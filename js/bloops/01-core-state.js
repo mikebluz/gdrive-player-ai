@@ -171,6 +171,21 @@
       const exp = document.getElementById('lane-expander');
       const stash = document.getElementById('lane-expander-stash');
       if (!exp || !stash) return;
+      // Bloom Author-in-Grid: while a Bloom layer is being edited in the full
+      // editor, the whole expander docks inside that layer's Seed subsection
+      // (17-ambient.js sets window._bloomGridDock). Everything in the expander
+      // is wired by fixed IDs, so relocation is transparent; renderSequence
+      // keeps calling this, so the override must come first.
+      // The dock target is resolved LIVE by layer key (panel rebuilds wipe and
+      // recreate the card DOM, so a stored node would go stale).
+      if (window._bloomGridKey != null) {
+        const dk = document.querySelector('.ambient-seedgrid-slot[data-sgkey="' + String(window._bloomGridKey).replace(/"/g, '') + '"] .ambient-seedgrid-dockhost');
+        if (dk) {
+          if (exp.parentNode !== dk) dk.appendChild(exp);
+          stash.hidden = true;
+          return;
+        }
+      }
       const display = document.getElementById('sequence-display');
       // Pin the editor to the TOP of the lane list (above the FIRST lane row),
       // not above the active lane — so the Grid/Graph/etc component stays put

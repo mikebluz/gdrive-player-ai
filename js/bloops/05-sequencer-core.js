@@ -602,6 +602,9 @@
         let _yolkColorN = 0;
         lanes.forEach(l => { if (l && l.yolk && !(l.yolk in _yolkColorMap)) _yolkColorMap[l.yolk] = _yolkColors[_yolkColorN++ % _yolkColors.length]; });
         lanes.forEach((lane, laneIdx) => {
+          // Bloom Author-in-Grid scratch lanes never render a row — they exist
+          // only to point the (relocated) expander at a Bloom layer's phrase.
+          if (lane && lane._bloomScratch) return;
           const isActiveLane = laneIdx === activeLaneIdx;
           // Mixed-tone lanes (e.g. a yolk-merged kit) colour their chips by
           // HIT SET rather than pitch class — computed once per lane. `laneMixed`

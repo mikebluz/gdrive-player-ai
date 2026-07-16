@@ -39,12 +39,97 @@ Layer = INSTRUMENT  ·  KEY  ·  SEED  ·  TIMING  ·  VARIANCE  ·  FX/MIX
         └─ preset picks this ─┘  └───── universal, adaptive, collapsed ─────┘
 ```
 
+**No default layers (2026-07-15, user directive):** a fresh area/workspace
+starts EMPTY — the auto-Bed is gone. All four primaries ship `present: false`
+in `_defaultAmbientConfig`; **the primary backfill loop explicitly SKIPS
+`present`** (its numeric fallback treats booleans as always-missing — with
+`present:false` in defaults it stomped every save's primaries to absent each
+normalize, incl. explicit `true`; absence stays meaningful: undefined =
+present, so pre-change saves keep their Bed). "🧹 Clear area" already removed
+all layers; "Clear all areas" and ＋ new areas now start truly empty. + Add
+layer restores any primary (settings retained). Harness mk() restores the old
+"bed on, primaries present" shape before each config's mutate — pins
+byte-identical.
+
 ## 2. The axes
 
 ### INSTRUMENT — the sound
 - **Voice**: `synth` (pitched) · `kit` (drum map; unpitched) · `sample` (buffer; pitch = varispeed).
 - A **tone**, or a **set of tones** (a kit; or per-degree/per-lane/per-note tones that
   the material assigns per event — the wrap-ensemble case).
+
+*Author grid docking (2026-07-15):* choosing **Author** on a layer's Seed
+seg now DOCKS the layer's whole composing surface (the editable lock-roll grid
++ the 🎹 keyboard) into the SEED subsection itself — the "compose a fixed part
+over/under the generative area" workflow lives on the axis where the choice is
+made, instead of behind the separate 🎹 toggle. Generate moves both elements
+back to their card home (DOM relocation only — the roll/piano wiring queries
+by host + data keys, so it's transparent; `_ambRefreshSeedModes` re-docks
+after any panel rebuild). Composes with ● Performance rec (record a take,
+refine it in the docked grid) and Yoke (generative layers harmonize around the
+authored part = the intentional foundation).
+
+*Author-in-Grid (2026-07-15):* "⧉ Edit in Grid" on an Authored layer's Seed
+slot docks THE ENTIRE lane editor (#lane-expander — Grid, Graph, Game, every
+mode) into the card, pointed at a hidden SCRATCH LANE holding the layer's
+phrase. No componentization: the expander is the app's own relocatable
+singleton (stash/re-place protocol); `_placeLaneExpander` gained a dock
+override that resolves the target LIVE by `window._bloomGridKey` (stored nodes
+go stale across card rebuilds), the panel wipe rescues the expander to its
+stash first (the renderSequence pre-wipe protocol), and the seed-mode refresh
+re-docks it (self-healing). The scratch lane is muted, row-hidden in
+renderSequence, survives _resizeLanesToGridRows trims, and is removed on
+Done/Cancel (active lane + expander state restored). Edits live-sync every
+400 ms: steps → lock events (sequential walk, each step advances
+duration×subdivision; chords + subSteps handled; layer-voiced params;
+bar-grid-aligned anchor; future-cancel + reschedule so the loop updates on the
+next pass). Cancel restores the pre-edit snapshot. Converters:
+`_ambLockToSteps` / `_ambStepsToLock`.
+
+*Rec quantize (2026-07-15):* the ●/🎤 snap grid is now a Configure setting —
+`cfg.recQuant` divisions per bar: Off (raw) / 1/8 / 1/16 (default, the old
+behavior) / 1/32 / 1/64 / 1/128 — resolved by `_ambRecSlotSec` in both commit
+paths. Verified live at 1/128: taps land on exact 15.6 ms grid points with
+their real micro-timing preserved. Numeric field → backfill-safe (legacy saves
+get 16).
+
+*Hum rec (2026-07-15):* audio → phrase transcription — 🎤 next to ● on the
+piano bar. Arm: the layer goes silent (the ● empty-frozen trick) while the
+area plays; the MIC records (dedicated native AudioContext + Analyser, no SAC
+wiring; frames every 35 ms stamped with Tone.now()). Stop: transcribe —
+PITCH by normalized autocorrelation with first-near-max-lag selection (kills
+the classic octave-down subharmonic error), local-peak walk + parabolic
+refinement (0¢ on harmonic-rich test tones, 70 Hz–1 kHz); SEGMENTATION on
+sustained pitch jumps ≥ 0.7 st or RMS re-attacks, notes end on silence,
+median-3 smoothing (vibrato-tolerant), min 90 ms; then snapped to semitones +
+16ths and committed through the SAME cycle-aligned lock path as ● (editable,
+Harmony-remappable, persisted; empty take resumes generation). Verified: a
+synthesized hummed melody with vibrato transcribes exactly (57,59,60).
+Headphones recommended (the mic hears the speakers).
+
+*Performance rec (2026-07-15):* play-along melody writing — ● on a layer's
+piano bar (next to 🎹): arm → the layer's own generation goes SILENT (an empty
+frozen loop; the freeze gate blocks its emitters) while the area/progression
+keeps playing; every piano key pressed sounds through the layer's voice (the
+audition path) AND lands in the take. ● again → quantized to 16ths, rounded up
+to whole progression CYCLES (`_ambProgCycleBars`; bars without a prog),
+committed as the layer's frozen loop ANCHORED TO THE CYCLE START — notes land
+on the chords they were played over. It's a normal user lock afterwards:
+piano-roll editable, Harmony-remappable (keyCtx snapshotted), persisted, ❄/Off
+discards. Empty take → generation resumes. Note durations = gap-to-next ×0.9
+(capped 1 bar). Proof: 4 taps over a I-V area → 4 events at 16th-quantized
+offsets, 2-cycle loop, exact pitches replaying every cycle.
+
+*Tone cycle (2026-07-15):* scheduled Instrument Tone changes — `L.toneSeq =
+{ on, steps: [{ tone, bars }] }` (≤8 steps) cycles the layer's Tone on the BAR
+clock (e.g. 4 bars sawtooth → 4 bars sine → repeat). Resolved PER NOTE ONSET in
+`_ambToneAt` at every pitched emitter (per-note voice construction is the norm
+— the wrap-ensemble degree tones already override type per note; degree tones
+still win). '' = the layer's default voice; anchor = the bar grid (play
+start). Deterministic, zero draws, absent/off → `inst.tone` byte-identical.
+UI: "Tone cycle" row in the Instrument group of every tone-bearing type
+(Beat is kit-based — excluded); delegated wiring, no per-card binds. Proof:
+alternate sine/saw 1-bar steps → voice flips exactly on every bar line.
 
 ### KEY — the harmonic frame
 - One of: **chromatic** · **key** (root + scale) · **progression** (a moving key — a
@@ -183,7 +268,25 @@ stays as written: the loop remains the loop; the touch varies. Proof: written
 replay = 1 volume/0 flicks over 4 iterations; live = 8 distinct volumes, all
 onsets humanized, fresh in-key flicks (degree derived from the replayed Hz via
 the `_ambScaleTranspose` nearest-degree walk against the layer's current
-source, so flicks follow key changes).
+source, so flicks follow key changes). *Verbatim fix (2026-07-15):* replay was
+proven verbatim across all 7 generator types, but an EMPTY capture window made
+the engage fail silently and Write re-armed the same odds forever — the layer
+never looped (heard as "Write isn't looping, variance keeps changing"). Fixed:
+the window floors at ≥ 1 natural layer period (whole bars — also fixes a lucky
+1-onset catch looping at double the harmonic rhythm), and an empty engage
+doubles the next attempt (`st._writeGrow`, reset on success, cap 32 bars).
+
+*Tight (2026-07-15):* an optional Variance RULE on every event layer
+(Motif/Texture/Beat/Arp/Bass/Riff/Pedal — Bed keeps its own Choke): each note
+lasts EXACTLY until the layer's next onset, then CHOKES (release clamped ≤60 ms
+so the tail can't smear the next hit). Lengths derive from the SEED pattern
+(next on-slot of the euclid/riff pattern; grid slot for stochastic seeds; the
+next burst offset / unit period on Motif; the rate interval on Arp) — pure
+arithmetic, ZERO RNG draws, gated at 0. Overrides Len var / Hold / Phrasing
+lengths while on. Proof: a tight Riff's 45/45 notes had duration == gap to the
+actual next onset (250/500 ms vs the uniform 220 ms baseline); Motif = the
+1200 ms unit exactly. Stochastic drops keep the seed gap (a dropped hit leaves
+a breath rather than re-deriving).
 
 *Landed (2026-07-15):* the axis gained its universal + per-type controls —
 **Humanize** (±20 ms onset jitter) and **Vel var** (±40% level noise) on every type
@@ -210,6 +313,12 @@ Progression (✎ opens the layer prog editor, whose apply writes keyOv). Hidden 
 kit/sample-voice extras (no harmonic frame). The Bed/Drone Progression sub-block
 (inside Seed) is gated by `_ambSyncProgVis` on the area prog, via the `sub`-token
 wrapper (`data-sub`).
+
+*Seq rows added (2026-07-15):* the matrix now lists SEQ layers (sent
+sequences) too — the emit path already gated per event (`_ambEmitSeqEvent` →
+`_ambChordGateOK`); the rows were just missing from `_ambChordMatrixRows`, and
+seq normalize now coerces `chordMask`. Proof: seq under I-IV-V masked
+[100,0,0] → 38→16 notes, zero off-chord leaks.
 
 *Chord matrix landed (2026-07-15):* per-layer **chord sequencer** against the
 active progression — `L.chordMask = { steps: [prob 0-100 per chord], part:
@@ -454,6 +563,16 @@ unmappable feature → migration can be additive.
 - Every load path funnels through `_normalizeAmbientCfg` (the one migration chokepoint).
 
 ## 8. Naming discipline (guards the design)
+
+**Per-layer divergence rule (2026-07-15, user directive):** a parameter that
+BEHAVES differently in different layers must be NAMED differently in those
+layers (labels; field keys may stay for save-compat, per the Rate→Unit
+precedent). Applied: Riff `phrasing` → **Articulate** (deterministic
+pattern-shaped lengths; Motif keeps **Phrasing** = stochastic gesture cells),
+Pedal `vary` → **Roam** (degree wander; Riff keeps **Vary** = slot mutation),
+Bass `pitchVar` → **Walk** (proximity-capped walk; Arp/Drone keep **Pitch
+vary** = octave drift). Same-concept shares stay shared (Ghosts, Rhythm var,
+Len var, Start, Accent, Hold, Tight).
 
 - **Rhythm splits SEED/TIMING**: the *pattern* (which slots fire — `pulses/rotation`,
   drawn cells) = SEED; the *ruler* (steps/bars/sync) = TIMING. Holding this apart is what

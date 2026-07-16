@@ -71,6 +71,9 @@
         keyFollow: true,
         keyRoot:  0,
         keyScale: 'major',
+        // Rec quantize — the snap grid for ● performance rec + 🎤 hum rec, in
+        // divisions per bar (16 = 16ths, up to 128; 0 = off, raw timing).
+        recQuant: 16,
         // How Key reshapes the material: 'transpose' (default — move every layer
         // wholesale into the key, intervals/voicings intact) or 'quantize' (leave
         // layers where they are and snap each out-of-key note to the nearest tone
@@ -115,10 +118,16 @@
         // `when` is an Elektron-style per-event conditional ('always' | '1st' |
         // 'A:B') that gates which of the layer's generated events actually fire —
         // e.g. '1:2' = every other event, for sparser/polymetric interplay.
-        bed:     { on: true,  density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, strum: 0, strumFidelity: 0, tone: '', scale: '', attack: 2000, decay: 200, sustain: 85, release: 3650, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
-        motif:   { on: false, register: 5, range: 2, proximity: 35, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, accent: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', attack: 100, decay: 120, sustain: 70, release: 500, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
-        texture: { on: false, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', attack: 40, decay: 80, sustain: 0, release: 240, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
-        beat:    { on: false, kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, attack: 1, decay: 60, sustain: 70, release: 120, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        // NO DEFAULT LAYERS (2026-07-15, user directive): a fresh area/workspace
+        // starts EMPTY — no auto-Bed. All four primaries ship present:false
+        // (normalize never backfills `present` on primaries, so old saves —
+        // where present is undefined = present — are untouched). + Add layer
+        // restores any of them (settings retained). The invariant harness
+        // forces present/on in mk() (its pins predate this default).
+        bed:     { on: false, present: false, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, strum: 0, strumFidelity: 0, tone: '', scale: '', attack: 2000, decay: 200, sustain: 85, release: 3650, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        motif:   { on: false, present: false, register: 5, range: 2, proximity: 35, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, accent: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', attack: 100, decay: 120, sustain: 70, release: 500, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        texture: { on: false, present: false, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', attack: 40, decay: 80, sustain: 0, release: 240, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        beat:    { on: false, present: false, kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, attack: 1, decay: 60, sustain: 70, release: 120, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
         // `seqs` is a DYNAMIC list of sequence-seeded layers (Seq1, Seq2…),
         // created by "Send to Bloom". Each replays one or more saved-sequence
         // "units", improvising variations and periodically returning to verbatim.
@@ -1416,6 +1425,18 @@
       // (Humanize / Vel var / Ornament re-roll per iteration in _ambReplayFrozen).
       // Absent = written (the phrase replays exactly as captured). Coerce-only.
       if (host.loopVar != null && host.loopVar !== 'live') delete host.loopVar;
+      // SCHEDULED TONE cycle: coerce when present; ABSENT = off (additive,
+      // kept out of defaults — the normalize trap).
+      if (host.toneSeq != null) {
+        const q = host.toneSeq;
+        if (typeof q !== 'object' || !Array.isArray(q.steps)) delete host.toneSeq;
+        else {
+          q.on = (q.on === true || q.on === 1) ? 1 : 0;
+          q.steps = q.steps.filter(t => t && typeof t === 'object').slice(0, 8)
+            .map(t => ({ tone: (typeof t.tone === 'string') ? t.tone : '', bars: Math.max(1, Math.min(32, t.bars | 0)) || 4 }));
+          if (!q.steps.length) delete host.toneSeq;
+        }
+      }
       // PITCH ECHO: coerce when present; ABSENT = off (additive, kept out of
       // defaults — the normalize trap).
       if (host.pecho != null) {
@@ -1545,6 +1566,7 @@
       // B4 refinements: re-voicing mode + missing-tone scale-borrow (chord-lock).
       if (['smooth', 'preserve', 'reset'].indexOf(s.revoice) < 0) s.revoice = 'smooth';
       if (typeof s.chordBorrow !== 'boolean') s.chordBorrow = true;
+      _ambNormalizeChordMask(s);   // chord-mask (chord matrix row) — additive
       if (!Array.isArray(s.units)) s.units = [];
       s.units = s.units.filter(_ambValidUnit);
       // Option C degree storage: backfill each unit event's degree form (ev.degs
@@ -1704,6 +1726,8 @@
       if (cfg.keyMode !== 'transpose' && cfg.keyMode !== 'quantize') cfg.keyMode = d.keyMode;
       cfg.keyModeRot = Number.isFinite(cfg.keyModeRot) ? ((((cfg.keyModeRot | 0) % 7) + 7) % 7) : 0;   // area relative mode (0..6)
       cfg.startVary = Math.max(0, Math.min(100, cfg.startVary | 0));   // area start cascade (0..100)
+      if (!Number.isFinite(cfg.recQuant)) cfg.recQuant = d.recQuant;   // ●/🎤 snap grid (divisions/bar; 0 = off)
+      cfg.recQuant = Math.max(0, Math.min(128, cfg.recQuant | 0));
       // AREA GROOVE (live macros): global Swing/Accent ADD to every layer's own
       // value; pushMode = the unit for per-layer Push (ms / % of unit). All
       // neutral (0) by default → byte-identical. Humanize reuses cfg.startVary.
@@ -1788,6 +1812,7 @@
       ['bed','motif','texture','beat'].forEach(layer => {
         Object.keys(d[layer]).forEach(k => {
           if (k === 'on') { if (typeof cfg[layer].on !== 'boolean') cfg[layer].on = d[layer].on; }
+          else if (k === 'present') { /* boolean, and ABSENCE IS MEANINGFUL (undefined = present, for pre-empty-default saves) — never backfilled; the numeric fallback below would stomp explicit true every normalize */ }
           else if (k === 'kit' || k === 'tone' || k === 'scale' || k === 'when' || k === 'panMode' || k === 'gen' || k === 'progFeel') { if (typeof cfg[layer][k] !== 'string') cfg[layer][k] = d[layer][k]; }
           else if (k === 'mod') { _ambNormalizeModObj(cfg[layer], d[layer].mod); }
           else if (k === 'delay' || k === 'dist' || k === 'chorus' || k === 'phaser' || k === 'autopan' || k === 'tg') { /* objects — handled by _ambNormalizeFx below */ }
@@ -5152,7 +5177,7 @@
       const _unit = [];
       order.forEach((vi, pos) => {
         const f = voicing[vi];
-        const params = _ambApplyAdsr(_ambBedParams(durMs, n, bed.motion, overlap, pans[vi], bed.tone), bed);
+        const params = _ambApplyAdsr(_ambBedParams(durMs, n, bed.motion, overlap, pans[vi], _ambToneAt(bed, at)), bed);
         if (voicing._tones && voicing._tones[vi]) params.type = voicing._tones[vi];   // wrap-ensemble Stack: this voice's degree-tone
         if (voicing._levels && voicing._levels[vi] != null) params.volume = Math.max(0, Math.min(100, Math.round((Number.isFinite(params.volume) ? params.volume : 100) * (voicing._levels[vi] / 100))));   // …and its level
 
@@ -5363,7 +5388,10 @@
                   const bp = _ambApplyAdsr(_ambBeatParams(inst.kit, lenMs, stPan), inst);
                   bp.volume = Math.max(0, Math.round(_ambApplyLevel(bp.volume, inst.level) * velS));
                   if (dmod) bp._detuneMod = dmod;
-                  const baseLen = _ambVaryLen(_holdMs || lenMs, inst.lenVary, rnd) * lenS;
+                  if (_ambTightOn(inst)) _ambTightChoke(bp);
+                  const baseLen = _ambTightOn(inst)
+                    ? _ambTightGap((j2) => vpat[j2 % vpat.length] === 1, absI, bars * steps) * slotSec * 1000 * lenS
+                    : _ambVaryLen(_holdMs || lenMs, inst.lenVary, rnd) * lenS;
                   const noteLen = (rat > 1) ? Math.min(baseLen, ratSpace * 1000 * 0.95) : baseLen;
                   try { playNote(f, bp, noteLen, rAt, dest, undefined, _E.laneIdx()); } catch (e) {}
                   ctx.cap++;
@@ -5423,7 +5451,9 @@
               bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
               if (dmod) bp._detuneMod = dmod;
               _ambKeyTime = at;
-              try { playNote(f, bp, _ambVaryLen(_holdMs || lenMs, inst.lenVary, rnd), at, dest, undefined, _E.laneIdx()); } catch (e) {}
+              let _sLen = _ambVaryLen(_holdMs || lenMs, inst.lenVary, rnd);
+              if (_ambTightOn(inst)) { _sLen = _ambTightGap((j2) => pat[j2 % pat.length] === 1, bar * steps + slot, bars * steps) * slotSec * 1000; _ambTightChoke(bp); }
+              try { playNote(f, bp, _sLen, at, dest, undefined, _E.laneIdx()); } catch (e) {}
               ctx.cap++;
               if (ctx.cap >= 256) break;
             }
@@ -5478,18 +5508,20 @@
             if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at, src);
             const f = _ambDegreeFreq(walkDeg % N, reg + Math.floor(walkDeg / N), src);
             if (f == null) continue;
-            const bp = _ambApplyAdsr(_ambBassParams(lenMs, _ambLayerPan(inst), inst.tone), inst);
+            const bp = _ambApplyAdsr(_ambBassParams(lenMs, _ambLayerPan(inst), _ambToneAt(inst, at)), inst);
             { const _dt = _ambDegreeToneAt(walkDeg, src); if (_dt) bp.type = _dt; const _dl = _ambDegreeLevelAt(walkDeg, src); if (_dl != null) bp.volume = Math.max(0, Math.min(100, Math.round((Number.isFinite(bp.volume) ? bp.volume : 100) * (_dl / 100)))); }   // wrap-ensemble: this degree's own tone + level
             bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
             if (dmod) bp._detuneMod = dmod;
             _ambColourLeadIn(f, bp, at, dest, _E.laneIdx(), src);   // Harmony colours: chromatic approach/enclosure (no-op at default 'landing')
-            try { playNote(f, bp, _ambVaryLen(_holdMs || lenMs, inst.lenVary, rnd), at, dest, undefined, _E.laneIdx()); } catch (e) {}
+            let _bLen = _ambVaryLen(_holdMs || lenMs, inst.lenVary, rnd);
+            if (_ambTightOn(inst)) { _bLen = _ambTightGap((j2) => pat[j2 % pat.length] === 1, bar * steps + slot, bars * steps) * slotSec * 1000; _ambTightChoke(bp); }
+            try { playNote(f, bp, _bLen, at, dest, undefined, _E.laneIdx()); } catch (e) {}
             ctx.cap++;
             // Ghosts (Variance): quiet pickup half a slot before, same pitch —
             // gated at 0 (no draw) → byte-identical.
             { const gP = Math.max(0, Math.min(100, inst.ghosts | 0));
               if (gP > 0 && rnd() * 100 < gP * 0.5 && ctx.cap < 256) {
-                const gbp = _ambApplyAdsr(_ambBassParams(Math.round((_holdMs || lenMs) * 0.6), _ambLayerPan(inst), inst.tone), inst);
+                const gbp = _ambApplyAdsr(_ambBassParams(Math.round((_holdMs || lenMs) * 0.6), _ambLayerPan(inst), _ambToneAt(inst, at)), inst);
                 gbp.volume = Math.max(0, Math.round(_ambApplyLevel(Number.isFinite(gbp.volume) ? gbp.volume : 100, inst.level) * 0.30));
                 if (dmod) gbp._detuneMod = dmod;
                 try { playNote(f, gbp, Math.max(40, Math.round((_holdMs || lenMs) * 0.5)), at - slotSec * 0.5, dest, undefined, _E.laneIdx()); } catch (e) {}
@@ -5597,7 +5629,9 @@
               const _gest = Math.round(slotSec * 1000 * (_nextRests ? 0.92 : 0.4));
               noteLen = Math.round(noteLen + (_gest - noteLen) * (_phrR / 100));
             } }
-          const bp = _ambApplyAdsr(_ambMotifParams(noteLen, _ambLayerPan(inst), inst.tone), inst);
+          if (_ambTightOn(inst)) noteLen = _ambTightGap((j2) => !baseRest[j2 % totalSlots], i, totalSlots) * slotSec * 1000;
+          const bp = _ambApplyAdsr(_ambMotifParams(noteLen, _ambLayerPan(inst), _ambToneAt(inst, at)), inst);
+          if (_ambTightOn(inst)) _ambTightChoke(bp);
           if (_ambLastDegTone) bp.type = _ambLastDegTone;   // wrap-ensemble: this degree's own tone
           // Phrase gestures (cycle-seeded → the figure locks to the loop).
           _ambOrnamentFlicks(inst, src, (deg % N + N) % N, reg + homeShift + Math.floor(deg / N), at, bp, noteLen, dest, _E.laneIdx(), vRnd);
@@ -5682,13 +5716,15 @@
           if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at, src);   // chord at THIS note's onset (per-onset)
           const f = _ambDegreeFreq(deg, reg, src);   // base degree or a roamed degree
           if (f == null) continue;
-          const bp = { type: vtype, attack: atk, decay: dec, sustain: sus, release: rel,
+          const bp = { type: (inst.toneSeq && inst.toneSeq.on) ? _ambLayerType(_ambToneAt(inst, at)) : vtype, attack: atk, decay: dec, sustain: sus, release: rel,
             volume: _ambAccentVol(_ambApplyLevel(100, inst.level), inst.accent), pan, detune: Math.max(-1200, Math.min(1200, inst.fine | 0)), loop: true };
           if (_ambLastDegTone) bp.type = _ambLastDegTone;   // wrap-ensemble: this degree's own tone
           _ambApplyDegLevel(bp);                          // …and its own level
           if (dmod) bp._detuneMod = dmod;
           _ambColourLeadIn(f, bp, at, dest, _E.laneIdx(), src);   // Harmony colours (no-op at default 'landing')
-          try { playNote(f, bp, lenMs, at, dest, undefined, _E.laneIdx()); } catch (e) {}
+          let _pLen = lenMs;
+          if (_ambTightOn(inst)) { _pLen = Math.max(40, Math.round(slotSec * 1000)); _ambTightChoke(bp); }
+          try { playNote(f, bp, _pLen, at, dest, undefined, _E.laneIdx()); } catch (e) {}
           cap++;
           if (cap >= 512) break;
         }
@@ -5842,6 +5878,40 @@
     // Draws come from the CALLER's stream — motif: the live engine stream;
     // riff: its cycle-seeded vRnd, so the ornament pattern LOCKS to the loop.
     // Fully gated at 0 (zero draws → harness byte-identical).
+    // SCHEDULED TONE (Instrument axis): L.toneSeq = { on: 1, steps: [{ tone,
+    // bars }] } — the layer's Tone cycles on the BAR clock (e.g. 4 bars saw →
+    // 4 bars sine → repeat), resolved PER NOTE ONSET (per-note voice
+    // construction is the norm — the wrap-ensemble degree tones already
+    // override type per note). Deterministic (onset arithmetic, zero RNG
+    // draws); absent/off → inst.tone (byte-identical, harness-safe). A step
+    // tone of '' = the layer's default voice.
+    function _ambToneAt(inst, atSec) {
+      const q = inst && inst.toneSeq;
+      if (!q || !q.on || !Array.isArray(q.steps) || !q.steps.length) return inst ? inst.tone : '';
+      const barSec = (60 / Math.max(20, _ambBpm())) * 4;
+      let total = 0; for (const st of q.steps) total += Math.max(1, st.bars | 0);
+      if (!(total > 0) || !(barSec > 0)) return inst.tone;
+      const E = _E;
+      const anchor = (E && Number.isFinite(E._barGridAnchor)) ? E._barGridAnchor : ((E && E._t0 != null) ? E._t0 : 0);
+      let bar = Math.floor((atSec - anchor) / barSec); bar = ((bar % total) + total) % total;
+      for (const st of q.steps) { const b = Math.max(1, st.bars | 0); if (bar < b) return (typeof st.tone === 'string') ? st.tone : inst.tone; bar -= b; }
+      return inst.tone;
+    }
+    // TIGHT (Variance rule): every note lasts exactly until the layer's NEXT
+    // onset, then CHOKES — length = the gap to the next seed-pattern hit (the
+    // grid slot for stochastic seeds), release clamped short so the tail can't
+    // smear over the next note. Pure pattern arithmetic on the SEED (zero RNG
+    // draws — stochastic drops keep the seed gap: a dropped hit leaves a
+    // breath); gated at 0 → byte-identical (harness-safe). Overrides Len var /
+    // Hold / Phrasing lengths while on.
+    function _ambTightOn(inst) { return ((inst && inst.tight) | 0) > 0; }
+    function _ambTightChoke(p) { if (p && typeof p === 'object') p.release = Math.min(Number.isFinite(p.release) ? p.release : 200, 60); return p; }
+    // Slots from `idx` to the next ON slot of a cyclic pattern (isOn answers
+    // per absolute slot over `total`); a lone hit gets the full cycle.
+    function _ambTightGap(isOn, idx, total) {
+      for (let j = 1; j < total; j++) { if (isOn((idx + j) % total)) return j; }
+      return Math.max(1, total);
+    }
     function _ambOrnamentFlicks(inst, src, deg, oct, at, baseParams, durMs, dest, laneIdx, rndFn, rec) {
       const p = Math.max(0, Math.min(100, inst.ornament | 0));
       if (p <= 0) return;
@@ -5987,6 +6057,13 @@
       }
       const dmod = _ambLayerDetuneMod(key);
       const dest = _ambLayerDest(key);
+      // Tight: the unit period is the "next onset" for a unit's LAST note.
+      const _tightM = _ambTightOn(motif);
+      let _tUnit = 0;
+      if (_tightM) {
+        try { _tUnit = _ambLayerPeriodSec(_E, key || 'motif', motif, _E._cfg || (_E.getCfg && _E.getCfg())); } catch (e) {}
+        if (!(_tUnit > 0.05)) _tUnit = Math.max(0.05, ((motif.intervalMs | 0) || 1200) / 1000);
+      }
       const _mnotes = _ambNotesOf(motif);   // carries colours + timed usage
       // Phrase placement (Start %): with probability motif.phraseVary, this phrase
       // begins at a STOCHASTIC point anywhere in the unit instead of on the 1 —
@@ -6023,13 +6100,18 @@
         // Sequential single notes can't be "distributed" simultaneously, so
         // Space spreads them by panning each randomly within ±space.
         const pan = _ambLayerPan(motif);
-        const mp = _ambApplyAdsr(_ambMotifParams(lenMs, pan, motif.tone), motif);
+        const mp = _ambApplyAdsr(_ambMotifParams(lenMs, pan, _ambToneAt(motif, at)), motif);
         if (_ambLastDegTone) mp.type = _ambLastDegTone;   // wrap-ensemble: this degree's own tone
         _ambApplyDegLevel(mp);                          // …and its own level
         mp.volume = _ambAccentVol(_ambApplyLevel(mp.volume, motif.level), motif.accent);
         if (_plan && _plan[i].arr) mp.volume = Math.min(127, Math.round(mp.volume * 1.15));   // agogic lean on the arrival
         const off = _plan ? (_startOff + _plan[i].t) : (_startOff + i * burstGap);
-        const noteMs = _plan ? _plan[i].d : _ambVaryLen(lenMs, motif.lenVary);   // gesture duration | Len var jitter
+        let noteMs = _plan ? _plan[i].d : _ambVaryLen(lenMs, motif.lenVary);   // gesture duration | Len var jitter
+        if (_tightM) {
+          const _nOff = (i + 1 < count) ? (_plan ? (_startOff + _plan[i + 1].t) : (_startOff + (i + 1) * burstGap)) : _tUnit;
+          noteMs = Math.max(40, Math.round((_nOff - off) * 1000));
+          _ambTightChoke(mp);
+        }
         // Phrase gestures — ornament flicks before the beat, glide into leaps.
         { const _N2 = Math.max(1, _ambScaleIntervals(_mnotes).length);
           const _dg = _E.motifDeg | 0;
@@ -6131,12 +6213,14 @@
           if (isProg) _ambProgStepOverride = null;
           if (f == null) continue;
           const pan = _ambLayerPan(inst);
-          const tp = _ambApplyAdsr(_ambTexParams(_holdMs || lenMs, pan, inst.tone), inst);
+          const tp = _ambApplyAdsr(_ambTexParams(_holdMs || lenMs, pan, _ambToneAt(inst, at)), inst);
           if (_ambLastDegTone) tp.type = _ambLastDegTone;
           _ambApplyDegLevel(tp);
           tp.volume = _ambApplyLevel(tp.volume, inst.level);
           if (dmod) tp._detuneMod = dmod;
-          try { playNote(f, tp, _ambVaryLen(_holdMs || lenMs, inst.lenVary, rnd), at, dest, undefined, E.laneIdx()); } catch (e) {}
+          let _tLen = _ambVaryLen(_holdMs || lenMs, inst.lenVary, rnd);
+          if (_ambTightOn(inst)) { _tLen = (euPat ? _ambTightGap((j2) => !!euPat[j2 % euPat.length], s, steps) : 1) * slotSec * 1000; _ambTightChoke(tp); }
+          try { playNote(f, tp, _tLen, at, dest, undefined, E.laneIdx()); } catch (e) {}
         }
       });
     }
@@ -6343,12 +6427,18 @@
       if (f == null) return;
       const lenMs = Math.max(40, arp.lengthMs | 0);
       const pan = _ambLayerPan(arp);
-      const ap = _ambApplyAdsr(_ambMotifParams(lenMs, pan, arp.tone), arp);
+      const ap = _ambApplyAdsr(_ambMotifParams(lenMs, pan, _ambToneAt(arp, at)), arp);
       { const _at = _ambDegreeToneAt(d, notes); if (_at) ap.type = _at; const _al = _ambDegreeLevelAt(d, notes); if (_al != null) ap.volume = Math.max(0, Math.min(100, Math.round((Number.isFinite(ap.volume) ? ap.volume : 100) * (_al / 100)))); }   // wrap-ensemble: this degree's own tone + level
       ap.volume = _ambAccentVol(_ambApplyLevel(ap.volume, arp.level), arp.accent);
       const dmod = _ambLayerDetuneMod(key); if (dmod) ap._detuneMod = dmod;
       _ambColourLeadIn(f, ap, at, _ambLayerDest(key), _E.laneIdx(), notes);   // Harmony colours (no-op at default 'landing')
-      try { playNote(f, ap, _ambVaryLen(lenMs, arp.lenVary), at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
+      let _aLen = _ambVaryLen(lenMs, arp.lenVary);
+      if (_ambTightOn(arp)) {
+        let _tg = 0; try { _tg = _ambLayerPeriodSec(_E, key, arp, _E._cfg || (_E.getCfg && _E.getCfg())); } catch (e) {}
+        if (!(_tg > 0.02)) _tg = Math.max(0.04, ((arp.intervalMs | 0) || 250) / 1000);
+        _aLen = Math.max(40, Math.round(_tg * 1000)); _ambTightChoke(ap);
+      }
+      try { playNote(f, ap, _aLen, at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
       } finally { if (_arpProg) _ambProgStepOverride = null; }
     }
     // Per-note interval for a SYNCED series arp with a fixed Resolution: the
@@ -10968,7 +11058,13 @@
       const w = st._lockWin, eps = 0.001;
       const cap = (E.cap && E.cap[key]) || [];
       const win = cap.filter(e => e.at >= w.bStart - eps && e.at < w.bEnd - eps);
-      if (!win.length) { st.pendingFreezeAt = null; st._lock = false; st._lockWin = null; return false; }
+      if (!win.length) {
+        // Empty window: for a Write-owned loop, grow the next attempt (see
+        // _ambWriteSync) instead of silently retrying the same odds.
+        if (st._write) st._writeGrow = Math.min(3, (st._writeGrow | 0) + 1);
+        st.pendingFreezeAt = null; st._lock = false; st._lockWin = null; return false;
+      }
+      st._writeGrow = 0;
       st.events = win.map(e => ({ t: Math.max(0, e.at - w.bStart), freq: e.freq, dur: e.dur, params: e.params }));
       st.loopLen = w.loopLen;
       st.keyCtx = _ambCurKeyCtx(E);   // the capture frame — anchors any later Harmony remap
@@ -11175,6 +11271,22 @@
         // LIVE for its window and just chains the next cycle at its end.
         const nT = _tu ? Math.max(1, _tu.times | 0)
           : (_sto ? _ambWriteRandInt(_id, st._writeCyc, _seed, 0x2222, Math.max(1, w.timesMin | 0), Math.max(1, w.timesMax | 0)) : Math.max(1, w.times | 0));
+        // SLOW-LAYER floor: a window shorter than the layer's own natural unit
+        // can capture ZERO onsets — engage fails, Write re-arms the same
+        // too-short window forever, and the layer never loops (heard as "Write
+        // isn't looping verbatim": generation just continues). Even a lucky
+        // 1-onset catch loops at the WRONG harmonic rhythm (a chord every
+        // window instead of every unit). Snap the window up to whole bars
+        // covering ≥ 1 natural period.
+        try {
+          const _P = _ambLayerPeriodSec(E, key, L, cfg);
+          if (_P > 0.05 && _P <= 31) { const _mb = Math.ceil((_P - 0.001) / barSec); if (_mb > nBars) nBars = _mb; }
+        } catch (e) {}
+        // Engage-failure growth: an armed window that captured NOTHING (a
+        // rest-heavy stretch) doubles the next attempt (reset on success), so
+        // sparse layers still find a loopable phrase instead of retrying the
+        // same empty-odds window forever.
+        if ((st._writeGrow | 0) > 0) nBars = Math.min(32, nBars << Math.min(3, st._writeGrow | 0));
         // Active progression → the phrase covers whole progression cycles (snap
         // BEFORE the 1-play branch so a live window's rewrite point is also
         // cycle-aligned; else it renders/labels inconsistently with a ≥2-play
@@ -11411,6 +11523,367 @@
       _ambReplayFrozen(E, key, now, (tA != null) ? Math.min(horizon, tA) : horizon);
       return true;
     }
+    // ---- AUTHOR-IN-GRID (the full Seed editor, docked in the card) --------
+    // "⧉ Edit in Grid" on an Authored layer's Seed slot: the ENTIRE lane
+    // editor (#lane-expander — Grid, Graph, Game, all modes) relocates into
+    // the card's Seed subsection, pointed at a hidden SCRATCH LANE holding
+    // this layer's phrase. The editor is the app's singleton (its own
+    // stash/re-place machinery makes it relocatable — _placeLaneExpander
+    // honors window._bloomGridDock); edits live-sync back into the layer's
+    // authored lock every 400 ms (steps → lock events, bar-grid aligned,
+    // future-cancel + reschedule so the loop updates on the next pass).
+    // Done keeps; Cancel restores the pre-edit phrase. One edit at a time.
+    let _bloomGridEdit = null;
+    function _ambGridSlotSec() {
+      const gsub = (typeof stepSubdivision === 'number' && stepSubdivision > 0) ? stepSubdivision : 0.5;
+      return (60 / Math.max(20, _ambBpm())) * gsub;
+    }
+    function _ambFreqLabel(f) {
+      try { return Tone.Frequency(f, 'hz').toNote(); } catch (e) {}
+      const m = Math.round(69 + 12 * Math.log2(f / 440));
+      const N = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      return N[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
+    }
+    // Lock events → sequential grid steps (one default grid step per slot;
+    // same-slot extras fold into a chord step; empty slots become rests).
+    function _ambLockToSteps(fs) {
+      const slot = _ambGridSlotSec();
+      const gsub = (typeof stepSubdivision === 'number' && stepSubdivision > 0) ? stepSubdivision : 0.5;
+      const n = Math.max(8, Math.round((fs.loopLen || 1) / slot));
+      const steps = [];
+      for (let i = 0; i < n; i++) steps.push({ freq: null, label: '—', cellIndex: null, duration: 1, subdivision: gsub });
+      (fs.events || []).forEach(ev => {
+        if (!(ev && ev.freq > 0)) return;
+        const i = Math.max(0, Math.min(n - 1, Math.round(ev.t / slot)));
+        const st = steps[i];
+        if (Array.isArray(st.chord)) st.chord.push({ freq: ev.freq, label: _ambFreqLabel(ev.freq) });
+        else if (st.freq != null) steps[i] = { freq: null, label: 'chord', cellIndex: null, duration: st.duration, subdivision: st.subdivision, chord: [{ freq: st.freq, label: st.label }, { freq: ev.freq, label: _ambFreqLabel(ev.freq) }] };
+        else { st.freq = ev.freq; st.label = _ambFreqLabel(ev.freq); }
+      });
+      return steps;
+    }
+    // Grid steps → lock events, walked sequentially (each step advances by its
+    // own duration×subdivision), voiced by the LAYER (tone/ADSR/level).
+    function _ambStepsToLock(E, key, steps) {
+      const L = _ambLayerByKey(E, key); if (!L) return;
+      const fs = _ambFreezeState(E, key);
+      const gsub = (typeof stepSubdivision === 'number' && stepSubdivision > 0) ? stepSubdivision : 0.5;
+      const beat = 60 / Math.max(20, _ambBpm());
+      const barSec = beat * 4;
+      const pan = _ambLayerPan(L) | 0;
+      const evs = []; let t = 0;
+      const push = (f, at, durMs) => {
+        if (!(f > 0)) return;
+        let pp; try { pp = _ambApplyAdsr(_ambMotifParams(durMs, pan, L.tone), L); pp.volume = _ambApplyLevel(pp.volume, L.level); } catch (e) { pp = { type: 'triangle', volume: 70, pan: pan }; }
+        evs.push({ t: at, freq: f, dur: durMs, params: pp });
+      };
+      (Array.isArray(steps) ? steps : []).forEach(st => {
+        if (!st) return;
+        const adv = beat * (st.subdivision != null ? st.subdivision : gsub) * (st.duration || 1);
+        const durMs = Math.max(80, Math.round(adv * 1000 * 0.92));
+        if (Array.isArray(st.chord) && st.chord.length) st.chord.forEach(nn => push(nn && nn.freq, t, durMs));
+        else if (st.freq != null) push(st.freq, t, durMs);
+        else if (st.isSub && Array.isArray(st.subSteps) && st.subSteps.length) {
+          const sd = adv / st.subSteps.length;
+          st.subSteps.forEach((ss, si) => { if (ss && ss.freq != null) push(ss.freq, t + si * sd, Math.max(60, Math.round(sd * 920))); });
+        }
+        t += adv;
+      });
+      const loopLen = Math.max(barSec, Math.ceil((t - 0.01) / barSec) * barSec);
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      const A0 = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor : ((E._t0 != null) ? E._t0 : 0);
+      fs.events = evs; fs.loopLen = loopLen;
+      fs.anchor = A0 + Math.floor((now - A0) / loopLen) * loopLen;
+      try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, now + 0.05); } catch (e) {}
+      fs.scheduledUpto = now;
+      fs.frozen = true; fs._lock = true;
+      if (!fs.keyCtx) fs.keyCtx = _ambCurKeyCtx(E);
+      try { _ambPersistLock(E, key); } catch (e) {}
+    }
+    function _ambGridEditSig(steps) {
+      try { return JSON.stringify((steps || []).map(s => s && [s.freq, s.duration, s.subdivision, s.chord && s.chord.map(c => c.freq), s.isSub && s.subSteps && s.subSteps.map(c => c && c.freq)])); } catch (e) { return String(Math.random()); }
+    }
+    function _ambGridEditSync() {
+      const ge = _bloomGridEdit; if (!ge || !ge.lane) return;
+      const sig = _ambGridEditSig(ge.lane.steps);
+      if (sig === ge.sig) return;
+      ge.sig = sig;
+      try { _ambStepsToLock(ge.E, ge.key, ge.lane.steps); } catch (e) {}
+    }
+    function _ambGridEditStart(E, key, dockEl) {
+      if (_bloomGridEdit) _ambGridEditStop(false);
+      const L = _ambLayerByKey(E, key); if (!L) return;
+      if (typeof lanes === 'undefined' || typeof _makeLane !== 'function') return;
+      const fs = _ambFreezeState(E, key);
+      if (!Array.isArray(fs.events)) fs.events = [];
+      if (!(fs.loopLen > 0)) fs.loopLen = (60 / Math.max(20, _ambBpm())) * 4 * 2;   // empty canvas: 2 bars
+      fs.frozen = true; fs._lock = true;
+      if (!fs.keyCtx) fs.keyCtx = _ambCurKeyCtx(E);
+      const snapshot = { ev: fs.events.map(e => ({ t: e.t, freq: e.freq, dur: e.dur, params: e.params })), loopLen: fs.loopLen };
+      const lane = _makeLane(lanes.length, _ambLockToSteps(fs));
+      lane._bloomScratch = true; lane.muted = true; lane.name = '✎' + String(key);
+      try { if (typeof _defaultVoice === 'function') lane.voice = _defaultVoice(); } catch (e) {}
+      lanes.push(lane);
+      _bloomGridEdit = { E: E, key: key, lane: lane, prevActive: (typeof activeLaneIdx !== 'undefined') ? activeLaneIdx : 0,
+        prevOpen: (typeof _laneExpanderOpen !== 'undefined') ? _laneExpanderOpen : false, snapshot: snapshot, sig: _ambGridEditSig(lane.steps), timer: null };
+      window._bloomGridKey = key;   // _placeLaneExpander resolves the dockhost live by key
+      const idx = lanes.length - 1;
+      try { if (typeof activateLane === 'function') activateLane(idx); else { activeLaneIdx = idx; if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane(); } } catch (e) { activeLaneIdx = idx; }
+      try { _laneExpanderOpen = true; } catch (e) {}
+      try { if (typeof _syncFluidGridToActiveLane === 'function') _syncFluidGridToActiveLane(); } catch (e) {}
+      try { renderSequence(); } catch (e) {}
+      try { _placeLaneExpander(); } catch (e) {}
+      _bloomGridEdit.timer = setInterval(() => { try { _ambGridEditSync(); } catch (e) {} }, 400);
+      try { _ambRefreshSeedModes(E); } catch (e) {}
+    }
+    function _ambGridEditStop(cancel) {
+      const ge = _bloomGridEdit; if (!ge) return;
+      _bloomGridEdit = null;
+      if (ge.timer) { try { clearInterval(ge.timer); } catch (e) {} }
+      if (cancel) {
+        const fs = _ambFreezeState(ge.E, ge.key);
+        fs.events = ge.snapshot.ev.map(e => ({ t: e.t, freq: e.freq, dur: e.dur, params: e.params }));
+        fs.loopLen = ge.snapshot.loopLen;
+        const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(ge.key, now + 0.05); } catch (e) {}
+        fs.scheduledUpto = now;
+        try { _ambPersistLock(ge.E, ge.key); } catch (e) {}
+      } else { try { _ambStepsToLock(ge.E, ge.key, ge.lane.steps); } catch (e) {} }
+      window._bloomGridKey = null;
+      try {
+        const i = lanes.indexOf(ge.lane); if (i >= 0) lanes.splice(i, 1);
+        const back = Math.max(0, Math.min(lanes.length - 1, ge.prevActive | 0));
+        if (typeof activateLane === 'function') activateLane(back); else { activeLaneIdx = back; if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane(); }
+        _laneExpanderOpen = ge.prevOpen;
+        if (typeof _syncFluidGridToActiveLane === 'function') _syncFluidGridToActiveLane();
+        renderSequence();
+        _placeLaneExpander();
+      } catch (e) {}
+      if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
+      try { _ambRefreshSeedModes(ge.E); _ambUpdateNotesLive(ge.E); } catch (e) {}
+    }
+    // ---- HUM REC (audio → phrase transcription) ---------------------------
+    // 🎤 on a layer's piano bar: arm → the layer goes silent (same empty-frozen
+    // trick as ●) while the area keeps playing; the MIC records you humming /
+    // singing / whistling along. Press 🎤 again → the take is transcribed:
+    //   pitch    — autocorrelation (ACF, normalized difference) per ~35 ms
+    //              frame, clarity-gated;
+    //   segments — a new note on a sustained pitch jump ≥ 0.7 st OR an RMS
+    //              re-attack after a dip; notes end on silence;
+    //   snap     — pitch → nearest semitone; onsets → 16ths; loop rounded up
+    //              to whole progression cycles and anchored at the cycle start
+    // …then committed through the same lock machinery as ● (editable in the
+    // roll/grid, Harmony-remappable, persisted). Headphones recommended — the
+    // mic also hears the speakers.
+    function _ambAcfPitch(buf, sr) {
+      const N = buf.length;
+      let rms = 0; for (let i = 0; i < N; i++) rms += buf[i] * buf[i];
+      rms = Math.sqrt(rms / N);
+      if (rms < 0.015) return { f: 0, rms: rms };
+      const MAXL = Math.floor(sr / 70), MINL = Math.floor(sr / 1000);   // 70 Hz … 1 kHz (voice/whistle)
+      // Two passes: find the global max, then take the SMALLEST lag that comes
+      // within 1% of it — for a periodic signal the ACF peaks identically at
+      // every multiple of the true period, and picking the global max lands on
+      // a subharmonic (the classic octave-down error: 440 Hz read as 110).
+      const norms = new Float32Array(MAXL + 1);
+      let best = 0;
+      for (let lag = MINL; lag <= MAXL && lag < N; lag++) {
+        let ac = 0, e1 = 0, e2 = 0;
+        for (let i = 0; i < N - lag; i++) { const a = buf[i], b2 = buf[i + lag]; ac += a * b2; e1 += a * a; e2 += b2 * b2; }
+        const norm = ac / Math.sqrt((e1 * e2) || 1);
+        norms[lag] = norm;
+        if (norm > best) best = norm;
+      }
+      if (best < 0.9) return { f: 0, rms: rms };
+      let bestL = 0;
+      for (let lag = MINL; lag <= MAXL; lag++) { if (norms[lag] >= best * 0.99) { bestL = lag; break; } }
+      if (!bestL) return { f: 0, rms: rms };
+      while (bestL < MAXL && norms[bestL + 1] > norms[bestL]) bestL++;   // ride to the local peak (the 1% gate fires on its leading edge → sharp bias)
+      // Parabolic refinement around the chosen lag (sub-sample pitch).
+      if (bestL > MINL && bestL < MAXL) {
+        const y0 = norms[bestL - 1], y1 = norms[bestL], y2 = norms[bestL + 1];
+        const d = (y0 - y2) / (2 * (y0 - 2 * y1 + y2) || 1);
+        if (Number.isFinite(d) && Math.abs(d) < 1) return { f: sr / (bestL + d), rms: rms };
+      }
+      return { f: sr / bestL, rms: rms };
+    }
+    function _ambHumSegment(frames) {
+      // median-3 pitch smoothing
+      const med = (a, b, c) => Math.max(Math.min(a, b), Math.min(Math.max(a, b), c));
+      const F = frames.map((fr, i) => ({ t: fr.t, rms: fr.rms,
+        f: (i > 0 && i < frames.length - 1 && fr.f && frames[i - 1].f && frames[i + 1].f) ? med(frames[i - 1].f, fr.f, frames[i + 1].f) : fr.f }));
+      const st = (f) => 69 + 12 * Math.log2(f / 440);
+      const notes = [];
+      let cur = null, jump = 0;
+      const close = (tEnd) => {
+        if (!cur) return;
+        cur.tEnd = tEnd;
+        if (cur.tEnd - cur.tStart >= 0.09 && cur.pitches.length) {
+          cur.pitches.sort((a, b) => a - b);
+          const midi = Math.round(cur.pitches[Math.floor(cur.pitches.length / 2)]);
+          notes.push({ at: cur.tStart, durMs: Math.round((cur.tEnd - cur.tStart) * 1000), f: 440 * Math.pow(2, (midi - 69) / 12) });
+        }
+        cur = null; jump = 0;
+      };
+      let prevRms = 0, dip = false;
+      for (const fr of F) {
+        const voiced = fr.f > 0 && fr.rms > 0.02;
+        if (!voiced) { if (fr.rms < 0.012) close(fr.t); dip = true; prevRms = fr.rms; continue; }
+        const p = st(fr.f);
+        if (!cur) { cur = { tStart: fr.t, pitches: [p] }; dip = false; }
+        else {
+          const ref = cur.pitches[cur.pitches.length - 1];
+          const dj = Math.abs(p - ref);
+          const reattack = dip && fr.rms > prevRms * 1.6 && fr.rms > 0.05;
+          if (dj >= 0.7) { jump++; if (jump >= 2 || reattack) { close(fr.t); cur = { tStart: fr.t, pitches: [p] }; } }
+          else { jump = 0; cur.pitches.push(p); if (reattack) { close(fr.t); cur = { tStart: fr.t, pitches: [p] }; } }
+          dip = false;
+        }
+        prevRms = fr.rms;
+      }
+      close(F.length ? F[F.length - 1].t : 0);
+      return notes;
+    }
+    function _ambHumToggle(E, key) {
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      const fs = _ambFreezeState(E, key);
+      // STOP → transcribe + commit
+      if (E._humRec && E._humRec.key === key) {
+        const hr = E._humRec; E._humRec = null;
+        try { clearInterval(hr.poll); } catch (e) {}
+        try { hr.media && hr.media.getTracks && hr.media.getTracks().forEach(tr => tr.stop()); } catch (e) {}
+        try { hr.ac && hr.ac.close && hr.ac.close(); } catch (e) {}
+        const notes = _ambHumSegment(hr.frames || []);
+        const resume = () => {
+          fs.frozen = false; fs._lock = false; fs._perfHold = false; fs.events = []; fs.scheduledUpto = 0;
+          if (E.clocks) E.clocks[key] = now + 0.1;
+          try { _ambResumePhaseAt(E, key, now + 0.1); } catch (e) {}
+        };
+        if (!notes.length) { resume(); try { _ambFreezeSyncAll(E); } catch (e) {} try { if (typeof showToast === 'function') showToast('No melody detected — try humming closer to the mic (headphones help).'); } catch (e) {} return; }
+        const cfg = E._cfg || (E.getCfg && E.getCfg());
+        const bpm = _ambBpm();
+        const barSec = (60 / Math.max(20, bpm)) * 4;
+        const cycBars = Math.max(1, (typeof _ambProgCycleBars === 'function' ? (_ambProgCycleBars(cfg) | 0) : 0) || 1);
+        const unitSec = barSec * cycBars;
+        const A0 = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor : ((E._t0 != null) ? E._t0 : 0);
+        const cycleStart = A0 + Math.floor((notes[0].at - A0) / unitSec) * unitSec;
+        const last = notes[notes.length - 1];
+        const loopLen = Math.max(unitSec, Math.ceil((last.at + last.durMs / 1000 - cycleStart + 0.02) / unitSec) * unitSec);
+        const slot = _ambRecSlotSec(cfg, barSec);   // snap grid (Configure → Rec quantize; 0 = raw)
+        const L = _ambLayerByKey(E, key);
+        const pan = L ? (_ambLayerPan(L) | 0) : 0;
+        const evs = notes.map(n => {
+          let t = slot > 0 ? Math.round((n.at - cycleStart) / slot) * slot : (n.at - cycleStart);
+          t = ((t % loopLen) + loopLen) % loopLen;
+          const durMs = Math.max(110, Math.min(barSec * 1000, Math.round(n.durMs * 0.95)));
+          let pp; try { pp = _ambApplyAdsr(_ambMotifParams(durMs, pan, L ? L.tone : ''), L || {}); pp.volume = _ambApplyLevel(pp.volume, L ? L.level : 70); } catch (e) { pp = { type: 'triangle', volume: 70, pan: pan }; }
+          return { t: t, freq: n.f, dur: durMs, params: pp };
+        }).sort((a, b) => a.t - b.t);
+        fs.events = evs; fs.loopLen = loopLen; fs.anchor = cycleStart; fs.scheduledUpto = now;
+        fs.frozen = true; fs._lock = true; fs._perfHold = false; fs.pendingThawAt = null; fs._write = false;
+        fs.keyCtx = _ambCurKeyCtx(E);
+        try { _ambPersistLock(E, key); } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        try { _ambFreezeSyncAll(E); _ambUpdateNotesLive(E); } catch (e) {}
+        try { if (typeof showToast === 'function') showToast('Hum kept — ' + evs.length + ' notes, ' + Math.round(loopLen / barSec) + ' bar loop. Edit in the roll; ❄/Off discards.'); } catch (e) {}
+        return;
+      }
+      // ARM — mic + analyser on a DEDICATED native context (no SAC wiring;
+      // timestamps are Tone.now() at poll time, ±poll jitter ≪ the 16th grid).
+      if (E._humRec) { try { _ambHumToggle(E, E._humRec.key); } catch (e) {} }
+      if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) { try { if (typeof showToast === 'function') showToast('Microphone unavailable in this browser.'); } catch (e) {} return; }
+      navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }).then((stream) => {
+        let ac; try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { try { stream.getTracks().forEach(tr => tr.stop()); } catch (e2) {} return; }
+        const src = ac.createMediaStreamSource(stream);
+        const an = ac.createAnalyser(); an.fftSize = 2048;
+        src.connect(an);
+        const buf = new Float32Array(an.fftSize);
+        const hr = { key: key, frames: [], media: stream, ac: ac, an: an, poll: null };
+        hr.poll = setInterval(() => {
+          try {
+            an.getFloatTimeDomainData(buf);
+            const r = _ambAcfPitch(buf, ac.sampleRate);
+            hr.frames.push({ t: (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0, f: r.f, rms: r.rms });
+            if (hr.frames.length > 4000) hr.frames.shift();   // ~2.3 min cap
+          } catch (e) {}
+        }, 35);
+        E._humRec = hr;
+        fs.frozen = true; fs._lock = false; fs._write = false; fs._perfHold = true;
+        fs.events = []; fs.loopLen = 1; fs.anchor = now; fs.scheduledUpto = now; fs.pendingThawAt = null; fs.pendingFreezeAt = null; fs.recording = false;
+        try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, now); } catch (e) {}
+        try { _ambFreezeSyncAll(E); } catch (e) {}
+        try { if (typeof showToast === 'function') showToast('Listening — hum / sing / whistle along with the area; press 🎤 again to keep it. (Headphones recommended.)'); } catch (e) {}
+      }).catch(() => { try { if (typeof showToast === 'function') showToast('Microphone permission denied.'); } catch (e) {} });
+    }
+    // ---- PERFORMANCE REC (play-along melody writing) ---------------------
+    // ● on a layer's piano bar: arm → the layer's own generation goes SILENT
+    // (frozen with an empty loop — the freeze gate blocks the emitters) while
+    // the area (progression) keeps playing; every piano key you press sounds
+    // through the layer's voice (the existing audition path) AND is recorded.
+    // Press ● again → the performance is quantized to 16ths, rounded up to
+    // whole progression CYCLES (bars without a prog), and committed as the
+    // layer's frozen loop — replayed by the existing lock engine, aligned so
+    // your notes land on the chords you played them over. It's a normal user
+    // lock afterwards: editable in the piano roll, Harmony-remappable,
+    // persisted, ❄/Off to discard. Empty recording → generation resumes.
+    // The ●/🎤 snap grid in seconds (cfg.recQuant divisions per bar; 0 = off).
+    function _ambRecSlotSec(cfg, barSec) {
+      const q = (cfg && Number.isFinite(cfg.recQuant)) ? (cfg.recQuant | 0) : 16;
+      return q > 0 ? barSec / q : 0;
+    }
+    function _ambPerfRecToggle(E, key) {
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      const fs = _ambFreezeState(E, key);
+      // STOP → commit (or restore when nothing was played)
+      if (E._perfRec && E._perfRec.key === key) {
+        const rec = E._perfRec; E._perfRec = null;
+        const resume = () => {
+          fs.frozen = false; fs._lock = false; fs._perfHold = false; fs.events = []; fs.scheduledUpto = 0; fs.pendingThawAt = null;
+          if (E.clocks) E.clocks[key] = now + 0.1;
+          try { _ambResumePhaseAt(E, key, now + 0.1); } catch (e) {}
+        };
+        if (!rec.notes.length) { resume(); try { _ambFreezeSyncAll(E); } catch (e) {} return; }
+        const cfg = E._cfg || (E.getCfg && E.getCfg());
+        const bpm = _ambBpm();
+        const barSec = (60 / Math.max(20, bpm)) * 4;
+        const cycBars = Math.max(1, (typeof _ambProgCycleBars === 'function' ? (_ambProgCycleBars(cfg) | 0) : 0) || 1);
+        const unitSec = barSec * cycBars;
+        const A0 = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor : ((E._t0 != null) ? E._t0 : 0);
+        const first = rec.notes[0].at;
+        const cycleStart = A0 + Math.floor((first - A0) / unitSec) * unitSec;
+        const last = rec.notes[rec.notes.length - 1].at;
+        const loopLen = Math.max(unitSec, Math.ceil((last - cycleStart + 0.02) / unitSec) * unitSec);
+        const slot = _ambRecSlotSec(cfg, barSec);   // snap grid (Configure → Rec quantize; 0 = raw)
+        const L = _ambLayerByKey(E, key);
+        const pan = L ? (_ambLayerPan(L) | 0) : 0;
+        const evs = rec.notes.map((n, i) => {
+          let t = slot > 0 ? Math.round((n.at - cycleStart) / slot) * slot : (n.at - cycleStart);
+          t = ((t % loopLen) + loopLen) % loopLen;
+          const nxt = rec.notes[i + 1];
+          const gapMs = (nxt ? Math.max(0.08, nxt.at - n.at) : barSec / 4) * 1000;
+          const durMs = Math.max(120, Math.min(barSec * 1000, Math.round(gapMs * 0.9)));
+          let pp; try { pp = _ambApplyAdsr(_ambMotifParams(durMs, pan, L ? L.tone : ''), L || {}); } catch (e) { pp = { type: 'triangle', volume: 70, pan: pan }; }
+          try { pp.volume = _ambApplyLevel(pp.volume, L ? L.level : 70); } catch (e) {}
+          return { t: t, freq: n.f, dur: durMs, params: pp };
+        }).sort((a, b) => a.t - b.t);
+        fs.events = evs; fs.loopLen = loopLen; fs.anchor = cycleStart; fs.scheduledUpto = now;
+        fs.frozen = true; fs._lock = true; fs._perfHold = false; fs.pendingThawAt = null; fs._write = false;
+        fs.keyCtx = _ambCurKeyCtx(E);
+        try { _ambPersistLock(E, key); } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        try { _ambFreezeSyncAll(E); _ambUpdateNotesLive(E); } catch (e) {}
+        try { if (typeof showToast === 'function') showToast('Melody kept — ' + Math.round(loopLen / barSec) + ' bar loop (' + evs.length + ' notes). Edit it in the piano roll; ❄/Off discards.'); } catch (e) {}
+        return;
+      }
+      // ARM — silence this layer's generation (empty frozen loop) and record.
+      if (E._perfRec) { try { _ambPerfRecToggle(E, E._perfRec.key); } catch (e) {} }   // one recording at a time
+      E._perfRec = { key: key, notes: [], armedAt: now };
+      fs.frozen = true; fs._lock = false; fs._write = false; fs._perfHold = true;
+      fs.events = []; fs.loopLen = 1; fs.anchor = now; fs.scheduledUpto = now; fs.pendingThawAt = null; fs.pendingFreezeAt = null; fs.recording = false;
+      try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, now); } catch (e) {}
+      try { _ambFreezeSyncAll(E); } catch (e) {}
+      try { if (typeof showToast === 'function') showToast('Recording — play the keys along with the area; press ● again to keep the loop.'); } catch (e) {}
+    }
     // One button, three states: idle → (arm) recording → (commit) looping → (thaw) idle.
     function _ambFreezeCycle(E, key) {
       // Legacy per-unit lock (old separate Lock button, now consolidated into
@@ -11455,6 +11928,12 @@
     function _ambFreezeSyncAll(E) {
       const host = document.getElementById(E.hostId); if (!host) return;
       try { _ambLoopSyncAll(E); } catch (e) {}   // unified Loop rows track the same state
+      host.querySelectorAll('.ambient-piano-rec').forEach(btn => {
+        btn.classList.toggle('rec', !!(E._perfRec && E._perfRec.key === btn.getAttribute('data-rkey')));
+      });
+      host.querySelectorAll('.ambient-hum-rec').forEach(btn => {
+        btn.classList.toggle('rec', !!(E._humRec && E._humRec.key === btn.getAttribute('data-hkey')));
+      });
       host.querySelectorAll('.ambient-freeze-btn').forEach(btn => {
         const fs = E.freeze && E.freeze[btn.dataset.fkey];
         // Write owns this loop → show ⟳ (not a lying ❄): pressing = KEEP this
@@ -14554,7 +15033,41 @@
         '<span class="ambient-seg-row">' +
           '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="generate" data-seedkey="' + _ambEscText(lk) + '">Generate</button>' +
           '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="author" data-seedkey="' + _ambEscText(lk) + '">Author</button>' +
-        '</span><span class="ambient-hint">improvise / compose</span></div>';
+        '</span><span class="ambient-hint">improvise / compose</span></div>' +
+        // Author docks the layer's grid (roll + keyboard) HERE — composing
+        // happens where the seed is chosen (filled by _ambRefreshSeedModes).
+        '<div class="ambient-seedgrid-slot" data-sgkey="' + _ambEscText(lk) + '" hidden>' +
+          '<div class="ambient-seedgrid-bar">' +
+            '<button type="button" class="ambient-seg ambient-seedgrid-open" data-sgk="' + _ambEscText(lk) + '" title="Open this phrase in the FULL Seed editor — the Grid/Graph/Game component docks right here, and every edit lands in the loop live (bar-aligned).">⧉ Edit in Grid</button>' +
+            '<span class="ambient-seedgrid-live" hidden>' +
+              '<span class="ambient-hint">editing in Grid — changes land live</span>' +
+              '<button type="button" class="ambient-seg ambient-seedgrid-done" data-sgk="' + _ambEscText(lk) + '">✓ Done</button>' +
+              '<button type="button" class="ambient-seg ambient-seedgrid-cancel" data-sgk="' + _ambEscText(lk) + '" title="Discard grid edits — restore the phrase as it was">✕ Cancel</button>' +
+            '</span>' +
+          '</div><div class="ambient-seedgrid-dockhost"></div></div>';
+    }
+    // Reveal an element that lives inside collapsed card groups: opens every
+    // closed .ambient-grp ancestor (persisting groupsOpen) + un-collapses the
+    // card. Needed since Author docks the piano/roll INSIDE the Seed group —
+    // without this, 🎹 on an Authored layer toggled a keyboard the user could
+    // never see ("the piano button does nothing").
+    function _ambRevealInCard(E, el) {
+      if (!el) return;
+      try {
+        const card = el.closest('.ambient-layer');
+        const key = card && (typeof _ambCardKey === 'function') ? _ambCardKey(card) : null;
+        const L = key ? _ambLayerByKey(E, key) : null;
+        let g = el.closest('.ambient-grp');
+        while (g) {
+          if (!g.classList.contains('open')) {
+            g.classList.add('open');
+            const nm = g.getAttribute('data-grp');
+            if (L && nm) { if (!L.groupsOpen || typeof L.groupsOpen !== 'object') L.groupsOpen = {}; L.groupsOpen[nm] = true; }
+          }
+          g = g.parentElement ? g.parentElement.closest('.ambient-grp') : null;
+        }
+        if (card) card.classList.remove('collapsed');
+      } catch (e) {}
     }
     function _ambRefreshSeedModes(E) {
       const host = E && document.getElementById(E.hostId); if (!host) return;
@@ -14571,6 +15084,39 @@
           const card = row.closest('.ambient-layer');
           const dirRow = card && card.querySelector('.ambient-arpdir');
           if (dirRow) dirRow.style.display = (authored || (L && L.euclid)) ? 'none' : '';
+        } catch (e) {}
+        // Author → dock the layer's grid (the live-notes roll + the 🎹 keyboard)
+        // INTO the Seed group, so the composing surface lives where the seed is
+        // chosen. Generate → move both back to their original card home. The
+        // roll/piano wiring queries by host + data keys, so relocation within
+        // the card is transparent to it; rebuilds recreate everything in place
+        // and this sync-refresh re-docks.
+        try {
+          const card = row.closest('.ambient-layer');
+          const slot = card && card.querySelector('.ambient-seedgrid-slot');
+          if (slot) {
+            const pe = card.querySelector('.ambient-piano[data-pkey="' + key + '"]');
+            const nl = card.querySelector('.ambient-notes-live[data-nkey="' + key + '"]');
+            if (authored) {
+              slot.hidden = false;
+              const dock = (el2) => { if (el2 && el2.parentElement !== slot) { if (!el2._seedHome) el2._seedHome = { p: el2.parentElement, n: el2.nextSibling }; slot.appendChild(el2); } };
+              dock(nl); dock(pe);
+              // Grid-edit bar: reflect whether THIS layer is being grid-edited.
+              const editing = !!(_bloomGridEdit && _bloomGridEdit.key === key && _bloomGridEdit.E === E);
+              const ob = slot.querySelector('.ambient-seedgrid-open'); if (ob) ob.hidden = editing;
+              const lb = slot.querySelector('.ambient-seedgrid-live'); if (lb) lb.hidden = !editing;
+              // Self-heal: a card rebuild recreates the dockhost — re-dock the
+              // expander on the refresh cadence if it drifted home.
+              if (editing) { try { const dh = slot.querySelector('.ambient-seedgrid-dockhost'); const exp2 = document.getElementById('lane-expander'); if (dh && exp2 && exp2.parentElement !== dh) _placeLaneExpander(); } catch (e) {} }
+              // While editing, the mini roll/piano step aside (the full editor is the surface).
+              if (nl) nl.style.display = editing ? 'none' : '';
+              if (pe) pe.style.display = editing ? 'none' : '';
+            } else {
+              const back = (el2) => { if (el2 && el2._seedHome && el2.parentElement === slot) { try { el2._seedHome.p.insertBefore(el2, el2._seedHome.n); } catch (e2) { try { el2._seedHome.p.appendChild(el2); } catch (e3) {} } } };
+              back(nl); back(pe);
+              slot.hidden = true;
+            }
+          }
         } catch (e) {}
       });
     }
@@ -15086,6 +15632,8 @@
       const dest = (E.mod && E.mod[key]) ? _ambLayerDest(key) : undefined;   // route through the layer chain if it exists (FX), else the dry bus
       const at = ((typeof Tone.now === 'function') ? Tone.now() : 0) + 0.03;
       try { playNote(f, p, lenMs, at, dest, undefined, (E.laneIdx ? E.laneIdx() : -1)); } catch (e) {}
+      // Performance rec: this layer is armed → the tap lands in the take.
+      if (E._perfRec && E._perfRec.key === key && E._perfRec.notes.length < 512) E._perfRec.notes.push({ at: at, f: f, midi: midi });
     }
     // Key geometry shared by the keyboard AND the vertical roll — the same
     // layout math as _ambBuildPiano (in px over a given width) so roll columns
@@ -15964,6 +16512,14 @@
       const rows = [];
       ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k] && cfg[k].present !== false) rows.push({ key: k, L: cfg[k], label: k.charAt(0).toUpperCase() + k.slice(1) }); });
       (cfg.extras || []).forEach(x => { if (x && x.type != null && x.id != null) rows.push({ key: x.type + ':' + x.id, L: x, label: (typeof x.name === 'string' && x.name) ? x.name : (x.type + ' ' + x.id) }); });
+      // Seq layers (sent sequences): the emit path already honors chordMask
+      // (_ambEmitSeqEvent gates per event) — list them so the mask is editable.
+      const seen = new Set(rows.map(r => r.key));
+      (Array.isArray(cfg.seqs) ? cfg.seqs : []).forEach((q, i) => {
+        if (!q || q.id == null) return;
+        const key = 'seq:' + q.id; if (seen.has(key)) return; seen.add(key);
+        rows.push({ key: key, L: q, label: (typeof q.name === 'string' && q.name) ? q.name : ('Seq' + (i + 1)) });
+      });
       return rows;
     }
     function _ambRenderChordMatrix(E) {
@@ -16367,7 +16923,7 @@
         '<button type="button" class="ambient-clone-btn" data-ckey="' + freezeKey + '" title="Clone — duplicate this layer" aria-label="Clone layer">⧉</button>' +
         '<button type="button" class="ambient-morph-btn" data-mkey="' + freezeKey + '" title="Re-realize as… — same instrument/key/mix, a different layer type (the material realized as a pad, arp, bassline…)" aria-label="Re-realize layer">⇄</button>' +
         '<button type="button" class="ambient-savepreset-btn" data-savekey="' + freezeKey + '" title="Save as preset — reuse this composition from the Add menu" aria-label="Save as preset">★</button>' +
-        (String(freezeKey).split(':')[0] !== 'beat' ? '<button type="button" class="ambient-piano-toggle" data-pkey="' + freezeKey + '" title="Show/hide the note keyboard" aria-label="Toggle keyboard">🎹</button>' : '') +
+        (String(freezeKey).split(':')[0] !== 'beat' ? '<button type="button" class="ambient-piano-toggle" data-pkey="' + freezeKey + '" title="Show/hide the note keyboard" aria-label="Toggle keyboard">🎹</button><button type="button" class="ambient-piano-rec" data-rkey="' + freezeKey + '" title="Write a melody by playing along: press ● (this layer goes quiet, the area keeps playing), play the keys, press ● again — your take loops in time with the progression." aria-label="Record a played melody">●</button><button type="button" class="ambient-hum-rec" data-hkey="' + freezeKey + '" title="Hum a melody: press 🎤 (this layer goes quiet, the area keeps playing), hum / sing / whistle into the mic, press again — the take is transcribed (pitch + rhythm detected, snapped to the key grid) and loops in time with the progression. Headphones recommended." aria-label="Record a hummed melody">🎤</button>' : '') +
         (_AMB_LAYER_SCHEMA[String(freezeKey).split(':')[0]] ? '<button type="button" class="ambient-dice-btn" data-dkey="' + freezeKey + '" title="Randomize all of this layer’s parameters" aria-label="Randomize parameters">🎲</button>' : '') +
       '</div>' : '') +
       // Live notes line / piano roll — a direct child of .ambient-layer (NOT the
@@ -17783,8 +18339,36 @@
     const _AMB_MIX = [['grp', 'FX / Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']];
     // Shared Voice group — same controls everywhere, only the voice token(s)
     // (tone / kit+gen) and the ADSR ranges vary, passed per layer.
+    // Tone-cycle editor rows (steps rendered from state; delegated wiring —
+    // no per-card binds, so primaries and extras share one code path).
+    function _ambToneSeqBoxHtml(inst) {
+      const q = (inst && inst.toneSeq && Array.isArray(inst.toneSeq.steps)) ? inst.toneSeq : null;
+      const on = !!(q && q.on);
+      let h = '<button type="button" class="ambient-seg ambient-toneseq-onoff' + (on ? ' active' : '') + '" title="Cycle the Tone through the steps below (bar-clocked). Off = the single Tone above.">' + (on ? 'On' : 'Off') + '</button>';
+      if (q) q.steps.forEach((st, i) => {
+        h += '<span class="ambient-toneseq-step" data-tsi="' + i + '">' +
+          '<select class="ambient-select ambient-toneseq-tone" data-tsi="' + i + '" id="ambient-tsq-' + Math.floor(Math.random() * 1e9) + '-tone"></select>' +
+          '<input type="number" class="ambient-toneseq-bars" data-tsi="' + i + '" min="1" max="32" step="1" value="' + (Math.max(1, st.bars | 0) || 4) + '" title="bars"> <span class="ambient-hint">bars</span>' +
+          '<button type="button" class="ambient-seq-del ambient-toneseq-del" data-tsi="' + i + '" title="Remove step">✕</button></span>';
+      });
+      h += '<button type="button" class="ambient-seg ambient-toneseq-add" title="Add a step">＋ step</button>';
+      return h;
+    }
+    // (Re)populate a toneseq box's selects from the tone catalog + reflect values.
+    function _ambToneSeqPopulate(box, inst) {
+      if (!box || !inst || !inst.toneSeq) return;
+      const opts = _ambToneOptions();
+      box.querySelectorAll('select.ambient-toneseq-tone').forEach(sel => {
+        const i = sel.getAttribute('data-tsi') | 0;
+        const st = inst.toneSeq.steps[i]; if (!st) return;
+        try { populateGroupedToneSelect(sel, opts, { value: '', label: '— layer default —' }); } catch (e) {}
+        sel.value = st.tone || '';
+        if (sel.value !== (st.tone || '')) sel.value = '';
+      });
+    }
     function _ambVoiceCtrls(voiceToks, atkMax, decMax, relMax) {
-      return [['grp', 'Instrument']].concat(voiceToks, [
+      const hasTone = voiceToks.some(t => Array.isArray(t) && t[0] === 'tone');
+      return [['grp', 'Instrument']].concat(voiceToks, hasTone ? [['toneseq']] : [], [
         ['sl', 'attack', 'Attack', 0, atkMax, 'ms'], ['sl', 'decay', 'Decay', 0, decMax, 'ms'],
         ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, relMax, 'ms'],
         ['sl', 'fine', 'Fine', -100, 100, 'cents'], ['sl', 'portamento', 'Portamento', 0, 300, 'ms glide'],
@@ -17815,19 +18399,19 @@
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['loop'], ['cond'],
-        ['grp', 'Variance'], ['sl', 'gravity', 'Gravity', 0, 100, 'free → chord tones'], ['sl', 'contour', 'Contour', -100, 100, 'fall → rise'], ['sl', 'stutter', 'Stutter', 0, 100, 'walk → repeats'], ['sl', 'phrasing', 'Phrasing', 0, 100, 'stream → gestures'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
+        ['grp', 'Variance'], ['tight'], ['sl', 'gravity', 'Gravity', 0, 100, 'free → chord tones'], ['sl', 'contour', 'Contour', -100, 100, 'fall → rise'], ['sl', 'stutter', 'Stutter', 0, 100, 'walk → repeats'], ['sl', 'phrasing', 'Phrasing', 0, 100, 'stream → gestures'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
-        ['grp', 'Variance'], ['sl', 'syncop', 'Syncopate', 0, 100, 'straight → offbeat'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
+        ['grp', 'Variance'], ['tight'], ['sl', 'syncop', 'Syncopate', 0, 100, 'straight → offbeat'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       beat: { label: 'Beat', ctrls: [
         ..._ambVoiceCtrls([['kit']], 500, 2000, 2000), ['synthkit'],
         ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['gen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'],
         ['grp', 'Timing', 'How fast and how long the beat plays. In Random mode, Interval sets the gap between hits; in Program mode the grid follows Sync + Bars. Length is how long each hit rings.'], ['unitsync'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'bars per loop'], ['tm', 'lengthMs', 'Hit length', 60, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
-        ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around hit length'],
+        ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around hit length'], ['tight'],
         ..._AMB_MIX] },
       // (Shape layer type removed — the master Shapes section covers radial-wheel
       // shapes. Existing shape layers are dropped on load in _normalizeAmbientCfg.)
@@ -17837,7 +18421,7 @@
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
         ['grp', 'Timing'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (euclid; 0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
-        ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'rateVar', 'Rate var', 0, 100, 'steady → rushes'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'rateVar', 'Rate var', 0, 100, 'steady → rushes'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
       // long; Rhythm/Pitch var add per-repeat variation.
@@ -17845,7 +18429,7 @@
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
-        ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['tight'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Walk', 0, 100, 'hold → wander (proximity-capped)'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Riff (internal type 'run'): a fixed RANDOM note phrase, `bars` bars long,
       // looping; Vary re-rolls; Len var spreads note lengths around Length.
@@ -17853,14 +18437,14 @@
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
-        ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'phrasing', 'Phrasing', 0, 100, 'even → shaped by the pattern'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'phrasing', 'Articulate', 0, 100, 'even → arrivals sustain, runs detach'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
-        ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'vary', 'Vary', 0, 100, 'root → roam'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'vary', 'Roam', 0, 100, 'root → wander degrees'], ['tight'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
       // vary are independent. A chord Notes source holds the whole chord.
@@ -17883,15 +18467,15 @@
     function _ambDefaultLayer(type, id) {
       const base = { id: id | 0, type: type, on: true, present: true, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, fine: 0, areaFadeMs: 250, write: { on: true, bars: 2, times: 4 }, mod: _ambDefaultMod(), ..._ambDefaultFx() };
       if (type === 'bed') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, strum: 0, strumFidelity: 0, chordMode: 'chaos', chordPhraseLen: 4, chordRepeats: 4, lenVary: 0, choke: false, progSubdiv: 1, progFeel: 'even', voiceVariety: 0, ..._AMB_ADSR_DEFAULTS.bed });
-      if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, proximity: 35, gravity: 50, contour: 0, stutter: 0, phrasing: 0, ornament: 0, slide: 0, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, lenVary: 0, phraseVary: 0, ..._AMB_ADSR_DEFAULTS.motif });
-      if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, syncop: 0, holdSteps: 0, intervalMs: 450, lengthMs: 300, mutateRate: 40, lenVary: 0, ..._AMB_ADSR_DEFAULTS.texture });
-      if (type === 'beat') return Object.assign(base, { kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, ghosts: 0, holdSteps: 0, lenVary: 0, ..._AMB_ADSR_DEFAULTS.beat });
+      if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, proximity: 35, gravity: 50, contour: 0, stutter: 0, phrasing: 0, ornament: 0, slide: 0, tight: 0, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, lenVary: 0, phraseVary: 0, ..._AMB_ADSR_DEFAULTS.motif });
+      if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, syncop: 0, holdSteps: 0, tight: 0, intervalMs: 450, lengthMs: 300, mutateRate: 40, lenVary: 0, ..._AMB_ADSR_DEFAULTS.texture });
+      if (type === 'beat') return Object.assign(base, { kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, ghosts: 0, holdSteps: 0, tight: 0, lenVary: 0, ..._AMB_ADSR_DEFAULTS.beat });
       // (Shape layer type removed — see _AMB_LAYER_SCHEMA + _normalizeAmbientCfg.)
       // Arp: a series of scale/chord entries (each with its own pass count) that
       // the engine arpeggiates through. Voice via `tone`, timing via rate/interval.
       if (type === 'arp') return Object.assign(base, {
         tone: '', steps: [{ notes: { type: 'scale', scale: '' }, passes: 1, dir: 'up' }], sel: 0,
-        dir: 'up', randomness: 0, pitchVary: 0, rateVar: 0, holdSteps: 0, rate: '', intervalMs: 250, octaves: 2, register: 4,
+        dir: 'up', randomness: 0, pitchVary: 0, rateVar: 0, holdSteps: 0, tight: 0, rate: '', intervalMs: 250, octaves: 2, register: 4,
         lengthMs: 220, restProb: 0, accent: 0, ..._AMB_ADSR_DEFAULTS.arp,
       });
       // Bass: low-octave euclidean phrase. Defaults to a 'bass' voice (falls
@@ -17901,20 +18485,20 @@
       if (type === 'bass') return Object.assign(base, {
         tone: 'bass', notes: { type: 'scale', scale: '' }, register: 2,
         bars: 2, pulses: 5, steps: 8, rotate: 0, lengthMs: 260, unitPadMs: 0,
-        rhythmVar: 0, pitchVar: 0, ghosts: 0, holdSteps: 0, proximity: 40, restProb: 0, accent: 0, ..._AMB_ADSR_DEFAULTS.bass,
+        rhythmVar: 0, pitchVar: 0, ghosts: 0, holdSteps: 0, tight: 0, proximity: 40, restProb: 0, accent: 0, ..._AMB_ADSR_DEFAULTS.bass,
       });
       // Run: a fixed random note run that loops. 2-bar loop of 8th notes across
       // 2 octaves by default; Vary starts at 0 so it repeats verbatim until
       // dialed up. A light rest % keeps the run from being wall-to-wall.
       if (type === 'run') return Object.assign(base, {
         tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, transpose: 0,
-        bars: 2, density: 8, lengthMs: 220, unitPadMs: 0, vary: 0, restProb: 10, lenVary: 0, accent: 20, phrasing: 0, ornament: 0, slide: 0, ..._AMB_ADSR_DEFAULTS.run,
+        bars: 2, density: 8, lengthMs: 220, unitPadMs: 0, vary: 0, restProb: 10, lenVary: 0, accent: 20, phrasing: 0, ornament: 0, slide: 0, tight: 0, ..._AMB_ADSR_DEFAULTS.run,
       });
       // Pedal: 1-bar loop of 4 quarter-note roots — a steady pedal point. Register
       // 4 (C4) + full volume matches a default Shape node so they sound the same.
       if (type === 'pedal') return Object.assign(base, {
         tone: '', notes: { type: 'scale', scale: '' }, register: 4,
-        bars: 1, density: 4, lengthMs: 400, unitPadMs: 0, restProb: 0, accent: 0, vary: 0, degree: 1,
+        bars: 1, density: 4, lengthMs: 400, unitPadMs: 0, restProb: 0, accent: 0, vary: 0, degree: 1, tight: 0,
         attack: 5, decay: 40, sustain: 75, release: 200,
       });
       // Drone: THE pad layer — holds the key root for a very long unit (default
@@ -18352,6 +18936,8 @@
       if (k === 'chordmode') return '<div class="ambient-ctrl"><label for="' + p + '-chordmode">Chords</label><select id="' + p + '-chordmode" class="ambient-select"><option value="chaos">Chaos</option><option value="chords">Chords</option><option value="chordsplus">Chords+</option><option value="monk">Monk</option></select><span class="ambient-hint">chord source</span></div>';
       if (k === 'progfeel') return _ambSeg('Feel', 'progFeel', [['even', 'Even'], ['stochastic', 'Stochastic']], 'placement', (inst && inst.progFeel) || 'even', 'How the per-area-chord voicings are placed: Even = equal sub-slots, variants cycle in order; Stochastic = random onset timing + random variant (seeded, so a Loop replays it).');
       if (k === 'choke') return '<div class="ambient-ctrl"><label for="' + p + '-choke">Choke</label><select id="' + p + '-choke" class="ambient-select"><option value="0">Off (overlap)</option><option value="1">At boundary</option></select><span class="ambient-hint">release each chord by the next unit</span></div>';
+      if (k === 'toneseq') return '<div class="ambient-ctrl ambient-toneseq-ctrl"><label title="Tone cycle — schedule Instrument Tone changes on the bar clock: e.g. 4 bars Sawtooth, then 4 bars Sine, repeating. Each note picks the step active at its onset; a blank tone = the layer\'s default voice.">Tone cycle</label><span class="ambient-toneseq-box" id="' + p + '-toneseq">' + _ambToneSeqBoxHtml(inst) + '</span></div>';
+      if (k === 'tight') return '<div class="ambient-ctrl"><label for="' + p + '-tight">Tight</label><select id="' + p + '-tight" class="ambient-select"><option value="0">Off</option><option value="1">Tight (choke)</option></select><span class="ambient-hint">each note lasts to the next hit, then chokes (overrides the other length controls)</span></div>';
       if (k === 'hold') return _ambHoldSel(p + '-hold', inst);
       if (k === 'rhythmseed') return _ambRhythmSeedSel(p + '-rhythmseed');
       if (k === 'pitchseed') return _ambPitchSeedSel(p + '-pitchseed');
@@ -18709,6 +19295,7 @@
           else if (k === 'droneedit') { _ambWireDroneEdit(E, inst, p, get); }
           else if (k === 'chordmode') { const e = el('chordmode'); if (e) { e.value = inst.chordMode || 'chaos'; e.addEventListener('change', () => { const L = get(); if (L) { L.chordMode = e.value || 'chaos'; L.choke = (L.chordMode !== 'chaos'); const ck = el('choke'); if (ck) ck.value = L.choke ? '1' : '0'; sync(); persist(); } }); } }
           else if (k === 'choke') { const e = el('choke'); if (e) { e.value = inst.choke ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.choke = (e.value === '1'); sync(); persist(); } }); } }
+          else if (k === 'tight') { const e = el('tight'); if (e) { e.value = (inst.tight | 0) ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.tight = (e.value === '1') ? 1 : 0; sync(); persist(); } }); } }
           else if (k === 'progfeel') { const e = el('progfeel'); if (e) { e.value = inst.progFeel || 'even'; e.addEventListener('change', () => { const L = get(); if (L) { L.progFeel = (e.value === 'stochastic') ? 'stochastic' : 'even'; sync(); persist(); } }); } }
           else if (k === 'hold') { const e = el('hold'); if (e) { e.value = (inst.hold != null && Number.isFinite(inst.hold)) ? String(inst.hold) : ''; e.addEventListener('change', () => { const L = get(); if (L) { const v = parseFloat(e.value); if (Number.isFinite(v) && v > 0) L.hold = v; else delete L.hold; sync(); persist(); } }); } }
           else if (k === 'rhythmseed') { const e = el('rhythmseed'); if (e) { e.value = inst.rhythmSeed || 'fill'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === 'euclid') L.rhythmSeed = 'euclid'; else delete L.rhythmSeed; sync(); persist(); } }); } }
@@ -20442,6 +21029,7 @@
         // Area START slider + per-layer cascade cue: a layer INHERITING (no own
         // value) shows the area value + an "inherit" cue; an override shows its own.
         set('ambient-area-startvary', cfg.startVary | 0); hint('ambient-area-startvary-v', String(cfg.startVary | 0));
+        set('ambient-area-recquant', String(Number.isFinite(cfg.recQuant) ? (cfg.recQuant | 0) : 16));
         try { if (typeof E._awSync === 'function') E._awSync(); } catch (e) {}   // Area Write row (Configure)
         [['bed', 'startVary'], ['motif', 'phraseVary']].forEach(function (pr) {
           const ty = pr[0], fld = pr[1];
@@ -20520,6 +21108,24 @@
       set('ambient-bed-density', cfg.bed.density);
       set('ambient-bed-chordmode', cfg.bed.chordMode || 'chaos');
       set('ambient-bed-choke', cfg.bed.choke ? '1' : '0');
+      // Tone-cycle boxes: fill each step's tone catalog + reflect state (rebuild
+      // rows only when the step count changed, so open dropdowns aren't stomped).
+      try {
+        const hostT = document.getElementById(E.hostId);
+        if (hostT) hostT.querySelectorAll('.ambient-toneseq-box').forEach(box => {
+          const card = box.closest('.ambient-layer'); const tkey = card && _ambCardKey(card);
+          const Lt = tkey ? _ambLayerByKey(E, tkey) : null; if (!Lt) return;
+          const want = (Lt.toneSeq && Array.isArray(Lt.toneSeq.steps)) ? Lt.toneSeq.steps.length : 0;
+          const have = box.querySelectorAll('.ambient-toneseq-step').length;
+          if (want !== have) box.innerHTML = _ambToneSeqBoxHtml(Lt);
+          const ob = box.querySelector('.ambient-toneseq-onoff');
+          if (ob) { const on = !!(Lt.toneSeq && Lt.toneSeq.on); ob.classList.toggle('active', on); ob.textContent = on ? 'On' : 'Off'; }
+          _ambToneSeqPopulate(box, Lt);
+        });
+      } catch (e) {}
+      set('ambient-motif-tight', (cfg.motif.tight | 0) ? '1' : '0');
+      set('ambient-texture-tight', (cfg.texture.tight | 0) ? '1' : '0');
+      set('ambient-beat-tight', (cfg.beat.tight | 0) ? '1' : '0');
       set('ambient-bed-chordPhraseLen', (cfg.bed.chordPhraseLen | 0) || 4);
       set('ambient-bed-chordRepeats', (cfg.bed.chordRepeats | 0) || 4);
       set('ambient-bed-progSubdiv', (cfg.bed.progSubdiv | 0) || 1);
@@ -20746,6 +21352,14 @@
           '<span class="ambient-hint" id="ambient-area-startvary-v">0</span>' +
           '<span class="ambient-hint">cascades → layers</span>' +
         '</div>' +
+        // Rec QUANTIZE — the snap grid for ● (play the keys) and 🎤 (hum) takes.
+        '<div class="ambient-row ambient-recquant">' +
+          '<span class="ambient-hint ambient-start-lbl" title="Rec quantize — how tightly ● (played) and 🎤 (hummed) takes snap to the grid. 1/16 cleans a sloppy take; 1/64–1/128 keeps your micro-timing; Off records raw.">Rec quantize</span>' +
+          '<select id="ambient-area-recquant" class="ambient-select">' +
+            [[0, 'Off (raw)'], [8, '1/8'], [16, '1/16'], [32, '1/32'], [64, '1/64'], [128, '1/128']].map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') +
+          '</select>' +
+          '<span class="ambient-hint">● / 🎤 snap</span>' +
+        '</div>' +
         // Area WRITE — phrase-loop EVERY layer (write X bars, loop ×Y, rewrite).
         // Cascades to all layers; a layer's own Loop (Write/Hold/Off) overrides
         // (Off = opt-out). Same markup family as the per-layer Loop control.
@@ -20928,6 +21542,15 @@
           '<button type="button" id="ambient-export-btn" class="ambient-footer-capture" title="Record Bloom into the capture bank — pick a length or record live">⤓</button>' +
           '<button type="button" id="ambient-play-btn" class="ambient-play" title="Play / stop">▶</button>' +
         '</div></div>';
+      // Singleton rescue: a Bloom panel rebuild would DESTROY the docked lane
+      // expander (Author-in-Grid) with its wipe — park it in its stash first
+      // (the same pre-wipe protocol renderSequence uses); the seed-mode
+      // refresh re-docks it into the rebuilt card.
+      try {
+        const _exp = document.getElementById('lane-expander');
+        const _est = document.getElementById('lane-expander-stash');
+        if (_exp && _est && host.contains(_exp)) _est.appendChild(_exp);
+      } catch (e) {}
       host.innerHTML = _ambNamespaceHtml(E, html);
       // Relocate the ⚙ Configure menu INTO the Area section, below the Lock
       // controls (master Mix Bloom only — lanes/Shape have no area block, so the
@@ -21424,6 +22047,10 @@
                 const r = _ambPianoRangeFor(E, key); _ambBuildPiano(pe, r.LO, r.HI); pe.classList.add('open');
                 const tog = h2.querySelector('.ambient-piano-toggle[data-pkey="' + key + '"]'); if (tog) tog.classList.add('active');
               }
+              // Reveal the SEED group (the piano/roll dock into it, but only
+              // after the refresh below — pe is still at its home here, so
+              // anchor the reveal on the slot, which is already in the group).
+              _ambRevealInCard(E, h2 && h2.querySelector('.ambient-seedgrid-slot[data-sgkey="' + key + '"]'));
               try { _ambUpdateNotesLive(E); } catch (e2) {}
             }
             _ambRefreshSeedModes(E);
@@ -21441,6 +22068,7 @@
               { const r = _ambPianoRangeFor(E, pb.dataset.pkey); _ambBuildPiano(pe, r.LO, r.HI); }
               const open = pe.classList.toggle('open');
               pb.classList.toggle('active', open);
+              if (open) _ambRevealInCard(E, pe);   // Author docks the piano inside the Seed group — surface it
               // Defer the notes-line refresh a frame: opening the piano can
               // trigger the seed-phrase render (a synchronous engine pre-roll),
               // which on a slow device would freeze the tap — the keys must
@@ -21897,6 +22525,7 @@
         try { _ambSeedUiRefresh(E, pp, getL, ly); } catch (e) {}
       });
       { const ck = G('ambient-bed-choke'); if (ck) ck.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg.bed) return; cfg.bed.choke = (ck.value === '1'); persist(); }); }
+      ['motif', 'texture', 'beat'].forEach((tk) => { const tg = G('ambient-' + tk + '-tight'); if (tg) tg.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg[tk]) return; cfg[tk].tight = (tg.value === '1') ? 1 : 0; persist(); }); });
       bindTime('ambient-bed-intervalMs', 'bed', 'intervalMs');
       bindTime('ambient-bed-lengthMs', 'bed', 'lengthMs');
       bind('ambient-bed-lenVary', 'bed', 'lenVary');
@@ -22122,6 +22751,12 @@
           cfg.startVary = Math.max(0, Math.min(100, parseInt(aSV.value, 10) || 0));
           _ambSyncControls(E); persist();
         });
+        const aRQ = G('ambient-area-recquant');
+        if (aRQ) aRQ.addEventListener('change', () => {
+          _E = E; const cfg = cfg0(); if (!cfg) return;
+          cfg.recQuant = Math.max(0, Math.min(128, parseInt(aRQ.value, 10) || 0));
+          persist();
+        });
         // ---- Area WRITE (Configure) — cascades to every layer ----------------
         // One sync fn drives the row's segments + field visibility from cfg.writeAll;
         // it also refreshes every layer's Loop row (they show the ↳ area cue).
@@ -22245,6 +22880,51 @@
           hostEl.addEventListener('click', (ev) => {
             // Vary (stochastic) toggle — a sibling seg, not a mode; flips
             // L.write.stochastic and re-syncs (fixed X×Y ↔ min–max ranges).
+            const sg = ev.target && ev.target.closest && ev.target.closest('.ambient-seedgrid-open, .ambient-seedgrid-done, .ambient-seedgrid-cancel');
+            if (sg && hostEl.contains(sg)) {
+              const sgk = sg.getAttribute('data-sgk'); if (!sgk) return;
+              _E = E;
+              if (sg.classList.contains('ambient-seedgrid-open')) {
+                const slot = sg.closest('.ambient-seedgrid-slot');
+                const dock = slot && slot.querySelector('.ambient-seedgrid-dockhost');
+                try { _ambGridEditStart(E, sgk, dock); } catch (e) { console.warn('Grid edit failed', e); }
+              } else { try { _ambGridEditStop(sg.classList.contains('ambient-seedgrid-cancel')); } catch (e) {} }
+              return;
+            }
+            const hm = ev.target && ev.target.closest && ev.target.closest('.ambient-hum-rec');
+            if (hm && hostEl.contains(hm)) {
+              const hkey = hm.getAttribute('data-hkey'); if (!hkey) return;
+              _E = E;
+              if (!E.timer) { try { if (typeof showToast === 'function') showToast('Press play first — hum along with the area.'); } catch (e) {} return; }
+              try { _ambHumToggle(E, hkey); } catch (e) {}
+              return;
+            }
+            const pr = ev.target && ev.target.closest && ev.target.closest('.ambient-piano-rec');
+            if (pr && hostEl.contains(pr)) {
+              const rkey = pr.getAttribute('data-rkey'); if (!rkey) return;
+              _E = E;
+              if (!E.timer) { try { if (typeof showToast === 'function') showToast('Press play first — record along with the area.'); } catch (e) {} return; }
+              try { _ambPerfRecToggle(E, rkey); } catch (e) {}
+              return;
+            }
+            const tq = ev.target && ev.target.closest && ev.target.closest('.ambient-toneseq-onoff, .ambient-toneseq-add, .ambient-toneseq-del');
+            if (tq && hostEl.contains(tq)) {
+              const box = tq.closest('.ambient-toneseq-box'); const tkey = _ambCardKey(tq.closest('.ambient-layer'));
+              if (!box || !tkey) return;
+              _E = E; const Lt = _ambLayerByKey(E, tkey); if (!Lt) return;
+              if (tq.classList.contains('ambient-toneseq-add')) {
+                if (!Lt.toneSeq || !Array.isArray(Lt.toneSeq.steps)) Lt.toneSeq = { on: 1, steps: [] };
+                if (Lt.toneSeq.steps.length < 8) Lt.toneSeq.steps.push({ tone: Lt.tone || '', bars: 4 });
+                Lt.toneSeq.on = 1;
+              } else if (tq.classList.contains('ambient-toneseq-del')) {
+                const ti = tq.getAttribute('data-tsi') | 0;
+                if (Lt.toneSeq && Array.isArray(Lt.toneSeq.steps)) { Lt.toneSeq.steps.splice(ti, 1); if (!Lt.toneSeq.steps.length) delete Lt.toneSeq; }
+              } else if (Lt.toneSeq) { Lt.toneSeq.on = Lt.toneSeq.on ? 0 : 1; }
+              box.innerHTML = _ambToneSeqBoxHtml(Lt);
+              _ambToneSeqPopulate(box, Lt);
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              return;
+            }
             const lv = ev.target && ev.target.closest && ev.target.closest('.ambient-loop-lvar');
             if (lv && hostEl.contains(lv)) {
               const key = _ambCardKey(lv.closest('.ambient-layer')); if (!key) return;
@@ -22300,7 +22980,23 @@
             try { _ambFreezeSyncAll(E); } catch (e) {}
             if (typeof persistWorkspace === 'function') persistWorkspace();
           });
+          hostEl.addEventListener('change', (ev) => {
+            const sel = ev.target && ev.target.closest && ev.target.closest('select.ambient-toneseq-tone');
+            if (!sel || !hostEl.contains(sel)) return;
+            const tkey = _ambCardKey(sel.closest('.ambient-layer')); if (!tkey) return;
+            _E = E; const Lt = _ambLayerByKey(E, tkey); if (!Lt || !Lt.toneSeq) return;
+            const ti = sel.getAttribute('data-tsi') | 0;
+            if (Lt.toneSeq.steps[ti]) { Lt.toneSeq.steps[ti].tone = sel.value || ''; if (typeof persistWorkspace === 'function') persistWorkspace(); }
+          });
           hostEl.addEventListener('input', (ev) => {
+            const tb = ev.target && ev.target.closest && ev.target.closest('input.ambient-toneseq-bars');
+            if (tb && hostEl.contains(tb)) {
+              const tkey = _ambCardKey(tb.closest('.ambient-layer')); if (!tkey) return;
+              _E = E; const Lt = _ambLayerByKey(E, tkey); if (!Lt || !Lt.toneSeq) return;
+              const ti = tb.getAttribute('data-tsi') | 0;
+              if (Lt.toneSeq.steps[ti]) { Lt.toneSeq.steps[ti].bars = Math.max(1, Math.min(32, tb.value | 0)) || 4; if (typeof persistWorkspace === 'function') persistWorkspace(); }
+              return;
+            }
             const inp = ev.target && ev.target.closest && ev.target.closest('.ambient-write-x, .ambient-write-y, .ambient-write-bmin, .ambient-write-bmax, .ambient-write-tmin, .ambient-write-tmax');
             if (!inp || !hostEl.contains(inp)) return;
             const w = _writeOf(inp); if (!w) return;

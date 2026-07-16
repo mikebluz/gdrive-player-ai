@@ -57,6 +57,11 @@
       const mk = (mutate) => {
         const c = _defaultAmbientConfig();
         c.seed = SEED;
+        // The app default is now an EMPTY area (no auto-Bed) — the pins were
+        // recorded under the old "bed on, all primaries present" defaults, so
+        // restore that baseline shape BEFORE each config's mutate applies.
+        ['bed', 'motif', 'texture', 'beat'].forEach((k) => { c[k].present = true; });
+        c.bed.on = true;
         if (mutate) mutate(c);
         try { _normalizeAmbientCfg(c); } catch (e) {}
         // Loop defaults to WRITE (2026-07-15) — but the pins are GENERATION

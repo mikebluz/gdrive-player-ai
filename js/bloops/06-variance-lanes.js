@@ -1460,9 +1460,13 @@
       if (lanes.length > target) {
         // Dispose audio nodes on lanes about to be trimmed so they
         // don't leak Tone.Panner / Tone.Volume / Tone.Sampler instances.
-        const trimmed = lanes.slice(target);
+        // Bloom Author-in-Grid scratch lanes survive the trim (they live
+        // beyond gridRows by design and are removed by _ambGridEditStop).
+        const scratch = lanes.slice(target).filter(l => l && l._bloomScratch);
+        const trimmed = lanes.slice(target).filter(l => !(l && l._bloomScratch));
         if (typeof disposeAllLaneAudio === 'function') disposeAllLaneAudio(trimmed);
         lanes.length = target;
+        scratch.forEach(l => lanes.push(l));
       }
       if (activeLaneIdx >= lanes.length) activeLaneIdx = lanes.length - 1;
       _aliasSequenceToActiveLane();

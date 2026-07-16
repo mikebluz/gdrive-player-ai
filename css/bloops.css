@@ -11680,3 +11680,30 @@
     .ambient-pm-part { flex: 0 0 118px; display: inline-flex; gap: 3px; }
     .ambient-pm-size { width: 56px; font-size: 0.6rem; padding: 1px 2px; }
     .ambient-pm-place { width: 56px; font-size: 0.6rem; padding: 1px 2px; }
+
+/* Tone cycle (scheduled Instrument Tone changes) */
+.ambient-toneseq-box { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.ambient-toneseq-step { display: inline-flex; gap: 3px; align-items: center; }
+.ambient-toneseq-step .ambient-toneseq-tone { max-width: 120px; }
+.ambient-toneseq-bars { width: 44px; }
+
+/* Performance rec (play-along melody writing) */
+.ambient-piano-rec { background: none; border: none; color: #a33; font-size: 13px; cursor: pointer; opacity: 0.55; padding: 2px 5px; }
+.ambient-piano-rec:hover { opacity: 1; }
+.ambient-piano-rec.rec { color: #e33; opacity: 1; animation: amb-rec-pulse 1s ease-in-out infinite; }
+@keyframes amb-rec-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.35); } }
+
+/* Author mode: the seed grid docks into the Seed subsection */
+.ambient-seedgrid-slot { display: block; width: 100%; margin: 4px 0 2px; }
+.ambient-seedgrid-slot .ambient-notes-live { display: block; width: 100%; }
+.ambient-seedgrid-slot .ambient-piano { margin-top: 2px; }
+
+/* Author-in-Grid: the full Seed editor docked in the card */
+.ambient-seedgrid-bar { display: flex; gap: 6px; align-items: center; margin: 2px 0 4px; }
+.ambient-seedgrid-dockhost { width: 100%; }
+.ambient-seedgrid-dockhost #lane-expander { width: 100%; }
+
+/* Hum rec (audio → phrase transcription) */
+.ambient-hum-rec { background: none; border: none; font-size: 12px; cursor: pointer; opacity: 0.55; padding: 2px 4px; }
+.ambient-hum-rec:hover { opacity: 1; }
+.ambient-hum-rec.rec { opacity: 1; animation: amb-rec-pulse 1s ease-in-out infinite; }

@@ -314,6 +314,27 @@ kit/sample-voice extras (no harmonic frame). The Bed/Drone Progression sub-block
 (inside Seed) is gated by `_ambSyncProgVis` on the area prog, via the `sub`-token
 wrapper (`data-sub`).
 
+*Matrix fixes (2026-07-15, user report "not working right"):* three real
+bugs. (1) **Masks now gate REPLAY too** — Loop defaults to Write, so most
+layers are frozen loops whose replay bypassed the emitters: matrix edits were
+inaudible until the next rewrite. `_ambReplayFrozen` now gates each note at
+its onset — Write loops HARD-only (p=0 kills, probabilities realize at
+generation — re-rolling them per pass would compound to p²; random Part
+windows likewise skipped), user Hold locks get the FULL gate (nothing else
+ever re-rolls them). Both gates gained the `hard` param. (2) **Edits are
+audible NOW** — `_ambMaskEditPoke` on every matrix edit: cancel the layer's
+scheduled-ahead voices + rewind scheduledUpto, and a Write-owned loop
+schedules a REWRITE at its next boundary so 30/60 changes land within one
+pass. (3) **lid fix** — primaries have no `id`, so bed/motif/texture/beat all
+hashed to the SAME gate identity: equal probs gated them in lockstep.
+Per-type bases decorrelate them (bed keeps the historical value; extras with
+real ids byte-identical — chordmask pins unchanged). Also: the CURRENT chord
+column lights in the chord matrix (mirrors the scheduler's chord tracking),
+the current section column in the Section matrix + the lane's playing block.
+Verified: frozen loop obeys a 0-mask instantly; bed/motif @60% now agree
+~53% (was 100%); hard 60→plays, 0→blocked; highlights track I-IV and A→B
+live; harness 26/26.
+
 *Seq rows added (2026-07-15):* the matrix now lists SEQ layers (sent
 sequences) too — the emit path already gated per event (`_ambEmitSeqEvent` →
 `_ambChordGateOK`); the rows were just missing from `_ambChordMatrixRows`, and

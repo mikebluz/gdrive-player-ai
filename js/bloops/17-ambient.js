@@ -2433,22 +2433,28 @@
       const x = Math.abs(Math.sin(a * 127.1 + b * 311.7 + 74.7) * 43758.5453);
       return x - Math.floor(x);
     }
-    function _ambChordGateOK(E, L, atSec, cfg, src) {
+    function _ambChordGateOK(E, L, atSec, cfg, src, hard) {
       const m = L && L.chordMask; if (!m) return true;
       const eff = (src && src.type === 'prog') ? src : ((typeof _ambGlobalProg === 'function') ? _ambGlobalProg() : null);
       if (!eff || !Array.isArray(eff.chords) || !eff.chords.length) return true;
       const sp = _ambProgStepPos(E, atSec, eff);
       const N = eff.chords.length, ci = ((sp.step % N) + N) % N;
-      const lid = ((L.id | 0) + 1) * 13 + 7;
+      // Layer identity for the hash: primaries have NO id — they all resolved
+      // to the same lid, so equal-prob masks gated bed/motif/texture/beat in
+      // LOCKSTEP. Per-type bases decorrelate them (bed keeps the historical
+      // value; extras with real ids are untouched — pins stay byte-identical).
+      const _lb = Number.isFinite(L.id) ? (L.id | 0) : ({ bed: 0, motif: 101, texture: 211, beat: 307 }[L.type] || 0);
+      const lid = (_lb + 1) * 13 + 7;
       const steps = Array.isArray(m.steps) ? m.steps : null;
       if (steps && steps.length) {
         const pv = steps[ci % steps.length];
         const p = Number.isFinite(pv) ? Math.max(0, Math.min(100, pv)) : 100;
         if (p <= 0) return false;
-        if (p < 100 && _ambChordHash01(sp.step + 1, lid) * 100 >= p) return false;
+        if (!hard && p < 100 && _ambChordHash01(sp.step + 1, lid) * 100 >= p) return false;
       }
       const part = m.part;
       if (part && Number.isFinite(part.size) && part.size > 0 && part.size < 100) {
+        if (hard && part.place === 'random') return true;   // random windows re-roll per instance — replay-gating them would compound with the baked window
         const frac = part.size / 100;
         let start = 0;
         if (part.place === 'end') start = 1 - frac;
@@ -2509,20 +2515,22 @@
     // Deterministic (instance, layer)-keyed hashes (salts differ from the chord
     // mask so the two masks decorrelate) — ZERO shared-RNG draws; no mask / no
     // sections → true (byte-identical, harness-safe).
-    function _ambSectionGateOK(E, L, atSec, cfg) {
+    function _ambSectionGateOK(E, L, atSec, cfg, hard) {
       const m = L && L.sectionMask; if (!m) return true;
       const at = _ambSectionAt(E, atSec, cfg);
       if (!at) return true;
-      const lid = ((L.id | 0) + 1) * 29 + 11;
+      const _lb = Number.isFinite(L.id) ? (L.id | 0) : ({ bed: 0, motif: 101, texture: 211, beat: 307 }[L.type] || 0);
+      const lid = (_lb + 1) * 29 + 11;
       const steps = Array.isArray(m.steps) ? m.steps : null;
       if (steps && steps.length) {
         const pv = steps[at.idx % steps.length];
         const p = Number.isFinite(pv) ? Math.max(0, Math.min(100, pv)) : 100;
         if (p <= 0) return false;
-        if (p < 100 && _ambChordHash01(at.step + 1, lid) * 100 >= p) return false;
+        if (!hard && p < 100 && _ambChordHash01(at.step + 1, lid) * 100 >= p) return false;
       }
       const part = m.part;
       if (part && Number.isFinite(part.size) && part.size > 0 && part.size < 100) {
+        if (hard && part.place === 'random') return true;
         const frac = part.size / 100;
         let start = 0;
         if (part.place === 'end') start = 1 - frac;
@@ -11502,6 +11510,13 @@
           for (const e of st.events) {
             const at = base + e.t;
             if (at >= from && at < horizon) { try {
+              // Masks gate NOTES at their onset, whatever produced them —
+              // matrix edits are live even on frozen loops (Write default!).
+              if (lyr) {
+                const _hardG = !!st._write;
+                if (!_ambChordGateOK(E, lyr, at, null, _ambNotesOf(lyr), _hardG)) continue;
+                if (!_ambSectionGateOK(E, lyr, at, null, _hardG)) continue;
+              }
               const f2 = _ambLockHarmonizeFreq(lyr, st.keyCtx, e.freq, at);
               let pp = e.params;
               if (_live) {
@@ -16620,6 +16635,25 @@
       });
       return rows;
     }
+    // Make a mask edit AUDIBLE NOW: cancel this layer's scheduled-ahead voices
+    // (they were gated under the old mask) and let replay/generation reschedule
+    // under the new one; a Write-owned loop also REWRITES at its next boundary
+    // so 30/60 probabilities (which realize at generation) pick up the change
+    // within one pass instead of after ×plays.
+    function _ambMaskEditPoke(E, key) {
+      try {
+        const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, now + 0.05);
+        const fs = E.freeze && E.freeze[key];
+        if (fs && fs.frozen) {
+          fs.scheduledUpto = Math.min(fs.scheduledUpto || now, now);
+          if (fs._write && fs.pendingThawAt == null && fs.anchor > 0 && fs.loopLen > 0.05) {
+            const b = fs.anchor + Math.max(1, Math.ceil((now - fs.anchor) / fs.loopLen)) * fs.loopLen;
+            fs.pendingThawAt = b; fs._writeRearmAt = b;
+          }
+        }
+      } catch (e) {}
+    }
     function _ambRenderChordMatrix(E) {
       const el = _ambGet(E, 'ambient-progmatrix'); if (!el) return;
       const cfg = E.getCfg();
@@ -16664,6 +16698,7 @@
           if (!Array.isArray(m.steps) || m.steps.length !== N2) { const old2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => old2 ? (Number.isFinite(old2[i2 % old2.length]) ? old2[i2 % old2.length] : 100) : 100); }
           const ci = cell.dataset.ci | 0, v = m.steps[ci];
           m.steps[ci] = (v >= 100) ? 60 : (v >= 60 ? 30 : (v >= 30 ? 0 : 100));
+          _ambMaskEditPoke(E, row.dataset.lkey);
           el._sig = ''; _ambRenderChordMatrix(E);
           if (typeof persistWorkspace === 'function') persistWorkspace();
         });
@@ -16675,6 +16710,7 @@
           const size = sz ? (sz.value | 0) : 100;
           m.part = (size < 100) ? { size: size, place: (pl && pl.value) || 'start' } : null;
           if (!m.part) delete m.part;
+          _ambMaskEditPoke(E, row.dataset.lkey);
           el._sig = ''; _ambRenderChordMatrix(E);
           if (typeof persistWorkspace === 'function') persistWorkspace();
         });
@@ -16728,6 +16764,7 @@
           if (!Array.isArray(m.steps) || m.steps.length !== N2) { const old2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => old2 ? (Number.isFinite(old2[i2 % old2.length]) ? old2[i2 % old2.length] : 100) : 100); }
           const ci = cell.dataset.ci | 0, v = m.steps[ci];
           m.steps[ci] = (v >= 100) ? 60 : (v >= 60 ? 30 : (v >= 30 ? 0 : 100));
+          _ambMaskEditPoke(E, row.dataset.lkey);
           el._sig = ''; _ambRenderSectionMatrix(E);
           if (typeof persistWorkspace === 'function') persistWorkspace();
         });
@@ -16739,6 +16776,7 @@
           const size = sz ? (sz.value | 0) : 100;
           m.part = (size < 100) ? { size: size, place: (pl && pl.value) || 'start' } : null;
           if (!m.part) delete m.part;
+          _ambMaskEditPoke(E, row.dataset.lkey);
           el._sig = ''; _ambRenderSectionMatrix(E);
           if (typeof persistWorkspace === 'function') persistWorkspace();
         });
@@ -18054,6 +18092,25 @@
       });
       // Live CHORD readout: light the chord block the playhead is inside, so the
       // lane shows which chord is sounding right now (matches the header readout).
+      // Current SECTION: light the scheduler lane block + the Section matrix column.
+      try {
+        const secAt = _ambSectionAt(E, now, cfg);
+        const sb = box.querySelectorAll('.ambient-sched-secblk');
+        if (secAt && sb.length) {
+          const nS = (cfg.sections || []).length;
+          // lane blocks tile cyclically; light every block of the current index
+          if (box._schSecIdx !== secAt.idx) {
+            box._schSecIdx = secAt.idx;
+            sb.forEach(el => el.classList.toggle('playing', (el.dataset.si | 0) === secAt.idx));
+            const smx = _ambGet(E, 'ambient-secmatrix');
+            if (smx && smx.style.display !== 'none') {
+              smx.querySelectorAll('.ambient-pm-cell.cur, .ambient-pm-ch.cur').forEach(x => x.classList.remove('cur'));
+              smx.querySelectorAll('.ambient-pm-cell[data-ci="' + secAt.idx + '"]').forEach(x => x.classList.add('cur'));
+              const hd2 = smx.querySelectorAll('.ambient-pm-head .ambient-pm-ch')[secAt.idx]; if (hd2) hd2.classList.add('cur');
+            }
+          }
+        }
+      } catch (e) {}
       const chs = box.querySelectorAll('.ambient-sched-chblk');
       if (chs.length) {
         let acc = 0, hit = -1;
@@ -18061,6 +18118,22 @@
         if (box._schChIdx !== hit || (hit >= 0 && !chs[hit].classList.contains('playing'))) {   // re-verify: a re-render wipes the class
           chs.forEach((el, i) => el.classList.toggle('playing', i === hit));
           box._schChIdx = hit;
+          // Mirror onto the CHORD MATRIX: light the current chord's column.
+          try {
+            const mx = _ambGet(E, 'ambient-progmatrix');
+            if (mx && mx.style.display !== 'none') {
+              const N3 = (cfg.prog && cfg.prog.chords) ? cfg.prog.chords.length : 0;
+              const ci3 = (N3 > 0 && hit >= 0) ? (hit % N3) : -1;
+              if (mx._curCi !== ci3) {
+                mx._curCi = ci3;
+                mx.querySelectorAll('.ambient-pm-cell.cur, .ambient-pm-ch.cur').forEach(x => x.classList.remove('cur'));
+                if (ci3 >= 0) {
+                  mx.querySelectorAll('.ambient-pm-cell[data-ci="' + ci3 + '"]').forEach(x => x.classList.add('cur'));
+                  const hd = mx.querySelectorAll('.ambient-pm-head .ambient-pm-ch')[ci3]; if (hd) hd.classList.add('cur');
+                }
+              }
+            }
+          } catch (e) {}
         }
       }
     }

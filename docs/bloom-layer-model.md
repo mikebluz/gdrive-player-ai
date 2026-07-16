@@ -332,6 +332,36 @@ byte-identical (pins `chordmask-steps` 7a4c9c6a · `chordmask-part` fdef4148).
 UI: Configure → a layers × chords grid (tap cells 100→60→30→0%; per-row Part
 size/placement selects), shown only with an Area progression on.
 
+## 2.5 SECTIONS — sets of bars (the arrangement level)
+
+*Landed v1+v2 (2026-07-15):* `cfg.sections = [{ id, name, bars }]` — an
+ordered, CYCLING list of named bar-blocks on the progression's clock/anchor
+(`_ambSectionAt` mirrors `_ambProgStepPos`; fractional bars OK, ≤16 sections).
+The missing middle of the hierarchy: **bar → chord → SECTION → area**.
+Sections GATE and colour layers but never own layer STATE (that's Areas) —
+the line that keeps every section feature additive.
+
+- **Section lane** in the Scheduler (above the chord lane): named blocks
+  cycling across the ruler; tap → rename / resize / delete (ctx menu); ＋
+  appends (first press seeds A/B 4+4). View widens to one full section cycle.
+- **Section matrix** (layers × sections, `#ambient-secmatrix` next to the
+  chord matrix, same interaction grammar): tap cells 100→60→30→0%, per-row
+  Part sub-window. Writes `L.sectionMask = { steps, part }`.
+- **Gate**: `_ambSectionGateOK` — the chord-mask machinery one level up,
+  called adjacent to every chord-gate site (bed/motif unit-level with empty
+  units recorded; kit/sample/synth step-grids; bass/run/pedal; texture; arp
+  silent-advance so the series cursor keeps walking; seq events).
+  Deterministic (instance, layer)-keyed hashes, salts distinct from the chord
+  mask; ZERO shared-RNG draws; absent mask / no sections → true.
+  Proofs: mask [100,0] over 1-bar A/B → zero off-section notes (32→17);
+  part ½-start over a 2-bar section → zero outside-window notes (46→25);
+  harness 26/26.
+
+NEXT (v3/v4, not built): Write snap-to-section (`_ambWriteEffBars` gains a
+section case), `when: 'sec:B'` terms, last-bar-of-section fill flag, sparse
+per-section overrides (groove/Start/keyModeRot), orchestration counting plays
+in section cycles.
+
 ## 3. Progressions vs parts (authoring)
 
 A "chord progression" is a **narrow, specific** kind of material (a clear series of

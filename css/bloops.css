@@ -11707,3 +11707,10 @@
 .ambient-hum-rec { background: none; border: none; font-size: 12px; cursor: pointer; opacity: 0.55; padding: 2px 4px; }
 .ambient-hum-rec:hover { opacity: 1; }
 .ambient-hum-rec.rec { opacity: 1; animation: amb-rec-pulse 1s ease-in-out infinite; }
+
+/* Sections (sets of bars): scheduler lane blocks */
+.ambient-sched-secrow .ambient-sched-strip.sections { display: flex; position: relative; }
+.ambient-sched-secblk { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; height: 18px; font: 600 0.62rem 'Segoe UI', sans-serif; color: #cfd4ff; background: rgba(110, 120, 255, 0.14); border: 1px solid rgba(110, 120, 255, 0.35); border-radius: 3px; overflow: hidden; white-space: nowrap; cursor: pointer; font-style: normal; }
+.ambient-sched-secblk.cyc { border-left-width: 2px; border-left-color: rgba(110, 120, 255, 0.8); }
+.ambient-sched-secblk:hover { background: rgba(110, 120, 255, 0.28); }
+.ambient-sched-addsec { font-size: 0.62rem; padding: 1px 7px; }

@@ -1,7 +1,7 @@
 class PlaylistManager {
-    constructor(musicPlayer, userCache = null) {
+    constructor(musicPlayer, offlineIds = null) {
         this.musicPlayer = musicPlayer;
-        this.userCache = userCache;
+        this.offlineIds = offlineIds;   // Set of track ids saved offline (app.js maintains it)
         this.tracks = [];
         this.currentIndex = -1;
         this.shuffled = false;
@@ -306,7 +306,7 @@ class PlaylistManager {
     }
 
     _trackNameClass(track) {
-        if (this.userCache?.isCached(track.id)) return 'track-name--user-cached';
+        if (this.offlineIds?.has(track.id)) return 'track-name--user-cached';
         if (this.musicPlayer.isPrefetched(track.id)) return 'track-name--prefetched';
         return '';
     }
@@ -356,7 +356,7 @@ class PlaylistManager {
             item.addEventListener('click', (e) => {
                 if (!e.target.classList.contains('drag-handle')) {
                     const track = this.tracks[index];
-                    const fastPath = this.userCache?.isCached(track.id)
+                    const fastPath = this.offlineIds?.has(track.id)
                         || this.musicPlayer.isPrefetched(track.id);
                     if (fastPath) {
                         this.playTrack(index, false);

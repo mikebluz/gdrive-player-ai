@@ -155,7 +155,8 @@ class MusicPlayer {
             }
             this._prefetchCache.set(track.id, blob);
             this._diag('prefetch(fetch) ' + this._short(track.id) + ' ' + Math.round(blob.size / 1024) + 'KB');
-            if (this.blobCache) this.blobCache.store(track.id, blob);
+            // (No incidental persistence: only "Make available offline" writes
+            // the persistent store, so it holds exactly the saved playlist.)
             document.dispatchEvent(new CustomEvent('prefetchCacheUpdated'));
             this._probeBlobDuration(blob, track.id);
             return 'fetched';

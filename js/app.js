@@ -16,13 +16,20 @@ document.addEventListener("DOMContentLoaded", () => {
   let _artworkBlobUrl = null;
   const albumArtImg = document.getElementById("album-art-img");
   const albumPlaceholder = document.getElementById("album-placeholder");
-  const userCache = new UserSongCache();
   const blobCache = new BlobCache();
-  const cacheBtn = document.getElementById("cache-btn");
-  const cachePlaylistBtn = document.getElementById("cache-playlist-btn");
-  const clearCacheBtn = document.getElementById("clear-cache-btn");
   const addToTrackBtn = document.getElementById("add-to-track-btn");
-  const cacheBtnContainer = cacheBtn?.closest(".cache-btn-container");
+  // OFFLINE (2026-07-16): the per-track cache model is gone. One switch saves
+  // THE WHOLE CURRENT PLAYLIST to this device; loading a different playlist
+  // deletes the old copy first (one playlist offline at a time, never stale).
+  // State: OFFLINE_KEY holds {on, name, tracks:[{id,name,size}]} so the saved
+  // playlist can also BOOT offline (no Drive listing needed).
+  const offlineBtn = document.getElementById("offline-btn");
+  const offlineBtnContainer = offlineBtn?.closest(".cache-btn-container");
+  const OFFLINE_KEY = "gdrivePlayerOffline";
+  const offlineIds = new Set();          // shared with PlaylistManager (indicators / fast path)
+  let _offlineSaveGen = 0;               // aborts a save when the playlist changes mid-download
+  const offlineState = () => { try { return JSON.parse(localStorage.getItem(OFFLINE_KEY) || "null"); } catch { return null; } };
+  const setOfflineState = (st) => { try { st ? localStorage.setItem(OFFLINE_KEY, JSON.stringify(st)) : localStorage.removeItem(OFFLINE_KEY); } catch {} };
 
   // Click → save the currently selected track as a sequencer chip in
   // Bloops + drop it on a fresh stereo track. Mirrors the long-press
@@ -65,7 +72,7 @@ document.addEventListener("DOMContentLoaded", () => {
       showLoading("Initializing Google Drive API...");
       driveAPI = new GoogleDriveAPI(window.APP_CONFIG);
       player = new MusicPlayer(driveAPI, blobCache);
-      playlist = new PlaylistManager(player, userCache);
+      playlist = new PlaylistManager(player, offlineIds);
       // Exposed so the Bloops/Make side of the unified page can pause
       // playback when the user switches away from the Listen view, and
       // lazy-load the track when the Listen view is opened.
@@ -154,85 +161,64 @@ document.addEventListener("DOMContentLoaded", () => {
   document.addEventListener("trackLoaded", (e) => {
     hideLoading();
     unfreezeUI();
-    updateCacheBtn(e.detail?.track);
+    updateOfflineBtn();
   });
 
-  cacheBtn?.addEventListener("click", () => {
-    const track = player?.currentTrack;
-    if (!track) return;
-    const wasCached = userCache.isCached(track.id);
-    userCache.toggle(track);
-    if (!wasCached) {
-      player.persistTrack(track);
-    } else {
-      blobCache.remove(track.id);
-    }
-    updateCacheBtn(track);
-    playlist?.refreshCacheIndicators();
-  });
-
-  // Clear ALL cached audio (prefetch + persistent blob cache). Recovers from a
-  // poisoned cache where the right title shows but the wrong song plays. The
-  // currently-playing track keeps playing; everything else re-downloads.
-  clearCacheBtn?.addEventListener("click", async () => {
-    if (typeof confirm === "function" && !confirm("Clear all cached audio?\n\nUse this if the wrong song plays for the right title. Tracks re-download from Drive on next play.")) return;
-    const orig = clearCacheBtn.textContent;
-    clearCacheBtn.disabled = true;
-    clearCacheBtn.textContent = "Clearing…";
-    try {
-      if (player && typeof player.clearCaches === "function") await player.clearCaches();
-      else { try { blobCache.clear(); } catch (e) {} }
-      playlist?.refreshCacheIndicators();
-      clearCacheBtn.textContent = "Cleared ✓";
-    } catch (e) {
-      console.error("Clear cache failed", e);
-      clearCacheBtn.textContent = "Clear failed";
-    }
-    setTimeout(() => { clearCacheBtn.textContent = orig; clearCacheBtn.disabled = false; }, 1600);
-  });
-
-  function updateCacheBtn(track) {
-    if (!track || !cacheBtn || !cacheBtnContainer) return;
-    cacheBtnContainer.style.display = "";
-    cacheBtn.textContent = userCache.isCached(track.id) ? "Remove from cache" : "Save to cache";
+  // ---- Make available offline (whole current playlist) -------------------
+  function updateOfflineBtn(saving) {
+    if (!offlineBtn) return;
+    const hasTracks = !!(playlist && playlist.tracks && playlist.tracks.length);
+    if (offlineBtnContainer) offlineBtnContainer.style.display = hasTracks ? "" : "none";
+    if (saving != null) { offlineBtn.textContent = saving; return; }
+    const st = offlineState();
+    const here = st && st.on && st.name === lastDriveFolderName;
+    offlineBtn.textContent = here ? "✓ Available offline — tap to remove" : "📥 Make available offline";
+    offlineBtn.disabled = false;
   }
-
-  cachePlaylistBtn?.addEventListener("click", () => {
-    if (cachePlaylistBtn.dataset.mode === "clear") {
-      userCache.clear();
-      blobCache.clear();
-      cachePlaylistBtn.textContent = "Playlist from cache";
-      delete cachePlaylistBtn.dataset.mode;
-      updateCacheBtn(player?.currentTrack);
-      playlist?.refreshCacheIndicators();
-      if (lastDriveFolderName && driveAPI?.accessToken) {
-        loadMusicFromDrive(lastDriveFolderName);
-      } else {
-        updateUIAuthState(false);
-      }
-      return;
+  async function refreshOfflineIds() {
+    offlineIds.clear();
+    try { (await blobCache.keys()).forEach((k) => offlineIds.add(k)); } catch {}
+    playlist?.refreshCacheIndicators();
+  }
+  async function clearOffline() {
+    ++_offlineSaveGen;
+    setOfflineState(null);
+    try { await blobCache.clear(); } catch {}
+    await refreshOfflineIds();
+    updateOfflineBtn();
+  }
+  async function saveCurrentPlaylistOffline() {
+    if (!player || !playlist || !playlist.tracks || !playlist.tracks.length) return;
+    const gen = ++_offlineSaveGen;
+    const tracks = playlist.tracks.map((t) => ({ id: t.id, name: t.name, size: t.size ?? null }));
+    const plName = lastDriveFolderName;
+    offlineBtn && (offlineBtn.disabled = true);
+    let done = 0, failed = 0;
+    for (const t of tracks) {
+      if (gen !== _offlineSaveGen) return;              // playlist changed — abort silently
+      try {
+        if (!(await blobCache.has(t.id))) await player.persistTrack(t);   // verified fetch + store
+        if (await blobCache.has(t.id)) offlineIds.add(t.id); else failed++;
+      } catch { failed++; }
+      done++;
+      updateOfflineBtn(`Saving… ${done}/${tracks.length}`);
+      if (done % 3 === 0) playlist?.refreshCacheIndicators();
     }
-
-    const cached = userCache.getAll();
-    if (cached.length === 0) {
-      showError("No songs in your cache yet.");
-      return;
+    if (gen !== _offlineSaveGen) return;
+    setOfflineState({ on: true, name: plName, tracks });
+    playlist?.refreshCacheIndicators();
+    updateOfflineBtn(failed ? `Offline (${tracks.length - failed}/${tracks.length} saved)` : null);
+    if (!failed) updateOfflineBtn();
+  }
+  offlineBtn?.addEventListener("click", async () => {
+    const st = offlineState();
+    if (st && st.on && st.name === lastDriveFolderName) {
+      if (typeof confirm === "function" && !confirm("Remove this playlist from offline storage?")) return;
+      await clearOffline();
+    } else {
+      await clearOffline();                              // one playlist at a time
+      await saveCurrentPlaylistOffline();
     }
-    const name = prompt("Name this playlist:", "My Cache");
-    if (!name?.trim()) return;
-    const tracks = cached.map(t => ({
-      id: t.id,
-      name: t.name,
-      size: null,
-      downloadUrl: `https://www.googleapis.com/drive/v3/files/${t.id}?alt=media`,
-    }));
-    player.defaultArtist = null;
-    document.getElementById("playlist-heading-name").textContent = name.trim();
-    setAlbumArt(null);
-    playlist.setTracks(tracks);
-    showPlayerSections();
-    cachePlaylistBtn.textContent = "Clear cache";
-    cachePlaylistBtn.dataset.mode = "clear";
   });
 
   async function loadQuickLoadOptions() {
@@ -250,6 +236,21 @@ document.addEventListener("DOMContentLoaded", () => {
       console.error("Could not load Quick Load options:", err);
       hideLoading();
       unfreezeUI();
+      // OFFLINE boot: no Drive listing (offline / auth down) — if a playlist
+      // was saved for offline, load it straight from the stored track list;
+      // playback then comes from the blob store with zero network.
+      const st = offlineState();
+      if (st && st.on && Array.isArray(st.tracks) && st.tracks.length && player && playlist) {
+        player.defaultArtist = null;
+        document.getElementById("playlist-heading-name").textContent = (st.name || "Offline") + " (offline)";
+        setAlbumArt(null);
+        playlist.setTracks(st.tracks);
+        lastDriveFolderName = st.name || null;
+        showPlayerSections();
+        await refreshOfflineIds();
+        updateOfflineBtn();
+        return;
+      }
       showError(`Could not load Quick Load options: ${err?.message || err}`);
     }
   }
@@ -294,8 +295,17 @@ document.addEventListener("DOMContentLoaded", () => {
       playlist.setTracks(musicFiles);
       showPlayerSections();
       lastDriveFolderName = folderName;
-      cachePlaylistBtn.textContent = "Playlist from cache";
-      delete cachePlaylistBtn.dataset.mode;
+      // OFFLINE handoff: a DIFFERENT playlist replaces the stored one — wipe
+      // the old copy, and if the offline switch was on, save this playlist.
+      {
+        const st = offlineState();
+        if (st && st.name !== folderName) {
+          const wasOn = !!st.on;
+          await clearOffline();
+          if (wasOn) saveCurrentPlaylistOffline();       // fire-and-forget; progress on the button
+        } else { await refreshOfflineIds(); }
+        updateOfflineBtn();
+      }
     } catch (error) {
       console.error("Error loading music:", error);
       hideLoading();
@@ -343,26 +353,25 @@ document.addEventListener("DOMContentLoaded", () => {
       player.stop();
       player.disableControls();
 
-      const cachedTracks = userCache.getAll();
-      if (infoBox) infoBox.style.display = cachedTracks.length > 0 ? "none" : "";
-      if (cachedTracks.length > 0) {
+      // Signed out: if a playlist was saved for offline, it stays playable
+      // (tracks stream from the blob store, no Drive needed).
+      const stOff = offlineState();
+      const offTracks = (stOff && stOff.on && Array.isArray(stOff.tracks)) ? stOff.tracks : [];
+      if (infoBox) infoBox.style.display = offTracks.length > 0 ? "none" : "";
+      if (offTracks.length > 0) {
         mainContent.style.display = "";
         footer.style.display = "";
         document.querySelector(".player-section").style.display = "";
         document.querySelector(".album-art-section").style.display = "";
         document.querySelector(".playlist-section").style.display = "";
         document.querySelector(".search-section").style.display = "none";
-        const tracks = cachedTracks.map(t => ({
-          id: t.id,
-          name: t.name,
-          size: null,
-        }));
         player.defaultArtist = null;
-        document.getElementById("playlist-heading-name").textContent = "In Cache";
+        document.getElementById("playlist-heading-name").textContent = (stOff.name || "Offline") + " (offline)";
         setAlbumArt(null);
-        playlist.setTracks(tracks);
-        cachePlaylistBtn.textContent = "Clear cache";
-        cachePlaylistBtn.dataset.mode = "clear";
+        playlist.setTracks(offTracks.map(t => ({ id: t.id, name: t.name, size: t.size ?? null })));
+        lastDriveFolderName = stOff.name || null;
+        refreshOfflineIds();
+        updateOfflineBtn();
       } else {
         mainContent.style.display = "none";
         footer.style.display = "none";

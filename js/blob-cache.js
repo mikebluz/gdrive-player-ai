@@ -90,6 +90,18 @@ class BlobCache {
         } catch {}
     }
 
+    async keys() {
+        try {
+            const db = await this._open();
+            return await new Promise((resolve, reject) => {
+                const tx = db.transaction(this._storeName, 'readonly');
+                const req = tx.objectStore(this._storeName).getAllKeys();
+                req.onsuccess = () => resolve(req.result || []);
+                req.onerror = () => reject(req.error);
+            });
+        } catch { return []; }
+    }
+
     async clear() {
         try {
             const db = await this._open();

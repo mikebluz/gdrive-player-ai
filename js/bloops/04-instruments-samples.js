@@ -2681,7 +2681,7 @@
       // or while the core warms up. Same eligibility as playNote, so a press
       // and its sequenced playback always land in the SAME engine.
       if (typeof _coreVoices !== 'undefined' && _coreVoices.enabled()
-          && !fxOverrideGlobal && _coreVoices.eligible(type, params)) {
+          && !fxOverrideGlobal && _coreVoices.eligible(type, params, true)) {
         const _h = _coreVoices.holdOn('live', globalSendTap, {
           type, freq, vel: velocity, pan,
           t: (_coldStartAt != null) ? _coldStartAt : 0,

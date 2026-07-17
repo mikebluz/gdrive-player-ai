@@ -772,6 +772,16 @@
     }
     function persistWorkspace() {
       if (!_workspacePersistEnabled) return;
+      // Bloom Grid-session HOLD: while the docked editor is live, the full
+      // snapshot serialize (all lanes + areas + saved audio) must never land
+      // in the tapping window — mark dirty and let the session flush it
+      // (Done/Cancel + a 10 s safety timer). Playback invalidation below
+      // still runs — live-edit correctness doesn't wait for the disk.
+      if (typeof window !== 'undefined' && window._bloomGridHoldPersist) {
+        window._bloomGridPersistDirty = true;
+        if (typeof _invalidatePlayback === 'function') { try { _invalidatePlayback(); } catch (e) {} }
+        return;
+      }
       clearTimeout(_workspacePersistTimer);
       _workspacePersistTimer = setTimeout(persistWorkspaceNow, 250);
       // Live-edit invalidation: persistWorkspace runs after every
@@ -960,8 +970,13 @@
           // Poly-mode state — clone lane step arrays deep so storage
           // doesn't share references with the live workspace.
           polyMode: !!polyMode,
-          activeLaneIdx,
-          lanes: lanes.map((l, li) => ({
+          // Bloom Grid-session SCRATCH lanes are transient (the whitelist drops
+          // their _bloomScratch flag, so persisting them resurrected GHOST
+          // lanes — an unexplained extra lane/chips strip after reload).
+          activeLaneIdx: (lanes[activeLaneIdx] && lanes[activeLaneIdx]._bloomScratch && typeof _bloomGridEdit !== 'undefined' && _bloomGridEdit)
+            ? Math.max(0, Math.min(lanes.filter(l => !l._bloomScratch).length - 1, _bloomGridEdit.prevActive | 0))
+            : activeLaneIdx - lanes.slice(0, activeLaneIdx).filter(l => l && l._bloomScratch).length,
+          lanes: lanes.filter(l => !(l && l._bloomScratch)).map((l, li) => ({
             name: l.name,
             steps: (l.steps || []).map(cloneStep),
             muted: !!l.muted,
@@ -992,7 +1007,7 @@
             // already have their voice frozen on their object from
             // the last activate-out — clone it here so the snapshot
             // doesn't share refs with the live workspace.
-            voice: (li === activeLaneIdx)
+            voice: (l === lanes[activeLaneIdx])
               ? _captureVoiceGlobals()
               : (l.voice ? JSON.parse(JSON.stringify(l.voice)) : null),
             // Per-lane FX send levels — shallow clone so snapshot edits

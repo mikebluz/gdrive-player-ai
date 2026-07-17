@@ -655,6 +655,7 @@
       try { _ambientInit(_masterEng); } catch (e) {}
     }
     function _ambSwitchToArea(idx) {
+      try { if (_bloomGridEdit) _ambGridEditStop(false); } catch (e) {}   // a Grid session belongs to ONE area's layer
       const s = _masterBloomState();
       idx = Math.max(0, Math.min(s.areas.length - 1, idx | 0));
       const playing = !!(_masterEng && _masterEng.timer);
@@ -11682,7 +11683,22 @@
     }
     // Grid steps → lock events, walked sequentially (each step advances by its
     // own duration×subdivision), voiced by the LAYER (tone/ADSR/level).
-    function _ambStepsToLock(E, key, steps) {
+    // Trailing persist for live Grid-session edits: the full workspace
+    // serialize (every lane + every Bloom area incl. lock event arrays →
+    // localStorage) on EVERY 400 ms sync tick was the "significant lag on
+    // note presses" — it blocked the main thread right as the user tapped.
+    // Live edits now update the AUDIO side immediately and persist once,
+    // 2 s after the last change (Done/Cancel still persist synchronously).
+    let _bloomGridPersistT = null;
+    function _ambGridPersistSoon(E, key) {
+      try { _ambSyncLockState(E, key); } catch (e) {}   // cheap: lockState only
+      if (_bloomGridPersistT) clearTimeout(_bloomGridPersistT);
+      _bloomGridPersistT = setTimeout(() => {
+        _bloomGridPersistT = null;
+        if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
+      }, 2000);
+    }
+    function _ambStepsToLock(E, key, steps, live) {
       const L = _ambLayerByKey(E, key); if (!L) return;
       const fs = _ambFreezeState(E, key);
       const gsub = (typeof stepSubdivision === 'number' && stepSubdivision > 0) ? stepSubdivision : 0.5;
@@ -11716,7 +11732,8 @@
       fs.scheduledUpto = now;
       fs.frozen = true; fs._lock = true;
       if (!fs.keyCtx) fs.keyCtx = _ambCurKeyCtx(E);
-      try { _ambPersistLock(E, key); } catch (e) {}
+      if (live) { _ambGridPersistSoon(E, key); }
+      else { try { _ambPersistLock(E, key); } catch (e) {} }
     }
     function _ambGridEditSig(steps) {
       try { return JSON.stringify((steps || []).map(s => s && [s.freq, s.duration, s.subdivision, s.chord && s.chord.map(c => c.freq), s.isSub && s.subSteps && s.subSteps.map(c => c && c.freq)])); } catch (e) { return String(Math.random()); }
@@ -11726,7 +11743,7 @@
       const sig = _ambGridEditSig(ge.lane.steps);
       if (sig === ge.sig) return;
       ge.sig = sig;
-      try { _ambStepsToLock(ge.E, ge.key, ge.lane.steps); } catch (e) {}
+      try { _ambStepsToLock(ge.E, ge.key, ge.lane.steps, true); } catch (e) {}
     }
     function _ambGridEditStart(E, key, dockEl) {
       if (_bloomGridEdit) _ambGridEditStop(false);
@@ -11744,6 +11761,12 @@
       lanes.push(lane);
       _bloomGridEdit = { E: E, key: key, lane: lane, prevActive: (typeof activeLaneIdx !== 'undefined') ? activeLaneIdx : 0,
         prevOpen: (typeof _laneExpanderOpen !== 'undefined') ? _laneExpanderOpen : false, snapshot: snapshot, sig: _ambGridEditSig(lane.steps), timer: null };
+      // ✎ PLACE needs the lane STRIP as its drop target — the scratch lane
+      // never renders one, so disable it for the session (restored on stop).
+      try {
+        const pb2 = document.getElementById('place-btn');
+        if (pb2) { _bloomGridEdit.prevPlaceDisabled = pb2.disabled; pb2.disabled = true; pb2.title = 'Place needs the lane strip — not available in the docked editor (use Keep + REST/⤸BAR to position notes)'; if (typeof placeMode !== 'undefined' && placeMode) { try { pb2.click(); pb2.disabled = true; } catch (e2) {} } }
+      } catch (e) {}
       window._bloomGridKey = key;   // _placeLaneExpander resolves the dockhost live by key
       const idx = lanes.length - 1;
       try { if (typeof activateLane === 'function') activateLane(idx); else { activeLaneIdx = idx; if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane(); } } catch (e) { activeLaneIdx = idx; }
@@ -11751,7 +11774,36 @@
       try { if (typeof _syncFluidGridToActiveLane === 'function') _syncFluidGridToActiveLane(); } catch (e) {}
       try { renderSequence(); } catch (e) {}
       try { _placeLaneExpander(); } catch (e) {}
-      _bloomGridEdit.timer = setInterval(() => { try { _ambGridEditSync(); } catch (e) {} }, 400);
+      // KEY ALIGNMENT — AFTER activateLane (it reloads per-lane scale state
+      // and would clobber this): snap the grid's global root/scale to the
+      // LAYER's effective key for the session, so the embedded editor only
+      // offers notes in the key the layer lives in. Restored on stop.
+      try {
+        const kc = _ambCurKeyCtx(E);
+        if (kc && typeof rootIdx !== 'undefined') {
+          _bloomGridEdit.prevKey = { root: rootIdx, scale: (typeof currentScale !== 'undefined') ? currentScale : null };
+          rootIdx = ((kc.root % 12) + 12) % 12;
+          if (typeof SCALES !== 'undefined' && kc.scale && SCALES[kc.scale] && typeof currentScale !== 'undefined') currentScale = kc.scale;
+          if (typeof applyScale === 'function') applyScale();
+          if (typeof rebuildGrid === 'function') rebuildGrid();
+        }
+      } catch (e) {}
+      // Suspend workspace serialization for the session (see persistWorkspace);
+      // the sync timer flushes at most every ~10 s if anything marked dirty.
+      window._bloomGridHoldPersist = true;
+      _bloomGridEdit._flushTick = 0;
+      _bloomGridEdit.timer = setInterval(() => {
+        try { _ambGridEditSync(); } catch (e) {}
+        try {
+          const ge2 = _bloomGridEdit;
+          if (ge2 && ++ge2._flushTick >= 25 && window._bloomGridPersistDirty) {   // ~10 s
+            ge2._flushTick = 0;
+            window._bloomGridHoldPersist = false; window._bloomGridPersistDirty = false;
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+            window._bloomGridHoldPersist = true;
+          }
+        } catch (e) {}
+      }, 400);
       try { _ambRefreshSeedModes(E); } catch (e) {}
     }
     function _ambGridEditStop(cancel) {
@@ -11768,6 +11820,9 @@
         try { _ambPersistLock(ge.E, ge.key); } catch (e) {}
       } else { try { _ambStepsToLock(ge.E, ge.key, ge.lane.steps); } catch (e) {} }
       window._bloomGridKey = null;
+      window._bloomGridHoldPersist = false;
+      window._bloomGridPersistDirty = false;
+      try { const pb2 = document.getElementById('place-btn'); if (pb2) { pb2.disabled = !!ge.prevPlaceDisabled; pb2.title = 'Place mode: tap a grid note to arm it, then click anywhere on the lane strip — empty space beyond the end or inside a rest — to drop it at that exact bar/cell. Gaps auto-fill with rests.'; } } catch (e) {}
       try {
         const i = lanes.indexOf(ge.lane); if (i >= 0) lanes.splice(i, 1);
         const back = Math.max(0, Math.min(lanes.length - 1, ge.prevActive | 0));
@@ -11776,6 +11831,13 @@
         if (typeof _syncFluidGridToActiveLane === 'function') _syncFluidGridToActiveLane();
         renderSequence();
         _placeLaneExpander();
+        // Restore the grid key AFTER activateLane (same clobber both ways).
+        if (ge.prevKey && typeof rootIdx !== 'undefined') {
+          rootIdx = ge.prevKey.root;
+          if (ge.prevKey.scale != null && typeof currentScale !== 'undefined') currentScale = ge.prevKey.scale;
+          if (typeof applyScale === 'function') applyScale();
+          if (typeof rebuildGrid === 'function') rebuildGrid();
+        }
       } catch (e) {}
       if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
       try { _ambRefreshSeedModes(ge.E); _ambUpdateNotesLive(ge.E); } catch (e) {}
@@ -11871,6 +11933,7 @@
         try { clearInterval(hr.poll); } catch (e) {}
         try { hr.media && hr.media.getTracks && hr.media.getTracks().forEach(tr => tr.stop()); } catch (e) {}
         try { hr.ac && hr.ac.close && hr.ac.close(); } catch (e) {}
+        _ambPianoShow(E, key, false);
         const notes = _ambHumSegment(hr.frames || []);
         const resume = () => {
           fs.frozen = false; fs._lock = false; fs._perfHold = false; fs.events = []; fs.scheduledUpto = 0;
@@ -11926,6 +11989,7 @@
           } catch (e) {}
         }, 35);
         E._humRec = hr;
+        _ambPianoShow(E, key, true);   // show the roll while the take records
         fs.frozen = true; fs._lock = false; fs._write = false; fs._perfHold = true;
         fs.events = []; fs.loopLen = 1; fs.anchor = now; fs.scheduledUpto = now; fs.pendingThawAt = null; fs.pendingFreezeAt = null; fs.recording = false;
         try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, now); } catch (e) {}
@@ -11933,6 +11997,23 @@
         try { if (typeof showToast === 'function') showToast('Listening — hum / sing / whistle along with the area; press 🎤 again to keep it. (Headphones recommended.)'); } catch (e) {}
       }).catch(() => { try { if (typeof showToast === 'function') showToast('Microphone permission denied.'); } catch (e) {} });
     }
+    // Auto-commit the Grid session when the VIEW leaves its context (Seed
+    // page tab, Mixdown/Shapes sub-tab): watch the body + #mix-view classes.
+    (function _bloomGridWatchViews() {
+      try {
+        const check = () => {
+          if (!_bloomGridEdit) return;
+          const inMix = document.body.classList.contains('view-mix');
+          const mv = document.getElementById('mix-view');
+          const inBloomPane = !mv || mv.classList.contains('mix-sub-bloom');
+          if (!inMix || !inBloomPane) { try { _ambGridEditStop(false); } catch (e) {} }
+        };
+        const mo = new MutationObserver(check);
+        mo.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+        const arm = () => { const mv = document.getElementById('mix-view'); if (mv) mo.observe(mv, { attributes: true, attributeFilter: ['class'] }); };
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', arm, { once: true }); else arm();
+      } catch (e) {}
+    })();
     // ---- PERFORMANCE REC (play-along melody writing) ---------------------
     // ● on a layer's piano bar: arm → the layer's own generation goes SILENT
     // (frozen with an empty loop — the freeze gate blocks the emitters) while
@@ -11949,6 +12030,26 @@
       const q = (cfg && Number.isFinite(cfg.recQuant)) ? (cfg.recQuant | 0) : 16;
       return q > 0 ? barSec / q : 0;
     }
+    // Show/hide a layer's keyboard+roll programmatically — the manual 🎹
+    // toggle is gone (2026-07-16): the piano opens ITSELF when something
+    // needs it (Author selection, ●/🎤 arming) and closes when done. Authored
+    // layers keep it open (the docked grid is their editing surface).
+    function _ambPianoShow(E, key, open) {
+      try {
+        const h2 = document.getElementById(E.hostId);
+        const pe = h2 && h2.querySelector('.ambient-piano[data-pkey="' + key + '"]');
+        if (!pe) return;
+        if (open) {
+          if (!pe.classList.contains('open')) { const r = _ambPianoRangeFor(E, key); _ambBuildPiano(pe, r.LO, r.HI); pe.classList.add('open'); }
+          _ambRevealInCard(E, pe);
+        } else {
+          const L = _ambLayerByKey(E, key);
+          if (L && L.lockState && L.lockState.seedEdit) return;   // Authored → stays open
+          pe.classList.remove('open');
+        }
+        setTimeout(() => { try { _ambUpdateNotesLive(E); } catch (e) {} }, 30);
+      } catch (e) {}
+    }
     function _ambPerfRecToggle(E, key) {
       const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
       const fs = _ambFreezeState(E, key);
@@ -11960,6 +12061,7 @@
           if (E.clocks) E.clocks[key] = now + 0.1;
           try { _ambResumePhaseAt(E, key, now + 0.1); } catch (e) {}
         };
+        _ambPianoShow(E, key, false);
         if (!rec.notes.length) { resume(); try { _ambFreezeSyncAll(E); } catch (e) {} return; }
         const cfg = E._cfg || (E.getCfg && E.getCfg());
         const bpm = _ambBpm();
@@ -11996,6 +12098,7 @@
       // ARM — silence this layer's generation (empty frozen loop) and record.
       if (E._perfRec) { try { _ambPerfRecToggle(E, E._perfRec.key); } catch (e) {} }   // one recording at a time
       E._perfRec = { key: key, notes: [], armedAt: now };
+      _ambPianoShow(E, key, true);   // the take is played ON the keys — surface them
       fs.frozen = true; fs._lock = false; fs._write = false; fs._perfHold = true;
       fs.events = []; fs.loopLen = 1; fs.anchor = now; fs.scheduledUpto = now; fs.pendingThawAt = null; fs.pendingFreezeAt = null; fs.recording = false;
       try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, now); } catch (e) {}
@@ -15152,17 +15255,24 @@
         '<label>Seed</label>' +
         '<span class="ambient-seg-row">' +
           '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="generate" data-seedkey="' + _ambEscText(lk) + '">Generate</button>' +
-          '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="author" data-seedkey="' + _ambEscText(lk) + '">Author</button>' +
+          '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="author" data-seedkey="' + _ambEscText(lk) + '" title="Compose the phrase on the piano roll (docked below)">Author</button>' +
+          '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="grid" data-seedkey="' + _ambEscText(lk) + '" title="Compose in the FULL Seed editor — Grid/Piano/Graph/Game docks below; edits land in the loop live. Author keeps them; ✕ Cancel discards.">Grid</button>' +
         '</span><span class="ambient-hint">improvise / compose</span></div>' +
         // Author docks the layer's grid (roll + keyboard) HERE — composing
         // happens where the seed is chosen (filled by _ambRefreshSeedModes).
         '<div class="ambient-seedgrid-slot" data-sgkey="' + _ambEscText(lk) + '" hidden>' +
           '<div class="ambient-seedgrid-bar">' +
-            '<button type="button" class="ambient-seg ambient-seedgrid-open" data-sgk="' + _ambEscText(lk) + '" title="Open this phrase in the FULL Seed editor — the Grid/Graph/Game component docks right here, and every edit lands in the loop live (bar-aligned).">⧉ Edit in Grid</button>' +
             '<span class="ambient-seedgrid-live" hidden>' +
               '<span class="ambient-hint">editing in Grid — changes land live</span>' +
               '<button type="button" class="ambient-seg ambient-seedgrid-done" data-sgk="' + _ambEscText(lk) + '">✓ Done</button>' +
               '<button type="button" class="ambient-seg ambient-seedgrid-cancel" data-sgk="' + _ambEscText(lk) + '" title="Discard grid edits — restore the phrase as it was">✕ Cancel</button>' +
+              // The docked editor is the WHOLE lane-expander — every mode surface
+              // is already inside it; these tabs are the mode switcher (the top-bar
+              // one isn't reachable from the card). Phrase-writing modes only.
+              '<span class="ambient-seedgrid-modes">' +
+                [['grid', 'Grid'], ['piano', 'Piano'], ['graph', 'Graph'], ['game', 'Game']].map(m2 =>
+                  '<button type="button" class="ambient-seg ambient-seedgrid-mode" data-gmode="' + m2[0] + '" data-sgk="' + _ambEscText(lk) + '" title="Switch the docked editor to ' + m2[1] + ' mode">' + m2[1] + '</button>').join('') +
+              '</span>' +
             '</span>' +
           '</div><div class="ambient-seedgrid-dockhost"></div></div>';
     }
@@ -15192,12 +15302,14 @@
     function _ambRefreshSeedModes(E) {
       const host = E && document.getElementById(E.hostId); if (!host) return;
       host.querySelectorAll('.ambient-seedmode').forEach(row => {
-        const gen = row.querySelector('[data-seedmode="generate"]'), auth = row.querySelector('[data-seedmode="author"]');
+        const gen = row.querySelector('[data-seedmode="generate"]'), auth = row.querySelector('[data-seedmode="author"]'), grd = row.querySelector('[data-seedmode="grid"]');
         const key = gen && gen.dataset.seedkey; if (!key) return;
         let authored = false, L = null;
         try { L = _ambLayerByKey(E, key); authored = !!(L && L.lockState && L.lockState.seedEdit); } catch (e) {}
-        if (gen) gen.classList.toggle('active', !authored);
-        if (auth) auth.classList.toggle('active', authored);
+        const gridActive = !!(_bloomGridEdit && _bloomGridEdit.E === E && _bloomGridEdit.key === key);
+        if (gen) gen.classList.toggle('active', !authored && !gridActive);
+        if (auth) auth.classList.toggle('active', authored && !gridActive);
+        if (grd) grd.classList.toggle('active', gridActive);
         // Arp Direction is a Generate-mode control (the series sweep) — keep its
         // visibility in step with the seed mode (and the euclid toggle).
         try {
@@ -15223,8 +15335,12 @@
               dock(nl); dock(pe);
               // Grid-edit bar: reflect whether THIS layer is being grid-edited.
               const editing = !!(_bloomGridEdit && _bloomGridEdit.key === key && _bloomGridEdit.E === E);
-              const ob = slot.querySelector('.ambient-seedgrid-open'); if (ob) ob.hidden = editing;
               const lb = slot.querySelector('.ambient-seedgrid-live'); if (lb) lb.hidden = !editing;
+              if (editing && _bloomGridEdit && _bloomGridEdit.lane) {
+                const L3 = _bloomGridEdit.lane;
+                const cur = L3.fluidGridMode ? 'graph' : L3.gameMode ? 'game' : L3.pianoMode ? 'piano' : 'grid';
+                slot.querySelectorAll('.ambient-seedgrid-mode').forEach(b3 => b3.classList.toggle('active', b3.getAttribute('data-gmode') === cur));
+              }
               // Self-heal: a card rebuild recreates the dockhost — re-dock the
               // expander on the refresh cadence if it drifted home.
               if (editing) { try { const dh = slot.querySelector('.ambient-seedgrid-dockhost'); const exp2 = document.getElementById('lane-expander'); if (dh && exp2 && exp2.parentElement !== dh) _placeLaneExpander(); } catch (e) {} }
@@ -17162,7 +17278,7 @@
         '<button type="button" class="ambient-clone-btn" data-ckey="' + freezeKey + '" title="Clone — duplicate this layer" aria-label="Clone layer">⧉</button>' +
         '<button type="button" class="ambient-morph-btn" data-mkey="' + freezeKey + '" title="Re-realize as… — same instrument/key/mix, a different layer type (the material realized as a pad, arp, bassline…)" aria-label="Re-realize layer">⇄</button>' +
         '<button type="button" class="ambient-savepreset-btn" data-savekey="' + freezeKey + '" title="Save as preset — reuse this composition from the Add menu" aria-label="Save as preset">★</button>' +
-        (String(freezeKey).split(':')[0] !== 'beat' ? '<button type="button" class="ambient-piano-toggle" data-pkey="' + freezeKey + '" title="Show/hide the note keyboard" aria-label="Toggle keyboard">🎹</button><button type="button" class="ambient-piano-rec" data-rkey="' + freezeKey + '" title="Write a melody by playing along: press ● (this layer goes quiet, the area keeps playing), play the keys, press ● again — your take loops in time with the progression." aria-label="Record a played melody">●</button><button type="button" class="ambient-hum-rec" data-hkey="' + freezeKey + '" title="Hum a melody: press 🎤 (this layer goes quiet, the area keeps playing), hum / sing / whistle into the mic, press again — the take is transcribed (pitch + rhythm detected, snapped to the key grid) and loops in time with the progression. Headphones recommended." aria-label="Record a hummed melody">🎤</button>' : '') +
+        (String(freezeKey).split(':')[0] !== 'beat' ? '<button type="button" class="ambient-piano-rec" data-rkey="' + freezeKey + '" title="Write a melody by playing along: press ● (this layer goes quiet, the area keeps playing), play the keys, press ● again — your take loops in time with the progression." aria-label="Record a played melody">●</button><button type="button" class="ambient-hum-rec" data-hkey="' + freezeKey + '" title="Hum a melody: press 🎤 (this layer goes quiet, the area keeps playing), hum / sing / whistle into the mic, press again — the take is transcribed (pitch + rhythm detected, snapped to the key grid) and loops in time with the progression. Headphones recommended." aria-label="Record a hummed melody">🎤</button>' : '') +
         (_AMB_LAYER_SCHEMA[String(freezeKey).split(':')[0]] ? '<button type="button" class="ambient-dice-btn" data-dkey="' + freezeKey + '" title="Randomize all of this layer’s parameters" aria-label="Randomize parameters">🎲</button>' : '') +
       '</div>' : '') +
       // Live notes line / piano roll — a direct child of .ambient-layer (NOT the
@@ -18345,8 +18461,10 @@
       if (!wrap) return;
       const cfg = E.getCfg(); if (!cfg) return;
       const seqs = _ambSeqList(cfg);
+      const _sqSnap = _ambSnapExpanded(wrap);
       wrap.innerHTML = _ambNamespaceHtml(E, seqs.map((s, i) => _ambSeqLayerHtml(s, i)).join(''));
       seqs.forEach((s) => _ambWireSeqLayer(E, s));
+      _ambRestoreExpanded(wrap, _sqSnap, E);
       try { _ambRenderMixer(E); } catch (e) {}   // keep the mixer in sync on add/delete
       try { _ambRenderRamps(E); } catch (e) {}   // refill the per-layer Ramps sections
       try { _ambSyncFxVis(E); } catch (e) {}     // FX module: show only the added FX
@@ -18543,8 +18661,10 @@
       if (!wrap) return;
       const cfg = E.getCfg(); if (!cfg) return;
       const arr = _ambSampleList(cfg);
+      const _spSnap = _ambSnapExpanded(wrap);
       wrap.innerHTML = _ambNamespaceHtml(E, arr.map((s, i) => _ambSampleLayerHtml(s, i)).join(''));
       arr.forEach((s) => _ambWireSampleLayer(E, s));
+      _ambRestoreExpanded(wrap, _spSnap, E);
       try { _ambRenderMixer(E); } catch (e) {}   // keep the mixer in sync on add/delete
       try { _ambRenderRamps(E); } catch (e) {}   // refill the per-layer Ramps sections
       try { _ambSyncFxVis(E); } catch (e) {}     // FX module: show only the added FX
@@ -20372,6 +20492,25 @@
         showToast(count ? ('Shaped ' + count + ' layer' + (count === 1 ? '' : 's') + ' → master Shapes') : 'No layers to shape');
       }
     }
+    // INVARIANT: parameter changes must NEVER collapse a layer card. Cards
+    // render 'collapsed' by default, so ANY rebuild (extras/seq/sample lists,
+    // the full panel) folds every open card unless expansion is carried
+    // across. Snap the open card keys before a wipe, restore after.
+    function _ambSnapExpanded(root) {
+      const out = new Set();
+      try { root.querySelectorAll('.ambient-layer:not(.collapsed)').forEach(el => { const k = _ambCardKey(el); if (k) out.add(k); }); } catch (e) {}
+      return out;
+    }
+    function _ambRestoreExpanded(root, snap, E) {
+      let keys = snap;
+      // Merge the panel-rebuild snapshot while fresh (the list wraps are EMPTY
+      // at snap time during a full rebuild — their cards render moments later).
+      if (E && E._expandSnap && performance.now() - E._expandSnap.t < 3000 && E._expandSnap.keys.size) {
+        keys = new Set([...(snap || []), ...E._expandSnap.keys]);
+      }
+      if (!keys || !keys.size) return;
+      try { root.querySelectorAll('.ambient-layer.collapsed').forEach(el => { const k = _ambCardKey(el); if (k && keys.has(k)) el.classList.remove('collapsed'); }); } catch (e) {}
+    }
     function _ambRenderExtras(E) {
       const wrap = _ambGet(E, 'ambient-extra-layers'); if (!wrap) return;
       const cfg = E.getCfg(); if (!cfg) return;
@@ -20379,8 +20518,10 @@
       // C2: extras-hosted Seq/Sample layers render through their OWN card
       // builders (_ambRenderSeqLayers/_ambRenderSampleLayers read the
       // canonical lists) — skip them here so they don't get a blank card.
+      const _exSnap = _ambSnapExpanded(wrap);
       wrap.innerHTML = _ambNamespaceHtml(E, cfg.extras.map(inst => (inst && (inst.type === 'seq' || inst.type === 'samp')) ? '' : _ambInstCardHtml(inst)).join(''));
       cfg.extras.forEach(inst => { if (inst && (inst.type === 'seq' || inst.type === 'samp')) return; _ambWireInst(E, inst); });
+      _ambRestoreExpanded(wrap, _exSnap, E);
       try { _ambRenderMixer(E); } catch (e) {}   // keep the mixer in sync on add/delete
       try { _ambSyncSliderReadouts(wrap); } catch (e) {}   // reflect synced mod/fx values
       try { _ambRefreshAreaFadeUI(E); } catch (e) {}       // grey out Area fade on capturable layers
@@ -21887,7 +22028,10 @@
         const _est = document.getElementById('lane-expander-stash');
         if (_exp && _est && host.contains(_exp)) _est.appendChild(_exp);
       } catch (e) {}
+      const _hostSnap = _ambSnapExpanded(host);   // full rebuild must not fold open cards
       host.innerHTML = _ambNamespaceHtml(E, html);
+      _ambRestoreExpanded(host, _hostSnap);                       // primaries render inline — restore now
+      E._expandSnap = { t: performance.now(), keys: _hostSnap };  // extras/seq/sample lists render later — they consume this while fresh
       // Relocate the ⚙ Configure menu INTO the Area section, below the Lock
       // controls (master Mix Bloom only — lanes/Shape have no area block, so the
       // menu stays at the top there). Placed as the last child of .ambient-areas,
@@ -22362,6 +22506,21 @@
           e.stopPropagation();
           const key = sm.dataset.seedkey, mode = sm.dataset.seedmode;
           try {
+            // Leaving an active Grid session: switching to Author KEEPS the
+            // edits (Done semantics); Generate reverts the seed entirely.
+            if (_bloomGridEdit && _bloomGridEdit.E === E && _bloomGridEdit.key === key && mode !== 'grid') {
+              try { _ambGridEditStop(false); } catch (e2) {}
+            }
+            if (mode === 'grid') {
+              const L = _ambLayerByKey(E, key);
+              if (!(L && L.lockState && L.lockState.seedEdit)) { _ambSeedPreview(E, key); _ambSeedPromote(E, key); }   // same authored-lock bootstrap as Author
+              if (!(_bloomGridEdit && _bloomGridEdit.E === E && _bloomGridEdit.key === key)) {
+                try { _ambGridEditStart(E, key); } catch (e2) { console.warn('Grid mode failed', e2); }
+              }
+              _ambRefreshSeedModes(E);
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              return;
+            }
             if (mode === 'generate') {
               _ambSeedRevert(E, key);
               // Author auto-opened the 🎹; Generate auto-closes it (roll is piano-gated).
@@ -22369,7 +22528,6 @@
               const pe = h2 && h2.querySelector('.ambient-piano[data-pkey="' + key + '"]');
               if (pe && pe.classList.contains('open')) {
                 pe.classList.remove('open');
-                const tog = h2.querySelector('.ambient-piano-toggle[data-pkey="' + key + '"]'); if (tog) tog.classList.remove('active');
               }
               try { _ambUpdateNotesLive(E); } catch (e2) {}
             }
@@ -22381,7 +22539,6 @@
               const pe = h2 && h2.querySelector('.ambient-piano[data-pkey="' + key + '"]');
               if (pe && !pe.classList.contains('open')) {
                 const r = _ambPianoRangeFor(E, key); _ambBuildPiano(pe, r.LO, r.HI); pe.classList.add('open');
-                const tog = h2.querySelector('.ambient-piano-toggle[data-pkey="' + key + '"]'); if (tog) tog.classList.add('active');
               }
               // Reveal the SEED group (the piano/roll dock into it, but only
               // after the refresh below — pe is still at its home here, so
@@ -22392,26 +22549,6 @@
             _ambRefreshSeedModes(E);
             if (typeof persistWorkspace === 'function') persistWorkspace();
           } catch (err) { console.warn('Seed mode toggle failed', err); }
-          return;
-        }
-        const pb = e.target && e.target.closest && e.target.closest('.ambient-piano-toggle');
-        if (pb) {
-          e.stopPropagation();
-          try {
-            const h2 = document.getElementById(E.hostId);
-            const pe = h2 && h2.querySelector('.ambient-piano[data-pkey="' + pb.dataset.pkey + '"]');
-            if (pe) {
-              { const r = _ambPianoRangeFor(E, pb.dataset.pkey); _ambBuildPiano(pe, r.LO, r.HI); }
-              const open = pe.classList.toggle('open');
-              pb.classList.toggle('active', open);
-              if (open) _ambRevealInCard(E, pe);   // Author docks the piano inside the Seed group — surface it
-              // Defer the notes-line refresh a frame: opening the piano can
-              // trigger the seed-phrase render (a synchronous engine pre-roll),
-              // which on a slow device would freeze the tap — the keys must
-              // paint first so the press visibly lands.
-              setTimeout(() => { try { _ambUpdateNotesLive(E); } catch (e2) {} }, 30);
-            }
-          } catch (err) { console.warn('Piano toggle failed', err); }
           return;
         }
         // Roll header: unit pager (multi-unit frozen loops) + "↺ Original".
@@ -23216,15 +23353,26 @@
           hostEl.addEventListener('click', (ev) => {
             // Vary (stochastic) toggle — a sibling seg, not a mode; flips
             // L.write.stochastic and re-syncs (fixed X×Y ↔ min–max ranges).
-            const sg = ev.target && ev.target.closest && ev.target.closest('.ambient-seedgrid-open, .ambient-seedgrid-done, .ambient-seedgrid-cancel');
+            const gm = ev.target && ev.target.closest && ev.target.closest('.ambient-seedgrid-mode');
+            if (gm && hostEl.contains(gm)) {
+              const ge = _bloomGridEdit;
+              if (ge && ge.lane && ge.key === gm.getAttribute('data-sgk')) {
+                const m2 = gm.getAttribute('data-gmode');
+                const L2 = ge.lane;
+                L2.pianoMode = (m2 === 'piano'); L2.fluidGridMode = (m2 === 'graph'); L2.gameMode = (m2 === 'game');
+                L2.progMode = false; L2.ambientMode = false; L2.textMode = false; L2.seqMode = false; L2.shapeMode = false;
+                try { if (typeof _syncFluidGridToActiveLane === 'function') _syncFluidGridToActiveLane(); } catch (e) {}
+                try { _placeLaneExpander(); } catch (e) {}   // a mode hook can re-render + re-home the expander — re-dock NOW, not on the next sync tick
+                const bar = gm.closest('.ambient-seedgrid-bar');
+                if (bar) bar.querySelectorAll('.ambient-seedgrid-mode').forEach(b2 => b2.classList.toggle('active', b2 === gm));
+              }
+              return;
+            }
+            const sg = ev.target && ev.target.closest && ev.target.closest('.ambient-seedgrid-done, .ambient-seedgrid-cancel');
             if (sg && hostEl.contains(sg)) {
-              const sgk = sg.getAttribute('data-sgk'); if (!sgk) return;
               _E = E;
-              if (sg.classList.contains('ambient-seedgrid-open')) {
-                const slot = sg.closest('.ambient-seedgrid-slot');
-                const dock = slot && slot.querySelector('.ambient-seedgrid-dockhost');
-                try { _ambGridEditStart(E, sgk, dock); } catch (e) { console.warn('Grid edit failed', e); }
-              } else { try { _ambGridEditStop(sg.classList.contains('ambient-seedgrid-cancel')); } catch (e) {} }
+              try { _ambGridEditStop(sg.classList.contains('ambient-seedgrid-cancel')); } catch (e) {}
+              try { _ambRefreshSeedModes(E); } catch (e) {}   // seg returns to Author
               return;
             }
             const hm = ev.target && ev.target.closest && ev.target.closest('.ambient-hum-rec');

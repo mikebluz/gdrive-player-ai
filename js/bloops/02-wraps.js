@@ -241,6 +241,10 @@
           // unchanged.
           if (Array.isArray(saved.lanes) && saved.lanes.length > 0) {
             if (typeof disposeAllLaneAudio === 'function') disposeAllLaneAudio(lanes);
+            // HEAL: workspaces saved during a Bloom Grid session (before the
+            // serializer excluded them) contain GHOST scratch lanes — the
+            // '✎<layerKey>' name is their only surviving marker. Drop them.
+            saved = Object.assign({}, saved, { lanes: saved.lanes.filter(l => !(l && typeof l.name === 'string' && l.name.charAt(0) === '\u270e')) });
             lanes = saved.lanes.map((l, li) => ({
               name: (typeof l?.name === 'string' && l.name) ? l.name : _laneName(li),
               steps: Array.isArray(l?.steps) ? l.steps.map(cloneStep) : [],

@@ -107,6 +107,42 @@ Harmony-remappable, persisted; empty take resumes generation). Verified: a
 synthesized hummed melody with vibrato transcribes exactly (57,59,60).
 Headphones recommended (the mic hears the speakers).
 
+*Grid-session control audit (2026-07-16):* the bar controls all operate on
+the SCRATCH LANE via the app's own handlers, so they flow into the 400 ms
+steps→lock sync for free: **Keep** (presses→steps) · **Wrap** (chord commits →
+chord-steps → simultaneous events) · **Perf** (real-time recorder; step
+duration×subdivision preserved by the converter — a third performance door
+beside ●/🎤) · **REST/⤸BAR** (advance the loop clock silently) · **Gen**
+(euclid fill). **✎ Place is DISABLED during a session** (its drop target is
+the lane strip, which a scratch lane never renders). **Key alignment**: on
+session start the grid's global root/scale snaps to the layer's effective key
+(and back on stop) — placed AFTER activateLane on both ends (it reloads
+per-lane scale state and clobbers earlier writes). Perf-lag fix: live syncs
+persist the workspace once, 2 s after the last change (was a full serialize
+per 400 ms tick — the "significant lag on note presses").
+
+*Grid = a SEED MODE (2026-07-16):* the "⧉ Edit in Grid" button is gone — the
+Seed seg is now **Generate · Author · Grid**. Author = the docked piano roll;
+Grid = the full docked lane editor (same authored-lock bootstrap as Author;
+starts the scratch-lane session directly). Leaving Grid via Author KEEPS the
+edits (Done semantics), via Generate reverts the seed entirely; ✕ Cancel in
+the editing bar still discards to the pre-session phrase. Verified lifecycle:
+Generate→Grid (docked, editing, authored, 1 scratch lane) →Author (kept,
+cleaned) →Grid→Generate (reverted, cleaned); harness 26/26.
+
+*Docked-editor modes (2026-07-16):* the Author-in-Grid dock gained MODE TABS
+(Grid · Piano · Graph · Game) in the editing bar — the whole mode family was
+always inside the relocated #lane-expander; only the switcher (top-bar
+#mode-select) wasn't reachable from the card. Tabs set the SCRATCH LANE's mode
+flags + `_syncFluidGridToActiveLane()` (body classes swap the surfaces; the
+pads keep their `hidden` attribute — the body-class CSS out-specifies it, so
+probe visibility by computed display, not `.hidden`) + an immediate
+`_placeLaneExpander()` (a mode hook can re-render and re-home the expander).
+Done/Cancel restores the real lane's modes. Phrase-writing modes only —
+Prog/Bloom/TEXT/Seq/Shape stay out (recursive or not phrase editors). Also
+2026-07-16: the 🎹 toggle is REMOVED — the piano opens itself (Author, ●/🎤
+arm) and closes on rec stop (Authored layers keep it open).
+
 *Performance rec (2026-07-15):* play-along melody writing — ● on a layer's
 piano bar (next to 🎹): arm → the layer's own generation goes SILENT (an empty
 frozen loop; the freeze gate blocks its emitters) while the area/progression

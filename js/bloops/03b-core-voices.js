@@ -379,20 +379,22 @@
           || (Array.isArray(p.modMatrix) && p.modMatrix.length)
           || (p.pitchEnv && p.pitchEnv.on && p.pitchEnv.amount) || p.osc);
       }
-      function eligible(type, p) {
+      function eligible(type, p, held) {
         const kf = kindFor(type);
         if (!kf) return false;
         if (type === 'wavetable' && (p.wtPosition != null || p.wavetableMix)) return false; // design wavetable → node engine
         if (_hasDesign(p)) {
-          // RETREAT (2026-07-16): design-carrying voices render NODE-SIDE for
-          // now — the sound designer's node path is the canonical, ear-
-          // calibrated realization (envelope, filter, wow), and a field report
-          // of per-pass dry-body cutoffs on a design pad couldn't be cleared
-          // against the core's newer design port. The node engine can afford
-          // pads again after the 2026-07-16 cost-weight recalibration. Plain
-          // notes keep the core. Re-open by removing this line (DESIGN_OK
-          // below gates the port as before).
-          return false;
+          // RETREAT (2026-07-16), SCHEDULED NOTES ONLY: design-carrying Bloom
+          // notes render NODE-SIDE (the ear-calibrated path) pending field
+          // validation of the core's design port. Interactive HELD presses
+          // (held=true) KEEP the core: the node design build is a heavy
+          // synchronous multi-node construction that lags the press — and a
+          // quick click can release before it ever sounds (the app-wide
+          // "click-to-sound" regression when this retreat was blanket).
+          // Trade-off: a design press (core) and its sequenced playback
+          // (node) render in different engines until the retreat lifts —
+          // they're spectrally calibrated against each other.
+          if (!held) return false;
           if (!DESIGN_OK[kf.kind]) return false;
           // wtpos mod routes need the wavetable crossfade rig — node engine
           if (Array.isArray(p.modMatrix) && p.modMatrix.some((r) => r && r.dest === 'wtpos' && r.amount)) return false;

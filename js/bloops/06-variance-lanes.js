@@ -2121,6 +2121,12 @@
       // no longer needed.)
     }
     function activateLane(idx) {
+      // Auto-commit a live Bloom Grid session when any OTHER lane activates
+      // (Seed-page navigation etc.) — the session must never outlive its
+      // context: it left the editor stranded in the hidden Bloom card ("the
+      // grid is gone") with the scratch lane active (a mystery extra lane).
+      // _ambGridEditStop nulls the session before re-activating, so no loop.
+      try { if (typeof _bloomGridEdit !== 'undefined' && _bloomGridEdit && lanes[idx] !== _bloomGridEdit.lane && typeof _ambGridEditStop === 'function') _ambGridEditStop(false); } catch (e) {}
       if (idx == null || idx < 0 || idx >= lanes.length) return;
       // Trans-mode: if we're leaving a Shape lane with pending wheel edits, fold
       // them into its steps FIRST so the steps writeback just below captures them.

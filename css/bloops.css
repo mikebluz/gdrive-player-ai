@@ -11729,3 +11729,7 @@
 .ambient-npg-cell.cur { background: rgba(127, 214, 196, 0.12); box-shadow: inset 0 -2px 0 rgba(127, 214, 196, 0.55); }
 .ambient-npg-cell.empty { color: transparent; }
 .ambient-np-notes { flex: 1; min-width: 0; }
+
+/* Docked editor mode tabs */
+.ambient-seedgrid-modes { display: inline-flex; gap: 3px; margin-left: 8px; }
+.ambient-seedgrid-modes .ambient-seg { font-size: 0.62rem; padding: 2px 7px; }

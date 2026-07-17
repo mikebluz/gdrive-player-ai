@@ -384,17 +384,15 @@
         if (!kf) return false;
         if (type === 'wavetable' && (p.wtPosition != null || p.wavetableMix)) return false; // design wavetable → node engine
         if (_hasDesign(p)) {
-          // RETREAT (2026-07-16), SCHEDULED NOTES ONLY: design-carrying Bloom
-          // notes render NODE-SIDE (the ear-calibrated path) pending field
-          // validation of the core's design port. Interactive HELD presses
-          // (held=true) KEEP the core: the node design build is a heavy
-          // synchronous multi-node construction that lags the press — and a
-          // quick click can release before it ever sounds (the app-wide
-          // "click-to-sound" regression when this retreat was blanket).
-          // Trade-off: a design press (core) and its sequenced playback
-          // (node) render in different engines until the retreat lifts —
-          // they're spectrally calibrated against each other.
-          if (!held) return false;
+          // RETREAT LIFTED (2026-07-16): design notes render in the core again
+          // (all paths). The retreat was a suspicion-based mitigation for the
+          // mid-bar pad cutoff, whose ACTUAL causes were found and fixed
+          // separately (stale voice-cost weights saturating the budget, the
+          // persisted budget=8 from the capture-watchdog bug, kept-loop
+          // replay gating dropping chord instances). Meanwhile the retreat
+          // itself pushed whole design areas onto heavy node chains — on real
+          // hardware that saturated the audio thread and made interactive
+          // presses late/silent ("finicky grid presses", ~50% at 4 Hz).
           if (!DESIGN_OK[kf.kind]) return false;
           // wtpos mod routes need the wavetable crossfade rig — node engine
           if (Array.isArray(p.modMatrix) && p.modMatrix.some((r) => r && r.dest === 'wtpos' && r.amount)) return false;

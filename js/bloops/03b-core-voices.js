@@ -327,6 +327,7 @@
         const id = _ensureSample(o.bufKey, o.buf);
         if (id < 0) return null;
         const tag = ++sTagSeq;
+        const _holdT0 = performance.now();
         const sp = new Float32Array(15);
         sp[0] = id; sp[1] = o.rate; sp[2] = o.gl; sp[3] = o.gr;
         sp[4] = o.a; sp[5] = o.d; sp[6] = o.s; sp[7] = o.r;
@@ -339,6 +340,12 @@
         return {
           release: () => {
             if (released) return; released = true;
+            // A release landing before the (padded) start FREES the still-
+            // Scheduled voice (silent tap) or chops the attack mid-rise
+            // (click). Defer fast taps' release — every click becomes a
+            // short-but-real note.
+            const _dt = performance.now() - _holdT0;
+            if (_dt < 45) { setTimeout(() => { try { node.port.postMessage({ cmd: 'releaseTag', tag, r: o.r }); } catch (e) {} }, 45 - _dt); return; }
             node.port.postMessage({ cmd: 'releaseTag', tag, r: o.r });
           },
           setDetune: (cents) => {
@@ -506,16 +513,30 @@
         if (slot < 0) return null;
         const kf = kindFor(o.type);
         const tag = ++tagSeq;
+        const _holdT0 = performance.now();
+        // ONSET CLICK GUARD: an immediate hold stamped t = "currentTime at
+        // post" is already a few ms in the PAST when the worklet processes it
+        // — the envelope then starts PARTWAY up its attack (a step = click at
+        // note onset). Pad immediate starts ~20 ms into the future so the
+        // attack always rises from zero; explicitly-scheduled starts (o.t>0,
+        // e.g. wrap chord auditions pinning voices together) pass through.
+        const _tHold = (o.t && o.t > 0) ? _tNow(o.t) : _tNow(0) + 0.02;
         node.port.postMessage({
           cmd: 'note', slot, kind: kf.kind, p0: kf.p0, freq: o.freq, vel: o.vel,
           pan: Math.max(-1, Math.min(1, (o.pan || 0) / 100)),
-          t: _tNow(o.t), dur: -1, a: o.a, dcy: o.d, s: o.s, r: o.r, detune: o.detune || 0,
+          t: _tHold, dur: -1, a: o.a, dcy: o.d, s: o.s, r: o.r, detune: o.detune || 0,
           dp: o.dp || null, tag,
         });
         let released = false;
         return {
           release: () => {
             if (released) return; released = true;
+            // A release landing before the (padded) start FREES the still-
+            // Scheduled voice (silent tap) or chops the attack mid-rise
+            // (click). Defer fast taps' release — every click becomes a
+            // short-but-real note.
+            const _dt = performance.now() - _holdT0;
+            if (_dt < 45) { setTimeout(() => { try { node.port.postMessage({ cmd: 'releaseTag', tag, r: o.r }); } catch (e) {} }, 45 - _dt); return; }
             node.port.postMessage({ cmd: 'releaseTag', tag, r: o.r });
           },
           setDetune: (cents) => {

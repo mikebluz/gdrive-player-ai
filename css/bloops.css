@@ -3635,44 +3635,52 @@
     }
     /* Per-layer top-controls row (above Voice) — holds Rename, hidden when the
        layer is collapsed (covered by .ambient-layer.collapsed > *:not(head)). */
-    .ambient-layer-topctrls { display: flex; align-items: center; gap: 6px; padding: 5px 0 3px; flex-wrap: nowrap; }
-    /* Dice — randomize all of this layer's params. Pill matching the other
-       icon buttons in this row. */
-    .ambient-layer-topctrls .ambient-dice-btn {
-      flex: 0 0 auto; width: auto; height: auto; margin: 0; padding: 3px 10px;
-      border: 1px solid #2d2d3f; border-radius: 7px; background: transparent;
-      color: #f6ad55; cursor: pointer; font: 600 0.72rem 'Segoe UI', sans-serif; line-height: 1;
-      transition: all 0.15s ease;
+    .ambient-layer-topctrls { display: flex; align-items: center; gap: 8px; padding: 5px 0 3px; flex-wrap: wrap; }
+    /* ONE pill spec for EVERY button in this row — identical shape, size,
+       border, and font; the FUNCTION is indicated by the glyph's accent color
+       (rename purple, clone blue, morph green, save gold, delete rose, rec
+       red, hum pink, dice orange, piano teal). Hover picks up the same accent
+       as border + tint. The child selector overrides each button's base style
+       from its other contexts (head-row 24px squares, the bare borderless rec
+       buttons) so nothing in this row reads bolted-on. Row wraps so the pills
+       never overflow (no horizontal scroll). */
+    .ambient-layer-topctrls > button {
+      flex: 0 0 auto; width: auto; height: auto; margin: 0;
+      padding: 4px 14px; border: 1px solid #2d2d3f; border-radius: 7px;
+      background: transparent; cursor: pointer; opacity: 1;
+      font: 600 0.95rem 'Segoe UI', sans-serif; line-height: 1;
+      color: #6b6b8a; transition: all 0.15s ease;
     }
-    @media (hover: hover) { .ambient-layer-topctrls .ambient-dice-btn:hover { border-color: #f6ad55; color: #fbd38d; background: rgba(246,173,85,0.12); } }
-    .ambient-layer-topctrls .ambient-rename-btn {
-      width: auto; height: auto; margin: 0; padding: 3px 10px; border-radius: 7px;
-      font: 600 0.72rem 'Segoe UI', sans-serif;
+    .ambient-layer-topctrls .ambient-rename-btn     { color: #b794f4; }
+    .ambient-layer-topctrls .ambient-clone-btn      { color: #63b3ed; }
+    .ambient-layer-topctrls .ambient-morph-btn      { color: #68d391; }
+    .ambient-layer-topctrls .ambient-savepreset-btn { color: #f6e05e; }
+    .ambient-layer-topctrls .ambient-seq-del        { color: #fc8181; }
+    .ambient-layer-topctrls .ambient-piano-rec      { color: #e53e3e; }
+    .ambient-layer-topctrls .ambient-hum-rec        { color: #ed64a6; }
+    .ambient-layer-topctrls .ambient-dice-btn       { color: #f6ad55; }
+    .ambient-layer-topctrls .ambient-piano-toggle   { color: #7fd6c4; }
+    @media (hover: hover) {
+      .ambient-layer-topctrls .ambient-rename-btn:hover     { border-color: #b794f4; color: #d6bcfa; background: rgba(159, 122, 234, 0.12); }
+      .ambient-layer-topctrls .ambient-clone-btn:hover      { border-color: #63b3ed; color: #90cdf4; background: rgba(99, 179, 237, 0.12); }
+      .ambient-layer-topctrls .ambient-morph-btn:hover      { border-color: #68d391; color: #9ae6b4; background: rgba(104, 211, 145, 0.12); }
+      .ambient-layer-topctrls .ambient-savepreset-btn:hover { border-color: #f6e05e; color: #faf089; background: rgba(246, 224, 94, 0.12); }
+      .ambient-layer-topctrls .ambient-seq-del:hover        { border-color: #e25563; color: #ff8a95; background: rgba(226, 85, 99, 0.12); }
+      .ambient-layer-topctrls .ambient-piano-rec:hover      { border-color: #e53e3e; color: #fc8181; background: rgba(229, 62, 62, 0.12); }
+      .ambient-layer-topctrls .ambient-hum-rec:hover        { border-color: #ed64a6; color: #f687b3; background: rgba(237, 100, 166, 0.12); }
+      .ambient-layer-topctrls .ambient-dice-btn:hover       { border-color: #f6ad55; color: #fbd38d; background: rgba(246, 173, 85, 0.12); }
+      .ambient-layer-topctrls .ambient-piano-toggle:hover   { border-color: #7fd6c4; color: #7fd6c4; background: rgba(127, 214, 196, 0.12); }
     }
-    /* Layer Delete moved into the body controls row — a reddish pill beside
-       Rename (overrides the base .ambient-seq-del 26px square + auto-margin). */
-    .ambient-layer-topctrls .ambient-seq-del {
-      width: auto; height: auto; margin: 0; padding: 3px 10px; border-radius: 7px;
-      font: 600 0.72rem 'Segoe UI', sans-serif;
-    }
-    /* Per-layer piano visualizer (#6) — toggle button + expandable keyboard. */
+    /* Per-layer piano visualizer (#6) — toggle button + expandable keyboard.
+       (Base style for contexts outside the top-controls row.) */
     .ambient-piano-toggle {
       flex: 0 0 auto; border: 1px solid #2d2d3f; border-radius: 7px;
       background: transparent; color: #6b6b8a; cursor: pointer; line-height: 1; transition: all 0.15s ease;
     }
     @media (hover: hover) { .ambient-piano-toggle:hover { border-color: #7fd6c4; color: #7fd6c4; } }
     .ambient-piano-toggle.active { color: #1a202c; background: #7fd6c4; border-color: #7fd6c4; }
-    /* In the body controls row it reads as a pill, matching the Rename button. */
-    .ambient-layer-topctrls .ambient-piano-toggle { width: auto; height: auto; margin: 0; padding: 3px 10px; font: 600 0.72rem 'Segoe UI', sans-serif; }
-    .ambient-layer-topctrls .ambient-clone-btn, .ambient-layer-topctrls .ambient-savepreset-btn { width: auto; height: auto; margin: 0; padding: 3px 10px; font: 600 0.72rem 'Segoe UI', sans-serif; }
-    /* Enlarged (~31% over original) + rounded. Row wraps so the bigger pills
-       never overflow (no horizontal scroll). */
-    .ambient-layer-topctrls { gap: 8px; flex-wrap: wrap; }
-    .ambient-layer-topctrls .ambient-dice-btn,
-    .ambient-layer-topctrls .ambient-rename-btn,
-    .ambient-layer-topctrls .ambient-seq-del,
-    .ambient-layer-topctrls .ambient-piano-toggle,
-    .ambient-layer-topctrls .ambient-clone-btn, .ambient-layer-topctrls .ambient-savepreset-btn { padding: 4px 14px; font-size: 0.95rem; border-radius: 7px; }
+    /* Active piano toggle stays the filled teal even against the scoped accents. */
+    .ambient-layer-topctrls .ambient-piano-toggle.active { color: #1a202c; background: #7fd6c4; border-color: #7fd6c4; }
     /* Keyboard strip — relative box; white keys tile (float), black keys overlay
        (absolute). Heights/widths come from inline styles built in _ambBuildPiano. */
     /* font-size:0 + nowrap kills inline-block gaps/wrap; inline-block (not float)
@@ -10871,7 +10879,7 @@
        top-level children show. */
     #serialbox-view { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 16px; box-sizing: border-box; }
     body.view-serialbox > #serialbox-view { display: block; }
-    body.view-serialbox > *:not(.key-picker-overlay):not(.float-header):not(.xport-menu):not(.top-bar):not(#serialbox-view):not(script) {
+    body.view-serialbox > *:not(.key-picker-overlay):not(.float-header):not(.xport-menu):not(.top-bar):not(#serialbox-view):not(.bloops-toast):not(script) {
       display: none !important;
     }
     body.view-serialbox { overflow-y: auto; }
@@ -10889,7 +10897,7 @@
        no empty gap between the Bloom panel and the project bar below it. The
        Shapes / Mixdown subtabs keep flex:1. */
     body.view-mix > #mix-view.mix-sub-bloom { flex: 0 0 auto; }
-    body.view-mix > *:not(.key-picker-overlay):not(.float-header):not(.top-bar):not(.project-bottom-bar):not(.project-panel):not(#mix-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(.track-item-popover):not(#ambient-shape-edithost):not(#midi-overlay):not(#xport-menu):not(script) {
+    body.view-mix > *:not(.key-picker-overlay):not(.float-header):not(.top-bar):not(.project-bottom-bar):not(.project-panel):not(#mix-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(.track-item-popover):not(#ambient-shape-edithost):not(#midi-overlay):not(#xport-menu):not(.bloops-toast):not(script) {
       display: none !important;
     }
     body.view-mix { overflow-y: auto; }
@@ -10902,7 +10910,7 @@
     /* Harvest view — captured Blooms + Shapes bank. Same show/hide model as Mix. */
     #harvest-view { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; box-sizing: border-box; padding: 16px; }
     body.view-harvest > #harvest-view { display: block; }
-    body.view-harvest > *:not(.key-picker-overlay):not(.float-header):not(.top-bar):not(.project-bottom-bar):not(.project-panel):not(#harvest-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(#midi-overlay):not(#xport-menu):not(script) {
+    body.view-harvest > *:not(.key-picker-overlay):not(.float-header):not(.top-bar):not(.project-bottom-bar):not(.project-panel):not(#harvest-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(#midi-overlay):not(#xport-menu):not(.bloops-toast):not(script) {
       display: none !important;
     }
     body.view-harvest { overflow-y: auto; }

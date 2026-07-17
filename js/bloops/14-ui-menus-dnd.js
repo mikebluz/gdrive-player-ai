@@ -5840,8 +5840,10 @@
       // Perform mode owns capture in default Sequencer mode: record the press
       // with timing instead of the normal Keep single/chord append below.
       if (performMode && gridMode === 'sequencer' && !wrapTemplate && !chordMode && !stepMode && selectedStepRefs.length === 0) {
-        // During a count-in the layer is armed but not yet recording.
-        if (!_performCountingIn) { try { _performEmit(voices); } catch (e) { console.warn('Perform capture failed', e); } }
+        // During a count-in the layer is armed but not yet recording. With
+        // "Translate mic input" on, the MIC owns the take — grid presses
+        // audition only (the hum is translated to steps at finalize).
+        if (!_performCountingIn && !(typeof performMic !== 'undefined' && performMic)) { try { _performEmit(voices); } catch (e) { console.warn('Perform capture failed', e); } }
         _polySession.suppressClickUntil = performance.now() + 250;
         return;
       }

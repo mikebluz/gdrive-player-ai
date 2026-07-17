@@ -279,6 +279,13 @@
     // is clicked again to finalize. With a count-in the click is phase-locked
     // to the count-in grid so it continues seamlessly into the take.
     let performClick = false;
+    // "Translate mic input" — when on, arming Perform opens the microphone
+    // and the take is HUMMED, not played: frames are pitch-tracked while
+    // armed, and finalizing (PERF again) transcribes them (via the Bloom hum
+    // machinery _ambAcfPitch/_ambHumSegment) into timed sequence steps on
+    // the same quantize/resolution grid. Grid presses audition only while a
+    // mic take is armed. Independent of any playback — works from silence.
+    let performMic = false;
     let _performStartMs = null;
     let _performEmittedUnits = 0;
     // While a count-in click is playing, Perform is armed but not yet

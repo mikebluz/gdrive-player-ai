@@ -944,8 +944,109 @@
       const countinBtn = document.getElementById('perform-countin-btn');
       const barsEl = document.getElementById('perform-countin-bars');
       const clickCb = document.getElementById('perform-click');
+      const micCb = document.getElementById('perform-mic');
       if (!btn) return;
       if (clickCb) clickCb.checked = performClick;
+      if (micCb) micCb.checked = performMic;
+
+      // ---- "Translate mic input" — hum the take instead of playing it ----
+      // Arms the mic alongside Perform (no playback required — works from
+      // silence): a 35 ms poll pitch-tracks the input via the Bloom hum
+      // machinery (_ambAcfPitch), and finalize segments the frames
+      // (_ambHumSegment) into notes committed as timed sequence steps on the
+      // SAME quantize/resolution timeline the played path uses. In Listen
+      // mode the first VOICED frame anchors the timeline (and starts the
+      // lanes) exactly like a first played note; with a count-in the
+      // downbeat anchor set in arm() applies and pre-downbeat humming is
+      // dropped. Frame times use performance.now() (the played path's
+      // clock), NOT Tone.now() like the Bloom hum path.
+      let _micRec = null;
+      const _micStop = () => {
+        if (!_micRec) return null;
+        const rec = _micRec; _micRec = null;
+        try { clearInterval(rec.poll); } catch (e) {}
+        try { rec.stream && rec.stream.getTracks().forEach(tr => tr.stop()); } catch (e) {}
+        try { rec.ac && rec.ac.close && rec.ac.close(); } catch (e) {}
+        return rec;
+      };
+      const _micStart = () => {
+        if (_micRec) return;
+        if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+          if (typeof showToast === 'function') showToast('Microphone unavailable in this browser — recording grid presses instead.');
+          return;
+        }
+        navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }).then((stream) => {
+          // Disarmed (or mic unchecked) while the permission prompt was up.
+          if (!performMode || !performMic) { try { stream.getTracks().forEach(tr => tr.stop()); } catch (e) {} return; }
+          let ac; try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { try { stream.getTracks().forEach(tr => tr.stop()); } catch (e2) {} return; }
+          const src = ac.createMediaStreamSource(stream);
+          const an = ac.createAnalyser(); an.fftSize = 2048;
+          src.connect(an);
+          const buf = new Float32Array(an.fftSize);
+          const rec = { stream, ac, an, frames: [], poll: null };
+          rec.poll = setInterval(() => {
+            try {
+              an.getFloatTimeDomainData(buf);
+              const r = _ambAcfPitch(buf, ac.sampleRate);
+              const tMs = performance.now();
+              if (_performStartMs == null && !_performCountingIn && r.f > 0 && r.rms > 0.02) {
+                _performStartMs = tMs; _performEmittedUnits = 0;
+                try { if (typeof playSequence === 'function') playSequence(); } catch (e) {}
+              }
+              rec.frames.push({ t: tMs / 1000, f: r.f, rms: r.rms });
+              if (rec.frames.length > 4000) rec.frames.shift();   // ~2.3 min cap
+            } catch (e) {}
+          }, 35);
+          _micRec = rec;
+          if (typeof showToast === 'function') showToast('Perform: mic listening — hum / sing; press PERF to translate.');
+        }).catch(() => {
+          if (typeof showToast === 'function') showToast('Microphone permission denied — recording grid presses instead.');
+        });
+      };
+      const _micFinalize = () => {
+        const rec = _micStop(); if (!rec) return;
+        let humNotes = [];
+        try { humNotes = (typeof _ambHumSegment === 'function') ? _ambHumSegment(rec.frames) : []; } catch (e) {}
+        const anchorMs = _performStartMs;
+        if (!humNotes.length || anchorMs == null) {
+          if (typeof showToast === 'function') showToast('No melody detected — try humming closer to the mic.');
+          return;
+        }
+        const bpm = parseInt(tempoInput?.value, 10) || 120;
+        const unitSub = performQuantize ? performResolution : 0.125;
+        const unitMs = Math.max(1, (60000 / bpm) * unitSub);
+        if (typeof snapshotForUndo === 'function') snapshotForUndo('Perform (mic)');
+        let added = 0;
+        humNotes.forEach(n => {
+          const atMs = n.at * 1000;
+          if (atMs + n.durMs <= anchorMs) return;   // hummed during the count-in
+          const desiredStart = Math.max(0, Math.round((atMs - anchorMs) / unitMs));
+          const restUnits = Math.max(0, desiredStart - _performEmittedUnits);
+          if (restUnits > 0) addToSequence({ freq: null, label: '—', cellIndex: null, duration: restUnits, subdivision: unitSub });
+          const noteUnits = Math.max(1, Math.round(n.durMs / unitMs));
+          const midi = Math.round(_freqToMidi(n.f));
+          // Land on a grid cell when the hummed pitch matches one, so the
+          // step carries the cell's sound/params like a played note would;
+          // off-grid pitches keep the raw (chromatic-snapped) freq.
+          let ci = null, freq = n.f, label = _pcName(midi) + (Math.floor(midi / 12) - 1), sound = null, params = null;
+          try {
+            if (typeof notes !== 'undefined' && Array.isArray(notes)) {
+              const gi = notes.findIndex(gn => gn && Number.isFinite(gn.freq) && Math.abs(_freqToMidi(gn.freq) - midi) < 0.5);
+              if (gi >= 0) {
+                ci = gi; freq = notes[gi].freq; label = notes[gi].label;
+                if (typeof cellParams !== 'undefined' && cellParams[gi]) { params = { ...cellParams[gi] }; sound = params.type; }
+              }
+            }
+          } catch (e) {}
+          const step = { freq, label, cellIndex: ci, duration: noteUnits, subdivision: unitSub };
+          if (sound) step.sound = sound;
+          if (params) step.params = params;
+          addToSequence(step);
+          _performEmittedUnits = desiredStart + noteUnits;
+          added++;
+        });
+        if (typeof showToast === 'function') showToast(added ? ('Hum translated — ' + added + ' note' + (added === 1 ? '' : 's') + '.') : 'No melody detected after the count-in.');
+      };
       const refresh = () => btn.classList.toggle('active', performMode);
       const closePop = () => { if (pop) pop.hidden = true; };
       const openPop = () => { if (pop) pop.hidden = false; };
@@ -1005,10 +1106,14 @@
           // No count-in grid to lock to — start a free-running click now if
           // Click is checked. It stays on until Perform is finalized.
           if (performClick) metroStart(0);
-          if (typeof showToast === 'function') showToast('Perform: listening — play to record.');
+          if (typeof showToast === 'function' && !performMic) showToast('Perform: listening — play to record.');
         }
+        if (performMic) _micStart();
       };
       const disarm = () => {
+        // Finalize a mic take BEFORE the flags reset — the translation
+        // reads _performStartMs / _performEmittedUnits.
+        try { _micFinalize(); } catch (e) { console.warn('Perform mic translate failed', e); }
         performMode = false; _performCountingIn = false;
         restoreMetro();
         closePop(); refresh();
@@ -1028,6 +1133,12 @@
       if (qz) qz.addEventListener('change', () => { performQuantize = !!qz.checked; });
       if (res) res.addEventListener('change', () => { performResolution = parseFloat(res.value) || 0.25; });
       if (clickCb) clickCb.addEventListener('change', () => { performClick = !!clickCb.checked; });
+      if (micCb) micCb.addEventListener('change', () => {
+        performMic = !!micCb.checked;
+        // Mid-take toggle: on → start listening now; off → drop the frames
+        // captured so far (no translation) and record grid presses again.
+        if (performMode) { if (performMic) _micStart(); else _micStop(); }
+      });
       // Close the popover on outside click / Escape.
       document.addEventListener('click', (e) => {
         if (!pop || pop.hidden) return;

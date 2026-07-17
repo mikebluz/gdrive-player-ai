@@ -3130,6 +3130,12 @@
     /* 🕺 Groove — reuses the .ambient-sched frame. Macro sliders + push rows. */
     .ambient-groove.collapsed .ambient-sched-body { display: none; }
     .ambient-groove.collapsed .ambient-groove-toggle::before { transform: rotate(-90deg); }
+    /* ⇶ Progression section (same shell family as Groove/Scheduler). */
+    .ambient-progsec.collapsed .ambient-progsec-toggle::before { transform: rotate(-90deg); }
+    /* Head hint sits in flow after the title; the caret keeps its own
+       margin-left:auto (two autos would split the space and float the hint). */
+    .ambient-progsec .ambient-progsec-hint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ambient-progsec .ambient-prog-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     /* Groove Bypass — A/B toggle. Green = active (applying), amber = bypassed. */
     .ambient-groove-bypassrow { margin-bottom: 10px; }
     .ambient-groove-bypass { width: 100%; padding: 7px 12px; font-size: 0.78rem; font-weight: 600;

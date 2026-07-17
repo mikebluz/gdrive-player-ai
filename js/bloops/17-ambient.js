@@ -21472,6 +21472,17 @@
         if (keySub) keySub.style.display = (rk.mode === 'key') ? '' : 'none';
         const progSub = document.getElementById(tr('ambient-prog-sub'));
         if (progSub) progSub.style.display = (rk.mode === 'progression') ? '' : 'none';
+        // ⇶ Progression section: swap picker ↔ "activate in Configure" hint,
+        // and mirror the state into the always-visible head hint.
+        { const progOff = document.getElementById(tr('ambient-progsec-off'));
+          if (progOff) progOff.style.display = (rk.mode === 'progression') ? 'none' : '';
+          const psHint = document.getElementById(tr('ambient-progsec-hint'));
+          if (psHint) {
+            const nC = Array.isArray(p.chords) ? p.chords.length : 0;
+            psHint.textContent = (rk.mode !== 'progression') ? 'off'
+              : nC ? (((p.name && p.name.trim()) || 'Progression') + ' · ' + nC + ' chord' + (nC === 1 ? '' : 's'))
+              : 'pick a progression';
+          } }
         // Key sub-controls. Effective key: workspace when following, stored custom otherwise.
         const kFol = document.getElementById(tr('ambient-key-follow'));
         if (kFol) { kFol.classList.toggle('active', follow); kFol.disabled = !cfg.keyOn; }
@@ -21802,21 +21813,12 @@
               ['Ionian (off)', 'Dorian', 'Phrygian', 'Lydian', 'Mixolydian', 'Aeolian (rel. min)', 'Locrian'].map((nm, i) => '<option value="' + i + '">' + nm + '</option>').join('') +
             '</select>' +
           '</span>' +
-          // Progression sub-controls (shown in Progression mode; master-only).
-          (E.isLane ? '' :
-            '<span class="ambient-prog-sub" id="ambient-prog-sub">' +
-              '<button type="button" class="ambient-select ambient-prog-pick" id="ambient-prog-pick" title="Pick a chord progression for all layers">— pick —</button>' +
-              '<button type="button" class="ambient-seg ambient-prog-edit" id="ambient-prog-edit" title="Edit the selected progression chord-by-chord and Save As New">Edit</button>' +
-            '</span>') +
+          // Progression sub-controls moved to the top-level ⇶ Progression
+          // section (below, beside Groove) — the mode selector stays here.
           '<span class="ambient-hint" id="ambient-key-hint">off</span>' +
         '</div>' +
-        // CHORD MATRIX (chord sequencer): with an Area progression on, a layers ×
-        // chords grid — tap a cell to cycle that layer's probability of playing
-        // during that chord (100→60→30→0); per-row Part = a sub-window of every
-        // chord (with a stochastic placement). Rendered by _ambRenderChordMatrix.
-        '<div class="ambient-progmatrix" id="ambient-progmatrix" style="display:none"></div>' +
-        // Section matrix (layers × sections) — rendered by _ambRenderSectionMatrix.
-        '<div class="ambient-progmatrix ambient-secmatrix" id="ambient-secmatrix" style="display:none"></div>' +
+        // (The chord matrix + section matrix moved into the ⇶ Progression
+        // section below — same ids, same renderers.)
         // Global ramps (BPM etc.) — area-level automation lives here in Configure;
         // per-layer ramps moved into each layer's card (see _ambLayerRampsHtml).
         _ambLayerRampsHtml('global') +
@@ -21860,6 +21862,34 @@
         // Warmth / Width / Dynamics / Reverb moved from here to the Mixer →
         // "Global FX" subsection (below the faders) — see _globalFxHtml.
         '</div></details>' +   // end .ambient-master-menu-body / .ambient-master-menu
+        // ⇶ Progression — the area's chord-sequence settings, hoisted to a
+        // top-level collapsible section (same shell as Groove): the
+        // progression picker/editor plus the chord matrix and the section
+        // matrix. The KEY MODE selector stays in Configure (Chromatic | Key |
+        // Progression) — this section holds the progression's OWN settings.
+        // Master-only (lanes have no area progression; the guarded renderers
+        // no-op without the elements). Ids are UNCHANGED (#ambient-prog-sub /
+        // #ambient-progmatrix / #ambient-secmatrix) so the existing pick/edit
+        // wiring, sync display toggles and matrix renderers work as-is.
+        (E.isLane ? '' :
+        '<div class="ambient-sched ambient-progsec collapsed" id="ambient-progsec">' +
+          '<div class="ambient-sched-head">' +
+            '<span class="ambient-mixer-title">⇶ Progression</span>' +
+            '<span class="ambient-hint ambient-progsec-hint" id="ambient-progsec-hint"></span>' +
+            '<button type="button" class="ambient-mixer-toggle ambient-progsec-toggle" id="ambient-progsec-toggle" title="Collapse / expand progression" aria-label="Collapse or expand progression"></button>' +
+          '</div>' +
+          '<div class="ambient-sched-body" id="ambient-progsec-body">' +
+            '<div class="ambient-row ambient-prog-row">' +
+              '<span class="ambient-prog-sub" id="ambient-prog-sub">' +
+                '<button type="button" class="ambient-select ambient-prog-pick" id="ambient-prog-pick" title="Pick a chord progression for all layers">— pick —</button>' +
+                '<button type="button" class="ambient-seg ambient-prog-edit" id="ambient-prog-edit" title="Edit the selected progression chord-by-chord and Save As New">Edit</button>' +
+              '</span>' +
+              '<span class="ambient-hint" id="ambient-progsec-off" style="display:none">set Key → Progression in Configure to activate</span>' +
+            '</div>' +
+            '<div class="ambient-progmatrix" id="ambient-progmatrix" style="display:none"></div>' +
+            '<div class="ambient-progmatrix ambient-secmatrix" id="ambient-secmatrix" style="display:none"></div>' +
+          '</div>' +
+        '</div>') +
         // 🕺 Groove — live macros that reshape the FEEL of everything playing:
         // global Swing / Accent / Humanize (cascade to every layer), and a
         // per-layer Push/Pull (ahead/behind the beat). Collapsible; rendered by
@@ -22093,6 +22123,13 @@
       // 🕺 Groove section — collapse toggle + delegated handlers (macros, mode,
       // per-layer push, 🎲 roll). Live: edits apply on the next onset; push
       // re-anchors the layer so the new offset lands cleanly.
+      // ⇶ Progression section — collapse toggle (content is rendered by the
+      // existing sync/matrix code; nothing to build on expand).
+      { const psBtn = host.querySelector('.ambient-progsec-toggle');
+        if (psBtn) psBtn.addEventListener('click', () => {
+          const ps = psBtn.closest('.ambient-progsec');
+          if (ps) ps.classList.toggle('collapsed');
+        }); }
       { const grBtn = host.querySelector('.ambient-groove-toggle');
         if (grBtn) grBtn.addEventListener('click', () => {
           const gr = grBtn.closest('.ambient-groove');

@@ -2407,7 +2407,77 @@
         setDetune: (c) => handles.forEach(h => { try { h && h.setDetune && h.setDetune(c); } catch (e) {} }),
       };
     }
+    // ---- Output-link keep-alive + press diagnostics (2026-07-17) ----------
+    // Field symptom that survives every engine fix and never reproduces
+    // headless: grid presses "laggy, ~half silent". A physical output path
+    // with HIGH LATENCY (Bluetooth ~150-300 ms, some HDMI/USB DACs) both
+    // delays everything AND — on macOS/iOS — SLEEPS the link during silence,
+    // swallowing the first note(s) after a quiet gap. Fix: when outputLatency
+    // says the path is slow, hold the link awake with an inaudible tone.
+    let _linkKeepAlive = null;
+    function _ensureLinkKeepAlive() {
+      try {
+        const raw = (typeof Tone !== 'undefined' && Tone.context) ? Tone.context.rawContext : null;
+        if (!raw || raw.state !== 'running') return;
+        const outLat = Number.isFinite(raw.outputLatency) ? raw.outputLatency : 0;
+        if (outLat < 0.08) { // wired path — no sleep problem, keep the graph clean
+          if (_linkKeepAlive) { try { _linkKeepAlive.osc.stop(); _linkKeepAlive.osc.disconnect(); _linkKeepAlive.g.disconnect(); } catch (e) {} _linkKeepAlive = null; }
+          return;
+        }
+        if (_linkKeepAlive) return;
+        const osc = raw.createOscillator(); const g = raw.createGain();
+        osc.frequency.value = 30; g.gain.value = 0.00018;   // ~-75 dBFS: inaudible, but the DAC/link stays awake
+        osc.connect(g); g.connect(raw.destination); osc.start();
+        _linkKeepAlive = { osc, g };
+        try { console.warn('[bloops] high output latency (' + Math.round(outLat * 1000) + ' ms — Bluetooth?) — link keep-alive engaged so quick presses are not swallowed while the device wakes.'); } catch (e) {}
+      } catch (e) {}
+    }
+    try { setInterval(_ensureLinkKeepAlive, 4000); } catch (e) {}
+    // Press diagnostics HUD — ?diag=1 (or localStorage sbDiag='1'): per press,
+    // shows handler latency, engine (core/node), node-build ms, and whether
+    // the MASTER bus actually rose within 200 ms; plus outputLatency and the
+    // audio-clock rate. One screenshot = a full field diagnosis.
+    const _pdOn = () => { try { return /[?&]diag=1\b/.test(location.search) || localStorage.getItem('sbDiag') === '1'; } catch (e) { return false; } };
+    let _pdAn = null, _pdRows = [], _pdEl = null;
+    function _pdEnsure() {
+      if (!_pdOn()) return false;
+      if (!_pdAn) {
+        try { _pdAn = new Tone.Analyser('waveform', 256); if (typeof masterBus !== 'undefined' && masterBus) masterBus.connect(_pdAn); } catch (e) { _pdAn = null; }
+      }
+      if (!_pdEl) {
+        _pdEl = document.createElement('div');
+        _pdEl.id = 'press-diag';
+        _pdEl.style.cssText = 'position:fixed;left:0;bottom:0;z-index:2147483000;background:rgba(10,10,18,.92);color:#cfe;font:11px/1.5 monospace;padding:6px 9px;pointer-events:none;max-width:64vw;border-top-right-radius:8px;';
+        document.body.appendChild(_pdEl);
+      }
+      return true;
+    }
+    function _pdRms() { try { const w = _pdAn.getValue(); let s2 = 0; for (let i = 0; i < w.length; i++) s2 += w[i] * w[i]; return Math.sqrt(s2 / w.length); } catch (e) { return 0; } }
+    function _pdPress(engine, buildMs) {
+      if (!_pdEnsure()) return;
+      const t0 = performance.now();
+      const base = _pdRms();
+      const row = { t: t0, engine, buildMs: Math.round(buildMs), rise: '…' };
+      _pdRows.push(row); if (_pdRows.length > 10) _pdRows.shift();
+      let checks = 0;
+      const iv = setInterval(() => {
+        checks++;
+        const r = _pdRms();
+        if (r > base * 1.25 + 0.004) { row.rise = Math.round(performance.now() - t0) + 'ms'; clearInterval(iv); _pdRender(); }
+        else if (checks > 12) { row.rise = '✗ SILENT'; clearInterval(iv); _pdRender(); }
+      }, 20);
+      _pdRender();
+    }
+    function _pdRender() {
+      if (!_pdEl) return;
+      let outLat = 0, ctr = '';
+      try { const raw = Tone.context.rawContext; outLat = Math.round((raw.outputLatency || 0) * 1000); } catch (e) {}
+      try { if (typeof _ambHealth !== 'undefined' && _ambHealth && _ambHealth.ctRate != null) ctr = ' ctRate=' + _ambHealth.ctRate; } catch (e) {}
+      _pdEl.innerHTML = 'outLat=' + outLat + 'ms' + ctr + (_linkKeepAlive ? ' [keep-alive ON]' : '') + '<br>' +
+        _pdRows.map(r => r.engine + (r.buildMs ? ' build=' + r.buildMs + 'ms' : '') + ' → ' + r.rise).join('<br>');
+    }
     function startSustainedNote(freq, params = {}, startAt) {
+      const _pdT0 = performance.now();   // press diag: node-build timing
       // Cold-start guard — same race as playNote. Optional `startAt`
       // (Tone audio time) lets multi-voice wrap auditions pin every
       // voice to the same instant; without it, each voice computes its
@@ -2688,7 +2758,7 @@
           a: atk, d: dec, s: sus, r: rel, detune,
           dp: _coreVoices.designParams(params),
         });
-        if (_h) return _h;
+        if (_h) { _pdPress('core', 0); return _h; }
       }
       // 'sync' is core-only — degrade a missed hold to a plain saw (see playNote).
       if (type === 'sync') {
@@ -3042,6 +3112,7 @@
         }
       }
 
+      _pdPress('node', performance.now() - _pdT0);
       let released = false;
       return {
         release: () => {

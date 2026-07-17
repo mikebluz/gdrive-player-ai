@@ -1,24 +1,14 @@
-    // ---- Weak-device audio fallback (persisted, applied before ANY Tone use)
-    // Set by the Bloom health watchdog when the adaptive voice budget bottoms
-    // out and the render clock STILL can't keep real time — i.e. the machine's
-    // render budget sits below this app's fixed graph cost at the default
-    // 'interactive' output latency. A 'playback'-hint context uses larger
-    // device buffers, amortizing the same DSP over far fewer callbacks
-    // (several × more headroom) for ~30-60 ms extra output latency —
-    // inaudible for scheduled/generative playback, minor for live presses.
-    // Takes effect on load because a context can't change latency in place.
-    // Revert: localStorage.removeItem('bloopsAudioLatency') + reload.
-    try {
-      const _audioLat = localStorage.getItem('bloopsAudioLatency');
-      if ((_audioLat === 'playback' || _audioLat === 'max')
-          && typeof Tone !== 'undefined' && typeof Tone.setContext === 'function' && Tone.Context) {
-        // 'playback' ≈ 23 ms device buffers; 'max' (0.12 s hint) rides through
-        // the ~30-50 ms transient system stalls that still glitch a weak
-        // machine at 'playback' size. Escalated by the health watchdog.
-        Tone.setContext(new Tone.Context({ latencyHint: _audioLat === 'max' ? 0.12 : 'playback' }));
-        console.info('[bloops] ' + _audioLat + '-latency audio mode (weak-device fallback) — remove localStorage "bloopsAudioLatency" to revert');
-      }
-    } catch (e) {}
+    // ---- Weak-device audio fallback: REMOVED (was: persisted latencyHint
+    // swap via Tone.setContext). Two reasons it must never come back in this
+    // form: (1) nothing writes 'bloopsAudioLatency' anymore (the watchdog
+    // escalation was removed), so the key only survived as a fossil on
+    // machines flagged by old builds; (2) in Tone 14.9.17, setContext()
+    // updates Tone.getContext() but NOT the Tone.context property — the app
+    // uses both idioms, so the swap SPLIT the app across two live
+    // AudioContexts with clocks ~0.5 s apart: fast grid taps released before
+    // their (wrong-clock) start = freed silent, everything else exited a
+    // ~186 ms output pipeline. Purge the fossil so no machine stays wedged.
+    try { localStorage.removeItem('bloopsAudioLatency'); } catch (e) {}
 
     // ---- Toast notifications -------------------------------------------------
     // Lightweight transient message, bottom-center. The whole Bloops codebase

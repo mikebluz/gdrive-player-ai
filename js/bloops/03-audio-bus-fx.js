@@ -562,14 +562,7 @@
     // inaudibly while halving this always-on master waveshaper's CPU (4x ran the
     // whole mix through 4x up/down-sampling every sample, a fixed drain that, with
     // dense FX-heavy Bloom stacks, contributed to glitching).
-    // Weak-device mode (persisted playback-latency fallback, see 01-core-state):
-    // skip oversampling entirely — the lookahead-limiter worklet already keeps
-    // peaks under the clipper's knee, so the clipper is identity in practice and
-    // 2x up/down-sampling the whole mix is pure fixed cost a struggling render
-    // thread can't spare.
-    try {
-      if (localStorage.getItem('bloopsAudioLatency') !== 'playback') masterClipper.oversample = '2x';
-    } catch (e) { try { masterClipper.oversample = '2x'; } catch (e2) {} }
+    try { masterClipper.oversample = '2x'; } catch (e) {}
     // Master FADE — the FINAL output gain. A fade-in (on play) / fade-out (on
     // capture Finalize) ramps this, so it affects ALL audio AND is included in a
     // capture (the recorder taps this node via _ambMasterTapNode). 1 = full.

@@ -210,9 +210,14 @@
       const stash = document.getElementById('lane-expander-stash');
       if (!row || !stash) return;
       const display = document.getElementById('sequence-display');
-      const activeRow = display
-        ? display.querySelector(':scope > .lane-row.active')
+      // Author-in-Grid: the active (scratch) lane's row lives in the dock's
+      // strip host, not #sequence-display — bracket it there the same way.
+      const docked = (window._bloomGridKey != null)
+        ? document.querySelector('.ambient-seedgrid-striphost .lane-row.active')
         : null;
+      const activeRow = docked || (display
+        ? display.querySelector(':scope > .lane-row.active')
+        : null);
       if (activeRow) {
         if (activeRow.nextSibling !== row) activeRow.after(row);
       } else {

@@ -725,26 +725,30 @@
       // `.on` = viewed/edited area; `.playing` = the area the engine is sounding
       // (can differ while you edit another area mid-play).
       const play = (_masterEng.timer && Number.isFinite(_masterEng._playIdx)) ? _masterEng._playIdx : -1;
-      const chips = s.areas.map((a, i) => {
-        const c = _ambAreaColor(i);
-        return '<button type="button" class="ambient-area-chip' + (i === s.activeIdx ? ' on' : '') + (i === play ? ' playing' : '') +
-          '" data-aidx="' + i + '" style="--ac:' + c.accent + ';--ac-soft:' + c.soft + '" title="Click to select / edit · double-click to rename">' +
-          _ambEscText(_ambAreaChipLabel(a, i)) + '</button>';
+      // Orchestration state folded into ONE cycling toggle: Single (mode!=seq),
+      // Sequence (seq, no shuffle), Shuffle (seq + shuffle).
+      const shuffle = !!s.orch.shuffle;
+      const orchState = !seq ? 'single' : (shuffle ? 'shuffle' : 'sequence');
+      const orchLabel = orchState === 'single' ? 'Single' : (orchState === 'sequence' ? 'Sequence' : 'Shuffle');
+      // Area selection is a dropdown now (was a chip strip); ▶ marks the area
+      // the engine is actually sounding (may differ from the viewed one).
+      const areaOpts = s.areas.map((a, i) => {
+        const lbl = _ambAreaChipLabel(a, i);
+        return '<option value="' + i + '" data-base="' + _ambEscText(lbl) + '"' + (i === s.activeIdx ? ' selected' : '') + '>' +
+          (i === play ? '▶ ' : '') + _ambEscText(lbl) + '</option>';
       }).join('');
+      const _actC = _ambAreaColor(s.activeIdx);
       return '<div class="ambient-areas' + (_ambAreasExpanded ? '' : ' collapsed') + '">' +
-        // Orchestration mode row (always visible, tinted) — Single vs Sequence +
-        // Shuffle + the "Areas" label.
-        '<div class="ambient-areas-orchrow">' +
-          '<button type="button" class="ambient-orch-mode' + (seq ? ' on' : '') + '" title="Single = play this area only. Sequence = play each area for Plays×Bars, then advance to the next.">' + (seq ? 'Sequence' : 'Single') + '</button>' +
-          '<button type="button" class="ambient-orch-shuffle' + (s.orch.shuffle ? ' on' : '') + '"' + (seq ? '' : ' disabled') + ' title="Randomize the area order each cycle">Shuffle</button>' +
-          '<span class="ambient-areas-label">Areas</span>' +
-          '<span class="ambient-orch-bar-hdr" aria-live="polite" title="Current bar (and play) — always visible; the strip is sticky on scroll"></span>' +
-          '<button type="button" class="ambient-orch-clear" title="Delete ALL areas and start over with one empty area">Clear</button>' +
-        '</div>' +
-        // Header (always visible): area chips + add + collapse toggle (far right).
-        '<div class="ambient-areas-row">' +
-          '<div class="ambient-areas-strip">' + chips + '</div>' +
+        // Header (always visible), one compact row: the consolidated
+        // orchestration toggle, the area dropdown, add, the live bar readout,
+        // clear-all (✕), and the collapse chevron.
+        '<div class="ambient-areas-row" style="--ac:' + _actC.accent + ';--ac-soft:' + _actC.soft + '">' +
+          // ONE toggle cycling Single → Sequence → Shuffle → Single.
+          '<button type="button" class="ambient-orch-mode is-' + orchState + (seq ? ' on' : '') + '" title="Playback across areas — click to cycle: Single (play this area only) → Sequence (each area in order) → Shuffle (random order each cycle).">' + orchLabel + '</button>' +
+          '<select class="ambient-area-select" title="Select the area to view / edit (▶ marks the area playing now)">' + areaOpts + '</select>' +
           '<button type="button" class="ambient-area-btn ambient-area-add" title="Add a new area">+</button>' +
+          '<span class="ambient-orch-bar-hdr" aria-live="polite" title="Current bar (and play) — always visible; sticky on scroll"></span>' +
+          '<button type="button" class="ambient-area-btn ambient-orch-clear" title="Delete ALL areas and start over with one empty area" aria-label="Delete all areas">✕</button>' +
           '<button type="button" class="ambient-areas-toggle" title="Show / hide area orchestration" aria-label="Show or hide area orchestration">▾</button>' +
         '</div>' +
         // Collapsible body — two rows: management (clone/rename/delete), then
@@ -784,14 +788,11 @@
         _ambAreasExpanded = !_ambAreasExpanded;
         areasBox.classList.toggle('collapsed', !_ambAreasExpanded);
       });
-      host.querySelectorAll('.ambient-area-chip').forEach(chip => {
-        chip.addEventListener('click', () => { _ambSwitchToArea(parseInt(chip.dataset.aidx, 10) || 0); });
-        chip.addEventListener('dblclick', () => {
-          const i = parseInt(chip.dataset.aidx, 10) || 0;
-          if (typeof prompt !== 'function') return;
-          const cur = _ambAreas()[i]; const nm = prompt('Area name (blank = number):', (cur && cur.name) || '');
-          if (nm != null) { _ambRenameArea(i, nm.trim()); _ambRebuildMaster(); try { persistWorkspace(); } catch (e) {} }
-        });
+      // Area selection dropdown (replaced the chip strip). Rename lives on the
+      // ✎ button in the management row now (a <select> has no dblclick affordance).
+      const areaSel = host.querySelector('.ambient-area-select');
+      if (areaSel) areaSel.addEventListener('change', () => {
+        _ambSwitchToArea(parseInt(areaSel.value, 10) || 0);
       });
       const add = host.querySelector('.ambient-area-add');
       if (add) add.addEventListener('click', () => {
@@ -854,26 +855,23 @@
         _ambRebuildMaster();
         try { persistWorkspace(); } catch (e) {}
       });
-      // Orchestration row: Single/Sequence mode, Shuffle, and the active area's
-      // Plays × Bars (length of one play).
+      // Orchestration mode — ONE toggle cycling Single → Sequence → Shuffle →
+      // Single (folds the old Single/Sequence + Shuffle pair into one control).
       const modeB = host.querySelector('.ambient-orch-mode');
       if (modeB) modeB.addEventListener('click', () => {
         const st = _masterBloomState();
-        st.orch.mode = (st.orch.mode === 'sequence') ? 'single' : 'sequence';
+        const cur = (st.orch.mode !== 'sequence') ? 'single' : (st.orch.shuffle ? 'shuffle' : 'sequence');
+        const next = cur === 'single' ? 'sequence' : (cur === 'sequence' ? 'shuffle' : 'single');
+        st.orch.mode = (next === 'single') ? 'single' : 'sequence';
+        st.orch.shuffle = (next === 'shuffle');
         const seq = st.orch.mode === 'sequence';
-        modeB.textContent = seq ? 'Sequence' : 'Single';
+        modeB.textContent = next.charAt(0).toUpperCase() + next.slice(1);
         modeB.classList.toggle('on', seq);
-        const sh = host.querySelector('.ambient-orch-shuffle'); if (sh) sh.disabled = !seq;
+        modeB.classList.remove('is-single', 'is-sequence', 'is-shuffle');
+        modeB.classList.add('is-' + next);
+        _masterEng._orchBag = null;   // reset the shuffle bag on any mode change
         // Engage/disengage live if playing.
         if (_masterEng.timer) { if (seq) _ambOrchMaybeStart(_masterEng); else { _masterEng._orchActive = false; _ambOrchUpdateNowPlaying(_masterEng); } }
-        try { persistWorkspace(); } catch (e) {}
-      });
-      const shufB = host.querySelector('.ambient-orch-shuffle');
-      if (shufB) shufB.addEventListener('click', () => {
-        const st = _masterBloomState();
-        st.orch.shuffle = !st.orch.shuffle;
-        shufB.classList.toggle('on', st.orch.shuffle);
-        _masterEng._orchBag = null;
         try { persistWorkspace(); } catch (e) {}
       });
       // Plays/Bars edit the VIEWED area (masterAmbient). Only re-time the running
@@ -1018,11 +1016,18 @@
       const host = document.getElementById(E.hostId); if (!host) return;
       const view = _masterBloomState().activeIdx;
       const play = Number.isFinite(E._playIdx) ? E._playIdx : view;
-      host.querySelectorAll('.ambient-area-chip').forEach(chip => {
-        const i = parseInt(chip.dataset.aidx, 10) || 0;
-        chip.classList.toggle('on', i === view);                       // viewed/edited area
-        chip.classList.toggle('playing', !!E.timer && i === play);     // sounding area
-      });
+      const sel = host.querySelector('.ambient-area-select');
+      if (sel) {
+        // Reflect the viewed area (don't stomp an open pick — the select-as-
+        // readout guard), and prefix the SOUNDING area's option with ▶.
+        if (document.activeElement !== sel) sel.value = String(view);
+        Array.from(sel.options).forEach(o => {
+          const i = parseInt(o.value, 10) || 0;
+          const base = (o.dataset.base != null) ? o.dataset.base : o.textContent.replace(/^▶\s*/, '');
+          const want = (!!E.timer && i === play) ? ('▶ ' + base) : base;
+          if (o.textContent !== want) o.textContent = want;
+        });
+      }
     }
     function _ambOrchMaybeStart(E) {
       if (E !== _masterEng) return;
@@ -11745,6 +11750,36 @@
       ge.sig = sig;
       try { _ambStepsToLock(ge.E, ge.key, ge.lane.steps, true); } catch (e) {}
     }
+    // ONE COMPOSING WORKFLOW — transport decides the semantics. Stopped, the
+    // card's ● / 🎤 buttons AUTHOR: enter the lane-based Grid session (strip +
+    // grid docked in the card) and arm the Perform recorder (mic armed for 🎤),
+    // so the take is transcribed into the layer's seed and starts on Play.
+    // Playing, they RECORD along with the area (the original semantics —
+    // handled by _ambPerfRecToggle/_ambHumToggle at the call sites).
+    // A second press while armed finalizes the take (PERF disarm → the mic
+    // translate / played steps land in the scratch lane → 400 ms sync → seed).
+    function _ambAuthorTakeToggle(E, key, wantMic) {
+      if (typeof performMode !== 'undefined' && performMode) {
+        const pb = document.getElementById('perform-btn');
+        if (pb) pb.click();   // finalize: disarm → mic translate / steps → seed
+        return;
+      }
+      if (!(_bloomGridEdit && _bloomGridEdit.E === E && _bloomGridEdit.key === key)) {
+        const L = _ambLayerByKey(E, key);
+        if (!(L && L.lockState && L.lockState.seedEdit)) { try { _ambSeedPreview(E, key); _ambSeedPromote(E, key); } catch (e) {} }
+        try { _ambGridEditStart(E, key); } catch (e) { console.warn('Author take: grid session failed', e); return; }
+        try { _ambRefreshSeedModes(E); } catch (e) {}
+      }
+      try {
+        const mic = document.getElementById('perform-mic');
+        if (mic && mic.checked !== !!wantMic) { mic.checked = !!wantMic; mic.dispatchEvent(new Event('change', { bubbles: true })); }
+        const lb = document.getElementById('perform-listen-btn');
+        if (lb) lb.click();   // arm Listen — the take starts on the first note / hum
+        if (typeof showToast === 'function') showToast(wantMic
+          ? 'Authoring: hum / sing — press 🎤 again to write it into the seed.'
+          : 'Authoring: play the grid — press ● again to write it into the seed.');
+      } catch (e) {}
+    }
     function _ambGridEditStart(E, key, dockEl) {
       if (_bloomGridEdit) _ambGridEditStop(false);
       const L = _ambLayerByKey(E, key); if (!L) return;
@@ -11761,12 +11796,8 @@
       lanes.push(lane);
       _bloomGridEdit = { E: E, key: key, lane: lane, prevActive: (typeof activeLaneIdx !== 'undefined') ? activeLaneIdx : 0,
         prevOpen: (typeof _laneExpanderOpen !== 'undefined') ? _laneExpanderOpen : false, snapshot: snapshot, sig: _ambGridEditSig(lane.steps), timer: null };
-      // ✎ PLACE needs the lane STRIP as its drop target — the scratch lane
-      // never renders one, so disable it for the session (restored on stop).
-      try {
-        const pb2 = document.getElementById('place-btn');
-        if (pb2) { _bloomGridEdit.prevPlaceDisabled = pb2.disabled; pb2.disabled = true; pb2.title = 'Place needs the lane strip — not available in the docked editor (use Keep + REST/⤸BAR to position notes)'; if (typeof placeMode !== 'undefined' && placeMode) { try { pb2.click(); pb2.disabled = true; } catch (e2) {} } }
-      } catch (e) {}
+      // ✎ PLACE and ⤸ BAR work in the dock now that the scratch lane's
+      // STRIP renders in the strip host (the lane-based composing view).
       window._bloomGridKey = key;   // _placeLaneExpander resolves the dockhost live by key
       const idx = lanes.length - 1;
       try { if (typeof activateLane === 'function') activateLane(idx); else { activeLaneIdx = idx; if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane(); } } catch (e) { activeLaneIdx = idx; }
@@ -11822,7 +11853,9 @@
       window._bloomGridKey = null;
       window._bloomGridHoldPersist = false;
       window._bloomGridPersistDirty = false;
-      try { const pb2 = document.getElementById('place-btn'); if (pb2) { pb2.disabled = !!ge.prevPlaceDisabled; pb2.title = 'Place mode: tap a grid note to arm it, then click anywhere on the lane strip — empty space beyond the end or inside a rest — to drop it at that exact bar/cell. Gaps auto-fill with rests.'; } } catch (e) {}
+      // Clear the docked strip (renderSequence won't re-append once the
+      // scratch lane is gone, so a stale row would linger).
+      try { document.querySelectorAll('.ambient-seedgrid-striphost').forEach(el => { el.innerHTML = ''; }); } catch (e) {}
       try {
         const i = lanes.indexOf(ge.lane); if (i >= 0) lanes.splice(i, 1);
         const back = Math.max(0, Math.min(lanes.length - 1, ge.prevActive | 0));
@@ -14557,6 +14590,11 @@
       return { cur: cur, nxt: nxt };
     }
     function _ambUnitNames(c) { return c ? c.evs.map(ev => _ambFreqNoteName(ev.freq)).filter(Boolean) : []; }
+    // Kill switch for the piano-roll canvas views (lockroll/seedroll/live
+    // roll). Left ON — a briefly-tried OFF lost the seed preview-and-Keep
+    // shopping loop (the roll toolbar is its only home); the roll's role vs
+    // the lane strip is to be reapproached rather than removed.
+    const _AMB_ROLL_ENABLED = true;
     function _ambUpdateNotesLive(E) {
       const host = document.getElementById(E.hostId); if (!host) return;
       const lines = host.querySelectorAll('.ambient-notes-live'); if (!lines.length) return;
@@ -14590,13 +14628,19 @@
         // (The compact Now-Playing panel above still lists every layer.)
         const _pEl = host.querySelector('.ambient-piano[data-pkey="' + key + '"]');
         const pianoOpen = !!(_pEl && _pEl.classList.contains('open'));
+        // ROLL DISABLED (2026-07-18): the piano-roll canvas was never the
+        // composing view users wanted — the LANE UI (Author-in-Grid strip)
+        // is. rollOn gates every roll mode to 'off'; the 🎹 KEYBOARD stays
+        // (it's the play-input for ● takes). Flip _AMB_ROLL_ENABLED to
+        // resurrect the roll wholesale.
+        const rollOn = pianoOpen && _AMB_ROLL_ENABLED;
         let seedPv = null;
-        if (!lockEd && !playing && pianoOpen) {
+        if (!lockEd && !playing && rollOn) {
           try { seedPv = _ambSeedPreview(E, key); } catch (e) {}
           if (seedPv && (!seedPv.events || !seedPv.events.length)) seedPv = null;
         }
         if (seedPv) layerOn = true;   // reserve the line height for the roll
-        el.classList.toggle('reserved', layerOn && pianoOpen);   // .reserved is the display gate → piano-gated
+        el.classList.toggle('reserved', layerOn && rollOn);   // .reserved is the display gate → roll-gated
         let html = '';
         const st = E._npCol[key] || (E._npCol[key] = { next: 0, map: {} });
         // Colour a unit by its NOTE CONTENT (not its time), persistently per layer
@@ -14695,8 +14739,8 @@
           const ed = el.querySelector('#ambient-note-editor');
           if (ed) { try { ed.classList.remove('docked', 'open'); ed.style.removeProperty('display'); document.body.appendChild(ed); } catch (e) {} }
         };
-        if (!pianoOpen) {
-          // Task 3: piano closed → no roll at all (the readout is piano-gated).
+        if (!rollOn) {
+          // Roll disabled / piano closed → no roll at all.
           if (el._mode !== 'off') { _rescueEditor(); el.innerHTML = ''; el._mode = 'off'; el._npHtml = null; }
         } else if (lockEd) {
           // Locked → editable piano-roll (click a block to edit, empty to add).
@@ -15274,7 +15318,7 @@
                   '<button type="button" class="ambient-seg ambient-seedgrid-mode" data-gmode="' + m2[0] + '" data-sgk="' + _ambEscText(lk) + '" title="Switch the docked editor to ' + m2[1] + ' mode">' + m2[1] + '</button>').join('') +
               '</span>' +
             '</span>' +
-          '</div><div class="ambient-seedgrid-dockhost"></div></div>';
+          '</div><div class="ambient-seedgrid-dockhost"></div><div class="ambient-seedgrid-striphost"></div></div>';
     }
     // Reveal an element that lives inside collapsed card groups: opens every
     // closed .ambient-grp ancestor (persisting groupsOpen) + un-collapses the
@@ -22111,9 +22155,14 @@
       });
       // Mixer collapse toggle (UI-only; the strip itself is re-rendered by
       // _ambRenderMixer as layers change).
-      { const mxBtn = host.querySelector('.ambient-mixer-toggle:not(.ambient-sched-toggle)');
-        if (mxBtn) mxBtn.addEventListener('click', () => {
-          const mx = mxBtn.closest('.ambient-mixer');
+      // Select by ID — the bare `.ambient-mixer-toggle` class is SHARED by the
+      // progsec/groove/sched carets (styling reuse), so a class query matched
+      // the wrong (first) one. `.ambient-mixer-head` is unique to the mixer.
+      { const mxHead = host.querySelector('.ambient-mixer-head');
+        // Bind the WHOLE header row (not just the caret) so the tap target is
+        // big on mobile — the caret is a ~18px hit area otherwise.
+        if (mxHead) mxHead.addEventListener('click', () => {
+          const mx = mxHead.closest('.ambient-mixer');
           if (mx) mx.classList.toggle('collapsed');   // caret direction handled by CSS (.collapsed)
         });
         try { _ambRenderMixer(E); } catch (e) {}
@@ -22126,13 +22175,15 @@
       // ⇶ Progression section — collapse toggle (content is rendered by the
       // existing sync/matrix code; nothing to build on expand).
       { const psBtn = host.querySelector('.ambient-progsec-toggle');
-        if (psBtn) psBtn.addEventListener('click', () => {
-          const ps = psBtn.closest('.ambient-progsec');
+        const psHead = psBtn && psBtn.closest('.ambient-sched-head');   // whole row taps (big mobile target)
+        if (psHead) psHead.addEventListener('click', () => {
+          const ps = psHead.closest('.ambient-progsec');
           if (ps) ps.classList.toggle('collapsed');
         }); }
       { const grBtn = host.querySelector('.ambient-groove-toggle');
-        if (grBtn) grBtn.addEventListener('click', () => {
-          const gr = grBtn.closest('.ambient-groove');
+        const grHead = grBtn && grBtn.closest('.ambient-sched-head');   // whole row taps (big mobile target)
+        if (grHead) grHead.addEventListener('click', () => {
+          const gr = grHead.closest('.ambient-groove');
           if (gr) { gr.classList.toggle('collapsed'); if (!gr.classList.contains('collapsed')) { try { _ambRenderGroove(E); } catch (e) {} } }
         });
         const grBody = _ambGet(E, 'ambient-groove-body');
@@ -22227,8 +22278,9 @@
         }
       }
       { const scBtn = host.querySelector('.ambient-sched-toggle');
-        if (scBtn) scBtn.addEventListener('click', () => {
-          const sc = scBtn.closest('.ambient-sched:not(.ambient-groove)');
+        const scHead = scBtn && scBtn.closest('.ambient-sched-head');   // whole row taps (big mobile target)
+        if (scHead) scHead.addEventListener('click', () => {
+          const sc = scHead.closest('.ambient-sched:not(.ambient-groove)');
           if (sc) { sc.classList.toggle('collapsed'); if (!sc.classList.contains('collapsed')) { try { _ambRenderScheduler(E); } catch (e) {} } }
         });
         const scBody = _ambGet(E, 'ambient-sched-body');
@@ -23416,7 +23468,9 @@
             if (hm && hostEl.contains(hm)) {
               const hkey = hm.getAttribute('data-hkey'); if (!hkey) return;
               _E = E;
-              if (!E.timer) { try { if (typeof showToast === 'function') showToast('Press play first — hum along with the area.'); } catch (e) {} return; }
+              // Stopped → author the seed with the mic (one workflow: the
+              // transport picks authoring vs play-along recording).
+              if (!E.timer) { try { _ambAuthorTakeToggle(E, hkey, true); } catch (e) {} return; }
               try { _ambHumToggle(E, hkey); } catch (e) {}
               return;
             }
@@ -23424,7 +23478,8 @@
             if (pr && hostEl.contains(pr)) {
               const rkey = pr.getAttribute('data-rkey'); if (!rkey) return;
               _E = E;
-              if (!E.timer) { try { if (typeof showToast === 'function') showToast('Press play first — record along with the area.'); } catch (e) {} return; }
+              // Stopped → author the seed by playing the docked grid.
+              if (!E.timer) { try { _ambAuthorTakeToggle(E, rkey, false); } catch (e) {} return; }
               try { _ambPerfRecToggle(E, rkey); } catch (e) {}
               return;
             }

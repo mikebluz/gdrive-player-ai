@@ -602,9 +602,14 @@
         let _yolkColorN = 0;
         lanes.forEach(l => { if (l && l.yolk && !(l.yolk in _yolkColorMap)) _yolkColorMap[l.yolk] = _yolkColors[_yolkColorN++ % _yolkColors.length]; });
         lanes.forEach((lane, laneIdx) => {
-          // Bloom Author-in-Grid scratch lanes never render a row — they exist
-          // only to point the (relocated) expander at a Bloom layer's phrase.
-          if (lane && lane._bloomScratch) return;
+          // Bloom Author-in-Grid: the ACTIVE session's scratch lane renders its
+          // row into the dock's strip host (the lane-based composing view —
+          // grid above, strip below, mirroring Make). Any other scratch lane
+          // (stale) still renders nothing.
+          if (lane && lane._bloomScratch) {
+            const ge = (typeof _bloomGridEdit !== 'undefined') && _bloomGridEdit;
+            if (!(ge && ge.lane === lane)) return;
+          }
           const isActiveLane = laneIdx === activeLaneIdx;
           // Mixed-tone lanes (e.g. a yolk-merged kit) colour their chips by
           // HIT SET rather than pitch class — computed once per lane. `laneMixed`
@@ -757,6 +762,13 @@
               menubarLanes.hidden = false;
             }
             (collapsedStrip || display).appendChild(row);
+          } else if (lane._bloomScratch) {
+            // Author-in-Grid scratch lane → the dock's strip host (resolved
+            // live by layer key, like the expander — card rebuilds recreate it).
+            const sh = (window._bloomGridKey != null)
+              ? document.querySelector('.ambient-seedgrid-slot[data-sgkey="' + String(window._bloomGridKey).replace(/"/g, '') + '"] .ambient-seedgrid-striphost')
+              : null;
+            if (sh) { sh.innerHTML = ''; sh.appendChild(row); }
           } else {
             // Expanded lane: append as its own row in the editor.
             display.appendChild(row);

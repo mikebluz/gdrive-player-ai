@@ -10495,6 +10495,19 @@
       cursor: not-allowed;
     }
     @media (hover: hover) { .bloom-hdr-key.disabled:hover { background: rgba(74, 85, 104, 0.08); color: #4a5568; } }
+    /* Mobile: a long scale name (e.g. "C# Harmonic Minor") would flood the
+       fixed header and push the bar / chord / BPM readouts off-screen. Cap its
+       width and ellipsize; allow it to shrink first when the row is crowded
+       (siblings are flex:0 0 auto, so the key yields). display:block +
+       line-height keeps the vertical centering that display:flex gave (
+       text-overflow needs a block context, not a flex one). */
+    @media (max-width: 600px) {
+      .bloom-hdr-key {
+        flex: 0 1 auto; min-width: 0; max-width: 42vw;
+        display: block; line-height: 40px; text-align: center;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+    }
     /* Elapsed-time + BPM readout — full-width header, doubles as the Settings
        trigger (the standalone Settings button was removed). */
     .bloom-hdr-elapsed {

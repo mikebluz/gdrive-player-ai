@@ -279,6 +279,27 @@ cleanups) only once real projects have exercised the whole thing.
 Tracks A and B are largely independent — A can land while B is still being designed, so
 the panel gets cleaner immediately without waiting on the harmonic migration.
 
+## Backlog
+
+- **Remove per-lane Bloom (dead code cleanup).** Per-lane Bloom (`lane.ambientMode`,
+  the `_laneEng` engine, `isLane: true`) was unplugged from the UI: the lane-mode
+  picker (`#mode-panel` in `bloops.html`) offers grid/piano/graph/game/prog/seq/shape
+  only — no Bloom/ambient — and the old cycle button that included it
+  (`#fluid-grid-toggle`) is now a hidden legacy anchor. Nothing sets
+  `lane.ambientMode = true` anymore, so `_laneEng` and every `E.isLane ? … : …`
+  branch in `17-ambient.js` (Areas strip, Key/Progression section, etc.) are inert
+  scaffolding kept only for backward-compat with any old saved project that has such
+  a lane. Task: rip out `_laneEng`, the `isLane` engine flag + all its guards, the
+  `lane.ambientMode` mode plumbing (13-prog-pad cycle stub, 06-variance-lanes mode
+  flags, the hidden `#fluid-grid-toggle` anchor), and simplify the panel builder to
+  master-only. RISK: (1) old projects with an `ambientMode` lane must still LOAD
+  without error — migrate/strip the flag in the lane load path rather than throw;
+  (2) `_ambientInit(E)` is shared by the master, the seed-preview engine (`E2`,
+  `isLane:false`) and Shape-Bloom — confirm those all take the master path before
+  deleting the branches; (3) the invariant/golden harnesses set `isLane` — check
+  `23-bloom-harness.js` before removing the flag. Verify no lane-mode regression and
+  a clean load of a legacy Bloom-lane project.
+
 ## Open (plan-level, decide when we reach them)
 
 - Degree-storage format (scale-degree vs chord-degree encoding; how a phrase records

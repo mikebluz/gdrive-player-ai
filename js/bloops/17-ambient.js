@@ -776,6 +776,42 @@
           // Live bar / play counter (during playback) — schedule areas by what you see here.
           '<span class="ambient-orch-bar" aria-live="polite" title="Current bar (and play) of the area — use this to set Plays × Bars"></span>' +
         '</div>' +
+        // --- Area-level settings (moved here when the ⚙ Configure drawer was
+        // dissolved): they all cascade to / govern this area's layers. ---
+        // Area WRITE — phrase-loop EVERY layer (write X bars, loop ×Y, rewrite).
+        '<div class="ambient-orch ambient-area-write">' +
+          '<span class="ambient-orch-lbl ambient-start-lbl" title="Area Write — every layer generates X bars, loops that exact phrase until it has played Y times, then writes a fresh one. Cascades to all layers; a layer’s own Loop control overrides (its Write wins, its Off opts out).">Write</span>' +
+          '<span class="ambient-seg-row">' +
+            '<button type="button" class="ambient-seg" id="ambient-areawrite-off">Off</button>' +
+            '<button type="button" class="ambient-seg" id="ambient-areawrite-on">Write</button>' +
+          '</span>' +
+          '<button type="button" class="ambient-seg" id="ambient-areawrite-vary" title="Vary — each cycle roll a random phrase length (bars) and repeat count (plays) inside the min–max ranges." style="display:none">~ Vary</button>' +
+          '<span class="ambient-write-xy" id="ambient-areawrite-fixed" style="display:none">' +
+            '<input type="number" id="ambient-areawrite-x" min="1" max="32" step="1" value="2" title="X — phrase length in bars"> <span class="ambient-hint">bars ×</span> ' +
+            '<input type="number" id="ambient-areawrite-y" min="1" max="32" step="1" value="4" title="Y — total plays of each phrase before a new one is written"> <span class="ambient-hint">plays</span>' +
+          '</span>' +
+          '<span class="ambient-write-xy" id="ambient-areawrite-range" style="display:none">' +
+            '<span class="ambient-hint">bars</span> <input type="number" id="ambient-areawrite-bmin" min="1" max="32" step="1" value="1">–<input type="number" id="ambient-areawrite-bmax" min="1" max="32" step="1" value="4"> ' +
+            '<span class="ambient-hint">× plays</span> <input type="number" id="ambient-areawrite-tmin" min="1" max="32" step="1" value="2">–<input type="number" id="ambient-areawrite-tmax" min="1" max="32" step="1" value="8">' +
+          '</span>' +
+        '</div>' +
+        // Queue mode — a layer on/off toggle applies at that layer's next boundary.
+        '<div class="ambient-orch ambient-queue">' +
+          '<span class="ambient-orch-lbl">Queue</span>' +
+          '<button type="button" class="ambient-seg" id="ambient-queue-on" title="Queue mode — a layer on/off toggle applies on that layer&#39;s next iteration boundary (its own loop/phrase end) instead of immediately">Off</button>' +
+          '<button type="button" class="ambient-seg" id="ambient-queue-tails" title="Tails — when a queued STOP cuts a layer, let its reverb keep feeding past the boundary so the wet tail rings out (off = cut the reverb send with the gate)">Tails</button>' +
+          '<span class="ambient-hint" id="ambient-queue-hint">toggles snap to each layer&#39;s loop</span>' +
+        '</div>' +
+        // Rec QUANTIZE — the snap grid for ● (play the keys) and 🎤 (hum) takes.
+        '<div class="ambient-orch ambient-recquant">' +
+          '<span class="ambient-orch-lbl ambient-start-lbl" title="Rec quantize — how tightly ● (played) and 🎤 (hummed) takes snap to the grid. 1/16 cleans a sloppy take; 1/64–1/128 keeps your micro-timing; Off records raw.">Rec quantize</span>' +
+          '<select id="ambient-area-recquant" class="ambient-select">' +
+            [[0, 'Off (raw)'], [8, '1/8'], [16, '1/16'], [32, '1/32'], [64, '1/64'], [128, '1/128']].map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') +
+          '</select>' +
+          '<span class="ambient-hint">● / 🎤 snap</span>' +
+        '</div>' +
+        // Area automation ramps (BPM etc.).
+        '<div class="ambient-orch ambient-area-ramps">' + _ambLayerRampsHtml('global') + '</div>' +
         '</div>' +
       '</div>';
     }
@@ -850,6 +886,9 @@
       const clr = host.querySelector('.ambient-orch-clear');
       if (clr) clr.addEventListener('click', () => {
         if (typeof confirm === 'function' && !confirm('Clear all areas? This deletes every area and starts over with one empty area. This can’t be undone.')) return;
+        // Stop playback first — the engine would otherwise keep generating
+        // against the areas we're about to delete/rebuild (stale state / glitch).
+        if (E.timer) { try { _ambStopGenerator(E); } catch (e) {} }
         _ambClearAreas();
         _ambApplyAreaGlobals(masterAmbient);
         _ambRebuildMaster();
@@ -15295,12 +15334,12 @@
     // promote → lockState path; Generate reverts to live generation. Wired by
     // delegation (one handler for primary + extras cards) via data-seedkey.
     function _ambSeedModeHtml(lk) {
-      return '<div class="ambient-ctrl ambient-seedmode" title="Seed source — Generate (the engine improvises this layer live) or Author (compose a fixed seed phrase you can hand-edit on the 🎹 roll). Reversible.">' +
-        '<label>Seed</label>' +
+      return '<div class="ambient-ctrl ambient-seedmode" title="Note source — Generate (the engine improvises this layer live) or Author (compose a fixed phrase you can hand-edit on the 🎹 roll). Reversible.">' +
+        '<label>Mode</label>' +
         '<span class="ambient-seg-row">' +
           '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="generate" data-seedkey="' + _ambEscText(lk) + '">Generate</button>' +
           '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="author" data-seedkey="' + _ambEscText(lk) + '" title="Compose the phrase on the piano roll (docked below)">Author</button>' +
-          '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="grid" data-seedkey="' + _ambEscText(lk) + '" title="Compose in the FULL Seed editor — Grid/Piano/Graph/Game docks below; edits land in the loop live. Author keeps them; ✕ Cancel discards.">Grid</button>' +
+          '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="grid" data-seedkey="' + _ambEscText(lk) + '" title="Compose in the FULL editor — Grid/Piano/Graph/Game docks below; edits land in the loop live. Author keeps them; ✕ Cancel discards.">Grid</button>' +
         '</span><span class="ambient-hint">improvise / compose</span></div>' +
         // Author docks the layer's grid (roll + keyboard) HERE — composing
         // happens where the seed is chosen (filled by _ambRefreshSeedModes).
@@ -17702,7 +17741,7 @@
         // blank default — updated live to the playing step during playback.
         try { toneSel.value = _ambSeqStepTone(s, 0); } catch (e) {}
       }
-      bindStr('tone', 'tone', () => _ambSeqEnsLockVis(E, id)); bindStr('vary', 'varyMode'); bindStr('harmony', 'harmony'); bindStr('chordmode', 'chordMode'); bindStr('revoice', 'revoice');
+      bindStr('tone', 'tone', () => { _ambSeqEnsLockVis(E, id); if (E.timer) { try { _ambReanchorLayer(E, 'seq:' + id); } catch (x) {} } });   /* tone lands at the seq layer's next boundary */ bindStr('vary', 'varyMode'); bindStr('harmony', 'harmony'); bindStr('chordmode', 'chordMode'); bindStr('revoice', 'revoice');
       // B4 borrow toggle (default on).
       const borrowBtn = el('borrow');
       const refreshBorrow = () => { const sq = getSq(); if (sq && borrowBtn) { const on = (sq.chordBorrow !== false); borrowBtn.textContent = on ? 'On' : 'Off'; borrowBtn.classList.toggle('active', on); } };
@@ -18888,26 +18927,26 @@
     const _AMB_LAYER_SCHEMA = {
       bed: { label: 'Bed', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
         ['sub', 'Progression', 'When an Area progression is set: the layer locks to it and plays voicings of the current chord. (Repeat/Times in Timing only apply when there is no Area progression.)'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['choke'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'gravity', 'Gravity', 0, 100, 'free → chord tones'], ['sl', 'contour', 'Contour', -100, 100, 'fall → rise'], ['sl', 'stutter', 'Stutter', 0, 100, 'walk → repeats'], ['sl', 'phrasing', 'Phrasing', 0, 100, 'stream → gestures'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'syncop', 'Syncopate', 0, 100, 'straight → offbeat'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       beat: { label: 'Beat', ctrls: [
         ..._ambVoiceCtrls([['kit']], 500, 2000, 2000), ['synthkit'],
-        ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['gen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['gen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'],
         ['grp', 'Timing', 'How fast and how long the beat plays. In Random mode, Interval sets the gap between hits; in Program mode the grid follows Sync + Bars. Length is how long each hit rings.'], ['unitsync'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'bars per loop'], ['tm', 'lengthMs', 'Hit length', 60, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around hit length'], ['tight'],
         ..._AMB_MIX] },
@@ -18917,7 +18956,7 @@
       // Direction); Randomness deviates from it. Pitch material is the series.
       arp: { label: 'Arp', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
         ['grp', 'Timing'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (euclid; 0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'rateVar', 'Rate var', 0, 100, 'steady → rushes'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -18925,7 +18964,7 @@
       // long; Rhythm/Pitch var add per-repeat variation.
       bass: { label: 'Bass', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['tight'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Walk', 0, 100, 'hold → wander (proximity-capped)'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -18933,14 +18972,14 @@
       // looping; Vary re-rolls; Len var spreads note lengths around Length.
       run: { label: 'Riff', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'phrasing', 'Articulate', 0, 100, 'even → arrivals sustain, runs detach'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'vary', 'Roam', 0, 100, 'root → wander degrees'], ['tight'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -18948,7 +18987,7 @@
       // vary are independent. A chord Notes source holds the whole chord.
       drone: { label: 'Drone', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
         ['sub', 'Progression', 'When an Area progression is set: the drone plays voicings of the current chord.'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
@@ -19582,11 +19621,11 @@
           if (subOpen) { html += '</div>'; subOpen = false; }
           if (grpOpen) html += '</div></div>';   // close prior group body + wrapper
           grpOpen = false;
-          // Beat is exempt: its Seed group IS the rhythm generator (Mode toggle,
+          // Beat is exempt: its Source group IS the rhythm generator (Mode toggle,
           // euclid knobs, the Pattern grid) — not pitch material. Dropping it left
           // the extras Beat card with no way to reach Program/euclid at all.
           // (Key has no such exemption — a kit layer has no harmonic frame.)
-          if (kitVoice && ((c[1] === 'Seed' && type !== 'beat') || c[1] === 'Key')) { skipGroup = true; return; }
+          if (kitVoice && ((c[1] === 'Source' && type !== 'beat') || c[1] === 'Key')) { skipGroup = true; return; }
           skipGroup = false;
           const name = c[1], open = _ambGroupOpen(inst, name);
           html += '<div class="ambient-grp' + (open ? ' open' : '') + '" data-grp="' + name + '">' +
@@ -19784,7 +19823,7 @@
       sch.ctrls.forEach(c => {
         const k = c[0];
         try {
-          if (k === 'tone') { const s = el('tone'); if (s) { populateGroupedToneSelect(s, _ambToneOptions(), _ambGridVoiceOption()); s.value = inst.tone || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.tone = s.value || ''; persist(); } }); } }
+          if (k === 'tone') { const s = el('tone'); if (s) { populateGroupedToneSelect(s, _ambToneOptions(), _ambGridVoiceOption()); s.value = inst.tone || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.tone = s.value || ''; persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } } }); } }   /* tone change lands at the layer's next unit boundary (like the sliders) */
           else if (k === 'kit') { const s = el('kit'); if (s) { _ambDrumKits().forEach(kk => { const o = document.createElement('option'); o.value = kk.id; o.textContent = kk.name; s.appendChild(o); }); s.value = inst.kit || 'tr808'; s.addEventListener('change', () => { const L = get(); if (L) { L.kit = s.value || 'tr808'; persist(); try { _ambSyncSynthKit(E); } catch (e) {} } }); } }
           else if (k === 'rate') { const s = el('rate'); if (s) { s.value = inst.rate || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.rate = s.value || ''; _ambUnitSyncViz(E, p, L); sync(); persist(); } }); } }
           else if (k === 'unitmatch') { _ambWireUnitMatch(E, inst, p, get); }
@@ -21516,17 +21555,12 @@
         if (keySub) keySub.style.display = (rk.mode === 'key') ? '' : 'none';
         const progSub = document.getElementById(tr('ambient-prog-sub'));
         if (progSub) progSub.style.display = (rk.mode === 'progression') ? '' : 'none';
-        // ⇶ Progression section: swap picker ↔ "activate in Configure" hint,
-        // and mirror the state into the always-visible head hint.
+        // ⇶ Key / Progression section: the prog picker only applies in
+        // Progression mode (else show the "select Progression" hint). The head
+        // hint mirrors the RESOLVED key mode — updated below where kName/kQual
+        // are in scope.
         { const progOff = document.getElementById(tr('ambient-progsec-off'));
-          if (progOff) progOff.style.display = (rk.mode === 'progression') ? 'none' : '';
-          const psHint = document.getElementById(tr('ambient-progsec-hint'));
-          if (psHint) {
-            const nC = Array.isArray(p.chords) ? p.chords.length : 0;
-            psHint.textContent = (rk.mode !== 'progression') ? 'off'
-              : nC ? (((p.name && p.name.trim()) || 'Progression') + ' · ' + nC + ' chord' + (nC === 1 ? '' : 's'))
-              : 'pick a progression';
-          } }
+          if (progOff) progOff.style.display = (rk.mode === 'progression') ? 'none' : ''; }
         // Key sub-controls. Effective key: workspace when following, stored custom otherwise.
         const kFol = document.getElementById(tr('ambient-key-follow'));
         if (kFol) { kFol.classList.toggle('active', follow); kFol.disabled = !cfg.keyOn; }
@@ -21556,6 +21590,8 @@
           rk.mode === 'chromatic' ? 'free — no key constraint'
           : rk.mode === 'key' ? ((follow ? '= workspace · ' : '') + kName + ' ' + kQual + ' · ' + ((cfg.keyMode === 'quantize') ? 'snap' : 'shift'))
           : (nCh ? (nCh + ' chord' + (nCh === 1 ? '' : 's') + (cfg.keyOn ? ' · in ' + kName + ' ' + kQual : '')) : 'pick a progression'));
+        // (The Key/Progression section subtitle is the #ambient-cfg-keyind
+        //  indicator, updated below — no separate head hint.)
         // Area START slider + per-layer cascade cue: a layer INHERITING (no own
         // value) shows the area value + an "inherit" cue; an override shows its own.
         set('ambient-area-startvary', cfg.startVary | 0); hint('ambient-area-startvary-v', String(cfg.startVary | 0));
@@ -21776,7 +21812,9 @@
       });
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => _ambSyncSpread(E, 'ambient-' + layer, cfg[layer]));
       const seedEl = document.getElementById(E.seedId);
-      if (seedEl) seedEl.textContent = '#' + (cfg.seed >>> 0);
+      // Compact base-36 take ID (from cfg.seed) — reads as an id, not a scary
+      // 10-digit number. Same seed → same id → same generated take.
+      if (seedEl) seedEl.textContent = 'Take ' + (cfg.seed >>> 0).toString(36).toUpperCase();
       _ambRefreshPlayBtn(E);
       try { _ambRefreshCaptureBtn(E); } catch (e) {}
       // Mirror every slider's just-synced value into its numeric readout
@@ -21802,41 +21840,11 @@
       const _keyNames = (typeof CHROMATIC !== 'undefined' && Array.isArray(CHROMATIC) && CHROMATIC.length === 12)
         ? CHROMATIC : ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
       const keyOpts = _keyNames.map((nm, i) => '<option value="' + i + '">' + nm + '</option>').join('');
-      let html =
-        // Area tab strip (master Mix Bloom only) — switch / add / duplicate / delete.
-        ((E === _masterEng) ? _ambAreaStripHtml() : '') +
-        // Everything above the first layer (viz + global Bloom settings) lives in
-        // one collapsible menu so the panel opens straight onto the layer stack.
-        '<details class="ambient-master-menu">' +
-        '<summary class="ambient-master-summary">⚙ Configure<span class="ambient-cfg-keyind" id="ambient-cfg-keyind" title="Current Area KEY (grey = following the workspace key · amber = overridden for this Area)"></span></summary>' +
-        '<div class="ambient-master-menu-body">' +
-        // Master (Mixer) Bloom drops the spectrum visualizer; the main + shape panels keep it.
-        (E.idPrefix === 'mix-bloom' ? '' : '<canvas id="ambient-viz" class="ambient-viz"></canvas>') +
-        // Now Playing — sits at the TOP of the panel (read-only; mirrors the per-layer live lines).
-        '<div class="ambient-nowplaying" id="ambient-nowplaying">' +
-          '<div class="ambient-nowplaying-head"><span class="ambient-mod-sub">Now Playing</span><span class="ambient-hint" id="ambient-nowplaying-empty">— stopped —</span></div>' +
-          '<div class="ambient-nowplaying-list" id="ambient-nowplaying-list"></div>' +
-        '</div>' +
-        '<div class="ambient-row">' +
-          '<button type="button" id="ambient-regen-btn" class="ambient-regen" title="New random seed">✨ Regenerate</button>' +
-          '<button type="button" id="ambient-reset-btn" class="ambient-regen" title="Reset this Bloom to defaults (one Bed, default settings)">↺ Reset</button>' +
-          (E.isLane ? '<button type="button" id="ambient-freeze-btn" class="ambient-regen" title="Print the generated output to a new editable lane">❄ Freeze→lane</button>' : '') +
-          '<span class="ambient-seed" id="ambient-seed-val">#1</span>' +
-        '</div>' +
-        // Queue mode — when on, a layer on/off click is deferred to that
-        // layer's OWN next iteration boundary instead of applying immediately.
-        '<div class="ambient-row ambient-queue">' +
-          '<span class="ambient-hint">Queue</span>' +
-          '<button type="button" class="ambient-seg" id="ambient-queue-on" title="Queue mode — a layer on/off toggle applies on that layer&#39;s next iteration boundary (its own loop/phrase end) instead of immediately">Off</button>' +
-          '<button type="button" class="ambient-seg" id="ambient-queue-tails" title="Tails — when a queued STOP cuts a layer, let its reverb keep feeding past the boundary so the wet tail rings out (off = cut the reverb send with the gate)">Tails</button>' +
-          '<span class="ambient-hint" id="ambient-queue-hint">toggles snap to each layer&#39;s loop</span>' +
-        '</div>' +
-        // KEY axis (docs/bloom-layer-model.md) — one section unifying the area's
-        // harmonic frame. Mode selector: Chromatic (no constraint) | Key (root +
-        // scale, optionally following the workspace) | Progression (a shared chord
-        // sequence). The selector drives the existing keyOn / prog.on fields, which
-        // stay independent underneath (a Progression can be diatonic to a Key).
-        // Progression is master-only (lanes have no area progression).
+      // KEY axis row (mode selector Chromatic | Key | Progression + the Key
+      // sub-controls). Built once here so the MASTER can host it inside the
+      // "Key / Progression" section while LANES (no Progression section) keep
+      // it in Configure. The Progression mode button is master-only.
+      const keyRowHtml =
         '<div class="ambient-row ambient-key">' +
           '<span class="ambient-hint ambient-key-lbl">Key</span>' +
           '<span class="ambient-seg-row ambient-keymode-seg">' +
@@ -21844,126 +21852,90 @@
             '<button type="button" class="ambient-seg amb-keymode" data-keymode="key" id="ambient-keymode-key" title="Key — constrain every layer to one key (root + scale); only in-key scales/chords (plus borrowed &amp; passing tones) are selectable">Key</button>' +
             (E.isLane ? '' : '<button type="button" class="ambient-seg amb-keymode" data-keymode="progression" id="ambient-keymode-prog" title="Progression — every layer follows a shared chord progression (the per-layer Notes chip is read-only while on)">Progression</button>') +
           '</span>' +
-          // Key sub-controls (shown in Key mode).
           '<span class="ambient-key-sub" id="ambient-key-sub">' +
             '<button type="button" class="ambient-seg" id="ambient-key-follow" title="Follow the workspace key (header pill / key picker) — one source of truth. Click to LOCK: snapshots the current key as this Area’s own (later workspace-key changes can’t re-key it); click again to re-follow.">= Workspace</button>' +
             '<select id="ambient-key-root" class="ambient-select" title="Key root">' + keyOpts + '</select>' +
             '<select id="ambient-key-scale" class="ambient-select" title="Key quality (defines the in-key note set)"></select>' +
             '<button type="button" class="ambient-seg ambient-key-mode" id="ambient-key-mode" title="How Key reshapes the material — Transpose: move every layer wholesale into the key (intervals/voicings intact). Quantize: leave layers where they are and snap each out-of-key note to the nearest key-scale tone.">Transpose</button>' +
-            // Area RELATIVE MODE: re-centre the whole area onto a modal degree of
-            // the key (a new tonal root that tracks the key). Cascades to every
-            // inheriting layer; a per-layer Relative mode overrides it.
             '<select id="ambient-key-moderot" class="ambient-select ambient-key-moderot" title="Relative mode — re-centre the whole Area onto a modal degree of the Key: a new tonal root that TRACKS the key (workspace C + Aeolian = A minor; change to G → E minor). Layers inheriting the Area key follow; a per-layer Relative mode overrides. Off = the key’s own root.">' +
               ['Ionian (off)', 'Dorian', 'Phrygian', 'Lydian', 'Mixolydian', 'Aeolian (rel. min)', 'Locrian'].map((nm, i) => '<option value="' + i + '">' + nm + '</option>').join('') +
             '</select>' +
           '</span>' +
-          // Progression sub-controls moved to the top-level ⇶ Progression
-          // section (below, beside Groove) — the mode selector stays here.
           '<span class="ambient-hint" id="ambient-key-hint">off</span>' +
+        '</div>';
+      let html =
+        // Area tab strip (master Mix Bloom only) — switch / add / duplicate / delete.
+        ((E === _masterEng) ? _ambAreaStripHtml() : '') +
+        // ⚙ Configure drawer DISSOLVED: generation actions + Now Playing are now
+        // always-visible panel chrome (below); the area-level settings moved into
+        // the Areas body; Start was deleted (it duplicated Groove → Humanize); the
+        // key indicator moved onto the Key/Progression header.
+        // Master (Mixer) Bloom drops the spectrum visualizer; the main + shape panels keep it.
+        (E.idPrefix === 'mix-bloom' ? '' : '<canvas id="ambient-viz" class="ambient-viz"></canvas>') +
+        // Now Playing — always-visible status strip (read-only; mirrors the per-layer live lines).
+        '<div class="ambient-nowplaying" id="ambient-nowplaying">' +
+          '<div class="ambient-nowplaying-head"><span class="ambient-mod-sub">Now Playing</span><span class="ambient-hint" id="ambient-nowplaying-empty">— stopped —</span></div>' +
+          '<div class="ambient-nowplaying-list" id="ambient-nowplaying-list"></div>' +
         '</div>' +
-        // (The chord matrix + section matrix moved into the ⇶ Progression
-        // section below — same ids, same renderers.)
-        // Global ramps (BPM etc.) — area-level automation lives here in Configure;
-        // per-layer ramps moved into each layer's card (see _ambLayerRampsHtml).
-        _ambLayerRampsHtml('global') +
-        // Area START — % chance each layer's event starts at a random point mid-unit.
-        // Cascades to every layer whose Start is set to Inherit (the default); a layer
-        // that sets its own Start overrides. The layer control shows a "↳ area" cue.
-        '<div class="ambient-row ambient-start">' +
-          '<span class="ambient-hint ambient-start-lbl" title="Area Start — % chance each layer starts at a RANDOM point within its unit instead of the boundary. Cascades to every layer set to Inherit; a per-layer Start overrides. A humanize / loosen control.">Start</span>' +
-          '<input type="range" id="ambient-area-startvary" class="ambient-area-start-range" min="0" max="100" step="1" value="0" />' +
-          '<span class="ambient-hint" id="ambient-area-startvary-v">0</span>' +
-          '<span class="ambient-hint">cascades → layers</span>' +
+        '<div class="ambient-row">' +
+          '<button type="button" id="ambient-regen-btn" class="ambient-regen" title="Roll a new TAKE of this area — same layers, tones, timing, key &amp; mix (the arrangement), but a fresh realization of the random choices (which notes get picked, where they land). Same song, different performance. The ID beside it names this take; the same ID always replays it, so a take you like is reproducible.">🎲 New take</button>' +
+          // Reset removed: it duplicated the Areas 🧹 Clear-layers / ✕ Clear-all.
+          (E.isLane ? '<button type="button" id="ambient-freeze-btn" class="ambient-regen" title="Print the generated output to a new editable lane">❄ Freeze→lane</button>' : '') +
+          '<span class="ambient-seed" id="ambient-seed-val" title="This area’s take ID — the fingerprint of its random choices. New take rolls a new one; the same ID replays the same performance.">Take —</span>' +
         '</div>' +
-        // Rec QUANTIZE — the snap grid for ● (play the keys) and 🎤 (hum) takes.
-        '<div class="ambient-row ambient-recquant">' +
-          '<span class="ambient-hint ambient-start-lbl" title="Rec quantize — how tightly ● (played) and 🎤 (hummed) takes snap to the grid. 1/16 cleans a sloppy take; 1/64–1/128 keeps your micro-timing; Off records raw.">Rec quantize</span>' +
-          '<select id="ambient-area-recquant" class="ambient-select">' +
-            [[0, 'Off (raw)'], [8, '1/8'], [16, '1/16'], [32, '1/32'], [64, '1/64'], [128, '1/128']].map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') +
-          '</select>' +
-          '<span class="ambient-hint">● / 🎤 snap</span>' +
-        '</div>' +
-        // Area WRITE — phrase-loop EVERY layer (write X bars, loop ×Y, rewrite).
-        // Cascades to all layers; a layer's own Loop (Write/Hold/Off) overrides
-        // (Off = opt-out). Same markup family as the per-layer Loop control.
-        '<div class="ambient-row ambient-area-write">' +
-          '<span class="ambient-hint ambient-start-lbl" title="Area Write — every layer generates X bars, loops that exact phrase until it has played Y times, then writes a fresh one. Cascades to all layers; a layer’s own Loop control overrides (its Write wins, its Off opts out).">Write</span>' +
-          '<span class="ambient-seg-row">' +
-            '<button type="button" class="ambient-seg" id="ambient-areawrite-off">Off</button>' +
-            '<button type="button" class="ambient-seg" id="ambient-areawrite-on">Write</button>' +
-          '</span>' +
-          '<button type="button" class="ambient-seg" id="ambient-areawrite-vary" title="Vary — each cycle roll a random phrase length (bars) and repeat count (plays) inside the min–max ranges." style="display:none">~ Vary</button>' +
-          '<span class="ambient-write-xy" id="ambient-areawrite-fixed" style="display:none">' +
-            '<input type="number" id="ambient-areawrite-x" min="1" max="32" step="1" value="2" title="X — phrase length in bars"> <span class="ambient-hint">bars ×</span> ' +
-            '<input type="number" id="ambient-areawrite-y" min="1" max="32" step="1" value="4" title="Y — total plays of each phrase before a new one is written"> <span class="ambient-hint">plays</span>' +
-          '</span>' +
-          '<span class="ambient-write-xy" id="ambient-areawrite-range" style="display:none">' +
-            '<span class="ambient-hint">bars</span> <input type="number" id="ambient-areawrite-bmin" min="1" max="32" step="1" value="1">–<input type="number" id="ambient-areawrite-bmax" min="1" max="32" step="1" value="4"> ' +
-            '<span class="ambient-hint">× plays</span> <input type="number" id="ambient-areawrite-tmin" min="1" max="32" step="1" value="2">–<input type="number" id="ambient-areawrite-tmax" min="1" max="32" step="1" value="8">' +
-          '</span>' +
-          '<span class="ambient-hint">cascades → layers</span>' +
-        '</div>' +
-        // Warmth / Width / Dynamics / Reverb moved from here to the Mixer →
-        // "Global FX" subsection (below the faders) — see _globalFxHtml.
-        '</div></details>' +   // end .ambient-master-menu-body / .ambient-master-menu
+        // KEY row for a lane-Bloom used to live in Configure; lane-Bloom is
+        // retired, but keep it here for that (dormant) engine so it isn't left
+        // Key-less if ever revived. Master/preview Key lives in Key/Progression.
+        (E.isLane ? keyRowHtml : '') +
+        // (Queue, Area Write, Rec quantize, Global ramps → moved to the Areas
+        //  body. Area Start → deleted, dup of Groove Humanize. FX → Mixer.)
         // ⇶ Progression — the area's chord-sequence settings, hoisted to a
-        // top-level collapsible section (same shell as Groove): the
-        // progression picker/editor plus the chord matrix and the section
-        // matrix. The KEY MODE selector stays in Configure (Chromatic | Key |
-        // Progression) — this section holds the progression's OWN settings.
-        // Master-only (lanes have no area progression; the guarded renderers
-        // no-op without the elements). Ids are UNCHANGED (#ambient-prog-sub /
-        // #ambient-progmatrix / #ambient-secmatrix) so the existing pick/edit
-        // wiring, sync display toggles and matrix renderers work as-is.
-        (E.isLane ? '' :
-        '<div class="ambient-sched ambient-progsec collapsed" id="ambient-progsec">' +
-          '<div class="ambient-sched-head">' +
-            '<span class="ambient-mixer-title">⇶ Progression</span>' +
-            '<span class="ambient-hint ambient-progsec-hint" id="ambient-progsec-hint"></span>' +
-            '<button type="button" class="ambient-mixer-toggle ambient-progsec-toggle" id="ambient-progsec-toggle" title="Collapse / expand progression" aria-label="Collapse or expand progression"></button>' +
+        // top-level collapsible section (same shell as Groove): the whole KEY
+        // axis (mode selector Chromatic | Key | Progression + key sub-controls),
+        // then the progression picker/editor, chord matrix and section matrix.
+        // Master-only (lanes keep the Key row in Configure and have no
+        // progression). Ids are UNCHANGED (#ambient-key-* / #ambient-prog-sub /
+        // #ambient-progmatrix / #ambient-secmatrix) so all existing wiring,
+        // sync display toggles and matrix renderers work as-is.
+        // TAB GROUP — Key/Progression · Groove · Scheduler · Mixer overlaid as
+        // tabs (one pane at a time; click the active tab again to collapse).
+        // Every body keeps its id so renderers/handlers bind unchanged.
+        '<div class="ambient-tabsec" id="ambient-tabsec">' +
+          '<div class="ambient-tabsec-bar" role="tablist">' +
+            (E.isLane ? '' : '<button type="button" class="ambient-tabsec-tab" data-tab="progsec" role="tab" title="Key &amp; progression">⇶ Key/Prog</button>') +
+            '<button type="button" class="ambient-tabsec-tab" data-tab="groove" role="tab" title="Groove — swing / accent / humanize / push">🕺 Groove</button>' +
+            '<button type="button" class="ambient-tabsec-tab" data-tab="sched" role="tab" title="Scheduler — per-layer time matrix">⏱ Sched</button>' +
+            '<button type="button" class="ambient-tabsec-tab" data-tab="mixer" role="tab" title="Mixer — faders + master fade + global FX">🎚️ Mixer</button>' +
           '</div>' +
-          '<div class="ambient-sched-body" id="ambient-progsec-body">' +
+          (E.isLane ? '' :
+          '<div class="ambient-tabsec-pane ambient-progsec" data-pane="progsec" id="ambient-progsec">' +
+            // Current-key indicator (from the dissolved Configure summary).
+            '<div class="ambient-progsec-topline"><span class="ambient-cfg-keyind" id="ambient-cfg-keyind" title="Current Area KEY (grey = following the workspace key · amber = overridden for this Area)"></span></div>' +
+            '<div class="ambient-sched-body" id="ambient-progsec-body">' +
+            keyRowHtml +
             '<div class="ambient-row ambient-prog-row">' +
               '<span class="ambient-prog-sub" id="ambient-prog-sub">' +
                 '<button type="button" class="ambient-select ambient-prog-pick" id="ambient-prog-pick" title="Pick a chord progression for all layers">— pick —</button>' +
                 '<button type="button" class="ambient-seg ambient-prog-edit" id="ambient-prog-edit" title="Edit the selected progression chord-by-chord and Save As New">Edit</button>' +
               '</span>' +
-              '<span class="ambient-hint" id="ambient-progsec-off" style="display:none">set Key → Progression in Configure to activate</span>' +
+              '<span class="ambient-hint" id="ambient-progsec-off" style="display:none">select Progression above to pick a chord sequence</span>' +
             '</div>' +
             '<div class="ambient-progmatrix" id="ambient-progmatrix" style="display:none"></div>' +
             '<div class="ambient-progmatrix ambient-secmatrix" id="ambient-secmatrix" style="display:none"></div>' +
-          '</div>' +
-        '</div>') +
-        // 🕺 Groove — live macros that reshape the FEEL of everything playing:
-        // global Swing / Accent / Humanize (cascade to every layer), and a
-        // per-layer Push/Pull (ahead/behind the beat). Collapsible; rendered by
-        // _ambRenderGroove.
-        '<div class="ambient-sched ambient-groove collapsed" id="ambient-groove">' +
-          '<div class="ambient-sched-head">' +
-            '<span class="ambient-mixer-title">🕺 Groove</span>' +
-            '<button type="button" class="ambient-mixer-toggle ambient-groove-toggle" id="ambient-groove-toggle" title="Collapse / expand groove" aria-label="Collapse or expand groove"></button>' +
-          '</div>' +
+          '</div>' +       // end #ambient-progsec-body
+        '</div>') +        // end progsec pane
+        // 🕺 Groove — swing / accent / humanize (cascade) + per-layer push;
+        // rendered by _ambRenderGroove into #ambient-groove-body.
+        '<div class="ambient-tabsec-pane ambient-groove" data-pane="groove" id="ambient-groove">' +
           '<div class="ambient-sched-body" id="ambient-groove-body"></div>' +
         '</div>' +
-        // ⏱ Scheduler — the per-layer TIME matrix: each present layer is a row;
-        // its row shows the layer's units as blocks on a shared bar ruler, with
-        // per-row Unit size / Loop bars / Plays editors (Loop×Plays = the layer's
-        // Write cycle). Collapsible like the Mixer; rendered by _ambRenderScheduler.
-        '<div class="ambient-sched collapsed" id="ambient-sched">' +
-          '<div class="ambient-sched-head">' +
-            '<span class="ambient-mixer-title">⏱ Scheduler</span>' +
-            '<button type="button" class="ambient-mixer-toggle ambient-sched-toggle" id="ambient-sched-toggle" title="Collapse / expand the scheduler" aria-label="Collapse or expand the scheduler"></button>' +
-          '</div>' +
+        // ⏱ Scheduler — the per-layer TIME matrix; rendered by _ambRenderScheduler.
+        '<div class="ambient-tabsec-pane ambient-sched" data-pane="sched" id="ambient-sched">' +
           '<div class="ambient-sched-body" id="ambient-sched-body"></div>' +
         '</div>' +
-        // Mixer — one vertical fader per layer for balancing overall levels in
-        // one place. Collapsible; the strip is (re)rendered by _ambRenderMixer
-        // whenever the layer set changes.
-        '<div class="ambient-mixer collapsed" id="ambient-mixer">' +
-          '<div class="ambient-mixer-head">' +
-            '<span class="ambient-mixer-title">🎚️ Mixer</span>' +
-            '<button type="button" class="ambient-mixer-toggle" id="ambient-mixer-toggle" title="Collapse / expand the mixer" aria-label="Collapse or expand the mixer"></button>' +
-          '</div>' +
+        // 🎚️ Mixer — layer faders + master fade + global FX. Strip (re)rendered
+        // by _ambRenderMixer. Keeps the .ambient-mixer class for its inner styles.
+        '<div class="ambient-tabsec-pane ambient-mixer" data-pane="mixer" id="ambient-mixer">' +
           '<div class="ambient-mixer-strip" id="ambient-mixer-strip"></div>' +
           // Master Fade In/Out — ramp ALL audio up on play and down from the
           // capture Finalize press (0 = off). Hidden with the strip when collapsed.
@@ -22046,7 +22018,8 @@
               sl('Damp', 'ambient-reverb-damp', 0, 100, 45, 'bright → dark') +
             '</div>' +
           '</details>' +
-        '</div>' +
+        '</div>' +        // end mixer pane
+        '</div>' +        // end .ambient-tabsec
         '<div class="ambient-layer collapsed">' + head(_plabel('bed', 'Bed'), 'ambient-bed-on', 'ambient-bed-del', 'bed', _ambComposePrimaryHtml('bed', _cfg0.bed)) +
           _ambPrimaryCardBody('bed', _cfg0.bed) +
         '</div>' +
@@ -22106,19 +22079,8 @@
       host.innerHTML = _ambNamespaceHtml(E, html);
       _ambRestoreExpanded(host, _hostSnap);                       // primaries render inline — restore now
       E._expandSnap = { t: performance.now(), keys: _hostSnap };  // extras/seq/sample lists render later — they consume this while fresh
-      // Relocate the ⚙ Configure menu INTO the Area section, below the Lock
-      // controls (master Mix Bloom only — lanes/Shape have no area block, so the
-      // menu stays at the top there). Placed as the last child of .ambient-areas,
-      // after the (collapsible) orchestration body, so it renders directly beneath
-      // the Bars/Lock row when the area body is expanded and stays visible when
-      // it's collapsed. Moved before wiring so the id-based binds still find it.
-      try {
-        if (E === _masterEng) {
-          const areas = host.querySelector('.ambient-areas');
-          const cfgMenu = host.querySelector('.ambient-master-menu');
-          if (areas && cfgMenu) areas.appendChild(cfgMenu);
-        }
-      } catch (e) {}
+      // (The ⚙ Configure drawer was dissolved — its area-level settings now live
+      // in the Areas body directly, so there's no menu to relocate here anymore.)
       // Tint this panel's layer highlights with the ACTIVE area's accent (master
       // only — lane/Shape Bloom have no areas, so they keep the CSS purple default).
       try {
@@ -22155,17 +22117,31 @@
       });
       // Mixer collapse toggle (UI-only; the strip itself is re-rendered by
       // _ambRenderMixer as layers change).
-      // Select by ID — the bare `.ambient-mixer-toggle` class is SHARED by the
-      // progsec/groove/sched carets (styling reuse), so a class query matched
-      // the wrong (first) one. `.ambient-mixer-head` is unique to the mixer.
-      { const mxHead = host.querySelector('.ambient-mixer-head');
-        // Bind the WHOLE header row (not just the caret) so the tap target is
-        // big on mobile — the caret is a ~18px hit area otherwise.
-        if (mxHead) mxHead.addEventListener('click', () => {
-          const mx = mxHead.closest('.ambient-mixer');
-          if (mx) mx.classList.toggle('collapsed');   // caret direction handled by CSS (.collapsed)
-        });
-        try { _ambRenderMixer(E); } catch (e) {}
+      // TAB GROUP handler — one delegated click on the bar shows the picked
+      // pane (click the active tab again to collapse). Lazy-render the pane on
+      // activation (the same renders the old per-section toggles ran on expand).
+      { const tabsec = host.querySelector('.ambient-tabsec');
+        if (tabsec) {
+          const bar = tabsec.querySelector('.ambient-tabsec-bar');
+          if (bar) bar.addEventListener('click', (ev) => {
+            const tab = ev.target.closest('.ambient-tabsec-tab'); if (!tab || !tabsec.contains(tab)) return;
+            const name = tab.getAttribute('data-tab');
+            const wasActive = tab.classList.contains('active');
+            tabsec.querySelectorAll('.ambient-tabsec-tab').forEach(t => t.classList.remove('active'));
+            tabsec.querySelectorAll('.ambient-tabsec-pane').forEach(p => p.classList.remove('active'));
+            if (!wasActive) {   // clicking the active tab collapses the group
+              tab.classList.add('active');
+              const pane = tabsec.querySelector('.ambient-tabsec-pane[data-pane="' + name + '"]');
+              if (pane) pane.classList.add('active');
+              try {
+                if (name === 'groove') _ambRenderGroove(E);
+                else if (name === 'sched') _ambRenderScheduler(E);
+                else if (name === 'mixer') _ambRenderMixer(E);
+              } catch (e) {}
+            }
+          });
+        }
+        try { _ambRenderMixer(E); } catch (e) {}   // populate the (hidden) mixer strip up front
       }
       // ⏱ Scheduler: collapse toggle + ONE delegated editor handler (rows are
       // re-rendered whenever the layer set changes, so no per-row binds).
@@ -22174,19 +22150,9 @@
       // re-anchors the layer so the new offset lands cleanly.
       // ⇶ Progression section — collapse toggle (content is rendered by the
       // existing sync/matrix code; nothing to build on expand).
-      { const psBtn = host.querySelector('.ambient-progsec-toggle');
-        const psHead = psBtn && psBtn.closest('.ambient-sched-head');   // whole row taps (big mobile target)
-        if (psHead) psHead.addEventListener('click', () => {
-          const ps = psHead.closest('.ambient-progsec');
-          if (ps) ps.classList.toggle('collapsed');
-        }); }
-      { const grBtn = host.querySelector('.ambient-groove-toggle');
-        const grHead = grBtn && grBtn.closest('.ambient-sched-head');   // whole row taps (big mobile target)
-        if (grHead) grHead.addEventListener('click', () => {
-          const gr = grHead.closest('.ambient-groove');
-          if (gr) { gr.classList.toggle('collapsed'); if (!gr.classList.contains('collapsed')) { try { _ambRenderGroove(E); } catch (e) {} } }
-        });
-        const grBody = _ambGet(E, 'ambient-groove-body');
+      // (The per-section collapse toggles were replaced by the tab handler
+      //  above.) Groove BODY handlers still bind here:
+      { const grBody = _ambGet(E, 'ambient-groove-body');
         const _grCfg = () => { const c = cfg0(); if (!c) return null; if (!c.groove || typeof c.groove !== 'object') c.groove = { swing: 0, accent: 0, pushMode: 'ms' }; return c; };
         const _grPushKey = (el) => { const r = el.closest('[data-gkey]'); return r && r.getAttribute('data-gkey'); };
         const _grLiveSwing = () => { if (E.timer) { try { _ambSyncMods(); } catch (e) {} } };   // swing/accent read live at emit; nudge mods for good measure
@@ -22277,13 +22243,8 @@
           });
         }
       }
-      { const scBtn = host.querySelector('.ambient-sched-toggle');
-        const scHead = scBtn && scBtn.closest('.ambient-sched-head');   // whole row taps (big mobile target)
-        if (scHead) scHead.addEventListener('click', () => {
-          const sc = scHead.closest('.ambient-sched:not(.ambient-groove)');
-          if (sc) { sc.classList.toggle('collapsed'); if (!sc.classList.contains('collapsed')) { try { _ambRenderScheduler(E); } catch (e) {} } }
-        });
-        const scBody = _ambGet(E, 'ambient-sched-body');
+      // (Scheduler collapse toggle → tab handler above.) Scheduler BODY handlers:
+      { const scBody = _ambGet(E, 'ambient-sched-body');
         const _schedLayer = (el) => { const row = el.closest('[data-schkey]'); const key = row && row.getAttribute('data-schkey'); return key ? { key, L: _ambLayerByKey(E, key) } : null; };
         if (scBody) {
           scBody.addEventListener('change', (ev) => {
@@ -22797,6 +22758,11 @@
       const G = (id) => _ambGet(E, id);                 // prefix-aware lookup
       const cfg0 = () => E.getCfg();
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
+      // Only wired for the Tone (instrument) select today. A tone change on a
+      // PLAYING layer re-anchors so the new voice takes over at the layer's next
+      // unit boundary (the current unit rings out) — same live-but-aligned
+      // behavior as the per-note sliders. If this helper is ever reused for a
+      // non-note select, gate the re-anchor on the key.
       const wireSelect = (id, layer, key, populate) => {
         const sel = G(id);
         if (!sel) return;
@@ -22805,6 +22771,7 @@
           _E = E; const cfg = cfg0(); if (!cfg) return;
           cfg[layer][key] = sel.value || '';
           persist();
+          if (E.timer) { try { _ambReanchorLayer(E, layer); } catch (x) {} }
         });
       };
       ['bed', 'motif', 'texture'].forEach(layer => {
@@ -23872,8 +23839,8 @@
         _ambSyncControls(E);
         persist();
       });
-      const resetBtn = G('ambient-reset-btn');
-      if (resetBtn) resetBtn.addEventListener('click', () => { try { _ambResetInstance(E); } catch (e) { console.warn('Bloom reset failed', e); } });
+      // (↺ Reset removed — use the Areas 🧹 Clear-layers / ✕ Clear-all instead.
+      //  _ambResetInstance is retained for any programmatic caller.)
       if (E.isLane) {
         const freezeBtn = G('ambient-freeze-btn');
         if (freezeBtn) freezeBtn.addEventListener('click', () => { try { _ambFreezeToLane(); } catch (e) { console.warn('Bloom freeze failed', e); } });

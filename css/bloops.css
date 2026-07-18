@@ -3141,6 +3141,36 @@
       padding: 8px 10px; background: rgba(255,255,255,0.02);
       display: flex; flex-direction: column; gap: 6px;
     }
+    /* ---- Tab group: Key/Progression · Groove · Scheduler · Mixer overlaid as
+       tabs (one pane shown at a time; click the active tab to collapse). The
+       group frames the content; the panes keep their old section classes for
+       descendant styling but drop their own frame so they don't double-box. */
+    .ambient-tabsec {
+      border: 1px solid #20203a; border-radius: 8px; padding: 6px;
+      background: rgba(255,255,255,0.02); display: flex; flex-direction: column; gap: 0;
+    }
+    .ambient-tabsec-bar { display: flex; gap: 4px; flex-wrap: wrap; }
+    .ambient-tabsec-tab {
+      flex: 1 1 auto; min-width: 0; padding: 8px 10px; text-align: center;
+      border: 1px solid #2d2d3f; border-radius: 7px; background: rgba(255,255,255,0.02);
+      color: #b8b8d0; cursor: pointer; touch-action: manipulation;
+      font: 700 0.78rem 'Segoe UI', sans-serif; white-space: nowrap; overflow: hidden;
+      text-overflow: ellipsis; transition: all 0.12s ease;
+    }
+    @media (hover: hover) { .ambient-tabsec-tab:hover { border-color: #9f7aea; color: #d6bcfa; } }
+    .ambient-tabsec-tab.active { background: rgba(159,122,234,0.20); border-color: #9f7aea; color: #f5d0fe; }
+    .ambient-tabsec-pane { display: none; margin-top: 8px; }
+    .ambient-tabsec-pane.active { display: block; }
+    /* Strip the standalone section frame when the element is a tab pane — the
+       group already frames it (avoids a box-in-a-box). */
+    .ambient-tabsec-pane.ambient-mixer,
+    .ambient-tabsec-pane.ambient-sched,
+    .ambient-tabsec-pane.ambient-groove {
+      border: 0; background: none; padding: 0; border-radius: 0;
+    }
+    /* Key indicator sits at the top of the Key/Progression pane. */
+    .ambient-progsec-topline { display: flex; align-items: center; min-height: 20px; margin-bottom: 4px; }
+    .ambient-progsec-topline:empty { display: none; }
     /* The whole header row is the collapse tap target (JS binds the click to
        the head, not just the caret) — pointer + comfortable height so it's
        easy to hit on mobile. */

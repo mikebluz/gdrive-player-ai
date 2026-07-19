@@ -2,6 +2,15 @@
 <html lang="en">
 <head>
 <script>
+/* Diagnostics on/off switch — INLINE (in the force-uploaded HTML) so it works
+   even when the cached JS is stale: ?diag=1 turns the on-screen diagnostics
+   footer ON (persists via localStorage.sbDiag); ?diag=0 turns it OFF. Same flag
+   drives the Bloops press-diag HUD, and localStorage is shared across the site,
+   so ?diag=0 here clears it everywhere. Runs first, unconditionally. */
+try { if (/[?&]diag=0\b/.test(location.search)) localStorage.removeItem('sbDiag');
+      else if (/[?&]diag=1\b/.test(location.search)) localStorage.setItem('sbDiag', '1'); } catch (e) {}
+</script>
+<script>
 /* BOOT GUARD — a mobile "black screen" is always one of two states: a
    MIXED-VERSION bundle (stale cached HTML referencing one deploy while some
    assets come from another) or corrupt/incompatible persisted state. Neither

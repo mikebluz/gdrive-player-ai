@@ -2,6 +2,14 @@
 <html lang="en">
 <head>
 <script>
+/* Diagnostics on/off switch — INLINE (force-uploaded HTML) so it works even
+   with stale cached JS: ?diag=1 = on (persists via localStorage.sbDiag),
+   ?diag=0 = off. Drives the on-screen diag footer + press-diag HUD; shared
+   localStorage means ?diag=0 clears it everywhere. Runs first, unconditionally. */
+try { if (/[?&]diag=0\b/.test(location.search)) localStorage.removeItem('sbDiag');
+      else if (/[?&]diag=1\b/.test(location.search)) localStorage.setItem('sbDiag', '1'); } catch (e) {}
+</script>
+<script>
 /* BOOT GUARD — a mobile "black screen" is always one of two states: a
    MIXED-VERSION bundle (stale cached HTML referencing one deploy while some
    assets come from another) or corrupt/incompatible persisted state. Neither

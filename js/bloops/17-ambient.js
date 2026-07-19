@@ -14267,7 +14267,12 @@
           const r = (typeof rootIdx === 'number') ? (((rootIdx % 12) + 12) % 12) : 0;
           const sc = (typeof currentScale === 'string') ? currentScale : 'chromatic';
           const scName = (typeof prettyScaleName === 'function') ? prettyScaleName(sc) : sc;
-          const txt = (KEYN[r] || 'C') + ' ' + (scName || 'Chromatic');
+          // Mobile: long scale names ("Neapolitan Major Pentatonic") flood the
+          // fixed header even with the CSS width cap — hard-truncate the NAME to
+          // 5 chars (root kept). Full name stays available via the key picker.
+          const scShow = (typeof window !== 'undefined' && window.innerWidth <= 600 && scName && scName.length > 5)
+            ? scName.slice(0, 5) : (scName || 'Chromatic');
+          const txt = (KEYN[r] || 'C') + ' ' + scShow;
           if (kEl.textContent !== txt) kEl.textContent = txt;
         }
       } catch (e) {}

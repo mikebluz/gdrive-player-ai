@@ -20667,11 +20667,38 @@
       if (typeof showToast === 'function') showToast('Re-realized as ' + (_AMB_LAYER_SCHEMA[newType].label || newType) + '.');
       return newId;
     }
+    // A freshly ADDED layer comes in with a RANDOM default voice so each one
+    // sounds distinct out of the box (was: always the same '' / 'bass' default).
+    // Melodic layers pick a random tonal synth voice (drums/noise excluded);
+    // Beat picks a random drum kit (drum-only). Uses Math.random (a one-off UI
+    // action) — NOT the seeded engine RNG, so takes/harness are unaffected. Not
+    // applied to presets (they define their own voice) or the deterministic
+    // _ambDefaultLayer (harness/reset). type 'sample' has no synth voice → skip.
+    function _ambInstVoicePool() {
+      const base = (typeof SOUNDS !== 'undefined' && Array.isArray(SOUNDS)) ? SOUNDS
+        : ['sine', 'triangle', 'sawtooth', 'fm', 'pluck', 'pad'];
+      // Drop percussion / noise voices — those aren't melodic "voices".
+      return base.filter(s => s !== 'kick' && s !== 'metal' && !String(s).startsWith('noise'));
+    }
+    function _ambApplyRandomInstVoice(L, type) {
+      if (!L) return;
+      try {
+        if (type === 'beat') {
+          const kits = (typeof _ambDrumKits === 'function') ? _ambDrumKits() : [];
+          if (kits.length > 1) L.kit = kits[Math.floor(Math.random() * kits.length)].id;
+          return;
+        }
+        const pool = _ambInstVoicePool();
+        if (pool.length) L.tone = pool[Math.floor(Math.random() * pool.length)];
+      } catch (e) {}
+    }
     function _ambAddExtra(E, type) {
       _E = E; const cfg = E.getCfg(); if (!cfg || !_AMB_LAYER_SCHEMA[type]) return;
       if (!Array.isArray(cfg.extras)) cfg.extras = [];
       const newId = cfg.extras.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
-      cfg.extras.push(_ambProgDefaultUnit(cfg, _ambDefaultLayer(type, newId)));
+      const L = _ambProgDefaultUnit(cfg, _ambDefaultLayer(type, newId));
+      _ambApplyRandomInstVoice(L, type);
+      cfg.extras.push(L);
       _ambRenderExtras(E);
       if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();

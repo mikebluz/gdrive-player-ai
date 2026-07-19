@@ -129,6 +129,18 @@ mirror --reverse --verbose --ignore-time "$STAGE_DIR/" "$REMOTE_DIR/"
 # the deployed app can't sign in to Google Drive.
 mkdir -p "$REMOTE_DIR/js"
 put -O "$REMOTE_DIR/js" "$STAGE_DIR/js/config.js"
+# Force-upload the ?v=DEPLOYVER–stamped files. The stamp is always a 14-digit
+# timestamp, so a stamp-only change keeps the file the EXACT SAME SIZE — and the
+# `mirror --ignore-time` above compares by SIZE ONLY, so it SKIPS them, freezing
+# the cache-bust stamp and serving stale JS/CSS to returning (mobile) browsers
+# forever. Put them explicitly every deploy so the fresh stamp always lands.
+mkdir -p "$REMOTE_DIR/js/bloops"
+put -O "$REMOTE_DIR"           "$STAGE_DIR/index.html"
+put -O "$REMOTE_DIR"           "$STAGE_DIR/bloops.html"
+put -O "$REMOTE_DIR"           "$STAGE_DIR/player.html"
+put -O "$REMOTE_DIR"           "$STAGE_DIR/artwork.html"
+put -O "$REMOTE_DIR"           "$STAGE_DIR/game.html"
+put -O "$REMOTE_DIR/js/bloops" "$STAGE_DIR/js/bloops/03b-core-voices.js"
 # Post-upload SIZE VERIFICATION of the big JS the app can't boot without —
 # a size mismatch vs the local staged copy means a truncated upload.
 echo "--- remote sizes (verify vs local) ---"

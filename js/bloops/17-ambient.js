@@ -10764,9 +10764,19 @@
             });
             if (!gate.run) continue;
             if (_ambFreezeGate(E, key, now, gate.hz)) continue;
+            // Suppress LIVE voices SCHEDULED past a pending Write/lock boundary —
+            // the replay owns that region. The emit still runs fully (all RNG
+            // draws intact, so generation is byte-identical); the real playNote
+            // just drops any note at >= the boundary via `_ambEmitCutoff`.
+            // Without this, the look-ahead's past-boundary voices DOUBLE the
+            // replay for a few notes at the unit boundary on a late/janky tick
+            // (mobile) before the engage-cancel cuts one out. The harness stubs
+            // playNote (bypasses this gate) so its recorded stream is unchanged.
+            { const _fs = E.freeze && E.freeze[key];
+              window._ambEmitCutoff = (_fs && !_fs.frozen && Number.isFinite(_fs.pendingFreezeAt) && _fs.pendingFreezeAt > now) ? _fs.pendingFreezeAt : null; }
             window._ambCaptureSink = _ambCapSink(E, key);
             try { desc.emit(E, ex, key, now, gate.hz, lead, space, cfg); }
-            catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; window._ambEmitCutoff = null; _ambPruneCap(E, key, now); }
             continue;
           }
           // Stepped (free) layers — bed/motif/texture/random Beat; runLayer gates

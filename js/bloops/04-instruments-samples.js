@@ -3273,6 +3273,17 @@
 
     function playNote(freq, params = {}, durationMs, startTime, destination, trackIdx, laneIdx) {
       if (typeof params === 'string') params = { type: params };
+      // Bloom Write/lock handoff: DROP a live voice scheduled at/after a pending
+      // loop boundary — the captured replay owns that region. `_ambEmitCutoff`
+      // is set only around a windowed layer's live emit in the Bloom tick (null
+      // otherwise, so grid presses / replay notes are never gated). RNG-neutral:
+      // the generative draws already happened in the emitter before this call,
+      // and the invariant harness stubs playNote so it never sees this gate.
+      // Fixes the mobile "double-plays-then-one-cuts-out" at unit boundaries: the
+      // look-ahead used to schedule these past-boundary voices and rely on the
+      // engage-cancel to kill them, which loses the race on a late/janky tick.
+      if (typeof window !== 'undefined' && Number.isFinite(window._ambEmitCutoff)
+          && Number.isFinite(startTime) && startTime >= window._ambEmitCutoff - 1e-6) return;
       // Humanize (Bloom Variance): per-onset timing jitter from _ambApplyAdsr.
       // Scheduled notes only (a live press has no startTime to shift).
       if (Number.isFinite(params._humanSec) && params._humanSec && Number.isFinite(startTime)) { startTime = Math.max(0, startTime + params._humanSec); }

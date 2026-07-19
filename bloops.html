@@ -35,16 +35,16 @@ try { if (/[?&]diag=0\b/.test(location.search)) localStorage.removeItem('sbDiag'
       var d = document.createElement('div');
       d.id = 'boot-guard-overlay';
       d.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#101018;color:#dfe3ff;font:15px/1.5 -apple-system,Segoe UI,sans-serif;padding:28px 22px;overflow:auto;';
-      d.innerHTML = '<h2 style="margin:0 0 10px;font-size:1.15rem;">⚠️ The app hit an error while starting</h2>' +
-        '<p style="opacity:.8;margin:0 0 6px;">A fresh copy was already tried, so this is likely saved-data related rather than a stale cache.</p>' +
+      d.innerHTML = '<h2 style="margin:0 0 10px;font-size:1.15rem;">⚠️ The app didn’t load correctly</h2>' +
+        '<p style="opacity:.8;margin:0 0 6px;">This is almost always a stale cached copy on the phone. Reload a fresh copy straight from the server:</p>' +
         '<pre style="white-space:pre-wrap;background:#1a1a26;border-radius:6px;padding:10px;font-size:12px;max-height:30vh;overflow:auto;">' +
         String(msg || 'Unknown startup error').replace(/[<>&]/g, function (c) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]; }) + '</pre>' +
-        '<p style="margin:14px 0 8px;"><button id="bg-retry" style="font-size:15px;padding:10px 16px;border-radius:8px;border:1px solid #56608c;background:#232338;color:#dfe3ff;">🔄 Try again</button></p>' +
+        '<p style="margin:14px 0 8px;"><button id="bg-retry" style="font-size:16px;padding:12px 18px;border-radius:8px;border:1px solid #4fd1c5;background:#173a36;color:#b2f5ea;font-weight:600;">🔄 Force reload from server</button></p>' +
         '<p style="margin:0 0 8px;"><button id="bg-reset" style="font-size:15px;padding:10px 16px;border-radius:8px;border:1px solid #8c5656;background:#382323;color:#ffdfdf;">🧯 Back up my data, then reset the app</button></p>' +
         '<p style="opacity:.6;font-size:12px;">Reset downloads a bloops-backup.json of everything saved in this browser first, then clears it and reloads fresh.</p>';
       (document.body || document.documentElement).appendChild(d);
       var r = d.querySelector('#bg-retry');
-      if (r) r.onclick = function () { location.replace(location.pathname + '?fresh=' + Date.now()); };
+      if (r) r.onclick = function () { hardReload(); };
       var x = d.querySelector('#bg-reset');
       if (x) x.onclick = function () {
         try {
@@ -76,7 +76,38 @@ try { if (/[?&]diag=0\b/.test(location.search)) localStorage.removeItem('sbDiag'
   }
   window.addEventListener('error', function (ev) { onBootError((ev && ev.message) || 'Script error'); }, true);
   window.addEventListener('unhandledrejection', function (ev) { onBootError('Unhandled: ' + ((ev && ev.reason && (ev.reason.message || ev.reason)) || '?')); }, true);
-  window.__bloopsBootGuard = { _overlay: overlay, _fail: onBootError };
+  // Hard reload FROM THE SERVER — clears any service worker + CacheStorage
+  // (belt-and-suspenders; none today) and changes the URL (?fresh) so the HTML
+  // itself is refetched, dragging in the current ?v= asset keys. Reachable via
+  // the overlay button and window.__bloopsForceReload().
+  function hardReload() {
+    try {
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations)
+        navigator.serviceWorker.getRegistrations().then(function (rs) { rs.forEach(function (r) { try { r.unregister(); } catch (e) {} }); });
+      if (window.caches && caches.keys)
+        caches.keys().then(function (ks) { ks.forEach(function (k) { try { caches.delete(k); } catch (e) {} }); });
+    } catch (e) {}
+    setTimeout(function () { try { location.replace(location.pathname + '?fresh=' + Date.now()); } catch (e) { try { location.reload(); } catch (e2) {} } }, 150);
+  }
+  window.__bloopsForceReload = hardReload;
+  // WATCHDOG — a SILENT blank screen (stale-HTML mixed bundle, or a render that
+  // never runs) throws no error, so the listeners above never fire and the user
+  // is stranded on black. If nothing has visibly rendered within 12 s, show the
+  // recovery overlay (its Force-reload button pulls a fresh copy). The app can
+  // call window.__bloopsHealthy() to cancel early; a DOM heuristic is the
+  // fallback so it fires even when the app is completely dead. Real on-screen
+  // content cancels it, so a slow-but-fine load is left alone.
+  var __healthy = false;
+  window.__bloopsHealthy = function () { __healthy = true; };
+  setTimeout(function () {
+    if (__healthy || document.getElementById('boot-guard-overlay')) return;
+    try {
+      var sel = ['#sequence-display', '#grid', '#mix-view', '.float-header', '#main-content', '#playlist-container', '.container'];
+      for (var i = 0; i < sel.length; i++) { var el = document.querySelector(sel[i]); if (el && el.getBoundingClientRect().height > 8) return; }
+    } catch (e) { return; }
+    overlay('Nothing rendered within 12 seconds — the blank-screen watchdog stepped in.');
+  }, 12000);
+  window.__bloopsBootGuard = { _overlay: overlay, _fail: onBootError, _forceReload: hardReload };
 })();
 </script>
   <meta charset="UTF-8" />

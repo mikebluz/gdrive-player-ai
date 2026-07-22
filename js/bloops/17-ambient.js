@@ -5799,15 +5799,29 @@
       const reg    = Math.max(1, Math.min(4, inst.register | 0) || 2);
       const src    = _ambNotesOf(inst);
       const N      = Math.max(1, _ambScaleIntervals(src).length);
-      const isProg = (_ambAsNotes(src).type === 'prog');   // per-layer: one chord per phrase cycle
+      const _srcType = _ambAsNotes(src).type;
+      const isProg = (_srcType === 'prog');   // per-layer: one chord per phrase cycle
+      // Explicit CHORD/wrap source → ARPEGGIATE: advance one chord tone per hit so the
+      // whole chord distributes across the euclidean pattern (root, 3rd, 5th, …) instead
+      // of sitting on the root. A SCALE source keeps the melodic proximity walk (moves
+      // only when Pitch var fires). Harness-safe: no harness bass uses a chord/wrap
+      // source, and this is a PITCH-only change (same onsets, same RNG draws).
+      const chordPool = (_srcType === 'chord' || _srcType === 'wrap');
       _ambEmitEuclidCore(E, inst, key, now, horizon, lead, space, cfg, phaseStore, (ctx) => {
         const { bars, steps, pulses, rotate, slotSec, cStart, rnd, tFrom, tTo, dest, dmod, rVar, restP } = ctx;
           const _holdMs = ((inst.holdSteps | 0) > 0) ? Math.max(20, Math.round(slotSec * 1000 * Math.min(16, inst.holdSteps | 0))) : 0;   // Hold: step-relative note length (§5.1 — 0 = the ms Length)
         const pat = _ambEuclidPat(inst, pulses, steps, rotate, 1, 0, inst.euclidRegen | 0);   // base euclidean seed (override row 0 or generated) — salt MUST match the grid's (WYSIWYG)
         let walkDeg = 0;   // scale-degree offset from the register root; resets to root each cycle
+        let arpOrd = 0;    // chord-pool arp position: counts EUCLIDEAN hits from the cycle start
         for (let bar = 0; bar < bars; bar++) {
           for (let slot = 0; slot < steps; slot++) {
             let hit = pat[(bar * steps + slot) % pat.length] === 1;
+            // Chord-pool arp degree is a PURE function of the euclidean-hit ordinal, so it's
+            // identical no matter which tick emits this slot (the emitter re-emits a cycle
+            // progressively across ticks; a per-played-hit counter restarts at the root each
+            // tick — the "distribution stops after a few bars" bug). Advance BEFORE the tFrom
+            // gate so skipped slots still count.
+            const arpDeg = arpOrd; if (hit) arpOrd++;
             if (rVar > 0) {
               if (hit) { if (rnd() * 100 < rVar * 0.40) hit = false; }       // drop a seed hit
               else      { if (rnd() * 100 < rVar * 0.22) hit = true; }        // add a ghost hit
@@ -5821,7 +5835,7 @@
             // random magnitude in [1, maxStep] scale degrees (Proximity caps the
             // leap — 0 = strictly adjacent), otherwise it holds the current note.
             // Reflected within a 2-octave bass range so it stays low.
-            if (pVar > 0 && rnd() * 100 < pVar) {
+            if (!chordPool && pVar > 0 && rnd() * 100 < pVar) {
               const mag = 1 + Math.floor(rnd() * maxStep);
               const dir = rnd() < 0.5 ? -1 : 1;
               walkDeg += dir * mag;
@@ -5836,10 +5850,12 @@
             if (isProg && !_ambChordGateOK(E, inst, at, cfg, src)) continue;
           if (!_ambSectionGateOK(E, inst, at, cfg)) continue;   // section-mask (arrangement)
             if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at, src);
-            const f = _ambDegreeFreq(walkDeg % N, reg + Math.floor(walkDeg / N), src);
+            const _deg = chordPool ? (arpDeg % Math.max(1, N)) : walkDeg;   // chord tone (base octave) vs melodic walk
+            const _oct = chordPool ? reg : (reg + Math.floor(walkDeg / N));
+            const f = _ambDegreeFreq(_deg, _oct, src);
             if (f == null) continue;
             const bp = _ambApplyAdsr(_ambBassParams(lenMs, _ambLayerPan(inst), _ambToneAt(inst, at)), inst);
-            { const _dt = _ambDegreeToneAt(walkDeg, src); if (_dt) bp.type = _dt; const _dl = _ambDegreeLevelAt(walkDeg, src); if (_dl != null) bp.volume = Math.max(0, Math.min(100, Math.round((Number.isFinite(bp.volume) ? bp.volume : 100) * (_dl / 100)))); }   // wrap-ensemble: this degree's own tone + level
+            { const _dt = _ambDegreeToneAt(_deg, src); if (_dt) bp.type = _dt; const _dl = _ambDegreeLevelAt(_deg, src); if (_dl != null) bp.volume = Math.max(0, Math.min(100, Math.round((Number.isFinite(bp.volume) ? bp.volume : 100) * (_dl / 100)))); }   // wrap-ensemble: this degree's own tone + level
             bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
             if (dmod) bp._detuneMod = dmod;
             _ambColourLeadIn(f, bp, at, dest, _E.laneIdx(), src);   // Harmony colours: chromatic approach/enclosure (no-op at default 'landing')

@@ -1940,6 +1940,7 @@
         });
         _ambNormalizeFx(cfg[layer]);
         _ambNormalizeEuclidPattern(cfg[layer]);   // beat (euclid) editable-grid override
+        _ambNormalizeStepFx(cfg[layer]);          // per-step Step-Edit overrides
       });
       // Built-in layers are now "addable": only present ones show + play. New
       // configs start with just Bed; an Add-layer menu adds the others. Migrate
@@ -2005,6 +2006,7 @@
         _ambNormalizeModObj(x, _ambDefaultMod());
         _ambNormalizeFx(x);
         _ambNormalizeEuclidPattern(x);   // bass/beat/arp (euclid) editable-grid override
+        _ambNormalizeStepFx(x);          // per-step Step-Edit overrides (bass/melodic euclid)
         _ambNormalizeUnit(x);
         if (x.type !== 'beat' && x.type !== 'arp') _ambNormalizeNotes(x);
         _ambNormalizeKeyOv(x);   // B2 per-layer KEY override (all extra types)
@@ -5830,6 +5832,9 @@
             if (restP > 0 && rnd() * 100 < restP) continue;
             const at = cStart + (bar * steps + slot) * slotSec + (((bar * steps + slot) & 1) ? _ambSwingSec(inst, slotSec) : 0);
             if (at < tFrom || at >= tTo) continue;
+            const _absI = bar * steps + slot;
+            const sfx = _ambBassStepFxGet(inst, _absI);   // Step-Edit per-step override (null → byte-identical default)
+            if (sfx && sfx.prob < 100 && rnd() * 100 >= sfx.prob) continue;   // per-step probability (gated → no draw by default)
             // Pitch: a proximity-constrained walk anchored to the root. Each
             // cycle starts on the root; when Pitch var fires the walk steps by a
             // random magnitude in [1, maxStep] scale degrees (Proximity caps the
@@ -5852,17 +5857,28 @@
             if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at, src);
             const _deg = chordPool ? (arpDeg % Math.max(1, N)) : walkDeg;   // chord tone (base octave) vs melodic walk
             const _oct = chordPool ? reg : (reg + Math.floor(walkDeg / N));
-            const f = _ambDegreeFreq(_deg, _oct, src);
+            let f = _ambDegreeFreq(_deg, _oct, src);
             if (f == null) continue;
-            const bp = _ambApplyAdsr(_ambBassParams(lenMs, _ambLayerPan(inst), _ambToneAt(inst, at)), inst);
+            if (sfx && sfx.note != null) { try { f = Tone.Frequency(sfx.note | 0, 'midi').toFrequency(); } catch (e) {} }   // Step-Edit: explicit note overrides the generated pitch
+            const _basePan = _ambLayerPan(inst);   // keep the shared-RNG draw for parity even when a step-pan overrides it
+            const bp = _ambApplyAdsr(_ambBassParams(lenMs, (sfx && sfx.pan) ? sfx.pan : _basePan, _ambToneAt(inst, at)), inst);
             { const _dt = _ambDegreeToneAt(_deg, src); if (_dt) bp.type = _dt; const _dl = _ambDegreeLevelAt(_deg, src); if (_dl != null) bp.volume = Math.max(0, Math.min(100, Math.round((Number.isFinite(bp.volume) ? bp.volume : 100) * (_dl / 100)))); }   // wrap-ensemble: this degree's own tone + level
+            if (sfx && sfx.tone) bp.type = sfx.tone;   // Step-Edit: explicit per-step tone wins
             bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
+            if (sfx && sfx.vel !== 100) bp.volume = Math.max(0, Math.round((Number.isFinite(bp.volume) ? bp.volume : 100) * sfx.vel / 100));   // Step-Edit: velocity
             if (dmod) bp._detuneMod = dmod;
             _ambColourLeadIn(f, bp, at, dest, _E.laneIdx(), src);   // Harmony colours: chromatic approach/enclosure (no-op at default 'landing')
             let _bLen = _ambVaryLen(_holdMs || lenMs, inst.lenVary, rnd);
             if (_ambTightOn(inst)) { _bLen = _ambTightGap((j2) => pat[j2 % pat.length] === 1, bar * steps + slot, bars * steps) * slotSec * 1000; _ambTightChoke(bp); }
-            try { playNote(f, bp, _bLen, at, dest, undefined, _E.laneIdx()); } catch (e) {}
-            ctx.cap++;
+            if (sfx && sfx.len !== 100) _bLen = Math.max(5, Math.round(_bLen * sfx.len / 100));   // Step-Edit: length
+            const _rat = sfx ? sfx.rat : 1;   // Step-Edit: ratchet — retrigger N sub-notes across the slot
+            if (_rat > 1) {
+              const _rsp = slotSec / _rat, _rlen = Math.min(_bLen, _rsp * 1000 * 0.95);
+              for (let rr = 0; rr < _rat && ctx.cap < 256; rr++) { try { playNote(f, bp, _rlen, at + rr * _rsp, dest, undefined, _E.laneIdx()); } catch (e) {} ctx.cap++; }
+            } else {
+              try { playNote(f, bp, _bLen, at, dest, undefined, _E.laneIdx()); } catch (e) {}
+              ctx.cap++;
+            }
             // Ghosts (Variance): quiet pickup half a slot before, same pitch —
             // gated at 0 (no draw) → byte-identical.
             { const gP = Math.max(0, Math.min(100, inst.ghosts | 0));
@@ -7339,6 +7355,96 @@
       if (cur.vel === 100 && cur.len === 100 && cur.rat === 1 && cur.ratd === 0 && cur.prob === 100 && cur.pan === 0 && cur.pitch === 0) { if (pg.fx) delete pg.fx[k]; }
       else { if (!pg.fx) pg.fx = {}; pg.fx[k] = cur; }
     }
+    // ---- BASS/melodic-euclid PER-STEP OVERRIDES (the "Step Edit" modal) --------
+    // Sparse per-layer overrides keyed by ABSOLUTE step index i: change a single
+    // euclid step's note/tone/volume/ratchet/length/probability/pan, like a Grid step.
+    // ABSENT by default → the generated value (harness byte-identical). `note` = an
+    // absolute MIDI note (null = auto: follow the pattern's arp/walk); `tone` = a voice
+    // id ('' = the layer's Tone). Distinct from the drum `pg.fx` store (pages/voices).
+    function _ambBassStepFxGet(L, i) {
+      const e = L && L.stepFx && L.stepFx[i];
+      if (!e) return null;   // null = default → the emit path is byte-identical
+      return { note: Number.isFinite(e.note) ? (e.note | 0) : null, tone: (typeof e.tone === 'string' ? e.tone : ''),
+        vel: (e.vel != null ? e.vel : 100), len: (e.len != null ? e.len : 100), rat: (e.rat | 0) || 1, prob: (e.prob != null ? e.prob : 100), pan: (e.pan != null ? e.pan : 0) };
+    }
+    function _ambBassStepFxCustom(L, i) { return !!(L && L.stepFx && L.stepFx[i]); }
+    function _ambBassStepFxSet(L, i, patch) {
+      if (!L) return;
+      const cur = { note: null, tone: '', vel: 100, len: 100, rat: 1, prob: 100, pan: 0, ...(L.stepFx && L.stepFx[i]), ...patch };
+      cur.note = Number.isFinite(cur.note) ? Math.max(0, Math.min(127, cur.note | 0)) : null;
+      cur.tone = (typeof cur.tone === 'string') ? cur.tone : '';
+      cur.vel = Math.max(0, Math.min(200, cur.vel | 0));
+      cur.len = Math.max(5, Math.min(400, cur.len | 0));
+      cur.rat = Math.max(1, Math.min(8, cur.rat | 0));
+      cur.prob = Math.max(0, Math.min(100, cur.prob | 0));
+      cur.pan = Math.max(-100, Math.min(100, cur.pan | 0));
+      if (cur.note == null && !cur.tone && cur.vel === 100 && cur.len === 100 && cur.rat === 1 && cur.prob === 100 && cur.pan === 0) { if (L.stepFx) delete L.stepFx[i]; }
+      else { if (!L.stepFx) L.stepFx = {}; L.stepFx[i] = cur; }
+    }
+    // Normalize the sparse stepFx map (coerce entries, drop defaults). Additive/absent
+    // by default → not in _ambDefaultLayer, so harness/backfill-trap safe.
+    function _ambNormalizeStepFx(L) {
+      if (!L || !L.stepFx || typeof L.stepFx !== 'object') { if (L && 'stepFx' in L && (!L.stepFx || typeof L.stepFx !== 'object')) delete L.stepFx; return; }
+      const keys = Object.keys(L.stepFx);
+      if (!keys.length) { delete L.stepFx; return; }
+      keys.forEach(k => { if (!/^\d+$/.test(k)) { delete L.stepFx[k]; return; } _ambBassStepFxSet(L, k | 0, {}); });
+      if (!Object.keys(L.stepFx).length) delete L.stepFx;
+    }
+    // The Step-Edit MODAL — press a step (in Step Edit mode) to change everything
+    // about it, like a Grid step: note / tone / volume / length / ratchet / probability
+    // / pan. Body-attached overlay (shown via inline !important per the view-mode hide
+    // rules); edits apply on `change` (re-render the grid marker + rewrite a playing
+    // Write loop so it's heard at the next boundary). Reset clears the override.
+    function _ambBassStepModal(E, getL, i, key, render, persist, sync) {
+      const L = getL(); if (!L) return; _E = E;
+      const esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const cur = _ambBassStepFxGet(L, i) || { note: null, tone: '', vel: 100, len: 100, rat: 1, prob: 100, pan: 0 };
+      let noteOpts = '<option value="">Auto (follow pattern)</option>';
+      for (let m = 24; m <= 84; m++) { let nm = 'n' + m; try { nm = Tone.Frequency(m, 'midi').toNote(); } catch (e) {} noteOpts += '<option value="' + m + '"' + (cur.note === m ? ' selected' : '') + '>' + esc(nm) + '</option>'; }
+      let toneOpts = '<option value="">Layer tone</option>';
+      try { _ambToneOptions().forEach(o => { toneOpts += '<option value="' + esc(o.value) + '"' + (cur.tone === o.value ? ' selected' : '') + '>' + esc(o.label || o.value) + '</option>'; }); } catch (e) {}
+      let ratOpts = ''; for (let r = 1; r <= 8; r++) ratOpts += '<option value="' + r + '"' + (cur.rat === r ? ' selected' : '') + '>' + r + '×</option>';
+      const row = (lbl, ctrl) => '<label class="ambient-step-row"><span>' + lbl + '</span>' + ctrl + '</label>';
+      const rrow = (lbl, sf, mn, mx, val, unit) => '<label class="ambient-step-row"><span>' + lbl + '</span><input type="range" data-sf="' + sf + '" min="' + mn + '" max="' + mx + '" value="' + val + '"><em class="ambient-step-val" data-for="' + sf + '">' + val + unit + '</em></label>';
+      const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-step-modal-ov';
+      ov.innerHTML = '<div class="sm-modal ambient-step-modal">' +
+        '<div class="sm-title">Step ' + (i + 1) + '</div>' +
+        '<div class="ambient-step-modal-body">' +
+          row('Note', '<select data-sf="note" class="ambient-select">' + noteOpts + '</select>') +
+          row('Tone', '<select data-sf="tone" class="ambient-select">' + toneOpts + '</select>') +
+          rrow('Volume', 'vel', 0, 200, cur.vel, '%') +
+          rrow('Length', 'len', 5, 400, cur.len, '%') +
+          row('Ratchet', '<select data-sf="rat" class="ambient-select">' + ratOpts + '</select>') +
+          rrow('Probability', 'prob', 0, 100, cur.prob, '%') +
+          rrow('Pan', 'pan', -100, 100, cur.pan, '') +
+        '</div>' +
+        '<div class="sm-footer">' +
+          '<button type="button" class="sm-cancel" data-sf-act="reset">Reset step</button>' +
+          '<button type="button" class="sm-apply" data-sf-act="done">Done</button>' +
+        '</div></div>';
+      document.body.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+      const close = () => { try { ov.remove(); } catch (e) {} };
+      const apply = (sf, raw) => {
+        const L2 = getL(); if (!L2) return;
+        const patch = {};
+        if (sf === 'note') patch.note = (raw === '' ? null : (parseInt(raw, 10) | 0));
+        else if (sf === 'tone') patch.tone = raw || '';
+        else if (sf === 'rat') patch.rat = (parseInt(raw, 10) || 1);
+        else patch[sf] = (parseInt(raw, 10) || 0);
+        _ambBassStepFxSet(L2, i, patch);
+        render(); persist();
+        if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} }   // heard at the next boundary (rewrites a Write loop)
+      };
+      ov.addEventListener('input', (ev) => { const el = ev.target; if (!el.dataset || !el.dataset.sf) return; if (el.type === 'range') { const r = ov.querySelector('.ambient-step-val[data-for="' + el.dataset.sf + '"]'); if (r) r.textContent = el.value + (el.dataset.sf === 'pan' ? '' : '%'); } });
+      ov.addEventListener('change', (ev) => { const el = ev.target; if (el.dataset && el.dataset.sf) apply(el.dataset.sf, el.value); });
+      ov.addEventListener('click', (ev) => {
+        const btn = ev.target.closest && ev.target.closest('[data-sf-act]');
+        if (btn) { const act = btn.getAttribute('data-sf-act'); if (act === 'reset') { const L2 = getL(); if (L2) { _ambBassStepFxSet(L2, i, { note: null, tone: '', vel: 100, len: 100, rat: 1, prob: 100, pan: 0 }); render(); persist(); if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} } } } close(); return; }
+        if (ev.target === ov) close();   // click the backdrop
+      });
+      document.addEventListener('keydown', function esk(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esk); } });
+    }
     // Edit-scope resolution — the (lane, step) cells the inspector's sliders act on.
     // Lane mode: the selected lane × the scoped steps. Column mode: the scoped steps
     // across ALL lanes. `_editSteps` null/empty = all steps. Default lane 0, all.
@@ -7797,6 +7903,9 @@
       html += '<div class="ambient-euclid-meta">' +
         '<span class="ambient-euclid-barsreadout" aria-label="Pattern length">' + ((bar && bar.label) || '⟳ 1 bar') + '</span>' +
         (edited ? '<span class="ambient-euclid-note">✎ edited — a knob/Regen/Preset resets it</span>' : '') +
+        // Step Edit (melodic euclid only): when ON, tapping a step opens a modal to
+        // set its note / tone / volume / ratchet / length / probability / pan.
+        (!inst.euclidKit ? '<button type="button" class="ambient-euclid-stepedit' + (inst._stepEdit ? ' on' : '') + '" data-stepedit="1" title="Step Edit — when on, tap a step to change its note, tone, volume, ratchet, length, probability and pan (like a Grid step)">✎ Step</button>' : '') +
         '</div>';
       // Drum-lanes: page + the current EDIT scope. Cells are pure on/off toggles;
       // ALL step shaping happens in the edit panel below, targeting the selected
@@ -7819,13 +7928,13 @@
         } else if (d.V > 1) {
           html += '<span class="ambient-euclid-vlab" aria-hidden="true">' + (v + 1) + '</span>';
         }
-        html += '<div class="ambient-slice-grid ambient-euclid-cells" style="--eucols:' + Math.min(d.steps, 16) + '">';
+        html += '<div class="ambient-slice-grid ambient-euclid-cells' + (!inst.euclidKit && inst._stepEdit ? ' step-edit' : '') + '" style="--eucols:' + Math.min(d.steps, 16) + '">';
         for (let b = 0; b < nBars; b++) {
           for (let slot = 0; slot < d.steps; slot++) {
             const idx = b * d.steps + slot;                    // absolute index into the phrase
             const on = pat[idx % pat.length] === 1;
             const barStart = (slot === 0);
-            const hasFx = kpage && _ambStepFxCustom(kpage, v, idx);
+            const hasFx = kpage ? _ambStepFxCustom(kpage, v, idx) : _ambBassStepFxCustom(inst, idx);
             // `in-scope` marks the cells the edit panel is currently pointed at.
             const scoped = inst.euclidKit && kpage && stepInScope(idx) && (editMode === 'column' || v === editLane);
             html += '<button type="button" class="ambient-slice-cell ambient-euclid-cell' + (on ? ' on' : '') + (barStart && b > 0 ? ' barstart' : '') +
@@ -7928,10 +8037,15 @@
       // flips the step; the edit panel below targets whatever lane/scope is chosen
       // there, so you never disable a step to shape it.
       grid.addEventListener('click', (ev) => {
+        // Step Edit MODE toggle (melodic euclid): flips press-behaviour to open the modal.
+        const se = ev.target.closest && ev.target.closest('.ambient-euclid-stepedit');
+        if (se) { _E = E; const L2 = getL(); if (L2) { L2._stepEdit = !L2._stepEdit; render(); persist(); } return; }
         const c = ev.target.closest && ev.target.closest('.ambient-euclid-cell'); if (!c) return;
         _E = E; const L = getL(); if (!L) return;
         const v = parseInt(c.dataset.ev, 10), i = parseInt(c.dataset.ei, 10);   // i = absolute index into the phrase
         const d = _ambEuclidGridDims(L, type); if (!d || !Number.isFinite(v) || !Number.isFinite(i)) return;
+        // Step Edit ON → a press opens the per-step modal instead of toggling the step.
+        if (L._stepEdit && !L.euclidKit) { try { _ambBassStepModal(E, getL, i, key, render, persist, sync); } catch (e) {} return; }
         const total = d.bars * d.steps;   // full-phrase override length
         let ov;
         if (L.euclidKit) {

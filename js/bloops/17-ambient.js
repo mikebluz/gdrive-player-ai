@@ -1744,7 +1744,69 @@
     //        modulation timeline. Inherit/wrap/prog + customized-chord entries
     //        stay as compat reads (prog graduation needs entry-through-layer
     //        resolution — deferred).
-    const _AMB_SCHEMA_VERSION = 5;
+    //   v6 — prog.parts (chain of named sub-progressions) / prog.versions
+    //        (whole-progression snapshots) / per-chord alts (per-slot alternate
+    //        chords). All ADDITIVE and absent on legacy projects; _ambNormalizeProgMeta
+    //        derives+repairs parts (Σlen === chords.length) and deletes empties, so a
+    //        re-normalize of any pre-v6 cfg yields a byte-identical prog.chords.
+    const _AMB_SCHEMA_VERSION = 6;
+    // v6 — normalize the additive PROG metadata (parts / versions / per-chord alts).
+    // Every field is ABSENT on pre-v6 projects; this coerces when present and DELETES
+    // empties, so a re-normalize of any current cfg leaves prog.chords byte-identical
+    // (the invariant harness hashes chord root/intervals — untouched here). Self-contained
+    // (inlines its own chord clone) so it doesn't depend on _ambCloneChord's alt-awareness.
+    function _ambNormalizeProgMeta(prog) {
+      if (!prog || typeof prog !== 'object') return;
+      const cloneCh = (c) => {
+        if (!c || typeof c !== 'object') return null;
+        return { root: (((c.root | 0) % 12) + 12) % 12,
+          intervals: (Array.isArray(c.intervals) && c.intervals.length ? c.intervals : [0]).map(iv => (((iv | 0) % 12) + 12) % 12),
+          ...(Number.isFinite(c.bars) && c.bars > 0 ? { bars: c.bars } : {}) };
+      };
+      // Per-chord ALTS (Feat 2a): coerce present alts; delete when empty so a plain chord
+      // stays byte-identical (the harness-hashed root/intervals arrays are unchanged).
+      const chords = Array.isArray(prog.chords) ? prog.chords : [];
+      chords.forEach(ch => {
+        if (!ch || typeof ch !== 'object') return;
+        if (Array.isArray(ch.alts) && ch.alts.length) {
+          const alts = ch.alts.map(cloneCh).filter(Boolean);
+          if (alts.length) { ch.alts = alts; ch.altMode = (ch.altMode === 'random') ? 'random' : 'cycle'; return; }
+        }
+        delete ch.alts; delete ch.altMode;
+      });
+      // PARTS (Feat 1): a view over the flat chord list; repair so Σlen === chords.length.
+      const rp = _ambRepairParts(prog.parts, chords.length);
+      if (rp) prog.parts = rp; else delete prog.parts;
+      // VERSIONS (Feat 2b): whole-prog snapshots; coerce + cap; each carries its own parts.
+      if (prog.versions != null && Array.isArray(prog.versions)) {
+        prog.versions = prog.versions.filter(v => v && typeof v === 'object').slice(0, 12).map(v => {
+          const vch = (Array.isArray(v.chords) ? v.chords : []).map(cloneCh).filter(Boolean);
+          const vp = _ambRepairParts(v.parts, vch.length);
+          return { name: (typeof v.name === 'string' && v.name.trim()) ? v.name.trim().slice(0, 24) : 'Version', chords: vch, ...(vp ? { parts: vp } : {}) };
+        }).filter(v => v.chords.length);
+        if (!prog.versions.length) { delete prog.versions; delete prog.versionIdx; }
+        else if (!Number.isFinite(prog.versionIdx) || prog.versionIdx < 0 || prog.versionIdx >= prog.versions.length) delete prog.versionIdx;
+        else prog.versionIdx = prog.versionIdx | 0;
+      } else { delete prog.versions; delete prog.versionIdx; }
+    }
+    // Repair a parts list against a chord count: coerce {name,len}, clamp Σlen to total,
+    // final part swallows any remainder. Returns undefined for absent/empty OR a trivial
+    // single-part cover (keeps legacy cfgs noise-free — the UI treats "no parts" as one
+    // implicit whole-progression part), so parts can never desync from chords.
+    function _ambRepairParts(parts, total) {
+      if (!Array.isArray(parts) || !parts.length || total <= 0) return undefined;
+      const out = []; let acc = 0;
+      for (let i = 0; i < parts.length && acc < total; i++) {
+        const p = parts[i]; if (!p || typeof p !== 'object') continue;
+        const len = Math.max(1, Math.min(total - acc, Number.isFinite(p.len) ? (p.len | 0) : 1));
+        const name = (typeof p.name === 'string' && p.name.trim()) ? p.name.trim().slice(0, 16) : ('Part ' + (out.length + 1));
+        out.push({ name, len }); acc += len;
+      }
+      if (!out.length) return undefined;
+      if (acc < total) out[out.length - 1].len += (total - acc);
+      if (out.length === 1) return undefined;   // one part spanning everything = no chain
+      return out;
+    }
     function _normalizeAmbientCfg(cfg) {
       if (!cfg || typeof cfg !== 'object') return _defaultAmbientConfig();
       const d = _defaultAmbientConfig();
@@ -1784,6 +1846,7 @@
       if (typeof cfg.barsPerChordStr !== 'string' || !cfg.barsPerChordStr) cfg.barsPerChordStr = _ambFmtBpc(cfg.barsPerChord);
       if (!cfg.prog || typeof cfg.prog !== 'object') cfg.prog = { on: false, name: '', chords: [] };
       else { cfg.prog.on = !!cfg.prog.on; if (!Array.isArray(cfg.prog.chords)) cfg.prog.chords = []; if (typeof cfg.prog.name !== 'string') cfg.prog.name = ''; }
+      _ambNormalizeProgMeta(cfg.prog);   // v6 — parts / versions / per-chord alts (additive; empties deleted)
       // SECTIONS (sets of bars): coerce when present; ABSENT = off (additive).
       if (cfg.sections != null) {
         if (!Array.isArray(cfg.sections)) delete cfg.sections;
@@ -2401,7 +2464,27 @@
       if (!chs.length) return null;
       const step = (_ambProgStepOverride != null) ? (_ambProgStepOverride | 0)
         : ((_E && Number.isFinite(_E.progStep)) ? (_E.progStep | 0) : 0);
-      return chs[((step % chs.length) + chs.length) % chs.length] || null;
+      const len = chs.length;
+      const base = chs[((step % len) + len) % len] || null;
+      // Per-slot ALTERNATES (v6): if this chord carries alternates, swap one in per cycle.
+      // GATE — no alts → the EXACT prior return (byte-identical; the invariant harness's
+      // configs are all alt-free, so it's unaffected). The pick uses a DEDICATED seeded
+      // RNG (never the shared _ambRand stream the harness hashes → no downstream draw
+      // shifts) and is a PURE function of (idx, cycle, seed), so the >1 calls per onset
+      // (root via _ambSrcRootPc + intervals via _ambScaleIntervals) resolve the SAME alt.
+      if (!base || !Array.isArray(base.alts) || !base.alts.length) return base;
+      const pool = base.alts.length + 1;   // index 0 = the written chord
+      const idx = ((step % len) + len) % len;
+      const cycle = Math.floor(step / len);
+      let pick;
+      if (base.altMode === 'random') {
+        const seed = (_E && _E.getCfg && (_E.getCfg().seed | 0)) || 1;
+        const rnd = _ambSeededRand((((idx + 1) * 2654435761) ^ ((cycle + 1) * 40503) ^ ((seed * 131) >>> 0)) >>> 0);
+        pick = Math.floor(rnd() * pool) % pool;
+      } else {
+        pick = (((cycle % pool) + pool) % pool);   // 'cycle' — pure arithmetic, no RNG
+      }
+      return (pick === 0) ? base : (base.alts[pick - 1] || base);
     }
     // Bar-aligned chord step at an absolute onset time `atSec` (Tone seconds):
     //   floor(barsElapsed / barsPerChord), anchored at play start.
@@ -3431,15 +3514,23 @@
     // Picker for the GLOBAL progression (Configure → Prog). Two groups: User (the
     // user's wrap progressions + published progs) and Standard (built-ins). Writes
     // to cfg.prog (turns it on). Edits the VIEWED area's cfg (panel = viewed area).
-    function _ambOpenGlobalProgMenu(E, x, y) {
+    function _ambOpenGlobalProgMenu(E, x, y, opts) {
       if (typeof showCtxMenu !== 'function') return;
+      opts = opts || {};
       _E = E;
       const cfg = E.getCfg();
       const keyOn = !!(cfg && cfg.keyOn);
-      const apply = (name, chords) => {
+      const apply = (name, chords, parts) => {
         _E = E; const c = E.getCfg(); if (!c) return;
         if (!c.prog || typeof c.prog !== 'object') c.prog = { on: false, name: '', chords: [] };
-        c.prog.name = name; c.prog.chords = chords; c.prog.on = true;
+        if (opts.append && Array.isArray(c.prog.chords) && c.prog.chords.length) {
+          // APPEND MODE — chain this progression on as a new PART (Verse → Chorus → …).
+          _ambProgAppendPart(c.prog, name, chords);
+          c.prog.on = true;
+        } else {
+          c.prog.name = name; c.prog.chords = chords; c.prog.on = true;
+          if (Array.isArray(parts) && parts.length) c.prog.parts = parts.map(p => ({ name: p.name, len: p.len })); else delete c.prog.parts;
+        }
         if (typeof _ambAutoSyncFreeForProg === 'function') { try { _ambAutoSyncFreeForProg(E, c); } catch (e) {} }   // Phase 2c
         try { _ambSyncControls(E); } catch (e) {}
         try { _ambRefreshSrcChips(E); } catch (e) {}   // lock the per-layer Notes chips
@@ -3457,9 +3548,9 @@
       });
       const pub = _ambPublishedProgs();
       pub.forEach(p => {
-        const chords = (p.chords || []).map(c => ({ root: c.root, intervals: c.intervals, bars: c.bars }));
+        const chords = (p.chords || []).map(_ambCloneChord);
         if (keyOn && !_ambProgWorksInKey({ chords }, cfg)) return;
-        userItems.push({ label: '  ' + p.name, fn: () => apply(p.name, chords) });
+        userItems.push({ label: '  ' + p.name, fn: () => apply(p.name, chords, p.parts) });
       });
       if (userItems.length) { items.push({ label: 'User', disabled: true }); userItems.forEach(i => items.push(i)); }
       // STANDARD group — the full Prog-pad catalog, one submenu per family
@@ -3552,6 +3643,25 @@
       let sym = dim ? '°' : (aug ? '+' : ''); if (has(10)) sym += '7'; else if (has(11)) sym += 'maj7';
       return acc + num + sym;
     }
+    // DIATONIC shift of a pitch-class by N scale degrees, within the AREA key
+    // (root + scale). Snaps `pc` to the nearest scale tone, steps `degreeDelta`
+    // degrees along the scale (wrapping within the octave — pc-space, octave is
+    // irrelevant), and returns the new pc. On a chromatic / ≥12-tone scale a
+    // "degree" == a semitone, so it degrades to chromatic. Mirrors the nearest-
+    // degree logic of 08-grid-modes.js shiftFreqByScaleDegree, but in pc-space
+    // keyed to the AREA key (not the workspace globals).
+    function _ambDiatonicShiftPc(pc, degreeDelta, keyRoot, scaleName) {
+      pc = (((pc | 0) % 12) + 12) % 12; keyRoot = (((keyRoot | 0) % 12) + 12) % 12; degreeDelta = degreeDelta | 0;
+      const iv = (typeof SCALES !== 'undefined' && Array.isArray(SCALES[scaleName])) ? SCALES[scaleName] : [0, 2, 4, 5, 7, 9, 11];
+      if (!degreeDelta || iv.length >= 12) return (((pc + degreeDelta) % 12) + 12) % 12;
+      const N = iv.length;
+      const rel = (((pc - keyRoot) % 12) + 12) % 12;
+      // nearest scale degree to `rel`
+      let bestI = 0, bestD = 99;
+      for (let i = 0; i < N; i++) { const up = (((iv[i] - rel) % 12) + 12) % 12; const dn = (((rel - iv[i]) % 12) + 12) % 12; const d = Math.min(up, dn); if (d < bestD) { bestD = d; bestI = i; } }
+      const newDeg = (((bestI + degreeDelta) % N) + N) % N;
+      return (((keyRoot + iv[newDeg]) % 12) + 12) % 12;
+    }
     function _ambPeClose() { if (_ambProgEd) { try { _ambPePreviewStop(_ambProgEd); } catch (e) {} } const h = document.getElementById('ambient-prog-editor'); if (h) h.style.setProperty('display', 'none', 'important'); _ambProgEd = null; }
     // Frequencies of an editor chord, voiced from octave `oct` (C-based) upward —
     // intervals are absolute semitones from the root, so extensions (9/11/13 =
@@ -3615,13 +3725,15 @@
       });
       T({ ms: cum + LEAD * 1000 + 300, fn: () => { if (_ambProgEd === ed) _ambPePreviewStop(ed); } });
     }
-    const _ambCloneChord = (c) => { const o = { root: (((c.root | 0) % 12) + 12) % 12, intervals: (Array.isArray(c.intervals) ? c.intervals : [0]).slice() }; if (Number.isFinite(c.bars) && c.bars > 0) o.bars = c.bars; return o; };
+    const _ambCloneChord = (c) => { const o = { root: (((c.root | 0) % 12) + 12) % 12, intervals: (Array.isArray(c.intervals) ? c.intervals : [0]).slice() }; if (Number.isFinite(c.bars) && c.bars > 0) o.bars = c.bars; if (Array.isArray(c.alts) && c.alts.length) { o.alts = c.alts.map(a => { const ao = { root: (((a.root | 0) % 12) + 12) % 12, intervals: (Array.isArray(a.intervals) ? a.intervals : [0]).slice() }; if (Number.isFinite(a.bars) && a.bars > 0) ao.bars = a.bars; return ao; }); o.altMode = (c.altMode === 'random') ? 'random' : 'cycle'; } return o; };
     // Publish a chord-array progression to the shared registry (the prog pickers'
     // User group). (Distinct from _ambPublishProg, which takes wrap-step BLOCKS.)
-    function _ambPublishProgChords(name, chords) {
+    function _ambPublishProgChords(name, chords, parts) {
       const reg = _ambPublishedProgs();
       const id = reg.reduce((m, p) => Math.max(m, p.id | 0), 0) + 1;
-      reg.push({ id, name, chords: (chords || []).map(_ambCloneChord) });
+      const entry = { id, name, chords: (chords || []).map(_ambCloneChord) };
+      if (Array.isArray(parts) && parts.length) entry.parts = parts.map(p => ({ name: p.name, len: p.len }));
+      reg.push(entry);
     }
     // B3: the chord/region editor is scope-aware. `opts.scope`:
     //   'area'  (default) → edits cfg.prog (requires existing chords).
@@ -3651,17 +3763,18 @@
         const cfg = E.getCfg();
         if (!cfg || !cfg.prog || !Array.isArray(cfg.prog.chords) || !cfg.prog.chords.length) return;
         chords = cfg.prog.chords.map(_ambCloneChord);
-        name = (cfg.prog.name || 'Prog') + ' edit';
-        target = { label: 'Edit progression', apply: (nm, chs) => {
+        name = (cfg.prog.name || 'Prog') + (opts.clone ? ' copy' : ' edit');
+        target = { label: opts.clone ? 'Clone progression' : 'Edit progression', apply: (nm, chs) => {
           _E = E; const c = E.getCfg(); if (!c) return;
           if (!c.prog || typeof c.prog !== 'object') c.prog = { on: false, name: '', chords: [] };
           c.prog.name = nm; c.prog.chords = chs; c.prog.on = true;
+          const rp = _ambRepairParts(c.prog.parts, chs.length); if (rp) c.prog.parts = rp; else delete c.prog.parts;   // keep parts consistent after chord edits
           try { _ambAutoSyncFreeForProg(E, c); } catch (e) {}
-          _ambPublishProgChords(nm, chs);
+          _ambPublishProgChords(nm, chs, c.prog.parts);
           try { _ambSyncControls(E); } catch (e) {}
         } };
       }
-      _ambProgEd = { E, chords, sel: 0, name, target };
+      _ambProgEd = { E, chords, sel: 0, altSel: -1, name, target };
       let host = document.getElementById('ambient-prog-editor');
       if (!host) {
         host = document.createElement('div'); host.id = 'ambient-prog-editor'; host.className = 'ambient-prog-editor';
@@ -3679,29 +3792,52 @@
 
       const ed = _ambProgEd, sel = Math.max(0, Math.min(ed.chords.length - 1, ed.sel)); ed.sel = sel;
       const ch = ed.chords[sel];
+      const alts = Array.isArray(ch.alts) ? ch.alts : [];
+      if (ed.altSel >= alts.length) ed.altSel = -1;   // guard a stale alt selection
+      const tgt = (ed.altSel >= 0 && alts[ed.altSel]) ? alts[ed.altSel] : ch;   // edit target: base chord OR a selected alternate
       const esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
       const gcfg = ed.E.getCfg();
       const gbpcStr = (gcfg && (gcfg.barsPerChordStr || _ambFmtBpc(gcfg.barsPerChord))) || '1';
       // Roman numerals relative to the current key (area key the progression sits in).
       const kRoot = gcfg ? _ambKeyRootPc(gcfg) : 0, kScale = gcfg ? _ambKeyScaleName(gcfg) : 'major';
+      const diatonic = !(typeof SCALES !== 'undefined' && Array.isArray(SCALES[kScale]) && SCALES[kScale].length >= 12);   // no diatonic buttons on a chromatic scale
       const chordsRow = ed.chords.map((c, i) => {
         const rn = _ambPeRoman(c, kRoot, kScale);
-        return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em></button>'; }).join('') +
+        const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
+        return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em>' + (altN ? '<i class="pe-chord-alt">×' + (altN + 1) + '</i>' : '') + '</button>'; }).join('') +
         '<button type="button" class="pe-chord pe-add" data-pe="addchord" title="Add a chord (copy of the selected)">＋</button>';
-      const notes = _ambPeNotes(ch).slice().sort((a, b) => a - b);
+      const notes = _ambPeNotes(tgt).slice().sort((a, b) => a - b);
       const noteChips = notes.map((p, ni) =>
         '<span class="pe-note"><b>' + _AMB_CHROM[p] + '</b>' +
-        '<button type="button" data-pe="flat:' + ni + '" title="Down a semitone">♭</button>' +
-        '<button type="button" data-pe="sharp:' + ni + '" title="Up a semitone">♯</button>' +
+        '<button type="button" data-pe="flat:' + ni + '" title="Down a semitone (chromatic)">♭</button>' +
+        '<button type="button" data-pe="sharp:' + ni + '" title="Up a semitone (chromatic)">♯</button>' +
+        (diatonic ? '<button type="button" class="pe-dt" data-pe="ndtdn:' + ni + '" title="Down a scale degree (diatonic)">▾</button>' +
+          '<button type="button" class="pe-dt" data-pe="ndtup:' + ni + '" title="Up a scale degree (diatonic)">▴</button>' : '') +
         '<button type="button" class="pe-x" data-pe="rmnote:' + ni + '" title="Remove note"' + (notes.length <= 1 ? ' disabled' : '') + '>✕</button></span>').join('');
       const qButtons = _AMB_PE_QUALITIES.map(q => '<button type="button" class="pe-q" data-pe="qual:' + q[0] + '">' + q[0] + '</button>').join('');
+      // Alternates row — the base chord (◆) + each alternate (◇) as selectable edit
+      // targets; a mode toggle (cycle/random) appears once there's ≥1 alternate.
+      const altChip = (glyph, j, active, chObj) =>
+        '<span role="button" class="pe-alt-chip' + (active ? ' sel' : '') + '" data-pe="altsel:' + j + '" title="' + esc(_ambPeChLabel(chObj)) + ' — edit this ' + (j < 0 ? 'chord' : 'alternate') + '">' + glyph + ' ' + esc(_ambChordShort(chObj) || '?') +
+        (j >= 0 ? '<button type="button" class="pe-x" data-pe="altrm:' + j + '" title="Remove this alternate">✕</button>' : '') + '</span>';
+      const altMode = (ch.altMode === 'random') ? 'random' : 'cycle';
+      const altsRow = '<div class="pe-altrow"><label title="Alternate chords that swap in on repeats — reharmonize this slot">Alternates</label>' +
+        (alts.length ? '<span class="pe-alt-mode">' +
+          '<button type="button" class="pe-altmode' + (altMode === 'cycle' ? ' on' : '') + '" data-pe="altmode:cycle" title="Cycle through the alternates in order — one per repeat of the progression">Cycle</button>' +
+          '<button type="button" class="pe-altmode' + (altMode === 'random' ? ' on' : '') + '" data-pe="altmode:random" title="Pick a random alternate each repeat">Random</button>' +
+          '</span>' : '') +
+        altChip('◆', -1, ed.altSel < 0, ch) +
+        alts.map((a, j) => altChip('◇', j, ed.altSel === j, a)).join('') +
+        '<button type="button" class="pe-alt-add" data-pe="altadd" title="Add an alternate chord (a copy you can mutate) that swaps in on repeats">＋ Alt</button></div>';
       host.innerHTML =
         '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
         '<div class="pe-chords">' + chordsRow + '</div>' +
-        '<div class="pe-chordhdr">Chord ' + (sel + 1) + ' of ' + ed.chords.length +
+        '<div class="pe-chordhdr">Chord ' + (sel + 1) + ' of ' + ed.chords.length + (ed.altSel >= 0 ? ' <span class="pe-editing-alt">· editing alt ' + (ed.altSel + 1) + '</span>' : '') +
           '<span class="pe-chordops">' +
-            '<button type="button" data-pe="trdn" title="Transpose chord down a semitone">◀</button>' +
-            '<button type="button" data-pe="trup" title="Transpose chord up a semitone">▶</button>' +
+            '<button type="button" data-pe="trdn" title="Transpose down a semitone (chromatic)">◀</button>' +
+            '<button type="button" data-pe="trup" title="Transpose up a semitone (chromatic)">▶</button>' +
+            (diatonic ? '<button type="button" class="pe-dt" data-pe="dtdn" title="Transpose down a scale degree (diatonic — stays in key)">▽</button>' +
+              '<button type="button" class="pe-dt" data-pe="dtup" title="Transpose up a scale degree (diatonic — stays in key)">△</button>' : '') +
             '<button type="button" data-pe="inv" title="Invert (re-root to the next chord tone)">⟳ Inv</button>' +
             '<button type="button" data-pe="addnote" title="Add a note">＋ note</button>' +
             '<button type="button" class="pe-x" data-pe="rmchord" title="Remove this chord"' + (ed.chords.length <= 1 ? ' disabled' : '') + '>✕ chord</button>' +
@@ -3711,8 +3847,10 @@
           '<span class="pe-lenhint">bars — blank = ' + esc(gbpcStr) + ' (default)</span></div>' +
         '<div class="pe-notes">' + noteChips + '</div>' +
         '<div class="pe-qrow"><label>Set quality</label>' + qButtons + '</div>' +
+        altsRow +
         '<div class="pe-save"><input type="text" id="pe-name" value="' + esc(ed.name) + '" placeholder="Progression name" />' +
           '<button type="button" data-pe="cancel">Cancel</button>' +
+          '<button type="button" data-pe="clone" title="Duplicate this progression into a fresh editable copy">⧉ Clone</button>' +
           '<button type="button" class="pe-preview' + (ed._pvOn ? ' on' : '') + '" data-pe="preview" title="Hear the progression — each chord sounds for its own length">' + (ed._pvOn ? '■ Stop' : '▶ Preview') + '</button>' +
           '<button type="button" data-pe="pad" title="Add a pad layer that plays this progression">＋ Pad</button>' +
           '<button type="button" class="pe-apply" data-pe="save">Save as new</button></div>';
@@ -3762,27 +3900,38 @@
     function _ambPeAct(act, el) {
       const ed = _ambProgEd; if (!ed) return;
       const ch = ed.chords[ed.sel];
+      const alts0 = Array.isArray(ch.alts) ? ch.alts : [];
+      const tgt = (ed.altSel >= 0 && alts0[ed.altSel]) ? alts0[ed.altSel] : ch;   // edit target: base chord OR a selected alternate
       const a = act.split(':'), op = a[0], arg = a[1];
-      const notesSorted = () => _ambPeNotes(ch).slice().sort((x, y) => x - y);
-      if (op === 'sel') { ed.sel = arg | 0; }
-      else if (op === 'addchord') { ed.chords.splice(ed.sel + 1, 0, { root: ch.root, intervals: ch.intervals.slice() }); ed.sel++; }
-      else if (op === 'rmchord') { if (ed.chords.length > 1) { ed.chords.splice(ed.sel, 1); ed.sel = Math.min(ed.sel, ed.chords.length - 1); } }
-      else if (op === 'flat' || op === 'sharp') { const ns = notesSorted(); const ni = arg | 0; if (ns[ni] != null) { ns[ni] = (((ns[ni] + (op === 'sharp' ? 1 : -1)) % 12) + 12) % 12; _ambPeSetNotes(ch, ns, true); } }
-      else if (op === 'rmnote') { const ns = notesSorted(); if (ns.length > 1) { ns.splice(arg | 0, 1); _ambPeSetNotes(ch, ns, true); } }
-      else if (op === 'addnote') { const ns = notesSorted(); for (let p = 0; p < 12; p++) { if (ns.indexOf((ns[0] + p) % 12) < 0) { ns.push((ns[0] + p) % 12); break; } } _ambPeSetNotes(ch, ns, true); }
-      else if (op === 'qual') { const q = _AMB_PE_QUALITIES.find(x => x[0] === arg); if (q) { ch.intervals = q[1].map(iv => ((iv % 12) + 12) % 12); ch.intervals = Array.from(new Set(ch.intervals)).sort((x, y) => x - y); } }
-      else if (op === 'trup' || op === 'trdn') { const d = (op === 'trup') ? 1 : -1; ch.root = (((ch.root + d) % 12) + 12) % 12; }
-      else if (op === 'inv') { const ns = _ambPeNotes(ch); if (ns.length > 1) { const newRoot = (((ch.root + ch.intervals.slice().sort((x, y) => x - y)[1]) % 12) + 12) % 12; _ambPeSetNotes(ch, ns, false); ch.root = newRoot; ch.intervals = ns.map(p => (((p - newRoot) % 12) + 12) % 12).sort((x, y) => x - y); } }
+      const gcfg = ed.E.getCfg();
+      const kRoot = gcfg ? _ambKeyRootPc(gcfg) : 0, kScale = gcfg ? _ambKeyScaleName(gcfg) : 'major';
+      const notesSorted = () => _ambPeNotes(tgt).slice().sort((x, y) => x - y);
+      const serialize = () => ed.chords.map(_ambCloneChord);   // preserves bars + alts
+      if (op === 'sel') { ed.sel = arg | 0; ed.altSel = -1; }
+      else if (op === 'addchord') { ed.chords.splice(ed.sel + 1, 0, _ambCloneChord(ch)); ed.sel++; ed.altSel = -1; }
+      else if (op === 'rmchord') { if (ed.chords.length > 1) { ed.chords.splice(ed.sel, 1); ed.sel = Math.min(ed.sel, ed.chords.length - 1); ed.altSel = -1; } }
+      else if (op === 'flat' || op === 'sharp') { const ns = notesSorted(); const ni = arg | 0; if (ns[ni] != null) { ns[ni] = (((ns[ni] + (op === 'sharp' ? 1 : -1)) % 12) + 12) % 12; _ambPeSetNotes(tgt, ns, true); } }
+      else if (op === 'ndtup' || op === 'ndtdn') { const ns = notesSorted(); const ni = arg | 0; if (ns[ni] != null) { ns[ni] = _ambDiatonicShiftPc(ns[ni], op === 'ndtup' ? 1 : -1, kRoot, kScale); _ambPeSetNotes(tgt, ns, true); } }
+      else if (op === 'rmnote') { const ns = notesSorted(); if (ns.length > 1) { ns.splice(arg | 0, 1); _ambPeSetNotes(tgt, ns, true); } }
+      else if (op === 'addnote') { const ns = notesSorted(); for (let p = 0; p < 12; p++) { if (ns.indexOf((ns[0] + p) % 12) < 0) { ns.push((ns[0] + p) % 12); break; } } _ambPeSetNotes(tgt, ns, true); }
+      else if (op === 'qual') { const q = _AMB_PE_QUALITIES.find(x => x[0] === arg); if (q) { tgt.intervals = Array.from(new Set(q[1].map(iv => ((iv % 12) + 12) % 12))).sort((x, y) => x - y); } }
+      else if (op === 'trup' || op === 'trdn') { tgt.root = (((tgt.root + (op === 'trup' ? 1 : -1)) % 12) + 12) % 12; }
+      else if (op === 'dtup' || op === 'dtdn') { tgt.root = _ambDiatonicShiftPc(tgt.root, op === 'dtup' ? 1 : -1, kRoot, kScale); }
+      else if (op === 'inv') { const ns = _ambPeNotes(tgt); if (ns.length > 1) { const newRoot = (((tgt.root + tgt.intervals.slice().sort((x, y) => x - y)[1]) % 12) + 12) % 12; _ambPeSetNotes(tgt, ns, false); tgt.root = newRoot; tgt.intervals = ns.map(p => (((p - newRoot) % 12) + 12) % 12).sort((x, y) => x - y); } }
+      else if (op === 'altadd') { if (!Array.isArray(ch.alts)) ch.alts = []; ch.alts.push(_ambCloneChord({ root: ch.root, intervals: ch.intervals })); if (!ch.altMode) ch.altMode = 'cycle'; ed.altSel = ch.alts.length - 1; }
+      else if (op === 'altrm') { const j = arg | 0; if (Array.isArray(ch.alts) && ch.alts[j]) { ch.alts.splice(j, 1); if (!ch.alts.length) { delete ch.alts; delete ch.altMode; } if (ed.altSel >= (ch.alts ? ch.alts.length : 0)) ed.altSel = -1; } }
+      else if (op === 'altsel') { const j = arg | 0; ed.altSel = (j >= 0 && alts0[j]) ? j : -1; }
+      else if (op === 'altmode') { if (Array.isArray(ch.alts) && ch.alts.length) ch.altMode = (arg === 'random') ? 'random' : 'cycle'; }
+      else if (op === 'clone') { ed.chords = ed.chords.map(_ambCloneChord); ed.name = (ed.name || 'Prog').replace(/\s+(edit|copy)$/i, '') + ' copy'; ed.sel = Math.min(ed.sel, ed.chords.length - 1); ed.altSel = -1; if (ed.target) ed.target.label = 'Clone progression'; if (typeof showToast === 'function') showToast('Cloned — edit freely, then Save as new'); }
       else if (op === 'preview') { if (ed._pvOn) _ambPePreviewStop(ed); else _ambPePreviewStart(ed); return; }
       else if (op === 'cancel') { _ambPeClose(); return; }
       else if (op === 'pad') {
-        const chords = ed.chords.map(c => { const o = { root: c.root, intervals: c.intervals.slice() }; if (Number.isFinite(c.bars) && c.bars > 0) o.bars = c.bars; return o; });
-        _ambAddPadForProg(ed.E, chords, (ed.name || '').trim());
+        _ambAddPadForProg(ed.E, serialize(), (ed.name || '').trim());
         return;   // keep the editor open so you can keep tweaking
       }
       else if (op === 'save') {
         const E = ed.E;
-        const chords = ed.chords.map(c => { const o = { root: c.root, intervals: c.intervals.slice() }; if (Number.isFinite(c.bars) && c.bars > 0) o.bars = c.bars; return o; });
+        const chords = serialize();
         const name = (ed.name || 'Prog').trim() || 'Prog';
         // Scope-aware commit: area → cfg.prog; layer → layer.keyOv. Both publish
         // to the shared registry for reuse (handled inside target.apply). B3.
@@ -4131,7 +4280,11 @@
         // owns the Notes for every layer while it's on).
         if (_ambGlobalProg()) { try { if (typeof showToast === 'function') showToast('Notes are locked to the Area progression — turn Prog off (Configure) to edit'); } catch (e) {} return; }
         const r = chip.getBoundingClientRect();
-        _ambOpenNotesMenu(E, getLayer, r.left, r.bottom + 4, refresh);
+        // On an ACTUAL source change (afterChange fires only from the menu's apply),
+        // re-anchor + rewrite the layer so the new Notes take effect at the next
+        // boundary — a frozen WRITE loop would otherwise keep replaying the old phrase
+        // verbatim (the run/riff "ignores the Notes change" bug).
+        _ambOpenNotesMenu(E, getLayer, r.left, r.bottom + 4, () => { refresh(); if (E.timer && key) { try { _ambReanchorLayer(E, key); } catch (e) {} } });
       });
     }
     // Refresh every layer's Note-source chip (label + lock state) — called when
@@ -4525,10 +4678,36 @@
     // boundary); step layers (bed/motif/texture/random beat) in E.clocks. This is
     // what makes the generation + per-note sliders feel LIVE (they otherwise land
     // ~1.4 s late because the lookahead already committed the old values).
+    // Bring a frozen WRITE loop's rewrite forward to the NEXT loop boundary, so a
+    // generative edit (Notes source, register, range…) is heard promptly instead of
+    // after the whole `times`-play Write cycle. GATED to `_write` loops — a manual Hold
+    // freeze (`_lock`, no `_write`) is intentionally left frozen. Mirrors the natural
+    // cycle-end thaw (sets pendingThawAt/_writeRearmAt to a future boundary), just
+    // earlier; the freeze gate then thaws + re-captures a fresh phrase from the current
+    // source. No-op unless the layer is a frozen Write loop with a real anchor/loop.
+    function _ambRewriteSoon(E, key) {
+      try {
+        const fs = E && E.freeze && E.freeze[key];
+        if (!fs || !fs.frozen || !fs._write || !(fs.anchor > 0) || !(fs.loopLen > 0.05)) return;
+        const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        const nb = fs.anchor + Math.max(1, Math.ceil((now + 0.03 - fs.anchor) / fs.loopLen)) * fs.loopLen;   // next loop boundary
+        if (fs.pendingThawAt == null || fs.pendingThawAt > nb + 1e-3) {
+          fs.pendingThawAt = nb; fs._writeRearmAt = nb;
+          if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, nb);   // drop replay scheduled past the boundary
+        }
+      } catch (e) {}
+    }
     function _ambReanchorLayer(E, key) {
       if (!E || !E.timer) return;
       try {
         const L = _ambLayerByKey(E, key); if (!L) return;
+        // A layer replaying a frozen WRITE loop short-circuits its live emitter (the
+        // freeze gate returns before generation runs), so re-anchoring the phase alone
+        // is invisible — the captured phrase keeps playing until the Write cycle ends
+        // (up to `times` loops later). Bring the rewrite forward to the NEXT loop
+        // boundary so generative edits (Notes source, register, range, density…) take
+        // effect promptly. No-op when not frozen / not a Write loop.
+        try { _ambRewriteSoon(E, key); } catch (e) {}
         const cfg = E._cfg || (E.getCfg && E.getCfg());
         const P = _ambLayerPeriodSec(E, key, L, cfg);
         if (!(P > 0.02)) return;
@@ -5025,9 +5204,16 @@
       const want = Math.max(1, Math.min(8, bed.density | 0));
       const mode = bed.chordMode || 'chaos';
       if (mode === 'chaos') {
-        // CHAOS (default, unchanged → harness byte-identical): random stack of
-        // scale degrees, biased toward chord tones.
-        const chordDegrees = [0, 2, 4, 6].filter(d => d < N);
+        // CHAOS (default): random stack, biased 75% toward "chord tones". For a
+        // SCALE pool the chord tones are the odd scale degrees (root/3rd/5th/7th);
+        // for an explicit CHORD pool (wrap/chord/prog) EVERY pool note is already a
+        // chord tone, so bias across all of them — otherwise a 3-note wrap's middle
+        // note is demoted to a rare passing tone (it appeared in only ~10% of voices,
+        // absent from ~64% of chords). Scale sources keep the historical [0,2,4,6]
+        // AND the RNG-draw count is unchanged either way → harness byte-identical
+        // (no harness bed uses a wrap/chord source).
+        const chordPool = (notes.type === 'wrap' || notes.type === 'chord' || notes.type === 'prog');
+        const chordDegrees = chordPool ? intervals.map((_, i) => i) : [0, 2, 4, 6].filter(d => d < N);
         const used = new Set();
         const out = [];
         let guard = 0;
@@ -14233,6 +14419,7 @@
       }
       try { _ambUpdatePlayheads(E); } catch (e) {}
       try { _ambEuclidStepPlayheads(E); } catch (e) {}
+      try { _ambProgOverviewPlayhead(E); } catch (e) {}
       try { _ambSynthVoicePlayheads(E); } catch (e) {}
       if (E.timer && !document.hidden) E.viz.raf = requestAnimationFrame(() => _ambVizFrame(E));
       else E.viz.raf = 0;
@@ -16906,6 +17093,145 @@
         }
       } catch (e) {}
     }
+    // ---- PROG-META mutations (shared by the overview strip + the tab buttons) ----
+    // Parts are a VIEW over the flat prog.chords list; these keep chords + parts in
+    // step, and normalize (_ambRepairParts) is the Σlen safety net after every edit.
+    function _ambProgPartRange(prog, pi) {
+      const parts = prog.parts; if (!Array.isArray(parts) || !parts[pi]) return null;
+      let from = 0; for (let i = 0; i < pi; i++) from += (parts[i].len | 0);
+      return { from, to: from + (parts[pi].len | 0) };
+    }
+    function _ambProgMovePart(prog, pi, dir) {
+      const parts = prog.parts; if (!Array.isArray(parts)) return;
+      const lo = Math.min(pi, pi + dir), hi = Math.max(pi, pi + dir);
+      if (lo < 0 || hi >= parts.length || lo === hi) return;
+      const rlo = _ambProgPartRange(prog, lo), rhi = _ambProgPartRange(prog, hi); if (!rlo || !rhi) return;
+      const chords = prog.chords;
+      const segLo = chords.slice(rlo.from, rlo.to), segHi = chords.slice(rhi.from, rhi.to);   // adjacent → rlo.to === rhi.from
+      chords.splice(rlo.from, rhi.to - rlo.from, ...segHi, ...segLo);
+      const tmp = parts[lo]; parts[lo] = parts[hi]; parts[hi] = tmp;
+    }
+    function _ambProgRemovePart(prog, pi) {
+      const parts = prog.parts; if (!Array.isArray(parts) || !parts[pi]) return;
+      const r = _ambProgPartRange(prog, pi); if (!r || (prog.chords.length - (r.to - r.from)) <= 0) return;   // never empty the whole prog
+      prog.chords.splice(r.from, r.to - r.from);
+      parts.splice(pi, 1);
+      if (parts.length <= 1) delete prog.parts;   // normalize repairs / drops trivial single-part
+    }
+    function _ambProgAppendPart(prog, name, chords) {
+      if (!Array.isArray(chords) || !chords.length) return;
+      const add = chords.map(_ambCloneChord);
+      if (!Array.isArray(prog.parts) || !prog.parts.length) {   // seed a part over the existing chords first
+        prog.parts = prog.chords.length ? [{ name: String(prog.name || 'Part 1').slice(0, 16), len: prog.chords.length }] : [];
+      }
+      prog.chords.push(...add);
+      prog.parts.push({ name: String(name || 'Part').slice(0, 16), len: add.length });
+    }
+    function _ambProgAddVersion(prog) {
+      if (!Array.isArray(prog.versions)) prog.versions = [];
+      if (prog.versions.length >= 12 || !Array.isArray(prog.chords) || !prog.chords.length) return;
+      prog.versions.push({ name: String(prog.name || ('Version ' + (prog.versions.length + 1))).slice(0, 24),
+        chords: prog.chords.map(_ambCloneChord),
+        ...(Array.isArray(prog.parts) && prog.parts.length ? { parts: prog.parts.map(p => ({ name: p.name, len: p.len })) } : {}) });
+      prog.versionIdx = prog.versions.length - 1;
+    }
+    function _ambProgSwitchVersion(prog, vi) {
+      if (!Array.isArray(prog.versions) || !prog.versions[vi]) return;
+      const v = prog.versions[vi];
+      prog.chords = v.chords.map(_ambCloneChord);
+      if (Array.isArray(v.parts) && v.parts.length) prog.parts = v.parts.map(p => ({ name: p.name, len: p.len })); else delete prog.parts;
+      prog.versionIdx = vi;
+    }
+    // ---- PROGRESSION OVERVIEW STRIP -------------------------------------
+    // A compact wrapping run of chord chips grouped under PART headers. Alt-bearing
+    // chords carry a ×N badge; the playing chord glows (per-frame _ambProgOverviewPlayhead).
+    // Click a chord → open the editor at that chord; click a part header → rename/reorder.
+    // Delegated POINTERDOWN (the strip repaints on the viz timer → click would drop; the
+    // live-readout gotcha). NO horizontal scroll: the container wraps, part headers are
+    // full-width flex breaks.
+    function _ambRenderProgOverview(E) {
+      const el = _ambGet(E, 'ambient-prog-overview'); if (!el) return;
+      const cfg = E.getCfg();
+      const on = !!(cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length);
+      el.style.display = on ? '' : 'none';
+      if (!on) { el.innerHTML = ''; el._sig = ''; el._curCi = -2; return; }
+      const prog = cfg.prog, chords = prog.chords, N = chords.length;
+      const parts = (Array.isArray(prog.parts) && prog.parts.length) ? prog.parts : null;
+      const sig = N + '|' + chords.map(c => c.root + ':' + (c.intervals || []).join('.') + (Array.isArray(c.alts) && c.alts.length ? ('a' + c.alts.length + (c.altMode || '')) : '')).join(',') +
+        '|' + (parts ? parts.map(p => p.name + '=' + p.len).join('/') : '') + '|' + (Number.isFinite(prog.versionIdx) ? prog.versionIdx : -1) + '|' + (Array.isArray(prog.versions) ? prog.versions.length : 0);
+      if (el._sig === sig) return;
+      el._sig = sig; el._curCi = -2;
+      const esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const kRoot = _ambKeyRootPc(cfg), kScale = _ambKeyScaleName(cfg);
+      const ranges = [];
+      if (parts) { let acc = 0; parts.forEach((p, pi) => { ranges.push({ name: p.name, from: acc, to: Math.min(N, acc + (p.len | 0)), pi }); acc += (p.len | 0); }); }
+      else ranges.push({ name: '', from: 0, to: N, pi: -1 });
+      let h = '';
+      if (Array.isArray(prog.versions) && prog.versions.length) {
+        h += '<div class="ambient-pov-vers">' +
+          '<span class="ambient-pov-verslbl">Versions</span>' +
+          prog.versions.map((v, vi) => '<span role="button" tabindex="0" class="ambient-pov-ver' + (vi === prog.versionIdx ? ' on' : '') + '" data-pov="ver:' + vi + '" title="Switch to “' + esc(v.name) + '”">' + esc(v.name) + '</span>').join('') +
+          '<span role="button" tabindex="0" class="ambient-pov-ver ambient-pov-veradd" data-pov="veradd" title="Save the current progression as a new version">＋</span>' +
+          '</div>';
+      }
+      ranges.forEach(r => {
+        if (r.pi >= 0) {
+          h += '<div class="ambient-pov-parthdr">' +
+            '<span class="ambient-pov-partname" role="button" tabindex="0" data-pov="partren:' + r.pi + '" title="Rename this part">' + esc(r.name) + ' <em>' + (r.to - r.from) + '</em></span>' +
+            '<span class="ambient-pov-partops">' +
+              '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':-1" title="Move part earlier">◀</span>' +
+              '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':1" title="Move part later">▶</span>' +
+              '<span role="button" tabindex="0" class="ambient-pov-partbtn ambient-pov-partrm" data-pov="partrm:' + r.pi + '" title="Remove this part (and its chords)">✕</span>' +
+            '</span></div>';
+        }
+        for (let i = r.from; i < r.to; i++) {
+          const c = chords[i];
+          const rn = _ambPeRoman(c, kRoot, kScale);
+          const nm = _ambChordShort(c) || '?';
+          const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
+          h += '<span role="button" tabindex="0" class="ambient-pov-chord" data-pov="chord:' + i + '" data-ci="' + i + '" title="Chord ' + (i + 1) + ' — ' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + ' · click to edit">' +
+            (rn ? '<b>' + esc(rn) + '</b>' : '') + '<span class="ambient-pov-nm">' + esc(nm) + '</span>' +
+            (altN ? '<i class="ambient-pov-alt" title="' + (altN + 1) + ' alternate chords cycle here">×' + (altN + 1) + '</i>' : '') +
+            '</span>';
+        }
+      });
+      el.innerHTML = h;
+      if (!el._wired) { el._wired = true; el.addEventListener('pointerdown', (ev) => { try { _ambProgOverviewAct(E, ev); } catch (e) {} }); }
+    }
+    // Per-frame glow of the sounding chord (called from _ambVizFrame; only touches the
+    // DOM when the chord index changes — cached on el._curCi).
+    function _ambProgOverviewPlayhead(E) {
+      const el = _ambGet(E, 'ambient-prog-overview'); if (!el || el.style.display === 'none' || !el._wired) return;
+      const cfg = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : (E.getCfg && E.getCfg()));
+      const p = cfg && cfg.prog; if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) { if (el._curCi !== -1) { el._curCi = -1; el.querySelectorAll('.ambient-pov-chord.cur').forEach(n => n.classList.remove('cur')); } return; }
+      const tnow = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + 0.016;
+      let step = 0; try { step = _ambProgStepAt(E, tnow) | 0; } catch (e) {}
+      const ci = ((step % p.chords.length) + p.chords.length) % p.chords.length;
+      if (ci === el._curCi) return;
+      el._curCi = ci;
+      el.querySelectorAll('.ambient-pov-chord.cur').forEach(n => n.classList.remove('cur'));
+      const cell = el.querySelector('.ambient-pov-chord[data-ci="' + ci + '"]'); if (cell) cell.classList.add('cur');
+    }
+    function _ambProgOverviewAct(E, ev) {
+      const t = ev.target && ev.target.closest && ev.target.closest('[data-pov]'); if (!t) return;
+      ev.preventDefault();
+      const a = String(t.getAttribute('data-pov')).split(':'), op = a[0];
+      _E = E; const cfg = E.getCfg(); if (!cfg || !cfg.prog) return; const prog = cfg.prog;
+      const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
+      const refresh = () => { el0(); _ambRenderProgOverview(E); try { _ambSyncControls(E); } catch (e) {} try { _ambRefreshSrcChips(E); } catch (e) {} if (E.timer) { try { _ambSyncMods(); } catch (e) {} } };
+      const el0 = () => { const el = _ambGet(E, 'ambient-prog-overview'); if (el) el._sig = ''; };
+      if (op === 'chord') {
+        const i = a[1] | 0;
+        _ambOpenProgEditor(E, { scope: 'area' });
+        if (_ambProgEd) { _ambProgEd.sel = Math.max(0, Math.min(_ambProgEd.chords.length - 1, i)); _ambPeRender(); }
+        return;
+      }
+      if (op === 'partren') { const pi = a[1] | 0; const parts = prog.parts; if (!parts || !parts[pi]) return; const nm = (typeof prompt === 'function') ? prompt('Part name', parts[pi].name) : null; if (nm != null) { const v = String(nm).trim().slice(0, 16); if (v) parts[pi].name = v; persist(); refresh(); } return; }
+      if (op === 'partmv') { _ambProgMovePart(prog, a[1] | 0, a[2] | 0); persist(); refresh(); return; }
+      if (op === 'partrm') { _ambProgRemovePart(prog, a[1] | 0); persist(); refresh(); return; }
+      if (op === 'ver') { _ambProgSwitchVersion(prog, a[1] | 0); try { _ambAutoSyncFreeForProg(E, cfg); } catch (e) {} persist(); refresh(); return; }
+      if (op === 'veradd') { _ambProgAddVersion(prog); persist(); refresh(); return; }
+    }
     function _ambRenderChordMatrix(E) {
       const el = _ambGet(E, 'ambient-progmatrix'); if (!el) return;
       const cfg = E.getCfg();
@@ -17038,6 +17364,7 @@
       const host = E && document.getElementById(E.hostId); if (!host) return;
       try { _ambSyncProgVis(E); } catch (e) {}
       try { _ambRenderChordMatrix(E); } catch (e) {}
+      try { _ambRenderProgOverview(E); } catch (e) {}
       try { _ambRenderSectionMatrix(E); } catch (e) {}
       // Warble sliders reflect their layer's macro value across re-renders.
       try { host.querySelectorAll('.amb-warble').forEach(wb => {
@@ -19896,7 +20223,7 @@
           } }); } }
           else if (k === 'euclidregen') { const b = el('euclidregen'); if (b) b.addEventListener('click', () => { _E = E; _ambEuclidRegen(E, type + ':' + id); }); }
           else if (k === 'euclidgrid') { _ambWireEuclidGrid(E, el, get, persist, sync, type, type + ':' + id); }
-          else if (k === 'arpeuclid') { const s = el('euclid'); if (s) { s.value = inst.euclid ? '1' : '0'; s.addEventListener('change', () => { const L = get(); if (!L) return; L.euclid = (s.value === '1'); if (L.euclid) { if (!(L.pulses | 0)) L.pulses = 4; if (!(L.steps | 0)) L.steps = 8; if (!(L.euclidVoices | 0)) L.euclidVoices = 2; if (!(L.bars | 0)) L.bars = 1; } const gk = type + ':' + id; if (E.runPhase) delete E.runPhase[gk]; if (E.arpState) delete E.arpState[gk]; if (E.clocks) delete E.clocks[gk]; persist(); _ambRenderExtras(E); try { const wrap = _ambGet(E, 'ambient-extra-layers'); const card = wrap && wrap.querySelector('.ambient-layer[data-inst="' + type + ':' + id + '"]'); if (card) card.classList.remove('collapsed'); } catch (e) {} }); } }
+          else if (k === 'arpeuclid') { const s = el('euclid'); if (s) { s.value = inst.euclid ? '1' : '0'; s.addEventListener('change', () => { const L = get(); if (!L) return; L.euclid = (s.value === '1'); if (L.euclid) { if (!(L.pulses | 0)) _ambEuclidStochasticInit(L); if (!(L.steps | 0)) L.steps = 8; if (!(L.euclidVoices | 0)) L.euclidVoices = 2; if (!(L.bars | 0)) L.bars = 1; } const gk = type + ':' + id; if (E.runPhase) delete E.runPhase[gk]; if (E.arpState) delete E.arpState[gk]; if (E.clocks) delete E.clocks[gk]; persist(); _ambRenderExtras(E); try { const wrap = _ambGet(E, 'ambient-extra-layers'); const card = wrap && wrap.querySelector('.ambient-layer[data-inst="' + type + ':' + id + '"]'); if (card) card.classList.remove('collapsed'); } catch (e) {} }); } }
         } catch (err) { console.warn('Bloom extra control wiring failed', type, id, k, err); }
       });
       ['vca', 'vco', 'vcf'].forEach(t => {
@@ -20707,12 +21034,43 @@
         if (pool.length) L.tone = pool[Math.floor(Math.random() * pool.length)];
       } catch (e) {}
     }
+    // Roll a STOCHASTIC initial euclidean pattern for a euclid layer (Bass / euclid
+    // Arp) — the first pattern is random instead of the fixed textbook 4/8 or 5/8, so
+    // each new euclid layer starts with a distinct rhythm. UI-time only: uses
+    // Math.random (like _ambApplyRandomInstVoice), NEVER the seeded generation stream
+    // `_ambRand`, and `_ambDefaultLayer` stays deterministic — so the invariant harness
+    // (which builds configs straight from `_ambDefaultLayer`, not this path) is unchanged.
+    function _ambEuclidStochasticInit(L) {
+      if (!L) return;
+      const steps = Math.max(2, Math.min(32, (L.steps | 0) || 8));
+      const minP = Math.min(2, steps - 1);
+      const maxP = Math.max(minP, Math.min(steps - 1, Math.round(steps * 0.7)));   // musical density band (steps 8 → 2..6)
+      L.steps = steps;
+      L.pulses = minP + Math.floor(Math.random() * (maxP - minP + 1));
+      L.rotate = Math.floor(Math.random() * steps);
+      L.euclidPattern = null;   // clear any override so the generated euclidean shows
+    }
+    // A layer flagged `takeReroll` re-rolls its RHYTHM with each "New take". For a
+    // EUCLID layer (Bass / euclid Arp / euclid single-drum Beat) the euclidean salt
+    // (`euclidRegen`) is DERIVED from the area take seed — the salt path in
+    // _ambEuclidVoicePat re-rolls pulses(±2)+rotation deterministically from it, so
+    // the rhythm changes per take AND is reproducible (same take ID = same rhythm).
+    // A RANDOM-gen Beat already re-rolls off cfg.seed, so there's nothing to do.
+    // Additive/gated (absent flag → untouched), so the harness is unaffected.
+    function _ambApplyTakeReroll(L, seed) {
+      if (!L || !L.takeReroll) return;
+      const euclid = (L.type === 'bass') || (L.type === 'beat' && L.gen === 'euclid') || (L.type === 'arp' && L.euclid);
+      if (!euclid) return;
+      L.euclidRegen = ((Math.imul((seed | 0) >>> 0, 2654435761) ^ Math.imul((L.id | 0) + 1, 40503)) >>> 0) || 1;
+      L.euclidPattern = null;   // drop any hand-edited override so the fresh pattern shows
+    }
     function _ambAddExtra(E, type) {
       _E = E; const cfg = E.getCfg(); if (!cfg || !_AMB_LAYER_SCHEMA[type]) return;
       if (!Array.isArray(cfg.extras)) cfg.extras = [];
       const newId = cfg.extras.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
       const L = _ambProgDefaultUnit(cfg, _ambDefaultLayer(type, newId));
       _ambApplyRandomInstVoice(L, type);
+      if (type === 'bass') _ambEuclidStochasticInit(L);   // Bass is always euclid → stochastic initial pattern
       cfg.extras.push(L);
       _ambRenderExtras(E);
       if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
@@ -20757,14 +21115,26 @@
     }
     // Add a saved preset as a new extras layer (deep-copy its cfg onto a fresh id).
     function _ambAddPreset(E, preset) {
-      _E = E; const cfg = E.getCfg(); if (!cfg || !preset || !_AMB_LAYER_SCHEMA[preset.type]) return;
+      _E = E; const cfg = E.getCfg(); if (!cfg || !preset) return;
       if (!Array.isArray(cfg.extras)) cfg.extras = [];
-      const newId = cfg.extras.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
-      let copy = {}; try { copy = JSON.parse(JSON.stringify(preset.cfg || {})); } catch (e) {}
-      const L = Object.assign(_ambDefaultLayer(preset.type, newId), copy, { id: newId, type: preset.type, present: true, on: true });
-      cfg.extras.push(L);
+      // A preset is EITHER single-layer ({type, cfg}) or MULTI-layer ({layers:[{type,cfg}…]},
+      // e.g. "Battery" = Beat + Bass). Add each in order.
+      const specs = Array.isArray(preset.layers) ? preset.layers : [{ type: preset.type, cfg: preset.cfg }];
+      let lastKey = null;
+      specs.forEach((spec) => {
+        if (!spec || !_AMB_LAYER_SCHEMA[spec.type]) return;
+        const newId = cfg.extras.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
+        let copy = {}; try { copy = JSON.parse(JSON.stringify(spec.cfg || {})); } catch (e) {}
+        const L = Object.assign(_ambDefaultLayer(spec.type, newId), copy, { id: newId, type: spec.type, present: true, on: true });
+        // Euclid layers get a stochastic INITIAL pattern (unless the preset pins pulses).
+        const isEuclid = (spec.type === 'bass') || (spec.type === 'beat' && L.gen === 'euclid') || (spec.type === 'arp' && L.euclid);
+        if (isEuclid && !Number.isFinite(copy.pulses)) _ambEuclidStochasticInit(L);
+        if (L.takeReroll) _ambApplyTakeReroll(L, cfg.seed);   // seed-derive its rhythm now (reproducible per take)
+        cfg.extras.push(L);
+        lastKey = spec.type + ':' + newId;
+      });
       _ambRenderExtras(E);
-      try { const wrap = _ambGet(E, 'ambient-extra-layers'); const card = wrap && wrap.querySelector('.ambient-layer[data-inst="' + preset.type + ':' + newId + '"]'); if (card) card.classList.remove('collapsed'); } catch (e) {}
+      try { const wrap = _ambGet(E, 'ambient-extra-layers'); const card = lastKey && wrap && wrap.querySelector('.ambient-layer[data-inst="' + lastKey + '"]'); if (card) card.classList.remove('collapsed'); } catch (e) {}
       if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
@@ -21583,26 +21953,26 @@
         if (qOn) { qOn.classList.toggle('active', !!cfg.queueMode); qOn.textContent = cfg.queueMode ? 'On' : 'Off'; } }
       { const qT = document.getElementById(tr('ambient-queue-tails'));
         if (qT) qT.classList.toggle('active', !!cfg.tails); }
-      // KEY axis — one section, three modes (Chromatic | Key | Progression),
-      // derived from the existing fields via _ambResolveKey. Mode selector active
-      // state + adaptive sub-control visibility; underlying keyOn/prog.on unchanged.
+      // KEY axis — TWO INDEPENDENT toggles: a Key toggle (Chromatic ⟷ Key, keyOn) in
+      // the Key subsection + a Progression toggle (prog.on) in the Progression
+      // subsection. Both can be on (a progression diatonic to a key). rk.mode is the
+      // RESOLVED label (prog wins) used for the header indicator + hints only.
       { const rk = _ambResolveKey(cfg);
         const p = (cfg.prog && typeof cfg.prog === 'object') ? cfg.prog : { on: false, chords: [] };
         const follow = rk.follow;
-        [['chromatic', 'chromatic'], ['key', 'key'], ['progression', 'prog']].forEach((m) => {
-          const b = document.getElementById(tr('ambient-keymode-' + m[1]));
-          if (b) b.classList.toggle('active', rk.mode === m[0]);
-        });
+        const keyOn = !!cfg.keyOn, progOn = !!p.on;
+        const kTog = document.getElementById(tr('ambient-key-toggle'));
+        if (kTog) { kTog.textContent = keyOn ? 'Key' : 'Chromatic'; kTog.classList.toggle('active', keyOn); }
+        const pTog = document.getElementById(tr('ambient-prog-onoff'));
+        if (pTog) pTog.classList.toggle('active', progOn);
         const keySub = document.getElementById(tr('ambient-key-sub'));
-        if (keySub) keySub.style.display = (rk.mode === 'key') ? '' : 'none';
+        if (keySub) keySub.style.display = keyOn ? '' : 'none';
         const progSub = document.getElementById(tr('ambient-prog-sub'));
-        if (progSub) progSub.style.display = (rk.mode === 'progression') ? '' : 'none';
-        // ⇶ Key / Progression section: the prog picker only applies in
-        // Progression mode (else show the "select Progression" hint). The head
-        // hint mirrors the RESOLVED key mode — updated below where kName/kQual
-        // are in scope.
+        if (progSub) progSub.style.display = progOn ? '' : 'none';
+        // Progression subsection: the pick/edit/clone/part row shows when Progression
+        // is on; else the "turn Progression on" hint.
         { const progOff = document.getElementById(tr('ambient-progsec-off'));
-          if (progOff) progOff.style.display = (rk.mode === 'progression') ? 'none' : ''; }
+          if (progOff) progOff.style.display = progOn ? 'none' : ''; }
         // Key sub-controls. Effective key: workspace when following, stored custom otherwise.
         const kFol = document.getElementById(tr('ambient-key-follow'));
         if (kFol) { kFol.classList.toggle('active', follow); kFol.disabled = !cfg.keyOn; }
@@ -21628,10 +21998,11 @@
         // Unified hint reflects the resolved mode.
         const kName = (typeof CHROMATIC !== 'undefined' && CHROMATIC[effRoot | 0]) || '';
         const kQual = (typeof prettyScaleName === 'function') ? prettyScaleName(effScale) : effScale;
+        // Key-subsection hint reflects ONLY the key state (chromatic vs key) now that
+        // Progression is its own independent toggle/subsection.
         hint('ambient-key-hint',
-          rk.mode === 'chromatic' ? 'free — no key constraint'
-          : rk.mode === 'key' ? ((follow ? '= workspace · ' : '') + kName + ' ' + kQual + ' · ' + ((cfg.keyMode === 'quantize') ? 'snap' : 'shift'))
-          : (nCh ? (nCh + ' chord' + (nCh === 1 ? '' : 's') + (cfg.keyOn ? ' · in ' + kName + ' ' + kQual : '')) : 'pick a progression'));
+          !keyOn ? 'free — no key constraint'
+          : ((follow ? '= workspace · ' : '') + kName + ' ' + kQual + ' · ' + ((cfg.keyMode === 'quantize') ? 'snap' : 'shift')));
         // (The Key/Progression section subtitle is the #ambient-cfg-keyind
         //  indicator, updated below — no separate head hint.)
         // Area START slider + per-layer cascade cue: a layer INHERITING (no own
@@ -21889,11 +22260,7 @@
       const keyRowHtml =
         '<div class="ambient-row ambient-key">' +
           '<span class="ambient-hint ambient-key-lbl">Key</span>' +
-          '<span class="ambient-seg-row ambient-keymode-seg">' +
-            '<button type="button" class="ambient-seg amb-keymode" data-keymode="chromatic" id="ambient-keymode-chromatic" title="Chromatic — no key constraint for this Area; every layer plays its own note-source freely (the header Key pill greys out in Grow)">Chromatic</button>' +
-            '<button type="button" class="ambient-seg amb-keymode" data-keymode="key" id="ambient-keymode-key" title="Key — constrain every layer to one key (root + scale); only in-key scales/chords (plus borrowed &amp; passing tones) are selectable">Key</button>' +
-            (E.isLane ? '' : '<button type="button" class="ambient-seg amb-keymode" data-keymode="progression" id="ambient-keymode-prog" title="Progression — every layer follows a shared chord progression (the per-layer Notes chip is read-only while on)">Progression</button>') +
-          '</span>' +
+          '<button type="button" class="ambient-seg amb-keytoggle" id="ambient-key-toggle" title="Chromatic ⟷ Key — OFF (Chromatic): every layer plays freely, no key constraint. ON (Key): constrain all layers to one key (root + scale); only in-key scales/chords (plus borrowed &amp; passing tones) are selectable.">Chromatic</button>' +
           '<span class="ambient-key-sub" id="ambient-key-sub">' +
             '<button type="button" class="ambient-seg" id="ambient-key-follow" title="Follow the workspace key (header pill / key picker) — one source of truth. Click to LOCK: snapshots the current key as this Area’s own (later workspace-key changes can’t re-key it); click again to re-follow.">= Workspace</button>' +
             '<select id="ambient-key-root" class="ambient-select" title="Key root">' + keyOpts + '</select>' +
@@ -21954,14 +22321,23 @@
             // Current-key indicator (from the dissolved Configure summary).
             '<div class="ambient-progsec-topline"><span class="ambient-cfg-keyind" id="ambient-cfg-keyind" title="Current Area KEY (grey = following the workspace key · amber = overridden for this Area)"></span></div>' +
             '<div class="ambient-sched-body" id="ambient-progsec-body">' +
+            '<div class="ambient-mod-sub ambient-progsec-lbl">Key</div>' +
             keyRowHtml +
+            '<div class="ambient-mod-sub ambient-progsec-lbl">Progression</div>' +
             '<div class="ambient-row ambient-prog-row">' +
+              '<button type="button" class="ambient-seg ambient-prog-onoff" id="ambient-prog-onoff" title="Progression — when ON, every layer follows a shared chord progression (the per-layer Notes chip is read-only while on). Combine with Key above for a progression diatonic to that key.">Progression</button>' +
               '<span class="ambient-prog-sub" id="ambient-prog-sub">' +
                 '<button type="button" class="ambient-select ambient-prog-pick" id="ambient-prog-pick" title="Pick a chord progression for all layers">— pick —</button>' +
                 '<button type="button" class="ambient-seg ambient-prog-edit" id="ambient-prog-edit" title="Edit the selected progression chord-by-chord and Save As New">Edit</button>' +
+                '<button type="button" class="ambient-seg ambient-prog-clone" id="ambient-prog-clone" title="Clone this progression into an editable copy you can mutate freely">⧉ Clone</button>' +
+                '<button type="button" class="ambient-seg ambient-prog-addpart" id="ambient-prog-addpart" title="Append another progression as a new PART — build a sequence of progressions (Verse → Chorus → …)">＋ Part</button>' +
               '</span>' +
-              '<span class="ambient-hint" id="ambient-progsec-off" style="display:none">select Progression above to pick a chord sequence</span>' +
+              '<span class="ambient-hint" id="ambient-progsec-off" style="display:none">turn Progression on to build a chord sequence</span>' +
             '</div>' +
+            // Overview strip — the whole progression at a glance (chord chips grouped
+            // under part labels; alt-bearing chords badged; playing chord glows). Click a
+            // chord to edit it there; click a part header to rename/reorder. _ambRenderProgOverview.
+            '<div class="ambient-pov-strip" id="ambient-prog-overview" style="display:none"></div>' +
             '<div class="ambient-progmatrix" id="ambient-progmatrix" style="display:none"></div>' +
             '<div class="ambient-progmatrix ambient-secmatrix" id="ambient-secmatrix" style="display:none"></div>' +
           '</div>' +       // end #ambient-progsec-body
@@ -23268,22 +23644,26 @@
         });
       }
 
-      // KEY axis mode selector — Chromatic | Key | Progression. Each mode sets the
-      // canonical (keyOn, prog.on) pair; the fields stay independent so switching to
-      // Progression keeps any active Key (a progression diatonic to a key), and
-      // switching to Key/Chromatic just deactivates the prog (its chords are retained).
-      { const setKeyMode = (m) => {
+      // KEY axis — TWO INDEPENDENT toggles (keyOn + prog.on are separate fields):
+      //   • Key toggle (Key subsection): Chromatic ⟷ Key — constrain layers to a key.
+      //   • Progression toggle (Progression subsection): every layer follows a shared
+      //     chord progression. Both can be on at once = a progression diatonic to a key.
+      // Chords are RETAINED when Progression is toggled off.
+      { const kTog = G('ambient-key-toggle');
+        if (kTog) kTog.addEventListener('click', () => {
+          _E = E; const cfg = cfg0(); if (!cfg) return;
+          cfg.keyOn = !cfg.keyOn;
+          _ambSyncControls(E); try { _ambRefreshSrcChips(E); } catch (e) {}
+          persist();
+        });
+        const pTog = G('ambient-prog-onoff');
+        if (pTog) pTog.addEventListener('click', () => {
           _E = E; const cfg = cfg0(); if (!cfg) return;
           if (!cfg.prog || typeof cfg.prog !== 'object') cfg.prog = { on: false, name: '', chords: [] };
-          if (m === 'chromatic') { cfg.keyOn = false; cfg.prog.on = false; }
-          else if (m === 'key') { cfg.keyOn = true; cfg.prog.on = false; }
-          else { cfg.prog.on = true; if (typeof _ambAutoSyncFreeForProg === 'function') { try { _ambAutoSyncFreeForProg(E, cfg); } catch (e) {} } }
+          cfg.prog.on = !cfg.prog.on;
+          if (cfg.prog.on && typeof _ambAutoSyncFreeForProg === 'function') { try { _ambAutoSyncFreeForProg(E, cfg); } catch (e) {} }
           _ambSyncControls(E); try { _ambRefreshSrcChips(E); } catch (e) {}   // lock/unlock the per-layer Notes chips
           persist();
-        };
-        ['chromatic', 'key', 'prog'].forEach((suf) => {
-          const b = G('ambient-keymode-' + suf);
-          if (b) b.addEventListener('click', () => setKeyMode(suf === 'prog' ? 'progression' : suf));
         });
         const kFol = G('ambient-key-follow');
         if (kFol) kFol.addEventListener('click', () => {
@@ -23428,6 +23808,10 @@
         });
         const pEdit = G('ambient-prog-edit');
         if (pEdit) pEdit.addEventListener('click', () => { _E = E; try { _ambOpenProgEditor(E); } catch (e) {} });
+        const pClone = G('ambient-prog-clone');
+        if (pClone) pClone.addEventListener('click', () => { _E = E; try { _ambOpenProgEditor(E, { scope: 'area', clone: true }); } catch (e) {} });
+        const pAddPart = G('ambient-prog-addpart');
+        if (pAddPart) pAddPart.addEventListener('click', () => { _E = E; const r = pAddPart.getBoundingClientRect(); _ambOpenGlobalProgMenu(E, r.left, r.bottom, { append: true }); });
       }
 
       // ＋ Ramp buttons live inside (re-renderable) layer cards → ONE delegated
@@ -23832,6 +24216,13 @@
           { name: '🫧 Glass Rain', type: 'texture', cfg: { tone: 'user:f-glasscath', level: 44, revSend: 40, fill: 25, syncop: 60,
             delay: { mix: 35, timeMs: 500, feedback: 50, ping: 1, spread: 50, dryKill: 0 } } },
           { name: '🎞 Hiss Bed', type: 'drone', cfg: { tone: 'user:f-tapehiss', level: 24, revSend: 18, density: 1, register: 3, hold: 8 } },
+          // Battery — a rhythm section (Beat + Bass) whose patterns RE-ROLL on New take
+          // (takeReroll: random Beat rerolls off the seed; euclid Bass re-derives its
+          // euclidean salt from the seed). Multi-layer preset (preset.layers).
+          { name: '🥁 Battery', layers: [
+            { type: 'beat', cfg: { gen: 'random', level: 66, restProb: 20, takeReroll: true } },
+            { type: 'bass', cfg: { level: 64, lengthMs: 320, takeReroll: true } },
+          ] },
         ];
         actions.push('hr', { label: 'Sound presets', disabled: true });
         _FACTORY_LAYER_PRESETS.forEach((pr) => actions.push({ label: pr.name, fn: () => _ambAddPreset(E, pr) }));
@@ -23877,6 +24268,10 @@
         _E = E; const cfg = cfg0(); if (!cfg) return;
         const t = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
         cfg.seed = ((cfg.seed * 1664525 + 1013904223 + Math.floor(t * 1000)) >>> 0) || 1;
+        // Layers flagged `takeReroll` re-roll their euclidean rhythm from the new seed
+        // (reproducible per take). Random-gen layers already re-roll off cfg.seed.
+        ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k]) _ambApplyTakeReroll(cfg[k], cfg.seed); });
+        (cfg.extras || []).forEach(L => _ambApplyTakeReroll(L, cfg.seed));
         if (E.timer) { _ambResetClocks(E); _ambSeed(cfg.seed); }
         _ambSyncControls(E);
         persist();

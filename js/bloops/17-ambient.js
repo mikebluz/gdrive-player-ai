@@ -8072,6 +8072,7 @@
         else { c.classList.remove('on'); c.removeAttribute('aria-pressed'); }
         if (!L.euclidKit && !grid.querySelector('.ambient-euclid-note')) render();   // first edit → add the "edited" note
         persist();
+        if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} }   // pattern edits take effect at the NEXT unit boundary (re-anchor + rewrite a Write loop)
       });
       // Edit-panel SLIDERS → apply live to EVERY step in scope (lane or column × the
       // chosen subset). No re-render on input, so the drag never resets mid-way.

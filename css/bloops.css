@@ -3576,13 +3576,19 @@
     .ambient-euclid-stepedit.on { border-color: #4fd1c5; background: rgba(79,209,197,0.16); color: #d6fbf6; }
     .ambient-euclid-cells.step-edit .ambient-euclid-cell { box-shadow: inset 0 0 0 1px rgba(79,209,197,0.35); cursor: pointer; }
     .ambient-euclid-cells.step-edit .ambient-euclid-cell.on { box-shadow: inset 0 0 0 1px rgba(79,209,197,0.75); }
-    .ambient-step-modal .sm-title { margin-bottom: 10px; }
-    .ambient-step-modal-body { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
-    .ambient-step-row { display: grid; grid-template-columns: 84px minmax(0,1fr) 40px; align-items: center; gap: 8px; font-size: 0.8rem; color: #a0aec0; }
-    .ambient-step-row > span { white-space: nowrap; }
-    .ambient-step-row select, .ambient-step-row input[type=range] { min-width: 0; width: 100%; touch-action: manipulation; }
-    .ambient-step-row select { padding: 5px 8px; background: #0f0f1e; border: 1px solid #2d2d3f; border-radius: 6px; color: #e2e8f0; }
-    .ambient-step-val { font-style: normal; text-align: right; color: #7fe4dc; font-variant-numeric: tabular-nums; }
+    /* Per-step popover — matches the Bloom editor shell (.ambient-prog-editor) and
+       reuses .ambient-ctrl rows / purple sliders / .ambient-select, NOT the blue wrap
+       modal look. */
+    .ambient-step-modal { background: #14142a; border: 1px solid #2d2d3f; border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,0.6); color: #e2e8f0; }
+    .ambient-step-modal .sm-title { font-size: 1rem; color: #cbd5e0; margin-bottom: 12px; }
+    .ambient-step-modal-body { display: flex; flex-direction: column; gap: 10px; }
+    .ambient-step-modal .ambient-ctrl { gap: 10px; }
+    .ambient-step-modal .ambient-ctrl input[type=range] { touch-action: manipulation; }
+    .ambient-step-val { text-align: right; min-width: 34px; color: #c9a8ec; font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+    .ambient-step-modal .sm-footer { margin-top: 14px; }
+    .ambient-step-modal .sm-cancel { padding: 6px 14px; border: 1px solid #2d2d3f; border-radius: 8px; background: #1a1a2e; color: #fc8181; cursor: pointer; font-size: 0.82rem; }
+    .ambient-step-modal .sm-apply { padding: 6px 16px; border: 1px solid #9f7aea; border-radius: 8px; background: rgba(159,122,234,0.22); color: #e2d9f5; font-weight: 600; font-size: 0.82rem; }
+    .ambient-step-modal .sm-apply:hover { transform: none; box-shadow: none; background: rgba(159,122,234,0.34); }
     /* Live playhead: the column currently sounding. OFF cells get a faint tint; a
        firing (ON) cell flashes bright so you see the hit land. */
     .ambient-euclid-cell.playing { background: rgba(159,122,234,0.22); border-color: #8f78c8; }

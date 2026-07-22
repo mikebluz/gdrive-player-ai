@@ -7404,8 +7404,10 @@
       let toneOpts = '<option value="">Layer tone</option>';
       try { _ambToneOptions().forEach(o => { toneOpts += '<option value="' + esc(o.value) + '"' + (cur.tone === o.value ? ' selected' : '') + '>' + esc(o.label || o.value) + '</option>'; }); } catch (e) {}
       let ratOpts = ''; for (let r = 1; r <= 8; r++) ratOpts += '<option value="' + r + '"' + (cur.rat === r ? ' selected' : '') + '>' + r + '×</option>';
-      const row = (lbl, ctrl) => '<label class="ambient-step-row"><span>' + lbl + '</span>' + ctrl + '</label>';
-      const rrow = (lbl, sf, mn, mx, val, unit) => '<label class="ambient-step-row"><span>' + lbl + '</span><input type="range" data-sf="' + sf + '" min="' + mn + '" max="' + mx + '" value="' + val + '"><em class="ambient-step-val" data-for="' + sf + '">' + val + unit + '</em></label>';
+      // Reuse the app's native control-row (.ambient-ctrl: 84px label / control / readout,
+      // purple slider accent) so the popover matches the rest of the Bloom panel.
+      const row = (lbl, ctrl) => '<div class="ambient-ctrl ambient-step-row"><label>' + lbl + '</label>' + ctrl + '<span class="ambient-step-val"></span></div>';
+      const rrow = (lbl, sf, mn, mx, val, unit) => '<div class="ambient-ctrl ambient-step-row"><label>' + lbl + '</label><input type="range" data-sf="' + sf + '" min="' + mn + '" max="' + mx + '" value="' + val + '"><span class="ambient-step-val" data-for="' + sf + '">' + val + unit + '</span></div>';
       const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-step-modal-ov';
       ov.innerHTML = '<div class="sm-modal ambient-step-modal">' +
         '<div class="sm-title">Step ' + (i + 1) + '</div>' +

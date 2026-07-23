@@ -2832,6 +2832,19 @@
     .pe-digin button { padding: 4px 8px; border: 1px solid #2d2d3f; border-radius: 6px; background: #1a1a2e; color: #cbd5e0; cursor: pointer; font-size: 0.8rem; }
     .pe-digin-ops { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
     .pe-digin-ops > label { font-size: 0.72rem; color: #8b8ba0; margin-right: 2px; text-transform: uppercase; letter-spacing: 0.04em; }
+    /* Nudge chord — chromatic (½ step) + diatonic (scale degree) whole-chord moves. */
+    .pe-nudgerow { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 2px 0; }
+    .pe-nudgerow label { font-size: 0.8rem; color: #a0aec0; margin-right: 4px; }
+    .pe-nudgerow button { padding: 4px 9px; border: 1px solid #2d2d3f; border-radius: 6px; background: #1a1a2e; color: #cbd5e0; cursor: pointer; font-size: 0.78rem; }
+    .pe-nudgerow .pe-dt { color: #7fd6a8; border-color: #2f5a45; }
+    /* Scale membership — teal = in the key, amber = out (borrowed / chromatic). */
+    .pe-root.r-in { box-shadow: inset 0 -2.5px 0 #4fd1a5; }
+    .pe-root.r-out { box-shadow: inset 0 -2.5px 0 #f0b64a; opacity: 0.9; }
+    .pe-note.n-in b { color: #6fe0b8; }
+    .pe-note.n-out b { color: #f0b64a; }
+    .pe-chord.chord-in small, .pe-chord.chord-in .pe-rn { color: #6fe0b8; }
+    .pe-chord.chord-out small, .pe-chord.chord-out .pe-rn { color: #f0b64a; }
+    .pe-scaletog.on { background: rgba(79,209,165,0.16); border-color: #3f8a6a; color: #b8f0d8; }
     .pe-save { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
     .pe-save input { flex: 1; min-width: 0; padding: 6px 10px; background: #0f0f1e; border: 1px solid #2d2d3f; border-radius: 6px; color: #e2e8f0; }
     .pe-apply { background: rgba(159,122,234,0.22) !important; border-color: #9f7aea !important; color: #e2d9f5 !important; font-weight: 600; }

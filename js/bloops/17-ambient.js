@@ -3601,6 +3601,16 @@
       const iv = norm(ch && ch.intervals), q = _AMB_PE_QUALITIES.find(x => norm(x[1]) === iv);
       return q ? q[0] : null;
     }
+    // Is a pitch class in the current key's scale? (chromatic scale → all "in").
+    function _ambPeInScale(pc, kRoot, kScale) {
+      const iv = (typeof SCALES !== 'undefined' && Array.isArray(SCALES[kScale])) ? SCALES[kScale] : null;
+      if (!iv || iv.length >= 12) return true;
+      return iv.indexOf(((((pc | 0) - (kRoot | 0)) % 12) + 12) % 12) >= 0;
+    }
+    // A chord is "in scale" only when EVERY note is in scale (else it's borrowed/chromatic).
+    function _ambPeChordInScale(ch, kRoot, kScale) {
+      return _ambPeNotes(ch).every(pc => _ambPeInScale(pc, kRoot, kScale));
+    }
     function _ambPeSetNotes(ch, pcs, keepRoot) {
       const root = keepRoot ? (((ch.root | 0) % 12) + 12) % 12 : null;
       const uniq = Array.from(new Set(pcs.map(p => (((p | 0) % 12) + 12) % 12)));
@@ -3815,14 +3825,16 @@
       // Roman numerals relative to the current key (area key the progression sits in).
       const kRoot = gcfg ? _ambKeyRootPc(gcfg) : 0, kScale = gcfg ? _ambKeyScaleName(gcfg) : 'major';
       const diatonic = !(typeof SCALES !== 'undefined' && Array.isArray(SCALES[kScale]) && SCALES[kScale].length >= 12);   // no diatonic buttons on a chromatic scale
+      const scaleView = ed._scaleView !== false;                     // color-code in/out of the key's scale (default on)
+      const showScale = scaleView && diatonic;                       // only meaningful under a diatonic key
       const chordsRow = ed.chords.map((c, i) => {
         const rn = _ambPeRoman(c, kRoot, kScale);
         const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
-        return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em>' + (altN ? '<i class="pe-chord-alt">×' + (altN + 1) + '</i>' : '') + '</button>'; }).join('') +
+        return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + (showScale ? (_ambPeChordInScale(c, kRoot, kScale) ? ' chord-in' : ' chord-out') : '') + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + (showScale && !_ambPeChordInScale(c, kRoot, kScale) ? ' · out of key' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em>' + (altN ? '<i class="pe-chord-alt">×' + (altN + 1) + '</i>' : '') + '</button>'; }).join('') +
         '<button type="button" class="pe-chord pe-add" data-pe="addchord" title="Add a chord (copy of the selected)">＋</button>';
       const notes = _ambPeNotes(tgt).slice().sort((a, b) => a - b);
       const noteChips = notes.map((p, ni) =>
-        '<span class="pe-note"><b>' + _AMB_CHROM[p] + '</b>' +
+        '<span class="pe-note' + (showScale ? (_ambPeInScale(p, kRoot, kScale) ? ' n-in' : ' n-out') : '') + '"><b>' + _AMB_CHROM[p] + '</b>' +
         '<button type="button" data-pe="flat:' + ni + '" title="Down a semitone (chromatic)">♭</button>' +
         '<button type="button" data-pe="sharp:' + ni + '" title="Up a semitone (chromatic)">♯</button>' +
         (diatonic ? '<button type="button" class="pe-dt" data-pe="ndtdn:' + ni + '" title="Down a scale degree (diatonic)">▾</button>' +
@@ -3831,7 +3843,7 @@
       const curRoot = (((tgt.root | 0) % 12) + 12) % 12;
       const curQual = _ambPeQualityOf(tgt);
       const digIn = !!ed._digIn;
-      const rootBtns = _AMB_CHROM.map((nm, pc) => '<button type="button" class="pe-root' + (pc === curRoot ? ' sel' : '') + '" data-pe="setroot:' + pc + '" title="Root ' + esc(nm) + '">' + esc(nm) + '</button>').join('');
+      const rootBtns = _AMB_CHROM.map((nm, pc) => '<button type="button" class="pe-root' + (pc === curRoot ? ' sel' : '') + (showScale ? (_ambPeInScale(pc, kRoot, kScale) ? ' r-in' : ' r-out') : '') + '" data-pe="setroot:' + pc + '" title="Root ' + esc(nm) + (showScale ? (_ambPeInScale(pc, kRoot, kScale) ? ' · in key' : ' · out of key') : '') + '">' + esc(nm) + '</button>').join('');
       const qButtons = _AMB_PE_QUALITIES.map(q => '<button type="button" class="pe-q' + (q[0] === curQual ? ' sel' : '') + '" data-pe="qual:' + q[0] + '">' + q[0] + '</button>').join('');
       // Alternates row — the base chord (◆) + each alternate (◇) as selectable edit
       // targets; a mode toggle (cycle/random) appears once there's ≥1 alternate.
@@ -3852,6 +3864,7 @@
         '<div class="pe-chords">' + chordsRow + '</div>' +
         '<div class="pe-chordhdr">Chord ' + (sel + 1) + ' of ' + ed.chords.length + (ed.altSel >= 0 ? ' <span class="pe-editing-alt">· editing alt ' + (ed.altSel + 1) + '</span>' : '') +
           '<span class="pe-chordops">' +
+            '<button type="button" class="pe-scaletog' + (scaleView ? ' on' : '') + '" data-pe="scaleview" title="' + (diatonic ? (scaleView ? 'Scale coloring ON — in-key roots/notes/chords are highlighted, out-of-key are amber. Click to turn off.' : 'Click to color roots / notes / chords by whether they fit the key.') : 'No diatonic key set — scale coloring needs a key/scale.') + '"' + (diatonic ? '' : ' disabled') + '>◈ Scale</button>' +
             '<button type="button" class="pe-digin-btn' + (digIn ? ' on' : '') + '" data-pe="digin" title="' + (digIn ? 'Hide the note-by-note tools' : 'Dig in — edit this chord note by note (♭ / ♯ / diatonic / invert / add / remove)') + '">' + (digIn ? '▴ Notes' : '⋯ Dig in') + '</button>' +
             '<button type="button" class="pe-x" data-pe="rmchord" title="Remove this chord"' + (ed.chords.length <= 1 ? ' disabled' : '') + '>✕ chord</button>' +
           '</span></div>' +
@@ -3860,13 +3873,15 @@
           '<span class="pe-lenhint">bars — blank = ' + esc(gbpcStr) + ' (default)</span></div>' +
         '<div class="pe-pickrow"><label>Root</label><span class="pe-roots">' + rootBtns + '</span></div>' +
         '<div class="pe-qrow"><label>Quality</label>' + qButtons + '</div>' +
+        '<div class="pe-nudgerow"><label>Nudge chord</label>' +
+          '<button type="button" data-pe="trdn" title="Down a semitone (chromatic)">◀ ½ step</button>' +
+          '<button type="button" data-pe="trup" title="Up a semitone (chromatic)">½ step ▶</button>' +
+          (diatonic ? '<button type="button" class="pe-dt" data-pe="dtdn" title="Down a scale degree — stays in key">▽ degree</button>' +
+            '<button type="button" class="pe-dt" data-pe="dtup" title="Up a scale degree — stays in key">degree △</button>' : '') +
+        '</div>' +
         (digIn ?
           '<div class="pe-digin">' +
             '<div class="pe-digin-ops"><label>Notes</label><span class="pe-chordops">' +
-              '<button type="button" data-pe="trdn" title="Transpose down a semitone (chromatic)">◀</button>' +
-              '<button type="button" data-pe="trup" title="Transpose up a semitone (chromatic)">▶</button>' +
-              (diatonic ? '<button type="button" class="pe-dt" data-pe="dtdn" title="Transpose down a scale degree (diatonic — stays in key)">▽</button>' +
-                '<button type="button" class="pe-dt" data-pe="dtup" title="Transpose up a scale degree (diatonic — stays in key)">△</button>' : '') +
               '<button type="button" data-pe="inv" title="Invert (re-root to the next chord tone)">⟳ Inv</button>' +
               '<button type="button" data-pe="addnote" title="Add a note">＋ note</button>' +
             '</span></div>' +
@@ -3942,6 +3957,7 @@
       else if (op === 'qual') { const q = _AMB_PE_QUALITIES.find(x => x[0] === arg); if (q) { tgt.intervals = Array.from(new Set(q[1].map(iv => ((iv % 12) + 12) % 12))).sort((x, y) => x - y); } }
       else if (op === 'setroot') { tgt.root = (((arg | 0) % 12) + 12) % 12; }   // pick a whole chord's root directly
       else if (op === 'digin') { ed._digIn = !ed._digIn; }   // reveal the note-by-note tools
+      else if (op === 'scaleview') { ed._scaleView = (ed._scaleView === false); }   // toggle in/out-of-key coloring (default on)
       else if (op === 'trup' || op === 'trdn') { tgt.root = (((tgt.root + (op === 'trup' ? 1 : -1)) % 12) + 12) % 12; }
       else if (op === 'dtup' || op === 'dtdn') { tgt.root = _ambDiatonicShiftPc(tgt.root, op === 'dtup' ? 1 : -1, kRoot, kScale); }
       else if (op === 'inv') { const ns = _ambPeNotes(tgt); if (ns.length > 1) { const newRoot = (((tgt.root + tgt.intervals.slice().sort((x, y) => x - y)[1]) % 12) + 12) % 12; _ambPeSetNotes(tgt, ns, false); tgt.root = newRoot; tgt.intervals = ns.map(p => (((p - newRoot) % 12) + 12) % 12).sort((x, y) => x - y); } }

@@ -3594,6 +3594,13 @@
       ['sus2', [0, 2, 7]], ['sus4', [0, 5, 7]], ['7', [0, 4, 7, 10]], ['maj7', [0, 4, 7, 11]],
       ['min7', [0, 3, 7, 10]], ['m7♭5', [0, 3, 6, 10]], ['dim7', [0, 3, 6, 9]], ['6', [0, 4, 7, 9]], ['9', [0, 4, 7, 10, 14]]];
     function _ambPeNotes(ch) { return (ch.intervals || [0]).map(iv => ((((ch.root | 0) + (iv | 0)) % 12) + 12) % 12); }
+    // Which named quality (maj/min/7…) a chord's intervals ARE, for the picker
+    // highlight — both sides normalized to a mod-12 sorted set (a 9th's 14 → 2).
+    function _ambPeQualityOf(ch) {
+      const norm = arr => Array.from(new Set((arr || [0]).map(iv => (((iv | 0) % 12) + 12) % 12))).sort((a, b) => a - b).join(',');
+      const iv = norm(ch && ch.intervals), q = _AMB_PE_QUALITIES.find(x => norm(x[1]) === iv);
+      return q ? q[0] : null;
+    }
     function _ambPeSetNotes(ch, pcs, keepRoot) {
       const root = keepRoot ? (((ch.root | 0) % 12) + 12) % 12 : null;
       const uniq = Array.from(new Set(pcs.map(p => (((p | 0) % 12) + 12) % 12)));
@@ -3821,7 +3828,11 @@
         (diatonic ? '<button type="button" class="pe-dt" data-pe="ndtdn:' + ni + '" title="Down a scale degree (diatonic)">▾</button>' +
           '<button type="button" class="pe-dt" data-pe="ndtup:' + ni + '" title="Up a scale degree (diatonic)">▴</button>' : '') +
         '<button type="button" class="pe-x" data-pe="rmnote:' + ni + '" title="Remove note"' + (notes.length <= 1 ? ' disabled' : '') + '>✕</button></span>').join('');
-      const qButtons = _AMB_PE_QUALITIES.map(q => '<button type="button" class="pe-q" data-pe="qual:' + q[0] + '">' + q[0] + '</button>').join('');
+      const curRoot = (((tgt.root | 0) % 12) + 12) % 12;
+      const curQual = _ambPeQualityOf(tgt);
+      const digIn = !!ed._digIn;
+      const rootBtns = _AMB_CHROM.map((nm, pc) => '<button type="button" class="pe-root' + (pc === curRoot ? ' sel' : '') + '" data-pe="setroot:' + pc + '" title="Root ' + esc(nm) + '">' + esc(nm) + '</button>').join('');
+      const qButtons = _AMB_PE_QUALITIES.map(q => '<button type="button" class="pe-q' + (q[0] === curQual ? ' sel' : '') + '" data-pe="qual:' + q[0] + '">' + q[0] + '</button>').join('');
       // Alternates row — the base chord (◆) + each alternate (◇) as selectable edit
       // targets; a mode toggle (cycle/random) appears once there's ≥1 alternate.
       const altChip = (glyph, j, active, chObj) =>
@@ -3841,19 +3852,26 @@
         '<div class="pe-chords">' + chordsRow + '</div>' +
         '<div class="pe-chordhdr">Chord ' + (sel + 1) + ' of ' + ed.chords.length + (ed.altSel >= 0 ? ' <span class="pe-editing-alt">· editing alt ' + (ed.altSel + 1) + '</span>' : '') +
           '<span class="pe-chordops">' +
-            '<button type="button" data-pe="trdn" title="Transpose down a semitone (chromatic)">◀</button>' +
-            '<button type="button" data-pe="trup" title="Transpose up a semitone (chromatic)">▶</button>' +
-            (diatonic ? '<button type="button" class="pe-dt" data-pe="dtdn" title="Transpose down a scale degree (diatonic — stays in key)">▽</button>' +
-              '<button type="button" class="pe-dt" data-pe="dtup" title="Transpose up a scale degree (diatonic — stays in key)">△</button>' : '') +
-            '<button type="button" data-pe="inv" title="Invert (re-root to the next chord tone)">⟳ Inv</button>' +
-            '<button type="button" data-pe="addnote" title="Add a note">＋ note</button>' +
+            '<button type="button" class="pe-digin-btn' + (digIn ? ' on' : '') + '" data-pe="digin" title="' + (digIn ? 'Hide the note-by-note tools' : 'Dig in — edit this chord note by note (♭ / ♯ / diatonic / invert / add / remove)') + '">' + (digIn ? '▴ Notes' : '⋯ Dig in') + '</button>' +
             '<button type="button" class="pe-x" data-pe="rmchord" title="Remove this chord"' + (ed.chords.length <= 1 ? ' disabled' : '') + '>✕ chord</button>' +
           '</span></div>' +
         '<div class="pe-lenrow"><label>Chord length</label>' +
           '<input type="text" id="pe-len" value="' + (ch.bars > 0 ? esc(_ambFmtBpc(ch.bars)) : '') + '" placeholder="' + esc(gbpcStr) + '" title="How long THIS chord lasts, in bars (1, 1/2, 8/7…). Blank = ' + esc(gbpcStr) + ' bar (default)." />' +
           '<span class="pe-lenhint">bars — blank = ' + esc(gbpcStr) + ' (default)</span></div>' +
-        '<div class="pe-notes">' + noteChips + '</div>' +
-        '<div class="pe-qrow"><label>Set quality</label>' + qButtons + '</div>' +
+        '<div class="pe-pickrow"><label>Root</label><span class="pe-roots">' + rootBtns + '</span></div>' +
+        '<div class="pe-qrow"><label>Quality</label>' + qButtons + '</div>' +
+        (digIn ?
+          '<div class="pe-digin">' +
+            '<div class="pe-digin-ops"><label>Notes</label><span class="pe-chordops">' +
+              '<button type="button" data-pe="trdn" title="Transpose down a semitone (chromatic)">◀</button>' +
+              '<button type="button" data-pe="trup" title="Transpose up a semitone (chromatic)">▶</button>' +
+              (diatonic ? '<button type="button" class="pe-dt" data-pe="dtdn" title="Transpose down a scale degree (diatonic — stays in key)">▽</button>' +
+                '<button type="button" class="pe-dt" data-pe="dtup" title="Transpose up a scale degree (diatonic — stays in key)">△</button>' : '') +
+              '<button type="button" data-pe="inv" title="Invert (re-root to the next chord tone)">⟳ Inv</button>' +
+              '<button type="button" data-pe="addnote" title="Add a note">＋ note</button>' +
+            '</span></div>' +
+            '<div class="pe-notes">' + noteChips + '</div>' +
+          '</div>' : '') +
         altsRow +
         '<div class="pe-save"><input type="text" id="pe-name" value="' + esc(ed.name) + '" placeholder="Progression name" />' +
           '<button type="button" data-pe="cancel">Cancel</button>' +
@@ -3922,6 +3940,8 @@
       else if (op === 'rmnote') { const ns = notesSorted(); if (ns.length > 1) { ns.splice(arg | 0, 1); _ambPeSetNotes(tgt, ns, true); } }
       else if (op === 'addnote') { const ns = notesSorted(); for (let p = 0; p < 12; p++) { if (ns.indexOf((ns[0] + p) % 12) < 0) { ns.push((ns[0] + p) % 12); break; } } _ambPeSetNotes(tgt, ns, true); }
       else if (op === 'qual') { const q = _AMB_PE_QUALITIES.find(x => x[0] === arg); if (q) { tgt.intervals = Array.from(new Set(q[1].map(iv => ((iv % 12) + 12) % 12))).sort((x, y) => x - y); } }
+      else if (op === 'setroot') { tgt.root = (((arg | 0) % 12) + 12) % 12; }   // pick a whole chord's root directly
+      else if (op === 'digin') { ed._digIn = !ed._digIn; }   // reveal the note-by-note tools
       else if (op === 'trup' || op === 'trdn') { tgt.root = (((tgt.root + (op === 'trup' ? 1 : -1)) % 12) + 12) % 12; }
       else if (op === 'dtup' || op === 'dtdn') { tgt.root = _ambDiatonicShiftPc(tgt.root, op === 'dtup' ? 1 : -1, kRoot, kScale); }
       else if (op === 'inv') { const ns = _ambPeNotes(tgt); if (ns.length > 1) { const newRoot = (((tgt.root + tgt.intervals.slice().sort((x, y) => x - y)[1]) % 12) + 12) % 12; _ambPeSetNotes(tgt, ns, false); tgt.root = newRoot; tgt.intervals = ns.map(p => (((p - newRoot) % 12) + 12) % 12).sort((x, y) => x - y); } }

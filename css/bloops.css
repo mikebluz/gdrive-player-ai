@@ -2818,6 +2818,20 @@
     .pe-note b { min-width: 24px; text-align: center; font-size: 0.9rem; color: #7fd6e8; }
     .pe-qrow { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
     .pe-qrow label { font-size: 0.8rem; color: #a0aec0; margin-right: 4px; }
+    /* Whole-chord picker: Root (12 pcs) + Quality, the DEFAULT way to set a chord. */
+    .pe-pickrow { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 2px 0; }
+    .pe-pickrow label { font-size: 0.8rem; color: #a0aec0; margin-right: 4px; }
+    .pe-roots { display: flex; flex-wrap: wrap; gap: 3px; }
+    .pe-root { padding: 4px 7px; min-width: 30px; text-align: center; border: 1px solid #2d2d3f; border-radius: 6px; background: #1a1a2e; color: #cbd5e0; cursor: pointer; font-size: 0.8rem; }
+    @media (hover: hover) { .pe-root:hover, .pe-q:hover { border-color: #6b5b95; color: #e6ddff; } }
+    /* Selected root / matching quality — purple, matching the chord selection. */
+    .pe-root.sel, .pe-q.sel { background: rgba(159,122,234,0.22); border-color: #9f7aea; color: #e6ddff; font-weight: 600; }
+    /* "Dig in" reveals the note-by-note tools; teal accent when open. */
+    .pe-digin-btn.on { background: rgba(127,214,232,0.16); border-color: #4a8a9a; color: #bfeef8; }
+    .pe-digin { margin: 2px 0 4px; padding: 10px; border: 1px dashed #2d2d3f; border-radius: 9px; background: rgba(255,255,255,0.02); display: flex; flex-direction: column; gap: 8px; }
+    .pe-digin button { padding: 4px 8px; border: 1px solid #2d2d3f; border-radius: 6px; background: #1a1a2e; color: #cbd5e0; cursor: pointer; font-size: 0.8rem; }
+    .pe-digin-ops { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .pe-digin-ops > label { font-size: 0.72rem; color: #8b8ba0; margin-right: 2px; text-transform: uppercase; letter-spacing: 0.04em; }
     .pe-save { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
     .pe-save input { flex: 1; min-width: 0; padding: 6px 10px; background: #0f0f1e; border: 1px solid #2d2d3f; border-radius: 6px; color: #e2e8f0; }
     .pe-apply { background: rgba(159,122,234,0.22) !important; border-color: #9f7aea !important; color: #e2d9f5 !important; font-weight: 600; }

@@ -5904,7 +5904,17 @@
             const _oct = chordPool ? reg : (reg + Math.floor(walkDeg / N));
             let f = _ambDegreeFreq(_deg, _oct, src);
             if (f == null) continue;
-            if (sfx && sfx.note != null) { try { f = Tone.Frequency(sfx.note | 0, 'midi').toFrequency(); } catch (e) {} }   // Step-Edit: explicit note overrides the generated pitch
+            if (sfx && sfx.note === 'rand') {
+              // Step-Edit "Random from set": draw a degree from the source pool via a
+              // DEDICATED seeded RNG keyed by (step, cycle, seed) — stable across the
+              // lookahead ticks of one cycle, evolves each cycle, and (unlike a ctx.rnd
+              // draw) shifts no other draw, so adding it leaves the rest of the layer
+              // byte-identical. Isolated → the layer stays native-loop eligible and the
+              // note changes cycle-to-cycle instead of freezing to one value.
+              const _rr = _ambSeededRand((((_absI + 1) * 2654435761) ^ (((ctx.c | 0) + 1) * 2246822519) ^ (((cfg && cfg.seed) | 0) * 40503)) >>> 0);
+              const _rf = _ambDegreeFreq(Math.floor(_rr() * N) % Math.max(1, N), reg, src);
+              if (_rf != null) f = _rf;
+            } else if (sfx && sfx.note != null) { try { f = Tone.Frequency(sfx.note | 0, 'midi').toFrequency(); } catch (e) {} }   // Step-Edit: explicit note overrides the generated pitch
             const _basePan = _ambLayerPan(inst);   // keep the shared-RNG draw for parity even when a step-pan overrides it
             const bp = _ambApplyAdsr(_ambBassParams(lenMs, (sfx && sfx.pan) ? sfx.pan : _basePan, _ambToneAt(inst, at)), inst);
             { const _dt = _ambDegreeToneAt(_deg, src); if (_dt) bp.type = _dt; const _dl = _ambDegreeLevelAt(_deg, src); if (_dl != null) bp.volume = Math.max(0, Math.min(100, Math.round((Number.isFinite(bp.volume) ? bp.volume : 100) * (_dl / 100)))); }   // wrap-ensemble: this degree's own tone + level
@@ -7418,14 +7428,31 @@
     function _ambBassStepFxGet(L, i) {
       const e = L && L.stepFx && L.stepFx[i];
       if (!e) return null;   // null = default → the emit path is byte-identical
-      return { note: Number.isFinite(e.note) ? (e.note | 0) : null, tone: (typeof e.tone === 'string' ? e.tone : ''),
+      return { note: (e.note === 'rand') ? 'rand' : (Number.isFinite(e.note) ? (e.note | 0) : null), tone: (typeof e.tone === 'string' ? e.tone : ''),
         vel: (e.vel != null ? e.vel : 100), len: (e.len != null ? e.len : 100), rat: (e.rat | 0) || 1, prob: (e.prob != null ? e.prob : 100), pan: (e.pan != null ? e.pan : 0) };
     }
     function _ambBassStepFxCustom(L, i) { return !!(L && L.stepFx && L.stepFx[i]); }
+    // The note label shown under a melodic-euclid step. Mirrors the emit's pitch
+    // choice: explicit Step-Edit note → that note; "Random from set" → 🎲; a chord/
+    // wrap source → the arpeggiated chord tone at this hit's ordinal (deterministic);
+    // a scale/notes source → the root it wanders from (prefixed ~, since Pitch var
+    // walks it per cycle). Returns { t: text, c: kind } (c drives the CSS accent).
+    function _ambEuclidNoteLabel(inst, src, N, chordPool, reg, pat, idx) {
+      const sfx = _ambBassStepFxGet(inst, idx);
+      if (sfx && sfx.note === 'rand') return { t: '🎲', c: 'rand' };
+      if (sfx && sfx.note != null) { try { return { t: Tone.Frequency(sfx.note | 0, 'midi').toNote(), c: 'set' }; } catch (e) {} }
+      let f = null, walk = false;
+      if (chordPool) {
+        let arp = 0; for (let j = 0; j < idx; j++) { if (pat[j % pat.length] === 1) arp++; }   // this hit's chord-tone ordinal = # hits before it
+        f = _ambDegreeFreq(arp % Math.max(1, N), reg, src);
+      } else { f = _ambDegreeFreq(0, reg, src); walk = true; }
+      if (f == null) return { t: '·', c: '' };
+      try { return { t: (walk ? '~' : '') + Tone.Frequency(f).toNote(), c: walk ? 'walk' : 'gen' }; } catch (e) { return { t: '·', c: '' }; }
+    }
     function _ambBassStepFxSet(L, i, patch) {
       if (!L) return;
       const cur = { note: null, tone: '', vel: 100, len: 100, rat: 1, prob: 100, pan: 0, ...(L.stepFx && L.stepFx[i]), ...patch };
-      cur.note = Number.isFinite(cur.note) ? Math.max(0, Math.min(127, cur.note | 0)) : null;
+      cur.note = (cur.note === 'rand') ? 'rand' : (Number.isFinite(cur.note) ? Math.max(0, Math.min(127, cur.note | 0)) : null);
       cur.tone = (typeof cur.tone === 'string') ? cur.tone : '';
       cur.vel = Math.max(0, Math.min(200, cur.vel | 0));
       cur.len = Math.max(5, Math.min(400, cur.len | 0));
@@ -7453,7 +7480,8 @@
       const L = getL(); if (!L) return; _E = E;
       const esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
       const cur = _ambBassStepFxGet(L, i) || { note: null, tone: '', vel: 100, len: 100, rat: 1, prob: 100, pan: 0 };
-      let noteOpts = '<option value="">Auto (follow pattern)</option>';
+      let noteOpts = '<option value="">Auto (follow pattern)</option>' +
+        '<option value="rand"' + (cur.note === 'rand' ? ' selected' : '') + '>🎲 Random from set</option>';
       for (let m = 24; m <= 84; m++) { let nm = 'n' + m; try { nm = Tone.Frequency(m, 'midi').toNote(); } catch (e) {} noteOpts += '<option value="' + m + '"' + (cur.note === m ? ' selected' : '') + '>' + esc(nm) + '</option>'; }
       let toneOpts = '<option value="">Layer tone</option>';
       try { _ambToneOptions().forEach(o => { toneOpts += '<option value="' + esc(o.value) + '"' + (cur.tone === o.value ? ' selected' : '') + '>' + esc(o.label || o.value) + '</option>'; }); } catch (e) {}
@@ -7484,7 +7512,7 @@
       const apply = (sf, raw) => {
         const L2 = getL(); if (!L2) return;
         const patch = {};
-        if (sf === 'note') patch.note = (raw === '' ? null : (parseInt(raw, 10) | 0));
+        if (sf === 'note') patch.note = (raw === '' ? null : (raw === 'rand' ? 'rand' : (parseInt(raw, 10) | 0)));
         else if (sf === 'tone') patch.tone = raw || '';
         else if (sf === 'rat') patch.rat = (parseInt(raw, 10) || 1);
         else patch[sf] = (parseInt(raw, 10) || 0);
@@ -8001,6 +8029,29 @@
           }
         }
         html += '</div></div>';
+      }
+      // Note readout (melodic euclid only): a strip under the grid naming the note each
+      // ACTIVE step plays — the arpeggiated chord tone, the walk's root (~), a Step-Edit
+      // override, or 🎲 for "Random from set". Same --eucols as the cells so it lines up
+      // (1-bar patterns align cell-for-cell; multi-bar wraps as one block below). Tap a
+      // step (Step Edit on) to change its note.
+      if (!inst.euclidKit) {
+        const _src = _ambNotesOf(inst);
+        const _N = Math.max(1, _ambScaleIntervals(_src).length);
+        const _st = _ambAsNotes(_src).type;
+        const _chordPool = (_st === 'chord' || _st === 'wrap');
+        const _reg = Math.max(1, Math.min(4, inst.register | 0) || 2);
+        const _pat0 = _ambEuclidPat(inst, d.pulses, d.steps, d.rotate, d.V, 0, d.salt);
+        html += '<div class="ambient-euclid-notes" style="--eucols:' + Math.min(d.steps, 16) + '" aria-hidden="true">';
+        for (let b = 0; b < nBars; b++) {
+          for (let slot = 0; slot < d.steps; slot++) {
+            const idx = b * d.steps + slot;
+            if (_pat0[idx % _pat0.length] !== 1) { html += '<span class="ambient-euclid-notelbl off"></span>'; continue; }
+            const lab = _ambEuclidNoteLabel(inst, _src, _N, _chordPool, _reg, _pat0, idx);
+            html += '<span class="ambient-euclid-notelbl ' + (lab.c || '') + '">' + lab.t + '</span>';
+          }
+        }
+        html += '</div>';
       }
       // Edit panel (Drum-lanes): Lane/Column mode · step scope (All / subset / one) ·
       // then shape every step in scope — vel / length / ratchet (count + rate) /

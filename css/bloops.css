@@ -3507,6 +3507,17 @@
     @media (hover: hover) { .ambient-euclid-cell.on:hover { background: #67e0ba; border-color: #9df5d8; color: #06210f; } }
     /* Cells the edit panel is currently pointed at (selected lane × step scope). */
     .ambient-euclid-cell.in-scope { outline: 1.5px solid rgba(159,122,234,0.85); outline-offset: 1px; }
+    /* Melodic-euclid note readout: a strip under the grid naming each active step's
+       note. Same --eucols as the cells so labels sit under their step. Small + clipped
+       so a long note name can never resize a column or force horizontal scroll. */
+    .ambient-euclid-notes { display: grid; grid-template-columns: repeat(var(--eucols, 8), minmax(0, 1fr));
+      column-gap: 3px; row-gap: 11px; margin: 3px 0 1px; }
+    .ambient-euclid-notelbl { min-width: 0; text-align: center; overflow: hidden; white-space: nowrap;
+      font: 600 0.53rem 'Segoe UI', sans-serif; letter-spacing: -0.03em; color: #7fd8b8; }
+    .ambient-euclid-notelbl.off { color: transparent; }
+    .ambient-euclid-notelbl.set { color: #c9b8ef; }                        /* explicit Step-Edit note */
+    .ambient-euclid-notelbl.rand { color: #f0b64a; font-size: 0.62rem; }   /* 🎲 random from set */
+    .ambient-euclid-notelbl.walk { color: #6f93c4; font-style: italic; }   /* wanders from ~root */
     /* Per-lane audition ▶ — sits left of each drum label. */
     .ambient-euclid-laneplay { flex: 0 0 auto; width: 18px; height: 18px; padding: 0; line-height: 1;
       display: inline-flex; align-items: center; justify-content: center; font-size: 0.56rem;

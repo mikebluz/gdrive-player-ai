@@ -11756,8 +11756,22 @@
     // per-step FX / its own loop semantics.
     function _ambEuclidDeterministic(L) {
       if (!L || typeof L !== 'object') return false;
-      const euclid = (L.type === 'bass') || (L.type === 'beat' && L.gen === 'euclid' && !L.euclidKit) || (L.type === 'arp' && L.euclid);
+      const isKit = (L.type === 'beat' && L.gen === 'euclid' && !!L.euclidKit);
+      const euclid = (L.type === 'bass') || (L.type === 'beat' && L.gen === 'euclid' && !L.euclidKit) || (L.type === 'arp' && L.euclid) || isKit;
       if (!euclid) return false;
+      if (isKit) {
+        // Drum-lanes play EXACTLY the drawn grid — rhythmVar / rests are forced off
+        // in the emit (5707-5708) and pages cycle deterministically by cycle index
+        // (no random order). So the ONLY per-cycle variance is Ghosts, length jitter,
+        // or a per-step Prob<100. Absent those the grid loops natively byte-identical,
+        // so skip Write and dodge the freeze/replay seam-cluster glitch.
+        if ((L.ghosts | 0) || (L.lenVary | 0)) return false;
+        const pages = _ambEuclidPages(L);
+        for (const pg of pages) {
+          if (pg && pg.fx) { for (const k in pg.fx) { const e = pg.fx[k]; if (e && Number.isFinite(e.prob) && e.prob < 100) return false; } }
+        }
+        return true;
+      }
       if ((L.rhythmVar | 0) || (L.ghosts | 0) || (L.pitchVar | 0) || (L.lenVary | 0)) return false;
       if (_ambEffRest(L) > 0) return false;
       if (L.stepFx && typeof L.stepFx === 'object') { for (const k in L.stepFx) { const e = L.stepFx[k]; if (e && Number.isFinite(e.prob) && e.prob < 100) return false; } }

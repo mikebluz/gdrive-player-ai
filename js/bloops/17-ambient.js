@@ -18673,6 +18673,23 @@
       const r = (Math.max(1, u.num | 0)) / (Math.max(1, u.den | 0));
       return ([0.25, 0.5, 1, 2, 4, 8].indexOf(r) >= 0) ? String(r) : 'free';
     }
+    // The layer's UNIT relative to the AREA unit, for the Scheduler dropdown:
+    // 'free' | 'num/den' (ref='area') | 'other' (a bar/layer sync set on the card).
+    const _AMB_AREA_RATIOS = [['1/4', '¼× Area'], ['1/2', '½× Area'], ['1/1', '1× Area'], ['3/2', '1½× Area'], ['2/1', '2× Area'], ['3/1', '3× Area'], ['4/1', '4× Area'], ['8/1', '8× Area']];
+    function _ambSchedAreaVal(L) {
+      const u = L && L.unit;
+      if (!u || u.mode !== 'sync') return 'free';
+      if (u.ref !== 'area') return 'other';
+      const key = Math.max(1, u.num | 0) + '/' + Math.max(1, u.den | 0);
+      return (_AMB_AREA_RATIOS.some(o => o[0] === key)) ? key : 'other';   // off-preset ratio (set on the card) shows as custom
+    }
+    // Short "× Area" label for a ratio (num/den) — ×2, ÷4, ×1½, etc.
+    function _ambAreaRatioLbl(num, den) {
+      num = Math.max(1, num | 0); den = Math.max(1, den | 0);
+      if (den === 1) return (num === 1) ? 'Area' : 'Area×' + num;
+      if (num === 1) return 'Area÷' + den;
+      return 'Area×' + _ambFmtBpc(num / den);
+    }
     function _ambRenderScheduler(E) {
       const body = _ambGet(E, 'ambient-sched-body'); if (!body) return;
       const cfg = E.getCfg(); if (!cfg) return;
@@ -18862,8 +18879,9 @@
             tuples.map((tu, i) => '<button type="button" class="ambient-sched-tuchip' + ((isSeq ? i === selTi : true) ? ' on' : '') + '" data-ti="' + i + '" title="Step ' + (i + 1) + ' of the Loop sequence — ' + tuLbl(tu) + '. Click to edit; the list plays through in order and loops.">' + tuLbl(tu) + ((isSeq && i === selTi && tuples.length > 1) ? '<span class="tux" title="Remove this step">✕</span>' : '') + '</button>').join('') +
             '<button type="button" class="ambient-sched-tuadd" title="Add a step — the Loop plays through the list in order (phrase 1, then phrase 2, …) and loops">＋</button></span>';
         }
-        const uOpts = [['free', 'Free'], ['0.25', '¼ bar'], ['0.5', '½ bar'], ['1', '1 bar'], ['2', '2 bars'], ['4', '4 bars'], ['8', '8 bars']]
-          .map(o => '<option value="' + o[0] + '"' + (o[0] === uVal ? ' selected' : '') + '>' + o[1] + '</option>').join('');
+        const aVal = _ambSchedAreaVal(layer);   // 'free' | 'num/den' (× Area) | 'other' (card-set bar/layer sync)
+        const uOpts = [['free', 'Free']].concat(_AMB_AREA_RATIOS).concat(aVal === 'other' ? [['other', '⋯ custom']] : [])
+          .map(o => '<option value="' + o[0] + '"' + (o[0] === aVal ? ' selected' : '') + (o[0] === 'other' ? ' disabled' : '') + '>' + o[1] + '</option>').join('');
         // Resolution READOUT (series arp only) — the note-rate reminder. For a
         // synced arp with a fixed division it IS the note rate (Unit doesn't
         // change it); 'Fit unit' → Unit sets the rate; Free → the layer's Rate.
@@ -18888,12 +18906,19 @@
               '<input type="number" class="ambient-sched-subdiv" min="1" max="16" step="1" value="' + (((layer.progSubdiv | 0) || 1)) + '">' +
               '<span class="ambient-sched-lbl snap">voicing' + ((((layer.progSubdiv | 0) || 1) === 1) ? '' : 's') + '</span>' +
               '<button type="button" class="ambient-seg ambient-sched-mergebtn' + (layer.progMerge ? ' active' : '') + '" title="Merge repeats — treat a run of the SAME chord (a chord that repeats, or spans multiple bars) as ONE chord, so the N voicings spread across the whole run (e.g. 4 voicings over a 2-bar chord = 2 per bar) instead of restarting every bar.">' + (layer.progMerge ? '⊕ merged' : 'merge') + '</button></span>')
-          : ('<span class="ambient-sched-grp" title="Unit — how long ONE block of this layer lasts. FREE = the layer’s OWN natural length (so layers can differ in block size); a BAR value LOCKS it to the shared grid.">' +
-              '<span class="ambient-sched-lbl">unit</span>' +
-              '<select class="ambient-select ambient-sched-unit">' + uOpts + '</select>' +
-              '<span class="ambient-sched-unitcue ' + (uVal === 'free' ? 'free' : 'sync') + '" title="' + (uVal === 'free' ? 'FREE — this block is the layer’s own natural length (≈' + _ambFmtBpc(unitBars) + ' bars); different layers can be different sizes. Pick a bar value to lock it to the shared grid.' : 'SYNCED — locked to the bar grid at this size.') + '">' +
-                (uVal === 'free' ? '⟲ Free · ≈' : '⧗ Sync · ') + _ambFmtBpc(unitBars) + ' bar' + ((unitBars > 1.02) ? 's' : '') + '</span>' +
-              '</span>');
+          : (function () {
+              const lbl = (aVal === 'free') ? ('⟲ Free · ≈' + _ambFmtBpc(unitBars))
+                : (aVal === 'other') ? ('⧗ ' + _ambFmtBpc(unitBars))
+                : ('◆ ' + _ambAreaRatioLbl(layer.unit.num, layer.unit.den) + ' · ' + _ambFmtBpc(unitBars));
+              const tip = (aVal === 'free') ? ('FREE — this block is the layer’s own natural length (≈' + _ambFmtBpc(unitBars) + ' bars); layers can be different sizes. Pick an Area ratio to lock it to the grid.')
+                : (aVal === 'other') ? 'Custom Sync (an absolute bar length or another layer) — set on the layer card.'
+                : ('Follows the ◆ Area unit × this ratio (' + _ambFmtBpc(unitBars) + ' bars).');
+              return '<span class="ambient-sched-grp" title="Unit — this layer’s cycle length. FREE = its own natural length (layers can differ); otherwise a ratio of the ◆ AREA unit. Off-preset ratios are set on the layer card.">' +
+                '<span class="ambient-sched-lbl">unit</span>' +
+                '<select class="ambient-select ambient-sched-unit">' + uOpts + '</select>' +
+                '<span class="ambient-sched-unitcue ' + (aVal === 'free' ? 'free' : 'sync') + '" title="' + esc(tip) + '">' + lbl + ' bar' + ((unitBars > 1.02) ? 's' : '') + '</span>' +
+                '</span>';
+            })();
         // Loop line (the phrase structure) — its own row so cycles×plays + chips breathe.
         const stoW = !!(w && w.stochastic);   // ~ Vary: random length/plays in a min–max range each cycle
         const phraseHtml = '<span class="ambient-sched-xy"' + (wOn ? '' : ' style="display:none"') + '>' +
@@ -23037,9 +23062,11 @@
             const sel = ev.target.closest('.ambient-sched-unit'); if (!sel) return;
             _E = E; const t = _schedLayer(sel); if (!t || !t.L) return;
             if (sel.value === 'free') { _ambNormalizeUnit(t.L); t.L.unit.mode = 'free'; }
-            else {
-              const r = parseFloat(sel.value) || 1;
-              t.L.unit = (r >= 1) ? { mode: 'sync', ref: 'bar', num: Math.round(r), den: 1 } : { mode: 'sync', ref: 'bar', num: 1, den: Math.round(1 / r) };
+            else if (sel.value === 'other') { return; }   // disabled display option (a card-set custom ratio)
+            else {   // "num/den" → a ratio of the AREA unit
+              const p = String(sel.value).split('/');
+              const num = Math.max(1, Math.min(64, parseInt(p[0], 10) || 1)), den = Math.max(1, Math.min(64, parseInt(p[1], 10) || 1));
+              t.L.unit = { mode: 'sync', ref: 'area', num, den };
               if (E.timer) { try { _ambUnitReanchor(E, t.key); } catch (e) {} }   // rejoin the grid at the next boundary
             }
             if (E.timer) { try { _ambSyncMods(); } catch (e) {} }

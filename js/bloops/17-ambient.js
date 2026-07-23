@@ -8141,19 +8141,24 @@
         const rv = grid.querySelector('.ambient-step-fx-v[data-sfxv="' + sfxKey + '"]'); if (rv) rv.textContent = val + (sfxKey === 'rat' ? '×' : (sfxKey === 'pitch' ? ' st' : (sfxKey === 'pan' ? '' : '%')));
         markScopeFx(L, d, pg); persist();
       });
-      // Ratchet-rate + Fill <select> (delegated change).
+      // Step-FX slider RELEASE + Ratchet-rate + Fill <select> (delegated change).
       grid.addEventListener('change', (ev) => {
         const tgt = ev.target;
+        const sl = tgt.closest && tgt.closest('.ambient-step-fx-sl');
         const rd = tgt.closest && tgt.closest('.ambient-step-fx-ratd');
         const f = tgt.closest && tgt.closest('.ambient-step-fx-fill');
-        if (!rd && !f) return;
+        if (!sl && !rd && !f) return;
         _E = E; const L = getL(); if (!L || !L.euclidKit) { if (f) f.value = ''; return; }
         const d = _ambEuclidGridDims(L, type); if (!d) return;
+        if (sl) {   // slider RELEASE — value was applied live on 'input'; re-anchor so a
+          if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} }   // frozen Write loop rewrites and the edit is HEARD at the next boundary
+          return;
+        }
         if (rd) {   // ratchet rate → apply to scope (no re-render; the select holds its value)
           const pg = _ambEuclidPage(L), rv = parseInt(rd.value, 10) || 0;
           _ambEditScopeCells(L, d).forEach(({ v, i }) => _ambStepFxSet(pg, v, i, { ratd: rv }));
           markScopeFx(L, d, pg); persist();
-          if (E.timer) { try { sync && sync(); } catch (e) {} }
+          if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} }
           return;
         }
         // Fill ▾ → euclid-fill the SELECTED lane (value = pulse count, 0 = clear).
@@ -8161,7 +8166,7 @@
         const k = parseInt(f.value, 10) || 0; f.value = '';
         _ambEuclidFillLane(L, type, _ambEditLane(L), k);
         render(); persist();
-        if (E.timer) { try { sync && sync(); } catch (e) {} }
+        if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} }
       });
       // Drum-lanes PAGE tabs + orchestration (delegated → survive grid re-renders).
       // Drag-reorder the page tabs (pointer-based → works on touch + desktop). A
@@ -23359,7 +23364,12 @@
       // layer's unit length — refresh the header readouts. It also invalidates
       // every cached seed preview (params feed the silent render; the next
       // notes-live pass lazily re-renders any open one).
-      const _unitRefresh = () => {
+      const _unitRefresh = (ev) => {
+        // Step-Edit inspector controls (vel/len/pan/pitch/prob/ratchet/scope/mode) don't
+        // change a layer's unit length, and _ambSyncLayerUnits → _ambRefreshEuclidGrids
+        // REBUILDS the euclid grid — destroying the inspector slider mid-drag ("sliders
+        // don't slide"). Skip the refresh for those.
+        if (ev && ev.target && ev.target.closest && ev.target.closest('.ambient-step-fx-sl, .ambient-step-fx-ratcount, .ambient-step-fx-ratd, .ambient-stepscope-btn, .ambient-stepmode, .ambient-step-fx-clear, .ambient-step-fx-trig')) return;
         try { _ambSyncLayerUnits(E); } catch (e) {}
         E.seedPv = {};
         // Debounced (a slider drag fires per pixel; the silent seed render is

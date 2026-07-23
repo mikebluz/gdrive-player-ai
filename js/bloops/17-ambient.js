@@ -17942,108 +17942,46 @@
     // Mode is DERIVED live (write.on → Write · frozen/recording → Hold · else
     // Off) by _ambLoopSyncAll; buttons are class-wired by ONE delegated host
     // listener.
+    // Loop/Write is now EDITED in the ⏱ Scheduler (per-layer timeline row). The card
+    // shows a read-only BADGE of the current state; Hold stays on the header ❄.
+    function _ambLoopStateText(mode, effW, live, inherited) {
+      if (mode === 'off') return 'Off';
+      if (mode === 'rec') return '◉ Rec';
+      if (mode === 'hold') return '❄ Hold';
+      const sto = !!(effW && effW.stochastic);
+      const seqOn = !!(effW && Array.isArray(effW.seq) && effW.seq.length);
+      let len;
+      if (seqOn) len = effW.seq.map(t => (t.bars | 0) + '×' + (t.times | 0)).join('→');
+      else if (sto) len = (((effW && effW.barsMin) | 0) || 1) + '–' + (((effW && effW.barsMax) | 0) || 4) + '×' + (((effW && effW.timesMin) | 0) || 2) + '–' + (((effW && effW.timesMax) | 0) || 8);
+      else len = (((effW && effW.bars) | 0) || 2) + '×' + (((effW && effW.times) | 0) || 4);
+      return (inherited ? '↳ ' : '⟳ ') + 'Write ' + len + (live ? ' ⚡' : '');
+    }
     function _ambLoopCtrl(inst) {
       const w = (inst && inst.write && typeof inst.write === 'object') ? inst.write : null;
       const on = !!(w && w.on);
-      return '<div class="ambient-ctrl ambient-loop-ctrl"><label title="Loop — Off: continuous generation. Hold: freeze a loop manually (press to start, press again to set the length; the header ❄ is a shortcut). Write: generate X bars, loop that exact phrase until it has played Y times total, then write a fresh one.">Loop</label>' +
-        '<span class="ambient-write-box">' +
-          '<span class="ambient-seg-row">' +
-            '<button type="button" class="ambient-seg ambient-loop-mode' + (on ? '' : ' active') + '" data-lmode="off">Off</button>' +
-            '<button type="button" class="ambient-seg ambient-loop-mode" data-lmode="hold">Hold</button>' +
-            '<button type="button" class="ambient-seg ambient-loop-mode' + (on ? ' active' : '') + '" data-lmode="write">Write</button>' +
-          '</span>' +
-          // Vary (stochastic) — re-rolls a random phrase length + repeat count in
-          // [min,max] each cycle, so Write becomes evolving structure.
-          '<button type="button" class="ambient-seg ambient-write-vary' + ((w && w.stochastic) ? ' active' : '') + '" title="Vary — each cycle roll a random phrase length (bars) and repeat count (plays) inside your min–max ranges, so the layer loops in evolving chunks instead of a fixed X×Y.">~ Vary</button>' +
-          '<button type="button" class="ambient-seg ambient-loop-lvar' + ((inst && inst.loopVar === 'live') ? ' active' : '') + '" title="Live variance — off: the loop replays exactly as written (variance baked into the captured phrase). On: every loop pass RE-PERFORMS the phrase — Humanize, Vel var and Ornament re-roll from the layer\'s current sliders each iteration (structural variance stays as written).">⚡ Live</button>' +
-          // Fixed X×Y (Vary off)
-          '<span class="ambient-write-xy ambient-write-fixed"' + (on ? '' : ' style="display:none"') + '>' +
-            '<input type="number" class="ambient-write-x" min="1" max="32" step="1" value="' + ((w && w.bars) || 2) + '" title="X — phrase length in bars"> <span class="ambient-hint">bars ×</span> ' +
-            '<input type="number" class="ambient-write-y" min="1" max="32" step="1" value="' + ((w && w.times) || 4) + '" title="Y — total plays of each phrase before a new one is written"> <span class="ambient-hint">plays</span>' +
-          '</span>' +
-          // Min–max ranges (Vary on)
-          '<span class="ambient-write-xy ambient-write-range" style="display:none">' +
-            '<span class="ambient-hint">bars</span> <input type="number" class="ambient-write-bmin" min="1" max="32" step="1" value="' + ((w && w.barsMin) || 1) + '" title="Min phrase length (bars)">–<input type="number" class="ambient-write-bmax" min="1" max="32" step="1" value="' + ((w && w.barsMax) || 4) + '" title="Max phrase length (bars)"> ' +
-            '<span class="ambient-hint">× plays</span> <input type="number" class="ambient-write-tmin" min="1" max="32" step="1" value="' + ((w && w.timesMin) || 2) + '" title="Min repeats before a new phrase">–<input type="number" class="ambient-write-tmax" min="1" max="32" step="1" value="' + ((w && w.timesMax) || 8) + '" title="Max repeats before a new phrase">' +
-          '</span>' +
-        '</span><span class="ambient-hint ambient-loop-hint">phrase loop</span></div>';
+      const txt = _ambLoopStateText(on ? 'write' : 'off', w, !!(inst && inst.loopVar === 'live'), false);
+      return '<div class="ambient-ctrl ambient-loop-ctrl" title="Loop / Write is edited in the ⏱ Sched tab (the per-layer timeline). This badge shows the current setting; the header ❄ freezes a loop manually (Hold).">' +
+        '<label>Loop</label>' +
+        '<span class="ambient-loop-badge' + (on ? ' on' : '') + '" data-loopbadge="1">' + txt + '</span>' +
+        '<span class="ambient-hint">edit in ⏱ Sched</span></div>';
     }
     // Sync every Loop row's active segment + X/Y visibility from the DERIVED
     // state (cfg write.on + live freeze state). Called from _ambFreezeSyncAll so
     // freeze transitions (record → frozen → thaw) reflect immediately.
     function _ambLoopSyncAll(E) {
       const host = E && document.getElementById(E.hostId); if (!host) return;
+      const cfgW = E.getCfg && E.getCfg();
       host.querySelectorAll('.ambient-loop-ctrl').forEach(row => {
         const key = (typeof _ambCardKey === 'function') ? _ambCardKey(row.closest('.ambient-layer')) : null;
         const L = key ? _ambLayerByKey(E, key) : null; if (!L) return;
         const fs = E.freeze && E.freeze[key];
-        const cfgW = E.getCfg && E.getCfg();
         const effW = _ambEffWrite(cfgW, L);
         const inherited = !!(effW && !(L.write && L.write.on));   // riding the Area Write
         const writing = !!effW;
         const holding = !writing && !!(fs && (fs.frozen || fs.recording));
-        const mode = writing ? 'write' : (holding ? 'hold' : 'off');
-        row.querySelectorAll('.ambient-loop-mode').forEach(b => {
-          b.classList.toggle('active', b.getAttribute('data-lmode') === mode);
-          if (b.getAttribute('data-lmode') === 'hold') b.textContent = (fs && fs.recording && !writing) ? '◉ Rec' : 'Hold';
-        });
-        // Vary state: show the fixed X×Y or the min–max ranges (only in Write mode).
-        const sto = !!(effW && effW.stochastic);
-        const seqOn = !!(effW && Array.isArray(effW.seq) && effW.seq.length);   // tuple SEQUENCE drives (edited in the Scheduler)
-        const varyBtn = row.querySelector('.ambient-write-vary');
-        // Inherited (Area Write): the settings live in Configure — hide the
-        // per-layer editors and cue the cascade instead of showing dormant fields.
-        if (varyBtn) { varyBtn.classList.toggle('active', sto); varyBtn.style.display = (writing && !inherited && !seqOn) ? '' : 'none'; }
-        const lvBtn = row.querySelector('.ambient-loop-lvar');
-        if (lvBtn) { lvBtn.classList.toggle('active', L.loopVar === 'live'); lvBtn.style.display = (writing || holding) ? '' : 'none'; }
-        const fixed = row.querySelector('.ambient-write-fixed'); if (fixed) fixed.style.display = (writing && !inherited && !sto && !seqOn) ? '' : 'none';
-        const range = row.querySelector('.ambient-write-range'); if (range) range.style.display = (writing && !inherited && sto && !seqOn) ? '' : 'none';
-        const hint = row.querySelector('.ambient-loop-hint');
-        if (hint) hint.textContent = writing
-            ? (inherited ? ('↳ area: ' + (sto ? (effW.barsMin + '–' + effW.barsMax + ' bars × ' + effW.timesMin + '–' + effW.timesMax + ' plays') : (effW.bars + ' bars × ' + effW.times + ' plays')))
-              : seqOn ? ('sequence: ' + effW.seq.map(t => t.bars + '×' + t.times).join(' → ') + ' (edit in Scheduler)')
-              : sto ? ('vary: ' + ((effW && effW.barsMin) || 1) + '–' + ((effW && effW.barsMax) || 4) + ' bars × ' + ((effW && effW.timesMin) || 2) + '–' + ((effW && effW.timesMax) || 8) + ' plays')
-                    : ('auto: write → loop ×' + ((effW && effW.times) || 4) + ' → rewrite'))
-          : (fs && fs.recording) ? 'recording — press Hold again to set the loop'
-          : (fs && fs.frozen) ? 'held loop — Off/❄ to thaw'
-          : 'phrase loop';
-        // Active progression → the X (phrase length) inputs edit in CYCLES (one
-        // full pass through the progression's chords), the only unit a looped
-        // phrase can honestly have (the engine snaps bars up to whole cycles).
-        // dataset.cyc marks the unit for the shared input handler; values are
-        // stored as bars either way. Skip while the field is being typed in.
-        try {
-          const cyc = _ambProgCycleBars(cfgW);
-          const relab = (inp, barsVal, hintTxtCyc, hintTxtBars) => {
-            if (!inp) return;
-            const h = inp.nextElementSibling;
-            if (cyc > 0) {
-              inp.dataset.cyc = String(cyc);
-              inp.max = String(Math.max(1, Math.ceil(32 / cyc)));
-              inp.title = 'Phrase length in progression cycles — 1 cycle = ' + _ambFmtBpc(cyc) + ' bars (one full pass through the chords)';
-              if (document.activeElement !== inp) inp.value = String(Math.max(1, Math.ceil((barsVal || 1) / cyc - 1e-6)));
-              if (h && h.classList && h.classList.contains('ambient-hint')) h.textContent = hintTxtCyc;
-            } else if (inp.dataset.cyc) {
-              delete inp.dataset.cyc; inp.max = '32';
-              inp.title = 'X — phrase length in bars';
-              if (document.activeElement !== inp) inp.value = String(barsVal || 2);
-              if (h && h.classList && h.classList.contains('ambient-hint')) h.textContent = hintTxtBars;
-            }
-          };
-          relab(row.querySelector('.ambient-write-x'), (L.write && L.write.bars) || 2, 'cycles ×', 'bars ×');
-          // Vary ranges: min–max phrase length, same unit swap ("bars" → "cycles").
-          const rangeBox = row.querySelector('.ambient-write-range');
-          if (rangeBox) {
-            const rh = rangeBox.querySelector('.ambient-hint');
-            if (rh) rh.textContent = (cyc > 0) ? 'cycles' : 'bars';
-            const bmin = rangeBox.querySelector('.ambient-write-bmin'), bmax = rangeBox.querySelector('.ambient-write-bmax');
-            [[bmin, (L.write && L.write.barsMin) || 1], [bmax, (L.write && L.write.barsMax) || 4]].forEach(pr => {
-              const inp = pr[0]; if (!inp) return;
-              if (cyc > 0) { inp.dataset.cyc = String(cyc); inp.max = String(Math.max(1, Math.ceil(32 / cyc))); if (document.activeElement !== inp) inp.value = String(Math.max(1, Math.ceil(pr[1] / cyc - 1e-6))); }
-              else if (inp.dataset.cyc) { delete inp.dataset.cyc; inp.max = '32'; if (document.activeElement !== inp) inp.value = String(pr[1]); }
-            });
-          }
-        } catch (e) {}
+        const mode = writing ? 'write' : (holding ? ((fs && fs.recording) ? 'rec' : 'hold') : 'off');
+        const badge = row.querySelector('.ambient-loop-badge');
+        if (badge) { badge.classList.toggle('on', writing || holding); badge.textContent = _ambLoopStateText(mode, effW, L.loopVar === 'live', inherited); }
       });
     }
     // Strum SYNC — lock the strummed chord's per-hit spacing to a BPM note-division
@@ -18937,12 +18875,20 @@
               '<span class="ambient-sched-lbl">unit</span>' +
               '<select class="ambient-select ambient-sched-unit">' + uOpts + '</select></span>');
         // Loop line (the phrase structure) — its own row so cycles×plays + chips breathe.
+        const stoW = !!(w && w.stochastic);   // ~ Vary: random length/plays in a min–max range each cycle
         const phraseHtml = '<span class="ambient-sched-xy"' + (wOn ? '' : ' style="display:none"') + '>' +
-            ((cycBars > 0)
-              ? ('<input type="number" class="ambient-sched-bars" data-cyc="' + cycBars + '" min="1" max="' + Math.max(1, Math.ceil(32 / cycBars)) + '" step="1" value="' + (effCycles || 1) + '" title="Phrase length in progression CYCLES — 1 cycle = one full pass through the progression’s chords (' + _ambFmtBpc(cycBars) + ' bars here). A looped phrase must span whole cycles so its repeats stay on the same chords."><span class="ambient-sched-lbl">cycle' + (effCycles === 1 ? '' : 's') + ' ×</span>')
-              : ('<input type="number" class="ambient-sched-bars" min="1" max="32" step="1" value="' + ((selTu && selTu.bars) || 2) + '" title="Phrase length in bars"><span class="ambient-sched-lbl">bars ×</span>')) +
-            '<input type="number" class="ambient-sched-times" min="1" max="32" step="1" value="' + ((selTu && selTu.times) || 4) + '" title="Times each phrase repeats before a fresh one is written"><span class="ambient-sched-lbl">plays</span>' +
-            ((cycBars > 0 && wOn) ? '<span class="ambient-sched-lbl snap" title="One cycle = one full pass through the progression (' + _ambFmtBpc(cycBars) + ' bars).">= ' + _ambFmtBpc(effBars) + ' bars</span>' : '') + '</span>';
+            (stoW
+              ? ('<span class="ambient-sched-lbl">bars</span>' +
+                 '<input type="number" class="ambient-sched-bmin" min="1" max="32" step="1" value="' + ((w && w.barsMin) || 1) + '" title="Min phrase length (bars)">–' +
+                 '<input type="number" class="ambient-sched-bmax" min="1" max="32" step="1" value="' + ((w && w.barsMax) || 4) + '" title="Max phrase length (bars)">' +
+                 '<span class="ambient-sched-lbl">× plays</span>' +
+                 '<input type="number" class="ambient-sched-tmin" min="1" max="32" step="1" value="' + ((w && w.timesMin) || 2) + '" title="Min repeats before a fresh phrase">–' +
+                 '<input type="number" class="ambient-sched-tmax" min="1" max="32" step="1" value="' + ((w && w.timesMax) || 8) + '" title="Max repeats before a fresh phrase">')
+              : (((cycBars > 0)
+                  ? ('<input type="number" class="ambient-sched-bars" data-cyc="' + cycBars + '" min="1" max="' + Math.max(1, Math.ceil(32 / cycBars)) + '" step="1" value="' + (effCycles || 1) + '" title="Phrase length in progression CYCLES — 1 cycle = one full pass through the progression’s chords (' + _ambFmtBpc(cycBars) + ' bars here). A looped phrase must span whole cycles so its repeats stay on the same chords."><span class="ambient-sched-lbl">cycle' + (effCycles === 1 ? '' : 's') + ' ×</span>')
+                  : ('<input type="number" class="ambient-sched-bars" min="1" max="32" step="1" value="' + ((selTu && selTu.bars) || 2) + '" title="Phrase length in bars"><span class="ambient-sched-lbl">bars ×</span>')) +
+                '<input type="number" class="ambient-sched-times" min="1" max="32" step="1" value="' + ((selTu && selTu.times) || 4) + '" title="Times each phrase repeats before a fresh one is written"><span class="ambient-sched-lbl">plays</span>' +
+                ((cycBars > 0 && wOn) ? '<span class="ambient-sched-lbl snap" title="One cycle = one full pass through the progression (' + _ambFmtBpc(cycBars) + ' bars).">= ' + _ambFmtBpc(effBars) + ' bars</span>' : ''))) + '</span>';
         html += '<div class="ambient-sched-row" data-schkey="' + esc(key) + '" data-total="' + totalSpan.toFixed(4) + '">' +
           '<div class="ambient-sched-ctl">' +
             // Header line: layer name (prominent) + the timing cluster to the right.
@@ -18953,7 +18899,9 @@
             // Loop line: on/off + phrase (cycles × plays = bars) + tuple chips.
             '<div class="ambient-sched-loopline' + (wOn ? ' on' : '') + '" title="Loop — write a fresh phrase, repeat it, then write a new one.">' +
               '<button type="button" class="ambient-seg ambient-sched-writebtn' + (wOn ? ' active' : '') + '">' + (wOn ? '⟳ Loop on' : 'Loop off') + '</button>' +
-              phraseHtml + chipsHtml +
+              (wOn ? ('<button type="button" class="ambient-seg ambient-sched-vary' + (stoW ? ' active' : '') + '" title="Vary — each cycle roll a random phrase length (bars) and repeat count (plays) inside the min–max ranges, so the layer loops in evolving chunks.">~ Vary</button>' +
+                     '<button type="button" class="ambient-seg ambient-sched-live' + ((layer.loopVar === 'live') ? ' active' : '') + '" title="Live — every loop pass RE-PERFORMS the phrase: Humanize / Vel var / Ornament re-roll from the layer’s current sliders (structural variance stays as written).">⚡ Live</button>') : '') +
+              phraseHtml + (stoW ? '' : chipsHtml) +
             '</div>' +
           '</div>' +
           blocksHtml +
@@ -23122,6 +23070,27 @@
               if (typeof persistWorkspace === 'function') persistWorkspace();
               return;
             }
+            // ~ Vary (stochastic min–max length) toggle.
+            const vary = ev.target.closest('.ambient-sched-vary');
+            if (vary) {
+              _E = E; const tv = _schedLayer(vary); if (!tv || !tv.L) return;
+              if (!tv.L.write || typeof tv.L.write !== 'object') tv.L.write = { on: false, bars: 2, times: 4 };
+              tv.L.write.stochastic = !tv.L.write.stochastic;
+              try { _ambFreezeSyncAll(E); } catch (e) {}
+              _ambRenderScheduler(E);
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              return;
+            }
+            // ⚡ Live (re-perform each loop) toggle.
+            const live = ev.target.closest('.ambient-sched-live');
+            if (live) {
+              _E = E; const tl = _schedLayer(live); if (!tl || !tl.L) return;
+              if (tl.L.loopVar === 'live') delete tl.L.loopVar; else tl.L.loopVar = 'live';
+              try { _ambFreezeSyncAll(E); } catch (e) {}
+              _ambRenderScheduler(E);
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              return;
+            }
             const btn = ev.target.closest('.ambient-sched-writebtn'); if (!btn) return;
             const t = _schedLayer(btn); if (!t || !t.L) return;
             if (!t.L.write || typeof t.L.write !== 'object') t.L.write = { on: false, bars: 2, times: 4 };
@@ -23144,6 +23113,20 @@
               try { _ambSyncControls(E); } catch (e) {}   // mirror onto the layer card's Subdivide
               return;   // strip granularity re-renders on blur (focusout)
             }
+            // ~ Vary min–max range inputs.
+            const rng = ev.target.closest('.ambient-sched-bmin, .ambient-sched-bmax, .ambient-sched-tmin, .ambient-sched-tmax');
+            if (rng) {
+              _E = E; const tr = _schedLayer(rng); if (!tr || !tr.L) return;
+              if (!tr.L.write || typeof tr.L.write !== 'object') tr.L.write = { on: false, bars: 2, times: 4 };
+              const w2 = tr.L.write, rv = Math.max(1, Math.min(32, parseInt(rng.value, 10) || 1));
+              if (rng.classList.contains('ambient-sched-bmin')) w2.barsMin = rv;
+              else if (rng.classList.contains('ambient-sched-bmax')) w2.barsMax = rv;
+              else if (rng.classList.contains('ambient-sched-tmin')) w2.timesMin = rv;
+              else w2.timesMax = rv;
+              try { _ambFreezeSyncAll(E); } catch (e) {}
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              return;
+            }
             const inp = ev.target.closest('.ambient-sched-bars, .ambient-sched-times'); if (!inp) return;
             _E = E; const t = _schedLayer(inp); if (!t || !t.L) return;
             if (!t.L.write || typeof t.L.write !== 'object') t.L.write = { on: false, bars: 2, times: 4 };
@@ -23161,7 +23144,7 @@
             // Redraw only the strips (keep the focused input alive): full render on blur.
             if (typeof persistWorkspace === 'function') persistWorkspace();
           });
-          scBody.addEventListener('focusout', (ev) => { if (ev.target.closest && ev.target.closest('.ambient-sched-bars, .ambient-sched-times, .ambient-sched-subdiv')) { try { _ambRenderScheduler(E); } catch (e) {} } });
+          scBody.addEventListener('focusout', (ev) => { if (ev.target.closest && ev.target.closest('.ambient-sched-bars, .ambient-sched-times, .ambient-sched-subdiv, .ambient-sched-bmin, .ambient-sched-bmax, .ambient-sched-tmin, .ambient-sched-tmax')) { try { _ambRenderScheduler(E); } catch (e) {} } });
         }
       }
       // Roll-bar Harmony select (Option C) — delegated change so it survives

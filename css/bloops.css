@@ -11743,6 +11743,10 @@
     /* Unified Loop row (Off / Hold / Write) + the ❄ button's Write-cycling state */
     .ambient-loop-ctrl .ambient-seg-row { display: inline-flex; gap: 2px; }
     .ambient-loop-ctrl .ambient-loop-mode.active { background: rgba(79,209,197,0.18); border-color: #5e9ead; color: #9fe0ef; }
+    /* Read-only Loop/Write BADGE (control moved to the ⏱ Sched tab). */
+    .ambient-loop-badge { flex: 1 1 auto; min-width: 0; padding: 2px 8px; border-radius: 5px; font: 600 0.66rem 'Segoe UI', sans-serif;
+      color: #7a7a9a; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ambient-loop-badge.on { color: #f6ad55; background: rgba(246,173,85,0.12); border-color: rgba(246,173,85,0.35); }
     .ambient-freeze-btn.write-cycling { color: #f6ad55; border-color: rgba(246,173,85,0.5); }
 
     /* Trance-gate GEN overlay: the current bar's generated chops (amber) over

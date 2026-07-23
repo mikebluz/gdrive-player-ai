@@ -3618,6 +3618,12 @@
     .ambient-step-fx-ctrl label { color: #a0aec0; font: 600 0.62rem 'Segoe UI', sans-serif; }
     .ambient-step-fx-sl { width: 100%; min-width: 0; accent-color: #9f7aea; }
     .ambient-step-fx-v { text-align: right; color: #9fe0ef; font: 600 0.62rem 'Segoe UI', sans-serif; }
+    /* Per-lane RAMP: a "Ramp · <drum>" header + two Depth|Rate pairs (Pan, Pitch). */
+    .ambient-step-fx-ramphead { color: #c9b8ef; font: 700 0.56rem 'Segoe UI', sans-serif; text-transform: uppercase;
+      letter-spacing: 0.05em; margin: 9px 0 2px; opacity: 0.85; }
+    .ambient-ramp-pair { grid-column: 2 / 4; display: grid; grid-template-columns: 1fr 30px 1fr 22px; align-items: center; gap: 5px; min-width: 0; }
+    .ambient-ramp-sl { width: 100%; min-width: 0; accent-color: #9f7aea; }
+    .ambient-ramp-pair .ambient-step-fx-v { font-size: 0.55rem; text-align: center; }
     /* Lane/Column mode segment + the "(shared)" tag when >1 step is in scope. */
     .ambient-stepedit-mode { display: inline-flex; gap: 2px; }
     .ambient-stepedit-mode .ambient-stepmode { padding: 2px 9px; font-size: 0.66rem; }

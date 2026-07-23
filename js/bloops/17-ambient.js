@@ -5715,6 +5715,8 @@
             // lanes it panned Kick+Snare hard left (left-heavy mix + reverb). Non-kit
             // multi-voice keeps the fan.
             const vpan = _spreadLfo ? 0 : ((V === 1 || inst.euclidKit) ? (pan | 0) : Math.max(-100, Math.min(100, (pan | 0) + Math.round((v - (V - 1) / 2) * 40))));
+            const laneRamp = inst.euclidKit ? _ambLaneRampGet(inst, v) : null;   // per-lane sine LFO on Pan/Pitch (deterministic, no RNG)
+            const rampBar = slotSec * steps || 1;   // one bar → ramp Rate is cycles/bar
             for (let bar = 0; bar < bars; bar++) {
               for (let slot = 0; slot < steps; slot++) {
                 let hit = vpat[(bar * steps + slot) % vpat.length] === 1;   // per-bar when the override spans the phrase; else repeats
@@ -5754,18 +5756,25 @@
                   const rAt = at + rr * ratSpace;
                   // Per-step pan OVERRIDES the layer/spread pan when set (≠ 0).
                   const stPan = (sfx && sfx.pan) ? Math.max(-100, Math.min(100, sfx.pan)) : vpan;
+                  // Per-lane RAMP: add a sine LFO (of absolute play-time, so it evolves
+                  // smoothly across the native loop) onto this hit's Pan and Pitch.
+                  let panEff = stPan, tuneEff = stTune;
+                  if (laneRamp) {
+                    if (laneRamp.panD && laneRamp.panR) panEff = Math.max(-100, Math.min(100, Math.round(stPan + laneRamp.panD * Math.sin(2 * Math.PI * laneRamp.panR * rAt / rampBar))));
+                    if (laneRamp.pitchD && laneRamp.pitchR) tuneEff = stTune + laneRamp.pitchD * Math.sin(2 * Math.PI * laneRamp.pitchR * rAt / rampBar);
+                  }
                   _ambKeyTime = rAt;
                   // SYNTH kit: synthesize this lane's drum from its recipe instead of
                   // a sample. Role = the lane's drum (via _AMB_VDRUM).
                   if (_ambBeatIsSynth(inst)) {
                     const _r = Math.max(0, _AMB_VDRUM.indexOf(pc));
                     const _vol = Math.max(0, Math.round(_ambApplyLevel(100, inst.level) * velS));
-                    _ambPlaySynthDrum(_E, dest, inst, _r, rAt, _vol, dmod, stPan, stPitch + stTune);   // synth drum has no zone map → Sound+Pitch both shift its real pitch
+                    _ambPlaySynthDrum(_E, dest, inst, _r, rAt, _vol, dmod, panEff, stPitch + tuneEff);   // synth drum has no zone map → Sound+Pitch both shift its real pitch
                     ctx.cap++;
                     continue;
                   }
-                  const bp = _ambApplyAdsr(_ambBeatParams(inst.kit, lenMs, stPan), inst);
-                  if (stTune) bp.drumTune = stTune;   // "Pitch": pitch the selected drum in place (playbackRate multiply in _resolveSampleVoice)
+                  const bp = _ambApplyAdsr(_ambBeatParams(inst.kit, lenMs, panEff), inst);
+                  if (tuneEff) bp.drumTune = tuneEff;   // "Pitch" (+ ramp): pitch the selected drum in place (playbackRate multiply in _resolveSampleVoice)
                   bp.volume = Math.max(0, Math.round(_ambApplyLevel(bp.volume, inst.level) * velS));
                   if (dmod) bp._detuneMod = dmod;
                   if (_ambTightOn(inst)) _ambTightChoke(bp);
@@ -7308,6 +7317,29 @@
       const pc = (((36 + _ambLaneDrumPc(inst, v) + (soundOffset | 0)) % 12) + 12) % 12;
       return _AMB_DRUM_NAMES[pc] || (function () { try { return Tone.Frequency(36 + pc, 'midi').toNote(); } catch (e) { return '—'; } })();
     }
+    // Per-LANE ramp (drum-lanes): a deterministic sine LFO on Pan and/or Pitch —
+    // `{ panD, panR, pitchD, pitchR }` (Depth + Rate in cycles/bar). Stored SPARSE on
+    // `L.laneRamps[v]`, absent by default (additive → harness byte-identical). Returns
+    // null unless at least one axis has BOTH a depth and a rate (so a partial config
+    // is inert). No RNG — pure function of time, so the kit stays native-loop.
+    function _ambLaneRampGet(L, v) {
+      const r = L && L.laneRamps && L.laneRamps[v];
+      if (!r) return null;
+      const panD = Math.max(0, Math.min(100, r.panD | 0)), panR = Math.max(0, Math.min(8, r.panR | 0));
+      const pitchD = Math.max(0, Math.min(12, r.pitchD | 0)), pitchR = Math.max(0, Math.min(8, r.pitchR | 0));
+      if (!((panD && panR) || (pitchD && pitchR))) return null;
+      return { panD, panR, pitchD, pitchR };
+    }
+    function _ambLaneRampSet(L, v, patch) {
+      if (!L) return;
+      const cur = { panD: 0, panR: 0, pitchD: 0, pitchR: 0, ...(L.laneRamps && L.laneRamps[v]), ...patch };
+      cur.panD = Math.max(0, Math.min(100, cur.panD | 0));
+      cur.panR = Math.max(0, Math.min(8, cur.panR | 0));
+      cur.pitchD = Math.max(0, Math.min(12, cur.pitchD | 0));
+      cur.pitchR = Math.max(0, Math.min(8, cur.pitchR | 0));
+      if (!cur.panD && !cur.panR && !cur.pitchD && !cur.pitchR) { if (L.laneRamps) delete L.laneRamps[v]; }
+      else { if (!L.laneRamps) L.laneRamps = {}; L.laneRamps[v] = cur; }
+    }
     // Drum-lanes shows ALL kit drums as fixed lanes (one sequence per drum).
     const _AMB_KIT_LANES = _AMB_VDRUM.length;   // 8: Kick/Snare/Hat/Clap/Open/Tom/Crash/Perc
     function _ambKitDims(L) {
@@ -7816,6 +7848,20 @@
           L.euclidDrums.every(x => x == null || (Number.isFinite(x) && x >= 0 && x <= 11));
         if (!ok) delete L.euclidDrums;
       }
+      // Per-lane RAMPS: sparse map v→{panD,panR,pitchD,pitchR} (sine LFO Depth+Rate).
+      // Coerce + drop all-zero entries; additive → absent-by-default byte-identical.
+      if (L.laneRamps != null) {
+        if (L.laneRamps && typeof L.laneRamps === 'object' && !Array.isArray(L.laneRamps)) {
+          for (const k in L.laneRamps) {
+            const r = L.laneRamps[k];
+            if (!r || typeof r !== 'object' || !/^\d+$/.test(k) || (k | 0) >= _AMB_KIT_LANES) { delete L.laneRamps[k]; continue; }
+            r.panD = Math.max(0, Math.min(100, r.panD | 0)); r.panR = Math.max(0, Math.min(8, r.panR | 0));
+            r.pitchD = Math.max(0, Math.min(12, r.pitchD | 0)); r.pitchR = Math.max(0, Math.min(8, r.pitchR | 0));
+            if (!r.panD && !r.panR && !r.pitchD && !r.pitchR) delete L.laneRamps[k];
+          }
+          if (!Object.keys(L.laneRamps).length) delete L.laneRamps;
+        } else delete L.laneRamps;
+      }
       // Drum-lanes PAGES: bank of {pat:[8 rows of 0/1], plays}. Drop malformed
       // pages/rows; clamp plays; keep the viewed index + sequence flag in range.
       if (L.euclidPages != null) {
@@ -8079,21 +8125,34 @@
         const fx = _ambStepFxGet(kpage, rep.v, rep.i);
         const mixed = scopeCells.length > 1;
         const drum = _AMB_DRUM_NAMES[_AMB_VDRUM[editLane]] || ('Drum ' + editLane);
-        const tgtLbl = (editMode === 'column') ? 'All lanes' : drum;
+        const tgtLbl = (editMode === 'column') ? 'All drums' : drum;
         const nSel = scopeSteps ? scopeSteps.length : total;
         const scopeLbl = scopeSteps ? (nSel === 1 ? ('step ' + ((scopeSteps[0] % d.steps) + 1)) : (nSel + ' steps')) : 'all steps';
         const sfxRow = (lbl, key, min, max, val, unit, hint) =>
           '<div class="ambient-step-fx-ctrl" title="' + hint + '"><label>' + lbl + '</label>' +
           '<input type="range" class="ambient-step-fx-sl" data-sfx="' + key + '" min="' + min + '" max="' + max + '" value="' + val + '">' +
           '<span class="ambient-step-fx-v" data-sfxv="' + key + '">' + val + (unit || '') + '</span></div>';
+        // Per-lane RAMP rows (single-lane scope only) — Depth + Rate pair per axis.
+        const rampCfg = (inst.laneRamps && inst.laneRamps[editLane]) || {};
+        const rampD = { panD: rampCfg.panD | 0, panR: rampCfg.panR | 0, pitchD: rampCfg.pitchD | 0, pitchR: rampCfg.pitchR | 0 };
+        const rampRow = (lbl, axis, dMax, dUnit) =>
+          '<div class="ambient-step-fx-ctrl ambient-lane-ramp-row" title="' + lbl + ' ramp — a sine oscillation on this drum. Depth = how far it swings; Rate = cycles per bar (0 = off).">' +
+            '<label>' + lbl + '</label><span class="ambient-ramp-pair">' +
+              '<input type="range" class="ambient-step-fx-sl ambient-ramp-sl" data-ramp="' + axis + 'D" min="0" max="' + dMax + '" value="' + rampD[axis + 'D'] + '" title="Depth">' +
+              '<span class="ambient-step-fx-v" data-rampv="' + axis + 'D">' + rampD[axis + 'D'] + dUnit + '</span>' +
+              '<input type="range" class="ambient-step-fx-sl ambient-ramp-sl" data-ramp="' + axis + 'R" min="0" max="8" value="' + rampD[axis + 'R'] + '" title="Rate (cycles/bar)">' +
+              '<span class="ambient-step-fx-v" data-rampv="' + axis + 'R">' + rampD[axis + 'R'] + '×</span>' +
+            '</span></div>';
+        const rampSection = (editMode === 'column') ? '' :
+          '<div class="ambient-step-fx-ramphead" title="A smooth sine LFO applied to every hit on THIS drum lane.">Ramp · ' + drum + '</div>' +
+          rampRow('Pan', 'pan', 100, '') + rampRow('Pitch', 'pitch', 12, ' st');
         const ratOpts = _AMB_RAT_DIVS.map(rd => '<option value="' + rd.v + '"' + (rd.v === fx.ratd ? ' selected' : '') + '>' + rd.lbl + '</option>').join('');
         let stepBtns = '<button type="button" class="ambient-stepscope-btn ambient-stepscope-all' + (scopeSteps ? '' : ' on') + '" data-scopeall="1" title="Edit every step">All</button>';
         for (let i = 0; i < total; i++) stepBtns += '<button type="button" class="ambient-stepscope-btn' + ((scopeSteps && stepInScope(i)) ? ' on' : '') + (i % d.steps === 0 && i > 0 ? ' barstart' : '') + '" data-scopestep="' + i + '" title="Toggle step ' + ((i % d.steps) + 1) + (d.bars > 1 ? ' (bar ' + (Math.floor(i / d.steps) + 1) + ')' : '') + ' in the edit scope">' + ((i % d.steps) + 1) + '</button>';
         html += '<div class="ambient-step-fx">' +
           '<div class="ambient-step-fx-head">' +
             '<span class="ambient-seg-row ambient-stepedit-mode">' +
-              '<button type="button" class="ambient-seg ambient-stepmode' + (editMode === 'lane' ? ' active' : '') + '" data-emode="lane" title="Edit steps within the selected drum lane">Lane</button>' +
-              '<button type="button" class="ambient-seg ambient-stepmode' + (editMode === 'column' ? ' active' : '') + '" data-emode="column" title="Edit the chosen step(s) across ALL lanes">Column</button>' +
+              '<button type="button" class="ambient-seg ambient-stepmode ambient-stepmode-all' + (editMode === 'column' ? ' active' : '') + '" data-emode="' + (editMode === 'column' ? 'lane' : 'column') + '" title="ON = edit ALL drum lanes at once. OFF = edit just the selected drum (click a drum name at left to pick one).">All drums</button>' +
             '</span>' +
             '<span class="ambient-step-fx-lbl">' + tgtLbl + ' · ' + scopeLbl + (mixed ? ' <span class="ambient-step-fx-mixed">shared</span>' : '') + '</span>' +
             '<span class="ambient-step-fx-btns">' +
@@ -8119,6 +8178,7 @@
             '<input type="range" class="ambient-step-fx-sl ambient-step-fx-sound" data-sfx="pitch" min="-24" max="24" value="' + fx.pitch + '">' +
             '<span class="ambient-step-fx-v ambient-step-fx-soundv" data-sfxv="pitch">' + _ambStepSoundName(inst, editLane, fx.pitch) + '</span></div>' +
           sfxRow('Pitch', 'tune', -12, 12, fx.tune, ' st', 'Real pitch of the SELECTED drum — tunes it up/down in semitones (0 = its natural pitch). It stays the same drum (playbackRate), unlike Sound which switches drum.') +
+          rampSection +
         '</div>';
       }
       return html;
@@ -8206,8 +8266,15 @@
       grid.addEventListener('input', (ev) => {
         const sl = ev.target.closest && ev.target.closest('.ambient-step-fx-sl'); if (!sl) return;
         _E = E; const L = getL(); if (!L || !L.euclidKit) return;
+        const val = parseInt(sl.value, 10);
+        if (sl.dataset.ramp) {   // per-lane RAMP (Pan/Pitch sine LFO) → the SELECTED lane
+          _ambLaneRampSet(L, _ambEditLane(L), { [sl.dataset.ramp]: val });
+          const rrv = grid.querySelector('.ambient-step-fx-v[data-rampv="' + sl.dataset.ramp + '"]');
+          if (rrv) rrv.textContent = val + (/R$/.test(sl.dataset.ramp) ? '×' : (sl.dataset.ramp === 'pitchD' ? ' st' : ''));
+          persist(); return;   // deterministic kit loops native → picked up next cycle
+        }
         const d = _ambEuclidGridDims(L, type); if (!d) return;
-        const pg = _ambEuclidPage(L), sfxKey = sl.dataset.sfx, val = parseInt(sl.value, 10);
+        const pg = _ambEuclidPage(L), sfxKey = sl.dataset.sfx;
         _ambEditScopeCells(L, d).forEach(({ v, i }) => _ambStepFxSet(pg, v, i, { [sfxKey]: val }));
         const rv = grid.querySelector('.ambient-step-fx-v[data-sfxv="' + sfxKey + '"]');
         if (rv) rv.textContent = (sfxKey === 'pitch') ? _ambStepSoundName(L, _ambEditLane(L), val)   // "Sound" → the drum name

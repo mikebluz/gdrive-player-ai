@@ -4460,10 +4460,55 @@
     // ×0.32, drone ×0.2) back up to — or past — parity; the old ×2 ceiling couldn't.
     // The master limiter/clipper guards the sum, so the extra range is safe.
     const _AMB_LEVEL_BASE = 1.3, _AMB_LEVEL_MAX = 4.0;
+    // ---- MIX WIDEN A/B (prototype) — default stereo PLACEMENT + more HEADROOM -----
+    // Toggle at runtime: window.bloopsMixWide(true|false) (persisted). OFF = today's
+    // mix (every layer centered at space:0, ×1.3 level baseline → a single voice sits
+    // ~0.58 with no room for overlap). ON = each layer gets a stereo HOME (bass/beat/
+    // drone anchor the center) + a headroom trim so a few overlapping tones don't slam
+    // the master limiter. Applied ONLY via the continuous layer panner (e.pan, a core-
+    // strip shim → works core+node) and the level GAIN node — NEITHER is hashed by the
+    // invariant harness (it hashes per-note pan/level and never builds the mod chain),
+    // so the harness is byte-identical in BOTH states; only the golden render (real
+    // audio) changes when ON. Numbers below are placeholders to tune by ear.
+    let _ambMixWide = false;
+    try { _ambMixWide = (typeof localStorage !== 'undefined' && localStorage.getItem('bloopsMixWide') === '1'); } catch (e) {}
+    const _AMB_MIX_HEADROOM = 0.62;   // ×level baseline when ON (~-4 dB more headroom for the sum)
+    // Per-layer stereo home (-1..1). Low-end + rhythm anchor the center; melodic/atmos
+    // layers fan L/R by type, duplicates (same type, higher id) nudged apart.
+    function _ambMixPan(lc, key) {
+      const type = String(key).split(':')[0];
+      if (type === 'bass' || type === 'drone' || type === 'beat') return 0;
+      const HOME = { bed: -0.35, motif: 0.42, texture: 0.60, run: -0.55, pedal: -0.22, arp: 0.50, seq: 0.32, samp: -0.40 };
+      let p = (HOME[type] != null) ? HOME[type] : 0;
+      const id = (lc && Number.isFinite(lc.id)) ? (lc.id | 0) : 1;
+      if (id > 1) p += ((id % 2) ? 0.13 : -0.13) * Math.min(3, Math.ceil((id - 1) / 2));
+      return Math.max(-0.85, Math.min(0.85, p));
+    }
     function _ambLevelGain(level) {
       const L = Number.isFinite(level) ? Math.max(0, Math.min(100, level)) : 70;
-      return (L <= 70) ? (L / 70) * _AMB_LEVEL_BASE : _AMB_LEVEL_BASE + (L - 70) / 30 * (_AMB_LEVEL_MAX - _AMB_LEVEL_BASE);
+      const g = (L <= 70) ? (L / 70) * _AMB_LEVEL_BASE : _AMB_LEVEL_BASE + (L - 70) / 30 * (_AMB_LEVEL_MAX - _AMB_LEVEL_BASE);
+      return _ambMixWide ? g * _AMB_MIX_HEADROOM : g;
     }
+    // Runtime A/B toggle — re-applies pan + level to every live layer so you can flip
+    // and listen mid-playback. `window.bloopsMixWide()` (no arg) flips it.
+    if (typeof window !== 'undefined') window.bloopsMixWide = function (on) {
+      _ambMixWide = (on === undefined) ? !_ambMixWide : !!on;
+      try { localStorage.setItem('bloopsMixWide', _ambMixWide ? '1' : '0'); } catch (e) {}
+      try {
+        const E = (typeof _masterEng !== 'undefined') ? _masterEng : null;
+        if (E && E.mod) {
+          _E = E;
+          Object.keys(E.mod).forEach((key) => {
+            const e = E.mod[key]; if (!e) return;
+            const lc = _ambLayerByKey(E, key) || null;
+            try { _ambApplyLayerPan(key, lc); } catch (x) {}
+            try { const lv = (lc && Number.isFinite(lc.level)) ? lc.level : 70; if (e.levelGain && e.levelGain.gain) e.levelGain.gain.value = _ambLevelGain(lv); } catch (x) {}
+          });
+        }
+      } catch (e) {}
+      try { if (typeof showToast === 'function') showToast('Mix widen ' + (_ambMixWide ? 'ON — placement + headroom' : 'OFF')); } catch (e) {}
+      return _ambMixWide;
+    };
     // Stochastic Accent (0..100): randomly widen a layer's note-to-note
     // dynamics. 0 = flat (every note at its level). As it rises, more notes pop
     // louder and a few drop to ghost-notes, so the line breathes. Per-note call.
@@ -5870,7 +5915,16 @@
             _ambColourLeadIn(f, bp, at, dest, _E.laneIdx(), src);   // Harmony colours: chromatic approach/enclosure (no-op at default 'landing')
             let _bLen = _ambVaryLen(_holdMs || lenMs, inst.lenVary, rnd);
             if (_ambTightOn(inst)) { _bLen = _ambTightGap((j2) => pat[j2 % pat.length] === 1, bar * steps + slot, bars * steps) * slotSec * 1000; _ambTightChoke(bp); }
-            if (sfx && sfx.len !== 100) _bLen = Math.max(5, Math.round(_bLen * sfx.len / 100));   // Step-Edit: length
+            else if (chordPool) {
+              // Arpeggiated (chord/wrap) bass: keep it monophonic-ish so consecutive
+              // DIFFERENT chord tones don't pile their sustain + long release tails into a
+              // muddy sub-bass cluster (a scale source repeats the ROOT, so tails there are
+              // coherent — this only bites for a chord). Cap the note to the slot + shorten
+              // the release so each tone clears before the next hit.
+              _bLen = Math.min(_bLen, Math.max(40, slotSec * 1000 * 0.92));
+              _ambTightChoke(bp);
+            }
+            if (sfx && sfx.len !== 100) _bLen = Math.max(5, Math.round(_bLen * sfx.len / 100));   // Step-Edit: length (a step can override the arp cap)
             const _rat = sfx ? sfx.rat : 1;   // Step-Edit: ratchet — retrigger N sub-notes across the slot
             if (_rat > 1) {
               const _rsp = slotSec / _rat, _rlen = Math.min(_bLen, _rsp * 1000 * 0.95);
@@ -9505,8 +9559,9 @@
     // The pan ramp also drives this node directly (see _ambRampResolve 'space').
     function _ambApplyLayerPan(layer, lc) {
       const e = _E.mod[layer]; if (!e || !e.pan) return;
-      const pos = (lc && lc.panMode === 'pan' && Number.isFinite(lc.space))
+      let pos = (lc && lc.panMode === 'pan' && Number.isFinite(lc.space))
         ? Math.max(-1, Math.min(1, (lc.space | 0) / 100)) : 0;
+      if (_ambMixWide) pos = Math.max(-1, Math.min(1, pos + _ambMixPan(lc, layer)));   // A/B: default stereo placement
       try { e.pan.pan.value = pos; } catch (x) {}
       // CORE STRIPS: live stereo WIDTH — spread mode scales the full-width
       // emitted fan to space/100 (short ramp = click-free morph of SOUNDING
@@ -11683,6 +11738,26 @@
       // call-site clarity.
       return Math.max(1e-6, Math.ceil(reqBars / cyc - 1e-6)) * cyc;
     }
+    // A euclid layer already loops NATIVELY — the generator re-emits the same pattern
+    // every cycle, phase-locked to the bar grid. When it's fully DETERMINISTIC (no
+    // per-cycle RNG draw), that native loop is byte-identical to a Write capture, so
+    // Write is redundant AND its live→replay handoff drops the notes at the loop seam
+    // (the euclid "unit boundary" glitch). This detects that case so _ambWriteSync can
+    // SKIP Write for it (native looping is glitch-free — proven by Loop=Off). EVERY
+    // per-cycle draw must be zero: Rhythm-var, Rests (layer restProb + the Area Groove
+    // density macro, via _ambEffRest), Ghosts, Pitch-var, Len-var, and any Step-Edit
+    // probability <100. If ANY is on, the cycles differ → KEEP Write (it locks one
+    // realization to repeat). euclidKit (drum-lanes) is excluded — it has pages /
+    // per-step FX / its own loop semantics.
+    function _ambEuclidDeterministic(L) {
+      if (!L || typeof L !== 'object') return false;
+      const euclid = (L.type === 'bass') || (L.type === 'beat' && L.gen === 'euclid' && !L.euclidKit) || (L.type === 'arp' && L.euclid);
+      if (!euclid) return false;
+      if ((L.rhythmVar | 0) || (L.ghosts | 0) || (L.pitchVar | 0) || (L.lenVary | 0)) return false;
+      if (_ambEffRest(L) > 0) return false;
+      if (L.stepFx && typeof L.stepFx === 'object') { for (const k in L.stepFx) { const e = L.stepFx[k]; if (e && Number.isFinite(e.prob) && e.prob < 100) return false; } }
+      return true;
+    }
     function _ambWriteSync(E, now) {
       const cfg = E._cfg || (E.getCfg && E.getCfg()); if (!cfg) return;
       if (cfg.barLock && E === _masterEng) return;   // the area Bar Lock owns loops
@@ -11695,6 +11770,16 @@
         const mine = !!(fs && fs._write);
         // Toggle-off / layer-off teardown: release our loop, leave user freezes alone.
         if (!w || !w.on || L.present === false || !L.on) {
+          if (mine) {
+            if (fs.frozen) { if (fs.pendingThawAt == null) fs.pendingThawAt = fs.anchor + Math.max(1, Math.ceil((now - fs.anchor) / Math.max(0.05, fs.loopLen))) * fs.loopLen; }
+            else { fs.pendingFreezeAt = null; fs._lock = false; fs._lockWin = null; }
+            fs._write = false; fs._writeRearmAt = null;
+          }
+          return;
+        }
+        // Deterministic euclid → loops natively, byte-identical, without the seam glitch.
+        // Skip Write (and thaw any Write loop it already holds, back to native looping).
+        if (_ambEuclidDeterministic(L)) {
           if (mine) {
             if (fs.frozen) { if (fs.pendingThawAt == null) fs.pendingThawAt = fs.anchor + Math.max(1, Math.ceil((now - fs.anchor) / Math.max(0.05, fs.loopLen))) * fs.loopLen; }
             else { fs.pendingFreezeAt = null; fs._lock = false; fs._lockWin = null; }

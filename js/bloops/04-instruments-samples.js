@@ -252,7 +252,7 @@
     // Resolve the nearest mapped buffer + playbackRate for a sample note —
     // shared by the node voice builder below and the core sample path
     // (Phase 3), so both play the identical buffer at the identical rate.
-    function _resolveSampleVoice(sampler, id, tunedFreq) {
+    function _resolveSampleVoice(sampler, id, tunedFreq, drumTuneSemis) {
       if (!sampler || !sampler._buffers || typeof sampler._buffers.get !== 'function'
           || typeof sampler._buffers.has !== 'function') return null;
       const info = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(id) : null;
@@ -282,11 +282,17 @@
       // Baked-in fine tune (cents) from sample capture — pulls the buffer into
       // tune relative to its mapped root so the keyboard tracks chromatically.
       if (info && Number.isFinite(info.tuneCents) && info.tuneCents) playbackRate *= Math.pow(2, -info.tuneCents / 1200);
+      // Per-hit drum PITCH (drum-lanes "Pitch"): pitch the SELECTED zone in place.
+      // The buffer was chosen by the (snapped) zone note, so this rate multiply
+      // shifts the SAME drum by ±semitones — it can't cross into a neighbouring
+      // drum's zone the way folding the shift into the note/detune would (a tr808
+      // maps one drum per semitone, so any non-octave note shift picks a new drum).
+      if (Number.isFinite(drumTuneSemis) && drumTuneSemis) playbackRate *= Math.pow(2, drumTuneSemis / 12);
       return { info, sampleMidi, audioBuf, playbackRate };
     }
     function _buildSampleAdsrVoice(sampler, id, tunedFreq, env, dest, opts) {
       if (_offlineSamplerOverride) return null;
-      const _rs = _resolveSampleVoice(sampler, id, tunedFreq);
+      const _rs = _resolveSampleVoice(sampler, id, tunedFreq, opts && opts.drumTune);
       if (!_rs) return null;
       const info = _rs.info, sampleMidi = _rs.sampleMidi, audioBuf = _rs.audioBuf;
       let playbackRate = _rs.playbackRate;
@@ -2653,7 +2659,7 @@
         if (typeof _coreVoices !== 'undefined' && _coreVoices.stripsEnabled()
             && !fxOverrideGlobal && !params._detuneMod && !_offlineSamplerOverride) {
           const _sid = type.slice(7);
-          const _rs = _resolveSampleVoice(entry.sampler, _sid, tunedFreq);
+          const _rs = _resolveSampleVoice(entry.sampler, _sid, tunedFreq, params && params.drumTune);
           if (_rs) {
             const _isPad = !!(_rs.info && _rs.info.padLoop);
             let _buf = _rs.audioBuf, _bufKey = _sid + '#' + _rs.sampleMidi;
@@ -2702,7 +2708,7 @@
         const _si = sampleSamplers.get(type.slice(7)) || {};
         const _wantLoop = (params.loop || !_si.drumKit) && !Number.isFinite(params.filterCutoff);
         const v = _buildSampleAdsrVoice(entry.sampler, type.slice(7), tunedFreq, env, sampleDest,
-          { filterCutoff: params.filterCutoff, filterQ: params.filterQ, pan, loop: _wantLoop });
+          { filterCutoff: params.filterCutoff, filterQ: params.filterQ, pan, loop: _wantLoop, drumTune: params.drumTune });
         if (v) {
           const triggerAt = _warmAt();
           try {
@@ -3676,7 +3682,7 @@
           if (typeof _coreVoices !== 'undefined' && _coreVoices.stripsEnabled()
               && !params._detuneMod && !_offlineSamplerOverride && !fxOverrideGlobal) {
             const _sid = type.slice(7);
-            const _rs = _resolveSampleVoice(sampler, _sid, tunedFreq);
+            const _rs = _resolveSampleVoice(sampler, _sid, tunedFreq, params && params.drumTune);
             if (_rs) {
               const _slicing = Number.isFinite(params.sliceDurSec)
                 || (Number.isFinite(params.sampleOffsetSec) && params.sampleOffsetSec > 0);
@@ -3739,7 +3745,7 @@
           }
           const v = _buildSampleAdsrVoice(sampler, type.slice(7), tunedFreq, env, sampleDest,
             { filterCutoff: params.filterCutoff, filterQ: params.filterQ, detuneMod: params._detuneMod, pan,
-              sampleOffsetSec: params.sampleOffsetSec, sliceDurSec: params.sliceDurSec, loop: _wantLoop, reverse: !!params.reverse });
+              sampleOffsetSec: params.sampleOffsetSec, sliceDurSec: params.sliceDurSec, loop: _wantLoop, reverse: !!params.reverse, drumTune: params.drumTune });
           if (v) {
             const triggerAt = (typeof startTime === 'number' && Number.isFinite(startTime)) ? startTime : Tone.now();
             // Portamento — glide the sample's playbackRate (= pitch) from the layer's previous

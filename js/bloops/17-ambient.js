@@ -5739,9 +5739,13 @@
                 // Beat (explicit single drum, random-per-hit at V=1, or auto-kit slot).
                 const pc = inst.euclidKit ? _ambLaneDrumPc(inst, v)
                   : ((inst.drum != null) ? (inst.drum | 0) : ((V === 1) ? _ambPickDrumPc() : VDRUM[v]));
-                // Per-step Pitch: absolute semitone tune of this hit (atonal — a
-                // fixed offset, not progression-aware). 0 → same freq as before.
-                const stPitch = sfx ? (sfx.pitch | 0) : 0;
+                // Per-step "Sound" (a note offset → the SELECTED drum, via the sampler's
+                // per-semitone zone map / snapDrumKitFreq) and "Pitch" (a REAL ± semitone
+                // tune of THAT drum, applied as a playbackRate multiply so it doesn't cross
+                // into a neighbour's zone). 0/0 → same as before. Field key `pitch` = Sound
+                // (kept for save-compat); `tune` = Pitch.
+                const stPitch = sfx ? (sfx.pitch | 0) : 0;   // "Sound" — drum selector
+                const stTune  = sfx ? (sfx.tune | 0) : 0;    // "Pitch"  — real tune
                 let f; try { f = Tone.Frequency(36 + pc + stPitch, 'midi').toFrequency(); } catch (e) { continue; }
                 const rat = sfx ? sfx.rat : 1;
                 const ratSpace = _ambRatSpacingSec(rat, sfx ? (sfx.ratd | 0) : 0, slotSec, slotSec * steps);
@@ -5756,11 +5760,12 @@
                   if (_ambBeatIsSynth(inst)) {
                     const _r = Math.max(0, _AMB_VDRUM.indexOf(pc));
                     const _vol = Math.max(0, Math.round(_ambApplyLevel(100, inst.level) * velS));
-                    _ambPlaySynthDrum(_E, dest, inst, _r, rAt, _vol, dmod, stPan, stPitch);
+                    _ambPlaySynthDrum(_E, dest, inst, _r, rAt, _vol, dmod, stPan, stPitch + stTune);   // synth drum has no zone map → Sound+Pitch both shift its real pitch
                     ctx.cap++;
                     continue;
                   }
                   const bp = _ambApplyAdsr(_ambBeatParams(inst.kit, lenMs, stPan), inst);
+                  if (stTune) bp.drumTune = stTune;   // "Pitch": pitch the selected drum in place (playbackRate multiply in _resolveSampleVoice)
                   bp.volume = Math.max(0, Math.round(_ambApplyLevel(bp.volume, inst.level) * velS));
                   if (dmod) bp._detuneMod = dmod;
                   if (_ambTightOn(inst)) _ambTightChoke(bp);
@@ -5780,9 +5785,10 @@
                     const gAt = at - slotSec * 0.5;
                     if (_ambBeatIsSynth(inst)) {
                       const _r2 = Math.max(0, _AMB_VDRUM.indexOf(pc));
-                      _ambPlaySynthDrum(_E, dest, inst, _r2, gAt, Math.max(0, Math.round(_ambApplyLevel(100, inst.level) * 0.28)), dmod, vpan, stPitch);
+                      _ambPlaySynthDrum(_E, dest, inst, _r2, gAt, Math.max(0, Math.round(_ambApplyLevel(100, inst.level) * 0.28)), dmod, vpan, stPitch + stTune);
                     } else {
                       const gbp = _ambApplyAdsr(_ambBeatParams(inst.kit, Math.round((_holdMs || lenMs) * 0.6), vpan), inst);
+                      if (stTune) gbp.drumTune = stTune;   // ghost is the same drum → same real pitch
                       gbp.volume = Math.max(0, Math.round(_ambApplyLevel(gbp.volume, inst.level) * 0.28));
                       if (dmod) gbp._detuneMod = dmod;
                       try { playNote(f, gbp, Math.max(40, Math.round((_holdMs || lenMs) * 0.5)), gAt, dest, undefined, _E.laneIdx()); } catch (e) {}
@@ -7295,6 +7301,13 @@
       if (inst && Array.isArray(inst.euclidDrums) && inst.euclidDrums[v] != null) return inst.euclidDrums[v] | 0;
       return (_AMB_VDRUM[v] != null) ? _AMB_VDRUM[v] : 0;
     }
+    // The drum a step's "Sound" offset selects (lane drum + ± semitones across the
+    // kit's zones) → its name for the Step-Edit readout. Known lane pcs use the
+    // friendly name; an in-between zone falls back to the note it maps to.
+    function _ambStepSoundName(inst, v, soundOffset) {
+      const pc = (((36 + _ambLaneDrumPc(inst, v) + (soundOffset | 0)) % 12) + 12) % 12;
+      return _AMB_DRUM_NAMES[pc] || (function () { try { return Tone.Frequency(36 + pc, 'midi').toNote(); } catch (e) { return '—'; } })();
+    }
     // Drum-lanes shows ALL kit drums as fixed lanes (one sequence per drum).
     const _AMB_KIT_LANES = _AMB_VDRUM.length;   // 8: Kick/Snare/Hat/Clap/Open/Tom/Crash/Perc
     function _ambKitDims(L) {
@@ -7393,18 +7406,20 @@
       if (ratd > 0 && barSec > 0) return barSec / ratd;
       return slotSec / Math.max(1, rat);
     }
-    // `pitch` = per-step semitone offset (± st) applied ABSOLUTELY to the drum's
-    // MIDI note (a tuned kick / pitched tom), NOT degree/progression-aware — drums
-    // are atonal, so a step tune is a fixed offset, not a scale move.
-    const _AMB_STEP_FX_DEF = { vel: 100, len: 100, rat: 1, ratd: 0, prob: 100, pan: 0, pitch: 0 };
+    // `pitch` = per-step "Sound": a semitone offset that picks a DIFFERENT drum from
+    // the kit's per-semitone zone map (a snare on a kick lane's step, etc.). `tune` =
+    // per-step "Pitch": a REAL ± semitone tune of the SELECTED drum (playbackRate on
+    // the sample; the synth drum's real pitch), so it stays the same drum. Both atonal
+    // (fixed offsets, not progression/scale-aware — drums are atonal).
+    const _AMB_STEP_FX_DEF = { vel: 100, len: 100, rat: 1, ratd: 0, prob: 100, pan: 0, pitch: 0, tune: 0 };
     function _ambStepFxGet(pg, v, i) {
       const e = pg && pg.fx && pg.fx[v + ':' + i];
-      return e ? { vel: (e.vel != null ? e.vel : 100), len: (e.len != null ? e.len : 100), rat: (e.rat | 0) || 1, ratd: (e.ratd | 0) || 0, prob: (e.prob != null ? e.prob : 100), pan: (e.pan != null ? e.pan : 0), pitch: (e.pitch | 0) || 0 }
-               : { vel: 100, len: 100, rat: 1, ratd: 0, prob: 100, pan: 0, pitch: 0 };
+      return e ? { vel: (e.vel != null ? e.vel : 100), len: (e.len != null ? e.len : 100), rat: (e.rat | 0) || 1, ratd: (e.ratd | 0) || 0, prob: (e.prob != null ? e.prob : 100), pan: (e.pan != null ? e.pan : 0), pitch: (e.pitch | 0) || 0, tune: (e.tune | 0) || 0 }
+               : { vel: 100, len: 100, rat: 1, ratd: 0, prob: 100, pan: 0, pitch: 0, tune: 0 };
     }
     function _ambStepFxCustom(pg, v, i) {
       const e = pg && pg.fx && pg.fx[v + ':' + i];
-      return !!(e && ((e.vel != null && e.vel !== 100) || (e.len != null && e.len !== 100) || ((e.rat | 0) > 1) || ((e.ratd | 0) > 0) || (e.prob != null && e.prob !== 100) || (e.pan != null && e.pan !== 0) || ((e.pitch | 0) !== 0)));
+      return !!(e && ((e.vel != null && e.vel !== 100) || (e.len != null && e.len !== 100) || ((e.rat | 0) > 1) || ((e.ratd | 0) > 0) || (e.prob != null && e.prob !== 100) || (e.pan != null && e.pan !== 0) || ((e.pitch | 0) !== 0) || ((e.tune | 0) !== 0)));
     }
     function _ambStepFxSet(pg, v, i, patch) {
       if (!pg) return;
@@ -7416,7 +7431,8 @@
       cur.prob = Math.max(0, Math.min(100, cur.prob | 0));
       cur.pan = Math.max(-100, Math.min(100, cur.pan | 0));
       cur.pitch = Math.max(-24, Math.min(24, cur.pitch | 0));
-      if (cur.vel === 100 && cur.len === 100 && cur.rat === 1 && cur.ratd === 0 && cur.prob === 100 && cur.pan === 0 && cur.pitch === 0) { if (pg.fx) delete pg.fx[k]; }
+      cur.tune = Math.max(-12, Math.min(12, cur.tune | 0));
+      if (cur.vel === 100 && cur.len === 100 && cur.rat === 1 && cur.ratd === 0 && cur.prob === 100 && cur.pan === 0 && cur.pitch === 0 && cur.tune === 0) { if (pg.fx) delete pg.fx[k]; }
       else { if (!pg.fx) pg.fx = {}; pg.fx[k] = cur; }
     }
     // ---- BASS/melodic-euclid PER-STEP OVERRIDES (the "Step Edit" modal) --------
@@ -7819,7 +7835,8 @@
                 if (e.prob != null) e.prob = Math.max(0, Math.min(100, e.prob | 0));
                 if (e.pan != null) e.pan = Math.max(-100, Math.min(100, e.pan | 0));
                 if (e.pitch != null) e.pitch = Math.max(-24, Math.min(24, e.pitch | 0));
-                if ((e.vel == null || e.vel === 100) && (e.len == null || e.len === 100) && ((e.rat | 0) <= 1) && (e.prob == null || e.prob === 100) && (e.pan == null || e.pan === 0) && ((e.pitch | 0) === 0)) delete pg.fx[k];
+                if (e.tune != null) e.tune = Math.max(-12, Math.min(12, e.tune | 0));
+                if ((e.vel == null || e.vel === 100) && (e.len == null || e.len === 100) && ((e.rat | 0) <= 1) && (e.prob == null || e.prob === 100) && (e.pan == null || e.pan === 0) && ((e.pitch | 0) === 0) && ((e.tune | 0) === 0)) delete pg.fx[k];
               }
               if (!Object.keys(pg.fx).length) delete pg.fx;
             } else if (pg.fx != null) delete pg.fx;
@@ -8098,7 +8115,10 @@
           '</div>' +
           sfxRow('Prob', 'prob', 0, 100, fx.prob, '%', 'Probability this step fires each pass (100 = always)') +
           sfxRow('Pan', 'pan', -100, 100, fx.pan, '', 'Stereo position (−100 = hard left, +100 = hard right)') +
-          sfxRow('Pitch', 'pitch', -24, 24, fx.pitch, ' st', 'Tune this hit up/down in semitones (0 = the drum’s natural pitch). Absolute — not tied to key or progression.') +
+          '<div class="ambient-step-fx-ctrl" title="Sound — pick WHICH drum this step plays (a snare on the kick lane, a cowbell, …). ± semitones across the kit’s drums; the readout names the drum."><label>Sound</label>' +
+            '<input type="range" class="ambient-step-fx-sl ambient-step-fx-sound" data-sfx="pitch" min="-24" max="24" value="' + fx.pitch + '">' +
+            '<span class="ambient-step-fx-v ambient-step-fx-soundv" data-sfxv="pitch">' + _ambStepSoundName(inst, editLane, fx.pitch) + '</span></div>' +
+          sfxRow('Pitch', 'tune', -12, 12, fx.tune, ' st', 'Real pitch of the SELECTED drum — tunes it up/down in semitones (0 = its natural pitch). It stays the same drum (playbackRate), unlike Sound which switches drum.') +
         '</div>';
       }
       return html;
@@ -8189,7 +8209,9 @@
         const d = _ambEuclidGridDims(L, type); if (!d) return;
         const pg = _ambEuclidPage(L), sfxKey = sl.dataset.sfx, val = parseInt(sl.value, 10);
         _ambEditScopeCells(L, d).forEach(({ v, i }) => _ambStepFxSet(pg, v, i, { [sfxKey]: val }));
-        const rv = grid.querySelector('.ambient-step-fx-v[data-sfxv="' + sfxKey + '"]'); if (rv) rv.textContent = val + (sfxKey === 'rat' ? '×' : (sfxKey === 'pitch' ? ' st' : (sfxKey === 'pan' ? '' : '%')));
+        const rv = grid.querySelector('.ambient-step-fx-v[data-sfxv="' + sfxKey + '"]');
+        if (rv) rv.textContent = (sfxKey === 'pitch') ? _ambStepSoundName(L, _ambEditLane(L), val)   // "Sound" → the drum name
+          : val + (sfxKey === 'rat' ? '×' : (sfxKey === 'tune' ? ' st' : (sfxKey === 'pan' ? '' : '%')));
         markScopeFx(L, d, pg); persist();
       });
       // Step-FX slider RELEASE + Ratchet-rate + Fill <select> (delegated change).

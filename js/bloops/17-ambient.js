@@ -1844,6 +1844,11 @@
       if (!Number.isFinite(cfg.progRateMs)) cfg.progRateMs = d.progRateMs;
       if (!Number.isFinite(cfg.barsPerChord) || cfg.barsPerChord <= 0) cfg.barsPerChord = d.barsPerChord;   // fractional allowed (e.g. 1/2, 8/7 of a bar)
       if (typeof cfg.barsPerChordStr !== 'string' || !cfg.barsPerChordStr) cfg.barsPerChordStr = _ambFmtBpc(cfg.barsPerChord);
+      // AREA UNIT — the global timing anchor (length in bars = num/den, fraction OK).
+      // A layer with `unit.ref==='area'` derives its cycle from this × its own ratio.
+      // Additive/absent-safe: default 1 bar; no layer references it until opted in.
+      if (!cfg.areaUnit || typeof cfg.areaUnit !== 'object') cfg.areaUnit = { num: 1, den: 1 };
+      else { cfg.areaUnit.num = Math.max(1, Math.min(64, (cfg.areaUnit.num | 0) || 1)); cfg.areaUnit.den = Math.max(1, Math.min(64, (cfg.areaUnit.den | 0) || 1)); }
       if (!cfg.prog || typeof cfg.prog !== 'object') cfg.prog = { on: false, name: '', chords: [] };
       else { cfg.prog.on = !!cfg.prog.on; if (!Array.isArray(cfg.prog.chords)) cfg.prog.chords = []; if (typeof cfg.prog.name !== 'string') cfg.prog.name = ''; }
       _ambNormalizeProgMeta(cfg.prog);   // v6 — parts / versions / per-chord alts (additive; empties deleted)
@@ -10314,6 +10319,7 @@
       const bpm = _ambBpm();
       if (!ref || ref === 'bar')  return (60 / bpm) * 4;
       if (ref === 'beat')         return (60 / bpm);
+      if (ref === 'area') { const au = cfg && cfg.areaUnit; const r = au ? (Math.max(1, au.num | 0) / Math.max(1, au.den | 0)) : 1; return (60 / bpm) * 4 * r; }   // the global Area Unit length
       const sub = ref.indexOf('#sub') >= 0;
       const refKey = sub ? ref.slice(0, ref.indexOf('#sub')) : ref;
       const whole = _ambResolvedUnitSec(E, refKey, cfg, seen);
@@ -18687,7 +18693,18 @@
         const tw = Math.min(1, VIEW - i) / VIEW * 100;
         ticks += '<i class="ambient-sched-tick' + (i % 4 === 0 ? ' q' : '') + '" style="flex:0 0 ' + tw.toFixed(3) + '%">' + ((i % 4 === 0) ? (i + 1) : '') + '</i>';
       }
-      let html = '<div class="ambient-sched-row ambient-sched-ruler"><span class="ambient-sched-ctl"><span class="ambient-sched-lbl">bars →</span></span><span class="ambient-sched-strip">' + ticks + '</span></div>';
+      // AREA UNIT — the global timing anchor every layer can follow (× a ratio) or opt
+      // out of (Free). Set once at the top; the whole rig references it.
+      const _auN = Math.max(1, (cfg.areaUnit && cfg.areaUnit.num | 0) || 1), _auD = Math.max(1, (cfg.areaUnit && cfg.areaUnit.den | 0) || 1);
+      const _auVal = _auN + '/' + _auD;
+      const _auOpts = [['1/4', '¼ bar'], ['1/2', '½ bar'], ['1/1', '1 bar'], ['2/1', '2 bars'], ['4/1', '4 bars'], ['8/1', '8 bars']]
+        .map(o => '<option value="' + o[0] + '"' + (o[0] === _auVal ? ' selected' : '') + '>' + o[1] + '</option>').join('');
+      let html = '<div class="ambient-sched-row ambient-sched-arearow" title="AREA UNIT — the timing anchor everything else follows. Each layer’s cycle inherits this (× its own ratio) unless it overrides to an absolute bar length or opts out to Free.">' +
+          '<span class="ambient-sched-ctl"><span class="ambient-sched-lbl">◆ area unit</span>' +
+          '<select class="ambient-select ambient-sched-areaunit">' + _auOpts + '</select>' +
+          '<span class="ambient-sched-unitcue sync">' + _ambFmtBpc(_auN / _auD) + ' bar' + ((_auN / _auD > 1.02) ? 's' : '') + '</span></span>' +
+          '<span class="ambient-sched-strip"></span></div>';
+      html += '<div class="ambient-sched-row ambient-sched-ruler"><span class="ambient-sched-ctl"><span class="ambient-sched-lbl">bars →</span></span><span class="ambient-sched-strip">' + ticks + '</span></div>';
       // SECTION lane (sets of bars): named blocks cycling across the ruler —
       // the arrangement level. With none defined, a slim ＋ affordance seeds
       // A/B (4+4 bars). Tap a block → rename / resize / delete.
@@ -23105,6 +23122,17 @@
             if (typeof persistWorkspace === 'function') persistWorkspace();
           });
           scBody.addEventListener('input', (ev) => {
+            // AREA UNIT (global anchor) — set cfg.areaUnit; layers on ref:'area' rescale.
+            const au = ev.target.closest('.ambient-sched-areaunit');
+            if (au) {
+              _E = E; const c2 = E.getCfg(); if (!c2) return;
+              const parts = String(au.value).split('/');
+              c2.areaUnit = { num: Math.max(1, Math.min(64, parseInt(parts[0], 10) || 1)), den: Math.max(1, Math.min(64, parseInt(parts[1], 10) || 1)) };
+              try { if (E.timer) _ambMixerLayers(c2).forEach(({ key, layer }) => { if (layer && layer.unit && layer.unit.ref === 'area') { try { _ambUnitReanchor(E, key); } catch (e) {} } }); } catch (e) {}   // area-followers rescale cleanly
+              _ambRenderScheduler(E);
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              return;
+            }
             // Voicings-per-chord (prog-synced Bed/Drone) — writes progSubdiv; the
             // engine reads it live (next tick re-subdivides), so no re-anchor.
             const sub = ev.target.closest('.ambient-sched-subdiv');

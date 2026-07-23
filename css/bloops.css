@@ -3286,6 +3286,9 @@
     .ambient-sched-lbl { font-size: 0.64rem; color: #8b9bb4; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
     /* Phrase snapped up to the progression cycle — teal (harmony drove it). */
     .ambient-sched-lbl.snap { color: #7fe4dc; text-transform: none; letter-spacing: 0; }
+    /* Area Unit anchor row — the global timing reference everything follows. */
+    .ambient-sched-arearow { border-bottom: 1px solid rgba(127,228,220,0.18); padding-bottom: 4px; margin-bottom: 2px; }
+    .ambient-sched-arearow .ambient-sched-lbl { color: #7fe4dc; }
     /* Unit mode cue: Free (this layer sizes itself, amber) vs Sync (bar-locked, teal). */
     .ambient-sched-unitcue { font: 600 0.6rem 'Segoe UI', sans-serif; white-space: nowrap; padding: 1px 6px; border-radius: 4px; }
     .ambient-sched-unitcue.free { color: #f0b64a; background: rgba(240,182,74,0.12); }

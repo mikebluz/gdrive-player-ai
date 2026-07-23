@@ -18871,9 +18871,12 @@
               '<input type="number" class="ambient-sched-subdiv" min="1" max="16" step="1" value="' + (((layer.progSubdiv | 0) || 1)) + '">' +
               '<span class="ambient-sched-lbl snap">voicing' + ((((layer.progSubdiv | 0) || 1) === 1) ? '' : 's') + '</span>' +
               '<button type="button" class="ambient-seg ambient-sched-mergebtn' + (layer.progMerge ? ' active' : '') + '" title="Merge repeats — treat a run of the SAME chord (a chord that repeats, or spans multiple bars) as ONE chord, so the N voicings spread across the whole run (e.g. 4 voicings over a 2-bar chord = 2 per bar) instead of restarting every bar.">' + (layer.progMerge ? '⊕ merged' : 'merge') + '</button></span>')
-          : ('<span class="ambient-sched-grp" title="Unit size — how long ONE block of this layer lasts. Free = the layer’s own timing; a bar value locks it to the grid.">' +
+          : ('<span class="ambient-sched-grp" title="Unit — how long ONE block of this layer lasts. FREE = the layer’s OWN natural length (so layers can differ in block size); a BAR value LOCKS it to the shared grid.">' +
               '<span class="ambient-sched-lbl">unit</span>' +
-              '<select class="ambient-select ambient-sched-unit">' + uOpts + '</select></span>');
+              '<select class="ambient-select ambient-sched-unit">' + uOpts + '</select>' +
+              '<span class="ambient-sched-unitcue ' + (uVal === 'free' ? 'free' : 'sync') + '" title="' + (uVal === 'free' ? 'FREE — this block is the layer’s own natural length (≈' + _ambFmtBpc(unitBars) + ' bars); different layers can be different sizes. Pick a bar value to lock it to the shared grid.' : 'SYNCED — locked to the bar grid at this size.') + '">' +
+                (uVal === 'free' ? '⟲ Free · ≈' : '⧗ Sync · ') + _ambFmtBpc(unitBars) + ' bar' + ((unitBars > 1.02) ? 's' : '') + '</span>' +
+              '</span>');
         // Loop line (the phrase structure) — its own row so cycles×plays + chips breathe.
         const stoW = !!(w && w.stochastic);   // ~ Vary: random length/plays in a min–max range each cycle
         const phraseHtml = '<span class="ambient-sched-xy"' + (wOn ? '' : ' style="display:none"') + '>' +

@@ -3286,6 +3286,10 @@
     .ambient-sched-lbl { font-size: 0.64rem; color: #8b9bb4; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
     /* Phrase snapped up to the progression cycle — teal (harmony drove it). */
     .ambient-sched-lbl.snap { color: #7fe4dc; text-transform: none; letter-spacing: 0; }
+    /* Unit mode cue: Free (this layer sizes itself, amber) vs Sync (bar-locked, teal). */
+    .ambient-sched-unitcue { font: 600 0.6rem 'Segoe UI', sans-serif; white-space: nowrap; padding: 1px 6px; border-radius: 4px; }
+    .ambient-sched-unitcue.free { color: #f0b64a; background: rgba(240,182,74,0.12); }
+    .ambient-sched-unitcue.sync { color: #7fe4dc; background: rgba(127,228,220,0.12); }
     /* Explicit width (not just max-width): the base .ambient-select is width:100%,
        which inside an auto-sized inline-flex group resolves CIRCULARLY — the group
        measured the select's intrinsic width but it laid out at the 84px cap,

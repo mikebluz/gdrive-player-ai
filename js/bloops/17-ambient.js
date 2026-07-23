@@ -11807,6 +11807,29 @@
     // per-step FX / its own loop semantics.
     function _ambEuclidDeterministic(L) {
       if (!L || typeof L !== 'object') return false;
+      // Series (non-euclid) ARP: a CONTINUOUS monotonic arpeggio (the arpState
+      // `idx` stream), NOT a looped phrase — so layering Write's freeze/replay on
+      // top is both needless and GLITCHY (it doubles at the lock/thaw boundary, and
+      // wrongly freezes the arp to one chord's notes under a progression). Its only
+      // per-cycle RNG draw is rateVar (the accelerando walk); without it the arp
+      // plays byte-identical forever → skip Write and run native/continuous.
+      if (L.type === 'arp' && !L.euclid) return !(L.rateVar | 0);
+      // Run / Pedal / Drone are windowed phrase layers whose BASE is seeded by
+      // (id, seed) — verbatim across cycles — and whose ONLY per-cycle RNG is their
+      // variance knob(s), a per-cycle SEEDED draw (never the shared _ambRand stream).
+      // With variance OFF they loop byte-identical, so Write (freeze one realization)
+      // is redundant AND doubles at the freeze/lock handoff → skip it, loop native.
+      // (With variance ON they KEEP Write to lock ONE realization — same doctrine as
+      // euclid. A Drone also follows a live progression, which Write would wrongly
+      // freeze to one chord — another reason the clean drone must stay native.)
+      // Run (Riff): base degrees AND rests are baseRnd-seeded (id+seed → FIXED every
+      // cycle), so Rests DON'T break determinism — only the per-cycle vRnd draws do
+      // (Vary / LenVary / Ornament / Slide). Absent those it repeats verbatim → native.
+      if (L.type === 'run')   return !(L.vary | 0) && !(L.lenVary | 0) && !(L.ornament | 0) && !(L.slide | 0);
+      // Pedal: its Rests use a PER-CYCLE seeded draw (it "roams" each pass), so rests
+      // DO make it evolve → keep Write unless both Vary and Rests are off.
+      if (L.type === 'pedal') return !(L.vary | 0) && _ambEffRest(L) === 0;
+      if (L.type === 'drone') return !(L.timeVary | 0) && !(L.pitchVary | 0);
       const isKit = (L.type === 'beat' && L.gen === 'euclid' && !!L.euclidKit);
       const euclid = (L.type === 'bass') || (L.type === 'beat' && L.gen === 'euclid' && !L.euclidKit) || (L.type === 'arp' && L.euclid) || isKit;
       if (!euclid) return false;

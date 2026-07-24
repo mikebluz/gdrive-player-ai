@@ -780,15 +780,15 @@
         // dissolved): they all cascade to / govern this area's layers. ---
         // Area WRITE — phrase-loop EVERY layer (write X bars, loop ×Y, rewrite).
         '<div class="ambient-orch ambient-area-write">' +
-          '<span class="ambient-orch-lbl ambient-start-lbl" title="Area Evolve — every layer generates X bars, loops that exact phrase until it has played Y times, then evolves a fresh one. Cascades to all layers; a layer’s own Evolve control overrides (its Evolve wins, its Off opts out).">Evolve</span>' +
+          '<span class="ambient-orch-lbl ambient-start-lbl" title="Area Evolve — every layer generates X bars, loops that exact pattern until it has played Y times, then evolves a fresh one. Cascades to all layers; a layer’s own Evolve control overrides (its Evolve wins, its Off opts out).">Evolve</span>' +
           '<span class="ambient-seg-row">' +
             '<button type="button" class="ambient-seg" id="ambient-areawrite-off">Off</button>' +
             '<button type="button" class="ambient-seg" id="ambient-areawrite-on">Evolve</button>' +
           '</span>' +
-          '<button type="button" class="ambient-seg" id="ambient-areawrite-vary" title="Vary — each cycle roll a random phrase length (bars) and repeat count (plays) inside the min–max ranges." style="display:none">~ Vary</button>' +
+          '<button type="button" class="ambient-seg" id="ambient-areawrite-vary" title="Vary — each cycle roll a random pattern length (bars) and repeat count (plays) inside the min–max ranges." style="display:none">~ Vary</button>' +
           '<span class="ambient-write-xy" id="ambient-areawrite-fixed" style="display:none">' +
-            '<input type="number" id="ambient-areawrite-x" min="1" max="32" step="1" value="2" title="X — phrase length in bars"> <span class="ambient-hint">bars ×</span> ' +
-            '<input type="number" id="ambient-areawrite-y" min="1" max="32" step="1" value="4" title="Y — total plays of each phrase before a new one is written"> <span class="ambient-hint">plays</span>' +
+            '<input type="number" id="ambient-areawrite-x" min="1" max="32" step="1" value="2" title="X — pattern length in bars"> <span class="ambient-hint">bars ×</span> ' +
+            '<input type="number" id="ambient-areawrite-y" min="1" max="32" step="1" value="4" title="Y — total plays of each pattern before a new one is written"> <span class="ambient-hint">plays</span>' +
           '</span>' +
           '<span class="ambient-write-xy" id="ambient-areawrite-range" style="display:none">' +
             '<span class="ambient-hint">bars</span> <input type="number" id="ambient-areawrite-bmin" min="1" max="32" step="1" value="1">–<input type="number" id="ambient-areawrite-bmax" min="1" max="32" step="1" value="4"> ' +
@@ -798,7 +798,7 @@
         // Queue mode — a layer on/off toggle applies at that layer's next boundary.
         '<div class="ambient-orch ambient-queue">' +
           '<span class="ambient-orch-lbl">Queue</span>' +
-          '<button type="button" class="ambient-seg" id="ambient-queue-on" title="Queue mode — a layer on/off toggle applies on that layer&#39;s next iteration boundary (its own loop/phrase end) instead of immediately">Off</button>' +
+          '<button type="button" class="ambient-seg" id="ambient-queue-on" title="Queue mode — a layer on/off toggle applies on that layer&#39;s next iteration boundary (its own loop/pattern end) instead of immediately">Off</button>' +
           '<button type="button" class="ambient-seg" id="ambient-queue-tails" title="Tails — when a queued STOP cuts a layer, let its reverb keep feeding past the boundary so the wet tail rings out (off = cut the reverb send with the gate)">Tails</button>' +
           '<span class="ambient-hint" id="ambient-queue-hint">toggles snap to each layer&#39;s loop</span>' +
         '</div>' +
@@ -12109,7 +12109,7 @@
         const _id = (String(key).split(':')[1] | 0);
         const _seed = (cfg && cfg.seed) | 0;
         const _maxBars = _sto ? Math.max(1, w.barsMax | 0) : Math.max(1, w.bars | 0);
-        if (_maxBars * barSec > 31) { if (fs && !fs._writeWarned) { fs._writeWarned = true; try { if (typeof showToast === 'function') showToast('Evolve: ' + _maxBars + '-bar phrase exceeds the ~31 s capture limit at this tempo — playing live.'); } catch (e) {} } return; }
+        if (_maxBars * barSec > 31) { if (fs && !fs._writeWarned) { fs._writeWarned = true; try { if (typeof showToast === 'function') showToast('Evolve: ' + _maxBars + '-bar pattern exceeds the ~31 s capture limit at this tempo — playing live.'); } catch (e) {} } return; }
         const st = _ambFreezeState(E, key);
         // Respect a USER freeze / recording / foreign lock — stand down until it clears.
         if ((st.frozen || st.recording || st.pendingFreezeAt != null) && !st._write) return;
@@ -12191,7 +12191,7 @@
         // If the snap blows the ~31 s capture limit, stay live this cycle (warn
         // once) rather than loop wrong.
         if (nBars * barSec > 31) {
-          if (!st._writeProgWarned) { st._writeProgWarned = true; try { if (typeof showToast === 'function') showToast('Evolve: phrase snapped to the progression cycle (' + _ambFmtBpc(nBars) + ' bars) exceeds the ~31 s capture limit — playing live.'); } catch (e) {} }
+          if (!st._writeProgWarned) { st._writeProgWarned = true; try { if (typeof showToast === 'function') showToast('Evolve: pattern snapped to the progression cycle (' + _ambFmtBpc(nBars) + ' bars) exceeds the ~31 s capture limit — playing live.'); } catch (e) {} }
           st._write = true; st._writeNT = 1; st._writeRearmAt = bStart + nBars * barSec; return;
         }
         st._writeNT = nT;
@@ -12977,7 +12977,7 @@
         // phrase (handled in _ambFreezeCycle), not thaw-and-rearm.
         const writeOwned = !!(fs && fs._write && (fs.frozen || fs.pendingFreezeAt != null));
         btn.classList.toggle('write-cycling', writeOwned);
-        if (writeOwned) { btn.textContent = '⟳'; btn.title = 'Evolve is cycling this layer — press to KEEP the current phrase (converts it to a held loop and stops the auto-rewrite)'; return; }
+        if (writeOwned) { btn.textContent = '⟳'; btn.title = 'Evolve is cycling this layer — press to KEEP the current pattern (converts it to a held loop and stops the auto-rewrite)'; return; }
         const recording = !!(fs && fs.recording);
         // A pending (deferred) thaw means the user already pressed Thaw; the audio
         // handoff completes at the loop boundary, but reflect their intent NOW as
@@ -15507,16 +15507,16 @@
               '<span class="ambient-roll-plabel"></span>' +
               '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-next" data-rkey="' + key + '" title="Next unit">▶</span>' +
             '</span>' +
-            '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-play" data-rkey="' + key + '" hidden title="Audition this phrase once, without starting playback">▶</span>' +
-            '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-regen" data-rkey="' + key + '" hidden title="Roll a new phrase (Variance settings shape every roll). Sim keeps part of the current phrase.">🎲</span>' +
-            '<select class="ambient-select ambient-roll-sim" data-rkey="' + key + '" hidden title="Regen similarity — how much of the CURRENT phrase each 🎲 keeps (Fresh = all new)">' +
+            '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-play" data-rkey="' + key + '" hidden title="Audition this pattern once, without starting playback">▶</span>' +
+            '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-regen" data-rkey="' + key + '" hidden title="Roll a new pattern (Variance settings shape every roll). Sim keeps part of the current pattern.">🎲</span>' +
+            '<select class="ambient-select ambient-roll-sim" data-rkey="' + key + '" hidden title="Regen similarity — how much of the CURRENT pattern each 🎲 keeps (Fresh = all new)">' +
               '<option value="0">Fresh</option><option value="25">Sim 25%</option><option value="50">Sim 50%</option><option value="75">Sim 75%</option>' +
             '</select>' +
-            '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-keep" data-rkey="' + key + '" hidden title="Keep this phrase — lock it in as the layer’s part (plays exactly on the next Play)">✓ Keep</span>' +
-            '<select class="ambient-select ambient-roll-harm" data-hkey="' + key + '" hidden title="Harmony — how this phrase relates to the key and chords: Fixed = the exact captured pitches; Diatonic = follows key changes by scale degree; Chord-locked = re-anchors each degree to the current chord (needs a progression)">' +
+            '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-keep" data-rkey="' + key + '" hidden title="Keep this pattern — lock it in as the layer’s part (plays exactly on the next Play)">✓ Keep</span>' +
+            '<select class="ambient-select ambient-roll-harm" data-hkey="' + key + '" hidden title="Harmony — how this pattern relates to the key and chords: Fixed = the exact captured pitches; Diatonic = follows key changes by scale degree; Chord-locked = re-anchors each degree to the current chord (needs a progression)">' +
               '<option value="">Fixed</option><option value="diatonic">Diatonic</option><option value="chordlock">Chord-locked</option>' +
             '</select>' +
-            '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-revert" data-rkey="' + key + '" hidden title="Discard the edited phrase — back to live generation">↺ Original</span>' +
+            '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-revert" data-rkey="' + key + '" hidden title="Discard the edited pattern — back to live generation">↺ Original</span>' +
           '</div>' +
           (_hasPiano
             ? '<div class="ambient-roll-editor-slot"></div><div class="ambient-roll-scroll"><canvas class="ambient-np-roll ambient-np-lockroll ambient-np-vroll"></canvas></div>'
@@ -16084,11 +16084,11 @@
     // promote → lockState path; Generate reverts to live generation. Wired by
     // delegation (one handler for primary + extras cards) via data-seedkey.
     function _ambSeedModeHtml(lk) {
-      return '<div class="ambient-ctrl ambient-seedmode" title="Note source — Generate (the engine improvises this layer live) or Author (compose a fixed phrase you can hand-edit on the 🎹 roll). Reversible.">' +
+      return '<div class="ambient-ctrl ambient-seedmode" title="Note source — Generate (the engine improvises this layer live) or Author (compose a fixed pattern you can hand-edit on the 🎹 roll). Reversible.">' +
         '<label>Mode</label>' +
         '<span class="ambient-seg-row">' +
           '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="generate" data-seedkey="' + _ambEscText(lk) + '">Generate</button>' +
-          '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="author" data-seedkey="' + _ambEscText(lk) + '" title="Compose the phrase on the piano roll (docked below)">Author</button>' +
+          '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="author" data-seedkey="' + _ambEscText(lk) + '" title="Compose the pattern on the piano roll (docked below)">Author</button>' +
           '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="grid" data-seedkey="' + _ambEscText(lk) + '" title="Compose in the FULL editor — Grid/Piano/Graph/Game docks below; edits land in the loop live. Author keeps them; ✕ Cancel discards.">Grid</button>' +
         '</span><span class="ambient-hint">improvise / compose</span></div>' +
         // Author docks the layer's grid (roll + keyboard) HERE — composing
@@ -16098,7 +16098,7 @@
             '<span class="ambient-seedgrid-live" hidden>' +
               '<span class="ambient-hint">editing in Grid — changes land live</span>' +
               '<button type="button" class="ambient-seg ambient-seedgrid-done" data-sgk="' + _ambEscText(lk) + '">✓ Done</button>' +
-              '<button type="button" class="ambient-seg ambient-seedgrid-cancel" data-sgk="' + _ambEscText(lk) + '" title="Discard grid edits — restore the phrase as it was">✕ Cancel</button>' +
+              '<button type="button" class="ambient-seg ambient-seedgrid-cancel" data-sgk="' + _ambEscText(lk) + '" title="Discard grid edits — restore the pattern as it was">✕ Cancel</button>' +
               // The docked editor is the WHOLE lane-expander — every mode surface
               // is already inside it; these tabs are the mode switcher (the top-bar
               // one isn't reachable from the card). Phrase-writing modes only.
@@ -17049,14 +17049,14 @@
       note: 'Which scale degree the pedal sits on (1 = the key root, 2 = the 2nd, …).',
       range: 'How many octaves the notes span.',
       transpose: 'Shift the whole layer by half-steps (±2 octaves), chromatically.',
-      bars: 'Length of the loop in bars before it repeats.',
-      phrase: 'Length of the phrase/loop in bars before it repeats.',
+      bars: 'How many bars the pattern spans before it repeats (fills the Unit).',
+      phrase: 'How many bars the pattern spans before it repeats (fills the Unit).',
       density: 'Notes per bar.',
       length: 'How long each note sustains.',
       interval: 'Time between events.',
       rate: 'How fast it cycles.',
       drift: 'Phase offset — nudges the layer off the downbeat for polymetric interplay.',
-      start: 'Chance a phrase begins at a random point in the unit instead of on the 1 (0 = always on the 1, 50 = half).',
+      start: 'Chance a pattern begins at a random point in the unit instead of on the 1 (0 = always on the 1, 50 = half).',
       'len var': 'How much each note’s length jitters around the Length value (0 = exact, higher = more variation).',
       vary: 'How much it deviates from its base pattern (0 = repeats exactly).',
       hold: 'How many units the note is held before it is struck again.',
@@ -19020,7 +19020,7 @@
         if (wOn) {
           chipsHtml = '<span class="ambient-sched-tuples">' +
             tuples.map((tu, i) => '<button type="button" class="ambient-sched-tuchip' + ((isSeq ? i === selTi : true) ? ' on' : '') + '" data-ti="' + i + '" title="Step ' + (i + 1) + ' of the Loop sequence — ' + tuLbl(tu) + '. Click to edit; the list plays through in order and loops.">' + tuLbl(tu) + ((isSeq && i === selTi && tuples.length > 1) ? '<span class="tux" title="Remove this step">✕</span>' : '') + '</button>').join('') +
-            '<button type="button" class="ambient-sched-tuadd" title="Add a step — the Loop plays through the list in order (phrase 1, then phrase 2, …) and loops">＋</button></span>';
+            '<button type="button" class="ambient-sched-tuadd" title="Add a step — the Loop plays through the list in order (pattern 1, then pattern 2, …) and loops">＋</button></span>';
         }
         const aVal = _ambSchedAreaVal(layer);   // 'free' | 'num/den' (× Area) | 'other' (card-set bar/layer sync)
         const uOpts = [['free', 'Free']].concat(_AMB_AREA_RATIOS).concat(aVal === 'other' ? [['other', '⋯ custom']] : [])
@@ -19035,7 +19035,7 @@
           const synced = !!(layer.unit && layer.unit.mode === 'sync');
           const govern = synced && rk !== 'fit';   // the fixed division is the ACTIVE rate → highlight it
           const txt = !synced ? 'Free (Rate)' : (rk === 'fit' ? 'Fit → Unit' : rlbl);
-          const tip = 'Resolution (note rate) — set on the Arp card. ' + (govern ? 'A fixed division: THIS is the note rate; the Unit only sets the phrase window.' : (rk === 'fit' ? 'Fit unit: the Unit sets the note rate.' : 'Free unit: the note rate comes from the layer’s Rate/Interval.'));
+          const tip = 'Resolution (note rate) — set on the Arp card. ' + (govern ? 'A fixed division: THIS is the note rate; the Unit only sets the pattern window.' : (rk === 'fit' ? 'Fit unit: the Unit sets the note rate.' : 'Free unit: the note rate comes from the layer’s Rate/Interval.'));
           resHtml = '<span class="ambient-sched-grp" title="' + esc(tip) + '"><span class="ambient-sched-lbl">rate</span><span class="ambient-sched-lbl' + (govern ? ' snap' : '') + '">♪ ' + esc(txt) + '</span></span>';
         }
         // Timing cluster (Unit + Rate) — the "what/how-fast" group, right of the name.
@@ -19068,15 +19068,15 @@
         const phraseHtml = '<span class="ambient-sched-xy"' + ((wOn && !wLock) ? '' : ' style="display:none"') + '>' +
             (stoW
               ? ('<span class="ambient-sched-lbl">bars</span>' +
-                 '<input type="number" class="ambient-sched-bmin" min="1" max="32" step="1" value="' + ((w && w.barsMin) || 1) + '" title="Min phrase length (bars)">–' +
-                 '<input type="number" class="ambient-sched-bmax" min="1" max="32" step="1" value="' + ((w && w.barsMax) || 4) + '" title="Max phrase length (bars)">' +
+                 '<input type="number" class="ambient-sched-bmin" min="1" max="32" step="1" value="' + ((w && w.barsMin) || 1) + '" title="Min pattern length (bars)">–' +
+                 '<input type="number" class="ambient-sched-bmax" min="1" max="32" step="1" value="' + ((w && w.barsMax) || 4) + '" title="Max pattern length (bars)">' +
                  '<span class="ambient-sched-lbl">× plays</span>' +
-                 '<input type="number" class="ambient-sched-tmin" min="1" max="32" step="1" value="' + ((w && w.timesMin) || 2) + '" title="Min repeats before a fresh phrase">–' +
-                 '<input type="number" class="ambient-sched-tmax" min="1" max="32" step="1" value="' + ((w && w.timesMax) || 8) + '" title="Max repeats before a fresh phrase">')
+                 '<input type="number" class="ambient-sched-tmin" min="1" max="32" step="1" value="' + ((w && w.timesMin) || 2) + '" title="Min repeats before a fresh pattern">–' +
+                 '<input type="number" class="ambient-sched-tmax" min="1" max="32" step="1" value="' + ((w && w.timesMax) || 8) + '" title="Max repeats before a fresh pattern">')
               : (((cycBars > 0)
-                  ? ('<input type="number" class="ambient-sched-bars" data-cyc="' + cycBars + '" min="1" max="' + Math.max(1, Math.ceil(32 / cycBars)) + '" step="1" value="' + (effCycles || 1) + '" title="Phrase length in progression CYCLES — 1 cycle = one full pass through the progression’s chords (' + _ambFmtBpc(cycBars) + ' bars here). A looped phrase must span whole cycles so its repeats stay on the same chords."><span class="ambient-sched-lbl">cycle' + (effCycles === 1 ? '' : 's') + ' ×</span>')
-                  : ('<input type="number" class="ambient-sched-bars" min="1" max="32" step="1" value="' + ((selTu && selTu.bars) || 2) + '" title="Phrase length in bars"><span class="ambient-sched-lbl">bars ×</span>')) +
-                '<input type="number" class="ambient-sched-times" min="1" max="32" step="1" value="' + ((selTu && selTu.times) || 4) + '" title="Times each phrase repeats before a fresh one is written"><span class="ambient-sched-lbl">plays</span>' +
+                  ? ('<input type="number" class="ambient-sched-bars" data-cyc="' + cycBars + '" min="1" max="' + Math.max(1, Math.ceil(32 / cycBars)) + '" step="1" value="' + (effCycles || 1) + '" title="Pattern length in progression CYCLES — 1 cycle = one full pass through the progression’s chords (' + _ambFmtBpc(cycBars) + ' bars here). A looped pattern must span whole cycles so its repeats stay on the same chords."><span class="ambient-sched-lbl">cycle' + (effCycles === 1 ? '' : 's') + ' ×</span>')
+                  : ('<input type="number" class="ambient-sched-bars" min="1" max="32" step="1" value="' + ((selTu && selTu.bars) || 2) + '" title="Pattern length in bars"><span class="ambient-sched-lbl">bars ×</span>')) +
+                '<input type="number" class="ambient-sched-times" min="1" max="32" step="1" value="' + ((selTu && selTu.times) || 4) + '" title="Times each pattern repeats before a fresh one is written"><span class="ambient-sched-lbl">plays</span>' +
                 ((cycBars > 0 && wOn) ? '<span class="ambient-sched-lbl snap" title="One cycle = one full pass through the progression (' + _ambFmtBpc(cycBars) + ' bars).">= ' + _ambFmtBpc(effBars) + ' bars</span>' : ''))) + '</span>';
         html += '<div class="ambient-sched-row" data-schkey="' + esc(key) + '" data-total="' + totalSpan.toFixed(4) + '">' +
           '<div class="ambient-sched-ctl">' +
@@ -19087,14 +19087,14 @@
             '</div>' +
             // Evolve line — the CADENCE axis as one 3-point control (Continuous /
             // Every N / Locked), then the Every-N detail (Vary/Live + phrase X×Y).
-            '<div class="ambient-sched-loopline' + (wOn ? ' on' : '') + (wLock ? ' locked' : '') + '" title="Evolve — how OFTEN the layer re-rolls: Continuous (every cycle) · Every N (freeze a phrase, repeat it, then evolve a fresh one) · Locked (freeze one roll, hold forever).">' +
+            '<div class="ambient-sched-loopline' + (wOn ? ' on' : '') + (wLock ? ' locked' : '') + '" title="Evolve — how OFTEN the layer re-rolls: Continuous (every cycle) · Every N (freeze a pattern, repeat it, then evolve a fresh one) · Locked (freeze one roll, hold forever).">' +
               '<span class="ambient-sched-evolve" role="group" aria-label="Evolve cadence">' +
                 '<button type="button" class="ambient-seg ambient-sched-ev' + (!wOn ? ' active' : '') + '" data-ev="cont" title="Continuous — re-roll a fresh pattern every cycle (no freezing).">Continuous</button>' +
-                '<button type="button" class="ambient-seg ambient-sched-ev' + ((wOn && !wLock) ? ' active' : '') + '" data-ev="every" title="Every N — freeze a phrase, repeat it N plays, then evolve a fresh one.">Every N</button>' +
+                '<button type="button" class="ambient-seg ambient-sched-ev' + ((wOn && !wLock) ? ' active' : '') + '" data-ev="every" title="Every N — freeze a pattern, repeat it N plays, then evolve a fresh one.">Every N</button>' +
                 '<button type="button" class="ambient-seg ambient-sched-ev' + (wLock ? ' active' : '') + '" data-ev="lock" title="Locked — freeze one roll and hold it forever (never re-rolls). Persists across reload.">🔒 Locked</button>' +
               '</span>' +
-              ((wOn && !wLock) ? ('<button type="button" class="ambient-seg ambient-sched-vary' + (stoW ? ' active' : '') + '" title="Vary — each cycle roll a random phrase length (bars) and repeat count (plays) inside the min–max ranges, so the layer loops in evolving chunks.">~ Vary</button>' +
-                     '<button type="button" class="ambient-seg ambient-sched-live' + ((layer.loopVar === 'live') ? ' active' : '') + '" title="Live — every loop pass RE-PERFORMS the phrase: Humanize / Vel var / Ornament re-roll from the layer’s current sliders (structural variance stays as written).">⚡ Live</button>') : '') +
+              ((wOn && !wLock) ? ('<button type="button" class="ambient-seg ambient-sched-vary' + (stoW ? ' active' : '') + '" title="Vary — each cycle roll a random pattern length (bars) and repeat count (plays) inside the min–max ranges, so the layer loops in evolving chunks.">~ Vary</button>' +
+                     '<button type="button" class="ambient-seg ambient-sched-live' + ((layer.loopVar === 'live') ? ' active' : '') + '" title="Live — every loop pass RE-PERFORMS the pattern: Humanize / Vel var / Ornament re-roll from the layer’s current sliders (structural variance stays as written).">⚡ Live</button>') : '') +
               ((wOn && !wLock) ? (phraseHtml + (stoW ? '' : chipsHtml)) : (wLock ? '<span class="ambient-sched-lbl snap" title="Locked captures one natural unit and repeats it verbatim.">1 unit · held</span>' : '')) +
             '</div>' +
           '</div>' +
@@ -19105,7 +19105,7 @@
       html += '<div class="ambient-sched-legend">' +
         '<i class="ambient-sched-blk lg"></i> 1 unit' +
         '<span class="lgtxt">✎ fresh material is written &amp; plays</span>' +
-        '<span class="lgtxt">↻ <i class="ambient-sched-blk lg rep"></i> that exact phrase repeats</span>' +
+        '<span class="lgtxt">↻ <i class="ambient-sched-blk lg rep"></i> that exact pattern repeats</span>' +
         '<i class="ambient-sched-ph lg"></i> playhead</div>';
       body.innerHTML = html;
       if (!body._secWired) {
@@ -19841,7 +19841,7 @@
       arp: { label: 'Arp', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
-        ['grp', 'Timing'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (euclid; 0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Pattern', 1, 8, 'bars — fills the Unit'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (euclid; 0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'rateVar', 'Rate var', 0, 100, 'steady → rushes'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
@@ -19849,7 +19849,7 @@
       bass: { label: 'Bass', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Pattern', 1, 8, 'bars — the seed fills the Unit'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['tight'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Walk', 0, 100, 'hold → wander (proximity-capped)'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Riff (internal type 'run'): a fixed RANDOM note phrase, `bars` bars long,
@@ -20142,7 +20142,7 @@
       // is where the old standalone "Mutate" generator now lives.
       if (t === 'run' || t === 'texture') {
         const mid = 'ambient-' + inst.type + '-' + inst.id + '-patmode', mcur = (t === 'texture') ? 'evolve' : 'reroll';
-        bits.push(_ambComposeField('Var', '<select id="' + mid + '" class="ambient-compose-sel" title="Variation mode — Re-roll swaps the whole phrase; Evolve mutates it gradually">' +
+        bits.push(_ambComposeField('Var', '<select id="' + mid + '" class="ambient-compose-sel" title="Variation mode — Re-roll swaps the whole pattern; Evolve mutates it gradually">' +
           [['reroll', 'Re-roll'], ['evolve', 'Evolve']].map(m => '<option value="' + m[0] + '"' + (m[0] === mcur ? ' selected' : '') + '>' + m[1] + '</option>').join('') + '</select>'));
       }
       return '<div class="ambient-compose" title="Voice · Note-source · Generator · (variation mode)">' +

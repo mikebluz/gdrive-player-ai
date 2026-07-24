@@ -10786,7 +10786,7 @@
       e._tgPrevV = prevV;
     }
     function _ambScheduleStochastic(now) {
-      const horizon = now + 1.2;
+      const horizon = now + 1.2 * _ambHiddenMult();   // hidden tab → longer mod/LFO runway (matches the note horizon stretch)
       for (const layer in _E.mod) {
         const e = _E.mod[layer];
         try { _ambScheduleTg(_E, layer, e, now, horizon); } catch (x) {}   // bar-synced trance gate
@@ -11001,7 +11001,7 @@
         lead = Math.max(now + 0.06, (Number.isFinite(E._pressAt) ? E._pressAt : 0) + 0.15,
           (Number.isFinite(E._emitFloor) && E._emitFloor > now) ? E._emitFloor : 0);
       }
-      const horizon = now + 1.4;
+      const horizon = now + 1.4 * _ambHiddenMult();   // hidden tab → 5.6 s runway (throttled ticks can't starve the schedule)
       // Bar Lock: pin the loop grid to the layers' first-onset lead, once per play,
       // so every (re)lock snaps to the same phase (stays in sync with live layers).
       if (E === _masterEng && E._barGridAnchor == null) E._barGridAnchor = lead;
@@ -13092,8 +13092,9 @@
       // SCHEDULING until the context is 'running' (Play resumes it asynchronously),
       // so the first running tick anchors the layers cleanly — no voices stranded
       // on a suspended/frozen clock, and no artificial start delay.
-      try { _ambInGeneration = true; _ambTick(E); } catch (e) { _ambLogTickErr(e); } finally { _ambInGeneration = false; }
-      E.timer = setInterval(() => { try { _ambInGeneration = true; _ambTick(E); } catch (e) { _ambLogTickErr(e); } finally { _ambInGeneration = false; } }, 150);
+      _ambRunTick(E);
+      E.timer = setInterval(() => _ambRunTick(E), 150);
+      _AMB_TICKING.add(E); _ambTickWorkerStart();   // background guard: worker drives ticks while the tab is hidden
       try { _ambHealthStart(); } catch (e) {}
       // The finer ramp clock only runs while ramps exist (started lazily) so a
       // ramp-free Bloom doesn't burn a 40 Hz main-thread timer that competes
@@ -13340,9 +13341,58 @@
       if (_ambHealthTimer) { clearInterval(_ambHealthTimer); _ambHealthTimer = null; }
     }
 
+    // ---- Background-tab playback guard (Stage 0) --------------------------
+    // A hidden tab throttles MAIN-THREAD timers to >=1 s (or 1/min if Chrome
+    // stops flagging the tab audible — likely during an ambient piece's quiet
+    // stretches), which starves the 150 ms tick and cuts audio. Two defenses:
+    //   1) WORKER TICKER — Worker timers are not throttled. One shared worker
+    //      posts every 150 ms; while the tab is HIDDEN its messages drive the
+    //      same _ambRunTick for every playing engine (visible → no-op, the
+    //      normal E.timer interval owns the tick, so foreground behavior and
+    //      the harness battery are byte-identical).
+    //   2) HORIZON STRETCH — _ambHiddenMult() widens the per-tick scheduling
+    //      runway (1.4 s → 5.6 s) while hidden, so even a straggler tick can't
+    //      outrun the committed WebAudio schedule. Visible / silent-capture →
+    //      ×1 (unchanged scheduling + RNG interleaving).
+    // Plus a visibility-return hook: immediately top up and resume a context
+    // the OS suspended, instead of waiting out the first foreground interval.
+    const _AMB_TICKING = new Set();
+    function _ambRunTick(E) {
+      try { _ambInGeneration = true; _ambTick(E); } catch (e) { _ambLogTickErr(e); } finally { _ambInGeneration = false; }
+    }
+    function _ambHiddenMult() {
+      try { return (typeof document !== 'undefined' && document.hidden && !(typeof window !== 'undefined' && window._ambSilentCapture)) ? 4 : 1; } catch (e) { return 1; }
+    }
+    let _ambTickWorker = null, _ambTickWorkerDead = false;
+    function _ambTickWorkerStart() {
+      if (_ambTickWorkerDead) return;
+      if (!_ambTickWorker) {
+        try {
+          const src = 'let id=null;onmessage=e=>{if(e.data==="start"&&!id)id=setInterval(()=>postMessage(0),150);else if(e.data==="stop"&&id){clearInterval(id);id=null;}};';
+          _ambTickWorker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+          _ambTickWorker.onmessage = () => {
+            if (typeof document === 'undefined' || !document.hidden) return;   // visible → E.timer owns the tick
+            try { const ac = Tone.getContext().rawContext; if (ac && ac.state === 'suspended') ac.resume().catch(() => {}); } catch (e) {}
+            _AMB_TICKING.forEach(E => { if (E.timer && E._everRan) _ambRunTick(E); });
+          };
+        } catch (e) { _ambTickWorkerDead = true; _ambTickWorker = null; return; }   // CSP/file:// → main-thread interval only (today's behavior)
+      }
+      try { _ambTickWorker.postMessage('start'); } catch (e) {}
+    }
+    function _ambTickWorkerMaybeStop() {
+      if (_ambTickWorker && !_AMB_TICKING.size) { try { _ambTickWorker.postMessage('stop'); } catch (e) {} }
+    }
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden || !_AMB_TICKING.size) return;
+        try { const ac = Tone.getContext().rawContext; if (ac && ac.state === 'suspended') ac.resume().catch(() => {}); } catch (e) {}
+        _AMB_TICKING.forEach(E => { if (E.timer) _ambRunTick(E); });   // top up now, not at the next interval
+      });
+    }
     function _ambStopGenerator(E) {
       _E = E;
       if (E.timer) { clearInterval(E.timer); E.timer = null; }
+      _AMB_TICKING.delete(E); _ambTickWorkerMaybeStop();
       try { _ambHealthStop(); } catch (e) {}
       if (E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
       // AREAS: end any sequencing and restore the bloom output gain (a stop mid

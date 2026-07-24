@@ -780,10 +780,10 @@
         // dissolved): they all cascade to / govern this area's layers. ---
         // Area WRITE — phrase-loop EVERY layer (write X bars, loop ×Y, rewrite).
         '<div class="ambient-orch ambient-area-write">' +
-          '<span class="ambient-orch-lbl ambient-start-lbl" title="Area Write — every layer generates X bars, loops that exact phrase until it has played Y times, then writes a fresh one. Cascades to all layers; a layer’s own Loop control overrides (its Write wins, its Off opts out).">Write</span>' +
+          '<span class="ambient-orch-lbl ambient-start-lbl" title="Area Evolve — every layer generates X bars, loops that exact phrase until it has played Y times, then evolves a fresh one. Cascades to all layers; a layer’s own Evolve control overrides (its Evolve wins, its Off opts out).">Evolve</span>' +
           '<span class="ambient-seg-row">' +
             '<button type="button" class="ambient-seg" id="ambient-areawrite-off">Off</button>' +
-            '<button type="button" class="ambient-seg" id="ambient-areawrite-on">Write</button>' +
+            '<button type="button" class="ambient-seg" id="ambient-areawrite-on">Evolve</button>' +
           '</span>' +
           '<button type="button" class="ambient-seg" id="ambient-areawrite-vary" title="Vary — each cycle roll a random phrase length (bars) and repeat count (plays) inside the min–max ranges." style="display:none">~ Vary</button>' +
           '<span class="ambient-write-xy" id="ambient-areawrite-fixed" style="display:none">' +
@@ -12105,7 +12105,7 @@
         const _id = (String(key).split(':')[1] | 0);
         const _seed = (cfg && cfg.seed) | 0;
         const _maxBars = _sto ? Math.max(1, w.barsMax | 0) : Math.max(1, w.bars | 0);
-        if (_maxBars * barSec > 31) { if (fs && !fs._writeWarned) { fs._writeWarned = true; try { if (typeof showToast === 'function') showToast('Write: ' + _maxBars + '-bar phrase exceeds the ~31 s capture limit at this tempo — playing live.'); } catch (e) {} } return; }
+        if (_maxBars * barSec > 31) { if (fs && !fs._writeWarned) { fs._writeWarned = true; try { if (typeof showToast === 'function') showToast('Evolve: ' + _maxBars + '-bar phrase exceeds the ~31 s capture limit at this tempo — playing live.'); } catch (e) {} } return; }
         const st = _ambFreezeState(E, key);
         // Respect a USER freeze / recording / foreign lock — stand down until it clears.
         if ((st.frozen || st.recording || st.pendingFreezeAt != null) && !st._write) return;
@@ -12175,7 +12175,7 @@
         // If the snap blows the ~31 s capture limit, stay live this cycle (warn
         // once) rather than loop wrong.
         if (nBars * barSec > 31) {
-          if (!st._writeProgWarned) { st._writeProgWarned = true; try { if (typeof showToast === 'function') showToast('Write: phrase snapped to the progression cycle (' + _ambFmtBpc(nBars) + ' bars) exceeds the ~31 s capture limit — playing live.'); } catch (e) {} }
+          if (!st._writeProgWarned) { st._writeProgWarned = true; try { if (typeof showToast === 'function') showToast('Evolve: phrase snapped to the progression cycle (' + _ambFmtBpc(nBars) + ' bars) exceeds the ~31 s capture limit — playing live.'); } catch (e) {} }
           st._write = true; st._writeNT = 1; st._writeRearmAt = bStart + nBars * barSec; return;
         }
         st._writeNT = nT;
@@ -12961,7 +12961,7 @@
         // phrase (handled in _ambFreezeCycle), not thaw-and-rearm.
         const writeOwned = !!(fs && fs._write && (fs.frozen || fs.pendingFreezeAt != null));
         btn.classList.toggle('write-cycling', writeOwned);
-        if (writeOwned) { btn.textContent = '⟳'; btn.title = 'Write is cycling this layer — press to KEEP the current phrase (converts it to a held loop and stops the auto-rewrite)'; return; }
+        if (writeOwned) { btn.textContent = '⟳'; btn.title = 'Evolve is cycling this layer — press to KEEP the current phrase (converts it to a held loop and stops the auto-rewrite)'; return; }
         const recording = !!(fs && fs.recording);
         // A pending (deferred) thaw means the user already pressed Thaw; the audio
         // handoff completes at the loop boundary, but reflect their intent NOW as
@@ -18086,14 +18086,14 @@
       if (seqOn) len = effW.seq.map(t => (t.bars | 0) + '×' + (t.times | 0)).join('→');
       else if (sto) len = (((effW && effW.barsMin) | 0) || 1) + '–' + (((effW && effW.barsMax) | 0) || 4) + '×' + (((effW && effW.timesMin) | 0) || 2) + '–' + (((effW && effW.timesMax) | 0) || 8);
       else len = (((effW && effW.bars) | 0) || 2) + '×' + (((effW && effW.times) | 0) || 4);
-      return (inherited ? '↳ ' : '⟳ ') + 'Write ' + len + (live ? ' ⚡' : '');
+      return (inherited ? '↳ ' : '⟳ ') + len + (live ? ' ⚡' : '');   // word lives in the "Evolve" label
     }
     function _ambLoopCtrl(inst) {
       const w = (inst && inst.write && typeof inst.write === 'object') ? inst.write : null;
       const on = !!(w && w.on);
       const txt = _ambLoopStateText(on ? 'write' : 'off', w, !!(inst && inst.loopVar === 'live'), false);
-      return '<div class="ambient-ctrl ambient-loop-ctrl" title="Loop / Write is edited in the ⏱ Sched tab (the per-layer timeline). This badge shows the current setting; the header ❄ freezes a loop manually (Hold).">' +
-        '<label>Loop</label>' +
+      return '<div class="ambient-ctrl ambient-loop-ctrl" title="Evolve is edited in the ⏱ Sched tab (the per-layer timeline). This badge shows the current setting; the header ❄ freezes a loop manually (Hold).">' +
+        '<label>Evolve</label>' +
         '<span class="ambient-loop-badge' + (on ? ' on' : '') + '" data-loopbadge="1">' + txt + '</span>' +
         '<span class="ambient-hint">edit in ⏱ Sched</span></div>';
     }
@@ -18995,7 +18995,7 @@
           for (let r = 0; r < nRows; r++) rowsHtml.push('<span class="ambient-sched-strip" data-srow="' + r + '">' + rowBuf[r] + '<i class="ambient-sched-ph"></i></span>');
         }
         const blocksHtml = rowsHtml.join('') +
-          (truncated ? '<span class="ambient-sched-lbl" title="The full write walk is ' + _ambFmtBpc(walkTotal) + ' bars — showing the first ' + _ambFmtBpc(totalSpan) + '.">… ' + _ambFmtBpc(walkTotal) + '-bar loop, first ' + _ambFmtBpc(totalSpan) + ' shown</span>' : '');
+          (truncated ? '<span class="ambient-sched-lbl" title="The full Evolve walk is ' + _ambFmtBpc(walkTotal) + ' bars — showing the first ' + _ambFmtBpc(totalSpan) + '.">… ' + _ambFmtBpc(walkTotal) + '-bar loop, first ' + _ambFmtBpc(totalSpan) + ' shown</span>' : '');
         // Tuple chips: the play-through list ("1×2 → 2×1 → …"). Click = select
         // (the N×M inputs edit the selected tuple); ✕ removes; ＋ appends a copy.
         const tuLbl = (tu) => ((cycBars > 0) ? Math.max(1, Math.round(_ambWriteEffBars(cfg, Math.max(1, tu.bars | 0), Math.max(1, tu.times | 0)) / cycBars)) : Math.max(1, tu.bars | 0)) + '×' + Math.max(1, tu.times | 0);
@@ -19068,8 +19068,8 @@
               '<span class="ambient-sched-timing">' + unitHtml + resHtml + '</span>' +
             '</div>' +
             // Loop line: on/off + phrase (cycles × plays = bars) + tuple chips.
-            '<div class="ambient-sched-loopline' + (wOn ? ' on' : '') + '" title="Loop — write a fresh phrase, repeat it, then write a new one.">' +
-              '<button type="button" class="ambient-seg ambient-sched-writebtn' + (wOn ? ' active' : '') + '">' + (wOn ? '⟳ Loop on' : 'Loop off') + '</button>' +
+            '<div class="ambient-sched-loopline' + (wOn ? ' on' : '') + '" title="Evolve — generate a fresh phrase, repeat it, then evolve a new one.">' +
+              '<button type="button" class="ambient-seg ambient-sched-writebtn' + (wOn ? ' active' : '') + '">' + (wOn ? '⟳ Evolve on' : 'Evolve off') + '</button>' +
               (wOn ? ('<button type="button" class="ambient-seg ambient-sched-vary' + (stoW ? ' active' : '') + '" title="Vary — each cycle roll a random phrase length (bars) and repeat count (plays) inside the min–max ranges, so the layer loops in evolving chunks.">~ Vary</button>' +
                      '<button type="button" class="ambient-seg ambient-sched-live' + ((layer.loopVar === 'live') ? ' active' : '') + '" title="Live — every loop pass RE-PERFORMS the phrase: Humanize / Vel var / Ornament re-roll from the layer’s current sliders (structural variance stays as written).">⚡ Live</button>') : '') +
               phraseHtml + (stoW ? '' : chipsHtml) +

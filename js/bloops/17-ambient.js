@@ -1660,6 +1660,8 @@
       s.reverse = (s.reverse | 0) ? 1 : 0;
       s.pitch = Math.max(-24, Math.min(24, Number.isFinite(s.pitch) ? (s.pitch | 0) : 0));
       s.stutter = Math.max(1, Math.min(8, Number.isFinite(s.stutter) ? (s.stutter | 0) : 1));
+      if (s.trackLoop != null) s.trackLoop = !!s.trackLoop;                                  // "Track": a tempo-locked whole-buffer loop
+      if (s.trackBars != null) s.trackBars = Math.max(1, Math.min(64, s.trackBars | 0));
       if (typeof s.when !== 'string') s.when = 'always';
       _ambNormalizeModObj(s, d.mod);
       _ambNormalizeFx(s);
@@ -11480,6 +11482,94 @@
         if (typeof showToast === 'function') showToast(reg ? ('Saved last ' + nBars + ' bar' + (nBars === 1 ? '' : 's') + ' as “' + reg.name + '”') : 'Grab complete');
       } catch (e) { if (typeof showToast === 'function') showToast('Grab failed: ' + ((e && e.message) || e)); }
       finally { _AL.busy = false; }
+    }
+    // ---- "Track" layer — record a loop from the audio INPUT, tempo-locked -----
+    // Reuses the resampler's WAV encoder + sample persistence (registerSampleFromBlob
+    // → IndexedDB, survives reload). Free-record with an optional count-in, then SNAP
+    // the length to the nearest whole bar, trim to it, and store as a looping (padLoop)
+    // sample layer tagged {trackLoop, trackBars}. NOTE: the audio/record path can't be
+    // verified headless — test recording + reload on a real input device.
+    function _ambTrackRecord(E) {
+      _E = E;
+      if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof registerSampleFromBlob !== 'function' || typeof audioBufferToWav !== 'function') {
+        if (typeof showToast === 'function') showToast('Recording is not available here.'); return;
+      }
+      let ac; try { ac = Tone.getContext().rawContext; } catch (e) { ac = null; }
+      if (!ac) { if (typeof showToast === 'function') showToast('Audio engine not ready.'); return; }
+      const bpm = _ambBpm(), beatSec = 60 / Math.max(20, bpm), barSec = beatSec * 4;
+      let stream = null, rec = null, chunks = [], recording = false, ctId = null;
+      const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-track-rec-ov';
+      ov.innerHTML = '<div class="sm-modal ambient-track-modal">' +
+        '<div class="sm-title">Record a Track</div>' +
+        '<div class="ambient-track-body">' +
+          '<div class="ambient-ctrl"><label>Count-in</label><select class="ambient-select trk-ci"><option value="0">Off</option><option value="1" selected>1 bar</option><option value="2">2 bars</option></select><span class="ambient-hint">clicks at ' + Math.round(bpm) + ' BPM before recording</span></div>' +
+          '<div class="ambient-track-status">Records your default audio input (mic / line-in). Press ● Record → after the count-in, play → ■ Stop. The loop snaps to the nearest bar.</div>' +
+        '</div>' +
+        '<div class="sm-footer"><button type="button" class="sm-cancel trk-cancel">Cancel</button>' +
+          '<button type="button" class="sm-apply trk-rec">● Record</button></div></div>';
+      document.body.appendChild(ov); ov.style.setProperty('display', 'flex', 'important');
+      const q = s => ov.querySelector(s);
+      const statusEl = q('.ambient-track-status'), recBtn = q('.trk-rec');
+      const stopStream = () => { try { stream && stream.getTracks().forEach(t => t.stop()); } catch (e) {} stream = null; };
+      const close = () => { try { if (ctId) clearTimeout(ctId); } catch (e) {} try { if (rec && rec.state === 'recording') rec.stop(); } catch (e) {} stopStream(); try { ov.remove(); } catch (e) {} };
+      q('.trk-cancel').addEventListener('click', close);
+      ov.addEventListener('click', e => { if (e.target === ov) close(); });
+      const click = (t, accent) => { try { const o = ac.createOscillator(), g = ac.createGain(); o.type = 'square'; o.frequency.value = accent ? 1760 : 1100; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(accent ? 0.4 : 0.26, t + 0.002); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05); o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 0.07); } catch (e) {} };
+      async function begin() {
+        const ciBars = Math.max(0, Math.min(2, parseInt(q('.trk-ci').value, 10) || 0));
+        try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }); }
+        catch (e) { try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e2) { statusEl.textContent = 'Microphone permission denied.'; return; } }
+        const prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'];
+        const mime = prefs.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
+        try { rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined); }
+        catch (e) { statusEl.textContent = 'Recording is not supported here.'; stopStream(); return; }
+        chunks = [];
+        rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+        rec.onstop = () => finish();
+        recBtn.disabled = true;
+        const t0 = ac.currentTime + 0.15, beats = ciBars * 4;
+        for (let i = 0; i < beats; i++) click(t0 + i * beatSec, i % 4 === 0);
+        if (ciBars) statusEl.textContent = 'Count-in…';
+        ctId = setTimeout(() => { try { rec.start(); recording = true; recBtn.disabled = false; recBtn.textContent = '■ Stop'; recBtn.classList.add('recording'); statusEl.textContent = 'Recording — play, then ■ Stop.'; } catch (e) { statusEl.textContent = 'Could not start recording.'; } }, ciBars ? (0.15 + beats * beatSec) * 1000 : 80);
+      }
+      async function finish() {
+        recording = false; stopStream(); recBtn.disabled = true; statusEl.textContent = 'Processing…';
+        try {
+          const blob = new Blob(chunks, { type: (rec && rec.mimeType) || 'audio/webm' });
+          const raw = await ac.decodeAudioData(await blob.arrayBuffer());
+          const bars = Math.max(1, Math.round(raw.duration / barSec));                 // free-record → SNAP to nearest bar
+          const wantLen = Math.round(bars * barSec * raw.sampleRate);
+          const out = ac.createBuffer(raw.numberOfChannels, wantLen, raw.sampleRate);   // trim/pad to exactly N bars
+          for (let c = 0; c < raw.numberOfChannels; c++) { const src = raw.getChannelData(c), dst = out.getChannelData(c), n = Math.min(src.length, wantLen); for (let i = 0; i < n; i++) dst[i] = src[i]; }
+          const wav = audioBufferToWav(out);
+          let stamp = 'take'; try { stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(11, 19); } catch (e) {}
+          const reg = await registerSampleFromBlob(wav, 'Track ' + stamp, { padLoop: true });   // persist (IndexedDB) + looping voice
+          if (!reg || !reg.id) throw new Error('register failed');
+          _ambSendSampleToInstance(E, reg.id, {});
+          try {
+            const cfg = E.getCfg();
+            // Match by the freshly-registered sampleId — _ambSampleList orders
+            // extras BEFORE legacy samples, so [length-1] isn't reliably ours.
+            const L = _ambSampleList(cfg).find(s => s && s.sampleId === reg.id);
+            if (L) {
+              const durMs = Math.round(bars * barSec * 1000);
+              L.trackLoop = true; L.trackBars = bars;
+              L.name = 'Track · ' + bars + ' bar' + (bars === 1 ? '' : 's');
+              // Tempo-locked LOOP with NO engine change: play the WHOLE buffer (no
+              // chop/stutter) and set the retrigger interval == the buffer length, so
+              // the existing sample scheduler tiles it seamlessly bar-to-bar. The
+              // recorded audio is fixed-length, so this locks to the RECORD tempo.
+              L.chop = 1; L.stutter = 1; L.order = 'forward'; L.pitch = 0; L.reverse = 0;
+              L.intervalMs = durMs; L.lengthMs = durMs;
+            }
+          } catch (e) {}
+          try { _ambRenderSampleLayers(E); } catch (e) {}
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+          if (typeof showToast === 'function') showToast('Track recorded — ' + bars + ' bar' + (bars === 1 ? '' : 's') + ', snapped + saved.');
+          close();
+        } catch (e) { statusEl.textContent = 'Could not process the recording. ' + ((e && e.message) || ''); recBtn.disabled = false; recBtn.textContent = '● Record'; recBtn.classList.remove('recording'); }
+      }
+      recBtn.addEventListener('click', () => { if (recording) { try { rec.stop(); } catch (e) {} } else begin(); });
     }
     // ---- Per-layer Freeze → loop (RETROACTIVE event capture) ----------------
     // The layer's generated notes (freq / params / step-div duration / time) are
@@ -24673,7 +24763,7 @@
           ['Pads & drones', [['bed', 'Bed'], ['texture', 'Texture'], ['drone', 'Drone']]],
           ['Melody', [['motif', 'Motif'], ['run', 'Riff'], ['arp', 'Arp']]],
           ['Rhythm', [['beat', 'Beat'], ['bass', 'Bass'], ['pedal', 'Pedal']]],
-          ['Sampler', [['sample', 'Sample']]],
+          ['Sampler', [['sample', 'Sample'], ['track', 'Track']]],
         ];
         const actions = [];
         FAMILIES.forEach((fam) => {
@@ -24681,6 +24771,7 @@
           fam[1].forEach((it) => {
             const type = it[0], name = it[1];
             if (type === 'sample') { actions.push({ label: name, fn: () => _ambAddSampleLayer(E) }); return; }
+            if (type === 'track') { actions.push({ label: '◉ ' + name + ' (record)', fn: () => _ambTrackRecord(E) }); return; }
             actions.push({ label: name, fn: () => _ambAddExtra(E, type) });
           });
         });

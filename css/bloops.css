@@ -9730,6 +9730,10 @@
       display: flex; align-items: center; justify-content: center;
     }
 
+    /* Record-a-Track modal — count-in + record; reuses the .sm-modal shell. */
+    .ambient-track-body { display: flex; flex-direction: column; gap: 12px; margin-bottom: 4px; }
+    .ambient-track-status { font-size: 0.82rem; color: #a0aec0; line-height: 1.5; }
+    .trk-rec.recording { background: rgba(229,62,62,0.28) !important; border-color: #e53e3e !important; color: #ffdada !important; }
     .sm-modal {
       background: #050510;
       border: 1px solid #2d2d3f;

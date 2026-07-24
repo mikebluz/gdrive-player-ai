@@ -782,8 +782,9 @@
         '<div class="ambient-orch ambient-area-write">' +
           '<span class="ambient-orch-lbl ambient-start-lbl" title="Area Evolve — every layer generates X bars, loops that exact pattern until it has played Y times, then evolves a fresh one. Cascades to all layers; a layer’s own Evolve control overrides (its Evolve wins, its Off opts out).">Evolve</span>' +
           '<span class="ambient-seg-row">' +
-            '<button type="button" class="ambient-seg" id="ambient-areawrite-off">Off</button>' +
-            '<button type="button" class="ambient-seg" id="ambient-areawrite-on">Evolve</button>' +
+            '<button type="button" class="ambient-seg" id="ambient-areawrite-off" title="Continuous — every cascading layer re-rolls a fresh pattern each cycle.">Continuous</button>' +
+            '<button type="button" class="ambient-seg" id="ambient-areawrite-on" title="Every N — every cascading layer freezes a pattern, repeats it, then evolves a fresh one.">Every N</button>' +
+            '<button type="button" class="ambient-seg" id="ambient-areawrite-lock" title="Locked — freeze every cascading layer on one roll and hold it forever (never re-rolls). A layer’s own Evolve control still overrides.">🔒 Locked</button>' +
           '</span>' +
           '<button type="button" class="ambient-seg" id="ambient-areawrite-vary" title="Vary — each cycle roll a random pattern length (bars) and repeat count (plays) inside the min–max ranges." style="display:none">~ Vary</button>' +
           '<span class="ambient-write-xy" id="ambient-areawrite-fixed" style="display:none">' +
@@ -24313,12 +24314,13 @@
         // One sync fn drives the row's segments + field visibility from cfg.writeAll;
         // it also refreshes every layer's Loop row (they show the ↳ area cue).
         const _awSync = () => {
-          const cfg = cfg0(); const w = cfg && cfg.writeAll; const on = !!(w && w.on), sto = !!(w && w.stochastic);
+          const cfg = cfg0(); const w = cfg && cfg.writeAll; const on = !!(w && w.on), sto = !!(w && w.stochastic), lock = !!(on && w.lock);
+          const evy = on && !lock;   // "Every N" = on but not Locked; Locked hides the X/Y detail (length is inert)
           const seg = (id, act) => { const el = G(id); if (el) el.classList.toggle('active', act); };
-          seg('ambient-areawrite-off', !on); seg('ambient-areawrite-on', on);
-          const vb = G('ambient-areawrite-vary'); if (vb) { vb.style.display = on ? '' : 'none'; vb.classList.toggle('active', sto); }
-          const fx = G('ambient-areawrite-fixed'); if (fx) fx.style.display = (on && !sto) ? '' : 'none';
-          const rg = G('ambient-areawrite-range'); if (rg) rg.style.display = (on && sto) ? '' : 'none';
+          seg('ambient-areawrite-off', !on); seg('ambient-areawrite-on', evy); seg('ambient-areawrite-lock', lock);
+          const vb = G('ambient-areawrite-vary'); if (vb) { vb.style.display = evy ? '' : 'none'; vb.classList.toggle('active', sto); }
+          const fx = G('ambient-areawrite-fixed'); if (fx) fx.style.display = (evy && !sto) ? '' : 'none';
+          const rg = G('ambient-areawrite-range'); if (rg) rg.style.display = (evy && sto) ? '' : 'none';
           if (w) {
             const setv = (id, v) => { const el = G(id); if (el && document.activeElement !== el) el.value = String(v); };
             setv('ambient-areawrite-x', w.bars); setv('ambient-areawrite-y', w.times);
@@ -24347,9 +24349,10 @@
           try { _ambFreezeSyncAll(E); } catch (e) {}
         };
         const _awCfg = () => { const cfg = cfg0(); if (!cfg) return null; if (!cfg.writeAll || typeof cfg.writeAll !== 'object') { cfg.writeAll = { on: false, bars: 2, times: 4 }; _ambNormalizeWriteObj(cfg, 'writeAll'); } return cfg.writeAll; };
-        const _awOn = G('ambient-areawrite-on'), _awOff = G('ambient-areawrite-off'), _awVary = G('ambient-areawrite-vary');
-        if (_awOn) _awOn.addEventListener('click', () => { _E = E; const w = _awCfg(); if (!w) return; w.on = true; _awSync(); persist(); });
-        if (_awOff) _awOff.addEventListener('click', () => { _E = E; const w = _awCfg(); if (!w) return; w.on = false; _awSync(); persist(); });
+        const _awOn = G('ambient-areawrite-on'), _awOff = G('ambient-areawrite-off'), _awLock = G('ambient-areawrite-lock'), _awVary = G('ambient-areawrite-vary');
+        if (_awOn) _awOn.addEventListener('click', () => { _E = E; const w = _awCfg(); if (!w) return; w.on = true; delete w.lock; _awSync(); persist(); });   // Every N
+        if (_awOff) _awOff.addEventListener('click', () => { _E = E; const w = _awCfg(); if (!w) return; w.on = false; delete w.lock; _awSync(); persist(); });   // Continuous
+        if (_awLock) _awLock.addEventListener('click', () => { _E = E; const w = _awCfg(); if (!w) return; w.on = true; w.lock = true; _awSync(); persist(); });   // Locked — cascade lock to all inheriting layers
         if (_awVary) _awVary.addEventListener('click', () => { _E = E; const w = _awCfg(); if (!w) return; w.stochastic = !w.stochastic; _awSync(); persist(); });
         [['x', 'bars', 32], ['y', 'times', 32], ['bmin', 'barsMin', 32], ['bmax', 'barsMax', 32], ['tmin', 'timesMin', 32], ['tmax', 'timesMax', 32]].forEach(pr => {
           const el = G('ambient-areawrite-' + pr[0]); if (!el) return;

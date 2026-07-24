@@ -11502,6 +11502,7 @@
     // layer tagged {trackLoop, trackBars}. NOTE: real alignment must be
     // ear-tested on a device; headless only proves the pipeline.
     const _TRK_NUDGE_LS = 'bloops-track-nudge-ms';
+    const _TRK_INPUT_LS = 'bloops-track-input-id';
     function _ambTrackRecord(E) {
       _E = E;
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof registerSampleFromBlob !== 'function' || typeof audioBufferToWav !== 'function') {
@@ -11517,6 +11518,7 @@
       ov.innerHTML = '<div class="sm-modal ambient-track-modal">' +
         '<div class="sm-title">Record a Track</div>' +
         '<div class="ambient-track-body">' +
+          '<div class="ambient-ctrl"><label>Input</label><select class="ambient-select trk-input"><option value="">Default input</option></select><span class="ambient-hint">mic / line-in device</span></div>' +
           '<div class="ambient-ctrl"><label>Count-in</label><select class="ambient-select trk-ci"><option value="0">Off</option><option value="1" selected>1 bar</option><option value="2">2 bars</option></select><span class="ambient-hint">clicks at ' + Math.round(bpm) + ' BPM before recording</span></div>' +
           '<div class="ambient-ctrl"><label title="Recording offset — extra ms to shift the take EARLIER on top of the measured output+input latency. If takes land late (draggy), increase; if early (rushed), decrease. Remembered.">Nudge</label><input type="number" class="trk-nudge" min="-200" max="200" step="1" value="' + Math.round(savedNudge) + '"><span class="ambient-hint">ms earlier (wired output recommended — Bluetooth adds 100–300 ms the OS under-reports)</span></div>' +
           '<div class="ambient-track-status">Records your default audio input (mic / line-in). Press ● Record → after the count-in, play → ■ Stop. The loop snaps to the nearest bar.</div>' +
@@ -11542,6 +11544,35 @@
       const close = () => { try { if (ctId) clearTimeout(ctId); } catch (e) {} try { if (rec && rec.state === 'recording') rec.stop(); } catch (e) {} teardownTap(); stopStream(); try { ov.remove(); } catch (e) {} };
       q('.trk-cancel').addEventListener('click', close);
       ov.addEventListener('click', e => { if (e.target === ov) close(); });
+      // ---- Input picker: enumerate audioinput devices. Labels are blank until
+      // mic permission is granted, so on first-ever use we open (and instantly
+      // stop) a throwaway default stream to unlock them — on a granted browser
+      // this is silent. Last choice remembered; a vanished device falls back to
+      // Default. Repopulates live if devices change while the modal is open.
+      const inputSel = q('.trk-input');
+      async function fillInputs() {
+        try {
+          let devs = await navigator.mediaDevices.enumerateDevices();
+          let ins = devs.filter(d => d.kind === 'audioinput');
+          if (ins.length && ins.every(d => !d.label)) {
+            try { const s0 = await navigator.mediaDevices.getUserMedia({ audio: true }); s0.getTracks().forEach(t => t.stop()); } catch (e) {}
+            devs = await navigator.mediaDevices.enumerateDevices();
+            ins = devs.filter(d => d.kind === 'audioinput');
+          }
+          let saved = ''; try { saved = localStorage.getItem(_TRK_INPUT_LS) || ''; } catch (e) {}
+          const cur = inputSel.value || saved;
+          inputSel.innerHTML = '<option value="">Default input</option>' + ins.filter(d => d.deviceId && d.deviceId !== 'default')
+            .map((d, i) => '<option value="' + _ambEscText(d.deviceId) + '">' + _ambEscText(d.label || ('Input ' + (i + 1))) + '</option>').join('');
+          if (cur && Array.from(inputSel.options).some(o => o.value === cur)) inputSel.value = cur;
+        } catch (e) {}
+      }
+      fillInputs();
+      const onDevChange = () => {
+        if (!document.body.contains(ov)) { try { navigator.mediaDevices.removeEventListener('devicechange', onDevChange); } catch (e) {} return; }
+        try { fillInputs(); } catch (e) {}
+      };
+      try { navigator.mediaDevices.addEventListener('devicechange', onDevChange); } catch (e) {}
+      inputSel.addEventListener('change', () => { try { localStorage.setItem(_TRK_INPUT_LS, inputSel.value); } catch (e) {} });
       const click = (t, accent) => { try { const o = ac.createOscillator(), g = ac.createGain(); o.type = 'square'; o.frequency.value = accent ? 1760 : 1100; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(accent ? 0.4 : 0.26, t + 0.002); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05); o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 0.07); } catch (e) {} };
       // The worklet tap: batches raw input PCM (up to 2 ch) and posts it with
       // the context-clock frame of the first sample — capture timing is exact.
@@ -11577,8 +11608,14 @@
       async function begin() {
         const ciBars = Math.max(0, Math.min(2, parseInt(q('.trk-ci').value, 10) || 0));
         saveNudge();
-        try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }); }
-        catch (e) { try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e2) { statusEl.textContent = 'Microphone permission denied.'; return; } }
+        // Chosen input (exact) → clean default → bare default. A device that
+        // vanished since the picker filled just falls back to Default.
+        const devId = inputSel.value || '';
+        const clean = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+        stream = null;
+        if (devId) { try { stream = await navigator.mediaDevices.getUserMedia({ audio: { ...clean, deviceId: { exact: devId } } }); } catch (e) {} }
+        if (!stream) { try { stream = await navigator.mediaDevices.getUserMedia({ audio: clean }); }
+          catch (e) { try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e2) { statusEl.textContent = 'Microphone permission denied.'; return; } } }
         usingTap = await beginTap();
         if (!usingTap) {
           // Fallback: v1 MediaRecorder (compensation still applied at decode).

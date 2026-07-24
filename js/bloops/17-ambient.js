@@ -1401,6 +1401,10 @@
       if (typeof w !== 'object') { delete host[field]; return; }
       w.on = w.on === true;
       w.optOut = w.optOut === true;
+      // Evolve = Locked (folds the old Hold into the Evolve cadence axis): capture
+      // ONE natural unit and hold it forever — a Write loop whose thaw is disabled.
+      // Additive + off by default, so legacy projects/invariants are untouched.
+      w.lock = w.lock === true;
       w.bars = Math.max(1, Math.min(32, w.bars | 0)) || 2;
       w.times = Math.max(1, Math.min(32, w.times | 0)) || 4;
       // STOCHASTIC Write: vary the phrase length + repeat count each cycle,
@@ -12110,6 +12114,8 @@
         // Respect a USER freeze / recording / foreign lock — stand down until it clears.
         if ((st.frozen || st.recording || st.pendingFreezeAt != null) && !st._write) return;
         if (st.frozen && st._write) {
+          // Evolve = Locked: replay the captured unit FOREVER — never arm a thaw.
+          if (w.lock) { st.pendingThawAt = null; st._writeRearmAt = null; return; }
           // Replaying our phrase: schedule the thaw once — anchor (= replay start,
           // after 1 live play) + (Y−1) more plays → each phrase plays Y times total.
           // The play-count was decided AT ARM (st._writeNT) so a 1-play cycle never
@@ -12136,6 +12142,16 @@
         }
         if (bStart < now - 0.05) bStart = now + 0.05;   // stale re-arm (long pause) → start fresh
         st._writeCyc = (st._writeCyc | 0) + 1;   // new cycle → new seeded structure
+        // Evolve = Locked: capture exactly ONE natural unit (not the seq/stochastic/
+        // X×Y structure) and freeze it. nT=2 just forces the freeze; the replay
+        // branch above then holds it forever (never thaws). Too-long unit → stay live.
+        if (w.lock) {
+          let _lb = Math.max(1, w.bars | 0);
+          try { const _P = _ambLayerPeriodSec(E, key, L, cfg); if (_P > 0.05 && _P <= 31) _lb = Math.max(1, Math.ceil((_P - 0.001) / barSec)); } catch (e) {}
+          let _nb = _ambWriteEffBars(cfg, _lb, 2);
+          if (_nb * barSec > 31) { st._write = true; st._writeNT = 1; st._writeRearmAt = bStart + _nb * barSec; return; }
+          st._writeNT = 2; _ambBarLockArm(E, key, bStart, _nb * barSec); st._write = true; return;
+        }
         // Write SEQUENCE: tuple k drives the k-th write cycle (looping the list).
         // A sequence supersedes both the single bars×times AND stochastic Vary —
         // the list IS the structure.
@@ -18080,6 +18096,7 @@
       if (mode === 'off') return 'Off';
       if (mode === 'rec') return '◉ Rec';
       if (mode === 'hold') return '❄ Hold';
+      if (mode === 'locked') return (inherited ? '↳ ' : '') + '🔒 Locked';
       const sto = !!(effW && effW.stochastic);
       const seqOn = !!(effW && Array.isArray(effW.seq) && effW.seq.length);
       let len;
@@ -18091,7 +18108,7 @@
     function _ambLoopCtrl(inst) {
       const w = (inst && inst.write && typeof inst.write === 'object') ? inst.write : null;
       const on = !!(w && w.on);
-      const txt = _ambLoopStateText(on ? 'write' : 'off', w, !!(inst && inst.loopVar === 'live'), false);
+      const txt = _ambLoopStateText(on ? (w.lock ? 'locked' : 'write') : 'off', w, !!(inst && inst.loopVar === 'live'), false);
       return '<div class="ambient-ctrl ambient-loop-ctrl" title="Evolve is edited in the ⏱ Sched tab (the per-layer timeline). This badge shows the current setting; the header ❄ freezes a loop manually (Hold).">' +
         '<label>Evolve</label>' +
         '<span class="ambient-loop-badge' + (on ? ' on' : '') + '" data-loopbadge="1">' + txt + '</span>' +
@@ -18111,7 +18128,7 @@
         const inherited = !!(effW && !(L.write && L.write.on));   // riding the Area Write
         const writing = !!effW;
         const holding = !writing && !!(fs && (fs.frozen || fs.recording));
-        const mode = writing ? 'write' : (holding ? ((fs && fs.recording) ? 'rec' : 'hold') : 'off');
+        const mode = writing ? (effW.lock ? 'locked' : 'write') : (holding ? ((fs && fs.recording) ? 'rec' : 'hold') : 'off');
         const badge = row.querySelector('.ambient-loop-badge');
         if (badge) { badge.classList.toggle('on', writing || holding); badge.textContent = _ambLoopStateText(mode, effW, L.loopVar === 'live', inherited); }
       });
@@ -19047,7 +19064,8 @@
             })();
         // Loop line (the phrase structure) — its own row so cycles×plays + chips breathe.
         const stoW = !!(w && w.stochastic);   // ~ Vary: random length/plays in a min–max range each cycle
-        const phraseHtml = '<span class="ambient-sched-xy"' + (wOn ? '' : ' style="display:none"') + '>' +
+        const wLock = !!(w && w.on && w.lock);   // Evolve = Locked: freeze one unit, hold forever (X×Y inert)
+        const phraseHtml = '<span class="ambient-sched-xy"' + ((wOn && !wLock) ? '' : ' style="display:none"') + '>' +
             (stoW
               ? ('<span class="ambient-sched-lbl">bars</span>' +
                  '<input type="number" class="ambient-sched-bmin" min="1" max="32" step="1" value="' + ((w && w.barsMin) || 1) + '" title="Min phrase length (bars)">–' +
@@ -19067,12 +19085,17 @@
               '<span class="ambient-sched-name" title="' + esc(name) + '">' + esc(name) + '</span>' +
               '<span class="ambient-sched-timing">' + unitHtml + resHtml + '</span>' +
             '</div>' +
-            // Loop line: on/off + phrase (cycles × plays = bars) + tuple chips.
-            '<div class="ambient-sched-loopline' + (wOn ? ' on' : '') + '" title="Evolve — generate a fresh phrase, repeat it, then evolve a new one.">' +
-              '<button type="button" class="ambient-seg ambient-sched-writebtn' + (wOn ? ' active' : '') + '">' + (wOn ? '⟳ Evolve on' : 'Evolve off') + '</button>' +
-              (wOn ? ('<button type="button" class="ambient-seg ambient-sched-vary' + (stoW ? ' active' : '') + '" title="Vary — each cycle roll a random phrase length (bars) and repeat count (plays) inside the min–max ranges, so the layer loops in evolving chunks.">~ Vary</button>' +
+            // Evolve line — the CADENCE axis as one 3-point control (Continuous /
+            // Every N / Locked), then the Every-N detail (Vary/Live + phrase X×Y).
+            '<div class="ambient-sched-loopline' + (wOn ? ' on' : '') + (wLock ? ' locked' : '') + '" title="Evolve — how OFTEN the layer re-rolls: Continuous (every cycle) · Every N (freeze a phrase, repeat it, then evolve a fresh one) · Locked (freeze one roll, hold forever).">' +
+              '<span class="ambient-sched-evolve" role="group" aria-label="Evolve cadence">' +
+                '<button type="button" class="ambient-seg ambient-sched-ev' + (!wOn ? ' active' : '') + '" data-ev="cont" title="Continuous — re-roll a fresh pattern every cycle (no freezing).">Continuous</button>' +
+                '<button type="button" class="ambient-seg ambient-sched-ev' + ((wOn && !wLock) ? ' active' : '') + '" data-ev="every" title="Every N — freeze a phrase, repeat it N plays, then evolve a fresh one.">Every N</button>' +
+                '<button type="button" class="ambient-seg ambient-sched-ev' + (wLock ? ' active' : '') + '" data-ev="lock" title="Locked — freeze one roll and hold it forever (never re-rolls). Persists across reload.">🔒 Locked</button>' +
+              '</span>' +
+              ((wOn && !wLock) ? ('<button type="button" class="ambient-seg ambient-sched-vary' + (stoW ? ' active' : '') + '" title="Vary — each cycle roll a random phrase length (bars) and repeat count (plays) inside the min–max ranges, so the layer loops in evolving chunks.">~ Vary</button>' +
                      '<button type="button" class="ambient-seg ambient-sched-live' + ((layer.loopVar === 'live') ? ' active' : '') + '" title="Live — every loop pass RE-PERFORMS the phrase: Humanize / Vel var / Ornament re-roll from the layer’s current sliders (structural variance stays as written).">⚡ Live</button>') : '') +
-              phraseHtml + (stoW ? '' : chipsHtml) +
+              ((wOn && !wLock) ? (phraseHtml + (stoW ? '' : chipsHtml)) : (wLock ? '<span class="ambient-sched-lbl snap" title="Locked captures one natural unit and repeats it verbatim.">1 unit · held</span>' : '')) +
             '</div>' +
           '</div>' +
           blocksHtml +
@@ -23264,12 +23287,14 @@
               if (typeof persistWorkspace === 'function') persistWorkspace();
               return;
             }
-            const btn = ev.target.closest('.ambient-sched-writebtn'); if (!btn) return;
-            const t = _schedLayer(btn); if (!t || !t.L) return;
+            const evb = ev.target.closest('.ambient-sched-ev'); if (!evb) return;
+            const t = _schedLayer(evb); if (!t || !t.L) return;
             if (!t.L.write || typeof t.L.write !== 'object') t.L.write = { on: false, bars: 2, times: 4 };
-            t.L.write.on = !t.L.write.on;
-            if (t.L.write.on) delete t.L.write.optOut;
-            else { const c = E.getCfg(); if (c && c.writeAll && c.writeAll.on) t.L.write.optOut = true; }   // explicit off opts out of an Area Write
+            const w = t.L.write, mode = evb.dataset.ev;
+            // Evolve cadence: Continuous = off · Every N = on (auto-rewrite) · Locked = on + lock.
+            if (mode === 'lock') { w.on = true; w.lock = true; delete w.optOut; }
+            else if (mode === 'every') { w.on = true; delete w.lock; delete w.optOut; }
+            else { w.on = false; delete w.lock; const c = E.getCfg(); if (c && c.writeAll && c.writeAll.on) w.optOut = true; }   // explicit Continuous opts out of an Area Evolve
             try { _ambFreezeSyncAll(E); } catch (e) {}
             _ambRenderScheduler(E);
             if (typeof persistWorkspace === 'function') persistWorkspace();

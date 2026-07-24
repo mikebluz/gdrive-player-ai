@@ -6,10 +6,14 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "desktop": "electron electron/main.cjs",
     "test:golden": "node test/golden-render.js"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
     "express": "^4.19.0"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11"
   }
 }

@@ -11489,25 +11489,36 @@
       finally { _AL.busy = false; }
     }
     // ---- "Track" layer — record a loop from the audio INPUT, tempo-locked -----
-    // Reuses the resampler's WAV encoder + sample persistence (registerSampleFromBlob
-    // → IndexedDB, survives reload). Free-record with an optional count-in, then SNAP
-    // the length to the nearest whole bar, trim to it, and store as a looping (padLoop)
-    // sample layer tagged {trackLoop, trackBars}. NOTE: the audio/record path can't be
-    // verified headless — test recording + reload on a real input device.
+    // v2: SAMPLE-ACCURATE capture via an AudioWorklet tap on the getUserMedia
+    // stream (raw PCM on the context clock — no MediaRecorder start jitter, no
+    // Opus encode/decode padding), with LATENCY COMPENSATION: the performer
+    // hears the backing outputLatency late and their sound arrives inputLatency
+    // late, so the take is shifted earlier by (outputLatency + inputLatency +
+    // nudge) before the bar snap. The Nudge (ms) field is the classic DAW
+    // recording-offset knob (persisted). Falls back to the v1 MediaRecorder
+    // path (with the same constant compensation trimmed off the decoded start)
+    // if AudioWorklet is unavailable. Free-record + snap-to-nearest-bar → WAV →
+    // registerSampleFromBlob (IndexedDB, survives reload) → a looping sample
+    // layer tagged {trackLoop, trackBars}. NOTE: real alignment must be
+    // ear-tested on a device; headless only proves the pipeline.
+    const _TRK_NUDGE_LS = 'bloops-track-nudge-ms';
     function _ambTrackRecord(E) {
       _E = E;
-      if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof registerSampleFromBlob !== 'function' || typeof audioBufferToWav !== 'function') {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof registerSampleFromBlob !== 'function' || typeof audioBufferToWav !== 'function') {
         if (typeof showToast === 'function') showToast('Recording is not available here.'); return;
       }
       let ac; try { ac = Tone.getContext().rawContext; } catch (e) { ac = null; }
       if (!ac) { if (typeof showToast === 'function') showToast('Audio engine not ready.'); return; }
       const bpm = _ambBpm(), beatSec = 60 / Math.max(20, bpm), barSec = beatSec * 4;
-      let stream = null, rec = null, chunks = [], recording = false, ctId = null;
+      let stream = null, rec = null, blobChunks = [], recording = false, ctId = null;
+      let tapNode = null, srcNode = null, tapSink = null, pcm = [], pcmChans = 1, firstFrame = -1, armAt = 0, stopAt = 0, usingTap = false;
+      let savedNudge = 0; try { savedNudge = parseFloat(localStorage.getItem(_TRK_NUDGE_LS)) || 0; } catch (e) {}
       const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-track-rec-ov';
       ov.innerHTML = '<div class="sm-modal ambient-track-modal">' +
         '<div class="sm-title">Record a Track</div>' +
         '<div class="ambient-track-body">' +
           '<div class="ambient-ctrl"><label>Count-in</label><select class="ambient-select trk-ci"><option value="0">Off</option><option value="1" selected>1 bar</option><option value="2">2 bars</option></select><span class="ambient-hint">clicks at ' + Math.round(bpm) + ' BPM before recording</span></div>' +
+          '<div class="ambient-ctrl"><label title="Recording offset — extra ms to shift the take EARLIER on top of the measured output+input latency. If takes land late (draggy), increase; if early (rushed), decrease. Remembered.">Nudge</label><input type="number" class="trk-nudge" min="-200" max="200" step="1" value="' + Math.round(savedNudge) + '"><span class="ambient-hint">ms earlier (wired output recommended — Bluetooth adds 100–300 ms the OS under-reports)</span></div>' +
           '<div class="ambient-track-status">Records your default audio input (mic / line-in). Press ● Record → after the count-in, play → ■ Stop. The loop snaps to the nearest bar.</div>' +
         '</div>' +
         '<div class="sm-footer"><button type="button" class="sm-cancel trk-cancel">Cancel</button>' +
@@ -11515,66 +11526,172 @@
       document.body.appendChild(ov); ov.style.setProperty('display', 'flex', 'important');
       const q = s => ov.querySelector(s);
       const statusEl = q('.ambient-track-status'), recBtn = q('.trk-rec');
+      // Compensation: measured output latency (what the performer HEARS late) +
+      // input-path latency (reported when available, else a ~10 ms estimate) +
+      // the user's nudge. The take is shifted EARLIER by this much.
+      const compSec = () => {
+        const lout = (Number.isFinite(ac.outputLatency) && ac.outputLatency > 0) ? ac.outputLatency : (ac.baseLatency || 0);
+        let lin = 0.01;
+        try { const st = stream && stream.getAudioTracks()[0].getSettings(); if (st && Number.isFinite(st.latency) && st.latency > 0) lin = st.latency; } catch (e) {}
+        const nudge = (parseFloat(q('.trk-nudge').value) || 0) / 1000;
+        return Math.max(0, lout + lin + nudge);
+      };
+      const saveNudge = () => { try { localStorage.setItem(_TRK_NUDGE_LS, String(parseFloat(q('.trk-nudge').value) || 0)); } catch (e) {} };
       const stopStream = () => { try { stream && stream.getTracks().forEach(t => t.stop()); } catch (e) {} stream = null; };
-      const close = () => { try { if (ctId) clearTimeout(ctId); } catch (e) {} try { if (rec && rec.state === 'recording') rec.stop(); } catch (e) {} stopStream(); try { ov.remove(); } catch (e) {} };
+      const teardownTap = () => { try { if (srcNode) srcNode.disconnect(); } catch (e) {} try { if (tapNode) tapNode.disconnect(); } catch (e) {} try { if (tapSink) tapSink.disconnect(); } catch (e) {} srcNode = tapNode = tapSink = null; };
+      const close = () => { try { if (ctId) clearTimeout(ctId); } catch (e) {} try { if (rec && rec.state === 'recording') rec.stop(); } catch (e) {} teardownTap(); stopStream(); try { ov.remove(); } catch (e) {} };
       q('.trk-cancel').addEventListener('click', close);
       ov.addEventListener('click', e => { if (e.target === ov) close(); });
       const click = (t, accent) => { try { const o = ac.createOscillator(), g = ac.createGain(); o.type = 'square'; o.frequency.value = accent ? 1760 : 1100; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(accent ? 0.4 : 0.26, t + 0.002); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05); o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 0.07); } catch (e) {} };
+      // The worklet tap: batches raw input PCM (up to 2 ch) and posts it with
+      // the context-clock frame of the first sample — capture timing is exact.
+      const TAP_SRC = 'class BloopsTrackTap extends AudioWorkletProcessor{constructor(){super();this._stop=false;this._buf=null;this._fill=0;this._ch=1;this.port.onmessage=e=>{if(e.data==="stop"){this._stop=true;this._flush();this.port.postMessage({t:"done"});}};}_flush(){if(this._buf&&this._fill>0){const out=this._buf.map(b=>b.slice(0,this._fill));this.port.postMessage({t:"d",ch:out.map(a=>a.buffer)},out.map(a=>a.buffer));}if(this._buf){this._buf=this._buf.map(()=>new Float32Array(4096));}this._fill=0;}process(inputs){if(this._stop)return false;const inp=inputs[0];if(!inp||!inp.length||!inp[0].length)return true;if(this._buf===null){this._ch=Math.min(2,inp.length);this._buf=[];for(let c=0;c<this._ch;c++)this._buf.push(new Float32Array(4096));this.port.postMessage({t:"start",frame:currentFrame,sr:sampleRate,ch:this._ch});}const n=inp[0].length;let off=0;while(off<n){const take=Math.min(n-off,4096-this._fill);for(let c=0;c<this._ch;c++){const src=inp[c]||inp[0];this._buf[c].set(src.subarray(off,off+take),this._fill);}this._fill+=take;off+=take;if(this._fill>=4096)this._flush();}return true;}}registerProcessor("bloops-track-tap",BloopsTrackTap);';
+      async function beginTap() {
+        if (!ac.audioWorklet) return false;
+        try {
+          if (!ac._trkTapLoaded) { await ac.audioWorklet.addModule(URL.createObjectURL(new Blob([TAP_SRC], { type: 'text/javascript' }))); ac._trkTapLoaded = true; }
+          // Tone's rawContext is a standardized-audio-context WRAPPER — the
+          // global `new AudioWorkletNode(ac,…)` rejects it ("parameter 1 is not
+          // of type BaseAudioContext"). Use the context factory (same pattern
+          // as 03b-core-voices' ctx.createAudioWorkletNode), native as fallback.
+          const toneCtx = (typeof Tone !== 'undefined' && Tone.getContext) ? Tone.getContext() : null;
+          tapNode = (toneCtx && typeof toneCtx.createAudioWorkletNode === 'function')
+            ? toneCtx.createAudioWorkletNode('bloops-track-tap', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] })
+            : new AudioWorkletNode(ac, 'bloops-track-tap', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+          pcm = []; firstFrame = -1; pcmChans = 1;
+          tapNode.port.onmessage = (e) => {
+            const m = e.data;
+            if (m.t === 'start') { firstFrame = m.frame; pcmChans = m.ch; }
+            else if (m.t === 'd') pcm.push(m.ch.map(b => new Float32Array(b)));
+            else if (m.t === 'done') finishTap();
+          };
+          srcNode = ac.createMediaStreamSource(stream);
+          srcNode.connect(tapNode);
+          // A subgraph not reaching the destination isn't guaranteed to render —
+          // pull the tap through a MUTED gain so process() actually runs.
+          tapSink = ac.createGain(); tapSink.gain.value = 0;
+          tapNode.connect(tapSink); tapSink.connect(ac.destination);
+          return true;
+        } catch (e) { teardownTap(); return false; }
+      }
       async function begin() {
         const ciBars = Math.max(0, Math.min(2, parseInt(q('.trk-ci').value, 10) || 0));
+        saveNudge();
         try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }); }
         catch (e) { try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e2) { statusEl.textContent = 'Microphone permission denied.'; return; } }
-        const prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'];
-        const mime = prefs.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
-        try { rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined); }
-        catch (e) { statusEl.textContent = 'Recording is not supported here.'; stopStream(); return; }
-        chunks = [];
-        rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
-        rec.onstop = () => finish();
+        usingTap = await beginTap();
+        if (!usingTap) {
+          // Fallback: v1 MediaRecorder (compensation still applied at decode).
+          if (typeof MediaRecorder === 'undefined') { statusEl.textContent = 'Recording is not supported here.'; stopStream(); return; }
+          const prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'];
+          const mime = prefs.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
+          try { rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined); }
+          catch (e) { statusEl.textContent = 'Recording is not supported here.'; stopStream(); return; }
+          blobChunks = [];
+          rec.ondataavailable = e => { if (e.data && e.data.size) blobChunks.push(e.data); };
+          rec.onstop = () => finishRec();
+        }
         recBtn.disabled = true;
         const t0 = ac.currentTime + 0.15, beats = ciBars * 4;
         for (let i = 0; i < beats; i++) click(t0 + i * beatSec, i % 4 === 0);
+        armAt = ciBars ? (t0 + beats * beatSec) : 0;   // 0 = no anchor (armed on the fly below)
         if (ciBars) statusEl.textContent = 'Count-in…';
-        ctId = setTimeout(() => { try { rec.start(); recording = true; recBtn.disabled = false; recBtn.textContent = '■ Stop'; recBtn.classList.add('recording'); statusEl.textContent = 'Recording — play, then ■ Stop.'; } catch (e) { statusEl.textContent = 'Could not start recording.'; } }, ciBars ? (0.15 + beats * beatSec) * 1000 : 80);
-      }
-      async function finish() {
-        recording = false; stopStream(); recBtn.disabled = true; statusEl.textContent = 'Processing…';
-        try {
-          const blob = new Blob(chunks, { type: (rec && rec.mimeType) || 'audio/webm' });
-          const raw = await ac.decodeAudioData(await blob.arrayBuffer());
-          const bars = Math.max(1, Math.round(raw.duration / barSec));                 // free-record → SNAP to nearest bar
-          const wantLen = Math.round(bars * barSec * raw.sampleRate);
-          const out = ac.createBuffer(raw.numberOfChannels, wantLen, raw.sampleRate);   // trim/pad to exactly N bars
-          for (let c = 0; c < raw.numberOfChannels; c++) { const src = raw.getChannelData(c), dst = out.getChannelData(c), n = Math.min(src.length, wantLen); for (let i = 0; i < n; i++) dst[i] = src[i]; }
-          const wav = audioBufferToWav(out);
-          let stamp = 'take'; try { stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(11, 19); } catch (e) {}
-          const reg = await registerSampleFromBlob(wav, 'Track ' + stamp, { padLoop: true });   // persist (IndexedDB) + looping voice
-          if (!reg || !reg.id) throw new Error('register failed');
-          _ambSendSampleToInstance(E, reg.id, {});
+        ctId = setTimeout(() => {
           try {
-            const cfg = E.getCfg();
-            // Match by the freshly-registered sampleId — _ambSampleList orders
-            // extras BEFORE legacy samples, so [length-1] isn't reliably ours.
-            const L = _ambSampleList(cfg).find(s => s && s.sampleId === reg.id);
-            if (L) {
-              const durMs = Math.round(bars * barSec * 1000);
-              L.trackLoop = true; L.trackBars = bars;
-              L.name = 'Track · ' + bars + ' bar' + (bars === 1 ? '' : 's');
-              // Tempo-locked LOOP with NO engine change: play the WHOLE buffer (no
-              // chop/stutter) and set the retrigger interval == the buffer length, so
-              // the existing sample scheduler tiles it seamlessly bar-to-bar. The
-              // recorded audio is fixed-length, so this locks to the RECORD tempo.
-              L.chop = 1; L.stutter = 1; L.order = 'forward'; L.pitch = 0; L.reverse = 0;
-              L.intervalMs = durMs; L.lengthMs = durMs;
-            }
-          } catch (e) {}
-          try { _ambRenderSampleLayers(E); } catch (e) {}
-          if (typeof persistWorkspace === 'function') persistWorkspace();
-          if (typeof showToast === 'function') showToast('Track recorded — ' + bars + ' bar' + (bars === 1 ? '' : 's') + ', snapped + saved.');
-          close();
-        } catch (e) { statusEl.textContent = 'Could not process the recording. ' + ((e && e.message) || ''); recBtn.disabled = false; recBtn.textContent = '● Record'; recBtn.classList.remove('recording'); }
+            if (!usingTap) rec.start();
+            if (!armAt) armAt = ac.currentTime;   // no count-in → anchor at the moment recording arms
+            recording = true; recBtn.disabled = false; recBtn.textContent = '■ Stop'; recBtn.classList.add('recording');
+            const cms = Math.round(compSec() * 1000);
+            statusEl.textContent = 'Recording (' + (usingTap ? 'sample-accurate' : 'compatibility mode') + ', compensating ~' + cms + ' ms) — play, then ■ Stop.';
+          } catch (e) { statusEl.textContent = 'Could not start recording.'; }
+        }, ciBars ? (0.15 + beats * beatSec) * 1000 : 80);
       }
-      recBtn.addEventListener('click', () => { if (recording) { try { rec.stop(); } catch (e) {} } else begin(); });
+      // Shared tail: buffer (already sliced/compensated) → snap → WAV → layer.
+      async function commitBuffer(raw, exactDurSec) {
+        const bars = Math.max(1, Math.round((exactDurSec != null ? exactDurSec : raw.duration) / barSec));
+        const wantLen = Math.round(bars * barSec * raw.sampleRate);
+        const out = ac.createBuffer(raw.numberOfChannels, wantLen, raw.sampleRate);
+        for (let c = 0; c < raw.numberOfChannels; c++) { const src = raw.getChannelData(c), dst = out.getChannelData(c), n = Math.min(src.length, wantLen); for (let i = 0; i < n; i++) dst[i] = src[i]; }
+        const wav = audioBufferToWav(out);
+        let stamp = 'take'; try { stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(11, 19); } catch (e) {}
+        const reg = await registerSampleFromBlob(wav, 'Track ' + stamp, { padLoop: true });   // persist (IndexedDB) + looping voice
+        if (!reg || !reg.id) throw new Error('register failed');
+        _ambSendSampleToInstance(E, reg.id, {});
+        try {
+          const cfg = E.getCfg();
+          // Match by the freshly-registered sampleId — _ambSampleList orders
+          // extras BEFORE legacy samples, so [length-1] isn't reliably ours.
+          const L = _ambSampleList(cfg).find(s => s && s.sampleId === reg.id);
+          if (L) {
+            const durMs = Math.round(bars * barSec * 1000);
+            L.trackLoop = true; L.trackBars = bars;
+            L.name = 'Track · ' + bars + ' bar' + (bars === 1 ? '' : 's');
+            // Tempo-locked LOOP with NO engine change: play the WHOLE buffer (no
+            // chop/stutter) and set the retrigger interval == the buffer length, so
+            // the existing sample scheduler tiles it seamlessly bar-to-bar. The
+            // recorded audio is fixed-length, so this locks to the RECORD tempo.
+            L.chop = 1; L.stutter = 1; L.order = 'forward'; L.pitch = 0; L.reverse = 0;
+            L.intervalMs = durMs; L.lengthMs = durMs;
+          }
+        } catch (e) {}
+        try { _ambRenderSampleLayers(E); } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        if (typeof showToast === 'function') showToast('Track recorded — ' + bars + ' bar' + (bars === 1 ? '' : 's') + ', snapped + saved.');
+        close();
+      }
+      const failUI = (e) => { statusEl.textContent = 'Could not process the recording. ' + ((e && e.message) || ''); recBtn.disabled = false; recBtn.textContent = '● Record'; recBtn.classList.remove('recording'); };
+      // Worklet path finalize: slice the PCM from (armAt + comp) — the sample
+      // stamped there is the one the performer MEANT on the grid's downbeat.
+      async function finishTap() {
+        teardownTap(); stopStream(); statusEl.textContent = 'Processing…';
+        try {
+          if (firstFrame < 0 || !pcm.length) throw new Error('no audio captured');
+          const sr = ac.sampleRate, chans = Math.max(1, pcmChans | 0);
+          let total = 0; pcm.forEach(b => { total += b[0].length; });
+          const firstTime = firstFrame / sr;
+          const sliceStart = Math.max(0, Math.round(((armAt + compSec()) - firstTime) * sr));
+          const avail = Math.max(0, total - sliceStart);
+          if (avail < sr * 0.25) throw new Error('recording too short');
+          const raw = ac.createBuffer(chans, avail, sr);
+          const dsts = []; for (let c = 0; c < chans; c++) dsts.push(raw.getChannelData(c));
+          let w = 0;   // write cursor into raw (post-slice)
+          let rdo = 0; // read offset across concatenated chunks
+          for (const b of pcm) {
+            const n = b[0].length;
+            const from = Math.max(0, sliceStart - rdo);
+            if (from < n) {
+              const count = Math.min(n - from, avail - w);
+              if (count > 0) { for (let c = 0; c < chans; c++) { const src = b[Math.min(c, b.length - 1)]; dsts[c].set(src.subarray(from, from + count), w); } w += count; }
+            }
+            rdo += n;
+            if (w >= avail) break;
+          }
+          pcm = [];
+          const exactDur = Math.max(0, stopAt - armAt);   // musical duration on the intent grid
+          await commitBuffer(raw, exactDur > 0.25 ? exactDur : null);
+        } catch (e) { pcm = []; failUI(e); }
+      }
+      // Fallback finalize: decode the MediaRecorder blob, trim the constant
+      // compensation off the front (start jitter can't be removed — that's why
+      // the worklet path exists), then snap.
+      async function finishRec() {
+        stopStream(); statusEl.textContent = 'Processing…';
+        try {
+          const blob = new Blob(blobChunks, { type: (rec && rec.mimeType) || 'audio/webm' });
+          const dec = await ac.decodeAudioData(await blob.arrayBuffer());
+          const skip = Math.min(dec.length - 1, Math.round(compSec() * dec.sampleRate));
+          const raw = ac.createBuffer(dec.numberOfChannels, Math.max(1, dec.length - skip), dec.sampleRate);
+          for (let c = 0; c < dec.numberOfChannels; c++) raw.getChannelData(c).set(dec.getChannelData(c).subarray(skip));
+          await commitBuffer(raw, null);
+        } catch (e) { failUI(e); }
+      }
+      recBtn.addEventListener('click', () => {
+        if (!recording) { begin(); return; }
+        recording = false; recBtn.disabled = true; stopAt = ac.currentTime;
+        saveNudge();
+        if (usingTap) { try { tapNode.port.postMessage('stop'); } catch (e) { finishTap(); } }
+        else { try { rec.stop(); } catch (e) {} }
+      });
     }
     // ---- Per-layer Freeze → loop (RETROACTIVE event capture) ----------------
     // The layer's generated notes (freq / params / step-div duration / time) are

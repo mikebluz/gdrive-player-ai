@@ -833,12 +833,79 @@
     };
     const _lsLabel = (k) => _LS_LABELS[k] || k;
     const _lsMB = (b) => (b / 1048576).toFixed(2);
-    // Full backup → a downloadable JSON of EVERY localStorage key, so the user
-    // can clean up (or reset) and lose nothing (restore re-imports it).
-    function _lsDownloadBackup() {
-      const dump = {};
-      try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); dump[k] = localStorage.getItem(k); } } catch (e) {}
-      let url; try { url = URL.createObjectURL(new Blob([JSON.stringify(dump)], { type: 'application/json' })); } catch (e) { return false; }
+    // Full backup (v2) → a downloadable JSON of EVERY localStorage key PLUS the
+    // imported-sample blobs ('bloops-imported-samples' IndexedDB — imported
+    // files, captured recordings, hums, Track takes), base64-encoded. This is
+    // the complete workspace: restoring it into a FRESH browser profile (or the
+    // Electron / phone shell, which each have their own empty storage) brings
+    // everything back. The Drive-track cache ('gdrive-player-blobs') is
+    // deliberately excluded — it re-downloads. Restore accepts BOTH v2 and the
+    // old flat localStorage-only format. Direct IndexedDB access on purpose (no
+    // dependency on 04's sampler-registry closures; restore reloads the page,
+    // and boot's loadImportedSamples registers the restored records).
+    const _BK_DB = 'bloops-imported-samples', _BK_STORE = 'blobs';
+    function _bkOpenDb() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(_BK_DB, 1);
+        req.onupgradeneeded = (e) => { const db = e.target.result; if (!db.objectStoreNames.contains(_BK_STORE)) db.createObjectStore(_BK_STORE, { keyPath: 'id' }); };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+    const _bkBlobToB64 = (blob) => new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => { const s = String(r.result); resolve(s.slice(s.indexOf(',') + 1)); };   // strip the data:<mime>;base64, prefix
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(blob);
+    });
+    function _bkB64ToBlob(b64, mime) {
+      const bin = atob(b64); const u8 = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      return new Blob([u8], { type: mime || 'application/octet-stream' });
+    }
+    async function _bloopsBuildBackup() {
+      const ls = {};
+      try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); ls[k] = localStorage.getItem(k); } } catch (e) {}
+      const samples = [];
+      try {
+        const db = await _bkOpenDb();
+        const recs = await new Promise((resolve, reject) => {
+          const tx = db.transaction(_BK_STORE, 'readonly'); const rq = tx.objectStore(_BK_STORE).getAll();
+          rq.onsuccess = () => resolve(rq.result || []); rq.onerror = () => reject(rq.error);
+        });
+        for (const rec of recs) {
+          if (!rec || !rec.id || !rec.blob) continue;
+          const { blob, ...meta } = rec;   // carry EVERY meta field generically (rootNote/tuneCents/padLoop/… + future ones)
+          try { samples.push({ ...meta, mime: blob.type || '', b64: await _bkBlobToB64(blob) }); } catch (e) {}
+        }
+      } catch (e) {}
+      return { __bloops: 2, date: new Date().toISOString(), ls, samples };
+    }
+    async function _bloopsApplyBackup(obj) {
+      // v2 {__bloops:2, ls, samples} or legacy flat {key: value}.
+      const isV2 = obj && obj.__bloops === 2;
+      const ls = isV2 ? (obj.ls || {}) : obj;
+      try { Object.keys(ls).forEach(k => { if (typeof ls[k] === 'string') localStorage.setItem(k, ls[k]); }); }
+      catch (e) { throw new Error('localStorage restore failed — storage may be full.'); }
+      if (isV2 && Array.isArray(obj.samples) && obj.samples.length) {
+        const db = await _bkOpenDb();
+        for (const s of obj.samples) {
+          if (!s || !s.id || typeof s.b64 !== 'string') continue;
+          const { b64, mime, ...meta } = s;
+          const rec = { ...meta, blob: _bkB64ToBlob(b64, mime) };
+          await new Promise((resolve) => {
+            const tx = db.transaction(_BK_STORE, 'readwrite'); tx.objectStore(_BK_STORE).put(rec);
+            tx.oncomplete = () => resolve(); tx.onerror = () => resolve();   // per-record failure shouldn't kill the rest
+          });
+        }
+      }
+      return true;
+    }
+    if (typeof window !== 'undefined') { window._bloopsBuildBackup = _bloopsBuildBackup; window._bloopsApplyBackup = _bloopsApplyBackup; }
+    async function _lsDownloadBackup() {
+      let url;
+      try { url = URL.createObjectURL(new Blob([JSON.stringify(await _bloopsBuildBackup())], { type: 'application/json' })); }
+      catch (e) { return false; }
       const a = document.createElement('a'); a.href = url;
       const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
       a.download = 'bloops-backup-' + ts + '.json';
@@ -851,9 +918,10 @@
       r.onload = () => {
         let obj = null; try { obj = JSON.parse(r.result); } catch (e) {}
         if (!obj || typeof obj !== 'object' || Array.isArray(obj)) { alert('That doesn’t look like a Bloops backup file.'); return; }
-        if (!confirm('Restore this backup? It replaces your current saved data, then reloads the app.')) return;
-        try { Object.keys(obj).forEach(k => { if (typeof obj[k] === 'string') localStorage.setItem(k, obj[k]); }); } catch (e) { alert('Restore failed — storage may be full. Free space first, then restore.'); return; }
-        location.reload();
+        const nSamp = (obj.__bloops === 2 && Array.isArray(obj.samples)) ? obj.samples.length : 0;
+        if (!confirm('Restore this backup' + (nSamp ? ' (incl. ' + nSamp + ' sample' + (nSamp === 1 ? '' : 's') + ')' : '') + '? It replaces your current saved data, then reloads the app.')) return;
+        _bloopsApplyBackup(obj).then(() => location.reload())
+          .catch((e) => alert('Restore failed — ' + ((e && e.message) || 'storage may be full. Free space first, then restore.')));
       };
       r.readAsText(file);
     }
@@ -891,7 +959,7 @@
               '<button type="button" class="ls-btn ls-restore">⬆ Restore backup</button>' +
               '<input type="file" accept="application/json,.json" class="ls-file" hidden>' +
             '</div>' +
-            '<div class="ls-hint">Download a backup first — then you can remove anything below without losing it (restore re-imports the file). Removing reloads the app.</div>' +
+            '<div class="ls-hint">Back up = one file with ALL settings + your imported/recorded samples — restorable here, in another browser, or in the desktop app. Download it first; then you can remove anything below without losing it. Removing reloads the app.</div>' +
             '<div class="ls-list">' +
               (items.length ? items.slice(0, 14).map(it =>
                 '<div class="ls-item"><span class="ls-item-label" title="' + _lsEsc(it.key) + '">' + _lsEsc(_lsLabel(it.key)) + '</span>' +
@@ -901,7 +969,7 @@
             '</div>' +
           '</div>';
         ov.querySelector('.ls-mclose').addEventListener('click', close);
-        ov.querySelector('.ls-backup').addEventListener('click', () => { if (_lsDownloadBackup()) { const h = ov.querySelector('.ls-hint'); if (h) { h.textContent = '✓ Backup downloaded. Now safe to remove items below.'; h.classList.add('ls-ok'); } } });
+        ov.querySelector('.ls-backup').addEventListener('click', async () => { if (await _lsDownloadBackup()) { const h = ov.querySelector('.ls-hint'); if (h) { h.textContent = '✓ Backup downloaded (settings + samples). Now safe to remove items below — or import it in another browser / the desktop app.'; h.classList.add('ls-ok'); } } });
         const fileInp = ov.querySelector('.ls-file');
         ov.querySelector('.ls-restore').addEventListener('click', () => fileInp.click());
         fileInp.addEventListener('change', () => { if (fileInp.files && fileInp.files[0]) _lsRestoreBackup(fileInp.files[0]); });

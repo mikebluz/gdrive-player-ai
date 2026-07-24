@@ -362,7 +362,7 @@
         'beat-euclid':   { hash: 'c2c8241b', count: 19 },
         'arp':           { hash: 'd5cc969a', count: 52 },
         'bass':          { hash: '0a287885', count: 32 },
-        'run':           { hash: '587c0ec7', count: 46 },
+        'run':           { hash: 'ac30c1a1', count: 46 },   // 2026-07-24: run default Pattern (bars) 2→1 — a 1-bar unit = 1 chord (chord-aligned, no odd-cycle phasing; bump Pattern to 2 for a 2-bar run). Deliberate; same onset count, walk just resets per bar. Was 587c0ec7.
         'pedal':         { hash: 'e788032c', count: 26 },
         'drone':         { hash: '053bdf7f', count: 1 },   // Drone default Unit 2000→8000 ms (Hold 4 = 32 s cycle) — deliberate: the drone is now the long-hold pad layer. Was 45a97025/2.
         'seq-pitch':     { hash: '64b0939b', count: 38 },
@@ -382,8 +382,8 @@
         'prog-arp':      { hash: 'be2ab3a6', count: 52 },   // 2026-07-12: pattern RESTART at each chord change (sweep from the top — classic arp; was 4d144e5a, cursor ran continuously through boundaries = per-bar pattern rotation)
         // KEY-axis pins (2026-07-14, recorded pre-migration) — lock keyOv/keyModeRot/
         // variable-bars/seq-harmony behavior before the degree-storage migration.
-        'keyov-key':       { hash: '40aa0745', count: 46 },
-        'keyov-prog':      { hash: '0c078c11', count: 46 },
+        'keyov-key':       { hash: '66dab3ef', count: 46 },   // 2026-07-24: run-based config — re-baselined with the run default Pattern 2→1 (was 40aa0745).
+        'keyov-prog':      { hash: '2a929f2a', count: 46 },   // 2026-07-24: run-based config — re-baselined with the run default Pattern 2→1 (was 0c078c11).
         'key-modrot-area': { hash: '9eedc324', count: 18 },
         'prog-varbars':    { hash: '5b83b2e3', count: 32 },
         'keyov-varbars':   { hash: '5b83b2e3', count: 32 },

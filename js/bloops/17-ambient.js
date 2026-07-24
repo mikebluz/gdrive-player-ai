@@ -19900,20 +19900,24 @@
         lengthMs: 220, restProb: 0, accent: 0, ..._AMB_ADSR_DEFAULTS.arp,
       });
       // Bass: low-octave euclidean phrase. Defaults to a 'bass' voice (falls
-      // back via _ambLayerType if absent), a 2-bar seed phrase, and a sparse
-      // 5-in-8 euclidean pulse — a simple groove out of the box. Variation
-      // sliders start at 0 so the seed repeats verbatim until dialed up.
+      // back via _ambLayerType if absent), a 1-BAR seed phrase (= 1 chord under a
+      // 1-bar-per-chord progression, so the walk follows each chord and can't phase
+      // against an odd cycle — bump Pattern to 2 for a 2-bar arc), and a sparse
+      // 5-in-8 euclidean pulse. Variation sliders start at 0 so the seed repeats
+      // verbatim until dialed up.
       if (type === 'bass') return Object.assign(base, {
         tone: 'bass', notes: { type: 'scale', scale: '' }, register: 2,
-        bars: 2, pulses: 5, steps: 8, rotate: 0, lengthMs: 260, unitPadMs: 0,
+        bars: 1, pulses: 5, steps: 8, rotate: 0, lengthMs: 260, unitPadMs: 0,
         rhythmVar: 0, pitchVar: 0, ghosts: 0, holdSteps: 0, tight: 0, proximity: 40, restProb: 0, accent: 0, ..._AMB_ADSR_DEFAULTS.bass,
       });
-      // Run: a fixed random note run that loops. 2-bar loop of 8th notes across
-      // 2 octaves by default; Vary starts at 0 so it repeats verbatim until
-      // dialed up. A light rest % keeps the run from being wall-to-wall.
+      // Run: a fixed random note run that loops. 1-BAR loop of 8th notes across
+      // 2 octaves by default (= 1 chord under a 1-bar-per-chord progression, so it
+      // re-fits each chord; bump Pattern to 2 for a 2-bar run). Vary starts at 0 so
+      // it repeats verbatim until dialed up. A light rest % keeps it from being
+      // wall-to-wall.
       if (type === 'run') return Object.assign(base, {
         tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, transpose: 0,
-        bars: 2, density: 8, lengthMs: 220, unitPadMs: 0, vary: 0, restProb: 10, lenVary: 0, accent: 20, phrasing: 0, ornament: 0, slide: 0, tight: 0, ..._AMB_ADSR_DEFAULTS.run,
+        bars: 1, density: 8, lengthMs: 220, unitPadMs: 0, vary: 0, restProb: 10, lenVary: 0, accent: 20, phrasing: 0, ornament: 0, slide: 0, tight: 0, ..._AMB_ADSR_DEFAULTS.run,
       });
       // Pedal: 1-bar loop of 4 quarter-note roots — a steady pedal point. Register
       // 4 (C4) + full volume matches a default Shape node so they sound the same.

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tracks — mercy wizard</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0a0a12; color: #cbd5e0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    .studio-wrap { max-width: 1060px; margin: 0 auto; padding: 14px 14px 90px; }
+    .studio-top { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 4px; }
+    .studio-home { color: #718096; text-decoration: none; font-size: 0.85rem; }
+    .studio-home:hover { color: #9f7aea; }
+    .studio-title { font-size: 1.5rem; font-weight: 700; color: #e2e8f0; }
+    .studio-sub { color: #718096; font-size: 0.85rem; margin: 2px 0 12px; }
+    .studio-auth { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 0.8rem; color: #718096; }
+    .studio-transport { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 14px; }
+    .studio-btn { background: #191927; border: 1px solid #2d2d3f; border-radius: 9px; color: #cbd5e0; padding: 7px 12px; font-size: 0.95rem; cursor: pointer; }
+    .studio-btn:hover { border-color: #9f7aea; }
+    .studio-playbtn { font-size: 1.15rem; padding: 7px 18px; }
+    .studio-recbtn.recording { color: #ff5c6c; border-color: #ff5c6c; box-shadow: 0 0 14px rgba(255, 92, 108, 0.6); animation: recpulse 2s ease-in-out infinite; }
+    @keyframes recpulse { 50% { box-shadow: 0 0 22px rgba(255, 92, 108, 0.9); } }
+    .studio-exportbtn { margin-left: auto; border-color: #38b2ac; color: #d6f5f2; }
+    .studio-time { font-variant-numeric: tabular-nums; color: #a0aec0; font-size: 0.9rem; padding: 0 6px; }
+    .studio-recgrp { display: inline-flex; align-items: center; gap: 6px; }
+    .ambient-select { background: #11111c; border: 1px solid #2d2d3f; border-radius: 7px; color: #cbd5e0; padding: 5px 7px; font-size: 0.82rem; max-width: 200px; }
+    .studio-tracks { display: flex; flex-direction: column; gap: 10px; }
+    .studio-empty { color: #718096; font-size: 0.9rem; padding: 26px 0; text-align: center; }
+    .studio-track { display: flex; gap: 10px; background: #0f0f1a; border: 1px solid #23233a; border-radius: 12px; padding: 8px; }
+    .studio-track-side { width: 250px; flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; }
+    .studio-track-head { display: flex; align-items: center; gap: 5px; }
+    .studio-name { flex: 1; min-width: 0; background: #11111c; border: 1px solid #2d2d3f; border-radius: 6px; color: #cbd5e0; padding: 4px 6px; font-size: 0.85rem; }
+    .studio-mini { background: #191927; border: 1px solid #2d2d3f; border-radius: 6px; color: #a0aec0; padding: 3px 8px; font-size: 0.78rem; cursor: pointer; }
+    .studio-mute.on { color: #ff5c6c; border-color: #ff5c6c; }
+    .studio-solo.on { color: #f6e05e; border-color: #f6e05e; }
+    .studio-del:hover { color: #ff5c6c; border-color: #ff5c6c; }
+    .studio-mix { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 10px; }
+    .studio-ctl { display: flex; align-items: center; gap: 5px; font-size: 0.7rem; color: #718096; }
+    .studio-ctl input[type="range"] { flex: 1; min-width: 0; height: 18px; }
+    .studio-wave { position: relative; flex: 1; min-width: 0; border-radius: 8px; overflow: hidden; cursor: crosshair; }
+    .studio-wave canvas { width: 100%; height: 72px; display: block; }
+    .studio-head { position: absolute; top: 0; bottom: 0; width: 2px; background: #9f7aea; box-shadow: 0 0 8px rgba(159, 122, 234, 0.8); pointer-events: none; display: none; }
+    .mw-toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); background: #191927; border: 1px solid #9f7aea; color: #e2e8f0; padding: 9px 16px; border-radius: 10px; font-size: 0.85rem; z-index: 99; box-shadow: 0 8px 30px rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.25s; pointer-events: none; max-width: 90vw; }
+    .mw-toast.show { opacity: 1; }
+    @media (max-width: 620px) { .studio-track { flex-direction: column; } .studio-track-side { width: auto; } }
+  </style>
+</head>
+<body>
+  <div class="studio-wrap">
+    <div class="studio-top">
+      <a class="studio-home" href="index.html">← mercy wizard</a>
+      <span class="studio-title">Tracks</span>
+      <span class="studio-auth"><span id="studio-auth-status">Drive: checking…</span><button type="button" id="studio-signin" class="studio-btn" style="display:none">Sign in</button></span>
+    </div>
+    <div class="studio-sub">Record takes against each other, mix them, export the mixdown to Drive (Tracks/Year/Month/Day).</div>
+    <div class="studio-transport">
+      <button type="button" id="studio-skip-start" class="studio-btn" title="Skip to the beginning">⏮</button>
+      <button type="button" id="studio-rew" class="studio-btn" title="Back 5 seconds">◀︎5</button>
+      <button type="button" id="studio-play" class="studio-btn studio-playbtn" title="Play from the playhead">▶</button>
+      <button type="button" id="studio-ff" class="studio-btn" title="Forward 5 seconds">5▶︎</button>
+      <button type="button" id="studio-skip-end" class="studio-btn" title="Skip to the end">⏭</button>
+      <span id="studio-time" class="studio-time">0:00.0 / 0:00.0</span>
+      <span class="studio-recgrp">
+        <select id="studio-input" class="ambient-select" title="Recording input (mic / line-in)"><option value="">Default input</option></select>
+        <button type="button" id="studio-rec" class="studio-btn studio-recbtn" title="Record a take from the playhead (other tracks play; you hear your input)">🎤</button>
+      </span>
+      <button type="button" id="studio-export" class="studio-btn studio-exportbtn" title="Render the mixdown and upload to Drive → Tracks/Year/Month/Day (falls back to a local download)">⬆ Export mix</button>
+    </div>
+    <div id="studio-tracks" class="studio-tracks"></div>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script src="js/auth-storage.js?v=DEPLOYVER"></script>
+  <script src="js/google-drive-api.js?v=DEPLOYVER"></script>
+  <script>
+    // Page toast (24-studio falls back to console when showToast is absent).
+    window.showToast = (msg) => {
+      let t = document.getElementById('mw-toast');
+      if (!t) { t = document.createElement('div'); t.id = 'mw-toast'; t.className = 'mw-toast'; document.body.appendChild(t); }
+      t.textContent = msg; t.classList.add('show');
+      clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 3500);
+    };
+    // Drive bridge for the studio: auth via the shared GoogleDriveAPI (token is
+    // cached cross-page by SharedAuth, so a Player sign-in carries over here).
+    (function () {
+      let api = null;
+      const status = document.getElementById('studio-auth-status');
+      const signBtn = document.getElementById('studio-signin');
+      const sync = () => {
+        const ok = !!(api && api.accessToken);
+        if (status) status.textContent = ok ? 'Drive: signed in ✓' : 'Drive: not signed in (exports download locally)';
+        if (signBtn) signBtn.style.display = ok ? 'none' : '';
+      };
+      const H = () => ({ 'Authorization': 'Bearer ' + api.accessToken });
+      async function findOrCreateDriveFolder(path) {
+        let parent = 'root';
+        for (const seg of String(path).split('/').filter(Boolean)) {
+          const q = encodeURIComponent("name = '" + seg.replace(/'/g, "\\'") + "' and '" + parent + "' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false");
+          const r = await fetch('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id)', { headers: H() });
+          const j = await r.json();
+          if (j.files && j.files.length) { parent = j.files[0].id; continue; }
+          const c = await fetch('https://www.googleapis.com/drive/v3/files?fields=id', {
+            method: 'POST', headers: { ...H(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: seg, mimeType: 'application/vnd.google-apps.folder', parents: [parent] }),
+          });
+          const cj = await c.json();
+          if (!cj.id) throw new Error('folder create failed: ' + seg);
+          parent = cj.id;
+        }
+        return parent;
+      }
+      async function uploadWavToDrive(name, blob, folderId) {
+        const init = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable', {
+          method: 'POST',
+          headers: { ...H(), 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': 'audio/wav' },
+          body: JSON.stringify({ name, parents: [folderId], mimeType: 'audio/wav' }),
+        });
+        if (!init.ok) throw new Error('Drive init failed: ' + init.status);
+        const url = init.headers.get('Location');
+        const up = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'audio/wav' }, body: blob });
+        if (!up.ok) throw new Error('Drive upload failed: ' + up.status);
+      }
+      window._drvBridge = {
+        ready: () => !!(api && api.accessToken),
+        findOrCreateDriveFolder, uploadWavToDrive,
+      };
+      window.addEventListener('DOMContentLoaded', async () => {
+        try {
+          if (window.APP_CONFIG && !/YOUR_CLIENT_ID/.test(window.APP_CONFIG.clientId || '')) {
+            api = new GoogleDriveAPI(window.APP_CONFIG);
+            await api.init();
+          }
+        } catch (e) { console.warn('Drive init failed', e); }
+        sync();
+        document.addEventListener('authStatusChanged', sync);
+        if (signBtn) signBtn.addEventListener('click', async () => { try { await api.signIn(); } catch (e) {} sync(); });
+        // boot the studio
+        try { window._studioShow(); } catch (e) { console.error(e); }
+      });
+    })();
+  </script>
+  <script src="js/bloops/24-studio.js?v=DEPLOYVER"></script>
+</body>
+</html>

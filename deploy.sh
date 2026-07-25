@@ -75,7 +75,7 @@ restore_dev_bypass() {
 trap 'rm -rf "$STAGE_DIR"; restore_dev_bypass' EXIT
 
 echo "📦 Staging files..."
-cp -r index.html bloops.html player.html artwork.html game.html css js banner.jpg me2026.jpg samples artwork vendor "$STAGE_DIR/"
+cp -r index.html bloops.html player.html artwork.html game.html tracks.html css js banner.jpg me2026.jpg samples artwork vendor "$STAGE_DIR/"
 # Caching policy (HTML revalidates every load; versioned assets cache long) —
 # without it, phones cache stale HTML pointing at old ?v= assets and boot dies.
 cp .htaccess "$STAGE_DIR/"
@@ -91,7 +91,7 @@ DEPLOY_VER=$(date +%Y%m%d%H%M%S)
 echo "🏷️  Cache-busting asset URLs with v=$DEPLOY_VER"
 # JS files that fetch versioned assets themselves (worklet module + wasm URLs
 # in the core-voices bridge) carry the same ?v=DEPLOYVER token as the HTML.
-for f in index.html bloops.html player.html artwork.html game.html js/bloops/03b-core-voices.js; do
+for f in index.html bloops.html player.html artwork.html game.html tracks.html js/bloops/03b-core-voices.js; do
   if [[ -f "$STAGE_DIR/$f" ]]; then
     sed "s/?v=DEPLOYVER/?v=$DEPLOY_VER/g" "$STAGE_DIR/$f" > "$STAGE_DIR/$f.tmp" && mv "$STAGE_DIR/$f.tmp" "$STAGE_DIR/$f"
   fi
@@ -140,6 +140,7 @@ put -O "$REMOTE_DIR"           "$STAGE_DIR/bloops.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/player.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/artwork.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/game.html"
+put -O "$REMOTE_DIR"           "$STAGE_DIR/tracks.html"
 put -O "$REMOTE_DIR/js/bloops" "$STAGE_DIR/js/bloops/03b-core-voices.js"
 # Post-upload SIZE VERIFICATION of the big JS the app can't boot without —
 # a size mismatch vs the local staged copy means a truncated upload.

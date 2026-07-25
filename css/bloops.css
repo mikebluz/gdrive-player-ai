@@ -11119,39 +11119,6 @@
     body.view-harvest { overflow-y: auto; }
     body:not(.view-harvest) #harvest-view { display: none !important; }
 
-    /* ---- Tracks (studio) view — same show/hide pattern as Harvest ---- */
-    body.view-studio > #studio-view { display: block; }
-    body.view-studio > *:not(.key-picker-overlay):not(.float-header):not(.top-bar):not(.project-bottom-bar):not(.project-panel):not(#studio-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(#midi-overlay):not(#xport-menu):not(.bloops-toast):not(script) {
-      display: none !important;
-    }
-    body.view-studio { overflow-y: auto; }
-    body:not(.view-studio) #studio-view { display: none !important; }
-    .studio-wrap { max-width: 1060px; margin: 0 auto; padding: 12px 14px 90px; }
-    .studio-transport { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 14px; }
-    .studio-btn { background: #191927; border: 1px solid #2d2d3f; border-radius: 9px; color: #cbd5e0; padding: 7px 12px; font-size: 0.95rem; cursor: pointer; }
-    .studio-btn:hover { border-color: #9f7aea; }
-    .studio-playbtn { font-size: 1.15rem; padding: 7px 18px; }
-    .studio-recbtn.recording { color: #ff5c6c; border-color: #ff5c6c; box-shadow: 0 0 14px rgba(255, 92, 108, 0.6); }
-    .studio-exportbtn { margin-left: auto; border-color: #38b2ac; color: #d6f5f2; }
-    .studio-time { font-variant-numeric: tabular-nums; color: #a0aec0; font-size: 0.9rem; padding: 0 6px; }
-    .studio-recgrp { display: inline-flex; align-items: center; gap: 6px; }
-    .studio-tracks { display: flex; flex-direction: column; gap: 10px; }
-    .studio-empty { color: #718096; font-size: 0.9rem; padding: 26px 0; text-align: center; }
-    .studio-track { display: flex; gap: 10px; background: #0f0f1a; border: 1px solid #23233a; border-radius: 12px; padding: 8px; }
-    .studio-track-side { width: 250px; flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; }
-    .studio-track-head { display: flex; align-items: center; gap: 5px; }
-    .studio-name { flex: 1; min-width: 0; background: #11111c; border: 1px solid #2d2d3f; border-radius: 6px; color: #cbd5e0; padding: 4px 6px; font-size: 0.85rem; }
-    .studio-mini { background: #191927; border: 1px solid #2d2d3f; border-radius: 6px; color: #a0aec0; padding: 3px 8px; font-size: 0.78rem; cursor: pointer; }
-    .studio-mute.on { color: #ff5c6c; border-color: #ff5c6c; }
-    .studio-solo.on { color: #f6e05e; border-color: #f6e05e; }
-    .studio-del:hover { color: #ff5c6c; border-color: #ff5c6c; }
-    .studio-mix { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 10px; }
-    .studio-ctl { display: flex; align-items: center; gap: 5px; font-size: 0.7rem; color: #718096; }
-    .studio-ctl input[type="range"] { flex: 1; min-width: 0; height: 18px; }
-    .studio-wave { position: relative; flex: 1; min-width: 0; border-radius: 8px; overflow: hidden; cursor: crosshair; }
-    .studio-wave canvas { width: 100%; height: 72px; display: block; }
-    .studio-head { position: absolute; top: 0; bottom: 0; width: 2px; background: #9f7aea; box-shadow: 0 0 8px rgba(159, 122, 234, 0.8); pointer-events: none; display: none; }
-    @media (max-width: 620px) { .studio-track { flex-direction: column; } .studio-track-side { width: auto; } }
     .harvest-wrap { max-width: 900px; margin: 0 auto; }
     .harvest-title { font: 700 1.1rem 'Segoe UI', sans-serif; color: #e6e6f5; margin: 4px 0 2px; }
     .harvest-sub { font-size: 0.8rem; color: #8a8aa8; margin-bottom: 14px; }

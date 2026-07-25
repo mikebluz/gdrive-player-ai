@@ -291,6 +291,17 @@
       box-shadow: 0 8px 28px rgba(217, 30, 124, 0.25);
     }
 
+    .btn-tracks {
+      background: transparent;
+      color: #7db8a8;
+      border: 1px solid #38b2ac;
+    }
+    .btn-tracks:hover {
+      transform: translateY(-2px);
+      background: rgba(56, 178, 172, 0.1);
+      box-shadow: 0 8px 28px rgba(56, 178, 172, 0.25);
+    }
+
     .btn-game {
       background: transparent;
       color: #00d4ff;

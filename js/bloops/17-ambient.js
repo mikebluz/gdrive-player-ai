@@ -10745,13 +10745,20 @@
         let at, period = 0;
         // FRESH layer (added this play, never started): its own iteration grid
         // has no phase yet — and can be very long (a drone's ~32 s cycle would
-        // park the entry absurdly far out). First entry queues to the next BAR.
+        // park the entry absurdly far out). First entry queues to the next
+        // ◆ AREA-UNIT boundary on the engine grid (units, not raw bars — the
+        // Track "Join" choice can widen the quant via E._freshJoin: key → bars).
         if (fresh) {
           const bpmQ = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
           const barSecQ = (60 / Math.max(20, bpmQ)) * 4;
+          const au = cfg && cfg.areaUnit;
+          const auBars = au ? (Math.max(1, au.num | 0) / Math.max(1, au.den | 0)) : 1;
+          let quantBars = (E._freshJoin && Number.isFinite(E._freshJoin[key]) && E._freshJoin[key] > 0) ? E._freshJoin[key] : auBars;
+          if (E._freshJoin) delete E._freshJoin[key];
+          const qSec = Math.max(0.05, quantBars * barSecQ);
           const anchorQ = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor : (Number.isFinite(E._playStartAt) ? E._playStartAt : now);
-          at = anchorQ + Math.max(0, Math.ceil((now + 0.05 - anchorQ) / barSecQ)) * barSecQ;
-          period = barSecQ;
+          at = anchorQ + Math.max(0, Math.ceil((now + 0.05 - anchorQ) / qSec)) * qSec;
+          period = qSec;
         } else {
         try { at = _ambLayerNextBoundary(E, key, L, cfg, now); } catch (e) { at = now + (60 / _ambBpm()) * 4; }
         try { period = _ambLayerPeriodSec(E, key, L, cfg); } catch (e) {}
@@ -11651,6 +11658,7 @@
     const _TRK_NUDGE_LS = 'bloops-track-nudge-ms';
     const _TRK_INPUT_LS = 'bloops-track-input-id';
     const _TRK_AUTOPLAY_LS = 'bloops-track-autoplay';
+    const _TRK_JOIN_LS = 'bloops-track-join';
     function _ambTrackRecord(E) {
       _E = E;
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof registerSampleFromBlob !== 'function' || typeof audioBufferToWav !== 'function') {
@@ -11664,6 +11672,7 @@
       let pbId = null, startedPb = false;   // "Start playback" — transport launched by this take
       let savedNudge = 0; try { savedNudge = parseFloat(localStorage.getItem(_TRK_NUDGE_LS)) || 0; } catch (e) {}
       let savedPb = true; try { savedPb = localStorage.getItem(_TRK_AUTOPLAY_LS) !== '0'; } catch (e) {}   // default CHECKED; a saved explicit off is respected
+      let savedJoin = '1'; try { savedJoin = localStorage.getItem(_TRK_JOIN_LS) || '1'; } catch (e) {}
       const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-track-rec-ov';
       ov.innerHTML = '<div class="sm-modal ambient-track-modal">' +
         '<div class="sm-title">Record a Track</div>' +
@@ -11672,6 +11681,9 @@
           '<div class="ambient-ctrl"><label>Preview</label><button type="button" class="ambient-seg trk-mon">🎧 Preview</button><span class="ambient-hint">hear the input live — auto-ON while recording · use HEADPHONES (open speakers will feed back)</span></div>' +
           '<div class="ambient-ctrl"><label>Count-in</label><select class="ambient-select trk-ci"><option value="0">Off</option><option value="1" selected>1 bar</option><option value="2">2 bars</option></select><span class="ambient-hint">clicks at ' + Math.round(bpm) + ' BPM before recording</span></div>' +
           '<div class="ambient-ctrl"><label>Playback</label><label class="trk-pb-lbl"><input type="checkbox" class="trk-autoplay"' + (savedPb ? ' checked' : '') + (E.timer ? ' disabled' : '') + '> Start playback</label><span class="ambient-hint">' + (E.timer ? 'already playing' : 'Bloom starts at the end of the count-in — record from bar 1') + '</span></div>' +
+          '<div class="ambient-ctrl"><label title="When the finished take re-enters the mix — it waits for this boundary on the ◆ Area-unit grid, so it always lands in time.">Join</label><select class="ambient-select trk-join">' +
+            [['1', 'Next unit'], ['bar', 'Next bar'], ['2', 'Next 2 units'], ['4', 'Next 4 units'], ['8', 'Next 8 units']].map(o => '<option value="' + o[0] + '"' + (savedJoin === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
+          '</select><span class="ambient-hint">when the take re-enters after recording</span></div>' +
           '<div class="ambient-ctrl"><label title="Recording offset — extra ms to shift the take EARLIER on top of the measured output+input latency. If takes land late (draggy), increase; if early (rushed), decrease. Remembered.">Nudge</label><input type="number" class="trk-nudge" min="-200" max="200" step="1" value="' + Math.round(savedNudge) + '"><span class="ambient-hint">ms earlier (wired output recommended — Bluetooth adds 100–300 ms the OS under-reports)</span></div>' +
           '<div class="ambient-track-status">Records your default audio input (mic / line-in). Press ● Record → after the count-in, play → ■ Stop. The loop snaps to the nearest bar.</div>' +
         '</div>' +
@@ -11845,17 +11857,20 @@
         for (let i = 0; i < beats; i++) click(t0 + i * beatSec, i % 4 === 0);
         armAt = ciBars ? (t0 + beats * beatSec) : 0;   // 0 = no anchor (armed on the fly below)
         // ▶ Start playback: launch the transport just BEFORE the count-in ends
-        // (~0.35 s = tick immediacy + typical first-onset lead) so the music
-        // enters at bar 1 ≈ armAt. finishTap then aligns the take's slice to
-        // the engine's ACTUAL pinned grid (E._barGridAnchor) — sample-accurate
-        // against the grid the take will later loop on, regardless of launch
-        // jitter. Stored preference; no-op when the transport already plays.
+        // so the music enters at bar 1 ≈ armAt. The engine's first-onset lead
+        // is now+0.3 (see the tick's `lead`), so pre-launch 0.28 s puts bar 1
+        // ~20 ms AFTER armAt — deliberately biased late-never-early (a 0.35
+        // pre-launch made playback audibly enter ~50 ms before the count-in
+        // ended). finishTap then aligns the take's slice to the engine's ACTUAL
+        // pinned grid (E._barGridAnchor) — sample-accurate against the grid the
+        // take will later loop on, regardless of launch jitter. Stored
+        // preference; no-op when the transport already plays.
         const pbBox = q('.trk-autoplay');
         const wantPb = !!(pbBox && pbBox.checked && !E.timer);
         try { if (pbBox && !pbBox.disabled) localStorage.setItem(_TRK_AUTOPLAY_LS, pbBox.checked ? '1' : '0'); } catch (e) {}
         if (wantPb) {
           const launch = () => { try { const pb = _ambGet(E, 'ambient-play-btn'); if (pb && !E.timer) { pb.click(); startedPb = true; } } catch (e) {} };
-          if (ciBars) pbId = setTimeout(launch, Math.max(0, (armAt - ac.currentTime - 0.35)) * 1000);
+          if (ciBars) pbId = setTimeout(launch, Math.max(0, (armAt - ac.currentTime - 0.28)) * 1000);
           else launch();   // no count-in → playback + recording start together
         }
         if (ciBars) statusEl.textContent = (aligned ? 'Count-in on the next bar…' : 'Count-in…') + (wantPb ? ' playback joins at the end.' : '');
@@ -11875,6 +11890,14 @@
         const wantLen = Math.round(bars * barSec * raw.sampleRate);
         const out = ac.createBuffer(raw.numberOfChannels, wantLen, raw.sampleRate);
         for (let c = 0; c < raw.numberOfChannels; c++) { const src = raw.getChannelData(c), dst = out.getChannelData(c), n = Math.min(src.length, wantLen); for (let i = 0; i < n; i++) dst[i] = src[i]; }
+        // Kill the loop-seam transient: the hard trim leaves a waveform
+        // discontinuity at both edges — bake ~5 ms linear micro-fades into the
+        // WAV so every wrap (end→start retrigger) is click-free.
+        { const fadeN = Math.min(Math.floor(wantLen / 4), Math.round(out.sampleRate * 0.005));
+          if (fadeN > 1) for (let c = 0; c < out.numberOfChannels; c++) {
+            const d = out.getChannelData(c);
+            for (let i = 0; i < fadeN; i++) { const g = i / fadeN; d[i] *= g; d[wantLen - 1 - i] *= g; }
+          } }
         const wav = audioBufferToWav(out);
         let stamp = 'take'; try { stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(11, 19); } catch (e) {}
         const reg = await registerSampleFromBlob(wav, 'Track ' + stamp, { padLoop: true });   // persist (IndexedDB) + looping voice
@@ -11895,6 +11918,11 @@
             // recorded audio is fixed-length, so this locks to the RECORD tempo.
             L.chop = 1; L.stutter = 1; L.order = 'forward'; L.pitch = 0; L.reverse = 0;
             L.intervalMs = durMs; L.lengthMs = durMs;
+            // FLAT envelope: the default sample ADSR (attack 6 / decay 120 →
+            // sustain 70%) re-shapes level at EVERY retrigger = an audible pump
+            // at each loop boundary. A Track loop plays its bytes verbatim; the
+            // WAV's baked micro-fades handle the seam.
+            L.attack = 3; L.decay = 10; L.sustain = 100; L.release = 60;
           }
         } catch (e) {}
         try { _ambRenderSampleLayers(E); } catch (e) {}
@@ -11905,6 +11933,16 @@
         try {
           const L2 = _ambSampleList(E.getCfg()).find(s => s && s.sampleId === reg.id);
           if (L2 && !L2.on) {
+            // Honor the modal's "Join" choice: the take waits for this boundary
+            // on the ◆ Area-unit grid ('bar' = a raw bar; N = N area units).
+            try {
+              const jv = (q('.trk-join') && q('.trk-join').value) || '1';
+              try { localStorage.setItem(_TRK_JOIN_LS, jv); } catch (e) {}
+              const cfgJ = E.getCfg(); const auJ = cfgJ && cfgJ.areaUnit;
+              const auBarsJ = auJ ? (Math.max(1, auJ.num | 0) / Math.max(1, auJ.den | 0)) : 1;
+              const qb = (jv === 'bar') ? 1 : Math.max(1, parseInt(jv, 10) || 1) * auBarsJ;
+              (E._freshJoin || (E._freshJoin = {}))['samp:' + L2.id] = qb;
+            } catch (e) {}
             let onB = null;
             try { const wrap = _ambGet(E, 'ambient-sample-layers'); const card = wrap && wrap.querySelector('.ambient-layer[data-samp-id="' + L2.id + '"]'); onB = card && card.querySelector('.ambient-toggle'); } catch (e) {}
             _ambToggleLayer(E, 'samp:' + L2.id, L2, onB, () => { if (typeof persistWorkspace === 'function') persistWorkspace(); });
@@ -13789,7 +13827,7 @@
       _E = E;
       if (E.timer) { clearInterval(E.timer); E.timer = null; }
       _AMB_TICKING.delete(E); _ambTickWorkerMaybeStop();
-      E._freshKeys = null;   // added-while-playing marks die with the session (a stopped toggle is plain)
+      E._freshKeys = null; E._freshJoin = null;   // added-while-playing marks die with the session (a stopped toggle is plain)
       try { _ambHealthStop(); } catch (e) {}
       if (E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
       // AREAS: end any sequencing and restore the bloom output gain (a stop mid

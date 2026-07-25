@@ -17143,6 +17143,7 @@
     }
     function _ambRenderNowPlaying(E, rows, playing) {
       const wrap = _ambGet(E, 'ambient-nowplaying-list'); if (!wrap) return;
+      if (wrap.offsetParent === null) return;   // panel hidden → skip the per-frame DOM work
       const empty = _ambGet(E, 'ambient-nowplaying-empty');
       if (empty) empty.textContent = playing ? (rows.length ? '' : '— silent —') : '— stopped —';
       const sig = rows.map(r => r.name + '=' + r.html).join('|');
@@ -23477,8 +23478,9 @@
         // key indicator moved onto the Key/Progression header.
         // Master (Mixer) Bloom drops the spectrum visualizer; the main + shape panels keep it.
         (E.idPrefix === 'mix-bloom' ? '' : '<canvas id="ambient-viz" class="ambient-viz"></canvas>') +
-        // Now Playing — always-visible status strip (read-only; mirrors the per-layer live lines).
-        '<div class="ambient-nowplaying" id="ambient-nowplaying">' +
+        // Now Playing — HIDDEN for now (user: "not adding anything"); markup kept
+        // for an easy revert. The updater short-circuits while it's display:none.
+        '<div class="ambient-nowplaying" id="ambient-nowplaying" style="display:none">' +
           '<div class="ambient-nowplaying-head"><span class="ambient-mod-sub">Now Playing</span><span class="ambient-hint" id="ambient-nowplaying-empty">— stopped —</span></div>' +
           '<div class="ambient-nowplaying-list" id="ambient-nowplaying-list"></div>' +
         '</div>' +

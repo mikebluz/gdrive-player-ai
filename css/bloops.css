@@ -3225,6 +3225,11 @@
        margin-left:auto (two autos would split the space and float the hint). */
     .ambient-progsec .ambient-progsec-hint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ambient-progsec .ambient-prog-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    /* 🧂 Salt row — three compact knobs under the progression picker. */
+    .ambient-prog-salt { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 2px; }
+    .ambient-prog-salt .salt-lbl { color: #9f7aea; font-weight: 600; }
+    .ambient-prog-salt .ambient-sched-grp { display: inline-flex; align-items: center; gap: 5px; }
+    .ambient-prog-salt .ambient-salt-in { width: 52px; background: #11111c; border: 1px solid #2d2d3f; border-radius: 6px; color: #cbd5e0; padding: 3px 5px; font-size: 0.8rem; }
     /* Progression sub-section labels inside the Key/Prog pane. */
     .ambient-progsec .ambient-progsec-lbl { margin: 10px 0 4px; }
     .ambient-progsec .ambient-progsec-lbl:first-child { margin-top: 0; }

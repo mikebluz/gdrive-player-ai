@@ -1795,6 +1795,20 @@
         else if (!Number.isFinite(prog.versionIdx) || prog.versionIdx < 0 || prog.versionIdx >= prog.versions.length) delete prog.versionIdx;
         else prog.versionIdx = prog.versionIdx | 0;
       } else { delete prog.versions; delete prog.versionIdx; }
+      // SALT (additive): deterministic per-cycle "spice" — len = random chord-length
+      // re-partition (0-100), colors = sub-chord color variations per unit (0-8),
+      // scatter = how unevenly the color count distributes (0-100). All-zero →
+      // DELETE the key so legacy/plain projects stay byte-identical.
+      if (prog.salt != null) {
+        const s = prog.salt;
+        if (typeof s !== 'object') delete prog.salt;
+        else {
+          s.len = Math.max(0, Math.min(100, s.len | 0));
+          s.colors = Math.max(0, Math.min(8, s.colors | 0));
+          s.scatter = Math.max(0, Math.min(100, s.scatter | 0));
+          if (!s.len && !s.colors && !s.scatter) delete prog.salt;
+        }
+      }
     }
     // Repair a parts list against a chord count: coerce {name,len}, clamp Σlen to total,
     // final part swallows any remainder. Returns undefined for absent/empty OR a trivial
@@ -2486,20 +2500,110 @@
       // RNG (never the shared _ambRand stream the harness hashes → no downstream draw
       // shifts) and is a PURE function of (idx, cycle, seed), so the >1 calls per onset
       // (root via _ambSrcRootPc + intervals via _ambScaleIntervals) resolve the SAME alt.
-      if (!base || !Array.isArray(base.alts) || !base.alts.length) return base;
-      const pool = base.alts.length + 1;   // index 0 = the written chord
-      const idx = ((step % len) + len) % len;
-      const cycle = Math.floor(step / len);
-      let pick;
-      if (base.altMode === 'random') {
-        const seed = (_E && _E.getCfg && (_E.getCfg().seed | 0)) || 1;
-        const rnd = _ambSeededRand((((idx + 1) * 2654435761) ^ ((cycle + 1) * 40503) ^ ((seed * 131) >>> 0)) >>> 0);
-        pick = Math.floor(rnd() * pool) % pool;
-      } else {
-        pick = (((cycle % pool) + pool) % pool);   // 'cycle' — pure arithmetic, no RNG
+      let ret = base;
+      if (base && Array.isArray(base.alts) && base.alts.length) {
+        const pool = base.alts.length + 1;   // index 0 = the written chord
+        const idx = ((step % len) + len) % len;
+        const cycle = Math.floor(step / len);
+        let pick;
+        if (base.altMode === 'random') {
+          const seed = (_E && _E.getCfg && (_E.getCfg().seed | 0)) || 1;
+          const rnd = _ambSeededRand((((idx + 1) * 2654435761) ^ ((cycle + 1) * 40503) ^ ((seed * 131) >>> 0)) >>> 0);
+          pick = Math.floor(rnd() * pool) % pool;
+        } else {
+          pick = (((cycle % pool) + pool) % pool);   // 'cycle' — pure arithmetic, no RNG
+        }
+        ret = (pick === 0) ? base : (base.alts[pick - 1] || base);
       }
-      return (pick === 0) ? base : (base.alts[pick - 1] || base);
+      if (!ret) return ret;
+      // SALT · colors — sub-chord color variations WITHIN this chord instance.
+      // GATE: knob 0 / no salt / not the global prog's chords → the exact prior
+      // return (byte-identical). Uses the pos hint stashed by _ambProgStepAt for
+      // THIS step (stale/absent → pos 0 = segment 0 = the plain chord). Both the
+      // segment count and the color pick are pure fns of (seed, step, segIdx) via
+      // dedicated seeded RNGs — the >1 reads per onset resolve identically.
+      const cfgS = _E && (_E._cfg || (_E.getCfg && _E.getCfg()));
+      const salt = _ambProgSaltCfg(cfgS);
+      if (!salt || !((salt.colors | 0) > 0)) return ret;
+      if (!(cfgS.prog && n.chords === cfgS.prog.chords)) return ret;
+      const hint = _ambProgPosHint;
+      const pos = (hint && hint.step === step) ? hint.pos : 0;
+      const seedS = (cfgS.seed | 0) || 1;
+      // Segment count for THIS instance: scatter 0 → always the full count;
+      // 100 → heavily skewed low (mostly plain, rare fully-colored units).
+      const nTarget = Math.min(8, (salt.colors | 0) + 1);   // knob k = k variations on top of the written chord, ≤8 segments
+      const rndN = _ambSeededRand((((step + 1) * 40503) ^ ((seedS * 131) >>> 0) ^ 0xC0105) >>> 0);
+      const shape = ((salt.scatter | 0) / 100) * 4;
+      const nSeg = 1 + Math.round(Math.pow(rndN(), shape) * (nTarget - 1));
+      if (nSeg <= 1) return ret;
+      const segIdx = Math.min(nSeg - 1, Math.floor(pos * nSeg));
+      if (segIdx <= 0) return ret;   // downbeat segment = the written chord, always
+      const vocab = _ambProgColorVocab(ret.intervals);
+      if (!vocab.length) return ret;
+      const rndC = _ambSeededRand((((step + 1) * 2654435761) ^ ((segIdx + 1) * 40503) ^ ((seedS * 131) >>> 0) ^ 0x51CE) >>> 0);
+      const cand = vocab[Math.floor(rndC() * vocab.length) % vocab.length];
+      return Object.assign({}, ret, { intervals: cand });
     }
+    // ---- Progression SALT --------------------------------------------------
+    // Deterministic per-cycle "spice" on the GLOBAL progression (cfg.prog only —
+    // inherited sources share its chords by reference, a layer's own prog is
+    // untouched). Two axes, both PURE functions of (cfg.seed, cycle/step, index)
+    // via the isolated _ambSeededRand idiom (zero shared-RNG draws; salt absent
+    // → every path returns exactly the pre-salt result, so harness/golden hold):
+    //   len (0-100)    — each cycle re-partitions the chord boundaries (chord A
+    //                    1.25 bars, chord B 0.5, …) on a 1/8-bar grid with the
+    //                    CYCLE TOTAL preserved, so cycle/loop/Evolve math is
+    //                    untouched. 0 = as written.
+    //   colors (0-8) × scatter (0-100) — sub-divides each chord instance into n
+    //                    segments; segment 0 = the written chord (downbeat is
+    //                    always honest), later segments swap in a root-preserving
+    //                    color (maj7 / add9 / 6 / sus2 / sus4 / open-5 …).
+    //                    Scatter shapes how n varies per instance: 0 = every
+    //                    unit gets the full count, 100 = mostly plain with rare
+    //                    fully-colored units (seeded, stochastic).
+    function _ambProgSaltCfg(cfg) {
+      const s = cfg && cfg.prog && cfg.prog.on && cfg.prog.salt;
+      return (s && (((s.len | 0) > 0) || ((s.colors | 0) > 0))) ? s : null;
+    }
+    // Re-partition one cycle's chord lengths: multiplicative seeded jitter,
+    // rescaled to the exact written total, boundaries quantized to 1/8 bar
+    // (min segment 1/8). Pure in (lens, cyc, seed, amt).
+    function _ambProgSaltLens(lens, cyc, seed, amt) {
+      const total = lens.reduce((s, v) => s + v, 0);
+      if (!(total > 0) || lens.length < 2) return lens;
+      const rnd = _ambSeededRand(((((cyc + 1) * 2246822519) >>> 0) ^ (((seed | 0) * 2654435761) >>> 0) ^ 0x5A17) >>> 0);
+      const k = Math.max(0, Math.min(100, amt)) / 100;
+      const raw = lens.map(w => w * Math.exp((rnd() * 2 - 1) * k * 1.1));   // ≈ ×3…÷3 spread at max
+      const scale = total / raw.reduce((s, v) => s + v, 0);
+      const out = []; let acc = 0, prevB = 0;
+      for (let i = 0; i < raw.length; i++) {
+        acc += raw[i] * scale;
+        let b = (i === raw.length - 1) ? total : Math.round(acc * 8) / 8;
+        b = Math.max(prevB + 0.125, Math.min(total - 0.125 * (raw.length - 1 - i), b));
+        out.push(Math.max(0.125, b - prevB)); prevB = b;
+      }
+      return out;
+    }
+    // Root-preserving color vocabulary for an interval set: extensions +
+    // suspensions + the open fifth — everything stays tonally the same chord.
+    function _ambProgColorVocab(iv) {
+      const s0 = Array.from(new Set((iv || []).map(x => ((x | 0) % 12 + 12) % 12))).sort((a, b) => a - b);
+      const has = (p) => s0.indexOf(p) >= 0;
+      const uniq = (a) => Array.from(new Set(a)).sort((x, y) => x - y);
+      const out = [], seen = new Set([s0.join(',')]);
+      const push = (a) => { a = uniq(a); const key = a.join(','); if (!seen.has(key) && a.length) { seen.add(key); out.push(a); } };
+      const third = has(4) ? 4 : (has(3) ? 3 : null);
+      if (third === 4) { push([...s0, 11]); push([...s0, 2]); push([...s0, 9]); push([...s0, 11, 2]); }   // maj7 · add9 · 6 · maj9
+      else if (third === 3) { push([...s0, 10]); push([...s0, 2]); push([...s0, 10, 2]); }                 // m7 · m(add9) · m9
+      else push([...s0, 2]);                                                                                // sus/power → add9 color
+      if (third != null) { const rest = s0.filter(p => p !== third); push([...rest, 5]); push([...rest, 2]); }   // sus4 · sus2
+      push([0, 7]);                                                                                          // open fifth
+      return out;
+    }
+    // Fractional position hint for COLORS: _ambProgStepAt stashes {step, pos}
+    // as it resolves each onset; _ambProgCurrentChord uses it only when the
+    // step matches (a stale/absent hint → pos 0 = the plain written chord).
+    let _ambProgPosHint = null;
     // Bar-aligned chord step at an absolute onset time `atSec` (Tone seconds):
     //   floor(barsElapsed / barsPerChord), anchored at play start.
     // This is the per-ONSET replacement for the legacy ms `progStep`: resolving
@@ -2527,15 +2631,24 @@
       // uniform path as before.
       const srcCh = (src && src.type === 'prog' && Array.isArray(src.chords) && src.chords.length) ? src.chords : null;
       const chords = srcCh || ((cfg && cfg.prog && Array.isArray(cfg.prog.chords)) ? cfg.prog.chords : null);
-      if (chords && chords.length && chords.some(c => c && Number.isFinite(c.bars) && c.bars > 0)) {
-        const lens = chords.map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
-        const cycle = lens.reduce((s, v) => s + v, 0) || bpc;
+      // SALT · len applies only when walking the GLOBAL prog's own chord list
+      // (inherited srcs share it by reference; a layer's own prog is untouched).
+      const _salt = _ambProgSaltCfg(cfg);
+      const _saltLen = (_salt && (_salt.len | 0) > 0 && chords && chords.length > 1 && cfg && cfg.prog && chords === cfg.prog.chords) ? (_salt.len | 0) : 0;
+      if (chords && chords.length && (_saltLen || chords.some(c => c && Number.isFinite(c.bars) && c.bars > 0))) {
+        let lens = chords.map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
+        const cycle = lens.reduce((s, v) => s + v, 0) || bpc;   // WRITTEN total — salt preserves it, so cycle math is stable
         const cyc = Math.floor(bars / cycle);
+        if (_saltLen) lens = _ambProgSaltLens(lens, cyc, (cfg.seed | 0), _saltLen);
         let pos = bars - cyc * cycle, i = 0;
         while (i < lens.length - 1 && pos >= lens[i]) { pos -= lens[i]; i++; }
-        return cyc * chords.length + i;
+        const step = cyc * chords.length + i;
+        _ambProgPosHint = { step: step, pos: Math.max(0, Math.min(1, pos / Math.max(1e-6, lens[i]))) };
+        return step;
       }
-      return Math.floor(bars / bpc);
+      const _ustep = Math.floor(bars / bpc);
+      _ambProgPosHint = { step: _ustep, pos: Math.max(0, Math.min(1, (bars - _ustep * bpc) / bpc)) };
+      return _ustep;
     }
     // Step + fractional position INSIDE the current chord instance (0..1) —
     // the same clock math as _ambProgStepAt (uniform fast path + per-chord
@@ -2550,10 +2663,13 @@
       const bars = Math.max(0, atSec - anchor) / barSec;
       const srcCh = (src && src.type === 'prog' && Array.isArray(src.chords) && src.chords.length) ? src.chords : null;
       const chords = srcCh || ((cfg && cfg.prog && Array.isArray(cfg.prog.chords)) ? cfg.prog.chords : null);
-      if (chords && chords.length && chords.some(c => c && Number.isFinite(c.bars) && c.bars > 0)) {
-        const lens = chords.map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
+      const _salt2 = _ambProgSaltCfg(cfg);
+      const _saltLen2 = (_salt2 && (_salt2.len | 0) > 0 && chords && chords.length > 1 && cfg && cfg.prog && chords === cfg.prog.chords) ? (_salt2.len | 0) : 0;
+      if (chords && chords.length && (_saltLen2 || chords.some(c => c && Number.isFinite(c.bars) && c.bars > 0))) {
+        let lens = chords.map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
         const cycle = lens.reduce((s2, v) => s2 + v, 0) || bpc;
         const cyc = Math.floor(bars / cycle);
+        if (_saltLen2) lens = _ambProgSaltLens(lens, cyc, (cfg.seed | 0), _saltLen2);
         let pos = bars - cyc * cycle, i = 0;
         while (i < lens.length - 1 && pos >= lens[i]) { pos -= lens[i]; i++; }
         return { step: cyc * chords.length + i, pos: Math.max(0, Math.min(1, pos / Math.max(1e-6, lens[i]))) };
@@ -22724,6 +22840,16 @@
         // is on; else the "turn Progression on" hint.
         { const progOff = document.getElementById(tr('ambient-progsec-off'));
           if (progOff) progOff.style.display = progOn ? 'none' : ''; }
+        // 🧂 Salt row follows Progression visibility + mirrors cfg.prog.salt.
+        { const saltRow = document.getElementById(tr('ambient-prog-saltrow'));
+          if (saltRow) {
+            saltRow.style.display = progOn ? '' : 'none';
+            const sv = (cfg.prog && cfg.prog.salt) || {};
+            [['ambient-salt-len', sv.len | 0], ['ambient-salt-colors', sv.colors | 0], ['ambient-salt-scatter', sv.scatter | 0]].forEach(pr => {
+              const el = document.getElementById(tr(pr[0]));
+              if (el && document.activeElement !== el) el.value = String(pr[1]);
+            });
+          } }
         // Key sub-controls. Effective key: workspace when following, stored custom otherwise.
         const kFol = document.getElementById(tr('ambient-key-follow'));
         if (kFol) { kFol.classList.toggle('active', follow); kFol.disabled = !cfg.keyOn; }
@@ -23084,6 +23210,15 @@
                 '<button type="button" class="ambient-seg ambient-prog-addpart" id="ambient-prog-addpart" title="Append another progression as a new PART — build a sequence of progressions (Verse → Chorus → …)">＋ Part</button>' +
               '</span>' +
               '<span class="ambient-hint" id="ambient-progsec-off" style="display:none">turn Progression on to build a chord sequence</span>' +
+            '</div>' +
+            // 🧂 SALT — deterministic per-cycle spice on the global progression
+            // (engine: _ambProgSaltCfg / _ambProgSaltLens / colors in
+            // _ambProgCurrentChord). All zeros = played exactly as written.
+            '<div class="ambient-row ambient-prog-salt" id="ambient-prog-saltrow" style="display:none" title="Salt — deterministic per-cycle spice on the progression. Everything at 0 = play exactly as written.">' +
+              '<span class="ambient-sched-lbl salt-lbl">🧂 salt</span>' +
+              '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">lengths</span><input type="number" class="ambient-salt-in" id="ambient-salt-len" min="0" max="100" step="5" value="0" title="Random chord scheduling — each cycle re-slices the chord lengths (A 1¼ bars, B ½, C 1¾ …) on a 1/8-bar grid. The cycle total is preserved, so loops/Evolve stay aligned. 0 = as written, 100 = wild."></span>' +
+              '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">colors</span><input type="number" class="ambient-salt-in" id="ambient-salt-colors" min="0" max="8" step="1" value="0" title="Chord colors per unit — splits a chord’s unit into segments: the downbeat is always the written chord, later segments become root-preserving colors of it (maj7 · add9 · 6 · maj9 · sus2 · sus4 · open 5). 0 = off, higher = more segments (max 8)."></span>' +
+              '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">scatter</span><input type="number" class="ambient-salt-in" id="ambient-salt-scatter" min="0" max="100" step="5" value="0" title="How unevenly the Colors count lands per chord unit — 0: every unit gets the full count; 100: most units stay plain and only the occasional unit blooms fully (stochastic, seeded — same seed replays identically)."></span>' +
             '</div>' +
             // Overview strip — the whole progression at a glance (chord chips grouped
             // under part labels; alt-bearing chords badged; playing chord glows). Click a
@@ -24620,6 +24755,18 @@
         if (pClone) pClone.addEventListener('click', () => { _E = E; try { _ambOpenProgEditor(E, { scope: 'area', clone: true }); } catch (e) {} });
         const pAddPart = G('ambient-prog-addpart');
         if (pAddPart) pAddPart.addEventListener('click', () => { _E = E; const r = pAddPart.getBoundingClientRect(); _ambOpenGlobalProgMenu(E, r.left, r.bottom, { append: true }); });
+        // 🧂 Salt knobs → cfg.prog.salt (normalize deletes the key when all zero,
+        // so untouched projects stay byte-identical). Engine reads per onset —
+        // changes land within the lookahead, no re-anchor needed.
+        [['ambient-salt-len', 'len', 100], ['ambient-salt-colors', 'colors', 8], ['ambient-salt-scatter', 'scatter', 100]].forEach(pr => {
+          const el = G(pr[0]); if (!el) return;
+          el.addEventListener('input', () => {
+            _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
+            if (!c.prog.salt || typeof c.prog.salt !== 'object') c.prog.salt = { len: 0, colors: 0, scatter: 0 };
+            c.prog.salt[pr[1]] = Math.max(0, Math.min(pr[2], parseInt(el.value, 10) || 0));
+            persist();
+          });
+        });
       }
 
       // ＋ Ramp buttons live inside (re-renderable) layer cards → ONE delegated

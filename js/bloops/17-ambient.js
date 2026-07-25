@@ -19156,6 +19156,85 @@
         });
       });
     }
+    // ---- Seq ACCOMPANIMENT — spawn a derived Seq layer in lockstep ---------
+    // The accompaniment is built by TRANSFORMING the source seq's own unit
+    // events: identical rhythm slots (same durMs walk → same unit length →
+    // plays through the ordinary seq engine in exact lockstep, plus a
+    // unit-sync ref to the source for belt-and-suspenders drift lock), with
+    // pitches re-mapped diatonically in the unit's own scale. A SNAPSHOT —
+    // edit the source, re-spawn to refresh. Scale-aware interval mapping:
+    // snap the pitch to the nearest scale tone, walk N scale steps, return.
+    function _ambAccMapFreq(f, steps, scaleIv, rootPc) {
+      if (!(f > 0)) return f;
+      const midi = 69 + 12 * Math.log2(f / 440);
+      const mR = Math.round(midi);
+      const rel = (((mR - rootPc) % 12) + 12) % 12;
+      const n = scaleIv.length || 7;
+      let bi = 0, bd = 99;
+      for (let i = 0; i < n; i++) {
+        const d = Math.min((((scaleIv[i] - rel) % 12) + 12) % 12, (((rel - scaleIv[i]) % 12) + 12) % 12);
+        if (d < bd) { bd = d; bi = i; }
+      }
+      // snapped absolute midi (nearest occurrence of scale tone bi to mR)
+      let snap = mR + ((((scaleIv[bi] - rel) % 12) + 12) % 12);
+      if (snap - mR > 6) snap -= 12;
+      // the scale as an infinite ladder: tone k = 12·floor(k/n) + iv[k mod n];
+      // walking `steps` rungs from bi is then exact in any direction.
+      const lad = (k) => 12 * Math.floor(k / n) + scaleIv[((k % n) + n) % n];
+      const target = snap + (lad(bi + (steps | 0)) - lad(bi));
+      return 440 * Math.pow(2, (target - 69) / 12);
+    }
+    function _ambSpawnAccomp(E, seq, opts) {
+      _E = E; const cfg = E.getCfg(); if (!cfg) return;
+      if (!Array.isArray(seq.units) || !seq.units.length) { if (typeof showToast === 'function') showToast('This Seq has no sequence yet — nothing to accompany.'); return; }
+      const octMul = Math.pow(2, opts.oct | 0);
+      const nu = seq.units.filter(_ambValidUnit).map(u => {
+        const sc = (typeof SCALES !== 'undefined' && u.scale && SCALES[u.scale] && SCALES[u.scale].length >= 5) ? SCALES[u.scale] : [0, 2, 4, 5, 7, 9, 11];
+        const rootPc = (((u.rootIdx | 0) % 12) + 12) % 12;
+        const mk = (freqs) => {
+          const out = [];
+          (freqs || []).forEach(f => {
+            if (!(f > 0)) return;
+            out.push(_ambAccMapFreq(f, opts.steps, sc, rootPc) * octMul);
+            if (opts.voice === 'triad') {
+              out.push(_ambAccMapFreq(f, opts.steps + 2, sc, rootPc) * octMul);
+              out.push(_ambAccMapFreq(f, opts.steps + 4, sc, rootPc) * octMul);
+            }
+          });
+          return out;
+        };
+        let evs;
+        if (opts.rhy === 'held') {
+          // one held voicing per pass — anchored on the first sounding event
+          const first = u.events.find(e => e && Array.isArray(e.freqs) && e.freqs.length) || u.events[0];
+          evs = [{ freqs: mk(first && first.freqs), durMs: Math.max(120, _unitTotalMs(u)) }];
+        } else {
+          // mirror every slot: silent slots stay silent (rests preserved)
+          evs = u.events.map(e => ({ freqs: mk(e && e.freqs), durMs: Math.max(20, (e && e.durMs) | 0), ...(e && e.vel != null ? { vel: e.vel } : {}) }));
+        }
+        const out = { events: evs, reps: (u.reps | 0) || 1 };
+        if (u.scale) out.scale = u.scale;
+        if (u.rootIdx != null) out.rootIdx = u.rootIdx;
+        return out;
+      });
+      if (!nu.length) { if (typeof showToast === 'function') showToast('This Seq has no playable units.'); return; }
+      const newId = _ambSeqList(cfg).reduce((m, s2) => Math.max(m, s2.id | 0), 0) + 1;
+      const L = _defaultSeqLayer(newId);
+      L.type = 'seq'; L.seedKind = 'sequence';
+      L.units = nu; L.unitMode = seq.unitMode || 'single';
+      L.name = (_ambLayerLabel(seq, 'Seq') || 'Seq') + ' · accomp';
+      L.level = 58;
+      L.harmony = seq.harmony || 'fixed'; L.chordBorrow = seq.chordBorrow !== false;   // follow key changes the same way the source does
+      L.tone = (opts.tone === 'random') ? ['sine', 'triangle', 'sawtooth', 'square'][Math.floor(Math.random() * 4)] : (seq.tone || '');
+      L.unit = { mode: 'sync', ref: 'seq:' + seq.id, num: 1, den: 1 };   // drift-lock to the source
+      if (!Array.isArray(cfg.extras)) cfg.extras = [];
+      cfg.extras.push(L);
+      const freshQ = _ambMarkFreshLayer(E, L, 'seq:' + newId);
+      try { _ambRenderSeqLayers(E); } catch (e) {}
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      if (typeof showToast === 'function') showToast('Accompaniment spawned' + (freshQ ? ' (muted — tap its name to bring it in on the next boundary)' : '') + '.');
+    }
     function _ambSeqLayerHtml(s, i) {
       const id = s.id, p = 'ambient-seq-' + id + '-';
       const opts = (arr, cur) => arr.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('');
@@ -19238,6 +19317,17 @@
           _ambSpreadCtrl('ambient-seq-' + id, s) +
           _ambModUi('seq-' + id) +
           _ambFxUi('seq-' + id) + gpe() +
+        // ✚ ACCOMPANIMENT — spawn a derived Seq layer in harmonic + rhythmic
+        // lockstep (engine: _ambSpawnAccomp). A snapshot; re-spawn to refresh.
+        grp('Accompaniment') +
+          '<div class="ambient-ctrl"><label for="' + p + 'acc-int" title="Diatonic interval for the accompaniment line — scale-aware (each note snaps to this sequence’s scale, then walks N scale steps)">Harmony</label><select id="' + p + 'acc-int" class="ambient-select">' +
+            opts([['0', 'Unison'], ['2', '3rd above'], ['-2', '3rd below'], ['4', '5th above'], ['-5', '6th below'], ['7', 'Octave above'], ['-7', 'Octave below']], '2') + '</select><span class="ambient-hint">scale-aware interval</span></div>' +
+          '<div class="ambient-ctrl"><label for="' + p + 'acc-voice">Voicing</label><select id="' + p + 'acc-voice" class="ambient-select">' + opts([['single', 'Single notes'], ['triad', 'Triad chords']], 'single') + '</select><span class="ambient-hint">one note, or a stacked diatonic triad per hit</span></div>' +
+          '<div class="ambient-ctrl"><label for="' + p + 'acc-rhy">Rhythm</label><select id="' + p + 'acc-rhy" class="ambient-select">' + opts([['follow', 'Follow the seq'], ['held', 'Held pad']], 'follow') + '</select><span class="ambient-hint">mirror every hit (rests kept) · or one held voicing per pass</span></div>' +
+          '<div class="ambient-ctrl"><label for="' + p + 'acc-oct">Octave</label><select id="' + p + 'acc-oct" class="ambient-select">' + opts([['-2', '−2'], ['-1', '−1'], ['0', '0'], ['1', '+1'], ['2', '+2']], '0') + '</select><span class="ambient-hint">shift the whole accompaniment</span></div>' +
+          '<div class="ambient-ctrl"><label for="' + p + 'acc-tone">Instrument</label><select id="' + p + 'acc-tone" class="ambient-select">' + opts([['same', 'Same as this Seq'], ['random', 'Random voice']], 'same') + '</select><span class="ambient-hint">the new layer’s voice — retune it on its own card any time</span></div>' +
+          '<div class="ambient-ctrl"><button type="button" id="' + p + 'acc-go" class="ambient-seg" title="Spawn a NEW Seq layer playing this harmonization in exact lockstep — same rhythm slots, same unit length, unit-synced to this layer. It’s a snapshot of the current sequence; re-spawn after edits.">✚ Spawn accompaniment</button><span class="ambient-hint">adds a new synced layer</span></div>' +
+        gpe() +
           _ambLayerRampsHtml('seq:' + id) +
       '</div>';
     }
@@ -19310,6 +19400,21 @@
       const getSq = () => _ambSeqById(E.getCfg(), id);
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
       const el = (suf) => _ambGet(E, p + suf);
+      // ✚ Accompaniment spawn — reads the group's selects at click time.
+      { const go = el('acc-go');
+        if (go) go.addEventListener('click', () => {
+          _E = E; const sq = getSq(); if (!sq) return;
+          const v = (suf, d) => { const e2 = el(suf); return e2 ? e2.value : d; };
+          try {
+            _ambSpawnAccomp(E, sq, {
+              steps: parseInt(v('acc-int', '2'), 10) || 0,
+              voice: v('acc-voice', 'single'),
+              rhy: v('acc-rhy', 'follow'),
+              oct: parseInt(v('acc-oct', '0'), 10) || 0,
+              tone: v('acc-tone', 'same'),
+            });
+          } catch (e) { console.warn('Accompaniment spawn failed', e); }
+        }); }
       const bindInt = (suf, key) => { const e = el(suf); if (!e) return; e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; sq[key] = parseInt(e.value, 10) || 0; if (key === 'level') _ambSyncLevelUI(E, 'seq:' + sq.id, sq.level); persist(); }); };
       const bindMs = (suf, key) => { const e = el(suf), v = el(suf + '-v'); if (!e) return; e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; const val = parseInt(e.value, 10) || 0; sq[key] = val; if (v) v.textContent = _ambFmtMs(val); persist(); }); };
       const bindStr = (suf, key, after) => { const e = el(suf); if (!e) return; e.addEventListener('change', () => { _E = E; const sq = getSq(); if (!sq) return; sq[key] = e.value || sq[key]; if (after) after(); persist(); }); };

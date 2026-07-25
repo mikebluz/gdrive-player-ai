@@ -11663,7 +11663,7 @@
       let tapNode = null, srcNode = null, tapSink = null, pcm = [], pcmChans = 1, firstFrame = -1, armAt = 0, stopAt = 0, usingTap = false;
       let pbId = null, startedPb = false;   // "Start playback" — transport launched by this take
       let savedNudge = 0; try { savedNudge = parseFloat(localStorage.getItem(_TRK_NUDGE_LS)) || 0; } catch (e) {}
-      let savedPb = false; try { savedPb = localStorage.getItem(_TRK_AUTOPLAY_LS) === '1'; } catch (e) {}
+      let savedPb = true; try { savedPb = localStorage.getItem(_TRK_AUTOPLAY_LS) !== '0'; } catch (e) {}   // default CHECKED; a saved explicit off is respected
       const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-track-rec-ov';
       ov.innerHTML = '<div class="sm-modal ambient-track-modal">' +
         '<div class="sm-title">Record a Track</div>' +

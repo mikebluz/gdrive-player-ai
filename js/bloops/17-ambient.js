@@ -2529,12 +2529,7 @@
       const hint = _ambProgPosHint;
       const pos = (hint && hint.step === step) ? hint.pos : 0;
       const seedS = (cfgS.seed | 0) || 1;
-      // Segment count for THIS instance: scatter 0 → always the full count;
-      // 100 → heavily skewed low (mostly plain, rare fully-colored units).
-      const nTarget = Math.min(8, (salt.colors | 0) + 1);   // knob k = k variations on top of the written chord, ≤8 segments
-      const rndN = _ambSeededRand((((step + 1) * 40503) ^ ((seedS * 131) >>> 0) ^ 0xC0105) >>> 0);
-      const shape = ((salt.scatter | 0) / 100) * 4;
-      const nSeg = 1 + Math.round(Math.pow(rndN(), shape) * (nTarget - 1));
+      const nSeg = _ambProgSaltSegCount(salt, step, seedS);
       if (nSeg <= 1) return ret;
       const segIdx = Math.min(nSeg - 1, Math.floor(pos * nSeg));
       if (segIdx <= 0) return ret;   // downbeat segment = the written chord, always
@@ -2599,6 +2594,17 @@
       if (third != null) { const rest = s0.filter(p => p !== third); push([...rest, 5]); push([...rest, 2]); }   // sus4 · sus2
       push([0, 7]);                                                                                          // open fifth
       return out;
+    }
+    // Segment count for ONE chord instance — scatter 0 → always the full count;
+    // 100 → heavily skewed low (mostly plain, rare fully-colored units). SHARED
+    // by the funnel (_ambProgCurrentChord) and the 🧂 readout so they can't drift.
+    function _ambProgSaltSegCount(salt, step, seed) {
+      const nTarget = Math.min(8, (salt.colors | 0) + 1);   // knob k = k variations on top of the written chord, ≤8 segments
+      if (nTarget <= 1) return 1;
+      const seedS = (seed | 0) || 1;
+      const rndN = _ambSeededRand((((step + 1) * 40503) ^ ((seedS * 131) >>> 0) ^ 0xC0105) >>> 0);
+      const shape = ((salt.scatter | 0) / 100) * 4;
+      return 1 + Math.round(Math.pow(rndN(), shape) * (nTarget - 1));
     }
     // Fractional position hint for COLORS: _ambProgStepAt stashes {step, pos}
     // as it resolves each onset; _ambProgCurrentChord uses it only when the
@@ -15364,6 +15370,7 @@
       try { _ambUpdatePlayheads(E); } catch (e) {}
       try { _ambEuclidStepPlayheads(E); } catch (e) {}
       try { _ambProgOverviewPlayhead(E); } catch (e) {}
+      try { _ambSaltReadoutSync(E); } catch (e) {}
       try { _ambSynthVoicePlayheads(E); } catch (e) {}
       if (E.timer && !document.hidden) E.viz.raf = requestAnimationFrame(() => _ambVizFrame(E));
       else E.viz.raf = 0;
@@ -18155,6 +18162,41 @@
       el._curCi = ci;
       el.querySelectorAll('.ambient-pov-chord.cur').forEach(n => n.classList.remove('cur'));
       const cell = el.querySelector('.ambient-pov-chord[data-ci="' + ci + '"]'); if (cell) cell.classList.add('cur');
+    }
+    // 🧂 Salt readout — salt is DETERMINISTIC per cycle, so show the player
+    // exactly what's happening and what's next: this cycle's actual plan
+    // ("C 1¼ ×3 · Am ½ · F 1¾ · G ½" — length = the salted slice, ×n = color
+    // segments this instance) plus the next cycle's lengths. Called per viz
+    // frame; sig-guarded so the DOM only updates on a cycle/knob/seed change.
+    function _ambSaltReadoutSync(E, force) {
+      const el = _ambGet(E, 'ambient-salt-readout'); if (!el) return;
+      const cfg = E._cfg || (E.getCfg && E.getCfg());
+      const salt = _ambProgSaltCfg(cfg);
+      const p = cfg && cfg.prog;
+      if (!salt || !p || !p.on || !Array.isArray(p.chords) || !p.chords.length) {
+        if (el.style.display !== 'none') { el.style.display = 'none'; el._sig = ''; }
+        return;
+      }
+      const chords = p.chords, len = chords.length;
+      let cyc = 0;
+      if (E.timer) { try { const step = _ambProgStepAt(E, ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0)) | 0; cyc = Math.max(0, Math.floor(step / len)); } catch (e) {} }
+      const seed = cfg.seed | 0;
+      const sig = cyc + '|' + (salt.len | 0) + '|' + (salt.colors | 0) + '|' + (salt.scatter | 0) + '|' + len + '|' + seed + '|' + (E.timer ? 1 : 0);
+      if (!force && el._sig === sig) return;
+      el._sig = sig;
+      const bpc = Math.max(0.01, (cfg && cfg.barsPerChord) || 1);
+      const wl = chords.map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
+      const salted = (salt.len | 0) > 0;
+      const cur = salted ? _ambProgSaltLens(wl, cyc, seed, salt.len | 0) : wl;
+      const nxt = salted ? _ambProgSaltLens(wl, cyc + 1, seed, salt.len | 0) : null;
+      const nm = (c) => _AMB_CHROM[(((c.root | 0) % 12) + 12) % 12] + ((Array.isArray(c.intervals) && c.intervals.indexOf(3) >= 0 && c.intervals.indexOf(4) < 0) ? 'm' : '');
+      const curTxt = chords.map((c, i) => {
+        const n = (salt.colors | 0) > 0 ? _ambProgSaltSegCount(salt, cyc * len + i, seed) : 1;
+        return nm(c) + ' ' + _ambFmtBpc(cur[i]) + (n > 1 ? '<i title="' + n + ' segments this pass — the downbeat stays the written chord, the rest are colors of it">×' + n + '</i>' : '');
+      }).join(' · ');
+      el.innerHTML = '🧂 <b>' + (E.timer ? 'cycle ' + (cyc + 1) : 'next play') + ':</b> ' + curTxt +
+        (nxt ? ' <span class="salt-next" title="Next cycle’s chord lengths (bars)">→ ' + chords.map((c, i) => _ambFmtBpc(nxt[i])).join(' · ') + '</span>' : '');
+      if (el.style.display === 'none') el.style.display = '';
     }
     function _ambProgOverviewAct(E, ev) {
       const t = ev.target && ev.target.closest && ev.target.closest('[data-pov]'); if (!t) return;
@@ -22928,6 +22970,7 @@
               const el = document.getElementById(tr(pr[0]));
               if (el && document.activeElement !== el) el.value = String(pr[1]);
             });
+            try { _ambSaltReadoutSync(E, true); } catch (e) {}
           } }
         // Key sub-controls. Effective key: workspace when following, stored custom otherwise.
         const kFol = document.getElementById(tr('ambient-key-follow'));
@@ -23299,6 +23342,9 @@
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">colors</span><input type="number" class="ambient-salt-in" id="ambient-salt-colors" min="0" max="8" step="1" value="0" title="Chord colors per unit — splits a chord’s unit into segments: the downbeat is always the written chord, later segments become root-preserving colors of it (maj7 · add9 · 6 · maj9 · sus2 · sus4 · open 5). 0 = off, higher = more segments (max 8)."></span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">scatter</span><input type="number" class="ambient-salt-in" id="ambient-salt-scatter" min="0" max="100" step="5" value="0" title="How unevenly the Colors count lands per chord unit — 0: every unit gets the full count; 100: most units stay plain and only the occasional unit blooms fully (stochastic, seeded — same seed replays identically)."></span>' +
             '</div>' +
+            // 🧂 live readout — this cycle's actual salted plan + next cycle's
+            // lengths (deterministic → fully predictable). _ambSaltReadoutSync.
+            '<div class="ambient-salt-readout" id="ambient-salt-readout" style="display:none" title="What salt is doing: this cycle’s chord lengths (and ×n color segments), then the next cycle’s lengths — deterministic per seed, so it plays exactly as shown."></div>' +
             // Overview strip — the whole progression at a glance (chord chips grouped
             // under part labels; alt-bearing chords badged; playing chord glows). Click a
             // chord to edit it there; click a part header to rename/reorder. _ambRenderProgOverview.
@@ -24846,6 +24892,7 @@
             if (!c.prog.salt || typeof c.prog.salt !== 'object') c.prog.salt = { len: 0, colors: 0, scatter: 0 };
             c.prog.salt[pr[1]] = Math.max(0, Math.min(pr[2], parseInt(el.value, 10) || 0));
             persist();
+            try { _ambSaltReadoutSync(E, true); } catch (e) {}   // readout tracks the knobs live
           });
         });
       }

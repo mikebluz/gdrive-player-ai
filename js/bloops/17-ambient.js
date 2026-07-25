@@ -18178,25 +18178,35 @@
         return;
       }
       const chords = p.chords, len = chords.length;
-      let cyc = 0;
-      if (E.timer) { try { const step = _ambProgStepAt(E, ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0)) | 0; cyc = Math.max(0, Math.floor(step / len)); } catch (e) {} }
+      let step = 0, cyc = 0;
+      if (E.timer) { try { step = _ambProgStepAt(E, ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + 0.016) | 0; cyc = Math.max(0, Math.floor(step / len)); } catch (e) {} }
       const seed = cfg.seed | 0;
       const sig = cyc + '|' + (salt.len | 0) + '|' + (salt.colors | 0) + '|' + (salt.scatter | 0) + '|' + len + '|' + seed + '|' + (E.timer ? 1 : 0);
-      if (!force && el._sig === sig) return;
-      el._sig = sig;
-      const bpc = Math.max(0.01, (cfg && cfg.barsPerChord) || 1);
-      const wl = chords.map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
-      const salted = (salt.len | 0) > 0;
-      const cur = salted ? _ambProgSaltLens(wl, cyc, seed, salt.len | 0) : wl;
-      const nxt = salted ? _ambProgSaltLens(wl, cyc + 1, seed, salt.len | 0) : null;
-      const nm = (c) => _AMB_CHROM[(((c.root | 0) % 12) + 12) % 12] + ((Array.isArray(c.intervals) && c.intervals.indexOf(3) >= 0 && c.intervals.indexOf(4) < 0) ? 'm' : '');
-      const curTxt = chords.map((c, i) => {
-        const n = (salt.colors | 0) > 0 ? _ambProgSaltSegCount(salt, cyc * len + i, seed) : 1;
-        return nm(c) + ' ' + _ambFmtBpc(cur[i]) + (n > 1 ? '<i title="' + n + ' segments this pass — the downbeat stays the written chord, the rest are colors of it">×' + n + '</i>' : '');
-      }).join(' · ');
-      el.innerHTML = '🧂 <b>' + (E.timer ? 'cycle ' + (cyc + 1) : 'next play') + ':</b> ' + curTxt +
-        (nxt ? ' <span class="salt-next" title="Next cycle’s chord lengths (bars)">→ ' + chords.map((c, i) => _ambFmtBpc(nxt[i])).join(' · ') + '</span>' : '');
-      if (el.style.display === 'none') el.style.display = '';
+      if (force || el._sig !== sig) {
+        el._sig = sig;
+        const bpc = Math.max(0.01, (cfg && cfg.barsPerChord) || 1);
+        const wl = chords.map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
+        const salted = (salt.len | 0) > 0;
+        const cur = salted ? _ambProgSaltLens(wl, cyc, seed, salt.len | 0) : wl;
+        const nxt = salted ? _ambProgSaltLens(wl, cyc + 1, seed, salt.len | 0) : null;
+        const nm = (c) => _AMB_CHROM[(((c.root | 0) % 12) + 12) % 12] + ((Array.isArray(c.intervals) && c.intervals.indexOf(3) >= 0 && c.intervals.indexOf(4) < 0) ? 'm' : '');
+        const curTxt = chords.map((c, i) => {
+          const n = (salt.colors | 0) > 0 ? _ambProgSaltSegCount(salt, cyc * len + i, seed) : 1;
+          return '<span class="salt-ch" data-sci="' + i + '">' + nm(c) + ' ' + _ambFmtBpc(cur[i]) + (n > 1 ? '<i title="' + n + ' segments this pass — the downbeat stays the written chord, the rest are colors of it">×' + n + '</i>' : '') + '</span>';
+        }).join(' · ');
+        el.innerHTML = '🧂 <b>' + (E.timer ? 'cycle ' + (cyc + 1) : 'next play') + ':</b> ' + curTxt +
+          (nxt ? ' <span class="salt-next" title="Next cycle’s chord lengths (bars)">→ ' + chords.map((c, i) => _ambFmtBpc(nxt[i])).join(' · ') + '</span>' : '');
+        el._curSci = null;   // innerHTML wiped any highlight — reapply below
+        if (el.style.display === 'none') el.style.display = '';
+      }
+      // Per-frame playhead: glow the SOUNDING chord chip (cheap — DOM touched
+      // only when the chord index changes; same idiom as the overview strip).
+      const ci = E.timer ? (((step % len) + len) % len) : null;
+      if (ci !== el._curSci) {
+        el._curSci = ci;
+        el.querySelectorAll('.salt-ch.cur').forEach(n => n.classList.remove('cur'));
+        if (ci != null) { const chip = el.querySelector('.salt-ch[data-sci="' + ci + '"]'); if (chip) chip.classList.add('cur'); }
+      }
     }
     function _ambProgOverviewAct(E, ev) {
       const t = ev.target && ev.target.closest && ev.target.closest('[data-pov]'); if (!t) return;

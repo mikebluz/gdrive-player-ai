@@ -14203,7 +14203,7 @@
       // Length popover: a fixed duration (auto-finalize after it elapses) or Live
       // (record until the user presses Finalize). Either way Finalize winds Bloom
       // down and ends on silence for a clean tail.
-      const btn = _ambGet(E, 'ambient-export-btn');
+      const btn = _ambGet(E, 'ambient-export-btn') || _ambGet(E, 'ambient-io-btn');   // master: anchor to the ⬡▾ I/O menu button
       const opts = [
         { label: '● Live — until Finalize', fn: () => _ambCaptureBegin(E, 0) },
         'hr',
@@ -14239,14 +14239,18 @@
         if (typeof showToast === 'function') showToast('Capturing — auto-finalize in ' + Math.round(lenMs / 1000) + 's (or press Finalize to end early).');
       }
     }
-    // Reflect the capture state onto the Capture/Finalize button.
+    // Reflect the capture state onto the Capture/Finalize button — the lane's
+    // ⤓ export button, or (master) the ⬡▾ I/O menu button, which becomes ■
+    // Finalize while a capture rolls (its click handler finalizes in that state).
     function _ambRefreshCaptureBtn(E) {
-      const btn = _ambGet(E, 'ambient-export-btn');
+      const ex = _ambGet(E, 'ambient-export-btn');
+      const btn = ex || _ambGet(E, 'ambient-io-btn');
       if (!btn) return;
       // Icon-only (it's a round transport button now); the title carries the words.
       if (E.capRec && E.windingDown) { btn.textContent = '⏳'; btn.title = 'Finalizing — ending on silence'; btn.disabled = true; btn.classList.add('recording'); }
       else if (E.capRec) { btn.textContent = '■'; btn.title = 'Finalize capture'; btn.disabled = false; btn.classList.add('recording'); }
-      else { btn.textContent = '⤓'; btn.title = 'Capture — pick a length or record live'; btn.disabled = false; btn.classList.remove('recording'); }
+      else if (ex) { btn.textContent = '⤓'; btn.title = 'Capture — pick a length or record live'; btn.disabled = false; btn.classList.remove('recording'); }
+      else { btn.textContent = '⬡▾'; btn.title = 'Send to Shape · Listen (rolling Grab buffer) · Capture'; btn.disabled = false; btn.classList.remove('recording'); }
     }
     // Begin live recording the master output (fan-out tap, no seed restart).
     function _ambCaptureStart(E) {
@@ -23402,16 +23406,18 @@
         // like the Make footer transport. Lives inside the (namespaced) panel so
         // it only shows while this Bloom panel is the active view.
         '<div class="ambient-footer-bar"><div class="ambient-footer-transport">' +
-          // Shape It (master only) — turn every Bloom layer into its own master
-          // Shapes wheel. Sits to the left of Capture.
-          (!E.isLane ? '<button type="button" id="ambient-shapeit-btn" class="ambient-footer-shapeit" title="Shape It — send every layer to master Shapes as its own wheel">⬡</button>' : '') +
-          // 🎙 Listen / Grab (master only): rolling capture of the master mix →
-          // retroactively save the last N bars as a loop-ready sample.
-          (!E.isLane ? '<button type="button" id="ambient-listen-btn" class="ambient-footer-capture" title="Listen — keep a rolling ~36s buffer of everything playing (for Grab)">🎙</button>' +
+          // ⬡▾ I/O menu (master only) — Send to Shape · Listen · Capture folded
+          // into ONE footer menu (the old standalone ⬡ / 🎙 / ⤓ buttons). The
+          // Grab controls stay in the footer, unhidden while Listen is rolling.
+          (!E.isLane ? '<button type="button" id="ambient-io-btn" class="ambient-footer-shapeit" title="Send to Shape · Listen (rolling Grab buffer) · Capture">⬡▾</button>' +
             '<select id="ambient-grab-bars" class="ambient-select ambient-grab-bars" title="How many bars Grab saves" hidden>' +
               [1, 2, 4, 8].map(n => '<option value="' + n + '"' + (n === 4 ? ' selected' : '') + '>' + n + ' bar' + (n === 1 ? '' : 's') + '</option>').join('') + '</select>' +
             '<button type="button" id="ambient-grab-btn" class="ambient-footer-capture" title="Grab — save the last N bars of what just played (bar-aligned, loop-ready)" hidden>⤓🎙</button>' : '') +
-          '<button type="button" id="ambient-export-btn" class="ambient-footer-capture" title="Record Bloom into the capture bank — pick a length or record live">⤓</button>' +
+          // Lanes keep the plain Capture button (no I/O menu — Shape/Listen are master-only).
+          (E.isLane ? '<button type="button" id="ambient-export-btn" class="ambient-footer-capture" title="Record Bloom into the capture bank — pick a length or record live">⤓</button>' : '') +
+          // 🎤 Record a Track — the input-recording modal (was the add-menu's
+          // "Track (record)" entry; the take still lands as a Track sample layer).
+          '<button type="button" id="ambient-track-btn" class="ambient-footer-capture" title="Record a Track — record your input (mic / line-in) against the playing loop; the take snaps to whole bars and loops tempo-locked">🎤</button>' +
           '<button type="button" id="ambient-play-btn" class="ambient-play" title="Play / stop">▶</button>' +
         '</div></div>';
       // Singleton rescue: a Bloom panel rebuild would DESTROY the docked lane
@@ -25190,7 +25196,7 @@
           ['Pads & drones', [['bed', 'Bed'], ['texture', 'Texture'], ['drone', 'Drone']]],
           ['Melody', [['motif', 'Motif'], ['run', 'Riff'], ['arp', 'Arp']]],
           ['Rhythm', [['beat', 'Beat'], ['bass', 'Bass'], ['pedal', 'Pedal']]],
-          ['Sampler', [['sample', 'Sample'], ['track', 'Track']]],
+          ['Sampler', [['sample', 'Sample']]],   // Track recording moved to the footer 🎤 button
         ];
         const actions = [];
         FAMILIES.forEach((fam) => {
@@ -25198,7 +25204,6 @@
           fam[1].forEach((it) => {
             const type = it[0], name = it[1];
             if (type === 'sample') { actions.push({ label: name, fn: () => _ambAddSampleLayer(E) }); return; }
-            if (type === 'track') { actions.push({ label: '◉ ' + name + ' (record)', fn: () => _ambTrackRecord(E) }); return; }
             actions.push({ label: name, fn: () => _ambAddExtra(E, type) });
           });
         });
@@ -25282,22 +25287,36 @@
         const freezeBtn = G('ambient-freeze-btn');
         if (freezeBtn) freezeBtn.addEventListener('click', () => { try { _ambFreezeToLane(); } catch (e) { console.warn('Bloom freeze failed', e); } });
       }
-      const exportBtn = G('ambient-export-btn');
+      const exportBtn = G('ambient-export-btn');   // lanes only — master's Capture lives in the ⬡▾ I/O menu
       if (exportBtn) exportBtn.addEventListener('click', () => { _ambCaptureToBank(E); });
+      // 🎤 Record a Track — the input-recording modal (footer, next to Play).
+      const trackBtn = G('ambient-track-btn');
+      if (trackBtn) trackBtn.addEventListener('click', () => { try { _ambTrackRecord(E); } catch (e) { console.warn('Track record failed', e); } });
       if (!E.isLane) {
-        const shapeitBtn = G('ambient-shapeit-btn');
-        if (shapeitBtn) shapeitBtn.addEventListener('click', () => { try { _ambShapeItAll(E); } catch (e) { console.warn('Shape It failed', e); } });
-        // 🎙 Listen / ⤓ Grab N bars (global master-mix capture)
-        const listenBtn = G('ambient-listen-btn'), grabBtn = G('ambient-grab-btn'), grabBars = G('ambient-grab-bars');
+        // ⬡▾ I/O menu: Send to Shape · Listen (toggle) · Capture. While a capture
+        // is rolling the button itself becomes ■ Finalize (_ambRefreshCaptureBtn),
+        // and pressing it finalizes instead of opening the menu.
+        const ioBtn = G('ambient-io-btn'), grabBtn = G('ambient-grab-btn'), grabBars = G('ambient-grab-bars');
         const syncAL = () => {
-          if (listenBtn) listenBtn.classList.toggle('ambient-listening', _AL.on);
+          if (ioBtn) ioBtn.classList.toggle('ambient-listening', _AL.on);
           if (grabBtn) grabBtn.hidden = !_AL.on;
           if (grabBars) grabBars.hidden = !_AL.on;
         };
-        if (listenBtn) listenBtn.addEventListener('click', () => {
-          if (_AL.on) _alStop();
-          else if (!_alStart() && typeof showToast === 'function') showToast('Listen unavailable (recording not supported here).');
-          syncAL();
+        if (ioBtn) ioBtn.addEventListener('click', () => {
+          if (E.capRec) { _ambCaptureToBank(E); return; }   // capturing → this press = Finalize
+          const r = ioBtn.getBoundingClientRect();
+          const acts = [
+            { label: '⬡ Send to Shape — every layer becomes a Shapes wheel', fn: () => { try { _ambShapeItAll(E); } catch (e) { console.warn('Shape It failed', e); } } },
+            { label: _AL.on ? '🎙 Listen — ON · stop the rolling buffer' : '🎙 Listen — roll a ~36s buffer (Grab saves the last N bars)', fn: () => {
+              if (_AL.on) _alStop();
+              else if (!_alStart() && typeof showToast === 'function') showToast('Listen unavailable (recording not supported here).');
+              syncAL();
+            } },
+            // Defer past this menu's own dismiss (showCtxMenu runs fn() THEN
+            // dismissCtxMenu(), which would close the length picker we open).
+            { label: '⤓ Capture — record Bloom into the bank', fn: () => { setTimeout(() => _ambCaptureToBank(E), 0); } },
+          ];
+          if (typeof showCtxMenu === 'function') showCtxMenu(r.left, r.top, acts);
         });
         if (grabBtn) grabBtn.addEventListener('click', () => { _alGrabBars(parseInt(grabBars && grabBars.value, 10) || 4); });
         syncAL();

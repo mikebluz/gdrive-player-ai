@@ -2745,6 +2745,10 @@
     }
     .ambient-footer-capture:hover { transform: translateY(-1px); box-shadow: 0 0 18px rgba(244, 183, 64, 0.7); }
     .ambient-footer-capture.recording { color: #ff5c6c; border-color: #ff5c6c; box-shadow: 0 0 16px rgba(255, 92, 108, 0.7); }
+    /* The ⬡▾ I/O menu button carries the same live states (■ Finalize while a
+       capture rolls; red pulse while Listen's rolling buffer is on). */
+    .ambient-footer-shapeit.recording { color: #ff5c6c; border-color: #ff5c6c; box-shadow: 0 0 16px rgba(255, 92, 108, 0.7); }
+    .ambient-footer-shapeit.ambient-listening { color: #ff5c6c; border-color: #ff5c6c; box-shadow: 0 0 16px rgba(255, 92, 108, 0.7); animation: ambient-listen-pulse 2.2s ease-in-out infinite; }
     .ambient-footer-capture:disabled { opacity: 0.7; cursor: default; }
     /* 🎙 Listen lit state + the Grab bars picker (revived Listen/Grab).
        The [hidden] rule is required: .ambient-footer-capture's display:flex

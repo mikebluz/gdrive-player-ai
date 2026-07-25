@@ -1814,6 +1814,13 @@
           if (!s.len && !s.colors && !s.scatter) delete prog.salt;
         }
       }
+      // ↻ ORDER (additive): scheduled chord re-ordering. Absent / mode '' → key
+      // deleted, so untouched projects stay byte-identical.
+      if (prog.order != null) {
+        const o = prog.order;
+        if (typeof o !== 'object' || (o.mode !== 'shuffle' && o.mode !== 'reverse')) delete prog.order;
+        else o.when = (typeof o.when === 'string' && (o.when === 'always' || /^[01]+$/.test(o.when))) ? o.when : 'always';
+      }
     }
     // Repair a parts list against a chord count: coerce {name,len}, clamp Σlen to total,
     // final part swallows any remainder. Returns undefined for absent/empty OR a trivial
@@ -2498,7 +2505,12 @@
       const step = (_ambProgStepOverride != null) ? (_ambProgStepOverride | 0)
         : ((_E && Number.isFinite(_E.progStep)) ? (_E.progStep | 0) : 0);
       const len = chs.length;
-      const base = chs[((step % len) + len) % len] || null;
+      const slot = ((step % len) + len) % len;
+      // ↻ ORDER (global prog only — inherited sources share its chord array by
+      // reference): slot i plays chord perm[i] on cycles the order-grid hits.
+      const cfg0 = _E && (_E._cfg || (_E.getCfg && _E.getCfg()));
+      const permO = (cfg0 && cfg0.prog && n.chords === cfg0.prog.chords) ? _ambProgOrderPerm(cfg0, len, Math.floor(step / len)) : null;
+      const base = chs[permO ? permO[slot] : slot] || null;
       // Per-slot ALTERNATES (v6): if this chord carries alternates, swap one in per cycle.
       // GATE — no alts → the EXACT prior return (byte-identical; the invariant harness's
       // configs are all alt-free, so it's unaffected). The pick uses a DEDICATED seeded
@@ -2611,6 +2623,27 @@
       const shape = ((salt.scatter | 0) / 100) * 4;
       return 1 + Math.round(Math.pow(rndN(), shape) * (nTarget - 1));
     }
+    // ↻ ORDER — scheduled re-ordering of the GLOBAL progression's chords.
+    // cfg.prog.order = { mode: 'shuffle'|'reverse', when: 'always'|step-grid }.
+    // The when-grid runs on progression CYCLES via the same _ambCondFires the
+    // layer When system uses ('1000' = the 1st of every 4 cycles, etc.).
+    // Returns a permutation (slot i plays chord perm[i]) for cycles the grid
+    // hits, else null (written order). Shuffle is a PURE function of
+    // (cfg.seed, cycle) via a dedicated seeded RNG — deterministic, replayable,
+    // and identical across the multiple reads of one onset. Absent order →
+    // null everywhere (byte-identical, harness-safe).
+    function _ambProgOrderPerm(cfg, n, cyc) {
+      const o = cfg && cfg.prog && cfg.prog.on && cfg.prog.order;
+      if (!o || !o.mode || !(n > 1)) return null;
+      try { if (!_ambCondFires(o.when || 'always', cyc)) return null; } catch (e) { return null; }
+      if (o.mode === 'reverse') { const p = []; for (let i = 0; i < n; i++) p.push(n - 1 - i); return p; }
+      if (o.mode !== 'shuffle') return null;
+      const seed = (cfg.seed | 0) || 1;
+      const rnd = _ambSeededRand(((((cyc + 1) * 1274126177) >>> 0) ^ ((seed * 2654435761) >>> 0) ^ 0x0DE5) >>> 0);
+      const p = []; for (let i = 0; i < n; i++) p.push(i);
+      for (let i = n - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); const t = p[i]; p[i] = p[j]; p[j] = t; }
+      return p;
+    }
     // Fractional position hint for COLORS: _ambProgStepAt stashes {step, pos}
     // as it resolves each onset; _ambProgCurrentChord uses it only when the
     // step matches (a stale/absent hint → pos 0 = the plain written chord).
@@ -2651,6 +2684,9 @@
         const cycle = lens.reduce((s, v) => s + v, 0) || bpc;   // WRITTEN total — salt preserves it, so cycle math is stable
         const cyc = Math.floor(bars / cycle);
         if (_saltLen) lens = _ambProgSaltLens(lens, cyc, (cfg.seed | 0), _saltLen);
+        // ↻ ORDER: chord perm[i] plays at slot i WITH ITS OWN length.
+        { const permL = (cfg && cfg.prog && chords === cfg.prog.chords) ? _ambProgOrderPerm(cfg, lens.length, cyc) : null;
+          if (permL) lens = permL.map(pi => lens[pi]); }
         let pos = bars - cyc * cycle, i = 0;
         while (i < lens.length - 1 && pos >= lens[i]) { pos -= lens[i]; i++; }
         const step = cyc * chords.length + i;
@@ -2681,6 +2717,8 @@
         const cycle = lens.reduce((s2, v) => s2 + v, 0) || bpc;
         const cyc = Math.floor(bars / cycle);
         if (_saltLen2) lens = _ambProgSaltLens(lens, cyc, (cfg.seed | 0), _saltLen2);
+        { const permL2 = (cfg && cfg.prog && chords === cfg.prog.chords) ? _ambProgOrderPerm(cfg, lens.length, cyc) : null;
+          if (permL2) lens = permL2.map(pi => lens[pi]); }
         let pos = bars - cyc * cycle, i = 0;
         while (i < lens.length - 1 && pos >= lens[i]) { pos -= lens[i]; i++; }
         return { step: cyc * chords.length + i, pos: Math.max(0, Math.min(1, pos / Math.max(1e-6, lens[i]))) };
@@ -3655,6 +3693,47 @@
     // Picker for the GLOBAL progression (Configure → Prog). Two groups: User (the
     // user's wrap progressions + published progs) and Standard (built-ins). Writes
     // to cfg.prog (turns it on). Edits the VIEWED area's cfg (panel = viewed area).
+    // ⚄ GENERATE a progression: `uniq` distinct diatonic chords (stacked thirds
+    // on scale degrees of the effective key; always includes the tonic, which
+    // opens the cycle) arranged into `total` slots — every unique appears at
+    // least once, immediate repeats avoided where possible. Math.random on
+    // purpose (a user-action dice roll, like 🎲; the RESULT is stored config,
+    // deterministic thereafter). Non-heptatonic key scales fall back to major.
+    function _ambGenerateProg(E, total, uniq) {
+      _E = E; const cfg = E.getCfg(); if (!cfg) return;
+      const rootPc = (typeof _ambKeyRootPc === 'function') ? _ambKeyRootPc(cfg) : 0;
+      let iv = null;
+      try { const sn = (typeof _ambKeyScaleName === 'function') ? _ambKeyScaleName(cfg) : 'major'; iv = (typeof SCALES !== 'undefined' && SCALES[sn]) ? SCALES[sn] : null; } catch (e) {}
+      if (!Array.isArray(iv) || iv.length !== 7) iv = [0, 2, 4, 5, 7, 9, 11];
+      const triad = (d) => {
+        const at = (k) => iv[(d + k) % 7] + (d + k >= 7 ? 12 : 0);
+        return { root: (((rootPc + iv[d]) % 12) + 12) % 12,
+                 intervals: [0, ((at(2) - iv[d]) % 12 + 12) % 12, ((at(4) - iv[d]) % 12 + 12) % 12] };
+      };
+      // pick degrees: tonic + (uniq-1) others, shuffled
+      const others = [1, 2, 3, 4, 5, 6];
+      for (let i = others.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = others[i]; others[i] = others[j]; others[j] = t; }
+      const degs = [0].concat(others.slice(0, Math.max(0, uniq - 1)));
+      const uniques = degs.map(triad);
+      // arrange: slot 0 = tonic; every unique appears ≥once; fill the rest
+      // randomly, then a single pass swaps adjacent duplicates apart.
+      const seq = [uniques[0]];
+      for (let i = 1; i < uniques.length && seq.length < total; i++) seq.push(uniques[i]);
+      while (seq.length < total) seq.push(uniques[1 + Math.floor(Math.random() * Math.max(1, uniques.length - 1))] || uniques[0]);
+      for (let i = seq.length - 1; i > 1; i--) { const j = 1 + Math.floor(Math.random() * i); const t = seq[i]; seq[i] = seq[j]; seq[j] = t; }
+      for (let i = 1; i < seq.length; i++) { if (seq[i] === seq[i - 1]) { const k = (i + 1) % seq.length; if (k > 0 && seq[k] !== seq[i - 1] && (k + 1 >= seq.length || seq[k] !== seq[i + 1])) { const t = seq[i]; seq[i] = seq[k]; seq[k] = t; } } }
+      const chords = seq.map(c => ({ root: c.root, intervals: c.intervals.slice() }));
+      if (!cfg.prog || typeof cfg.prog !== 'object') cfg.prog = { on: false, name: '', chords: [] };
+      cfg.prog.name = 'Gen ' + total + '×' + uniq;
+      cfg.prog.chords = chords; cfg.prog.on = true;
+      delete cfg.prog.parts;
+      if (typeof _ambAutoSyncFreeForProg === 'function') { try { _ambAutoSyncFreeForProg(E, cfg); } catch (e) {} }
+      try { _ambSyncControls(E); } catch (e) {}
+      try { _ambRefreshSrcChips(E); } catch (e) {}
+      try { _ambSaltReadoutSync(E, true); } catch (e) {}
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      if (typeof showToast === 'function') showToast('Generated “' + cfg.prog.name + '” — press ⚄ again for another roll.');
+    }
     function _ambOpenGlobalProgMenu(E, x, y, opts) {
       if (typeof showCtxMenu !== 'function') return;
       opts = opts || {};
@@ -18361,7 +18440,8 @@
       const cfg = E._cfg || (E.getCfg && E.getCfg());
       const salt = _ambProgSaltCfg(cfg);
       const p = cfg && cfg.prog;
-      if (!salt || !p || !p.on || !Array.isArray(p.chords) || !p.chords.length) {
+      const ordered = !!(p && p.order && p.order.mode);   // ↻ order alone also earns the readout
+      if ((!salt && !ordered) || !p || !p.on || !Array.isArray(p.chords) || !p.chords.length) {
         if (el.style.display !== 'none') { el.style.display = 'none'; el._sig = ''; }
         return;
       }
@@ -18369,21 +18449,29 @@
       let step = 0, cyc = 0;
       if (E.timer) { try { step = _ambProgStepAt(E, ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + 0.016) | 0; cyc = Math.max(0, Math.floor(step / len)); } catch (e) {} }
       const seed = cfg.seed | 0;
-      const sig = cyc + '|' + (salt.len | 0) + '|' + (salt.colors | 0) + '|' + (salt.scatter | 0) + '|' + len + '|' + seed + '|' + (E.timer ? 1 : 0);
+      const s = salt || { len: 0, colors: 0, scatter: 0 };
+      const om = (p.order && p.order.mode) || '', ow = (p.order && p.order.when) || '';
+      const sig = cyc + '|' + (s.len | 0) + '|' + (s.colors | 0) + '|' + (s.scatter | 0) + '|' + om + '|' + ow + '|' + len + '|' + seed + '|' + (E.timer ? 1 : 0);
       if (force || el._sig !== sig) {
         el._sig = sig;
         const bpc = Math.max(0.01, (cfg && cfg.barsPerChord) || 1);
         const wl = chords.map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
-        const salted = (salt.len | 0) > 0;
-        const cur = salted ? _ambProgSaltLens(wl, cyc, seed, salt.len | 0) : wl;
-        const nxt = salted ? _ambProgSaltLens(wl, cyc + 1, seed, salt.len | 0) : null;
-        const nm = (c) => _AMB_CHROM[(((c.root | 0) % 12) + 12) % 12] + ((Array.isArray(c.intervals) && c.intervals.indexOf(3) >= 0 && c.intervals.indexOf(4) < 0) ? 'm' : '');
+        const salted = (s.len | 0) > 0;
+        const cur = salted ? _ambProgSaltLens(wl, cyc, seed, s.len | 0) : wl;
+        const nxt = (salted || ordered) ? (salted ? _ambProgSaltLens(wl, cyc + 1, seed, s.len | 0) : wl) : null;
+        // ↻ order: chips display in PLAYED order (chord perm[i] at slot i, its own length).
+        const perm = _ambProgOrderPerm(cfg, len, cyc);
+        const permN = _ambProgOrderPerm(cfg, len, cyc + 1);
+        const ci = (i) => perm ? perm[i] : i;
+        const ciN = (i) => permN ? permN[i] : i;
+        const nm = (c) => { const iv = Array.isArray(c.intervals) ? c.intervals : []; const min3 = iv.indexOf(3) >= 0 && iv.indexOf(4) < 0;
+          return _AMB_CHROM[(((c.root | 0) % 12) + 12) % 12] + (min3 ? (iv.indexOf(6) >= 0 && iv.indexOf(7) < 0 ? '°' : 'm') : ''); };
         const curTxt = chords.map((c, i) => {
-          const n = (salt.colors | 0) > 0 ? _ambProgSaltSegCount(salt, cyc * len + i, seed) : 1;
-          return '<span class="salt-ch" data-sci="' + i + '">' + nm(c) + ' ' + _ambFmtBpc(cur[i]) + (n > 1 ? '<i title="' + n + ' segments this pass — the downbeat stays the written chord, the rest are colors of it">×' + n + '</i>' : '') + '</span>';
+          const n = (s.colors | 0) > 0 ? _ambProgSaltSegCount(s, cyc * len + i, seed) : 1;
+          return '<span class="salt-ch" data-sci="' + i + '">' + nm(chords[ci(i)]) + ' ' + _ambFmtBpc(cur[ci(i)]) + (n > 1 ? '<i title="' + n + ' segments this pass — the downbeat stays the written chord, the rest are colors of it">×' + n + '</i>' : '') + '</span>';
         }).join(' · ');
-        el.innerHTML = '🧂 <b>' + (E.timer ? 'cycle ' + (cyc + 1) : 'next play') + ':</b> ' + curTxt +
-          (nxt ? ' <span class="salt-next" title="Next cycle’s chord lengths (bars)">→ ' + chords.map((c, i) => _ambFmtBpc(nxt[i])).join(' · ') + '</span>' : '');
+        el.innerHTML = (salt ? '🧂 ' : '↻ ') + '<b>' + (E.timer ? 'cycle ' + (cyc + 1) : 'next play') + ':</b> ' + curTxt +
+          (nxt ? ' <span class="salt-next" title="Next cycle (played order · lengths in bars)">→ ' + chords.map((c, i) => nm(chords[ciN(i)]) + (salted ? ' ' + _ambFmtBpc(nxt[ciN(i)]) : '')).join(' · ') + '</span>' : '');
         el._curSci = null;   // innerHTML wiped any highlight — reapply below
         if (el.style.display === 'none') el.style.display = '';
       }
@@ -23168,6 +23256,16 @@
               const el = document.getElementById(tr(pr[0]));
               if (el && document.activeElement !== el) el.value = String(pr[1]);
             });
+            // ↻ order row: same visibility; mirror cfg.prog.order.
+            { const orow = document.getElementById(tr('ambient-prog-orderrow'));
+              if (orow) {
+                orow.style.display = progOn ? '' : 'none';
+                const o = (cfg.prog && cfg.prog.order) || {};
+                const mSel = document.getElementById(tr('ambient-order-mode'));
+                const wSel = document.getElementById(tr('ambient-order-when'));
+                if (mSel && document.activeElement !== mSel) mSel.value = o.mode || '';
+                if (wSel && document.activeElement !== wSel) wSel.value = o.when || 'always';
+              } }
             try { _ambSaltReadoutSync(E, true); } catch (e) {}
           } }
         // Key sub-controls. Effective key: workspace when following, stored custom otherwise.
@@ -23529,6 +23627,7 @@
                 '<button type="button" class="ambient-seg ambient-prog-edit" id="ambient-prog-edit" title="Edit the selected progression chord-by-chord and Save As New">Edit</button>' +
                 '<button type="button" class="ambient-seg ambient-prog-clone" id="ambient-prog-clone" title="Clone this progression into an editable copy you can mutate freely">⧉ Clone</button>' +
                 '<button type="button" class="ambient-seg ambient-prog-addpart" id="ambient-prog-addpart" title="Append another progression as a new PART — build a sequence of progressions (Verse → Chorus → …)">＋ Part</button>' +
+                '<button type="button" class="ambient-seg ambient-prog-generate" id="ambient-prog-generate" title="Generate a progression — pick how many chords total and how many unique; diatonic to the current key, starting on the tonic. Press again for another roll.">⚄ Generate</button>' +
               '</span>' +
               '<span class="ambient-hint" id="ambient-progsec-off" style="display:none">turn Progression on to build a chord sequence</span>' +
             '</div>' +
@@ -23541,9 +23640,15 @@
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">colors</span><input type="number" class="ambient-salt-in" id="ambient-salt-colors" min="0" max="8" step="1" value="0" title="Chord colors per unit — splits a chord’s unit into segments: the downbeat is always the written chord, later segments become root-preserving colors of it (maj7 · add9 · 6 · maj9 · sus2 · sus4 · open 5). 0 = off, higher = more segments (max 8)."></span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">scatter</span><input type="number" class="ambient-salt-in" id="ambient-salt-scatter" min="0" max="100" step="5" value="0" title="How unevenly the Colors count lands per chord unit — 0: every unit gets the full count; 100: most units stay plain and only the occasional unit blooms fully (stochastic, seeded — same seed replays identically)."></span>' +
             '</div>' +
-            // 🧂 live readout — this cycle's actual salted plan + next cycle's
-            // lengths (deterministic → fully predictable). _ambSaltReadoutSync.
-            '<div class="ambient-salt-readout" id="ambient-salt-readout" style="display:none" title="What salt is doing: this cycle’s chord lengths (and ×n color segments), then the next cycle’s lengths — deterministic per seed, so it plays exactly as shown."></div>' +
+            // ↻ ORDER — scheduled chord re-ordering (engine: _ambProgOrderPerm).
+            '<div class="ambient-row ambient-prog-salt ambient-prog-order" id="ambient-prog-orderrow" style="display:none" title="Play order — re-order the progression’s chords on scheduled cycles (deterministic per seed; the readout below shows each cycle’s actual order).">' +
+              '<span class="ambient-sched-lbl salt-lbl">↻ order</span>' +
+              '<select id="ambient-order-mode" class="ambient-select"><option value="">Written</option><option value="shuffle">Random</option><option value="reverse">Reversed</option></select>' +
+              '<select id="ambient-order-when" class="ambient-select" title="Which progression cycles play in the altered order (the rest play as written)"><option value="always">every cycle</option><option value="10">1 in 2</option><option value="100">1 in 3</option><option value="1000">1 in 4</option><option value="10000000">1 in 8</option></select>' +
+            '</div>' +
+            // 🧂/↻ live readout — this cycle's actual plan (salted lengths, colors,
+            // played order) + the next cycle's. _ambSaltReadoutSync.
+            '<div class="ambient-salt-readout" id="ambient-salt-readout" style="display:none" title="What salt/order are doing: this cycle’s chords in PLAYED order (with lengths and ×n color segments), then the next cycle’s — deterministic per seed, so it plays exactly as shown."></div>' +
             // Overview strip — the whole progression at a glance (chord chips grouped
             // under part labels; alt-bearing chords badged; playing chord glows). Click a
             // chord to edit it there; click a part header to rename/reorder. _ambRenderProgOverview.
@@ -25092,6 +25197,43 @@
             c.prog.salt[pr[1]] = Math.max(0, Math.min(pr[2], parseInt(el.value, 10) || 0));
             persist();
             try { _ambSaltReadoutSync(E, true); } catch (e) {}   // readout tracks the knobs live
+          });
+        });
+        // ↻ order selects → cfg.prog.order (mode '' deletes; normalize prunes).
+        [['ambient-order-mode', 'mode'], ['ambient-order-when', 'when']].forEach(pr => {
+          const el = G(pr[0]); if (!el) return;
+          el.addEventListener('change', () => {
+            _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
+            const mSel = G('ambient-order-mode'), wSel = G('ambient-order-when');
+            const mode = mSel ? mSel.value : '';
+            if (!mode) delete c.prog.order;
+            else c.prog.order = { mode: mode, when: (wSel && wSel.value) || 'always' };
+            persist();
+            try { _ambSaltReadoutSync(E, true); } catch (e) {}
+          });
+        });
+        // ⚄ Generate — popover: total + unique chord counts → a diatonic
+        // progression in the current key (tonic first), applied like a pick.
+        const pGen = G('ambient-prog-generate');
+        if (pGen) pGen.addEventListener('click', () => {
+          _E = E;
+          const old = document.getElementById('pg-overlay'); if (old) old.remove();
+          const ov = document.createElement('div'); ov.id = 'pg-overlay'; ov.className = 'sm-overlay';
+          ov.innerHTML = '<div class="sm-modal pg-modal">' +
+            '<div class="sm-title">⚄ Generate progression</div>' +
+            '<div class="ambient-ctrl"><label>Chords</label><input type="number" class="pg-total ambient-salt-in" min="2" max="16" step="1" value="4"><span class="ambient-hint">total slots in the cycle</span></div>' +
+            '<div class="ambient-ctrl"><label>Unique</label><input type="number" class="pg-uniq ambient-salt-in" min="1" max="7" step="1" value="3"><span class="ambient-hint">distinct chords (≤ total; diatonic to the key, starts on the tonic)</span></div>' +
+            '<div class="sm-footer"><button type="button" class="sm-cancel pg-cancel">Close</button>' +
+              '<button type="button" class="sm-apply pg-go">⚄ Generate</button></div></div>';
+          document.body.appendChild(ov); ov.style.setProperty('display', 'flex', 'important');
+          ov.addEventListener('click', (ev) => {
+            if (ev.target === ov || ev.target.closest('.pg-cancel')) { try { ov.remove(); } catch (e) {} return; }
+            if (ev.target.closest('.pg-go')) {
+              const total = Math.max(2, Math.min(16, parseInt(ov.querySelector('.pg-total').value, 10) || 4));
+              const uniq = Math.max(1, Math.min(7, Math.min(total, parseInt(ov.querySelector('.pg-uniq').value, 10) || 3)));
+              try { _ambGenerateProg(E, total, uniq); } catch (e) { console.warn('Generate failed', e); }
+              // stays open — press ⚄ again for another roll
+            }
           });
         });
       }

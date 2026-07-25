@@ -3234,6 +3234,11 @@
     .ambient-prog-salt .salt-lbl { color: #9f7aea; font-weight: 600; }
     .ambient-prog-salt .ambient-sched-grp { display: inline-flex; align-items: center; gap: 5px; }
     .ambient-prog-salt .ambient-salt-in { width: 52px; background: #11111c; border: 1px solid #2d2d3f; border-radius: 6px; color: #cbd5e0; padding: 3px 5px; font-size: 0.8rem; }
+    /* 🧂 live readout — this cycle's salted plan + next cycle's lengths. */
+    .ambient-salt-readout { font-size: 0.76rem; color: #a0aec0; line-height: 1.5; padding: 2px 0 0 4px; font-variant-numeric: tabular-nums; }
+    .ambient-salt-readout b { color: #cbd5e0; font-weight: 600; }
+    .ambient-salt-readout i { font-style: normal; color: #9f7aea; font-weight: 600; margin-left: 1px; }
+    .ambient-salt-readout .salt-next { opacity: 0.65; }
     /* Progression sub-section labels inside the Key/Prog pane. */
     .ambient-progsec .ambient-progsec-lbl { margin: 10px 0 4px; }
     .ambient-progsec .ambient-progsec-lbl:first-child { margin-top: 0; }

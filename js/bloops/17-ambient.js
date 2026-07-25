@@ -14928,6 +14928,30 @@
         }
       });
     }
+    // Send a Harvest capture to the TRACKS page (tracks.html): write the blob
+    // into the studio's IndexedDB ('bloops-studio' / 'takes') and append its
+    // meta to localStorage 'bloops-studio-tracks' — the studio loads both at
+    // boot, so the capture appears as a track the next time Tracks is opened
+    // (same origin → shared storage). CONTRACT: must match js/bloops/24-studio.js
+    // (DB/store/LS names + the meta field set). ★-mastered items send the
+    // mastered render, mirroring Download/Upload.
+    async function _ambSendCaptureToStudio(item) {
+      if (!item || !item.blob) return;
+      let blob = item.blob, name = item.name;
+      if (item.mastered) { try { const b = await _ambMasteredBlob(item); if (b) { blob = b; name = item.name + ' (master)'; } } catch (e) {} }
+      const id = 't' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36);
+      await new Promise((ok, no) => {
+        const q = indexedDB.open('bloops-studio', 1);
+        q.onupgradeneeded = (ev) => { const d = ev.target.result; if (!d.objectStoreNames.contains('takes')) d.createObjectStore('takes'); };
+        q.onsuccess = () => { const d = q.result; const tx = d.transaction('takes', 'readwrite'); tx.objectStore('takes').put(blob, id); tx.oncomplete = () => { d.close(); ok(); }; tx.onerror = () => { d.close(); no(tx.error); }; };
+        q.onerror = () => no(q.error);
+      });
+      let meta = []; try { meta = JSON.parse(localStorage.getItem('bloops-studio-tracks') || '[]'); } catch (e) {}
+      if (!Array.isArray(meta)) meta = [];
+      meta.push({ id, name: String(name).slice(0, 40), offset: 0, gain: 0.9, pan: 0, mute: false, solo: false, eqLo: 0, eqHi: 0, rev: 0, del: 0 });
+      try { localStorage.setItem('bloops-studio-tracks', JSON.stringify(meta)); } catch (e) {}
+      if (typeof showToast === 'function') showToast('Sent “' + name + '” to Tracks — it’ll be there next time you open the Tracks page.');
+    }
     async function _ambDownloadBankItem(item) {
       if (!item) return;
       let url = item.url, name = item.name + '.' + item.ext, revoke = false;
@@ -15003,6 +15027,7 @@
             else if (act === 'up') _ambUploadBankItem(it);
             else if (act === 'master') { it.mastered = !it.mastered; _ambRenderCaptureBank(); }
             else if (act === 'proc') _ambOpenProcessModal(it);
+            else if (act === 'totracks') _ambSendCaptureToStudio(it).catch(err => { try { if (typeof showToast === 'function') showToast('Send to Tracks failed: ' + (err && err.message)); } catch (e2) {} });
             else if (act === 'del') _ambRemoveBankItem(id);
           });
         }
@@ -15019,6 +15044,7 @@
             '<button type="button" class="ambient-cap-btn" data-act="proc" title="Process — reverse / pitch / glide → new take">⚙</button>' +
             '<button type="button" class="ambient-cap-btn" data-act="ren" title="Rename">✎</button>' +
             '<button type="button" class="ambient-cap-btn" data-act="dl" title="Download to this device">⤓</button>' +
+            '<button type="button" class="ambient-cap-btn" data-act="totracks" title="Send to Tracks — shows up as a track next time you open the Tracks page' + (it.mastered ? ' (sends the mastered version)' : '') + '">🎚→</button>' +
             '<button type="button" class="ambient-cap-btn ambient-cap-up" data-act="up" title="Upload to Google Drive">⬆ Upload</button>' +
             '<button type="button" class="ambient-cap-btn ambient-cap-del" data-act="del" title="Remove from bank">✕</button>' +
           '</div>').join('');

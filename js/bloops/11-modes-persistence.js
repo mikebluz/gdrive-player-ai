@@ -310,6 +310,15 @@
       return putResp.json();
     }
 
+    // Bridge for the Tracks studio (24-studio.js runs in its own scope):
+    // auth check + path-based folder ensure + WAV upload.
+    try {
+      window._drvBridge = {
+        ready: () => { try { return !!googleAccessToken; } catch (e) { return false; } },
+        findOrCreateDriveFolder: (p) => findOrCreateDriveFolder(p),
+        uploadWavToDrive: (n, b, f) => uploadWavToDrive(n, b, f),
+      };
+    } catch (e) {}
     async function uploadWavToDrive(name, blob, folderId) {
       const initResp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable', {
         method: 'POST',

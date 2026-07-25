@@ -207,6 +207,7 @@ try { if (/[?&]diag=0\b/.test(location.search)) localStorage.removeItem('sbDiag'
     <button type="button" class="wip-banner tab-active" id="bloops-tab" title="Switch to the Bloops sequencer (Seed)">Seed</button>
     <button type="button" class="mix-top-link" id="mix-tab" title="Switch to the Grow view">Grow</button>
     <button type="button" class="mix-top-link" id="harvest-tab" title="Switch to Harvest — your captured Blooms and Shapes">Harvest</button>
+    <button type="button" class="mix-top-link" id="studio-tab" title="Switch to Tracks — the multi-track recorder / mixer">Tracks</button>
     <!-- Listen (Player) tab — hidden for now but kept in the DOM (tab-switching
          JS and the Player view stay wired). To bring it back, remove `hidden`. -->
     <button type="button" class="serialbox-top-link" id="serialbox-tab" title="Switch to the Player (Listen) — requires Google sign-in" hidden>Listen →</button>
@@ -1090,6 +1091,29 @@ try { if (/[?&]diag=0\b/.test(location.search)) localStorage.removeItem('sbDiag'
     </div>
   </div>
 
+  <!-- Tracks view — the multi-track recorder / mixer (js/bloops/24-studio.js).
+       Shown via body.view-studio; everything inside is built lazily on first show. -->
+  <div id="studio-view">
+    <div class="studio-wrap">
+      <div class="harvest-title">Tracks</div>
+      <div class="harvest-sub">Record takes against each other, mix them, export the mixdown to Drive.</div>
+      <div class="studio-transport">
+        <button type="button" id="studio-skip-start" class="studio-btn" title="Skip to the beginning">⏮</button>
+        <button type="button" id="studio-rew" class="studio-btn" title="Back 5 seconds">◀︎5</button>
+        <button type="button" id="studio-play" class="studio-btn studio-playbtn" title="Play from the playhead">▶</button>
+        <button type="button" id="studio-ff" class="studio-btn" title="Forward 5 seconds">5▶︎</button>
+        <button type="button" id="studio-skip-end" class="studio-btn" title="Skip to the end">⏭</button>
+        <span id="studio-time" class="studio-time">0:00.0 / 0:00.0</span>
+        <span class="studio-recgrp">
+          <select id="studio-input" class="ambient-select" title="Recording input (mic / line-in)"><option value="">Default input</option></select>
+          <button type="button" id="studio-rec" class="studio-btn studio-recbtn" title="Record a take from the playhead (other tracks play; you hear your input)">🎤</button>
+        </span>
+        <button type="button" id="studio-export" class="studio-btn studio-exportbtn" title="Render the mixdown and upload to Drive → Tracks/Year/Month/Day (falls back to a local download)">⬆ Export mix</button>
+      </div>
+      <div id="studio-tracks" class="studio-tracks"></div>
+    </div>
+  </div>
+
 
   <script src="js/bloops/01-core-state.js?v=DEPLOYVER"></script>
   <script src="js/bloops/02-wraps.js?v=DEPLOYVER"></script>
@@ -1115,6 +1139,7 @@ try { if (/[?&]diag=0\b/.test(location.search)) localStorage.removeItem('sbDiag'
   <script src="js/bloops/21-shape.js?v=DEPLOYVER"></script>
   <script src="js/bloops/22-midi.js?v=DEPLOYVER"></script>
   <script src="js/bloops/23-bloom-harness.js?v=DEPLOYVER"></script>
+  <script src="js/bloops/24-studio.js?v=DEPLOYVER"></script>
 
   <!-- ===================== Serialbox view ============================== -->
   <!-- Hidden by default; the Serialbox tab in the top bar reveals it via

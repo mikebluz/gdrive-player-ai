@@ -11876,8 +11876,20 @@
           }
         } catch (e) {}
         try { _ambRenderSampleLayers(E); } catch (e) {}
+        // LOOPER CONVENTION: a recorded take AUTO-ENTERS — the fresh-layer mark
+        // (set by _ambSendSampleToInstance while playing) makes this activation
+        // a bar-queued start, so the take comes back around ON the grid with no
+        // tap needed. Stopped → plain on, ready for the next Play.
+        try {
+          const L2 = _ambSampleList(E.getCfg()).find(s => s && s.sampleId === reg.id);
+          if (L2 && !L2.on) {
+            let onB = null;
+            try { const wrap = _ambGet(E, 'ambient-sample-layers'); const card = wrap && wrap.querySelector('.ambient-layer[data-samp-id="' + L2.id + '"]'); onB = card && card.querySelector('.ambient-toggle'); } catch (e) {}
+            _ambToggleLayer(E, 'samp:' + L2.id, L2, onB, () => { if (typeof persistWorkspace === 'function') persistWorkspace(); });
+          }
+        } catch (e) {}
         if (typeof persistWorkspace === 'function') persistWorkspace();
-        if (typeof showToast === 'function') showToast('Track recorded — ' + bars + ' bar' + (bars === 1 ? '' : 's') + ', snapped + saved.' + (E.timer ? ' Muted — tap it to join on the next bar.' : ''));
+        if (typeof showToast === 'function') showToast('Track recorded — ' + bars + ' bar' + (bars === 1 ? '' : 's') + ', snapped + saved.' + (E.timer ? ' Joining at the next bar…' : ''));
         close();
       }
       const failUI = (e) => { statusEl.textContent = 'Could not process the recording. ' + ((e && e.message) || ''); recBtn.disabled = false; recBtn.textContent = '● Record'; recBtn.classList.remove('recording'); };

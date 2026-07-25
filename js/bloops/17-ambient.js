@@ -11820,10 +11820,23 @@
           rec.onstop = () => finishRec();
         }
         recBtn.disabled = true;
-        const t0 = ac.currentTime + 0.15, beats = ciBars * 4;
+        const beats = ciBars * 4;
+        // Count-in BAR-ALIGNED with playback: while the transport is rolling,
+        // the first click waits for the NEXT bar line (≥0.15 s scheduling lead)
+        // so the count-in walks the music's own beats — and armAt (the take's
+        // downbeat) lands exactly ON a bar boundary. Combined with the fresh-
+        // layer bar-queued start, the take then re-enters phase-perfect.
+        // Engine grid times (Tone clock) share the raw context's timeline, so
+        // they anchor osc/arm scheduling directly. Stopped → free (now + 0.15).
+        let t0 = ac.currentTime + 0.15;
+        let aligned = false;
+        if (ciBars && E.timer) {
+          const anchor = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor : (Number.isFinite(E._playStartAt) ? E._playStartAt : null);
+          if (anchor != null) { t0 = anchor + Math.max(0, Math.ceil((ac.currentTime + 0.15 - anchor) / barSec)) * barSec; aligned = true; }
+        }
         for (let i = 0; i < beats; i++) click(t0 + i * beatSec, i % 4 === 0);
         armAt = ciBars ? (t0 + beats * beatSec) : 0;   // 0 = no anchor (armed on the fly below)
-        if (ciBars) statusEl.textContent = 'Count-in…';
+        if (ciBars) statusEl.textContent = aligned ? 'Count-in on the next bar…' : 'Count-in…';
         ctId = setTimeout(() => {
           try {
             if (!usingTap) rec.start();
@@ -11832,7 +11845,7 @@
             const cms = Math.round(compSec() * 1000);
             statusEl.textContent = 'Recording (' + (usingTap ? 'sample-accurate' : 'compatibility mode') + ', compensating ~' + cms + ' ms) — play, then ■ Stop.';
           } catch (e) { statusEl.textContent = 'Could not start recording.'; }
-        }, ciBars ? (0.15 + beats * beatSec) * 1000 : 80);
+        }, ciBars ? Math.max(80, (t0 - ac.currentTime + beats * beatSec) * 1000) : 80);
       }
       // Shared tail: buffer (already sliced/compensated) → snap → WAV → layer.
       async function commitBuffer(raw, exactDurSec) {

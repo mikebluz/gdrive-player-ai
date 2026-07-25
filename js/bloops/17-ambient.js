@@ -11650,6 +11650,7 @@
     // ear-tested on a device; headless only proves the pipeline.
     const _TRK_NUDGE_LS = 'bloops-track-nudge-ms';
     const _TRK_INPUT_LS = 'bloops-track-input-id';
+    const _TRK_AUTOPLAY_LS = 'bloops-track-autoplay';
     function _ambTrackRecord(E) {
       _E = E;
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof registerSampleFromBlob !== 'function' || typeof audioBufferToWav !== 'function') {
@@ -11660,7 +11661,9 @@
       const bpm = _ambBpm(), beatSec = 60 / Math.max(20, bpm), barSec = beatSec * 4;
       let stream = null, rec = null, blobChunks = [], recording = false, ctId = null;
       let tapNode = null, srcNode = null, tapSink = null, pcm = [], pcmChans = 1, firstFrame = -1, armAt = 0, stopAt = 0, usingTap = false;
+      let pbId = null, startedPb = false;   // "Start playback" — transport launched by this take
       let savedNudge = 0; try { savedNudge = parseFloat(localStorage.getItem(_TRK_NUDGE_LS)) || 0; } catch (e) {}
+      let savedPb = false; try { savedPb = localStorage.getItem(_TRK_AUTOPLAY_LS) === '1'; } catch (e) {}
       const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-track-rec-ov';
       ov.innerHTML = '<div class="sm-modal ambient-track-modal">' +
         '<div class="sm-title">Record a Track</div>' +
@@ -11668,6 +11671,7 @@
           '<div class="ambient-ctrl"><label>Input</label><select class="ambient-select trk-input"><option value="">Default input</option></select><span class="ambient-hint">mic / line-in device</span></div>' +
           '<div class="ambient-ctrl"><label>Preview</label><button type="button" class="ambient-seg trk-mon">🎧 Preview</button><span class="ambient-hint">hear the input live — auto-ON while recording · use HEADPHONES (open speakers will feed back)</span></div>' +
           '<div class="ambient-ctrl"><label>Count-in</label><select class="ambient-select trk-ci"><option value="0">Off</option><option value="1" selected>1 bar</option><option value="2">2 bars</option></select><span class="ambient-hint">clicks at ' + Math.round(bpm) + ' BPM before recording</span></div>' +
+          '<div class="ambient-ctrl"><label>Playback</label><label class="trk-pb-lbl"><input type="checkbox" class="trk-autoplay"' + (savedPb ? ' checked' : '') + (E.timer ? ' disabled' : '') + '> Start playback</label><span class="ambient-hint">' + (E.timer ? 'already playing' : 'Bloom starts at the end of the count-in — record from bar 1') + '</span></div>' +
           '<div class="ambient-ctrl"><label title="Recording offset — extra ms to shift the take EARLIER on top of the measured output+input latency. If takes land late (draggy), increase; if early (rushed), decrease. Remembered.">Nudge</label><input type="number" class="trk-nudge" min="-200" max="200" step="1" value="' + Math.round(savedNudge) + '"><span class="ambient-hint">ms earlier (wired output recommended — Bluetooth adds 100–300 ms the OS under-reports)</span></div>' +
           '<div class="ambient-track-status">Records your default audio input (mic / line-in). Press ● Record → after the count-in, play → ■ Stop. The loop snaps to the nearest bar.</div>' +
         '</div>' +
@@ -11732,7 +11736,7 @@
         else { monStop(); if (!capActive()) stopStream(); }   // release the mic unless a take is rolling
       });
       const teardownTap = () => { try { if (srcNode) srcNode.disconnect(); } catch (e) {} try { if (tapNode) tapNode.disconnect(); } catch (e) {} try { if (tapSink) tapSink.disconnect(); } catch (e) {} srcNode = tapNode = tapSink = null; };
-      const close = () => { try { if (ctId) clearTimeout(ctId); } catch (e) {} try { if (rec && rec.state === 'recording') rec.stop(); } catch (e) {} monStop(); teardownTap(); stopStream(); try { ov.remove(); } catch (e) {} };
+      const close = () => { try { if (ctId) clearTimeout(ctId); } catch (e) {} try { if (pbId) clearTimeout(pbId); } catch (e) {} try { if (rec && rec.state === 'recording') rec.stop(); } catch (e) {} monStop(); teardownTap(); stopStream(); try { ov.remove(); } catch (e) {} };
       q('.trk-cancel').addEventListener('click', close);
       ov.addEventListener('click', e => { if (e.target === ov) close(); });
       // ---- Input picker: enumerate audioinput devices. Labels are blank until
@@ -11840,7 +11844,21 @@
         }
         for (let i = 0; i < beats; i++) click(t0 + i * beatSec, i % 4 === 0);
         armAt = ciBars ? (t0 + beats * beatSec) : 0;   // 0 = no anchor (armed on the fly below)
-        if (ciBars) statusEl.textContent = aligned ? 'Count-in on the next bar…' : 'Count-in…';
+        // ▶ Start playback: launch the transport just BEFORE the count-in ends
+        // (~0.35 s = tick immediacy + typical first-onset lead) so the music
+        // enters at bar 1 ≈ armAt. finishTap then aligns the take's slice to
+        // the engine's ACTUAL pinned grid (E._barGridAnchor) — sample-accurate
+        // against the grid the take will later loop on, regardless of launch
+        // jitter. Stored preference; no-op when the transport already plays.
+        const pbBox = q('.trk-autoplay');
+        const wantPb = !!(pbBox && pbBox.checked && !E.timer);
+        try { if (pbBox && !pbBox.disabled) localStorage.setItem(_TRK_AUTOPLAY_LS, pbBox.checked ? '1' : '0'); } catch (e) {}
+        if (wantPb) {
+          const launch = () => { try { const pb = _ambGet(E, 'ambient-play-btn'); if (pb && !E.timer) { pb.click(); startedPb = true; } } catch (e) {} };
+          if (ciBars) pbId = setTimeout(launch, Math.max(0, (armAt - ac.currentTime - 0.35)) * 1000);
+          else launch();   // no count-in → playback + recording start together
+        }
+        if (ciBars) statusEl.textContent = (aligned ? 'Count-in on the next bar…' : 'Count-in…') + (wantPb ? ' playback joins at the end.' : '');
         ctId = setTimeout(() => {
           try {
             if (!usingTap) rec.start();
@@ -11906,7 +11924,11 @@
           const sr = ac.sampleRate, chans = Math.max(1, pcmChans | 0);
           let total = 0; pcm.forEach(b => { total += b[0].length; });
           const firstTime = firstFrame / sr;
-          const sliceStart = Math.max(0, Math.round(((armAt + compSec()) - firstTime) * sr));
+          // "Start playback" takes align to the engine's ACTUAL bar-1 anchor
+          // (the transport launched near armAt; the pinned grid is the truth
+          // the take will loop against). Fallback: the count-in's armAt.
+          const armEff = (startedPb && Number.isFinite(E._barGridAnchor)) ? E._barGridAnchor : armAt;
+          const sliceStart = Math.max(0, Math.round(((armEff + compSec()) - firstTime) * sr));
           const avail = Math.max(0, total - sliceStart);
           if (avail < sr * 0.25) throw new Error('recording too short');
           const raw = ac.createBuffer(chans, avail, sr);
@@ -11924,7 +11946,7 @@
             if (w >= avail) break;
           }
           pcm = [];
-          const exactDur = Math.max(0, stopAt - armAt);   // musical duration on the intent grid
+          const exactDur = Math.max(0, stopAt - armEff);   // musical duration on the intent grid
           await commitBuffer(raw, exactDur > 0.25 ? exactDur : null);
         } catch (e) { pcm = []; failUI(e); }
       }

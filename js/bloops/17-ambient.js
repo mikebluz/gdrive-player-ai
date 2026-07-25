@@ -1667,6 +1667,11 @@
       s.stutter = Math.max(1, Math.min(8, Number.isFinite(s.stutter) ? (s.stutter | 0) : 1));
       if (s.trackLoop != null) s.trackLoop = !!s.trackLoop;                                  // "Track": a tempo-locked whole-buffer loop
       if (s.trackBars != null) s.trackBars = Math.max(1, Math.min(64, s.trackBars | 0));
+      // MIGRATION: Track takes recorded before the flat-envelope fix still carry the
+      // stock sample ADSR (attack 6 / decay 120 → sustain 70), which re-shapes level
+      // at every loop retrigger — an audible pump at each boundary. Flatten ONLY the
+      // exact old-default combo, so a user-shaped envelope is never touched.
+      if (s.trackLoop && s.attack === 6 && s.decay === 120 && s.sustain === 70 && s.release === 600) { s.attack = 3; s.decay = 10; s.sustain = 100; s.release = 60; }
       if (typeof s.when !== 'string') s.when = 'always';
       _ambNormalizeModObj(s, d.mod);
       _ambNormalizeFx(s);
@@ -11659,6 +11664,7 @@
     const _TRK_INPUT_LS = 'bloops-track-input-id';
     const _TRK_AUTOPLAY_LS = 'bloops-track-autoplay';
     const _TRK_JOIN_LS = 'bloops-track-join';
+    const _TRK_CLEARPREV_LS = 'bloops-track-clearprev';
     function _ambTrackRecord(E) {
       _E = E;
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof registerSampleFromBlob !== 'function' || typeof audioBufferToWav !== 'function') {
@@ -11673,6 +11679,8 @@
       let savedNudge = 0; try { savedNudge = parseFloat(localStorage.getItem(_TRK_NUDGE_LS)) || 0; } catch (e) {}
       let savedPb = true; try { savedPb = localStorage.getItem(_TRK_AUTOPLAY_LS) !== '0'; } catch (e) {}   // default CHECKED; a saved explicit off is respected
       let savedJoin = '1'; try { savedJoin = localStorage.getItem(_TRK_JOIN_LS) || '1'; } catch (e) {}
+      let savedClear = false; try { savedClear = localStorage.getItem(_TRK_CLEARPREV_LS) === '1'; } catch (e) {}
+      let clearedPrev = [];   // {L, wasOn} — muted at record start; deleted on commit, restored on cancel
       const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-track-rec-ov';
       ov.innerHTML = '<div class="sm-modal ambient-track-modal">' +
         '<div class="sm-title">Record a Track</div>' +
@@ -11684,6 +11692,7 @@
           '<div class="ambient-ctrl"><label title="When the finished take re-enters the mix — it waits for this boundary on the ◆ Area-unit grid, so it always lands in time.">Join</label><select class="ambient-select trk-join">' +
             [['1', 'Next unit'], ['bar', 'Next bar'], ['2', 'Next 2 units'], ['4', 'Next 4 units'], ['8', 'Next 8 units']].map(o => '<option value="' + o[0] + '"' + (savedJoin === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
           '</select><span class="ambient-hint">when the take re-enters after recording</span></div>' +
+          '<div class="ambient-ctrl"><label title="Re-take mode: previous Track takes fall silent the moment recording starts, and are DELETED when the new take lands (restored if you cancel). Leave off to overdub — takes stack as layers.">Clear</label><label class="trk-pb-lbl"><input type="checkbox" class="trk-clearprev"' + (savedClear ? ' checked' : '') + '> Clear previous</label><span class="ambient-hint">replace earlier takes instead of stacking (off = overdub)</span></div>' +
           '<div class="ambient-ctrl"><label title="Recording offset — extra ms to shift the take EARLIER on top of the measured output+input latency. If takes land late (draggy), increase; if early (rushed), decrease. Remembered.">Nudge</label><input type="number" class="trk-nudge" min="-200" max="200" step="1" value="' + Math.round(savedNudge) + '"><span class="ambient-hint">ms earlier (wired output recommended — Bluetooth adds 100–300 ms the OS under-reports)</span></div>' +
           '<div class="ambient-track-status">Records your default audio input (mic / line-in). Press ● Record → after the count-in, play → ■ Stop. The loop snaps to the nearest bar.</div>' +
         '</div>' +
@@ -11728,7 +11737,15 @@
       // node). Slight self-monitoring delay = the context's output latency.
       let monOn = false, monSrc = null, monGain = null;
       const monBtn = q('.trk-mon');
-      const monStop = () => { try { if (monSrc) monSrc.disconnect(); } catch (e) {} try { if (monGain) monGain.disconnect(); } catch (e) {} monSrc = monGain = null; };
+      // De-click: ramp the monitor to silence (~8 ms) BEFORE disconnecting —
+      // an instant disconnect mid-signal was an audible transient right at the
+      // end of every take (the modal closes → monitor tears down).
+      const monStop = () => {
+        const g = monGain, s = monSrc; monSrc = monGain = null;
+        if (!g) { try { if (s) s.disconnect(); } catch (e) {} return; }
+        try { g.gain.setTargetAtTime(0, ac.currentTime, 0.008); } catch (e) {}
+        setTimeout(() => { try { if (s) s.disconnect(); } catch (e) {} try { g.disconnect(); } catch (e) {} }, 80);
+      };
       async function monStart() {
         const s = await acquireStream();
         if (!s) { statusEl.textContent = 'Microphone permission denied.'; monOn = false; monBtn.classList.remove('active'); monBtn.textContent = '🎧 Preview'; return; }
@@ -11748,7 +11765,16 @@
         else { monStop(); if (!capActive()) stopStream(); }   // release the mic unless a take is rolling
       });
       const teardownTap = () => { try { if (srcNode) srcNode.disconnect(); } catch (e) {} try { if (tapNode) tapNode.disconnect(); } catch (e) {} try { if (tapSink) tapSink.disconnect(); } catch (e) {} srcNode = tapNode = tapSink = null; };
-      const close = () => { try { if (ctId) clearTimeout(ctId); } catch (e) {} try { if (pbId) clearTimeout(pbId); } catch (e) {} try { if (rec && rec.state === 'recording') rec.stop(); } catch (e) {} monStop(); teardownTap(); stopStream(); try { ov.remove(); } catch (e) {} };
+      const close = () => {
+        try { if (ctId) clearTimeout(ctId); } catch (e) {}
+        try { if (pbId) clearTimeout(pbId); } catch (e) {}
+        try { if (rec && rec.state === 'recording') rec.stop(); } catch (e) {}
+        // Cancel path: takes muted by "Clear previous" come back (commit empties the list).
+        try { if (clearedPrev.length) { clearedPrev.forEach(it => { if (it.wasOn) it.L.on = true; }); clearedPrev = []; if (E.timer) { _E = E; try { _ambSyncMods(); } catch (e) {} } try { _ambRenderSampleLayers(E); } catch (e) {} } } catch (e) {}
+        monStop(); teardownTap();
+        setTimeout(stopStream, 120);   // after the monitor's de-click ramp (a hard track-stop would click first)
+        try { ov.remove(); } catch (e) {}
+      };
       q('.trk-cancel').addEventListener('click', close);
       ov.addEventListener('click', e => { if (e.target === ov) close(); });
       // ---- Input picker: enumerate audioinput devices. Labels are blank until
@@ -11865,6 +11891,19 @@
         // pinned grid (E._barGridAnchor) — sample-accurate against the grid the
         // take will later loop on, regardless of launch jitter. Stored
         // preference; no-op when the transport already plays.
+        // ✂ Clear previous (re-take mode): earlier Track takes fall SILENT the
+        // moment recording starts (muted, remembered) — deleted on commit,
+        // restored on cancel. Off = overdub (takes stack).
+        try {
+          const cp = q('.trk-clearprev');
+          try { if (cp) localStorage.setItem(_TRK_CLEARPREV_LS, cp.checked ? '1' : '0'); } catch (e) {}
+          if (cp && cp.checked && !clearedPrev.length) {
+            _ambSampleList(E.getCfg()).forEach(Lp => {
+              if (Lp && Lp.trackLoop) { clearedPrev.push({ L: Lp, wasOn: !!Lp.on }); Lp.on = false; }
+            });
+            if (clearedPrev.length) { if (E.timer) { _E = E; try { _ambSyncMods(); } catch (e) {} } try { _ambRenderSampleLayers(E); } catch (e) {} }
+          }
+        } catch (e) {}
         const pbBox = q('.trk-autoplay');
         const wantPb = !!(pbBox && pbBox.checked && !E.timer);
         try { if (pbBox && !pbBox.disabled) localStorage.setItem(_TRK_AUTOPLAY_LS, pbBox.checked ? '1' : '0'); } catch (e) {}
@@ -11902,6 +11941,22 @@
         let stamp = 'take'; try { stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(11, 19); } catch (e) {}
         const reg = await registerSampleFromBlob(wav, 'Track ' + stamp, { padLoop: true });   // persist (IndexedDB) + looping voice
         if (!reg || !reg.id) throw new Error('register failed');
+        // ✂ Clear previous — the takes muted at record start are now DELETED
+        // (layer + chain + persisted sample blob). Emptied so close() won't restore.
+        if (clearedPrev.length) {
+          try {
+            const cfgC = E.getCfg();
+            const gone = new Set(clearedPrev.map(it => it.L));
+            if (Array.isArray(cfgC.extras)) cfgC.extras = cfgC.extras.filter(x => !gone.has(x));
+            if (Array.isArray(cfgC.samples)) cfgC.samples = cfgC.samples.filter(x => !gone.has(x));
+            clearedPrev.forEach(it => {
+              try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices('samp:' + (it.L.id | 0), 0); } catch (e) {}
+              try { if (it.L.sampleId && typeof deleteUserSample === 'function') deleteUserSample(it.L.sampleId); } catch (e) {}
+            });
+            if (E.timer) { _E = E; try { _ambSyncMods(); } catch (e) {} }   // tear down the removed chains
+          } catch (e) {}
+          clearedPrev = [];
+        }
         _ambSendSampleToInstance(E, reg.id, {});
         try {
           const cfg = E.getCfg();

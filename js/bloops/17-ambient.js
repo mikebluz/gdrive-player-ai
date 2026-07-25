@@ -11635,6 +11635,7 @@
         '<div class="sm-title">Record a Track</div>' +
         '<div class="ambient-track-body">' +
           '<div class="ambient-ctrl"><label>Input</label><select class="ambient-select trk-input"><option value="">Default input</option></select><span class="ambient-hint">mic / line-in device</span></div>' +
+          '<div class="ambient-ctrl"><label>Preview</label><button type="button" class="ambient-seg trk-mon">🎧 Preview</button><span class="ambient-hint">hear the input live before/while recording — use HEADPHONES (open speakers will feed back)</span></div>' +
           '<div class="ambient-ctrl"><label>Count-in</label><select class="ambient-select trk-ci"><option value="0">Off</option><option value="1" selected>1 bar</option><option value="2">2 bars</option></select><span class="ambient-hint">clicks at ' + Math.round(bpm) + ' BPM before recording</span></div>' +
           '<div class="ambient-ctrl"><label title="Recording offset — extra ms to shift the take EARLIER on top of the measured output+input latency. If takes land late (draggy), increase; if early (rushed), decrease. Remembered.">Nudge</label><input type="number" class="trk-nudge" min="-200" max="200" step="1" value="' + Math.round(savedNudge) + '"><span class="ambient-hint">ms earlier (wired output recommended — Bluetooth adds 100–300 ms the OS under-reports)</span></div>' +
           '<div class="ambient-track-status">Records your default audio input (mic / line-in). Press ● Record → after the count-in, play → ■ Stop. The loop snaps to the nearest bar.</div>' +
@@ -11655,9 +11656,52 @@
         return Math.max(0, lout + lin + nudge);
       };
       const saveNudge = () => { try { localStorage.setItem(_TRK_NUDGE_LS, String(parseFloat(q('.trk-nudge').value) || 0)); } catch (e) {} };
-      const stopStream = () => { try { stream && stream.getTracks().forEach(t => t.stop()); } catch (e) {} stream = null; };
+      const stopStream = () => { try { stream && stream.getTracks().forEach(t => t.stop()); } catch (e) {} stream = null; streamDevId = null; };
+      // ONE shared input stream for preview + capture (a second getUserMedia on
+      // the same device can conflict). Re-acquired only when the picked device
+      // changes; callers must not force a re-acquire mid-take (guarded below).
+      let streamDevId = null;
+      async function acquireStream() {
+        const devId = inputSel.value || '';
+        if (stream && streamDevId === devId) return stream;
+        stopStream();
+        const clean = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+        let s = null;
+        if (devId) { try { s = await navigator.mediaDevices.getUserMedia({ audio: { ...clean, deviceId: { exact: devId } } }); } catch (e) {} }
+        if (!s) { try { s = await navigator.mediaDevices.getUserMedia({ audio: clean }); }
+          catch (e) { try { s = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e2) { s = null; } } }
+        stream = s; streamDevId = s ? devId : null;
+        return s;
+      }
+      // Is a take in flight (armed or rolling)? Preview-off / device-change must
+      // never tear the stream out from under it.
+      const capActive = () => !!(tapNode || (rec && rec.state === 'recording'));
+      // 🎧 PREVIEW — live input monitoring: stream → source → gain → destination.
+      // Purely a monitor path; capture timing is untouched (the tap has its own
+      // node). Slight self-monitoring delay = the context's output latency.
+      let monOn = false, monSrc = null, monGain = null;
+      const monBtn = q('.trk-mon');
+      const monStop = () => { try { if (monSrc) monSrc.disconnect(); } catch (e) {} try { if (monGain) monGain.disconnect(); } catch (e) {} monSrc = monGain = null; };
+      async function monStart() {
+        const s = await acquireStream();
+        if (!s) { statusEl.textContent = 'Microphone permission denied.'; monOn = false; monBtn.classList.remove('active'); monBtn.textContent = '🎧 Preview'; return; }
+        monStop();
+        try {
+          monSrc = ac.createMediaStreamSource(s);
+          monGain = ac.createGain(); monGain.gain.value = 0.9;
+          monSrc.connect(monGain); monGain.connect(ac.destination);
+          try { const rc = ac.resume ? ac.resume() : null; if (rc && rc.catch) rc.catch(() => {}); } catch (e) {}
+        } catch (e) { monStop(); monOn = false; monBtn.classList.remove('active'); monBtn.textContent = '🎧 Preview'; }
+      }
+      monBtn.addEventListener('click', async () => {
+        monOn = !monOn;
+        monBtn.classList.toggle('active', monOn);
+        monBtn.textContent = monOn ? '🎧 Preview on' : '🎧 Preview';
+        if (monOn) await monStart();
+        else { monStop(); if (!capActive()) stopStream(); }   // release the mic unless a take is rolling
+      });
       const teardownTap = () => { try { if (srcNode) srcNode.disconnect(); } catch (e) {} try { if (tapNode) tapNode.disconnect(); } catch (e) {} try { if (tapSink) tapSink.disconnect(); } catch (e) {} srcNode = tapNode = tapSink = null; };
-      const close = () => { try { if (ctId) clearTimeout(ctId); } catch (e) {} try { if (rec && rec.state === 'recording') rec.stop(); } catch (e) {} teardownTap(); stopStream(); try { ov.remove(); } catch (e) {} };
+      const close = () => { try { if (ctId) clearTimeout(ctId); } catch (e) {} try { if (rec && rec.state === 'recording') rec.stop(); } catch (e) {} monStop(); teardownTap(); stopStream(); try { ov.remove(); } catch (e) {} };
       q('.trk-cancel').addEventListener('click', close);
       ov.addEventListener('click', e => { if (e.target === ov) close(); });
       // ---- Input picker: enumerate audioinput devices. Labels are blank until
@@ -11688,7 +11732,12 @@
         try { fillInputs(); } catch (e) {}
       };
       try { navigator.mediaDevices.addEventListener('devicechange', onDevChange); } catch (e) {}
-      inputSel.addEventListener('change', () => { try { localStorage.setItem(_TRK_INPUT_LS, inputSel.value); } catch (e) {} });
+      inputSel.addEventListener('change', async () => {
+        try { localStorage.setItem(_TRK_INPUT_LS, inputSel.value); } catch (e) {}
+        // Preview follows the picked device (never mid-take — the guard keeps
+        // the rolling capture's stream intact; the new device applies next take).
+        if (monOn && !capActive()) await monStart();
+      });
       const click = (t, accent) => { try { const o = ac.createOscillator(), g = ac.createGain(); o.type = 'square'; o.frequency.value = accent ? 1760 : 1100; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(accent ? 0.4 : 0.26, t + 0.002); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05); o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 0.07); } catch (e) {} };
       // The worklet tap: batches raw input PCM (up to 2 ch) and posts it with
       // the context-clock frame of the first sample — capture timing is exact.
@@ -11724,14 +11773,9 @@
       async function begin() {
         const ciBars = Math.max(0, Math.min(2, parseInt(q('.trk-ci').value, 10) || 0));
         saveNudge();
-        // Chosen input (exact) → clean default → bare default. A device that
-        // vanished since the picker filled just falls back to Default.
-        const devId = inputSel.value || '';
-        const clean = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
-        stream = null;
-        if (devId) { try { stream = await navigator.mediaDevices.getUserMedia({ audio: { ...clean, deviceId: { exact: devId } } }); } catch (e) {} }
-        if (!stream) { try { stream = await navigator.mediaDevices.getUserMedia({ audio: clean }); }
-          catch (e) { try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e2) { statusEl.textContent = 'Microphone permission denied.'; return; } } }
+        // Shared stream (preview may already hold it open on the same device).
+        const s = await acquireStream();
+        if (!s) { statusEl.textContent = 'Microphone permission denied.'; return; }
         usingTap = await beginTap();
         if (!usingTap) {
           // Fallback: v1 MediaRecorder (compensation still applied at decode).
@@ -11796,7 +11840,7 @@
       // Worklet path finalize: slice the PCM from (armAt + comp) — the sample
       // stamped there is the one the performer MEANT on the grid's downbeat.
       async function finishTap() {
-        teardownTap(); stopStream(); statusEl.textContent = 'Processing…';
+        teardownTap(); if (!monOn) stopStream(); statusEl.textContent = 'Processing…';   // preview keeps the mic open
         try {
           if (firstFrame < 0 || !pcm.length) throw new Error('no audio captured');
           const sr = ac.sampleRate, chans = Math.max(1, pcmChans | 0);
@@ -11828,7 +11872,7 @@
       // compensation off the front (start jitter can't be removed — that's why
       // the worklet path exists), then snap.
       async function finishRec() {
-        stopStream(); statusEl.textContent = 'Processing…';
+        if (!monOn) stopStream(); statusEl.textContent = 'Processing…';   // preview keeps the mic open
         try {
           const blob = new Blob(blobChunks, { type: (rec && rec.mimeType) || 'audio/webm' });
           const dec = await ac.decodeAudioData(await blob.arrayBuffer());

@@ -10689,10 +10689,24 @@
     // current iteration completes, or starts cleanly on its next one. The button
     // shows a "queued" state until it lands; clicking again before the boundary
     // cancels the queued change.
+    // Layers CREATED WHILE PLAYING arrive MUTED (on:false) and are marked
+    // "fresh" (engine-side Set — never persisted, cleared on stop): their first
+    // activation is boundary-queued like Queue mode regardless of cfg.queueMode,
+    // so a new layer always enters in time instead of stumbling in mid-cycle.
+    function _ambMarkFreshLayer(E, L, key) {
+      if (!E || !E.timer || !L) return false;
+      L.on = false;
+      (E._freshKeys || (E._freshKeys = new Set())).add(key);
+      return true;
+    }
     function _ambToggleLayer(E, key, L, onB, persist) {
       if (!L) return;
       const cfg = E.getCfg();
-      const queueing = !!(cfg && cfg.queueMode) && !!E.timer;
+      // A fresh (added-while-playing) layer's first switch-ON is ALWAYS queued
+      // to its next boundary; the mark is consumed on first touch either way.
+      const fresh = !!(E._freshKeys && E._freshKeys.has(key));
+      if (fresh) E._freshKeys.delete(key);
+      const queueing = (!!(cfg && cfg.queueMode) || (fresh && !L.on)) && !!E.timer;
       if (!queueing) {
         L.on = !L.on;
         if (onB) { onB.classList.toggle('on', !!L.on); onB.classList.remove('queued'); }
@@ -10723,8 +10737,19 @@
         if (onB) onB.classList.add('queued');
       } else {                           // queued START → first note on the next boundary
         let at, period = 0;
+        // FRESH layer (added this play, never started): its own iteration grid
+        // has no phase yet — and can be very long (a drone's ~32 s cycle would
+        // park the entry absurdly far out). First entry queues to the next BAR.
+        if (fresh) {
+          const bpmQ = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+          const barSecQ = (60 / Math.max(20, bpmQ)) * 4;
+          const anchorQ = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor : (Number.isFinite(E._playStartAt) ? E._playStartAt : now);
+          at = anchorQ + Math.max(0, Math.ceil((now + 0.05 - anchorQ) / barSecQ)) * barSecQ;
+          period = barSecQ;
+        } else {
         try { at = _ambLayerNextBoundary(E, key, L, cfg, now); } catch (e) { at = now + (60 / _ambBpm()) * 4; }
         try { period = _ambLayerPeriodSec(E, key, L, cfg); } catch (e) {}
+        }
         // Stash the period so the arming tick can step the start forward onto
         // the grid if the boundary slid too close to give the first voice its
         // scheduler-lead headroom (see _qGate).
@@ -11833,7 +11858,7 @@
         } catch (e) {}
         try { _ambRenderSampleLayers(E); } catch (e) {}
         if (typeof persistWorkspace === 'function') persistWorkspace();
-        if (typeof showToast === 'function') showToast('Track recorded — ' + bars + ' bar' + (bars === 1 ? '' : 's') + ', snapped + saved.');
+        if (typeof showToast === 'function') showToast('Track recorded — ' + bars + ' bar' + (bars === 1 ? '' : 's') + ', snapped + saved.' + (E.timer ? ' Muted — tap it to join on the next bar.' : ''));
         close();
       }
       const failUI = (e) => { statusEl.textContent = 'Could not process the recording. ' + ((e && e.message) || ''); recBtn.disabled = false; recBtn.textContent = '● Record'; recBtn.classList.remove('recording'); };
@@ -13707,6 +13732,7 @@
       _E = E;
       if (E.timer) { clearInterval(E.timer); E.timer = null; }
       _AMB_TICKING.delete(E); _ambTickWorkerMaybeStop();
+      E._freshKeys = null;   // added-while-playing marks die with the session (a stopped toggle is plain)
       try { _ambHealthStop(); } catch (e) {}
       if (E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
       // AREAS: end any sequencing and restore the bloom output gain (a stop mid
@@ -14063,6 +14089,7 @@
       L.type = 'samp'; L.seedKind = 'sample';
       if (!Array.isArray(cfg.extras)) cfg.extras = [];
       cfg.extras.push(L);
+      _ambMarkFreshLayer(E, L, 'samp:' + newId);   // added while playing → muted; first ON is boundary-queued (Track takes enter ON the bar)
       if (E.timer) { _E = E; try { _ambSyncMods(); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();
       return true;
@@ -20085,6 +20112,7 @@
       const newId = _ambSampleList(cfg).reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
       const _nl = _defaultSampleLayer(newId); _nl.type = 'samp'; _nl.seedKind = 'sample';
       cfg.extras.push(_nl);   // sampleId '' — import in the card
+      _ambMarkFreshLayer(E, _nl, 'samp:' + newId);   // (no toast — it has no source yet; activation queues once imported + toggled)
       try { _ambRenderSampleLayers(E); } catch (e) {}
       try {
         const wrap = _ambGet(E, 'ambient-sample-layers');
@@ -21987,6 +22015,7 @@
       _ambApplyRandomInstVoice(L, type);
       if (type === 'bass') _ambEuclidStochasticInit(L);   // Bass is always euclid → stochastic initial pattern
       cfg.extras.push(L);
+      if (_ambMarkFreshLayer(E, L, type + ':' + newId)) { try { if (typeof showToast === 'function') showToast('Layer added muted — tap its name to bring it in on the next boundary.'); } catch (e) {} }
       _ambRenderExtras(E);
       if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();
@@ -22046,8 +22075,10 @@
         if (isEuclid && !Number.isFinite(copy.pulses)) _ambEuclidStochasticInit(L);
         if (L.takeReroll) _ambApplyTakeReroll(L, cfg.seed);   // seed-derive its rhythm now (reproducible per take)
         cfg.extras.push(L);
+        _ambMarkFreshLayer(E, L, spec.type + ':' + newId);
         lastKey = spec.type + ':' + newId;
       });
+      if (E.timer && lastKey) { try { if (typeof showToast === 'function') showToast('Added muted — tap the layer name' + (specs.length > 1 ? 's' : '') + ' to bring it in on the next boundary.'); } catch (e) {} }
       _ambRenderExtras(E);
       try { const wrap = _ambGet(E, 'ambient-extra-layers'); const card = lastKey && wrap && wrap.querySelector('.ambient-layer[data-inst="' + lastKey + '"]'); if (card) card.classList.remove('collapsed'); } catch (e) {}
       if (E.timer) { try { _ambSyncMods(); } catch (e) {} }

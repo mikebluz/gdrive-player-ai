@@ -11666,7 +11666,7 @@
         '<div class="sm-title">Record a Track</div>' +
         '<div class="ambient-track-body">' +
           '<div class="ambient-ctrl"><label>Input</label><select class="ambient-select trk-input"><option value="">Default input</option></select><span class="ambient-hint">mic / line-in device</span></div>' +
-          '<div class="ambient-ctrl"><label>Preview</label><button type="button" class="ambient-seg trk-mon">🎧 Preview</button><span class="ambient-hint">hear the input live before/while recording — use HEADPHONES (open speakers will feed back)</span></div>' +
+          '<div class="ambient-ctrl"><label>Preview</label><button type="button" class="ambient-seg trk-mon">🎧 Preview</button><span class="ambient-hint">hear the input live — auto-ON while recording · use HEADPHONES (open speakers will feed back)</span></div>' +
           '<div class="ambient-ctrl"><label>Count-in</label><select class="ambient-select trk-ci"><option value="0">Off</option><option value="1" selected>1 bar</option><option value="2">2 bars</option></select><span class="ambient-hint">clicks at ' + Math.round(bpm) + ' BPM before recording</span></div>' +
           '<div class="ambient-ctrl"><label title="Recording offset — extra ms to shift the take EARLIER on top of the measured output+input latency. If takes land late (draggy), increase; if early (rushed), decrease. Remembered.">Nudge</label><input type="number" class="trk-nudge" min="-200" max="200" step="1" value="' + Math.round(savedNudge) + '"><span class="ambient-hint">ms earlier (wired output recommended — Bluetooth adds 100–300 ms the OS under-reports)</span></div>' +
           '<div class="ambient-track-status">Records your default audio input (mic / line-in). Press ● Record → after the count-in, play → ■ Stop. The loop snaps to the nearest bar.</div>' +
@@ -11807,6 +11807,10 @@
         // Shared stream (preview may already hold it open on the same device).
         const s = await acquireStream();
         if (!s) { statusEl.textContent = 'Microphone permission denied.'; return; }
+        // ALWAYS monitor while recording: hear the input from the moment Record
+        // is pressed (count-in included). The Preview button reflects it and can
+        // still be toggled off mid-take if speakers feed back; close tears down.
+        if (!monOn) { monOn = true; monBtn.classList.add('active'); monBtn.textContent = '🎧 Preview on'; await monStart(); }
         usingTap = await beginTap();
         if (!usingTap) {
           // Fallback: v1 MediaRecorder (compensation still applied at decode).

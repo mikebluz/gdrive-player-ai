@@ -9746,6 +9746,15 @@
       display: flex; align-items: center; justify-content: center;
     }
 
+    /* 🎲 New-take popover — per-layer Keep / Revise rows in the .sm-modal shell. */
+    .nt-modal { width: min(440px, 94vw); }
+    .nt-hint { font-size: 0.8rem; color: #a0aec0; line-height: 1.45; margin-bottom: 10px; }
+    .nt-all { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+    .nt-list { max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+    .nt-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 6px; border: 1px solid #23233a; border-radius: 8px; }
+    .nt-name { font-size: 0.85rem; color: #cbd5e0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .nt-row .ambient-seg.active { background: rgba(159, 122, 234, 0.25); border-color: #9f7aea; color: #e9e4f8; }
+    .nt-row .nt-keep.active { background: rgba(56, 178, 172, 0.25); border-color: #38b2ac; color: #d6f5f2; }
     /* Record-a-Track modal — count-in + record; reuses the .sm-modal shell. */
     .ambient-track-body { display: flex; flex-direction: column; gap: 12px; margin-bottom: 4px; }
     .ambient-track-status { font-size: 0.82rem; color: #a0aec0; line-height: 1.5; }

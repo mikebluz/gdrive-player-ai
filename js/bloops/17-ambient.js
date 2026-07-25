@@ -12257,6 +12257,49 @@
     // First press: mark the loop start (the layer keeps generating; notes keep
     // rolling into the capture sink). The window between this press and the next
     // becomes the loop.
+    // KEEP (New-take popover): retroactively freeze the layer's LAST COMPLETED
+    // UNIT from the rolling capture — material that already sounded, i.e. the
+    // OLD take — and hold it (a user lock, like ❄ Hold) so it survives the
+    // seed re-roll while other layers revise. Returns false when there's
+    // nothing captured to keep (layer never sounded / just enabled).
+    function _ambKeepLastUnit(E, key) {
+      const L = _ambLayerByKey(E, key); if (!L) return false;
+      const cfg = E._cfg || (E.getCfg && E.getCfg());
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      let P = 0; try { P = _ambLayerPeriodSec(E, key, L, cfg); } catch (e) {}
+      if (!(P > 0.05) || P > 31) return false;
+      const cap = (E.cap && E.cap[key]) || [];
+      if (!cap.length) return false;
+      // Window = the last COMPLETED unit (boundary in the future → step back one).
+      let end; try { end = _ambLayerAudibleBoundary(E, key, L, cfg, now - 0.001); } catch (e) { end = now; }
+      let start = end - P;
+      if (end > now + 0.05) { end -= P; start -= P; }
+      const eps = 0.001;
+      let win = cap.filter(e => e.at >= start - eps && e.at < end - eps);
+      if (!win.length) {   // sparse fallback: the last P seconds that actually played
+        end = now; start = now - P;
+        win = cap.filter(e => e.at >= start - eps && e.at < end - eps);
+      }
+      if (!win.length) return false;
+      const st = _ambFreezeState(E, key);
+      st.recording = false; st.pendingThawAt = null; st.pendingFreezeAt = null;
+      st._write = false; st._writeRearmAt = null; st._barLock = false;
+      st.events = win.map(e => ({ t: Math.max(0, e.at - start), freq: e.freq, dur: e.dur, params: e.params }));
+      st.loopLen = end - start;
+      st.anchor = start;               // past-aligned → replay tiles forward on the same phase
+      st.scheduledUpto = now;
+      st._lock = true; st.frozen = true;
+      // Like the card's ❄ KEEP: holding a loop stops the auto-rewrite — turn the
+      // layer's Evolve off (opting out of an Area Evolve) so the badge honestly
+      // reads ❄ Hold and Write can never thaw the kept material.
+      try {
+        if (!L.write || typeof L.write !== 'object') L.write = { on: false, bars: 2, times: 4 };
+        L.write.on = false; delete L.write.lock;
+        if (cfg && cfg.writeAll && cfg.writeAll.on) L.write.optOut = true;
+      } catch (e) {}
+      try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, now + 0.05); } catch (e) {}
+      return true;
+    }
     function _ambFreezeArm(E, key) {
       const st = _ambFreezeState(E, key);
       st.recording = true; st.frozen = false; st.events = []; st.pendingThawAt = null;
@@ -25500,19 +25543,61 @@
 
       const playBtn = G('ambient-play-btn');
       if (playBtn) playBtn.addEventListener('click', () => { if (E.timer) _ambStopGenerator(E); else _ambStartGenerator(E); });
-      const regenBtn = G('ambient-regen-btn');
-      if (regenBtn) regenBtn.addEventListener('click', () => {
+      // 🎲 New take → a per-layer KEEP / REVISE popover. Revise (default) =
+      // today's behavior (fresh realization from the new seed). Keep =
+      // _ambKeepLastUnit: the layer's last completed unit is retroactively
+      // frozen (❄-style user lock, OLD-take material) and rides through the
+      // re-roll untouched; kept layers also skip takeReroll. Thaw a kept
+      // layer any time via its card ❄ / Evolve controls.
+      const _rollNewTake = (keepKeys) => {
         _E = E; const cfg = cfg0(); if (!cfg) return;
+        const kept = new Set(keepKeys || []);
+        const missed = [];
+        kept.forEach(k => { if (!_ambKeepLastUnit(E, k)) missed.push(k); });
         const t = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
         cfg.seed = ((cfg.seed * 1664525 + 1013904223 + Math.floor(t * 1000)) >>> 0) || 1;
         // Layers flagged `takeReroll` re-roll their euclidean rhythm from the new seed
         // (reproducible per take). Random-gen layers already re-roll off cfg.seed.
-        ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k]) _ambApplyTakeReroll(cfg[k], cfg.seed); });
-        (cfg.extras || []).forEach(L => _ambApplyTakeReroll(L, cfg.seed));
+        ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k] && !kept.has(k)) _ambApplyTakeReroll(cfg[k], cfg.seed); });
+        (cfg.extras || []).forEach(L => { if (L && !kept.has(L.type + ':' + (L.id | 0))) _ambApplyTakeReroll(L, cfg.seed); });
         if (E.timer) { _ambResetClocks(E); _ambSeed(cfg.seed); }
+        try { _ambFreezeSyncAll(E); } catch (e) {}
         _ambSyncControls(E);
         persist();
-      });
+        if (missed.length && typeof showToast === 'function') showToast(missed.length + ' layer' + (missed.length === 1 ? ' hadn’t' : 's hadn’t') + ' played yet — nothing to keep, revised instead.');
+      };
+      const _newTakePopover = () => {
+        _E = E; const cfg = cfg0(); if (!cfg) return;
+        const layers = _ambMixerLayers(cfg).filter(it => it.layer && it.layer.on);
+        if (!layers.length) { _rollNewTake([]); return; }   // nothing on → plain roll
+        const old = document.getElementById('nt-overlay'); if (old) old.remove();
+        const ov = document.createElement('div'); ov.id = 'nt-overlay'; ov.className = 'sm-overlay';
+        ov.innerHTML = '<div class="sm-modal nt-modal">' +
+          '<div class="sm-title">🎲 New take</div>' +
+          '<div class="nt-hint">Revise = a fresh roll of this layer. Keep = its current loop is frozen (❄) and carries over — thaw it later from the card.' + (E.timer ? '' : ' <b>Keep uses the last-played loop (needs to have sounded).</b>') + '</div>' +
+          '<div class="nt-all"><span class="ambient-sched-lbl">all:</span><button type="button" class="ambient-seg nt-all-rev">Revise</button><button type="button" class="ambient-seg nt-all-keep">Keep</button></div>' +
+          '<div class="nt-list">' + layers.map(it =>
+            '<div class="nt-row" data-key="' + _ambEscText(it.key) + '"><span class="nt-name">' + _ambEscText(it.name) + '</span>' +
+            '<span class="ambient-seg-row"><button type="button" class="ambient-seg nt-rev active">Revise</button><button type="button" class="ambient-seg nt-keep">Keep</button></span></div>').join('') + '</div>' +
+          '<div class="sm-footer"><button type="button" class="sm-cancel nt-cancel">Cancel</button>' +
+            '<button type="button" class="sm-apply nt-roll">🎲 Roll</button></div></div>';
+        document.body.appendChild(ov); ov.style.setProperty('display', 'flex', 'important');
+        const close = () => { try { ov.remove(); } catch (e) {} };
+        ov.addEventListener('click', (ev) => {
+          if (ev.target === ov) { close(); return; }
+          const seg = ev.target.closest('.nt-rev, .nt-keep');
+          if (seg) { const row = seg.closest('.nt-row'); row.querySelectorAll('.nt-rev, .nt-keep').forEach(b => b.classList.remove('active')); seg.classList.add('active'); return; }
+          if (ev.target.closest('.nt-all-rev')) { ov.querySelectorAll('.nt-row').forEach(r => { r.querySelector('.nt-keep').classList.remove('active'); r.querySelector('.nt-rev').classList.add('active'); }); return; }
+          if (ev.target.closest('.nt-all-keep')) { ov.querySelectorAll('.nt-row').forEach(r => { r.querySelector('.nt-rev').classList.remove('active'); r.querySelector('.nt-keep').classList.add('active'); }); return; }
+          if (ev.target.closest('.nt-cancel')) { close(); return; }
+          if (ev.target.closest('.nt-roll')) {
+            const keep = Array.from(ov.querySelectorAll('.nt-row')).filter(r => r.querySelector('.nt-keep').classList.contains('active')).map(r => r.getAttribute('data-key'));
+            close(); _rollNewTake(keep);
+          }
+        });
+      };
+      const regenBtn = G('ambient-regen-btn');
+      if (regenBtn) regenBtn.addEventListener('click', _newTakePopover);
       // (↺ Reset removed — use the Areas 🧹 Clear-layers / ✕ Clear-all instead.
       //  _ambResetInstance is retained for any programmatic caller.)
       if (E.isLane) {

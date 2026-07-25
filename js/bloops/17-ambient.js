@@ -25644,6 +25644,20 @@
       E.inited = true;
       _ambSyncControls(E);
       _ambStartViz(E);
+      // COLD-START WARM-UP: the first play after a reload was choppy because
+      // everything is cold — the chain-building paths are un-JITted and the whole
+      // layer graph (EQ / delay / reverb sends / LFOs) is created in one gulp
+      // right as the context resumes. At IDLE, build the chains once and TEAR
+      // THEM DOWN again: the compile/JIT warmth is what makes the real first
+      // play smooth (rebuilding warm code is cheap — that's why the second play
+      // was always clean), and leaving no state means the harness battery (which
+      // hashes note params like _detuneMod that existing chains would add) stays
+      // byte-identical. Runs only while stopped; silent (context suspended).
+      try {
+        const warm = () => { try { if (!E.timer && E.inited && !(typeof window !== 'undefined' && window._ambSilentCapture)) { _E = E; _ambSyncMods(); _ambTeardownMods(); } } catch (e) {} };
+        if (typeof requestIdleCallback === 'function') requestIdleCallback(warm, { timeout: 3000 });
+        else setTimeout(warm, 600);
+      } catch (e) {}
     }
 
     // ---- Mode entry/exit (called by _syncFluidGridToActiveLane) ---------

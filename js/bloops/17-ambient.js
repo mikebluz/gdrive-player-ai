@@ -18942,6 +18942,8 @@
         '<button type="button" class="ambient-savepreset-btn" data-savekey="' + freezeKey + '" title="Save as preset — reuse this composition from the Add menu" aria-label="Save as preset">★</button>' +
         (String(freezeKey).split(':')[0] !== 'beat' ? '<button type="button" class="ambient-piano-rec" data-rkey="' + freezeKey + '" title="Write a melody by playing along: press ● (this layer goes quiet, the area keeps playing), play the keys, press ● again — your take loops in time with the progression." aria-label="Record a played melody">●</button><button type="button" class="ambient-hum-rec" data-hkey="' + freezeKey + '" title="Hum a melody: press 🎤 (this layer goes quiet, the area keeps playing), hum / sing / whistle into the mic, press again — the take is transcribed (pitch + rhythm detected, snapped to the key grid) and loops in time with the progression. Headphones recommended." aria-label="Record a hummed melody">🎤</button>' : '') +
         (_AMB_LAYER_SCHEMA[String(freezeKey).split(':')[0]] ? '<button type="button" class="ambient-dice-btn" data-dkey="' + freezeKey + '" title="Randomize all of this layer’s parameters" aria-label="Randomize parameters">🎲</button>' : '') +
+        // ✦ Design (B3-lite) — every tone-bearing layer (not samp buffers / beat kits).
+        (['samp', 'beat'].indexOf(String(freezeKey).split(':')[0]) < 0 ? '<button type="button" class="ambient-design-btn" data-sdk="' + freezeKey + '" title="Design this layer’s sound — opens the ✦ sound designer seeded with its current tone; saving assigns the new patch to this layer" aria-label="Design this layer’s sound">✦</button>' : '') +
       '</div>' : '') +
       // Live notes line / piano roll — a direct child of .ambient-layer (NOT the
       // head), so the collapse rule (.ambient-layer.collapsed > *:not(head)) hides
@@ -24605,6 +24607,25 @@
               if (typeof persistWorkspace === 'function') persistWorkspace();
             }
           } catch (err) { console.warn('Dice randomize failed', err); }
+          return;
+        }
+        // ✦ Design (B3-lite): open the sound designer seeded with this layer's
+        // tone (a user: patch edits in place; a built-in forks). Saving assigns
+        // the patch to THIS layer via the onSaved hook — the grid is untouched.
+        const sdb = e.target && e.target.closest && e.target.closest('.ambient-design-btn');
+        if (sdb) {
+          const key = sdb.dataset.sdk;
+          const L = _ambLayerByKey(E, key);
+          if (!L || typeof _sdOpenDesign !== 'function') return;
+          const seed = (typeof L.tone === 'string' && L.tone) ? L.tone : null;
+          _sdOpenDesign(seed, { onSaved: (toneId, patch) => {
+            _E = E; const L2 = _ambLayerByKey(E, key); if (!L2) return;
+            L2.tone = toneId;
+            try { _ambSyncControls(E); } catch (e2) {}
+            if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e2) {} }   // heard at the next boundary
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+            try { if (typeof showToast === 'function') showToast('Layer now plays “' + (patch && patch.name || 'patch') + '”.'); } catch (e2) {}
+          } });
           return;
         }
       });

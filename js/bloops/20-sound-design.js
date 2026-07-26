@@ -768,6 +768,11 @@
 
     // ---- Design view (overlay) ---------------------------------------------
     let _sdState = null;   // { params, baseType, editId } while the overlay is open
+    // B3-lite: optional save hook — set when the designer is opened FROM a Bloom
+    // layer card (✦). When present, saving assigns the patch via the hook
+    // instead of re-toning the whole grid. Survives the seed-picker path
+    // (module-level, not on _sdState); cleared on close/save.
+    let _sdOnSavedHook = null;
 
     function _sdSeedOptions() {
       // Base voices a patch can be built from: synths + samples, but NOT other
@@ -796,7 +801,8 @@
       return ov;
     }
 
-    function _sdOpenDesign(editValue) {
+    function _sdOpenDesign(editValue, opts) {
+      _sdOnSavedHook = (opts && typeof opts.onSaved === 'function') ? opts.onSaved : null;
       // Close any open menu panel so the Design overlay replaces it rather than
       // stacking over it (the Tone menu, but also the Sounds / FX panels that
       // may be open behind it, and their banner triggers).
@@ -846,6 +852,7 @@
       _sdOpenDesign(value || undefined);
     }
     function _sdCloseDesign() {
+      _sdOnSavedHook = null;
       try { _sdStopPreview(); } catch (e) {}
       const ov = document.getElementById('sd-overlay');
       if (ov) ov.classList.remove('open');
@@ -1309,13 +1316,20 @@
       } else {
         patch = _sdCreateUserPatch(name, _sdState.baseType, params);
       }
+      const _hook = _sdOnSavedHook; _sdOnSavedHook = null;
       _sdCloseDesign();
-      // Refresh anything that lists tones, and apply the new patch to the grid.
+      // Refresh anything that lists tones; then either hand the patch to the
+      // caller's hook (✦ from a Bloom layer → assign to THAT layer) or apply
+      // it to the grid (the classic Tone-menu flow).
       try { if (typeof populateTonePanel === 'function') populateTonePanel(); } catch (e) {}
-      try {
-        if (typeof applyToneToAllCells === 'function') applyToneToAllCells('user:' + patch.id);
-        else if (typeof setGridTone === 'function') setGridTone('user:' + patch.id);
-      } catch (e) {}
+      if (_hook) {
+        try { _hook('user:' + patch.id, patch); } catch (e) {}
+      } else {
+        try {
+          if (typeof applyToneToAllCells === 'function') applyToneToAllCells('user:' + patch.id);
+          else if (typeof setGridTone === 'function') setGridTone('user:' + patch.id);
+        } catch (e) {}
+      }
       try { if (typeof showToast === 'function') showToast('Saved “' + patch.name + '” to User sounds'); } catch (e) {}
     }
 

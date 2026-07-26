@@ -3239,6 +3239,24 @@
     .ambient-prog-salt .salt-lbl { color: #9f7aea; font-weight: 600; }
     .ambient-prog-salt .ambient-sched-grp { display: inline-flex; align-items: center; gap: 5px; }
     .ambient-prog-salt .ambient-salt-in { width: 52px; background: #11111c; border: 1px solid #2d2d3f; border-radius: 6px; color: #cbd5e0; padding: 3px 5px; font-size: 0.8rem; }
+    /* ⚄ Generate-progression popover — steppers + live chord preview. */
+    .pg-modal { width: min(440px, 94vw); }
+    .pg-key { font-size: 0.8rem; color: #a0aec0; margin: -4px 0 14px; }
+    .pg-key b { color: #9f7aea; font-weight: 600; }
+    .pg-steppers { display: flex; flex-direction: column; gap: 10px; }
+    .pg-stepper { display: flex; align-items: center; gap: 8px; }
+    .pg-stepper .pg-lab { flex: 0 0 58px; color: #cbd5e0; font-size: 0.86rem; font-weight: 600; }
+    .pg-inc, .pg-dec { flex: 0 0 auto; width: 30px; height: 30px; border: 1px solid #2d2d3f; border-radius: 8px; background: #15152a; color: #cbd5e0; font-size: 1.05rem; line-height: 1; cursor: pointer; touch-action: manipulation; }
+    @media (hover: hover) { .pg-inc:hover, .pg-dec:hover { border-color: #9f7aea; color: #fff; } }
+    .pg-stepper .pg-val { flex: 0 0 28px; text-align: center; color: #e9e4f8; font-size: 1rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .pg-stepper .pg-sub { flex: 1 1 auto; min-width: 0; color: #718096; font-size: 0.74rem; }
+    .pg-preview { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 4px; padding: 10px; border: 1px solid #23233a; border-radius: 10px; background: #0a0a16; min-height: 52px; align-content: flex-start; }
+    .pg-chip { display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 42px; padding: 5px 8px; border: 1px solid #2d2d3f; border-radius: 8px; background: #16162a; }
+    .pg-chip b { color: #d6bcfa; font-size: 0.86rem; font-weight: 700; }
+    .pg-chip small { color: #88aabb; font-size: 0.66rem; white-space: nowrap; }
+    .pg-footer { align-items: center; }
+    .pg-reroll { padding: 6px 14px; border-radius: 18px; background: transparent; border: 1px solid #2d2d3f; color: #cbd5e0; font: 0.78rem 'Segoe UI', sans-serif; cursor: pointer; margin-right: auto; transition: all 0.15s; }
+    @media (hover: hover) { .pg-reroll:hover { border-color: #9f7aea; color: #fff; } }
     /* 🧂 live readout — this cycle's salted plan + next cycle's lengths. */
     .ambient-salt-readout { font-size: 0.76rem; color: #a0aec0; line-height: 1.5; padding: 2px 0 0 4px; font-variant-numeric: tabular-nums; }
     .ambient-salt-readout b { color: #cbd5e0; font-weight: 600; }

@@ -3699,12 +3699,16 @@
     // least once, immediate repeats avoided where possible. Math.random on
     // purpose (a user-action dice roll, like 🎲; the RESULT is stored config,
     // deterministic thereafter). Non-heptatonic key scales fall back to major.
-    function _ambGenerateProg(E, total, uniq) {
-      _E = E; const cfg = E.getCfg(); if (!cfg) return;
+    // PURE roll: build a diatonic triad progression (tonic first) for the cfg's
+    // key — `total` slots, `uniq` distinct chords. Returns a fresh chord array;
+    // no cfg mutation, so the popover can PREVIEW a roll before applying it.
+    function _ambGenProgChords(cfg, total, uniq) {
       const rootPc = (typeof _ambKeyRootPc === 'function') ? _ambKeyRootPc(cfg) : 0;
       let iv = null;
       try { const sn = (typeof _ambKeyScaleName === 'function') ? _ambKeyScaleName(cfg) : 'major'; iv = (typeof SCALES !== 'undefined' && SCALES[sn]) ? SCALES[sn] : null; } catch (e) {}
       if (!Array.isArray(iv) || iv.length !== 7) iv = [0, 2, 4, 5, 7, 9, 11];
+      total = Math.max(2, Math.min(16, total | 0));
+      uniq = Math.max(1, Math.min(7, Math.min(total, uniq | 0)));
       const triad = (d) => {
         const at = (k) => iv[(d + k) % 7] + (d + k >= 7 ? 12 : 0);
         return { root: (((rootPc + iv[d]) % 12) + 12) % 12,
@@ -3722,17 +3726,24 @@
       while (seq.length < total) seq.push(uniques[1 + Math.floor(Math.random() * Math.max(1, uniques.length - 1))] || uniques[0]);
       for (let i = seq.length - 1; i > 1; i--) { const j = 1 + Math.floor(Math.random() * i); const t = seq[i]; seq[i] = seq[j]; seq[j] = t; }
       for (let i = 1; i < seq.length; i++) { if (seq[i] === seq[i - 1]) { const k = (i + 1) % seq.length; if (k > 0 && seq[k] !== seq[i - 1] && (k + 1 >= seq.length || seq[k] !== seq[i + 1])) { const t = seq[i]; seq[i] = seq[k]; seq[k] = t; } } }
-      const chords = seq.map(c => ({ root: c.root, intervals: c.intervals.slice() }));
+      return seq.map(c => ({ root: c.root, intervals: c.intervals.slice() }));
+    }
+    // Commit a rolled chord array to the Area progression.
+    function _ambApplyGenProg(E, chords, name) {
+      _E = E; const cfg = E.getCfg(); if (!cfg || !Array.isArray(chords) || !chords.length) return;
       if (!cfg.prog || typeof cfg.prog !== 'object') cfg.prog = { on: false, name: '', chords: [] };
-      cfg.prog.name = 'Gen ' + total + '×' + uniq;
-      cfg.prog.chords = chords; cfg.prog.on = true;
+      cfg.prog.name = name || ('Gen ' + chords.length);
+      cfg.prog.chords = chords.map(_ambCloneChord); cfg.prog.on = true;
       delete cfg.prog.parts;
       if (typeof _ambAutoSyncFreeForProg === 'function') { try { _ambAutoSyncFreeForProg(E, cfg); } catch (e) {} }
       try { _ambSyncControls(E); } catch (e) {}
       try { _ambRefreshSrcChips(E); } catch (e) {}
       try { _ambSaltReadoutSync(E, true); } catch (e) {}
       if (typeof persistWorkspace === 'function') persistWorkspace();
-      if (typeof showToast === 'function') showToast('Generated “' + cfg.prog.name + '” — press ⚄ again for another roll.');
+    }
+    function _ambGenerateProg(E, total, uniq) {
+      _E = E; const cfg = E.getCfg(); if (!cfg) return;
+      _ambApplyGenProg(E, _ambGenProgChords(cfg, total, uniq), 'Gen ' + (total | 0) + '×' + (uniq | 0));
     }
     function _ambOpenGlobalProgMenu(E, x, y, opts) {
       if (typeof showCtxMenu !== 'function') return;
@@ -25459,27 +25470,63 @@
             try { _ambSaltReadoutSync(E, true); } catch (e) {}
           });
         });
-        // ⚄ Generate — popover: total + unique chord counts → a diatonic
-        // progression in the current key (tonic first), applied like a pick.
+        // ⚄ Generate — popover: pick Length + Unique with steppers, PREVIEW the
+        // rolled chords as chips (roman numeral + name), reroll, then Apply.
         const pGen = G('ambient-prog-generate');
         if (pGen) pGen.addEventListener('click', () => {
           _E = E;
+          const esc = (s) => String(s == null ? '' : s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
           const old = document.getElementById('pg-overlay'); if (old) old.remove();
+          const cfg = E.getCfg() || {};
+          const kRoot = (typeof _ambKeyRootPc === 'function') ? _ambKeyRootPc(cfg) : 0;
+          let kScale = 'major'; try { kScale = (typeof _ambKeyScaleName === 'function') ? _ambKeyScaleName(cfg) : 'major'; } catch (e) {}
+          // The generator only works on a 7-note diatonic scale (else it falls
+          // back to major) — label what it ACTUALLY uses, not the raw scale.
+          const diatonic = (typeof SCALES !== 'undefined' && Array.isArray(SCALES[kScale]) && SCALES[kScale].length === 7);
+          const kScaleEff = diatonic ? kScale : 'major';
+          const keyTxt = (_AMB_CHROM[((kRoot % 12) + 12) % 12] || 'C') + ' ' + (kScaleEff.charAt(0).toUpperCase() + kScaleEff.slice(1));
+          const state = { total: 4, uniq: 3, chords: [] };
+          const roll = () => { state.chords = _ambGenProgChords(E.getCfg() || cfg, state.total, state.uniq); };
+          roll();
           const ov = document.createElement('div'); ov.id = 'pg-overlay'; ov.className = 'sm-overlay';
           ov.innerHTML = '<div class="sm-modal pg-modal">' +
             '<div class="sm-title">⚄ Generate progression</div>' +
-            '<div class="ambient-ctrl"><label>Chords</label><input type="number" class="pg-total ambient-salt-in" min="2" max="16" step="1" value="4"><span class="ambient-hint">total slots in the cycle</span></div>' +
-            '<div class="ambient-ctrl"><label>Unique</label><input type="number" class="pg-uniq ambient-salt-in" min="1" max="7" step="1" value="3"><span class="ambient-hint">distinct chords (≤ total; diatonic to the key, starts on the tonic)</span></div>' +
-            '<div class="sm-footer"><button type="button" class="sm-cancel pg-cancel">Close</button>' +
-              '<button type="button" class="sm-apply pg-go">⚄ Generate</button></div></div>';
+            '<div class="pg-key">diatonic to <b>' + esc(keyTxt) + '</b>, starting on the tonic</div>' +
+            '<div class="pg-steppers">' +
+              '<div class="pg-stepper"><span class="pg-lab">Length</span><button type="button" class="pg-dec" data-k="total">−</button><span class="pg-val pg-total-v">4</span><button type="button" class="pg-inc" data-k="total">+</button><span class="pg-sub">chords in the cycle</span></div>' +
+              '<div class="pg-stepper"><span class="pg-lab">Unique</span><button type="button" class="pg-dec" data-k="uniq">−</button><span class="pg-val pg-uniq-v">3</span><button type="button" class="pg-inc" data-k="uniq">+</button><span class="pg-sub">distinct chords</span></div>' +
+            '</div>' +
+            '<div class="pg-preview" aria-label="Preview"></div>' +
+            '<div class="sm-footer pg-footer">' +
+              '<button type="button" class="pg-reroll" title="Roll a different progression with these counts">↻ Reroll</button>' +
+              '<button type="button" class="sm-cancel pg-cancel">Cancel</button>' +
+              '<button type="button" class="sm-apply pg-apply">Apply</button></div></div>';
           document.body.appendChild(ov); ov.style.setProperty('display', 'flex', 'important');
+          const renderPreview = () => {
+            const box = ov.querySelector('.pg-preview'); if (!box) return;
+            box.innerHTML = state.chords.map((ch, i) => {
+              const rn = _ambPeRoman(ch, kRoot, kScale);
+              return '<span class="pg-chip"><b>' + esc(rn || (i + 1)) + '</b><small>' + esc(_ambChordShort(ch)) + '</small></span>';
+            }).join('');
+            ov.querySelector('.pg-total-v').textContent = state.total;
+            ov.querySelector('.pg-uniq-v').textContent = state.uniq;
+          };
+          renderPreview();
           ov.addEventListener('click', (ev) => {
             if (ev.target === ov || ev.target.closest('.pg-cancel')) { try { ov.remove(); } catch (e) {} return; }
-            if (ev.target.closest('.pg-go')) {
-              const total = Math.max(2, Math.min(16, parseInt(ov.querySelector('.pg-total').value, 10) || 4));
-              const uniq = Math.max(1, Math.min(7, Math.min(total, parseInt(ov.querySelector('.pg-uniq').value, 10) || 3)));
-              try { _ambGenerateProg(E, total, uniq); } catch (e) { console.warn('Generate failed', e); }
-              // stays open — press ⚄ again for another roll
+            const step = ev.target.closest('.pg-inc, .pg-dec');
+            if (step) {
+              const k = step.getAttribute('data-k'), d = step.classList.contains('pg-inc') ? 1 : -1;
+              if (k === 'total') state.total = Math.max(2, Math.min(16, state.total + d));
+              else state.uniq = Math.max(1, Math.min(7, state.uniq + d));
+              if (state.uniq > state.total) state.uniq = state.total;   // unique ≤ length
+              roll(); renderPreview(); return;
+            }
+            if (ev.target.closest('.pg-reroll')) { roll(); renderPreview(); return; }
+            if (ev.target.closest('.pg-apply')) {
+              try { _ambApplyGenProg(E, state.chords, 'Gen ' + state.total + '×' + state.uniq); } catch (e) { console.warn('Generate failed', e); }
+              if (typeof showToast === 'function') showToast('Applied — ' + state.chords.length + ' chords.');
+              try { ov.remove(); } catch (e) {}
             }
           });
         });

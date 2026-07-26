@@ -37,7 +37,9 @@
     .studio-mix { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 10px; }
     .studio-ctl { display: flex; align-items: center; gap: 5px; font-size: 0.7rem; color: #718096; }
     .studio-ctl input[type="range"] { flex: 1; min-width: 0; height: 18px; }
-    .studio-wave { position: relative; flex: 1; min-width: 0; border-radius: 8px; overflow: hidden; cursor: crosshair; }
+    .studio-wave { position: relative; flex: 1; min-width: 0; height: 72px; border-radius: 8px; overflow: hidden; cursor: crosshair; background: #0c0c15; }
+    .studio-clip { position: absolute; top: 0; bottom: 0; left: 0; width: 100%; touch-action: pan-y; cursor: grab; border-radius: 6px; overflow: hidden; }
+    .studio-clip:active { cursor: grabbing; }
     .studio-wave canvas { width: 100%; height: 72px; display: block; }
     .studio-head { position: absolute; top: 0; bottom: 0; width: 2px; background: #9f7aea; box-shadow: 0 0 8px rgba(159, 122, 234, 0.8); pointer-events: none; display: none; }
     .mw-toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); background: #191927; border: 1px solid #9f7aea; color: #e2e8f0; padding: 9px 16px; border-radius: 10px; font-size: 0.85rem; z-index: 99; box-shadow: 0 8px 30px rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.25s; pointer-events: none; max-width: 90vw; }

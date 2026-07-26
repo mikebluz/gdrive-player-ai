@@ -105,6 +105,7 @@
   }
   const applyAllMix = () => tracks.forEach(applyMix);
   const totalLen = () => tracks.reduce((m, t) => Math.max(m, t.offset + (t.buffer ? t.buffer.duration : 0)), 0);
+  const timelineLen = () => Math.max(totalLen(), 1);   // shared lane scale (never 0-wide)
 
   // ---------- transport ----------
   function play() {
@@ -249,15 +250,24 @@
     drawHead(t);
   }
   function drawHead(t) {
-    const wrap = t.canvas && t.canvas.parentElement; if (!wrap) return;
+    const wrap = t.canvas && t.canvas.closest('.studio-wave'); if (!wrap) return;
     const line = wrap.querySelector('.studio-head'); if (!line) return;
-    const dur = t.buffer ? t.buffer.duration : 0;
-    const local = pos - t.offset;
-    if (dur <= 0 || local < 0 || local > dur) { line.style.display = 'none'; return; }
-    const x = (local / dur) * wrap.clientWidth;
+    const T = timelineLen();
+    if (pos < 0 || pos > T) { line.style.display = 'none'; return; }
+    const x = (pos / T) * wrap.clientWidth;                // shared timeline → heads align across rows
     line.style.display = ''; line.style.left = x.toFixed(1) + 'px';
   }
   const drawAllHeads = () => tracks.forEach(drawHead);
+  // Position every clip on the shared timeline (left = offset, width = duration).
+  function layoutClips() {
+    const T = timelineLen();
+    tracks.forEach(t => {
+      const clip = t.canvas && t.canvas.parentElement; if (!clip || !t.buffer) return;
+      clip.style.left = ((t.offset / T) * 100) + '%';
+      clip.style.width = Math.max(0.5, (t.buffer.duration / T) * 100) + '%';
+      drawWave(t);                                          // redraw at the clip's new pixel width
+    });
+  }
 
   // ---------- UI ----------
   const fmtTime = (s) => { const m = Math.floor(s / 60), ss = s - m * 60; return m + ':' + (ss < 10 ? '0' : '') + ss.toFixed(1); };
@@ -292,11 +302,11 @@
             mixCtl(t, 'del', 0, 1, 0.01, '⧖', 'Delay send') +
           '</div>' +
         '</div>' +
-        '<div class="studio-wave"><canvas></canvas><div class="studio-head"></div></div>';
+        '<div class="studio-wave"><div class="studio-clip" title="Drag to move this take on the timeline"><canvas></canvas></div><div class="studio-head"></div></div>';
       host.appendChild(row);
       t.canvas = row.querySelector('canvas');
-      drawWave(t);
     });
+    layoutClips();
     syncTimeUI();
   }
   function wireHost() {
@@ -325,9 +335,45 @@
       }
       const wave = e.target.closest('.studio-wave');
       if (wave && t.buffer) {
+        if (host._clipDragged) { host._clipDragged = false; return; }   // a drag isn't a seek
         const r = wave.getBoundingClientRect();
-        seek(t.offset + ((e.clientX - r.left) / r.width) * t.buffer.duration);
+        seek(((e.clientX - r.left) / r.width) * timelineLen());
       }
+    });
+    // Drag a clip horizontally to move its take on the timeline (a plain click
+    // still falls through to seek). Pointer-captured → works for touch too.
+    host.addEventListener('pointerdown', (e) => {
+      const clip = e.target.closest('.studio-clip'); if (!clip) return;
+      const row = e.target.closest('.studio-track'); if (!row) return;
+      const t = tracks.find(x => x.id === row.dataset.id); if (!t || !t.buffer) return;
+      const wave = clip.closest('.studio-wave');
+      const T = timelineLen();                            // frozen during the drag
+      const secPerPx = T / Math.max(1, wave.clientWidth);
+      const st = { x0: e.clientX, off0: t.offset, moved: false };
+      const move = (ev) => {
+        const dx = ev.clientX - st.x0;
+        if (!st.moved && Math.abs(dx) < 6) return;        // click tolerance
+        st.moved = true;
+        t.offset = Math.max(0, st.off0 + dx * secPerPx);
+        clip.style.left = ((t.offset / T) * 100) + '%';
+        drawHead(t);
+      };
+      const up = () => {
+        clip.removeEventListener('pointermove', move);
+        clip.removeEventListener('pointerup', up);
+        clip.removeEventListener('pointercancel', up);
+        if (!st.moved) return;                            // plain click → seek handler runs
+        host._clipDragged = true; setTimeout(() => { host._clipDragged = false; }, 350);
+        saveMeta(); layoutClips(); drawAllHeads(); syncTimeUI();
+        if (playing) {                                    // re-schedule sources at the new offset
+          const p = pos; playing = false; stopSources(); cancelAnimationFrame(raf);
+          pos = p; play();
+        }
+      };
+      try { clip.setPointerCapture(e.pointerId); } catch (e2) {}
+      clip.addEventListener('pointermove', move);
+      clip.addEventListener('pointerup', up);
+      clip.addEventListener('pointercancel', up);
     });
   }
   async function fillInputs() {

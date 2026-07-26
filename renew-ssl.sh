@@ -124,3 +124,13 @@ echo "   New cert expires: $new_end"
 echo "   (If the live dates above don't match, the cPanel install didn't take.)"
 echo ""
 echo "⏰ Run this again in ~80 days."
+
+# Self-perpetuating reminder: drop a macOS Reminder due 80 days out so the
+# next renewal can't be forgotten (best-effort — skipped silently if the
+# Reminders automation permission is declined).
+REMIND_DATE=$(date -v+80d "+%m/%d/%Y" 2>/dev/null || true)
+if [[ -n "$REMIND_DATE" ]]; then
+  osascript -e "tell application \"Reminders\" to make new reminder with properties {name:\"Renew mercywizard.com SSL cert (./renew-ssl.sh)\", due date:date \"$REMIND_DATE 10:00 AM\"}" >/dev/null 2>&1 \
+    && echo "🔔 macOS Reminder set for $REMIND_DATE." \
+    || echo "🔔 Couldn't set a macOS Reminder (permission?) — note the date: $REMIND_DATE."
+fi

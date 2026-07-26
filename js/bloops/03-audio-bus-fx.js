@@ -490,6 +490,40 @@
 
     const SOUNDS = ['sine','square','triangle','sawtooth','pulse','fat','sync','modal','wavetable','fm','am','mono','duo','bass','pad','xylo','bell','pluck','kick','metal','noise:white','noise:pink','noise:brown'];
 
+    // SHARED mod-waveform evaluator (B2 shape core) — the ONE place JS-side
+    // modulation shapes are defined. phase = cycles (any real; wrapped to
+    // [0,1)), returns -1..1. Callers map to their own ranges (Bloom's stepped
+    // sources do 0.5+0.5·x → min..max; the Design rig scales by depth).
+    // Consumers: 17-ambient _ambScheduleCustomSrc + _ambSyncTargetCore's
+    // 64-pt core-curve sampler, 20-sound-design _sdModSrcFn (filter-curve
+    // path) + the per-voice scheduled-LFO sampler. NOT consumed by: Tone.LFO
+    // node sources (native shapes — Bloom's long-lived layer LFOs stay real
+    // nodes by design) and the Rust core's in-DSP LFOs (dsp/src/lib.rs).
+    // Adding a shape here makes it available to every JS sampler at once —
+    // remember the three-place rule for Bloom UI shapes (_ambShapeSel /
+    // _AMB_MOD_SHAPES / _ambMakeSrc) still applies for the node-LFO path.
+    // 'custom' opts: {partials:[0-100×4], rates:[×1-16×4], norm} — the Bloom
+    // harmonic-stack shape (sum of sines, clamped).
+    function _modWaveEval(shape, phase, opts) {
+      const ph = phase - Math.floor(phase);
+      switch (shape) {
+        case 'triangle': return ph < 0.5 ? (ph * 4 - 1) : (3 - ph * 4);
+        case 'sawtooth': return ph * 2 - 1;
+        case 'rampdown': return 1 - ph * 2;
+        case 'square':   return ph < 0.5 ? 1 : -1;
+        case 'custom': {
+          const parts = (opts && opts.partials) || [100, 0, 0, 0];
+          const rates = (opts && opts.rates) || [1, 2, 3, 4];
+          const norm = (opts && opts.norm)
+            || Math.max(1, parts.reduce((s, a) => s + Math.abs(a || 0), 0));
+          let w = 0;
+          for (let k = 0; k < parts.length; k++) w += (parts[k] || 0) * Math.sin(2 * Math.PI * (rates[k] || (k + 1)) * ph);
+          return Math.max(-1, Math.min(1, w / norm));
+        }
+        default: return Math.sin(ph * 2 * Math.PI);   // sine + fallback
+      }
+    }
+
     // ---- Tone.js v14 URL double-encode patch ----------------------------
     // ToneAudioBuffer.load() does
     //   location.href = baseUrl + url; pathname = pathname.split('/').

@@ -9507,11 +9507,7 @@
         } else {
           const parts = _ambModPartials(t), rates = _ambModPartialRates(t);
           const norm = Math.max(1, parts.reduce((s, a) => s + Math.abs(a || 0), 0));
-          for (let i = 0; i < 64; i++) {
-            let w = 0;
-            for (let k = 0; k < parts.length; k++) w += (parts[k] || 0) * Math.sin(2 * Math.PI * (rates[k] || (k + 1)) * (i / 64));
-            curve[i] = 0.5 + 0.5 * Math.max(-1, Math.min(1, w / norm));
-          }
+          for (let i = 0; i < 64; i++) curve[i] = 0.5 + 0.5 * _modWaveEval('custom', i / 64, { partials: parts, rates, norm });
         }
         sig += '/c:' + Array.from(curve, (v) => Math.round(v * 100)).join(',');
         if (e.src[target] && e.src[target].sig === sig) return;
@@ -11061,9 +11057,7 @@
       let g = 0;
       while (src.nextAt < horizon && g++ < 256) {
         const phase = (src.nextAt / period) % 1;
-        let w = 0;
-        for (let k = 0; k < parts.length; k++) w += (parts[k] || 0) * Math.sin(2 * Math.PI * (rates[k] || (k + 1)) * phase);
-        const f = 0.5 + 0.5 * Math.max(-1, Math.min(1, w / norm));
+        const f = 0.5 + 0.5 * _modWaveEval('custom', phase, { partials: parts, rates, norm });
         const v = src.min + f * (src.max - src.min);
         try { src.node.linearRampToValueAtTime(v, src.nextAt); } catch (x) {}
         src.nextAt += dt;

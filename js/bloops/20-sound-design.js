@@ -333,13 +333,8 @@
             return pts[i] + (pts[Math.min(count, i + 1)] - pts[i]) * fr;
           };
         }
-        return (t) => {
-          const ph = (t * rate) % 1;
-          if (shape === 'triangle') return ph < 0.5 ? (ph * 4 - 1) : (3 - ph * 4);
-          if (shape === 'sawtooth') return ph * 2 - 1;
-          if (shape === 'square') return ph < 0.5 ? 1 : -1;
-          return Math.sin(ph * 2 * Math.PI);
-        };
+        // Periodic shapes: the shared B2 shape core (03-audio-bus-fx.js).
+        return (t) => _modWaveEval(shape, t * rate);
       }
       if (id === 'env2') {
         const e = params.env2;
@@ -531,12 +526,8 @@
                   // control signal; the step floor caps total events at ~512.
                   const step = Math.max(period / 16, span / 512);
                   const count = Math.ceil(span / step);
-                  const val = (t) => {
-                    const ph = (t * rate) % 1;                // 0..1, phase 0 at voice start (like LFO.start(now))
-                    if (shape === 'triangle') return ph < 0.5 ? (ph * 4 - 1) : (3 - ph * 4);
-                    if (shape === 'sawtooth') return ph * 2 - 1;
-                    return Math.sin(ph * 2 * Math.PI);        // sine (and fallback)
-                  };
+                  // phase 0 at voice start (like LFO.start(now)); shared shape core.
+                  const val = (t) => _modWaveEval(shape, t * rate);
                   try { sig.setValueAtTime(val(0), now); } catch (e) {}
                   for (let k = 1; k <= count; k++) {
                     try { sig.linearRampToValueAtTime(val(k * step), now + k * step); } catch (e) {}

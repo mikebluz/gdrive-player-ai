@@ -211,6 +211,7 @@
         macros: d.macros, modMatrix: d.modMatrix,
         // Granular (grain seed) — read by the GrainPlayer branch (flat keys).
         grainSize: 0.1, grainOverlap: 0.05, grainRate: 1, grainOffset: 0,
+        grainSpray: 0, grainJitter: 0, grainFreeze: 0,   // v2 scheduler knobs (0 = classic GrainPlayer path)
         // Wavetable scan position (wavetable seed): 0-100 morphs the 4-frame
         // bank sine → triangle → sawtooth → square.
         wtPosition: 0,
@@ -961,6 +962,11 @@
         gr._row.appendChild(_sdMakeKnob({ label: 'Density', min: 1, max: 250, value: Math.round((P.grainOverlap || 0.05) * 1000), step: 1, defaultValue: 50, format: ms, onChange: (v) => P.grainOverlap = v / 1000 }));
         gr._row.appendChild(_sdMakeKnob({ label: 'Rate', min: -2, max: 2, value: Number.isFinite(P.grainRate) ? P.grainRate : 1, step: 0.05, defaultValue: 1, format: (v) => (Math.round(v * 100) / 100) + '×', onChange: (v) => P.grainRate = v }));
         gr._row.appendChild(_sdMakeKnob({ label: 'Position', min: 0, max: 100, value: Math.round((P.grainOffset || 0) * 100), step: 1, unit: '%', defaultValue: 0, onChange: (v) => P.grainOffset = v / 100 }));
+        // GRANULAR v2 (any of these non-zero → the hand-rolled grain scheduler
+        // replaces GrainPlayer on sequenced notes: true spray/jitter/freeze).
+        gr._row.appendChild(_sdMakeKnob({ label: 'Spray', min: 0, max: 500, value: Math.round((P.grainSpray || 0) * 1000), step: 5, defaultValue: 0, format: ms, onChange: (v) => P.grainSpray = v / 1000 }));
+        gr._row.appendChild(_sdMakeKnob({ label: 'Jitter', min: 0, max: 100, value: Math.round((P.grainJitter || 0) * 100), step: 1, unit: '%', defaultValue: 0, onChange: (v) => P.grainJitter = v / 100 }));
+        gr._row.appendChild(_sdMakeKnob({ label: 'Freeze', min: 0, max: 1, value: P.grainFreeze ? 1 : 0, step: 1, defaultValue: 0, format: (v) => (v ? 'on' : 'off'), onChange: (v) => P.grainFreeze = v ? 1 : 0 }));
         panes.appendChild(gr);
       } else if (seedClass !== 'other') {
         const osc = _sdSection('Oscillator');

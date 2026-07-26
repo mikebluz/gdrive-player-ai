@@ -3283,6 +3283,93 @@
       return merged;
     }
 
+    // ---- GRANULAR v2 — hand-rolled grain scheduler ------------------------
+    // Windowed BufferSources spawned at the grain rate (the sound-design
+    // to-do's "true scheduler"), unlocking what Tone.GrainPlayer can't do:
+    //   spray  — random position scatter per grain (seconds into the buffer)
+    //   jitter — random onset scatter (fraction of the grain period)
+    //   freeze — the read-head holds still (mod routes sampled once at t=0)
+    // Each grain = source → per-grain trapezoid gain (fade = overlap) → a
+    // shared velocity gain → dest. 'grainpos' mod-matrix routes are consumed
+    // directly (sampled per grain at its onset). LIVE mode schedules grains
+    // ~0.4 s ahead on a lookahead timer; OFFLINE mode (Harvest export)
+    // schedules the whole note upfront — no timers in a render. Reverse rates
+    // play |rate| (per-grain reversal isn't worth a buffer copy per note).
+    function _sdGrainStream(o) {
+      const rawC = Tone.getContext().rawContext || Tone.context.rawContext;
+      const bufDur = Math.max(0.01, o.buffer.duration);
+      const out = rawC.createGain();
+      out.gain.value = Math.max(0.001, Math.min(1.5, o.velocity != null ? o.velocity : 1));
+      try { Tone.connect(out, o.dest); } catch (e) { try { out.connect(rawC.destination); } catch (e2) {} }
+      const size = Math.max(0.02, Math.min(1.5, o.size));
+      const fade = Math.max(0.004, Math.min(o.overlap || 0.05, size / 2));
+      const period = Math.max(0.012, size - (o.overlap || 0));
+      const grainDur = size + fade;
+      const rate = Math.max(0.05, Math.abs(o.rate || 1));
+      // live 'grainpos' routes (same mod-source machinery the detune hook uses)
+      let posFn = null;
+      try {
+        if (typeof _sdModSrcFn === 'function' && o.params && Array.isArray(o.params.modMatrix)) {
+          const rs = o.params.modMatrix.filter(r => r && r.amount && r.dest === 'grainpos')
+            .map(r => ({ scale: (r.amount / 100), fn: _sdModSrcFn(r.src, o.params, { startTime: o.when, dur: o.dur || 3600, velocity: o.velocity }) }))
+            .filter(r => r.fn);
+          if (rs.length) posFn = (t) => rs.reduce((a, r) => a + r.scale * r.fn(t), 0);
+        }
+      } catch (e) {}
+      const frozenAdd = (o.freeze && posFn) ? posFn(0) : 0;
+      const posAt = (t) => Math.max(0, Math.min(0.999, o.basePos + (o.freeze ? frozenAdd : (posFn ? posFn(t) : 0))));
+      const refs = [];
+      const spawn = (at, t) => {
+        let a = at;
+        if (!o.offline) a = Math.max(a, rawC.currentTime + 0.005);
+        const src = rawC.createBufferSource(); src.buffer = o.buffer;
+        src.playbackRate.value = rate;
+        try { src.detune.value = o.cents || 0; } catch (e) {}
+        const g = rawC.createGain();
+        g.gain.setValueAtTime(0, a);
+        g.gain.linearRampToValueAtTime(1, a + fade);
+        g.gain.setValueAtTime(1, a + grainDur - fade);
+        g.gain.linearRampToValueAtTime(0, a + grainDur);
+        src.connect(g); g.connect(out);
+        let off = posAt(t) * Math.max(0.005, bufDur - 0.01);
+        if (o.spraySec > 0) off += (Math.random() * 2 - 1) * o.spraySec;
+        off = Math.max(0, Math.min(bufDur - 0.005, off));
+        try { src.start(a, off); } catch (e) {}
+        try { src.stop(a + grainDur + 0.02); } catch (e) {}
+        if (o.offline && Array.isArray(o.offlineRefs)) o.offlineRefs.push(src, g);
+        else refs.push(src, g);
+      };
+      const jit = () => (o.jitterFrac > 0 ? (Math.random() * 2 - 1) * o.jitterFrac * period * 0.5 : 0);
+      let disposed = false, timer = null;
+      if (o.offline || (o.dur && o.dur <= 12)) {
+        // whole note upfront (offline REQUIRES it; short live notes may as well)
+        for (let t = 0; t < (o.dur || 1); t += period) spawn(o.when + t + jit(), t);
+      } else {
+        // sustained / long: lookahead scheduling
+        let nextT = 0;
+        const HORIZON = 0.4;
+        const tick = () => {
+          if (disposed) return;
+          const now = rawC.currentTime;
+          while (o.when + nextT < now + HORIZON && (!o.dur || nextT < o.dur)) { spawn(o.when + nextT + jit(), nextT); nextT += period; }
+          if (o.dur && nextT >= o.dur) { clearInterval(timer); timer = null; }
+        };
+        timer = setInterval(tick, 120); tick();
+      }
+      return {
+        stop: (atSec) => {
+          const t = Number.isFinite(atSec) ? atSec : rawC.currentTime;
+          try { out.gain.setTargetAtTime(0, t, 0.02); } catch (e) {}
+          if (timer) { clearInterval(timer); timer = null; }
+        },
+        dispose: () => {
+          if (disposed) return; disposed = true;
+          if (timer) { clearInterval(timer); timer = null; }
+          refs.forEach(n => { try { n.disconnect(); } catch (e) {} });
+          try { out.disconnect(); } catch (e) {}
+        },
+      };
+    }
     function playNote(freq, params = {}, durationMs, startTime, destination, trackIdx, laneIdx) {
       if (typeof params === 'string') params = { type: params };
       // Bloom Write/lock handoff: DROP a live voice scheduled at/after a pending
@@ -3511,6 +3598,41 @@
             // note is at least audible while we wait for grain to
             // initialize on the next tick.
             return playNote(freq, { ...params, type: 'sine' }, durationMs, startTime, destination, trackIdx, laneIdx);
+          }
+          // GRANULAR v2 — the true hand-rolled grain scheduler (spray / jitter /
+          // freeze). Engaged ONLY when one of the new knobs is set, so every
+          // existing patch keeps the Tone.GrainPlayer path byte-for-byte.
+          // (Sequenced path only for now; a sustained press with v2 knobs
+          // falls back to GrainPlayer — sounds, minus spray.)
+          if (((params.grainSpray || 0) > 0 || (params.grainJitter || 0) > 0 || params.grainFreeze)
+              && typeof _sdGrainStream === 'function') {
+            const rawB = (grainInfo.buffer && typeof grainInfo.buffer.get === 'function') ? grainInfo.buffer.get() : null;
+            if (rawB) {
+              const baseFreq2 = grainInfo.baseFreq || 440;
+              const cents2 = (typeof freq === 'number' && freq > 0) ? 1200 * Math.log2(freq / baseFreq2) + (detune || 0) : (detune || 0);
+              const laneDest2 = (Number.isFinite(laneIdx) && lanes[laneIdx]) ? getLaneBus(laneIdx) : null;
+              const dest2 = destination || laneDest2 || globalSendTap;
+              const trig2 = (typeof startTime === 'number' && Number.isFinite(startTime)) ? startTime : Tone.now();
+              const dur2 = Math.max(0.05, targetDur);
+              const h = _sdGrainStream({
+                buffer: rawB, dest: dest2, when: trig2, dur: dur2,
+                size: (params.grainSize != null) ? params.grainSize : 0.1,
+                overlap: (params.grainOverlap != null) ? params.grainOverlap : 0.05,
+                rate: Number.isFinite(params.grainRate) ? params.grainRate : 1,
+                cents: cents2, velocity,
+                basePos: Math.max(0, Math.min(0.999, Number.isFinite(params.grainOffset) ? params.grainOffset : 0)),
+                spraySec: Math.max(0, params.grainSpray || 0),
+                jitterFrac: Math.max(0, Math.min(1, params.grainJitter || 0)),
+                freeze: !!params.grainFreeze,
+                params,
+                offline: !!_offlineSamplerOverride,
+                offlineRefs: _offlineSamplerOverride ? _offlineVoiceRefs : null,
+              });
+              if (_offlineSamplerOverride) return;   // grains + gains parked in the ref pool by the stream
+              const lead2 = (typeof startTime === 'number' && Number.isFinite(startTime)) ? Math.max(0, (startTime - Tone.context.now()) * 1000) : 0;
+              setTimeout(() => { try { h.dispose(); } catch (e) {} }, lead2 + (dur2 + 1.2) * 1000);
+              return;
+            }
           }
           const baseFreq = grainInfo.baseFreq || 440;
           const cents = (typeof freq === 'number' && freq > 0)

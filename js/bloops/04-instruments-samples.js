@@ -2615,6 +2615,24 @@
             loop: true,
             volume: Tone.gainToDb(Math.max(0.001, velocity)),
           };
+          // GRANULAR v2 held press — spray/jitter/freeze on an unbounded hold
+          // (dur:null → the stream's lookahead scheduler runs until release).
+          if (((params.grainSpray || 0) > 0 || (params.grainJitter || 0) > 0 || params.grainFreeze)
+              && typeof _sdGrainStream === 'function' && rawBuffer) {
+            const h = _sdGrainStream({
+              buffer: rawBuffer, dest: (fxOverrideGlobal ? masterLimiter : globalSendTap),
+              when: _warmAt(), dur: null,
+              size: playerOpts.grainSize, overlap: playerOpts.overlap,
+              rate: playbackRate, cents, velocity,
+              basePos: Math.max(0, Math.min(0.999, Number.isFinite(params.grainOffset) ? params.grainOffset : 0)),
+              spraySec: Math.max(0, params.grainSpray || 0),
+              jitterFrac: Math.max(0, Math.min(1, params.grainJitter || 0)),
+              freeze: !!params.grainFreeze,
+              params, offline: false, offlineRefs: null,
+            });
+            let rel2 = false;
+            return { release: () => { if (rel2) return; rel2 = true; try { h.stop(); } catch (e) {} setTimeout(() => { try { h.dispose(); } catch (e) {} }, 400); } };
+          }
           playerOpts.url = rawBuffer || 'https://tonejs.github.io/audio/salamander/A4.mp3';
           const player = new Tone.GrainPlayer(playerOpts).connect(
             fxOverrideGlobal ? masterLimiter : globalSendTap

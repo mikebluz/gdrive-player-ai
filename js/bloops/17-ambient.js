@@ -4016,12 +4016,67 @@
       if (!host) {
         host = document.createElement('div'); host.id = 'ambient-prog-editor'; host.className = 'ambient-prog-editor';
         document.body.appendChild(host);
-        host.addEventListener('pointerdown', (e) => { const b = e.target.closest('[data-pe]'); if (!b) return; e.preventDefault(); _ambPeAct(b.getAttribute('data-pe'), b); });
+        host.addEventListener('pointerdown', (e) => {
+          const b = e.target.closest('[data-pe]'); if (!b) return; e.preventDefault();
+          const act = b.getAttribute('data-pe');
+          // Main-strip chord buttons: defer the select to pointerup so a drag
+          // can reorder them (tap = select as before, drag ≥6px = move).
+          if (/^sel:\d+$/.test(act) && b.classList.contains('pe-chord') && b.closest('.pe-chords')) { _ambPeDragStart(e, b, act); return; }
+          _ambPeAct(act, b);
+        });
         document.addEventListener('pointerdown', (e) => { if (_ambProgEd && host.style.display !== 'none' && !host.contains(e.target) && !(e.target.closest && e.target.closest('#ambient-prog-edit'))) _ambPeClose(); }, true);
         document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && _ambProgEd) _ambPeClose(); });
       }
       _ambPeRender();
       host.style.setProperty('display', 'flex', 'important');
+    }
+    // Drag a main-strip chord button to REORDER the progression (pointer-based →
+    // touch + desktop). A plain tap (<6px) falls through to the original select.
+    // The insertion slot follows the pointer across the WRAPPING row: a button
+    // counts as "before the slot" when the pointer is below its row, or on its
+    // row past its center. Reorder splices ed.chords (alts/bars ride the chord
+    // object); parts keep their lens — a chord dragged across a part boundary
+    // changes part membership positionally (repaired again on Save).
+    function _ambPeDragStart(e, btn, act) {
+      const ed = _ambProgEd; if (!ed) return;
+      const from = parseInt(act.slice(4), 10);
+      const row = btn.closest('.pe-chords');
+      const btns = Array.prototype.slice.call(row.querySelectorAll('.pe-chord[data-pe^="sel:"]'));
+      const st = { x0: e.clientX, y0: e.clientY, moved: false, to: from };
+      const clearMarks = () => {
+        btn.classList.remove('pe-dragging');
+        btns.forEach(b2 => b2.classList.remove('pe-drop-before'));
+        row.classList.remove('pe-drop-end');
+      };
+      const move = (ev) => {
+        if (!st.moved && Math.abs(ev.clientX - st.x0) < 6 && Math.abs(ev.clientY - st.y0) < 6) return;
+        if (!st.moved) { st.moved = true; btn.classList.add('pe-dragging'); }
+        let to = 0;
+        for (const b2 of btns) {
+          const r = b2.getBoundingClientRect();
+          if (ev.clientY > r.bottom || (ev.clientY >= r.top && ev.clientX > r.left + r.width / 2)) to++;
+        }
+        st.to = Math.max(0, Math.min(btns.length, to));
+        btns.forEach((b2, bi) => b2.classList.toggle('pe-drop-before', bi === st.to));
+        row.classList.toggle('pe-drop-end', st.to === btns.length);
+      };
+      const up = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
+        clearMarks();
+        if (!st.moved) { _ambPeAct(act, btn); return; }   // tap = the original select
+        let to = st.to; if (to > from) to--;              // removal shifts the slot left
+        if (to === from || !Array.isArray(ed.chords) || from >= ed.chords.length) return;
+        const ch = ed.chords.splice(from, 1)[0];
+        ed.chords.splice(to, 0, ch);
+        ed.sel = to; ed.altSel = -1;                      // follow the dragged chord
+        _ambPeRender();
+      };
+      try { btn.setPointerCapture(e.pointerId); } catch (e2) {}
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', up);
     }
     function _ambPeRender() {
       const host = document.getElementById('ambient-prog-editor'); if (!host || !_ambProgEd) return;

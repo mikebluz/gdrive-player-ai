@@ -2810,7 +2810,12 @@
     }
     .pe-title { font-size: 1rem; font-weight: 700; color: #cbd5e0; }
     .pe-chords { display: flex; flex-wrap: wrap; gap: 6px; }
-    .pe-chord { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 54px; padding: 6px 8px; border: 1px solid #2d2d3f; border-radius: 8px; background: #1a1a2e; color: #cbd5e0; cursor: pointer; font-weight: 700; }
+    .pe-chord { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 54px; padding: 6px 8px; border: 1px solid #2d2d3f; border-radius: 8px; background: #1a1a2e; color: #cbd5e0; cursor: pointer; font-weight: 700; touch-action: none; }
+    /* Drag-to-reorder (main strip): the lifted chord dims; a purple insertion
+       bar marks the drop slot (left edge of the slot's chord, or after the last). */
+    .pe-chord.pe-dragging { opacity: 0.55; border-style: dashed; border-color: #9f7aea; }
+    .pe-chord.pe-drop-before { box-shadow: -5px 0 0 -1px #9f7aea; }
+    .pe-chords.pe-drop-end .pe-chord[data-pe^="sel:"]:last-of-type { box-shadow: 5px 0 0 -1px #9f7aea; }
     .pe-chord small { font-weight: 400; font-size: 0.62rem; color: #88aabb; white-space: nowrap; }
     .pe-chord.sel { border-color: #9f7aea; background: rgba(159,122,234,0.18); }
     .pe-chord.pe-add { color: #9f7aea; justify-content: center; }

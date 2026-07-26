@@ -1942,6 +1942,58 @@
       return out;
     }
 
+    // MODAL BELL PCM (node path, same one-shot-buffer pattern as sync): a bank
+    // of exponentially-decaying sinusoids at Risset's classic inharmonic bell
+    // partials — the hum/prime/tierce beating pairs included. Deterministic
+    // (no RNG). Design knobs ride the same osc fields as sync:
+    //   osc.harmonicity → partial-spacing STRETCH (2.5 = neutral ×1, matching
+    //     the designer's ratio-knob center; <2.5 compresses toward harmonic,
+    //     >2.5 stretches toward gong)
+    //   osc.modIndex    → BRIGHTNESS tilt (0 = classic weights; up-tilts the
+    //     high partials)
+    // Length: the slowest partial decays ~-60 dB across lenSec, faster ones
+    // proportionally quicker — the caller's amp envelope + release still gate
+    // the tail like every other voice.
+    function _renderModalPcm(freq, params, lenSec, sr, detuneCents) {
+      const n = Math.max(16, Math.round(lenSec * sr));
+      const f = Math.max(1, freq * Math.pow(2, (detuneCents || 0) / 1200));
+      const o = (params && params.osc) || {};
+      const stretch = Math.max(0.4, Math.min(2.4, (Number.isFinite(o.harmonicity) ? o.harmonicity : 2.5) / 2.5));
+      const tilt = Math.max(0, Math.min(4, Number.isFinite(o.modIndex) ? o.modIndex : 0)) * 0.22;
+      // Risset bell partials: [freq ratio, amplitude, relative decay length].
+      // The two near-unison pairs (.56/.5623, .92/.9233) beat slowly — the
+      // characteristic bell "shimmer".
+      const P = [
+        [0.56, 1, 1], [0.5623, 0.67, 0.9], [0.92, 1, 0.65], [0.9233, 1.8, 0.55],
+        [1.19, 2.67, 0.325], [1.7, 1.67, 0.35], [2.0, 1.46, 0.25], [2.74, 1.33, 0.2],
+        [3.0, 1.33, 0.15], [3.76, 1, 0.1], [4.07, 1.33, 0.075],
+      ];
+      const T = Math.max(0.3, lenSec);
+      let norm = 0;
+      const bank = P.map(pr => {
+        const ratio = Math.max(0.1, 1 + (pr[0] - 1) * stretch);
+        const amp = pr[1] * Math.pow(ratio, tilt);
+        norm += amp;
+        return { w: 2 * Math.PI * f * ratio / sr, amp, dk: Math.exp(-(6.9 / (T * pr[2])) / sr) };
+      });
+      const out = new Float32Array(n);
+      const TWO_PI = 2 * Math.PI;
+      for (const b of bank) {
+        if (b.w >= Math.PI) continue;                    // partial above Nyquist
+        let env = (b.amp / (norm || 1)) * 2.4;           // strike level (partials rarely peak in phase)
+        let ph = 0;
+        for (let i = 0; i < n; i++) {
+          out[i] += env * Math.sin(ph);
+          ph += b.w; if (ph >= TWO_PI) ph -= TWO_PI;     // keep sin() in its precise range
+          env *= b.dk;
+          if (env < 1e-5) break;                          // partial fully decayed
+        }
+      }
+      // Safety clamp against pathological stretch/tilt stacks.
+      for (let i = 0; i < n; i++) { const s = out[i]; out[i] = s > 1 ? 1 : s < -1 ? -1 : s; }
+      return out;
+    }
+
     // Voice cap — limits simultaneous synth voices to keep the master
     // limiter from being driven into IM artifacts by overlapping release
     // tails. When a new voice would push the count over the cap, the
@@ -2758,10 +2810,11 @@
       // short one-shot, no release work needed. Suppress the flashCell
       // active-loop outline so it doesn't fight the .sustaining
       // highlight during the press.
-      if (type === 'pluck' || type === 'kick' || type === 'metal') {
+      if (type === 'pluck' || type === 'kick' || type === 'metal' || type === 'modal') {
         const prev = _suppressCellFlash;
         _suppressCellFlash = true;
-        try { playNote(freq, params); }
+        // A held modal bell is a strike that rings — give it a real tail.
+        try { playNote(freq, params, type === 'modal' ? 2500 : undefined); }
         finally { _suppressCellFlash = prev; }
         return { release: () => {} };
       }
@@ -4279,19 +4332,22 @@
           octaves: 1.5,
           envelope: { attack: 0.001, decay: 1.4, release: 0.2 },
         }).connect(chainHead);
-      } else if (type === 'sync') {
-        // TRUE hard sync on the NODE path (offline Harvest export, core cold
-        // start/miss): the core kind-14 algorithm rendered to PCM
-        // (_renderSyncPcm below the dispatch) and played as a one-shot buffer
-        // through the same amp envelope + chain as any other voice — exports
-        // keep the sync timbre instead of degrading to a plain saw.
+      } else if (type === 'sync' || type === 'modal') {
+        // PCM-rendered voices on the NODE path, played as a one-shot buffer
+        // through the same amp envelope + chain as any other voice:
+        //   sync  — TRUE hard sync (offline Harvest export, core cold
+        //           start/miss): the core kind-14 algorithm ported to JS
+        //           (_renderSyncPcm) so exports keep the sync timbre instead
+        //           of degrading to a plain saw.
+        //   modal — Risset modal bell (_renderModalPcm), node-only (no core
+        //           kind; kindFor returns null so it always lands here).
         const ampEnv = new Tone.AmplitudeEnvelope({
           attack:  env.attack, decay: env.decay,
           sustain: env.sustain, release: env.release,
         }).connect(chainHead);
         const _sr = (Tone.getContext() && Tone.getContext().sampleRate) || 44100;
         const _len = Math.max(0.05, (Number.isFinite(preReleaseDur) ? preReleaseDur : targetDur) + (env.release || 0.5) + 0.1);
-        const pcm = _renderSyncPcm(freq, params, _len, _sr, detune);
+        const pcm = (type === 'modal' ? _renderModalPcm : _renderSyncPcm)(freq, params, _len, _sr, detune);
         const rawC = Tone.getContext().rawContext || Tone.context.rawContext;
         const ab = rawC.createBuffer(1, pcm.length, _sr);
         ab.copyToChannel(pcm, 0);

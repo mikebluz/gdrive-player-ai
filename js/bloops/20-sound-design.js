@@ -182,6 +182,7 @@
       if (baseType === 'am') return 'am';
       if (baseType === 'duo') return 'duo';
       if (baseType === 'sync') return 'sync';
+      if (baseType === 'modal') return 'modal';
       if (baseType === 'wavetable') return 'wavetable';
       if (baseType === 'sample:grain') return 'grain';
       // pad / mono / bass carry their own hardcoded envelope/filter, so they
@@ -203,7 +204,8 @@
     // A fresh, fully-defaulted patch param object (amp env + design blocks).
     function _sdNewPatchParams(baseType) {
       const d = _sdDesignDefaults();
-      const harm = baseType === 'fm' ? 3 : baseType === 'duo' ? 1.5 : 2;
+      const harm = baseType === 'fm' ? 3 : baseType === 'duo' ? 1.5
+        : (baseType === 'sync' || baseType === 'modal') ? 2.5 : 2;   // 2.5 = both PCM voices' neutral center
       return {
         attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0,
         osc: Object.assign({}, d.osc, { harmonicity: harm }),
@@ -980,6 +982,14 @@
           // harmonicity/modIndex design overrides (dp[16]/dp[17]).
           osc._row.appendChild(_sdMakeKnob({ label: 'Ratio', min: 1, max: 12, value: P.osc.harmonicity || 2.5, step: 0.05, defaultValue: 2.5, format: (v) => (Math.round(v * 100) / 100) + '×', onChange: (v) => P.osc.harmonicity = v }));
           osc._row.appendChild(_sdMakeKnob({ label: 'Sweep', min: 0, max: 10, value: P.osc.modIndex || 0, step: 0.1, defaultValue: 0, format: (v) => (v <= 0 ? 'off' : (Math.round(v * 10) / 10) + ''), onChange: (v) => P.osc.modIndex = v }));
+        } else if (seedClass === 'modal') {
+          // MODAL BELL (Risset partial bank, _renderModalPcm in 04): Stretch
+          // scales the inharmonic partial spacing (1× = classic bell, low =
+          // toward harmonic chime, high = toward gong), Bright tilts energy
+          // into the upper partials. They ride the same harmonicity/modIndex
+          // fields as sync (2.5 = neutral ×1 stretch, matching that center).
+          osc._row.appendChild(_sdMakeKnob({ label: 'Stretch', min: 1, max: 6, value: P.osc.harmonicity || 2.5, step: 0.05, defaultValue: 2.5, format: (v) => (Math.round((v / 2.5) * 100) / 100) + '×', onChange: (v) => P.osc.harmonicity = v }));
+          osc._row.appendChild(_sdMakeKnob({ label: 'Bright', min: 0, max: 4, value: P.osc.modIndex || 0, step: 0.1, defaultValue: 0, format: (v) => (v <= 0 ? 'off' : (Math.round(v * 10) / 10) + ''), onChange: (v) => P.osc.modIndex = v }));
         } else {
           // Double-click resets to the SEED's default harmonicity (fm 3 / duo
           // 1.5 / else 2), not the current value — matching _sdNewPatchParams.

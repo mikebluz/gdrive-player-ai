@@ -488,7 +488,7 @@
       return Math.round(60000 / (parseInt(tempoInput.value) || 120) * stepSubdivision);
     }
 
-    const SOUNDS = ['sine','square','triangle','sawtooth','pulse','fat','sync','wavetable','fm','am','mono','duo','bass','pad','xylo','bell','pluck','kick','metal','noise:white','noise:pink','noise:brown'];
+    const SOUNDS = ['sine','square','triangle','sawtooth','pulse','fat','sync','modal','wavetable','fm','am','mono','duo','bass','pad','xylo','bell','pluck','kick','metal','noise:white','noise:pink','noise:brown'];
 
     // ---- Tone.js v14 URL double-encode patch ----------------------------
     // ToneAudioBuffer.load() does

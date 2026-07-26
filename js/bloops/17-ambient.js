@@ -22514,6 +22514,11 @@
       // Drop percussion / noise voices — those aren't melodic "voices".
       return base.filter(s => s !== 'kick' && s !== 'metal' && !String(s).startsWith('noise'));
     }
+    // Low-end voices a new BASS layer rolls from — curated so a fresh Bass
+    // actually sounds like a bass (the generic melodic pool handed it bells/
+    // pads ~19 times out of 20). Filtered against SOUNDS so a missing voice
+    // can never be picked.
+    const _AMB_BASS_VOICES = ['bass', 'sub', 'acid', 'reese', 'growl', 'mono'];
     function _ambApplyRandomInstVoice(L, type) {
       if (!L) return;
       try {
@@ -22522,7 +22527,9 @@
           if (kits.length > 1) L.kit = kits[Math.floor(Math.random() * kits.length)].id;
           return;
         }
-        const pool = _ambInstVoicePool();
+        const pool = (type === 'bass')
+          ? _AMB_BASS_VOICES.filter(s => typeof SOUNDS === 'undefined' || SOUNDS.indexOf(s) >= 0)
+          : _ambInstVoicePool();
         if (pool.length) L.tone = pool[Math.floor(Math.random() * pool.length)];
       } catch (e) {}
     }

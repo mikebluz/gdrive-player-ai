@@ -3264,7 +3264,13 @@
     const _SD_CALLER_KEYS = ['bend', 'pan', '_detuneMod', 'glideMs', 'glideLayer',
       'reverb', 'delay', 'distortion', 'chorus', 'phaser', 'vibrato', 'tremolo',
       'autoFilter', 'pingPong', 'autoPan', 'fxOverrideGlobal',
-      'sampleOffsetSec', 'sliceDurSec', 'loop', 'reverse', 'filterCutoff', 'filterQ'];
+      'sampleOffsetSec', 'sliceDurSec', 'loop', 'reverse', 'filterCutoff', 'filterQ',
+      // B1: the amp envelope is caller-owned WHEN PROVIDED — Bloom layers always
+      // pass their ADSR sliders (via _ambApplyAdsr), so those sliders shape a
+      // designed voice like any other (they were silently dead before). Callers
+      // that pass no env (grid presses on a raw user: cell) keep the patch's
+      // own designed envelope, unchanged.
+      'attack', 'decay', 'sustain', 'release'];
     function _sdMergeUserPatch(up, params) {
       const merged = Object.assign({}, up.params, { type: up.baseType });
       _SD_CALLER_KEYS.forEach((k) => { if (params[k] != null) merged[k] = params[k]; });

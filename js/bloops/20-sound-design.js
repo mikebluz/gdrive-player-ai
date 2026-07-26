@@ -45,13 +45,16 @@
     //    kind-14 algorithm ported to JS PCM (_renderSyncPcm, 04) played as a
     //    one-shot buffer, so exports keep the sync character.
     // ------------------------------------------------------------
-    // Bloom integration plan (separate track, non-breaking) — NOT a tabled
-    // item, just deferred: B1 = fix the user:<id> param merge so Bloom's
-    // per-layer _detuneMod/FX/level survive (caller-owned whitelist + multiply
-    // level), so designed voices play in Bloom layers (which already emit via
-    // playNote and already list User patches in _ambToneOptions). B2 = move
-    // Bloom's VCA/VCO/VCF onto this shared mod engine behind a flag + parity
-    // test. B3 = expose the Design panels per Bloom layer. Ship B1 first.
+    // Bloom integration plan (separate track, non-breaking):
+    // B1 — DONE (verified 2026-07-25): the user:<id> param merge preserves
+    //   Bloom's caller-owned fields (_SD_CALLER_KEYS in 04 — _detuneMod, pan,
+    //   FX mixes, glide, sample fields; volume multiplies, detune adds), and
+    //   the amp envelope is caller-owned WHEN PROVIDED, so Bloom's per-layer
+    //   ADSR sliders shape designed voices (grid presses that pass no env
+    //   keep the patch's own). Designed voices play in Bloom layers; User
+    //   patches are listed by _ambToneOptions.
+    // B2 = move Bloom's VCA/VCO/VCF onto this shared mod engine behind a flag
+    //   + parity test. B3 = expose the Design panels per Bloom layer.
     // ============================================================
 
     // ---- "User" patch store -------------------------------------------------

@@ -3032,6 +3032,31 @@
                             baseFrequency: 80, octaves: 3.2 },
           filter: { Q: 4, type: 'lowpass', rolloff: -24 },
         }).connect(chainHead);
+      } else if (type === 'sub') {
+        synth = new Tone.MonoSynth({
+          oscillator: { type: 'sine' }, envelope: env,
+          filterEnvelope: { attack: 0.01, decay: 0.25, sustain: 0.8, release: 0.3, baseFrequency: 200, octaves: 1.5 },
+          filter: { Q: 1, type: 'lowpass', rolloff: -12 },
+        }).connect(chainHead);
+      } else if (type === 'acid') {
+        synth = new Tone.MonoSynth({
+          oscillator: { type: 'sawtooth' }, envelope: env,
+          filterEnvelope: { attack: 0.003, decay: 0.14, sustain: 0.12, release: 0.3, baseFrequency: 110, octaves: 3.8 },
+          filter: { Q: 12, type: 'lowpass', rolloff: -24 },
+        }).connect(chainHead);
+      } else if (type === 'reese') {
+        synth = new Tone.MonoSynth({
+          oscillator: { type: 'fatsawtooth', count: 2, spread: 40 }, envelope: env,
+          filterEnvelope: { attack: 0.02, decay: 0.5, sustain: 0.6, release: 0.5, baseFrequency: 120, octaves: 2.2 },
+          filter: { Q: 2, type: 'lowpass', rolloff: -24 },
+        }).connect(chainHead);
+      } else if (type === 'growl') {
+        synth = new Tone.FMSynth({
+          harmonicity: 0.501, modulationIndex: 12,
+          oscillator: { type: 'sine' }, envelope: env,
+          modulation: { type: 'sawtooth' },
+          modulationEnvelope: { attack: 0.005, decay: 0.25, sustain: 0.35, release: 0.4 },
+        }).connect(chainHead);
       } else if (type === 'pad') {
         synth = new Tone.AMSynth({
           harmonicity: 1.5,
@@ -4277,6 +4302,44 @@
             baseFrequency: 80, octaves: 3.2,
           },
           filter: { Q: 4, type: 'lowpass', rolloff: -24 },
+        }).connect(chainHead);
+      } else if (type === 'sub') {
+        // SUB bass — near-pure sine fundamental with a soft filter bloom:
+        // deep, clean low end that sits under everything without mud.
+        synth = new Tone.MonoSynth({
+          oscillator: { type: 'sine' },
+          envelope: env,
+          filterEnvelope: { attack: 0.01, decay: 0.25, sustain: 0.8, release: 0.3, baseFrequency: 200, octaves: 1.5 },
+          filter: { Q: 1, type: 'lowpass', rolloff: -12 },
+        }).connect(chainHead);
+      } else if (type === 'acid') {
+        // ACID bass — 303-style: sawtooth into a highly resonant lowpass with
+        // a fast filter-envelope snap (squelch). Sequenced runs = instant acid.
+        synth = new Tone.MonoSynth({
+          oscillator: { type: 'sawtooth' },
+          envelope: env,
+          filterEnvelope: { attack: 0.003, decay: 0.14, sustain: 0.12, release: 0.3, baseFrequency: 110, octaves: 3.8 },
+          filter: { Q: 12, type: 'lowpass', rolloff: -24 },
+        }).connect(chainHead);
+      } else if (type === 'reese') {
+        // REESE bass — two detuned saws beating inside a lowpass (the classic
+        // DnB hollow swirl); wider spread = slower, deeper phasing.
+        synth = new Tone.MonoSynth({
+          oscillator: { type: 'fatsawtooth', count: 2, spread: 40 },
+          envelope: env,
+          filterEnvelope: { attack: 0.02, decay: 0.5, sustain: 0.6, release: 0.5, baseFrequency: 120, octaves: 2.2 },
+          filter: { Q: 2, type: 'lowpass', rolloff: -24 },
+        }).connect(chainHead);
+      } else if (type === 'growl') {
+        // GROWL bass — FM: half-ratio sawtooth modulator (slightly off for
+        // slow movement) with an index envelope that snarls then settles.
+        synth = new Tone.FMSynth({
+          harmonicity: 0.501,
+          modulationIndex: 12,
+          oscillator: { type: 'sine' },
+          envelope: env,
+          modulation: { type: 'sawtooth' },
+          modulationEnvelope: { attack: 0.005, decay: 0.25, sustain: 0.35, release: 0.4 },
         }).connect(chainHead);
       } else if (type === 'pad') {
         // Pad preset — slow-attack AM voice. Hardcoded envelope so the

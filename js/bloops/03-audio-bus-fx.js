@@ -488,7 +488,7 @@
       return Math.round(60000 / (parseInt(tempoInput.value) || 120) * stepSubdivision);
     }
 
-    const SOUNDS = ['sine','square','triangle','sawtooth','pulse','fat','sync','modal','wavetable','fm','am','mono','duo','bass','pad','xylo','bell','pluck','kick','metal','noise:white','noise:pink','noise:brown'];
+    const SOUNDS = ['sine','square','triangle','sawtooth','pulse','fat','sync','modal','wavetable','fm','am','mono','duo','bass','sub','acid','reese','growl','pad','xylo','bell','pluck','kick','metal','noise:white','noise:pink','noise:brown'];
 
     // SHARED mod-waveform evaluator (B2 shape core) — the ONE place JS-side
     // modulation shapes are defined. phase = cycles (any real; wrapped to

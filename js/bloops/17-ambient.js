@@ -16087,6 +16087,16 @@
     const _AMB_ROLL_ENABLED = true;
     function _ambUpdateNotesLive(E) {
       const host = document.getElementById(E.hostId); if (!host) return;
+      // Arp "Notes" chips track the series cursor live (cheap: text set only on change).
+      host.querySelectorAll('.ambient-arp-series-live').forEach(el => {
+        const key = el.dataset.akey; if (!key) return;
+        let txt = 'Series';
+        try {
+          const L = _ambLayerByKey(E, key);
+          if (L) txt = _ambArpSeriesChipText(L, E.arpState && E.arpState[key]);
+        } catch (e) {}
+        if (el._t !== txt) { el._t = txt; el.textContent = txt; }
+      });
       const lines = host.querySelectorAll('.ambient-notes-live'); if (!lines.length) return;
       // Inactive area on screen (master playing a different area) → render as stopped,
       // so the viewed area shows its own static notes, not the playing area's live ones.
@@ -20976,6 +20986,18 @@
       return '<div class="ambient-compose" title="Voice · Note-source · Generator (built-in layer)">' +
         bits.join('') + '</div>';
     }
+    // Arp "Notes" chip text: the CURRENT series entry's material (not the word
+    // "Series") + its position, e.g. "C Minor · 2/3". st = E.arpState[key]
+    // (absent pre-play → entry 0). Falls back to "Series" only on errors.
+    function _ambArpSeriesChipText(L, st) {
+      const steps = (Array.isArray(L.steps) && L.steps.length) ? L.steps : null;
+      if (!steps) return 'Series';
+      const n = steps.length;
+      const i = Math.max(0, Math.min(n - 1, st ? (st.entry | 0) : 0));
+      let lbl = 'Series';
+      try { lbl = _ambNotesLabel(_ambArpEntrySrc(L, steps[i])); } catch (e) {}
+      return n > 1 ? (lbl + ' · ' + (i + 1) + '/' + n) : lbl;
+    }
     function _ambComposeReadoutHtml(inst) {
       const t = inst.type;
       const voice = _ambVoiceOf(inst, t), gen = _ambGeneratorOf(inst, t), src = _ambSourceKindOf(inst, t);
@@ -20995,6 +21017,11 @@
           const sid = 'ambient-' + inst.type + '-' + inst.id + '-srcswap';
           // Detailed label (e.g. "C Dorian"), or the Area prog when locked.
           bits.push(_ambComposeField('Notes', '<button type="button" id="' + sid + '" class="ambient-compose-sel' + (_ambGlobalProg() ? ' ambient-compose-locked' : '') + '" title="' + _ambSrcChipTitle() + '">' + _ambNotesLabel(_ambNotesOf(inst)) + '</button>'));
+        } else if (t === 'arp') {
+          // Live chip: the CURRENT series entry's notes + position (updated per
+          // frame in _ambUpdateNotesLive) — "Series" alone said nothing.
+          const st0 = (typeof _E !== 'undefined' && _E && _E.arpState) ? _E.arpState['arp:' + inst.id] : null;
+          bits.push(_ambComposeField('Notes', '<span class="ambient-compose-tag ambient-arp-series-live" data-akey="arp:' + inst.id + '" title="Current entry in the arp series (edit in Series below)">' + _ambArpSeriesChipText(inst, st0) + '</span>'));
         } else {
           bits.push(_ambComposeField('Notes', tag(slbl)));
         }

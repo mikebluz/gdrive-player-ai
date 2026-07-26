@@ -25,16 +25,16 @@
     //    LFO's Shape menu + Read/Curve/Rest sub-row; engine samples
     //    _seqRefCurve/_seqCurveAt (scheduled rig = time fn; live/held =
     //    Signal schedule). Core-ineligible (falls to the node engine).
-    // 2. Granular position as a LIVE mod destination — MEDIUM (still open).
-    //    Tone.GrainPlayer exposes no modulatable read-position param (set only
-    //    at .start()), so live position-scan needs a hand-rolled grain
-    //    scheduler (windowed BufferSources spawned at the grain rate, each
-    //    offset from a position Signal) — which would also unlock jitter /
-    //    spray / freeze / per-grain env. CHEAP PARTIAL DONE (2026-07-03):
-    //    _sdGrainModHook samples pitch mod routes at control rate and writes
-    //    GrainPlayer.detune (a per-grain property, not an AudioParam) — live
-    //    granular vibrato/sweeps in both voice paths. Rate mod skipped (would
-    //    need a grain-only dest in the matrix UI).
+    // 2. Granular position as a LIVE mod destination — MOSTLY DONE.
+    //    (2026-07-03) _sdGrainModHook samples pitch routes at control rate →
+    //    GrainPlayer.detune (live granular vibrato/sweeps, both voice paths).
+    //    (later, verified 2026-07-25) the SAME hook now also does live
+    //    POSITION SCAN: 'grainpos' matrix routes move the GrainPlayer's loop
+    //    WINDOW (a few grain-lengths wide) to the scanned position at control
+    //    rate — a working read-head without the hand-rolled scheduler.
+    //    STILL OPEN (the true scheduler's remaining unlocks): spray / jitter /
+    //    freeze knobs + per-grain envelopes + rate mod — needs windowed
+    //    BufferSources spawned at the grain rate (offline-path parity too).
     // 3. Hard-sync — DONE (2026-07-03) via Route A, now cheap: the bloops-dsp
     //    core exists, so 'sync' is core voice kind 14 (true hard sync: saw
     //    slave reset per master cycle, polyBLEP at both discontinuity

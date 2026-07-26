@@ -113,7 +113,10 @@ Bloom voices, layer strips/FX, and sample playback render in a Rust→WASM core 
 ```bash
 npm start        # Start Express server at http://localhost:3001
 ./deploy.sh      # Deploy to GoDaddy cPanel via SFTP (requires lftp) — ONLY on explicit user request (see Deployment policy)
+node test/bloom-mod-parity.js   # B2 mod-source parity gate (needs npm start running; --update re-baselines deliberately)
 ```
+
+**Mod-parity gate:** any change to Bloom's node-path mod sources (`_ambMakeSrc`, `_ambSyncTarget`, `_ambScheduleStochastic`/`_ambScheduleCustomSrc`/`_ambScheduleSeqSrc` in 17-ambient.js) must keep `node test/bloom-mod-parity.js` green — it fingerprints each shape×target's output range, period, and phase-folded waveform against `test/bloom-mod-parity-baseline.json` (tolerance-based, node path, core strips off). This is the safety net for the planned B2 unification onto the Design engine's mod rig.
 
 There is no build step, no linter, and no test suite. All JavaScript runs directly in the browser.
 

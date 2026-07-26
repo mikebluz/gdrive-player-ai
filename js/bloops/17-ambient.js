@@ -12291,12 +12291,18 @@
         // and by scheduled start time (window._ambEmitAt) for thresholded cancel.
         if (typeof window !== 'undefined') { window._ambEmitKey = key; window._ambEmitAt = (typeof at === 'number' ? at : null); }
         if (typeof freq !== 'number' || typeof at !== 'number') return;
-        const p = {}; for (const k in params) { if (k === '_detuneMod') continue; p[k] = params[k]; }
-        arr.push({ at: at, freq: freq, dur: dur, params: p });
-        // PITCH ECHO — spawn pitched echoes of this note (not of an echo). Runs
-        // mid-playNote via the tee, so save/restore the emit-tag globals the echo
-        // playNotes clobber, and guard with _pecho against recursion.
+        // PITCH-ECHO notes are an FX, NOT material: keep them OUT of the rolling
+        // capture (the tag above still runs, so echo voices stay cancellable).
+        // Captured echoes got BAKED into Write/Hold freezes as ordinary events —
+        // the loop then replayed them forever regardless of the FX's on/off
+        // ("removed pitch echo, still/suddenly hearing it"), and each rewrite
+        // stacked fresh echoes on top of the baked ones (echo-density creep).
         if (!(params && params._pecho)) {
+          const p = {}; for (const k in params) { if (k === '_detuneMod') continue; p[k] = params[k]; }
+          arr.push({ at: at, freq: freq, dur: dur, params: p });
+          // PITCH ECHO — spawn pitched echoes of this note (not of an echo). Runs
+          // mid-playNote via the tee, so save/restore the emit-tag globals the echo
+          // playNotes clobber; recursion is impossible (echoes carry _pecho).
           const _lc = _ambLayerByKey(E, key);
           if (_lc && _lc.pecho && _lc.pecho.on) {
             const _sk = (typeof window !== 'undefined') ? window._ambEmitKey : null;
@@ -12903,6 +12909,12 @@
           const base = A + k * L;
           if (base >= horizon) break;
           for (const e of st.events) {
+            // Baked pitch-echo events (captured before echoes were excluded from
+            // the rolling capture): skip at replay — when the FX is ON the sink
+            // regenerates fresh echoes from the dry notes (playing the baked
+            // copies too doubled the density), and when it's OFF they're the
+            // ghost echoes the user turned off.
+            if (e.params && e.params._pecho) continue;
             const at = base + e.t;
             if (at >= from && at < horizon) { try {
               // Masks gate NOTES at their onset, whatever produced them —

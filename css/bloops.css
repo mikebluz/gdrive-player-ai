@@ -3266,6 +3266,18 @@
        not authored' colour used by the section key badge) and allowed to wrap. */
     .ambient-salt-readout .salt-reroll { display: block; margin-top: 3px; color: #f6ad55; white-space: normal; overflow-wrap: anywhere; }
     .ambient-salt-readout .salt-reroll i { font-style: normal; opacity: 0.7; }
+    /* ---- Drone note editor: one SELECT per voice slot (Density-capped) ---- */
+    .amb-droneedit-modal .amb-ce-chord { border: 1px solid #2d2d3f; border-radius: 8px; padding: 8px; margin: 6px 0; background: rgba(45,45,63,0.18); }
+    .amb-droneedit-modal .amb-ce-chead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .amb-droneedit-modal .amb-ce-croot { font: 700 0.82rem 'Segoe UI', sans-serif; color: #cfd4ff; flex: 0 0 auto; }
+    .amb-droneedit-modal .amb-ce-form { flex: 1 1 auto; min-width: 0; }
+    /* Slots wrap rather than widening the modal (no horizontal scrolling). */
+    .amb-droneedit-modal .amb-ce-slots { display: flex; flex-wrap: wrap; gap: 6px; }
+    .amb-droneedit-modal .amb-ce-slot { display: inline-flex; align-items: center; gap: 4px; flex: 1 1 108px; min-width: 0; }
+    .amb-droneedit-modal .amb-ce-slot i { font-style: normal; font: 600 0.62rem 'JetBrains Mono', monospace; color: #7f7fa8; flex: 0 0 auto; }
+    .amb-droneedit-modal .amb-ce-slot select { flex: 1 1 auto; min-width: 0; }
+    .amb-droneedit-modal .amb-ce-warn { color: #f6ad55; }
+    .amb-droneedit-modal .amb-ce-hint { white-space: normal; overflow-wrap: anywhere; }
     .ambient-salt-readout .salt-ch { padding: 0 3px; border-radius: 5px; transition: background 0.15s, color 0.15s; }
     .ambient-salt-readout .salt-ch.cur { background: rgba(159, 122, 234, 0.22); color: #e9e4f8; box-shadow: 0 0 8px rgba(159, 122, 234, 0.35); }
     /* Progression sub-section labels inside the Key/Prog pane. */

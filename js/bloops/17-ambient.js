@@ -4174,6 +4174,57 @@
       let sym = dim ? '°' : (aug ? '+' : ''); if (has(10)) sym += '7'; else if (has(11)) sym += 'maj7';
       return acc + num + sym;
     }
+    // ---- ROMAN-NUMERAL ENTRY (the inverse of _ambPeRoman) --------------------
+    // Parse "ii V I" / "i bVII bVI V" / "IVmaj7 V7 iii7 vi7" into chords in the
+    // CURRENT key. Case carries quality (upper = major, lower = minor), and the
+    // suffixes mirror what _ambPeRoman prints, so a progression round-trips:
+    // render → text → parse → the same chords. Accepts ♭/♯ or b/#, and separators
+    // of space, comma, | or -. Returns null when nothing parsed, so a typo can't
+    // silently wipe a progression.
+    const _AMB_RN_DEG = { i: 0, ii: 1, iii: 2, iv: 3, v: 4, vi: 5, vii: 6 };
+    function _ambParseRomanProg(text, keyRoot, keyScale) {
+      if (typeof text !== 'string' || !text.trim()) return null;
+      const MAJ = [0, 2, 4, 5, 7, 9, 11];
+      // The key's own degree qualities, so a bare numeral is diatonic when the
+      // scale says so (in minor, "i" and "iv" are minor without being typed low).
+      const sIv = (typeof SCALES !== 'undefined' && SCALES[keyScale]) ? SCALES[keyScale] : MAJ;
+      const out = [];
+      String(text).split(/[\s,|]+|(?<=[^-])-(?=[^-])/).forEach(tok => {
+        const t = String(tok).trim().replace(/♭/g, 'b').replace(/♯/g, '#');
+        if (!t) return;
+        const m = t.match(/^([b#]?)([ivIV]+)(.*)$/);
+        if (!m) return;
+        const acc = m[1], num = m[2], rest = (m[3] || '').trim();
+        const deg = _AMB_RN_DEG[num.toLowerCase()];
+        if (deg == null) return;
+        let rel = MAJ[deg] + (acc === 'b' ? -1 : acc === '#' ? 1 : 0);
+        rel = ((rel % 12) + 12) % 12;
+        const root = (((keyRoot | 0) + rel) % 12 + 12) % 12;
+        // Quality: explicit suffix wins; else case; else the key's own third.
+        const lower = num === num.toLowerCase();
+        let iv;
+        if (/^(°|dim)/i.test(rest)) iv = [0, 3, 6];
+        else if (/^\+|^aug/i.test(rest)) iv = [0, 4, 8];
+        else if (/^sus2/i.test(rest)) iv = [0, 2, 7];
+        else if (/^sus4/i.test(rest)) iv = [0, 5, 7];
+        else if (lower) iv = [0, 3, 7];
+        else if (num !== num.toUpperCase()) iv = [0, 3, 7];
+        else {
+          // Upper-case, no explicit quality: major, unless the KEY makes this
+          // degree minor (so "VII" in minor still spells the flat-seven major
+          // the numeral implies, but "III" in a minor key isn't forced major).
+          const thirdUp = sIv.indexOf((rel + 4) % 12) >= 0, thirdDown = sIv.indexOf((rel + 3) % 12) >= 0;
+          iv = (!thirdUp && thirdDown) ? [0, 3, 7] : [0, 4, 7];
+        }
+        iv = iv.slice();
+        if (/maj7/i.test(rest)) iv.push(11);
+        else if (/(^|[^a-z])7/i.test(rest)) iv.push(10);
+        if (/9/.test(rest) && iv.indexOf(2) < 0) { if (iv.indexOf(10) < 0 && iv.indexOf(11) < 0) iv.push(10); iv.push(2); }
+        if (/6/.test(rest) && iv.indexOf(9) < 0) iv.push(9);
+        out.push({ root, intervals: Array.from(new Set(iv.map(x => ((x % 12) + 12) % 12))).sort((a, b) => a - b) });
+      });
+      return out.length ? out : null;
+    }
     // DIATONIC shift of a pitch-class by N scale degrees, within the AREA key
     // (root + scale). Snaps `pc` to the nearest scale tone, steps `degreeDelta`
     // degrees along the scale (wrapping within the octave — pc-space, octave is
@@ -25240,6 +25291,7 @@
                 '<button type="button" class="ambient-seg ambient-prog-edit" id="ambient-prog-edit" title="Edit the selected progression chord-by-chord and Save As New">Edit</button>' +
                 '<button type="button" class="ambient-seg ambient-prog-clone" id="ambient-prog-clone" title="Clone this progression into an editable copy you can mutate freely">⧉ Clone</button>' +
                 '<button type="button" class="ambient-seg ambient-prog-addpart" id="ambient-prog-addpart" title="Append another progression as a new PART — build a sequence of progressions (Verse → Chorus → …)">＋ Part</button>' +
+                '<button type="button" class="ambient-seg ambient-prog-roman" id="ambient-prog-roman" title="Type the changes as roman numerals in the current key — e.g. “ii V I”, “i ♭VII ♭VI V”, “IVmaj7 V7 iii7 vi7”. Case sets quality (IV = major, iv = minor); ♭/♯ shift the degree; 7 / maj7 / 9 / 6 / ° / + / sus add colour. Replaces the current progression.">⌨ Numerals</button>' +
                 '<button type="button" class="ambient-seg ambient-prog-generate" id="ambient-prog-generate" title="Generate a progression — pick how many chords total and how many unique; diatonic to the current key, starting on the tonic. Press again for another roll.">⚄ Generate</button>' +
               '</span>' +
               '<span class="ambient-hint" id="ambient-progsec-off" style="display:none">turn Progression on to build a chord sequence</span>' +
@@ -26877,6 +26929,28 @@
         if (pClone) pClone.addEventListener('click', () => { _E = E; try { _ambOpenProgEditor(E, { scope: 'area', clone: true }); } catch (e) {} });
         const pAddPart = G('ambient-prog-addpart');
         if (pAddPart) pAddPart.addEventListener('click', () => { _E = E; const r = pAddPart.getBoundingClientRect(); _ambOpenGlobalProgMenu(E, r.left, r.bottom, { append: true }); });
+        // ⌨ Numerals — type the changes instead of clicking them in.
+        { const pRn = G('ambient-prog-roman');
+          if (pRn) pRn.addEventListener('click', () => {
+            _E = E; const c = E.getCfg(); if (!c) return;
+            const kRoot = _ambKeyRootPc(c), kScale = _ambKeyScaleName(c);
+            const cur = (c.prog && Array.isArray(c.prog.chords) && c.prog.chords.length)
+              ? c.prog.chords.map(ch => _ambPeRoman(ch, kRoot, kScale)).filter(Boolean).join(' ') : '';
+            let txt = null;
+            try { txt = prompt('Progression as roman numerals in ' + CHROMATIC[kRoot] + ' ' + kScale + ':\n(e.g. "ii V I"  ·  "i bVII bVI V"  ·  "IVmaj7 V7 iii7 vi7")', cur); } catch (e) {}
+            if (txt == null) return;
+            const chords = _ambParseRomanProg(txt, kRoot, kScale);
+            if (!chords) { try { if (typeof showToast === 'function') showToast('Couldn’t read any numerals in that — progression unchanged.'); } catch (e) {} return; }
+            if (!c.prog || typeof c.prog !== 'object') c.prog = { on: false, name: '', chords: [] };
+            c.prog.chords = chords; c.prog.on = true;
+            c.prog.name = txt.trim().slice(0, 24);
+            delete c.prog.parts;                       // a fresh progression, not a chain
+            try { _ambAutoSyncFreeForProg(E, c); } catch (e) {}
+            try { _ambRenderProgOverview(E); _ambSyncControls(E); _ambRefreshSrcChips(E); _ambRenderScheduler(E); } catch (e) {}
+            if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+            try { if (typeof showToast === 'function') showToast('Progression set — ' + chords.length + ' chords.'); } catch (e) {}
+          }); }
         // 🧂 Salt knobs → cfg.prog.salt (normalize deletes the key when all zero,
         // so untouched projects stay byte-identical). Engine reads per onset —
         // changes land within the lookahead, no re-anchor needed.

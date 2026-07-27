@@ -22900,17 +22900,18 @@
       const hit = _AMB_CHORD_FORMS.find(f => key(f[2]) === k);
       return hit ? hit[0] : '';
     }
-    // Re-spell a chord as `form`, using exactly `density` notes: the form's tones
-    // in order, stacking +1 octave each time we run past the top (the same voicing
-    // rule the drone itself uses for Density > chord size).
-    function _ambDroneChordSetForm(o, form, density) {
+    // Re-spell a chord as `form` — the form's FULL set of tones.
+    // DO NOT cap this at Density. Density governs how many of the chord's tones
+    // the drone VOICES, not how many the chord HAS, and this chord object is very
+    // often the AREA progression's (every layer follows the same one by reference
+    // — see _ambGlobalProg). Writing the cap into the data truncated the shared
+    // progression: a Density-1 drone re-spelling a chord as Min 9 left the whole
+    // area with a one-note chord. The editor still SHOWS `density` slots, because
+    // that's what this layer sounds.
+    function _ambDroneChordSetForm(o, form) {
       _ambChordEditable(o);
-      const base = _ambChordIntervals(form, 0);
-      const n = Math.max(1, Math.min(9, density | 0));
-      const out = [];
-      for (let i = 0; i < n; i++) out.push(base[i % base.length] + 12 * Math.floor(i / base.length));
       o.form = form;
-      o.intervals = Array.from(new Set(out)).sort((a, b) => a - b);
+      o.intervals = _ambChordIntervals(form, 0).slice().sort((a, b) => a - b);
       o.muted = [];
     }
     function _ambShowDroneChordEditor(E, getL) {
@@ -22954,8 +22955,13 @@
           h += '<div class="amb-ce-na">This Drone is on a ' + esc(_ambNotesLabel(src)) + ' source. Pick a Chord or Progression (the Notes button) to edit its notes here.</div>';
         } else {
           const pedal = (L.progMode !== 'voice') && !!(src && src.type === 'prog');
-          h += '<div class="amb-ce-hint">' + n + ' note' + (n === 1 ? '' : 's') + ' per chord — set by <b>Density</b>. Change Quality to re-spell a chord; each slot picks its own note.' +
-            (chords.length > 1 ? ' One block per chord of the progression.' : '') + '</div>';
+          h += '<div class="amb-ce-hint">Showing the ' + n + ' note' + (n === 1 ? '' : 's') + ' this Drone voices — set by <b>Density</b>. Quality re-spells the whole chord; each slot swaps one tone.' +
+            (chords.length > 1 ? ' One block per chord.' : '') + '</div>';
+          // These chords are usually the AREA progression's, shared by reference
+          // with every other layer — say so rather than let an edit surprise.
+          if (_ambGlobalProg() && (src && src.type === 'prog')) {
+            h += '<div class="amb-ce-hint amb-ce-warn">These are the <b>Area progression\u2019s</b> chords — edits here change them for every layer that follows it.</div>';
+          }
           if (pedal) h += '<div class="amb-ce-hint amb-ce-warn">This Drone is in <b>♩ Pedal note</b> mode, so it holds one auto-chosen note per progression cycle and ignores these. Switch Prog to <b>⇶ Voicings</b> on the card to hear them.</div>';
           h += '<div class="amb-ce-list"><div class="amb-ce-entry">';
           chords.forEach((o, ci) => {
@@ -23007,7 +23013,7 @@
         modal.querySelectorAll('.amb-ce-form').forEach(sel => sel.addEventListener('change', () => {
           const cs = chordsNow(); const o = cs && cs[sel.getAttribute('data-ci') | 0]; if (!o) return;
           if (!sel.value) return;                       // "Custom" is a readout, not a choice
-          _ambDroneChordSetForm(o, sel.value, density());
+          _ambDroneChordSetForm(o, sel.value);
           persist(); render();
           if (E.timer) { try { _ambReanchorLayer(E, _ambDroneKeyOf(E, getL())); } catch (e) {} }
         }));
@@ -23022,10 +23028,15 @@
           let d = (12 * ((oS.value | 0) + 1) + (nS.value | 0)) - rootMidi;
           while (d < 0) d += 12;
           while (d >= _AMB_DRONE_EDIT_SPAN) d -= 12;
-          const slots = slotsOf(o);
-          slots[slot.getAttribute('data-si') | 0] = d;
-          // The slots ARE the chord now — an explicit per-slot edit makes it custom.
-          o.intervals = Array.from(new Set(slots.filter(v => v != null))).sort((a, b) => a - b);
+          // SWAP this slot's tone inside the chord — never rebuild the chord from
+          // the (Density-capped) slot view, which would drop every tone beyond
+          // Density from what may be the shared area progression.
+          const si = slot.getAttribute('data-si') | 0;
+          const prev = slotsOf(o)[si];
+          const live = new Set((o.intervals || []).filter(iv => (o.muted || []).indexOf(iv) < 0));
+          if (prev != null && live.has(prev)) live.delete(prev);   // a stacked-octave slot adds instead
+          live.add(d);
+          o.intervals = Array.from(live).sort((a, b) => a - b);
           o.muted = [];
           delete o.form;
           persist(); render();

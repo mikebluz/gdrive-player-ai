@@ -1829,6 +1829,16 @@
         prog.reroll = Math.max(0, Math.min(100, prog.reroll | 0));
         if (!prog.reroll) delete prog.reroll;
       }
+      // 🌊 PER-CYCLE VARIANCE (additive): re-rolls the substitutions every pass.
+      if (prog.vary != null) {
+        prog.vary = Math.max(0, Math.min(100, prog.vary | 0));
+        if (!prog.vary) delete prog.vary;
+      }
+      // 🌡 TENSION (additive): extensions build across the cycle.
+      if (prog.tension != null) {
+        prog.tension = Math.max(0, Math.min(100, prog.tension | 0));
+        if (!prog.tension) delete prog.tension;
+      }
       // ↻ ORDER (additive): scheduled chord re-ordering. Absent / mode '' → key
       // deleted, so untouched projects stay byte-identical.
       if (prog.order != null) {
@@ -2588,19 +2598,60 @@
       if (isMin) { push(root, [0, 3, 7, 10], 'min7'); push(root, [0, 3, 7, 2], 'add9'); }
       return out;
     }
-    function _ambProgTakeSub(cfg, slot, ch) {
-      const amt = Math.max(0, Math.min(100, (cfg && cfg.prog && cfg.prog.reroll | 0)));
+    // `cycle` null → the TAKE reroll (prog.reroll): one realization per take id,
+    // fixed for the whole play. A number → per-CYCLE VARIANCE (prog.vary): the
+    // same candidates re-rolled every pass, so the changes evolve while you
+    // listen. Both are pure in their inputs and use a DEDICATED seeded RNG, so
+    // neither shifts a downstream draw; the two compose (vary is applied to
+    // whatever the take reroll produced).
+    function _ambProgTakeSub(cfg, slot, ch, cycle) {
+      const perCycle = Number.isFinite(cycle);
+      const amt = Math.max(0, Math.min(100, ((cfg && cfg.prog && (perCycle ? cfg.prog.vary : cfg.prog.reroll)) | 0)));
       if (!amt || !ch) return null;
       const cands = _ambProgTakeCandidates(cfg, ch);
       if (!cands.length) return null;
       const seed = (cfg.seed | 0) || 1;
-      const rnd = _ambSeededRand(((((slot | 0) + 1) * 2246822519) ^ ((seed * 2654435761) >>> 0) ^ 0x7A4E) >>> 0);
+      const rnd = _ambSeededRand(((((slot | 0) + 1) * 2246822519) ^ ((seed * 2654435761) >>> 0)
+        ^ (perCycle ? (((cycle | 0) + 1) * 40503) >>> 0 : 0) ^ (perCycle ? 0x2C9F : 0x7A4E)) >>> 0);
       if (rnd() * 100 >= amt) return null;                  // this slot keeps the written chord
       const pick = cands[Math.floor(rnd() * cands.length) % cands.length];
       // Carry the written chord's own length/alt metadata; only the harmony moves.
       const outc = { root: pick.root, intervals: pick.intervals };
       if (Number.isFinite(ch.bars) && ch.bars > 0) outc.bars = ch.bars;
       return outc;
+    }
+    // ---- 🌡 TENSION RAMP -----------------------------------------------------
+    // Chords gain COLOUR EXTENSIONS progressively across the progression cycle
+    // and reset each pass, so harmony tightens toward the turnaround and
+    // releases at the top — the shape a player gives a vamp. `prog.tension`
+    // (0-100) is the amount at the END of the cycle; slot 0 stays as written,
+    // the last slot gets the most. Purely ADDITIVE (the written tones are never
+    // removed or moved), deterministic, and 0/absent → the exact prior chord.
+    const _AMB_TENSION_STEPS = [10, 2, 5];   // added in order: ♭7 · 9th · 11th
+    function _ambProgTension(cfg, slot, len, ch) {
+      const amt = Math.max(0, Math.min(100, (cfg && cfg.prog && cfg.prog.tension | 0)));
+      if (!amt || !ch || !Array.isArray(ch.intervals)) return null;
+      const N = Math.max(1, len | 0);
+      // Position through the cycle, 0 at the top → 1 at the last slot.
+      const pos = (N > 1) ? (((slot | 0) % N + N) % N) / (N - 1) : 1;
+      const depth = (amt / 100) * pos * _AMB_TENSION_STEPS.length;
+      const take = Math.floor(depth + 1e-9);
+      if (take <= 0) return null;
+      const iv = ch.intervals.map(x => ((x % 12) + 12) % 12);
+      const set = new Set(iv);
+      let added = 0;
+      for (let i = 0; i < _AMB_TENSION_STEPS.length && added < take; i++) {
+        const t = _AMB_TENSION_STEPS[i];
+        // Skip a tone the chord already spells, and skip the 11th over a major
+        // 3rd — the one extension that genuinely fights the chord.
+        if (set.has(t)) continue;
+        if (t === 5 && set.has(4)) continue;
+        set.add(t); added++;
+      }
+      if (!added) return null;
+      const out = { root: ch.root, intervals: Array.from(set).sort((a, b) => a - b) };
+      if (Number.isFinite(ch.bars) && ch.bars > 0) out.bars = ch.bars;
+      return out;
     }
     // What THIS take did, for the readout: one entry per substituted slot.
     function _ambProgTakePlan(cfg) {
@@ -2660,9 +2711,13 @@
       // (idx, seed) — never the shared _ambRand stream — so no downstream draw
       // shifts, and it's stable across the >1 resolver calls per onset. Gated on
       // prog.reroll > 0, so untouched projects are byte-identical.
-      if (ret && cfg0 && cfg0.prog && (cfg0.prog.reroll | 0) > 0 && n.chords === cfg0.prog.chords) {
-        const sub = _ambProgTakeSub(cfg0, ((step % len) + len) % len, ret);
-        if (sub) ret = sub;
+      if (ret && cfg0 && cfg0.prog && n.chords === cfg0.prog.chords) {
+        const _slot = ((step % len) + len) % len;
+        if ((cfg0.prog.reroll | 0) > 0) { const sub = _ambProgTakeSub(cfg0, _slot, ret); if (sub) ret = sub; }
+        // …then per-cycle variance on top, so a take's harmony still evolves.
+        if ((cfg0.prog.vary | 0) > 0) { const sub = _ambProgTakeSub(cfg0, _slot, ret, Math.floor(step / len)); if (sub) ret = sub; }
+        // …and tension LAST, so it colours whatever chord ended up here.
+        if ((cfg0.prog.tension | 0) > 0) { const t = _ambProgTension(cfg0, _slot, len, ret); if (t) ret = t; }
       }
       if (!ret) return ret;
       // SALT · colors — sub-chord color variations WITHIN this chord instance.
@@ -19561,7 +19616,7 @@
       const salt = _ambProgSaltCfg(cfg);
       const p = cfg && cfg.prog;
       const ordered = !!(p && p.order && p.order.mode);   // ↻ order alone also earns the readout
-      const rerolled = !!(p && (p.reroll | 0));            // 🎲 take reroll likewise
+      const rerolled = !!(p && ((p.reroll | 0) || (p.vary | 0) || (p.tension | 0)));   // 🎲/🌊/🌡 likewise
       if ((!salt && !ordered && !rerolled) || !p || !p.on || !Array.isArray(p.chords) || !p.chords.length) {
         if (el.style.display !== 'none') { el.style.display = 'none'; el._sig = ''; }
         return;
@@ -19572,7 +19627,7 @@
       const seed = cfg.seed | 0;
       const s = salt || { len: 0, colors: 0, scatter: 0 };
       const om = (p.order && p.order.mode) || '', ow = (p.order && p.order.when) || '';
-      const sig = cyc + '|' + (s.len | 0) + '|' + (s.colors | 0) + '|' + (s.scatter | 0) + '|' + om + '|' + ow + '|' + len + '|' + seed + '|' + (p.reroll | 0) + '|' + (E.timer ? 1 : 0);
+      const sig = cyc + '|' + (s.len | 0) + '|' + (s.colors | 0) + '|' + (s.scatter | 0) + '|' + om + '|' + ow + '|' + len + '|' + seed + '|' + (p.reroll | 0) + '|' + (p.vary | 0) + '|' + (p.tension | 0) + '|' + (E.timer ? 1 : 0);
       if (force || el._sig !== sig) {
         el._sig = sig;
         const bpc = Math.max(0.01, (cfg && cfg.barsPerChord) || 1);
@@ -24808,7 +24863,9 @@
             saltRow.style.display = progOn ? '' : 'none';
             const sv = (cfg.prog && cfg.prog.salt) || {};
             [['ambient-salt-len', sv.len | 0], ['ambient-salt-colors', sv.colors | 0], ['ambient-salt-scatter', sv.scatter | 0],
-             ['ambient-prog-reroll', (cfg.prog && cfg.prog.reroll | 0) || 0]].forEach(pr => {
+             ['ambient-prog-reroll', (cfg.prog && cfg.prog.reroll | 0) || 0],
+             ['ambient-prog-vary', (cfg.prog && cfg.prog.vary | 0) || 0],
+             ['ambient-prog-tension', (cfg.prog && cfg.prog.tension | 0) || 0]].forEach(pr => {
               const el = document.getElementById(tr(pr[0]));
               if (el && document.activeElement !== el) el.value = String(pr[1]);
             });
@@ -25194,6 +25251,8 @@
               '<span class="ambient-sched-lbl salt-lbl">🧂 salt</span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">lengths</span><input type="number" class="ambient-salt-in" id="ambient-salt-len" min="0" max="100" step="5" value="0" title="Random chord scheduling — each cycle re-slices the chord lengths (A 1¼ bars, B ½, C 1¾ …) on a 1/8-bar grid. The cycle total is preserved, so loops/Evolve stay aligned. 0 = as written, 100 = wild."></span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">colors</span><input type="number" class="ambient-salt-in" id="ambient-salt-colors" min="0" max="8" step="1" value="0" title="Chord colors per unit — splits a chord’s unit into segments: the downbeat is always the written chord, later segments become root-preserving colors of it (maj7 · add9 · 6 · maj9 · sus2 · sus4 · open 5). 0 = off, higher = more segments (max 8)."></span>' +
+              '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">🌊 vary</span><input type="number" class="ambient-salt-in" id="ambient-prog-vary" min="0" max="100" step="5" value="0" title="Per-CYCLE harmony variance — the chance each chord is swapped for a same-function substitute, RE-ROLLED EVERY PASS, so the changes keep evolving while you listen. (🎲 take fixes one realization per take id; this one moves.) Same candidates, same in-key rule; deterministic per (chord, cycle, take), so a Loop replays it exactly."></span>' +
+              '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">🌡 tension</span><input type="number" class="ambient-salt-in" id="ambient-prog-tension" min="0" max="100" step="5" value="0" title="Tension ramp — chords gain colour extensions (♭7 → 9th → 11th) progressively ACROSS the progression cycle and reset at the top, so harmony tightens toward the turnaround. Purely additive: the written tones are never removed. 0 = as written."></span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">🎲 take</span><input type="number" class="ambient-salt-in" id="ambient-prog-reroll" min="0" max="100" step="5" value="0" title="Harmony re-roll — the chance each chord is swapped for a SAME-FUNCTION substitute (relative minor/major, mediant, or a 7th/9th colour) when you press 🎲 New take. Only substitutions that stay in the key are offered. Deterministic: the same take id always gives the same changes, and the written progression is never altered — set it back to 0 to hear it as authored."></span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">scatter</span><input type="number" class="ambient-salt-in" id="ambient-salt-scatter" min="0" max="100" step="5" value="0" title="How unevenly the Colors count lands per chord unit — 0: every unit gets the full count; 100: most units stay plain and only the occasional unit blooms fully (stochastic, seeded — same seed replays identically)."></span>' +
             '</div>' +
@@ -26834,14 +26893,16 @@
         // 🎲 Harmony re-roll amount → cfg.prog.reroll. Read per onset like salt,
         // so a change is heard within the lookahead; the readout names what this
         // take actually substituted.
-        { const el = G('ambient-prog-reroll');
-          if (el) el.addEventListener('input', () => {
+        [['ambient-prog-reroll', 'reroll'], ['ambient-prog-vary', 'vary'], ['ambient-prog-tension', 'tension']].forEach(pr => {
+          const el = G(pr[0]); if (!el) return;
+          el.addEventListener('input', () => {
             _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
             const v = Math.max(0, Math.min(100, parseInt(el.value, 10) || 0));
-            if (v) c.prog.reroll = v; else delete c.prog.reroll;
+            if (v) c.prog[pr[1]] = v; else delete c.prog[pr[1]];
             persist();
             try { _ambSaltReadoutSync(E, true); } catch (e) {}
-          }); }
+          });
+        });
         // ↻ order selects → cfg.prog.order (mode '' deletes; normalize prunes).
         [['ambient-order-mode', 'mode'], ['ambient-order-when', 'when']].forEach(pr => {
           const el = G(pr[0]); if (!el) return;

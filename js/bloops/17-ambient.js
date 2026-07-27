@@ -43,7 +43,12 @@
       // core only); `dryKill` on any wet FX forces it fully wet (removes its dry).
       // `wetOnly` (layer) mutes the direct/dry output so only reverb + wet-FX tails
       // sound. All default off/0 → byte-identical / golden-safe.
-      return { cutoff: 100, reso: 0, revSend: 0, wetOnly: 0, delay: { mix: 0, timeMs: 300, feedback: 35, ping: 0, spread: 0, dryKill: 0 }, dist: { mix: 0, amount: 40, dryKill: 0 }, chorus: { mix: 0, depth: 50, rate: 30, dryKill: 0 }, phaser: { mix: 0, depth: 50, rate: 30, dryKill: 0 }, autopan: { mix: 0, depth: 100, rate: 30, dryKill: 0 },
+      // Distortion TONE STACK: `tone` (0-100, 50 = flat) tilts the shaped signal
+      // dark → bright; `focus` (0-100, 0 = off) high-passes the signal on its way
+      // INTO the shaper so the low end stays clean. Both act on the WET path only,
+      // so at a partial Mix the dry lows sit under a filtered dirty top. Neutral
+      // defaults → byte-identical / golden-safe. CORE ONLY (see _ambApplyLayerFx).
+      return { cutoff: 100, reso: 0, revSend: 0, wetOnly: 0, delay: { mix: 0, timeMs: 300, feedback: 35, ping: 0, spread: 0, dryKill: 0 }, dist: { mix: 0, amount: 40, tone: 50, focus: 0, dryKill: 0 }, chorus: { mix: 0, depth: 50, rate: 30, dryKill: 0 }, phaser: { mix: 0, depth: 50, rate: 30, dryKill: 0 }, autopan: { mix: 0, depth: 100, rate: 30, dryKill: 0 },
                // Trance gate: a bar-synced step pattern that chops the layer's output. `steps`
                // = steps per bar (= pattern length); each step on (1) passes, off (0) cuts by
                // `depth`%. `edge` ms softens each transition. Default = an 8th-note gate.
@@ -1461,7 +1466,9 @@
       else ['mix', 'timeMs', 'feedback', 'ping', 'spread'].forEach(k => { if (!Number.isFinite(host.delay[k])) host.delay[k] = d.delay[k]; });
       host.delay.spread = Math.max(0, Math.min(100, host.delay.spread | 0)); _dk(host.delay);
       if (!host.dist || typeof host.dist !== 'object') host.dist = { ...d.dist };
-      else ['mix', 'amount'].forEach(k => { if (!Number.isFinite(host.dist[k])) host.dist[k] = d.dist[k]; });
+      else ['mix', 'amount', 'tone', 'focus'].forEach(k => { if (!Number.isFinite(host.dist[k])) host.dist[k] = d.dist[k]; });
+      host.dist.tone = Math.max(0, Math.min(100, host.dist.tone | 0));
+      host.dist.focus = Math.max(0, Math.min(100, host.dist.focus | 0));
       _dk(host.dist);
       // WRITE (X bars × Y plays) — LOOP DEFAULTS TO WRITE (2026-07-15): a layer
       // that has never touched the Loop control gets the auto phrase-cycle
@@ -1636,6 +1643,7 @@
       _ambNormalizeKeyOv(s);   // B3-sync: a Seq can carry a keyOv prog (its own chords) for Prog-sync
       _ambNormalizeSpread(s);
       _ambNormalizeUnit(s);
+      _ambNormalizeUnitGate(s);
       return s;
     }
     // A Sample layer plays a single-buffer `sample:<id>` raw. `chop` 1 = retrigger
@@ -1677,6 +1685,7 @@
       _ambNormalizeFx(s);
       _ambNormalizeSpread(s);
       _ambNormalizeUnit(s);
+      _ambNormalizeUnitGate(s);
       return s;
     }
     // Migrate + backfill a Bloom config in place (shared by per-lane + master).
@@ -1890,9 +1899,20 @@
         if (!Array.isArray(cfg.sections)) delete cfg.sections;
         else {
           cfg.sections = cfg.sections.filter(x => x && typeof x === 'object').slice(0, 16)
-            .map((x, i) => ({ id: Number.isFinite(x.id) ? (x.id | 0) : (i + 1),
-              name: (typeof x.name === 'string' && x.name.trim()) ? x.name.trim().slice(0, 12) : String.fromCharCode(65 + (i % 26)),
-              bars: Math.max(0.25, Math.min(64, Number(x.bars) || 4)) }));
+            .map((x, i) => {
+              const s = { id: Number.isFinite(x.id) ? (x.id | 0) : (i + 1),
+                name: (typeof x.name === 'string' && x.name.trim()) ? x.name.trim().slice(0, 12) : String.fromCharCode(65 + (i % 26)),
+                bars: Math.max(0.25, Math.min(64, Number(x.bars) || 4)) };
+              // PART BINDING (additive): an index into cfg.prog.parts — while this
+              // section runs, the progression plays only that part, looping, anchored
+              // at the section's start. ABSENT = the whole progression (today's
+              // behaviour, byte-identical). This map REBUILDS the object, so any new
+              // field has to be carried explicitly or it's dropped every normalize.
+              // Only coerced here; the clamp against the live parts list happens at
+              // READ time (_ambSectionPart) because editing chords can shrink it.
+              if (Number.isFinite(x.part) && x.part >= 0) s.part = x.part | 0;
+              return s;
+            });
           if (!cfg.sections.length) delete cfg.sections;
         }
       }
@@ -1979,6 +1999,7 @@
         _ambNormalizeFx(cfg[layer]);
         _ambNormalizeEuclidPattern(cfg[layer]);   // beat (euclid) editable-grid override
         _ambNormalizeStepFx(cfg[layer]);          // per-step Step-Edit overrides
+        _ambNormalizeUnitGate(cfg[layer]);        // per-unit on/off step gate (Edit Unit Schedule)
       });
       // Built-in layers are now "addable": only present ones show + play. New
       // configs start with just Bed; an Add-layer menu adds the others. Migrate
@@ -2045,9 +2066,17 @@
         _ambNormalizeFx(x);
         _ambNormalizeEuclidPattern(x);   // bass/beat/arp (euclid) editable-grid override
         _ambNormalizeStepFx(x);          // per-step Step-Edit overrides (bass/melodic euclid)
+        _ambNormalizeUnitGate(x);        // per-unit on/off step gate (Edit Unit Schedule)
         _ambNormalizeUnit(x);
         if (x.type !== 'beat' && x.type !== 'arp') _ambNormalizeNotes(x);
         _ambNormalizeKeyOv(x);   // B2 per-layer KEY override (all extra types)
+        if (x.type === 'drone') {
+          // PEDAL fields (string/absent — kept OUT of the defaults object, the
+          // numeric backfill would clobber them). progMode ABSENT = 'pedal' (the
+          // default under a progression); progNote ABSENT = auto pick.
+          if (x.progMode !== 'voice') delete x.progMode;
+          if (!(Number.isFinite(x.progNote) && x.progNote >= 0 && x.progNote < 12)) delete x.progNote; else x.progNote = x.progNote | 0;
+        }
         if (x.type === 'arp') {
           if (!Array.isArray(x.steps) || !x.steps.length) x.steps = [{ notes: { type: 'scale', scale: '' }, passes: 1 }];
           // Synced-arp note RESOLUTION (string field — keep out of the defaults
@@ -2664,6 +2693,44 @@
       const anchor = Number.isFinite(E._progAnchor) ? E._progAnchor
         : (Number.isFinite(E._playStartAt) ? E._playStartAt : 0);
       const bars = Math.max(0, atSec - anchor) / barSec;
+      // ---- SECTION-BOUND PART -------------------------------------------------
+      // While a section that names a progression part is running, the chord clock
+      // walks ONLY that part's slice, looping, anchored at the SECTION's own start
+      // bar — so each time the section comes round its changes start from the top
+      // (verse changes / chorus changes). _ambSectionAt uses the same anchor as
+      // this function, so the two clocks are in the same bar-space by construction.
+      // GATED HARD: no sections, no part binding, or a LAYER's own prog source
+      // (a section binds the AREA progression, not a layer override) → falls
+      // through to the untouched code below, so the default path — and the
+      // invariant harness, whose configs have no sections — is byte-identical.
+      // Two deliberate interactions: the length-SALT and the ↻ ORDER grid both
+      // re-partition/permute the WHOLE written cycle, so they are bypassed while a
+      // part is active (the part is a sub-window; permuting the full list would
+      // pull in chords from outside it).
+      const _ownSrc = !!(src && src.type === 'prog' && Array.isArray(src.chords) && src.chords.length
+        && !(cfg && cfg.prog && src.chords === cfg.prog.chords));
+      if (!_ownSrc && cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.sections) && cfg.sections.length
+          && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length) {
+        const _at = _ambSectionAt(E, atSec, cfg);
+        const _part = _at ? _ambSectionPart(cfg, _at.idx) : null;
+        if (_part) {
+          const _all = cfg.prog.chords, _L = _all.length;
+          const _lens = [];
+          for (let i = 0; i < _part.len; i++) {
+            const c = _all[_part.from + i];
+            _lens.push((c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
+          }
+          const _cycle = _lens.reduce((s, v) => s + v, 0) || bpc;
+          const _into = Math.max(0, bars - (_at.startBar || 0));   // bars since this section began
+          const _loops = Math.floor(_into / _cycle);
+          let _rem = _into - _loops * _cycle, _k = 0;
+          while (_k < _lens.length - 1 && _rem >= _lens[_k]) { _rem -= _lens[_k]; _k++; }
+          // Keep BOTH caller contracts: `step % chords.length` is the chord index,
+          // and `floor(step / chords.length)` is the variation cycle the alternates
+          // and order-perm hash on — so alts still evolve inside a bound section.
+          return ((_at.step | 0) + _loops) * _L + ((_part.from + _k) % _L);
+        }
+      }
       // Per-chord lengths: if any chord carries its own `bars`, walk the cumulative
       // lengths to find the active chord; else the uniform fast path (byte-identical to
       // before → harness-safe). Returns a MONOTONIC step (chord = step mod chords.length).
@@ -2814,7 +2881,32 @@
       const cyc = Math.floor(bars / cycle);
       let pos = bars - cyc * cycle, i = 0;
       while (i < lens.length - 1 && pos >= lens[i]) { pos -= lens[i]; i++; }
-      return { idx: i, step: cyc * secs.length + i, pos: Math.max(0, Math.min(1, pos / Math.max(1e-6, lens[i]))) };
+      // startBar/lenBars are additive (existing callers read idx/step/pos only) —
+      // the chord clock needs the section's own start as its anchor so a
+      // section-bound progression part restarts from the top each time the
+      // section comes round. `pos` here is still the raw bar offset INTO the
+      // section, so bars − pos is exactly where the section began.
+      return { idx: i, step: cyc * secs.length + i, startBar: bars - pos, lenBars: lens[i],
+        pos: Math.max(0, Math.min(1, pos / Math.max(1e-6, lens[i]))) };
+    }
+    // The progression PART a section binds to, as {from, len} over prog.chords —
+    // or null for "the whole progression" (no binding, no parts, or an index that
+    // no longer exists because the chord list shrank). `parts` is a positional
+    // cover of the chord list ([{name, len}], see _ambRepairParts), so a part is a
+    // contiguous slice: its start is the sum of the preceding parts' lengths.
+    function _ambSectionPart(cfg, secIdx) {
+      const secs = cfg && cfg.sections;
+      const s = (Array.isArray(secs) && secs[secIdx]) || null;
+      if (!s || !Number.isFinite(s.part) || s.part < 0) return null;
+      const p = cfg && cfg.prog;
+      if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return null;
+      const parts = Array.isArray(p.parts) ? p.parts : null;
+      if (!parts || !parts.length || s.part >= parts.length) return null;
+      let from = 0;
+      for (let i = 0; i < s.part; i++) from += Math.max(1, parts[i].len | 0);
+      const len = Math.max(1, parts[s.part].len | 0);
+      if (from >= p.chords.length) return null;
+      return { from, len: Math.min(len, p.chords.length - from), name: parts[s.part].name || ('Part ' + (s.part + 1)) };
     }
     // Per-note SECTION gate — the chord-mask machinery one level up:
     // L.sectionMask = { steps: [prob 0-100 per section], part: {size, place} }.
@@ -5508,6 +5600,97 @@
         : (Number.isFinite(E && E._playStartAt) ? E._playStartAt : 0);
       return { subdiv, chordSec, subUnit, anchor, feel: (lc && lc.progFeel) === 'stochastic' ? 'stochastic' : 'even' };
     }
+    // ---- DRONE PEDAL NOTE (one note per progression cycle) -------------------
+    // Score every pitch class against ALL of a progression's chords + the key,
+    // and pick the best pedal tone. Per chord a pc is a CHORD TONE (best — +3,
+    // root/5th also tallied as anchors), a KEY COLOR (in the key scale AND a
+    // 9th/13th/maj7 over this chord — +1.5), PASSING (in key, weak — +0.5, or
+    // −0.5 for the harsh ♭9/♯11 spots), or OUTSIDE (−2). A semitone over any
+    // chord root gets an extra −1.5 regardless (the one interval that never
+    // reads as a pedal). Ties break toward more chord-tone hits, then more
+    // root/5th anchors; the key root gets a +0.25 nudge. PURE + deterministic —
+    // no RNG draw, so the layer stays native-loopable (see the Write-skip gate).
+    const _AMB_PEDAL_ROLE = { 0: 'root', 1: '♭9', 2: '9th', 3: '♭3rd', 4: '3rd', 5: '11th', 6: '♯11', 7: '5th', 8: '♭13', 9: '13th', 10: '♭7th', 11: '7th' };
+    function _ambDronePedalRoles(pc, chords, kRoot, kIvs) {
+      const inKey = kIvs.indexOf((((pc - kRoot) % 12) + 12) % 12) >= 0;
+      let score = 0, ct = 0, anchors = 0;
+      const per = (chords || []).map(ch => {
+        const iv = (((pc - (ch && ch.root | 0)) % 12) + 12) % 12;
+        const isCt = !!(ch && Array.isArray(ch.intervals) && ch.intervals.indexOf(iv) >= 0);
+        let kind;
+        if (isCt) { kind = 'chord'; score += 3; ct++; if (iv === 0 || iv === 7) anchors++; }
+        else if (inKey && (iv === 2 || iv === 9 || iv === 11)) { kind = 'color'; score += 1.5; }
+        else if (inKey) { kind = 'passing'; score += (iv === 1 || iv === 6) ? -0.5 : 0.5; }
+        else { kind = 'outside'; score -= 2; }
+        if (iv === 1) score -= 1.5;
+        return { kind, iv, role: _AMB_PEDAL_ROLE[iv] };
+      });
+      return { pc, score, ct, anchors, inKey, per };
+    }
+    function _ambDronePedalPick(chords, kRoot, kIvs) {
+      let best = null;
+      for (let pc = 0; pc < 12; pc++) {
+        const c = _ambDronePedalRoles(pc, chords, kRoot, kIvs);
+        if (pc === ((kRoot % 12) + 12) % 12) c.score += 0.25;
+        if (!best || c.score > best.score + 1e-9
+            || (Math.abs(c.score - best.score) < 1e-9 && (c.ct > best.ct || (c.ct === best.ct && c.anchors > best.anchors)))) best = c;
+      }
+      best.common = best.ct === (chords ? chords.length : 0);
+      return best;
+    }
+    // Human-readable articulation of the pick — shown on the drone card so the
+    // choice is inspectable and obviously overridable. `pcOv` (finite) describes
+    // the USER's note instead, with the auto pick appended when they differ.
+    function _ambDronePedalText(cfg, chords, pcOv) {
+      if (!chords || !chords.length) return '';
+      const kIvs = (typeof SCALES !== 'undefined' && SCALES[_ambKeyScaleName(cfg)]) || [0, 2, 4, 5, 7, 9, 11];
+      const kRoot = _ambKeyRootPc(cfg);
+      const auto = _ambDronePedalPick(chords, kRoot, kIvs);
+      const pc = Number.isFinite(pcOv) ? (((pcOv | 0) % 12) + 12) % 12 : auto.pc;
+      const a = (pc === auto.pc) ? auto : _ambDronePedalRoles(pc, chords, kRoot, kIvs);
+      const nm = (p) => CHROMATIC[((p % 12) + 12) % 12];
+      const chNm = (ch) => { try { return _ambChordShort(ch); } catch (e) { return nm(ch && ch.root | 0); } };
+      const bits = a.per.map((r, i) => {
+        const c = chNm(chords[i]);
+        if (r.kind === 'chord') return r.role + ' of ' + c;
+        if (r.kind === 'color') return r.role + ' of ' + c + ' (key color)';
+        if (r.kind === 'passing') return 'passing on ' + c + ' (in key)';
+        return '⚠ outside on ' + c;
+      });
+      const head = 'For ' + chords.map(chNm).join(' / ') + ': ' + nm(pc) + ' ' +
+        (a.ct === chords.length ? 'works in all ' + chords.length : 'fits ' + a.ct + '/' + chords.length) + ' — ' + bits.join(', ');
+      const scaleNm = _ambKeyScaleName(cfg);
+      // No key set → the scale resolves 'chromatic' and in-key tells you nothing;
+      // say so instead of printing "key C chromatic".
+      const keyBit = (scaleNm === 'chromatic') ? ' · no key set' : ' · key ' + nm(kRoot) + ' ' + scaleNm + (a.inKey ? '' : ' (⚠ outside the key)');
+      const ovBit = (Number.isFinite(pcOv) && pc !== auto.pc) ? ' · auto would pick ' + nm(auto.pc) : '';
+      return head + keyBit + ovBit;
+    }
+    // The pedal's strike WINDOW at a time: the current progression cycle — or,
+    // when the active section binds a part, that PART's cycle anchored at the
+    // section's start (so the pedal follows the section harmony). Onsets ride
+    // psi.anchor (the layers' shared bar grid), same convention as the sub-slots.
+    function _ambDronePedalWindow(E, cfg, atSec, psi) {
+      const p = cfg && cfg.prog;
+      const all = (p && Array.isArray(p.chords)) ? p.chords : [];
+      if (!all.length) return null;
+      const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const bpc = Math.max(0.01, cfg.barsPerChord || 1);
+      const lensOf = (list) => list.reduce((s, c) => s + ((c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc), 0) || bpc;
+      const secAt = (Array.isArray(cfg.sections) && cfg.sections.length) ? _ambSectionAt(E, atSec, cfg) : null;
+      const part = secAt ? _ambSectionPart(cfg, secAt.idx) : null;
+      if (part) {
+        const chords = all.slice(part.from, part.from + part.len);
+        const cycSec = Math.max(0.1, lensOf(chords) * barSec);
+        const secStart = psi.anchor + secAt.startBar * barSec;
+        const k = Math.max(0, Math.floor((atSec - secStart) / cycSec + 1e-9));
+        return { startSec: secStart + k * cycSec, lenSec: cycSec, chords };
+      }
+      const cycSec = Math.max(0.1, lensOf(all) * barSec);
+      const k = Math.max(0, Math.floor((atSec - psi.anchor) / cycSec + 1e-9));
+      return { startSec: psi.anchor + k * cycSec, lenSec: cycSec, chords: all };
+    }
     // Voice the CURRENT area-progression chord with an in-tonality VARIATION for a
     // given sub-slot. Never leaves the chord: it re-voices (inversion / octave
     // spread) and — gated by the Chords mode + Variety — adds color (9/11/13
@@ -5546,6 +5729,26 @@
       else if (v.k === 'ext') { tones.push({ iv: v.a, oct: 0 }); }                                                  // add a 9/11/13 color tone
       else if (v.k === 'sus') { const t3 = tones.find(t => t.iv === 3 || t.iv === 4); if (t3) t3.iv = v.s; else tones.push({ iv: v.s, oct: 0 }); }  // 3rd → 2nd/4th
       else if (v.k === 'aug') { const t5 = tones.find(t => t.iv === 7); if (t5) t5.iv = 8; }                        // raise the 5th
+      // DEGREE SELECTION (drone): pick WHICH chord tones to play, starting at the
+      // Degree-th and stacking `want` consecutive tones (+1 octave per wrap) —
+      // the same semantics as the non-prog drone branch. Without this the trim
+      // below keeps the LOWEST RENDERED PITCHES, which is not the same thing as
+      // the lowest chord tones: each tone is rendered at `center` from the
+      // CHORD's own root, so F major renders C–F–A and G major D–G–B. At
+      // Density 1 that kept C for F and D for G — the drone sat on a near-static
+      // pitch instead of the chord root and read as "the same note over and
+      // over" (and its piano highlight looked shifted on those chords).
+      // GATED on `bed.degree` being present: the Bed never sets it, so the Bed's
+      // voicings — and the invariant harness — are byte-identical.
+      if (Number.isFinite(bed.degree) && bed.degree > 0 && tones.length) {
+        const _start = (bed.degree | 0) - 1, _T = tones.length, _sel = [];
+        for (let i = 0; i < want; i++) {
+          const idx = _start + i;
+          const t = tones[((idx % _T) + _T) % _T];
+          _sel.push({ iv: t.iv, oct: t.oct + Math.floor(idx / _T) });
+        }
+        tones = _sel;
+      }
       // Spread lifts the upper half of the tones an octave (voicing width) — 2+
       // widens once, 3+ widens the top third a second octave.
       if (spread >= 2) { const half = Math.ceil(tones.length / 2); tones.forEach((t, i) => { if (i >= half) t.oct += 1; if (spread >= 3 && i >= Math.ceil(tones.length * 2 / 3)) t.oct += 1; }); }
@@ -6542,10 +6745,70 @@
       const lenMs = Math.max(60, Math.round(cycleSec * 1000 * (_psi ? 1.5 : 0.98)));
 
       let st = E.runPhase[key];
-      if (!st) st = E.runPhase[key] = { startAt: _ambUnitGridSnap(E, key, inst, cfg, lead) + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
+      if (!st) {
+        let s0 = _ambUnitGridSnap(E, key, inst, cfg, lead) + _ambDriftOffset(E, key, inst, cfg);
+        // PROG-SYNC START ALIGNMENT: a Free-unit drone used to anchor at its own
+        // lead (unsnapped), so its first onset landed BEFORE the shared bar grid
+        // the other layers snap to — the drone audibly entered EARLY. Under a
+        // progression, snap the anchor UP onto the chord sub-grid (psi.anchor +
+        // k·subUnit — the same grid its sub-slots are computed from) so it comes
+        // in with the band. At play start lead ≈ the grid anchor, so the snap is
+        // near-identity; a mid-play add waits for the next sub-slot.
+        if (_psi && s0 > _psi.anchor) s0 = _psi.anchor + Math.ceil((s0 - _psi.anchor - 1e-4) / _psi.subUnit) * _psi.subUnit;
+        st = E.runPhase[key] = { startAt: s0, lastAt: null };
+      }
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
       const tTo = _ambBudgetHorizon(now, horizon);
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
+
+      // ---- PEDAL MODE (default under a progression) --------------------------
+      // ONE sustained note per progression (or section-part) cycle, chosen by
+      // _ambDronePedalPick to work across ALL the cycle's chords (override:
+      // inst.progNote). Density stacks octaves of the same pitch — a true drone.
+      // 'voice' mode keeps the previous behaviour (re-voice per chord sub-slot).
+      // Deterministic (no RNG draws), so it loops natively — and the harness's
+      // `drone` config has no progression, so this branch never runs there.
+      if (_psi && inst.progMode !== 'voice') {
+        const kIvs = (typeof SCALES !== 'undefined' && SCALES[_ambKeyScaleName(cfg)]) || [0, 2, 4, 5, 7, 9, 11];
+        const kRoot = _ambKeyRootPc(cfg);
+        const A4 = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+        const strike = (at, holdSec, chords) => {
+          const auto = _ambDronePedalPick(chords, kRoot, kIvs);
+          const pc = (Number.isFinite(inst.progNote)) ? (((inst.progNote | 0) % 12) + 12) % 12 : auto.pc;
+          if (typeof window !== 'undefined' && window._ambPedalDebug) { try { (window.__pdbg = window.__pdbg || []).push({ at: +at.toFixed(2), pc, auto: auto.pc, holdSec: +holdSec.toFixed(2), reg, chords: chords.length, A4, f0: +(A4 * Math.pow(2, (12 * (reg + 1) + pc - 69) / 12)).toFixed(1), pn: typeof playNote }); } catch (e) {} }
+          _ambKeyTime = at;
+          const holdMs = Math.max(120, Math.round(holdSec * 1000 * 0.98));
+          for (let i = 0; i < density; i++) {
+            const midi = 12 * (reg + 1) + pc + 12 * i;
+            const f = A4 * Math.pow(2, (midi - 69) / 12);
+            const vp = { type: vtype, attack: atk, decay: dec, sustain: sus, release: rel,
+              volume: _ambAccentVol(_ambApplyLevel(100, inst.level), inst.accent), pan, detune: Math.max(-1200, Math.min(1200, inst.fine | 0)), loop: true };
+            if (dmod) vp._detuneMod = dmod;
+            if (i === 0) _ambColourLeadIn(f, vp, at, dest, _E.laneIdx(), src);
+            try { playNote(f, vp, holdMs, at + i * 0.006, dest, undefined, _E.laneIdx()); } catch (e) {}
+          }
+        };
+        let guard = 0, t = tFrom;
+        while (t < tTo && guard++ < 8) {
+          const w = _ambDronePedalWindow(E, cfg, t + 1e-3, _psi);
+          if (!w) break;
+          const k = Math.round((w.startSec - _psi.anchor) / Math.max(0.1, w.lenSec));
+          if (w.startSec >= tFrom - 1e-4 && w.startSec < tTo) {
+            // A cycle boundary in this tick's window → the full-cycle strike.
+            if (st._pedalAt !== w.startSec && _ambCondFires(inst.when, k)) { strike(w.startSec, w.lenSec, w.chords); st._pedalAt = w.startSec; }
+          } else if (st._pedalAt == null && w.startSec < tFrom && tFrom >= st.startAt) {
+            // Engaged MID-cycle (layer added / thawed): come in on the next chord
+            // sub-slot — grid-aligned, never early — and hold to the cycle's end.
+            const catchAt = _psi.anchor + Math.ceil((tFrom - _psi.anchor - 1e-4) / _psi.subUnit) * _psi.subUnit;
+            if (catchAt < tTo && catchAt < w.startSec + w.lenSec - 0.25) {
+              strike(catchAt, (w.startSec + w.lenSec) - catchAt, w.chords); st._pedalAt = w.startSec;
+            } else break;
+          }
+          t = w.startSec + w.lenSec + 1e-3;
+        }
+        st.lastAt = tTo;
+        return;
+      }
 
       const isProg = _isProg;   // per-layer: one chord per drone cycle (re-voice cap applied above)
       const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / cycleSec));
@@ -6587,7 +6850,11 @@
           const _dsp = inst.progMerge ? _ambProgSpanAt(_E, inst, (_E._cfg || (_E.getCfg && _E.getCfg())), _cyc) : null;
           if (_dsp) { _slot = _dsp.slot; _cstep = _dsp.chordStep; }
           else { const _subSlot = Math.round((_cyc - _psi.anchor) / _psi.subUnit); _cstep = Math.floor(_subSlot / _psi.subdiv); _slot = ((_subSlot % _psi.subdiv) + _psi.subdiv) % _psi.subdiv; }
-          const _shim = { register: reg + regShift, spread: 0, density: density, chordMode: 'chordsplus', voiceVariety: inst.voiceVariety | 0 };
+          // `degree` is what makes the drone's Note control work under a
+          // progression (it was dropped here, so the knob did nothing and the
+          // voicing fell back to "lowest rendered pitch" — see _ambVoiceProgChord).
+          const _shim = { register: reg + regShift, spread: 0, density: density, chordMode: 'chordsplus', voiceVariety: inst.voiceVariety | 0,
+            degree: Math.max(1, (inst.degree | 0) || 1) };
           const _freqs = _ambVoiceProgChord(_shim, src, { slot: _slot, chordStep: _cstep, subdiv: _psi.subdiv, feel: _psi.feel });
           for (let i = 0; i < _freqs.length; i++) {
             const f = _freqs[i]; if (!(f > 0)) continue;
@@ -7786,6 +8053,299 @@
       cur.tune = Math.max(-12, Math.min(12, cur.tune | 0));
       if (cur.vel === 100 && cur.len === 100 && cur.rat === 1 && cur.ratd === 0 && cur.prob === 100 && cur.pan === 0 && cur.pitch === 0 && cur.tune === 0) { if (pg.fx) delete pg.fx[k]; }
       else { if (!pg.fx) pg.fx = {}; pg.fx[k] = cur; }
+    }
+    // ---- UNIT SCHEDULE (the per-unit on/off step gate) -------------------------
+    // A layer's UNIT (its cycle — the block the ⏱ Scheduler lane draws) can be
+    // sliced into `div` equal segments, each on or off. Off = the layer doesn't
+    // play there; `mode` picks what that means:
+    //   'skip' (default) — a note whose ONSET lands in an off slice never fires.
+    //                      Notes already sounding ring out across the boundary.
+    //   'chop'           — the layer's OUTPUT is silenced across the slice, so a
+    //                      sustained note is cut mid-flight (a hard gate).
+    // The lane draws the same unit over and over, so a gate is stored PER UNIT
+    // SLOT and repeats: the gate for absolute unit i is `slots[i % period]`, and
+    // an ABSENT slot means fully on. `period` seeds from the number of unit blocks
+    // that layer's lane currently draws, so "the units you can see" are exactly
+    // the ones you can edit and the visible row is what repeats. The Apply-to
+    // actions (all / every 2nd / 3rd / 4th) grow `period` to a multiple so an
+    // "every Nth" selection can be expressed exactly.
+    //
+    // ABSENT BY DEFAULT and kept OUT of _ambDefaultLayer — an object field in the
+    // layer defaults gets clobbered every normalize by the Number.isFinite
+    // backfill (the trap in CLAUDE.md). A layer with no unitGate behaves exactly
+    // as before, so the invariant harness is untouched.
+    const _AMB_UG_DIVS = [2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64];
+    const _AMB_UG_MAXSLOTS = 64;
+    function _ambUnitGateDiv(L) {
+      const g = L && L.unitGate;
+      return Math.max(2, Math.min(64, (g && g.div | 0) || 16));
+    }
+    function _ambUnitGatePeriod(L) {
+      const g = L && L.unitGate;
+      return Math.max(1, Math.min(_AMB_UG_MAXSLOTS, (g && g.period | 0) || 1));
+    }
+    function _ambUnitGateMode(L) {
+      const g = L && L.unitGate;
+      return (g && g.mode === 'chop') ? 'chop' : 'skip';
+    }
+    // The mask for absolute unit index i — an array of `div` 0/1 values, or NULL
+    // when that slot is fully open (the common case; callers skip all work).
+    function _ambUnitGateMaskAt(L, i) {
+      const g = L && L.unitGate;
+      if (!g || !g.slots) return null;
+      const period = _ambUnitGatePeriod(L);
+      const m = g.slots[((i | 0) % period + period) % period];
+      if (!Array.isArray(m) || !m.length) return null;
+      return m.some(v => !v) ? m : null;   // all-on stores as a no-op
+    }
+    // Is unit index i's slice at time-fraction `frac` (0..1 through the unit) ON?
+    function _ambUnitGateOpenAt(L, i, frac) {
+      const m = _ambUnitGateMaskAt(L, i);
+      if (!m) return true;
+      const f = frac - Math.floor(frac);   // fold, so a hair past the end wraps
+      const s = Math.max(0, Math.min(m.length - 1, Math.floor(f * m.length)));
+      return !!m[s];
+    }
+    // Write a mask into slot `si`, creating/pruning the store. An all-on mask
+    // drops the slot (and an empty store drops unitGate) so a cleared gate leaves
+    // no residue in the save — absence is the neutral state everywhere.
+    function _ambUnitGateSet(L, si, mask, div, period) {
+      if (!L) return;
+      const d = Math.max(2, Math.min(64, div | 0));
+      const p = Math.max(1, Math.min(_AMB_UG_MAXSLOTS, period | 0));
+      if (!L.unitGate || typeof L.unitGate !== 'object') L.unitGate = { div: d, period: p, slots: {} };
+      const g = L.unitGate;
+      g.div = d; g.period = p;
+      if (!g.slots || typeof g.slots !== 'object') g.slots = {};
+      const idx = ((si | 0) % p + p) % p;
+      const arr = Array.isArray(mask) ? mask.slice(0, d).map(v => (v ? 1 : 0)) : null;
+      while (arr && arr.length < d) arr.push(1);
+      if (!arr || !arr.some(v => !v)) delete g.slots[idx]; else g.slots[idx] = arr;
+      if (!Object.keys(g.slots).length) delete L.unitGate;
+    }
+    // Coerce a loaded unitGate; drop it entirely when it says nothing.
+    function _ambNormalizeUnitGate(L) {
+      if (!L || typeof L !== 'object') return;
+      const g = L.unitGate;
+      if (g == null) return;
+      if (typeof g !== 'object' || Array.isArray(g)) { delete L.unitGate; return; }
+      g.div = Math.max(2, Math.min(64, (g.div | 0) || 16));
+      g.period = Math.max(1, Math.min(_AMB_UG_MAXSLOTS, (g.period | 0) || 1));
+      g.mode = (g.mode === 'chop') ? 'chop' : 'skip';
+      if (!g.slots || typeof g.slots !== 'object' || Array.isArray(g.slots)) { delete L.unitGate; return; }
+      Object.keys(g.slots).forEach(k => {
+        const i = (/^\d+$/.test(k)) ? (k | 0) : -1;
+        const m = g.slots[k];
+        if (i < 0 || i >= g.period || !Array.isArray(m) || !m.length) { delete g.slots[k]; return; }
+        const arr = m.slice(0, g.div).map(v => (v ? 1 : 0));
+        while (arr.length < g.div) arr.push(1);
+        if (!arr.some(v => !v)) delete g.slots[k]; else g.slots[k] = arr;   // all-on = no gate
+      });
+      if (!Object.keys(g.slots).length) delete L.unitGate;
+    }
+    // The unit length the ⏱ Scheduler lane DRAWS for a layer, in bars. The gate
+    // and the strip MUST agree — a block you click has to be the span that gets
+    // gated — so both read this one helper, VIEW clamp included (a Free layer
+    // whose natural period exceeds the view draws one block spanning it).
+    function _ambUnitLaneBars(E, key, L, cfg, VIEW, barSec) {
+      let unitBars = 1;
+      try { const P = _ambLayerPeriodSec(E, key, L, cfg); if (P > 0.01) unitBars = P / barSec; } catch (e) {}
+      return Math.max(1 / 32, Math.min(VIEW, unitBars));
+    }
+    // Where an absolute time falls on that grid: which unit index, and how far
+    // through it (0..1). Anchored on E._barGridAnchor — the SAME anchor the
+    // scheduler playhead uses — so the audio gate lines up with the strip.
+    // null when there's no grid (stopped, or before the anchor).
+    let _ambUgMemo = { cfg: null, tok: -1, m: null };
+    let _ambUgTok = 0;
+    function _ambUnitGateBump() { _ambUgTok++; }   // Unit / gate edits invalidate the memo
+    function _ambUnitGridPos(E, key, at) {
+      const cfg = E && E._cfg; if (!cfg) return null;   // outside a tick — never run getCfg() (full normalize) per note
+      const G = E._barGridAnchor;
+      if (!Number.isFinite(G) || !Number.isFinite(at) || at < G - 1e-6) return null;
+      if (_ambUgMemo.cfg !== cfg || _ambUgMemo.tok !== _ambUgTok) _ambUgMemo = { cfg, tok: _ambUgTok, m: new Map() };
+      let info = _ambUgMemo.m.get(key);
+      if (info === undefined) {
+        const L = _ambLayerByKey(E, key);
+        if (!L) info = null;
+        else {
+          const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+          const barSec = (60 / Math.max(20, bpm)) * 4;
+          info = { L, barSec, unitBars: _ambUnitLaneBars(E, key, L, cfg, _ambSchedViewBars(cfg), barSec) };
+        }
+        _ambUgMemo.m.set(key, info);
+      }
+      if (!info) return null;
+      const x = (at - G) / info.barSec / info.unitBars;
+      const u = Math.floor(x + 1e-9);
+      return { L: info.L, u, frac: x - u };
+    }
+    // playNote hook (skip mode): true = this onset lands in an off slice, drop it.
+    // Deliberately AFTER the capture tee in playNote, so Write / Bar-Lock captures
+    // hold the FULL phrase and the gate is applied at PLAYBACK — which is what
+    // lets you edit the schedule live on a frozen loop with no rewrite (same
+    // reasoning as the chord-mask edits).
+    function _ambUnitGateShouldSkip(key, at) {
+      const E = _E;
+      if (!E || !E.timer) return false;
+      const pos = _ambUnitGridPos(E, key, at);
+      if (!pos || !pos.L.unitGate || _ambUnitGateMode(pos.L) !== 'skip') return false;
+      return !_ambUnitGateOpenAt(pos.L, pos.u, pos.frac);
+    }
+    if (typeof window !== 'undefined') window._ambUnitGateSkip = _ambUnitGateShouldSkip;
+    // CHOP mode driver — pushes the CURRENT unit's mask to the audio gate (core
+    // strip or node signal) and re-pushes when the unit index changes. Defined
+    // later (next to the trance gate it mirrors); this forward stub keeps the
+    // popover's live-apply call safe before that runs.
+    // Popover live-apply: drop the already-scheduled envelope so the next tick
+    // re-schedules from the edited mask (otherwise a chop edit is heard a full
+    // lookahead late, or not at all once the horizon is filled).
+    function _ambSyncUnitGate(E, key) {
+      const e = E && E.mod && E.mod[key];
+      if (!e || !e.ugGate || !e.ugGate.gain) return;
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      try { e.ugGate.gain.cancelScheduledValues(now); } catch (x) {}
+      e._ugNextAt = 0; e._ugPrevV = 1;
+      if (_ambUnitGateMode(_ambLayerByKey(E, key) || {}) !== 'chop') { try { e.ugGate.gain.value = 1; } catch (x) {} e._ugOn = false; }
+    }
+    // ---- "Edit Unit Schedule" — the per-unit step-gate editor -----------------
+    // Opened by tapping a unit block in a layer's ⏱ Scheduler lane. Edits THAT
+    // unit's slot by default; the Apply-to actions copy the mask onto every unit,
+    // or every 2nd/3rd/4th from this one (growing `period` to a multiple so the
+    // selection is expressible). Body-attached overlay → shown with an inline
+    // `display !important` (the view-mode CSS force-hides body children).
+    function _ambUnitGateModal(E, key, uIdx, refresh) {
+      const L = _ambLayerByKey(E, key); if (!L) return;
+      _E = E;
+      const cfg = E._cfg || E.getCfg(); if (!cfg) return;
+      const esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const unitBars = _ambUnitLaneBars(E, key, L, cfg, _ambSchedViewBars(cfg), barSec);
+      // Seed `period` from what the lane DRAWS, so "the units you can see" are the
+      // ones that repeat. Only on first creation — an existing gate keeps its own.
+      const lanePeriod = (() => {
+        try {
+          const row = document.querySelector('.ambient-sched-row[data-schkey="' + (window.CSS && CSS.escape ? CSS.escape(key) : key) + '"]');
+          const n = row ? row.querySelectorAll('.ambient-sched-blk[data-ui]').length : 0;
+          return Math.max(1, Math.min(_AMB_UG_MAXSLOTS, n || 1));
+        } catch (e) { return 1; }
+      })();
+      let div = _ambUnitGateDiv(L);
+      let period = L.unitGate ? _ambUnitGatePeriod(L) : lanePeriod;
+      let slot = ((uIdx | 0) % period + period) % period;
+      // Working copy of THIS slot's mask (all-on when the slot is open).
+      let mask = (_ambUnitGateMaskAt(L, uIdx) || Array.from({ length: div }, () => 1)).slice();
+      while (mask.length < div) mask.push(1);
+      const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-ug-ov';
+      ov.innerHTML = '<div class="sm-modal ambient-ug-modal"></div>';
+      const modal = ov.querySelector('.ambient-ug-modal');
+      // What one slice works out to musically, so "32 slices" means something.
+      const sliceLbl = () => {
+        const beats = unitBars * 4 / div;                        // in quarter notes
+        if (Math.abs(beats - Math.round(beats)) < 0.01 && beats >= 1) return Math.round(beats) + ' beat' + (Math.round(beats) === 1 ? '' : 's');
+        const denom = 4 / beats;                                  // 1/denom note
+        const near = [1, 2, 4, 8, 16, 32, 64, 128].find(d => Math.abs(d - denom) < d * 0.02);
+        return near ? ('1/' + near + ' note') : (beats.toFixed(2) + ' beats');
+      };
+      const draw = () => {
+        const cells = mask.map((v, i) => '<button type="button" class="ambient-slice-cell ambient-ug-cell' + (v ? ' on' : '') +
+          (i % 4 === 0 ? ' q' : '') + '" data-ug-i="' + i + '" title="Slice ' + (i + 1) + ' of ' + div + '">' + (i % 4 === 0 ? (i / 4 + 1) : '') + '</button>').join('');
+        const divOpts = _AMB_UG_DIVS.map(d => '<option value="' + d + '"' + (d === div ? ' selected' : '') + '>' + d + '</option>').join('');
+        const onCount = mask.filter(v => v).length;
+        modal.innerHTML =
+          '<div class="sm-title">Edit Unit Schedule</div>' +
+          '<div class="ambient-ug-sub">' + esc(_ambLayerLabel(L, key) || key) + ' · unit ' + (uIdx + 1) +
+            ' · ' + _ambFmtBpc(unitBars) + ' bar' + (Math.abs(unitBars - 1) < 0.01 ? '' : 's') + '</div>' +
+          '<div class="ambient-ug-body">' +
+            '<div class="ambient-ctrl"><label title="How many equal segments this unit is cut into.">Slices</label>' +
+              '<select class="ambient-select ambient-ug-div">' + divOpts + '</select>' +
+              '<span class="ambient-hint">' + esc(sliceLbl()) + ' each</span></div>' +
+            '<div class="ambient-ctrl"><label title="What an OFF slice does. Skip = a note starting there never fires, but notes already sounding ring out. Chop = the layer’s output is silenced across the slice, cutting sustained notes.">Off means</label>' +
+              '<span class="ambient-seg-row ambient-ug-mode">' +
+                '<button type="button" class="ambient-seg ambient-ug-modebtn' + (_ambUnitGateMode(L) === 'skip' ? ' active' : '') + '" data-ug-mode="skip" title="Skip note onsets — sustains ring through">♪ skip notes</button>' +
+                '<button type="button" class="ambient-seg ambient-ug-modebtn' + (_ambUnitGateMode(L) === 'chop' ? ' active' : '') + '" data-ug-mode="chop" title="Chop the audio — hard-cuts sustained notes">▊ chop audio</button>' +
+              '</span><span class="ambient-hint">per layer</span></div>' +
+            '<div class="ambient-slice-grid ambient-ug-grid" style="--ugcols:' + Math.min(div, 16) + '">' + cells + '</div>' +
+            '<div class="ambient-ug-actions">' +
+              '<span class="ambient-sched-lbl">apply to</span>' +
+              '<button type="button" class="ambient-seg" data-ug-apply="1" title="Give every unit this pattern">all</button>' +
+              '<button type="button" class="ambient-seg" data-ug-apply="2" title="This unit and every 2nd one after it">every 2nd</button>' +
+              '<button type="button" class="ambient-seg" data-ug-apply="3" title="This unit and every 3rd one after it">1:3</button>' +
+              '<button type="button" class="ambient-seg" data-ug-apply="4" title="This unit and every 4th one after it">1:4</button>' +
+            '</div>' +
+            '<div class="ambient-hint ambient-ug-note">' + onCount + '/' + div + ' slices on · repeats every ' + period + ' unit' + (period === 1 ? '' : 's') +
+              // An "every Nth" apply grows the period to a multiple of N, which can
+              // push it past what the lane draws — say so rather than imply the
+              // visible row is the whole loop.
+              (period > lanePeriod ? ' (the lane draws the first ' + lanePeriod + ')' : '') +
+              '. Edits apply to this unit only unless you use “apply to”.</div>' +
+          '</div>' +
+          '<div class="sm-footer">' +
+            '<button type="button" class="sm-cancel" data-ug-act="clear">Clear gate</button>' +
+            '<button type="button" class="sm-apply" data-ug-act="done">Done</button>' +
+          '</div>';
+      };
+      // Commit the working mask into `stride`-spaced slots from this one (1 = all).
+      const commit = (stride) => {
+        const st = Math.max(1, stride | 0);
+        if (st > 1) {   // grow the ring so "every Nth" is expressible
+          const lcm = (a, b) => { const g = (x, y) => (y ? g(y, x % y) : x); return a / g(a, b) * b; };
+          period = Math.max(1, Math.min(_AMB_UG_MAXSLOTS, lcm(period, st)));
+          slot = ((uIdx | 0) % period + period) % period;
+        }
+        if (st === 1 && stride === 1) {   // "all" → every slot
+          for (let s = 0; s < period; s++) _ambUnitGateSet(L, s, mask, div, period);
+        } else {
+          for (let s = slot; s < period; s += st) _ambUnitGateSet(L, s, mask, div, period);
+          for (let s = slot - st; s >= 0; s -= st) _ambUnitGateSet(L, s, mask, div, period);
+        }
+        after();
+      };
+      const after = () => {
+        _ambUnitGateBump();
+        try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+        try { refresh && refresh(); } catch (e) {}
+        try { if (E.timer) _ambSyncUnitGate(E, key); } catch (e) {}   // chop mode: re-push the schedule
+        draw();
+      };
+      draw();
+      document.body.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+      const close = () => { try { ov.remove(); } catch (e) {} };
+      ov.addEventListener('click', (ev) => {
+        const t = ev.target;
+        const cell = t.closest && t.closest('[data-ug-i]');
+        if (cell) { const i = cell.getAttribute('data-ug-i') | 0; mask[i] = mask[i] ? 0 : 1; _ambUnitGateSet(L, slot, mask, div, period); after(); return; }
+        const ap = t.closest && t.closest('[data-ug-apply]');
+        if (ap) { commit(ap.getAttribute('data-ug-apply') | 0); return; }
+        const md = t.closest && t.closest('[data-ug-mode]');
+        if (md) {
+          const m = md.getAttribute('data-ug-mode');
+          if (L.unitGate) L.unitGate.mode = m;
+          else { _ambUnitGateSet(L, slot, mask, div, period); if (L.unitGate) L.unitGate.mode = m; }
+          after(); return;
+        }
+        const act = t.closest && t.closest('[data-ug-act]');
+        if (act) {
+          if (act.getAttribute('data-ug-act') === 'clear') { delete L.unitGate; mask = Array.from({ length: div }, () => 1); after(); return; }
+          close(); return;
+        }
+        if (t === ov) close();
+      });
+      ov.addEventListener('change', (ev) => {
+        const sel = ev.target.closest && ev.target.closest('.ambient-ug-div');
+        if (!sel) return;
+        const nd = Math.max(2, Math.min(64, parseInt(sel.value, 10) || 16));
+        // Re-slice the CURRENT pattern onto the new grid (resample by position)
+        // so changing resolution refines the shape instead of wiping it.
+        const old = mask.slice();
+        mask = Array.from({ length: nd }, (_, i) => old[Math.min(old.length - 1, Math.floor(i / nd * old.length))] ? 1 : 0);
+        div = nd;
+        _ambUnitGateSet(L, slot, mask, div, period);
+        after();
+      });
+      document.addEventListener('keydown', function esk(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esk); } });
     }
     // ---- BASS/melodic-euclid PER-STEP OVERRIDES (the "Step Edit" modal) --------
     // Sparse per-layer overrides keyed by ABSOLUTE step index i: change a single
@@ -9743,6 +10303,9 @@
               vcf: null, eq: null, eqAnalyser: null, vca: null,
               levelGain: { gain: h.param(1, 1) },
               tgGate: null, tgSig: null,
+              // Unit-schedule chop gate — core param 5 (a plain multiplier on the
+              // strip output, alongside the trance gate). Neutral at 1.
+              ugGate: { gain: h.param(5, 1) },
               gate: { gain: h.param(0, 1) },
               pan: { pan: h.param(3, 0) },
               dist: null, delay: null, chorus: null, phaser: null, autopan: null,
@@ -9776,7 +10339,12 @@
         // dedicated tgSig Signal — created lazily in _ambScheduleTg, disposed on stop). Held
         // at unity (passthrough) while off. Sits AFTER levelGain, BEFORE gate, so the reverb
         // send (off levelGain, pre-gate) is NOT chopped — the wash fills the gaps (classic).
-        const tgGate = new Tone.Gain(1).connect(gate);
+        // Unit-schedule chop gate: sits between the trance gate and the dry gate,
+        // so like tgGate it is POST-levelGain — the reverb send (tapped off
+        // levelGain) rings on through a chopped slice. One Gain at unity while
+        // disengaged, the same cost tgGate already pays.
+        const ugGate = new Tone.Gain(1).connect(gate);
+        const tgGate = new Tone.Gain(1).connect(ugGate);
         const levelGain = new Tone.Gain(1).connect(tgGate);
         const vca = new Tone.Gain(1).connect(levelGain);
         // Per-layer 3-band EQ is spliced in LAZILY (see _ambApplyEq) — an EQ3 is
@@ -9800,7 +10368,7 @@
         levelGain.connect(revSend);   // reverb scales with level (still pre-gate, so tails ring through a gate mute)
         const rev = _ambEnsureReverb();
         if (rev) revSend.connect(rev);
-        _E.mod[layer] = { input: vcf, vcf, eq: null, eqAnalyser, vca, levelGain, tgGate, tgSig: null, gate, pan, dist: null, delay: null, chorus: null, phaser: null, autopan: null, revSend, src: { vca: null, vco: null, vcf: null } };
+        _E.mod[layer] = { input: vcf, vcf, eq: null, eqAnalyser, vca, levelGain, tgGate, tgSig: null, ugGate, gate, pan, dist: null, delay: null, chorus: null, phaser: null, autopan: null, revSend, src: { vca: null, vco: null, vcf: null } };
         _ambUpdateMod(layer, cfg);
       } catch (e) {}
     }
@@ -9840,26 +10408,47 @@
       const dly = lc.delay || {}, dst = lc.dist || {}, cho = lc.chorus || {}, pha = lc.phaser || {}, apan = lc.autopan || {};
       // Dry Kill: a wet FX with dryKill on is ENGAGED even at Mix 0 (it plays fully
       // wet). Wet Only (layer): forces every engaged in-line FX to fully wet so the
-      // chain carries no dry, and — when no in-line FX is engaged — mutes the layer's
+      // chain carries no dry, and — when no such FX is engaged — mutes the layer's
       // direct output (core strip_mainout) so only the parallel reverb wash sounds.
       const wetOnly = !!(lc.wetOnly);
       const dk = (fx) => !!(fx && fx.dryKill);
+      // DISTORTION IS EXEMPT FROM THE WET-ONLY FORCING. A waveshaper produces no
+      // tail — its "wet" is the same signal, reshaped — so forcing it to wet=1
+      // removes no dry at all; it just re-levels the layer. And these curves are
+      // level NORMALIZERS (output amplitude barely tracks input), so on a quiet
+      // layer the forced-wet output jumps to roughly full-level loudness: measured
+      // at Level 29 / Mix 10 / Amount 40 it was +2.4 dB classic, +8.6 overdrive,
+      // +10.4 fuzz, +19.7 fold — while at Level 100 the same toggle went QUIETER.
+      // That asymmetry was the "Wet only makes a low layer very loud" bug. Wet Only
+      // now leaves Distortion at its own Mix and mutes the direct output instead
+      // (dist alone no longer counts as an in-line FX below). The per-FX Dry Kill
+      // still forces dist fully wet — that IS what that checkbox asks for.
+      const _wetOnlyFx = (fx) => wetOnly && fx !== dst;
       // effective wet (0..1) for an FX given its Mix — 1.0 when its own Dry Kill or
       // the layer Wet Only is on.
-      const _wet01 = (fx) => (wetOnly || dk(fx)) ? 1 : Math.max(0, Math.min(1, (fx.mix | 0) / 100));
+      const _wet01 = (fx) => (_wetOnlyFx(fx) || dk(fx)) ? 1 : Math.max(0, Math.min(1, (fx.mix | 0) / 100));
       const wantDelay = (dly.mix | 0) > 0 || dk(dly);
       const wantPing = (dly.ping | 0) > 0;   // ping-pong vs plain feedback delay
       const wantDist = (dst.mix | 0) > 0 || dk(dst);
       const wantChorus = (cho.mix | 0) > 0 || dk(cho);
       const wantPhaser = (pha.mix | 0) > 0 || dk(pha);
       const wantAutopan = (apan.mix | 0) > 0 || dk(apan);
-      const anyInline = wantDelay || wantDist || wantChorus || wantPhaser || wantAutopan;
+      // Which in-line FX keep the direct output alive under Wet Only — i.e. the
+      // ones the forcing above actually strips the dry from. Distortion is NOT one
+      // of them (see _wetOnlyFx), so a dist-only layer mutes its direct output and
+      // you hear just the reverb wash, at the level the layer is set to.
+      const anyInline = wantDelay || wantChorus || wantPhaser || wantAutopan;
+      const muteDry = wetOnly && !anyInline;
       // CORE STRIPS: FX run inside the core — push configs (rate/depth maps
       // match the node builders below exactly), no node churn at all.
       if (e.core) {
         const sl = e.core.slot, c01 = (v) => Math.max(0, Math.min(1, (v | 0) / 100));
         try {
-          e.core.cmd('strip_dist', sl, wantDist ? 1 : 0, c01(dst.amount), _wet01(dst), _ambDistModeIdx(dst.flavor));   // flavor → dist_mode (node fallback keeps the classic curve)
+          // Tone stack → the core's tilt/focus args. Tone is stored 0-100 with 50
+          // flat; the core wants a SIGNED tilt (0 = bypass), so centre it here.
+          // Both are i32 in the ABI on purpose — see strip_dist's doc comment.
+          e.core.cmd('strip_dist', sl, wantDist ? 1 : 0, c01(dst.amount), _wet01(dst), _ambDistModeIdx(dst.flavor),
+            _ambDistTilt(dst), Math.max(0, Math.min(100, dst.focus | 0)));   // flavor → dist_mode (node fallback keeps the classic curve)
           e.core.cmd('strip_chorus', sl, wantChorus ? 1 : 0, _wet01(cho), c01(cho.depth),
             0.1 + Math.max(0, Math.min(100, cho.rate | 0)) / 100 * 4.9);
           e.core.cmd('strip_phaser', sl, wantPhaser ? 1 : 0, _wet01(pha),
@@ -9872,9 +10461,10 @@
           e.revSend.gain.value = _ambRevSendGain(layer, lc.revSend);
           const _fo = _ambFxCoreOrder(lc);
           e.core.cmd('strip_fxorder', sl, _fo[0], _fo[1], _fo[2], _fo[3], _fo[4]);   // in-line FX processed in fxChain order
-          // Wet Only with no in-line FX → mute the dry output (reverb send survives).
-          // With ≥1 in-line FX the wet=1 forcing above already strips the dry.
-          e.core.cmd('strip_mainout', sl, (wetOnly && !anyInline) ? 0 : 1);
+          // Wet Only with no dry-stripping in-line FX → mute the dry output (the
+          // reverb send is tapped PRE-FX so the wash survives). With ≥1 such FX the
+          // wet=1 forcing above already strips the dry.
+          e.core.cmd('strip_mainout', sl, muteDry ? 0 : 1);
         } catch (x) {}
         try { _ambApplyEq(layer, lc); } catch (x) {}
         return;
@@ -9882,7 +10472,14 @@
       try {
         const _wantById = { dist: wantDist, chorus: wantChorus, phaser: wantPhaser, delay: wantDelay, autopan: wantAutopan };
         const _inline = _ambFxInlineEngaged(lc, _wantById);   // engaged in-line FX in fxChain order
-        const _orderSig = _inline.join(',') + '|' + (wantPing ? 1 : 0) + '|' + (dst.flavor === 'crush' ? 'c' : '');   // crush ↔ waveshape = a different node type
+        // Node-side strip_mainout: a TERMINAL gain (last node before the bus) that
+        // Wet Only drops to 0 to mute the layer's direct output. The reverb send
+        // taps levelGain (pre-gate, see _ambBuildMod) so the wash rings on. Built
+        // lazily the first time a layer needs it — one Gain, and it costs nothing
+        // sitting at unity — and kept afterwards so toggling Wet Only never churns
+        // the graph (a re-route mid-tail clicks).
+        if (muteDry && !e.mainOut && typeof Tone !== 'undefined') { try { e.mainOut = new Tone.Gain(1); } catch (x) {} }
+        const _orderSig = _inline.join(',') + '|' + (wantPing ? 1 : 0) + '|' + (dst.flavor === 'crush' ? 'c' : '') + (e.mainOut ? '|m' : '');   // crush ↔ waveshape = a different node type
         const _setChanged = wantDelay !== !!e.delay || wantDist !== !!e.dist || wantChorus !== !!e.chorus || wantPhaser !== !!e.phaser || wantAutopan !== !!e.autopan || (wantDelay && !!e.delay && e.delayPing !== wantPing);
         if (_setChanged || e._fxOrderSig !== _orderSig) {
           e._fxOrderSig = _orderSig;
@@ -9915,6 +10512,7 @@
           // (build backward from the bus so the LAST id sits nearest the bus).
           const _nodeById = { dist: e.dist, chorus: e.chorus, phaser: e.phaser, delay: e.delay, autopan: e.autopan };
           let tail = out;
+          if (e.mainOut) { try { e.mainOut.disconnect(); } catch (x) {} try { e.mainOut.connect(out); tail = e.mainOut; } catch (x) {} }
           for (let i = _inline.length - 1; i >= 0; i--) { const nd = _nodeById[_inline[i]]; if (!nd) continue; try { nd.disconnect(); } catch (x) {} nd.connect(tail); tail = nd; }
           g.connect(tail);
           // (reverb send taps the VCA, pre-gate — see _ambBuildMod — so it is
@@ -9922,7 +10520,14 @@
         }
         // Node fallback: Dry Kill / Wet Only force a node's wet to 1 via _wet01.
         // Delay `spread` is a core-only Haas widening (Tone's delay nodes expose no
-        // tap offset) — the node fallback plays the delay without it.
+        // tap offset) — the node fallback plays the delay without it. Distortion
+        // `tone`/`focus` are core-only for the same reason: they filter the WET
+        // path ONLY, and Tone.Distortion mixes its dry INTERNALLY, so a filter
+        // spliced around the node would colour the dry too (a Focus cut would eat
+        // the layer's whole low end, not just the driven half). Doing it right in
+        // nodes needs a parallel dry/wet split — not worth it for a path that only
+        // runs when core strips are off or slots are exhausted (Bloom's exports
+        // capture the live core output, so WAVs keep the tone stack).
         if (e.dist) {
           if (e._distCrush) {
             // Amount → bit depth 8 → 2 (matches the core's k·0.06 map).
@@ -9951,6 +10556,7 @@
           e.autopan.frequency.value = 0.05 + Math.max(0, Math.min(100, apan.rate | 0)) / 100 * 7.95; // ~0.05–8 Hz
         }
         if (e.revSend) e.revSend.gain.value = _ambRevSendGain(layer, lc.revSend);
+        if (e.mainOut) e.mainOut.gain.value = muteDry ? 0 : 1;   // node-side strip_mainout (Wet Only)
       } catch (x) {}
       try { _ambApplyEq(layer, lc); } catch (x) {}
       try { _ambNormalizeDistOversample(); } catch (x) {}
@@ -10056,6 +10662,7 @@
       try { e.levelGain && e.levelGain.dispose(); } catch (x) {}
       try { e.tgSig && e.tgSig.disconnect(); e.tgSig && e.tgSig.dispose(); } catch (x) {}
       try { e.tgGate && e.tgGate.dispose(); } catch (x) {}
+      try { e.ugGate && e.ugGate.dispose && e.ugGate.dispose(); } catch (x) {}
       try { e.gate && e.gate.dispose(); } catch (x) {}
       try { e.pan && e.pan.dispose(); } catch (x) {}
       try { e.dist && e.dist.dispose(); } catch (x) {}
@@ -10064,6 +10671,7 @@
       try { e.phaser && e.phaser.dispose(); } catch (x) {}
       try { e.autopan && e.autopan.dispose(); } catch (x) {}
       try { e.revSend && e.revSend.dispose(); } catch (x) {}
+      try { e.mainOut && e.mainOut.dispose(); } catch (x) {}
       delete _E.mod[layer];
     }
     function _ambTeardownMods() {
@@ -10166,6 +10774,15 @@
           const key = span.getAttribute('data-barkey');
           const L = _ambLayerByKey(E, key);
           span.textContent = L ? _ambLayerBarsText(E, key, L, cfg) : '';
+        });
+        // Header level dial — reflect each layer's current level (value + rotation).
+        host.querySelectorAll('.ambient-level-dial[data-levelkey]').forEach(dl => {
+          const key = dl.getAttribute('data-levelkey');
+          const L = _ambLayerByKey(E, key);
+          const v = (L && Number.isFinite(L.level)) ? (L.level | 0) : 70;
+          dl.style.setProperty('--lvl', String(v));
+          dl.setAttribute('aria-valuenow', String(v));
+          dl.title = 'Layer level ' + v + '% — drag up/down (double-tap to reset)';
         });
         // One-block reminder beside each When dropdown: one step gates one whole
         // unit, so a block lasts exactly the layer's period. Key comes from the
@@ -11085,11 +11702,62 @@
       }
       e._tgPrevV = prevV;
     }
+    // UNIT SCHEDULE, 'chop' mode — the audio half of the per-unit step gate.
+    // Schedules a gain envelope AHEAD onto e.ugGate.gain across the lookahead, so
+    // an off slice silences the layer's output (a sustained note is cut). Unlike
+    // the trance gate this needs no engine split: e.ugGate.gain is a real
+    // AudioParam on the node chain and a SHIM param (→ strip_setv/strip_rampv on
+    // core param 5) under core strips, so the same scheduling drives both.
+    // Sits post-levelGain / pre-gate exactly like tgGate, so the reverb send —
+    // tapped off levelGain — is NOT chopped and the wash fills the gaps.
+    // Deterministic (no RNG draw), so the invariant harness is untouched.
+    const _AMB_UG_EDGE = 0.004;   // 4 ms slew on each transition — declick, not a fade
+    function _ambUnitGateAudio(E, key, now, horizon) {
+      const e = E.mod && E.mod[key];
+      if (!e || !e.ugGate || !e.ugGate.gain) return;
+      const L = _ambLayerByKey(E, key);
+      const on = !!(L && L.unitGate && _ambUnitGateMode(L) === 'chop');
+      if (!on) {   // disengaged → park open, once
+        if (e._ugOn) {
+          try { e.ugGate.gain.cancelScheduledValues(now); e.ugGate.gain.value = 1; } catch (x) {}
+          e._ugOn = false; e._ugNextAt = 0; e._ugPrevV = 1;
+        }
+        return;
+      }
+      const cfg = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : null);
+      const G = E._barGridAnchor;
+      if (!cfg || !Number.isFinite(G)) return;
+      const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const unitBars = _ambUnitLaneBars(E, key, L, cfg, _ambSchedViewBars(cfg), barSec);
+      const unitSec = Math.max(0.05, unitBars * barSec);
+      const div = _ambUnitGateDiv(L);
+      const stepDur = Math.max(0.01, unitSec / div);
+      if (!e._ugOn) { e._ugOn = true; e._ugNextAt = 0; e._ugPrevV = 1; }
+      if (!e._ugNextAt || e._ugNextAt < now) {
+        const k = Math.ceil((now - G) / stepDur);
+        e._ugNextAt = G + k * stepDur;
+      }
+      let prevV = Number.isFinite(e._ugPrevV) ? e._ugPrevV : 1, guard = 0;
+      while (e._ugNextAt < horizon && guard++ < 256) {
+        const idx = Math.round((e._ugNextAt - G) / stepDur);   // absolute slice index off the shared grid
+        const u = Math.floor(idx / div);
+        const v = _ambUnitGateOpenAt(L, u, (((idx % div) + div) % div) / div) ? 1 : 0;
+        try {
+          e.ugGate.gain.setValueAtTime(prevV, e._ugNextAt);
+          e.ugGate.gain.linearRampToValueAtTime(v, e._ugNextAt + Math.min(_AMB_UG_EDGE, stepDur * 0.5));
+        } catch (x) {}
+        prevV = v;
+        e._ugNextAt += stepDur;
+      }
+      e._ugPrevV = prevV;
+    }
     function _ambScheduleStochastic(now) {
       const horizon = now + 1.2 * _ambHiddenMult();   // hidden tab → longer mod/LFO runway (matches the note horizon stretch)
       for (const layer in _E.mod) {
         const e = _E.mod[layer];
         try { _ambScheduleTg(_E, layer, e, now, horizon); } catch (x) {}   // bar-synced trance gate
+        try { _ambUnitGateAudio(_E, layer, now, horizon); } catch (x) {}   // unit-synced schedule gate (chop mode)
         if (!e.src) continue;
         ['vca', 'vco', 'vcf'].forEach(tg => {
           const src = e.src[tg];
@@ -12732,7 +13400,20 @@
       // Pedal: its Rests use a PER-CYCLE seeded draw (it "roams" each pass), so rests
       // DO make it evolve → keep Write unless both Vary and Rests are off.
       if (L.type === 'pedal') return !(L.vary | 0) && _ambEffRest(L) === 0;
-      if (L.type === 'drone') return !(L.timeVary | 0) && !(L.pitchVary | 0);
+      if (L.type === 'drone') {
+        // UNDER A PROGRESSION, skip Write even WITH variance. The comment above
+        // ("Write would freeze it to one chord") stated the problem but the gate
+        // only acted on it at variance 0 — so a drone with any Time/Pitch var
+        // froze a 2-bar capture and replayed ONE chord's note forever while the
+        // changes moved on ("same note over and over"; density/degree edits also
+        // went silent, because the freeze gate blocks the emitter). Variance is a
+        // per-cycle SEEDED draw (cRnd — never the shared stream), so the native
+        // loop still varies; there is nothing Write needs to lock. Returning true
+        // here also THAWS an already-frozen drone (the caller's thaw branch), so
+        // projects saved in the stuck state self-heal on the next play.
+        try { const src = _ambNotesOf(L); if (src && src.type === 'prog') return true; } catch (e) {}
+        return !(L.timeVary | 0) && !(L.pitchVary | 0);
+      }
       const isKit = (L.type === 'beat' && L.gen === 'euclid' && !!L.euclidKit);
       const euclid = (L.type === 'bass') || (L.type === 'beat' && L.gen === 'euclid' && !L.euclidKit) || (L.type === 'arp' && L.euclid) || isKit;
       if (!euclid) return false;
@@ -16046,7 +16727,13 @@
               // stay EMPTY instead of rendering ~full ("near the end of a phantom
               // previous cycle") right after Play. (Same guard as the texture branch.)
               const pos = idx - (next - now) / iv;
-              if (pos >= 0) { prog = ((pos % 1) + 1) % 1; active = true; }
+              // pos simplifies to (now − firstOnset)/iv, so floor(pos) is EXACTLY the
+              // absolute iteration index `_ambCondFires(L.when, I[key])` gates on at
+              // schedule time — DERIVE the When-cycle from it (like the phase-anchored
+              // and texture branches) instead of the −1-then-wrap counter, which
+              // trailed by one unit on lead-anchored layers (sample/bed/motif/beat)
+              // that go active AT the first onset (pos≈0), not during the pre-lead.
+              if (pos >= 0) { prog = ((pos % 1) + 1) % 1; active = true; cyc = Math.floor(pos); }
             }
           }
         }
@@ -17874,6 +18561,8 @@
       mix: 'Dry → wet balance.',
       feedback: 'How much the delay echoes repeat.',
       drive: 'Distortion amount.',
+      focus: 'How much low end reaches the distortion. 0 drives the whole signal; turn it up to keep bass OUT of the drive so chords stay defined instead of turning to mud. Only the distorted (wet) half is filtered — the dry lows come through untouched.',
+      tone: 'Brightness of the distorted signal. 50 is flat; below rolls the highs off (tames fizz), above rolls the lows off (thin and cutting). Shapes the wet half only, so the dry keeps its body.',
       tone: 'The voice / instrument this layer plays.',
       notes: 'The scale, chord, wrap or progression this layer draws pitches from.',
       when: 'Conditional — which cycles this layer plays on.',
@@ -18281,6 +18970,13 @@
     // Distortion flavor ↔ core dist_mode index (0 classic default).
     const _AMB_DIST_FLAVORS = [['', 'Classic'], ['overdrive', 'Overdrive'], ['fuzz', 'Fuzz'], ['fold', 'Wavefold'], ['crush', 'Crush']];
     const _ambDistModeIdx = (flavor) => Math.max(0, _AMB_DIST_FLAVORS.findIndex(f => f[0] === (flavor || '')));
+    // Distortion Tone slider (0-100, 50 flat) → the core's SIGNED tilt (-100..100,
+    // 0 = bypassed). Centring here means an absent/legacy dist object (tone
+    // undefined → 50) sends 0 and renders the untouched classic path.
+    const _ambDistTilt = (dst) => {
+      const t = Number.isFinite(dst && dst.tone) ? dst.tone : 50;
+      return Math.max(-100, Math.min(100, ((Math.max(0, Math.min(100, t | 0)) - 50) * 2) | 0));
+    };
     const _AMB_FX_DEFS = [
       { id: 'filter',  label: 'Filter',      engaged: (lc) => ((Number.isFinite(lc.cutoff) ? lc.cutoff : 100) < 100) || ((lc.reso | 0) > 0), off: (lc) => { lc.cutoff = 100; lc.reso = 0; }, zero: [['fx-cutoff', 100], ['fx-reso', 0]] },
       { id: 'rev',     label: 'Reverb send', engaged: (lc) => (lc.revSend | 0) > 0,                    off: (lc) => { lc.revSend = 0; },                zero: [['fx-rev', 0]] },
@@ -18822,7 +19518,7 @@
         '<div class="ambient-fx-chainviz" aria-live="polite" title="Signal chain — Filter (pre) → in-line FX (reorderable) → out, with Reverb as a parallel send"></div>' +
         // Layer "Wet only": mute the direct/dry output so only the wet tails sound
         // (reverb wash + any in-line FX, forced fully wet). Classic ambient drench.
-        '<label class="ambient-fx-wetonly" title="Wet only — mute this layer’s dry output so you hear only its wet tails (reverb send + in-line FX forced fully wet).">' +
+        '<label class="ambient-fx-wetonly" title="Wet only — mute this layer’s dry output so you hear only its wet tails: the reverb send, plus Delay/Chorus/Phaser/Auto-Pan forced fully wet. Distortion keeps its own Mix (it reshapes the signal rather than adding a tail, so forcing it wet only makes a quiet layer loud) — use its Dry kill for that.">' +
         '<input type="checkbox" class="ambient-fx-wetonly-cb"><span>Wet only</span></label>' +
         // Live per-layer low-pass filter — Cutoff sweeps the whole layer (tails
         // included) in real time; Resonance peaks at the cutoff. Cutoff 100 = open.
@@ -18864,6 +19560,8 @@
         _ambFxItem('dist', 'Distortion',
           '<div class="ambient-ctrl"><label title="Distortion character. Classic = the original curve. Overdrive = smooth warm tanh. Fuzz = hard asymmetric clip with a sputtery crossover gate. Wavefold = triangle folding (west-coast). Crush = bit-depth quantize.">Type</label><select class="ambient-select ambient-fx-dist-flavor">' + _AMB_DIST_FLAVORS.map(f => '<option value="' + f[0] + '">' + f[1] + '</option>').join('') + '</select><span class="ambient-hint">character</span></div>' +
           _ambSl('Drive', 'ambient-' + layer + '-fx-dist-amt', 0, 100, 40, 'amount') +
+          _ambSl('Focus', 'ambient-' + layer + '-fx-dist-focus', 0, 100, 0, 'full range → highs only') +
+          _ambSl('Tone', 'ambient-' + layer + '-fx-dist-tone', 0, 100, 50, 'dark ← flat → bright') +
           _ambSl('Mix', 'ambient-' + layer + '-fx-dist-mix', 0, 100, 0, 'dry → wet') +
           _ambFxDk('dist')) +
         '<div class="ambient-fx-addrow"><button type="button" class="ambient-seg ambient-fx-add" title="Add an effect to this layer">＋ Add FX</button></div>' +
@@ -19004,6 +19702,11 @@
       // Live unit-length readout (filled by _ambSyncLayerUnits) — shows the layer's
       // unit/loop length and the formula that produces it, so you know what to tweak.
       (freezeKey ? '<span class="ambient-layer-unit" data-ukey="' + freezeKey + '" title="Unit length (tap the named parameters to change it)"></span>' : '') +
+      // Level shortcut DIAL — a compact rotary knob for this layer's level, right
+      // of the readouts / left of Solo. Drag up/down (or ↑/↓ when focused) to set;
+      // double-tap resets. Value/rotation filled by _ambSyncLayerUnits + kept in
+      // sync with the mixer fader and card Level slider by _ambSyncLevelUI.
+      (freezeKey ? '<span class="ambient-level-dial" data-levelkey="' + freezeKey + '" role="slider" tabindex="0" aria-label="Layer level" aria-valuemin="0" aria-valuemax="100" title="Layer level — drag up/down (double-tap to reset)"><i class="ambient-level-dial-ind"></i></span>' : '') +
       (freezeKey ? '<button type="button" class="ambient-solo-btn" data-skey="' + freezeKey + '" title="Solo — play only soloed layers">S</button>' : '') +
       // Freeze/Loop consolidated into the ONE per-layer "Loop" control (Timing
       // group: Off / Hold / Write). The old header ❄ Freeze + 🔒 Lock buttons
@@ -19585,6 +20288,8 @@
       bindFx('dly-time', (q, v) => { q.delay.timeMs = v; });
       bindFx('dly-fb', (q, v) => { q.delay.feedback = v; }); bindFx('dly-ping', (q, v) => { q.delay.ping = v; }); bindFx('dly-spread', (q, v) => { q.delay.spread = v; });
       bindFx('dist-amt', (q, v) => { q.dist.amount = v; });
+      bindFx('dist-focus', (q, v) => { q.dist.focus = v; });
+      bindFx('dist-tone', (q, v) => { q.dist.tone = v; });
       bindFx('dist-mix', (q, v) => { q.dist.mix = v; });
       bindFx('cho-mix', (q, v) => { q.chorus.mix = v; }); bindFx('cho-depth', (q, v) => { q.chorus.depth = v; }); bindFx('cho-rate', (q, v) => { q.chorus.rate = v; });
       bindFx('pha-mix', (q, v) => { q.phaser.mix = v; }); bindFx('pha-depth', (q, v) => { q.phaser.depth = v; }); bindFx('pha-rate', (q, v) => { q.phaser.rate = v; });
@@ -19609,7 +20314,7 @@
       setVal('mod-sync', (s.mod && s.mod.sync === 'sync') ? 'sync' : 'free');
       setVal('fx-rev', s.revSend);
       if (s.delay) { setVal('fx-dly-mix', s.delay.mix); setVal('fx-dly-time', s.delay.timeMs); const dtv = el('fx-dly-time-v'); if (dtv) dtv.textContent = _ambFmtMs(s.delay.timeMs); setVal('fx-dly-fb', s.delay.feedback); setVal('fx-dly-ping', s.delay.ping); setVal('fx-dly-spread', s.delay.spread || 0); }
-      if (s.dist) { setVal('fx-dist-amt', s.dist.amount); setVal('fx-dist-mix', s.dist.mix); }
+      if (s.dist) { setVal('fx-dist-amt', s.dist.amount); setVal('fx-dist-focus', s.dist.focus); setVal('fx-dist-tone', s.dist.tone); setVal('fx-dist-mix', s.dist.mix); }
       if (s.chorus) { setVal('fx-cho-mix', s.chorus.mix); setVal('fx-cho-depth', s.chorus.depth); setVal('fx-cho-rate', s.chorus.rate); }
       if (s.phaser) { setVal('fx-pha-mix', s.phaser.mix); setVal('fx-pha-depth', s.phaser.depth); setVal('fx-pha-rate', s.phaser.rate); }
       if (s.autopan) { setVal('fx-apan-mix', s.autopan.mix); setVal('fx-apan-depth', s.autopan.depth); setVal('fx-apan-rate', s.autopan.rate); }
@@ -19628,6 +20333,15 @@
       });
       (Array.isArray(cfg.extras) ? cfg.extras : []).forEach((ex) => {
         if (!ex) return;
+        // SKIP seq/samp here — `extras` is their single home (schema v2/C3), and
+        // _ambSeqList/_ambSampleList below ALREADY enumerate the extras-hosted
+        // ones. Emitting them here too gave every Seq/Sample layer TWO entries
+        // under the SAME key: a duplicate mixer channel and a duplicate
+        // Scheduler lane, the second labelled with the raw type ("samp"/"seq")
+        // because neither has an _AMB_LAYER_SCHEMA entry to name it. Deleting
+        // the layer cleared one and left the other looking like a zombie lane.
+        // _ambRenderExtras skips the same two types when building cards.
+        if (ex.type === 'seq' || ex.type === 'samp') return;
         const sch = (typeof _AMB_LAYER_SCHEMA !== 'undefined') ? _AMB_LAYER_SCHEMA[ex.type] : null;
         out.push({ key: ex.type + ':' + ex.id, name: _ambLayerLabel(ex, (sch && sch.label) ? sch.label : (ex.type || 'Layer')), layer: ex });
       });
@@ -19674,6 +20388,18 @@
         }
         break;
       }
+      // Header level dial (shortcut) — mirror value + rotation.
+      let dl = null; try { dl = host.querySelector('.ambient-level-dial[data-levelkey="' + key + '"]'); } catch (e) {}
+      if (dl) { dl.style.setProperty('--lvl', s); dl.setAttribute('aria-valuenow', s); dl.title = 'Layer level ' + v + '% — drag up/down (double-tap to reset)'; }
+    }
+    // Set a layer's level by KEY (shared by the header dial + keyboard). Level is a
+    // live per-layer gain (via _ambSyncLevelUI → e.levelGain), so no re-anchor.
+    function _ambSetLayerLevel(E, key, v, persistNow) {
+      const L = _ambLayerByKey(E, key); if (!L) return;
+      v = Math.max(0, Math.min(100, Math.round(v)));
+      L.level = v;
+      _ambSyncLevelUI(E, key, v);
+      if (persistNow && typeof persistWorkspace === 'function') persistWorkspace();
     }
     // (Re)render the Mixer strip — one vertical fader per layer, bound to that
     // layer's `level`. Level is applied per-note at emit time, so a drag affects
@@ -19684,12 +20410,15 @@
       const cfg = E.getCfg();
       const layers = cfg ? _ambMixerLayers(cfg) : [];
       strip.innerHTML = '';
+      // NO EARLY RETURN HERE. The Scheduler + Groove repaints at the bottom are
+      // this function's tail — bailing out on an empty list left them showing the
+      // LAST non-empty render forever, i.e. deleting the final layer left a zombie
+      // lane in the Scheduler (its own render clears correctly; it just never ran).
       if (!layers.length) {
         const hint = document.createElement('span');
         hint.className = 'ambient-hint';
         hint.textContent = 'No layers yet.';
         strip.appendChild(hint);
-        return;
       }
       layers.forEach(({ name, layer, key }) => {
         const lvl = Number.isFinite(layer.level) ? layer.level : 70;
@@ -19817,7 +20546,13 @@
             const sc = secs[si % secs.length];
             const slen = Math.max(0.25, lens[si % lens.length]);
             const sw = Math.min(slen, VIEW - sb) / VIEW * 100;
-            sBlocks += '<i class="ambient-sched-secblk' + (si % secs.length === 0 ? ' cyc' : '') + '" data-si="' + (si % secs.length) + '" style="width:' + sw.toFixed(3) + '%" title="' + esc(sc.name) + ' · ' + _ambFmtBpc(slen) + ' bars — tap to edit">' + esc(sc.name) + '</i>';
+            // A section bound to a progression part shows the part name and a
+            // harmony tint, so the arrangement reads at a glance.
+            const _sp = _ambSectionPart(cfg, si % secs.length);
+            sBlocks += '<i class="ambient-sched-secblk' + (si % secs.length === 0 ? ' cyc' : '') + (_sp ? ' harm' : '') +
+              '" data-si="' + (si % secs.length) + '" style="width:' + sw.toFixed(3) + '%" title="' + esc(sc.name) + ' · ' + _ambFmtBpc(slen) + ' bars' +
+              (_sp ? ' · plays “' + esc(_sp.name) + '” (' + _sp.len + ' chord' + (_sp.len === 1 ? '' : 's') + ')' : '') +
+              ' — tap to edit">' + esc(sc.name) + (_sp ? '<b class="secpart">♭' + esc(_sp.name) + '</b>' : '') + '</i>';
             sb += slen; si++;
           }
         } else {
@@ -19835,10 +20570,39 @@
       if (pg && pg.on && Array.isArray(pg.chords) && pg.chords.length) {
         const bpc = Math.max(0.01, cfg.barsPerChord || 1);
         const lens = pg.chords.map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
+        // SECTION-BOUND PARTS: when any section names a part, the chord walk is no
+        // longer one global cycle — each section plays its own part, looping from
+        // that part's top. The lane has to draw the SAME walk the engine plays
+        // (_ambProgStepAt's early branch) or the strip lies about the harmony.
+        // Both read sections from bar 0 of the shared grid anchor, so a static
+        // bar-space walk here matches the engine's time-space one.
+        const _secs = Array.isArray(cfg.sections) ? cfg.sections : null;
+        const _bound = !!(_secs && _secs.length && _secs.some((s, i) => _ambSectionPart(cfg, i)));
+        const _secLens = _bound ? _secs.map(x => Math.max(0.25, Number(x && x.bars) || 4)) : null;
+        const _secCycle = _bound ? _secLens.reduce((a2, b2) => a2 + b2, 0) : 0;
+        // Which chord index is live at bar `b`, walking the active section's window.
+        const _chordAtBar = (b) => {
+          const cyc = Math.floor(b / _secCycle);
+          let pos = b - cyc * _secCycle, i = 0;
+          while (i < _secLens.length - 1 && pos >= _secLens[i]) { pos -= _secLens[i]; i++; }
+          const part = _ambSectionPart(cfg, i);
+          const from = part ? part.from : 0, plen = part ? part.len : pg.chords.length;
+          const anchor = part ? (b - pos) : 0;          // part restarts at the section's top
+          const wLens = []; for (let k = 0; k < plen; k++) wLens.push(lens[(from + k) % lens.length]);
+          const wCycle = wLens.reduce((s, v) => s + v, 0) || bpc;
+          let rem = Math.max(0, b - anchor) % wCycle, k2 = 0;
+          while (k2 < wLens.length - 1 && rem >= wLens[k2]) { rem -= wLens[k2]; k2++; }
+          const idx = (from + k2) % pg.chords.length;
+          // Draw only up to this section's end, so a part that doesn't divide the
+          // section evenly is CUT at the boundary — which is what you hear.
+          const secEnd = (b - pos) + _secLens[i];
+          return { idx, len: Math.min(wLens[k2] - rem, secEnd - b), first: k2 === 0 };
+        };
         let cb = 0, ci = 0, cBlocks = '';
         while (cb < VIEW - 1e-6 && ci < 96) {
-          const ch = pg.chords[ci % pg.chords.length];
-          const clen = Math.max(0.05, lens[ci % lens.length]);
+          const _at = _bound ? _chordAtBar(cb) : null;
+          const ch = pg.chords[_at ? _at.idx : (ci % pg.chords.length)];
+          const clen = Math.max(0.05, _at ? _at.len : lens[ci % lens.length]);
           const cw = Math.min(clen, VIEW - cb) / VIEW * 100;
           const lbl = _ambChordShort(ch);
           // Label only when the block is wide enough to read it (narrow chords
@@ -19847,7 +20611,7 @@
           // on phones — half-bar labels clipped to mush at 390px). Narrow blocks
           // keep the boundary edge + hover title.
           const showLbl = cw >= ((typeof window !== 'undefined' && window.innerWidth < 560) ? 6 : 3);
-          cBlocks += '<i class="ambient-sched-chblk' + (ci % pg.chords.length === 0 ? ' cyc' : '') + '" style="width:' + cw.toFixed(3) + '%" title="' + esc(lbl) + ' · ' + _ambFmtBpc(clen) + ' bar' + (clen === 1 ? '' : 's') + '">' + (showLbl ? esc(lbl) : '') + '</i>';
+          cBlocks += '<i class="ambient-sched-chblk' + ((_at ? _at.first : (ci % pg.chords.length === 0)) ? ' cyc' : '') + '" style="width:' + cw.toFixed(3) + '%" title="' + esc(lbl) + ' · ' + _ambFmtBpc(clen) + ' bar' + (clen === 1 ? '' : 's') + '">' + (showLbl ? esc(lbl) : '') + '</i>';
           cb += clen; ci++;
         }
         html += '<div class="ambient-sched-row ambient-sched-chordrow">' +
@@ -19855,9 +20619,9 @@
           '<span class="ambient-sched-strip chords">' + cBlocks + '<i class="ambient-sched-ph"></i></span></div>';
       }
       layers.forEach(({ name, layer, key }) => {
-        let unitBars = 1;
-        try { const P = _ambLayerPeriodSec(E, key, layer, cfg); if (P > 0.01) unitBars = P / barSec; } catch (e) {}
-        unitBars = Math.max(1 / 32, Math.min(VIEW, unitBars));
+        // ONE source of truth with the audio gate (_ambUnitGridPos) — a block you
+        // click must be exactly the span that gets gated.
+        const unitBars = _ambUnitLaneBars(E, key, layer, cfg, VIEW, barSec);
         const w = layer.write, wOn = !!(w && w.on);
         const uVal = _ambSchedUnitVal(layer);
         const cycBars = _ambProgCycleBars(cfg);
@@ -19945,7 +20709,23 @@
             } else if (segs && !naturalStart) {
               const sg = segs[Math.min(segIdx, segs.length - 1)]; if (sg && !sg.fresh) cls += ' rep';
             }
-            rowBuf[rIdx] += '<i class="' + cls + '" style="width:' + wPct.toFixed(3) + '%">' + glyph + '</i>';
+            // UNIT SCHEDULE: the block's absolute unit index (its slot in the
+            // repeating gate) + the slice shading, so the strip SHOWS the gate.
+            // Merge mode blocks are chord voicings of varying width, not a
+            // repeating unit — no index, so they aren't clickable/gateable.
+            let uAttr = '', gateHtml = '';
+            if (!mergeMode) {
+              const uIdx = Math.round(b / unitBars);
+              if (naturalStart && Math.abs(b - uIdx * unitBars) < 1e-6) {
+                uAttr = ' data-ui="' + uIdx + '"';
+                const mask = _ambUnitGateMaskAt(layer, uIdx);
+                if (mask) {
+                  cls += ' ugated';
+                  gateHtml = '<i class="ambient-sched-ug">' + mask.map(v => '<i' + (v ? '' : ' class="off"') + '></i>').join('') + '</i>';
+                }
+              }
+            }
+            rowBuf[rIdx] += '<i class="' + cls + '"' + uAttr + ' style="width:' + wPct.toFixed(3) + '%">' + gateHtml + glyph + '</i>';
             b = end;
           }
           for (let r = 0; r < nRows; r++) rowsHtml.push('<span class="ambient-sched-strip" data-srow="' + r + '">' + rowBuf[r] + '<i class="ambient-sched-ph"></i></span>');
@@ -20070,9 +20850,27 @@
             const items = [
               { label: '✎ Rename “' + sc.name + '”', fn: () => { const nm = prompt('Section name:', sc.name); if (nm != null && nm.trim()) { sc.name = nm.trim().slice(0, 12); done(); } } },
               { label: '⇔ Bars (' + _ambFmtBpc(sc.bars) + ')', fn: () => { const b2 = prompt('Section length in bars:', String(sc.bars)); const v2 = parseFloat(b2); if (Number.isFinite(v2) && v2 > 0) { sc.bars = Math.max(0.25, Math.min(64, v2)); done(); } } },
-              'hr',
-              { label: '✕ Delete section', danger: true, fn: () => { c2.sections.splice(si, 1); if (!c2.sections.length) delete c2.sections; done(); } },
             ];
+            // HARMONY: bind this section to one PART of the area progression —
+            // verse changes vs chorus changes. Only offered when a progression is
+            // on AND it has named parts (a single part covering everything isn't a
+            // chain; _ambRepairParts returns undefined for that case).
+            {
+              const _pg = c2.prog;
+              const _parts = (_pg && _pg.on && Array.isArray(_pg.parts) && _pg.parts.length) ? _pg.parts : null;
+              if (_parts) {
+                const cur = Number.isFinite(sc.part) ? (sc.part | 0) : -1;
+                items.push('hr', { label: '♭ Harmony', disabled: true });
+                items.push({ label: (cur < 0 ? '● ' : '○ ') + 'Whole progression', fn: () => { delete sc.part; done(); } });
+                _parts.forEach((p2, pi) => {
+                  items.push({ label: (cur === pi ? '● ' : '○ ') + (p2.name || ('Part ' + (pi + 1))) + ' (' + Math.max(1, p2.len | 0) + ' chord' + ((p2.len | 0) === 1 ? '' : 's') + ')',
+                    fn: () => { sc.part = pi; done(); } });
+                });
+              }
+            }
+            items.push(
+              'hr',
+              { label: '✕ Delete section', danger: true, fn: () => { c2.sections.splice(si, 1); if (!c2.sections.length) delete c2.sections; done(); } });
             if (typeof showCtxMenu === 'function') showCtxMenu(ev.clientX, ev.clientY, items);
             else { const nm = prompt('Section name:', sc.name); if (nm != null && nm.trim()) { sc.name = nm.trim().slice(0, 12); done(); } }
             return;
@@ -20497,6 +21295,14 @@
       const bindStr = (suf, key) => { const e = el(suf); if (!e) return; e.addEventListener('change', () => { _E = E; const L = getL(); if (!L) return; L[key] = e.value || L[key]; persist(); }); };
       bindInt('attack', 'attack'); bindInt('decay', 'decay'); bindInt('sustain', 'sustain'); bindInt('release', 'release'); bindInt('fine', 'fine'); bindInt('porta', 'portamento');
       bindInt('chop', 'chop'); bindStr('order', 'order'); bindInt('pitch', 'pitch'); bindInt('reverse', 'reverse'); bindInt('stutter', 'stutter');
+      // Reverse / Pitch are per-note SOURCE params: a live change must CANCEL the
+      // already-scheduled-ahead slices (they register active on emit, up to ~1.4s +
+      // one Interval out) and re-emit from the next boundary — otherwise the flip is
+      // masked by the queued voices and looks like it "does nothing". sync() only
+      // updates the mod chains, never the note stream, so it can't do this.
+      { const reAnchor = () => { _E = E; const L = getL(); if (L && E.timer) { try { _ambReanchorLayer(E, 'samp:' + L.id); } catch (x) {} } };
+        const re = el('reverse'); if (re) re.addEventListener('input', reAnchor);
+        const pe = el('pitch'); if (pe) pe.addEventListener('input', reAnchor); }
       // Per-slice mute grid: re-render cells when Chop changes; toggle a cell to mute/keep its slice.
       { const ce = el('chop'); if (ce) ce.addEventListener('input', () => { const L = getL(); const g = el('slicegrid'); if (L && g) g.innerHTML = _ambSampleSliceCells(L); }); }
       { const g = el('slicegrid'); if (g) g.addEventListener('click', (ev) => {
@@ -20522,6 +21328,8 @@
       bindFx('dly-time', (q, v) => { q.delay.timeMs = v; });
       bindFx('dly-fb', (q, v) => { q.delay.feedback = v; }); bindFx('dly-ping', (q, v) => { q.delay.ping = v; }); bindFx('dly-spread', (q, v) => { q.delay.spread = v; });
       bindFx('dist-amt', (q, v) => { q.dist.amount = v; });
+      bindFx('dist-focus', (q, v) => { q.dist.focus = v; });
+      bindFx('dist-tone', (q, v) => { q.dist.tone = v; });
       bindFx('dist-mix', (q, v) => { q.dist.mix = v; });
       bindFx('cho-mix', (q, v) => { q.chorus.mix = v; }); bindFx('cho-depth', (q, v) => { q.chorus.depth = v; }); bindFx('cho-rate', (q, v) => { q.chorus.rate = v; });
       bindFx('pha-mix', (q, v) => { q.phaser.mix = v; }); bindFx('pha-depth', (q, v) => { q.phaser.depth = v; }); bindFx('pha-rate', (q, v) => { q.phaser.rate = v; });
@@ -20557,7 +21365,7 @@
       setVal('mod-sync', (s.mod && s.mod.sync === 'sync') ? 'sync' : 'free');
       setVal('fx-rev', s.revSend);
       if (s.delay) { setVal('fx-dly-mix', s.delay.mix); setVal('fx-dly-time', s.delay.timeMs); const dtv = el('fx-dly-time-v'); if (dtv) dtv.textContent = _ambFmtMs(s.delay.timeMs); setVal('fx-dly-fb', s.delay.feedback); setVal('fx-dly-ping', s.delay.ping); setVal('fx-dly-spread', s.delay.spread || 0); }
-      if (s.dist) { setVal('fx-dist-amt', s.dist.amount); setVal('fx-dist-mix', s.dist.mix); }
+      if (s.dist) { setVal('fx-dist-amt', s.dist.amount); setVal('fx-dist-focus', s.dist.focus); setVal('fx-dist-tone', s.dist.tone); setVal('fx-dist-mix', s.dist.mix); }
       if (s.chorus) { setVal('fx-cho-mix', s.chorus.mix); setVal('fx-cho-depth', s.chorus.depth); setVal('fx-cho-rate', s.chorus.rate); }
       if (s.phaser) { setVal('fx-pha-mix', s.phaser.mix); setVal('fx-pha-depth', s.phaser.depth); setVal('fx-pha-rate', s.phaser.rate); }
       if (s.autopan) { setVal('fx-apan-mix', s.autopan.mix); setVal('fx-apan-depth', s.autopan.depth); setVal('fx-apan-rate', s.autopan.rate); }
@@ -20812,7 +21620,7 @@
       drone: { label: 'Drone', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
-        ['sub', 'Progression', 'When an Area progression is set: the drone plays voicings of the current chord.'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
+        ['sub', 'Progression', 'When an Area progression is set: PEDAL (default) holds ONE note per progression cycle, auto-chosen to work across every chord — the card explains the pick, and Note overrides it. VOICINGS re-voices the current chord instead (Subdivide/Feel/Variety).'], ['dronepedal'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
         ..._AMB_MIX] },
@@ -21316,6 +22124,9 @@
       if (k === 'notes') return _ambNotesButtonHtml(p);
       if (k === 'droneedit') return _ambDroneEditHtml(p);
       if (k === 'chordmode') return '<div class="ambient-ctrl"><label for="' + p + '-chordmode">Chords</label><select id="' + p + '-chordmode" class="ambient-select"><option value="chaos">Chaos</option><option value="chords">Chords</option><option value="chordsplus">Chords+</option><option value="monk">Monk</option></select><span class="ambient-hint">chord source</span></div>';
+      if (k === 'dronepedal') return _ambSeg('Prog', 'progMode', [['pedal', '♩ Pedal note'], ['voice', '⇶ Voicings']], 'one note / cycle ↔ chord voicings', (inst && inst.progMode) === 'voice' ? 'voice' : 'pedal', 'Pedal = ONE sustained note per progression cycle, chosen to work across every chord (see the note line below; override with Note). Voicings = the previous behaviour: re-voice the current chord per sub-slot.') +
+        '<div class="ambient-ctrl"><label for="' + p + '-prognote" title="The pedal pitch. Auto picks the best common tone across the cycle&#39;s chords; choose a note to override it — the line below explains how YOUR note sits in each chord.">Note</label><select id="' + p + '-prognote" class="ambient-select"><option value="">Auto (best fit)</option>' + CHROMATIC.map((n2, i) => '<option value="' + i + '">' + n2 + '</option>').join('') + '</select><span class="ambient-hint">pedal pitch</span></div>' +
+        '<div class="ambient-hint ambient-pedal-info" id="' + p + '-pedalinfo" aria-live="polite"></div>';
       if (k === 'progfeel') return _ambSeg('Feel', 'progFeel', [['even', 'Even'], ['stochastic', 'Stochastic']], 'placement', (inst && inst.progFeel) || 'even', 'How the per-area-chord voicings are placed: Even = equal sub-slots, variants cycle in order; Stochastic = random onset timing + random variant (seeded, so a Loop replays it).');
       if (k === 'choke') return '<div class="ambient-ctrl"><label for="' + p + '-choke">Choke</label><select id="' + p + '-choke" class="ambient-select"><option value="0">Off (overlap)</option><option value="1">At boundary</option></select><span class="ambient-hint">release each chord by the next unit</span></div>';
       if (k === 'toneseq') return '<div class="ambient-ctrl ambient-toneseq-ctrl"><label title="Tone cycle — schedule Instrument Tone changes on the bar clock: e.g. 4 bars Sawtooth, then 4 bars Sine, repeating. Each note picks the step active at its onset; a blank tone = the layer\'s default voice.">Tone cycle</label><span class="ambient-toneseq-box" id="' + p + '-toneseq">' + _ambToneSeqBoxHtml(inst) + '</span></div>';
@@ -21679,6 +22490,31 @@
           else if (k === 'choke') { const e = el('choke'); if (e) { e.value = inst.choke ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.choke = (e.value === '1'); sync(); persist(); } }); } }
           else if (k === 'tight') { const e = el('tight'); if (e) { e.value = (inst.tight | 0) ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.tight = (e.value === '1') ? 1 : 0; sync(); persist(); } }); } }
           else if (k === 'progfeel') { const e = el('progfeel'); if (e) { e.value = inst.progFeel || 'even'; e.addEventListener('change', () => { const L = get(); if (L) { L.progFeel = (e.value === 'stochastic') ? 'stochastic' : 'even'; sync(); persist(); } }); } }
+          else if (k === 'dronepedal') {
+            const sel = el('prognote'), info = el('pedalinfo');
+            const refresh = () => {
+              if (!info) return;
+              try {
+                const cfg2 = E.getCfg();
+                const L2 = get();
+                const on = !!(cfg2 && cfg2.prog && cfg2.prog.on && Array.isArray(cfg2.prog.chords) && cfg2.prog.chords.length);
+                info.textContent = (on && L2 && L2.progMode !== 'voice')
+                  ? _ambDronePedalText(cfg2, cfg2.prog.chords, Number.isFinite(L2.progNote) ? L2.progNote : null)
+                  : (on ? '' : 'No area progression — the drone plays its Source (pedal engages when a progression is on).');
+              } catch (e2) {}
+            };
+            if (info) info._pedalRefresh = refresh;   // the progMode seg (delegated handler) re-runs it
+            if (sel) {
+              sel.value = Number.isFinite(inst.progNote) ? String(inst.progNote | 0) : '';
+              sel.addEventListener('change', () => {
+                const L2 = get(); if (!L2) return;
+                if (sel.value === '') delete L2.progNote; else L2.progNote = Math.max(0, Math.min(11, parseInt(sel.value, 10) | 0));
+                if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (e2) {} }
+                refresh(); sync(); persist();
+              });
+            }
+            refresh();
+          }
           else if (k === 'hold') { const e = el('hold'); if (e) { e.value = (inst.hold != null && Number.isFinite(inst.hold)) ? String(inst.hold) : ''; e.addEventListener('change', () => { const L = get(); if (L) { const v = parseFloat(e.value); if (Number.isFinite(v) && v > 0) L.hold = v; else delete L.hold; sync(); persist(); } }); } }
           else if (k === 'rhythmseed') { const e = el('rhythmseed'); if (e) { e.value = inst.rhythmSeed || 'fill'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === 'euclid') L.rhythmSeed = 'euclid'; else delete L.rhythmSeed; sync(); persist(); } }); } }
           else if (k === 'pitchseed') { const e = el('pitchseed'); if (e) { e.value = inst.pitchSeed || 'random'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === 'low') L.pitchSeed = 'low'; else delete L.pitchSeed; sync(); persist(); } }); } }
@@ -21735,14 +22571,14 @@
       });
       { const sy = el('mod-sync'); if (sy) sy.addEventListener('change', () => { _E = E; const L = get(); if (!L || !L.mod) return; L.mod.sync = sy.value; sync(); persist(); }); }
       const bindFx = (suf, setter) => { const e = el('fx-' + suf); if (!e) return; const v = el('fx-' + suf + '-v'); e.addEventListener('input', () => { const L = get(); if (!L) return; const val = parseInt(e.value, 10) || 0; setter(L, val); if (v && /time/.test(suf)) v.textContent = _ambFmtMs(val); sync(); persist(); }); };
-      bindFx('rev', (q, v) => { q.revSend = v; }); bindFx('dly-mix', (q, v) => { q.delay.mix = v; }); bindFx('dly-time', (q, v) => { q.delay.timeMs = v; }); bindFx('dly-fb', (q, v) => { q.delay.feedback = v; }); bindFx('dly-ping', (q, v) => { q.delay.ping = v; }); bindFx('dly-spread', (q, v) => { q.delay.spread = v; }); bindFx('dist-amt', (q, v) => { q.dist.amount = v; }); bindFx('dist-mix', (q, v) => { q.dist.mix = v; }); bindFx('cho-mix', (q, v) => { q.chorus.mix = v; }); bindFx('cho-depth', (q, v) => { q.chorus.depth = v; }); bindFx('cho-rate', (q, v) => { q.chorus.rate = v; }); bindFx('pha-mix', (q, v) => { q.phaser.mix = v; }); bindFx('pha-depth', (q, v) => { q.phaser.depth = v; }); bindFx('pha-rate', (q, v) => { q.phaser.rate = v; }); bindFx('apan-mix', (q, v) => { q.autopan.mix = v; }); bindFx('apan-depth', (q, v) => { q.autopan.depth = v; }); bindFx('apan-rate', (q, v) => { q.autopan.rate = v; });
+      bindFx('rev', (q, v) => { q.revSend = v; }); bindFx('dly-mix', (q, v) => { q.delay.mix = v; }); bindFx('dly-time', (q, v) => { q.delay.timeMs = v; }); bindFx('dly-fb', (q, v) => { q.delay.feedback = v; }); bindFx('dly-ping', (q, v) => { q.delay.ping = v; }); bindFx('dly-spread', (q, v) => { q.delay.spread = v; }); bindFx('dist-amt', (q, v) => { q.dist.amount = v; }); bindFx('dist-focus', (q, v) => { q.dist.focus = v; }); bindFx('dist-tone', (q, v) => { q.dist.tone = v; }); bindFx('dist-mix', (q, v) => { q.dist.mix = v; }); bindFx('cho-mix', (q, v) => { q.chorus.mix = v; }); bindFx('cho-depth', (q, v) => { q.chorus.depth = v; }); bindFx('cho-rate', (q, v) => { q.chorus.rate = v; }); bindFx('pha-mix', (q, v) => { q.phaser.mix = v; }); bindFx('pha-depth', (q, v) => { q.phaser.depth = v; }); bindFx('pha-rate', (q, v) => { q.phaser.rate = v; }); bindFx('apan-mix', (q, v) => { q.autopan.mix = v; }); bindFx('apan-depth', (q, v) => { q.autopan.depth = v; }); bindFx('apan-rate', (q, v) => { q.autopan.rate = v; });
       _ambWireTg(E, el, get, persist);
       _ambWireFilter(E, el, get, type + ':' + id, persist);
       ['vca', 'vco', 'vcf'].forEach(t => { if (inst.mod && inst.mod[t]) { setVal('mod-' + t + '-depth', inst.mod[t].depth); setVal('mod-' + t + '-rate', inst.mod[t].rate); _ambSyncModShapeEl(el, inst.mod[t], t); } });
       setVal('mod-sync', (inst.mod && inst.mod.sync === 'sync') ? 'sync' : 'free');
       setVal('fx-rev', inst.revSend);
       if (inst.delay) { setVal('fx-dly-mix', inst.delay.mix); setVal('fx-dly-time', inst.delay.timeMs); const dt = el('fx-dly-time-v'); if (dt) dt.textContent = _ambFmtMs(inst.delay.timeMs); setVal('fx-dly-fb', inst.delay.feedback); setVal('fx-dly-ping', inst.delay.ping); setVal('fx-dly-spread', inst.delay.spread || 0); }
-      if (inst.dist) { setVal('fx-dist-amt', inst.dist.amount); setVal('fx-dist-mix', inst.dist.mix); }
+      if (inst.dist) { setVal('fx-dist-amt', inst.dist.amount); setVal('fx-dist-focus', inst.dist.focus); setVal('fx-dist-tone', inst.dist.tone); setVal('fx-dist-mix', inst.dist.mix); }
       if (inst.chorus) { setVal('fx-cho-mix', inst.chorus.mix); setVal('fx-cho-depth', inst.chorus.depth); setVal('fx-cho-rate', inst.chorus.rate); }
       if (inst.phaser) { setVal('fx-pha-mix', inst.phaser.mix); setVal('fx-pha-depth', inst.phaser.depth); setVal('fx-pha-rate', inst.phaser.rate); }
       if (inst.autopan) { setVal('fx-apan-mix', inst.autopan.mix); setVal('fx-apan-depth', inst.autopan.depth); setVal('fx-apan-rate', inst.autopan.rate); }
@@ -22701,7 +23537,7 @@
     // Per-layer FX params are rampable too. They live nested (delay.*, dist.*)
     // and need a live node push (handled in _ambRampResolve). Append to every
     // layer type except the global group.
-    const _AMB_FX_RAMP = [['revSend','Reverb send',0,100],['cutoff','Filter cutoff',0,100],['reso','Filter reso',0,100],['delay.mix','Delay mix',0,100],['delay.timeMs','Delay time (ms)',1,1000],['delay.feedback','Delay feedback',0,95],['dist.mix','Distortion mix',0,100],['dist.amount','Distortion drive',0,100],['chorus.mix','Chorus mix',0,100],['chorus.depth','Chorus depth',0,100],['chorus.rate','Chorus rate',0,100],['phaser.mix','Phaser mix',0,100],['phaser.depth','Phaser depth',0,100],['phaser.rate','Phaser rate',0,100],['autopan.mix','Auto-pan mix',0,100],['autopan.depth','Auto-pan depth',0,100],['autopan.rate','Auto-pan rate',0,100]];
+    const _AMB_FX_RAMP = [['revSend','Reverb send',0,100],['cutoff','Filter cutoff',0,100],['reso','Filter reso',0,100],['delay.mix','Delay mix',0,100],['delay.timeMs','Delay time (ms)',1,1000],['delay.feedback','Delay feedback',0,95],['dist.mix','Distortion mix',0,100],['dist.amount','Distortion drive',0,100],['dist.tone','Distortion tone',0,100],['dist.focus','Distortion focus',0,100],['chorus.mix','Chorus mix',0,100],['chorus.depth','Chorus depth',0,100],['chorus.rate','Chorus rate',0,100],['phaser.mix','Phaser mix',0,100],['phaser.depth','Phaser depth',0,100],['phaser.rate','Phaser rate',0,100],['autopan.mix','Auto-pan mix',0,100],['autopan.depth','Auto-pan depth',0,100],['autopan.rate','Auto-pan rate',0,100]];
     // Stereo (the Spread/Pan fader, stored in `space`) is rampable on every layer.
     // Range spans the full Pan field (-100..100); in Spread mode the engine reads
     // the magnitude, so the positive half (0..100) is the spread amount.
@@ -23126,9 +23962,13 @@
           '<label>A<input type="number" id="' + p + 'a" class="ambient-ramp-num" min="0" max="100" value="' + r.a + '"><span class="ambient-hint" id="' + p + 'a-u">%</span></label>' +
           '<label>B<input type="number" id="' + p + 'b" class="ambient-ramp-num" min="0" max="100" value="' + r.b + '"><span class="ambient-hint" id="' + p + 'b-u">%</span></label>' +
           '<label>Period<input type="number" id="' + p + 'period" class="ambient-ramp-num" min="' + (r.syncBars ? '0.125' : '50') + '" step="' + (r.syncBars ? '0.25' : '50') + '" value="' + (r.syncBars ? (Number.isFinite(r.periodBars) ? r.periodBars : 4) : r.periodMs) + '"><button type="button" id="' + p + 'periodunit" class="ambient-ramp-unit" title="Toggle the ramp period between milliseconds and bars (synced to tempo; fractional allowed)">' + (r.syncBars ? 'bars' : 'ms') + '</button></label>' +
+          '<label>Wave<select id="' + p + 'wave" class="ambient-select ambient-ramp-wave">' + waveOpts + (seqWaveOpts ? '<optgroup label="Sequence">' + seqWaveOpts + '</optgroup>' : '') + '</select></label>' +
+        '</div>' +
+        // Hold controls on their own row — the ramp pauses at the "at" value
+        // for the Hold duration each cycle (separate from the A/B/Period shape).
+        '<div class="ambient-ramp-hold">' +
           '<label title="Hold the ramp at the “at” value for this long each cycle. 0 = no hold. Uses the same unit as Period.">Hold<input type="number" id="' + p + 'hold" class="ambient-ramp-num" min="0" step="' + (r.syncBars ? '0.25' : '100') + '" value="' + (r.syncBars ? (Number.isFinite(r.holdBars) ? r.holdBars : 0) : (r.holdMs | 0)) + '"><span class="ambient-hint ambient-ramp-holdu">' + (r.syncBars ? 'bars' : 'ms') + '</span></label>' +
           '<label title="The value to hold at (in the target’s unit for a single target, else percent). The ramp sweeps up, pauses here, then continues.">at<input type="number" id="' + p + 'holdval" class="ambient-ramp-num" min="0" max="100" value="' + r.holdVal + '"><span class="ambient-hint" id="' + p + 'holdval-u">%</span></label>' +
-          '<label>Wave<select id="' + p + 'wave" class="ambient-select ambient-ramp-wave">' + waveOpts + (seqWaveOpts ? '<optgroup label="Sequence">' + seqWaveOpts + '</optgroup>' : '') + '</select></label>' +
         '</div>' +
         seqRowHtml +
       '</div>';
@@ -23730,7 +24570,7 @@
         const L = cfg[layer]; if (!L) return;
         set('ambient-' + layer + '-fx-rev', L.revSend);
         if (L.delay) { set('ambient-' + layer + '-fx-dly-mix', L.delay.mix); set('ambient-' + layer + '-fx-dly-time', L.delay.timeMs); hint('ambient-' + layer + '-fx-dly-time-v', _ambFmtMs(L.delay.timeMs)); set('ambient-' + layer + '-fx-dly-fb', L.delay.feedback); set('ambient-' + layer + '-fx-dly-ping', L.delay.ping); set('ambient-' + layer + '-fx-dly-spread', L.delay.spread || 0); }
-        if (L.dist) { set('ambient-' + layer + '-fx-dist-amt', L.dist.amount); set('ambient-' + layer + '-fx-dist-mix', L.dist.mix); }
+        if (L.dist) { set('ambient-' + layer + '-fx-dist-amt', L.dist.amount); set('ambient-' + layer + '-fx-dist-focus', L.dist.focus); set('ambient-' + layer + '-fx-dist-tone', L.dist.tone); set('ambient-' + layer + '-fx-dist-mix', L.dist.mix); }
         if (L.chorus) { set('ambient-' + layer + '-fx-cho-mix', L.chorus.mix); set('ambient-' + layer + '-fx-cho-depth', L.chorus.depth); set('ambient-' + layer + '-fx-cho-rate', L.chorus.rate); }
         if (L.phaser) { set('ambient-' + layer + '-fx-pha-mix', L.phaser.mix); set('ambient-' + layer + '-fx-pha-depth', L.phaser.depth); set('ambient-' + layer + '-fx-pha-rate', L.phaser.rate); }
         if (L.autopan) { set('ambient-' + layer + '-fx-apan-mix', L.autopan.mix); set('ambient-' + layer + '-fx-apan-depth', L.autopan.depth); set('ambient-' + layer + '-fx-apan-rate', L.autopan.rate); }
@@ -24240,6 +25080,16 @@
           });
           scBody.addEventListener('click', (ev) => {
             _E = E;
+            // UNIT block → the Edit Unit Schedule popover (the per-unit step gate).
+            // Only blocks carrying data-ui are gateable: merge-mode (chord-locked)
+            // blocks are voicings of varying width, not a repeating unit.
+            const ublk = ev.target.closest('.ambient-sched-blk[data-ui]');
+            if (ublk) {
+              const t = _schedLayer(ublk); if (!t || !t.L) return;
+              const ui = parseInt(ublk.getAttribute('data-ui'), 10) | 0;
+              try { _ambUnitGateModal(E, t.key, ui, () => _ambRenderScheduler(E)); } catch (e) {}
+              return;
+            }
             // Tuple chips: ✕ removes the selected step; a chip click selects it;
             // ＋ appends a copy of the selected step (converting single → list).
             const tux = ev.target.closest('.tux');
@@ -24550,6 +25400,50 @@
         const kk = eb.dataset.kokey;
         _E = E;
         try { _ambOpenProgEditor(E, { scope: 'layer', getLayer: () => _koLayer(kk), after: () => _koApply(kk) }); } catch (err) { console.warn('Layer prog edit failed', err); }
+      });
+      // Header level DIAL — vertical drag to set the layer level. Delegated on the
+      // host (headers re-render); the drag lifecycle binds to the captured knob so
+      // it keeps tracking even if the pointer leaves it. touch-action:none on the
+      // knob (CSS) keeps a vertical drag from scrolling the page on mobile.
+      host.addEventListener('pointerdown', (e) => {
+        const d = e.target && e.target.closest && e.target.closest('.ambient-level-dial');
+        if (!d) return;
+        e.preventDefault(); e.stopPropagation();
+        _E = E;
+        const key = d.dataset.levelkey;
+        const L = _ambLayerByKey(E, key); if (!L) return;
+        const startY = e.clientY;
+        const startVal = Number.isFinite(L.level) ? L.level : 70;
+        try { d.setPointerCapture(e.pointerId); } catch (x) {}
+        const move = (ev) => { _ambSetLayerLevel(E, key, startVal + (startY - ev.clientY) * 0.6); };   // drag up = louder, 0.6 %/px
+        const up = () => {
+          d.removeEventListener('pointermove', move);
+          d.removeEventListener('pointerup', up);
+          d.removeEventListener('pointercancel', up);
+          try { d.releasePointerCapture(e.pointerId); } catch (x) {}
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        };
+        d.addEventListener('pointermove', move);
+        d.addEventListener('pointerup', up);
+        d.addEventListener('pointercancel', up);
+      });
+      // Double-tap the dial to reset to the default level (70).
+      host.addEventListener('dblclick', (e) => {
+        const d = e.target && e.target.closest && e.target.closest('.ambient-level-dial');
+        if (!d) return; e.stopPropagation(); _E = E;
+        _ambSetLayerLevel(E, d.dataset.levelkey, 70, true);
+      });
+      // Keyboard nudge when the dial is focused (↑/↓ or ←/→; Shift = ×10).
+      host.addEventListener('keydown', (e) => {
+        const d = e.target && e.target.closest && e.target.closest('.ambient-level-dial');
+        if (!d) return;
+        let delta = 0;
+        if (e.key === 'ArrowUp' || e.key === 'ArrowRight') delta = e.shiftKey ? 10 : 1;
+        else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') delta = e.shiftKey ? -10 : -1;
+        else return;
+        e.preventDefault(); _E = E;
+        const L = _ambLayerByKey(E, d.dataset.levelkey); if (!L) return;
+        _ambSetLayerLevel(E, d.dataset.levelkey, (Number.isFinite(L.level) ? L.level : 70) + delta, true);
       });
       // Per-layer Freeze button — one delegated handler (buttons get rebuilt as
       // dynamic layers re-render; data-fkey carries the layer key).
@@ -25224,6 +26118,8 @@
         fxBind('dly-fb', (lc, v) => { lc.delay.feedback = v; });
         fxBind('dly-ping', (lc, v) => { lc.delay.ping = v; });
         fxBind('dist-amt', (lc, v) => { lc.dist.amount = v; });
+        fxBind('dist-focus', (lc, v) => { lc.dist.focus = v; });
+        fxBind('dist-tone', (lc, v) => { lc.dist.tone = v; });
         fxBind('dist-mix', (lc, v) => { lc.dist.mix = v; });
         fxBind('cho-mix', (lc, v) => { lc.chorus.mix = v; });
         fxBind('cho-depth', (lc, v) => { lc.chorus.depth = v; });
@@ -25814,6 +26710,13 @@
             lc[field] = btn.getAttribute('data-val');
             row.querySelectorAll('.ambient-seg-opt').forEach(b => b.classList.toggle('active', b === btn));
             if (field === 'home') { try { _ambSyncControls(E); } catch (e) {} }   // Home shifts the seed preview
+            // Drone Prog mode (Pedal ↔ Voicings): a MODE flip mid-play must drop the
+            // scheduled-ahead notes of the OLD mode (a pedal hold can span many bars)
+            // and refresh the explanation line under the Note picker.
+            if (field === 'progMode') {
+              if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} }
+              try { const inf = btn.closest('.ambient-layer').querySelector('.ambient-pedal-info'); if (inf && inf._pedalRefresh) inf._pedalRefresh(); } catch (e) {}
+            }
             if (typeof persistWorkspace === 'function') persistWorkspace();
           });
           // Dry Kill (per-FX) + Wet Only (layer) checkboxes — ONE delegated change

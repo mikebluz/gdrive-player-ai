@@ -3522,6 +3522,18 @@
         // notes only, so live grid presses during the render still play.
         if (window._ambSilentCapture) return;
       }
+      // UNIT SCHEDULE (Bloom per-layer step gate, 'skip' mode): drop a note whose
+      // ONSET lands in an off slice of its layer's unit. Deliberately AFTER the
+      // capture tee above — the capture keeps the whole phrase, so the gate is a
+      // PLAYBACK filter and stays live-editable on a frozen Write/Bar-Lock loop
+      // without forcing a rewrite. _ambEmitKey is stamped by that tee (both live
+      // emits and _ambReplayFrozen set the sink), so it names the right layer.
+      // RNG-neutral: the generative draws already happened in the emitter, and
+      // the invariant harness stubs playNote so it never sees this gate.
+      if (typeof window !== 'undefined' && window._ambEmitKey && Number.isFinite(startTime)
+          && typeof window._ambUnitGateSkip === 'function') {
+        try { if (window._ambUnitGateSkip(window._ambEmitKey, startTime)) return; } catch (e) {}
+      }
       // Cold-start guard: if the AudioContext hasn't actually resumed yet
       // (very first gesture race — the gesture's resume() is async, the
       // synchronous call into playNote loses), kick the resume now and

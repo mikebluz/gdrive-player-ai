@@ -64,9 +64,45 @@ gain), grain playback (sample slicing), and offline render→WAV→bank.
   the layer **Wet only** toggle drives to 0 — muting the dry/in-line output while the
   parallel reverb send rings. Per-FX **Dry kill** (Delay/Chorus/Phaser/Dist/Auto-Pan)
   forces that FX fully wet (`_wet01`); with ≥1 in-line FX, Wet only forces them all
-  wet=1 so the chain carries no dry. **Pitch echo** gained a **Spread** (pans echoes
+  wet=1 so the chain carries no dry — **except Distortion, which Wet only leaves at
+  its own Mix** (a waveshaper adds no tail, and its curve is a level normalizer, so
+  forcing it wet made a quiet layer jump to full loudness — see the gotcha in
+  CLAUDE.md). A dist-only layer therefore takes the `strip_mainout` mute path.
+  **Pitch echo** gained a **Spread** (pans echoes
   alternately L/R). All default off/0 → CORE_REV 11, golden 75/75 WITHOUT re-baseline.
-  Node fallback honors Dry Kill / Wet-only-via-wet=1; delay Spread is core-only.
+  Node fallback honors Dry Kill / Wet-only-via-wet=1 and now has its own `main`
+  output gain (`e.mainOut`, lazily built) so it mutes the dry like the core does;
+  delay Spread is core-only.
+- **Unit Schedule** (per-layer, scheduler-level): tapping a unit block in a layer's
+  ⏱ Scheduler lane opens **Edit Unit Schedule** — the unit is cut into 2–64 equal
+  slices (the popover names the musical value: "16 slices of a 2-bar unit = 1/8
+  notes") and each slice toggles on/off. Gates are stored PER UNIT and repeat
+  (`slots[i % period]`, period seeded from what the lane draws); **Apply to →
+  all / every 2nd / 1:3 / 1:4** propagates the pattern, growing the period to an
+  exact multiple. Two modes: **skip** drops note ONSETS in the off slices (sustains
+  ring out — a playback filter applied after the capture, so it stays editable live
+  on a frozen Write loop) and **chop** silences the layer's output across them
+  (cutting sustains). Chop rides core param 5 / a node gain via one scheduler, both
+  post-levelGain so the reverb send rings through the hole. Distinct from the
+  **Trance Gate**, which is bar-synced and always an audio chop; this one is
+  unit-synced and per-unit. `layer.unitGate`, absent by default → harness untouched.
+
+- **Distortion tone stack** (Tier A): `strip_dist` gained **Focus** (0–100, 0 =
+  off) — a pre-shaper high-pass sweeping 30 Hz → 600 Hz, so the low end stays out
+  of the drive and chords keep their definition instead of turning to mud — and
+  **Tone** (0–100, 50 = flat) — a post-shaper tilt, below 50 a lowpass down to
+  400 Hz (dark), above 50 a highpass up to 2 kHz (bright). Both are Butterworth
+  (Q −3 dB) and, crucially, act on the **wet path only**: at a partial Mix the dry
+  lows sit untouched under a filtered dirty top (measured — Focus 100 cuts 100 Hz
+  by 31.7 dB at Mix 100 but only 4.7 dB at Mix 40, and 0 dB at Mix 0). Coefficients
+  are computed in `strip_dist`, not per block — unlike the vcf, nothing modulates
+  them. `dist.tone` / `dist.focus`; UI sliders between Drive and Mix. The two new
+  ABI args are **i32, deliberately**: a missing wasm argument coerces to 0 for an
+  integer but NaN for a float, so any caller still on the 5-arg signature keeps
+  rendering the neutral path. CORE_REV 12; golden 75/75 unchanged + 5 NEW sections
+  pinning the filtered paths. Core-only — the node fallback can't do wet-only
+  filtering without a parallel dry/wet split (Tone.Distortion mixes dry
+  internally), and Bloom's exports capture the live core output.
 - **Distortion flavors** (Tier A — the first core-DSP addition): `strip_dist`
   gains a `dist_mode` — Classic (the original curve, default, golden-covered
   byte-identical) · Overdrive (warm tanh) · Fuzz (asymmetric clip + crossover

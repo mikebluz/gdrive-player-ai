@@ -191,6 +191,19 @@ CHORD-LOCK BRIDGE: a chord-locked phrase on a yoked layer now resolves its chord
 from the source's sounding notes (same `{root,intervals}` shape → the borrow +
 Smooth/Preserve/Reset re-voicing machinery works unchanged) — composed parts comp
 a live generative source.
+*Section-bound parts landed (2026-07-26):* `cfg.sections[i].part` = an index into
+`prog.parts`, so a SECTION selects which sub-progression plays — verse changes vs
+chorus changes, the arrangement level driving harmony. While that section runs the
+chord clock walks only that part's slice, looping, anchored at the section's start
+(the part restarts from its top each time the section comes round); a part that
+doesn't divide the section evenly is cut at the boundary. Absent = the whole
+progression (today). Implemented as a gated early branch in `_ambProgStepAt`, so the
+unbound path — and the invariant harness — is byte-identical. UI: the section
+block's tap menu grows a "♭ Harmony" group listing the parts; a bound block shows
+the part name and a teal tint. The Scheduler chord lane draws the same walk.
+Closes the loop between `prog.parts` (which named sub-progressions but bound to
+nothing) and `cfg.sections` (which gated layers but carried no harmony).
+
 - **Cascades** workspace → area → layer; **overridable** at any level (override
   cascades down automatically). A layer defaults to its area's frame, which defaults
   to the workspace's.

@@ -21,7 +21,8 @@
 //!   sub-quantum); the render-quantum penalty lands on the FEEDBACK edge,
 //!   which delivers one-quantum-old data (measured — see the QUANTUM note).
 //! - Distortion: y = (3+k)·x·(20π/180)/(π+k|x|), k = amount·100, input
-//!   clamped to ±1, 0 inside |x|<0.001.
+//!   clamped to ±1, 0 inside |x|<0.001. The Focus/Tone stack is an ADDITION
+//!   (no Tone counterpart) and sits on the wet path only — see `strip_dist`.
 //! - Chorus: L/R delays (3.5 ms) LFO-modulated ±3.5·depth ms, LFO phases
 //!   0°/180° (spread 180), same-channel feedback 0.15.
 //! - Phaser: 10 series allpass biquads per channel, freq swept linearly
@@ -199,6 +200,13 @@ pub(crate) struct Strip {
     level: Ramp,
     gate: Ramp,
     rev: Ramp,
+    /// Unit-schedule chop gate (host param 5) — a plain output multiplier the
+    /// host schedules against the layer's UNIT grid, alongside the bar-synced
+    /// trance gate. 1.0 = neutral, and nothing writes it unless a layer runs a
+    /// unit schedule in 'chop' mode, so x*1.0 keeps every existing render
+    /// bit-identical. Applied with tg_val (post send-tap) so a chopped slice
+    /// still feeds the reverb — the wash rings through the hole.
+    ug: Ramp,
     pan: Ramp,
     pan_mod: SMod,
     // stereo WIDTH (side-gain multiplier, live-morphable): in spread mode the
@@ -226,6 +234,25 @@ pub(crate) struct Strip {
     dist_mode: u32,
     crush_cnt: [f32; 2],
     crush_hold: [f32; 2],
+    // Distortion TONE STACK — both neutral-off, so a strip that never sets them
+    // (or a 5-arg caller: a missing i32 arg coerces to 0) is byte-identical.
+    // `foc` = a PRE-shaper high-pass: how much low end reaches the drive. Bass
+    // into a waveshaper is what turns a chord to mud, so cutting it first is the
+    // single most useful control on a distortion.
+    // `tn` = a POST-shaper tilt: < 0 lowpass (dark, tames fizz), > 0 highpass
+    // (bright, thins).
+    // BOTH RUN ON THE WET PATH ONLY. The dry half of the Mix crossfade is
+    // untouched, which is the whole point of a partial Mix — clean lows sitting
+    // under a filtered dirty top. Coefficients are computed in strip_dist (they
+    // only change when the host pushes), unlike the vcf's per-block recompute.
+    dist_foc_on: bool,
+    dist_foc_b: [f32; 3],
+    dist_foc_a: [f32; 2],
+    dist_foc_s: [[f32; 2]; 2],
+    dist_tn_on: bool,
+    dist_tn_b: [f32; 3],
+    dist_tn_a: [f32; 2],
+    dist_tn_s: [[f32; 2]; 2],
     fx_order: [u8; 5],
     cho_on: bool,
     cho_wet: f32,
@@ -273,6 +300,7 @@ pub(crate) const STRIP0: Strip = Strip {
     level: Ramp::at(1.0),
     gate: Ramp::at(1.0),
     rev: Ramp::at(0.0),
+    ug: Ramp::at(1.0),
     pan: Ramp::at(0.0),
     pan_mod: SMOD0,
     width: Ramp::at(1.0),
@@ -290,6 +318,14 @@ pub(crate) const STRIP0: Strip = Strip {
     dist_mode: 0,
     crush_cnt: [0.0; 2],
     crush_hold: [0.0; 2],
+    dist_foc_on: false,
+    dist_foc_b: [0.0; 3],
+    dist_foc_a: [0.0; 2],
+    dist_foc_s: [[0.0; 2]; 2],
+    dist_tn_on: false,
+    dist_tn_b: [0.0; 3],
+    dist_tn_a: [0.0; 2],
+    dist_tn_s: [[0.0; 2]; 2],
     cho_on: false,
     cho_wet: 0.0,
     cho_depth: 0.5,
@@ -420,12 +456,23 @@ fn fx_dist(buf: &mut [[f32; BLOCK]; 2], st: &mut Strip, frames: usize) {
         let hold = 1.0 + k * 0.11;
         for (ci, ch) in buf.iter_mut().enumerate() {
             for x in ch.iter_mut().take(frames) {
+                let dry = *x;
+                let xin = if st.dist_foc_on {
+                    df2t(dry, &st.dist_foc_b, &st.dist_foc_a, &mut st.dist_foc_s[ci])
+                } else {
+                    dry
+                };
                 st.crush_cnt[ci] += 1.0;
                 if st.crush_cnt[ci] >= hold {
                     st.crush_cnt[ci] -= hold;
-                    st.crush_hold[ci] = (x.clamp(-1.0, 1.0) * lv).floor() / lv;
+                    st.crush_hold[ci] = (xin.clamp(-1.0, 1.0) * lv).floor() / lv;
                 }
-                *x = *x * cd + st.crush_hold[ci] * cw;
+                let y = if st.dist_tn_on {
+                    df2t(st.crush_hold[ci], &st.dist_tn_b, &st.dist_tn_a, &mut st.dist_tn_s[ci])
+                } else {
+                    st.crush_hold[ci]
+                };
+                *x = dry * cd + y * cw;
             }
         }
         return;
@@ -433,9 +480,16 @@ fn fx_dist(buf: &mut [[f32; BLOCK]; 2], st: &mut Strip, frames: usize) {
     let scale = 20.0 * PI / 180.0;
     let mode = st.dist_mode;
     let tanhf = |v: f32| { let e = (2.0 * v).exp(); (e - 1.0) / (e + 1.0) };
-    for ch in buf.iter_mut() {
+    for (ci, ch) in buf.iter_mut().enumerate() {
         for x in ch.iter_mut().take(frames) {
-            let xc = x.clamp(-1.0, 1.0);
+            let dry = *x;
+            // Focus: high-pass the signal ON ITS WAY INTO the shaper only.
+            let xin = if st.dist_foc_on {
+                df2t(dry, &st.dist_foc_b, &st.dist_foc_a, &mut st.dist_foc_s[ci])
+            } else {
+                dry
+            };
+            let xc = xin.clamp(-1.0, 1.0);
             let y = match mode {
                 1 => {
                     let g = 1.0 + k * 0.12;
@@ -459,7 +513,13 @@ fn fx_dist(buf: &mut [[f32; BLOCK]; 2], st: &mut Strip, frames: usize) {
                     if xc.abs() < 0.001 { 0.0 } else { (3.0 + k) * xc * scale / (PI + k * xc.abs()) }
                 }
             };
-            *x = *x * cd + y * cw;
+            // Tone: tilt the SHAPED signal before it meets the dry.
+            let y = if st.dist_tn_on {
+                df2t(y, &st.dist_tn_b, &st.dist_tn_a, &mut st.dist_tn_s[ci])
+            } else {
+                y
+            };
+            *x = dry * cd + y * cw;
         }
     }
 }
@@ -675,8 +735,8 @@ pub(crate) fn process_strips(t_block: f64, frames: usize) {
                 let lv1 = st.level.value(te);
                 let rv0 = st.rev.value(tc);
                 let rv1 = st.rev.value(te);
-                let cut0 = tg_val(st, tc) * st.gate.value(tc);
-                let cut1 = tg_val(st, te) * st.gate.value(te);
+                let cut0 = tg_val(st, tc) * st.gate.value(tc) * st.ug.value(tc);
+                let cut1 = tg_val(st, te) * st.gate.value(te) * st.ug.value(te);
                 let inv = 1.0 / n as f32;
                 for ch in 0..2 {
                     let mut k = 0.0f32;
@@ -800,6 +860,7 @@ pub extern "C" fn strip_setv(slot: u32, which: u32, v: f32) {
             1 => &mut st.level,
             2 => &mut st.rev,
             4 => &mut st.width,
+            5 => &mut st.ug,
             _ => &mut st.pan,
         };
         *r = Ramp::at(v);
@@ -817,6 +878,7 @@ pub extern "C" fn strip_rampv(slot: u32, which: u32, t: f64, from: f32, target: 
             1 => &mut st.level,
             2 => &mut st.rev,
             4 => &mut st.width,
+            5 => &mut st.ug,
             _ => &mut st.pan,
         };
         let v0 = if from < -1.0e5 { r.value(t) } else { from };
@@ -926,14 +988,46 @@ pub extern "C" fn strip_fxorder(slot: u32, a: u32, b: u32, c: u32, d: u32, e: u3
     }
 }
 
+/// `tilt` (−100..100, 0 neutral) and `focus` (0..100, 0 neutral) are the tone
+/// stack — see the Strip fields. They are i32 ON PURPOSE: the JS→wasm coercion
+/// turns a MISSING argument into 0 for an integer (but NaN for a float), so a
+/// caller still on the old 5-arg signature keeps rendering the neutral, golden-
+/// covered path instead of poisoning the buffer.
 #[no_mangle]
-pub extern "C" fn strip_dist(slot: u32, on: u32, amount: f32, wet: f32, mode: u32) {
+pub extern "C" fn strip_dist(slot: u32, on: u32, amount: f32, wet: f32, mode: u32, tilt: i32, focus: i32) {
     unsafe {
         let st = &mut STRIPS[(slot as usize) % SLOTS];
         st.dist_on = on != 0;
         st.dist_k = amount.clamp(0.0, 1.0) * 100.0;
         st.dist_wet = wet.clamp(0.0, 1.0);
         st.dist_mode = mode % 5;   // 0 classic · 1 overdrive · 2 fuzz · 3 fold · 4 crush
+        let sr = SR;
+        // Focus: 30 Hz … 600 Hz high-pass, logarithmic. Q −3 dB = Butterworth
+        // (0.707) — a tone control wants a gentle slope, not a resonant peak.
+        let f = focus.clamp(0, 100);
+        let was_foc = st.dist_foc_on;
+        st.dist_foc_on = f > 0;
+        if st.dist_foc_on {
+            let (b, a) = nat_hp(30.0 * 20f32.powf(f as f32 / 100.0), -3.0, sr);
+            st.dist_foc_b = b;
+            st.dist_foc_a = a;
+            if !was_foc { st.dist_foc_s = [[0.0; 2]; 2]; }   // stale state would ring on re-engage
+        }
+        // Tone: below 0 a lowpass sweeping 20 kHz → 400 Hz (dark), above 0 a
+        // highpass sweeping 20 Hz → 2 kHz (bright). Exactly 0 bypasses.
+        let t = tilt.clamp(-100, 100);
+        let was_tn = st.dist_tn_on;
+        st.dist_tn_on = t != 0;
+        if st.dist_tn_on {
+            let (b, a) = if t < 0 {
+                nat_lp(400.0 * 50f32.powf(1.0 + t as f32 / 100.0), -3.0, sr)
+            } else {
+                nat_hp(20.0 * 100f32.powf(t as f32 / 100.0), -3.0, sr)
+            };
+            st.dist_tn_b = b;
+            st.dist_tn_a = a;
+            if !was_tn { st.dist_tn_s = [[0.0; 2]; 2]; }
+        }
     }
 }
 

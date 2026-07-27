@@ -257,6 +257,18 @@ const SECTIONS = {
   }] },
   // EQ3 bands −12/+6/−6 dB on noise (broadband makes crossovers visible)
   'strip-eq': { s: 1.2, ev: [...EN(0), N(0, 8, { p0: 0, dur: 1.0 }), S(0, 'strip_eq', 0, -12, 6, -6)] },
+  // unit-schedule chop gate (host param 5) — a plain output multiplier the host
+  // schedules against the layer's UNIT grid, independent of the trance gate.
+  // Neutral at 1.0, which is why every other section is unaffected by it.
+  'strip-unitgate': { s: 1.4, ev: [...EN(0), N(0, 13, { p0: 2, dur: 1.2 }),
+    S(0.00, 'strip_setv', 0, 5, 1),
+    S(0.30, 'strip_rampv', 0, 5, 0.30, 1, 0, 0.004),
+    S(0.60, 'strip_rampv', 0, 5, 0.60, 0, 1, 0.004),
+    S(0.90, 'strip_rampv', 0, 5, 0.90, 1, 0, 0.004)] },
+  // …and stacked with the trance gate (both multiply into the same output gain).
+  'strip-unitgate-tg': { s: 1.4, ev: [...EN(0), N(0, 13, { p0: 2, dur: 1.2 }),
+    S(0, 'strip_tg', 0, 1, 8, 0b10110101, 0, 1.0, 0.006, 0.0, 1.0),
+    S(0.40, 'strip_rampv', 0, 5, 0.40, 1, 0, 0.004)] },
   // trance gate: 8 steps/bar, pattern 10110101, full depth, 6 ms edges
   'strip-tg': { s: 1.6, ev: [...EN(0), N(0, 13, { p0: 2, dur: 1.4 }),
     S(0, 'strip_tg', 0, 1, 8, 0b10110101, 0, 1.0, 0.006, 0.0, 1.0)] },
@@ -265,6 +277,16 @@ const SECTIONS = {
     S(0, 'strip_setv', 0, 2, 0.6), S(0, 'strip_setv', 0, 1, 0.8)] },
   // FX, one at a time on a saw
   'strip-fx-dist':     { s: 1.2, ev: [...EN(0), N(0, 13, { p0: 2, dur: 1.0 }), S(0, 'strip_dist', 0, 1, 0.6, 0.8)] },
+  // Distortion TONE STACK (args 6/7 = tilt −100..100, focus 0..100). Both are
+  // 0 = neutral+bypassed, which is why the line above — still on the old 5-arg
+  // call — stays bit-identical. These pin the filtered paths.
+  'strip-fx-dist-dark':  { s: 1.2, ev: [...EN(0), N(0, 13, { p0: 2, dur: 1.0 }), S(0, 'strip_dist', 0, 1, 0.6, 0.8, 0, -70, 0)] },
+  'strip-fx-dist-brite': { s: 1.2, ev: [...EN(0), N(0, 13, { p0: 2, dur: 1.0 }), S(0, 'strip_dist', 0, 1, 0.6, 0.8, 0, 70, 0)] },
+  'strip-fx-dist-focus': { s: 1.2, ev: [...EN(0), N(0, 13, { p0: 2, dur: 1.0 }), S(0, 'strip_dist', 0, 1, 0.6, 0.8, 0, 0, 80)] },
+  // …on the wet path ONLY: at a partial Mix the dry must survive the filters.
+  'strip-fx-dist-tonemix': { s: 1.2, ev: [...EN(0), N(0, 13, { p0: 2, dur: 1.0 }), S(0, 'strip_dist', 0, 1, 0.6, 0.4, 0, -80, 60)] },
+  // …and on a non-classic flavor (the crush path has its own loop).
+  'strip-fx-dist-crushtone': { s: 1.2, ev: [...EN(0), N(0, 13, { p0: 2, dur: 1.0 }), S(0, 'strip_dist', 0, 1, 0.5, 0.9, 4, -50, 40)] },
   'strip-fx-chorus':   { s: 1.4, ev: [...EN(0), N(0, 13, { p0: 2, dur: 1.2 }), S(0, 'strip_chorus', 0, 1, 0.7, 0.7, 1.5)] },
   'strip-fx-phaser':   { s: 1.4, ev: [...EN(0), N(0, 13, { p0: 2, dur: 1.2 }), S(0, 'strip_phaser', 0, 1, 0.8, 3, 0.9)] },
   'strip-fx-delay':    { s: 1.6, ev: [...EN(0), N(0, 0, { dur: 0.15 }), S(0, 'strip_delay', 0, 1, 0, 0.5, 0.25, 0.4)] },

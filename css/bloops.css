@@ -3397,6 +3397,36 @@
     .ambient-sched-blk.chgrp-a { box-shadow: inset 0 -3px 0 rgba(79,209,197,0.16); }
     .ambient-sched-blk.chgrp-b { box-shadow: inset 0 -3px 0 rgba(79,209,197,0.34); }
     .ambient-sched-blk.chgrp-start { border-left: 2px solid rgba(79,209,197,0.65); }
+    /* UNIT SCHEDULE — the per-unit on/off step gate painted INSIDE its block, so
+       the strip shows which slices of that unit play. A flex row of equal cells
+       (one per slice) laid over the fill; `off` cells knock the fill out. Pointer
+       events pass through to the block, which owns the click that opens the
+       editor. `min-width:0` on the cells so a 64-slice grid never widens the row. */
+    .ambient-sched-blk { position: relative; }
+    .ambient-sched-blk[data-ui] { cursor: pointer; }
+    @media (hover: hover) { .ambient-sched-blk[data-ui]:hover { box-shadow: inset 0 0 0 1px rgba(246,173,85,0.8); } }
+    .ambient-sched-ug { position: absolute; inset: 0; display: flex; pointer-events: none; }
+    .ambient-sched-ug > i { flex: 1 1 0; min-width: 0; }
+    .ambient-sched-ug > i.off { background: rgba(10,12,24,0.82); box-shadow: inset 0 0 0 1px rgba(10,12,24,0.5); }
+    .ambient-sched-blk.ugated { border-top: 2px solid rgba(246,173,85,0.7); }
+
+    /* ---- Edit Unit Schedule popover ---- */
+    .ambient-ug-modal { max-width: 460px; width: min(92vw, 460px); }
+    .ambient-ug-sub { font: 600 0.7rem 'Segoe UI', sans-serif; color: #8b7aa8; padding: 0 2px 8px; }
+    .ambient-ug-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+    /* Slice grid: a fixed column count so a 64-slice pattern WRAPS onto more rows
+       instead of shrinking the cells below a tap target (the euclid-grid rule). */
+    .ambient-slice-grid.ambient-ug-grid { display: grid; grid-template-columns: repeat(var(--ugcols, 16), minmax(0, 1fr)); gap: 3px; }
+    .ambient-ug-grid .ambient-slice-cell { min-width: 0; width: auto; height: 30px; padding: 0; overflow: hidden; text-align: center; touch-action: manipulation; }
+    .ambient-ug-grid .ambient-slice-cell.q { border-color: #4a4a68; }
+    .ambient-ug-grid .ambient-slice-cell.on { border-color: #5e9ead; color: #9fe0ef; background: rgba(94,158,173,0.28); }
+    .ambient-ug-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .ambient-ug-actions .ambient-seg { touch-action: manipulation; min-height: 30px; }
+    /* .ambient-hint is nowrap by default — this one is a sentence, so let it wrap
+       rather than widen the modal (no horizontal scrolling, ever). */
+    .ambient-ug-note { line-height: 1.4; white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+    .ambient-ug-mode { display: inline-flex; gap: 2px; flex: 1 1 auto; min-width: 0; }
+    .ambient-ug-mode .ambient-seg { flex: 1 1 0; min-width: 0; touch-action: manipulation; }
     .ambient-sched-blk.chgrp-a.playing, .ambient-sched-blk.chgrp-b.playing { box-shadow: inset 0 0 0 1px rgba(79,209,197,0.7), inset 0 -3px 0 rgba(79,209,197,0.5); }
     /* Merge-repeats toggle. */
     .ambient-sched-mergebtn { flex: 0 0 auto; font-size: 0.66rem; padding: 3px 8px; white-space: nowrap; }
@@ -3510,7 +3540,9 @@
     .ambient-ramp-head .ambient-ramp-target { flex: 1 1 auto; min-width: 0; }
     .ambient-ramp-head .ambient-seq-del { margin-left: 0; }
     .ambient-ramp-params { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-    .ambient-ramp-params > label {
+    .ambient-ramp-hold { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 6px; }
+    .ambient-ramp-params > label,
+    .ambient-ramp-hold > label {
       display: flex; align-items: center; gap: 5px;
       color: #8a8aa8; font-family: 'Segoe UI', sans-serif; font-size: 0.78rem; font-weight: 700;
     }
@@ -3996,13 +4028,32 @@
     /* Per-layer Solo button (in the layer head) — pushes the right-hand
        button group (Solo / Freeze / delete / collapse) over. */
     .ambient-solo-btn {
-      margin-left: auto; flex: 0 0 auto;
+      margin-left: 6px; flex: 0 0 auto;
       padding: 2px 8px; border: 1px solid #2d2d3f; border-radius: 12px;
       background: transparent; color: #d6bcfa; font-family: 'Segoe UI', sans-serif;
       font-size: 0.72rem; font-weight: 700; cursor: pointer; transition: all 0.15s ease;
     }
     @media (hover: hover) { .ambient-solo-btn:hover { border-color: #9f7aea; color: #e9d8fd; } }
     .ambient-solo-btn.soloed { color: #1a202c; background: #f6e05e; border-color: #f6e05e; }
+    /* Header level shortcut DIAL — compact rotary knob. It carries the right-push
+       (margin-left:auto) that Solo used to own, so the [dial · Solo] cluster stays
+       together at the far right; the dial always precedes Solo (both need a key). */
+    .ambient-level-dial {
+      margin-left: auto; flex: 0 0 auto; box-sizing: border-box;
+      width: 20px; height: 20px; border-radius: 50%; position: relative;
+      background: radial-gradient(circle at 50% 35%, #23233c, #10101c);
+      border: 1px solid #2d2d3f; cursor: ns-resize; touch-action: none;
+      display: inline-flex; align-items: center; justify-content: center;
+      transition: border-color 0.15s ease;
+    }
+    @media (hover: hover) { .ambient-level-dial:hover { border-color: #9f7aea; } }
+    .ambient-level-dial:focus-visible { outline: 2px solid #9f7aea; outline-offset: 1px; }
+    .ambient-level-dial-ind {
+      position: absolute; top: 2px; left: 50%; width: 2px; height: 7px;
+      background: #9f7aea; border-radius: 1px; pointer-events: none;
+      transform-origin: 50% 8px;
+      transform: translateX(-50%) rotate(calc((var(--lvl, 70) - 50) * 2.7deg));
+    }
     /* Per-layer Rename ✎ button — sits just right of the name, before the
        auto-margin pushes Solo/Freeze/✕ to the far right. */
     .ambient-rename-btn {
@@ -11956,6 +12007,13 @@
 .ambient-sched-secblk { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; height: 18px; font: 600 0.62rem 'Segoe UI', sans-serif; color: #cfd4ff; background: rgba(110, 120, 255, 0.14); border: 1px solid rgba(110, 120, 255, 0.35); border-radius: 3px; overflow: hidden; white-space: nowrap; cursor: pointer; font-style: normal; }
 .ambient-sched-secblk.cyc { border-left-width: 2px; border-left-color: rgba(110, 120, 255, 0.8); }
 .ambient-sched-secblk:hover { background: rgba(110, 120, 255, 0.28); }
+/* A section bound to a progression PART — its changes are that part's, looping
+   from the top each time the section comes round. Teal = the harmony colour used
+   by the chord lane / chord-group tints, so the two lanes read as one system.
+   The name clips (min-width:0) rather than widening the block. */
+.ambient-sched-secblk.harm { border-color: rgba(79, 209, 197, 0.55); background: rgba(79, 209, 197, 0.13); }
+.ambient-sched-secblk.harm:hover { background: rgba(79, 209, 197, 0.24); }
+.ambient-sched-secblk .secpart { margin-left: 4px; font-weight: 600; color: #7fd6c4; opacity: 0.95; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ambient-sched-addsec { font-size: 0.62rem; padding: 1px 7px; }
 
 /* Matrix "now playing" column + section lane playing block */

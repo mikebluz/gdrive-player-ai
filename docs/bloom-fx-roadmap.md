@@ -51,6 +51,19 @@ gain), grain playback (sample slicing), and offline render→WAV→bank.
   the loop — each repeat re-saturated (tanh), darkened (4.2 kHz LP), and
   wobbled — which the stock FeedbackDelay can't do. Off starves the loop so
   the tail rings out. `globalFx.tape*`; UI On/Mix/Time/Feedback/Wobble.
+- **Per-cycle harmony variance + tension ramp** (generative): `prog.vary` (0-100)
+  re-rolls the same same-function substitutions EVERY CYCLE, so the changes keep
+  evolving while you listen (🎲 take fixes one realization; 🌊 vary moves), and
+  `prog.tension` (0-100) adds colour extensions (♭7 → 9th → 11th) progressively
+  across the cycle, resetting at the top — harmony tightens toward the turnaround.
+  Both resolve at read time (the authored progression is untouched), both are
+  deterministic, both 0 = byte-identical.
+- **Progression authoring** (Tier none — pure UI): **⌨ Numerals** types the changes
+  in the current key (`_ambParseRomanProg`, the exact inverse of `_ambPeRoman`, so
+  render → text → parse round-trips); **♺ Reharm** applies the substitutions ONCE,
+  WRITTEN into the chords (undoable, unlike vary/reroll); **🔍 Key** detects the key
+  the chords imply (`_ambDetectKey` — scores every root × scale, out-of-key notes
+  weighted −2, first/last chords double) and offers it rather than applying it.
 - **Harmony take-reroll** (generative): `cfg.prog.reroll` (0-100) = the chance each
   chord is swapped for a SAME-FUNCTION substitute when 🎲 New take rolls — relative
   minor/major, mediant, up-a-fourth, or a 7th/9th colour. Derived from the take seed,

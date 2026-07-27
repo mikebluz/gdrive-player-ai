@@ -4174,6 +4174,60 @@
       let sym = dim ? '°' : (aug ? '+' : ''); if (has(10)) sym += '7'; else if (has(11)) sym += 'maj7';
       return acc + num + sym;
     }
+    // ---- DETECT KEY -----------------------------------------------------------
+    // Which (root, scale) best fits a progression's pitch classes. Scores every
+    // root × the common scales: a chord pc inside the scale is +1, outside is −2
+    // (an out-of-key note is far more diagnostic than an in-key one), with the
+    // progression's FIRST and LAST chord roots weighted — those carry tonality
+    // far more than the middle. Ties break toward the first chord's root.
+    function _ambDetectKey(chords) {
+      const list = (chords || []).filter(c => c && Number.isFinite(c.root));
+      if (!list.length) return null;
+      const NAMES = ['major', 'minor', 'dorian', 'mixolydian', 'lydian', 'phrygian', 'harmonicMinor'];
+      const scales = NAMES.filter(n => typeof SCALES !== 'undefined' && SCALES[n]);
+      if (!scales.length) return null;
+      const pcs = [];
+      list.forEach((c, i) => {
+        const w = (i === 0 || i === list.length - 1) ? 2 : 1;
+        const r = (((c.root | 0) % 12) + 12) % 12;
+        (c.intervals || [0, 4, 7]).forEach(iv => pcs.push({ pc: (((r + iv) % 12) + 12) % 12, w }));
+        pcs.push({ pc: r, w: w * 2 });        // roots count double — they define the region
+      });
+      let best = null;
+      for (let root = 0; root < 12; root++) {
+        scales.forEach(sn => {
+          const iv = SCALES[sn];
+          let score = 0;
+          pcs.forEach(x => { score += (iv.indexOf((((x.pc - root) % 12) + 12) % 12) >= 0 ? 1 : -2) * x.w; });
+          // The tonic actually being the first chord's root is strong evidence.
+          if (root === ((((list[0].root | 0) % 12) + 12) % 12)) score += 3;
+          if (!best || score > best.score) best = { root, scale: sn, score };
+        });
+      }
+      return best;
+    }
+    // ---- REHARMONIZE ----------------------------------------------------------
+    // Apply the substitution candidates ONCE, WRITTEN into the chords — unlike
+    // 🎲 take / 🌊 vary, which resolve at read time and leave the source intact.
+    // This is a destructive authoring action, so it returns a fresh array for the
+    // caller to snapshot/undo around rather than mutating in place.
+    function _ambReharmonize(cfg, chords, amount, seedSalt) {
+      const amt = Math.max(0, Math.min(100, amount | 0));
+      const src = (chords || []);
+      const seed = ((cfg && cfg.seed | 0) || 1) ^ ((seedSalt | 0) >>> 0);
+      const out = [], changed = [];
+      src.forEach((ch, i) => {
+        const cands = _ambProgTakeCandidates(cfg, ch);
+        const rnd = _ambSeededRand(((((i | 0) + 1) * 2654435761) ^ ((seed * 2246822519) >>> 0) ^ 0x51E3) >>> 0);
+        if (!cands.length || rnd() * 100 >= amt) { out.push(_ambCloneChord(ch)); return; }
+        const pick = cands[Math.floor(rnd() * cands.length) % cands.length];
+        const c2 = _ambCloneChord(ch);
+        c2.root = pick.root; c2.intervals = pick.intervals.slice(); delete c2.form;
+        out.push(c2);
+        changed.push({ i, from: _ambChordShort(ch), to: _ambChordShort(c2), how: pick._label });
+      });
+      return { chords: out, changed };
+    }
     // ---- ROMAN-NUMERAL ENTRY (the inverse of _ambPeRoman) --------------------
     // Parse "ii V I" / "i bVII bVI V" / "IVmaj7 V7 iii7 vi7" into chords in the
     // CURRENT key. Case carries quality (upper = major, lower = minor), and the
@@ -25291,6 +25345,8 @@
                 '<button type="button" class="ambient-seg ambient-prog-edit" id="ambient-prog-edit" title="Edit the selected progression chord-by-chord and Save As New">Edit</button>' +
                 '<button type="button" class="ambient-seg ambient-prog-clone" id="ambient-prog-clone" title="Clone this progression into an editable copy you can mutate freely">⧉ Clone</button>' +
                 '<button type="button" class="ambient-seg ambient-prog-addpart" id="ambient-prog-addpart" title="Append another progression as a new PART — build a sequence of progressions (Verse → Chorus → …)">＋ Part</button>' +
+                '<button type="button" class="ambient-seg ambient-prog-reharm" id="ambient-prog-reharm" title="Reharmonize — rewrite the chords ONCE with same-function substitutes (relative minor/major, mediant, up-a-fourth, 7th/9th colour), staying in the key. Unlike 🎲 take / 🌊 vary this is WRITTEN into the progression, so it is a real edit (undoable).">♺ Reharm</button>' +
+                '<button type="button" class="ambient-seg ambient-prog-detectkey" id="ambient-prog-detectkey" title="Detect the key these chords imply and offer to set it. Scores every root × scale by how many chord tones fall inside, weighting the first and last chords — then you confirm before anything changes.">🔍 Key</button>' +
                 '<button type="button" class="ambient-seg ambient-prog-roman" id="ambient-prog-roman" title="Type the changes as roman numerals in the current key — e.g. “ii V I”, “i ♭VII ♭VI V”, “IVmaj7 V7 iii7 vi7”. Case sets quality (IV = major, iv = minor); ♭/♯ shift the degree; 7 / maj7 / 9 / 6 / ° / + / sus add colour. Replaces the current progression.">⌨ Numerals</button>' +
                 '<button type="button" class="ambient-seg ambient-prog-generate" id="ambient-prog-generate" title="Generate a progression — pick how many chords total and how many unique; diatonic to the current key, starting on the tonic. Press again for another roll.">⚄ Generate</button>' +
               '</span>' +
@@ -26929,6 +26985,46 @@
         if (pClone) pClone.addEventListener('click', () => { _E = E; try { _ambOpenProgEditor(E, { scope: 'area', clone: true }); } catch (e) {} });
         const pAddPart = G('ambient-prog-addpart');
         if (pAddPart) pAddPart.addEventListener('click', () => { _E = E; const r = pAddPart.getBoundingClientRect(); _ambOpenGlobalProgMenu(E, r.left, r.bottom, { append: true }); });
+        // ♺ Reharm — a real, written edit (snapshot for undo first).
+        { const pRh = G('ambient-prog-reharm');
+          if (pRh) pRh.addEventListener('click', () => {
+            _E = E; const c = E.getCfg(); if (!c || !c.prog || !Array.isArray(c.prog.chords) || !c.prog.chords.length) {
+              try { if (typeof showToast === 'function') showToast('No progression to reharmonize.'); } catch (e) {} return; }
+            let amt = null;
+            try { amt = prompt('Reharmonize — how much? (0-100: the chance each chord is substituted)', '50'); } catch (e) {}
+            if (amt == null) return;
+            const v = Math.max(0, Math.min(100, parseInt(amt, 10) || 0)); if (!v) return;
+            if (typeof snapshotForUndo === 'function') { try { snapshotForUndo('Reharmonize progression'); } catch (e) {} }
+            const salt = (c.prog.chords.length * 7919) ^ (Date.now() & 0xffff);   // a fresh roll each press
+            const r = _ambReharmonize(c, c.prog.chords, v, salt);
+            if (!r.changed.length) { try { if (typeof showToast === 'function') showToast('Reharmonize: nothing changed — try a higher amount.'); } catch (e) {} return; }
+            c.prog.chords = r.chords;
+            try { _ambRenderProgOverview(E); _ambSyncControls(E); _ambRefreshSrcChips(E); _ambRenderScheduler(E); } catch (e) {}
+            if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+            try { if (typeof showToast === 'function') showToast('Reharmonized ' + r.changed.length + ': ' + r.changed.slice(0, 3).map(x => x.from + '→' + x.to).join(' · ') + (r.changed.length > 3 ? ' …' : '')); } catch (e) {}
+          }); }
+        // 🔍 Key — detect and OFFER; never silently re-key the area.
+        { const pDk = G('ambient-prog-detectkey');
+          if (pDk) pDk.addEventListener('click', () => {
+            _E = E; const c = E.getCfg(); if (!c || !c.prog || !Array.isArray(c.prog.chords) || !c.prog.chords.length) {
+              try { if (typeof showToast === 'function') showToast('No progression to analyse.'); } catch (e) {} return; }
+            const d = _ambDetectKey(c.prog.chords);
+            if (!d) { try { if (typeof showToast === 'function') showToast('Couldn’t read a key from these chords.'); } catch (e) {} return; }
+            const nm = CHROMATIC[d.root] + ' ' + d.scale;
+            const cur = _ambKeyRootPc(c), curS = _ambKeyScaleName(c);
+            const same = (cur === d.root && curS === d.scale) && !!c.keyOn;
+            if (same) { try { if (typeof showToast === 'function') showToast('These chords are already in ' + nm + '.'); } catch (e) {} return; }
+            let ok = false;
+            try { ok = confirm('These chords look like ' + nm + '.\n\nSet the area key to it?' + (c.keyOn ? ('\n(currently ' + CHROMATIC[cur] + ' ' + curS + ')') : '\n(the area currently has no key set)')); } catch (e) {}
+            if (!ok) return;
+            if (typeof snapshotForUndo === 'function') { try { snapshotForUndo('Set key from progression'); } catch (e) {} }
+            c.keyOn = true; c.keyFollow = false; c.keyRoot = d.root; c.keyScale = d.scale;
+            try { _ambSyncControls(E); _ambRenderProgOverview(E); _ambRenderScheduler(E); } catch (e) {}
+            if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+            try { if (typeof showToast === 'function') showToast('Key set to ' + nm + '.'); } catch (e) {}
+          }); }
         // ⌨ Numerals — type the changes instead of clicking them in.
         { const pRn = G('ambient-prog-roman');
           if (pRn) pRn.addEventListener('click', () => {

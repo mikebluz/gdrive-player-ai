@@ -8735,6 +8735,49 @@
       } catch (e) {}
       return out;
     }
+    // ---- SUSTAINING VOICES (the Drone's tone list) ---------------------------
+    // A Drone holds ONE note for its whole unit — 31 s at the defaults, a whole
+    // progression cycle in pedal mode — so a voice that decays to silence just
+    // makes the layer disappear mid-hold. These are the built-ins that can't
+    // hold: `pluck` / `kick` / `metal` / `modal` are played as one-shots (their
+    // held path returns a no-op release), and `bell` / `xylo` are FM voices whose
+    // scheduled amp envelope is sustain 0. Everything else in SOUNDS honours the
+    // note ADSR; samples sustain because the drone flags them `loop: true`.
+    const _AMB_NOSUSTAIN_TONES = new Set(['bell', 'xylo', 'pluck', 'kick', 'metal', 'modal']);
+    function _ambToneSustains(v) {
+      if (typeof v !== 'string' || !v) return true;                   // '' = the grid voice
+      if (_AMB_NOSUSTAIN_TONES.has(v)) return false;
+      if (v.indexOf('sample:') === 0 || v.indexOf('ensemble:') === 0) return true;
+      // A Design patch holds only if its amp envelope does (sustain is 0-100),
+      // and never if it's built on a one-shot base voice.
+      if (v.indexOf('user:') === 0) {
+        try {
+          const p = (typeof _resolveUserPatch === 'function') ? _resolveUserPatch(v) : null;
+          if (p) {
+            if (Number.isFinite(p.sustain) && p.sustain <= 0) return false;
+            const base = (p.osc && p.osc.type) || p.type || p.baseType;
+            if (typeof base === 'string' && _AMB_NOSUSTAIN_TONES.has(base)) return false;
+          }
+        } catch (e) {}
+      }
+      return true;
+    }
+    // The Drone's option list: sustaining voices only — but NEVER silently drop a
+    // choice a project already made. An existing decaying tone stays, flagged, so
+    // loading an old drone doesn't rewrite its sound behind the user's back.
+    function _ambSustainToneOptions(cur) {
+      const all = _ambToneOptions();
+      const out = all.filter(o => _ambToneSustains(o.value));
+      if (cur && !_ambToneSustains(cur)) {
+        const o = all.find(x => x.value === cur);
+        if (o) out.push({ value: o.value, label: o.label + ' — decays (won’t hold)' });
+      }
+      return out;
+    }
+    // Which option list a layer's Tone select should offer.
+    function _ambToneOptionsFor(type, cur) {
+      return (type === 'drone') ? _ambSustainToneOptions(cur) : _ambToneOptions();
+    }
     // Re-populate this engine's per-layer Tone dropdowns from the current voice
     // list (so newly-created ensembles / imported samples appear without a full
     // panel rebuild). Preserves each select's current value when still valid.
@@ -8744,7 +8787,9 @@
       const opts = _ambToneOptions();
       host.querySelectorAll('select[id$="-tone"]').forEach(sel => {
         const cur = sel.value;
-        populateGroupedToneSelect(sel, opts, _ambGridVoiceOption());
+        // A Drone keeps its sustaining-only list on every repopulate, or an
+        // imported sample/ensemble would quietly re-open the decaying voices.
+        populateGroupedToneSelect(sel, /-drone-\d+-tone$/.test(sel.id) ? _ambSustainToneOptions(cur) : opts, _ambGridVoiceOption());
         sel.value = cur;
         if (sel.value !== cur) sel.value = ''; // chosen voice no longer exists → Grid voice
         // Seq layers show the FIRST step's tone (not a blank Grid-voice default)
@@ -22676,7 +22721,7 @@
       sch.ctrls.forEach(c => {
         const k = c[0];
         try {
-          if (k === 'tone') { const s = el('tone'); if (s) { populateGroupedToneSelect(s, _ambToneOptions(), _ambGridVoiceOption()); s.value = inst.tone || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.tone = s.value || ''; persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } } }); } }   /* tone change lands at the layer's next unit boundary (like the sliders) */
+          if (k === 'tone') { const s = el('tone'); if (s) { populateGroupedToneSelect(s, _ambToneOptionsFor(type, inst.tone), _ambGridVoiceOption()); s.value = inst.tone || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.tone = s.value || ''; persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } } }); } }   /* tone change lands at the layer's next unit boundary (like the sliders) */
           else if (k === 'kit') { const s = el('kit'); if (s) { _ambDrumKits().forEach(kk => { const o = document.createElement('option'); o.value = kk.id; o.textContent = kk.name; s.appendChild(o); }); s.value = inst.kit || 'tr808'; s.addEventListener('change', () => { const L = get(); if (L) { L.kit = s.value || 'tr808'; persist(); try { _ambSyncSynthKit(E); } catch (e) {} } }); } }
           else if (k === 'rate') { const s = el('rate'); if (s) { s.value = inst.rate || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.rate = s.value || ''; _ambUnitSyncViz(E, p, L); sync(); persist(); } }); } }
           else if (k === 'unitmatch') { _ambWireUnitMatch(E, inst, p, get); }

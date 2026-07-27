@@ -3262,6 +3262,10 @@
     .ambient-salt-readout b { color: #cbd5e0; font-weight: 600; }
     .ambient-salt-readout i { font-style: normal; color: #9f7aea; font-weight: 600; margin-left: 1px; }
     .ambient-salt-readout .salt-next { opacity: 0.65; }
+    /* 🎲 harmony re-roll: what this take substituted. Amber (the 'generated,
+       not authored' colour used by the section key badge) and allowed to wrap. */
+    .ambient-salt-readout .salt-reroll { display: block; margin-top: 3px; color: #f6ad55; white-space: normal; overflow-wrap: anywhere; }
+    .ambient-salt-readout .salt-reroll i { font-style: normal; opacity: 0.7; }
     .ambient-salt-readout .salt-ch { padding: 0 3px; border-radius: 5px; transition: background 0.15s, color 0.15s; }
     .ambient-salt-readout .salt-ch.cur { background: rgba(159, 122, 234, 0.22); color: #e9e4f8; box-shadow: 0 0 8px rgba(159, 122, 234, 0.35); }
     /* Progression sub-section labels inside the Key/Prog pane. */

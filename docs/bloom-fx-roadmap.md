@@ -51,6 +51,13 @@ gain), grain playback (sample slicing), and offline render→WAV→bank.
   the loop — each repeat re-saturated (tanh), darkened (4.2 kHz LP), and
   wobbled — which the stock FeedbackDelay can't do. Off starves the loop so
   the tail rings out. `globalFx.tape*`; UI On/Mix/Time/Feedback/Wobble.
+- **Harmony take-reroll** (generative): `cfg.prog.reroll` (0-100) = the chance each
+  chord is swapped for a SAME-FUNCTION substitute when 🎲 New take rolls — relative
+  minor/major, mediant, up-a-fourth, or a 7th/9th colour. Derived from the take seed,
+  so a take is reproducible; resolved at read time, so the authored progression is
+  never altered (set the amount to 0 to hear it as written). Substitutions must stay
+  inside the key, or — on a keyless area — inside the progression's own note pool.
+  The 🧂 readout names what the take did. Consumes no shared-RNG draw.
 - **Chaos ramps** (generative): `wave: 'random'` on any per-layer ramp — smooth
   hash-seeded value noise (one new target per period, cosine-eased), drifts
   forever without repeating, deterministic per ramp id (Bar-Lock replays the

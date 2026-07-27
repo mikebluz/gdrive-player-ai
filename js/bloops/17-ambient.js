@@ -1823,6 +1823,12 @@
           if (!s.len && !s.colors && !s.scatter) delete prog.salt;
         }
       }
+      // 🎲 TAKE REROLL (additive): per-slot chance that New take substitutes a
+      // same-function chord. 0 / absent → key deleted, byte-identical.
+      if (prog.reroll != null) {
+        prog.reroll = Math.max(0, Math.min(100, prog.reroll | 0));
+        if (!prog.reroll) delete prog.reroll;
+      }
       // ↻ ORDER (additive): scheduled chord re-ordering. Absent / mode '' → key
       // deleted, so untouched projects stay byte-identical.
       if (prog.order != null) {
@@ -2532,6 +2538,86 @@
     let _ambProgStepOverride = null;
     // The current chord of a progression note source. Uses the per-layer override
     // when active, else the shared global step (_E.progStep, ~progRate).
+    // ---- 🎲 TAKE REROLL (harmony) -------------------------------------------
+    // Deterministic, FUNCTION-PRESERVING chord substitutions keyed on (slot, take
+    // seed). Candidates are the classic same-function swaps — a major triad can
+    // become its relative minor (I→vi) or mediant (I→iii); a minor triad its
+    // relative major (vi→I) or subdominant partner (ii→IV) — plus colour (7th/9th)
+    // on the written root. A candidate is only offered when EVERY resulting pitch
+    // class is in the key scale, so a reroll can't wander out of the key; when a
+    // key is off (chromatic) only the colour candidates apply, since "diatonic"
+    // has no meaning. `reroll` (0-100) is the per-slot chance.
+    // PURE in (slot, seed, chord, key) — no shared-RNG draw, so the note stream's
+    // draw ORDER is untouched and the invariant harness (reroll absent) is
+    // byte-identical. Never written back: the authored progression is preserved.
+    function _ambProgTakeCandidates(cfg, ch) {
+      const out = [];
+      if (!ch || !Array.isArray(ch.intervals)) return out;
+      const iv = ch.intervals.map(x => ((x % 12) + 12) % 12).sort((a, b) => a - b);
+      const root = ((ch.root | 0) % 12 + 12) % 12;
+      const isMaj = iv.indexOf(4) >= 0 && iv.indexOf(7) >= 0;
+      const isMin = iv.indexOf(3) >= 0 && iv.indexOf(7) >= 0;
+      const scaleNm = _ambKeyScaleName(cfg);
+      const kIv = (scaleNm !== 'chromatic' && typeof SCALES !== 'undefined' && SCALES[scaleNm]) ? SCALES[scaleNm] : null;
+      const kRoot = _ambKeyRootPc(cfg);
+      // No key set (chromatic) → fall back to the PROGRESSION's own note pool:
+      // a substitution must use only pitch classes the progression already
+      // contains. Without this the diatonic swaps were never offered on a
+      // keyless area (the common case), leaving only colour — the feature read
+      // as "it just adds 7ths".
+      let pool = null;
+      if (!kIv) {
+        const all = (cfg && cfg.prog && Array.isArray(cfg.prog.chords)) ? cfg.prog.chords : [];
+        if (all.length) {
+          pool = new Set();
+          all.forEach(c => { const r = ((c.root | 0) % 12 + 12) % 12; (c.intervals || []).forEach(x => pool.add((((r + x) % 12) + 12) % 12)); });
+        }
+      }
+      const inKey = (pcs) => kIv ? pcs.every(p => kIv.indexOf((((p - kRoot) % 12) + 12) % 12) >= 0)
+                                 : (!pool || pcs.every(p => pool.has((((p % 12) + 12) % 12))));
+      const push = (r, ivs, label) => {
+        const pcs = ivs.map(x => (((r + x) % 12) + 12) % 12);
+        if (inKey(pcs)) out.push({ root: ((r % 12) + 12) % 12, intervals: ivs.slice(), _label: label });
+      };
+      if (kIv || pool) {
+        if (isMaj) { push((root + 9) % 12, [0, 3, 7], 'relative minor'); push((root + 4) % 12, [0, 3, 7], 'mediant'); }
+        if (isMin) { push((root + 3) % 12, [0, 4, 7], 'relative major'); push((root + 5) % 12, [0, 3, 7], 'up a fourth'); }
+      }
+      // Colour on the written root — always same-function, so it needs no key.
+      if (isMaj) { push(root, [0, 4, 7, 11], 'maj7'); push(root, [0, 4, 7, 2], 'add9'); }
+      if (isMin) { push(root, [0, 3, 7, 10], 'min7'); push(root, [0, 3, 7, 2], 'add9'); }
+      return out;
+    }
+    function _ambProgTakeSub(cfg, slot, ch) {
+      const amt = Math.max(0, Math.min(100, (cfg && cfg.prog && cfg.prog.reroll | 0)));
+      if (!amt || !ch) return null;
+      const cands = _ambProgTakeCandidates(cfg, ch);
+      if (!cands.length) return null;
+      const seed = (cfg.seed | 0) || 1;
+      const rnd = _ambSeededRand(((((slot | 0) + 1) * 2246822519) ^ ((seed * 2654435761) >>> 0) ^ 0x7A4E) >>> 0);
+      if (rnd() * 100 >= amt) return null;                  // this slot keeps the written chord
+      const pick = cands[Math.floor(rnd() * cands.length) % cands.length];
+      // Carry the written chord's own length/alt metadata; only the harmony moves.
+      const outc = { root: pick.root, intervals: pick.intervals };
+      if (Number.isFinite(ch.bars) && ch.bars > 0) outc.bars = ch.bars;
+      return outc;
+    }
+    // What THIS take did, for the readout: one entry per substituted slot.
+    function _ambProgTakePlan(cfg) {
+      const p = cfg && cfg.prog;
+      if (!p || !Array.isArray(p.chords) || !(p.reroll | 0)) return [];
+      const out = [];
+      p.chords.forEach((c, i) => {
+        const sub = _ambProgTakeSub(cfg, i, c);
+        if (!sub) return;
+        const cands = _ambProgTakeCandidates(cfg, c);
+        const m = cands.find(x => x.root === sub.root && x.intervals.join() === sub.intervals.join());
+        const from = _ambChordShort(c), to = _ambChordShort(sub), how = (m && m._label) || 'substitution';
+        // A colour keeps the root, so "C→C (add9)" reads as a no-op — show "C +add9".
+        out.push({ i, from, to, how, txt: (from === to) ? (from + ' +' + how) : (from + '→' + to + ' (' + how + ')') });
+      });
+      return out;
+    }
     function _ambProgCurrentChord(n) {
       const chs = Array.isArray(n.chords) ? n.chords : [];
       if (!chs.length) return null;
@@ -2564,6 +2650,19 @@
           pick = (((cycle % pool) + pool) % pool);   // 'cycle' — pure arithmetic, no RNG
         }
         ret = (pick === 0) ? base : (base.alts[pick - 1] || base);
+      }
+      // 🎲 TAKE REROLL — function-preserving substitutions derived from the TAKE
+      // SEED. This is the harmony counterpart of the per-layer `takeReroll` that
+      // re-rolls euclid rhythm: 🎲 New take bumps cfg.seed, so the changes
+      // re-realize — reproducibly (same take id = same harmony). Resolved at READ
+      // time and never written back, so the authored progression is preserved and
+      // reverting is just restoring the seed. Uses a DEDICATED seeded RNG keyed on
+      // (idx, seed) — never the shared _ambRand stream — so no downstream draw
+      // shifts, and it's stable across the >1 resolver calls per onset. Gated on
+      // prog.reroll > 0, so untouched projects are byte-identical.
+      if (ret && cfg0 && cfg0.prog && (cfg0.prog.reroll | 0) > 0 && n.chords === cfg0.prog.chords) {
+        const sub = _ambProgTakeSub(cfg0, ((step % len) + len) % len, ret);
+        if (sub) ret = sub;
       }
       if (!ret) return ret;
       // SALT · colors — sub-chord color variations WITHIN this chord instance.
@@ -19297,7 +19396,8 @@
       const salt = _ambProgSaltCfg(cfg);
       const p = cfg && cfg.prog;
       const ordered = !!(p && p.order && p.order.mode);   // ↻ order alone also earns the readout
-      if ((!salt && !ordered) || !p || !p.on || !Array.isArray(p.chords) || !p.chords.length) {
+      const rerolled = !!(p && (p.reroll | 0));            // 🎲 take reroll likewise
+      if ((!salt && !ordered && !rerolled) || !p || !p.on || !Array.isArray(p.chords) || !p.chords.length) {
         if (el.style.display !== 'none') { el.style.display = 'none'; el._sig = ''; }
         return;
       }
@@ -19307,7 +19407,7 @@
       const seed = cfg.seed | 0;
       const s = salt || { len: 0, colors: 0, scatter: 0 };
       const om = (p.order && p.order.mode) || '', ow = (p.order && p.order.when) || '';
-      const sig = cyc + '|' + (s.len | 0) + '|' + (s.colors | 0) + '|' + (s.scatter | 0) + '|' + om + '|' + ow + '|' + len + '|' + seed + '|' + (E.timer ? 1 : 0);
+      const sig = cyc + '|' + (s.len | 0) + '|' + (s.colors | 0) + '|' + (s.scatter | 0) + '|' + om + '|' + ow + '|' + len + '|' + seed + '|' + (p.reroll | 0) + '|' + (E.timer ? 1 : 0);
       if (force || el._sig !== sig) {
         el._sig = sig;
         const bpc = Math.max(0.01, (cfg && cfg.barsPerChord) || 1);
@@ -19326,8 +19426,20 @@
           const n = (s.colors | 0) > 0 ? _ambProgSaltSegCount(s, cyc * len + i, seed) : 1;
           return '<span class="salt-ch" data-sci="' + i + '">' + nm(chords[ci(i)]) + ' ' + _ambFmtBpc(cur[ci(i)]) + (n > 1 ? '<i title="' + n + ' segments this pass — the downbeat stays the written chord, the rest are colors of it">×' + n + '</i>' : '') + '</span>';
         }).join(' · ');
-        el.innerHTML = (salt ? '🧂 ' : '↻ ') + '<b>' + (E.timer ? 'cycle ' + (cyc + 1) : 'next play') + ':</b> ' + curTxt +
-          (nxt ? ' <span class="salt-next" title="Next cycle (played order · lengths in bars)">→ ' + chords.map((c, i) => nm(chords[ciN(i)]) + (salted ? ' ' + _ambFmtBpc(nxt[ciN(i)]) : '')).join(' · ') + '</span>' : '');
+        // 🎲 What THIS take substituted — named, so the re-roll is inspectable
+        // ("take 1f3 · C→Am (relative minor), G→Gadd9") and obviously revertible
+        // (set 🎲 take back to 0, or roll again).
+        let rerollTxt = '';
+        try {
+          if (p.reroll | 0) {
+            const plan = _ambProgTakePlan(cfg);
+            rerollTxt = ' <span class="salt-reroll" title="Harmony re-roll for this take — same-function substitutions derived from the take id. Deterministic: this take always plays these changes. The written progression is untouched; set 🎲 take to 0 to hear it as authored.">🎲 take ' +
+              ((seed >>> 0).toString(36).slice(-3)) + ': ' +
+              (plan.length ? plan.map(x => (x.from === x.to) ? (x.from + ' <i>+' + x.how + '</i>') : (x.from + '→' + x.to + ' <i>(' + x.how + ')</i>')).join(' · ') : 'as written') + '</span>';
+          }
+        } catch (e) {}
+        el.innerHTML = (salt ? '🧂 ' : ((p.reroll | 0) ? '🎲 ' : '↻ ')) + '<b>' + (E.timer ? 'cycle ' + (cyc + 1) : 'next play') + ':</b> ' + curTxt +
+          (nxt ? ' <span class="salt-next" title="Next cycle (played order · lengths in bars)">→ ' + chords.map((c, i) => nm(chords[ciN(i)]) + (salted ? ' ' + _ambFmtBpc(nxt[ciN(i)]) : '')).join(' · ') + '</span>' : '') + rerollTxt;
         el._curSci = null;   // innerHTML wiped any highlight — reapply below
         if (el.style.display === 'none') el.style.display = '';
       }
@@ -24398,7 +24510,8 @@
           if (saltRow) {
             saltRow.style.display = progOn ? '' : 'none';
             const sv = (cfg.prog && cfg.prog.salt) || {};
-            [['ambient-salt-len', sv.len | 0], ['ambient-salt-colors', sv.colors | 0], ['ambient-salt-scatter', sv.scatter | 0]].forEach(pr => {
+            [['ambient-salt-len', sv.len | 0], ['ambient-salt-colors', sv.colors | 0], ['ambient-salt-scatter', sv.scatter | 0],
+             ['ambient-prog-reroll', (cfg.prog && cfg.prog.reroll | 0) || 0]].forEach(pr => {
               const el = document.getElementById(tr(pr[0]));
               if (el && document.activeElement !== el) el.value = String(pr[1]);
             });
@@ -24784,6 +24897,7 @@
               '<span class="ambient-sched-lbl salt-lbl">🧂 salt</span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">lengths</span><input type="number" class="ambient-salt-in" id="ambient-salt-len" min="0" max="100" step="5" value="0" title="Random chord scheduling — each cycle re-slices the chord lengths (A 1¼ bars, B ½, C 1¾ …) on a 1/8-bar grid. The cycle total is preserved, so loops/Evolve stay aligned. 0 = as written, 100 = wild."></span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">colors</span><input type="number" class="ambient-salt-in" id="ambient-salt-colors" min="0" max="8" step="1" value="0" title="Chord colors per unit — splits a chord’s unit into segments: the downbeat is always the written chord, later segments become root-preserving colors of it (maj7 · add9 · 6 · maj9 · sus2 · sus4 · open 5). 0 = off, higher = more segments (max 8)."></span>' +
+              '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">🎲 take</span><input type="number" class="ambient-salt-in" id="ambient-prog-reroll" min="0" max="100" step="5" value="0" title="Harmony re-roll — the chance each chord is swapped for a SAME-FUNCTION substitute (relative minor/major, mediant, or a 7th/9th colour) when you press 🎲 New take. Only substitutions that stay in the key are offered. Deterministic: the same take id always gives the same changes, and the written progression is never altered — set it back to 0 to hear it as authored."></span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">scatter</span><input type="number" class="ambient-salt-in" id="ambient-salt-scatter" min="0" max="100" step="5" value="0" title="How unevenly the Colors count lands per chord unit — 0: every unit gets the full count; 100: most units stay plain and only the occasional unit blooms fully (stochastic, seeded — same seed replays identically)."></span>' +
             '</div>' +
             // ↻ ORDER — scheduled chord re-ordering (engine: _ambProgOrderPerm).
@@ -26420,6 +26534,17 @@
             try { _ambSaltReadoutSync(E, true); } catch (e) {}   // readout tracks the knobs live
           });
         });
+        // 🎲 Harmony re-roll amount → cfg.prog.reroll. Read per onset like salt,
+        // so a change is heard within the lookahead; the readout names what this
+        // take actually substituted.
+        { const el = G('ambient-prog-reroll');
+          if (el) el.addEventListener('input', () => {
+            _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
+            const v = Math.max(0, Math.min(100, parseInt(el.value, 10) || 0));
+            if (v) c.prog.reroll = v; else delete c.prog.reroll;
+            persist();
+            try { _ambSaltReadoutSync(E, true); } catch (e) {}
+          }); }
         // ↻ order selects → cfg.prog.order (mode '' deletes; normalize prunes).
         [['ambient-order-mode', 'mode'], ['ambient-order-when', 'when']].forEach(pr => {
           const el = G(pr[0]); if (!el) return;

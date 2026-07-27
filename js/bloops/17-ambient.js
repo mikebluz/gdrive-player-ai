@@ -5308,6 +5308,24 @@
         if (!(P > 0.02)) return;
         const tn = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
         const type = String(key).split(':')[0];
+        // DRONE: re-strike PROMPTLY instead of ringing out the current unit. Its
+        // "unit" is a long sustained hold — 32 s at the defaults (Hold 4 × Unit
+        // 8 s), and a whole progression cycle in pedal mode — so the standard
+        // "edit lands at the next unit boundary" rule meant a Tone change wasn't
+        // heard for up to half a minute, which reads as "the control does
+        // nothing" (measured: 14.7 s on a default drone). The sounding voice is
+        // killed click-free (the pad kill is a ~22 ms ramp) and the phase state
+        // is dropped so the emitter rebuilds it grid-snapped — in pedal mode the
+        // absent _pedalAt makes it take the mid-cycle catch-up path, so it comes
+        // back in on the next chord sub-slot rather than mid-bar. Only fires on
+        // `change` handlers (never per-input), so a slider drag re-strikes once.
+        if (type === 'drone') {
+          const cut = tn + 0.06;
+          try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, cut); } catch (e) {}
+          try { if (typeof stopBloomVoicesBefore === 'function') stopBloomVoicesBefore(key, cut); } catch (e) {}
+          if (E.runPhase) delete E.runPhase[key];
+          return;
+        }
         let store = { bass: 'bassPhase', run: 'runPhase', pedal: 'runPhase', drone: 'runPhase' }[type] || null;
         if (type === 'arp')  store = L.euclid ? 'runPhase' : 'arpState';
         if (type === 'beat') store = (L.gen === 'euclid') ? 'runPhase' : null;   // random beat = step mode

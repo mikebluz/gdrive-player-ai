@@ -8362,6 +8362,44 @@
       return !_ambUnitGateOpenAt(pos.L, pos.u, pos.frac);
     }
     if (typeof window !== 'undefined') window._ambUnitGateSkip = _ambUnitGateShouldSkip;
+    // ---- PHASE DIAGNOSTIC (read-only) ---------------------------------------
+    // window.__ambPhase() dumps every layer's ACTUAL phase anchor next to the
+    // shared grid, so a "layer X starts earlier" report can be settled with the
+    // engine's own numbers instead of inferred from the DOM. Touches nothing.
+    if (typeof window !== 'undefined') window.__ambPhase = function () {
+      const E = (typeof _masterEng !== 'undefined') ? _masterEng : _E;
+      if (!E) return 'no engine';
+      const cfg = E._cfg || (E.getCfg && E.getCfg());
+      if (!cfg) return 'no cfg';
+      const G = E._barGridAnchor, PS = E._playStartAt;
+      const rows = [];
+      const add = (key, L) => {
+        if (!L || L.present === false) return;
+        let P = 0; try { P = _ambLayerPeriodSec(E, key, L, cfg); } catch (e) {}
+        let psi = null; try { psi = _ambProgSyncInfo(E, key, L, cfg); } catch (e) {}
+        const stores = { runPhase: E.runPhase, bassPhase: E.bassPhase, arpState: E.arpState };
+        let store = null, startAt = null;
+        Object.keys(stores).forEach(sn => { const st = stores[sn] && stores[sn][key]; if (st && startAt == null && Number.isFinite(st.startAt)) { store = sn; startAt = st.startAt; } });
+        if (startAt == null && E.clocks && Number.isFinite(E.clocks[key])) { store = 'clocks(next)'; startAt = E.clocks[key]; }
+        // Signed offset from the shared grid, folded into (-P/2, P/2] — a raw
+        // modulo prints a near-full period (1999 ms) for what is really -1 ms.
+        let rel = null;
+        if (Number.isFinite(startAt) && Number.isFinite(G) && P > 0) {
+          let r = (((startAt - G) % P) + P) % P;
+          if (r > P / 2) r -= P;
+          rel = Math.round(r * 1000);
+        }
+        rows.push({ key, unit: (L.unit && L.unit.mode === 'sync') ? (L.unit.num + '/' + L.unit.den) : 'FREE',
+          store, P: P ? +P.toFixed(4) : null, psiSub: psi ? +psi.subUnit.toFixed(4) : null,
+          psiAnchorIsGrid: psi ? (Math.abs(psi.anchor - G) < 1e-6) : null,
+          startAt: Number.isFinite(startAt) ? +startAt.toFixed(4) : null,
+          offGridMs: rel });
+      };
+      ['bed', 'motif', 'texture', 'beat'].forEach(k => add(k, cfg[k]));
+      (cfg.extras || []).forEach(x => { if (x && x.type !== 'seq' && x.type !== 'samp') add(x.type + ':' + x.id, x); });
+      return { barGridAnchor: Number.isFinite(G) ? +G.toFixed(4) : G, playStartAt: Number.isFinite(PS) ? +PS.toFixed(4) : PS,
+        leadMs: (Number.isFinite(G) && Number.isFinite(PS)) ? Math.round((G - PS) * 1000) : null, layers: rows };
+    };
     // CHOP mode driver — pushes the CURRENT unit's mask to the audio gate (core
     // strip or node signal) and re-pushes when the unit index changes. Defined
     // later (next to the trance gate it mirrors); this forward stub keeps the

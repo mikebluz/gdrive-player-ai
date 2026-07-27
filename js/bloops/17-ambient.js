@@ -1911,6 +1911,10 @@
               // Only coerced here; the clamp against the live parts list happens at
               // READ time (_ambSectionPart) because editing chords can shrink it.
               if (Number.isFinite(x.part) && x.part >= 0) s.part = x.part | 0;
+              // KEY OFFSET (modulation): semitones the harmonic frame moves while
+              // this section runs. Absent/0 = no change (dropped, so it leaves no
+              // residue in the save).
+              if (Number.isFinite(x.key) && (x.key | 0)) s.key = Math.max(-12, Math.min(12, x.key | 0));
               return s;
             });
           if (!cfg.sections.length) delete cfg.sections;
@@ -3282,7 +3286,40 @@
       if (rot) { const N = iv.length, k = ((rot % N) + N) % N; if (k) { const base = iv[k]; return iv.map((_, i) => (((iv[(i + k) % N] - base) % 12) + 12) % 12); } }
       return iv;
     }
+    // ---- SECTION KEY OFFSET (modulation) ------------------------------------
+    // cfg.sections[i].key = semitones the whole harmonic frame moves while that
+    // section runs ("up a tone for the last chorus"). Absent/0 = no change.
+    // Applied at the ONE root chokepoint (_ambSrcRootPc, which every pitch
+    // resolves through via _ambNoteFreq), so chords, wraps, progressions, scales,
+    // chord-locked phrases and yoked layers all modulate together with no emitter
+    // changes. Resolved by the NOTE's own play time (_ambKeyTime — the same stamp
+    // the keyMaster key schedule uses), so the change lands exactly on the section
+    // boundary with no rescheduling. Returns 0 whenever there's nothing to do, so
+    // the default path is untouched and the harness (no sections) is unaffected.
+    function _ambSectionKeyOffset(E, cfg, atSec) {
+      const secs = cfg && cfg.sections;
+      if (!Array.isArray(secs) || !secs.length) return 0;
+      if (!secs.some(s => s && (s.key | 0))) return 0;   // cheap out: no section modulates
+      if (!Number.isFinite(atSec)) return 0;
+      const at = _ambSectionAt(E, atSec, cfg);
+      const s = at && secs[at.idx];
+      return s ? (s.key | 0) : 0;
+    }
+    function _ambSectionKeyNow() {
+      // _ambKeyTime is stamped per note by every emitter; fall back to the audio
+      // clock for UI reads (labels/readouts) that aren't inside a note build.
+      const E = _E; if (!E) return 0;
+      const cfg = E._cfg || (E.getCfg && E.getCfg()); if (!cfg) return 0;
+      const t = (typeof _ambKeyTime === 'number' && Number.isFinite(_ambKeyTime))
+        ? _ambKeyTime : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : NaN);
+      try { return _ambSectionKeyOffset(E, cfg, t); } catch (e) { return 0; }
+    }
     function _ambSrcRootPc(src) {
+      const _secKey = _ambSectionKeyNow();
+      if (_secKey) { const _base = _ambSrcRootPcRaw(src); return ((((_base + _secKey) % 12) + 12) % 12); }
+      return _ambSrcRootPcRaw(src);
+    }
+    function _ambSrcRootPcRaw(src) {
       const n = _ambAsNotes(src);
       const kc = _ambKeyCfg();
       const keyOn = !!(kc && kc.keyOn);
@@ -6774,7 +6811,12 @@
         const A4 = (typeof masterFreqA === 'number') ? masterFreqA : 440;
         const strike = (at, holdSec, chords) => {
           const auto = _ambDronePedalPick(chords, kRoot, kIvs);
-          const pc = (Number.isFinite(inst.progNote)) ? (((inst.progNote | 0) % 12) + 12) % 12 : auto.pc;
+          // The pedal reads cfg.prog.chords DIRECTLY (not via _ambSrcRootPc), so a
+          // section key offset has to be applied here too or the drone would hold
+          // the un-modulated note under transposed layers.
+          const _sk = _ambSectionKeyOffset(E, cfg, at);
+          const pc0 = (Number.isFinite(inst.progNote)) ? (((inst.progNote | 0) % 12) + 12) % 12 : auto.pc;
+          const pc = ((((pc0 + _sk) % 12) + 12) % 12);
           if (typeof window !== 'undefined' && window._ambPedalDebug) { try { (window.__pdbg = window.__pdbg || []).push({ at: +at.toFixed(2), pc, auto: auto.pc, holdSec: +holdSec.toFixed(2), reg, chords: chords.length, A4, f0: +(A4 * Math.pow(2, (12 * (reg + 1) + pc - 69) / 12)).toFixed(1), pn: typeof playNote }); } catch (e) {} }
           _ambKeyTime = at;
           const holdMs = Math.max(120, Math.round(holdSec * 1000 * 0.98));
@@ -13676,7 +13718,17 @@
                 if (!_ambChordGateOK(E, lyr, at, null, _ambNotesOf(lyr), true)) continue;
                 if (!_ambSectionGateOK(E, lyr, at, null, true)) continue;
               }
-              const f2 = _ambLockHarmonizeFreq(lyr, st.keyCtx, e.freq, at);
+              let f2 = _ambLockHarmonizeFreq(lyr, st.keyCtx, e.freq, at);
+              // SECTION KEY OFFSET: a frozen Write/Evolve phrase replays captured
+              // ABSOLUTE pitches, so a section modulation would pass it by — the
+              // pad would sit in the old key while the live layers moved. Shift
+              // the replayed note by the offset active at ITS OWN play time, so a
+              // looped phrase modulates with everything else and snaps back on
+              // the boundary. Gated: no section key → the exact prior value.
+              if (f2 > 0) {
+                const _sk = _ambSectionKeyOffset(E, E._cfg || (E.getCfg && E.getCfg()), at);
+                if (_sk) f2 = f2 * Math.pow(2, _sk / 12);
+              }
               let pp = e.params;
               if (_live) {
                 pp = Object.assign({}, e.params);
@@ -20549,10 +20601,14 @@
             // A section bound to a progression part shows the part name and a
             // harmony tint, so the arrangement reads at a glance.
             const _sp = _ambSectionPart(cfg, si % secs.length);
-            sBlocks += '<i class="ambient-sched-secblk' + (si % secs.length === 0 ? ' cyc' : '') + (_sp ? ' harm' : '') +
+            const _sk = (sc.key | 0);
+            const _skTxt = _sk ? ((_sk > 0 ? '+' : '') + _sk) : '';
+            sBlocks += '<i class="ambient-sched-secblk' + (si % secs.length === 0 ? ' cyc' : '') + ((_sp || _sk) ? ' harm' : '') +
               '" data-si="' + (si % secs.length) + '" style="width:' + sw.toFixed(3) + '%" title="' + esc(sc.name) + ' · ' + _ambFmtBpc(slen) + ' bars' +
               (_sp ? ' · plays “' + esc(_sp.name) + '” (' + _sp.len + ' chord' + (_sp.len === 1 ? '' : 's') + ')' : '') +
-              ' — tap to edit">' + esc(sc.name) + (_sp ? '<b class="secpart">♭' + esc(_sp.name) + '</b>' : '') + '</i>';
+              (_sk ? ' · key ' + _skTxt + ' semitone' + (Math.abs(_sk) === 1 ? '' : 's') : '') +
+              ' — tap to edit">' + esc(sc.name) + (_sp ? '<b class="secpart">♭' + esc(_sp.name) + '</b>' : '') +
+              (_sk ? '<b class="seckey">⇅' + _skTxt + '</b>' : '') + '</i>';
             sb += slen; si++;
           }
         } else {
@@ -20850,6 +20906,17 @@
             const items = [
               { label: '✎ Rename “' + sc.name + '”', fn: () => { const nm = prompt('Section name:', sc.name); if (nm != null && nm.trim()) { sc.name = nm.trim().slice(0, 12); done(); } } },
               { label: '⇔ Bars (' + _ambFmtBpc(sc.bars) + ')', fn: () => { const b2 = prompt('Section length in bars:', String(sc.bars)); const v2 = parseFloat(b2); if (Number.isFinite(v2) && v2 > 0) { sc.bars = Math.max(0.25, Math.min(64, v2)); done(); } } },
+              // MODULATION: semitones the whole harmonic frame moves during this
+              // section. Applied at the root chokepoint, so every layer follows.
+              { label: '⇅ Key (' + ((sc.key | 0) ? (((sc.key | 0) > 0 ? '+' : '') + (sc.key | 0) + ' st') : 'no change') + ')', fn: () => {
+                const k2 = prompt('Key offset for “' + sc.name + '” in semitones (0 = no change, e.g. 2 = up a tone):', String(sc.key | 0));
+                if (k2 == null) return;
+                const v3 = parseInt(k2, 10);
+                if (!Number.isFinite(v3)) return;
+                const cl = Math.max(-12, Math.min(12, v3));
+                if (cl) sc.key = cl; else delete sc.key;
+                done();
+              } },
             ];
             // HARMONY: bind this section to one PART of the area progression —
             // verse changes vs chorus changes. Only offered when a progression is

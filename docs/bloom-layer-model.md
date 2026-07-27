@@ -204,6 +204,13 @@ the part name and a teal tint. The Scheduler chord lane draws the same walk.
 Closes the loop between `prog.parts` (which named sub-progressions but bound to
 nothing) and `cfg.sections` (which gated layers but carried no harmony).
 
+*Section key offset landed (2026-07-26):* `cfg.sections[i].key` = semitones the
+harmonic frame moves while that section runs — the last-chorus modulation. Applied
+at `_ambSrcRootPc` (which every pitch resolves through) by the note's own play
+time, so all sources modulate together; frozen Write/Evolve loops transpose at
+replay, and the drone pedal shifts its own pick. Absent/0 = no change. UI: "⇅ Key"
+in the section tap menu; the block shows an amber ⇅±n badge.
+
 - **Cascades** workspace → area → layer; **overridable** at any level (override
   cascades down automatically). A layer defaults to its area's frame, which defaults
   to the workspace's.

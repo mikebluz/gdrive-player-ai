@@ -12014,6 +12014,9 @@
 .ambient-sched-secblk.harm { border-color: rgba(79, 209, 197, 0.55); background: rgba(79, 209, 197, 0.13); }
 .ambient-sched-secblk.harm:hover { background: rgba(79, 209, 197, 0.24); }
 .ambient-sched-secblk .secpart { margin-left: 4px; font-weight: 600; color: #7fd6c4; opacity: 0.95; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Section KEY OFFSET (modulation) badge — amber, distinct from the teal part
+   badge, so "which changes" and "what key" read as two different facts. */
+.ambient-sched-secblk .seckey { margin-left: 4px; font-weight: 700; color: #f6ad55; flex: 0 0 auto; }
 .ambient-sched-addsec { font-size: 0.62rem; padding: 1px 7px; }
 
 /* Matrix "now playing" column + section lane playing block */

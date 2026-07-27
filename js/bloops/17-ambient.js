@@ -6901,14 +6901,24 @@
       let st = E.runPhase[key];
       if (!st) {
         let s0 = _ambUnitGridSnap(E, key, inst, cfg, lead) + _ambDriftOffset(E, key, inst, cfg);
-        // PROG-SYNC START ALIGNMENT: a Free-unit drone used to anchor at its own
-        // lead (unsnapped), so its first onset landed BEFORE the shared bar grid
-        // the other layers snap to — the drone audibly entered EARLY. Under a
-        // progression, snap the anchor UP onto the chord sub-grid (psi.anchor +
-        // k·subUnit — the same grid its sub-slots are computed from) so it comes
-        // in with the band. At play start lead ≈ the grid anchor, so the snap is
-        // near-identity; a mid-play add waits for the next sub-slot.
-        if (_psi && s0 > _psi.anchor) s0 = _psi.anchor + Math.ceil((s0 - _psi.anchor - 1e-4) / _psi.subUnit) * _psi.subUnit;
+        // PROG-SYNC START ALIGNMENT — FREE-UNIT DRONES ONLY.
+        // A Free drone isn't snapped by _ambUnitGridSnap at all, so under a
+        // progression it anchored at its own lead and came in off the grid the
+        // rest of the band uses; pulling it onto the chord sub-grid fixes that.
+        // A UNIT-SYNCED drone must NOT go through here: _ambUnitGridSnap has
+        // already put it on the shared grid, and re-snapping against
+        // `_psi.anchor` gave it a phase origin no other layer had — psi's anchor
+        // falls back to _playStartAt when _barGridAnchor isn't pinned, and
+        // playStart precedes the grid by the first-tick lead. Measured in a user
+        // project: the drone sat at 0 ms while beat/bass/arp/bed — four separate
+        // bar branches — all agreed at +130 ms. Five layers, one outlier, and the
+        // outlier was the only one with a bespoke anchor. Anchor on the SHARED
+        // grid explicitly, never on psi's fallback.
+        const _G = E._barGridAnchor;
+        const _synced = !!(inst.unit && inst.unit.mode === 'sync');
+        if (_psi && !_synced && Number.isFinite(_G) && s0 > _G) {
+          s0 = _G + Math.ceil((s0 - _G - 1e-4) / _psi.subUnit) * _psi.subUnit;
+        }
         st = E.runPhase[key] = { startAt: s0, lastAt: null };
       }
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);

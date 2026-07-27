@@ -8381,6 +8381,14 @@
         let store = null, startAt = null;
         Object.keys(stores).forEach(sn => { const st = stores[sn] && stores[sn][key]; if (st && startAt == null && Number.isFinite(st.startAt)) { store = sn; startAt = st.startAt; } });
         if (startAt == null && E.clocks && Number.isFinite(E.clocks[key])) { store = 'clocks(next)'; startAt = E.clocks[key]; }
+        // FROZEN layers have no emitter phase state — their clock is the freeze
+        // anchor. Report it, or the dump shows null and hides the actual driver.
+        const fz = E.freeze && E.freeze[key];
+        let frozen = null;
+        if (fz && fz.frozen) {
+          frozen = { anchor: Number.isFinite(fz.anchor) ? +fz.anchor.toFixed(4) : fz.anchor, loopLen: +(fz.loopLen || 0).toFixed(4) };
+          if (startAt == null && Number.isFinite(fz.anchor)) { store = 'freeze'; startAt = fz.anchor; }
+        }
         // Signed offset from the shared grid, folded into (-P/2, P/2] — a raw
         // modulo prints a near-full period (1999 ms) for what is really -1 ms.
         let rel = null;
@@ -8390,7 +8398,7 @@
           rel = Math.round(r * 1000);
         }
         rows.push({ key, unit: (L.unit && L.unit.mode === 'sync') ? (L.unit.num + '/' + L.unit.den) : 'FREE',
-          store, P: P ? +P.toFixed(4) : null, psiSub: psi ? +psi.subUnit.toFixed(4) : null,
+          store, frozen, P: P ? +P.toFixed(4) : null, psiSub: psi ? +psi.subUnit.toFixed(4) : null,
           psiAnchorIsGrid: psi ? (Math.abs(psi.anchor - G) < 1e-6) : null,
           startAt: Number.isFinite(startAt) ? +startAt.toFixed(4) : null,
           offGridMs: rel });
@@ -13873,7 +13881,22 @@
       // the moving clock every tick, so the loop never phase-locks and the
       // phrase degrades to whichever note offsets slide through the window
       // (heard as one note repeating instead of the edited unit).
-      if (!(st.anchor > 0)) { st.anchor = now; if (!(st.scheduledUpto > now)) st.scheduledUpto = now; }
+      // …but "NOW" must be SNAPPED TO THE SHARED GRID, not the raw tick clock.
+      // Anchoring at `now` put every RESTORED loop (stop→play, reload, a
+      // seed-edit lock) a constant sub-tick offset off the grid the live layers
+      // anchor on — heard as that layer entering "a hair early" every session,
+      // with nothing wrong in its config. (Found via __ambPhase: the frozen
+      // drone had NO runPhase — the freeze replay was its clock — while four
+      // live layers sat exactly on _barGridAnchor.) Snap to the most recent
+      // grid-aligned loop start ≤ now: phase-true immediately; the first pass
+      // may join mid-phrase, which the from-clamp below already handles.
+      if (!(st.anchor > 0)) {
+        let a = now;
+        const G = E._barGridAnchor;
+        if (Number.isFinite(G) && st.loopLen > 0.05) a = G + Math.floor((now - G) / st.loopLen) * st.loopLen;
+        st.anchor = a;
+        if (!(st.scheduledUpto > now)) st.scheduledUpto = now;
+      }
       const dest = (E.mod[key] && E.mod[key].input) || E.busNode();
       let from = st.scheduledUpto;
       // Handoff GRACE: at engage, scheduledUpto = anchor = the loop boundary, but

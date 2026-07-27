@@ -13893,7 +13893,14 @@
       if (!(st.anchor > 0)) {
         let a = now;
         const G = E._barGridAnchor;
-        if (Number.isFinite(G) && st.loopLen > 0.05) a = G + Math.floor((now - G) / st.loopLen) * st.loopLen;
+        // Pre-grid (play start: the first tick's `now` PRECEDES the grid anchor
+        // by the lead), floor() would put the anchor a full loop in the past —
+        // the bar lit ~99% for a split second and the catch-up window could
+        // schedule the loop's TAIL into the pre-grid lead. The first loop simply
+        // starts AT the grid.
+        if (Number.isFinite(G) && st.loopLen > 0.05) {
+          a = (now <= G + 1e-4) ? G : G + Math.floor((now - G) / st.loopLen) * st.loopLen;
+        }
         st.anchor = a;
         if (!(st.scheduledUpto > now)) st.scheduledUpto = now;
       }
@@ -16923,8 +16930,12 @@
         let prog = 0, active = false, frozen = false, cyc = null;
         const fs = E.freeze && E.freeze[key];
         if (fs && fs.frozen && fs.loopLen > 0) {
-          frozen = true; active = true;
+          frozen = true;
           const d = now - (fs.anchor || now);
+          // Pre-anchor (a restored loop whose first pass starts AT the grid, i.e.
+          // during the play-start lead): the loop hasn't begun — an empty bar,
+          // not a modulo-wrapped ~full one flashing for the lead's duration.
+          active = d >= 0;
           if (fs._barLock) {
             // Bar-Lock loop: fill per the LAYER's own unit (per chord), consistent
             // with its generative phase — the area counter shows the whole loop.

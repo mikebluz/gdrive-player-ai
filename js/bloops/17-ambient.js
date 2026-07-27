@@ -22968,13 +22968,20 @@
             h += '<div class="amb-ce-chead"><span class="amb-ce-croot">' + esc(names[rootPc]) + (chords.length > 1 ? ' · ' + (ci + 1) : '') + '</span>' +
               '<select class="ambient-select amb-ce-form" data-ci="' + ci + '" title="Chord quality — re-spells this chord using Density notes">' + formOpts + '</select></div>';
             h += '<div class="amb-ce-slots">';
+            // Each slot is NOTE + OCTAVE side by side rather than one long list of
+            // every absolute pitch — 12 names and a handful of octaves beat a
+            // 36-entry dropdown to scroll on a phone.
+            const loOct = Math.floor(rootMidi / 12) - 1;
+            const hiOct = Math.floor((rootMidi + _AMB_DRONE_EDIT_SPAN - 1) / 12) - 1;
             slotsOf(o).forEach((iv, si) => {
-              let opts = '';
-              for (let d = 0; d < _AMB_DRONE_EDIT_SPAN; d++) {
-                const mv = rootMidi + d;
-                opts += '<option value="' + d + '"' + (iv === d ? ' selected' : '') + '>' + esc(midiName(mv)) + '</option>';
-              }
-              h += '<span class="amb-ce-slot"><i>' + (si + 1) + '</i><select class="ambient-select amb-ce-note" data-ci="' + ci + '" data-si="' + si + '">' + opts + '</select></span>';
+              const mv = rootMidi + (iv == null ? 0 : iv);
+              const curPc = ((mv % 12) + 12) % 12, curOct = Math.floor(mv / 12) - 1;
+              let nOpts = '', oOpts = '';
+              for (let pc = 0; pc < 12; pc++) nOpts += '<option value="' + pc + '"' + (pc === curPc ? ' selected' : '') + '>' + esc(names[pc]) + '</option>';
+              for (let ov = loOct; ov <= hiOct; ov++) oOpts += '<option value="' + ov + '"' + (ov === curOct ? ' selected' : '') + '>' + ov + '</option>';
+              h += '<span class="amb-ce-slot" data-ci="' + ci + '" data-si="' + si + '"><i>' + (si + 1) + '</i>' +
+                '<select class="ambient-select amb-ce-note" title="Note">' + nOpts + '</select>' +
+                '<select class="ambient-select amb-ce-oct" title="Octave">' + oOpts + '</select></span>';
             });
             h += '</div></div>';
           });
@@ -23004,11 +23011,19 @@
           persist(); render();
           if (E.timer) { try { _ambReanchorLayer(E, _ambDroneKeyOf(E, getL())); } catch (e) {} }
         }));
-        modal.querySelectorAll('.amb-ce-note').forEach(sel => sel.addEventListener('change', () => {
-          const cs = chordsNow(); const o = cs && cs[sel.getAttribute('data-ci') | 0]; if (!o) return;
+        modal.querySelectorAll('.amb-ce-note, .amb-ce-oct').forEach(sel => sel.addEventListener('change', () => {
+          const slot = sel.closest('.amb-ce-slot'); if (!slot) return;
+          const cs = chordsNow(); const o = cs && cs[slot.getAttribute('data-ci') | 0]; if (!o) return;
           _ambChordEditable(o);
+          const nS = slot.querySelector('.amb-ce-note'), oS = slot.querySelector('.amb-ce-oct');
+          const rootMidi = 12 * (regOf() + 1) + (((o.root | 0) % 12 + 12) % 12);
+          // note+octave → an absolute pitch → the interval above this chord's root.
+          // Fold by octaves into the offered span so any combination is valid.
+          let d = (12 * ((oS.value | 0) + 1) + (nS.value | 0)) - rootMidi;
+          while (d < 0) d += 12;
+          while (d >= _AMB_DRONE_EDIT_SPAN) d -= 12;
           const slots = slotsOf(o);
-          slots[sel.getAttribute('data-si') | 0] = sel.value | 0;
+          slots[slot.getAttribute('data-si') | 0] = d;
           // The slots ARE the chord now — an explicit per-slot edit makes it custom.
           o.intervals = Array.from(new Set(slots.filter(v => v != null))).sort((a, b) => a - b);
           o.muted = [];

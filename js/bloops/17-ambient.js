@@ -21014,6 +21014,16 @@
             if (pgActive) {
               const gp = _ambProgGroupAt(cfg, (b + end) * 0.5, !!layer.progMerge);
               if (gp) { const gabs = gp.cyc * gp.nGroups + gp.gi; cls += (gabs % 2 ? ' chgrp-b' : ' chgrp-a'); if (gabs !== lastGrp && naturalStart) { lastGrp = gabs; cls += ' chgrp-start'; } }
+              // MERGE REPEATS: with merge on, consecutive blocks INSIDE one chord
+              // group are voicing sub-slots of a single harmonic unit, not separate
+              // units. Dot the divider between them (the group's own outer edges
+              // stay solid) so a merged run reads as one thing. Purely visual —
+              // these blocks are still excluded from the Unit Schedule gate,
+              // because a group's sub-slots aren't a uniform repeating unit.
+              if (mergeMode && gp) {
+                const gN = _ambProgGroupAt(cfg, end + 1e-4, true);
+                if (gN && (gN.cyc * gN.nGroups + gN.gi) === (gp.cyc * gp.nGroups + gp.gi)) cls += ' submerged';
+              }
             }
             if (segs && naturalStart) {
               while (segIdx < segs.length - 1 && b >= segs[segIdx].e - 1e-6) segIdx++;

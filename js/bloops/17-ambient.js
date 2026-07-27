@@ -5781,11 +5781,29 @@
       });
       return { pc, score, ct, anchors, inKey, per };
     }
-    function _ambDronePedalPick(chords, kRoot, kIvs) {
+    // The TONIC a pedal should gravitate to: the key root, or — on a keyless
+    // (chromatic) area, where "key root" means little — the progression's own
+    // first chord, which is where it reads as home.
+    function _ambDronePedalTonic(cfg, chords) {
+      const scaleNm = _ambKeyScaleName(cfg);
+      if (scaleNm !== 'chromatic') return _ambKeyRootPc(cfg);
+      const c0 = chords && chords[0];
+      if (c0 && Number.isFinite(c0.root)) return (((c0.root | 0) % 12) + 12) % 12;
+      return _ambKeyRootPc(cfg);
+    }
+    // A DRONE IS A PEDAL: bias hard toward the tonic. +3 = worth one extra
+    // chord-tone hit, so the tonic wins every near-tie (C/F/G now holds C, the
+    // textbook I-pedal, instead of G on chord-tone count alone) — but it can
+    // still lose when it's genuinely OUTSIDE a chord, since that's -2 against a
+    // rival's +3. Deliberately not an override: a clashing tonic shouldn't win.
+    const _AMB_PEDAL_TONIC_BIAS = 3;
+    function _ambDronePedalPick(chords, kRoot, kIvs, tonicPc) {
+      const tonic = Number.isFinite(tonicPc) ? ((((tonicPc | 0) % 12) + 12) % 12) : ((((kRoot | 0) % 12) + 12) % 12);
       let best = null;
       for (let pc = 0; pc < 12; pc++) {
         const c = _ambDronePedalRoles(pc, chords, kRoot, kIvs);
-        if (pc === ((kRoot % 12) + 12) % 12) c.score += 0.25;
+        c.isTonic = (pc === tonic);
+        if (c.isTonic) c.score += _AMB_PEDAL_TONIC_BIAS;
         if (!best || c.score > best.score + 1e-9
             || (Math.abs(c.score - best.score) < 1e-9 && (c.ct > best.ct || (c.ct === best.ct && c.anchors > best.anchors)))) best = c;
       }
@@ -5799,7 +5817,8 @@
       if (!chords || !chords.length) return '';
       const kIvs = (typeof SCALES !== 'undefined' && SCALES[_ambKeyScaleName(cfg)]) || [0, 2, 4, 5, 7, 9, 11];
       const kRoot = _ambKeyRootPc(cfg);
-      const auto = _ambDronePedalPick(chords, kRoot, kIvs);
+      const tonic = _ambDronePedalTonic(cfg, chords);
+      const auto = _ambDronePedalPick(chords, kRoot, kIvs, tonic);
       const pc = Number.isFinite(pcOv) ? (((pcOv | 0) % 12) + 12) % 12 : auto.pc;
       const a = (pc === auto.pc) ? auto : _ambDronePedalRoles(pc, chords, kRoot, kIvs);
       const nm = (p) => CHROMATIC[((p % 12) + 12) % 12];
@@ -5818,7 +5837,8 @@
       // say so instead of printing "key C chromatic".
       const keyBit = (scaleNm === 'chromatic') ? ' · no key set' : ' · key ' + nm(kRoot) + ' ' + scaleNm + (a.inKey ? '' : ' (⚠ outside the key)');
       const ovBit = (Number.isFinite(pcOv) && pc !== auto.pc) ? ' · auto would pick ' + nm(auto.pc) : '';
-      return head + keyBit + ovBit;
+      const tonicBit = (pc === tonic) ? ' · tonic pedal' : '';
+      return head + tonicBit + keyBit + ovBit;
     }
     // The pedal's strike WINDOW at a time: the current progression cycle — or,
     // when the active section binds a part, that PART's cycle anchored at the
@@ -6937,7 +6957,7 @@
         const kRoot = _ambKeyRootPc(cfg);
         const A4 = (typeof masterFreqA === 'number') ? masterFreqA : 440;
         const strike = (at, holdSec, chords) => {
-          const auto = _ambDronePedalPick(chords, kRoot, kIvs);
+          const auto = _ambDronePedalPick(chords, kRoot, kIvs, _ambDronePedalTonic(cfg, chords));
           // The pedal reads cfg.prog.chords DIRECTLY (not via _ambSrcRootPc), so a
           // section key offset has to be applied here too or the drone would hold
           // the un-modulated note under transposed layers.

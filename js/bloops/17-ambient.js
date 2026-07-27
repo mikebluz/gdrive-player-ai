@@ -21922,7 +21922,14 @@
       // continuously as a pad. Pick a chord Notes source to hold a whole chord.
       if (type === 'drone') return Object.assign(base, {
         tone: '', notes: { type: 'scale', scale: '' }, register: 3, degree: 1, density: 1,
-        intervalMs: 8000, hold: 4, attack: 200, decay: 0, sustain: 100, release: 1500,
+        // Attack 2000 (was 200) to MATCH THE BED. Onsets are already sample-
+        // aligned, but a 0.2 s attack against the bed's 2 s swell is heard ~1.8 s
+        // early — which reads as "the drone starts before everything else". A
+        // drone holds one note for ~32 s; arriving in 200 ms was abrupt for the
+        // slowest layer in the rig. Defaults only touch NEW layers, and the
+        // invariant harness hashes [at,freq,durMs,voice,pan,level] — not attack —
+        // so this is harness-neutral.
+        intervalMs: 8000, hold: 4, attack: 2000, decay: 0, sustain: 100, release: 1500,
         timeVary: 0, pitchVary: 0, accent: 0, progSubdiv: 1, progFeel: 'even', voiceVariety: 0,
       });
       return base;

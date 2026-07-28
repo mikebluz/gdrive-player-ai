@@ -26103,6 +26103,10 @@
         if (keySub) keySub.style.display = keyOn ? '' : 'none';
         const progSub = document.getElementById(tr('ambient-prog-sub'));
         if (progSub) progSub.style.display = progOn ? '' : 'none';
+        // The picker moved out of #ambient-prog-sub onto the on/off row, so it
+        // carries its own visibility now.
+        { const pk = document.getElementById(tr('ambient-prog-pick'));
+          if (pk) pk.style.display = progOn ? '' : 'none'; }
         // Progression subsection: the pick/edit/clone/part row shows when Progression
         // is on; else the "turn Progression on" hint.
         { const progOff = document.getElementById(tr('ambient-progsec-off'));
@@ -26502,8 +26506,11 @@
             '<div class="ambient-mod-sub ambient-progsec-lbl">Progression</div>' +
             '<div class="ambient-row ambient-prog-row">' +
               '<button type="button" class="ambient-seg ambient-prog-onoff" id="ambient-prog-onoff" title="Progression — when ON, every layer follows a shared chord progression (the per-layer Notes chip is read-only while on). Combine with Key above for a progression diatonic to that key.">Progression</button>' +
-              '<span class="ambient-prog-sub" id="ambient-prog-sub">' +
-                '<button type="button" class="ambient-select ambient-prog-pick" id="ambient-prog-pick" title="Pick a chord progression for all layers">— pick —</button>' +
+              // The SEED picker sits with the on/off button — together they answer
+              // "is a progression on, and which one". The action buttons wrap to
+              // their own line below (see .ambient-prog-actions).
+              '<button type="button" class="ambient-select ambient-prog-pick" id="ambient-prog-pick" title="Pick a chord progression for all layers">— pick —</button>' +
+              '<span class="ambient-prog-sub ambient-prog-actions" id="ambient-prog-sub">' +
                 '<button type="button" class="ambient-seg ambient-prog-edit" id="ambient-prog-edit" title="Edit the selected progression chord-by-chord and Save As New">Edit</button>' +
                 '<button type="button" class="ambient-seg ambient-prog-clone" id="ambient-prog-clone" title="Clone this progression into an editable copy you can mutate freely">⧉ Clone</button>' +
                 '<button type="button" class="ambient-seg ambient-prog-addpart" id="ambient-prog-addpart" title="Append another progression as a new PART — build a sequence of progressions (Verse → Chorus → …)">＋ Part</button>' +

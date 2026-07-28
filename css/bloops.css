@@ -3257,6 +3257,12 @@
        margin-left:auto (two autos would split the space and float the hint). */
     .ambient-progsec .ambient-progsec-hint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ambient-progsec .ambient-prog-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    /* Row 1 is "is it on, and which one": the on/off button and the seed picker
+       hold the first line together, and the action cluster is forced onto its own
+       line (flex-basis 100%) instead of trailing off the end of row 1. */
+    .ambient-progsec .ambient-prog-row > .ambient-prog-onoff { flex: 0 0 auto; }
+    .ambient-progsec .ambient-prog-row > .ambient-prog-pick { flex: 1 1 auto; width: auto; min-width: 0; }
+    .ambient-progsec .ambient-prog-actions { flex: 1 1 100%; flex-wrap: wrap; }
     /* 🧂 Salt row — three compact knobs under the progression picker. */
     .ambient-prog-salt { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 2px; }
     /* ↻ Order: label + both selects on ONE row. The shared .ambient-prog-salt

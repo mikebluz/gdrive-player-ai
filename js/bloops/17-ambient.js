@@ -1709,7 +1709,8 @@
         // the future, so each position is negative). See _ambUpdatePlayheads.
         E._orchPrevPhase = { clocks: E.clocks, iters: E.iters, runPhase: E.runPhase,
           arpState: E.arpState, bassPhase: E.bassPhase, shapePhase: E.shapePhase,
-          seqState: E.seqState, cfg: s.areas[playIdx] };
+          seqState: E.seqState, cfg: s.areas[playIdx],
+          progAnchor: E._progAnchor, playStartAt: E._playStartAt };
         _ambResetClocks(E);
         // Anchor the incoming area's grid to the PRECISE boundary (not the late tick),
         // so its synced/bar-native layers' first onsets land ON the boundary — matching
@@ -4653,7 +4654,8 @@
       return root;
     }
     // Current progression chord label for the header ('' when no Area prog plays).
-    function _ambHeaderChord(E) {
+    function _ambHeaderChord(E) { return _ambAsAudibleArea(E, () => _ambHeaderChordCore(E)); }
+    function _ambHeaderChordCore(E) {
       const cfg = (E && (E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : (E.getCfg && E.getCfg())))) || null;
       const p = cfg && cfg.prog;
       if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return '';
@@ -17575,6 +17577,28 @@
       }
       return { idx: play, anchor: E._barGridAnchor, pending: false };
     }
+    // Run `fn` with the engine's PROGRESSION CLOCK + play-config temporarily set
+    // to the area that is still SOUNDING. Between an advance and its boundary the
+    // engine has already swapped both, so anything that resolves a chord from them
+    // reports the NEXT area ~0.6 s early — that's the header chord readout flipping
+    // to the incoming area's first chord before you hear it. Unlike the layer phase
+    // stores (which stop being advanced and so can't be reused), the prog clock is
+    // pure arithmetic from an anchor, so replaying it against the outgoing anchor
+    // stays correct. Display-only and synchronous; restored in `finally`.
+    function _ambAsAudibleArea(E, fn) {
+      let sw = null;
+      try {
+        const p = E && E._orchPrevPhase;
+        if (p && E === _masterEng && E.timer && _ambAudibleOrch(E).pending) {
+          sw = { cfg: E._cfg, pa: E._progAnchor, ps: E._playStartAt };
+          if (p.cfg) E._cfg = p.cfg;
+          if (Number.isFinite(p.progAnchor)) E._progAnchor = p.progAnchor;
+          if (Number.isFinite(p.playStartAt)) E._playStartAt = p.playStartAt;
+        }
+      } catch (e) {}
+      try { return fn(); }
+      finally { if (sw) { E._cfg = sw.cfg; E._progAnchor = sw.pa; E._playStartAt = sw.ps; } }
+    }
     function _ambViewIsPlaying(E) {
       if (E !== _masterEng || !Number.isFinite(E._playIdx)) return true;
       try { return _ambAudibleOrch(E).idx === _masterBloomState().activeIdx; } catch (e) { return true; }
@@ -20589,7 +20613,8 @@
     }
     // Per-frame glow of the sounding chord (called from _ambVizFrame; only touches the
     // DOM when the chord index changes — cached on el._curCi).
-    function _ambProgOverviewPlayhead(E) {
+    function _ambProgOverviewPlayhead(E) { return _ambAsAudibleArea(E, () => _ambProgOverviewPlayheadCore(E)); }
+    function _ambProgOverviewPlayheadCore(E) {
       const el = _ambGet(E, 'ambient-prog-overview'); if (!el || el.style.display === 'none' || !el._wired) return;
       const cfg = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : (E.getCfg && E.getCfg()));
       const p = cfg && cfg.prog; if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) { if (el._curCi !== -1) { el._curCi = -1; el.querySelectorAll('.ambient-pov-chord.cur').forEach(n => n.classList.remove('cur')); } return; }

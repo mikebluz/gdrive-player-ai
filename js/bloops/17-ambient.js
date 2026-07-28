@@ -1059,7 +1059,9 @@
       _masterEng.inited = false;
       try { _ambientInit(_masterEng); } catch (e) {}
     }
-    function _ambSwitchToArea(idx) {
+    // Debounce handle for `defer` switches — see below.
+    let _ambSwitchRepaintT = null;
+    function _ambSwitchToArea(idx, opts) {
       try { if (_bloomGridEdit) _ambGridEditStop(false); } catch (e) {}   // a Grid session belongs to ONE area's layer
       const s = _masterBloomState();
       idx = Math.max(0, Math.min(s.areas.length - 1, idx | 0));
@@ -1074,6 +1076,27 @@
         // Playing: VIEW select only — show/edit area `idx` WITHOUT disturbing what
         // the engine is playing (E._playIdx) or the live tempo/groove.
         _ambSetActiveArea(idx);
+      }
+      if (_ambSwitchRepaintT) { clearTimeout(_ambSwitchRepaintT); _ambSwitchRepaintT = null; }
+      // `defer` (the ‹ › arrows + side-swipe): the STATE flip above is ~0 ms; the
+      // full panel rebuild is ~265 ms — the whole perceived lag. Reflect the
+      // switch in the select IMMEDIATELY (its options already exist) and coalesce
+      // the rebuild ~160 ms behind the LAST step, so tapping › › › repaints once
+      // instead of three times and each tap responds instantly. Every other
+      // caller (dropdown, add/clone/sibling — which may have changed the area
+      // LIST the options don't yet show) keeps the synchronous rebuild.
+      if (opts && opts.defer) {
+        try {
+          const host = document.getElementById(_masterEng.hostId);
+          const sel = host && host.querySelector('.ambient-area-select');
+          if (sel) sel.value = String(idx);
+        } catch (e) {}
+        _ambSwitchRepaintT = setTimeout(() => {
+          _ambSwitchRepaintT = null;
+          _ambRebuildMaster();
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+        }, 160);
+        return;
       }
       _ambRebuildMaster();                                                    // repaint the panel for the viewed area
       try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
@@ -1288,7 +1311,7 @@
       const _step = (dir) => {
         const st = _masterBloomState();
         if (st.areas.length < 2) return;
-        _ambSwitchToArea((((st.activeIdx + dir) % st.areas.length) + st.areas.length) % st.areas.length);
+        _ambSwitchToArea((((st.activeIdx + dir) % st.areas.length) + st.areas.length) % st.areas.length, { defer: true });
       };
       const prevB = host.querySelector('.ambient-area-prev');
       if (prevB) prevB.addEventListener('click', () => _step(-1));
@@ -1327,7 +1350,7 @@
           // Swipe LEFT (dx<0) = go forward, like flicking a card away.
           const dir = dx < 0 ? 1 : -1;
           const next = ((s.activeIdx + dir) % s.areas.length + s.areas.length) % s.areas.length;
-          _ambSwitchToArea(next);
+          _ambSwitchToArea(next, { defer: true });
           try { areasBox.classList.remove('swipe-l', 'swipe-r'); void areasBox.offsetWidth;
                 areasBox.classList.add(dir > 0 ? 'swipe-l' : 'swipe-r');
                 setTimeout(() => areasBox.classList.remove('swipe-l', 'swipe-r'), 260); } catch (e) {}

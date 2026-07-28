@@ -2885,6 +2885,9 @@
     .pe-ops { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
     .pe-ops button { padding: 4px 10px; border: 1px solid #2d2d3f; border-radius: 6px; background: #1a1a2e; color: #cbd5e0; cursor: pointer; font-size: 0.78rem; touch-action: manipulation; }
     .pe-ops button:hover { border-color: #4a5568; color: #e2e8f0; }
+    .pe-addtrans { color: #f6ad55; border-color: #6b4a2a !important; }
+    .pe-transnote { margin: 4px 0 8px; padding: 6px 9px; border: 1px solid #3a3a52; border-left: 3px solid #f6ad55; border-radius: 6px; background: rgba(246,173,85,0.07); color: #a9b3c4; font-size: 0.74rem; line-height: 1.45; }
+    .pe-transnote b { color: #f6d5a8; }
     .pe-save { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
     .pe-save input { flex: 1; min-width: 0; padding: 6px 10px; background: #0f0f1e; border: 1px solid #2d2d3f; border-radius: 6px; color: #e2e8f0; }
     .pe-apply { background: rgba(159,122,234,0.22) !important; border-color: #9f7aea !important; color: #e2d9f5 !important; font-weight: 600; }

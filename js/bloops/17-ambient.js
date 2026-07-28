@@ -2386,6 +2386,9 @@
       if (prog.seedSig != null && typeof prog.seedSig !== 'string') delete prog.seedSig;
       const cloneCh = (c) => {
         if (!c || typeof c !== 'object') return null;
+        // A TRANSITION slot has no harmony of its own — it is a walk from the
+        // chord before it to the chord after. Carries only its length.
+        if (c.transition) return { transition: true, bars: (Number.isFinite(c.bars) && c.bars > 0) ? c.bars : 1 };
         return { root: (((c.root | 0) % 12) + 12) % 12,
           intervals: (Array.isArray(c.intervals) && c.intervals.length ? c.intervals : [0]).map(iv => (((iv | 0) % 12) + 12) % 12),
           ...(Number.isFinite(c.bars) && c.bars > 0 ? { bars: c.bars } : {}) };
@@ -2395,6 +2398,13 @@
       const chords = Array.isArray(prog.chords) ? prog.chords : [];
       chords.forEach(ch => {
         if (!ch || typeof ch !== 'object') return;
+        if (ch.transition) {
+          // Never alternates, never a root of its own; length only.
+          ch.transition = true;
+          if (!(Number.isFinite(ch.bars) && ch.bars > 0)) ch.bars = 1;
+          delete ch.root; delete ch.intervals; delete ch.alts; delete ch.altMode;
+          return;
+        }
         if (Array.isArray(ch.alts) && ch.alts.length) {
           const alts = ch.alts.map(cloneCh).filter(Boolean);
           if (alts.length) { ch.alts = alts; ch.altMode = (ch.altMode === 'random') ? 'random' : 'cycle'; return; }
@@ -3294,6 +3304,96 @@
       });
       return out;
     }
+    // ---- TRANSITION SLOTS ---------------------------------------------------
+    // A transition is a chord slot flagged { transition:true, bars } that carries
+    // no harmony of its own: it WALKS from the chord before it to the chord after.
+    // Making it a real slot (rather than a property of the following chord) means
+    // the editor, overview strip, Scheduler lane and chord matrix all show it as a
+    // column for free — including the per-layer opt-in, since the matrix cell for
+    // that column already decides whether a layer plays there at all.
+    //
+    // Resolution is per ONSET: at each note's position within the slot the walk
+    // supplies a passing chord rooted on the current step of the line. Layers that
+    // sit the transition out are handled by their matrix cell (0%), not here.
+    function _ambIsTransition(ch) { return !!(ch && ch.transition); }
+    // The nearest real chord before / after slot i, wrapping the cycle. Returns
+    // null when the progression is nothing but transitions (guarded by callers).
+    function _ambProgNeighbourChord(chords, i, dir) {
+      const n = chords.length;
+      for (let k = 1; k <= n; k++) {
+        const c = chords[(((i + dir * k) % n) + n) % n];
+        if (c && !_ambIsTransition(c)) return c;
+      }
+      return null;
+    }
+    // The walk itself: a stepwise line from `fromPc` to `toPc`.
+    //
+    // Direction is the SHORT way round (a walk is a lead-in, not a tour), and the
+    // path runs along the area's scale when there is one so the passing notes stay
+    // diatonic — chromatically otherwise. `steps` notes are spread across the slot.
+    // Composition is seeded on (slot, cycle, take) so it is reproducible and loops
+    // identically, but re-rolls per take like every other 🎲 feature: some passes
+    // approach from below, some from above, and some slip in a chromatic
+    // approach note on the last step.
+    function _ambTransitionLine(cfg, fromPc, toPc, steps, seedKey) {
+      const rnd = _ambSeededRand((((seedKey + 1) * 2654435761) ^ 0x7A17) >>> 0);
+      const n = Math.max(2, steps | 0);
+      let scale = null;
+      try {
+        if (cfg && cfg.keyOn) {
+          const ivs = (typeof SCALES !== 'undefined' && SCALES[_ambKeyScaleName(cfg)]) || null;
+          if (ivs && ivs.length >= 5) { const kr = _ambKeyRootPc(cfg); scale = ivs.map(iv => (((kr + iv) % 12) + 12) % 12); }
+        }
+      } catch (e) {}
+      const up = (((toPc - fromPc) % 12) + 12) % 12;
+      // Short way round, with the tie broken by the take so a tritone gap doesn't
+      // always walk the same direction.
+      const dir = (up === 6) ? (rnd() < 0.5 ? 1 : -1) : (up <= 6 ? 1 : -1);
+      const out = [];
+      if (scale) {
+        // Nearest scale tones to the endpoints, then walk the scale between them.
+        const near = (pc) => { let bi = 0, bd = 99; scale.forEach((s2, si) => { const d = Math.min((((s2 - pc) % 12) + 12) % 12, (((pc - s2) % 12) + 12) % 12); if (d < bd) { bd = d; bi = si; } }); return bi; };
+        const a0 = near(fromPc), a1 = near(toPc), L = scale.length;
+        for (let s2 = 0; s2 < n; s2++) {
+          const t = s2 / n;                       // never reaches the target — the NEXT chord plays it
+          let idx = a0 + Math.round(t * ((((a1 - a0) * dir % L) + L) % L)) * dir;
+          out.push(scale[(((idx % L) + L) % L)]);
+        }
+      } else {
+        const span = (dir > 0) ? up : (12 - up);
+        for (let s2 = 0; s2 < n; s2++) out.push(((((fromPc + dir * Math.round((s2 / n) * span)) % 12) + 12) % 12));
+      }
+      out[0] = fromPc;                            // always leave from where we were
+      // Rounding STALLS when there are more beats than scale steps (F→A over four
+      // quarters gives F G G A), and a repeated note is exactly where a walk wants
+      // its chromatic passing tone. Fill any repeat that sits a whole tone below
+      // the next distinct note — F G G A becomes F G G♯ A, which is the line a
+      // bass player would actually walk.
+      for (let s2 = 1; s2 < n - 1; s2++) {
+        if (out[s2] !== out[s2 - 1]) continue;
+        const gap = (((out[s2 + 1] - out[s2]) % 12) + 12) % 12;
+        if (gap === 2) out[s2] = (((out[s2] + 1) % 12) + 12) % 12;
+        else if (gap === 10) out[s2] = (((out[s2] - 1) % 12) + 12) % 12;
+      }
+      // …and sometimes approach the target chromatically from the other side, so
+      // repeated passes through the same transition don't all walk identically.
+      if (n > 2 && rnd() < 0.45) out[n - 1] = ((((toPc - dir) % 12) + 12) % 12);
+      return out;
+    }
+    // The passing chord sounding at `pos` (0-1) through transition slot `i`.
+    function _ambTransitionChordAt(cfg, chords, i, pos, cycle) {
+      const prev = _ambProgNeighbourChord(chords, i, -1);
+      const next = _ambProgNeighbourChord(chords, i, 1);
+      if (!prev || !next) return prev || next || null;
+      const slot = chords[i];
+      const bars = (Number.isFinite(slot.bars) && slot.bars > 0) ? slot.bars : 1;
+      const steps = Math.max(2, Math.min(16, Math.round(bars * 4)));   // quarter-note walk
+      const line = _ambTransitionLine(cfg, prev.root | 0, next.root | 0, steps, (i + 1) * 131 + (cycle | 0) * 7919 + ((cfg && cfg.seed | 0) || 0));
+      const k = Math.max(0, Math.min(steps - 1, Math.floor(Math.max(0, Math.min(0.9999, pos)) * steps)));
+      // Voiced with the OUTGOING chord's shape, so the walk keeps the texture of
+      // the music it is leaving rather than announcing itself as a new chord.
+      return { root: line[k], intervals: (Array.isArray(prev.intervals) && prev.intervals.length) ? prev.intervals.slice() : [0, 4, 7] };
+    }
     // ---- PROGRESSION VIEW SHIFT --------------------------------------------
     // A resolved chord object still carries its AUTHORED root, because the engine
     // transposes progression roots LATER — inside _ambSrcRootPc, downstream of
@@ -3381,6 +3481,18 @@
       // RNG (never the shared _ambRand stream the harness hashes → no downstream draw
       // shifts) and is a PURE function of (idx, cycle, seed), so the >1 calls per onset
       // (root via _ambSrcRootPc + intervals via _ambScaleIntervals) resolve the SAME alt.
+      // TRANSITION slot → the walk's current passing chord. Resolved before alts /
+      // reroll / salt, none of which apply: a transition has no written harmony for
+      // them to substitute. `pos` comes from the same hint _ambProgStepAt stashes
+      // for salt colours, so the walk advances WITHIN the slot without any new
+      // clock. Gated on the flag, so a progression without transitions takes the
+      // exact prior path (harness/golden byte-identical by construction).
+      if (base && _ambIsTransition(base)) {
+        const hint = _ambProgPosHint;
+        const pos = (hint && hint.step === step) ? hint.pos : 0;
+        const idx = permO ? permO[slot] : slot;
+        return _ambTransitionChordAt(cfg0, chs, idx, pos, Math.floor(step / len));
+      }
       let ret = base;
       if (base && Array.isArray(base.alts) && base.alts.length) {
         const pool = base.alts.length + 1;   // index 0 = the written chord
@@ -4127,7 +4239,11 @@
     // while keeping its relative chord motion.
     function _ambProgKeyOffset(n, keyRoot) {
       const chs = Array.isArray(n.chords) ? n.chords : [];
-      const ref = (chs[0] && Number.isFinite(chs[0].root)) ? (((chs[0].root % 12) + 12) % 12) : 0;
+      // The reference is the first chord with a ROOT — a leading transition slot
+      // has none, and reading its undefined root as 0 would silently re-root the
+      // whole progression onto C.
+      const c0 = chs.find(c => c && !c.transition && Number.isFinite(c.root));
+      const ref = c0 ? (((c0.root % 12) + 12) % 12) : 0;
       return (((keyRoot - ref) % 12) + 12) % 12;
     }
     function _ambProgWorksInKey(n, cfg) {
@@ -4943,12 +5059,13 @@
       ch.root = base;
       ch.intervals = uniq.map(p => (((p - base) % 12) + 12) % 12).sort((a, b) => a - b);
     }
-    function _ambPeChLabel(ch) { return _ambPeNotes(ch).slice().sort((a, b) => a - b).map(p => _AMB_CHROM[p]).join(' '); }
+    function _ambPeChLabel(ch) { if (ch && ch.transition) return 'walk'; return _ambPeNotes(ch).slice().sort((a, b) => a - b).map(p => _AMB_CHROM[p]).join(' '); }
     // Compact chord name for the header readout: root note + quality suffix
     // (C, Am, G7, D°…). Falls back to just the root for a custom voicing.
     const _AMB_CH_SYM = { maj: '', min: 'm', dim: '°', aug: '+', sus2: 'sus2', sus4: 'sus4', '7': '7', maj7: 'maj7', min7: 'm7', 'm7♭5': 'm7♭5', dim7: '°7', '6': '6', '9': '9' };
     function _ambChordShort(ch) {
       if (!ch || typeof ch !== 'object') return '';
+      if (ch.transition) return '⇝';
       const root = _AMB_CHROM[(((ch.root | 0) % 12) + 12) % 12];
       const norm = (Array.isArray(ch.intervals) ? ch.intervals.map(x => x | 0) : [0]).slice().sort((a, b) => a - b).join(',');
       for (let i = 0; i < _AMB_PE_QUALITIES.length; i++) {
@@ -4974,6 +5091,7 @@
     // Returns '' when there's no key context.
     function _ambPeRoman(ch, keyRoot, keyScale) {
       if (!ch || !Number.isFinite(keyRoot)) return '';
+      if (ch.transition) return '';   // a walk has no degree — it is the motion between two
       const R = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
       const MAJ = [0, 2, 4, 5, 7, 9, 11];
       const rel = (((((ch.root | 0) - (keyRoot | 0)) % 12) + 12) % 12);
@@ -5182,7 +5300,8 @@
       });
       T({ ms: cum + LEAD * 1000 + 300, fn: () => { if (_ambProgEd === ed) _ambPePreviewStop(ed); } });
     }
-    const _ambCloneChord = (c) => { const o = { root: (((c.root | 0) % 12) + 12) % 12, intervals: (Array.isArray(c.intervals) ? c.intervals : [0]).slice() }; if (Number.isFinite(c.bars) && c.bars > 0) o.bars = c.bars; if (Array.isArray(c.alts) && c.alts.length) { o.alts = c.alts.map(a => { const ao = { root: (((a.root | 0) % 12) + 12) % 12, intervals: (Array.isArray(a.intervals) ? a.intervals : [0]).slice() }; if (Number.isFinite(a.bars) && a.bars > 0) ao.bars = a.bars; return ao; }); o.altMode = (c.altMode === 'random') ? 'random' : 'cycle'; } return o; };
+    const _ambCloneChord = (c) => { if (c && c.transition) return { transition: true, bars: (Number.isFinite(c.bars) && c.bars > 0) ? c.bars : 1 };
+      const o = { root: (((c.root | 0) % 12) + 12) % 12, intervals: (Array.isArray(c.intervals) ? c.intervals : [0]).slice() }; if (Number.isFinite(c.bars) && c.bars > 0) o.bars = c.bars; if (Array.isArray(c.alts) && c.alts.length) { o.alts = c.alts.map(a => { const ao = { root: (((a.root | 0) % 12) + 12) % 12, intervals: (Array.isArray(a.intervals) ? a.intervals : [0]).slice() }; if (Number.isFinite(a.bars) && a.bars > 0) ao.bars = a.bars; return ao; }); o.altMode = (c.altMode === 'random') ? 'random' : 'cycle'; } return o; };
     // Publish a chord-array progression to the shared registry (the prog pickers'
     // User group). (Distinct from _ambPublishProg, which takes wrap-step BLOCKS.)
     function _ambPublishProgChords(name, chords, parts) {
@@ -5329,7 +5448,8 @@
         const rn = _ambPeRoman(fn(c), kRoot, kScale);
         const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
         return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + (showScale ? (_ambPeChordInScale(fn(c), kRoot, kScale) ? ' chord-in' : ' chord-out') : '') + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + (_vsEd ? ' · sounds ' + esc(_ambChordShort(fn(c)) || '?') : '') + (showScale && !_ambPeChordInScale(fn(c), kRoot, kScale) ? ' · out of key' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em>' + (altN ? '<i class="pe-chord-alt">×' + (altN + 1) + '</i>' : '') + '</button>'; }).join('') +
-        '<button type="button" class="pe-chord pe-add" data-pe="addchord" title="Add a chord (copy of the selected)">＋</button>';
+        '<button type="button" class="pe-chord pe-add" data-pe="addchord" title="Add a chord (copy of the selected)">＋</button>' +
+        '<button type="button" class="pe-chord pe-add pe-addtrans" data-pe="addtrans" title="Add a TRANSITION after this chord — a walk from it to the next one. Length is editable like any chord; each layer opts in through its cell in the chord matrix.">⇝</button>';
       const notes = _ambPeNotes(tgt).slice().sort((a, b) => a - b);
       const noteChips = notes.map((p, ni) =>
         '<span class="pe-note' + (showScale ? (_ambPeInScale((((p + _vsEd) % 12) + 12) % 12, kRoot, kScale) ? ' n-in' : ' n-out') : '') + '"><b>' + _AMB_CHROM[p] + '</b>' +
@@ -5367,6 +5487,27 @@
             '↳ transposed +' + _vsEd + ' into ' + esc(_AMB_CHROM[((kRoot % 12) + 12) % 12] + ' ' + kScale) + ' — sounds as <b>' +
             esc(ed.chords.map(c => _ambChordShort(_ambChordShift(c, _vsEd)) || '?').join(' ')) + '</b></div>'
         : '';
+      // A TRANSITION slot has no harmony to edit — only how long the walk is. Show
+      // that instead of the note/quality/alternates machinery, which would
+      // otherwise operate on a chord with no root and write one into it.
+      if (_ambIsTransition(ch)) {
+        host.innerHTML =
+          '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
+          shiftNote +
+          '<div class="pe-chords">' + chordsRow + '</div>' +
+          '<div class="pe-chordhdr">Transition ' + (sel + 1) + ' of ' + ed.chords.length +
+            '<span class="pe-chordops"><button type="button" class="pe-x" data-pe="rmchord" title="Remove this transition"' + (ed.chords.length <= 1 ? ' disabled' : '') + '>✕ remove</button></span></div>' +
+          '<div class="pe-transnote">A <b>walk</b> from the chord before it to the chord after — composed fresh from the take seed, so it re-rolls with 🎲 New take and loops identically in between. Each layer opts in through its cell in the <b>chord matrix</b>: leave the cell on to walk, set it to <b>never</b> to sit the bar out.</div>' +
+          '<div class="pe-lenrow"><label>Length</label>' +
+            '<input type="text" id="pe-len" value="' + (ch.bars > 0 ? esc(_ambFmtBpc(ch.bars)) : '') + '" placeholder="1" title="How long the walk lasts, in bars (1, 1/2, 2…). Longer = more steps in the line." />' +
+            '<span class="pe-lenhint">bars — blank = 1</span></div>' +
+          '<div class="pe-save"><input type="text" id="pe-name" value="' + esc(ed.name || '') + '" placeholder="name" />' +
+            '<button type="button" data-pe="clone" title="Duplicate this progression into a fresh editable copy">⧉ Clone</button>' +
+            '<button type="button" data-pe="export" title="Save this progression into the SEED list under a name of your choosing">⤓ Export…</button>' +
+            '<button type="button" class="pe-apply" data-pe="save" title="Save these changes to the CURRENT progression">Save</button></div>';
+        _ambPeWireFooter(host, ed);
+        return;
+      }
       host.innerHTML =
         '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
         shiftNote +
@@ -5412,6 +5553,10 @@
           '<button type="button" data-pe="pad" title="Add a pad layer that plays this progression">＋ Pad</button>' +
           '<button type="button" data-pe="export" title="Save this progression into the SEED list under a name of your choosing — the seed list is not touched by ordinary edits">⤓ Export…</button>' +
           '<button type="button" class="pe-apply" data-pe="save" title="Save these changes to the CURRENT progression">Save</button></div>';
+      _ambPeWireFooter(host, ed);
+    }
+    // Name + per-chord length inputs, shared by the chord and transition bodies.
+    function _ambPeWireFooter(host, ed) {
       const nm = host.querySelector('#pe-name'); if (nm) nm.addEventListener('input', () => { ed.name = nm.value; });
       const ln = host.querySelector('#pe-len');
       if (ln) ln.addEventListener('change', () => {
@@ -5467,6 +5612,7 @@
       const serialize = () => ed.chords.map(_ambCloneChord);   // preserves bars + alts
       if (op === 'sel') { ed.sel = arg | 0; ed.altSel = -1; }
       else if (op === 'addchord') { ed.chords.splice(ed.sel + 1, 0, _ambCloneChord(ch)); ed.sel++; ed.altSel = -1; }
+      else if (op === 'addtrans') { ed.chords.splice(ed.sel + 1, 0, { transition: true, bars: 1 }); ed.sel++; ed.altSel = -1; }
       else if (op === 'rmchord') { if (ed.chords.length > 1) { ed.chords.splice(ed.sel, 1); ed.sel = Math.min(ed.sel, ed.chords.length - 1); ed.altSel = -1; } }
       else if (op === 'flat' || op === 'sharp') { const ns = notesSorted(); const ni = arg | 0; if (ns[ni] != null) { ns[ni] = (((ns[ni] + (op === 'sharp' ? 1 : -1)) % 12) + 12) % 12; _ambPeSetNotes(tgt, ns, true); } }
       else if (op === 'ndtup' || op === 'ndtdn') { const ns = notesSorted(); const ni = arg | 0; if (ns[ni] != null) { ns[ni] = _ambDiatonicShiftPc(ns[ni], op === 'ndtup' ? 1 : -1, kRoot, kScale); _ambPeSetNotes(tgt, ns, true); } }
@@ -21348,7 +21494,9 @@
       // for chords the engine plays as A D E — and the cell tooltips + the exact
       // editor's title quote this same helper, so all three were wrong together.
       const _vsM = _ambProgViewShift(E, cfg, chords);
-      const chName = (ch) => { try { return (typeof CHROMATIC !== 'undefined' && CHROMATIC[((((ch.root | 0) + _vsM) % 12) + 12) % 12]) || '?'; } catch (e) { return '?'; } };
+      // A transition column has no root of its own — `ch.root|0` would read 0 and
+      // label it "C", which is both wrong and indistinguishable from a real C.
+      const chName = (ch) => { try { if (_ambIsTransition(ch)) return '⇝'; return (typeof CHROMATIC !== 'undefined' && CHROMATIC[((((ch.root | 0) + _vsM) % 12) + 12) % 12]) || '?'; } catch (e) { return '?'; } };
       // The cells are a PROBABILITY and the Part column is a DURATION fraction —
       // two different axes side by side, so a bare "60" reads as either. Name the
       // axis in the title, spell the scale out in words, and say that the roll is

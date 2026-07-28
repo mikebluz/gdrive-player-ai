@@ -716,8 +716,17 @@ C-track discipline).
 
 ### Playback hardening — unreproduced audio anomalies (raised 2026-07-27/28)
 
-**Status: PARKED.** Two user reports, folded into one item because they may share a
-cause and neither reproduces in headless measurement. Revisit when it next bites.
+**Status: OPEN — NO REPRODUCIBLE CASE.** Two user reports, folded into one item
+because they may share a cause. Neither reproduces in headless measurement, and
+that — not the absence of a candidate fix — is what actually blocks this.
+
+**Do not record this as fixed on the strength of a clean press.** The symptom is
+intermittent by the user's own description ("stop/play a few times before it plays
+right"), so one good run is weak evidence. A cold-press timing cause WAS found and
+removed (see `_AMB_LEAD_COLD` in CLAUDE.md) and a single field capture afterwards
+showed all five layers starting together at 0.369s and sounding right — that
+verifies the mechanism, not the symptom. The next step is a REPRODUCTION, not
+another fix.
 
 **Symptom A — mid-play weirdness.** "Patterns sound off then go back to normal;
 tones sound different for one unit then normal." Reported repeatedly over a
@@ -762,6 +771,12 @@ inside the worklet, so tapping the per-layer Tone chain reads SILENCE (level has
 to come from soloing + the master bus); and soloing lowers DSP load, so PASS 1 is
 the one to trust for load-dependent faults. Verified against a planted cold-only
 level fault — reported it at 23 dB.
+
+**Untested variant, flagged and unanswered:** whether the bad case involves a
+BACKGROUNDED tab rather than mere idle. A buried tab throttles rAF and can suspend
+the AudioContext — a different mechanism from the empty-voice-pool one that was
+fixed, and one none of the measurements so far have exercised (every capture was
+taken with the tab focused, since running the probe requires the console).
 
 **What would localise it next time:** which layers go quiet and whether their
 reverb send is up (a layer that loses its wet signal reads as much quieter, and

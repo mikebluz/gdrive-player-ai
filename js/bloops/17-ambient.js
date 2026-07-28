@@ -1057,7 +1057,9 @@
     // ---- Master panel rebuild + area switching --------------------------
     function _ambRebuildMaster() {
       _masterEng.inited = false;
+      _ambNormMemo = { cfg: masterAmbient, done: false };
       try { _ambientInit(_masterEng); } catch (e) {}
+      finally { _ambNormMemo = null; }
     }
     // Debounce handle for `defer` switches — see below.
     let _ambSwitchRepaintT = null;
@@ -1095,7 +1097,7 @@
           _ambSwitchRepaintT = null;
           _ambRebuildMaster();
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-        }, 160);
+        }, 70);
         return;
       }
       _ambRebuildMaster();                                                    // repaint the panel for the viewed area
@@ -2412,8 +2414,24 @@
       if (out.length === 1) return undefined;   // one part spanning everything = no chain
       return out;
     }
+    // REBUILD-SCOPED normalize memo. getCfg() normalizes on EVERY call, and a
+    // panel rebuild calls getCfg once per control it renders — so one rebuild ran
+    // the full normalize (which itself constructs a complete default cfg) dozens
+    // of times over the SAME object: O(layers²), ~120ms of a ~300ms rebuild on an
+    // 8-layer rig and the dominant share of the ~1s area-switch lag on a real
+    // project. During ONE synchronous rebuild nothing external can mutate the cfg
+    // between calls, so the first call normalizes and the rest are pure no-ops —
+    // the same already-current-is-a-no-op reasoning _ambPlayCfg uses for the
+    // tick. The memo exists ONLY inside _ambRebuildMaster's synchronous span
+    // (cleared in its finally), so every other getCfg keeps the run-every-call
+    // coercions the codebase relies on (arp dir reset, keyOv drops, heals).
+    let _ambNormMemo = null;
     function _normalizeAmbientCfg(cfg) {
       if (!cfg || typeof cfg !== 'object') return _defaultAmbientConfig();
+      if (_ambNormMemo && _ambNormMemo.cfg === cfg) {
+        if (_ambNormMemo.done) return cfg;
+        _ambNormMemo.done = true;   // first pass runs in full; later calls in this rebuild skip
+      }
       const d = _defaultAmbientConfig();
       // Incoming layer-schema version (0 = legacy/pre-versioned). Migrations below
       // may gate on `_fromVer`; the stamp before `return` records the new version.

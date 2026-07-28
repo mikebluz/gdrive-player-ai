@@ -1092,16 +1092,34 @@
           const host = document.getElementById(_masterEng.hostId);
           const sel = host && host.querySelector('.ambient-area-select');
           if (sel) sel.value = String(idx);
+          // Instant feedback: dim the panel until the rebuild lands, so the click
+          // visibly took even while the heavy repaint is still coming.
+          if (host) host.classList.add('amb-switching');
         } catch (e) {}
         _ambSwitchRepaintT = setTimeout(() => {
           _ambSwitchRepaintT = null;
           _ambRebuildMaster();
-          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-        }, 70);
+          try { const h2 = document.getElementById(_masterEng.hostId); if (h2) h2.classList.remove('amb-switching'); } catch (e) {}
+          _ambSwitchPersistSoon();
+        }, 50);
         return;
       }
       _ambRebuildMaster();                                                    // repaint the panel for the viewed area
-      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      _ambSwitchPersistSoon();
+    }
+    // persistWorkspace serializes the WHOLE workspace — trivial on an empty rig,
+    // but on a real project it can be a large synchronous JSON+localStorage write.
+    // Running it in the SAME task as the rebuild blocked the first paint of the
+    // freshly rebuilt cards (the switch felt ~persist-time slower than the
+    // rebuild). Push it to its own task ~250ms later so the panel paints first;
+    // coalesced so a burst of switches persists once.
+    let _ambSwitchPersistT = null;
+    function _ambSwitchPersistSoon() {
+      if (_ambSwitchPersistT) clearTimeout(_ambSwitchPersistT);
+      _ambSwitchPersistT = setTimeout(() => {
+        _ambSwitchPersistT = null;
+        try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      }, 250);
     }
     // The config the ENGINE is GENERATING (master: the PLAYING area, which can
     // differ from the viewed/edited area = getCfg()). Lane/Shape: just getCfg().

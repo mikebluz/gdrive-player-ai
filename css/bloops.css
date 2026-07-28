@@ -3748,6 +3748,9 @@
     @media (hover: hover) { .ambient-step-fx-fill:hover { border-color: #9f7aea; color: #e6ddff; } }
     .ambient-step-fx-clear, .ambient-step-fx-trig { padding: 2px 8px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8; background: transparent; border: 1px solid #34344a; border-radius: 4px; cursor: pointer; }
     .ambient-step-fx-trig { color: #7fe0b0; border-color: #2f5c48; }
+    /* Area switch in flight — dim until the deferred rebuild lands (instant
+       feedback for the ‹ › arrows / swipe; removed right after the repaint). */
+    .ambient-inner.amb-switching { opacity: 0.5; transition: opacity 0.08s ease; }
     /* Notes button in the Source group — the layer's pitch material. Styled from
        the same tokens as .ambient-select so it reads as a sibling control, not a
        one-off; amber when the Area progression has locked the source. */

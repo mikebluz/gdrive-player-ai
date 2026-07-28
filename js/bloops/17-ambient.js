@@ -3291,6 +3291,50 @@
       });
       return out;
     }
+    // ---- PROGRESSION VIEW SHIFT --------------------------------------------
+    // A resolved chord object still carries its AUTHORED root, because the engine
+    // transposes progression roots LATER — inside _ambSrcRootPc, downstream of
+    // _ambProgCurrentChord. Two shifts live there and a display that stops at the
+    // chord object misses both:
+    //   • KEY, transpose mode (the DEFAULT — _ambKeyMode returns 'transpose'
+    //     unless keyMode==='quantize'): _ambProgKeyOffset re-roots the whole
+    //     progression so its tonic = the key root. A C–F–G template in A major
+    //     SOUNDS A–D–E. Measured: every readout said C/F/G while a drone held
+    //     A/D/E, and the roman numerals read ♭III ♭VI ♭VII for what is plainly
+    //     I IV V.
+    //   • SECTION modulation (cfg.sections[i].key), per section.
+    // Returns 0 whenever nothing applies, and _ambChordShift then returns the
+    // SAME object — so identity lookups (the overview playhead's
+    // `chords.indexOf(resolved)`) keep working on the untransposed path.
+    function _ambProgViewShift(E, cfg, chords, atSec) {
+      if (!cfg || !Array.isArray(chords) || !chords.length) return 0;
+      let sh = 0;
+      try {
+        if (cfg.keyOn && _ambKeyMode(cfg) === 'transpose') {
+          sh += _ambProgKeyOffset({ type: 'prog', chords: chords }, _ambKeyRootPc(cfg));
+        }
+      } catch (e) {}
+      try {
+        sh += Number.isFinite(atSec) ? _ambSectionKeyOffset(E, cfg, atSec)
+          : (function () { const p = _E; _E = E || _E; try { return _ambSectionKeyNow(); } finally { _E = p; } })();
+      } catch (e) {}
+      return (((sh % 12) + 12) % 12);
+    }
+    function _ambChordShift(ch, semis) {
+      if (!ch || !(semis | 0)) return ch;
+      return Object.assign({}, ch, { root: ((((ch.root | 0) + (semis | 0)) % 12) + 12) % 12 });
+    }
+    // The chord that sounds at `step`, IN THE PITCHES YOU HEAR — the funnel below
+    // plus the view shift. Every chord LABEL (header pill, overview chips, the
+    // Scheduler chord lane, the note-pick rows) must use this one; use the plain
+    // _ambProgChordAt only when you need the resolved object's identity.
+    function _ambProgSoundAt(E, src, step, atSec) {
+      const ch = _ambProgChordAt(E, src, step);
+      if (!ch) return ch;
+      const cfg = (E && (E._cfg || (E.getCfg && E.getCfg()))) || null;
+      const chords = Array.isArray(src && src.chords) ? src.chords : (Array.isArray(src) ? src : null);
+      return _ambChordShift(ch, _ambProgViewShift(E, cfg, chords, atSec));
+    }
     // The chord that SOUNDS at progression step `step` — resolved through the
     // engine's OWN path (↻ order-perm → per-slot alts → 🎲 take-reroll → 🌊 vary /
     // tension) by setting the same override the emitters set.
@@ -4810,7 +4854,7 @@
       if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return '';
       const tnow = ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0)) + 0.016;
       let step = 0; try { step = _ambProgStepAt(E, tnow) | 0; } catch (e) {}
-      const ch = _ambProgChordAt(E, p, step) || p.chords[((step % p.chords.length) + p.chords.length) % p.chords.length];
+      const ch = _ambProgSoundAt(E, p, step, tnow) || p.chords[((step % p.chords.length) + p.chords.length) % p.chords.length];
       return _ambChordShort(ch);
     }
     // B3: roman-numeral for a chord relative to a key (root pc + scale name). Degree
@@ -5160,14 +5204,21 @@
       const diatonic = !(typeof SCALES !== 'undefined' && Array.isArray(SCALES[kScale]) && SCALES[kScale].length >= 12);   // no diatonic buttons on a chromatic scale
       const scaleView = ed._scaleView !== false;                     // color-code in/out of the key's scale (default on)
       const showScale = scaleView && diatonic;                       // only meaningful under a diatonic key
+      // Roman numerals and the in-key coloring are properties of the chord that
+      // SOUNDS, not the one written: under Key/transpose a written C–F–G in A
+      // major functions as I–IV–V, and reading the raw roots printed ♭III ♭VI ♭VII
+      // with every chord flagged out-of-key. The NOTE names stay written — that is
+      // what this pane edits — and the banner below the title says so.
+      const _vsEd = (function () { try { return _ambProgViewShift(ed.E, gcfg, ed.chords); } catch (e) { return 0; } })();
+      const fn = (c) => _ambChordShift(c, _vsEd);
       const chordsRow = ed.chords.map((c, i) => {
-        const rn = _ambPeRoman(c, kRoot, kScale);
+        const rn = _ambPeRoman(fn(c), kRoot, kScale);
         const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
-        return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + (showScale ? (_ambPeChordInScale(c, kRoot, kScale) ? ' chord-in' : ' chord-out') : '') + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + (showScale && !_ambPeChordInScale(c, kRoot, kScale) ? ' · out of key' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em>' + (altN ? '<i class="pe-chord-alt">×' + (altN + 1) + '</i>' : '') + '</button>'; }).join('') +
+        return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + (showScale ? (_ambPeChordInScale(fn(c), kRoot, kScale) ? ' chord-in' : ' chord-out') : '') + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + (_vsEd ? ' · sounds ' + esc(_ambChordShort(fn(c)) || '?') : '') + (showScale && !_ambPeChordInScale(fn(c), kRoot, kScale) ? ' · out of key' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em>' + (altN ? '<i class="pe-chord-alt">×' + (altN + 1) + '</i>' : '') + '</button>'; }).join('') +
         '<button type="button" class="pe-chord pe-add" data-pe="addchord" title="Add a chord (copy of the selected)">＋</button>';
       const notes = _ambPeNotes(tgt).slice().sort((a, b) => a - b);
       const noteChips = notes.map((p, ni) =>
-        '<span class="pe-note' + (showScale ? (_ambPeInScale(p, kRoot, kScale) ? ' n-in' : ' n-out') : '') + '"><b>' + _AMB_CHROM[p] + '</b>' +
+        '<span class="pe-note' + (showScale ? (_ambPeInScale((((p + _vsEd) % 12) + 12) % 12, kRoot, kScale) ? ' n-in' : ' n-out') : '') + '"><b>' + _AMB_CHROM[p] + '</b>' +
         '<button type="button" data-pe="flat:' + ni + '" title="Down a semitone (chromatic)">♭</button>' +
         '<button type="button" data-pe="sharp:' + ni + '" title="Up a semitone (chromatic)">♯</button>' +
         (diatonic ? '<button type="button" class="pe-dt" data-pe="ndtdn:' + ni + '" title="Down a scale degree (diatonic)">▾</button>' +
@@ -5181,7 +5232,7 @@
       // Alternates row — the base chord (◆) + each alternate (◇) as selectable edit
       // targets; a mode toggle (cycle/random) appears once there's ≥1 alternate.
       const altChip = (glyph, j, active, chObj) =>
-        '<span role="button" class="pe-alt-chip' + (active ? ' sel' : '') + '" data-pe="altsel:' + j + '" title="' + esc(_ambPeChLabel(chObj)) + ' — edit this ' + (j < 0 ? 'chord' : 'alternate') + '">' + glyph + ' ' + esc(_ambChordShort(chObj) || '?') +
+        '<span role="button" class="pe-alt-chip' + (active ? ' sel' : '') + '" data-pe="altsel:' + j + '" title="' + esc(_ambPeChLabel(chObj)) + (_vsEd ? ' · sounds ' + esc(_ambChordShort(_ambChordShift(chObj, _vsEd)) || '?') : '') + ' — edit this ' + (j < 0 ? 'chord' : 'alternate') + '">' + glyph + ' ' + esc(_ambChordShort(chObj) || '?') +
         (j >= 0 ? '<button type="button" class="pe-x" data-pe="altrm:' + j + '" title="Remove this alternate">✕</button>' : '') + '</span>';
       const altMode = (ch.altMode === 'random') ? 'random' : 'cycle';
       const altsRow = '<div class="pe-altrow"><label title="Alternate chords that swap in on repeats — reharmonize this slot">Alternates</label>' +
@@ -5192,8 +5243,19 @@
         altChip('◆', -1, ed.altSel < 0, ch) +
         alts.map((a, j) => altChip('◇', j, ed.altSel === j, a)).join('') +
         '<button type="button" class="pe-alt-add" data-pe="altadd" title="Add an alternate chord (a copy you can mutate) that swaps in on repeats">＋ Alt</button></div>';
+      // This pane edits the SCORE — the written chords, which is what gets saved.
+      // Under Key/transpose the engine re-roots the whole progression so its
+      // tonic = the key root, so the score and the sound are in different keys.
+      // Say so explicitly and name what is actually heard, rather than letting
+      // the editor read as a chord readout that disagrees with every other one.
+      const shiftNote = _vsEd
+        ? '<div class="pe-shifted" title="The written progression is a template: the engine re-roots it so its first chord lands on the key root. These chords are the score; the names below are what you hear.">' +
+            '↳ transposed +' + _vsEd + ' into ' + esc(_AMB_CHROM[((kRoot % 12) + 12) % 12] + ' ' + kScale) + ' — sounds as <b>' +
+            esc(ed.chords.map(c => _ambChordShort(_ambChordShift(c, _vsEd)) || '?').join(' ')) + '</b></div>'
+        : '';
       host.innerHTML =
         '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
+        shiftNote +
         '<div class="pe-chords">' + chordsRow + '</div>' +
         '<div class="pe-chordhdr">Chord ' + (sel + 1) + ' of ' + ed.chords.length + (ed.altSel >= 0 ? ' <span class="pe-editing-alt">· editing alt ' + (ed.altSel + 1) + '</span>' : '') +
           '<span class="pe-chordops">' +
@@ -6696,6 +6758,9 @@
     // the USER's note instead, with the auto pick appended when they differ.
     function _ambDronePedalText(cfg, chords, pcOv) {
       if (!chords || !chords.length) return '';
+      // Score and NAME the chords as they sound — the emit does the same, so the
+      // explanation is of the pitch actually being held (see the strike() note).
+      { const _vs = _ambProgViewShift(_E, cfg, chords); if (_vs) chords = chords.map(c => _ambChordShift(c, _vs)); }
       const kIvs = (typeof SCALES !== 'undefined' && SCALES[_ambKeyScaleName(cfg)]) || [0, 2, 4, 5, 7, 9, 11];
       const kRoot = _ambKeyRootPc(cfg);
       const tonic = _ambDronePedalTonic(cfg, chords);
@@ -7945,13 +8010,21 @@
         const kRoot = _ambKeyRootPc(cfg);
         const A4 = (typeof masterFreqA === 'number') ? masterFreqA : 440;
         const strike = (at, holdSec, chords) => {
-          const auto = _ambDronePedalPick(chords, kRoot, kIvs, _ambDronePedalTonic(cfg, chords));
-          // The pedal reads cfg.prog.chords DIRECTLY (not via _ambSrcRootPc), so a
-          // section key offset has to be applied here too or the drone would hold
-          // the un-modulated note under transposed layers.
-          const _sk = _ambSectionKeyOffset(E, cfg, at);
-          const pc0 = (Number.isFinite(inst.progNote)) ? (((inst.progNote | 0) % 12) + 12) % 12 : auto.pc;
-          const pc = ((((pc0 + _sk) % 12) + 12) % 12);
+          // The pedal reads cfg.prog.chords DIRECTLY (never via _ambSrcRootPc), so
+          // it has to apply the same view shift every other layer gets — the KEY
+          // transpose AND the section key offset — BEFORE scoring. Shifting only
+          // the RESULT (as this did for the section offset alone) scores the pedal
+          // against chords nobody hears: measured in A major over a written C–F–G
+          // that sounds A–D–E, the readout claimed "A fits 1/3 — 13th of C, 3rd of
+          // F, 9th of G" for a note that is in fact the root of A and the 5th of D.
+          // The shift is computed from the WHOLE progression, not this window's
+          // slice, because _ambProgKeyOffset keys on chords[0] of the full list.
+          const _vs = _ambProgViewShift(E, cfg, (cfg.prog && cfg.prog.chords) || chords, at);
+          const sChords = _vs ? chords.map(c => _ambChordShift(c, _vs)) : chords;
+          const auto = _ambDronePedalPick(sChords, kRoot, kIvs, _ambDronePedalTonic(cfg, sChords));
+          // An explicit Note is an ABSOLUTE sounding pitch — the picker lists it
+          // against the sounding chords, so it is played exactly as chosen.
+          const pc = (Number.isFinite(inst.progNote)) ? (((inst.progNote | 0) % 12) + 12) % 12 : auto.pc;
           if (typeof window !== 'undefined' && window._ambPedalDebug) { try { (window.__pdbg = window.__pdbg || []).push({ at: +at.toFixed(2), pc, auto: auto.pc, holdSec: +holdSec.toFixed(2), reg, chords: chords.length, A4, f0: +(A4 * Math.pow(2, (12 * (reg + 1) + pc - 69) / 12)).toFixed(1), pn: typeof playNote }); } catch (e) {} }
           _ambKeyTime = at;
           const holdMs = Math.max(120, Math.round(holdSec * 1000 * 0.98));
@@ -20878,11 +20951,15 @@
       const prog = cfg.prog, chords = prog.chords, N = chords.length;
       const parts = (Array.isArray(prog.parts) && prog.parts.length) ? prog.parts : null;
       const sig = N + '|' + chords.map(c => c.root + ':' + (c.intervals || []).join('.') + (Array.isArray(c.alts) && c.alts.length ? ('a' + c.alts.length + (c.altMode || '')) : '')).join(',') +
-        '|' + (parts ? parts.map(p => p.name + '=' + p.len).join('/') : '') + '|' + (Number.isFinite(prog.versionIdx) ? prog.versionIdx : -1) + '|' + (Array.isArray(prog.versions) ? prog.versions.length : 0);
+        '|' + (parts ? parts.map(p => p.name + '=' + p.len).join('/') : '') + '|' + (Number.isFinite(prog.versionIdx) ? prog.versionIdx : -1) + '|' + (Array.isArray(prog.versions) ? prog.versions.length : 0) +
+        // The chips are drawn in the SOUNDING key, so the shift is part of what
+        // is on screen — without it a key change repaints nothing.
+        '|s' + _ambProgViewShift(E, cfg, chords) + '|' + _ambKeyRootPc(cfg) + _ambKeyScaleName(cfg);
       if (el._sig === sig) return;
       el._sig = sig; el._curCi = -2;
       const esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
       const kRoot = _ambKeyRootPc(cfg), kScale = _ambKeyScaleName(cfg);
+      const vShift = _ambProgViewShift(E, cfg, chords);
       const ranges = [];
       if (parts) { let acc = 0; parts.forEach((p, pi) => { ranges.push({ name: p.name, from: acc, to: Math.min(N, acc + (p.len | 0)), pi }); acc += (p.len | 0); }); }
       else ranges.push({ name: '', from: 0, to: N, pi: -1 });
@@ -20905,7 +20982,13 @@
             '</span></div>';
         }
         for (let i = r.from; i < r.to; i++) {
-          const c = chords[i];
+          // The strip is the SCORE — written chords in written order, so the
+          // playhead's identity lookup and the ×N alt badge still line up — but
+          // rendered in the KEY YOU HEAR (_ambProgViewShift). Per-cycle
+          // resolution (alts / take-reroll / ↻ order) is deliberately NOT folded
+          // in here: it changes every pass, and the glowing chip (see
+          // _ambProgOverviewPlayheadCore) relabels itself to the sounding chord.
+          const c = _ambChordShift(chords[i], vShift);
           const rn = _ambPeRoman(c, kRoot, kScale);
           const nm = _ambChordShort(c) || '?';
           const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
@@ -20936,14 +21019,32 @@
       // chip that is actually SOUNDING, not the slot index. (alts / take-reroll
       // resolve to objects that aren't in the written list at all; for those the
       // slot IS the right chip, which is what the identity lookup falls back to.)
+      let _snd = null;
       try {
-        const _snd = _ambProgChordAt(E, p, step);
+        _snd = _ambProgChordAt(E, p, step);
         if (_snd) { const _j = p.chords.indexOf(_snd); if (_j >= 0) ci = _j; }
       } catch (e) {}
-      if (ci === el._curCi) return;
-      el._curCi = ci;
-      el.querySelectorAll('.ambient-pov-chord.cur').forEach(n => n.classList.remove('cur'));
-      const cell = el.querySelector('.ambient-pov-chord[data-ci="' + ci + '"]'); if (cell) cell.classList.add('cur');
+      // The chips carry the WRITTEN chord (see the render), but alts / take-reroll
+      // / 🌊 vary substitute a chord that is not in the written list at all — so
+      // the GLOWING chip would name one chord while another sounds. Relabel just
+      // that chip with what is actually playing; the previous glow is restored
+      // from the written name stashed on the node.
+      const sndTxt = (function () {
+        try { return _snd ? (_ambChordShort(_ambChordShift(_snd, _ambProgViewShift(E, cfg, p.chords, tnow))) || '') : ''; } catch (e) { return ''; }
+      })();
+      if (ci === el._curCi && sndTxt === el._curTxt) return;
+      el._curCi = ci; el._curTxt = sndTxt;
+      el.querySelectorAll('.ambient-pov-chord.cur').forEach(n => {
+        n.classList.remove('cur');
+        const w = n.querySelector('.ambient-pov-nm');
+        if (w && n._writtenNm != null) { w.textContent = n._writtenNm; n._writtenNm = null; }
+      });
+      const cell = el.querySelector('.ambient-pov-chord[data-ci="' + ci + '"]');
+      if (cell) {
+        cell.classList.add('cur');
+        const w = cell.querySelector('.ambient-pov-nm');
+        if (w && sndTxt && w.textContent !== sndTxt) { cell._writtenNm = w.textContent; w.textContent = sndTxt; }
+      }
     }
     // 🧂 Salt readout — salt is DETERMINISTIC per cycle, so show the player
     // exactly what's happening and what's next: this cycle's actual plan
@@ -22338,7 +22439,7 @@
           // SOUNDS in each block, not the authored one (they differ under ↻ order
           // / alts / 🎲 take-reroll — the same defect the header pill had).
           const _slotI = _at ? _at.idx : (ci % pg.chords.length);
-          const ch = _ambProgChordAt(E, pg, _slotI) || pg.chords[_slotI];
+          const ch = _ambProgSoundAt(E, pg, _slotI) || pg.chords[_slotI];
           const clen = Math.max(0.05, _at ? _at.len : lens[ci % lens.length]);
           const cw = Math.min(clen, VIEW - cb) / VIEW * 100;
           const lbl = _ambChordShort(ch);
@@ -24406,6 +24507,13 @@
       const close = () => { try { overlay.remove(); } catch (e) {} };
       overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
       const chordsNow = () => _ambArpEntryChords({ notes: _ambNotesOf(getL() || L0) });
+      // A pick is stored as an interval ABOVE the chord root, and the engine
+      // applies it over the SOUNDING root (_ambNoteFreq → _ambSrcRootPc). So both
+      // the row label and the note names in each <select> have to be built from
+      // the shifted chord — under Key/transpose a written C sounding as A was
+      // offering "D · 9th" for a note that comes out as E, and in 'key' mode the
+      // candidate SET itself was re-expressed against the wrong root.
+      const viewChords = () => { const cs = chordsNow(); const sh = _ambProgViewShift(E, cfg, cs); return cs.map(c => _ambChordShift(c, sh)); };
       const density = () => Math.max(1, Math.min(9, (getL() || L0).density | 0));
       // The engine key for this layer object — derived from its own type/id, the
       // same shape _ambMixerLayers builds ('drone:3'). Needed so an edit can
@@ -24437,7 +24545,7 @@
       };
       const render = () => {
         const L = getL() || L0;
-        const chords = chordsNow();
+        const chords = viewChords();
         const mode = _ambPickMode(L);
         const D = density();
         let rows = '';
@@ -24447,7 +24555,7 @@
           let slots = '';
           for (let s = 0; s < D; s++) slots += slotHtml(ci, ch, cand, pick, s);
           rows += '<div class="amb-pick-row">' +
-            '<span class="amb-pick-chord" title="Chord ' + (ci + 1) + ' of the area progression (read-only here)">' + esc(_ambChordShort(ch)) + '</span>' +
+            '<span class="amb-pick-chord" title="Chord ' + (ci + 1) + ' of the area progression, as it sounds (read-only here)">' + esc(_ambChordShort(ch)) + '</span>' +
             '<span class="amb-pick-slots">' + slots + '</span>' +
             '<button type="button" class="ambient-seg amb-pick-auto" data-auto="' + ci + '" title="Back to the automatic voicing for this chord">auto</button>' +
           '</div>';
@@ -24488,7 +24596,9 @@
           const mode = m.getAttribute('data-mode');
           // Read the chords BEFORE touching state — chordsNow() goes through
           // getCfg(), which normalizes and can prune what we're about to edit.
-          const chords = chordsNow();
+          // Shifted, so the orphan check below uses the SAME candidate basis the
+          // selects were built from.
+          const chords = viewChords();
           L._pickMode = mode;
           if (L.chordPick && typeof L.chordPick === 'object') L.chordPick.mode = mode;
           // A narrower mode can orphan picks it no longer offers — drop those
@@ -28240,8 +28350,13 @@
         const _pgRoman = () => {
             _E = E; const c = E.getCfg(); if (!c) return;
             const kRoot = _ambKeyRootPc(c), kScale = _ambKeyScaleName(c);
+            // Prefill the numerals the progression SOUNDS as. Typing them back
+            // builds chords rooted off the key (offset 0), so the round-trip is
+            // an identity — reading the raw roots prefilled "♭III ♭VI ♭VII" for
+            // a progression the ear hears, correctly, as I IV V.
+            const _vsR = _ambProgViewShift(E, c, c.prog && c.prog.chords);
             const cur = (c.prog && Array.isArray(c.prog.chords) && c.prog.chords.length)
-              ? c.prog.chords.map(ch => _ambPeRoman(ch, kRoot, kScale)).filter(Boolean).join(' ') : '';
+              ? c.prog.chords.map(ch => _ambPeRoman(_ambChordShift(ch, _vsR), kRoot, kScale)).filter(Boolean).join(' ') : '';
             let txt = null;
             try { txt = prompt('Progression as roman numerals in ' + CHROMATIC[kRoot] + ' ' + kScale + ':\n(e.g. "ii V I"  ·  "i bVII bVI V"  ·  "IVmaj7 V7 iii7 vi7")', cur); } catch (e) {}
             if (txt == null) return;

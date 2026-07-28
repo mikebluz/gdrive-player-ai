@@ -2877,6 +2877,10 @@
     .pe-chord.chord-in small, .pe-chord.chord-in .pe-rn { color: #6fe0b8; }
     .pe-chord.chord-out small, .pe-chord.chord-out .pe-rn { color: #f0b64a; }
     .pe-scaletog.on { background: rgba(79,209,165,0.16); border-color: #3f8a6a; color: #b8f0d8; }
+    /* Score-vs-sound banner: the written chords are a template that the key
+       re-roots, so name what is actually heard. */
+    .pe-shifted { margin: 2px 0 6px; padding: 5px 9px; border: 1px solid #3a3a52; border-left: 3px solid #9f7aea; border-radius: 6px; background: rgba(159,122,234,0.08); color: #a9b3c4; font-size: 0.74rem; line-height: 1.4; }
+    .pe-shifted b { color: #e2c9ff; font-weight: 700; }
     /* Editor toolbar — operations that rewrite the chords you can see. */
     .pe-ops { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
     .pe-ops button { padding: 4px 10px; border: 1px solid #2d2d3f; border-radius: 6px; background: #1a1a2e; color: #cbd5e0; cursor: pointer; font-size: 0.78rem; touch-action: manipulation; }

@@ -1174,7 +1174,11 @@
         : 'No capturable (synced / bar-native) layers — Unit-Sync a layer so Bar Lock has something to loop.';
       // `.on` = viewed/edited area; `.playing` = the area the engine is sounding
       // (can differ while you edit another area mid-play).
-      const play = (_masterEng.timer && Number.isFinite(_masterEng._playIdx)) ? _masterEng._playIdx : -1;
+      // AUDIBLE index, not the engine's `_playIdx` — the advance flips that ~0.6s
+      // before the boundary, so a rebuild landing in that window would paint the
+      // ▶ on an area you cannot hear yet (and _ambOrchUpdateNowPlaying, which
+      // uses the audible index, would then disagree with the freshly built list).
+      const play = (_masterEng.timer && Number.isFinite(_masterEng._playIdx)) ? _ambAudibleOrch(_masterEng).idx : -1;
       // Orchestration state folded into ONE cycling toggle: Single (mode!=seq),
       // Sequence (seq, no shuffle), Shuffle (seq + shuffle).
       const shuffle = !!s.orch.shuffle;
@@ -18040,6 +18044,26 @@
           _ambFlashEl(hdr, c);
         }
       }
+      // ▶ CARET SYNC. _ambOrchUpdateNowPlaying only ran at advance/start — and at
+      // advance time the audible area is still the OUTGOING one (correct for that
+      // instant), with NOTHING repainting when the boundary actually lands. The
+      // caret therefore sat on the previous area for a whole area's duration.
+      // Repaint from here instead: this already runs per frame off the audible
+      // clock and already tracks the audible index, so it costs one comparison.
+      if (playArea !== E._biArea) { try { _ambOrchUpdateNowPlaying(E); } catch (e) {} }
+      // Tint the readout with the PLAYING area's colour (the same palette the
+      // area chips/strip use), so "which area am I hearing" is legible at a
+      // glance without reading the name. Only the resting style is tinted — the
+      // flash animations own the element mid-pulse and settle back to this.
+      try {
+        const _ac = _ambAreaColor(playArea);
+        if (hdr._acIdx !== playArea) {
+          hdr._acIdx = playArea;
+          hdr.style.setProperty('--ac', _ac.accent);
+          hdr.style.setProperty('--ac-soft', _ac.soft);
+          hdr.style.setProperty('--ac-border', _ac.border);
+        }
+      } catch (e) {}
       E._biBar = barsElapsed; E._biArea = playArea; E._biInit = true;
     }
     // Trance-gate GEN visualization: overlay the CURRENT bar's generated pattern

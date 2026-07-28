@@ -2662,19 +2662,19 @@
     .ambient-orch-bar-hdr.amb-unit-flash { animation: amb-unitf 0.55s ease-out; }
     @keyframes amb-unitf {
       0%   { background: rgba(79,209,197,0.9); border-color: #4fd1c5; color: #06251f; box-shadow: 0 0 10px rgba(79,209,197,0.8); }
-      100% { background: rgba(79,209,197,0.10); border-color: rgba(79,209,197,0.35); color: #4fd1c5; box-shadow: none; }
+      100% { background: var(--ac-soft, rgba(79,209,197,0.10)); border-color: var(--ac-border, rgba(79,209,197,0.35)); color: var(--ac, #4fd1c5); box-shadow: none; }
     }
     @keyframes amb-barf-a {
       0%   { background: rgba(159,122,234,0.65); border-color: #9f7aea; color: #fff; }
-      100% { background: rgba(79,209,197,0.10);  border-color: rgba(79,209,197,0.35); color: #4fd1c5; }
+      100% { background: var(--ac-soft, rgba(79,209,197,0.10)); border-color: var(--ac-border, rgba(79,209,197,0.35)); color: var(--ac, #4fd1c5); }
     }
     @keyframes amb-barf-b {
       0%   { background: rgba(99,179,237,0.65); border-color: #63b3ed; color: #fff; }
-      100% { background: rgba(79,209,197,0.10); border-color: rgba(79,209,197,0.35); color: #4fd1c5; }
+      100% { background: var(--ac-soft, rgba(79,209,197,0.10)); border-color: var(--ac-border, rgba(79,209,197,0.35)); color: var(--ac, #4fd1c5); }
     }
     @keyframes amb-areaf {
       0%   { background: #f6ad55; border-color: #f6ad55; color: #1a202c; box-shadow: 0 0 14px rgba(246,173,85,0.95); }
-      100% { background: rgba(79,209,197,0.10); border-color: rgba(79,209,197,0.35); color: #4fd1c5; box-shadow: none; }
+      100% { background: var(--ac-soft, rgba(79,209,197,0.10)); border-color: var(--ac-border, rgba(79,209,197,0.35)); color: var(--ac, #4fd1c5); box-shadow: none; }
     }
     /* Now-playing area during sequence orchestration: gentle teal pulse. */
     .ambient-area-chip.playing { border-color: #4fd1c5; box-shadow: 0 0 0 1px rgba(79,209,197,0.5); animation: amb-area-play 1.6s ease-in-out infinite; }
@@ -12025,7 +12025,13 @@
       margin: 0 4px; padding: 2px 8px; border-radius: 7px;
       font: 600 0.72rem 'JetBrains Mono', monospace; color: #7fd6c4; white-space: nowrap;
     }
-    .ambient-orch-bar-hdr:not(:empty) { border: 1px solid rgba(79,209,197,0.35); background: rgba(79,209,197,0.10); }
+    /* Resting style is the PLAYING area's colour (--ac* set per frame by
+       _ambUpdateBarIndicator); falls back to teal before playback sets them. */
+    .ambient-orch-bar-hdr:not(:empty) {
+      border: 1px solid var(--ac-border, rgba(79,209,197,0.35));
+      background: var(--ac-soft, rgba(79,209,197,0.10));
+      color: var(--ac, #7fd6c4);
+    }
     .ambient-orch-bar-hdr:empty { display: none; }
 
     /* Trance-gate step grid: max 8 UNIFORM cells per row, aligned into columns

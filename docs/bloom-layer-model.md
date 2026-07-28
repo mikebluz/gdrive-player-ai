@@ -714,6 +714,48 @@ C-track discipline).
 
 ## 11. Backlog — TBD
 
+### Playback hardening — unreproduced audio anomalies (raised 2026-07-27/28)
+
+**Status: PARKED.** Two user reports, folded into one item because they may share a
+cause and neither reproduces in headless measurement. Revisit when it next bites.
+
+**Symptom A — mid-play weirdness.** "Patterns sound off then go back to normal;
+tones sound different for one unit then normal." Reported repeatedly over a
+session.
+
+**Symptom B — cold-start levels.** "Some layers are very quiet on the first press
+after an idle; a stop/start brings them to normal." First reported right after the
+adaptive cold-press lead landed (`_AMB_LEAD_COLD`), so that change is a suspect,
+but unproven.
+
+**Already shipped, may or may not have addressed A:**
+- Drum solo was invisible/persisted state that silently muted 7 of 8 kit lanes and
+  died on stop — three designs, now a plain persisted `soloLane` with loud visuals.
+- Drum kits could substitute a NEIGHBOURING drum while CDN samples streamed in
+  (`_resolveSampleVoice` picked "nearest loaded"); kits are exact-only now. This is
+  the best structural explanation for "tones change for one unit then go back",
+  since every reload restarts the fetches.
+
+**Ruled out for B by measurement** (cold vs warm, same seed, same rig): per-layer
+`levelGain` (1.3) and gate (1.0) identical; per-note `volume` params identical;
+whole-mix RMS in 8×500 ms windows identical to four decimals; watchdog healthy
+(ctRate 0.996–1.009, no voice shedding); reverb send already claimed at play start
+by `_ambSyncMods`. Also confirmed: play-to-play generation is deterministic —
+consecutive plays are note-for-note identical on a fixed seed.
+
+**Known but not the cause:** the synchronous chain build at press blocks the main
+thread ~476 ms on a cold press. Inherent to the current start path.
+
+**Tool left in place:** `bloomColdLead(sec)` in the console — `0.06` = pre-fix
+behaviour, `0.35` = current default, no arg reads it back. Session-only, clamped
+0–2 s. A press counts as COLD only on the first play of a page load or >20 s after
+the last stop, so an A/B needs that wait between presses.
+
+**What would localise it next time:** which layers go quiet and whether their
+reverb send is up (a layer that loses its wet signal reads as much quieter, and
+that is a different code path from level); whether it tracks `bloomColdLead`;
+whether it happens on the deployed build as well as locally.
+
 ### Sustain-family consolidation: Bed / Drone / Pedal → one type (raised 2026-07-27)
 
 **Status: TBD.** Analysis done, no decision, nothing scheduled.

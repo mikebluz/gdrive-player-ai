@@ -2602,7 +2602,13 @@
       padding: 0 8px; border: 1px solid var(--ac, #2d2d3f); border-radius: 7px;
       background: var(--ac-soft, #0a0a14); color: #e8e8f4; cursor: pointer;
       font: 600 0.9rem 'Segoe UI', sans-serif; touch-action: manipulation;
+      /* The COLLAPSED display is what you read 99% of the time — centre it.
+         text-align alone does nothing for the closed state in Blink; the
+         -last variant is the one that moves it, and both are needed for the
+         open list to stay left-aligned and readable. */
+      text-align: center; text-align-last: center;
     }
+    .ambient-area-select option { text-align: left; text-align-last: left; }
     /* Clear ALL areas — compact ✕ (danger), pinned to the right of the row. */
     .ambient-orch-clear {
       flex: 0 0 auto; margin-left: auto; width: 36px; height: 36px; padding: 0;
@@ -2885,6 +2891,21 @@
     .pe-ops { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
     .pe-ops button { padding: 4px 10px; border: 1px solid #2d2d3f; border-radius: 6px; background: #1a1a2e; color: #cbd5e0; cursor: pointer; font-size: 0.78rem; touch-action: manipulation; }
     .pe-ops button:hover { border-color: #4a5568; color: #e2e8f0; }
+    /* TRANSITIONS read as motion, not harmony — one amber accent shared by the
+       editor strip, the overview strip and the matrix header, so a walk is
+       recognisable wherever the progression is drawn. The dashed edge says
+       "passing through"; in/out-of-key colouring is deliberately not applied,
+       since a walk is meant to leave the key on its way somewhere. */
+    .pe-chord.pe-trans { border-style: dashed; border-color: #7a5730; background: rgba(246,173,85,0.10); }
+    .pe-chord.pe-trans small, .pe-chord.pe-trans .pe-rn { color: #f6ad55; }
+    .pe-chord.pe-trans.sel { border-color: #f6ad55; background: rgba(246,173,85,0.20); }
+    .ambient-pov-chord.pov-trans { border-style: dashed; border-color: #7a5730; background: rgba(246,173,85,0.10); }
+    .ambient-pov-chord.pov-trans .ambient-pov-nm { color: #f6ad55; font-weight: 700; }
+    .ambient-pov-chord.pov-trans.cur { border-color: #f6ad55; background: rgba(246,173,85,0.26); }
+    .ambient-pm-ch.pm-trans { color: #f6ad55; }
+    .pe-addtrans { color: #f6ad55; border-color: #6b4a2a !important; }
+    .pe-transnote { margin: 4px 0 8px; padding: 6px 9px; border: 1px solid #3a3a52; border-left: 3px solid #f6ad55; border-radius: 6px; background: rgba(246,173,85,0.07); color: #a9b3c4; font-size: 0.74rem; line-height: 1.45; }
+    .pe-transnote b { color: #f6d5a8; }
     .pe-save { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
     .pe-save input { flex: 1; min-width: 0; padding: 6px 10px; background: #0f0f1e; border: 1px solid #2d2d3f; border-radius: 6px; color: #e2e8f0; }
     .pe-apply { background: rgba(159,122,234,0.22) !important; border-color: #9f7aea !important; color: #e2d9f5 !important; font-weight: 600; }
@@ -3351,6 +3372,9 @@
     .ambient-pov-partname { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: #c9a8ec; cursor: pointer; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; touch-action: manipulation; }
     .ambient-pov-partname em { font-style: normal; font-weight: 500; color: #6b7280; text-transform: none; }
     .ambient-pov-partops { display: inline-flex; gap: 3px; flex: 0 0 auto; }
+    /* A part's own key is a modulation — named on the part header, not buried. */
+    .ambient-pov-partkey { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 6px; border: 1px dashed #3a3a52; border-radius: 6px; background: transparent; color: #6b7280; cursor: pointer; font-size: 0.66rem; font-weight: 700; touch-action: manipulation; }
+    .ambient-pov-partkey.on { border-style: solid; border-color: #9f7aea; background: rgba(159,122,234,0.18); color: #e2c9ff; }
     .ambient-pov-partbtn { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 4px; border: 1px solid #2d2d3f; border-radius: 6px; background: #16162a; color: #9aa; cursor: pointer; font-size: 0.72rem; touch-action: manipulation; }
     .ambient-pov-partrm { color: #fc8181; }
     .ambient-pov-addpart { display: inline-flex; align-items: center; justify-content: center; min-height: 30px; padding: 3px 10px; border: 1px dashed #3a3a52; border-radius: 8px; background: transparent; color: #9f7aea; cursor: pointer; font-size: 0.74rem; font-weight: 600; touch-action: manipulation; }
@@ -12155,6 +12179,19 @@
     .ambient-pm-title .ambient-hint { text-transform: none; letter-spacing: 0; margin-left: 8px; }
     /* Legend: the cells are a CHANCE, the Part column is a DURATION. Without
        this spelled out a bare "60" reads as either (or as a volume). */
+    /* Part tabs — scope the grid to one part, and carry that part's repeat
+       count, so a 16-chord progression is editable on a phone. */
+    .ambient-pm-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 0 0 7px; }
+    .ambient-pm-tabwrap { display: inline-flex; align-items: stretch; border: 1px solid #2d2d3f; border-radius: 7px; overflow: hidden; }
+    .ambient-pm-tabwrap.on { border-color: #35c98e; }
+    .ambient-pm-tab { padding: 3px 10px; border: 1px solid #2d2d3f; border-radius: 7px; background: #16162a; color: #9a9ac0; cursor: pointer; font-size: 0.7rem; font-weight: 600; touch-action: manipulation; }
+    .ambient-pm-tabwrap .ambient-pm-tab { border: 0; border-radius: 0; }
+    .ambient-pm-tab.on { background: rgba(53,201,142,0.18); color: #7fe0b6; border-color: #35c98e; }
+    .ambient-pm-plays { display: inline-flex; align-items: center; gap: 2px; padding: 0 4px; border-left: 1px solid #2d2d3f; background: #0f0f1e; }
+    .ambient-pm-plays b { min-width: 22px; text-align: center; color: #cbd5e0; font-size: 0.66rem; font-weight: 700; }
+    .ambient-pm-playsbtn { width: 18px; height: 20px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: #8a8aa8; cursor: pointer; font-size: 0.72rem; line-height: 1; touch-action: manipulation; }
+    .ambient-pm-playsbtn:disabled { opacity: 0.3; cursor: default; }
+    @media (hover: hover) { .ambient-pm-playsbtn:hover:not(:disabled) { background: #23233a; color: #e2e8f0; } }
     .ambient-pm-legend { font-size: 0.64rem; line-height: 1.45; color: #8a8aa8; margin: 0 0 6px; padding: 5px 8px; border: 1px solid #23233a; border-left: 3px solid #35c98e; border-radius: 6px; background: rgba(53,201,142,0.06); }
     .ambient-pm-legend b { color: #cbd5e0; font-weight: 700; }
     .ambient-pm-head, .ambient-pm-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
@@ -12188,8 +12225,23 @@
     .ambient-pm-editbtn:hover { border-color: #4a5568; color: #cbd5e0; }
     .ambient-pm-editbtn.active { border-color: #35c98e; background: rgba(53,201,142,0.18); color: #7fe0b6; }
     .ambient-pm-cell:active { filter: brightness(1.25); }
+    .ambient-addpart-hint { font-size: 0.72rem; line-height: 1.45; color: #8a8aa8; margin: 0 0 10px; }
+    .ambient-addpart-key { display: inline-flex; gap: 5px; min-width: 0; }
+    .ambient-addpart-key select { width: 84px; }
+    .ambient-addpart-modal .ap-same { color: #6b7280; font-size: 0.72rem; }
+    .ambient-addpart-modal .ap-same.ap-mod { color: #9f7aea; font-weight: 700; }
+    .ambient-addpart-note { margin-top: 8px; padding: 6px 9px; border: 1px solid #23233a; border-left: 3px solid #9f7aea; border-radius: 6px; background: rgba(159,122,234,0.07); color: #a9b3c4; font-size: 0.74rem; line-height: 1.45; }
     .ambient-pm-modal-hint { font-size: 0.72rem; line-height: 1.45; color: #8a8aa8; margin: 0 0 10px; }
     .ambient-pm-modal-presets { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+    /* Spread actions — deliberately full-width and wordy: a one-click edit that
+       touches a whole row or column should read as a sentence, not a glyph. */
+    .ambient-pm-modal-spread { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px solid #23233a; }
+    .ambient-pm-modal-spread .ambient-seg { text-align: left; padding: 7px 10px; font-size: 0.74rem; font-weight: 500; }
+    .ambient-pm-modal-spread b { color: #cbd5e0; font-weight: 700; }
+    .ambient-pm-modal-spread i { color: #35c98e; font-style: normal; font-weight: 700; }
+    /* The row label and column header are handles, so they must look like it. */
+    .ambient-pm-row > .ambient-pm-lbl, .ambient-pm-head > .ambient-pm-ch { cursor: pointer; touch-action: manipulation; }
+    .ambient-pm-row > .ambient-pm-lbl:hover, .ambient-pm-head > .ambient-pm-ch:hover { color: #e2e8f0; text-decoration: underline dotted; }
     .ambient-pm-modal-presets .ambient-seg { flex: 1 1 auto; padding: 4px 8px; font-size: 0.72rem; }
     .ambient-pm-part { flex: 0 0 118px; display: inline-flex; gap: 3px; }
     /* The head-row "Part" label inherited the body font and towered over the

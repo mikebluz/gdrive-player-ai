@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node server.js",
     "desktop": "electron electron/main.cjs",
-    "test:golden": "node test/golden-render.js"
+    "test:golden": "node test/golden-render.js",
+    "samples": "node tools/import-samples.mjs"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

@@ -266,9 +266,11 @@
     }
     // Chip-face label: the "Areas" header supplies the word, so an unnamed area
     // just shows its position number (1, 2, 3…); a user-named area shows its name.
-    function _ambAreaChipLabel(cfg, i) {
-      return (cfg && typeof cfg.name === 'string' && cfg.name.trim()) ? cfg.name.trim() : String((i | 0) + 1);
-    }
+    // The area selector used to render a bare "1" when unnamed, so the one place
+    // you PICK an area disagreed with every place that REPORTS one ("▶ Area 1").
+    // There is now a single label — _ambAreaLabel — and this is kept only as its
+    // alias, so a future caller can't reintroduce the split.
+    function _ambAreaChipLabel(cfg, i) { return _ambAreaLabel(cfg, i); }
     // Per-area accent palette — index 0 = the original purple (Area 1), then a
     // distinct hue per additional area (cycled). Colours each area's chip and the
     // active area's layer highlights so areas read apart at a glance.
@@ -1376,7 +1378,9 @@
           try { areasBox.classList.remove('swipe-l', 'swipe-r'); void areasBox.offsetWidth;
                 areasBox.classList.add(dir > 0 ? 'swipe-l' : 'swipe-r');
                 setTimeout(() => areasBox.classList.remove('swipe-l', 'swipe-r'), 260); } catch (e) {}
-          try { if (typeof showToast === 'function') showToast('Area ' + _ambAreaLabel(s.areas[next], next) + (_masterEng && _masterEng.timer ? ' (viewing — playback unchanged)' : '')); } catch (e) {}
+          // _ambAreaLabel ALREADY reads "Area 3" when unnamed — prefixing it gave
+          // "Area Verse" the moment anyone named one.
+          try { if (typeof showToast === 'function') showToast(_ambAreaLabel(s.areas[next], next) + (_masterEng && _masterEng.timer ? ' (viewing — playback unchanged)' : '')); } catch (e) {}
         });
         const end = () => { armed = false; sid = null; };
         areasBox.addEventListener('pointerup', end);
@@ -1387,7 +1391,7 @@
       if (ren) ren.addEventListener('click', () => {
         const i = _ambActiveAreaIdx();
         if (typeof prompt !== 'function') return;
-        const cur = _ambAreas()[i]; const nm = prompt('Area name (blank = number):', (cur && cur.name) || '');
+        const cur = _ambAreas()[i]; const nm = prompt('Area name — used by every readout (blank = "Area ' + (i + 1) + '"):', (cur && cur.name) || '');
         if (nm != null) { _ambRenameArea(i, nm.trim()); _ambRebuildMaster(); try { persistWorkspace(); } catch (e) {} }
       });
       const clrArea = host.querySelector('.ambient-area-clear');
@@ -2386,6 +2390,9 @@
       if (prog.seedSig != null && typeof prog.seedSig !== 'string') delete prog.seedSig;
       const cloneCh = (c) => {
         if (!c || typeof c !== 'object') return null;
+        // A TRANSITION slot has no harmony of its own — it is a walk from the
+        // chord before it to the chord after. Carries only its length.
+        if (c.transition) return { transition: true, bars: (Number.isFinite(c.bars) && c.bars > 0) ? c.bars : 1 };
         return { root: (((c.root | 0) % 12) + 12) % 12,
           intervals: (Array.isArray(c.intervals) && c.intervals.length ? c.intervals : [0]).map(iv => (((iv | 0) % 12) + 12) % 12),
           ...(Number.isFinite(c.bars) && c.bars > 0 ? { bars: c.bars } : {}) };
@@ -2395,6 +2402,13 @@
       const chords = Array.isArray(prog.chords) ? prog.chords : [];
       chords.forEach(ch => {
         if (!ch || typeof ch !== 'object') return;
+        if (ch.transition) {
+          // Never alternates, never a root of its own; length only.
+          ch.transition = true;
+          if (!(Number.isFinite(ch.bars) && ch.bars > 0)) ch.bars = 1;
+          delete ch.root; delete ch.intervals; delete ch.alts; delete ch.altMode;
+          return;
+        }
         if (Array.isArray(ch.alts) && ch.alts.length) {
           const alts = ch.alts.map(cloneCh).filter(Boolean);
           if (alts.length) { ch.alts = alts; ch.altMode = (ch.altMode === 'random') ? 'random' : 'cycle'; return; }
@@ -2464,7 +2478,19 @@
         const p = parts[i]; if (!p || typeof p !== 'object') continue;
         const len = Math.max(1, Math.min(total - acc, Number.isFinite(p.len) ? (p.len | 0) : 1));
         const name = (typeof p.name === 'string' && p.name.trim()) ? p.name.trim().slice(0, 16) : ('Part ' + (out.length + 1));
-        out.push({ name, len }); acc += len;
+        // PER-PART KEY (additive): the key in force while this part plays — a real
+        // modulation mid-progression, with the AREA key left alone. This builds a
+        // FRESH object per part, so anything not carried explicitly is dropped on
+        // every normalize (the same trap the sections repair has).
+        const e = { name, len };
+        // How many times this part runs before the progression moves on. 1 is the
+        // neutral value and is NOT stored, so a plain chain stays byte-identical.
+        if (Number.isFinite(p.plays) && (p.plays | 0) > 1) e.plays = Math.min(64, p.plays | 0);
+        if (p.key && typeof p.key === 'object' && Number.isFinite(p.key.root)) {
+          const sc = (typeof SCALES !== 'undefined' && SCALES[p.key.scale]) ? p.key.scale : 'major';
+          e.key = { root: (((p.key.root | 0) % 12) + 12) % 12, scale: sc };
+        }
+        out.push(e); acc += len;
       }
       if (!out.length) return undefined;
       if (acc < total) out[out.length - 1].len += (total - acc);
@@ -3294,6 +3320,99 @@
       });
       return out;
     }
+    // ---- TRANSITION SLOTS ---------------------------------------------------
+    // A transition is a chord slot flagged { transition:true, bars } that carries
+    // no harmony of its own: it WALKS from the chord before it to the chord after.
+    // Making it a real slot (rather than a property of the following chord) means
+    // the editor, overview strip, Scheduler lane and chord matrix all show it as a
+    // column for free — including the per-layer opt-in, since the matrix cell for
+    // that column already decides whether a layer plays there at all.
+    //
+    // Resolution is per ONSET: at each note's position within the slot the walk
+    // supplies a passing chord rooted on the current step of the line. Layers that
+    // sit the transition out are handled by their matrix cell (0%), not here.
+    function _ambIsTransition(ch) { return !!(ch && ch.transition); }
+    // How many notes the walk has. ONE definition — the editor preview plays the
+    // same line the engine does, so a preview can never lie about the walk.
+    function _ambTransitionSteps(bars) { return Math.max(2, Math.min(16, Math.round(((Number.isFinite(bars) && bars > 0) ? bars : 1) * 4))); }
+    // The nearest real chord before / after slot i, wrapping the cycle. Returns
+    // null when the progression is nothing but transitions (guarded by callers).
+    function _ambProgNeighbourChord(chords, i, dir) {
+      const n = chords.length;
+      for (let k = 1; k <= n; k++) {
+        const c = chords[(((i + dir * k) % n) + n) % n];
+        if (c && !_ambIsTransition(c)) return c;
+      }
+      return null;
+    }
+    // The walk itself: a stepwise line from `fromPc` to `toPc`.
+    //
+    // Direction is the SHORT way round (a walk is a lead-in, not a tour), and the
+    // path runs along the area's scale when there is one so the passing notes stay
+    // diatonic — chromatically otherwise. `steps` notes are spread across the slot.
+    // Composition is seeded on (slot, cycle, take) so it is reproducible and loops
+    // identically, but re-rolls per take like every other 🎲 feature: some passes
+    // approach from below, some from above, and some slip in a chromatic
+    // approach note on the last step.
+    function _ambTransitionLine(cfg, fromPc, toPc, steps, seedKey) {
+      const rnd = _ambSeededRand((((seedKey + 1) * 2654435761) ^ 0x7A17) >>> 0);
+      const n = Math.max(2, steps | 0);
+      let scale = null;
+      try {
+        if (cfg && cfg.keyOn) {
+          const ivs = (typeof SCALES !== 'undefined' && SCALES[_ambKeyScaleName(cfg)]) || null;
+          if (ivs && ivs.length >= 5) { const kr = _ambKeyRootPc(cfg); scale = ivs.map(iv => (((kr + iv) % 12) + 12) % 12); }
+        }
+      } catch (e) {}
+      const up = (((toPc - fromPc) % 12) + 12) % 12;
+      // Short way round, with the tie broken by the take so a tritone gap doesn't
+      // always walk the same direction.
+      const dir = (up === 6) ? (rnd() < 0.5 ? 1 : -1) : (up <= 6 ? 1 : -1);
+      const out = [];
+      if (scale) {
+        // Nearest scale tones to the endpoints, then walk the scale between them.
+        const near = (pc) => { let bi = 0, bd = 99; scale.forEach((s2, si) => { const d = Math.min((((s2 - pc) % 12) + 12) % 12, (((pc - s2) % 12) + 12) % 12); if (d < bd) { bd = d; bi = si; } }); return bi; };
+        const a0 = near(fromPc), a1 = near(toPc), L = scale.length;
+        for (let s2 = 0; s2 < n; s2++) {
+          const t = s2 / n;                       // never reaches the target — the NEXT chord plays it
+          let idx = a0 + Math.round(t * ((((a1 - a0) * dir % L) + L) % L)) * dir;
+          out.push(scale[(((idx % L) + L) % L)]);
+        }
+      } else {
+        const span = (dir > 0) ? up : (12 - up);
+        for (let s2 = 0; s2 < n; s2++) out.push(((((fromPc + dir * Math.round((s2 / n) * span)) % 12) + 12) % 12));
+      }
+      out[0] = fromPc;                            // always leave from where we were
+      // Rounding STALLS when there are more beats than scale steps (F→A over four
+      // quarters gives F G G A), and a repeated note is exactly where a walk wants
+      // its chromatic passing tone. Fill any repeat that sits a whole tone below
+      // the next distinct note — F G G A becomes F G G♯ A, which is the line a
+      // bass player would actually walk.
+      for (let s2 = 1; s2 < n - 1; s2++) {
+        if (out[s2] !== out[s2 - 1]) continue;
+        const gap = (((out[s2 + 1] - out[s2]) % 12) + 12) % 12;
+        if (gap === 2) out[s2] = (((out[s2] + 1) % 12) + 12) % 12;
+        else if (gap === 10) out[s2] = (((out[s2] - 1) % 12) + 12) % 12;
+      }
+      // …and sometimes approach the target chromatically from the other side, so
+      // repeated passes through the same transition don't all walk identically.
+      if (n > 2 && rnd() < 0.45) out[n - 1] = ((((toPc - dir) % 12) + 12) % 12);
+      return out;
+    }
+    // The passing chord sounding at `pos` (0-1) through transition slot `i`.
+    function _ambTransitionChordAt(cfg, chords, i, pos, cycle) {
+      const prev = _ambProgNeighbourChord(chords, i, -1);
+      const next = _ambProgNeighbourChord(chords, i, 1);
+      if (!prev || !next) return prev || next || null;
+      const slot = chords[i];
+      const bars = (Number.isFinite(slot.bars) && slot.bars > 0) ? slot.bars : 1;
+      const steps = _ambTransitionSteps(bars);
+      const line = _ambTransitionLine(cfg, prev.root | 0, next.root | 0, steps, (i + 1) * 131 + (cycle | 0) * 7919 + ((cfg && cfg.seed | 0) || 0));
+      const k = Math.max(0, Math.min(steps - 1, Math.floor(Math.max(0, Math.min(0.9999, pos)) * steps)));
+      // Voiced with the OUTGOING chord's shape, so the walk keeps the texture of
+      // the music it is leaving rather than announcing itself as a new chord.
+      return { root: line[k], intervals: (Array.isArray(prev.intervals) && prev.intervals.length) ? prev.intervals.slice() : [0, 4, 7] };
+    }
     // ---- PROGRESSION VIEW SHIFT --------------------------------------------
     // A resolved chord object still carries its AUTHORED root, because the engine
     // transposes progression roots LATER — inside _ambSrcRootPc, downstream of
@@ -3314,7 +3433,7 @@
       let sh = 0;
       try {
         if (cfg.keyOn && _ambKeyMode(cfg) === 'transpose') {
-          sh += _ambProgKeyOffset({ type: 'prog', chords: chords }, _ambKeyRootPc(cfg));
+          sh += _ambProgKeyOffset({ type: 'prog', chords: chords }, _ambAreaKeyRootPc(cfg));
         }
       } catch (e) {}
       try {
@@ -3381,6 +3500,18 @@
       // RNG (never the shared _ambRand stream the harness hashes → no downstream draw
       // shifts) and is a PURE function of (idx, cycle, seed), so the >1 calls per onset
       // (root via _ambSrcRootPc + intervals via _ambScaleIntervals) resolve the SAME alt.
+      // TRANSITION slot → the walk's current passing chord. Resolved before alts /
+      // reroll / salt, none of which apply: a transition has no written harmony for
+      // them to substitute. `pos` comes from the same hint _ambProgStepAt stashes
+      // for salt colours, so the walk advances WITHIN the slot without any new
+      // clock. Gated on the flag, so a progression without transitions takes the
+      // exact prior path (harness/golden byte-identical by construction).
+      if (base && _ambIsTransition(base)) {
+        const hint = _ambProgPosHint;
+        const pos = (hint && hint.step === step) ? hint.pos : 0;
+        const idx = permO ? permO[slot] : slot;
+        return _ambTransitionChordAt(cfg0, chs, idx, pos, Math.floor(step / len));
+      }
       let ret = base;
       if (base && Array.isArray(base.alts) && base.alts.length) {
         const pool = base.alts.length + 1;   // index 0 = the written chord
@@ -3583,6 +3714,43 @@
           return ((_at.step | 0) + _loops) * _L + ((_part.from + _k) % _L);
         }
       }
+      // ---- PART REPEATS -------------------------------------------------------
+      // `parts[i].plays` — how many times a part runs before the progression moves
+      // on (Verse ×2 → Chorus ×1 → …). The written chord list is unchanged; what
+      // changes is the ORDER OF PLAY, so this expands the parts into the sequence
+      // actually heard and walks that. GATED on some part carrying plays > 1, so
+      // the default path below is untouched and the harness (no parts) is
+      // byte-identical. Mutually exclusive with the section-bound branch above,
+      // which pins ONE part and returns before reaching here.
+      // BOTH caller contracts survive: `step % L` is the chord index and
+      // `floor(step / L)` the variation cycle — the latter advancing once per full
+      // pass through the part sequence, so repeats of a part play the same chords
+      // (which is what a repeat means) while alts still evolve pass to pass.
+      if (!_ownSrc && cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length
+          && Array.isArray(cfg.prog.parts) && cfg.prog.parts.some(p => p && (p.plays | 0) > 1)) {
+        const all = cfg.prog.chords, L = all.length;
+        const seq = []; let from = 0;
+        cfg.prog.parts.forEach(p => {
+          const plen = Math.max(1, p.len | 0), plays = Math.max(1, p.plays | 0);
+          for (let r = 0; r < plays; r++) {
+            for (let i = 0; i < plen; i++) {
+              const abs = from + i; if (abs >= L) break;
+              const c = all[abs];
+              seq.push({ abs, len: (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc });
+            }
+          }
+          from += plen;
+        });
+        if (seq.length) {
+          const cycle = seq.reduce((a2, v) => a2 + v.len, 0) || bpc;
+          const loops = Math.floor(bars / cycle);
+          let rem = bars - loops * cycle, k = 0;
+          while (k < seq.length - 1 && rem >= seq[k].len) { rem -= seq[k].len; k++; }
+          const step = loops * L + seq[k].abs;
+          _ambProgPosHint = { step: step, pos: Math.max(0, Math.min(1, rem / Math.max(1e-6, seq[k].len))) };
+          return step;
+        }
+      }
       // Per-chord lengths: if any chord carries its own `bars`, walk the cumulative
       // lengths to find the active chord; else the uniform fast path (byte-identical to
       // before → harness-safe). Returns a MONOTONIC step (chord = step mod chords.length).
@@ -3722,8 +3890,10 @@
       ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-pm-modal">' +
         '<div class="sm-title">' + esc(o.label) + '</div>' +
         '<div class="ambient-step-modal-body">' +
-          '<div class="ambient-pm-modal-hint">The chance this layer plays. Rolled once per ' + esc(o.unit) +
-            ', so it is in or out for the whole ' + esc(o.unit) + ' — a lower % means it sits out more passes, not that it plays quieter or shorter.</div>' +
+          '<div class="ambient-pm-modal-hint">' + (o.bulk
+            ? ('Sets <b>every ' + esc(o.bulk) + '</b> at once. The chance is rolled once per ' + esc(o.unit) + ', so a layer is in or out for the whole ' + esc(o.unit) + '.')
+            : ('The chance this layer plays. Rolled once per ' + esc(o.unit) +
+               ', so it is in or out for the whole ' + esc(o.unit) + ' — a lower % means it sits out more passes, not that it plays quieter or shorter.')) + '</div>' +
           '<div class="ambient-ctrl ambient-step-row"><label>Chance</label>' +
             '<input type="range" class="ambient-pm-modal-sl" min="0" max="100" step="1" value="' + v0 + '">' +
             '<span class="ambient-step-val ambient-pm-modal-val">' + v0 + '%</span></div>' +
@@ -3733,22 +3903,35 @@
               .map(x => '<button type="button" class="ambient-seg ambient-pm-modal-preset" data-v="' + x + '">' +
                 (x >= 100 ? 'always' : (x <= 0 ? 'never' : x + '%')) + '</button>').join('') +
           '</div>' +
+          // SPREAD: the slider always writes the one cell (immediate, reversible),
+          // and these are the explicit "and everything else like it" actions —
+          // one click, named, so a wide edit is never something you did by accident.
+          // Absent when the modal was opened on a whole row/column already.
+          (o.onRow || o.onCol ? '<div class="ambient-pm-modal-spread">' +
+            (o.onRow ? '<button type="button" class="ambient-seg pm-sp-row">Set all of <b>' + esc(o.rowLabel || 'this layer') + '</b> to <i class="pm-sp-v">' + v0 + '%</i></button>' : '') +
+            (o.onCol ? '<button type="button" class="ambient-seg pm-sp-col">Set every layer on <b>' + esc(o.colLabel || 'this ' + o.unit) + '</b> to <i class="pm-sp-v">' + v0 + '%</i></button>' : '') +
+          '</div>' : '') +
         '</div>' +
         '<div class="sm-footer"><button type="button" class="sm-apply ambient-pm-modal-done">Done</button></div></div>';
       document.body.appendChild(ov);
       ov.style.setProperty('display', 'flex', 'important');
       const sl = ov.querySelector('.ambient-pm-modal-sl'), val = ov.querySelector('.ambient-pm-modal-val');
       const close = () => { try { ov.remove(); } catch (e) {} };
+      let cur = v0;
       const set = (v) => {
         const n = Math.max(0, Math.min(100, v | 0));
+        cur = n;
         sl.value = String(n); val.textContent = n + '%';
         ov.querySelectorAll('.ambient-pm-modal-preset').forEach(bt => bt.classList.toggle('active', (bt.dataset.v | 0) === n));
+        ov.querySelectorAll('.pm-sp-v').forEach(e2 => { e2.textContent = n + '%'; });
         try { o.onSet(n); } catch (e) {}
       };
       set(v0);
       sl.addEventListener('input', () => set(sl.value | 0));
       ov.addEventListener('click', (ev) => {
         if (ev.target === ov || (ev.target.closest && ev.target.closest('.ambient-pm-modal-done'))) { close(); return; }
+        if (ev.target.closest && ev.target.closest('.pm-sp-row')) { try { o.onRow(cur); } catch (e) {} close(); return; }
+        if (ev.target.closest && ev.target.closest('.pm-sp-col')) { try { o.onCol(cur); } catch (e) {} close(); return; }
         const pr = ev.target.closest && ev.target.closest('.ambient-pm-modal-preset');
         if (pr) set(pr.dataset.v | 0);
       });
@@ -3919,16 +4102,78 @@
     // Read the current engine's (already-normalized) cfg cheaply: the tick
     // caches it on E._cfg, so generation reads keyOn/keyRoot without a fresh
     // normalize. Returns null off the audio path (UI-only calls fall through).
+    // ---- PER-PART KEY ------------------------------------------------------
+    // `parts[i].key = {root, scale}` is the key in force while that part of the
+    // progression plays. Resolved the same way the section key is (_ambSectionKeyNow):
+    // off the note's own _ambKeyTime stamp, falling back to the audio clock for UI
+    // reads, so the change lands exactly on the part boundary with no rescheduling.
+    // Returns null whenever no part carries a key, which is the overwhelming
+    // majority — so the default path through _ambKeyRootPc/_ambKeyScaleName is
+    // untouched and the harness (no parts) is byte-identical by construction.
+    let _ambPartKeyBusy = false;
+    // The key in force at a given chord SLOT, for static rendering (the overview
+    // strip draws every chip at once, so it cannot use the time-resolved lookup).
+    function _ambPartKeyForSlot(prog, slot) {
+      const parts = prog && prog.parts;
+      if (!Array.isArray(parts) || !parts.some(x => x && x.key)) return null;
+      let acc = 0;
+      for (let i = 0; i < parts.length; i++) {
+        const len = Math.max(1, parts[i].len | 0);
+        if (slot < acc + len) return parts[i].key || null;
+        acc += len;
+      }
+      return null;
+    }
+    function _ambPartKeyNow(cfg) {
+      if (_ambPartKeyBusy) return null;                       // _ambProgStepAt must never re-enter this
+      const E = _E; if (!E) return null;
+      const c = cfg || (E._cfg || (E.getCfg && E.getCfg()));
+      const p = c && c.prog;
+      if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return null;
+      const parts = p.parts;
+      if (!Array.isArray(parts) || !parts.some(x => x && x.key)) return null;
+      _ambPartKeyBusy = true;
+      try {
+        const t = (typeof _ambKeyTime === 'number' && Number.isFinite(_ambKeyTime))
+          ? _ambKeyTime : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : NaN);
+        let slot = 0;
+        if (Number.isFinite(_ambProgStepOverride)) slot = _ambProgStepOverride | 0;
+        else if (Number.isFinite(t)) { try { slot = _ambProgStepAt(E, t) | 0; } catch (e) { slot = 0; } }
+        const n = p.chords.length;
+        slot = ((slot % n) + n) % n;
+        let acc = 0;
+        for (let i = 0; i < parts.length; i++) {
+          const len = Math.max(1, parts[i].len | 0);
+          if (slot < acc + len) return parts[i].key || null;
+          acc += len;
+        }
+        return null;
+      } catch (e) { return null; }
+      finally { _ambPartKeyBusy = false; }
+    }
     function _ambKeyCfg() {
       try { return (_E && (_E._cfg || (typeof _E.getCfg === 'function' && _E.getCfg()))) || null; } catch (e) { return null; }
     }
+    // The AREA key, ignoring any per-part override. Used by the progression-wide
+    // transpose (_ambProgKeyOffset), which re-roots the WHOLE progression so its
+    // tonic sits on the key — an area-level idea. A part key must NOT feed it: the
+    // part's modulation is already baked into that part's stored chords, so using
+    // it here applied the change twice (measured: a Chorus in F, whose chords are
+    // already F and C, played A♯ and F).
+    function _ambAreaKeyRootPc(cfg) {
+      const c = cfg || _ambKeyCfg();
+      if (c && c.keyOn && c.keyFollow !== false) return (typeof rootIdx === 'number') ? (((rootIdx % 12) + 12) % 12) : 0;
+      return c ? ((((c.keyRoot | 0) % 12) + 12) % 12) : 0;
+    }
     function _ambKeyRootPc(cfg) {
       const c = cfg || _ambKeyCfg();
+      { const pk = _ambPartKeyNow(c); if (pk) return (((pk.root | 0) % 12) + 12) % 12; }
       if (c && c.keyOn && c.keyFollow !== false) return (typeof rootIdx === 'number') ? (((rootIdx % 12) + 12) % 12) : 0;   // follow the workspace key
       return c ? ((((c.keyRoot | 0) % 12) + 12) % 12) : 0;
     }
     function _ambKeyScaleName(cfg) {
       const c = cfg || _ambKeyCfg();
+      { const pk = _ambPartKeyNow(c); if (pk && typeof SCALES !== 'undefined' && SCALES[pk.scale]) return pk.scale; }
       if (c && c.keyOn && c.keyFollow !== false) {   // follow the workspace scale
         const ws = (typeof currentScale === 'string') ? currentScale : 'major';
         return (typeof SCALES !== 'undefined' && SCALES[ws]) ? ws : 'major';
@@ -4127,7 +4372,11 @@
     // while keeping its relative chord motion.
     function _ambProgKeyOffset(n, keyRoot) {
       const chs = Array.isArray(n.chords) ? n.chords : [];
-      const ref = (chs[0] && Number.isFinite(chs[0].root)) ? (((chs[0].root % 12) + 12) % 12) : 0;
+      // The reference is the first chord with a ROOT — a leading transition slot
+      // has none, and reading its undefined root as 0 would silently re-root the
+      // whole progression onto C.
+      const c0 = chs.find(c => c && !c.transition && Number.isFinite(c.root));
+      const ref = c0 ? (((c0.root % 12) + 12) % 12) : 0;
       return (((keyRoot - ref) % 12) + 12) % 12;
     }
     function _ambProgWorksInKey(n, cfg) {
@@ -4304,7 +4553,7 @@
       if (n.type === 'prog') {
         const ch = _ambProgCurrentChord(n);
         let r = (ch && Number.isFinite(ch.root)) ? (((ch.root % 12) + 12) % 12) : baseRoot;
-        if (transpose) r = ((r + _ambProgKeyOffset(n, keyRoot)) % 12 + 12) % 12;
+        if (transpose) r = ((r + _ambProgKeyOffset(n, _ambAreaKeyRootPc(kc))) % 12 + 12) % 12;
         return r;
       }
       // Scales root to the key tonic in transpose mode. Time-indexed (keyMaster)
@@ -4845,7 +5094,7 @@
         if (!c.prog || typeof c.prog !== 'object') c.prog = { on: false, name: '', chords: [] };
         if (opts.append && Array.isArray(c.prog.chords) && c.prog.chords.length) {
           // APPEND MODE — chain this progression on as a new PART (Verse → Chorus → …).
-          _ambProgAppendPart(c.prog, name, chords);
+          _ambProgAppendPart(c.prog, name, chords, opts.partKey);
           c.prog.on = true;
         } else {
           c.prog.name = name; c.prog.chords = chords; c.prog.on = true;
@@ -4943,12 +5192,13 @@
       ch.root = base;
       ch.intervals = uniq.map(p => (((p - base) % 12) + 12) % 12).sort((a, b) => a - b);
     }
-    function _ambPeChLabel(ch) { return _ambPeNotes(ch).slice().sort((a, b) => a - b).map(p => _AMB_CHROM[p]).join(' '); }
+    function _ambPeChLabel(ch) { if (ch && ch.transition) return 'walk'; return _ambPeNotes(ch).slice().sort((a, b) => a - b).map(p => _AMB_CHROM[p]).join(' '); }
     // Compact chord name for the header readout: root note + quality suffix
     // (C, Am, G7, D°…). Falls back to just the root for a custom voicing.
     const _AMB_CH_SYM = { maj: '', min: 'm', dim: '°', aug: '+', sus2: 'sus2', sus4: 'sus4', '7': '7', maj7: 'maj7', min7: 'm7', 'm7♭5': 'm7♭5', dim7: '°7', '6': '6', '9': '9' };
     function _ambChordShort(ch) {
       if (!ch || typeof ch !== 'object') return '';
+      if (ch.transition) return '⇝';
       const root = _AMB_CHROM[(((ch.root | 0) % 12) + 12) % 12];
       const norm = (Array.isArray(ch.intervals) ? ch.intervals.map(x => x | 0) : [0]).slice().sort((a, b) => a - b).join(',');
       for (let i = 0; i < _AMB_PE_QUALITIES.length; i++) {
@@ -4974,6 +5224,7 @@
     // Returns '' when there's no key context.
     function _ambPeRoman(ch, keyRoot, keyScale) {
       if (!ch || !Number.isFinite(keyRoot)) return '';
+      if (ch.transition) return '';   // a walk has no degree — it is the motion between two
       const R = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
       const MAJ = [0, 2, 4, 5, 7, 9, 11];
       const rel = (((((ch.root | 0) - (keyRoot | 0)) % 12) + 12) % 12);
@@ -5169,6 +5420,30 @@
         const bars = (Number.isFinite(ch.bars) && ch.bars > 0) ? ch.bars : defBars;
         const durMs = Math.max(150, bars * BAR_MS);
         const noteMs = Math.max(120, durMs * 0.92);
+        // A TRANSITION is a LINE, not a chord — preview it as one note per step,
+        // spread across the slot, an octave down so it reads as the bass walk it
+        // is and is instantly distinguishable from the chords around it. Pitches
+        // come from _ambTransitionChordAt, i.e. the engine's own walk, so the
+        // preview cannot drift from what will actually play.
+        if (_ambIsTransition(ch)) {
+          const nSteps = _ambTransitionSteps(bars);
+          const stepMs = durMs / nSteps;
+          for (let k = 0; k < nSteps; k++) {
+            T({ ms: cum + k * stepMs, fn: () => {
+              if (_ambProgEd !== ed || typeof playNote !== 'function') return;
+              const at = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + LEAD;
+              let pc = null;
+              try { const wc = _ambTransitionChordAt(gcfg, ed.chords, i, (k + 0.5) / nSteps, 0); pc = wc && wc.root; } catch (e) {}
+              if (!Number.isFinite(pc)) return;
+              const A = (typeof masterFreqA === 'number' && masterFreqA > 0) ? masterFreqA : 440;
+              const f = A * Math.pow(2, (12 * 4 + pc - 69) / 12);   // octave 3
+              try { playNote(f, PARAMS, Math.max(90, stepMs * 0.9), at); } catch (e) {}
+              if (k === 0) T({ ms: LEAD * 1000, fn: () => { if (_ambProgEd === ed) btns.forEach((b, bi) => b.classList.toggle('pe-playing', bi === i)); } });
+            } });
+          }
+          cum += durMs;
+          return;
+        }
         T({ ms: cum, fn: () => {
           if (_ambProgEd !== ed || typeof playNote !== 'function') return;
           const at = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + LEAD;
@@ -5182,7 +5457,8 @@
       });
       T({ ms: cum + LEAD * 1000 + 300, fn: () => { if (_ambProgEd === ed) _ambPePreviewStop(ed); } });
     }
-    const _ambCloneChord = (c) => { const o = { root: (((c.root | 0) % 12) + 12) % 12, intervals: (Array.isArray(c.intervals) ? c.intervals : [0]).slice() }; if (Number.isFinite(c.bars) && c.bars > 0) o.bars = c.bars; if (Array.isArray(c.alts) && c.alts.length) { o.alts = c.alts.map(a => { const ao = { root: (((a.root | 0) % 12) + 12) % 12, intervals: (Array.isArray(a.intervals) ? a.intervals : [0]).slice() }; if (Number.isFinite(a.bars) && a.bars > 0) ao.bars = a.bars; return ao; }); o.altMode = (c.altMode === 'random') ? 'random' : 'cycle'; } return o; };
+    const _ambCloneChord = (c) => { if (c && c.transition) return { transition: true, bars: (Number.isFinite(c.bars) && c.bars > 0) ? c.bars : 1 };
+      const o = { root: (((c.root | 0) % 12) + 12) % 12, intervals: (Array.isArray(c.intervals) ? c.intervals : [0]).slice() }; if (Number.isFinite(c.bars) && c.bars > 0) o.bars = c.bars; if (Array.isArray(c.alts) && c.alts.length) { o.alts = c.alts.map(a => { const ao = { root: (((a.root | 0) % 12) + 12) % 12, intervals: (Array.isArray(a.intervals) ? a.intervals : [0]).slice() }; if (Number.isFinite(a.bars) && a.bars > 0) ao.bars = a.bars; return ao; }); o.altMode = (c.altMode === 'random') ? 'random' : 'cycle'; } return o; };
     // Publish a chord-array progression to the shared registry (the prog pickers'
     // User group). (Distinct from _ambPublishProg, which takes wrap-step BLOCKS.)
     function _ambPublishProgChords(name, chords, parts) {
@@ -5328,8 +5604,12 @@
       const chordsRow = ed.chords.map((c, i) => {
         const rn = _ambPeRoman(fn(c), kRoot, kScale);
         const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
-        return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + (showScale ? (_ambPeChordInScale(fn(c), kRoot, kScale) ? ' chord-in' : ' chord-out') : '') + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + (_vsEd ? ' · sounds ' + esc(_ambChordShort(fn(c)) || '?') : '') + (showScale && !_ambPeChordInScale(fn(c), kRoot, kScale) ? ' · out of key' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em>' + (altN ? '<i class="pe-chord-alt">×' + (altN + 1) + '</i>' : '') + '</button>'; }).join('') +
-        '<button type="button" class="pe-chord pe-add" data-pe="addchord" title="Add a chord (copy of the selected)">＋</button>';
+        // A transition is not a chord and must not read as one — it takes the
+        // walk accent and opts out of the in/out-of-key colouring, which has no
+        // meaning for a line that is passing through by design.
+        return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + (_ambIsTransition(c) ? ' pe-trans' : (showScale ? (_ambPeChordInScale(fn(c), kRoot, kScale) ? ' chord-in' : ' chord-out') : '')) + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + (_vsEd ? ' · sounds ' + esc(_ambChordShort(fn(c)) || '?') : '') + (showScale && !_ambPeChordInScale(fn(c), kRoot, kScale) ? ' · out of key' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em>' + (altN ? '<i class="pe-chord-alt">×' + (altN + 1) + '</i>' : '') + '</button>'; }).join('') +
+        '<button type="button" class="pe-chord pe-add" data-pe="addchord" title="Add a chord (copy of the selected)">＋</button>' +
+        '<button type="button" class="pe-chord pe-add pe-addtrans" data-pe="addtrans" title="Add a TRANSITION after this chord — a walk from it to the next one. Length is editable like any chord; each layer opts in through its cell in the chord matrix.">⇝</button>';
       const notes = _ambPeNotes(tgt).slice().sort((a, b) => a - b);
       const noteChips = notes.map((p, ni) =>
         '<span class="pe-note' + (showScale ? (_ambPeInScale((((p + _vsEd) % 12) + 12) % 12, kRoot, kScale) ? ' n-in' : ' n-out') : '') + '"><b>' + _AMB_CHROM[p] + '</b>' +
@@ -5367,6 +5647,27 @@
             '↳ transposed +' + _vsEd + ' into ' + esc(_AMB_CHROM[((kRoot % 12) + 12) % 12] + ' ' + kScale) + ' — sounds as <b>' +
             esc(ed.chords.map(c => _ambChordShort(_ambChordShift(c, _vsEd)) || '?').join(' ')) + '</b></div>'
         : '';
+      // A TRANSITION slot has no harmony to edit — only how long the walk is. Show
+      // that instead of the note/quality/alternates machinery, which would
+      // otherwise operate on a chord with no root and write one into it.
+      if (_ambIsTransition(ch)) {
+        host.innerHTML =
+          '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
+          shiftNote +
+          '<div class="pe-chords">' + chordsRow + '</div>' +
+          '<div class="pe-chordhdr">Transition ' + (sel + 1) + ' of ' + ed.chords.length +
+            '<span class="pe-chordops"><button type="button" class="pe-x" data-pe="rmchord" title="Remove this transition"' + (ed.chords.length <= 1 ? ' disabled' : '') + '>✕ remove</button></span></div>' +
+          '<div class="pe-transnote">A <b>walk</b> from the chord before it to the chord after — composed fresh from the take seed, so it re-rolls with 🎲 New take and loops identically in between. Each layer opts in through its cell in the <b>chord matrix</b>: leave the cell on to walk, set it to <b>never</b> to sit the bar out.</div>' +
+          '<div class="pe-lenrow"><label>Length</label>' +
+            '<input type="text" id="pe-len" value="' + (ch.bars > 0 ? esc(_ambFmtBpc(ch.bars)) : '') + '" placeholder="1" title="How long the walk lasts, in bars (1, 1/2, 2…). Longer = more steps in the line." />' +
+            '<span class="pe-lenhint">bars — blank = 1</span></div>' +
+          '<div class="pe-save"><input type="text" id="pe-name" value="' + esc(ed.name || '') + '" placeholder="name" />' +
+            '<button type="button" data-pe="clone" title="Duplicate this progression into a fresh editable copy">⧉ Clone</button>' +
+            '<button type="button" data-pe="export" title="Save this progression into the SEED list under a name of your choosing">⤓ Export…</button>' +
+            '<button type="button" class="pe-apply" data-pe="save" title="Save these changes to the CURRENT progression">Save</button></div>';
+        _ambPeWireFooter(host, ed);
+        return;
+      }
       host.innerHTML =
         '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
         shiftNote +
@@ -5412,6 +5713,10 @@
           '<button type="button" data-pe="pad" title="Add a pad layer that plays this progression">＋ Pad</button>' +
           '<button type="button" data-pe="export" title="Save this progression into the SEED list under a name of your choosing — the seed list is not touched by ordinary edits">⤓ Export…</button>' +
           '<button type="button" class="pe-apply" data-pe="save" title="Save these changes to the CURRENT progression">Save</button></div>';
+      _ambPeWireFooter(host, ed);
+    }
+    // Name + per-chord length inputs, shared by the chord and transition bodies.
+    function _ambPeWireFooter(host, ed) {
       const nm = host.querySelector('#pe-name'); if (nm) nm.addEventListener('input', () => { ed.name = nm.value; });
       const ln = host.querySelector('#pe-len');
       if (ln) ln.addEventListener('change', () => {
@@ -5467,6 +5772,7 @@
       const serialize = () => ed.chords.map(_ambCloneChord);   // preserves bars + alts
       if (op === 'sel') { ed.sel = arg | 0; ed.altSel = -1; }
       else if (op === 'addchord') { ed.chords.splice(ed.sel + 1, 0, _ambCloneChord(ch)); ed.sel++; ed.altSel = -1; }
+      else if (op === 'addtrans') { ed.chords.splice(ed.sel + 1, 0, { transition: true, bars: 1 }); ed.sel++; ed.altSel = -1; }
       else if (op === 'rmchord') { if (ed.chords.length > 1) { ed.chords.splice(ed.sel, 1); ed.sel = Math.min(ed.sel, ed.chords.length - 1); ed.altSel = -1; } }
       else if (op === 'flat' || op === 'sharp') { const ns = notesSorted(); const ni = arg | 0; if (ns[ni] != null) { ns[ni] = (((ns[ni] + (op === 'sharp' ? 1 : -1)) % 12) + 12) % 12; _ambPeSetNotes(tgt, ns, true); } }
       else if (op === 'ndtup' || op === 'ndtdn') { const ns = notesSorted(); const ni = arg | 0; if (ns[ni] != null) { ns[ni] = _ambDiatonicShiftPc(ns[ni], op === 'ndtup' ? 1 : -1, kRoot, kScale); _ambPeSetNotes(tgt, ns, true); } }
@@ -6408,6 +6714,75 @@
     // sweep, not the note stream) — they must NOT re-anchor (that would needlessly
     // re-emit). Everything else (generation + per-note) re-anchors on commit.
     const _AMB_LIVE_NODE_PARAMS = { level: 1, space: 1, areaFadeMs: 1 };
+    // ---- LIVE-NOTE PARAMS (performance tweaking) ---------------------------
+    // Re-anchoring does TWO separable things, and only one of them is the delay:
+    //   (a) _ambRewriteSoon — brings a Write freeze's rewrite forward. WITHOUT
+    //       this a frozen layer ignores the edit entirely, possibly for many
+    //       loops, and every layer defaults to write:{on:true}. Always needed.
+    //   (b) cancel pending voices + move the phase anchor to the NEXT UNIT
+    //       BOUNDARY. This is what makes an edit land "on the 1" — correct for a
+    //       param that moves ONSETS, since re-emitting a half-played unit with a
+    //       different rhythm drops or doubles notes at the cut. But it is also
+    //       what makes a Bed sit unchanged for up to 8 s and a Drone for 32 s.
+    // The params below don't move onsets at all — they are pitch, level, timbre
+    // and duration. The emitters read them at each note's build, so simply NOT
+    // re-anchoring lets them take effect on the next note the generator emits,
+    // bounded by the ~1.4 s lookahead instead of by the unit length. Nothing is
+    // cancelled and nothing is re-emitted, so there is no risk of re-drawing a
+    // seeded pitch or doubling an onset — the change just arrives sooner.
+    // Anything NOT listed here keeps the boundary behaviour.
+    // MEASURED, and the answer moved the line: the dominant delay is NOT the unit
+    // boundary, it is the WRITE FREEZE. Every layer defaults to write:{on,bars:2,
+    // times:4}, so a few seconds after Play the layer is replaying a captured
+    // phrase — and the replay reuses the CAPTURED params, so a character edit is
+    // frozen along with the notes. Measured on a default Bed: turning Attack up
+    // changed nothing for 19.3 s (the rest of the Write cycle), with or without a
+    // re-anchor. _ambRewriteSoon can't help either — at the moment of the edit the
+    // freeze often isn't armed yet, so there is nothing to bring forward.
+    //
+    // That splits the params along a musical line rather than a technical one:
+    //   PHRASE — which notes, how many, when. register / density / rests / steps /
+    //     humanize … A frozen loop SHOULD hold these; that is what freezing is.
+    //     They keep the boundary re-anchor.
+    //   SOUND  — how each note is shaped. Envelope, detune, glide. Freezing the
+    //     phrase is no reason to freeze the tone, so these are refreshed from the
+    //     layer at REPLAY time (see _ambLiveVoiceParams in _ambReplayFrozen) and
+    //     need no re-anchor at all: the generator reads them at each note's build.
+    // Deliberately conservative — a param whose classification is arguable stays
+    // on the boundary path, where the behaviour is unchanged.
+    // NOT `fine`: Motion ADDS a seeded random offset onto the same params.detune
+    // (17:~7352), so refreshing detune from lyr.fine alone would silently flatten
+    // the motion jitter on every frozen loop. Envelope and glide are standalone
+    // fields with a single writer, which is exactly why they are safe here.
+    const _AMB_LIVE_NOTE_PARAMS = { attack: 1, decay: 1, sustain: 1, release: 1, portamento: 1 };
+    // Rebuild the SOUND half of a note's params from the layer as it is NOW.
+    // Returns null when nothing differs, so the untouched path allocates nothing
+    // and replays the captured object by reference exactly as before.
+    function _ambLiveVoiceParams(lyr, params) {
+      if (!lyr || !params) return null;
+      let out = null;
+      const put = (k, v) => { if (!Number.isFinite(v) || params[k] === v) return; (out = out || Object.assign({}, params))[k] = v; };
+      put('attack', lyr.attack); put('decay', lyr.decay);
+      put('sustain', lyr.sustain); put('release', lyr.release);
+      const gl = lyr.portamento | 0;
+      if (gl > 0 && params.glideMs !== gl) { (out = out || Object.assign({}, params)).glideMs = gl; out.glideLayer = lyr; }
+      else if (!gl && params.glideMs) { (out = out || Object.assign({}, params)).glideMs = 0; }
+      return out;
+    }
+    // A per-note edit that needs no re-anchor: the generator already reads it at
+    // build time, so all that is required is to un-freeze a Write loop that would
+    // otherwise replay a captured phrase straight past the change.
+    function _ambApplyLayerParamLive(E, key) {
+      if (!E || !E.timer) return;
+      try { _ambRewriteSoon(E, key); } catch (e) {}
+    }
+    // Which apply-path a slider key takes on commit.
+    function _ambCommitParam(E, key, param) {
+      if (!E || !E.timer) return;
+      if (_AMB_LIVE_NODE_PARAMS[param]) return;                 // already live on the DSP chain
+      if (_AMB_LIVE_NOTE_PARAMS[param]) { _ambApplyLayerParamLive(E, key); return; }
+      try { _ambReanchorLayer(E, key); } catch (e) {}
+    }
     // Is `key` currently locked (single unit OR a frozen loop, incl. an armed
     // pending one)? Bed/Motif can be locked either way (single → E.unit,
     // multi-unit → a freeze loop).
@@ -15341,8 +15716,16 @@
                 if (_sk) f2 = f2 * Math.pow(2, _sk / 12);
               }
               let pp = e.params;
+              // Envelope / detune / glide follow the sliders even while the
+              // phrase is frozen — freezing the notes is not a reason to freeze
+              // the tone (this is what made an Attack tweak inaudible for the
+              // rest of the Write cycle).
+              { const lv = _ambLiveVoiceParams(lyr, pp); if (lv) pp = lv; }
               if (_live) {
-                pp = Object.assign({}, e.params);
+                // Clone from pp, NOT e.params — the live-voice refresh above may
+                // already have replaced it, and re-cloning the captured object
+                // would silently discard those values.
+                pp = Object.assign({}, pp);
                 if (Number.isFinite(lyr.humanize) && lyr.humanize > 0) pp._humanSec = (Math.random() * 2 - 1) * Math.min(100, lyr.humanize) / 100 * 0.02;
                 if (Number.isFinite(lyr.velVar) && lyr.velVar > 0) {
                   const b0 = Number.isFinite(pp.volume) ? pp.volume : 100;
@@ -21025,14 +21408,113 @@
       parts.splice(pi, 1);
       if (parts.length <= 1) delete prog.parts;   // normalize repairs / drops trivial single-part
     }
-    function _ambProgAppendPart(prog, name, chords) {
+    // ＋ Part → pick the KEY first, then the progression. Adding a part is where a
+    // key change belongs: a part is a named stretch of the progression, and "the
+    // chorus is in F" is one decision, not two. Defaults to the area key, so the
+    // common case (another part, same key) is one extra click and nothing else.
+    function _ambAddPartModal(E, x, y) {
+      _E = E;
+      const cfg = E.getCfg() || {};
+      const aRoot = _ambKeyRootPc(cfg), aScale = _ambKeyScaleName(cfg);
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const scales = (typeof SCALES !== 'undefined') ? Object.keys(SCALES) : ['major', 'minor'];
+      const rootOpts = _AMB_CHROM.map((n, i) => '<option value="' + i + '"' + (i === aRoot ? ' selected' : '') + '>' + esc(n) + '</option>').join('');
+      const scaleOpts = scales.map(sc => '<option value="' + esc(sc) + '"' + (sc === aScale ? ' selected' : '') + '>' + esc(sc.charAt(0).toUpperCase() + sc.slice(1)) + '</option>').join('');
+      const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-step-modal-ov';
+      ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-addpart-modal">' +
+        '<div class="sm-title">Add a part</div>' +
+        '<div class="ambient-step-modal-body">' +
+          '<div class="ambient-addpart-hint">A part is a named stretch of the progression — Verse, Chorus. Give it its own key and the music MODULATES while it plays; the area key is left alone. The progression you pick next is transposed into this key, keeping its relative motion.</div>' +
+          '<div class="ambient-ctrl ambient-step-row"><label>Key</label>' +
+            '<span class="ambient-addpart-key">' +
+              '<select class="ambient-select ap-root">' + rootOpts + '</select>' +
+              '<select class="ambient-select ap-scale">' + scaleOpts + '</select>' +
+            '</span><span class="ambient-step-val ap-same"></span></div>' +
+          '<div class="ambient-addpart-note ap-note"></div>' +
+        '</div>' +
+        '<div class="sm-footer">' +
+          '<button type="button" class="sm-cancel ap-cancel">Cancel</button>' +
+          '<button type="button" class="sm-apply ap-next">Choose progression…</button>' +
+        '</div></div>';
+      document.body.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+      const rootSel = ov.querySelector('.ap-root'), scaleSel = ov.querySelector('.ap-scale');
+      const same = ov.querySelector('.ap-same'), note = ov.querySelector('.ap-note');
+      const close = () => { try { ov.remove(); } catch (e) {} };
+      const sync = () => {
+        const r = rootSel.value | 0, sc = scaleSel.value;
+        const unchanged = (r === aRoot && sc === aScale);
+        same.textContent = unchanged ? 'same as area' : 'modulates';
+        same.classList.toggle('ap-mod', !unchanged);
+        note.textContent = unchanged
+          ? 'No key change — this part stays in ' + _AMB_CHROM[aRoot] + ' ' + aScale + ' like the rest of the area.'
+          : 'This part will play in ' + _AMB_CHROM[r] + ' ' + sc + ', while the area stays in ' + _AMB_CHROM[aRoot] + ' ' + aScale + '.';
+      };
+      sync();
+      rootSel.addEventListener('change', sync); scaleSel.addEventListener('change', sync);
+      ov.addEventListener('click', (ev) => {
+        if (ev.target === ov || (ev.target.closest && ev.target.closest('.ap-cancel'))) { close(); return; }
+        if (!(ev.target.closest && ev.target.closest('.ap-next'))) return;
+        const r = rootSel.value | 0, sc = scaleSel.value;
+        const unchanged = (r === aRoot && sc === aScale);
+        close();
+        // Next tick, so this click doesn't reach the menu's own dismiss listener.
+        setTimeout(() => { try {
+          _ambOpenGlobalProgMenu(E, x || 40, y || 120, { append: true, partKey: unchanged ? null : { root: r, scale: sc } });
+        } catch (e) {} }, 0);
+      });
+    }
+    // Change (or clear) an existing part's key. Clearing returns it to the area
+    // key; it does NOT transpose the chords back — the chords are the music, and
+    // silently re-keying written harmony because a label changed would be a
+    // surprise. The menu says so.
+    function _ambPartKeyMenu(E, prog, pi, x, y, refresh, persist) {
+      if (typeof showCtxMenu !== 'function') return;
+      const part = prog.parts && prog.parts[pi]; if (!part) return;
+      const cfg = E.getCfg() || {};
+      const aRoot = _ambKeyRootPc(cfg), aScale = _ambKeyScaleName(cfg);
+      const scales = (typeof SCALES !== 'undefined') ? Object.keys(SCALES) : ['major', 'minor'];
+      const items = [];
+      items.push({ label: '“' + part.name + '” key', disabled: true });
+      items.push({ label: (part.key ? '  ' : '  ✓ ') + 'Follow the area (' + _AMB_CHROM[aRoot] + ' ' + aScale + ')',
+        fn: () => { delete part.key; persist(); refresh(); } });
+      items.push('hr');
+      // showCtxMenu has no submenu property — nesting is done by RE-OPENING the
+      // menu on a deferred tick (same shape the progression families use), or the
+      // dismiss listener tears the child down as it opens.
+      scales.slice(0, 8).forEach(sc => {
+        items.push({ label: sc.charAt(0).toUpperCase() + sc.slice(1) + ' ▸', fn: () => setTimeout(() => showCtxMenu(x, y, [
+          { label: '‹ Back', fn: () => setTimeout(() => _ambPartKeyMenu(E, prog, pi, x, y, refresh, persist), 0) },
+          { label: sc.charAt(0).toUpperCase() + sc.slice(1), disabled: true },
+          ..._AMB_CHROM.map((nm, r) => ({
+            label: '  ' + (part.key && part.key.root === r && part.key.scale === sc ? '✓ ' : '') + nm + ' ' + sc,
+            fn: () => { part.key = { root: r, scale: sc }; persist(); refresh(); }
+          })),
+        ]), 0) });
+      });
+      showCtxMenu(x, y, items);
+    }
+    function _ambProgAppendPart(prog, name, chords, partKey) {
       if (!Array.isArray(chords) || !chords.length) return;
-      const add = chords.map(_ambCloneChord);
+      let add = chords.map(_ambCloneChord);
+      // A part with its OWN key is a real modulation: transpose the incoming
+      // chords so their tonic lands on that root (the progression keeps its
+      // relative motion — I vi IV V stays I vi IV V, in the new key), and record
+      // the key so everything key-dependent follows while the part plays —
+      // roman numerals, quantize, and a transition's diatonic walk.
+      // Transitions carry no root and are skipped, not shifted.
+      if (partKey && Number.isFinite(partKey.root)) {
+        const c0 = add.find(c => c && !c.transition && Number.isFinite(c.root));
+        const off = c0 ? ((((partKey.root | 0) - (c0.root | 0)) % 12) + 12) % 12 : 0;
+        if (off) add = add.map(c => (c && !c.transition) ? _ambChordShift(c, off) : c);
+      }
       if (!Array.isArray(prog.parts) || !prog.parts.length) {   // seed a part over the existing chords first
         prog.parts = prog.chords.length ? [{ name: String(prog.name || 'Part 1').slice(0, 16), len: prog.chords.length }] : [];
       }
       prog.chords.push(...add);
-      prog.parts.push({ name: String(name || 'Part').slice(0, 16), len: add.length });
+      const part = { name: String(name || 'Part').slice(0, 16), len: add.length };
+      if (partKey && Number.isFinite(partKey.root)) part.key = { root: (((partKey.root | 0) % 12) + 12) % 12, scale: partKey.scale || 'major' };
+      prog.parts.push(part);
     }
     function _ambProgAddVersion(prog) {
       if (!Array.isArray(prog.versions)) prog.versions = [];
@@ -21065,7 +21547,7 @@
       const prog = cfg.prog, chords = prog.chords, N = chords.length;
       const parts = (Array.isArray(prog.parts) && prog.parts.length) ? prog.parts : null;
       const sig = N + '|' + chords.map(c => c.root + ':' + (c.intervals || []).join('.') + (Array.isArray(c.alts) && c.alts.length ? ('a' + c.alts.length + (c.altMode || '')) : '')).join(',') +
-        '|' + (parts ? parts.map(p => p.name + '=' + p.len).join('/') : '') + '|' + (Number.isFinite(prog.versionIdx) ? prog.versionIdx : -1) + '|' + (Array.isArray(prog.versions) ? prog.versions.length : 0) +
+        '|' + (parts ? parts.map(p => p.name + '=' + p.len + (p.key ? ('@' + p.key.root + p.key.scale) : '')).join('/') : '') + '|' + (Number.isFinite(prog.versionIdx) ? prog.versionIdx : -1) + '|' + (Array.isArray(prog.versions) ? prog.versions.length : 0) +
         // The chips are drawn in the SOUNDING key, so the shift is part of what
         // is on screen — without it a key change repaints nothing.
         '|s' + _ambProgViewShift(E, cfg, chords) + '|' + _ambKeyRootPc(cfg) + _ambKeyScaleName(cfg);
@@ -21075,7 +21557,7 @@
       const kRoot = _ambKeyRootPc(cfg), kScale = _ambKeyScaleName(cfg);
       const vShift = _ambProgViewShift(E, cfg, chords);
       const ranges = [];
-      if (parts) { let acc = 0; parts.forEach((p, pi) => { ranges.push({ name: p.name, from: acc, to: Math.min(N, acc + (p.len | 0)), pi }); acc += (p.len | 0); }); }
+      if (parts) { let acc = 0; parts.forEach((p, pi) => { ranges.push({ name: p.name, from: acc, to: Math.min(N, acc + (p.len | 0)), pi, key: p.key || null }); acc += (p.len | 0); }); }
       else ranges.push({ name: '', from: 0, to: N, pi: -1 });
       let h = '';
       if (Array.isArray(prog.versions) && prog.versions.length) {
@@ -21090,6 +21572,9 @@
           h += '<div class="ambient-pov-parthdr">' +
             '<span class="ambient-pov-partname" role="button" tabindex="0" data-pov="partren:' + r.pi + '" title="Rename this part">' + esc(r.name) + ' <em>' + (r.to - r.from) + '</em></span>' +
             '<span class="ambient-pov-partops">' +
+              // A part's own key is a modulation, so it is named right on the part
+              // header rather than buried — you can see where the music changes key.
+              '<span role="button" tabindex="0" class="ambient-pov-partkey' + (r.key ? ' on' : '') + '" data-pov="partkey:' + r.pi + '" title="' + (r.key ? ('This part plays in ' + esc(_AMB_CHROM[r.key.root] + ' ' + r.key.scale) + ' — the area key is unchanged. Click to change or clear it.') : 'No key change — this part follows the area key. Click to give it its own key.') + '">' + (r.key ? esc(_AMB_CHROM[r.key.root] + ' ' + r.key.scale.slice(0, 3)) : '♭♯') + '</span>' +
               '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':-1" title="Move part earlier">◀</span>' +
               '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':1" title="Move part later">▶</span>' +
               '<span role="button" tabindex="0" class="ambient-pov-partbtn ambient-pov-partrm" data-pov="partrm:' + r.pi + '" title="Remove this part (and its chords)">✕</span>' +
@@ -21103,10 +21588,13 @@
           // in here: it changes every pass, and the glowing chip (see
           // _ambProgOverviewPlayheadCore) relabels itself to the sounding chord.
           const c = _ambChordShift(chords[i], vShift);
-          const rn = _ambPeRoman(c, kRoot, kScale);
+          // Roman numerals are relative to the key THIS chip plays in — a part
+          // with its own key modulates, so the chorus's I must read I and not IV.
+          const pk = _ambPartKeyForSlot(prog, i);
+          const rn = _ambPeRoman(c, pk ? pk.root : kRoot, pk ? pk.scale : kScale);
           const nm = _ambChordShort(c) || '?';
           const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
-          h += '<span role="button" tabindex="0" class="ambient-pov-chord" data-pov="chord:' + i + '" data-ci="' + i + '" title="Chord ' + (i + 1) + ' — ' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + ' · click to edit">' +
+          h += '<span role="button" tabindex="0" class="ambient-pov-chord' + (_ambIsTransition(c) ? ' pov-trans' : '') + '" data-pov="chord:' + i + '" data-ci="' + i + '" title="' + (_ambIsTransition(c) ? 'Transition ' : 'Chord ') + (i + 1) + ' — ' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + ' · click to edit">' +
             (rn ? '<b>' + esc(rn) + '</b>' : '') + '<span class="ambient-pov-nm">' + esc(nm) + '</span>' +
             (altN ? '<i class="ambient-pov-alt" title="' + (altN + 1) + ' alternate chords cycle here">×' + (altN + 1) + '</i>' : '') +
             '</span>';
@@ -21251,6 +21739,12 @@
       // so a click would drop), and showCtxMenu arms its own document-level
       // pointerdown dismiss — registered mid-dispatch, that listener still fires
       // for THIS event and closes the menu the instant it opens. Open it next tick.
+      if (op === 'partkey') {
+        const pi = a[1] | 0; const parts2 = prog.parts; if (!parts2 || !parts2[pi]) return;
+        const r2 = t.getBoundingClientRect();
+        setTimeout(() => { try { _ambPartKeyMenu(E, prog, pi, r2.left, r2.bottom, refresh, persist); } catch (e) {} }, 0);
+        return;
+      }
       if (op === 'addpart') { const r = t.getBoundingClientRect(); if (_ambProgActions) setTimeout(() => { try { _ambProgActions.addPart(r.left, r.bottom); } catch (e) {} }, 0); return; }
     }
     function _ambRenderChordMatrix(E) {
@@ -21260,10 +21754,14 @@
       el.style.display = on ? '' : 'none';
       if (!on) { el.innerHTML = ''; el._sig = ''; return; }
       const chords = cfg.prog.chords, N = chords.length;
+      const prog = cfg.prog;
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
       const rows = _ambChordMatrixRows(cfg);
       // cheap re-render guard (masks + shape + labels)
       const sig = N + '|' + rows.map(r => r.key + ':' + JSON.stringify(r.L.chordMask || 0)).join(',') +
-        '|s' + _ambProgViewShift(E, cfg, chords) + '|' + chords.map(c2 => c2.root).join('.');
+        '|s' + _ambProgViewShift(E, cfg, chords) + '|' + chords.map(c2 => c2.root).join('.') +
+        '|t' + (Number.isFinite(el._pmPart) ? el._pmPart : -1) +
+        '|p' + (Array.isArray(prog.parts) ? prog.parts.map(p => p.name + ':' + p.len + ':' + (p.plays | 0)).join('/') : '');
       if (el._sig === sig) return;
       el._sig = sig;
       // Name the chord as it SOUNDS. Missed in the readout sweep: this header
@@ -21271,20 +21769,60 @@
       // for chords the engine plays as A D E — and the cell tooltips + the exact
       // editor's title quote this same helper, so all three were wrong together.
       const _vsM = _ambProgViewShift(E, cfg, chords);
-      const chName = (ch) => { try { return (typeof CHROMATIC !== 'undefined' && CHROMATIC[((((ch.root | 0) + _vsM) % 12) + 12) % 12]) || '?'; } catch (e) { return '?'; } };
+      // A transition column has no root of its own — `ch.root|0` would read 0 and
+      // label it "C", which is both wrong and indistinguishable from a real C.
+      const chName = (ch) => { try { if (_ambIsTransition(ch)) return '⇝'; return (typeof CHROMATIC !== 'undefined' && CHROMATIC[((((ch.root | 0) + _vsM) % 12) + 12) % 12]) || '?'; } catch (e) { return '?'; } };
       // The cells are a PROBABILITY and the Part column is a DURATION fraction —
       // two different axes side by side, so a bare "60" reads as either. Name the
       // axis in the title, spell the scale out in words, and say that the roll is
       // once per chord (the thing that makes 60% sound like "sits out some passes"
       // rather than "plays quieter" or "plays 60% of the bar").
+      // PART TABS — a long progression is a chain of named parts, and editing all
+      // of it at once means a 16-column grid on a 390px phone. One tab per part
+      // scopes the grid to that part's chords; "All" is the whole thing, and is
+      // the only view when there are no parts. The tab also carries the part's
+      // REPEAT count, because "how many times does the verse run" belongs next to
+      // the verse, not in a separate panel.
+      const _pmParts = (Array.isArray(prog.parts) && prog.parts.length > 1) ? prog.parts : null;
+      if (_pmParts) {
+        if (!Number.isFinite(el._pmPart) || el._pmPart >= _pmParts.length) el._pmPart = -1;
+      } else el._pmPart = -1;
       let h = '<div class="ambient-pm-title">Chord matrix — how often each layer plays on each chord' + _ambMaskEditBtnHtml(!!el._pmEdit) + '</div>';
+      if (_pmParts) {
+        let acc0 = 0;
+        h += '<div class="ambient-pm-tabs">' +
+          '<button type="button" class="ambient-pm-tab' + (el._pmPart < 0 ? ' on' : '') + '" data-pmpart="-1" title="Every chord in the progression">All</button>' +
+          _pmParts.map((p, pi) => {
+            const plays = Math.max(1, p.plays | 0);
+            const from = acc0; acc0 += Math.max(1, p.len | 0);
+            const kk = p.key ? (' · ' + _AMB_CHROM[p.key.root] + ' ' + p.key.scale.slice(0, 3)) : '';
+            return '<span class="ambient-pm-tabwrap' + (el._pmPart === pi ? ' on' : '') + '">' +
+              '<button type="button" class="ambient-pm-tab' + (el._pmPart === pi ? ' on' : '') + '" data-pmpart="' + pi + '"' +
+                ' title="' + esc(p.name) + ' — chords ' + (from + 1) + '-' + acc0 + kk + '">' + esc(p.name) + '</button>' +
+              '<span class="ambient-pm-plays" title="How many times “' + esc(p.name) + '” runs before the progression moves to the next part.">' +
+                '<button type="button" class="ambient-pm-playsbtn" data-pmplays="' + pi + ':-1" title="Fewer repeats"' + (plays <= 1 ? ' disabled' : '') + '>−</button>' +
+                '<b>' + plays + '×</b>' +
+                '<button type="button" class="ambient-pm-playsbtn" data-pmplays="' + pi + ':1" title="More repeats"' + (plays >= 64 ? ' disabled' : '') + '>＋</button>' +
+              '</span></span>';
+          }).join('') + '</div>';
+      }
       h += '<div class="ambient-pm-legend"><b>Cell</b> = the chance this layer plays that chord — tap to step <b>always → 60% → 30% → never</b>, or press and hold (✎ % to make a tap do it) for <b>any value 0-100</b>. Rolled once per chord, so the layer is in or out for that whole chord; it never cuts in halfway. <b>Part</b> is the other axis: how much of each chord it plays once it is in.</div>';
-      h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + chords.map((c2, i) => '<span class="ambient-pm-ch">' + (i + 1) + '·' + chName(c2) + '</span>').join('') + '<span class="ambient-pm-part">Part</span></div>';
+      // Column window for the selected tab. Cell/header indices stay ABSOLUTE
+      // (data-ci), so every setter keeps writing the right slot of the mask.
+      let _pmFrom = 0, _pmTo = N;
+      if (_pmParts && el._pmPart >= 0) {
+        let a0 = 0;
+        for (let i = 0; i < _pmParts.length; i++) { const l2 = Math.max(1, _pmParts[i].len | 0); if (i === el._pmPart) { _pmFrom = a0; _pmTo = Math.min(N, a0 + l2); break; } a0 += l2; }
+      }
+      const _pmCols = [];
+      for (let i = _pmFrom; i < _pmTo; i++) _pmCols.push(i);
+      h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + _pmCols.map((i) => chords[i]).map((c2, _n) => { const i = _pmCols[_n]; return '<span class="ambient-pm-ch' + (_ambIsTransition(c2) ? ' pm-trans' : '') + '"' + (_ambIsTransition(c2) ? ' title="Transition — a walk into the next chord. Leave this cell on for a layer to walk it, set it to never to sit the bar out."' : '') + '>' + (i + 1) + '·' + chName(c2) + '</span>'; }).join('') + '<span class="ambient-pm-part">Part</span></div>';
       rows.forEach(r => {
         const steps = (r.L.chordMask && Array.isArray(r.L.chordMask.steps)) ? r.L.chordMask.steps : null;
         const part = (r.L.chordMask && r.L.chordMask.part) || null;
         h += '<div class="ambient-pm-row" data-lkey="' + r.key + '"><span class="ambient-pm-lbl" title="' + r.label + '">' + r.label + '</span>' +
-          chords.map((c2, i) => {
+          _pmCols.map((i) => {
+            const c2 = chords[i];
             const v = steps ? (Number.isFinite(steps[i % steps.length]) ? steps[i % steps.length] : 100) : 100;
             return _ambMaskCellHtml(v, i, r.label + ' · chord ' + (i + 1) + ' (' + chName(c2) + ') — ' + _ambMaskCellTip(v, 'chord', !!el._pmEdit));
           }).join('') +
@@ -21315,21 +21853,82 @@
           el._sig = ''; _ambRenderChordMatrix(E);
           if (typeof persistWorkspace === 'function') persistWorkspace();
         };
+        // Write one value across a whole ROW (this layer, every chord) or a whole
+        // COLUMN (this chord, every layer). The column form has to reach layers
+        // other than the clicked row, so it goes through _ambChordMatrixRows
+        // rather than the row element — and each layer it touches needs its own
+        // _ambMaskEditPoke, or the ones that are mid-loop keep the old gate.
+        const setRow = (lkey, v) => {
+          const cfg2 = E.getCfg(); const L = _ambLayerByKey(E, lkey); if (!L || !cfg2 || !cfg2.prog) return;
+          const N2 = cfg2.prog.chords.length;
+          const m = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
+          m.steps = Array.from({ length: N2 }, () => v);
+          commit(lkey);
+        };
+        const setCol = (ci, v) => {
+          const cfg2 = E.getCfg(); if (!cfg2 || !cfg2.prog) return;
+          const N2 = cfg2.prog.chords.length;
+          _ambChordMatrixRows(cfg2).forEach(r2 => {
+            const L = r2.L; if (!L) return;
+            const m = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
+            if (!Array.isArray(m.steps) || m.steps.length !== N2) { const old2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => old2 ? (Number.isFinite(old2[i2 % old2.length]) ? old2[i2 % old2.length] : 100) : 100); }
+            m.steps[ci] = v;
+            try { _ambMaskEditPoke(E, r2.key); } catch (e) {}
+          });
+          el._sig = ''; _ambRenderChordMatrix(E);
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        };
+        const chLabel = (ci) => { const c3 = (E.getCfg().prog.chords || [])[ci]; return 'chord ' + (ci + 1) + (c3 ? ' (' + chName(c3) + ')' : ''); };
         const openEditor = (cell) => {
           const sl = slot(cell); if (!sl) return;
-          const cfg2 = E.getCfg();
-          const ch = cfg2.prog.chords[sl.ci];
           _ambMaskCellModal(E, {
-            label: sl.label + ' · chord ' + (sl.ci + 1) + (ch ? ' (' + chName(ch) + ')' : ''),
+            label: sl.label + ' · ' + chLabel(sl.ci),
             unit: 'chord', value: sl.m.steps[sl.ci],
-            onSet: (v) => { const s2 = slot(cell) || sl; s2.m.steps[s2.ci] = v; commit(sl.lkey); }
+            rowLabel: sl.label, colLabel: chLabel(sl.ci),
+            onSet: (v) => { const s2 = slot(cell) || sl; s2.m.steps[s2.ci] = v; commit(sl.lkey); },
+            onRow: (v) => setRow(sl.lkey, v),
+            onCol: (v) => setCol(sl.ci, v)
           });
+        };
+        // The row label and the column header are the natural handles for "all of
+        // this layer" / "all layers here", so they open the editor already scoped.
+        const openRow = (lkey, label) => {
+          const L = _ambLayerByKey(E, lkey); if (!L) return;
+          const st = (L.chordMask && Array.isArray(L.chordMask.steps)) ? L.chordMask.steps : null;
+          _ambMaskCellModal(E, { label: label + ' · every chord', unit: 'chord', bulk: 'chord for this layer',
+            value: st ? st[0] : 100, onSet: (v) => setRow(lkey, v) });
+        };
+        const openCol = (ci) => {
+          _ambMaskCellModal(E, { label: chLabel(ci) + ' · every layer', unit: 'chord', bulk: 'layer on this chord',
+            value: 100, onSet: (v) => setCol(ci, v) });
         };
         _ambWireMaskCells(el, openEditor);
         el.addEventListener('click', (ev) => {
           // The ✎ toggle rides the same delegated handler as the cells.
           const eb = ev.target && ev.target.closest && ev.target.closest('[data-pm-edit]');
           if (eb) { el._pmEdit = !el._pmEdit; el._sig = ''; _ambRenderChordMatrix(E); return; }
+          const tb = ev.target && ev.target.closest && ev.target.closest('[data-pmpart]');
+          if (tb) { el._pmPart = tb.dataset.pmpart | 0; el._sig = ''; _ambRenderChordMatrix(E); return; }
+          // The repeat stepper sits ON the tab, because "how many times does the
+          // verse run" belongs next to the verse. 1 is neutral and is deleted
+          // rather than stored, so a plain chain keeps no plays field at all.
+          const pl = ev.target && ev.target.closest && ev.target.closest('[data-pmplays]');
+          if (pl) {
+            _E = E; const cfg3 = E.getCfg(); const ps = cfg3 && cfg3.prog && cfg3.prog.parts;
+            const aa = String(pl.dataset.pmplays).split(':'), pi = aa[0] | 0, d = aa[1] | 0;
+            if (ps && ps[pi]) {
+              const nv = Math.max(1, Math.min(64, Math.max(1, ps[pi].plays | 0) + d));
+              if (nv > 1) ps[pi].plays = nv; else delete ps[pi].plays;
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              el._sig = ''; _ambRenderChordMatrix(E);
+              try { _ambRenderProgOverview(E); _ambRenderScheduler(E); } catch (e) {}
+            }
+            return;
+          }
+          const rl = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-row > .ambient-pm-lbl');
+          if (rl) { const row2 = rl.closest('.ambient-pm-row'); openRow(row2.dataset.lkey, rl.textContent); return; }
+          const hd = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-head > .ambient-pm-ch');
+          if (hd) { openCol(Array.prototype.indexOf.call(hd.parentNode.querySelectorAll('.ambient-pm-ch'), hd)); return; }
           const cell = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-cell'); if (!cell) return;
           // A long-press/right-click already opened the editor for this press.
           if (el._suppressClick) { el._suppressClick = false; return; }
@@ -21405,19 +22004,55 @@
           el._sig = ''; _ambRenderSectionMatrix(E);
           if (typeof persistWorkspace === 'function') persistWorkspace();
         };
+        const secLabel = (ci) => { const sc = (E.getCfg().sections || [])[ci]; return (sc && sc.name) || ('section ' + (ci + 1)); };
+        const setRow = (lkey, v) => {
+          const cfg2 = E.getCfg(); const L = _ambLayerByKey(E, lkey); if (!L || !cfg2 || !Array.isArray(cfg2.sections)) return;
+          const m = (L.sectionMask && typeof L.sectionMask === 'object') ? L.sectionMask : (L.sectionMask = {});
+          m.steps = Array.from({ length: cfg2.sections.length }, () => v);
+          commit(lkey);
+        };
+        const setCol = (ci, v) => {
+          const cfg2 = E.getCfg(); if (!cfg2 || !Array.isArray(cfg2.sections)) return;
+          const N2 = cfg2.sections.length;
+          _ambChordMatrixRows(cfg2).forEach(r2 => {
+            const L = r2.L; if (!L) return;
+            const m = (L.sectionMask && typeof L.sectionMask === 'object') ? L.sectionMask : (L.sectionMask = {});
+            if (!Array.isArray(m.steps) || m.steps.length !== N2) { const old2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => old2 ? (Number.isFinite(old2[i2 % old2.length]) ? old2[i2 % old2.length] : 100) : 100); }
+            m.steps[ci] = v;
+            try { _ambMaskEditPoke(E, r2.key); } catch (e) {}
+          });
+          el._sig = ''; _ambRenderSectionMatrix(E);
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        };
         const openEditor = (cell) => {
           const sl = slot(cell); if (!sl) return;
-          const sec = (E.getCfg().sections || [])[sl.ci];
           _ambMaskCellModal(E, {
-            label: sl.label + ' · ' + ((sec && sec.name) || ('section ' + (sl.ci + 1))),
+            label: sl.label + ' · ' + secLabel(sl.ci),
             unit: 'section', value: sl.m.steps[sl.ci],
-            onSet: (v) => { const s2 = slot(cell) || sl; s2.m.steps[s2.ci] = v; commit(sl.lkey); }
+            rowLabel: sl.label, colLabel: secLabel(sl.ci),
+            onSet: (v) => { const s2 = slot(cell) || sl; s2.m.steps[s2.ci] = v; commit(sl.lkey); },
+            onRow: (v) => setRow(sl.lkey, v),
+            onCol: (v) => setCol(sl.ci, v)
           });
+        };
+        const openRow = (lkey, label) => {
+          const L = _ambLayerByKey(E, lkey); if (!L) return;
+          const st = (L.sectionMask && Array.isArray(L.sectionMask.steps)) ? L.sectionMask.steps : null;
+          _ambMaskCellModal(E, { label: label + ' · every section', unit: 'section', bulk: 'section for this layer',
+            value: st ? st[0] : 100, onSet: (v) => setRow(lkey, v) });
+        };
+        const openCol = (ci) => {
+          _ambMaskCellModal(E, { label: secLabel(ci) + ' · every layer', unit: 'section', bulk: 'layer in this section',
+            value: 100, onSet: (v) => setCol(ci, v) });
         };
         _ambWireMaskCells(el, openEditor);
         el.addEventListener('click', (ev) => {
           const eb = ev.target && ev.target.closest && ev.target.closest('[data-pm-edit]');
           if (eb) { el._pmEdit = !el._pmEdit; el._sig = ''; _ambRenderSectionMatrix(E); return; }
+          const rl = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-row > .ambient-pm-lbl');
+          if (rl) { const row2 = rl.closest('.ambient-pm-row'); openRow(row2.dataset.lkey, rl.textContent); return; }
+          const hd = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-head > .ambient-pm-ch');
+          if (hd) { openCol(Array.prototype.indexOf.call(hd.parentNode.querySelectorAll('.ambient-pm-ch'), hd)); return; }
           const cell = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-cell'); if (!cell) return;
           if (el._suppressClick) { el._suppressClick = false; return; }
           if (el._pmEdit) { openEditor(cell); return; }
@@ -24511,8 +25146,8 @@
           else if (k === 'pitchseed') { const e = el('pitchseed'); if (e) { e.value = inst.pitchSeed || 'random'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === 'low') L.pitchSeed = 'low'; else delete L.pitchSeed; sync(); persist(); } }); } }
           else if (k === 'strumsync') { const e = el('strumsync'); if (e) { e.value = inst.strumSync || ''; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value) L.strumSync = e.value; else delete L.strumSync; sync(); persist(); } }); } }
           else if (k === 'speed') { const e = el('speed'); if (e) { e.value = (Number.isFinite(inst.speed) && inst.speed !== 1) ? String(inst.speed) : ''; e.addEventListener('change', () => { const L = get(); if (L) { const v = parseFloat(e.value); if (Number.isFinite(v) && v > 0 && v !== 1) L.speed = v; else delete L.speed; sync(); persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } } }); } }
-          else if (k === 'sl' || k === 'st') { const e = el(c[1]); if (e) { e.addEventListener('input', () => { const L = get(); if (L) { let v = parseInt(e.value, 10); if (!Number.isFinite(v)) v = c[3] | 0; v = Math.max(c[3] | 0, Math.min(c[4] | 0, v)); L[c[1]] = v; if (c[1] === 'level') _ambSyncLevelUI(E, type + ':' + id, L.level); sync(); persist(); } }); if (!_AMB_LIVE_NODE_PARAMS[c[1]]) e.addEventListener('change', () => { if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } }); } }
-          else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); if (!_AMB_LIVE_NODE_PARAMS[c[1]]) e.addEventListener('change', () => { if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } }); } }
+          else if (k === 'sl' || k === 'st') { const e = el(c[1]); if (e) { e.addEventListener('input', () => { const L = get(); if (L) { let v = parseInt(e.value, 10); if (!Number.isFinite(v)) v = c[3] | 0; v = Math.max(c[3] | 0, Math.min(c[4] | 0, v)); L[c[1]] = v; if (c[1] === 'level') _ambSyncLevelUI(E, type + ':' + id, L.level); sync(); persist(); } }); e.addEventListener('change', () => { _ambCommitParam(E, type + ':' + id, c[1]); }); } }
+          else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); e.addEventListener('change', () => { _ambCommitParam(E, type + ':' + id, c[1]); }); } }
           else if (k === 'home') { const s = el('home'); if (s) { s.value = _ambHomeOf(inst, type); s.addEventListener('change', () => { const L = get(); if (!L) return; L.home = s.value || ''; sync(); persist(); try { _ambSeedUiRefresh(E, p, get, type + ':' + id); } catch (e) {} }); } }
           else if (k === 'cond') { _ambBindWhen(E, p, get, persist); }
           else if (k === 'spread') { _ambWireSpread(E, 'ambient-' + type + '-' + id, get, persist, sync); }
@@ -27928,8 +28563,8 @@
       // Live re-anchor on commit (change) so a generation/per-note edit lands on
       // the layer's NEXT unit, not a loop later — skipped for live-node params.
       const bindReanchor = (el, layer, key) => {
-        if (!el || layer === null || _AMB_LIVE_NODE_PARAMS[key]) return;
-        el.addEventListener('change', () => { _E = E; if (E.timer) { try { _ambReanchorLayer(E, layer); } catch (x) {} } });
+        if (!el || layer === null) return;
+        el.addEventListener('change', () => { _E = E; _ambCommitParam(E, layer, key); });
       };
       const bind = (id, layer, key) => {
         const el = G(id);
@@ -28485,7 +29120,7 @@
         // editor is the whole difference.
         // ＋ Part moved to the overview strip: it CHAINS another progression on,
         // so it belongs where the parts are drawn.
-        const _pgAddPart = (x, y) => { _E = E; _ambOpenGlobalProgMenu(E, x || 40, y || 120, { append: true }); };
+        const _pgAddPart = (x, y) => { _E = E; _ambAddPartModal(E, x, y); };
         // ♺ Reharm — a real, written edit (snapshot for undo first).
         const _pgReharm = () => {
             _E = E; const c = E.getCfg(); if (!c || !c.prog || !Array.isArray(c.prog.chords) || !c.prog.chords.length) {

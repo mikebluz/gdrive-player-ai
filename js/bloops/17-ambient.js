@@ -28256,6 +28256,11 @@
         fxBind('dly-time', (lc, v) => { lc.delay.timeMs = v; });
         fxBind('dly-fb', (lc, v) => { lc.delay.feedback = v; });
         fxBind('dly-ping', (lc, v) => { lc.delay.ping = v; });
+        // Was MISSING while the slider rendered (_ambSl, ~21538) and read back
+        // (set(), ~26697) — the classic primary-vs-schema wiring gap: it works on
+        // an ADDED layer (schema-driven _ambWireInst) and did nothing at all on
+        // bed/motif/texture/beat. Found by driving every control and diffing cfg.
+        fxBind('dly-spread', (lc, v) => { lc.delay.spread = v; });
         fxBind('dist-amt', (lc, v) => { lc.dist.amount = v; });
         fxBind('dist-focus', (lc, v) => { lc.dist.focus = v; });
         fxBind('dist-tone', (lc, v) => { lc.dist.tone = v; });

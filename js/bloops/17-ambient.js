@@ -2349,8 +2349,41 @@
     // empties, so a re-normalize of any current cfg leaves prog.chords byte-identical
     // (the invariant harness hashes chord root/intervals — untouched here). Self-contained
     // (inlines its own chord clone) so it doesn't depend on _ambCloneChord's alt-awareness.
+    // ---- SEED vs CURRENT progression -------------------------------------
+    // The picker used to be overloaded: its label mirrored the CURRENT
+    // progression, and every editor save also published a new entry into the
+    // seed list (named "<name> edit", so editing twice left "X edit", "X edit
+    // edit" behind). Those are three separate jobs and are now separated:
+    //   • `prog.seedName` — WHICH seed was loaded. The picker shows this and
+    //     nothing else, so it stays a chooser rather than a readout.
+    //   • `prog.name` / `prog.chords` — the CURRENT progression, decoupled.
+    //     Every edit lands here; Save commits here and touches no seed.
+    //   • the seed list — written ONLY by an explicit Export.
+    // `prog.seedSig` is the chord signature at load time, so the picker can say
+    // "· edited" once the current progression has diverged from its seed.
+    function _ambProgSig(chords) {
+      return (Array.isArray(chords) ? chords : []).map(function (c) {
+        return (c && c.root | 0) + ':' + ((c && c.intervals) || []).join('.') + (c && c.bars ? '@' + c.bars : '');
+      }).join('|');
+    }
+    function _ambProgSeedLabel(prog) {
+      if (!prog || !Array.isArray(prog.chords) || !prog.chords.length) return '— pick —';
+      const seed = (typeof prog.seedName === 'string' && prog.seedName) ? prog.seedName : null;
+      if (!seed) return 'Custom';                       // hand-authored, never from a seed
+      const edited = prog.seedSig != null && prog.seedSig !== _ambProgSig(prog.chords);
+      return seed + (edited ? ' · edited' : '');
+    }
+    // Stamp the seed identity when a seed is loaded into the current progression.
+    function _ambProgMarkSeed(prog, seedName) {
+      if (!prog) return;
+      if (seedName) { prog.seedName = String(seedName); prog.seedSig = _ambProgSig(prog.chords); }
+      else { delete prog.seedName; delete prog.seedSig; }
+    }
     function _ambNormalizeProgMeta(prog) {
       if (!prog || typeof prog !== 'object') return;
+      // Seed identity (additive; absent = hand-authored "Custom").
+      if (prog.seedName != null && typeof prog.seedName !== 'string') delete prog.seedName;
+      if (prog.seedSig != null && typeof prog.seedSig !== 'string') delete prog.seedSig;
       const cloneCh = (c) => {
         if (!c || typeof c !== 'object') return null;
         return { root: (((c.root | 0) % 12) + 12) % 12,
@@ -4660,6 +4693,7 @@
         } else {
           c.prog.name = name; c.prog.chords = chords; c.prog.on = true;
           if (Array.isArray(parts) && parts.length) c.prog.parts = parts.map(p => ({ name: p.name, len: p.len })); else delete c.prog.parts;
+          _ambProgMarkSeed(c.prog, name);   // this IS the seed it came from
         }
         if (typeof _ambAutoSyncFreeForProg === 'function') { try { _ambAutoSyncFreeForProg(E, c); } catch (e) {} }   // Phase 2c
         try { _ambSyncControls(E); } catch (e) {}
@@ -5009,21 +5043,24 @@
           _E = E; const L2 = opts.getLayer(); if (!L2) return;
           L2.keyOv = { mode: 'prog', name: nm, chords: chs };
           if (L2.notes && L2.notes.type === 'prog') L2.notes = { type: 'scale', scale: '' };
-          _ambPublishProgChords(nm, chs);
+          // (no publish — Export is the only path into the seed list)
           if (typeof opts.after === 'function') { try { opts.after(); } catch (e) {} }
         } };
       } else {
         const cfg = E.getCfg();
         if (!cfg || !cfg.prog || !Array.isArray(cfg.prog.chords) || !cfg.prog.chords.length) return;
         chords = cfg.prog.chords.map(_ambCloneChord);
-        name = (cfg.prog.name || 'Prog') + (opts.clone ? ' copy' : ' edit');
+        // Editing keeps the CURRENT name (the old "<name> edit" default is what
+        // seeded the "X edit", "X edit edit" pile-up in the seed list).
+        name = (cfg.prog.name || 'Prog') + (opts.clone ? ' copy' : '');
         target = { label: opts.clone ? 'Clone progression' : 'Edit progression', apply: (nm, chs) => {
           _E = E; const c = E.getCfg(); if (!c) return;
           if (!c.prog || typeof c.prog !== 'object') c.prog = { on: false, name: '', chords: [] };
           c.prog.name = nm; c.prog.chords = chs; c.prog.on = true;
           const rp = _ambRepairParts(c.prog.parts, chs.length); if (rp) c.prog.parts = rp; else delete c.prog.parts;   // keep parts consistent after chord edits
           try { _ambAutoSyncFreeForProg(E, c); } catch (e) {}
-          _ambPublishProgChords(nm, chs, c.prog.parts);
+          // NO publish here: Save commits to the CURRENT progression only. The seed
+          // list is written exclusively by Export (data-pe="export").
           try { _ambSyncControls(E); } catch (e) {}
         } };
       }
@@ -5177,7 +5214,8 @@
           '<button type="button" data-pe="clone" title="Duplicate this progression into a fresh editable copy">⧉ Clone</button>' +
           '<button type="button" class="pe-preview' + (ed._pvOn ? ' on' : '') + '" data-pe="preview" title="Hear the progression — each chord sounds for its own length">' + (ed._pvOn ? '■ Stop' : '▶ Preview') + '</button>' +
           '<button type="button" data-pe="pad" title="Add a pad layer that plays this progression">＋ Pad</button>' +
-          '<button type="button" class="pe-apply" data-pe="save">Save as new</button></div>';
+          '<button type="button" data-pe="export" title="Save this progression into the SEED list under a name of your choosing — the seed list is not touched by ordinary edits">⤓ Export…</button>' +
+          '<button type="button" class="pe-apply" data-pe="save" title="Save these changes to the CURRENT progression">Save</button></div>';
       const nm = host.querySelector('#pe-name'); if (nm) nm.addEventListener('input', () => { ed.name = nm.value; });
       const ln = host.querySelector('#pe-len');
       if (ln) ln.addEventListener('change', () => {
@@ -5265,8 +5303,32 @@
         try { if (ed.target && typeof ed.target.apply === 'function') ed.target.apply(name, chords); } catch (e) {}
         if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
         if (typeof persistWorkspace === 'function') persistWorkspace();
-        if (typeof showToast === 'function') showToast('Saved "' + name + '"');
+        if (typeof showToast === 'function') showToast('Saved to the current progression.');
         _ambPeClose(); return;
+      }
+      else if (op === 'export') {
+        // The ONLY path into the seed list. Prompts for the name that will show
+        // there, so an exported seed is deliberately named rather than inheriting
+        // whatever the editor happened to be called.
+        const E = ed.E;
+        const chords = serialize();
+        let nm = null;
+        try { nm = prompt('Export to the seed list as:', (ed.name || 'Prog').trim() || 'Prog'); } catch (e) {}
+        if (nm == null) return;
+        nm = String(nm).trim(); if (!nm) return;
+        let parts = null;
+        try { const c = E.getCfg(); parts = (c && c.prog && c.prog.parts) || null; } catch (e) {}
+        _ambPublishProgChords(nm, chords, parts);
+        // The current progression now traces to this seed, so the picker names it.
+        // The exported name becomes the current progression's name too — you
+        // exported THIS progression under that name, so leaving the old one on it
+        // would read as a mismatch against the picker.
+        try { const c = E.getCfg(); if (c && c.prog) { c.prog.chords = chords.map(_ambCloneChord); c.prog.name = nm; _ambProgMarkSeed(c.prog, nm); } } catch (e) {}
+        ed.name = nm;
+        try { _ambSyncControls(E); } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        if (typeof showToast === 'function') showToast('Exported "' + nm + '" to the seed list.');
+        return;   // stay open — exporting is not finishing
       }
       _ambPeRender();
     }
@@ -26087,7 +26149,11 @@
         if (kModeRot) { kModeRot.value = String(((cfg.keyModeRot | 0) % 7 + 7) % 7); kModeRot.disabled = !cfg.keyOn; }
         // Progression sub-controls.
         const pPick = document.getElementById(tr('ambient-prog-pick'));
-        if (pPick) pPick.textContent = (Array.isArray(p.chords) && p.chords.length) ? (p.name || 'Progression') : '— pick —';
+        // Shows WHICH SEED is loaded (+ "· edited" once the current progression
+        // diverges) — deliberately NOT the current progression's name, which is
+        // what made this control read as both a chooser and a readout.
+        if (pPick) { pPick.textContent = _ambProgSeedLabel(p);
+          pPick.title = 'Pick a SEED progression — it loads into the current progression, which you then edit independently. The seed list is only changed by Export.'; }
         const nCh = (Array.isArray(p.chords) ? p.chords.length : 0);
         const pEdit = document.getElementById(tr('ambient-prog-edit'));
         if (pEdit) pEdit.disabled = !(nCh > 0);   // editable only when a progression is selected

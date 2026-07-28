@@ -4677,6 +4677,8 @@
       _E = E; const cfg = E.getCfg(); if (!cfg) return;
       _ambApplyGenProg(E, _ambGenProgChords(cfg, total, uniq), 'Gen ' + (total | 0) + '×' + (uniq | 0));
     }
+    // Set by the panel wiring (see ACTION REGISTRY). Null before the panel builds.
+    let _ambProgActions = null;
     function _ambOpenGlobalProgMenu(E, x, y, opts) {
       if (typeof showCtxMenu !== 'function') return;
       opts = opts || {};
@@ -4701,6 +4703,16 @@
         if (typeof persistWorkspace === 'function') persistWorkspace();
       };
       const items = [];
+      // SOURCE a progression — creating one answers the same question the seed
+      // list does ("where does this progression come from"), so Generate and
+      // Roman live here rather than as separate buttons outside. Suppressed in
+      // append mode, where the menu is choosing a PART to chain on.
+      if (!opts.append && _ambProgActions) {
+        items.push({ label: 'New progression', disabled: true });
+        items.push({ label: '  ⚄ Generate…', fn: () => setTimeout(() => { try { _ambProgActions.generate(); } catch (e) {} }, 0) });
+        items.push({ label: '  ⌨ Type roman numerals…', fn: () => setTimeout(() => { try { _ambProgActions.roman(); } catch (e) {} }, 0) });
+        items.push('hr');
+      }
       // USER group — wrap progressions (resolved to chords) + published progs.
       const userItems = [];
       const wps = (typeof wrapProgs !== 'undefined' && Array.isArray(wrapProgs)) ? wrapProgs : [];
@@ -5209,6 +5221,14 @@
             '<div class="pe-notes">' + noteChips + '</div>' +
           '</div>' : '') +
         altsRow +
+        // Operations ON the chords live WITH the chords — you want to see what
+        // Reharmonize rewrote and what Detect key read. Area scope only: both act
+        // on cfg.prog, which a layer-scope edit isn't.
+        ((ed.target && ed.target.label !== 'Edit layer progression') ?
+          '<div class="pe-ops">' +
+            '<button type="button" data-pe="reharm" title="Reharmonize — rewrite these chords once with same-function substitutions">♺ Reharmonize</button>' +
+            '<button type="button" data-pe="detectkey" title="Detect the key these chords imply and offer to set it">🔍 Detect key</button>' +
+          '</div>' : '') +
         '<div class="pe-save"><input type="text" id="pe-name" value="' + esc(ed.name) + '" placeholder="Progression name" />' +
           '<button type="button" data-pe="cancel">Cancel</button>' +
           '<button type="button" data-pe="clone" title="Duplicate this progression into a fresh editable copy">⧉ Clone</button>' +
@@ -5289,6 +5309,17 @@
       else if (op === 'altmode') { if (Array.isArray(ch.alts) && ch.alts.length) ch.altMode = (arg === 'random') ? 'random' : 'cycle'; }
       else if (op === 'clone') { ed.chords = ed.chords.map(_ambCloneChord); ed.name = (ed.name || 'Prog').replace(/\s+(edit|copy)$/i, '') + ' copy'; ed.sel = Math.min(ed.sel, ed.chords.length - 1); ed.altSel = -1; if (ed.target) ed.target.label = 'Clone progression'; if (typeof showToast === 'function') showToast('Cloned — edit freely, then Save as new'); }
       else if (op === 'preview') { if (ed._pvOn) _ambPePreviewStop(ed); else _ambPePreviewStart(ed); return; }
+      else if (op === 'reharm' || op === 'detectkey') {
+        // Both rewrite cfg.prog directly, so commit the editor's staged chords
+        // first — otherwise the operation would run against the pre-edit chords
+        // and silently discard whatever is on screen.
+        const E = ed.E;
+        try { if (ed.target && typeof ed.target.apply === 'function') ed.target.apply((ed.name || 'Prog').trim() || 'Prog', serialize()); } catch (e) {}
+        try { if (_ambProgActions) (op === 'reharm' ? _ambProgActions.reharm() : _ambProgActions.detectKey()); } catch (e) {}
+        // Re-seed the editor from whatever the operation left behind.
+        try { const c = E.getCfg(); if (c && c.prog && Array.isArray(c.prog.chords)) ed.chords = c.prog.chords.map(_ambCloneChord); } catch (e) {}
+        _ambPeRender(); return;
+      }
       else if (op === 'cancel') { _ambPeClose(); return; }
       else if (op === 'pad') {
         _ambAddPadForProg(ed.E, serialize(), (ed.name || '').trim());
@@ -20884,6 +20915,10 @@
             '</span>';
         }
       });
+      // ＋ Part CHAINS another progression onto the end — this strip is where the
+      // parts are drawn and named, so the button lives at the end of the chain
+      // rather than in the outer button row.
+      h += '<span role="button" tabindex="0" class="ambient-pov-addpart" data-pov="addpart" title="Chain another progression on as a new part">＋ Part</span>';
       el.innerHTML = h;
       if (!el._wired) { el._wired = true; el.addEventListener('pointerdown', (ev) => { try { _ambProgOverviewAct(E, ev); } catch (e) {} }); }
     }
@@ -20996,6 +21031,11 @@
       if (op === 'partrm') { _ambProgRemovePart(prog, a[1] | 0); persist(); refresh(); return; }
       if (op === 'ver') { _ambProgSwitchVersion(prog, a[1] | 0); try { _ambAutoSyncFreeForProg(E, cfg); } catch (e) {} persist(); refresh(); return; }
       if (op === 'veradd') { _ambProgAddVersion(prog); persist(); refresh(); return; }
+      // DEFERRED: this strip acts on POINTERDOWN (it repaints on the viz timer,
+      // so a click would drop), and showCtxMenu arms its own document-level
+      // pointerdown dismiss — registered mid-dispatch, that listener still fires
+      // for THIS event and closes the menu the instant it opens. Open it next tick.
+      if (op === 'addpart') { const r = t.getBoundingClientRect(); if (_ambProgActions) setTimeout(() => { try { _ambProgActions.addPart(r.left, r.bottom); } catch (e) {} }, 0); return; }
     }
     function _ambRenderChordMatrix(E) {
       const el = _ambGet(E, 'ambient-progmatrix'); if (!el) return;
@@ -26512,12 +26552,6 @@
               '<button type="button" class="ambient-select ambient-prog-pick" id="ambient-prog-pick" title="Pick a chord progression for all layers">— pick —</button>' +
               '<span class="ambient-prog-sub ambient-prog-actions" id="ambient-prog-sub">' +
                 '<button type="button" class="ambient-seg ambient-prog-edit" id="ambient-prog-edit" title="Edit the selected progression chord-by-chord and Save As New">Edit</button>' +
-                '<button type="button" class="ambient-seg ambient-prog-clone" id="ambient-prog-clone" title="Clone this progression into an editable copy you can mutate freely">⧉ Clone</button>' +
-                '<button type="button" class="ambient-seg ambient-prog-addpart" id="ambient-prog-addpart" title="Append another progression as a new PART — build a sequence of progressions (Verse → Chorus → …)">＋ Part</button>' +
-                '<button type="button" class="ambient-seg ambient-prog-reharm" id="ambient-prog-reharm" title="Reharmonize — rewrite the chords ONCE with same-function substitutes (relative minor/major, mediant, up-a-fourth, 7th/9th colour), staying in the key. Unlike 🎲 take / 🌊 vary this is WRITTEN into the progression, so it is a real edit (undoable).">♺ Reharm</button>' +
-                '<button type="button" class="ambient-seg ambient-prog-detectkey" id="ambient-prog-detectkey" title="Detect the key these chords imply and offer to set it. Scores every root × scale by how many chord tones fall inside, weighting the first and last chords — then you confirm before anything changes.">🔍 Key</button>' +
-                '<button type="button" class="ambient-seg ambient-prog-roman" id="ambient-prog-roman" title="Type the changes as roman numerals in the current key — e.g. “ii V I”, “i ♭VII ♭VI V”, “IVmaj7 V7 iii7 vi7”. Case sets quality (IV = major, iv = minor); ♭/♯ shift the degree; 7 / maj7 / 9 / 6 / ° / + / sus add colour. Replaces the current progression.">⌨ Numerals</button>' +
-                '<button type="button" class="ambient-seg ambient-prog-generate" id="ambient-prog-generate" title="Generate a progression — pick how many chords total and how many unique; diatonic to the current key, starting on the tonic. Press again for another roll.">⚄ Generate</button>' +
               '</span>' +
               '<span class="ambient-hint" id="ambient-progsec-off" style="display:none">turn Progression on to build a chord sequence</span>' +
             '</div>' +
@@ -28158,13 +28192,14 @@
         });
         const pEdit = G('ambient-prog-edit');
         if (pEdit) pEdit.addEventListener('click', () => { _E = E; try { _ambOpenProgEditor(E); } catch (e) {} });
-        const pClone = G('ambient-prog-clone');
-        if (pClone) pClone.addEventListener('click', () => { _E = E; try { _ambOpenProgEditor(E, { scope: 'area', clone: true }); } catch (e) {} });
-        const pAddPart = G('ambient-prog-addpart');
-        if (pAddPart) pAddPart.addEventListener('click', () => { _E = E; const r = pAddPart.getBoundingClientRect(); _ambOpenGlobalProgMenu(E, r.left, r.bottom, { append: true }); });
+        // ⧉ Clone's outer button is GONE — the editor footer already had one
+        // (data-pe="clone"), so it was a duplicate; one extra click to open the
+        // editor is the whole difference.
+        // ＋ Part moved to the overview strip: it CHAINS another progression on,
+        // so it belongs where the parts are drawn.
+        const _pgAddPart = (x, y) => { _E = E; _ambOpenGlobalProgMenu(E, x || 40, y || 120, { append: true }); };
         // ♺ Reharm — a real, written edit (snapshot for undo first).
-        { const pRh = G('ambient-prog-reharm');
-          if (pRh) pRh.addEventListener('click', () => {
+        const _pgReharm = () => {
             _E = E; const c = E.getCfg(); if (!c || !c.prog || !Array.isArray(c.prog.chords) || !c.prog.chords.length) {
               try { if (typeof showToast === 'function') showToast('No progression to reharmonize.'); } catch (e) {} return; }
             let amt = null;
@@ -28180,10 +28215,9 @@
             if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
             if (typeof persistWorkspace === 'function') persistWorkspace();
             try { if (typeof showToast === 'function') showToast('Reharmonized ' + r.changed.length + ': ' + r.changed.slice(0, 3).map(x => x.from + '→' + x.to).join(' · ') + (r.changed.length > 3 ? ' …' : '')); } catch (e) {}
-          }); }
+          };
         // 🔍 Key — detect and OFFER; never silently re-key the area.
-        { const pDk = G('ambient-prog-detectkey');
-          if (pDk) pDk.addEventListener('click', () => {
+        const _pgDetectKey = () => {
             _E = E; const c = E.getCfg(); if (!c || !c.prog || !Array.isArray(c.prog.chords) || !c.prog.chords.length) {
               try { if (typeof showToast === 'function') showToast('No progression to analyse.'); } catch (e) {} return; }
             const d = _ambDetectKey(c.prog.chords);
@@ -28201,10 +28235,9 @@
             if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
             if (typeof persistWorkspace === 'function') persistWorkspace();
             try { if (typeof showToast === 'function') showToast('Key set to ' + nm + '.'); } catch (e) {}
-          }); }
+          };
         // ⌨ Numerals — type the changes instead of clicking them in.
-        { const pRn = G('ambient-prog-roman');
-          if (pRn) pRn.addEventListener('click', () => {
+        const _pgRoman = () => {
             _E = E; const c = E.getCfg(); if (!c) return;
             const kRoot = _ambKeyRootPc(c), kScale = _ambKeyScaleName(c);
             const cur = (c.prog && Array.isArray(c.prog.chords) && c.prog.chords.length)
@@ -28223,7 +28256,7 @@
             if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
             if (typeof persistWorkspace === 'function') persistWorkspace();
             try { if (typeof showToast === 'function') showToast('Progression set — ' + chords.length + ' chords.'); } catch (e) {}
-          }); }
+          };
         // 🧂 Salt knobs → cfg.prog.salt (normalize deletes the key when all zero,
         // so untouched projects stay byte-identical). Engine reads per onset —
         // changes land within the lookahead, no re-anchor needed.
@@ -28276,8 +28309,7 @@
         });
         // ⚄ Generate — popover: pick Length + Unique with steppers, PREVIEW the
         // rolled chords as chips (roman numeral + name), reroll, then Apply.
-        const pGen = G('ambient-prog-generate');
-        if (pGen) pGen.addEventListener('click', () => {
+        const _pgGenerate = () => {
           _E = E;
           const esc = (s) => String(s == null ? '' : s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
           const old = document.getElementById('pg-overlay'); if (old) old.remove();
@@ -28333,7 +28365,14 @@
               try { ov.remove(); } catch (e) {}
             }
           });
-        });
+        };
+        // ACTION REGISTRY — the outer row now carries only on/off · picker · Edit.
+        // Generate + Roman are reached from the picker menu (they SOURCE a
+        // progression), Reharm + Detect key from the editor toolbar (they operate
+        // on chords you can see), ＋ Part from the overview strip. All of those
+        // live at module scope, so they reach the handlers through here.
+        _ambProgActions = { generate: _pgGenerate, roman: _pgRoman,
+          reharm: _pgReharm, detectKey: _pgDetectKey, addPart: _pgAddPart };
       }
 
       // ＋ Ramp buttons live inside (re-renderable) layer cards → ONE delegated

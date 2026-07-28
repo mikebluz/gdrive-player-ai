@@ -13302,7 +13302,20 @@
         // lead — the core engine makes near-instant scheduling safe (a core
         // note is one message; the few node-engine sample voices build in ms).
         E._firstTickLead = false;
-        lead = Math.max(now + 0.06, (Number.isFinite(E._pressAt) ? E._pressAt : 0) + 0.15,
+        // The floor matters more than the press anchor on a COLD press. Building
+        // the chains above can eat the whole `pressAt + 0.15` margin, and the old
+        // 0.06 fallback left each layer ~30-60ms to construct its first voices
+        // (measured: 28-63ms cold vs 127-133ms warm). That is BELOW playNote's
+        // 0.25s defer threshold, so instead of the paced build queue every layer
+        // hit the urgent bounded-30ms slice at once, against an empty pool — some
+        // voices made their onset and some didn't, which is the "layers clumsily
+        // cascade on, stop/play a few times and it's fine" report (a few plays
+        // warm the pool, so the same margin then suffices).
+        // Cold ⇒ 0.35s floor: over the defer threshold, so the queue paces the
+        // builds and every first voice is ready before its onset. Warm keeps the
+        // press-anchored 0.06 so a normal press still sounds immediate.
+        const _floor = E._coldStart ? _AMB_LEAD_COLD : _AMB_LEAD_WARM;
+        lead = Math.max(now + _floor, (Number.isFinite(E._pressAt) ? E._pressAt : 0) + 0.15,
           (Number.isFinite(E._emitFloor) && E._emitFloor > now) ? E._emitFloor : 0);
       }
       const horizon = now + 1.4 * _ambHiddenMult();   // hidden tab → 5.6 s runway (throttled ticks can't starve the schedule)
@@ -15787,6 +15800,13 @@
       if (E && E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
       try { _ambRampVizClear(E); } catch (e) {}
     }
+    // When playback last STOPPED (Tone clock), and whether anything has ever
+    // played this page. Between them they answer "is the voice pool cold?" —
+    // pooled synth bodies get disposed and the JIT deoptimizes while idle.
+    let _ambLastStopAt = -1e9, _ambEverPlayed = false;
+    const _AMB_COLD_IDLE_SEC = 20;    // idle longer than this ⇒ treat the press as cold
+    const _AMB_LEAD_COLD = 0.35;      // ≥ the 0.25s defer threshold, so the FIRST voices
+    const _AMB_LEAD_WARM = 0.06;      // take the paced build queue, not the urgent slice
     function _ambStartGenerator(E) {
       _E = E;
       const cfg = E.getCfg();
@@ -15798,6 +15818,12 @@
       // build + 0.3 s. Steady-state ticks keep the protective 0.3 s lead.
       E._pressAt = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
       E._firstTickLead = true;
+      // COLD PRESS: first play of the page, or after a long idle. The voice pool
+      // is empty and the paths are de-JITed, so every layer's first voices cost
+      // milliseconds each to construct. Flagged here (before the build below eats
+      // the clock) so the first tick can give them room — see the lead floor.
+      E._coldStart = !_ambEverPlayed || ((E._pressAt - _ambLastStopAt) > _AMB_COLD_IDLE_SEC);
+      _ambEverPlayed = true;
       try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
       if (E.timer) return;
       _ambResetClocks(E);
@@ -16128,6 +16154,8 @@
       if (E.timer) { clearInterval(E.timer); E.timer = null; }
       _AMB_TICKING.delete(E); _ambTickWorkerMaybeStop();
       E._freshKeys = null; E._freshJoin = null;   // added-while-playing marks die with the session (a stopped toggle is plain)
+      // Stamp the stop so the NEXT press can tell warm from cold (see _ambStartGenerator).
+      try { _ambLastStopAt = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : _ambLastStopAt; } catch (e) {}
       // DRUM SOLO is monitoring state, not arrangement — clear it across every
       // area so a project can never be saved (or reloaded) with seven drum lanes
       // silently muted and nothing on screen to explain it. Normalize can't do

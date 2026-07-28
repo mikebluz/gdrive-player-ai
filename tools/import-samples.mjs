@@ -138,8 +138,9 @@ const prettyName = (rel) => {
   }
 
   // Build entries, resolving id collisions (two files can slug to one name).
+  const changedList = [];
   const entries = [], seen = new Map();
-  let copied = 0, unchanged = 0, bytes = 0, guessed = 0;
+  let added = 0, updated = 0, unchanged = 0, bytes = 0, guessed = 0;
   for (const f of files) {
     const relSlug = slugPath(f.rel);
     let id = relSlug.replace(/\.[^.]+$/, '');
@@ -156,16 +157,21 @@ const prettyName = (rel) => {
     // never recopied). So: size differs → copy; size matches but the source is
     // newer → hash both and copy only if the bytes really differ, which keeps a
     // merely-touched file from being recopied.
-    let need = true;
+    let need = true, existed = false;
     try {
       const st = fs.statSync(destAbs);
+      existed = true;
       if (st.size !== f.size) need = true;
       else if (f.mtime > st.mtimeMs + 1) need = !sameBytes(f.full, destAbs);
       else need = false;
     } catch (e) { need = true; }
     if (need) {
       if (!DRY) { fs.mkdirSync(path.dirname(destAbs), { recursive: true }); fs.copyFileSync(f.full, destAbs); }
-      copied++;
+      // NEW vs UPDATED is the distinction you want when re-running on a library
+      // you have been editing — "3 new" and "3 updated" mean very different
+      // things, and one lumped "copied" count hides which happened.
+      if (existed) { updated++; changedList.push(['~', destRel]); }
+      else { added++; changedList.push(['+', destRel]); }
     } else unchanged++;
     bytes += f.size;
 
@@ -203,9 +209,18 @@ const prettyName = (rel) => {
   }
 
   // ---- report ------------------------------------------------------------
+  const verb = DRY ? 'would be ' : '';
   console.log(c.b('Imported'));
-  console.log(`  ${c.g(String(entries.length))} sample(s) in the library   ${c.dim(`(${copied} copied, ${unchanged} already current)`)}`);
-  console.log(`  ${c.dim(mb(bytes) + ' of audio')}`);
+  if (added)   console.log(`  ${c.g(String(added))} new       ${c.dim(verb + 'copied in')}`);
+  if (updated) console.log(`  ${c.y(String(updated))} updated   ${c.dim(verb + 'changed since the last run')}`);
+  if (unchanged) console.log(`  ${c.dim(String(unchanged) + ' unchanged   already current, not copied')}`);
+  if (changedList.length && changedList.length <= 20) {
+    changedList.forEach(([mk, rel]) => console.log(c.dim(`      ${mk} ${rel}`)));
+  } else if (changedList.length) {
+    changedList.slice(0, 12).forEach(([mk, rel]) => console.log(c.dim(`      ${mk} ${rel}`)));
+    console.log(c.dim(`      …and ${changedList.length - 12} more`));
+  }
+  console.log(`  ${c.b(String(entries.length))} sample(s) in the library   ${c.dim(mb(bytes) + ' of audio')}`);
   if (guessed) console.log(c.dim(`  ${guessed} had no note in the filename → root note C4 (edit manifest.json to correct)`));
   if (unsupported.length) {
     console.log('\n' + c.y(`Skipped ${unsupported.length} file(s) in formats browsers cannot decode:`));

@@ -792,6 +792,14 @@ this rig is a Mac. The remaining honest step is a capture from the actual browse
 at the moment it happens — which is what `__bloomCold` is for, and why it should be
 deployed before the next attempt.
 
+**GC / pool hypothesis KILLED (by code, not measurement).** The working theory was
+"the voice pool goes cold while idle". There IS NO VOICE POOL — synth-body pooling
+was removed in 2026-07 (04-instruments-samples.js: "permanently gone… NEVER
+reintroduce without passing an oscillator-leak test"); every note builds a fresh
+synth. Forcing `gc()` with heap churn, headless AND headful, changed nothing —
+as expected, since there is nothing to collect. What remains genuinely cheaper on
+a warm press is JIT warmth on the construction path, not a pool.
+
 **Still untested:** whether the bad case involves a BACKGROUNDED tab rather than mere
 idle. A buried tab throttles rAF and can suspend
 the AudioContext — a different mechanism from the empty-voice-pool one that was

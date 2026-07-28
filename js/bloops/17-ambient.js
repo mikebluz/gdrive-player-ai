@@ -6408,6 +6408,75 @@
     // sweep, not the note stream) — they must NOT re-anchor (that would needlessly
     // re-emit). Everything else (generation + per-note) re-anchors on commit.
     const _AMB_LIVE_NODE_PARAMS = { level: 1, space: 1, areaFadeMs: 1 };
+    // ---- LIVE-NOTE PARAMS (performance tweaking) ---------------------------
+    // Re-anchoring does TWO separable things, and only one of them is the delay:
+    //   (a) _ambRewriteSoon — brings a Write freeze's rewrite forward. WITHOUT
+    //       this a frozen layer ignores the edit entirely, possibly for many
+    //       loops, and every layer defaults to write:{on:true}. Always needed.
+    //   (b) cancel pending voices + move the phase anchor to the NEXT UNIT
+    //       BOUNDARY. This is what makes an edit land "on the 1" — correct for a
+    //       param that moves ONSETS, since re-emitting a half-played unit with a
+    //       different rhythm drops or doubles notes at the cut. But it is also
+    //       what makes a Bed sit unchanged for up to 8 s and a Drone for 32 s.
+    // The params below don't move onsets at all — they are pitch, level, timbre
+    // and duration. The emitters read them at each note's build, so simply NOT
+    // re-anchoring lets them take effect on the next note the generator emits,
+    // bounded by the ~1.4 s lookahead instead of by the unit length. Nothing is
+    // cancelled and nothing is re-emitted, so there is no risk of re-drawing a
+    // seeded pitch or doubling an onset — the change just arrives sooner.
+    // Anything NOT listed here keeps the boundary behaviour.
+    // MEASURED, and the answer moved the line: the dominant delay is NOT the unit
+    // boundary, it is the WRITE FREEZE. Every layer defaults to write:{on,bars:2,
+    // times:4}, so a few seconds after Play the layer is replaying a captured
+    // phrase — and the replay reuses the CAPTURED params, so a character edit is
+    // frozen along with the notes. Measured on a default Bed: turning Attack up
+    // changed nothing for 19.3 s (the rest of the Write cycle), with or without a
+    // re-anchor. _ambRewriteSoon can't help either — at the moment of the edit the
+    // freeze often isn't armed yet, so there is nothing to bring forward.
+    //
+    // That splits the params along a musical line rather than a technical one:
+    //   PHRASE — which notes, how many, when. register / density / rests / steps /
+    //     humanize … A frozen loop SHOULD hold these; that is what freezing is.
+    //     They keep the boundary re-anchor.
+    //   SOUND  — how each note is shaped. Envelope, detune, glide. Freezing the
+    //     phrase is no reason to freeze the tone, so these are refreshed from the
+    //     layer at REPLAY time (see _ambLiveVoiceParams in _ambReplayFrozen) and
+    //     need no re-anchor at all: the generator reads them at each note's build.
+    // Deliberately conservative — a param whose classification is arguable stays
+    // on the boundary path, where the behaviour is unchanged.
+    // NOT `fine`: Motion ADDS a seeded random offset onto the same params.detune
+    // (17:~7352), so refreshing detune from lyr.fine alone would silently flatten
+    // the motion jitter on every frozen loop. Envelope and glide are standalone
+    // fields with a single writer, which is exactly why they are safe here.
+    const _AMB_LIVE_NOTE_PARAMS = { attack: 1, decay: 1, sustain: 1, release: 1, portamento: 1 };
+    // Rebuild the SOUND half of a note's params from the layer as it is NOW.
+    // Returns null when nothing differs, so the untouched path allocates nothing
+    // and replays the captured object by reference exactly as before.
+    function _ambLiveVoiceParams(lyr, params) {
+      if (!lyr || !params) return null;
+      let out = null;
+      const put = (k, v) => { if (!Number.isFinite(v) || params[k] === v) return; (out = out || Object.assign({}, params))[k] = v; };
+      put('attack', lyr.attack); put('decay', lyr.decay);
+      put('sustain', lyr.sustain); put('release', lyr.release);
+      const gl = lyr.portamento | 0;
+      if (gl > 0 && params.glideMs !== gl) { (out = out || Object.assign({}, params)).glideMs = gl; out.glideLayer = lyr; }
+      else if (!gl && params.glideMs) { (out = out || Object.assign({}, params)).glideMs = 0; }
+      return out;
+    }
+    // A per-note edit that needs no re-anchor: the generator already reads it at
+    // build time, so all that is required is to un-freeze a Write loop that would
+    // otherwise replay a captured phrase straight past the change.
+    function _ambApplyLayerParamLive(E, key) {
+      if (!E || !E.timer) return;
+      try { _ambRewriteSoon(E, key); } catch (e) {}
+    }
+    // Which apply-path a slider key takes on commit.
+    function _ambCommitParam(E, key, param) {
+      if (!E || !E.timer) return;
+      if (_AMB_LIVE_NODE_PARAMS[param]) return;                 // already live on the DSP chain
+      if (_AMB_LIVE_NOTE_PARAMS[param]) { _ambApplyLayerParamLive(E, key); return; }
+      try { _ambReanchorLayer(E, key); } catch (e) {}
+    }
     // Is `key` currently locked (single unit OR a frozen loop, incl. an armed
     // pending one)? Bed/Motif can be locked either way (single → E.unit,
     // multi-unit → a freeze loop).
@@ -15341,8 +15410,16 @@
                 if (_sk) f2 = f2 * Math.pow(2, _sk / 12);
               }
               let pp = e.params;
+              // Envelope / detune / glide follow the sliders even while the
+              // phrase is frozen — freezing the notes is not a reason to freeze
+              // the tone (this is what made an Attack tweak inaudible for the
+              // rest of the Write cycle).
+              { const lv = _ambLiveVoiceParams(lyr, pp); if (lv) pp = lv; }
               if (_live) {
-                pp = Object.assign({}, e.params);
+                // Clone from pp, NOT e.params — the live-voice refresh above may
+                // already have replaced it, and re-cloning the captured object
+                // would silently discard those values.
+                pp = Object.assign({}, pp);
                 if (Number.isFinite(lyr.humanize) && lyr.humanize > 0) pp._humanSec = (Math.random() * 2 - 1) * Math.min(100, lyr.humanize) / 100 * 0.02;
                 if (Number.isFinite(lyr.velVar) && lyr.velVar > 0) {
                   const b0 = Number.isFinite(pp.volume) ? pp.volume : 100;
@@ -24511,8 +24588,8 @@
           else if (k === 'pitchseed') { const e = el('pitchseed'); if (e) { e.value = inst.pitchSeed || 'random'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === 'low') L.pitchSeed = 'low'; else delete L.pitchSeed; sync(); persist(); } }); } }
           else if (k === 'strumsync') { const e = el('strumsync'); if (e) { e.value = inst.strumSync || ''; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value) L.strumSync = e.value; else delete L.strumSync; sync(); persist(); } }); } }
           else if (k === 'speed') { const e = el('speed'); if (e) { e.value = (Number.isFinite(inst.speed) && inst.speed !== 1) ? String(inst.speed) : ''; e.addEventListener('change', () => { const L = get(); if (L) { const v = parseFloat(e.value); if (Number.isFinite(v) && v > 0 && v !== 1) L.speed = v; else delete L.speed; sync(); persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } } }); } }
-          else if (k === 'sl' || k === 'st') { const e = el(c[1]); if (e) { e.addEventListener('input', () => { const L = get(); if (L) { let v = parseInt(e.value, 10); if (!Number.isFinite(v)) v = c[3] | 0; v = Math.max(c[3] | 0, Math.min(c[4] | 0, v)); L[c[1]] = v; if (c[1] === 'level') _ambSyncLevelUI(E, type + ':' + id, L.level); sync(); persist(); } }); if (!_AMB_LIVE_NODE_PARAMS[c[1]]) e.addEventListener('change', () => { if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } }); } }
-          else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); if (!_AMB_LIVE_NODE_PARAMS[c[1]]) e.addEventListener('change', () => { if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } }); } }
+          else if (k === 'sl' || k === 'st') { const e = el(c[1]); if (e) { e.addEventListener('input', () => { const L = get(); if (L) { let v = parseInt(e.value, 10); if (!Number.isFinite(v)) v = c[3] | 0; v = Math.max(c[3] | 0, Math.min(c[4] | 0, v)); L[c[1]] = v; if (c[1] === 'level') _ambSyncLevelUI(E, type + ':' + id, L.level); sync(); persist(); } }); e.addEventListener('change', () => { _ambCommitParam(E, type + ':' + id, c[1]); }); } }
+          else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); e.addEventListener('change', () => { _ambCommitParam(E, type + ':' + id, c[1]); }); } }
           else if (k === 'home') { const s = el('home'); if (s) { s.value = _ambHomeOf(inst, type); s.addEventListener('change', () => { const L = get(); if (!L) return; L.home = s.value || ''; sync(); persist(); try { _ambSeedUiRefresh(E, p, get, type + ':' + id); } catch (e) {} }); } }
           else if (k === 'cond') { _ambBindWhen(E, p, get, persist); }
           else if (k === 'spread') { _ambWireSpread(E, 'ambient-' + type + '-' + id, get, persist, sync); }
@@ -27928,8 +28005,8 @@
       // Live re-anchor on commit (change) so a generation/per-note edit lands on
       // the layer's NEXT unit, not a loop later — skipped for live-node params.
       const bindReanchor = (el, layer, key) => {
-        if (!el || layer === null || _AMB_LIVE_NODE_PARAMS[key]) return;
-        el.addEventListener('change', () => { _E = E; if (E.timer) { try { _ambReanchorLayer(E, layer); } catch (x) {} } });
+        if (!el || layer === null) return;
+        el.addEventListener('change', () => { _E = E; _ambCommitParam(E, layer, key); });
       };
       const bind = (id, layer, key) => {
         const el = G(id);

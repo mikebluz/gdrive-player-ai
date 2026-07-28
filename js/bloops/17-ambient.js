@@ -266,9 +266,11 @@
     }
     // Chip-face label: the "Areas" header supplies the word, so an unnamed area
     // just shows its position number (1, 2, 3…); a user-named area shows its name.
-    function _ambAreaChipLabel(cfg, i) {
-      return (cfg && typeof cfg.name === 'string' && cfg.name.trim()) ? cfg.name.trim() : String((i | 0) + 1);
-    }
+    // The area selector used to render a bare "1" when unnamed, so the one place
+    // you PICK an area disagreed with every place that REPORTS one ("▶ Area 1").
+    // There is now a single label — _ambAreaLabel — and this is kept only as its
+    // alias, so a future caller can't reintroduce the split.
+    function _ambAreaChipLabel(cfg, i) { return _ambAreaLabel(cfg, i); }
     // Per-area accent palette — index 0 = the original purple (Area 1), then a
     // distinct hue per additional area (cycled). Colours each area's chip and the
     // active area's layer highlights so areas read apart at a glance.
@@ -1376,7 +1378,9 @@
           try { areasBox.classList.remove('swipe-l', 'swipe-r'); void areasBox.offsetWidth;
                 areasBox.classList.add(dir > 0 ? 'swipe-l' : 'swipe-r');
                 setTimeout(() => areasBox.classList.remove('swipe-l', 'swipe-r'), 260); } catch (e) {}
-          try { if (typeof showToast === 'function') showToast('Area ' + _ambAreaLabel(s.areas[next], next) + (_masterEng && _masterEng.timer ? ' (viewing — playback unchanged)' : '')); } catch (e) {}
+          // _ambAreaLabel ALREADY reads "Area 3" when unnamed — prefixing it gave
+          // "Area Verse" the moment anyone named one.
+          try { if (typeof showToast === 'function') showToast(_ambAreaLabel(s.areas[next], next) + (_masterEng && _masterEng.timer ? ' (viewing — playback unchanged)' : '')); } catch (e) {}
         });
         const end = () => { armed = false; sid = null; };
         areasBox.addEventListener('pointerup', end);
@@ -1387,7 +1391,7 @@
       if (ren) ren.addEventListener('click', () => {
         const i = _ambActiveAreaIdx();
         if (typeof prompt !== 'function') return;
-        const cur = _ambAreas()[i]; const nm = prompt('Area name (blank = number):', (cur && cur.name) || '');
+        const cur = _ambAreas()[i]; const nm = prompt('Area name — used by every readout (blank = "Area ' + (i + 1) + '"):', (cur && cur.name) || '');
         if (nm != null) { _ambRenameArea(i, nm.trim()); _ambRebuildMaster(); try { persistWorkspace(); } catch (e) {} }
       });
       const clrArea = host.querySelector('.ambient-area-clear');

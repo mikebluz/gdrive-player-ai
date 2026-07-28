@@ -2602,7 +2602,13 @@
       padding: 0 8px; border: 1px solid var(--ac, #2d2d3f); border-radius: 7px;
       background: var(--ac-soft, #0a0a14); color: #e8e8f4; cursor: pointer;
       font: 600 0.9rem 'Segoe UI', sans-serif; touch-action: manipulation;
+      /* The COLLAPSED display is what you read 99% of the time — centre it.
+         text-align alone does nothing for the closed state in Blink; the
+         -last variant is the one that moves it, and both are needed for the
+         open list to stay left-aligned and readable. */
+      text-align: center; text-align-last: center;
     }
+    .ambient-area-select option { text-align: left; text-align-last: left; }
     /* Clear ALL areas — compact ✕ (danger), pinned to the right of the row. */
     .ambient-orch-clear {
       flex: 0 0 auto; margin-left: auto; width: 36px; height: 36px; padding: 0;

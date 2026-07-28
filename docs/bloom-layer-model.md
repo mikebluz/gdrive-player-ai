@@ -772,8 +772,28 @@ to come from soloing + the master bus); and soloing lowers DSP load, so PASS 1 i
 the one to trust for load-dependent faults. Verified against a planted cold-only
 level fault — reported it at 23 dB.
 
-**Untested variant, flagged and unanswered:** whether the bad case involves a
-BACKGROUNDED tab rather than mere idle. A buried tab throttles rAF and can suspend
+**Long-idle hypothesis TESTED, did not reproduce (headless).** User's estimate was
+that the fault needs 5-10 minutes of not playing. Two 7-minute-idle runs: the first
+was INVALID — the probe's own requestAnimationFrame sampler ran throughout, so the
+page was never idle (V8 hot, no throttling); it measured 7 minutes of an ACTIVE
+page. Corrected run stops the sampler for the whole idle and marks the document
+hidden so Chrome applies background throttling. Result, cold press after 7 idle
+minutes vs the same rig warm:
+
+    LONGIDLE  margins 0.350 all layers   audibleLag  46ms   notes 32/20/40/12/1
+    warm      margins 0.133 all layers   audibleLag -175ms  notes 33/20/42/12/1
+
+No degradation: margins hold at the 0.35s cold floor, entry spread is unchanged,
+note counts match. So a long idle does not, by itself, reproduce it HERE.
+
+**Do not read that as "not reproducible".** Headless Chrome does not reclaim memory
+or deoptimise like a real browser under real memory pressure with other tabs, and
+this rig is a Mac. The remaining honest step is a capture from the actual browser
+at the moment it happens — which is what `__bloomCold` is for, and why it should be
+deployed before the next attempt.
+
+**Still untested:** whether the bad case involves a BACKGROUNDED tab rather than mere
+idle. A buried tab throttles rAF and can suspend
 the AudioContext — a different mechanism from the empty-voice-pool one that was
 fixed, and one none of the measurements so far have exercised (every capture was
 taken with the tab focused, since running the probe requires the console).

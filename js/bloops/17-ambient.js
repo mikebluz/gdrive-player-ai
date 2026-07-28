@@ -1598,6 +1598,17 @@
       const L = _ambSampleById(areaCfg, id);
       return (L && Number.isFinite(L.boundaryFadeMs)) ? Math.max(0, L.boundaryFadeMs) : 0;
     }
+    // DRUM SOLO store — a Map of layer OBJECT → soloed lane index. Deliberately
+    // OUTSIDE the layer cfg: solo is monitoring state, and anything stored on the
+    // layer is swept into localStorage by persistWorkspace (JSON keeps underscore
+    // fields), so the original `L._soloLane` could be SAVED into a project and
+    // reload with 7 of 8 drum lanes silently muted — nothing on screen to explain
+    // it (measured: the solo survived a page reload). A Map keyed by the live
+    // object can't persist, dies naturally on reload, and clears in one call on
+    // stop. Normalize deletes any legacy persisted `_soloLane`, healing projects
+    // already saved with one.
+    const _AMB_SOLO = new Map();
+    const _ambSoloLane = (L) => (L && _AMB_SOLO.has(L)) ? _AMB_SOLO.get(L) : null;
     // Click-free floor for a departing layer's gate ramp (see _ambDepartLayer).
     const _AMB_DEPART_MIN_FADE = 0.020;
     function _ambDepartLayer(E, key, fadeMs, at, sampFadeMs) {
@@ -7197,7 +7208,7 @@
             // Transient + underscore-prefixed (never persisted, like `_selStep`),
             // gated on euclidKit, and absent by default → no effect on any other
             // layer and byte-identical when unset.
-            if (kitPat && Number.isFinite(inst._soloLane) && (inst._soloLane | 0) !== v) continue;
+            { const _sv = kitPat ? _ambSoloLane(inst) : null; if (_sv != null && (_sv | 0) !== v) continue; }
             const vpat = kitPat
               ? ((Array.isArray(kitPat[v]) && kitPat[v].length) ? kitPat[v] : new Array(steps).fill(0))
               : _ambEuclidPat(inst, pulses, steps, rotate, V, v, inst.euclidRegen | 0);
@@ -9801,6 +9812,7 @@
     function _ambNormalizeEuclidPattern(L) {
       if (!L || typeof L !== 'object') return;
       _ambNormalizeCycleGate(L);   // ⏱ Schedule tab (additive; absent = every iteration plays)
+      if ('_soloLane' in L) delete L._soloLane;   // legacy persisted solo (now in _AMB_SOLO) — heal saved projects
       _ambNormalizeChordPick(L);   // per-layer note picks (additive; absent = automatic voicing)
       // Drum-lanes (additive; absent = classic single/auto-kit behavior).
       if (L.euclidKit != null) L.euclidKit = !!L.euclidKit;
@@ -10212,7 +10224,7 @@
               // SOLO the drum you're editing — everything else on this kit goes
               // quiet until you turn it off. Only meaningful with a single lane in
               // scope (All-drums has no one lane to solo), so it's disabled there.
-              '<button type="button" class="ambient-step-fx-solo' + ((Number.isFinite(inst._soloLane) && (inst._soloLane | 0) === editLane) ? ' on' : '') + '"' +
+              '<button type="button" class="ambient-step-fx-solo' + ((_ambSoloLane(inst) === editLane) ? ' on' : '') + '"' +
                 (editMode === 'column' ? ' disabled' : '') +
                 ' title="' + (editMode === 'column'
                   ? 'Solo applies to one drum — turn “All drums” off and pick a lane.'
@@ -10448,8 +10460,8 @@
           // Toggle: soloing the already-soloed lane clears it. Re-anchor so the
           // change is heard at the layer's next boundary instead of a whole
           // pattern later (the same rule every per-note edit follows).
-          if (Number.isFinite(L._soloLane) && (L._soloLane | 0) === lane) delete L._soloLane;
-          else L._soloLane = lane;
+          if (_ambSoloLane(L) === lane) _AMB_SOLO.delete(L);
+          else _AMB_SOLO.set(L, lane);
           render();
           if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} }
           return;
@@ -16016,12 +16028,7 @@
       // area so a project can never be saved (or reloaded) with seven drum lanes
       // silently muted and nothing on screen to explain it. Normalize can't do
       // this: it runs on every getCfg, so it would cancel the solo mid-listen.
-      try {
-        (_masterBloomState().areas || []).forEach(a => {
-          (a && Array.isArray(a.extras) ? a.extras : []).forEach(L => { if (L && L._soloLane != null) delete L._soloLane; });
-          ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (a && a[k] && a[k]._soloLane != null) delete a[k]._soloLane; });
-        });
-      } catch (e) {}
+      try { _AMB_SOLO.clear(); } catch (e) {}
       try { _ambHealthStop(); } catch (e) {}
       if (E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
       // AREAS: end any sequencing and restore the bloom output gain (a stop mid

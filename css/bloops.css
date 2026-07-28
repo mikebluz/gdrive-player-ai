@@ -2885,6 +2885,18 @@
     .pe-ops { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
     .pe-ops button { padding: 4px 10px; border: 1px solid #2d2d3f; border-radius: 6px; background: #1a1a2e; color: #cbd5e0; cursor: pointer; font-size: 0.78rem; touch-action: manipulation; }
     .pe-ops button:hover { border-color: #4a5568; color: #e2e8f0; }
+    /* TRANSITIONS read as motion, not harmony — one amber accent shared by the
+       editor strip, the overview strip and the matrix header, so a walk is
+       recognisable wherever the progression is drawn. The dashed edge says
+       "passing through"; in/out-of-key colouring is deliberately not applied,
+       since a walk is meant to leave the key on its way somewhere. */
+    .pe-chord.pe-trans { border-style: dashed; border-color: #7a5730; background: rgba(246,173,85,0.10); }
+    .pe-chord.pe-trans small, .pe-chord.pe-trans .pe-rn { color: #f6ad55; }
+    .pe-chord.pe-trans.sel { border-color: #f6ad55; background: rgba(246,173,85,0.20); }
+    .ambient-pov-chord.pov-trans { border-style: dashed; border-color: #7a5730; background: rgba(246,173,85,0.10); }
+    .ambient-pov-chord.pov-trans .ambient-pov-nm { color: #f6ad55; font-weight: 700; }
+    .ambient-pov-chord.pov-trans.cur { border-color: #f6ad55; background: rgba(246,173,85,0.26); }
+    .ambient-pm-ch.pm-trans { color: #f6ad55; }
     .pe-addtrans { color: #f6ad55; border-color: #6b4a2a !important; }
     .pe-transnote { margin: 4px 0 8px; padding: 6px 9px; border: 1px solid #3a3a52; border-left: 3px solid #f6ad55; border-radius: 6px; background: rgba(246,173,85,0.07); color: #a9b3c4; font-size: 0.74rem; line-height: 1.45; }
     .pe-transnote b { color: #f6d5a8; }

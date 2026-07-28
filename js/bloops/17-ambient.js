@@ -3316,6 +3316,9 @@
     // supplies a passing chord rooted on the current step of the line. Layers that
     // sit the transition out are handled by their matrix cell (0%), not here.
     function _ambIsTransition(ch) { return !!(ch && ch.transition); }
+    // How many notes the walk has. ONE definition — the editor preview plays the
+    // same line the engine does, so a preview can never lie about the walk.
+    function _ambTransitionSteps(bars) { return Math.max(2, Math.min(16, Math.round(((Number.isFinite(bars) && bars > 0) ? bars : 1) * 4))); }
     // The nearest real chord before / after slot i, wrapping the cycle. Returns
     // null when the progression is nothing but transitions (guarded by callers).
     function _ambProgNeighbourChord(chords, i, dir) {
@@ -3387,7 +3390,7 @@
       if (!prev || !next) return prev || next || null;
       const slot = chords[i];
       const bars = (Number.isFinite(slot.bars) && slot.bars > 0) ? slot.bars : 1;
-      const steps = Math.max(2, Math.min(16, Math.round(bars * 4)));   // quarter-note walk
+      const steps = _ambTransitionSteps(bars);
       const line = _ambTransitionLine(cfg, prev.root | 0, next.root | 0, steps, (i + 1) * 131 + (cycle | 0) * 7919 + ((cfg && cfg.seed | 0) || 0));
       const k = Math.max(0, Math.min(steps - 1, Math.floor(Math.max(0, Math.min(0.9999, pos)) * steps)));
       // Voiced with the OUTGOING chord's shape, so the walk keeps the texture of
@@ -5287,6 +5290,30 @@
         const bars = (Number.isFinite(ch.bars) && ch.bars > 0) ? ch.bars : defBars;
         const durMs = Math.max(150, bars * BAR_MS);
         const noteMs = Math.max(120, durMs * 0.92);
+        // A TRANSITION is a LINE, not a chord — preview it as one note per step,
+        // spread across the slot, an octave down so it reads as the bass walk it
+        // is and is instantly distinguishable from the chords around it. Pitches
+        // come from _ambTransitionChordAt, i.e. the engine's own walk, so the
+        // preview cannot drift from what will actually play.
+        if (_ambIsTransition(ch)) {
+          const nSteps = _ambTransitionSteps(bars);
+          const stepMs = durMs / nSteps;
+          for (let k = 0; k < nSteps; k++) {
+            T({ ms: cum + k * stepMs, fn: () => {
+              if (_ambProgEd !== ed || typeof playNote !== 'function') return;
+              const at = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + LEAD;
+              let pc = null;
+              try { const wc = _ambTransitionChordAt(gcfg, ed.chords, i, (k + 0.5) / nSteps, 0); pc = wc && wc.root; } catch (e) {}
+              if (!Number.isFinite(pc)) return;
+              const A = (typeof masterFreqA === 'number' && masterFreqA > 0) ? masterFreqA : 440;
+              const f = A * Math.pow(2, (12 * 4 + pc - 69) / 12);   // octave 3
+              try { playNote(f, PARAMS, Math.max(90, stepMs * 0.9), at); } catch (e) {}
+              if (k === 0) T({ ms: LEAD * 1000, fn: () => { if (_ambProgEd === ed) btns.forEach((b, bi) => b.classList.toggle('pe-playing', bi === i)); } });
+            } });
+          }
+          cum += durMs;
+          return;
+        }
         T({ ms: cum, fn: () => {
           if (_ambProgEd !== ed || typeof playNote !== 'function') return;
           const at = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + LEAD;
@@ -5447,7 +5474,10 @@
       const chordsRow = ed.chords.map((c, i) => {
         const rn = _ambPeRoman(fn(c), kRoot, kScale);
         const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
-        return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + (showScale ? (_ambPeChordInScale(fn(c), kRoot, kScale) ? ' chord-in' : ' chord-out') : '') + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + (_vsEd ? ' · sounds ' + esc(_ambChordShort(fn(c)) || '?') : '') + (showScale && !_ambPeChordInScale(fn(c), kRoot, kScale) ? ' · out of key' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em>' + (altN ? '<i class="pe-chord-alt">×' + (altN + 1) + '</i>' : '') + '</button>'; }).join('') +
+        // A transition is not a chord and must not read as one — it takes the
+        // walk accent and opts out of the in/out-of-key colouring, which has no
+        // meaning for a line that is passing through by design.
+        return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + (_ambIsTransition(c) ? ' pe-trans' : (showScale ? (_ambPeChordInScale(fn(c), kRoot, kScale) ? ' chord-in' : ' chord-out') : '')) + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + (_vsEd ? ' · sounds ' + esc(_ambChordShort(fn(c)) || '?') : '') + (showScale && !_ambPeChordInScale(fn(c), kRoot, kScale) ? ' · out of key' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em>' + (altN ? '<i class="pe-chord-alt">×' + (altN + 1) + '</i>' : '') + '</button>'; }).join('') +
         '<button type="button" class="pe-chord pe-add" data-pe="addchord" title="Add a chord (copy of the selected)">＋</button>' +
         '<button type="button" class="pe-chord pe-add pe-addtrans" data-pe="addtrans" title="Add a TRANSITION after this chord — a walk from it to the next one. Length is editable like any chord; each layer opts in through its cell in the chord matrix.">⇝</button>';
       const notes = _ambPeNotes(tgt).slice().sort((a, b) => a - b);
@@ -21329,7 +21359,7 @@
           const rn = _ambPeRoman(c, kRoot, kScale);
           const nm = _ambChordShort(c) || '?';
           const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
-          h += '<span role="button" tabindex="0" class="ambient-pov-chord" data-pov="chord:' + i + '" data-ci="' + i + '" title="Chord ' + (i + 1) + ' — ' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + ' · click to edit">' +
+          h += '<span role="button" tabindex="0" class="ambient-pov-chord' + (_ambIsTransition(c) ? ' pov-trans' : '') + '" data-pov="chord:' + i + '" data-ci="' + i + '" title="' + (_ambIsTransition(c) ? 'Transition ' : 'Chord ') + (i + 1) + ' — ' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + ' · click to edit">' +
             (rn ? '<b>' + esc(rn) + '</b>' : '') + '<span class="ambient-pov-nm">' + esc(nm) + '</span>' +
             (altN ? '<i class="ambient-pov-alt" title="' + (altN + 1) + ' alternate chords cycle here">×' + (altN + 1) + '</i>' : '') +
             '</span>';
@@ -21504,7 +21534,7 @@
       // rather than "plays quieter" or "plays 60% of the bar").
       let h = '<div class="ambient-pm-title">Chord matrix — how often each layer plays on each chord' + _ambMaskEditBtnHtml(!!el._pmEdit) + '</div>';
       h += '<div class="ambient-pm-legend"><b>Cell</b> = the chance this layer plays that chord — tap to step <b>always → 60% → 30% → never</b>, or press and hold (✎ % to make a tap do it) for <b>any value 0-100</b>. Rolled once per chord, so the layer is in or out for that whole chord; it never cuts in halfway. <b>Part</b> is the other axis: how much of each chord it plays once it is in.</div>';
-      h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + chords.map((c2, i) => '<span class="ambient-pm-ch">' + (i + 1) + '·' + chName(c2) + '</span>').join('') + '<span class="ambient-pm-part">Part</span></div>';
+      h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + chords.map((c2, i) => '<span class="ambient-pm-ch' + (_ambIsTransition(c2) ? ' pm-trans' : '') + '"' + (_ambIsTransition(c2) ? ' title="Transition — a walk into the next chord. Leave this cell on for a layer to walk it, set it to never to sit the bar out."' : '') + '>' + (i + 1) + '·' + chName(c2) + '</span>').join('') + '<span class="ambient-pm-part">Part</span></div>';
       rows.forEach(r => {
         const steps = (r.L.chordMask && Array.isArray(r.L.chordMask.steps)) ? r.L.chordMask.steps : null;
         const part = (r.L.chordMask && r.L.chordMask.part) || null;

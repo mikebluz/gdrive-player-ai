@@ -15805,8 +15805,23 @@
     // pooled synth bodies get disposed and the JIT deoptimizes while idle.
     let _ambLastStopAt = -1e9, _ambEverPlayed = false;
     const _AMB_COLD_IDLE_SEC = 20;    // idle longer than this ⇒ treat the press as cold
-    const _AMB_LEAD_COLD = 0.35;      // ≥ the 0.25s defer threshold, so the FIRST voices
+    let _AMB_LEAD_COLD = 0.35;        // ≥ the 0.25s defer threshold, so the FIRST voices
     const _AMB_LEAD_WARM = 0.06;      // take the paced build queue, not the urgent slice
+    // Runtime A/B for the cold lead — some cold-press symptoms only reproduce on
+    // real hardware, and this is the one knob that changed. From the console:
+    //   bloomColdLead(0.06)  → pre-fix behaviour (cold presses act like warm ones)
+    //   bloomColdLead(0.35)  → current default
+    //   bloomColdLead()      → report the current value
+    // Not persisted: it resets to the default on reload, so it can't become a
+    // silent setting someone forgets about.
+    try {
+      if (typeof window !== 'undefined') window.bloomColdLead = function (sec) {
+        if (sec == null) return _AMB_LEAD_COLD;
+        _AMB_LEAD_COLD = Math.max(0, Math.min(2, +sec || 0));
+        try { if (typeof showToast === 'function') showToast('Cold-press lead → ' + _AMB_LEAD_COLD.toFixed(2) + 's (this session only)'); } catch (e) {}
+        return _AMB_LEAD_COLD;
+      };
+    } catch (e) {}
     function _ambStartGenerator(E) {
       _E = E;
       const cfg = E.getCfg();

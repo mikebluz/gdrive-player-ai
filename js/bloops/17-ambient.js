@@ -3648,12 +3648,107 @@
     // 'always' is drawn as a filled cell with no text (the solid colour IS the
     // state) and 'never' as a dot, so only the two ambiguous middles need reading.
     function _ambMaskCellTxt(v) { return (v >= 100) ? '' : (v <= 0 ? '·' : (v + '%')); }
-    function _ambMaskCellTip(v, unit) {
-      const nxt = (v >= 100) ? '60%' : (v >= 60 ? '30%' : (v >= 30 ? 'never' : 'always'));
+    // Tap LADDER — coarse steps for quick work, while the stored value is a free
+    // 0-100 (set exactly via _ambMaskCellModal). "Step down to the next rung
+    // BELOW the current value, wrapping at 0" is identical to the old hardcoded
+    // chain for every rung (100→60→30→0→100) AND degrades sensibly for a custom
+    // value: 45% taps to 30%, 85% to 60%. Without that, a hand-set 45 hit the
+    // old `v >= 30 ? 0` arm and jumped straight to silence.
+    const _AMB_MASK_LADDER = [100, 60, 30, 0];
+    function _ambMaskCellNext(v) {
+      const cur = Math.max(0, Math.min(100, v | 0));
+      for (let i = 0; i < _AMB_MASK_LADDER.length; i++) if (_AMB_MASK_LADDER[i] < cur) return _AMB_MASK_LADDER[i];
+      return 100;   // at (or below) the bottom rung — wrap
+    }
+    function _ambMaskCellTip(v, unit, editMode) {
       const now = (v >= 100) ? 'plays every time'
         : (v <= 0 ? 'never plays'
         : ('plays ' + v + '% of the time — rolled once per ' + unit + ', so it is in or out for the whole ' + unit));
-      return now + '. Tap → ' + nxt + '.';
+      const how = editMode
+        ? ' Tap to set an exact %.'
+        : (' Tap → ' + (function () { const n = _ambMaskCellNext(v); return n >= 100 ? 'always' : (n <= 0 ? 'never' : n + '%'); })() +
+           '. Press and hold (or right-click) to set an exact %.');
+      return now + '.' + how;
+    }
+    // One cell's markup. The tint is driven by a CSS variable rather than
+    // per-value attribute rules, because those only matched the four hardcoded
+    // rungs — a hand-set 45% fell through to the base rule and drew FULL green,
+    // i.e. the one thing the colour is supposed to tell you was wrong.
+    function _ambMaskCellHtml(v, ci, title) {
+      const n = Math.max(0, Math.min(100, v | 0));
+      return '<button type="button" class="ambient-pm-cell' + (n >= 70 ? ' pm-dark' : '') + '" data-ci="' + ci +
+        '" data-v="' + n + '" style="--pv:' + n + '" title="' + title + '">' + _ambMaskCellTxt(n) + '</button>';
+    }
+    // "✎ %" turns a tap into "set an exact value" instead of a ladder step — the
+    // same mode-toggle shape the euclid grid's "✎ Step" uses, so the exact-value
+    // path is a visible affordance rather than a hidden long-press. Long-press and
+    // right-click open the editor in EITHER mode (see _ambWireMaskCells).
+    function _ambMaskEditBtnHtml(on) {
+      return '<button type="button" class="ambient-seg ambient-pm-editbtn' + (on ? ' active' : '') +
+        '" data-pm-edit="1" title="' + (on ? 'Exact mode ON — a tap opens the % editor. Click to go back to tap-to-step.'
+          : 'Set an exact % — a tap opens the editor instead of stepping through the ladder.') + '">✎ %</button>';
+    }
+    // Long-press / right-click → the exact editor, on either matrix. Kept off the
+    // click path entirely: a press that becomes an editor must NOT also fire the
+    // ladder step, so a fired long-press arms a one-shot click suppressor (the
+    // same trick the euclid page tabs use for drag-vs-select).
+    function _ambWireMaskCells(el, open) {
+      let t = null, cell = null, x0 = 0, y0 = 0;
+      const cancel = () => { if (t) { clearTimeout(t); t = null; } cell = null; };
+      el.addEventListener('pointerdown', (ev) => {
+        const c = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-cell'); if (!c) return;
+        cell = c; x0 = ev.clientX; y0 = ev.clientY;
+        t = setTimeout(() => { t = null; const c2 = cell; cancel(); if (c2) { el._suppressClick = true; open(c2); } }, 450);
+      });
+      el.addEventListener('pointermove', (ev) => { if (t && (Math.abs(ev.clientX - x0) > 8 || Math.abs(ev.clientY - y0) > 8)) cancel(); });
+      ['pointerup', 'pointercancel', 'pointerleave'].forEach(k => el.addEventListener(k, cancel));
+      el.addEventListener('contextmenu', (ev) => {
+        const c = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-cell'); if (!c) return;
+        ev.preventDefault(); cancel(); el._suppressClick = true; open(c);
+      });
+    }
+    // Exact per-cell probability. The ladder covers the common cases; this is the
+    // escape hatch for "this layer sits out roughly one pass in seven". Reuses the
+    // step-modal shell (body-attached .sm-overlay shown via inline !important, per
+    // the view-mode hide rules) so it matches the rest of the Bloom panel.
+    function _ambMaskCellModal(E, o) {
+      _E = E;
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const v0 = Math.max(0, Math.min(100, o.value | 0));
+      const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-step-modal-ov';
+      ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-pm-modal">' +
+        '<div class="sm-title">' + esc(o.label) + '</div>' +
+        '<div class="ambient-step-modal-body">' +
+          '<div class="ambient-pm-modal-hint">The chance this layer plays. Rolled once per ' + esc(o.unit) +
+            ', so it is in or out for the whole ' + esc(o.unit) + ' — a lower % means it sits out more passes, not that it plays quieter or shorter.</div>' +
+          '<div class="ambient-ctrl ambient-step-row"><label>Chance</label>' +
+            '<input type="range" class="ambient-pm-modal-sl" min="0" max="100" step="1" value="' + v0 + '">' +
+            '<span class="ambient-step-val ambient-pm-modal-val">' + v0 + '%</span></div>' +
+          '<div class="ambient-pm-modal-presets">' +
+            _AMB_MASK_LADDER.slice().reverse().concat([25, 50, 75]).sort((x, y) => x - y)
+              .filter((x, i, arr) => arr.indexOf(x) === i)
+              .map(x => '<button type="button" class="ambient-seg ambient-pm-modal-preset" data-v="' + x + '">' +
+                (x >= 100 ? 'always' : (x <= 0 ? 'never' : x + '%')) + '</button>').join('') +
+          '</div>' +
+        '</div>' +
+        '<div class="sm-footer"><button type="button" class="sm-apply ambient-pm-modal-done">Done</button></div></div>';
+      document.body.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+      const sl = ov.querySelector('.ambient-pm-modal-sl'), val = ov.querySelector('.ambient-pm-modal-val');
+      const close = () => { try { ov.remove(); } catch (e) {} };
+      const set = (v) => {
+        const n = Math.max(0, Math.min(100, v | 0));
+        sl.value = String(n); val.textContent = n + '%';
+        ov.querySelectorAll('.ambient-pm-modal-preset').forEach(bt => bt.classList.toggle('active', (bt.dataset.v | 0) === n));
+        try { o.onSet(n); } catch (e) {}
+      };
+      set(v0);
+      sl.addEventListener('input', () => set(sl.value | 0));
+      ov.addEventListener('click', (ev) => {
+        if (ev.target === ov || (ev.target.closest && ev.target.closest('.ambient-pm-modal-done'))) { close(); return; }
+        const pr = ev.target.closest && ev.target.closest('.ambient-pm-modal-preset');
+        if (pr) set(pr.dataset.v | 0);
+      });
     }
     // ---- CHORD MASK (per-layer chord sequencer) ---------------------------
     // L.chordMask = { steps: [prob 0-100 per chord of the ACTIVE progression],
@@ -21169,8 +21264,8 @@
       // axis in the title, spell the scale out in words, and say that the roll is
       // once per chord (the thing that makes 60% sound like "sits out some passes"
       // rather than "plays quieter" or "plays 60% of the bar").
-      let h = '<div class="ambient-pm-title">Chord matrix — how often each layer plays on each chord</div>';
-      h += '<div class="ambient-pm-legend"><b>Cell</b> = the chance this layer plays that chord — tap to cycle <b>always → 60% → 30% → never</b>. Rolled once per chord, so the layer is in or out for that whole chord; it never cuts in halfway. <b>Part</b> is the other axis: how much of each chord it plays once it is in.</div>';
+      let h = '<div class="ambient-pm-title">Chord matrix — how often each layer plays on each chord' + _ambMaskEditBtnHtml(!!el._pmEdit) + '</div>';
+      h += '<div class="ambient-pm-legend"><b>Cell</b> = the chance this layer plays that chord — tap to step <b>always → 60% → 30% → never</b>, or press and hold (✎ % to make a tap do it) for <b>any value 0-100</b>. Rolled once per chord, so the layer is in or out for that whole chord; it never cuts in halfway. <b>Part</b> is the other axis: how much of each chord it plays once it is in.</div>';
       h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + chords.map((c2, i) => '<span class="ambient-pm-ch">' + (i + 1) + '·' + chName(c2) + '</span>').join('') + '<span class="ambient-pm-part">Part</span></div>';
       rows.forEach(r => {
         const steps = (r.L.chordMask && Array.isArray(r.L.chordMask.steps)) ? r.L.chordMask.steps : null;
@@ -21178,7 +21273,7 @@
         h += '<div class="ambient-pm-row" data-lkey="' + r.key + '"><span class="ambient-pm-lbl" title="' + r.label + '">' + r.label + '</span>' +
           chords.map((c2, i) => {
             const v = steps ? (Number.isFinite(steps[i % steps.length]) ? steps[i % steps.length] : 100) : 100;
-            return '<button type="button" class="ambient-pm-cell" data-ci="' + i + '" data-v="' + v + '" title="' + r.label + ' · chord ' + (i + 1) + ' (' + chName(c2) + ') — ' + _ambMaskCellTip(v, 'chord') + '">' + _ambMaskCellTxt(v) + '</button>';
+            return _ambMaskCellHtml(v, i, r.label + ' · chord ' + (i + 1) + ' (' + chName(c2) + ') — ' + _ambMaskCellTip(v, 'chord', !!el._pmEdit));
           }).join('') +
           '<span class="ambient-pm-part">' +
             '<select class="ambient-select ambient-pm-size" title="How much of each chord this layer plays once it is in — a DURATION, not a chance. Full = the whole chord.">' +
@@ -21192,18 +21287,43 @@
       el.innerHTML = h;
       if (!el._wired) {
         el._wired = true;
-        el.addEventListener('click', (ev) => {
-          const cell = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-cell'); if (!cell) return;
-          _E = E; const cfg2 = E.getCfg(); if (!cfg2 || !cfg2.prog) return;
-          const row = cell.closest('.ambient-pm-row'); const L = _ambLayerByKey(E, row.dataset.lkey); if (!L) return;
+        // Resolve a cell to its live steps array, creating/resizing it on demand —
+        // shared by the ladder tap and the exact editor so both write one place.
+        const slot = (cell) => {
+          _E = E; const cfg2 = E.getCfg(); if (!cfg2 || !cfg2.prog) return null;
+          const row = cell.closest('.ambient-pm-row'); const L = _ambLayerByKey(E, row.dataset.lkey); if (!L) return null;
           const N2 = cfg2.prog.chords.length;
           const m = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
           if (!Array.isArray(m.steps) || m.steps.length !== N2) { const old2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => old2 ? (Number.isFinite(old2[i2 % old2.length]) ? old2[i2 % old2.length] : 100) : 100); }
-          const ci = cell.dataset.ci | 0, v = m.steps[ci];
-          m.steps[ci] = (v >= 100) ? 60 : (v >= 60 ? 30 : (v >= 30 ? 0 : 100));
-          _ambMaskEditPoke(E, row.dataset.lkey);
+          return { m: m, ci: cell.dataset.ci | 0, lkey: row.dataset.lkey, label: row.querySelector('.ambient-pm-lbl').textContent };
+        };
+        const commit = (lkey) => {
+          _ambMaskEditPoke(E, lkey);
           el._sig = ''; _ambRenderChordMatrix(E);
           if (typeof persistWorkspace === 'function') persistWorkspace();
+        };
+        const openEditor = (cell) => {
+          const sl = slot(cell); if (!sl) return;
+          const cfg2 = E.getCfg();
+          const ch = cfg2.prog.chords[sl.ci];
+          _ambMaskCellModal(E, {
+            label: sl.label + ' · chord ' + (sl.ci + 1) + (ch ? ' (' + chName(ch) + ')' : ''),
+            unit: 'chord', value: sl.m.steps[sl.ci],
+            onSet: (v) => { const s2 = slot(cell) || sl; s2.m.steps[s2.ci] = v; commit(sl.lkey); }
+          });
+        };
+        _ambWireMaskCells(el, openEditor);
+        el.addEventListener('click', (ev) => {
+          // The ✎ toggle rides the same delegated handler as the cells.
+          const eb = ev.target && ev.target.closest && ev.target.closest('[data-pm-edit]');
+          if (eb) { el._pmEdit = !el._pmEdit; el._sig = ''; _ambRenderChordMatrix(E); return; }
+          const cell = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-cell'); if (!cell) return;
+          // A long-press/right-click already opened the editor for this press.
+          if (el._suppressClick) { el._suppressClick = false; return; }
+          if (el._pmEdit) { openEditor(cell); return; }
+          const sl = slot(cell); if (!sl) return;
+          sl.m.steps[sl.ci] = _ambMaskCellNext(sl.m.steps[sl.ci]);
+          commit(sl.lkey);
         });
         el.addEventListener('change', (ev) => {
           const sel = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-size, .ambient-pm-place'); if (!sel) return;
@@ -21220,8 +21340,8 @@
       }
     }
     // ---- SECTION MATRIX (layers × sections — the arrangement grid) --------
-    // Same interaction grammar as the chord matrix: tap cells 100→60→30→0%,
-    // per-row Part sub-window. Writes L.sectionMask; the emitters gate via
+    // Same interaction grammar as the chord matrix: tap steps the ladder, ✎ % /
+    // long-press / right-click sets an exact 0-100, per-row Part sub-window. Writes L.sectionMask; the emitters gate via
     // _ambSectionGateOK. Shown whenever the area has sections.
     function _ambRenderSectionMatrix(E) {
       const el = _ambGet(E, 'ambient-secmatrix'); if (!el) return;
@@ -21236,8 +21356,8 @@
       if (el._sig === sig) return;
       el._sig = sig;
       const esc = (t) => String(t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
-      let h = '<div class="ambient-pm-title">Section matrix — how often each layer plays in each section</div>';
-      h += '<div class="ambient-pm-legend"><b>Cell</b> = the chance this layer plays that section — tap to cycle <b>always → 60% → 30% → never</b>. Rolled once per section, so the layer is in or out for the whole section. <b>Part</b> is the other axis: how much of each section it plays once it is in.</div>';
+      let h = '<div class="ambient-pm-title">Section matrix — how often each layer plays in each section' + _ambMaskEditBtnHtml(!!el._pmEdit) + '</div>';
+      h += '<div class="ambient-pm-legend"><b>Cell</b> = the chance this layer plays that section — tap to step <b>always → 60% → 30% → never</b>, or press and hold (✎ % to make a tap do it) for <b>any value 0-100</b>. Rolled once per section, so the layer is in or out for the whole section. <b>Part</b> is the other axis: how much of each section it plays once it is in.</div>';
       h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + secs.map((x, i) => '<span class="ambient-pm-ch" title="' + esc(x.name) + ' · ' + _ambFmtBpc(x.bars) + ' bars">' + esc(x.name) + '</span>').join('') + '<span class="ambient-pm-part">Part</span></div>';
       rows.forEach(r => {
         const steps = (r.L.sectionMask && Array.isArray(r.L.sectionMask.steps)) ? r.L.sectionMask.steps : null;
@@ -21245,7 +21365,7 @@
         h += '<div class="ambient-pm-row" data-lkey="' + r.key + '"><span class="ambient-pm-lbl" title="' + r.label + '">' + r.label + '</span>' +
           secs.map((x, i) => {
             const v = steps ? (Number.isFinite(steps[i % steps.length]) ? steps[i % steps.length] : 100) : 100;
-            return '<button type="button" class="ambient-pm-cell" data-ci="' + i + '" data-v="' + v + '" title="' + r.label + ' · ' + esc(x.name) + ' — ' + _ambMaskCellTip(v, 'section') + '">' + _ambMaskCellTxt(v) + '</button>';
+            return _ambMaskCellHtml(v, i, r.label + ' · ' + esc(x.name) + ' — ' + _ambMaskCellTip(v, 'section', !!el._pmEdit));
           }).join('') +
           '<span class="ambient-pm-part">' +
             '<select class="ambient-select ambient-pm-size" title="How much of each section this layer plays once it is in — a DURATION, not a chance. Full = the whole section.">' +
@@ -21259,18 +21379,38 @@
       el.innerHTML = h;
       if (!el._wired) {
         el._wired = true;
-        el.addEventListener('click', (ev) => {
-          const cell = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-cell'); if (!cell) return;
-          _E = E; const cfg2 = E.getCfg(); if (!cfg2 || !Array.isArray(cfg2.sections)) return;
-          const row = cell.closest('.ambient-pm-row'); const L = _ambLayerByKey(E, row.dataset.lkey); if (!L) return;
+        const slot = (cell) => {
+          _E = E; const cfg2 = E.getCfg(); if (!cfg2 || !Array.isArray(cfg2.sections)) return null;
+          const row = cell.closest('.ambient-pm-row'); const L = _ambLayerByKey(E, row.dataset.lkey); if (!L) return null;
           const N2 = cfg2.sections.length;
           const m = (L.sectionMask && typeof L.sectionMask === 'object') ? L.sectionMask : (L.sectionMask = {});
           if (!Array.isArray(m.steps) || m.steps.length !== N2) { const old2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => old2 ? (Number.isFinite(old2[i2 % old2.length]) ? old2[i2 % old2.length] : 100) : 100); }
-          const ci = cell.dataset.ci | 0, v = m.steps[ci];
-          m.steps[ci] = (v >= 100) ? 60 : (v >= 60 ? 30 : (v >= 30 ? 0 : 100));
-          _ambMaskEditPoke(E, row.dataset.lkey);
+          return { m: m, ci: cell.dataset.ci | 0, lkey: row.dataset.lkey, label: row.querySelector('.ambient-pm-lbl').textContent };
+        };
+        const commit = (lkey) => {
+          _ambMaskEditPoke(E, lkey);
           el._sig = ''; _ambRenderSectionMatrix(E);
           if (typeof persistWorkspace === 'function') persistWorkspace();
+        };
+        const openEditor = (cell) => {
+          const sl = slot(cell); if (!sl) return;
+          const sec = (E.getCfg().sections || [])[sl.ci];
+          _ambMaskCellModal(E, {
+            label: sl.label + ' · ' + ((sec && sec.name) || ('section ' + (sl.ci + 1))),
+            unit: 'section', value: sl.m.steps[sl.ci],
+            onSet: (v) => { const s2 = slot(cell) || sl; s2.m.steps[s2.ci] = v; commit(sl.lkey); }
+          });
+        };
+        _ambWireMaskCells(el, openEditor);
+        el.addEventListener('click', (ev) => {
+          const eb = ev.target && ev.target.closest && ev.target.closest('[data-pm-edit]');
+          if (eb) { el._pmEdit = !el._pmEdit; el._sig = ''; _ambRenderSectionMatrix(E); return; }
+          const cell = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-cell'); if (!cell) return;
+          if (el._suppressClick) { el._suppressClick = false; return; }
+          if (el._pmEdit) { openEditor(cell); return; }
+          const sl = slot(cell); if (!sl) return;
+          sl.m.steps[sl.ci] = _ambMaskCellNext(sl.m.steps[sl.ci]);
+          commit(sl.lkey);
         });
         el.addEventListener('change', (ev) => {
           const sel = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-size, .ambient-pm-place'); if (!sel) return;

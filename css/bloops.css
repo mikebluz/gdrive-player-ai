@@ -12160,13 +12160,37 @@
     .ambient-pm-head, .ambient-pm-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
     .ambient-pm-lbl { flex: 0 0 72px; font-size: 0.66rem; color: #9a9ac0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ambient-pm-ch { flex: 1 1 0; min-width: 0; text-align: center; font-size: 0.58rem; color: #6b6b8a; overflow: hidden; }
-    .ambient-pm-cell { flex: 1 1 0; min-width: 0; height: 22px; padding: 0 1px; overflow: hidden; border: 1px solid #2d2d3f; border-radius: 5px; background: #35c98e; color: #0c1220; font-size: 0.6rem; font-variant-numeric: tabular-nums; cursor: pointer; touch-action: manipulation; }
+    /* Colour lives in the value-driven rule below; this is geometry only.
+       The callout/selection kills matter: a 450ms press is the exact-value
+       gesture, and iOS would otherwise answer it with a text-selection
+       callout over the cell. */
+    .ambient-pm-cell { flex: 1 1 0; min-width: 0; height: 22px; padding: 0 1px; overflow: hidden; border: 1px solid #2d2d3f; border-radius: 5px; font-size: 0.6rem; font-variant-numeric: tabular-nums; cursor: pointer; touch-action: manipulation; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
     /* "60%" needs the room a bare "60" didn't — shrink rather than clip or
        widen the row (a matrix must never introduce horizontal scroll). */
     @media (max-width: 560px) { .ambient-pm-cell { font-size: 0.54rem; } .ambient-pm-lbl { flex: 0 0 58px; } .ambient-pm-part { flex: 0 0 104px; } .ambient-pm-size, .ambient-pm-place { width: 49px; } }
-    .ambient-pm-cell[data-v="60"] { background: rgba(53, 201, 142, 0.55); color: #dfe7f1; }
-    .ambient-pm-cell[data-v="30"] { background: rgba(53, 201, 142, 0.25); color: #9a9ac0; }
+    /* The tint tracks the VALUE, not four hardcoded rungs — the old
+       [data-v="60"]/[data-v="30"] rules left any hand-set value (45%, 12%) falling
+       through to the full-strength base rule, so the colour said "always" while
+       the label said 45%. --pv is the raw 0-100; the alpha ramp is the line
+       through the two old anchors (30 → .25, 60 → .55), so the rungs look as they
+       always did and everything between them interpolates. Endpoints keep their
+       own rules: 100 is the solid fill, 0 the dark "off" cell.
+       .pm-dark is set by JS above 70%, where the fill is bright enough to need
+       dark text — CSS can't branch on a number. */
+    .ambient-pm-cell { background: rgba(53, 201, 142, calc(var(--pv, 100) * 0.01 - 0.05)); color: #dfe7f1; }
+    .ambient-pm-cell.pm-dark { color: #0c1220; }
+    .ambient-pm-cell[data-v="100"] { background: #35c98e; color: #0c1220; }
     .ambient-pm-cell[data-v="0"] { background: #1a1a2c; color: #4a4a5e; }
+    /* Exact-value mode: a tap opens the editor instead of stepping. */
+    /* The title row is uppercase 0.62rem grey, which swallowed a plain
+       .ambient-seg — give the toggle its own chrome so it reads as a control. */
+    .ambient-pm-editbtn { float: right; margin: -3px 0 0 8px; padding: 2px 9px; border: 1px solid #2d2d3f; border-radius: 999px; background: #16162a; color: #9a9ac0; font-size: 0.62rem; font-weight: 600; text-transform: none; letter-spacing: 0; cursor: pointer; touch-action: manipulation; }
+    .ambient-pm-editbtn:hover { border-color: #4a5568; color: #cbd5e0; }
+    .ambient-pm-editbtn.active { border-color: #35c98e; background: rgba(53,201,142,0.18); color: #7fe0b6; }
+    .ambient-pm-cell:active { filter: brightness(1.25); }
+    .ambient-pm-modal-hint { font-size: 0.72rem; line-height: 1.45; color: #8a8aa8; margin: 0 0 10px; }
+    .ambient-pm-modal-presets { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+    .ambient-pm-modal-presets .ambient-seg { flex: 1 1 auto; padding: 4px 8px; font-size: 0.72rem; }
     .ambient-pm-part { flex: 0 0 118px; display: inline-flex; gap: 3px; }
     /* The head-row "Part" label inherited the body font and towered over the
        0.58rem chord labels beside it — match its own column's chrome. */

@@ -3642,6 +3642,19 @@
       const step = Math.floor(bars / bpc);
       return { step: step, pos: Math.max(0, Math.min(1, (bars - step * bpc) / bpc)) };
     }
+    // Cell chrome shared by the chord + section matrices. The value is a PERCENT
+    // CHANCE, so the label carries its own unit ("60%") — a bare number sat next
+    // to the Part column, which is a duration fraction, and read as either one.
+    // 'always' is drawn as a filled cell with no text (the solid colour IS the
+    // state) and 'never' as a dot, so only the two ambiguous middles need reading.
+    function _ambMaskCellTxt(v) { return (v >= 100) ? '' : (v <= 0 ? '·' : (v + '%')); }
+    function _ambMaskCellTip(v, unit) {
+      const nxt = (v >= 100) ? '60%' : (v >= 60 ? '30%' : (v >= 30 ? 'never' : 'always'));
+      const now = (v >= 100) ? 'plays every time'
+        : (v <= 0 ? 'never plays'
+        : ('plays ' + v + '% of the time — rolled once per ' + unit + ', so it is in or out for the whole ' + unit));
+      return now + '. Tap → ' + nxt + '.';
+    }
     // ---- CHORD MASK (per-layer chord sequencer) ---------------------------
     // L.chordMask = { steps: [prob 0-100 per chord of the ACTIVE progression],
     //                 part: { size: 1-100 (% of each chord's span), place:
@@ -21151,7 +21164,13 @@
       if (el._sig === sig) return;
       el._sig = sig;
       const chName = (ch) => { try { return (typeof CHROMATIC !== 'undefined' && CHROMATIC[((ch.root % 12) + 12) % 12]) || '?'; } catch (e) { return '?'; } };
-      let h = '<div class="ambient-pm-title">Chord matrix — which chords each layer plays<span class="ambient-hint"> tap: 100→60→30→0% · Part = play a sub-window of every chord</span></div>';
+      // The cells are a PROBABILITY and the Part column is a DURATION fraction —
+      // two different axes side by side, so a bare "60" reads as either. Name the
+      // axis in the title, spell the scale out in words, and say that the roll is
+      // once per chord (the thing that makes 60% sound like "sits out some passes"
+      // rather than "plays quieter" or "plays 60% of the bar").
+      let h = '<div class="ambient-pm-title">Chord matrix — how often each layer plays on each chord</div>';
+      h += '<div class="ambient-pm-legend"><b>Cell</b> = the chance this layer plays that chord — tap to cycle <b>always → 60% → 30% → never</b>. Rolled once per chord, so the layer is in or out for that whole chord; it never cuts in halfway. <b>Part</b> is the other axis: how much of each chord it plays once it is in.</div>';
       h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + chords.map((c2, i) => '<span class="ambient-pm-ch">' + (i + 1) + '·' + chName(c2) + '</span>').join('') + '<span class="ambient-pm-part">Part</span></div>';
       rows.forEach(r => {
         const steps = (r.L.chordMask && Array.isArray(r.L.chordMask.steps)) ? r.L.chordMask.steps : null;
@@ -21159,10 +21178,10 @@
         h += '<div class="ambient-pm-row" data-lkey="' + r.key + '"><span class="ambient-pm-lbl" title="' + r.label + '">' + r.label + '</span>' +
           chords.map((c2, i) => {
             const v = steps ? (Number.isFinite(steps[i % steps.length]) ? steps[i % steps.length] : 100) : 100;
-            return '<button type="button" class="ambient-pm-cell" data-ci="' + i + '" data-v="' + v + '" title="' + r.label + ' on chord ' + (i + 1) + ': ' + v + '%">' + (v === 100 ? '' : (v === 0 ? '·' : v)) + '</button>';
+            return '<button type="button" class="ambient-pm-cell" data-ci="' + i + '" data-v="' + v + '" title="' + r.label + ' · chord ' + (i + 1) + ' (' + chName(c2) + ') — ' + _ambMaskCellTip(v, 'chord') + '">' + _ambMaskCellTxt(v) + '</button>';
           }).join('') +
           '<span class="ambient-pm-part">' +
-            '<select class="ambient-select ambient-pm-size" title="How much of each chord this layer plays">' +
+            '<select class="ambient-select ambient-pm-size" title="How much of each chord this layer plays once it is in — a DURATION, not a chance. Full = the whole chord.">' +
               [[100, 'Full'], [75, '¾'], [50, '½'], [25, '¼']].map(o => '<option value="' + o[0] + '"' + ((part ? part.size : 100) === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
             '</select>' +
             '<select class="ambient-select ambient-pm-place"' + ((part ? part.size : 100) >= 100 ? ' disabled' : '') + ' title="Where in the chord the window sits — Random re-rolls per chord">' +
@@ -21217,7 +21236,8 @@
       if (el._sig === sig) return;
       el._sig = sig;
       const esc = (t) => String(t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
-      let h = '<div class="ambient-pm-title">Section matrix — which sections each layer plays<span class="ambient-hint"> tap: 100→60→30→0% · Part = a sub-window of every section</span></div>';
+      let h = '<div class="ambient-pm-title">Section matrix — how often each layer plays in each section</div>';
+      h += '<div class="ambient-pm-legend"><b>Cell</b> = the chance this layer plays that section — tap to cycle <b>always → 60% → 30% → never</b>. Rolled once per section, so the layer is in or out for the whole section. <b>Part</b> is the other axis: how much of each section it plays once it is in.</div>';
       h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + secs.map((x, i) => '<span class="ambient-pm-ch" title="' + esc(x.name) + ' · ' + _ambFmtBpc(x.bars) + ' bars">' + esc(x.name) + '</span>').join('') + '<span class="ambient-pm-part">Part</span></div>';
       rows.forEach(r => {
         const steps = (r.L.sectionMask && Array.isArray(r.L.sectionMask.steps)) ? r.L.sectionMask.steps : null;
@@ -21225,10 +21245,10 @@
         h += '<div class="ambient-pm-row" data-lkey="' + r.key + '"><span class="ambient-pm-lbl" title="' + r.label + '">' + r.label + '</span>' +
           secs.map((x, i) => {
             const v = steps ? (Number.isFinite(steps[i % steps.length]) ? steps[i % steps.length] : 100) : 100;
-            return '<button type="button" class="ambient-pm-cell" data-ci="' + i + '" data-v="' + v + '" title="' + r.label + ' in ' + esc(x.name) + ': ' + v + '%">' + (v === 100 ? '' : (v === 0 ? '·' : v)) + '</button>';
+            return '<button type="button" class="ambient-pm-cell" data-ci="' + i + '" data-v="' + v + '" title="' + r.label + ' · ' + esc(x.name) + ' — ' + _ambMaskCellTip(v, 'section') + '">' + _ambMaskCellTxt(v) + '</button>';
           }).join('') +
           '<span class="ambient-pm-part">' +
-            '<select class="ambient-select ambient-pm-size" title="How much of each section this layer plays">' +
+            '<select class="ambient-select ambient-pm-size" title="How much of each section this layer plays once it is in — a DURATION, not a chance. Full = the whole section.">' +
               [[100, 'Full'], [75, '¾'], [50, '½'], [25, '¼']].map(o => '<option value="' + o[0] + '"' + ((part ? part.size : 100) === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
             '</select>' +
             '<select class="ambient-select ambient-pm-place"' + ((part ? part.size : 100) >= 100 ? ' disabled' : '') + ' title="Where in the section the window sits — Random re-rolls per instance">' +

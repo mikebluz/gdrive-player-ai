@@ -1787,24 +1787,12 @@
         E._emitFloor = at;
         try { _ambInGeneration = true; _ambTick(E); } catch (e) { _ambLogTickErr(e); } finally { _ambInGeneration = false; E._emitFloor = 0; }
         _ambOrchUpdateNowPlaying(E);   // move the "playing" highlight; view/panel unchanged
-        // FOLLOW THE PLAYBACK: a collapsed <select> only shows its SELECTED
-        // option, so the ▶ marker written into the option list is invisible and
-        // the selector "just keeps showing area 1" while sequencing. If the user
-        // was viewing the area that just ended (i.e. they had NOT parked the view
-        // somewhere else to edit), advance the VIEW with the music — after the
-        // audible boundary, on the deferred/dimmed switch path. A parked view is
-        // left alone: view-while-editing stays decoupled.
-        try {
-          if (s.activeIdx === playIdx && nextIdx !== playIdx) {
-            const _followMs = Math.max(60, (at - ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0)) * 1000 + 300);
-            setTimeout(() => {
-              try {
-                const s2 = _masterBloomState();
-                if (E.timer && E._playIdx === nextIdx && s2.activeIdx === playIdx) _ambSwitchToArea(nextIdx, { defer: true });
-              } catch (e) {}
-            }, _followMs);
-          }
-        } catch (e) {}
+        // The VIEW is never moved by an area advance. The panel belongs to the
+        // user: whichever area they selected stays selected so they can edit it
+        // while any area plays (an auto-follow yanked the panel out from under an
+        // edit in progress). What's SOUNDING is reported, not enacted — the ▶
+        // prefix on the playing option, the "▶ <name> · Bar …" header readout,
+        // and the amber rim on the select when view ≠ playing.
       } catch (e) { try { _ambLogTickErr(e); } catch (x) {} }
       E._orchSwitching = false;
     }

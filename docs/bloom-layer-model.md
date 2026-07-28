@@ -714,6 +714,103 @@ C-track discipline).
 
 ## 11. Backlog — TBD
 
+### Playback hardening — unreproduced audio anomalies (raised 2026-07-27/28)
+
+**Status: OPEN — NO REPRODUCIBLE CASE.** Two user reports, folded into one item
+because they may share a cause. Neither reproduces in headless measurement, and
+that — not the absence of a candidate fix — is what actually blocks this.
+
+**Do not record this as fixed on the strength of a clean press.** The symptom is
+intermittent by the user's own description ("stop/play a few times before it plays
+right"), so one good run is weak evidence. A cold-press timing cause WAS found and
+removed (see `_AMB_LEAD_COLD` in CLAUDE.md) and a single field capture afterwards
+showed all five layers starting together at 0.369s and sounding right — that
+verifies the mechanism, not the symptom. The next step is a REPRODUCTION, not
+another fix.
+
+**Symptom A — mid-play weirdness.** "Patterns sound off then go back to normal;
+tones sound different for one unit then normal." Reported repeatedly over a
+session.
+
+**Symptom B — cold-start levels.** "Some layers are very quiet on the first press
+after an idle; a stop/start brings them to normal." First reported right after the
+adaptive cold-press lead landed (`_AMB_LEAD_COLD`), so that change is a suspect,
+but unproven.
+
+**Already shipped, may or may not have addressed A:**
+- Drum solo was invisible/persisted state that silently muted 7 of 8 kit lanes and
+  died on stop — three designs, now a plain persisted `soloLane` with loud visuals.
+- Drum kits could substitute a NEIGHBOURING drum while CDN samples streamed in
+  (`_resolveSampleVoice` picked "nearest loaded"); kits are exact-only now. This is
+  the best structural explanation for "tones change for one unit then go back",
+  since every reload restarts the fetches.
+
+**Ruled out for B by measurement** (cold vs warm, same seed, same rig): per-layer
+`levelGain` (1.3) and gate (1.0) identical; per-note `volume` params identical;
+whole-mix RMS in 8×500 ms windows identical to four decimals; watchdog healthy
+(ctRate 0.996–1.009, no voice shedding); reverb send already claimed at play start
+by `_ambSyncMods`. Also confirmed: play-to-play generation is deterministic —
+consecutive plays are note-for-note identical on a fixed seed.
+
+**Known but not the cause:** the synchronous chain build at press blocks the main
+thread ~476 ms on a cold press. Inherent to the current start path.
+
+**Tool left in place:** `bloomColdLead(sec)` in the console — `0.06` = pre-fix
+behaviour, `0.35` = current default, no arg reads it back. Session-only, clamped
+0–2 s. A press counts as COLD only on the first play of a page load or >20 s after
+the last stop, so an A/B needs that wait between presses.
+
+**Probe in place:** `__bloomCold.run()` (js/bloops/24-bloom-coldtest.js) — runs the
+transport itself and prints a two-pass report. PASS 1 plays cold then warm at FULL
+load and reports per-layer NOTE COUNTS (catches "that layer produced nothing").
+PASS 2 solos each layer cold and warm and reports per-layer RMS in dB (catches
+"that layer came in 12 dB down"). Flags any layer off by ≥3 dB in EITHER
+direction, and prints which engine is live. `__bloomCold.dump()` gives pasteable
+JSON. Two constraints it was built around: the WASM core strips render and mix
+inside the worklet, so tapping the per-layer Tone chain reads SILENCE (level has
+to come from soloing + the master bus); and soloing lowers DSP load, so PASS 1 is
+the one to trust for load-dependent faults. Verified against a planted cold-only
+level fault — reported it at 23 dB.
+
+**Long-idle hypothesis TESTED, did not reproduce (headless).** User's estimate was
+that the fault needs 5-10 minutes of not playing. Two 7-minute-idle runs: the first
+was INVALID — the probe's own requestAnimationFrame sampler ran throughout, so the
+page was never idle (V8 hot, no throttling); it measured 7 minutes of an ACTIVE
+page. Corrected run stops the sampler for the whole idle and marks the document
+hidden so Chrome applies background throttling. Result, cold press after 7 idle
+minutes vs the same rig warm:
+
+    LONGIDLE  margins 0.350 all layers   audibleLag  46ms   notes 32/20/40/12/1
+    warm      margins 0.133 all layers   audibleLag -175ms  notes 33/20/42/12/1
+
+No degradation: margins hold at the 0.35s cold floor, entry spread is unchanged,
+note counts match. So a long idle does not, by itself, reproduce it HERE.
+
+**Do not read that as "not reproducible".** Headless Chrome does not reclaim memory
+or deoptimise like a real browser under real memory pressure with other tabs, and
+this rig is a Mac. The remaining honest step is a capture from the actual browser
+at the moment it happens — which is what `__bloomCold` is for, and why it should be
+deployed before the next attempt.
+
+**GC / pool hypothesis KILLED (by code, not measurement).** The working theory was
+"the voice pool goes cold while idle". There IS NO VOICE POOL — synth-body pooling
+was removed in 2026-07 (04-instruments-samples.js: "permanently gone… NEVER
+reintroduce without passing an oscillator-leak test"); every note builds a fresh
+synth. Forcing `gc()` with heap churn, headless AND headful, changed nothing —
+as expected, since there is nothing to collect. What remains genuinely cheaper on
+a warm press is JIT warmth on the construction path, not a pool.
+
+**Still untested:** whether the bad case involves a BACKGROUNDED tab rather than mere
+idle. A buried tab throttles rAF and can suspend
+the AudioContext — a different mechanism from the empty-voice-pool one that was
+fixed, and one none of the measurements so far have exercised (every capture was
+taken with the tab focused, since running the probe requires the console).
+
+**What would localise it next time:** which layers go quiet and whether their
+reverb send is up (a layer that loses its wet signal reads as much quieter, and
+that is a different code path from level); whether it tracks `bloomColdLead`;
+whether it happens on the deployed build as well as locally.
+
 ### Sustain-family consolidation: Bed / Drone / Pedal → one type (raised 2026-07-27)
 
 **Status: TBD.** Analysis done, no decision, nothing scheduled.

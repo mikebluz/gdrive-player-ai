@@ -78,37 +78,40 @@ async function main() {
   await page.waitForFunction('typeof Tone !== "undefined" && typeof _ambSyncMods === "function"', { timeout: 30000 });
   await new Promise(r => setTimeout(r, 1500));
 
-  const results = {};
-  for (const cfg of BATTERY) {
-    results[cfg.id] = await page.evaluate(measureOne, cfg, SAMPLE_SEC);
-    // teardown between configs so each starts from a clean chain
-    await page.evaluate(() => { try { _ambTeardownMods(); } catch (e) {} });
-  }
-  await browser.close();
+  // Measure a set of configs, tearing the chains down between each so every
+  // config starts from a clean graph.
+  const measure = async (cfgs) => {
+    const out = {};
+    for (const cfg of cfgs) {
+      out[cfg.id] = await page.evaluate(measureOne, cfg, SAMPLE_SEC);
+      await page.evaluate(() => { try { _ambTeardownMods(); } catch (e) {} });
+    }
+    return out;
+  };
 
-  if (pageErrs.length) {
-    console.error('PAGE ERRORS:', pageErrs.join(' | '));
-    process.exit(1);
-  }
+  const results = await measure(BATTERY);
   for (const [id, r] of Object.entries(results)) {
-    if (r && r.error) { console.error(`✗ ${id}: measurement failed — ${r.error}`); process.exit(1); }
+    if (r && r.error) { await browser.close(); console.error(`✗ ${id}: measurement failed — ${r.error}`); process.exit(1); }
   }
 
   if (UPDATE) {
+    await browser.close();
+    if (pageErrs.length) { console.error('PAGE ERRORS:', pageErrs.join(' | ')); process.exit(1); }
     fs.writeFileSync(BASE_PATH, JSON.stringify({ recorded: new Date().toISOString(), sampleSec: SAMPLE_SEC, results }, null, 1));
     console.log(`MOD PARITY: baseline recorded → ${path.basename(BASE_PATH)} (${Object.keys(results).length} configs)`);
     return;
   }
 
   if (!fs.existsSync(BASE_PATH)) {
+    await browser.close();
     console.error('No baseline. Run with --update first (and commit the JSON).');
     process.exit(1);
   }
   const base = JSON.parse(fs.readFileSync(BASE_PATH, 'utf8')).results;
-  let fails = 0;
-  for (const cfg of BATTERY) {
-    const b = base[cfg.id], r = results[cfg.id];
-    if (!b) { console.error(`✗ ${cfg.id}: missing from baseline`); fails++; continue; }
+
+  // Compare ONE config against its baseline row -> array of issue strings.
+  const compareOne = (cfg, b, r) => {
+    if (!b) return ['missing from baseline'];
     const issues = [];
     if (cfg.stochastic) {
       // Random draws: observed extremes are order statistics — check the
@@ -130,10 +133,47 @@ async function main() {
         if (mae > TOL.fold) issues.push(`fold MAE ${mae.toFixed(3)}`);
       }
     }
-    if (issues.length) { console.error(`✗ ${cfg.id}: ${issues.join('; ')}`); fails++; }
-    else console.log(`✓ ${cfg.id}`);
+    return issues;
+  };
+
+  const issuesById = {};
+  for (const cfg of BATTERY) issuesById[cfg.id] = compareOne(cfg, base[cfg.id], results[cfg.id]);
+
+  // RE-MEASURE the drifted configs once before failing. This harness samples a
+  // LIVE audio graph for SAMPLE_SEC seconds, so a GC pause or a busy host during
+  // that window can smear one config past tolerance with nothing changed — the
+  // "1/9 configs drifted, passes on re-run" flake. A genuine regression drifts on
+  // EVERY attempt, so a single retry separates the two.
+  //
+  // This retries the MEASUREMENT, not the assertion: tolerances are untouched,
+  // and a config that drifts twice still fails. Retries are reported so a
+  // config that is quietly becoming marginal stays visible instead of being
+  // silently rescued every run.
+  const drifted = BATTERY.filter(c => issuesById[c.id].length && !/missing from baseline/.test(issuesById[c.id][0]));
+  const rescued = [], persisted = [];
+  if (drifted.length) {
+    console.log(`⟳ re-measuring ${drifted.length} config(s) after possible sampling jitter: ${drifted.map(c => c.id).join(', ')}`);
+    const again = await measure(drifted);
+    for (const cfg of drifted) {
+      const r2 = again[cfg.id];
+      if (r2 && r2.error) { issuesById[cfg.id] = [`measurement failed on retry — ${r2.error}`]; persisted.push(cfg.id); continue; }
+      const i2 = compareOne(cfg, base[cfg.id], r2);
+      issuesById[cfg.id] = i2;
+      (i2.length ? persisted : rescued).push(cfg.id);
+    }
   }
-  if (fails) { console.error(`MOD PARITY: ${fails}/${BATTERY.length} configs drifted`); process.exit(1); }
+
+  await browser.close();
+  if (pageErrs.length) { console.error('PAGE ERRORS:', pageErrs.join(' | ')); process.exit(1); }
+
+  let fails = 0;
+  for (const cfg of BATTERY) {
+    const issues = issuesById[cfg.id];
+    if (issues.length) { console.error(`✗ ${cfg.id}: ${issues.join('; ')}`); fails++; }
+    else console.log(`✓ ${cfg.id}${rescued.includes(cfg.id) ? ' (passed on re-measure — sampling jitter)' : ''}`);
+  }
+  if (rescued.length) console.log(`MOD PARITY: ${rescued.length} config(s) needed a re-measure: ${rescued.join(', ')}`);
+  if (fails) { console.error(`MOD PARITY: ${fails}/${BATTERY.length} configs drifted (twice — not jitter)`); process.exit(1); }
   console.log(`MOD PARITY: ✓ all ${BATTERY.length} configs within tolerance`);
 }
 

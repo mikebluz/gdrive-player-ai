@@ -2349,8 +2349,41 @@
     // empties, so a re-normalize of any current cfg leaves prog.chords byte-identical
     // (the invariant harness hashes chord root/intervals — untouched here). Self-contained
     // (inlines its own chord clone) so it doesn't depend on _ambCloneChord's alt-awareness.
+    // ---- SEED vs CURRENT progression -------------------------------------
+    // The picker used to be overloaded: its label mirrored the CURRENT
+    // progression, and every editor save also published a new entry into the
+    // seed list (named "<name> edit", so editing twice left "X edit", "X edit
+    // edit" behind). Those are three separate jobs and are now separated:
+    //   • `prog.seedName` — WHICH seed was loaded. The picker shows this and
+    //     nothing else, so it stays a chooser rather than a readout.
+    //   • `prog.name` / `prog.chords` — the CURRENT progression, decoupled.
+    //     Every edit lands here; Save commits here and touches no seed.
+    //   • the seed list — written ONLY by an explicit Export.
+    // `prog.seedSig` is the chord signature at load time, so the picker can say
+    // "· edited" once the current progression has diverged from its seed.
+    function _ambProgSig(chords) {
+      return (Array.isArray(chords) ? chords : []).map(function (c) {
+        return (c && c.root | 0) + ':' + ((c && c.intervals) || []).join('.') + (c && c.bars ? '@' + c.bars : '');
+      }).join('|');
+    }
+    function _ambProgSeedLabel(prog) {
+      if (!prog || !Array.isArray(prog.chords) || !prog.chords.length) return '— pick —';
+      const seed = (typeof prog.seedName === 'string' && prog.seedName) ? prog.seedName : null;
+      if (!seed) return 'Custom';                       // hand-authored, never from a seed
+      const edited = prog.seedSig != null && prog.seedSig !== _ambProgSig(prog.chords);
+      return seed + (edited ? ' · edited' : '');
+    }
+    // Stamp the seed identity when a seed is loaded into the current progression.
+    function _ambProgMarkSeed(prog, seedName) {
+      if (!prog) return;
+      if (seedName) { prog.seedName = String(seedName); prog.seedSig = _ambProgSig(prog.chords); }
+      else { delete prog.seedName; delete prog.seedSig; }
+    }
     function _ambNormalizeProgMeta(prog) {
       if (!prog || typeof prog !== 'object') return;
+      // Seed identity (additive; absent = hand-authored "Custom").
+      if (prog.seedName != null && typeof prog.seedName !== 'string') delete prog.seedName;
+      if (prog.seedSig != null && typeof prog.seedSig !== 'string') delete prog.seedSig;
       const cloneCh = (c) => {
         if (!c || typeof c !== 'object') return null;
         return { root: (((c.root | 0) % 12) + 12) % 12,
@@ -3252,11 +3285,83 @@
         if (!sub) return;
         const cands = _ambProgTakeCandidates(cfg, c);
         const m = cands.find(x => x.root === sub.root && x.intervals.join() === sub.intervals.join());
-        const from = _ambChordShort(c), to = _ambChordShort(sub), how = (m && m._label) || 'substitution';
+        // Named in the pitches you hear (the readout sits beside the strip and
+        // the pill, both of which are shifted).
+        const _vs = _ambProgViewShift(_E, cfg, p.chords);
+        const from = _ambChordShort(_ambChordShift(c, _vs)), to = _ambChordShort(_ambChordShift(sub, _vs)), how = (m && m._label) || 'substitution';
         // A colour keeps the root, so "C→C (add9)" reads as a no-op — show "C +add9".
         out.push({ i, from, to, how, txt: (from === to) ? (from + ' +' + how) : (from + '→' + to + ' (' + how + ')') });
       });
       return out;
+    }
+    // ---- PROGRESSION VIEW SHIFT --------------------------------------------
+    // A resolved chord object still carries its AUTHORED root, because the engine
+    // transposes progression roots LATER — inside _ambSrcRootPc, downstream of
+    // _ambProgCurrentChord. Two shifts live there and a display that stops at the
+    // chord object misses both:
+    //   • KEY, transpose mode (the DEFAULT — _ambKeyMode returns 'transpose'
+    //     unless keyMode==='quantize'): _ambProgKeyOffset re-roots the whole
+    //     progression so its tonic = the key root. A C–F–G template in A major
+    //     SOUNDS A–D–E. Measured: every readout said C/F/G while a drone held
+    //     A/D/E, and the roman numerals read ♭III ♭VI ♭VII for what is plainly
+    //     I IV V.
+    //   • SECTION modulation (cfg.sections[i].key), per section.
+    // Returns 0 whenever nothing applies, and _ambChordShift then returns the
+    // SAME object — so identity lookups (the overview playhead's
+    // `chords.indexOf(resolved)`) keep working on the untransposed path.
+    function _ambProgViewShift(E, cfg, chords, atSec) {
+      if (!cfg || !Array.isArray(chords) || !chords.length) return 0;
+      let sh = 0;
+      try {
+        if (cfg.keyOn && _ambKeyMode(cfg) === 'transpose') {
+          sh += _ambProgKeyOffset({ type: 'prog', chords: chords }, _ambKeyRootPc(cfg));
+        }
+      } catch (e) {}
+      try {
+        sh += Number.isFinite(atSec) ? _ambSectionKeyOffset(E, cfg, atSec)
+          : (function () { const p = _E; _E = E || _E; try { return _ambSectionKeyNow(); } finally { _E = p; } })();
+      } catch (e) {}
+      return (((sh % 12) + 12) % 12);
+    }
+    function _ambChordShift(ch, semis) {
+      if (!ch || !(semis | 0)) return ch;
+      return Object.assign({}, ch, { root: ((((ch.root | 0) + (semis | 0)) % 12) + 12) % 12 });
+    }
+    // The chord that sounds at `step`, IN THE PITCHES YOU HEAR — the funnel below
+    // plus the view shift. Every chord LABEL (header pill, overview chips, the
+    // Scheduler chord lane, the note-pick rows) must use this one; use the plain
+    // _ambProgChordAt only when you need the resolved object's identity.
+    function _ambProgSoundAt(E, src, step, atSec) {
+      const ch = _ambProgChordAt(E, src, step);
+      if (!ch) return ch;
+      const cfg = (E && (E._cfg || (E.getCfg && E.getCfg()))) || null;
+      const chords = Array.isArray(src && src.chords) ? src.chords : (Array.isArray(src) ? src : null);
+      return _ambChordShift(ch, _ambProgViewShift(E, cfg, chords, atSec));
+    }
+    // The chord that SOUNDS at progression step `step` — resolved through the
+    // engine's OWN path (↻ order-perm → per-slot alts → 🎲 take-reroll → 🌊 vary /
+    // tension) by setting the same override the emitters set.
+    //
+    // EVERY chord DISPLAY must go through this. Reading `prog.chords[step % len]`
+    // directly shows the AUTHORED chord, which is a different chord whenever any
+    // read-time resolution is active — measured with take-reroll at 100%: the
+    // header pill read "F" while the engine sounded D. The authored array is the
+    // score, not what you hear; only _ambProgCurrentChord knows the difference.
+    function _ambProgChordAt(E, src, step) {
+      const prevOv = _ambProgStepOverride, prevE = _E;
+      try {
+        _E = E || _E;
+        _ambProgStepOverride = step | 0;
+        // Build the prog-notes shape explicitly: `cfg.prog` has no `type`, so
+        // _ambAsNotes would coerce it to a SCALE and the resolver would see no
+        // chords. Reuse the SAME chords array by reference — the take-reroll and
+        // order-perm gates test `n.chords === cfg.prog.chords` identity.
+        const chords = Array.isArray(src && src.chords) ? src.chords
+          : (Array.isArray(src) ? src : null);
+        if (!chords || !chords.length) return null;
+        return _ambProgCurrentChord({ type: 'prog', chords: chords });
+      } catch (e) { return null; }
+      finally { _ambProgStepOverride = prevOv; _E = prevE; }
     }
     function _ambProgCurrentChord(n) {
       const chs = Array.isArray(n.chords) ? n.chords : [];
@@ -3539,6 +3644,114 @@
       }
       const step = Math.floor(bars / bpc);
       return { step: step, pos: Math.max(0, Math.min(1, (bars - step * bpc) / bpc)) };
+    }
+    // Cell chrome shared by the chord + section matrices. The value is a PERCENT
+    // CHANCE, so the label carries its own unit ("60%") — a bare number sat next
+    // to the Part column, which is a duration fraction, and read as either one.
+    // 'always' is drawn as a filled cell with no text (the solid colour IS the
+    // state) and 'never' as a dot, so only the two ambiguous middles need reading.
+    function _ambMaskCellTxt(v) { return (v >= 100) ? '' : (v <= 0 ? '·' : (v + '%')); }
+    // Tap LADDER — coarse steps for quick work, while the stored value is a free
+    // 0-100 (set exactly via _ambMaskCellModal). "Step down to the next rung
+    // BELOW the current value, wrapping at 0" is identical to the old hardcoded
+    // chain for every rung (100→60→30→0→100) AND degrades sensibly for a custom
+    // value: 45% taps to 30%, 85% to 60%. Without that, a hand-set 45 hit the
+    // old `v >= 30 ? 0` arm and jumped straight to silence.
+    const _AMB_MASK_LADDER = [100, 60, 30, 0];
+    function _ambMaskCellNext(v) {
+      const cur = Math.max(0, Math.min(100, v | 0));
+      for (let i = 0; i < _AMB_MASK_LADDER.length; i++) if (_AMB_MASK_LADDER[i] < cur) return _AMB_MASK_LADDER[i];
+      return 100;   // at (or below) the bottom rung — wrap
+    }
+    function _ambMaskCellTip(v, unit, editMode) {
+      const now = (v >= 100) ? 'plays every time'
+        : (v <= 0 ? 'never plays'
+        : ('plays ' + v + '% of the time — rolled once per ' + unit + ', so it is in or out for the whole ' + unit));
+      const how = editMode
+        ? ' Tap to set an exact %.'
+        : (' Tap → ' + (function () { const n = _ambMaskCellNext(v); return n >= 100 ? 'always' : (n <= 0 ? 'never' : n + '%'); })() +
+           '. Press and hold (or right-click) to set an exact %.');
+      return now + '.' + how;
+    }
+    // One cell's markup. The tint is driven by a CSS variable rather than
+    // per-value attribute rules, because those only matched the four hardcoded
+    // rungs — a hand-set 45% fell through to the base rule and drew FULL green,
+    // i.e. the one thing the colour is supposed to tell you was wrong.
+    function _ambMaskCellHtml(v, ci, title) {
+      const n = Math.max(0, Math.min(100, v | 0));
+      return '<button type="button" class="ambient-pm-cell' + (n >= 70 ? ' pm-dark' : '') + '" data-ci="' + ci +
+        '" data-v="' + n + '" style="--pv:' + n + '" title="' + title + '">' + _ambMaskCellTxt(n) + '</button>';
+    }
+    // "✎ %" turns a tap into "set an exact value" instead of a ladder step — the
+    // same mode-toggle shape the euclid grid's "✎ Step" uses, so the exact-value
+    // path is a visible affordance rather than a hidden long-press. Long-press and
+    // right-click open the editor in EITHER mode (see _ambWireMaskCells).
+    function _ambMaskEditBtnHtml(on) {
+      return '<button type="button" class="ambient-seg ambient-pm-editbtn' + (on ? ' active' : '') +
+        '" data-pm-edit="1" title="' + (on ? 'Exact mode ON — a tap opens the % editor. Click to go back to tap-to-step.'
+          : 'Set an exact % — a tap opens the editor instead of stepping through the ladder.') + '">✎ %</button>';
+    }
+    // Long-press / right-click → the exact editor, on either matrix. Kept off the
+    // click path entirely: a press that becomes an editor must NOT also fire the
+    // ladder step, so a fired long-press arms a one-shot click suppressor (the
+    // same trick the euclid page tabs use for drag-vs-select).
+    function _ambWireMaskCells(el, open) {
+      let t = null, cell = null, x0 = 0, y0 = 0;
+      const cancel = () => { if (t) { clearTimeout(t); t = null; } cell = null; };
+      el.addEventListener('pointerdown', (ev) => {
+        const c = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-cell'); if (!c) return;
+        cell = c; x0 = ev.clientX; y0 = ev.clientY;
+        t = setTimeout(() => { t = null; const c2 = cell; cancel(); if (c2) { el._suppressClick = true; open(c2); } }, 450);
+      });
+      el.addEventListener('pointermove', (ev) => { if (t && (Math.abs(ev.clientX - x0) > 8 || Math.abs(ev.clientY - y0) > 8)) cancel(); });
+      ['pointerup', 'pointercancel', 'pointerleave'].forEach(k => el.addEventListener(k, cancel));
+      el.addEventListener('contextmenu', (ev) => {
+        const c = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-cell'); if (!c) return;
+        ev.preventDefault(); cancel(); el._suppressClick = true; open(c);
+      });
+    }
+    // Exact per-cell probability. The ladder covers the common cases; this is the
+    // escape hatch for "this layer sits out roughly one pass in seven". Reuses the
+    // step-modal shell (body-attached .sm-overlay shown via inline !important, per
+    // the view-mode hide rules) so it matches the rest of the Bloom panel.
+    function _ambMaskCellModal(E, o) {
+      _E = E;
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const v0 = Math.max(0, Math.min(100, o.value | 0));
+      const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-step-modal-ov';
+      ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-pm-modal">' +
+        '<div class="sm-title">' + esc(o.label) + '</div>' +
+        '<div class="ambient-step-modal-body">' +
+          '<div class="ambient-pm-modal-hint">The chance this layer plays. Rolled once per ' + esc(o.unit) +
+            ', so it is in or out for the whole ' + esc(o.unit) + ' — a lower % means it sits out more passes, not that it plays quieter or shorter.</div>' +
+          '<div class="ambient-ctrl ambient-step-row"><label>Chance</label>' +
+            '<input type="range" class="ambient-pm-modal-sl" min="0" max="100" step="1" value="' + v0 + '">' +
+            '<span class="ambient-step-val ambient-pm-modal-val">' + v0 + '%</span></div>' +
+          '<div class="ambient-pm-modal-presets">' +
+            _AMB_MASK_LADDER.slice().reverse().concat([25, 50, 75]).sort((x, y) => x - y)
+              .filter((x, i, arr) => arr.indexOf(x) === i)
+              .map(x => '<button type="button" class="ambient-seg ambient-pm-modal-preset" data-v="' + x + '">' +
+                (x >= 100 ? 'always' : (x <= 0 ? 'never' : x + '%')) + '</button>').join('') +
+          '</div>' +
+        '</div>' +
+        '<div class="sm-footer"><button type="button" class="sm-apply ambient-pm-modal-done">Done</button></div></div>';
+      document.body.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+      const sl = ov.querySelector('.ambient-pm-modal-sl'), val = ov.querySelector('.ambient-pm-modal-val');
+      const close = () => { try { ov.remove(); } catch (e) {} };
+      const set = (v) => {
+        const n = Math.max(0, Math.min(100, v | 0));
+        sl.value = String(n); val.textContent = n + '%';
+        ov.querySelectorAll('.ambient-pm-modal-preset').forEach(bt => bt.classList.toggle('active', (bt.dataset.v | 0) === n));
+        try { o.onSet(n); } catch (e) {}
+      };
+      set(v0);
+      sl.addEventListener('input', () => set(sl.value | 0));
+      ov.addEventListener('click', (ev) => {
+        if (ev.target === ov || (ev.target.closest && ev.target.closest('.ambient-pm-modal-done'))) { close(); return; }
+        const pr = ev.target.closest && ev.target.closest('.ambient-pm-modal-preset');
+        if (pr) set(pr.dataset.v | 0);
+      });
     }
     // ---- CHORD MASK (per-layer chord sequencer) ---------------------------
     // L.chordMask = { steps: [prob 0-100 per chord of the ACTIVE progression],
@@ -4619,6 +4832,8 @@
       _E = E; const cfg = E.getCfg(); if (!cfg) return;
       _ambApplyGenProg(E, _ambGenProgChords(cfg, total, uniq), 'Gen ' + (total | 0) + '×' + (uniq | 0));
     }
+    // Set by the panel wiring (see ACTION REGISTRY). Null before the panel builds.
+    let _ambProgActions = null;
     function _ambOpenGlobalProgMenu(E, x, y, opts) {
       if (typeof showCtxMenu !== 'function') return;
       opts = opts || {};
@@ -4635,6 +4850,7 @@
         } else {
           c.prog.name = name; c.prog.chords = chords; c.prog.on = true;
           if (Array.isArray(parts) && parts.length) c.prog.parts = parts.map(p => ({ name: p.name, len: p.len })); else delete c.prog.parts;
+          _ambProgMarkSeed(c.prog, name);   // this IS the seed it came from
         }
         if (typeof _ambAutoSyncFreeForProg === 'function') { try { _ambAutoSyncFreeForProg(E, c); } catch (e) {} }   // Phase 2c
         try { _ambSyncControls(E); } catch (e) {}
@@ -4642,6 +4858,16 @@
         if (typeof persistWorkspace === 'function') persistWorkspace();
       };
       const items = [];
+      // SOURCE a progression — creating one answers the same question the seed
+      // list does ("where does this progression come from"), so Generate and
+      // Roman live here rather than as separate buttons outside. Suppressed in
+      // append mode, where the menu is choosing a PART to chain on.
+      if (!opts.append && _ambProgActions) {
+        items.push({ label: 'New progression', disabled: true });
+        items.push({ label: '  ⚄ Generate…', fn: () => setTimeout(() => { try { _ambProgActions.generate(); } catch (e) {} }, 0) });
+        items.push({ label: '  ⌨ Type roman numerals…', fn: () => setTimeout(() => { try { _ambProgActions.roman(); } catch (e) {} }, 0) });
+        items.push('hr');
+      }
       // USER group — wrap progressions (resolved to chords) + published progs.
       const userItems = [];
       const wps = (typeof wrapProgs !== 'undefined' && Array.isArray(wrapProgs)) ? wrapProgs : [];
@@ -4739,7 +4965,7 @@
       if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return '';
       const tnow = ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0)) + 0.016;
       let step = 0; try { step = _ambProgStepAt(E, tnow) | 0; } catch (e) {}
-      const ch = p.chords[((step % p.chords.length) + p.chords.length) % p.chords.length];
+      const ch = _ambProgSoundAt(E, p, step, tnow) || p.chords[((step % p.chords.length) + p.chords.length) % p.chords.length];
       return _ambChordShort(ch);
     }
     // B3: roman-numeral for a chord relative to a key (root pc + scale name). Degree
@@ -4804,6 +5030,9 @@
     // This is a destructive authoring action, so it returns a fresh array for the
     // caller to snapshot/undo around rather than mutating in place.
     function _ambReharmonize(cfg, chords, amount, seedSalt) {
+      // The `changed` list is a REPORT (a toast naming what moved), so it is
+      // named in the sounding key like every other chord readout.
+      const _vsRh = _ambProgViewShift(_E, cfg, chords);
       const amt = Math.max(0, Math.min(100, amount | 0));
       const src = (chords || []);
       const seed = ((cfg && cfg.seed | 0) || 1) ^ ((seedSalt | 0) >>> 0);
@@ -4816,7 +5045,7 @@
         const c2 = _ambCloneChord(ch);
         c2.root = pick.root; c2.intervals = pick.intervals.slice(); delete c2.form;
         out.push(c2);
-        changed.push({ i, from: _ambChordShort(ch), to: _ambChordShort(c2), how: pick._label });
+        changed.push({ i, from: _ambChordShort(_ambChordShift(ch, _vsRh)), to: _ambChordShort(_ambChordShift(c2, _vsRh)), how: pick._label });
       });
       return { chords: out, changed };
     }
@@ -4984,21 +5213,24 @@
           _E = E; const L2 = opts.getLayer(); if (!L2) return;
           L2.keyOv = { mode: 'prog', name: nm, chords: chs };
           if (L2.notes && L2.notes.type === 'prog') L2.notes = { type: 'scale', scale: '' };
-          _ambPublishProgChords(nm, chs);
+          // (no publish — Export is the only path into the seed list)
           if (typeof opts.after === 'function') { try { opts.after(); } catch (e) {} }
         } };
       } else {
         const cfg = E.getCfg();
         if (!cfg || !cfg.prog || !Array.isArray(cfg.prog.chords) || !cfg.prog.chords.length) return;
         chords = cfg.prog.chords.map(_ambCloneChord);
-        name = (cfg.prog.name || 'Prog') + (opts.clone ? ' copy' : ' edit');
+        // Editing keeps the CURRENT name (the old "<name> edit" default is what
+        // seeded the "X edit", "X edit edit" pile-up in the seed list).
+        name = (cfg.prog.name || 'Prog') + (opts.clone ? ' copy' : '');
         target = { label: opts.clone ? 'Clone progression' : 'Edit progression', apply: (nm, chs) => {
           _E = E; const c = E.getCfg(); if (!c) return;
           if (!c.prog || typeof c.prog !== 'object') c.prog = { on: false, name: '', chords: [] };
           c.prog.name = nm; c.prog.chords = chs; c.prog.on = true;
           const rp = _ambRepairParts(c.prog.parts, chs.length); if (rp) c.prog.parts = rp; else delete c.prog.parts;   // keep parts consistent after chord edits
           try { _ambAutoSyncFreeForProg(E, c); } catch (e) {}
-          _ambPublishProgChords(nm, chs, c.prog.parts);
+          // NO publish here: Save commits to the CURRENT progression only. The seed
+          // list is written exclusively by Export (data-pe="export").
           try { _ambSyncControls(E); } catch (e) {}
         } };
       }
@@ -5086,14 +5318,21 @@
       const diatonic = !(typeof SCALES !== 'undefined' && Array.isArray(SCALES[kScale]) && SCALES[kScale].length >= 12);   // no diatonic buttons on a chromatic scale
       const scaleView = ed._scaleView !== false;                     // color-code in/out of the key's scale (default on)
       const showScale = scaleView && diatonic;                       // only meaningful under a diatonic key
+      // Roman numerals and the in-key coloring are properties of the chord that
+      // SOUNDS, not the one written: under Key/transpose a written C–F–G in A
+      // major functions as I–IV–V, and reading the raw roots printed ♭III ♭VI ♭VII
+      // with every chord flagged out-of-key. The NOTE names stay written — that is
+      // what this pane edits — and the banner below the title says so.
+      const _vsEd = (function () { try { return _ambProgViewShift(ed.E, gcfg, ed.chords); } catch (e) { return 0; } })();
+      const fn = (c) => _ambChordShift(c, _vsEd);
       const chordsRow = ed.chords.map((c, i) => {
-        const rn = _ambPeRoman(c, kRoot, kScale);
+        const rn = _ambPeRoman(fn(c), kRoot, kScale);
         const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
-        return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + (showScale ? (_ambPeChordInScale(c, kRoot, kScale) ? ' chord-in' : ' chord-out') : '') + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + (showScale && !_ambPeChordInScale(c, kRoot, kScale) ? ' · out of key' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em>' + (altN ? '<i class="pe-chord-alt">×' + (altN + 1) + '</i>' : '') + '</button>'; }).join('') +
+        return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + (showScale ? (_ambPeChordInScale(fn(c), kRoot, kScale) ? ' chord-in' : ' chord-out') : '') + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + (_vsEd ? ' · sounds ' + esc(_ambChordShort(fn(c)) || '?') : '') + (showScale && !_ambPeChordInScale(fn(c), kRoot, kScale) ? ' · out of key' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em>' + (altN ? '<i class="pe-chord-alt">×' + (altN + 1) + '</i>' : '') + '</button>'; }).join('') +
         '<button type="button" class="pe-chord pe-add" data-pe="addchord" title="Add a chord (copy of the selected)">＋</button>';
       const notes = _ambPeNotes(tgt).slice().sort((a, b) => a - b);
       const noteChips = notes.map((p, ni) =>
-        '<span class="pe-note' + (showScale ? (_ambPeInScale(p, kRoot, kScale) ? ' n-in' : ' n-out') : '') + '"><b>' + _AMB_CHROM[p] + '</b>' +
+        '<span class="pe-note' + (showScale ? (_ambPeInScale((((p + _vsEd) % 12) + 12) % 12, kRoot, kScale) ? ' n-in' : ' n-out') : '') + '"><b>' + _AMB_CHROM[p] + '</b>' +
         '<button type="button" data-pe="flat:' + ni + '" title="Down a semitone (chromatic)">♭</button>' +
         '<button type="button" data-pe="sharp:' + ni + '" title="Up a semitone (chromatic)">♯</button>' +
         (diatonic ? '<button type="button" class="pe-dt" data-pe="ndtdn:' + ni + '" title="Down a scale degree (diatonic)">▾</button>' +
@@ -5107,7 +5346,7 @@
       // Alternates row — the base chord (◆) + each alternate (◇) as selectable edit
       // targets; a mode toggle (cycle/random) appears once there's ≥1 alternate.
       const altChip = (glyph, j, active, chObj) =>
-        '<span role="button" class="pe-alt-chip' + (active ? ' sel' : '') + '" data-pe="altsel:' + j + '" title="' + esc(_ambPeChLabel(chObj)) + ' — edit this ' + (j < 0 ? 'chord' : 'alternate') + '">' + glyph + ' ' + esc(_ambChordShort(chObj) || '?') +
+        '<span role="button" class="pe-alt-chip' + (active ? ' sel' : '') + '" data-pe="altsel:' + j + '" title="' + esc(_ambPeChLabel(chObj)) + (_vsEd ? ' · sounds ' + esc(_ambChordShort(_ambChordShift(chObj, _vsEd)) || '?') : '') + ' — edit this ' + (j < 0 ? 'chord' : 'alternate') + '">' + glyph + ' ' + esc(_ambChordShort(chObj) || '?') +
         (j >= 0 ? '<button type="button" class="pe-x" data-pe="altrm:' + j + '" title="Remove this alternate">✕</button>' : '') + '</span>';
       const altMode = (ch.altMode === 'random') ? 'random' : 'cycle';
       const altsRow = '<div class="pe-altrow"><label title="Alternate chords that swap in on repeats — reharmonize this slot">Alternates</label>' +
@@ -5118,8 +5357,19 @@
         altChip('◆', -1, ed.altSel < 0, ch) +
         alts.map((a, j) => altChip('◇', j, ed.altSel === j, a)).join('') +
         '<button type="button" class="pe-alt-add" data-pe="altadd" title="Add an alternate chord (a copy you can mutate) that swaps in on repeats">＋ Alt</button></div>';
+      // This pane edits the SCORE — the written chords, which is what gets saved.
+      // Under Key/transpose the engine re-roots the whole progression so its
+      // tonic = the key root, so the score and the sound are in different keys.
+      // Say so explicitly and name what is actually heard, rather than letting
+      // the editor read as a chord readout that disagrees with every other one.
+      const shiftNote = _vsEd
+        ? '<div class="pe-shifted" title="The written progression is a template: the engine re-roots it so its first chord lands on the key root. These chords are the score; the names below are what you hear.">' +
+            '↳ transposed +' + _vsEd + ' into ' + esc(_AMB_CHROM[((kRoot % 12) + 12) % 12] + ' ' + kScale) + ' — sounds as <b>' +
+            esc(ed.chords.map(c => _ambChordShort(_ambChordShift(c, _vsEd)) || '?').join(' ')) + '</b></div>'
+        : '';
       host.innerHTML =
         '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
+        shiftNote +
         '<div class="pe-chords">' + chordsRow + '</div>' +
         '<div class="pe-chordhdr">Chord ' + (sel + 1) + ' of ' + ed.chords.length + (ed.altSel >= 0 ? ' <span class="pe-editing-alt">· editing alt ' + (ed.altSel + 1) + '</span>' : '') +
           '<span class="pe-chordops">' +
@@ -5147,12 +5397,21 @@
             '<div class="pe-notes">' + noteChips + '</div>' +
           '</div>' : '') +
         altsRow +
+        // Operations ON the chords live WITH the chords — you want to see what
+        // Reharmonize rewrote and what Detect key read. Area scope only: both act
+        // on cfg.prog, which a layer-scope edit isn't.
+        ((ed.target && ed.target.label !== 'Edit layer progression') ?
+          '<div class="pe-ops">' +
+            '<button type="button" data-pe="reharm" title="Reharmonize — rewrite these chords once with same-function substitutions">♺ Reharmonize</button>' +
+            '<button type="button" data-pe="detectkey" title="Detect the key these chords imply and offer to set it">🔍 Detect key</button>' +
+          '</div>' : '') +
         '<div class="pe-save"><input type="text" id="pe-name" value="' + esc(ed.name) + '" placeholder="Progression name" />' +
           '<button type="button" data-pe="cancel">Cancel</button>' +
           '<button type="button" data-pe="clone" title="Duplicate this progression into a fresh editable copy">⧉ Clone</button>' +
           '<button type="button" class="pe-preview' + (ed._pvOn ? ' on' : '') + '" data-pe="preview" title="Hear the progression — each chord sounds for its own length">' + (ed._pvOn ? '■ Stop' : '▶ Preview') + '</button>' +
           '<button type="button" data-pe="pad" title="Add a pad layer that plays this progression">＋ Pad</button>' +
-          '<button type="button" class="pe-apply" data-pe="save">Save as new</button></div>';
+          '<button type="button" data-pe="export" title="Save this progression into the SEED list under a name of your choosing — the seed list is not touched by ordinary edits">⤓ Export…</button>' +
+          '<button type="button" class="pe-apply" data-pe="save" title="Save these changes to the CURRENT progression">Save</button></div>';
       const nm = host.querySelector('#pe-name'); if (nm) nm.addEventListener('input', () => { ed.name = nm.value; });
       const ln = host.querySelector('#pe-len');
       if (ln) ln.addEventListener('change', () => {
@@ -5226,6 +5485,17 @@
       else if (op === 'altmode') { if (Array.isArray(ch.alts) && ch.alts.length) ch.altMode = (arg === 'random') ? 'random' : 'cycle'; }
       else if (op === 'clone') { ed.chords = ed.chords.map(_ambCloneChord); ed.name = (ed.name || 'Prog').replace(/\s+(edit|copy)$/i, '') + ' copy'; ed.sel = Math.min(ed.sel, ed.chords.length - 1); ed.altSel = -1; if (ed.target) ed.target.label = 'Clone progression'; if (typeof showToast === 'function') showToast('Cloned — edit freely, then Save as new'); }
       else if (op === 'preview') { if (ed._pvOn) _ambPePreviewStop(ed); else _ambPePreviewStart(ed); return; }
+      else if (op === 'reharm' || op === 'detectkey') {
+        // Both rewrite cfg.prog directly, so commit the editor's staged chords
+        // first — otherwise the operation would run against the pre-edit chords
+        // and silently discard whatever is on screen.
+        const E = ed.E;
+        try { if (ed.target && typeof ed.target.apply === 'function') ed.target.apply((ed.name || 'Prog').trim() || 'Prog', serialize()); } catch (e) {}
+        try { if (_ambProgActions) (op === 'reharm' ? _ambProgActions.reharm() : _ambProgActions.detectKey()); } catch (e) {}
+        // Re-seed the editor from whatever the operation left behind.
+        try { const c = E.getCfg(); if (c && c.prog && Array.isArray(c.prog.chords)) ed.chords = c.prog.chords.map(_ambCloneChord); } catch (e) {}
+        _ambPeRender(); return;
+      }
       else if (op === 'cancel') { _ambPeClose(); return; }
       else if (op === 'pad') {
         _ambAddPadForProg(ed.E, serialize(), (ed.name || '').trim());
@@ -5240,8 +5510,32 @@
         try { if (ed.target && typeof ed.target.apply === 'function') ed.target.apply(name, chords); } catch (e) {}
         if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
         if (typeof persistWorkspace === 'function') persistWorkspace();
-        if (typeof showToast === 'function') showToast('Saved "' + name + '"');
+        if (typeof showToast === 'function') showToast('Saved to the current progression.');
         _ambPeClose(); return;
+      }
+      else if (op === 'export') {
+        // The ONLY path into the seed list. Prompts for the name that will show
+        // there, so an exported seed is deliberately named rather than inheriting
+        // whatever the editor happened to be called.
+        const E = ed.E;
+        const chords = serialize();
+        let nm = null;
+        try { nm = prompt('Export to the seed list as:', (ed.name || 'Prog').trim() || 'Prog'); } catch (e) {}
+        if (nm == null) return;
+        nm = String(nm).trim(); if (!nm) return;
+        let parts = null;
+        try { const c = E.getCfg(); parts = (c && c.prog && c.prog.parts) || null; } catch (e) {}
+        _ambPublishProgChords(nm, chords, parts);
+        // The current progression now traces to this seed, so the picker names it.
+        // The exported name becomes the current progression's name too — you
+        // exported THIS progression under that name, so leaving the old one on it
+        // would read as a mismatch against the picker.
+        try { const c = E.getCfg(); if (c && c.prog) { c.prog.chords = chords.map(_ambCloneChord); c.prog.name = nm; _ambProgMarkSeed(c.prog, nm); } } catch (e) {}
+        ed.name = nm;
+        try { _ambSyncControls(E); } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        if (typeof showToast === 'function') showToast('Exported "' + nm + '" to the seed list.');
+        return;   // stay open — exporting is not finishing
       }
       _ambPeRender();
     }
@@ -6578,6 +6872,9 @@
     // the USER's note instead, with the auto pick appended when they differ.
     function _ambDronePedalText(cfg, chords, pcOv) {
       if (!chords || !chords.length) return '';
+      // Score and NAME the chords as they sound — the emit does the same, so the
+      // explanation is of the pitch actually being held (see the strike() note).
+      { const _vs = _ambProgViewShift(_E, cfg, chords); if (_vs) chords = chords.map(c => _ambChordShift(c, _vs)); }
       const kIvs = (typeof SCALES !== 'undefined' && SCALES[_ambKeyScaleName(cfg)]) || [0, 2, 4, 5, 7, 9, 11];
       const kRoot = _ambKeyRootPc(cfg);
       const tonic = _ambDronePedalTonic(cfg, chords);
@@ -7827,13 +8124,21 @@
         const kRoot = _ambKeyRootPc(cfg);
         const A4 = (typeof masterFreqA === 'number') ? masterFreqA : 440;
         const strike = (at, holdSec, chords) => {
-          const auto = _ambDronePedalPick(chords, kRoot, kIvs, _ambDronePedalTonic(cfg, chords));
-          // The pedal reads cfg.prog.chords DIRECTLY (not via _ambSrcRootPc), so a
-          // section key offset has to be applied here too or the drone would hold
-          // the un-modulated note under transposed layers.
-          const _sk = _ambSectionKeyOffset(E, cfg, at);
-          const pc0 = (Number.isFinite(inst.progNote)) ? (((inst.progNote | 0) % 12) + 12) % 12 : auto.pc;
-          const pc = ((((pc0 + _sk) % 12) + 12) % 12);
+          // The pedal reads cfg.prog.chords DIRECTLY (never via _ambSrcRootPc), so
+          // it has to apply the same view shift every other layer gets — the KEY
+          // transpose AND the section key offset — BEFORE scoring. Shifting only
+          // the RESULT (as this did for the section offset alone) scores the pedal
+          // against chords nobody hears: measured in A major over a written C–F–G
+          // that sounds A–D–E, the readout claimed "A fits 1/3 — 13th of C, 3rd of
+          // F, 9th of G" for a note that is in fact the root of A and the 5th of D.
+          // The shift is computed from the WHOLE progression, not this window's
+          // slice, because _ambProgKeyOffset keys on chords[0] of the full list.
+          const _vs = _ambProgViewShift(E, cfg, (cfg.prog && cfg.prog.chords) || chords, at);
+          const sChords = _vs ? chords.map(c => _ambChordShift(c, _vs)) : chords;
+          const auto = _ambDronePedalPick(sChords, kRoot, kIvs, _ambDronePedalTonic(cfg, sChords));
+          // An explicit Note is an ABSOLUTE sounding pitch — the picker lists it
+          // against the sounding chords, so it is played exactly as chosen.
+          const pc = (Number.isFinite(inst.progNote)) ? (((inst.progNote | 0) % 12) + 12) % 12 : auto.pc;
           if (typeof window !== 'undefined' && window._ambPedalDebug) { try { (window.__pdbg = window.__pdbg || []).push({ at: +at.toFixed(2), pc, auto: auto.pc, holdSec: +holdSec.toFixed(2), reg, chords: chords.length, A4, f0: +(A4 * Math.pow(2, (12 * (reg + 1) + pc - 69) / 12)).toFixed(1), pn: typeof playNote }); } catch (e) {} }
           _ambKeyTime = at;
           const holdMs = Math.max(120, Math.round(holdSec * 1000 * 0.98));
@@ -13277,7 +13582,20 @@
         // lead — the core engine makes near-instant scheduling safe (a core
         // note is one message; the few node-engine sample voices build in ms).
         E._firstTickLead = false;
-        lead = Math.max(now + 0.06, (Number.isFinite(E._pressAt) ? E._pressAt : 0) + 0.15,
+        // The floor matters more than the press anchor on a COLD press. Building
+        // the chains above can eat the whole `pressAt + 0.15` margin, and the old
+        // 0.06 fallback left each layer ~30-60ms to construct its first voices
+        // (measured: 28-63ms cold vs 127-133ms warm). That is BELOW playNote's
+        // 0.25s defer threshold, so instead of the paced build queue every layer
+        // hit the urgent bounded-30ms slice at once, against an empty pool — some
+        // voices made their onset and some didn't, which is the "layers clumsily
+        // cascade on, stop/play a few times and it's fine" report (a few plays
+        // warm the pool, so the same margin then suffices).
+        // Cold ⇒ 0.35s floor: over the defer threshold, so the queue paces the
+        // builds and every first voice is ready before its onset. Warm keeps the
+        // press-anchored 0.06 so a normal press still sounds immediate.
+        const _floor = E._coldStart ? _AMB_LEAD_COLD : _AMB_LEAD_WARM;
+        lead = Math.max(now + _floor, (Number.isFinite(E._pressAt) ? E._pressAt : 0) + 0.15,
           (Number.isFinite(E._emitFloor) && E._emitFloor > now) ? E._emitFloor : 0);
       }
       const horizon = now + 1.4 * _ambHiddenMult();   // hidden tab → 5.6 s runway (throttled ticks can't starve the schedule)
@@ -15762,6 +16080,40 @@
       if (E && E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
       try { _ambRampVizClear(E); } catch (e) {}
     }
+    // When playback last STOPPED (Tone clock), and whether anything has ever
+    // played this page. Between them they answer "is the voice pool cold?" —
+    // pooled synth bodies get disposed and the JIT deoptimizes while idle.
+    let _ambLastStopAt = -1e9, _ambEverPlayed = false;
+    const _AMB_COLD_IDLE_SEC = 20;    // idle longer than this ⇒ treat the press as cold
+    let _AMB_LEAD_COLD = 0.35;        // ≥ the 0.25s defer threshold, so the FIRST voices
+    const _AMB_LEAD_WARM = 0.06;      // take the paced build queue, not the urgent slice
+    // Runtime A/B for the cold lead — some cold-press symptoms only reproduce on
+    // real hardware, and this is the one knob that changed. From the console:
+    //   bloomColdLead(0.06)  → pre-fix behaviour (cold presses act like warm ones)
+    //   bloomColdLead(0.35)  → current default
+    //   bloomColdLead()      → report the current value
+    // Not persisted: it resets to the default on reload, so it can't become a
+    // silent setting someone forgets about.
+    // Test hook: force the NEXT press to classify cold (true) or warm (false)
+    // without waiting out _AMB_COLD_IDLE_SEC. Used by __bloomCold (24-bloom-
+    // coldtest.js) so a cold-vs-warm A/B is one command instead of a two-minute
+    // stopwatch exercise. Only moves the last-stop stamp — no other state.
+    try {
+      if (typeof window !== 'undefined') window._ambColdTestForce = function (cold) {
+        const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        _ambLastStopAt = cold ? (now - (_AMB_COLD_IDLE_SEC + 5)) : now;
+        if (cold) _ambEverPlayed = false;
+        return { cold: !!cold, lastStopAt: _ambLastStopAt };
+      };
+    } catch (e) {}
+    try {
+      if (typeof window !== 'undefined') window.bloomColdLead = function (sec) {
+        if (sec == null) return _AMB_LEAD_COLD;
+        _AMB_LEAD_COLD = Math.max(0, Math.min(2, +sec || 0));
+        try { if (typeof showToast === 'function') showToast('Cold-press lead → ' + _AMB_LEAD_COLD.toFixed(2) + 's (this session only)'); } catch (e) {}
+        return _AMB_LEAD_COLD;
+      };
+    } catch (e) {}
     function _ambStartGenerator(E) {
       _E = E;
       const cfg = E.getCfg();
@@ -15773,6 +16125,12 @@
       // build + 0.3 s. Steady-state ticks keep the protective 0.3 s lead.
       E._pressAt = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
       E._firstTickLead = true;
+      // COLD PRESS: first play of the page, or after a long idle. The voice pool
+      // is empty and the paths are de-JITed, so every layer's first voices cost
+      // milliseconds each to construct. Flagged here (before the build below eats
+      // the clock) so the first tick can give them room — see the lead floor.
+      E._coldStart = !_ambEverPlayed || ((E._pressAt - _ambLastStopAt) > _AMB_COLD_IDLE_SEC);
+      _ambEverPlayed = true;
       try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
       if (E.timer) return;
       _ambResetClocks(E);
@@ -16103,6 +16461,8 @@
       if (E.timer) { clearInterval(E.timer); E.timer = null; }
       _AMB_TICKING.delete(E); _ambTickWorkerMaybeStop();
       E._freshKeys = null; E._freshJoin = null;   // added-while-playing marks die with the session (a stopped toggle is plain)
+      // Stamp the stop so the NEXT press can tell warm from cold (see _ambStartGenerator).
+      try { _ambLastStopAt = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : _ambLastStopAt; } catch (e) {}
       // DRUM SOLO is monitoring state, not arrangement — clear it across every
       // area so a project can never be saved (or reloaded) with seven drum lanes
       // silently muted and nothing on screen to explain it. Normalize can't do
@@ -20705,11 +21065,15 @@
       const prog = cfg.prog, chords = prog.chords, N = chords.length;
       const parts = (Array.isArray(prog.parts) && prog.parts.length) ? prog.parts : null;
       const sig = N + '|' + chords.map(c => c.root + ':' + (c.intervals || []).join('.') + (Array.isArray(c.alts) && c.alts.length ? ('a' + c.alts.length + (c.altMode || '')) : '')).join(',') +
-        '|' + (parts ? parts.map(p => p.name + '=' + p.len).join('/') : '') + '|' + (Number.isFinite(prog.versionIdx) ? prog.versionIdx : -1) + '|' + (Array.isArray(prog.versions) ? prog.versions.length : 0);
+        '|' + (parts ? parts.map(p => p.name + '=' + p.len).join('/') : '') + '|' + (Number.isFinite(prog.versionIdx) ? prog.versionIdx : -1) + '|' + (Array.isArray(prog.versions) ? prog.versions.length : 0) +
+        // The chips are drawn in the SOUNDING key, so the shift is part of what
+        // is on screen — without it a key change repaints nothing.
+        '|s' + _ambProgViewShift(E, cfg, chords) + '|' + _ambKeyRootPc(cfg) + _ambKeyScaleName(cfg);
       if (el._sig === sig) return;
       el._sig = sig; el._curCi = -2;
       const esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
       const kRoot = _ambKeyRootPc(cfg), kScale = _ambKeyScaleName(cfg);
+      const vShift = _ambProgViewShift(E, cfg, chords);
       const ranges = [];
       if (parts) { let acc = 0; parts.forEach((p, pi) => { ranges.push({ name: p.name, from: acc, to: Math.min(N, acc + (p.len | 0)), pi }); acc += (p.len | 0); }); }
       else ranges.push({ name: '', from: 0, to: N, pi: -1 });
@@ -20732,7 +21096,13 @@
             '</span></div>';
         }
         for (let i = r.from; i < r.to; i++) {
-          const c = chords[i];
+          // The strip is the SCORE — written chords in written order, so the
+          // playhead's identity lookup and the ×N alt badge still line up — but
+          // rendered in the KEY YOU HEAR (_ambProgViewShift). Per-cycle
+          // resolution (alts / take-reroll / ↻ order) is deliberately NOT folded
+          // in here: it changes every pass, and the glowing chip (see
+          // _ambProgOverviewPlayheadCore) relabels itself to the sounding chord.
+          const c = _ambChordShift(chords[i], vShift);
           const rn = _ambPeRoman(c, kRoot, kScale);
           const nm = _ambChordShort(c) || '?';
           const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
@@ -20742,6 +21112,10 @@
             '</span>';
         }
       });
+      // ＋ Part CHAINS another progression onto the end — this strip is where the
+      // parts are drawn and named, so the button lives at the end of the chain
+      // rather than in the outer button row.
+      h += '<span role="button" tabindex="0" class="ambient-pov-addpart" data-pov="addpart" title="Chain another progression on as a new part">＋ Part</span>';
       el.innerHTML = h;
       if (!el._wired) { el._wired = true; el.addEventListener('pointerdown', (ev) => { try { _ambProgOverviewAct(E, ev); } catch (e) {} }); }
     }
@@ -20754,11 +21128,37 @@
       const p = cfg && cfg.prog; if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) { if (el._curCi !== -1) { el._curCi = -1; el.querySelectorAll('.ambient-pov-chord.cur').forEach(n => n.classList.remove('cur')); } return; }
       const tnow = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + 0.016;
       let step = 0; try { step = _ambProgStepAt(E, tnow) | 0; } catch (e) {}
-      const ci = ((step % p.chords.length) + p.chords.length) % p.chords.length;
-      if (ci === el._curCi) return;
-      el._curCi = ci;
-      el.querySelectorAll('.ambient-pov-chord.cur').forEach(n => n.classList.remove('cur'));
-      const cell = el.querySelector('.ambient-pov-chord[data-ci="' + ci + '"]'); if (cell) cell.classList.add('cur');
+      let ci = ((step % p.chords.length) + p.chords.length) % p.chords.length;
+      // ↻ ORDER permutes which written chord plays in this slot — highlight the
+      // chip that is actually SOUNDING, not the slot index. (alts / take-reroll
+      // resolve to objects that aren't in the written list at all; for those the
+      // slot IS the right chip, which is what the identity lookup falls back to.)
+      let _snd = null;
+      try {
+        _snd = _ambProgChordAt(E, p, step);
+        if (_snd) { const _j = p.chords.indexOf(_snd); if (_j >= 0) ci = _j; }
+      } catch (e) {}
+      // The chips carry the WRITTEN chord (see the render), but alts / take-reroll
+      // / 🌊 vary substitute a chord that is not in the written list at all — so
+      // the GLOWING chip would name one chord while another sounds. Relabel just
+      // that chip with what is actually playing; the previous glow is restored
+      // from the written name stashed on the node.
+      const sndTxt = (function () {
+        try { return _snd ? (_ambChordShort(_ambChordShift(_snd, _ambProgViewShift(E, cfg, p.chords, tnow))) || '') : ''; } catch (e) { return ''; }
+      })();
+      if (ci === el._curCi && sndTxt === el._curTxt) return;
+      el._curCi = ci; el._curTxt = sndTxt;
+      el.querySelectorAll('.ambient-pov-chord.cur').forEach(n => {
+        n.classList.remove('cur');
+        const w = n.querySelector('.ambient-pov-nm');
+        if (w && n._writtenNm != null) { w.textContent = n._writtenNm; n._writtenNm = null; }
+      });
+      const cell = el.querySelector('.ambient-pov-chord[data-ci="' + ci + '"]');
+      if (cell) {
+        cell.classList.add('cur');
+        const w = cell.querySelector('.ambient-pov-nm');
+        if (w && sndTxt && w.textContent !== sndTxt) { cell._writtenNm = w.textContent; w.textContent = sndTxt; }
+      }
     }
     // 🧂 Salt readout — salt is DETERMINISTIC per cycle, so show the player
     // exactly what's happening and what's next: this cycle's actual plan
@@ -20795,8 +21195,9 @@
         const permN = _ambProgOrderPerm(cfg, len, cyc + 1);
         const ci = (i) => perm ? perm[i] : i;
         const ciN = (i) => permN ? permN[i] : i;
+        const _vsS = _ambProgViewShift(E, cfg, chords);
         const nm = (c) => { const iv = Array.isArray(c.intervals) ? c.intervals : []; const min3 = iv.indexOf(3) >= 0 && iv.indexOf(4) < 0;
-          return _AMB_CHROM[(((c.root | 0) % 12) + 12) % 12] + (min3 ? (iv.indexOf(6) >= 0 && iv.indexOf(7) < 0 ? '°' : 'm') : ''); };
+          return _AMB_CHROM[(((((c.root | 0) + _vsS) % 12) + 12) % 12)] + (min3 ? (iv.indexOf(6) >= 0 && iv.indexOf(7) < 0 ? '°' : 'm') : ''); };
         const curTxt = chords.map((c, i) => {
           const n = (s.colors | 0) > 0 ? _ambProgSaltSegCount(s, cyc * len + i, seed) : 1;
           return '<span class="salt-ch" data-sci="' + i + '">' + nm(chords[ci(i)]) + ' ' + _ambFmtBpc(cur[ci(i)]) + (n > 1 ? '<i title="' + n + ' segments this pass — the downbeat stays the written chord, the rest are colors of it">×' + n + '</i>' : '') + '</span>';
@@ -20846,6 +21247,11 @@
       if (op === 'partrm') { _ambProgRemovePart(prog, a[1] | 0); persist(); refresh(); return; }
       if (op === 'ver') { _ambProgSwitchVersion(prog, a[1] | 0); try { _ambAutoSyncFreeForProg(E, cfg); } catch (e) {} persist(); refresh(); return; }
       if (op === 'veradd') { _ambProgAddVersion(prog); persist(); refresh(); return; }
+      // DEFERRED: this strip acts on POINTERDOWN (it repaints on the viz timer,
+      // so a click would drop), and showCtxMenu arms its own document-level
+      // pointerdown dismiss — registered mid-dispatch, that listener still fires
+      // for THIS event and closes the menu the instant it opens. Open it next tick.
+      if (op === 'addpart') { const r = t.getBoundingClientRect(); if (_ambProgActions) setTimeout(() => { try { _ambProgActions.addPart(r.left, r.bottom); } catch (e) {} }, 0); return; }
     }
     function _ambRenderChordMatrix(E) {
       const el = _ambGet(E, 'ambient-progmatrix'); if (!el) return;
@@ -20856,11 +21262,23 @@
       const chords = cfg.prog.chords, N = chords.length;
       const rows = _ambChordMatrixRows(cfg);
       // cheap re-render guard (masks + shape + labels)
-      const sig = N + '|' + rows.map(r => r.key + ':' + JSON.stringify(r.L.chordMask || 0)).join(',');
+      const sig = N + '|' + rows.map(r => r.key + ':' + JSON.stringify(r.L.chordMask || 0)).join(',') +
+        '|s' + _ambProgViewShift(E, cfg, chords) + '|' + chords.map(c2 => c2.root).join('.');
       if (el._sig === sig) return;
       el._sig = sig;
-      const chName = (ch) => { try { return (typeof CHROMATIC !== 'undefined' && CHROMATIC[((ch.root % 12) + 12) % 12]) || '?'; } catch (e) { return '?'; } };
-      let h = '<div class="ambient-pm-title">Chord matrix — which chords each layer plays<span class="ambient-hint"> tap: 100→60→30→0% · Part = play a sub-window of every chord</span></div>';
+      // Name the chord as it SOUNDS. Missed in the readout sweep: this header
+      // reads the raw root, so under Key/transpose it labelled the columns C F G
+      // for chords the engine plays as A D E — and the cell tooltips + the exact
+      // editor's title quote this same helper, so all three were wrong together.
+      const _vsM = _ambProgViewShift(E, cfg, chords);
+      const chName = (ch) => { try { return (typeof CHROMATIC !== 'undefined' && CHROMATIC[((((ch.root | 0) + _vsM) % 12) + 12) % 12]) || '?'; } catch (e) { return '?'; } };
+      // The cells are a PROBABILITY and the Part column is a DURATION fraction —
+      // two different axes side by side, so a bare "60" reads as either. Name the
+      // axis in the title, spell the scale out in words, and say that the roll is
+      // once per chord (the thing that makes 60% sound like "sits out some passes"
+      // rather than "plays quieter" or "plays 60% of the bar").
+      let h = '<div class="ambient-pm-title">Chord matrix — how often each layer plays on each chord' + _ambMaskEditBtnHtml(!!el._pmEdit) + '</div>';
+      h += '<div class="ambient-pm-legend"><b>Cell</b> = the chance this layer plays that chord — tap to step <b>always → 60% → 30% → never</b>, or press and hold (✎ % to make a tap do it) for <b>any value 0-100</b>. Rolled once per chord, so the layer is in or out for that whole chord; it never cuts in halfway. <b>Part</b> is the other axis: how much of each chord it plays once it is in.</div>';
       h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + chords.map((c2, i) => '<span class="ambient-pm-ch">' + (i + 1) + '·' + chName(c2) + '</span>').join('') + '<span class="ambient-pm-part">Part</span></div>';
       rows.forEach(r => {
         const steps = (r.L.chordMask && Array.isArray(r.L.chordMask.steps)) ? r.L.chordMask.steps : null;
@@ -20868,10 +21286,10 @@
         h += '<div class="ambient-pm-row" data-lkey="' + r.key + '"><span class="ambient-pm-lbl" title="' + r.label + '">' + r.label + '</span>' +
           chords.map((c2, i) => {
             const v = steps ? (Number.isFinite(steps[i % steps.length]) ? steps[i % steps.length] : 100) : 100;
-            return '<button type="button" class="ambient-pm-cell" data-ci="' + i + '" data-v="' + v + '" title="' + r.label + ' on chord ' + (i + 1) + ': ' + v + '%">' + (v === 100 ? '' : (v === 0 ? '·' : v)) + '</button>';
+            return _ambMaskCellHtml(v, i, r.label + ' · chord ' + (i + 1) + ' (' + chName(c2) + ') — ' + _ambMaskCellTip(v, 'chord', !!el._pmEdit));
           }).join('') +
           '<span class="ambient-pm-part">' +
-            '<select class="ambient-select ambient-pm-size" title="How much of each chord this layer plays">' +
+            '<select class="ambient-select ambient-pm-size" title="How much of each chord this layer plays once it is in — a DURATION, not a chance. Full = the whole chord.">' +
               [[100, 'Full'], [75, '¾'], [50, '½'], [25, '¼']].map(o => '<option value="' + o[0] + '"' + ((part ? part.size : 100) === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
             '</select>' +
             '<select class="ambient-select ambient-pm-place"' + ((part ? part.size : 100) >= 100 ? ' disabled' : '') + ' title="Where in the chord the window sits — Random re-rolls per chord">' +
@@ -20882,18 +21300,43 @@
       el.innerHTML = h;
       if (!el._wired) {
         el._wired = true;
-        el.addEventListener('click', (ev) => {
-          const cell = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-cell'); if (!cell) return;
-          _E = E; const cfg2 = E.getCfg(); if (!cfg2 || !cfg2.prog) return;
-          const row = cell.closest('.ambient-pm-row'); const L = _ambLayerByKey(E, row.dataset.lkey); if (!L) return;
+        // Resolve a cell to its live steps array, creating/resizing it on demand —
+        // shared by the ladder tap and the exact editor so both write one place.
+        const slot = (cell) => {
+          _E = E; const cfg2 = E.getCfg(); if (!cfg2 || !cfg2.prog) return null;
+          const row = cell.closest('.ambient-pm-row'); const L = _ambLayerByKey(E, row.dataset.lkey); if (!L) return null;
           const N2 = cfg2.prog.chords.length;
           const m = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
           if (!Array.isArray(m.steps) || m.steps.length !== N2) { const old2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => old2 ? (Number.isFinite(old2[i2 % old2.length]) ? old2[i2 % old2.length] : 100) : 100); }
-          const ci = cell.dataset.ci | 0, v = m.steps[ci];
-          m.steps[ci] = (v >= 100) ? 60 : (v >= 60 ? 30 : (v >= 30 ? 0 : 100));
-          _ambMaskEditPoke(E, row.dataset.lkey);
+          return { m: m, ci: cell.dataset.ci | 0, lkey: row.dataset.lkey, label: row.querySelector('.ambient-pm-lbl').textContent };
+        };
+        const commit = (lkey) => {
+          _ambMaskEditPoke(E, lkey);
           el._sig = ''; _ambRenderChordMatrix(E);
           if (typeof persistWorkspace === 'function') persistWorkspace();
+        };
+        const openEditor = (cell) => {
+          const sl = slot(cell); if (!sl) return;
+          const cfg2 = E.getCfg();
+          const ch = cfg2.prog.chords[sl.ci];
+          _ambMaskCellModal(E, {
+            label: sl.label + ' · chord ' + (sl.ci + 1) + (ch ? ' (' + chName(ch) + ')' : ''),
+            unit: 'chord', value: sl.m.steps[sl.ci],
+            onSet: (v) => { const s2 = slot(cell) || sl; s2.m.steps[s2.ci] = v; commit(sl.lkey); }
+          });
+        };
+        _ambWireMaskCells(el, openEditor);
+        el.addEventListener('click', (ev) => {
+          // The ✎ toggle rides the same delegated handler as the cells.
+          const eb = ev.target && ev.target.closest && ev.target.closest('[data-pm-edit]');
+          if (eb) { el._pmEdit = !el._pmEdit; el._sig = ''; _ambRenderChordMatrix(E); return; }
+          const cell = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-cell'); if (!cell) return;
+          // A long-press/right-click already opened the editor for this press.
+          if (el._suppressClick) { el._suppressClick = false; return; }
+          if (el._pmEdit) { openEditor(cell); return; }
+          const sl = slot(cell); if (!sl) return;
+          sl.m.steps[sl.ci] = _ambMaskCellNext(sl.m.steps[sl.ci]);
+          commit(sl.lkey);
         });
         el.addEventListener('change', (ev) => {
           const sel = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-size, .ambient-pm-place'); if (!sel) return;
@@ -20910,8 +21353,8 @@
       }
     }
     // ---- SECTION MATRIX (layers × sections — the arrangement grid) --------
-    // Same interaction grammar as the chord matrix: tap cells 100→60→30→0%,
-    // per-row Part sub-window. Writes L.sectionMask; the emitters gate via
+    // Same interaction grammar as the chord matrix: tap steps the ladder, ✎ % /
+    // long-press / right-click sets an exact 0-100, per-row Part sub-window. Writes L.sectionMask; the emitters gate via
     // _ambSectionGateOK. Shown whenever the area has sections.
     function _ambRenderSectionMatrix(E) {
       const el = _ambGet(E, 'ambient-secmatrix'); if (!el) return;
@@ -20926,7 +21369,8 @@
       if (el._sig === sig) return;
       el._sig = sig;
       const esc = (t) => String(t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
-      let h = '<div class="ambient-pm-title">Section matrix — which sections each layer plays<span class="ambient-hint"> tap: 100→60→30→0% · Part = a sub-window of every section</span></div>';
+      let h = '<div class="ambient-pm-title">Section matrix — how often each layer plays in each section' + _ambMaskEditBtnHtml(!!el._pmEdit) + '</div>';
+      h += '<div class="ambient-pm-legend"><b>Cell</b> = the chance this layer plays that section — tap to step <b>always → 60% → 30% → never</b>, or press and hold (✎ % to make a tap do it) for <b>any value 0-100</b>. Rolled once per section, so the layer is in or out for the whole section. <b>Part</b> is the other axis: how much of each section it plays once it is in.</div>';
       h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + secs.map((x, i) => '<span class="ambient-pm-ch" title="' + esc(x.name) + ' · ' + _ambFmtBpc(x.bars) + ' bars">' + esc(x.name) + '</span>').join('') + '<span class="ambient-pm-part">Part</span></div>';
       rows.forEach(r => {
         const steps = (r.L.sectionMask && Array.isArray(r.L.sectionMask.steps)) ? r.L.sectionMask.steps : null;
@@ -20934,10 +21378,10 @@
         h += '<div class="ambient-pm-row" data-lkey="' + r.key + '"><span class="ambient-pm-lbl" title="' + r.label + '">' + r.label + '</span>' +
           secs.map((x, i) => {
             const v = steps ? (Number.isFinite(steps[i % steps.length]) ? steps[i % steps.length] : 100) : 100;
-            return '<button type="button" class="ambient-pm-cell" data-ci="' + i + '" data-v="' + v + '" title="' + r.label + ' in ' + esc(x.name) + ': ' + v + '%">' + (v === 100 ? '' : (v === 0 ? '·' : v)) + '</button>';
+            return _ambMaskCellHtml(v, i, r.label + ' · ' + esc(x.name) + ' — ' + _ambMaskCellTip(v, 'section', !!el._pmEdit));
           }).join('') +
           '<span class="ambient-pm-part">' +
-            '<select class="ambient-select ambient-pm-size" title="How much of each section this layer plays">' +
+            '<select class="ambient-select ambient-pm-size" title="How much of each section this layer plays once it is in — a DURATION, not a chance. Full = the whole section.">' +
               [[100, 'Full'], [75, '¾'], [50, '½'], [25, '¼']].map(o => '<option value="' + o[0] + '"' + ((part ? part.size : 100) === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
             '</select>' +
             '<select class="ambient-select ambient-pm-place"' + ((part ? part.size : 100) >= 100 ? ' disabled' : '') + ' title="Where in the section the window sits — Random re-rolls per instance">' +
@@ -20948,18 +21392,38 @@
       el.innerHTML = h;
       if (!el._wired) {
         el._wired = true;
-        el.addEventListener('click', (ev) => {
-          const cell = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-cell'); if (!cell) return;
-          _E = E; const cfg2 = E.getCfg(); if (!cfg2 || !Array.isArray(cfg2.sections)) return;
-          const row = cell.closest('.ambient-pm-row'); const L = _ambLayerByKey(E, row.dataset.lkey); if (!L) return;
+        const slot = (cell) => {
+          _E = E; const cfg2 = E.getCfg(); if (!cfg2 || !Array.isArray(cfg2.sections)) return null;
+          const row = cell.closest('.ambient-pm-row'); const L = _ambLayerByKey(E, row.dataset.lkey); if (!L) return null;
           const N2 = cfg2.sections.length;
           const m = (L.sectionMask && typeof L.sectionMask === 'object') ? L.sectionMask : (L.sectionMask = {});
           if (!Array.isArray(m.steps) || m.steps.length !== N2) { const old2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => old2 ? (Number.isFinite(old2[i2 % old2.length]) ? old2[i2 % old2.length] : 100) : 100); }
-          const ci = cell.dataset.ci | 0, v = m.steps[ci];
-          m.steps[ci] = (v >= 100) ? 60 : (v >= 60 ? 30 : (v >= 30 ? 0 : 100));
-          _ambMaskEditPoke(E, row.dataset.lkey);
+          return { m: m, ci: cell.dataset.ci | 0, lkey: row.dataset.lkey, label: row.querySelector('.ambient-pm-lbl').textContent };
+        };
+        const commit = (lkey) => {
+          _ambMaskEditPoke(E, lkey);
           el._sig = ''; _ambRenderSectionMatrix(E);
           if (typeof persistWorkspace === 'function') persistWorkspace();
+        };
+        const openEditor = (cell) => {
+          const sl = slot(cell); if (!sl) return;
+          const sec = (E.getCfg().sections || [])[sl.ci];
+          _ambMaskCellModal(E, {
+            label: sl.label + ' · ' + ((sec && sec.name) || ('section ' + (sl.ci + 1))),
+            unit: 'section', value: sl.m.steps[sl.ci],
+            onSet: (v) => { const s2 = slot(cell) || sl; s2.m.steps[s2.ci] = v; commit(sl.lkey); }
+          });
+        };
+        _ambWireMaskCells(el, openEditor);
+        el.addEventListener('click', (ev) => {
+          const eb = ev.target && ev.target.closest && ev.target.closest('[data-pm-edit]');
+          if (eb) { el._pmEdit = !el._pmEdit; el._sig = ''; _ambRenderSectionMatrix(E); return; }
+          const cell = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-cell'); if (!cell) return;
+          if (el._suppressClick) { el._suppressClick = false; return; }
+          if (el._pmEdit) { openEditor(cell); return; }
+          const sl = slot(cell); if (!sl) return;
+          sl.m.steps[sl.ci] = _ambMaskCellNext(sl.m.steps[sl.ci]);
+          commit(sl.lkey);
         });
         el.addEventListener('change', (ev) => {
           const sel = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-size, .ambient-pm-place'); if (!sel) return;
@@ -22144,7 +22608,11 @@
         let cb = 0, ci = 0, cBlocks = '';
         while (cb < VIEW - 1e-6 && ci < 96) {
           const _at = _bound ? _chordAtBar(cb) : null;
-          const ch = pg.chords[_at ? _at.idx : (ci % pg.chords.length)];
+          // Resolve through the engine's path so the lane labels the chord that
+          // SOUNDS in each block, not the authored one (they differ under ↻ order
+          // / alts / 🎲 take-reroll — the same defect the header pill had).
+          const _slotI = _at ? _at.idx : (ci % pg.chords.length);
+          const ch = _ambProgSoundAt(E, pg, _slotI) || pg.chords[_slotI];
           const clen = Math.max(0.05, _at ? _at.len : lens[ci % lens.length]);
           const cw = Math.min(clen, VIEW - cb) / VIEW * 100;
           const lbl = _ambChordShort(ch);
@@ -24212,6 +24680,13 @@
       const close = () => { try { overlay.remove(); } catch (e) {} };
       overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
       const chordsNow = () => _ambArpEntryChords({ notes: _ambNotesOf(getL() || L0) });
+      // A pick is stored as an interval ABOVE the chord root, and the engine
+      // applies it over the SOUNDING root (_ambNoteFreq → _ambSrcRootPc). So both
+      // the row label and the note names in each <select> have to be built from
+      // the shifted chord — under Key/transpose a written C sounding as A was
+      // offering "D · 9th" for a note that comes out as E, and in 'key' mode the
+      // candidate SET itself was re-expressed against the wrong root.
+      const viewChords = () => { const cs = chordsNow(); const sh = _ambProgViewShift(E, cfg, cs); return cs.map(c => _ambChordShift(c, sh)); };
       const density = () => Math.max(1, Math.min(9, (getL() || L0).density | 0));
       // The engine key for this layer object — derived from its own type/id, the
       // same shape _ambMixerLayers builds ('drone:3'). Needed so an edit can
@@ -24243,7 +24718,7 @@
       };
       const render = () => {
         const L = getL() || L0;
-        const chords = chordsNow();
+        const chords = viewChords();
         const mode = _ambPickMode(L);
         const D = density();
         let rows = '';
@@ -24253,7 +24728,7 @@
           let slots = '';
           for (let s = 0; s < D; s++) slots += slotHtml(ci, ch, cand, pick, s);
           rows += '<div class="amb-pick-row">' +
-            '<span class="amb-pick-chord" title="Chord ' + (ci + 1) + ' of the area progression (read-only here)">' + esc(_ambChordShort(ch)) + '</span>' +
+            '<span class="amb-pick-chord" title="Chord ' + (ci + 1) + ' of the area progression, as it sounds (read-only here)">' + esc(_ambChordShort(ch)) + '</span>' +
             '<span class="amb-pick-slots">' + slots + '</span>' +
             '<button type="button" class="ambient-seg amb-pick-auto" data-auto="' + ci + '" title="Back to the automatic voicing for this chord">auto</button>' +
           '</div>';
@@ -24294,7 +24769,9 @@
           const mode = m.getAttribute('data-mode');
           // Read the chords BEFORE touching state — chordsNow() goes through
           // getCfg(), which normalizes and can prune what we're about to edit.
-          const chords = chordsNow();
+          // Shifted, so the orphan check below uses the SAME candidate basis the
+          // selects were built from.
+          const chords = viewChords();
           L._pickMode = mode;
           if (L.chordPick && typeof L.chordPick === 'object') L.chordPick.mode = mode;
           // A narrower mode can orphan picks it no longer offers — drop those
@@ -25949,6 +26426,10 @@
         if (keySub) keySub.style.display = keyOn ? '' : 'none';
         const progSub = document.getElementById(tr('ambient-prog-sub'));
         if (progSub) progSub.style.display = progOn ? '' : 'none';
+        // The picker moved out of #ambient-prog-sub onto the on/off row, so it
+        // carries its own visibility now.
+        { const pk = document.getElementById(tr('ambient-prog-pick'));
+          if (pk) pk.style.display = progOn ? '' : 'none'; }
         // Progression subsection: the pick/edit/clone/part row shows when Progression
         // is on; else the "turn Progression on" hint.
         { const progOff = document.getElementById(tr('ambient-progsec-off'));
@@ -25970,10 +26451,20 @@
               if (orow) {
                 orow.style.display = progOn ? '' : 'none';
                 const o = (cfg.prog && cfg.prog.order) || {};
+                const active = !!o.mode;   // no mode stored = inactive = written order
+                const tog = document.getElementById(tr('ambient-order-toggle'));
+                if (tog) { tog.classList.toggle('active', active);
+                  tog.title = active
+                    ? '↻ Order is ON — click to turn off (back to written order, every cycle)'
+                    : '↻ Order — re-order the progression’s chords on scheduled cycles. OFF = written order, every cycle. Click to turn on.'; }
                 const mSel = document.getElementById(tr('ambient-order-mode'));
                 const wSel = document.getElementById(tr('ambient-order-when'));
-                if (mSel && document.activeElement !== mSel) mSel.value = o.mode || '';
-                if (wSel && document.activeElement !== wSel) wSel.value = o.when || 'always';
+                // Hidden while inactive: with the defaults implicit there is nothing
+                // to show, and the row collapses to just its label.
+                if (mSel) { mSel.style.display = active ? '' : 'none';
+                  if (document.activeElement !== mSel) mSel.value = o.mode || 'shuffle'; }
+                if (wSel) { wSel.style.display = active ? '' : 'none';
+                  if (document.activeElement !== wSel) wSel.value = o.when || 'always'; }
               } }
             try { _ambSaltReadoutSync(E, true); } catch (e) {}
           } }
@@ -25995,7 +26486,11 @@
         if (kModeRot) { kModeRot.value = String(((cfg.keyModeRot | 0) % 7 + 7) % 7); kModeRot.disabled = !cfg.keyOn; }
         // Progression sub-controls.
         const pPick = document.getElementById(tr('ambient-prog-pick'));
-        if (pPick) pPick.textContent = (Array.isArray(p.chords) && p.chords.length) ? (p.name || 'Progression') : '— pick —';
+        // Shows WHICH SEED is loaded (+ "· edited" once the current progression
+        // diverges) — deliberately NOT the current progression's name, which is
+        // what made this control read as both a chooser and a readout.
+        if (pPick) { pPick.textContent = _ambProgSeedLabel(p);
+          pPick.title = 'Pick a SEED progression — it loads into the current progression, which you then edit independently. The seed list is only changed by Export.'; }
         const nCh = (Array.isArray(p.chords) ? p.chords.length : 0);
         const pEdit = document.getElementById(tr('ambient-prog-edit'));
         if (pEdit) pEdit.disabled = !(nCh > 0);   // editable only when a progression is selected
@@ -26334,15 +26829,12 @@
             '<div class="ambient-mod-sub ambient-progsec-lbl">Progression</div>' +
             '<div class="ambient-row ambient-prog-row">' +
               '<button type="button" class="ambient-seg ambient-prog-onoff" id="ambient-prog-onoff" title="Progression — when ON, every layer follows a shared chord progression (the per-layer Notes chip is read-only while on). Combine with Key above for a progression diatonic to that key.">Progression</button>' +
-              '<span class="ambient-prog-sub" id="ambient-prog-sub">' +
-                '<button type="button" class="ambient-select ambient-prog-pick" id="ambient-prog-pick" title="Pick a chord progression for all layers">— pick —</button>' +
+              // The SEED picker sits with the on/off button — together they answer
+              // "is a progression on, and which one". The action buttons wrap to
+              // their own line below (see .ambient-prog-actions).
+              '<button type="button" class="ambient-select ambient-prog-pick" id="ambient-prog-pick" title="Pick a chord progression for all layers">— pick —</button>' +
+              '<span class="ambient-prog-sub ambient-prog-actions" id="ambient-prog-sub">' +
                 '<button type="button" class="ambient-seg ambient-prog-edit" id="ambient-prog-edit" title="Edit the selected progression chord-by-chord and Save As New">Edit</button>' +
-                '<button type="button" class="ambient-seg ambient-prog-clone" id="ambient-prog-clone" title="Clone this progression into an editable copy you can mutate freely">⧉ Clone</button>' +
-                '<button type="button" class="ambient-seg ambient-prog-addpart" id="ambient-prog-addpart" title="Append another progression as a new PART — build a sequence of progressions (Verse → Chorus → …)">＋ Part</button>' +
-                '<button type="button" class="ambient-seg ambient-prog-reharm" id="ambient-prog-reharm" title="Reharmonize — rewrite the chords ONCE with same-function substitutes (relative minor/major, mediant, up-a-fourth, 7th/9th colour), staying in the key. Unlike 🎲 take / 🌊 vary this is WRITTEN into the progression, so it is a real edit (undoable).">♺ Reharm</button>' +
-                '<button type="button" class="ambient-seg ambient-prog-detectkey" id="ambient-prog-detectkey" title="Detect the key these chords imply and offer to set it. Scores every root × scale by how many chord tones fall inside, weighting the first and last chords — then you confirm before anything changes.">🔍 Key</button>' +
-                '<button type="button" class="ambient-seg ambient-prog-roman" id="ambient-prog-roman" title="Type the changes as roman numerals in the current key — e.g. “ii V I”, “i ♭VII ♭VI V”, “IVmaj7 V7 iii7 vi7”. Case sets quality (IV = major, iv = minor); ♭/♯ shift the degree; 7 / maj7 / 9 / 6 / ° / + / sus add colour. Replaces the current progression.">⌨ Numerals</button>' +
-                '<button type="button" class="ambient-seg ambient-prog-generate" id="ambient-prog-generate" title="Generate a progression — pick how many chords total and how many unique; diatonic to the current key, starting on the tonic. Press again for another roll.">⚄ Generate</button>' +
               '</span>' +
               '<span class="ambient-hint" id="ambient-progsec-off" style="display:none">turn Progression on to build a chord sequence</span>' +
             '</div>' +
@@ -26360,8 +26852,12 @@
             '</div>' +
             // ↻ ORDER — scheduled chord re-ordering (engine: _ambProgOrderPerm).
             '<div class="ambient-row ambient-prog-salt ambient-prog-order" id="ambient-prog-orderrow" style="display:none" title="Play order — re-order the progression’s chords on scheduled cycles (deterministic per seed; the readout below shows each cycle’s actual order).">' +
-              '<span class="ambient-sched-lbl salt-lbl">↻ order</span>' +
-              '<select id="ambient-order-mode" class="ambient-select"><option value="">Written</option><option value="shuffle">Random</option><option value="reverse">Reversed</option></select>' +
+              // The LABEL is the on/off. Inactive = the implicit defaults (written
+              // order, every cycle) — i.e. the engine does nothing — so "Written"
+              // no longer needs to occupy a slot in the mode list; turning Order
+              // OFF is what "written" means. Activating picks Random by default.
+              '<button type="button" class="ambient-sched-lbl salt-lbl ambient-order-toggle" id="ambient-order-toggle" title="↻ Order — re-order the progression\u2019s chords on scheduled cycles. OFF = written order, every cycle. Click to turn on.">↻ Order</button>' +
+              '<select id="ambient-order-mode" class="ambient-select"><option value="shuffle">Random</option><option value="reverse">Reversed</option></select>' +
               '<select id="ambient-order-when" class="ambient-select" title="Which progression cycles play in the altered order (the rest play as written)"><option value="always">every cycle</option><option value="10">1 in 2</option><option value="100">1 in 3</option><option value="1000">1 in 4</option><option value="10000000">1 in 8</option></select>' +
             '</div>' +
             // 🧂/↻ live readout — this cycle's actual plan (salted lengths, colors,
@@ -27760,6 +28256,11 @@
         fxBind('dly-time', (lc, v) => { lc.delay.timeMs = v; });
         fxBind('dly-fb', (lc, v) => { lc.delay.feedback = v; });
         fxBind('dly-ping', (lc, v) => { lc.delay.ping = v; });
+        // Was MISSING while the slider rendered (_ambSl, ~21538) and read back
+        // (set(), ~26697) — the classic primary-vs-schema wiring gap: it works on
+        // an ADDED layer (schema-driven _ambWireInst) and did nothing at all on
+        // bed/motif/texture/beat. Found by driving every control and diffing cfg.
+        fxBind('dly-spread', (lc, v) => { lc.delay.spread = v; });
         fxBind('dist-amt', (lc, v) => { lc.dist.amount = v; });
         fxBind('dist-focus', (lc, v) => { lc.dist.focus = v; });
         fxBind('dist-tone', (lc, v) => { lc.dist.tone = v; });
@@ -27979,13 +28480,14 @@
         });
         const pEdit = G('ambient-prog-edit');
         if (pEdit) pEdit.addEventListener('click', () => { _E = E; try { _ambOpenProgEditor(E); } catch (e) {} });
-        const pClone = G('ambient-prog-clone');
-        if (pClone) pClone.addEventListener('click', () => { _E = E; try { _ambOpenProgEditor(E, { scope: 'area', clone: true }); } catch (e) {} });
-        const pAddPart = G('ambient-prog-addpart');
-        if (pAddPart) pAddPart.addEventListener('click', () => { _E = E; const r = pAddPart.getBoundingClientRect(); _ambOpenGlobalProgMenu(E, r.left, r.bottom, { append: true }); });
+        // ⧉ Clone's outer button is GONE — the editor footer already had one
+        // (data-pe="clone"), so it was a duplicate; one extra click to open the
+        // editor is the whole difference.
+        // ＋ Part moved to the overview strip: it CHAINS another progression on,
+        // so it belongs where the parts are drawn.
+        const _pgAddPart = (x, y) => { _E = E; _ambOpenGlobalProgMenu(E, x || 40, y || 120, { append: true }); };
         // ♺ Reharm — a real, written edit (snapshot for undo first).
-        { const pRh = G('ambient-prog-reharm');
-          if (pRh) pRh.addEventListener('click', () => {
+        const _pgReharm = () => {
             _E = E; const c = E.getCfg(); if (!c || !c.prog || !Array.isArray(c.prog.chords) || !c.prog.chords.length) {
               try { if (typeof showToast === 'function') showToast('No progression to reharmonize.'); } catch (e) {} return; }
             let amt = null;
@@ -28001,13 +28503,17 @@
             if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
             if (typeof persistWorkspace === 'function') persistWorkspace();
             try { if (typeof showToast === 'function') showToast('Reharmonized ' + r.changed.length + ': ' + r.changed.slice(0, 3).map(x => x.from + '→' + x.to).join(' · ') + (r.changed.length > 3 ? ' …' : '')); } catch (e) {}
-          }); }
+          };
         // 🔍 Key — detect and OFFER; never silently re-key the area.
-        { const pDk = G('ambient-prog-detectkey');
-          if (pDk) pDk.addEventListener('click', () => {
+        const _pgDetectKey = () => {
             _E = E; const c = E.getCfg(); if (!c || !c.prog || !Array.isArray(c.prog.chords) || !c.prog.chords.length) {
               try { if (typeof showToast === 'function') showToast('No progression to analyse.'); } catch (e) {} return; }
-            const d = _ambDetectKey(c.prog.chords);
+            // Analyse what is HEARD. Under Key/transpose the engine re-roots the
+            // whole progression, so detecting on the written chords reports the
+            // key of a template nobody is playing — and then offers to set the
+            // area key to it, which would move the sound again.
+            const _vsD = _ambProgViewShift(E, c, c.prog.chords);
+            const d = _ambDetectKey(_vsD ? c.prog.chords.map(x => _ambChordShift(x, _vsD)) : c.prog.chords);
             if (!d) { try { if (typeof showToast === 'function') showToast('Couldn’t read a key from these chords.'); } catch (e) {} return; }
             const nm = CHROMATIC[d.root] + ' ' + d.scale;
             const cur = _ambKeyRootPc(c), curS = _ambKeyScaleName(c);
@@ -28022,14 +28528,18 @@
             if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
             if (typeof persistWorkspace === 'function') persistWorkspace();
             try { if (typeof showToast === 'function') showToast('Key set to ' + nm + '.'); } catch (e) {}
-          }); }
+          };
         // ⌨ Numerals — type the changes instead of clicking them in.
-        { const pRn = G('ambient-prog-roman');
-          if (pRn) pRn.addEventListener('click', () => {
+        const _pgRoman = () => {
             _E = E; const c = E.getCfg(); if (!c) return;
             const kRoot = _ambKeyRootPc(c), kScale = _ambKeyScaleName(c);
+            // Prefill the numerals the progression SOUNDS as. Typing them back
+            // builds chords rooted off the key (offset 0), so the round-trip is
+            // an identity — reading the raw roots prefilled "♭III ♭VI ♭VII" for
+            // a progression the ear hears, correctly, as I IV V.
+            const _vsR = _ambProgViewShift(E, c, c.prog && c.prog.chords);
             const cur = (c.prog && Array.isArray(c.prog.chords) && c.prog.chords.length)
-              ? c.prog.chords.map(ch => _ambPeRoman(ch, kRoot, kScale)).filter(Boolean).join(' ') : '';
+              ? c.prog.chords.map(ch => _ambPeRoman(_ambChordShift(ch, _vsR), kRoot, kScale)).filter(Boolean).join(' ') : '';
             let txt = null;
             try { txt = prompt('Progression as roman numerals in ' + CHROMATIC[kRoot] + ' ' + kScale + ':\n(e.g. "ii V I"  ·  "i bVII bVI V"  ·  "IVmaj7 V7 iii7 vi7")', cur); } catch (e) {}
             if (txt == null) return;
@@ -28044,7 +28554,7 @@
             if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
             if (typeof persistWorkspace === 'function') persistWorkspace();
             try { if (typeof showToast === 'function') showToast('Progression set — ' + chords.length + ' chords.'); } catch (e) {}
-          }); }
+          };
         // 🧂 Salt knobs → cfg.prog.salt (normalize deletes the key when all zero,
         // so untouched projects stay byte-identical). Engine reads per onset —
         // changes land within the lookahead, no re-anchor needed.
@@ -28072,22 +28582,32 @@
           });
         });
         // ↻ order selects → cfg.prog.order (mode '' deletes; normalize prunes).
+        // ↻ Order ON/OFF lives on the LABEL. OFF deletes `prog.order` entirely, so
+        // absence keeps meaning "written order, every cycle" for the engine and
+        // for save-compat; ON seeds the defaults you'd otherwise have to pick.
+        { const oTog = G('ambient-order-toggle');
+          if (oTog) oTog.addEventListener('click', () => {
+            _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
+            if (c.prog.order && c.prog.order.mode) delete c.prog.order;
+            else c.prog.order = { mode: 'shuffle', when: 'always' };
+            persist();
+            try { _ambSyncControls(E); } catch (e) {}
+            try { _ambSaltReadoutSync(E, true); } catch (e) {}
+          }); }
         [['ambient-order-mode', 'mode'], ['ambient-order-when', 'when']].forEach(pr => {
           const el = G(pr[0]); if (!el) return;
           el.addEventListener('change', () => {
             _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
             const mSel = G('ambient-order-mode'), wSel = G('ambient-order-when');
-            const mode = mSel ? mSel.value : '';
-            if (!mode) delete c.prog.order;
-            else c.prog.order = { mode: mode, when: (wSel && wSel.value) || 'always' };
+            // Neither list can select "off" any more — that is the label's job.
+            c.prog.order = { mode: (mSel && mSel.value) || 'shuffle', when: (wSel && wSel.value) || 'always' };
             persist();
             try { _ambSaltReadoutSync(E, true); } catch (e) {}
           });
         });
         // ⚄ Generate — popover: pick Length + Unique with steppers, PREVIEW the
         // rolled chords as chips (roman numeral + name), reroll, then Apply.
-        const pGen = G('ambient-prog-generate');
-        if (pGen) pGen.addEventListener('click', () => {
+        const _pgGenerate = () => {
           _E = E;
           const esc = (s) => String(s == null ? '' : s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
           const old = document.getElementById('pg-overlay'); if (old) old.remove();
@@ -28143,7 +28663,14 @@
               try { ov.remove(); } catch (e) {}
             }
           });
-        });
+        };
+        // ACTION REGISTRY — the outer row now carries only on/off · picker · Edit.
+        // Generate + Roman are reached from the picker menu (they SOURCE a
+        // progression), Reharm + Detect key from the editor toolbar (they operate
+        // on chords you can see), ＋ Part from the overview strip. All of those
+        // live at module scope, so they reach the handlers through here.
+        _ambProgActions = { generate: _pgGenerate, roman: _pgRoman,
+          reharm: _pgReharm, detectKey: _pgDetectKey, addPart: _pgAddPart };
       }
 
       // ＋ Ramp buttons live inside (re-renderable) layer cards → ONE delegated

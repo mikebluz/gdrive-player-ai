@@ -2877,6 +2877,14 @@
     .pe-chord.chord-in small, .pe-chord.chord-in .pe-rn { color: #6fe0b8; }
     .pe-chord.chord-out small, .pe-chord.chord-out .pe-rn { color: #f0b64a; }
     .pe-scaletog.on { background: rgba(79,209,165,0.16); border-color: #3f8a6a; color: #b8f0d8; }
+    /* Score-vs-sound banner: the written chords are a template that the key
+       re-roots, so name what is actually heard. */
+    .pe-shifted { margin: 2px 0 6px; padding: 5px 9px; border: 1px solid #3a3a52; border-left: 3px solid #9f7aea; border-radius: 6px; background: rgba(159,122,234,0.08); color: #a9b3c4; font-size: 0.74rem; line-height: 1.4; }
+    .pe-shifted b { color: #e2c9ff; font-weight: 700; }
+    /* Editor toolbar — operations that rewrite the chords you can see. */
+    .pe-ops { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
+    .pe-ops button { padding: 4px 10px; border: 1px solid #2d2d3f; border-radius: 6px; background: #1a1a2e; color: #cbd5e0; cursor: pointer; font-size: 0.78rem; touch-action: manipulation; }
+    .pe-ops button:hover { border-color: #4a5568; color: #e2e8f0; }
     .pe-save { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
     .pe-save input { flex: 1; min-width: 0; padding: 6px 10px; background: #0f0f1e; border: 1px solid #2d2d3f; border-radius: 6px; color: #e2e8f0; }
     .pe-apply { background: rgba(159,122,234,0.22) !important; border-color: #9f7aea !important; color: #e2d9f5 !important; font-weight: 600; }
@@ -3257,8 +3265,30 @@
        margin-left:auto (two autos would split the space and float the hint). */
     .ambient-progsec .ambient-progsec-hint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ambient-progsec .ambient-prog-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    /* Row 1 is "is it on, and which one": the on/off button and the seed picker
+       hold the first line together, and the action cluster is forced onto its own
+       line (flex-basis 100%) instead of trailing off the end of row 1. */
+    .ambient-progsec .ambient-prog-row > .ambient-prog-onoff { flex: 0 0 auto; }
+    .ambient-progsec .ambient-prog-row > .ambient-prog-pick { flex: 1 1 auto; width: auto; min-width: 0; }
+    .ambient-progsec .ambient-prog-actions { flex: 1 1 100%; flex-wrap: wrap; }
     /* 🧂 Salt row — three compact knobs under the progression picker. */
     .ambient-prog-salt { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 2px; }
+    /* ↻ Order: label + both selects on ONE row. The shared .ambient-prog-salt
+       style wraps, and .ambient-select is width:100%, so at 390px each select
+       claimed its own line (measured: 3 rows, 86px tall). The label keeps its
+       intrinsic width; the two selects share what's left and may ellipsise. */
+    .ambient-prog-order { flex-wrap: nowrap; gap: 6px; min-width: 0; }
+    .ambient-prog-order > .salt-lbl { flex: 0 0 auto; white-space: nowrap; }
+    /* The ↻ Order label IS the on/off control — styled as a quiet toggle so it
+       reads as clickable, and lit when active. */
+    .ambient-order-toggle {
+      background: transparent; border: 1px solid #2d2d3f; border-radius: 6px;
+      padding: 3px 9px; cursor: pointer; touch-action: manipulation;
+      font: 600 0.72rem 'Segoe UI', sans-serif; color: #8b7fa8;
+    }
+    .ambient-order-toggle.active { color: #e9e4f8; background: rgba(159,122,234,0.22); border-color: #9f7aea; }
+    @media (hover: hover) { .ambient-order-toggle:not(.active):hover { color: #cbb8ee; border-color: #4a3d6b; } }
+    .ambient-prog-order > .ambient-select { flex: 1 1 0; width: auto; min-width: 0; }
     .ambient-prog-salt .salt-lbl { color: #9f7aea; font-weight: 600; }
     .ambient-prog-salt .ambient-sched-grp { display: inline-flex; align-items: center; gap: 5px; }
     .ambient-prog-salt .ambient-salt-in { width: 52px; background: #11111c; border: 1px solid #2d2d3f; border-radius: 6px; color: #cbd5e0; padding: 3px 5px; font-size: 0.8rem; }
@@ -3323,6 +3353,8 @@
     .ambient-pov-partops { display: inline-flex; gap: 3px; flex: 0 0 auto; }
     .ambient-pov-partbtn { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 4px; border: 1px solid #2d2d3f; border-radius: 6px; background: #16162a; color: #9aa; cursor: pointer; font-size: 0.72rem; touch-action: manipulation; }
     .ambient-pov-partrm { color: #fc8181; }
+    .ambient-pov-addpart { display: inline-flex; align-items: center; justify-content: center; min-height: 30px; padding: 3px 10px; border: 1px dashed #3a3a52; border-radius: 8px; background: transparent; color: #9f7aea; cursor: pointer; font-size: 0.74rem; font-weight: 600; touch-action: manipulation; }
+    .ambient-pov-addpart:hover { border-color: #9f7aea; background: rgba(159,122,234,0.12); }
     .ambient-pov-chord { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; min-width: 44px; min-height: 30px; padding: 3px 7px; border: 1px solid #2d2d3f; border-radius: 8px; background: #1a1a2e; color: #cbd5e0; cursor: pointer; position: relative; touch-action: manipulation; }
     .ambient-pov-chord b { font-size: 0.8rem; font-weight: 800; color: #e2c9ff; line-height: 1; }
     .ambient-pov-chord .ambient-pov-nm { font-size: 0.6rem; color: #88aabb; white-space: nowrap; }
@@ -12121,14 +12153,49 @@
     .ambient-progmatrix { margin: 8px 0 4px; display: flex; flex-direction: column; gap: 3px; }
     .ambient-pm-title { font: 600 0.62rem 'Segoe UI', sans-serif; letter-spacing: 0.05em; text-transform: uppercase; color: #7a7a9c; padding: 2px 0; }
     .ambient-pm-title .ambient-hint { text-transform: none; letter-spacing: 0; margin-left: 8px; }
+    /* Legend: the cells are a CHANCE, the Part column is a DURATION. Without
+       this spelled out a bare "60" reads as either (or as a volume). */
+    .ambient-pm-legend { font-size: 0.64rem; line-height: 1.45; color: #8a8aa8; margin: 0 0 6px; padding: 5px 8px; border: 1px solid #23233a; border-left: 3px solid #35c98e; border-radius: 6px; background: rgba(53,201,142,0.06); }
+    .ambient-pm-legend b { color: #cbd5e0; font-weight: 700; }
     .ambient-pm-head, .ambient-pm-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
     .ambient-pm-lbl { flex: 0 0 72px; font-size: 0.66rem; color: #9a9ac0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ambient-pm-ch { flex: 1 1 0; min-width: 0; text-align: center; font-size: 0.58rem; color: #6b6b8a; overflow: hidden; }
-    .ambient-pm-cell { flex: 1 1 0; min-width: 0; height: 22px; border: 1px solid #2d2d3f; border-radius: 5px; background: #35c98e; color: #0c1220; font-size: 0.6rem; cursor: pointer; touch-action: manipulation; }
-    .ambient-pm-cell[data-v="60"] { background: rgba(53, 201, 142, 0.55); color: #dfe7f1; }
-    .ambient-pm-cell[data-v="30"] { background: rgba(53, 201, 142, 0.25); color: #9a9ac0; }
+    /* Colour lives in the value-driven rule below; this is geometry only.
+       The callout/selection kills matter: a 450ms press is the exact-value
+       gesture, and iOS would otherwise answer it with a text-selection
+       callout over the cell. */
+    .ambient-pm-cell { flex: 1 1 0; min-width: 0; height: 22px; padding: 0 1px; overflow: hidden; border: 1px solid #2d2d3f; border-radius: 5px; font-size: 0.6rem; font-variant-numeric: tabular-nums; cursor: pointer; touch-action: manipulation; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+    /* "60%" needs the room a bare "60" didn't — shrink rather than clip or
+       widen the row (a matrix must never introduce horizontal scroll). */
+    @media (max-width: 560px) { .ambient-pm-cell { font-size: 0.54rem; } .ambient-pm-lbl { flex: 0 0 58px; } .ambient-pm-part { flex: 0 0 104px; } .ambient-pm-size, .ambient-pm-place { width: 49px; } }
+    /* The tint tracks the VALUE, not four hardcoded rungs — the old
+       [data-v="60"]/[data-v="30"] rules left any hand-set value (45%, 12%) falling
+       through to the full-strength base rule, so the colour said "always" while
+       the label said 45%. --pv is the raw 0-100; the alpha ramp is the line
+       through the two old anchors (30 → .25, 60 → .55), so the rungs look as they
+       always did and everything between them interpolates. Endpoints keep their
+       own rules: 100 is the solid fill, 0 the dark "off" cell.
+       .pm-dark is set by JS above 70%, where the fill is bright enough to need
+       dark text — CSS can't branch on a number. */
+    .ambient-pm-cell { background: rgba(53, 201, 142, calc(var(--pv, 100) * 0.01 - 0.05)); color: #dfe7f1; }
+    .ambient-pm-cell.pm-dark { color: #0c1220; }
+    .ambient-pm-cell[data-v="100"] { background: #35c98e; color: #0c1220; }
     .ambient-pm-cell[data-v="0"] { background: #1a1a2c; color: #4a4a5e; }
+    /* Exact-value mode: a tap opens the editor instead of stepping. */
+    /* The title row is uppercase 0.62rem grey, which swallowed a plain
+       .ambient-seg — give the toggle its own chrome so it reads as a control. */
+    .ambient-pm-editbtn { float: right; margin: -3px 0 0 8px; padding: 2px 9px; border: 1px solid #2d2d3f; border-radius: 999px; background: #16162a; color: #9a9ac0; font-size: 0.62rem; font-weight: 600; text-transform: none; letter-spacing: 0; cursor: pointer; touch-action: manipulation; }
+    .ambient-pm-editbtn:hover { border-color: #4a5568; color: #cbd5e0; }
+    .ambient-pm-editbtn.active { border-color: #35c98e; background: rgba(53,201,142,0.18); color: #7fe0b6; }
+    .ambient-pm-cell:active { filter: brightness(1.25); }
+    .ambient-pm-modal-hint { font-size: 0.72rem; line-height: 1.45; color: #8a8aa8; margin: 0 0 10px; }
+    .ambient-pm-modal-presets { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+    .ambient-pm-modal-presets .ambient-seg { flex: 1 1 auto; padding: 4px 8px; font-size: 0.72rem; }
     .ambient-pm-part { flex: 0 0 118px; display: inline-flex; gap: 3px; }
+    /* The head-row "Part" label inherited the body font and towered over the
+       0.58rem chord labels beside it — match its own column's chrome. */
+    .ambient-pm-head .ambient-pm-part { font-size: 0.58rem; color: #6b6b8a; justify-content: center; }
+
     .ambient-pm-size { width: 56px; font-size: 0.6rem; padding: 1px 2px; }
     .ambient-pm-place { width: 56px; font-size: 0.6rem; padding: 1px 2px; }
 

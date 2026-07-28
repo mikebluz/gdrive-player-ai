@@ -148,8 +148,21 @@ const prettyName = (rel) => {
 
     const destRel = id + path.extname(f.rel).toLowerCase();
     const destAbs = path.join(DEST, destRel);
+    // Re-copy only what actually changed, so re-running on a big library is
+    // cheap. Size alone is NOT enough: an audio file edited in place — gain
+    // normalised, a different take of the same length, a re-render — keeps its
+    // byte count exactly, so a size-only check left the app serving the OLD
+    // audio forever (reproduced: 440 Hz replaced by 880 Hz, same 22094 bytes,
+    // never recopied). So: size differs → copy; size matches but the source is
+    // newer → hash both and copy only if the bytes really differ, which keeps a
+    // merely-touched file from being recopied.
     let need = true;
-    try { const st = fs.statSync(destAbs); need = (st.size !== f.size); } catch (e) { need = true; }
+    try {
+      const st = fs.statSync(destAbs);
+      if (st.size !== f.size) need = true;
+      else if (f.mtime > st.mtimeMs + 1) need = !sameBytes(f.full, destAbs);
+      else need = false;
+    } catch (e) { need = true; }
     if (need) {
       if (!DRY) { fs.mkdirSync(path.dirname(destAbs), { recursive: true }); fs.copyFileSync(f.full, destAbs); }
       copied++;
@@ -213,6 +226,23 @@ const prettyName = (rel) => {
   console.log(c.dim('  deploy.sh already ships ./samples.\n'));
 })();
 
+// Content compare, for the "same size, newer mtime" case. Streams in chunks so a
+// long sample is not held in memory twice.
+function sameBytes(a, b) {
+  let fa = null, fb = null;
+  try {
+    fa = fs.openSync(a, 'r'); fb = fs.openSync(b, 'r');
+    const A = Buffer.alloc(65536), B = Buffer.alloc(65536);
+    for (;;) {
+      const na = fs.readSync(fa, A, 0, A.length, null);
+      const nb = fs.readSync(fb, B, 0, B.length, null);
+      if (na !== nb) return false;
+      if (na === 0) return true;
+      if (!A.subarray(0, na).equals(B.subarray(0, nb))) return false;
+    }
+  } catch (e) { return false; }               // unreadable → treat as different, i.e. re-copy
+  finally { try { if (fa !== null) fs.closeSync(fa); } catch (e) {} try { if (fb !== null) fs.closeSync(fb); } catch (e) {} }
+}
 // Remove directories left empty by a prune. Depth-first, and never the root.
 function pruneEmptyDirs(dir, top = true) {
   let ents = [];

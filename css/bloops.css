@@ -12192,6 +12192,10 @@
     .ambient-pm-playsbtn { width: 18px; height: 20px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: #8a8aa8; cursor: pointer; font-size: 0.72rem; line-height: 1; touch-action: manipulation; }
     .ambient-pm-playsbtn:disabled { opacity: 0.3; cursor: default; }
     @media (hover: hover) { .ambient-pm-playsbtn:hover:not(:disabled) { background: #23233a; color: #e2e8f0; } }
+    /* Dry Kill while the layer's Wet only is on: the switch is real but has no
+       effect, so mark it rather than let it read as broken. */
+    .ambient-fx-dk.is-overridden { opacity: 0.55; }
+    .ambient-fx-dk.is-overridden span::after { content: ' (Wet only wins)'; color: #f6ad55; font-size: 0.9em; }
     .ambient-pm-legend { font-size: 0.64rem; line-height: 1.45; color: #8a8aa8; margin: 0 0 6px; padding: 5px 8px; border: 1px solid #23233a; border-left: 3px solid #35c98e; border-radius: 6px; background: rgba(53,201,142,0.06); }
     .ambient-pm-legend b { color: #cbd5e0; font-weight: 700; }
     .ambient-pm-head, .ambient-pm-row { display: flex; align-items: center; gap: 4px; min-width: 0; }

@@ -2039,6 +2039,16 @@
       // the apply path. Absent = neutral (off/0).
       host.wetOnly = host.wetOnly ? 1 : 0;
       const _dk = (fx) => { if (fx && typeof fx === 'object') fx.dryKill = fx.dryKill ? 1 : 0; };
+      // SELF-HEAL: an FX that was REMOVED (so it is absent from an explicit
+      // fxChain) must not still carry dryKill — that combination is what kept a
+      // deleted effect running at full wet with no card left to switch it off.
+      // fxChain only exists once the user has added or removed something, which
+      // is exactly when the removal happened, so its absence here is meaningful.
+      if (Array.isArray(host.fxChain)) {
+        ['delay', 'dist', 'chorus', 'phaser', 'autopan'].forEach(k => {
+          if (host.fxChain.indexOf(k) < 0 && host[k] && typeof host[k] === 'object') host[k].dryKill = 0;
+        });
+      }
       if (!host.delay || typeof host.delay !== 'object') host.delay = { ...d.delay };
       else ['mix', 'timeMs', 'feedback', 'ping', 'spread'].forEach(k => { if (!Number.isFinite(host.delay[k])) host.delay[k] = d.delay[k]; });
       host.delay.spread = Math.max(0, Math.min(100, host.delay.spread | 0)); _dk(host.delay);
@@ -21248,17 +21258,22 @@
     const _AMB_FX_DEFS = [
       { id: 'filter',  label: 'Filter',      engaged: (lc) => ((Number.isFinite(lc.cutoff) ? lc.cutoff : 100) < 100) || ((lc.reso | 0) > 0), off: (lc) => { lc.cutoff = 100; lc.reso = 0; }, zero: [['fx-cutoff', 100], ['fx-reso', 0]] },
       { id: 'rev',     label: 'Reverb send', engaged: (lc) => (lc.revSend | 0) > 0,                    off: (lc) => { lc.revSend = 0; },                zero: [['fx-rev', 0]] },
+      // `off` must clear dryKill as well as the Mix. Dry Kill deliberately ENGAGES
+      // an FX at Mix 0 (that is the whole point of it), so zeroing the Mix alone
+      // left a REMOVED effect running at full wet — and with its card gone there
+      // was no longer any UI to switch it off. Reported as "I deleted the delay
+      // and now all I have is the wet signal", and it was unrecoverable.
       // In-line FX listed in CORE-INDEX order (dist·chorus·phaser·delay·autopan)
       // so a DERIVED chain's order == the core's default → no change for existing
       // engaged-FX layers. An explicit fxChain (user reorder) overrides.
-      { id: 'dist',    label: 'Distortion',  engaged: (lc) => !!(lc.dist && (lc.dist.mix | 0) > 0),    off: (lc) => { if (lc.dist) lc.dist.mix = 0; },   zero: [['fx-dist-mix', 0]] },
-      { id: 'chorus',  label: 'Chorus',      engaged: (lc) => !!(lc.chorus && (lc.chorus.mix | 0) > 0), off: (lc) => { if (lc.chorus) lc.chorus.mix = 0; }, zero: [['fx-cho-mix', 0]] },
-      { id: 'phaser',  label: 'Phaser',      engaged: (lc) => !!(lc.phaser && (lc.phaser.mix | 0) > 0), off: (lc) => { if (lc.phaser) lc.phaser.mix = 0; }, zero: [['fx-pha-mix', 0]] },
-      { id: 'delay',   label: 'Delay',       engaged: (lc) => !!(lc.delay && (lc.delay.mix | 0) > 0),  off: (lc) => { if (lc.delay) lc.delay.mix = 0; }, zero: [['fx-dly-mix', 0]] },
-      { id: 'autopan', label: 'Auto-Pan',    engaged: (lc) => !!(lc.autopan && (lc.autopan.mix | 0) > 0), off: (lc) => { if (lc.autopan) lc.autopan.mix = 0; }, zero: [['fx-apan-mix', 0]] },
+      { id: 'dist',    label: 'Distortion',  engaged: (lc) => !!(lc.dist && (lc.dist.mix | 0) > 0),    off: (lc) => { if (lc.dist) { lc.dist.mix = 0; lc.dist.dryKill = 0; } },   zero: [['fx-dist-mix', 0]] },
+      { id: 'chorus',  label: 'Chorus',      engaged: (lc) => !!(lc.chorus && (lc.chorus.mix | 0) > 0), off: (lc) => { if (lc.chorus) { lc.chorus.mix = 0; lc.chorus.dryKill = 0; } }, zero: [['fx-cho-mix', 0]] },
+      { id: 'phaser',  label: 'Phaser',      engaged: (lc) => !!(lc.phaser && (lc.phaser.mix | 0) > 0), off: (lc) => { if (lc.phaser) { lc.phaser.mix = 0; lc.phaser.dryKill = 0; } }, zero: [['fx-pha-mix', 0]] },
+      { id: 'delay',   label: 'Delay',       engaged: (lc) => !!(lc.delay && (lc.delay.mix | 0) > 0),  off: (lc) => { if (lc.delay) { lc.delay.mix = 0; lc.delay.dryKill = 0; } }, zero: [['fx-dly-mix', 0]] },
+      { id: 'autopan', label: 'Auto-Pan',    engaged: (lc) => !!(lc.autopan && (lc.autopan.mix | 0) > 0), off: (lc) => { if (lc.autopan) { lc.autopan.mix = 0; lc.autopan.dryKill = 0; } }, zero: [['fx-apan-mix', 0]] },
       // Pitch echo — a GENERATIVE note echo (re-emits pitched notes, not audio),
       // so it's not in the audio chain / not orderable. on materializes on add.
-      { id: 'pecho',   label: 'Pitch echo',  engaged: (lc) => !!(lc.pecho && lc.pecho.on),               off: (lc) => { if (lc.pecho) lc.pecho.on = false; }, zero: [], add: (lc) => { lc.pecho = Object.assign({ on: true, timeMs: 300, sync: '', repeats: 3, step: 2, pattern: '', feedback: 65, spread: 0, dryKill: 0 }, lc.pecho || {}, { on: true }); } },
+      { id: 'pecho',   label: 'Pitch echo',  engaged: (lc) => !!(lc.pecho && lc.pecho.on),               off: (lc) => { if (lc.pecho) { lc.pecho.on = false; lc.pecho.dryKill = 0; } }, zero: [], add: (lc) => { lc.pecho = Object.assign({ on: true, timeMs: 300, sync: '', repeats: 3, step: 2, pattern: '', feedback: 65, spread: 0, dryKill: 0 }, lc.pecho || {}, { on: true }); } },
     ];
     // The layer's FX chain: its own list when set, else DERIVED from engagement
     // (legacy projects show exactly the FX that are audible). Not persisted until
@@ -22133,7 +22148,21 @@
         // Layer "Wet only" + per-FX "Dry kill" checkboxes reflect the config.
         const wo = det.querySelector('.ambient-fx-wetonly-cb'); if (wo) wo.checked = !!lc.wetOnly;
         det.querySelectorAll('.ambient-fx-drykill').forEach(cb => {
-          const fx = lc[cb.getAttribute('data-fx')]; cb.checked = !!(fx && fx.dryKill);
+          const id = cb.getAttribute('data-fx');
+          const fx = lc[id]; cb.checked = !!(fx && fx.dryKill);
+          // The layer's Wet Only forces every in-line FX fully wet, so while it is
+          // on, unchecking Dry Kill changes nothing — which reads as a dead
+          // control ("I turned dry kill off and the dry didn't come back"). Say so
+          // instead: the row is marked overridden and explains which switch wins.
+          // Distortion is exempt from the forcing, so its checkbox is unaffected.
+          const overridden = !!lc.wetOnly && id !== 'dist';
+          const row = cb.closest('.ambient-fx-dk');
+          if (row) {
+            row.classList.toggle('is-overridden', overridden);
+            row.title = overridden
+              ? 'Dry Kill — overridden right now: the layer’s “Wet only” is already forcing this effect fully wet. Turn Wet only off for this switch to have any effect.'
+              : 'Dry Kill — play only this effect’s fully-wet output (removes its dry signal). For Delay = echoes only.';
+          }
         });
       });
     }

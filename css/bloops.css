@@ -3764,9 +3764,23 @@
     .ambient-src-btn.ambient-src-locked::after { content: ' 🔒'; font-size: 0.72em; opacity: 0.8; }
     /* Elapsed / BPM ⚙ Settings pill, re-homed under the footer transport row.
        Full width and centred so it reads as its own strip, not another button. */
-    .ambient-footer-settings { display: flex; justify-content: center; padding: 4px 0 2px; }
+    /* `flex: 1 1 100%` like .ambient-footer-transport — .ambient-footer-bar is a
+       wrapping FLEX row, so without it this slot became a flex ITEM sized to its
+       content and sat beside the transport cluster instead of centred on its own
+       line below it (measured: slot centre 118 against a bar centre of 195). */
+    .ambient-footer-settings { display: flex; justify-content: center; flex: 1 1 100%; min-width: 0; padding: 4px 0 2px; }
     .ambient-footer-settings:empty { display: none; }
-    .ambient-footer-settings > .bloom-hdr-elapsed { position: static; margin: 0; }
+    /* In the header this pill is `flex:1 1 0; width:100%` so it fills the bar.
+       Down here that made it stretch the whole footer row; shrink it to its
+       content so the row's justify-content:center actually centers it, and give
+       it a full rounded border (the header-only bottom rule read as a divider). */
+    .ambient-footer-settings > .bloom-hdr-elapsed {
+      position: static; margin: 0 auto;
+      flex: 0 0 auto; width: auto; max-width: 100%;
+      height: 34px; padding: 0 16px;
+      font-size: clamp(0.95rem, 3.2vw, 1.15rem);
+      border: 1px solid rgba(159, 122, 234, 0.35); border-radius: 9px;
+    }
     /* ‹ › area steppers — same chrome as the other area buttons, tightened up so
        the row still fits at 390px alongside the select. */
     .ambient-area-prev, .ambient-area-next { padding-left: 6px; padding-right: 6px; font-weight: 700; }

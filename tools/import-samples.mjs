@@ -201,18 +201,14 @@ const prettyName = (rel) => {
   }
   if (DRY) console.log('\n' + c.y('Dry run — samples/ and manifest.json were not modified.'));
 
-  // The honest caveat: the loader is EAGER. Every manifest entry becomes a
-  // Tone.Sampler at page load, so the library's size is paid on every boot, by
-  // every device, before anything sounds.
-  console.log('\n' + c.b('Boot cost'));
-  const per = entries.length ? bytes / entries.length : 0;
-  console.log(c.dim(`  Every entry is fetched and decoded at page load: ${entries.length} request(s), ${mb(bytes)}.`));
-  if (entries.length > 24 || bytes > 24 * 1048576) {
-    console.log(c.y('  That is enough to be noticeable on mobile.') + c.dim(' The loader is eager (loadSampleManifest'));
-    console.log(c.dim('  in js/bloops/04-instruments-samples.js); lazy loading is the fix, and is not built yet.'));
-  } else {
-    console.log(c.dim(`  Comfortable. Roughly ${mb(per)} each — worth re-checking past ~24 samples.`));
-  }
+  // Loading is LAZY: an entry is registered (so it shows up in every voice
+  // picker) but nothing is fetched until it is selected, referenced by the
+  // stored project, or played. So library SIZE is no longer a boot cost — only
+  // what you actually use gets downloaded.
+  console.log('\n' + c.b('Loading'));
+  console.log(c.dim(`  Registered, not preloaded — nothing is fetched until a sample is selected,`));
+  console.log(c.dim(`  used by the open project, or played. Library size does not slow the boot.`));
+  console.log(c.dim(`  ${entries.length} entries, ${mb(bytes)} on disk (shipped with the app).`));
   console.log('\n' + c.dim('  Live locally now (npm start). Reaches production on the next deploy —') );
   console.log(c.dim('  deploy.sh already ships ./samples.\n'));
 })();

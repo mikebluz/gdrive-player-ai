@@ -3,6 +3,96 @@
     // the keyboard. type strings of the form 'sample:<id>' route through these.
     const sampleSamplers = new Map();
 
+    // ---- LAZY SAMPLE LOADING -------------------------------------------------
+    // Every registered sampler used to be CONSTRUCTED at boot, and a Tone.Sampler
+    // fetches its urls the moment it exists — so the whole library (the built-in
+    // instruments plus everything in samples/manifest.json) was downloaded and
+    // decoded on every page load, by every device, before a note could sound.
+    //
+    // The entries are now registered with `sampler` as a GETTER that builds on
+    // first read. That keeps the map's shape EXACTLY as it was, which is the
+    // point: ~38 call sites do `sampleSamplers.get(id).sampler` and none of them
+    // change. Reading the field is also the natural last-resort trigger — a note
+    // on a cold sample starts the fetch and is silent that once, then correct
+    // forever. The warm-up paths below exist so that fallback is never reached in
+    // practice: selection, project load, and an idle pass over what the current
+    // workspace actually uses.
+    //
+    // NOT lazy: the `grain` buffer (one file, and its whole reason for existing
+    // is that per-note GrainPlayers find a cached buffer) and anything imported
+    // into IndexedDB (already local — there is no fetch to defer).
+    function _defineLazySampler(entry, build) {
+      let built = null, tried = false;
+      Object.defineProperty(entry, 'sampler', {
+        configurable: true, enumerable: true,
+        get() {
+          if (tried) return built;
+          tried = true;
+          try { built = build(); } catch (e) { console.warn('[samples] build failed', e); built = null; }
+          // Replace the accessor with the value so later reads cost nothing.
+          if (built) Object.defineProperty(entry, 'sampler', { value: built, writable: true, configurable: true, enumerable: true });
+          return built;
+        },
+        set(v) { tried = true; built = v; Object.defineProperty(entry, 'sampler', { value: v, writable: true, configurable: true, enumerable: true }); }
+      });
+    }
+    // Build a sampler NOW (idempotent — the getter caches). Returns it, or null.
+    function ensureSampleLoaded(id) {
+      const e = (id != null) ? sampleSamplers.get(String(id)) : null;
+      if (!e) return null;
+      try { return e.sampler || null; } catch (err) { return null; }
+    }
+    function warmSamples(ids) {
+      if (!ids) return 0;
+      let n = 0;
+      (Array.isArray(ids) ? ids : [ids]).forEach(id => { if (ensureSampleLoaded(id)) n++; });
+      return n;
+    }
+    // Any <select> anywhere in the app that lands on a sample voice warms it, so
+    // by the time Play is pressed the buffer is already in memory. Capture phase,
+    // on document, so it survives every card re-render and any stopPropagation —
+    // far more robust than hooking each of the tone selects individually.
+    try {
+      document.addEventListener('change', (ev) => {
+        const v = ev && ev.target && ev.target.value;
+        if (typeof v === 'string' && v.startsWith('sample:')) { try { ensureSampleLoaded(v.slice(7)); } catch (e) {} }
+      }, true);
+    } catch (e) {}
+    // Whatever the CURRENT workspace already references gets warmed once the page
+    // is idle — a loaded project is playable without waiting for a selection, and
+    // it is a handful of samples rather than the whole library.
+    function warmSamplesForWorkspace() {
+      try {
+        const raw = localStorage.getItem('bloops-workspace'); if (!raw) return 0;
+        const ids = new Set();
+        // Cheap and dependency-free: the snapshot is JSON, and every reference is
+        // the literal string "sample:<id>". No need to walk the object graph (and
+        // no ordering dependency on 11-modes-persistence).
+        const re = /"sample:([^"]+)"/g; let m;
+        while ((m = re.exec(raw))) ids.add(m[1]);
+        return warmSamples([...ids]);
+      } catch (e) { return 0; }
+    }
+    try {
+      const kick = () => { const n = warmSamplesForWorkspace(); if (n) console.info('[samples] warmed ' + n + ' used by this workspace'); };
+      if (typeof requestIdleCallback === 'function') requestIdleCallback(kick, { timeout: 4000 });
+      else setTimeout(kick, 1500);
+    } catch (e) {}
+    if (typeof window !== 'undefined') {
+      window.__warmSamples = warmSamples;
+      window.__sampleStats = () => {
+        let reg = 0, built = 0, loaded = 0;
+        sampleSamplers.forEach((e) => {
+          reg++;
+          // Read the DESCRIPTOR, never the value — touching .sampler here would
+          // build every entry and defeat the whole feature.
+          const d = Object.getOwnPropertyDescriptor(e, 'sampler');
+          if (d && 'value' in d && d.value) { built++; try { if (d.value.loaded) loaded++; } catch (x) {} }
+        });
+        return { registered: reg, built, loaded };
+      };
+    }
+
     // A cached, reversed copy of an AudioBuffer (for the Bloom sample "Reverse" toggle).
     // Web Audio can't play a buffer backwards, so we mirror the samples once per buffer.
     const _ambRevBufCache = (typeof WeakMap === 'function') ? new WeakMap() : null;
@@ -1248,20 +1338,22 @@
       REMOTE_INSTRUMENTS.forEach(inst => {
         if (sampleSamplers.has(inst.id)) return;
         try {
-          const sampler = new Tone.Sampler({
-            urls: inst.urls,
-            baseUrl: inst.baseUrl,
-            release: 1,
-          }).connect(globalSendTap);
-          sampleSamplers.set(inst.id, {
-            sampler,
+          const entry = {
             name: inst.label,
             rootNote: 'C4',
             remote: true,
             drumKit: !!inst.drumKit,
             urls: inst.urls,
             baseUrl: inst.baseUrl,
-          });
+          };
+          // REGISTERED, not loaded: the entry appears in every picker and every
+          // metadata read (name / drumKit / urls) without a byte being fetched.
+          _defineLazySampler(entry, () => new Tone.Sampler({
+            urls: inst.urls,
+            baseUrl: inst.baseUrl,
+            release: 1,
+          }).connect(globalSendTap));
+          sampleSamplers.set(inst.id, entry);
         } catch (e) {
           console.warn('Failed to register remote instrument', inst.id, e);
         }
@@ -1302,20 +1394,20 @@
           const rootNote = s.rootNote || 'C4';
           try {
             const urls = { [rootNote]: s.file };
-            const sampler = new Tone.Sampler({
-              urls,
-              release: 1,
-              baseUrl: 'samples/',
-            }).connect(globalSendTap);
-            sampleSamplers.set(s.id, {
-              sampler,
+            const entry = {
               name: s.name || s.id,
               rootNote,
               urls,
               baseUrl: 'samples/',
-            });
+            };
+            _defineLazySampler(entry, () => new Tone.Sampler({
+              urls,
+              release: 1,
+              baseUrl: 'samples/',
+            }).connect(globalSendTap));
+            sampleSamplers.set(s.id, entry);
           } catch (e) {
-            console.warn('Failed to load sample', s.id, e);
+            console.warn('Failed to register sample', s.id, e);
           }
         });
       } catch (e) {

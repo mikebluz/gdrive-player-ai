@@ -3285,7 +3285,10 @@
         if (!sub) return;
         const cands = _ambProgTakeCandidates(cfg, c);
         const m = cands.find(x => x.root === sub.root && x.intervals.join() === sub.intervals.join());
-        const from = _ambChordShort(c), to = _ambChordShort(sub), how = (m && m._label) || 'substitution';
+        // Named in the pitches you hear (the readout sits beside the strip and
+        // the pill, both of which are shifted).
+        const _vs = _ambProgViewShift(_E, cfg, p.chords);
+        const from = _ambChordShort(_ambChordShift(c, _vs)), to = _ambChordShort(_ambChordShift(sub, _vs)), how = (m && m._label) || 'substitution';
         // A colour keeps the root, so "C→C (add9)" reads as a no-op — show "C +add9".
         out.push({ i, from, to, how, txt: (from === to) ? (from + ' +' + how) : (from + '→' + to + ' (' + how + ')') });
       });
@@ -5027,6 +5030,9 @@
     // This is a destructive authoring action, so it returns a fresh array for the
     // caller to snapshot/undo around rather than mutating in place.
     function _ambReharmonize(cfg, chords, amount, seedSalt) {
+      // The `changed` list is a REPORT (a toast naming what moved), so it is
+      // named in the sounding key like every other chord readout.
+      const _vsRh = _ambProgViewShift(_E, cfg, chords);
       const amt = Math.max(0, Math.min(100, amount | 0));
       const src = (chords || []);
       const seed = ((cfg && cfg.seed | 0) || 1) ^ ((seedSalt | 0) >>> 0);
@@ -5039,7 +5045,7 @@
         const c2 = _ambCloneChord(ch);
         c2.root = pick.root; c2.intervals = pick.intervals.slice(); delete c2.form;
         out.push(c2);
-        changed.push({ i, from: _ambChordShort(ch), to: _ambChordShort(c2), how: pick._label });
+        changed.push({ i, from: _ambChordShort(_ambChordShift(ch, _vsRh)), to: _ambChordShort(_ambChordShift(c2, _vsRh)), how: pick._label });
       });
       return { chords: out, changed };
     }
@@ -21189,8 +21195,9 @@
         const permN = _ambProgOrderPerm(cfg, len, cyc + 1);
         const ci = (i) => perm ? perm[i] : i;
         const ciN = (i) => permN ? permN[i] : i;
+        const _vsS = _ambProgViewShift(E, cfg, chords);
         const nm = (c) => { const iv = Array.isArray(c.intervals) ? c.intervals : []; const min3 = iv.indexOf(3) >= 0 && iv.indexOf(4) < 0;
-          return _AMB_CHROM[(((c.root | 0) % 12) + 12) % 12] + (min3 ? (iv.indexOf(6) >= 0 && iv.indexOf(7) < 0 ? '°' : 'm') : ''); };
+          return _AMB_CHROM[(((((c.root | 0) + _vsS) % 12) + 12) % 12)] + (min3 ? (iv.indexOf(6) >= 0 && iv.indexOf(7) < 0 ? '°' : 'm') : ''); };
         const curTxt = chords.map((c, i) => {
           const n = (s.colors | 0) > 0 ? _ambProgSaltSegCount(s, cyc * len + i, seed) : 1;
           return '<span class="salt-ch" data-sci="' + i + '">' + nm(chords[ci(i)]) + ' ' + _ambFmtBpc(cur[ci(i)]) + (n > 1 ? '<i title="' + n + ' segments this pass — the downbeat stays the written chord, the rest are colors of it">×' + n + '</i>' : '') + '</span>';
@@ -21255,10 +21262,16 @@
       const chords = cfg.prog.chords, N = chords.length;
       const rows = _ambChordMatrixRows(cfg);
       // cheap re-render guard (masks + shape + labels)
-      const sig = N + '|' + rows.map(r => r.key + ':' + JSON.stringify(r.L.chordMask || 0)).join(',');
+      const sig = N + '|' + rows.map(r => r.key + ':' + JSON.stringify(r.L.chordMask || 0)).join(',') +
+        '|s' + _ambProgViewShift(E, cfg, chords) + '|' + chords.map(c2 => c2.root).join('.');
       if (el._sig === sig) return;
       el._sig = sig;
-      const chName = (ch) => { try { return (typeof CHROMATIC !== 'undefined' && CHROMATIC[((ch.root % 12) + 12) % 12]) || '?'; } catch (e) { return '?'; } };
+      // Name the chord as it SOUNDS. Missed in the readout sweep: this header
+      // reads the raw root, so under Key/transpose it labelled the columns C F G
+      // for chords the engine plays as A D E — and the cell tooltips + the exact
+      // editor's title quote this same helper, so all three were wrong together.
+      const _vsM = _ambProgViewShift(E, cfg, chords);
+      const chName = (ch) => { try { return (typeof CHROMATIC !== 'undefined' && CHROMATIC[((((ch.root | 0) + _vsM) % 12) + 12) % 12]) || '?'; } catch (e) { return '?'; } };
       // The cells are a PROBABILITY and the Part column is a DURATION fraction —
       // two different axes side by side, so a bare "60" reads as either. Name the
       // axis in the title, spell the scale out in words, and say that the roll is
@@ -28490,7 +28503,12 @@
         const _pgDetectKey = () => {
             _E = E; const c = E.getCfg(); if (!c || !c.prog || !Array.isArray(c.prog.chords) || !c.prog.chords.length) {
               try { if (typeof showToast === 'function') showToast('No progression to analyse.'); } catch (e) {} return; }
-            const d = _ambDetectKey(c.prog.chords);
+            // Analyse what is HEARD. Under Key/transpose the engine re-roots the
+            // whole progression, so detecting on the written chords reports the
+            // key of a template nobody is playing — and then offers to set the
+            // area key to it, which would move the sound again.
+            const _vsD = _ambProgViewShift(E, c, c.prog.chords);
+            const d = _ambDetectKey(_vsD ? c.prog.chords.map(x => _ambChordShift(x, _vsD)) : c.prog.chords);
             if (!d) { try { if (typeof showToast === 'function') showToast('Couldn’t read a key from these chords.'); } catch (e) {} return; }
             const nm = CHROMATIC[d.root] + ' ' + d.scale;
             const cur = _ambKeyRootPc(c), curS = _ambKeyScaleName(c);

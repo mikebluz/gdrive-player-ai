@@ -3846,8 +3846,10 @@
       ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-pm-modal">' +
         '<div class="sm-title">' + esc(o.label) + '</div>' +
         '<div class="ambient-step-modal-body">' +
-          '<div class="ambient-pm-modal-hint">The chance this layer plays. Rolled once per ' + esc(o.unit) +
-            ', so it is in or out for the whole ' + esc(o.unit) + ' — a lower % means it sits out more passes, not that it plays quieter or shorter.</div>' +
+          '<div class="ambient-pm-modal-hint">' + (o.bulk
+            ? ('Sets <b>every ' + esc(o.bulk) + '</b> at once. The chance is rolled once per ' + esc(o.unit) + ', so a layer is in or out for the whole ' + esc(o.unit) + '.')
+            : ('The chance this layer plays. Rolled once per ' + esc(o.unit) +
+               ', so it is in or out for the whole ' + esc(o.unit) + ' — a lower % means it sits out more passes, not that it plays quieter or shorter.')) + '</div>' +
           '<div class="ambient-ctrl ambient-step-row"><label>Chance</label>' +
             '<input type="range" class="ambient-pm-modal-sl" min="0" max="100" step="1" value="' + v0 + '">' +
             '<span class="ambient-step-val ambient-pm-modal-val">' + v0 + '%</span></div>' +
@@ -3857,22 +3859,35 @@
               .map(x => '<button type="button" class="ambient-seg ambient-pm-modal-preset" data-v="' + x + '">' +
                 (x >= 100 ? 'always' : (x <= 0 ? 'never' : x + '%')) + '</button>').join('') +
           '</div>' +
+          // SPREAD: the slider always writes the one cell (immediate, reversible),
+          // and these are the explicit "and everything else like it" actions —
+          // one click, named, so a wide edit is never something you did by accident.
+          // Absent when the modal was opened on a whole row/column already.
+          (o.onRow || o.onCol ? '<div class="ambient-pm-modal-spread">' +
+            (o.onRow ? '<button type="button" class="ambient-seg pm-sp-row">Set all of <b>' + esc(o.rowLabel || 'this layer') + '</b> to <i class="pm-sp-v">' + v0 + '%</i></button>' : '') +
+            (o.onCol ? '<button type="button" class="ambient-seg pm-sp-col">Set every layer on <b>' + esc(o.colLabel || 'this ' + o.unit) + '</b> to <i class="pm-sp-v">' + v0 + '%</i></button>' : '') +
+          '</div>' : '') +
         '</div>' +
         '<div class="sm-footer"><button type="button" class="sm-apply ambient-pm-modal-done">Done</button></div></div>';
       document.body.appendChild(ov);
       ov.style.setProperty('display', 'flex', 'important');
       const sl = ov.querySelector('.ambient-pm-modal-sl'), val = ov.querySelector('.ambient-pm-modal-val');
       const close = () => { try { ov.remove(); } catch (e) {} };
+      let cur = v0;
       const set = (v) => {
         const n = Math.max(0, Math.min(100, v | 0));
+        cur = n;
         sl.value = String(n); val.textContent = n + '%';
         ov.querySelectorAll('.ambient-pm-modal-preset').forEach(bt => bt.classList.toggle('active', (bt.dataset.v | 0) === n));
+        ov.querySelectorAll('.pm-sp-v').forEach(e2 => { e2.textContent = n + '%'; });
         try { o.onSet(n); } catch (e) {}
       };
       set(v0);
       sl.addEventListener('input', () => set(sl.value | 0));
       ov.addEventListener('click', (ev) => {
         if (ev.target === ov || (ev.target.closest && ev.target.closest('.ambient-pm-modal-done'))) { close(); return; }
+        if (ev.target.closest && ev.target.closest('.pm-sp-row')) { try { o.onRow(cur); } catch (e) {} close(); return; }
+        if (ev.target.closest && ev.target.closest('.pm-sp-col')) { try { o.onCol(cur); } catch (e) {} close(); return; }
         const pr = ev.target.closest && ev.target.closest('.ambient-pm-modal-preset');
         if (pr) set(pr.dataset.v | 0);
       });
@@ -21752,21 +21767,64 @@
           el._sig = ''; _ambRenderChordMatrix(E);
           if (typeof persistWorkspace === 'function') persistWorkspace();
         };
+        // Write one value across a whole ROW (this layer, every chord) or a whole
+        // COLUMN (this chord, every layer). The column form has to reach layers
+        // other than the clicked row, so it goes through _ambChordMatrixRows
+        // rather than the row element — and each layer it touches needs its own
+        // _ambMaskEditPoke, or the ones that are mid-loop keep the old gate.
+        const setRow = (lkey, v) => {
+          const cfg2 = E.getCfg(); const L = _ambLayerByKey(E, lkey); if (!L || !cfg2 || !cfg2.prog) return;
+          const N2 = cfg2.prog.chords.length;
+          const m = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
+          m.steps = Array.from({ length: N2 }, () => v);
+          commit(lkey);
+        };
+        const setCol = (ci, v) => {
+          const cfg2 = E.getCfg(); if (!cfg2 || !cfg2.prog) return;
+          const N2 = cfg2.prog.chords.length;
+          _ambChordMatrixRows(cfg2).forEach(r2 => {
+            const L = r2.L; if (!L) return;
+            const m = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
+            if (!Array.isArray(m.steps) || m.steps.length !== N2) { const old2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => old2 ? (Number.isFinite(old2[i2 % old2.length]) ? old2[i2 % old2.length] : 100) : 100); }
+            m.steps[ci] = v;
+            try { _ambMaskEditPoke(E, r2.key); } catch (e) {}
+          });
+          el._sig = ''; _ambRenderChordMatrix(E);
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        };
+        const chLabel = (ci) => { const c3 = (E.getCfg().prog.chords || [])[ci]; return 'chord ' + (ci + 1) + (c3 ? ' (' + chName(c3) + ')' : ''); };
         const openEditor = (cell) => {
           const sl = slot(cell); if (!sl) return;
-          const cfg2 = E.getCfg();
-          const ch = cfg2.prog.chords[sl.ci];
           _ambMaskCellModal(E, {
-            label: sl.label + ' · chord ' + (sl.ci + 1) + (ch ? ' (' + chName(ch) + ')' : ''),
+            label: sl.label + ' · ' + chLabel(sl.ci),
             unit: 'chord', value: sl.m.steps[sl.ci],
-            onSet: (v) => { const s2 = slot(cell) || sl; s2.m.steps[s2.ci] = v; commit(sl.lkey); }
+            rowLabel: sl.label, colLabel: chLabel(sl.ci),
+            onSet: (v) => { const s2 = slot(cell) || sl; s2.m.steps[s2.ci] = v; commit(sl.lkey); },
+            onRow: (v) => setRow(sl.lkey, v),
+            onCol: (v) => setCol(sl.ci, v)
           });
+        };
+        // The row label and the column header are the natural handles for "all of
+        // this layer" / "all layers here", so they open the editor already scoped.
+        const openRow = (lkey, label) => {
+          const L = _ambLayerByKey(E, lkey); if (!L) return;
+          const st = (L.chordMask && Array.isArray(L.chordMask.steps)) ? L.chordMask.steps : null;
+          _ambMaskCellModal(E, { label: label + ' · every chord', unit: 'chord', bulk: 'chord for this layer',
+            value: st ? st[0] : 100, onSet: (v) => setRow(lkey, v) });
+        };
+        const openCol = (ci) => {
+          _ambMaskCellModal(E, { label: chLabel(ci) + ' · every layer', unit: 'chord', bulk: 'layer on this chord',
+            value: 100, onSet: (v) => setCol(ci, v) });
         };
         _ambWireMaskCells(el, openEditor);
         el.addEventListener('click', (ev) => {
           // The ✎ toggle rides the same delegated handler as the cells.
           const eb = ev.target && ev.target.closest && ev.target.closest('[data-pm-edit]');
           if (eb) { el._pmEdit = !el._pmEdit; el._sig = ''; _ambRenderChordMatrix(E); return; }
+          const rl = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-row > .ambient-pm-lbl');
+          if (rl) { const row2 = rl.closest('.ambient-pm-row'); openRow(row2.dataset.lkey, rl.textContent); return; }
+          const hd = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-head > .ambient-pm-ch');
+          if (hd) { openCol(Array.prototype.indexOf.call(hd.parentNode.querySelectorAll('.ambient-pm-ch'), hd)); return; }
           const cell = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-cell'); if (!cell) return;
           // A long-press/right-click already opened the editor for this press.
           if (el._suppressClick) { el._suppressClick = false; return; }
@@ -21842,19 +21900,55 @@
           el._sig = ''; _ambRenderSectionMatrix(E);
           if (typeof persistWorkspace === 'function') persistWorkspace();
         };
+        const secLabel = (ci) => { const sc = (E.getCfg().sections || [])[ci]; return (sc && sc.name) || ('section ' + (ci + 1)); };
+        const setRow = (lkey, v) => {
+          const cfg2 = E.getCfg(); const L = _ambLayerByKey(E, lkey); if (!L || !cfg2 || !Array.isArray(cfg2.sections)) return;
+          const m = (L.sectionMask && typeof L.sectionMask === 'object') ? L.sectionMask : (L.sectionMask = {});
+          m.steps = Array.from({ length: cfg2.sections.length }, () => v);
+          commit(lkey);
+        };
+        const setCol = (ci, v) => {
+          const cfg2 = E.getCfg(); if (!cfg2 || !Array.isArray(cfg2.sections)) return;
+          const N2 = cfg2.sections.length;
+          _ambChordMatrixRows(cfg2).forEach(r2 => {
+            const L = r2.L; if (!L) return;
+            const m = (L.sectionMask && typeof L.sectionMask === 'object') ? L.sectionMask : (L.sectionMask = {});
+            if (!Array.isArray(m.steps) || m.steps.length !== N2) { const old2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => old2 ? (Number.isFinite(old2[i2 % old2.length]) ? old2[i2 % old2.length] : 100) : 100); }
+            m.steps[ci] = v;
+            try { _ambMaskEditPoke(E, r2.key); } catch (e) {}
+          });
+          el._sig = ''; _ambRenderSectionMatrix(E);
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        };
         const openEditor = (cell) => {
           const sl = slot(cell); if (!sl) return;
-          const sec = (E.getCfg().sections || [])[sl.ci];
           _ambMaskCellModal(E, {
-            label: sl.label + ' · ' + ((sec && sec.name) || ('section ' + (sl.ci + 1))),
+            label: sl.label + ' · ' + secLabel(sl.ci),
             unit: 'section', value: sl.m.steps[sl.ci],
-            onSet: (v) => { const s2 = slot(cell) || sl; s2.m.steps[s2.ci] = v; commit(sl.lkey); }
+            rowLabel: sl.label, colLabel: secLabel(sl.ci),
+            onSet: (v) => { const s2 = slot(cell) || sl; s2.m.steps[s2.ci] = v; commit(sl.lkey); },
+            onRow: (v) => setRow(sl.lkey, v),
+            onCol: (v) => setCol(sl.ci, v)
           });
+        };
+        const openRow = (lkey, label) => {
+          const L = _ambLayerByKey(E, lkey); if (!L) return;
+          const st = (L.sectionMask && Array.isArray(L.sectionMask.steps)) ? L.sectionMask.steps : null;
+          _ambMaskCellModal(E, { label: label + ' · every section', unit: 'section', bulk: 'section for this layer',
+            value: st ? st[0] : 100, onSet: (v) => setRow(lkey, v) });
+        };
+        const openCol = (ci) => {
+          _ambMaskCellModal(E, { label: secLabel(ci) + ' · every layer', unit: 'section', bulk: 'layer in this section',
+            value: 100, onSet: (v) => setCol(ci, v) });
         };
         _ambWireMaskCells(el, openEditor);
         el.addEventListener('click', (ev) => {
           const eb = ev.target && ev.target.closest && ev.target.closest('[data-pm-edit]');
           if (eb) { el._pmEdit = !el._pmEdit; el._sig = ''; _ambRenderSectionMatrix(E); return; }
+          const rl = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-row > .ambient-pm-lbl');
+          if (rl) { const row2 = rl.closest('.ambient-pm-row'); openRow(row2.dataset.lkey, rl.textContent); return; }
+          const hd = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-head > .ambient-pm-ch');
+          if (hd) { openCol(Array.prototype.indexOf.call(hd.parentNode.querySelectorAll('.ambient-pm-ch'), hd)); return; }
           const cell = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-cell'); if (!cell) return;
           if (el._suppressClick) { el._suppressClick = false; return; }
           if (el._pmEdit) { openEditor(cell); return; }

@@ -258,15 +258,29 @@
       const info = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(id) : null;
       if (!info || !info.urls) return null;
       // Nearest mapped MIDI that actually has a loaded buffer.
+      // DRUM KITS are EXACT-ONLY: a kit maps one DRUM per semitone, so "nearest
+      // loaded" isn't a repitched neighbour of the same instrument (correct for
+      // piano/violin, whose maps are the same timbre every few semitones) — it's a
+      // DIFFERENT DRUM. While a kit's CDN samples stream in after a page load, a
+      // kick hit could resolve to whichever neighbouring drum's buffer landed
+      // first, then flip to the real kick a moment later — heard as "layer tones
+      // changing mid bar" and "sounds different every play" (which fetch wins the
+      // race varies per load). Better a missed hit for the first second than the
+      // wrong drum: return null when the exact zone isn't loaded yet, and the
+      // callers skip the hit / play the brief stand-in until the buffer arrives.
       let sampleMidi = null;
       try {
         const targetMidi = Math.round(Tone.Frequency(tunedFreq).toMidi());
-        let bestD = Infinity;
-        for (const noteName of Object.keys(info.urls)) {
-          let m; try { m = Math.round(Tone.Frequency(noteName).toMidi()); } catch (e) { continue; }
-          if (!sampler._buffers.has(m)) continue;
-          const d = Math.abs(m - targetMidi);
-          if (d < bestD) { bestD = d; sampleMidi = m; }
+        if (info.drumKit) {
+          if (sampler._buffers.has(targetMidi)) sampleMidi = targetMidi;
+        } else {
+          let bestD = Infinity;
+          for (const noteName of Object.keys(info.urls)) {
+            let m; try { m = Math.round(Tone.Frequency(noteName).toMidi()); } catch (e) { continue; }
+            if (!sampler._buffers.has(m)) continue;
+            const d = Math.abs(m - targetMidi);
+            if (d < bestD) { bestD = d; sampleMidi = m; }
+          }
         }
       } catch (e) { return null; }
       if (sampleMidi == null) return null;

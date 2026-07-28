@@ -3751,7 +3751,7 @@
     /* Notes button in the Source group — the layer's pitch material. Styled from
        the same tokens as .ambient-select so it reads as a sibling control, not a
        one-off; amber when the Area progression has locked the source. */
-    .ambient-src-btn {
+    .ambient-notes-btn.ambient-src-locked, .ambient-src-btn {
       width: 100%; min-width: 0; padding: 4px 8px; text-align: left;
       font: 600 0.72rem 'Segoe UI', sans-serif; color: #d9cbff;
       background: rgba(159, 122, 234, 0.16); border: 1px solid rgba(159, 122, 234, 0.45);
@@ -3760,8 +3760,8 @@
     }
     @media (hover: hover) { .ambient-src-btn:hover { background: rgba(159, 122, 234, 0.30); } }
     .ambient-src-btn:focus { outline: none; border-color: rgba(159, 122, 234, 0.85); }
-    .ambient-src-btn.ambient-src-locked { color: #f7c98b; background: rgba(214, 158, 46, 0.14); border-color: rgba(214, 158, 46, 0.45); }
-    .ambient-src-btn.ambient-src-locked::after { content: ' 🔒'; font-size: 0.72em; opacity: 0.8; }
+    .ambient-notes-btn.ambient-src-locked, .ambient-src-btn.ambient-src-locked { color: #f7c98b; background: rgba(214, 158, 46, 0.14); border-color: rgba(214, 158, 46, 0.45); }
+    .ambient-notes-btn.ambient-src-locked::after, .ambient-src-btn.ambient-src-locked::after { content: ' 🔒'; font-size: 0.72em; opacity: 0.8; }
     /* Elapsed / BPM ⚙ Settings pill, re-homed under the footer transport row.
        Full width and centred so it reads as its own strip, not another button. */
     /* `flex: 1 1 100%` like .ambient-footer-transport — .ambient-footer-bar is a

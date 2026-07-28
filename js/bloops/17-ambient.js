@@ -4423,8 +4423,10 @@
     }
     // ---- "Notes" control: a button that opens a Scale / Chord menu ----------
     function _ambNotesButtonHtml(prefix) {
+      let locked = false; try { locked = !!_ambGlobalProg(); } catch (e) {}
       return '<div class="ambient-ctrl"><label>Notes</label>' +
-        '<button type="button" id="' + prefix + '-notes" class="ambient-select ambient-notes-btn">Scale</button>' +
+        '<button type="button" id="' + prefix + '-notes" class="ambient-select ambient-notes-btn' +
+          (locked ? ' ambient-src-locked' : '') + '">Scale</button>' +
         '<span class="ambient-hint">source</span></div>';
     }
     // Phase 2c: when the global progression is turned on, snap the FREE continuous
@@ -5465,6 +5467,9 @@
       const refresh = () => {
         const L = getLayer(); if (!L) return;
         btn.textContent = _ambNotesLabel(_ambNotesOf(L));
+        // Area-progression LOCK — while it's on, _ambNotesOf overrides every
+        // layer's source to it, so the button is a read-only readout.
+        try { btn.classList.toggle('ambient-src-locked', !!_ambGlobalProg()); btn.title = _ambSrcChipTitle(); } catch (e) {}
         try { _ambToneWrapVis(E, tonePrefix, L); } catch (e) {}
         // Notes root moved → the home note (Register readout + key mark) moves.
         try {
@@ -5475,8 +5480,16 @@
       };
       refresh();
       btn.addEventListener('click', () => {
+        if (_ambGlobalProg()) { try { if (typeof showToast === 'function') showToast('Notes are locked to the Area progression — turn Prog off to edit'); } catch (e) {} return; }
         const r = btn.getBoundingClientRect();
-        _ambOpenNotesMenu(E, getLayer, r.left, r.bottom + 4, refresh);
+        // Re-anchor on an actual source change so a frozen Write loop doesn't keep
+        // replaying the old phrase (the "ignores the Notes change" bug).
+        _ambOpenNotesMenu(E, getLayer, r.left, r.bottom + 4, () => {
+          refresh();
+          try { const mid = btnId.slice('ambient-'.length, -('-notes'.length));
+                const k2 = mid.indexOf('-') > 0 ? mid.replace('-', ':') : mid;
+                if (E.timer) _ambReanchorLayer(E, k2); } catch (e) {}
+        });
       });
     }
     // Wire the header compose-readout's Note-source CHIP (the interactive
@@ -5520,7 +5533,7 @@
       _E = E;   // _ambGlobalProg / _ambNotesOf read the module-global engine
       const locked = !!_ambGlobalProg();
       const ttl = _ambSrcChipTitle();
-      host.querySelectorAll('button[id$="-srcswap"]').forEach(btn => {
+      host.querySelectorAll('button.ambient-notes-btn, button[id$="-srcswap"]').forEach(btn => {
         const card = btn.closest('.ambient-layer'); if (!card) return;
         let k = card.getAttribute('data-inst');
         if (!k) { const ph = card.querySelector('[data-phkey]'); k = ph && ph.getAttribute('data-phkey'); }
@@ -23448,18 +23461,6 @@
       // euclidean pattern shown here; tapping a cell hand-edits it into an
       // explicit override. A knob change or Regen resets it to the generated
       // pattern. Filled/wired by _ambWireEuclidGrid (like the trance-gate grid).
-      // NOTES — the layer's pitch material, re-homed into the Source group after the
-      // compose strip was removed. The button id is `<prefix>-srcswap`, which the
-      // EXISTING _ambWireSrcChip wiring (extras + primaries) already looks for, so
-      // this row needs no new handler — only the markup came back.
-      if (k === 'notes') {
-        let lbl = 'Scale', locked = false;
-        try { lbl = _ambNotesLabel(_ambNotesOf(inst || {})); locked = !!_ambGlobalProg(); } catch (e) {}
-        return '<div class="ambient-ctrl"><label for="' + p + '-srcswap">Notes</label>' +
-          '<button type="button" id="' + p + '-srcswap" class="ambient-src-btn' + (locked ? ' ambient-src-locked' : '') +
-            '" title="' + _ambSrcChipTitle() + '">' + lbl + '</button>' +
-          '<span class="ambient-hint">pitch material</span></div>';
-      }
       if (k === 'euclidgrid') return '<div class="ambient-ctrl ambient-slice-row ambient-euclid-ctrl' + ((inst && inst.euclidKit) ? ' ambient-euclid-kitctrl' : '') + '"><label title="The on/off step pattern. Pulses/Steps/Rotate generate it; tap cells to hand-edit; or load a rhythm Preset. A knob change or Regen resets it to the generated Euclid pattern.">Pattern</label>' +
         '<div class="ambient-euclid-wrap">' +
           '<div class="ambient-euclid-presetrow"><select id="' + p + '-euclidpreset" class="ambient-select ambient-euclid-preset" title="Load a rhythm preset (world / rock / African / clave) into the step grid">' + _ambEuclidPresetOptions() + '</select></div>' +
@@ -27244,7 +27245,11 @@
           (sel) => populateGroupedToneSelect(sel, _ambToneOptions(), _ambGridVoiceOption()));
         // Note-source is the header compose-readout CHIP now (the Seed-group "Notes"
         // button was removed); it opens the same source menu + refreshes the Seed UI.
-        _ambWireSrcChip(E, 'ambient-' + layer + '-srcswap', () => { const c = cfg0(); return c ? c[layer] : null; }, 'ambient-' + layer + '-', layer);
+        // PRIMARY layers wire from this hardcoded list, not the schema walk — so the
+        // Notes button needs its own bind here or bed/motif/texture render one that
+        // does nothing. Targets `-notes` (the schema token's id), not the retired
+        // `-srcswap` of the removed compose chip.
+        _ambWireNotesBtn(E, 'ambient-' + layer + '-notes', () => { const c = cfg0(); return c ? c[layer] : null; });
         _ambWireKeyChip(E, 'ambient-' + layer + '-keyov', () => { const c = cfg0(); return c ? c[layer] : null; });   // B2 per-layer KEY override chip
       });
 

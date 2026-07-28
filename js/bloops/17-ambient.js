@@ -15814,6 +15814,18 @@
     //   bloomColdLead()      → report the current value
     // Not persisted: it resets to the default on reload, so it can't become a
     // silent setting someone forgets about.
+    // Test hook: force the NEXT press to classify cold (true) or warm (false)
+    // without waiting out _AMB_COLD_IDLE_SEC. Used by __bloomCold (24-bloom-
+    // coldtest.js) so a cold-vs-warm A/B is one command instead of a two-minute
+    // stopwatch exercise. Only moves the last-stop stamp — no other state.
+    try {
+      if (typeof window !== 'undefined') window._ambColdTestForce = function (cold) {
+        const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        _ambLastStopAt = cold ? (now - (_AMB_COLD_IDLE_SEC + 5)) : now;
+        if (cold) _ambEverPlayed = false;
+        return { cold: !!cold, lastStopAt: _ambLastStopAt };
+      };
+    } catch (e) {}
     try {
       if (typeof window !== 'undefined') window.bloomColdLead = function (sec) {
         if (sec == null) return _AMB_LEAD_COLD;

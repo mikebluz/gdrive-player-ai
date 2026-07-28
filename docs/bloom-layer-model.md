@@ -751,6 +751,18 @@ behaviour, `0.35` = current default, no arg reads it back. Session-only, clamped
 0–2 s. A press counts as COLD only on the first play of a page load or >20 s after
 the last stop, so an A/B needs that wait between presses.
 
+**Probe in place:** `__bloomCold.run()` (js/bloops/24-bloom-coldtest.js) — runs the
+transport itself and prints a two-pass report. PASS 1 plays cold then warm at FULL
+load and reports per-layer NOTE COUNTS (catches "that layer produced nothing").
+PASS 2 solos each layer cold and warm and reports per-layer RMS in dB (catches
+"that layer came in 12 dB down"). Flags any layer off by ≥3 dB in EITHER
+direction, and prints which engine is live. `__bloomCold.dump()` gives pasteable
+JSON. Two constraints it was built around: the WASM core strips render and mix
+inside the worklet, so tapping the per-layer Tone chain reads SILENCE (level has
+to come from soloing + the master bus); and soloing lowers DSP load, so PASS 1 is
+the one to trust for load-dependent faults. Verified against a planted cold-only
+level fault — reported it at 23 dB.
+
 **What would localise it next time:** which layers go quiet and whether their
 reverb send is up (a layer that loses its wet signal reads as much quieter, and
 that is a different code path from level); whether it tracks `bloomColdLead`;

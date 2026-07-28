@@ -3258,6 +3258,31 @@
       });
       return out;
     }
+    // The chord that SOUNDS at progression step `step` — resolved through the
+    // engine's OWN path (↻ order-perm → per-slot alts → 🎲 take-reroll → 🌊 vary /
+    // tension) by setting the same override the emitters set.
+    //
+    // EVERY chord DISPLAY must go through this. Reading `prog.chords[step % len]`
+    // directly shows the AUTHORED chord, which is a different chord whenever any
+    // read-time resolution is active — measured with take-reroll at 100%: the
+    // header pill read "F" while the engine sounded D. The authored array is the
+    // score, not what you hear; only _ambProgCurrentChord knows the difference.
+    function _ambProgChordAt(E, src, step) {
+      const prevOv = _ambProgStepOverride, prevE = _E;
+      try {
+        _E = E || _E;
+        _ambProgStepOverride = step | 0;
+        // Build the prog-notes shape explicitly: `cfg.prog` has no `type`, so
+        // _ambAsNotes would coerce it to a SCALE and the resolver would see no
+        // chords. Reuse the SAME chords array by reference — the take-reroll and
+        // order-perm gates test `n.chords === cfg.prog.chords` identity.
+        const chords = Array.isArray(src && src.chords) ? src.chords
+          : (Array.isArray(src) ? src : null);
+        if (!chords || !chords.length) return null;
+        return _ambProgCurrentChord({ type: 'prog', chords: chords });
+      } catch (e) { return null; }
+      finally { _ambProgStepOverride = prevOv; _E = prevE; }
+    }
     function _ambProgCurrentChord(n) {
       const chs = Array.isArray(n.chords) ? n.chords : [];
       if (!chs.length) return null;
@@ -4739,7 +4764,7 @@
       if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return '';
       const tnow = ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0)) + 0.016;
       let step = 0; try { step = _ambProgStepAt(E, tnow) | 0; } catch (e) {}
-      const ch = p.chords[((step % p.chords.length) + p.chords.length) % p.chords.length];
+      const ch = _ambProgChordAt(E, p, step) || p.chords[((step % p.chords.length) + p.chords.length) % p.chords.length];
       return _ambChordShort(ch);
     }
     // B3: roman-numeral for a chord relative to a key (root pc + scale name). Degree
@@ -20754,7 +20779,15 @@
       const p = cfg && cfg.prog; if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) { if (el._curCi !== -1) { el._curCi = -1; el.querySelectorAll('.ambient-pov-chord.cur').forEach(n => n.classList.remove('cur')); } return; }
       const tnow = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + 0.016;
       let step = 0; try { step = _ambProgStepAt(E, tnow) | 0; } catch (e) {}
-      const ci = ((step % p.chords.length) + p.chords.length) % p.chords.length;
+      let ci = ((step % p.chords.length) + p.chords.length) % p.chords.length;
+      // ↻ ORDER permutes which written chord plays in this slot — highlight the
+      // chip that is actually SOUNDING, not the slot index. (alts / take-reroll
+      // resolve to objects that aren't in the written list at all; for those the
+      // slot IS the right chip, which is what the identity lookup falls back to.)
+      try {
+        const _snd = _ambProgChordAt(E, p, step);
+        if (_snd) { const _j = p.chords.indexOf(_snd); if (_j >= 0) ci = _j; }
+      } catch (e) {}
       if (ci === el._curCi) return;
       el._curCi = ci;
       el.querySelectorAll('.ambient-pov-chord.cur').forEach(n => n.classList.remove('cur'));
@@ -22144,7 +22177,11 @@
         let cb = 0, ci = 0, cBlocks = '';
         while (cb < VIEW - 1e-6 && ci < 96) {
           const _at = _bound ? _chordAtBar(cb) : null;
-          const ch = pg.chords[_at ? _at.idx : (ci % pg.chords.length)];
+          // Resolve through the engine's path so the lane labels the chord that
+          // SOUNDS in each block, not the authored one (they differ under ↻ order
+          // / alts / 🎲 take-reroll — the same defect the header pill had).
+          const _slotI = _at ? _at.idx : (ci % pg.chords.length);
+          const ch = _ambProgChordAt(E, pg, _slotI) || pg.chords[_slotI];
           const clen = Math.max(0.05, _at ? _at.len : lens[ci % lens.length]);
           const cw = Math.min(clen, VIEW - cb) / VIEW * 100;
           const lbl = _ambChordShort(ch);

@@ -2483,6 +2483,9 @@
         // FRESH object per part, so anything not carried explicitly is dropped on
         // every normalize (the same trap the sections repair has).
         const e = { name, len };
+        // How many times this part runs before the progression moves on. 1 is the
+        // neutral value and is NOT stored, so a plain chain stays byte-identical.
+        if (Number.isFinite(p.plays) && (p.plays | 0) > 1) e.plays = Math.min(64, p.plays | 0);
         if (p.key && typeof p.key === 'object' && Number.isFinite(p.key.root)) {
           const sc = (typeof SCALES !== 'undefined' && SCALES[p.key.scale]) ? p.key.scale : 'major';
           e.key = { root: (((p.key.root | 0) % 12) + 12) % 12, scale: sc };
@@ -3709,6 +3712,43 @@
           // and `floor(step / chords.length)` is the variation cycle the alternates
           // and order-perm hash on — so alts still evolve inside a bound section.
           return ((_at.step | 0) + _loops) * _L + ((_part.from + _k) % _L);
+        }
+      }
+      // ---- PART REPEATS -------------------------------------------------------
+      // `parts[i].plays` — how many times a part runs before the progression moves
+      // on (Verse ×2 → Chorus ×1 → …). The written chord list is unchanged; what
+      // changes is the ORDER OF PLAY, so this expands the parts into the sequence
+      // actually heard and walks that. GATED on some part carrying plays > 1, so
+      // the default path below is untouched and the harness (no parts) is
+      // byte-identical. Mutually exclusive with the section-bound branch above,
+      // which pins ONE part and returns before reaching here.
+      // BOTH caller contracts survive: `step % L` is the chord index and
+      // `floor(step / L)` the variation cycle — the latter advancing once per full
+      // pass through the part sequence, so repeats of a part play the same chords
+      // (which is what a repeat means) while alts still evolve pass to pass.
+      if (!_ownSrc && cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length
+          && Array.isArray(cfg.prog.parts) && cfg.prog.parts.some(p => p && (p.plays | 0) > 1)) {
+        const all = cfg.prog.chords, L = all.length;
+        const seq = []; let from = 0;
+        cfg.prog.parts.forEach(p => {
+          const plen = Math.max(1, p.len | 0), plays = Math.max(1, p.plays | 0);
+          for (let r = 0; r < plays; r++) {
+            for (let i = 0; i < plen; i++) {
+              const abs = from + i; if (abs >= L) break;
+              const c = all[abs];
+              seq.push({ abs, len: (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc });
+            }
+          }
+          from += plen;
+        });
+        if (seq.length) {
+          const cycle = seq.reduce((a2, v) => a2 + v.len, 0) || bpc;
+          const loops = Math.floor(bars / cycle);
+          let rem = bars - loops * cycle, k = 0;
+          while (k < seq.length - 1 && rem >= seq[k].len) { rem -= seq[k].len; k++; }
+          const step = loops * L + seq[k].abs;
+          _ambProgPosHint = { step: step, pos: Math.max(0, Math.min(1, rem / Math.max(1e-6, seq[k].len))) };
+          return step;
         }
       }
       // Per-chord lengths: if any chord carries its own `bars`, walk the cumulative
@@ -21714,10 +21754,14 @@
       el.style.display = on ? '' : 'none';
       if (!on) { el.innerHTML = ''; el._sig = ''; return; }
       const chords = cfg.prog.chords, N = chords.length;
+      const prog = cfg.prog;
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
       const rows = _ambChordMatrixRows(cfg);
       // cheap re-render guard (masks + shape + labels)
       const sig = N + '|' + rows.map(r => r.key + ':' + JSON.stringify(r.L.chordMask || 0)).join(',') +
-        '|s' + _ambProgViewShift(E, cfg, chords) + '|' + chords.map(c2 => c2.root).join('.');
+        '|s' + _ambProgViewShift(E, cfg, chords) + '|' + chords.map(c2 => c2.root).join('.') +
+        '|t' + (Number.isFinite(el._pmPart) ? el._pmPart : -1) +
+        '|p' + (Array.isArray(prog.parts) ? prog.parts.map(p => p.name + ':' + p.len + ':' + (p.plays | 0)).join('/') : '');
       if (el._sig === sig) return;
       el._sig = sig;
       // Name the chord as it SOUNDS. Missed in the readout sweep: this header
@@ -21733,14 +21777,52 @@
       // axis in the title, spell the scale out in words, and say that the roll is
       // once per chord (the thing that makes 60% sound like "sits out some passes"
       // rather than "plays quieter" or "plays 60% of the bar").
+      // PART TABS — a long progression is a chain of named parts, and editing all
+      // of it at once means a 16-column grid on a 390px phone. One tab per part
+      // scopes the grid to that part's chords; "All" is the whole thing, and is
+      // the only view when there are no parts. The tab also carries the part's
+      // REPEAT count, because "how many times does the verse run" belongs next to
+      // the verse, not in a separate panel.
+      const _pmParts = (Array.isArray(prog.parts) && prog.parts.length > 1) ? prog.parts : null;
+      if (_pmParts) {
+        if (!Number.isFinite(el._pmPart) || el._pmPart >= _pmParts.length) el._pmPart = -1;
+      } else el._pmPart = -1;
       let h = '<div class="ambient-pm-title">Chord matrix — how often each layer plays on each chord' + _ambMaskEditBtnHtml(!!el._pmEdit) + '</div>';
+      if (_pmParts) {
+        let acc0 = 0;
+        h += '<div class="ambient-pm-tabs">' +
+          '<button type="button" class="ambient-pm-tab' + (el._pmPart < 0 ? ' on' : '') + '" data-pmpart="-1" title="Every chord in the progression">All</button>' +
+          _pmParts.map((p, pi) => {
+            const plays = Math.max(1, p.plays | 0);
+            const from = acc0; acc0 += Math.max(1, p.len | 0);
+            const kk = p.key ? (' · ' + _AMB_CHROM[p.key.root] + ' ' + p.key.scale.slice(0, 3)) : '';
+            return '<span class="ambient-pm-tabwrap' + (el._pmPart === pi ? ' on' : '') + '">' +
+              '<button type="button" class="ambient-pm-tab' + (el._pmPart === pi ? ' on' : '') + '" data-pmpart="' + pi + '"' +
+                ' title="' + esc(p.name) + ' — chords ' + (from + 1) + '-' + acc0 + kk + '">' + esc(p.name) + '</button>' +
+              '<span class="ambient-pm-plays" title="How many times “' + esc(p.name) + '” runs before the progression moves to the next part.">' +
+                '<button type="button" class="ambient-pm-playsbtn" data-pmplays="' + pi + ':-1" title="Fewer repeats"' + (plays <= 1 ? ' disabled' : '') + '>−</button>' +
+                '<b>' + plays + '×</b>' +
+                '<button type="button" class="ambient-pm-playsbtn" data-pmplays="' + pi + ':1" title="More repeats"' + (plays >= 64 ? ' disabled' : '') + '>＋</button>' +
+              '</span></span>';
+          }).join('') + '</div>';
+      }
       h += '<div class="ambient-pm-legend"><b>Cell</b> = the chance this layer plays that chord — tap to step <b>always → 60% → 30% → never</b>, or press and hold (✎ % to make a tap do it) for <b>any value 0-100</b>. Rolled once per chord, so the layer is in or out for that whole chord; it never cuts in halfway. <b>Part</b> is the other axis: how much of each chord it plays once it is in.</div>';
-      h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + chords.map((c2, i) => '<span class="ambient-pm-ch' + (_ambIsTransition(c2) ? ' pm-trans' : '') + '"' + (_ambIsTransition(c2) ? ' title="Transition — a walk into the next chord. Leave this cell on for a layer to walk it, set it to never to sit the bar out."' : '') + '>' + (i + 1) + '·' + chName(c2) + '</span>').join('') + '<span class="ambient-pm-part">Part</span></div>';
+      // Column window for the selected tab. Cell/header indices stay ABSOLUTE
+      // (data-ci), so every setter keeps writing the right slot of the mask.
+      let _pmFrom = 0, _pmTo = N;
+      if (_pmParts && el._pmPart >= 0) {
+        let a0 = 0;
+        for (let i = 0; i < _pmParts.length; i++) { const l2 = Math.max(1, _pmParts[i].len | 0); if (i === el._pmPart) { _pmFrom = a0; _pmTo = Math.min(N, a0 + l2); break; } a0 += l2; }
+      }
+      const _pmCols = [];
+      for (let i = _pmFrom; i < _pmTo; i++) _pmCols.push(i);
+      h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + _pmCols.map((i) => chords[i]).map((c2, _n) => { const i = _pmCols[_n]; return '<span class="ambient-pm-ch' + (_ambIsTransition(c2) ? ' pm-trans' : '') + '"' + (_ambIsTransition(c2) ? ' title="Transition — a walk into the next chord. Leave this cell on for a layer to walk it, set it to never to sit the bar out."' : '') + '>' + (i + 1) + '·' + chName(c2) + '</span>'; }).join('') + '<span class="ambient-pm-part">Part</span></div>';
       rows.forEach(r => {
         const steps = (r.L.chordMask && Array.isArray(r.L.chordMask.steps)) ? r.L.chordMask.steps : null;
         const part = (r.L.chordMask && r.L.chordMask.part) || null;
         h += '<div class="ambient-pm-row" data-lkey="' + r.key + '"><span class="ambient-pm-lbl" title="' + r.label + '">' + r.label + '</span>' +
-          chords.map((c2, i) => {
+          _pmCols.map((i) => {
+            const c2 = chords[i];
             const v = steps ? (Number.isFinite(steps[i % steps.length]) ? steps[i % steps.length] : 100) : 100;
             return _ambMaskCellHtml(v, i, r.label + ' · chord ' + (i + 1) + ' (' + chName(c2) + ') — ' + _ambMaskCellTip(v, 'chord', !!el._pmEdit));
           }).join('') +
@@ -21825,6 +21907,24 @@
           // The ✎ toggle rides the same delegated handler as the cells.
           const eb = ev.target && ev.target.closest && ev.target.closest('[data-pm-edit]');
           if (eb) { el._pmEdit = !el._pmEdit; el._sig = ''; _ambRenderChordMatrix(E); return; }
+          const tb = ev.target && ev.target.closest && ev.target.closest('[data-pmpart]');
+          if (tb) { el._pmPart = tb.dataset.pmpart | 0; el._sig = ''; _ambRenderChordMatrix(E); return; }
+          // The repeat stepper sits ON the tab, because "how many times does the
+          // verse run" belongs next to the verse. 1 is neutral and is deleted
+          // rather than stored, so a plain chain keeps no plays field at all.
+          const pl = ev.target && ev.target.closest && ev.target.closest('[data-pmplays]');
+          if (pl) {
+            _E = E; const cfg3 = E.getCfg(); const ps = cfg3 && cfg3.prog && cfg3.prog.parts;
+            const aa = String(pl.dataset.pmplays).split(':'), pi = aa[0] | 0, d = aa[1] | 0;
+            if (ps && ps[pi]) {
+              const nv = Math.max(1, Math.min(64, Math.max(1, ps[pi].plays | 0) + d));
+              if (nv > 1) ps[pi].plays = nv; else delete ps[pi].plays;
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              el._sig = ''; _ambRenderChordMatrix(E);
+              try { _ambRenderProgOverview(E); _ambRenderScheduler(E); } catch (e) {}
+            }
+            return;
+          }
           const rl = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-row > .ambient-pm-lbl');
           if (rl) { const row2 = rl.closest('.ambient-pm-row'); openRow(row2.dataset.lkey, rl.textContent); return; }
           const hd = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-head > .ambient-pm-ch');

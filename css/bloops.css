@@ -12179,6 +12179,19 @@
     .ambient-pm-title .ambient-hint { text-transform: none; letter-spacing: 0; margin-left: 8px; }
     /* Legend: the cells are a CHANCE, the Part column is a DURATION. Without
        this spelled out a bare "60" reads as either (or as a volume). */
+    /* Part tabs — scope the grid to one part, and carry that part's repeat
+       count, so a 16-chord progression is editable on a phone. */
+    .ambient-pm-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 0 0 7px; }
+    .ambient-pm-tabwrap { display: inline-flex; align-items: stretch; border: 1px solid #2d2d3f; border-radius: 7px; overflow: hidden; }
+    .ambient-pm-tabwrap.on { border-color: #35c98e; }
+    .ambient-pm-tab { padding: 3px 10px; border: 1px solid #2d2d3f; border-radius: 7px; background: #16162a; color: #9a9ac0; cursor: pointer; font-size: 0.7rem; font-weight: 600; touch-action: manipulation; }
+    .ambient-pm-tabwrap .ambient-pm-tab { border: 0; border-radius: 0; }
+    .ambient-pm-tab.on { background: rgba(53,201,142,0.18); color: #7fe0b6; border-color: #35c98e; }
+    .ambient-pm-plays { display: inline-flex; align-items: center; gap: 2px; padding: 0 4px; border-left: 1px solid #2d2d3f; background: #0f0f1e; }
+    .ambient-pm-plays b { min-width: 22px; text-align: center; color: #cbd5e0; font-size: 0.66rem; font-weight: 700; }
+    .ambient-pm-playsbtn { width: 18px; height: 20px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: #8a8aa8; cursor: pointer; font-size: 0.72rem; line-height: 1; touch-action: manipulation; }
+    .ambient-pm-playsbtn:disabled { opacity: 0.3; cursor: default; }
+    @media (hover: hover) { .ambient-pm-playsbtn:hover:not(:disabled) { background: #23233a; color: #e2e8f0; } }
     .ambient-pm-legend { font-size: 0.64rem; line-height: 1.45; color: #8a8aa8; margin: 0 0 6px; padding: 5px 8px; border: 1px solid #23233a; border-left: 3px solid #35c98e; border-radius: 6px; background: rgba(53,201,142,0.06); }
     .ambient-pm-legend b { color: #cbd5e0; font-weight: 700; }
     .ambient-pm-head, .ambient-pm-row { display: flex; align-items: center; gap: 4px; min-width: 0; }

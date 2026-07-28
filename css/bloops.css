@@ -3265,6 +3265,15 @@
        intrinsic width; the two selects share what's left and may ellipsise. */
     .ambient-prog-order { flex-wrap: nowrap; gap: 6px; min-width: 0; }
     .ambient-prog-order > .salt-lbl { flex: 0 0 auto; white-space: nowrap; }
+    /* The ↻ Order label IS the on/off control — styled as a quiet toggle so it
+       reads as clickable, and lit when active. */
+    .ambient-order-toggle {
+      background: transparent; border: 1px solid #2d2d3f; border-radius: 6px;
+      padding: 3px 9px; cursor: pointer; touch-action: manipulation;
+      font: 600 0.72rem 'Segoe UI', sans-serif; color: #8b7fa8;
+    }
+    .ambient-order-toggle.active { color: #e9e4f8; background: rgba(159,122,234,0.22); border-color: #9f7aea; }
+    @media (hover: hover) { .ambient-order-toggle:not(.active):hover { color: #cbb8ee; border-color: #4a3d6b; } }
     .ambient-prog-order > .ambient-select { flex: 1 1 0; width: auto; min-width: 0; }
     .ambient-prog-salt .salt-lbl { color: #9f7aea; font-weight: 600; }
     .ambient-prog-salt .ambient-sched-grp { display: inline-flex; align-items: center; gap: 5px; }

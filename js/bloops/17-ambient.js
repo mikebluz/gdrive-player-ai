@@ -26124,10 +26124,20 @@
               if (orow) {
                 orow.style.display = progOn ? '' : 'none';
                 const o = (cfg.prog && cfg.prog.order) || {};
+                const active = !!o.mode;   // no mode stored = inactive = written order
+                const tog = document.getElementById(tr('ambient-order-toggle'));
+                if (tog) { tog.classList.toggle('active', active);
+                  tog.title = active
+                    ? '↻ Order is ON — click to turn off (back to written order, every cycle)'
+                    : '↻ Order — re-order the progression’s chords on scheduled cycles. OFF = written order, every cycle. Click to turn on.'; }
                 const mSel = document.getElementById(tr('ambient-order-mode'));
                 const wSel = document.getElementById(tr('ambient-order-when'));
-                if (mSel && document.activeElement !== mSel) mSel.value = o.mode || '';
-                if (wSel && document.activeElement !== wSel) wSel.value = o.when || 'always';
+                // Hidden while inactive: with the defaults implicit there is nothing
+                // to show, and the row collapses to just its label.
+                if (mSel) { mSel.style.display = active ? '' : 'none';
+                  if (document.activeElement !== mSel) mSel.value = o.mode || 'shuffle'; }
+                if (wSel) { wSel.style.display = active ? '' : 'none';
+                  if (document.activeElement !== wSel) wSel.value = o.when || 'always'; }
               } }
             try { _ambSaltReadoutSync(E, true); } catch (e) {}
           } }
@@ -26518,8 +26528,12 @@
             '</div>' +
             // ↻ ORDER — scheduled chord re-ordering (engine: _ambProgOrderPerm).
             '<div class="ambient-row ambient-prog-salt ambient-prog-order" id="ambient-prog-orderrow" style="display:none" title="Play order — re-order the progression’s chords on scheduled cycles (deterministic per seed; the readout below shows each cycle’s actual order).">' +
-              '<span class="ambient-sched-lbl salt-lbl">↻ order</span>' +
-              '<select id="ambient-order-mode" class="ambient-select"><option value="">Written</option><option value="shuffle">Random</option><option value="reverse">Reversed</option></select>' +
+              // The LABEL is the on/off. Inactive = the implicit defaults (written
+              // order, every cycle) — i.e. the engine does nothing — so "Written"
+              // no longer needs to occupy a slot in the mode list; turning Order
+              // OFF is what "written" means. Activating picks Random by default.
+              '<button type="button" class="ambient-sched-lbl salt-lbl ambient-order-toggle" id="ambient-order-toggle" title="↻ Order — re-order the progression\u2019s chords on scheduled cycles. OFF = written order, every cycle. Click to turn on.">↻ Order</button>' +
+              '<select id="ambient-order-mode" class="ambient-select"><option value="shuffle">Random</option><option value="reverse">Reversed</option></select>' +
               '<select id="ambient-order-when" class="ambient-select" title="Which progression cycles play in the altered order (the rest play as written)"><option value="always">every cycle</option><option value="10">1 in 2</option><option value="100">1 in 3</option><option value="1000">1 in 4</option><option value="10000000">1 in 8</option></select>' +
             '</div>' +
             // 🧂/↻ live readout — this cycle's actual plan (salted lengths, colors,
@@ -28230,14 +28244,25 @@
           });
         });
         // ↻ order selects → cfg.prog.order (mode '' deletes; normalize prunes).
+        // ↻ Order ON/OFF lives on the LABEL. OFF deletes `prog.order` entirely, so
+        // absence keeps meaning "written order, every cycle" for the engine and
+        // for save-compat; ON seeds the defaults you'd otherwise have to pick.
+        { const oTog = G('ambient-order-toggle');
+          if (oTog) oTog.addEventListener('click', () => {
+            _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
+            if (c.prog.order && c.prog.order.mode) delete c.prog.order;
+            else c.prog.order = { mode: 'shuffle', when: 'always' };
+            persist();
+            try { _ambSyncControls(E); } catch (e) {}
+            try { _ambSaltReadoutSync(E, true); } catch (e) {}
+          }); }
         [['ambient-order-mode', 'mode'], ['ambient-order-when', 'when']].forEach(pr => {
           const el = G(pr[0]); if (!el) return;
           el.addEventListener('change', () => {
             _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
             const mSel = G('ambient-order-mode'), wSel = G('ambient-order-when');
-            const mode = mSel ? mSel.value : '';
-            if (!mode) delete c.prog.order;
-            else c.prog.order = { mode: mode, when: (wSel && wSel.value) || 'always' };
+            // Neither list can select "off" any more — that is the label's job.
+            c.prog.order = { mode: (mSel && mSel.value) || 'shuffle', when: (wSel && wSel.value) || 'always' };
             persist();
             try { _ambSaltReadoutSync(E, true); } catch (e) {}
           });

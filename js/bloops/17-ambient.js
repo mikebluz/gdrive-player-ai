@@ -2474,7 +2474,16 @@
         const p = parts[i]; if (!p || typeof p !== 'object') continue;
         const len = Math.max(1, Math.min(total - acc, Number.isFinite(p.len) ? (p.len | 0) : 1));
         const name = (typeof p.name === 'string' && p.name.trim()) ? p.name.trim().slice(0, 16) : ('Part ' + (out.length + 1));
-        out.push({ name, len }); acc += len;
+        // PER-PART KEY (additive): the key in force while this part plays — a real
+        // modulation mid-progression, with the AREA key left alone. This builds a
+        // FRESH object per part, so anything not carried explicitly is dropped on
+        // every normalize (the same trap the sections repair has).
+        const e = { name, len };
+        if (p.key && typeof p.key === 'object' && Number.isFinite(p.key.root)) {
+          const sc = (typeof SCALES !== 'undefined' && SCALES[p.key.scale]) ? p.key.scale : 'major';
+          e.key = { root: (((p.key.root | 0) % 12) + 12) % 12, scale: sc };
+        }
+        out.push(e); acc += len;
       }
       if (!out.length) return undefined;
       if (acc < total) out[out.length - 1].len += (total - acc);
@@ -3417,7 +3426,7 @@
       let sh = 0;
       try {
         if (cfg.keyOn && _ambKeyMode(cfg) === 'transpose') {
-          sh += _ambProgKeyOffset({ type: 'prog', chords: chords }, _ambKeyRootPc(cfg));
+          sh += _ambProgKeyOffset({ type: 'prog', chords: chords }, _ambAreaKeyRootPc(cfg));
         }
       } catch (e) {}
       try {
@@ -4034,16 +4043,78 @@
     // Read the current engine's (already-normalized) cfg cheaply: the tick
     // caches it on E._cfg, so generation reads keyOn/keyRoot without a fresh
     // normalize. Returns null off the audio path (UI-only calls fall through).
+    // ---- PER-PART KEY ------------------------------------------------------
+    // `parts[i].key = {root, scale}` is the key in force while that part of the
+    // progression plays. Resolved the same way the section key is (_ambSectionKeyNow):
+    // off the note's own _ambKeyTime stamp, falling back to the audio clock for UI
+    // reads, so the change lands exactly on the part boundary with no rescheduling.
+    // Returns null whenever no part carries a key, which is the overwhelming
+    // majority — so the default path through _ambKeyRootPc/_ambKeyScaleName is
+    // untouched and the harness (no parts) is byte-identical by construction.
+    let _ambPartKeyBusy = false;
+    // The key in force at a given chord SLOT, for static rendering (the overview
+    // strip draws every chip at once, so it cannot use the time-resolved lookup).
+    function _ambPartKeyForSlot(prog, slot) {
+      const parts = prog && prog.parts;
+      if (!Array.isArray(parts) || !parts.some(x => x && x.key)) return null;
+      let acc = 0;
+      for (let i = 0; i < parts.length; i++) {
+        const len = Math.max(1, parts[i].len | 0);
+        if (slot < acc + len) return parts[i].key || null;
+        acc += len;
+      }
+      return null;
+    }
+    function _ambPartKeyNow(cfg) {
+      if (_ambPartKeyBusy) return null;                       // _ambProgStepAt must never re-enter this
+      const E = _E; if (!E) return null;
+      const c = cfg || (E._cfg || (E.getCfg && E.getCfg()));
+      const p = c && c.prog;
+      if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return null;
+      const parts = p.parts;
+      if (!Array.isArray(parts) || !parts.some(x => x && x.key)) return null;
+      _ambPartKeyBusy = true;
+      try {
+        const t = (typeof _ambKeyTime === 'number' && Number.isFinite(_ambKeyTime))
+          ? _ambKeyTime : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : NaN);
+        let slot = 0;
+        if (Number.isFinite(_ambProgStepOverride)) slot = _ambProgStepOverride | 0;
+        else if (Number.isFinite(t)) { try { slot = _ambProgStepAt(E, t) | 0; } catch (e) { slot = 0; } }
+        const n = p.chords.length;
+        slot = ((slot % n) + n) % n;
+        let acc = 0;
+        for (let i = 0; i < parts.length; i++) {
+          const len = Math.max(1, parts[i].len | 0);
+          if (slot < acc + len) return parts[i].key || null;
+          acc += len;
+        }
+        return null;
+      } catch (e) { return null; }
+      finally { _ambPartKeyBusy = false; }
+    }
     function _ambKeyCfg() {
       try { return (_E && (_E._cfg || (typeof _E.getCfg === 'function' && _E.getCfg()))) || null; } catch (e) { return null; }
     }
+    // The AREA key, ignoring any per-part override. Used by the progression-wide
+    // transpose (_ambProgKeyOffset), which re-roots the WHOLE progression so its
+    // tonic sits on the key — an area-level idea. A part key must NOT feed it: the
+    // part's modulation is already baked into that part's stored chords, so using
+    // it here applied the change twice (measured: a Chorus in F, whose chords are
+    // already F and C, played A♯ and F).
+    function _ambAreaKeyRootPc(cfg) {
+      const c = cfg || _ambKeyCfg();
+      if (c && c.keyOn && c.keyFollow !== false) return (typeof rootIdx === 'number') ? (((rootIdx % 12) + 12) % 12) : 0;
+      return c ? ((((c.keyRoot | 0) % 12) + 12) % 12) : 0;
+    }
     function _ambKeyRootPc(cfg) {
       const c = cfg || _ambKeyCfg();
+      { const pk = _ambPartKeyNow(c); if (pk) return (((pk.root | 0) % 12) + 12) % 12; }
       if (c && c.keyOn && c.keyFollow !== false) return (typeof rootIdx === 'number') ? (((rootIdx % 12) + 12) % 12) : 0;   // follow the workspace key
       return c ? ((((c.keyRoot | 0) % 12) + 12) % 12) : 0;
     }
     function _ambKeyScaleName(cfg) {
       const c = cfg || _ambKeyCfg();
+      { const pk = _ambPartKeyNow(c); if (pk && typeof SCALES !== 'undefined' && SCALES[pk.scale]) return pk.scale; }
       if (c && c.keyOn && c.keyFollow !== false) {   // follow the workspace scale
         const ws = (typeof currentScale === 'string') ? currentScale : 'major';
         return (typeof SCALES !== 'undefined' && SCALES[ws]) ? ws : 'major';
@@ -4423,7 +4494,7 @@
       if (n.type === 'prog') {
         const ch = _ambProgCurrentChord(n);
         let r = (ch && Number.isFinite(ch.root)) ? (((ch.root % 12) + 12) % 12) : baseRoot;
-        if (transpose) r = ((r + _ambProgKeyOffset(n, keyRoot)) % 12 + 12) % 12;
+        if (transpose) r = ((r + _ambProgKeyOffset(n, _ambAreaKeyRootPc(kc))) % 12 + 12) % 12;
         return r;
       }
       // Scales root to the key tonic in transpose mode. Time-indexed (keyMaster)
@@ -4964,7 +5035,7 @@
         if (!c.prog || typeof c.prog !== 'object') c.prog = { on: false, name: '', chords: [] };
         if (opts.append && Array.isArray(c.prog.chords) && c.prog.chords.length) {
           // APPEND MODE — chain this progression on as a new PART (Verse → Chorus → …).
-          _ambProgAppendPart(c.prog, name, chords);
+          _ambProgAppendPart(c.prog, name, chords, opts.partKey);
           c.prog.on = true;
         } else {
           c.prog.name = name; c.prog.chords = chords; c.prog.on = true;
@@ -21278,14 +21349,113 @@
       parts.splice(pi, 1);
       if (parts.length <= 1) delete prog.parts;   // normalize repairs / drops trivial single-part
     }
-    function _ambProgAppendPart(prog, name, chords) {
+    // ＋ Part → pick the KEY first, then the progression. Adding a part is where a
+    // key change belongs: a part is a named stretch of the progression, and "the
+    // chorus is in F" is one decision, not two. Defaults to the area key, so the
+    // common case (another part, same key) is one extra click and nothing else.
+    function _ambAddPartModal(E, x, y) {
+      _E = E;
+      const cfg = E.getCfg() || {};
+      const aRoot = _ambKeyRootPc(cfg), aScale = _ambKeyScaleName(cfg);
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const scales = (typeof SCALES !== 'undefined') ? Object.keys(SCALES) : ['major', 'minor'];
+      const rootOpts = _AMB_CHROM.map((n, i) => '<option value="' + i + '"' + (i === aRoot ? ' selected' : '') + '>' + esc(n) + '</option>').join('');
+      const scaleOpts = scales.map(sc => '<option value="' + esc(sc) + '"' + (sc === aScale ? ' selected' : '') + '>' + esc(sc.charAt(0).toUpperCase() + sc.slice(1)) + '</option>').join('');
+      const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-step-modal-ov';
+      ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-addpart-modal">' +
+        '<div class="sm-title">Add a part</div>' +
+        '<div class="ambient-step-modal-body">' +
+          '<div class="ambient-addpart-hint">A part is a named stretch of the progression — Verse, Chorus. Give it its own key and the music MODULATES while it plays; the area key is left alone. The progression you pick next is transposed into this key, keeping its relative motion.</div>' +
+          '<div class="ambient-ctrl ambient-step-row"><label>Key</label>' +
+            '<span class="ambient-addpart-key">' +
+              '<select class="ambient-select ap-root">' + rootOpts + '</select>' +
+              '<select class="ambient-select ap-scale">' + scaleOpts + '</select>' +
+            '</span><span class="ambient-step-val ap-same"></span></div>' +
+          '<div class="ambient-addpart-note ap-note"></div>' +
+        '</div>' +
+        '<div class="sm-footer">' +
+          '<button type="button" class="sm-cancel ap-cancel">Cancel</button>' +
+          '<button type="button" class="sm-apply ap-next">Choose progression…</button>' +
+        '</div></div>';
+      document.body.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+      const rootSel = ov.querySelector('.ap-root'), scaleSel = ov.querySelector('.ap-scale');
+      const same = ov.querySelector('.ap-same'), note = ov.querySelector('.ap-note');
+      const close = () => { try { ov.remove(); } catch (e) {} };
+      const sync = () => {
+        const r = rootSel.value | 0, sc = scaleSel.value;
+        const unchanged = (r === aRoot && sc === aScale);
+        same.textContent = unchanged ? 'same as area' : 'modulates';
+        same.classList.toggle('ap-mod', !unchanged);
+        note.textContent = unchanged
+          ? 'No key change — this part stays in ' + _AMB_CHROM[aRoot] + ' ' + aScale + ' like the rest of the area.'
+          : 'This part will play in ' + _AMB_CHROM[r] + ' ' + sc + ', while the area stays in ' + _AMB_CHROM[aRoot] + ' ' + aScale + '.';
+      };
+      sync();
+      rootSel.addEventListener('change', sync); scaleSel.addEventListener('change', sync);
+      ov.addEventListener('click', (ev) => {
+        if (ev.target === ov || (ev.target.closest && ev.target.closest('.ap-cancel'))) { close(); return; }
+        if (!(ev.target.closest && ev.target.closest('.ap-next'))) return;
+        const r = rootSel.value | 0, sc = scaleSel.value;
+        const unchanged = (r === aRoot && sc === aScale);
+        close();
+        // Next tick, so this click doesn't reach the menu's own dismiss listener.
+        setTimeout(() => { try {
+          _ambOpenGlobalProgMenu(E, x || 40, y || 120, { append: true, partKey: unchanged ? null : { root: r, scale: sc } });
+        } catch (e) {} }, 0);
+      });
+    }
+    // Change (or clear) an existing part's key. Clearing returns it to the area
+    // key; it does NOT transpose the chords back — the chords are the music, and
+    // silently re-keying written harmony because a label changed would be a
+    // surprise. The menu says so.
+    function _ambPartKeyMenu(E, prog, pi, x, y, refresh, persist) {
+      if (typeof showCtxMenu !== 'function') return;
+      const part = prog.parts && prog.parts[pi]; if (!part) return;
+      const cfg = E.getCfg() || {};
+      const aRoot = _ambKeyRootPc(cfg), aScale = _ambKeyScaleName(cfg);
+      const scales = (typeof SCALES !== 'undefined') ? Object.keys(SCALES) : ['major', 'minor'];
+      const items = [];
+      items.push({ label: '“' + part.name + '” key', disabled: true });
+      items.push({ label: (part.key ? '  ' : '  ✓ ') + 'Follow the area (' + _AMB_CHROM[aRoot] + ' ' + aScale + ')',
+        fn: () => { delete part.key; persist(); refresh(); } });
+      items.push('hr');
+      // showCtxMenu has no submenu property — nesting is done by RE-OPENING the
+      // menu on a deferred tick (same shape the progression families use), or the
+      // dismiss listener tears the child down as it opens.
+      scales.slice(0, 8).forEach(sc => {
+        items.push({ label: sc.charAt(0).toUpperCase() + sc.slice(1) + ' ▸', fn: () => setTimeout(() => showCtxMenu(x, y, [
+          { label: '‹ Back', fn: () => setTimeout(() => _ambPartKeyMenu(E, prog, pi, x, y, refresh, persist), 0) },
+          { label: sc.charAt(0).toUpperCase() + sc.slice(1), disabled: true },
+          ..._AMB_CHROM.map((nm, r) => ({
+            label: '  ' + (part.key && part.key.root === r && part.key.scale === sc ? '✓ ' : '') + nm + ' ' + sc,
+            fn: () => { part.key = { root: r, scale: sc }; persist(); refresh(); }
+          })),
+        ]), 0) });
+      });
+      showCtxMenu(x, y, items);
+    }
+    function _ambProgAppendPart(prog, name, chords, partKey) {
       if (!Array.isArray(chords) || !chords.length) return;
-      const add = chords.map(_ambCloneChord);
+      let add = chords.map(_ambCloneChord);
+      // A part with its OWN key is a real modulation: transpose the incoming
+      // chords so their tonic lands on that root (the progression keeps its
+      // relative motion — I vi IV V stays I vi IV V, in the new key), and record
+      // the key so everything key-dependent follows while the part plays —
+      // roman numerals, quantize, and a transition's diatonic walk.
+      // Transitions carry no root and are skipped, not shifted.
+      if (partKey && Number.isFinite(partKey.root)) {
+        const c0 = add.find(c => c && !c.transition && Number.isFinite(c.root));
+        const off = c0 ? ((((partKey.root | 0) - (c0.root | 0)) % 12) + 12) % 12 : 0;
+        if (off) add = add.map(c => (c && !c.transition) ? _ambChordShift(c, off) : c);
+      }
       if (!Array.isArray(prog.parts) || !prog.parts.length) {   // seed a part over the existing chords first
         prog.parts = prog.chords.length ? [{ name: String(prog.name || 'Part 1').slice(0, 16), len: prog.chords.length }] : [];
       }
       prog.chords.push(...add);
-      prog.parts.push({ name: String(name || 'Part').slice(0, 16), len: add.length });
+      const part = { name: String(name || 'Part').slice(0, 16), len: add.length };
+      if (partKey && Number.isFinite(partKey.root)) part.key = { root: (((partKey.root | 0) % 12) + 12) % 12, scale: partKey.scale || 'major' };
+      prog.parts.push(part);
     }
     function _ambProgAddVersion(prog) {
       if (!Array.isArray(prog.versions)) prog.versions = [];
@@ -21318,7 +21488,7 @@
       const prog = cfg.prog, chords = prog.chords, N = chords.length;
       const parts = (Array.isArray(prog.parts) && prog.parts.length) ? prog.parts : null;
       const sig = N + '|' + chords.map(c => c.root + ':' + (c.intervals || []).join('.') + (Array.isArray(c.alts) && c.alts.length ? ('a' + c.alts.length + (c.altMode || '')) : '')).join(',') +
-        '|' + (parts ? parts.map(p => p.name + '=' + p.len).join('/') : '') + '|' + (Number.isFinite(prog.versionIdx) ? prog.versionIdx : -1) + '|' + (Array.isArray(prog.versions) ? prog.versions.length : 0) +
+        '|' + (parts ? parts.map(p => p.name + '=' + p.len + (p.key ? ('@' + p.key.root + p.key.scale) : '')).join('/') : '') + '|' + (Number.isFinite(prog.versionIdx) ? prog.versionIdx : -1) + '|' + (Array.isArray(prog.versions) ? prog.versions.length : 0) +
         // The chips are drawn in the SOUNDING key, so the shift is part of what
         // is on screen — without it a key change repaints nothing.
         '|s' + _ambProgViewShift(E, cfg, chords) + '|' + _ambKeyRootPc(cfg) + _ambKeyScaleName(cfg);
@@ -21328,7 +21498,7 @@
       const kRoot = _ambKeyRootPc(cfg), kScale = _ambKeyScaleName(cfg);
       const vShift = _ambProgViewShift(E, cfg, chords);
       const ranges = [];
-      if (parts) { let acc = 0; parts.forEach((p, pi) => { ranges.push({ name: p.name, from: acc, to: Math.min(N, acc + (p.len | 0)), pi }); acc += (p.len | 0); }); }
+      if (parts) { let acc = 0; parts.forEach((p, pi) => { ranges.push({ name: p.name, from: acc, to: Math.min(N, acc + (p.len | 0)), pi, key: p.key || null }); acc += (p.len | 0); }); }
       else ranges.push({ name: '', from: 0, to: N, pi: -1 });
       let h = '';
       if (Array.isArray(prog.versions) && prog.versions.length) {
@@ -21343,6 +21513,9 @@
           h += '<div class="ambient-pov-parthdr">' +
             '<span class="ambient-pov-partname" role="button" tabindex="0" data-pov="partren:' + r.pi + '" title="Rename this part">' + esc(r.name) + ' <em>' + (r.to - r.from) + '</em></span>' +
             '<span class="ambient-pov-partops">' +
+              // A part's own key is a modulation, so it is named right on the part
+              // header rather than buried — you can see where the music changes key.
+              '<span role="button" tabindex="0" class="ambient-pov-partkey' + (r.key ? ' on' : '') + '" data-pov="partkey:' + r.pi + '" title="' + (r.key ? ('This part plays in ' + esc(_AMB_CHROM[r.key.root] + ' ' + r.key.scale) + ' — the area key is unchanged. Click to change or clear it.') : 'No key change — this part follows the area key. Click to give it its own key.') + '">' + (r.key ? esc(_AMB_CHROM[r.key.root] + ' ' + r.key.scale.slice(0, 3)) : '♭♯') + '</span>' +
               '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':-1" title="Move part earlier">◀</span>' +
               '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':1" title="Move part later">▶</span>' +
               '<span role="button" tabindex="0" class="ambient-pov-partbtn ambient-pov-partrm" data-pov="partrm:' + r.pi + '" title="Remove this part (and its chords)">✕</span>' +
@@ -21356,7 +21529,10 @@
           // in here: it changes every pass, and the glowing chip (see
           // _ambProgOverviewPlayheadCore) relabels itself to the sounding chord.
           const c = _ambChordShift(chords[i], vShift);
-          const rn = _ambPeRoman(c, kRoot, kScale);
+          // Roman numerals are relative to the key THIS chip plays in — a part
+          // with its own key modulates, so the chorus's I must read I and not IV.
+          const pk = _ambPartKeyForSlot(prog, i);
+          const rn = _ambPeRoman(c, pk ? pk.root : kRoot, pk ? pk.scale : kScale);
           const nm = _ambChordShort(c) || '?';
           const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
           h += '<span role="button" tabindex="0" class="ambient-pov-chord' + (_ambIsTransition(c) ? ' pov-trans' : '') + '" data-pov="chord:' + i + '" data-ci="' + i + '" title="' + (_ambIsTransition(c) ? 'Transition ' : 'Chord ') + (i + 1) + ' — ' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + ' · click to edit">' +
@@ -21504,6 +21680,12 @@
       // so a click would drop), and showCtxMenu arms its own document-level
       // pointerdown dismiss — registered mid-dispatch, that listener still fires
       // for THIS event and closes the menu the instant it opens. Open it next tick.
+      if (op === 'partkey') {
+        const pi = a[1] | 0; const parts2 = prog.parts; if (!parts2 || !parts2[pi]) return;
+        const r2 = t.getBoundingClientRect();
+        setTimeout(() => { try { _ambPartKeyMenu(E, prog, pi, r2.left, r2.bottom, refresh, persist); } catch (e) {} }, 0);
+        return;
+      }
       if (op === 'addpart') { const r = t.getBoundingClientRect(); if (_ambProgActions) setTimeout(() => { try { _ambProgActions.addPart(r.left, r.bottom); } catch (e) {} }, 0); return; }
     }
     function _ambRenderChordMatrix(E) {
@@ -28740,7 +28922,7 @@
         // editor is the whole difference.
         // ＋ Part moved to the overview strip: it CHAINS another progression on,
         // so it belongs where the parts are drawn.
-        const _pgAddPart = (x, y) => { _E = E; _ambOpenGlobalProgMenu(E, x || 40, y || 120, { append: true }); };
+        const _pgAddPart = (x, y) => { _E = E; _ambAddPartModal(E, x, y); };
         // ♺ Reharm — a real, written edit (snapshot for undo first).
         const _pgReharm = () => {
             _E = E; const c = E.getCfg(); if (!c || !c.prog || !Array.isArray(c.prog.chords) || !c.prog.chords.length) {

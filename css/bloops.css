@@ -3366,6 +3366,9 @@
     .ambient-pov-partname { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: #c9a8ec; cursor: pointer; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; touch-action: manipulation; }
     .ambient-pov-partname em { font-style: normal; font-weight: 500; color: #6b7280; text-transform: none; }
     .ambient-pov-partops { display: inline-flex; gap: 3px; flex: 0 0 auto; }
+    /* A part's own key is a modulation — named on the part header, not buried. */
+    .ambient-pov-partkey { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 6px; border: 1px dashed #3a3a52; border-radius: 6px; background: transparent; color: #6b7280; cursor: pointer; font-size: 0.66rem; font-weight: 700; touch-action: manipulation; }
+    .ambient-pov-partkey.on { border-style: solid; border-color: #9f7aea; background: rgba(159,122,234,0.18); color: #e2c9ff; }
     .ambient-pov-partbtn { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 4px; border: 1px solid #2d2d3f; border-radius: 6px; background: #16162a; color: #9aa; cursor: pointer; font-size: 0.72rem; touch-action: manipulation; }
     .ambient-pov-partrm { color: #fc8181; }
     .ambient-pov-addpart { display: inline-flex; align-items: center; justify-content: center; min-height: 30px; padding: 3px 10px; border: 1px dashed #3a3a52; border-radius: 8px; background: transparent; color: #9f7aea; cursor: pointer; font-size: 0.74rem; font-weight: 600; touch-action: manipulation; }
@@ -12203,6 +12206,12 @@
     .ambient-pm-editbtn:hover { border-color: #4a5568; color: #cbd5e0; }
     .ambient-pm-editbtn.active { border-color: #35c98e; background: rgba(53,201,142,0.18); color: #7fe0b6; }
     .ambient-pm-cell:active { filter: brightness(1.25); }
+    .ambient-addpart-hint { font-size: 0.72rem; line-height: 1.45; color: #8a8aa8; margin: 0 0 10px; }
+    .ambient-addpart-key { display: inline-flex; gap: 5px; min-width: 0; }
+    .ambient-addpart-key select { width: 84px; }
+    .ambient-addpart-modal .ap-same { color: #6b7280; font-size: 0.72rem; }
+    .ambient-addpart-modal .ap-same.ap-mod { color: #9f7aea; font-weight: 700; }
+    .ambient-addpart-note { margin-top: 8px; padding: 6px 9px; border: 1px solid #23233a; border-left: 3px solid #9f7aea; border-radius: 6px; background: rgba(159,122,234,0.07); color: #a9b3c4; font-size: 0.74rem; line-height: 1.45; }
     .ambient-pm-modal-hint { font-size: 0.72rem; line-height: 1.45; color: #8a8aa8; margin: 0 0 10px; }
     .ambient-pm-modal-presets { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
     .ambient-pm-modal-presets .ambient-seg { flex: 1 1 auto; padding: 4px 8px; font-size: 0.72rem; }

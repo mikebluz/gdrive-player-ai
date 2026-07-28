@@ -17875,7 +17875,7 @@
       const host = document.getElementById(E.hostId); if (!host) return;
       const el = host.querySelector('.ambient-orch-bar'); if (!el) return;
       const hdr = host.querySelector('.ambient-orch-bar-hdr');
-      const app = document.getElementById('bloom-hdr-bar');   // app header pill (fixed on scroll)
+      const app = null;   // app-header bar pill REMOVED (redundant with the Areas strip readout)
       const chp = document.getElementById('bloom-hdr-chord');  // live progression-chord readout
       if (!E.timer) { if (el.textContent) el.textContent = ''; if (hdr && hdr.textContent) hdr.textContent = ''; if (app && app.textContent) app.textContent = ''; if (chp && chp.textContent) chp.textContent = ''; E._biInit = false; return; }
       // Live current-progression-chord readout in the app header (empty when the
@@ -26404,13 +26404,7 @@
           // "Track (record)" entry; the take still lands as a Track sample layer).
           '<button type="button" id="ambient-track-btn" class="ambient-footer-capture" title="Record a Track — record your input (mic / line-in) against the playing loop; the take snaps to whole bars and loops tempo-locked">🎤</button>' +
           '<button type="button" id="ambient-play-btn" class="ambient-play" title="Play / stop">▶</button>' +
-        '</div>' +
-        // Its own row UNDER the transport: the elapsed / BPM pill that opens the
-        // ⚙ Settings menu (Undo/Redo · Tempo · Volume · Groove · MIDI · Storage).
-        // Filled by adopting the singleton #bloom-hdr-elapsed out of the app
-        // header on every build — see the adopt step in the wiring.
-        (!E.isLane ? '<div class="ambient-footer-settings" id="ambient-footer-settings"></div>' : '') +
-        '</div>';
+        '</div></div>';
       // Singleton rescue: a Bloom panel rebuild would DESTROY the docked lane
       // expander (Author-in-Grid) with its wipe — park it in its stash first
       // (the same pre-wipe protocol renderSequence uses); the seed-mode
@@ -28492,19 +28486,6 @@
         if (delB) delB.addEventListener('click', () => _ambRemoveLayer(E, l));
       });
 
-      // ADOPT the elapsed/BPM ⚙ Settings pill into the footer row. It is a
-      // singleton declared in bloops.html, and a panel rebuild wipes this host —
-      // so re-adopt every build rather than moving it once at init, or it is
-      // orphaned the first time the panel re-renders. pinPanelToButton already
-      // flips its menu ABOVE a trigger with no room below, so being at the bottom
-      // of the screen makes the menu expand upward with no extra work.
-      if (!E.isLane) {
-        try {
-          const _slot = G('ambient-footer-settings');
-          const _pill = document.getElementById('bloom-hdr-elapsed');
-          if (_slot && _pill && _pill.parentElement !== _slot) _slot.appendChild(_pill);
-        } catch (e) {}
-      }
       const playBtn = G('ambient-play-btn');
       if (playBtn) playBtn.addEventListener('click', () => { if (E.timer) _ambStopGenerator(E); else _ambStartGenerator(E); });
       // 🎲 New take → a per-layer KEEP / REVISE popover. Revise (default) =

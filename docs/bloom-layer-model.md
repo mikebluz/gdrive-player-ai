@@ -711,3 +711,69 @@ Implementation is a **separate** plan: order of migrations, which preset cards g
 first, the Progression authoring surface, degree-storage format. To be written before
 code, staged and harness-gated, with per-stage load/save sign-off (per the old doc's
 C-track discipline).
+
+## 11. Backlog — TBD
+
+### Sustain-family consolidation: Bed / Drone / Pedal → one type (raised 2026-07-27)
+
+**Status: TBD.** Analysis done, no decision, nothing scheduled.
+
+The three types are points on the same small parameter space. From their schemas, the
+only real divergences are:
+
+| Axis | Bed | Drone | Pedal |
+|---|---|---|---|
+| Voices | `density` 1–8 (chord voicing) | `density` 1–9 (stacked from `degree`) | 1 |
+| Onset cadence | 1/unit (+ `chordPhraseLen`/`chordRepeats`) | `hold` 1–16 units **per** onset | `density` 1–16 hits **per bar** |
+| Note length | `lengthMs` 300–16000 | *none* — fills the hold | `lengthMs` 40–2000 |
+| Pitch rule | voicing of current chord | degree-rooted stack, or pedal-pick | fixed scale degree + `vary` roam |
+| Under prog | voicings (Subdiv/Feel/Variety) | pedal (1 note/cycle) **or** voicings | per-onset degree in chord |
+
+Everything else (register, tone, key override, unit sync, humanize, rests, swing, spread)
+is shared vocabulary each type happens to expose a *subset* of — Bed has Spread/Strum,
+Drone has Pitch vary, Pedal has Swing, and none of those absences are musically motivated.
+
+**The reduction — four dials:**
+
+1. **Voices** (1–9) — already `density` in two of the three.
+2. **Strike** — one signed cadence control, ×16 per unit → ÷16 per unit. Pedal sits on
+   the multiply side, Bed at ×1, Drone on the divide side (that *is* `hold`). This single
+   dial is the rhythmic difference between the three types.
+3. **Length ratio** — note length as % of the onset interval. 100% = drone (fills the
+   hold), ~15% = pedal. The three `lengthMs`/hold-fill encodings are one number. Keep an
+   absolute-ms escape hatch.
+4. **Pitch rule** — the only axis that doesn't collapse to a number: `voicing` (Bed) ·
+   `stack` (Drone) · `fixed degree` (Pedal) · `anchor` (the pedal-pick scorer). `stack` at
+   Voices 1 ≈ `fixed`; `anchor` is the same rule at a different *time scale* (one pick per
+   progression cycle vs per onset).
+
+The cross-product gives combinations none of the three can reach today (3-voice staccato
+stack, held single note that roams per cycle, strummed pedal).
+
+**Costs — why this isn't free:**
+
+- **Three clocks, not one.** Bed runs on `stepLayer`/`E.clocks`; Drone and Pedal are
+  windowed `runPhase` stores. A unified emitter must pick one and move the others, which
+  shifts RNG draw order → golden + invariant-harness re-baseline.
+- `_ambProgSyncInfo` returns null for anything but bed/drone — forces a decision on
+  whether a pedal gets voicings.
+- `_ambEuclidDeterministic` (the "loops natively, skip Write" gate) has separate pedal and
+  drone branches with different conditions.
+- The Drone's Tone list is filtered to sustaining voices. Under one type that filter keys
+  off **length ratio**, not type — which is more correct: a Bed at 100% length has the same
+  problem today and doesn't get the filter.
+- Needs a schema bump + migration, and `type` must keep dispatching for saved projects
+  (§6 additive-only invariant).
+
+**Recommended staging if it's ever picked up — merge the controls before the emitters:**
+
+1. Give all three the same axis vocabulary (Strike / Length ratio / Pitch rule)
+   implemented *on top of their existing emitters*. Additive, no baseline churn.
+2. Verify by construction: can Bed-with-dials reproduce Drone? Drone reproduce Pedal? A
+   failure locates the genuinely-missing axis rather than guessing at it.
+3. Only then collapse to one emitter, with Bed/Drone/Pedal surviving as **presets in the
+   Add-layer menu** (§5) — "add a drone" stays one click, not four dials.
+
+Supporting evidence the merge is already half-built by hand: the Drone's pedal mode does
+what the Pedal layer does (one note per cycle, roaming), and a Bed at Density 1 with a Hold
+is a Drone.

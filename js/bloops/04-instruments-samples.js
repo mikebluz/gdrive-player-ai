@@ -2400,6 +2400,35 @@
       Array.from(_activeSampleVoices).forEach(v => { if (hit(v)) { _activeSampleVoices.delete(v); try { _killSampleVoiceFast(v); } catch (x) {} } });
       Array.from(_activePadVoices).forEach(r => { if (hit(r)) { _activePadVoices.delete(r); try { r.kill && r.kill(); } catch (x) {} } });
     }
+    // Re-tag a Bloom layer's voices that started BEFORE `beforeAt` onto `newKey`
+    // (returns how many moved). THE AREA-TRANSITION RACE this exists to close:
+    // a departing layer's CHAIN is moved to a unique "#dep" key, but its already-
+    // dispatched VOICES keep the original `_ak` — and the incoming area rebuilds
+    // on that very same key later in the same advance. From then on the two
+    // areas' voices are told apart ONLY by `_akAt < boundary`, so any INCOMING
+    // onset that lands before the boundary is destroyed by the departing layer's
+    // stop (which fires ~60 ms AFTER it). A layer with Area-Groove push set
+    // negative ("ahead of the beat") anchors before the boundary EVERY time —
+    // measured: the new area's opening bass note, scheduled at −40 ms for 260 ms,
+    // was silent by +90 ms. Re-tagging at depart time (synchronously, BEFORE the
+    // incoming area generates) makes the split structural — which area emitted
+    // the voice — instead of a float comparison against the boundary.
+    function retagBloomVoicesBefore(key, beforeAt, newKey) {
+      if (!key || !newKey) return 0;
+      let n = 0;
+      const hit = (e) => e && e._ak === key && (beforeAt == null || (Number.isFinite(e._akAt) && e._akAt < beforeAt));
+      const walk = (coll) => { try { coll.forEach(e => { if (hit(e)) { e._ak = newKey; n++; } }); } catch (x) {} };
+      walk(_pendingVoices); walk(_activeVoices); walk(_pendingSampleVoices);
+      walk(_activeSampleVoices); walk(_activePadVoices);
+      // …and the deferred build queue, which carries its own ak/at copies (a
+      // queued voice that isn't re-tagged would never be purged by the dep-key
+      // stop, so it would build and sound after the layer was supposed to be gone).
+      for (let i = 0; i < _voiceBuildQueue.length; i++) {
+        const e = _voiceBuildQueue[i];
+        if (e.ak === key && (beforeAt == null || e.at < beforeAt)) { e.ak = newKey; n++; }
+      }
+      return n;
+    }
     function silenceActiveVoices() {
       // Drain pending (scheduled-ahead, not-yet-registered) voices too — a stop
       // must cancel notes the Bloom phrase dispatched for the near future, or

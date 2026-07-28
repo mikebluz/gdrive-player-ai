@@ -2540,6 +2540,14 @@
       border: 1px solid #2d2d3f; border-radius: 10px; background: rgba(20, 20, 34, 0.5);
     }
     .ambient-areas-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    /* SIDE-SWIPE between areas: horizontal drag = switch, vertical = page scroll.
+       `pan-y` is what lets the browser keep scrolling while we claim the X axis. */
+    .ambient-areas { touch-action: pan-y; }
+    .ambient-areas.swipe-l { animation: ambAreaSwipeL 0.24s ease-out; }
+    .ambient-areas.swipe-r { animation: ambAreaSwipeR 0.24s ease-out; }
+    @keyframes ambAreaSwipeL { 0% { transform: translateX(14px); opacity: 0.55; } 100% { transform: none; opacity: 1; } }
+    @keyframes ambAreaSwipeR { 0% { transform: translateX(-14px); opacity: 0.55; } 100% { transform: none; opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { .ambient-areas.swipe-l, .ambient-areas.swipe-r { animation: none; } }
     .ambient-areas-label { font-size: 0.7rem; color: #8a8aa8; letter-spacing: 0.04em; text-transform: uppercase; }
     /* Orchestration mode row (Single/Sequence + Shuffle) — sits above the area
        chips, with its own slightly lighter fill so it reads as a distinct band. */
@@ -3740,6 +3748,82 @@
     @media (hover: hover) { .ambient-step-fx-fill:hover { border-color: #9f7aea; color: #e6ddff; } }
     .ambient-step-fx-clear, .ambient-step-fx-trig { padding: 2px 8px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8; background: transparent; border: 1px solid #34344a; border-radius: 4px; cursor: pointer; }
     .ambient-step-fx-trig { color: #7fe0b0; border-color: #2f5c48; }
+    /* Notes button in the Source group — the layer's pitch material. Styled from
+       the same tokens as .ambient-select so it reads as a sibling control, not a
+       one-off; amber when the Area progression has locked the source. */
+    .ambient-src-btn {
+      width: 100%; min-width: 0; padding: 4px 8px; text-align: left;
+      font: 600 0.72rem 'Segoe UI', sans-serif; color: #d9cbff;
+      background: rgba(159, 122, 234, 0.16); border: 1px solid rgba(159, 122, 234, 0.45);
+      border-radius: 6px; cursor: pointer; touch-action: manipulation;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    @media (hover: hover) { .ambient-src-btn:hover { background: rgba(159, 122, 234, 0.30); } }
+    .ambient-src-btn:focus { outline: none; border-color: rgba(159, 122, 234, 0.85); }
+    .ambient-src-btn.ambient-src-locked { color: #f7c98b; background: rgba(214, 158, 46, 0.14); border-color: rgba(214, 158, 46, 0.45); }
+    .ambient-src-btn.ambient-src-locked::after { content: ' 🔒'; font-size: 0.72em; opacity: 0.8; }
+    /* Elapsed / BPM ⚙ Settings pill, re-homed under the footer transport row.
+       Full width and centred so it reads as its own strip, not another button. */
+    .ambient-footer-settings { display: flex; justify-content: center; padding: 4px 0 2px; }
+    .ambient-footer-settings:empty { display: none; }
+    .ambient-footer-settings > .bloom-hdr-elapsed { position: static; margin: 0; }
+    /* ‹ › area steppers — same chrome as the other area buttons, tightened up so
+       the row still fits at 390px alongside the select. */
+    .ambient-area-prev, .ambient-area-next { padding-left: 6px; padding-right: 6px; font-weight: 700; }
+    /* 🎲 New take, now an AREA action — pushed to the end of the management row. */
+    .ambient-area-take { margin-left: auto; }
+    .ambient-orch > .ambient-seed { flex: 0 0 auto; }
+    @media (max-width: 480px) { .ambient-area-take { margin-left: 0; } }
+    /* Drone "Edit notes" — a per-CHORD row of voice slots. Wraps at any width;
+       the chord name is a read-only label (this editor never edits the chord). */
+    .amb-pick-hint { font-size: 0.78rem; color: #a0aec0; line-height: 1.5; margin-bottom: 10px; }
+    .amb-pick-modes { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+    .amb-pick-list { max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+    .amb-pick-row {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+      padding: 5px 7px; border: 1px solid #23233a; border-radius: 8px;
+    }
+    .amb-pick-chord { flex: 0 0 auto; min-width: 54px; font: 700 0.8rem 'Segoe UI', sans-serif; color: #cbb8ee; }
+    .amb-pick-slots { display: flex; flex-wrap: wrap; gap: 4px; flex: 1 1 auto; min-width: 0; }
+    .amb-pick-sel { width: auto; min-width: 104px; max-width: 150px; flex: 0 1 auto; }
+    .amb-pick-mode.active { background: rgba(159,122,234,0.25); border-color: #9f7aea; color: #e9e4f8; }
+    @media (max-width: 480px) { .amb-pick-slots { flex: 1 1 100%; } .amb-pick-sel { min-width: 92px; } }
+    /* Pattern-control TABS: ⿴ Pattern (the step grid) · ⏱ Schedule (one cell per
+       full iteration of that pattern). Styled from the same tokens as the euclid
+       page tabs so the two tab strips read as one family. */
+    .ambient-gridtabs { display: flex; gap: 4px; margin-bottom: 6px; flex-wrap: wrap; }
+    .ambient-gridtab {
+      position: relative; padding: 3px 10px; font: 600 0.62rem 'Segoe UI', sans-serif;
+      color: #8b7fa8; background: transparent; border: 1px solid #2a2a3d;
+      border-radius: 6px 6px 0 0; cursor: pointer; touch-action: manipulation;
+    }
+    .ambient-gridtab.on { color: #e9e4f8; background: rgba(159,122,234,0.18); border-color: #9f7aea; }
+    .ambient-gridtab .gdot { position: absolute; top: 2px; right: 3px; width: 5px; height: 5px; border-radius: 50%; background: #f6ad55; }
+    @media (hover: hover) { .ambient-gridtab:not(.on):hover { color: #cbb8ee; border-color: #4a3d6b; } }
+    /* The cycle schedule itself — cells wrap at 8 per row (no horizontal scroll). */
+    .ambient-cycgate { display: flex; flex-direction: column; gap: 6px; }
+    .ambient-cycgate-cells { display: grid; grid-template-columns: repeat(var(--cyccols, 8), minmax(0, 1fr)); gap: 3px; }
+    .ambient-cyccell {
+      min-width: 0; padding: 7px 0; font: 600 0.6rem 'Segoe UI', sans-serif;
+      color: #6c6486; background: #14141f; border: 1px solid #26263a; border-radius: 4px;
+      cursor: pointer; touch-action: manipulation; overflow: hidden;
+    }
+    .ambient-cyccell.q { border-left-color: #3d3d58; }
+    .ambient-cyccell.on { color: #1a1206; background: #9f7aea; border-color: #b794f4; }
+    @media (hover: hover) { .ambient-cyccell:not(.on):hover { border-color: #4a3d6b; color: #a294c4; } }
+    .ambient-cycgate-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+    .ambient-cyclen, .ambient-cycclear {
+      padding: 2px 9px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8;
+      background: transparent; border: 1px solid #34344a; border-radius: 4px;
+      cursor: pointer; touch-action: manipulation;
+    }
+    @media (hover: hover) { .ambient-cyclen:hover, .ambient-cycclear:hover { border-color: #9f7aea; color: #d9cbff; } }
+    /* Drum SOLO — sits beside the ▶ audition; amber when engaged so it reads as
+       a temporary monitoring state rather than part of the pattern. */
+    .ambient-step-fx-solo { padding: 2px 8px; font: 700 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8; background: transparent; border: 1px solid #34344a; border-radius: 4px; cursor: pointer; touch-action: manipulation; }
+    .ambient-step-fx-solo.on { color: #1a1206; background: #f6ad55; border-color: #f6ad55; }
+    .ambient-step-fx-solo[disabled] { opacity: 0.35; cursor: not-allowed; }
+    @media (hover: hover) { .ambient-step-fx-solo:not([disabled]):hover { border-color: #f6ad55; color: #f7c98b; } .ambient-step-fx-solo.on:hover { color: #1a1206; } }
     @media (hover: hover) { .ambient-step-fx-clear:hover { border-color: #9f7aea; color: #d9cbff; } .ambient-step-fx-trig:hover { border-color: #4fd090; color: #b6f5d6; } }
     .ambient-step-fx-ctrl { display: grid; grid-template-columns: 54px 1fr 42px; align-items: center; gap: 8px; margin: 3px 0; }
     .ambient-step-fx-ctrl label { color: #a0aec0; font: 600 0.62rem 'Segoe UI', sans-serif; }
@@ -4189,19 +4273,14 @@
     .ambient-collapse::before { content: '▾'; display: inline-block; font-size: 0.8rem; transition: transform 0.12s ease; }
     .ambient-layer.collapsed .ambient-collapse::before { transform: rotate(-90deg); }
     /* Collapsed: hide everything in the layer except its head row. */
-    .ambient-layer.collapsed > *:not(.ambient-layer-head):not(.ambient-compose) { display: none; }
+    .ambient-layer.collapsed > *:not(.ambient-layer-head) { display: none; }
     /* Composable-layer readout: Voice · Note-source · Generator, shown on the
        card header (collapsed or not) as a compact derived summary. */
-    .ambient-compose { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 4px 8px; padding: 2px 2px 6px; margin: -2px 0 2px; }
     /* Each chip is a labeled field: a tiny caption above the tag/select/button. */
-    .ambient-compose-field { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
-    .ambient-compose-lbl { font: 700 0.56rem 'Segoe UI', sans-serif; letter-spacing: 0.06em; text-transform: uppercase; color: #6a6a8a; padding-left: 2px; }
-    .ambient-compose-tag {
       font: 600 0.81rem 'Segoe UI', sans-serif; letter-spacing: 0.02em; color: #9aa3c4;
       background: rgba(159, 122, 234, 0.12); border: 1px solid rgba(159, 122, 234, 0.28);
       border-radius: 5px; padding: 2px 8px; line-height: 1.5; text-transform: uppercase;
     }
-    .ambient-compose-dot { color: #4a4a63; font-size: 0.81rem; line-height: 1; }
     /* Sample record button + recording overlay. */
     .ambient-srcbtn-rec { color: #fc8181 !important; }
     .amb-rec-overlay { position: fixed; inset: 0; z-index: 100000; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.55); }
@@ -4213,24 +4292,17 @@
     .amb-rec-stop { border: 1px solid #fc5151; border-radius: 8px; background: rgba(252,81,81,0.15); color: #feb2b2; cursor: pointer; font: 600 0.85rem 'Segoe UI', sans-serif; padding: 6px 14px; }
     .amb-rec-stop:hover { background: rgba(252,81,81,0.28); }
     /* Generator tag is an interactive swap picker — a chip-styled <select>. */
-    .ambient-compose-sel {
       font: 600 0.81rem 'Segoe UI', sans-serif; letter-spacing: 0.02em; text-transform: uppercase;
       color: #cbb6f5; background: rgba(159, 122, 234, 0.18); border: 1px solid rgba(159, 122, 234, 0.45);
       border-radius: 5px; padding: 2px 5px; line-height: 1.5; cursor: pointer;
       -webkit-appearance: none; appearance: none;
     }
-    .ambient-compose-sel:hover { background: rgba(159, 122, 234, 0.30); }
-    .ambient-compose-sel:focus { outline: none; border-color: rgba(159, 122, 234, 0.8); }
     /* Notes chip locked to the Area progression — read-only, prog-tinted. */
-    button.ambient-compose-sel.ambient-compose-locked {
       cursor: not-allowed; color: #f0b3ff;
       background: rgba(214, 122, 234, 0.14); border-color: rgba(214, 122, 234, 0.45);
     }
-    button.ambient-compose-sel.ambient-compose-locked::after { content: ' 🔒'; font-size: 0.72em; opacity: 0.8; }
-    @media (hover: hover) { button.ambient-compose-sel.ambient-compose-locked:hover { background: rgba(214, 122, 234, 0.14); } }
     /* B2: per-layer KEY override chip — "Inherit" (the default) reads as muted so an
        active Key/Progression override stands out. */
-    button.ambient-compose-sel.ambient-keyov-inherit { color: #8b93a7; font-style: italic; border-color: rgba(120, 130, 150, 0.35); }
     /* ---- Collapsible parameter groups (Voice / Pitch / Rhythm / …) ------- */
     .ambient-grp { margin: 6px 0 0; border-top: 1px solid #1c1c2e; }
     .ambient-grp:first-of-type { border-top: none; margin-top: 2px; }
@@ -9851,6 +9923,49 @@
     .nt-name { font-size: 0.85rem; color: #cbd5e0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .nt-row .ambient-seg.active { background: rgba(159, 122, 234, 0.25); border-color: #9f7aea; color: #e9e4f8; }
     .nt-row .nt-keep.active { background: rgba(56, 178, 172, 0.25); border-color: #38b2ac; color: #d6f5f2; }
+    /* Editing an area you aren't hearing (the view/play decoupling) — amber rim
+       on the area select, so a "nothing changed" edit is explained. The playing
+       area's NAME lives in the bar readout (▶ Chorus · Bar 2/4 · Play 1/2). */
+    .ambient-area-select.viewing-other {
+      border-color: #d69e2e;
+      box-shadow: inset 0 0 0 1px rgba(214, 158, 46, 0.35);
+    }
+    /* ❖ Create-sibling popover — area-level options above a per-layer op grid.
+       Reuses the .sm-modal shell + .nt-list/.nt-row rows from the New-take
+       popover so the two read as the same family of dialog. Everything wraps
+       (no horizontal scroll at 390px): the op chips are the widest thing here,
+       so .sib-ops is a wrapping flex that gets its own line when it has to. */
+    .sib-modal { width: min(560px, 96vw); }
+    .sib-sec {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+      font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase;
+      color: #718096; margin: 12px 0 6px;
+    }
+    .sib-all { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-left: auto; }
+    .sib-area { display: flex; flex-direction: column; gap: 5px; }
+    .sib-arow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+    .sib-arow > .sib-tg { flex: 0 0 auto; min-width: 132px; text-align: left; }
+    /* A tail control is inert until its option is ticked — dim, don't hide, so
+       the row height never jumps as you toggle through the list. */
+    .sib-arow.sib-off > :not(.sib-tg) { opacity: 0.4; }
+    .sib-sel { width: auto; min-width: 108px; max-width: 190px; }
+    .sib-num { width: 62px; }
+    .sib-list { max-height: 38vh; }
+    .sib-row { flex-wrap: wrap; }
+    .sib-row .nt-name { flex: 1 1 120px; min-width: 0; }
+    .sib-ops { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+    .sib-modal .ambient-seg { touch-action: manipulation; }
+    .sib-modal .ambient-seg[disabled] { opacity: 0.32; cursor: not-allowed; }
+    .sib-op.active, .sib-tg.active { background: rgba(159, 122, 234, 0.25); border-color: #9f7aea; color: #e9e4f8; }
+    .sib-drop.active { background: rgba(229, 62, 62, 0.24); border-color: #e53e3e; color: #ffd7d7; }
+    /* Drop wins: a dropped layer can't also be mutated, so its op chips grey out
+       (still clickable — untick Drop and they come back live). */
+    .sib-row.sib-dropped .nt-name { text-decoration: line-through; opacity: 0.55; }
+    .sib-row.sib-dropped .sib-op { opacity: 0.35; }
+    @media (max-width: 480px) {
+      .sib-arow > .sib-tg { min-width: 0; flex: 1 1 100%; }
+      .sib-ops { justify-content: flex-start; flex: 1 1 100%; }
+    }
     /* Record-a-Track modal — count-in + record; reuses the .sm-modal shell. */
     .ambient-track-body { display: flex; flex-direction: column; gap: 12px; margin-bottom: 4px; }
     .ambient-track-status { font-size: 0.82rem; color: #a0aec0; line-height: 1.5; }

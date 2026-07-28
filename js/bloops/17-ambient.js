@@ -572,14 +572,22 @@
       sch.ctrls.forEach(c => {
         if (!Array.isArray(c)) return;
         const kind = c[0], key = c[1];
+        // Schema shape is ['sl'|'tm', key, LABEL, min, max, hint|step] — min/max
+        // are c[3]/c[4], NOT c[2]/c[3]. Reading them one slot early took the
+        // label as min (`'Strum' | 0` === 0) and the real min as max, so every
+        // ri(min,max) collapsed to ri(0,0): the dice zeroed each slider AND each
+        // time param (sustain 0, release 0, intervalMs 0 = a silent layer on a
+        // zero-length unit). Fixed here; `step` is c[5].
         if (kind === 'sl') {
-          const min = c[2] | 0, max = c[3] | 0;
+          const min = c[3] | 0, max = c[4] | 0;
           if (key === 'level') { L.level = ri(55, 90); return; }       // keep audible
           if (key === 'restProb') { L.restProb = ri(0, 50); return; }  // not mostly-silent
+          if (max <= min) return;
           L[key] = ri(min, max);
         } else if (kind === 'tm') {
           if (key === 'areaFadeMs') return;                            // leave fade default
-          const min = c[2] | 0, max = c[3] | 0, step = (c[4] | 0) || 1;
+          const min = c[3] | 0, max = c[4] | 0, step = (c[5] | 0) || 1;
+          if (max <= min) return;
           L[key] = min + ri(0, Math.floor((max - min) / step)) * step;
         }
       });
@@ -607,6 +615,398 @@
         area.extras.push(_ambDefaultLayer(type, nid++));   // default params
       }
       try { _normalizeAmbientCfg(area); } catch (e) {}
+    }
+    // ---- CREATE SIBLING -------------------------------------------------
+    // Clone the current area into a new one, applying a user-picked set of
+    // mutations: area-level (transpose / new or reharmonized progression / new
+    // take / tempo nudge) and per-layer (drop, new tone, re-rolled rhythm,
+    // octave shift, nudged settings). Anything not ticked carries over VERBATIM
+    // — that's what makes it a sibling rather than a new area.
+    //
+    // ALL randomness here is `Math.random` (a user action at UI time), never the
+    // seeded generation stream `_ambRand` — so the invariant harness, which
+    // builds its configs straight from `_ambDefaultLayer`, is untouched by
+    // construction. The only field that feeds generation determinism is
+    // `cfg.seed`, and it moves only when "New take" is ticked.
+    const _ambTrPc = (pc, semis) => (((((pc | 0) + (semis | 0)) % 12) + 12) % 12);
+    function _ambTransposeChordList(list, semis) {
+      if (!Array.isArray(list)) return;
+      list.forEach(ch => {
+        if (!ch || !Number.isFinite(ch.root)) return;
+        ch.root = _ambTrPc(ch.root, semis);
+        // Per-slot ALTERNATES carry their own roots (prog v6) — miss these and a
+        // transposed area snaps back to the old key whenever an alt is picked.
+        if (Array.isArray(ch.alts)) ch.alts.forEach(a => { if (a && Number.isFinite(a.root)) a.root = _ambTrPc(a.root, semis); });
+      });
+    }
+    function _ambTransposeSrc(src, semis) {
+      if (!src || typeof src !== 'object') return;
+      if (src.type === 'chord' && Number.isFinite(src.root)) src.root = _ambTrPc(src.root, semis);
+      else if (src.type === 'prog') _ambTransposeChordList(src.chords, semis);
+      // 'wrap' points at a shared registry entry (transposing it would move every
+      // area that uses it) and 'scale' is relative to the key root — both correct
+      // to leave alone.
+    }
+    function _ambTransposeLayer(L, semis) {
+      if (!L || typeof L !== 'object') return;
+      _ambTransposeSrc(L.notes, semis);
+      if (Array.isArray(L.steps)) L.steps.forEach(s => s && _ambTransposeSrc(s.notes, semis));   // arp series entries
+      const ko = L.keyOv;
+      if (ko && typeof ko === 'object') {
+        if (ko.mode === 'key' && Number.isFinite(ko.root)) ko.root = _ambTrPc(ko.root, semis);
+        else if (ko.mode === 'prog') _ambTransposeChordList(ko.chords, semis);
+      }
+    }
+    // Move a whole area into a new key. Touches the ONE key field plus every
+    // absolute-pitch source under it; `cfg.sections[i].key` is a RELATIVE offset
+    // so it rides along untouched.
+    function _ambTransposeArea(cfg, semis) {
+      semis = ((((semis | 0) % 12) + 12) % 12);
+      if (!cfg || !semis) return;
+      // keyFollow=true means the area MIRRORS the workspace root and ignores its
+      // own cfg.keyRoot — so pin the effective key first, then detach (the same
+      // move _ambSetActiveArea makes when the workspace key changes under a
+      // follower). Without this the transpose silently does nothing on the key.
+      try {
+        cfg.keyRoot = _ambTrPc(_ambKeyRootPc(cfg), semis);
+        cfg.keyScale = _ambKeyScaleName(cfg);
+      } catch (e) { cfg.keyRoot = _ambTrPc(cfg.keyRoot, semis); }
+      cfg.keyFollow = false;
+      if (cfg.prog) _ambTransposeChordList(cfg.prog.chords, semis);
+      if (cfg.prog && Array.isArray(cfg.prog.versions)) cfg.prog.versions.forEach(v => v && _ambTransposeChordList(v.chords, semis));
+      ['bed', 'motif', 'texture', 'beat'].forEach(k => _ambTransposeLayer(cfg[k], semis));
+      [cfg.extras, cfg.seqs, cfg.samples].forEach(arr => { if (Array.isArray(arr)) arr.forEach(L => _ambTransposeLayer(L, semis)); });
+    }
+    // Which sibling mutations actually MEAN something for this layer. A layer's
+    // rhythm is only privately re-rollable when it's euclidean — every other
+    // generative layer draws its material from the area take, so "Pattern" there
+    // would be a lie (the honest lever is the area-level New take).
+    function _ambSibCaps(type, L) {
+      const sch = (typeof _AMB_LAYER_SCHEMA !== 'undefined') ? _AMB_LAYER_SCHEMA[type] : null;
+      const euclid = (type === 'bass')
+        || (type === 'beat' && L && L.gen === 'euclid' && !L.euclidKit)
+        || (type === 'arp' && L && L.euclid);
+      const hasReg = !!(sch && Array.isArray(sch.ctrls) && sch.ctrls.some(c => Array.isArray(c) && c[1] === 'register'));
+      return { tone: type !== 'samp', pattern: euclid, octave: hasReg, settings: !!sch, drop: true };
+    }
+    // Fields "Settings" must NOT touch. `level`/`areaFadeMs` are mix + transition
+    // (a sibling shouldn't drift in loudness or fade). The rest are STRUCTURE,
+    // not feel: pulses/steps/rotate/bars define the euclidean seed — nudging them
+    // both undoes a Pattern roll ticked on the same layer and can push
+    // `pulses`/`rotate` past `steps` (they're independent `sl` rows with their own
+    // ranges: rotate goes to 31 while steps can be 8). register/octaves/range/
+    // density are the layer's pitch footprint, and Octave owns register.
+    const _AMB_SIB_NUDGE_SKIP = new Set(['level', 'areaFadeMs', 'pulses', 'steps', 'rotate', 'bars', 'register', 'octaves', 'range', 'density']);
+    // Perturb a layer's numeric schema params by ±pct% of each control's RANGE
+    // (clamped to it). Deliberately NOT the dice button's full re-roll — a
+    // sibling should read as a variant of the parent, not a different layer.
+    function _ambNudgeLayerParams(L, type, pct) {
+      const sch = (typeof _AMB_LAYER_SCHEMA !== 'undefined') ? _AMB_LAYER_SCHEMA[type] : null;
+      if (!sch || !L) return;
+      const p = Math.max(1, Math.min(100, pct | 0)) / 100;
+      sch.ctrls.forEach(c => {
+        if (!Array.isArray(c)) return;
+        const kind = c[0], key = c[1];
+        if (kind !== 'sl' && kind !== 'tm') return;
+        if (_AMB_SIB_NUDGE_SKIP.has(key)) return;
+        const min = c[3], max = c[4];
+        if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return;
+        const cur = Number.isFinite(L[key]) ? L[key] : min;
+        let v = cur + (Math.random() * 2 - 1) * (max - min) * p;
+        v = Math.max(min, Math.min(max, v));
+        if (kind === 'tm') { const step = (c[5] | 0) || 1; v = min + Math.round((v - min) / step) * step; }
+        L[key] = Math.round(Math.max(min, Math.min(max, v)));
+      });
+    }
+    // Shift a layer one octave up or down, inside its schema's Register range.
+    function _ambNudgeRegister(L, type) {
+      const sch = (typeof _AMB_LAYER_SCHEMA !== 'undefined') ? _AMB_LAYER_SCHEMA[type] : null;
+      if (!sch || !L) return;
+      const row = sch.ctrls.find(c => Array.isArray(c) && c[1] === 'register');
+      if (!row) return;
+      const min = row[3] | 0, max = row[4] | 0;
+      const cur = Number.isFinite(L.register) ? L.register : min;
+      const opts = [cur - 1, cur + 1].filter(v => v >= min && v <= max);
+      if (opts.length) L.register = opts[Math.floor(Math.random() * opts.length)];
+    }
+    // Remove a layer from a cloned area. Primaries are marked ABSENT (not just
+    // off) so they don't render as deactivated cards — the same move the "empty
+    // area" path makes; extras/seq/sample are spliced out of their lists.
+    function _ambSibDropLayer(cfg, key) {
+      const parts = String(key).split(':'), type = parts[0];
+      if (parts.length < 2) {
+        if (cfg[type]) { cfg[type].present = false; cfg[type].on = false; }
+        return;
+      }
+      const id = parseInt(parts[1], 10);
+      const rm = (arr) => {
+        if (!Array.isArray(arr)) return;
+        for (let i = arr.length - 1; i >= 0; i--) {
+          const x = arr[i];
+          if (x && (x.id | 0) === id && (x.type === type || !x.type)) arr.splice(i, 1);
+        }
+      };
+      rm(cfg.extras);                        // schema v2/C3: the single home for seq/samp too
+      if (type === 'seq') rm(cfg.seqs);      // …plus the legacy lists, for older projects
+      if (type === 'samp') rm(cfg.samples);
+    }
+    // Replace the area progression with a random standard from the catalog
+    // (optionally restricted to one family). Returns its name, or null.
+    function _ambSibNewProg(cfg, family) {
+      const pool = [];
+      try {
+        _ambProgFamilies().forEach(([label, rows]) => {
+          if (family && family !== '*' && label !== family) return;
+          (rows || []).forEach(r => { if (r) pool.push({ name: r[0], f: r[1], steps: r[2] }); });
+        });
+      } catch (e) {}
+      if (!pool.length) return null;
+      const pick = pool[Math.floor(Math.random() * pool.length)];
+      let chords = [];
+      try { chords = _ambResolveStandard(pick.f, pick.steps); } catch (e) {}
+      if (!Array.isArray(chords) || !chords.length) return null;
+      if (!cfg.prog || typeof cfg.prog !== 'object') cfg.prog = { on: false, name: '', chords: [] };
+      cfg.prog.on = true;
+      cfg.prog.name = pick.name;
+      cfg.prog.chords = chords;
+      // A different progression invalidates the old chain/version metadata
+      // (parts index into the OLD chord list, versions snapshot it).
+      delete cfg.prog.parts; delete cfg.prog.versions; delete cfg.prog.versionIdx;
+      // Section→part bindings index the same dead list.
+      if (Array.isArray(cfg.sections)) cfg.sections.forEach(s => { if (s) delete s.part; });
+      return pick.name;
+    }
+    // Apply a sibling plan to a CLONED area cfg. Returns a list of one-line
+    // change descriptions for the toast.
+    function _ambApplySiblingPlan(cfg, plan) {
+      const notes = [];
+      const A = (plan && plan.area) || {}, byKey = (plan && plan.layers) || {};
+      // --- Area level. Order matters: harmony is authored first, THEN moved, so
+      // a new/reharmonized progression lands in the transposed key too.
+      if (A.newProg) {
+        const nm = _ambSibNewProg(cfg, A.progFamily);
+        if (nm) notes.push('progression → ' + nm);
+      }
+      if (A.mutateProg > 0 && cfg.prog && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length) {
+        try {
+          const r = _ambReharmonize(cfg, cfg.prog.chords, A.mutateProg, (Math.random() * 0x7fffffff) | 0);
+          if (r && r.chords.length) {
+            cfg.prog.chords = r.chords;
+            delete cfg.prog.versions; delete cfg.prog.versionIdx;
+            notes.push('reharmonized ' + r.changed.length + '/' + r.chords.length + ' chord' + (r.changed.length === 1 ? '' : 's'));
+          }
+        } catch (e) {}
+      }
+      if (A.transpose) {
+        const semis = (A.transpose === 'rand') ? (1 + Math.floor(Math.random() * 11)) : (A.transpose | 0);
+        _ambTransposeArea(cfg, semis);
+        notes.push('transposed +' + (((semis % 12) + 12) % 12) + ' semitone' + (semis === 1 ? '' : 's'));
+      }
+      if (A.newTake) {
+        cfg.seed = ((((cfg.seed | 0) * 1664525 + 1013904223 + Math.floor(Math.random() * 1e6)) >>> 0) || 1);
+        ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k]) { try { _ambApplyTakeReroll(cfg[k], cfg.seed); } catch (e) {} } });
+        (Array.isArray(cfg.extras) ? cfg.extras : []).forEach(L => { try { _ambApplyTakeReroll(L, cfg.seed); } catch (e) {} });
+        notes.push('new take (' + (cfg.seed >>> 0).toString(36) + ')');
+      }
+      if (A.tempo) {
+        const cur = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : 120;
+        let f = 1;
+        if (A.tempo === 'half') f = 0.5;
+        else if (A.tempo === 'double') f = 2;
+        else { const p = (A.tempo | 0) / 100; f = 1 + (Math.random() < 0.5 ? -p : p); }
+        cfg.bpm = Math.max(20, Math.min(300, Math.round(cur * f)));
+        notes.push('tempo ' + Math.round(cur) + ' → ' + cfg.bpm + ' bpm');
+      }
+      // --- Per layer. Drops run FIRST so a dropped layer can't also be mutated,
+      // and so the surviving list is what gets counted.
+      let dropped = 0, touched = 0;
+      Object.keys(byKey).forEach(key => { if (byKey[key] && byKey[key].drop) { _ambSibDropLayer(cfg, key); dropped++; } });
+      _ambMixerLayers(cfg).forEach(it => {
+        const opt = byKey[it.key]; if (!opt || opt.drop) return;
+        const type = String(it.key).split(':')[0], L = it.layer;
+        let did = false;
+        if (opt.tone)     { try { _ambApplyRandomInstVoice(L, type); did = true; } catch (e) {} }
+        if (opt.pattern)  {
+          try {
+            _ambEuclidStochasticInit(L);
+            // Re-derive the take salt too, so the fresh rhythm is the one the
+            // euclid salt path reproduces on this area's take id.
+            L.euclidRegen = (Math.floor(Math.random() * 0xfffffff) >>> 0) || 1;
+            did = true;
+          } catch (e) {}
+        }
+        if (opt.octave)   { try { _ambNudgeRegister(L, type); did = true; } catch (e) {} }
+        if (opt.settings) { try { _ambNudgeLayerParams(L, type, 25); did = true; } catch (e) {} }
+        if (did) touched++;
+      });
+      if (dropped) notes.push(dropped + ' layer' + (dropped === 1 ? '' : 's') + ' dropped');
+      if (touched) notes.push(touched + ' layer' + (touched === 1 ? '' : 's') + ' changed');
+      return notes;
+    }
+    // Build the sibling: clone the active area, apply the plan, name it, switch.
+    function _ambCreateSibling(plan) {
+      const s = _masterBloomState();
+      const from = _ambActiveAreaIdx();
+      const src = s.areas[from]; if (!src) return -1;
+      // Capture the live tempo/groove into the SOURCE first, or the clone would
+      // inherit whatever was last persisted rather than what's on screen.
+      try { _ambCaptureGlobalsInto(src); } catch (e) {}
+      const i = _ambAddArea(from);
+      const cfg = s.areas[i]; if (!cfg) return -1;
+      let notes = [];
+      try { notes = _ambApplySiblingPlan(cfg, plan) || []; } catch (e) { console.warn('Sibling plan failed', e); }
+      const base = (typeof src.name === 'string' && src.name.trim()) ? src.name.trim() : '';
+      cfg.name = base ? _ambUniqueAreaName(s, base + ' ′') : '';
+      try { _normalizeAmbientCfg(cfg); } catch (e) {}
+      _ambSwitchToArea(i);
+      _ambRebuildMaster();
+      try { persistWorkspace(); } catch (e) {}
+      try {
+        if (typeof showToast === 'function') {
+          showToast(notes.length ? ('Sibling created — ' + notes.join(' · ')) : 'Sibling created (exact clone).');
+        }
+      } catch (e) {}
+      return i;
+    }
+    const _AMB_SIB_TR = [
+      ['rand', 'random'], [1, '+1 · minor 2nd'], [2, '+2 · major 2nd'], [3, '+3 · minor 3rd'],
+      [4, '+4 · major 3rd'], [5, '+5 · fourth'], [6, '+6 · tritone'], [7, '+7 · fifth'],
+      [8, '+8 · minor 6th'], [9, '+9 · major 6th'], [10, '+10 · minor 7th'], [11, '+11 · major 7th'],
+    ];
+    const _AMB_SIB_OPS = [
+      ['tone', 'Tone', 'Roll a new instrument for this layer'],
+      ['pattern', 'Pattern', 'Roll a new euclidean rhythm'],
+      ['octave', 'Octave', 'Shift this layer one octave up or down'],
+      ['settings', 'Settings', 'Nudge this layer’s numeric settings (±25% of each range)'],
+    ];
+    function _ambSiblingModal(E) {
+      _E = E;
+      const cfg = E.getCfg(); if (!cfg) return;
+      const s = _masterBloomState();
+      const srcName = _ambAreaLabel(cfg, _ambActiveAreaIdx());
+      const layers = _ambMixerLayers(cfg);
+      const hasProg = !!(cfg.prog && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length);
+      const old = document.getElementById('sib-overlay'); if (old) old.remove();
+      const ov = document.createElement('div'); ov.id = 'sib-overlay'; ov.className = 'sm-overlay';
+      // _ambEscText leaves quotes alone — fine for text nodes, NOT for the
+      // attribute contexts below (layer names are user-editable, and one `"`
+      // would break out of a title=/data-key=).
+      const escA = (v) => _ambEscText(v).replace(/"/g, '&quot;');
+      const famOpts = ['<option value="*">any family</option>'].concat((() => {
+        try { return _ambProgFamilies().map(f => '<option value="' + escA(f[0]) + '">' + _ambEscText(f[0]) + '</option>'); } catch (e) { return []; }
+      })()).join('');
+      const trOpts = _AMB_SIB_TR.map(t => '<option value="' + t[0] + '">' + _ambEscText(t[1]) + '</option>').join('');
+      const aRow = (op, label, title, tail) =>
+        '<div class="sib-arow"><button type="button" class="ambient-seg sib-tg" data-sib="' + op + '" title="' + escA(title) + '">' + _ambEscText(label) + '</button>' + (tail || '') + '</div>';
+      const layerRows = layers.map(it => {
+        const type = String(it.key).split(':')[0];
+        const caps = _ambSibCaps(type, it.layer);
+        const ops = _AMB_SIB_OPS.map(o => {
+          const ok = !!caps[o[0]];
+          const why = (o[0] === 'pattern' && !ok)
+            ? 'Only euclidean layers (Bass, euclid Beat, euclid Arp) have a private rhythm to re-roll — for this layer use the area-level “New take”.'
+            : (ok ? o[2] : 'Not applicable to this layer type.');
+          return '<button type="button" class="ambient-seg sib-op" data-op="' + o[0] + '"' + (ok ? '' : ' disabled') +
+            ' title="' + escA(why) + '">' + _ambEscText(o[1]) + '</button>';
+        }).join('');
+        return '<div class="nt-row sib-row" data-key="' + escA(it.key) + '">' +
+          '<span class="nt-name">' + _ambEscText(it.name) + '</span>' +
+          '<span class="sib-ops">' + ops +
+            '<button type="button" class="ambient-seg sib-drop" data-op="drop" title="Leave this layer out of the sibling">Drop</button>' +
+          '</span></div>';
+      }).join('');
+      ov.innerHTML = '<div class="sm-modal sib-modal">' +
+        '<div class="sm-title">❖ Create sibling</div>' +
+        '<div class="nt-hint">Clones <b>' + _ambEscText(srcName) + '</b> into a new area, then applies only what you tick below. Everything left unticked carries over verbatim.</div>' +
+        '<div class="sib-sec">Area</div>' +
+        '<div class="sib-area">' +
+          aRow('transpose', 'Transpose', 'Move the whole area — key, progression and every layer’s chord source — into a new key.',
+            '<select class="ambient-select sib-sel" data-sibsel="transpose">' + trOpts + '</select>') +
+          aRow('newProg', 'New progression', 'Replace the area progression with a random standard from the catalog.',
+            '<select class="ambient-select sib-sel" data-sibsel="progFamily">' + famOpts + '</select>') +
+          aRow('mutateProg', 'Mutate progression', hasProg
+              ? 'Reharmonize the current chords — each chord has this % chance of a same-function substitute (relative minor/major, mediant, or a 7th/9th colour).'
+              : 'No progression on this area to mutate.',
+            '<input type="number" class="ambient-step-inp sib-num" data-sibnum="mutateProg" min="5" max="100" step="5" value="35" title="% chance per chord"><span class="ambient-hint">%</span>') +
+          aRow('newTake', 'New take', 'Roll a fresh take id — every generative layer re-realizes its material (the only lever that changes a non-euclidean layer’s pattern).', '') +
+          aRow('tempo', 'Tempo', 'Change the sibling’s tempo.',
+            '<select class="ambient-select sib-sel" data-sibsel="tempo">' +
+              '<option value="5">±5%</option><option value="10" selected>±10%</option><option value="20">±20%</option>' +
+              '<option value="half">half time</option><option value="double">double time</option></select>') +
+        '</div>' +
+        '<div class="sib-sec">Layers' +
+          '<span class="sib-all"><span class="ambient-sched-lbl">all:</span>' +
+            _AMB_SIB_OPS.map(o => '<button type="button" class="ambient-seg sib-allop" data-allop="' + o[0] + '">' + _ambEscText(o[1]) + '</button>').join('') +
+            '<button type="button" class="ambient-seg sib-allop" data-allop="none">none</button>' +
+          '</span></div>' +
+        '<div class="nt-list sib-list">' + (layerRows || '<div class="ambient-hint">This area has no layers.</div>') + '</div>' +
+        '<div class="sm-footer"><button type="button" class="sm-cancel sib-cancel">Cancel</button>' +
+          '<button type="button" class="sm-apply sib-go">❖ Create sibling</button></div></div>';
+      document.body.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+      if (!hasProg) { const b = ov.querySelector('[data-sib="mutateProg"]'); if (b) b.disabled = true; }
+      // A tail control is dead weight until its option is on — dim it so the
+      // modal reads as "tick the thing, then tune it".
+      const syncTails = () => {
+        ov.querySelectorAll('.sib-arow').forEach(r => {
+          const b = r.querySelector('.sib-tg');
+          r.classList.toggle('sib-off', !(b && b.classList.contains('active')));
+        });
+      };
+      syncTails();
+      const close = () => { try { ov.remove(); } catch (e) {} };
+      ov.addEventListener('click', (ev) => {
+        const t = ev.target;
+        if (t === ov) { close(); return; }
+        const tg = t.closest && t.closest('.sib-tg');
+        if (tg) { if (!tg.disabled) { tg.classList.toggle('active'); syncTails(); } return; }
+        const op = t.closest && t.closest('.sib-op, .sib-drop');
+        if (op) {
+          if (op.disabled) return;
+          op.classList.toggle('active');
+          const row = op.closest('.sib-row');
+          // Drop wins: a dropped layer can't also be mutated, so grey the rest.
+          if (row) row.classList.toggle('sib-dropped', !!row.querySelector('.sib-drop.active'));
+          return;
+        }
+        const all = t.closest && t.closest('.sib-allop');
+        if (all) {
+          const which = all.getAttribute('data-allop');
+          ov.querySelectorAll('.sib-row').forEach(r => {
+            if (which === 'none') {
+              r.querySelectorAll('.sib-op, .sib-drop').forEach(b => b.classList.remove('active'));
+              r.classList.remove('sib-dropped');
+              return;
+            }
+            const b = r.querySelector('.sib-op[data-op="' + which + '"]');
+            if (b && !b.disabled) b.classList.add('active');
+          });
+          return;
+        }
+        if (t.closest && t.closest('.sib-cancel')) { close(); return; }
+        if (t.closest && t.closest('.sib-go')) {
+          const on = (sel) => { const b = ov.querySelector('[data-sib="' + sel + '"]'); return !!(b && !b.disabled && b.classList.contains('active')); };
+          const val = (sel) => { const e2 = ov.querySelector('[data-sibsel="' + sel + '"], [data-sibnum="' + sel + '"]'); return e2 ? e2.value : ''; };
+          const plan = { area: {}, layers: {} };
+          if (on('transpose')) { const v = val('transpose'); plan.area.transpose = (v === 'rand') ? 'rand' : (parseInt(v, 10) | 0); }
+          if (on('newProg')) { plan.area.newProg = true; plan.area.progFamily = val('progFamily') || '*'; }
+          if (on('mutateProg')) plan.area.mutateProg = Math.max(5, Math.min(100, parseInt(val('mutateProg'), 10) || 35));
+          if (on('newTake')) plan.area.newTake = true;
+          if (on('tempo')) plan.area.tempo = val('tempo') || '10';
+          ov.querySelectorAll('.sib-row').forEach(r => {
+            const key = r.getAttribute('data-key'); if (!key) return;
+            const o = {};
+            r.querySelectorAll('.sib-op.active, .sib-drop.active').forEach(b => { o[b.getAttribute('data-op')] = true; });
+            if (Object.keys(o).length) plan.layers[key] = o;
+          });
+          close();
+          _ambCreateSibling(plan);
+          return;
+        }
+      });
+      document.addEventListener('keydown', function esk(e) {
+        if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esk); }
+      });
     }
     // ---- Per-area globals (BPM + groove) --------------------------------
     // Only the Seed page/grid is shared; an area also remembers its OWN tempo +
@@ -750,7 +1150,11 @@
         '<div class="ambient-areas-row" style="--ac:' + _actC.accent + ';--ac-soft:' + _actC.soft + '">' +
           // ONE toggle cycling Single → Sequence → Shuffle → Single.
           '<button type="button" class="ambient-orch-mode is-' + orchState + (seq ? ' on' : '') + '" title="Playback across areas — click to cycle: Single (play this area only) → Sequence (each area in order) → Shuffle (random order each cycle).">' + orchLabel + '</button>' +
+          // ‹ › step through the areas — the desktop equivalent of the side-swipe
+          // (same wrap-around, same view-only semantics while playing).
+          '<button type="button" class="ambient-area-btn ambient-area-prev" title="Previous area (wraps)"' + (s.areas.length < 2 ? ' disabled' : '') + '>‹</button>' +
           '<select class="ambient-area-select" title="Select the area to view / edit (▶ marks the area playing now)">' + areaOpts + '</select>' +
+          '<button type="button" class="ambient-area-btn ambient-area-next" title="Next area (wraps)"' + (s.areas.length < 2 ? ' disabled' : '') + '>›</button>' +
           '<button type="button" class="ambient-area-btn ambient-area-add" title="Add a new area">+</button>' +
           '<span class="ambient-orch-bar-hdr" aria-live="polite" title="Current bar (and play) — always visible; sticky on scroll"></span>' +
           '<button type="button" class="ambient-area-btn ambient-orch-clear" title="Delete ALL areas and start over with one empty area" aria-label="Delete all areas">✕</button>' +
@@ -761,9 +1165,14 @@
         '<div class="ambient-areas-body">' +
         '<div class="ambient-orch">' +
           '<button type="button" class="ambient-area-btn ambient-area-dup" title="Clone the current area">⧉</button>' +
+          '<button type="button" class="ambient-area-btn ambient-area-sib" title="Create sibling — clone this area, then pick what to keep verbatim and what to change (per layer, plus key / progression / take / tempo)">❖</button>' +
           '<button type="button" class="ambient-area-btn ambient-area-ren" title="Rename the current area">✎</button>' +
           '<button type="button" class="ambient-area-btn ambient-area-clear" title="Clear all layers from this area (keeps its key / tempo / name)">🧹</button>' +
           '<button type="button" class="ambient-area-btn ambient-area-del" title="Delete the current area"' + (s.areas.length <= 1 ? ' disabled' : '') + '>✕</button>' +
+          // 🎲 New take lives HERE (moved out of the panel body): it re-rolls THIS
+          // AREA's random choices, so it belongs with the other per-area actions.
+          '<button type="button" id="ambient-regen-btn" class="ambient-regen ambient-area-take" title="Roll a new TAKE of this area — same layers, tones, timing, key &amp; mix (the arrangement), but a fresh realization of the random choices (which notes get picked, where they land). Same song, different performance. The ID beside it names this take; the same ID always replays it, so a take you like is reproducible.">🎲 New take</button>' +
+          '<span class="ambient-seed" id="ambient-seed-val" title="This area’s take ID — the fingerprint of its random choices. New take rolls a new one; the same ID replays the same performance.">Take —</span>' +
         '</div>' +
         // Plays × random + Bar Lock + Bars.
         '<div class="ambient-orch">' +
@@ -864,10 +1273,71 @@
           { label: 'Manual — empty area', fn: addManual },
           { label: 'Random — random layers', fn: addRandom },
           { label: 'Presets ▸', fn: () => setTimeout(presetSub, 0) },
+          'hr',
+          { label: 'From this area', disabled: true },
+          { label: '⧉ Clone — exact copy', fn: () => { _ambSwitchToArea(_ambAddArea(_ambActiveAreaIdx())); } },
+          // Deferred past this menu's own dismiss: showCtxMenu runs fn() THEN
+          // dismissCtxMenu(), and the sibling modal is a body-appended overlay
+          // that shouldn't share a frame with the teardown.
+          { label: '❖ Sibling — clone with changes…', fn: () => setTimeout(() => { try { _ambSiblingModal(_masterEng); } catch (e2) { console.warn('Create sibling failed', e2); } }, 0) },
         ]);
       });
       const dup = host.querySelector('.ambient-area-dup');
       if (dup) dup.addEventListener('click', () => { _ambSwitchToArea(_ambAddArea(_ambActiveAreaIdx())); });
+      // ‹ › — the same step the swipe performs, so they share one path.
+      const _step = (dir) => {
+        const st = _masterBloomState();
+        if (st.areas.length < 2) return;
+        _ambSwitchToArea((((st.activeIdx + dir) % st.areas.length) + st.areas.length) % st.areas.length);
+      };
+      const prevB = host.querySelector('.ambient-area-prev');
+      if (prevB) prevB.addEventListener('click', () => _step(-1));
+      const nextB = host.querySelector('.ambient-area-next');
+      if (nextB) nextB.addEventListener('click', () => _step(1));
+      const sib = host.querySelector('.ambient-area-sib');
+      if (sib) sib.addEventListener('click', () => { try { _ambSiblingModal(_masterEng); } catch (e) { console.warn('Create sibling failed', e); } });
+      // ---- SIDE-SWIPE between areas -------------------------------------
+      // A horizontal drag anywhere on the Areas strip steps the VIEW one area
+      // left/right. Works stopped and while playing — _ambSwitchToArea already
+      // draws the line (stopped it also moves what will play next; playing it is
+      // view-only, and the ▶ readout + amber select rim say so).
+      // Pointer events (not touch) so it behaves the same on desktop drag and on
+      // a phone; `touch-action: pan-y` on the strip keeps vertical page scroll.
+      if (areasBox) {
+        let sx = 0, sy = 0, sid = null, armed = false;
+        const THRESH = 42;          // px of horizontal travel before it counts
+        const SLOPE = 1.4;          // …and it must be this much more X than Y
+        areasBox.addEventListener('pointerdown', (ev) => {
+          // Arm on BUTTONS and SELECTS too — the strip is almost entirely chrome,
+          // so bailing on them meant the gesture could only start in the few bare
+          // pixels between controls (it never fired in practice). Safe because we
+          // never preventDefault and only act past a 42px horizontal threshold, so
+          // a tap still opens the select / presses the button exactly as before.
+          // Sliders and text fields DO own the horizontal axis, so skip those.
+          if (ev.target.closest && ev.target.closest('input, textarea, [contenteditable]')) return;
+          sx = ev.clientX; sy = ev.clientY; sid = ev.pointerId; armed = true;
+        });
+        areasBox.addEventListener('pointermove', (ev) => {
+          if (!armed || ev.pointerId !== sid) return;
+          const dx = ev.clientX - sx, dy = ev.clientY - sy;
+          if (Math.abs(dx) < THRESH || Math.abs(dx) < Math.abs(dy) * SLOPE) return;
+          armed = false;
+          const s = _masterBloomState();
+          if (s.areas.length < 2) return;
+          // Swipe LEFT (dx<0) = go forward, like flicking a card away.
+          const dir = dx < 0 ? 1 : -1;
+          const next = ((s.activeIdx + dir) % s.areas.length + s.areas.length) % s.areas.length;
+          _ambSwitchToArea(next);
+          try { areasBox.classList.remove('swipe-l', 'swipe-r'); void areasBox.offsetWidth;
+                areasBox.classList.add(dir > 0 ? 'swipe-l' : 'swipe-r');
+                setTimeout(() => areasBox.classList.remove('swipe-l', 'swipe-r'), 260); } catch (e) {}
+          try { if (typeof showToast === 'function') showToast('Area ' + _ambAreaLabel(s.areas[next], next) + (_masterEng && _masterEng.timer ? ' (viewing — playback unchanged)' : '')); } catch (e) {}
+        });
+        const end = () => { armed = false; sid = null; };
+        areasBox.addEventListener('pointerup', end);
+        areasBox.addEventListener('pointercancel', end);
+        areasBox.addEventListener('pointerleave', end);
+      }
       const ren = host.querySelector('.ambient-area-ren');
       if (ren) ren.addEventListener('click', () => {
         const i = _ambActiveAreaIdx();
@@ -1060,7 +1530,7 @@
       if (E !== _masterEng) return;
       const host = document.getElementById(E.hostId); if (!host) return;
       const view = _masterBloomState().activeIdx;
-      const play = Number.isFinite(E._playIdx) ? E._playIdx : view;
+      const play = _ambAudibleOrch(E).idx;   // audible, not queued (see _ambAudibleOrch)
       const sel = host.querySelector('.ambient-area-select');
       if (sel) {
         // Reflect the viewed area (don't stomp an open pick — the select-as-
@@ -1080,6 +1550,8 @@
       E._orchActive = (s.orch.mode === 'sequence' && s.areas.length > 1);
       E._orchSwitching = false;
       E._orchBag = null; E._plotWrapped = false;
+      E._orchPrevIdx = null; E._orchPrevAnchor = null; E._orchBoundaryAt = null;
+      E._orchPrevPhase = null;
       // Fresh play → start from the viewed area; mid-play mode toggle → keep the
       // area already sounding. Re-time the current area from now either way.
       if (!Number.isFinite(E._playIdx)) { E._playIdx = s.activeIdx; E._plotCount = 1; }
@@ -1126,6 +1598,8 @@
       const L = _ambSampleById(areaCfg, id);
       return (L && Number.isFinite(L.boundaryFadeMs)) ? Math.max(0, L.boundaryFadeMs) : 0;
     }
+    // Click-free floor for a departing layer's gate ramp (see _ambDepartLayer).
+    const _AMB_DEPART_MIN_FADE = 0.020;
     function _ambDepartLayer(E, key, fadeMs, at, sampFadeMs) {
       const e = E.mod && E.mod[key];
       if (!e) return;
@@ -1135,7 +1609,22 @@
       // voice stops below hit the OLD slot while the incoming area's fresh
       // build acquires a new one under the real key.
       if (e.core) { try { _coreVoices.stripRekey(key, depKey); } catch (ex) {} }
-      const fadeSec = Math.max(0.005, (fadeMs | 0) / 1000);
+      // Move this layer's ALREADY-DISPATCHED voices onto the dep key too, NOW —
+      // synchronously, while `key` still belongs exclusively to the outgoing area
+      // (the incoming area generates later in the same advance). Otherwise the
+      // stop below, which fires ~60 ms after the boundary against the LIVE key,
+      // separates the two areas' voices only by `_akAt < at` and destroys any
+      // INCOMING onset that lands before the boundary — which a layer with a
+      // negative Area-Groove push ("ahead of the beat") does every single time.
+      try { if (typeof retagBloomVoicesBefore === 'function') retagBloomVoicesBefore(key, at, depKey); } catch (ex) {}
+      // A hard cut (Area fade 0 — every synced / bar-native layer) still needs a
+      // CLICK-FREE ramp. 5 ms is shorter than one cycle of a low bass note
+      // (41 Hz ≈ 24 ms), so the gate collapsed mid-cycle and the step radiated
+      // broadband — the "boundary glitch, bass especially". 20 ms is the same
+      // click-free ramp the pad kill() uses, and it lets the outgoing note round
+      // off without the layer's PATTERN bleeding (its post-boundary onsets were
+      // already cancelled in step 1 of the advance).
+      const fadeSec = Math.max(_AMB_DEPART_MIN_FADE, (fadeMs | 0) / 1000);
       // Sample Fade Out: a sample overrunning the boundary fades from `at` over its own
       // boundaryFadeMs (scheduled NOW so the ramp lands on the future boundary), instead
       // of the hard stop below. Default 0 → falls through to the stop (identical to before).
@@ -1155,9 +1644,13 @@
       const now0 = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
       // Wait for the LONGER of the gate fade and the sample fade so neither is cut off
       // (the sample voices route through this chain, so teardown must not precede them).
-      const afterMs = Math.max(0, (at - now0) * 1000) + Math.max(fadeMs | 0, sampFadeMs | 0) + 60;
+      // Wait out the ACTUAL gate ramp (fadeSec, which carries the click-free floor),
+      // not the requested fadeMs — a 0 ms request still ramps for _AMB_DEPART_MIN_FADE.
+      const afterMs = Math.max(0, (at - now0) * 1000) + Math.max(fadeSec * 1000, sampFadeMs | 0) + 60;
       setTimeout(() => {
-        try { if (typeof stopBloomVoicesBefore === 'function') stopBloomVoicesBefore(key, at); } catch (ex) {}
+        // depKey, not key: the voices were re-tagged above, and `key` now belongs
+        // to the INCOMING area's freshly-built chain.
+        try { if (typeof stopBloomVoicesBefore === 'function') stopBloomVoicesBefore(depKey, at); } catch (ex) {}
         // core voices were dispatched under the ORIGINAL key, whose slot now
         // belongs to depKey after the rekey — stop them there explicitly
         if (e.core) { try { _coreVoices.stopBefore(depKey, at); } catch (ex) {} }
@@ -1192,12 +1685,31 @@
         // 2. Hand off to the next PLAY area (NOT the viewed/active area — the panel
         //    stays where the user is editing). Tempo / groove follow the play area.
         _ambCaptureGlobalsInto(s.areas[playIdx]);
+        // UI TRUTH vs ENGINE TRUTH. This advance fires ~0.6 s BEFORE `at` — it has
+        // to, because voices are scheduled ahead — and everything below flips the
+        // engine to the incoming area immediately. But NOTHING from that area
+        // sounds until `at`, so remember what's still audible and until when;
+        // every readout resolves against this instead of `_playIdx`, or the whole
+        // panel jumps a beat early (the ▶ name switches, the bar counter freezes
+        // because its bars go negative, and every layer bar empties because its
+        // new anchor is in the future).
+        E._orchPrevIdx = playIdx;
+        E._orchPrevAnchor = E._barGridAnchor;
+        E._orchBoundaryAt = at;
         E._playIdx = nextIdx;
         E._curPlays = _ambEffectivePlays(s.areas[nextIdx]);
         _ambApplyAreaGlobals(s.areas[nextIdx]);
         const cfg = _ambPlayCfg(E);   // = areas[nextIdx]
         // 3. Fresh clocks/phases so the new area's layers anchor at the boundary
         //    (E.mod is NOT cleared by this — shared chains persist for the tails).
+        // Keep the OUTGOING phase stores for the DISPLAY. _ambResetClocks assigns
+        // fresh objects rather than mutating, so holding these references costs
+        // nothing — and without them every layer bar renders empty for the ~0.6 s
+        // between this advance and the boundary (their new anchors are still in
+        // the future, so each position is negative). See _ambUpdatePlayheads.
+        E._orchPrevPhase = { clocks: E.clocks, iters: E.iters, runPhase: E.runPhase,
+          arpState: E.arpState, bassPhase: E.bassPhase, shapePhase: E.shapePhase,
+          seqState: E.seqState, cfg: s.areas[playIdx] };
         _ambResetClocks(E);
         // Anchor the incoming area's grid to the PRECISE boundary (not the late tick),
         // so its synced/bar-native layers' first onsets land ON the boundary — matching
@@ -4979,7 +5491,7 @@
         const L = getLayer(); if (!L) return;
         chip.textContent = _ambNotesLabel(_ambNotesOf(L));   // _ambNotesOf → the Area prog when locked
         const locked = !!_ambGlobalProg();
-        chip.classList.toggle('ambient-compose-locked', locked);
+        chip.classList.toggle('ambient-src-locked', locked);
         chip.title = _ambSrcChipTitle();
         try { _ambToneWrapVis(E, tonePrefix, L); } catch (e) {}
         try { _ambSeedUiRefresh(E, tonePrefix, getLayer, key); } catch (e) {}
@@ -5013,13 +5525,13 @@
         if (!k) return;
         const L = _ambLayerByKey(E, k); if (!L) return;
         btn.textContent = _ambNotesLabel(_ambNotesOf(L));
-        btn.classList.toggle('ambient-compose-locked', locked);
+        btn.classList.toggle('ambient-src-locked', locked);
         btn.title = ttl;
       });
       // B2: the per-layer KEY chip greys while the Area progression forces global
       // lock (area wins), so refresh its lock styling alongside the Notes chips.
       host.querySelectorAll('button[id$="-keyov"]').forEach(btn => {
-        btn.classList.toggle('ambient-compose-locked', locked);
+        btn.classList.toggle('ambient-src-locked', locked);
       });
     }
 
@@ -6031,8 +6543,108 @@
     // extensions, sus2/sus4, aug). Even feel cycles variants in slot order;
     // Stochastic picks a seeded-random variant (deterministic per chord+slot, so
     // Bar-Lock/Loop replay identically). Returns sorted freqs (fit to Density).
+    // ---- PER-LAYER NOTE PICK (`layer.chordPick`) ------------------------------
+    // "Edit notes" used to write into the chord itself — and under an area
+    // progression `_ambNotesOf` hands EVERY layer the SAME chords array by
+    // reference, so editing one layer's notes silently re-spelled the area's
+    // harmony for all of them. This replaces that with a per-layer CHOICE: which
+    // notes THIS layer plays out of what each chord offers. The progression is
+    // never touched.
+    //   { mode: 'chord'|'jazzy'|'key', sel: { '<chordIdx>': [iv, …] } }
+    // `iv` = semitones above THAT chord's root, so a pick follows the chord when
+    // the progression is transposed. Absent = the automatic voicing (byte-
+    // identical). Kept out of _ambDefaultLayer (object-in-defaults backfill trap).
+    const _AMB_PICK_MODES = [
+      ['chord', 'Chord', 'Only the chord’s own tones — a verbatim voicing.'],
+      ['jazzy', 'Jazzy', 'Chord tones plus tensions (9 · ♯11 · 13 · 6 · 7ths) — colour that isn’t strictly in the chord but sits well over it.'],
+      ['key', 'Key', 'Every tone of the area key, so you can hold a note the chord doesn’t contain at all.'],
+    ];
+    // Interval → its function over a chord root, for the picker labels.
+    const _AMB_IV_ROLE = { 0: 'root', 1: '♭9', 2: '9th', 3: '♭3', 4: '3rd', 5: '11th', 6: '♯11', 7: '5th', 8: '♭13', 9: '13th', 10: '♭7', 11: 'maj7' };
+    const _AMB_JAZZ_TENSIONS = [2, 5, 6, 9, 10, 11];   // 9 · 11 · ♯11 · 13 · ♭7 · maj7
+    // The mode is read from the stored pick when there is one, else from a
+    // TRANSIENT editor field. It cannot live in `chordPick` alone: an all-auto
+    // pick prunes to absent (the neutral state), and normalize runs on every
+    // getCfg — so a bare {mode, sel:{}} is deleted the moment the editor reads
+    // the chords back, which threw mid-handler.
+    function _ambPickMode(L) {
+      const m = (L && L.chordPick && L.chordPick.mode) || (L && L._pickMode);
+      return (m === 'jazzy' || m === 'key') ? m : 'chord';
+    }
+    function _ambPickFor(L, idx) {
+      const sel = L && L.chordPick && L.chordPick.sel;
+      const a = sel && sel[String(idx | 0)];
+      return (Array.isArray(a) && a.length) ? a.slice() : null;
+    }
+    function _ambPickSet(L, idx, arr) {
+      if (!L) return;
+      const mode = _ambPickMode(L);
+      const cp = (L.chordPick && typeof L.chordPick === 'object') ? L.chordPick : { mode: mode, sel: {} };
+      if (!cp.sel || typeof cp.sel !== 'object') cp.sel = {};
+      const clean = Array.isArray(arr) ? arr.filter(v => Number.isFinite(v)).map(v => ((v | 0) % 24 + 24) % 24) : [];
+      if (clean.length) cp.sel[String(idx | 0)] = clean; else delete cp.sel[String(idx | 0)];
+      cp.mode = mode;
+      if (!Object.keys(cp.sel).length) delete L.chordPick; else L.chordPick = cp;
+    }
+    function _ambNormalizeChordPick(L) {
+      if (!L || typeof L !== 'object') return;
+      const cp = L.chordPick;
+      if (!cp || typeof cp !== 'object' || !cp.sel || typeof cp.sel !== 'object') { if ('chordPick' in L) delete L.chordPick; return; }
+      const sel = {};
+      Object.keys(cp.sel).forEach(k => {
+        const a = cp.sel[k];
+        if (!Array.isArray(a)) return;
+        const clean = a.filter(v => Number.isFinite(v)).map(v => ((v | 0) % 24 + 24) % 24);
+        if (clean.length) sel[String(parseInt(k, 10) | 0)] = clean;
+      });
+      if (!Object.keys(sel).length) { delete L.chordPick; return; }
+      L.chordPick = { mode: (cp.mode === 'jazzy' || cp.mode === 'key') ? cp.mode : 'chord', sel: sel };
+    }
+    // The notes this chord OFFERS under `mode`, as intervals above its own root.
+    function _ambPickCandidates(chord, mode, cfg) {
+      const base = (chord && Array.isArray(chord.intervals) && chord.intervals.length) ? chord.intervals : [0, 4, 7];
+      const root = (((chord && chord.root | 0) % 12) + 12) % 12;
+      const set = new Set(base.map(v => ((v % 12) + 12) % 12));
+      if (mode === 'jazzy') _AMB_JAZZ_TENSIONS.forEach(t => set.add(t));
+      else if (mode === 'key') {
+        // Every scale tone of the AREA key, re-expressed against this chord's root
+        // so the stored pick stays chord-relative like the others.
+        let kRoot = 0, kIvs = null;
+        try { kRoot = _ambKeyRootPc(cfg); kIvs = (typeof SCALES !== 'undefined' && SCALES[_ambKeyScaleName(cfg)]) || null; } catch (e) {}
+        if (kIvs) kIvs.forEach(iv => set.add(((((kRoot + iv - root) % 12) + 12) % 12)));
+        else for (let i = 0; i < 12; i++) set.add(i);
+      }
+      return Array.from(set).sort((a, b) => a - b);
+    }
     function _ambVoiceProgChord(bed, notes, progVar) {
       const base = _ambScaleIntervals(notes);            // current chord's intervals from its root
+      // A per-layer PICK short-circuits the whole variant machinery: the user has
+      // said exactly which notes this layer plays over this chord, so re-voicing
+      // or degree-stacking on top would fight them. Spread + Register still apply
+      // (they're placement, not note choice), and Density still trims/doubles.
+      {
+        const _ch = _ambAsNotes(notes);
+        if (_ch && _ch.type === 'prog' && Array.isArray(_ch.chords) && _ch.chords.length) {
+          const _i = ((((progVar && progVar.chordStep | 0) % _ch.chords.length) + _ch.chords.length) % _ch.chords.length);
+          const _p = _ambPickFor(bed, _i);
+          if (_p) {
+            const center0 = Math.max(1, Math.min(8, bed.register | 0));
+            const spread0 = Math.max(0, Math.min(4, bed.spread | 0));
+            const want0 = Math.max(1, Math.min(9, bed.density | 0));
+            let tones0 = _p.map(iv => ({ iv: iv % 12, oct: Math.floor(iv / 12) }));
+            tones0.sort((a, b) => (a.oct * 12 + a.iv) - (b.oct * 12 + b.iv));
+            if (tones0.length > want0) tones0.length = want0;
+            if (spread0 >= 2) { const half = Math.ceil(tones0.length / 2); tones0.forEach((t, i) => { if (i >= half) t.oct += 1; if (spread0 >= 3 && i >= Math.ceil(tones0.length * 2 / 3)) t.oct += 1; }); }
+            const out0 = [];
+            for (const t of tones0) { const f = _ambNoteFreq(t.iv, center0 + t.oct, notes); if (f > 0) out0.push(f); }
+            out0.sort((a, b) => a - b);
+            let g0 = 0; while (out0.length < want0 && out0.length && g0++ < 24) out0.push(out0[out0.length % Math.max(1, tones0.length)] * 2);
+            out0.sort((a, b) => a - b);
+            if (out0.length > want0) out0.length = want0;
+            return out0;
+          }
+        }
+      }
       const N = Math.max(1, base.length);
       const center = Math.max(1, Math.min(8, bed.register | 0));
       const spread = Math.max(0, Math.min(4, bed.spread | 0));
@@ -6510,6 +7122,7 @@
         for (let c = cFrom; c <= cTo && ctx.cap < 256; c++) {
           // 'when' conditional applies per phrase cycle (cycle = iteration index).
           if (!_ambCondFires(inst.when, c)) continue;
+          if (!_ambCycleGateOK(inst, c)) continue;   // ⏱ Schedule tab: this whole iteration is switched off
           ctx.c = c;
           ctx.cStart = st.startAt + c * loopSec;
           // Deterministic per-cycle RNG — stable across ticks, evolves per cycle.
@@ -6564,6 +7177,12 @@
           const rVarEff = kitPat ? 0 : rVar;
           const restEff = kitPat ? 0 : restP;
           for (let v = 0; v < V && ctx.cap < 256; v++) {
+            // DRUM SOLO (monitoring): while a lane is soloed on a drum-lanes kit,
+            // every other lane is silent so you can hear the one you're editing.
+            // Transient + underscore-prefixed (never persisted, like `_selStep`),
+            // gated on euclidKit, and absent by default → no effect on any other
+            // layer and byte-identical when unset.
+            if (kitPat && Number.isFinite(inst._soloLane) && (inst._soloLane | 0) !== v) continue;
             const vpat = kitPat
               ? ((Array.isArray(kitPat[v]) && kitPat[v].length) ? kitPat[v] : new Array(steps).fill(0))
               : _ambEuclidPat(inst, pulses, steps, rotate, V, v, inst.euclidRegen | 0);
@@ -7202,8 +7821,12 @@
           // `degree` is what makes the drone's Note control work under a
           // progression (it was dropped here, so the knob did nothing and the
           // voicing fell back to "lowest rendered pitch" — see _ambVoiceProgChord).
+          // `chordPick` has to ride along for the same reason `degree` does: the
+          // voicer is handed this SHIM, not the layer, so anything the layer owns
+          // that the voicer reads must be copied here or the control silently does
+          // nothing (the picker stored fine, sounded not at all).
           const _shim = { register: reg + regShift, spread: 0, density: density, chordMode: 'chordsplus', voiceVariety: inst.voiceVariety | 0,
-            degree: Math.max(1, (inst.degree | 0) || 1) };
+            degree: Math.max(1, (inst.degree | 0) || 1), chordPick: inst.chordPick };
           const _freqs = _ambVoiceProgChord(_shim, src, { slot: _slot, chordStep: _cstep, subdiv: _psi.subdiv, feel: _psi.feel });
           for (let i = 0; i < _freqs.length; i++) {
             const f = _freqs[i]; if (!(f > 0)) continue;
@@ -8001,6 +8624,7 @@
       const pVary = Math.max(0, Math.min(100, arp.pitchVary | 0));   // ±1-octave drift per hit (gated)
       for (let c = cFrom; c <= cTo && cap < 256; c++) {
         if (!_ambCondFires(arp.when, c)) continue;
+        if (!_ambCycleGateOK(arp, c)) continue;   // ⏱ Schedule tab: this whole iteration is switched off
         const cStart = st.startAt + c * loopSec;
         const rnd = _ambSeededRand(((arp.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503));
         const rVar = Math.max(0, Math.min(100, arp.rhythmVar | 0));
@@ -9161,6 +9785,8 @@
     // before, so the invariant harness is unaffected (schema rule #3/#5).
     function _ambNormalizeEuclidPattern(L) {
       if (!L || typeof L !== 'object') return;
+      _ambNormalizeCycleGate(L);   // ⏱ Schedule tab (additive; absent = every iteration plays)
+      _ambNormalizeChordPick(L);   // per-layer note picks (additive; absent = automatic voicing)
       // Drum-lanes (additive; absent = classic single/auto-kit behavior).
       if (L.euclidKit != null) L.euclidKit = !!L.euclidKit;
       if (L.euclidDrums != null) {
@@ -9334,6 +9960,96 @@
     // override; the first cell of each bar (after the first) gets a divider + bar
     // number. The generated pattern is one bar and repeats (pat[idx % pat.length]);
     // a hand-edited override is the full phrase, one bar-block per bar.
+    // ---- CYCLE SCHEDULE (`layer.cycleGate`) — the Pattern grid's 2nd tab -------
+    // Where the Pattern grid sequences STEPS WITHIN one iteration, this sequences
+    // the ITERATIONS themselves: each cell is one full pass of the pattern, and an
+    // off cell leaves that whole pass silent. It's the `When` control (every 2nd /
+    // 1:3 / …) drawn as an arbitrary pattern instead of picked from a list, and it
+    // COMPOSES with When rather than replacing it — both gate the same cycle index.
+    // Distinct from `unitGate` (the ⏱ Scheduler's Unit Schedule), which slices the
+    // INSIDE of a unit; this one drops whole units.
+    // Shape: { len, steps:[0|1 …] }. Absent = every iteration plays, which is also
+    // how an all-on gate is stored (the setters prune it), so absence is the single
+    // neutral state everywhere. Kept OUT of _ambDefaultLayer — the object-in-
+    // defaults backfill trap — and coerced in _ambNormalizeEuclidPattern.
+    const _AMB_CYCGATE_MAX = 32;
+    function _ambCycleGateLen(L) {
+      const g = L && L.cycleGate;
+      const n = (g && Number.isFinite(g.len)) ? (g.len | 0) : ((g && Array.isArray(g.steps)) ? g.steps.length : 4);
+      return Math.max(2, Math.min(_AMB_CYCGATE_MAX, n || 4));
+    }
+    function _ambCycleGateSteps(L) {
+      const n = _ambCycleGateLen(L);
+      const src = (L && L.cycleGate && Array.isArray(L.cycleGate.steps)) ? L.cycleGate.steps : null;
+      return Array.from({ length: n }, (_, i) => (src && src[i] != null) ? (src[i] ? 1 : 0) : 1);
+    }
+    // The ONE read the emitters make. Absent/empty gate → every cycle fires, so a
+    // layer that has never opened the tab is byte-identical to before.
+    function _ambCycleGateOK(L, c) {
+      const g = L && L.cycleGate;
+      if (!g || !Array.isArray(g.steps) || !g.steps.length) return true;
+      const n = Math.max(2, Math.min(_AMB_CYCGATE_MAX, (g.len | 0) || g.steps.length));
+      const v = g.steps[((((c | 0) % n) + n) % n)];
+      return (v == null) ? true : !!v;
+    }
+    function _ambCycleGateSet(L, i, on) {
+      if (!L) return;
+      const n = _ambCycleGateLen(L), steps = _ambCycleGateSteps(L);
+      steps[(((i | 0) % n) + n) % n] = on ? 1 : 0;
+      if (steps.every(v => v)) { delete L.cycleGate; return; }   // all-on === neutral === absent
+      L.cycleGate = { len: n, steps: steps };
+    }
+    function _ambCycleGateResize(L, n) {
+      if (!L) return;
+      n = Math.max(2, Math.min(_AMB_CYCGATE_MAX, n | 0));
+      const old = _ambCycleGateSteps(L);
+      const steps = Array.from({ length: n }, (_, i) => (old[i] != null ? old[i] : 1));
+      if (steps.every(v => v)) { delete L.cycleGate; return; }
+      L.cycleGate = { len: n, steps: steps };
+    }
+    function _ambNormalizeCycleGate(L) {
+      if (!L || typeof L !== 'object') return;
+      const g = L.cycleGate;
+      if (!g || typeof g !== 'object' || !Array.isArray(g.steps) || !g.steps.length) { if ('cycleGate' in L) delete L.cycleGate; return; }
+      const n = Math.max(2, Math.min(_AMB_CYCGATE_MAX, (g.len | 0) || g.steps.length));
+      const steps = Array.from({ length: n }, (_, i) => (g.steps[i] ? 1 : 0));
+      if (steps.every(v => v)) { delete L.cycleGate; return; }
+      L.cycleGate = { len: n, steps: steps };
+    }
+    // The Pattern control's tab strip. The active tab is transient (`_gridTab`) —
+    // a view preference, not arrangement, so it never needs a schema field.
+    function _ambGridTabsHtml(L) {
+      const sched = !!(L && L._gridTab === 'sched');
+      const gated = !!(L && L.cycleGate);
+      const n = _ambCycleGateLen(L), on = _ambCycleGateSteps(L).filter(v => v).length;
+      return '<div class="ambient-gridtabs" role="tablist">' +
+        '<button type="button" class="ambient-gridtab' + (sched ? '' : ' on') + '" data-gtab="pattern" role="tab"' +
+          ' title="The step pattern — one iteration of this layer’s sequence.">⿴ Pattern</button>' +
+        '<button type="button" class="ambient-gridtab' + (sched ? ' on' : '') + '" data-gtab="sched" role="tab"' +
+          ' title="Schedule — each step here is one FULL iteration of the pattern, so switching one off leaves that whole repeat silent (a drawable ‘When’).">⏱ Schedule' +
+          (gated ? '<i class="gdot" title="' + on + ' of ' + n + ' iterations play"></i>' : '') + '</button>' +
+        '</div>';
+    }
+    function _ambCycleGateHtml(L) {
+      const n = _ambCycleGateLen(L), steps = _ambCycleGateSteps(L);
+      const on = steps.filter(v => v).length;
+      let cells = '';
+      for (let i = 0; i < n; i++) {
+        cells += '<button type="button" class="ambient-cyccell' + (steps[i] ? ' on' : '') + (i % 4 === 0 ? ' q' : '') +
+          '" data-cyc="' + i + '" title="Iteration ' + (i + 1) + ' of ' + n + ' — ' + (steps[i] ? 'plays' : 'silent') + '">' + (i + 1) + '</button>';
+      }
+      return '<div class="ambient-cycgate">' +
+        '<div class="ambient-cycgate-cells" style="--cyccols:' + Math.min(n, 8) + '">' + cells + '</div>' +
+        '<div class="ambient-cycgate-foot">' +
+          '<span class="ambient-sched-lbl">length</span>' +
+          '<button type="button" class="ambient-cyclen" data-cyclen="-1" title="Shorter schedule">−</button>' +
+          '<span class="ambient-step-fx-v">' + n + '</span>' +
+          '<button type="button" class="ambient-cyclen" data-cyclen="1" title="Longer schedule">＋</button>' +
+          '<button type="button" class="ambient-cycclear" title="Clear — every iteration plays again">Clear</button>' +
+        '</div>' +
+        '<div class="ambient-hint">' + on + ' of ' + n + ' iterations play, then the schedule repeats. Stacks with the layer’s When control.</div>' +
+      '</div>';
+    }
     function _ambEuclidCellsHtml(inst, type, bar) {
       const d = _ambEuclidGridDims(inst, type); if (!d) return '';
       const nBars = d.bars;
@@ -9478,6 +10194,14 @@
             '<span class="ambient-step-fx-btns">' +
               '<select class="ambient-step-fx-fill" title="Auto-fill the selected lane with an evenly-spread (euclidean) rhythm">' + _ambEuclidFillOptions(d.steps) + '</select>' +
               '<button type="button" class="ambient-step-fx-trig" title="Play the selected drum (audition)">▶</button>' +
+              // SOLO the drum you're editing — everything else on this kit goes
+              // quiet until you turn it off. Only meaningful with a single lane in
+              // scope (All-drums has no one lane to solo), so it's disabled there.
+              '<button type="button" class="ambient-step-fx-solo' + ((Number.isFinite(inst._soloLane) && (inst._soloLane | 0) === editLane) ? ' on' : '') + '"' +
+                (editMode === 'column' ? ' disabled' : '') +
+                ' title="' + (editMode === 'column'
+                  ? 'Solo applies to one drum — turn “All drums” off and pick a lane.'
+                  : 'Solo ' + drum + ' — mute every other drum on this layer while you work. Cleared when playback stops.') + '">S</button>' +
               '<button type="button" class="ambient-step-fx-clear" title="Reset the steps in scope to defaults">Reset</button>' +
             '</span>' +
           '</div>' +
@@ -9515,10 +10239,38 @@
       const dims = () => { const L = getL(); return L ? _ambEuclidGridDims(L, type) : null; };
       const render = () => {
         const L = getL(); if (!L) return;
+        // TAB 1 = the step pattern (unchanged). TAB 2 = the cycle schedule, where
+        // each step is one full iteration of that pattern. Both live inside `grid`
+        // so every delegated handler already bound to it keeps working.
+        if (L._gridTab === 'sched') { grid.innerHTML = _ambGridTabsHtml(L) + _ambCycleGateHtml(L); return; }
         const d = _ambEuclidGridDims(L, type);
         const bar = d ? _ambEuclidBarInfo(E, key, L, (E.getCfg && E.getCfg()) || null, d.steps, d.bars) : null;
-        grid.innerHTML = _ambEuclidCellsHtml(L, type, bar);
+        grid.innerHTML = _ambGridTabsHtml(L) + _ambEuclidCellsHtml(L, type, bar);
       };
+      // Tab strip + cycle-schedule chrome. A SEPARATE delegated listener from the
+      // drum-lanes one below, which returns early for non-kit layers — the schedule
+      // tab exists on every euclidgrid type (Bass / Beat / Arp).
+      grid.addEventListener('click', (ev) => {
+        const t = ev.target.closest && ev.target.closest('.ambient-gridtab, .ambient-cyccell, .ambient-cyclen, .ambient-cycclear');
+        if (!t) return;
+        _E = E; const L = getL(); if (!L) return;
+        if (t.classList.contains('ambient-gridtab')) {
+          L._gridTab = (t.getAttribute('data-gtab') === 'sched') ? 'sched' : 'pattern';
+          render(); return;   // view-only — nothing to persist or re-anchor
+        }
+        if (t.classList.contains('ambient-cyccell')) {
+          const i = t.getAttribute('data-cyc') | 0;
+          _ambCycleGateSet(L, i, !_ambCycleGateSteps(L)[i]);
+        } else if (t.classList.contains('ambient-cyclen')) {
+          _ambCycleGateResize(L, _ambCycleGateLen(L) + ((t.getAttribute('data-cyclen') | 0) || 1));
+        } else {
+          delete L.cycleGate;
+        }
+        render(); persist();
+        // Land on the layer's next boundary like every other per-note edit, so a
+        // schedule change is heard within one iteration instead of a whole loop later.
+        if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} try { sync && sync(); } catch (e) {} }
+      });
       // Mirror a knob value + its readout into the slider UI (preset application
       // writes cfg directly, so the sliders must be re-synced by hand).
       const syncSlider = (suf, v) => { const e = el(suf); if (!e || v == null) return; e.value = String(v); const rv = el(suf + '-v'); if (rv) rv.textContent = _ambSlReadout(e.id, v); };
@@ -9670,12 +10422,23 @@
       // re-render can never cancel a half-open native <select> — the "Sequence never
       // sticks" bug.
       grid.addEventListener('click', (ev) => {
-        const t = ev.target.closest && ev.target.closest('.ambient-euclid-tab, .ambient-euclid-pagedel, .ambient-euclid-segbtn, .ambient-euclid-playsbtn, .ambient-euclid-drumlbl, .ambient-euclid-laneplay, .ambient-step-fx-trig, .ambient-step-fx-clear, .ambient-stepmode, .ambient-stepscope-btn'); if (!t) return;
+        const t = ev.target.closest && ev.target.closest('.ambient-euclid-tab, .ambient-euclid-pagedel, .ambient-euclid-segbtn, .ambient-euclid-playsbtn, .ambient-euclid-drumlbl, .ambient-euclid-laneplay, .ambient-step-fx-trig, .ambient-step-fx-solo, .ambient-step-fx-clear, .ambient-stepmode, .ambient-stepscope-btn'); if (!t) return;
         if (_suppressTabClick) { _suppressTabClick = false; if (t.dataset.page != null) return; }   // a drag just reordered — don't also select
         _E = E; const L = getL(); if (!L || !L.euclidKit) return;
         const d = _ambEuclidGridDims(L, type); const total = d ? d.bars * d.steps : 0;
         // ▶ auditions — no state change / re-render.
         if (t.classList.contains('ambient-step-fx-trig')) { _ambTriggerLaneStep(E, key, L, _ambEditLane(L)); return; }
+        if (t.classList.contains('ambient-step-fx-solo')) {
+          const lane = _ambEditLane(L);
+          // Toggle: soloing the already-soloed lane clears it. Re-anchor so the
+          // change is heard at the layer's next boundary instead of a whole
+          // pattern later (the same rule every per-note edit follows).
+          if (Number.isFinite(L._soloLane) && (L._soloLane | 0) === lane) delete L._soloLane;
+          else L._soloLane = lane;
+          render();
+          if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} }
+          return;
+        }
         if (t.classList.contains('ambient-euclid-laneplay')) { _ambTriggerLaneStep(E, key, L, parseInt(t.dataset.laneplay, 10) | 0); return; }
         // Reset the steps in scope to default FX.
         if (t.classList.contains('ambient-step-fx-clear')) {
@@ -11279,9 +12042,13 @@
         if (!key) return;
         const L = _ambLayerByKey(E, key); if (!L) return;
         const type = String(key).split(':')[0];
+        // SECOND render path for the same element (timing edits / Lock-to re-fit).
+        // It has to emit the tab strip and honour the selected tab too, or a Unit
+        // change silently replaces the tabbed control with a bare step grid.
+        if (L._gridTab === 'sched') { grid.innerHTML = _ambGridTabsHtml(L) + _ambCycleGateHtml(L); return; }
         const d = _ambEuclidGridDims(L, type); if (!d) return;
         let bar = null; try { bar = _ambEuclidBarInfo(E, key, L, cfg, d.steps, d.bars); } catch (e) {}
-        grid.innerHTML = _ambEuclidCellsHtml(L, type, bar);
+        grid.innerHTML = _ambGridTabsHtml(L) + _ambEuclidCellsHtml(L, type, bar);
       });
     }
     // ---- Per-layer Unit controls (BPM-sync visibility + Match-to-layer) -----
@@ -15230,11 +15997,25 @@
       if (E.timer) { clearInterval(E.timer); E.timer = null; }
       _AMB_TICKING.delete(E); _ambTickWorkerMaybeStop();
       E._freshKeys = null; E._freshJoin = null;   // added-while-playing marks die with the session (a stopped toggle is plain)
+      // DRUM SOLO is monitoring state, not arrangement — clear it across every
+      // area so a project can never be saved (or reloaded) with seven drum lanes
+      // silently muted and nothing on screen to explain it. Normalize can't do
+      // this: it runs on every getCfg, so it would cancel the solo mid-listen.
+      try {
+        (_masterBloomState().areas || []).forEach(a => {
+          (a && Array.isArray(a.extras) ? a.extras : []).forEach(L => { if (L && L._soloLane != null) delete L._soloLane; });
+          ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (a && a[k] && a[k]._soloLane != null) delete a[k]._soloLane; });
+        });
+      } catch (e) {}
       try { _ambHealthStop(); } catch (e) {}
       if (E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
       // AREAS: end any sequencing and restore the bloom output gain (a stop mid
       // area-switch dip must not leave it at 0). Clear the now-playing highlight.
       E._orchActive = false; E._orchSwitching = false; E._playIdx = null;
+      // Drop the audible-handoff marker too, or a stop taken during the ~0.6 s
+      // pre-boundary window would leave every readout pinned to the outgoing area.
+      E._orchPrevIdx = null; E._orchPrevAnchor = null; E._orchBoundaryAt = null;
+      E._orchPrevPhase = null;
       try { _ambBarLockClear(E); } catch (e) {}   // drop ephemeral Bar-Lock loops (never persisted)
       E._barGridAnchor = null;                     // fresh loop grid next play
       try { if (typeof _bloomMasterGain !== 'undefined' && _bloomMasterGain && _bloomMasterGain.gain) { const _n = (Tone && Tone.now) ? Tone.now() : 0; _bloomMasterGain.gain.cancelScheduledValues(_n); _bloomMasterGain.gain.setValueAtTime(_BLOOM_MASTER_TRIM, _n); } } catch (e) {}
@@ -16769,12 +17550,52 @@
     // Driven by _ambVizFrame each frame; anchors to the layer's phase store
     // (runPhase[key].startAt) at the Bloom bpm, so the lit step tracks the audio.
     // Cached per grid (grid._phStep) → DOM only touched when the step changes.
+    // TRUE when the panel is showing the area the engine is actually generating.
+    // Master Bloom deliberately decouples the two (edit area 3 while area 1
+    // sounds), so EVERY live overlay — the ⏱ Scheduler cursor, the Pattern page
+    // tabs, the step playhead — must check this before painting engine state onto
+    // DOM that was rendered from a different area's config. Lane/Shape engines and
+    // a stopped master have no separate play index, so they're always "in view".
+    // The AUDIBLE clock — what the user is hearing right now, not what the
+    // scheduler has queued. Same basis the bar counter and layer bars already use.
+    function _ambAudibleNow() {
+      const t = (typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow()
+        : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0);
+      return t + 0.016;
+    }
+    // Which area is SOUNDING, and on which grid. Between the advance and the
+    // boundary the engine has already moved on; the ear has not.
+    function _ambAudibleOrch(E, tnow) {
+      const play = Number.isFinite(E && E._playIdx) ? E._playIdx : 0;
+      if (!E) return { idx: play, anchor: null, pending: false };
+      const b = E._orchBoundaryAt;
+      const t = Number.isFinite(tnow) ? tnow : _ambAudibleNow();
+      if (Number.isFinite(b) && t < b && Number.isFinite(E._orchPrevIdx)) {
+        return { idx: E._orchPrevIdx, anchor: E._orchPrevAnchor, pending: true };
+      }
+      return { idx: play, anchor: E._barGridAnchor, pending: false };
+    }
+    function _ambViewIsPlaying(E) {
+      if (E !== _masterEng || !Number.isFinite(E._playIdx)) return true;
+      try { return _ambAudibleOrch(E).idx === _masterBloomState().activeIdx; } catch (e) { return true; }
+    }
     function _ambEuclidStepPlayheads(E) {
       const host = E && document.getElementById(E.hostId); if (!host) return;
       const grids = host.querySelectorAll('.ambient-euclid-grid'); if (!grids.length) return;
+      // Viewing an area the engine isn't playing: the grids on screen belong to a
+      // DIFFERENT area's layers than E.runPhase / E._cfg describe, so the "playing"
+      // page tab, "up next" flag and step column would all be lifted from the wrong
+      // layer ("wrong Seq chips in Pattern during playback, after one play through"
+      // — i.e. after the first area advance). Clear instead of guessing.
+      if (!_ambViewIsPlaying(E)) { try { _ambClearEuclidPlayheads(E); } catch (e) {} return; }
       const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
       const cfg = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : (E.getCfg && E.getCfg())) || null;
-      const bpm = _ambBpm();
+      // Prefer the AREA's own tempo, exactly like _ambUpdateBarIndicator and
+      // _ambSchedCursor. `_ambBpm()` reads the GLOBAL tempo field, and an area
+      // carries its own bpm — when the two differ, every bar length here is off by
+      // that ratio and the step sweep truncates: at area 90 against a global 120
+      // the highlight wraps after 6 of 8 steps (0.75) and never completes a pass.
+      const bpm = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
       grids.forEach(grid => {
         let cur = -1, curPage = -1, nextPage = -1;
         try {
@@ -16782,20 +17603,39 @@
           let key = card && card.getAttribute('data-inst');
           if (!key) { const ph = card && card.querySelector('[data-phkey]'); key = ph && ph.getAttribute('data-phkey'); }
           const st = key && E.timer && E.runPhase && E.runPhase[key];
-          if (key && st && st.startAt != null && now >= st.startAt) {
+          // PRE-BOUNDARY PHASE. An area advance fires ~0.6 s before the boundary
+          // and re-anchors every layer AT that future boundary, so `now >= startAt`
+          // goes false and this whole block stops running — the step highlight
+          // vanishes partway through the bar that is still sounding. At 120 bpm
+          // that's ~2.3 of 8 steps, i.e. "the highlight stops at 6 of 8". The
+          // outgoing pattern is locked to the previous shared bar grid, so phase
+          // from that instead until the boundary actually lands (exact for a
+          // unit-synced layer, which is the case that reports this).
+          let _origin = (st && st.startAt != null) ? st.startAt : null;
+          let _cfgP = cfg;
+          if (key && E.timer && (_origin == null || now < _origin)) {
+            try {
+              const _ao = _ambAudibleOrch(E, now);
+              if (_ao.pending && Number.isFinite(_ao.anchor)) {
+                _origin = _ao.anchor;
+                if (E._orchPrevPhase && E._orchPrevPhase.cfg) _cfgP = E._orchPrevPhase.cfg;
+              }
+            } catch (e) {}
+          }
+          if (key && _origin != null && now >= _origin) {
             const L = _ambLayerByKey(E, key);
             if (L) {
-              const barSec = (60 / bpm) * 4 * _ambLayerScale(E, key, L, cfg);
+              const barSec = (60 / bpm) * 4 * _ambLayerScale(E, key, L, _cfgP);
               const bars = Math.max(1, Math.min(8, L.bars | 0) || 1), steps = Math.max(2, Math.min(32, L.steps | 0) || 8);
               const slotSec = barSec / steps, loopSec = bars * barSec + Math.max(0, (L.unitPadMs | 0)) / 1000;
               if (slotSec > 0 && loopSec > 0) {
-                const s = Math.floor(((now - st.startAt) % loopSec) / slotSec);
+                const s = Math.floor(((now - _origin) % loopSec) / slotSec);
                 if (s >= 0 && s < bars * steps) cur = s;
                 // Sequence mode: which PAGE is sounding this cycle (may differ from
                 // the viewed page) → mark that tab "playing"; and when the current
                 // page is on its LAST loop, flag the NEXT page as "up next".
                 if (L.euclidKit && L.euclidSeq && Array.isArray(L.euclidPages) && L.euclidPages.length > 1) {
-                  const info = _ambEuclidPageRunInfo(L, Math.floor((now - st.startAt) / loopSec));
+                  const info = _ambEuclidPageRunInfo(L, Math.floor((now - _origin) / loopSec));
                   curPage = info.idx;
                   if (info.remaining === 1 && info.nextIdx >= 0 && info.nextIdx !== info.idx) nextPage = info.nextIdx;
                 }
@@ -17006,7 +17846,10 @@
       const bpm = (typeof _ambBpm === 'function') ? _ambBpm() : 120;
       const barSec = (60 / Math.max(20, bpm)) * 4;
       const seq = !!E._orchActive;
-      const playArea = Number.isFinite(E._playIdx) ? E._playIdx : 0;
+      // Hold the OUTGOING area (and its grid) until the boundary really lands —
+      // otherwise this readout switches name and freezes ~0.6 s early.
+      const _ao = _ambAudibleOrch(E, tnow);
+      const playArea = _ao.idx;
       // Bar-Locked area: count from the LOOP grid (E._barGridAnchor) and show the
       // position within the captured loop (e.g. "🔒 Bar 1/2"); else from the area/play
       // start. loopBars is cached at arm time (no per-frame LCM recompute).
@@ -17015,9 +17858,10 @@
       // counter shares the same anchor as the layer status bars and lines up with them
       // (using _playStartAt instead leads by the whole cold-start gap + lead). Falls
       // back to the orch/play start before the first tick sets the grid.
-      const anchor = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor
+      const anchor = Number.isFinite(_ao.anchor) ? _ao.anchor
+        : (Number.isFinite(E._barGridAnchor) ? E._barGridAnchor
         : (seq && Number.isFinite(E._orchStartAt)) ? E._orchStartAt
-        : (Number.isFinite(E._playStartAt) ? E._playStartAt : tnow);
+        : (Number.isFinite(E._playStartAt) ? E._playStartAt : tnow));
       const barsElapsed = Math.max(0, Math.floor(Math.max(0, tnow - anchor) / barSec));
       let txt;
       if (loopBars > 0) {
@@ -17038,9 +17882,24 @@
       } else {
         txt = 'Bar ' + (barsElapsed + 1);
       }
+      // WHICH AREA IS SOUNDING. The ▶ marker _ambOrchUpdateNowPlaying writes into
+      // the area <select>'s options is invisible while the select is collapsed —
+      // it only shows the SELECTED (= viewed) option — and the viewed area is
+      // deliberately decoupled from the playing one, so with >1 area there was no
+      // always-visible answer to "what am I hearing?". Prefix the bar readout,
+      // which is mirrored into the sticky header and the app-header pill.
+      const _sMB = _masterBloomState();
+      if (_sMB.areas.length > 1) {
+        const nm = _ambAreaLabel(_sMB.areas[playArea], playArea);
+        txt = '▶ ' + nm + ' · ' + txt;
+      }
       if (el.textContent !== txt) el.textContent = txt;
       if (hdr && hdr.textContent !== txt) hdr.textContent = txt;   // header mirror (always visible; strip is sticky)
       if (app && app.textContent !== txt) app.textContent = txt;    // app-header pill mirror
+      // …and mark the select itself when you're EDITING an area you aren't
+      // hearing, so a change that seems to do nothing is explained.
+      const selEl = host.querySelector('.ambient-area-select');
+      if (selEl) selEl.classList.toggle('viewing-other', _sMB.areas.length > 1 && playArea !== _sMB.activeIdx);
       // Flash: every bar pulses (alternating colours so consecutive bars read as
       // distinct); an area boundary (the playing area changed) pulses brighter.
       if (E._biInit) {
@@ -17083,7 +17942,11 @@
         grid.querySelectorAll('.ambient-slice-cell').forEach((c, i) => c.classList.toggle('gen-hit', !!pat[i]));
       });
     }
+    // Thin wrapper kept so the pre-boundary sweep below has one obvious home.
     function _ambUpdatePlayheads(E) {
+      return _ambUpdatePlayheadsCore(E);
+    }
+    function _ambUpdatePlayheadsCore(E) {
       const host = document.getElementById(E.hostId); if (!host) return;
       // Elapsed-time readout lives in the global float-header (top), driven by the
       // always-on _ambStartHeaderTicker (live on Seed / Grow / Harvest) — not here.
@@ -17094,7 +17957,13 @@
       // Areas are fully separated: when the master is playing a DIFFERENT area than the
       // one on screen, the panel shows an INACTIVE area — its live readouts (cursors,
       // note lines, Now Playing) must stay static, not mirror the playing area's engine.
-      const liveOK = _ambLiveApplyOK(E);
+      // DISPLAY gate — deliberately NOT _ambLiveApplyOK. That one guards pushing
+      // edits into the running engine, so it must follow the ENGINE's `_playIdx`,
+      // which moves at the advance ~0.6 s before the boundary. Driving the bars
+      // from it blanked every one of them for that half-second while the outgoing
+      // area was still sounding ("status bars end early"). The bars must follow
+      // what's AUDIBLE, so they empty exactly on the boundary instead.
+      const liveOK = (E === _masterEng && E.timer) ? _ambViewIsPlaying(E) : _ambLiveApplyOK(E);
       // Drive the bars off the AUDIBLE clock (currentTime − latency), not the
       // schedule clock (Tone.now() = currentTime + lookAhead), so they track what
       // you HEAR instead of running ~lookAhead+latency ahead of it. Matches the
@@ -17214,6 +18083,28 @@
           }
         }
         if (!liveOK) { active = false; prog = 0; frozen = false; cyc = null; }   // inactive area on screen → no live cursor
+        // PRE-BOUNDARY SWEEP. An area advance fires ~0.6 s before the boundary it
+        // schedules for: it re-anchors every layer at that FUTURE boundary and the
+        // tick returns, so the outgoing area's clocks stop being advanced. Both
+        // halves then fail to resolve — the new anchor is in the future (position
+        // < 0) and the old `next` has fallen behind `now` — and the bar rendered
+        // EMPTY for the last half-second of an area that is still sounding ("status
+        // bars end early"). The outgoing layers were locked to the previous shared
+        // grid, so sweep from that instead; it's exact for synced layers and close
+        // enough for free ones over half a second. Only while a boundary is pending.
+        if (!active && liveOK && E === _masterEng && E.timer) {
+          try {
+            const _ao2 = _ambAudibleOrch(E, now);
+            if (_ao2.pending && Number.isFinite(_ao2.anchor)) {
+              // `layer` is block-local to the branches above — resolve it here or
+              // the ReferenceError is swallowed by this catch and the sweep
+              // silently never runs (which is exactly what happened first time).
+              const _L2 = _ambLayerByKey(E, key);
+              const _P2 = _L2 ? _ambLayerPeriodSec(E, key, _L2, (E._orchPrevPhase && E._orchPrevPhase.cfg) || E._cfg || E.getCfg()) : 0;
+              if (_P2 > 0.02 && now >= _ao2.anchor) { prog = (((now - _ao2.anchor) % _P2) / _P2 + 1) % 1; active = true; }
+            }
+          } catch (e) {}
+        }
         el.style.setProperty('--ph', active ? prog.toFixed(3) : '0');
         el.classList.toggle('active', active);
         el.classList.toggle('frozen', frozen);
@@ -21400,7 +22291,17 @@
       const cfg = E._cfg || (E.getCfg && E.getCfg()); if (!cfg) return;
       const G = E._barGridAnchor;
       const phs = box.querySelectorAll('.ambient-sched-ph:not(.lg)'); if (!phs.length) return;   // .lg = the legend's sample chip, never a live cursor
-      if (!E.timer || !Number.isFinite(G)) {   // stopped → hide cursors + clear every live highlight
+      // VIEWED vs PLAYING area. _ambRenderScheduler draws the STRUCTURE from
+      // E.getCfg() (the area on screen), while this cursor is driven by E._cfg
+      // (the area the engine is generating) plus E.freeze[key] engine state. When
+      // Area sequence play moves on and the panel stays parked, those are two
+      // DIFFERENT areas — and indexing one into the other lights the wrong row:
+      // measured with a Loop SEQUENCE on a beat layer, the viewed area's 2 tuple
+      // chips were highlighted from the playing area's 1-tuple write cycle ("the
+      // seq chip display gets out of sync with playback"). There is no honest
+      // cursor to draw for an area you aren't hearing, so draw none — the amber
+      // rim on the area select + the "▶ <name>" bar readout already say why.
+      if (!E.timer || !Number.isFinite(G) || !_ambViewIsPlaying(E)) {   // stopped / other area → hide cursors + clear every live highlight
         phs.forEach(el => { el.style.display = 'none'; });
         box.querySelectorAll('.ambient-sched-blk.playing, .ambient-sched-chblk.playing, .ambient-sched-tuchip.playing').forEach(el => el.classList.remove('playing'));
         box.querySelectorAll('.ambient-sched-row[data-schkey]').forEach(r => { r._blkEl = null; });
@@ -22073,20 +22974,20 @@
     const _AMB_LAYER_SCHEMA = {
       bed: { label: 'Bed', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
         ['sub', 'Progression', 'When an Area progression is set: the layer locks to it and plays voicings of the current chord. (Repeat/Times in Timing only apply when there is no Area progression.)'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['choke'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'gravity', 'Gravity', 0, 100, 'free → chord tones'], ['sl', 'contour', 'Contour', -100, 100, 'fall → rise'], ['sl', 'stutter', 'Stutter', 0, 100, 'walk → repeats'], ['sl', 'phrasing', 'Phrasing', 0, 100, 'stream → gestures'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'syncop', 'Syncopate', 0, 100, 'straight → offbeat'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
@@ -22110,7 +23011,7 @@
       // long; Rhythm/Pitch var add per-repeat variation.
       bass: { label: 'Bass', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Pattern', 1, 8, 'bars — the seed fills the Unit'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['tight'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Walk', 0, 100, 'hold → wander (proximity-capped)'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -22118,14 +23019,14 @@
       // looping; Vary re-rolls; Len var spreads note lengths around Length.
       run: { label: 'Riff', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'phrasing', 'Articulate', 0, 100, 'even → arrivals sustain, runs detach'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'vary', 'Roam', 0, 100, 'root → wander degrees'], ['tight'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -22133,7 +23034,7 @@
       // vary are independent. A chord Notes source holds the whole chord.
       drone: { label: 'Drone', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
         ['sub', 'Progression', 'When an Area progression is set: PEDAL (default) holds ONE note per progression cycle, auto-chosen to work across every chord — the card explains the pick, and Note overrides it. VOICINGS re-voices the current chord instead (Subdivide/Feel/Variety).'], ['dronepedal'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
@@ -22337,7 +23238,7 @@
         const st = _ambLayerKeyState(L);
         chip.textContent = st.label;
         chip.classList.toggle('ambient-keyov-inherit', st.mode === 'inherit');
-        chip.classList.toggle('ambient-compose-locked', !!_ambGlobalProg());
+        chip.classList.toggle('ambient-src-locked', !!_ambGlobalProg());
       };
       refresh();
       chip.addEventListener('click', () => {
@@ -22352,34 +23253,17 @@
     // extras readout so both read consistently. `L` = the live cfg layer.
     // Wrap a compose chip (tag / select / button) with a small caption above it
     // so the row reads "Voice · Notes · Gen" as labeled fields, not bare values.
-    const _ambComposeField = (lbl, html) =>
-      '<span class="ambient-compose-field"><span class="ambient-compose-lbl">' + lbl + '</span>' + html + '</span>';
     // Note-source chip title, reflecting the Area-progression LOCK: while the Area
     // prog is on, every source-editable layer's Notes is overridden to it, so the
     // chip is read-only (its click toasts instead of opening the source menu).
     const _ambSrcChipTitle = () => _ambGlobalProg()
       ? 'Notes locked to the Area progression 🔒 — turn Prog off (Configure) to edit per-layer Notes'
       : 'Note-source — the pitch material this layer draws from (click to change)';
+    // REMOVED. The compose strip is gone entirely — readouts and chips alike.
+    // Kept as a no-op stub so the four primary-card call sites and the Beat
+    // generator re-render don't need to change shape.
     function _ambComposePrimaryHtml(type, L) {
-      L = L || {};
-      const voice = _ambVoiceOf(L, type), src = _ambSourceKindOf(L, type), gen = _ambGeneratorOf(L, type);
-      const tag = (t2) => '<span class="ambient-compose-tag">' + t2 + '</span>';
-      const bits = [_ambComposeField('Voice', tag(_AMB_VOICE_LBL[voice] || voice))];
-      // Note-source: an interactive chip (opens the source menu, shows the detailed
-      // material label) for editable-source layers — this replaced the Seed-group
-      // "Notes" button. Static tag otherwise (e.g. Beat has no pitch source).
-      if (src && src !== 'none') {
-        if (_ambSourceEditable(type)) {
-          bits.push(_ambComposeField('Notes', '<button type="button" id="ambient-' + type + '-srcswap" class="ambient-compose-sel' + (_ambGlobalProg() ? ' ambient-compose-locked' : '') + '" title="' + _ambSrcChipTitle() + '">' + _ambNotesLabel(_ambNotesOf(L)) + '</button>'));
-        } else bits.push(_ambComposeField('Notes', tag(_AMB_SRC_LBL[src] || src)));
-      }
-      // B2: per-layer KEY override chip (Inherit / Key / Progression).
-      if (_ambSourceEditable(type)) bits.push(_ambKeyChipHtml('ambient-' + type, L));
-      if (gen === 'riff') { bits.push(_ambComposeField('Gen', tag('Riff'))); bits.push(_ambComposeField('Var', tag('Re-roll'))); }
-      else if (gen === 'stepgrid' || gen === 'mutate') { bits.push(_ambComposeField('Gen', tag('Step-grid'))); bits.push(_ambComposeField('Var', tag('Evolve'))); }   // texture = stochastic-fill step grid + evolve (was mislabeled "Riff")
-      else bits.push(_ambComposeField('Gen', tag(_AMB_GEN_LBL[gen] || gen)));
-      return '<div class="ambient-compose" title="Voice · Note-source · Generator (built-in layer)">' +
-        bits.join('') + '</div>';
+      return '';
     }
     // Arp "Notes" chip text: the CURRENT series entry's material (not the word
     // "Series") + its position, e.g. "C Minor · 2/3". st = E.arpState[key]
@@ -22393,50 +23277,9 @@
       try { lbl = _ambNotesLabel(_ambArpEntrySrc(L, steps[i])); } catch (e) {}
       return n > 1 ? (lbl + ' · ' + (i + 1) + '/' + n) : lbl;
     }
+    // REMOVED — see _ambComposePrimaryHtml.
     function _ambComposeReadoutHtml(inst) {
-      const t = inst.type;
-      const voice = _ambVoiceOf(inst, t), gen = _ambGeneratorOf(inst, t), src = _ambSourceKindOf(inst, t);
-      const tag = (txt) => '<span class="ambient-compose-tag">' + txt + '</span>';
-      // Voice chip — a static readout of the sound family (Synth = pitched,
-      // Kit = drums, Sample). Voice is a property of the layer's INSTRUMENT preset,
-      // not an in-card axis picker; the old Synth↔Kit swap select was dropped in the
-      // layer-model rework (docs/bloom-layer-model.md — INSTRUMENT owns the voice).
-      const voiceLbl = { synth: 'Synth', kit: 'Kit', sample: 'Sample' }[voice] || voice;
-      const bits = [_ambComposeField('Voice', tag(voiceLbl))];
-      // Source chip: a button that opens the shared note-source menu (scale/chord/
-      // wrap/prog) for editable-source layers; a static tag otherwise (arp shows
-      // its Series, pedal its Degree).
-      if (src && src !== 'none') {
-        const slbl = (t === 'arp') ? 'Series' : (_AMB_SRC_LBL[src] || src);
-        if (_ambSourceEditable(t)) {
-          const sid = 'ambient-' + inst.type + '-' + inst.id + '-srcswap';
-          // Detailed label (e.g. "C Dorian"), or the Area prog when locked.
-          bits.push(_ambComposeField('Notes', '<button type="button" id="' + sid + '" class="ambient-compose-sel' + (_ambGlobalProg() ? ' ambient-compose-locked' : '') + '" title="' + _ambSrcChipTitle() + '">' + _ambNotesLabel(_ambNotesOf(inst)) + '</button>'));
-        } else if (t === 'arp') {
-          // Live chip: the CURRENT series entry's notes + position (updated per
-          // frame in _ambUpdateNotesLive) — "Series" alone said nothing.
-          const st0 = (typeof _E !== 'undefined' && _E && _E.arpState) ? _E.arpState['arp:' + inst.id] : null;
-          bits.push(_ambComposeField('Notes', '<span class="ambient-compose-tag ambient-arp-series-live" data-akey="arp:' + inst.id + '" title="Current entry in the arp series (edit in Series below)">' + _ambArpSeriesChipText(inst, st0) + '</span>'));
-        } else {
-          bits.push(_ambComposeField('Notes', tag(slbl)));
-        }
-      }
-      // B2: per-layer KEY override chip (Inherit / Key / Progression).
-      if (_ambSourceEditable(t)) bits.push(_ambKeyChipHtml('ambient-' + inst.type + '-' + inst.id, inst));
-      // Generator — a static readout of how the layer sequences. Swapping the
-      // generator in-card (the old select) was dropped in the layer-model rework:
-      // the generator is fixed by the layer's preset, not assembled from an axis.
-      bits.push(_ambComposeField('Gen', tag(_AMB_GEN_LBL[gen] || gen)));
-      // Pattern generator (run/texture) carries a VARIATION MODE chip — re-roll
-      // (run) swaps the whole phrase, evolve (texture) mutates it gradually. This
-      // is where the old standalone "Mutate" generator now lives.
-      if (t === 'run' || t === 'texture') {
-        const mid = 'ambient-' + inst.type + '-' + inst.id + '-patmode', mcur = (t === 'texture') ? 'evolve' : 'reroll';
-        bits.push(_ambComposeField('Var', '<select id="' + mid + '" class="ambient-compose-sel" title="Variation mode — Re-roll swaps the whole pattern; Evolve mutates it gradually">' +
-          [['reroll', 'Re-roll'], ['evolve', 'Evolve']].map(m => '<option value="' + m[0] + '"' + (m[0] === mcur ? ' selected' : '') + '>' + m[1] + '</option>').join('') + '</select>'));
-      }
-      return '<div class="ambient-compose" title="Voice · Note-source · Generator · (variation mode)">' +
-        bits.join('') + '</div>';
+      return '';
     }
     // Convert a layer to a different GENERATOR by rebuilding it as the target preset
     // type and carrying over the tuned SOUND (voice/ADSR), SOURCE (notes), and
@@ -22534,10 +23377,10 @@
     // A static (read-only) composition readout from label parts — used on cards
     // that aren't convertible extras (primary layers, Seq, Sample).
     // pairs: [[label, value], …] → labeled static fields (seq / sample cards).
-    function _ambComposeReadonlyHtml(pairs, title) {
-      return '<div class="ambient-compose" title="' + (title || 'Voice · Seed · Generator') + '">' +
-        (pairs || []).map(p => _ambComposeField(p[0], '<span class="ambient-compose-tag">' + p[1] + '</span>')).join('') + '</div>';
-    }
+    // REMOVED with the rest of the compose strip (this was the Seq / Sample card
+    // variant — the one that survived the first pass because those cards build
+    // their heads through a different helper).
+    function _ambComposeReadonlyHtml() { return ''; }
     // Sample-voice params: a chosen sample triggered one-shot per onset + a ±semitone
     // trigger-pitch offset. Injected only when the voice derives to 'sample'.
     function _ambSamplePickHtml(inst, p) {
@@ -22580,6 +23423,18 @@
       // euclidean pattern shown here; tapping a cell hand-edits it into an
       // explicit override. A knob change or Regen resets it to the generated
       // pattern. Filled/wired by _ambWireEuclidGrid (like the trance-gate grid).
+      // NOTES — the layer's pitch material, re-homed into the Source group after the
+      // compose strip was removed. The button id is `<prefix>-srcswap`, which the
+      // EXISTING _ambWireSrcChip wiring (extras + primaries) already looks for, so
+      // this row needs no new handler — only the markup came back.
+      if (k === 'notes') {
+        let lbl = 'Scale', locked = false;
+        try { lbl = _ambNotesLabel(_ambNotesOf(inst || {})); locked = !!_ambGlobalProg(); } catch (e) {}
+        return '<div class="ambient-ctrl"><label for="' + p + '-srcswap">Notes</label>' +
+          '<button type="button" id="' + p + '-srcswap" class="ambient-src-btn' + (locked ? ' ambient-src-locked' : '') +
+            '" title="' + _ambSrcChipTitle() + '">' + lbl + '</button>' +
+          '<span class="ambient-hint">pitch material</span></div>';
+      }
       if (k === 'euclidgrid') return '<div class="ambient-ctrl ambient-slice-row ambient-euclid-ctrl' + ((inst && inst.euclidKit) ? ' ambient-euclid-kitctrl' : '') + '"><label title="The on/off step pattern. Pulses/Steps/Rotate generate it; tap cells to hand-edit; or load a rhythm Preset. A knob change or Regen resets it to the generated Euclid pattern.">Pattern</label>' +
         '<div class="ambient-euclid-wrap">' +
           '<div class="ambient-euclid-presetrow"><select id="' + p + '-euclidpreset" class="ambient-select ambient-euclid-preset" title="Load a rhythm preset (world / rock / African / clave) into the step grid">' + _ambEuclidPresetOptions() + '</select></div>' +
@@ -23193,140 +24048,129 @@
       o.intervals = _ambChordIntervals(form, 0).slice().sort((a, b) => a - b);
       o.muted = [];
     }
+    // "Edit notes" for a Drone under an area progression. THIS DOES NOT EDIT THE
+    // PROGRESSION. It records, per chord, which notes THIS layer plays out of what
+    // the chord offers (`layer.chordPick`) — the old version re-spelled the chord
+    // object, which every layer shares by reference, so one layer's note edit
+    // rewrote the area's harmony for all of them.
     function _ambShowDroneChordEditor(E, getL) {
       const L0 = getL(); if (!L0) return;
       const names = (typeof CHROMATIC !== 'undefined' && CHROMATIC.length === 12) ? CHROMATIC : ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
       const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, '');
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
+      const cfg = (E && (E._cfg || (E.getCfg && E.getCfg()))) || null;
       const overlay = document.createElement('div'); overlay.className = 'modal-overlay';
       const modal = document.createElement('div'); modal.className = 'step-div-modal amb-chordedit-modal amb-droneedit-modal';
       overlay.appendChild(modal);
       const close = () => { try { overlay.remove(); } catch (e) {} };
       overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
       const chordsNow = () => _ambArpEntryChords({ notes: _ambNotesOf(getL() || L0) });
-      // Snapshot for Revert — the chord objects as they were on open.
-      const original = (() => { try { return JSON.parse(JSON.stringify(chordsNow() || [])); } catch (e) { return null; } })();
-      const density = () => Math.max(1, Math.min(9, ((getL() || L0).density | 0) || 1));
-      const regOf = () => Math.max(1, Math.min(7, ((getL() || L0).register | 0) || 3));
-      const midiName = (m) => names[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
-      // The `density` intervals this chord currently sounds, low → high. Muted
-      // tones are excluded (they don't sound), and a chord with fewer tones than
-      // Density stacks octaves — mirroring the engine's own voicing.
-      const slotsOf = (o) => {
-        const disp = (Array.isArray(o.intervals) && o.intervals.length)
-          ? o.intervals : ((o.form && typeof _ambChordIntervals === 'function') ? _ambChordIntervals(o.form, o.inversion) : [0, 4, 7]);
-        const m = Array.isArray(o.muted) ? o.muted : [];
-        const live = disp.filter(iv => m.indexOf(iv) < 0).sort((a, b) => a - b);
-        const n = density(), out = [];
-        for (let i = 0; i < n; i++) {
-          if (!live.length) { out.push(null); continue; }
-          out.push(live[i % live.length] + 12 * Math.floor(i / live.length));
-        }
-        return out;
+      const density = () => Math.max(1, Math.min(9, (getL() || L0).density | 0));
+      // The engine key for this layer object — derived from its own type/id, the
+      // same shape _ambMixerLayers builds ('drone:3'). Needed so an edit can
+      // re-anchor: a drone holds one note for a very long unit, so a change that
+      // lands "at the next boundary" is indistinguishable from one that does
+      // nothing (measured 14.7 s on the defaults).
+      const key = () => { const L = getL() || L0; return (L && L.type) ? (L.type + ':' + (L.id | 0)) : null; };
+      const after = () => {
+        persist();
+        // A drone holds one note for a very long unit, so "lands at the next
+        // boundary" and "does nothing" are indistinguishable — re-anchor.
+        try { const k = key(); if (k && E.timer) _ambReanchorLayer(E, k); } catch (e) {}
+      };
+      // One <select> per voice SLOT, capped at Density (that's how many notes a
+      // drone actually sounds). Options carry the note NAME and its function over
+      // the chord ("D · 9th"), because that's the choice being made.
+      const slotHtml = (ci, chord, cand, pick, s) => {
+        const root = (((chord.root | 0) % 12) + 12) % 12;
+        const cur = (pick && pick[s] != null) ? pick[s] : null;
+        let opts = '<option value=""' + (cur == null ? ' selected' : '') + '>— auto —</option>';
+        cand.forEach(iv => {
+          const pc = (root + iv) % 12;
+          const role = _AMB_IV_ROLE[iv % 12] || (iv + '');
+          const inChord = (chord.intervals || []).indexOf(iv % 12) >= 0;
+          opts += '<option value="' + iv + '"' + (cur === iv ? ' selected' : '') + '>' +
+            esc(names[pc]) + ' · ' + esc(role) + (inChord ? '' : ' ✦') + '</option>';
+        });
+        return '<select class="ambient-select amb-pick-sel" data-ci="' + ci + '" data-slot="' + s + '">' + opts + '</select>';
       };
       const render = () => {
         const L = getL() || L0;
-        const src = _ambNotesOf(L);
-        const chords = _ambArpEntryChords({ notes: src });
-        const reg = regOf(), n = density();
-        let h = '<div class="keep-sdiv-title">Drone Notes</div>';
-        if (!chords) {
-          h += '<div class="amb-ce-na">This Drone is on a ' + esc(_ambNotesLabel(src)) + ' source. Pick a Chord or Progression (the Notes button) to edit its notes here.</div>';
-        } else {
-          const pedal = (L.progMode !== 'voice') && !!(src && src.type === 'prog');
-          h += '<div class="amb-ce-hint">Showing the ' + n + ' note' + (n === 1 ? '' : 's') + ' this Drone voices — set by <b>Density</b>. Quality re-spells the whole chord; each slot swaps one tone.' +
-            (chords.length > 1 ? ' One block per chord.' : '') + '</div>';
-          // These chords are usually the AREA progression's, shared by reference
-          // with every other layer — say so rather than let an edit surprise.
-          if (_ambGlobalProg() && (src && src.type === 'prog')) {
-            h += '<div class="amb-ce-hint amb-ce-warn">These are the <b>Area progression\u2019s</b> chords — edits here change them for every layer that follows it.</div>';
-          }
-          if (pedal) h += '<div class="amb-ce-hint amb-ce-warn">This Drone is in <b>♩ Pedal note</b> mode, so it holds one auto-chosen note per progression cycle and ignores these. Switch Prog to <b>⇶ Voicings</b> on the card to hear them.</div>';
-          h += '<div class="amb-ce-list"><div class="amb-ce-entry">';
-          chords.forEach((o, ci) => {
-            const rootPc = ((o.root | 0) % 12 + 12) % 12;
-            const rootMidi = 12 * (reg + 1) + rootPc;
-            const curForm = _ambChordFormOf((Array.isArray(o.intervals) && o.intervals.length) ? o.intervals : _ambChordIntervals(o.form || 'maj', 0));
-            const formOpts = _AMB_CHORD_FORMS.map(f => '<option value="' + f[0] + '"' + (f[0] === curForm ? ' selected' : '') + '>' + esc(f[1]) + '</option>').join('')
-              + (curForm ? '' : '<option value="" selected>Custom</option>');
-            h += '<div class="amb-ce-chord" data-ci="' + ci + '">';
-            h += '<div class="amb-ce-chead"><span class="amb-ce-croot">' + esc(names[rootPc]) + (chords.length > 1 ? ' · ' + (ci + 1) : '') + '</span>' +
-              '<select class="ambient-select amb-ce-form" data-ci="' + ci + '" title="Chord quality — re-spells this chord using Density notes">' + formOpts + '</select></div>';
-            h += '<div class="amb-ce-slots">';
-            // Each slot is NOTE + OCTAVE side by side rather than one long list of
-            // every absolute pitch — 12 names and a handful of octaves beat a
-            // 36-entry dropdown to scroll on a phone.
-            const loOct = Math.floor(rootMidi / 12) - 1;
-            const hiOct = Math.floor((rootMidi + _AMB_DRONE_EDIT_SPAN - 1) / 12) - 1;
-            slotsOf(o).forEach((iv, si) => {
-              const mv = rootMidi + (iv == null ? 0 : iv);
-              const curPc = ((mv % 12) + 12) % 12, curOct = Math.floor(mv / 12) - 1;
-              let nOpts = '', oOpts = '';
-              for (let pc = 0; pc < 12; pc++) nOpts += '<option value="' + pc + '"' + (pc === curPc ? ' selected' : '') + '>' + esc(names[pc]) + '</option>';
-              for (let ov = loOct; ov <= hiOct; ov++) oOpts += '<option value="' + ov + '"' + (ov === curOct ? ' selected' : '') + '>' + ov + '</option>';
-              h += '<span class="amb-ce-slot" data-ci="' + ci + '" data-si="' + si + '"><i>' + (si + 1) + '</i>' +
-                '<select class="ambient-select amb-ce-note" title="Note">' + nOpts + '</select>' +
-                '<select class="ambient-select amb-ce-oct" title="Octave">' + oOpts + '</select></span>';
-            });
-            h += '</div></div>';
-          });
-          h += '</div></div>';
-        }
-        h += '<div class="sm-footer"><button type="button" class="sm-cancel amb-ce-revert">Revert to original</button>' +
-          '<button type="button" class="sm-apply amb-ce-ok">Done</button></div>';
-        modal.innerHTML = h;
-        const okB = modal.querySelector('.amb-ce-ok'); if (okB) okB.addEventListener('click', close);
-        const rvB = modal.querySelector('.amb-ce-revert');
-        if (rvB) rvB.addEventListener('click', () => {
-          const cs = chordsNow(); if (!cs || !original) return;
-          // Restore IN PLACE so the source keeps its object identity (the engine
-          // and any inherited reference read the same chords).
-          cs.forEach((o, i) => {
-            const o0 = original[i]; if (!o0) return;
-            Object.keys(o).forEach(k => { if (k !== 'root') delete o[k]; });
-            Object.keys(o0).forEach(k => { o[k] = (Array.isArray(o0[k])) ? o0[k].slice() : o0[k]; });
-          });
-          persist(); render();
-          if (E.timer) { try { _ambReanchorLayer(E, _ambDroneKeyOf(E, getL())); } catch (e) {} }
+        const chords = chordsNow();
+        const mode = _ambPickMode(L);
+        const D = density();
+        let rows = '';
+        chords.forEach((ch, ci) => {
+          const cand = _ambPickCandidates(ch, mode, cfg);
+          const pick = _ambPickFor(L, ci) || [];
+          let slots = '';
+          for (let s = 0; s < D; s++) slots += slotHtml(ci, ch, cand, pick, s);
+          rows += '<div class="amb-pick-row">' +
+            '<span class="amb-pick-chord" title="Chord ' + (ci + 1) + ' of the area progression (read-only here)">' + esc(_ambChordShort(ch)) + '</span>' +
+            '<span class="amb-pick-slots">' + slots + '</span>' +
+            '<button type="button" class="ambient-seg amb-pick-auto" data-auto="' + ci + '" title="Back to the automatic voicing for this chord">auto</button>' +
+          '</div>';
         });
-        modal.querySelectorAll('.amb-ce-form').forEach(sel => sel.addEventListener('change', () => {
-          const cs = chordsNow(); const o = cs && cs[sel.getAttribute('data-ci') | 0]; if (!o) return;
-          if (!sel.value) return;                       // "Custom" is a readout, not a choice
-          _ambDroneChordSetForm(o, sel.value);
-          persist(); render();
-          if (E.timer) { try { _ambReanchorLayer(E, _ambDroneKeyOf(E, getL())); } catch (e) {} }
-        }));
-        modal.querySelectorAll('.amb-ce-note, .amb-ce-oct').forEach(sel => sel.addEventListener('change', () => {
-          const slot = sel.closest('.amb-ce-slot'); if (!slot) return;
-          const cs = chordsNow(); const o = cs && cs[slot.getAttribute('data-ci') | 0]; if (!o) return;
-          _ambChordEditable(o);
-          const nS = slot.querySelector('.amb-ce-note'), oS = slot.querySelector('.amb-ce-oct');
-          const rootMidi = 12 * (regOf() + 1) + (((o.root | 0) % 12 + 12) % 12);
-          // note+octave → an absolute pitch → the interval above this chord's root.
-          // Fold by octaves into the offered span so any combination is valid.
-          let d = (12 * ((oS.value | 0) + 1) + (nS.value | 0)) - rootMidi;
-          while (d < 0) d += 12;
-          while (d >= _AMB_DRONE_EDIT_SPAN) d -= 12;
-          // SWAP this slot's tone inside the chord — never rebuild the chord from
-          // the (Density-capped) slot view, which would drop every tone beyond
-          // Density from what may be the shared area progression.
-          const si = slot.getAttribute('data-si') | 0;
-          const prev = slotsOf(o)[si];
-          const live = new Set((o.intervals || []).filter(iv => (o.muted || []).indexOf(iv) < 0));
-          if (prev != null && live.has(prev)) live.delete(prev);   // a stacked-octave slot adds instead
-          live.add(d);
-          o.intervals = Array.from(live).sort((a, b) => a - b);
-          o.muted = [];
-          delete o.form;
-          persist(); render();
-          if (E.timer) { try { _ambReanchorLayer(E, _ambDroneKeyOf(E, getL())); } catch (e) {} }
-        }));
+        const modeBtns = _AMB_PICK_MODES.map(m =>
+          '<button type="button" class="ambient-seg amb-pick-mode' + (mode === m[0] ? ' active' : '') + '" data-mode="' + m[0] + '" title="' + esc(m[2]) + '">' + esc(m[1]) + '</button>').join('');
+        modal.innerHTML =
+          '<div class="sm-title">Edit notes</div>' +
+          '<div class="amb-pick-hint">Pick which notes <b>this layer</b> plays over each chord — ' + D + ' slot' + (D === 1 ? '' : 's') +
+            ', one per voice (set by Density). The area progression is <b>not</b> changed; other layers keep their own voicings. ' +
+            '“— auto —” leaves that voice to the automatic voicing. ✦ marks a note outside the chord.</div>' +
+          '<div class="amb-pick-modes"><span class="ambient-sched-lbl">notes from</span>' + modeBtns + '</div>' +
+          '<div class="amb-pick-list">' + (rows || '<span class="ambient-hint">This area has no progression.</span>') + '</div>' +
+          '<div class="sm-footer">' +
+            '<button type="button" class="sm-cancel amb-pick-clear">Clear all picks</button>' +
+            '<button type="button" class="sm-apply amb-pick-done">Done</button>' +
+          '</div>';
       };
+      modal.addEventListener('change', (ev) => {
+        const sel = ev.target.closest && ev.target.closest('.amb-pick-sel'); if (!sel) return;
+        const L = getL() || L0;
+        const ci = sel.getAttribute('data-ci') | 0;
+        // Rebuild this chord's picks from EVERY select in the row, so the stored
+        // array always matches what's on screen. "— auto —" is simply omitted
+        // (there is no null-interval to store), and an all-auto row prunes back
+        // to absent — the same neutral state used everywhere else.
+        const row = sel.closest('.amb-pick-row');
+        const vals = Array.from(row ? row.querySelectorAll('.amb-pick-sel') : [])
+          .map(s2 => (s2.value === '' ? null : (parseInt(s2.value, 10) | 0)))
+          .filter(v => v != null);
+        _ambPickSet(L, ci, vals);
+        after(); render();
+      });
+      modal.addEventListener('click', (ev) => {
+        const L = getL() || L0;
+        const m = ev.target.closest && ev.target.closest('.amb-pick-mode');
+        if (m) {
+          const mode = m.getAttribute('data-mode');
+          // Read the chords BEFORE touching state — chordsNow() goes through
+          // getCfg(), which normalizes and can prune what we're about to edit.
+          const chords = chordsNow();
+          L._pickMode = mode;
+          if (L.chordPick && typeof L.chordPick === 'object') L.chordPick.mode = mode;
+          // A narrower mode can orphan picks it no longer offers — drop those
+          // rather than leave a select showing a value it can't re-pick.
+          if (L.chordPick && L.chordPick.sel) {
+            Object.keys(L.chordPick.sel).forEach(k2 => {
+              const ch = chords[parseInt(k2, 10) | 0]; if (!ch) { delete L.chordPick.sel[k2]; return; }
+              const ok = _ambPickCandidates(ch, mode, cfg);
+              const kept = L.chordPick.sel[k2].filter(iv => ok.indexOf(iv % 12) >= 0);
+              if (kept.length) L.chordPick.sel[k2] = kept; else delete L.chordPick.sel[k2];
+            });
+            if (!Object.keys(L.chordPick.sel).length) delete L.chordPick;
+          }
+          after(); render(); return;
+        }
+        const a = ev.target.closest && ev.target.closest('.amb-pick-auto');
+        if (a) { _ambPickSet(L, a.getAttribute('data-auto') | 0, []); after(); render(); return; }
+        if (ev.target.closest && ev.target.closest('.amb-pick-clear')) { delete L.chordPick; after(); render(); return; }
+        if (ev.target.closest && ev.target.closest('.amb-pick-done')) { close(); return; }
+      });
       render();
       document.body.appendChild(overlay);
     }
-    // The engine key ('drone:<id>') for a layer object — the note editor needs it
-    // to re-anchor so an edit is heard promptly (a drone holds for a long time).
     function _ambDroneKeyOf(E, L) {
       if (!L) return null;
       return (L.type || 'drone') + ':' + (L.id | 0);
@@ -25300,12 +26144,15 @@
           '<div class="ambient-nowplaying-head"><span class="ambient-mod-sub">Now Playing</span><span class="ambient-hint" id="ambient-nowplaying-empty">— stopped —</span></div>' +
           '<div class="ambient-nowplaying-list" id="ambient-nowplaying-list"></div>' +
         '</div>' +
-        '<div class="ambient-row">' +
-          '<button type="button" id="ambient-regen-btn" class="ambient-regen" title="Roll a new TAKE of this area — same layers, tones, timing, key &amp; mix (the arrangement), but a fresh realization of the random choices (which notes get picked, where they land). Same song, different performance. The ID beside it names this take; the same ID always replays it, so a take you like is reproducible.">🎲 New take</button>' +
-          // Reset removed: it duplicated the Areas 🧹 Clear-layers / ✕ Clear-all.
-          (E.isLane ? '<button type="button" id="ambient-freeze-btn" class="ambient-regen" title="Print the generated output to a new editable lane">❄ Freeze→lane</button>' : '') +
-          '<span class="ambient-seed" id="ambient-seed-val" title="This area’s take ID — the fingerprint of its random choices. New take rolls a new one; the same ID replays the same performance.">Take —</span>' +
-        '</div>' +
+        // 🎲 New take + the take-id readout MOVED into the Areas body for the
+        // master panel (it is an AREA-level action — it re-rolls this area's
+        // random choices). Lane/Shape have no Areas strip, so they keep it here.
+        ((E === _masterEng) ? '' : ( '<div class="ambient-row">' +
+            '<button type="button" id="ambient-regen-btn" class="ambient-regen" title="Roll a new TAKE of this area — same layers, tones, timing, key &amp; mix (the arrangement), but a fresh realization of the random choices (which notes get picked, where they land). Same song, different performance. The ID beside it names this take; the same ID always replays it, so a take you like is reproducible.">🎲 New take</button>' +
+            // Reset removed: it duplicated the Areas 🧹 Clear-layers / ✕ Clear-all.
+            (E.isLane ? '<button type="button" id="ambient-freeze-btn" class="ambient-regen" title="Print the generated output to a new editable lane">❄ Freeze→lane</button>' : '') +
+            '<span class="ambient-seed" id="ambient-seed-val" title="This area’s take ID — the fingerprint of its random choices. New take rolls a new one; the same ID replays the same performance.">Take —</span>' +
+        '</div>')) +
         // KEY row for a lane-Bloom used to live in Configure; lane-Bloom is
         // retired, but keep it here for that (dormant) engine so it isn't left
         // Key-less if ever revived. Master/preview Key lives in Key/Progression.
@@ -25524,7 +26371,13 @@
           // "Track (record)" entry; the take still lands as a Track sample layer).
           '<button type="button" id="ambient-track-btn" class="ambient-footer-capture" title="Record a Track — record your input (mic / line-in) against the playing loop; the take snaps to whole bars and loops tempo-locked">🎤</button>' +
           '<button type="button" id="ambient-play-btn" class="ambient-play" title="Play / stop">▶</button>' +
-        '</div></div>';
+        '</div>' +
+        // Its own row UNDER the transport: the elapsed / BPM pill that opens the
+        // ⚙ Settings menu (Undo/Redo · Tempo · Volume · Groove · MIDI · Storage).
+        // Filled by adopting the singleton #bloom-hdr-elapsed out of the app
+        // header on every build — see the adopt step in the wiring.
+        (!E.isLane ? '<div class="ambient-footer-settings" id="ambient-footer-settings"></div>' : '') +
+        '</div>';
       // Singleton rescue: a Bloom panel rebuild would DESTROY the docked lane
       // expander (Author-in-Grid) with its wipe — park it in its stash first
       // (the same pre-wipe protocol renderSequence uses); the seed-mode
@@ -26310,7 +27163,7 @@
         // change a layer's unit length, and _ambSyncLayerUnits → _ambRefreshEuclidGrids
         // REBUILDS the euclid grid — destroying the inspector slider mid-drag ("sliders
         // don't slide"). Skip the refresh for those.
-        if (ev && ev.target && ev.target.closest && ev.target.closest('.ambient-step-fx-sl, .ambient-step-fx-ratcount, .ambient-step-fx-ratd, .ambient-stepscope-btn, .ambient-stepmode, .ambient-step-fx-clear, .ambient-step-fx-trig')) return;
+        if (ev && ev.target && ev.target.closest && ev.target.closest('.ambient-step-fx-sl, .ambient-step-fx-ratcount, .ambient-step-fx-ratd, .ambient-stepscope-btn, .ambient-stepmode, .ambient-step-fx-clear, .ambient-step-fx-trig, .ambient-step-fx-solo')) return;
         try { _ambSyncLayerUnits(E); } catch (e) {}
         E.seedPv = {};
         // Debounced (a slider drag fires per pixel; the silent seed render is
@@ -26427,7 +27280,7 @@
         // Clean switch (drop the old mode's lookahead voices) + sync the header
         // compose tag, which the visibility toggle alone left stale.
         try { if (E.timer && typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices('beat', (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0); } catch (e) {}
-        try { const card = beatGenSel.closest('.ambient-layer'); const compose = card && card.querySelector('.ambient-compose'); if (compose) compose.outerHTML = _ambComposePrimaryHtml('beat', cfg.beat); } catch (e) {}
+        // (compose strip removed — nothing to re-render here)
         persist();
       });
 
@@ -27602,6 +28455,19 @@
         if (delB) delB.addEventListener('click', () => _ambRemoveLayer(E, l));
       });
 
+      // ADOPT the elapsed/BPM ⚙ Settings pill into the footer row. It is a
+      // singleton declared in bloops.html, and a panel rebuild wipes this host —
+      // so re-adopt every build rather than moving it once at init, or it is
+      // orphaned the first time the panel re-renders. pinPanelToButton already
+      // flips its menu ABOVE a trigger with no room below, so being at the bottom
+      // of the screen makes the menu expand upward with no extra work.
+      if (!E.isLane) {
+        try {
+          const _slot = G('ambient-footer-settings');
+          const _pill = document.getElementById('bloom-hdr-elapsed');
+          if (_slot && _pill && _pill.parentElement !== _slot) _slot.appendChild(_pill);
+        } catch (e) {}
+      }
       const playBtn = G('ambient-play-btn');
       if (playBtn) playBtn.addEventListener('click', () => { if (E.timer) _ambStopGenerator(E); else _ambStartGenerator(E); });
       // 🎲 New take → a per-layer KEEP / REVISE popover. Revise (default) =

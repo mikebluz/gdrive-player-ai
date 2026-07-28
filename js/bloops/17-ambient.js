@@ -856,14 +856,16 @@
       let notes = [];
       try { notes = _ambApplySiblingPlan(cfg, plan) || []; } catch (e) { console.warn('Sibling plan failed', e); }
       const base = (typeof src.name === 'string' && src.name.trim()) ? src.name.trim() : '';
-      cfg.name = base ? _ambUniqueAreaName(s, base + ' ′') : '';
+      // Exact copy reads as "<name> copy" (the old plain-clone convention); a
+      // clone WITH changes gets the prime mark so siblings are tellable apart.
+      cfg.name = base ? _ambUniqueAreaName(s, base + (notes.length ? ' ′' : ' copy')) : '';
       try { _normalizeAmbientCfg(cfg); } catch (e) {}
       _ambSwitchToArea(i);
       _ambRebuildMaster();
       try { persistWorkspace(); } catch (e) {}
       try {
         if (typeof showToast === 'function') {
-          showToast(notes.length ? ('Sibling created — ' + notes.join(' · ')) : 'Sibling created (exact clone).');
+          showToast(notes.length ? ('Cloned with changes — ' + notes.join(' · ')) : 'Area cloned.');
         }
       } catch (e) {}
       return i;
@@ -916,8 +918,8 @@
           '</span></div>';
       }).join('');
       ov.innerHTML = '<div class="sm-modal sib-modal">' +
-        '<div class="sm-title">❖ Create sibling</div>' +
-        '<div class="nt-hint">Clones <b>' + _ambEscText(srcName) + '</b> into a new area, then applies only what you tick below. Everything left unticked carries over verbatim.</div>' +
+        '<div class="sm-title">⧉ Clone area</div>' +
+        '<div class="nt-hint">Clones <b>' + _ambEscText(srcName) + '</b> into a new area. Tick nothing for an EXACT copy; anything you tick below is changed in the clone, everything else carries over verbatim.</div>' +
         '<div class="sib-sec">Area</div>' +
         '<div class="sib-area">' +
           aRow('transpose', 'Transpose', 'Move the whole area — key, progression and every layer’s chord source — into a new key.',
@@ -941,7 +943,7 @@
           '</span></div>' +
         '<div class="nt-list sib-list">' + (layerRows || '<div class="ambient-hint">This area has no layers.</div>') + '</div>' +
         '<div class="sm-footer"><button type="button" class="sm-cancel sib-cancel">Cancel</button>' +
-          '<button type="button" class="sm-apply sib-go">❖ Create sibling</button></div></div>';
+          '<button type="button" class="sm-apply sib-go">⧉ Clone</button></div></div>';
       document.body.appendChild(ov);
       ov.style.setProperty('display', 'flex', 'important');
       if (!hasProg) { const b = ov.querySelector('[data-sib="mutateProg"]'); if (b) b.disabled = true; }
@@ -1207,8 +1209,7 @@
         // Plays × random + Bar Lock + Bars.
         '<div class="ambient-areas-body">' +
         '<div class="ambient-orch">' +
-          '<button type="button" class="ambient-area-btn ambient-area-dup" title="Clone the current area">⧉</button>' +
-          '<button type="button" class="ambient-area-btn ambient-area-sib" title="Create sibling — clone this area, then pick what to keep verbatim and what to change (per layer, plus key / progression / take / tempo)">❖</button>' +
+          '<button type="button" class="ambient-area-btn ambient-area-dup" title="Clone this area — leave everything unticked for an exact copy, or pick what to change (per layer, plus key / progression / take / tempo)">⧉</button>' +
           '<button type="button" class="ambient-area-btn ambient-area-ren" title="Rename the current area">✎</button>' +
           '<button type="button" class="ambient-area-btn ambient-area-clear" title="Clear all layers from this area (keeps its key / tempo / name)">🧹</button>' +
           '<button type="button" class="ambient-area-btn ambient-area-del" title="Delete the current area"' + (s.areas.length <= 1 ? ' disabled' : '') + '>✕</button>' +
@@ -1231,7 +1232,7 @@
           '<select class="ambient-orch-bars" title="Length of one play — and, when 🔒 Bar Lock is on, the loop length (a hard override of the natural unit shown beside it)">' + _ambNumOpts(Math.max(1, (act.bars | 0) || 4)) + '</select>' +
           '<span class="ambient-orch-unit' + (_clean || unitBars <= 0 ? '' : ' warn') + '" title="' + _ambEscText(unitTip) + '">' + _ambEscText(unitLabel) + '</span>' +
           // Live bar / play counter (during playback) — schedule areas by what you see here.
-          '<span class="ambient-orch-bar" aria-live="polite" title="Current bar (and play) of the area — use this to set Plays × Bars"></span>' +
+
         '</div>' +
         // --- Area-level settings (moved here when the ⚙ Configure drawer was
         // dissolved): they all cascade to / govern this area's layers. ---
@@ -1317,16 +1318,15 @@
           { label: 'Random — random layers', fn: addRandom },
           { label: 'Presets ▸', fn: () => setTimeout(presetSub, 0) },
           'hr',
-          { label: 'From this area', disabled: true },
-          { label: '⧉ Clone — exact copy', fn: () => { _ambSwitchToArea(_ambAddArea(_ambActiveAreaIdx())); } },
           // Deferred past this menu's own dismiss: showCtxMenu runs fn() THEN
-          // dismissCtxMenu(), and the sibling modal is a body-appended overlay
+          // dismissCtxMenu(), and the clone modal is a body-appended overlay
           // that shouldn't share a frame with the teardown.
-          { label: '❖ Sibling — clone with changes…', fn: () => setTimeout(() => { try { _ambSiblingModal(_masterEng); } catch (e2) { console.warn('Create sibling failed', e2); } }, 0) },
+          { label: '⧉ Clone this area… (exact, or with changes)', fn: () => setTimeout(() => { try { _ambSiblingModal(_masterEng); } catch (e2) { console.warn('Clone failed', e2); } }, 0) },
         ]);
       });
+      // ⧉ Clone = the (former sibling) options popover; nothing ticked = exact copy.
       const dup = host.querySelector('.ambient-area-dup');
-      if (dup) dup.addEventListener('click', () => { _ambSwitchToArea(_ambAddArea(_ambActiveAreaIdx())); });
+      if (dup) dup.addEventListener('click', () => { try { _ambSiblingModal(_masterEng); } catch (e) { console.warn('Clone failed', e); } });
       // ‹ › — the same step the swipe performs, so they share one path.
       const _step = (dir) => {
         const st = _masterBloomState();
@@ -1337,8 +1337,6 @@
       if (prevB) prevB.addEventListener('click', () => _step(-1));
       const nextB = host.querySelector('.ambient-area-next');
       if (nextB) nextB.addEventListener('click', () => _step(1));
-      const sib = host.querySelector('.ambient-area-sib');
-      if (sib) sib.addEventListener('click', () => { try { _ambSiblingModal(_masterEng); } catch (e) { console.warn('Create sibling failed', e); } });
       // ---- SIDE-SWIPE between areas -------------------------------------
       // A horizontal drag anywhere on the Areas strip steps the VIEW one area
       // left/right. Works stopped and while playing — _ambSwitchToArea already
@@ -1641,17 +1639,15 @@
       const L = _ambSampleById(areaCfg, id);
       return (L && Number.isFinite(L.boundaryFadeMs)) ? Math.max(0, L.boundaryFadeMs) : 0;
     }
-    // DRUM SOLO store — a Map of layer OBJECT → soloed lane index. Deliberately
-    // OUTSIDE the layer cfg: solo is monitoring state, and anything stored on the
-    // layer is swept into localStorage by persistWorkspace (JSON keeps underscore
-    // fields), so the original `L._soloLane` could be SAVED into a project and
-    // reload with 7 of 8 drum lanes silently muted — nothing on screen to explain
-    // it (measured: the solo survived a page reload). A Map keyed by the live
-    // object can't persist, dies naturally on reload, and clears in one call on
-    // stop. Normalize deletes any legacy persisted `_soloLane`, healing projects
-    // already saved with one.
-    const _AMB_SOLO = new Map();
-    const _ambSoloLane = (L) => (L && _AMB_SOLO.has(L)) ? _AMB_SOLO.get(L) : null;
+    // DRUM SOLO — a real, PERSISTED layer setting (`L.soloLane`, absent = none),
+    // like any other control. Two earlier designs both caused "toggle out of
+    // sync" bugs: an underscore field survived JSON-persist invisibly, and a
+    // Map keyed by the live layer object silently died on stop/copy/reload while
+    // the button kept its state. A plain field + LOUD visuals (the S button, a
+    // badge on the soloed lane's label) is the boring design that stays in sync:
+    // what you see is what is stored, it survives areas cycling and stop/play,
+    // and normalize coerces it like everything else.
+    const _ambSoloLane = (L) => (L && Number.isFinite(L.soloLane)) ? (L.soloLane | 0) : null;
     // Click-free floor for a departing layer's gate ramp (see _ambDepartLayer).
     const _AMB_DEPART_MIN_FADE = 0.020;
     function _ambDepartLayer(E, key, fadeMs, at, sampFadeMs) {
@@ -1791,6 +1787,24 @@
         E._emitFloor = at;
         try { _ambInGeneration = true; _ambTick(E); } catch (e) { _ambLogTickErr(e); } finally { _ambInGeneration = false; E._emitFloor = 0; }
         _ambOrchUpdateNowPlaying(E);   // move the "playing" highlight; view/panel unchanged
+        // FOLLOW THE PLAYBACK: a collapsed <select> only shows its SELECTED
+        // option, so the ▶ marker written into the option list is invisible and
+        // the selector "just keeps showing area 1" while sequencing. If the user
+        // was viewing the area that just ended (i.e. they had NOT parked the view
+        // somewhere else to edit), advance the VIEW with the music — after the
+        // audible boundary, on the deferred/dimmed switch path. A parked view is
+        // left alone: view-while-editing stays decoupled.
+        try {
+          if (s.activeIdx === playIdx && nextIdx !== playIdx) {
+            const _followMs = Math.max(60, (at - ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0)) * 1000 + 300);
+            setTimeout(() => {
+              try {
+                const s2 = _masterBloomState();
+                if (E.timer && E._playIdx === nextIdx && s2.activeIdx === playIdx) _ambSwitchToArea(nextIdx, { defer: true });
+              } catch (e) {}
+            }, _followMs);
+          }
+        } catch (e) {}
       } catch (e) { try { _ambLogTickErr(e); } catch (x) {} }
       E._orchSwitching = false;
     }
@@ -9871,7 +9885,14 @@
     function _ambNormalizeEuclidPattern(L) {
       if (!L || typeof L !== 'object') return;
       _ambNormalizeCycleGate(L);   // ⏱ Schedule tab (additive; absent = every iteration plays)
-      if ('_soloLane' in L) delete L._soloLane;   // legacy persisted solo (now in _AMB_SOLO) — heal saved projects
+      // Solo lane: coerce; migrate the legacy transient `_soloLane` into the real
+      // field so a project saved during the transient era becomes VISIBLE instead
+      // of silently muted. Kit-only (a non-kit layer has no lanes to solo).
+      if ('_soloLane' in L) { if (Number.isFinite(L._soloLane) && L.soloLane == null) L.soloLane = L._soloLane | 0; delete L._soloLane; }
+      if (L.soloLane != null) {
+        if (!L.euclidKit || !Number.isFinite(L.soloLane)) delete L.soloLane;
+        else L.soloLane = Math.max(0, Math.min(_AMB_KIT_LANES - 1, L.soloLane | 0));
+      }
       _ambNormalizeChordPick(L);   // per-layer note picks (additive; absent = automatic voicing)
       // Drum-lanes (additive; absent = classic single/auto-kit behavior).
       if (L.euclidKit != null) L.euclidKit = !!L.euclidKit;
@@ -10193,7 +10214,8 @@
           // The lane LABEL selects which lane the edit panel targets (Lane mode).
           const dn = _AMB_DRUM_NAMES[_AMB_VDRUM[v]] || ('Drum ' + v);
           html += '<button type="button" class="ambient-euclid-laneplay" data-laneplay="' + v + '" title="Play the ' + dn + ' (audition)">▶</button>';
-          html += '<button type="button" class="ambient-euclid-drumlbl' + ((editMode === 'lane' && v === editLane) ? ' on' : '') + '" data-lane="' + v + '" title="Edit the ' + dn + ' lane">' + dn + '</button>';
+          { const _soL = _ambSoloLane(inst);
+            html += '<button type="button" class="ambient-euclid-drumlbl' + ((editMode === 'lane' && v === editLane) ? ' on' : '') + ((_soL === v) ? ' solo' : (_soL != null ? ' muted-by-solo' : '')) + '" data-lane="' + v + '" title="' + (_soL === v ? dn + ' — SOLOED (others muted)' : 'Edit the ' + dn + ' lane') + '">' + dn + ((_soL === v) ? '<i class="solo-dot">S</i>' : '') + '</button>'; }
         } else if (d.V > 1) {
           html += '<span class="ambient-euclid-vlab" aria-hidden="true">' + (v + 1) + '</span>';
         }
@@ -10283,11 +10305,16 @@
               // SOLO the drum you're editing — everything else on this kit goes
               // quiet until you turn it off. Only meaningful with a single lane in
               // scope (All-drums has no one lane to solo), so it's disabled there.
-              '<button type="button" class="ambient-step-fx-solo' + ((_ambSoloLane(inst) === editLane) ? ' on' : '') + '"' +
-                (editMode === 'column' ? ' disabled' : '') +
-                ' title="' + (editMode === 'column'
-                  ? 'Solo applies to one drum — turn “All drums” off and pick a lane.'
-                  : 'Solo ' + drum + ' — mute every other drum on this layer while you work. Cleared when playback stops.') + '">S</button>' +
+              (function(){
+                const _so = _ambSoloLane(inst);
+                const _cls = (_so === editLane) ? ' on' : (_so != null ? ' other' : '');
+                const _ttl = (editMode === 'column')
+                  ? (_so != null ? (_AMB_DRUM_NAMES[_AMB_VDRUM[_so]] || 'A lane') + ' is soloed — turn “All drums” off to change it.' : 'Solo applies to one drum — turn “All drums” off and pick a lane.')
+                  : (_so === editLane ? 'Soloed — every other drum on this layer is muted. Click to un-solo. (Saved with the project.)'
+                    : _so != null ? (_AMB_DRUM_NAMES[_AMB_VDRUM[_so]] || 'Another lane') + ' is soloed — click to move the solo to ' + drum + '.'
+                    : 'Solo ' + drum + ' — mute every other drum on this layer. Saved with the project; click again to clear.');
+                return '<button type="button" class="ambient-step-fx-solo' + _cls + '"' + (editMode === 'column' ? ' disabled' : '') + ' title="' + _ttl + '">S</button>';
+              })() +
               '<button type="button" class="ambient-step-fx-clear" title="Reset the steps in scope to defaults">Reset</button>' +
             '</span>' +
           '</div>' +
@@ -10519,8 +10546,9 @@
           // Toggle: soloing the already-soloed lane clears it. Re-anchor so the
           // change is heard at the layer's next boundary instead of a whole
           // pattern later (the same rule every per-note edit follows).
-          if (_ambSoloLane(L) === lane) _AMB_SOLO.delete(L);
-          else _AMB_SOLO.set(L, lane);
+          if (_ambSoloLane(L) === lane) delete L.soloLane;
+          else L.soloLane = lane;
+          persist();
           render();
           if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} }
           return;
@@ -16087,7 +16115,7 @@
       // area so a project can never be saved (or reloaded) with seven drum lanes
       // silently muted and nothing on screen to explain it. Normalize can't do
       // this: it runs on every getCfg, so it would cancel the solo mid-listen.
-      try { _AMB_SOLO.clear(); } catch (e) {}
+      // (drum solo is a persisted layer setting now — it survives stop/play)
       try { _ambHealthStop(); } catch (e) {}
       if (E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
       // AREAS: end any sequencing and restore the bloom output gain (a stop mid
@@ -17927,13 +17955,16 @@
     // Re-trigger a one-shot flash animation on `el` (remove all flash classes,
     // force reflow, add the chosen one).
     function _ambFlashEl(el, cls) {
-      try { el.classList.remove('amb-bar-flash-a', 'amb-bar-flash-b', 'amb-area-flash'); void el.offsetWidth; el.classList.add(cls); } catch (e) {}
+      try { el.classList.remove('amb-bar-flash-a', 'amb-bar-flash-b', 'amb-area-flash', 'amb-unit-flash'); void el.offsetWidth; el.classList.add(cls); } catch (e) {}
     }
     function _ambUpdateBarIndicator(E) {
       if (E !== _masterEng) return;
       const host = document.getElementById(E.hostId); if (!host) return;
-      const el = host.querySelector('.ambient-orch-bar'); if (!el) return;
-      const hdr = host.querySelector('.ambient-orch-bar-hdr');
+      // The body copy of this readout was removed (redundant) — the header strip
+      // readout `hdr` is the primary now; `el` survives as an optional alias so
+      // the write/flash sites below need no per-line guards.
+      const hdr = host.querySelector('.ambient-orch-bar-hdr'); if (!hdr) return;
+      const el = hdr;
       const app = null;   // app-header bar pill REMOVED (redundant with the Areas strip readout)
       const chp = document.getElementById('bloom-hdr-chord');  // live progression-chord readout
       if (!E.timer) { if (el.textContent) el.textContent = ''; if (hdr && hdr.textContent) hdr.textContent = ''; if (app && app.textContent) app.textContent = ''; if (chp && chp.textContent) chp.textContent = ''; E._biInit = false; return; }
@@ -18006,8 +18037,20 @@
       // Flash: every bar pulses (alternating colours so consecutive bars read as
       // distinct); an area boundary (the playing area changed) pulses brighter.
       if (E._biInit) {
-        if (seq && playArea !== E._biArea) { _ambFlashEl(el, 'amb-area-flash'); if (hdr) _ambFlashEl(hdr, 'amb-area-flash'); }
-        else if (barsElapsed !== E._biBar) { const c = (barsElapsed % 2) ? 'amb-bar-flash-b' : 'amb-bar-flash-a'; _ambFlashEl(el, c); if (hdr) _ambFlashEl(hdr, c); }
+        if (seq && playArea !== E._biArea) { _ambFlashEl(hdr, 'amb-area-flash'); }
+        else if (barsElapsed !== E._biBar) {
+          // AREA-UNIT boundary (the ⏱ grid anchor every synced layer rides) gets
+          // its own brighter pulse; plain bars keep the alternating pair.
+          let c = (barsElapsed % 2) ? 'amb-bar-flash-b' : 'amb-bar-flash-a';
+          try {
+            const _sArs = _masterBloomState().areas[playArea] || {};
+            const _uN = Math.max(1, (_sArs.areaUnit && _sArs.areaUnit.num | 0) || 1);
+            const _uD = Math.max(1, (_sArs.areaUnit && _sArs.areaUnit.den | 0) || 1);
+            const _uBars = _uN / _uD;
+            if (_uBars > 0 && Math.abs((barsElapsed / _uBars) - Math.round(barsElapsed / _uBars)) < 1e-6) c = 'amb-unit-flash';
+          } catch (e) {}
+          _ambFlashEl(hdr, c);
+        }
       }
       E._biBar = barsElapsed; E._biArea = playArea; E._biInit = true;
     }

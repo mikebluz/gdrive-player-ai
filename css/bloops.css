@@ -2539,7 +2539,15 @@
       margin-bottom: 8px; padding: 6px 8px;
       border: 1px solid #2d2d3f; border-radius: 10px; background: rgba(20, 20, 34, 0.5);
     }
-    .ambient-areas-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    /* The BUTTONS (mode · ‹ select › · + · ✕ · ▾) all stay on the first line —
+       with plain wrap the long playing readout pushed ✕/▾ onto a second line
+       between the other controls. The readout instead takes a full-width line of
+       its own below them (order:10 + flex-basis 100%), centred; at 390px there
+       is genuinely no room for both on one line. */
+    .ambient-areas-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0; }
+    .ambient-areas-row > * { flex: 0 0 auto; }
+    .ambient-areas-row .ambient-area-select { flex: 1 1 44px; min-width: 44px; max-width: 160px; }
+    .ambient-areas-row .ambient-orch-bar-hdr { order: 10; }
     /* SIDE-SWIPE between areas: horizontal drag = switch, vertical = page scroll.
        `pan-y` is what lets the browser keep scrolling while we claim the X axis. */
     .ambient-areas { touch-action: pan-y; }
@@ -2646,9 +2654,16 @@
     /* Per-bar flash (alternating purple / blue so bars read as distinct), and a
        brighter amber flash on each area boundary. Each settles back to the teal
        resting style. */
-    .ambient-orch-bar.amb-bar-flash-a { animation: amb-barf-a 0.40s ease-out; }
-    .ambient-orch-bar.amb-bar-flash-b { animation: amb-barf-b 0.40s ease-out; }
-    .ambient-orch-bar.amb-area-flash  { animation: amb-areaf 0.70s ease-out; }
+    .ambient-orch-bar.amb-bar-flash-a, .ambient-orch-bar-hdr.amb-bar-flash-a { animation: amb-barf-a 0.40s ease-out; }
+    .ambient-orch-bar.amb-bar-flash-b, .ambient-orch-bar-hdr.amb-bar-flash-b { animation: amb-barf-b 0.40s ease-out; }
+    .ambient-orch-bar.amb-area-flash,  .ambient-orch-bar-hdr.amb-area-flash  { animation: amb-areaf 0.70s ease-out; }
+    /* AREA-UNIT boundary — the shared grid anchor: a teal-white pulse, brighter
+       than a plain bar but distinct from the amber area handoff. */
+    .ambient-orch-bar-hdr.amb-unit-flash { animation: amb-unitf 0.55s ease-out; }
+    @keyframes amb-unitf {
+      0%   { background: rgba(79,209,197,0.9); border-color: #4fd1c5; color: #06251f; box-shadow: 0 0 10px rgba(79,209,197,0.8); }
+      100% { background: rgba(79,209,197,0.10); border-color: rgba(79,209,197,0.35); color: #4fd1c5; box-shadow: none; }
+    }
     @keyframes amb-barf-a {
       0%   { background: rgba(159,122,234,0.65); border-color: #9f7aea; color: #fff; }
       100% { background: rgba(79,209,197,0.10);  border-color: rgba(79,209,197,0.35); color: #4fd1c5; }
@@ -3820,6 +3835,14 @@
        a temporary monitoring state rather than part of the pattern. */
     .ambient-step-fx-solo { padding: 2px 8px; font: 700 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8; background: transparent; border: 1px solid #34344a; border-radius: 4px; cursor: pointer; touch-action: manipulation; }
     .ambient-step-fx-solo.on { color: #1a1206; background: #f6ad55; border-color: #f6ad55; }
+    /* Another lane holds the solo — visibly amber (a solo IS active) but hollow,
+       so the button can never read "off" while the kit is soloed elsewhere. */
+    .ambient-step-fx-solo.other { color: #f6ad55; border-color: #f6ad55; background: rgba(246,173,85,0.12); }
+    /* Lane labels: the soloed lane carries a hard badge; every muted lane dims —
+       an active solo is always visible on the grid itself, not just the button. */
+    .ambient-euclid-drumlbl.solo { color: #1a1206; background: #f6ad55; border-color: #f6ad55; font-weight: 700; }
+    .ambient-euclid-drumlbl.solo .solo-dot { font-style: normal; font-size: 0.62em; font-weight: 800; margin-left: 3px; padding: 0 3px; border-radius: 3px; background: #1a1206; color: #f6ad55; }
+    .ambient-euclid-drumlbl.muted-by-solo { opacity: 0.38; }
     .ambient-step-fx-solo[disabled] { opacity: 0.35; cursor: not-allowed; }
     @media (hover: hover) { .ambient-step-fx-solo:not([disabled]):hover { border-color: #f6ad55; color: #f7c98b; } .ambient-step-fx-solo.on:hover { color: #1a1206; } }
     @media (hover: hover) { .ambient-step-fx-clear:hover { border-color: #9f7aea; color: #d9cbff; } .ambient-step-fx-trig:hover { border-color: #4fd090; color: #b6f5d6; } }
@@ -11996,7 +12019,13 @@
     /* Sticky Bloom header (master): the Areas strip stays visible on scroll, and
        the always-visible orch row carries a live Bar counter mirror. */
     .ambient-areas { position: sticky; top: 0; z-index: 40; background: #101018; box-shadow: 0 6px 14px rgba(0,0,0,0.35); }
-    .ambient-orch-bar-hdr { margin-left: auto; margin-right: 8px; font: 600 0.72rem 'JetBrains Mono', monospace; color: #7fd6c4; white-space: nowrap; }
+    .ambient-orch-bar-hdr {
+      flex: 1 1 100% !important; min-width: 0; text-align: center;
+      overflow: hidden; text-overflow: ellipsis;
+      margin: 0 4px; padding: 2px 8px; border-radius: 7px;
+      font: 600 0.72rem 'JetBrains Mono', monospace; color: #7fd6c4; white-space: nowrap;
+    }
+    .ambient-orch-bar-hdr:not(:empty) { border: 1px solid rgba(79,209,197,0.35); background: rgba(79,209,197,0.10); }
     .ambient-orch-bar-hdr:empty { display: none; }
 
     /* Trance-gate step grid: max 8 UNIFORM cells per row, aligned into columns

@@ -140,7 +140,7 @@ td .c{display:block;font-size:10px;color:var(--mute)}
    one dimension is auto. Without it the square renders uncropped at full
    height. The attributes stay so the box is reserved before the file loads. */
 .shot{display:block;width:100%;height:auto;aspect-ratio:16/9;object-fit:cover;
-  object-position:50% 3%;background:var(--bevel);margin-bottom:10px}
+  object-position:50% 3%;background:var(--bevel);margin-bottom:6px}
 .vid{position:relative;width:100%;padding:56.25% 0 0;background:#000}
 .vid button{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;cursor:pointer;padding:0}
 .vid img,.vid iframe{position:absolute;inset:0;width:100%;height:100%;border:0;object-fit:cover}
@@ -212,7 +212,11 @@ dl.f dd{font-weight:700}
          and powerful verses.</p>
       <div class="hr"></div>
       <p style="font-size:11px;color:var(--mute);margin-bottom:8px">
-        Also records as <a href="#w-wiz" data-open="w-wiz">Mercy Wizard</a>.
+        <!-- The handle reads mercywizard, but this IS the performer page.
+             It sits here as well as in LINKS because nothing about the URL
+             says so, and LINKS is otherwise all recording-side. -->
+        <a href="https://instagram.com/mercywizard" target="_blank" rel="noopener">Instagram</a>
+        &middot; also records as <a href="#w-wiz" data-open="w-wiz">Mercy Wizard</a>.
       </p>
       <a class="btn" href="#w-book" data-open="w-book">✉ BOOK A SHOW</a>
     </div>
@@ -243,7 +247,7 @@ dl.f dd{font-weight:700}
   </div>
 
   <!-- BOOKING -->
-  <div class="win" id="w-book" data-x="104" data-y="500" data-w="320">
+  <div class="win" id="w-book" data-x="104" data-y="505" data-w="320">
     <div class="tb"><span class="t px">BOOKING.exe</span><button data-close>✕</button></div>
     <div class="body">
       <h2 class="wt px">Book a show</h2>

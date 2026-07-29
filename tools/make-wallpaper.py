@@ -25,6 +25,16 @@ W, H = 384, 216
 HORIZON = 122                      # low, so the busy part sits under the windows
 DUSK = '--dusk' in sys.argv
 
+# Frame cycling. The sea is the only thing that moves: --frame N re-rolls the
+# chop and the moon path and leaves everything else pixel-identical, so the
+# frames can be stepped through as an animation without any other part of the
+# scene twitching. This is how water is animated in the games this borrows
+# from — a few frames on a loop, not a shader.
+FRAME = 0
+for _a in sys.argv:
+    if _a.startswith('--frame='):
+        FRAME = int(_a.split('=')[1])
+
 # ── palette ────────────────────────────────────────────────────────────────
 # Values are deliberately LOW and close together. This is a wallpaper: windows
 # sit on top of it, so it has to read as scenery at a glance and then get out
@@ -100,7 +110,7 @@ def gradient(y0, y1, top, bot):
             _ = base
 
 # Deterministic noise — a seeded LCG, so re-running gives the identical file.
-_seed = 20260729
+_seed = 20260729 + FRAME * 7919      # water only — see the land reseed below
 def rnd():
     global _seed
     _seed = (_seed * 1103515245 + 12345) & 0x7FFFFFFF
@@ -173,6 +183,11 @@ for y in range(HORIZON + 1, H, 2):
         c = P['sun'] if t < 0.18 else mix(P['glint'], P['sun'], max(0, .55 - t))
         for k in range(ln):
             px(gx + k, y, c)
+
+# Reseed to a CONSTANT. Everything below draws with rnd() too — islands, the
+# granite ridge, foam, spruces — and if it inherited the per-frame water seed
+# the whole coastline would jitter between frames instead of only the sea.
+_seed = 11061980
 
 # ── land ───────────────────────────────────────────────────────────────────
 def conifer(bx, by, h, dark, mid, lite):
@@ -296,7 +311,8 @@ png = (b'\x89PNG\r\n\x1a\n'
 
 out = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'img')
 os.makedirs(out, exist_ok=True)
-name = 'wallpaper-maine-dusk.png' if DUSK else 'wallpaper-maine.png'
+stem = 'wallpaper-maine-dusk' if DUSK else 'wallpaper-maine'
+name = '%s.png' % stem if FRAME == 0 else '%s-%d.png' % (stem, FRAME)
 path = os.path.join(out, name)
 with open(path, 'wb') as f:
     f.write(png)

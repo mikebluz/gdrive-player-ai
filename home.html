@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mike Luz — music, software, and things worth owning</title>
+  <meta name="description" content="Mike Luz makes records as Mercy Wizard, builds browser instruments, and sells guitars, merch and artwork." />
+  <link rel="stylesheet" href="css/site.css?v=DEPLOYVER" />
+</head>
+<body>
+
+  <!-- ══ TEMPORARY — REMOVE WHEN THIS PAGE REPLACES index.html ══════════════
+       The old homepage stays live and untouched while this one is built.
+       Delete this whole .devbar block (here and on listen/watch) at cutover. -->
+  <div class="devbar">
+    <span><b>New site, in progress.</b> Nothing here is final.</span>
+    <a href="index.html">← the current homepage</a>
+  </div>
+  <!-- ══ END TEMPORARY ═══════════════════════════════════════════════════════ -->
+
+  <nav class="nav">
+    <div class="wrap nav-inner">
+      <a class="nav-mark" href="home.html">MIKE<span>·</span>LUZ</a>
+      <div class="nav-links">
+        <a href="home.html" class="on">Home</a>
+        <a href="listen.html">Listen</a>
+        <a href="watch.html">Watch</a>
+        <a href="#software">Software</a>
+        <a href="#shop">Shop</a>
+        <a href="#about">About</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- HERO — name, one line of who this is, and the Listen path immediately.
+       Burying "Listen" below the fold is the single most common mistake on
+       artist sites, so it is the primary button. -->
+  <header class="hero">
+    <div class="wrap hero-inner">
+      <div>
+        <div class="hero-kicker">Musician · Developer · Maker</div>
+        <h1>Mike Luz makes <em>records</em>, <em>instruments</em>,<br />and things worth owning.</h1>
+        <p class="hero-sub">
+          Records under the name <strong>Mercy Wizard</strong>. Browser instruments that
+          generate music rather than just play it back. Guitars, merch and artwork,
+          sold direct.
+        </p>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="listen.html">▸ Listen</a>
+          <a class="btn" href="watch.html">Watch</a>
+          <a class="btn" href="#software">See the software</a>
+        </div>
+      </div>
+      <div class="hero-art">
+        <img src="me2026.jpg" alt="Mike Luz" />
+      </div>
+    </div>
+  </header>
+
+  <!-- LATEST RELEASE — the artist-site convention: one current thing, loud,
+       with a direct path to hear it. Swap the copy and links per release. -->
+  <section class="sec" id="latest">
+    <div class="wrap">
+      <div class="feature">
+        <div class="feature-art">
+          <img src="banner.jpg" alt="Mercy Wizard" />
+        </div>
+        <div>
+          <div class="feature-tag">Latest single</div>
+          <h3>Grains</h3>
+          <p>
+            Out now, everywhere. <!-- TODO: a line or two about the track — what it is,
+            what it came from. This is the spot people actually read. -->
+          </p>
+          <div class="hero-cta">
+            <a class="btn btn-primary" href="https://symphony.to/mercywizard/bhu4vkjnrcyg" target="_blank" rel="noopener">Stream it</a>
+            <a class="btn" href="https://youtu.be/UKcZJ31ZHH0" target="_blank" rel="noopener">Watch the video</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- THREE STRANDS — the structural bet of this page. Most artist sites are
+       music with everything else as a footnote; these get equal weight because
+       they are three real practices, not one plus hobbies. -->
+  <section class="sec" id="strands">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2 class="sec-title">Three things, one person</h2>
+        <span class="sec-note">They feed each other more than you'd think</span>
+      </div>
+      <div class="strands">
+
+        <article class="strand" style="--sc: var(--music)">
+          <div class="strand-n">01 — Music</div>
+          <h3>Mercy Wizard</h3>
+          <p>
+            Songs, records, and the occasional video.
+            <!-- TODO: what should someone know about the music in one sentence?
+                 Genre, feel, a comparison, or what you're going for. -->
+          </p>
+          <div class="strand-links">
+            <a href="listen.html">Listen</a>
+            <a href="watch.html">Videos</a>
+            <a href="https://mercywizard.bandcamp.com" target="_blank" rel="noopener">Bandcamp</a>
+          </div>
+        </article>
+
+        <article class="strand" id="software" style="--sc: var(--code)">
+          <div class="strand-n">02 — Software</div>
+          <h3>Browser instruments</h3>
+          <p>
+            Tools that make music rather than just play it — a generative engine, a
+            sequencer, a player, all running in a tab with nothing to install.
+          </p>
+          <div class="strand-links">
+            <a href="bloops.html">Bloops</a>
+            <a href="player.html">Player</a>
+            <a href="tracks.html">Tracks</a>
+            <a href="game.html">Game</a>
+          </div>
+        </article>
+
+        <article class="strand" id="shop" style="--sc: var(--shop)">
+          <div class="strand-n">03 — Shop</div>
+          <h3>Guitars, merch, art</h3>
+          <p>
+            Instruments I've found and fettled, shirts and records, and original
+            artwork. Sold direct.
+          </p>
+          <div class="strand-links">
+            <a href="https://linktr.ee/mikebuys" target="_blank" rel="noopener">Guitars</a>
+            <a href="https://mercywizard.bandcamp.com/merch" target="_blank" rel="noopener">Merch</a>
+            <a href="artwork.html">Artwork</a>
+          </div>
+        </article>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ABOUT — short. A long bio is the thing nobody scrolls to. -->
+  <section class="sec" id="about">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2 class="sec-title">About</h2>
+      </div>
+      <p class="hero-sub" style="max-width: 62ch">
+        <!-- TODO: three or four sentences in your voice. Where you are, what you're
+             chasing, why the software and the music are the same project. This is
+             the only long-form text on the page, so it can afford to be personal. -->
+        Placeholder — we'll write this together. It should sound like you, not like a
+        press release, and it should make the through-line obvious: the records, the
+        instruments and the objects are all the same instinct pointed at different
+        materials.
+      </p>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <div class="wrap foot-inner">
+      <div class="social">
+        <a href="https://www.youtube.com/@mercywizard-music" target="_blank" rel="noopener">YouTube</a>
+        <a href="https://instagram.com/mercywizard" target="_blank" rel="noopener">Instagram</a>
+        <a href="https://mercywizard.bandcamp.com/follow_me" target="_blank" rel="noopener">Bandcamp</a>
+        <a href="https://open.substack.com/pub/mercywizard" target="_blank" rel="noopener">Substack</a>
+        <a href="https://linktr.ee/mercywizard" target="_blank" rel="noopener">All links</a>
+      </div>
+      <div class="foot-c">© 2026 Mike Luz</div>
+    </div>
+  </footer>
+
+</body>
+</html>

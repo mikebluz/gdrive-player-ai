@@ -75,7 +75,7 @@ restore_dev_bypass() {
 trap 'rm -rf "$STAGE_DIR"; restore_dev_bypass' EXIT
 
 echo "📦 Staging files..."
-cp -r index.html bloops.html player.html artwork.html game.html tracks.html css js banner.jpg me2026.jpg samples artwork vendor "$STAGE_DIR/"
+cp -r index.html home.html listen.html watch.html bloops.html player.html artwork.html game.html tracks.html css js banner.jpg me2026.jpg samples music artwork vendor "$STAGE_DIR/"
 # Caching policy (HTML revalidates every load; versioned assets cache long) —
 # without it, phones cache stale HTML pointing at old ?v= assets and boot dies.
 cp .htaccess "$STAGE_DIR/"
@@ -91,7 +91,7 @@ DEPLOY_VER=$(date +%Y%m%d%H%M%S)
 echo "🏷️  Cache-busting asset URLs with v=$DEPLOY_VER"
 # JS files that fetch versioned assets themselves (worklet module + wasm URLs
 # in the core-voices bridge) carry the same ?v=DEPLOYVER token as the HTML.
-for f in index.html bloops.html player.html artwork.html game.html tracks.html js/bloops/03b-core-voices.js; do
+for f in index.html home.html listen.html watch.html bloops.html player.html artwork.html game.html tracks.html js/bloops/03b-core-voices.js; do
   if [[ -f "$STAGE_DIR/$f" ]]; then
     sed "s/?v=DEPLOYVER/?v=$DEPLOY_VER/g" "$STAGE_DIR/$f" > "$STAGE_DIR/$f.tmp" && mv "$STAGE_DIR/$f.tmp" "$STAGE_DIR/$f"
   fi
@@ -136,6 +136,11 @@ put -O "$REMOTE_DIR/js" "$STAGE_DIR/js/config.js"
 # forever. Put them explicitly every deploy so the fresh stamp always lands.
 mkdir -p "$REMOTE_DIR/js/bloops"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/index.html"
+# New site (in development) — same force-put, same reason: a stamp-only
+# change is byte-identical in length and the size-only mirror would skip it.
+put -O "$REMOTE_DIR"           "$STAGE_DIR/home.html"
+put -O "$REMOTE_DIR"           "$STAGE_DIR/listen.html"
+put -O "$REMOTE_DIR"           "$STAGE_DIR/watch.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/bloops.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/player.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/artwork.html"

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Watch — Mike Luz</title>
+  <meta name="description" content="Music videos, live takes and studio footage from Mike Luz / Mercy Wizard." />
+  <link rel="stylesheet" href="css/site.css?v=DEPLOYVER" />
+</head>
+<body>
+
+  <!-- ══ TEMPORARY — REMOVE WHEN THIS PAGE REPLACES index.html ══════════════ -->
+  <div class="devbar">
+    <span><b>New site, in progress.</b> Nothing here is final.</span>
+    <a href="index.html">← the current homepage</a>
+  </div>
+  <!-- ══ END TEMPORARY ═══════════════════════════════════════════════════════ -->
+
+  <nav class="nav">
+    <div class="wrap nav-inner">
+      <a class="nav-mark" href="home.html">MIKE<span>·</span>LUZ</a>
+      <div class="nav-links">
+        <a href="home.html">Home</a>
+        <a href="listen.html">Listen</a>
+        <a href="watch.html" class="on">Watch</a>
+        <a href="home.html#software">Software</a>
+        <a href="home.html#shop">Shop</a>
+        <a href="home.html#about">About</a>
+      </div>
+    </div>
+  </nav>
+
+  <header class="hero" style="padding-bottom: 0">
+    <div class="wrap">
+      <div class="hero-kicker">Watch</div>
+      <h1 style="font-size: clamp(2.4rem, 6.5vw, 4rem)">Videos</h1>
+      <p class="hero-sub">Music videos, live takes, and whatever else ends up on camera.</p>
+    </div>
+  </header>
+
+  <section class="sec">
+    <div class="wrap">
+      <div id="vgrid" class="vgrid"></div>
+      <div id="vempty" class="empty" style="display:none">
+        <b>No videos listed yet</b>
+        Add them to the <code>VIDEOS</code> list at the bottom of this file — an id and a title is all it takes.
+      </div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <div class="wrap foot-inner">
+      <div class="social">
+        <a href="https://www.youtube.com/@mercywizard-music" target="_blank" rel="noopener">YouTube</a>
+        <a href="https://instagram.com/mercywizard" target="_blank" rel="noopener">Instagram</a>
+        <a href="https://mercywizard.bandcamp.com/follow_me" target="_blank" rel="noopener">Bandcamp</a>
+      </div>
+      <div class="foot-c">© 2026 Mike Luz</div>
+    </div>
+  </footer>
+
+  <script>
+    // ── THE VIDEO LIST ────────────────────────────────────────────────────
+    // Add a video by pasting its YouTube id (the part after ?v= or youtu.be/)
+    // plus a title. `note` is optional and shows underneath.
+    const VIDEOS = [
+      { id: 'UKcZJ31ZHH0', title: 'Grains', note: 'Official video' },
+      // { id: 'xxxxxxxxxxx', title: 'Another one', note: 'Live' },
+    ];
+
+    // Videos load CLICK-TO-PLAY: the poster is a plain image and the YouTube
+    // iframe is only created when you press play. Ten videos would otherwise
+    // mean ten embedded players — and ten sets of YouTube cookies — on a page
+    // where you might watch none of them.
+    const grid = document.getElementById('vgrid');
+    const empty = document.getElementById('vempty');
+    const esc = (s) => String(s == null ? '' : s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+
+    if (!VIDEOS.length) {
+      empty.style.display = '';
+    } else {
+      VIDEOS.forEach(v => {
+        if (!v || !v.id) return;
+        const card = document.createElement('article');
+        card.className = 'vcard';
+        card.innerHTML =
+          '<button class="vframe vposter" type="button" aria-label="Play ' + esc(v.title) + '">' +
+            // hqdefault exists for every video; maxres does not, so this never 404s
+            '<img loading="lazy" src="https://i.ytimg.com/vi/' + esc(v.id) + '/hqdefault.jpg" alt="" />' +
+          '</button>' +
+          '<div class="vmeta"><h4>' + esc(v.title || 'Untitled') + '</h4>' +
+            (v.note ? '<span>' + esc(v.note) + '</span>' : '') + '</div>';
+        card.querySelector('.vposter').addEventListener('click', function () {
+          const holder = document.createElement('div');
+          holder.className = 'vframe';
+          holder.innerHTML = '<iframe src="https://www.youtube-nocookie.com/embed/' + esc(v.id) +
+            '?autoplay=1&rel=0" title="' + esc(v.title) + '" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>';
+          this.replaceWith(holder);
+        });
+        grid.appendChild(card);
+      });
+    }
+  </script>
+
+</body>
+</html>

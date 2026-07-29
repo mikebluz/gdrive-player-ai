@@ -1,0 +1,101 @@
+/* ==========================================================================
+   SKIN: ATMOS — dark, but with weather in it.
+
+   The base skin is dark and FLAT: every edge is a hard rule, every surface
+   the same value. This keeps the dark and removes the edges — a faint grain
+   over everything, light that falls off toward the corners, sections divided
+   by a fade rather than a line, and one cool accent instead of amber. Closest
+   in feel to the demos you liked for their atmosphere (C, E) without any of
+   the costume.
+   ========================================================================== */
+
+:root {
+  --bg:    #0a0b10;
+  --panel: #12141c;
+  --fg:    #eceef5;
+  --mid:   #9ba1b4;
+  --dim:   #676d80;
+  --line:  #1d2029;
+  --hard:  #1d2029;
+  --ac:    #8fb8ff;
+}
+
+/* Grain + a light source top-left, fixed so it does not scroll with content. */
+body { position: relative; background: var(--bg); }
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(70% 55% at 18% 0%, rgba(143,184,255,.10), transparent 68%),
+    radial-gradient(60% 50% at 92% 22%, rgba(255,150,120,.055), transparent 70%);
+}
+body::after {
+  content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: .35;
+  background-image: radial-gradient(rgba(255,255,255,.055) .5px, transparent .5px);
+  background-size: 3px 3px;
+}
+.devbar, .mast, .hero, .sec, .foot { position: relative; z-index: 1; }
+
+/* Dividers fade out rather than ruling across. */
+.mast { border-bottom: 0; box-shadow: 0 1px 0 rgba(255,255,255,.05); }
+.sec { border-top: 0; padding: clamp(40px, 6.5vw, 80px) 0; }
+.sec::before {
+  content: ''; display: block; height: 1px; margin-bottom: clamp(30px, 5vw, 56px);
+  background: linear-gradient(90deg, rgba(143,184,255,.28), rgba(255,255,255,.06) 42%, transparent 78%);
+}
+.foot { border-top: 0; box-shadow: 0 -1px 0 rgba(255,255,255,.05); }
+
+/* Type — mixed case, lighter, wider leading. */
+.mast b { letter-spacing: .2em; font-weight: 600; }
+.mast nav a { text-transform: none; letter-spacing: .01em; font-size: .88rem; font-weight: 500; }
+.hero h1 { text-transform: none; font-weight: 650; letter-spacing: -.035em;
+  font-size: clamp(2.5rem, 8.4vw, 5.4rem);
+  background: linear-gradient(170deg, #ffffff, #b9c2da);
+  -webkit-background-clip: text; background-clip: text; color: transparent; }
+.eyebrow { text-transform: none; letter-spacing: .06em; font-weight: 600; font-size: .84rem; }
+.hero .said { font-size: clamp(1.02rem, 2.1vw, 1.28rem); line-height: 1.62; max-width: 38ch; }
+.sec-h h2 { text-transform: none; font-weight: 650; letter-spacing: -.02em;
+  font-size: clamp(1.2rem, 2.7vw, 1.6rem); }
+.sec-h span { text-transform: none; letter-spacing: .02em; font-size: .84rem; }
+
+/* Surfaces — soft, lifted, no hard borders anywhere. */
+.btn { border: 1px solid rgba(255,255,255,.12); border-radius: 999px; text-transform: none;
+  letter-spacing: .01em; font-weight: 600; font-size: .95rem; padding: 13px 24px;
+  background: rgba(255,255,255,.03); }
+.btn:hover { background: rgba(255,255,255,.09); border-color: rgba(255,255,255,.24); color: var(--fg); }
+.btn.p { background: var(--ac); border-color: var(--ac); color: #0a1020; }
+.btn.p:hover { background: #a9c8ff; border-color: #a9c8ff; color: #0a1020; }
+
+.vid { border: 0; border-radius: 14px; overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.07); }
+.vid button::after { background: var(--ac); }
+.vid button::before { border-color: transparent transparent transparent #0a1020; }
+.hero-note { color: var(--dim); }
+
+.tbl .th { border-bottom-color: rgba(255,255,255,.09); text-transform: none;
+  letter-spacing: .04em; font-size: .78rem; }
+.tbl .tr { border-bottom-color: rgba(255,255,255,.05); }
+.tbl .tr:hover { background: rgba(255,255,255,.035); }
+.tbl .t { font-weight: 600; }
+.tbl .tag { text-transform: none; letter-spacing: .02em; font-weight: 600; font-size: .78rem; }
+
+.card { border: 0; border-radius: 14px; background: linear-gradient(168deg, var(--panel), #0d0f16);
+  box-shadow: 0 0 0 1px rgba(255,255,255,.06), 0 18px 44px rgba(0,0,0,.45); }
+.card:hover { box-shadow: 0 0 0 1px rgba(143,184,255,.4), 0 22px 54px rgba(0,0,0,.55); }
+.card .shot { border-bottom: 1px solid rgba(255,255,255,.07); }
+.card h3 { text-transform: none; font-weight: 650; }
+.card .kind { text-transform: none; letter-spacing: .03em; font-weight: 600; font-size: .78rem; }
+.card .go { text-transform: none; letter-spacing: .02em; font-weight: 600; border-bottom-width: 1px; }
+
+.facts { border-radius: 12px; overflow: hidden; background: rgba(255,255,255,.07); border: 0; }
+.facts div { background: #0c0e14; }
+.facts dt { text-transform: none; letter-spacing: .04em; font-size: .78rem; }
+.facts dd { font-weight: 600; }
+
+.quote { border-left-width: 2px; border-left-color: var(--ac); }
+.quote cite { text-transform: none; letter-spacing: .02em; font-size: .8rem; }
+
+.todo { border: 1px dashed rgba(255,255,255,.14); border-radius: 12px;
+  background: rgba(143,184,255,.05); }
+.todo b { text-transform: none; letter-spacing: .03em; font-size: .8rem; }
+
+.foot { text-transform: none; letter-spacing: .02em; font-size: .82rem; }

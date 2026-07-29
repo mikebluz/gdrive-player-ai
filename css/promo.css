@@ -49,6 +49,13 @@ a { color: inherit; text-decoration: none; }
 .devbar a { color: var(--ac); border-bottom: 1px solid rgba(246,173,85,.35); }
 .devbar b { color: var(--fg); }
 
+/* TEMPORARY — style switcher chrome, removed with the dev strip. */
+.skinpick { display: inline-flex; gap: 4px; margin-left: auto; }
+.skinpick button { font: inherit; font-size: .7rem; padding: 4px 10px; cursor: pointer;
+  background: transparent; border: 1px solid var(--line); color: var(--dim); border-radius: 4px; }
+.skinpick button:hover { color: var(--fg); }
+.skinpick button.on { color: var(--bg); background: var(--ac); border-color: var(--ac); }
+
 /* ---- MASTHEAD ------------------------------------------------------------ */
 .mast { border-bottom: 2px solid var(--hard); }
 .mast-in { display: flex; align-items: baseline; justify-content: space-between; gap: 14px;

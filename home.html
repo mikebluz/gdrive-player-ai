@@ -6,6 +6,7 @@
 <title>Mike Luz — Mercy Wizard</title>
 <meta name="description" content="Mike Luz — records as Mercy Wizard. Listen, watch, live dates and booking." />
 <link rel="stylesheet" href="css/promo.css?v=DEPLOYVER" />
+<link rel="stylesheet" id="skin" href="" />
 </head>
 <body>
 
@@ -14,6 +15,7 @@
   <span><b>New homepage</b> — in progress</span>
   <a href="index.html">← current homepage</a>
   <a href="home-demos.html">the twelve demos</a>
+  <span class="skinpick" id="skinpick"></span>
 </div>
 <!-- ══ END TEMPORARY ═══════════════════════════════════════════════════════ -->
 
@@ -120,6 +122,31 @@
 </div></footer>
 
 <script>
+// ══ TEMPORARY — style switcher. Goes with the dev strip at cutover. ═══════
+(function () {
+  const SKINS = [
+    ['', 'Hard'],                       // the current one — heavy rules, all caps
+    ['css/skin-soft.css', 'Soft'],      // same bones, quieter voice
+    ['css/skin-paper.css', 'Paper'],    // light
+    ['css/skin-atmos.css', 'Atmos'],    // dark, textural, no hard edges
+  ];
+  const link = document.getElementById('skin'), pick = document.getElementById('skinpick');
+  const set = (href) => {
+    link.href = href ? href + '?v=DEPLOYVER' : '';
+    try { localStorage.setItem('mlskin', href); } catch (e) {}
+    [...pick.children].forEach(b => b.classList.toggle('on', b.dataset.h === href));
+  };
+  SKINS.forEach(([h, n]) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = n; b.dataset.h = h;
+    b.addEventListener('click', () => set(h));
+    pick.appendChild(b);
+  });
+  let saved = ''; try { saved = localStorage.getItem('mlskin') || ''; } catch (e) {}
+  set(SKINS.some(s2 => s2[0] === saved) ? saved : '');
+})();
+// ══ END TEMPORARY ════════════════════════════════════════════════════════
+
 const YT = 'UKcZJ31ZHH0';
 
 // ── SHOWS ──────────────────────────────────────────────────────────────────

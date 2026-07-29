@@ -1,0 +1,74 @@
+/* ==========================================================================
+   SKIN: SOFT — same bones, quieter voice.
+
+   The complaint about the base skin is that it shouts: 2px rules everywhere,
+   everything upper-case, weight 800 on every heading. This keeps the layout
+   exactly and changes only the volume — hairline rules, mixed case, one
+   weight step down, more air between things, and a warmer near-black so the
+   page stops feeling like a spreadsheet.
+   ========================================================================== */
+
+:root {
+  --bg:    #12110f;          /* warm near-black rather than blue-black */
+  --panel: #1a1815;
+  --fg:    #f2efe9;
+  --mid:   #a8a29a;
+  --dim:   #77716a;
+  --line:  #2a2724;
+  --hard:  #2a2724;          /* rules stop being full-contrast */
+  --ac:    #e0a75f;
+}
+
+/* Type — mixed case, lighter, roomier. */
+.mast b { letter-spacing: .18em; font-weight: 700; }
+.mast nav a { text-transform: none; letter-spacing: .02em; font-size: .88rem; font-weight: 500; }
+
+.hero h1 { text-transform: none; font-weight: 700; letter-spacing: -.03em;
+  font-size: clamp(2.4rem, 8vw, 5.2rem); }
+.eyebrow { text-transform: none; letter-spacing: .04em; font-weight: 600; font-size: .84rem;
+  color: var(--ac); }
+.hero .said { font-size: clamp(1.02rem, 2.1vw, 1.28rem); line-height: 1.55; max-width: 38ch; }
+
+.sec-h h2 { text-transform: none; font-weight: 700; letter-spacing: -.015em;
+  font-size: clamp(1.15rem, 2.6vw, 1.5rem); }
+.sec-h span { text-transform: none; letter-spacing: .02em; font-size: .84rem; }
+
+/* Rules — hairlines, and only where they separate something. */
+.mast { border-bottom: 1px solid var(--line); }
+.sec { border-top: 1px solid var(--line); padding: clamp(38px, 6vw, 74px) 0; }
+.foot { border-top: 1px solid var(--line); }
+
+/* Controls — softened corners, no shouting caps. */
+.btn { border: 1px solid var(--line); border-radius: 8px; text-transform: none;
+  letter-spacing: .01em; font-weight: 600; font-size: .96rem; padding: 13px 22px; }
+.btn:hover { background: rgba(255,255,255,.05); color: var(--fg); border-color: #443f39; }
+.btn.p { background: var(--ac); border-color: var(--ac); color: #1b1206; }
+.btn.p:hover { background: #eab876; border-color: #eab876; color: #1b1206; }
+
+/* Video — a frame, not a border. */
+.vid { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.hero-note { font-size: .8rem; color: var(--dim); }
+
+/* Tables — the rules recede, the content leads. */
+.tbl .th { text-transform: none; letter-spacing: .04em; font-size: .76rem; }
+.tbl .t { font-weight: 600; }
+.tbl .tag { text-transform: none; letter-spacing: .02em; font-weight: 600; font-size: .76rem; }
+.tbl .tr:hover { background: rgba(255,255,255,.03); }
+
+/* Cards / facts */
+.card { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.card .shot { border-bottom: 1px solid var(--line); }
+.card h3 { text-transform: none; font-weight: 700; }
+.card .kind { text-transform: none; letter-spacing: .03em; font-weight: 600; font-size: .78rem; }
+.card .go { text-transform: none; letter-spacing: .02em; font-weight: 600; border-bottom-width: 1px; }
+.facts { border-radius: 10px; overflow: hidden; }
+.facts dt { text-transform: none; letter-spacing: .04em; font-size: .78rem; }
+.facts dd { font-weight: 600; }
+
+.quote { border-left-width: 2px; }
+.quote cite { text-transform: none; letter-spacing: .02em; font-size: .8rem; }
+
+.todo { border-radius: 10px; }
+.todo b { text-transform: none; letter-spacing: .03em; font-size: .8rem; }
+
+.foot { text-transform: none; letter-spacing: .02em; font-size: .82rem; }

@@ -1,0 +1,89 @@
+/* ==========================================================================
+   SKIN: PAPER — light, printed, calm.
+
+   Everything so far has been dark. This is the other half of the room: warm
+   off-white, a serif for the headings so the name reads as a name rather
+   than a logo, and rules that behave like the ones in a printed programme.
+   Nothing here shouts, which is the point.
+   ========================================================================== */
+
+:root {
+  --bg:    #f6f3ec;
+  --panel: #fffdf8;
+  --fg:    #17150f;
+  --mid:   #55514a;
+  --dim:   #8b857c;
+  --line:  #ddd7ca;
+  --hard:  #17150f;
+  --ac:    #a33b23;          /* one red, used sparingly */
+}
+body { background: var(--bg); color: var(--fg); }
+
+/* Headings in a serif; everything else stays in the sans, which is what
+   keeps this from reading as a wedding invitation. */
+.hero h1, .sec-h h2, .card h3, .door h2 {
+  font-family: 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+  font-weight: 600; text-transform: none; letter-spacing: -.02em;
+}
+.hero h1 { font-size: clamp(2.6rem, 8.5vw, 5.6rem); line-height: .96; }
+.sec-h h2 { font-size: clamp(1.3rem, 3vw, 1.8rem); }
+
+.mast { border-bottom: 1px solid var(--hard); }
+.mast b { letter-spacing: .24em; font-weight: 700; font-size: .8rem; }
+.mast nav a { text-transform: none; letter-spacing: .01em; font-size: .9rem;
+  font-weight: 500; color: var(--mid); }
+.mast nav a:hover { color: var(--fg); }
+.mast nav a.on { color: var(--ac); }
+
+.eyebrow { text-transform: uppercase; letter-spacing: .22em; font-size: .7rem;
+  font-weight: 700; color: var(--ac); }
+.hero .said { color: var(--mid); font-size: clamp(1.05rem, 2.1vw, 1.3rem);
+  line-height: 1.55; max-width: 38ch; }
+.hero .said b { color: var(--fg); }
+
+.sec { border-top: 1px solid var(--hard); }
+.sec-h span { text-transform: uppercase; letter-spacing: .16em; font-size: .68rem; color: var(--dim); }
+
+.btn { border: 1px solid var(--hard); border-radius: 0; text-transform: none;
+  letter-spacing: .01em; font-weight: 600; font-size: .95rem; color: var(--fg); }
+.btn:hover { background: var(--hard); color: var(--bg); }
+.btn.p { background: var(--ac); border-color: var(--ac); color: #fff; }
+.btn.p:hover { background: #8d3120; border-color: #8d3120; color: #fff; }
+
+.vid { border: 1px solid var(--hard); background: #ddd7ca; }
+.vid button { background: #ddd7ca; }
+.vid button::after { background: var(--bg); border: 1px solid var(--hard); }
+.vid button::before { border-color: transparent transparent transparent var(--fg); }
+.hero-note { color: var(--dim); }
+
+.tbl .th { border-bottom-color: var(--hard); text-transform: uppercase;
+  letter-spacing: .16em; font-size: .66rem; }
+.tbl .tr { border-bottom-color: var(--line); }
+.tbl .tr:hover { background: #efeade; }
+.tbl .t { font-weight: 600; }
+.tbl .tag { color: var(--ac); }
+
+.card { border: 1px solid var(--hard); background: var(--panel); }
+.card .shot { border-bottom: 1px solid var(--hard); background: #e9e3d6; color: var(--dim); }
+.card p { color: var(--mid); }
+.card .kind { color: var(--ac); }
+.card .go { border-bottom-color: var(--ac); }
+
+.facts { background: var(--line); border-color: var(--line); }
+.facts div { background: var(--panel); }
+.facts dt { color: var(--dim); }
+.facts dd a { border-bottom-color: var(--ac); color: var(--ac); }
+
+.quote { border-left-color: var(--ac); }
+.quote cite { color: var(--dim); }
+
+.todo { border: 1px dashed #c4bcab; background: rgba(163,59,35,.04); color: var(--mid); }
+.todo b { color: var(--ac); }
+
+.foot { border-top: 1px solid var(--hard); color: var(--dim); }
+.foot a:hover { color: var(--ac); }
+
+.devbar { background: #17150f; color: #a09a90; border-bottom: 0; }
+.devbar b { color: #f6f3ec; }
+.skinpick button { border-color: #3a352c; color: #a09a90; }
+.skinpick button:hover { color: #fff; }

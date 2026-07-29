@@ -166,25 +166,30 @@ echo "    open https://<your-domain>/js/config.js — it should show your real"
 echo "    clientId/apiKey, not a 404. Then hard-refresh the app (Cmd-Shift-R)."
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HOLD: home.html (the new homepage) is NOT deployed.
+# HOLD: the new homepage is NOT deployed.
 #
-# It is finished enough to look at locally but not ready to be public, so it is
+# The live direction is home-os.html (the desktop). home.html is the earlier
+# single-page version, kept for reference. Neither ships yet, so both are
 # omitted from three places above: the `cp` staging line, the ?v= stamp loop,
 # and the force-put block. listen.html and watch.html ARE deployed.
 #
-# TO GO LIVE, add "home.html" back to all three, then decide whether it becomes
-# index.html (and drop the .devbar block from home/listen/watch when it does).
-#
-# This prints on every deploy on purpose — a comment nobody reads is not a
-# reminder. Delete this block at cutover.
+# The launch checklist below is the real thing to read. It prints on every
+# deploy on purpose — a comment nobody reads is not a reminder. Delete this
+# whole block at cutover.
 # ─────────────────────────────────────────────────────────────────────────────
-if [[ -f "home.html" ]]; then
+if [[ -f "home-os.html" || -f "home.html" ]]; then
   echo ""
-  echo "⏸️  REMINDER — home.html was NOT deployed (new homepage, still on hold)."
-  echo "    listen.html and watch.html WERE. When the new homepage is ready:"
-  echo "      1. add home.html to the cp line, the stamp loop and the force-put block"
-  echo "      1b. add img/ to the cp line — it holds the pixel-art wallpaper;"
-  echo "          without it the desktop ships as flat green with no scene"
-  echo "      2. remove the .devbar block from home/listen/watch"
-  echo "      3. delete this reminder from deploy.sh"
+  echo "⏸️  REMINDER — the new homepage was NOT deployed (still on hold)."
+  echo "    listen.html and watch.html WERE. To go live:"
+  echo "      1. decide which file ships and whether it becomes index.html"
+  echo "         (home-os.html is the current direction; home.html is the old one)"
+  echo "      2. add it to the cp line, the ?v= stamp loop and the force-put block"
+  echo "      3. add img/ to the cp line — it holds the pixel-art wallpaper and"
+  echo "         the live photo; without it the desktop ships as flat green"
+  echo "      4. CONTENT: in home-os.html's LINKS window, delete the whole"
+  echo "         '← old site · demos' row. Both are scaffolding — the back-link"
+  echo "         is temporary, and demos points at home-demos.html, an internal"
+  echo "         working file that must not ship."
+  echo "      5. remove the .devbar block from home/listen/watch"
+  echo "      6. delete this reminder from deploy.sh"
 fi

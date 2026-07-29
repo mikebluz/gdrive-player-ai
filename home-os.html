@@ -175,7 +175,7 @@ dl.f dd{font-weight:700}
     <div class="body">
       <div class="vid" id="vid"></div>
       <div style="margin-top:9px">
-        <a class="btn hot" href="https://tr.ee/YKRcNe0nlW" target="_blank" rel="noopener">▶ LISTEN</a>
+        <a class="btn hot" href="https://tr.ee/YKRcNe0nlW" target="_blank" rel="noopener">▶ STREAM</a>
         <a class="btn" href="https://youtu.be/UKcZJ31ZHH0" target="_blank" rel="noopener">YouTube</a>
       </div>
     </div>
@@ -205,18 +205,13 @@ dl.f dd{font-weight:700}
     <div class="tb"><span class="t px">MERCY WIZARD.txt</span><button data-close>✕</button></div>
     <div class="body">
       <h2 class="wt px">MERCY WIZARD</h2>
-      <p>Records and produces in the box. Folk and acoustic material too.</p>
-      <div class="todo">
-        <b>your line goes here</b>
-        One sentence: what the records sound like.
-      </div>
+      <p>Mike's long-running recording handle.</p>
       <div class="hr"></div>
+      <p>Eclectic and varied, everything from electronic indie dance music to raw acoustic demos.</p>
       <p style="font-size:11px;color:var(--mute);margin-bottom:8px">
         Performs live as <a href="#w-luz" data-open="w-luz">Mike Luz</a>.
-        Also builds the instruments the records are made with — those live in
-        <a href="software.html">TOOLS</a>, not for sale, just what's on the desk.
       </p>
-      <a class="btn" href="https://tr.ee/YKRcNe0nlW" target="_blank" rel="noopener">▶ LISTEN</a>
+      <a class="btn" href="https://linktr.ee/mercywizard" target="_blank" rel="noopener">▶ LISTEN</a>
     </div>
   </div>
 
@@ -247,6 +242,18 @@ dl.f dd{font-weight:700}
       </dl>
       <div class="hr"></div>
       <a class="btn hot" href="mailto:BOOKING@EXAMPLE.COM">✉ EMAIL ME</a>
+    </div>
+  </div>
+
+  <!-- TOOLS — the one window that is not music. It used to be a clause in the
+       Mercy Wizard footnote, which made software.html reachable only by
+       reading a paragraph to the end. -->
+  <div class="win" id="w-tools" data-x="1090" data-y="620" data-w="286">
+    <div class="tb"><span class="t px">TOOLS.exe</span><button data-close>✕</button></div>
+    <div class="body">
+      <h2 class="wt px">Tools</h2>
+      <p>The instruments the records are made with. Not for sale — just what's on the desk.</p>
+      <a class="btn" href="software.html">→ OPEN TOOLS</a>
     </div>
   </div>
 
@@ -298,7 +305,8 @@ const wins = [...document.querySelectorAll('.win')];
 // a mixer for the one that makes the records. 💿/💽 were the first pick and
 // are indistinguishable at 24px.
 const ICONS = { 'w-grains':['💿','GRAINS'], 'w-luz':['🎤','MIKE LUZ'], 'w-wiz':['🎛','MERCY WIZARD'],
-                'w-live':['🎫','LIVE'], 'w-book':['✉','BOOKING'], 'w-links':['🔗','LINKS'] };
+                'w-live':['🎫','LIVE'], 'w-book':['✉','BOOKING'], 'w-tools':['🛠','TOOLS'],
+                'w-links':['🔗','LINKS'] };
 let z = 10;
 
 function place() {

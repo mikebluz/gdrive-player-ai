@@ -1,0 +1,179 @@
+/* ==========================================================================
+   MIKE LUZ — promo pages (gigs.html / software.html)
+
+   Visual language pulled from the demos that landed: the heavy rules and
+   stark contrast of D, the condensed stacked type and rule-boxes of F, the
+   dense tabular information of I. Deliberately NOT the quiet editorial of G
+   and NOT the page-as-application of A/B/H/J.
+
+   One stylesheet for both pages so they read as one person, with a single
+   accent swapped per page: amber for the music side, teal for the software
+   side. Separate from site.css and index.css — nothing here can regress the
+   live homepage.
+   ========================================================================== */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:    #0a0a0c;
+  --panel: #101015;
+  --fg:    #f4f4f6;
+  --mid:   #a3a3ae;
+  --dim:   #6a6a78;
+  --line:  #232330;
+  --hard:  #f4f4f6;          /* the heavy rules */
+  --ac:    #f6ad55;          /* music side */
+  --max:   1140px;
+}
+body.sw { --ac: #4fd1c5; }   /* software side */
+
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+body {
+  background: var(--bg); color: var(--fg); min-height: 100svh; overflow-x: hidden;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+img { max-width: 100%; display: block; }
+a { color: inherit; text-decoration: none; }
+.wrap { width: 100%; max-width: var(--max); margin: 0 auto; padding: 0 clamp(14px, 3vw, 26px); }
+
+/* ---- TEMPORARY dev strip (delete at cutover) ----------------------------- */
+.devbar {
+  padding: 6px 14px; border-bottom: 1px solid var(--line); color: var(--dim);
+  font-size: .74rem; display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
+}
+.devbar a { color: var(--ac); border-bottom: 1px solid rgba(246,173,85,.35); }
+.devbar b { color: var(--fg); }
+
+/* ---- MASTHEAD ------------------------------------------------------------ */
+.mast { border-bottom: 2px solid var(--hard); }
+.mast-in { display: flex; align-items: baseline; justify-content: space-between; gap: 14px;
+  flex-wrap: wrap; padding: 16px 0; }
+.mast b { font-size: clamp(.86rem, 2vw, 1rem); font-weight: 800; letter-spacing: .3em;
+  text-transform: uppercase; }
+.mast nav { display: flex; gap: 4px; flex-wrap: wrap; }
+.mast nav a { font-size: .76rem; font-weight: 700; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--dim); padding: 8px 11px; }
+.mast nav a:hover { color: var(--fg); }
+.mast nav a.on { color: var(--ac); }
+
+/* ---- HERO ---------------------------------------------------------------- */
+.hero { padding: clamp(30px, 6vw, 68px) 0 clamp(24px, 4vw, 46px); }
+.eyebrow { font-size: .72rem; font-weight: 700; letter-spacing: .3em; text-transform: uppercase;
+  color: var(--ac); margin-bottom: 16px; }
+.hero h1 { font-size: clamp(2.6rem, 10.5vw, 7rem); font-weight: 800; letter-spacing: -.045em;
+  line-height: .88; text-transform: uppercase; margin-bottom: 18px; }
+.hero .said { font-size: clamp(1.05rem, 2.4vw, 1.5rem); line-height: 1.42; color: var(--mid);
+  max-width: 34ch; margin-bottom: 26px; }
+.hero .said b { color: var(--fg); font-weight: 700; }
+.acts { display: flex; gap: 10px; flex-wrap: wrap; }
+.btn { display: inline-flex; align-items: center; gap: 9px; padding: 14px 24px;
+  border: 2px solid var(--hard); color: var(--fg); font-weight: 750; font-size: .92rem;
+  letter-spacing: .04em; text-transform: uppercase; cursor: pointer; background: transparent;
+  font-family: inherit; transition: background .15s, color .15s, border-color .15s; }
+.btn:hover { background: var(--hard); color: var(--bg); }
+.btn.p { background: var(--ac); border-color: var(--ac); color: #17110a; }
+.btn.p:hover { filter: brightness(1.12); }
+
+/* ---- SECTIONS ------------------------------------------------------------ */
+.sec { padding: clamp(34px, 5.5vw, 66px) 0; border-top: 2px solid var(--hard); }
+.sec-h { display: flex; align-items: baseline; justify-content: space-between; gap: 14px;
+  flex-wrap: wrap; margin-bottom: clamp(18px, 3vw, 30px); }
+.sec-h h2 { font-size: clamp(1.2rem, 3vw, 1.7rem); font-weight: 800; letter-spacing: .04em;
+  text-transform: uppercase; }
+.sec-h span { font-size: .72rem; letter-spacing: .2em; text-transform: uppercase; color: var(--dim); }
+
+/* ---- VIDEO --------------------------------------------------------------- */
+.vid { position: relative; border: 2px solid var(--hard); background: #000; }
+.vid button { display: block; position: relative; width: 100%; padding: 56.25% 0 0;
+  border: 0; background: #000; cursor: pointer; }
+.vid img, .vid iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; object-fit: cover; }
+.vid button::after { content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+  width: 78px; height: 78px; border-radius: 50%; background: var(--ac); }
+.vid button::before { content: ''; position: absolute; left: 50%; top: 50%; z-index: 2;
+  transform: translate(-30%,-50%); border-style: solid; border-width: 13px 0 13px 21px;
+  border-color: transparent transparent transparent #17110a; }
+
+/* ---- TABLE (shows / tools index) ----------------------------------------- */
+.tbl { width: 100%; }
+.tbl .th, .tbl .tr { display: grid; gap: 14px; align-items: baseline;
+  padding: 13px 2px; border-bottom: 1px solid var(--line); }
+.tbl .th { font-size: .66rem; letter-spacing: .2em; text-transform: uppercase; color: var(--dim);
+  border-bottom-color: #33333f; }
+.tbl .tr:hover { background: #131318; }
+.tbl a.tr { color: inherit; }
+.tbl .t { font-size: 1.05rem; font-weight: 700; letter-spacing: -.01em; min-width: 0; }
+.tbl .m { font-size: .8rem; color: var(--dim); }
+.tbl .tag { font-size: .64rem; font-weight: 800; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--ac); }
+/* Column shapes live here, NOT inline, so the narrow-screen rules below can
+   actually override them. A fixed-pixel grid (44 + 160 + 70 + gaps) cannot fit
+   a 320px phone — measured 371 > 320 before this. */
+.tbl.idx   .th, .tbl.idx   .tr { grid-template-columns: 44px 1fr 160px 70px; }
+.tbl.shows .th, .tbl.shows .tr { grid-template-columns: 120px 1fr 1fr 90px; }
+@media (max-width: 620px) {
+  /* Two columns and a wrapped meta line — the header row stops earning its
+     space once the widths collapse, so it goes. */
+  .tbl .th { display: none; }
+  .tbl.idx .tr, .tbl.shows .tr { grid-template-columns: 1fr auto; gap: 4px 10px; }
+  .tbl.idx .tr > :first-child { display: none; }
+  .tbl .t { grid-column: 1; }
+  .tbl .tag { grid-column: 2; text-align: right; }
+  .tbl .m { grid-column: 1 / -1; }
+  .tbl.shows .tr > .m:first-child { grid-column: 1 / -1; order: -1; }
+}
+
+/* ---- CARDS (tools) ------------------------------------------------------- */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px,100%), 1fr)); gap: 18px; }
+.card { border: 2px solid var(--hard); background: var(--panel); display: flex; flex-direction: column;
+  transition: transform .18s, border-color .18s; }
+.card:hover { transform: translateY(-3px); border-color: var(--ac); }
+.card .shot { border-bottom: 2px solid var(--hard); background: #08080b; aspect-ratio: 16/10;
+  display: grid; place-items: center; color: var(--dim); font-size: .74rem; letter-spacing: .18em;
+  text-transform: uppercase; overflow: hidden; }
+.card .shot img { width: 100%; height: 100%; object-fit: cover; }
+.card .b { padding: 20px 20px 22px; display: flex; flex-direction: column; flex: 1; }
+.card h3 { font-size: 1.3rem; font-weight: 800; letter-spacing: -.01em; margin-bottom: 4px;
+  text-transform: uppercase; }
+.card .kind { font-size: .66rem; font-weight: 800; letter-spacing: .18em; text-transform: uppercase;
+  color: var(--ac); margin-bottom: 12px; }
+.card p { font-size: .92rem; line-height: 1.6; color: var(--mid); margin-bottom: 18px; }
+.card .go { margin-top: auto; font-size: .8rem; font-weight: 800; letter-spacing: .14em;
+  text-transform: uppercase; border-bottom: 2px solid var(--ac); align-self: flex-start;
+  padding-bottom: 2px; }
+
+/* ---- FACTS / SPEC LIST --------------------------------------------------- */
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(190px,100%), 1fr)); gap: 1px;
+  background: var(--line); border: 1px solid var(--line); }
+.facts div { background: var(--bg); padding: 18px 16px; }
+.facts dt { font-size: .66rem; letter-spacing: .2em; text-transform: uppercase; color: var(--dim);
+  margin-bottom: 7px; }
+.facts dd { font-size: 1.02rem; font-weight: 650; line-height: 1.4; }
+.facts dd a { border-bottom: 1px solid var(--ac); }
+
+/* ---- QUOTE --------------------------------------------------------------- */
+.quotes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px,100%), 1fr)); gap: 18px; }
+.quote { border-left: 3px solid var(--ac); padding: 4px 0 4px 18px; }
+.quote p { font-size: 1.05rem; line-height: 1.5; margin-bottom: 8px; }
+.quote cite { font-style: normal; font-size: .74rem; letter-spacing: .18em; text-transform: uppercase;
+  color: var(--dim); }
+
+/* ---- TODO marker — visible while building, one class to delete ----------- */
+.todo { border: 1px dashed #4a4a5e; background: rgba(246,173,85,.05); color: var(--mid);
+  padding: 16px 18px; font-size: .88rem; line-height: 1.55; }
+.todo b { color: var(--ac); display: block; font-size: .7rem; letter-spacing: .2em;
+  text-transform: uppercase; margin-bottom: 7px; }
+
+/* ---- FOOTER -------------------------------------------------------------- */
+.foot { border-top: 2px solid var(--hard); padding: 26px 0 40px; display: flex; gap: 16px;
+  flex-wrap: wrap; align-items: center; justify-content: space-between;
+  font-size: .74rem; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+.foot a:hover { color: var(--fg); }
+.foot .l { display: flex; gap: 14px; flex-wrap: wrap; }
+
+/* ---- RESPONSIVE ---------------------------------------------------------- */
+@media (pointer: coarse) {
+  .mast nav a, .foot a, .devbar a { min-height: 44px; display: inline-flex; align-items: center; }
+  .btn { min-height: 50px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

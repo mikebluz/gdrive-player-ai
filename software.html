@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mike Luz — browser instruments</title>
+<meta name="description" content="Generative instruments and music tools that run in a browser tab. Built by Mike Luz." />
+<link rel="stylesheet" href="css/promo.css?v=DEPLOYVER" />
+</head>
+<body class="sw">
+
+<!-- ══ TEMPORARY — remove at cutover ═══════════════════════════════════════ -->
+<div class="devbar">
+  <span><b>Software page</b> — in progress</span>
+  <a href="index.html">← current homepage</a>
+  <a href="gigs.html">the booking page →</a>
+  <a href="home-demos.html">the twelve demos</a>
+</div>
+<!-- ══ END TEMPORARY ═══════════════════════════════════════════════════════ -->
+
+<div class="mast"><div class="wrap mast-in">
+  <b>Mike Luz</b>
+  <nav>
+    <a href="#tools" class="on">Tools</a>
+    <a href="#why">Why</a>
+    <a href="#index">Index</a>
+    <a href="gigs.html">Music</a>
+  </nav>
+</div></div>
+
+<!-- HERO — the claim, not a feature list. The interesting fact is that these
+     were built to make records, and then the records got made with them. -->
+<header class="hero"><div class="wrap">
+  <div class="eyebrow">Browser instruments</div>
+  <h1>Software that<br />writes music</h1>
+  <p class="said">
+    Generative instruments that run in a tab. Nothing to install, no account,
+    no plugin. <b>Built to make my own records</b> — and then used to make them.
+  </p>
+  <div class="acts">
+    <a class="btn p" href="bloops.html">▸ Open Bloops</a>
+    <a class="btn" href="#tools">See all four</a>
+    <a class="btn" href="gigs.html">Hear the records</a>
+  </div>
+</div></header>
+
+<!-- THE TOOLS -->
+<section class="sec" id="tools"><div class="wrap">
+  <div class="sec-h"><h2>The tools</h2><span>All free · all in-browser</span></div>
+  <div class="cards" id="cards"></div>
+</div></section>
+
+<!-- WHY — the differentiator. Most music software is made by companies that
+     do not use it. -->
+<section class="sec" id="why"><div class="wrap">
+  <div class="sec-h"><h2>Why these exist</h2></div>
+  <div style="max-width:64ch">
+    <p style="font-size:clamp(1.05rem,2.2vw,1.3rem);line-height:1.6;color:var(--mid);margin-bottom:18px">
+      Bloops doesn't play music back — it <b style="color:var(--fg)">writes</b> it. You set up
+      layers, harmony, timing and variance, press play, and it generates continuously,
+      differently every time, in the browser.
+    </p>
+    <div class="todo">
+      <b>Your paragraph goes here</b>
+      Two or three sentences on why you built them rather than buying something. The honest
+      version of this is the whole pitch: most music software is made by companies that do not
+      make records with it. Say what you couldn't find, and what you did instead.
+    </div>
+  </div>
+</div></section>
+
+<!-- INDEX — the dense view from demo I, which read as the most durable thing
+     in the set: new work is a row, and nothing needs redesigning. -->
+<section class="sec" id="index"><div class="wrap">
+  <div class="sec-h"><h2>Index</h2><span id="idx-count"></span></div>
+  <div class="tbl idx" id="idx"></div>
+</div></section>
+
+<footer class="foot"><div class="wrap" style="display:flex;gap:16px;flex-wrap:wrap;justify-content:space-between;width:100%">
+  <span class="l">
+    <a href="gigs.html">Music &amp; booking</a>
+    <a href="https://www.youtube.com/@mercywizard-music" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://instagram.com/mercywizard" target="_blank" rel="noopener">Instagram</a>
+  </span>
+  <span>© 2026 Mike Luz</span>
+</div></footer>
+
+<script>
+// One list drives both the cards and the index — add a tool once.
+const TOOLS = [
+  { n: 'Bloops',  k: 'Generative instrument', y: 2026, u: 'bloops.html',
+    d: 'A layered generative engine. Set the harmony, timing and how much it is allowed to vary, then let it write — continuously, and differently every pass.',
+    shot: '' },
+  { n: 'Tracks',  k: 'Multitrack', y: 2026, u: 'tracks.html',
+    d: 'Arrange and layer recordings in the browser. Where Bloops generates, this is where it gets assembled into something finished.',
+    shot: '' },
+  { n: 'Player',  k: 'Player', y: 2025, u: 'player.html',
+    d: 'Streams a library straight from Google Drive — playlists, artwork, no upload step and no third party holding the files.',
+    shot: '' },
+  { n: 'Game',    k: 'Game', y: 2025, u: 'game.html',
+    d: 'A small browser game. Not a music tool — it is here because it is part of the same habit of building the thing rather than looking for it.',
+    shot: '' },
+];
+
+// CARDS
+document.getElementById('cards').innerHTML = TOOLS.map(t =>
+  '<a class="card" href="' + t.u + '">' +
+    '<div class="shot">' + (t.shot ? '<img src="' + t.shot + '" alt="">' : 'screenshot — TODO') + '</div>' +
+    '<div class="b">' +
+      '<div class="kind">' + t.k + '</div>' +
+      '<h3>' + t.n + '</h3>' +
+      '<p>' + t.d + '</p>' +
+      '<span class="go">Open →</span>' +
+    '</div></a>').join('');
+
+// INDEX
+const idx = document.getElementById('idx');
+idx.innerHTML =
+  '<div class="th"><span>№</span><span>Name</span><span>Kind</span><span>Year</span></div>' +
+  TOOLS.map((t, i) =>
+    '<a class="tr" href="' + t.u + '">' +
+    '<span class="m">' + String(i + 1).padStart(2, '0') + '</span>' +
+    '<span class="t">' + t.n + '</span>' +
+    '<span class="tag">' + t.k + '</span>' +
+    '<span class="m" style="text-align:right">' + t.y + '</span></a>').join('');
+document.getElementById('idx-count').textContent = TOOLS.length + ' entries';
+</script>
+</body>
+</html>

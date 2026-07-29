@@ -120,7 +120,7 @@ a:hover{color:var(--link-h)}
 .btn:active{border-color:var(--bevel);border-right-color:#fff;border-bottom-color:#fff}
 .btn.hot{background:var(--hot)}
 table{width:100%;border-collapse:collapse;font-size:12px}
-td{padding:5px 6px;border-bottom:1px solid var(--chrome)}
+td{padding:4px 6px;border-bottom:1px solid var(--chrome)}
 td.d{white-space:nowrap;color:var(--mute)}
 td.n{text-align:right;color:var(--link-h);font-size:10px;white-space:nowrap}
 td .c{display:block;font-size:10px;color:var(--mute)}
@@ -221,7 +221,7 @@ dl.f dd{font-weight:700}
   </div>
 
   <!-- LIVE -->
-  <div class="win" id="w-live" data-x="440" data-y="560" data-w="420">
+  <div class="win" id="w-live" data-x="440" data-y="400" data-w="420">
     <div class="tb"><span class="t px">LIVE.dat</span><button data-close>✕</button></div>
     <div class="body">
       <h2 class="wt px">Shows</h2>
@@ -281,6 +281,9 @@ const YT = 'UKcZJ31ZHH0';
 // they answer "has anyone else booked this". Nothing else needs touching; the
 // badge and the ordering both come from the date.
 const SHOWS = [
+  { d:'2024-03-02', v:'Tributary Brewing', c:'Kittery, ME' },
+  { d:'2024-11-02', v:'Wild Bevy',  c:'Wells, ME' },
+  { d:'2024-11-30', v:'Wild Bevy',  c:'Wells, ME' },
   { d:'2026-04-03', v:"Popover's",  c:'Epping, NH' },
   { d:'2026-08-13', v:'Ocean Surf', c:'York, ME' },
   { d:'2026-08-29', v:'Ocean Surf', c:'York, ME' },

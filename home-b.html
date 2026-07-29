@@ -42,7 +42,7 @@ a{color:var(--ac)}
 </style>
 </head>
 <body>
-<div class="devbar"><span>Direction <b>B</b> — terminal</span><a href="index.html">← old site</a><a href="home-demos.html">all four</a></div>
+<div class="devbar"><span>Direction <b>B</b> — terminal</span><a href="index.html">← old site</a><a href="home-demos.html">all eight</a></div>
 <div class="term" id="term"></div>
 <script>
 const T = document.getElementById('term');
@@ -63,11 +63,10 @@ function type(text, cls, speed) {
 const SINGLE = { title: 'Grains', stream: 'https://symphony.to/mercywizard/bhu4vkjnrcyg', yt: 'UKcZJ31ZHH0' };
 
 const CMDS = {
-  help:   () => line('commands: <span class="ac">listen</span>  <span class="ac">watch</span>  <span class="ac">shop</span>  <span class="ac">code</span>  <span class="ac">who</span>  <span class="ac">links</span>  <span class="ac">clear</span>'),
-  who:    () => { line('mike luz'); line('records as <span class="ac">mercy wizard</span>. builds browser instruments. sells guitars, merch, artwork.', 'dim'); },
+  help:   () => line('commands: <span class="ac">listen</span>  <span class="ac">watch</span>  <span class="ac">code</span>  <span class="ac">who</span>  <span class="ac">links</span>  <span class="ac">clear</span>'),
+  who:    () => { line('mike luz'); line('records as <span class="ac">mercy wizard</span>. builds browser instruments.', 'dim'); },
   listen: () => { line('opening <span class="ac">' + SINGLE.title + '</span> …'); open(SINGLE.stream, '_blank', 'noopener'); },
   watch:  () => { line('opening video …'); open('https://youtu.be/' + SINGLE.yt, '_blank', 'noopener'); },
-  shop:   () => { line('guitars   <a href="https://linktr.ee/mikebuys" target="_blank" rel="noopener">linktr.ee/mikebuys</a>'); line('merch     <a href="https://mercywizard.bandcamp.com/merch" target="_blank" rel="noopener">bandcamp</a>'); line('artwork   <a href="artwork.html">artwork.html</a>'); },
   code:   () => { line('bloops    <a href="bloops.html">a generative instrument</a>'); line('player    <a href="player.html">drive-backed player</a>'); line('tracks    <a href="tracks.html">multitrack</a>'); line('game      <a href="game.html">game</a>'); },
   links:  () => { line('youtube   <a href="https://www.youtube.com/@mercywizard-music" target="_blank" rel="noopener">@mercywizard-music</a>'); line('instagram <a href="https://instagram.com/mercywizard" target="_blank" rel="noopener">@mercywizard</a>'); line('bandcamp  <a href="https://mercywizard.bandcamp.com" target="_blank" rel="noopener">mercywizard</a>'); line('substack  <a href="https://open.substack.com/pub/mercywizard" target="_blank" rel="noopener">mercywizard</a>'); },
   clear:  () => { T.innerHTML = ''; prompt_(); return true; },
@@ -104,7 +103,7 @@ function prompt_() {
   await type('mikeluz.sh — v2026.7', 'dim', 9);
   line('&nbsp;');
   await type('$ whoami', '', 26);
-  line('mike luz <span class="dim">— records, instruments, objects</span>');
+  line('mike luz <span class="dim">— records and instruments</span>');
   line('&nbsp;');
   await type('$ ls releases/ --new', '', 20);
   line('<span class="big">' + SINGLE.title.toUpperCase() + '</span>  <span class="warn">[NEW SINGLE]</span>');

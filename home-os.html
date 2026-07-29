@@ -170,37 +170,58 @@ dl.f dd{font-weight:700}
 <div class="stack" id="stack">
 
   <!-- GRAINS — the release, with the video inside it -->
-  <div class="win" id="w-grains" data-x="248" data-y="52" data-w="470">
+  <div class="win" id="w-grains" data-x="420" data-y="48" data-w="450">
     <div class="tb"><span class="t px">GRAINS.mp4 — new single</span><button data-close>✕</button></div>
     <div class="body">
       <div class="vid" id="vid"></div>
       <div style="margin-top:9px">
-        <a class="btn hot" href="https://symphony.to/mercywizard/bhu4vkjnrcyg" target="_blank" rel="noopener">▶ LISTEN</a>
+        <a class="btn hot" href="https://tr.ee/YKRcNe0nlW" target="_blank" rel="noopener">▶ LISTEN</a>
         <a class="btn" href="https://youtu.be/UKcZJ31ZHH0" target="_blank" rel="noopener">YouTube</a>
       </div>
     </div>
   </div>
 
-  <!-- README — who this is -->
-  <div class="win" id="w-read" data-x="18" data-y="262" data-w="286">
-    <div class="tb"><span class="t px">README.txt</span><button data-close>✕</button></div>
+  <!-- MIKE LUZ — the performing identity. Sits with LIVE and BOOKING, which
+       are the two windows that act on it. -->
+  <div class="win" id="w-luz" data-x="104" data-y="250" data-w="272">
+    <div class="tb"><span class="t px">MIKE LUZ.txt</span><button data-close>✕</button></div>
     <div class="body">
       <h2 class="wt px">MIKE LUZ</h2>
-      <p>Records as <b>Mercy Wizard</b>.</p>
+      <p>Singer-songwriter. Plays solo, live.</p>
       <div class="todo">
         <b>your line goes here</b>
-        One sentence: what it sounds like and how you play it. Plus the city.
+        One sentence: what a set sounds like. Plus the city.
       </div>
       <div class="hr"></div>
-      <p style="font-size:11px;color:var(--mute)">
-        Also builds the instruments the records are made with. Those live in
-        <a href="software.html">TOOLS</a> — they're not for sale, they're just what's on the desk.
+      <p style="font-size:11px;color:var(--mute);margin-bottom:8px">
+        Records as <a href="#w-wiz" data-open="w-wiz">Mercy Wizard</a>.
       </p>
+      <a class="btn" href="#w-book" data-open="w-book">✉ BOOK A SHOW</a>
+    </div>
+  </div>
+
+  <!-- MERCY WIZARD — the recording identity. Sits with GRAINS and LINKS. -->
+  <div class="win" id="w-wiz" data-x="1090" data-y="48" data-w="286">
+    <div class="tb"><span class="t px">MERCY WIZARD.txt</span><button data-close>✕</button></div>
+    <div class="body">
+      <h2 class="wt px">MERCY WIZARD</h2>
+      <p>Records and produces in the box. Folk and acoustic material too.</p>
+      <div class="todo">
+        <b>your line goes here</b>
+        One sentence: what the records sound like.
+      </div>
+      <div class="hr"></div>
+      <p style="font-size:11px;color:var(--mute);margin-bottom:8px">
+        Performs live as <a href="#w-luz" data-open="w-luz">Mike Luz</a>.
+        Also builds the instruments the records are made with — those live in
+        <a href="software.html">TOOLS</a>, not for sale, just what's on the desk.
+      </p>
+      <a class="btn" href="https://tr.ee/YKRcNe0nlW" target="_blank" rel="noopener">▶ LISTEN</a>
     </div>
   </div>
 
   <!-- LIVE -->
-  <div class="win" id="w-live" data-x="752" data-y="340" data-w="418">
+  <div class="win" id="w-live" data-x="440" data-y="560" data-w="420">
     <div class="tb"><span class="t px">LIVE.dat</span><button data-close>✕</button></div>
     <div class="body">
       <h2 class="wt px">Tour dates</h2>
@@ -213,7 +234,7 @@ dl.f dd{font-weight:700}
   </div>
 
   <!-- BOOKING -->
-  <div class="win" id="w-book" data-x="330" data-y="516" data-w="378">
+  <div class="win" id="w-book" data-x="104" data-y="548" data-w="320">
     <div class="tb"><span class="t px">BOOKING.exe</span><button data-close>✕</button></div>
     <div class="body">
       <h2 class="wt px">Book a show</h2>
@@ -230,7 +251,7 @@ dl.f dd{font-weight:700}
   </div>
 
   <!-- LINKS -->
-  <div class="win" id="w-links" data-x="1128" data-y="62" data-w="240">
+  <div class="win" id="w-links" data-x="1090" data-y="400" data-w="286">
     <div class="tb"><span class="t px">LINKS</span><button data-close>✕</button></div>
     <div class="body">
       <p><a href="https://mercywizard.bandcamp.com" target="_blank" rel="noopener">▸ Bandcamp</a></p>
@@ -273,8 +294,11 @@ v.querySelector('button').addEventListener('click', function () {
 // them would fight it.
 const desktop = matchMedia('(min-width:821px)');
 const wins = [...document.querySelectorAll('.win')];
-const ICONS = { 'w-grains':['💿','GRAINS'], 'w-read':['📄','README'], 'w-live':['🎫','LIVE'],
-                'w-book':['✉','BOOKING'], 'w-links':['🔗','LINKS'] };
+// Glyphs split performer from producer on sight: a mic for the one you book,
+// a mixer for the one that makes the records. 💿/💽 were the first pick and
+// are indistinguishable at 24px.
+const ICONS = { 'w-grains':['💿','GRAINS'], 'w-luz':['🎤','MIKE LUZ'], 'w-wiz':['🎛','MERCY WIZARD'],
+                'w-live':['🎫','LIVE'], 'w-book':['✉','BOOKING'], 'w-links':['🔗','LINKS'] };
 let z = 10;
 
 function place() {
@@ -319,6 +343,18 @@ Object.entries(ICONS).forEach(([id, [glyph, label]]) => {
   b.innerHTML = '<span>' + glyph + '</span>' + label;
   b.addEventListener('click', () => setOpen(document.getElementById(id), true));
   icons.appendChild(b);
+});
+
+// Cross-window links — "Records as Mercy Wizard" opens and focuses that
+// window instead of navigating anywhere. On mobile there are no windows to
+// focus, so the href is left alone and the anchor simply scrolls to it.
+document.addEventListener('click', e => {
+  const a = e.target.closest('[data-open]');
+  if (!a || !desktop.matches) return;
+  const w = document.getElementById(a.dataset.open);
+  if (!w) return;
+  e.preventDefault();
+  setOpen(w, true);
 });
 
 wins.forEach(w => {

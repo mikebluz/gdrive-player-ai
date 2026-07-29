@@ -75,7 +75,10 @@ restore_dev_bypass() {
 trap 'rm -rf "$STAGE_DIR"; restore_dev_bypass' EXIT
 
 echo "📦 Staging files..."
-cp -r index.html home.html listen.html watch.html bloops.html player.html artwork.html game.html tracks.html css js banner.jpg me2026.jpg samples music artwork vendor "$STAGE_DIR/"
+# home.html is DELIBERATELY NOT DEPLOYED yet — see the HOLD note near the end
+# of this script. Add it back to this line, the stamp loop, and the force-put
+# block below when the new homepage is ready to go live.
+cp -r index.html listen.html watch.html bloops.html player.html artwork.html game.html tracks.html css js banner.jpg me2026.jpg samples music artwork vendor "$STAGE_DIR/"
 # Caching policy (HTML revalidates every load; versioned assets cache long) —
 # without it, phones cache stale HTML pointing at old ?v= assets and boot dies.
 cp .htaccess "$STAGE_DIR/"
@@ -91,7 +94,7 @@ DEPLOY_VER=$(date +%Y%m%d%H%M%S)
 echo "🏷️  Cache-busting asset URLs with v=$DEPLOY_VER"
 # JS files that fetch versioned assets themselves (worklet module + wasm URLs
 # in the core-voices bridge) carry the same ?v=DEPLOYVER token as the HTML.
-for f in index.html home.html listen.html watch.html bloops.html player.html artwork.html game.html tracks.html js/bloops/03b-core-voices.js; do
+for f in index.html listen.html watch.html bloops.html player.html artwork.html game.html tracks.html js/bloops/03b-core-voices.js; do
   if [[ -f "$STAGE_DIR/$f" ]]; then
     sed "s/?v=DEPLOYVER/?v=$DEPLOY_VER/g" "$STAGE_DIR/$f" > "$STAGE_DIR/$f.tmp" && mv "$STAGE_DIR/$f.tmp" "$STAGE_DIR/$f"
   fi
@@ -138,7 +141,7 @@ mkdir -p "$REMOTE_DIR/js/bloops"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/index.html"
 # New site (in development) — same force-put, same reason: a stamp-only
 # change is byte-identical in length and the size-only mirror would skip it.
-put -O "$REMOTE_DIR"           "$STAGE_DIR/home.html"
+# NOTE: home.html is intentionally absent — see the HOLD note at the end.
 put -O "$REMOTE_DIR"           "$STAGE_DIR/listen.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/watch.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/bloops.html"
@@ -161,3 +164,25 @@ echo "🎵 Deployment complete."
 echo "🔎 Verify the credentials reached the server:"
 echo "    open https://<your-domain>/js/config.js — it should show your real"
 echo "    clientId/apiKey, not a 404. Then hard-refresh the app (Cmd-Shift-R)."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HOLD: home.html (the new homepage) is NOT deployed.
+#
+# It is finished enough to look at locally but not ready to be public, so it is
+# omitted from three places above: the `cp` staging line, the ?v= stamp loop,
+# and the force-put block. listen.html and watch.html ARE deployed.
+#
+# TO GO LIVE, add "home.html" back to all three, then decide whether it becomes
+# index.html (and drop the .devbar block from home/listen/watch when it does).
+#
+# This prints on every deploy on purpose — a comment nobody reads is not a
+# reminder. Delete this block at cutover.
+# ─────────────────────────────────────────────────────────────────────────────
+if [[ -f "home.html" ]]; then
+  echo ""
+  echo "⏸️  REMINDER — home.html was NOT deployed (new homepage, still on hold)."
+  echo "    listen.html and watch.html WERE. When the new homepage is ready:"
+  echo "      1. add home.html to the cp line, the stamp loop and the force-put block"
+  echo "      2. remove the .devbar block from home/listen/watch"
+  echo "      3. delete this reminder from deploy.sh"
+fi

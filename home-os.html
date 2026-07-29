@@ -452,8 +452,23 @@ function place() {
     const x = Math.min(+w.dataset.x || 40, Math.max(10, innerWidth - W - 14));
     const y = Math.min(+w.dataset.y || 60, Math.max(40, innerHeight - 150));
     w.style.left = x + 'px'; w.style.top = y + 'px'; w.style.width = W + 'px';
-    w.style.maxHeight = (innerHeight - y - 16) + 'px';
+    w.style.maxHeight = 'none';       // measure what each window actually wants
   });
+
+  // The layout is laid out for a ~900px-tall screen. On a shorter one — 1366x768
+  // is the common case, and it is 130px shorter — the columns do not fit. The old
+  // behaviour capped every window to the viewport, which gave THREE of them their
+  // own inner scrollbar: content still reachable, but you had to find it, and a
+  // window with a scrollbar reads as broken rather than as full.
+  //
+  // So: keep the one-screen conceit where it fits, and let the DESKTOP scroll
+  // where it does not. One scrollbar in the expected place beats three hidden
+  // ones, and no window ever has to truncate its content.
+  const deepest = Math.max(...wins.filter(w => !w.classList.contains('hidden'))
+                                  .map(w => w.offsetTop + w.offsetHeight));
+  const overflows = deepest > innerHeight - 12;
+  document.body.style.overflowY = overflows ? 'auto' : 'hidden';
+  document.body.style.minHeight = overflows ? (deepest + 16) + 'px' : '';
 }
 function focus(w) {
   if (!desktop.matches) return;

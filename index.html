@@ -192,6 +192,12 @@ td .c{display:block;font-size:10px;color:var(--mute)}
 #shows tr:not(.past):not(.more) td{background:rgba(44,117,80,.085);font-weight:700}
 #shows tr:not(.past):not(.more) td.d{color:var(--ink)}
 #shows tr:not(.past):not(.more) .c{font-weight:400}
+/* The next gig. A stronger wash and an amber edge down the left — the only
+   place amber appears outside a call to action, which is the point: this is
+   the row the window exists to surface. */
+#shows tr.next td{background:rgba(44,117,80,.17)}
+#shows tr.next td:first-child{box-shadow:inset 3px 0 0 var(--hot)}
+#shows tr.next td.n{color:var(--link-h);font-weight:700}
 #shows .more td{border-bottom:0;padding:7px 6px 0;text-align:center}
 #shows .more button{background:none;border:0;font:inherit;font-size:11px;
   color:var(--link);cursor:pointer;padding:3px 8px}
@@ -238,7 +244,7 @@ dl.f dd{font-weight:700}
   .win.hidden{display:flex}
   .tb{cursor:default}
   .tb button{display:none}
-  .stack{padding:40px 10px 24px}
+  .stack{padding:56px 10px 24px}   /* 30px taskbar + a real gap under it */
   .body{max-height:none}
 }
 @media (min-width:821px){
@@ -414,16 +420,20 @@ const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
 const when = s => { const x = new Date(s.d + 'T00:00'); return isNaN(x) ? null : x; };
 const upcoming = s => { const x = when(s); return !!x && x >= midnight; };
 
-// Upcoming first and SOONEST first within it — a flat newest-first sort put
-// the show furthest away at the top, so "when is the next one" was the last
-// row. Past shows then run most-recent first underneath.
+// ONE order: by date, newest first, all the way down. Future dates are all
+// larger than past ones, so this still puts everything upcoming above
+// everything played — no special-casing needed.
 const rows = SHOWS.slice().sort((a, b) => {
-  const au = upcoming(a), bu = upcoming(b);
-  if (au !== bu) return au ? -1 : 1;
   const ax = when(a), bx = when(b);
   if (!ax || !bx) return 0;
-  return au ? ax - bx : bx - ax;
+  return bx - ax;
 });
+// The NEXT gig is the one thing a reader is looking for, and newest-first
+// buries it at the bottom of the upcoming block rather than the top. So it is
+// marked instead of re-ordered: the soonest future show is the LAST upcoming
+// row in a newest-first list.
+const upcomingRows = rows.filter(upcoming);
+const nextShow = upcomingRows.length ? upcomingRows[upcomingRows.length - 1] : null;
 
 const rowHtml = s => {
   const x = when(s);
@@ -431,10 +441,14 @@ const rowHtml = s => {
     { day:'2-digit', month:'short', year:'2-digit' }).toUpperCase() : esc(s.d);
   // ★ SOON is DERIVED from the date, never stored. A hand-set flag would
   // still read SOON a year after the show happened.
-  const up = upcoming(s);
-  return `<tr${up ? '' : ' class="past"'}><td class="d">${d}</td>` +
+  const up = upcoming(s), isNext = s === nextShow;
+  // ★ NEXT on the one show, not ★ SOON on every upcoming one — the green wash
+  // already says "still to come", so a badge on all three was noise competing
+  // with the thing worth finding.
+  const cls = isNext ? ' class="next"' : (up ? '' : ' class="past"');
+  return `<tr${cls}><td class="d">${d}</td>` +
          `<td>${esc(s.v)}<span class="c">${esc(s.c)}</span></td>` +
-         `<td class="n">${up ? '★ SOON' : ''}</td></tr>`;
+         `<td class="n">${isNext ? '★ NEXT' : ''}</td></tr>`;
 };
 
 // EVERY upcoming show is always shown; the past list is capped and expands on

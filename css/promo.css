@@ -1,15 +1,19 @@
 /* ==========================================================================
-   MIKE LUZ — promo pages (gigs.html / software.html)
+   MIKE LUZ — home.html (the artist site) + software.html (personal tools)
 
    Visual language pulled from the demos that landed: the heavy rules and
    stark contrast of D, the condensed stacked type and rule-boxes of F, the
    dense tabular information of I. Deliberately NOT the quiet editorial of G
    and NOT the page-as-application of A/B/H/J.
 
-   One stylesheet for both pages so they read as one person, with a single
-   accent swapped per page: amber for the music side, teal for the software
-   side. Separate from site.css and index.css — nothing here can regress the
-   live homepage.
+   The site is a MUSICIAN'S site. The software is Mike's own, not a product,
+   so it gets a reachable page and a footer link — never a strand of the
+   identity. An earlier version split the homepage into two doors, music and
+   software; it was cut because it asked visitors to categorise him before
+   they had a reason to care.
+
+   Accent: amber throughout, teal only on the tools page (body.sw). Separate
+   from site.css and index.css — nothing here can regress the live homepage.
    ========================================================================== */
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -163,62 +167,6 @@ a { color: inherit; text-decoration: none; }
   padding: 16px 18px; font-size: .88rem; line-height: 1.55; }
 .todo b { color: var(--ac); display: block; font-size: .7rem; letter-spacing: .2em;
   text-transform: uppercase; margin-bottom: 7px; }
-
-/* ---- FRONT DOOR (home.html) ----------------------------------------------
-   The home page routes and gets out of the way. Two doors, one per audience,
-   each carrying its own accent so the split is legible before you read a word
-   — amber goes to the music, teal to the tools. Fills the viewport; the whole
-   thing is one decision. */
-body.door { display: flex; flex-direction: column; min-height: 100svh; }
-.door-rel {
-  display: flex; align-items: center; gap: clamp(10px, 2vw, 22px); flex-wrap: wrap;
-  padding: clamp(14px, 2.6vw, 22px) 0; border-bottom: 2px solid var(--hard);
-}
-.door-rel .tagr { font-size: .66rem; font-weight: 800; letter-spacing: .24em;
-  text-transform: uppercase; color: var(--ac); }
-.door-rel .ttl { font-size: clamp(1.4rem, 4.6vw, 2.4rem); font-weight: 800;
-  letter-spacing: -.03em; text-transform: uppercase; }
-.door-rel .sp { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
-.door-rel .sp a { display: inline-flex; align-items: center; min-height: 44px;
-  font-size: .72rem; font-weight: 800; letter-spacing: .14em;
-  text-transform: uppercase; padding: 10px 18px; border: 2px solid var(--hard); }
-.door-rel .sp a:hover { background: var(--hard); color: var(--bg); }
-.door-rel .sp a.p { background: var(--ac); border-color: var(--ac); color: #17110a; }
-
-.doors { flex: 1; display: grid; grid-template-columns: 1fr 1fr; min-height: 0; }
-.door {
-  --d: var(--ac);
-  position: relative; display: flex; flex-direction: column; justify-content: flex-end;
-  padding: clamp(20px, 3.6vw, 46px); overflow: hidden;
-  border-right: 2px solid var(--hard); color: var(--fg);
-  transition: background .25s;
-}
-.doors > .door:last-child { border-right: 0; }
-.door::before {
-  content: ''; position: absolute; inset: auto 0 0 0; height: 0; background: var(--d);
-  opacity: .12; transition: height .3s cubic-bezier(.2,.7,.2,1);
-}
-.door:hover::before { height: 100%; }
-.door .n { position: relative; font-size: .66rem; font-weight: 800; letter-spacing: .26em;
-  text-transform: uppercase; color: var(--d); margin-bottom: auto; }
-.door h2 { position: relative; font-size: clamp(1.9rem, 6vw, 3.6rem); font-weight: 800;
-  letter-spacing: -.04em; line-height: .92; text-transform: uppercase; margin-bottom: 12px; }
-.door p { position: relative; font-size: clamp(.9rem, 1.7vw, 1.05rem); line-height: 1.5;
-  color: var(--mid); max-width: 30ch; margin-bottom: 18px; }
-.door .go { position: relative; font-size: .78rem; font-weight: 800; letter-spacing: .16em;
-  text-transform: uppercase; border-bottom: 2px solid var(--d); align-self: flex-start;
-  padding-bottom: 3px; }
-@media (max-width: 780px) {
-  .doors { grid-template-columns: 1fr; }
-  /* Sized so BOTH doors are on screen at once — a front door that makes you
-     scroll to discover the second choice is not offering a choice. */
-  .door { border-right: 0; border-bottom: 2px solid var(--hard); min-height: 0;
-    padding: clamp(18px, 5vw, 26px); }
-  .door h2 { font-size: clamp(1.7rem, 8.4vw, 2.4rem); }
-  .door p { margin-bottom: 14px; }
-  .door .n { margin-bottom: 14px; }
-  .doors > .door:last-child { border-bottom: 0; }
-}
 
 /* ---- FOOTER -------------------------------------------------------------- */
 .foot { border-top: 2px solid var(--hard); padding: 26px 0 40px; display: flex; gap: 16px;

@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Mike Luz</title>
-<meta name="description" content="Mike Luz — records as Mercy Wizard, and browser instruments that write music." />
+<title>Mike Luz — Mercy Wizard</title>
+<meta name="description" content="Mike Luz — records as Mercy Wizard. Listen, watch, live dates and booking." />
 <link rel="stylesheet" href="css/promo.css?v=DEPLOYVER" />
 </head>
-<body class="door">
+<body>
 
 <!-- ══ TEMPORARY — remove at cutover ═══════════════════════════════════════ -->
 <div class="devbar">
@@ -20,52 +20,156 @@
 <div class="mast"><div class="wrap mast-in">
   <b>Mike Luz</b>
   <nav>
-    <a href="gigs.html">Music</a>
-    <a href="software.html">Software</a>
-    <a href="https://linktr.ee/mercywizard" target="_blank" rel="noopener">Links</a>
+    <a href="#music" class="on">Music</a>
+    <a href="#video">Video</a>
+    <a href="#live">Live</a>
+    <a href="#press">Press</a>
+    <a href="#book">Booking</a>
   </nav>
 </div></div>
 
-<!-- THE RELEASE — one strip. The reason someone might care, without turning
-     the front door into a third page about the single. -->
-<div class="wrap"><div class="door-rel">
-  <span class="tagr">New single</span>
-  <span class="ttl" id="rel">Grains</span>
-  <span class="sp">
-    <a class="p" href="https://symphony.to/mercywizard/bhu4vkjnrcyg" target="_blank" rel="noopener">▸ Listen</a>
-    <a href="https://youtu.be/UKcZJ31ZHH0" target="_blank" rel="noopener">Watch</a>
-  </span>
-</div></div>
+<!-- HERO — a promoter decides in about eight seconds. Name, what it sounds
+     like, where you are, and one button that plays something. -->
+<header class="hero"><div class="wrap">
+  <div class="eyebrow">Mercy Wizard</div>
+  <h1>Mike Luz</h1>
+  <p class="said">
+    <!-- TODO: one sentence a promoter can repeat to someone else. Genre, feel,
+         and the format you play — "solo electric guitar and loops", "four-piece",
+         "one man and a laptop". This line does more work than anything else here. -->
+    <b>[ One line: what it sounds like and how you play it. ]</b>
+    Based in <b>[ city ]</b>.
+  </p>
+  <div class="acts">
+    <a class="btn p" href="https://symphony.to/mercywizard/bhu4vkjnrcyg" target="_blank" rel="noopener">▸ Listen</a>
+    <a class="btn" href="#video">Watch live</a>
+    <a class="btn" href="#book">Booking</a>
+  </div>
+</div></header>
 
-<!-- TWO DOORS — the whole job of this page. Two audiences, one click each,
-     and nothing here that either destination already says better. -->
-<main class="doors">
-  <a class="door" href="gigs.html" style="--d:#f6ad55">
-    <span class="n">01 — Music</span>
-    <h2>Records<br />&amp; booking</h2>
-    <p>
-      <!-- TODO: replace with the same one-liner as the booking page hero. -->
-      Music as Mercy Wizard. Listen, watch, and everything a promoter needs to book a show.
-    </p>
-    <span class="go">Hear it →</span>
-  </a>
+<!-- MUSIC — playable in place. A promoter will not open a new tab. -->
+<section class="sec" id="music"><div class="wrap">
+  <div class="sec-h"><h2>The music</h2><span>Latest release</span></div>
+  <div class="todo">
+    <b>Embed goes here</b>
+    Paste the Bandcamp or Spotify embed for the current release. Bandcamp's is better for
+    booking — it plays the whole track without an account, and promoters usually have
+    neither Spotify open nor patience.
+    <br /><br />
+    Until then: <a href="https://symphony.to/mercywizard/bhu4vkjnrcyg" target="_blank" rel="noopener" style="border-bottom:1px solid var(--ac)">Grains — stream it →</a>
+  </div>
+</div></section>
 
-  <a class="door" href="software.html" style="--d:#4fd1c5">
-    <span class="n">02 — Software</span>
-    <h2>Browser<br />instruments</h2>
-    <p>Generative music tools that run in a tab — built to make the records, then used to make them.</p>
-    <span class="go">Try them →</span>
-  </a>
-</main>
+<!-- VIDEO — LIVE footage if it exists. A studio video proves you can record;
+     live footage proves you can hold a room, which is the actual question. -->
+<section class="sec" id="video"><div class="wrap">
+  <div class="sec-h"><h2>Video</h2><span>Live footage sells the show</span></div>
+  <div class="vid" id="vid"></div>
+  <p class="todo" style="margin-top:16px">
+    <b>Swap for live footage when you have it</b>
+    This is currently the official video for Grains. A promoter mostly wants to see a room
+    respond — even a phone recording of a good night beats a polished promo here.
+  </p>
+</div></section>
+
+<!-- LIVE — past shows are the credibility. Upcoming are the reason to act. -->
+<section class="sec" id="live"><div class="wrap">
+  <div class="sec-h"><h2>Live</h2><span id="live-count"></span></div>
+  <div class="tbl shows" id="shows"></div>
+  <div class="todo" style="margin-top:18px">
+    <b>Fill the SHOWS list</b>
+    In the script at the foot of this file. Past shows count for as much as upcoming ones —
+    they answer "has anyone else booked this". Venue and city is enough; support slots are
+    worth naming.
+  </div>
+</div></section>
+
+<!-- PRESS — quotes and photos. Both are things a promoter will lift directly. -->
+<section class="sec" id="press"><div class="wrap">
+  <div class="sec-h"><h2>Press</h2><span>Quotes &amp; assets</span></div>
+  <div class="quotes" id="quotes"></div>
+  <div class="todo" style="margin-top:20px">
+    <b>Press photos</b>
+    Promoters need a hi-res photo they can put on a poster, and they will use whatever is
+    easiest to find. Add two or three here — one landscape, one portrait — as direct
+    downloads, plus a credit line if the photographer needs one.
+  </div>
+</div></section>
+
+<!-- BOOKING — the whole point of the page. Never make them hunt for it. -->
+<section class="sec" id="book"><div class="wrap">
+  <div class="sec-h"><h2>Booking</h2><span>Direct — no agent</span></div>
+  <dl class="facts">
+    <div><dt>Enquiries</dt><dd><a href="mailto:BOOKING@EXAMPLE.COM">booking@ — TODO</a></dd></div>
+    <div><dt>Based in</dt><dd>[ city ] — TODO</dd></div>
+    <div><dt>Format</dt><dd>[ solo / duo / band ] — TODO</dd></div>
+    <div><dt>Set length</dt><dd>[ 30 / 45 / 60 min ] — TODO</dd></div>
+    <div><dt>Needs</dt><dd>[ own backline? DI? ] — TODO</dd></div>
+    <div><dt>Travelling from</dt><dd>[ radius ] — TODO</dd></div>
+  </dl>
+  <div class="acts" style="margin-top:22px">
+    <a class="btn p" href="mailto:BOOKING@EXAMPLE.COM">Email about a show</a>
+    <a class="btn" href="https://linktr.ee/mercywizard" target="_blank" rel="noopener">All links</a>
+  </div>
+</div></section>
 
 <footer class="foot"><div class="wrap" style="display:flex;gap:16px;flex-wrap:wrap;justify-content:space-between;width:100%">
   <span class="l">
     <a href="https://www.youtube.com/@mercywizard-music" target="_blank" rel="noopener">YouTube</a>
     <a href="https://instagram.com/mercywizard" target="_blank" rel="noopener">Instagram</a>
     <a href="https://mercywizard.bandcamp.com" target="_blank" rel="noopener">Bandcamp</a>
+    <a href="software.html" title="Instruments I built to make these records — not a product, just where they live">Tools</a>
   </span>
   <span>© 2026 Mike Luz</span>
 </div></footer>
 
+<script>
+const YT = 'UKcZJ31ZHH0';
+
+// ── SHOWS ──────────────────────────────────────────────────────────────────
+// Add rows here. `up: true` marks an upcoming date; everything else reads as
+// history, which is what establishes that other people book you.
+const SHOWS = [
+  // Replace these with real ones — they are here so the table is visible while
+  // we design it. Delete any that are not true before this goes anywhere.
+  { d: '2026-09-12', v: 'EXAMPLE VENUE', c: 'Example City', n: 'w/ Someone', up: true },
+  { d: '2026-06-02', v: 'EXAMPLE VENUE', c: 'Example City' },
+];
+
+const shows = document.getElementById('shows'), count = document.getElementById('live-count');
+if (!SHOWS.length) {
+  shows.innerHTML = '<div class="todo"><b>No shows listed yet</b>Add them to the SHOWS list below — past ones too.</div>';
+  count.textContent = '';
+} else {
+  const fmt = (d) => { const x = new Date(d + 'T00:00'); return isNaN(x) ? d :
+    x.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase(); };
+  const rows = SHOWS.slice().sort((a, b) => (a.d < b.d ? 1 : -1));
+  shows.innerHTML =
+    '<div class="th"><span>Date</span><span>Venue</span><span>City</span><span></span></div>' +
+    rows.map(s =>
+      '<div class="tr">' +
+      '<span class="m">' + fmt(s.d) + '</span>' +
+      '<span class="t">' + s.v + (s.n ? ' <span class="m">· ' + s.n + '</span>' : '') + '</span>' +
+      '<span class="m">' + (s.c || '') + '</span>' +
+      '<span class="tag">' + (s.up ? 'Upcoming' : '') + '</span></div>').join('');
+  count.textContent = rows.length + ' shows listed';
+}
+
+// ── PRESS QUOTES ───────────────────────────────────────────────────────────
+const QUOTES = [
+  // { q: 'Something someone said.', w: 'Publication / promoter' },
+];
+const qs = document.getElementById('quotes');
+qs.innerHTML = QUOTES.length
+  ? QUOTES.map(x => '<blockquote class="quote"><p>“' + x.q + '”</p><cite>' + x.w + '</cite></blockquote>').join('')
+  : '<div class="todo"><b>No quotes yet</b>Anything counts — a line from a promoter, a blog, a radio play. One good sentence is worth more than a paragraph of your own copy.</div>';
+
+// ── VIDEO — click to play, no iframe until asked ───────────────────────────
+const v = document.getElementById('vid');
+v.innerHTML = '<button type="button" aria-label="Play video"><img src="https://i.ytimg.com/vi/' + YT + '/maxresdefault.jpg" alt="" onerror="this.src=\'https://i.ytimg.com/vi/' + YT + '/hqdefault.jpg\'"></button>';
+v.querySelector('button').addEventListener('click', function () {
+  this.outerHTML = '<div style="position:relative;padding:56.25% 0 0"><iframe src="https://www.youtube-nocookie.com/embed/' + YT + '?autoplay=1&rel=0" allow="autoplay; encrypted-media" allowfullscreen title="Video"></iframe></div>';
+});
+</script>
 </body>
 </html>

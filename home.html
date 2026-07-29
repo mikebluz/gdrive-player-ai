@@ -32,54 +32,30 @@
     </div>
   </nav>
 
-  <!-- HERO — name, one line of who this is, and the Listen path immediately.
-       Burying "Listen" below the fold is the single most common mistake on
-       artist sites, so it is the primary button. -->
+  <!-- HERO = THE RELEASE. The newest single IS the page's headline rather than a
+       section beneath one: the name sits small above it, the track title is the
+       h1, and the two things you can do with it — hear it, watch it — are the
+       only buttons. Everything about who Mike is moved down to the strands.
+
+       To change release, edit the SINGLE block in the script at the foot of this
+       file — nothing here needs touching. -->
   <header class="hero">
     <div class="wrap hero-inner">
       <div>
-        <div class="hero-kicker">Musician · Developer · Maker</div>
-        <h1>Mike Luz makes <em>records</em>, <em>instruments</em>,<br />and things worth owning.</h1>
-        <p class="hero-sub">
-          Records under the name <strong>Mercy Wizard</strong>. Browser instruments that
-          generate music rather than just play it back. Guitars, merch and artwork,
-          sold direct.
-        </p>
+        <div class="hero-kicker">Mike Luz</div>
+        <div class="rel-tag" id="rel-tag">New single</div>
+        <h1 id="rel-title">—</h1>
+        <p class="rel-blurb" id="rel-blurb"></p>
         <div class="hero-cta">
-          <a class="btn btn-primary" href="listen.html">▸ Listen</a>
-          <a class="btn" href="watch.html">Watch</a>
-          <a class="btn" href="#software">See the software</a>
+          <a class="btn btn-primary" id="rel-stream" href="#" target="_blank" rel="noopener">▸ Listen</a>
+          <a class="btn" id="rel-watch" href="#" target="_blank" rel="noopener">Watch the video</a>
         </div>
       </div>
-      <div class="hero-art">
-        <img src="me2026.jpg" alt="Mike Luz" />
-      </div>
+      <!-- The release's own image. With a YouTube id it becomes a click-to-play
+           poster, so the video is playable without leaving the page. -->
+      <div class="hero-art" id="rel-art"></div>
     </div>
   </header>
-
-  <!-- LATEST RELEASE — the artist-site convention: one current thing, loud,
-       with a direct path to hear it. Swap the copy and links per release. -->
-  <section class="sec" id="latest">
-    <div class="wrap">
-      <div class="feature">
-        <div class="feature-art">
-          <img src="banner.jpg" alt="Mercy Wizard" />
-        </div>
-        <div>
-          <div class="feature-tag">Latest single</div>
-          <h3>Grains</h3>
-          <p>
-            Out now, everywhere. <!-- TODO: a line or two about the track — what it is,
-            what it came from. This is the spot people actually read. -->
-          </p>
-          <div class="hero-cta">
-            <a class="btn btn-primary" href="https://symphony.to/mercywizard/bhu4vkjnrcyg" target="_blank" rel="noopener">Stream it</a>
-            <a class="btn" href="https://youtu.be/UKcZJ31ZHH0" target="_blank" rel="noopener">Watch the video</a>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
 
   <!-- THREE STRANDS — the structural bet of this page. Most artist sites are
        music with everything else as a footnote; these get equal weight because
@@ -88,8 +64,12 @@
     <div class="wrap">
       <div class="sec-head">
         <h2 class="sec-title">Three things, one person</h2>
-        <span class="sec-note">They feed each other more than you'd think</span>
       </div>
+      <p class="strands-intro">
+        Records under the name <strong>Mercy Wizard</strong>. Browser instruments that
+        generate music rather than just play it back. Guitars, merch and artwork,
+        sold direct.
+      </p>
       <div class="strands">
 
         <article class="strand" style="--sc: var(--music)">
@@ -170,6 +150,55 @@
       <div class="foot-c">© 2026 Mike Luz</div>
     </div>
   </footer>
+
+  <script>
+    // ── THE CURRENT RELEASE ───────────────────────────────────────────────
+    // This is the whole hero. Change these five fields when a new one lands.
+    //   youtube: the video id → the hero art becomes a click-to-play player.
+    //   art:     used instead when there is no video (a filename or URL).
+    const SINGLE = {
+      tag:     'New single',
+      title:   'Grains',
+      blurb:   '',   // TODO: one or two lines about the track. Empty = hidden.
+      stream:  'https://symphony.to/mercywizard/bhu4vkjnrcyg',
+      youtube: 'UKcZJ31ZHH0',
+      art:     'me2026.jpg',
+    };
+
+    (function () {
+      const $ = (id) => document.getElementById(id);
+      const esc = (s) => String(s == null ? '' : s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+
+      $('rel-tag').textContent = SINGLE.tag || 'New single';
+      $('rel-title').textContent = SINGLE.title || '';
+      // An empty blurb collapses rather than leaving a gap where text should be.
+      if (SINGLE.blurb) $('rel-blurb').textContent = SINGLE.blurb; else $('rel-blurb').remove();
+      if (SINGLE.stream) $('rel-stream').href = SINGLE.stream; else $('rel-stream').remove();
+      if (SINGLE.youtube) $('rel-watch').href = 'https://youtu.be/' + SINGLE.youtube; else $('rel-watch').remove();
+
+      const art = $('rel-art');
+      if (SINGLE.youtube) {
+        // Click-to-play: a thumbnail until pressed, so the page carries no
+        // YouTube player (or cookies) for a video nobody has asked for yet.
+        art.innerHTML =
+          '<button class="vframe vposter" type="button" aria-label="Play ' + esc(SINGLE.title) + '">' +
+            '<img src="https://i.ytimg.com/vi/' + esc(SINGLE.youtube) + '/maxresdefault.jpg" alt="" ' +
+            'onerror="this.src=\'https://i.ytimg.com/vi/' + esc(SINGLE.youtube) + '/hqdefault.jpg\'" />' +
+          '</button>';
+        art.querySelector('.vposter').addEventListener('click', function () {
+          const d = document.createElement('div');
+          d.className = 'vframe';
+          d.innerHTML = '<iframe src="https://www.youtube-nocookie.com/embed/' + esc(SINGLE.youtube) +
+            '?autoplay=1&rel=0" title="' + esc(SINGLE.title) + '" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>';
+          this.replaceWith(d);
+        });
+      } else if (SINGLE.art) {
+        art.innerHTML = '<img src="' + esc(SINGLE.art) + '" alt="' + esc(SINGLE.title) + '" />';
+      } else {
+        art.remove();
+      }
+    })();
+  </script>
 
 </body>
 </html>

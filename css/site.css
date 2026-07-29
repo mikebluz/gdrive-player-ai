@@ -111,6 +111,22 @@ a { color: inherit; text-decoration: none; }
 }
 .hero h1 em { font-style: normal; color: var(--music); }
 .hero-sub { font-size: clamp(1rem, 1.9vw, 1.16rem); line-height: 1.62; color: var(--muted); max-width: 46ch; margin-bottom: 30px; }
+/* ---- RELEASE HERO --------------------------------------------------------
+   The single is the headline, so its title takes the h1 sizing and the
+   supporting bits stay deliberately small around it. */
+.hero-kicker { margin-bottom: 14px; }
+.rel-tag {
+  display: inline-block; margin-bottom: 14px; padding: 5px 13px; border-radius: 999px;
+  background: rgba(159,122,234,.16); border: 1px solid rgba(159,122,234,.4);
+  color: #d6bcfa; font-size: .72rem; font-weight: 700;
+  letter-spacing: .16em; text-transform: uppercase;
+}
+.rel-blurb { font-size: clamp(1rem, 1.9vw, 1.14rem); line-height: 1.6; color: var(--muted); max-width: 42ch; margin-bottom: 30px; }
+/* The release art is the video poster, so it needs the 16:9 frame rules the
+   watch grid uses — and a rounded, bordered shell to match the hero. */
+.hero-art .vframe { border-radius: 18px; overflow: hidden; border: 1px solid var(--line); }
+.hero-art .vposter { border-radius: 18px; }
+.strands-intro { font-size: clamp(1rem, 1.8vw, 1.1rem); line-height: 1.62; color: var(--muted); max-width: 62ch; margin: -14px 0 32px; }
 .hero-cta { display: flex; flex-wrap: wrap; gap: 12px; }
 
 .btn {
@@ -125,7 +141,8 @@ a { color: inherit; text-decoration: none; }
 
 .hero-art { position: relative; }
 .hero-art img { width: 100%; border-radius: 18px; border: 1px solid var(--line); }
-.hero-art::after {
+/* Only veil a still image — over the video poster it dulls the play button. */
+.hero-art:not(:has(.vframe))::after {
   content: ''; position: absolute; inset: 0; border-radius: 18px;
   background: linear-gradient(200deg, transparent 42%, rgba(5,5,10,.55));
   pointer-events: none;
@@ -174,7 +191,10 @@ a { color: inherit; text-decoration: none; }
 .feature p { color: var(--muted); line-height: 1.65; margin-bottom: 24px; }
 
 /* ---- VIDEO GRID ---------------------------------------------------------- */
-.vgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+/* min() so the track can never be wider than the column it sits in — a flat
+   300px minimum overflowed a 320px phone once the 22px gutters were taken
+   off (measured 322 > 320). */
+.vgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 20px; }
 .vcard { border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: var(--panel);
   transition: transform .2s var(--ease), border-color .2s var(--ease); }
 .vcard:hover { transform: translateY(-3px); border-color: #34344e; }
@@ -186,7 +206,10 @@ a { color: inherit; text-decoration: none; }
 .vmeta span { font-size: .82rem; color: var(--dim); }
 /* Click-to-load poster: no YouTube iframe (and no YouTube cookies) until asked,
    which also keeps a page of many videos from loading a player each. */
-.vposter { cursor: pointer; padding: 0; background: #000; }
+/* NOT `padding: 0` — .vframe builds its 16:9 box out of padding-top: 56.25%,
+   and zeroing it collapsed the poster to 2px tall (measured 346x2), which is a
+   play button you cannot hit. Keep the aspect padding, kill only the sides. */
+.vposter { cursor: pointer; padding: 56.25% 0 0; background: #000; border: 0; }
 .vposter img { object-fit: cover; }
 .vposter::after {
   content: ''; position: absolute; left: 50%; top: 50%; width: 66px; height: 66px; transform: translate(-50%,-50%);
@@ -278,6 +301,36 @@ a { color: inherit; text-decoration: none; }
   .nav-links a { padding: 7px 10px; font-size: .8rem; }
   .btn { padding: 12px 19px; font-size: .88rem; }
 }
+/* ---- TOUCH ---------------------------------------------------------------
+   Keyed off the POINTER, not the viewport: a narrow window on a laptop still
+   has a mouse and does not need finger-sized targets, while a tablet does.
+   44px is Apple's minimum comfortable target; the audit found nav links,
+   strand links and social pills all sitting around 35px. */
+@media (pointer: coarse) {
+  .nav-links a,
+  .strand-links a,
+  .social a,
+  .devbar a,
+  .nav-mark { min-height: 44px; display: inline-flex; align-items: center; }
+  .nav-links a { padding: 10px 14px; }
+  .strand-links a, .social a { padding: 11px 15px; }
+  .btn { min-height: 48px; }
+  .trk { padding: 15px 6px; }        /* the tracklist rows are the main target on Listen */
+  .tbtn { width: 48px; height: 48px; }
+  .tbtn-main { width: 60px; height: 60px; }
+  .scrub input[type=range] { height: 6px; }
+  .scrub input[type=range]::-webkit-slider-thumb { width: 20px; height: 20px; }
+  .scrub input[type=range]::-moz-range-thumb { width: 20px; height: 20px; }
+}
+
+/* Legibility floor on small screens. The small-caps labels are 0.70–0.76rem,
+   which is ~11px — fine on a monitor, a squint on a phone. */
+@media (max-width: 560px) {
+  .hero-kicker, .rel-tag, .strand-n, .feature-tag, .now-tag { font-size: .82rem; }
+  .sec-note, .foot-c, .devbar, .vmeta span, .trk-d, .scrub { font-size: .82rem; }
+  .nav-links a { font-size: .86rem; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }

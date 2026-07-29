@@ -183,6 +183,8 @@ if [[ -f "home.html" ]]; then
   echo "⏸️  REMINDER — home.html was NOT deployed (new homepage, still on hold)."
   echo "    listen.html and watch.html WERE. When the new homepage is ready:"
   echo "      1. add home.html to the cp line, the stamp loop and the force-put block"
+  echo "      1b. add img/ to the cp line — it holds the pixel-art wallpaper;"
+  echo "          without it the desktop ships as flat green with no scene"
   echo "      2. remove the .devbar block from home/listen/watch"
   echo "      3. delete this reminder from deploy.sh"
 fi

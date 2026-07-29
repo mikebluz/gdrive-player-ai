@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MIKE LUZ</title>
+<style>
+/* ── DIRECTION: BROWSER ───────────────────────────────────────────────────
+   A DEMO variant of index.html. Same content, same palette, same pixel-art
+   coastline — but the conceit is a browser rather than a desktop, so each of
+   the seven windows becomes a TAB.
+
+   The reason this is worth trying: the desktop is at 100% layout capacity.
+   Seven windows against three columns leaves single-digit pixels at 1280x800,
+   and every copy edit this session has had to be paid for out of some other
+   window's height. A tab gets the WHOLE viewport, one at a time, so the
+   capacity problem disappears entirely — the trade is that you can only read
+   one thing at a time, where the desktop shows you everything at once.
+
+   index.html is untouched. This file is deliberately NOT in deploy.sh.
+   ───────────────────────────────────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --desk:#2d6144; --bar:#143022;
+  --tb-a:#3a7d55; --tb-b:#215539;
+  --sunk:#1e4a36; --sunk-e:#3a7355;
+  --bar-fg:#cfe7d8; --bar-hi:#5cc189;
+  --chrome:#c7cfc9; --chrome-d:#8b948d; --bevel:#6e766f;
+  --paper:#eef2ee; --ink:#0f1611;
+  --mute:#4a554d; --mute-2:#78857c;
+  --link:#1c7247; --link-h:#a33b23;
+  --ac:#62c994; --hot:#f6ad55;
+}
+html,body{height:100%}
+body{
+  background:var(--bar);color:var(--ink);overflow:hidden;
+  font:13px/1.62 ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+  display:flex;flex-direction:column;
+}
+
+/* ── CHROME: tab strip ──────────────────────────────────────────────────── */
+.tabs{display:flex;align-items:flex-end;gap:2px;flex-wrap:wrap;
+  padding:8px 8px 0;background:var(--bar);flex:0 0 auto}
+/* Window controls. Three dots read as a window instantly and cost nothing. */
+.lights{display:flex;gap:6px;align-self:center;padding:0 10px 6px 2px;flex:0 0 auto}
+.lights i{width:11px;height:11px;border-radius:50%;background:var(--sunk-e);display:block}
+.lights i:nth-child(1){background:#c9584a}
+.lights i:nth-child(2){background:#d8a44a}
+.lights i:nth-child(3){background:#5aa76a}
+
+.tab{display:flex;align-items:center;gap:6px;max-width:190px;min-width:0;
+  padding:7px 9px;border:0;cursor:pointer;font:inherit;font-size:11px;
+  color:var(--bar-fg);background:var(--sunk);
+  border-radius:6px 6px 0 0;box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+.tab .fav{flex:0 0 auto;font-size:12px;line-height:1}
+.tab .ttl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  letter-spacing:.05em}
+.tab .x{flex:0 0 auto;width:15px;height:15px;border:0;border-radius:3px;cursor:pointer;
+  background:transparent;color:inherit;font:700 11px/1 inherit;padding:0;opacity:.55}
+.tab .x:hover{background:rgba(255,255,255,.16);opacity:1}
+.tab:hover{background:#255c42}
+/* The active tab joins the toolbar below it — the seam is what makes a strip
+   of buttons read as tabs. */
+.tab[aria-selected="true"]{background:var(--chrome);color:var(--ink);
+  padding-bottom:9px;margin-bottom:-1px;position:relative;z-index:2}
+.tab[aria-selected="true"] .x{opacity:.6}
+.tab[aria-selected="true"] .x:hover{background:rgba(0,0,0,.12)}
+.newtab{align-self:center;width:24px;height:24px;margin:0 0 5px 4px;flex:0 0 auto;
+  border:0;border-radius:5px;background:transparent;color:var(--bar-fg);
+  font:400 17px/1 inherit;cursor:pointer;padding:0}
+.newtab:hover{background:rgba(255,255,255,.14)}
+
+/* ── CHROME: toolbar ────────────────────────────────────────────────────── */
+.toolbar{display:flex;align-items:center;gap:7px;padding:7px 9px;background:var(--chrome);
+  border-bottom:1px solid var(--bevel);flex:0 0 auto;position:relative;z-index:1}
+.nav{display:flex;gap:3px;flex:0 0 auto}
+.nav button{width:26px;height:24px;border:0;border-radius:4px;background:transparent;
+  color:var(--ink);font:400 14px/1 inherit;cursor:pointer;padding:0}
+.nav button:hover:not(:disabled){background:rgba(0,0,0,.10)}
+.nav button:disabled{opacity:.3;cursor:default}
+.url{flex:1;min-width:0;display:flex;align-items:center;gap:7px;
+  padding:5px 11px;border-radius:13px;background:var(--paper);
+  box-shadow:inset 0 0 0 1px var(--chrome-d)}
+.url .lock{flex:0 0 auto;font-size:10px;color:var(--link)}
+.url .txt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:12px;color:var(--mute)}
+.url .txt b{color:var(--ink);font-weight:400}
+/* Loading bar — 400ms of it on every tab switch. Nothing says "browser" faster. */
+.load{position:absolute;left:0;bottom:-1px;height:2px;width:0;background:var(--ac);opacity:0}
+.load.go{animation:load .45s ease-out}
+@keyframes load{0%{width:0;opacity:1}70%{width:82%;opacity:1}100%{width:100%;opacity:0}}
+
+/* ── THE PAGE ───────────────────────────────────────────────────────────── */
+.viewport{flex:1;min-height:0;overflow:auto;position:relative;background:var(--desk)}
+/* Same three-layer wallpaper as the desktop: sky, then the moon rising behind
+   the sea, then four water frames on a loop. Fixed inside the viewport so it
+   does not scroll with the page. */
+.wp{position:absolute;inset:0;pointer-events:none;background:var(--desk)}
+.wp b,.wp i{position:absolute;inset:0;background-repeat:no-repeat;
+  background-position:center;background-size:cover;
+  image-rendering:pixelated;image-rendering:crisp-edges}
+.wp-sky{background-image:url(img/wp-sky.png)}
+.wp-moon{background-image:url(img/wp-moon.png);
+  animation:moonrise 150s linear infinite;will-change:transform}
+@keyframes moonrise{from{transform:translateY(48%)}to{transform:translateY(-19%)}}
+.wp i{background-image:url(img/wp-sea-0.png);opacity:0;animation:sea 2s infinite}
+.wp i:nth-child(3){animation-delay:0s}
+.wp i:nth-child(4){background-image:url(img/wp-sea-1.png);animation-delay:.5s}
+.wp i:nth-child(5){background-image:url(img/wp-sea-2.png);animation-delay:1s}
+.wp i:nth-child(6){background-image:url(img/wp-sea-3.png);animation-delay:1.5s}
+@keyframes sea{0%,26%{opacity:1}26.01%,100%{opacity:0}}
+@media (prefers-reduced-motion:reduce){
+  .wp i,.wp-moon{animation:none}
+  .wp i:nth-child(3){opacity:1}
+  .wp-moon{transform:translateY(7%)}
+}
+
+/* One panel at a time, centred, on paper. This is the whole payoff: a tab has
+   the entire viewport, so nothing here is fighting for height. */
+.panel{display:none;position:relative;z-index:1;
+  max-width:620px;margin:26px auto 40px;padding:22px 24px;
+  background:var(--paper);border:2px solid #fff;
+  border-right-color:var(--bevel);border-bottom-color:var(--bevel);
+  box-shadow:3px 3px 0 rgba(0,0,0,.35)}
+.panel.on{display:block}
+h2{font-size:15px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;margin-bottom:12px}
+p{margin-bottom:9px}
+a{color:var(--link)}
+a:hover{color:var(--link-h)}
+.note{font-size:11px;color:var(--mute);margin-bottom:5px}
+.hr{height:1px;background:var(--chrome-d);margin:14px 0}
+.btn{display:inline-block;padding:6px 13px;background:var(--chrome);border:2px solid #fff;
+  border-right-color:var(--bevel);border-bottom-color:var(--bevel);color:var(--ink);
+  font:inherit;font-size:12px;cursor:pointer;text-decoration:none;margin:0 5px 5px 0}
+.btn:active{border-color:var(--bevel);border-right-color:#fff;border-bottom-color:#fff}
+.btn.hot{background:var(--hot);font-weight:700;letter-spacing:.06em;padding:7px 15px;
+  border-right-color:#9c6c34;border-bottom-color:#9c6c34}
+.shot,.wordmark{display:block;width:100%;height:auto}
+.shot{aspect-ratio:2/1;object-fit:cover;object-position:50% 3%;background:var(--bevel);margin-bottom:12px}
+.wordmark{max-width:340px;mix-blend-mode:multiply;margin-bottom:12px}
+.vid{position:relative;width:100%;padding:56.25% 0 0;background:#000;margin-bottom:11px}
+.vid button{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;cursor:pointer;padding:0}
+.vid img,.vid iframe{position:absolute;inset:0;width:100%;height:100%;border:0;object-fit:cover}
+.vid button::after{content:'▶';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:52px;height:52px;background:var(--ac);color:#fff;display:grid;place-items:center;font-size:17px}
+dl.f{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;font-size:13px}
+dl.f dt{color:var(--mute);white-space:nowrap}
+dl.f dd{font-weight:700}
+table{width:100%;border-collapse:collapse;font-size:13px}
+td{padding:6px 7px;border-bottom:1px solid var(--chrome)}
+td.d{white-space:nowrap;color:var(--mute)}
+td.n{text-align:right;color:var(--link-h);font-size:10px;white-space:nowrap}
+td .c{display:block;font-size:11px;color:var(--mute)}
+#shows tr.past td{color:var(--mute)}
+#shows tr:not(.past):not(.more) td{background:rgba(44,117,80,.085);font-weight:700}
+#shows tr:not(.past):not(.more) td.d{color:var(--ink)}
+#shows tr:not(.past):not(.more) .c{font-weight:400}
+#shows tr.next td{background:rgba(44,117,80,.17)}
+#shows tr.next td:first-child{box-shadow:inset 3px 0 0 var(--hot)}
+#shows tr.next td.n{color:var(--link-h);font-weight:700}
+#shows .more td{border-bottom:0;padding:9px 7px 0;text-align:center}
+#shows .more button{background:none;border:0;font:inherit;font-size:12px;
+  color:var(--link);cursor:pointer;padding:3px 8px}
+#shows .more button:hover{color:var(--link-h);text-decoration:underline}
+.tl p{margin-bottom:5px}
+.tl .d{font-size:11px;color:var(--mute)}
+
+/* The new-tab page: shortcuts to everything, which is the one view that gets
+   back what tabs give up — seeing the whole site at once. */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(150px,100%),1fr));gap:10px}
+.grid button{display:flex;flex-direction:column;align-items:center;gap:6px;
+  padding:16px 10px;cursor:pointer;font:inherit;font-size:11px;letter-spacing:.06em;
+  color:var(--ink);background:var(--chrome);border:2px solid #fff;
+  border-right-color:var(--bevel);border-bottom-color:var(--bevel)}
+.grid button:hover{background:#d5ddd7}
+.grid button span{font-size:26px;line-height:1}
+
+@media (max-width:640px){
+  .tabs{padding:6px 5px 0}
+  .lights{display:none}          /* a phone browser has no window controls */
+  .tab{max-width:none;flex:1 1 auto;font-size:10px;padding:6px 7px}
+  .tab .x{display:none}          /* no room, and closing is not the point here */
+  .panel{margin:12px 8px 28px;padding:16px 15px;max-width:none}
+  .url{padding:4px 9px}
+  .url .txt{font-size:11px}
+}
+</style>
+</head>
+<body>
+
+<!-- ══ BROWSER CHROME ══════════════════════════════════════════════════════ -->
+<div class="tabs" role="tablist" aria-label="Sections">
+  <div class="lights" aria-hidden="true"><i></i><i></i><i></i></div>
+  <!-- tabs injected -->
+  <button class="newtab" id="newtab" type="button" title="New tab" aria-label="New tab">+</button>
+</div>
+
+<div class="toolbar">
+  <div class="nav">
+    <button id="back" type="button" title="Back" aria-label="Back">←</button>
+    <button id="fwd" type="button" title="Forward" aria-label="Forward">→</button>
+    <button id="reload" type="button" title="Reload" aria-label="Reload">⟳</button>
+  </div>
+  <div class="url"><span class="lock" aria-hidden="true">🔒</span>
+    <span class="txt" id="urltxt"></span></div>
+  <div class="load" id="load" aria-hidden="true"></div>
+</div>
+
+<!-- ══ THE PAGE ════════════════════════════════════════════════════════════ -->
+<div class="viewport" id="viewport">
+  <div class="wp" aria-hidden="true">
+    <b class="wp-sky"></b><b class="wp-moon"></b><i></i><i></i><i></i><i></i>
+  </div>
+
+  <section class="panel" id="p-new" role="tabpanel" aria-label="New tab">
+    <h2>Mike Luz</h2>
+    <p class="note">Seven pages. Pick one.</p>
+    <div class="grid" id="shortcuts"></div>
+  </section>
+
+  <section class="panel" id="p-grains" role="tabpanel" aria-label="Grains">
+    <h2>Grains — new single</h2>
+    <div class="vid" id="vid"></div>
+    <a class="btn hot" href="https://tr.ee/YKRcNe0nlW" target="_blank" rel="noopener">▶ STREAM</a>
+    <a class="btn" href="https://youtu.be/UKcZJ31ZHH0" target="_blank" rel="noopener">YouTube</a>
+  </section>
+
+  <section class="panel" id="p-luz" role="tabpanel" aria-label="Mike Luz">
+    <img class="shot" src="img/mikeluz-live.jpg" width="560" height="560"
+         alt="Mike Luz playing acoustic guitar and singing into a microphone at a show">
+    <h2>Mike Luz</h2>
+    <p>Singer-songwriter, solo performer. Originals and interpretations of
+       classics and lesser-known gems, with emphasis on anthemic choruses and
+       compelling chord changes.</p>
+    <div class="hr"></div>
+    <p class="note"><a href="https://instagram.com/mercywizard" target="_blank" rel="noopener">Instagram</a></p>
+    <p class="note">I primarily record as <a href="#wiz" data-go="wiz">Mercy Wizard</a>.</p>
+    <a class="btn hot" href="#booking" data-go="booking">✉ BOOK A SHOW</a>
+  </section>
+
+  <section class="panel" id="p-wiz" role="tabpanel" aria-label="Mercy Wizard">
+    <img class="wordmark" src="img/mercywizard-banner.jpg" width="560" height="126" alt="Mercy Wizard">
+    <p>My recording handle.</p>
+    <p class="note">I perform live as <a href="#luz" data-go="luz">Mike Luz</a>.</p>
+    <a class="btn hot" href="https://linktr.ee/mercywizard" target="_blank" rel="noopener">▶ LISTEN</a>
+  </section>
+
+  <section class="panel" id="p-shows" role="tabpanel" aria-label="Shows">
+    <h2>Shows</h2>
+    <table id="shows"></table>
+  </section>
+
+  <section class="panel" id="p-booking" role="tabpanel" aria-label="Booking">
+    <h2>Book a show</h2>
+    <dl class="f">
+      <dt>style</dt><dd>acoustic singer/songwriter</dd>
+      <dt>email</dt><dd><a href="mailto:onlymikeluz@gmail.com">onlymikeluz@gmail.com</a></dd>
+      <dt>based in</dt><dd>Eliot, ME</dd>
+      <dt>format</dt><dd>solo</dd>
+      <dt>set</dt><dd>1–3 hours</dd>
+      <dt>needs</dt><dd>nothing (own PA)</dd>
+    </dl>
+    <div class="hr"></div>
+    <a class="btn hot" href="mailto:onlymikeluz@gmail.com">✉ EMAIL ME</a>
+  </section>
+
+  <section class="panel" id="p-tools" role="tabpanel" aria-label="Tools">
+    <h2>Tools</h2>
+    <p class="note">I am also a software engineer and enjoy tinkering with web-based music tools.</p>
+    <div class="hr"></div>
+    <div class="tl">
+      <p><a href="bloops.html" target="_blank" rel="noopener">▸ Bloops</a>
+         <span class="d">generative synth &amp; sequencer</span></p>
+      <p><a href="tracks.html" target="_blank" rel="noopener">▸ Tracks</a>
+         <span class="d">multitrack recorder for quick demos</span></p>
+      <p><a href="player.html" target="_blank" rel="noopener">▸ Player</a>
+         <span class="d">playlists backed by Google Drive</span></p>
+      <p><a href="game.html" target="_blank" rel="noopener">▸ Game</a>
+         <span class="d">bricks that compose as you play</span></p>
+    </div>
+  </section>
+
+  <section class="panel" id="p-links" role="tabpanel" aria-label="Links">
+    <h2>Links</h2>
+    <p><a href="https://mercywizard.bandcamp.com" target="_blank" rel="noopener">▸ Bandcamp</a></p>
+    <p><a href="https://www.youtube.com/@mercywizard-music" target="_blank" rel="noopener">▸ YouTube</a></p>
+    <p><a href="https://instagram.com/mercywizard" target="_blank" rel="noopener">▸ Instagram</a></p>
+    <p><a href="https://open.substack.com/pub/mercywizard" target="_blank" rel="noopener">▸ Substack</a></p>
+  </section>
+</div>
+
+<script>
+// ── TABS ─────────────────────────────────────────────────────────────────
+// id · favicon · tab title · the URL the address bar shows · closable
+const TABS = [
+  { id:'grains',  fav:'💿', title:'Grains',       path:'/grains'       },
+  { id:'luz',     fav:'🎤', title:'Mike Luz',     path:'/'             },
+  { id:'wiz',     fav:'🎛', title:'Mercy Wizard', path:'/mercy-wizard' },
+  { id:'shows',   fav:'🎫', title:'Shows',        path:'/shows'        },
+  { id:'booking', fav:'✉',  title:'Booking',      path:'/booking'      },
+  { id:'tools',   fav:'🛠', title:'Tools',        path:'/tools'        },
+  { id:'links',   fav:'🔗', title:'Links',        path:'/links'        },
+  { id:'new',     fav:'✦',  title:'New tab',      path:'/'             },
+];
+const HOST = 'mikeluz.com';
+const strip = document.querySelector('.tabs');
+const urltxt = document.getElementById('urltxt');
+const load = document.getElementById('load');
+let open = TABS.filter(t => t.id !== 'new').map(t => t.id);   // the new-tab page starts closed
+let active = 'grains';
+// Real back/forward: a visit stack with a cursor, so Back does not just undo.
+let hist = ['grains'], cursor = 0;
+
+const tabById = id => TABS.find(t => t.id === id);
+
+function paintUrl(id) {
+  const t = tabById(id);
+  urltxt.innerHTML = id === 'new'
+    ? '<b>Search or enter address</b>'
+    : HOST + '<b>' + (t.path === '/' ? '' : t.path) + '</b>';
+}
+
+function show(id, record) {
+  if (!open.includes(id)) return;
+  active = id;
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('on', p.id === 'p-' + id));
+  document.querySelectorAll('.tab').forEach(b =>
+    b.setAttribute('aria-selected', String(b.dataset.tab === id)));
+  paintUrl(id);
+  document.title = (id === 'new' ? 'New tab' : tabById(id).title + ' — Mike Luz');
+  // the loading bar, restarted each time
+  load.classList.remove('go'); void load.offsetWidth; load.classList.add('go');
+  if (record !== false) {
+    hist = hist.slice(0, cursor + 1);
+    if (hist[hist.length - 1] !== id) { hist.push(id); cursor = hist.length - 1; }
+  }
+  syncNav();
+  document.getElementById('viewport').scrollTop = 0;
+}
+
+function syncNav() {
+  document.getElementById('back').disabled = cursor <= 0;
+  document.getElementById('fwd').disabled = cursor >= hist.length - 1;
+}
+
+function drawTabs() {
+  strip.querySelectorAll('.tab').forEach(el => el.remove());
+  const plus = document.getElementById('newtab');
+  open.forEach(id => {
+    const t = tabById(id);
+    const b = document.createElement('button');
+    b.className = 'tab'; b.type = 'button'; b.dataset.tab = id;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', String(id === active));
+    b.innerHTML = '<span class="fav" aria-hidden="true">' + t.fav + '</span>' +
+                  '<span class="ttl">' + t.title + '</span>' +
+                  (open.length > 1 ? '<button class="x" type="button" aria-label="Close ' + t.title + '">✕</button>' : '');
+    b.addEventListener('click', (e) => {
+      if (e.target.closest('.x')) { closeTab(id); return; }
+      show(id);
+    });
+    strip.insertBefore(b, plus);
+  });
+}
+
+function closeTab(id) {
+  if (open.length <= 1) return;                 // never leave a browser with no tabs
+  const i = open.indexOf(id);
+  open = open.filter(x => x !== id);
+  hist = hist.filter(x => open.includes(x));
+  if (!hist.length) hist = [open[0]];
+  cursor = Math.min(cursor, hist.length - 1);
+  drawTabs();
+  if (active === id) show(open[Math.max(0, i - 1)] || open[0], false);
+  else syncNav();
+}
+
+document.getElementById('newtab').addEventListener('click', () => {
+  if (!open.includes('new')) open.push('new');
+  drawTabs(); show('new');
+});
+document.getElementById('back').addEventListener('click', () => {
+  if (cursor > 0) { cursor--; show(hist[cursor], false); }
+});
+document.getElementById('fwd').addEventListener('click', () => {
+  if (cursor < hist.length - 1) { cursor++; show(hist[cursor], false); }
+});
+document.getElementById('reload').addEventListener('click', () => show(active, false));
+
+// In-page links that point at another section behave like navigation.
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('[data-go]');
+  if (!a) return;
+  e.preventDefault();
+  const id = a.dataset.go;
+  if (!open.includes(id)) { open.push(id); drawTabs(); }
+  show(id);
+});
+
+// The new-tab page's shortcut grid
+document.getElementById('shortcuts').innerHTML = TABS.filter(t => t.id !== 'new')
+  .map(t => '<button type="button" data-go="' + t.id + '">' +
+            '<span aria-hidden="true">' + t.fav + '</span>' + t.title + '</button>').join('');
+
+drawTabs(); show('grains', false);
+
+// ── SHOWS ────────────────────────────────────────────────────────────────
+const SHOWS = [
+  { d:'2024-03-02', v:'Tributary Brewing', c:'Kittery, ME' },
+  { d:'2024-11-02', v:'Wild Bevy', c:'Wells, ME' },
+  { d:'2024-11-30', v:'Wild Bevy', c:'Wells, ME' },
+  { d:'2025-02-14', v:"Popover's",  c:'Epping, NH' },
+  { d:'2025-07-04', v:"Popover's",  c:'Epping, NH' },
+  { d:'2026-04-03', v:"Popover's",  c:'Epping, NH' },
+  { d:'2026-08-13', v:'Ocean Surf', c:'York, ME' },
+  { d:'2026-08-29', v:'Ocean Surf', c:'York, ME' },
+  { d:'2026-12-04', v:"Popover's",  c:'Epping, NH' },
+];
+const st = document.getElementById('shows');
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c =>
+  ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+const when = s => { const x = new Date(s.d + 'T00:00'); return isNaN(x) ? null : x; };
+const upcoming = s => { const x = when(s); return !!x && x >= midnight; };
+const rows = SHOWS.slice().sort((a, b) => {
+  const ax = when(a), bx = when(b); if (!ax || !bx) return 0; return bx - ax;
+});
+const up = rows.filter(upcoming);
+const nextShow = up.length ? up[up.length - 1] : null;
+const rowHtml = s => {
+  const x = when(s);
+  const d = x ? x.toLocaleDateString('en-GB',
+    { day:'2-digit', month:'short', year:'2-digit' }).toUpperCase() : esc(s.d);
+  const isNext = s === nextShow;
+  const cls = isNext ? ' class="next"' : (upcoming(s) ? '' : ' class="past"');
+  return `<tr${cls}><td class="d">${d}</td>` +
+         `<td>${esc(s.v)}<span class="c">${esc(s.c)}</span></td>` +
+         `<td class="n">${isNext ? '★ NEXT' : ''}</td></tr>`;
+};
+// A tab has the whole viewport, so the cap is generous where the desktop's
+// window could only afford three.
+const PAST_CAP = 6;
+const past = rows.filter(s => !upcoming(s));
+let allPast = false;
+function renderShows() {
+  const shown = allPast ? past : past.slice(0, PAST_CAP);
+  let html = up.concat(shown).map(rowHtml).join('');
+  if (past.length > PAST_CAP) {
+    html += '<tr class="more"><td colspan="3"><button type="button">' +
+            (allPast ? '− fewer' : '＋ earlier shows') + '</button></td></tr>';
+  }
+  st.innerHTML = html;
+  const btn = st.querySelector('.more button');
+  if (btn) btn.addEventListener('click', () => { allPast = !allPast; renderShows(); });
+}
+renderShows();
+
+// ── VIDEO ────────────────────────────────────────────────────────────────
+const YT = 'UKcZJ31ZHH0';
+const v = document.getElementById('vid');
+v.innerHTML = `<button type="button" aria-label="Play Grains"><img src="https://i.ytimg.com/vi/${YT}/hqdefault.jpg" alt=""></button>`;
+v.querySelector('button').addEventListener('click', function () {
+  this.outerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${YT}?autoplay=1&rel=0" allow="autoplay; encrypted-media" allowfullscreen title="Grains"></iframe>`;
+});
+</script>
+</body>
+</html>

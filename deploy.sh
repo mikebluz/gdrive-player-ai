@@ -78,7 +78,7 @@ echo "📦 Staging files..."
 # img/ is REQUIRED by index.html — it holds the pixel-art wallpaper, the live
 # photo and the handwritten wordmark. Without it the desktop ships as a flat
 # green field with three broken images.
-cp -r index.html listen.html watch.html bloops.html player.html artwork.html game.html tracks.html css js img banner.jpg me2026.jpg samples music artwork vendor "$STAGE_DIR/"
+cp -r index.html bloops.html player.html artwork.html game.html tracks.html css js img banner.jpg me2026.jpg samples artwork vendor "$STAGE_DIR/"
 # Caching policy (HTML revalidates every load; versioned assets cache long) —
 # without it, phones cache stale HTML pointing at old ?v= assets and boot dies.
 cp .htaccess "$STAGE_DIR/"
@@ -94,7 +94,7 @@ DEPLOY_VER=$(date +%Y%m%d%H%M%S)
 echo "🏷️  Cache-busting asset URLs with v=$DEPLOY_VER"
 # JS files that fetch versioned assets themselves (worklet module + wasm URLs
 # in the core-voices bridge) carry the same ?v=DEPLOYVER token as the HTML.
-for f in index.html listen.html watch.html bloops.html player.html artwork.html game.html tracks.html js/bloops/03b-core-voices.js; do
+for f in index.html bloops.html player.html artwork.html game.html tracks.html js/bloops/03b-core-voices.js; do
   if [[ -f "$STAGE_DIR/$f" ]]; then
     sed "s/?v=DEPLOYVER/?v=$DEPLOY_VER/g" "$STAGE_DIR/$f" > "$STAGE_DIR/$f.tmp" && mv "$STAGE_DIR/$f.tmp" "$STAGE_DIR/$f"
   fi
@@ -141,14 +141,19 @@ mkdir -p "$REMOTE_DIR/js/bloops"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/index.html"
 # Same force-put, same reason: a stamp-only change is byte-identical in length
 # and the size-only mirror would skip it.
-put -O "$REMOTE_DIR"           "$STAGE_DIR/listen.html"
-put -O "$REMOTE_DIR"           "$STAGE_DIR/watch.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/bloops.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/player.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/artwork.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/game.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/tracks.html"
 put -O "$REMOTE_DIR/js/bloops" "$STAGE_DIR/js/bloops/03b-core-voices.js"
+# RETIRED PAGES. The mirror above is --reverse WITHOUT --delete, so deleting a
+# file from the repo never removes it from the server — it just stops being
+# updated and sits there serving its last version forever. These two were the
+# earlier site's Listen and Watch pages; their nav pointed at a homepage that
+# no longer exists. rm -f is idempotent, so this is safe to leave in place.
+rm -f "$REMOTE_DIR/listen.html"
+rm -f "$REMOTE_DIR/watch.html"
 # Post-upload SIZE VERIFICATION of the big JS the app can't boot without —
 # a size mismatch vs the local staged copy means a truncated upload.
 echo "--- remote sizes (verify vs local) ---"

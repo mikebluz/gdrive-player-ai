@@ -1,5 +1,0 @@
-{
-  "_readme": "Drop audio files (mp3/m4a/wav/ogg) into this folder and list them below. `file` is required; title/album/year/art are optional. `art` is a filename in this same folder.",
-  "tracks": [
-  ]
-}

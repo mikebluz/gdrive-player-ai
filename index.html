@@ -94,9 +94,15 @@ body{
 .wp i:nth-child(4){background-image:url(img/wp-sea-1.png);animation-delay:.5s}
 .wp i:nth-child(5){background-image:url(img/wp-sea-2.png);animation-delay:1s}
 .wp i:nth-child(6){background-image:url(img/wp-sea-3.png);animation-delay:1.5s}
-/* Hard switch, not a fade — the keyframes hold 1 for a quarter of the cycle
-   and drop to 0 within a hundredth of it. */
-@keyframes sea{0%,24.99%{opacity:1}25%,100%{opacity:0}}
+/* Hard switch, not a fade. The visible windows OVERLAP by 1% — each layer
+   holds on ~20ms past the next one's start. They must not merely abut: at
+   24.99%/25% the frames left a 0.2ms hole every switch where no layer was
+   opaque, and since browsers sample animations at frame boundaries, some
+   frames landed in it and the sky showed through the whole lower half. With
+   the moon below the horizon it showed through too, which is why the flash
+   looked tied to the moonrise. Overlapping is free: the later layer paints
+   above the earlier one, so the newer frame simply wins. */
+@keyframes sea{0%,26%{opacity:1}26.01%,100%{opacity:0}}
 /* Someone who has asked the system for less motion gets a still sea and a
    moon parked where it originally sat. */
 @media (prefers-reduced-motion:reduce){
@@ -209,11 +215,22 @@ td .c{display:block;font-size:10px;color:var(--mute)}
    log: at 1280x800 this column has single-digit pixels to spare. */
 .shot{display:block;width:100%;height:auto;aspect-ratio:2/1;object-fit:cover;
   object-position:50% 3%;background:var(--bevel);margin-bottom:6px}
-/* ── AUDIO PLAYER ──────────────────────────────────────────────────────
+/* ── DOCKED PLAYER ─────────────────────────────────────────────────────
    Built rather than using <audio controls>, because the native widget is a
    rounded pill that looks like it was dropped in from another operating
-   system. Same bevels as everything else here: raised button, sunken groove. */
-.ap{display:flex;align-items:center;gap:8px;margin-top:9px}
+   system. Mirrors the taskbar at the top of the screen — same dark green, same
+   sunken chrome — so the desktop is bracketed by two bars. */
+.dock{position:fixed;left:0;right:0;bottom:0;height:34px;z-index:900;
+  display:flex;align-items:center;gap:9px;padding:0 8px;background:var(--bar);
+  box-shadow:0 1px 0 rgba(255,255,255,.15) inset,0 -2px 8px rgba(0,0,0,.4)}
+.dock .np{flex:0 0 auto;font-size:10px;font-weight:700;letter-spacing:.1em;
+  color:#fff;white-space:nowrap}
+.dock .np em{font-style:normal;font-weight:400;letter-spacing:.04em;
+  color:var(--bar-fg);margin-left:7px}
+/* The title is the first thing to go when there is no room — the control and
+   the scrubber matter more than the label. */
+@media (max-width:560px){ .dock .np em{display:none} }
+@media (max-width:380px){ .dock .np{display:none} }
 /* GREEN, not amber. Amber means "this is the window's call to action" and
    GRAINS already spends it on STREAM; a second amber control here would break
    that. Green is what the video's own play control uses, so green reads as
@@ -222,12 +239,11 @@ td .c{display:block;font-size:10px;color:var(--mute)}
   background:var(--ac);color:var(--ink);font:700 11px/1 inherit;
   border:2px solid #fff;border-right-color:#2f7a52;border-bottom-color:#2f7a52}
 .ap-go:active{border-color:#2f7a52;border-right-color:#fff;border-bottom-color:#fff}
-.ap-bar{flex:1;min-width:0;height:12px;cursor:pointer;position:relative;
-  background:var(--chrome-d);border:2px solid var(--bevel);
-  border-right-color:#fff;border-bottom-color:#fff}
+.ap-bar{flex:1;min-width:40px;height:12px;cursor:pointer;position:relative;
+  background:var(--sunk);border:1px solid var(--sunk-e)}
 .ap-bar i{position:absolute;inset:0;width:0;background:var(--ac);display:block}
-.ap-bar:focus-visible{outline:2px solid var(--link);outline-offset:2px}
-.ap-t{flex:0 0 auto;font-size:11px;color:var(--mute);font-variant-numeric:tabular-nums}
+.ap-bar:focus-visible{outline:2px solid var(--bar-hi);outline-offset:2px}
+.ap-t{flex:0 0 auto;font-size:10px;color:var(--bar-fg);font-variant-numeric:tabular-nums}
 .vid{position:relative;width:100%;padding:56.25% 0 0;background:#000}
 .vid button{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;cursor:pointer;padding:0}
 .vid img,.vid iframe{position:absolute;inset:0;width:100%;height:100%;border:0;object-fit:cover}
@@ -251,7 +267,7 @@ dl.f dd{font-weight:700}
   .win.hidden{display:flex}
   .tb{cursor:default}
   .tb button{display:none}
-  .stack{padding:40px 10px 24px}
+  .stack{padding:40px 10px 58px}   /* bottom clears the docked player */
   .body{max-height:none}
 }
 @media (min-width:821px){
@@ -274,23 +290,27 @@ dl.f dd{font-weight:700}
 
 <div class="icons" id="icons"></div>
 
+<!-- The player is DOCKED, not in a window: it is the one thing that should be
+     reachable the instant the page opens, and on a phone the windows are a
+     stack you have to scroll. A bar pinned to the bottom edge is also what an
+     OS would do with a media player. Same markup hooks as before, so the
+     player script is unchanged. -->
+<div class="dock">
+  <button type="button" class="ap-go" aria-label="Play Grains">▶</button>
+  <span class="np">GRAINS<em>Mercy Wizard</em></span>
+  <div class="ap-bar" role="slider" tabindex="0" aria-label="Seek"
+       aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
+  <span class="ap-t">3:57</span>
+  <audio id="ap-a" preload="none" src="audio/grains.m4a"></audio>
+</div>
+
 <div class="stack" id="stack">
 
   <!-- GRAINS — the release, with the video inside it -->
-  <div class="win" id="w-grains" data-x="440" data-y="48" data-w="400">
+  <div class="win" id="w-grains" data-x="440" data-y="48" data-w="450">
     <div class="tb"><span class="t">GRAINS.mp4 — new single</span><button data-close>✕</button></div>
     <div class="body">
       <div class="vid" id="vid"></div>
-      <!-- Play the track without loading YouTube: no iframe, no ads, no
-           third party, and it starts instantly. preload="none" so the 4.7 MB
-           is not fetched until someone actually presses play. -->
-      <div class="ap">
-        <button type="button" class="ap-go" aria-label="Play Grains">▶</button>
-        <div class="ap-bar" role="slider" tabindex="0" aria-label="Seek"
-             aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
-        <span class="ap-t">3:57</span>
-        <audio id="ap-a" preload="none" src="audio/grains.m4a"></audio>
-      </div>
       <div style="margin-top:9px">
         <a class="btn hot" href="https://tr.ee/YKRcNe0nlW" target="_blank" rel="noopener">▶ STREAM</a>
         <a class="btn" href="https://youtu.be/UKcZJ31ZHH0" target="_blank" rel="noopener">YouTube</a>
@@ -347,7 +367,7 @@ dl.f dd{font-weight:700}
   </div>
 
   <!-- LIVE -->
-  <div class="win" id="w-live" data-x="440" data-y="410" data-w="420">
+  <div class="win" id="w-live" data-x="440" data-y="405" data-w="450">
     <div class="tb"><span class="t">LIVE.dat</span><button data-close>✕</button></div>
     <div class="body">
       <h2 class="wt">Shows</h2>
@@ -545,13 +565,16 @@ const ICONS = { 'w-grains':['💿','GRAINS'], 'w-luz':['🎤','MIKE LUZ'], 'w-wi
                 'w-links':['🔗','LINKS'] };
 let z = 10;
 
+const DOCK = 34;                     // the player bar owns the bottom edge
+
 function place() {
   if (!desktop.matches) return;
+  const floor = innerHeight - DOCK;   // usable height, dock excluded
   wins.forEach(w => {
     const W = +w.dataset.w || 320;
     // Clamp into view so a window can never open off the edge on a small laptop.
     const x = Math.min(+w.dataset.x || 40, Math.max(10, innerWidth - W - 14));
-    const y = Math.min(+w.dataset.y || 60, Math.max(40, innerHeight - 150));
+    const y = Math.min(+w.dataset.y || 60, Math.max(40, floor - 150));
     w.style.left = x + 'px'; w.style.top = y + 'px'; w.style.width = W + 'px';
     w.style.maxHeight = 'none';       // measure what each window actually wants
   });
@@ -567,9 +590,9 @@ function place() {
   // ones, and no window ever has to truncate its content.
   const deepest = Math.max(...wins.filter(w => !w.classList.contains('hidden'))
                                   .map(w => w.offsetTop + w.offsetHeight));
-  const overflows = deepest > innerHeight - 12;
+  const overflows = deepest > floor - 12;
   document.body.style.overflowY = overflows ? 'auto' : 'hidden';
-  document.body.style.minHeight = overflows ? (deepest + 16) + 'px' : '';
+  document.body.style.minHeight = overflows ? (deepest + DOCK + 16) + 'px' : '';
 }
 function focus(w) {
   if (!desktop.matches) return;

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mike Luz — G / editorial</title>
+<style>
+/* ── DIRECTION G: EDITORIAL ───────────────────────────────────────────────
+   The only LIGHT one. A magazine spread rather than a website: serif text,
+   a drop cap, a real column measure, rules that sit tight under headings,
+   an image that bleeds off the edge. Quiet and confident — the opposite bet
+   from D's shouting and F's noise. Ages well; costs nothing to load. */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--paper:#f7f4ee;--ink:#17161a;--mid:#5c5a63;--rule:#d8d3c8;--ac:#8a2f24}
+body{background:var(--paper);color:var(--ink);min-height:100svh;overflow-x:hidden;
+  font-family:Georgia,'Iowan Old Style','Times New Roman',serif;
+  -webkit-font-smoothing:antialiased}
+.devbar{padding:6px 14px;background:#17161a;color:#a09a90;font-size:12px;display:flex;gap:16px;
+  flex-wrap:wrap;font-family:system-ui,sans-serif}
+.devbar a{color:#f6ad55}
+.mast{display:flex;justify-content:space-between;align-items:baseline;gap:14px;flex-wrap:wrap;
+  padding:20px clamp(18px,5vw,60px) 14px;border-bottom:2px solid var(--ink)}
+.mast b{font-size:clamp(1rem,2.4vw,1.3rem);letter-spacing:.3em;text-transform:uppercase;font-weight:400}
+.mast span{font-family:system-ui,sans-serif;font-size:.7rem;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--mid)}
+.sheet{max-width:1120px;margin:0 auto;padding:clamp(26px,5vw,64px) clamp(18px,5vw,60px) 70px}
+.kick{font-family:system-ui,sans-serif;font-size:.72rem;letter-spacing:.28em;text-transform:uppercase;
+  color:var(--ac);margin-bottom:18px}
+h1{font-size:clamp(2.6rem,7.6vw,5.4rem);line-height:.98;font-weight:400;letter-spacing:-.02em;
+  margin-bottom:18px}
+h1 em{font-style:italic;color:var(--ac)}
+.standfirst{font-size:clamp(1.05rem,2.3vw,1.4rem);line-height:1.5;color:var(--mid);
+  max-width:34ch;font-style:italic;margin-bottom:30px}
+.byline{font-family:system-ui,sans-serif;font-size:.72rem;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--mid);padding-bottom:12px;border-bottom:1px solid var(--rule);margin-bottom:30px}
+/* Image bleeds past the text column on the right — the print move. */
+.plate{position:relative;margin:0 calc(-1 * clamp(18px,5vw,60px)) 34px 0;
+  border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.plate button{display:block;position:relative;width:100%;padding:44% 0 0;border:0;background:#e9e4da;cursor:pointer}
+.plate img,.plate iframe{position:absolute;inset:0;width:100%;height:100%;border:0;object-fit:cover}
+.plate button::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:74px;height:74px;border-radius:50%;background:var(--paper);border:1px solid var(--ink)}
+.plate button::before{content:'';position:absolute;left:50%;top:50%;z-index:2;
+  transform:translate(-30%,-50%);border-style:solid;border-width:11px 0 11px 17px;
+  border-color:transparent transparent transparent var(--ink)}
+.cap{font-family:system-ui,sans-serif;font-size:.72rem;color:var(--mid);padding:8px 0 0;letter-spacing:.02em}
+.cols{columns:2;column-gap:clamp(24px,4vw,52px);font-size:1.02rem;line-height:1.68;color:#2c2a30}
+.cols p{margin-bottom:1em;break-inside:avoid}
+/* Drop cap on the first paragraph only. */
+.cols p:first-child::first-letter{float:left;font-size:3.9em;line-height:.82;padding:.04em .1em 0 0;
+  color:var(--ac)}
+.ends{display:flex;flex-wrap:wrap;gap:26px;align-items:baseline;margin-top:38px;
+  padding-top:18px;border-top:2px solid var(--ink)}
+.ends a{font-family:system-ui,sans-serif;font-size:.86rem;font-weight:600;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink);text-decoration:none;border-bottom:1px solid var(--ink);
+  padding-bottom:3px}
+.ends a:hover{color:var(--ac);border-color:var(--ac)}
+.ends .n{margin-left:auto;font-family:system-ui,sans-serif;font-size:.7rem;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--mid)}
+@media(max-width:760px){.cols{columns:1}.plate{margin-right:0}}
+</style>
+</head>
+<body>
+<div class="devbar"><span>Direction <b>G</b> — editorial</span><a href="index.html">← old site</a><a href="home-demos.html">all eight</a></div>
+
+<div class="mast"><b>Mike Luz</b><span>Mercy Wizard · Est. MMXXVI</span></div>
+
+<div class="sheet">
+  <div class="kick">New single</div>
+  <h1>Grains<em>.</em></h1>
+  <p class="standfirst">Out now, everywhere you keep your music.</p>
+  <div class="byline">Words, music and instruments — Mike Luz</div>
+
+  <div class="plate" id="plate"></div>
+  <div class="cap">Still from the video for “Grains”. Directed by — <!-- TODO --> </div>
+
+  <div class="cols">
+    <p>Placeholder — this is the column where the writing goes, and it is the point of this
+       direction. A page that looks like a magazine earns the right to be read, so it wants a
+       real paragraph or two rather than a tagline.</p>
+    <p>Records under the name Mercy Wizard. Browser instruments that generate music rather
+       than just play it back. Guitars, merch and artwork, sold direct. Three practices that
+       are more obviously one thing than they look.</p>
+    <p>The instruments came out of wanting a particular sound and not finding it; the objects
+       came out of the same instinct pointed at wood and paper instead of code.</p>
+  </div>
+
+  <div class="ends">
+    <a href="https://symphony.to/mercywizard/bhu4vkjnrcyg" target="_blank" rel="noopener">Listen</a>
+    <a href="https://youtu.be/UKcZJ31ZHH0" target="_blank" rel="noopener">Watch</a>
+    <a href="bloops.html">Instruments</a>
+    <a href="https://mercywizard.bandcamp.com/merch" target="_blank" rel="noopener">Shop</a>
+    <a href="https://linktr.ee/mercywizard" target="_blank" rel="noopener">All links</a>
+    <span class="n">№ 001</span>
+  </div>
+</div>
+
+<script>
+const YT = 'UKcZJ31ZHH0';
+const p = document.getElementById('plate');
+p.innerHTML = '<button type="button" aria-label="Play Grains"><img src="https://i.ytimg.com/vi/' + YT + '/maxresdefault.jpg" alt="" onerror="this.src=\'https://i.ytimg.com/vi/' + YT + '/hqdefault.jpg\'"></button>';
+p.querySelector('button').addEventListener('click', function () {
+  const d = document.createElement('div');
+  d.style.cssText = 'position:relative;padding:44% 0 0';
+  d.innerHTML = '<iframe src="https://www.youtube-nocookie.com/embed/' + YT + '?autoplay=1&rel=0" allow="autoplay; encrypted-media" allowfullscreen title="Grains"></iframe>';
+  this.replaceWith(d);
+});
+</script>
+</body>
+</html>

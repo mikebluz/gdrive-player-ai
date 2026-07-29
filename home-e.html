@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mike Luz — E / VHS</title>
+<style>
+/* ── DIRECTION E: VHS ─────────────────────────────────────────────────────
+   Analog decay rather than digital. Tape wobble, tracking error, chroma
+   bleed, a timecode burned into the corner. Where B is a green terminal
+   (cold, digital), this is warm, degraded and physical — a dub of a dub. */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0b0a10;--fg:#e6e2d8;--red:#ff2e4d;--cy:#2ee8ff}
+body{background:var(--bg);color:var(--fg);min-height:100svh;overflow-x:hidden;
+  font-family:'VT323','Courier New',monospace;letter-spacing:.02em}
+.devbar{padding:6px 14px;color:#7a7466;font-size:12px;display:flex;gap:16px;flex-wrap:wrap;
+  font-family:system-ui,sans-serif;border-bottom:1px solid #1c1a24}
+.devbar a{color:#f6ad55}
+/* Scanlines + a slow rolling tracking band + vignette. */
+.fx{position:fixed;inset:0;pointer-events:none;z-index:20}
+.fx::before{content:'';position:absolute;inset:0;
+  background:repeating-linear-gradient(rgba(0,0,0,0) 0 2px,rgba(0,0,0,.3) 2px 4px)}
+.fx::after{content:'';position:absolute;inset:0;
+  background:radial-gradient(120% 90% at 50% 50%,transparent 55%,rgba(0,0,0,.75))}
+.track{position:fixed;left:0;right:0;height:76px;z-index:21;pointer-events:none;
+  background:linear-gradient(rgba(255,255,255,0),rgba(255,255,255,.07),rgba(255,255,255,0));
+  animation:roll 7.5s linear infinite;mix-blend-mode:screen}
+@keyframes roll{0%{top:-80px}100%{top:100%}}
+.stage{position:relative;z-index:5;min-height:calc(100svh - 34px);display:flex;flex-direction:column;
+  justify-content:center;padding:clamp(18px,4vw,54px);animation:wob 9s ease-in-out infinite}
+@keyframes wob{0%,100%{transform:translateX(0)}23%{transform:translateX(-1.5px)}61%{transform:translateX(2px)}}
+.osd{display:flex;justify-content:space-between;font-size:clamp(1rem,2.1vw,1.35rem);
+  color:var(--fg);text-shadow:0 0 8px rgba(255,255,255,.25);margin-bottom:auto}
+.rec{display:inline-flex;align-items:center;gap:9px;color:var(--red)}
+.dot{width:12px;height:12px;border-radius:50%;background:var(--red);animation:bl 1.3s steps(1) infinite}
+@keyframes bl{50%{opacity:.15}}
+.mid{margin:auto 0}
+.who{font-size:clamp(1rem,2.2vw,1.4rem);color:#a09a8c;margin-bottom:6px}
+/* Chroma bleed: the same word in red and cyan, offset, behind the white one. */
+.t{position:relative;font-size:clamp(3.4rem,17vw,13rem);line-height:.82;font-weight:400;
+  text-transform:uppercase;letter-spacing:.01em}
+.t span{position:absolute;inset:0;mix-blend-mode:screen}
+.t .r{color:var(--red);transform:translate(-4px,2px);animation:j1 5s steps(1) infinite}
+.t .c{color:var(--cy);transform:translate(4px,-2px);animation:j2 5s steps(1) infinite}
+@keyframes j1{0%,92%{transform:translate(-4px,2px)}94%{transform:translate(-13px,2px)}96%{transform:translate(-2px,4px)}}
+@keyframes j2{0%,90%{transform:translate(4px,-2px)}93%{transform:translate(14px,-3px)}97%{transform:translate(2px,-5px)}}
+.sub{font-size:clamp(1rem,2.3vw,1.5rem);color:#a09a8c;margin-top:14px}
+.ctl{display:flex;gap:12px;flex-wrap:wrap;margin-top:clamp(20px,3.4vw,34px)}
+.k{display:inline-flex;align-items:center;gap:10px;padding:12px 22px;
+  border:2px solid var(--fg);color:var(--fg);text-decoration:none;
+  font-size:clamp(1rem,2.1vw,1.3rem);text-transform:uppercase;background:transparent;
+  cursor:pointer;font-family:inherit}
+.k:hover{background:var(--fg);color:var(--bg)}
+.k.on{border-color:var(--red);color:var(--red)}
+.k.on:hover{background:var(--red);color:var(--bg)}
+.tc{font-size:clamp(.95rem,2vw,1.25rem);color:#7a7466;margin-top:auto;padding-top:20px}
+/* The tape itself — the video, framed like a monitor. */
+.mon{position:fixed;inset:0;z-index:30;background:#000;display:none;place-items:center}
+.mon.on{display:grid}
+.mon .fr{position:relative;width:min(94vw,1320px);padding:0 0 min(52.8vw,742px)}
+.mon iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.mon .x{position:absolute;top:16px;right:18px;z-index:2}
+@media(prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+</head>
+<body>
+<div class="devbar"><span>Direction <b>E</b> — VHS</span><a href="index.html">← old site</a><a href="home-demos.html">all eight</a></div>
+<div class="fx"></div><div class="track"></div>
+
+<div class="stage">
+  <div class="osd">
+    <span class="rec"><span class="dot"></span>REC</span>
+    <span id="tc2">SP · 00:00:00</span>
+  </div>
+
+  <div class="mid">
+    <div class="who">MIKE LUZ ▸ MERCY WIZARD</div>
+    <h1 class="t"><span class="r" aria-hidden="true">Grains</span><span class="c" aria-hidden="true">Grains</span>Grains</h1>
+    <div class="sub">NEW SINGLE ▸ OUT NOW</div>
+    <div class="ctl">
+      <a class="k" href="https://symphony.to/mercywizard/bhu4vkjnrcyg" target="_blank" rel="noopener">▶ PLAY</a>
+      <button class="k on" id="watch" type="button">■ TAPE</button>
+    </div>
+  </div>
+
+  <div class="tc">ALL LINKS ▸ <a href="https://linktr.ee/mercywizard" target="_blank" rel="noopener" style="color:inherit">LINKTR.EE/MERCYWIZARD</a></div>
+</div>
+
+<div class="mon" id="mon"><div class="fr" id="fr"></div><button class="k on x" id="close" type="button">EJECT</button></div>
+
+<script>
+const YT = 'UKcZJ31ZHH0';
+// A timecode that actually counts — the detail that sells the format.
+const t0 = Date.now(), pad = n => String(n).padStart(2, '0');
+setInterval(() => {
+  const s = (Date.now() - t0) / 1000;
+  document.getElementById('tc2').textContent =
+    'SP · ' + pad(s / 3600 | 0) + ':' + pad((s / 60 | 0) % 60) + ':' + pad(s % 60 | 0);
+}, 200);
+
+const mon = document.getElementById('mon'), fr = document.getElementById('fr');
+document.getElementById('watch').addEventListener('click', () => {
+  fr.innerHTML = '<iframe src="https://www.youtube-nocookie.com/embed/' + YT + '?autoplay=1&rel=0" allow="autoplay; encrypted-media" allowfullscreen title="Grains"></iframe>';
+  mon.classList.add('on');
+});
+const shut = () => { mon.classList.remove('on'); fr.innerHTML = ''; };   // kill it or it plays on behind
+document.getElementById('close').addEventListener('click', shut);
+addEventListener('keydown', e => { if (e.key === 'Escape') shut(); });
+</script>
+</body>
+</html>

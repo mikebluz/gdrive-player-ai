@@ -118,6 +118,11 @@ h2.wt{font-size:15px;font-weight:700;letter-spacing:.13em;text-transform:upperca
   margin-bottom:10px}
 /* Small muted footnote lines. Was repeated inline in three windows. */
 .note{font-size:11px;color:var(--mute);margin-bottom:4px}
+/* Tool list. The description sits INLINE after the name rather than on its
+   own line: four extra lines is 72px, and this column does not have it. */
+.tl p{margin-bottom:4px}
+.tl p:last-child{margin-bottom:0}
+.tl .d{font-size:11px;color:var(--mute)}
 p{margin-bottom:7px}
 a{color:var(--link)}
 a:hover{color:var(--link-h)}
@@ -155,7 +160,9 @@ td .c{display:block;font-size:10px;color:var(--mute)}
    the old site inverted it for a dark page — here the window interior is light
    so it goes in as-is, with multiply dropping the white out onto the paper so
    there is no pale rectangle around it. */
-.wordmark{display:block;width:100%;height:auto;mix-blend-mode:multiply}
+/* max-width so widening the column does not simply make this taller —
+   the wordmark grew with the window and ate the space the widening freed. */
+.wordmark{display:block;width:100%;max-width:264px;height:auto;mix-blend-mode:multiply}
 /* The live photo. The file is SQUARE and the crop is done here rather than
    offline, so the framing stays adjustable — object-position pulls the visible
    band up off the floor and onto the head and guitar. */
@@ -259,7 +266,7 @@ dl.f dd{font-weight:700}
   </div>
 
   <!-- MERCY WIZARD — the recording identity. Sits with GRAINS and LINKS. -->
-  <div class="win" id="w-wiz" data-x="1090" data-y="48" data-w="286">
+  <div class="win" id="w-wiz" data-x="1064" data-y="48" data-w="330">
     <div class="tb"><span class="t">MERCY WIZARD.txt</span><button data-close>✕</button></div>
     <div class="body">
       <h2 class="wt"><img class="wordmark" src="img/mercywizard-banner.jpg"
@@ -306,19 +313,27 @@ dl.f dd{font-weight:700}
        sales hero for things that are not for sale, an unfilled "why these
        exist" block, and the same four items twice (cards, then an index
        table). A folder of tools on a desktop is what this already was. -->
-  <div class="win" id="w-tools" data-x="1090" data-y="584" data-w="286">
+  <div class="win" id="w-tools" data-x="1064" data-y="566" data-w="330">
     <div class="tb"><span class="t">TOOLS.exe</span><button data-close>✕</button></div>
     <div class="body">
       <h2 class="wt">Tools</h2>
-      <p><a href="bloops.html">▸ Bloops</a></p>
-      <p><a href="tracks.html">▸ Tracks</a></p>
-      <p><a href="player.html">▸ Player</a></p>
-      <p><a href="game.html">▸ Game</a></p>
+      <p class="note">I am also a software engineer and enjoy tinkering with
+         web-based music tools.</p>
+      <div class="tl">
+        <p><a href="bloops.html" target="_blank" rel="noopener">▸ Bloops</a>
+           <span class="d">generative synth &amp; sequencer</span></p>
+        <p><a href="tracks.html" target="_blank" rel="noopener">▸ Tracks</a>
+           <span class="d">multitrack recorder for quick demos</span></p>
+        <p><a href="player.html" target="_blank" rel="noopener">▸ Player</a>
+           <span class="d">playlists backed by Google Drive</span></p>
+        <p><a href="game.html" target="_blank" rel="noopener">▸ Game</a>
+           <span class="d">bricks that compose as you play</span></p>
+      </div>
     </div>
   </div>
 
   <!-- LINKS -->
-  <div class="win" id="w-links" data-x="1090" data-y="383" data-w="286">
+  <div class="win" id="w-links" data-x="1064" data-y="369" data-w="330">
     <div class="tb"><span class="t">LINKS</span><button data-close>✕</button></div>
     <div class="body">
       <p><a href="https://mercywizard.bandcamp.com" target="_blank" rel="noopener">▸ Bandcamp</a></p>

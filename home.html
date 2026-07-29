@@ -21,7 +21,6 @@
   <b>Mike Luz</b>
   <nav>
     <a href="#music" class="on">Music</a>
-    <a href="#video">Video</a>
     <a href="#live">Live</a>
     <a href="#press">Press</a>
     <a href="#book">Booking</a>
@@ -30,20 +29,29 @@
 
 <!-- HERO — a promoter decides in about eight seconds. Name, what it sounds
      like, where you are, and one button that plays something. -->
-<header class="hero"><div class="wrap">
-  <div class="eyebrow">Mercy Wizard</div>
-  <h1>Mike Luz</h1>
-  <p class="said">
-    <!-- TODO: one sentence a promoter can repeat to someone else. Genre, feel,
-         and the format you play — "solo electric guitar and loops", "four-piece",
-         "one man and a laptop". This line does more work than anything else here. -->
-    <b>[ One line: what it sounds like and how you play it. ]</b>
-    Based in <b>[ city ]</b>.
-  </p>
-  <div class="acts">
-    <a class="btn p" href="https://symphony.to/mercywizard/bhu4vkjnrcyg" target="_blank" rel="noopener">▸ Listen</a>
-    <a class="btn" href="#video">Watch live</a>
-    <a class="btn" href="#book">Booking</a>
+<header class="hero"><div class="wrap hero-grid">
+  <div>
+    <div class="eyebrow">Mercy Wizard</div>
+    <h1>Mike Luz</h1>
+    <p class="said">
+      <!-- TODO: one sentence a promoter can repeat to someone else. Genre, feel,
+           and the format you play — "solo electric guitar and loops", "four-piece",
+           "one man and a laptop". This line does more work than anything else here. -->
+      <b>[ One line: what it sounds like and how you play it. ]</b>
+      Based in <b>[ city ]</b>.
+    </p>
+    <div class="acts">
+      <a class="btn p" href="https://symphony.to/mercywizard/bhu4vkjnrcyg" target="_blank" rel="noopener">▸ Listen</a>
+      <a class="btn" href="#book">Booking</a>
+    </div>
+  </div>
+  <div>
+    <div class="vid" id="vid"></div>
+    <p class="hero-note">
+      <!-- TODO: swap for live footage when you have it — a promoter wants to see a
+           room respond, and a phone recording of a good night beats a polished promo. -->
+      “Grains” — official video. Doubles as the press shot until there's live footage.
+    </p>
   </div>
 </div></header>
 
@@ -58,18 +66,6 @@
     <br /><br />
     Until then: <a href="https://symphony.to/mercywizard/bhu4vkjnrcyg" target="_blank" rel="noopener" style="border-bottom:1px solid var(--ac)">Grains — stream it →</a>
   </div>
-</div></section>
-
-<!-- VIDEO — LIVE footage if it exists. A studio video proves you can record;
-     live footage proves you can hold a room, which is the actual question. -->
-<section class="sec" id="video"><div class="wrap">
-  <div class="sec-h"><h2>Video</h2><span>Live footage sells the show</span></div>
-  <div class="vid" id="vid"></div>
-  <p class="todo" style="margin-top:16px">
-    <b>Swap for live footage when you have it</b>
-    This is currently the official video for Grains. A promoter mostly wants to see a room
-    respond — even a phone recording of a good night beats a polished promo here.
-  </p>
 </div></section>
 
 <!-- LIVE — past shows are the credibility. Upcoming are the reason to act. -->

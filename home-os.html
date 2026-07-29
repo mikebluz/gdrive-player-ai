@@ -132,6 +132,15 @@ td .c{display:block;font-size:10px;color:var(--mute)}
 #shows .more button{background:none;border:0;font:inherit;font-size:11px;
   color:var(--link);cursor:pointer;padding:3px 8px}
 #shows .more button:hover{color:var(--link-h);text-decoration:underline}
+/* The live photo. The file is SQUARE and the crop is done here rather than
+   offline, so the framing stays adjustable — object-position pulls the visible
+   band up off the floor and onto the head and guitar. */
+/* height:auto is REQUIRED, not tidiness — the height="560" attribute is a
+   presentational hint that pins the box, and aspect-ratio only computes when
+   one dimension is auto. Without it the square renders uncropped at full
+   height. The attributes stay so the box is reserved before the file loads. */
+.shot{display:block;width:100%;height:auto;aspect-ratio:16/9;object-fit:cover;
+  object-position:50% 3%;background:var(--bevel);margin-bottom:10px}
 .vid{position:relative;width:100%;padding:56.25% 0 0;background:#000}
 .vid button{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;cursor:pointer;padding:0}
 .vid img,.vid iframe{position:absolute;inset:0;width:100%;height:100%;border:0;object-fit:cover}
@@ -192,9 +201,11 @@ dl.f dd{font-weight:700}
 
   <!-- MIKE LUZ — the performing identity. Sits with LIVE and BOOKING, which
        are the two windows that act on it. -->
-  <div class="win" id="w-luz" data-x="104" data-y="100" data-w="272">
+  <div class="win" id="w-luz" data-x="104" data-y="48" data-w="272">
     <div class="tb"><span class="t px">MIKE LUZ.txt</span><button data-close>✕</button></div>
     <div class="body">
+      <img class="shot" src="img/mikeluz-live.jpg" width="560" height="560"
+           alt="Mike Luz playing acoustic guitar and singing into a microphone at a show">
       <h2 class="wt px">MIKE LUZ</h2>
       <p>Singer-songwriter. Plays solo, live.</p>
       <div class="todo">
@@ -234,7 +245,7 @@ dl.f dd{font-weight:700}
   </div>
 
   <!-- BOOKING -->
-  <div class="win" id="w-book" data-x="104" data-y="404" data-w="320">
+  <div class="win" id="w-book" data-x="104" data-y="500" data-w="320">
     <div class="tb"><span class="t px">BOOKING.exe</span><button data-close>✕</button></div>
     <div class="body">
       <h2 class="wt px">Book a show</h2>

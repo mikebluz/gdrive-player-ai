@@ -137,10 +137,16 @@ td{padding:4px 6px;border-bottom:1px solid var(--chrome)}
 td.d{white-space:nowrap;color:var(--mute)}
 td.n{text-align:right;color:var(--link-h);font-size:10px;white-space:nowrap}
 td .c{display:block;font-size:10px;color:var(--mute)}
-/* Past shows stay listed but step back — only the venue changes, from ink to
-   mute, since the date and city are already mute. Dimming further (--mute-2,
-   or a row opacity) drops 10px text to ~3.5:1 on paper, under AA. */
+/* Past shows stay listed but step back. The separation is made by LIFTING the
+   upcoming block — a faint wash, bold venue, full-strength date — rather than
+   by pushing past further down: past is already at the AA floor, since
+   dimming 10px city text past --mute lands it around 3.5:1 on paper. */
 #shows tr.past td{color:var(--mute)}
+/* :not(.past) alone also matched the expand-toggle row, which is neither
+   upcoming nor past — it washed green and read as a fourth show. */
+#shows tr:not(.past):not(.more) td{background:rgba(44,117,80,.085);font-weight:700}
+#shows tr:not(.past):not(.more) td.d{color:var(--ink)}
+#shows tr:not(.past):not(.more) .c{font-weight:400}
 #shows .more td{border-bottom:0;padding:7px 6px 0;text-align:center}
 #shows .more button{background:none;border:0;font:inherit;font-size:11px;
   color:var(--link);cursor:pointer;padding:3px 8px}
@@ -392,9 +398,8 @@ function renderShows() {
   const shown = allPast ? past : past.slice(0, PAST_CAP);
   let html = up.concat(shown).map(rowHtml).join('');
   if (past.length > PAST_CAP) {
-    const n = past.length - PAST_CAP;
     html += `<tr class="more"><td colspan="3"><button type="button">` +
-            (allPast ? '− fewer' : `＋ ${n} earlier show${n === 1 ? '' : 's'}`) +
+            (allPast ? '− fewer' : '＋ earlier shows') +
             `</button></td></tr>`;
   }
   st.innerHTML = html;

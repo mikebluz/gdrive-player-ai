@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mike Luz — D / brutalist</title>
+<style>
+/* ── DIRECTION D: BRUTALIST ───────────────────────────────────────────────
+   No hero image, no gradient, no rounded anything. Type at a scale that is
+   almost rude, hairline rules, links as raw underlined text. Loads instantly
+   and commits to a position. The video is there — but you have to ask. */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#000;--fg:#fff;--ac:#ff3b1f}
+body{background:var(--bg);color:var(--fg);min-height:100svh;
+  font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;overflow-x:hidden;
+  display:flex;flex-direction:column}
+a{color:inherit}
+.devbar{padding:6px 12px;border-bottom:1px solid #222;color:#666;font-size:11px;
+  display:flex;gap:16px;flex-wrap:wrap;letter-spacing:.06em;text-transform:uppercase}
+.devbar a{color:var(--ac)}
+.top{display:flex;justify-content:space-between;align-items:baseline;gap:16px;
+  padding:16px clamp(12px,3vw,26px);border-bottom:1px solid var(--fg);flex-wrap:wrap}
+.top b{font-size:.82rem;letter-spacing:.3em;text-transform:uppercase;font-weight:700}
+.top span{font-size:.72rem;letter-spacing:.18em;text-transform:uppercase;color:#888}
+/* THE WORD. Edge to edge, clipped by the viewport, no apology. */
+.mono{flex:1;display:flex;flex-direction:column;justify-content:center;
+  padding:clamp(14px,3vw,30px) clamp(12px,3vw,26px)}
+.kick{font-size:clamp(.68rem,1.5vw,.8rem);letter-spacing:.34em;text-transform:uppercase;
+  color:var(--ac);margin-bottom:clamp(8px,1.6vw,14px)}
+.word{font-size:clamp(4rem,20.5vw,17rem);line-height:.78;font-weight:700;
+  letter-spacing:-.045em;text-transform:uppercase;margin-left:-.02em;
+  overflow:hidden}
+.word span{display:inline-block;transition:transform .5s cubic-bezier(.2,.8,.2,1),color .25s}
+.word:hover span{color:var(--ac)}
+.word span:hover{transform:translateY(-.06em) rotate(-2deg)}
+.meta{display:flex;gap:clamp(14px,3vw,34px);flex-wrap:wrap;align-items:baseline;
+  margin-top:clamp(16px,3vw,30px);border-top:1px solid var(--fg);padding-top:14px}
+.meta a{font-size:clamp(1rem,2.6vw,1.5rem);font-weight:700;text-decoration:none;
+  text-transform:uppercase;letter-spacing:-.01em;border-bottom:3px solid var(--fg);
+  padding-bottom:2px}
+.meta a:hover{color:var(--ac);border-color:var(--ac)}
+.meta .x{font-size:.72rem;letter-spacing:.2em;text-transform:uppercase;color:#777;margin-left:auto}
+/* The video is opt-in — it takes over the whole screen when you ask for it. */
+.play{position:fixed;inset:0;z-index:20;background:#000;display:none;place-items:center}
+.play.on{display:grid}
+.play .fr{position:relative;width:min(94vw,1400px);padding:0 0 min(52.8vw,787px);}
+.play iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.play button{position:absolute;top:14px;right:16px;z-index:2;background:#000;color:#fff;
+  border:1px solid #fff;padding:8px 14px;font:700 .74rem/1 Helvetica,Arial,sans-serif;
+  letter-spacing:.2em;text-transform:uppercase;cursor:pointer}
+.play button:hover{background:var(--ac);border-color:var(--ac)}
+.foot{padding:12px clamp(12px,3vw,26px);border-top:1px solid #222;
+  display:flex;gap:14px;flex-wrap:wrap;font-size:.7rem;letter-spacing:.16em;
+  text-transform:uppercase;color:#666}
+.foot a{text-decoration:none}
+.foot a:hover{color:var(--ac)}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="devbar"><span>Direction D — brutalist</span><a href="index.html">← old site</a><a href="home-demos.html">all four</a></div>
+
+<div class="top">
+  <b>Mike Luz</b>
+  <span>Mercy Wizard</span>
+</div>
+
+<main class="mono">
+  <div class="kick">New single ——— out now</div>
+  <h1 class="word" id="w"></h1>
+  <div class="meta">
+    <a href="https://symphony.to/mercywizard/bhu4vkjnrcyg" target="_blank" rel="noopener">Listen</a>
+    <a href="#" id="watch">Watch</a>
+    <a href="https://linktr.ee/mercywizard" target="_blank" rel="noopener">Everything else</a>
+    <span class="x">2026</span>
+  </div>
+</main>
+
+<div class="foot">
+  <a href="bloops.html">Bloops</a>
+  <a href="artwork.html">Artwork</a>
+  <a href="https://mercywizard.bandcamp.com/merch" target="_blank" rel="noopener">Merch</a>
+  <a href="https://linktr.ee/mikebuys" target="_blank" rel="noopener">Guitars</a>
+  <a href="https://instagram.com/mercywizard" target="_blank" rel="noopener">Instagram</a>
+</div>
+
+<div class="play" id="play"><div class="fr" id="fr"></div><button type="button" id="close">Close</button></div>
+
+<script>
+const YT = 'UKcZJ31ZHH0';
+// Letter-by-letter so each one can be nudged on hover — the only ornament here.
+[...'GRAINS'].forEach(ch => { const s = document.createElement('span'); s.textContent = ch; document.getElementById('w').appendChild(s); });
+
+const play = document.getElementById('play'), fr = document.getElementById('fr');
+document.getElementById('watch').addEventListener('click', e => {
+  e.preventDefault();
+  fr.innerHTML = '<iframe src="https://www.youtube-nocookie.com/embed/' + YT + '?autoplay=1&rel=0" allow="autoplay; encrypted-media" allowfullscreen title="Grains"></iframe>';
+  play.classList.add('on');
+});
+const shut = () => { play.classList.remove('on'); fr.innerHTML = ''; };   // kill the iframe or it keeps playing
+document.getElementById('close').addEventListener('click', shut);
+addEventListener('keydown', e => { if (e.key === 'Escape') shut(); });
+</script>
+</body>
+</html>

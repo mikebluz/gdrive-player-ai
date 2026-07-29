@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mike Luz — B / terminal</title>
+<style>
+/* ── DIRECTION B: TERMINAL ────────────────────────────────────────────────
+   You type to get around. Leans on the half of you that writes software, and
+   is about as far from a Squarespace template as a page gets. Every command
+   is real. */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0a0e0a;--fg:#c8f7c5;--dim:#4a7a4a;--ac:#7dfc7d;--warn:#f6ad55}
+body{background:var(--bg);color:var(--fg);min-height:100svh;
+  font:14px/1.62 'SF Mono',Menlo,Consolas,'Liberation Mono',monospace;
+  padding:0;overflow-x:hidden}
+/* Scanlines + a faint CRT glow. Cheap, and it does a lot of work. */
+body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9;
+  background:repeating-linear-gradient(rgba(0,0,0,0) 0 2px,rgba(0,0,0,.22) 2px 4px)}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:8;
+  background:radial-gradient(70% 60% at 50% 40%,rgba(125,252,125,.055),transparent 72%)}
+.devbar{padding:6px 14px;border-bottom:1px solid #1b2a1b;color:var(--dim);font-size:12px;
+  display:flex;gap:16px;flex-wrap:wrap}
+.devbar a{color:var(--warn)}
+.term{padding:22px clamp(14px,4vw,40px) 90px;max-width:900px}
+.l{white-space:pre-wrap;word-break:break-word}
+.dim{color:var(--dim)}
+.ac{color:var(--ac)}
+.warn{color:var(--warn)}
+.big{color:var(--ac);font-weight:700;letter-spacing:.04em}
+a{color:var(--ac)}
+.in{display:flex;gap:9px;align-items:baseline;margin-top:6px}
+.in input{flex:1;min-width:0;background:transparent;border:0;outline:0;
+  color:var(--fg);font:inherit;caret-color:var(--ac)}
+.cur{display:inline-block;width:8px;height:15px;background:var(--ac);
+  animation:bl 1.05s steps(1) infinite;vertical-align:-2px}
+@keyframes bl{50%{opacity:0}}
+.bar{display:inline-block;color:var(--dim)}
+.hit{color:var(--ac);text-decoration:none;border-bottom:1px dotted var(--dim);cursor:pointer}
+.hit:hover{border-bottom-style:solid}
+@media(prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+</head>
+<body>
+<div class="devbar"><span>Direction <b>B</b> — terminal</span><a href="index.html">← old site</a><a href="home-demos.html">all four</a></div>
+<div class="term" id="term"></div>
+<script>
+const T = document.getElementById('term');
+const line = (html, cls) => { const d = document.createElement('div'); d.className = 'l ' + (cls || ''); d.innerHTML = html; T.appendChild(d); scrollTo(0, document.body.scrollHeight); return d; };
+const esc = s => String(s).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+
+// Type a line out rather than printing it — the boot is most of the character.
+function type(text, cls, speed) {
+  return new Promise(res => {
+    const d = line('', cls); let i = 0;
+    (function step() {
+      d.innerHTML = esc(text.slice(0, ++i));
+      if (i < text.length) setTimeout(step, speed || 14); else res();
+    })();
+  });
+}
+
+const SINGLE = { title: 'Grains', stream: 'https://symphony.to/mercywizard/bhu4vkjnrcyg', yt: 'UKcZJ31ZHH0' };
+
+const CMDS = {
+  help:   () => line('commands: <span class="ac">listen</span>  <span class="ac">watch</span>  <span class="ac">shop</span>  <span class="ac">code</span>  <span class="ac">who</span>  <span class="ac">links</span>  <span class="ac">clear</span>'),
+  who:    () => { line('mike luz'); line('records as <span class="ac">mercy wizard</span>. builds browser instruments. sells guitars, merch, artwork.', 'dim'); },
+  listen: () => { line('opening <span class="ac">' + SINGLE.title + '</span> …'); open(SINGLE.stream, '_blank', 'noopener'); },
+  watch:  () => { line('opening video …'); open('https://youtu.be/' + SINGLE.yt, '_blank', 'noopener'); },
+  shop:   () => { line('guitars   <a href="https://linktr.ee/mikebuys" target="_blank" rel="noopener">linktr.ee/mikebuys</a>'); line('merch     <a href="https://mercywizard.bandcamp.com/merch" target="_blank" rel="noopener">bandcamp</a>'); line('artwork   <a href="artwork.html">artwork.html</a>'); },
+  code:   () => { line('bloops    <a href="bloops.html">a generative instrument</a>'); line('player    <a href="player.html">drive-backed player</a>'); line('tracks    <a href="tracks.html">multitrack</a>'); line('game      <a href="game.html">game</a>'); },
+  links:  () => { line('youtube   <a href="https://www.youtube.com/@mercywizard-music" target="_blank" rel="noopener">@mercywizard-music</a>'); line('instagram <a href="https://instagram.com/mercywizard" target="_blank" rel="noopener">@mercywizard</a>'); line('bandcamp  <a href="https://mercywizard.bandcamp.com" target="_blank" rel="noopener">mercywizard</a>'); line('substack  <a href="https://open.substack.com/pub/mercywizard" target="_blank" rel="noopener">mercywizard</a>'); },
+  clear:  () => { T.innerHTML = ''; prompt_(); return true; },
+};
+
+function run(raw) {
+  const cmd = raw.trim().toLowerCase();
+  if (!cmd) return;
+  if (CMDS[cmd]) { if (CMDS[cmd]() === true) return true; }
+  else line('<span class="warn">' + esc(cmd) + '</span>: not a command — try <span class="ac">help</span>');
+}
+
+function prompt_() {
+  const w = document.createElement('div');
+  w.className = 'in';
+  w.innerHTML = '<span class="ac">$</span>';
+  const i = document.createElement('input');
+  i.setAttribute('autocomplete', 'off'); i.setAttribute('spellcheck', 'false');
+  i.setAttribute('aria-label', 'command');
+  w.appendChild(i); T.appendChild(w); i.focus();
+  scrollTo(0, document.body.scrollHeight);
+  i.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const v = i.value;
+    w.replaceWith(Object.assign(document.createElement('div'), { className: 'l', innerHTML: '<span class="ac">$</span> ' + esc(v) }));
+    if (run(v) !== true) prompt_();
+  });
+  // Clicking anywhere gets you back to the cursor — a terminal you cannot type
+  // into is a poster.
+  document.body.onclick = (e) => { if (!e.target.closest('a')) i.focus(); };
+}
+
+(async function boot() {
+  await type('mikeluz.sh — v2026.7', 'dim', 9);
+  line('&nbsp;');
+  await type('$ whoami', '', 26);
+  line('mike luz <span class="dim">— records, instruments, objects</span>');
+  line('&nbsp;');
+  await type('$ ls releases/ --new', '', 20);
+  line('<span class="big">' + SINGLE.title.toUpperCase() + '</span>  <span class="warn">[NEW SINGLE]</span>');
+  line('<span class="bar">▸ </span><span class="hit" onclick="CMDS.listen()">listen</span>   <span class="hit" onclick="CMDS.watch()">watch the video</span>', 'dim');
+  line('&nbsp;');
+  line('type <span class="ac">help</span> for everything else', 'dim');
+  line('&nbsp;');
+  prompt_();
+})();
+</script>
+</body>
+</html>

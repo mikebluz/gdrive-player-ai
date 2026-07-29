@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Four directions — Mike Luz</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:#08080e;color:#e8e8f4;min-height:100svh;
+  font-family:'Inter',-apple-system,'Segoe UI',sans-serif;padding:0 0 60px}
+.bar{padding:7px 14px;border-bottom:1px solid #1e1e30;color:#8a8aa8;font-size:.76rem;
+  display:flex;gap:16px;flex-wrap:wrap}
+.bar a{color:#f6ad55}
+.wrap{max-width:1080px;margin:0 auto;padding:44px 22px}
+h1{font-size:clamp(1.8rem,4.4vw,2.6rem);font-weight:800;letter-spacing:-.03em;margin-bottom:10px}
+.lede{color:#9a9ab4;line-height:1.62;max-width:60ch;margin-bottom:36px}
+.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr));gap:18px}
+.c{display:block;text-decoration:none;color:inherit;border:1px solid #1e1e30;border-radius:14px;
+  padding:24px 22px;background:linear-gradient(165deg,#10101c,#0b0b14);transition:.2s}
+.c:hover{transform:translateY(-3px);border-color:var(--a)}
+.k{font-size:.7rem;letter-spacing:.22em;text-transform:uppercase;color:var(--a);
+  font-weight:700;margin-bottom:12px}
+.c h2{font-size:1.24rem;font-weight:750;margin-bottom:9px;letter-spacing:-.015em}
+.c p{font-size:.9rem;line-height:1.6;color:#9a9ab4}
+.c em{display:block;margin-top:14px;font-style:normal;font-size:.8rem;color:#6b6b85}
+</style>
+</head>
+<body>
+<div class="bar"><span>Four directions for the new homepage</span><a href="index.html">← the current homepage</a></div>
+<div class="wrap">
+  <h1>Same single. Four different pages.</h1>
+  <p class="lede">
+    Each is a working page, not a mockup — click into them, they do what they say.
+    They are deliberately far apart, so pick the one you want to move toward and
+    we sharpen from there (or take one thing from each).
+  </p>
+  <div class="g">
+    <a class="c" href="home-a.html" style="--a:#9f7aea">
+      <div class="k">A</div>
+      <h2>The page is an instrument</h2>
+      <p>Generates music on arrival; the type is driven by what's sounding. Space re-rolls it. The one direction no other musician can copy — it's your software.</p>
+      <em>Needs sound on · try space and m</em>
+    </a>
+    <a class="c" href="home-b.html" style="--a:#7dfc7d">
+      <div class="k">B</div>
+      <h2>Terminal</h2>
+      <p>You type to get around: <code>listen</code>, <code>watch</code>, <code>shop</code>, <code>code</code>, <code>who</code>. Scanlines, a real prompt, no buttons anywhere.</p>
+      <em>Every command works · try help</em>
+    </a>
+    <a class="c" href="home-c.html" style="--a:#c8352b">
+      <div class="k">C</div>
+      <h2>Hand-made</h2>
+      <p>Your drawn wordmark and the Air Bath artwork, taped to a sheet of paper. Cut-out letters, nothing quite square, nothing centred.</p>
+      <em>Uses art you already have</em>
+    </a>
+    <a class="c" href="home-d.html" style="--a:#ff3b1f">
+      <div class="k">D</div>
+      <h2>Brutalist</h2>
+      <p>No image, no gradient, no rounded corners. GRAINS at 17rem, hairline rules, links as raw underlined text. The video takes the whole screen when asked.</p>
+      <em>Loads instantly · hover the letters</em>
+    </a>
+  </div>
+</div>
+</body>
+</html>

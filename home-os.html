@@ -55,8 +55,14 @@
 html,body{height:100%}
 body{
   background:var(--desk);color:var(--ink);overflow:hidden;
-  font:13px/1.55 'SF Mono',Menlo,Consolas,'Courier New',monospace;
-  -webkit-font-smoothing:none;
+  font:13px/1.62 ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;
+  /* Body text is ANTIALIASED. The page used -webkit-font-smoothing:none
+     everywhere, which is correct for a pixel font and actively harmful for
+     paragraphs — it strips every subpixel from the curves and leaves prose
+     jagged and slow to read. The aliasing now applies only to .px, which is
+     the one place it belongs. */
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
 }
 /* The wallpaper. On its own FIXED layer rather than on body, because the
    mobile branch lets body scroll — a background there would scroll with the
@@ -68,7 +74,10 @@ body::before{
   background:var(--desk) url(img/wallpaper-maine.png) 30% center/cover no-repeat;
   image-rendering:pixelated;image-rendering:crisp-edges;
 }
-.px{font-family:'Silkscreen','Courier New',monospace}
+/* Silkscreen is a PIXEL font — antialiasing blurs the very edges it is made
+   of, so the aliasing that hurt the prose is exactly right here. */
+.px{font-family:'Silkscreen','Courier New',monospace;
+  -webkit-font-smoothing:none;-moz-osx-font-smoothing:auto}
 
 /* ── TASKBAR ───────────────────────────────────────────────────────────── */
 .bar{position:fixed;inset:0 0 auto 0;height:30px;z-index:900;display:flex;align-items:center;
@@ -132,6 +141,11 @@ td .c{display:block;font-size:10px;color:var(--mute)}
 #shows .more button{background:none;border:0;font:inherit;font-size:11px;
   color:var(--link);cursor:pointer;padding:3px 8px}
 #shows .more button:hover{color:var(--link-h);text-decoration:underline}
+/* The handwritten wordmark, from the old site. It is black ink on WHITE, and
+   the old site inverted it for a dark page — here the window interior is light
+   so it goes in as-is, with multiply dropping the white out onto the paper so
+   there is no pale rectangle around it. */
+.wordmark{display:block;width:100%;height:auto;mix-blend-mode:multiply}
 /* The live photo. The file is SQUARE and the crop is done here rather than
    offline, so the framing stays adjustable — object-position pulls the visible
    band up off the floor and onto the head and guitar. */
@@ -226,7 +240,8 @@ dl.f dd{font-weight:700}
   <div class="win" id="w-wiz" data-x="1090" data-y="48" data-w="286">
     <div class="tb"><span class="t px">MERCY WIZARD.txt</span><button data-close>✕</button></div>
     <div class="body">
-      <h2 class="wt px">MERCY WIZARD</h2>
+      <h2 class="wt"><img class="wordmark" src="img/mercywizard-banner.jpg"
+           width="560" height="126" alt="Mercy Wizard"></h2>
       <p>Mike's long-running recording handle.</p>
       <div class="hr"></div>
       <p>Eclectic and varied, everything from electronic indie dance music to raw acoustic demos.</p>

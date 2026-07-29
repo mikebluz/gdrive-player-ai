@@ -55,6 +55,7 @@ a { color: inherit; text-decoration: none; }
   background: transparent; border: 1px solid var(--line); color: var(--dim); border-radius: 4px; }
 .skinpick button:hover { color: var(--fg); }
 .skinpick button.on { color: var(--bg); background: var(--ac); border-color: var(--ac); }
+.wmpick { margin-left: 10px; padding-left: 10px; border-left: 1px solid var(--line); }
 
 /* ---- MASTHEAD ------------------------------------------------------------ */
 .mast { border-bottom: 2px solid var(--hard); }
@@ -200,3 +201,18 @@ a { color: inherit; text-decoration: none; }
   .btn { min-height: 50px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* ---- WORDMARK ------------------------------------------------------------
+   The name gets its own face; everything else stays in the UI sans, because a
+   display font is a signature and a page set entirely in one is a poster.
+
+   LAST in the file on purpose: it has to beat `.hero h1 { font-weight: 800 }`
+   above AND whatever the active skin says, or a display face gets a synthetic
+   800 smeared over it. `--wordmark` is unset by default, so with no choice
+   made both fall back to the body stack and nothing external is fetched. */
+.mast b, .hero h1 { font-family: var(--wordmark, inherit); }
+.hero h1, .mast b { font-weight: var(--wordmark-w, 800); }
+/* Display faces run wide; keep the name on one line and let it shrink to fit
+   rather than breaking "Mike Luz" across two. */
+.hero h1 { white-space: nowrap; }
+@media (max-width: 520px) { .hero h1 { white-space: normal; } }

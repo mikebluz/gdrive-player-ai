@@ -7,6 +7,9 @@
 <meta name="description" content="Mike Luz — records as Mercy Wizard. Listen, watch, live dates and booking." />
 <link rel="stylesheet" href="css/promo.css?v=DEPLOYVER" />
 <link rel="stylesheet" id="skin" href="" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" id="wm-font" href="" />
 </head>
 <body>
 
@@ -16,6 +19,7 @@
   <a href="index.html">← current homepage</a>
   <a href="home-demos.html">the twelve demos</a>
   <span class="skinpick" id="skinpick"></span>
+  <span class="skinpick wmpick" id="wmpick"></span>
 </div>
 <!-- ══ END TEMPORARY ═══════════════════════════════════════════════════════ -->
 
@@ -144,6 +148,41 @@
   });
   let saved = ''; try { saved = localStorage.getItem('mlskin') || ''; } catch (e) {}
   set(SKINS.some(s2 => s2[0] === saved) ? saved : '');
+})();
+
+// ══ TEMPORARY — wordmark font picker. Goes with the dev strip. ═══════════
+// Fonts load ON SELECTION, not up front: six display faces preloaded would
+// cost more than the rest of the page combined, and five of them are always
+// going to be the wrong ones.
+(function () {
+  const FONTS = [
+    ['',                 '',                       'Default', ''],
+    ['Anton',            'Anton',                  'Anton',   '400'],   // poster condensed
+    ['Bebas Neue',       'Bebas+Neue',             'Bebas',   '400'],   // gig-poster caps
+    ['Syne',             'Syne:wght@700;800',      'Syne',    '800'],   // arty, contemporary
+    ['Instrument Serif', 'Instrument+Serif',       'Instr.',  '400'],   // editorial serif
+    ['Space Grotesk',    'Space+Grotesk:wght@700', 'Grotesk', '700'],   // technical
+    ['Alfa Slab One',    'Alfa+Slab+One',          'Slab',    '400'],   // heavy vintage slab
+  ];
+  const link = document.getElementById('wm-font'), pick = document.getElementById('wmpick');
+  const set = (fam, url, w) => {
+    link.href = url ? 'https://fonts.googleapis.com/css2?family=' + url + '&display=swap' : '';
+    document.documentElement.style.setProperty('--wordmark', fam ? "'" + fam + "'" : '');
+    document.documentElement.style.setProperty('--wordmark-w', w || '');
+    if (!fam) { document.documentElement.style.removeProperty('--wordmark');
+                document.documentElement.style.removeProperty('--wordmark-w'); }
+    try { localStorage.setItem('mlwm', fam); } catch (e) {}
+    [...pick.children].forEach(b => b.classList.toggle('on', b.dataset.f === fam));
+  };
+  FONTS.forEach(([fam, url, label, w]) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = label; b.dataset.f = fam;
+    b.addEventListener('click', () => set(fam, url, w));
+    pick.appendChild(b);
+  });
+  let saved = ''; try { saved = localStorage.getItem('mlwm') || ''; } catch (e) {}
+  const f = FONTS.find(x => x[0] === saved) || FONTS[0];
+  set(f[0], f[1], f[3]);
 })();
 // ══ END TEMPORARY ════════════════════════════════════════════════════════
 

@@ -32,31 +32,37 @@ DUSK = '--dusk' in sys.argv
 # static at 4x and fought the window chrome. Only the sun and the lighthouse
 # lamp are allowed to be bright, because they are the two things the eye
 # should find.
+# Values are LOW-CONTRAST but no longer dark. This is a wallpaper: windows sit
+# on top of it, so it has to read as scenery at a glance and then get out of
+# the way. What made an early pass look like static at 4x was the chop DENSITY
+# and the spread between the sea's lightest and darkest values — not the
+# overall brightness. So the whole set was lifted together, keeping the
+# intervals between neighbouring values roughly where they were.
 P = {
-    'sky_top':  (9, 22, 17),
-    'sky_mid':  (14, 34, 27),
-    'sky_low':  (23, 52, 40),
-    'sky_glow': (46, 80, 61),
-    'sun':      (198, 216, 186),
-    'far_isle': (11, 27, 21),
-    'mid_isle': (8, 21, 16),
-    'sea_far':  (28, 58, 48),
-    'sea_mid':  (18, 42, 35),
-    'sea_near': (12, 31, 26),
-    'sea_deep': (9, 23, 20),
-    'glint':    (58, 100, 82),
-    'foam':     (118, 146, 126),
-    'rock_dk':  (16, 21, 18),
-    'rock_md':  (30, 37, 31),
-    'rock_lt':  (50, 60, 50),
-    'tree_dk':  (7, 18, 12),
-    'tree_md':  (13, 34, 23),
-    'tree_lt':  (21, 51, 34),
-    'trunk':    (20, 17, 14),
-    'house':    (198, 208, 196),
-    'band':     (150, 56, 34),
-    'lamp':     (232, 160, 78),
-    'gull':     (150, 166, 152),
+    'sky_top':  (16, 42, 31),
+    'sky_mid':  (24, 60, 45),
+    'sky_low':  (38, 88, 66),
+    'sky_glow': (72, 128, 96),
+    'sun':      (208, 226, 198),
+    'far_isle': (20, 50, 37),
+    'mid_isle': (14, 38, 28),
+    'sea_far':  (48, 100, 79),
+    'sea_mid':  (32, 74, 59),
+    'sea_near': (22, 55, 44),
+    'sea_deep': (16, 41, 34),
+    'glint':    (90, 154, 122),
+    'foam':     (156, 188, 164),
+    'rock_dk':  (28, 37, 30),
+    'rock_md':  (50, 63, 51),
+    'rock_lt':  (80, 97, 79),
+    'tree_dk':  (12, 32, 21),
+    'tree_md':  (23, 60, 39),
+    'tree_lt':  (37, 88, 57),
+    'trunk':    (32, 27, 22),
+    'house':    (210, 220, 208),
+    'band':     (166, 62, 38),
+    'lamp':     (240, 170, 86),
+    'gull':     (176, 194, 178),
 }
 if DUSK:                            # warmer sky, same sea
     P['sky_low']  = (86, 74, 52)

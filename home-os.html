@@ -23,16 +23,17 @@
   /* FOREST GREEN. Every colour is named here — the first version had most of
      them hardcoded down the file, which made a palette change a hunt. Swapping
      the scheme again is now this block and nothing else. */
-  --desk:#1c3b2a;        /* the desktop itself */
-  --bar:#0d1d14;         /* taskbar */
-  --tb-a:#2f6647;        /* active title bar, top */
-  --tb-b:#1a3f2c;        /* active title bar, bottom */
-  --tb-x-a:#5f6b63;      /* unfocused title bar */
-  --tb-x-b:#48544c;
-  --sunk:#17352a;        /* recessed chrome in the bar */
-  --sunk-e:#2b5540;      /* its edge */
-  --bar-fg:#bcd6c6;      /* text on the bar */
-  --bar-hi:#479a6b;      /* focused tab edge */
+  --desk:#2d6144;        /* the desktop itself */
+  --bar:#143022;         /* taskbar */
+  --tb-a:#3a7d55;        /* active title bar, top — as bright as it can go and
+                            still hold 5:1 against white title text */
+  --tb-b:#215539;        /* active title bar, bottom */
+  --tb-x-a:#6d7c72;      /* unfocused title bar */
+  --tb-x-b:#55635a;
+  --sunk:#1e4a36;        /* recessed chrome in the bar */
+  --sunk-e:#3a7355;      /* its edge */
+  --bar-fg:#cfe7d8;      /* text on the bar */
+  --bar-hi:#5cc189;      /* focused tab edge */
   --chrome:#c7cfc9;      /* window furniture — grey with a green cast */
   --chrome-d:#8b948d;
   --bevel:#6e766f;       /* the dark side of every bevel */
@@ -40,14 +41,16 @@
   --ink:#0f1611;
   --mute:#4a554d;        /* secondary text */
   --mute-2:#78857c;
-  --link:#1f6340;
+  --link:#1c7247;        /* brightened only to 5.2:1 on --paper — links are
+                            body text and cannot chase the rest of the lift */
   --link-h:#a33b23;
-  --ac:#4fae7c;          /* play button, highlights */
+  --ac:#62c994;          /* play button, highlights */
   --hot:#f6ad55;         /* calls to action — amber, because it has to survive
                             a green field and nothing green would */
   --note:#e2e9e4;        /* the TODO blocks */
   --note-e:#949e97;
-  --note-t:#2a6b47;
+  --note-t:#2c7550;      /* the TODO headings are real text — 4.5:1 is the
+                            ceiling here, so this lifts less than the rest */
 }
 html,body{height:100%}
 body{

@@ -128,6 +128,10 @@ td .c{display:block;font-size:10px;color:var(--mute)}
    mute, since the date and city are already mute. Dimming further (--mute-2,
    or a row opacity) drops 10px text to ~3.5:1 on paper, under AA. */
 #shows tr.past td{color:var(--mute)}
+#shows .more td{border-bottom:0;padding:7px 6px 0;text-align:center}
+#shows .more button{background:none;border:0;font:inherit;font-size:11px;
+  color:var(--link);cursor:pointer;padding:3px 8px}
+#shows .more button:hover{color:var(--link-h);text-decoration:underline}
 .vid{position:relative;width:100%;padding:56.25% 0 0;background:#000}
 .vid button{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;cursor:pointer;padding:0}
 .vid img,.vid iframe{position:absolute;inset:0;width:100%;height:100%;border:0;object-fit:cover}
@@ -284,6 +288,8 @@ const SHOWS = [
   { d:'2024-03-02', v:'Tributary Brewing', c:'Kittery, ME' },
   { d:'2024-11-02', v:'Wild Bevy',  c:'Wells, ME' },
   { d:'2024-11-30', v:'Wild Bevy',  c:'Wells, ME' },
+  { d:'2025-02-14', v:"Popover's",  c:'Epping, NH' },
+  { d:'2025-07-04', v:"Popover's",  c:'Epping, NH' },
   { d:'2026-04-03', v:"Popover's",  c:'Epping, NH' },
   { d:'2026-08-13', v:'Ocean Surf', c:'York, ME' },
   { d:'2026-08-29', v:'Ocean Surf', c:'York, ME' },
@@ -309,19 +315,44 @@ const rows = SHOWS.slice().sort((a, b) => {
   return au ? ax - bx : bx - ax;
 });
 
-st.innerHTML = rows.length
-  ? rows.map(s => {
-      const x = when(s);
-      const d = x ? x.toLocaleDateString('en-GB',
-        { day:'2-digit', month:'short', year:'2-digit' }).toUpperCase() : esc(s.d);
-      // ★ SOON is DERIVED from the date, never stored. A hand-set flag would
-      // still read SOON a year after the show happened.
-      const up = upcoming(s);
-      return `<tr${up ? '' : ' class="past"'}><td class="d">${d}</td>` +
-             `<td>${esc(s.v)}<span class="c">${esc(s.c)}</span></td>` +
-             `<td class="n">${up ? '★ SOON' : ''}</td></tr>`;
-    }).join('')
-  : '<tr><td style="color:var(--mute-2)">no dates listed yet</td></tr>';
+const rowHtml = s => {
+  const x = when(s);
+  const d = x ? x.toLocaleDateString('en-GB',
+    { day:'2-digit', month:'short', year:'2-digit' }).toUpperCase() : esc(s.d);
+  // ★ SOON is DERIVED from the date, never stored. A hand-set flag would
+  // still read SOON a year after the show happened.
+  const up = upcoming(s);
+  return `<tr${up ? '' : ' class="past"'}><td class="d">${d}</td>` +
+         `<td>${esc(s.v)}<span class="c">${esc(s.c)}</span></td>` +
+         `<td class="n">${up ? '★ SOON' : ''}</td></tr>`;
+};
+
+// EVERY upcoming show is always shown; the past list is capped and expands on
+// demand. Without this the window grows by a row per gig forever — at nine it
+// already overflowed a 1280x800 laptop, and no amount of padding tuning fixes
+// that, it only moves the number at which it breaks.
+const PAST_CAP = 3;
+const up = rows.filter(upcoming), past = rows.filter(s => !upcoming(s));
+let allPast = false;
+
+function renderShows() {
+  if (!rows.length) {
+    st.innerHTML = '<tr><td class="c">no dates listed yet</td></tr>';
+    return;
+  }
+  const shown = allPast ? past : past.slice(0, PAST_CAP);
+  let html = up.concat(shown).map(rowHtml).join('');
+  if (past.length > PAST_CAP) {
+    const n = past.length - PAST_CAP;
+    html += `<tr class="more"><td colspan="3"><button type="button">` +
+            (allPast ? '− fewer' : `＋ ${n} earlier show${n === 1 ? '' : 's'}`) +
+            `</button></td></tr>`;
+  }
+  st.innerHTML = html;
+  const btn = st.querySelector('.more button');
+  if (btn) btn.addEventListener('click', () => { allPast = !allPast; renderShows(); });
+}
+renderShows();
 
 // ── VIDEO ────────────────────────────────────────────────────────────────
 const v = document.getElementById('vid');

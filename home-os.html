@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MIKE LUZ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&display=swap" />
+<style>
+/* ── DIRECTION: DESKTOP ───────────────────────────────────────────────────
+   The page is an operating system. Content lives in draggable windows rather
+   than in a scroll, there is a taskbar with a real clock, and the desktop
+   itself is the background. Same family as the reference Mike sent — that
+   site is a fake Windows desktop — but built from his own material and his
+   own jokes rather than borrowed ones: his purple instead of their blue, his
+   Air Bath art on the desktop, and windows for the things he actually has.
+
+   Deliberately does NOT scroll on desktop: one screen, and you rearrange it.
+   Below 820px the whole conceit is abandoned for a stacked list, because
+   dragging windows on a phone is a bad time. */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --desk:#3a2a6b;        /* his purple, deepened so white windows sit on it */
+  --chrome:#c9c6d6;      /* window furniture */
+  --chrome-d:#8d89a3;
+  --ink:#12101a;
+  --paper:#efeef5;
+  --bar:#1d1830;
+  --ac:#9f7aea;
+  --hot:#f6ad55;
+}
+html,body{height:100%}
+body{
+  background:var(--desk);color:var(--ink);overflow:hidden;
+  font:13px/1.55 'SF Mono',Menlo,Consolas,'Courier New',monospace;
+  -webkit-font-smoothing:none;
+  background-image:
+    radial-gradient(1px 1px at 18% 26%,rgba(255,255,255,.25),transparent),
+    radial-gradient(1px 1px at 72% 62%,rgba(255,255,255,.18),transparent),
+    radial-gradient(1px 1px at 44% 82%,rgba(255,255,255,.2),transparent);
+}
+.px{font-family:'Silkscreen','Courier New',monospace}
+
+/* ── TASKBAR ───────────────────────────────────────────────────────────── */
+.bar{position:fixed;inset:0 0 auto 0;height:30px;z-index:900;display:flex;align-items:center;
+  gap:10px;padding:0 8px;background:var(--bar);
+  box-shadow:0 1px 0 rgba(255,255,255,.15) inset,0 2px 8px rgba(0,0,0,.4)}
+.bar .name{font-size:11px;letter-spacing:.14em;color:#fff;padding:4px 10px;
+  background:linear-gradient(180deg,#4a3a80,#2b2350);border:1px solid #5d4d95}
+.bar .tabs{display:flex;gap:5px;flex:1;min-width:0;overflow:hidden}
+.bar .tab{font-size:10px;color:#cfc9e6;padding:5px 9px;background:#2a2245;border:1px solid #40365f;
+  cursor:pointer;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis}
+.bar .tab.on{background:#4a3a80;color:#fff;border-color:#6b58a8}
+.bar .clock{font-size:10px;color:#cfc9e6;padding:5px 9px;background:#2a2245;border:1px solid #40365f}
+
+/* ── DESKTOP ICONS ─────────────────────────────────────────────────────── */
+.icons{position:fixed;top:42px;left:10px;z-index:1;display:flex;flex-direction:column;gap:4px;width:84px}
+.icon{background:none;border:0;color:#fff;font:inherit;font-size:10px;cursor:pointer;
+  padding:7px 4px;text-align:center;line-height:1.3;text-shadow:1px 1px 0 rgba(0,0,0,.6)}
+.icon:hover,.icon:focus{background:rgba(255,255,255,.14);outline:0}
+.icon span{display:block;font-size:24px;margin-bottom:3px}
+
+/* ── WINDOWS ───────────────────────────────────────────────────────────── */
+.win{position:absolute;z-index:10;background:var(--chrome);border:2px solid #fff;
+  border-right-color:#6f6b85;border-bottom-color:#6f6b85;
+  box-shadow:3px 3px 0 rgba(0,0,0,.35);display:flex;flex-direction:column;min-width:200px}
+.win.hidden{display:none}
+.tb{display:flex;align-items:center;gap:6px;padding:3px 4px 3px 6px;cursor:grab;
+  background:linear-gradient(180deg,#5b4a95,#3b2f68);color:#fff;user-select:none;touch-action:none}
+.win.blur .tb{background:linear-gradient(180deg,#6d6a80,#54516a)}
+.tb .t{flex:1;min-width:0;font-size:10px;letter-spacing:.1em;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.tb button{width:17px;height:16px;border:1px solid #fff;border-right-color:#6f6b85;
+  border-bottom-color:#6f6b85;background:var(--chrome);color:var(--ink);
+  font:700 11px/1 'SF Mono',monospace;cursor:pointer;padding:0}
+.tb button:active{border-color:#6f6b85;border-right-color:#fff;border-bottom-color:#fff}
+.body{background:var(--paper);padding:11px;overflow:auto;flex:1}
+.body::-webkit-scrollbar{width:12px}
+.body::-webkit-scrollbar-thumb{background:var(--chrome);border:1px solid #fff;
+  border-right-color:#6f6b85;border-bottom-color:#6f6b85}
+
+/* ── WINDOW CONTENT ────────────────────────────────────────────────────── */
+h2.wt{font-size:15px;letter-spacing:.06em;margin-bottom:8px}
+p{margin-bottom:9px}
+a{color:#3a2a9b}
+a:hover{color:#9b2a2a}
+.hr{height:1px;background:var(--chrome-d);margin:10px 0}
+.btn{display:inline-block;padding:6px 13px;background:var(--chrome);border:2px solid #fff;
+  border-right-color:#6f6b85;border-bottom-color:#6f6b85;color:var(--ink);
+  font:inherit;font-size:12px;cursor:pointer;text-decoration:none;margin:0 5px 5px 0}
+.btn:active{border-color:#6f6b85;border-right-color:#fff;border-bottom-color:#fff}
+.btn.hot{background:var(--hot)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+td{padding:5px 6px;border-bottom:1px solid var(--chrome)}
+td.d{white-space:nowrap;color:#4a4660}
+td.n{text-align:right;color:#7a2a2a;font-size:10px;white-space:nowrap}
+.vid{position:relative;width:100%;padding:56.25% 0 0;background:#000}
+.vid button{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;cursor:pointer;padding:0}
+.vid img,.vid iframe{position:absolute;inset:0;width:100%;height:100%;border:0;object-fit:cover}
+.vid button::after{content:'▶';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:52px;height:52px;background:var(--ac);color:#fff;display:grid;place-items:center;font-size:17px;
+  border:2px solid #fff}
+dl.f{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:12px}
+dl.f dt{color:#4a4660;white-space:nowrap}
+dl.f dd{font-weight:700}
+.todo{border:1px dashed #9b96b0;background:#e4e1ee;padding:8px 9px;font-size:11px;
+  color:#3f3b52;line-height:1.5;margin-bottom:9px}
+.todo b{display:block;color:#7a2a9b;margin-bottom:3px}
+
+/* ── MOBILE: no windows, just the content ──────────────────────────────── */
+@media (max-width:820px){
+  body{overflow:auto}
+  .icons{display:none}
+  .bar .tabs{display:none}
+  .win{position:static!important;width:auto!important;height:auto!important;
+    margin:0 0 12px;box-shadow:none;z-index:auto!important}
+  .win.hidden{display:flex}
+  .tb{cursor:default}
+  .tb button{display:none}
+  .stack{padding:40px 10px 24px}
+  .body{max-height:none}
+}
+@media (min-width:821px){ .stack{display:contents} }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <span class="name px">MIKE LUZ</span>
+  <span class="tabs" id="tabs"></span>
+  <span class="clock" id="clock">--:--</span>
+</div>
+
+<div class="icons" id="icons"></div>
+
+<div class="stack" id="stack">
+
+  <!-- GRAINS — the release, with the video inside it -->
+  <div class="win" id="w-grains" data-x="248" data-y="52" data-w="470">
+    <div class="tb"><span class="t px">GRAINS.mp4 — new single</span><button data-close>✕</button></div>
+    <div class="body">
+      <div class="vid" id="vid"></div>
+      <div style="margin-top:9px">
+        <a class="btn hot" href="https://symphony.to/mercywizard/bhu4vkjnrcyg" target="_blank" rel="noopener">▶ LISTEN</a>
+        <a class="btn" href="https://youtu.be/UKcZJ31ZHH0" target="_blank" rel="noopener">YouTube</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- README — who this is -->
+  <div class="win" id="w-read" data-x="18" data-y="262" data-w="286">
+    <div class="tb"><span class="t px">README.txt</span><button data-close>✕</button></div>
+    <div class="body">
+      <h2 class="wt px">MIKE LUZ</h2>
+      <p>Records as <b>Mercy Wizard</b>.</p>
+      <div class="todo">
+        <b>your line goes here</b>
+        One sentence: what it sounds like and how you play it. Plus the city.
+      </div>
+      <div class="hr"></div>
+      <p style="font-size:11px;color:#4a4660">
+        Also builds the instruments the records are made with. Those live in
+        <a href="software.html">TOOLS</a> — they're not for sale, they're just what's on the desk.
+      </p>
+    </div>
+  </div>
+
+  <!-- LIVE -->
+  <div class="win" id="w-live" data-x="752" data-y="340" data-w="418">
+    <div class="tb"><span class="t px">LIVE.dat</span><button data-close>✕</button></div>
+    <div class="body">
+      <h2 class="wt px">Tour dates</h2>
+      <table id="shows"></table>
+      <div class="todo" style="margin-top:9px">
+        <b>fill the SHOWS list</b>
+        Past shows count too — they answer "has anyone else booked this".
+      </div>
+    </div>
+  </div>
+
+  <!-- BOOKING -->
+  <div class="win" id="w-book" data-x="330" data-y="516" data-w="378">
+    <div class="tb"><span class="t px">BOOKING.exe</span><button data-close>✕</button></div>
+    <div class="body">
+      <h2 class="wt px">Book a show</h2>
+      <dl class="f">
+        <dt>email</dt><dd><a href="mailto:BOOKING@EXAMPLE.COM">booking@ — TODO</a></dd>
+        <dt>based in</dt><dd>[ city ]</dd>
+        <dt>format</dt><dd>[ solo / band ]</dd>
+        <dt>set</dt><dd>[ 30 / 45 / 60 min ]</dd>
+        <dt>needs</dt><dd>[ backline / DI ]</dd>
+      </dl>
+      <div class="hr"></div>
+      <a class="btn hot" href="mailto:BOOKING@EXAMPLE.COM">✉ EMAIL ME</a>
+    </div>
+  </div>
+
+  <!-- LINKS -->
+  <div class="win" id="w-links" data-x="1128" data-y="62" data-w="240">
+    <div class="tb"><span class="t px">LINKS</span><button data-close>✕</button></div>
+    <div class="body">
+      <p><a href="https://mercywizard.bandcamp.com" target="_blank" rel="noopener">▸ Bandcamp</a></p>
+      <p><a href="https://www.youtube.com/@mercywizard-music" target="_blank" rel="noopener">▸ YouTube</a></p>
+      <p><a href="https://instagram.com/mercywizard" target="_blank" rel="noopener">▸ Instagram</a></p>
+      <p><a href="https://open.substack.com/pub/mercywizard" target="_blank" rel="noopener">▸ Substack</a></p>
+      <div class="hr"></div>
+      <p style="margin:0"><a href="index.html">← old site</a> · <a href="home-demos.html">demos</a></p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const YT = 'UKcZJ31ZHH0';
+
+// ── SHOWS ────────────────────────────────────────────────────────────────
+const SHOWS = [
+  // { d:'2026-09-12', v:'EXAMPLE VENUE', c:'Example City', up:true },
+];
+const st = document.getElementById('shows');
+st.innerHTML = SHOWS.length
+  ? SHOWS.slice().sort((a,b)=>a.d<b.d?1:-1).map(s=>{
+      const x = new Date(s.d+'T00:00');
+      const d = isNaN(x) ? s.d : x.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'}).toUpperCase();
+      return `<tr><td class="d">${d}</td><td>${s.v}<br><span style="font-size:10px;color:#7a7690">${s.c||''}</span></td><td class="n">${s.up?'★ SOON':''}</td></tr>`;
+    }).join('')
+  : '<tr><td style="color:#7a7690">no dates listed yet</td></tr>';
+
+// ── VIDEO ────────────────────────────────────────────────────────────────
+const v = document.getElementById('vid');
+v.innerHTML = `<button type="button" aria-label="Play Grains"><img src="https://i.ytimg.com/vi/${YT}/hqdefault.jpg" alt=""></button>`;
+v.querySelector('button').addEventListener('click', function () {
+  this.outerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${YT}?autoplay=1&rel=0" allow="autoplay; encrypted-media" allowfullscreen title="Grains"></iframe>`;
+});
+
+// ── WINDOW MANAGER ───────────────────────────────────────────────────────
+// Position, drag, focus, close, reopen. Everything below 821px is skipped —
+// the CSS has already flattened the windows into a list by then, and moving
+// them would fight it.
+const desktop = matchMedia('(min-width:821px)');
+const wins = [...document.querySelectorAll('.win')];
+const ICONS = { 'w-grains':['💿','GRAINS'], 'w-read':['📄','README'], 'w-live':['🎫','LIVE'],
+                'w-book':['✉','BOOKING'], 'w-links':['🔗','LINKS'] };
+let z = 10;
+
+function place() {
+  if (!desktop.matches) return;
+  wins.forEach(w => {
+    const W = +w.dataset.w || 320;
+    // Clamp into view so a window can never open off the edge on a small laptop.
+    const x = Math.min(+w.dataset.x || 40, Math.max(10, innerWidth - W - 14));
+    const y = Math.min(+w.dataset.y || 60, Math.max(40, innerHeight - 150));
+    w.style.left = x + 'px'; w.style.top = y + 'px'; w.style.width = W + 'px';
+    w.style.maxHeight = (innerHeight - y - 16) + 'px';
+  });
+}
+function focus(w) {
+  if (!desktop.matches) return;
+  w.style.zIndex = ++z;
+  wins.forEach(o => o.classList.toggle('blur', o !== w));
+  drawTabs();
+}
+function setOpen(w, on) {
+  w.classList.toggle('hidden', !on);
+  if (on) focus(w);
+  drawTabs();
+}
+
+// Taskbar + desktop icons both reflect what is open.
+const tabs = document.getElementById('tabs'), icons = document.getElementById('icons');
+function drawTabs() {
+  tabs.innerHTML = '';
+  wins.forEach(w => {
+    if (w.classList.contains('hidden')) return;
+    const b = document.createElement('button');
+    b.className = 'tab' + (w.classList.contains('blur') ? '' : ' on');
+    b.textContent = (ICONS[w.id] || ['', w.id])[1];
+    b.addEventListener('click', () => focus(w));
+    tabs.appendChild(b);
+  });
+}
+Object.entries(ICONS).forEach(([id, [glyph, label]]) => {
+  const b = document.createElement('button');
+  b.className = 'icon';
+  b.innerHTML = '<span>' + glyph + '</span>' + label;
+  b.addEventListener('click', () => setOpen(document.getElementById(id), true));
+  icons.appendChild(b);
+});
+
+wins.forEach(w => {
+  w.addEventListener('pointerdown', () => focus(w));
+  w.querySelector('[data-close]').addEventListener('click', e => { e.stopPropagation(); setOpen(w, false); });
+
+  // Drag by the title bar. Pointer capture so the window keeps following even
+  // when the cursor outruns it, which it will.
+  const tb = w.querySelector('.tb');
+  let dx = 0, dy = 0, on = false;
+  tb.addEventListener('pointerdown', e => {
+    if (!desktop.matches || e.target.closest('button')) return;
+    on = true; dx = e.clientX - w.offsetLeft; dy = e.clientY - w.offsetTop;
+    tb.setPointerCapture(e.pointerId); tb.style.cursor = 'grabbing';
+  });
+  tb.addEventListener('pointermove', e => {
+    if (!on) return;
+    const W = w.offsetWidth;
+    w.style.left = Math.max(-W + 70, Math.min(innerWidth - 70, e.clientX - dx)) + 'px';
+    w.style.top  = Math.max(30, Math.min(innerHeight - 34, e.clientY - dy)) + 'px';
+  });
+  const end = () => { on = false; tb.style.cursor = 'grab'; };
+  tb.addEventListener('pointerup', end); tb.addEventListener('pointercancel', end);
+});
+
+place(); focus(document.getElementById('w-grains'));
+addEventListener('resize', () => { if (desktop.matches) place(); });
+
+// ── CLOCK ────────────────────────────────────────────────────────────────
+const clock = document.getElementById('clock');
+const tick = () => { const d = new Date();
+  clock.textContent = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0'); };
+tick(); setInterval(tick, 20000);
+</script>
+</body>
+</html>

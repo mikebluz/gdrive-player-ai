@@ -75,7 +75,10 @@ restore_dev_bypass() {
 trap 'rm -rf "$STAGE_DIR"; restore_dev_bypass' EXIT
 
 echo "📦 Staging files..."
-cp -r index.html bloops.html player.html artwork.html game.html tracks.html css js banner.jpg me2026.jpg samples artwork vendor "$STAGE_DIR/"
+# img/ is REQUIRED by index.html — it holds the pixel-art wallpaper, the live
+# photo and the handwritten wordmark. Without it the desktop ships as a flat
+# green field with three broken images.
+cp -r index.html bloops.html player.html artwork.html game.html tracks.html css js img audio banner.jpg me2026.jpg samples artwork vendor "$STAGE_DIR/"
 # Caching policy (HTML revalidates every load; versioned assets cache long) —
 # without it, phones cache stale HTML pointing at old ?v= assets and boot dies.
 cp .htaccess "$STAGE_DIR/"
@@ -136,12 +139,21 @@ put -O "$REMOTE_DIR/js" "$STAGE_DIR/js/config.js"
 # forever. Put them explicitly every deploy so the fresh stamp always lands.
 mkdir -p "$REMOTE_DIR/js/bloops"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/index.html"
+# Same force-put, same reason: a stamp-only change is byte-identical in length
+# and the size-only mirror would skip it.
 put -O "$REMOTE_DIR"           "$STAGE_DIR/bloops.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/player.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/artwork.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/game.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/tracks.html"
 put -O "$REMOTE_DIR/js/bloops" "$STAGE_DIR/js/bloops/03b-core-voices.js"
+# RETIRED PAGES. The mirror above is --reverse WITHOUT --delete, so deleting a
+# file from the repo never removes it from the server — it just stops being
+# updated and sits there serving its last version forever. These two were the
+# earlier site's Listen and Watch pages; their nav pointed at a homepage that
+# no longer exists. rm -f is idempotent, so this is safe to leave in place.
+rm -f "$REMOTE_DIR/listen.html"
+rm -f "$REMOTE_DIR/watch.html"
 # Post-upload SIZE VERIFICATION of the big JS the app can't boot without —
 # a size mismatch vs the local staged copy means a truncated upload.
 echo "--- remote sizes (verify vs local) ---"
@@ -156,3 +168,4 @@ echo "🎵 Deployment complete."
 echo "🔎 Verify the credentials reached the server:"
 echo "    open https://<your-domain>/js/config.js — it should show your real"
 echo "    clientId/apiKey, not a 404. Then hard-refresh the app (Cmd-Shift-R)."
+

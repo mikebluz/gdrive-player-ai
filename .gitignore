@@ -6,3 +6,9 @@ js/config.js
 **/.DS_Store
 spike/dsp/target/
 dsp/target/
+
+# Mike's own scratch/test scripts, and the throwaway puppeteer runners used
+# while building — never meant to be committed. _dialtest.mjs got in once via
+# `git add -A`, which is exactly why that is not used here.
+_*.mjs
+_*.png

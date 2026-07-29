@@ -8429,9 +8429,13 @@
       const phraseSec = bars * barSec;
       if (!(phraseSec > 0.05)) return;
       const loopSec = phraseSec + Math.max(0, (inst.unitPadMs | 0)) / 1000;   // + silent pad (Unit Match)
-      const perBar = Math.max(1, Math.min(16, inst.density | 0) || 4);
-      const totalSlots = bars * perBar;
-      const slotSec = barSec / perBar;
+      // Cadence comes from the STRIKE axis. At strike 0 (the default) that
+      // resolves to +density, so slotSec is barSec/density and totalSlots is
+      // bars*density exactly as before; a NEGATIVE strike holds one hit across
+      // several bars, which a Pedal could not do until now.
+      const strike = _ambStrikeOf(inst, 'pedal');
+      const slotSec = _ambStrikeSpan(strike, barSec);
+      const totalSlots = Math.max(1, Math.round(phraseSec / slotSec));
       const lenMs  = Math.max(40, inst.lengthMs | 0);
       const restP  = _ambEffRest(inst);
       const vary   = Math.max(0, Math.min(100, inst.vary | 0));   // % of hits that roam off the root
@@ -8508,8 +8512,12 @@
     function _ambEmitDrone(E, inst, key, now, horizon, lead, space, cfg) {
       if (!E.runPhase) E.runPhase = {};
       const unitSec = Math.max(0.05, _ambEffIntervalSec(inst)) * _ambLayerScale(E, key, inst, cfg);   // Unit-Sync scaled
-      const hold = Math.max(1, Math.min(64, inst.hold | 0) || 1);
-      let cycleSec = hold * unitSec;
+      // Cadence comes from the STRIKE axis. At strike 0 (the default) that
+      // resolves to -hold, so this is exactly `hold * unitSec` as before; a
+      // positive strike subdivides the unit instead, which a Drone could not
+      // do at all until now.
+      const strike = _ambStrikeOf(inst, 'drone');
+      let cycleSec = _ambStrikeSpan(strike, unitSec);
       if (!(cycleSec > 0.05)) return;
       const reg = Math.max(1, Math.min(7, inst.register | 0) || 3);
       const src = _ambNotesOf(inst);
@@ -13443,7 +13451,7 @@
       if (type === 'bass') { const bars = Math.max(1, Math.min(8, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4 + Math.max(0, (L.unitPadMs | 0)) / 1000; }
       if (type === 'run')  { const bars = Math.max(1, Math.min(16, (L.bars | 0) || 2)); return bars * (60 / _ambBpm()) * 4 + Math.max(0, (L.unitPadMs | 0)) / 1000; }
       if (type === 'pedal') { const bars = Math.max(1, Math.min(16, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4 + Math.max(0, (L.unitPadMs | 0)) / 1000; }
-      if (type === 'drone') { const hold = Math.max(1, Math.min(64, (L.hold | 0) || 1)); return hold * Math.max(0.05, _ambEffIntervalSec(L)); }
+      if (type === 'drone') return _ambStrikeSpan(_ambStrikeOf(L, 'drone'), Math.max(0.05, _ambEffIntervalSec(L)));
       if (type === 'arp' && L && L.euclid) { const bars = Math.max(1, Math.min(8, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4 + Math.max(0, (L.unitPadMs | 0)) / 1000; }
       if (type === 'arp') { const info = _ambArpSeriesInfo(L, cfg); return info.totalNotes * info.interval; }
       // Texture scans a 16-slot pattern, so ONE unit = 16 steps. Use the SAME
@@ -13475,10 +13483,37 @@
     // restores the original rhythm exactly. Layer→layer refs are cycle-guarded.
     //
     // How many sub-cells a layer's unit divides into (for '#sub' references).
+    // ── SUSTAIN FAMILY: the STRIKE axis ────────────────────────────────────
+    // Bed, Drone and Pedal differ rhythmically by one thing: how often they
+    // re-strike relative to their unit. Today each type spells that its own way
+    // — Bed is fixed at one per unit, Drone divides (`hold` units per onset),
+    // Pedal multiplies (`density` hits per bar) — so none of them can reach the
+    // other two's territory.
+    //
+    // `strike` is that one signed dial:  +N = N onsets per unit (subdivide)
+    //                                    -N = one onset per N units (hold)
+    // Absent or 0 means "use the type's own control", which is what keeps every
+    // saved project and both test baselines byte-identical. Nothing writes it
+    // unless the user moves the new slider.
+    //
+    // This is step 1 of the consolidation in docs/bloom-layer-model.md §11:
+    // give the three types the same vocabulary BEFORE merging their emitters.
+    function _ambStrikeOf(L, type) {
+      const s = L && L.strike;
+      if (Number.isFinite(s) && (s | 0) !== 0) return Math.max(-16, Math.min(16, s | 0));
+      if (type === 'drone') return -Math.max(1, Math.min(64, (L.hold | 0) || 1));
+      if (type === 'pedal') return Math.max(1, Math.min(16, (L.density | 0) || 4));
+      return 1;   // bed: one chord per unit
+    }
+    // Onset interval for a given strike, in units of `unitSec`.
+    function _ambStrikeSpan(strike, unitSec) {
+      return strike > 0 ? unitSec / strike : unitSec * (-strike);
+    }
+
     function _ambLayerSubCount(L, key) {
       const type = String(key).split(':')[0];
       if (type === 'arp')   return Math.max(1, (Array.isArray(L.steps) ? L.steps.length : 1));
-      if (type === 'drone') return Math.max(1, Math.min(64, (L.hold | 0) || 1));
+      if (type === 'drone') { const k = _ambStrikeOf(L, 'drone'); return k > 0 ? 1 : Math.max(1, -k); }
       if (type === 'bass')  return Math.max(1, Math.min(8,  (L.bars | 0) || 1));
       if (type === 'run')   return Math.max(1, Math.min(16, (L.bars | 0) || 2));
       if (type === 'pedal') return Math.max(1, Math.min(16, (L.bars | 0) || 1));
@@ -24650,7 +24685,7 @@
       pedal: { label: 'Pedal', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Density · −N = 1 hit per N bars · +N = N per bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'vary', 'Roam', 0, 100, 'root → wander degrees'], ['tight'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
@@ -24659,7 +24694,7 @@
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
         ['sub', 'Progression', 'When an Area progression is set: PEDAL (default) holds ONE note per progression cycle, auto-chosen to work across every chord — the card explains the pick, and Note overrides it. VOICINGS re-voices the current chord instead (Subdivide/Feel/Variety).'], ['dronepedal'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
-        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold · −N = hold N units · +N = N per unit'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
         ..._AMB_MIX] },
     };

@@ -879,6 +879,27 @@ stack, held single note that roams per cycle, strummed pedal).
 
 1. Give all three the same axis vocabulary (Strike / Length ratio / Pitch rule)
    implemented *on top of their existing emitters*. Additive, no baseline churn.
+
+   **STRIKE: LANDED for Drone + Pedal (2026-07-29, branch `bloom-sustain-axes`).**
+   `_ambStrikeOf(L, type)` / `_ambStrikeSpan(strike, unitSec)`. One signed dial:
+   `+N` = N onsets per unit, `-N` = one onset per N units. Absent or `0` resolves
+   to the type's own control — `-hold` for a Drone, `+density` for a Pedal — so
+   every saved project and both baselines are byte-identical, and nothing writes
+   the field until the slider moves. Consumed by the two emitters, by
+   `_ambLayerPeriodSec` and by `_ambLayerSubCount`, so the Scheduler and the
+   playheads follow it too. Gates: golden 82/82, invariant harness green, mod
+   parity 9/9. New reach proved by test: a Drone that subdivides its unit, and a
+   Pedal held across several bars — neither was expressible before.
+
+   **STRIKE on Bed is NOT done, and is the bigger half.** Bed's cadence is not in
+   its emitter: it rides the shared `stepLayer`/`E.clocks` step clock, one chord
+   per tick. Subdividing means emitting N chords inside one `_ambEmitBed` call;
+   holding means skipping units. Both touch the unit-record / unit-lock / Write
+   machinery, which assumes one unit = one chord — the "three clocks" cost listed
+   above, arriving exactly where predicted. Until Bed has it, the step-2
+   reproduction test below cannot run.
+
+   Length ratio and Pitch rule remain unstarted.
 2. Verify by construction: can Bed-with-dials reproduce Drone? Drone reproduce Pedal? A
    failure locates the genuinely-missing axis rather than guessing at it.
 3. Only then collapse to one emitter, with Bed/Drone/Pedal surviving as **presets in the

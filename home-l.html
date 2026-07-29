@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mike Luz — L / cartridge</title>
+<style>
+/* ── DIRECTION L: CARTRIDGE ───────────────────────────────────────────────
+   Pulled from your own Air Bath NES cartridge art: an 8-bit console boot and
+   title screen. Arrow keys / tap to move the cursor, enter to select. Where H
+   is a desktop application, this is a console — playful rather than
+   professional, and it makes "software" read as something you PLAY. */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0b0f1e;--fg:#eef1ff;--dim:#6c7aa8;--y:#ffd23f;--r:#ff4d5e;--c:#3fe0d0}
+body{background:var(--bg);color:var(--fg);min-height:100svh;overflow:hidden;
+  font:14px/1.7 'Courier New',Courier,monospace;letter-spacing:.06em;
+  display:flex;flex-direction:column;image-rendering:pixelated}
+.devbar{padding:6px 14px;color:var(--dim);font-size:12px;display:flex;gap:16px;flex-wrap:wrap;
+  font-family:system-ui,sans-serif;border-bottom:2px solid #1a2138}
+.devbar a{color:#f6ad55}
+/* the "screen" — 4:3-ish, letterboxed, with a chunky bezel */
+.tv{flex:1;display:grid;place-items:center;padding:clamp(10px,2.4vw,24px);min-height:0}
+.scr{position:relative;width:min(100%,860px);aspect-ratio:4/3;max-height:100%;
+  background:linear-gradient(180deg,#101736,#070a16);border:4px solid #263056;
+  box-shadow:0 0 0 5px #0b0f1e,0 22px 60px rgba(0,0,0,.7);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:clamp(14px,3vw,30px);overflow:hidden;text-align:center}
+/* starfield + scanlines */
+.scr::before{content:'';position:absolute;inset:0;pointer-events:none;
+  background-image:radial-gradient(1px 1px at 12% 22%,#fff,transparent),
+    radial-gradient(1px 1px at 78% 14%,#9fb0ff,transparent),
+    radial-gradient(1px 1px at 34% 78%,#fff,transparent),
+    radial-gradient(1px 1px at 88% 62%,#ffd23f,transparent),
+    radial-gradient(1px 1px at 56% 42%,#fff,transparent),
+    radial-gradient(1px 1px at 22% 56%,#3fe0d0,transparent);
+  opacity:.55}
+.scr::after{content:'';position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(rgba(0,0,0,0) 0 3px,rgba(0,0,0,.22) 3px 4px)}
+.z{position:relative;z-index:2;width:100%}
+.cart{width:min(220px,42%);margin:0 auto clamp(10px,2.4vw,20px);display:block;
+  filter:drop-shadow(0 6px 0 rgba(0,0,0,.55))}
+.title{font-size:clamp(1.5rem,5.4vw,3rem);font-weight:700;letter-spacing:.14em;
+  color:var(--y);text-shadow:3px 3px 0 #7a4a00,0 0 18px rgba(255,210,63,.35);margin-bottom:4px}
+.byline{font-size:clamp(.66rem,1.7vw,.84rem);letter-spacing:.34em;color:var(--dim);
+  margin-bottom:clamp(14px,3vw,26px)}
+.menu{display:inline-flex;flex-direction:column;gap:clamp(6px,1.4vw,11px);text-align:left}
+.mi{display:flex;align-items:center;gap:12px;color:var(--fg);text-decoration:none;
+  font-size:clamp(.86rem,2.2vw,1.12rem);letter-spacing:.18em;cursor:pointer;
+  background:none;border:0;font-family:inherit;padding:2px 0}
+.mi .cur{width:1.1em;color:var(--y);opacity:0}
+.mi.on .cur{opacity:1;animation:bl .7s steps(1) infinite}
+.mi.on{color:var(--y)}
+.mi .tag{margin-left:auto;padding-left:18px;font-size:.62em;letter-spacing:.2em;color:var(--dim)}
+.mi.on .tag{color:var(--c)}
+@keyframes bl{50%{opacity:.25}}
+.press{margin-top:clamp(14px,3vw,26px);font-size:clamp(.62rem,1.6vw,.76rem);letter-spacing:.3em;
+  color:var(--dim);animation:fl 1.5s steps(1) infinite}
+@keyframes fl{50%{opacity:.3}}
+.foot{padding:8px 14px 14px;text-align:center;font-size:.66rem;letter-spacing:.22em;color:#3f4a70}
+/* video takes the screen, in the bezel */
+.vid{position:absolute;inset:0;z-index:5;background:#000;display:none}
+.vid.on{display:block}
+.vid iframe{width:100%;height:100%;border:0}
+.vid button{position:absolute;top:8px;right:8px;z-index:6;background:var(--r);color:#fff;border:0;
+  padding:6px 12px;font:700 .66rem/1 'Courier New',monospace;letter-spacing:.2em;cursor:pointer}
+@media(prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+</head>
+<body>
+<div class="devbar"><span>Direction <b>L</b> — cartridge</span><a href="index.html">← old site</a><a href="home-demos.html">all twelve</a></div>
+
+<div class="tv">
+  <div class="scr">
+    <div class="vid" id="vid"><button type="button" id="close">✕ EJECT</button></div>
+    <div class="z">
+      <img class="cart" src="artwork/AirBath-NES-Cartridge-Final.png" alt="" />
+      <div class="title">MIKE LUZ</div>
+      <div class="byline">MERCY WIZARD · 2026</div>
+      <nav class="menu" id="menu"></nav>
+      <div class="press">▲▼ SELECT · ENTER START</div>
+    </div>
+  </div>
+</div>
+<div class="foot">© 2026 MIKE LUZ — ALL RIGHTS RESERVED</div>
+
+<script>
+const YT = 'UKcZJ31ZHH0';
+const ITEMS = [
+  { l: 'PLAY GRAINS',    t: 'NEW',    u: 'https://symphony.to/mercywizard/bhu4vkjnrcyg' },
+  { l: 'WATCH VIDEO',    t: 'FILM',   v: true },
+  { l: 'BLOOPS',         t: 'TOOL',   u: 'bloops.html' },
+  { l: 'TRACKS',         t: 'TOOL',   u: 'tracks.html' },
+  { l: 'GAME',           t: 'GAME',   u: 'game.html' },
+  { l: 'ALL LINKS',      t: 'MORE',   u: 'https://linktr.ee/mercywizard' },
+];
+let sel = 0;
+const menu = document.getElementById('menu');
+const els = ITEMS.map((x, i) => {
+  const el = document.createElement(x.u ? 'a' : 'button');
+  el.className = 'mi' + (i === 0 ? ' on' : '');
+  if (x.u) { el.href = x.u; if (/^https?:/.test(x.u)) { el.target = '_blank'; el.rel = 'noopener'; } }
+  else el.type = 'button';
+  el.innerHTML = '<span class="cur">▶</span><span class="l"></span><span class="tag"></span>';
+  el.querySelector('.l').textContent = x.l;
+  el.querySelector('.tag').textContent = x.t;
+  el.addEventListener('mouseenter', () => move(i));
+  el.addEventListener('click', e => { if (x.v) { e.preventDefault(); openVid(); } });
+  menu.appendChild(el);
+  return el;
+});
+function move(i) { sel = (i + ITEMS.length) % ITEMS.length; els.forEach((e, n) => e.classList.toggle('on', n === sel)); }
+
+const vid = document.getElementById('vid');
+function openVid() {
+  vid.insertAdjacentHTML('afterbegin',
+    '<iframe src="https://www.youtube-nocookie.com/embed/' + YT + '?autoplay=1&rel=0" allow="autoplay; encrypted-media" allowfullscreen title="Grains"></iframe>');
+  vid.classList.add('on');
+}
+const shut = () => { vid.classList.remove('on'); const f = vid.querySelector('iframe'); if (f) f.remove(); };
+document.getElementById('close').addEventListener('click', shut);
+
+addEventListener('keydown', e => {
+  if (e.key === 'Escape') return shut();
+  if (e.key === 'ArrowDown') { e.preventDefault(); move(sel + 1); }
+  if (e.key === 'ArrowUp')   { e.preventDefault(); move(sel - 1); }
+  if (e.key === 'Enter')     { e.preventDefault(); els[sel].click(); }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mike Luz — J / the nav is an instrument</title>
+<style>
+/* ── DIRECTION J: THE NAV IS AN INSTRUMENT ────────────────────────────────
+   Where A played music AT you, this hands you the instrument. Every tile is
+   a note you can play AND a place you can go — the navigation is literally
+   playable. Music and software stop being two things being pointed at and
+   become one object you are holding. */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#08070c;--fg:#f0eef7;--dim:#7a7690;--ac:#c3a4ff}
+body{background:var(--bg);color:var(--fg);min-height:100svh;overflow:hidden;
+  font-family:'Inter',-apple-system,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased;
+  display:flex;flex-direction:column}
+.devbar{padding:6px 14px;color:var(--dim);font-size:12px;display:flex;gap:16px;flex-wrap:wrap;
+  border-bottom:1px solid #17141f}
+.devbar a{color:#f6ad55}
+.top{padding:clamp(16px,3.4vw,30px) clamp(16px,4vw,40px) 0}
+.name{font-size:.74rem;letter-spacing:.44em;text-transform:uppercase;color:var(--dim)}
+.tag{font-size:clamp(1.5rem,4.4vw,2.5rem);font-weight:700;letter-spacing:-.028em;margin-top:8px;line-height:1.05}
+.tag em{font-style:normal;color:var(--ac)}
+.hint{font-size:.74rem;color:var(--dim);margin-top:12px;letter-spacing:.06em}
+/* THE KEYBOARD */
+.pad{flex:1;display:grid;gap:clamp(5px,.9vw,9px);padding:clamp(14px,3vw,30px) clamp(16px,4vw,40px) clamp(20px,4vw,38px);
+  grid-template-columns:repeat(6,1fr);grid-auto-rows:1fr;min-height:0}
+.key{position:relative;border:1px solid #1f1b2b;border-radius:10px;background:#0e0c15;
+  color:var(--fg);cursor:pointer;overflow:hidden;font:inherit;
+  display:flex;flex-direction:column;justify-content:flex-end;padding:10px 12px;
+  text-align:left;text-decoration:none;transition:transform .09s,border-color .18s,background .18s}
+.key:hover{border-color:#3a3350;background:#141020}
+.key.hit{transform:scale(.965);background:var(--ac);border-color:var(--ac);color:#160c26}
+.key .lbl{font-size:clamp(.66rem,1.15vw,.8rem);font-weight:650;letter-spacing:.02em;
+  opacity:.9;line-height:1.2}
+.key .sub{font-size:.6rem;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);margin-top:3px}
+.key.hit .sub{color:#4a2f78}
+/* Link keys read as destinations; plain keys are just notes. */
+.key.go{background:linear-gradient(165deg,#171226,#0e0c15);border-color:#2b2340}
+.key.go .lbl{font-size:clamp(.72rem,1.35vw,.92rem);font-weight:750}
+.key.big{grid-column:span 2}
+/* the ring that fires when a key sounds */
+.key::after{content:'';position:absolute;inset:0;border-radius:10px;
+  box-shadow:0 0 0 0 rgba(195,164,255,.55);opacity:0}
+.key.hit::after{animation:ring .5s ease-out}
+@keyframes ring{0%{opacity:1;box-shadow:0 0 0 0 rgba(195,164,255,.5)}100%{opacity:0;box-shadow:0 0 0 26px rgba(195,164,255,0)}}
+.gate{position:fixed;inset:0;z-index:9;display:grid;place-items:center;background:rgba(8,7,12,.95);
+  cursor:pointer;text-align:center;padding:24px}
+.gate b{display:block;font-size:clamp(1.1rem,3vw,1.7rem);font-weight:700;margin-bottom:12px}
+.gate small{font-size:.78rem;letter-spacing:.24em;text-transform:uppercase;color:var(--dim)}
+@media(max-width:720px){.pad{grid-template-columns:repeat(4,1fr)}}
+@media(max-width:430px){.pad{grid-template-columns:repeat(3,1fr)}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="devbar"><span>Direction <b>J</b> — the nav is an instrument</span><a href="index.html">← old site</a><a href="home-demos.html">all twelve</a></div>
+
+<div class="top">
+  <div class="name">Mike Luz</div>
+  <div class="tag">I make the <em>records</em> and the <em>instruments</em> that made them.</div>
+  <div class="hint">every tile is a note — play it, or follow it. keys A–L work too.</div>
+</div>
+
+<div class="pad" id="pad"></div>
+
+<div class="gate" id="gate"><div><b>Play the page</b><small>tap anywhere to start</small></div></div>
+
+<script>
+// Tiles: some go somewhere, all of them sound. Pentatonic so any order you
+// hit them in is musical — you cannot play a wrong note on your own homepage.
+const SCALE = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24, 26];
+const KEYS = [
+  { l: 'Grains',   s: 'new single', u: 'https://symphony.to/mercywizard/bhu4vkjnrcyg', go: 1, big: 1 },
+  { l: 'Watch',    s: 'video',      u: 'https://youtu.be/UKcZJ31ZHH0', go: 1 },
+  { l: '' }, { l: '' },
+  { l: 'Bloops',   s: 'instrument', u: 'bloops.html', go: 1, big: 1 },
+  { l: '' },
+  { l: 'Tracks',   s: 'multitrack', u: 'tracks.html', go: 1 },
+  { l: '' },
+  { l: 'Player',   s: 'player',     u: 'player.html', go: 1 },
+  { l: '' }, { l: '' },
+  { l: 'Game',     s: 'game',       u: 'game.html', go: 1 },
+  { l: '' },
+  { l: 'YouTube',  s: 'channel',    u: 'https://www.youtube.com/@mercywizard-music', go: 1 },
+  { l: '' },
+  { l: 'Bandcamp', s: 'records',    u: 'https://mercywizard.bandcamp.com', go: 1 },
+  { l: '' }, { l: '' },
+];
+
+let ctx, master;
+function audio() {
+  if (ctx) return;
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  master = ctx.createGain(); master.gain.value = .5; master.connect(ctx.destination);
+}
+function note(i) {
+  if (!ctx) return;
+  const midi = 55 + SCALE[i % SCALE.length];
+  const t = ctx.currentTime;
+  const o = ctx.createOscillator(), g = ctx.createGain(), f = ctx.createBiquadFilter();
+  o.type = 'triangle'; o.frequency.value = 440 * Math.pow(2, (midi - 69) / 12);
+  f.type = 'lowpass'; f.frequency.value = 2600;
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(.22, t + .012);
+  g.gain.exponentialRampToValueAtTime(.0001, t + 1.5);
+  o.connect(f); f.connect(g); g.connect(master);
+  o.start(t); o.stop(t + 1.6);
+}
+
+const pad = document.getElementById('pad');
+const els = KEYS.map((k, i) => {
+  const el = document.createElement(k.u ? 'a' : 'button');
+  el.className = 'key' + (k.go ? ' go' : '') + (k.big ? ' big' : '');
+  if (k.u) { el.href = k.u; if (/^https?:/.test(k.u)) { el.target = '_blank'; el.rel = 'noopener'; } }
+  else el.type = 'button';
+  el.innerHTML = k.l ? '<span class="lbl"></span>' + (k.s ? '<span class="sub"></span>' : '') : '';
+  if (k.l) el.querySelector('.lbl').textContent = k.l;
+  if (k.s) el.querySelector('.sub').textContent = k.s;
+  const fire = () => { note(i); el.classList.remove('hit'); void el.offsetWidth; el.classList.add('hit'); };
+  // Sound on POINTERDOWN so it feels like a key, not a click — and a link
+  // still navigates, because the note is instant and the nav is not.
+  el.addEventListener('pointerdown', fire);
+  el.addEventListener('pointerenter', e => { if (e.buttons) fire(); });   // drag across to glissando
+  pad.appendChild(el);
+  return el;
+});
+
+// A–L on the keyboard maps to the first twelve tiles.
+const ROW = 'asdfghjklqwe';
+addEventListener('keydown', e => {
+  const i = ROW.indexOf(e.key.toLowerCase());
+  if (i < 0 || !els[i]) return;
+  audio(); note(i);
+  els[i].classList.remove('hit'); void els[i].offsetWidth; els[i].classList.add('hit');
+});
+
+document.getElementById('gate').addEventListener('click', function () { audio(); this.remove(); });
+</script>
+</body>
+</html>

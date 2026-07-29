@@ -126,7 +126,12 @@ a:hover{color:var(--link-h)}
   border-right-color:var(--bevel);border-bottom-color:var(--bevel);color:var(--ink);
   font:inherit;font-size:12px;cursor:pointer;text-decoration:none;margin:0 5px 5px 0}
 .btn:active{border-color:var(--bevel);border-right-color:#fff;border-bottom-color:#fff}
-.btn.hot{background:var(--hot)}
+/* Amber = THE action of the window it sits in, one per window: GRAINS
+   streams, MIKE LUZ books, MERCY WIZARD listens, BOOKING emails. Anything
+   grey is a secondary route (the YouTube button). Bold and tracked as well as
+   tinted — tint alone left them reading as chrome rather than as buttons. */
+.btn.hot{background:var(--hot);font-weight:700;letter-spacing:.06em;
+  padding:7px 15px;border-right-color:#9c6c34;border-bottom-color:#9c6c34}
 table{width:100%;border-collapse:collapse;font-size:12px}
 td{padding:4px 6px;border-bottom:1px solid var(--chrome)}
 td.d{white-space:nowrap;color:var(--mute)}
@@ -243,7 +248,7 @@ dl.f dd{font-weight:700}
       <p class="note" style="margin-bottom:8px">
         I primarily record as <a href="#w-wiz" data-open="w-wiz">Mercy Wizard</a>.
       </p>
-      <a class="btn" href="#w-book" data-open="w-book">✉ BOOK A SHOW</a>
+      <a class="btn hot" href="#w-book" data-open="w-book">✉ BOOK A SHOW</a>
     </div>
   </div>
 
@@ -259,7 +264,7 @@ dl.f dd{font-weight:700}
       <p class="note" style="margin-bottom:8px">
         I perform live as <a href="#w-luz" data-open="w-luz">Mike Luz</a>.
       </p>
-      <a class="btn" href="https://linktr.ee/mercywizard" target="_blank" rel="noopener">▶ LISTEN</a>
+      <a class="btn hot" href="https://linktr.ee/mercywizard" target="_blank" rel="noopener">▶ LISTEN</a>
     </div>
   </div>
 

@@ -1,90 +1,71 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Mike Luz</title>
-  <meta name="description" content="Mike Luz — Mercy Wizard." />
-  <link rel="stylesheet" href="css/site.css?v=DEPLOYVER" />
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mike Luz</title>
+<meta name="description" content="Mike Luz — records as Mercy Wizard, and browser instruments that write music." />
+<link rel="stylesheet" href="css/promo.css?v=DEPLOYVER" />
 </head>
-<body class="bare">
+<body class="door">
 
-  <!-- ══ TEMPORARY — REMOVE WHEN THIS PAGE REPLACES index.html ══════════════
-       The old homepage stays live and untouched while this one is built. -->
-  <div class="devbar">
-    <span><b>New site, in progress.</b> Nothing here is final.</span>
-    <a href="index.html">← the current homepage</a>
-  </div>
-  <!-- ══ END TEMPORARY ═══════════════════════════════════════════════════════ -->
+<!-- ══ TEMPORARY — remove at cutover ═══════════════════════════════════════ -->
+<div class="devbar">
+  <span><b>New homepage</b> — in progress</span>
+  <a href="index.html">← current homepage</a>
+  <a href="home-demos.html">the twelve demos</a>
+</div>
+<!-- ══ END TEMPORARY ═══════════════════════════════════════════════════════ -->
 
-  <!-- Stripped to the bone on purpose: the name, the single, and nothing else.
-       Everything that was here before — the three strands, the about, the
-       footer — is in git if we want any of it back, but this is the canvas we
-       are rebuilding from. -->
-  <header class="hero hero-full">
-    <div class="wrap hero-inner">
-      <div>
-        <div class="hero-kicker">Mike Luz</div>
-        <div class="rel-tag" id="rel-tag">New single</div>
-        <h1 id="rel-title">—</h1>
-        <p class="rel-blurb" id="rel-blurb"></p>
-        <div class="hero-cta">
-          <a class="btn btn-primary" id="rel-stream" href="#" target="_blank" rel="noopener">▸ Listen</a>
-          <a class="btn" id="rel-watch" href="#" target="_blank" rel="noopener">Watch the video</a>
-        </div>
-      </div>
-      <div class="hero-art" id="rel-art"></div>
-    </div>
-  </header>
+<div class="mast"><div class="wrap mast-in">
+  <b>Mike Luz</b>
+  <nav>
+    <a href="gigs.html">Music</a>
+    <a href="software.html">Software</a>
+    <a href="https://linktr.ee/mercywizard" target="_blank" rel="noopener">Links</a>
+  </nav>
+</div></div>
 
-  <script>
-    // ── THE CURRENT RELEASE ───────────────────────────────────────────────
-    // The whole page. Change these when a new one lands.
-    //   youtube: the video id → the art becomes a click-to-play player.
-    //   art:     used instead when there is no video (a filename or URL).
-    const SINGLE = {
-      tag:     'New single',
-      title:   'Grains',
-      blurb:   '',   // one or two lines about the track. Empty = hidden.
-      stream:  'https://symphony.to/mercywizard/bhu4vkjnrcyg',
-      youtube: 'UKcZJ31ZHH0',
-      art:     'me2026.jpg',
-    };
+<!-- THE RELEASE — one strip. The reason someone might care, without turning
+     the front door into a third page about the single. -->
+<div class="wrap"><div class="door-rel">
+  <span class="tagr">New single</span>
+  <span class="ttl" id="rel">Grains</span>
+  <span class="sp">
+    <a class="p" href="https://symphony.to/mercywizard/bhu4vkjnrcyg" target="_blank" rel="noopener">▸ Listen</a>
+    <a href="https://youtu.be/UKcZJ31ZHH0" target="_blank" rel="noopener">Watch</a>
+  </span>
+</div></div>
 
-    (function () {
-      const $ = (id) => document.getElementById(id);
-      const esc = (s) => String(s == null ? '' : s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+<!-- TWO DOORS — the whole job of this page. Two audiences, one click each,
+     and nothing here that either destination already says better. -->
+<main class="doors">
+  <a class="door" href="gigs.html" style="--d:#f6ad55">
+    <span class="n">01 — Music</span>
+    <h2>Records<br />&amp; booking</h2>
+    <p>
+      <!-- TODO: replace with the same one-liner as the booking page hero. -->
+      Music as Mercy Wizard. Listen, watch, and everything a promoter needs to book a show.
+    </p>
+    <span class="go">Hear it →</span>
+  </a>
 
-      $('rel-tag').textContent = SINGLE.tag || 'New single';
-      $('rel-title').textContent = SINGLE.title || '';
-      // An empty blurb collapses rather than leaving a gap where text should be.
-      if (SINGLE.blurb) $('rel-blurb').textContent = SINGLE.blurb; else $('rel-blurb').remove();
-      if (SINGLE.stream) $('rel-stream').href = SINGLE.stream; else $('rel-stream').remove();
-      if (SINGLE.youtube) $('rel-watch').href = 'https://youtu.be/' + SINGLE.youtube; else $('rel-watch').remove();
+  <a class="door" href="software.html" style="--d:#4fd1c5">
+    <span class="n">02 — Software</span>
+    <h2>Browser<br />instruments</h2>
+    <p>Generative music tools that run in a tab — built to make the records, then used to make them.</p>
+    <span class="go">Try them →</span>
+  </a>
+</main>
 
-      const art = $('rel-art');
-      if (SINGLE.youtube) {
-        // Click-to-play: a thumbnail until pressed, so the page carries no
-        // YouTube player (or cookies) for a video nobody has asked for yet.
-        art.innerHTML =
-          '<button class="vframe vposter" type="button" aria-label="Play ' + esc(SINGLE.title) + '">' +
-            '<img src="https://i.ytimg.com/vi/' + esc(SINGLE.youtube) + '/maxresdefault.jpg" alt="" ' +
-            'onerror="this.src=\'https://i.ytimg.com/vi/' + esc(SINGLE.youtube) + '/hqdefault.jpg\'" />' +
-          '</button>';
-        art.querySelector('.vposter').addEventListener('click', function () {
-          const d = document.createElement('div');
-          d.className = 'vframe';
-          d.innerHTML = '<iframe src="https://www.youtube-nocookie.com/embed/' + esc(SINGLE.youtube) +
-            '?autoplay=1&rel=0" title="' + esc(SINGLE.title) + '" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>';
-          this.replaceWith(d);
-        });
-      } else if (SINGLE.art) {
-        art.innerHTML = '<img src="' + esc(SINGLE.art) + '" alt="' + esc(SINGLE.title) + '" />';
-      } else {
-        art.remove();
-      }
-    })();
-  </script>
+<footer class="foot"><div class="wrap" style="display:flex;gap:16px;flex-wrap:wrap;justify-content:space-between;width:100%">
+  <span class="l">
+    <a href="https://www.youtube.com/@mercywizard-music" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://instagram.com/mercywizard" target="_blank" rel="noopener">Instagram</a>
+    <a href="https://mercywizard.bandcamp.com" target="_blank" rel="noopener">Bandcamp</a>
+  </span>
+  <span>© 2026 Mike Luz</span>
+</div></footer>
 
 </body>
 </html>

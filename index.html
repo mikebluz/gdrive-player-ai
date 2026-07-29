@@ -112,7 +112,7 @@ body{
 }
 
 /* ── TASKBAR ───────────────────────────────────────────────────────────── */
-.bar{position:fixed;inset:0 0 auto 0;height:30px;z-index:900;display:flex;align-items:center;
+.bar{position:fixed;inset:0 0 auto 0;height:38px;z-index:900;display:flex;align-items:center;
   gap:10px;padding:0 8px;background:var(--bar);
   box-shadow:0 1px 0 rgba(255,255,255,.15) inset,0 2px 8px rgba(0,0,0,.4)}
 .bar .name{font-size:11px;font-weight:700;letter-spacing:.16em;color:#fff;padding:4px 10px;
@@ -124,7 +124,7 @@ body{
 .bar .clock{font-size:10px;color:var(--bar-fg);padding:5px 9px;background:var(--sunk);border:1px solid var(--sunk-e)}
 
 /* ── DESKTOP ICONS ─────────────────────────────────────────────────────── */
-.icons{position:fixed;top:42px;left:10px;z-index:1;display:flex;flex-direction:column;gap:4px;width:84px}
+.icons{position:fixed;top:54px;left:10px;z-index:1;display:flex;flex-direction:column;gap:4px;width:84px}
 .icon{background:none;border:0;color:#fff;font:inherit;font-size:10px;cursor:pointer;
   padding:7px 4px;text-align:center;line-height:1.3;text-shadow:1px 1px 0 rgba(0,0,0,.6)}
 .icon:hover,.icon:focus{background:rgba(255,255,255,.14);outline:0}
@@ -244,7 +244,7 @@ dl.f dd{font-weight:700}
   .win.hidden{display:flex}
   .tb{cursor:default}
   .tb button{display:none}
-  .stack{padding:56px 10px 24px}   /* 30px taskbar + a real gap under it */
+  .stack{padding:64px 10px 24px}   /* 38px taskbar + a real gap under it */
   .body{max-height:none}
 }
 @media (min-width:821px){
@@ -270,7 +270,7 @@ dl.f dd{font-weight:700}
 <div class="stack" id="stack">
 
   <!-- GRAINS — the release, with the video inside it -->
-  <div class="win" id="w-grains" data-x="440" data-y="48" data-w="450">
+  <div class="win" id="w-grains" data-x="440" data-y="66" data-w="450">
     <div class="tb"><span class="t">GRAINS.mp4 — new single</span><button data-close>✕</button></div>
     <div class="body">
       <div class="vid" id="vid"></div>
@@ -288,7 +288,7 @@ dl.f dd{font-weight:700}
        windows are all data), first person where one is unavoidable. These
        are Mike's own files on Mike's own desktop; third person there reads
        like a publicist he does not have. -->
-  <div class="win" id="w-luz" data-x="104" data-y="48" data-w="272">
+  <div class="win" id="w-luz" data-x="104" data-y="66" data-w="272">
     <div class="tb"><span class="t">MIKE LUZ.txt</span><button data-close>✕</button></div>
     <div class="body">
       <img class="shot" src="img/mikeluz-live.jpg" width="560" height="560"
@@ -314,7 +314,7 @@ dl.f dd{font-weight:700}
   </div>
 
   <!-- MERCY WIZARD — the recording identity. Sits with GRAINS and LINKS. -->
-  <div class="win" id="w-wiz" data-x="1064" data-y="48" data-w="330">
+  <div class="win" id="w-wiz" data-x="1064" data-y="66" data-w="330">
     <div class="tb"><span class="t">MERCY WIZARD.txt</span><button data-close>✕</button></div>
     <div class="body">
       <h2 class="wt"><img class="wordmark" src="img/mercywizard-banner.jpg"
@@ -330,7 +330,7 @@ dl.f dd{font-weight:700}
   </div>
 
   <!-- LIVE -->
-  <div class="win" id="w-live" data-x="440" data-y="405" data-w="450">
+  <div class="win" id="w-live" data-x="440" data-y="423" data-w="450">
     <div class="tb"><span class="t">LIVE.dat</span><button data-close>✕</button></div>
     <div class="body">
       <h2 class="wt">Shows</h2>
@@ -339,7 +339,7 @@ dl.f dd{font-weight:700}
   </div>
 
   <!-- BOOKING -->
-  <div class="win" id="w-book" data-x="104" data-y="505" data-w="320">
+  <div class="win" id="w-book" data-x="104" data-y="523" data-w="320">
     <div class="tb"><span class="t">BOOKING.exe</span><button data-close>✕</button></div>
     <div class="body">
       <h2 class="wt">Book a show</h2>
@@ -361,7 +361,7 @@ dl.f dd{font-weight:700}
        sales hero for things that are not for sale, an unfilled "why these
        exist" block, and the same four items twice (cards, then an index
        table). A folder of tools on a desktop is what this already was. -->
-  <div class="win" id="w-tools" data-x="1064" data-y="566" data-w="330">
+  <div class="win" id="w-tools" data-x="1064" data-y="584" data-w="330">
     <div class="tb"><span class="t">TOOLS.exe</span><button data-close>✕</button></div>
     <div class="body">
       <h2 class="wt">Tools</h2>
@@ -381,7 +381,7 @@ dl.f dd{font-weight:700}
   </div>
 
   <!-- LINKS -->
-  <div class="win" id="w-links" data-x="1064" data-y="369" data-w="330">
+  <div class="win" id="w-links" data-x="1064" data-y="387" data-w="330">
     <div class="tb"><span class="t">LINKS</span><button data-close>✕</button></div>
     <div class="body">
       <p><a href="https://mercywizard.bandcamp.com" target="_blank" rel="noopener">▸ Bandcamp</a></p>

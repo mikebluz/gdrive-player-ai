@@ -75,10 +75,10 @@ restore_dev_bypass() {
 trap 'rm -rf "$STAGE_DIR"; restore_dev_bypass' EXIT
 
 echo "📦 Staging files..."
-# home.html is DELIBERATELY NOT DEPLOYED yet — see the HOLD note near the end
-# of this script. Add it back to this line, the stamp loop, and the force-put
-# block below when the new homepage is ready to go live.
-cp -r index.html listen.html watch.html bloops.html player.html artwork.html game.html tracks.html css js banner.jpg me2026.jpg samples music artwork vendor "$STAGE_DIR/"
+# img/ is REQUIRED by index.html — it holds the pixel-art wallpaper, the live
+# photo and the handwritten wordmark. Without it the desktop ships as a flat
+# green field with three broken images.
+cp -r index.html listen.html watch.html bloops.html player.html artwork.html game.html tracks.html css js img banner.jpg me2026.jpg samples music artwork vendor "$STAGE_DIR/"
 # Caching policy (HTML revalidates every load; versioned assets cache long) —
 # without it, phones cache stale HTML pointing at old ?v= assets and boot dies.
 cp .htaccess "$STAGE_DIR/"
@@ -139,9 +139,8 @@ put -O "$REMOTE_DIR/js" "$STAGE_DIR/js/config.js"
 # forever. Put them explicitly every deploy so the fresh stamp always lands.
 mkdir -p "$REMOTE_DIR/js/bloops"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/index.html"
-# New site (in development) — same force-put, same reason: a stamp-only
-# change is byte-identical in length and the size-only mirror would skip it.
-# NOTE: home.html is intentionally absent — see the HOLD note at the end.
+# Same force-put, same reason: a stamp-only change is byte-identical in length
+# and the size-only mirror would skip it.
 put -O "$REMOTE_DIR"           "$STAGE_DIR/listen.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/watch.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/bloops.html"
@@ -165,31 +164,3 @@ echo "🔎 Verify the credentials reached the server:"
 echo "    open https://<your-domain>/js/config.js — it should show your real"
 echo "    clientId/apiKey, not a 404. Then hard-refresh the app (Cmd-Shift-R)."
 
-# ─────────────────────────────────────────────────────────────────────────────
-# HOLD: the new homepage is NOT deployed.
-#
-# The live direction is home-os.html (the desktop). home.html is the earlier
-# single-page version, kept for reference. Neither ships yet, so both are
-# omitted from three places above: the `cp` staging line, the ?v= stamp loop,
-# and the force-put block. listen.html and watch.html ARE deployed.
-#
-# The launch checklist below is the real thing to read. It prints on every
-# deploy on purpose — a comment nobody reads is not a reminder. Delete this
-# whole block at cutover.
-# ─────────────────────────────────────────────────────────────────────────────
-if [[ -f "home-os.html" || -f "home.html" ]]; then
-  echo ""
-  echo "⏸️  REMINDER — the new homepage was NOT deployed (still on hold)."
-  echo "    listen.html and watch.html WERE. To go live:"
-  echo "      1. decide which file ships and whether it becomes index.html"
-  echo "         (home-os.html is the current direction; home.html is the old one)"
-  echo "      2. add it to the cp line, the ?v= stamp loop and the force-put block"
-  echo "      3. add img/ to the cp line — it holds the pixel-art wallpaper and"
-  echo "         the live photo; without it the desktop ships as flat green"
-  echo "      4. CONTENT: in home-os.html's LINKS window, delete the whole"
-  echo "         '← old site · demos' row. Both are scaffolding — the back-link"
-  echo "         is temporary, and demos points at home-demos.html, an internal"
-  echo "         working file that must not ship."
-  echo "      5. remove the .devbar block from home/listen/watch"
-  echo "      6. delete this reminder from deploy.sh"
-fi

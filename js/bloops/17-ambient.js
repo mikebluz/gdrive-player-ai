@@ -8002,7 +8002,6 @@
         for (let c = cFrom; c <= cTo && ctx.cap < 256; c++) {
           // 'when' conditional applies per phrase cycle (cycle = iteration index).
           if (!_ambCondFires(inst.when, c)) continue;
-          if (!_ambCycleGateOK(inst, c)) continue;   // ⏱ Schedule tab: this whole iteration is switched off
           ctx.c = c;
           // 🎲 Improvise tab: is this iteration played as written, or improvised?
           // Rhythm var / Rests come from the improv set for an improvised cycle —
@@ -9575,7 +9574,6 @@
       const pVary = Math.max(0, Math.min(100, arp.pitchVary | 0));   // ±1-octave drift per hit (gated)
       for (let c = cFrom; c <= cTo && cap < 256; c++) {
         if (!_ambCondFires(arp.when, c)) continue;
-        if (!_ambCycleGateOK(arp, c)) continue;   // ⏱ Schedule tab: this whole iteration is switched off
         const cStart = st.startAt + c * loopSec;
         const rnd = _ambSeededRand(((arp.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503));
         // 🎲 Improvise tab. Same three swaps as the shared euclid core (this
@@ -10963,52 +10961,29 @@
     // neutral state everywhere. Kept OUT of _ambDefaultLayer — the object-in-
     // defaults backfill trap — and coerced in _ambNormalizeEuclidPattern.
     const _AMB_CYCGATE_MAX = 32;
-    function _ambCycleGateLen(L) {
-      const g = L && L.cycleGate;
-      const n = (g && Number.isFinite(g.len)) ? (g.len | 0) : ((g && Array.isArray(g.steps)) ? g.steps.length : 4);
-      return Math.max(2, Math.min(_AMB_CYCGATE_MAX, n || 4));
-    }
-    function _ambCycleGateSteps(L) {
-      const n = _ambCycleGateLen(L);
-      const src = (L && L.cycleGate && Array.isArray(L.cycleGate.steps)) ? L.cycleGate.steps : null;
-      return Array.from({ length: n }, (_, i) => (src && src[i] != null) ? (src[i] ? 1 : 0) : 1);
-    }
-    // The ONE read the emitters make. Absent/empty gate → every cycle fires, so a
-    // layer that has never opened the tab is byte-identical to before.
-    function _ambCycleGateOK(L, c) {
-      const g = L && L.cycleGate;
-      if (!g || !Array.isArray(g.steps) || !g.steps.length) return true;
-      const n = Math.max(2, Math.min(_AMB_CYCGATE_MAX, (g.len | 0) || g.steps.length));
-      const v = g.steps[((((c | 0) % n) + n) % n)];
-      return (v == null) ? true : !!v;
-    }
-    // NOTE on the neutrality rule: an ALL-ON gate is already neutral to the
-    // engine — _ambCycleGateOK returns true for every cycle and makes no RNG
-    // draws — so it does NOT have to be pruned to absent. Pruning it is in fact
-    // a bug: it threw away the LENGTH the user just set (a fresh schedule is
-    // all-on, so every ± press was deleted on the spot and the buttons looked
-    // dead — reported 2026-07-30). ABSENT remains the neutral state for a layer
-    // that has never opened the tab; "Clear" is the explicit way back to it.
-    function _ambCycleGateSet(L, i, on) {
-      if (!L) return;
-      const n = _ambCycleGateLen(L), steps = _ambCycleGateSteps(L);
-      steps[(((i | 0) % n) + n) % n] = on ? 1 : 0;
-      L.cycleGate = { len: n, steps: steps };
-    }
-    function _ambCycleGateResize(L, n) {
-      if (!L) return;
-      n = Math.max(2, Math.min(_AMB_CYCGATE_MAX, n | 0));
-      const old = _ambCycleGateSteps(L);
-      const steps = Array.from({ length: n }, (_, i) => (old[i] != null ? old[i] : 1));
-      L.cycleGate = { len: n, steps: steps };   // keep an all-on gate: the LENGTH is the setting
-    }
     function _ambNormalizeCycleGate(L) {
       if (!L || typeof L !== 'object') return;
       const g = L.cycleGate;
       if (!g || typeof g !== 'object' || !Array.isArray(g.steps) || !g.steps.length) { if ('cycleGate' in L) delete L.cycleGate; return; }
       const n = Math.max(2, Math.min(_AMB_CYCGATE_MAX, (g.len | 0) || g.steps.length));
-      const steps = Array.from({ length: n }, (_, i) => (g.steps[i] ? 1 : 0));
-      L.cycleGate = { len: n, steps: steps };   // all-on is kept (neutral, and carries the length)
+      const gate = Array.from({ length: n }, (_, i) => (g.steps[i] ? 1 : 0));
+      delete L.cycleGate;
+      if (gate.every(v => v)) return;                      // all-on gated nothing
+      const w = L.when;
+      // '1st' is the one aperiodic When: it fires at iteration 0 only, so the
+      // merge is decided entirely by the gate's first cell.
+      if (w === '1st') { if (!gate[0]) L.when = '0'; return; }
+      // Everything else is periodic. AND the two over the LCM of their periods,
+      // which is exact for always / A:B / a bitmask / another step string.
+      let wp = 1;
+      if (typeof w === 'string' && /^[01]+$/.test(w)) wp = w.length;
+      else if (typeof w === 'string' && /^\d+$/.test(w)) { try { wp = _ambWhenBitsStr(parseInt(w, 10) || 0).length; } catch (e) { wp = 1; } }
+      else { const m = /^(\d+):(\d+)$/.exec(String(w || '')); if (m) wp = Math.max(1, parseInt(m[2], 10) || 1); }
+      const gcd = (a, b) => b ? gcd(b, a % b) : a;
+      const len = Math.min(64, (n * wp) / gcd(n, wp) || n);
+      let out = '';
+      for (let i = 0; i < len; i++) out += (_ambCondFires(w, i) && gate[i % n]) ? '1' : '0';
+      L.when = out;
     }
     // IMPROVISE SCHEDULE (`layer.improv`) — the Pattern control's 3rd tab.
     //
@@ -11121,15 +11096,10 @@
       // The dot means "iterations are actually being skipped" — NOT merely "a
       // gate object exists". Since an all-on gate is now kept (it carries the
       // length), presence alone would light it while nothing is gated.
-      const gated = !!(L && L.cycleGate) && _ambCycleGateSteps(L).some(v => !v);
-      const n = _ambCycleGateLen(L), on = _ambCycleGateSteps(L).filter(v => v).length;
       const imp = _ambImprovOn(L);
       return '<div class="ambient-gridtabs" role="tablist">' +
         '<button type="button" class="ambient-gridtab' + (tab === 'pattern' ? ' on' : '') + '" data-gtab="pattern" role="tab"' +
           ' title="The step pattern — one iteration of this layer’s sequence.">⿴ Pattern</button>' +
-        '<button type="button" class="ambient-gridtab' + (tab === 'sched' ? ' on' : '') + '" data-gtab="sched" role="tab"' +
-          ' title="Schedule — each step here is one FULL iteration of the pattern, so switching one off leaves that whole repeat silent (a drawable ‘When’).">⏱ Schedule' +
-          (gated ? '<i class="gdot" title="' + on + ' of ' + n + ' iterations play"></i>' : '') + '</button>' +
         '<button type="button" class="ambient-gridtab' + (tab === 'improv' ? ' on' : '') + '" data-gtab="improv" role="tab"' +
           ' title="Improvise — alternate between playing the pattern and improvising around it, counted in whole iterations.">\u{1F3B2} Improvise' +
           (imp ? '<i class="gdot" title="' + _ambImprovLen(L, 'pat') + ' \u00d7 pattern, then ' + _ambImprovLen(L, 'imp') + ' \u00d7 improvise"></i>' : '') + '</button>' +
@@ -11175,30 +11145,6 @@
           : '') +
       '</div>';
     }
-    function _ambCycleGateHtml(L) {
-      const n = _ambCycleGateLen(L), steps = _ambCycleGateSteps(L);
-      const on = steps.filter(v => v).length;
-      let cells = '';
-      for (let i = 0; i < n; i++) {
-        cells += '<button type="button" class="ambient-cyccell' + (steps[i] ? ' on' : '') + (i % 4 === 0 ? ' q' : '') +
-          '" data-cyc="' + i + '" title="Iteration ' + (i + 1) + ' of ' + n + ' — ' + (steps[i] ? 'plays' : 'silent') + '">' + (i + 1) + '</button>';
-      }
-      return '<div class="ambient-cycgate">' +
-        '<div class="ambient-cycgate-cells" style="--cyccols:' + Math.min(n, 8) + '">' + cells + '</div>' +
-        '<div class="ambient-cycgate-foot">' +
-          '<span class="ambient-sched-lbl">length</span>' +
-          '<button type="button" class="ambient-cyclen" data-cyclen="-1" title="Shorter schedule">−</button>' +
-          '<span class="ambient-step-fx-v">' + n + '</span>' +
-          '<button type="button" class="ambient-cyclen" data-cyclen="1" title="Longer schedule">＋</button>' +
-          '<button type="button" class="ambient-cycclear" title="Clear — every iteration plays again">Clear</button>' +
-        '</div>' +
-        '<div class="ambient-hint">' + on + ' of ' + n + ' iterations play, then the schedule repeats. Stacks with the layer’s When control.</div>' +
-      '</div>';
-    }
-    // The Pattern tab's rhythm-source switch. Drawn = play the grid · Euclid =
-    // generate the rhythm from Pulses/Steps/Rotate and keep the drawing on file.
-    // Kit layers are excluded: drum-lanes IS a step sequencer, so a generated
-    // rhythm has no meaning there.
     function _ambPatModeHtml(inst) {
       if (inst && inst.euclidKit) return '';
       const drawn = Array.isArray(inst && inst.euclidPattern) && inst.euclidPattern.some(r => Array.isArray(r));
@@ -11411,7 +11357,6 @@
         // TAB 1 = the step pattern (unchanged). TAB 2 = the cycle schedule, where
         // each step is one full iteration of that pattern. Both live inside `grid`
         // so every delegated handler already bound to it keeps working.
-        if (L._gridTab === 'sched') { grid.innerHTML = _ambGridTabsHtml(L) + _ambCycleGateHtml(L); return; }
         if (L._gridTab === 'improv') { grid.innerHTML = _ambGridTabsHtml(L) + _ambImprovHtml(L); return; }
         const d = _ambEuclidGridDims(L, type);
         const bar = d ? _ambEuclidBarInfo(E, key, L, (E.getCfg && E.getCfg()) || null, d.steps, d.bars) : null;
@@ -11421,12 +11366,12 @@
       // drum-lanes one below, which returns early for non-kit layers — the schedule
       // tab exists on every euclidgrid type (Bass / Beat / Arp).
       grid.addEventListener('click', (ev) => {
-        const t = ev.target.closest && ev.target.closest('.ambient-gridtab, .ambient-cyccell, .ambient-cyclen, .ambient-cycclear, .ambient-patmode-btn');
+        const t = ev.target.closest && ev.target.closest('.ambient-gridtab, .ambient-cyclen, .ambient-patmode-btn');
         if (!t) return;
         _E = E; const L = getL(); if (!L) return;
         if (t.classList.contains('ambient-gridtab')) {
           { const g = t.getAttribute('data-gtab');
-            L._gridTab = (g === 'sched' || g === 'improv') ? g : 'pattern'; }
+            L._gridTab = (g === 'improv') ? g : 'pattern'; }
           render(); return;   // view-only — nothing to persist or re-anchor
         }
         if (t.classList.contains('ambient-patmode-btn')) {
@@ -11437,13 +11382,6 @@
           // length buttons, so discriminate on the attribute, not the class.
           const [k, d] = String(t.getAttribute('data-implen')).split(':');
           _ambImprovSetLen(L, k, _ambImprovLen(L, k) + ((d | 0) || 1));
-        } else if (t.classList.contains('ambient-cyccell')) {
-          const i = t.getAttribute('data-cyc') | 0;
-          _ambCycleGateSet(L, i, !_ambCycleGateSteps(L)[i]);
-        } else if (t.classList.contains('ambient-cyclen')) {
-          _ambCycleGateResize(L, _ambCycleGateLen(L) + ((t.getAttribute('data-cyclen') | 0) || 1));
-        } else {
-          delete L.cycleGate;
         }
         render(); persist();
         // Land on the layer's next boundary like every other per-note edit, so a
@@ -13254,7 +13192,6 @@
         // SECOND render path for the same element (timing edits / Lock-to re-fit).
         // It has to emit the tab strip and honour the selected tab too, or a Unit
         // change silently replaces the tabbed control with a bare step grid.
-        if (L._gridTab === 'sched') { grid.innerHTML = _ambGridTabsHtml(L) + _ambCycleGateHtml(L); return; }
         if (L._gridTab === 'improv') { grid.innerHTML = _ambGridTabsHtml(L) + _ambImprovHtml(L); return; }
         const d = _ambEuclidGridDims(L, type); if (!d) return;
         let bar = null; try { bar = _ambEuclidBarInfo(E, key, L, cfg, d.steps, d.bars); } catch (e) {}

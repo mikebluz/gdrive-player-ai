@@ -3871,24 +3871,8 @@
     @media (hover: hover) { .ambient-gridtab:not(.on):hover { color: #cbb8ee; border-color: #4a3d6b; } }
     /* The cycle schedule itself — cells wrap at 8 per row (no horizontal scroll). */
     .ambient-cycgate { display: flex; flex-direction: column; gap: 6px; }
-    .ambient-cycgate-cells { display: grid; grid-template-columns: repeat(var(--cyccols, 8), minmax(0, 1fr)); gap: 3px; }
-    .ambient-cyccell {
-      min-width: 0; padding: 7px 0; font: 600 0.6rem 'Segoe UI', sans-serif;
-      color: #6c6486; background: #14141f; border: 1px solid #26263a; border-radius: 4px;
-      cursor: pointer; touch-action: manipulation; overflow: hidden;
-    }
-    .ambient-cyccell.q { border-left-color: #3d3d58; }
-    .ambient-cyccell.on { color: #1a1206; background: #9f7aea; border-color: #b794f4; }
-    @media (hover: hover) { .ambient-cyccell:not(.on):hover { border-color: #4a3d6b; color: #a294c4; } }
     .ambient-cycgate-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
-    .ambient-cyclen, .ambient-cycclear {
-      padding: 2px 9px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8;
-      background: transparent; border: 1px solid #34344a; border-radius: 4px;
-      cursor: pointer; touch-action: manipulation;
-    }
-    @media (hover: hover) { .ambient-cyclen:hover, .ambient-cycclear:hover { border-color: #9f7aea; color: #d9cbff; } }
     /* 🎲 Improvise tab. Same tokens as the Schedule tab's chrome above so the two
-       tabs of one control read alike; the On state borrows the .ambient-cyccell.on
        violet, which is already this control's "engaged" colour. */
     /* Pattern-source switch (Drawn · Euclid) at the head of the Pattern tab. */
     .ambient-patmode { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-bottom: 5px; }

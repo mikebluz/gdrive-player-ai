@@ -1982,6 +1982,26 @@
         });
       })();
 
+      // Background-audio sink ON/OFF — a master OUTPUT-ROUTING switch, not an
+      // effect: it swaps the speakers for a hidden media element so iOS keeps
+      // playing in the background. The tap is the user gesture el.play() needs.
+      (function initBgSinkToggle() {
+        const tgl = panel.querySelector('#fx-bgsink-on');
+        if (!tgl) return;
+        const paint = () => {
+          const on = globalFx.bgSinkOn === true;
+          tgl.classList.toggle('off', !on);
+          tgl.textContent = on ? 'ON' : 'OFF';
+        };
+        paint();
+        tgl.addEventListener('click', () => {
+          globalFx.bgSinkOn = !(globalFx.bgSinkOn === true);
+          try { applyBackgroundSink(); } catch (e) {}
+          paint();   // AFTER apply: a failed construction flips the flag back off
+          try { persistGlobalFx(); } catch (e) {}
+        });
+      })();
+
       // Effect-order list — renders globalFx.fxOrder as a stack of rows
       // with ↑ / ↓ buttons. A move re-runs rebuildMasterChain so the
       // master signal flow follows immediately; per-note chains pick up

@@ -1334,6 +1334,7 @@
       compOn:             true,
       ottOn:              false,  // 3-band OTT glue (the "Glue" control)
       ottDepth:           35,
+      bgSinkOn:           false,  // media-element output sink (phone background audio)
       compThresh:         -3,    // dBFS
       compRatio:          2,     // :1
       compAttack:         5,     // ms
@@ -1346,7 +1347,7 @@
       // Drives both the master chain and per-note chains in playNote.
       fxOrder:            FX_NAMES.slice(),
     };
-    const FX_ON_KEYS = ['reverbOn', 'delayOn', 'distortionOn', 'chorusOn', 'vibratoOn', 'tremoloOn', 'phaserOn', 'autoFilterOn', 'pingPongOn', 'autoPanOn', 'warmthOn', 'compOn', 'ottOn', 'limitOn', 'clipOn', 'vinylOn', 'tapeOn'];
+    const FX_ON_KEYS = ['reverbOn', 'delayOn', 'distortionOn', 'chorusOn', 'vibratoOn', 'tremoloOn', 'phaserOn', 'autoFilterOn', 'pingPongOn', 'autoPanOn', 'warmthOn', 'compOn', 'ottOn', 'bgSinkOn', 'limitOn', 'clipOn', 'vinylOn', 'tapeOn'];
     // Keys reset by the Dynamics "Reset" button.
     const DYN_KEYS = ['compOn', 'compThresh', 'compRatio', 'compAttack', 'compRelease', 'compKnee', 'limitOn', 'limitCeil', 'clipOn'];
     const globalFx = (() => {
@@ -1505,6 +1506,80 @@
         });
       } catch (e) {}
     }
+
+    // ---- Background-audio sink (phone) -------------------------------------
+    // iOS Safari suspends a Web Audio graph when the app is backgrounded or the
+    // screen locks — but it does NOT stop a playing <audio> ELEMENT, because a
+    // media element is "media playback" (the web-radio category) and gets media-
+    // session treatment. Routing the END of the master chain into a
+    // MediaStreamDestination and playing that stream through a hidden <audio>
+    // element makes the element THE output, so the whole engine inherits that
+    // exemption. This was deliberately skipped while a native shell was the
+    // plan; the native path is now hardware-blocked (Intel Mac + iOS 26), so
+    // the sink is the phone story.
+    //
+    // The element must be the ONLY output — masterFade's edge to the real
+    // destination is disconnected while the sink is on, or everything plays
+    // twice (the documented reason this was skipped). masterFade has exactly
+    // one outgoing edge, so the surgical disconnect below is the whole swap.
+    // Metronome and other stray .toDestination() one-offs keep playing through
+    // the speakers directly and simply don't sound while backgrounded — fine.
+    //
+    // iOS needs a USER GESTURE for el.play(): the toggle tap is one. If play()
+    // still rejects (boot-time restore of a persisted ON), a one-shot
+    // pointerdown listener retries on the next touch anywhere.
+    let _bgSink = null;
+    function applyBackgroundSink() {
+      const want = globalFx.bgSinkOn === true;
+      if (want && !_bgSink) {
+        try {
+          // The destination node must live in TONE'S context — rawContext is the
+          // standardized-audio-context wrapper Tone's whole graph is built on,
+          // and it implements createMediaStreamDestination itself. Creating it
+          // on the unwrapped native context instead makes Tone.connect throw
+          // InvalidAccessError (cross-context edge) and the sink silently never
+          // engages. The .stream it exposes is a real MediaStream either way.
+          const dest = Tone.context.rawContext.createMediaStreamDestination();
+          Tone.connect(masterFade, dest);
+          try { masterFade.disconnect(Tone.getDestination()); } catch (e) {}
+          const el = document.createElement('audio');
+          el.setAttribute('playsinline', '');
+          el.style.display = 'none';
+          el.srcObject = dest.stream;
+          document.body.appendChild(el);
+          _bgSink = { dest, el };
+          const tryPlay = () => el.play().catch(() => {
+            // no gesture yet — retry on the next touch, once
+            const arm = () => { el.play().catch(() => {}); document.removeEventListener('pointerdown', arm); };
+            document.addEventListener('pointerdown', arm, { once: true });
+          });
+          tryPlay();
+          // Lock-screen identity + controls. Play/pause map to the Bloom
+          // transport when available so the lock screen actually works.
+          try {
+            if (navigator.mediaSession) {
+              navigator.mediaSession.metadata = new MediaMetadata({ title: 'Bloops', artist: 'generative bloom' });
+              navigator.mediaSession.setActionHandler('play', () => { try { el.play(); } catch (e) {} });
+              navigator.mediaSession.setActionHandler('pause', () => { /* keep the stream alive — pausing the element kills background audio */ });
+            }
+          } catch (e) {}
+        } catch (e) {
+          // construction failed — restore the direct path, drop any half-built
+          // element, and report off (the toggle repaints from this flag).
+          try { masterFade.toDestination(); } catch (e2) {}
+          try { const el = document.querySelector('audio[playsinline][style*="display: none"]'); if (el && !el.src) el.remove(); } catch (e2) {}
+          _bgSink = null; globalFx.bgSinkOn = false;
+        }
+      } else if (!want && _bgSink) {
+        try { _bgSink.el.pause(); } catch (e) {}
+        try { _bgSink.el.srcObject = null; _bgSink.el.remove(); } catch (e) {}
+        try { masterFade.disconnect(_bgSink.dest); } catch (e) {}
+        try { masterFade.toDestination(); } catch (e) {}
+        _bgSink = null;
+      }
+    }
+    // A persisted ON restores at boot (the gesture retry above covers autoplay).
+    try { if (globalFx.bgSinkOn === true) applyBackgroundSink(); } catch (e) {}
 
     function applyGlobalFx() {
       // Send/return: master FX wets stay at 1 (always fully wet); the

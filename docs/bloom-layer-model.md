@@ -915,7 +915,18 @@ stack, held single note that roams per cycle, strummed pedal).
    (verified note-for-note, plus the invariant harness). Gates: golden 82/82,
    harness green.
 
-   Length ratio and Pitch rule remain unstarted — they are the next two axes.
+   **LENGTH RATIO ("Ring"): LANDED (2026-07-30).** `lenRatio` (0–200 %) +
+   `_ambRingMs(L, spanSec)` — note length as a % of the STRIKE SPAN, replacing
+   the three encodings (Bed Length ms / Drone fill-the-hold / Pedal Length ms)
+   with one number; `lengthMs` survives as the absolute escape hatch and
+   absent/0 is each type's legacy path, byte-identical. Verified through the
+   engine: bed strike +2 ring 25 → 250 ms of a 1 s span; drone hold 2 ring 50
+   → 2000 ms of 4 s; pedal ring 100 → 500 ms legato slots; ring 0 note-for-note
+   identical to absent. Harness green, golden 82/82.
+
+   **PITCH RULE remains unstarted** — the one axis that isn't a number
+   (`voicing` · `stack` · `fixed` · `anchor`). After it: the step-3 emitter
+   collapse, which is the deliberate re-baseline decision.
 2. Verify by construction: can Bed-with-dials reproduce Drone? Drone reproduce Pedal? A
    failure locates the genuinely-missing axis rather than guessing at it.
 3. Only then collapse to one emitter, with Bed/Drone/Pedal surviving as **presets in the

@@ -7804,6 +7804,11 @@
         durMs = Math.max(80, Math.round(_ambBedHoldEff(bed) * unitSec * 1000));
         effIntervalMs = durMs;   // onset interval == the hold span (one chord at a time)
       }
+      // RING (length-ratio axis): when set, the chord's length is a % of the
+      // EFFECTIVE onset interval — whatever cadence the strike/hold/prog-sync
+      // branches above chose — replacing all three length encodings at once.
+      { const _ring = _ambRingMs(bed, Math.max(0.001, effIntervalMs / 1000));
+        if (_ring > 0) durMs = Math.max(80, _ring); }
       const overlap = durMs / Math.max(1, effIntervalMs);
       const pans = _ambLayerPans(bed, voicing.length);
       const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
@@ -8441,7 +8446,10 @@
       const strike = _ambStrikeOf(inst, 'pedal');
       const slotSec = _ambStrikeSpan(strike, barSec);
       const totalSlots = Math.max(1, Math.round(phraseSec / slotSec));
-      const lenMs  = Math.max(40, inst.lengthMs | 0);
+      // RING overrides the ms Length as a % of the strike slot (100 = legato
+      // hits that meet, 15 = the classic staccato pedal); absent = legacy ms.
+      const _ring = _ambRingMs(inst, slotSec);
+      const lenMs  = _ring > 0 ? _ring : Math.max(40, inst.lengthMs | 0);
       const restP  = _ambEffRest(inst);
       const vary   = Math.max(0, Math.min(100, inst.vary | 0));   // % of hits that roam off the root
       const reg    = Math.max(1, Math.min(7, inst.register | 0) || 4);
@@ -8554,8 +8562,11 @@
       const pitchVary = Math.max(0, Math.min(100, inst.pitchVary | 0));
       // Hold the note across (almost) the whole span so it's continuous; a hair
       // short so a long release doesn't pile onto the next strike. Prog-sync
-      // overlaps (×1.5) so subdivided voicings crossfade like a pad.
-      const lenMs = Math.max(60, Math.round(cycleSec * 1000 * (_psi ? 1.5 : 0.98)));
+      // overlaps (×1.5) so subdivided voicings crossfade like a pad. RING (the
+      // length-ratio axis) overrides the fill when set — a drone that strikes
+      // every 2 units but rings only half of them was inexpressible before.
+      const _ring = _ambRingMs(inst, cycleSec);
+      const lenMs = _ring > 0 ? Math.max(60, _ring) : Math.max(60, Math.round(cycleSec * 1000 * (_psi ? 1.5 : 0.98)));
 
       let st = E.runPhase[key];
       if (!st) {
@@ -13513,6 +13524,19 @@
     // Onset interval for a given strike, in units of `unitSec`.
     function _ambStrikeSpan(strike, unitSec) {
       return strike > 0 ? unitSec / strike : unitSec * (-strike);
+    }
+    // ── SUSTAIN FAMILY: the RING (length-ratio) axis ──────────────────────
+    // Step-1 axis #2 (docs §11): note length as a % of the STRIKE SPAN, so the
+    // three length encodings — Bed's Length ms, Drone's implicit fill-the-hold,
+    // Pedal's Length ms — are one number. 100 = fill the span (a drone), ~15 =
+    // staccato (a pedal). Absent/0 = the type's own legacy encoding, which is
+    // what keeps saved projects and both baselines byte-identical; nothing
+    // writes the field until the slider moves. `lengthMs` survives as the
+    // absolute-ms escape hatch (the plan's own requirement).
+    function _ambRingMs(L, spanSec) {
+      const r = L && L.lenRatio;
+      if (!Number.isFinite(r) || (r | 0) <= 0) return 0;   // 0/absent = legacy
+      return Math.max(40, Math.round(spanSec * 1000 * Math.min(200, r | 0) / 100));
     }
     // BED's strike resolves through its existing HOLD machinery rather than a
     // new clock: hold already scales the step interval AND the chord length by
@@ -24658,7 +24682,7 @@
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
         ['sub', 'Progression', 'When an Area progression is set: the layer locks to it and plays voicings of the current chord. (Repeat/Times in Timing only apply when there is no Area progression.)'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
-        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold \u00b7 \u2212N = hold N units \u00b7 +N = N chords per unit'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['choke'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold \u00b7 \u2212N = hold N units \u00b7 +N = N chords per unit'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length \u00b7 % of each strike a chord rings'], ['choke'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
@@ -24709,7 +24733,7 @@
       pedal: { label: 'Pedal', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Density · −N = 1 hit per N bars · +N = N per bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Density · −N = 1 hit per N bars · +N = N per bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length · % of each strike a hit rings'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'vary', 'Roam', 0, 100, 'root → wander degrees'], ['tight'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
@@ -24718,7 +24742,7 @@
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
         ['sub', 'Progression', 'When an Area progression is set: PEDAL (default) holds ONE note per progression cycle, auto-chosen to work across every chord — the card explains the pick, and Note overrides it. VOICINGS re-voices the current chord instead (Subdivide/Feel/Variety).'], ['dronepedal'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
-        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold · −N = hold N units · +N = N per unit'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold · −N = hold N units · +N = N per unit'], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = fill the hold · % of each strike the note rings'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
         ..._AMB_MIX] },
     };
@@ -27693,6 +27717,7 @@
       set('ambient-bed-restProb', cfg.bed.restProb | 0);
       set('ambient-bed-strum', cfg.bed.strum);
       set('ambient-bed-strike', cfg.bed.strike | 0);
+      set('ambient-bed-lenRatio', cfg.bed.lenRatio | 0);
       set('ambient-bed-strumFidelity', cfg.bed.strumFidelity);
       set('ambient-bed-level', cfg.bed.level);
        set('ambient-bed-areaFadeMs', cfg.bed.areaFadeMs); hint('ambient-bed-areaFadeMs-v', _ambFmtMs(cfg.bed.areaFadeMs));
@@ -29201,6 +29226,7 @@
       bind('ambient-bed-motion', 'bed', 'motion');
       bind('ambient-bed-strum', 'bed', 'strum');
       bind('ambient-bed-strike', 'bed', 'strike');   // primary bind — the schema token alone only wires ADDED beds (the documented trap)
+      bind('ambient-bed-lenRatio', 'bed', 'lenRatio');
       bind('ambient-bed-strumFidelity', 'bed', 'strumFidelity');
       bind('ambient-bed-restProb', 'bed', 'restProb');
       bind('ambient-bed-startVary', 'bed', 'startVary');

@@ -924,9 +924,53 @@ stack, held single note that roams per cycle, strummed pedal).
    → 2000 ms of 4 s; pedal ring 100 → 500 ms legato slots; ring 0 note-for-note
    identical to absent. Harness green, golden 82/82.
 
-   **PITCH RULE remains unstarted** — the one axis that isn't a number
-   (`voicing` · `stack` · `fixed` · `anchor`). After it: the step-3 emitter
-   collapse, which is the deliberate re-baseline decision.
+   **PITCH RULE: LANDED (2026-07-30).** `pitchRule` ('' = the type's native
+   rule · voicing · stack · fixed · anchor) + `_ambStackFreqs` (the drone's
+   stack math extracted verbatim) + `_ambAnchorPc` (the pedal-pick scorer over
+   the WHOLE progression, view-shifted — deliberately the simplification; the
+   drone's own anchor path keeps its part/section-aware window machinery).
+   Each emitter branches at its pick site only when the field is set, so the
+   shared-RNG draw pattern of every existing project is untouched. Pedal gains
+   `voices` (1–9) for its Stack; pedal omits 'voicing' until the collapse
+   gives it the chord machinery. UI: a 'pitchrule' select token on all three
+   (the primary Bed needing the hardcoded wiring, as ever).
+
+   **STEP-2 REPRODUCTION MATRIX: RUN.** Bed(stack · strike −2 · ring 100)
+   reproduces Drone(hold 2) note-for-note at the same cadence — the one
+   residual is a ≤10 ms per-voice stagger difference (Bed's strum machinery vs
+   the drone's fixed 6 ms fan). Drone(fixed · strike +4 · ring 20) reproduces
+   Pedal(density 4) EXACTLY — character-for-character identical streams. The
+   matrix's genuine finding, exactly what step 2 exists to surface: the axis
+   that resists unification is not a dial at all, it is the CLOCK — the
+   drone's anchor/progression-window machinery strikes at part-aware WINDOW
+   boundaries (variable length under sections), which the step clock cannot
+   express without a new snapping mode. That is the real content of the
+   "three clocks" cost, now located precisely.
+
+   **STEP 3, FIRST CUT: LANDED (2026-07-30) — Drone + Pedal are ONE emitter,
+   with zero re-baseline.** `_ambEmitSustain` replaces `_ambEmitDrone` and
+   `_ambEmitPedal` (both deleted): the pedal's phrase→slots walk with the
+   drone as the 1-slot-per-phrase case, which is exact because a drone's
+   per-cycle seeded cRnd IS a per-phrase cRnd when phrase == cycle (same seed
+   formula). Every surviving divergence is kind-gated and was transcribed
+   verbatim — especially each kind's RNG draw ORDER (the drone draws tOff
+   before its window check and regShift after; the pedal draws rest-then-vary
+   for every slot regardless of the window). Dispatch: the descriptor table's
+   'pedal' and 'held' cases both route here; `type` keeps dispatching, so
+   saved projects load untouched. Proof: a 16-config reference battery
+   (defaults · vary/rest/swing · odd bars×density · prog voice+anchor ·
+   strike/ring · stack/voicing/fixed · tight) captured from the OLD emitters
+   diffs BYTE-IDENTICAL against the merged one, and the invariant harness +
+   golden stayed green with no baseline change — the collapse cost the doc
+   predicted (RNG draw-order shifts) never materialized, because the merge
+   followed the matrix's clock analysis instead of picking a clock first.
+
+   **REMAINING: Bed into the core, and presets.** Bed still rides the step
+   clock; the anchor path's part-aware window boundaries are what the step
+   clock cannot express (the located "three clocks" cost). Folding Bed in —
+   or deciding the two-clock split is the right permanent shape, with the
+   dials as the unification — is the last decision. The Add-layer presets
+   (§5) become trivial once that lands.
 2. Verify by construction: can Bed-with-dials reproduce Drone? Drone reproduce Pedal? A
    failure locates the genuinely-missing axis rather than guessing at it.
 3. Only then collapse to one emitter, with Bed/Drone/Pedal surviving as **presets in the

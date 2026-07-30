@@ -3019,8 +3019,8 @@
         case 'euclid':   return { mode: 'window', store: (t === 'bass') ? 'bassPhase' : 'runPhase', emit: _ambEmitStepGrid };
         case 'stepgrid': return { mode: 'window', store: 'runPhase', emit: _ambEmitStepGrid };
         case 'riff':     return { mode: 'window', store: 'runPhase',  emit: _ambEmitRun };
-        case 'pedal':    return { mode: 'window', store: 'runPhase',  emit: _ambEmitPedal };
-        case 'held':     return { mode: 'window', store: 'runPhase',  emit: _ambEmitDrone };
+        case 'pedal':    return { mode: 'window', store: 'runPhase',  emit: _ambEmitSustain };   // the collapsed sustain emitter (drone+pedal)
+        case 'held':     return { mode: 'window', store: 'runPhase',  emit: _ambEmitSustain };
         case 'series':   return { mode: 'window', store: 'arpState', emit: _ambEmitArpWindow,
             init: (tt) => ({ entry: 0, note: 0, pos: 0, _loop: 0, idx: 0, startAt: tt, lastAt: null }) };
         case 'random':   return { mode: 'step', gm: 16, ms: 0.03, emit: _ambEmitBeat };
@@ -7780,7 +7780,25 @@
         _progVar = { slot: _slot, chordStep: _cstep, subdiv: _psi.subdiv, feel: _psi.feel };
         if (_psi.feel === 'stochastic') { const _jr = _ambSeededRand((((_cstep + 1) * 40503) ^ ((_slot + 1) * 2654435761) ^ 0x9e3779b9) >>> 0); _progJit = _jr() * 0.4 * _psiSub; }   // up to 40% of a sub-slot
       }
-      const voicing = _ambPickVoicing(bed, (_E.iters && _E.iters[key]) | 0, key, _progVar);
+      const _pr = _ambPitchRuleOf(bed);
+      let voicing;
+      if (_pr && _pr !== 'voicing') {
+        // 'stack' / 'fixed' / 'anchor' replace the voicer. The prog-step
+        // override is live here, so _ambNotesOf/_ambScaleIntervals resolve the
+        // chord sounding at THIS onset, same as the native path.
+        const _src = _ambNotesOf(bed);
+        if (_pr === 'anchor') {
+          const _cfgA = _E._cfg || (_E.getCfg && _E.getCfg()) || {};
+          const _pc = _ambAnchorPc(_E, _cfgA, at);
+          if (_pc != null) {
+            const _reg = Math.max(1, Math.min(8, bed.register | 0));
+            const _A4 = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+            voicing = [_A4 * Math.pow(2, (12 * (_reg + 1) + _pc - 69) / 12)];
+          } else voicing = _ambStackFreqs(_src, bed.degree, 1, Math.max(1, Math.min(8, bed.register | 0)));
+        } else {
+          voicing = _ambStackFreqs(_src, bed.degree, _pr === 'fixed' ? 1 : (bed.density | 0) || 1, Math.max(1, Math.min(8, bed.register | 0)));
+        }
+      } else voicing = _ambPickVoicing(bed, (_E.iters && _E.iters[key]) | 0, key, _progVar);
       if (_bedProg) _ambProgStepOverride = null;
       if (!voicing.length) { _ambRecordUnit(_E, key, at, []); return; }
       // HOLD mode: each chord's length = Hold × the base UNIT (Sync-scaled), which
@@ -8426,168 +8444,87 @@
       st.lastAt = tTo;
     }
 
-    // ================= PEDAL engine =================================
-    // A dead-simple pedal-point loop: `density` evenly-spaced hits per bar of the
-    // ROOT note (degree 0 of the current key/grid), over `bars` bars, BPM-locked
-    // and phase-anchored like Bass/Run. Default 1 bar × 4 quarter-note roots.
-    // Follows the key (incl. keyMaster sections) via the per-note time stamp.
-    function _ambEmitPedal(E, inst, key, now, horizon, lead, space, cfg) {
+    // ── THE SUSTAIN EMITTER (docs §11 step 3, first cut: Drone + Pedal) ─────
+    // One windowed emitter for the family's two windowed types, shaped as the
+    // pedal's phrase→slots walk with the drone as the 1-slot-per-phrase case —
+    // the mapping the step-2 matrix proved exact (a drone's per-cycle seeded
+    // cRnd IS a per-phrase cRnd when phrase == cycle, same seed formula). Every
+    // divergence that survives is kind-gated and transcribed VERBATIM from the
+    // two originals, in particular each kind's RNG draw order: the drone draws
+    // tOff BEFORE its window check and regShift after it (a skipped cycle
+    // consumes exactly one draw), the pedal draws rest-then-vary for EVERY slot
+    // of a phrase regardless of the window (its stream is per-phrase
+    // deterministic). Bed stays on the step clock — the matrix located the
+    // genuinely-unmergeable piece as the CLOCK (the anchor path strikes at
+    // part-aware window boundaries), not any dial; folding Bed in is the
+    // remaining decision, not part of this cut.
+    function _ambEmitSustain(E, inst, key, now, horizon, lead, space, cfg) {
+      const kind = (inst && inst.type === 'pedal') ? 'pedal' : 'drone';
       if (!E.runPhase) E.runPhase = {};
-      const bpm = _ambBpm();
-      const barSec = (60 / bpm) * 4 * _ambLayerScale(E, key, inst, cfg);   // 4/4, Unit-Sync scaled
-      const bars   = Math.max(1, Math.min(16, inst.bars | 0) || 1);
-      const phraseSec = bars * barSec;
-      if (!(phraseSec > 0.05)) return;
-      const loopSec = phraseSec + Math.max(0, (inst.unitPadMs | 0)) / 1000;   // + silent pad (Unit Match)
-      // Cadence comes from the STRIKE axis. At strike 0 (the default) that
-      // resolves to +density, so slotSec is barSec/density and totalSlots is
-      // bars*density exactly as before; a NEGATIVE strike holds one hit across
-      // several bars, which a Pedal could not do until now.
-      const strike = _ambStrikeOf(inst, 'pedal');
-      const slotSec = _ambStrikeSpan(strike, barSec);
-      const totalSlots = Math.max(1, Math.round(phraseSec / slotSec));
-      // RING overrides the ms Length as a % of the strike slot (100 = legato
-      // hits that meet, 15 = the classic staccato pedal); absent = legacy ms.
-      const _ring = _ambRingMs(inst, slotSec);
-      const lenMs  = _ring > 0 ? _ring : Math.max(40, inst.lengthMs | 0);
-      const restP  = _ambEffRest(inst);
-      const vary   = Math.max(0, Math.min(100, inst.vary | 0));   // % of hits that roam off the root
-      const reg    = Math.max(1, Math.min(7, inst.register | 0) || 4);
-      const src    = _ambNotesOf(inst);
-      const N      = Math.max(1, _ambScaleIntervals(src).length);
-      const dest   = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
-      // Match a default Shape node exactly: the grid voice at FULL volume 100
-      // (applyLevel'd), not the ~0.3×-attenuated Bass/Motif params — so a default
-      // Pedal and a default Shape sound the same.
-      const vtype  = _ambLayerType(inst.tone);
-      const pan    = _ambLayerPan(inst);
-      // ADSR is exposed at the layer level (Attack/Decay/Sustain/Release sliders);
-      // defaults match a default Shape node's fitted bare-voice envelope.
-      const atk = Math.max(0, Math.min(2000, Number.isFinite(inst.attack) ? inst.attack : 5));
-      const dec = Math.max(0, Math.min(2000, Number.isFinite(inst.decay) ? inst.decay : 40));
-      const sus = Math.max(0, Math.min(100, Number.isFinite(inst.sustain) ? inst.sustain : 75));
-      const rel = Math.max(0, Math.min(4000, Number.isFinite(inst.release) ? inst.release : 200));
-
-      let st = E.runPhase[key];
-      if (!st) st = E.runPhase[key] = { startAt: _ambUnitGridSnap(E, key, inst, cfg, lead) + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
-      const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
-      const tTo = _ambBudgetHorizon(now, horizon);
-      if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
-
-      const isProg = (_ambAsNotes(src).type === 'prog');
-      const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / loopSec));
-      const cTo   = Math.floor((tTo - st.startAt) / loopSec);
-      let cap = 0;
-      try {
-      for (let c = cFrom; c <= cTo && cap < 512; c++) {
-        if (!_ambCondFires(inst.when, c)) continue;
-        const cStart = st.startAt + c * loopSec;
-        // One per-cycle RNG drives both Rests and Vary (stable within a cycle,
-        // evolves per cycle — so the pedal stays mostly on the root and roams the
-        // same way each pass until the cycle turns over).
-        const cRnd = (restP > 0 || vary > 0) ? _ambSeededRand((((inst.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503)) >>> 0) : null;
-        for (let i = 0; i < totalSlots; i++) {
-          if (cRnd && restP > 0 && cRnd() * 100 < restP) continue;
-          // Base degree (the "Note" control, 1 = key root) unless Vary roams it.
-          let deg = Math.min(N - 1, Math.max(0, ((inst.degree | 0) || 1) - 1));
-          if (cRnd && vary > 0 && cRnd() * 100 < vary) deg = Math.floor(cRnd() * N);
-          const at = cStart + i * slotSec + ((i & 1) ? _ambSwingSec(inst, slotSec) : 0);
-          if (at < tFrom || at >= tTo) continue;
-          _ambKeyTime = at;
-          if (isProg && !_ambChordGateOK(E, inst, at, cfg, src)) continue;
-          if (!_ambSectionGateOK(E, inst, at, cfg)) continue;   // section-mask (arrangement)
-          if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at, src);   // chord at THIS note's onset (per-onset)
-          const f = _ambDegreeFreq(deg, reg, src);   // base degree or a roamed degree
-          if (f == null) continue;
-          const bp = { type: (inst.toneSeq && inst.toneSeq.on) ? _ambLayerType(_ambToneAt(inst, at)) : vtype, attack: atk, decay: dec, sustain: sus, release: rel,
-            volume: _ambAccentVol(_ambApplyLevel(100, inst.level), inst.accent), pan, detune: Math.max(-1200, Math.min(1200, inst.fine | 0)), loop: true };
-          if (_ambLastDegTone) bp.type = _ambLastDegTone;   // wrap-ensemble: this degree's own tone
-          _ambApplyDegLevel(bp);                          // …and its own level
-          if (dmod) bp._detuneMod = dmod;
-          _ambColourLeadIn(f, bp, at, dest, _E.laneIdx(), src);   // Harmony colours (no-op at default 'landing')
-          let _pLen = lenMs;
-          if (_ambTightOn(inst)) { _pLen = Math.max(40, Math.round(slotSec * 1000)); _ambTightChoke(bp); }
-          try { playNote(f, bp, _pLen, at, dest, undefined, _E.laneIdx()); } catch (e) {}
-          cap++;
-          if (cap >= 512) break;
-        }
-      }
-      } finally { _ambProgStepOverride = null; }
-      st.lastAt = tTo;
-    }
-
-    // ================= DRONE engine ================================
-    // Holds a voicing of the Notes source and RE-STRIKES every `hold` units. The
-    // voicing is set by Density (how many tones to stack, 1–9) and Degree (which
-    // source tone is the bottom/root), stacking up and wrapping +1 octave past the
-    // top tone. Time vary jitters the strike time; Pitch vary drifts the octave.
-    // Phase-anchored to a downbeat like Pedal/Run; follows the key per note.
-    function _ambEmitDrone(E, inst, key, now, horizon, lead, space, cfg) {
-      if (!E.runPhase) E.runPhase = {};
-      const unitSec = Math.max(0.05, _ambEffIntervalSec(inst)) * _ambLayerScale(E, key, inst, cfg);   // Unit-Sync scaled
-      // Cadence comes from the STRIKE axis. At strike 0 (the default) that
-      // resolves to -hold, so this is exactly `hold * unitSec` as before; a
-      // positive strike subdivides the unit instead, which a Drone could not
-      // do at all until now.
-      const strike = _ambStrikeOf(inst, 'drone');
-      let cycleSec = _ambStrikeSpan(strike, unitSec);
-      if (!(cycleSec > 0.05)) return;
-      const reg = Math.max(1, Math.min(7, inst.register | 0) || 3);
+      const _scale = _ambLayerScale(E, key, inst, cfg);
       const src = _ambNotesOf(inst);
       const n = _ambAsNotes(src);
-      // PROGRESSION SYNC: an active Area progression overrides the drone's own
-      // clock — it re-voices on the chord grid (chord length ÷ Subdivide), so it
-      // follows the changes and (Subdivide > 1) plays several in-chord voicings per
-      // chord instead of sitting on one. Non-prog drones are untouched → byte-
-      // identical / harness-safe. (Superseded the earlier chord-cap fix.)
       const _isProg = (n.type === 'prog');
       const _psi = _ambProgSyncInfo(E, key, inst, cfg);
-      if (_psi) cycleSec = _psi.subUnit;
-      // Density/Degree voicing: of the current source's tones (chord tones for a
-      // chord/wrap/prog, scale degrees for a scale), start at the Degree-th tone
-      // (the voicing root) and stack `density` consecutive tones, bumping up an
-      // octave each time we pass the top tone. So a major triad at Degree 2 /
-      // Density 3 = third, fifth, root(+8ve); a 7th chord adds the 7th instead.
-      const density = Math.max(1, Math.min(9, inst.density | 0) || 1);
+      const _prD = _ambPitchRuleOf(inst);
+
+      // ---- clock geometry (phrase → slots; a drone is a 1-slot phrase) ----
+      let phraseSec, loopSec, slotSec, totalSlots, cycleSec = 0, unitSec = 0;
+      if (kind === 'pedal') {
+        const barSec = (60 / _ambBpm()) * 4 * _scale;
+        const bars = Math.max(1, Math.min(16, inst.bars | 0) || 1);
+        phraseSec = bars * barSec;
+        if (!(phraseSec > 0.05)) return;
+        loopSec = phraseSec + Math.max(0, (inst.unitPadMs | 0)) / 1000;   // + silent pad (Unit Match)
+        slotSec = _ambStrikeSpan(_ambStrikeOf(inst, 'pedal'), barSec);
+        totalSlots = Math.max(1, Math.round(phraseSec / slotSec));
+      } else {
+        unitSec = Math.max(0.05, _ambEffIntervalSec(inst)) * _scale;
+        cycleSec = _ambStrikeSpan(_ambStrikeOf(inst, 'drone'), unitSec);
+        if (!(cycleSec > 0.05)) return;
+        if (_psi) cycleSec = _psi.subUnit;   // prog re-voice grid overrides the drone's own clock
+        phraseSec = cycleSec; loopSec = cycleSec; slotSec = cycleSec; totalSlots = 1;
+      }
+
+      // ---- per-kind knobs (bounds + defaults transcribed verbatim) --------
+      const reg = Math.max(1, Math.min(7, inst.register | 0) || (kind === 'pedal' ? 4 : 3));
+      const density = Math.max(1, Math.min(9, inst.density | 0) || 1);       // drone: voices per strike
       const startIdx = Math.max(0, (((inst.degree | 0) || 1) - 1));
       const tones0 = _ambScaleIntervals(src);
+      const N = Math.max(1, tones0.length);
       const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
       const vtype = _ambLayerType(inst.tone);
       const pan = _ambLayerPan(inst);
-      const atk = Math.max(0, Math.min(8000, Number.isFinite(inst.attack) ? inst.attack : 200));
-      const rel = Math.max(0, Math.min(12000, Number.isFinite(inst.release) ? inst.release : 1500));
-      const dec = Math.max(0, Math.min(4000, Number.isFinite(inst.decay) ? inst.decay : 0));
-      const sus = Math.max(0, Math.min(100, Number.isFinite(inst.sustain) ? inst.sustain : 100));
-      const timeVary = Math.max(0, Math.min(100, inst.timeVary | 0));
-      const pitchVary = Math.max(0, Math.min(100, inst.pitchVary | 0));
-      // Hold the note across (almost) the whole span so it's continuous; a hair
-      // short so a long release doesn't pile onto the next strike. Prog-sync
-      // overlaps (×1.5) so subdivided voicings crossfade like a pad. RING (the
-      // length-ratio axis) overrides the fill when set — a drone that strikes
-      // every 2 units but rings only half of them was inexpressible before.
-      const _ring = _ambRingMs(inst, cycleSec);
-      const lenMs = _ring > 0 ? Math.max(60, _ring) : Math.max(60, Math.round(cycleSec * 1000 * (_psi ? 1.5 : 0.98)));
+      const atk = kind === 'pedal' ? Math.max(0, Math.min(2000, Number.isFinite(inst.attack) ? inst.attack : 5))
+                                   : Math.max(0, Math.min(8000, Number.isFinite(inst.attack) ? inst.attack : 200));
+      const dec = kind === 'pedal' ? Math.max(0, Math.min(2000, Number.isFinite(inst.decay) ? inst.decay : 40))
+                                   : Math.max(0, Math.min(4000, Number.isFinite(inst.decay) ? inst.decay : 0));
+      const sus = Math.max(0, Math.min(100, Number.isFinite(inst.sustain) ? inst.sustain : (kind === 'pedal' ? 75 : 100)));
+      const rel = kind === 'pedal' ? Math.max(0, Math.min(4000, Number.isFinite(inst.release) ? inst.release : 200))
+                                   : Math.max(0, Math.min(12000, Number.isFinite(inst.release) ? inst.release : 1500));
+      const restP = kind === 'pedal' ? _ambEffRest(inst) : 0;
+      const vary = kind === 'pedal' ? Math.max(0, Math.min(100, inst.vary | 0)) : 0;
+      const timeVary = kind === 'drone' ? Math.max(0, Math.min(100, inst.timeVary | 0)) : 0;
+      const pitchVary = kind === 'drone' ? Math.max(0, Math.min(100, inst.pitchVary | 0)) : 0;
+      // RING: % of the strike span; absent = the kind's legacy length encoding
+      // (pedal: the ms Length · drone: fill the hold, ×1.5 under prog-sync).
+      const _ring = _ambRingMs(inst, kind === 'pedal' ? slotSec : cycleSec);
+      const lenMs = kind === 'pedal'
+        ? (_ring > 0 ? _ring : Math.max(40, inst.lengthMs | 0))
+        : (_ring > 0 ? Math.max(60, _ring) : Math.max(60, Math.round(cycleSec * 1000 * (_psi ? 1.5 : 0.98))));
 
+      // ---- phase anchor (the drone's free-under-prog chord-grid snap kept) --
       let st = E.runPhase[key];
       if (!st) {
         let s0 = _ambUnitGridSnap(E, key, inst, cfg, lead) + _ambDriftOffset(E, key, inst, cfg);
-        // PROG-SYNC START ALIGNMENT — FREE-UNIT DRONES ONLY.
-        // A Free drone isn't snapped by _ambUnitGridSnap at all, so under a
-        // progression it anchored at its own lead and came in off the grid the
-        // rest of the band uses; pulling it onto the chord sub-grid fixes that.
-        // A UNIT-SYNCED drone must NOT go through here: _ambUnitGridSnap has
-        // already put it on the shared grid, and re-snapping against
-        // `_psi.anchor` gave it a phase origin no other layer had — psi's anchor
-        // falls back to _playStartAt when _barGridAnchor isn't pinned, and
-        // playStart precedes the grid by the first-tick lead. Measured in a user
-        // project: the drone sat at 0 ms while beat/bass/arp/bed — four separate
-        // bar branches — all agreed at +130 ms. Five layers, one outlier, and the
-        // outlier was the only one with a bespoke anchor. Anchor on the SHARED
-        // grid explicitly, never on psi's fallback.
-        const _G = E._barGridAnchor;
-        const _synced = !!(inst.unit && inst.unit.mode === 'sync');
-        if (_psi && !_synced && Number.isFinite(_G) && s0 > _G) {
-          s0 = _G + Math.ceil((s0 - _G - 1e-4) / _psi.subUnit) * _psi.subUnit;
+        if (kind === 'drone') {
+          // PROG-SYNC START ALIGNMENT — FREE-UNIT DRONES ONLY (see the phase-
+          // origin gotcha: anchor on the SHARED grid, never psi's fallback).
+          const _G = E._barGridAnchor;
+          const _synced = !!(inst.unit && inst.unit.mode === 'sync');
+          if (_psi && !_synced && Number.isFinite(_G) && s0 > _G) {
+            s0 = _G + Math.ceil((s0 - _G - 1e-4) / _psi.subUnit) * _psi.subUnit;
+          }
         }
         st = E.runPhase[key] = { startAt: s0, lastAt: null };
       }
@@ -8595,27 +8532,15 @@
       const tTo = _ambBudgetHorizon(now, horizon);
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
 
-      // ---- PEDAL MODE (default under a progression) --------------------------
-      // ONE sustained note per progression (or section-part) cycle, chosen by
-      // _ambDronePedalPick to work across ALL the cycle's chords (override:
-      // inst.progNote). Density stacks octaves of the same pitch — a true drone.
-      // 'voice' mode keeps the previous behaviour (re-voice per chord sub-slot).
-      // Deterministic (no RNG draws), so it loops natively — and the harness's
-      // `drone` config has no progression, so this branch never runs there.
-      if (_psi && inst.progMode !== 'voice') {
+      // ---- ANCHOR path (drone-native pedal mode / explicit anchor rule) -----
+      // One sustained note per progression (or section-part) window, chosen by
+      // the scorer — window-boundary-clocked, which is why it sits OUTSIDE the
+      // phrase loop. Drone-only unless the collapse's presets route others here.
+      if (kind === 'drone' && _psi && (inst.progMode !== 'voice' || _prD === 'anchor') && _prD !== 'voicing' && _prD !== 'stack' && _prD !== 'fixed') {
         const kIvs = (typeof SCALES !== 'undefined' && SCALES[_ambKeyScaleName(cfg)]) || [0, 2, 4, 5, 7, 9, 11];
         const kRoot = _ambKeyRootPc(cfg);
         const A4 = (typeof masterFreqA === 'number') ? masterFreqA : 440;
         const strike = (at, holdSec, chords) => {
-          // The pedal reads cfg.prog.chords DIRECTLY (never via _ambSrcRootPc), so
-          // it has to apply the same view shift every other layer gets — the KEY
-          // transpose AND the section key offset — BEFORE scoring. Shifting only
-          // the RESULT (as this did for the section offset alone) scores the pedal
-          // against chords nobody hears: measured in A major over a written C–F–G
-          // that sounds A–D–E, the readout claimed "A fits 1/3 — 13th of C, 3rd of
-          // F, 9th of G" for a note that is in fact the root of A and the 5th of D.
-          // The shift is computed from the WHOLE progression, not this window's
-          // slice, because _ambProgKeyOffset keys on chords[0] of the full list.
           const _vs = _ambProgViewShift(E, cfg, (cfg.prog && cfg.prog.chords) || chords, at);
           const sChords = _vs ? chords.map(c => _ambChordShift(c, _vs)) : chords;
           const auto = _ambDronePedalPick(sChords, kRoot, kIvs, _ambDronePedalTonic(cfg, sChords));
@@ -8641,11 +8566,8 @@
           if (!w) break;
           const k = Math.round((w.startSec - _psi.anchor) / Math.max(0.1, w.lenSec));
           if (w.startSec >= tFrom - 1e-4 && w.startSec < tTo) {
-            // A cycle boundary in this tick's window → the full-cycle strike.
             if (st._pedalAt !== w.startSec && _ambCondFires(inst.when, k)) { strike(w.startSec, w.lenSec, w.chords); st._pedalAt = w.startSec; }
           } else if (st._pedalAt == null && w.startSec < tFrom && tFrom >= st.startAt) {
-            // Engaged MID-cycle (layer added / thawed): come in on the next chord
-            // sub-slot — grid-aligned, never early — and hold to the cycle's end.
             const catchAt = _psi.anchor + Math.ceil((tFrom - _psi.anchor - 1e-4) / _psi.subUnit) * _psi.subUnit;
             if (catchAt < tTo && catchAt < w.startSec + w.lenSec - 0.25) {
               strike(catchAt, (w.startSec + w.lenSec) - catchAt, w.chords); st._pedalAt = w.startSec;
@@ -8657,80 +8579,135 @@
         return;
       }
 
-      const isProg = _isProg;   // per-layer: one chord per drone cycle (re-voice cap applied above)
-      const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / cycleSec));
-      const cTo   = Math.floor((tTo - st.startAt) / cycleSec);
+      // ---- the phrase → slots walk ----------------------------------------
+      const isProg = _isProg;
+      const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / loopSec));
+      const cTo = Math.floor((tTo - st.startAt) / loopSec);
+      const CAP = kind === 'pedal' ? 512 : 64;
       let cap = 0;
       try {
-      for (let c = cFrom; c <= cTo && cap < 64; c++) {
+      for (let c = cFrom; c <= cTo && cap < CAP; c++) {
         if (!_ambCondFires(inst.when, c)) continue;
-        if (isProg && !_ambChordGateOK(E, inst, st.startAt + c * cycleSec, cfg, src)) continue;
-        if (isProg) _ambProgStepOverride = _ambProgStepAt(E, st.startAt + c * cycleSec, src);  // chord at the cycle's bar-aligned onset
-        const tones = isProg ? _ambScaleIntervals(src) : tones0;   // prog chord re-resolved per cycle
-        const K = Math.max(1, tones.length);
-        const cRnd = (timeVary > 0 || pitchVary > 0)
-          ? _ambSeededRand((((inst.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503)) >>> 0) : null;
-        let tOff = 0;
-        if (cRnd && timeVary > 0) tOff = (cRnd() * 2 - 1) * (timeVary / 100) * unitSec * 0.5;
-        const at = st.startAt + c * cycleSec + tOff;
-        if (at < tFrom || at >= tTo) continue;
-        let regShift = 0;
-        if (cRnd && pitchVary > 0 && cRnd() * 100 < pitchVary) regShift = (cRnd() < 0.5 ? -1 : 1);
-        _ambKeyTime = at;
-        const bp = { type: vtype, attack: atk, decay: dec, sustain: sus, release: rel,
-          volume: _ambAccentVol(_ambApplyLevel(100, inst.level), inst.accent), pan, detune: Math.max(-1200, Math.min(1200, inst.fine | 0)) };
-        if (dmod) bp._detuneMod = dmod;
-        // The Drone HOLDS each note for (almost) the whole cycle. A tuned sample's
-        // buffer is one-shot, so without looping it ends partway and the layer
-        // falls silent mid-hold — flag it to loop/sustain via the pad voice path.
-        bp.loop = true;
-        if (_psi) {
-          // PROG-SYNC: voice the CURRENT chord with an in-tonality variation for
-          // this sub-slot (inversions + — via Variety — 9/11/13 extensions), so a
-          // subdivided drone evolves within the chord. Reuses the Bed's voicer with
-          // a drone shim (its Register/Density; Pitch-vary still drifts the octave).
-          const _cyc = st.startAt + c * cycleSec;
-          let _slot, _cstep;
-          // MERGE: the voicing variant follows the chord GROUP (run of the same
-          // chord), so a subdivided drone walks the group's voicings; the drone's
-          // re-voice cadence stays its uniform sub-slot (a sustained pad).
-          const _dsp = inst.progMerge ? _ambProgSpanAt(_E, inst, (_E._cfg || (_E.getCfg && _E.getCfg())), _cyc) : null;
-          if (_dsp) { _slot = _dsp.slot; _cstep = _dsp.chordStep; }
-          else { const _subSlot = Math.round((_cyc - _psi.anchor) / _psi.subUnit); _cstep = Math.floor(_subSlot / _psi.subdiv); _slot = ((_subSlot % _psi.subdiv) + _psi.subdiv) % _psi.subdiv; }
-          // `degree` is what makes the drone's Note control work under a
-          // progression (it was dropped here, so the knob did nothing and the
-          // voicing fell back to "lowest rendered pitch" — see _ambVoiceProgChord).
-          // `chordPick` has to ride along for the same reason `degree` does: the
-          // voicer is handed this SHIM, not the layer, so anything the layer owns
-          // that the voicer reads must be copied here or the control silently does
-          // nothing (the picker stored fine, sounded not at all).
-          const _shim = { register: reg + regShift, spread: 0, density: density, chordMode: 'chordsplus', voiceVariety: inst.voiceVariety | 0,
-            degree: Math.max(1, (inst.degree | 0) || 1), chordPick: inst.chordPick };
-          const _freqs = _ambVoiceProgChord(_shim, src, { slot: _slot, chordStep: _cstep, subdiv: _psi.subdiv, feel: _psi.feel });
-          for (let i = 0; i < _freqs.length; i++) {
-            const f = _freqs[i]; if (!(f > 0)) continue;
-            const vp = Object.assign({}, bp);
-            if (i === 0) _ambColourLeadIn(f, vp, at, dest, _E.laneIdx(), src);
-            try { playNote(f, vp, lenMs, at + i * 0.006, dest, undefined, _E.laneIdx()); } catch (e) {}
-          }
-        } else {
-          // Stack `density` tones from the Degree-th, wrapping +1 octave per pass.
-          for (let i = 0; i < density; i++) {
-            const idx = startIdx + i;
-            const tIv = tones[(((idx % K) + K) % K)];
-            const oct = Math.floor(idx / K);
-            const f = _ambNoteFreq(tIv, reg + regShift + oct, src);
-            if (f == null) continue;
-            const vp = Object.assign({}, bp);
-            if (i === 0) _ambColourLeadIn(f, vp, at, dest, _E.laneIdx(), src);   // Harmony colours: lead-in once per onset (root), no-op at default
-            try { playNote(f, vp, lenMs, at + i * 0.006, dest, undefined, _E.laneIdx()); } catch (e) {}
-          }
+        const cStart = st.startAt + c * loopSec;
+        // Drone: chord-gate + prog override + tone re-resolve at the PHRASE
+        // start (its phrase IS the strike); the pedal resolves per slot below.
+        let tones = tones0, K = Math.max(1, tones0.length);
+        if (kind === 'drone') {
+          if (isProg && !_ambChordGateOK(E, inst, cStart, cfg, src)) continue;
+          if (isProg) _ambProgStepOverride = _ambProgStepAt(E, cStart, src);
+          if (isProg) { tones = _ambScaleIntervals(src); K = Math.max(1, tones.length); }
         }
-        cap++;
+        // ONE per-phrase RNG per kind, same seed formula both had. The pedal's
+        // drives Rests + Vary in slot order for the WHOLE phrase; the drone's
+        // drives timeVary/pitchVary (1 slot, so per-phrase == per-cycle).
+        const cRnd = (kind === 'pedal' ? (restP > 0 || vary > 0) : (timeVary > 0 || pitchVary > 0))
+          ? _ambSeededRand((((inst.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503)) >>> 0) : null;
+        for (let i = 0; i < totalSlots; i++) {
+          let at, regShift = 0, deg = 0;
+          if (kind === 'pedal') {
+            if (cRnd && restP > 0 && cRnd() * 100 < restP) continue;
+            deg = Math.min(N - 1, Math.max(0, ((inst.degree | 0) || 1) - 1));
+            if (cRnd && vary > 0 && cRnd() * 100 < vary) deg = Math.floor(cRnd() * N);
+            at = cStart + i * slotSec + ((i & 1) ? _ambSwingSec(inst, slotSec) : 0);
+            if (at < tFrom || at >= tTo) continue;
+            _ambKeyTime = at;
+            if (isProg && !_ambChordGateOK(E, inst, at, cfg, src)) continue;
+            if (!_ambSectionGateOK(E, inst, at, cfg)) continue;
+            if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at, src);
+          } else {
+            // DRAW ORDER preserved: tOff BEFORE the window check, regShift after.
+            let tOff = 0;
+            if (cRnd && timeVary > 0) tOff = (cRnd() * 2 - 1) * (timeVary / 100) * unitSec * 0.5;
+            at = cStart + tOff;
+            if (at < tFrom || at >= tTo) continue;
+            if (cRnd && pitchVary > 0 && cRnd() * 100 < pitchVary) regShift = (cRnd() < 0.5 ? -1 : 1);
+            _ambKeyTime = at;
+          }
+
+          const bp = kind === 'pedal'
+            ? { type: (inst.toneSeq && inst.toneSeq.on) ? _ambLayerType(_ambToneAt(inst, at)) : vtype, attack: atk, decay: dec, sustain: sus, release: rel,
+                volume: _ambAccentVol(_ambApplyLevel(100, inst.level), inst.accent), pan, detune: Math.max(-1200, Math.min(1200, inst.fine | 0)), loop: true }
+            : { type: vtype, attack: atk, decay: dec, sustain: sus, release: rel,
+                volume: _ambAccentVol(_ambApplyLevel(100, inst.level), inst.accent), pan, detune: Math.max(-1200, Math.min(1200, inst.fine | 0)), loop: true };
+          if (dmod) bp._detuneMod = dmod;
+
+          if (kind === 'pedal') {
+            // PITCH RULE on the pedal: stack / anchor / native fixed degree.
+            const _prP = _prD;
+            let _hitFs;
+            if (_prP === 'stack' || _prP === 'anchor') _ambLastDegTone = null;   // bypassing _ambDegreeFreq → clear its side channel
+            if (_prP === 'stack') {
+              _hitFs = _ambStackFreqs(src, deg + 1, Math.max(1, Math.min(9, (inst.voices | 0) || 1)), reg);
+            } else if (_prP === 'anchor') {
+              const _pc = _ambAnchorPc(E, cfg, at);
+              if (_pc != null) {
+                const _A4 = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+                _hitFs = [_A4 * Math.pow(2, (12 * (reg + 1) + _pc - 69) / 12)];
+              }
+            }
+            if (!_hitFs) { const f0 = _ambDegreeFreq(deg, reg, src); _hitFs = (f0 == null) ? [] : [f0]; }
+            if (!_hitFs.length) continue;
+            for (let _vi = 0; _vi < _hitFs.length; _vi++) {
+              const f = _hitFs[_vi];
+              const vp = Object.assign({}, bp);
+              if (_ambLastDegTone) vp.type = _ambLastDegTone;   // wrap-ensemble: this degree's own tone
+              _ambApplyDegLevel(vp);
+              if (_vi === 0) _ambColourLeadIn(f, vp, at, dest, _E.laneIdx(), src);
+              let _pLen = lenMs;
+              if (_ambTightOn(inst)) { _pLen = Math.max(40, Math.round(slotSec * 1000)); _ambTightChoke(vp); }
+              try { playNote(f, vp, _pLen, at + _vi * 0.006, dest, undefined, _E.laneIdx()); } catch (e) {}
+            }
+          } else if (_psi && _prD !== 'stack' && _prD !== 'fixed') {
+            // PROG-SYNC: voice the CURRENT chord per sub-slot via the Bed's
+            // voicer + drone shim (degree/chordPick must ride along — see the
+            // shim gotcha). Explicit 'stack'/'fixed' fall to the stack below.
+            let _slot, _cstep;
+            const _dsp = inst.progMerge ? _ambProgSpanAt(_E, inst, (_E._cfg || (_E.getCfg && _E.getCfg())), cStart) : null;
+            if (_dsp) { _slot = _dsp.slot; _cstep = _dsp.chordStep; }
+            else { const _subSlot = Math.round((cStart - _psi.anchor) / _psi.subUnit); _cstep = Math.floor(_subSlot / _psi.subdiv); _slot = ((_subSlot % _psi.subdiv) + _psi.subdiv) % _psi.subdiv; }
+            const _shim = { register: reg + regShift, spread: 0, density: density, chordMode: 'chordsplus', voiceVariety: inst.voiceVariety | 0,
+              degree: Math.max(1, (inst.degree | 0) || 1), chordPick: inst.chordPick };
+            const _freqs = _ambVoiceProgChord(_shim, src, { slot: _slot, chordStep: _cstep, subdiv: _psi.subdiv, feel: _psi.feel });
+            for (let vi = 0; vi < _freqs.length; vi++) {
+              const f = _freqs[vi]; if (!(f > 0)) continue;
+              const vp = Object.assign({}, bp);
+              if (vi === 0) _ambColourLeadIn(f, vp, at, dest, _E.laneIdx(), src);
+              try { playNote(f, vp, lenMs, at + vi * 0.006, dest, undefined, _E.laneIdx()); } catch (e) {}
+            }
+          } else if (_prD === 'voicing') {
+            // Pitch rule 'voicing': the Bed's chord voicer instead of the stack.
+            const _vf = _ambPickVoicing({ register: reg + regShift, spread: 0, density: density,
+              chordMode: inst.chordMode || 'chaos', voiceVariety: inst.voiceVariety | 0,
+              notes: inst.notes, keyOv: inst.keyOv }, c, key, null);
+            for (let vi = 0; vi < _vf.length; vi++) {
+              const f = _vf[vi]; if (!(f > 0)) continue;
+              const vp = Object.assign({}, bp);
+              if (vi === 0) _ambColourLeadIn(f, vp, at, dest, _E.laneIdx(), src);
+              try { playNote(f, vp, lenMs, at + vi * 0.006, dest, undefined, _E.laneIdx()); } catch (e) {}
+            }
+          } else {
+            // The stack: `density` tones from the Degree-th, +1 octave per wrap.
+            // Pitch rule 'fixed' is the stack at ONE voice, which is its definition.
+            const _dEff = (_prD === 'fixed') ? 1 : density;
+            for (let vi = 0; vi < _dEff; vi++) {
+              const idx = startIdx + vi;
+              const tIv = tones[(((idx % K) + K) % K)];
+              const oct = Math.floor(idx / K);
+              const f = _ambNoteFreq(tIv, reg + regShift + oct, src);
+              if (f == null) continue;
+              const vp = Object.assign({}, bp);
+              if (vi === 0) _ambColourLeadIn(f, vp, at, dest, _E.laneIdx(), src);
+              try { playNote(f, vp, lenMs, at + vi * 0.006, dest, undefined, _E.laneIdx()); } catch (e) {}
+            }
+          }
+          cap++;
+          if (cap >= CAP) break;
+        }
       }
       } finally { _ambProgStepOverride = null; }
       st.lastAt = tTo;
     }
+
 
     // ================= MOTIF engine =================================
     // motif random-walk position lives on the engine: _E.motifDeg
@@ -10673,6 +10650,9 @@
       if (!L || typeof L !== 'object') return;
       _ambNormalizeCycleGate(L);   // ⏱ Schedule tab (additive; absent = every iteration plays)
       _ambNormalizeImprov(L);      // 🎲 Improvise tab (additive; absent = always plays as written)
+      // Pitch-rule axis + the pedal's Stack voice count (additive; absent = native).
+      if (L.pitchRule != null && ['voicing', 'stack', 'fixed', 'anchor'].indexOf(L.pitchRule) < 0) delete L.pitchRule;
+      if (L.voices != null) { if (!Number.isFinite(L.voices)) delete L.voices; else L.voices = Math.max(1, Math.min(9, L.voices | 0)); }
       // Solo lane: coerce; migrate the legacy transient `_soloLane` into the real
       // field so a project saved during the transient era becomes VISIBLE instead
       // of silently muted. Kit-only (a non-kit layer has no lanes to solo).
@@ -13537,6 +13517,54 @@
       const r = L && L.lenRatio;
       if (!Number.isFinite(r) || (r | 0) <= 0) return 0;   // 0/absent = legacy
       return Math.max(40, Math.round(spanSec * 1000 * Math.min(200, r | 0) / 100));
+    }
+    // ── SUSTAIN FAMILY: the PITCH RULE axis ───────────────────────────────
+    // Step-1 axis #3 (docs §11), the one that isn't a number: WHAT each strike
+    // plays. 'voicing' = a chord voicing of the current source (Bed's native
+    // rule) · 'stack' = `density` consecutive tones from the Degree-th (Drone's)
+    // · 'fixed' = the Degree tone alone (Pedal's) · 'anchor' = the pedal-pick
+    // scorer's one-note-for-the-whole-progression. Absent/'' = the type's own
+    // native rule — byte-identical, nothing writes the field until the control
+    // moves. Each emitter branches at its pick site ONLY when the field is set,
+    // so the shared-RNG draw pattern of every existing project is untouched.
+    function _ambPitchRuleOf(L) {
+      const r = L && L.pitchRule;
+      return (r === 'voicing' || r === 'stack' || r === 'fixed' || r === 'anchor') ? r : '';
+    }
+    // The Drone's stack math, extracted verbatim: `density` consecutive source
+    // tones from the Degree-th, bumping an octave each time the pool wraps.
+    function _ambStackFreqs(src, degree, density, reg) {
+      const tones = _ambScaleIntervals(src);
+      const K = Math.max(1, tones.length);
+      const startIdx = Math.max(0, (((degree | 0) || 1) - 1));
+      const out = [];
+      for (let i = 0; i < Math.max(1, Math.min(9, density | 0) || 1); i++) {
+        const idx = startIdx + i;
+        const f = _ambNoteFreq(tones[(((idx % K) + K) % K)], reg + Math.floor(idx / K), src);
+        if (f != null) out.push(f);
+      }
+      return out;
+    }
+    // The anchor rule for layers WITHOUT the drone's part-aware window machinery
+    // (bed/pedal): one pitch class scored against the WHOLE progression, view-
+    // shifted the way every label/pick must be (see the funnel gotcha). The
+    // drone's own anchor path stays the superior part/section-aware version;
+    // this is deliberately the whole-prog simplification, and it returns null
+    // without an active progression so callers can fall back to 'fixed'.
+    function _ambAnchorPc(E, cfg, at) {
+      try {
+        const prog = cfg && cfg.prog;
+        if (!prog || !prog.on || !Array.isArray(prog.chords) || !prog.chords.length) return null;
+        const chords = prog.chords.filter(c => c && !c.transition && Number.isFinite(c.root));
+        if (!chords.length) return null;
+        const kIvs = (typeof SCALES !== 'undefined' && SCALES[_ambKeyScaleName(cfg)]) || [0, 2, 4, 5, 7, 9, 11];
+        const kRoot = _ambKeyRootPc(cfg);
+        const _vs = _ambProgViewShift(E, cfg, prog.chords, at);
+        const sChords = _vs ? chords.map(c => _ambChordShift(c, _vs)) : chords;
+        const tonic = _ambDronePedalTonic(cfg, sChords);
+        const pick = _ambDronePedalPick(sChords, kRoot, kIvs, tonic);
+        return (pick && Number.isFinite(pick.pc)) ? ((pick.pc % 12) + 12) % 12 : null;
+      } catch (e) { return null; }
     }
     // BED's strike resolves through its existing HOLD machinery rather than a
     // new clock: hold already scales the step interval AND the chord length by
@@ -24682,7 +24710,7 @@
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
         ['sub', 'Progression', 'When an Area progression is set: the layer locks to it and plays voicings of the current chord. (Repeat/Times in Timing only apply when there is no Area progression.)'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
-        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold \u00b7 \u2212N = hold N units \u00b7 +N = N chords per unit'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length \u00b7 % of each strike a chord rings'], ['choke'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold \u00b7 \u2212N = hold N units \u00b7 +N = N chords per unit'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length \u00b7 % of each strike a chord rings'], ['choke'], ['pitchrule'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
@@ -24733,7 +24761,7 @@
       pedal: { label: 'Pedal', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Density · −N = 1 hit per N bars · +N = N per bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length · % of each strike a hit rings'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Density · −N = 1 hit per N bars · +N = N per bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length · % of each strike a hit rings'], ['pitchrule'], ['st', 'voices', 'Voices', 1, 9, 'tones per hit (Stack)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'vary', 'Roam', 0, 100, 'root → wander degrees'], ['tight'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
@@ -24742,7 +24770,7 @@
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
         ['sub', 'Progression', 'When an Area progression is set: PEDAL (default) holds ONE note per progression cycle, auto-chosen to work across every chord — the card explains the pick, and Note overrides it. VOICINGS re-voices the current chord instead (Subdivide/Feel/Variety).'], ['dronepedal'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
-        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold · −N = hold N units · +N = N per unit'], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = fill the hold · % of each strike the note rings'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold · −N = hold N units · +N = N per unit'], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = fill the hold · % of each strike the note rings'], ['pitchrule'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
         ..._AMB_MIX] },
     };
@@ -25198,6 +25226,19 @@
         '<div class="ambient-ctrl"><label for="' + p + '-prognote" title="The pedal pitch. Auto picks the best common tone across the cycle&#39;s chords; choose a note to override it — the line below explains how YOUR note sits in each chord.">Note</label><select id="' + p + '-prognote" class="ambient-select"><option value="">Auto (best fit)</option>' + CHROMATIC.map((n2, i) => '<option value="' + i + '">' + n2 + '</option>').join('') + '</select><span class="ambient-hint">pedal pitch</span></div>' +
         '<div class="ambient-hint ambient-pedal-info" id="' + p + '-pedalinfo" aria-live="polite"></div>';
       if (k === 'progfeel') return _ambSeg('Feel', 'progFeel', [['even', 'Even'], ['stochastic', 'Stochastic']], 'placement', (inst && inst.progFeel) || 'even', 'How the per-area-chord voicings are placed: Even = equal sub-slots, variants cycle in order; Stochastic = random onset timing + random variant (seeded, so a Loop replays it).');
+      if (k === 'pitchrule') {
+        // The sustain family's Pitch-rule axis (docs §11). 'Auto' = absent = the
+        // type's own native rule; a select, not segments — five options don't fit
+        // a mobile card as a seg row. Pedal deliberately omits 'voicing' until
+        // the emitter collapse gives it the chord machinery.
+        const opts = [['', 'Auto'], ['stack', 'Stack'], ['fixed', 'Fixed note'], ['anchor', 'Anchor']];
+        if (type !== 'pedal') opts.splice(1, 0, ['voicing', 'Voicing']);
+        const cur = _ambPitchRuleOf(inst);
+        return '<div class="ambient-ctrl" title="What each strike plays. Auto = this layer type\u2019s own rule. Voicing = a chord voicing of the source \u00b7 Stack = Density tones stacked from the Degree \u00b7 Fixed = the Degree tone alone \u00b7 Anchor = one note scored to fit the whole progression."><label for="' + p + '-pitchrule">Pitch rule</label>' +
+          '<select id="' + p + '-pitchrule" class="ambient-select">' +
+          opts.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
+          '</select></div>';
+      }
       if (k === 'choke') return '<div class="ambient-ctrl"><label for="' + p + '-choke">Choke</label><select id="' + p + '-choke" class="ambient-select"><option value="0">Off (overlap)</option><option value="1">At boundary</option></select><span class="ambient-hint">release each chord by the next unit</span></div>';
       if (k === 'toneseq') return '<div class="ambient-ctrl ambient-toneseq-ctrl"><label title="Tone cycle — schedule Instrument Tone changes on the bar clock: e.g. 4 bars Sawtooth, then 4 bars Sine, repeating. Each note picks the step active at its onset; a blank tone = the layer\'s default voice.">Tone cycle</label><span class="ambient-toneseq-box" id="' + p + '-toneseq">' + _ambToneSeqBoxHtml(inst) + '</span></div>';
       if (k === 'tight') return '<div class="ambient-ctrl"><label for="' + p + '-tight">Tight</label><select id="' + p + '-tight" class="ambient-select"><option value="0">Off</option><option value="1">Tight (choke)</option></select><span class="ambient-hint">each note lasts to the next hit, then chokes (overrides the other length controls)</span></div>';
@@ -25560,6 +25601,7 @@
           else if (k === 'choke') { const e = el('choke'); if (e) { e.value = inst.choke ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.choke = (e.value === '1'); sync(); persist(); } }); } }
           else if (k === 'tight') { const e = el('tight'); if (e) { e.value = (inst.tight | 0) ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.tight = (e.value === '1') ? 1 : 0; sync(); persist(); } }); } }
           else if (k === 'progfeel') { const e = el('progfeel'); if (e) { e.value = inst.progFeel || 'even'; e.addEventListener('change', () => { const L = get(); if (L) { L.progFeel = (e.value === 'stochastic') ? 'stochastic' : 'even'; sync(); persist(); } }); } }
+          else if (k === 'pitchrule') { const e = el('pitchrule'); if (e) { e.value = _ambPitchRuleOf(inst); e.addEventListener('change', () => { const L = get(); if (!L) return; const v = e.value; if (v === 'voicing' || v === 'stack' || v === 'fixed' || v === 'anchor') L.pitchRule = v; else delete L.pitchRule; if (E.timer) { try { _ambReanchorLayer(E, key); } catch (x) {} } sync(); persist(); }); } }
           else if (k === 'dronepedal') {
             const sel = el('prognote'), info = el('pedalinfo');
             const refresh = () => {
@@ -27718,6 +27760,7 @@
       set('ambient-bed-strum', cfg.bed.strum);
       set('ambient-bed-strike', cfg.bed.strike | 0);
       set('ambient-bed-lenRatio', cfg.bed.lenRatio | 0);
+      { const e = document.getElementById(tr('ambient-bed-pitchrule')); if (e) e.value = _ambPitchRuleOf(cfg.bed); }
       set('ambient-bed-strumFidelity', cfg.bed.strumFidelity);
       set('ambient-bed-level', cfg.bed.level);
        set('ambient-bed-areaFadeMs', cfg.bed.areaFadeMs); hint('ambient-bed-areaFadeMs-v', _ambFmtMs(cfg.bed.areaFadeMs));
@@ -29227,6 +29270,11 @@
       bind('ambient-bed-strum', 'bed', 'strum');
       bind('ambient-bed-strike', 'bed', 'strike');   // primary bind — the schema token alone only wires ADDED beds (the documented trap)
       bind('ambient-bed-lenRatio', 'bed', 'lenRatio');
+      { const pr = G('ambient-bed-pitchrule'); if (pr) pr.addEventListener('change', () => {
+          _E = E; const c = cfg0(); if (!c || !c.bed) return; const v = pr.value;
+          if (v === 'voicing' || v === 'stack' || v === 'fixed' || v === 'anchor') c.bed.pitchRule = v; else delete c.bed.pitchRule;
+          if (E.timer) { try { _ambReanchorLayer(E, 'bed'); } catch (e) {} try { _ambSyncMods(); } catch (e) {} }
+          persist(); }); }
       bind('ambient-bed-strumFidelity', 'bed', 'strumFidelity');
       bind('ambient-bed-restProb', 'bed', 'restProb');
       bind('ambient-bed-startVary', 'bed', 'startVary');

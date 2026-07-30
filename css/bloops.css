@@ -3875,6 +3875,14 @@
     /* 🎲 Improvise tab. Same tokens as the Schedule tab's chrome above so the two
        violet, which is already this control's "engaged" colour. */
     /* Pattern-source switch (Drawn · Euclid) at the head of the Pattern tab. */
+    .ambient-euclid-presetrow { display: flex; align-items: center; gap: 5px; }
+    .ambient-euclid-presetrow .ambient-euclid-preset { flex: 1 1 auto; min-width: 0; }
+    .ambient-euclid-presetsave {
+      flex: 0 0 auto; padding: 2px 8px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8;
+      background: transparent; border: 1px solid #34344a; border-radius: 4px;
+      cursor: pointer; touch-action: manipulation;
+    }
+    @media (hover: hover) { .ambient-euclid-presetsave:hover { border-color: #9f7aea; color: #d9cbff; } }
     .ambient-patmode { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-bottom: 5px; }
     .ambient-patmode-btn {
       padding: 2px 9px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8;

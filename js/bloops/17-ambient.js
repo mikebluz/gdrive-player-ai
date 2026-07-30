@@ -10761,6 +10761,9 @@
       if (!L || typeof L !== 'object') return;
       _ambNormalizeCycleGate(L);   // ⏱ Schedule tab (additive; absent = every iteration plays)
       _ambNormalizeImprov(L);      // 🎲 Improvise tab (additive; absent = always plays as written)
+      // Remembered rhythm-preset NAME (additive; absent = Custom).
+      if (L.euclidPreset != null && typeof L.euclidPreset !== 'string') delete L.euclidPreset;
+      else if (L.euclidPreset === '') delete L.euclidPreset;
       // Pattern source (additive; absent = drawn-if-present, i.e. today).
       if (L.patMode != null && L.patMode !== 'euclid' && L.patMode !== 'drawn') delete L.patMode;
       // Pitch-rule axis + the pedal's Stack voice count (additive; absent = native).
@@ -10852,26 +10855,72 @@
     // the grid "Generate Sequence" dialog offers (_EUC_PRESETS in 09), grouped
     // by their `grp` tag into <optgroup>s. Option value = index into _EUC_PRESETS.
     const _AMB_EUC_GRP_LBL = { 1: 'World', 2: 'Rock / R&B', 3: 'African', 4: 'Clave / Bell', 5: 'Vapor' };
-    function _ambEuclidPresetOptions() {
+    // USER RHYTHM PRESETS. The factory list (_EUC_PRESETS) is read-only, so a
+    // pattern you build by hand had nowhere to go — you could load a rhythm but
+    // never keep one. Stored by NAME so factory and user presets share one
+    // namespace in the dropdown, which is also what `L.euclidPreset` records.
+    const _AMB_RHY_KEY = 'bloops-rhythm-presets';
+    function _ambLoadRhythmPresets() {
+      try { const a = JSON.parse(localStorage.getItem(_AMB_RHY_KEY) || '[]'); return Array.isArray(a) ? a : []; }
+      catch (e) { return []; }
+    }
+    function _ambSaveRhythmPreset(name, L) {
+      const list = _ambLoadRhythmPresets().filter(x => x && x.name !== name);
+      const row = (Array.isArray(L.euclidPattern) && Array.isArray(L.euclidPattern[0])) ? L.euclidPattern[0].map(v => v ? 1 : 0) : null;
+      list.push({ name: name, steps: L.steps | 0, pulses: L.pulses | 0, rotate: L.rotate | 0, pat: row });
+      try { localStorage.setItem(_AMB_RHY_KEY, JSON.stringify(list.slice(-64))); } catch (e) {}
+      return list;
+    }
+    function _ambDeleteRhythmPreset(name) {
+      const list = _ambLoadRhythmPresets().filter(x => x && x.name !== name);
+      try { localStorage.setItem(_AMB_RHY_KEY, JSON.stringify(list)); } catch (e) {}
+    }
+    // Applying a user preset is the same two shapes the factory list uses:
+    // a literal row (a drawn timeline) or knob values.
+    function _ambApplyRhythmPreset(L, name) {
+      const pr = _ambLoadRhythmPresets().find(x => x && x.name === name);
+      if (!pr || !L) return false;
+      L.steps = Math.max(2, Math.min(32, pr.steps | 0) || 8);
+      L.pulses = Math.max(1, Math.min(L.steps, pr.pulses | 0) || 1);
+      L.rotate = Math.max(0, (pr.rotate | 0) % L.steps);
+      if (Array.isArray(pr.pat) && pr.pat.length) { L.euclidPattern = [pr.pat.map(v => v ? 1 : 0)]; L.patMode = 'drawn'; }
+      else { L.euclidPattern = null; L.patMode = 'euclid'; }
+      return true;
+    }
+    // What the dropdown should READ. A stored name survives until the pattern is
+    // edited; any edit clears it and the select falls to "Custom".
+    function _ambPresetLabel(L) {
+      const n = L && L.euclidPreset;
+      return (typeof n === 'string' && n) ? n : '';
+    }
+    function _ambEuclidPresetOptions(L) {
       const list = (typeof _EUC_PRESETS !== 'undefined' && Array.isArray(_EUC_PRESETS)) ? _EUC_PRESETS : [];
       const byGrp = {};
       list.forEach((p, i) => { const g = p.grp || 1; (byGrp[g] = byGrp[g] || []).push({ p, i }); });
-      let html = '<option value="">Preset…</option>';
+      // The select READS the current pattern. It used to be an action menu that
+      // reset itself to "Preset…" after applying, so it never told you what you
+      // had loaded. Values are NAMES now (factory and user share the namespace);
+      // "Custom" is selected whenever the pattern has been edited since.
+      const cur = _ambPresetLabel(L);
+      const esc = (t) => String(t).replace(/"/g, '&quot;');
+      let html = '<option value=""' + (cur ? '' : ' selected') + '>' + (cur ? 'Preset…' : 'Custom') + '</option>';
       Object.keys(byGrp).sort((a, b) => a - b).forEach(g => {
         html += '<optgroup label="' + (_AMB_EUC_GRP_LBL[g] || 'Other') + '">';
         byGrp[g].forEach(({ p, i }) => {
           const n = (typeof p.pat === 'string') ? p.pat.length : (p.n | 0);
-          html += '<option value="' + i + '" title="' + String(p.hint || '').replace(/"/g, '&quot;') + '">' + p.name + ' · ' + n + '</option>';
+          html += '<option value="f:' + i + '"' + (cur === p.name ? ' selected' : '') + ' title="' + esc(p.hint || '') + '">' + p.name + ' · ' + n + '</option>';
         });
         html += '</optgroup>';
       });
+      const mine = _ambLoadRhythmPresets();
+      if (mine.length) {
+        html += '<optgroup label="Yours">';
+        mine.forEach(m => { html += '<option value="u:' + esc(m.name) + '"' + (cur === m.name ? ' selected' : '') + '>' + m.name + '</option>'; });
+        html += '</optgroup>';
+      }
       return html;
     }
-    // Apply a preset to a euclid layer. EUCLIDEAN presets (k/n/rot) drive the
-    // Pulses/Steps/Rotate knobs and CLEAR any override (the generated pattern IS
-    // the preset, and multi-voice spread still works). DIRECT presets (clave
-    // `pat` strings — non-Euclidean) can't be expressed as k/n/rot, so they set
-    // Steps + store an explicit override on voice 0. Returns the applied preset.
+
     function _ambApplyEuclidPreset(L, idx) {
       const list = (typeof _EUC_PRESETS !== 'undefined' && Array.isArray(_EUC_PRESETS)) ? _EUC_PRESETS : [];
       const pr = list[idx]; if (!pr || !L) return null;
@@ -11376,7 +11425,25 @@
         }
         if (t.classList.contains('ambient-patmode-btn')) {
           const m = t.getAttribute('data-patmode');
-          if (m === 'euclid') L.patMode = 'euclid'; else delete L.patMode;   // 'drawn' IS the default → store absence
+          if (m === 'euclid') L.patMode = 'euclid';
+          else {
+            // Store 'drawn' EXPLICITLY. Deleting the field looked equivalent —
+            // absence means "drawn if present" — but the button state is derived
+            // the same way, so with NOTHING drawn the display fell straight back
+            // to Euclid and Drawn could never be selected. A euclidean preset
+            // clears the grid, which is exactly how you get there.
+            L.patMode = 'drawn';
+            // …and give it something to draw ON: snapshot what is currently
+            // generating, so the grid shows what you were just hearing and is
+            // immediately editable. Identical output, so the switch is silent.
+            if (!(Array.isArray(L.euclidPattern) && L.euclidPattern.some(r => Array.isArray(r))) && !L.euclidKit) {
+              try {
+                const _st = Math.max(2, Math.min(32, L.steps | 0) || 8);
+                const _pu = Math.max(1, Math.min(_st, L.pulses | 0) || 1);
+                L.euclidPattern = [_ambEuclidVoicePat(_pu, Math.max(0, L.rotate | 0), _st, 1, 0, L.euclidRegen | 0)];
+              } catch (e) {}
+            }
+          }
         } else if (t.hasAttribute('data-implen')) {
           // 🎲 Improvise steppers share .ambient-cyclen with the Schedule tab's
           // length buttons, so discriminate on the attribute, not the class.
@@ -11415,13 +11482,43 @@
       const syncSlider = (suf, v) => { const e = el(suf); if (!e || v == null) return; e.value = String(v); const rv = el(suf + '-v'); if (rv) rv.textContent = _ambSlReadout(e.id, v); };
       render();
       // Preset picker → load a named rhythm, reflect into the knobs, re-render.
+      // The select lives in the euclid CONTROL, not inside `grid` — render()
+      // rewrites grid.innerHTML and would leave a stale name showing. Repaint it
+      // wherever the remembered name can change.
+      const syncPreset = () => { try { const e2 = el('euclidpreset'); const L2 = getL(); if (e2 && L2) e2.innerHTML = _ambEuclidPresetOptions(L2); } catch (e) {} };
       { const ps = el('euclidpreset'); if (ps) ps.addEventListener('change', () => {
-          _E = E; const L = getL(); const idx = parseInt(ps.value, 10); ps.value = '';
-          if (!L || !Number.isFinite(idx)) return;
-          if (!_ambApplyEuclidPreset(L, idx)) return;
+          _E = E; const L = getL(); const v = String(ps.value || '');
+          if (!L || !v) return;
+          let name = '';
+          if (v.slice(0, 2) === 'f:') {
+            const idx = parseInt(v.slice(2), 10);
+            const pr = (typeof _EUC_PRESETS !== 'undefined' && _EUC_PRESETS[idx]) || null;
+            if (!Number.isFinite(idx) || !_ambApplyEuclidPreset(L, idx)) return;
+            name = (pr && pr.name) || '';
+            // A clave preset stores a literal row; a euclidean one clears it.
+            // Set the source to match so the grid shows what is actually playing.
+            L.patMode = (Array.isArray(L.euclidPattern) && Array.isArray(L.euclidPattern[0])) ? 'drawn' : 'euclid';
+          } else if (v.slice(0, 2) === 'u:') {
+            name = v.slice(2);
+            if (!_ambApplyRhythmPreset(L, name)) return;
+          } else return;
+          L.euclidPreset = name;   // the select now READS this until an edit clears it
           syncSlider('steps', L.steps); syncSlider('pulses', L.pulses); syncSlider('rotate', L.rotate);
-          render(); persist();
-          if (E.timer) { try { sync && sync(); } catch (e) {} }
+          render(); syncPreset(); persist();
+          if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} try { sync && sync(); } catch (e) {} }
+        }); }
+      // Save the current pattern as a named rhythm (appears under "Yours").
+      { const sv = el('euclidpresetsave'); if (sv) sv.addEventListener('click', () => {
+          _E = E; const L = getL(); if (!L) return;
+          const suggested = _ambPresetLabel(L) || 'My rhythm';
+          let nm = null;
+          try { nm = window.prompt('Name this rhythm', suggested); } catch (e) {}
+          nm = (nm || '').trim();
+          if (!nm) return;
+          _ambSaveRhythmPreset(nm, L);
+          L.euclidPreset = nm;
+          render(); syncPreset(); persist();
+          try { if (typeof showToast === 'function') showToast('Saved rhythm “' + nm + '”'); } catch (e) {}
         }); }
       // Refresh the has-fx dot on every cell in the current edit scope (called after
       // a slider/select edit, since those don't re-render — keeps the drag alive).
@@ -11468,7 +11565,10 @@
         ov[v][i] = ov[v][i] ? 0 : 1;
         if (ov[v][i]) { c.classList.add('on'); c.setAttribute('aria-pressed', 'true'); }
         else { c.classList.remove('on'); c.removeAttribute('aria-pressed'); }
-        if (!L.euclidKit && !grid.querySelector('.ambient-euclid-note')) render();   // first edit → add the "edited" note
+        // The pattern no longer IS the preset it came from — the select reads
+        // Custom until it is saved under a name.
+        const _wasNamed = !!L.euclidPreset; if (_wasNamed) { delete L.euclidPreset; syncPreset(); }
+        if (!L.euclidKit && !grid.querySelector('.ambient-euclid-note')) render();   // first edit → the "edited" note
         persist();
         if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} }   // pattern edits take effect at the NEXT unit boundary (re-anchor + rewrite a Write loop)
       });
@@ -11646,7 +11746,7 @@
       // adds/drops rows; Regen clears (a fresh re-roll). All re-render the grid.
       // These listeners register after the generic `sl` handlers, so L is already
       // updated when they fire.
-      const onGen = (clear) => () => { _E = E; const L = getL(); if (!L) return; if (L.euclidKit) _ambEuclidResizePages(L); else if (clear) L.euclidPattern = null; render(); persist(); };
+      const onGen = (clear) => () => { _E = E; const L = getL(); if (!L) return; if (L.euclidKit) _ambEuclidResizePages(L); else if (clear) L.euclidPattern = null; if (L.euclidPreset) delete L.euclidPreset; render(); syncPreset(); persist(); };   // a knob move departs from the named rhythm → Custom
       ['pulses', 'rotate', 'steps'].forEach(s => { const e = el(s); if (e) e.addEventListener('input', onGen(true)); });
       { const e = el('euclidVoices'); if (e) e.addEventListener('input', onGen(false)); }
       { const b = el('euclidregen'); if (b) b.addEventListener('click', onGen(true)); }
@@ -11669,6 +11769,7 @@
       // switch to, so there Regen re-seeds the grid itself.
       if (L.euclidKit) L.euclidPattern = null;
       else L.patMode = 'euclid';
+      if (L.euclidPreset) delete L.euclidPreset;   // a re-roll is no longer the named rhythm
       const t = (typeof performance !== 'undefined' && performance.now) ? Math.floor(performance.now()) : ((L.euclidRegen | 0) + 1);
       L.euclidRegen = (((L.euclidRegen | 0) * 1103515245 + 12345 + t) >>> 0) || 1;
       if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
@@ -25271,7 +25372,9 @@
       // pattern. Filled/wired by _ambWireEuclidGrid (like the trance-gate grid).
       if (k === 'euclidgrid') return '<div class="ambient-ctrl ambient-slice-row ambient-euclid-ctrl' + ((inst && inst.euclidKit) ? ' ambient-euclid-kitctrl' : '') + '"><label title="The on/off step pattern. Pulses/Steps/Rotate generate it; tap cells to hand-edit; or load a rhythm Preset. A knob change or Regen resets it to the generated Euclid pattern.">Pattern</label>' +
         '<div class="ambient-euclid-wrap">' +
-          '<div class="ambient-euclid-presetrow"><select id="' + p + '-euclidpreset" class="ambient-select ambient-euclid-preset" title="Load a rhythm preset (world / rock / African / clave) into the step grid">' + _ambEuclidPresetOptions() + '</select></div>' +
+          '<div class="ambient-euclid-presetrow"><select id="' + p + '-euclidpreset" class="ambient-select ambient-euclid-preset" title="The rhythm this pattern came from. Reads Custom once you edit it — save a Custom to keep it.">' + _ambEuclidPresetOptions(inst) + '</select>' +
+            '<button type="button" id="' + p + '-euclidpresetsave" class="ambient-euclid-presetsave" title="Save this pattern as a named rhythm you can load on any layer">\u2b07 Save</button>' +
+          '</div>' +
           '<div class="ambient-euclid-grid" id="' + p + '-euclidgrid"></div>' +
         '</div></div>';
       // KEY group (Option C): surface the per-layer KEY override (layer.keyOv —

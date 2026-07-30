@@ -997,9 +997,11 @@ stack, held single note that roams per cycle, strummed pedal).
    Drone (drone · voicing), 🎠 Pulse Bed (bed · strike +4 · strum), 🪨
    Roaming Hold (pedal · strike −2 · vary) — each inexpressible before
    Strike/Ring/Pitch-rule, each one tap now. The three types remain the
-   plain one-click adds. Left open, deliberately: seeding velVar
-   (behavior-changing — today it draws unseeded Math.random(), so velVar'd
-   dynamics never replay exactly under Write/locks).
+   plain one-click adds. velVar was subsequently SEEDED
+   (2026-07-30, same day): _ambVelJitter01 keys on note time · per-onset
+   ordinal · take seed — same take = identical dynamics, New take re-rolls,
+   zero engine-RNG draws. Humanize keeps Math.random on purpose (start-jitter
+   is performance feel). Nothing in §11 remains open.
 2. Verify by construction: can Bed-with-dials reproduce Drone? Drone reproduce Pedal? A
    failure locates the genuinely-missing axis rather than guessing at it.
 3. Only then collapse to one emitter, with Bed/Drone/Pedal surviving as **presets in the

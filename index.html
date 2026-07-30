@@ -160,6 +160,29 @@ body{
   .wp-moon{transform:translateY(7%)}
   .whale .fill,.seal .fill{opacity:0}   /* both would be parked mid-leap */
 }
+/* ── AMBIENT SOUND ─────────────────────────────────────────────────────────
+   A generative pad, off until asked for. Pinned bottom-right rather than run
+   across the footer: a full-width bar down there got lost against a phone's
+   own chrome, and this only needs to be findable, not present. */
+.snd{position:fixed;right:12px;bottom:12px;z-index:950;
+  display:flex;align-items:center;gap:8px;padding:7px 11px;cursor:pointer;
+  font:inherit;font-size:10px;font-weight:700;letter-spacing:.14em;
+  color:var(--bar-fg);background:var(--bar);border:1px solid var(--sunk-e);
+  box-shadow:0 2px 10px rgba(0,0,0,.45)}
+.snd:hover{color:#fff;border-color:var(--bar-hi)}
+.snd[aria-pressed="true"]{color:#fff;border-color:var(--bar-hi)}
+.snd .ic{font-size:12px;line-height:1}
+/* A level meter that only exists while it plays — the one honest signal that
+   what you are hearing is being generated rather than streamed. */
+.snd .lv{display:none;align-items:flex-end;gap:2px;width:20px;height:9px}
+.snd[aria-pressed="true"] .lv{display:flex}
+.snd .lv i{flex:1;background:var(--ac);height:25%;transform-origin:bottom;
+  animation:lvl 2.4s ease-in-out infinite}
+.snd .lv i:nth-child(2){animation-duration:3.1s;animation-delay:-.6s}
+.snd .lv i:nth-child(3){animation-duration:1.9s;animation-delay:-1.2s}
+@keyframes lvl{0%,100%{transform:scaleY(1)}50%{transform:scaleY(3.4)}}
+@media (prefers-reduced-motion:reduce){.snd .lv i{animation:none}}
+@media (max-width:520px){.snd .lb{display:none}}
 /* ── TASKBAR ───────────────────────────────────────────────────────────── */
 .bar{position:fixed;inset:0 0 auto 0;height:38px;z-index:900;display:flex;align-items:center;
   gap:10px;padding:0 8px;background:var(--bar);
@@ -293,7 +316,7 @@ dl.f dd{font-weight:700}
   .win.hidden{display:flex}
   .tb{cursor:default}
   .tb button{display:none}
-  .stack{padding:64px 10px 24px}   /* 38px taskbar + a real gap under it */
+  .stack{padding:64px 10px 60px}   /* bottom clears the sound button */   /* 38px taskbar + a real gap under it */
   .body{max-height:none}
 }
 @media (min-width:821px){
@@ -323,6 +346,13 @@ dl.f dd{font-weight:700}
   <b class="wp-land"><i class="fill"></i></b>
   <b class="beam"><i class="fill"></i></b>
 </div>
+
+<button class="snd" id="snd" type="button" aria-pressed="false"
+        title="Ambient sound — generated live, off by default">
+  <span class="ic" aria-hidden="true">◌</span>
+  <span class="lv" aria-hidden="true"><i></i><i></i><i></i></span>
+  <span class="lb">SOUND</span>
+</button>
 
 <div class="bar">
   <span class="name">MIKE LUZ</span>
@@ -485,6 +515,135 @@ const YT = 'UKcZJ31ZHH0';
   }
   addEventListener('resize', place);
   place();
+})();
+
+// ── AMBIENT SOUND ────────────────────────────────────────────────────────
+// A small generative pad, written for this page rather than borrowed from
+// Bloops. The real engine is ~6 MB with Tone.js and is wired into the bloops
+// app's DOM, which is the wrong trade for a homepage that mostly wants to be
+// read. This is the same idea at 1/2000th the weight: a key chosen at random
+// per visit, chords that wander a diatonic set, and bells that land off the
+// grid, so two visits are never the same piece.
+//
+// Nothing is built until the button is pressed — no AudioContext, no buffers.
+(function () {
+  const btn = document.getElementById('snd');
+  if (!btn || !(window.AudioContext || window.webkitAudioContext)) return;
+
+  let ac = null, bus = null, verb = null, timers = [], playing = false;
+  let root = 0, chord = null;
+
+  const SCALE  = [0, 2, 3, 5, 7, 9, 10];                 // dorian — minor, but not sad
+  const DEGREES = [[0, 2, 4], [3, 5, 0], [4, 6, 1], [5, 0, 2], [2, 4, 6]];
+  const ROOTS  = [130.81, 138.59, 146.83, 155.56, 164.81, 174.61];
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const pick = a => a[(Math.random() * a.length) | 0];
+
+  // Degree → frequency, wrapping octaves as the degree runs past the scale.
+  function hz(deg, oct) {
+    const i = ((deg % 7) + 7) % 7, o = oct + Math.floor(deg / 7);
+    return root * Math.pow(2, (SCALE[i] + 12 * o) / 12);
+  }
+
+  // A noise impulse with a steep decay. Cheap, and at this tempo indistinguish-
+  // able from a real one.
+  function impulse(sec) {
+    const n = Math.floor(ac.sampleRate * sec);
+    const b = ac.createBuffer(2, n, ac.sampleRate);
+    for (let c = 0; c < 2; c++) {
+      const d = b.getChannelData(c);
+      for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2.8);
+    }
+    return b;
+  }
+
+  function build() {
+    ac = new (window.AudioContext || window.webkitAudioContext)();
+    bus = ac.createGain(); bus.gain.value = 0;
+    const lp = ac.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 1500; lp.Q.value = 0.4;
+    verb = ac.createConvolver(); verb.buffer = impulse(4.5);
+    const wet = ac.createGain(); wet.gain.value = 0.5;
+    bus.connect(lp); lp.connect(ac.destination);
+    lp.connect(verb); verb.connect(wet); wet.connect(ac.destination);
+    root = pick(ROOTS);
+  }
+
+  // One pad voice: slow in, slow out, slightly detuned against its neighbours.
+  function pad(f, dur, level) {
+    const o = ac.createOscillator(), g = ac.createGain(), t = ac.currentTime;
+    o.type = 'triangle'; o.frequency.value = f;
+    o.detune.value = rnd(-7, 7);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(level, t + rnd(3.5, 7));
+    g.gain.setValueAtTime(level, t + dur - 4);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(bus);
+    o.start(t); o.stop(t + dur + 0.2);
+  }
+
+  // A struck note: fast in, long tail. Two partials so it reads as a bell.
+  function bell(f) {
+    const t = ac.currentTime, dur = rnd(4, 8);
+    [[1, 0.09], [2.01, 0.035]].forEach(([mult, lvl]) => {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = 'sine'; o.frequency.value = f * mult;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(lvl, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(bus);
+      o.start(t); o.stop(t + dur + 0.1);
+    });
+  }
+
+  function nextChord() {
+    if (!playing) return;
+    const hold = rnd(13, 21);
+    let next = pick(DEGREES);
+    while (next === chord) next = pick(DEGREES);      // never twice running
+    chord = next;
+    chord.forEach((d, i) => pad(hz(d, i === 0 ? -1 : 0), hold + 3, i === 0 ? 0.10 : 0.065));
+    timers.push(setTimeout(nextChord, hold * 1000));
+  }
+
+  function nextBell() {
+    if (!playing) return;
+    // Mostly from the chord under it, occasionally not — which is where the
+    // colour comes from.
+    const d = Math.random() < 0.75 && chord ? pick(chord) : ((Math.random() * 7) | 0);
+    bell(hz(d, Math.random() < 0.4 ? 2 : 1));
+    timers.push(setTimeout(nextBell, rnd(3.5, 11) * 1000));
+  }
+
+  function start() {
+    if (!ac) build();
+    ac.resume();
+    playing = true;
+    bus.gain.cancelScheduledValues(ac.currentTime);
+    bus.gain.setValueAtTime(Math.max(0.0001, bus.gain.value), ac.currentTime);
+    bus.gain.exponentialRampToValueAtTime(0.22, ac.currentTime + 2.5);
+    chord = null; nextChord();
+    timers.push(setTimeout(nextBell, 4000));
+  }
+
+  function stop() {
+    playing = false;
+    timers.forEach(clearTimeout); timers = [];
+    if (!ac) return;
+    // Fade the BUS rather than suspending, so nothing is cut off mid-note.
+    bus.gain.cancelScheduledValues(ac.currentTime);
+    bus.gain.setValueAtTime(Math.max(0.0001, bus.gain.value), ac.currentTime);
+    bus.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 1.6);
+  }
+
+  btn.addEventListener('click', () => {
+    const on = btn.getAttribute('aria-pressed') === 'true';
+    btn.setAttribute('aria-pressed', String(!on));
+    btn.querySelector('.ic').textContent = on ? '◌' : '◉';
+    btn.title = on ? 'Ambient sound — generated live, off by default'
+                   : 'Ambient sound — playing. Click to stop.';
+    on ? stop() : start();
+  });
 })();
 
 // ── SHOWS ────────────────────────────────────────────────────────────────

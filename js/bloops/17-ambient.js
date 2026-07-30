@@ -19150,6 +19150,31 @@
               if (slotSec > 0 && loopSec > 0) {
                 const s = Math.floor(((now - _origin) % loopSec) / slotSec);
                 if (s >= 0 && s < bars * steps) cur = s;
+                // IMPROVISED cycles: show what is ACTUALLY playing. The cells hold
+                // the drawn pattern, but an improvised iteration generates its own
+                // rhythm — so without this the grid confidently displays a pattern
+                // nobody is hearing. Repaint the cells from the generated row for
+                // the cycle now sounding, and mark the grid so it reads as "not
+                // your pattern right now" rather than as an edit.
+                try {
+                  const _cyc = Math.floor((now - _origin) / loopSec);
+                  const _imp = _ambImprovAt(L, _cyc);
+                  if (_imp !== !!grid._impShown || (_imp && grid._impCyc !== _cyc)) {
+                    grid._impShown = _imp; grid._impCyc = _cyc;
+                    grid.classList.toggle('improvising', _imp);
+                    if (!L.euclidKit) {
+                      const _pu = Math.max(1, Math.min(steps, L.pulses | 0) || 1);
+                      const _row = _imp
+                        ? _ambEuclidVoicePat(_pu, Math.max(0, L.rotate | 0), steps, 1, 0, _ambImprovSalt(L, _cyc))
+                        : null;
+                      grid.querySelectorAll('.ambient-euclid-cell[data-ei]').forEach(c2 => {
+                        const i2 = c2.getAttribute('data-ei') | 0;
+                        if (_row) c2.classList.toggle('impon', _row[i2 % _row.length] === 1);
+                        else c2.classList.remove('impon');
+                      });
+                    }
+                  }
+                } catch (e) {}
                 // Sequence mode: which PAGE is sounding this cycle (may differ from
                 // the viewed page) → mark that tab "playing"; and when the current
                 // page is on its LAST loop, flag the NEXT page as "up next".

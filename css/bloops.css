@@ -3889,6 +3889,13 @@
     .ambient-layer.amb-grid-owns .ambient-euclid-ctrl > *:not(.ambient-patsrc),
     .ambient-layer.amb-grid-owns .ambient-euclid-grid { opacity: 0.35; pointer-events: none; }
     .ambient-patsrc .ambient-seg-row { display: inline-flex; gap: 4px; }
+    /* IMPROVISING: the cells are showing the generated rhythm for this cycle,
+       not the pattern you drew — amber so it can never be mistaken for an edit. */
+    .ambient-euclid-grid.improvising { outline: 1px dashed rgba(245,158,11,0.45); outline-offset: 2px; }
+    .ambient-euclid-grid.improvising .ambient-euclid-cell.on { opacity: 0.28; }
+    .ambient-euclid-grid.improvising .ambient-euclid-cell.impon {
+      opacity: 1; background: #f59e0b; border-color: #fbbf24; color: #1a1206;
+    }
     .ambient-patmode { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-bottom: 5px; }
     .ambient-patmode-btn {
       padding: 2px 9px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8;

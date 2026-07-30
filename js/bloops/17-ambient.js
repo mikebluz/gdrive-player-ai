@@ -14489,6 +14489,10 @@
     function _ambTick(E) {
       _E = E;
       if (!E.guard()) { _ambStopGenerator(E); return; }
+      // PAUSED: the context is suspended, so Tone.now() is frozen and every
+      // scheduling decision below would re-derive the same instant over and over
+      // (and repaint playheads that aren't moving). Idle until resume.
+      if (E.paused) return;
       // Generate the PLAYING area (master: E._playIdx, which can differ from the
       // viewed/edited area = getCfg()). Everything downstream reads this via E._cfg.
       const cfg = _ambPlayCfg(E);
@@ -17139,10 +17143,78 @@
         return _AMB_LEAD_COLD;
       };
     } catch (e) {}
+    // ---- Pause / resume -------------------------------------------------
+    // FREEZE THE CLOCK, DON'T REWIND IT. Every anchor the engine keeps —
+    // E.clocks, runPhase/bassPhase startAt, freeze anchors, already-scheduled
+    // voices — is an ABSOLUTE AudioContext time. Suspending the context stops
+    // currentTime itself, so all of them stay valid by construction and resume
+    // lands exactly where the pause landed. The alternative (offset every stored
+    // anchor by the paused duration) has to find every anchor site, and missing
+    // one is a silent phase bug.
+    //
+    // Two things fought this and both had to stand down (see 03-audio-bus-fx.js):
+    // the keep-alive watchdog, which polls every 500 ms and resumes any suspended
+    // context, and the iOS unlock handler, which fires on the very pointerdown
+    // that triggers the pause. window.__bloopsAudioPaused is how they tell a
+    // deliberate pause from the accidental suspensions they exist to repair.
+    //
+    // Suspend the WRAPPED context (Tone's rawContext), NOT its
+    // _nativeAudioContext — suspending the native handle leaves the wrapper's
+    // clock running at full speed, which freezes the scheduler but not time.
+    // Note the wrapper keeps REPORTING state 'running' either way, so state is
+    // not a usable check; currentTime is.
+    function _ambRawCtx() {
+      try { return (typeof Tone !== 'undefined' && Tone.getContext) ? Tone.getContext().rawContext : null; }
+      catch (e) { return null; }
+    }
+    function _ambPauseToggle(E) {
+      if (!E || !E.timer) return false;             // nothing playing → nothing to pause
+      const raw = _ambRawCtx();
+      if (!raw || typeof raw.suspend !== 'function') return false;
+      if (E.paused) {
+        E.paused = false;
+        window.__bloopsAudioPaused = false;
+        try { raw.resume(); } catch (e) {}
+        // Resuming re-enters the same startup transient a play press does (the
+        // render thread has to refill), so reuse the play-start grace rather than
+        // let the health monitor read the catch-up as overload.
+        try { _ambHealthGraceUntil = performance.now() + 1500; _ambHealthBadN = 0; } catch (e) {}
+      } else {
+        E.paused = true;
+        window.__bloopsAudioPaused = true;
+        try { raw.suspend(); } catch (e) {}
+      }
+      _ambSyncPauseUi(E);
+      return E.paused;
+    }
+    function _ambSyncPauseUi(E) {
+      let btn = null;
+      try { btn = _ambGet(E, 'ambient-pause-btn'); } catch (e) {}
+      if (!btn) return;
+      const on = !!(E && E.paused);
+      btn.textContent = on ? '▶' : '⏸';
+      btn.classList.toggle('on', on);
+      btn.title = on ? 'Resume — picks up exactly where it stopped' : 'Pause — freeze everything in place so you can edit this unit';
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    // Any path that leaves the paused state MUST clear the global flag, or the
+    // keep-alive watchdog stays stood down for the rest of the session and a
+    // later accidental suspension never gets repaired.
+    function _ambClearPaused(E) {
+      if (E) E.paused = false;
+      window.__bloopsAudioPaused = false;
+      try { _ambSyncPauseUi(E); } catch (e) {}
+    }
     function _ambStartGenerator(E) {
       _E = E;
       const cfg = E.getCfg();
       if (!cfg) return;
+      // A stop→play while paused must come back running, not silently suspended.
+      if (E.paused || window.__bloopsAudioPaused) {
+        const raw = _ambRawCtx();
+        try { raw && raw.resume && raw.resume(); } catch (e) {}
+        _ambClearPaused(E);
+      }
       // Press-anchored first onsets: capture the press time BEFORE the heavy
       // synchronous work below (chain building can take 100s of ms on slower
       // machines). The FIRST tick schedules against this anchor with a small
@@ -17357,7 +17429,14 @@
             // capturing). Hold the budget for the duration; the encoder's load
             // ends with the capture.
             const _capturing = !!(E.capRec);
-            if (typeof _setVoiceBudget === 'function' && raw.state === 'running' && dt > 0.25 && !_inGrace && !_capturing) {
+            // PAUSED = the context is suspended on purpose, so currentTime is
+            // frozen and ctRate reads ~0 — which looks exactly like a catastrophic
+            // render stall. The `raw.state === 'running'` gate does NOT catch this:
+            // the standardized-audio-context wrapper keeps reporting 'running'
+            // while suspended (measured), so state is not a usable signal here.
+            // Without this check a pause would shed the voice budget to its floor
+            // and the music would come back thinned.
+            if (typeof _setVoiceBudget === 'function' && raw.state === 'running' && !E.paused && dt > 0.25 && !_inGrace && !_capturing) {
               if (ctRate < 0.97) {
                 _ambHealthGoodN = 0;
                 _ambHealthBadN++;
@@ -17483,6 +17562,14 @@
     }
     function _ambStopGenerator(E) {
       _E = E;
+      // Stopping while paused has to un-suspend the context on the way out —
+      // otherwise the whole app's audio (Grid, previews, everything) stays frozen
+      // with no visible pause state left to explain it.
+      if (E.paused || window.__bloopsAudioPaused) {
+        const raw = _ambRawCtx();
+        try { raw && raw.resume && raw.resume(); } catch (e) {}
+        _ambClearPaused(E);
+      }
       if (E.timer) { clearInterval(E.timer); E.timer = null; }
       _AMB_TICKING.delete(E); _ambTickWorkerMaybeStop();
       E._freshKeys = null; E._freshJoin = null;   // added-while-playing marks die with the session (a stopped toggle is plain)
@@ -28547,6 +28634,7 @@
           // 🎤 Record a Track — the input-recording modal (was the add-menu's
           // "Track (record)" entry; the take still lands as a Track sample layer).
           '<button type="button" id="ambient-track-btn" class="ambient-footer-capture" title="Record a Track — record your input (mic / line-in) against the playing loop; the take snaps to whole bars and loops tempo-locked">🎤</button>' +
+          '<button type="button" id="ambient-pause-btn" class="ambient-pause" aria-pressed="false" title="Pause — freeze everything in place so you can edit this unit">⏸</button>' +
           '<button type="button" id="ambient-play-btn" class="ambient-play" title="Play / stop">▶</button>' +
         '</div></div>';
       // Singleton rescue: a Bloom panel rebuild would DESTROY the docked lane
@@ -30691,6 +30779,9 @@
 
       const playBtn = G('ambient-play-btn');
       if (playBtn) playBtn.addEventListener('click', () => { if (E.timer) _ambStopGenerator(E); else _ambStartGenerator(E); });
+      const pauseBtn = G('ambient-pause-btn');
+      if (pauseBtn) pauseBtn.addEventListener('click', () => _ambPauseToggle(E));
+      try { _ambSyncPauseUi(E); } catch (e) {}   // a panel rebuild must not lose the paused face
       // 🎲 New take → a per-layer KEEP / REVISE popover. Revise (default) =
       // today's behavior (fresh realization from the new seed). Keep =
       // _ambKeepLastUnit: the layer's last completed unit is retroactively

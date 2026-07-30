@@ -2832,6 +2832,21 @@
     }
     .ambient-play:hover { transform: translateY(-1px); box-shadow: 0 0 18px rgba(0, 191, 255, 0.7); }
     .ambient-play.active { box-shadow: 0 0 18px rgba(0, 191, 255, 0.85); }
+    /* Pause sits beside Play but reads as secondary — same circle, ~60% the
+       diameter, amber instead of cyan so a frozen transport is unmistakable at a
+       glance. Lit (.on) while paused, i.e. while the button offers "resume". */
+    .ambient-pause {
+      width: clamp(40px, 15vw, 76px); height: clamp(40px, 15vw, 76px); flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 50%; cursor: pointer; font-size: clamp(0.95rem, 3.4vw, 1.7rem); padding: 0; transition: all 0.15s ease;
+      background: rgba(0, 0, 0, 0.5); color: #f6ad55; border: 2px solid #f6ad55;
+      box-shadow: 0 0 8px rgba(246, 173, 85, 0.3);
+    }
+    .ambient-pause:hover { transform: translateY(-1px); box-shadow: 0 0 14px rgba(246, 173, 85, 0.6); }
+    .ambient-pause.on {
+      background: rgba(246, 173, 85, 0.18); color: #ffd8a8; border-color: #ffd8a8;
+      box-shadow: 0 0 16px rgba(246, 173, 85, 0.75);
+    }
     .ambient-seed { font-family: 'Segoe UI', sans-serif; font-size: 0.75rem; color: #6b6b8a; }
     .ambient-ctrl { display: grid; grid-template-columns: 84px 1fr auto; align-items: center; gap: 10px; }
     .ambient-ctrl.amb-disabled { opacity: 0.4; }   /* Area fade disabled: layer is synced/bar-native → it hard-cuts at the boundary */

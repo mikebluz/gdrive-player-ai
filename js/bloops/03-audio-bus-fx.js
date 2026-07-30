@@ -412,6 +412,14 @@
       if (_keepAliveWatchdog != null) return;
       _keepAliveWatchdog = setInterval(() => {
         if (document.hidden) return;
+        // A DELIBERATE pause (Bloom's ⏸) suspends the context on purpose. This
+        // watchdog exists to undo ACCIDENTAL suspensions (iOS/Android power
+        // blips), and it cannot tell the two apart from state alone — so the
+        // pauser raises this flag and we stand down. Without it the pause looks
+        // like it works for ~500 ms and then the context silently resumes under
+        // it, which reads as "suspend() doesn't work" rather than "something
+        // resumed it".
+        if (window.__bloopsAudioPaused) return;
         let ac;
         try { ac = Tone.getContext().rawContext; } catch (e) { return; }
         if (!ac) return;
@@ -430,6 +438,10 @@
     (function bindIosAudioUnlock() {
       const events = ['pointerdown','touchstart','keydown'];
       const handler = () => {
+        // Same standing-down rule as the watchdog above — and this one matters
+        // even more, because the pause is triggered BY a pointerdown: without
+        // the guard the unlock handler races the pauser on its own click.
+        if (window.__bloopsAudioPaused) return;
         let ac;
         try { ac = Tone.getContext().rawContext; } catch (e) { return; }
         if (ac && ac.state === 'running') {

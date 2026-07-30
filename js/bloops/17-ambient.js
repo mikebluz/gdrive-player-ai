@@ -10982,11 +10982,17 @@
       const v = g.steps[((((c | 0) % n) + n) % n)];
       return (v == null) ? true : !!v;
     }
+    // NOTE on the neutrality rule: an ALL-ON gate is already neutral to the
+    // engine — _ambCycleGateOK returns true for every cycle and makes no RNG
+    // draws — so it does NOT have to be pruned to absent. Pruning it is in fact
+    // a bug: it threw away the LENGTH the user just set (a fresh schedule is
+    // all-on, so every ± press was deleted on the spot and the buttons looked
+    // dead — reported 2026-07-30). ABSENT remains the neutral state for a layer
+    // that has never opened the tab; "Clear" is the explicit way back to it.
     function _ambCycleGateSet(L, i, on) {
       if (!L) return;
       const n = _ambCycleGateLen(L), steps = _ambCycleGateSteps(L);
       steps[(((i | 0) % n) + n) % n] = on ? 1 : 0;
-      if (steps.every(v => v)) { delete L.cycleGate; return; }   // all-on === neutral === absent
       L.cycleGate = { len: n, steps: steps };
     }
     function _ambCycleGateResize(L, n) {
@@ -10994,8 +11000,7 @@
       n = Math.max(2, Math.min(_AMB_CYCGATE_MAX, n | 0));
       const old = _ambCycleGateSteps(L);
       const steps = Array.from({ length: n }, (_, i) => (old[i] != null ? old[i] : 1));
-      if (steps.every(v => v)) { delete L.cycleGate; return; }
-      L.cycleGate = { len: n, steps: steps };
+      L.cycleGate = { len: n, steps: steps };   // keep an all-on gate: the LENGTH is the setting
     }
     function _ambNormalizeCycleGate(L) {
       if (!L || typeof L !== 'object') return;
@@ -11003,8 +11008,7 @@
       if (!g || typeof g !== 'object' || !Array.isArray(g.steps) || !g.steps.length) { if ('cycleGate' in L) delete L.cycleGate; return; }
       const n = Math.max(2, Math.min(_AMB_CYCGATE_MAX, (g.len | 0) || g.steps.length));
       const steps = Array.from({ length: n }, (_, i) => (g.steps[i] ? 1 : 0));
-      if (steps.every(v => v)) { delete L.cycleGate; return; }
-      L.cycleGate = { len: n, steps: steps };
+      L.cycleGate = { len: n, steps: steps };   // all-on is kept (neutral, and carries the length)
     }
     // IMPROVISE SCHEDULE (`layer.improv`) — the Pattern control's 3rd tab.
     //
@@ -11109,7 +11113,10 @@
     // a view preference, not arrangement, so it never needs a schema field.
     function _ambGridTabsHtml(L) {
       const tab = (L && L._gridTab) || 'pattern';
-      const gated = !!(L && L.cycleGate);
+      // The dot means "iterations are actually being skipped" — NOT merely "a
+      // gate object exists". Since an all-on gate is now kept (it carries the
+      // length), presence alone would light it while nothing is gated.
+      const gated = !!(L && L.cycleGate) && _ambCycleGateSteps(L).some(v => !v);
       const n = _ambCycleGateLen(L), on = _ambCycleGateSteps(L).filter(v => v).length;
       const imp = _ambImprovOn(L);
       return '<div class="ambient-gridtabs" role="tablist">' +
@@ -24899,7 +24906,7 @@
       arp: { label: 'Arp', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
-        ['grp', 'Timing'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Pattern', 1, 8, 'bars — fills the Unit'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (euclid; 0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'pattern length — fills the Unit'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (euclid; 0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'rateVar', 'Rate var', 0, 100, 'steady → rushes'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
@@ -24907,7 +24914,7 @@
       bass: { label: 'Bass', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Pattern', 1, 8, 'bars — the seed fills the Unit'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'pattern length — the seed fills the Unit'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['tight'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Walk', 0, 100, 'hold → wander (proximity-capped)'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Riff (internal type 'run'): a fixed RANDOM note phrase, `bars` bars long,
@@ -25307,7 +25314,10 @@
       if (k === 'kit') return '<div class="ambient-ctrl"><label for="' + p + '-kit" title="' + _ambTitleAttr('Kit', 'drums') + '">Kit</label><select id="' + p + '-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>';
       if (k === 'gen') { _ambWireBeatModeOnce(); return _ambGenSel(p + '-', inst); }
       if (k === 'arpeuclid') return '<div class="ambient-ctrl"><label for="' + p + '-euclid">Mode</label><select id="' + p + '-euclid" class="ambient-select"><option value="0">Series</option><option value="1">Euclid (poly)</option></select><span class="ambient-hint">arp engine</span></div>';
-      if (k === 'euclidregen') return '<div class="ambient-ctrl"><label for="' + p + '-euclidregen">Pattern</label><button type="button" id="' + p + '-euclidregen" class="ambient-regen">↻ Regen</button><span class="ambient-hint">re-roll voices (next unit)</span></div>';
+      // Labelled for what it ACTS ON (the euclidean generator), not "Pattern" —
+      // the grid control below is the Pattern, and two adjacent rows under one
+      // word is the overload this vocabulary pass is removing.
+      if (k === 'euclidregen') return '<div class="ambient-ctrl"><label for="' + p + '-euclidregen">Euclid</label><button type="button" id="' + p + '-euclidregen" class="ambient-regen">↻ Regen</button><span class="ambient-hint">re-roll voices (next unit)</span></div>';
       // Drum-lanes toggle: turn each voice into its own drum lane (a drum picker +
       // step pattern per row) — a mini drum machine inside the one Beat layer.
       if (k === 'euclidkit') { const on = !!(inst && inst.euclidKit);

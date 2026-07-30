@@ -19184,7 +19184,7 @@
                 try {
                   const _cyc = Math.floor((now - _origin) / loopSec);
                   const _imp = _ambImprovAt(L, _cyc);
-                  if (_imp !== !!grid._impShown || (_imp && grid._impCyc !== _cyc)) {
+                  if (_imp !== !!grid._impShown || grid._impCyc !== _cyc) {   // every cycle: the HEARD notes change even when the flag does not
                     grid._impShown = _imp; grid._impCyc = _cyc;
                     grid.classList.toggle('improvising', _imp);
                     if (!L.euclidKit) {
@@ -19197,10 +19197,14 @@
                         if (_row) c2.classList.toggle('impon', _row[i2 % _row.length] === 1);
                         else c2.classList.remove('impon');
                       });
-                      // …and the NOTE READOUT with them. It is rendered once from
-                      // the DRAWN pattern, so during improvised cycles it named
-                      // pitches for hits that were not sounding. Recompute against
-                      // whichever row is actually playing.
+                      // …and the NOTE READOUT with them, from WHAT ACTUALLY
+                      // SOUNDED. The static label is a prediction, and for a scale
+                      // source it can only ever name the walk's ROOT (every step
+                      // read "~C2") because the real pitch is chosen per onset by
+                      // the runtime walk. E.cap holds the notes as emitted — the
+                      // same source the piano highlight uses, which is why THAT
+                      // one has always been truthful — so map each captured onset
+                      // back to its step and name the pitch that played.
                       const _labs = grid.querySelectorAll('.ambient-euclid-notelbl');
                       if (_labs.length) {
                         const _src2 = _ambNotesOf(L);
@@ -19209,7 +19213,29 @@
                         const _cp2 = (_t2 === 'chord' || _t2 === 'wrap');
                         const _rg2 = Math.max(1, Math.min(4, L.register | 0) || 2);
                         const _shown = _row || _ambEuclidPat(L, _pu, steps, Math.max(0, L.rotate | 0), 1, 0, L.euclidRegen | 0);
+                        // Captured onsets from the cycle that just played, bucketed
+                        // by step. One pass, so this stays O(notes) per cycle.
+                        const _heard = {};
+                        try {
+                          const _cap = (E.cap && E.cap[key]) || [];
+                          const _c0 = _origin + _cyc * loopSec, _c1 = _c0 + loopSec;
+                          for (let ci = _cap.length - 1; ci >= 0 && _cap.length - ci < 96; ci--) {
+                            const ev = _cap[ci]; if (!ev || !(ev.freq > 0)) continue;
+                            if (ev.at < _c0 - 1e-3 || ev.at >= _c1) continue;
+                            const si = Math.round((ev.at - _c0) / slotSec);
+                            if (si >= 0 && si < bars * steps && _heard[si] == null) _heard[si] = ev.freq;
+                          }
+                        } catch (e) {}
                         _labs.forEach((el2, i2) => {
+                          const hz = _heard[i2];
+                          if (hz > 0) {
+                            let t2 = '·'; try { t2 = Tone.Frequency(hz).toNote(); } catch (e) {}
+                            el2.textContent = t2;
+                            el2.className = 'ambient-euclid-notelbl heard';
+                            const pc3 = _ambNoteNamePc(t2);
+                            if (pc3 >= 0) el2.setAttribute('data-pc', String(pc3)); else el2.removeAttribute('data-pc');
+                            return;
+                          }
                           if (_shown[i2 % _shown.length] !== 1) { el2.textContent = ''; el2.className = 'ambient-euclid-notelbl off'; el2.removeAttribute('data-pc'); return; }
                           const lb = _ambEuclidNoteLabel(L, _src2, _N2, _cp2, _rg2, _shown, i2);
                           el2.textContent = lb.t;

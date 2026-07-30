@@ -10366,6 +10366,17 @@
     // wrap source → the arpeggiated chord tone at this hit's ordinal (deterministic);
     // a scale/notes source → the root it wanders from (prefixed ~, since Pitch var
     // walks it per cycle). Returns { t: text, c: kind } (c drives the CSS accent).
+    // Pitch class (0-11) from a rendered note label, so the strip can colour by
+    // pitch. Tolerates the label's own prefixes (~ for a walking root) and
+    // returns -1 for the non-note labels (🎲, ·).
+    const _AMB_PC_OF = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+    function _ambNoteNamePc(t) {
+      const m = /([A-G])([#b]?)(-?\d+)/.exec(String(t || ''));
+      if (!m) return -1;
+      let pc = _AMB_PC_OF[m[1]];
+      if (m[2] === '#') pc += 1; else if (m[2] === 'b') pc -= 1;
+      return ((pc % 12) + 12) % 12;
+    }
     function _ambEuclidNoteLabel(inst, src, N, chordPool, reg, pat, idx) {
       const sfx = _ambBassStepFxGet(inst, idx);
       if (sfx && sfx.note === 'rand') return { t: '🎲', c: 'rand' };
@@ -11239,7 +11250,7 @@
       }
       html += '<div class="ambient-euclid-meta">' +
         '<span class="ambient-euclid-barsreadout" aria-label="Pattern length">' + ((bar && bar.label) || '⟳ 1 bar') + '</span>' +
-        (edited ? '<span class="ambient-euclid-note">✎ edited — a knob/Regen/Preset resets it</span>' : '') +
+
         // Step Edit (melodic euclid only): when ON, tapping a step opens a modal to
         // set its note / tone / volume / ratchet / length / probability / pan.
         (!inst.euclidKit ? '<button type="button" class="ambient-euclid-stepedit' + (inst._stepEdit ? ' on' : '') + '" data-stepedit="1" title="Step Edit — when on, tap a step to change its note, tone, volume, ratchet, length, probability and pan (like a Grid step)">✎ Step</button>' : '') +
@@ -11296,13 +11307,18 @@
         const _chordPool = (_st === 'chord' || _st === 'wrap');
         const _reg = Math.max(1, Math.min(4, inst.register | 0) || 2);
         const _pat0 = _ambEuclidPat(inst, d.pulses, d.steps, d.rotate, d.V, 0, d.salt);
+        // Names sit directly under their step (same --eucols, so they line up
+        // column-for-column) and are tinted by PITCH CLASS: a returning note is
+        // recognisable at a glance, and a walk reads as a colour drift.
         html += '<div class="ambient-euclid-notes" style="--eucols:' + Math.min(d.steps, 16) + '" aria-hidden="true">';
         for (let b = 0; b < nBars; b++) {
           for (let slot = 0; slot < d.steps; slot++) {
             const idx = b * d.steps + slot;
             if (_pat0[idx % _pat0.length] !== 1) { html += '<span class="ambient-euclid-notelbl off"></span>'; continue; }
             const lab = _ambEuclidNoteLabel(inst, _src, _N, _chordPool, _reg, _pat0, idx);
-            html += '<span class="ambient-euclid-notelbl ' + (lab.c || '') + '">' + lab.t + '</span>';
+            const _pc = _ambNoteNamePc(lab.t);
+            html += '<span class="ambient-euclid-notelbl ' + (lab.c || '') + '"' +
+              (_pc >= 0 ? ' data-pc="' + _pc + '"' : '') + '>' + lab.t + '</span>';
           }
         }
         html += '</div>';

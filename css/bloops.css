@@ -3734,6 +3734,22 @@
     .ambient-euclid-notelbl.off { color: transparent; }
     .ambient-euclid-notelbl.set { color: #c9b8ef; }                        /* explicit Step-Edit note */
     .ambient-euclid-notelbl.rand { color: #f0b64a; font-size: 0.62rem; }   /* 🎲 random from set */
+    /* Tinted by PITCH CLASS — twelve hues round the wheel, so the same pitch
+       always reads the same colour and a walking line shows as a colour drift.
+       AFTER the semantic classes and :not()-guarded, so an explicit Step-Edit
+       note and 🎲 keep their own colour while .walk/.gen take the pitch hue. */
+    .ambient-euclid-notelbl:not(.set):not(.rand):not(.off)[data-pc="0"] { color: #f87171; }
+    .ambient-euclid-notelbl:not(.set):not(.rand):not(.off)[data-pc="1"] { color: #fb923c; }
+    .ambient-euclid-notelbl:not(.set):not(.rand):not(.off)[data-pc="2"] { color: #fbbf24; }
+    .ambient-euclid-notelbl:not(.set):not(.rand):not(.off)[data-pc="3"] { color: #bef264; }
+    .ambient-euclid-notelbl:not(.set):not(.rand):not(.off)[data-pc="4"] { color: #86efac; }
+    .ambient-euclid-notelbl:not(.set):not(.rand):not(.off)[data-pc="5"] { color: #5eead4; }
+    .ambient-euclid-notelbl:not(.set):not(.rand):not(.off)[data-pc="6"] { color: #67e8f9; }
+    .ambient-euclid-notelbl:not(.set):not(.rand):not(.off)[data-pc="7"] { color: #93c5fd; }
+    .ambient-euclid-notelbl:not(.set):not(.rand):not(.off)[data-pc="8"] { color: #a5b4fc; }
+    .ambient-euclid-notelbl:not(.set):not(.rand):not(.off)[data-pc="9"] { color: #c4b5fd; }
+    .ambient-euclid-notelbl:not(.set):not(.rand):not(.off)[data-pc="10"] { color: #e9d5ff; }
+    .ambient-euclid-notelbl:not(.set):not(.rand):not(.off)[data-pc="11"] { color: #f5d0fe; }
     .ambient-euclid-notelbl.walk { color: #6f93c4; font-style: italic; }   /* wanders from ~root */
     /* Per-lane audition ▶ — sits left of each drum label. */
     .ambient-euclid-laneplay { flex: 0 0 auto; width: 18px; height: 18px; padding: 0; line-height: 1;

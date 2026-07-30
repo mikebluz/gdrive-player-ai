@@ -45,7 +45,7 @@
  "life-steal": "a0113544ac44630a",
  "strip-input-passthrough": "39d47f7e1bf35316",
  "strip-level-gate": "919b999441b95f15",
- "strip-pan": "5a6d330af6608faa",
+ "strip-pan": "f3312e581804ef03",
  "strip-pan-mod": "47947fd5b22df8cd",
  "strip-vca-lfo": "25df186f1b44db0f",
  "strip-vca-sharp": "00182f49a86840ce",
@@ -55,7 +55,7 @@
  "strip-unitgate": "cd173d2851864809",
  "strip-unitgate-tg": "6bbf9afa04af9274",
  "strip-tg": "68b7c6cebebb5014",
- "strip-revsend": "47b10a7705124a2d",
+ "strip-revsend": "0cf6798cf5e5888d",
  "strip-fx-dist": "0508d5dc97787857",
  "strip-fx-dist-dark": "e6ee9425967df454",
  "strip-fx-dist-brite": "55d98b8359b7123a",
@@ -65,7 +65,7 @@
  "strip-fx-chorus": "b203d12ade63e1ae",
  "strip-fx-phaser": "90371a21fd2945c9",
  "strip-fx-delay": "16098ce374586731",
- "strip-fx-pingpong": "fb1d6a6808b7f4d5",
+ "strip-fx-pingpong": "90ce83c93698cfa7",
  "strip-fx-autopan": "82ebab64c80bc8e4",
  "strip-width": "208aebef274d8766",
  "samp-basic": "82d6aa30d5b1e7ba",
@@ -79,6 +79,6 @@
  "samp-bend-glide": "e62b20e6fd53088c",
  "samp-lifecycle": "31bd9cac56cd8b60",
  "samp-steal": "d8c69a9500e8b6b0",
- "samp-through-strip": "28883ccb5e0ad0f2",
- "strip-kitchen-sink": "cd9dd71a0af265c8"
+ "samp-through-strip": "a443497b1fb54bb2",
+ "strip-kitchen-sink": "5c7f62390b199d66"
 }

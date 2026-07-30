@@ -159,10 +159,24 @@ fn nat_ap(fc: f32, q: f32, sr: f32) -> ([f32; 3], [f32; 2]) {
 }
 
 #[inline(always)]
+// ---- denormal flush ---------------------------------------------------------
+// WASM has no FTZ mode, and on x86 subnormal floats fall back to microcode —
+// orders of magnitude slower than normal ops. Strips process SILENCE whenever
+// their layer is idle, so every recursive path (biquad states, delay/chorus
+// feedback lines) decays into the subnormal range and sits there, burning CPU
+// on nothing. Flushing below 1e-18 is ~120 dB under the smallest audible tail
+// (inaudible by construction) and stops the decay at true zero, where the
+// arithmetic is fast again. Applied at every RECURSIVE write — never on the
+// forward signal path, which passes through and can't accumulate.
+#[inline(always)]
+pub(crate) fn flush(x: f32) -> f32 {
+    if x.abs() < 1.0e-18 { 0.0 } else { x }
+}
+
 pub(crate) fn df2t(x: f32, b: &[f32; 3], a: &[f32; 2], s: &mut [f32; 2]) -> f32 {
     let y = b[0] * x + s[0];
-    s[0] = b[1] * x - a[0] * y + s[1];
-    s[1] = b[2] * x - a[1] * y;
+    s[0] = flush(b[1] * x - a[0] * y + s[1]);
+    s[1] = flush(b[2] * x - a[1] * y);
     y
 }
 
@@ -554,7 +568,7 @@ fn fx_chorus(slot: usize, st: &mut Strip, t: f64, frames: usize) {
                 unsafe {
                     let fb_old = CFB[slot][ch][q]; // wet from one quantum ago
                     CFB[slot][ch][q] = wet;
-                    CBUF[slot][ch][w] = x + fb * fb_old;
+                    CBUF[slot][ch][w] = flush(x + fb * fb_old);
                     OUT[slot][ch][i] = x * cd + wet * cw;
                 }
             }
@@ -620,9 +634,9 @@ fn fx_delay(slot: usize, st: &mut Strip, frames: usize) {
                 DFB[slot][0][q] = l_out;
                 DFB[slot][1][q] = r_fb;
                 // cross feedback: L out → R delay input, R out → L delay input
-                DLINE[slot][0][w] = in_l + fb * r_old;
-                DLINE[slot][1][w] = pre_out + fb * l_old;
-                DPRE[slot][w] = in_r;
+                DLINE[slot][0][w] = flush(in_l + fb * r_old);
+                DLINE[slot][1][w] = flush(pre_out + fb * l_old);
+                DPRE[slot][w] = flush(in_r);
                 OUT[slot][0][i] = in_l * cd + l_out * cw;
                 OUT[slot][1][i] = in_r * cd + r_out * cw;
             } else {
@@ -632,7 +646,7 @@ fn fx_delay(slot: usize, st: &mut Strip, frames: usize) {
                     let x = OUT[slot][ch][i];
                     let old = DFB[slot][ch][q];
                     DFB[slot][ch][q] = fb_read;
-                    DLINE[slot][ch][w] = x + fb * old;
+                    DLINE[slot][ch][w] = flush(x + fb * old);
                     OUT[slot][ch][i] = x * cd + out_read * cw;
                 }
             }

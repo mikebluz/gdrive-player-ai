@@ -947,10 +947,30 @@ stack, held single note that roams per cycle, strummed pedal).
    express without a new snapping mode. That is the real content of the
    "three clocks" cost, now located precisely.
 
-   Step 3 (the emitter collapse) follows from the matrix: Drone and Pedal
-   share the windowed clock and are now dial-equivalent — they merge first;
-   Bed's step-clock body and the window-boundary question are the remaining
-   decision.
+   **STEP 3, FIRST CUT: LANDED (2026-07-30) — Drone + Pedal are ONE emitter,
+   with zero re-baseline.** `_ambEmitSustain` replaces `_ambEmitDrone` and
+   `_ambEmitPedal` (both deleted): the pedal's phrase→slots walk with the
+   drone as the 1-slot-per-phrase case, which is exact because a drone's
+   per-cycle seeded cRnd IS a per-phrase cRnd when phrase == cycle (same seed
+   formula). Every surviving divergence is kind-gated and was transcribed
+   verbatim — especially each kind's RNG draw ORDER (the drone draws tOff
+   before its window check and regShift after; the pedal draws rest-then-vary
+   for every slot regardless of the window). Dispatch: the descriptor table's
+   'pedal' and 'held' cases both route here; `type` keeps dispatching, so
+   saved projects load untouched. Proof: a 16-config reference battery
+   (defaults · vary/rest/swing · odd bars×density · prog voice+anchor ·
+   strike/ring · stack/voicing/fixed · tight) captured from the OLD emitters
+   diffs BYTE-IDENTICAL against the merged one, and the invariant harness +
+   golden stayed green with no baseline change — the collapse cost the doc
+   predicted (RNG draw-order shifts) never materialized, because the merge
+   followed the matrix's clock analysis instead of picking a clock first.
+
+   **REMAINING: Bed into the core, and presets.** Bed still rides the step
+   clock; the anchor path's part-aware window boundaries are what the step
+   clock cannot express (the located "three clocks" cost). Folding Bed in —
+   or deciding the two-clock split is the right permanent shape, with the
+   dials as the unification — is the last decision. The Add-layer presets
+   (§5) become trivial once that lands.
 2. Verify by construction: can Bed-with-dials reproduce Drone? Drone reproduce Pedal? A
    failure locates the genuinely-missing axis rather than guessing at it.
 3. Only then collapse to one emitter, with Bed/Drone/Pedal surviving as **presets in the

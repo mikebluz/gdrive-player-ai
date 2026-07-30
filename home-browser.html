@@ -39,29 +39,37 @@ body{
   display:flex;flex-direction:column;
 }
 
-/* ── AMBIENT SOUND ─────────────────────────────────────────────────────────
-   A generative pad, off until asked for. Pinned bottom-right rather than run
-   across the footer: a full-width bar down there got lost against a phone's
-   own chrome, and this only needs to be findable, not present. */
-.snd{position:fixed;right:12px;bottom:12px;z-index:950;
-  display:flex;align-items:center;gap:8px;padding:7px 11px;cursor:pointer;
-  font:inherit;font-size:10px;font-weight:700;letter-spacing:.14em;
-  color:var(--bar-fg);background:var(--bar);border:1px solid var(--sunk-e);
+/* ── RADIO ─────────────────────────────────────────────────────────────────
+   Four channels: the single, and three generative ones. Off until asked for,
+   pinned bottom-right rather than run across the footer — a full-width bar
+   down there is the thing that got lost against a phone's own chrome. */
+.radio{position:fixed;right:12px;bottom:12px;z-index:950;
+  display:flex;align-items:stretch;gap:0;
+  font:inherit;font-size:10px;font-weight:700;letter-spacing:.13em;
+  background:var(--bar);border:1px solid var(--sunk-e);
   box-shadow:0 2px 10px rgba(0,0,0,.45)}
-.snd:hover{color:#fff;border-color:var(--bar-hi)}
-.snd[aria-pressed="true"]{color:#fff;border-color:var(--bar-hi)}
-.snd .ic{font-size:12px;line-height:1}
-/* A level meter that only exists while it plays — the one honest signal that
-   what you are hearing is being generated rather than streamed. */
-.snd .lv{display:none;align-items:flex-end;gap:2px;width:20px;height:9px}
-.snd[aria-pressed="true"] .lv{display:flex}
-.snd .lv i{flex:1;background:var(--ac);height:25%;transform-origin:bottom;
+.radio button{border:0;background:transparent;color:var(--bar-fg);font:inherit;
+  cursor:pointer;padding:8px 10px;display:flex;align-items:center;gap:7px}
+.radio button:hover{color:#fff;background:rgba(255,255,255,.07)}
+.radio .pw{font-size:12px;letter-spacing:0;padding:8px 11px}
+.radio[data-on="1"] .pw{color:var(--ac)}
+.radio .ch{border-left:1px solid var(--sunk-e);min-width:0}
+.radio .ch .n{color:var(--mute-2);font-weight:400}
+.radio[data-on="1"] .ch .t{color:#fff}
+.radio .ch .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:74px}
+/* A level meter that exists only while it plays — the one honest signal that
+   what you are hearing is being made rather than streamed. */
+.radio .lv{display:none;align-items:flex-end;gap:2px;width:18px;padding:0 10px 0 2px;
+  align-self:center;height:9px}
+.radio[data-on="1"] .lv{display:flex}
+.radio .lv i{flex:1;background:var(--ac);height:25%;transform-origin:bottom;
   animation:lvl 2.4s ease-in-out infinite}
-.snd .lv i:nth-child(2){animation-duration:3.1s;animation-delay:-.6s}
-.snd .lv i:nth-child(3){animation-duration:1.9s;animation-delay:-1.2s}
+.radio .lv i:nth-child(2){animation-duration:3.1s;animation-delay:-.6s}
+.radio .lv i:nth-child(3){animation-duration:1.9s;animation-delay:-1.2s}
 @keyframes lvl{0%,100%{transform:scaleY(1)}50%{transform:scaleY(3.4)}}
-@media (prefers-reduced-motion:reduce){.snd .lv i{animation:none}}
-@media (max-width:520px){.snd .lb{display:none}}
+@media (prefers-reduced-motion:reduce){.radio .lv i{animation:none}}
+@media (max-width:520px){.radio .ch .t{max-width:58px}}
+
 /* ── CHROME: tab strip ──────────────────────────────────────────────────── */
 .tabs{display:flex;align-items:flex-end;gap:2px;flex-wrap:wrap;
   padding:8px 8px 0;background:var(--bar);flex:0 0 auto}
@@ -209,11 +217,31 @@ body{
   animation:flash 9s linear infinite}
 @keyframes sweep{from{transform:rotate(-30deg)}to{transform:rotate(330deg)}}
 @keyframes flash{0%{opacity:0}6%{opacity:.95}13%{opacity:.45}20%,100%{opacity:0}}
+/* UFOs. Absent for most of a long cycle, then across in about three seconds —
+   the point is that you catch one out of the corner of your eye, not that
+   there is a saucer parked in the sky. Two of them, at different heights and
+   very different periods, so the pair never falls into a rhythm. */
+.ufo .fill{background-image:url(img/wp-ufo.png)}
+.ufo1{animation:zip-l 37s linear infinite}
+.ufo2{animation:zip-r 61s linear infinite}
+.ufo2 .fill{transform:translateY(-7%) scale(.72)}
+@keyframes zip-l{
+  0%,88%{transform:translateX(88%);opacity:0}
+  89%{transform:translateX(80%);opacity:1}
+  96%{transform:translateX(-80%);opacity:1}
+  97%,100%{transform:translateX(-88%);opacity:0}
+}
+@keyframes zip-r{
+  0%,72%{transform:translateX(-88%);opacity:0}
+  73%{transform:translateX(-80%);opacity:1}
+  81%{transform:translateX(80%);opacity:1}
+  82%,100%{transform:translateX(88%);opacity:0}
+}
 @media (prefers-reduced-motion:reduce){
-  .wp-moon,.sea .fill,.tr,.tr .fill,.beam,.beam .fill{animation:none}
+  .wp-moon,.sea .fill,.tr,.tr .fill,.beam,.beam .fill,.ufo{animation:none}
   .s0 .fill{opacity:1}
   .wp-moon{transform:translateY(7%)}
-  .whale .fill,.seal .fill{opacity:0}   /* both would be parked mid-leap */
+  .whale .fill,.seal .fill,.ufo .fill{opacity:0}  /* all would be parked mid-air */
 }
 /* One panel at a time, centred, on paper. This is the whole payoff: a tab has
    the entire viewport, so nothing here is fighting for height. */
@@ -289,12 +317,15 @@ td .c{display:block;font-size:11px;color:var(--mute)}
 <body>
 
 <!-- ══ BROWSER CHROME ══════════════════════════════════════════════════════ -->
-<button class="snd" id="snd" type="button" aria-pressed="false"
-        title="Ambient sound — generated live, off by default">
-  <span class="ic" aria-hidden="true">◌</span>
+<div class="radio" id="radio" data-on="0">
+  <button class="pw" id="rpw" type="button" aria-pressed="false"
+          title="Radio — off. Everything but channel 1 is generated live.">◌</button>
+  <button class="ch" id="rch" type="button" title="Next channel">
+    <span class="n">1</span><span class="t">GRAINS</span>
+  </button>
   <span class="lv" aria-hidden="true"><i></i><i></i><i></i></span>
-  <span class="lb">SOUND</span>
-</button>
+  <audio id="rgr" preload="none" loop src="audio/grains.m4a"></audio>
+</div>
 
 <div class="tabs" role="tablist" aria-label="Sections">
   <div class="lights" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -329,6 +360,8 @@ td .c{display:block;font-size:11px;color:var(--mute)}
     <b class="tr ferry"><i class="fill"></i></b>
     <b class="tr seal"><i class="fill"></i></b>
     <b class="tr buoy"><i class="fill"></i></b>
+    <b class="ufo ufo1"><i class="fill"></i></b>
+    <b class="ufo ufo2"><i class="fill"></i></b>
     <b class="wp-land"><i class="fill"></i></b>
     <b class="beam"><i class="fill"></i></b>
   </div>
@@ -343,7 +376,6 @@ td .c{display:block;font-size:11px;color:var(--mute)}
     <h2>Grains — new single</h2>
     <div class="vid" id="vid"></div>
     <a class="btn hot" href="https://tr.ee/YKRcNe0nlW" target="_blank" rel="noopener">▶ STREAM</a>
-    <a class="btn" href="https://youtu.be/UKcZJ31ZHH0" target="_blank" rel="noopener">YouTube</a>
   </section>
 
   <section class="panel" id="p-luz" role="tabpanel" aria-label="Mike Luz">
@@ -553,133 +585,170 @@ drawTabs(); show('grains', false);
   place();
 })();
 
-// ── AMBIENT SOUND ────────────────────────────────────────────────────────
-// A small generative pad, written for this page rather than borrowed from
-// Bloops. The real engine is ~6 MB with Tone.js and is wired into the bloops
-// app's DOM, which is the wrong trade for a homepage that mostly wants to be
-// read. This is the same idea at 1/2000th the weight: a key chosen at random
-// per visit, chords that wander a diatonic set, and bells that land off the
-// grid, so two visits are never the same piece.
+// ── RADIO ────────────────────────────────────────────────────────────────
+// Four channels. Channel 1 is the single; 2-4 are generated live, each with
+// its own scale, register and pacing, so they are three different pieces of
+// music rather than one with the seed changed.
 //
-// Nothing is built until the button is pressed — no AudioContext, no buffers.
+// NOT the Bloops engine. That is ~6 MB with Tone.js and is wired into the
+// bloops app's DOM — the wrong trade for a page that mostly wants to be read.
+// This is the same idea in about 150 lines of Web Audio, no dependencies.
+//
+// Nothing is built until the power button is pressed: no AudioContext, no
+// impulse buffer, and the single is preload="none" so its 4.7 MB is not
+// fetched by anyone who never turns the radio on.
 (function () {
-  const btn = document.getElementById('snd');
-  if (!btn || !(window.AudioContext || window.webkitAudioContext)) return;
+  const box = document.getElementById('radio');
+  if (!box) return;
+  const pw = document.getElementById('rpw'), chb = document.getElementById('rch');
+  const trk = document.getElementById('rgr');
+  const nEl = chb.querySelector('.n'), tEl = chb.querySelector('.t');
+  const T0 = performance.now();          // channel 1 has "been playing" since this
 
-  let ac = null, bus = null, verb = null, timers = [], playing = false;
-  let root = 0, chord = null;
+  const CH = [
+    { name: 'GRAINS', track: true },
+    // dorian, low and slow — the sea at night
+    { name: 'TIDE',   scale: [0, 2, 3, 5, 7, 9, 10], roots: [130.81, 146.83, 164.81],
+      hold: [15, 25], bell: [7, 16], oct: -1, cut: 1100, chords: [[0,2,4],[3,5,0],[4,6,1],[5,0,2]] },
+    // minor pentatonic, closer and busier
+    { name: 'DRIFT',  scale: [0, 3, 5, 7, 10],       roots: [155.56, 174.61, 196.00],
+      hold: [9, 15],  bell: [3, 8],  oct: 0,  cut: 1750, chords: [[0,2,4],[1,3,0],[2,4,1],[3,0,2]] },
+    // lydian, high and sparse — the light on the point
+    { name: 'BEACON', scale: [0, 2, 4, 6, 7, 9, 11], roots: [138.59, 164.81, 185.00],
+      hold: [13, 22], bell: [4, 10], oct: 1,  cut: 2400, chords: [[0,2,4],[4,6,1],[5,0,2],[2,4,6]] },
+  ];
 
-  const SCALE  = [0, 2, 3, 5, 7, 9, 10];                 // dorian — minor, but not sad
-  const DEGREES = [[0, 2, 4], [3, 5, 0], [4, 6, 1], [5, 0, 2], [2, 4, 6]];
-  const ROOTS  = [130.81, 138.59, 146.83, 155.56, 164.81, 174.61];
+  let ac = null, bus = null, timers = [], on = false, idx = 0;
+  let root = 0, chord = null, first = true;
   const rnd = (a, b) => a + Math.random() * (b - a);
   const pick = a => a[(Math.random() * a.length) | 0];
+  const cfg = () => CH[idx];
 
-  // Degree → frequency, wrapping octaves as the degree runs past the scale.
   function hz(deg, oct) {
-    const i = ((deg % 7) + 7) % 7, o = oct + Math.floor(deg / 7);
-    return root * Math.pow(2, (SCALE[i] + 12 * o) / 12);
-  }
-
-  // A noise impulse with a steep decay. Cheap, and at this tempo indistinguish-
-  // able from a real one.
-  function impulse(sec) {
-    const n = Math.floor(ac.sampleRate * sec);
-    const b = ac.createBuffer(2, n, ac.sampleRate);
-    for (let c = 0; c < 2; c++) {
-      const d = b.getChannelData(c);
-      for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2.8);
-    }
-    return b;
+    const sc = cfg().scale, L = sc.length;
+    const i = ((deg % L) + L) % L, o = oct + Math.floor(deg / L);
+    return root * Math.pow(2, (sc[i] + 12 * o) / 12);
   }
 
   function build() {
     ac = new (window.AudioContext || window.webkitAudioContext)();
-    bus = ac.createGain(); bus.gain.value = 0;
-    const lp = ac.createBiquadFilter();
-    lp.type = 'lowpass'; lp.frequency.value = 1500; lp.Q.value = 0.4;
-    verb = ac.createConvolver(); verb.buffer = impulse(4.5);
+    bus = ac.createGain(); bus.gain.value = 0.0001;
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.4;
+    const n = Math.floor(ac.sampleRate * 4.5), b = ac.createBuffer(2, n, ac.sampleRate);
+    for (let c = 0; c < 2; c++) { const d = b.getChannelData(c);
+      for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2.8); }
+    const cv = ac.createConvolver(); cv.buffer = b;
     const wet = ac.createGain(); wet.gain.value = 0.5;
     bus.connect(lp); lp.connect(ac.destination);
-    lp.connect(verb); verb.connect(wet); wet.connect(ac.destination);
-    root = pick(ROOTS);
+    lp.connect(cv); cv.connect(wet); wet.connect(ac.destination);
+    build.lp = lp;
   }
 
-  // One pad voice: slow in, slow out, slightly detuned against its neighbours.
-  function pad(f, dur, level) {
+  // `fast` is the FIRST chord of a session. Without it the pad takes 3.5-7s to
+  // reach level and the radio sounds broken for the first few seconds — which
+  // is exactly how it did sound before.
+  function pad(f, dur, level, fast) {
     const o = ac.createOscillator(), g = ac.createGain(), t = ac.currentTime;
-    o.type = 'triangle'; o.frequency.value = f;
-    o.detune.value = rnd(-7, 7);
+    o.type = 'triangle'; o.frequency.value = f; o.detune.value = rnd(-7, 7);
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(level, t + rnd(3.5, 7));
+    g.gain.exponentialRampToValueAtTime(level, t + (fast ? rnd(0.6, 1.1) : rnd(3.5, 7)));
     g.gain.setValueAtTime(level, t + dur - 4);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g); g.connect(bus);
-    o.start(t); o.stop(t + dur + 0.2);
+    o.connect(g); g.connect(bus); o.start(t); o.stop(t + dur + 0.2);
   }
 
-  // A struck note: fast in, long tail. Two partials so it reads as a bell.
   function bell(f) {
     const t = ac.currentTime, dur = rnd(4, 8);
-    [[1, 0.09], [2.01, 0.035]].forEach(([mult, lvl]) => {
+    [[1, 0.09], [2.01, 0.035]].forEach(([m, lv]) => {
       const o = ac.createOscillator(), g = ac.createGain();
-      o.type = 'sine'; o.frequency.value = f * mult;
+      o.type = 'sine'; o.frequency.value = f * m;
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(lvl, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(lv, t + 0.02);
       g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-      o.connect(g); g.connect(bus);
-      o.start(t); o.stop(t + dur + 0.1);
+      o.connect(g); g.connect(bus); o.start(t); o.stop(t + dur + 0.1);
     });
   }
 
   function nextChord() {
-    if (!playing) return;
-    const hold = rnd(13, 21);
-    let next = pick(DEGREES);
-    while (next === chord) next = pick(DEGREES);      // never twice running
+    if (!on || cfg().track) return;
+    const c = cfg(), hold = rnd(c.hold[0], c.hold[1]);
+    let next = pick(c.chords);
+    while (next === chord && c.chords.length > 1) next = pick(c.chords);
     chord = next;
-    chord.forEach((d, i) => pad(hz(d, i === 0 ? -1 : 0), hold + 3, i === 0 ? 0.10 : 0.065));
+    chord.forEach((d, i) => pad(hz(d, c.oct + (i === 0 ? -1 : 0)), hold + 3,
+                               i === 0 ? 0.10 : 0.065, first));
+    first = false;
     timers.push(setTimeout(nextChord, hold * 1000));
   }
 
   function nextBell() {
-    if (!playing) return;
-    // Mostly from the chord under it, occasionally not — which is where the
-    // colour comes from.
-    const d = Math.random() < 0.75 && chord ? pick(chord) : ((Math.random() * 7) | 0);
-    bell(hz(d, Math.random() < 0.4 ? 2 : 1));
-    timers.push(setTimeout(nextBell, rnd(3.5, 11) * 1000));
+    if (!on || cfg().track) return;
+    const c = cfg();
+    const d = Math.random() < 0.75 && chord ? pick(chord) : ((Math.random() * c.scale.length) | 0);
+    bell(hz(d, c.oct + (Math.random() < 0.4 ? 3 : 2)));
+    timers.push(setTimeout(nextBell, rnd(c.bell[0], c.bell[1]) * 1000));
   }
 
-  function start() {
+  // Channel 1 has been running since the page loaded whether or not anyone was
+  // listening, so tuning to it drops you wherever it has got to.
+  function startTrack() {
+    const seek = () => {
+      const d = trk.duration;
+      if (d && isFinite(d)) trk.currentTime = ((performance.now() - T0) / 1000) % d;
+      trk.volume = 0; trk.play().catch(() => {});
+      const t0 = performance.now();
+      (function fade() {                                   // 700ms in
+        const k = Math.min(1, (performance.now() - t0) / 700);
+        trk.volume = k * 0.55;
+        if (k < 1 && on && cfg().track) requestAnimationFrame(fade);
+      })();
+    };
+    if (trk.readyState >= 1) seek();
+    else { trk.addEventListener('loadedmetadata', seek, { once: true }); trk.load(); }
+  }
+
+  function startBloom() {
     if (!ac) build();
     ac.resume();
-    playing = true;
+    build.lp.frequency.value = cfg().cut;
+    root = pick(cfg().roots);
+    chord = null; first = true;
     bus.gain.cancelScheduledValues(ac.currentTime);
     bus.gain.setValueAtTime(Math.max(0.0001, bus.gain.value), ac.currentTime);
-    bus.gain.exponentialRampToValueAtTime(0.22, ac.currentTime + 2.5);
-    chord = null; nextChord();
-    timers.push(setTimeout(nextBell, 4000));
+    bus.gain.exponentialRampToValueAtTime(0.22, ac.currentTime + 0.8);   // was 2.5s
+    nextChord();
+    timers.push(setTimeout(nextBell, 500));                              // was 4000
   }
 
-  function stop() {
-    playing = false;
+  function silence(fast) {
     timers.forEach(clearTimeout); timers = [];
+    if (!trk.paused) trk.pause();
     if (!ac) return;
     // Fade the BUS rather than suspending, so nothing is cut off mid-note.
     bus.gain.cancelScheduledValues(ac.currentTime);
     bus.gain.setValueAtTime(Math.max(0.0001, bus.gain.value), ac.currentTime);
-    bus.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 1.6);
+    bus.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + (fast ? 0.25 : 1.4));
   }
 
-  btn.addEventListener('click', () => {
-    const on = btn.getAttribute('aria-pressed') === 'true';
-    btn.setAttribute('aria-pressed', String(!on));
-    btn.querySelector('.ic').textContent = on ? '◌' : '◉';
-    btn.title = on ? 'Ambient sound — generated live, off by default'
-                   : 'Ambient sound — playing. Click to stop.';
-    on ? stop() : start();
+  function tune() {
+    nEl.textContent = String(idx + 1);
+    tEl.textContent = cfg().name;
+    if (!on) return;
+    silence(true);
+    setTimeout(() => { if (!on) return; cfg().track ? startTrack() : startBloom(); }, 260);
+  }
+
+  pw.addEventListener('click', () => {
+    on = !on;
+    box.dataset.on = on ? '1' : '0';
+    pw.setAttribute('aria-pressed', String(on));
+    pw.textContent = on ? '◉' : '◌';
+    pw.title = on ? 'Radio — playing. Click to stop.'
+                  : 'Radio — off. Everything but channel 1 is generated live.';
+    if (on) { cfg().track ? startTrack() : startBloom(); } else { silence(); }
   });
+  chb.addEventListener('click', () => { idx = (idx + 1) % CH.length; tune(); });
+  tune();
 })();
 
 // ── SHOWS ────────────────────────────────────────────────────────────────

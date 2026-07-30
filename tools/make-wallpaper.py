@@ -433,6 +433,20 @@ if LAYER == 'sprite':
         for k in range(5):                                     # spray
             px(WX - 1 - k, WY + 9 + (k // 2), wake)
 
+    elif SPRITE == 'ufo':
+        # A saucer, high in the sky. Drawn small and hard-edged: at this size a
+        # dome, a hull and three lights is the whole vocabulary, and anything
+        # more becomes mush at 4x.
+        UX, UY = 190, 62
+        for x in range(UX - 7, UX + 8): px(x, UY, P['rock_dk'])          # hull
+        for x in range(UX - 5, UX + 6): px(x, UY + 1, P['rock_dk'])
+        for x in range(UX - 3, UX + 4): px(x, UY - 1, P['house'])        # dome
+        px(UX - 2, UY - 2, P['house']); px(UX - 1, UY - 2, P['house'])
+        px(UX, UY - 2, P['house']); px(UX + 1, UY - 2, P['house'])
+        for x in (UX - 4, UX, UX + 4): px(x, UY + 1, P['lamp'])          # lights
+        px(UX - 9, UY, P['glint']); px(UX + 9, UY, P['glint'])           # motion streak
+        px(UX - 11, UY, P['glint'])
+
     elif SPRITE == 'beam':
         # The lighthouse beam, on its own layer so the page can ROTATE it about
         # the lamp. Drawn pointing left and level; the CSS spins it and gates

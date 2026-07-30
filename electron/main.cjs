@@ -25,7 +25,13 @@ const fs = require('fs');
 const path = require('path');
 
 const SMOKE = !!process.env.BLOOPS_SMOKE;
-const ROOT = path.resolve(__dirname, '..');   // repo root (packaged later: resources dir)
+// Where the app's files live. In dev that is the repo root, one level up from
+// this file. PACKAGED it is Resources/app.asar — a single archive file, NOT a
+// directory, so guessing a path (Resources/app) silently 404s everything: the
+// window loads, the page is empty, and nothing errors. app.getAppPath() is the
+// only thing that knows which of the two it is. Electron patches fs to read
+// straight through the archive, so readFile below needs no special case.
+const ROOT = app.isPackaged ? app.getAppPath() : path.resolve(__dirname, '..');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.wasm': 'application/wasm', '.png': 'image/png',
   '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',

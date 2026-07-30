@@ -9,13 +9,15 @@
     "desktop": "electron electron/main.cjs",
     "test:golden": "node test/golden-render.js",
     "samples": "node tools/import-samples.mjs",
-    "radio": "node tools/add-radio-track.mjs"
+    "radio": "node tools/add-radio-track.mjs",
+    "desktop:build": "node tools/build-desktop.mjs"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
     "express": "^4.19.0"
   },
   "devDependencies": {
+    "@electron/packager": "^18.3.6",
     "electron": "^33.4.11",
     "puppeteer-core": "^25.3.0"
   }

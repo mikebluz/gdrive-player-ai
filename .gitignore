@@ -12,3 +12,7 @@ dsp/target/
 # `git add -A`, which is exactly why that is not used here.
 _*.mjs
 _*.png
+
+# built desktop app — large, and rebuilt on demand
+dist/
+.desktop-stage/

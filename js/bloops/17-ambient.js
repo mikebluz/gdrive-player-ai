@@ -2062,7 +2062,6 @@
       host.delay.spread = Math.max(0, Math.min(100, host.delay.spread | 0)); _dk(host.delay);
       if (!host.dist || typeof host.dist !== 'object') host.dist = { ...d.dist };
       else ['mix', 'amount', 'tone', 'focus'].forEach(k => { if (!Number.isFinite(host.dist[k])) host.dist[k] = d.dist[k]; });
-
       host.dist.tone = Math.max(0, Math.min(100, host.dist.tone | 0));
       host.dist.focus = Math.max(0, Math.min(100, host.dist.focus | 0));
       _dk(host.dist);
@@ -6375,7 +6374,6 @@
     // Effective interval (sec) for a layer, honoring `rate` first, else Interval
     // (snapped to the step grid in global Sync mode via _ambSnap).
     function _ambStepSecFor(lc, minSec, cfg) {
-
       const b = _ambRateBeats(lc && lc.rate);
       if (b > 0) return Math.max(minSec || 0.02, b * (60 / _ambBpm()));
       return _ambSnap(Math.max(minSec || 0.05, (lc.intervalMs | 0) / 1000), cfg);
@@ -7954,6 +7952,12 @@
           if (!_ambCondFires(inst.when, c)) continue;
           if (!_ambCycleGateOK(inst, c)) continue;   // ⏱ Schedule tab: this whole iteration is switched off
           ctx.c = c;
+          // 🎲 Improvise tab: is this iteration played as written, or improvised?
+          // Rhythm var / Rests come from the improv set for an improvised cycle —
+          // every renderer reads them off ctx, so this covers all of them at once.
+          ctx.imp = _ambImprovAt(inst, c);
+          ctx.rVar  = ctx.imp ? _ambImprovVar(inst, 'rhythmVar', rVar) : rVar;
+          ctx.restP = ctx.imp ? _ambImprovVar(inst, 'restProb', restP) : restP;
           ctx.cStart = st.startAt + c * loopSec;
           // Deterministic per-cycle RNG — stable across ticks, evolves per cycle.
           ctx.rnd = _ambSeededRand(((inst.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503));
@@ -8004,8 +8008,13 @@
           // programmed beats (default restProb 25 dropped drawn hits; a leftover
           // rhythmVar added ghosts on unselected lanes). Chance in Program mode is
           // the per-step Prob control. Non-kit euclid keeps both.
-          const rVarEff = kitPat ? 0 : rVar;
-          const restEff = kitPat ? 0 : restP;
+          // Program mode plays the drawn grid EXACTLY — except on an improvised
+          // cycle, which is the one time the stochastic gates are wanted. The grid
+          // still supplies the base hits (replacing 8 drawn lanes with generated
+          // euclidean rows would be mush, not a fill), so a drum layer improvises
+          // BY loosening its own pattern rather than by abandoning it.
+          const rVarEff = (kitPat && !ctx.imp) ? 0 : rVar;
+          const restEff = (kitPat && !ctx.imp) ? 0 : restP;
           for (let v = 0; v < V && ctx.cap < 256; v++) {
             // DRUM SOLO (monitoring): while a lane is soloed on a drum-lanes kit,
             // every other lane is silent so you can hear the one you're editing.
@@ -8178,7 +8187,15 @@
       _ambEmitEuclidCore(E, inst, key, now, horizon, lead, space, cfg, phaseStore, (ctx) => {
         const { bars, steps, pulses, rotate, slotSec, cStart, rnd, tFrom, tTo, dest, dmod, rVar, restP } = ctx;
           const _holdMs = ((inst.holdSteps | 0) > 0) ? Math.max(20, Math.round(slotSec * 1000 * Math.min(16, inst.holdSteps | 0))) : 0;   // Hold: step-relative note length (§5.1 — 0 = the ms Length)
-        const pat = _ambEuclidPat(inst, pulses, steps, rotate, 1, 0, inst.euclidRegen | 0);   // base euclidean seed (override row 0 or generated) — salt MUST match the grid's (WYSIWYG)
+        // While improvising, IGNORE the hand-drawn override and generate a fresh
+        // euclidean rhythm for this cycle (a per-cycle salt re-rolls pulses and
+        // rotation) — otherwise "improvise" would only re-shade the written
+        // rhythm's dynamics, never depart from it. The written pattern is
+        // untouched on disk; the next as-written cycle plays it again verbatim.
+        const pat = ctx.imp
+          ? _ambEuclidVoicePat(pulses, rotate, steps, 1, 0, _ambImprovSalt(inst, ctx.c))
+          : _ambEuclidPat(inst, pulses, steps, rotate, 1, 0, inst.euclidRegen | 0);   // base euclidean seed (override row 0 or generated) — salt MUST match the grid's (WYSIWYG)
+        const pVarEff = ctx.imp ? _ambImprovVar(inst, 'pitchVar', pVar) : pVar;   // the walk is what makes it a line rather than a riff
         let walkDeg = 0;   // scale-degree offset from the register root; resets to root each cycle
         let arpOrd = 0;    // chord-pool arp position: counts EUCLIDEAN hits from the cycle start
         for (let bar = 0; bar < bars; bar++) {
@@ -8206,7 +8223,7 @@
             // random magnitude in [1, maxStep] scale degrees (Proximity caps the
             // leap — 0 = strictly adjacent), otherwise it holds the current note.
             // Reflected within a 2-octave bass range so it stays low.
-            if (!chordPool && pVar > 0 && rnd() * 100 < pVar) {
+            if (!chordPool && pVarEff > 0 && rnd() * 100 < pVarEff) {
               const mag = 1 + Math.floor(rnd() * maxStep);
               const dir = rnd() < 0.5 ? -1 : 1;
               walkDeg += dir * mag;
@@ -9465,11 +9482,18 @@
         if (!_ambCycleGateOK(arp, c)) continue;   // ⏱ Schedule tab: this whole iteration is switched off
         const cStart = st.startAt + c * loopSec;
         const rnd = _ambSeededRand(((arp.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503));
-        const rVar = Math.max(0, Math.min(100, arp.rhythmVar | 0));
+        // 🎲 Improvise tab. Same three swaps as the shared euclid core (this
+        // emitter predates it and has its own cycle loop). No pitchVar here — an
+        // arp walks the chord, it has no free melodic walk to widen.
+        const imp = _ambImprovAt(arp, c);
+        const rVar = imp ? _ambImprovVar(arp, 'rhythmVar', arp.rhythmVar | 0) : Math.max(0, Math.min(100, arp.rhythmVar | 0));
+        const restEff = imp ? _ambImprovVar(arp, 'restProb', restP) : restP;
         // Collect the whole cycle's hits (deterministic via rnd), then cap.
         const hits = [];
         for (let v = 0; v < Veff; v++) {
-          const vpat = _ambEuclidPat(arp, pulses, steps, rotate, Veff, v, arp.euclidRegen | 0);
+          const vpat = imp
+            ? _ambEuclidVoicePat(pulses, rotate, steps, Veff, v, _ambImprovSalt(arp, c))   // fresh rhythm per improvised cycle
+            : _ambEuclidPat(arp, pulses, steps, rotate, Veff, v, arp.euclidRegen | 0);
           const deg = v % N, oct = baseOct + Math.floor(v / N);
           const carry = Math.floor((_ambSrcRootPc(notes) + (intervals[deg] | 0)) / 12);
           _ambKeyTime = cStart;
@@ -9483,7 +9507,7 @@
                 else      { if (rnd() * 100 < rVar * 0.22) hit = true; }
               }
               if (!hit) continue;
-              if (restP > 0 && rnd() * 100 < restP) continue;
+              if (restEff > 0 && rnd() * 100 < restEff) continue;
               const hitAt = cStart + (bar * steps + slot) * slotSec + (((bar * steps + slot) & 1) ? _ambSwingSec(arp, slotSec) : 0);
               // Pitch vary: per-hit ±1-octave drift (gated → no RNG at 0).
               let f = f0, _sh = 0;
@@ -10624,6 +10648,7 @@
     function _ambNormalizeEuclidPattern(L) {
       if (!L || typeof L !== 'object') return;
       _ambNormalizeCycleGate(L);   // ⏱ Schedule tab (additive; absent = every iteration plays)
+      _ambNormalizeImprov(L);      // 🎲 Improvise tab (additive; absent = always plays as written)
       // Solo lane: coerce; migrate the legacy transient `_soloLane` into the real
       // field so a project saved during the transient era becomes VISIBLE instead
       // of silently muted. Kit-only (a non-kit layer has no lanes to solo).
@@ -10862,19 +10887,155 @@
       if (steps.every(v => v)) { delete L.cycleGate; return; }
       L.cycleGate = { len: n, steps: steps };
     }
+    // IMPROVISE SCHEDULE (`layer.improv`) — the Pattern control's 3rd tab.
+    //
+    // A layer alternates between playing its pattern AS WRITTEN and improvising
+    // around it: `pat` iterations of the authored pattern, then `imp` iterations
+    // where the pattern is re-generated per cycle and the variance knobs are
+    // replaced by the improv set, then it repeats. "8 bars of the riff, 8 bars of
+    // blowing over it."
+    //
+    // It sits on the same axis as the ⏱ Schedule tab (both address whole
+    // ITERATIONS by index `c`) and composes with it — the schedule decides whether
+    // an iteration plays at all, this decides how it plays. It also composes with
+    // `When`.
+    //
+    // Shape { on, pat, imp, rhythmVar, pitchVar, restProb }. Absent = off, and the
+    // layer is byte-identical to before — so the invariant harness (whose configs
+    // never set it) is unaffected by construction. Kept OUT of _ambDefaultLayer:
+    // an object there would be clobbered by the numeric backfill on every getCfg
+    // (the normalize trap), so it is coerced in _ambNormalizeEuclidPattern instead.
+    const _AMB_IMPROV_MAX = 64;
+    const _AMB_IMPROV_DEF = { pat: 8, imp: 8, rhythmVar: 55, pitchVar: 65, restProb: 10 };
+    function _ambImprovOn(L) {
+      const im = L && L.improv;
+      // imp 0 = no improvised phase at all, which is just "off" spelled differently.
+      return !!(im && im.on && (im.imp | 0) > 0);
+    }
+    function _ambImprovLen(L, k) {
+      const im = (L && L.improv) || null;
+      const v = (im && Number.isFinite(im[k])) ? (im[k] | 0) : _AMB_IMPROV_DEF[k];
+      return Math.max(0, Math.min(_AMB_IMPROV_MAX, v));
+    }
+    // Is iteration `c` an improvised one? Pure function of the cycle index — no RNG,
+    // no state — so every tick that re-emits a cycle agrees, and it is identical on
+    // a re-render (the same reason the euclid chord-pool ordinal is index-derived).
+    function _ambImprovAt(L, c) {
+      if (!_ambImprovOn(L)) return false;
+      const p = _ambImprovLen(L, 'pat'), q = _ambImprovLen(L, 'imp');
+      if (p <= 0) return true;                       // no written phase → always improvising
+      const n = p + q;
+      return ((((c | 0) % n) + n) % n) >= p;
+    }
+    // A variance value for the improvised phase. `fallback` is what the layer plays
+    // normally, so a field left at its default still reads as a deliberate value.
+    function _ambImprovVar(L, k, fallback) {
+      const im = (L && L.improv) || null;
+      const v = (im && Number.isFinite(im[k])) ? (im[k] | 0) : _AMB_IMPROV_DEF[k];
+      return Math.max(0, Math.min(100, Number.isFinite(v) ? v : (fallback | 0)));
+    }
+    // The pattern salt for an improvised cycle. Nonzero → _ambEuclidVoicePat
+    // re-rolls pulses (±2) and rotation from it, so each improvised iteration gets
+    // its own rhythm; derived from (regen, cycle) so it is reproducible.
+    function _ambImprovSalt(L, c) {
+      return ((((L && L.euclidRegen) | 0) ^ (((c | 0) + 1) * 2654435761)) >>> 0) || 1;
+    }
+    // Setters. They always write a COMPLETE object, so a layer that has only ever
+    // been toggled still carries usable counts, and switching off deletes the field
+    // outright — absence is the neutral state that keeps the layer byte-identical.
+    function _ambImprovEnsure(L) {
+      if (!L.improv || typeof L.improv !== 'object') {
+        L.improv = { on: 1, pat: _AMB_IMPROV_DEF.pat, imp: _AMB_IMPROV_DEF.imp,
+          rhythmVar: _AMB_IMPROV_DEF.rhythmVar, pitchVar: _AMB_IMPROV_DEF.pitchVar, restProb: _AMB_IMPROV_DEF.restProb };
+      }
+      return L.improv;
+    }
+    function _ambImprovToggle(L) {
+      if (!L) return;
+      if (_ambImprovOn(L)) { delete L.improv; return; }
+      const im = _ambImprovEnsure(L);
+      im.on = 1;
+      if ((im.imp | 0) <= 0) im.imp = _AMB_IMPROV_DEF.imp;   // 0 improvised = off; don't switch on into a no-op
+    }
+    function _ambImprovSetLen(L, k, v) {
+      if (!L || (k !== 'pat' && k !== 'imp')) return;
+      const im = _ambImprovEnsure(L);
+      // `pat` may go to 0 (= always improvising, a real setting); `imp` may not,
+      // since 0 improvised iterations IS "off" and there is a switch for that.
+      im[k] = Math.max(k === 'imp' ? 1 : 0, Math.min(_AMB_IMPROV_MAX, v | 0));
+    }
+    function _ambImprovSetVar(L, k, v) {
+      if (!L || ['rhythmVar', 'pitchVar', 'restProb'].indexOf(k) < 0) return;
+      _ambImprovEnsure(L)[k] = Math.max(0, Math.min(100, v | 0));
+    }
+    function _ambNormalizeImprov(L) {
+      if (!L || typeof L !== 'object') return;
+      const im = L.improv;
+      if (!im || typeof im !== 'object') { if ('improv' in L) delete L.improv; return; }
+      const out = { on: (im.on === true || im.on === 1) ? 1 : 0 };
+      for (const k of ['pat', 'imp']) out[k] = _ambImprovLen({ improv: im }, k);
+      for (const k of ['rhythmVar', 'pitchVar', 'restProb']) out[k] = _ambImprovVar({ improv: im }, k, _AMB_IMPROV_DEF[k]);
+      if (!out.on) { delete L.improv; return; }       // off === absent === neutral
+      L.improv = out;
+    }
     // The Pattern control's tab strip. The active tab is transient (`_gridTab`) —
     // a view preference, not arrangement, so it never needs a schema field.
     function _ambGridTabsHtml(L) {
-      const sched = !!(L && L._gridTab === 'sched');
+      const tab = (L && L._gridTab) || 'pattern';
       const gated = !!(L && L.cycleGate);
       const n = _ambCycleGateLen(L), on = _ambCycleGateSteps(L).filter(v => v).length;
+      const imp = _ambImprovOn(L);
       return '<div class="ambient-gridtabs" role="tablist">' +
-        '<button type="button" class="ambient-gridtab' + (sched ? '' : ' on') + '" data-gtab="pattern" role="tab"' +
+        '<button type="button" class="ambient-gridtab' + (tab === 'pattern' ? ' on' : '') + '" data-gtab="pattern" role="tab"' +
           ' title="The step pattern — one iteration of this layer’s sequence.">⿴ Pattern</button>' +
-        '<button type="button" class="ambient-gridtab' + (sched ? ' on' : '') + '" data-gtab="sched" role="tab"' +
+        '<button type="button" class="ambient-gridtab' + (tab === 'sched' ? ' on' : '') + '" data-gtab="sched" role="tab"' +
           ' title="Schedule — each step here is one FULL iteration of the pattern, so switching one off leaves that whole repeat silent (a drawable ‘When’).">⏱ Schedule' +
           (gated ? '<i class="gdot" title="' + on + ' of ' + n + ' iterations play"></i>' : '') + '</button>' +
+        '<button type="button" class="ambient-gridtab' + (tab === 'improv' ? ' on' : '') + '" data-gtab="improv" role="tab"' +
+          ' title="Improvise — alternate between playing the pattern as written and improvising around it, counted in whole iterations.">\u{1F3B2} Improvise' +
+          (imp ? '<i class="gdot" title="' + _ambImprovLen(L, 'pat') + ' written, then ' + _ambImprovLen(L, 'imp') + ' improvised"></i>' : '') + '</button>' +
         '</div>';
+    }
+    // The Improvise tab's body: how many iterations each way, and the three
+    // amounts that define what "improvising" means for this layer. Styled from the
+    // Schedule tab's own classes (.ambient-cycgate / -foot, .ambient-cyclen,
+    // .ambient-ctrl sliders) so the two tabs read as one control.
+    function _ambImprovHtml(L) {
+      const on = _ambImprovOn(L);
+      const p = _ambImprovLen(L, 'pat'), q = _ambImprovLen(L, 'imp');
+      const stepper = (key, label, v) =>
+        '<span class="ambient-sched-lbl">' + label + '</span>' +
+        '<button type="button" class="ambient-cyclen" data-implen="' + key + ':-1" title="Fewer iterations">−</button>' +
+        '<span class="ambient-step-fx-v">' + v + '</span>' +
+        '<button type="button" class="ambient-cyclen" data-implen="' + key + ':1" title="More iterations">＋</button>';
+      const sl = (key, label, val, title) =>
+        '<div class="ambient-ctrl" title="' + title + '"><label>' + label + '</label>' +
+        '<input type="range" class="ambient-improv-sl" data-imp="' + key + '" min="0" max="100" step="1" value="' + val + '" />' +
+        '<span class="ambient-hint ambient-step-fx-v">' + val + '</span></div>';
+      const written = p > 0
+        ? (p + ' iteration' + (p === 1 ? '' : 's') + ' as written, then ' + q + ' improvised, repeating (' + (p + q) + ' in all).')
+        : 'Always improvising — the written pattern is never played.';
+      return '<div class="ambient-cycgate ambient-improv">' +
+        '<div class="ambient-cycgate-foot">' +
+          '<button type="button" class="ambient-improv-on' + (on ? ' on' : '') + '" data-impon="1"' +
+            ' title="Alternate between the written pattern and improvising around it.">' + (on ? '● On' : '○ Off') + '</button>' +
+          stepper('pat', 'written', p) +
+          stepper('imp', 'improvised', q) +
+        '</div>' +
+        (on
+          ? sl('rhythmVar', 'Rhythm', _ambImprovVar(L, 'rhythmVar', 0), 'How far the improvised rhythm strays — drops written hits and adds new ones.') +
+            sl('pitchVar', 'Pitch', _ambImprovVar(L, 'pitchVar', 0), 'How often the melodic walk moves. Bass only — an arp walks its chord, and drums have no pitch walk.') +
+            sl('restProb', 'Rests', _ambImprovVar(L, 'restProb', 0), 'Chance of leaving a slot silent while improvising — space in the line.')
+          : '') +
+        '<div class="ambient-hint">' +
+          (on
+            ? written +
+              ' Each improvised iteration re-rolls its own rhythm, so no two repeat. The pattern you drew is left alone —' +
+              ' the next written iteration plays it again exactly. While this is on the layer stops using Loop/Write,' +
+              ' because a frozen phrase would pin it to one side of the alternation.'
+            : 'Off — every iteration plays the pattern as written.') +
+        '</div>' +
+      '</div>';
     }
     function _ambCycleGateHtml(L) {
       const n = _ambCycleGateLen(L), steps = _ambCycleGateSteps(L);
@@ -11095,6 +11256,7 @@
         // each step is one full iteration of that pattern. Both live inside `grid`
         // so every delegated handler already bound to it keeps working.
         if (L._gridTab === 'sched') { grid.innerHTML = _ambGridTabsHtml(L) + _ambCycleGateHtml(L); return; }
+        if (L._gridTab === 'improv') { grid.innerHTML = _ambGridTabsHtml(L) + _ambImprovHtml(L); return; }
         const d = _ambEuclidGridDims(L, type);
         const bar = d ? _ambEuclidBarInfo(E, key, L, (E.getCfg && E.getCfg()) || null, d.steps, d.bars) : null;
         grid.innerHTML = _ambGridTabsHtml(L) + _ambEuclidCellsHtml(L, type, bar);
@@ -11103,14 +11265,22 @@
       // drum-lanes one below, which returns early for non-kit layers — the schedule
       // tab exists on every euclidgrid type (Bass / Beat / Arp).
       grid.addEventListener('click', (ev) => {
-        const t = ev.target.closest && ev.target.closest('.ambient-gridtab, .ambient-cyccell, .ambient-cyclen, .ambient-cycclear');
+        const t = ev.target.closest && ev.target.closest('.ambient-gridtab, .ambient-cyccell, .ambient-cyclen, .ambient-cycclear, .ambient-improv-on');
         if (!t) return;
         _E = E; const L = getL(); if (!L) return;
         if (t.classList.contains('ambient-gridtab')) {
-          L._gridTab = (t.getAttribute('data-gtab') === 'sched') ? 'sched' : 'pattern';
+          { const g = t.getAttribute('data-gtab');
+            L._gridTab = (g === 'sched' || g === 'improv') ? g : 'pattern'; }
           render(); return;   // view-only — nothing to persist or re-anchor
         }
-        if (t.classList.contains('ambient-cyccell')) {
+        if (t.classList.contains('ambient-improv-on')) {
+          _ambImprovToggle(L);
+        } else if (t.hasAttribute('data-implen')) {
+          // 🎲 Improvise steppers share .ambient-cyclen with the Schedule tab's
+          // length buttons, so discriminate on the attribute, not the class.
+          const [k, d] = String(t.getAttribute('data-implen')).split(':');
+          _ambImprovSetLen(L, k, _ambImprovLen(L, k) + ((d | 0) || 1));
+        } else if (t.classList.contains('ambient-cyccell')) {
           const i = t.getAttribute('data-cyc') | 0;
           _ambCycleGateSet(L, i, !_ambCycleGateSteps(L)[i]);
         } else if (t.classList.contains('ambient-cyclen')) {
@@ -11121,6 +11291,28 @@
         render(); persist();
         // Land on the layer's next boundary like every other per-note edit, so a
         // schedule change is heard within one iteration instead of a whole loop later.
+        if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} try { sync && sync(); } catch (e) {} }
+      });
+      // 🎲 Improvise sliders. Deliberately NOT re-rendering on `input` — the grid's
+      // innerHTML is rebuilt by render(), which would destroy the slider mid-drag
+      // (the same trap the Step-Edit inspector hit; they are also exempted from
+      // _unitRefresh's rebuild for that reason). The readout is updated in place,
+      // and the layer is re-anchored once on `change` so the new feel is heard at
+      // the next iteration boundary rather than a whole loop later.
+      grid.addEventListener('input', (ev) => {
+        const sl = ev.target && ev.target.closest && ev.target.closest('.ambient-improv-sl');
+        if (!sl || !grid.contains(sl)) return;
+        _E = E; const L = getL(); if (!L) return;
+        const v = parseInt(sl.value, 10) || 0;
+        _ambImprovSetVar(L, sl.getAttribute('data-imp'), v);
+        const rv = sl.parentNode && sl.parentNode.querySelector('.ambient-step-fx-v');
+        if (rv) rv.textContent = String(v);
+        persist();
+      });
+      grid.addEventListener('change', (ev) => {
+        const sl = ev.target && ev.target.closest && ev.target.closest('.ambient-improv-sl');
+        if (!sl || !grid.contains(sl)) return;
+        _E = E;
         if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} try { sync && sync(); } catch (e) {} }
       });
       // Mirror a knob value + its readout into the slider UI (preset application
@@ -12515,7 +12707,6 @@
           e.core.cmd('strip_autopan', sl, wantAutopan ? 1 : 0, _wet01(apan), c01(apan.depth),
             0.05 + Math.max(0, Math.min(100, apan.rate | 0)) / 100 * 7.95);
           e.revSend.gain.value = _ambRevSendGain(layer, lc.revSend);
-
           const _fo = _ambFxCoreOrder(lc);
           e.core.cmd('strip_fxorder', sl, _fo[0], _fo[1], _fo[2], _fo[3], _fo[4]);   // in-line FX processed in fxChain order
           // Wet Only with no dry-stripping in-line FX → mute the dry output (the
@@ -12597,7 +12788,6 @@
           e.delay.feedback.value = Math.max(0, Math.min(0.95, (dly.feedback | 0) / 100));
           e.delay.wet.value = _wet01(dly);
         }
-
         if (e.chorus) {
           e.chorus.wet.value = _wet01(cho);
           e.chorus.depth = Math.max(0, Math.min(1, (cho.depth | 0) / 100));
@@ -12901,6 +13091,7 @@
         // It has to emit the tab strip and honour the selected tab too, or a Unit
         // change silently replaces the tabbed control with a bare step grid.
         if (L._gridTab === 'sched') { grid.innerHTML = _ambGridTabsHtml(L) + _ambCycleGateHtml(L); return; }
+        if (L._gridTab === 'improv') { grid.innerHTML = _ambGridTabsHtml(L) + _ambImprovHtml(L); return; }
         const d = _ambEuclidGridDims(L, type); if (!d) return;
         let bar = null; try { bar = _ambEuclidBarInfo(E, key, L, cfg, d.steps, d.bars); } catch (e) {}
         grid.innerHTML = _ambGridTabsHtml(L) + _ambEuclidCellsHtml(L, type, bar);
@@ -15492,6 +15683,16 @@
       const isKit = (L.type === 'beat' && L.gen === 'euclid' && !!L.euclidKit);
       const euclid = (L.type === 'bass') || (L.type === 'beat' && L.gen === 'euclid' && !L.euclidKit) || (L.type === 'arp' && L.euclid) || isKit;
       if (!euclid) return false;
+      // 🎲 IMPROVISE: skip Write. This layer is not byte-identical per cycle — it
+      // deliberately alternates — so it fails the "deterministic" reading of this
+      // gate, but the gate's real question is "does this layer loop natively, so
+      // Write should stay out of the way", and here the answer is emphatically yes:
+      // Write freezes ONE captured phrase and replays it, which would pin the layer
+      // to whichever phase it happened to capture and silence the alternation
+      // entirely (the freeze gate short-circuits the emitter). Same reasoning as the
+      // drone-under-a-progression case above, and returning true here also THAWS a
+      // layer that was already frozen when improvise was switched on.
+      if (_ambImprovOn(L)) return true;
       if (isKit) {
         // Drum-lanes play EXACTLY the drawn grid — rhythmVar / rests are forced off
         // in the emit (5707-5708) and pages cycle deterministically by cycle index
@@ -21082,7 +21283,6 @@
     // Saved sequences as a "Sequence" optgroup for shape/wave dropdowns.
     function _ambSeqWaveOptgroup() {
       const list = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences : [];
-
       const o = list.map((s, i) => (s && s.type !== 'audio' && Array.isArray(s.steps) && s.steps.length)
         ? '<option value="seq:' + i + '">' + String(s.name || ('Seq ' + (i + 1))).replace(/[<>&"]/g, '') + '</option>' : '').join('');
       return o ? ('<optgroup label="Sequence">' + o + '</optgroup>') : '';
@@ -22330,7 +22530,6 @@
           _ambSl('Feedback', 'ambient-' + layer + '-fx-dly-fb', 0, 95, 35, '%') +
           _ambSl('Ping-Pong', 'ambient-' + layer + '-fx-dly-ping', 0, 1, 0, 'normal → bounce L/R') +
           _ambSl('Spread', 'ambient-' + layer + '-fx-dly-spread', 0, 100, 0, 'mono → wide (stereo)') +
-
           _ambFxDk('delay')) +
         _ambFxItem('chorus', 'Chorus',
           _ambSl('Mix', 'ambient-' + layer + '-fx-cho-mix', 0, 100, 0, 'dry → wet') +
@@ -23089,7 +23288,6 @@
       bindFx('dist-amt', (q, v) => { q.dist.amount = v; });
       bindFx('dist-focus', (q, v) => { q.dist.focus = v; });
       bindFx('dist-tone', (q, v) => { q.dist.tone = v; });
-
       bindFx('dist-mix', (q, v) => { q.dist.mix = v; });
       bindFx('cho-mix', (q, v) => { q.chorus.mix = v; }); bindFx('cho-depth', (q, v) => { q.chorus.depth = v; }); bindFx('cho-rate', (q, v) => { q.chorus.rate = v; });
       bindFx('pha-mix', (q, v) => { q.phaser.mix = v; }); bindFx('pha-depth', (q, v) => { q.phaser.depth = v; }); bindFx('pha-rate', (q, v) => { q.phaser.rate = v; });
@@ -23117,7 +23315,6 @@
       if (s.dist) { setVal('fx-dist-amt', s.dist.amount); setVal('fx-dist-focus', s.dist.focus); setVal('fx-dist-tone', s.dist.tone); setVal('fx-dist-mix', s.dist.mix); }
       if (s.chorus) { setVal('fx-cho-mix', s.chorus.mix); setVal('fx-cho-depth', s.chorus.depth); setVal('fx-cho-rate', s.chorus.rate); }
       if (s.phaser) { setVal('fx-pha-mix', s.phaser.mix); setVal('fx-pha-depth', s.phaser.depth); setVal('fx-pha-rate', s.phaser.rate); }
-
       if (s.autopan) { setVal('fx-apan-mix', s.autopan.mix); setVal('fx-apan-depth', s.autopan.depth); setVal('fx-apan-rate', s.autopan.rate); }
       _ambSeqReturnVis(E, id);
       _ambSeqIntervalModeVis(E, id); // sets the interval readout too (overrides the line above in Auto)
@@ -24171,7 +24368,6 @@
       bindFx('dist-amt', (q, v) => { q.dist.amount = v; });
       bindFx('dist-focus', (q, v) => { q.dist.focus = v; });
       bindFx('dist-tone', (q, v) => { q.dist.tone = v; });
-
       bindFx('dist-mix', (q, v) => { q.dist.mix = v; });
       bindFx('cho-mix', (q, v) => { q.chorus.mix = v; }); bindFx('cho-depth', (q, v) => { q.chorus.depth = v; }); bindFx('cho-rate', (q, v) => { q.chorus.rate = v; });
       bindFx('pha-mix', (q, v) => { q.phaser.mix = v; }); bindFx('pha-depth', (q, v) => { q.phaser.depth = v; }); bindFx('pha-rate', (q, v) => { q.phaser.rate = v; });
@@ -24210,7 +24406,6 @@
       if (s.dist) { setVal('fx-dist-amt', s.dist.amount); setVal('fx-dist-focus', s.dist.focus); setVal('fx-dist-tone', s.dist.tone); setVal('fx-dist-mix', s.dist.mix); }
       if (s.chorus) { setVal('fx-cho-mix', s.chorus.mix); setVal('fx-cho-depth', s.chorus.depth); setVal('fx-cho-rate', s.chorus.rate); }
       if (s.phaser) { setVal('fx-pha-mix', s.phaser.mix); setVal('fx-pha-depth', s.phaser.depth); setVal('fx-pha-rate', s.phaser.rate); }
-
       if (s.autopan) { setVal('fx-apan-mix', s.autopan.mix); setVal('fx-apan-depth', s.autopan.depth); setVal('fx-apan-rate', s.autopan.rate); }
     }
     function _ambRenderSampleLayers(E) {
@@ -25374,7 +25569,6 @@
       if (inst.dist) { setVal('fx-dist-amt', inst.dist.amount); setVal('fx-dist-focus', inst.dist.focus); setVal('fx-dist-tone', inst.dist.tone); setVal('fx-dist-mix', inst.dist.mix); }
       if (inst.chorus) { setVal('fx-cho-mix', inst.chorus.mix); setVal('fx-cho-depth', inst.chorus.depth); setVal('fx-cho-rate', inst.chorus.rate); }
       if (inst.phaser) { setVal('fx-pha-mix', inst.phaser.mix); setVal('fx-pha-depth', inst.phaser.depth); setVal('fx-pha-rate', inst.phaser.rate); }
-
       if (inst.autopan) { setVal('fx-apan-mix', inst.autopan.mix); setVal('fx-apan-depth', inst.autopan.depth); setVal('fx-apan-rate', inst.autopan.rate); }
       try { _ambUnitSyncViz(E, p, inst); } catch (e) {}   // hide free Interval when BPM-synced
       if (type === 'beat') { try { _ambBeatGenVis(E, p, inst, p); } catch (e) {} }   // Gen mode rows (after UnitSyncViz so euclid can hide Interval)
@@ -27501,7 +27695,6 @@
         if (L.dist) { set('ambient-' + layer + '-fx-dist-amt', L.dist.amount); set('ambient-' + layer + '-fx-dist-focus', L.dist.focus); set('ambient-' + layer + '-fx-dist-tone', L.dist.tone); set('ambient-' + layer + '-fx-dist-mix', L.dist.mix); }
         if (L.chorus) { set('ambient-' + layer + '-fx-cho-mix', L.chorus.mix); set('ambient-' + layer + '-fx-cho-depth', L.chorus.depth); set('ambient-' + layer + '-fx-cho-rate', L.chorus.rate); }
         if (L.phaser) { set('ambient-' + layer + '-fx-pha-mix', L.phaser.mix); set('ambient-' + layer + '-fx-pha-depth', L.phaser.depth); set('ambient-' + layer + '-fx-pha-rate', L.phaser.rate); }
-
         if (L.autopan) { set('ambient-' + layer + '-fx-apan-mix', L.autopan.mix); set('ambient-' + layer + '-fx-apan-depth', L.autopan.depth); set('ambient-' + layer + '-fx-apan-rate', L.autopan.rate); }
       });
       // Seq + Sample layers are dynamic lists — (re)render for this engine.
@@ -28604,7 +28797,7 @@
         // change a layer's unit length, and _ambSyncLayerUnits → _ambRefreshEuclidGrids
         // REBUILDS the euclid grid — destroying the inspector slider mid-drag ("sliders
         // don't slide"). Skip the refresh for those.
-        if (ev && ev.target && ev.target.closest && ev.target.closest('.ambient-step-fx-sl, .ambient-step-fx-ratcount, .ambient-step-fx-ratd, .ambient-stepscope-btn, .ambient-stepmode, .ambient-step-fx-clear, .ambient-step-fx-trig, .ambient-step-fx-solo')) return;
+        if (ev && ev.target && ev.target.closest && ev.target.closest('.ambient-improv-sl, .ambient-step-fx-sl, .ambient-step-fx-ratcount, .ambient-step-fx-ratd, .ambient-stepscope-btn, .ambient-stepmode, .ambient-step-fx-clear, .ambient-step-fx-trig, .ambient-step-fx-solo')) return;
         try { _ambSyncLayerUnits(E); } catch (e) {}
         E.seedPv = {};
         // Debounced (a slider drag fires per pixel; the silent seed render is
@@ -29066,7 +29259,6 @@
         fxBind('dly-fb', (lc, v) => { lc.delay.feedback = v; });
         fxBind('dly-ping', (lc, v) => { lc.delay.ping = v; });
         // Was MISSING while the slider rendered (_ambSl, ~21538) and read back
-
         // (set(), ~26697) — the classic primary-vs-schema wiring gap: it works on
         // an ADDED layer (schema-driven _ambWireInst) and did nothing at all on
         // bed/motif/texture/beat. Found by driving every control and diffing cfg.

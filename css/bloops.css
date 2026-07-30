@@ -3887,6 +3887,20 @@
       cursor: pointer; touch-action: manipulation;
     }
     @media (hover: hover) { .ambient-cyclen:hover, .ambient-cycclear:hover { border-color: #9f7aea; color: #d9cbff; } }
+    /* 🎲 Improvise tab. Same tokens as the Schedule tab's chrome above so the two
+       tabs of one control read alike; the On state borrows the .ambient-cyccell.on
+       violet, which is already this control's "engaged" colour. */
+    .ambient-improv-on {
+      padding: 2px 10px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8;
+      background: transparent; border: 1px solid #34344a; border-radius: 4px;
+      cursor: pointer; touch-action: manipulation;
+    }
+    .ambient-improv-on.on { color: #1a1206; background: #9f7aea; border-color: #b794f4; }
+    @media (hover: hover) { .ambient-improv-on:not(.on):hover { border-color: #9f7aea; color: #d9cbff; } }
+    /* Give the counts room to breathe between the two steppers. */
+    .ambient-improv .ambient-cycgate-foot .ambient-sched-lbl:not(:first-of-type) { margin-left: 8px; }
+    .ambient-improv .ambient-ctrl { gap: 8px; }
+    .ambient-improv .ambient-improv-sl { touch-action: manipulation; }
     /* Drum SOLO — sits beside the ▶ audition; amber when engaged so it reads as
        a temporary monitoring state rather than part of the pattern. */
     .ambient-step-fx-solo { padding: 2px 8px; font: 700 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8; background: transparent; border: 1px solid #34344a; border-radius: 4px; cursor: pointer; touch-action: manipulation; }
@@ -12137,7 +12151,6 @@
 
     /* Per-FX "Dry kill" checkbox (compact, sits under the FX's sliders) + the
        layer "Wet only" toggle (top of the FX section). Big tap target for mobile. */
-
     .ambient-fx-dk, .ambient-fx-wetonly {
       display: flex; align-items: center; gap: 7px;
       font: 600 0.72rem 'Segoe UI', sans-serif; color: #a0aec0;

@@ -30531,6 +30531,41 @@
           { name: '🌫 Chord Drone', type: 'drone', cfg: { level: 58, revSend: 40, pitchRule: 'voicing', density: 3, hold: 2, attack: 1800, release: 3000 } },
           { name: '🎠 Pulse Bed', type: 'bed', cfg: { level: 62, revSend: 30, strike: 4, lenRatio: 60, strum: 40, density: 3, attack: 120, release: 900 } },
           { name: '🪨 Roaming Hold', type: 'pedal', cfg: { level: 60, revSend: 25, strike: -2, lenRatio: 100, vary: 55, register: 3 } },
+          // 8-BIT / GAME pack. Chip music is a small palette used precisely: square
+          // and pulse leads, a fast arp standing in for chords, a square-bass root
+          // line, and drums that are noise. Each of these is a multi-layer preset
+          // so one tap gives a playable scene rather than a lone voice.
+          { name: '🕹 8-bit · Sports', layers: [
+            { type: 'beat', cfg: { gen: 'euclid', kit: 'tr808', level: 68, pulses: 5, steps: 8, restProb: 8, lengthMs: 110 } },
+            { type: 'bass', cfg: { tone: 'square', level: 62, pulses: 5, steps: 8, register: 2, lengthMs: 150, proximity: 20, attack: 1, decay: 40, sustain: 60, release: 60 } },
+            { type: 'arp',  cfg: { tone: 'square', level: 46, arpRes: '16', octaves: 2, register: 5, attack: 1, decay: 30, sustain: 45, release: 70 } },
+          ] },
+          { name: '🏁 8-bit · Racing', layers: [
+            { type: 'beat', cfg: { gen: 'euclid', kit: 'tr808', level: 66, pulses: 7, steps: 8, restProb: 4, lengthMs: 90 } },
+            { type: 'bass', cfg: { tone: 'square', level: 64, pulses: 8, steps: 8, register: 2, lengthMs: 110, proximity: 10, attack: 1, decay: 30, sustain: 55, release: 40,
+              improv: { pat: 3, imp: 1, rhythmVar: 25, pitchVar: 30, restProb: 5 } } },
+            { type: 'arp',  cfg: { tone: 'pulse', level: 44, arpRes: '16', octaves: 2, register: 6, dir: 'updown', attack: 1, decay: 25, sustain: 40, release: 50 } },
+          ] },
+          { name: '🦇 8-bit · Demons', layers: [
+            { type: 'beat', cfg: { gen: 'euclid', kit: 'tr808', level: 62, pulses: 4, steps: 8, restProb: 10, lengthMs: 120 } },
+            { type: 'bass', cfg: { tone: 'square', level: 66, pulses: 6, steps: 8, register: 2, lengthMs: 130, proximity: 35, keyOv: { mode: 'key', root: 9, scale: 'harmonicMinor' } } },
+            { type: 'arp',  cfg: { tone: 'pulse', level: 50, arpRes: '16', octaves: 2, register: 5, dir: 'up', rateVar: 10,
+              keyOv: { mode: 'key', root: 9, scale: 'harmonicMinor' } } },
+          ] },
+          { name: '🤘 Heavy Metal', layers: [
+            { type: 'beat', cfg: { gen: 'euclid', kit: 'tr808', level: 70, pulses: 8, steps: 8, restProb: 0, lengthMs: 80 } },
+            { type: 'bass', cfg: { tone: 'sawtooth', level: 68, pulses: 8, steps: 8, register: 1, lengthMs: 120, proximity: 8,
+              keyOv: { mode: 'key', root: 4, scale: 'phrygian' }, dist: { mix: 55, amount: 65, tone: 62, focus: 30, dryKill: 0 } } },
+            { type: 'run', cfg: { tone: 'sawtooth', level: 58, register: 3, bars: 1, proximity: 25, ornament: 15,
+              keyOv: { mode: 'key', root: 4, scale: 'phrygian' }, dist: { mix: 45, amount: 55, tone: 70, focus: 40, dryKill: 0 } } },
+          ] },
+          { name: '💥 Pop Punk', layers: [
+            { type: 'beat', cfg: { gen: 'euclid', kit: 'tr808', level: 68, pulses: 6, steps: 8, restProb: 5, lengthMs: 100 } },
+            { type: 'bass', cfg: { tone: 'sawtooth', level: 64, pulses: 8, steps: 8, register: 2, lengthMs: 130, proximity: 12,
+              dist: { mix: 30, amount: 40, tone: 58, focus: 20, dryKill: 0 } } },
+            { type: 'run', cfg: { tone: 'square', level: 54, register: 4, bars: 2, proximity: 35, slide: 20,
+              dist: { mix: 35, amount: 45, tone: 65, focus: 25, dryKill: 0 } } },
+          ] },
           // Battery — a rhythm section (Beat + Bass) whose patterns RE-ROLL on New take
           // (takeReroll: random Beat rerolls off the seed; euclid Bass re-derives its
           // euclidean salt from the seed). Multi-layer preset (preset.layers).

@@ -11029,7 +11029,12 @@
     // an object there would be clobbered by the numeric backfill on every getCfg
     // (the normalize trap), so it is coerced in _ambNormalizeEuclidPattern instead.
     const _AMB_IMPROV_MAX = 64;
-    const _AMB_IMPROV_DEF = { pat: 8, imp: 8, rhythmVar: 55, pitchVar: 65, restProb: 10 };
+    // Counts default to 1 and 1 — alternate every other iteration, the tightest
+    // and most obviously-audible setting, and the natural place to dial UP from.
+    // (8/8 made the alternation take half a minute to reveal itself.) Note that
+    // an untouched layer still SHOWS improvise ×0: the tab is off until you
+    // raise it, so displaying a 1 there would claim it was running.
+    const _AMB_IMPROV_DEF = { pat: 1, imp: 1, rhythmVar: 55, pitchVar: 65, restProb: 10 };
     // ON/OFF is the COUNT, not a separate switch (the button was dropped
     // 2026-07-30): `improvise ×0` means no improvised iterations, which is what
     // off always meant. Three states, two numbers. The legacy `on` flag is still

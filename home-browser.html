@@ -131,7 +131,6 @@ body{
 /* TRAFFIC. The OUTER element carries the crossing and the INNER one carries
    whatever the creature does while crossing, so the two never fight over
    `transform`. */
-.tr{will-change:transform}
 .boat{animation:cross-l 110s linear infinite}
 .boat .fill{background-image:url(img/wp-boat.png)}
 .loon{animation:cross-r 165s linear infinite}
@@ -158,11 +157,40 @@ body{
   96.5%{opacity:1;transform:translateY(3.5%)}
   98%,100%{opacity:0;transform:translateY(7%)}
 }
+/* MORE TRAFFIC. Six things crossing plus one anchored, at speeds that read as
+   distance: the ferry is furthest out and slowest, the seal is nearest and
+   surfaces briefly. */
+.sail{animation:cross-r 130s linear infinite}
+.sail .fill{background-image:url(img/wp-sail.png)}
+.ferry{animation:cross-l 185s linear infinite}
+.ferry .fill{background-image:url(img/wp-ferry.png)}
+.seal{animation:cross-l 190s linear infinite}
+.seal .fill{background-image:url(img/wp-seal.png);animation:surface 27s ease-in-out infinite}
+/* The buoy goes nowhere. It is what makes the moving traffic read as moving. */
+.buoy .fill{background-image:url(img/wp-buoy.png);animation:bobbuoy 6s ease-in-out infinite}
+@keyframes surface{
+  0%,72%{opacity:0;transform:translateY(2.4%)}
+  78%,86%{opacity:1;transform:translateY(0)}
+  92%,100%{opacity:0;transform:translateY(2.4%)}
+}
+@keyframes bobbuoy{0%,100%{transform:translateY(0)}50%{transform:translateY(.7%)}}
+
+/* THE LIGHT TURNS. The beam is its own layer, in FRONT of the land, spun about
+   the lamp and gated so it only shows on the sweep across the water — a wedge
+   visible through 360 degrees would rake the sky and the headland.
+   transform-origin is set in JS: the wallpaper is `cover`-fitted, so where the
+   lamp actually lands depends on the crop, and a fixed percentage is only
+   right at exactly 16:9. */
+.beam{animation:sweep 9s linear infinite}
+.beam .fill{background-image:url(img/wp-beam.png);opacity:0;
+  animation:flash 9s linear infinite}
+@keyframes sweep{from{transform:rotate(-30deg)}to{transform:rotate(330deg)}}
+@keyframes flash{0%{opacity:0}6%{opacity:.95}13%{opacity:.45}20%,100%{opacity:0}}
 @media (prefers-reduced-motion:reduce){
-  .wp-moon,.sea .fill,.tr,.tr .fill{animation:none}
+  .wp-moon,.sea .fill,.tr,.tr .fill,.beam,.beam .fill{animation:none}
   .s0 .fill{opacity:1}
   .wp-moon{transform:translateY(7%)}
-  .whale .fill{opacity:0}          /* it would otherwise be parked mid-air */
+  .whale .fill,.seal .fill{opacity:0}   /* both would be parked mid-leap */
 }
 /* One panel at a time, centred, on paper. This is the whole payoff: a tab has
    the entire viewport, so nothing here is fighting for height. */
@@ -267,7 +295,12 @@ td .c{display:block;font-size:11px;color:var(--mute)}
     <b class="tr boat"><i class="fill"></i></b>
     <b class="tr loon"><i class="fill"></i></b>
     <b class="tr whale"><i class="fill"></i></b>
+    <b class="tr sail"><i class="fill"></i></b>
+    <b class="tr ferry"><i class="fill"></i></b>
+    <b class="tr seal"><i class="fill"></i></b>
+    <b class="tr buoy"><i class="fill"></i></b>
     <b class="wp-land"><i class="fill"></i></b>
+    <b class="beam"><i class="fill"></i></b>
   </div>
 
   <section class="panel" id="p-new" role="tabpanel" aria-label="New tab">
@@ -461,6 +494,34 @@ document.getElementById('shortcuts').innerHTML = TABS.filter(t => t.id !== 'new'
             '<span aria-hidden="true">' + t.fav + '</span>' + t.title + '</button>').join('');
 
 drawTabs(); show('grains', false);
+
+// ── LIGHTHOUSE BEAM PIVOT ────────────────────────────────────────────────
+// The beam turns about the LAMP. The wallpaper is `cover`-fitted, so the
+// lamp's position in the viewport depends on how the art is cropped — a fixed
+// transform-origin percentage is only correct at exactly 16:9, and anywhere
+// else the beam detaches and pivots off in open water. Measured instead.
+(function () {
+  const ART_W = 384, ART_H = 216, LAMP_X = 344, LAMP_Y = 141;
+  const beam = document.querySelector('.beam');
+  if (!beam) return;
+  const fill = beam.querySelector('.fill');
+  function place() {
+    // offsetWidth/Height, NOT getBoundingClientRect: the beam is mid-rotation,
+    // and a rect is the AXIS-ALIGNED bounds of the spun box — it grows and
+    // shrinks as the light turns, so the pivot computed from it wandered by
+    // about a hundred pixels and drifted continuously.
+    const w = beam.offsetWidth, h = beam.offsetHeight;
+    if (!w || !h) return;
+    const s = Math.max(w / ART_W, h / ART_H);                    // cover
+    const bp = getComputedStyle(fill).backgroundPositionX.trim();
+    const fx = bp === 'center' ? 0.5 : ((parseFloat(bp) || 50) / 100);
+    const ox = (w - ART_W * s) * fx  + LAMP_X * s;
+    const oy = (h - ART_H * s) * 0.5 + LAMP_Y * s;
+    beam.style.transformOrigin = ox + 'px ' + oy + 'px';
+  }
+  addEventListener('resize', place);
+  place();
+})();
 
 // ── SHOWS ────────────────────────────────────────────────────────────────
 const SHOWS = [

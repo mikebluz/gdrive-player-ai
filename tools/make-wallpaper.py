@@ -19,7 +19,7 @@ behind the windows should read as one surface with them, not as a photo
 someone pasted on.
 """
 
-import zlib, struct, sys, os
+import zlib, struct, sys, os, math
 
 W, H = 384, 216
 HORIZON = 122                      # low, so the busy part sits under the windows
@@ -289,14 +289,25 @@ if LAND:
 
   # ── foreground headland, bottom-left ──────────────────────────────────────
   # Granite: a ridge line with lit tops and dark flanks, then tide line beneath.
+  # The ridge used to stop dead at x=175, leaving a vertical cliff where the
+  # land simply ended — the straight edge that made the whole mass read as a
+  # rectangle. It now continues until the ridge line sinks past the bottom of
+  # the canvas, so the shore RUNS OUT into the water on its own.
+  #
+  # Two scales of noise, because one is what made it look machined: a slow
+  # undulation for the shape of the shoreline and a fine jitter for the granite.
+  SHORE = 236
   ridge = []
-  for x in range(0, 176):
+  for x in range(0, SHORE):
       t = x / 175.0
       base = H - 66 + int(38 * t * t)             # falls away to the right
       n = (rnd() - 0.5) * 3 + (2.4 if (x // 7) % 3 == 0 else 0)
+      n += 3.4 * math.sin(x * 0.051) + 2.0 * math.sin(x * 0.129 + 1.7)
       ridge.append(int(base + n))
 
   for x, top in enumerate(ridge):
+      if top >= H:                                 # sunk below the waterline
+          continue
       for y in range(top, H):
           d = y - top
           if d < 2:
@@ -308,8 +319,10 @@ if LAND:
           px(x, y, c)
 
   # foam where the rock meets the water
-  for x in range(0, 176):
+  for x in range(0, SHORE):
       top = ridge[x]
+      if top >= H:
+          continue
       if rnd() < 0.5:
           px(x, top - 1, P['foam'])
       if rnd() < 0.25:
@@ -317,13 +330,19 @@ if LAND:
 
   # spruce stand along the headland
   for bx, h in ((14, 30), (27, 22), (38, 34), (52, 24), (63, 18), (78, 27), (92, 16), (104, 21), (120, 13)):
-      conifer(bx, ridge[min(bx, 175)] - 1, h, P['tree_dk'], P['tree_md'], P['tree_lt'])
+      conifer(bx, ridge[min(bx, SHORE - 1)] - 1, h, P['tree_dk'], P['tree_md'], P['tree_lt'])
 
   # ── lighthouse, on the right point ─────────────────────────────────────────
   LX, LBASE = 344, H - 40
-  for x in range(LX - 20, LX + 22):                # its own small headland
-      t = abs(x - LX) / 21.0
-      top = LBASE - int(9 * (1 - t * t))
+  # The island is centred on the MIDPOINT of tower and keeper's house, not on
+  # the tower, and its crown is cubic rather than quadratic so the top is flat
+  # instead of domed. The first version was a narrow dome under the tower: the
+  # house, eleven pixels to its right, stood on water.
+  ISLE_C, ISLE_W, ISLE_H = LX + 5, 33, 10
+  for x in range(ISLE_C - ISLE_W, ISLE_C + ISLE_W + 1):
+      d = abs(x - ISLE_C) / float(ISLE_W)
+      top = LBASE - int(ISLE_H * (1 - d ** 3))
+      top += int((rnd() - 0.5) * 1.6)              # a rock, not an arch
       for y in range(top, H):
           px(x, y, P['rock_dk'] if BAYER[y % 4][x % 4] > 4 else P['rock_md'])
 
@@ -341,16 +360,8 @@ if LAND:
           px(x, y, P['lamp'] if TOP - 4 <= y <= TOP - 2 else P['rock_dk'])
   for x in range(LX - 4, LX + 5):
       px(x, TOP - 6, P['rock_dk'])
-  # The beam, thrown left over the water. Continuous and tapering — drawn with
-  # a per-pixel random gate it came out as a dashed line that read as a mistake
-  # rather than as light.
-  for i in range(54):
-      bx, by = LX - 6 - i, TOP - 3 - int(i * 0.14)
-      if bx < 0 or not (0 <= by < H - 1):
-          continue
-      a = 0.30 * (1 - i / 54.0)
-      px(bx, by, mix(buf[by][bx], P['lamp'], a))
-      px(bx, by + 1, mix(buf[by + 1][bx], P['lamp'], a * 0.55))
+  # The beam is NOT drawn here any more — it is its own layer so the page can
+  # rotate it about the lamp. See --sprite=beam.
   # keeper's house
   for y in range(LBASE - 16, LBASE - 8):
       for x in range(LX + 7, LX + 19):
@@ -421,6 +432,61 @@ if LAYER == 'sprite':
         px(WX + 2, WY + 6, trim); px(WX + 3, WY + 6, trim)     # pale flank
         for k in range(5):                                     # spray
             px(WX - 1 - k, WY + 9 + (k // 2), wake)
+
+    elif SPRITE == 'beam':
+        # The lighthouse beam, on its own layer so the page can ROTATE it about
+        # the lamp. Drawn pointing left and level; the CSS spins it and gates
+        # its opacity so it only shows on the sweep across the water.
+        LXb, TOPb = 344, (H - 40) - 32
+        for i in range(62):
+            bx, by = LXb - 6 - i, TOPb - 3
+            if bx < 0:
+                continue
+            a = int(150 * (1 - i / 62.0))          # tapers out with distance
+            px(bx, by, P['lamp'], a)
+            px(bx, by + 1, P['lamp'], int(a * 0.5))
+
+    elif SPRITE == 'sail':
+        # A sloop: hull, mast, one triangular main. Sails read at this size far
+        # better than hulls do, which is why it is mostly sail.
+        SX2, SY2 = 120, 146
+        for x in range(SX2, SX2 + 9): px(x, SY2, hull)
+        for x in range(SX2 + 1, SX2 + 8): px(x, SY2 + 1, hull)
+        for y in range(SY2 - 12, SY2): px(SX2 + 6, y, hull)      # mast
+        for k in range(11):                                       # mainsail
+            for x in range(SX2 + 6 - 1 - int(k * 0.55), SX2 + 6):
+                px(x, SY2 - 12 + k + 1, trim)
+        px(SX2 - 2, SY2 + 1, wake); px(SX2 - 4, SY2 + 1, wake)
+
+    elif SPRITE == 'buoy':
+        # A channel marker. It does not go anywhere — it just bobs, which is
+        # what makes the moving traffic read as moving.
+        BX2, BY2 = 210, 168
+        for y in range(BY2 - 6, BY2 + 2): px(BX2, y, hull); px(BX2 + 1, y, hull)
+        px(BX2, BY2 - 7, P['band']); px(BX2 + 1, BY2 - 7, P['band'])
+        px(BX2, BY2 - 4, P['band']); px(BX2 + 1, BY2 - 4, P['band'])
+        px(BX2 - 1, BY2 + 1, wake); px(BX2 + 2, BY2 + 1, wake)
+
+    elif SPRITE == 'seal':
+        # A head and a shoulder — a seal is mostly underwater, so most of the
+        # drawing is what is NOT there.
+        EX, EY = 80, 172
+        for x in range(EX, EX + 6): px(x, EY, hull)
+        px(EX + 1, EY - 1, hull); px(EX + 2, EY - 1, hull)
+        px(EX + 5, EY - 1, hull); px(EX + 6, EY - 1, hull)       # head
+        px(EX + 7, EY - 1, hull)
+        px(EX + 6, EY - 2, hull)
+        px(EX - 2, EY, wake); px(EX - 4, EY, wake)
+
+    elif SPRITE == 'ferry':
+        # Bigger, slower, further out — right up against the horizon so it
+        # reads as distance rather than as a second lobster boat.
+        FX, FY = 60, 127
+        for x in range(FX, FX + 22): px(x, FY, hull); px(x, FY + 1, hull)
+        for x in range(FX + 3, FX + 19): px(x, FY - 1, hull)
+        for x in range(FX + 5, FX + 15): px(x, FY - 3, hull); px(x, FY - 2, hull)
+        px(FX + 17, FY - 3, hull); px(FX + 17, FY - 4, hull)     # funnel
+        for x in (FX + 6, FX + 9, FX + 12): px(x, FY - 2, trim)  # lit windows
 
 # ── encode ─────────────────────────────────────────────────────────────────
 def chunk(tag, data):

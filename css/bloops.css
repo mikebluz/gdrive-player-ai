@@ -3734,6 +3734,16 @@
     .ambient-euclid-notelbl.off { color: transparent; }
     .ambient-euclid-notelbl.set { color: #c9b8ef; }                        /* explicit Step-Edit note */
     .ambient-euclid-notelbl.rand { color: #f0b64a; font-size: 0.62rem; }   /* 🎲 random from set */
+    /* IMPROVISING: the cells are showing the GENERATED rhythm for this cycle, not
+       the pattern you drew — amber, with the drawn pattern faded underneath, so it
+       can never be mistaken for an edit. (Deleted by accident during the
+       Drawn/Euclid cleanup — the JS kept setting the classes and nothing rendered
+       them, so improvised cycles looked identical to written ones.) */
+    .ambient-euclid-grid.improvising { outline: 1px dashed rgba(245,158,11,0.45); outline-offset: 2px; }
+    .ambient-euclid-grid.improvising .ambient-euclid-cell.on { opacity: 0.28; }
+    .ambient-euclid-grid.improvising .ambient-euclid-cell.impon {
+      opacity: 1; background: #f59e0b; border-color: #fbbf24; color: #1a1206;
+    }
     /* Tinted by PITCH CLASS — twelve hues round the wheel, so the same pitch
        always reads the same colour and a walking line shows as a colour drift.
        AFTER the semantic classes and :not()-guarded, so an explicit Step-Edit

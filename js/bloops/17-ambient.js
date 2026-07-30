@@ -19131,6 +19131,27 @@
                         if (_row) c2.classList.toggle('impon', _row[i2 % _row.length] === 1);
                         else c2.classList.remove('impon');
                       });
+                      // …and the NOTE READOUT with them. It is rendered once from
+                      // the DRAWN pattern, so during improvised cycles it named
+                      // pitches for hits that were not sounding. Recompute against
+                      // whichever row is actually playing.
+                      const _labs = grid.querySelectorAll('.ambient-euclid-notelbl');
+                      if (_labs.length) {
+                        const _src2 = _ambNotesOf(L);
+                        const _N2 = Math.max(1, _ambScaleIntervals(_src2).length);
+                        const _t2 = _ambAsNotes(_src2).type;
+                        const _cp2 = (_t2 === 'chord' || _t2 === 'wrap');
+                        const _rg2 = Math.max(1, Math.min(4, L.register | 0) || 2);
+                        const _shown = _row || _ambEuclidPat(L, _pu, steps, Math.max(0, L.rotate | 0), 1, 0, L.euclidRegen | 0);
+                        _labs.forEach((el2, i2) => {
+                          if (_shown[i2 % _shown.length] !== 1) { el2.textContent = ''; el2.className = 'ambient-euclid-notelbl off'; el2.removeAttribute('data-pc'); return; }
+                          const lb = _ambEuclidNoteLabel(L, _src2, _N2, _cp2, _rg2, _shown, i2);
+                          el2.textContent = lb.t;
+                          el2.className = 'ambient-euclid-notelbl ' + (lb.c || '');
+                          const pc2 = _ambNoteNamePc(lb.t);
+                          if (pc2 >= 0) el2.setAttribute('data-pc', String(pc2)); else el2.removeAttribute('data-pc');
+                        });
+                      }
                     }
                   }
                 } catch (e) {}

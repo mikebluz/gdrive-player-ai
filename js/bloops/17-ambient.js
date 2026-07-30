@@ -2051,9 +2051,18 @@
       }
       if (!host.delay || typeof host.delay !== 'object') host.delay = { ...d.delay };
       else ['mix', 'timeMs', 'feedback', 'ping', 'spread'].forEach(k => { if (!Number.isFinite(host.delay[k])) host.delay[k] = d.delay[k]; });
+      // BPM sync (additive string; absent/'' = the free ms Time, byte-identical).
+      // An unknown division is dropped rather than kept, so a project written by
+      // a newer build degrades to free-ms here instead of silently playing at 0.
+      if (host.delay) {
+        if (typeof host.delay.sync !== 'string' || (host.delay.sync && !_AMB_RATES[host.delay.sync])) {
+          if ('sync' in host.delay) delete host.delay.sync;
+        } else if (!host.delay.sync) delete host.delay.sync;
+      }
       host.delay.spread = Math.max(0, Math.min(100, host.delay.spread | 0)); _dk(host.delay);
       if (!host.dist || typeof host.dist !== 'object') host.dist = { ...d.dist };
       else ['mix', 'amount', 'tone', 'focus'].forEach(k => { if (!Number.isFinite(host.dist[k])) host.dist[k] = d.dist[k]; });
+
       host.dist.tone = Math.max(0, Math.min(100, host.dist.tone | 0));
       host.dist.focus = Math.max(0, Math.min(100, host.dist.focus | 0));
       _dk(host.dist);
@@ -6314,11 +6323,59 @@
     // (quarter note = 1 beat). When a layer carries a `rate`, its interval is
     // derived live from the global tempo (so changing BPM scales it), and the
     // ms Interval slider is ignored. Empty/unknown rate → fall back to Interval.
-    const _AMB_RATES = { '1/1': 4, '1/2': 2, '1/4': 1, '1/4T': 2 / 3, '1/8': 0.5, '1/8T': 1 / 3, '1/16': 0.25, '1/16T': 1 / 6, '1/32': 0.125 };
+    const _AMB_RATES = { '1/1': 4, '1/2': 2, '1/4': 1, '1/4T': 2 / 3, '1/8': 0.5, '1/8T': 1 / 3, '1/16': 0.25, '1/16T': 1 / 6, '1/32': 0.125,
+      // DOTTED (× 1.5) — added for the delay's BPM sync, where dotted-8th is the
+      // signature setting. Additive keys: nothing iterates this table to build a
+      // UI, so no existing Rate dropdown gains an option, and an unknown rate
+      // still falls through _ambRateBeats to 0 (= use the ms value).
+      '1/4.': 1.5, '1/8.': 0.75, '1/16.': 0.375 };
     function _ambRateBeats(rate) { return (rate && _AMB_RATES[rate]) ? _AMB_RATES[rate] : 0; }
+    // DELAY BPM SYNC. `delay.sync` is a beat division ('' = free ms). It is the
+    // same shape as the pitch echo's `pecho.sync` — a string key into _AMB_RATES,
+    // resolved live so a tempo change re-times the repeats.
+    //
+    // CEILING: the core's delay line is DELAY_LEN = 48000 samples (dsp/src/strip.rs),
+    // i.e. ~1 s, and strip_delay clamps to (DELAY_LEN-130)/SR. So a division that
+    // resolves past that would play at one time on the core path and another on the
+    // node path. The SYNC path is therefore clamped here, and the division list
+    // stops at 1/4 for the same reason. The FREE-ms path is deliberately left
+    // exactly as it was — clamping it too would change existing projects whose
+    // Time sits above 1000 ms (the slider allows 1500), which is a pre-existing
+    // node-vs-core divergence and not this feature's business.
+    const _AMB_DELAY_MAX_SEC = 0.99;
+    const _AMB_DELAY_SYNCS = ['1/4', '1/4T', '1/8.', '1/8', '1/8T', '1/16.', '1/16', '1/16T'];
+    function _ambDelaySec(dly) {
+      const b = _ambRateBeats(dly && dly.sync);
+      if (b > 0) {
+        _ambArmTempoResync();
+        return Math.max(0.001, Math.min(_AMB_DELAY_MAX_SEC, b * (60 / Math.max(20, _ambBpm()))));
+      }
+      return Math.max(0.001, ((dly && dly.timeMs) | 0) / 1000);
+    }
+    // Readout text: free → "300 ms"; synced → "1/8 · 250 ms" so the resolved time is
+    // still visible (and a division pinned by the ceiling above reads as "≤").
+    function _ambDelayTimeText(dly) {
+      const b = _ambRateBeats(dly && dly.sync);
+      if (!(b > 0)) return _ambFmtMs((dly && dly.timeMs) | 0);
+      const raw = b * (60 / Math.max(20, _ambBpm()));
+      const sec = Math.min(_AMB_DELAY_MAX_SEC, raw);
+      return dly.sync + ' \u00b7 ' + (raw > sec ? '\u2264' : '') + _ambFmtMs(Math.round(sec * 1000));
+    }
+    // A synced delay has to follow the tempo, and the FX params are only pushed on
+    // an edit (_ambSyncMods) — the tick doesn't push them. Self-installing on the
+    // first synced resolve, so a project that never syncs a delay costs nothing.
+    let _ambTempoResyncWired = false;
+    function _ambArmTempoResync() {
+      if (_ambTempoResyncWired) return;
+      const el = document.getElementById('tempo-input') || ((typeof tempoInput !== 'undefined') ? tempoInput : null);
+      if (!el) return;
+      _ambTempoResyncWired = true;
+      el.addEventListener('change', () => { try { if (_masterEng && _masterEng.timer) _ambSyncMods(); } catch (e) {} });
+    }
     // Effective interval (sec) for a layer, honoring `rate` first, else Interval
     // (snapped to the step grid in global Sync mode via _ambSnap).
     function _ambStepSecFor(lc, minSec, cfg) {
+
       const b = _ambRateBeats(lc && lc.rate);
       if (b > 0) return Math.max(minSec || 0.02, b * (60 / _ambBpm()));
       return _ambSnap(Math.max(minSec || 0.05, (lc.intervalMs | 0) / 1000), cfg);
@@ -12454,10 +12511,11 @@
             1 + Math.max(0, Math.min(100, pha.depth | 0)) / 100 * 4,
             0.1 + Math.max(0, Math.min(100, pha.rate | 0)) / 100 * 3.9);
           e.core.cmd('strip_delay', sl, wantDelay ? 1 : 0, wantPing ? 1 : 0, _wet01(dly),
-            Math.max(0.001, (dly.timeMs | 0) / 1000), Math.max(0, Math.min(0.95, (dly.feedback | 0) / 100)), c01(dly.spread));
+            _ambDelaySec(dly), Math.max(0, Math.min(0.95, (dly.feedback | 0) / 100)), c01(dly.spread));
           e.core.cmd('strip_autopan', sl, wantAutopan ? 1 : 0, _wet01(apan), c01(apan.depth),
             0.05 + Math.max(0, Math.min(100, apan.rate | 0)) / 100 * 7.95);
           e.revSend.gain.value = _ambRevSendGain(layer, lc.revSend);
+
           const _fo = _ambFxCoreOrder(lc);
           e.core.cmd('strip_fxorder', sl, _fo[0], _fo[1], _fo[2], _fo[3], _fo[4]);   // in-line FX processed in fxChain order
           // Wet Only with no dry-stripping in-line FX → mute the dry output (the
@@ -12535,10 +12593,11 @@
           e.dist.wet.value = _wet01(dst);
         }
         if (e.delay) {
-          e.delay.delayTime.value = Math.max(0.001, (dly.timeMs | 0) / 1000);
+          e.delay.delayTime.value = _ambDelaySec(dly);
           e.delay.feedback.value = Math.max(0, Math.min(0.95, (dly.feedback | 0) / 100));
           e.delay.wet.value = _wet01(dly);
         }
+
         if (e.chorus) {
           e.chorus.wet.value = _wet01(cho);
           e.chorus.depth = Math.max(0, Math.min(1, (cho.depth | 0) / 100));
@@ -20978,9 +21037,52 @@
       '<input type="range" id="' + id + '" min="' + min + '" max="' + max + '" step="' + step + '" value="' + val + '" />' +
       '<span class="ambient-hint" id="' + id + '-v"></span></div>';
     };
+    // DELAY TIME row: the ms slider plus a beat-division select, laid out like the
+    // pitch echo's Time control (which pairs the same two things) rather than as a
+    // second full-width row. Picking a division makes the slider inert — the
+    // readout then shows the resolved time, and the slider is disabled so it can't
+    // read as a live control that does nothing.
+    const _ambDlyTimeRow = (layer) => {
+      const id = 'ambient-' + layer + '-fx-dly-time', sid = 'ambient-' + layer + '-fx-dly-sync';
+      const t = 'Echo spacing. Free ms, or pick a beat division to lock the repeats to the tempo.';
+      return '<div class="ambient-ctrl" title="' + t + '"><label for="' + id + '" title="' + t + '">Time</label>' +
+        '<input type="range" id="' + id + '" min="20" max="1500" step="5" value="300" />' +
+        '<span class="ambient-hint" id="' + id + '-v"></span>' +
+        '<select id="' + sid + '" class="ambient-select ambient-dly-sync" title="Lock the delay time to a beat division of the project tempo (overrides the ms slider).">' +
+          '<option value="">free</option>' +
+          _AMB_DELAY_SYNCS.map(k => '<option value="' + k + '">' + k + '</option>').join('') +
+        '</select></div>';
+    };
+    // Reflect a delay's sync state into its three controls: the division select,
+    // the Time readout (resolved ms while synced), and the slider's disabled state
+    // — a slider that still looks live while a division overrides it reads as a
+    // broken control. `el` is the caller's own id-resolver (each FX cluster scopes
+    // ids differently); skipText is for the one caller that already wrote the hint.
+    function _ambSyncDlyUi(el, dly, skipText) {
+      if (!dly) return;
+      const sel = el('fx-dly-sync'); if (sel) sel.value = dly.sync || '';
+      if (!skipText) { const v = el('fx-dly-time-v'); if (v) v.textContent = _ambDelayTimeText(dly); }
+      const sl = el('fx-dly-time'); if (sl) sl.disabled = !!(dly.sync && _AMB_RATES[dly.sync]);
+    }
+    // Wire the division select. A <select> needs `change` + a string value, so it
+    // can't ride the numeric `input`-driven bindFx helpers each FX cluster defines;
+    // this is the one shape all four clusters share. Choosing "free" DELETES the
+    // field rather than storing '' — absence is the neutral state (normalize prunes
+    // it either way, but storing '' would survive until the next getCfg).
+    function _ambWireDlySync(el, getL, after) {
+      const sel = el('fx-dly-sync'); if (!sel) return;
+      sel.addEventListener('change', () => {
+        const L = getL(); if (!L || !L.delay) return;
+        const v = sel.value || '';
+        if (v && _AMB_RATES[v]) L.delay.sync = v; else delete L.delay.sync;
+        _ambSyncDlyUi(el, L.delay);
+        if (after) after();
+      });
+    }
     // Saved sequences as a "Sequence" optgroup for shape/wave dropdowns.
     function _ambSeqWaveOptgroup() {
       const list = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences : [];
+
       const o = list.map((s, i) => (s && s.type !== 'audio' && Array.isArray(s.steps) && s.steps.length)
         ? '<option value="seq:' + i + '">' + String(s.name || ('Seq ' + (i + 1))).replace(/[<>&"]/g, '') + '</option>' : '').join('');
       return o ? ('<optgroup label="Sequence">' + o + '</optgroup>') : '';
@@ -22224,10 +22326,11 @@
           _ambSl('Send', 'ambient-' + layer + '-fx-rev', 0, 100, 0, 'to verb')) +
         _ambFxItem('delay', 'Delay',
           _ambSl('Mix', 'ambient-' + layer + '-fx-dly-mix', 0, 100, 0, 'dry → wet') +
-          _ambTm('Time', 'ambient-' + layer + '-fx-dly-time', 20, 1500, 5, 300) +
+          _ambDlyTimeRow(layer) +
           _ambSl('Feedback', 'ambient-' + layer + '-fx-dly-fb', 0, 95, 35, '%') +
           _ambSl('Ping-Pong', 'ambient-' + layer + '-fx-dly-ping', 0, 1, 0, 'normal → bounce L/R') +
           _ambSl('Spread', 'ambient-' + layer + '-fx-dly-spread', 0, 100, 0, 'mono → wide (stereo)') +
+
           _ambFxDk('delay')) +
         _ambFxItem('chorus', 'Chorus',
           _ambSl('Mix', 'ambient-' + layer + '-fx-cho-mix', 0, 100, 0, 'dry → wet') +
@@ -22982,9 +23085,11 @@
       bindFx('dly-mix', (q, v) => { q.delay.mix = v; });
       bindFx('dly-time', (q, v) => { q.delay.timeMs = v; });
       bindFx('dly-fb', (q, v) => { q.delay.feedback = v; }); bindFx('dly-ping', (q, v) => { q.delay.ping = v; }); bindFx('dly-spread', (q, v) => { q.delay.spread = v; });
+      _ambWireDlySync(el, () => { _E = E; return getSq(); }, () => { if (E.timer) { try { _ambSyncMods(); } catch (x) {} } persist(); });
       bindFx('dist-amt', (q, v) => { q.dist.amount = v; });
       bindFx('dist-focus', (q, v) => { q.dist.focus = v; });
       bindFx('dist-tone', (q, v) => { q.dist.tone = v; });
+
       bindFx('dist-mix', (q, v) => { q.dist.mix = v; });
       bindFx('cho-mix', (q, v) => { q.chorus.mix = v; }); bindFx('cho-depth', (q, v) => { q.chorus.depth = v; }); bindFx('cho-rate', (q, v) => { q.chorus.rate = v; });
       bindFx('pha-mix', (q, v) => { q.phaser.mix = v; }); bindFx('pha-depth', (q, v) => { q.phaser.depth = v; }); bindFx('pha-rate', (q, v) => { q.phaser.rate = v; });
@@ -23008,10 +23113,11 @@
       ['vca', 'vco', 'vcf'].forEach(t => { if (!s.mod || !s.mod[t]) return; setVal('mod-' + t + '-depth', s.mod[t].depth); setVal('mod-' + t + '-rate', s.mod[t].rate); _ambSyncModShapeEl(el, s.mod[t], t); });
       setVal('mod-sync', (s.mod && s.mod.sync === 'sync') ? 'sync' : 'free');
       setVal('fx-rev', s.revSend);
-      if (s.delay) { setVal('fx-dly-mix', s.delay.mix); setVal('fx-dly-time', s.delay.timeMs); const dtv = el('fx-dly-time-v'); if (dtv) dtv.textContent = _ambFmtMs(s.delay.timeMs); setVal('fx-dly-fb', s.delay.feedback); setVal('fx-dly-ping', s.delay.ping); setVal('fx-dly-spread', s.delay.spread || 0); }
+      if (s.delay) { setVal('fx-dly-mix', s.delay.mix); setVal('fx-dly-time', s.delay.timeMs); _ambSyncDlyUi(el, s.delay); setVal('fx-dly-fb', s.delay.feedback); setVal('fx-dly-ping', s.delay.ping); setVal('fx-dly-spread', s.delay.spread || 0); }
       if (s.dist) { setVal('fx-dist-amt', s.dist.amount); setVal('fx-dist-focus', s.dist.focus); setVal('fx-dist-tone', s.dist.tone); setVal('fx-dist-mix', s.dist.mix); }
       if (s.chorus) { setVal('fx-cho-mix', s.chorus.mix); setVal('fx-cho-depth', s.chorus.depth); setVal('fx-cho-rate', s.chorus.rate); }
       if (s.phaser) { setVal('fx-pha-mix', s.phaser.mix); setVal('fx-pha-depth', s.phaser.depth); setVal('fx-pha-rate', s.phaser.rate); }
+
       if (s.autopan) { setVal('fx-apan-mix', s.autopan.mix); setVal('fx-apan-depth', s.autopan.depth); setVal('fx-apan-rate', s.autopan.rate); }
       _ambSeqReturnVis(E, id);
       _ambSeqIntervalModeVis(E, id); // sets the interval readout too (overrides the line above in Auto)
@@ -24061,9 +24167,11 @@
       bindFx('dly-mix', (q, v) => { q.delay.mix = v; });
       bindFx('dly-time', (q, v) => { q.delay.timeMs = v; });
       bindFx('dly-fb', (q, v) => { q.delay.feedback = v; }); bindFx('dly-ping', (q, v) => { q.delay.ping = v; }); bindFx('dly-spread', (q, v) => { q.delay.spread = v; });
+      _ambWireDlySync(el, () => { _E = E; return getL(); }, () => { sync(); persist(); });
       bindFx('dist-amt', (q, v) => { q.dist.amount = v; });
       bindFx('dist-focus', (q, v) => { q.dist.focus = v; });
       bindFx('dist-tone', (q, v) => { q.dist.tone = v; });
+
       bindFx('dist-mix', (q, v) => { q.dist.mix = v; });
       bindFx('cho-mix', (q, v) => { q.chorus.mix = v; }); bindFx('cho-depth', (q, v) => { q.chorus.depth = v; }); bindFx('cho-rate', (q, v) => { q.chorus.rate = v; });
       bindFx('pha-mix', (q, v) => { q.phaser.mix = v; }); bindFx('pha-depth', (q, v) => { q.phaser.depth = v; }); bindFx('pha-rate', (q, v) => { q.phaser.rate = v; });
@@ -24098,10 +24206,11 @@
       ['vca', 'vco', 'vcf'].forEach(t => { if (!s.mod || !s.mod[t]) return; setVal('mod-' + t + '-depth', s.mod[t].depth); setVal('mod-' + t + '-rate', s.mod[t].rate); _ambSyncModShapeEl(el, s.mod[t], t); });
       setVal('mod-sync', (s.mod && s.mod.sync === 'sync') ? 'sync' : 'free');
       setVal('fx-rev', s.revSend);
-      if (s.delay) { setVal('fx-dly-mix', s.delay.mix); setVal('fx-dly-time', s.delay.timeMs); const dtv = el('fx-dly-time-v'); if (dtv) dtv.textContent = _ambFmtMs(s.delay.timeMs); setVal('fx-dly-fb', s.delay.feedback); setVal('fx-dly-ping', s.delay.ping); setVal('fx-dly-spread', s.delay.spread || 0); }
+      if (s.delay) { setVal('fx-dly-mix', s.delay.mix); setVal('fx-dly-time', s.delay.timeMs); _ambSyncDlyUi(el, s.delay); setVal('fx-dly-fb', s.delay.feedback); setVal('fx-dly-ping', s.delay.ping); setVal('fx-dly-spread', s.delay.spread || 0); }
       if (s.dist) { setVal('fx-dist-amt', s.dist.amount); setVal('fx-dist-focus', s.dist.focus); setVal('fx-dist-tone', s.dist.tone); setVal('fx-dist-mix', s.dist.mix); }
       if (s.chorus) { setVal('fx-cho-mix', s.chorus.mix); setVal('fx-cho-depth', s.chorus.depth); setVal('fx-cho-rate', s.chorus.rate); }
       if (s.phaser) { setVal('fx-pha-mix', s.phaser.mix); setVal('fx-pha-depth', s.phaser.depth); setVal('fx-pha-rate', s.phaser.rate); }
+
       if (s.autopan) { setVal('fx-apan-mix', s.autopan.mix); setVal('fx-apan-depth', s.autopan.depth); setVal('fx-apan-rate', s.autopan.rate); }
     }
     function _ambRenderSampleLayers(E) {
@@ -25255,15 +25364,17 @@
       { const sy = el('mod-sync'); if (sy) sy.addEventListener('change', () => { _E = E; const L = get(); if (!L || !L.mod) return; L.mod.sync = sy.value; sync(); persist(); }); }
       const bindFx = (suf, setter) => { const e = el('fx-' + suf); if (!e) return; const v = el('fx-' + suf + '-v'); e.addEventListener('input', () => { const L = get(); if (!L) return; const val = parseInt(e.value, 10) || 0; setter(L, val); if (v && /time/.test(suf)) v.textContent = _ambFmtMs(val); sync(); persist(); }); };
       bindFx('rev', (q, v) => { q.revSend = v; }); bindFx('dly-mix', (q, v) => { q.delay.mix = v; }); bindFx('dly-time', (q, v) => { q.delay.timeMs = v; }); bindFx('dly-fb', (q, v) => { q.delay.feedback = v; }); bindFx('dly-ping', (q, v) => { q.delay.ping = v; }); bindFx('dly-spread', (q, v) => { q.delay.spread = v; }); bindFx('dist-amt', (q, v) => { q.dist.amount = v; }); bindFx('dist-focus', (q, v) => { q.dist.focus = v; }); bindFx('dist-tone', (q, v) => { q.dist.tone = v; }); bindFx('dist-mix', (q, v) => { q.dist.mix = v; }); bindFx('cho-mix', (q, v) => { q.chorus.mix = v; }); bindFx('cho-depth', (q, v) => { q.chorus.depth = v; }); bindFx('cho-rate', (q, v) => { q.chorus.rate = v; }); bindFx('pha-mix', (q, v) => { q.phaser.mix = v; }); bindFx('pha-depth', (q, v) => { q.phaser.depth = v; }); bindFx('pha-rate', (q, v) => { q.phaser.rate = v; }); bindFx('apan-mix', (q, v) => { q.autopan.mix = v; }); bindFx('apan-depth', (q, v) => { q.autopan.depth = v; }); bindFx('apan-rate', (q, v) => { q.autopan.rate = v; });
+      _ambWireDlySync(el, () => { _E = E; return get(); }, () => { sync(); persist(); });
       _ambWireTg(E, el, get, persist);
       _ambWireFilter(E, el, get, type + ':' + id, persist);
       ['vca', 'vco', 'vcf'].forEach(t => { if (inst.mod && inst.mod[t]) { setVal('mod-' + t + '-depth', inst.mod[t].depth); setVal('mod-' + t + '-rate', inst.mod[t].rate); _ambSyncModShapeEl(el, inst.mod[t], t); } });
       setVal('mod-sync', (inst.mod && inst.mod.sync === 'sync') ? 'sync' : 'free');
       setVal('fx-rev', inst.revSend);
-      if (inst.delay) { setVal('fx-dly-mix', inst.delay.mix); setVal('fx-dly-time', inst.delay.timeMs); const dt = el('fx-dly-time-v'); if (dt) dt.textContent = _ambFmtMs(inst.delay.timeMs); setVal('fx-dly-fb', inst.delay.feedback); setVal('fx-dly-ping', inst.delay.ping); setVal('fx-dly-spread', inst.delay.spread || 0); }
+      if (inst.delay) { setVal('fx-dly-mix', inst.delay.mix); setVal('fx-dly-time', inst.delay.timeMs); _ambSyncDlyUi(el, inst.delay); setVal('fx-dly-fb', inst.delay.feedback); setVal('fx-dly-ping', inst.delay.ping); setVal('fx-dly-spread', inst.delay.spread || 0); }
       if (inst.dist) { setVal('fx-dist-amt', inst.dist.amount); setVal('fx-dist-focus', inst.dist.focus); setVal('fx-dist-tone', inst.dist.tone); setVal('fx-dist-mix', inst.dist.mix); }
       if (inst.chorus) { setVal('fx-cho-mix', inst.chorus.mix); setVal('fx-cho-depth', inst.chorus.depth); setVal('fx-cho-rate', inst.chorus.rate); }
       if (inst.phaser) { setVal('fx-pha-mix', inst.phaser.mix); setVal('fx-pha-depth', inst.phaser.depth); setVal('fx-pha-rate', inst.phaser.rate); }
+
       if (inst.autopan) { setVal('fx-apan-mix', inst.autopan.mix); setVal('fx-apan-depth', inst.autopan.depth); setVal('fx-apan-rate', inst.autopan.rate); }
       try { _ambUnitSyncViz(E, p, inst); } catch (e) {}   // hide free Interval when BPM-synced
       if (type === 'beat') { try { _ambBeatGenVis(E, p, inst, p); } catch (e) {} }   // Gen mode rows (after UnitSyncViz so euclid can hide Interval)
@@ -27386,10 +27497,11 @@
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
         const L = cfg[layer]; if (!L) return;
         set('ambient-' + layer + '-fx-rev', L.revSend);
-        if (L.delay) { set('ambient-' + layer + '-fx-dly-mix', L.delay.mix); set('ambient-' + layer + '-fx-dly-time', L.delay.timeMs); hint('ambient-' + layer + '-fx-dly-time-v', _ambFmtMs(L.delay.timeMs)); set('ambient-' + layer + '-fx-dly-fb', L.delay.feedback); set('ambient-' + layer + '-fx-dly-ping', L.delay.ping); set('ambient-' + layer + '-fx-dly-spread', L.delay.spread || 0); }
+        if (L.delay) { set('ambient-' + layer + '-fx-dly-mix', L.delay.mix); set('ambient-' + layer + '-fx-dly-time', L.delay.timeMs); hint('ambient-' + layer + '-fx-dly-time-v', _ambDelayTimeText(L.delay)); _ambSyncDlyUi((suf) => document.getElementById(tr('ambient-' + layer + '-' + suf)), L.delay, true); set('ambient-' + layer + '-fx-dly-fb', L.delay.feedback); set('ambient-' + layer + '-fx-dly-ping', L.delay.ping); set('ambient-' + layer + '-fx-dly-spread', L.delay.spread || 0); }
         if (L.dist) { set('ambient-' + layer + '-fx-dist-amt', L.dist.amount); set('ambient-' + layer + '-fx-dist-focus', L.dist.focus); set('ambient-' + layer + '-fx-dist-tone', L.dist.tone); set('ambient-' + layer + '-fx-dist-mix', L.dist.mix); }
         if (L.chorus) { set('ambient-' + layer + '-fx-cho-mix', L.chorus.mix); set('ambient-' + layer + '-fx-cho-depth', L.chorus.depth); set('ambient-' + layer + '-fx-cho-rate', L.chorus.rate); }
         if (L.phaser) { set('ambient-' + layer + '-fx-pha-mix', L.phaser.mix); set('ambient-' + layer + '-fx-pha-depth', L.phaser.depth); set('ambient-' + layer + '-fx-pha-rate', L.phaser.rate); }
+
         if (L.autopan) { set('ambient-' + layer + '-fx-apan-mix', L.autopan.mix); set('ambient-' + layer + '-fx-apan-depth', L.autopan.depth); set('ambient-' + layer + '-fx-apan-rate', L.autopan.rate); }
       });
       // Seq + Sample layers are dynamic lists — (re)render for this engine.
@@ -28946,9 +29058,15 @@
         fxBind('rev', (lc, v) => { lc.revSend = v; });
         fxBind('dly-mix', (lc, v) => { lc.delay.mix = v; });
         fxBind('dly-time', (lc, v) => { lc.delay.timeMs = v; });
+        // `cfg` here is fetched per-event via cfg0() (there is no outer `cfg` in
+        // this closure — only `layer`), and ids resolve through G like fxBind's.
+        _ambWireDlySync((suf) => G('ambient-' + layer + '-' + suf),
+          () => { _E = E; const c = cfg0(); return c ? c[layer] : null; },
+          () => { if (E.timer) { try { _ambSyncMods(); } catch (e) {} } persist(); });
         fxBind('dly-fb', (lc, v) => { lc.delay.feedback = v; });
         fxBind('dly-ping', (lc, v) => { lc.delay.ping = v; });
         // Was MISSING while the slider rendered (_ambSl, ~21538) and read back
+
         // (set(), ~26697) — the classic primary-vs-schema wiring gap: it works on
         // an ADDED layer (schema-driven _ambWireInst) and did nothing at all on
         // bed/motif/texture/beat. Found by driving every control and diffing cfg.

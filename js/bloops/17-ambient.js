@@ -11071,7 +11071,12 @@
     }
     function _ambImprovToggle(L) {
       if (!L) return;
-      if (_ambImprovOn(L)) { delete L.improv; return; }
+      // Switching OFF keeps the settings. It used to `delete L.improv`, which
+      // threw away the counts AND all three slider values — flip off, flip on,
+      // and you were back at the defaults with your dial-in gone. An
+      // off-but-present object is exactly as neutral as an absent one, because
+      // every read goes through _ambImprovOn() and that requires `on`.
+      if (_ambImprovOn(L)) { const im0 = _ambImprovEnsure(L); im0.on = 0; return; }
       const im = _ambImprovEnsure(L);
       im.on = 1;
       if ((im.imp | 0) <= 0) im.imp = _AMB_IMPROV_DEF.imp;   // 0 improvised = off; don't switch on into a no-op
@@ -11094,7 +11099,10 @@
       const out = { on: (im.on === true || im.on === 1) ? 1 : 0 };
       for (const k of ['pat', 'imp']) out[k] = _ambImprovLen({ improv: im }, k);
       for (const k of ['rhythmVar', 'pitchVar', 'restProb']) out[k] = _ambImprovVar({ improv: im }, k, _AMB_IMPROV_DEF[k]);
-      if (!out.on) { delete L.improv; return; }       // off === absent === neutral
+      // Off is stored, not pruned (see _ambImprovToggle): `on: 0` is neutral to
+      // every consumer, and pruning would silently discard the user's counts and
+      // slider values on the next getCfg. ABSENT stays valid — that is what every
+      // project that has never touched the tab carries, and it is handled above.
       L.improv = out;
     }
     // The Pattern control's tab strip. The active tab is transient (`_gridTab`) —

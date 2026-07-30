@@ -364,7 +364,73 @@
       try { localStorage.setItem(_AMB_AREA_PRESET_LS, JSON.stringify(reg)); } catch (e) {}
     }
     function _ambFactoryAreaPresets() {
+      // 8-BIT / GAME pack. Chip music is a small palette used precisely: square
+      // and pulse leads, a fast arp standing in for chords, a root-line square
+      // bass, drums that are noise. These are AREAS — a whole scene per tap,
+      // with key, tempo and drums set, not a lone layer you then have to dress.
+      const _chipBeat = (a, pulses, len, rest) => {
+        Object.assign(a.beat, { present: true, on: true, gen: 'euclid', kit: 'tr808',
+          level: 68, pulses: pulses, steps: 8, restProb: rest, lengthMs: len });
+      };
+      const _chipOff = (a) => { ['bed', 'motif', 'texture'].forEach(k => { if (a[k]) { a[k].present = false; a[k].on = false; } }); };
+      const _mk = (type, id, cfg) => Object.assign(_ambDefaultLayer(type, id), cfg);
       return [
+        { name: '🕹 8-bit · Sports', hint: 'Square bass + 16th arp · brisk euclid kit · the stadium-anthem palette', build: (a) => {
+          a.name = '8-bit Sports'; a.bpm = 150;
+          a.reverb = { size: 25, damp: 70, type: 'room' };
+          _chipOff(a); _chipBeat(a, 5, 110, 8);
+          a.extras = [
+            _mk('bass', 1, { tone: 'square', level: 62, pulses: 5, steps: 8, register: 2, lengthMs: 150,
+              proximity: 20, attack: 1, decay: 40, sustain: 60, release: 60 }),
+            _mk('arp', 2, { tone: 'square', level: 46, arpRes: '16', octaves: 2, register: 5,
+              attack: 1, decay: 30, sustain: 45, release: 70 }),
+          ];
+        } },
+        { name: '🏁 8-bit · Racing', hint: 'Driving 8-pulse bass that improvises every 4th bar · pulse arp · flat-out kit', build: (a) => {
+          a.name = '8-bit Racing'; a.bpm = 168;
+          a.reverb = { size: 20, damp: 75, type: 'room' };
+          _chipOff(a); _chipBeat(a, 7, 90, 4);
+          a.extras = [
+            _mk('bass', 1, { tone: 'square', level: 64, pulses: 8, steps: 8, register: 2, lengthMs: 110,
+              proximity: 10, attack: 1, decay: 30, sustain: 55, release: 40,
+              improv: { pat: 3, imp: 1, rhythmVar: 25, pitchVar: 30, restProb: 5 } }),
+            _mk('arp', 2, { tone: 'square', level: 44, arpRes: '16', octaves: 2, register: 6,
+              attack: 1, decay: 25, sustain: 40, release: 50 }),
+          ];
+        } },
+        { name: '🦇 8-bit · Demons', hint: 'Harmonic minor · gothic pulse arp over a stalking bass — the Castlevania colour', build: (a) => {
+          a.name = '8-bit Demons'; a.bpm = 138;
+          a.keyOn = true; a.keyFollow = false; a.keyRoot = 9; a.keyScale = 'harmonic minor';   // SCALES keys are SPACED — 'harmonicMinor' silently normalizes to major
+          a.reverb = { size: 55, damp: 50, type: 'hall' };
+          _chipOff(a); _chipBeat(a, 4, 120, 10);
+          a.extras = [
+            _mk('bass', 1, { tone: 'square', level: 66, pulses: 6, steps: 8, register: 2, lengthMs: 130, proximity: 35 }),
+            _mk('arp', 2, { tone: 'square', level: 50, arpRes: '16', octaves: 2, register: 5, dir: 'up', rateVar: 10 }),
+          ];
+        } },
+        { name: '🤘 Heavy Metal', hint: 'Phrygian · distorted saw bass + riff locked to a straight-eight kit', build: (a) => {
+          a.name = 'Heavy Metal'; a.bpm = 160;
+          a.keyOn = true; a.keyFollow = false; a.keyRoot = 4; a.keyScale = 'phrygian';
+          a.reverb = { size: 35, damp: 60, type: 'room' };
+          _chipOff(a); _chipBeat(a, 8, 80, 0);
+          a.extras = [
+            _mk('bass', 1, { tone: 'sawtooth', level: 68, pulses: 8, steps: 8, register: 1, lengthMs: 120, proximity: 8,
+              dist: { mix: 55, amount: 65, tone: 62, focus: 30, dryKill: 0 } }),
+            _mk('run', 2, { tone: 'sawtooth', level: 58, register: 3, bars: 1, proximity: 25, ornament: 15,
+              dist: { mix: 45, amount: 55, tone: 70, focus: 40, dryKill: 0 } }),
+          ];
+        } },
+        { name: '💥 Pop Punk', hint: 'Bright saw bass + square riff with slides · lighter drive, busy kit', build: (a) => {
+          a.name = 'Pop Punk'; a.bpm = 172;
+          a.reverb = { size: 30, damp: 62, type: 'room' };
+          _chipOff(a); _chipBeat(a, 6, 100, 5);
+          a.extras = [
+            _mk('bass', 1, { tone: 'sawtooth', level: 64, pulses: 8, steps: 8, register: 2, lengthMs: 130, proximity: 12,
+              dist: { mix: 30, amount: 40, tone: 58, focus: 20, dryKill: 0 } }),
+            _mk('run', 2, { tone: 'square', level: 54, register: 4, bars: 2, proximity: 35, slide: 20,
+              dist: { mix: 35, amount: 45, tone: 65, focus: 25, dryKill: 0 } }),
+          ];
+        } },
         { name: '🌴 Vapor Plaza', hint: 'Royal Road · Palm Static bed · yoked Mall Fountain · half-time drums · tape hiss', build: (a) => {
           a.name = 'Vapor Plaza';
           a.reverb = { size: 75, damp: 55, type: 'cavern' };
@@ -30552,41 +30618,6 @@
           { name: '🌫 Chord Drone', type: 'drone', cfg: { level: 58, revSend: 40, pitchRule: 'voicing', density: 3, hold: 2, attack: 1800, release: 3000 } },
           { name: '🎠 Pulse Bed', type: 'bed', cfg: { level: 62, revSend: 30, strike: 4, lenRatio: 60, strum: 40, density: 3, attack: 120, release: 900 } },
           { name: '🪨 Roaming Hold', type: 'pedal', cfg: { level: 60, revSend: 25, strike: -2, lenRatio: 100, vary: 55, register: 3 } },
-          // 8-BIT / GAME pack. Chip music is a small palette used precisely: square
-          // and pulse leads, a fast arp standing in for chords, a square-bass root
-          // line, and drums that are noise. Each of these is a multi-layer preset
-          // so one tap gives a playable scene rather than a lone voice.
-          { name: '🕹 8-bit · Sports', layers: [
-            { type: 'beat', cfg: { gen: 'euclid', kit: 'tr808', level: 68, pulses: 5, steps: 8, restProb: 8, lengthMs: 110 } },
-            { type: 'bass', cfg: { tone: 'square', level: 62, pulses: 5, steps: 8, register: 2, lengthMs: 150, proximity: 20, attack: 1, decay: 40, sustain: 60, release: 60 } },
-            { type: 'arp',  cfg: { tone: 'square', level: 46, arpRes: '16', octaves: 2, register: 5, attack: 1, decay: 30, sustain: 45, release: 70 } },
-          ] },
-          { name: '🏁 8-bit · Racing', layers: [
-            { type: 'beat', cfg: { gen: 'euclid', kit: 'tr808', level: 66, pulses: 7, steps: 8, restProb: 4, lengthMs: 90 } },
-            { type: 'bass', cfg: { tone: 'square', level: 64, pulses: 8, steps: 8, register: 2, lengthMs: 110, proximity: 10, attack: 1, decay: 30, sustain: 55, release: 40,
-              improv: { pat: 3, imp: 1, rhythmVar: 25, pitchVar: 30, restProb: 5 } } },
-            { type: 'arp',  cfg: { tone: 'pulse', level: 44, arpRes: '16', octaves: 2, register: 6, dir: 'updown', attack: 1, decay: 25, sustain: 40, release: 50 } },
-          ] },
-          { name: '🦇 8-bit · Demons', layers: [
-            { type: 'beat', cfg: { gen: 'euclid', kit: 'tr808', level: 62, pulses: 4, steps: 8, restProb: 10, lengthMs: 120 } },
-            { type: 'bass', cfg: { tone: 'square', level: 66, pulses: 6, steps: 8, register: 2, lengthMs: 130, proximity: 35, keyOv: { mode: 'key', root: 9, scale: 'harmonicMinor' } } },
-            { type: 'arp',  cfg: { tone: 'pulse', level: 50, arpRes: '16', octaves: 2, register: 5, dir: 'up', rateVar: 10,
-              keyOv: { mode: 'key', root: 9, scale: 'harmonicMinor' } } },
-          ] },
-          { name: '🤘 Heavy Metal', layers: [
-            { type: 'beat', cfg: { gen: 'euclid', kit: 'tr808', level: 70, pulses: 8, steps: 8, restProb: 0, lengthMs: 80 } },
-            { type: 'bass', cfg: { tone: 'sawtooth', level: 68, pulses: 8, steps: 8, register: 1, lengthMs: 120, proximity: 8,
-              keyOv: { mode: 'key', root: 4, scale: 'phrygian' }, dist: { mix: 55, amount: 65, tone: 62, focus: 30, dryKill: 0 } } },
-            { type: 'run', cfg: { tone: 'sawtooth', level: 58, register: 3, bars: 1, proximity: 25, ornament: 15,
-              keyOv: { mode: 'key', root: 4, scale: 'phrygian' }, dist: { mix: 45, amount: 55, tone: 70, focus: 40, dryKill: 0 } } },
-          ] },
-          { name: '💥 Pop Punk', layers: [
-            { type: 'beat', cfg: { gen: 'euclid', kit: 'tr808', level: 68, pulses: 6, steps: 8, restProb: 5, lengthMs: 100 } },
-            { type: 'bass', cfg: { tone: 'sawtooth', level: 64, pulses: 8, steps: 8, register: 2, lengthMs: 130, proximity: 12,
-              dist: { mix: 30, amount: 40, tone: 58, focus: 20, dryKill: 0 } } },
-            { type: 'run', cfg: { tone: 'square', level: 54, register: 4, bars: 2, proximity: 35, slide: 20,
-              dist: { mix: 35, amount: 45, tone: 65, focus: 25, dryKill: 0 } } },
-          ] },
           // Battery — a rhythm section (Beat + Bass) whose patterns RE-ROLL on New take
           // (takeReroll: random Beat rerolls off the seed; euclid Bass re-derives its
           // euclidean salt from the seed). Multi-layer preset (preset.layers).

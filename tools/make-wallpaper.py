@@ -41,19 +41,34 @@ for _a in sys.argv:
 #   --layer=sky    sky gradient and cloud bars. Opaque, static, drawn first.
 #   --layer=moon   the disc and its halo alone, on transparency, so the page
 #                  can slide it upward independently of everything else.
-#   --layer=sea    everything from the waterline forward — sea, islands,
-#                  granite, spruces, lighthouse, gulls — on transparency, so
-#                  it occludes the moon while it is still below the horizon.
+#   --layer=water  the sea alone — gradient, chop, moon path — transparent
+#                  above the waterline, so it occludes the moon while the moon
+#                  is still below the horizon.
+#   --layer=land   islands, granite, spruces, lighthouse, gulls, on
+#                  transparency. It sits ABOVE the traffic, so a boat passes
+#                  BEHIND the headland and out from behind an island rather
+#                  than sliding over the top of them.
+#   --sprite=NAME  one piece of traffic (boat | loon | whale) alone on a full
+#                  transparent canvas, drawn at the height it belongs at, so
+#                  the page only has to slide it sideways.
+#
+# --layer=sea still means water+land together, which is what the single-image
+# renders use.
 #
 # --layer=all keeps the old single-image behaviour, which is what the --dusk
 # variant and any still render still use.
 LAYER = 'all'
+SPRITE = ''
 for _a in sys.argv:
     if _a.startswith('--layer='):
         LAYER = _a.split('=')[1]
-SKY  = LAYER in ('all', 'sky')
-MOON = LAYER in ('all', 'moon')
-SEA  = LAYER in ('all', 'sea')
+    if _a.startswith('--sprite='):
+        LAYER, SPRITE = 'sprite', _a.split('=')[1]
+SKY   = LAYER in ('all', 'sky')
+MOON  = LAYER in ('all', 'moon')
+WATER = LAYER in ('all', 'sea', 'water')
+LAND  = LAYER in ('all', 'sea', 'land')
+SEA   = WATER or LAND
 
 # ── palette ────────────────────────────────────────────────────────────────
 # Values are deliberately LOW and close together. This is a wallpaper: windows
@@ -188,9 +203,10 @@ for cy, cx0, cw in (((72, 34, 120), (92, 206, 132), (58, 250, 78), (108, 16, 76)
                 px(x, y, mix(buf[y][x], P['sky_glow'], 0.5))
 
 # ── sea ────────────────────────────────────────────────────────────────────
-# Everything from here to the encoder is the FOREGROUND — sea, land,
-# lighthouse, gulls — and runs only for the sea layer.
-if SEA:
+# Everything from here to the encoder is the FOREGROUND, in two halves: the
+# WATER (gradient, chop, moon path) and then the LAND that stands in front of
+# it. They are separate layers so animated traffic can be sandwiched between.
+if WATER:
   gradient(HORIZON, HORIZON + 22, P['sea_far'], P['sea_mid'])
   gradient(HORIZON + 22, HORIZON + 54, P['sea_mid'], P['sea_near'])
   gradient(HORIZON + 54, H, P['sea_near'], P['sea_deep'])
@@ -229,10 +245,12 @@ if SEA:
           for k in range(ln):
               px(gx + k, y, c)
 
-  # Reseed to a CONSTANT. Everything below draws with rnd() too — islands, the
-  # granite ridge, foam, spruces — and if it inherited the per-frame water seed
-  # the whole coastline would jitter between frames instead of only the sea.
-  _seed = 11061980
+# Reseed to a CONSTANT. Everything below draws with rnd() too — islands, the
+# granite ridge, foam, spruces — and if it inherited the per-frame water seed
+# the whole coastline would jitter between frames instead of only the sea.
+_seed = 11061980
+
+if LAND:
 
   # ── land ───────────────────────────────────────────────────────────────────
   def conifer(bx, by, h, dark, mid, lite):
@@ -343,6 +361,67 @@ if SEA:
       px(gx, gy, P['gull']); px(gx - 1, gy - 1, P['gull']); px(gx + 1, gy - 1, P['gull'])
       px(gx - 2, gy - 1, P['gull']); px(gx + 2, gy - 1, P['gull'])
 
+# ── TRAFFIC ────────────────────────────────────────────────────────────────
+# One piece of traffic per canvas, drawn at the height it belongs at, so the
+# page only has to slide it sideways. Full-canvas rather than a tight sprite
+# because that keeps the coordinate space identical to every other layer — no
+# scaling maths to keep in sync when the wallpaper is `cover`-fitted.
+#
+# All three sit BETWEEN water and land, so they pass behind the headland, the
+# spruces and the islands instead of over them. That is the whole reason the
+# sea was split in two.
+if LAYER == 'sprite':
+    hull = P['rock_dk']; trim = P['foam']; wake = P['glint']
+
+    if SPRITE == 'boat':
+        # A lobster boat in the middle distance: low hull, small wheelhouse,
+        # a short mast. Twelve pixels of it, which at 4x is plenty to read.
+        BX, BY = 180, 138
+        for x in range(BX, BX + 13):                       # hull
+            px(x, BY, hull); px(x, BY + 1, hull)
+        for x in range(BX + 1, BX + 12): px(x, BY + 2, hull)
+        for x in range(BX + 3, BX + 8):                    # wheelhouse
+            px(x, BY - 3, hull); px(x, BY - 2, hull)
+        px(BX + 4, BY - 4, hull); px(BX + 5, BY - 4, hull)
+        px(BX + 10, BY - 4, hull); px(BX + 10, BY - 3, hull)   # mast
+        px(BX + 10, BY - 5, hull)
+        px(BX + 4, BY - 3, trim); px(BX + 5, BY - 3, trim)     # lit window
+        for k in range(6):                                     # wake
+            if k % 2 == 0: px(BX - 2 - k, BY + 2, wake)
+
+    elif SPRITE == 'loon':
+        # Loons ride LOW — a long body barely above the surface and a black head
+        # held up on a straight neck. The silhouette is the whole trick, so this
+        # is drawn bigger than scale and placed in the MID water: the first pass
+        # sat it in the near water, where a dark bird on the dark end of the sea
+        # gradient was a smudge rather than a shape.
+        LX2, LY = 250, 158
+        for x in range(LX2, LX2 + 10): px(x, LY, hull)         # waterline
+        for x in range(LX2 + 1, LX2 + 9): px(x, LY + 1, hull)  # body below it
+        for x in range(LX2 + 2, LX2 + 7): px(x, LY - 1, hull)  # rounded back
+        px(LX2 + 8, LY - 1, hull)                              # neck
+        px(LX2 + 8, LY - 2, hull); px(LX2 + 8, LY - 3, hull)
+        px(LX2 + 8, LY - 4, hull); px(LX2 + 9, LY - 4, hull)   # head
+        px(LX2 + 10, LY - 4, hull)                             # bill
+        px(LX2 + 3, LY, trim); px(LX2 + 5, LY, trim)           # flank checks
+        for k in (2, 4, 7):                                    # wake
+            px(LX2 - k, LY + 1, wake)
+
+    elif SPRITE == 'whale':
+        # Mid-breach: the body clear of the surface at an angle, flukes still
+        # low. Drawn once at the top of its arc — the page throws the arc.
+        WX, WY = 300, 150
+        body = [(0,7),(1,6),(2,5),(3,4),(4,3),(5,2),(6,2),(7,1),(8,1),(9,1),(10,2),(11,3)]
+        for dx, dy in body:
+            for t in range(4):
+                px(WX + dx, WY + dy + t, hull)
+        px(WX + 12, WY + 4, hull); px(WX + 12, WY + 5, hull)   # tail stock
+        px(WX + 13, WY + 6, hull); px(WX + 14, WY + 7, hull)   # flukes
+        px(WX + 13, WY + 8, hull); px(WX + 15, WY + 8, hull)
+        px(WX + 2, WY + 6, trim); px(WX + 3, WY + 6, trim)     # pale flank
+        for k in range(5):                                     # spray
+            px(WX - 1 - k, WY + 9 + (k // 2), wake)
+
 # ── encode ─────────────────────────────────────────────────────────────────
 def chunk(tag, data):
     return (struct.pack('>I', len(data)) + tag + data +
@@ -366,9 +445,12 @@ png = (b'\x89PNG\r\n\x1a\n'
 out = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'img')
 os.makedirs(out, exist_ok=True)
 stem = 'wallpaper-maine-dusk' if DUSK else 'wallpaper-maine'
-if LAYER == 'sky':    name = 'wp-sky.png'
-elif LAYER == 'moon': name = 'wp-moon.png'
-elif LAYER == 'sea':  name = 'wp-sea-%d.png' % FRAME
+if LAYER == 'sky':      name = 'wp-sky.png'
+elif LAYER == 'moon':   name = 'wp-moon.png'
+elif LAYER == 'water':  name = 'wp-water-%d.png' % FRAME
+elif LAYER == 'land':   name = 'wp-land.png'
+elif LAYER == 'sprite': name = 'wp-%s.png' % SPRITE
+elif LAYER == 'sea':    name = 'wp-sea-%d.png' % FRAME
 else:                 name = '%s.png' % stem if FRAME == 0 else '%s-%d.png' % (stem, FRAME)
 path = os.path.join(out, name)
 with open(path, 'wb') as f:

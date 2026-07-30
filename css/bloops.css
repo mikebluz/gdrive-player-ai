@@ -3883,6 +3883,8 @@
       cursor: pointer; touch-action: manipulation;
     }
     @media (hover: hover) { .ambient-euclid-presetsave:hover { border-color: #9f7aea; color: #d9cbff; } }
+    /* Header marker: this layer has a step Pattern you can draw on. */
+    .ambient-layer-patcap { font-size: 0.72rem; color: #9f7aea; margin-left: 4px; opacity: 0.85; cursor: help; }
     .ambient-patmode { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-bottom: 5px; }
     .ambient-patmode-btn {
       padding: 2px 9px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8;

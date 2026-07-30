@@ -23016,8 +23016,21 @@
       return confirm('Delete layer “' + (name || 'this layer') + '”? This can’t be undone.');
     }
     const _ambEscText = (s) => String(s == null ? '' : s).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
-    const _ambHead = (label, onId, delId, freezeKey, afterHead) =>
+    // Does this layer TYPE carry a step Pattern (the euclid grid)? Marked in the
+    // header so you can tell at a glance which layers you can draw a rhythm on —
+    // Bass and euclid Beat/Arp do; Bed/Motif/Drone/Pedal never do, and a Beat or
+    // Arp only does in its euclid mode.
+    const _AMB_NOTE12 = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    function _ambHasPattern(L, type) {
+      const t = type || (L && L.type) || '';
+      if (t === 'bass') return true;
+      if (t === 'beat') return !!(L && L.gen === 'euclid');
+      if (t === 'arp') return !!(L && L.euclid);
+      return false;
+    }
+    const _ambHead = (label, onId, delId, freezeKey, afterHead, patCap) =>
       '<div class="ambient-layer-head"><button type="button" class="ambient-toggle" id="' + onId + '"><span class="ambient-layer-name">' + _ambEscText(label) + '</span></button>' +
+      (patCap ? '<span class="ambient-layer-patcap" title="This layer has a step Pattern \u2014 draw or pick a rhythm in its Pattern section">\u2fb4</span>' : '') +
       // Bar-length chip — the layer's loop length in bars, immediately right of
       // the on/off toggle (filled by _ambSyncLayerUnits).
       (freezeKey ? '<span class="ambient-layer-bars" data-barkey="' + freezeKey + '" title="Loop length in bars"></span>' : '') +
@@ -24922,26 +24935,26 @@
     const _AMB_LAYER_SCHEMA = {
       bed: { label: 'Bed', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
         ['sub', 'Progression', 'When an Area progression is set: the layer locks to it and plays voicings of the current chord. (Repeat/Times in Timing only apply when there is no Area progression.)'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold \u00b7 \u2212N = hold N units \u00b7 +N = N chords per unit'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length \u00b7 % of each strike a chord rings'], ['choke'], ['pitchrule'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'gravity', 'Gravity', 0, 100, 'free → chord tones'], ['sl', 'contour', 'Contour', -100, 100, 'fall → rise'], ['sl', 'stutter', 'Stutter', 0, 100, 'walk → repeats'], ['sl', 'phrasing', 'Phrasing', 0, 100, 'stream → gestures'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'syncop', 'Syncopate', 0, 100, 'straight → offbeat'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       beat: { label: 'Beat', ctrls: [
         ..._ambVoiceCtrls([['kit']], 500, 2000, 2000), ['synthkit'],
-        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['gen'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'],
+        ['grp', 'Source'], ['keyov'], ['gen'], ['grp', 'Pattern'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'],
         ['grp', 'Timing', 'How fast and how long the beat plays. In Random mode, Interval sets the gap between hits; in Program mode the grid follows Sync + Bars. Length is how long each hit rings.'], ['unitsync'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'bars per loop'], ['tm', 'lengthMs', 'Hit length', 60, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around hit length'], ['tight'],
         ..._AMB_MIX] },
@@ -24951,7 +24964,7 @@
       // Direction); Randomness deviates from it. Pitch material is the series.
       arp: { label: 'Arp', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
+        ['grp', 'Source'], ['keyov'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['grp', 'Pattern'], ['arpeuclid'], ['euclidgrid'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
         ['grp', 'Timing'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'pattern length — fills the Unit'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (euclid; 0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'rateVar', 'Rate var', 0, 100, 'steady → rushes'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -24959,7 +24972,7 @@
       // long; Rhythm/Pitch var add per-repeat variation.
       bass: { label: 'Bass', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['st', 'register', 'Register', 1, 4, 'octave'], ['euclidgrid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['grp', 'Pattern'], ['euclidgrid'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'pattern length — the seed fills the Unit'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['tight'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Walk', 0, 100, 'hold → wander (proximity-capped)'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -24967,14 +24980,14 @@
       // looping; Vary re-rolls; Len var spreads note lengths around Length.
       run: { label: 'Riff', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'phrasing', 'Articulate', 0, 100, 'even → arrivals sustain, runs detach'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Density · −N = 1 hit per N bars · +N = N per bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length · % of each strike a hit rings'], ['pitchrule'], ['st', 'voices', 'Voices', 1, 9, 'tones per hit (Stack)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'vary', 'Roam', 0, 100, 'root → wander degrees'], ['tight'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -24982,7 +24995,7 @@
       // vary are independent. A chord Notes source holds the whole chord.
       drone: { label: 'Drone', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
         ['sub', 'Progression', 'When an Area progression is set: PEDAL (default) holds ONE note per progression cycle, auto-chosen to work across every chord — the card explains the pick, and Note overrides it. VOICINGS re-voices the current chord instead (Subdivide/Feel/Variety).'], ['dronepedal'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold · −N = hold N units · +N = N per unit'], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = fill the hold · % of each strike the note rings'], ['pitchrule'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
@@ -25398,7 +25411,16 @@
         const NOTE = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
         const root = (ko && ko.mode === 'key') ? ((((ko.root | 0) % 12) + 12) % 12) : (((typeof rootIdx === 'number' ? rootIdx : 0) % 12) + 12) % 12;
         const scale = (ko && ko.mode === 'key' && ko.scale) ? ko.scale : 'major';
-        const hints = { '': 'follows the Area', key: 'this layer only', prog: 'its own changes', yoke: 'follows that layer’s notes' };
+        // INHERIT names the key it is actually inheriting rather than making you
+        // go and look: "C major (inherited)". Resolved through the same
+        // chokepoints the engine uses, so it tracks the Area / workspace live.
+        let _inhLbl = 'follows the Area';
+        try {
+          const _c = (_E && (_E._cfg || (_E.getCfg && _E.getCfg()))) || null;
+          const _r = _ambKeyRootPc(_c), _sc = _ambKeyScaleName(_c);
+          if (Number.isFinite(_r)) _inhLbl = _AMB_NOTE12[((_r % 12) + 12) % 12] + (_sc ? ' ' + _sc : '') + ' (inherited)';
+        } catch (e) {}
+        const hints = { '': _inhLbl, key: 'this layer only', prog: 'its own changes', yoke: 'follows that layer’s notes' };
         return '<div class="ambient-ctrl"><label title="' + _ambTitleAttr('Key', 'harmonic frame') + '">Key</label>' +
           '<select class="ambient-select amb-keyov-mode" data-kokey="' + kk + '" title="The layer’s harmonic frame: Inherit = the Area’s key / progression; Key = pin this layer to its own root + scale; Progression = this layer follows its own chord changes">' +
             '<option value=""' + (mode === '' ? ' selected' : '') + '>Inherit</option>' +
@@ -25584,7 +25606,7 @@
       // Every layer (Shape included) starts collapsed — just its header — so a
       // fresh Bloom panel stays compact and you expand only what you're tuning.
       const _collapsed = ' collapsed';
-      let html = '<div class="ambient-layer' + _collapsed + '" data-inst="' + fkey + '">' + _ambHead(_ambLayerLabel(inst, sch.label), p + '-on', p + '-del', fkey, _ambComposeReadoutHtml(inst));
+      let html = '<div class="ambient-layer' + _collapsed + '" data-inst="' + fkey + '">' + _ambHead(_ambLayerLabel(inst, sch.label), p + '-on', p + '-del', fkey, _ambComposeReadoutHtml(inst), _ambHasPattern(inst, type));
       // Kit-voice DRUM params for any layer whose voice derives to kit (a native
       // Beat — euclid or random — or a Bass voice-swapped to Kit) — the type schema
       // carries no single-drum control. Voices row only for a swapped layer that
@@ -28736,7 +28758,16 @@
       const _koRefresh = (kk) => {
         const L = _koLayer(kk); const ko = (L && L.keyOv) || null;
         const mode = (ko && (ko.mode === 'key' || ko.mode === 'prog' || ko.mode === 'yoke')) ? ko.mode : '';
-        const hints = { '': 'follows the Area', key: 'this layer only', prog: 'its own changes', yoke: 'follows that layer’s notes' };
+        // INHERIT names the key it is actually inheriting rather than making you
+        // go and look: "C major (inherited)". Resolved through the same
+        // chokepoints the engine uses, so it tracks the Area / workspace live.
+        let _inhLbl = 'follows the Area';
+        try {
+          const _c = (_E && (_E._cfg || (_E.getCfg && _E.getCfg()))) || null;
+          const _r = _ambKeyRootPc(_c), _sc = _ambKeyScaleName(_c);
+          if (Number.isFinite(_r)) _inhLbl = _AMB_NOTE12[((_r % 12) + 12) % 12] + (_sc ? ' ' + _sc : '') + ' (inherited)';
+        } catch (e) {}
+        const hints = { '': _inhLbl, key: 'this layer only', prog: 'its own changes', yoke: 'follows that layer’s notes' };
         host.querySelectorAll('.amb-keyov-mode[data-kokey="' + kk + '"]').forEach(s => { if (document.activeElement !== s) s.value = mode; });
         host.querySelectorAll('.amb-keyov-hint[data-kokey="' + kk + '"]').forEach(h => { h.textContent = hints[mode]; });
         host.querySelectorAll('.amb-keyov-keyrow[data-kokey="' + kk + '"]').forEach(r => { r.hidden = (mode !== 'key'); });

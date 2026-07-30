@@ -965,12 +965,36 @@ stack, held single note that roams per cycle, strummed pedal).
    predicted (RNG draw-order shifts) never materialized, because the merge
    followed the matrix's clock analysis instead of picking a clock first.
 
-   **REMAINING: Bed into the core, and presets.** Bed still rides the step
-   clock; the anchor path's part-aware window boundaries are what the step
-   clock cannot express (the located "three clocks" cost). Folding Bed in —
-   or deciding the two-clock split is the right permanent shape, with the
-   dials as the unification — is the last decision. The Add-layer presets
-   (§5) become trivial once that lands.
+   **STEP 3, SECOND CUT: BED FOLDED IN (2026-07-30, user decision) — the
+   sustain family is ONE emitter.** `_ambEmitSustain` now owns all three
+   cadence strategies: the pedal's modulo phrase→slots walk, the drone's
+   1-slot phrase (and window-clocked anchor path), and BED's iterative
+   step-clock walk — transplanted character-for-character from `runLayer`
+   (psi chord-grid snap, progMerge group walk, unit-sync heal, ×Hold
+   advance) and specialized (perCycle 1, guardMax 8, minSec 0.05). The
+   per-onset body survives as `_ambEmitBedOnset`, this walk's strike
+   function, exactly the shape of the anchor path's strike() closure.
+   THE MOVE THAT MADE IT SAFE: bed's walk state deliberately STAYS in
+   `E.clocks`/`E.iters` — every boundary, re-anchor, lock-thaw, When-cursor
+   and diagnostic consumer keys off those maps, so only the walk's OWNERSHIP
+   moved and none of them changed. `stepLayer` diverts bed to the sustain
+   emitter (one chokepoint, primary + extras both); `runLayer` still serves
+   motif / texture / random-beat. Kind is derived from the KEY, because the
+   primary bed carries no `type` field.
+
+   Proof: a 15-config bed battery (default · Write-on · hold + fractional ·
+   strike/ring · strum · phrase/repeats · prog + progMerge · pitchRule ·
+   When · unit-sync · structured · a motif interleave for shared-RNG order)
+   — 14/15 byte-identical; the 15th (velVar) turned out to differ between
+   ANY two runs of the OLD code too, because velVar draws unseeded
+   Math.random() (17-ambient ~7676) — a pre-existing nondeterminism the
+   battery surfaced, not a fold regression (verified self-consistent with
+   velVar excluded). Harness + golden + mod-parity all green, no re-baseline.
+
+   **§11 CLOSES with: the Add-layer presets (§5)** — the three types stay as
+   the one-click adds; presets showcasing the cross-type dial reach
+   (staccato stack, chord drone, strummed pedal-like bed) are the remaining
+   cosmetic step, plus (optional, behavior-changing) seeding velVar.
 2. Verify by construction: can Bed-with-dials reproduce Drone? Drone reproduce Pedal? A
    failure locates the genuinely-missing axis rather than guessing at it.
 3. Only then collapse to one emitter, with Bed/Drone/Pedal surviving as **presets in the

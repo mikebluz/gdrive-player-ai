@@ -3024,7 +3024,7 @@
         case 'series':   return { mode: 'window', store: 'arpState', emit: _ambEmitArpWindow,
             init: (tt) => ({ entry: 0, note: 0, pos: 0, _loop: 0, idx: 0, startAt: tt, lastAt: null }) };
         case 'random':   return { mode: 'step', gm: 16, ms: 0.03, emit: _ambEmitBeat };
-        case 'pad':      return { mode: 'step', gm: 8,  ms: 0.05, emit: _ambEmitBed };
+        case 'pad':      return { mode: 'step', gm: 8,  ms: 0.05, emit: _ambEmitBedOnset };   // (stepLayer diverts bed to _ambEmitSustain before this emit is reached)
         case 'walk':     return { mode: 'step', gm: 16, ms: 0.04, emit: _ambEmitMotif };
         default:         return null;   // sequence / sampleChop run bespoke tick loops
       }
@@ -6956,7 +6956,7 @@
         // few times (advancing the seeded RNG) until a non-empty unit is recorded.
         for (let i = 0; i < 8; i++) {
           _ambKeyTime = at;
-          if (ty === 'bed') _ambEmitBed(at, layer, space, key);
+          if (ty === 'bed') _ambEmitBedOnset(at, layer, space, key);
           else _ambEmitMotif(at, layer, space, key);
           const a = E.units && E.units[key];
           const last = a && a.length ? a[a.length - 1] : null;
@@ -7746,7 +7746,11 @@
       }
       return order;
     }
-    function _ambEmitBed(at, bed, space, key) {
+    // The bed's PER-ONSET body — voicing/strum/humanize/record-unit, one chord
+    // per call. Since the fold (docs §11 step 3, second cut) its CLOCK lives in
+    // _ambEmitSustain's bed branch; this is that walk's strike function, the
+    // same shape as the anchor path's strike() closure.
+    function _ambEmitBedOnset(at, bed, space, key) {
       key = key || 'bed';
       if (_ambEmitLocked(_E, key, at)) return;   // unit locked → replay it, no generation
       _ambKeyTime = at;   // resolve this note's key by its play-time (keyMaster sections)
@@ -8459,7 +8463,78 @@
     // part-aware window boundaries), not any dial; folding Bed in is the
     // remaining decision, not part of this cut.
     function _ambEmitSustain(E, inst, key, now, horizon, lead, space, cfg) {
-      const kind = (inst && inst.type === 'pedal') ? 'pedal' : 'drone';
+      // Kind by KEY, not inst.type — the PRIMARY bed (cfg.bed) carries no type
+      // field; its key is the bare 'bed'.
+      const _t0 = String(key).split(':')[0];
+      const kind = _t0 === 'pedal' ? 'pedal' : (_t0 === 'bed' ? 'bed' : 'drone');
+
+      if (kind === 'bed') {
+        // ---- BED cadence (§11 fold, second cut): the step-clock walk, ------
+        // transplanted VERBATIM from runLayer and specialized to bed
+        // (perCycle 1, guardMax 8, minSec 0.05). Bed's state DELIBERATELY
+        // stays in E.clocks / E.iters: every boundary, re-anchor, lock-thaw
+        // and diagnostic consumer keys off those maps, so moving the walk's
+        // OWNERSHIP here costs none of them anything — and the RNG stream is
+        // untouched because the arithmetic below is character-for-character
+        // runLayer's. The per-onset body is _ambEmitBedOnset (the strike
+        // function of this walk, like the anchor path's strike() closure).
+        const guardMax = 8, minSec = 0.05;
+        const C = E.clocks, I = E.iters;
+        if (!inst || inst.present === false || _ambFreezeFrozen(E, key)) return;
+        if (E.windingDown) return;
+        const HZ = horizon;
+        const psi = _ambProgSyncInfo(E, key, inst, cfg);
+        if (!C[key] || C[key] < now) {
+          if (psi) C[key] = lead;
+          else C[key] = _ambUnitGridSnap(E, key, inst, cfg, lead) + _ambDriftOffset(E, key, inst, cfg);
+        }
+        const sc = _ambLayerScale(E, key, inst, cfg);
+        let g = 0;
+        while (C[key] < HZ && g++ < guardMax) {
+          if (_ambCondFires(inst.when, Math.floor((I[key] | 0) / 1))) _ambEmitBedOnset(C[key], inst, space, key === 'bed' ? undefined : key);
+          else if (E.units && E.units[key]) _ambRecordUnit(E, key, C[key], []);
+          I[key] = (I[key] | 0) + 1;
+          if (psi) {
+            let ng;
+            if (inst.progMerge) {
+              // MERGE mode: one strike per voicing across the chord GROUP — advance
+              // to the next group sub-slot, or the next group's start at its edge.
+              const _sp = _ambProgSpanAt(E, inst, cfg, C[key] + 1e-4);
+              if (_sp) {
+                ng = (_sp.slot + 1 < _sp.subdiv) ? (_sp.groupStart + (_sp.slot + 1) * _sp.subUnit) : (_sp.groupStart + _sp.groupLen);
+                let guard2 = 0;   // skip any slot that lands inside the min gap (fast subdiv on a short group)
+                while (ng < C[key] + minSec && guard2++ < 64) { const s2 = _ambProgSpanAt(E, inst, cfg, ng + 1e-4); if (!s2) break; ng = (s2.slot + 1 < s2.subdiv) ? (s2.groupStart + (s2.slot + 1) * s2.subUnit) : (s2.groupStart + s2.groupLen); }
+              } else ng = C[key] + minSec;
+            } else {
+              // snap to the next chord-grid slot strictly after C[key] (with a min gap
+              // so a prompt first onset can't sit right on top of the next slot).
+              ng = psi.anchor + (Math.floor((C[key] - psi.anchor) / psi.subUnit) + 1) * psi.subUnit;
+              while (ng < C[key] + minSec) ng += psi.subUnit;
+            }
+            C[key] = ng;
+          } else {
+            const nx = C[key] + Math.max(minSec, _ambStepSecFor(inst, minSec, cfg) * sc * _ambHoldMult(key, inst));   // floor so a fast Sync can't flood; ×Hold lets a bed span N units
+            // UNIT-SYNC heal: when the layer is off the shared grid (a mid-play
+            // Sync flip, or global-Sync's snapped step drifting vs the exact
+            // period), pull the NEXT onset onto the nearest grid point — a
+            // one-time correction, then it stays locked. On-grid runs pass the
+            // tolerance check and keep nx verbatim (byte-identical).
+            const u = inst.unit;
+            if (u && u.mode === 'sync' && u.ref && Number.isFinite(E._barGridAnchor)) {
+              let P = 0; try { P = _ambLayerPeriodSec(E, key, inst, cfg); } catch (e) {}
+              if (P > 0.001) {
+                const drOff = _ambDriftOffset(E, key, inst, cfg);   // legacy drift = a deliberate constant offset — preserve it on the grid
+                let ng = E._barGridAnchor + drOff + Math.round((nx - E._barGridAnchor - drOff) / P) * P;
+                while (ng < C[key] + minSec) ng += P;
+                if (Math.abs(ng - nx) > 0.002) { C[key] = ng; continue; }
+              }
+            }
+            C[key] = nx;
+          }
+        }
+        return;
+      }
+
       if (!E.runPhase) E.runPhase = {};
       const _scale = _ambLayerScale(E, key, inst, cfg);
       const src = _ambNotesOf(inst);
@@ -14478,7 +14553,12 @@
         if (!g.run) return;
         if (_ambFreezeGate(E, key, now, g.hz)) return;
         window._ambCaptureSink = _ambCapSink(E, key); // always roll-capture
-        try { runLayer(key, lc, guardMax, minSec, emit, g.hz); }
+        try {
+          // BED belongs to the sustain family: its clock walk lives in
+          // _ambEmitSustain (the §11 fold). Everything else steps via runLayer.
+          if (String(key).split(':')[0] === 'bed') _ambEmitSustain(E, lc, key, now, g.hz, lead, space, cfg);
+          else runLayer(key, lc, guardMax, minSec, emit, g.hz);
+        }
         catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
       };
       // Windowed wrapper — like stepLayer but for engines that schedule a whole
@@ -14495,7 +14575,7 @@
         try { emit(E, lc, key, now, gate.hz, lead, space, cfg); }
         catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
       };
-      stepLayer('bed', cfg.bed, 8, 0.05, (at) => _ambEmitBed(at, cfg.bed, space));
+      stepLayer('bed', cfg.bed, 8, 0.05, (at) => _ambEmitBedOnset(at, cfg.bed, space));   // callback kept for shape; stepLayer diverts bed to _ambEmitSustain
       stepLayer('motif', cfg.motif, 16, 0.04, (at) => _ambEmitMotif(at, cfg.motif, space));
       windowLayer('texture', cfg.texture, 'runPhase', _ambEmitStepGrid);
       if (cfg.beat && cfg.beat.gen === 'euclid') windowLayer('beat', cfg.beat, 'runPhase', _ambEmitStepGrid);

@@ -8344,7 +8344,18 @@
               const _rsp = slotSec / _rat, _rlen = Math.min(_bLen, _rsp * 1000 * 0.95);
               for (let rr = 0; rr < _rat && ctx.cap < 256; rr++) { try { playNote(f, bp, _rlen, at + rr * _rsp, dest, undefined, _E.laneIdx()); } catch (e) {} ctx.cap++; }
             } else {
-              try { playNote(f, bp, _bLen, at, dest, undefined, _E.laneIdx()); } catch (e) {}
+              // IMPROVISED cycles generate their own, DENSER rhythm — but Length is
+            // an absolute ms set against the WRITTEN pattern's spacing. Measured
+            // on the default bass: written = 2 hits 1000 ms apart (a 400 ms note
+            // fits), improvised = 4-5 hits 250 ms apart (the SAME 400 ms note runs
+            // 150 ms into the next) → two overlaps per improvised cycle, heard as
+            // notes stepping on each other. Fit the note to the gap it actually
+            // has. Written cycles are untouched, so nothing else changes.
+            if (ctx.imp && !_ambTightOn(inst)) {
+              const _gapMs = _ambTightGap((j2) => pat[j2 % pat.length] === 1, bar * steps + slot, bars * steps) * slotSec * 1000;
+              if (_gapMs > 20) _bLen = Math.min(_bLen, _gapMs * 0.98);
+            }
+            try { playNote(f, bp, _bLen, at, dest, undefined, _E.laneIdx()); } catch (e) {}
               ctx.cap++;
             }
             // Ghosts (Variance): quiet pickup half a slot before, same pitch —

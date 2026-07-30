@@ -10726,7 +10726,25 @@
     // per Phrase bar). Callers index with `(bar*steps+slot) % pat.length`, so a
     // steps-long pattern repeats every bar (the default, byte-identical to before)
     // and a phrase-long one plays a different bar-block per bar.
+    // PATTERN SOURCE (`patMode`): what supplies a euclid layer's RHYTHM while
+    // the generator supplies its PITCHES. Until now this was implicit — a drawn
+    // grid silently beat the euclidean generator, and the ONLY way back to
+    // generated rhythm was Regen, which DESTROYED the drawing. So "Generate"
+    // could obey a pattern or play stochastically, but you could not switch
+    // between them without losing work.
+    //   'euclid' → generate from Pulses/Steps/Rotate, KEEPING any drawing
+    //   'drawn'  → play the drawn grid (explicit form of today's default)
+    //   absent   → today's behavior exactly (drawn if present, else generated),
+    //              which is what keeps saved projects byte-identical.
+    function _ambPatMode(L) {
+      const m = L && L.patMode;
+      return (m === 'euclid' || m === 'drawn') ? m : '';
+    }
     function _ambEuclidPat(inst, pulses, steps, rotate, V, v, salt) {
+      // Explicit 'euclid' bypasses the drawn override without discarding it.
+      if (_ambPatMode(inst) === 'euclid' && !(inst && inst.euclidKit)) {
+        return _ambEuclidVoicePat(pulses, rotate, steps, V, v, salt);
+      }
       // Drum-lanes is a step SEQUENCER (not euclidean-generated): the grid shows the
       // VIEWED page; a lane with no drawn hits is silent.
       if (inst && inst.euclidKit) {
@@ -10745,6 +10763,8 @@
       if (!L || typeof L !== 'object') return;
       _ambNormalizeCycleGate(L);   // ⏱ Schedule tab (additive; absent = every iteration plays)
       _ambNormalizeImprov(L);      // 🎲 Improvise tab (additive; absent = always plays as written)
+      // Pattern source (additive; absent = drawn-if-present, i.e. today).
+      if (L.patMode != null && L.patMode !== 'euclid' && L.patMode !== 'drawn') delete L.patMode;
       // Pitch-rule axis + the pedal's Stack voice count (additive; absent = native).
       if (L.pitchRule != null && ['voicing', 'stack', 'fixed', 'anchor'].indexOf(L.pitchRule) < 0) delete L.pitchRule;
       if (L.voices != null) { if (!Number.isFinite(L.voices)) delete L.voices; else L.voices = Math.max(1, Math.min(9, L.voices | 0)); }
@@ -11156,6 +11176,24 @@
         '<div class="ambient-hint">' + on + ' of ' + n + ' iterations play, then the schedule repeats. Stacks with the layer’s When control.</div>' +
       '</div>';
     }
+    // The Pattern tab's rhythm-source switch. Drawn = play the grid · Euclid =
+    // generate the rhythm from Pulses/Steps/Rotate and keep the drawing on file.
+    // Kit layers are excluded: drum-lanes IS a step sequencer, so a generated
+    // rhythm has no meaning there.
+    function _ambPatModeHtml(inst) {
+      if (inst && inst.euclidKit) return '';
+      const drawn = Array.isArray(inst && inst.euclidPattern) && inst.euclidPattern.some(r => Array.isArray(r));
+      const m = _ambPatMode(inst) || (drawn ? 'drawn' : 'euclid');
+      return '<div class="ambient-patmode">' +
+        '<button type="button" class="ambient-seg ambient-patmode-btn' + (m === 'drawn' ? ' on' : '') + '" data-patmode="drawn"' +
+          ' title="Play the grid below exactly as drawn. The engine still picks the NOTES; you own the rhythm.">\u2fb4 Drawn</button>' +
+        '<button type="button" class="ambient-seg ambient-patmode-btn' + (m === 'euclid' ? ' on' : '') + '" data-patmode="euclid"' +
+          ' title="Generate the rhythm from Pulses / Steps / Rotate. Any drawing you have made is kept, not discarded — switch back to Drawn to hear it again.">\u2684 Euclid</button>' +
+        '<span class="ambient-hint">' + (m === 'drawn'
+          ? (drawn ? 'plays your grid' : 'nothing drawn yet — tap cells below')
+          : (drawn ? 'generated \u00b7 your drawing is kept' : 'generated from the knobs')) + '</span>' +
+      '</div>';
+    }
     function _ambEuclidCellsHtml(inst, type, bar) {
       const d = _ambEuclidGridDims(inst, type); if (!d) return '';
       const nBars = d.bars;
@@ -11358,13 +11396,13 @@
         if (L._gridTab === 'improv') { grid.innerHTML = _ambGridTabsHtml(L) + _ambImprovHtml(L); return; }
         const d = _ambEuclidGridDims(L, type);
         const bar = d ? _ambEuclidBarInfo(E, key, L, (E.getCfg && E.getCfg()) || null, d.steps, d.bars) : null;
-        grid.innerHTML = _ambGridTabsHtml(L) + _ambEuclidCellsHtml(L, type, bar);
+        grid.innerHTML = _ambGridTabsHtml(L) + _ambPatModeHtml(L) + _ambEuclidCellsHtml(L, type, bar);
       };
       // Tab strip + cycle-schedule chrome. A SEPARATE delegated listener from the
       // drum-lanes one below, which returns early for non-kit layers — the schedule
       // tab exists on every euclidgrid type (Bass / Beat / Arp).
       grid.addEventListener('click', (ev) => {
-        const t = ev.target.closest && ev.target.closest('.ambient-gridtab, .ambient-cyccell, .ambient-cyclen, .ambient-cycclear, .ambient-improv-on');
+        const t = ev.target.closest && ev.target.closest('.ambient-gridtab, .ambient-cyccell, .ambient-cyclen, .ambient-cycclear, .ambient-improv-on, .ambient-patmode-btn');
         if (!t) return;
         _E = E; const L = getL(); if (!L) return;
         if (t.classList.contains('ambient-gridtab')) {
@@ -11372,7 +11410,10 @@
             L._gridTab = (g === 'sched' || g === 'improv') ? g : 'pattern'; }
           render(); return;   // view-only — nothing to persist or re-anchor
         }
-        if (t.classList.contains('ambient-improv-on')) {
+        if (t.classList.contains('ambient-patmode-btn')) {
+          const m = t.getAttribute('data-patmode');
+          if (m === 'euclid') L.patMode = 'euclid'; else delete L.patMode;   // 'drawn' IS the default → store absence
+        } else if (t.classList.contains('ambient-improv-on')) {
           _ambImprovToggle(L);
         } else if (t.hasAttribute('data-implen')) {
           // 🎲 Improvise steppers share .ambient-cyclen with the Schedule tab's
@@ -11665,7 +11706,14 @@
     // boundary (the current unit plays out).
     function _ambEuclidRegen(E, key) {
       const L = _ambLayerByKey(E, key); if (!L) return;
-      L.euclidPattern = null;   // Regen re-rolls the GENERATED pattern → drop any hand-edited override
+      // Regen re-rolls the GENERATED rhythm. It used to DELETE any hand-drawn
+      // grid to get there — destructive, and the only route back to generated
+      // rhythm. Now that the source is an explicit mode, it just switches to
+      // 'euclid' and leaves the drawing on file (Drawn brings it straight back).
+      // Kit layers keep the old clear: drum-lanes has no generated form to
+      // switch to, so there Regen re-seeds the grid itself.
+      if (L.euclidKit) L.euclidPattern = null;
+      else L.patMode = 'euclid';
       const t = (typeof performance !== 'undefined' && performance.now) ? Math.floor(performance.now()) : ((L.euclidRegen | 0) + 1);
       L.euclidRegen = (((L.euclidRegen | 0) * 1103515245 + 12345 + t) >>> 0) || 1;
       if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
@@ -13193,7 +13241,7 @@
         if (L._gridTab === 'improv') { grid.innerHTML = _ambGridTabsHtml(L) + _ambImprovHtml(L); return; }
         const d = _ambEuclidGridDims(L, type); if (!d) return;
         let bar = null; try { bar = _ambEuclidBarInfo(E, key, L, cfg, d.steps, d.bars); } catch (e) {}
-        grid.innerHTML = _ambGridTabsHtml(L) + _ambEuclidCellsHtml(L, type, bar);
+        grid.innerHTML = _ambGridTabsHtml(L) + _ambPatModeHtml(L) + _ambEuclidCellsHtml(L, type, bar);
       });
     }
     // ---- Per-layer Unit controls (BPM-sync visibility + Match-to-layer) -----
@@ -19613,11 +19661,14 @@
       return { cur: cur, nxt: nxt };
     }
     function _ambUnitNames(c) { return c ? c.evs.map(ev => _ambFreqNoteName(ev.freq)).filter(Boolean) : []; }
-    // Kill switch for the piano-roll canvas views (lockroll/seedroll/live
-    // roll). Left ON — a briefly-tried OFF lost the seed preview-and-Keep
-    // shopping loop (the roll toolbar is its only home); the roll's role vs
-    // the lane strip is to be reapproached rather than removed.
-    const _AMB_ROLL_ENABLED = true;
+    // Kill switch for the piano-roll canvas views (lockroll/seedroll/live roll).
+    // OFF since 2026-07-30, by decision: the roll was never the composing view
+    // wanted here — the LANE strip is — and AUTHOR mode (its only home) is gone,
+    // folded into Grid. Turning it off also retires the seed preview / 🎲 / Sim /
+    // ✓ Keep shopping loop that lived on its toolbar; that was accepted as part
+    // of the same call rather than re-homed. The 🎹 KEYBOARD stays — it is the
+    // play-input for ● takes, not part of the roll.
+    const _AMB_ROLL_ENABLED = false;
     function _ambUpdateNotesLive(E) {
       const host = document.getElementById(E.hostId); if (!host) return;
       // Arp "Notes" chips track the series cursor live (cheap: text set only on change).
@@ -20328,11 +20379,10 @@
     // promote → lockState path; Generate reverts to live generation. Wired by
     // delegation (one handler for primary + extras cards) via data-seedkey.
     function _ambSeedModeHtml(lk) {
-      return '<div class="ambient-ctrl ambient-seedmode" title="Note source — Generate (the engine improvises this layer live) or Author (compose a fixed pattern you can hand-edit on the 🎹 roll). Reversible.">' +
+      return '<div class="ambient-ctrl ambient-seedmode" title="Who plays the notes — Generate (the engine picks from the Notes pool live, every cycle) or Grid (you compose a fixed phrase in the full editor). Reversible.">' +
         '<label>Mode</label>' +
         '<span class="ambient-seg-row">' +
           '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="generate" data-seedkey="' + _ambEscText(lk) + '">Generate</button>' +
-          '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="author" data-seedkey="' + _ambEscText(lk) + '" title="Compose the pattern on the piano roll (docked below)">Author</button>' +
           '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="grid" data-seedkey="' + _ambEscText(lk) + '" title="Compose in the FULL editor — Grid/Piano/Graph/Game docks below; edits land in the loop live. Author keeps them; ✕ Cancel discards.">Grid</button>' +
         '</span><span class="ambient-hint">improvise / compose</span></div>' +
         // Author docks the layer's grid (roll + keyboard) HERE — composing
@@ -20379,14 +20429,16 @@
     function _ambRefreshSeedModes(E) {
       const host = E && document.getElementById(E.hostId); if (!host) return;
       host.querySelectorAll('.ambient-seedmode').forEach(row => {
-        const gen = row.querySelector('[data-seedmode="generate"]'), auth = row.querySelector('[data-seedmode="author"]'), grd = row.querySelector('[data-seedmode="grid"]');
+        const gen = row.querySelector('[data-seedmode="generate"]'), grd = row.querySelector('[data-seedmode="grid"]');
         const key = gen && gen.dataset.seedkey; if (!key) return;
         let authored = false, L = null;
         try { L = _ambLayerByKey(E, key); authored = !!(L && L.lockState && L.lockState.seedEdit); } catch (e) {}
         const gridActive = !!(_bloomGridEdit && _bloomGridEdit.E === E && _bloomGridEdit.key === key);
+        // A layer AUTHORED before the Author mode was folded into Grid (2026-07-30)
+        // still carries lockState.seedEdit — it reads as Grid now, which is what it
+        // is: a hand-authored fixed phrase. No migration needed, just the label.
         if (gen) gen.classList.toggle('active', !authored && !gridActive);
-        if (auth) auth.classList.toggle('active', authored && !gridActive);
-        if (grd) grd.classList.toggle('active', gridActive);
+        if (grd) grd.classList.toggle('active', gridActive || authored);
         // Arp Direction is a Generate-mode control (the series sweep) — keep its
         // visibility in step with the seed mode (and the euclid toggle).
         try {
@@ -28837,14 +28889,13 @@
           e.stopPropagation();
           const key = sm.dataset.seedkey, mode = sm.dataset.seedmode;
           try {
-            // Leaving an active Grid session: switching to Author KEEPS the
-            // edits (Done semantics); Generate reverts the seed entirely.
+            // Leaving an active Grid session: Generate reverts the seed entirely.
             if (_bloomGridEdit && _bloomGridEdit.E === E && _bloomGridEdit.key === key && mode !== 'grid') {
               try { _ambGridEditStop(false); } catch (e2) {}
             }
             if (mode === 'grid') {
               const L = _ambLayerByKey(E, key);
-              if (!(L && L.lockState && L.lockState.seedEdit)) { _ambSeedPreview(E, key); _ambSeedPromote(E, key); }   // same authored-lock bootstrap as Author
+              if (!(L && L.lockState && L.lockState.seedEdit)) { _ambSeedPreview(E, key); _ambSeedPromote(E, key); }   // bootstrap the authored lock
               if (!(_bloomGridEdit && _bloomGridEdit.E === E && _bloomGridEdit.key === key)) {
                 try { _ambGridEditStart(E, key); } catch (e2) { console.warn('Grid mode failed', e2); }
               }
@@ -28854,27 +28905,12 @@
             }
             if (mode === 'generate') {
               _ambSeedRevert(E, key);
-              // Author auto-opened the 🎹; Generate auto-closes it (roll is piano-gated).
+              // Generate closes the 🎹 (it was opened for composing).
               const h2 = document.getElementById(E.hostId);
               const pe = h2 && h2.querySelector('.ambient-piano[data-pkey="' + key + '"]');
               if (pe && pe.classList.contains('open')) {
                 pe.classList.remove('open');
               }
-              try { _ambUpdateNotesLive(E); } catch (e2) {}
-            }
-            else {
-              const L = _ambLayerByKey(E, key);
-              if (!(L && L.lockState && L.lockState.seedEdit)) { _ambSeedPreview(E, key); _ambSeedPromote(E, key); }
-              // Reveal the 🎹 piano so the authored roll is visible + editable.
-              const h2 = document.getElementById(E.hostId);
-              const pe = h2 && h2.querySelector('.ambient-piano[data-pkey="' + key + '"]');
-              if (pe && !pe.classList.contains('open')) {
-                const r = _ambPianoRangeFor(E, key); _ambBuildPiano(pe, r.LO, r.HI); pe.classList.add('open');
-              }
-              // Reveal the SEED group (the piano/roll dock into it, but only
-              // after the refresh below — pe is still at its home here, so
-              // anchor the reveal on the slot, which is already in the group).
-              _ambRevealInCard(E, h2 && h2.querySelector('.ambient-seedgrid-slot[data-sgkey="' + key + '"]'));
               try { _ambUpdateNotesLive(E); } catch (e2) {}
             }
             _ambRefreshSeedModes(E);

@@ -3890,6 +3890,17 @@
     /* 🎲 Improvise tab. Same tokens as the Schedule tab's chrome above so the two
        tabs of one control read alike; the On state borrows the .ambient-cyccell.on
        violet, which is already this control's "engaged" colour. */
+    /* Pattern-source switch (Drawn · Euclid) at the head of the Pattern tab. */
+    .ambient-patmode { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-bottom: 5px; }
+    .ambient-patmode-btn {
+      padding: 2px 9px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8;
+      background: transparent; border: 1px solid #34344a; border-radius: 4px;
+      cursor: pointer; touch-action: manipulation;
+    }
+    .ambient-patmode-btn.on { color: #1a1206; background: #9f7aea; border-color: #b794f4; }
+    @media (hover: hover) { .ambient-patmode-btn:not(.on):hover { border-color: #9f7aea; color: #d9cbff; } }
+    /* Generated rhythm: the drawing is kept but isn't what you hear — say so. */
+    .ambient-euclid-grid.patgen .ambient-euclid-cell { opacity: 0.55; }
     .ambient-improv-on {
       padding: 2px 10px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8;
       background: transparent; border: 1px solid #34344a; border-radius: 4px;

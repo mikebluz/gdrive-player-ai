@@ -347,17 +347,6 @@ try { if (/[?&]diag=0\b/.test(location.search)) localStorage.removeItem('sbDiag'
       </div>
     </div>
     <div class="fx-panel" id="fx-panel">
-      <!-- ── DEVICE section ───────────────────────────────────────────────
-           Not an effect: an OUTPUT-ROUTING switch. It sits first because it is
-           the setting people go looking for ("does this keep playing when I
-           lock my phone?"), and because burying it under ten send groups made
-           it unfindable — reported 2026-07-30. -->
-      <div class="fx-section-head" id="fx-section-device">
-        <span>Device</span>
-        <span class="fx-section-sub">playback, not an effect</span>
-      </div>
-      <div class="fx-group-label fx-group-head"><span>Background audio</span><button type="button" class="fx-bypass off" id="fx-bgsink-on" title="Keep playing when the app is in the background (phone). Routes the output through a media player, which iOS treats like a web radio — switching apps or locking the screen no longer stops the sound. Leave OFF on desktop.">OFF</button></div>
-      <div class="fx-control"><div class="fx-hint-row">Keeps a Bloom playing when you switch apps or lock the screen. Turn this on from the phone itself.</div></div>
       <!-- ── PER-LANE section ─────────────────────────────────────────────
            These are the per-lane SEND amounts (lane.sends[name]) + bypass:
            how much of THIS lane feeds each shared effect. They refresh when

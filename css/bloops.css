@@ -776,6 +776,9 @@
     }
     .fx-section-head:first-child { margin-top: 0; }
     .fx-section-head .fx-section-sub {
+    /* One-line explanation under a switch that isn't self-evident (the Device
+       section's Background audio). Same muted tone as .fx-section-sub. */
+    .fx-hint-row { font-size: 0.62rem; line-height: 1.35; color: #8a8aa0; padding: 2px 0 4px; }
       font-size: 0.62rem;
       font-weight: 600;
       letter-spacing: 0.4px;

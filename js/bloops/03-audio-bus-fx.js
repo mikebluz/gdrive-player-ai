@@ -1528,7 +1528,7 @@
     // iOS needs a USER GESTURE for el.play(): the toggle tap is one. If play()
     // still rejects (boot-time restore of a persisted ON), a one-shot
     // pointerdown listener retries on the next touch anywhere.
-    let _bgSink = null;
+    let _bgSink = null, _bgSilentTap = null;
     function applyBackgroundSink() {
       const want = globalFx.bgSinkOn === true;
       if (want && !_bgSink) {
@@ -1541,7 +1541,22 @@
           // engages. The .stream it exposes is a real MediaStream either way.
           const dest = Tone.context.rawContext.createMediaStreamDestination();
           Tone.connect(masterFade, dest);
+          // KEEP THE REAL DEVICE PULLING. Disconnecting masterFade from the
+          // destination outright leaves context.destination with NO input, and
+          // Chrome then stops driving the graph from the hard-real-time audio
+          // device callback — the MediaStream consumer pulls it instead, which
+          // underruns under load. Reported 2026-07-30 as "layer attrition,
+          // some layers cut out, area boundaries glitchy": dropouts landing on
+          // the densest passages and on area transitions (the heaviest
+          // graph-mutation moments), plus the ctRate dip feeding the
+          // voice-budget watchdog, which then sheds voices and thins the music
+          // for real. A SILENT tap keeps the device callback alive — gain 0, so
+          // it contributes nothing audible and there is no double-play — while
+          // the element carries the actual output.
+          if (!_bgSilentTap) _bgSilentTap = new Tone.Gain(0);
           try { masterFade.disconnect(Tone.getDestination()); } catch (e) {}
+          masterFade.connect(_bgSilentTap);
+          _bgSilentTap.toDestination();
           const el = document.createElement('audio');
           el.setAttribute('playsinline', '');
           el.style.display = 'none';
@@ -1566,6 +1581,7 @@
         } catch (e) {
           // construction failed — restore the direct path, drop any half-built
           // element, and report off (the toggle repaints from this flag).
+          if (_bgSilentTap) { try { masterFade.disconnect(_bgSilentTap); } catch (e2) {} try { _bgSilentTap.dispose(); } catch (e2) {} _bgSilentTap = null; }
           try { masterFade.toDestination(); } catch (e2) {}
           try { const el = document.querySelector('audio[playsinline][style*="display: none"]'); if (el && !el.src) el.remove(); } catch (e2) {}
           _bgSink = null; globalFx.bgSinkOn = false;
@@ -1574,6 +1590,7 @@
         try { _bgSink.el.pause(); } catch (e) {}
         try { _bgSink.el.srcObject = null; _bgSink.el.remove(); } catch (e) {}
         try { masterFade.disconnect(_bgSink.dest); } catch (e) {}
+        if (_bgSilentTap) { try { masterFade.disconnect(_bgSilentTap); } catch (e) {} try { _bgSilentTap.dispose(); } catch (e) {} _bgSilentTap = null; }
         try { masterFade.toDestination(); } catch (e) {}
         _bgSink = null;
       }

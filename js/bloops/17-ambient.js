@@ -1185,14 +1185,20 @@
       // Sequence (seq, no shuffle), Shuffle (seq + shuffle).
       const shuffle = !!s.orch.shuffle;
       const orchState = !seq ? 'single' : (shuffle ? 'shuffle' : 'sequence');
-      const orchLabel = orchState === 'single' ? 'Single' : (orchState === 'sequence' ? 'Sequence' : 'Shuffle');
+      // (icon table lives at _ambOrchIcon — the click handler paints from it too)
+      // ICON only — the word cost the row most of its width and the tooltip
+      // already spells the cycle out. ▶ one area · ⇉ each in order · ⤨ random.
+      const orchLabel = _ambOrchIcon(orchState);
       // Area selection is a dropdown now (was a chip strip); ▶ marks the area
       // the engine is actually sounding (may differ from the viewed one).
       const areaOpts = s.areas.map((a, i) => {
         const lbl = _ambAreaChipLabel(a, i);
         return '<option value="' + i + '" data-base="' + _ambEscText(lbl) + '"' + (i === s.activeIdx ? ' selected' : '') + '>' +
           (i === play ? '▶ ' : '') + _ambEscText(lbl) + '</option>';
-      }).join('');
+      }).join('') +
+        // ADD lives in the dropdown now: the row was cramped, and "make another
+        // one" belongs in the list of them rather than as its own button.
+        '<option value="new">\uff0b New area\u2026</option>';
       const _actC = _ambAreaColor(s.activeIdx);
       return '<div class="ambient-areas' + (_ambAreasExpanded ? '' : ' collapsed') + '">' +
         // Header (always visible), one compact row: the consolidated
@@ -1206,7 +1212,6 @@
           '<button type="button" class="ambient-area-btn ambient-area-prev" title="Previous area (wraps)"' + (s.areas.length < 2 ? ' disabled' : '') + '>‹</button>' +
           '<select class="ambient-area-select" title="Select the area to view / edit (▶ marks the area playing now)">' + areaOpts + '</select>' +
           '<button type="button" class="ambient-area-btn ambient-area-next" title="Next area (wraps)"' + (s.areas.length < 2 ? ' disabled' : '') + '>›</button>' +
-          '<button type="button" class="ambient-area-btn ambient-area-add" title="Add a new area">+</button>' +
           '<span class="ambient-orch-bar-hdr" aria-live="polite" title="Current bar (and play) — always visible; sticky on scroll"></span>' +
           '<button type="button" class="ambient-area-btn ambient-orch-clear" title="Delete ALL areas and start over with one empty area" aria-label="Delete all areas">✕</button>' +
           '<button type="button" class="ambient-areas-toggle" title="Show / hide area orchestration" aria-label="Show or hide area orchestration">▾</button>' +
@@ -1293,10 +1298,21 @@
       // ✎ button in the management row now (a <select> has no dblclick affordance).
       const areaSel = host.querySelector('.ambient-area-select');
       if (areaSel) areaSel.addEventListener('change', () => {
+        if (areaSel.value === 'new') {
+          // Not a selection — an action. Put the select back on the area actually
+          // being viewed BEFORE opening the menu, so a cancelled menu leaves the
+          // dropdown reading correctly instead of stuck on "＋ New area…".
+          areaSel.value = String(_ambActiveAreaIdx());
+          const r = areaSel.getBoundingClientRect();
+          openAddMenu(r.left, r.bottom + 4);
+          return;
+        }
         _ambSwitchToArea(parseInt(areaSel.value, 10) || 0);
       });
-      const add = host.querySelector('.ambient-area-add');
-      if (add) add.addEventListener('click', () => {
+      // The + button is gone (the row was cramped); "＋ New area…" in the dropdown
+      // opens this same menu, so none of its options — Manual / Random / Presets /
+      // Clone — were lost with the button.
+      const openAddMenu = (ax, ay) => {
         const addManual = () => {
           const i = _ambAddArea();
           // Empty area — drop the default primaries so it starts with no layers.
@@ -1306,7 +1322,6 @@
         };
         const addRandom = () => { const i = _ambAddArea(); try { _ambRandomizeArea(i); } catch (e) {} _ambSwitchToArea(i); };
         if (typeof showCtxMenu !== 'function') { addManual(); return; }   // fallback
-        const r = add.getBoundingClientRect();
         const presetSub = () => {
           const items = [{ label: 'Area presets', disabled: true }];
           _ambFactoryAreaPresets().forEach(p2 => items.push({ label: p2.name, fn: () => _ambAddAreaFromPreset(p2) }));
@@ -1316,9 +1331,9 @@
             let nm = null; try { nm = prompt('Preset name:', (_ambAreas()[_ambActiveAreaIdx()] || {}).name || ''); } catch (e) {}
             if (nm != null && nm.trim()) { _ambSaveAreaPreset(nm.trim()); if (typeof showToast === 'function') showToast('Area preset saved.'); }
           } });
-          showCtxMenu(r.left, r.bottom + 4, items);
+          showCtxMenu(ax, ay, items);
         };
-        showCtxMenu(r.left, r.bottom + 4, [
+        showCtxMenu(ax, ay, [
           { label: 'New area', disabled: true },
           { label: 'Manual — empty area', fn: addManual },
           { label: 'Random — random layers', fn: addRandom },
@@ -1329,7 +1344,7 @@
           // that shouldn't share a frame with the teardown.
           { label: '⧉ Clone this area… (exact, or with changes)', fn: () => setTimeout(() => { try { _ambSiblingModal(_masterEng); } catch (e2) { console.warn('Clone failed', e2); } }, 0) },
         ]);
-      });
+      };
       // ⧉ Clone = the (former sibling) options popover; nothing ticked = exact copy.
       const dup = host.querySelector('.ambient-area-dup');
       if (dup) dup.addEventListener('click', () => { try { _ambSiblingModal(_masterEng); } catch (e) { console.warn('Clone failed', e); } });
@@ -1429,7 +1444,7 @@
         st.orch.mode = (next === 'single') ? 'single' : 'sequence';
         st.orch.shuffle = (next === 'shuffle');
         const seq = st.orch.mode === 'sequence';
-        modeB.textContent = next.charAt(0).toUpperCase() + next.slice(1);
+        modeB.textContent = _ambOrchIcon(next);   // the WORD used to come back here on every click
         modeB.classList.toggle('on', seq);
         modeB.classList.remove('is-single', 'is-sequence', 'is-shuffle');
         modeB.classList.add('is-' + next);
@@ -20437,6 +20452,12 @@
     // (a composed, hand-editable seed phrase). Author reuses the seed-preview →
     // promote → lockState path; Generate reverts to live generation. Wired by
     // delegation (one handler for primary + extras cards) via data-seedkey.
+    // Orchestration mode glyphs: ▶ this area only · ⇉ each in order · ⤨ random.
+    // ONE table — the render and the click handler both paint from it, or the
+    // click silently restores the old word labels (which is exactly what it did).
+    function _ambOrchIcon(state) {
+      return state === 'single' ? '\u25b6' : (state === 'sequence' ? '\u21c9' : '\u2928');
+    }
     function _ambSeedModeHtml(lk, patCap) {
       const _ambSeedModePatCap = !!patCap;
       // "Generate" is gone as a named mode (2026-07-30). It overclaimed: it never

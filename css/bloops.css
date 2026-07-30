@@ -2546,7 +2546,7 @@
        is genuinely no room for both on one line. */
     .ambient-areas-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0; }
     .ambient-areas-row > * { flex: 0 0 auto; }
-    .ambient-areas-row .ambient-area-select { flex: 1 1 44px; min-width: 44px; max-width: 160px; }
+    .ambient-areas-row .ambient-area-select { flex: 1 1 120px; min-width: 96px; max-width: 260px; }   /* + button gone, mode button is an icon → the name has room */
     .ambient-areas-row .ambient-orch-bar-hdr { order: 10; }
     /* SIDE-SWIPE between areas: horizontal drag = switch, vertical = page scroll.
        `pan-y` is what lets the browser keep scrolling while we claim the X axis. */
@@ -2588,7 +2588,7 @@
        label doesn't shift the row; per-state tint (single neutral, sequence
        teal, shuffle purple). */
     .ambient-orch-mode {
-      flex: 0 0 auto; height: 36px; min-width: 92px; padding: 0 14px; text-align: center;
+      flex: 0 0 auto; height: 36px; min-width: 40px; padding: 0 10px; text-align: center;   /* icon, not the word — was 92px for "Sequence" */
       border: 1px solid #2d2d3f; border-radius: 7px; touch-action: manipulation;
       background: #0a0a14; color: #b8b8d0; cursor: pointer; font: 600 0.92rem 'Segoe UI', sans-serif;
     }

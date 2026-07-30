@@ -2546,8 +2546,18 @@
        is genuinely no room for both on one line. */
     .ambient-areas-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0; }
     .ambient-areas-row > * { flex: 0 0 auto; }
-    .ambient-areas-row .ambient-area-select { flex: 1 1 120px; min-width: 96px; max-width: 260px;
-      padding-right: 22px; }   /* the caret sat hard against the right edge */   /* + button gone, mode button is an icon → the name has room */
+    .ambient-areas-row .ambient-area-select {
+      flex: 1 1 120px; min-width: 96px; max-width: 260px;
+      /* The caret sat hard against the right edge. padding-right alone does
+         NOTHING here: with no `appearance` override the arrow is drawn by the
+         BROWSER at the edge, and padding only moves the text. Replace it with
+         our own chevron so it can actually be positioned. */
+      -webkit-appearance: none; appearance: none;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'><path d='M1 1l4 4 4-4' fill='none' stroke='%23d6bcfa' stroke-width='1.6' stroke-linecap='round'/></svg>");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      padding-right: 26px;
+    }   /* + button gone, mode button is an icon → the name has room */
     .ambient-areas-row .ambient-orch-bar-hdr { order: 10; }
     /* SIDE-SWIPE between areas: horizontal drag = switch, vertical = page scroll.
        `pan-y` is what lets the browser keep scrolling while we claim the X axis. */

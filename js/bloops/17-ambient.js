@@ -23047,9 +23047,8 @@
       if (t === 'arp') return !!(L && L.euclid);
       return false;
     }
-    const _ambHead = (label, onId, delId, freezeKey, afterHead, patCap) =>
+    const _ambHead = (label, onId, delId, freezeKey, afterHead) =>
       '<div class="ambient-layer-head"><button type="button" class="ambient-toggle" id="' + onId + '"><span class="ambient-layer-name">' + _ambEscText(label) + '</span></button>' +
-      (patCap ? '<span class="ambient-layer-patcap" title="This layer has a step Pattern \u2014 draw or pick a rhythm in its Pattern section">\u2ff4</span>' : '') +
       // Bar-length chip — the layer's loop length in bars, immediately right of
       // the on/off toggle (filled by _ambSyncLayerUnits).
       (freezeKey ? '<span class="ambient-layer-bars" data-barkey="' + freezeKey + '" title="Loop length in bars"></span>' : '') +
@@ -25632,7 +25631,7 @@
       // Every layer (Shape included) starts collapsed — just its header — so a
       // fresh Bloom panel stays compact and you expand only what you're tuning.
       const _collapsed = ' collapsed';
-      let html = '<div class="ambient-layer' + _collapsed + '" data-inst="' + fkey + '">' + _ambHead(_ambLayerLabel(inst, sch.label), p + '-on', p + '-del', fkey, _ambComposeReadoutHtml(inst), _ambHasPattern(inst, type));
+      let html = '<div class="ambient-layer' + _collapsed + '" data-inst="' + fkey + '">' + _ambHead(_ambLayerLabel(inst, sch.label), p + '-on', p + '-del', fkey, _ambComposeReadoutHtml(inst));
       // Kit-voice DRUM params for any layer whose voice derives to kit (a native
       // Beat — euclid or random — or a Bass voice-swapped to Kit) — the type schema
       // carries no single-drum control. Voices row only for a swapped layer that

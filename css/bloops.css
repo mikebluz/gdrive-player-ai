@@ -3888,8 +3888,6 @@
     .ambient-layer.amb-grid-owns .ambient-euclid-ctrl > *:not(.ambient-patsrc),
     .ambient-layer.amb-grid-owns .ambient-euclid-grid { opacity: 0.35; pointer-events: none; }
     .ambient-patsrc .ambient-seg-row { display: inline-flex; gap: 4px; }
-    /* Header marker: this layer has a step Pattern you can draw on. */
-    .ambient-layer-patcap { font-size: 0.72rem; color: #9f7aea; margin-left: 4px; opacity: 0.85; cursor: help; }
     .ambient-patmode { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-bottom: 5px; }
     .ambient-patmode-btn {
       padding: 2px 9px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8;
@@ -4333,12 +4331,16 @@
     .ambient-layer-head .ambient-seq-del { flex: 0 0 auto; }
     .ambient-listen-row { gap: 8px; align-items: center; }
     .ambient-toggle {
-      height: 38px; padding: 0 13px; border: 1px solid #2d2d3f; border-radius: 10px;
-      display: inline-flex; align-items: center;
+      /* FIXED width: the button wraps the layer NAME, so its size used to track
+         the name's length ("Bed" vs "Texture") and no two cards' toggles lined
+         up. Fixed box + ellipsis keeps every card's header on one grid. */
+      height: 38px; width: 112px; padding: 0 13px; border: 1px solid #2d2d3f; border-radius: 10px;
+      display: inline-flex; align-items: center; flex: 0 0 auto;
       background: transparent; color: #6b6b8a; font-family: 'Segoe UI', sans-serif;
       font-size: 1.02rem; font-weight: 700; cursor: pointer; transition: all 0.15s ease;
     }
     /* Hover is NEUTRAL (not the on-accent) so an off layer never looks on. */
+    .ambient-toggle .ambient-layer-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ambient-toggle:hover { border-color: #5a5a7a; color: #a8a8c8; }
     /* On = clear area-accent fill + bright text, unmistakable vs off/hover.
        Accent var is set per-panel from the active area (Area 1 = purple). */

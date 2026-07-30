@@ -6391,7 +6391,10 @@
     // is byte-identical to before (harness-safe). Bed + Motif (chord/note streams).
     function _ambHoldMult(key, L) {
       const t = String(key).split(':')[0];
-      if (t !== 'bed' && t !== 'motif') return 1;
+      // Bed resolves through the STRIKE axis (which falls back to hold, which
+      // falls back to 1 — each step byte-identical when the outer is unset).
+      if (t === 'bed') { const e = _ambBedHoldEff(L); return e > 0 ? e : 1; }
+      if (t !== 'motif') return 1;
       const h = L && L.hold;
       return (Number.isFinite(h) && h > 0) ? Math.max(0.05, Math.min(64, h)) : 1;
     }
@@ -7792,11 +7795,13 @@
         // still caps the sustain, so a long pad can ring across sub-slots if you want).
         effIntervalMs = Math.max(1, Math.round(_psiSub * 1000));   // _psiSub = the group sub-slot in merge mode, else the uniform sub-slot
         durMs = Math.max(80, Math.min(durMs, Math.round(_psiSub * 1000 * 1.5)));
-      } else if (Number.isFinite(bed.hold) && bed.hold > 0) {
+      } else if (_ambBedHoldEff(bed) > 0) {
+        // Hold OR Strike (the strike axis resolves to an effective hold — +N
+        // subdivides the unit into N chords, -N holds one chord across N units).
         const _cfg = _E._cfg || (_E.getCfg && _E.getCfg()) || {};
         let _sc = 1; try { _sc = _ambLayerScale(_E, key, bed, _cfg); } catch (e) {}
         const unitSec = Math.max(0.05, _ambEffIntervalSec(bed)) * _sc;
-        durMs = Math.max(80, Math.round(Math.max(0.05, Math.min(64, bed.hold)) * unitSec * 1000));
+        durMs = Math.max(80, Math.round(_ambBedHoldEff(bed) * unitSec * 1000));
         effIntervalMs = durMs;   // onset interval == the hold span (one chord at a time)
       }
       const overlap = durMs / Math.max(1, effIntervalMs);
@@ -13509,11 +13514,30 @@
     function _ambStrikeSpan(strike, unitSec) {
       return strike > 0 ? unitSec / strike : unitSec * (-strike);
     }
+    // BED's strike resolves through its existing HOLD machinery rather than a
+    // new clock: hold already scales the step interval AND the chord length by
+    // a fraction-or-multiple of the unit, lands every event on a unit boundary,
+    // and coexists with unit-record / unit-lock / Write (it shipped through all
+    // of them). So +N (subdivide) = hold 1/N and -N (hold) = hold N, and the
+    // "one unit = one chord" assumption the consolidation doc worried about
+    // never needed breaking — the step clock simply calls the emitter more or
+    // less often. Returns the effective hold multiplier; 0 = neither strike
+    // nor hold set = the legacy Length/Interval path, byte-identical.
+    function _ambBedHoldEff(L) {
+      const st = L && L.strike;
+      if (Number.isFinite(st) && (st | 0) !== 0) {
+        const k = Math.max(-16, Math.min(16, st | 0));
+        return k > 0 ? 1 / k : -k;
+      }
+      const h = L && L.hold;
+      return (Number.isFinite(h) && h > 0) ? Math.max(0.05, Math.min(64, h)) : 0;
+    }
 
     function _ambLayerSubCount(L, key) {
       const type = String(key).split(':')[0];
       if (type === 'arp')   return Math.max(1, (Array.isArray(L.steps) ? L.steps.length : 1));
       if (type === 'drone') { const k = _ambStrikeOf(L, 'drone'); return k > 0 ? 1 : Math.max(1, -k); }
+      if (type === 'bed')   { const k = _ambStrikeOf(L, 'bed');   return k > 0 ? 1 : Math.max(1, -k); }   // strike-held bed spans N units (absent → 1, as ever)
       if (type === 'bass')  return Math.max(1, Math.min(8,  (L.bars | 0) || 1));
       if (type === 'run')   return Math.max(1, Math.min(16, (L.bars | 0) || 2));
       if (type === 'pedal') return Math.max(1, Math.min(16, (L.bars | 0) || 1));
@@ -24634,7 +24658,7 @@
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Source'], ['notes'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
         ['sub', 'Progression', 'When an Area progression is set: the layer locks to it and plays voicings of the current chord. (Repeat/Times in Timing only apply when there is no Area progression.)'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
-        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['choke'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold \u00b7 \u2212N = hold N units \u00b7 +N = N chords per unit'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['choke'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
@@ -27668,6 +27692,7 @@
       set('ambient-bed-motion', cfg.bed.motion);
       set('ambient-bed-restProb', cfg.bed.restProb | 0);
       set('ambient-bed-strum', cfg.bed.strum);
+      set('ambient-bed-strike', cfg.bed.strike | 0);
       set('ambient-bed-strumFidelity', cfg.bed.strumFidelity);
       set('ambient-bed-level', cfg.bed.level);
        set('ambient-bed-areaFadeMs', cfg.bed.areaFadeMs); hint('ambient-bed-areaFadeMs-v', _ambFmtMs(cfg.bed.areaFadeMs));
@@ -29175,6 +29200,7 @@
       bind('ambient-bed-velVar', 'bed', 'velVar');
       bind('ambient-bed-motion', 'bed', 'motion');
       bind('ambient-bed-strum', 'bed', 'strum');
+      bind('ambient-bed-strike', 'bed', 'strike');   // primary bind — the schema token alone only wires ADDED beds (the documented trap)
       bind('ambient-bed-strumFidelity', 'bed', 'strumFidelity');
       bind('ambient-bed-restProb', 'bed', 'restProb');
       bind('ambient-bed-startVary', 'bed', 'startVary');

@@ -891,15 +891,31 @@ stack, held single note that roams per cycle, strummed pedal).
    parity 9/9. New reach proved by test: a Drone that subdivides its unit, and a
    Pedal held across several bars — neither was expressible before.
 
-   **STRIKE on Bed is NOT done, and is the bigger half.** Bed's cadence is not in
-   its emitter: it rides the shared `stepLayer`/`E.clocks` step clock, one chord
-   per tick. Subdividing means emitting N chords inside one `_ambEmitBed` call;
-   holding means skipping units. Both touch the unit-record / unit-lock / Write
-   machinery, which assumes one unit = one chord — the "three clocks" cost listed
-   above, arriving exactly where predicted. Until Bed has it, the step-2
-   reproduction test below cannot run.
+   **STRIKE on Bed: LANDED (2026-07-30) — and the feared cost never arrived.**
+   The predicted problem ("subdividing means emitting N chords inside one
+   `_ambEmitBed` call; holding means skipping units; both break unit-record /
+   unit-lock / Write") dissolved on inspection: Bed already had HOLD, which
+   scales the step interval AND the chord length by a fraction-or-multiple of
+   the unit through `_ambHoldMult`, lands every event on a unit boundary, and
+   shipped through all of the unit machinery. So Strike on Bed is a RESOLVER,
+   not a clock change: `_ambBedHoldEff(L)` maps `+N → hold 1/N` and
+   `-N → hold N`, falling back to the legacy `hold` field, falling back to the
+   legacy Length/Interval path — each layer of fallback byte-identical when the
+   outer is unset. Consumed by `_ambHoldMult` (the step clock + period),
+   `_ambEmitBed`'s hold branch (chord fills its strike span) and
+   `_ambLayerSubCount`. Bed being a PRIMARY layer needed the schema token AND
+   the hardcoded `bind('ambient-bed-strike', …)` + `set(…)` (the documented
+   primary-wiring trap; drone/pedal are extras-only and never hit it).
 
-   Length ratio and Pitch rule remain unstarted.
+   **Step-2 reproduction test: RUN, and it passes.** Measured through the real
+   engine (stubbed clock, unit 2 s): Bed strike −3 re-strikes every 5.96 s with
+   a 6000 ms chord — the same cadence as a Drone at hold 3 (6 s) — and Bed
+   strike +4 plays 4 chords per unit (0.5 s cadence, 500 ms chords), which Bed
+   could not express at all. strike 0/absent is byte-identical to baseline
+   (verified note-for-note, plus the invariant harness). Gates: golden 82/82,
+   harness green.
+
+   Length ratio and Pitch rule remain unstarted — they are the next two axes.
 2. Verify by construction: can Bed-with-dials reproduce Drone? Drone reproduce Pedal? A
    failure locates the genuinely-missing axis rather than guessing at it.
 3. Only then collapse to one emitter, with Bed/Drone/Pedal surviving as **presets in the

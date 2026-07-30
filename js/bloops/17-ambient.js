@@ -11026,14 +11026,21 @@
     // (the normalize trap), so it is coerced in _ambNormalizeEuclidPattern instead.
     const _AMB_IMPROV_MAX = 64;
     const _AMB_IMPROV_DEF = { pat: 8, imp: 8, rhythmVar: 55, pitchVar: 65, restProb: 10 };
+    // ON/OFF is the COUNT, not a separate switch (the button was dropped
+    // 2026-07-30): `improvise ×0` means no improvised iterations, which is what
+    // off always meant. Three states, two numbers. The legacy `on` flag is still
+    // honoured when present so projects saved with it keep behaving — an
+    // explicit on:0 stays off — but nothing writes it any more.
     function _ambImprovOn(L) {
       const im = L && L.improv;
-      // imp 0 = no improvised phase at all, which is just "off" spelled differently.
-      return !!(im && im.on && (im.imp | 0) > 0);
+      if (!im || (im.imp | 0) <= 0) return false;
+      return !('on' in im) || !!im.on;
     }
     function _ambImprovLen(L, k) {
       const im = (L && L.improv) || null;
-      const v = (im && Number.isFinite(im[k])) ? (im[k] | 0) : _AMB_IMPROV_DEF[k];
+      // No object yet = nothing dialled in: pattern shows its default, improvise
+      // shows 0 (off). With an object, a stored 0 is a real value, not "missing".
+      const v = (im && Number.isFinite(im[k])) ? (im[k] | 0) : (k === 'imp' ? 0 : _AMB_IMPROV_DEF[k]);
       return Math.max(0, Math.min(_AMB_IMPROV_MAX, v));
     }
     // Is iteration `c` an improvised one? Pure function of the cycle index — no RNG,
@@ -11064,29 +11071,19 @@
     // outright — absence is the neutral state that keeps the layer byte-identical.
     function _ambImprovEnsure(L) {
       if (!L.improv || typeof L.improv !== 'object') {
-        L.improv = { on: 1, pat: _AMB_IMPROV_DEF.pat, imp: _AMB_IMPROV_DEF.imp,
+        L.improv = { pat: _AMB_IMPROV_DEF.pat, imp: 0,   // imp 0 = off until you dial one in
           rhythmVar: _AMB_IMPROV_DEF.rhythmVar, pitchVar: _AMB_IMPROV_DEF.pitchVar, restProb: _AMB_IMPROV_DEF.restProb };
       }
       return L.improv;
     }
-    function _ambImprovToggle(L) {
-      if (!L) return;
-      // Switching OFF keeps the settings. It used to `delete L.improv`, which
-      // threw away the counts AND all three slider values — flip off, flip on,
-      // and you were back at the defaults with your dial-in gone. An
-      // off-but-present object is exactly as neutral as an absent one, because
-      // every read goes through _ambImprovOn() and that requires `on`.
-      if (_ambImprovOn(L)) { const im0 = _ambImprovEnsure(L); im0.on = 0; return; }
-      const im = _ambImprovEnsure(L);
-      im.on = 1;
-      if ((im.imp | 0) <= 0) im.imp = _AMB_IMPROV_DEF.imp;   // 0 improvised = off; don't switch on into a no-op
-    }
     function _ambImprovSetLen(L, k, v) {
       if (!L || (k !== 'pat' && k !== 'imp')) return;
       const im = _ambImprovEnsure(L);
-      // `pat` may go to 0 (= always improvising, a real setting); `imp` may not,
-      // since 0 improvised iterations IS "off" and there is a switch for that.
-      im[k] = Math.max(k === 'imp' ? 1 : 0, Math.min(_AMB_IMPROV_MAX, v | 0));
+      // BOTH may reach 0, and each 0 is a real setting: pat 0 = always
+      // improvising, imp 0 = off. That is why there is no separate switch.
+      im[k] = Math.max(0, Math.min(_AMB_IMPROV_MAX, v | 0));
+      // Touching a count clears any legacy `on:0` — the numbers are the state now.
+      if ('on' in im) delete im.on;
     }
     function _ambImprovSetVar(L, k, v) {
       if (!L || ['rhythmVar', 'pitchVar', 'restProb'].indexOf(k) < 0) return;
@@ -11096,10 +11093,13 @@
       if (!L || typeof L !== 'object') return;
       const im = L.improv;
       if (!im || typeof im !== 'object') { if ('improv' in L) delete L.improv; return; }
-      const out = { on: (im.on === true || im.on === 1) ? 1 : 0 };
+      const out = {};
+      // Legacy: a project saved with the old switch OFF must stay off until the
+      // user touches a count. on:1 is the default meaning now, so it is dropped.
+      if ('on' in im && !(im.on === true || im.on === 1)) out.on = 0;
       for (const k of ['pat', 'imp']) out[k] = _ambImprovLen({ improv: im }, k);
       for (const k of ['rhythmVar', 'pitchVar', 'restProb']) out[k] = _ambImprovVar({ improv: im }, k, _AMB_IMPROV_DEF[k]);
-      // Off is stored, not pruned (see _ambImprovToggle): `on: 0` is neutral to
+      // Off is now just `improvise ×0`, so nothing here prunes: `on: 0` is neutral to
       // every consumer, and pruning would silently discard the user's counts and
       // slider values on the next getCfg. ABSENT stays valid — that is what every
       // project that has never touched the tab carries, and it is handled above.
@@ -11139,13 +11139,13 @@
         '<div class="ambient-ctrl" title="' + title + '"><label>' + label + '</label>' +
         '<input type="range" class="ambient-improv-sl" data-imp="' + key + '" min="0" max="100" step="1" value="' + val + '" />' +
         '<span class="ambient-hint ambient-step-fx-v">' + val + '</span></div>';
-      const summary = p > 0
-        ? (p + ' iteration' + (p === 1 ? '' : 's') + ' of the pattern, then ' + q + ' improvised, repeating (' + (p + q) + ' in all).')
-        : 'Always improvising — the pattern is never played.';
+      const summary = !on
+        ? 'Off — improvise \u00d70, so every iteration plays the pattern. Raise it to start alternating.'
+        : (p > 0
+          ? (p + ' iteration' + (p === 1 ? '' : 's') + ' of the pattern, then ' + q + ' improvised, repeating (' + (p + q) + ' in all).')
+          : 'Always improvising — the pattern is never played.');
       return '<div class="ambient-cycgate ambient-improv">' +
         '<div class="ambient-cycgate-foot">' +
-          '<button type="button" class="ambient-improv-on' + (on ? ' on' : '') + '" data-impon="1"' +
-            ' title="Alternate between playing the pattern and improvising around it.">' + (on ? '● On' : '○ Off') + '</button>' +
           stepper('pat', 'pattern \u00d7', p) +
           stepper('imp', 'improvise \u00d7', q) +
         '</div>' +
@@ -11160,7 +11160,7 @@
               ' Each improvised iteration re-rolls its own rhythm, so no two repeat. The pattern you drew is left alone —' +
               ' the next pattern iteration plays it again exactly. While this is on the layer stops using Loop/Write,' +
               ' because a frozen phrase would pin it to one side of the alternation.'
-            : 'Off — every iteration plays the pattern.') +
+            : summary) +
         '</div>' +
       '</div>';
     }
@@ -11410,7 +11410,7 @@
       // drum-lanes one below, which returns early for non-kit layers — the schedule
       // tab exists on every euclidgrid type (Bass / Beat / Arp).
       grid.addEventListener('click', (ev) => {
-        const t = ev.target.closest && ev.target.closest('.ambient-gridtab, .ambient-cyccell, .ambient-cyclen, .ambient-cycclear, .ambient-improv-on, .ambient-patmode-btn');
+        const t = ev.target.closest && ev.target.closest('.ambient-gridtab, .ambient-cyccell, .ambient-cyclen, .ambient-cycclear, .ambient-patmode-btn');
         if (!t) return;
         _E = E; const L = getL(); if (!L) return;
         if (t.classList.contains('ambient-gridtab')) {
@@ -11421,8 +11421,6 @@
         if (t.classList.contains('ambient-patmode-btn')) {
           const m = t.getAttribute('data-patmode');
           if (m === 'euclid') L.patMode = 'euclid'; else delete L.patMode;   // 'drawn' IS the default → store absence
-        } else if (t.classList.contains('ambient-improv-on')) {
-          _ambImprovToggle(L);
         } else if (t.hasAttribute('data-implen')) {
           // 🎲 Improvise steppers share .ambient-cyclen with the Schedule tab's
           // length buttons, so discriminate on the attribute, not the class.

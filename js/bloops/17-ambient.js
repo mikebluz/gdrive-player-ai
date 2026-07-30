@@ -346,6 +346,14 @@
     // key, so progressions land transposed); user presets are JSON snapshots of
     // an area saved to localStorage. Both feed the + (add-area) menu.
     const _AMB_AREA_PRESET_LS = 'bloomAreaPresets.v1';
+    // Arp sweep directions — ONE list, shared by the layer picker, the per-entry
+    // picker, and normalize's validation. They drifted before: the layer picker
+    // offered all nine while the per-entry picker offered five, so an entry set to
+    // ladder/converge/diverge/pedal could not be DISPLAYED — the select fell back
+    // to its first option and reported "Up" while the engine swept a ladder.
+    const _AMB_ARP_DIRS = [['up', 'Up'], ['down', 'Down'], ['updown', 'Up-Down'], ['downup', 'Down-Up'],
+      ['ladder', 'Ladder'], ['converge', 'Converge'], ['diverge', 'Diverge'], ['pedal', 'Pedal'], ['random', 'Random']];
+    const _AMB_ARP_DIR_KEYS = _AMB_ARP_DIRS.map(d => d[0]);
     function _ambAreaPresetsUser() {
       try { const a = JSON.parse(localStorage.getItem(_AMB_AREA_PRESET_LS) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; }
     }
@@ -2852,7 +2860,7 @@
           // rate; 'fit' = legacy squeeze-the-whole-cycle-into-the-unit (rate
           // varies with the direction's pass length). Free mode ignores it.
           if (['fit', '4', '8', '8t', '16', '16t', '32'].indexOf(x.arpRes) < 0) x.arpRes = '16';
-          const _DIRS = ['up', 'down', 'updown', 'downup', 'ladder', 'converge', 'diverge', 'pedal', 'random'];
+          const _DIRS = _AMB_ARP_DIR_KEYS;
           const _layerDir = (_DIRS.indexOf(x.dir) >= 0) ? x.dir : 'up';
           x.steps = x.steps.map(s => {
             const st = (s && typeof s === 'object') ? s : {};
@@ -25929,11 +25937,14 @@
     // Arp Direction picker — the series sweep pattern (Generate mode only; an
     // authored arp replays its roll, and the euclid arp picks pitch per-hit).
     function _ambArpDirHtml(p, inst) {
-      const dirs = [['up', 'Up'], ['down', 'Down'], ['updown', 'Up-Down'], ['downup', 'Down-Up'], ['ladder', 'Ladder'], ['converge', 'Converge'], ['diverge', 'Diverge'], ['pedal', 'Pedal'], ['random', 'Random']];
-      return '<div class="ambient-ctrl ambient-arpdir"><label for="' + p + '-dir">Direction</label>' +
-        '<select id="' + p + '-dir" class="ambient-select">' +
-        dirs.map(d => '<option value="' + d[0] + '">' + d[1] + '</option>').join('') +
-        '</select><span class="ambient-hint">order</span></div>';
+      // Labelled "all" because it OVERWRITES every entry's own Direction (see the
+      // change handler). Each series entry carries its own direction, so a control
+      // that silently flattened them while reading plain "Direction" was claiming
+      // to be a default when it is really a bulk apply.
+      return '<div class="ambient-ctrl ambient-arpdir"><label for="' + p + '-dir" title="Sets the sweep order for EVERY entry in the series at once — this overwrites the per-entry Direction on each row below">Direction — all</label>' +
+        '<select id="' + p + '-dir" class="ambient-select" title="Sets the sweep order for EVERY entry in the series at once — this overwrites the per-entry Direction on each row below">' +
+        _AMB_ARP_DIRS.map(d => '<option value="' + d[0] + '">' + d[1] + '</option>').join('') +
+        '</select><span class="ambient-hint">all entries</span></div>';
     }
     // Arp series browser: the ordered list of scale/chord entries + an Add button.
     // Rows (Notes button · passes stepper · delete) are filled by _ambRenderArpList.
@@ -26144,10 +26155,15 @@
             if (E.timer) { try { _ambUnitReanchor(E, type + ':' + id); } catch (x) {} } } }); } }
           else if (k === 'arpdir') { const s = el('dir'); if (s) { s.value = inst.dir || 'up'; s.addEventListener('change', () => { const L = get(); if (L) {
             L.dir = s.value || 'up';
-            // Propagate to every series ENTRY: normalize stamps each entry with
-            // its own dir at creation (entry.dir || L.dir at emit — entry wins),
-            // so without this the layer select silently does nothing.
+            // BULK APPLY, by design — normalize stamps each entry with its own dir
+            // at creation (entry.dir || L.dir at emit — entry wins), so without this
+            // the layer select would silently do nothing. It therefore OVERWRITES
+            // per-entry Directions, which is why the control reads "Direction — all".
             if (Array.isArray(L.steps)) L.steps.forEach(st2 => { if (st2 && typeof st2 === 'object') st2.dir = L.dir; });
+            // Repaint the series rows so their own Direction selects show what was
+            // just written to them — otherwise the rows keep displaying the values
+            // this apply replaced.
+            try { _ambRenderArpList(E, get, p); } catch (x) {}
             _ambResetArp(E, type + ':' + id); sync(); persist();
           } }); } }
           else if (k === 'gen') { const s = el('gen'); if (s) { s.value = inst.gen || 'random'; s.addEventListener('change', () => { const L = get(); if (L) {
@@ -26727,10 +26743,14 @@
         });
         // Per-entry Direction — each series row sweeps in its own order.
         const ds = document.createElement('select'); ds.className = 'ambient-select ambient-arp-dir';
-        [['up', 'Up'], ['down', 'Down'], ['updown', 'Up-Dn'], ['downup', 'Dn-Up'], ['random', 'Rand']].forEach(d => {
+        ds.title = 'Sweep order for THIS entry';
+        _AMB_ARP_DIRS.forEach(d => {
           const o = document.createElement('option'); o.value = d[0]; o.textContent = d[1]; ds.appendChild(o);
         });
-        ds.value = st.dir || 'up';
+        // Fall back only when the stored value isn't a real direction — assigning an
+        // unknown value to a <select> silently leaves it on the first option, which
+        // is how this used to report "Up" for entries the engine swept as Ladder.
+        ds.value = (_AMB_ARP_DIR_KEYS.indexOf(st.dir) >= 0) ? st.dir : 'up';
         ds.addEventListener('change', () => { st.dir = ds.value || 'up'; _ambResetArp(E, key); if (typeof persistWorkspace === 'function') persistWorkspace(); });
         // Per-entry count: a −/+ stepper plus a visible UNIT TOGGLE — × (whole
         // passes before advancing) vs ♪ (an exact note count that wraps the pool).

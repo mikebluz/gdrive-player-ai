@@ -11598,6 +11598,26 @@
         // Step Edit (melodic euclid only): when ON, tapping a step opens a modal to
         // set its note / tone / volume / ratchet / length / probability / pan.
         (!inst.euclidKit ? '<button type="button" class="ambient-euclid-stepedit' + (inst._stepEdit ? ' on' : '') + '" data-stepedit="1" title="Step Edit — when on, tap a step to change its note, tone, volume, ratchet, length, probability and pan (like a Grid step)">✎ Step</button>' : '') +
+        // FOLD — halve the step size: every step splits in two, the first half
+        // keeping the hit and the second half free, so folding gives you somewhere
+        // finer to put the next hit. Onsets are unchanged (step i moves to index 2i
+        // at half the slot, i.e. the same absolute time). SWING is the exception and
+        // the tooltip says so: it is applied to ODD step indices and scaled by slot
+        // size, so folding moves every existing hit onto an EVEN index and a swung
+        // pattern comes out straight — a resolution change necessarily re-reads
+        // swing at the new grid. Disabled past 32 steps (the grid's ceiling) and
+        // hidden on drum-lanes, whose per-page store re-fits on a Steps change
+        // rather than mapping step→step.
+        (!inst.euclidKit
+          ? (function () {
+              const s0 = Math.max(2, Math.min(32, inst.steps | 0) || 8);
+              if (s0 * 2 > 32) return '<button type="button" class="ambient-euclid-fold" data-fold="1" disabled title="Already at the 32-step maximum — can’t fold further">⑂ Fold</button>';
+              const _g = _ambGroove(); const swEff = Math.max(0, Math.min(100, ((Number.isFinite(inst.swing) ? inst.swing : 0) | 0) + (_g ? (_g.swing | 0) : 0)));
+              const t = 'Fold — split every step in two (' + s0 + ' → ' + (s0 * 2) + ' steps) for finer placement. Your hits stay where they are and the new in-between steps start empty.'
+                + (swEff > 0 ? ' Note: Swing is measured against the step grid, so this pattern will re-swing at the finer resolution rather than keep its current shuffle.' : '');
+              return '<button type="button" class="ambient-euclid-fold" data-fold="1" title="' + t + '">⑂ Fold</button>';
+            })()
+          : '') +
         '</div>';
       // Drum-lanes: page + the current EDIT scope. Cells are pure on/off toggles;
       // ALL step shaping happens in the edit panel below, targeting the selected
@@ -11881,6 +11901,45 @@
         // Step Edit MODE toggle (melodic euclid): flips press-behaviour to open the modal.
         const se = ev.target.closest && ev.target.closest('.ambient-euclid-stepedit');
         if (se) { _E = E; const L2 = getL(); if (L2) { L2._stepEdit = !L2._stepEdit; render(); persist(); } return; }
+        // FOLD ×2 — halve the step size without changing a note of what plays.
+        const fo = ev.target.closest && ev.target.closest('.ambient-euclid-fold');
+        if (fo) {
+          _E = E; const L3 = getL(); if (!L3 || L3.euclidKit) return;
+          const d3 = _ambEuclidGridDims(L3, type); if (!d3) return;
+          const oldSteps = d3.steps, newSteps = oldSteps * 2;
+          if (newSteps > 32) return;                       // grid ceiling
+          const total = d3.bars * oldSteps;
+          // SNAPSHOT FIRST, exactly as a cell-toggle does: a generated pattern is
+          // only an array once someone writes to it, and folding must preserve what
+          // is AUDIBLE, not what the generator would produce at the new resolution.
+          let ov = L3.euclidPattern;
+          const ok = Array.isArray(ov) && ov.length === d3.V && ov.every(r => Array.isArray(r) && r.length === total);
+          if (!ok) {
+            ov = [];
+            for (let vv = 0; vv < d3.V; vv++) {
+              const pat = _ambEuclidPat(L3, d3.pulses, d3.steps, d3.rotate, d3.V, vv, d3.salt);
+              const row = []; for (let j = 0; j < total; j++) row.push(pat[j % pat.length] === 1 ? 1 : 0);
+              ov.push(row);
+            }
+          }
+          // Each step becomes two: the first carries the hit, the second is free.
+          L3.euclidPattern = ov.map(row => { const out = []; for (let j = 0; j < row.length; j++) { out.push(row[j] ? 1 : 0); out.push(0); } return out; });
+          // Per-step edits are keyed by ABSOLUTE step index, so they have to move
+          // with their step (i → 2i) or they would land on unrelated steps.
+          if (L3.stepFx && typeof L3.stepFx === 'object') {
+            const nf = {};
+            Object.keys(L3.stepFx).forEach(k => { const i2 = parseInt(k, 10); if (Number.isFinite(i2)) nf[i2 * 2] = L3.stepFx[k]; });
+            L3.stepFx = nf;
+          }
+          L3.steps = newSteps;
+          // Rotate is measured in steps, and Hold is a note length in steps — both
+          // are now half as long in real time, so double them to hold the sound.
+          if ((L3.rotate | 0) > 0) L3.rotate = Math.min(31, (L3.rotate | 0) * 2);
+          if ((L3.holdSteps | 0) > 0) L3.holdSteps = Math.min(16, (L3.holdSteps | 0) * 2);
+          try { _ambResetArp(E, key); } catch (e) {}
+          render(); sync(); persist();
+          return;
+        }
         const c = ev.target.closest && ev.target.closest('.ambient-euclid-cell'); if (!c) return;
         _E = E; const L = getL(); if (!L) return;
         const v = parseInt(c.dataset.ev, 10), i = parseInt(c.dataset.ei, 10);   // i = absolute index into the phrase

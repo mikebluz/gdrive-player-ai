@@ -3865,6 +3865,11 @@
     /* Step Edit mode (melodic euclid): toggle + per-step modal. */
     .ambient-euclid-stepedit { margin-left: auto; padding: 2px 9px; border: 1px solid #2d2d3f; border-radius: 999px; background: #16162a; color: #cbd5e0; cursor: pointer; font-size: 0.72rem; touch-action: manipulation; }
     .ambient-euclid-stepedit.on { border-color: #4fd1c5; background: rgba(79,209,197,0.16); color: #d6fbf6; }
+    /* Fold sits beside Step Edit. It is an ACTION, not a mode, so it has no .on
+       state — margin-left:0 keeps Step Edit's auto-margin as the only spacer. */
+    .ambient-euclid-fold { margin-left: 6px; padding: 2px 9px; border: 1px solid #2d2d3f; border-radius: 999px; background: #16162a; color: #cbd5e0; cursor: pointer; font-size: 0.72rem; touch-action: manipulation; }
+    .ambient-euclid-fold:hover:not(:disabled) { border-color: #9f7aea; background: rgba(159,122,234,0.16); color: #e9dcff; }
+    .ambient-euclid-fold:disabled { opacity: 0.35; cursor: default; }
     .ambient-euclid-cells.step-edit .ambient-euclid-cell { box-shadow: inset 0 0 0 1px rgba(79,209,197,0.35); cursor: pointer; }
     .ambient-euclid-cells.step-edit .ambient-euclid-cell.on { box-shadow: inset 0 0 0 1px rgba(79,209,197,0.75); }
     /* Per-step popover — matches the Bloom editor shell (.ambient-prog-editor) and

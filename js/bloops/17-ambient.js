@@ -11111,8 +11111,8 @@
           ' title="Schedule — each step here is one FULL iteration of the pattern, so switching one off leaves that whole repeat silent (a drawable ‘When’).">⏱ Schedule' +
           (gated ? '<i class="gdot" title="' + on + ' of ' + n + ' iterations play"></i>' : '') + '</button>' +
         '<button type="button" class="ambient-gridtab' + (tab === 'improv' ? ' on' : '') + '" data-gtab="improv" role="tab"' +
-          ' title="Improvise — alternate between playing the pattern as written and improvising around it, counted in whole iterations.">\u{1F3B2} Improvise' +
-          (imp ? '<i class="gdot" title="' + _ambImprovLen(L, 'pat') + ' written, then ' + _ambImprovLen(L, 'imp') + ' improvised"></i>' : '') + '</button>' +
+          ' title="Improvise — alternate between playing the pattern and improvising around it, counted in whole iterations.">\u{1F3B2} Improvise' +
+          (imp ? '<i class="gdot" title="' + _ambImprovLen(L, 'pat') + ' \u00d7 pattern, then ' + _ambImprovLen(L, 'imp') + ' \u00d7 improvise"></i>' : '') + '</button>' +
         '</div>';
     }
     // The Improvise tab's body: how many iterations each way, and the three
@@ -11131,28 +11131,28 @@
         '<div class="ambient-ctrl" title="' + title + '"><label>' + label + '</label>' +
         '<input type="range" class="ambient-improv-sl" data-imp="' + key + '" min="0" max="100" step="1" value="' + val + '" />' +
         '<span class="ambient-hint ambient-step-fx-v">' + val + '</span></div>';
-      const written = p > 0
-        ? (p + ' iteration' + (p === 1 ? '' : 's') + ' as written, then ' + q + ' improvised, repeating (' + (p + q) + ' in all).')
-        : 'Always improvising — the written pattern is never played.';
+      const summary = p > 0
+        ? (p + ' iteration' + (p === 1 ? '' : 's') + ' of the pattern, then ' + q + ' improvised, repeating (' + (p + q) + ' in all).')
+        : 'Always improvising — the pattern is never played.';
       return '<div class="ambient-cycgate ambient-improv">' +
         '<div class="ambient-cycgate-foot">' +
           '<button type="button" class="ambient-improv-on' + (on ? ' on' : '') + '" data-impon="1"' +
-            ' title="Alternate between the written pattern and improvising around it.">' + (on ? '● On' : '○ Off') + '</button>' +
-          stepper('pat', 'written', p) +
-          stepper('imp', 'improvised', q) +
+            ' title="Alternate between playing the pattern and improvising around it.">' + (on ? '● On' : '○ Off') + '</button>' +
+          stepper('pat', 'pattern \u00d7', p) +
+          stepper('imp', 'improvise \u00d7', q) +
         '</div>' +
         (on
-          ? sl('rhythmVar', 'Rhythm', _ambImprovVar(L, 'rhythmVar', 0), 'How far the improvised rhythm strays — drops written hits and adds new ones.') +
+          ? sl('rhythmVar', 'Rhythm', _ambImprovVar(L, 'rhythmVar', 0), 'How far the improvised rhythm strays — drops pattern hits and adds new ones.') +
             sl('pitchVar', 'Pitch', _ambImprovVar(L, 'pitchVar', 0), 'How often the melodic walk moves. Bass only — an arp walks its chord, and drums have no pitch walk.') +
             sl('restProb', 'Rests', _ambImprovVar(L, 'restProb', 0), 'Chance of leaving a slot silent while improvising — space in the line.')
           : '') +
         '<div class="ambient-hint">' +
           (on
-            ? written +
+            ? summary +
               ' Each improvised iteration re-rolls its own rhythm, so no two repeat. The pattern you drew is left alone —' +
-              ' the next written iteration plays it again exactly. While this is on the layer stops using Loop/Write,' +
+              ' the next pattern iteration plays it again exactly. While this is on the layer stops using Loop/Write,' +
               ' because a frozen phrase would pin it to one side of the alternation.'
-            : 'Off — every iteration plays the pattern as written.') +
+            : 'Off — every iteration plays the pattern.') +
         '</div>' +
       '</div>';
     }

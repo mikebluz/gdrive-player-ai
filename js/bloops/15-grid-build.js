@@ -1775,6 +1775,7 @@
         ['fx-warmth',      'fx-warmth-v',      'warmth',             '%'],
         ['fx-warmth-drive','fx-warmth-drive-v','warmthDrive',        '%'],
         ['fx-warmth-cut',  'fx-warmth-cut-v',  'warmthCut',          ' Hz'],
+        ['fx-ott-depth',   'fx-ott-depth-v',   'ottDepth',           '%'],
         ['fx-rev',         'fx-rev-v',         'reverb',             '%'],
         ['fx-rev-size',    'fx-rev-size-v',    'reverbSize',         '%'],
         ['fx-rev-tone',    'fx-rev-tone-v',    'reverbTone',         '%'],
@@ -1957,6 +1958,46 @@
           globalFx.warmthOn = !(globalFx.warmthOn !== false);
           paint();
           try { applyGlobalFx(); } catch (e) {}
+          try { persistGlobalFx(); } catch (e) {}
+        });
+      })();
+
+      // Glue (master OTT) ON/OFF — same shape as the Warmth toggle above: a
+      // global master-chain stage, not a lane send. Defaults OFF (unlike
+      // warmth) so existing projects sound exactly as before until engaged.
+      (function initOttToggle() {
+        const tgl = panel.querySelector('#fx-ott-on');
+        if (!tgl) return;
+        const paint = () => {
+          const on = globalFx.ottOn === true;
+          tgl.classList.toggle('off', !on);
+          tgl.textContent = on ? 'ON' : 'OFF';
+        };
+        paint();
+        tgl.addEventListener('click', () => {
+          globalFx.ottOn = !(globalFx.ottOn === true);
+          paint();
+          try { applyMasterDynamics(); } catch (e) {}
+          try { persistGlobalFx(); } catch (e) {}
+        });
+      })();
+
+      // Background-audio sink ON/OFF — a master OUTPUT-ROUTING switch, not an
+      // effect: it swaps the speakers for a hidden media element so iOS keeps
+      // playing in the background. The tap is the user gesture el.play() needs.
+      (function initBgSinkToggle() {
+        const tgl = panel.querySelector('#fx-bgsink-on');
+        if (!tgl) return;
+        const paint = () => {
+          const on = globalFx.bgSinkOn === true;
+          tgl.classList.toggle('off', !on);
+          tgl.textContent = on ? 'ON' : 'OFF';
+        };
+        paint();
+        tgl.addEventListener('click', () => {
+          globalFx.bgSinkOn = !(globalFx.bgSinkOn === true);
+          try { applyBackgroundSink(); } catch (e) {}
+          paint();   // AFTER apply: a failed construction flips the flag back off
           try { persistGlobalFx(); } catch (e) {}
         });
       })();

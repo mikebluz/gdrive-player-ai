@@ -280,6 +280,19 @@ event). Bed's Monk-voicing and a hand-drawn chord are the same kind of object.
 - Deterministic generation is NOT here (that's SEED). "Non-deterministic modification"
   is the whole of VARIANCE.
 
+*Improvise schedule landed (2026-07-29):* **`layer.improv`** — the layer alternates
+`pat` iterations of its WRITTEN pattern with `imp` improvised ones, repeating ("8 bars
+of the riff, 8 bars of blowing over it"). It is a VARIANCE-axis control that operates at
+the ITERATION level rather than the note level: on an improvised cycle the hand-drawn
+`euclidPattern` override is set aside for a freshly generated euclidean rhythm (per-cycle
+salt, so no two improvised iterations repeat) and the layer's Rhythm/Pitch/Rests amounts
+are swapped for an improv set. Same axis as the ⏱ Schedule tab (both address whole
+iterations by index `c`) and composes with it and with `When`; it lives as the Pattern
+control's 3rd tab for that reason. Covers the euclid layers — Bass, euclid Beat (incl.
+drum-lanes, which loosen their drawn grid rather than replacing it), euclid Arp. Absent =
+off = byte-identical; requires the layer to skip Loop/Write (see CLAUDE.md — a freeze
+would pin it to one side of the alternation).
+
 *Phrase gestures landed (2026-07-15, first slice of the phrase-interest plan —
 build order Ornaments → Slide → gesture cells → agogic emphasis → motivic
 sequence):* **Ornament** (Motif/Riff) — tempo-synced pre-beat figures (grace /

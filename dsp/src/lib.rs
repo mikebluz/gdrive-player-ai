@@ -122,6 +122,7 @@ struct Voice {
     bend_t: f32,
     // design filter (2 sections) + unison/sub/ring phases
     g_s: [f32; 8],
+    g_sat: bool,   // design filter q past the ringing threshold → saturate the recursion
     g_b: [f32; 3],
     g_a: [f32; 2],
     uni_ph: [f32; MAX_UNI],
@@ -147,7 +148,7 @@ const VOICE0: Voice = Voice {
     d_pe_amt: 0.0, d_pe_atk: 0.001, d_pe_dec: 0.05,
     m_pitch: 1.0, m_amp: 1.0, m_pan: 0.0, m_n: 0,
     tag: 0, bend: 1.0, bend_t: 1.0,
-    g_s: [0.0; 8], g_b: [0.0; 3], g_a: [0.0; 2],
+    g_s: [0.0; 8], g_b: [0.0; 3], g_a: [0.0; 2], g_sat: false,
     uni_ph: [0.0; MAX_UNI], sub_ph: 0.0, ring_ph: 0.0,
 };
 
@@ -916,6 +917,10 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                             let (b, a) = biquad_coeffs(v.d_ftype, fc, q, SR);
                             v.g_b = b;
                             v.g_a = a;
+                            // Two cascaded sections SQUARE the resonance, so the
+                            // glassy-ringing threshold is lower than the strip
+                            // vcf's: saturate the recursion from q ≈ 2.5 up.
+                            v.g_sat = q > 2.5;
                         }
                         v.m_n = 16;
                     }
@@ -1223,13 +1228,19 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                     if v.d_flags & 1 != 0 {
                         let y1 = v.g_b[0] * sd + v.g_b[1] * v.g_s[0] + v.g_b[2] * v.g_s[1]
                             - v.g_a[0] * v.g_s[2] - v.g_a[1] * v.g_s[3];
+                        // Saturate only the FRESH y-history write — the shifted
+                        // copy carries an already-saturated value. DF1 feedback
+                        // runs entirely off g_s[2,3]/[6,7], so this bounds the
+                        // resonant build-up exactly like the strip's df2t_sat.
+                        let y1s = if v.g_sat { crate::strip::sat4(y1) } else { y1 };
                         v.g_s[1] = v.g_s[0]; v.g_s[0] = sd;
-                        v.g_s[3] = v.g_s[2]; v.g_s[2] = y1;
-                        let y2 = v.g_b[0] * y1 + v.g_b[1] * v.g_s[4] + v.g_b[2] * v.g_s[5]
+                        v.g_s[3] = v.g_s[2]; v.g_s[2] = y1s;
+                        let y2 = v.g_b[0] * y1s + v.g_b[1] * v.g_s[4] + v.g_b[2] * v.g_s[5]
                             - v.g_a[0] * v.g_s[6] - v.g_a[1] * v.g_s[7];
-                        v.g_s[5] = v.g_s[4]; v.g_s[4] = y1;
-                        v.g_s[7] = v.g_s[6]; v.g_s[6] = y2;
-                        y2
+                        let y2s = if v.g_sat { crate::strip::sat4(y2) } else { y2 };
+                        v.g_s[5] = v.g_s[4]; v.g_s[4] = y1s;
+                        v.g_s[7] = v.g_s[6]; v.g_s[6] = y2s;
+                        y2s
                     } else {
                         sd
                     }

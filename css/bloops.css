@@ -3887,6 +3887,20 @@
       cursor: pointer; touch-action: manipulation;
     }
     @media (hover: hover) { .ambient-cyclen:hover, .ambient-cycclear:hover { border-color: #9f7aea; color: #d9cbff; } }
+    /* 🎲 Improvise tab. Same tokens as the Schedule tab's chrome above so the two
+       tabs of one control read alike; the On state borrows the .ambient-cyccell.on
+       violet, which is already this control's "engaged" colour. */
+    .ambient-improv-on {
+      padding: 2px 10px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8;
+      background: transparent; border: 1px solid #34344a; border-radius: 4px;
+      cursor: pointer; touch-action: manipulation;
+    }
+    .ambient-improv-on.on { color: #1a1206; background: #9f7aea; border-color: #b794f4; }
+    @media (hover: hover) { .ambient-improv-on:not(.on):hover { border-color: #9f7aea; color: #d9cbff; } }
+    /* Give the counts room to breathe between the two steppers. */
+    .ambient-improv .ambient-cycgate-foot .ambient-sched-lbl:not(:first-of-type) { margin-left: 8px; }
+    .ambient-improv .ambient-ctrl { gap: 8px; }
+    .ambient-improv .ambient-improv-sl { touch-action: manipulation; }
     /* Drum SOLO — sits beside the ▶ audition; amber when engaged so it reads as
        a temporary monitoring state rather than part of the pattern. */
     .ambient-step-fx-solo { padding: 2px 8px; font: 700 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8; background: transparent; border: 1px solid #34344a; border-radius: 4px; cursor: pointer; touch-action: manipulation; }
@@ -12128,6 +12142,12 @@
     .ambient-fx-item[data-fx="pecho"] .ambient-pecho-time { width: 56px; }
     .ambient-fx-item[data-fx="pecho"] .ambient-pecho-pat { width: 90px; text-align: center; }
     .ambient-fx-item[data-fx="pecho"] .ambient-pecho-sync { min-width: 56px; }
+    /* Delay Time row: the division select sits INLINE after the readout rather
+       than wrapping under the label (which is where a 4th child lands in the
+       3-column .ambient-ctrl grid). Explicit width, not min-width — .ambient-select
+       is width:100%, which resolves circularly in an auto-sized track. */
+    .ambient-fx-item[data-fx="delay"] .ambient-ctrl:has(> .ambient-dly-sync) { grid-template-columns: 84px 1fr auto auto; }
+    .ambient-dly-sync { width: 68px; }
 
     /* Per-FX "Dry kill" checkbox (compact, sits under the FX's sliders) + the
        layer "Wet only" toggle (top of the FX section). Big tap target for mobile. */

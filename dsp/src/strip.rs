@@ -158,11 +158,64 @@ fn nat_ap(fc: f32, q: f32, sr: f32) -> ([f32; 3], [f32; 2]) {
     )
 }
 
+// ---- denormal flush ---------------------------------------------------------
+// WASM has no FTZ mode, and on x86 subnormal floats fall back to microcode —
+// orders of magnitude slower than normal ops. Strips process SILENCE whenever
+// their layer is idle, so every recursive path (biquad states, delay/chorus
+// feedback lines) decays into the subnormal range and sits there, burning CPU
+// on nothing. Flushing below 1e-18 is ~120 dB under the smallest audible tail
+// (inaudible by construction) and stops the decay at true zero, where the
+// arithmetic is fast again. Applied at every RECURSIVE write — never on the
+// forward signal path, which passes through and can't accumulate.
 #[inline(always)]
+pub(crate) fn flush(x: f32) -> f32 {
+    if x.abs() < 1.0e-18 { 0.0 } else { x }
+}
+
+// One-pole DC blocker (~10 Hz highpass): y = x - x1 + R*y1. The ASYMMETRIC
+// dist flavors generate a DC component — fuzz clamps -0.9/+0.6, wavefold's
+// +0.25 phase offset re-centres arbitrarily, crush's floor() rounds toward
+// -inf — and that offset eats limiter headroom and thumps when a gate cuts
+// the layer. Classic and overdrive are odd-symmetric (no DC) and are NOT
+// routed through this, which also keeps the golden-pinned classic path
+// byte-identical. R at 48 kHz ≈ 0.99869 → -3 dB near 10 Hz.
+#[inline(always)]
+fn dc_block(x: f32, s: &mut [f32; 2]) -> f32 {
+    let r = 1.0 - TAU * 10.0 / unsafe { SR };
+    let y = x - s[0] + r * s[1];
+    s[0] = x;
+    s[1] = flush(y);
+    y
+}
+
 pub(crate) fn df2t(x: f32, b: &[f32; 3], a: &[f32; 2], s: &mut [f32; 2]) -> f32 {
     let y = b[0] * x + s[0];
-    s[0] = b[1] * x - a[0] * y + s[1];
-    s[1] = b[2] * x - a[1] * y;
+    s[0] = flush(b[1] * x - a[0] * y + s[1]);
+    s[1] = flush(b[2] * x - a[1] * y);
+    y
+}
+
+// tanh soft clip scaled so |x| ≤ 0.5 passes within 0.5% (transparent at
+// musical levels) while runaway resonance compresses toward ±4 instead of
+// ringing at whatever amplitude the pole math produces.
+#[inline(always)]
+pub(crate) fn sat4(x: f32) -> f32 {
+    let v = x * 0.25;
+    let e = (2.0 * v).exp();
+    4.0 * ((e - 1.0) / (e + 1.0))
+}
+
+// df2t with SATURATED state — a biquad driven hard at high Q rings digitally
+// (a clinical, glassy sine that decays exactly linearly in dB). Saturating the
+// recursion compresses the resonant build-up the way an analog filter's core
+// does, so high-reso sweeps sing instead of whistle. Selected ONLY above a Q
+// threshold at the call sites; below it the plain kernel runs and stays
+// byte-identical. Crossing the threshold is seamless because sat4 ≈ identity
+// at the state levels a just-below-threshold filter reaches.
+pub(crate) fn df2t_sat(x: f32, b: &[f32; 3], a: &[f32; 2], s: &mut [f32; 2]) -> f32 {
+    let y = b[0] * x + s[0];
+    s[0] = flush(sat4(b[1] * x - a[0] * y + s[1]));
+    s[1] = flush(sat4(b[2] * x - a[1] * y));
     y
 }
 
@@ -253,6 +306,8 @@ pub(crate) struct Strip {
     dist_tn_b: [f32; 3],
     dist_tn_a: [f32; 2],
     dist_tn_s: [[f32; 2]; 2],
+    // DC blocker state for the asymmetric dist flavors: [x1, y1] per channel.
+    dist_dc_s: [[f32; 2]; 2],
     fx_order: [u8; 5],
     cho_on: bool,
     cho_wet: f32,
@@ -326,6 +381,7 @@ pub(crate) const STRIP0: Strip = Strip {
     dist_tn_b: [0.0; 3],
     dist_tn_a: [0.0; 2],
     dist_tn_s: [[0.0; 2]; 2],
+    dist_dc_s: [[0.0; 2]; 2],
     cho_on: false,
     cho_wet: 0.0,
     cho_depth: 0.5,
@@ -472,6 +528,7 @@ fn fx_dist(buf: &mut [[f32; BLOCK]; 2], st: &mut Strip, frames: usize) {
                 } else {
                     st.crush_hold[ci]
                 };
+                let y = dc_block(y, &mut st.dist_dc_s[ci]);
                 *x = dry * cd + y * cw;
             }
         }
@@ -519,6 +576,9 @@ fn fx_dist(buf: &mut [[f32; BLOCK]; 2], st: &mut Strip, frames: usize) {
             } else {
                 y
             };
+            // Only the asymmetric flavors carry DC; classic/overdrive skip the
+            // blocker entirely so their (golden-covered) output is untouched.
+            let y = if mode == 2 || mode == 3 { dc_block(y, &mut st.dist_dc_s[ci]) } else { y };
             *x = dry * cd + y * cw;
         }
     }
@@ -554,7 +614,7 @@ fn fx_chorus(slot: usize, st: &mut Strip, t: f64, frames: usize) {
                 unsafe {
                     let fb_old = CFB[slot][ch][q]; // wet from one quantum ago
                     CFB[slot][ch][q] = wet;
-                    CBUF[slot][ch][w] = x + fb * fb_old;
+                    CBUF[slot][ch][w] = flush(x + fb * fb_old);
                     OUT[slot][ch][i] = x * cd + wet * cw;
                 }
             }
@@ -620,9 +680,9 @@ fn fx_delay(slot: usize, st: &mut Strip, frames: usize) {
                 DFB[slot][0][q] = l_out;
                 DFB[slot][1][q] = r_fb;
                 // cross feedback: L out → R delay input, R out → L delay input
-                DLINE[slot][0][w] = in_l + fb * r_old;
-                DLINE[slot][1][w] = pre_out + fb * l_old;
-                DPRE[slot][w] = in_r;
+                DLINE[slot][0][w] = flush(in_l + fb * r_old);
+                DLINE[slot][1][w] = flush(pre_out + fb * l_old);
+                DPRE[slot][w] = flush(in_r);
                 OUT[slot][0][i] = in_l * cd + l_out * cw;
                 OUT[slot][1][i] = in_r * cd + r_out * cw;
             } else {
@@ -632,7 +692,7 @@ fn fx_delay(slot: usize, st: &mut Strip, frames: usize) {
                     let x = OUT[slot][ch][i];
                     let old = DFB[slot][ch][q];
                     DFB[slot][ch][q] = fb_read;
-                    DLINE[slot][ch][w] = x + fb * old;
+                    DLINE[slot][ch][w] = flush(x + fb * old);
                     OUT[slot][ch][i] = x * cd + out_read * cw;
                 }
             }
@@ -701,10 +761,17 @@ pub(crate) fn process_strips(t_block: f64, frames: usize) {
                     st.vcf_a = a;
                     st.vcf_last = cut;
                 }
+                // vcf_reso is native-lowpass Q in dB; ringing turns glassy
+                // above ~8 dB (q ≈ 2.5), which is where the saturating kernel
+                // takes over. Below it: the plain kernel, byte-identical.
+                let hot = st.vcf_reso > 8.0;
                 for ch in 0..2 {
                     for i in i0..i0 + n {
-                        OUT[slot][ch][i] =
-                            df2t(OUT[slot][ch][i], &st.vcf_b, &st.vcf_a, &mut st.vcf_s[ch]);
+                        OUT[slot][ch][i] = if hot {
+                            df2t_sat(OUT[slot][ch][i], &st.vcf_b, &st.vcf_a, &mut st.vcf_s[ch])
+                        } else {
+                            df2t(OUT[slot][ch][i], &st.vcf_b, &st.vcf_a, &mut st.vcf_s[ch])
+                        };
                     }
                 }
                 // ---- eq3 (engaged only while a band ≠ 0) --------------------
@@ -997,7 +1064,9 @@ pub extern "C" fn strip_fxorder(slot: u32, a: u32, b: u32, c: u32, d: u32, e: u3
 pub extern "C" fn strip_dist(slot: u32, on: u32, amount: f32, wet: f32, mode: u32, tilt: i32, focus: i32) {
     unsafe {
         let st = &mut STRIPS[(slot as usize) % SLOTS];
+        let was_on = st.dist_on;
         st.dist_on = on != 0;
+        if st.dist_on && !was_on { st.dist_dc_s = [[0.0; 2]; 2]; }   // stale DC estimate would step on re-engage
         st.dist_k = amount.clamp(0.0, 1.0) * 100.0;
         st.dist_wet = wet.clamp(0.0, 1.0);
         st.dist_mode = mode % 5;   // 0 classic · 1 overdrive · 2 fuzz · 3 fold · 4 crush

@@ -374,6 +374,13 @@ pub extern "C" fn active_svoices() -> u32 {
     unsafe { SVOICES.iter().filter(|v| v.stage != SStage::Free).count() as u32 }
 }
 
+// 4-point, 3rd-order Hermite (Catmull-Rom). Linear interpolation's error
+// spectrum is a comb of aliased images falling off at only -12 dB/oct, which is
+// audible as fizz on any bright sample repitched more than a few semitones —
+// exactly what the drum Tune and off-root sample layers do. Hermite's images
+// fall at -24 dB/oct for two extra multiplies per read. At fr == 0 every fr
+// term vanishes and the result is y1 EXACTLY, so unpitched integer-position
+// playback is bit-identical to the old linear read by construction.
 #[inline(always)]
 fn read_frame(d: &SampleDesc, pos: f64, c: u32) -> f32 {
     unsafe {
@@ -381,9 +388,16 @@ fn read_frame(d: &SampleDesc, pos: f64, c: u32) -> f32 {
         let fr = (pos - i as f64) as f32;
         let ch = c.min(d.ch - 1);
         let p = (d.base + (ch * d.len) as usize * 4) as *const f32;
-        let a = *p.add(i.min(d.len as usize - 1));
-        let b = *p.add((i + 1).min(d.len as usize - 1));
-        a + (b - a) * fr
+        let last = d.len as usize - 1;
+        let y0 = *p.add(i.saturating_sub(1).min(last));
+        let y1 = *p.add(i.min(last));
+        if fr == 0.0 { return y1; }
+        let y2 = *p.add((i + 1).min(last));
+        let y3 = *p.add((i + 2).min(last));
+        let c1 = 0.5 * (y2 - y0);
+        let c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+        let c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
+        ((c3 * fr + c2) * fr + c1) * fr + y1
     }
 }
 

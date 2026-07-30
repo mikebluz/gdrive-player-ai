@@ -1178,6 +1178,10 @@
     // fxOrder no longer affects audio (it had meaning only when FX were
     // in series). The order list UI is kept for backward compat but is
     // effectively cosmetic.
+    // Declared ahead of rebuildMasterChain: its boot-time call (below) runs
+    // before the OTT installer's block executes, and a TDZ read inside the
+    // try{} would silently skip that rebuild.
+    let masterOtt = null;
     function rebuildMasterChain() {
       try {
         try { masterCompressor.disconnect(); } catch (e) {}
@@ -1185,9 +1189,14 @@
           const n = _masterFxNodes[name];
           if (n) { try { n.disconnect(); } catch (e) {} }
         });
-        // Master series: compressor → volume (limiter / destination are
-        // already wired downstream of volume at construction).
-        masterCompressor.connect(masterVolume);
+        // Master series: compressor → [ott glue] → volume (limiter /
+        // destination are already wired downstream of volume at construction).
+        if (masterOtt) {
+          masterCompressor.connect(masterOtt);
+          Tone.connect(masterOtt, masterVolume);
+        } else {
+          masterCompressor.connect(masterVolume);
+        }
         // Parallel FX returns. Each FX is hard-wired wet=1 (the per-lane
         // send gain controls the wet AMOUNT now). Send bus → FX → masterBus.
         FX_NAMES.forEach(name => {
@@ -1323,6 +1332,9 @@
       // be made less compressed. *On=false bypasses that stage (made transparent,
       // no rerouting). Global: affects ALL output.
       compOn:             true,
+      ottOn:              false,  // 3-band OTT glue (the "Glue" control)
+      ottDepth:           35,
+      bgSinkOn:           false,  // media-element output sink (phone background audio)
       compThresh:         -3,    // dBFS
       compRatio:          2,     // :1
       compAttack:         5,     // ms
@@ -1335,7 +1347,7 @@
       // Drives both the master chain and per-note chains in playNote.
       fxOrder:            FX_NAMES.slice(),
     };
-    const FX_ON_KEYS = ['reverbOn', 'delayOn', 'distortionOn', 'chorusOn', 'vibratoOn', 'tremoloOn', 'phaserOn', 'autoFilterOn', 'pingPongOn', 'autoPanOn', 'warmthOn', 'compOn', 'limitOn', 'clipOn', 'vinylOn', 'tapeOn'];
+    const FX_ON_KEYS = ['reverbOn', 'delayOn', 'distortionOn', 'chorusOn', 'vibratoOn', 'tremoloOn', 'phaserOn', 'autoFilterOn', 'pingPongOn', 'autoPanOn', 'warmthOn', 'compOn', 'ottOn', 'bgSinkOn', 'limitOn', 'clipOn', 'vinylOn', 'tapeOn'];
     // Keys reset by the Dynamics "Reset" button.
     const DYN_KEYS = ['compOn', 'compThresh', 'compRatio', 'compAttack', 'compRelease', 'compKnee', 'limitOn', 'limitCeil', 'clipOn'];
     const globalFx = (() => {
@@ -1364,6 +1376,211 @@
         return { ...GLOBAL_FX_DEFAULTS, fxOrder: FX_NAMES.slice() };
       }
     })();
+    // ---- OTT-style multiband glue (the "Glue" control) ---------------------
+    // Ambient stacks pile up spectrally: five sustained layers sum to a wall in
+    // the mids while the top and bottom thin out. A single broadband compressor
+    // (masterCompressor above) can only duck the whole thing; the OTT trick is
+    // 3-band UPWARD + downward compression — quiet material in each band is
+    // lifted toward a reference, loud material eased down — which is the
+    // modern-ambient "sheen": density and air at once, per band.
+    //
+    // Implementation notes, in the lookahead-limiter's idiom (inline worklet,
+    // Tone-factory node, graceful absence):
+    // - Crossovers 120 Hz / 2.5 kHz, Linkwitz-Riley 4th order (two cascaded
+    //   Butterworth biquads), with the LOW band run through a 2nd-order allpass
+    //   matched to the upper crossover so the three bands still sum flat —
+    //   cascading two LR crossovers without it dips the recombine near 2.5 kHz.
+    // - Per-band envelope in dB with OTT-fast time constants (low 20/150 ms,
+    //   mid 10/90, high 5/60). Downward 4:1 above the -30 dBFS reference,
+    //   upward 3:1 below it CAPPED at +14 dB, and the upward lift fades to
+    //   nothing below -55 dBFS — classic OTT pumps the noise floor between
+    //   notes, and on generative ambient (long silences!) that gate is the
+    //   difference between sheen and hiss-breathing.
+    // - Depth scales the dB amounts (not a dry/wet crossfade), which is how
+    //   OTT's own depth behaves; on/off ramps an internal mix over ~30 ms so
+    //   toggling never clicks and the graph is never rewired live.
+    (function installMasterOtt() {
+      const rawCtx = (Tone.context && Tone.context.rawContext) ? Tone.context.rawContext : null;
+      if (!rawCtx || !rawCtx.audioWorklet || typeof rawCtx.audioWorklet.addModule !== 'function') return;
+      const code = `
+        class BloopsOtt extends AudioWorkletProcessor {
+          constructor(opt){
+            super();
+            const o=(opt&&opt.processorOptions)||{};
+            this.depth=(typeof o.depth==='number')?o.depth:0.35;
+            this.on=!!o.on; this.mix=this.on?1:0;
+            const bq=(fc,q,type)=>{ // RBJ, normalized by a0
+              const w=2*Math.PI*fc/sampleRate, sw=Math.sin(w), cw=Math.cos(w), al=sw/(2*q);
+              let b0,b1,b2,a0=1+al,a1=-2*cw,a2=1-al;
+              if(type==='lp'){ b0=(1-cw)/2; b1=1-cw; b2=b0; }
+              else if(type==='hp'){ b0=(1+cw)/2; b1=-(1+cw); b2=b0; }
+              else { b0=1-al; b1=-2*cw; b2=1+al; } // allpass
+              return [b0/a0,b1/a0,b2/a0,a1/a0,a2/a0];
+            };
+            const Q=Math.SQRT1_2, F1=120, F2=2500;
+            // per channel: low = LP4(F1) then AP2(F2); mid = HP4(F1)->LP4(F2); high = HP4(F1)->HP4(F2)
+            this.co={ lp1:bq(F1,Q,'lp'), hp1:bq(F1,Q,'hp'), lp2:bq(F2,Q,'lp'), hp2:bq(F2,Q,'hp'), ap2:bq(F2,Q,'ap') };
+            this.st=[this._mkState(),this._mkState()];
+            const tc=(ms)=>Math.exp(-1/(ms/1000*sampleRate));
+            this.att=[tc(20),tc(10),tc(5)];  this.rel=[tc(150),tc(90),tc(60)];
+            this.env=[1e-6,1e-6,1e-6]; this.gain=[1,1,1];
+            this.gC=tc(8);                        // gain smoothing ~8 ms
+            this.mixC=tc(30);                     // on/off ramp
+            this.port.onmessage=(e)=>{ const d=e&&e.data||{};
+              if(typeof d.depth==='number') this.depth=Math.max(0,Math.min(1,d.depth));
+              if(typeof d.on==='boolean') this.on=d.on; };
+          }
+          _mkState(){ const z=()=>[0,0]; return { lp1a:z(),lp1b:z(), hp1a:z(),hp1b:z(), lp2a:z(),lp2b:z(), hp2a:z(),hp2b:z(), ap2:z() }; }
+          _f(x,c,s){ const y=c[0]*x+s[0]; s[0]=c[1]*x-c[3]*y+s[1]; s[1]=c[2]*x-c[4]*y; return y; }
+          process(inputs,outputs){
+            const inp=inputs[0], out=outputs[0];
+            if(!inp||inp.length===0) return true;
+            const ch=Math.min(inp.length,2), n=inp[0].length, co=this.co;
+            const REF=-30, GATE=-55, DN=1-1/4, UP=1-1/3, UPMAX=14;
+            for(let i=0;i<n;i++){
+              const bands=[[0,0],[0,0],[0,0]];   // [band][ch]
+              for(let c=0;c<ch;c++){
+                const x=inp[c][i], s=this.st[c];
+                let lo=this._f(this._f(x,co.lp1,s.lp1a),co.lp1,s.lp1b);
+                lo=this._f(lo,co.ap2,s.ap2);                      // phase-match the upper crossover
+                const rest=this._f(this._f(x,co.hp1,s.hp1a),co.hp1,s.hp1b);
+                const mid=this._f(this._f(rest,co.lp2,s.lp2a),co.lp2,s.lp2b);
+                const hi=this._f(this._f(rest,co.hp2,s.hp2a),co.hp2,s.hp2b);
+                bands[0][c]=lo; bands[1][c]=mid; bands[2][c]=hi;
+              }
+              let l=0,r=0;
+              for(let b=0;b<3;b++){
+                let p=0; for(let c=0;c<ch;c++){ const a=Math.abs(bands[b][c]); if(a>p)p=a; }
+                const coeff=(p>this.env[b])?this.att[b]:this.rel[b];
+                this.env[b]=p+(this.env[b]-p)*coeff;
+                const e=20*Math.log10(this.env[b]+1e-9);
+                let g=0;
+                if(e>REF) g=-(e-REF)*DN;
+                else { const lift=Math.min((REF-e)*UP,UPMAX);
+                       const fade=(e<=GATE)?0:Math.min(1,(e-GATE)/10);   // fade the lift out toward silence
+                       g=lift*fade; }
+                const target=Math.pow(10,(g*this.depth)/20);
+                this.gain[b]=target+(this.gain[b]-target)*this.gC;
+                l+=bands[b][0]*this.gain[b];
+                if(ch>1) r+=bands[b][1]*this.gain[b];
+              }
+              const m=this.mix=(this.on?1:0)+(this.mix-(this.on?1:0))*this.mixC;
+              out[0][i]=inp[0][i]*(1-m)+l*m;
+              if(out.length>1){ const dryR=(ch>1?inp[1][i]:inp[0][i]); out[1][i]=dryR*(1-m)+(ch>1?r:l)*m; }
+            }
+            return true;
+          }
+        }
+        registerProcessor('bloops-ott', BloopsOtt);`;
+      let url;
+      try { url = URL.createObjectURL(new Blob([code], { type: 'application/javascript' })); } catch (e) { return; }
+      rawCtx.audioWorklet.addModule(url).then(() => {
+        let node;
+        try {
+          node = Tone.context.createAudioWorkletNode('bloops-ott', {
+            numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+            channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers',
+            processorOptions: { on: globalFx.ottOn === true, depth: Math.max(0, Math.min(100, globalFx.ottDepth || 0)) / 100 },
+          });
+        } catch (e) { return; }
+        try {
+          // Splice: masterCompressor → ott → masterVolume. rebuildMasterChain
+          // routes through masterOtt when present, so FX-order rebuilds keep it.
+          masterCompressor.disconnect();
+          masterCompressor.connect(node);
+          Tone.connect(node, masterVolume);
+          masterOtt = node;
+        } catch (e) {
+          try { masterCompressor.disconnect(); masterCompressor.connect(masterVolume); } catch (e2) {}
+        }
+        try { URL.revokeObjectURL(url); } catch (e) {}
+      }).catch(() => { /* worklet unavailable — chain stays compressor → volume */ });
+    })();
+    // Push the persisted Glue state into the worklet (on/off + depth).
+    function applyMasterOtt() {
+      if (!masterOtt || !masterOtt.port) return;
+      try {
+        masterOtt.port.postMessage({
+          on: globalFx.ottOn === true,
+          depth: Math.max(0, Math.min(100, Number.isFinite(globalFx.ottDepth) ? globalFx.ottDepth : 35)) / 100,
+        });
+      } catch (e) {}
+    }
+
+    // ---- Background-audio sink (phone) -------------------------------------
+    // iOS Safari suspends a Web Audio graph when the app is backgrounded or the
+    // screen locks — but it does NOT stop a playing <audio> ELEMENT, because a
+    // media element is "media playback" (the web-radio category) and gets media-
+    // session treatment. Routing the END of the master chain into a
+    // MediaStreamDestination and playing that stream through a hidden <audio>
+    // element makes the element THE output, so the whole engine inherits that
+    // exemption. This was deliberately skipped while a native shell was the
+    // plan; the native path is now hardware-blocked (Intel Mac + iOS 26), so
+    // the sink is the phone story.
+    //
+    // The element must be the ONLY output — masterFade's edge to the real
+    // destination is disconnected while the sink is on, or everything plays
+    // twice (the documented reason this was skipped). masterFade has exactly
+    // one outgoing edge, so the surgical disconnect below is the whole swap.
+    // Metronome and other stray .toDestination() one-offs keep playing through
+    // the speakers directly and simply don't sound while backgrounded — fine.
+    //
+    // iOS needs a USER GESTURE for el.play(): the toggle tap is one. If play()
+    // still rejects (boot-time restore of a persisted ON), a one-shot
+    // pointerdown listener retries on the next touch anywhere.
+    let _bgSink = null;
+    function applyBackgroundSink() {
+      const want = globalFx.bgSinkOn === true;
+      if (want && !_bgSink) {
+        try {
+          // The destination node must live in TONE'S context — rawContext is the
+          // standardized-audio-context wrapper Tone's whole graph is built on,
+          // and it implements createMediaStreamDestination itself. Creating it
+          // on the unwrapped native context instead makes Tone.connect throw
+          // InvalidAccessError (cross-context edge) and the sink silently never
+          // engages. The .stream it exposes is a real MediaStream either way.
+          const dest = Tone.context.rawContext.createMediaStreamDestination();
+          Tone.connect(masterFade, dest);
+          try { masterFade.disconnect(Tone.getDestination()); } catch (e) {}
+          const el = document.createElement('audio');
+          el.setAttribute('playsinline', '');
+          el.style.display = 'none';
+          el.srcObject = dest.stream;
+          document.body.appendChild(el);
+          _bgSink = { dest, el };
+          const tryPlay = () => el.play().catch(() => {
+            // no gesture yet — retry on the next touch, once
+            const arm = () => { el.play().catch(() => {}); document.removeEventListener('pointerdown', arm); };
+            document.addEventListener('pointerdown', arm, { once: true });
+          });
+          tryPlay();
+          // Lock-screen identity + controls. Play/pause map to the Bloom
+          // transport when available so the lock screen actually works.
+          try {
+            if (navigator.mediaSession) {
+              navigator.mediaSession.metadata = new MediaMetadata({ title: 'Bloops', artist: 'generative bloom' });
+              navigator.mediaSession.setActionHandler('play', () => { try { el.play(); } catch (e) {} });
+              navigator.mediaSession.setActionHandler('pause', () => { /* keep the stream alive — pausing the element kills background audio */ });
+            }
+          } catch (e) {}
+        } catch (e) {
+          // construction failed — restore the direct path, drop any half-built
+          // element, and report off (the toggle repaints from this flag).
+          try { masterFade.toDestination(); } catch (e2) {}
+          try { const el = document.querySelector('audio[playsinline][style*="display: none"]'); if (el && !el.src) el.remove(); } catch (e2) {}
+          _bgSink = null; globalFx.bgSinkOn = false;
+        }
+      } else if (!want && _bgSink) {
+        try { _bgSink.el.pause(); } catch (e) {}
+        try { _bgSink.el.srcObject = null; _bgSink.el.remove(); } catch (e) {}
+        try { masterFade.disconnect(_bgSink.dest); } catch (e) {}
+        try { masterFade.toDestination(); } catch (e) {}
+        _bgSink = null;
+      }
+    }
+    // A persisted ON restores at boot (the gesture retry above covers autoplay).
+    try { if (globalFx.bgSinkOn === true) applyBackgroundSink(); } catch (e) {}
+
     function applyGlobalFx() {
       // Send/return: master FX wets stay at 1 (always fully wet); the
       // per-lane send Gain controls how much signal goes IN to each FX.
@@ -1451,6 +1668,7 @@
         }
       } catch (e) {}
       try { masterClipper.setMap(globalFx.clipOn === false ? ((x) => x) : _masterClipCurve); } catch (e) {}
+      try { applyMasterOtt(); } catch (e) {}
     }
     try { applyMasterDynamics(); } catch (e) {}   // apply saved dynamics on boot
     // Apply the Master Warmth settings (globalFx.warmth/warmthDrive/warmthCut/

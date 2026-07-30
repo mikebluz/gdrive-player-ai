@@ -11146,8 +11146,9 @@
         '<div class="ambient-ctrl" title="' + title + '"><label>' + label + '</label>' +
         '<input type="range" class="ambient-improv-sl" data-imp="' + key + '" min="0" max="100" step="1" value="' + val + '" />' +
         '<span class="ambient-hint ambient-step-fx-v">' + val + '</span></div>';
-      const summary = !on
-        ? 'Off — improvise \u00d70, so every iteration plays the pattern. Raise it to start alternating.'
+      // No off-state blurb: `improvise ×0` says it itself now that the count IS
+      // the state. The summary only appears when there is something to explain.
+      const summary = !on ? ''
         : (p > 0
           ? (p + ' iteration' + (p === 1 ? '' : 's') + ' of the pattern, then ' + q + ' improvised, repeating (' + (p + q) + ' in all).')
           : 'Always improvising — the pattern is never played.');
@@ -11161,14 +11162,12 @@
             sl('pitchVar', 'Pitch', _ambImprovVar(L, 'pitchVar', 0), 'How often the melodic walk moves. Bass only — an arp walks its chord, and drums have no pitch walk.') +
             sl('restProb', 'Rests', _ambImprovVar(L, 'restProb', 0), 'Chance of leaving a slot silent while improvising — space in the line.')
           : '') +
-        '<div class="ambient-hint">' +
-          (on
-            ? summary +
-              ' Each improvised iteration re-rolls its own rhythm, so no two repeat. The pattern you drew is left alone —' +
-              ' the next pattern iteration plays it again exactly. While this is on the layer stops using Loop/Write,' +
-              ' because a frozen phrase would pin it to one side of the alternation.'
-            : summary) +
-        '</div>' +
+        (summary
+          ? ('<div class="ambient-hint">' + summary +
+             ' Each improvised iteration re-rolls its own rhythm, so no two repeat. The pattern you drew is left alone —' +
+             ' the next pattern iteration plays it again exactly. While this is on the layer stops using Loop/Write,' +
+             ' because a frozen phrase would pin it to one side of the alternation.</div>')
+          : '') +
       '</div>';
     }
     function _ambCycleGateHtml(L) {

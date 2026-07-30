@@ -7659,6 +7659,20 @@
     // derived from note length; Fine (cents) is ADDED onto any existing detune.
     // So the Voice-section sliders shape the sound directly (the model Pedal/
     // Drone already used). Absent fields leave the builder's value.
+    // Vel-var's seeded jitter: one uniform per call, keyed on (note time ·
+    // per-onset ordinal · take seed). The ordinal differentiates the voices of
+    // one chord (same _ambKeyTime) and self-resets when the time moves, so the
+    // stream is a pure function of the timeline — same take = same dynamics,
+    // 🎲 New take re-rolls them, and NOTHING touches the engine RNG stream
+    // (harness-safe, like the unseeded draw it replaces). Emit order is
+    // deterministic, so the ordinal is too.
+    let _vvLastAt = null, _vvSeq = 0;
+    function _ambVelJitter01(atSec) {
+      const t = (typeof atSec === 'number' && atSec != null) ? atSec : 0;
+      if (t !== _vvLastAt) { _vvLastAt = t; _vvSeq = 0; } else _vvSeq++;
+      const seed = ((Math.round(t * 8000) | 0) * 2654435761) ^ ((_vvSeq + 1) * 2246822519) ^ ((((typeof _E !== 'undefined' && _E && _E._cfg && _E._cfg.seed) | 0)) * 40503);
+      return _ambSeededRand(seed >>> 0)();
+    }
     function _ambApplyAdsr(p, inst) {
       if (!p || !inst) return p;
       // Humanize (Variance, universal): per-onset timing jitter, applied by
@@ -7667,13 +7681,19 @@
       // engine RNG stream (zero draws either way → harness-safe). Gated, so
       // the default path carries no extra field. Max ±20 ms at 100.
       if (Number.isFinite(inst.humanize) && inst.humanize > 0) p._humanSec = (Math.random() * 2 - 1) * Math.min(100, inst.humanize) / 100 * 0.02;
-      // Vel var (Variance, universal): velocity NOISE — random per-onset level
-      // scatter, distinct from Accent (patterned dynamics). Same unseeded
-      // doctrine as Humanize (performance noise, zero engine-RNG draws);
-      // gated at 0. Max ±40% of the note's level at 100.
+      // Vel var (Variance, universal): velocity NOISE — per-onset level
+      // scatter, distinct from Accent (patterned dynamics). SEEDED since
+      // 2026-07-30 (it split from Humanize's unseeded doctrine): the emitter-
+      // fold battery showed unseeded dynamics never replay — not across two
+      // runs of the same take, not under Write's 'live' re-perform — which
+      // reads as broken reproducibility, not as performance. Keyed on the
+      // note's own time (_ambKeyTime, stamped by every emitter) + the take
+      // seed; still zero engine-RNG draws. Humanize below deliberately KEEPS
+      // Math.random — ±20 ms of start jitter is performance feel, and nothing
+      // downstream depends on it. Max ±40% of the note's level at 100.
       if (Number.isFinite(inst.velVar) && inst.velVar > 0) {
         const b0 = Number.isFinite(p.volume) ? p.volume : 100;
-        p.volume = Math.max(0, Math.min(127, Math.round(b0 * (1 + (Math.random() * 2 - 1) * Math.min(100, inst.velVar) / 100 * 0.4))));
+        p.volume = Math.max(0, Math.min(127, Math.round(b0 * (1 + (_ambVelJitter01(_ambKeyTime) * 2 - 1) * Math.min(100, inst.velVar) / 100 * 0.4))));
       }
       if (Number.isFinite(inst.attack))  p.attack  = Math.max(0, Math.min(20000, inst.attack));
       if (Number.isFinite(inst.decay))   p.decay   = Math.max(0, Math.min(20000, inst.decay));
@@ -16189,8 +16209,11 @@
                 pp = Object.assign({}, pp);
                 if (Number.isFinite(lyr.humanize) && lyr.humanize > 0) pp._humanSec = (Math.random() * 2 - 1) * Math.min(100, lyr.humanize) / 100 * 0.02;
                 if (Number.isFinite(lyr.velVar) && lyr.velVar > 0) {
+                  // Seeded on the note's REPLAY time, which shifts every loop
+                  // pass — so 'live' still re-rolls the dynamics per iteration,
+                  // but the same pass of the same take replays identically.
                   const b0 = Number.isFinite(pp.volume) ? pp.volume : 100;
-                  pp.volume = Math.max(0, Math.min(127, Math.round(b0 * (1 + (Math.random() * 2 - 1) * Math.min(100, lyr.velVar) / 100 * 0.4))));
+                  pp.volume = Math.max(0, Math.min(127, Math.round(b0 * (1 + (_ambVelJitter01(at) * 2 - 1) * Math.min(100, lyr.velVar) / 100 * 0.4))));
                 }
                 if (_liveOrn > 0 && f2 > 0) {
                   // Fresh in-key flicks each pass: nearest degree in the layer's

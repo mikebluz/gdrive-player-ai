@@ -11053,12 +11053,12 @@
     // an object there would be clobbered by the numeric backfill on every getCfg
     // (the normalize trap), so it is coerced in _ambNormalizeEuclidPattern instead.
     const _AMB_IMPROV_MAX = 64;
-    // Counts default to 1 and 1 — alternate every other iteration, the tightest
-    // and most obviously-audible setting, and the natural place to dial UP from.
-    // (8/8 made the alternation take half a minute to reveal itself.) Note that
-    // an untouched layer still SHOWS improvise ×0: the tab is off until you
-    // raise it, so displaying a 1 there would claim it was running.
-    const _AMB_IMPROV_DEF = { pat: 1, imp: 1, rhythmVar: 55, pitchVar: 65, restProb: 10 };
+    // Counts default to 1 and 0: one iteration of the pattern, none improvised —
+    // i.e. OFF, stated in the same two numbers that carry every other state. The
+    // first + press lands on 1/1, alternating every other iteration, which is the
+    // tightest and most obviously-audible setting and the natural place to dial UP
+    // from. (8/8 made the alternation take half a minute to reveal itself.)
+    const _AMB_IMPROV_DEF = { pat: 1, imp: 0, rhythmVar: 55, pitchVar: 65, restProb: 10 };
     // ON/OFF is the COUNT, not a separate switch (the button was dropped
     // 2026-07-30): `improvise ×0` means no improvised iterations, which is what
     // off always meant. Three states, two numbers. The legacy `on` flag is still
@@ -11071,9 +11071,8 @@
     }
     function _ambImprovLen(L, k) {
       const im = (L && L.improv) || null;
-      // No object yet = nothing dialled in: pattern shows its default, improvise
-      // shows 0 (off). With an object, a stored 0 is a real value, not "missing".
-      const v = (im && Number.isFinite(im[k])) ? (im[k] | 0) : (k === 'imp' ? 0 : _AMB_IMPROV_DEF[k]);
+      // A stored 0 is a real value, not "missing" — hence the isFinite check.
+      const v = (im && Number.isFinite(im[k])) ? (im[k] | 0) : _AMB_IMPROV_DEF[k];
       return Math.max(0, Math.min(_AMB_IMPROV_MAX, v));
     }
     // Is iteration `c` an improvised one? Pure function of the cycle index — no RNG,
@@ -11104,8 +11103,7 @@
     // outright — absence is the neutral state that keeps the layer byte-identical.
     function _ambImprovEnsure(L) {
       if (!L.improv || typeof L.improv !== 'object') {
-        L.improv = { pat: _AMB_IMPROV_DEF.pat, imp: 0,   // imp 0 = off until you dial one in
-          rhythmVar: _AMB_IMPROV_DEF.rhythmVar, pitchVar: _AMB_IMPROV_DEF.pitchVar, restProb: _AMB_IMPROV_DEF.restProb };
+        L.improv = { ..._AMB_IMPROV_DEF };
       }
       return L.improv;
     }

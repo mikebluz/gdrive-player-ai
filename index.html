@@ -343,17 +343,49 @@ dl.f dd{font-weight:700}
 .todo b{display:block;color:var(--note-t);margin-bottom:3px}
 
 /* ── MOBILE: no windows, just the content ──────────────────────────────── */
+/* ── MOBILE: BROWSER CHROME ────────────────────────────────────────────────
+   Below 821px the desktop metaphor is abandoned — dragging windows on a phone
+   is a bad time — and until now it degraded to one long scroll through seven
+   stacked windows. Tabs are better on a phone for the same reason windows are
+   better on a desktop: you get one thing at a time with a chooser, instead of
+   scrolling past six things to reach the seventh.
+
+   The CONTENT is the same DOM either way. Only the chrome around it changes,
+   so nothing here is a second copy of anything. */
+.bchrome{display:none}
+
 @media (max-width:820px){
-  body{overflow:auto}
-  .icons{display:none}
-  .bar .tabs{display:none}
+  .bar,.icons{display:none}                /* the taskbar's job is done by tabs */
+  .bchrome{display:block;position:fixed;inset:0 0 auto 0;z-index:900;background:var(--bar)}
+  .btabs{display:flex;align-items:flex-end;gap:2px;flex-wrap:wrap;padding:6px 5px 0}
+  .btab{display:flex;align-items:center;gap:5px;flex:1 1 auto;min-width:0;
+    padding:6px 7px;border:0;cursor:pointer;font:inherit;font-size:10px;
+    letter-spacing:.05em;color:var(--bar-fg);background:var(--sunk);
+    border-radius:5px 5px 0 0}
+  .btab .f{flex:0 0 auto;font-size:11px;line-height:1}
+  .btab .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .btab[aria-selected="true"]{background:var(--chrome);color:var(--ink);
+    padding-bottom:8px;margin-bottom:-1px}
+  .btoolbar{display:flex;align-items:center;gap:6px;padding:6px 8px;
+    background:var(--chrome);border-bottom:1px solid var(--bevel)}
+  .btoolbar button{width:24px;height:22px;border:0;border-radius:4px;padding:0;
+    background:transparent;color:var(--ink);font:400 13px/1 inherit;cursor:pointer}
+  .btoolbar button:disabled{opacity:.3}
+  .burl{flex:1;min-width:0;display:flex;align-items:center;gap:6px;
+    padding:4px 9px;border-radius:12px;background:var(--paper);
+    box-shadow:inset 0 0 0 1px var(--chrome-d);font-size:11px;color:var(--mute)}
+  .burl b{color:var(--ink);font-weight:400}
+  .burl .lk{font-size:9px;color:var(--link)}
+
+  /* One pane at a time. The window chrome goes — the tab strip already says
+     which one you are looking at, so a title bar would repeat it. */
   .win{position:static!important;width:auto!important;height:auto!important;
-    margin:0 0 12px;box-shadow:none;z-index:auto!important}
-  .win.hidden{display:flex}
-  .tb{cursor:default}
-  .tb button{display:none}
-  .stack{padding:64px 10px 60px}   /* bottom clears the sound button */   /* 38px taskbar + a real gap under it */
+    margin:0;box-shadow:none;z-index:auto!important;display:none}
+  .win.tabon,.win.tabon.hidden{display:flex}
+  .tb{display:none}
   .body{max-height:none}
+  .stack{padding:0 8px 60px}   /* top is measured — see padForChrome */
+  body{overflow:auto}
 }
 @media (min-width:821px){
   .stack{display:contents}
@@ -402,6 +434,15 @@ dl.f dd{font-weight:700}
 </div>
 
 <div class="icons" id="icons"></div>
+
+<div class="bchrome" aria-hidden="false">
+  <div class="btabs" id="btabs" role="tablist" aria-label="Sections"></div>
+  <div class="btoolbar">
+    <button id="bback" type="button" title="Back" aria-label="Back">←</button>
+    <button id="bfwd" type="button" title="Forward" aria-label="Forward">→</button>
+    <span class="burl"><span class="lk" aria-hidden="true">🔒</span><span id="burl"></span></span>
+  </div>
+</div>
 
 <div class="stack" id="stack">
 
@@ -926,6 +967,76 @@ const clock = document.getElementById('clock');
 const tick = () => { const d = new Date();
   clock.textContent = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0'); };
 tick(); setInterval(tick, 20000);
+
+// ── MOBILE: TABS ─────────────────────────────────────────────────────────
+// Same seven windows, different chrome. On a phone they become tabs, because
+// one-at-a-time with a chooser beats scrolling past six things to reach the
+// seventh. Reuses ICONS for the labels and the SAME DOM for the content, so
+// there is no second copy of the page to keep in step.
+const PATHS = { 'w-grains':'/grains', 'w-luz':'/', 'w-wiz':'/mercy-wizard',
+                'w-live':'/shows', 'w-book':'/booking', 'w-tools':'/tools',
+                'w-links':'/links' };
+const btabs = document.getElementById('btabs'), burl = document.getElementById('burl');
+let mtab = 'w-grains', mhist = ['w-grains'], mcur = 0;
+
+function showTab(id, record) {
+  if (!PATHS[id]) return;
+  mtab = id;
+  wins.forEach(w => w.classList.toggle('tabon', w.id === id));
+  btabs.querySelectorAll('.btab').forEach(b =>
+    b.setAttribute('aria-selected', String(b.dataset.tab === id)));
+  const p = PATHS[id];
+  burl.innerHTML = 'mikeluz.com<b>' + (p === '/' ? '' : p) + '</b>';
+  document.title = (ICONS[id] || ['', 'Mike Luz'])[1] + ' — Mike Luz';
+  if (record !== false) {
+    mhist = mhist.slice(0, mcur + 1);
+    if (mhist[mhist.length - 1] !== id) { mhist.push(id); mcur = mhist.length - 1; }
+  }
+  document.getElementById('bback').disabled = mcur <= 0;
+  document.getElementById('bfwd').disabled = mcur >= mhist.length - 1;
+  scrollTo(0, 0);
+}
+
+Object.entries(ICONS).forEach(([id, [glyph, label]]) => {
+  const b = document.createElement('button');
+  b.className = 'btab'; b.type = 'button'; b.dataset.tab = id;
+  b.setAttribute('role', 'tab');
+  b.innerHTML = '<span class="f" aria-hidden="true">' + glyph + '</span>' +
+                '<span class="t">' + label + '</span>';
+  b.addEventListener('click', () => showTab(id));
+  btabs.appendChild(b);
+});
+document.getElementById('bback').addEventListener('click', () => {
+  if (mcur > 0) { mcur--; showTab(mhist[mcur], false); }
+});
+document.getElementById('bfwd').addEventListener('click', () => {
+  if (mcur < mhist.length - 1) { mcur++; showTab(mhist[mcur], false); }
+});
+// Cross-window links are navigation here too — the desktop handler bails on
+// mobile, so this picks them up.
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('[data-open]');
+  if (!a || desktop.matches) return;
+  e.preventDefault();
+  showTab(a.dataset.open);
+});
+// The chrome is fixed and its height depends on how many rows the tab strip
+// wraps to, which depends on the width — so it is MEASURED rather than guessed
+// at with a magic padding that is only right at one screen size.
+function padForChrome() {
+  const st = document.getElementById('stack');
+  if (desktop.matches) { st.style.paddingTop = ''; return; }
+  st.style.paddingTop = (document.querySelector('.bchrome').offsetHeight + 12) + 'px';
+}
+
+showTab('w-grains', false);
+padForChrome();
+// A window closed on the desktop must not stay hidden when the layout flips.
+addEventListener('resize', () => {
+  padForChrome();
+  if (!desktop.matches) showTab(mtab, false);
+});
+
 </script>
 </body>
 </html>

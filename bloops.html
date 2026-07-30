@@ -347,6 +347,17 @@ try { if (/[?&]diag=0\b/.test(location.search)) localStorage.removeItem('sbDiag'
       </div>
     </div>
     <div class="fx-panel" id="fx-panel">
+      <!-- ── DEVICE section ───────────────────────────────────────────────
+           Not an effect: an OUTPUT-ROUTING switch. It sits first because it is
+           the setting people go looking for ("does this keep playing when I
+           lock my phone?"), and because burying it under ten send groups made
+           it unfindable — reported 2026-07-30. -->
+      <div class="fx-section-head" id="fx-section-device">
+        <span>Device</span>
+        <span class="fx-section-sub">playback, not an effect</span>
+      </div>
+      <div class="fx-group-label fx-group-head"><span>Background audio</span><button type="button" class="fx-bypass off" id="fx-bgsink-on" title="Keep playing when the app is in the background (phone). Routes the output through a media player, which iOS treats like a web radio — switching apps or locking the screen no longer stops the sound. Leave OFF on desktop.">OFF</button></div>
+      <div class="fx-control"><div class="fx-hint-row">Keeps a Bloom playing when you switch apps or lock the screen. Turn this on from the phone itself.</div></div>
       <!-- ── PER-LANE section ─────────────────────────────────────────────
            These are the per-lane SEND amounts (lane.sends[name]) + bypass:
            how much of THIS lane feeds each shared effect. They refresh when
@@ -390,7 +401,6 @@ try { if (/[?&]diag=0\b/.test(location.search)) localStorage.removeItem('sbDiag'
       <div class="fx-control"><div class="fx-control-row">High cut <span class="fx-val" id="fx-warmth-cut-v">16000 Hz</span></div><input type="range" id="fx-warmth-cut" min="2000" max="20000" step="500" value="16000" title="Low-pass to shave digital fizz" /></div>
       <div class="fx-group-label fx-group-head"><span>Glue</span><button type="button" class="fx-bypass off" id="fx-ott-on" title="3-band OTT-style compression on the master — lifts quiet material and eases loud material per band (low/mid/high), the modern-ambient density-and-air trick.">OFF</button></div>
       <div class="fx-control"><div class="fx-control-row">Depth <span class="fx-val" id="fx-ott-depth-v">35%</span></div><input type="range" id="fx-ott-depth" min="0" max="100" value="35" title="How hard the three bands are pushed toward the reference level. Subtle at 20, obvious at 60, squashed at 100." /></div>
-      <div class="fx-group-label fx-group-head"><span>Background audio</span><button type="button" class="fx-bypass off" id="fx-bgsink-on" title="Keep playing when the app is in the background (phone). Routes the output through a media player, which iOS treats like a web radio — switching apps or locking the screen no longer stops the sound. Leave OFF on desktop.">OFF</button></div>
       <div class="fx-group-label fx-group-head"><span>Reverb</span><button type="button" class="fx-bypass" id="fx-rev-type" title="Reverb engine — Convolution (lush, default) or Freeverb (classic comb)">Convolution</button></div>
       <div class="fx-control"><div class="fx-control-row">Size <span class="fx-val" id="fx-rev-size-v">70%</span></div><input type="range" id="fx-rev-size" min="0" max="100" value="70" /></div>
       <div class="fx-control"><div class="fx-control-row">Tone <span class="fx-val" id="fx-rev-tone-v">50%</span></div><input type="range" id="fx-rev-tone" min="0" max="100" value="50" /></div>

@@ -924,9 +924,33 @@ stack, held single note that roams per cycle, strummed pedal).
    → 2000 ms of 4 s; pedal ring 100 → 500 ms legato slots; ring 0 note-for-note
    identical to absent. Harness green, golden 82/82.
 
-   **PITCH RULE remains unstarted** — the one axis that isn't a number
-   (`voicing` · `stack` · `fixed` · `anchor`). After it: the step-3 emitter
-   collapse, which is the deliberate re-baseline decision.
+   **PITCH RULE: LANDED (2026-07-30).** `pitchRule` ('' = the type's native
+   rule · voicing · stack · fixed · anchor) + `_ambStackFreqs` (the drone's
+   stack math extracted verbatim) + `_ambAnchorPc` (the pedal-pick scorer over
+   the WHOLE progression, view-shifted — deliberately the simplification; the
+   drone's own anchor path keeps its part/section-aware window machinery).
+   Each emitter branches at its pick site only when the field is set, so the
+   shared-RNG draw pattern of every existing project is untouched. Pedal gains
+   `voices` (1–9) for its Stack; pedal omits 'voicing' until the collapse
+   gives it the chord machinery. UI: a 'pitchrule' select token on all three
+   (the primary Bed needing the hardcoded wiring, as ever).
+
+   **STEP-2 REPRODUCTION MATRIX: RUN.** Bed(stack · strike −2 · ring 100)
+   reproduces Drone(hold 2) note-for-note at the same cadence — the one
+   residual is a ≤10 ms per-voice stagger difference (Bed's strum machinery vs
+   the drone's fixed 6 ms fan). Drone(fixed · strike +4 · ring 20) reproduces
+   Pedal(density 4) EXACTLY — character-for-character identical streams. The
+   matrix's genuine finding, exactly what step 2 exists to surface: the axis
+   that resists unification is not a dial at all, it is the CLOCK — the
+   drone's anchor/progression-window machinery strikes at part-aware WINDOW
+   boundaries (variable length under sections), which the step clock cannot
+   express without a new snapping mode. That is the real content of the
+   "three clocks" cost, now located precisely.
+
+   Step 3 (the emitter collapse) follows from the matrix: Drone and Pedal
+   share the windowed clock and are now dial-equivalent — they merge first;
+   Bed's step-clock body and the window-boundary question are the remaining
+   decision.
 2. Verify by construction: can Bed-with-dials reproduce Drone? Drone reproduce Pedal? A
    failure locates the genuinely-missing axis rather than guessing at it.
 3. Only then collapse to one emitter, with Bed/Drone/Pedal surviving as **presets in the

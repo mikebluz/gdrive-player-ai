@@ -25413,20 +25413,26 @@
       // euclidean pattern shown here; tapping a cell hand-edits it into an
       // explicit override. A knob change or Regen resets it to the generated
       // pattern. Filled/wired by _ambWireEuclidGrid (like the trance-gate grid).
-      if (k === 'euclidgrid') return '<div class="ambient-ctrl ambient-slice-row ambient-euclid-ctrl' + ((inst && inst.euclidKit) ? ' ambient-euclid-kitctrl' : '') + '"><label title="The on/off step pattern. Pulses/Steps/Rotate generate it; tap cells to hand-edit; or load a rhythm Preset. A knob change or Regen resets it to the generated Euclid pattern.">Pattern</label>' +
+      // LAYER KEY, not `lk`. `lk` is the ID STEM ("bass-9901"); the actual key is
+      // "bass:9901" — every other seedkey emitter applies this transform, and
+      // using the raw stem here made _ambLayerByKey miss, so _ambGridEditStart
+      // early-returned and "Grid" silently did nothing on a Bass. It worked on a
+      // PRIMARY (lk === type === "beat"), which is what made it look layer-specific.
+      if (k === 'euclidgrid') { const _sk = (lk === type) ? type : (type + ':' + lk.slice(type.length + 1));
+        return '<div class="ambient-ctrl ambient-slice-row ambient-euclid-ctrl' + ((inst && inst.euclidKit) ? ' ambient-euclid-kitctrl' : '') + '"><label title="The on/off step pattern. Pulses/Steps/Rotate generate it; tap cells to hand-edit; or load a rhythm Preset. A knob change or Regen resets it to the generated Euclid pattern.">Pattern</label>' +
         '<div class="ambient-euclid-wrap">' +
           // PATTERN or GRID — the two mutually exclusive ways of saying what this
           // layer plays. Reuses the amb-seedmode attributes, so the existing
           // handler and _ambRefreshSeedModes drive it with no new wiring.
           '<div class="ambient-ctrl ambient-patsrc"><label>Notes from</label><span class="ambient-seg-row">' +
-            '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="generate" data-seedkey="' + _ambEscText(lk) + '" title="This layer\u2019s Pattern: the rhythm below, with the engine picking each note from the Notes pool.">\u2ff4 Pattern</button>' +
-            '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="grid" data-seedkey="' + _ambEscText(lk) + '" title="A fixed phrase you compose in the full editor. Replaces the Pattern while it is set \u2014 the two are alternatives, not layers.">\u270e Grid</button>' +
+            '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="generate" data-seedkey="' + _ambEscText(_sk) + '" title="This layer\u2019s Pattern: the rhythm below, with the engine picking each note from the Notes pool.">\u2ff4 Pattern</button>' +
+            '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="grid" data-seedkey="' + _ambEscText(_sk) + '" title="A fixed phrase you compose in the full editor. Replaces the Pattern while it is set \u2014 the two are alternatives, not layers.">\u270e Grid</button>' +
           '</span></div>' +
           '<div class="ambient-euclid-presetrow"><select id="' + p + '-euclidpreset" class="ambient-select ambient-euclid-preset" title="The rhythm this pattern came from. Reads Custom once you edit it — save a Custom to keep it.">' + _ambEuclidPresetOptions(inst) + '</select>' +
             '<button type="button" id="' + p + '-euclidpresetsave" class="ambient-euclid-presetsave" title="Save this pattern as a named rhythm you can load on any layer">\u2b07 Save</button>' +
           '</div>' +
           '<div class="ambient-euclid-grid" id="' + p + '-euclidgrid"></div>' +
-        '</div></div>';
+        '</div></div>'; }
       // KEY group (Option C): surface the per-layer KEY override (layer.keyOv —
       // engine support pre-existed; this is its card UI). Inherit = the area's
       // frame (key or global prog); Key = this layer pins its own root+scale;

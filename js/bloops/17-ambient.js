@@ -19102,7 +19102,15 @@
           const card = grid.closest('.ambient-layer');
           let key = card && card.getAttribute('data-inst');
           if (!key) { const ph = card && card.querySelector('[data-phkey]'); key = ph && ph.getAttribute('data-phkey'); }
-          const st = key && E.timer && E.runPhase && E.runPhase[key];
+          // STORE SPLIT: a Bass anchors in E.bassPhase, everything else euclid
+          // (Beat / Arp) in E.runPhase — see the descriptor table. Reading only
+          // runPhase meant the step highlight never lit on a BASS at all, which
+          // is the layer most likely to have a hand-drawn pattern you want to
+          // watch. Check both stores.
+          const _ph = key && E.timer
+            ? ((E.runPhase && E.runPhase[key]) || (E.bassPhase && E.bassPhase[key]))
+            : null;
+          const st = _ph;
           // PRE-BOUNDARY PHASE. An area advance fires ~0.6 s before the boundary
           // and re-anchors every layer AT that future boundary, so `now >= startAt`
           // goes false and this whole block stops running — the step highlight

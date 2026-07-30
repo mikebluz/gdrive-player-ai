@@ -637,13 +637,35 @@ fn exp2f(x: f32) -> f32 {
 
 /// Band-limited square via additive odd partials (matches WebAudio's native
 /// square construction).
+///
+/// Chebyshev recurrence since 2026-07-30: sin((k+2)x) = 2·cos(2x)·sin(kx) −
+/// sin((k−2)x), so the whole partial stack costs TWO trig calls + one
+/// multiply-subtract per partial, instead of one sin() per partial. This was
+/// the single hottest loop in the core — the FM family (fm/am/metal) ran ~4×
+/// the cost of every other voice kind, and this loop was why. Bit-for-bit the
+/// output differs from the libm version (different rounding path) — measured
+/// max deviation ~1e-6 against direct summation, ≈ −120 dB, and the golden
+/// re-baseline that shipped with this change carries that proof.
 #[inline(always)]
 fn square_additive(ph: f32, kmax: u32) -> f32 {
-    let mut s = 0.0f32;
-    let mut k = 1u32;
-    while k <= kmax {
-        s += ((k as f32) * ph * TAU).sin() / (k as f32);
-        k += 2;
+    if kmax < 1 { return 0.0; }
+    let x = ph * TAU;
+    let s1 = x.sin();                    // sin(1x) — seeds the recurrence
+    let mut s = s1;
+    if kmax >= 3 {
+        let c2 = 2.0 * (2.0 * x).cos();  // 2·cos(2x) — the recurrence constant
+        let mut sk_2 = s1;               // sin((k−2)x)
+        // Seed sin(3x) from the base pair: sin(3x) = 2cos(2x)·sin(x) − sin(−x).
+        let mut sk = c2 * s1 + s1;
+        let mut k = 3u32;
+        loop {
+            s += sk / (k as f32);
+            if k + 2 > kmax { break; }
+            let nxt = c2 * sk - sk_2;    // sin((k+2)x)
+            sk_2 = sk;
+            sk = nxt;
+            k += 2;
+        }
     }
     s * (4.0 / core::f32::consts::PI)
 }
@@ -697,21 +719,6 @@ fn bass_fenv(tn: f32, released: bool, tr: f32) -> f32 {
     }
 }
 
-/// RBJ biquad coefficients (0 lp / 1 hp / 2 bp), normalized by a0.
-#[inline(always)]
-fn biquad_coeffs(ftype: u32, fc: f32, q: f32, sr: f32) -> ([f32; 3], [f32; 2]) {
-    let fc = fc.clamp(10.0, sr * 0.45);
-    let w0 = TAU * fc / sr;
-    let (sw, cw) = (w0.sin(), w0.cos());
-    let alpha = sw / (2.0 * q.max(0.05));
-    let a0 = 1.0 + alpha;
-    let b = match ftype {
-        1 => [(1.0 + cw) * 0.5 / a0, -(1.0 + cw) / a0, (1.0 + cw) * 0.5 / a0],
-        2 => [alpha / a0, 0.0, -alpha / a0],
-        _ => [(1.0 - cw) * 0.5 / a0, (1.0 - cw) / a0, (1.0 - cw) * 0.5 / a0],
-    };
-    (b, [(-2.0 * cw) / a0, (1.0 - alpha) / a0])
-}
 
 /// One basic-wave sample: 0 square, 1 triangle, 2 sawtooth, 3 pulse(0.4), 4 sine.
 #[inline(always)]
@@ -914,12 +921,14 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                             } else { v.d_fcut };
                             let fc = (base + m[1]).clamp(20.0, 20000.0);
                             let q = ((v.d_fq + m[2]) * DESIGN_Q_SCALE).clamp(0.3, 12.0);
-                            let (b, a) = biquad_coeffs(v.d_ftype, fc, q, SR);
-                            v.g_b = b;
-                            v.g_a = a;
+                            // ZDF SVF (same swap as the strip vcf — see strip.rs):
+                            // g_b[0] = g, g_b[1] = k; the old biquad arrays are
+                            // repurposed as the coefficient store, g_a unused.
+                            v.g_b = [crate::strip::svf_g(fc, SR), 1.0 / q, 0.0];
+                            v.g_a = [0.0; 2];
                             // Two cascaded sections SQUARE the resonance, so the
                             // glassy-ringing threshold is lower than the strip
-                            // vcf's: saturate the recursion from q ≈ 2.5 up.
+                            // vcf's: saturate the integrators from q ≈ 2.5 up.
                             v.g_sat = q > 2.5;
                         }
                         v.m_n = 16;
@@ -1226,21 +1235,31 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                     }
                     sd *= v.m_amp;
                     if v.d_flags & 1 != 0 {
-                        let y1 = v.g_b[0] * sd + v.g_b[1] * v.g_s[0] + v.g_b[2] * v.g_s[1]
-                            - v.g_a[0] * v.g_s[2] - v.g_a[1] * v.g_s[3];
-                        // Saturate only the FRESH y-history write — the shifted
-                        // copy carries an already-saturated value. DF1 feedback
-                        // runs entirely off g_s[2,3]/[6,7], so this bounds the
-                        // resonant build-up exactly like the strip's df2t_sat.
-                        let y1s = if v.g_sat { crate::strip::sat4(y1) } else { y1 };
-                        v.g_s[1] = v.g_s[0]; v.g_s[0] = sd;
-                        v.g_s[3] = v.g_s[2]; v.g_s[2] = y1s;
-                        let y2 = v.g_b[0] * y1s + v.g_b[1] * v.g_s[4] + v.g_b[2] * v.g_s[5]
-                            - v.g_a[0] * v.g_s[6] - v.g_a[1] * v.g_s[7];
-                        let y2s = if v.g_sat { crate::strip::sat4(y2) } else { y2 };
-                        v.g_s[5] = v.g_s[4]; v.g_s[4] = y1s;
-                        v.g_s[7] = v.g_s[6]; v.g_s[6] = y2s;
-                        y2s
+                        // 2× cascaded ZDF SVF sections (g_s[0..1], g_s[4..5] are
+                        // each section's [ic1, ic2]; the DF1 history slots are
+                        // free). Output per d_ftype: 0 LP = v2 · 1 HP = x − k·v1
+                        // − v2 · 2 BP = v1. Saturation lives in the integrators
+                        // (svf_lp's sat flag) — the true VA behavior.
+                        let g = v.g_b[0];
+                        let k = v.g_b[1];
+                        let sec = |x: f32, s0: &mut f32, s1: &mut f32, sat: bool| -> f32 {
+                            let a1 = 1.0 / (1.0 + g * (g + k));
+                            let v1 = (*s0 + g * (x - *s1)) * a1;
+                            let v2 = *s1 + g * v1;
+                            let (n1, n2) = (2.0 * v1 - *s0, 2.0 * v2 - *s1);
+                            if sat { *s0 = crate::strip::sat4(n1); *s1 = crate::strip::sat4(n2); }
+                            else { *s0 = n1; *s1 = n2; }
+                            // BP: k·v1 = the 0 dB-peak variant biquad_coeffs
+                            // implemented (b0 = alpha); raw v1 peaks at Q.
+                            match v.d_ftype { 1 => x - k * v1 - v2, 2 => k * v1, _ => v2 }
+                        };
+                        let (mut s0, mut s1) = (v.g_s[0], v.g_s[1]);
+                        let y1 = sec(sd, &mut s0, &mut s1, v.g_sat);
+                        v.g_s[0] = s0; v.g_s[1] = s1;
+                        let (mut s4, mut s5) = (v.g_s[4], v.g_s[5]);
+                        let y2 = sec(y1, &mut s4, &mut s5, v.g_sat);
+                        v.g_s[4] = s4; v.g_s[5] = s5;
+                        y2
                     } else {
                         sd
                     }

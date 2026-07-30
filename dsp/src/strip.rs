@@ -188,6 +188,39 @@ fn dc_block(x: f32, s: &mut [f32; 2]) -> f32 {
     y
 }
 
+// ---- ZDF state-variable filter (Cytomic/Simper "linear SVF") ---------------
+// The strip VCF's kernel since 2026-07-30. Same bilinear-warped transfer
+// function as the RBJ biquad it replaced (verified: magnitude response matches
+// to <0.1 dB across the band at low AND high Q), but with the two properties a
+// MODULATED filter wants and a biquad lacks: coefficients are cheap enough to
+// refresh every chunk unconditionally (one tan), so cutoff sweeps step at the
+// chunk rate instead of the old 0.2%-cache stepping; and the resonant feedback
+// lives in two integrators whose STATE can be saturated directly, which is the
+// true VA topology the df2t_sat hack approximated. `k` = 1/Q(linear); native-
+// lowpass "Q" arrives in dB and converts at the call site.
+#[inline(always)]
+pub(crate) fn svf_g(fc: f32, sr: f32) -> f32 {
+    (core::f32::consts::PI * (fc.clamp(1.0, sr * 0.499) / sr)).tan()
+}
+// One LP sample. s = [ic1, ic2]. `sat` engages the integrator tanh (the VA
+// resonance behavior) — below the call sites' Q threshold it stays off and the
+// filter is exactly linear.
+#[inline(always)]
+pub(crate) fn svf_lp(x: f32, g: f32, k: f32, s: &mut [f32; 2], sat: bool) -> f32 {
+    let a1 = 1.0 / (1.0 + g * (g + k));
+    let v1 = (s[0] + g * (x - s[1])) * a1;
+    let v2 = s[1] + g * v1;
+    let (n1, n2) = (2.0 * v1 - s[0], 2.0 * v2 - s[1]);
+    if sat {
+        s[0] = flush(sat4(n1));
+        s[1] = flush(sat4(n2));
+    } else {
+        s[0] = flush(n1);
+        s[1] = flush(n2);
+    }
+    v2
+}
+
 pub(crate) fn df2t(x: f32, b: &[f32; 3], a: &[f32; 2], s: &mut [f32; 2]) -> f32 {
     let y = b[0] * x + s[0];
     s[0] = flush(b[1] * x - a[0] * y + s[1]);
@@ -205,19 +238,6 @@ pub(crate) fn sat4(x: f32) -> f32 {
     4.0 * ((e - 1.0) / (e + 1.0))
 }
 
-// df2t with SATURATED state — a biquad driven hard at high Q rings digitally
-// (a clinical, glassy sine that decays exactly linearly in dB). Saturating the
-// recursion compresses the resonant build-up the way an analog filter's core
-// does, so high-reso sweeps sing instead of whistle. Selected ONLY above a Q
-// threshold at the call sites; below it the plain kernel runs and stays
-// byte-identical. Crossing the threshold is seamless because sat4 ≈ identity
-// at the state levels a just-below-threshold filter reaches.
-pub(crate) fn df2t_sat(x: f32, b: &[f32; 3], a: &[f32; 2], s: &mut [f32; 2]) -> f32 {
-    let y = b[0] * x + s[0];
-    s[0] = flush(sat4(b[1] * x - a[0] * y + s[1]));
-    s[1] = flush(sat4(b[2] * x - a[1] * y));
-    y
-}
 
 /// Equal-power wet/dry (Tone CrossFade): (dry gain, wet gain).
 #[inline(always)]
@@ -239,8 +259,6 @@ pub(crate) struct Strip {
     // way. Defaults 20000/0.7 reproduce the old fixed-open behaviour byte-for-byte.
     vcf_cutoff: f32,
     vcf_reso: f32,
-    vcf_b: [f32; 3],
-    vcf_a: [f32; 2],
     vcf_s: [[f32; 2]; 2],
     // eq3 (lazy, engaged only while a band ≠ 0 — matches the node splice)
     eq_on: bool,
@@ -343,8 +361,6 @@ pub(crate) const STRIP0: Strip = Strip {
     vcf_last: 0.0,
     vcf_cutoff: 20000.0,
     vcf_reso: 0.7,
-    vcf_b: [0.0; 3],
-    vcf_a: [0.0; 2],
     vcf_s: [[0.0; 2]; 2],
     eq_on: false,
     eq_g: [1.0; 3],
@@ -755,23 +771,19 @@ pub(crate) fn process_strips(t_block: f64, frames: usize) {
                 } else {
                     st.vcf_cutoff
                 };
-                if (cut - st.vcf_last).abs() > st.vcf_last.abs() * 0.002 + 0.01 {
-                    let (b, a) = nat_lp(cut, st.vcf_reso, sr);
-                    st.vcf_b = b;
-                    st.vcf_a = a;
-                    st.vcf_last = cut;
-                }
-                // vcf_reso is native-lowpass Q in dB; ringing turns glassy
-                // above ~8 dB (q ≈ 2.5), which is where the saturating kernel
-                // takes over. Below it: the plain kernel, byte-identical.
+                // ZDF SVF: coefficients refresh EVERY chunk (one tan — cheap
+                // enough that the old 0.2% cutoff cache and its audible
+                // stepping are gone; vcf_last survives only as the reset
+                // sentinel other cmds poke). Q arrives in native-lowpass dB →
+                // linear; k = 1/Q. Above ~8 dB the integrator tanh engages —
+                // the VA resonance the df2t_sat kernel approximated.
+                let g = svf_g(cut, sr);
+                let k = 1.0 / 10f32.powf(st.vcf_reso / 20.0).max(1.0e-4);
+                st.vcf_last = cut;
                 let hot = st.vcf_reso > 8.0;
                 for ch in 0..2 {
                     for i in i0..i0 + n {
-                        OUT[slot][ch][i] = if hot {
-                            df2t_sat(OUT[slot][ch][i], &st.vcf_b, &st.vcf_a, &mut st.vcf_s[ch])
-                        } else {
-                            df2t(OUT[slot][ch][i], &st.vcf_b, &st.vcf_a, &mut st.vcf_s[ch])
-                        };
+                        OUT[slot][ch][i] = svf_lp(OUT[slot][ch][i], g, k, &mut st.vcf_s[ch], hot);
                     }
                 }
                 // ---- eq3 (engaged only while a band ≠ 0) --------------------

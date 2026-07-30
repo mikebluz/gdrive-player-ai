@@ -3883,6 +3883,11 @@
       cursor: pointer; touch-action: manipulation;
     }
     @media (hover: hover) { .ambient-euclid-presetsave:hover { border-color: #9f7aea; color: #d9cbff; } }
+    /* A Grid phrase REPLACES the Pattern — dim the pattern controls while one is
+       in force, so there are never two live-looking sources of the same thing. */
+    .ambient-layer.amb-grid-owns .ambient-euclid-ctrl > *:not(.ambient-patsrc),
+    .ambient-layer.amb-grid-owns .ambient-euclid-grid { opacity: 0.35; pointer-events: none; }
+    .ambient-patsrc .ambient-seg-row { display: inline-flex; gap: 4px; }
     /* Header marker: this layer has a step Pattern you can draw on. */
     .ambient-layer-patcap { font-size: 0.72rem; color: #9f7aea; margin-left: 4px; opacity: 0.85; cursor: help; }
     .ambient-patmode { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-bottom: 5px; }

@@ -11204,7 +11204,7 @@
       const m = _ambPatMode(inst) || (drawn ? 'drawn' : 'euclid');
       return '<div class="ambient-patmode">' +
         '<button type="button" class="ambient-seg ambient-patmode-btn' + (m === 'drawn' ? ' on' : '') + '" data-patmode="drawn"' +
-          ' title="Play the grid below exactly as drawn. The engine still picks the NOTES; you own the rhythm.">\u2fb4 Drawn</button>' +
+          ' title="Play the grid below exactly as drawn. The engine still picks the NOTES; you own the rhythm.">\u2ff4 Drawn</button>' +
         '<button type="button" class="ambient-seg ambient-patmode-btn' + (m === 'euclid' ? ' on' : '') + '" data-patmode="euclid"' +
           ' title="Generate the rhythm from Pulses / Steps / Rotate. Any drawing you have made is kept, not discarded — switch back to Drawn to hear it again.">\u2684 Euclid</button>' +
         '<span class="ambient-hint">' + (m === 'drawn'
@@ -20437,13 +20437,25 @@
     // (a composed, hand-editable seed phrase). Author reuses the seed-preview →
     // promote → lockState path; Generate reverts to live generation. Wired by
     // delegation (one handler for primary + extras cards) via data-seedkey.
-    function _ambSeedModeHtml(lk) {
-      return '<div class="ambient-ctrl ambient-seedmode" title="Who plays the notes — Generate (the engine picks from the Notes pool live, every cycle) or Grid (you compose a fixed phrase in the full editor). Reversible.">' +
-        '<label>Mode</label>' +
+    function _ambSeedModeHtml(lk, patCap) {
+      const _ambSeedModePatCap = !!patCap;
+      // "Generate" is gone as a named mode (2026-07-30). It overclaimed: it never
+        // generated the PATTERN — with a drawn grid the engine only picks pitches
+        // over YOUR rhythm — and it collided with Improvise, which is the thing
+        // that actually regenerates. The default state now needs no name at all:
+        // a layer plays itself unless you compose a phrase in the Grid, so the
+        // control is a single ACTION rather than a two-way of modes.
+        //
+        // Pattern-capable layers don't render it here — their choice lives at the
+        // top of the Pattern section, where Pattern and Grid are the two mutually
+        // exclusive ways of saying what the layer plays.
+        return (_ambSeedModePatCap ? '' :
+        '<div class="ambient-ctrl ambient-seedmode" title="Compose a fixed phrase in the full editor (Grid / Piano / Graph / Game dock below). Off = the layer plays itself, picking notes from its Notes pool.">' +
+        '<label>Compose</label>' +
         '<span class="ambient-seg-row">' +
-          '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="generate" data-seedkey="' + _ambEscText(lk) + '">Generate</button>' +
-          '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="grid" data-seedkey="' + _ambEscText(lk) + '" title="Compose in the FULL editor — Grid/Piano/Graph/Game docks below; edits land in the loop live. Author keeps them; ✕ Cancel discards.">Grid</button>' +
-        '</span><span class="ambient-hint">improvise / compose</span></div>' +
+          '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="generate" data-seedkey="' + _ambEscText(lk) + '" hidden></button>' +
+          '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="grid" data-seedkey="' + _ambEscText(lk) + '" title="Compose in the FULL editor — edits land in the loop live. ✕ Cancel discards.">✎ Grid</button>' +
+        '</span><span class="ambient-hint">plays itself unless composed</span></div>') +
         // Author docks the layer's grid (roll + keyboard) HERE — composing
         // happens where the seed is chosen (filled by _ambRefreshSeedModes).
         '<div class="ambient-seedgrid-slot" data-sgkey="' + _ambEscText(lk) + '" hidden>' +
@@ -20487,7 +20499,7 @@
     }
     function _ambRefreshSeedModes(E) {
       const host = E && document.getElementById(E.hostId); if (!host) return;
-      host.querySelectorAll('.ambient-seedmode').forEach(row => {
+      host.querySelectorAll('.ambient-seedmode, .ambient-patsrc').forEach(row => {   // .ambient-patsrc is the pattern layers' Pattern|Grid pair
         const gen = row.querySelector('[data-seedmode="generate"]'), grd = row.querySelector('[data-seedmode="grid"]');
         const key = gen && gen.dataset.seedkey; if (!key) return;
         let authored = false, L = null;
@@ -20498,6 +20510,13 @@
         // is: a hand-authored fixed phrase. No migration needed, just the label.
         if (gen) gen.classList.toggle('active', !authored && !gridActive);
         if (grd) grd.classList.toggle('active', gridActive || authored);
+        // MUTUAL EXCLUSION, made visible: a Grid phrase replaces the Pattern, so
+        // dim the pattern controls while one is in force rather than leaving two
+        // live-looking sources of the same thing on screen.
+        try {
+          const _card = row.closest('.ambient-layer');
+          if (_card) _card.classList.toggle('amb-grid-owns', !!(gridActive || authored));
+        } catch (e) {}
         // Arp Direction is a Generate-mode control (the series sweep) — keep its
         // visibility in step with the seed mode (and the euclid toggle).
         try {
@@ -23030,7 +23049,7 @@
     }
     const _ambHead = (label, onId, delId, freezeKey, afterHead, patCap) =>
       '<div class="ambient-layer-head"><button type="button" class="ambient-toggle" id="' + onId + '"><span class="ambient-layer-name">' + _ambEscText(label) + '</span></button>' +
-      (patCap ? '<span class="ambient-layer-patcap" title="This layer has a step Pattern \u2014 draw or pick a rhythm in its Pattern section">\u2fb4</span>' : '') +
+      (patCap ? '<span class="ambient-layer-patcap" title="This layer has a step Pattern \u2014 draw or pick a rhythm in its Pattern section">\u2ff4</span>' : '') +
       // Bar-length chip — the layer's loop length in bars, immediately right of
       // the on/off toggle (filled by _ambSyncLayerUnits).
       (freezeKey ? '<span class="ambient-layer-bars" data-barkey="' + freezeKey + '" title="Loop length in bars"></span>' : '') +
@@ -25389,6 +25408,13 @@
       // pattern. Filled/wired by _ambWireEuclidGrid (like the trance-gate grid).
       if (k === 'euclidgrid') return '<div class="ambient-ctrl ambient-slice-row ambient-euclid-ctrl' + ((inst && inst.euclidKit) ? ' ambient-euclid-kitctrl' : '') + '"><label title="The on/off step pattern. Pulses/Steps/Rotate generate it; tap cells to hand-edit; or load a rhythm Preset. A knob change or Regen resets it to the generated Euclid pattern.">Pattern</label>' +
         '<div class="ambient-euclid-wrap">' +
+          // PATTERN or GRID — the two mutually exclusive ways of saying what this
+          // layer plays. Reuses the amb-seedmode attributes, so the existing
+          // handler and _ambRefreshSeedModes drive it with no new wiring.
+          '<div class="ambient-ctrl ambient-patsrc"><label>Notes from</label><span class="ambient-seg-row">' +
+            '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="generate" data-seedkey="' + _ambEscText(lk) + '" title="This layer\u2019s Pattern: the rhythm below, with the engine picking each note from the Notes pool.">\u2ff4 Pattern</button>' +
+            '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="grid" data-seedkey="' + _ambEscText(lk) + '" title="A fixed phrase you compose in the full editor. Replaces the Pattern while it is set \u2014 the two are alternatives, not layers.">\u270e Grid</button>' +
+          '</span></div>' +
           '<div class="ambient-euclid-presetrow"><select id="' + p + '-euclidpreset" class="ambient-select ambient-euclid-preset" title="The rhythm this pattern came from. Reads Custom once you edit it — save a Custom to keep it.">' + _ambEuclidPresetOptions(inst) + '</select>' +
             '<button type="button" id="' + p + '-euclidpresetsave" class="ambient-euclid-presetsave" title="Save this pattern as a named rhythm you can load on any layer">\u2b07 Save</button>' +
           '</div>' +
@@ -25458,7 +25484,7 @@
       // key by bare type (lk === type); extras' `lk` is the DASH id-prefix form
       // (`run-1`) — convert to the colon form (`run:1`) everything else uses, else
       // _ambLayerByKey('run-1') → cfg['run-1'] = undefined and Author silently no-ops.
-      if (k === 'seedmode') return _ambSeedModeHtml((lk === type) ? type : (type + ':' + lk.slice(type.length + 1)));
+      if (k === 'seedmode') return _ambSeedModeHtml((lk === type) ? type : (type + ':' + lk.slice(type.length + 1)), _ambHasPattern(inst, type));
       if (k === 'home') return _ambSeg('Home', 'home', [['floor', 'Floor'], ['center', 'Center'], ['ceiling', 'Ceiling']], 'Register sits at\u2026', _ambHomeOf(inst, type), 'Where Register sits in the layer\u2019s pitch span: Floor = lowest octave (Range reaches up), Center = middle (Range reaches \u00b1 around it), Ceiling = top (Range reaches down).');
       if (k === 'notes') return _ambNotesButtonHtml(p);
       if (k === 'droneedit') return _ambDroneEditHtml(p);
@@ -28989,6 +29015,19 @@
               try { _ambGridEditStop(false); } catch (e2) {}
             }
             if (mode === 'grid') {
+              const L0 = _ambLayerByKey(E, key);
+              const _authored = !!(L0 && L0.lockState && L0.lockState.seedEdit);
+              const _live = !!(_bloomGridEdit && _bloomGridEdit.E === E && _bloomGridEdit.key === key);
+              // Second press = leave. With no visible "generate" button on
+              // non-pattern layers this is the only way back, and on pattern
+              // layers it matches picking ⿴ Pattern.
+              if (_authored || _live) {
+                try { if (_live) _ambGridEditStop(false); } catch (e2) {}
+                _ambSeedRevert(E, key);
+                _ambRefreshSeedModes(E);
+                if (typeof persistWorkspace === 'function') persistWorkspace();
+                return;
+              }
               const L = _ambLayerByKey(E, key);
               if (!(L && L.lockState && L.lockState.seedEdit)) { _ambSeedPreview(E, key); _ambSeedPromote(E, key); }   // bootstrap the authored lock
               if (!(_bloomGridEdit && _bloomGridEdit.E === E && _bloomGridEdit.key === key)) {

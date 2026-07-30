@@ -10756,25 +10756,7 @@
     // per Phrase bar). Callers index with `(bar*steps+slot) % pat.length`, so a
     // steps-long pattern repeats every bar (the default, byte-identical to before)
     // and a phrase-long one plays a different bar-block per bar.
-    // PATTERN SOURCE (`patMode`): what supplies a euclid layer's RHYTHM while
-    // the generator supplies its PITCHES. Until now this was implicit — a drawn
-    // grid silently beat the euclidean generator, and the ONLY way back to
-    // generated rhythm was Regen, which DESTROYED the drawing. So "Generate"
-    // could obey a pattern or play stochastically, but you could not switch
-    // between them without losing work.
-    //   'euclid' → generate from Pulses/Steps/Rotate, KEEPING any drawing
-    //   'drawn'  → play the drawn grid (explicit form of today's default)
-    //   absent   → today's behavior exactly (drawn if present, else generated),
-    //              which is what keeps saved projects byte-identical.
-    function _ambPatMode(L) {
-      const m = L && L.patMode;
-      return (m === 'euclid' || m === 'drawn') ? m : '';
-    }
     function _ambEuclidPat(inst, pulses, steps, rotate, V, v, salt) {
-      // Explicit 'euclid' bypasses the drawn override without discarding it.
-      if (_ambPatMode(inst) === 'euclid' && !(inst && inst.euclidKit)) {
-        return _ambEuclidVoicePat(pulses, rotate, steps, V, v, salt);
-      }
       // Drum-lanes is a step SEQUENCER (not euclidean-generated): the grid shows the
       // VIEWED page; a lane with no drawn hits is silent.
       if (inst && inst.euclidKit) {
@@ -10796,8 +10778,6 @@
       // Remembered rhythm-preset NAME (additive; absent = Custom).
       if (L.euclidPreset != null && typeof L.euclidPreset !== 'string') delete L.euclidPreset;
       else if (L.euclidPreset === '') delete L.euclidPreset;
-      // Pattern source (additive; absent = drawn-if-present, i.e. today).
-      if (L.patMode != null && L.patMode !== 'euclid' && L.patMode !== 'drawn') delete L.patMode;
       // Pitch-rule axis + the pedal's Stack voice count (additive; absent = native).
       if (L.pitchRule != null && ['voicing', 'stack', 'fixed', 'anchor'].indexOf(L.pitchRule) < 0) delete L.pitchRule;
       if (L.voices != null) { if (!Number.isFinite(L.voices)) delete L.voices; else L.voices = Math.max(1, Math.min(9, L.voices | 0)); }
@@ -10915,8 +10895,8 @@
       L.steps = Math.max(2, Math.min(32, pr.steps | 0) || 8);
       L.pulses = Math.max(1, Math.min(L.steps, pr.pulses | 0) || 1);
       L.rotate = Math.max(0, (pr.rotate | 0) % L.steps);
-      if (Array.isArray(pr.pat) && pr.pat.length) { L.euclidPattern = [pr.pat.map(v => v ? 1 : 0)]; L.patMode = 'drawn'; }
-      else { L.euclidPattern = null; L.patMode = 'euclid'; }
+      if (Array.isArray(pr.pat) && pr.pat.length) L.euclidPattern = [pr.pat.map(v => v ? 1 : 0)];
+      else L.euclidPattern = null;
       return true;
     }
     // What the dropdown should READ. A stored name survives until the pattern is
@@ -11224,20 +11204,6 @@
           : '') +
       '</div>';
     }
-    function _ambPatModeHtml(inst) {
-      if (inst && inst.euclidKit) return '';
-      const drawn = Array.isArray(inst && inst.euclidPattern) && inst.euclidPattern.some(r => Array.isArray(r));
-      const m = _ambPatMode(inst) || (drawn ? 'drawn' : 'euclid');
-      return '<div class="ambient-patmode">' +
-        '<button type="button" class="ambient-seg ambient-patmode-btn' + (m === 'drawn' ? ' on' : '') + '" data-patmode="drawn"' +
-          ' title="Play the grid below exactly as drawn. The engine still picks the NOTES; you own the rhythm.">\u2ff4 Drawn</button>' +
-        '<button type="button" class="ambient-seg ambient-patmode-btn' + (m === 'euclid' ? ' on' : '') + '" data-patmode="euclid"' +
-          ' title="Generate the rhythm from Pulses / Steps / Rotate. Any drawing you have made is kept, not discarded — switch back to Drawn to hear it again.">\u2684 Euclid</button>' +
-        '<span class="ambient-hint">' + (m === 'drawn'
-          ? (drawn ? 'plays your grid' : 'nothing drawn yet — tap cells below')
-          : (drawn ? 'generated \u00b7 your drawing is kept' : 'generated from the knobs')) + '</span>' +
-      '</div>';
-    }
     function _ambEuclidCellsHtml(inst, type, bar) {
       const d = _ambEuclidGridDims(inst, type); if (!d) return '';
       const nBars = d.bars;
@@ -11439,13 +11405,13 @@
         if (L._gridTab === 'improv') { grid.innerHTML = _ambGridTabsHtml(L) + _ambImprovHtml(L); return; }
         const d = _ambEuclidGridDims(L, type);
         const bar = d ? _ambEuclidBarInfo(E, key, L, (E.getCfg && E.getCfg()) || null, d.steps, d.bars) : null;
-        grid.innerHTML = _ambGridTabsHtml(L) + _ambPatModeHtml(L) + _ambEuclidCellsHtml(L, type, bar);
+        grid.innerHTML = _ambGridTabsHtml(L) + _ambEuclidCellsHtml(L, type, bar);
       };
       // Tab strip + cycle-schedule chrome. A SEPARATE delegated listener from the
       // drum-lanes one below, which returns early for non-kit layers — the schedule
       // tab exists on every euclidgrid type (Bass / Beat / Arp).
       grid.addEventListener('click', (ev) => {
-        const t = ev.target.closest && ev.target.closest('.ambient-gridtab, .ambient-cyclen, .ambient-patmode-btn');
+        const t = ev.target.closest && ev.target.closest('.ambient-gridtab, .ambient-cyclen');
         if (!t) return;
         _E = E; const L = getL(); if (!L) return;
         if (t.classList.contains('ambient-gridtab')) {
@@ -11453,28 +11419,7 @@
             L._gridTab = (g === 'improv') ? g : 'pattern'; }
           render(); return;   // view-only — nothing to persist or re-anchor
         }
-        if (t.classList.contains('ambient-patmode-btn')) {
-          const m = t.getAttribute('data-patmode');
-          if (m === 'euclid') L.patMode = 'euclid';
-          else {
-            // Store 'drawn' EXPLICITLY. Deleting the field looked equivalent —
-            // absence means "drawn if present" — but the button state is derived
-            // the same way, so with NOTHING drawn the display fell straight back
-            // to Euclid and Drawn could never be selected. A euclidean preset
-            // clears the grid, which is exactly how you get there.
-            L.patMode = 'drawn';
-            // …and give it something to draw ON: snapshot what is currently
-            // generating, so the grid shows what you were just hearing and is
-            // immediately editable. Identical output, so the switch is silent.
-            if (!(Array.isArray(L.euclidPattern) && L.euclidPattern.some(r => Array.isArray(r))) && !L.euclidKit) {
-              try {
-                const _st = Math.max(2, Math.min(32, L.steps | 0) || 8);
-                const _pu = Math.max(1, Math.min(_st, L.pulses | 0) || 1);
-                L.euclidPattern = [_ambEuclidVoicePat(_pu, Math.max(0, L.rotate | 0), _st, 1, 0, L.euclidRegen | 0)];
-              } catch (e) {}
-            }
-          }
-        } else if (t.hasAttribute('data-implen')) {
+        if (t.hasAttribute('data-implen')) {
           // 🎲 Improvise steppers share .ambient-cyclen with the Schedule tab's
           // length buttons, so discriminate on the attribute, not the class.
           const [k, d] = String(t.getAttribute('data-implen')).split(':');
@@ -11527,7 +11472,6 @@
             name = (pr && pr.name) || '';
             // A clave preset stores a literal row; a euclidean one clears it.
             // Set the source to match so the grid shows what is actually playing.
-            L.patMode = (Array.isArray(L.euclidPattern) && Array.isArray(L.euclidPattern[0])) ? 'drawn' : 'euclid';
           } else if (v.slice(0, 2) === 'u:') {
             name = v.slice(2);
             if (!_ambApplyRhythmPreset(L, name)) return;
@@ -11797,8 +11741,7 @@
       // 'euclid' and leaves the drawing on file (Drawn brings it straight back).
       // Kit layers keep the old clear: drum-lanes has no generated form to
       // switch to, so there Regen re-seeds the grid itself.
-      if (L.euclidKit) L.euclidPattern = null;
-      else L.patMode = 'euclid';
+      L.euclidPattern = null;   // Regen re-rolls the generated rhythm
       if (L.euclidPreset) delete L.euclidPreset;   // a re-roll is no longer the named rhythm
       const t = (typeof performance !== 'undefined' && performance.now) ? Math.floor(performance.now()) : ((L.euclidRegen | 0) + 1);
       L.euclidRegen = (((L.euclidRegen | 0) * 1103515245 + 12345 + t) >>> 0) || 1;
@@ -13326,7 +13269,7 @@
         if (L._gridTab === 'improv') { grid.innerHTML = _ambGridTabsHtml(L) + _ambImprovHtml(L); return; }
         const d = _ambEuclidGridDims(L, type); if (!d) return;
         let bar = null; try { bar = _ambEuclidBarInfo(E, key, L, cfg, d.steps, d.bars); } catch (e) {}
-        grid.innerHTML = _ambGridTabsHtml(L) + _ambPatModeHtml(L) + _ambEuclidCellsHtml(L, type, bar);
+        grid.innerHTML = _ambGridTabsHtml(L) + _ambEuclidCellsHtml(L, type, bar);
       });
     }
     // ---- Per-layer Unit controls (BPM-sync visibility + Match-to-layer) -----

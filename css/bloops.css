@@ -3885,37 +3885,6 @@
     .ambient-cycgate-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
     /* 🎲 Improvise tab. Same tokens as the Schedule tab's chrome above so the two
        violet, which is already this control's "engaged" colour. */
-    /* Pattern-source switch (Drawn · Euclid) at the head of the Pattern tab. */
-    .ambient-euclid-presetrow { display: flex; align-items: center; gap: 5px; }
-    .ambient-euclid-presetrow .ambient-euclid-preset { flex: 1 1 auto; min-width: 0; }
-    .ambient-euclid-presetsave {
-      flex: 0 0 auto; padding: 2px 8px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8;
-      background: transparent; border: 1px solid #34344a; border-radius: 4px;
-      cursor: pointer; touch-action: manipulation;
-    }
-    @media (hover: hover) { .ambient-euclid-presetsave:hover { border-color: #9f7aea; color: #d9cbff; } }
-    /* A Grid phrase REPLACES the Pattern — dim the pattern controls while one is
-       in force, so there are never two live-looking sources of the same thing. */
-    .ambient-layer.amb-grid-owns .ambient-euclid-ctrl > *:not(.ambient-patsrc),
-    .ambient-layer.amb-grid-owns .ambient-euclid-grid { opacity: 0.35; pointer-events: none; }
-    .ambient-patsrc .ambient-seg-row { display: inline-flex; gap: 4px; }
-    /* IMPROVISING: the cells are showing the generated rhythm for this cycle,
-       not the pattern you drew — amber so it can never be mistaken for an edit. */
-    .ambient-euclid-grid.improvising { outline: 1px dashed rgba(245,158,11,0.45); outline-offset: 2px; }
-    .ambient-euclid-grid.improvising .ambient-euclid-cell.on { opacity: 0.28; }
-    .ambient-euclid-grid.improvising .ambient-euclid-cell.impon {
-      opacity: 1; background: #f59e0b; border-color: #fbbf24; color: #1a1206;
-    }
-    .ambient-patmode { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-bottom: 5px; }
-    .ambient-patmode-btn {
-      padding: 2px 9px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8;
-      background: transparent; border: 1px solid #34344a; border-radius: 4px;
-      cursor: pointer; touch-action: manipulation;
-    }
-    .ambient-patmode-btn.on { color: #1a1206; background: #9f7aea; border-color: #b794f4; }
-    @media (hover: hover) { .ambient-patmode-btn:not(.on):hover { border-color: #9f7aea; color: #d9cbff; } }
-    /* Generated rhythm: the drawing is kept but isn't what you hear — say so. */
-    .ambient-euclid-grid.patgen .ambient-euclid-cell { opacity: 0.55; }
     /* Give the counts room to breathe between the two steppers. */
     .ambient-improv .ambient-cycgate-foot .ambient-sched-lbl:not(:first-of-type) { margin-left: 8px; }
     .ambient-improv .ambient-ctrl { gap: 8px; }

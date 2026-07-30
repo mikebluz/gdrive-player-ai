@@ -991,10 +991,15 @@ stack, held single note that roams per cycle, strummed pedal).
    battery surfaced, not a fold regression (verified self-consistent with
    velVar excluded). Harness + golden + mod-parity all green, no re-baseline.
 
-   **§11 CLOSES with: the Add-layer presets (§5)** — the three types stay as
-   the one-click adds; presets showcasing the cross-type dial reach
-   (staccato stack, chord drone, strummed pedal-like bed) are the remaining
-   cosmetic step, plus (optional, behavior-changing) seeding velVar.
+   **§11 CLOSED (2026-07-30): the Add-layer presets landed.** Four factory
+   presets in the Add-layer menu showcase the cross-type reach the dials
+   opened — 🧱 Staccato Stack (pedal · stack · 3 voices · ring 15), 🌫 Chord
+   Drone (drone · voicing), 🎠 Pulse Bed (bed · strike +4 · strum), 🪨
+   Roaming Hold (pedal · strike −2 · vary) — each inexpressible before
+   Strike/Ring/Pitch-rule, each one tap now. The three types remain the
+   plain one-click adds. Left open, deliberately: seeding velVar
+   (behavior-changing — today it draws unseeded Math.random(), so velVar'd
+   dynamics never replay exactly under Write/locks).
 2. Verify by construction: can Bed-with-dials reproduce Drone? Drone reproduce Pedal? A
    failure locates the genuinely-missing axis rather than guessing at it.
 3. Only then collapse to one emitter, with Bed/Drone/Pedal surviving as **presets in the

@@ -30299,6 +30299,13 @@
           { name: '🫧 Glass Rain', type: 'texture', cfg: { tone: 'user:f-glasscath', level: 44, revSend: 40, fill: 25, syncop: 60,
             delay: { mix: 35, timeMs: 500, feedback: 50, ping: 1, spread: 50, dryKill: 0 } } },
           { name: '🎞 Hiss Bed', type: 'drone', cfg: { tone: 'user:f-tapehiss', level: 24, revSend: 18, density: 1, register: 3, hold: 8 } },
+          // SUSTAIN-FAMILY presets (§11 close-out): the cross-type reach the
+          // four dials opened — each was inexpressible before Strike / Ring /
+          // Pitch rule, and each is one tap here instead of four dials.
+          { name: '🧱 Staccato Stack', type: 'pedal', cfg: { level: 60, revSend: 20, pitchRule: 'stack', voices: 3, lenRatio: 15, register: 3 } },
+          { name: '🌫 Chord Drone', type: 'drone', cfg: { level: 58, revSend: 40, pitchRule: 'voicing', density: 3, hold: 2, attack: 1800, release: 3000 } },
+          { name: '🎠 Pulse Bed', type: 'bed', cfg: { level: 62, revSend: 30, strike: 4, lenRatio: 60, strum: 40, density: 3, attack: 120, release: 900 } },
+          { name: '🪨 Roaming Hold', type: 'pedal', cfg: { level: 60, revSend: 25, strike: -2, lenRatio: 100, vary: 55, register: 3 } },
           // Battery — a rhythm section (Beat + Bass) whose patterns RE-ROLL on New take
           // (takeReroll: random Beat rerolls off the seed; euclid Bass re-derives its
           // euclidean salt from the seed). Multi-layer preset (preset.layers).

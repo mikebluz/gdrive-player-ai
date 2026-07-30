@@ -11079,7 +11079,7 @@
     // first + press lands on 1/1, alternating every other iteration, which is the
     // tightest and most obviously-audible setting and the natural place to dial UP
     // from. (8/8 made the alternation take half a minute to reveal itself.)
-    const _AMB_IMPROV_DEF = { pat: 1, imp: 0, rhythmVar: 55, pitchVar: 65, restProb: 10 };
+    const _AMB_IMPROV_DEF = { pat: 1, imp: 0, rhythmVar: 20, pitchVar: 25, restProb: 5 };
     // ON/OFF is the COUNT, not a separate switch (the button was dropped
     // 2026-07-30): `improvise ×0` means no improvised iterations, which is what
     // off always meant. Three states, two numbers. The legacy `on` flag is still
@@ -29038,10 +29038,13 @@
               const L0 = _ambLayerByKey(E, key);
               const _authored = !!(L0 && L0.lockState && L0.lockState.seedEdit);
               const _live = !!(_bloomGridEdit && _bloomGridEdit.E === E && _bloomGridEdit.key === key);
-              // Second press = leave. With no visible "generate" button on
-              // non-pattern layers this is the only way back, and on pattern
-              // layers it matches picking ⿴ Pattern.
-              if (_authored || _live) {
+              // Second press = leave — but ONLY where Grid is the sole button.
+              // On a pattern-capable layer the pair is a RADIO (⿴ Pattern is the
+              // way back), and treating Grid as a toggle there meant a layer that
+              // was already authored bounced straight back out on the first
+              // press: it read as "can't select Grid, stuck on Pattern".
+              const _soleBtn = !_ambHasPattern(L0, String(key).split(':')[0]);
+              if (_soleBtn && (_authored || _live)) {
                 try { if (_live) _ambGridEditStop(false); } catch (e2) {}
                 _ambSeedRevert(E, key);
                 _ambRefreshSeedModes(E);

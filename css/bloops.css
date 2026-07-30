@@ -2546,7 +2546,8 @@
        is genuinely no room for both on one line. */
     .ambient-areas-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0; }
     .ambient-areas-row > * { flex: 0 0 auto; }
-    .ambient-areas-row .ambient-area-select { flex: 1 1 120px; min-width: 96px; max-width: 260px; }   /* + button gone, mode button is an icon → the name has room */
+    .ambient-areas-row .ambient-area-select { flex: 1 1 120px; min-width: 96px; max-width: 260px;
+      padding-right: 22px; }   /* the caret sat hard against the right edge */   /* + button gone, mode button is an icon → the name has room */
     .ambient-areas-row .ambient-orch-bar-hdr { order: 10; }
     /* SIDE-SWIPE between areas: horizontal drag = switch, vertical = page scroll.
        `pan-y` is what lets the browser keep scrolling while we claim the X axis. */

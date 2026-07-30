@@ -158,7 +158,6 @@ fn nat_ap(fc: f32, q: f32, sr: f32) -> ([f32; 3], [f32; 2]) {
     )
 }
 
-#[inline(always)]
 // ---- denormal flush ---------------------------------------------------------
 // WASM has no FTZ mode, and on x86 subnormal floats fall back to microcode —
 // orders of magnitude slower than normal ops. Strips process SILENCE whenever
@@ -193,6 +192,30 @@ pub(crate) fn df2t(x: f32, b: &[f32; 3], a: &[f32; 2], s: &mut [f32; 2]) -> f32 
     let y = b[0] * x + s[0];
     s[0] = flush(b[1] * x - a[0] * y + s[1]);
     s[1] = flush(b[2] * x - a[1] * y);
+    y
+}
+
+// tanh soft clip scaled so |x| ≤ 0.5 passes within 0.5% (transparent at
+// musical levels) while runaway resonance compresses toward ±4 instead of
+// ringing at whatever amplitude the pole math produces.
+#[inline(always)]
+pub(crate) fn sat4(x: f32) -> f32 {
+    let v = x * 0.25;
+    let e = (2.0 * v).exp();
+    4.0 * ((e - 1.0) / (e + 1.0))
+}
+
+// df2t with SATURATED state — a biquad driven hard at high Q rings digitally
+// (a clinical, glassy sine that decays exactly linearly in dB). Saturating the
+// recursion compresses the resonant build-up the way an analog filter's core
+// does, so high-reso sweeps sing instead of whistle. Selected ONLY above a Q
+// threshold at the call sites; below it the plain kernel runs and stays
+// byte-identical. Crossing the threshold is seamless because sat4 ≈ identity
+// at the state levels a just-below-threshold filter reaches.
+pub(crate) fn df2t_sat(x: f32, b: &[f32; 3], a: &[f32; 2], s: &mut [f32; 2]) -> f32 {
+    let y = b[0] * x + s[0];
+    s[0] = flush(sat4(b[1] * x - a[0] * y + s[1]));
+    s[1] = flush(sat4(b[2] * x - a[1] * y));
     y
 }
 
@@ -738,10 +761,17 @@ pub(crate) fn process_strips(t_block: f64, frames: usize) {
                     st.vcf_a = a;
                     st.vcf_last = cut;
                 }
+                // vcf_reso is native-lowpass Q in dB; ringing turns glassy
+                // above ~8 dB (q ≈ 2.5), which is where the saturating kernel
+                // takes over. Below it: the plain kernel, byte-identical.
+                let hot = st.vcf_reso > 8.0;
                 for ch in 0..2 {
                     for i in i0..i0 + n {
-                        OUT[slot][ch][i] =
-                            df2t(OUT[slot][ch][i], &st.vcf_b, &st.vcf_a, &mut st.vcf_s[ch]);
+                        OUT[slot][ch][i] = if hot {
+                            df2t_sat(OUT[slot][ch][i], &st.vcf_b, &st.vcf_a, &mut st.vcf_s[ch])
+                        } else {
+                            df2t(OUT[slot][ch][i], &st.vcf_b, &st.vcf_a, &mut st.vcf_s[ch])
+                        };
                     }
                 }
                 // ---- eq3 (engaged only while a band ≠ 0) --------------------

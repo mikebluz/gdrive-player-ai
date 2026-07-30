@@ -879,6 +879,54 @@ stack, held single note that roams per cycle, strummed pedal).
 
 1. Give all three the same axis vocabulary (Strike / Length ratio / Pitch rule)
    implemented *on top of their existing emitters*. Additive, no baseline churn.
+
+   **STRIKE: LANDED for Drone + Pedal (2026-07-29, branch `bloom-sustain-axes`).**
+   `_ambStrikeOf(L, type)` / `_ambStrikeSpan(strike, unitSec)`. One signed dial:
+   `+N` = N onsets per unit, `-N` = one onset per N units. Absent or `0` resolves
+   to the type's own control — `-hold` for a Drone, `+density` for a Pedal — so
+   every saved project and both baselines are byte-identical, and nothing writes
+   the field until the slider moves. Consumed by the two emitters, by
+   `_ambLayerPeriodSec` and by `_ambLayerSubCount`, so the Scheduler and the
+   playheads follow it too. Gates: golden 82/82, invariant harness green, mod
+   parity 9/9. New reach proved by test: a Drone that subdivides its unit, and a
+   Pedal held across several bars — neither was expressible before.
+
+   **STRIKE on Bed: LANDED (2026-07-30) — and the feared cost never arrived.**
+   The predicted problem ("subdividing means emitting N chords inside one
+   `_ambEmitBed` call; holding means skipping units; both break unit-record /
+   unit-lock / Write") dissolved on inspection: Bed already had HOLD, which
+   scales the step interval AND the chord length by a fraction-or-multiple of
+   the unit through `_ambHoldMult`, lands every event on a unit boundary, and
+   shipped through all of the unit machinery. So Strike on Bed is a RESOLVER,
+   not a clock change: `_ambBedHoldEff(L)` maps `+N → hold 1/N` and
+   `-N → hold N`, falling back to the legacy `hold` field, falling back to the
+   legacy Length/Interval path — each layer of fallback byte-identical when the
+   outer is unset. Consumed by `_ambHoldMult` (the step clock + period),
+   `_ambEmitBed`'s hold branch (chord fills its strike span) and
+   `_ambLayerSubCount`. Bed being a PRIMARY layer needed the schema token AND
+   the hardcoded `bind('ambient-bed-strike', …)` + `set(…)` (the documented
+   primary-wiring trap; drone/pedal are extras-only and never hit it).
+
+   **Step-2 reproduction test: RUN, and it passes.** Measured through the real
+   engine (stubbed clock, unit 2 s): Bed strike −3 re-strikes every 5.96 s with
+   a 6000 ms chord — the same cadence as a Drone at hold 3 (6 s) — and Bed
+   strike +4 plays 4 chords per unit (0.5 s cadence, 500 ms chords), which Bed
+   could not express at all. strike 0/absent is byte-identical to baseline
+   (verified note-for-note, plus the invariant harness). Gates: golden 82/82,
+   harness green.
+
+   **LENGTH RATIO ("Ring"): LANDED (2026-07-30).** `lenRatio` (0–200 %) +
+   `_ambRingMs(L, spanSec)` — note length as a % of the STRIKE SPAN, replacing
+   the three encodings (Bed Length ms / Drone fill-the-hold / Pedal Length ms)
+   with one number; `lengthMs` survives as the absolute escape hatch and
+   absent/0 is each type's legacy path, byte-identical. Verified through the
+   engine: bed strike +2 ring 25 → 250 ms of a 1 s span; drone hold 2 ring 50
+   → 2000 ms of 4 s; pedal ring 100 → 500 ms legato slots; ring 0 note-for-note
+   identical to absent. Harness green, golden 82/82.
+
+   **PITCH RULE remains unstarted** — the one axis that isn't a number
+   (`voicing` · `stack` · `fixed` · `anchor`). After it: the step-3 emitter
+   collapse, which is the deliberate re-baseline decision.
 2. Verify by construction: can Bed-with-dials reproduce Drone? Drone reproduce Pedal? A
    failure locates the genuinely-missing axis rather than guessing at it.
 3. Only then collapse to one emitter, with Bed/Drone/Pedal surviving as **presets in the

@@ -8,7 +8,8 @@
     "start": "node server.js",
     "desktop": "electron electron/main.cjs",
     "test:golden": "node test/golden-render.js",
-    "samples": "node tools/import-samples.mjs"
+    "samples": "node tools/import-samples.mjs",
+    "radio": "node tools/add-radio-track.mjs"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

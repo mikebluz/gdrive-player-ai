@@ -17823,6 +17823,32 @@
       try { const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); } catch (e) {}
       if (revoke) setTimeout(() => { try { URL.revokeObjectURL(url); } catch (e) {} }, 15000);
     }
+    // Send a capture to the HOME PAGE RADIO. This downloads rather than
+    // uploading anywhere, because the radio plays files that ship with the
+    // site — so the take has to reach the project directory and be deployed.
+    // The `radio--` prefix is the contract: `npm run radio` picks up anything
+    // matching it, encodes it to AAC and installs it with a manifest entry.
+    async function _ambSendToRadio(item) {
+      if (!item) return;
+      let url = item.url, revoke = false;
+      if (item.mastered) {
+        const b = await _ambMasteredBlob(item);
+        if (b) { try { url = URL.createObjectURL(b); revoke = true; } catch (e) {} }
+      }
+      if (!url) return;
+      const slug = String(item.name || 'take').toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'take';
+      try {
+        const a = document.createElement('a');
+        a.href = url; a.download = 'radio--' + slug + '.wav';
+        document.body.appendChild(a); a.click(); a.remove();
+      } catch (e) {}
+      if (revoke) setTimeout(() => { try { URL.revokeObjectURL(url); } catch (e) {} }, 15000);
+      try {
+        if (typeof showToast === 'function')
+          showToast('Saved radio--' + slug + '.wav — run `npm run radio` to add it to the site.');
+      } catch (e) {}
+    }
     function _ambRemoveBankItem(id) {
       const i = _ambCaptureBank.findIndex(x => x.id === id);
       if (i < 0) return;
@@ -17884,6 +17910,7 @@
             if (act === 'play') _ambPreviewBankItem(it);
             else if (act === 'ren') _ambRenameBankItem(it);
             else if (act === 'dl') _ambDownloadBankItem(it);
+            else if (act === 'radio') _ambSendToRadio(it);
             else if (act === 'up') _ambUploadBankItem(it);
             else if (act === 'master') { it.mastered = !it.mastered; _ambRenderCaptureBank(); }
             else if (act === 'proc') _ambOpenProcessModal(it);
@@ -17904,6 +17931,7 @@
             '<button type="button" class="ambient-cap-btn" data-act="proc" title="Process — reverse / pitch / glide → new take">⚙</button>' +
             '<button type="button" class="ambient-cap-btn" data-act="ren" title="Rename">✎</button>' +
             '<button type="button" class="ambient-cap-btn" data-act="dl" title="Download to this device">⤓</button>' +
+            '<button type="button" class="ambient-cap-btn" data-act="radio" title="Send to the home page radio — downloads a WAV that `npm run radio` installs into the site">📻</button>' +
             '<button type="button" class="ambient-cap-btn" data-act="totracks" title="Send to Tracks — shows up as a track next time you open the Tracks page' + (it.mastered ? ' (sends the mastered version)' : '') + '">🎚→</button>' +
             '<button type="button" class="ambient-cap-btn ambient-cap-up" data-act="up" title="Upload to Google Drive">⬆ Upload</button>' +
             '<button type="button" class="ambient-cap-btn ambient-cap-del" data-act="del" title="Remove from bank">✕</button>' +

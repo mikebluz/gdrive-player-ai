@@ -421,6 +421,29 @@
     return wavEncode(rendered);
   }
   const randomName = () => { const a = WORDS[Math.floor(Math.random() * WORDS.length)]; let b = a; while (b === a) b = WORDS[Math.floor(Math.random() * WORDS.length)]; return a + '-' + b; };
+  // Send the mixdown to the HOME PAGE RADIO. Always a local download, never
+  // Drive: the radio plays files that ship with the site, so the mix has to
+  // reach the project directory and be deployed. `npm run radio` picks up the
+  // `radio--` prefix, encodes it to AAC and installs it with a manifest entry.
+  async function exportToRadio() {
+    let name = null;
+    try { name = prompt('Name this radio track:', randomName()); } catch (e) {}
+    if (name == null) return;
+    const slug = (String(name).trim() || randomName()).toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'mix';
+    toast('Rendering mixdown…');
+    let blob = null;
+    try { blob = await renderMixdown(); } catch (e) { toast('Render failed: ' + (e && e.message)); return; }
+    if (!blob) return;
+    try {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'radio--' + slug + '.wav';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => { try { URL.revokeObjectURL(url); } catch (e) {} }, 8000);
+      toast('Saved radio--' + slug + '.wav — run `npm run radio` to add it to the site.');
+    } catch (e) { toast('Download failed: ' + (e && e.message)); }
+  }
   async function exportMixdown() {
     let name = null;
     try { name = prompt('Name this mixdown:', randomName()); } catch (e) {}
@@ -472,6 +495,7 @@
     on('studio-rew', () => seek(Math.max(0, pos - 5)));
     on('studio-ff', () => seek(pos + 5));
     on('studio-export', exportMixdown);
+    on('studio-radio', exportToRadio);
     const sel = $('studio-input');
     if (sel) sel.addEventListener('change', () => { try { localStorage.setItem(LS_INPUT, sel.value); } catch (e) {} });
   }
@@ -487,5 +511,5 @@
   window._studioShow = () => { init().catch(() => {}); };
   window._studioHide = () => { if (rec.on) stop(); else if (playing) stop(); };
   // test hooks (headless verification)
-  window._studio = { get tracks() { return tracks; }, get pos() { return pos; }, get playing() { return playing; }, seek, play, stop, exportMixdown, renderMixdown, randomName };
+  window._studio = { get tracks() { return tracks; }, get pos() { return pos; }, get playing() { return playing; }, seek, play, stop, exportMixdown, exportToRadio, renderMixdown, randomName };
 })();

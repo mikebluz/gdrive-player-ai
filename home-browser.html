@@ -59,6 +59,14 @@ body{
 .radio .ch .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:74px}
 /* A level meter that exists only while it plays — the one honest signal that
    what you are hearing is being made rather than streamed. */
+/* The standard speaker, drawn rather than an emoji: it inherits the bar's
+   colour, so it reads as chrome instead of as a sticker. One SVG holds both
+   states and CSS picks — no swapping markup on click. */
+.radio .spk{width:15px;height:15px;display:block;flex:0 0 auto}
+.radio .spk .cone{fill:currentColor}
+.radio .spk .waves,.radio .spk .cross{stroke:currentColor;stroke-width:1.5}
+.radio[data-on="0"] .spk .waves{display:none}
+.radio[data-on="1"] .spk .cross{display:none}
 .radio .lv{display:none;align-items:flex-end;gap:2px;width:18px;padding:0 10px 0 2px;
   align-self:center;height:9px}
 .radio[data-on="1"] .lv{display:flex}
@@ -319,7 +327,7 @@ td .c{display:block;font-size:11px;color:var(--mute)}
 <!-- ══ BROWSER CHROME ══════════════════════════════════════════════════════ -->
 <div class="radio" id="radio" data-on="0">
   <button class="pw" id="rpw" type="button" aria-pressed="false"
-          title="Radio — off. Everything but channel 1 is generated live.">◌</button>
+          title="Unmute — everything but channel 1 is generated live."><svg class="spk" viewBox="0 0 16 16" aria-hidden="true"><path class="cone" d="M2 6h3l4-3v10L5 10H2z"/><g class="waves" fill="none" stroke-linecap="round"><path d="M11 6.2a2.6 2.6 0 0 1 0 3.6"/><path d="M12.9 4.4a5.2 5.2 0 0 1 0 7.2"/></g><g class="cross" fill="none" stroke-linecap="round"><path d="M11.3 6.3l3.4 3.4"/><path d="M14.7 6.3l-3.4 3.4"/></g></svg></button>
   <button class="ch" id="rch" type="button" title="Next channel">
     <span class="n">1</span><span class="t">GRAINS</span>
   </button>
@@ -742,9 +750,7 @@ drawTabs(); show('grains', false);
     on = !on;
     box.dataset.on = on ? '1' : '0';
     pw.setAttribute('aria-pressed', String(on));
-    pw.textContent = on ? '◉' : '◌';
-    pw.title = on ? 'Radio — playing. Click to stop.'
-                  : 'Radio — off. Everything but channel 1 is generated live.';
+    pw.title = on ? 'Mute' : 'Unmute — everything but channel 1 is generated live.';
     if (on) { cfg().track ? startTrack() : startBloom(); } else { silence(); }
   });
   chb.addEventListener('click', () => { idx = (idx + 1) % CH.length; tune(); });

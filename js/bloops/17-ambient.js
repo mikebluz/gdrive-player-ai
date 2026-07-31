@@ -132,7 +132,7 @@
         bed:     { on: false, present: false, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, strum: 0, strumFidelity: 0, tone: '', scale: '', attack: 2000, decay: 200, sustain: 85, release: 3650, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
         motif:   { on: false, present: false, register: 5, range: 2, proximity: 35, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, accent: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', attack: 100, decay: 120, sustain: 70, release: 500, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
         texture: { on: false, present: false, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', attack: 40, decay: 80, sustain: 0, release: 240, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
-        beat:    { on: false, present: false, kit: 'tr808', gen: 'random', intervalMs: 250, lengthMs: 200, restProb: 15, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, attack: 1, decay: 60, sustain: 70, release: 120, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        beat:    { on: false, present: false, kit: 'tr808', gen: 'random', poly: 2, intervalMs: 250, lengthMs: 200, restProb: 15, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, attack: 1, decay: 60, sustain: 70, release: 120, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
         // `seqs` is a DYNAMIC list of sequence-seeded layers (Seq1, Seq2…),
         // created by "Send to Bloom". Each replays one or more saved-sequence
         // "units", improvising variations and periodically returning to verbatim.
@@ -10956,6 +10956,9 @@
         pan: pan | 0,
       };
     }
+    // Simultaneous drums per random-mode hit. 2 = a kit part (kick+hat) rather
+    // than a lone tick; raised per layer via the Poly control.
+    const _AMB_BEAT_POLY_DEF = 2;
     function _ambEmitBeat(at, beat, space, key) {
       key = key || 'beat';
       if (_ambRand() * 100 < _ambEffRest(beat)) return;
@@ -10972,30 +10975,56 @@
         return;
       }
       // An explicit single drum (`beat.drum`) else the native random pick. A beat
-      // with no `drum` field → _ambPickDrumPc() (harness byte-identical).
+      // with no `drum` field → _ambPickDrumPc().
       const pc = (beat.drum != null) ? (beat.drum | 0) : _ambPickDrumPc();
-      const midi = 36 + pc; // C2 = 36
-      let f;
-      try { f = Tone.Frequency(midi, 'midi').toFrequency(); } catch (e) { return; }
       const lenMs = Math.max(60, beat.lengthMs | 0);
       const pan = _ambLayerPan(beat);
-      // SYNTH kit: synthesize the drum from its recipe (was only wired into the
-      // euclid path — in random mode kit:'synth' built a nonexistent sample).
-      // Role = the picked drum (via _AMB_VDRUM). dmod computed below.
-      if (_ambBeatIsSynth(beat)) {
-        const _role = Math.max(0, _AMB_VDRUM.indexOf(pc));
-        const _dm = _ambLayerDetuneMod(key);
-        const _vol = Math.max(0, Math.round(_ambAccentVol(_ambApplyLevel(100, beat.level), beat.accent)));
-        _ambPlaySynthDrum(_E, _ambLayerDest(key), beat, _role, at, _vol, _dm, pan);
-        _ambGrooveEmbellish(f, { volume: _vol, pan: pan | 0 }, _ambVaryLen(lenMs, beat.lenVary), at, _ambLayerDest(key), _E.laneIdx());
-        return;
+      // POLY — simultaneous drums on ONE onset. Random mode fired exactly one drum
+      // per hit, so it read as a sparse tick rather than a kit playing; real kit
+      // parts hit two or three pieces together (kick+hat, snare+hat). Defaults to 2
+      // for the random generator and 1 everywhere else, so only random mode changes.
+      // SKIPPED when `beat.drum` is set: an explicit single drum is a choice, and
+      // stacking others on top would override it.
+      const _polyDef = (beat.gen === 'random') ? _AMB_BEAT_POLY_DEF : 1;
+      const _poly = Math.max(1, Math.min(4, Number.isFinite(beat.poly) ? (beat.poly | 0) : _polyDef));
+      const pcs = [pc];
+      if (_poly > 1 && beat.drum == null) {
+        // Distinct pieces only — two kicks on the same instant is one louder kick,
+        // not a chord. Bounded retries so a weighted table that keeps returning the
+        // same drum can't spin (it just yields fewer voices, which is musical).
+        for (let n = 1; n < _poly; n++) {
+          let cand = -1;
+          for (let t = 0; t < 6; t++) { const c = _ambPickDrumPc(); if (pcs.indexOf(c) < 0) { cand = c; break; } }
+          if (cand < 0) break;
+          pcs.push(cand);
+        }
       }
-      const bp = _ambApplyAdsr(_ambBeatParams(beat.kit, lenMs, pan), beat);
-      bp.volume = _ambApplyLevel(bp.volume, beat.level);
-      const dmod = _ambLayerDetuneMod(key); if (dmod) bp._detuneMod = dmod;
-      { const _bdur = _ambVaryLen(lenMs, beat.lenVary);   // compute once (avoid a 2nd lenVary rng draw)
-        try { playNote(f, bp, _bdur, at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
-        _ambGrooveEmbellish(f, bp, _bdur, at, _ambLayerDest(key), _E.laneIdx()); }   // Groove ghost/rolls (gated at 0)
+      // ONE length draw for the whole onset — the poly voices are one hit, and a
+      // draw per voice would both desync their lengths and churn the shared RNG.
+      const _bdur = _ambVaryLen(lenMs, beat.lenVary);
+      const _isSynth = _ambBeatIsSynth(beat);
+      const _dest = _ambLayerDest(key);
+      for (let n = 0; n < pcs.length; n++) {
+        const pcN = pcs[n];
+        let f;
+        try { f = Tone.Frequency(36 + pcN, 'midi').toFrequency(); } catch (e) { continue; }   // C2 = 36
+        // SYNTH kit: synthesize the drum from its recipe (was only wired into the
+        // euclid path — in random mode kit:'synth' built a nonexistent sample).
+        // Role = the picked drum (via _AMB_VDRUM).
+        if (_isSynth) {
+          const _role = Math.max(0, _AMB_VDRUM.indexOf(pcN));
+          const _dm = _ambLayerDetuneMod(key);
+          const _vol = Math.max(0, Math.round(_ambAccentVol(_ambApplyLevel(100, beat.level), beat.accent)));
+          _ambPlaySynthDrum(_E, _dest, beat, _role, at, _vol, _dm, pan);
+          _ambGrooveEmbellish(f, { volume: _vol, pan: pan | 0 }, _bdur, at, _dest, _E.laneIdx());
+          continue;
+        }
+        const bp = _ambApplyAdsr(_ambBeatParams(beat.kit, lenMs, pan), beat);
+        bp.volume = _ambApplyLevel(bp.volume, beat.level);
+        const dmod = _ambLayerDetuneMod(key); if (dmod) bp._detuneMod = dmod;
+        try { playNote(f, bp, _bdur, at, _dest, undefined, _E.laneIdx()); } catch (e) {}
+        _ambGrooveEmbellish(f, bp, _bdur, at, _dest, _E.laneIdx());   // Groove ghost/rolls (gated at 0)
+      }
     }
     // One euclidean voice's pattern. salt 0 → deterministic: voice 0 = the base
     // params; extra voices spread pulses/rotation to interlock. salt != 0 (a Regen
@@ -22238,6 +22267,10 @@
       // 'voices' = primary id; 'euclidVoices' = extra-layer (schema) id.
       ['pulses', 'steps', 'rotate', 'euclidkit', 'voices', 'euclidVoices', 'euclidregen', 'euclidgrid', 'bars', 'rhythmVar'].forEach(s => setRow(s, euclid));
       setRow('rate', !euclid);
+      // Poly is a RANDOM-mode control: euclid mode already has its own polyphony
+      // (Voices / drum lanes), so showing it there would offer two answers to the
+      // same question.
+      setRow('poly', !euclid);
       // Drum-lanes = a step sequencer over all 8 fixed drum lanes → the euclidean
       // generator knobs (Pulses/Rotate/Regen/Voices) and the single-drum "Drum"
       // picker don't apply; hide them in that mode (Steps + Phrase stay).
@@ -22271,6 +22304,10 @@
       // Resolution = synced-series note rate: series only, and only while synced.
       setRow('arpres', !euclid && !!(inst && inst.unit && inst.unit.mode === 'sync'));
       setRow('rate', !euclid);
+      // Poly is a RANDOM-mode control: euclid mode already has its own polyphony
+      // (Voices / drum lanes), so showing it there would offer two answers to the
+      // same question.
+      setRow('poly', !euclid);
       const ivRow = rowOf('intervalMs'); if (ivRow) ivRow.style.display = euclid ? 'none' : '';
       if (!euclid && typeof _ambUnitSyncViz === 'function') { try { _ambUnitSyncViz(E, stem, inst); } catch (e) {} }
     }
@@ -25464,7 +25501,7 @@
         ..._AMB_MIX] },
       beat: { label: 'Beat', ctrls: [
         ..._ambVoiceCtrls([['kit']], 500, 2000, 2000), ['synthkit'],
-        ['grp', 'Source'], ['keyov'], ['gen'], ['grp', 'Pattern'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'],
+        ['grp', 'Source'], ['keyov'], ['gen'], ['sl', 'poly', 'Poly', 1, 4, 'drums per hit (Random)'], ['grp', 'Pattern'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'],
         ['grp', 'Timing', 'How fast and how long the beat plays. In Random mode, Interval sets the gap between hits; in Program mode the grid follows Sync + Bars. Length is how long each hit rings.'], ['unitsync'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'bars per loop'], ['tm', 'lengthMs', 'Hit length', 60, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around hit length'], ['tight'],
         ..._AMB_MIX] },

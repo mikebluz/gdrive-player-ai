@@ -358,7 +358,7 @@
         'bed':           { hash: '1d8eacee', count: 12 },
         'motif':         { hash: '8e39cc63', count: 9 },
         'texture':       { hash: '2c80e9bc', count: 25 },   // Track D/D2: unified step-grid emitter (grid-synced shimmer) — deliberate re-baseline, ear-checked. Old free-scanner baseline was b766f5dc/3; revert via bloomStepGrid(false).
-        'beat-random':   { hash: '2422203d', count: 43 },   // 2026-07-30: random Beat default densified — Unit 500→250 ms (8ths, not quarters) + Rests 25→15. One hit per unit made the default beat ~1.5 hits/s, which reads as a stray tick rather than a drum part; now ~3.3. Deliberate. Was 872e5741/19.
+        'beat-random':   { hash: '41145a83', count: 90 },   // 2026-07-30 (2): random Beat is now POLYPHONIC — _AMB_BEAT_POLY_DEF 2, so each onset fires two DISTINCT drums (kick+hat, snare+hat) instead of one. One drum per hit read as a lone tick, not a kit. Count 43→90 (not exactly 2× — the distinct-pick retry yields one voice when the weighted table repeats). Deliberate. Was 2422203d/43 (Unit 500→250 ms + Rests 25→15), before that 872e5741/19.
         'beat-euclid':   { hash: '645ef315', count: 21 },   // same change: Rests 25→15 feeds _ambEffRest on the euclid beat too (19→21 hits).
         'arp':           { hash: 'd5cc969a', count: 52 },
         'bass':          { hash: '0a287885', count: 32 },
@@ -366,7 +366,7 @@
         'pedal':         { hash: 'e788032c', count: 26 },
         'drone':         { hash: '053bdf7f', count: 1 },   // Drone default Unit 2000→8000 ms (Hold 4 = 32 s cycle) — deliberate: the drone is now the long-hold pad layer. Was 45a97025/2.
         'seq-pitch':     { hash: '64b0939b', count: 38 },
-        'combo':         { hash: '50d9be7b', count: 90 },   // includes the beat, so it moves with it.   // Track D/D2: includes the texture layer, so it re-baselines with texture (was ad0b1f59/53).
+        'combo':         { hash: '1639ce3f', count: 129 },   // includes the beat, so it moves with it (Beat poly: 90→129).   // Track D/D2: includes the texture layer, so it re-baselines with texture (was ad0b1f59/53).
         // Phase 1 — Key transpose/quantize (G major). Locks the new behavior.
         'key-transpose': { hash: '56adac6e', count: 18 },
         'key-quantize':  { hash: 'dc3ce346', count: 18 },

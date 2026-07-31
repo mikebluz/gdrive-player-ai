@@ -16112,6 +16112,27 @@
     }
     function _ambWriteEffBars(cfg, reqBars, nT) {
       const cyc = _ambProgCycleBars(cfg);
+      // SECTION SNAP: sections are the outer bar clock, so a captured phrase that
+      // isn't a whole number of section cycles replays against a DIFFERENT section
+      // each time round — the arrangement-level version of the chord-drift this
+      // function already guards against. Snap up to a length that is a whole
+      // multiple of BOTH clocks. Capped: an awkward pair (7-bar prog, 9-bar
+      // sections) would otherwise land on a 63-bar phrase, which is not a loop
+      // anyone asked for — past the cap, fall through to progression-only rather
+      // than silently capturing something enormous.
+      const sec = _ambSectionCycleBars(cfg);
+      if (sec > 0) {
+        const base = (cyc > 0) ? cyc : 0;
+        const step = 0.25;                                    // the section-bars floor
+        const isMult = (v, m) => (m <= 0) ? true : Math.abs(v / m - Math.round(v / m)) < 1e-6;
+        let want = Math.max(step, reqBars);
+        // Walk up in units of the finer clock until both divide evenly.
+        const unit = (base > 0) ? Math.min(base, sec) : sec;
+        const cap = Math.max(32, unit * 8);
+        let v = Math.max(unit, Math.ceil(want / unit - 1e-6) * unit);
+        while (v <= cap && !(isMult(v, base) && isMult(v, sec))) v += unit;
+        if (v <= cap) return v;
+      }
       if (!(cyc > 0)) return reqBars;
       // Snap UP to whole progression cycles WHENEVER a progression is active —
       // the phrase is edited in cycles, so a layer's stored bars that isn't a

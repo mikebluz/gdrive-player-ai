@@ -11422,6 +11422,24 @@
     // Is iteration `c` an improvised one? Pure function of the cycle index — no RNG,
     // no state — so every tick that re-emits a cycle agrees, and it is identical on
     // a re-render (the same reason the euclid chord-pool ordinal is index-derived).
+    // Captured onsets for ONE cycle, bucketed by step index: {stepIdx: freq, _n}.
+    // E.cap is what the engine actually emitted, so this is the truthful answer to
+    // "what is playing in this slot" — as opposed to re-deriving the pattern, which
+    // misses the per-slot rhythmVar/restProb edits the emitters apply.
+    function _ambImpHeard(E, key, origin, cyc, loopSec, slotSec, total) {
+      const out = { _n: 0 };
+      try {
+        const cap = (E && E.cap && E.cap[key]) || [];
+        const c0 = origin + cyc * loopSec, c1 = c0 + loopSec;
+        for (let ci = cap.length - 1; ci >= 0 && cap.length - ci < 96; ci--) {
+          const ev = cap[ci]; if (!ev || !(ev.freq > 0)) continue;
+          if (ev.at < c0 - 1e-3 || ev.at >= c1) continue;
+          const si = Math.round((ev.at - c0) / slotSec);
+          if (si >= 0 && si < total && out[si] == null) { out[si] = ev.freq; out._n++; }
+        }
+      } catch (e) {}
+      return out;
+    }
     function _ambImprovAt(L, c) {
       if (!_ambImprovOn(L)) return false;
       const p = _ambImprovLen(L, 'pat'), q = _ambImprovLen(L, 'imp');
@@ -19659,10 +19677,25 @@
                       const _row = _imp
                         ? _ambEuclidVoicePat(_pu, Math.max(0, L.rotate | 0), steps, 1, 0, _ambImprovSalt(L, _cyc))
                         : null;
+                      // WHAT SOUNDED, not what was generated. _row is the improvised
+                      // euclid pattern BEFORE the engine mutates it: rhythmVar drops
+                      // ~40% of hits and promotes ~22% of rests (scaled by the knob,
+                      // which improv defaults to 20), and restProb skips on top. So
+                      // painting _row showed a pattern the engine had already edited —
+                      // the "doesn't always match" report. E.cap is the same truthful
+                      // source the note readout below uses.
+                      const _heard = _ambImpHeard(E, key, _origin, _cyc, loopSec, slotSec, bars * steps);
+                      const _hasCap = _heard && _heard._n > 0;
                       grid.querySelectorAll('.ambient-euclid-cell[data-ei]').forEach(c2 => {
                         const i2 = c2.getAttribute('data-ei') | 0;
-                        if (_row) c2.classList.toggle('impon', _row[i2 % _row.length] === 1);
-                        else c2.classList.remove('impon');
+                        if (!_row) { c2.classList.remove('impon'); return; }
+                        // Heard → truth. Already passed with nothing heard → truthfully
+                        // off. Still upcoming → the generated row is the best available
+                        // prediction (the tick may not have emitted that far yet).
+                        const on = (_heard[i2] > 0) ? true
+                          : (_hasCap && i2 <= cur) ? false
+                          : (_row[i2 % _row.length] === 1);
+                        c2.classList.toggle('impon', on);
                       });
                       // …and the NOTE READOUT with them, from WHAT ACTUALLY
                       // SOUNDED. The static label is a prediction, and for a scale
@@ -19682,17 +19715,8 @@
                         const _shown = _row || _ambEuclidPat(L, _pu, steps, Math.max(0, L.rotate | 0), 1, 0, L.euclidRegen | 0);
                         // Captured onsets from the cycle that just played, bucketed
                         // by step. One pass, so this stays O(notes) per cycle.
-                        const _heard = {};
-                        try {
-                          const _cap = (E.cap && E.cap[key]) || [];
-                          const _c0 = _origin + _cyc * loopSec, _c1 = _c0 + loopSec;
-                          for (let ci = _cap.length - 1; ci >= 0 && _cap.length - ci < 96; ci--) {
-                            const ev = _cap[ci]; if (!ev || !(ev.freq > 0)) continue;
-                            if (ev.at < _c0 - 1e-3 || ev.at >= _c1) continue;
-                            const si = Math.round((ev.at - _c0) / slotSec);
-                            if (si >= 0 && si < bars * steps && _heard[si] == null) _heard[si] = ev.freq;
-                          }
-                        } catch (e) {}
+                        // (_heard was computed above for the cells — same cycle, same
+                        // buckets, so it is reused rather than recomputed.)
                         _labs.forEach((el2, i2) => {
                           const hz = _heard[i2];
                           if (hz > 0) {

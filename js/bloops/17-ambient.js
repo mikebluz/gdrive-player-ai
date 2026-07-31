@@ -22243,20 +22243,20 @@
     const _ambCondCtrl = (layer) => _ambWhenCtrl('ambient-' + layer + '-');
     // Beat "Gen" mode select: Random (one hit per Interval) vs Euclidean (a
     // BPM-locked euclidean pattern over N bars). `stem` ends with '-'.
-    // Beat mode: a plain Random | Program segment. "Program" = the euclid engine
+    // Beat mode: a plain Random | Pattern segment. "Pattern" = the euclid engine
     // with the 8-lane drum GRID surfaced immediately (the gen handlers auto-enable
     // drum-lanes on the switch) — the intuitive "populate a bar with hits" path.
     // The native <select> stays (hidden) so ALL existing gen wiring is reused: the
     // segment just drives it. `inst` sets the initial active button.
     const _ambGenSel = (stem, inst) => {
       const euclid = !!(inst && inst.gen === 'euclid');
-      return '<div class="ambient-ctrl ambient-beatmode-ctrl" title="' + _ambTitleAttr('Mode', 'random hits or a programmable drum grid') + '"><label>Mode</label>' +
+      return '<div class="ambient-ctrl ambient-beatmode-ctrl" title="' + _ambTitleAttr('Mode', 'random hits or a written drum grid') + '"><label>Mode</label>' +
         '<div class="ambient-seg-row ambient-beatmode-seg">' +
           '<button type="button" class="ambient-seg ambient-beatmode-btn' + (euclid ? '' : ' active') + '" data-gen="random" title="Auto-generated random hits">Random</button>' +
-          '<button type="button" class="ambient-seg ambient-beatmode-btn' + (euclid ? ' active' : '') + '" data-gen="euclid" title="Program your own beat on a drum grid">Program</button>' +
+          '<button type="button" class="ambient-seg ambient-beatmode-btn' + (euclid ? ' active' : '') + '" data-gen="euclid" title="Write your own beat on a drum grid">Pattern</button>' +
         '</div>' +
         '<select id="' + stem + 'gen" class="ambient-select ambient-beatmode-select"><option value="random">Random</option><option value="euclid">Euclidean</option></select>' +
-        '<span class="ambient-hint">random → program a grid</span></div>';
+        '<span class="ambient-hint">random → write a grid</span></div>';
     };
     // One document-level listener drives every Beat mode segment (primary + extras,
     // different hosts) — set once. The button just flips the hidden gen select and
@@ -22292,6 +22292,14 @@
       // (Voices / drum lanes), so showing it there would offer two answers to the
       // same question.
       setRow('poly', !euclid);
+      // The Pattern SUBSECTION itself follows the mode. Gating only its rows left
+      // a labelled group that opened onto nothing in Random mode.
+      try {
+        const _anyRow = rowOf('steps') || rowOf('pulses') || rowOf('poly');
+        const _card = _anyRow && _anyRow.closest && _anyRow.closest('.ambient-layer');
+        const _pg = _card && _card.querySelector('.ambient-grp[data-grp="Pattern"]');
+        if (_pg) _pg.style.display = euclid ? '' : 'none';
+      } catch (e) {}
       // Drum-lanes = a step sequencer over all 8 fixed drum lanes → the euclidean
       // generator knobs (Pulses/Rotate/Regen/Voices) and the single-drum "Drum"
       // picker don't apply; hide them in that mode (Steps + Phrase stay).
@@ -22329,6 +22337,14 @@
       // (Voices / drum lanes), so showing it there would offer two answers to the
       // same question.
       setRow('poly', !euclid);
+      // The Pattern SUBSECTION itself follows the mode. Gating only its rows left
+      // a labelled group that opened onto nothing in Random mode.
+      try {
+        const _anyRow = rowOf('steps') || rowOf('pulses') || rowOf('poly');
+        const _card = _anyRow && _anyRow.closest && _anyRow.closest('.ambient-layer');
+        const _pg = _card && _card.querySelector('.ambient-grp[data-grp="Pattern"]');
+        if (_pg) _pg.style.display = euclid ? '' : 'none';
+      } catch (e) {}
       const ivRow = rowOf('intervalMs'); if (ivRow) ivRow.style.display = euclid ? 'none' : '';
       if (!euclid && typeof _ambUnitSyncViz === 'function') { try { _ambUnitSyncViz(E, stem, inst); } catch (e) {} }
     }

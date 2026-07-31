@@ -11591,7 +11591,79 @@
     // layer's FX and is picked up by capture like any other layer — the whole reason
     // a buffer-producing engine was chosen over SpeechSynthesis, which can only
     // reach the output device.
-    function _ambLearnPlay(E, key, buf, at) {
+    // Status is written from the layer's REAL state (st), never predicted — the
+    // whole point is telling the user which of "downloading a 60 MB voice",
+    // "fetching an article" and "speaking" they are waiting on. Cheap: it only
+    // touches the DOM when the string actually changes.
+    function _ambLearnSay(E, L, st, txt) {
+      if (st._say === txt) return;
+      st._say = txt;
+      try {
+        const el = _ambGet(E, 'ambient-learn-' + (L.id | 0) + '-learnstat');
+        if (el) el.textContent = txt;
+      } catch (e) {}
+    }
+    // Start a load immediately. The tick only refills while PLAYING, but both
+    // buttons must work with the transport stopped — that was the opaque part.
+    function _ambLearnLoadNow(E, L) {
+      if (!L) return;
+      const key = 'learn:' + (L.id | 0);
+      E.seqState = E.seqState || {};
+      const st = E.seqState[key] || (E.seqState[key] = { q: [], sentences: [], si: 0, pending: false, srcKey: '' });
+      st.epoch = (st.epoch | 0) + 1;             // cancels anything in flight
+      st.sentences = []; st.si = 0; st.q = []; st.title = '';
+      st.srcKey = (L.source || 'wiki-random') + '|' + (L.term || '');
+      st.phase = 'fetch'; st._say = null;
+      _ambLearnSayEl(E, L.id, 'Fetching an article…');
+      st.pending = true;
+      const ep = st.epoch | 0;
+      const settle = () => {
+        st.pending = false;
+        if ((st.epoch | 0) !== ep) return;           // a newer load already reported
+        // Only the tick writes status while playing; with the transport STOPPED
+        // nothing else would ever clear "Fetching…", so report the outcome here.
+        _ambLearnSayEl(E, L.id,
+          st.phase === 'nofetch' ? 'No article found — check the search term'
+          : st.phase === 'novoice' ? 'Voice unavailable (offline?)'
+          : st.sentences.length ? ('Ready — ' + (st.title || 'article') + ', ' + st.sentences.length + ' lines. Press play.')
+          : 'Nothing to read — try again');
+      };
+      try { _ambLearnAhead(L, st).then(settle, settle); }
+      catch (e) { st.pending = false; }
+    }
+    function _ambLearnReset(E, L) {
+      const st = E.seqState && E.seqState['learn:' + (L.id | 0)];
+      if (!st) return;
+      st.sentences = []; st.si = 0; st.q = []; st.title = ''; st.srcKey = '';
+      st._say = null;   // force the next status write through
+    }
+    // `epoch` is what makes a load CANCELLABLE. Pressing Random mid-search leaves
+    // a synth already running in the worker; it will still come back, and without
+    // this its audio would be appended to the new article's queue. Every result
+    // is checked against the epoch it started under and dropped if it moved.
+    async function _ambLearnAhead(L, st) {
+      const ep = st.epoch | 0;
+      const stale = () => (st.epoch | 0) !== ep;
+      if (!st.sentences.length || st.si >= st.sentences.length) {
+        st.phase = 'fetch';
+        const doc = await _ambLearnFetch(L.source || 'wiki-random', L.term || '');
+        if (stale()) return;
+        if (!doc) { st.phase = 'nofetch'; return; }
+        st.title = doc.title;
+        // Speak a SENTENCE at a time: the whole extract in one synth call would be
+        // a single multi-minute buffer that cannot be interrupted or aligned.
+        st.sentences = String(doc.text).split(/(?<=[.!?])\s+/).filter(x => x.trim().length > 1);
+        st.si = 0;
+        if (!st.sentences.length) return;
+      }
+      const line = st.sentences[st.si++];
+      st.phase = _ambLearnWarm ? 'render' : 'voice';
+      const buf = await _ambLearnSynth(line);
+      if (stale()) return;                      // abandoned article — drop the audio
+      if (buf) st.q.push(buf); else st.phase = 'novoice';
+    }
+    const _AMB_LEARN_BOOST = 3.2;   // speech is quiet next to synth layers; measured peak ~0.7
+    function _ambLearnPlay(E, key, L, buf, at) {
       try {
         if (!buf) return null;
         const ac = Tone.getContext().rawContext;
@@ -11599,7 +11671,15 @@
         if (!dest) return null;
         const src = ac.createBufferSource();
         src.buffer = buf;
-        try { src.connect(dest); } catch (e) { try { src.connect(dest.input || dest); } catch (e2) { return null; } }
+        // Through a GAIN, not straight to the dest. Without this the layer's Level
+        // control did nothing at all, and MMS output sits well below the synth
+        // layers — the BOOST brings a speaking voice up to sit in a mix rather
+        // than under it.
+        const g = ac.createGain();
+        const lvl = Math.max(0, Math.min(100, Number.isFinite(L && L.level) ? (L.level | 0) : 70));
+        g.gain.value = (lvl / 100) * _AMB_LEARN_BOOST;
+        src.connect(g);
+        try { g.connect(dest); } catch (e) { try { g.connect(dest.input || dest); } catch (e2) { return null; } }
         src.start(Math.max(ac.currentTime, Number.isFinite(at) ? at : 0));
         return src;
       } catch (e) { return null; }
@@ -15402,41 +15482,6 @@
       // Render ONE line ahead. The voice's cold start is ~16 s (CDN library + model
       // on first use), so synthesising on demand would leave the layer silent long
       // after the press; this keeps a buffer queued while the current line plays.
-      // Status is written from the layer's REAL state (st), never predicted — the
-      // whole point is telling the user which of "downloading a 60 MB voice",
-      // "fetching an article" and "speaking" they are waiting on. Cheap: it only
-      // touches the DOM when the string actually changes.
-      function _ambLearnSay(E, L, st, txt) {
-        if (st._say === txt) return;
-        st._say = txt;
-        try {
-          const el = _ambGet(E, 'ambient-learn-' + (L.id | 0) + '-learnstat');
-          if (el) el.textContent = txt;
-        } catch (e) {}
-      }
-      function _ambLearnReset(E, L) {
-        const st = E.seqState && E.seqState['learn:' + (L.id | 0)];
-        if (!st) return;
-        st.sentences = []; st.si = 0; st.q = []; st.title = ''; st.srcKey = '';
-        st._say = null;   // force the next status write through
-      }
-      async function _ambLearnAhead(L, st) {
-        if (!st.sentences.length || st.si >= st.sentences.length) {
-          st.phase = 'fetch';
-          const doc = await _ambLearnFetch(L.source || 'wiki-random', L.term || '');
-          if (!doc) { st.phase = 'nofetch'; return; }
-          st.title = doc.title;
-          // Speak a SENTENCE at a time: the whole extract in one synth call would be
-          // a single multi-minute buffer that cannot be interrupted or aligned.
-          st.sentences = String(doc.text).split(/(?<=[.!?])\s+/).filter(x => x.trim().length > 1);
-          st.si = 0;
-          if (!st.sentences.length) return;
-        }
-        const line = st.sentences[st.si++];
-        st.phase = _ambLearnWarm ? 'render' : 'voice';
-        const buf = await _ambLearnSynth(line);
-        if (buf) st.q.push(buf); else st.phase = 'novoice';
-      }
       function _ambTickLearnLayer(E, L, now, lead, space, cfg, opts) {
         const C = E.clocks;
         const key = opts.key;
@@ -15483,7 +15528,7 @@
           if (_ambCondFires(L.when, (E.iters[key] | 0), C[key])) {
             const buf = st.q.shift();
             window._ambCaptureSink = _ambCapSink(E, key);
-            _ambLearnPlay(E, key, buf, C[key]);
+            _ambLearnPlay(E, key, L, buf, C[key]);
             window._ambCaptureSink = null;
             C[key] += buf.duration + Math.max(0, (L.intervalMs | 0)) / 1000;
           } else {
@@ -25931,7 +25976,7 @@
       // rhythm — the utterance is the unit — so it carries Source + Gap + the
       // shared mix block and nothing else.
       learn: { label: 'Learn', ctrls: [
-        ['grp', 'Source'], ['learnsrc'], ['learnterm'], ['learnstatus'],
+        ['grp', 'Source'], ['learnsrc'], ['learnstatus'],
         ['grp', 'Timing'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
         ..._AMB_MIX,
       ] },
@@ -26499,12 +26544,17 @@
       if (k === 'spread') return _ambSpreadCtrl(p, inst);
       if (k === 'mod') return _ambModUi(lk);
       if (k === 'fx') return _ambFxUi(lk);
-      if (k === 'learnsrc') return '<div class="ambient-ctrl" title="Where the words come from. Wikipedia works straight from the browser; other sources need a proxy."><label for="' + p + '-learnsrc">Source</label>' +
-        '<select id="' + p + '-learnsrc" class="ambient-select">' + _AMB_LEARN_SOURCES.map(x => '<option value="' + x.id + '">' + x.label + '</option>').join('') + '</select>' +
-        '<span class="ambient-hint">text source</span></div>';
-      if (k === 'learnterm') return '<div class="ambient-ctrl" title="Article to read, for a search source. Ignored by the random source."><label for="' + p + '-learnterm">Search</label>' +
-        '<input type="text" id="' + p + '-learnterm" class="ambient-bpc-input" placeholder="article title" />' +
-        '<span class="ambient-hint">search sources only</span></div>';
+      if (k === 'learnsrc') { const _sr = (inst.source === 'wiki-search');
+        return '<div class="ambient-ctrl" title="Random loads an article straight away. Search reveals a box — type a title and press Load."><label>Source</label>' +
+          '<div class="ambient-seg-row">' +
+            '<button type="button" class="ambient-seg ambient-learn-rand' + (_sr ? '' : ' active') + '" title="Load a random Wikipedia article now. Cancels anything currently loading.">Random</button>' +
+            '<button type="button" class="ambient-seg ambient-learn-srch' + (_sr ? ' active' : '') + '" title="Choose the article yourself">Search</button>' +
+          '</div><span class="ambient-hint">random → search</span></div>' +
+        // Search row exists always (so wiring is stable) but only SHOWS in search
+        // mode — a term box with no visible relationship to a mode was the opaque bit.
+        '<div class="ambient-ctrl ambient-learn-termrow"' + (_sr ? '' : ' style="display:none"') + '><label for="' + p + '-learnterm">Term</label>' +
+          '<input type="text" id="' + p + '-learnterm" class="ambient-bpc-input" placeholder="article title" />' +
+          '<button type="button" class="ambient-seg ambient-learn-load" title="Fetch this article and start reading it">Load</button></div>'; }
       if (k === 'learnstatus') return '<div class="ambient-ctrl ambient-learn-row"><label>Status</label>' +
         '<span class="ambient-learn-stat" id="' + p + '-learnstat">Idle — press play</span>' +
         '<button type="button" class="ambient-seg ambient-learn-go" data-lgo="' + (inst.id | 0) + '" title="Fetch a new article now — a search source uses the Search box, the random source picks another article. Takes a few seconds; the very first line also downloads the voice (~15 s, once).">\u21bb New text</button></div>';
@@ -26903,8 +26953,27 @@
             if (btn) btn.addEventListener('click', () => { const L = get(); if (!L) return; _E = E; _ambLearnReset(E, L);
               try { const st2 = E.seqState && E.seqState['learn:' + (L.id | 0)]; if (st2) { st2.phase = 'fetch'; _ambLearnSay(E, L, st2, 'Fetching an article…'); } } catch (x) {}
               persist(); }); }
-          else if (k === 'learnsrc') { const s2 = el('learnsrc'); if (s2) { s2.value = inst.source || 'wiki-random'; s2.addEventListener('change', () => { const L = get(); if (L) { L.source = s2.value || 'wiki-random'; persist(); } }); } }
-          else if (k === 'learnterm') { const e2 = el('learnterm'); if (e2) { e2.value = inst.term || ''; e2.addEventListener('change', () => { const L = get(); if (L) { L.term = e2.value || ''; persist(); } }); } }
+          else if (k === 'learnsrc') {
+            const term = el('learnterm');
+            const row = term && term.closest ? term.closest('.ambient-learn-termrow') : null;
+            const card = term && term.closest ? term.closest('.ambient-layer') : null;
+            const bR = card && card.querySelector('.ambient-learn-rand');
+            const bS = card && card.querySelector('.ambient-learn-srch');
+            const bL = card && card.querySelector('.ambient-learn-load');
+            if (term) { term.value = inst.term || ''; term.addEventListener('change', () => { const L = get(); if (L) { L.term = term.value || ''; persist(); } }); }
+            const paint = (searching) => { if (row) row.style.display = searching ? '' : 'none';
+              if (bR) bR.classList.toggle('active', !searching); if (bS) bS.classList.toggle('active', !!searching); };
+            if (bR) bR.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;
+              L.source = 'wiki-random'; paint(false); persist();
+              _ambLearnLoadNow(E, L); });          // Random LOADS immediately, and cancels in-flight work
+            if (bS) bS.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;
+              L.source = 'wiki-search'; paint(true); persist();
+              if (term) { try { term.focus(); } catch (x) {} } });   // reveal only — Load is the trigger
+            if (bL) bL.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;
+              L.term = (term && term.value) || ''; L.source = 'wiki-search'; persist();
+              if (!String(L.term).trim()) { _ambLearnSayEl(E, L.id, 'Type something to search for'); return; }
+              _ambLearnLoadNow(E, L); });
+          }
           else if (k === 'arpdir') { const s = el('dir'); if (s) { s.value = inst.dir || 'up'; s.addEventListener('change', () => { const L = get(); if (L) {
             L.dir = s.value || 'up';
             // BULK APPLY, by design — normalize stamps each entry with its own dir

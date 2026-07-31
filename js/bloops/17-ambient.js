@@ -11588,17 +11588,17 @@
     // and shared: the pipeline is per-worker, so warming once serves every Learn
     // layer, and a second call while one is in flight is a no-op.
     function _ambLearnWarmUp(E, L) {
-      if (_ambLearnWarm) { _ambLearnSayEl(E, L && L.id, 'Voice ready — press play'); return; }
+      if (_ambLearnWarm) { _ambLearnSayEl(E, L && L.id, _ambLearnStatusText(L, null)); return; }
       if (_ambLearnWarming) return;
       const w = _ambLearnWorkerGet();
-      if (!w) { _ambLearnSayEl(E, L && L.id, 'Voice unavailable (offline?)'); return; }
+      if (!w) { _ambLearnSayEl(E, L && L.id, _ambLearnStatusText(L, null)); return; }
       _ambLearnWarming = true;
-      _ambLearnSayEl(E, L && L.id, 'Downloading the voice, first use only…');
+      _ambLearnSayEl(E, L && L.id, _ambLearnStatusText(L, null));
       const id = ++_ambLearnSeq;
       _ambLearnPending.set(id, (d) => {
         _ambLearnWarming = false;
-        if (d && d.warm) { _ambLearnWarm = true; _ambLearnSayEl(E, L && L.id, 'Voice ready — press play'); }
-        else _ambLearnSayEl(E, L && L.id, 'Voice unavailable (offline?)');
+        if (d && d.warm) _ambLearnWarm = true; else _ambLearnWorkerErr = _ambLearnWorkerErr || new Error('warm failed');
+        _ambLearnSayEl(E, L && L.id, _ambLearnStatusText(L, null));
       });
       try { w.postMessage({ id: id, warm: true }); }
       catch (e) { _ambLearnPending.delete(id); _ambLearnWarming = false; }
@@ -11611,6 +11611,29 @@
     // whole point is telling the user which of "downloading a 60 MB voice",
     // "fetching an article" and "speaking" they are waiting on. Cheap: it only
     // touches the DOM when the string actually changes.
+    // ONE source of truth for the status line. The tick and the warm-up BOTH used
+    // to write it from their own view of the world, and they disagreed: the warm-up
+    // said "Downloading the voice…" while the tick said "Fetching an article…", so
+    // the line flipped between them. Invisible on desktop because the download is
+    // quick; on mobile it is slow enough to watch it oscillate, which is how this
+    // was reported. Warming now takes PRECEDENCE over per-layer phase — you cannot
+    // be fetching usefully until the voice exists.
+    function _ambLearnStatusText(L, st) {
+      if (_ambLearnWorkerErr) return 'Voice unavailable — no connection?';
+      if (!_ambLearnWarm && _ambLearnWarming) return 'Downloading the voice, first use only…';
+      const paste = (L && L.source === 'paste');
+      if (!st) return _ambLearnWarm ? 'Voice ready — press play' : 'Idle — press play';
+      const n = st.sentences ? st.sentences.length : 0;
+      const done = Math.max(0, (st.si | 0) - (st.q ? st.q.length : 0));
+      const where = st.title ? (' — ' + st.title) : '';
+      if (st.phase === 'nofetch') return paste ? 'Nothing pasted yet' : 'No article found — check the search term';
+      if (st.phase === 'novoice') return 'Voice unavailable — no connection?';
+      if (st.q && st.q.length) return 'Speaking ' + done + '/' + n + where;
+      if (st.phase === 'fetch') return paste ? 'Reading your text…' : 'Fetching an article…';
+      if (st.phase === 'render') return 'Writing line ' + Math.min(n, st.si | 0) + '/' + n + where;
+      if (n) return 'Ready — ' + (st.title || 'text') + ', ' + n + ' lines. Press play.';
+      return _ambLearnWarm ? 'Voice ready — press play' : 'Idle — press play';
+    }
     function _ambLearnSay(E, L, st, txt) {
       if (st._say === txt) return;
       st._say = txt;
@@ -11630,7 +11653,7 @@
       st.sentences = []; st.si = 0; st.q = []; st.title = '';
       st.srcKey = (L.source || 'wiki-random') + '|' + (L.term || '') + '|' + (L.corpus || 'wikipedia') + '|' + String(L.pasted || '').length;
       st.phase = 'fetch'; st._say = null;
-      _ambLearnSayEl(E, L.id, 'Fetching an article…');
+      _ambLearnSayEl(E, L.id, _ambLearnStatusText(L, st));
       st.pending = true;
       const ep = st.epoch | 0;
       const settle = () => {
@@ -11638,11 +11661,7 @@
         if ((st.epoch | 0) !== ep) return;           // a newer load already reported
         // Only the tick writes status while playing; with the transport STOPPED
         // nothing else would ever clear "Fetching…", so report the outcome here.
-        _ambLearnSayEl(E, L.id,
-          st.phase === 'nofetch' ? ((L.source === 'paste') ? 'Nothing pasted yet' : 'No article found — check the search term')
-          : st.phase === 'novoice' ? 'Voice unavailable (offline?)'
-          : st.sentences.length ? ('Ready — ' + (st.title || 'article') + ', ' + st.sentences.length + ' lines. Press play.')
-          : 'Nothing to read — try again');
+        _ambLearnSayEl(E, L.id, _ambLearnStatusText(L, st));
       };
       try { _ambLearnAhead(L, st).then(settle, settle); }
       catch (e) { st.pending = false; }
@@ -15529,18 +15548,7 @@
         // TELL THE USER WHAT IT IS DOING. The first line can be ~15 s away (voice
         // download) and there is otherwise no signal at all — silence that looks
         // identical to a broken layer.
-        {
-          const n = st.sentences.length, done = Math.max(0, st.si - st.q.length);
-          const where = st.title ? (' — ' + st.title) : '';
-          _ambLearnSay(E, L, st,
-            st.phase === 'nofetch' ? ((L.source === 'paste') ? 'Nothing pasted yet' : 'No article found — check the search term')
-            : st.phase === 'novoice' ? 'Voice unavailable (offline?)'
-            : st.phase === 'voice'  ? 'Downloading the voice, first use only…'
-            : st.q.length            ? ('Speaking ' + done + '/' + n + where)
-            : st.phase === 'fetch'   ? 'Fetching an article…'
-            : st.phase === 'render'  ? ('Writing line ' + Math.min(n, st.si) + '/' + n + where)
-            : 'Idle');
-        }
+        _ambLearnSay(E, L, st, _ambLearnStatusText(L, st));
         if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(E, key, L, cfg);
         let g = 0;
         while (C[key] < HZ && g++ < 4) {

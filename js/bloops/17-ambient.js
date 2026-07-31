@@ -28435,6 +28435,7 @@
         if (wOn) { const on = globalFx.warmthOn !== false; wOn.classList.toggle('active', on); wOn.textContent = on ? 'On' : 'Off'; }
         // Vinyl / Tape (global FX) reflection.
         set('ambient-vinyl-amount', globalFx.vinylAmount); hint('ambient-vinyl-amount-v', (globalFx.vinylAmount | 0) + '%');
+        { const _mv = (globalFx.masterVol == null ? 100 : globalFx.masterVol); set('ambient-master-vol', _mv); hint('ambient-master-vol-v', (_mv | 0) + '%'); }
         set('ambient-vinyl-age', globalFx.vinylAge); hint('ambient-vinyl-age-v', (globalFx.vinylAge | 0) + '%');
         { const _h = (globalFx.vinylHiss == null ? 100 : globalFx.vinylHiss); set('ambient-vinyl-hiss', _h); hint('ambient-vinyl-hiss-v', (_h | 0) + '%'); }
         const vOn = document.getElementById(tr('ambient-vinyl-on'));
@@ -28781,6 +28782,16 @@
           '<div class="ambient-mixer-strip" id="ambient-mixer-strip"></div>' +
           // Master Fade In/Out — ramp ALL audio up on play and down from the
           // capture Finalize press (0 = off). Hidden with the strip when collapsed.
+          // MASTER VOLUME — the final output fader, above the fades so the
+          // signal-flow order on screen matches the chain (level, then fades).
+          '<div class="ambient-mixer-fades">' +
+            '<div class="ambient-mod-sub">Master volume</div>' +
+            '<div class="ambient-ctrl" title="Final output level for everything Bloops plays. 100 = unity (0 dB); the bottom of the fader is silence.">' +
+              '<label for="ambient-master-vol">Volume</label>' +
+              '<input type="range" id="ambient-master-vol" min="0" max="100" step="1" value="100" />' +
+              '<span class="ambient-hint" id="ambient-master-vol-v"></span>' +
+            '</div>' +
+          '</div>' +
           '<div class="ambient-mixer-fades">' +
             '<div class="ambient-mod-sub">Master fade</div>' +
             tm('Fade In', 'ambient-master-fadein', 0, 30000, 100, 0) +
@@ -29918,6 +29929,8 @@
         wireStage('ambient-vinyl-amount', 'vinylAmount', '%', aV);
         wireStage('ambient-vinyl-age', 'vinylAge', '%', aV);
         wireStage('ambient-vinyl-hiss', 'vinylHiss', '%', aV);
+        { const aVol = () => { if (typeof applyMasterVol === 'function') applyMasterVol(); };
+          wireStage('ambient-master-vol', 'masterVol', '%', aVol); }
         wireOn('ambient-tape-on', 'tapeOn', aT);
         wireStage('ambient-tape-mix', 'tapeMix', '%', aT);
         wireStage('ambient-tape-time', 'tapeTime', ' ms', aT);

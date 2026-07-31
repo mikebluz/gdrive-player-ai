@@ -1070,6 +1070,20 @@
         } catch (e) {}
       }, 150);
     }
+    // ---- Master VOLUME -------------------------------------------------------
+    // The final user-facing level, on the existing masterVolume node (which sat at
+    // a fixed 0 dB with nothing driving it). 0-100 maps to dB logarithmically so
+    // the fader behaves like a fader rather than a gain multiplier: 100 = 0 dB
+    // (unchanged), 50 = -6 dB, and the bottom is floored at -60 dB rather than
+    // -Infinity — ramping to -Infinity is not well-defined, and -60 dB is already
+    // inaudible.
+    function applyMasterVol() {
+      try {
+        const v = Math.max(0, Math.min(100, (globalFx.masterVol == null ? 100 : globalFx.masterVol)));
+        const db = (v <= 0) ? -60 : Math.max(-60, 20 * Math.log10(v / 100));
+        masterVolume.volume.rampTo(db, 0.05);
+      } catch (e) {}
+    }
     function applyMasterVinyl() {
       try {
         const on = globalFx.vinylOn === true;
@@ -1290,6 +1304,7 @@
     // Persisted global effect mix — applied to every voice via the master
     // chain above. Loaded from localStorage so settings stick across reloads.
     const GLOBAL_FX_DEFAULTS = {
+      masterVol:          100,  // final output fader; 100 = 0 dB (unchanged)
       vinylOn:            false,
       vinylAmount:        35,   // crackle + hiss level
       vinylAge:           50,   // wear: wobble depth + darkness + crackle density
@@ -1636,6 +1651,7 @@
     // Apply the persisted/default warmth now so sounds come up rounded on boot.
     try { applyMasterWarmth(); } catch (e) {}
     // Vinyl / Tape stages boot from persisted globalFx too (defaults: off/neutral).
+    try { applyMasterVol(); } catch (e) {}
     try { applyMasterVinyl(); } catch (e) {}
     try { applyMasterTape(); } catch (e) {}
     function persistGlobalFx() {

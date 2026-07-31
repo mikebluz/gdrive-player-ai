@@ -2685,6 +2685,10 @@
       else { cfg.prog.on = !!cfg.prog.on; if (!Array.isArray(cfg.prog.chords)) cfg.prog.chords = []; if (typeof cfg.prog.name !== 'string') cfg.prog.name = ''; }
       _ambNormalizeProgMeta(cfg.prog);   // v6 — parts / versions / per-chord alts (additive; empties deleted)
       // SECTIONS (sets of bars): coerce when present; ABSENT = off (additive).
+      // Clear the override stamps up front so a deleted section (or a dropped
+      // override) can never leave a hot path believing an override still exists.
+      if (cfg._secOvGroove) delete cfg._secOvGroove;
+      if (cfg._secOvMode) delete cfg._secOvMode;
       if (cfg.sections != null) {
         if (!Array.isArray(cfg.sections)) delete cfg.sections;
         else {
@@ -2705,9 +2709,32 @@
               // this section runs. Absent/0 = no change (dropped, so it leaves no
               // residue in the save).
               if (Number.isFinite(x.key) && (x.key | 0)) s.key = Math.max(-12, Math.min(12, x.key | 0));
+              // SPARSE OVERRIDES of area settings, applied only while this section
+              // runs. Same doctrine as `part`/`key`: absent = inherit the area, and
+              // an override equal to nothing is DROPPED so it leaves no residue.
+              // (This map rebuilds the object — see the note above — so every one of
+              // these has to be carried explicitly or it dies on the next normalize.)
+              if (Number.isFinite(x.keyModeRot)) {
+                const _m = (((x.keyModeRot | 0) % 7) + 7) % 7;
+                if (_m) s.keyModeRot = _m;
+              }
+              if (x.groove && typeof x.groove === 'object') {
+                const g = {};
+                ['swing', 'accent', 'density', 'ghost', 'rolls'].forEach(k2 => {
+                  if (Number.isFinite(x.groove[k2])) g[k2] = Math.max(0, Math.min(100, x.groove[k2] | 0));
+                });
+                if (Object.keys(g).length) s.groove = g;
+              }
               return s;
             });
           if (!cfg.sections.length) delete cfg.sections;
+          // Stamp what KIND of override exists anywhere in this area, so the hot
+          // paths (_ambGroove runs per note) test one property instead of scanning
+          // the section list. Recomputed on every normalize, so it can't go stale.
+          else {
+            cfg._secOvGroove = cfg.sections.some(x => x && x.groove);
+            cfg._secOvMode = cfg.sections.some(x => x && Number.isFinite(x.keyModeRot));
+          }
         }
       }
       // Orchestration play UNIT: 'sections' counts one play as a full section cycle.
@@ -3281,7 +3308,14 @@
       // cascades to every inheriting scale layer, and a per-layer mode overrides.
       // Area default 0 → effMode == layer.modeRot → byte-identical.
       const _amKc = (typeof _ambKeyCfg === 'function') ? _ambKeyCfg() : null;
-      const _areaMode = (_amKc && _amKc.keyOn) ? ((((_amKc.keyModeRot | 0) % 7) + 7) % 7) : 0;
+      // A section may override the area's relative mode while it runs (sparse;
+      // absent → the area value, so the default is unchanged).
+      let _areaModeSrc = (_amKc && _amKc.keyOn) ? (_amKc.keyModeRot | 0) : 0;
+      if (_amKc && _amKc.keyOn) {
+        const _c2 = _E && _E._cfg;
+        if (_c2 && _c2._secOvMode) { const _sc = _ambSectionNowObj(_c2); if (_sc && Number.isFinite(_sc.keyModeRot)) _areaModeSrc = _sc.keyModeRot | 0; }
+      }
+      const _areaMode = (_amKc && _amKc.keyOn) ? (((_areaModeSrc % 7) + 7) % 7) : 0;
       const _layerMode = ((((layer && (layer.modeRot | 0)) | 0) % 7) + 7) % 7;
       const effMode = _layerMode || _areaMode;
       const hasMode = !!(effMode && (notes.type === 'scale' || !notes.type));
@@ -4198,6 +4232,32 @@
       if (!at) return true;
       const cur = secs[at.idx];
       return String((cur && cur.name) || '').trim().toLowerCase() === want;
+    }
+    // ---- Per-section OVERRIDES ---------------------------------------------
+    // A section may carry sparse overrides of AREA-level settings (`groove`,
+    // `keyModeRot`) that apply only while it runs. Resolved off the note's own
+    // _ambKeyTime stamp, falling back to the audio clock for UI reads — the
+    // _ambSectionKeyNow idiom. Returns null when the workspace has no sections OR
+    // no section carries an override, which is what keeps this off the hot path
+    // by default (the flag is stamped by normalize, so it costs one property read).
+    function _ambSectionNowObj(cfg) {
+      const secs = cfg && cfg.sections;
+      if (!Array.isArray(secs) || !secs.length) return null;
+      let t = (typeof _ambKeyTime === 'number' && Number.isFinite(_ambKeyTime)) ? _ambKeyTime : NaN;
+      if (!Number.isFinite(t)) t = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : NaN;
+      if (!Number.isFinite(t)) return null;
+      const at = _ambSectionAt(_E, t, cfg);
+      return at ? (secs[at.idx] || null) : null;
+    }
+    // The section's groove MERGED over the area's, memoized on the section object
+    // (normalize rebuilds sections, so the memo dies with the values it caches —
+    // it can never go stale). Called per note, hence the memo.
+    function _ambSectionGroove(cfg, areaG) {
+      const sc = _ambSectionNowObj(cfg);
+      const sg = sc && sc.groove;
+      if (!sg) return areaG;
+      if (sc._gmSrc !== areaG) { sc._gm = Object.assign({}, areaG || {}, sg); sc._gmSrc = areaG; }
+      return sc._gm;
     }
     // The progression PART a section binds to, as {from, len} over prog.chords —
     // or null for "the whole progression" (no binding, no parts, or an index that
@@ -6650,7 +6710,11 @@
     // each lookahead window. Absent groove / bypass off → unchanged (byte-identical
     // default; the harness runs default groove with no bypass field).
     function _ambGroove() {
-      const g = (_E && _E._cfg && _E._cfg.groove) || null;
+      const cfg = _E && _E._cfg;
+      let g = (cfg && cfg.groove) || null;
+      // Per-section groove override (swing/accent/density/ghost/rolls). Gated on
+      // the normalize-stamped flag so the default path is one property read.
+      if (cfg && cfg._secOvGroove) g = _ambSectionGroove(cfg, g);
       return (g && g.bypass) ? null : g;
     }
     function _ambEffRest(lc) {
@@ -24621,6 +24685,37 @@
                 if (!Number.isFinite(v3)) return;
                 const cl = Math.max(-12, Math.min(12, v3));
                 if (cl) sc.key = cl; else delete sc.key;
+                done();
+              } },
+              // RELATIVE MODE while this section runs — the area's keyModeRot,
+              // overridden per section. Only meaningful with the area Key on, so
+              // the label says so rather than failing silently.
+              { label: '◑ Mode (' + (Number.isFinite(sc.keyModeRot) && (sc.keyModeRot | 0) ? ('+' + (sc.keyModeRot | 0)) : 'area') + ')', fn: () => {
+                const m2 = prompt('Relative mode for “' + sc.name + '” (0-6 scale degrees; 0 = follow the area)'
+                  + ((c2.keyOn === false || !c2.keyOn) ? '\n\nNote: the area Key is OFF, so mode has no effect until you turn it on.' : ''),
+                  String((sc.keyModeRot | 0) || 0));
+                if (m2 == null) return;
+                const v4 = parseInt(m2, 10);
+                if (!Number.isFinite(v4)) return;
+                const cl2 = (((v4 % 7) + 7) % 7);
+                if (cl2) sc.keyModeRot = cl2; else delete sc.keyModeRot;
+                done();
+              } },
+              // GROOVE while this section runs — sparse: only the knobs you set are
+              // overridden, the rest keep following the area.
+              { label: '🕺 Groove (' + (sc.groove ? Object.keys(sc.groove).map(k3 => k3 + ' ' + sc.groove[k3]).join(', ') : 'area') + ')', fn: () => {
+                const cur = sc.groove || {};
+                const txt = prompt('Groove overrides for “' + sc.name + '” — comma-separated name=value, 0-100.'
+                  + '\nKnobs: swing, accent, density, ghost, rolls.'
+                  + '\nLeave EMPTY to clear all overrides and follow the area.',
+                  Object.keys(cur).map(k3 => k3 + '=' + cur[k3]).join(', '));
+                if (txt == null) return;
+                const g2 = {};
+                String(txt).split(',').forEach(pair => {
+                  const mm = /^\s*(swing|accent|density|ghost|rolls)\s*=\s*(-?\d+)\s*$/i.exec(pair);
+                  if (mm) g2[mm[1].toLowerCase()] = Math.max(0, Math.min(100, parseInt(mm[2], 10) || 0));
+                });
+                if (Object.keys(g2).length) sc.groove = g2; else delete sc.groove;
                 done();
               } },
             ];

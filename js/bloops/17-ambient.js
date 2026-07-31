@@ -11427,7 +11427,23 @@
       const p = _ambImprovLen(L, 'pat'), q = _ambImprovLen(L, 'imp');
       if (p <= 0) return true;                       // no written phase → always improvising
       const n = p + q;
-      return ((((c | 0) % n) + n) % n) >= p;
+      const i = ((((c | 0) % n) + n) % n);
+      const im = L.improv;
+      if (!im || !im.shuffle) return i >= p;         // ordered: p written, then q improvised
+      // SHUFFLED order: the same COUNT of improvised iterations per block of n,
+      // but their POSITIONS differ block to block, so the alternation stops being
+      // audibly metronomic. Still a pure function of the cycle index — the block
+      // index seeds a Fisher-Yates over the n slots, so every tick that re-emits a
+      // cycle agrees and a re-render is identical. That contract is why this
+      // cannot just draw from the shared RNG.
+      const b = Math.floor((c | 0) / n);
+      let seed = 0;
+      try { seed = (_E && _E._cfg && (_E._cfg.seed | 0)) || 0; } catch (e) {}
+      const r = _ambSeededRand((((((L.id | 0) + 1) * 2654435761) ^ ((b + 1) * 2246822519) ^ (seed * 40503)) >>> 0));
+      const pos = []; for (let k = 0; k < n; k++) pos.push(k);
+      for (let k = n - 1; k > 0; k--) { const j = Math.floor(r() * (k + 1)); const t = pos[k]; pos[k] = pos[j]; pos[j] = t; }
+      for (let k = 0; k < q; k++) if (pos[k] === i) return true;
+      return false;
     }
     // A variance value for the improvised phase. `fallback` is what the layer plays
     // normally, so a field left at its default still reads as a deliberate value.
@@ -11516,12 +11532,19 @@
       // the state. The summary only appears when there is something to explain.
       const summary = !on ? ''
         : (p > 0
-          ? (p + ' iteration' + (p === 1 ? '' : 's') + ' of the pattern, then ' + q + ' improvised, repeating (' + (p + q) + ' in all).')
+          ? (p + ' iteration' + (p === 1 ? '' : 's') + ' of the pattern and ' + q + ' improvised per ' + (p + q)
+             + ((L.improv && L.improv.shuffle) ? ', in a shuffled order that changes each time round.' : ', in that order, repeating.'))
           : 'Always improvising — the pattern is never played.');
       return '<div class="ambient-cycgate ambient-improv">' +
         '<div class="ambient-cycgate-foot">' +
           stepper('pat', 'pattern \u00d7', p) +
           stepper('imp', 'improvise \u00d7', q) +
+          // Shuffle the ORDER within each block rather than always front-loading
+          // the written iterations. Only offered when both phases exist — with one
+          // side at 0 there is no order to shuffle.
+          ((p > 0 && q > 0)
+            ? '<button type="button" class="ambient-seg ambient-improv-shuf' + ((L.improv && L.improv.shuffle) ? ' on' : '') + '" title="Shuffle the order — same number of improvised iterations per block, but their positions change each time round instead of always coming last">\u21c4 shuffle</button>'
+            : '') +
         '</div>' +
         (on
           ? sl('rhythmVar', 'Rhythm', _ambImprovVar(L, 'rhythmVar', 0), 'How far the improvised rhythm strays — drops pattern hits and adds new ones.') +
@@ -11765,6 +11788,18 @@
         render(); persist();
         // Land on the layer's next boundary like every other per-note edit, so a
         // schedule change is heard within one iteration instead of a whole loop later.
+        if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} try { sync && sync(); } catch (e) {} }
+      });
+      // ⇄ Shuffle order. A re-render IS wanted here (unlike the sliders below): the
+      // toggle's lit state and the summary text both change with it.
+      grid.addEventListener('click', (ev) => {
+        const sh = ev.target && ev.target.closest && ev.target.closest('.ambient-improv-shuf');
+        if (!sh || !grid.contains(sh)) return;
+        _E = E; const L = getL(); if (!L) return;
+        _ambImprovEnsure(L);
+        L.improv.shuffle = L.improv.shuffle ? 0 : 1;
+        try { render && render(); } catch (e) {}
+        persist();
         if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} try { sync && sync(); } catch (e) {} }
       });
       // 🎲 Improvise sliders. Deliberately NOT re-rendering on `input` — the grid's

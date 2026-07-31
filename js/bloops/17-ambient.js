@@ -11488,6 +11488,78 @@
                  url: String((j && j.content_urls && j.content_urls.desktop && j.content_urls.desktop.page) || '') };
       } catch (e) { return null; }
     }
+    // ---- LEARN layer: the voice ---------------------------------------------
+    // transformers.js + Xenova/mms-tts-eng (Meta MMS, a VITS model). Chosen because
+    // it is TEXT → AUDIO END TO END: Piper would additionally need a phonemizer
+    // (espeak-ng compiled to WASM) because it consumes phonemes, not text, and that
+    // third moving part buys nothing here.
+    //
+    // Loaded by DYNAMIC import() from a CDN. This app has no bundler — bloops.html
+    // is ~40 plain <script> tags with no type="module" — so an npm ESM package
+    // cannot be required the usual way; import() works from a classic script and
+    // needs no build step. Model weights come from the HF CDN too (deliberate: it
+    // keeps ~60 MB out of the repo and off every FTP deploy, at the cost of needing
+    // the network on first use).
+    //
+    // Both the module and the pipeline are fetched ONCE and cached. A failure is
+    // cached too (_ambLearnTtsErr) so a layer on a dead network retries on every
+    // tick — which would be a request storm — instead of once.
+    const _AMB_LEARN_TTS_CDN = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers';
+    const _AMB_LEARN_TTS_MODEL = 'Xenova/mms-tts-eng';
+    let _ambLearnTts = null, _ambLearnTtsErr = null, _ambLearnTtsPending = null;
+    function _ambLearnVoice() {
+      if (_ambLearnTts) return Promise.resolve(_ambLearnTts);
+      if (_ambLearnTtsErr) return Promise.resolve(null);
+      if (_ambLearnTtsPending) return _ambLearnTtsPending;      // concurrent callers share one download
+      _ambLearnTtsPending = (async () => {
+        try {
+          const mod = await import(_AMB_LEARN_TTS_CDN);
+          _ambLearnTts = await mod.pipeline('text-to-speech', _AMB_LEARN_TTS_MODEL);
+          return _ambLearnTts;
+        } catch (e) {
+          _ambLearnTtsErr = e || new Error('tts load failed');
+          try { console.warn('[bloom] Learn voice unavailable:', e && e.message); } catch (e2) {}
+          return null;
+        } finally { _ambLearnTtsPending = null; }
+      })();
+      return _ambLearnTtsPending;
+    }
+    // text → AudioBuffer, or null. The buffer carries the model's OWN sample rate
+    // (MMS is 16 kHz); a BufferSource resamples on playback, so it does not have to
+    // match the context.
+    async function _ambLearnSynth(text) {
+      const t = String(text || '').trim();
+      if (!t) return null;
+      const tts = await _ambLearnVoice();
+      if (!tts) return null;
+      try {
+        const out = await tts(t);
+        const data = out && out.audio;
+        const sr = (out && out.sampling_rate) || 16000;
+        if (!data || !data.length) return null;
+        const ac = Tone.getContext().rawContext;
+        const buf = ac.createBuffer(1, data.length, sr);
+        buf.getChannelData(0).set(data);
+        return buf;
+      } catch (e) { return null; }
+    }
+    // Speak a rendered buffer THROUGH the layer's own chain, so the voice gets the
+    // layer's FX and is picked up by capture like any other layer — the whole reason
+    // a buffer-producing engine was chosen over SpeechSynthesis, which can only
+    // reach the output device.
+    function _ambLearnPlay(E, key, buf, at) {
+      try {
+        if (!buf) return null;
+        const ac = Tone.getContext().rawContext;
+        const dest = _ambLayerDest(key);
+        if (!dest) return null;
+        const src = ac.createBufferSource();
+        src.buffer = buf;
+        try { src.connect(dest); } catch (e) { try { src.connect(dest.input || dest); } catch (e2) { return null; } }
+        src.start(Math.max(ac.currentTime, Number.isFinite(at) ? at : 0));
+        return src;
+      } catch (e) { return null; }
+    }
     function _ambImprovAt(L, c) {
       if (!_ambImprovOn(L)) return false;
       const p = _ambImprovLen(L, 'pat'), q = _ambImprovLen(L, 'imp');

@@ -11614,7 +11614,8 @@
               if (s0 * 2 > 32) return '<button type="button" class="ambient-euclid-fold" data-fold="1" disabled title="Already at the 32-step maximum — can’t fold further">⑂ Fold</button>';
               const _g = _ambGroove(); const swEff = Math.max(0, Math.min(100, ((Number.isFinite(inst.swing) ? inst.swing : 0) | 0) + (_g ? (_g.swing | 0) : 0)));
               const t = 'Fold — split every step in two (' + s0 + ' → ' + (s0 * 2) + ' steps) for finer placement. Your hits stay where they are and the new in-between steps start empty.'
-                + (swEff > 0 ? ' Note: Swing is measured against the step grid, so this pattern will re-swing at the finer resolution rather than keep its current shuffle.' : '');
+                + (swEff > 0 ? ' Note: Swing is measured against the step grid, so this pattern will re-swing at the finer resolution rather than keep its current shuffle.' : '')
+                + (((inst.holdSteps | 0) > 0) ? ' Note: Hold is a length in STEPS, so halving the step size also halves how long each note rings.' : '');
               return '<button type="button" class="ambient-euclid-fold" data-fold="1" title="' + t + '">⑂ Fold</button>';
             })()
           : '') +
@@ -11932,10 +11933,19 @@
             L3.stepFx = nf;
           }
           L3.steps = newSteps;
-          // Rotate is measured in steps, and Hold is a note length in steps — both
-          // are now half as long in real time, so double them to hold the sound.
+          // Rotate is a generator param measured in steps, so it doubles to keep a
+          // later Regen landing in the same place. Presets set rotate themselves, so
+          // this leaves no residue behind.
           if ((L3.rotate | 0) > 0) L3.rotate = Math.min(31, (L3.rotate | 0) * 2);
-          if ((L3.holdSteps | 0) > 0) L3.holdSteps = Math.min(16, (L3.holdSteps | 0) * 2);
+          // HOLD is deliberately NOT compensated. It is a note length measured in
+          // steps, so it re-reads at whatever the current resolution is — exactly
+          // like the Steps slider, which has never rescaled it either. Doubling it
+          // here kept folding sound-neutral but left RESIDUE: a preset selected
+          // afterwards overrides steps/pulses/rotate and not Hold, so notes came
+          // back twice as long as intended. Consistency with every other resolution
+          // change beats sound-neutrality in the one direction.
+          //   → folding a layer with Hold set DOES halve its note length; the
+          //     tooltip says so.
           try { _ambResetArp(E, key); } catch (e) {}
           render(); sync(); persist();
           return;

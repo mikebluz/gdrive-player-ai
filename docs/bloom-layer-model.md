@@ -477,9 +477,25 @@ from `L._whenPrev`. **Two paths had to be guarded** because both write
 the temp punch-in revert (`_ambWhenTempStep`) and the cycleGate fold. Default
 path untouched → golden render byte-identical.
 
-NEXT (v3/v4, not built): Write snap-to-section (`_ambWriteEffBars` gains a
-section case), last-bar-of-section fill flag, sparse per-section overrides
-(groove/Start/keyModeRot), orchestration counting plays in section cycles.
+*Write snap-to-section landed (2026-07-30):* `_ambWriteEffBars` snaps a captured
+phrase up to a length that divides evenly into BOTH the progression cycle and
+the section cycle, walking in units of the finer one. Capped at
+`max(32, unit*8)` — an awkward pair (7-bar prog, 9-bar sections) would land on a
+63-bar phrase, so past the cap it falls through to progression-only rather than
+capturing something enormous. No sections → branch skipped, byte-identical.
+
+*Orchestration section-cycle counting landed (2026-07-30):* `cfg.playsUnit =
+'sections'` makes one PLAY of an area equal one full section cycle instead of
+its `bars`, so "×2" means twice through the arrangement. An area whose sections
+sum to 12 bars but whose `bars` is 8 otherwise advances mid-arrangement every
+pass. Falls back to `bars` when the area has no sections, so the setting cannot
+strand an area at a stale length; absent = 'bars' and is DROPPED on normalize.
+UI: a `§` chip beside ⚄, rendered only once the area HAS sections.
+
+NEXT (v4, not built): last-bar-of-section fill flag, sparse per-section
+overrides (groove/keyModeRot — note "Start" in the original list has no
+area-level counterpart; `startVary`/`phraseVary` are per-LAYER variance knobs,
+so there is nothing for a section to override).
 
 ## 3. Progressions vs parts (authoring)
 

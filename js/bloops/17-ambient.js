@@ -1309,6 +1309,11 @@
           '<select class="ambient-orch-plays" title="How many times this area plays before advancing">' + _ambNumOpts(Math.max(1, (act.plays | 0) || 1)) + '</select>' +
           // Stochastic: play a RANDOM number of times in [1, Plays] each entry.
           '<button type="button" class="ambient-orch-rand' + (act.playsRandom ? ' on' : '') + '" title="Stochastic — play this area a random number of times (1 to Plays) on each pass">⚄</button>' +
+          // COUNT IN SECTION CYCLES — hidden until the area has sections, since
+          // without them it would silently mean nothing.
+          (_ambSectionCycleBars(act) > 0
+            ? '<button type="button" class="ambient-orch-secunit' + (act.playsUnit === 'sections' ? ' on' : '') + '" title="Count plays in SECTION CYCLES — one play = one full pass through this area&#39;s sections, instead of its Bars">§</button>'
+            : '') +
           // Bar Lock: capture the bar-rational layers over their combined loop and
           // repeat verbatim; free layers improvise live over it. When on, Bars is the
           // AUTO loop length (LCM); when off, a manual section length.
@@ -1544,6 +1549,13 @@
         if (_viewIsPlaying()) { _masterEng._curPlays = _ambEffectivePlays(masterAmbient); _masterEng._orchDurSec = _ambAreaDurSec(_ambPlayCfg(_masterEng), _masterEng._curPlays); }
         try { persistWorkspace(); } catch (e) {}
       });
+      const secU = host.querySelector('.ambient-orch-secunit');
+      if (secU) secU.addEventListener('click', () => {
+        masterAmbient.playsUnit = (masterAmbient.playsUnit === 'sections') ? 'bars' : 'sections';
+        secU.classList.toggle('on', masterAmbient.playsUnit === 'sections');
+        if (_viewIsPlaying()) { _masterEng._curPlays = _ambEffectivePlays(masterAmbient); _masterEng._orchDurSec = _ambAreaDurSec(_ambPlayCfg(_masterEng), _masterEng._curPlays); }
+        try { persistWorkspace(); } catch (e) {}
+      });
       const barsI = host.querySelector('.ambient-orch-bars');
       if (barsI) barsI.addEventListener('change', () => {
         const v = Math.max(1, Math.min(36, parseInt(barsI.value, 10) || 4)); barsI.value = String(v);
@@ -1579,7 +1591,14 @@
       if (!cfg) return 8;
       const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : (typeof _ambBpm === 'function' ? _ambBpm() : 120);
       const barSec = (60 / Math.max(20, bpm)) * 4;
-      const bars  = Math.max(1, cfg.bars | 0);
+      // One play is normally the area's `bars`. With playsUnit='sections' it is one
+      // full SECTION CYCLE instead, so "×2" means "twice through the arrangement"
+      // rather than twice through a bar count that may not divide into it — an area
+      // whose sections sum to 12 bars but whose `bars` is 8 otherwise advances
+      // mid-arrangement every time. Falls back to `bars` when the area has no
+      // sections, so the setting can't strand an area at a stale length.
+      const secCyc = (cfg.playsUnit === 'sections') ? _ambSectionCycleBars(cfg) : 0;
+      const bars  = (secCyc > 0) ? secCyc : Math.max(1, cfg.bars | 0);
       const plays = Number.isFinite(playsOverride) ? Math.max(1, playsOverride | 0) : Math.max(1, cfg.plays | 0);
       // Bar Lock now HONORS the manual `bars` (a hard override of the natural unit),
       // so one play = `bars` bars whether locked or not.
@@ -2691,6 +2710,10 @@
           if (!cfg.sections.length) delete cfg.sections;
         }
       }
+      // Orchestration play UNIT: 'sections' counts one play as a full section cycle.
+      // Absent = bars (today's behaviour) and is DROPPED rather than stored, so the
+      // default leaves no residue in the save.
+      if (cfg.playsUnit === 'sections') cfg.playsUnit = 'sections'; else if ('playsUnit' in cfg) delete cfg.playsUnit;
       // AREA Write (Configure) — phrase-cycle EVERY layer; per-layer Loop overrides.
       _ambNormalizeWriteObj(cfg, 'writeAll');
       if (!Number.isFinite(cfg.fadeInMs)) cfg.fadeInMs = d.fadeInMs;

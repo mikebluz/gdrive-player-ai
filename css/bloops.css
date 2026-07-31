@@ -2638,6 +2638,15 @@
     }
     @media (hover: hover) { .ambient-orch-rand:hover { border-color: #f6ad55; color: #fbd38d; } }
     .ambient-orch-rand.on { background: rgba(246,173,85,0.20); border-color: #f6ad55; color: #fbd38d; }
+    /* § — count plays in section cycles. Same chip as ⚄, tinted to the section
+       palette so the arrangement-level control reads as its own family. */
+    .ambient-orch-secunit {
+      flex: 0 0 auto; width: 36px; height: 36px; padding: 0;
+      border: 1px solid #2d2d3f; border-radius: 6px; background: #0a0a14;
+      color: #8a8aa8; cursor: pointer; font-size: 1.0rem; line-height: 1;
+    }
+    @media (hover: hover) { .ambient-orch-secunit:hover { border-color: #68d391; color: #9ae6b4; } }
+    .ambient-orch-secunit.on { background: rgba(104,211,145,0.20); border-color: #68d391; color: #9ae6b4; }
     /* Bar Lock toggle + its auto loop-length readout (replaces the Bars input when on). */
     .ambient-orch-lock {
       flex: 0 0 auto; height: 36px; padding: 0 14px; border: 1px solid #2d2d3f; border-radius: 7px;

@@ -11510,7 +11510,7 @@
     // audio — the app read as "playback stopped" (measured: the audio clock advanced
     // 40 s between probes taken 6 s apart). Nothing model-shaped may run on this
     // thread; we only ever receive finished samples.
-    let _ambLearnWorker = null, _ambLearnWorkerErr = null, _ambLearnSeq = 0, _ambLearnWarm = false;
+    let _ambLearnWorker = null, _ambLearnWorkerErr = null, _ambLearnSeq = 0, _ambLearnWarm = false, _ambLearnWarming = false;
     const _ambLearnPending = new Map();
     function _ambLearnWorkerGet() {
       if (_ambLearnWorker) return _ambLearnWorker;
@@ -11523,7 +11523,7 @@
           const r = _ambLearnPending.get(d.id);
           if (!r) return;
           _ambLearnPending.delete(d.id);
-          r(d && d.audio ? d : null);
+          r(d || null);   // callers discriminate: synth wants .audio, warm-up wants .warm
         };
         w.onerror = (err) => {
           _ambLearnWorkerErr = err || new Error('learn worker failed');
@@ -11562,6 +11562,30 @@
         buf.getChannelData(0).set(data);
         return buf;
       } catch (e) { return null; }
+    }
+    // Write straight to a Learn card's status line. Needed BEFORE play, when no
+    // tick is running to report state.
+    function _ambLearnSayEl(E, id, txt) {
+      try { const el = _ambGet(E, 'ambient-learn-' + (id | 0) + '-learnstat'); if (el) el.textContent = txt; } catch (e) {}
+    }
+    // Start the model download NOW rather than at the first spoken line. Idempotent
+    // and shared: the pipeline is per-worker, so warming once serves every Learn
+    // layer, and a second call while one is in flight is a no-op.
+    function _ambLearnWarmUp(E, L) {
+      if (_ambLearnWarm) { _ambLearnSayEl(E, L && L.id, 'Voice ready — press play'); return; }
+      if (_ambLearnWarming) return;
+      const w = _ambLearnWorkerGet();
+      if (!w) { _ambLearnSayEl(E, L && L.id, 'Voice unavailable (offline?)'); return; }
+      _ambLearnWarming = true;
+      _ambLearnSayEl(E, L && L.id, 'Downloading the voice, first use only…');
+      const id = ++_ambLearnSeq;
+      _ambLearnPending.set(id, (d) => {
+        _ambLearnWarming = false;
+        if (d && d.warm) { _ambLearnWarm = true; _ambLearnSayEl(E, L && L.id, 'Voice ready — press play'); }
+        else _ambLearnSayEl(E, L && L.id, 'Voice unavailable (offline?)');
+      });
+      try { w.postMessage({ id: id, warm: true }); }
+      catch (e) { _ambLearnPending.delete(id); _ambLearnWarming = false; }
     }
     // Speak a rendered buffer THROUGH the layer's own chain, so the voice gets the
     // layer's FX and is picked up by capture like any other layer — the whole reason
@@ -26874,7 +26898,8 @@
             // idx 0 on the shared grid (_ambUnitReanchor) → the new rate starts
             // predictably at the next grid point.
             if (E.timer) { try { _ambUnitReanchor(E, type + ':' + id); } catch (x) {} } } }); } }
-          else if (k === 'learnstatus') { const g2 = el('learnstat') && el('learnstat').parentNode; const btn = g2 && g2.querySelector('.ambient-learn-go');
+          else if (k === 'learnstatus') { try { _ambLearnWarmUp(E, inst); } catch (x) {}
+            const g2 = el('learnstat') && el('learnstat').parentNode; const btn = g2 && g2.querySelector('.ambient-learn-go');
             if (btn) btn.addEventListener('click', () => { const L = get(); if (!L) return; _E = E; _ambLearnReset(E, L);
               try { const st2 = E.seqState && E.seqState['learn:' + (L.id | 0)]; if (st2) { st2.phase = 'fetch'; _ambLearnSay(E, L, st2, 'Fetching an article…'); } } catch (x) {}
               persist(); }); }

@@ -34,6 +34,11 @@ self.onmessage = async (ev) => {
   const msg = ev.data || {};
   const id = msg.id;
   try {
+    // WARM-UP: load the model and reply, without synthesising anything. The
+    // download is the ~15 s cost, and it has nothing to do with playback — the
+    // page kicks this off as soon as a Learn layer exists so the wait is spent
+    // while the user is still setting up rather than after they press play.
+    if (msg.warm) { await getPipeline(); self.postMessage({ id, warm: true }); return; }
     const text = String(msg.text || '').trim();
     if (!text) { self.postMessage({ id, error: 'empty text' }); return; }
     const p = await getPipeline();

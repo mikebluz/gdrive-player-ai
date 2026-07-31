@@ -11504,25 +11504,38 @@
     // Both the module and the pipeline are fetched ONCE and cached. A failure is
     // cached too (_ambLearnTtsErr) so a layer on a dead network retries on every
     // tick — which would be a request storm — instead of once.
-    const _AMB_LEARN_TTS_CDN = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers';
-    const _AMB_LEARN_TTS_MODEL = 'Xenova/mms-tts-eng';
-    let _ambLearnTts = null, _ambLearnTtsErr = null, _ambLearnTtsPending = null;
-    function _ambLearnVoice() {
-      if (_ambLearnTts) return Promise.resolve(_ambLearnTts);
-      if (_ambLearnTtsErr) return Promise.resolve(null);
-      if (_ambLearnTtsPending) return _ambLearnTtsPending;      // concurrent callers share one download
-      _ambLearnTtsPending = (async () => {
-        try {
-          const mod = await import(_AMB_LEARN_TTS_CDN);
-          _ambLearnTts = await mod.pipeline('text-to-speech', _AMB_LEARN_TTS_MODEL);
-          return _ambLearnTts;
-        } catch (e) {
-          _ambLearnTtsErr = e || new Error('tts load failed');
-          try { console.warn('[bloom] Learn voice unavailable:', e && e.message); } catch (e2) {}
-          return null;
-        } finally { _ambLearnTtsPending = null; }
-      })();
-      return _ambLearnTtsPending;
+    // The voice runs in a WORKER (js/bloops/learn-voice.worker.js). It used to run
+    // inline here, and ONNX inference is synchronous: each sentence blocked the main
+    // thread for tens of seconds, which starved the tick and drained the scheduled
+    // audio — the app read as "playback stopped" (measured: the audio clock advanced
+    // 40 s between probes taken 6 s apart). Nothing model-shaped may run on this
+    // thread; we only ever receive finished samples.
+    let _ambLearnWorker = null, _ambLearnWorkerErr = null, _ambLearnSeq = 0;
+    const _ambLearnPending = new Map();
+    function _ambLearnWorkerGet() {
+      if (_ambLearnWorker) return _ambLearnWorker;
+      if (_ambLearnWorkerErr) return null;          // a failure is sticky: without this a
+                                                    // dead CDN would respawn a worker per tick
+      try {
+        const w = new Worker('js/bloops/learn-voice.worker.js', { type: 'module' });
+        w.onmessage = (ev) => {
+          const d = ev.data || {};
+          const r = _ambLearnPending.get(d.id);
+          if (!r) return;
+          _ambLearnPending.delete(d.id);
+          r(d && d.audio ? d : null);
+        };
+        w.onerror = (err) => {
+          _ambLearnWorkerErr = err || new Error('learn worker failed');
+          try { console.warn('[bloom] Learn voice unavailable:', (err && err.message) || err); } catch (e) {}
+          // Never leave a caller awaiting forever — the tick would keep `pending`
+          // true and the layer would sit silent with no way back.
+          _ambLearnPending.forEach((r) => r(null));
+          _ambLearnPending.clear();
+        };
+        _ambLearnWorker = w;
+        return w;
+      } catch (e) { _ambLearnWorkerErr = e; return null; }
     }
     // text → AudioBuffer, or null. The buffer carries the model's OWN sample rate
     // (MMS is 16 kHz); a BufferSource resamples on playback, so it does not have to
@@ -11530,14 +11543,20 @@
     async function _ambLearnSynth(text) {
       const t = String(text || '').trim();
       if (!t) return null;
-      const tts = await _ambLearnVoice();
-      if (!tts) return null;
+      const w = _ambLearnWorkerGet();
+      if (!w) return null;
+      const id = ++_ambLearnSeq;
+      let res = null;
       try {
-        const out = await tts(t);
-        const data = out && out.audio;
-        const sr = (out && out.sampling_rate) || 16000;
-        if (!data || !data.length) return null;
+        res = await new Promise((resolve) => {
+          _ambLearnPending.set(id, resolve);
+          try { w.postMessage({ id: id, text: t }); } catch (e) { _ambLearnPending.delete(id); resolve(null); }
+        });
+      } catch (e) { return null; }
+      if (!res || !res.audio || !res.audio.length) return null;
+      try {
         const ac = Tone.getContext().rawContext;
+        const data = res.audio, sr = res.sampling_rate || 16000;
         const buf = ac.createBuffer(1, data.length, sr);
         buf.getChannelData(0).set(data);
         return buf;

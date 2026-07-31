@@ -11527,6 +11527,7 @@
     // 40 s between probes taken 6 s apart). Nothing model-shaped may run on this
     // thread; we only ever receive finished samples.
     let _ambLearnWorker = null, _ambLearnWorkerErr = null, _ambLearnSeq = 0, _ambLearnWarm = false, _ambLearnWarming = false;
+    let _ambLearnErrWhy = '';   // surfaced in the status — "unavailable" alone is undiagnosable
     const _ambLearnPending = new Map();
     function _ambLearnWorkerGet() {
       if (_ambLearnWorker) return _ambLearnWorker;
@@ -11543,6 +11544,7 @@
         };
         w.onerror = (err) => {
           _ambLearnWorkerErr = err || new Error('learn worker failed');
+          _ambLearnErrWhy = String((err && (err.message || err.type)) || 'worker error').slice(0, 90);
           try { console.warn('[bloom] Learn voice unavailable:', (err && err.message) || err); } catch (e) {}
           // Never leave a caller awaiting forever — the tick would keep `pending`
           // true and the layer would sit silent with no way back.
@@ -11597,7 +11599,10 @@
       const id = ++_ambLearnSeq;
       _ambLearnPending.set(id, (d) => {
         _ambLearnWarming = false;
-        if (d && d.warm) _ambLearnWarm = true; else _ambLearnWorkerErr = _ambLearnWorkerErr || new Error('warm failed');
+        if (d && d.warm) { _ambLearnWarm = true; _ambLearnErrWhy = ''; }
+        else { _ambLearnWorkerErr = _ambLearnWorkerErr || new Error('warm failed');
+               _ambLearnErrWhy = String((d && d.error) || 'no reply').slice(0, 90);
+               try { console.warn('[bloom] Learn voice failed:', _ambLearnErrWhy); } catch (e) {} }
         _ambLearnSayEl(E, L && L.id, _ambLearnStatusText(L, null));
       });
       try { w.postMessage({ id: id, warm: true }); }
@@ -11619,7 +11624,7 @@
     // was reported. Warming now takes PRECEDENCE over per-layer phase — you cannot
     // be fetching usefully until the voice exists.
     function _ambLearnStatusText(L, st) {
-      if (_ambLearnWorkerErr) return 'Voice unavailable — no connection?';
+      if (_ambLearnWorkerErr) return 'Voice unavailable' + (_ambLearnErrWhy ? (' — ' + _ambLearnErrWhy) : ' — no connection?');
       if (!_ambLearnWarm && _ambLearnWarming) return 'Downloading the voice, first use only…';
       const paste = (L && L.source === 'paste');
       if (!st) return _ambLearnWarm ? 'Voice ready — press play' : 'Idle — press play';
@@ -11627,7 +11632,7 @@
       const done = Math.max(0, (st.si | 0) - (st.q ? st.q.length : 0));
       const where = st.title ? (' — ' + st.title) : '';
       if (st.phase === 'nofetch') return paste ? 'Nothing pasted yet' : 'No article found — check the search term';
-      if (st.phase === 'novoice') return 'Voice unavailable — no connection?';
+      if (st.phase === 'novoice') return 'Voice unavailable' + (_ambLearnErrWhy ? (' — ' + _ambLearnErrWhy) : ' — no connection?');
       if (st.q && st.q.length) return 'Speaking ' + done + '/' + n + where;
       if (st.phase === 'fetch') return paste ? 'Reading your text…' : 'Fetching an article…';
       if (st.phase === 'render') return 'Writing line ' + Math.min(n, st.si | 0) + '/' + n + where;

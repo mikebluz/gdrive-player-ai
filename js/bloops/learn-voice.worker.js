@@ -29,11 +29,16 @@ async function build() {
   // NOT fp16: this model's duration predictor emits float32, so an fp16 session
   // fails to build ("Type (tensor(float16)) ... does not match expected type
   // (tensor(float))"). Measured, not assumed.
-  const attempts = [
-    { device: 'webgpu' },                // GPU at default precision — the big win
-    { dtype: 'q8' },                     // CPU/WASM, quantised
+  // Only OFFER WebGPU where it exists. Attempting it on a device without
+  // navigator.gpu (iOS below Safari 18, most Android) does not fail cleanly — it
+  // can surface as a worker-level error rather than a caught rejection, which
+  // tripped the sticky "voice unavailable" flag and killed the CPU fallback that
+  // would have worked.
+  const hasGPU = (typeof navigator !== 'undefined') && !!navigator.gpu;
+  const attempts = (hasGPU ? [{ device: 'webgpu' }] : []).concat([
+    { dtype: 'q8' },                     // CPU/WASM, quantised — the mobile path
     {},                                  // last resort: the default
-  ];
+  ]);
   let lastErr = null;
   for (const opts of attempts) {
     try {
@@ -42,7 +47,7 @@ async function build() {
       return p;
     } catch (e) { lastErr = e; }
   }
-  throw lastErr || new Error('no backend');
+  throw new Error('all backends failed (' + attempts.length + ' tried, gpu=' + hasGPU + '): ' + String((lastErr && lastErr.message) || lastErr || '?').slice(0, 120));
 }
 function getPipeline() {
   if (tts) return Promise.resolve(tts);
@@ -62,7 +67,7 @@ self.onmessage = async (ev) => {
     // download is the ~15 s cost, and it has nothing to do with playback — the
     // page kicks this off as soon as a Learn layer exists so the wait is spent
     // while the user is still setting up rather than after they press play.
-    if (msg.warm) { await getPipeline(); self.postMessage({ id, warm: true }); return; }
+    if (msg.warm) { await getPipeline(); self.postMessage({ id, warm: true, gpu: (typeof navigator !== 'undefined') && !!navigator.gpu }); return; }
     const text = String(msg.text || '').trim();
     if (!text) { self.postMessage({ id, error: 'empty text' }); return; }
     const p = await getPipeline();

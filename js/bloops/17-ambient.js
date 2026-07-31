@@ -11529,9 +11529,40 @@
     let _ambLearnWorker = null, _ambLearnWorkerErr = null, _ambLearnSeq = 0, _ambLearnWarm = false, _ambLearnWarming = false;
     let _ambLearnErrWhy = '';   // surfaced in the status — "unavailable" alone is undiagnosable
     const _ambLearnPending = new Map();
+    // MOBILE IS BLOCKED, deliberately. The voice model is ~60 MB of weights plus
+    // inference buffers, which exceeds iOS Safari's per-tab memory ceiling: the tab
+    // does not throw, it DIES — reported as the browser crashing when the layer
+    // starts to play. There is nothing to catch and nothing to degrade to, so the
+    // layer refuses to load the voice here and says why. Everything else about the
+    // layer (fetching, the article list, the status line) still works, so a project
+    // containing a Learn layer opens fine on a phone; it just stays silent.
+    //
+    // Detection is deliberately conservative — a coarse pointer with no fine
+    // pointer, or an explicit mobile UA. A false NEGATIVE only costs a slow
+    // synthesis on a desktop; a false POSITIVE crashes someone's browser.
+    function _ambLearnDeviceOK() {
+      try {
+        const ua = String((navigator && navigator.userAgent) || '');
+        if (/Android|iPhone|iPad|iPod|Mobile/i.test(ua)) return false;
+        if (typeof window !== 'undefined' && window.matchMedia) {
+          const coarse = window.matchMedia('(pointer: coarse)').matches;
+          const fine = window.matchMedia('(pointer: fine)').matches;
+          if (coarse && !fine) return false;          // touch-only device
+        }
+        // deviceMemory is Chromium-only; when present and tiny, don't risk it.
+        const mem = navigator && navigator.deviceMemory;
+        if (Number.isFinite(mem) && mem > 0 && mem <= 2) return false;
+        return true;
+      } catch (e) { return true; }
+    }
     function _ambLearnWorkerGet() {
       if (_ambLearnWorker) return _ambLearnWorker;
-      if (_ambLearnWorkerErr) return null;          // a failure is sticky: without this a
+      if (_ambLearnWorkerErr) return null;
+      if (!_ambLearnDeviceOK()) {
+        _ambLearnWorkerErr = new Error('device unsupported');
+        _ambLearnErrWhy = 'needs a desktop browser (the voice model is too large for phones)';
+        return null;
+      }          // a failure is sticky: without this a
                                                     // dead CDN would respawn a worker per tick
       try {
         const w = new Worker('js/bloops/learn-voice.worker.js', { type: 'module' });
@@ -11624,7 +11655,9 @@
     // was reported. Warming now takes PRECEDENCE over per-layer phase — you cannot
     // be fetching usefully until the voice exists.
     function _ambLearnStatusText(L, st) {
-      if (_ambLearnWorkerErr) return 'Voice unavailable' + (_ambLearnErrWhy ? (' — ' + _ambLearnErrWhy) : ' — no connection?');
+      if (_ambLearnWorkerErr) return (_ambLearnErrWhy.indexOf('desktop browser') >= 0)
+        ? 'Speech needs a desktop browser — this layer stays silent here'
+        : ('Voice unavailable' + (_ambLearnErrWhy ? (' — ' + _ambLearnErrWhy) : ' — no connection?'));
       if (!_ambLearnWarm && _ambLearnWarming) return 'Downloading the voice, first use only…';
       const paste = (L && L.source === 'paste');
       if (!st) return _ambLearnWarm ? 'Voice ready — press play' : 'Idle — press play';

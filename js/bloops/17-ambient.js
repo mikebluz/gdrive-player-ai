@@ -8525,9 +8525,12 @@
         // rotation) — otherwise "improvise" would only re-shade the written
         // rhythm's dynamics, never depart from it. The written pattern is
         // untouched on disk; the next as-written cycle plays it again verbatim.
-        const pat = ctx.imp
-          ? _ambEuclidVoicePat(pulses, rotate, steps, 1, 0, _ambImprovSalt(inst, ctx.c))
-          : _ambEuclidPat(inst, pulses, steps, rotate, 1, 0, inst.euclidRegen | 0);   // base euclidean seed (override row 0 or generated) — salt MUST match the grid's (WYSIWYG)
+        // The pattern for ANY cycle, so a note at a seam can measure its gap against
+        // the cycle that actually follows instead of a wrap of its own.
+        const _patAt = (cn) => (_ambImprovAt(inst, cn)
+          ? _ambEuclidVoicePat(pulses, rotate, steps, 1, 0, _ambImprovSalt(inst, cn))
+          : _ambEuclidPat(inst, pulses, steps, rotate, 1, 0, inst.euclidRegen | 0));   // base euclidean seed (override row 0 or generated) — salt MUST match the grid's (WYSIWYG)
+        const pat = _patAt(ctx.c);
         const pVarEff = ctx.imp ? _ambImprovVar(inst, 'pitchVar', pVar) : pVar;   // the walk is what makes it a line rather than a riff
         let walkDeg = 0;   // scale-degree offset from the register root; resets to root each cycle
         let arpOrd = 0;    // chord-pool arp position: counts EUCLIDEAN hits from the cycle start
@@ -8619,7 +8622,7 @@
             // notes stepping on each other. Fit the note to the gap it actually
             // has. Written cycles are untouched, so nothing else changes.
             if (ctx.imp && !_ambTightOn(inst)) {
-              const _gapMs = _ambTightGap((j2) => pat[j2 % pat.length] === 1, bar * steps + slot, bars * steps) * slotSec * 1000;
+              const _gapMs = _ambGapAcrossCycles(_patAt, ctx.c, pat, bar * steps + slot, bars * steps) * slotSec * 1000;
               if (_gapMs > 20) _bLen = Math.min(_bLen, _gapMs * 0.98);
             }
             try { playNote(f, bp, _bLen, at, dest, undefined, _E.laneIdx()); } catch (e) {}
@@ -9155,6 +9158,24 @@
     // per absolute slot over `total`); a lone hit gets the full cycle.
     function _ambTightGap(isOn, idx, total) {
       for (let j = 1; j < total; j++) { if (isOn((idx + j) % total)) return j; }
+      return Math.max(1, total);
+    }
+    // Steps from `idx` to the next onset, WITHOUT assuming this cycle's pattern
+    // repeats. _ambTightGap wraps with % total, which is right when the same
+    // pattern plays again — and wrong at an improvise seam, where the next cycle
+    // is written (or vice versa) and has a different pattern. Measured on the
+    // default bass: the last improvised note was sized against a hit 1 step away
+    // in the IMPROVISED pattern while the written cycle's first hit was 2 steps
+    // away, so the note stopped halfway to the downbeat and left a hole — the
+    // "clumsy / rushed" transition out of improvised bars. `patAt(c)` returns the
+    // pattern for cycle c, so the search crosses the boundary into the real one.
+    function _ambGapAcrossCycles(patAt, c, pat, idx, total) {
+      for (let j = 1; idx + j < total; j++) { if (pat[(idx + j) % pat.length] === 1) return j; }
+      const rem = total - idx;                       // steps to the cycle boundary
+      let next = null;
+      try { next = patAt(c + 1); } catch (e) { next = null; }
+      if (!next || !next.length) return Math.max(1, total);
+      for (let j = 0; j < total; j++) { if (next[j % next.length] === 1) return rem + j; }
       return Math.max(1, total);
     }
     function _ambOrnamentFlicks(inst, src, deg, oct, at, baseParams, durMs, dest, laneIdx, rndFn, rec) {

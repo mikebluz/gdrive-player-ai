@@ -25416,7 +25416,14 @@
     }
     function _ambVoiceCtrls(voiceToks, atkMax, decMax, relMax) {
       const hasTone = voiceToks.some(t => Array.isArray(t) && t[0] === 'tone');
+      // ADSR + tuning live in their OWN group rather than trailing the Instrument
+      // rows: they are the fiddly per-voice shaping you set once, and inline they
+      // pushed the actual instrument choice off the top of the card. Every
+      // parameter group defaults collapsed (_AMB_GROUP_DEFAULT_OPEN is empty), so
+      // this is collapsed by default and remembers its own open state per layer
+      // via groupsOpen — no new machinery, and no new state to normalize.
       return [['grp', 'Instrument']].concat(voiceToks, hasTone ? [['toneseq']] : [], [
+        ['grp', 'Envelope & Tuning'],
         ['sl', 'attack', 'Attack', 0, atkMax, 'ms'], ['sl', 'decay', 'Decay', 0, decMax, 'ms'],
         ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, relMax, 'ms'],
         ['sl', 'fine', 'Fine', -100, 100, 'cents'], ['sl', 'portamento', 'Portamento', 0, 300, 'ms glide'],

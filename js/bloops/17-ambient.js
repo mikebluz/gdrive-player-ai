@@ -11440,6 +11440,54 @@
       } catch (e) {}
       return out;
     }
+    // ---- LEARN layer: text sources ----------------------------------------
+    // Fetches prose for the Learn layer to speak. Wikipedia is the only source
+    // wired today because its REST API sends permissive CORS headers, so it works
+    // straight from the browser; arbitrary user URLs need a proxy (deferred — see
+    // the note on _AMB_LEARN_SOURCES). Kept PLUGGABLE from the start: Wikipedia is
+    // meant to be one preset among several, so callers pick by id and never build
+    // a URL themselves.
+    const _AMB_LEARN_SOURCES = [
+      { id: 'wiki-random', label: 'Wikipedia — random', needsTerm: false },
+      { id: 'wiki-search', label: 'Wikipedia — search', needsTerm: true },
+      // { id: 'url', label: 'Any page (needs a proxy)', needsTerm: true },
+    ];
+    const _AMB_LEARN_WIKI = 'https://en.wikipedia.org/api/rest_v1/page/';
+    // Wikipedia summaries carry footnote/pronunciation debris that a speech engine
+    // reads aloud as noise: bracketed refs, parenthetical IPA, and the /.../ slashes
+    // around pronunciations. Strip them here so every source hands the speaker
+    // clean prose rather than each voice re-inventing the cleanup.
+    function _ambLearnClean(t) {
+      return String(t || '')
+        .replace(/\[[^\]]*\]/g, ' ')                 // [1], [citation needed]
+        .replace(/\((?:[^()]*(?:IPA|pronounc|listen)[^()]*)\)/gi, ' ')
+        .replace(/\/[^\/]{2,40}\//g, ' ')             // /prəˌnʌnsiˈeɪʃən/
+        .replace(/\s+([.,;:!?])/g, '$1')             // stripping a ref leaves "thing ." — a speech engine phrases that as a pause
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+    }
+    // → { title, text, url } or null. Never throws: a dead network or an unknown
+    // page must leave the layer silent, not break the tick that called it.
+    async function _ambLearnFetch(sourceId, term) {
+      try {
+        const src = _AMB_LEARN_SOURCES.find(x => x.id === sourceId) || _AMB_LEARN_SOURCES[0];
+        let url;
+        if (src.id === 'wiki-search') {
+          const q = String(term || '').trim();
+          if (!q) return null;
+          url = _AMB_LEARN_WIKI + 'summary/' + encodeURIComponent(q.replace(/\s+/g, '_'));
+        } else {
+          url = _AMB_LEARN_WIKI + 'random/summary';
+        }
+        const r = await fetch(url, { headers: { accept: 'application/json' } });
+        if (!r || !r.ok) return null;
+        const j = await r.json();
+        const text = _ambLearnClean(j && (j.extract || ''));
+        if (!text) return null;
+        return { title: String((j && j.title) || ''), text: text,
+                 url: String((j && j.content_urls && j.content_urls.desktop && j.content_urls.desktop.page) || '') };
+      } catch (e) { return null; }
+    }
     function _ambImprovAt(L, c) {
       if (!_ambImprovOn(L)) return false;
       const p = _ambImprovLen(L, 'pat'), q = _ambImprovLen(L, 'imp');

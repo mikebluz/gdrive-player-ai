@@ -28436,6 +28436,7 @@
         // Vinyl / Tape (global FX) reflection.
         set('ambient-vinyl-amount', globalFx.vinylAmount); hint('ambient-vinyl-amount-v', (globalFx.vinylAmount | 0) + '%');
         set('ambient-vinyl-age', globalFx.vinylAge); hint('ambient-vinyl-age-v', (globalFx.vinylAge | 0) + '%');
+        { const _h = (globalFx.vinylHiss == null ? 100 : globalFx.vinylHiss); set('ambient-vinyl-hiss', _h); hint('ambient-vinyl-hiss-v', (_h | 0) + '%'); }
         const vOn = document.getElementById(tr('ambient-vinyl-on'));
         if (vOn) { const on = globalFx.vinylOn === true; vOn.classList.toggle('active', on); vOn.textContent = on ? 'On' : 'Off'; }
         set('ambient-tape-mix', globalFx.tapeMix); hint('ambient-tape-mix-v', (globalFx.tapeMix | 0) + '%');
@@ -28840,6 +28841,7 @@
                   '<span class="ambient-hint">global · all output</span></div>' +
                 '<div class="ambient-ctrl"><label for="ambient-vinyl-amount">Amount</label><input type="range" id="ambient-vinyl-amount" min="0" max="100" step="1" value="35" /><span class="ambient-hint" id="ambient-vinyl-amount-v"></span></div>' +
                 '<div class="ambient-ctrl"><label for="ambient-vinyl-age">Age</label><input type="range" id="ambient-vinyl-age" min="0" max="100" step="1" value="50" /><span class="ambient-hint" id="ambient-vinyl-age-v"></span></div>' +
+                '<div class="ambient-ctrl"><label for="ambient-vinyl-hiss" title="Noise floor in the vinyl bed — 0 keeps the crackle and rumble but drops the tape hiss">Hiss</label><input type="range" id="ambient-vinyl-hiss" min="0" max="100" step="1" value="100" title="Noise floor in the vinyl bed — 0 keeps the crackle and rumble but drops the tape hiss" /><span class="ambient-hint" id="ambient-vinyl-hiss-v"></span></div>' +
               '</div>') +
             (E.isLane ? '' :
               '<div class="ambient-warmth">' +
@@ -29915,6 +29917,7 @@
         wireOn('ambient-vinyl-on', 'vinylOn', aV);
         wireStage('ambient-vinyl-amount', 'vinylAmount', '%', aV);
         wireStage('ambient-vinyl-age', 'vinylAge', '%', aV);
+        wireStage('ambient-vinyl-hiss', 'vinylHiss', '%', aV);
         wireOn('ambient-tape-on', 'tapeOn', aT);
         wireStage('ambient-tape-mix', 'tapeMix', '%', aT);
         wireStage('ambient-tape-time', 'tapeTime', ' ms', aT);

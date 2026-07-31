@@ -1029,7 +1029,10 @@
     let _vinylSrc = null, _vinylSrcAge = -1;
     // Synthesized 4 s looping side-bed: hiss (dark filtered noise) + Poisson-timed
     // crackle pops (density/sharpness scale with Age) + a faint 33⅓ rpm rumble.
-    function _makeVinylBed(age01) {
+    // hiss01 scales the noise bed independently of Age/Amount, so a user can keep
+    // the crackle and rumble of a worn record without the tape-hiss floor sitting
+    // under everything. 1 = the level this bed has always had.
+    function _makeVinylBed(age01, hiss01) {
       const ac = Tone.getContext().rawContext, sr = ac.sampleRate || 44100;
       const len = Math.floor(4 * sr), buf = ac.createBuffer(2, len, sr);
       const pops = Math.floor(8 + age01 * 90);               // pops per 4 s
@@ -1041,7 +1044,7 @@
           const n = Math.random() * 2 - 1;
           lp = (1 - aH) * n + aH * lp;                       // hiss (dark)
           rum = (1 - aR) * n + aR * rum;                     // rumble (very low)
-          d[i] = lp * 0.16 + rum * 0.5;
+          d[i] = lp * 0.16 * hiss01 + rum * 0.5;
         }
         for (let k = 0; k < pops; k++) {                     // crackle: sparse decaying bursts
           const at = Math.floor(Math.random() * (len - 200));
@@ -1052,15 +1055,18 @@
       }
       return buf;
     }
+    // Hiss is baked into the bed sample alongside the crackle, so the cache key
+    // covers BOTH — otherwise a hiss change would leave the old bed playing.
+    const _vinylBedKey = (age01, hiss01) => Math.round(age01 * 20) + ':' + Math.round(hiss01 * 20);
     let _vinylBedTimer = null;
-    function _rebuildVinylBed(age01) {
+    function _rebuildVinylBed(age01, hiss01) {
       if (_vinylBedTimer) clearTimeout(_vinylBedTimer);
       _vinylBedTimer = setTimeout(() => {
         try {
           if (_vinylSrc) { try { _vinylSrc.stop(); _vinylSrc.dispose(); } catch (e) {} _vinylSrc = null; }
-          const src = new Tone.BufferSource({ url: _makeVinylBed(age01), loop: true });
+          const src = new Tone.BufferSource({ url: _makeVinylBed(age01, hiss01), loop: true });
           src.connect(vinylCrackleG); src.start();
-          _vinylSrc = src; _vinylSrcAge = Math.round(age01 * 20);
+          _vinylSrc = src; _vinylSrcAge = _vinylBedKey(age01, hiss01);
         } catch (e) {}
       }, 150);
     }
@@ -1074,7 +1080,8 @@
         vinylFlutG.gain.rampTo(on ? 0.00015 + age * 0.0004 : 0, 0.2);
         vinylLP.frequency.rampTo(on ? (14000 - age * 8500) : 20000, 0.2);   // wear darkens
         vinylCrackleG.gain.rampTo(on ? amt * 0.5 : 0, 0.2);
-        if (on && (!_vinylSrc || _vinylSrcAge !== Math.round(age * 20))) _rebuildVinylBed(age);
+        const hiss = Math.max(0, Math.min(100, (globalFx.vinylHiss == null ? 100 : globalFx.vinylHiss))) / 100;
+        if (on && (!_vinylSrc || _vinylSrcAge !== _vinylBedKey(age, hiss))) _rebuildVinylBed(age, hiss);
         if (!on && _vinylSrc) { try { _vinylSrc.stop(); _vinylSrc.dispose(); } catch (e) {} _vinylSrc = null; _vinylSrcAge = -1; }
       } catch (e) {}
     }
@@ -1286,6 +1293,7 @@
       vinylOn:            false,
       vinylAmount:        35,   // crackle + hiss level
       vinylAge:           50,   // wear: wobble depth + darkness + crackle density
+      vinylHiss:          100,  // noise-floor level in the bed; 100 = the historical bake, 0 = crackle/rumble only
       tapeOn:             false,
       tapeTime:           280,  // ms
       tapeFeedback:       45,   // %

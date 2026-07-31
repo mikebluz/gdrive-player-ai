@@ -3041,6 +3041,16 @@
       text-transform: uppercase; letter-spacing: 0.05em;
     }
     @media (hover: hover) { .ambient-when-temp:hover { border-color: #f6ad55; color: #fbd38d; } }
+    /* Section select: only present once the workspace HAS sections, so the
+       control never shows a menu whose only entry is "Every section". */
+    .ambient-when-sec { display: none; margin-left: 6px; padding: 1px 4px; font-size: 0.68rem; max-width: 11ch; }
+    .ambient-when-wrap.has-sections .ambient-when-sec { display: inline-block; }
+    /* Restricted to a section → the cycle grid and its length stepper are hidden:
+       a section term is resolved by TIME, so there is no per-cycle pattern to
+       show or edit. The summary carries the state ("Section B"). */
+    .ambient-when-wrap.sec-mode .ambient-when-grid,
+    .ambient-when-wrap.sec-mode .ambient-when-len { display: none; }
+    .ambient-when-wrap.sec-mode .ambient-when-summary { color: #9ae6b4; }
     .ambient-when-temp.on { background: rgba(246,173,85,0.20); border-color: #f6ad55; color: #fbd38d; }
     .ambient-when-toggle {
       display: inline-flex; align-items: center; gap: 8px; cursor: pointer;

@@ -4139,6 +4139,43 @@
       return { idx: i, step: cyc * secs.length + i, startBar: bars - pos, lenBars: lens[i],
         pos: Math.max(0, Math.min(1, pos / Math.max(1e-6, lens[i]))) };
     }
+    // ---- When: 'sec:NAME' -------------------------------------------------
+    // A When term that names a SECTION instead of counting cycles. Unlike every
+    // other When form it is a function of TIME, not of the iteration index, so it
+    // needs the moment the event lands rather than which cycle it belongs to.
+    // Section names are matched case-insensitively and trimmed; several sections
+    // may share a name, in which case any of them fires.
+    const _AMB_SEC_WHEN_RE = /^sec:(.+)$/i;
+    function _ambWhenSecName(cond) {
+      const m = _AMB_SEC_WHEN_RE.exec(String(cond == null ? '' : cond));
+      return m ? String(m[1]).trim() : null;
+    }
+    // Does `name` name the section sounding at `atSec`? Returns TRUE when the
+    // reference cannot be resolved — no sections at all, or a name that no longer
+    // exists because the section was renamed or deleted. That matches the rest of
+    // the section machinery (an absent mask, or _ambSectionPart's missing index,
+    // both degrade to "no restriction"), and it means renaming a section leaves
+    // the layer audible rather than silently muting it forever.
+    function _ambSecWhenFires(name, atSec, E, cfg) {
+      E = E || _E;
+      cfg = cfg || (E && (E._cfg || (E.getCfg && E.getCfg())));
+      const secs = cfg && cfg.sections;
+      if (!Array.isArray(secs) || !secs.length) return true;
+      const want = String(name || '').trim().toLowerCase();
+      if (!want) return true;
+      if (!secs.some(s => String((s && s.name) || '').trim().toLowerCase() === want)) return true;   // stale name → inert
+      // Prefer the caller's explicit event time. Fall back to the per-note
+      // _ambKeyTime stamp (the _ambSectionKeyNow idiom), then the audio clock for
+      // UI reads that aren't inside a note build.
+      let t = atSec;
+      if (!Number.isFinite(t)) t = (typeof _ambKeyTime === 'number' && Number.isFinite(_ambKeyTime)) ? _ambKeyTime : NaN;
+      if (!Number.isFinite(t)) t = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : NaN;
+      if (!Number.isFinite(t)) return true;
+      const at = _ambSectionAt(E, t, cfg);
+      if (!at) return true;
+      const cur = secs[at.idx];
+      return String((cur && cur.name) || '').trim().toLowerCase() === want;
+    }
     // The progression PART a section binds to, as {from, len} over prog.chords —
     // or null for "the whole progression" (no binding, no parts, or an index that
     // no longer exists because the chord list shrank). `parts` is a positional
@@ -7086,9 +7123,14 @@
     // Per-layer When (per-event conditional): mirrors the Grid step `cond`.
     // 'always'/unset → fire every event; '1st' → only the layer's first event;
     // 'A:B' → fire on event A of every B (1-based, e.g. '1:2' = events 1,3,5…).
-    function _ambCondFires(cond, iter) {
+    // `atSec` is OPTIONAL and only the 'sec:' form reads it — every other When
+    // term is a pure function of the iteration index, so the 15 existing call
+    // sites keep working untouched and callers that know the event time pass it.
+    function _ambCondFires(cond, iter, atSec) {
       if (cond == null || cond === 'always') return true;
       if (cond === '1st') return iter === 0;
+      // SECTION term — plays only while the named section is running.
+      { const _sn = _ambWhenSecName(cond); if (_sn != null) return _ambSecWhenFires(_sn, atSec); }
       // STEP GRID: a binary string (the toggle grid) of ANY length N — each char
       // is one cycle in an N-step pattern (1 = play, 0 = skip), repeating every N.
       if (/^[01]+$/.test(String(cond))) { const p = String(cond), w = p.length; return p.charAt(((iter % w) + w) % w) === '1'; }
@@ -7156,6 +7198,24 @@
     // stored value.
     function _ambPaintWhenGrid(grid, when) {
       if (!grid) return;
+      // SECTION term: gated by TIME, not by cycle index, so there is no per-cycle
+      // answer to paint. Hide the grid (CSS, via .sec-mode) instead of filling it
+      // with 16 copies of "is section B playing right now" — a grid that redrew
+      // itself every time the arrangement moved would be asserting a per-cycle
+      // pattern the engine does not have.
+      {
+        const wrapS = grid.closest('.ambient-when-wrap');
+        const secName = _ambWhenSecName(when);
+        if (wrapS) wrapS.classList.toggle('sec-mode', secName != null);
+        if (secName != null) {
+          if (wrapS) {
+            const sum = wrapS.querySelector('.ambient-when-summary'); if (sum) sum.textContent = 'Section ' + secName;
+            const sel = wrapS.querySelector('.ambient-when-sec'); if (sel && sel.value !== String(when)) sel.value = String(when);
+          }
+          return;
+        }
+        if (wrapS) { const sel = wrapS.querySelector('.ambient-when-sec'); if (sel && sel.value !== '') sel.value = ''; }
+      }
       const cells = _ambWhenGridCells(when);
       // Rebuild the cell DOM if the pattern length changed (variable length).
       if (grid.querySelectorAll('.ambient-when-cell').length !== cells.length) {
@@ -7213,6 +7273,10 @@
     function _ambWhenTempStep(E, key, el, active, cycle) {
       const L = _ambLayerByKey(E, key);
       if (!active || !L || !L.whenTemp) { if (el) el._whenPrevCell = null; return; }
+      // A SECTION term has no per-cycle blocks to punch in or revert, and the
+      // _ambGridToWhen write below would flatten it into a binary string —
+      // silently destroying the section restriction mid-play.
+      if (_ambWhenSecName(L.when) != null) { if (el) el._whenPrevCell = null; return; }
       const cells = _ambWhenGridCells(L.when); const n = cells.length; if (!n) return;
       const playing = (((cycle % n) + n) % n);
       const prev = el._whenPrevCell;
@@ -7305,7 +7369,47 @@
       });
     }
     function _ambBindWhen(E, stem, get, persist) {
-      _ambWireWhenGrid(E, _ambGet(E, stem + 'when'), get, persist);
+      const grid = _ambGet(E, stem + 'when');
+      _ambWireWhenGrid(E, grid, get, persist);
+      _ambWireWhenSec(E, grid, get, persist);
+    }
+    // Populate + wire the Section select. Rebuilt on every bind so a renamed,
+    // added or deleted section is reflected without a reload; hidden outright
+    // when the workspace has no sections, so the control only appears once it can
+    // actually do something.
+    function _ambWireWhenSec(E, grid, getLayer, persist) {
+      if (!grid) return;
+      const wrap = grid.closest('.ambient-when-wrap'); if (!wrap) return;
+      const sel = wrap.querySelector('.ambient-when-sec'); if (!sel) return;
+      const cfg = E && (E._cfg || (E.getCfg && E.getCfg()));
+      const secs = (cfg && Array.isArray(cfg.sections)) ? cfg.sections : [];
+      // DISTINCT names only: two sections may share a name, and 'sec:NAME' fires
+      // for any of them — one option per name keeps the menu honest about that.
+      const names = [];
+      secs.forEach(s => { const n = String((s && s.name) || '').trim(); if (n && names.indexOf(n) < 0) names.push(n); });
+      wrap.classList.toggle('has-sections', names.length > 0);
+      let html = '<option value="">Every section</option>';
+      names.forEach(n => { html += '<option value="sec:' + n.replace(/"/g, '&quot;') + '">Section ' + n + '</option>'; });
+      if (sel._ambSecHtml !== html) { sel.innerHTML = html; sel._ambSecHtml = html; }
+      const L0 = getLayer && getLayer();
+      sel.value = (L0 && _ambWhenSecName(L0.when) != null) ? String(L0.when) : '';
+      if (sel._ambSecBound) return;
+      sel._ambSecBound = true;
+      sel.addEventListener('change', () => {
+        _E = E; const L = getLayer(); if (!L) return;
+        const v = sel.value || '';
+        if (v) {
+          // Remember the cycle pattern so leaving the section restores it rather
+          // than silently flattening the layer to Always.
+          if (_ambWhenSecName(L.when) == null) L._whenPrev = L.when;
+          L.when = v;
+        } else {
+          L.when = (typeof L._whenPrev === 'string' && L._whenPrev) ? L._whenPrev : 'always';
+          delete L._whenPrev;
+        }
+        _ambPaintWhenGrid(grid, L.when);
+        persist();
+      });
     }
 
     // ================= BED engine ===================================
@@ -8089,8 +8193,10 @@
       const ctx = { E, inst, key, cfg, dest, dmod, bars, steps, pulses, rotate, slotSec, loopSec, rVar, restP, tFrom, tTo, cap: 0 };
       try {
         for (let c = cFrom; c <= cTo && ctx.cap < 256; c++) {
-          // 'when' conditional applies per phrase cycle (cycle = iteration index).
-          if (!_ambCondFires(inst.when, c)) continue;
+          // 'when' conditional applies per phrase cycle (cycle = iteration index),
+          // except a 'sec:' term, which needs this cycle's START TIME to know
+          // which section it lands in.
+          if (!_ambCondFires(inst.when, c, st.startAt + c * loopSec)) continue;
           ctx.c = c;
           // 🎲 Improvise tab: is this iteration played as written, or improvised?
           // Rhythm var / Rests come from the improv set for an improvised cycle —
@@ -8510,7 +8616,7 @@
       const isProg = (_ambAsNotes(src).type === 'prog');   // per-layer: one chord per loop
       try {
       for (let c = cFrom; c <= cTo && cap < 512; c++) {
-        if (!_ambCondFires(inst.when, c)) continue;
+        if (!_ambCondFires(inst.when, c, st.startAt + c * loopSec)) continue;
         const cStart = st.startAt + c * loopSec;
         // Per-cycle RNG drives Vary — stable within a cycle, evolves per cycle.
         const vRnd = _ambSeededRand((baseSeed ^ ((c + 1) * 2246822519)) >>> 0);
@@ -8610,7 +8716,7 @@
         const sc = _ambLayerScale(E, key, inst, cfg);
         let g = 0;
         while (C[key] < HZ && g++ < guardMax) {
-          if (_ambCondFires(inst.when, Math.floor((I[key] | 0) / 1))) _ambEmitBedOnset(C[key], inst, space, key === 'bed' ? undefined : key);
+          if (_ambCondFires(inst.when, Math.floor((I[key] | 0) / 1), C[key])) _ambEmitBedOnset(C[key], inst, space, key === 'bed' ? undefined : key);
           else if (E.units && E.units[key]) _ambRecordUnit(E, key, C[key], []);
           I[key] = (I[key] | 0) + 1;
           if (psi) {
@@ -8760,7 +8866,7 @@
           if (!w) break;
           const k = Math.round((w.startSec - _psi.anchor) / Math.max(0.1, w.lenSec));
           if (w.startSec >= tFrom - 1e-4 && w.startSec < tTo) {
-            if (st._pedalAt !== w.startSec && _ambCondFires(inst.when, k)) { strike(w.startSec, w.lenSec, w.chords); st._pedalAt = w.startSec; }
+            if (st._pedalAt !== w.startSec && _ambCondFires(inst.when, k, w.startSec)) { strike(w.startSec, w.lenSec, w.chords); st._pedalAt = w.startSec; }
           } else if (st._pedalAt == null && w.startSec < tFrom && tFrom >= st.startAt) {
             const catchAt = _psi.anchor + Math.ceil((tFrom - _psi.anchor - 1e-4) / _psi.subUnit) * _psi.subUnit;
             if (catchAt < tTo && catchAt < w.startSec + w.lenSec - 0.25) {
@@ -8781,7 +8887,7 @@
       let cap = 0;
       try {
       for (let c = cFrom; c <= cTo && cap < CAP; c++) {
-        if (!_ambCondFires(inst.when, c)) continue;
+        if (!_ambCondFires(inst.when, c, st.startAt + c * loopSec)) continue;
         const cStart = st.startAt + c * loopSec;
         // Drone: chord-gate + prog override + tone re-resolve at the PHRASE
         // start (its phrase IS the strike); the pedal resolves per slot below.
@@ -9673,7 +9779,7 @@
       _ambArpSpreadLfo(E, key, _me, (arp.panMode === 'pan') ? 0 : _sp, barSec);
       const pVary = Math.max(0, Math.min(100, arp.pitchVary | 0));   // ±1-octave drift per hit (gated)
       for (let c = cFrom; c <= cTo && cap < 256; c++) {
-        if (!_ambCondFires(arp.when, c)) continue;
+        if (!_ambCondFires(arp.when, c, st.startAt + c * loopSec)) continue;
         const cStart = st.startAt + c * loopSec;
         const rnd = _ambSeededRand(((arp.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503));
         // 🎲 Improvise tab. Same three swaps as the shared euclid core (this
@@ -11116,6 +11222,10 @@
       delete L.cycleGate;
       if (gate.every(v => v)) return;                      // all-on gated nothing
       const w = L.when;
+      // A SECTION term is resolved by TIME, so it has no period to take an LCM
+      // with and cannot be folded into a cycle string. Leave it alone: the gate
+      // has already been dropped above, and When keeps gating by section.
+      if (_ambWhenSecName(w) != null) return;
       // '1st' is the one aperiodic When: it fires at iteration 0 only, so the
       // merge is decided entirely by the gate's first cell.
       if (w === '1st') { if (!gate[0]) L.when = '0'; return; }
@@ -14689,7 +14799,7 @@
         const perCycle = (String(key).split(':')[0] === 'texture') ? 16 : 1;
         let g = 0;
         while (C[key] < HZ && g++ < guardMax) {
-          if (_ambCondFires(lc.when, Math.floor((I[key] | 0) / perCycle))) emit(C[key]);
+          if (_ambCondFires(lc.when, Math.floor((I[key] | 0) / perCycle), C[key])) emit(C[key]);
           // When-gated OFF this iteration = a REST. For recording layers (those
           // that already log units), log an empty unit so the readout shows "–"
           // instead of the previous notes lingering.
@@ -14823,7 +14933,7 @@
         let g = 0;
         while (C[key] < HZ && g++ < 64) {
           if (!manual && stSeq.plan) break; // auto: one phrase streams at a time
-          const fires = _ambCondFires(seq.when, I[key] | 0);
+          const fires = _ambCondFires(seq.when, I[key] | 0, C[key]);
           stSeq.iter = I[key] | 0;
           I[key] = (I[key] | 0) + 1;
           if (!fires) {
@@ -14880,7 +14990,7 @@
         if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(E, key, L, cfg);
         let g = 0;
         while (C[key] < HZ && g++ < 4) {
-          if (_ambCondFires(L.when, I[key] | 0)) {
+          if (_ambCondFires(L.when, I[key] | 0, C[key])) {
             const st = E.seqState[key] || (E.seqState[key] = { pick: 0, iter: 0 });
             st.iter = I[key] | 0;
             _ambEmitSample(C[key], L, space, st, key);
@@ -21957,6 +22067,10 @@
             // Temp: while playing, on/off edits to blocks are TEMPORARY — after a
             // block plays through it reverts to its pre-play state (live punch-ins).
             '<button type="button" class="ambient-when-temp" aria-pressed="false" title="Temp — while playing, on/off edits to blocks are temporary: after a block plays through it reverts to its state from before play started">temp</button>' +
+            // SECTION restriction — the arrangement-level When. Populated from
+            // cfg.sections at bind time (this builder only gets the id stem), and
+            // hidden entirely when the workspace has no sections.
+            '<select class="ambient-select ambient-when-sec" title="Section — play only while one named section of the arrangement is running. “Every section” hands control back to the play pattern."><option value="">Every section</option></select>' +
           '</div>' +
           '<div class="ambient-when-grid" id="' + stem + 'when" role="group" aria-label="When step pattern">' + _ambWhenCellsHtml(16) + '</div>' +
           '<div class="ambient-when-len" aria-label="Pattern length">' +

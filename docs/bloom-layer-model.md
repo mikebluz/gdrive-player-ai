@@ -458,10 +458,28 @@ the line that keeps every section feature additive.
   part ½-start over a 2-bar section → zero outside-window notes (46→25);
   harness 26/26.
 
+*Section When landed (2026-07-30):* `when: 'sec:NAME'` — a When term that names
+a section instead of counting cycles. It is the first When form resolved by
+TIME rather than by iteration index, so `_ambCondFires` gained an OPTIONAL third
+arg (`atSec`) that only this branch reads; the nine emitter call sites that know
+their event time pass it (cycle start for the phrase emitters, `C[key]` for the
+unit/lane/seq loops, `w.startSec` for the pedal strike) and everything else
+falls back to the `_ambKeyTime` stamp then the audio clock, the
+`_ambSectionKeyNow` idiom. Names match case-insensitively; **an unresolvable
+reference degrades to INERT, not silent** (no sections at all, or a name that no
+longer exists) — matching `_ambSectionPart`'s missing-index behavior, so
+renaming a section leaves the layer audible instead of muting it forever.
+UI: a Section select in the When control, hidden until the workspace HAS
+sections; picking one hides the cycle grid (there is no per-cycle answer to
+paint) and the summary reads "Section B"; leaving restores the prior pattern
+from `L._whenPrev`. **Two paths had to be guarded** because both write
+`L.when` from grid cells and would flatten a section term into a binary string:
+the temp punch-in revert (`_ambWhenTempStep`) and the cycleGate fold. Default
+path untouched → golden render byte-identical.
+
 NEXT (v3/v4, not built): Write snap-to-section (`_ambWriteEffBars` gains a
-section case), `when: 'sec:B'` terms, last-bar-of-section fill flag, sparse
-per-section overrides (groove/Start/keyModeRot), orchestration counting plays
-in section cycles.
+section case), last-bar-of-section fill flag, sparse per-section overrides
+(groove/Start/keyModeRot), orchestration counting plays in section cycles.
 
 ## 3. Progressions vs parts (authoring)
 

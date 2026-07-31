@@ -3867,6 +3867,10 @@
     .ambient-euclid-stepedit.on { border-color: #4fd1c5; background: rgba(79,209,197,0.16); color: #d6fbf6; }
     /* Fold sits beside Step Edit. It is an ACTION, not a mode, so it has no .on
        state — margin-left:0 keeps Step Edit's auto-margin as the only spacer. */
+    /* Learn status: reads as live state, not a control — hence no button chrome. */
+    .ambient-learn-row { display: flex; align-items: center; gap: 6px; }
+    .ambient-learn-stat { flex: 1 1 auto; min-width: 0; font-family: 'Segoe UI', sans-serif; font-size: 0.72rem; color: #9ae6b4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ambient-learn-go { flex: 0 0 auto; margin-left: 6px; }
     .ambient-euclid-fold { margin-left: 6px; padding: 2px 9px; border: 1px solid #2d2d3f; border-radius: 999px; background: #16162a; color: #cbd5e0; cursor: pointer; font-size: 0.72rem; touch-action: manipulation; }
     .ambient-euclid-fold:hover:not(:disabled) { border-color: #9f7aea; background: rgba(159,122,234,0.16); color: #e9dcff; }
     .ambient-euclid-fold:disabled { opacity: 0.35; cursor: default; }

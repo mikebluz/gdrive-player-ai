@@ -15355,6 +15355,65 @@
         }
         window._ambCaptureSink = null; _ambPruneCap(E, key, now);
       }
+      // Render ONE line ahead. The voice's cold start is ~16 s (CDN library + model
+      // on first use), so synthesising on demand would leave the layer silent long
+      // after the press; this keeps a buffer queued while the current line plays.
+      async function _ambLearnAhead(L, st) {
+        if (!st.sentences.length || st.si >= st.sentences.length) {
+          const doc = await _ambLearnFetch(L.source || 'wiki-random', L.term || '');
+          if (!doc) return;
+          st.title = doc.title;
+          // Speak a SENTENCE at a time: the whole extract in one synth call would be
+          // a single multi-minute buffer that cannot be interrupted or aligned.
+          st.sentences = String(doc.text).split(/(?<=[.!?])\s+/).filter(x => x.trim().length > 1);
+          st.si = 0;
+          if (!st.sentences.length) return;
+        }
+        const line = st.sentences[st.si++];
+        const buf = await _ambLearnSynth(line);
+        if (buf) st.q.push(buf);
+      }
+      function _ambTickLearnLayer(E, L, now, lead, space, cfg, opts) {
+        const C = E.clocks;
+        const key = opts.key;
+        if (!L || _muted(L)) return;
+        if (E.windingDown) return;
+        const gate = _qGate(key, !!L.on, (t) => { C[key] = t; });
+        if (!gate.run) return;
+        const HZ = gate.hz;
+        if (_ambFreezeGate(E, key, now, HZ)) return;
+        const st = E.seqState[key] || (E.seqState[key] = { q: [], sentences: [], si: 0, pending: false, srcKey: '' });
+        // Changing the source or the search term abandons the queued article.
+        const srcKey = (L.source || 'wiki-random') + '|' + (L.term || '');
+        if (st.srcKey !== srcKey) { st.srcKey = srcKey; st.sentences = []; st.si = 0; st.q = []; }
+        // Keep TWO lines queued, not one. With a single slot the layer plays a line,
+        // then has to synthesise the next before it can schedule anything — measured
+        // ~13 s of silence between lines against a 900 ms Gap. Rendering one further
+        // ahead lets synthesis overlap playback so the Gap is the real gap.
+        if (!st.pending && st.q.length < 2) {
+          st.pending = true;
+          try { _ambLearnAhead(L, st).then(() => { st.pending = false; }, () => { st.pending = false; }); }
+          catch (e) { st.pending = false; }
+        }
+        if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(E, key, L, cfg);
+        let g = 0;
+        while (C[key] < HZ && g++ < 4) {
+          if (!st.q.length) break;   // nothing rendered yet — WAIT rather than advance the
+                                     // clock, or the layer would silently skip its turn and
+                                     // the first line would land arbitrarily late.
+          if (_ambCondFires(L.when, (E.iters[key] | 0), C[key])) {
+            const buf = st.q.shift();
+            window._ambCaptureSink = _ambCapSink(E, key);
+            _ambLearnPlay(E, key, buf, C[key]);
+            window._ambCaptureSink = null;
+            C[key] += buf.duration + Math.max(0, (L.intervalMs | 0)) / 1000;
+          } else {
+            C[key] += Math.max(0.25, (L.intervalMs | 0) / 1000);
+          }
+          E.iters[key] = (E.iters[key] | 0) + 1;
+        }
+        _ambPruneCap(E, key, now);
+      }
       function _ambTickSampleLayer(E, L, now, lead, space, cfg, opts) {
         const C = E.clocks, I = E.iters;
         if (!L || !L.sampleId) return;
@@ -15413,6 +15472,11 @@
           }
           if (_sk === 'sample' && ex.sampleId) {
             try { _ambTickSampleLayer(E, ex, now, lead, space, cfg, { key: ex.type + ':' + ex.id }); }
+            catch (e) { _ambLogTickErr(e); window._ambCaptureSink = null; }
+            continue;
+          }
+          if (ex.type === 'learn') {
+            try { _ambTickLearnLayer(E, ex, now, lead, space, cfg, { key: 'learn:' + ex.id }); }
             catch (e) { _ambLogTickErr(e); window._ambCaptureSink = null; }
             continue;
           }
@@ -25784,6 +25848,14 @@
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'syncop', 'Syncopate', 0, 100, 'straight → offbeat'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
+      // Learn: fetched prose spoken over the music. No pitch material and no
+      // rhythm — the utterance is the unit — so it carries Source + Gap + the
+      // shared mix block and nothing else.
+      learn: { label: 'Learn', ctrls: [
+        ['grp', 'Source'], ['learnsrc'], ['learnterm'],
+        ['grp', 'Timing'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
+        ..._AMB_MIX,
+      ] },
       beat: { label: 'Beat', ctrls: [
         ..._ambVoiceCtrls([['kit']], 500, 2000, 2000), ['synthkit'],
         ['grp', 'Source'], ['keyov'], ['gen'], ['sl', 'poly', 'Poly', 1, 4, 'drums per hit (Random)'], ['grp', 'Pattern'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'],
@@ -25847,6 +25919,9 @@
       if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, proximity: 35, gravity: 50, contour: 0, stutter: 0, phrasing: 0, ornament: 0, slide: 0, tight: 0, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, lenVary: 0, phraseVary: 0, ..._AMB_ADSR_DEFAULTS.motif });
       if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, syncop: 0, holdSteps: 0, tight: 0, intervalMs: 450, lengthMs: 300, mutateRate: 40, lenVary: 0, ..._AMB_ADSR_DEFAULTS.texture });
       if (type === 'beat') return Object.assign(base, { kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, ghosts: 0, holdSteps: 0, tight: 0, lenVary: 0, ..._AMB_ADSR_DEFAULTS.beat });
+      // Learn: speaks fetched prose over the music. `intervalMs` is the GAP between
+      // spoken lines, not a note length — the utterance sets its own duration.
+      if (type === 'learn') return Object.assign(base, { source: 'wiki-random', term: '', intervalMs: 900, lengthMs: 0 });
       // (Shape layer type removed — see _AMB_LAYER_SCHEMA + _normalizeAmbientCfg.)
       // Arp: a series of scale/chord entries (each with its own pass count) that
       // the engine arpeggiates through. Voice via `tone`, timing via rate/interval.
@@ -26345,6 +26420,12 @@
       if (k === 'spread') return _ambSpreadCtrl(p, inst);
       if (k === 'mod') return _ambModUi(lk);
       if (k === 'fx') return _ambFxUi(lk);
+      if (k === 'learnsrc') return '<div class="ambient-ctrl" title="Where the words come from. Wikipedia works straight from the browser; other sources need a proxy."><label for="' + p + '-learnsrc">Source</label>' +
+        '<select id="' + p + '-learnsrc" class="ambient-select">' + _AMB_LEARN_SOURCES.map(x => '<option value="' + x.id + '">' + x.label + '</option>').join('') + '</select>' +
+        '<span class="ambient-hint">text source</span></div>';
+      if (k === 'learnterm') return '<div class="ambient-ctrl" title="Article to read, for a search source. Ignored by the random source."><label for="' + p + '-learnterm">Search</label>' +
+        '<input type="text" id="' + p + '-learnterm" class="ambient-bpc-input" placeholder="article title" />' +
+        '<span class="ambient-hint">search sources only</span></div>';
       if (k === 'arpseries') return _ambArpSeriesHtml(p, inst);
       if (k === 'arpdir') return _ambArpDirHtml(p, inst);
       if (k === 'arpres') return _ambArpResHtml(p, inst);
@@ -26735,6 +26816,8 @@
             // idx 0 on the shared grid (_ambUnitReanchor) → the new rate starts
             // predictably at the next grid point.
             if (E.timer) { try { _ambUnitReanchor(E, type + ':' + id); } catch (x) {} } } }); } }
+          else if (k === 'learnsrc') { const s2 = el('learnsrc'); if (s2) { s2.value = inst.source || 'wiki-random'; s2.addEventListener('change', () => { const L = get(); if (L) { L.source = s2.value || 'wiki-random'; persist(); } }); } }
+          else if (k === 'learnterm') { const e2 = el('learnterm'); if (e2) { e2.value = inst.term || ''; e2.addEventListener('change', () => { const L = get(); if (L) { L.term = e2.value || ''; persist(); } }); } }
           else if (k === 'arpdir') { const s = el('dir'); if (s) { s.value = inst.dir || 'up'; s.addEventListener('change', () => { const L = get(); if (L) {
             L.dir = s.value || 'up';
             // BULK APPLY, by design — normalize stamps each entry with its own dir
@@ -31319,6 +31402,7 @@
           ['Melody', [['motif', 'Motif'], ['run', 'Riff'], ['arp', 'Arp']]],
           ['Rhythm', [['beat', 'Beat'], ['bass', 'Bass'], ['pedal', 'Pedal']]],
           ['Sampler', [['sample', 'Sample']]],   // Track recording moved to the footer 🎤 button
+          ['Spoken', [['learn', 'Learn']]],      // fetched prose, spoken over the music
         ];
         const actions = [];
         FAMILIES.forEach((fam) => {

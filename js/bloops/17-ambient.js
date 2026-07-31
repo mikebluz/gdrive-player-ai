@@ -11452,7 +11452,21 @@
       { id: 'wiki-search', label: 'Wikipedia — search', needsTerm: true },
       // { id: 'url', label: 'Any page (needs a proxy)', needsTerm: true },
     ];
-    const _AMB_LEARN_WIKI = 'https://en.wikipedia.org/api/rest_v1/page/';
+    // WHICH BODY OF TEXT. All three speak the same REST shape, so a corpus is just
+    // a host swap. Verified in-browser that each returns 200 with CORS headers;
+    // Wiktionary / Wikisource / Wikibooks are absent because they do NOT serve this
+    // summary endpoint (404/400), not because of CORS.
+    //
+    // Stanford Encyclopedia of Philosophy was asked for and CANNOT be added this
+    // way: plato.stanford.edu has no API and no CORS headers, so a browser fetch
+    // fails outright ("Failed to fetch", measured). Same for poetrydb and arXiv.
+    // Any of those needs the proxy route that user URLs also need.
+    const _AMB_LEARN_CORPORA = [
+      { id: 'wikipedia', label: 'Wikipedia',        host: 'en.wikipedia.org' },
+      { id: 'simple',    label: 'Wikipedia (plain)', host: 'simple.wikipedia.org' },   // short sentences — reads best aloud
+      { id: 'wikiquote', label: 'Wikiquote',        host: 'en.wikiquote.org' },
+    ];
+    const _ambLearnHost = (id) => (_AMB_LEARN_CORPORA.find(c => c.id === id) || _AMB_LEARN_CORPORA[0]).host;
     // Wikipedia summaries carry footnote/pronunciation debris that a speech engine
     // reads aloud as noise: bracketed refs, parenthetical IPA, and the /.../ slashes
     // around pronunciations. Strip them here so every source hands the speaker
@@ -11468,16 +11482,17 @@
     }
     // → { title, text, url } or null. Never throws: a dead network or an unknown
     // page must leave the layer silent, not break the tick that called it.
-    async function _ambLearnFetch(sourceId, term) {
+    async function _ambLearnFetch(sourceId, term, corpus) {
       try {
         const src = _AMB_LEARN_SOURCES.find(x => x.id === sourceId) || _AMB_LEARN_SOURCES[0];
+        const base = 'https://' + _ambLearnHost(corpus) + '/api/rest_v1/page/';
         let url;
         if (src.id === 'wiki-search') {
           const q = String(term || '').trim();
           if (!q) return null;
-          url = _AMB_LEARN_WIKI + 'summary/' + encodeURIComponent(q.replace(/\s+/g, '_'));
+          url = base + 'summary/' + encodeURIComponent(q.replace(/\s+/g, '_'));
         } else {
-          url = _AMB_LEARN_WIKI + 'random/summary';
+          url = base + 'random/summary';
         }
         const r = await fetch(url, { headers: { accept: 'application/json' } });
         if (!r || !r.ok) return null;
@@ -11612,7 +11627,7 @@
       const st = E.seqState[key] || (E.seqState[key] = { q: [], sentences: [], si: 0, pending: false, srcKey: '' });
       st.epoch = (st.epoch | 0) + 1;             // cancels anything in flight
       st.sentences = []; st.si = 0; st.q = []; st.title = '';
-      st.srcKey = (L.source || 'wiki-random') + '|' + (L.term || '');
+      st.srcKey = (L.source || 'wiki-random') + '|' + (L.term || '') + '|' + (L.corpus || 'wikipedia');
       st.phase = 'fetch'; st._say = null;
       _ambLearnSayEl(E, L.id, 'Fetching an article…');
       st.pending = true;
@@ -11646,7 +11661,7 @@
       const stale = () => (st.epoch | 0) !== ep;
       if (!st.sentences.length || st.si >= st.sentences.length) {
         st.phase = 'fetch';
-        const doc = await _ambLearnFetch(L.source || 'wiki-random', L.term || '');
+        const doc = await _ambLearnFetch(L.source || 'wiki-random', L.term || '', L.corpus);
         if (stale()) return;
         if (!doc) { st.phase = 'nofetch'; return; }
         st.title = doc.title;
@@ -15493,7 +15508,7 @@
         if (_ambFreezeGate(E, key, now, HZ)) return;
         const st = E.seqState[key] || (E.seqState[key] = { q: [], sentences: [], si: 0, pending: false, srcKey: '' });
         // Changing the source or the search term abandons the queued article.
-        const srcKey = (L.source || 'wiki-random') + '|' + (L.term || '');
+        const srcKey = (L.source || 'wiki-random') + '|' + (L.term || '') + '|' + (L.corpus || 'wikipedia');
         if (st.srcKey !== srcKey) { st.srcKey = srcKey; st.sentences = []; st.si = 0; st.q = []; }
         // Keep TWO lines queued, not one. With a single slot the layer plays a line,
         // then has to synthesise the next before it can schedule anything — measured
@@ -26045,7 +26060,7 @@
       if (type === 'beat') return Object.assign(base, { kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, ghosts: 0, holdSteps: 0, tight: 0, lenVary: 0, ..._AMB_ADSR_DEFAULTS.beat });
       // Learn: speaks fetched prose over the music. `intervalMs` is the GAP between
       // spoken lines, not a note length — the utterance sets its own duration.
-      if (type === 'learn') return Object.assign(base, { source: 'wiki-random', term: '', intervalMs: 900, lengthMs: 0 });
+      if (type === 'learn') return Object.assign(base, { source: 'wiki-random', corpus: 'wikipedia', term: '', intervalMs: 900, lengthMs: 0 });
       // (Shape layer type removed — see _AMB_LAYER_SCHEMA + _normalizeAmbientCfg.)
       // Arp: a series of scale/chord entries (each with its own pass count) that
       // the engine arpeggiates through. Voice via `tone`, timing via rate/interval.
@@ -26545,7 +26560,10 @@
       if (k === 'mod') return _ambModUi(lk);
       if (k === 'fx') return _ambFxUi(lk);
       if (k === 'learnsrc') { const _sr = (inst.source === 'wiki-search');
-        return '<div class="ambient-ctrl" title="Random loads an article straight away. Search reveals a box — type a title and press Load."><label>Source</label>' +
+        return '<div class="ambient-ctrl" title="Which body of text to read from. All are Wikimedia projects — the only ones that allow a browser to fetch them directly."><label for="' + p + '-learncorpus">Library</label>' +
+          '<select id="' + p + '-learncorpus" class="ambient-select">' + _AMB_LEARN_CORPORA.map(c => '<option value="' + c.id + '">' + c.label + '</option>').join('') + '</select>' +
+          '<span class="ambient-hint">plain = short sentences</span></div>' +
+        '<div class="ambient-ctrl" title="Random loads an article straight away. Search reveals a box — type a title and press Load."><label>Source</label>' +
           '<div class="ambient-seg-row">' +
             '<button type="button" class="ambient-seg ambient-learn-rand' + (_sr ? '' : ' active') + '" title="Load a random Wikipedia article now. Cancels anything currently loading.">Random</button>' +
             '<button type="button" class="ambient-seg ambient-learn-srch' + (_sr ? ' active' : '') + '" title="Choose the article yourself">Search</button>' +
@@ -26961,6 +26979,13 @@
             const bS = card && card.querySelector('.ambient-learn-srch');
             const bL = card && card.querySelector('.ambient-learn-load');
             if (term) { term.value = inst.term || ''; term.addEventListener('change', () => { const L = get(); if (L) { L.term = term.value || ''; persist(); } }); }
+            const cor = el('learncorpus');
+            if (cor) { cor.value = inst.corpus || 'wikipedia';
+              cor.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
+                L.corpus = cor.value || 'wikipedia'; persist();
+                // Switching library mid-article must abandon it, not blend the two.
+                if ((L.source || 'wiki-random') === 'wiki-random' || String(L.term || '').trim()) _ambLearnLoadNow(E, L);
+                else _ambLearnReset(E, L); }); }
             const paint = (searching) => { if (row) row.style.display = searching ? '' : 'none';
               if (bR) bR.classList.toggle('active', !searching); if (bS) bS.classList.toggle('active', !!searching); };
             if (bR) bR.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;

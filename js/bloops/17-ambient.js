@@ -11450,6 +11450,7 @@
     const _AMB_LEARN_SOURCES = [
       { id: 'wiki-random', label: 'Wikipedia — random', needsTerm: false },
       { id: 'wiki-search', label: 'Wikipedia — search', needsTerm: true },
+      { id: 'paste', label: 'Pasted text', needsTerm: true },   // no network at all
       // { id: 'url', label: 'Any page (needs a proxy)', needsTerm: true },
     ];
     // WHICH BODY OF TEXT. All three speak the same REST shape, so a corpus is just
@@ -11627,7 +11628,7 @@
       const st = E.seqState[key] || (E.seqState[key] = { q: [], sentences: [], si: 0, pending: false, srcKey: '' });
       st.epoch = (st.epoch | 0) + 1;             // cancels anything in flight
       st.sentences = []; st.si = 0; st.q = []; st.title = '';
-      st.srcKey = (L.source || 'wiki-random') + '|' + (L.term || '') + '|' + (L.corpus || 'wikipedia');
+      st.srcKey = (L.source || 'wiki-random') + '|' + (L.term || '') + '|' + (L.corpus || 'wikipedia') + '|' + String(L.pasted || '').length;
       st.phase = 'fetch'; st._say = null;
       _ambLearnSayEl(E, L.id, 'Fetching an article…');
       st.pending = true;
@@ -11638,7 +11639,7 @@
         // Only the tick writes status while playing; with the transport STOPPED
         // nothing else would ever clear "Fetching…", so report the outcome here.
         _ambLearnSayEl(E, L.id,
-          st.phase === 'nofetch' ? 'No article found — check the search term'
+          st.phase === 'nofetch' ? ((L.source === 'paste') ? 'Nothing pasted yet' : 'No article found — check the search term')
           : st.phase === 'novoice' ? 'Voice unavailable (offline?)'
           : st.sentences.length ? ('Ready — ' + (st.title || 'article') + ', ' + st.sentences.length + ' lines. Press play.')
           : 'Nothing to read — try again');
@@ -11661,7 +11662,13 @@
       const stale = () => (st.epoch | 0) !== ep;
       if (!st.sentences.length || st.si >= st.sentences.length) {
         st.phase = 'fetch';
-        const doc = await _ambLearnFetch(L.source || 'wiki-random', L.term || '', L.corpus);
+        // Pasted text needs no request — build the document locally rather than
+        // routing it through the fetch path just to keep one code shape.
+        const doc = (L.source === 'paste')
+          ? (String(L.pasted || '').trim()
+              ? { title: 'Pasted text', text: _ambLearnClean(L.pasted), url: '' }
+              : null)
+          : await _ambLearnFetch(L.source || 'wiki-random', L.term || '', L.corpus);
         if (stale()) return;
         if (!doc) { st.phase = 'nofetch'; return; }
         st.title = doc.title;
@@ -15508,7 +15515,7 @@
         if (_ambFreezeGate(E, key, now, HZ)) return;
         const st = E.seqState[key] || (E.seqState[key] = { q: [], sentences: [], si: 0, pending: false, srcKey: '' });
         // Changing the source or the search term abandons the queued article.
-        const srcKey = (L.source || 'wiki-random') + '|' + (L.term || '') + '|' + (L.corpus || 'wikipedia');
+        const srcKey = (L.source || 'wiki-random') + '|' + (L.term || '') + '|' + (L.corpus || 'wikipedia') + '|' + String(L.pasted || '').length;
         if (st.srcKey !== srcKey) { st.srcKey = srcKey; st.sentences = []; st.si = 0; st.q = []; }
         // Keep TWO lines queued, not one. With a single slot the layer plays a line,
         // then has to synthesise the next before it can schedule anything — measured
@@ -15526,7 +15533,7 @@
           const n = st.sentences.length, done = Math.max(0, st.si - st.q.length);
           const where = st.title ? (' — ' + st.title) : '';
           _ambLearnSay(E, L, st,
-            st.phase === 'nofetch' ? 'No article found — check the search term'
+            st.phase === 'nofetch' ? ((L.source === 'paste') ? 'Nothing pasted yet' : 'No article found — check the search term')
             : st.phase === 'novoice' ? 'Voice unavailable (offline?)'
             : st.phase === 'voice'  ? 'Downloading the voice, first use only…'
             : st.q.length            ? ('Speaking ' + done + '/' + n + where)
@@ -26060,7 +26067,7 @@
       if (type === 'beat') return Object.assign(base, { kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, ghosts: 0, holdSteps: 0, tight: 0, lenVary: 0, ..._AMB_ADSR_DEFAULTS.beat });
       // Learn: speaks fetched prose over the music. `intervalMs` is the GAP between
       // spoken lines, not a note length — the utterance sets its own duration.
-      if (type === 'learn') return Object.assign(base, { source: 'wiki-random', corpus: 'wikipedia', term: '', intervalMs: 900, lengthMs: 0 });
+      if (type === 'learn') return Object.assign(base, { source: 'wiki-random', corpus: 'wikipedia', term: '', pasted: '', intervalMs: 900, lengthMs: 0 });
       // (Shape layer type removed — see _AMB_LAYER_SCHEMA + _normalizeAmbientCfg.)
       // Arp: a series of scale/chord entries (each with its own pass count) that
       // the engine arpeggiates through. Voice via `tone`, timing via rate/interval.
@@ -26559,7 +26566,7 @@
       if (k === 'spread') return _ambSpreadCtrl(p, inst);
       if (k === 'mod') return _ambModUi(lk);
       if (k === 'fx') return _ambFxUi(lk);
-      if (k === 'learnsrc') { const _sr = (inst.source === 'wiki-search');
+      if (k === 'learnsrc') { const _sr = (inst.source === 'wiki-search'), _pt = (inst.source === 'paste');
         return '<div class="ambient-ctrl" title="Which body of text to read from. All are Wikimedia projects — the only ones that allow a browser to fetch them directly."><label for="' + p + '-learncorpus">Library</label>' +
           '<select id="' + p + '-learncorpus" class="ambient-select">' + _AMB_LEARN_CORPORA.map(c => '<option value="' + c.id + '">' + c.label + '</option>').join('') + '</select>' +
           '<span class="ambient-hint">plain = short sentences</span></div>' +
@@ -26567,7 +26574,11 @@
           '<div class="ambient-seg-row">' +
             '<button type="button" class="ambient-seg ambient-learn-rand' + (_sr ? '' : ' active') + '" title="Load a random Wikipedia article now. Cancels anything currently loading.">Random</button>' +
             '<button type="button" class="ambient-seg ambient-learn-srch' + (_sr ? ' active' : '') + '" title="Choose the article yourself">Search</button>' +
-          '</div><span class="ambient-hint">random → search</span></div>' +
+            '<button type="button" class="ambient-seg ambient-learn-pst' + (_pt ? ' active' : '') + '" title="Read text you paste in — no lookup, no network">Paste</button>' +
+          '</div><span class="ambient-hint">random → search → paste</span></div>' +
+        '<div class="ambient-ctrl ambient-learn-pasterow"' + (_pt ? '' : ' style="display:none"') + '><label for="' + p + '-learnpaste">Text</label>' +
+          '<textarea id="' + p + '-learnpaste" class="ambient-bpc-input ambient-learn-paste" rows="3" placeholder="Paste anything to be read aloud"></textarea>' +
+          '<button type="button" class="ambient-seg ambient-learn-loadp" title="Read this text">Load</button></div>' +
         // Search row exists always (so wiring is stable) but only SHOWS in search
         // mode — a term box with no visible relationship to a mode was the opaque bit.
         '<div class="ambient-ctrl ambient-learn-termrow"' + (_sr ? '' : ' style="display:none"') + '><label for="' + p + '-learnterm">Term</label>' +
@@ -26986,13 +26997,36 @@
                 // Switching library mid-article must abandon it, not blend the two.
                 if ((L.source || 'wiki-random') === 'wiki-random' || String(L.term || '').trim()) _ambLearnLoadNow(E, L);
                 else _ambLearnReset(E, L); }); }
-            const paint = (searching) => { if (row) row.style.display = searching ? '' : 'none';
-              if (bR) bR.classList.toggle('active', !searching); if (bS) bS.classList.toggle('active', !!searching); };
+            const pasteEl = el('learnpaste');
+            const prow = pasteEl && pasteEl.closest ? pasteEl.closest('.ambient-learn-pasterow') : null;
+            const bP = card && card.querySelector('.ambient-learn-pst');
+            const bLP = card && card.querySelector('.ambient-learn-loadp');
+            const corRow = (function () { const c = el('learncorpus'); return c && c.closest ? c.closest('.ambient-ctrl') : null; })();
+            // mode: 'wiki-random' | 'wiki-search' | 'paste'
+            const paint = (mode) => {
+              if (row) row.style.display = (mode === 'wiki-search') ? '' : 'none';
+              if (prow) prow.style.display = (mode === 'paste') ? '' : 'none';
+              // A Library picker means nothing for text you supplied yourself.
+              if (corRow) corRow.style.display = (mode === 'paste') ? 'none' : '';
+              if (bR) bR.classList.toggle('active', mode === 'wiki-random');
+              if (bS) bS.classList.toggle('active', mode === 'wiki-search');
+              if (bP) bP.classList.toggle('active', mode === 'paste');
+            };
+            if (pasteEl) { pasteEl.value = inst.pasted || '';
+              pasteEl.addEventListener('change', () => { const L = get(); if (L) { L.pasted = pasteEl.value || ''; persist(); } }); }
+            if (bP) bP.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;
+              L.source = 'paste'; paint('paste'); persist();
+              if (pasteEl) { try { pasteEl.focus(); } catch (x) {} } });
+            if (bLP) bLP.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;
+              L.pasted = (pasteEl && pasteEl.value) || ''; L.source = 'paste'; persist();
+              if (!String(L.pasted).trim()) { _ambLearnSayEl(E, L.id, 'Nothing pasted yet'); return; }
+              _ambLearnLoadNow(E, L); });
+            paint(inst.source || 'wiki-random');
             if (bR) bR.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;
-              L.source = 'wiki-random'; paint(false); persist();
+              L.source = 'wiki-random'; paint('wiki-random'); persist();
               _ambLearnLoadNow(E, L); });          // Random LOADS immediately, and cancels in-flight work
             if (bS) bS.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;
-              L.source = 'wiki-search'; paint(true); persist();
+              L.source = 'wiki-search'; paint('wiki-search'); persist();
               if (term) { try { term.focus(); } catch (x) {} } });   // reveal only — Load is the trigger
             if (bL) bL.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;
               L.term = (term && term.value) || ''; L.source = 'wiki-search'; persist();

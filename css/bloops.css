@@ -3869,7 +3869,57 @@
        state — margin-left:0 keeps Step Edit's auto-margin as the only spacer. */
     /* The spoken layer's "getting ready" popover — same shell as the other
        modals, so it reads as part of the app rather than a bolted-on dialog. */
-    .amb-spoken-loading { max-width: 420px; display: flex; flex-direction: column; gap: 10px; }
+    /* The article a Learn layer is reading, in its header — identity, not a control. */
+    /* SHRINKS rather than pushes: the head is a wrapping flex row (the live-notes
+       line deliberately takes its own 100% row), so a rigid chip would bump Solo and
+       the caret onto a second line. flex 0 1 auto + min-width 0 lets the title
+       ellipse instead. */
+    /* flex-basis 0 is what keeps the head on ONE line. The head is a WRAPPING flex
+       row (the live-notes line and playhead deliberately take their own 100% rows,
+       so it cannot simply be nowrap), and a wrapping row breaks BEFORE it shrinks —
+       an item sized to its text pushed Solo and the caret onto a second line. At
+       basis 0 the chip contributes nothing to the line's natural width, so the row
+       always fits, and it then grows into whatever is left over. On a phone that is
+       a few characters and an ellipsis; on a wide panel it is the whole title. */
+    /* A head carrying an article chip is tighter than the others, so it buys the
+       chip room from the two places that can spare it: the fixed 8px gutters, and
+       the unit readout (which is a convenience — the same number is in Timing —
+       whereas the article is the layer's identity). Scoped with :has so no other
+       card's header moves. */
+    .ambient-layer-head:has(.ambient-learn-article) > .ambient-layer-bars,
+    .ambient-layer-head:has(.ambient-learn-article) > .ambient-layer-unit,
+    .ambient-layer-head:has(.ambient-learn-article) > .ambient-solo-btn,
+    .ambient-layer-head:has(.ambient-learn-article) > .ambient-collapse { margin-left: 4px; }
+    .ambient-layer-head:has(.ambient-learn-article) > .ambient-layer-unit {
+      flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ambient-learn-article { flex: 1 1 0; min-width: 0; font-family: 'Segoe UI', sans-serif; font-size: 0.7rem;
+      color: #9ae6b4; margin: 0 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.9; }
+    .ambient-learn-artname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #9ae6b4; }
+    /* The Learn "what shall I read?" chooser — same shell as the other modals. */
+    .amb-learn-pick { display: flex; flex-direction: column; gap: 10px; }
+    .amb-learn-pick .ambient-ctrl { grid-template-columns: 64px minmax(0, 1fr); align-items: center; }
+    .amb-learn-pick-btns { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+    /* MODAL TEXT MUST WRAP. `.ambient-hint` is `white-space: nowrap` — correct in a
+       card row, where it sits in an auto-sized column, but inside a
+       `width: min(360px, 92vw)` dialog it simply runs out the side. Hints wrap here,
+       and `overflow-wrap: anywhere` covers the parts that are not ours to write:
+       an article title or a status line can be arbitrarily long. */
+    .amb-learn-pick, .amb-spoken-loading { overflow-wrap: anywhere; }
+    .amb-learn-pick .ambient-hint, .amb-spoken-loading .ambient-hint,
+    .amb-spoken-loading-msg { white-space: normal; }
+    .amb-pick-searchrow { display: flex; gap: 6px; min-width: 0; }
+    .amb-pick-searchrow .ambient-bpc-input { flex: 1 1 auto; min-width: 0; text-align: left; }
+    .amb-pick-searchrow .amb-pick-go { flex: 0 0 auto; }
+    /* Results: a scrolling list, so eight hits cannot push the buttons off screen. */
+    .amb-pick-results { display: flex; flex-direction: column; gap: 4px; max-height: 34vh; overflow-y: auto; }
+    .amb-pick-hit { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 6px 9px;
+      border: 1px solid #2d2d3f; border-radius: 8px; background: #0f0f1e; color: #e2e8f0; cursor: pointer;
+      font-family: 'Segoe UI', sans-serif; touch-action: manipulation; }
+    .amb-pick-hit:hover { border-color: #9f7aea; }
+    .amb-pick-hit.on { border-color: #9f7aea; background: rgba(159,122,234,0.16); }
+    .amb-pick-hit-t { font-size: 0.82rem; }
+    .amb-pick-hit-d { font-size: 0.68rem; color: #8b8ba7; }
+    .amb-spoken-loading { display: flex; flex-direction: column; gap: 10px; }
     .amb-spoken-loading-msg { font-family: 'Segoe UI', sans-serif; font-size: 0.85rem; color: #9ae6b4; min-height: 1.2em; }
     .amb-spoken-loading-btns { display: flex; justify-content: flex-end; }
     /* Learn status: reads as live state, not a control — hence no button chrome. */
@@ -4415,7 +4465,10 @@
       /* FIXED width: the button wraps the layer NAME, so its size used to track
          the name's length ("Bed" vs "Texture") and no two cards' toggles lined
          up. Fixed box + ellipsis keeps every card's header on one grid. */
-      height: 38px; width: 112px; padding: 0 13px; border: 1px solid #2d2d3f; border-radius: 10px;
+      /* 112px -> 90px (-20%): the header gained an article readout on Learn layers
+         and needed the room to stay on ONE line. The name still ellipses, so the
+         only cost is a couple of characters on the longest names. */
+      height: 38px; width: 90px; padding: 0 11px; border: 1px solid #2d2d3f; border-radius: 10px;
       display: inline-flex; align-items: center; flex: 0 0 auto;
       background: transparent; color: #6b6b8a; font-family: 'Segoe UI', sans-serif;
       font-size: 1.02rem; font-weight: 700; cursor: pointer; transition: all 0.15s ease;

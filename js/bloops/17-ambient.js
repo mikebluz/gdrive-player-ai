@@ -2900,7 +2900,8 @@
         // Sir Eel: `text` is user prose (a string, and the only thing that is
         // actually spoken), `sentences` only sizes the NEXT generate. Coerced
         // rather than trusted because both survive a hand-edited save file.
-        if (x.type === 'sireel' || x.type === 'learn') { x.voice = _ambSpokenVoice(x); _ambNormalizeWord(x); _ambNormalizeSpeech(x); x.snapBars = _ambWordBars(x); }
+        if (x.type === 'sireel' || x.type === 'learn') { x.voice = _ambSpokenVoice(x); _ambNormalizeWord(x); _ambNormalizeSpeech(x); x.snapBars = _ambWordBars(x);
+          if (x.type === 'learn' && typeof x.article !== 'string') x.article = ''; }
         if (x.type === 'sireel') {
           x.text = (typeof x.text === 'string') ? x.text : '';
           x.sentences = Math.max(1, Math.min(24, Number.isFinite(x.sentences) ? (x.sentences | 0) : 4));
@@ -12164,6 +12165,122 @@
       if (local !== null) return v + _ambSpokenType(L) + '|' + (L.source === 'paste' ? 'paste|' : '') + local;
       return v + (L.source || 'wiki-random') + '|' + (L.term || '') + '|' + (L.corpus || 'wikipedia');
     }
+    // TITLE SEARCH for the chooser. The REST v1 search endpoint sends CORS headers
+    // on every Wikimedia host we offer (verified against wikipedia and wikiquote)
+    // and returns a short description per hit, which is what makes a result list
+    // worth reading rather than a wall of ambiguous titles.
+    async function _ambLearnSearch(term, corpus) {
+      const q = String(term || '').trim();
+      if (!q) return [];
+      try {
+        const url = 'https://' + _ambLearnHost(corpus) + '/w/rest.php/v1/search/title?q=' + encodeURIComponent(q) + '&limit=8';
+        const r = await fetch(url);
+        if (!r.ok) return [];
+        const j = await r.json();
+        return (j && Array.isArray(j.pages) ? j.pages : [])
+          .map(pg => ({ title: String(pg.title || ''), desc: String(pg.description || '') }))
+          .filter(x => x.title);
+      } catch (e) { return []; }
+    }
+    // ---- "WHAT SHALL I READ?" — the Learn add flow ---------------------------
+    // A Learn layer used to grab a random article the moment it was added, which is
+    // a decision the layer made for you, and an irreversible-feeling one: by the time
+    // the card appeared it was already fetching and rendering something. Now the
+    // layer ASKS first — pick an article by name or take a random one — and only
+    // starts work when you press Load.
+    //
+    // "Waiting to be asked" is held in a WeakSet rather than a field on the layer,
+    // deliberately: persistWorkspace serialises underscore fields, and a persisted
+    // "not chosen yet" flag would make every SAVED project stop fetching on load.
+    // A WeakSet dies with the page, so saved layers behave exactly as they always
+    // have and only a freshly added one waits.
+    const _ambLearnPickPending = new WeakSet();
+    function _ambLearnSourceModal(E, L) {
+      if (!E || !L) return;
+      try {
+        const overlay = document.createElement('div'); overlay.className = 'modal-overlay';
+        const modal = document.createElement('div'); modal.className = 'step-div-modal amb-learn-pick';
+        const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, '');
+        modal.innerHTML = '<div class="ambient-mod-sub">Learn \u2014 what shall I read?</div>' +
+          '<div class="ambient-ctrl"><label for="amb-pick-corpus">Library</label>' +
+            '<select id="amb-pick-corpus" class="ambient-select">' +
+              _AMB_LEARN_CORPORA.map(c => '<option value="' + c.id + '"' + ((L.corpus || 'wikipedia') === c.id ? ' selected' : '') + '>' + esc(c.label) + '</option>').join('') +
+            '</select></div>' +
+          '<div class="ambient-ctrl"><label for="amb-pick-term">Search</label>' +
+            '<span class="amb-pick-searchrow">' +
+              '<input type="text" id="amb-pick-term" class="ambient-bpc-input" placeholder="Subject or title" value="' + esc(L.term || '') + '" />' +
+              '<button type="button" class="ambient-seg amb-pick-go">\ud83d\udd0d</button>' +
+            '</span></div>' +
+          '<div class="amb-pick-results" id="amb-pick-results" hidden></div>' +
+          '<div class="ambient-hint amb-pick-note">Search, then tap a result to load it \u2014 or take a random article. The voice downloads once, on the first line.</div>' +
+          '<div class="amb-learn-pick-btns">' +
+            '<button type="button" class="ambient-seg amb-pick-cancel">Cancel</button>' +
+            '<button type="button" class="ambient-seg amb-pick-random">\ud83c\udfb2 Random</button>' +
+          '</div>';
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+        overlay.style.setProperty('display', 'flex', 'important');
+        const term = modal.querySelector('#amb-pick-term');
+        const corpus = modal.querySelector('#amb-pick-corpus');
+        const list = modal.querySelector('#amb-pick-results');
+        const note = modal.querySelector('.amb-pick-note');
+        let closed = false;
+        const close = () => { if (closed) return; closed = true; try { overlay.remove(); } catch (e) {} };
+        const say = (t) => { if (note) note.textContent = t; };
+        // SEARCH first, choose second — and CHOOSING IS LOADING. There is no Load
+        // button: picking a result is an unambiguous act, and making it a two-step
+        // (select, then confirm) only adds a click and a state to get wrong. Typing a
+        // title and hoping it is the exact page name was the flow this replaced; it
+        // failed silently on near-misses.
+        const search = async () => {
+          const q = String((term && term.value) || '').trim();
+          if (!q) { say('Type something to search for, or press Random.'); return; }
+          say('Searching\u2026');
+          const res = await _ambLearnSearch(q, (corpus && corpus.value) || 'wikipedia');
+          if (closed) return;
+          if (!res.length) { list.hidden = true; list.innerHTML = ''; say('No matches for \u201c' + q + '\u201d \u2014 try another wording.'); return; }
+          list.innerHTML = res.map((x, i) => '<button type="button" class="amb-pick-hit" data-i="' + i + '" data-title="' + esc(x.title) + '">' +
+            '<span class="amb-pick-hit-t">' + esc(x.title) + '</span>' +
+            (x.desc ? '<span class="amb-pick-hit-d">' + esc(x.desc) + '</span>' : '') + '</button>').join('');
+          list.hidden = false;
+          say('Tap one to load it.');
+          list.querySelectorAll('.amb-pick-hit').forEach(b => b.addEventListener('click', () => {
+            const t = b.getAttribute('data-title') || '';
+            if (!t) return;
+            b.classList.add('on');
+            say('Loading \u201c' + t + '\u201d\u2026');
+            load(t);
+          }));
+        };
+        // CANCEL means "not now": the layer stays idle rather than quietly fetching a
+        // random article behind the dismissed dialog. Pressing play, or any of the
+        // card's own buttons, releases it.
+        const cancel = () => { close(); try { _ambRenderExtras(E); } catch (e) {} };
+        // `title` is the chosen article; empty means take a random one.
+        const load = (title) => {
+          const t = String(title || '').trim();
+          L.corpus = (corpus && corpus.value) || 'wikipedia';
+          L.term = t;
+          L.source = t ? 'wiki-search' : 'wiki-random';
+          _ambLearnPickPending.delete(L);
+          close();
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          try { _ambRenderExtras(E); } catch (e) {}      // the card's Source row follows the choice
+          try { _ambLearnHeadSync(E, L); } catch (e) {}
+          try { _ambLearnLoadNow(E, L); } catch (e) {}   // start fetching + rendering now
+          try { _ambSpokenLoadingModal(E, L); } catch (e) {}   // hand straight over to the status popover
+        };
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) cancel(); });
+        modal.querySelector('.amb-pick-cancel').addEventListener('click', cancel);
+        modal.querySelector('.amb-pick-random').addEventListener('click', () => load(''));
+        modal.querySelector('.amb-pick-go').addEventListener('click', search);
+        // Enter SEARCHES — it is the only thing it could sensibly do now, since
+        // loading happens by choosing a result.
+        if (term) term.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); search(); } });
+        if (corpus) corpus.addEventListener('change', () => { if (String((term && term.value) || '').trim()) search(); });
+        try { term && term.focus(); } catch (e) {}
+      } catch (e) { _ambLearnPickPending.delete(L); }
+    }
     // ---- "GETTING READY" POPOVER --------------------------------------------
     // Adding a spoken layer starts a chain the user cannot see: download the voice,
     // fetch an article, render line 1. That is tens of seconds during which the card
@@ -12208,6 +12325,31 @@
           } catch (e) { close(); }
         }, 250);
         setTimeout(close, 180000);   // never leave it up forever
+      } catch (e) {}
+    }
+    // Paint the header's article chip from the layer's own state. Cheap and
+    // idempotent — called when an article lands and on every card render.
+    function _ambLearnHeadSync(E, L) {
+      try {
+        if (!E || !L || L.type !== 'learn') return;
+        const host = document.getElementById(E.hostId); if (!host) return;
+        const key = 'learn:' + (L.id | 0);
+        const t = String(L.article || '').trim();
+        host.querySelectorAll('.ambient-learn-article[data-artkey="' + key + '"]').forEach(el => {
+          el.textContent = t ? ('\u25b8 ' + t) : '';
+          el.style.display = t ? '' : 'none';
+        });
+        // The card's Source row names it too, and it is rendered BEFORE the fetch
+        // resolves — so without this it shows the previous article until the next
+        // full re-render (measured: one article behind).
+        const nm = _ambGet(E, _ambSpokenPrefix(L) + '-artname');
+        if (nm) nm.textContent = t || '\u2014';
+      } catch (e) {}
+    }
+    function _ambLearnHeadSyncAll(E) {
+      try {
+        const cfg = E && E.getCfg && E.getCfg(); if (!cfg) return;
+        (cfg.extras || []).forEach(L => { if (L && L.type === 'learn') _ambLearnHeadSync(E, L); });
       } catch (e) {}
     }
     // Write straight to a spoken card's status line. Needed BEFORE play, when no
@@ -12310,6 +12452,8 @@
     // buttons must work with the transport stopped — that was the opaque part.
     function _ambLearnLoadNow(E, L) {
       if (!L) return;
+      _ambLearnPickPending.delete(L);   // an explicit Load / Random / Search IS the answer
+
       const key = _ambSpokenKey(L);
       E.seqState = E.seqState || {};
       const st = E.seqState[key] || (E.seqState[key] = { q: [], sentences: [], si: 0, pending: false, srcKey: '' });
@@ -12406,6 +12550,8 @@
     }
     async function _ambSeelPrerender(E, L) {
       if (!L || !E) return;
+      // Freshly added and still being asked what to read — do not fetch anything.
+      if (_ambLearnPickPending.has(L)) return;
       const ent = _ambSeelEntry(E, L, true);
       const st = _ambSeelState(E, L);
       const ck = _ambSpokenSrcKey(L);
@@ -12427,16 +12573,23 @@
               ent.lines = lines; ent.cache = lines.map(l => ent.buf.get(vk + l) || null); ent.full = false; st.ci = 0;
             }
             ent.titles = [_ambIsSeel(L) ? 'Sir Eel' : 'Pasted text'];
-          } else if (!ent.lines.length || (_ambSpokenWantMore(ent, st) && !ent.full)) {
+          } else if (!ent.lines.length) {
             st.phase = 'fetch'; st._say = null; say();
             const doc = await _ambLearnFetch(L.source || 'wiki-random', L.term || '', L.corpus);
             if (ent.key !== ck) return;
             if (!doc) { st.phase = 'nofetch'; st._say = null; say(); return; }
-            const add = _ambSpokenLines(doc.text).filter(l => ent.lines.indexOf(l) < 0);
-            ent.titles = (ent.titles || []).concat([doc.title]);
-            ent.lines = ent.lines.concat(add);
-            ent.cache = ent.cache.concat(add.map(l => ent.buf.get(vk + l) || null));
-            st.phase = null;
+            const add = _ambSpokenLines(doc.text);
+            ent.titles = [doc.title];
+            ent.lines = add;
+            ent.cache = add.map(l => ent.buf.get(vk + l) || null);
+            // The subject is layer state, not just runtime: the card header names it,
+            // and that has to survive a reload like any other setting.
+            // Persist it: the header names the article, and that readout has to
+            // survive a reload like any other layer setting. Nothing else writes
+            // here, so without this the field is only ever runtime state.
+            try { L.article = String(doc.title || ''); if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            st.ci = 0; st.phase = null;
+            try { _ambLearnHeadSync(E, L); } catch (e) {}
           }
           st.sentences = ent.lines; st.title = (ent.titles && ent.titles.length) ? ent.titles[ent.titles.length - 1] : '';
           // ---- RENDER ----------------------------------------------------
@@ -12444,7 +12597,7 @@
           if (next < 0) {
             // Everything in hand is audio. Fetch more only if the cursor is near the
             // end and there is room; otherwise this pump is done.
-            if (local !== null || ent.full || !_ambSpokenWantMore(ent, st)) { st.prerendering = false; st._say = null; say(); return; }
+            { st.prerendering = false; st._say = null; say(); return; }
             continue;
           }
           if (_ambSpokenCachedSec(ent) > _AMB_SEEL_CACHE_SEC) {
@@ -12469,15 +12622,24 @@
       } finally {
         ent.running = false;
         if (ent.key === ck) { st.prerendering = false; st._say = null; try { _ambLearnSayEl(E, L, _ambLearnStatusText(L, st)); } catch (e) {} }
+        else {
+          // We bailed because the article / voice / text changed under us — which
+          // means there IS new work and nobody else is going to start it. Without
+          // this the layer strands on "Fetching an article…" forever whenever a
+          // setting changes while a fetch is in flight.
+          setTimeout(() => { try { _ambSeelPrerender(E, L); } catch (e) {} }, 0);
+        }
       }
     }
     // More material is wanted when the play cursor is within a few lines of the end
     // of what we have. Before the layer has ever played, one article is enough.
-    function _ambSpokenWantMore(ent, st) {
-      if (ent.full) return false;
-      const have = (ent.lines || []).length;
-      if (!have) return true;
-      return ((st.ci | 0) % Math.max(1, have)) >= have - _AMB_SPOKEN_LOOKAHEAD;
+    // ONE ARTICLE PER LAYER. It used to pull another one in whenever the play cursor
+    // neared the end, which made a Learn layer feel like a radio that kept changing
+    // station: the subject drifted while you were listening and the layer never
+    // settled on anything. A layer now reads what it was given and loops it; a new
+    // article is an explicit act (the New article button, or the chooser on add).
+    function _ambSpokenWantMore(ent) {
+      return !(ent.lines || []).length;
     }
     // TEXT → SPOKEN LINES. Sentences first, then long ones are broken at CLAUSE
     // boundaries, because a line costs ~0.9 s + about its own spoken length to
@@ -16475,6 +16637,9 @@
         // into play, or the text was just rewritten) kick the pre-render and wait for
         // it, rather than falling back to on-demand synthesis, which is the very
         // latency this removes.
+        // Pressing play is an explicit "go", so a layer still waiting to be asked
+        // stops waiting here rather than staying silent through a whole session.
+        if (_ambLearnPickPending.has(L)) _ambLearnPickPending.delete(L);
         // EVERY spoken layer plays from the cache now, fetched articles included.
         // The pump renders ahead in the background, so the tick never synthesises:
         // it takes what is ready, and simply waits when the next line is not — which
@@ -16482,7 +16647,7 @@
         {
           const ent = _ambSeelEntry(E, L, false);
           const cache = (ent && ent.key === srcKey && ent.cache.length) ? ent.cache : null;
-          if (!cache || _ambSpokenWantMore(ent, st) || ent.cache.indexOf(null) >= 0) {
+          if (!cache || _ambSpokenWantMore(ent) || ent.cache.indexOf(null) >= 0) {
             if (!ent || !ent.running) { try { _ambSeelPrerender(E, L); } catch (e) {} }
           }
           if (cache) {
@@ -25135,6 +25300,12 @@
       // Live unit-length readout (filled by _ambSyncLayerUnits) — shows the layer's
       // unit/loop length and the formula that produces it, so you know what to tweak.
       (freezeKey ? '<span class="ambient-layer-unit" data-ukey="' + freezeKey + '" title="Unit length (tap the named parameters to change it)"></span>' : '') +
+      // ARTICLE chip — a Learn layer's whole identity is what it is reading, and the
+      // card header was the one place that never said. Sits right of the length
+      // readouts, where the eye is already reading the layer's state. Filled by
+      // _ambLearnHeadSync so a new article appears the moment it lands.
+      (freezeKey && String(freezeKey).split(':')[0] === 'learn'
+        ? '<span class="ambient-learn-article" data-artkey="' + freezeKey + '" title="The article this layer is reading"></span>' : '') +
       // Level shortcut DIAL — a compact rotary knob for this layer's level, right
       // of the readouts / left of Solo. Drag up/down (or ↑/↓ when focused) to set;
       // double-tap resets. Value/rotation filled by _ambSyncLayerUnits + kept in
@@ -27194,7 +27365,7 @@
       // shared mix block and nothing else.
       learn: { label: 'Learn', ctrls: [
         ['grp', 'Source'], ['learnsrc'], ['spokenvoice'], ['learnstatus'],
-        ['grp', 'Notes'], ['wordmusic'],
+        ['grp', 'Notes'], ['tone'], ['wordmusic'],
         ['grp', 'Speech'], ['speechfx'],
         ['grp', 'Timing'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
         ..._AMB_MIX,
@@ -27204,7 +27375,7 @@
       // control set as Learn bar the source block, because it is the same layer.
       sireel: { label: 'Sir Eel', ctrls: [
         ['grp', 'Source'], ['sl', 'sentences', 'Length', 1, 24, 'sentences per text'], ['seeltext'], ['spokenvoice'], ['learnstatus'],
-        ['grp', 'Notes'], ['wordmusic'],
+        ['grp', 'Notes'], ['tone'], ['wordmusic'],
         ['grp', 'Speech'], ['speechfx'],
         ['grp', 'Timing'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
         ..._AMB_MIX,
@@ -27274,13 +27445,13 @@
       if (type === 'beat') return Object.assign(base, { kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, ghosts: 0, holdSteps: 0, tight: 0, lenVary: 0, ..._AMB_ADSR_DEFAULTS.beat });
       // Learn: speaks fetched prose over the music. `intervalMs` is the GAP between
       // spoken lines, not a note length — the utterance sets its own duration.
-      if (type === 'learn') return Object.assign(base, { source: 'wiki-random', corpus: 'wikipedia', term: '', pasted: '', voice: '', intervalMs: 900, lengthMs: 0 });
+      if (type === 'learn') return Object.assign(base, { source: 'wiki-random', corpus: 'wikipedia', term: '', pasted: '', voice: '', tone: '', intervalMs: 900, lengthMs: 0 });
       // Sir Eel: `text` is what gets spoken and is fully user-editable; `sentences`
       // is only how much the generator writes NEXT time. The default text is EMPTY
       // on purpose — _ambDefaultLayer must stay deterministic (the invariant harness
       // builds layers straight from it), so the opening text is rolled at UI time in
       // _ambAddExtra, the same split the euclid stochastic init uses.
-      if (type === 'sireel') return Object.assign(base, { text: '', sentences: 4, elaborate: false, voice: '', intervalMs: 900, lengthMs: 0 });
+      if (type === 'sireel') return Object.assign(base, { text: '', sentences: 4, elaborate: false, voice: '', tone: '', intervalMs: 900, lengthMs: 0 });
       // (Shape layer type removed — see _AMB_LAYER_SCHEMA + _normalizeAmbientCfg.)
       // Arp: a series of scale/chord entries (each with its own pass count) that
       // the engine arpeggiates through. Voice via `tone`, timing via rate/interval.
@@ -27780,33 +27951,20 @@
       if (k === 'spat') return _ambSpatCtrl(p, inst);
       if (k === 'mod') return _ambModUi(lk);
       if (k === 'fx') return _ambFxUi(lk);
-      if (k === 'learnsrc') { const _sr = (inst.source === 'wiki-search'), _pt = (inst.source === 'paste');
-        return '<div class="ambient-ctrl" title="Which body of text to read from. All are Wikimedia projects — the only ones that allow a browser to fetch them directly."><label for="' + p + '-learncorpus">Library</label>' +
-          '<select id="' + p + '-learncorpus" class="ambient-select">' + _AMB_LEARN_CORPORA.map(c => '<option value="' + c.id + '">' + c.label + '</option>').join('') + '</select>' +
-          '<span class="ambient-hint">plain = short sentences</span></div>' +
-        '<div class="ambient-ctrl" title="Random loads an article straight away. Search reveals a box — type a title and press Load."><label>Source</label>' +
-          '<div class="ambient-seg-row">' +
-            '<button type="button" class="ambient-seg ambient-learn-rand' + (_sr ? '' : ' active') + '" title="Load a random Wikipedia article now. Cancels anything currently loading.">Random</button>' +
-            '<button type="button" class="ambient-seg ambient-learn-srch' + (_sr ? ' active' : '') + '" title="Choose the article yourself">Search</button>' +
-            '<button type="button" class="ambient-seg ambient-learn-pst' + (_pt ? ' active' : '') + '" title="Read text you paste in — no lookup, no network">Paste</button>' +
-          '</div><span class="ambient-hint">random → search → paste</span></div>' +
-        '<div class="ambient-ctrl ambient-learn-pasterow"' + (_pt ? '' : ' style="display:none"') + '><label for="' + p + '-learnpaste">Text</label>' +
-          '<textarea id="' + p + '-learnpaste" class="ambient-bpc-input ambient-learn-paste" rows="3" placeholder="Paste anything to be read aloud"></textarea>' +
-          '<button type="button" class="ambient-seg ambient-learn-loadp" title="Read this text">Load</button></div>' +
-        // Search row exists always (so wiring is stable) but only SHOWS in search
-        // mode — a term box with no visible relationship to a mode was the opaque bit.
-        '<div class="ambient-ctrl ambient-learn-termrow"' + (_sr ? '' : ' style="display:none"') + '><label for="' + p + '-learnterm">Term</label>' +
-          '<input type="text" id="' + p + '-learnterm" class="ambient-bpc-input" placeholder="article title" />' +
-          '<button type="button" class="ambient-seg ambient-learn-load" title="Fetch this article and start reading it">Load</button></div>'; }
-      // The Text box + the generator. Sir Eel's material is EDITABLE prose, so the
-      // box is the layer's real content — the generator only fills it, and anything
-      // typed here is spoken verbatim from the next line on.
-      // Eight style vectors against ONE model, so this is a per-request choice, not
-      // a reload — the ~24 MB download is shared by every voice.
-      if (k === 'spokenvoice') return '<div class="ambient-ctrl" title="Which of the eight KittenTTS voices reads this layer. Switching re-renders the lines it has already written."><label for="' + p + '-spokenvoice">Voice</label>' +
-        '<select id="' + p + '-spokenvoice" class="ambient-select">' +
-          _AMB_SPOKEN_VOICES.map(v => '<option value="' + v[0] + '"' + ((_ambSpokenVoice(inst) === v[0]) ? ' selected' : '') + '>' + v[1] + '</option>').join('') +
-        '</select><span class="ambient-hint">same model, different speaker</span></div>';
+      if (k === 'learnsrc') { const _pt = (inst.source === 'paste');
+        // ONE way in. This used to be Random / Search segments plus a Library select
+        // and a Term box — all of which now live in the chooser popover, so the card
+        // just names what it is reading and offers to change it.
+        return '<div class="ambient-ctrl" title="Load a different article into this layer. Opens the same chooser you saw when the layer was added; everything else about the layer stays as it is."><label>Article</label>' +
+            '<span class="ambient-hint ambient-learn-artname" id="' + p + '-artname">' + _ambEscText(inst.article || '\u2014') + '</span>' +
+            '<button type="button" class="ambient-seg ambient-learn-new">\ud83d\udcc4 New article\u2026</button></div>' +
+          '<div class="ambient-ctrl" title="Read text you supply instead of an article \u2014 no lookup, no network."><label>Or</label>' +
+            '<div class="ambient-seg-row"><button type="button" class="ambient-seg ambient-learn-pst' + (_pt ? ' active' : '') + '">Paste text</button></div>' +
+            '<span class="ambient-hint">your own words</span></div>' +
+          '<div class="ambient-ctrl ambient-learn-pasterow"' + (_pt ? '' : ' style="display:none"') + '><label for="' + p + '-learnpaste">Text</label>' +
+            '<textarea id="' + p + '-learnpaste" class="ambient-bpc-input ambient-learn-paste" rows="3" placeholder="Paste anything to be read aloud"></textarea>' +
+            '<button type="button" class="ambient-seg ambient-learn-loadp" title="Read this text">Load</button></div>';
+      }
       if (k === 'seeltext') return '<div class="ambient-ctrl ambient-seel-textrow"><label for="' + p + '-seeltext">Text</label>' +
         '<textarea id="' + p + '-seeltext" class="ambient-bpc-input ambient-seel-text" rows="4" placeholder="Press New text, or write your own"></textarea>' +
         '<span class="ambient-hint">spoken as written · loops until you change it</span></div>';
@@ -28371,58 +28529,27 @@
                 if (!String(L.text).trim()) { _ambLearnSayEl(E, L, 'No text yet — press 🎲 New text'); return; }
                 try { _ambSeelPrerender(E, L); } catch (x) {} }); } }
           else if (k === 'learnsrc') {
-            const term = el('learnterm');
-            const row = term && term.closest ? term.closest('.ambient-learn-termrow') : null;
-            const card = term && term.closest ? term.closest('.ambient-layer') : null;
-            const bR = card && card.querySelector('.ambient-learn-rand');
-            const bS = card && card.querySelector('.ambient-learn-srch');
-            const bL = card && card.querySelector('.ambient-learn-load');
-            if (term) { term.value = inst.term || ''; term.addEventListener('change', () => { const L = get(); if (L) { L.term = term.value || ''; persist(); } }); }
-            const cor = el('learncorpus');
-            if (cor) { cor.value = inst.corpus || 'wikipedia';
-              cor.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
-                L.corpus = cor.value || 'wikipedia'; persist();
-                // Switching library mid-article must abandon it, not blend the two.
-                if ((L.source || 'wiki-random') === 'wiki-random' || String(L.term || '').trim()) _ambLearnLoadNow(E, L);
-                else _ambLearnReset(E, L); }); }
+            const card = el('learnstat') ? el('learnstat').closest('.ambient-layer') : null;
+            const nb = card && card.querySelector('.ambient-learn-new');
+            // The SAME chooser as on add — pick, Load, watch the status popover.
+            if (nb) nb.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;
+              try { _ambLearnSourceModal(E, L); } catch (x) {} });
             const pasteEl = el('learnpaste');
             const prow = pasteEl && pasteEl.closest ? pasteEl.closest('.ambient-learn-pasterow') : null;
             const bP = card && card.querySelector('.ambient-learn-pst');
             const bLP = card && card.querySelector('.ambient-learn-loadp');
-            const corRow = (function () { const c = el('learncorpus'); return c && c.closest ? c.closest('.ambient-ctrl') : null; })();
-            // mode: 'wiki-random' | 'wiki-search' | 'paste'
-            const paint = (mode) => {
-              if (row) row.style.display = (mode === 'wiki-search') ? '' : 'none';
-              if (prow) prow.style.display = (mode === 'paste') ? '' : 'none';
-              // A Library picker means nothing for text you supplied yourself.
-              if (corRow) corRow.style.display = (mode === 'paste') ? 'none' : '';
-              if (bR) bR.classList.toggle('active', mode === 'wiki-random');
-              if (bS) bS.classList.toggle('active', mode === 'wiki-search');
-              if (bP) bP.classList.toggle('active', mode === 'paste');
-            };
             if (pasteEl) { pasteEl.value = inst.pasted || '';
               pasteEl.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
                 L.pasted = pasteEl.value || ''; persist();
-                // Pasted text is LOCAL, so it can be rendered before the press like
-                // Sir Eel's — the same cache, the same instant start.
                 if (L.source === 'paste' && _ambSpokenLocalText(L) !== null) { _ambLearnReset(E, L); try { _ambSeelPrerender(E, L); } catch (x) {} } }); }
             if (bP) bP.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;
-              L.source = 'paste'; paint('paste'); persist();
+              L.source = 'paste'; persist();
+              if (prow) prow.style.display = '';
+              bP.classList.add('active');
               if (pasteEl) { try { pasteEl.focus(); } catch (x) {} } });
             if (bLP) bLP.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;
               L.pasted = (pasteEl && pasteEl.value) || ''; L.source = 'paste'; persist();
               if (!String(L.pasted).trim()) { _ambLearnSayEl(E, L, 'Nothing pasted yet'); return; }
-              _ambLearnLoadNow(E, L); });   // local text → _ambLearnLoadNow pre-renders the whole thing
-            paint(inst.source || 'wiki-random');
-            if (bR) bR.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;
-              L.source = 'wiki-random'; paint('wiki-random'); persist();
-              _ambLearnLoadNow(E, L); });          // Random LOADS immediately, and cancels in-flight work
-            if (bS) bS.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;
-              L.source = 'wiki-search'; paint('wiki-search'); persist();
-              if (term) { try { term.focus(); } catch (x) {} } });   // reveal only — Load is the trigger
-            if (bL) bL.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;
-              L.term = (term && term.value) || ''; L.source = 'wiki-search'; persist();
-              if (!String(L.term).trim()) { _ambLearnSayEl(E, L, 'Type something to search for'); return; }
               _ambLearnLoadNow(E, L); });
           }
           else if (k === 'arpdir') { const s = el('dir'); if (s) { s.value = inst.dir || 'up'; s.addEventListener('change', () => { const L = get(); if (L) {
@@ -29290,6 +29417,7 @@
       const _exSnap = _ambSnapExpanded(wrap);
       wrap.innerHTML = _ambNamespaceHtml(E, cfg.extras.map(inst => (inst && (inst.type === 'seq' || inst.type === 'samp')) ? '' : _ambInstCardHtml(inst)).join(''));
       cfg.extras.forEach(inst => { if (inst && (inst.type === 'seq' || inst.type === 'samp')) return; _ambWireInst(E, inst); });
+      try { _ambLearnHeadSyncAll(E); } catch (e) {}   // header article chips follow the layer state
       _ambRestoreExpanded(wrap, _exSnap, E);
       try { _ambRenderMixer(E); } catch (e) {}   // keep the mixer in sync on add/delete
       try { _ambSyncSliderReadouts(wrap); } catch (e) {}   // reflect synced mod/fx values
@@ -29437,10 +29565,18 @@
       if (type === 'sireel') L.text = _ambSeelText(L.sentences | 0);
       cfg.extras.push(L);
       if (_ambMarkFreshLayer(E, L, type + ':' + newId)) { try { if (typeof showToast === 'function') showToast('Layer added muted — tap its name to bring it in on the next boundary.'); } catch (e) {} }
+      // MARK IT PENDING FIRST. _ambRenderExtras wires the card, and the card's hook
+      // kicks the render pump — so marking it after the render let a random article
+      // fetch start 840 ms BEFORE the user was even asked (measured), which then
+      // held the pump's `running` latch and swallowed the real Load.
+      if (type === 'learn') _ambLearnPickPending.add(L);
       _ambRenderExtras(E);
       // A spoken layer has a visible wait in front of it (voice, article, first
-      // line). Say so, rather than leaving a silent card.
-      if (type === 'learn' || type === 'sireel') { try { _ambSpokenLoadingModal(E, L); } catch (e) {} }
+      // line). Say so, rather than leaving a silent card. A Learn layer has nothing
+      // to say until it is told what to read, so it asks first; Sir Eel already
+      // wrote its own text and goes straight to the status popover.
+      if (type === 'learn') { try { _ambLearnSourceModal(E, L); } catch (e) {} }
+      else if (type === 'sireel') { try { _ambSpokenLoadingModal(E, L); } catch (e) {} }
       if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }

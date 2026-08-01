@@ -104,6 +104,9 @@
     function stopSequence() {
       clearTimeout(sequenceTimer);
       sequenceTimer = null;
+      // The vinyl bed GENERATES sound, so it has to follow the transport or the app
+      // keeps crackling after Stop. Cleared here, restarted by playSequence.
+      try { if (typeof applyMasterVinyl === 'function') applyMasterVinyl(); } catch (e) {}
       _schedStreams = [];
       _schedStopping = false;
       // MIDI output: Stop + clock halt + all-notes-off on the output.

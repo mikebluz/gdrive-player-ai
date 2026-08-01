@@ -3867,11 +3867,33 @@
     .ambient-euclid-stepedit.on { border-color: #4fd1c5; background: rgba(79,209,197,0.16); color: #d6fbf6; }
     /* Fold sits beside Step Edit. It is an ACTION, not a mode, so it has no .on
        state — margin-left:0 keeps Step Edit's auto-margin as the only spacer. */
+    /* The spoken layer's "getting ready" popover — same shell as the other
+       modals, so it reads as part of the app rather than a bolted-on dialog. */
+    .amb-spoken-loading { max-width: 420px; display: flex; flex-direction: column; gap: 10px; }
+    .amb-spoken-loading-msg { font-family: 'Segoe UI', sans-serif; font-size: 0.85rem; color: #9ae6b4; min-height: 1.2em; }
+    .amb-spoken-loading-btns { display: flex; justify-content: flex-end; }
     /* Learn status: reads as live state, not a control — hence no button chrome. */
     .ambient-learn-row { display: flex; align-items: center; gap: 6px; }
     .ambient-learn-stat { flex: 1 1 auto; min-width: 0; font-family: 'Segoe UI', sans-serif; font-size: 0.72rem; color: #9ae6b4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     textarea.ambient-learn-paste { flex: 1 1 auto; min-width: 0; resize: vertical; font-size: 0.72rem; line-height: 1.35; }
+    /* Sir Eel's Text box is the layer's CONTENT, not a parameter, so it takes the
+       whole row instead of .ambient-ctrl's middle column. In the 84px/1fr/auto grid
+       the hint claims the `auto` track and the box measured 48px wide at 390px —
+       unusable, and not fixable by shrinking the hint. Stacking is the fix that
+       holds at every width; the type/colour tokens stay the ones its neighbours use. */
+    .ambient-ctrl.ambient-seel-textrow { display: block; }
+    .ambient-seel-textrow > label { display: block; margin-bottom: 4px; }
+    textarea.ambient-seel-text { width: 100%; min-width: 0; box-sizing: border-box; resize: vertical; text-align: left; font-size: 0.72rem; line-height: 1.4; }
+    .ambient-seel-textrow .ambient-hint { display: block; margin-top: 4px; }
     .ambient-learn-go { flex: 0 0 auto; margin-left: 6px; }
+    /* Sir Eel puts three controls beside the status. WRAP rather than let them
+       squeeze the status line to nothing on a phone — the row is a flex box, so
+       this costs one line of height and never a horizontal scrollbar. */
+    .ambient-learn-row { flex-wrap: wrap; row-gap: 6px; }
+    .ambient-seel-add { flex: 0 0 auto; margin-left: 6px; }
+    .ambient-seel-elab { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; margin-left: 6px;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.72rem; color: #a0aec0; cursor: pointer; touch-action: manipulation; }
+    .ambient-seel-elab input { accent-color: #9f7aea; width: 15px; height: 15px; touch-action: manipulation; }
     .ambient-euclid-fold { margin-left: 6px; padding: 2px 9px; border: 1px solid #2d2d3f; border-radius: 999px; background: #16162a; color: #cbd5e0; cursor: pointer; font-size: 0.72rem; touch-action: manipulation; }
     .ambient-euclid-fold:hover:not(:disabled) { border-color: #9f7aea; background: rgba(159,122,234,0.16); color: #e9dcff; }
     .ambient-euclid-fold:disabled { opacity: 0.35; cursor: default; }
@@ -4157,7 +4179,6 @@
       .ambient-layer-topctrls .ambient-savepreset-btn:hover { border-color: #f6e05e; color: #faf089; background: rgba(246, 224, 94, 0.12); }
       .ambient-layer-topctrls .ambient-seq-del:hover        { border-color: #e25563; color: #ff8a95; background: rgba(226, 85, 99, 0.12); }
       .ambient-layer-topctrls .ambient-piano-rec:hover      { border-color: #e53e3e; color: #fc8181; background: rgba(229, 62, 62, 0.12); }
-      .ambient-layer-topctrls .ambient-hum-rec:hover        { border-color: #ed64a6; color: #f687b3; background: rgba(237, 100, 166, 0.12); }
       .ambient-layer-topctrls .ambient-dice-btn:hover       { border-color: #f6ad55; color: #fbd38d; background: rgba(246, 173, 85, 0.12); }
       .ambient-layer-topctrls .ambient-piano-toggle:hover   { border-color: #7fd6c4; color: #7fd6c4; background: rgba(127, 214, 196, 0.12); }
     }
@@ -8581,7 +8602,11 @@
        the top level (forced display:block since it's normally hidden in
        Make view), then hide every #mix-view child except the tracks
        section so the Mixdown bar collapses too. */
-    body.tracks-fullscreen > *:not(#mix-view):not(.ctx-menu):not(.float-header):not(.xport-menu) { display: none !important; }
+    /* .bloops-toast must be exempt here as it is in the view-* rules: it is appended
+       to <body>, so an unexempted hide rule makes EVERY toast invisible in this view
+       — the same defect that once silently swallowed all guidance on Grow/Listen/
+       Harvest, reported as "the button does nothing". */
+    body.tracks-fullscreen > *:not(#mix-view):not(.ctx-menu):not(.float-header):not(.xport-menu):not(.bloops-toast) { display: none !important; }
     body.tracks-fullscreen > #mix-view { display: block !important; padding: 0; }
     body.tracks-fullscreen #mix-view > *:not(.tracks-section) { display: none !important; }
     body.tracks-fullscreen {
@@ -12350,6 +12375,9 @@
 .ambient-piano-rec { background: none; border: none; color: #a33; font-size: 13px; cursor: pointer; opacity: 0.55; padding: 2px 5px; }
 .ambient-piano-rec:hover { opacity: 1; }
 .ambient-piano-rec.rec { color: #e33; opacity: 1; animation: amb-rec-pulse 1s ease-in-out infinite; }
+.ambient-hum-rec { background: none; border: none; font-size: 12px; cursor: pointer; opacity: 0.55; padding: 2px 4px; }
+.ambient-hum-rec:hover { opacity: 1; }
+.ambient-hum-rec.rec { opacity: 1; animation: amb-rec-pulse 1s ease-in-out infinite; }
 @keyframes amb-rec-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.35); } }
 
 /* Author mode: the seed grid docks into the Seed subsection */
@@ -12367,9 +12395,6 @@
 .ambient-seedgrid-striphost .lane-row { width: 100%; box-sizing: border-box; }
 
 /* Hum rec (audio → phrase transcription) */
-.ambient-hum-rec { background: none; border: none; font-size: 12px; cursor: pointer; opacity: 0.55; padding: 2px 4px; }
-.ambient-hum-rec:hover { opacity: 1; }
-.ambient-hum-rec.rec { opacity: 1; animation: amb-rec-pulse 1s ease-in-out infinite; }
 
 /* Sections (sets of bars): scheduler lane blocks */
 .ambient-sched-secrow .ambient-sched-strip.sections { display: flex; position: relative; }

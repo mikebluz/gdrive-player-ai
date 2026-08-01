@@ -1084,21 +1084,62 @@
         masterVolume.volume.rampTo(db, 0.05);
       } catch (e) {}
     }
+    // IS ANYTHING PLAYING? The vinyl bed is the only part of this stage that
+    // GENERATES sound — the wobble, the tone loss and the tape stage all process a
+    // signal, so with nothing playing they are inaudible on their own. The crackle
+    // and hiss are a looping buffer, so without this they carry on after Stop and
+    // the app hisses at you while it is doing nothing.
+    //
+    // Read at call time and typeof-guarded: this file loads before the engines that
+    // own these flags, and `sequenceTimer !== null` is the same idiom the grid modes
+    // and Shape already use for "the sequencer is running".
+    function _vinylTransportOn() {
+      try {
+        if (typeof sequenceTimer !== 'undefined' && sequenceTimer !== null) return true;
+        if (typeof _masterEng !== 'undefined' && _masterEng && _masterEng.timer) return true;
+        if (typeof lanes !== 'undefined' && Array.isArray(lanes)
+          && lanes.some(l => l && l.ambient && l.ambient.timer)) return true;
+      } catch (e) {}
+      return false;
+    }
     function applyMasterVinyl() {
       try {
         const on = globalFx.vinylOn === true;
+        // The BED follows the transport as well as the switch; everything else
+        // follows the switch alone.
+        const bedOn = on && _vinylTransportOn();
         const amt = Math.max(0, Math.min(100, globalFx.vinylAmount || 0)) / 100;
         const age = Math.max(0, Math.min(100, globalFx.vinylAge || 0)) / 100;
         vinylWobble.delayTime.rampTo(on ? 0.01 : 0, 0.2);          // 10 ms wobble center (0 = no latency when off)
         vinylWowG.gain.rampTo(on ? 0.0004 + age * 0.0022 : 0, 0.2); // wow depth 0.4–2.6 ms
         vinylFlutG.gain.rampTo(on ? 0.00015 + age * 0.0004 : 0, 0.2);
         vinylLP.frequency.rampTo(on ? (14000 - age * 8500) : 20000, 0.2);   // wear darkens
-        vinylCrackleG.gain.rampTo(on ? amt * 0.5 : 0, 0.2);
+        vinylCrackleG.gain.rampTo(bedOn ? amt * 0.5 : 0, 0.2);
         const hiss = Math.max(0, Math.min(100, (globalFx.vinylHiss == null ? 100 : globalFx.vinylHiss))) / 100;
-        if (on && (!_vinylSrc || _vinylSrcAge !== _vinylBedKey(age, hiss))) _rebuildVinylBed(age, hiss);
-        if (!on && _vinylSrc) { try { _vinylSrc.stop(); _vinylSrc.dispose(); } catch (e) {} _vinylSrc = null; _vinylSrcAge = -1; }
+        if (bedOn && (!_vinylSrc || _vinylSrcAge !== _vinylBedKey(age, hiss))) _rebuildVinylBed(age, hiss);
+        // Tear the source down when it should not be sounding — a stopped transport
+        // included. The 0.2 s gain ramp above covers the fade, and the bed is rebuilt
+        // (and re-started) on the next play.
+        if (!bedOn && _vinylSrc) { try { _vinylSrc.stop('+0.25'); } catch (e) { try { _vinylSrc.stop(); } catch (e2) {} }
+          const _dead = _vinylSrc; setTimeout(() => { try { _dead.dispose(); } catch (e) {} }, 400);
+          _vinylSrc = null; _vinylSrcAge = -1; }
       } catch (e) {}
     }
+
+    // Playback STARTS from several places (the grid sequencer, the Bloom master
+    // engine, per-lane engines), so rather than hook every one of them — and miss the
+    // next one added — watch the answer and act only when it CHANGES. The check is a
+    // few property reads twice a second; `applyMasterVinyl` runs only on a transition,
+    // so there are no ramps and no rebuilds while nothing is happening.
+    let _vinylWasOn = null;
+    setInterval(() => {
+      try {
+        const now = _vinylTransportOn();
+        if (now === _vinylWasOn) return;
+        _vinylWasOn = now;
+        if (globalFx && globalFx.vinylOn === true) applyMasterVinyl();
+      } catch (e) {}
+    }, 500);
 
     // ---- Master TAPE ECHO stage (FX roadmap Tier B) ---------------------------
     // A PARALLEL wet path off the vinyl output with degradation IN the loop —

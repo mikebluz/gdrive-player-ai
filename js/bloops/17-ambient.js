@@ -2825,6 +2825,7 @@
         _ambNormalizeEuclidPattern(cfg[layer]);   // beat (euclid) editable-grid override
         _ambNormalizeStepFx(cfg[layer]);          // per-step Step-Edit overrides
         _ambNormalizeUnitGate(cfg[layer]);        // per-unit on/off step gate (Edit Unit Schedule)
+        _ambNormalizeSpat(cfg[layer]);            // per-note pan sequence (absent = off)
       });
       // Built-in layers are now "addable": only present ones show + play. New
       // configs start with just Bed; an Add-layer menu adds the others. Migrate
@@ -2892,9 +2893,19 @@
         _ambNormalizeEuclidPattern(x);   // bass/beat/arp (euclid) editable-grid override
         _ambNormalizeStepFx(x);          // per-step Step-Edit overrides (bass/melodic euclid)
         _ambNormalizeUnitGate(x);        // per-unit on/off step gate (Edit Unit Schedule)
+        _ambNormalizeSpat(x);            // per-note pan sequence (absent = off)
         _ambNormalizeUnit(x);
         if (x.type !== 'beat' && x.type !== 'arp') _ambNormalizeNotes(x);
         _ambNormalizeKeyOv(x);   // B2 per-layer KEY override (all extra types)
+        // Sir Eel: `text` is user prose (a string, and the only thing that is
+        // actually spoken), `sentences` only sizes the NEXT generate. Coerced
+        // rather than trusted because both survive a hand-edited save file.
+        if (x.type === 'sireel' || x.type === 'learn') { x.voice = _ambSpokenVoice(x); _ambNormalizeWord(x); _ambNormalizeSpeech(x); x.snapBars = _ambWordBars(x); }
+        if (x.type === 'sireel') {
+          x.text = (typeof x.text === 'string') ? x.text : '';
+          x.sentences = Math.max(1, Math.min(24, Number.isFinite(x.sentences) ? (x.sentences | 0) : 4));
+          x.elaborate = !!x.elaborate;
+        }
         if (x.type === 'drone') {
           // PEDAL fields (string/absent — kept OUT of the defaults object, the
           // numeric backfill would clobber them). progMode ABSENT = 'pedal' (the
@@ -6509,6 +6520,95 @@
       const val = _ambLayerSpace(layer);
       if (layer && layer.panMode === 'pan') return 0;   // position is on the layer Panner (no rand draw — RNG parity)
       return Math.round((_ambRand() * 2 - 1) * (_ambStripWidthLive(layer) ? 100 : Math.max(0, Math.min(100, val))));
+    }
+
+    // ---- SPATIALIZE: a per-NOTE pan SEQUENCE -------------------------------
+    // Spread scatters the voices of ONE event across the field and then holds
+    // still; Spatialize walks the layer's notes THROUGH the field, a new position
+    // per note, so a phrase travels instead of standing in a fixed image. It is the
+    // finer-grained answer to the same question, so it REPLACES the spread fan when
+    // engaged — and it composes with Pan mode, which still offsets the whole layer,
+    // so a spatialized phrase can itself sit off-centre.
+    //
+    // WHERE IT IS APPLIED, and why not in `_ambLayerPan`: that helper takes only the
+    // layer — no note time, no layer key — and it spends a SHARED-STREAM `_ambRand()`
+    // draw. Overriding its result there would either need the draw removed (which
+    // would shift every downstream draw and change the layer's NOTES the moment you
+    // switched panning on — a pan control must never rewrite the music) or the index
+    // threaded through twenty call sites. The capture-sink tee inside playNote has
+    // all three (key, params, `at`), runs BEFORE the voice is built, and is already
+    // the place where an effect edits a note in flight — see the pitch-echo dry-kill
+    // in `_ambCapSink`, which mutates `params.volume` exactly this way.
+    //
+    // The ordinal is MEMOISED BY ONSET TIME rather than counted, because emitters
+    // re-emit the same window on every tick (the duplicates are dropped later, by
+    // playNote's `_ambEmitCutoff`). A bare counter would advance on those dropped
+    // re-emissions and the sequence would jump; keyed by `at`, a note keeps its
+    // position no matter how many times it is offered. Voices sharing one onset (a
+    // chord) share a position and move as a body — per-voice fanning is what Spread
+    // does, and this is the control that replaces it.
+    const _AMB_SPAT_MODES = [['fan', 'Fan out'], ['alt', 'Alternate'], ['sine', 'Sine'], ['sweep', 'Sweep'], ['random', 'Random']];
+    const _ambSpatOn = (L) => !!(L && L.spat && L.spat.on && (L.spat.width | 0) > 0);
+    function _ambNormalizeSpat(L) {
+      if (!L || typeof L !== 'object') return;
+      const s = L.spat;
+      if (!s || typeof s !== 'object') { if ('spat' in L) delete L.spat; return; }
+      L.spat = {
+        on: s.on ? 1 : 0,
+        mode: _AMB_SPAT_MODES.some(m => m[0] === s.mode) ? s.mode : 'fan',
+        width: Math.max(0, Math.min(100, Number.isFinite(s.width) ? (s.width | 0) : 60)),
+        steps: Math.max(2, Math.min(16, Number.isFinite(s.steps) ? (s.steps | 0) : 5)),
+      };
+    }
+    // Position for note ordinal `i`, in the -100..100 the rest of the pan path uses.
+    // `steps` is POSITIONS PER CYCLE, counted the way you would say it out loud: the
+    // worked example — five notes, width 10, fanning out from the centre — is
+    // steps 5, and gives exactly 0, R5, L5, R10, L10 before it comes back to 0.
+    function _ambSpatPan(L, i, seed) {
+      const s = L.spat;
+      const w = Math.max(0, Math.min(100, s.width | 0));
+      const P = Math.max(2, Math.min(16, s.steps | 0));
+      const k = i | 0;
+      const j = ((k % P) + P) % P;
+      switch (s.mode) {
+        case 'alt':   return (j % 2 === 0) ? w : -w;                       // straight ping-pong, ignores Positions
+        case 'sine':  return Math.round(w * Math.sin(2 * Math.PI * j / P));
+        case 'sweep': return Math.round(w * ((2 * j) / (P - 1) - 1));      // hard left, walk to hard right, jump back
+        case 'random': {
+          // A DEDICATED seeded stream, never the shared `_ambRand()` — an extra draw
+          // on that one would shift every generator downstream of it. Keyed on the
+          // ordinal and the take, so it is stable across re-emits and re-rolls with
+          // a new take like every other seeded decision.
+          const h = (Math.imul(k + 1, 0x9E3779B1) ^ Math.imul((seed | 0) + 1, 0x85EBCA77)) >>> 0;
+          return Math.round((_ambSeededRand(h)() * 2 - 1) * w);
+        }
+        case 'fan':
+        default: {
+          if (j === 0) return 0;
+          const pairs = Math.max(1, Math.floor(P / 2));
+          const mag = (Math.ceil(j / 2) / pairs) * w;
+          return Math.round((j % 2 === 1) ? mag : -mag);   // odd steps go right, even come back left
+        }
+      }
+    }
+    function _ambSpatIdx(E, key, at) {
+      const S = E._spat || (E._spat = {});
+      const st = S[key] || (S[key] = { map: new Map(), order: [], next: 0 });
+      const t = Math.round(at * 10000);          // float onsets recompute identically; round anyway
+      let idx = st.map.get(t);
+      if (idx === undefined) {
+        idx = st.next++;
+        st.map.set(t, idx); st.order.push(t);
+        if (st.order.length > 512) st.map.delete(st.order.shift());
+      }
+      return idx;
+    }
+    function _ambSpatApply(E, key, params, at) {
+      if (!params || typeof at !== 'number' || params._pecho) return;
+      const L = _ambLayerByKey(E, key);
+      if (!_ambSpatOn(L)) return;
+      const cfg = E._cfg || (E.getCfg && E.getCfg());
+      params.pan = _ambSpatPan(L, _ambSpatIdx(E, key, at), (cfg && cfg.seed) | 0);
     }
 
     // ---- Timing helpers ------------------------------------------------
@@ -11504,18 +11604,432 @@
                  url: String((j && j.content_urls && j.content_urls.desktop && j.content_urls.desktop.page) || '') };
       } catch (e) { return null; }
     }
+    // ---- SIR EEL layer: generated text --------------------------------------
+    // Sir Eel = surreal. It writes sentences that are grammatically airtight and
+    // mean nothing, and hands them to the SAME voice, queue and playback path the
+    // Learn layer uses — it is a text SOURCE, not a second speaking layer, which
+    // is the whole reason it is cheap to have.
+    //
+    // Grammatical correctness is enforced by the WORD BANKS as much as by the
+    // templates, because a generator cannot check its own output:
+    //   · every count noun takes the REGULAR plural (+s / +es / +ies, the same
+    //     three rules as the 3rd-person singular, which is why one function does
+    //     both) — no child/children, no analysis/analyses — so agreement is
+    //     decidable from a boolean;
+    //   · no word needs "an" against its spelling (no hour, no university), so
+    //     reading the first letter IS the a/an rule here, not an approximation;
+    //   · only the PRESENT tense is ever built. One irregular past participle in
+    //     the bank would put an ungrammatical sentence in someone's mouth, and
+    //     nothing downstream could notice.
+    // Adding a word means honouring those three properties — that is the contract.
+    // Four traps that decide whether a word may join a bank, all of them things the
+    // generator cannot detect for itself:
+    //   · -o and -f/-fe nouns (echo→echoes, leaf→leaves) break the +s/+es/+ies rule
+    //     — piano/radio/igloo are fine because they take a plain +s;
+    //   · a u- or eu- word that sounds like "yoo" (university, uniform, euphonium)
+    //     takes "a", so it breaks the first-letter a/an rule. u- words that sound
+    //     like "uh" (umbrella, unusual, upright) are fine;
+    //   · "between"/"among" need a plural object, so they are not prepositions this
+    //     grammar can use with an arbitrary noun phrase;
+    //   · a mass noun must never be countable in the sense meant (traffic, cutlery).
+    const _SEEL = {
+      adj: ['quiet', 'luminous', 'forgotten', 'patient', 'restless', 'velvet', 'distant', 'careful',
+        'hollow', 'ordinary', 'immense', 'gentle', 'curious', 'tidal', 'electric', 'absent',
+        'brittle', 'radiant', 'humble', 'unlikely', 'small', 'reluctant', 'polite', 'enormous',
+        'ancient', 'invisible', 'idle', 'awkward', 'eager', 'urgent', 'elegant', 'obvious',
+        'muddy', 'wooden', 'silver', 'golden', 'endless', 'narrow', 'sudden', 'fragile',
+        'sleepy', 'stubborn', 'cheerful', 'damp', 'grateful', 'hopeful', 'lonely', 'misty',
+        'nervous', 'olive', 'peculiar', 'playful', 'precise', 'sensible', 'solemn', 'spotless',
+        'sturdy', 'tangled', 'thoughtful', 'tremendous', 'vacant', 'weary', 'wistful', 'abrupt',
+        'agreeable', 'amber', 'anxious', 'opposite', 'unusual', 'upright', 'crooked', 'faithful',
+        'glassy', 'hungry', 'modest', 'northern', 'patchwork', 'rusty', 'serene', 'shallow',
+        'sombre', 'tidy', 'unhurried', 'watchful', 'winter', 'yellow'],
+      // Count nouns: the regular plural, and none of them a mass noun in disguise.
+      count: ['lantern', 'engine', 'garden', 'letter', 'mountain', 'orchestra', 'pigeon', 'ribbon',
+        'station', 'telescope', 'window', 'kitchen', 'sparrow', 'corridor', 'envelope', 'piano',
+        'ladder', 'compass', 'meadow', 'bicycle', 'harbour', 'postcard', 'cathedral', 'umbrella',
+        'accordion', 'island', 'elevator', 'onion', 'anchor', 'apricot', 'aquarium', 'avalanche',
+        'balcony', 'basket', 'bottle', 'bridge', 'button', 'candle', 'carpet', 'chimney',
+        'clock', 'cottage', 'curtain', 'doorway', 'drawer', 'escalator', 'factory', 'feather',
+        'fountain', 'glacier', 'greenhouse', 'hammock', 'harpsichord', 'hedge', 'hillside',
+        'igloo', 'kettle', 'laboratory', 'lighthouse', 'lobby', 'machine', 'magnet', 'mirror',
+        'museum', 'needle', 'notebook', 'orchard', 'ostrich', 'oyster', 'painting', 'parachute',
+        'passenger', 'pebble', 'pendulum', 'pillow', 'planet', 'postbox', 'printer', 'puddle',
+        'quarry', 'radiator', 'railway', 'raincoat', 'sandal', 'sandwich', 'satchel', 'sculpture',
+        'seagull', 'staircase', 'statue', 'suitcase', 'surgeon', 'teapot', 'tractor', 'trumpet',
+        'tunnel', 'typewriter', 'valley', 'violin', 'waistcoat', 'watch', 'waterfall', 'whistle',
+        'windmill', 'yacht', 'zebra'],
+      // Mass nouns: singular verb, and grammatical with no determiner at all.
+      mass: ['weather', 'silence', 'patience', 'gravity', 'music', 'distance', 'evidence',
+        'laughter', 'sunlight', 'furniture', 'traffic', 'arithmetic', 'darkness', 'electricity',
+        'thunder', 'applause', 'machinery', 'luggage', 'cutlery', 'jazz', 'dust', 'smoke',
+        'honey', 'moonlight', 'scaffolding', 'plumbing', 'nonsense', 'homework', 'pottery',
+        'rainfall', 'seaweed', 'chalk', 'steam', 'gossip', 'courage', 'mischief', 'momentum'],
+      vi: ['wander', 'hesitate', 'glimmer', 'collapse', 'arrive', 'listen', 'dissolve', 'wait',
+        'travel', 'hum', 'drift', 'vanish', 'persist', 'sing', 'apologise', 'rehearse',
+        'shimmer', 'tremble', 'flicker', 'hover', 'linger', 'murmur', 'ramble', 'rattle',
+        'shuffle', 'slumber', 'sparkle', 'stumble', 'sway', 'wobble', 'whisper', 'depart',
+        'return', 'pause', 'giggle', 'flourish', 'perish', 'tumble', 'glide', 'settle',
+        'fade', 'gleam', 'wilt', 'yawn'],
+      vt: ['remember', 'carry', 'ignore', 'translate', 'arrange', 'follow', 'borrow', 'imagine',
+        'describe', 'polish', 'question', 'gather', 'examine', 'inherit', 'misplace', 'admire',
+        'assemble', 'balance', 'bury', 'calculate', 'celebrate', 'collect', 'compare', 'consider',
+        'decorate', 'deliver', 'discover', 'embrace', 'exchange', 'guard', 'inspect', 'interpret',
+        'mention', 'notice', 'organise', 'paint', 'photograph', 'pocket', 'prefer', 'protect',
+        'rearrange', 'rescue', 'review', 'sketch', 'study', 'summon', 'trace', 'unwrap',
+        'visit', 'watch', 'weigh', 'welcome'],
+      adv: ['slowly', 'carefully', 'almost', 'quietly', 'eventually', 'rarely', 'gladly', 'briefly',
+        'endlessly', 'politely', 'somehow', 'twice', 'obviously', 'again', 'abruptly', 'cheerfully',
+        'constantly', 'deliberately', 'frequently', 'hastily', 'hopefully', 'instantly',
+        'mysteriously', 'neatly', 'occasionally', 'patiently', 'perfectly', 'reluctantly',
+        'secretly', 'smoothly', 'softly', 'steadily', 'suddenly', 'thoroughly', 'tenderly',
+        'wildly', 'gracefully', 'faintly', 'briskly'],
+      prep: ['under', 'beside', 'above', 'without', 'across', 'beyond', 'during', 'behind', 'near',
+        'inside', 'beneath', 'along', 'within', 'outside', 'underneath', 'past', 'through', 'toward'],
+      sub: ['because', 'although', 'while', 'whenever', 'until', 'since', 'unless', 'before',
+        'after', 'wherever', 'though', 'if'],
+      conj: ['and', 'but', 'so', 'yet', 'or'],
+    };
+    const _seelPick = (a, rnd) => a[Math.min(a.length - 1, Math.floor(rnd() * a.length))];
+    // 3rd-person singular AND the regular plural — English spells them the same
+    // way, so one function serves both: sibilant → +es (compass → compasses),
+    // consonant+y → +ies (carry → carries), else +s.
+    const _seelS = (v) => (/(s|x|z|ch|sh)$/.test(v) ? v + 'es' : (/[^aeiou]y$/.test(v) ? v.slice(0, -1) + 'ies' : v + 's'));
+    // Reads the first letter of the phrase AS WRITTEN — so an adjective in front
+    // of the noun decides it ("an ordinary lantern", not "a ordinary lantern").
+    const _seelArt = (w) => (/^[aeiou]/i.test(w) ? 'an ' : 'a ') + w;
+    // A noun phrase carries its own number, because everything that agrees with it
+    // (the verb, a relative clause's verb, there is/are) needs that one boolean.
+    //
+    // `indef` exists for the existential template alone: English has a DEFINITENESS
+    // EFFECT — "there is a lantern" is fine and "there is the lantern" / "there are
+    // most sparrows" are not — so that one caller restricts the determiners rather
+    // than taking whatever this would otherwise pick.
+    // ELABORATE: the pool of nouns lifted from the previous chunk of text, so a new
+    // chunk keeps talking about the same things. A module-level slot rather than a
+    // threaded argument because generation is synchronous, single-pass and not
+    // reentrant — the alternative is passing an options bag through eleven template
+    // functions that otherwise need to know nothing about it. Always cleared in a
+    // `finally`, so a throw mid-generation cannot leak the bias into the next one.
+    let _seelPool = null;
+    const _SEEL_ELAB_P = 0.72;   // how often a recycled noun wins over the full bank
+    const _seelNoun = (kind, rnd) => {
+      const pool = _seelPool && _seelPool[kind];
+      if (pool && pool.length && rnd() < _SEEL_ELAB_P) return _seelPick(pool, rnd);
+      return _seelPick(_SEEL[kind], rnd);
+    };
+    function _seelNP(rnd, opts) {
+      const o = opts || {};
+      const adj = (rnd() < 0.5) ? _seelPick(_SEEL.adj, rnd) + ' ' : '';
+      if (!o.noMass && rnd() < 0.18) {
+        const head = adj + _seelNoun('mass', rnd);            // bare mass IS indefinite
+        return { text: (!o.indef && rnd() < 0.45 ? 'the ' : '') + head, plural: false };
+      }
+      const plural = rnd() < 0.4;
+      const one = _seelNoun('count', rnd);
+      const head = adj + (plural ? _seelS(one) : one);
+      if (plural) return { text: _seelPick(o.indef ? ['several ', 'many ', '', 'two ', 'a few '] : ['the ', 'several ', 'many ', 'most ', '', 'two ', 'a few '], rnd) + head, plural: true };
+      if (o.indef) return { text: _seelArt(head), plural: false };
+      const r = rnd();
+      return { text: r < 0.45 ? 'the ' + head : (r < 0.8 ? _seelArt(head) : (r < 0.9 ? 'every ' + head : 'this ' + head)), plural: false };
+    }
+    const _seelVI = (rnd, plural) => { const v = _seelPick(_SEEL.vi, rnd); return plural ? v : _seelS(v); };
+    const _seelVT = (rnd, plural) => { const v = _seelPick(_SEEL.vt, rnd); return plural ? v : _seelS(v); };
+    const _seelPP = (rnd) => _seelPick(_SEEL.prep, rnd) + ' ' + _seelNP(rnd, {}).text;
+    // Every template returns a bare clause — no capital, no full stop. Sentence
+    // punctuation is applied once, at the end, so a template can be dropped in
+    // without thinking about it.
+    const _SEEL_FORMS = [
+      (r) => { const s = _seelNP(r, {}); return s.text + ' ' + _seelVI(r, s.plural); },
+      (r) => { const s = _seelNP(r, {}); return s.text + ' ' + _seelVI(r, s.plural) + ' ' + _seelPick(_SEEL.adv, r); },
+      (r) => { const s = _seelNP(r, {}); return s.text + ' ' + _seelVT(r, s.plural) + ' ' + _seelNP(r, {}).text; },
+      (r) => { const s = _seelNP(r, {}); return s.text + ' ' + _seelPick(_SEEL.adv, r) + ' ' + _seelVT(r, s.plural) + ' ' + _seelNP(r, {}).text; },
+      (r) => { const s = _seelNP(r, {}); return s.text + ' ' + _seelVT(r, s.plural) + ' ' + _seelNP(r, {}).text + ' ' + _seelPP(r); },
+      (r) => { const s = _seelNP(r, {}); return _seelPP(r) + ', ' + s.text + ' ' + _seelVI(r, s.plural); },
+      (r) => { const a = _seelNP(r, {}), b = _seelNP(r, {});
+        return _seelPick(_SEEL.sub, r) + ' ' + a.text + ' ' + _seelVI(r, a.plural) + ', ' + b.text + ' ' + _seelVT(r, b.plural) + ' ' + _seelNP(r, {}).text; },
+      // Relative clause — its verb agrees with the HEAD noun, not with whatever
+      // follows it, which is the one place a naive generator gets caught out.
+      (r) => { const s = _seelNP(r, {});
+        return s.text + ' that ' + _seelVI(r, s.plural) + ' ' + _seelPP(r) + ' ' + _seelVI(r, s.plural) + ' ' + _seelPick(_SEEL.adv, r); },
+      (r) => { const a = _seelNP(r, {}), b = _seelNP(r, {});
+        return a.text + ' ' + _seelVI(r, a.plural) + ' ' + _seelPick(_SEEL.conj, r) + ' ' + b.text + ' ' + _seelVT(r, b.plural) + ' ' + _seelNP(r, {}).text; },
+      (r) => { const s = _seelNP(r, { indef: true }); return 'there ' + (s.plural ? 'are ' : 'is ') + s.text + ' ' + _seelPP(r); },
+      (r) => { const s = _seelNP(r, {}); return 'it is ' + _seelPick(_SEEL.adj, r) + ' that ' + s.text + ' ' + _seelVI(r, s.plural); },
+    ];
+    // n sentences of grammatical nonsense. `rnd` defaults to Math.random because
+    // this runs at UI time (a button press, adding the layer) — the same
+    // convention as _ambApplyRandomInstVoice, and deliberately NOT the seeded
+    // _ambRand stream, which belongs to note generation and must not be shifted.
+    function _ambSeelText(n, rnd, pool) {
+      const r = (typeof rnd === 'function') ? rnd : Math.random;
+      const out = [];
+      let last = -1;
+      _seelPool = (pool && ((pool.count && pool.count.length) || (pool.mass && pool.mass.length))) ? pool : null;
+      try {
+        for (let i = 0; i < Math.max(1, n | 0); i++) {
+          let f = Math.floor(r() * _SEEL_FORMS.length);
+          if (f === last) f = (f + 1) % _SEEL_FORMS.length;    // no two identical shapes in a row
+          last = f;
+          const s = _SEEL_FORMS[f](r);
+          out.push(s.charAt(0).toUpperCase() + s.slice(1) + (r() < 0.12 ? '!' : '.'));
+        }
+      } finally { _seelPool = null; }
+      return out.join(' ');
+    }
+    // Which nouns does this text already talk about? Words are matched against the
+    // banks in BOTH spellings, so "compasses" recycles as "compass" and can come
+    // back singular or plural — recycling the surface form would fix its number.
+    // Anything not in a bank (a word the user typed themselves) is ignored: the
+    // grammar can only inflect what it knows.
+    function _ambSeelNounsIn(text) {
+      const seen = { count: [], mass: [] };
+      const words = String(text || '').toLowerCase().match(/[a-z]+/g);
+      if (!words) return seen;
+      const set = new Set(words);
+      _SEEL.count.forEach(n => { if (set.has(n) || set.has(_seelS(n))) seen.count.push(n); });
+      _SEEL.mass.forEach(n => { if (set.has(n)) seen.mass.push(n); });
+      return seen;
+    }
+    // The LAST CHUNK is the tail of the text — as many sentences as one generate
+    // writes. Elaborating on the whole text would drift back toward the full bank
+    // as the text grows, which is the opposite of what the switch asks for.
+    function _ambSeelLastChunk(L) {
+      const lines = String((L && L.text) || '').split(/(?<=[.!?])\s+/).filter(x => x.trim().length > 1);
+      const n = Math.max(1, Math.min(24, (L && L.sentences) | 0 || 4));
+      return lines.slice(Math.max(0, lines.length - n)).join(' ');
+    }
+    // One place decides what a generate produces, so the two buttons cannot drift:
+    // Elaborate biases toward the nouns already in play, and is simply absent when
+    // the switch is off or nothing recognisable is there to reuse.
+    function _ambSeelGenerate(L, append) {
+      const n = Math.max(1, Math.min(24, (L.sentences | 0) || 4));
+      const pool = (L.elaborate && String(L.text || '').trim()) ? _ambSeelNounsIn(_ambSeelLastChunk(L)) : null;
+      const fresh = _ambSeelText(n, null, pool);
+      const prev = String(L.text || '').trim();
+      return (append && prev) ? (prev + ' ' + fresh) : fresh;
+    }
+    // ---- ALPHABET TRANSLATOR: text → pitches --------------------------------
+    // Letters become notes, so a Word layer (Learn / Sir Eel) can PLAY its text as
+    // well as speak it. Three mappings, one shared shape:
+    //
+    //   CHROMATIC  letter i → rootMidi + i semitones. The 26 letters therefore span
+    //              just over two octaves and keep ASCENDING rather than folding back
+    //              — "az" is a two-octave leap, which is the point: the shape of the
+    //              word is audible. What "A" is, is the user's to set, and moving it
+    //              moves the whole distribution.
+    //   IN KEY     letter i → the i-th DEGREE of the key, wrapping octaves. This is
+    //              the one that makes words legible: with A = C in C major, "abcd"
+    //              is C D E F. Spelling and scale degree line up.
+    //   MICROTONAL letter i → i steps of `cents`. At 100 it is the chromatic map; at
+    //              46.15 (1200/26) the whole alphabet spans exactly one octave; any
+    //              other value is its own equal division.
+    //
+    // Everything is derived from the letter INDEX, so all three share one contract:
+    // index in, frequency out, and the caller never needs to know which is active.
+    const _AMB_ALPHA_MAPS = [['chromatic', 'Chromatic'], ['scale', 'In key'], ['micro', 'Microtonal']];
+    const _AMB_WORD_SHAPES = [['run', 'Run'], ['chord', 'Chord'], ['split', 'Chord + run']];
+    const _AMB_WORD_OUTS = [['speak', 'Speak'], ['play', 'Play'], ['both', 'Both']];
+    const _ambAlphaIdx = (ch) => { const c = String(ch || '').toLowerCase().charCodeAt(0) - 97; return (c >= 0 && c < 26) ? c : -1; };
+    const _ambMidiToFreq = (m) => 440 * Math.pow(2, (m - 69) / 12);
+    function _ambAlphaFreq(i, o) {
+      if (!(i >= 0)) return 0;
+      const root = Number.isFinite(o.rootMidi) ? o.rootMidi : 48;
+      if (o.map === 'micro') return _ambMidiToFreq(root) * Math.pow(2, (i * (Number.isFinite(o.cents) ? o.cents : 100)) / 1200);
+      if (o.map === 'scale') {
+        const sc = (o.scale && o.scale.length) ? o.scale : [0, 2, 4, 5, 7, 9, 11];
+        // The degrees are the KEY's actual notes, not the scale shape transposed onto
+        // whatever "A is" happens to be — otherwise picking A = C in D major would
+        // play C major and the words would sit outside the music. "A is" still places
+        // the alphabet: it is snapped UP to the nearest note of the key, and the
+        // letters walk the key from there, wrapping octaves so they keep climbing.
+        const kr = (((o.keyRootPc | 0) % 12) + 12) % 12;
+        const offs = sc.map(x => (((kr + x - root) % 12) + 12) % 12).sort((a, b) => a - b);
+        const uniq = offs.filter((v, k) => k === 0 || v !== offs[k - 1]);
+        const n = uniq.length || 1;
+        return _ambMidiToFreq(root + uniq[i % n] + 12 * Math.floor(i / n));
+      }
+      return _ambMidiToFreq(root + i);
+    }
+    // A WORD becomes one or more simultaneities. `split` is the shape the request
+    // named: the first `chord` letters sound together, the rest run on from there —
+    // so a six-letter word at chord 3 is a three-note chord followed by a three-note
+    // run. A word shorter than the chord size is simply a smaller chord.
+    function _ambWordEvents(word, o) {
+      const idx = [];
+      for (const ch of String(word)) { const i = _ambAlphaIdx(ch); if (i >= 0) idx.push(i); }
+      if (!idx.length) return [];
+      const f = (i) => _ambAlphaFreq(i, o);
+      const shape = o.shape || 'run';
+      if (shape === 'chord') return [{ step: 0, freqs: idx.map(f) }];
+      if (shape === 'split') {
+        const n = Math.max(1, Math.min(8, o.chord | 0 || 3));
+        const head = idx.slice(0, n), tail = idx.slice(n);
+        const out = [{ step: 0, freqs: head.map(f) }];
+        tail.forEach((i, k) => out.push({ step: k + 1, freqs: [f(i)] }));
+        return out;
+      }
+      return idx.map((i, k) => ({ step: k, freqs: [f(i)] }));
+    }
+    // A LINE of text → events in seconds, plus how long the whole passage runs.
+    // Words are separated by one step of silence so the words stay audible AS words
+    // rather than running together into one long scale.
+    function _ambTextPassage(text, o) {
+      const noteSec = Math.max(0.03, (o.noteMs | 0 || 220) / 1000);
+      const words = String(text || '').split(/\s+/).filter(Boolean);
+      const events = [];
+      let step = 0;
+      for (const w of words) {
+        const ev = _ambWordEvents(w, o);
+        if (!ev.length) continue;
+        let last = 0;
+        for (const e of ev) { events.push({ t: (step + e.step) * noteSec, freqs: e.freqs }); if (e.step > last) last = e.step; }
+        step += last + 2;                     // +1 for the last note, +1 rest between words
+      }
+      return { events, durSec: Math.max(noteSec, step * noteSec) };
+    }
+    // ---- BAR LOCK for Word layers -------------------------------------------
+    // A spoken line is as long as it is, so these layers have always advanced by
+    // "however long that took, plus the Gap" — which drifts against the bar grid and
+    // is the one way they refuse to sit in the music. Bar lock rounds each utterance
+    // UP to a whole number of bars and starts every one on the grid: a short line
+    // waits for the next bar, a long line simply takes more of them. Nothing is ever
+    // cut off, because the next start is the first grid point at or after the end.
+    //
+    // The grid is `E._barGridAnchor` — the SAME anchor every synced layer uses, not
+    // a private one — so a locked Word layer lines up with the rest of the mix
+    // rather than with its own idea of where the bar is.
+    const _AMB_WORD_BARS = [[0, 'Free'], [1, '1 bar'], [2, '2 bars'], [4, '4 bars'], [8, '8 bars']];
+    const _ambWordBars = (L) => { const n = (L && L.snapBars) | 0; return _AMB_WORD_BARS.some(b => b[0] === n) ? n : 0; };
+    function _ambWordGridSec(E) {
+      const cfg = (E && (E._cfg || (E.getCfg && E.getCfg()))) || null;
+      const bpm = (cfg && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      return (60 / Math.max(20, bpm)) * 4;
+    }
+    function _ambWordAnchor(E) {
+      if (Number.isFinite(E._barGridAnchor)) return E._barGridAnchor;
+      if (Number.isFinite(E._playStartAt)) return E._playStartAt;
+      return 0;
+    }
+    // The first grid point at or after `t`. Used for the first onset AND for every
+    // advance, so the two can never disagree about where a bar is.
+    function _ambWordSnap(E, L, t) {
+      const bars = _ambWordBars(L);
+      if (!bars) return t;
+      const unit = bars * _ambWordGridSec(E);
+      if (!(unit > 0.05)) return t;
+      const A = _ambWordAnchor(E);
+      const k = Math.ceil((t - A) / unit - 1e-6);
+      return A + k * unit;
+    }
+    // The layer's own settings → one options object the translator understands.
+    // The SCALE comes from the area key rather than the layer, so "in key" means the
+    // same thing here as everywhere else in Bloom and a key change moves the words
+    // with the music.
+    const _ambWordOut = (L) => { const o = L && L.word && L.word.out; return (o === 'play' || o === 'both') ? o : 'speak'; };
+    const _ambWordOn = (L) => _ambWordOut(L) !== 'speak';
+    function _ambWordOpt(E, L) {
+      const w = (L && L.word) || {};
+      const cfg = (E && (E._cfg || (E.getCfg && E.getCfg()))) || null;
+      let scale = [0, 2, 4, 5, 7, 9, 11], keyRootPc = 0;
+      try {
+        const n = _ambKeyScaleName(cfg);
+        // A CHROMATIC key would make "In key" identical to the chromatic map — the
+        // control would appear to do nothing. A keyless area therefore reads as
+        // major here, which is also the key the worked example assumes.
+        if (typeof SCALES !== 'undefined' && SCALES[n] && SCALES[n].length && SCALES[n].length < 12) scale = SCALES[n];
+        keyRootPc = _ambKeyRootPc(cfg) | 0;
+      } catch (e) {}
+      return {
+        rootMidi: (Math.max(0, Math.min(8, Number.isFinite(w.aOct) ? w.aOct : 3)) + 1) * 12 + Math.max(0, Math.min(11, w.aPc | 0)),
+        map: _AMB_ALPHA_MAPS.some(m => m[0] === w.map) ? w.map : 'chromatic',
+        cents: Number.isFinite(w.cents) ? w.cents : 100,
+        scale, keyRootPc,
+        shape: _AMB_WORD_SHAPES.some(m => m[0] === w.shape) ? w.shape : 'run',
+        chord: Math.max(1, Math.min(8, Number.isFinite(w.chord) ? (w.chord | 0) : 3)),
+        noteMs: Math.max(40, Math.min(2000, Number.isFinite(w.noteMs) ? (w.noteMs | 0) : 220)),
+      };
+    }
+    // PURE COERCION — it must NOT call `_ambWordOpt`, which resolves the area key.
+    // Normalize runs inside `getCfg()`, and the key resolvers call `getCfg()` in
+    // turn, so reaching for the key here is infinite recursion: the app hangs the
+    // moment any Word layer carries a `word` object (measured — a 3-minute CDP
+    // timeout on a single keystroke). Nothing in this function may read the config.
+    function _ambNormalizeWord(L) {
+      if (!L || typeof L !== 'object') return;
+      const w = L.word;
+      if (!w || typeof w !== 'object') { if ('word' in L) delete L.word; return; }
+      const pick = (list, v, d) => (list.some(x => x[0] === v) ? v : d);
+      L.word = {
+        out: pick(_AMB_WORD_OUTS, w.out, 'speak'),
+        aPc: Math.max(0, Math.min(11, w.aPc | 0)),
+        aOct: Math.max(0, Math.min(8, Number.isFinite(w.aOct) ? (w.aOct | 0) : 3)),
+        map: pick(_AMB_ALPHA_MAPS, w.map, 'chromatic'),
+        cents: Math.max(5, Math.min(300, Number.isFinite(w.cents) ? Math.round(w.cents) : 100)),
+        shape: pick(_AMB_WORD_SHAPES, w.shape, 'run'),
+        chord: Math.max(1, Math.min(8, Number.isFinite(w.chord) ? (w.chord | 0) : 3)),
+        noteMs: Math.max(40, Math.min(2000, Number.isFinite(w.noteMs) ? (w.noteMs | 0) : 220)),
+      };
+    }
+    // Play ONE line as notes, through the layer's own chain — so the passage gets the
+    // layer's instrument, FX, level and Spatialize exactly as its spoken half does,
+    // and lands in the capture like any other material. Returns how long it runs, so
+    // the caller can advance its clock by the real length of what it just scheduled.
+    function _ambEmitWordPassage(E, key, L, text, at) {
+      const o = _ambWordOpt(E, L);
+      const pass = _ambTextPassage(text, o);
+      if (!pass.events.length) return 0;
+      const dest = _ambLayerDest(key);
+      const prevSink = window._ambCaptureSink;
+      window._ambCaptureSink = _ambCapSink(E, key);
+      try {
+        for (const ev of pass.events) {
+          const pan = _ambLayerPan(L);
+          for (const f of ev.freqs) {
+            if (!(f > 0)) continue;
+            let pp;
+            try { pp = _ambApplyAdsr(_ambMotifParams(o.noteMs, pan, L.tone || ''), L); pp.volume = _ambApplyLevel(pp.volume, L.level); }
+            catch (e) { pp = { type: 'triangle', volume: 70, pan: pan }; }
+            try { playNote(f, pp, o.noteMs, at + ev.t, dest); } catch (e) {}
+          }
+        }
+      } finally { window._ambCaptureSink = prevSink; }
+      return pass.durSec;
+    }
+    // PLAY-ONLY needs the text but not a single sample of audio, so it never touches
+    // the voice worker — a Word layer set to Play works with no model download at
+    // all. Local text is already here; a fetched article still has to be fetched.
+    function _ambWordEnsureLines(E, L, st) {
+      if (st.sentences && st.sentences.length) return;
+      const local = _ambSpokenLocalText(L);
+      if (local !== null) { st.sentences = _ambSpokenLines(local); st.si = 0; st.title = _ambIsSeel(L) ? 'Sir Eel' : 'Pasted text'; return; }
+      if (st.pending) return;
+      st.pending = true; st.phase = 'fetch';
+      const ep = st.epoch | 0;
+      _ambLearnFetch(L.source || 'wiki-random', L.term || '', L.corpus).then((doc) => {
+        st.pending = false;
+        if ((st.epoch | 0) !== ep) return;
+        if (!doc) { st.phase = 'nofetch'; return; }
+        st.title = doc.title; st.sentences = _ambSpokenLines(doc.text); st.si = 0; st.phase = null;
+      }, () => { st.pending = false; });
+    }
     // ---- LEARN layer: the voice ---------------------------------------------
-    // transformers.js + Xenova/mms-tts-eng (Meta MMS, a VITS model). Chosen because
-    // it is TEXT → AUDIO END TO END: Piper would additionally need a phonemizer
-    // (espeak-ng compiled to WASM) because it consumes phonemes, not text, and that
-    // third moving part buys nothing here.
+    // transformers.js + onnx-community/kitten-tts-nano-0.1-ONNX (KittenTTS, a
+    // StyleTTS2 model), driven by hand in the worker — see learn-voice.worker.js
+    // for why there is no `pipeline()` call and why a phonemizer is now a real
+    // dependency.
+    //
+    // It replaced Xenova/mms-tts-eng, which was chosen for being text→audio end to
+    // end but was ~60 MB and synthesised 2-2.7x SLOWER than real time. Kitten is
+    // ~24 MB and runs FASTER than real time (measured 0.77-0.87x on WASM/q8), which
+    // is what makes speaking a sentence at a time keep up with playback at all.
     //
     // Loaded by DYNAMIC import() from a CDN. This app has no bundler — bloops.html
     // is ~40 plain <script> tags with no type="module" — so an npm ESM package
     // cannot be required the usual way; import() works from a classic script and
     // needs no build step. Model weights come from the HF CDN too (deliberate: it
-    // keeps ~60 MB out of the repo and off every FTP deploy, at the cost of needing
-    // the network on first use).
+    // keeps the weights out of the repo and off every FTP deploy, at the cost of
+    // needing the network on first use).
     //
     // Both the module and the pipeline are fetched ONCE and cached. A failure is
     // cached too (_ambLearnTtsErr) so a layer on a dead network retries on every
@@ -11529,29 +12043,21 @@
     let _ambLearnWorker = null, _ambLearnWorkerErr = null, _ambLearnSeq = 0, _ambLearnWarm = false, _ambLearnWarming = false;
     let _ambLearnErrWhy = '';   // surfaced in the status — "unavailable" alone is undiagnosable
     const _ambLearnPending = new Map();
-    // MOBILE IS BLOCKED, deliberately. The voice model is ~60 MB of weights plus
-    // inference buffers, which exceeds iOS Safari's per-tab memory ceiling: the tab
-    // does not throw, it DIES — reported as the browser crashing when the layer
-    // starts to play. There is nothing to catch and nothing to degrade to, so the
-    // layer refuses to load the voice here and says why. Everything else about the
-    // layer (fetching, the article list, the status line) still works, so a project
-    // containing a Learn layer opens fine on a phone; it just stays silent.
+    // MOBILE WAS BLOCKED HERE, and the block is gone with the model that caused it.
+    // Under Xenova/mms-tts-eng this refused to load on any touch-only device: ~60 MB
+    // of weights plus inference buffers exceeded iOS Safari's per-tab memory ceiling,
+    // and the tab did not throw — it DIED, reported as the browser crashing when the
+    // layer started to play. Kitten's quantised model is ~24 MB, which is the whole
+    // reason for the swap, so the phone path is open again.
     //
-    // Detection is deliberately conservative — a coarse pointer with no fine
-    // pointer, or an explicit mobile UA. A false NEGATIVE only costs a slow
-    // synthesis on a desktop; a false POSITIVE crashes someone's browser.
+    // What survives is the floor: `deviceMemory` is Chromium-only and reports in GiB,
+    // so a device advertising 0.5 GiB or less still gets no voice. That is a genuinely
+    // tiny device, not a phone. Everything else about the layer (fetching, the article
+    // list, the status line) works regardless, so a refusal here is silent, not broken.
     function _ambLearnDeviceOK() {
       try {
-        const ua = String((navigator && navigator.userAgent) || '');
-        if (/Android|iPhone|iPad|iPod|Mobile/i.test(ua)) return false;
-        if (typeof window !== 'undefined' && window.matchMedia) {
-          const coarse = window.matchMedia('(pointer: coarse)').matches;
-          const fine = window.matchMedia('(pointer: fine)').matches;
-          if (coarse && !fine) return false;          // touch-only device
-        }
-        // deviceMemory is Chromium-only; when present and tiny, don't risk it.
         const mem = navigator && navigator.deviceMemory;
-        if (Number.isFinite(mem) && mem > 0 && mem <= 2) return false;
+        if (Number.isFinite(mem) && mem > 0 && mem <= 0.5) return false;
         return true;
       } catch (e) { return true; }
     }
@@ -11560,12 +12066,18 @@
       if (_ambLearnWorkerErr) return null;
       if (!_ambLearnDeviceOK()) {
         _ambLearnWorkerErr = new Error('device unsupported');
-        _ambLearnErrWhy = 'needs a desktop browser (the voice model is too large for phones)';
+        _ambLearnErrWhy = 'this device reports too little memory for the voice';
         return null;
       }          // a failure is sticky: without this a
                                                     // dead CDN would respawn a worker per tick
       try {
-        const w = new Worker('js/bloops/learn-voice.worker.js', { type: 'module' });
+        // ?v=DEPLOYVER, stamped by deploy.sh exactly like the <script> tags. A
+        // Worker URL is fetched and cached like any other asset, and this one is
+        // NOT in the HTML, so without the token a phone would keep running the
+        // cached worker after a deploy — which now means the OLD 60 MB model, the
+        // one that crashes the tab. 17-ambient.js is in deploy.sh's stamp list for
+        // this line alone; keep the two together.
+        const w = new Worker('js/bloops/learn-voice.worker.js?v=DEPLOYVER', { type: 'module' });
         w.onmessage = (ev) => {
           const d = ev.data || {};
           const r = _ambLearnPending.get(d.id);
@@ -11587,9 +12099,9 @@
       } catch (e) { _ambLearnWorkerErr = e; return null; }
     }
     // text → AudioBuffer, or null. The buffer carries the model's OWN sample rate
-    // (MMS is 16 kHz); a BufferSource resamples on playback, so it does not have to
-    // match the context.
-    async function _ambLearnSynth(text) {
+    // (Kitten is 24 kHz); a BufferSource resamples on playback, so it does not have
+    // to match the context.
+    async function _ambLearnSynth(text, voice) {
       const t = String(text || '').trim();
       if (!t) return null;
       const w = _ambLearnWorkerGet();
@@ -11599,34 +12111,125 @@
       try {
         res = await new Promise((resolve) => {
           _ambLearnPending.set(id, resolve);
-          try { w.postMessage({ id: id, text: t }); } catch (e) { _ambLearnPending.delete(id); resolve(null); }
+          // The voice is a per-REQUEST style vector against one shared model, so a
+          // layer can pick its own without reloading anything.
+          try { w.postMessage({ id: id, text: t, voice: voice || '' }); } catch (e) { _ambLearnPending.delete(id); resolve(null); }
         });
       } catch (e) { return null; }
       if (!res || !res.audio || !res.audio.length) return null;
       _ambLearnWarm = true;   // the model is downloaded; later lines are just inference
       try {
         const ac = Tone.getContext().rawContext;
-        const data = res.audio, sr = res.sampling_rate || 16000;
+        const data = res.audio, sr = res.sampling_rate || 24000;
         const buf = ac.createBuffer(1, data.length, sr);
         buf.getChannelData(0).set(data);
         return buf;
       } catch (e) { return null; }
     }
-    // Write straight to a Learn card's status line. Needed BEFORE play, when no
+    // SPOKEN LAYERS are Learn and Sir Eel: two text SOURCES sharing one voice,
+    // one queue, one playback path. Everything below keys off the layer rather
+    // than a bare id so both types land in the right card and the right state
+    // slot — a spoken layer's engine key is '<type>:<id>' like any other layer.
+    const _ambSpokenType = (L) => (((L && L.type) === 'sireel') ? 'sireel' : 'learn');
+    const _ambSpokenKey = (L) => _ambSpokenType(L) + ':' + ((L && L.id) | 0);
+    const _ambSpokenPrefix = (L) => 'ambient-' + _ambSpokenType(L) + '-' + ((L && L.id) | 0);
+    const _ambIsSeel = (L) => _ambSpokenType(L) === 'sireel';
+    // LOCAL TEXT is text the layer already holds, as opposed to an article it has to
+    // go and fetch. Sir Eel's generated text and Learn's pasted text are both local,
+    // which is what makes them pre-renderable: everything that will be spoken is
+    // known before the transport starts. A fetched source returns null and keeps the
+    // original render-one-line-ahead behaviour, because there is nothing to render
+    // until the request comes back.
+    const _AMB_SPOKEN_VOICES = [
+      ['', 'Voice 2 · female'], ['expr-voice-2-m', 'Voice 2 · male'],
+      ['expr-voice-3-f', 'Voice 3 · female'], ['expr-voice-3-m', 'Voice 3 · male'],
+      ['expr-voice-4-f', 'Voice 4 · female'], ['expr-voice-4-m', 'Voice 4 · male'],
+      ['expr-voice-5-f', 'Voice 5 · female'], ['expr-voice-5-m', 'Voice 5 · male'],
+    ];
+    const _ambSpokenVoice = (L) => (L && typeof L.voice === 'string' && _AMB_SPOKEN_VOICES.some(v => v[0] === L.voice)) ? L.voice : '';
+    function _ambSpokenLocalText(L) {
+      if (!L) return null;
+      if (_ambIsSeel(L)) { const t = String(L.text || '').trim(); return t || null; }
+      if (L.source === 'paste') { const t = _ambLearnClean(String(L.pasted || '')).trim(); return t || null; }
+      return null;
+    }
+    // What invalidates a queued reading. For a fetched source that is the
+    // source/term/library; for local text it is the TEXT ITSELF — an edit that
+    // happens to keep the same length must still abandon the old audio, so compare
+    // the text, not its size. The VOICE is part of it either way: the same words in
+    // a different voice are different audio.
+    function _ambSpokenSrcKey(L) {
+      const v = _ambSpokenVoice(L) + '|';
+      const local = _ambSpokenLocalText(L);
+      if (local !== null) return v + _ambSpokenType(L) + '|' + (L.source === 'paste' ? 'paste|' : '') + local;
+      return v + (L.source || 'wiki-random') + '|' + (L.term || '') + '|' + (L.corpus || 'wikipedia');
+    }
+    // ---- "GETTING READY" POPOVER --------------------------------------------
+    // Adding a spoken layer starts a chain the user cannot see: download the voice,
+    // fetch an article, render line 1. That is tens of seconds during which the card
+    // simply sits there, and a status line at the bottom of a collapsed card is easy
+    // to miss. This says what is happening, in front, until the layer can actually
+    // speak — then gets out of the way on its own.
+    //
+    // DISMISSIBLE and non-blocking: the work carries on if you close it, and closing
+    // is never required. Nothing here drives the pipeline; it only watches.
+    function _ambSpokenLoadingModal(E, L) {
+      if (!E || !L) return;
+      try {
+        const overlay = document.createElement('div'); overlay.className = 'modal-overlay';
+        const modal = document.createElement('div'); modal.className = 'step-div-modal amb-spoken-loading';
+        const title = _ambIsSeel(L) ? 'Sir Eel' : 'Learn';
+        modal.innerHTML = '<div class="ambient-mod-sub">' + title + ' \u2014 getting ready</div>' +
+          '<div class="amb-spoken-loading-msg">Starting\u2026</div>' +
+          '<div class="ambient-hint">The voice downloads once, then lines are written ahead of the one playing. You can close this \u2014 it keeps going.</div>' +
+          '<div class="amb-spoken-loading-btns"><button type="button" class="ambient-seg amb-spoken-loading-close">Close</button></div>';
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+        // Body-appended overlays are hidden by the view-mode rules unless exempt —
+        // .modal-overlay is, but set display inline anyway so a future rule cannot
+        // silently swallow this the way one once swallowed every toast.
+        overlay.style.setProperty('display', 'flex', 'important');
+        const msg = modal.querySelector('.amb-spoken-loading-msg');
+        let done = false;
+        const close = () => { if (done) return; done = true; try { clearInterval(iv); } catch (e) {} try { overlay.remove(); } catch (e) {} };
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+        modal.querySelector('.amb-spoken-loading-close').addEventListener('click', close);
+        const iv = setInterval(() => {
+          try {
+            const cfg = E.getCfg && E.getCfg();
+            if (cfg && !(cfg.extras || []).some(x => x === L)) { close(); return; }   // layer deleted while we waited
+            const st = (E.seqState && E.seqState[_ambSpokenKey(L)]) || null;
+            if (msg) msg.textContent = _ambLearnStatusText(L, st);
+            const ent = _ambSeelEntry(E, L, false);
+            // READY = the first line is audio, or the layer plays notes rather than
+            // speech, in which case there was never anything to wait for.
+            if (_ambWordOut(L) === 'play' || (ent && ent.cache && ent.cache[0])) close();
+            if (_ambLearnWorkerErr) close();
+          } catch (e) { close(); }
+        }, 250);
+        setTimeout(close, 180000);   // never leave it up forever
+      } catch (e) {}
+    }
+    // Write straight to a spoken card's status line. Needed BEFORE play, when no
     // tick is running to report state.
-    function _ambLearnSayEl(E, id, txt) {
-      try { const el = _ambGet(E, 'ambient-learn-' + (id | 0) + '-learnstat'); if (el) el.textContent = txt; } catch (e) {}
+    function _ambLearnSayEl(E, L, txt) {
+      try { const el = _ambGet(E, _ambSpokenPrefix(L) + '-learnstat'); if (el) el.textContent = txt; } catch (e) {}
     }
     // Start the model download NOW rather than at the first spoken line. Idempotent
     // and shared: the pipeline is per-worker, so warming once serves every Learn
     // layer, and a second call while one is in flight is a no-op.
     function _ambLearnWarmUp(E, L) {
-      if (_ambLearnWarm) { _ambLearnSayEl(E, L && L.id, _ambLearnStatusText(L, null)); return; }
+      // ALWAYS report against the layer's real state. Passing null here said "Voice
+      // ready — press play" regardless, and since this runs on every card render it
+      // clobbered "Ready — Pasted text, 3 lines" moments after a pre-render finished
+      // — the layer looked un-prepared while its audio sat ready in the cache.
+      const _st = () => (E.seqState && E.seqState[_ambSpokenKey(L)]) || null;
+      if (_ambLearnWarm) { _ambLearnSayEl(E, L, _ambLearnStatusText(L, _st())); return; }
       if (_ambLearnWarming) return;
       const w = _ambLearnWorkerGet();
-      if (!w) { _ambLearnSayEl(E, L && L.id, _ambLearnStatusText(L, null)); return; }
+      if (!w) { _ambLearnSayEl(E, L, _ambLearnStatusText(L, _st())); return; }
       _ambLearnWarming = true;
-      _ambLearnSayEl(E, L && L.id, _ambLearnStatusText(L, null));
+      _ambLearnSayEl(E, L, _ambLearnStatusText(L, _st()));
       const id = ++_ambLearnSeq;
       _ambLearnPending.set(id, (d) => {
         _ambLearnWarming = false;
@@ -11634,7 +12237,7 @@
         else { _ambLearnWorkerErr = _ambLearnWorkerErr || new Error('warm failed');
                _ambLearnErrWhy = String((d && d.error) || 'no reply').slice(0, 90);
                try { console.warn('[bloom] Learn voice failed:', _ambLearnErrWhy); } catch (e) {} }
-        _ambLearnSayEl(E, L && L.id, _ambLearnStatusText(L, null));
+        _ambLearnSayEl(E, L, _ambLearnStatusText(L, _st()));
       });
       try { w.postMessage({ id: id, warm: true }); }
       catch (e) { _ambLearnPending.delete(id); _ambLearnWarming = false; }
@@ -11644,7 +12247,7 @@
     // a buffer-producing engine was chosen over SpeechSynthesis, which can only
     // reach the output device.
     // Status is written from the layer's REAL state (st), never predicted — the
-    // whole point is telling the user which of "downloading a 60 MB voice",
+    // whole point is telling the user which of "downloading the voice",
     // "fetching an article" and "speaking" they are waiting on. Cheap: it only
     // touches the DOM when the string actually changes.
     // ONE source of truth for the status line. The tick and the warm-up BOTH used
@@ -11655,19 +12258,42 @@
     // was reported. Warming now takes PRECEDENCE over per-layer phase — you cannot
     // be fetching usefully until the voice exists.
     function _ambLearnStatusText(L, st) {
-      if (_ambLearnWorkerErr) return (_ambLearnErrWhy.indexOf('desktop browser') >= 0)
-        ? 'Speech needs a desktop browser — this layer stays silent here'
+      // A PLAY-ONLY layer never opens the voice, so none of the voice's states apply
+      // to it — reporting "Downloading the voice…" for a layer that will never speak
+      // is just noise.
+      if (_ambWordOut(L) === 'play') {
+        const n = (st && st.sentences) ? st.sentences.length : 0;
+        if (st && st.phase === 'fetch') return 'Fetching text…';
+        if (st && st.phase === 'nofetch') return 'No text found';
+        if (!n) return 'Idle — press play';
+        return 'Playing the text as notes — ' + n + ' lines';
+      }
+      if (_ambLearnWorkerErr) return (_ambLearnErrWhy.indexOf('too little memory') >= 0)
+        ? 'This device can’t run the voice — this layer stays silent here'
         : ('Voice unavailable' + (_ambLearnErrWhy ? (' — ' + _ambLearnErrWhy) : ' — no connection?'));
       if (!_ambLearnWarm && _ambLearnWarming) return 'Downloading the voice, first use only…';
+      const seel = _ambIsSeel(L);
       const paste = (L && L.source === 'paste');
       if (!st) return _ambLearnWarm ? 'Voice ready — press play' : 'Idle — press play';
       const n = st.sentences ? st.sentences.length : 0;
       const done = Math.max(0, (st.si | 0) - (st.q ? st.q.length : 0));
       const where = st.title ? (' — ' + st.title) : '';
-      if (st.phase === 'nofetch') return paste ? 'Nothing pasted yet' : 'No article found — check the search term';
+      // EVERY stage is reported, for every source. Fetching, writing (with the count
+      // so a long article visibly progresses), speaking, and the point at which the
+      // layer stops taking on new articles and loops what it has — the whole reason
+      // this line exists is that all of it is otherwise invisible waiting.
+      if (st.phase === 'fetch') return seel ? 'Reading the text…' : (paste ? 'Reading your text…' : 'Fetching an article…');
+      if (st.phase === 'nofetch') return seel ? 'No text yet — press 🎲 New text' : (paste ? 'Nothing pasted yet' : 'No article found — check the search term');
       if (st.phase === 'novoice') return 'Voice unavailable' + (_ambLearnErrWhy ? (' — ' + _ambLearnErrWhy) : ' — no connection?');
-      if (st.q && st.q.length) return 'Speaking ' + done + '/' + n + where;
-      if (st.phase === 'fetch') return paste ? 'Reading your text…' : 'Fetching an article…';
+      // SPEAKING wins over "writing", because while it plays the render carries on in
+      // the background and the useful number is where the voice is, not the renderer.
+      // The cursor counts across loops, so it wraps back into 1..n.
+      if (st.q && st.q.length) {
+        const at = n ? (done <= 0 ? 1 : ((done - 1) % n) + 1) : done;
+        const ahead = st.prerendering ? (' · writing ' + (st.preDone | 0) + '/' + n) : '';
+        return 'Speaking ' + at + '/' + n + where + ahead;
+      }
+      if (st.prerendering) return 'Writing ' + (st.preDone | 0) + '/' + n + ' lines…' + where;
       if (st.phase === 'render') return 'Writing line ' + Math.min(n, st.si | 0) + '/' + n + where;
       if (n) return 'Ready — ' + (st.title || 'text') + ', ' + n + ' lines. Press play.';
       return _ambLearnWarm ? 'Voice ready — press play' : 'Idle — press play';
@@ -11676,7 +12302,7 @@
       if (st._say === txt) return;
       st._say = txt;
       try {
-        const el = _ambGet(E, 'ambient-learn-' + (L.id | 0) + '-learnstat');
+        const el = _ambGet(E, _ambSpokenPrefix(L) + '-learnstat');
         if (el) el.textContent = txt;
       } catch (e) {}
     }
@@ -11684,14 +12310,14 @@
     // buttons must work with the transport stopped — that was the opaque part.
     function _ambLearnLoadNow(E, L) {
       if (!L) return;
-      const key = 'learn:' + (L.id | 0);
+      const key = _ambSpokenKey(L);
       E.seqState = E.seqState || {};
       const st = E.seqState[key] || (E.seqState[key] = { q: [], sentences: [], si: 0, pending: false, srcKey: '' });
       st.epoch = (st.epoch | 0) + 1;             // cancels anything in flight
       st.sentences = []; st.si = 0; st.q = []; st.title = '';
-      st.srcKey = (L.source || 'wiki-random') + '|' + (L.term || '') + '|' + (L.corpus || 'wikipedia') + '|' + String(L.pasted || '').length;
+      st.srcKey = _ambSpokenSrcKey(L);
       st.phase = 'fetch'; st._say = null;
-      _ambLearnSayEl(E, L.id, _ambLearnStatusText(L, st));
+      _ambLearnSayEl(E, L, _ambLearnStatusText(L, st));
       st.pending = true;
       const ep = st.epoch | 0;
       const settle = () => {
@@ -11699,68 +12325,303 @@
         if ((st.epoch | 0) !== ep) return;           // a newer load already reported
         // Only the tick writes status while playing; with the transport STOPPED
         // nothing else would ever clear "Fetching…", so report the outcome here.
-        _ambLearnSayEl(E, L.id, _ambLearnStatusText(L, st));
+        _ambLearnSayEl(E, L, _ambLearnStatusText(L, st));
       };
-      try { _ambLearnAhead(L, st).then(settle, settle); }
-      catch (e) { st.pending = false; }
+      // EVERY source renders through the pump — it fetches when there is nothing to
+      // say, renders in order so playback can start on line 0, and stops at the
+      // space cap. Nothing here synthesises on demand any more.
+      st.pending = false;
+      try { _ambSeelPrerender(E, L); } catch (e) {}
     }
     function _ambLearnReset(E, L) {
-      const st = E.seqState && E.seqState['learn:' + (L.id | 0)];
+      const st = E.seqState && E.seqState[_ambSpokenKey(L)];
       if (!st) return;
       st.sentences = []; st.si = 0; st.q = []; st.title = ''; st.srcKey = '';
       st._say = null;   // force the next status write through
     }
-    // `epoch` is what makes a load CANCELLABLE. Pressing Random mid-search leaves
-    // a synth already running in the worker; it will still come back, and without
-    // this its audio would be appended to the new article's queue. Every result
-    // is checked against the epoch it started under and dropped if it moved.
-    async function _ambLearnAhead(L, st) {
-      const ep = st.epoch | 0;
-      const stale = () => (st.epoch | 0) !== ep;
-      if (!st.sentences.length || st.si >= st.sentences.length) {
-        st.phase = 'fetch';
-        // Pasted text needs no request — build the document locally rather than
-        // routing it through the fetch path just to keep one code shape.
-        const doc = (L.source === 'paste')
-          ? (String(L.pasted || '').trim()
-              ? { title: 'Pasted text', text: _ambLearnClean(L.pasted), url: '' }
-              : null)
-          : await _ambLearnFetch(L.source || 'wiki-random', L.term || '', L.corpus);
-        if (stale()) return;
-        if (!doc) { st.phase = 'nofetch'; return; }
-        st.title = doc.title;
-        // Speak a SENTENCE at a time: the whole extract in one synth call would be
-        // a single multi-minute buffer that cannot be interrupted or aligned.
-        st.sentences = String(doc.text).split(/(?<=[.!?])\s+/).filter(x => x.trim().length > 1);
-        st.si = 0;
-        if (!st.sentences.length) return;
-      }
-      const line = st.sentences[st.si++];
-      st.phase = _ambLearnWarm ? 'render' : 'voice';
-      const buf = await _ambLearnSynth(line);
-      if (stale()) return;                      // abandoned article — drop the audio
-      if (buf) st.q.push(buf); else st.phase = 'novoice';
+    // SIR EEL RENDERS EAGERLY, AND KEEPS WHAT IT RENDERED.
+    //
+    // Learn cannot do this — its text arrives from a fetch, one article at a time —
+    // but Sir Eel's text is sitting in the box before anyone presses play, so making
+    // the user wait for it is a choice, not a constraint. Measured, a line costs
+    // ~0.9 s fixed + ~1.0x its own spoken length, so on-demand synthesis put the
+    // whole first line's duration between the press and the first word (a 25-word
+    // sentence is ~15 s of speech, hence ~16 s of silence).
+    //
+    // Two halves, and the second is what makes it stay fast: every line is rendered
+    // AHEAD into `st.cache`, and the cache is KEPT and replayed, because the text
+    // loops unchanged — an AudioBuffer can feed any number of BufferSources. So the
+    // wait is paid once per text, not once per pass. The cost is memory, bounded by
+    // _AMB_SEEL_CACHE_SEC below.
+    //
+    // Cancellation is by CACHE KEY rather than the fetch path's epoch counter: the
+    // key IS the text, so a rewrite mid-render is noticed by every iteration of the
+    // loop and the stale run drops its own work.
+    const _AMB_SEEL_CACHE_SEC = 300;   // ~29 MB at 24 kHz float32 — a whole 24-sentence text is well inside it
+    // THE CACHE MUST NOT LIVE IN `E.seqState` — `_ambResetClocks` empties that on
+    // EVERY press, so a cache kept there is destroyed by the very play it exists to
+    // make instant (measured: the pre-render finished while stopped, then the first
+    // line was re-synthesised on demand and arrived 4.0 s after the press, against
+    // 0.44 s for a Bed's first note). It also must not live on the layer object:
+    // persistWorkspace serialises underscore fields, so AudioBuffers would end up in
+    // the saved project. A WeakMap on the ENGINE is neither — it outlives every play
+    // and dies with the engine.
+    const _ambSeelStore = new WeakMap();   // engine → Map(layerKey → { key, lines, cache, rendering })
+    function _ambSeelEntry(E, L, make) {
+      if (!E || !L) return null;
+      let m = _ambSeelStore.get(E);
+      if (!m) { if (!make) return null; m = new Map(); _ambSeelStore.set(E, m); }
+      const k = _ambSpokenKey(L);
+      let ent = m.get(k);
+      if (!ent && make) { ent = { key: '', lines: [], cache: [], rendering: '' }; m.set(k, ent); }
+      return ent || null;
     }
-    const _AMB_LEARN_BOOST = 3.2;   // speech is quiet next to synth layers; measured peak ~0.7
+    function _ambSeelState(E, L) {
+      E.seqState = E.seqState || {};
+      const k = _ambSpokenKey(L);
+      return E.seqState[k] || (E.seqState[k] = { q: [], sentences: [], si: 0, pending: false, srcKey: '' });
+    }
+    // ONE PUMP for every spoken layer. It owns three jobs that used to be split
+    // between a pre-render (local text only) and a render-one-ahead tick (fetched):
+    //
+    //   FETCH   get an article when there is nothing left to say. Local text needs
+    //           no fetch; a fetched layer takes ONE article at a time and appends
+    //           its lines, so a layer accumulates a growing library rather than
+    //           throwing the last article away.
+    //   RENDER  turn lines into audio IN ORDER, so playback can start as soon as
+    //           line 0 exists and the rest arrive while it speaks. This is what
+    //           keeps a long article from dropping out mid-way.
+    //   CAP     stop at _AMB_SEEL_CACHE_SEC of audio. At the cap it stops fetching
+    //           NEW articles and the layer loops what it has — a bounded library
+    //           rather than an unbounded one.
+    //
+    // The cache lives in the engine WeakMap, so everything it has rendered survives
+    // stop; a fresh press simply starts from line 0 again. A line is rendered at
+    // most ONCE per voice — the map is keyed by voice+text — so an article that
+    // comes round again costs nothing.
+    const _AMB_SPOKEN_LOOKAHEAD = 3;   // fetch the next article when the cursor is this close to the end
+    function _ambSpokenCachedSec(ent) {
+      let s = 0; for (const b of (ent.cache || [])) if (b) s += b.duration || 0;
+      return s;
+    }
+    async function _ambSeelPrerender(E, L) {
+      if (!L || !E) return;
+      const ent = _ambSeelEntry(E, L, true);
+      const st = _ambSeelState(E, L);
+      const ck = _ambSpokenSrcKey(L);
+      const local = _ambSpokenLocalText(L);
+      const vk = _ambSpokenVoice(L) + '\u0000';
+      ent.buf = ent.buf || new Map();
+      // The voice or the local text changed → this cache is for different audio.
+      if (ent.key !== ck) { ent.key = ck; ent.lines = []; ent.cache = []; ent.full = false; ent.titles = []; st.ci = 0; }
+      if (ent.running) return;                    // one pump per layer
+      ent.running = true;
+      const say = () => { try { _ambLearnSayEl(E, L, _ambLearnStatusText(L, st)); } catch (e) {} };
+      try {
+        for (let guard = 0; guard < 64; guard++) {
+          if (ent.key !== ck) return;             // settings moved under us
+          // ---- LINES ----------------------------------------------------
+          if (local !== null) {
+            const lines = _ambSpokenLines(local);
+            if (lines.join('\u0000') !== (ent.lines || []).join('\u0000')) {
+              ent.lines = lines; ent.cache = lines.map(l => ent.buf.get(vk + l) || null); ent.full = false; st.ci = 0;
+            }
+            ent.titles = [_ambIsSeel(L) ? 'Sir Eel' : 'Pasted text'];
+          } else if (!ent.lines.length || (_ambSpokenWantMore(ent, st) && !ent.full)) {
+            st.phase = 'fetch'; st._say = null; say();
+            const doc = await _ambLearnFetch(L.source || 'wiki-random', L.term || '', L.corpus);
+            if (ent.key !== ck) return;
+            if (!doc) { st.phase = 'nofetch'; st._say = null; say(); return; }
+            const add = _ambSpokenLines(doc.text).filter(l => ent.lines.indexOf(l) < 0);
+            ent.titles = (ent.titles || []).concat([doc.title]);
+            ent.lines = ent.lines.concat(add);
+            ent.cache = ent.cache.concat(add.map(l => ent.buf.get(vk + l) || null));
+            st.phase = null;
+          }
+          st.sentences = ent.lines; st.title = (ent.titles && ent.titles.length) ? ent.titles[ent.titles.length - 1] : '';
+          // ---- RENDER ----------------------------------------------------
+          const next = ent.cache.indexOf(null);
+          if (next < 0) {
+            // Everything in hand is audio. Fetch more only if the cursor is near the
+            // end and there is room; otherwise this pump is done.
+            if (local !== null || ent.full || !_ambSpokenWantMore(ent, st)) { st.prerendering = false; st._say = null; say(); return; }
+            continue;
+          }
+          if (_ambSpokenCachedSec(ent) > _AMB_SEEL_CACHE_SEC) {
+            // SPACE LIMIT. Keep what is rendered, stop taking on new articles, and
+            // drop the un-rendered tail so the layer loops what it actually has.
+            ent.full = true;
+            ent.lines = ent.lines.slice(0, next); ent.cache = ent.cache.slice(0, next);
+            st.sentences = ent.lines; st.prerendering = false; st._say = null; say();
+            return;
+          }
+          st.prerendering = true; st.preDone = ent.cache.filter(Boolean).length; st._say = null; say();
+          const line = ent.lines[next];
+          // AWAIT each line: the worker is a FIFO, so one in flight at a time lets
+          // another layer's line interleave instead of queueing behind a whole
+          // article, and lets playback start the moment line 0 lands.
+          const buf = await _ambLearnSynth(line, _ambSpokenVoice(L));
+          if (ent.key !== ck) return;
+          if (!buf) { st.phase = 'novoice'; st.prerendering = false; st._say = null; say(); return; }
+          ent.cache[next] = buf; ent.buf.set(vk + line, buf);
+          st.preDone = ent.cache.filter(Boolean).length; st._say = null; say();
+        }
+      } finally {
+        ent.running = false;
+        if (ent.key === ck) { st.prerendering = false; st._say = null; try { _ambLearnSayEl(E, L, _ambLearnStatusText(L, st)); } catch (e) {} }
+      }
+    }
+    // More material is wanted when the play cursor is within a few lines of the end
+    // of what we have. Before the layer has ever played, one article is enough.
+    function _ambSpokenWantMore(ent, st) {
+      if (ent.full) return false;
+      const have = (ent.lines || []).length;
+      if (!have) return true;
+      return ((st.ci | 0) % Math.max(1, have)) >= have - _AMB_SPOKEN_LOOKAHEAD;
+    }
+    // TEXT → SPOKEN LINES. Sentences first, then long ones are broken at CLAUSE
+    // boundaries, because a line costs ~0.9 s + about its own spoken length to
+    // render and the FIRST line's cost is pure waiting — nothing is playing yet to
+    // hide it. A 25-word encyclopedia opener is ~15 s of speech, so ~16 s of
+    // silence after the press; split in two it starts speaking in about half that,
+    // for one extra fixed cost later, absorbed by the line already playing.
+    //
+    // Splitting only ever happens at punctuation or a conjunction, never mid-clause,
+    // so each piece is still something a voice can read with sensible prosody. A
+    // clause that is somehow still enormous is left ALONE rather than hard-cut at a
+    // word count: a butchered phrase sounds worse than a long one.
+    const _AMB_LINE_MAX_WORDS = 14;
+    const _ambWordCount = (s) => (String(s).trim().match(/\S+/g) || []).length;
+    function _ambSplitLine(line) {
+      const t = String(line || '').trim();
+      if (_ambWordCount(t) <= _AMB_LINE_MAX_WORDS) return [t];
+      // Break points, in order of how natural they are to pause on.
+      const marks = [/(?<=[;:])\s+/, /(?<=,)\s+/, /\s+(?=(?:and|but|or|so|yet|because|although|while|which|who|that|when|where)\s)/i];
+      let parts = [t];
+      for (const re of marks) {
+        if (parts.every(p => _ambWordCount(p) <= _AMB_LINE_MAX_WORDS)) break;
+        parts = parts.flatMap(p => (_ambWordCount(p) > _AMB_LINE_MAX_WORDS) ? p.split(re) : [p]);
+      }
+      // Re-join the small pieces so the split does not produce a stutter of 2-word lines
+      // — the fixed per-line cost is real, and so is the rhythm of the reading.
+      const out = [];
+      for (const p of parts.map(x => String(x).trim()).filter(Boolean)) {
+        const last = out.length ? out[out.length - 1] : null;
+        if (last && _ambWordCount(last) + _ambWordCount(p) <= _AMB_LINE_MAX_WORDS) out[out.length - 1] = last + ' ' + p;
+        else out.push(p);
+      }
+      return out.length ? out : [t];
+    }
+    function _ambSpokenLines(text) {
+      return String(text || '')
+        .split(/(?<=[.!?])\s+/)
+        .map(x => x.trim())
+        .filter(x => x.length > 1)
+        .flatMap(_ambSplitLine);
+    }
+    const _AMB_LEARN_BOOST = 3.2;   // speech is quiet next to synth layers; Kitten peaks 0.77-0.91, rms ~0.12
+    // ---- SPEECH AS A SAMPLE: slice / chop / reverse / rate -------------------
+    // A rendered line IS a sample, so the Word layers get the sample-layer moves
+    // rather than being stuck with plain start-to-finish playback. All of it is
+    // absent-by-default and a layer with no `speech` object plays exactly as before.
+    //
+    //   Trim        keep a window of the line (start %, length %) — the sample
+    //               layer's slice, applied to an utterance.
+    //   Chop        cut that window into N pieces and re-order them: forward,
+    //               reversed, ping-pong, or a SEEDED shuffle (seeded so a loop
+    //               repeats identically rather than scrambling differently each
+    //               pass — the line is material, not a random event).
+    //   Reverse     play each piece backwards. Done by reversing the BUFFER once
+    //               and caching it, because playbackRate cannot go negative in Web
+    //               Audio and reversing per piece per pass would allocate on every
+    //               line.
+    //   Rate        playbackRate — speed and pitch together, as on a sampler.
+    const _AMB_SPEECH_ORDERS = [['fwd', 'Forward'], ['rev', 'Reversed'], ['pong', 'Ping-pong'], ['shuf', 'Shuffle']];
+    const _ambSpeechOn = (L) => { const p = L && L.speech; return !!(p && (p.chop > 1 || p.reverse || (p.rate | 0) !== 100 || (p.start | 0) !== 0 || (p.len | 0) !== 100)); };
+    function _ambSpeechOpt(L) {
+      const p = (L && L.speech) || {};
+      return {
+        chop: Math.max(1, Math.min(16, Number.isFinite(p.chop) ? (p.chop | 0) : 1)),
+        order: _AMB_SPEECH_ORDERS.some(o => o[0] === p.order) ? p.order : 'fwd',
+        reverse: !!p.reverse,
+        rate: Math.max(25, Math.min(400, Number.isFinite(p.rate) ? (p.rate | 0) : 100)),
+        start: Math.max(0, Math.min(95, Number.isFinite(p.start) ? (p.start | 0) : 0)),
+        len: Math.max(5, Math.min(100, Number.isFinite(p.len) ? (p.len | 0) : 100)),
+      };
+    }
+    function _ambNormalizeSpeech(L) {
+      if (!L || typeof L !== 'object') return;
+      if (!L.speech || typeof L.speech !== 'object') { if ('speech' in L) delete L.speech; return; }
+      const o = _ambSpeechOpt(L);
+      L.speech = { chop: o.chop, order: o.order, reverse: o.reverse ? 1 : 0, rate: o.rate, start: o.start, len: o.len };
+    }
+    // Reversed copies are cached ON the buffer object — one allocation per line for
+    // the life of the cache, not one per playback.
+    function _ambSpeechReversed(ac, buf) {
+      if (buf._ambRev) return buf._ambRev;
+      try {
+        const out = ac.createBuffer(buf.numberOfChannels, buf.length, buf.sampleRate);
+        for (let c = 0; c < buf.numberOfChannels; c++) {
+          const src = buf.getChannelData(c), dst = out.getChannelData(c);
+          for (let i = 0, n = buf.length; i < n; i++) dst[i] = src[n - 1 - i];
+        }
+        try { Object.defineProperty(buf, '_ambRev', { value: out, enumerable: false }); } catch (e) { buf._ambRev = out; }
+        return out;
+      } catch (e) { return buf; }
+    }
+    const _ambSpeechOrderIdx = (o, n, seed) => {
+      const a = []; for (let i = 0; i < n; i++) a.push(i);
+      if (o === 'rev') return a.reverse();
+      if (o === 'pong') { const b = a.slice(); return a.concat(b.slice(0, -1).reverse()); }
+      if (o === 'shuf') {
+        // Seeded on the LINE, so the same line scrambles the same way every pass.
+        const r = _ambSeededRand(seed >>> 0);
+        for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); const t = a[i]; a[i] = a[j]; a[j] = t; }
+      }
+      return a;
+    };
+    // Returns the SOUNDING duration so the caller can advance its clock by what it
+    // actually scheduled — chop order (ping-pong) and rate both change it.
     function _ambLearnPlay(E, key, L, buf, at) {
       try {
         if (!buf) return null;
         const ac = Tone.getContext().rawContext;
         const dest = _ambLayerDest(key);
         if (!dest) return null;
-        const src = ac.createBufferSource();
-        src.buffer = buf;
         // Through a GAIN, not straight to the dest. Without this the layer's Level
-        // control did nothing at all, and MMS output sits well below the synth
+        // control did nothing at all, and the voice sits well below the synth
         // layers — the BOOST brings a speaking voice up to sit in a mix rather
         // than under it.
         const g = ac.createGain();
         const lvl = Math.max(0, Math.min(100, Number.isFinite(L && L.level) ? (L.level | 0) : 70));
         g.gain.value = (lvl / 100) * _AMB_LEARN_BOOST;
-        src.connect(g);
         try { g.connect(dest); } catch (e) { try { g.connect(dest.input || dest); } catch (e2) { return null; } }
-        src.start(Math.max(ac.currentTime, Number.isFinite(at) ? at : 0));
-        return src;
+        const t0 = Math.max(ac.currentTime, Number.isFinite(at) ? at : 0);
+        if (!_ambSpeechOn(L)) {
+          const src = ac.createBufferSource();
+          src.buffer = buf; src.connect(g); src.start(t0);
+          return { src: src, dur: buf.duration };
+        }
+        const o = _ambSpeechOpt(L);
+        const play = o.reverse ? _ambSpeechReversed(ac, buf) : buf;
+        const rate = o.rate / 100;
+        // The trim window, then the pieces of it. A reversed line trims from the
+        // reversed copy, so Trim always means "the part of what you hear".
+        const winStart = play.duration * (o.start / 100);
+        const winLen = Math.max(0.02, play.duration * (o.len / 100) - (play.duration * (o.start / 100)) * 0);
+        const win = Math.max(0.02, Math.min(play.duration - winStart, winLen));
+        const pieceLen = win / o.chop;
+        const order = _ambSpeechOrderIdx(o.order, o.chop, (Math.round(buf.duration * 1000) * 2654435761) >>> 0);
+        let t = t0, last = null;
+        for (const idx of order) {
+          const src = ac.createBufferSource();
+          src.buffer = play; src.playbackRate.value = rate; src.connect(g);
+          const off = winStart + idx * pieceLen;
+          src.start(t, off, pieceLen);
+          t += pieceLen / rate;
+          last = src;
+        }
+        return { src: last, dur: Math.max(0.02, t - t0) };
       } catch (e) { return null; }
     }
     function _ambImprovAt(L, c) {
@@ -13840,8 +14701,12 @@
       // emitted fan to space/100 (short ramp = click-free morph of SOUNDING
       // voices); pan mode collapses to the node panner's point source.
       if (e.core) {
-        const w = (lc && lc.panMode !== 'pan' && Number.isFinite(lc.space))
-          ? Math.max(0, Math.min(1, (lc.space | 0) / 100)) : 0;
+        // SPATIALIZE needs the strip's side signal passed at FULL width, or its
+        // per-note positions are collapsed to mono by a Spread width of 0 — which
+        // is the default, so the feature would appear to do nothing at all.
+        const w = _ambSpatOn(lc) ? 1
+          : ((lc && lc.panMode !== 'pan' && Number.isFinite(lc.space))
+            ? Math.max(0, Math.min(1, (lc.space | 0) / 100)) : 0);
         try {
           const tn = Tone.getContext().rawContext.currentTime;
           e.core.cmd('strip_rampv', e.core.slot, 4, tn, -1e6, w, 0.05);
@@ -15146,6 +16011,7 @@
     // tick sets the current-engine pointer _E first.
     function _ambResetClocks(E) {
       E.clocks = {}; E.iters = {}; E.seqState = {};
+      E._spat = {};       // per-note pan ordinals — a fresh play restarts every layer's Spatialize pattern
       E.motifDeg = null;
       E.texPattern = null; E.texStep = 0; E.texMutateAt = 0;
       E.shapePhase = {};   // per Shape-layer wheel: { startAt, lastAt } phase clocks
@@ -15571,23 +16437,75 @@
         const HZ = gate.hz;
         if (_ambFreezeGate(E, key, now, HZ)) return;
         const st = E.seqState[key] || (E.seqState[key] = { q: [], sentences: [], si: 0, pending: false, srcKey: '' });
-        // Changing the source or the search term abandons the queued article.
-        const srcKey = (L.source || 'wiki-random') + '|' + (L.term || '') + '|' + (L.corpus || 'wikipedia') + '|' + String(L.pasted || '').length;
-        if (st.srcKey !== srcKey) { st.srcKey = srcKey; st.sentences = []; st.si = 0; st.q = []; }
+        // Changing the source / search term / generated text abandons the queue.
+        const srcKey = _ambSpokenSrcKey(L);
+        if (st.srcKey !== srcKey) { st.srcKey = srcKey; st.sentences = []; st.si = 0; st.q = []; st.qL = []; }
+        // WORD MUSIC. Play-only skips the voice entirely — no worker, no model, no
+        // queue — and walks the LINES, turning each into a passage of notes. Both
+        // keeps the spoken path below and adds the passage beside each line.
+        const _wOut = _ambWordOut(L);
+        if (_wOut === 'play') {
+          _ambWordEnsureLines(E, L, st);
+          _ambLearnSay(E, L, st, _ambLearnStatusText(L, st));
+          if (!C[key] || C[key] < now) C[key] = _ambWordSnap(E, L, lead + _ambDriftOffset(E, key, L, cfg));
+          let gp = 0;
+          while (C[key] < HZ && gp++ < 4) {
+            if (!st.sentences.length) break;
+            if (_ambCondFires(L.when, (E.iters[key] | 0), C[key])) {
+              const line = st.sentences[(st.si | 0) % st.sentences.length];
+              st.si = (st.si | 0) + 1;
+              const d = _ambEmitWordPassage(E, key, L, line, C[key]);
+              C[key] = _ambWordSnap(E, L, C[key] + Math.max(0.2, d) + Math.max(0, (L.intervalMs | 0)) / 1000);
+            } else {
+              C[key] = _ambWordSnap(E, L, C[key] + Math.max(0.25, (L.intervalMs | 0) / 1000));
+            }
+            E.iters[key] = (E.iters[key] | 0) + 1;
+          }
+          _ambPruneCap(E, key, now);
+          return;
+        }
         // Keep TWO lines queued, not one. With a single slot the layer plays a line,
         // then has to synthesise the next before it can schedule anything — measured
         // ~13 s of silence between lines against a 900 ms Gap. Rendering one further
         // ahead lets synthesis overlap playback so the Gap is the real gap.
-        if (!st.pending && st.q.length < 2) {
-          st.pending = true;
-          try { _ambLearnAhead(L, st).then(() => { st.pending = false; }, () => { st.pending = false; }); }
-          catch (e) { st.pending = false; }
+        // A LOCAL-TEXT layer (Sir Eel, or Learn on Paste) never synthesises inside
+        // the tick — its lines were rendered before play and are replayed from the
+        // cache, so the queue refills instantly and the layer speaks the moment its
+        // first slot comes round. If the cache is missing (a project loaded straight
+        // into play, or the text was just rewritten) kick the pre-render and wait for
+        // it, rather than falling back to on-demand synthesis, which is the very
+        // latency this removes.
+        // EVERY spoken layer plays from the cache now, fetched articles included.
+        // The pump renders ahead in the background, so the tick never synthesises:
+        // it takes what is ready, and simply waits when the next line is not — which
+        // is what stops a long article dropping out part-way through.
+        {
+          const ent = _ambSeelEntry(E, L, false);
+          const cache = (ent && ent.key === srcKey && ent.cache.length) ? ent.cache : null;
+          if (!cache || _ambSpokenWantMore(ent, st) || ent.cache.indexOf(null) >= 0) {
+            if (!ent || !ent.running) { try { _ambSeelPrerender(E, L); } catch (e) {} }
+          }
+          if (cache) {
+            // The play reset emptied seqState, so restore what the readout needs
+            // from the surviving entry rather than re-deriving it.
+            if (!st.sentences.length) { st.sentences = ent.lines; st.title = (ent.titles && ent.titles.length) ? ent.titles[ent.titles.length - 1] : ''; }
+            while (st.q.length < 2) {
+              const ci = (st.ci | 0) % cache.length;
+              const b = cache[ci];
+              if (!b) break;                        // still rendering this line — wait for it
+              // The LINE rides along with its buffer: "Both" needs to know which text
+              // the audio about to play corresponds to, and the queue is the only
+              // place that mapping still exists by the time it is played.
+              st.q.push(b); (st.qL = st.qL || []).push(ent.lines[ci] || '');
+              st.ci = (st.ci | 0) + 1; st.si = st.ci;
+            }
+          }
         }
         // TELL THE USER WHAT IT IS DOING. The first line can be ~15 s away (voice
         // download) and there is otherwise no signal at all — silence that looks
         // identical to a broken layer.
         _ambLearnSay(E, L, st, _ambLearnStatusText(L, st));
-        if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(E, key, L, cfg);
+        if (!C[key] || C[key] < now) C[key] = _ambWordSnap(E, L, lead + _ambDriftOffset(E, key, L, cfg));
         let g = 0;
         while (C[key] < HZ && g++ < 4) {
           if (!st.q.length) break;   // nothing rendered yet — WAIT rather than advance the
@@ -15595,12 +16513,20 @@
                                      // the first line would land arbitrarily late.
           if (_ambCondFires(L.when, (E.iters[key] | 0), C[key])) {
             const buf = st.q.shift();
+            const line = (st.qL && st.qL.length) ? st.qL.shift() : '';
             window._ambCaptureSink = _ambCapSink(E, key);
-            _ambLearnPlay(E, key, L, buf, C[key]);
+            const _played = _ambLearnPlay(E, key, L, buf, C[key]);
             window._ambCaptureSink = null;
-            C[key] += buf.duration + Math.max(0, (L.intervalMs | 0)) / 1000;
+            // BOTH: the passage starts with the spoken line, so the notes and the
+            // words are the same text arriving two ways at once.
+            let _wDur = 0;
+            if (_wOut === 'both' && line) { try { _wDur = _ambEmitWordPassage(E, key, L, line, C[key]); } catch (e) {} }
+            // Chop / rate / ping-pong change how long the line SOUNDS, so advance by
+            // what was scheduled rather than by the raw buffer length.
+            const _sDur = (_played && _played.dur > 0) ? _played.dur : buf.duration;
+            C[key] = _ambWordSnap(E, L, C[key] + Math.max(_sDur, _wDur) + Math.max(0, (L.intervalMs | 0)) / 1000);
           } else {
-            C[key] += Math.max(0.25, (L.intervalMs | 0) / 1000);
+            C[key] = _ambWordSnap(E, L, C[key] + Math.max(0.25, (L.intervalMs | 0) / 1000));
           }
           E.iters[key] = (E.iters[key] | 0) + 1;
         }
@@ -15667,8 +16593,10 @@
             catch (e) { _ambLogTickErr(e); window._ambCaptureSink = null; }
             continue;
           }
-          if (ex.type === 'learn') {
-            try { _ambTickLearnLayer(E, ex, now, lead, space, cfg, { key: 'learn:' + ex.id }); }
+          // Both SPOKEN types run the same tick — they differ only in where the
+          // text comes from, which is settled inside the render pump.
+          if (ex.type === 'learn' || ex.type === 'sireel') {
+            try { _ambTickLearnLayer(E, ex, now, lead, space, cfg, { key: ex.type + ':' + ex.id }); }
             catch (e) { _ambLogTickErr(e); window._ambCaptureSink = null; }
             continue;
           }
@@ -16417,6 +17345,11 @@
         // and by scheduled start time (window._ambEmitAt) for thresholded cancel.
         if (typeof window !== 'undefined') { window._ambEmitKey = key; window._ambEmitAt = (typeof at === 'number' ? at : null); }
         if (typeof freq !== 'number' || typeof at !== 'number') return;
+        // SPATIALIZE before the capture copy is taken, so a Write/Hold freeze stores
+        // the position this note actually sounded at — and see _ambTagSink, which
+        // re-applies it on replay so editing the control is heard on a frozen loop
+        // instead of waiting for the next rewrite.
+        try { _ambSpatApply(E, key, params, at); } catch (e) {}
         // PITCH-ECHO notes are an FX, NOT material: keep them OUT of the rolling
         // capture (the tag above still runs, so echo voices stay cancellable).
         // Captured echoes got BAKED into Write/Hold freezes as ordinary events —
@@ -16451,11 +17384,45 @@
     function _ambTagSink(key) {
       return (freq, params, dur, at) => {
         if (typeof window !== 'undefined') { window._ambEmitKey = key; window._ambEmitAt = (typeof at === 'number' ? at : null); }
+        // Replayed notes carry the pan that was CAPTURED, so without this a frozen
+        // loop would ignore every Spatialize edit until its next rewrite (the
+        // documented "edits land a whole Write cycle late" trap). Recomputing is
+        // idempotent — the value is assigned outright, never accumulated — and the
+        // ordinal keeps advancing with absolute time, so a looping phrase carries on
+        // moving through the field rather than repeating one fixed image.
+        try { _ambSpatApply(_E, key, params, at); } catch (e) {}
       };
+    }
+    // ---- ROLLING CAPTURE RETENTION -----------------------------------------
+    // A Write/Evolve or Bar-Lock loop is recovered FROM this buffer, so the buffer's
+    // retention IS the maximum phrase length. It was a fixed 33 s, which made "~31 s"
+    // a hard ceiling on a loop — and under an active progression the phrase is
+    // snapped to whole progression CYCLES, so any project whose cycle runs longer
+    // than that (16 bars at 120 bpm is already 32 s) could not loop at all: every
+    // Evolve layer silently stayed live and said so, over and over.
+    //
+    // Retention now FOLLOWS the longest phrase the project actually arms. Nothing
+    // grows for a project that never asks: the floor is the old 33 s, and the ceiling
+    // is bounded so a pathological setting cannot grow the buffer without limit.
+    // Notes are small ({at, freq, dur, params}), so three minutes of one layer is
+    // some thousands of objects, not a memory problem.
+    const _AMB_CAP_MAX_SEC = 180;
+    const _AMB_CAP_MIN_SEC = 33;
+    const _ambCapKeepSec = (E) => Math.max(_AMB_CAP_MIN_SEC, Math.min(_AMB_CAP_MAX_SEC + 2, (E && E._capKeepSec) || _AMB_CAP_MIN_SEC));
+    // The usable phrase length — retention minus a margin, so the oldest note of a
+    // just-completed window cannot be pruned in the same tick it is locked.
+    const _ambCapLimitSec = (E) => _ambCapKeepSec(E) - 2;
+    // Ask for enough retention to hold a phrase of `sec`. Called BEFORE the window is
+    // armed, which is what makes this work: the window is captured going forward, so
+    // widening the buffer now covers the whole of it.
+    function _ambCapWant(E, sec) {
+      if (!E || !(sec > 0)) return;
+      const want = Math.min(_AMB_CAP_MAX_SEC + 2, sec + 2);
+      if (want > (E._capKeepSec || _AMB_CAP_MIN_SEC)) E._capKeepSec = want;
     }
     function _ambPruneCap(E, key, now) {
       const arr = E.cap && E.cap[key]; if (!arr || !arr.length) return;
-      const keepFrom = now - 33; // keep ~last 33s (≥ max Freeze length)
+      const keepFrom = now - _ambCapKeepSec(E);
       let i = 0; while (i < arr.length && arr[i].at < keepFrom) i++;
       if (i > 0) arr.splice(0, i);
     }
@@ -16472,7 +17439,7 @@
       const cfg = E._cfg || (E.getCfg && E.getCfg());
       const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
       let P = 0; try { P = _ambLayerPeriodSec(E, key, L, cfg); } catch (e) {}
-      if (!(P > 0.05) || P > 31) return false;
+      if (!(P > 0.05) || P > _ambCapLimitSec(E)) return false;
       const cap = (E.cap && E.cap[key]) || [];
       if (!cap.length) return false;
       // Window = the last COMPLETED unit (boundary in the future → step back one).
@@ -16891,7 +17858,8 @@
         const _id = (String(key).split(':')[1] | 0);
         const _seed = (cfg && cfg.seed) | 0;
         const _maxBars = _sto ? Math.max(1, w.barsMax | 0) : Math.max(1, w.bars | 0);
-        if (_maxBars * barSec > 31) { if (fs && !fs._writeWarned) { fs._writeWarned = true; try { if (typeof showToast === 'function') showToast('Evolve: ' + _maxBars + '-bar pattern exceeds the ~31 s capture limit at this tempo — playing live.'); } catch (e) {} } return; }
+        _ambCapWant(E, _maxBars * barSec);
+        if (_maxBars * barSec > _ambCapLimitSec(E)) { if (fs && !fs._writeWarned) { fs._writeWarned = true; try { if (typeof showToast === 'function') showToast('Evolve: ' + _maxBars + '-bar pattern exceeds the capture capture limit at this tempo — playing live.'); } catch (e) {} } return; }
         const st = _ambFreezeState(E, key);
         // Respect a USER freeze / recording / foreign lock — stand down until it clears.
         if ((st.frozen || st.recording || st.pendingFreezeAt != null) && !st._write) return;
@@ -16929,9 +17897,10 @@
         // branch above then holds it forever (never thaws). Too-long unit → stay live.
         if (w.lock) {
           let _lb = Math.max(1, w.bars | 0);
-          try { const _P = _ambLayerPeriodSec(E, key, L, cfg); if (_P > 0.05 && _P <= 31) _lb = Math.max(1, Math.ceil((_P - 0.001) / barSec)); } catch (e) {}
+          try { const _P = _ambLayerPeriodSec(E, key, L, cfg); if (_P > 0.05 && _P <= _ambCapLimitSec(E)) _lb = Math.max(1, Math.ceil((_P - 0.001) / barSec)); } catch (e) {}
           let _nb = _ambWriteEffBars(cfg, _lb, 2);
-          if (_nb * barSec > 31) { st._write = true; st._writeNT = 1; st._writeRearmAt = bStart + _nb * barSec; return; }
+          _ambCapWant(E, _nb * barSec);
+          if (_nb * barSec > _ambCapLimitSec(E)) { st._write = true; st._writeNT = 1; st._writeRearmAt = bStart + _nb * barSec; return; }
           st._writeNT = 2; _ambBarLockArm(E, key, bStart, _nb * barSec); st._write = true; return;
         }
         // Write SEQUENCE: tuple k drives the k-th write cycle (looping the list).
@@ -16957,7 +17926,7 @@
         // covering ≥ 1 natural period.
         try {
           const _P = _ambLayerPeriodSec(E, key, L, cfg);
-          if (_P > 0.05 && _P <= 31) { const _mb = Math.ceil((_P - 0.001) / barSec); if (_mb > nBars) nBars = _mb; }
+          if (_P > 0.05 && _P <= _ambCapLimitSec(E)) { const _mb = Math.ceil((_P - 0.001) / barSec); if (_mb > nBars) nBars = _mb; }
         } catch (e) {}
         // Engage-failure growth: an armed window that captured NOTHING (a
         // rest-heavy stretch) doubles the next attempt (reset on success), so
@@ -16972,8 +17941,10 @@
         if (nT <= 1) { st._write = true; st._writeNT = 1; st._writeRearmAt = bStart + nBars * barSec; return; }
         // If the snap blows the ~31 s capture limit, stay live this cycle (warn
         // once) rather than loop wrong.
-        if (nBars * barSec > 31) {
-          if (!st._writeProgWarned) { st._writeProgWarned = true; try { if (typeof showToast === 'function') showToast('Evolve: pattern snapped to the progression cycle (' + _ambFmtBpc(nBars) + ' bars) exceeds the ~31 s capture limit — playing live.'); } catch (e) {} }
+        _ambCapWant(E, nBars * barSec);
+        if (nBars * barSec > _ambCapLimitSec(E)) {
+          if (!st._writeProgWarned) { st._writeProgWarned = true; try { if (typeof showToast === 'function') showToast(
+            'Evolve: this layer\u2019s phrase follows the whole progression cycle (' + _ambFmtBpc(nBars) + ' bars \u2248 ' + Math.round(nBars * barSec) + ' s), longer than the ' + Math.round(_ambCapLimitSec(E)) + ' s that can be captured \u2014 playing live instead. Shorten the cycle, raise the tempo, or turn Evolve off for this layer.'); } catch (e) {} }
           st._write = true; st._writeNT = 1; st._writeRearmAt = bStart + nBars * barSec; return;
         }
         st._writeNT = nT;
@@ -16995,8 +17966,9 @@
       const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : (typeof _ambBpm === 'function' ? _ambBpm() : 120);
       const barSec = (60 / Math.max(20, bpm)) * 4;
       const loopSec = loopBars * barSec;
-      if (loopSec > 31) {
-        if (typeof showToast === 'function') showToast('Bar Lock: ' + loopBars + '-bar loop exceeds the ~31 s capture limit — playing live.');
+      _ambCapWant(E, loopSec);
+      if (loopSec > _ambCapLimitSec(E)) {
+        if (typeof showToast === 'function') showToast('Bar Lock: ' + loopBars + '-bar loop (' + Math.round(loopSec) + ' s) exceeds the ' + Math.round(_ambCapLimitSec(E)) + ' s capture limit — playing live.');
         return;
       }
       E._barLockLoopBars = loopBars;   // cached for the loop-position indicator (no per-frame LCM recompute)
@@ -17373,22 +18345,33 @@
     // A second press while armed finalizes the take (PERF disarm → the mic
     // translate / played steps land in the scratch lane → 400 ms sync → seed).
     function _ambAuthorTakeToggle(E, key, wantMic) {
+      // TWO SILENT DEAD-ENDS lived below, and both read as a dead button. (1) When
+      // `performMode` was already armed — easy to leave behind from an earlier take
+      // — the press just forwarded to #perform-btn, and if that element was not in
+      // the DOM it returned having done and said NOTHING. (2) A throw out of
+      // `_ambGridEditStart` logged to the console and returned, which nobody sees.
+      // The press is now always answered, whatever happens after it.
+      const _say = (t) => { try { if (typeof showToast === 'function') showToast(t); } catch (e) {} };
       if (typeof performMode !== 'undefined' && performMode) {
         const pb = document.getElementById('perform-btn');
-        if (pb) pb.click();   // finalize: disarm → mic translate / steps → seed
+        if (pb) { pb.click(); return; }   // finalize: disarm → mic translate / steps → seed
+        _say('Take already armed elsewhere — could not find the Perform control to finish it.');
         return;
       }
       if (!(_bloomGridEdit && _bloomGridEdit.E === E && _bloomGridEdit.key === key)) {
         const L = _ambLayerByKey(E, key);
         if (!(L && L.lockState && L.lockState.seedEdit)) { try { _ambSeedPreview(E, key); _ambSeedPromote(E, key); } catch (e) {} }
-        try { _ambGridEditStart(E, key); } catch (e) { console.warn('Author take: grid session failed', e); return; }
+        try { _ambGridEditStart(E, key); } catch (e) { console.warn('Author take: grid session failed', e); _say('Could not open the authoring grid for this layer — nothing recorded.'); return; }
         try { _ambRefreshSeedModes(E); } catch (e) {}
       }
       try {
         const mic = document.getElementById('perform-mic');
         if (mic && mic.checked !== !!wantMic) { mic.checked = !!wantMic; mic.dispatchEvent(new Event('change', { bubbles: true })); }
         const lb = document.getElementById('perform-listen-btn');
-        if (lb) lb.click();   // arm Listen — the take starts on the first note / hum
+        // Missing Listen control = the take can never arm. Say so rather than
+        // leaving the user humming at a button that did nothing.
+        if (!lb) { _say('Could not arm the take — the Perform Listen control is missing from this view.'); return; }
+        lb.click();           // arm Listen — the take starts on the first note / hum
         if (typeof showToast === 'function') showToast(wantMic
           ? 'Authoring: hum / sing — press 🎤 again to write it into the seed.'
           : 'Authoring: play the grid — press ● again to write it into the seed.');
@@ -17552,10 +18535,24 @@
         }
         cur = null; jump = 0;
       };
+      // THE VOICED GATE IS RELATIVE TO THE ROOM, not a fixed level. It used to be a
+      // hard `rms > 0.02`, which is a cliff: at 0.021 the whole melody transcribes,
+      // at 0.019 nothing does and the take is thrown away with one unhelpful toast
+      // after twenty seconds of humming. A quiet singer, a laptop mic at arm's
+      // length, or any gain staging below that line failed identically.
+      // The floor is the 20th percentile of the take's own RMS — silence between
+      // notes — and voiced is three times that, clamped so it can never be STRICTER
+      // than the old constant (a loud take behaves exactly as before) nor so loose
+      // that room tone counts. A pitch is still required, so noise without a stable
+      // period is still not a note.
+      const rl = F.map(f => f.rms || 0).sort((a, b) => a - b);
+      const floor = rl.length ? rl[Math.floor(rl.length * 0.2)] : 0;
+      const VOICED = Math.max(0.008, Math.min(0.02, floor * 3));
+      const SILENT = VOICED * 0.6;
       let prevRms = 0, dip = false;
       for (const fr of F) {
-        const voiced = fr.f > 0 && fr.rms > 0.02;
-        if (!voiced) { if (fr.rms < 0.012) close(fr.t); dip = true; prevRms = fr.rms; continue; }
+        const voiced = fr.f > 0 && fr.rms > VOICED;
+        if (!voiced) { if (fr.rms < SILENT) close(fr.t); dip = true; prevRms = fr.rms; continue; }
         const p = st(fr.f);
         if (!cur) { cur = { tStart: fr.t, pitches: [p] }; dip = false; }
         else {
@@ -17571,6 +18568,11 @@
       close(F.length ? F[F.length - 1].t : 0);
       return notes;
     }
+    // HUM-ALONG, the PLAYING half of the layer's 🎤. Distinct from Perform on the
+    // Seed/Grid, which authors a seed with the transport STOPPED: this one records
+    // over a playing area — the layer goes quiet, everything else keeps going, you
+    // hum, and the take is transcribed and locked as that layer's loop, in time with
+    // the progression. The button picks between them by transport state.
     function _ambHumToggle(E, key) {
       const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
       const fs = _ambFreezeState(E, key);
@@ -17587,7 +18589,23 @@
           if (E.clocks) E.clocks[key] = now + 0.1;
           try { _ambResumePhaseAt(E, key, now + 0.1); } catch (e) {}
         };
-        if (!notes.length) { resume(); try { _ambFreezeSyncAll(E); } catch (e) {} try { if (typeof showToast === 'function') showToast('No melody detected — try humming closer to the mic (headphones help).'); } catch (e) {} return; }
+        if (!notes.length) {
+          resume(); try { _ambFreezeSyncAll(E); } catch (e) {}
+          // SAY WHAT THE MIC ACTUALLY HEARD. "No melody detected" alone cannot be
+          // acted on — it looks identical whether the mic was muted, the input was
+          // too quiet, or the pitch tracker could not lock on. These three numbers
+          // separate those cases in one line.
+          const fr = hr.frames || [];
+          const peak = fr.reduce((m, f) => Math.max(m, f.rms || 0), 0);
+          const pitched = fr.filter(f => f.f > 0).length;
+          let why;
+          if (!fr.length) why = 'nothing was captured — is the mic blocked?';
+          else if (peak < 0.01) why = 'the mic was silent (peak ' + Math.round(peak * 1000) / 10 + '%) — check the input device and its level';
+          else if (!pitched) why = 'sound came in (peak ' + Math.round(peak * 100) + '%) but no steady pitch — hum a sustained note rather than speaking';
+          else why = 'pitch was found in only ' + Math.round(100 * pitched / fr.length) + '% of the take — hold each note a little longer';
+          try { if (typeof showToast === 'function') showToast('No melody kept — ' + why); } catch (e) {}
+          return;
+        }
         const cfg = E._cfg || (E.getCfg && E.getCfg());
         const bpm = _ambBpm();
         const barSec = (60 / Math.max(20, bpm)) * 4;
@@ -17620,7 +18638,29 @@
       // timestamps are Tone.now() at poll time, ±poll jitter ≪ the 16th grid).
       if (E._humRec) { try { _ambHumToggle(E, E._humRec.key); } catch (e) {} }
       if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) { try { if (typeof showToast === 'function') showToast('Microphone unavailable in this browser.'); } catch (e) {} return; }
-      navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }).then((stream) => {
+      // NOISE SUPPRESSION MUST BE OFF. Chrome's suppressor is built to remove
+      // steady-state signals, and a hum is about as steady-state as audio gets — it
+      // attenuates exactly the thing being recorded, which lands the input under the
+      // voiced gate and produces "No melody detected" for a hum the user can hear
+      // perfectly well. The Track recorder next door already opens the mic clean
+      // (`_ambTrackArm`'s `clean`); this path was the odd one out.
+      // Echo cancellation STAYS on, unlike there: this take is hummed ALONG WITH the
+      // area, so without headphones the speakers bleed in and the pitch tracker
+      // follows the music instead of the voice. Gain control ON so a quiet hum is
+      // brought up rather than rejected.
+      // ACKNOWLEDGE THE PRESS BEFORE ASKING FOR THE MIC. Every toast on this path
+      // used to come after getUserMedia SETTLED, so while a permission prompt sat
+      // unanswered — or was suppressed by a policy, which resolves neither way —
+      // the button produced no feedback of any kind. "I press it and nothing
+      // happens" is indistinguishable from a dead control, and this is the only
+      // path with a gap between the press and any sign of life.
+      try { if (typeof showToast === 'function') showToast('Asking for the microphone…'); } catch (e) {}
+      let _micSettled = false;
+      setTimeout(() => { if (!_micSettled && !(E._humRec && E._humRec.key === key)) {
+        try { if (typeof showToast === 'function') showToast('Still waiting for microphone permission — look for the prompt in the address bar.'); } catch (e) {}
+      } }, 6000);
+      navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: true } }).then((stream) => {
+        _micSettled = true;
         let ac; try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { try { stream.getTracks().forEach(tr => tr.stop()); } catch (e2) {} return; }
         const src = ac.createMediaStreamSource(stream);
         const an = ac.createAnalyser(); an.fftSize = 2048;
@@ -17642,7 +18682,15 @@
         try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, now); } catch (e) {}
         try { _ambFreezeSyncAll(E); } catch (e) {}
         try { if (typeof showToast === 'function') showToast('Listening — hum / sing / whistle along with the area; press 🎤 again to keep it. (Headphones recommended.)'); } catch (e) {}
-      }).catch(() => { try { if (typeof showToast === 'function') showToast('Microphone permission denied.'); } catch (e) {} });
+      }).catch((err) => { _micSettled = true;
+        // Name the reason: a blocked permission and an absent device are different
+        // problems with different fixes, and "denied" was reported for both.
+        const n = (err && err.name) || '';
+        const why = (n === 'NotAllowedError' || n === 'SecurityError') ? 'permission denied — allow the mic for this site in the address bar'
+          : (n === 'NotFoundError' || n === 'OverconstrainedError') ? 'no microphone found — check the input device'
+          : (n === 'NotReadableError') ? 'the microphone is in use by another app'
+          : ('could not be opened' + (n ? ' (' + n + ')' : ''));
+        try { if (typeof showToast === 'function') showToast('Microphone ' + why + '.'); } catch (e) {} });
     }
     // Auto-commit the Grid session when the VIEW leaves its context (Seed
     // page tab, Mixdown/Shapes sub-tab): watch the body + #mix-view classes.
@@ -24155,6 +25203,102 @@
         '<input type="range" id="' + stem + '-stereo" min="' + (mode === 'pan' ? -100 : 0) + '" max="100" step="1" value="' + val + '" />' +
         '<span class="ambient-hint" id="' + stem + '-stereo-v">' + _ambSpreadLabel(mode, val) + '</span></div>';
     };
+    // SPATIALIZE control — sits directly under Stereo because it supersedes the
+    // Spread half of it. Rendered for every layer type (it is in _AMB_MIX), and
+    // built from the same tokens as its neighbours: one `.ambient-select` for the
+    // algorithm, two `_ambSl` sliders. "Off" is a mode rather than a separate
+    // switch, so the control has one obvious way in and out.
+    const _ambSpatCtrl = (stem, layer) => {
+      const s = (layer && layer.spat) || {};
+      const on = !!s.on, mode = on ? (s.mode || 'fan') : '';
+      const width = Number.isFinite(s.width) ? (s.width | 0) : 60;
+      const steps = Number.isFinite(s.steps) ? (s.steps | 0) : 5;
+      return '<div class="ambient-ctrl" title="Move the layer through the stereo field a note at a time, instead of holding one image. Replaces Spread while it is on; Pan still offsets the whole layer."><label for="' + stem + '-spatmode">Spatialize</label>' +
+        '<select id="' + stem + '-spatmode" class="ambient-select">' +
+          '<option value=""' + (on ? '' : ' selected') + '>Off</option>' +
+          _AMB_SPAT_MODES.map(m => '<option value="' + m[0] + '"' + (on && mode === m[0] ? ' selected' : '') + '>' + m[1] + '</option>').join('') +
+        '</select><span class="ambient-hint">per-note pan · overrides Spread</span></div>' +
+        _ambSl('Width', stem + '-spatwidth', 0, 100, width, 'how far from centre it travels') +
+        _ambSl('Positions', stem + '-spatsteps', 2, 16, steps, 'notes before the pattern repeats');
+    };
+    // ONE wiring path for all four card families (primary / extras / seq / sample),
+    // like _ambWireSpread beside it — a per-note pan needs no re-anchor, because the
+    // next note reads the new value, and a frozen loop recomputes it on replay.
+    // How many note EVENTS the layer plays in one of its units — the natural cycle
+    // length for the pattern, so switching Spatialize on lines its walk up with the
+    // phrase instead of cutting across it. Onsets are counted DISTINCT: a chord is
+    // one event, because a chord takes one position (see _ambSpatApply).
+    //
+    // Two sources, both already in the codebase. While PLAYING, the rolling capture
+    // is the truth — those are the notes that actually sounded. Stopped, the seed
+    // preview's offline render answers the same question without audio; it stubs
+    // `Tone.now` and `playNote` globally, which is why it is not used mid-playback.
+    function _ambSpatNaturalSteps(E, key, L) {
+      const clamp = (n) => Math.max(2, Math.min(16, n | 0));
+      try {
+        const cfg = E._cfg || (E.getCfg && E.getCfg());
+        let P = 0;
+        try { P = _ambLayerPeriodSec(E, key, L, cfg); } catch (e) {}
+        const cap = E.cap && E.cap[key];
+        if (E.timer && cap && cap.length && P > 0.05) {
+          const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+          const from = now - P;
+          const onsets = new Set();
+          for (const ev of cap) { if (ev && ev.at >= from && ev.at <= now) onsets.add(Math.round(ev.at * 1000)); }
+          if (onsets.size) return clamp(onsets.size);
+        }
+        if (!E.timer) {
+          const r = _ambSeedRender(E, key);
+          if (r && r.events && r.events.length) {
+            const onsets = new Set();
+            for (const ev of r.events) onsets.add(Math.round(ev.t * 1000));
+            if (onsets.size) return clamp(onsets.size);
+          }
+        }
+      } catch (e) {}
+      return 5;
+    }
+    function _ambWireSpat(E, stem, key, getLayer, persist, sync) {
+      const sel = _ambGet(E, stem + '-spatmode');
+      const wsl = _ambGet(E, stem + '-spatwidth');
+      const ssl = _ambGet(E, stem + '-spatsteps');
+      // Width and Positions mean nothing with the algorithm Off, so they are not
+      // shown then — one control until there is something to shape.
+      const paint = (on) => {
+        [wsl, ssl].forEach(el => { const row = el && el.closest ? el.closest('.ambient-ctrl') : null;
+          if (row) row.style.display = on ? '' : 'none'; });
+      };
+      const cur = (L) => {
+        if (L.spat && typeof L.spat === 'object') return L.spat;
+        // FIRST engage: size the cycle to the layer's own phrase.
+        return (L.spat = { on: 0, mode: 'fan', width: 60, steps: _ambSpatNaturalSteps(E, key, L) });
+      };
+      const push = () => { if (typeof persist === 'function') persist(); if (typeof sync === 'function') { try { sync(); } catch (e) {} } };
+      if (sel) sel.addEventListener('change', () => { const L = getLayer(); if (!L) return; _E = E;
+        const v = sel.value || '';
+        const s = cur(L);
+        if (!v) s.on = 0; else { s.on = 1; s.mode = v; }
+        _ambNormalizeSpat(L);
+        paint(!!v);
+        // Show the derived Positions that `cur` may have just computed, or the two
+        // rows come back holding whatever the last render put in them.
+        if (L.spat) {
+          if (wsl) { wsl.value = String(L.spat.width | 0); const wv = _ambGet(E, wsl.id + '-v'); if (wv) wv.textContent = _ambSlReadout(wsl.id, L.spat.width | 0); }
+          if (ssl) { ssl.value = String(L.spat.steps | 0); const sv = _ambGet(E, ssl.id + '-v'); if (sv) sv.textContent = _ambSlReadout(ssl.id, L.spat.steps | 0); }
+        }
+        // The strip's side gain is what carries these positions; without this the
+        // control only takes effect at the next chain rebuild.
+        if (E.timer && _ambLiveApplyOK(E)) { try { _ambApplyLayerPan(key, L); } catch (e) {} }
+        push(); });
+      const slide = (el, key) => { if (!el) return;
+        el.addEventListener('input', () => { const L = getLayer(); if (!L) return; _E = E;
+          const s = cur(L); s[key] = el.value | 0;
+          const v = _ambGet(E, el.id + '-v'); if (v) v.textContent = _ambSlReadout(el.id, el.value | 0); });
+        el.addEventListener('change', () => { const L = getLayer(); if (!L) return; _E = E;
+          const s = cur(L); s[key] = el.value | 0; _ambNormalizeSpat(L); push(); }); };
+      slide(wsl, 'width'); slide(ssl, 'steps');
+      paint(!!(sel && sel.value));   // initial state — the render emits both rows unconditionally
+    }
     // Push current layer state into an already-rendered Stereo control (used by
     // the primaries, whose HTML is built once and synced separately).
     function _ambSyncSpread(E, stem, layer) {
@@ -24487,6 +25631,7 @@
           _ambTm('Area fade', p + 'areafade', 0, 4000, 50, s.areaFadeMs) +
           _ambSl('Accent', p + 'accent', 0, 100, s.accent | 0, 'flat → dynamic') +
           _ambSpreadCtrl('ambient-seq-' + id, s) +
+          _ambSpatCtrl('ambient-seq-' + id, s) +
           _ambModUi('seq-' + id) +
           _ambFxUi('seq-' + id) + gpe() +
         // ✚ ACCOMPANIMENT — spawn a derived Seq layer in harmonic + rhythmic
@@ -24661,6 +25806,8 @@
       bindInt('returnN', 'returnN'); bindInt('returnChance', 'returnChance'); bindInt('level', 'level'); bindInt('accent', 'accent'); bindMs('areafade', 'areaFadeMs');
       _ambWireSpread(E, 'ambient-seq-' + id, getSq, persist,
         () => { if (E.timer) { try { _ambSyncMods(); } catch (x) {} } });   // live Pan-mode drags (same gap as the primaries)
+      _ambWireSpat(E, 'ambient-seq-' + id, 'seq:' + id, getSq, persist,
+        () => { if (E.timer) { try { _ambSyncMods(); } catch (x) {} } });
       ['vca', 'vco', 'vcf'].forEach(t => {
         ['depth', 'rate'].forEach(k => { const e = el('mod-' + t + '-' + k); if (!e) return; e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; sq.mod[t][k] = parseInt(e.value, 10) || 0; if (E.timer) { try { _ambSyncMods(); } catch (x) {} } persist(); }); });
         _ambWireModTarget(E, el, getSq, t, () => { if (E.timer) { try { _ambSyncMods(); } catch (x) {} } });
@@ -25708,6 +26855,7 @@
           _ambSl('Level', p + 'level', 0, 100, s.level, 'soft → boost') +
           _ambTm('Fade out', p + 'boundaryfade', 0, 8000, 50, s.boundaryFadeMs) +
           _ambSpreadCtrl('ambient-samp-' + id, s) +
+          _ambSpatCtrl('ambient-samp-' + id, s) +
           _ambModUi('samp-' + id) +
           _ambFxUi('samp-' + id) + gpe() +
           _ambLayerRampsHtml('samp:' + id) +
@@ -25773,6 +26921,7 @@
       bindMs('interval', 'intervalMs'); bindMs('length', 'lengthMs');
       bindInt('drift', 'drift'); _ambBindWhen(E, p, getL, persist); bindInt('level', 'level'); bindMs('boundaryfade', 'boundaryFadeMs');
       _ambWireSpread(E, 'ambient-samp-' + id, getL, persist, sync);
+      _ambWireSpat(E, 'ambient-samp-' + id, 'samp:' + id, getL, persist, sync);
       ['vca', 'vco', 'vcf'].forEach(t => {
         ['depth', 'rate'].forEach(k => { const e = el('mod-' + t + '-' + k); if (!e) return; e.addEventListener('input', () => { _E = E; const L = getL(); if (!L) return; L.mod[t][k] = parseInt(e.value, 10) || 0; sync(); persist(); }); });
         _ambWireModTarget(E, el, getL, t, sync);
@@ -25962,7 +27111,7 @@
     // and mirrors the engine's Voice × Source × Generator × Timing × Mix model.
     // The Mix group is byte-identical across every layer (Area fade is hidden at
     // render for bar-native types via _ambCtrlHtml, not omitted here).
-    const _AMB_MIX = [['grp', 'FX / Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']];
+    const _AMB_MIX = [['grp', 'FX / Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['spat'], ['mod'], ['fx']];
     // Shared Voice group — same controls everywhere, only the voice token(s)
     // (tone / kit+gen) and the ADSR ranges vary, passed per layer.
     // Tone-cycle editor rows (steps rendered from state; delegated wiring —
@@ -26044,8 +27193,20 @@
       // rhythm — the utterance is the unit — so it carries Source + Gap + the
       // shared mix block and nothing else.
       learn: { label: 'Learn', ctrls: [
-        ['grp', 'Source'], ['learnsrc'], ['learnstatus'],
-        ['grp', 'Timing'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
+        ['grp', 'Source'], ['learnsrc'], ['spokenvoice'], ['learnstatus'],
+        ['grp', 'Notes'], ['wordmusic'],
+        ['grp', 'Speech'], ['speechfx'],
+        ['grp', 'Timing'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
+        ..._AMB_MIX,
+      ] },
+      // Sir Eel: the same spoken layer with a GENERATOR instead of a library —
+      // grammatically correct nonsense, written here rather than fetched. Same
+      // control set as Learn bar the source block, because it is the same layer.
+      sireel: { label: 'Sir Eel', ctrls: [
+        ['grp', 'Source'], ['sl', 'sentences', 'Length', 1, 24, 'sentences per text'], ['seeltext'], ['spokenvoice'], ['learnstatus'],
+        ['grp', 'Notes'], ['wordmusic'],
+        ['grp', 'Speech'], ['speechfx'],
+        ['grp', 'Timing'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
         ..._AMB_MIX,
       ] },
       beat: { label: 'Beat', ctrls: [
@@ -26113,7 +27274,13 @@
       if (type === 'beat') return Object.assign(base, { kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, ghosts: 0, holdSteps: 0, tight: 0, lenVary: 0, ..._AMB_ADSR_DEFAULTS.beat });
       // Learn: speaks fetched prose over the music. `intervalMs` is the GAP between
       // spoken lines, not a note length — the utterance sets its own duration.
-      if (type === 'learn') return Object.assign(base, { source: 'wiki-random', corpus: 'wikipedia', term: '', pasted: '', intervalMs: 900, lengthMs: 0 });
+      if (type === 'learn') return Object.assign(base, { source: 'wiki-random', corpus: 'wikipedia', term: '', pasted: '', voice: '', intervalMs: 900, lengthMs: 0 });
+      // Sir Eel: `text` is what gets spoken and is fully user-editable; `sentences`
+      // is only how much the generator writes NEXT time. The default text is EMPTY
+      // on purpose — _ambDefaultLayer must stay deterministic (the invariant harness
+      // builds layers straight from it), so the opening text is rolled at UI time in
+      // _ambAddExtra, the same split the euclid stochastic init uses.
+      if (type === 'sireel') return Object.assign(base, { text: '', sentences: 4, elaborate: false, voice: '', intervalMs: 900, lengthMs: 0 });
       // (Shape layer type removed — see _AMB_LAYER_SCHEMA + _normalizeAmbientCfg.)
       // Arp: a series of scale/chord entries (each with its own pass count) that
       // the engine arpeggiates through. Voice via `tone`, timing via rate/interval.
@@ -26610,6 +27777,7 @@
       if (k === 'tm') return _ambTm(c[2], p + '-' + c[1], c[3], c[4], c[5], inst[c[1]]);
       if (k === 'cond') return _ambCondCtrl(lk);
       if (k === 'spread') return _ambSpreadCtrl(p, inst);
+      if (k === 'spat') return _ambSpatCtrl(p, inst);
       if (k === 'mod') return _ambModUi(lk);
       if (k === 'fx') return _ambFxUi(lk);
       if (k === 'learnsrc') { const _sr = (inst.source === 'wiki-search'), _pt = (inst.source === 'paste');
@@ -26630,9 +27798,72 @@
         '<div class="ambient-ctrl ambient-learn-termrow"' + (_sr ? '' : ' style="display:none"') + '><label for="' + p + '-learnterm">Term</label>' +
           '<input type="text" id="' + p + '-learnterm" class="ambient-bpc-input" placeholder="article title" />' +
           '<button type="button" class="ambient-seg ambient-learn-load" title="Fetch this article and start reading it">Load</button></div>'; }
-      if (k === 'learnstatus') return '<div class="ambient-ctrl ambient-learn-row"><label>Status</label>' +
+      // The Text box + the generator. Sir Eel's material is EDITABLE prose, so the
+      // box is the layer's real content — the generator only fills it, and anything
+      // typed here is spoken verbatim from the next line on.
+      // Eight style vectors against ONE model, so this is a per-request choice, not
+      // a reload — the ~24 MB download is shared by every voice.
+      if (k === 'spokenvoice') return '<div class="ambient-ctrl" title="Which of the eight KittenTTS voices reads this layer. Switching re-renders the lines it has already written."><label for="' + p + '-spokenvoice">Voice</label>' +
+        '<select id="' + p + '-spokenvoice" class="ambient-select">' +
+          _AMB_SPOKEN_VOICES.map(v => '<option value="' + v[0] + '"' + ((_ambSpokenVoice(inst) === v[0]) ? ' selected' : '') + '>' + v[1] + '</option>').join('') +
+        '</select><span class="ambient-hint">same model, different speaker</span></div>';
+      if (k === 'seeltext') return '<div class="ambient-ctrl ambient-seel-textrow"><label for="' + p + '-seeltext">Text</label>' +
+        '<textarea id="' + p + '-seeltext" class="ambient-bpc-input ambient-seel-text" rows="4" placeholder="Press New text, or write your own"></textarea>' +
+        '<span class="ambient-hint">spoken as written · loops until you change it</span></div>';
+      // WORD MUSIC — the alphabet translator's controls. One block rather than eight
+      // tokens because they only make sense together, and the rows that do not apply
+      // to the current mapping are hidden by the wiring.
+      // SPEECH PROCESSING — the sample-layer moves, applied to a spoken line.
+      if (k === 'speechfx') { const sp = (inst && inst.speech) || {};
+        const g = Number.isFinite(sp.chop) ? (sp.chop | 0) : 1;
+        return _ambSl('Chop', p + '-spchop', 1, 16, g, 'pieces per line \u00b7 1 = whole') +
+          '<div class="ambient-ctrl" title="How the pieces are ordered once the line is chopped. Shuffle is seeded on the line, so a loop repeats the same scramble instead of a new one each pass."><label for="' + p + '-sporder">Order</label>' +
+            '<select id="' + p + '-sporder" class="ambient-select">' + _AMB_SPEECH_ORDERS.map(o => '<option value="' + o[0] + '"' + ((sp.order || 'fwd') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>' +
+            '<span class="ambient-hint">piece order</span></div>' +
+          _ambSl('Start', p + '-spstart', 0, 95, Number.isFinite(sp.start) ? (sp.start | 0) : 0, '% into the line') +
+          _ambSl('Length', p + '-splen', 5, 100, Number.isFinite(sp.len) ? (sp.len | 0) : 100, '% of the line kept') +
+          _ambSl('Rate', p + '-sprate', 25, 400, Number.isFinite(sp.rate) ? (sp.rate | 0) : 100, '% \u00b7 speed and pitch together') +
+          '<div class="ambient-ctrl" title="Play the line backwards. The reversed copy is made once and cached, so it costs nothing per repeat."><label for="' + p + '-sprev">Reverse</label>' +
+            '<select id="' + p + '-sprev" class="ambient-select"><option value="0"' + (sp.reverse ? '' : ' selected') + '>Off</option><option value="1"' + (sp.reverse ? ' selected' : '') + '>On</option></select>' +
+            '<span class="ambient-hint">whole line backwards</span></div>';
+      }
+      if (k === 'wordbars') return '<div class="ambient-ctrl" title="Free lets each line start as soon as the last one finishes plus the Gap. Locking starts every line on the bar grid — a short line waits for the next bar, a long one takes as many as it needs, and nothing is cut off."><label for="' + p + '-wordbars">Bar lock</label>' +
+        '<select id="' + p + '-wordbars" class="ambient-select">' + _AMB_WORD_BARS.map(b => '<option value="' + b[0] + '"' + ((_ambWordBars(inst) === b[0]) ? ' selected' : '') + '>' + b[1] + '</option>').join('') + '</select>' +
+        '<span class="ambient-hint">start each line on the grid</span></div>';
+      if (k === 'wordmusic') { const w = (inst && inst.word) || {};
+        const cur = (v, d) => (v === undefined || v === null || v === '') ? d : v;
+        const sel = (id, opts, val, hint, label, title) => '<div class="ambient-ctrl"' + (title ? ' title="' + title + '"' : '') + '><label for="' + p + '-' + id + '">' + label + '</label>' +
+          '<select id="' + p + '-' + id + '" class="ambient-select">' + opts.map(o => '<option value="' + o[0] + '"' + (String(val) === String(o[0]) ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>' +
+          (hint ? '<span class="ambient-hint">' + hint + '</span>' : '') + '</div>';
+        const PCS = ['C','C\u266f','D','D\u266f','E','F','F\u266f','G','G\u266f','A','A\u266f','B'].map((n, i) => [i, n]);
+        return sel('wordout', _AMB_WORD_OUTS, _ambWordOut(inst), 'speak it, play it, or both', 'Words as',
+            'Speak reads the text aloud; Play turns each word into notes and never loads the voice at all; Both does the two together, from the same line.') +
+          '<div class="ambient-word-rows">' +
+          sel('wordmap', _AMB_ALPHA_MAPS, cur(w.map, 'chromatic'), 'how letters become pitch', 'Mapping',
+            'Chromatic: one semitone per letter. In key: one scale DEGREE per letter, so abcd in C major is C D E F. Microtonal: your own step size.') +
+          sel('wordapc', PCS, (w.aPc | 0), '', 'A is',
+            'Which note the letter A becomes. Everything else follows from it, so this is how you place the whole alphabet.') +
+          _ambSl('A octave', p + '-wordaoct', 0, 8, Number.isFinite(w.aOct) ? (w.aOct | 0) : 3, 'octave of the letter A') +
+          '<div class="ambient-word-micro">' + _ambSl('Step', p + '-wordcents', 5, 300, Number.isFinite(w.cents) ? (w.cents | 0) : 100, 'cents per letter \u00b7 46 = the alphabet in one octave') + '</div>' +
+          sel('wordshape', _AMB_WORD_SHAPES, cur(w.shape, 'run'), 'what a word becomes', 'Word shape',
+            'Run: one note per letter. Chord: the whole word at once. Chord + run: the first letters sound together, the rest run on \u2014 a six-letter word at chord 3 is a three-note chord then a three-note run.') +
+          '<div class="ambient-word-chord">' + _ambSl('Chord size', p + '-wordchord', 1, 8, Number.isFinite(w.chord) ? (w.chord | 0) : 3, 'letters in the chord') + '</div>' +
+          _ambTm('Note', p + '-wordnotems', 40, 2000, 10, Number.isFinite(w.noteMs) ? (w.noteMs | 0) : 220) +
+          '</div>';
+      }
+      if (k === 'learnstatus') { const _seel = (type === 'sireel');
+        return '<div class="ambient-ctrl ambient-learn-row"><label>Status</label>' +
         '<span class="ambient-learn-stat" id="' + p + '-learnstat">Idle — press play</span>' +
-        '<button type="button" class="ambient-seg ambient-learn-go" data-lgo="' + (inst.id | 0) + '" title="Fetch a new article now — a search source uses the Search box, the random source picks another article. Takes a few seconds; the very first line also downloads the voice (~15 s, once).">\u21bb New text</button></div>';
+        '<button type="button" class="ambient-seg ambient-learn-go" data-lgo="' + (inst.id | 0) + '" title="' + (_seel
+          ? 'Write a fresh text of Length sentences, replacing what is in the box. The very first line also downloads the voice (once).'
+          : 'Fetch a new article now — a search source uses the Search box, the random source picks another article. Takes a few seconds; the very first line also downloads the voice (~15 s, once).') +
+        '">' + (_seel ? '\ud83c\udfb2 New text' : '\u21bb New text') + '</button>' +
+        // Sir Eel gets two more: APPEND (keep what is written, add to it) and the
+        // Elaborate switch, which is a property of generating and so belongs with
+        // the buttons that generate rather than with the text it acts on.
+        (_seel ? ('<button type="button" class="ambient-seg ambient-seel-add" title="Write another Length worth of sentences and add them to the end, keeping what is already there.">+ Add text</button>' +
+          '<label class="ambient-seel-elab" title="Keep talking about the same things: a new chunk reuses the nouns from the last one instead of drawing freely from the whole vocabulary."><input type="checkbox" class="ambient-seel-elabbox"' + (inst.elaborate ? ' checked' : '') + ' /> Elaborate</label>') : '') +
+        '</div>'; }
       if (k === 'arpseries') return _ambArpSeriesHtml(p, inst);
       if (k === 'arpdir') return _ambArpDirHtml(p, inst);
       if (k === 'arpres') return _ambArpResHtml(p, inst);
@@ -27014,6 +28245,7 @@
           else if (k === 'home') { const s = el('home'); if (s) { s.value = _ambHomeOf(inst, type); s.addEventListener('change', () => { const L = get(); if (!L) return; L.home = s.value || ''; sync(); persist(); try { _ambSeedUiRefresh(E, p, get, type + ':' + id); } catch (e) {} }); } }
           else if (k === 'cond') { _ambBindWhen(E, p, get, persist); }
           else if (k === 'spread') { _ambWireSpread(E, 'ambient-' + type + '-' + id, get, persist, sync); }
+          else if (k === 'spat') { _ambWireSpat(E, 'ambient-' + type + '-' + id, type + ':' + id, get, persist, sync); }
           else if (k === 'arpseries') { _ambWireArpSeries(E, inst, p, get); }
           else if (k === 'arpres') { const s = el('arpres'); if (s) { s.value = inst.arpRes || '16'; s.addEventListener('change', () => { const L = get(); if (L) { L.arpRes = s.value || '16'; sync(); persist();
             // Interval change = the series timeline (startAt + idx×interval)
@@ -27023,11 +28255,121 @@
             // idx 0 on the shared grid (_ambUnitReanchor) → the new rate starts
             // predictably at the next grid point.
             if (E.timer) { try { _ambUnitReanchor(E, type + ':' + id); } catch (x) {} } } }); } }
-          else if (k === 'learnstatus') { try { _ambLearnWarmUp(E, inst); } catch (x) {}
+          else if (k === 'learnstatus') {
+            // PLAY-ONLY never speaks, so it must not warm the voice or pre-render a
+            // single line — the whole point of that mode is a Word layer with no
+            // model download behind it.
+            const _playOnly = _ambWordOut(inst) === 'play';
+            if (!_playOnly) { try { _ambLearnWarmUp(E, inst); } catch (x) {} }
+            // Start writing the moment the card exists — on add, on project load,
+            // on an area switch. Idempotent: it returns immediately when the cache
+            // already matches the text, which is what every repaint hits.
+            // Kick the pump for EVERY speaking layer, not just local text: a fetched
+            // article now renders ahead through the same path, and gating this on
+            // local text left a Learn layer idle until the first press — the "getting
+            // ready" popover sat on "Voice ready" with nothing behind it.
+            if (!_playOnly && inst) { try { _ambSeelPrerender(E, inst); } catch (x) {} }
             const g2 = el('learnstat') && el('learnstat').parentNode; const btn = g2 && g2.querySelector('.ambient-learn-go');
-            if (btn) btn.addEventListener('click', () => { const L = get(); if (!L) return; _E = E; _ambLearnReset(E, L);
-              try { const st2 = E.seqState && E.seqState['learn:' + (L.id | 0)]; if (st2) { st2.phase = 'fetch'; _ambLearnSay(E, L, st2, 'Fetching an article…'); } } catch (x) {}
-              persist(); }); }
+            // REPLACE and APPEND are the same act with one flag — writing Length
+            // sentences and re-rendering. Only the flag differs, so they share a
+            // body; splitting them is how the two would drift.
+            const write = (append) => { const L = get(); if (!L) return; _E = E;
+              L.text = _ambSeelGenerate(L, append);
+              const ta = el('seeltext'); if (ta) { ta.value = L.text; if (append) ta.scrollTop = ta.scrollHeight; }
+              _ambLearnReset(E, L); persist();
+              // Render NOW, in the background, so play is instant. This also owns the
+              // status line from here on (it reports "Writing 2/4…" then "Ready"),
+              // which is why nothing is written by hand after it. Appending only
+              // renders the ADDED lines — the cache is keyed per line.
+              try { _ambSeelPrerender(E, L); } catch (x) {} };
+            if (btn) btn.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;
+              // Sir Eel WRITES rather than fetches, so the same button generates a
+              // new text into the box (and into the layer) instead of re-reading a
+              // source. Both then drop the queue so the new material is what plays.
+              if (_ambIsSeel(L)) { write(false); return; }
+              _ambLearnReset(E, L);
+              try { const st2 = E.seqState && E.seqState[_ambSpokenKey(L)]; if (st2) { st2.phase = 'fetch'; _ambLearnSay(E, L, st2, 'Fetching an article…'); } } catch (x) {}
+              persist(); });
+            const addBtn = g2 && g2.querySelector('.ambient-seel-add');
+            if (addBtn) addBtn.addEventListener('click', () => write(true));
+            const elab = g2 && g2.querySelector('.ambient-seel-elabbox');
+            // A generation SETTING, not content — it changes what the next press
+            // writes, so it neither rewrites the text nor disturbs the rendered
+            // audio on its own.
+            if (elab) elab.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
+              L.elaborate = !!elab.checked; persist(); }); }
+          else if (k === 'speechfx') {
+            const sp = () => { const L = get(); if (!L) return null; if (!L.speech || typeof L.speech !== 'object') L.speech = {}; return L.speech; };
+            const num = (id, key) => { const e2 = el(id); if (!e2) return;
+              e2.addEventListener('input', () => { const v = _ambGet(E, e2.id + '-v'); if (v) v.textContent = _ambSlReadout(e2.id, e2.value | 0); });
+              e2.addEventListener('change', () => { const o = sp(); if (!o) return; _E = E; o[key] = e2.value | 0; _ambNormalizeSpeech(get()); persist(); }); };
+            const pick = (id, key, asNum) => { const e2 = el(id); if (!e2) return;
+              e2.addEventListener('change', () => { const o = sp(); if (!o) return; _E = E;
+                o[key] = asNum ? (parseInt(e2.value, 10) | 0) : e2.value; _ambNormalizeSpeech(get()); persist(); }); };
+            num('spchop', 'chop'); num('spstart', 'start'); num('splen', 'len'); num('sprate', 'rate');
+            pick('sporder', 'order', false); pick('sprev', 'reverse', true);
+          }
+          else if (k === 'wordbars') { const e2 = el('wordbars');
+            if (e2) e2.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
+              L.snapBars = parseInt(e2.value, 10) | 0; persist();
+              // Re-anchor so the change is heard at the next line rather than after
+              // the current free-running one drifts to its own end.
+              if (E.timer) { try { delete E.clocks[_ambSpokenKey(L)]; } catch (x) {} } }); }
+          else if (k === 'wordmusic') {
+            const w = () => { const L = get(); if (!L) return null; if (!L.word || typeof L.word !== 'object') L.word = {}; return L.word; };
+            const rows = el('wordmap') && el('wordmap').closest('.ambient-word-rows');
+            const microRow = el('wordcents') && el('wordcents').closest('.ambient-word-micro');
+            const chordRow = el('wordchord') && el('wordchord').closest('.ambient-word-chord');
+            // Only show what applies: cents belong to the microtonal map, chord size
+            // to the shapes that build a chord, and none of it to a Speak-only layer.
+            const paint = () => { const L = get(); const o = L ? _ambWordOpt(E, L) : null;
+              if (rows) rows.style.display = (L && _ambWordOn(L)) ? '' : 'none';
+              if (microRow) microRow.style.display = (o && o.map === 'micro') ? '' : 'none';
+              if (chordRow) chordRow.style.display = (o && (o.shape === 'chord' || o.shape === 'split')) ? '' : 'none'; };
+            const bindSel = (id, key) => { const e2 = el(id); if (!e2) return;
+              e2.addEventListener('change', () => { const o = w(); if (!o) return; _E = E;
+                o[key] = (id === 'wordapc') ? (parseInt(e2.value, 10) | 0) : e2.value;
+                _ambNormalizeWord(get()); paint(); persist();
+                // A Play-only layer that was speaking has a queue of audio it will
+                // never use, and vice versa — drop it so the switch takes effect on
+                // the next line rather than after the queue drains.
+                if (id === 'wordout') {
+                  const L2 = get();
+                  try { _ambLearnReset(E, L2); } catch (x) {}
+                  // Switching INTO a speaking mode has to start the voice now, the
+                  // same as any other control that needs it — otherwise the layer
+                  // sits silent with a stale status until the first press.
+                  if (L2 && _ambWordOut(L2) !== 'play') {
+                    try { _ambLearnWarmUp(E, L2); } catch (x) {}
+                    if (_ambSpokenLocalText(L2) !== null) { try { _ambSeelPrerender(E, L2); } catch (x) {} }
+                  } else if (L2) { try { _ambLearnSayEl(E, L2, _ambLearnStatusText(L2, E.seqState && E.seqState[_ambSpokenKey(L2)])); } catch (x) {} }
+                } }); };
+            const bindSl = (id, key) => { const e2 = el(id); if (!e2) return;
+              e2.addEventListener('input', () => { const v = _ambGet(E, e2.id + '-v'); if (v) v.textContent = (id === 'wordnotems') ? _ambFmtMs(e2.value | 0) : _ambSlReadout(e2.id, e2.value | 0); });
+              e2.addEventListener('change', () => { const o = w(); if (!o) return; _E = E; o[key] = e2.value | 0; _ambNormalizeWord(get()); persist(); }); };
+            bindSel('wordout', 'out'); bindSel('wordmap', 'map'); bindSel('wordapc', 'aPc'); bindSel('wordshape', 'shape');
+            bindSl('wordaoct', 'aOct'); bindSl('wordcents', 'cents'); bindSl('wordchord', 'chord'); bindSl('wordnotems', 'noteMs');
+            paint();
+          }
+          else if (k === 'spokenvoice') { const sv = el('spokenvoice');
+            if (sv) { sv.value = _ambSpokenVoice(inst);
+              sv.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
+                L.voice = sv.value || '';
+                // The voice is part of the cache key, so anything already rendered
+                // for this layer is now the wrong audio: drop the queue and, for a
+                // local-text layer, re-render in the background.
+                _ambLearnReset(E, L); persist();
+                if (_ambSpokenLocalText(L) !== null) { try { _ambSeelPrerender(E, L); } catch (x) {} }
+                else if (!E.timer) _ambLearnSayEl(E, L, 'Voice changed — press play'); }); } }
+          else if (k === 'seeltext') {
+            const ta = el('seeltext');
+            if (ta) { ta.value = inst.text || '';
+              // `change`, not `input` — a keystroke-by-keystroke write would abandon
+              // the queued audio on every character typed (the src key is the text).
+              ta.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
+                L.text = ta.value || ''; _ambLearnReset(E, L); persist();
+                if (!String(L.text).trim()) { _ambLearnSayEl(E, L, 'No text yet — press 🎲 New text'); return; }
+                try { _ambSeelPrerender(E, L); } catch (x) {} }); } }
           else if (k === 'learnsrc') {
             const term = el('learnterm');
             const row = term && term.closest ? term.closest('.ambient-learn-termrow') : null;
@@ -27059,14 +28401,18 @@
               if (bP) bP.classList.toggle('active', mode === 'paste');
             };
             if (pasteEl) { pasteEl.value = inst.pasted || '';
-              pasteEl.addEventListener('change', () => { const L = get(); if (L) { L.pasted = pasteEl.value || ''; persist(); } }); }
+              pasteEl.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
+                L.pasted = pasteEl.value || ''; persist();
+                // Pasted text is LOCAL, so it can be rendered before the press like
+                // Sir Eel's — the same cache, the same instant start.
+                if (L.source === 'paste' && _ambSpokenLocalText(L) !== null) { _ambLearnReset(E, L); try { _ambSeelPrerender(E, L); } catch (x) {} } }); }
             if (bP) bP.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;
               L.source = 'paste'; paint('paste'); persist();
               if (pasteEl) { try { pasteEl.focus(); } catch (x) {} } });
             if (bLP) bLP.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;
               L.pasted = (pasteEl && pasteEl.value) || ''; L.source = 'paste'; persist();
-              if (!String(L.pasted).trim()) { _ambLearnSayEl(E, L.id, 'Nothing pasted yet'); return; }
-              _ambLearnLoadNow(E, L); });
+              if (!String(L.pasted).trim()) { _ambLearnSayEl(E, L, 'Nothing pasted yet'); return; }
+              _ambLearnLoadNow(E, L); });   // local text → _ambLearnLoadNow pre-renders the whole thing
             paint(inst.source || 'wiki-random');
             if (bR) bR.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;
               L.source = 'wiki-random'; paint('wiki-random'); persist();
@@ -27076,7 +28422,7 @@
               if (term) { try { term.focus(); } catch (x) {} } });   // reveal only — Load is the trigger
             if (bL) bL.addEventListener('click', () => { const L = get(); if (!L) return; _E = E;
               L.term = (term && term.value) || ''; L.source = 'wiki-search'; persist();
-              if (!String(L.term).trim()) { _ambLearnSayEl(E, L.id, 'Type something to search for'); return; }
+              if (!String(L.term).trim()) { _ambLearnSayEl(E, L, 'Type something to search for'); return; }
               _ambLearnLoadNow(E, L); });
           }
           else if (k === 'arpdir') { const s = el('dir'); if (s) { s.value = inst.dir || 'up'; s.addEventListener('change', () => { const L = get(); if (L) {
@@ -28085,9 +29431,16 @@
       const L = _ambProgDefaultUnit(cfg, _ambDefaultLayer(type, newId));
       _ambApplyRandomInstVoice(L, type);
       if (type === 'bass') _ambEuclidStochasticInit(L);   // Bass is always euclid → stochastic initial pattern
+      // A Sir Eel layer arrives with something already written in it — an empty
+      // text field would need a button press before the layer could do anything,
+      // and the layer's whole proposition is that it writes its own material.
+      if (type === 'sireel') L.text = _ambSeelText(L.sentences | 0);
       cfg.extras.push(L);
       if (_ambMarkFreshLayer(E, L, type + ':' + newId)) { try { if (typeof showToast === 'function') showToast('Layer added muted — tap its name to bring it in on the next boundary.'); } catch (e) {} }
       _ambRenderExtras(E);
+      // A spoken layer has a visible wait in front of it (voice, article, first
+      // line). Say so, rather than leaving a silent card.
+      if (type === 'learn' || type === 'sireel') { try { _ambSpokenLoadingModal(E, L); } catch (e) {} }
       if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
@@ -28210,7 +29563,18 @@
     // Range spans the full Pan field (-100..100); in Spread mode the engine reads
     // the magnitude, so the positive half (0..100) is the spread amount.
     const _AMB_STEREO_RAMP = [['space','Spread / Pan',-100,100]];
-    Object.keys(_AMB_RAMP_PARAMS).forEach(k => { if (k !== 'global') _AMB_RAMP_PARAMS[k] = _AMB_RAMP_PARAMS[k].concat(_AMB_STEREO_RAMP, _AMB_FX_RAMP); });
+    // Spatialize is a nested object like the FX, so it needs hand entries — the
+    // auto-derive only sweeps flat sl/tm schema tokens. Width is the musical one
+    // (the field opens up or closes in); Positions re-lengths the cycle mid-phrase.
+    const _AMB_SPAT_RAMP = [['spat.width','Spatialize width',0,100],['spat.steps','Spatialize positions',2,16]];
+    // WORD MUSIC — only the numeric axes; Words-as / Mapping / Word shape are modes,
+    // and a ramp between two modes has no meaning. These are the ones worth sweeping:
+    // "A is" transposes the whole alphabet, the microtonal step stretches or squeezes
+    // its spread, and Note is the passage's rate. Spoken layers ONLY (a Bed has no
+    // `word` object), so it is appended per type rather than to the shared list.
+    const _AMB_WORD_RAMP = [['word.aPc','Letter A note',0,11],['word.aOct','Letter A octave',0,8],
+      ['word.cents','Microtonal step (cents)',5,300],['word.chord','Word chord size',1,8],
+      ['word.noteMs','Word note length',40,2000]];
     // AUTO-DERIVED targets: every numeric control in _AMB_LAYER_SCHEMA
     // (['sl'|'tm', key, label, min, max, …] tokens) becomes a ramp target for
     // its layer type automatically — ADSR, Swing, Rests, Start, euclid knobs,
@@ -28231,6 +29595,21 @@
         });
       });
     }
+    // The SHARED targets (Stereo, Spatialize, the FX) are appended AFTER the derive,
+    // to EVERY type. They used to be concatenated before it, which meant any layer
+    // type that only existed in the schema — Learn and Sir Eel among them — was
+    // created by the derive afterwards and never received them: those layers had no
+    // Spread/Pan and no FX ramp targets at all. Appending here covers every type,
+    // and the existence check keeps a hand-tuned entry winning as it did before.
+    Object.keys(_AMB_RAMP_PARAMS).forEach(k => {
+      if (k === 'global') return;
+      const list = _AMB_RAMP_PARAMS[k];
+      _AMB_STEREO_RAMP.concat(_AMB_SPAT_RAMP, _AMB_FX_RAMP).forEach(p => { if (!list.some(x => x[0] === p[0])) list.push(p); });
+    });
+    ['learn', 'sireel'].forEach(t => {
+      const list = _AMB_RAMP_PARAMS[t] || (_AMB_RAMP_PARAMS[t] = []);
+      _AMB_WORD_RAMP.forEach(p => { if (!list.some(x => x[0] === p[0])) list.push(p); });
+    });
     // Live-write the global tempo from a ramp (cheap: just the inputs + the
     // top-bar readout — no digit rebuild / persist at 40 Hz; engines read
     // tempoInput.value live).
@@ -28339,6 +29718,27 @@
       if (!spec) return null;
       // FX params (revSend / delay.* / dist.*) are nested and only audible once
       // pushed to the live nodes — write the value then re-apply the layer FX.
+      // SPATIALIZE: the value is read per note by the capture-sink tee, so writing it
+      // is enough for the notes — but the CORE strip's width gate is only re-applied
+      // by _ambApplyLayerPan, and without that a ramp from 0 would open the pan
+      // sequence into a strip that is still summing to mono.
+      // WORD MUSIC: the emitter reads `L.word` live when it builds each passage, so
+      // writing the field IS the whole job — no node to push to, nothing to re-apply.
+      if (key.indexOf('word.') === 0) {
+        const sub = key.slice(5);
+        return { min: spec[2], max: spec[3], set: function (v) {
+          if (!obj.word || typeof obj.word !== 'object') obj.word = {};
+          obj.word[sub] = v;
+        } };
+      }
+      if (key.indexOf('spat.') === 0) {
+        const sub = key.slice(5);
+        return { min: spec[2], max: spec[3], set: function (v) {
+          if (!obj.spat || typeof obj.spat !== 'object') obj.spat = { on: 1, mode: 'fan', width: 60, steps: 5 };
+          obj.spat[sub] = v;
+          if (_ambLiveApplyOK(_E)) { try { _ambApplyLayerPan(head, obj); } catch (e) {} }
+        } };
+      }
       if (key === 'revSend' || key.indexOf('.') >= 0) {
         return { min: spec[2], max: spec[3], set: function (v) {
           if (key === 'revSend') { obj.revSend = v; }
@@ -30835,9 +32235,15 @@
       // sync while playing so Pan-mode drags land on the layer panner LIVE —
       // with sync null the position only applied at the next rebuild (the
       // "bed pan does nothing" report; extras always passed a sync).
-      ['bed', 'motif', 'texture', 'beat'].forEach(layer =>
-        _ambWireSpread(E, 'ambient-' + layer, () => { const c = cfg0(); return c ? c[layer] : null; }, persist,
-          () => { if (E.timer) { try { _ambSyncMods(); } catch (e) {} } }));
+      ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
+        const get = () => { const c = cfg0(); return c ? c[layer] : null; };
+        const sync = () => { if (E.timer) { try { _ambSyncMods(); } catch (e) {} } };
+        _ambWireSpread(E, 'ambient-' + layer, get, persist, sync);
+        // Primaries RENDER from _AMB_LAYER_SCHEMA but WIRE from this hardcoded
+        // list, so a new shared token is inert on bed/motif/texture/beat until it
+        // is added here too — see the "new primary token does nothing" note.
+        _ambWireSpat(E, 'ambient-' + layer, layer, get, persist, sync);
+      });
       // Per-layer FX (reverb send / delay / distortion). Apply live when playing.
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
         const fxBind = (suf, setter) => {
@@ -31663,7 +33069,7 @@
           ['Melody', [['motif', 'Motif'], ['run', 'Riff'], ['arp', 'Arp']]],
           ['Rhythm', [['beat', 'Beat'], ['bass', 'Bass'], ['pedal', 'Pedal']]],
           ['Sampler', [['sample', 'Sample']]],   // Track recording moved to the footer 🎤 button
-          ['Spoken', [['learn', 'Learn']]],      // fetched prose, spoken over the music
+          ['Spoken', [['learn', 'Learn'], ['sireel', 'Sir Eel']]],   // fetched prose / generated nonsense, spoken over the music
         ];
         const actions = [];
         FAMILIES.forEach((fam) => {

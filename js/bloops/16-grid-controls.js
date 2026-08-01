@@ -975,7 +975,13 @@
           if (typeof showToast === 'function') showToast('Microphone unavailable in this browser — recording grid presses instead.');
           return;
         }
-        navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }).then((stream) => {
+        // noiseSuppression OFF: Chrome's suppressor exists to remove steady-state
+        // signals, which is precisely what a hum is — it attenuates the take into
+        // silence. Echo cancellation stays on (this is hummed along with playback,
+        // so without headphones the speakers would otherwise be tracked), and gain
+        // control is on so a quiet hum is lifted rather than rejected. Same change,
+        // same reason, as the Bloom hum path in 17-ambient.js.
+        navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: true } }).then((stream) => {
           // Disarmed (or mic unchecked) while the permission prompt was up.
           if (!performMode || !performMic) { try { stream.getTracks().forEach(tr => tr.stop()); } catch (e) {} return; }
           let ac; try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { try { stream.getTracks().forEach(tr => tr.stop()); } catch (e2) {} return; }
@@ -984,12 +990,27 @@
           src.connect(an);
           const buf = new Float32Array(an.fftSize);
           const rec = { stream, ac, an, frames: [], poll: null };
+          // The take STARTS on the first voiced frame, so a fixed 0.02 threshold here
+          // is a harder cliff than the one in _ambHumSegment: below it the take never
+          // begins, `_performStartMs` stays null, and everything hummed afterwards is
+          // discarded no matter how good it was. Track the room's noise floor instead
+          // (fast to fall, slow to rise) and trigger relative to it, with a floor of
+          // its own so a dead-silent room cannot arm on nothing.
+          let _nf = null;
           rec.poll = setInterval(() => {
             try {
               an.getFloatTimeDomainData(buf);
               const r = _ambAcfPitch(buf, ac.sampleRate);
               const tMs = performance.now();
-              if (_performStartMs == null && !_performCountingIn && r.f > 0 && r.rms > 0.02) {
+              _nf = (_nf == null) ? r.rms : Math.min(r.rms, _nf * 1.02 + 0.0005);
+              // CLAMPED TO THE OLD CONSTANT AT THE TOP. The floor seeds from the
+              // first frame, so someone already humming when the take arms would
+              // otherwise set a floor at hum level and need 3x that to trigger —
+              // the take would never start. Bounded above by 0.02 it is never
+              // stricter than before; bounded below by 0.01 a silent room cannot
+              // arm on nothing.
+              const trig = Math.min(0.02, Math.max(0.01, _nf * 3));
+              if (_performStartMs == null && !_performCountingIn && r.f > 0 && r.rms > trig) {
                 _performStartMs = tMs; _performEmittedUnits = 0;
                 try { if (typeof playSequence === 'function') playSequence(); } catch (e) {}
               }
@@ -1009,7 +1030,18 @@
         try { humNotes = (typeof _ambHumSegment === 'function') ? _ambHumSegment(rec.frames) : []; } catch (e) {}
         const anchorMs = _performStartMs;
         if (!humNotes.length || anchorMs == null) {
-          if (typeof showToast === 'function') showToast('No melody detected — try humming closer to the mic.');
+          // Say which of the three failures it was — silent mic, sound without a
+          // steady pitch, or a take that never reached the start threshold — so the
+          // message can be acted on instead of just repeated.
+          const fr = rec.frames || [];
+          const peak = fr.reduce((m, f) => Math.max(m, f.rms || 0), 0);
+          const pitched = fr.filter(f => f.f > 0).length;
+          const why = !fr.length ? 'nothing was captured — is the mic blocked?'
+            : (peak < 0.01) ? ('the mic was silent (peak ' + Math.round(peak * 1000) / 10 + '%) — check the input device and its level')
+            : (anchorMs == null) ? ('sound came in (peak ' + Math.round(peak * 100) + '%) but never a clear sustained note to start on')
+            : !pitched ? ('sound came in (peak ' + Math.round(peak * 100) + '%) but no steady pitch — hum a note rather than speaking')
+            : 'the notes were too short to keep — hold each one a little longer';
+          if (typeof showToast === 'function') showToast('No melody kept — ' + why);
           return;
         }
         const bpm = parseInt(tempoInput?.value, 10) || 120;

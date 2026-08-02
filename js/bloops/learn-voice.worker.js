@@ -30,7 +30,15 @@
 // deploy button for this feature — a breaking minor release would take the voice
 // down with no change on our side. These two versions are the ones every
 // measurement in this file was made against.
-import { StyleTextToSpeech2Model, AutoTokenizer, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0';
+// LAZY imports, deliberately: on WebKit this worker is a thin CLIENT of the
+// Bloops TTS server (an iOS tab cannot afford in-tab inference — measured, it
+// crashes the app), and it must not download megabytes of ML library it will
+// never run. Blink loads them on first use, exactly as before.
+let _T = null;
+async function _lib() {
+  if (!_T) _T = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0');
+  return _T;
+}
 // THE PHONEMIZER IS THE ECHOGARDEN ESPEAK BUILD, NOT the `phonemizer` package.
 // The old package (espeak compiled to one giant JS function via wasm2js) HANGS in
 // WebKit — worker or main thread, alone on the page, never returns — and poisons
@@ -41,14 +49,13 @@ import { StyleTextToSpeech2Model, AutoTokenizer, Tensor, env } from 'https://cdn
 // completes — the first WebKit synthesis of this whole effort). Output is
 // byte-identical to the old package after separator stripping (verified across
 // test sentences; one dictionary-version vowel nuance in number expansion).
-import * as _ESPEAK_NS from 'https://cdn.jsdelivr.net/npm/@echogarden/espeak-ng-emscripten@0.3.5/+esm';
-const _espFactory = _ESPEAK_NS.default || _ESPEAK_NS;
 let _espeak = null, _espeakLoading = null;
 function espeakGet() {
   if (_espeak) return Promise.resolve(_espeak);
   if (!_espeakLoading) {
     _espeakLoading = (async () => {
-      const m = await _espFactory();
+      const NS = await import('https://cdn.jsdelivr.net/npm/@echogarden/espeak-ng-emscripten@0.3.5/+esm');
+      const m = await (NS.default || NS)();
       const w = new m.eSpeakNGWorker();
       w.set_voice('en-us');
       _espeak = w; _espeakLoading = null; return w;
@@ -75,7 +82,11 @@ async function phonemize(text) {
 // attempt is the documented fix; the ladder below stays as a backstop for other
 // failure shapes. On desktop this is a no-op — without SAB, ort runs
 // single-threaded anyway.
-try { if (typeof SharedArrayBuffer === 'undefined') env.backends.onnx.wasm.numThreads = 1; } catch (e) {}
+async function _envPrep() {
+  const T = await _lib();
+  try { if (typeof SharedArrayBuffer === 'undefined') T.env.backends.onnx.wasm.numThreads = 1; } catch (e) {}
+  return T;
+}
 
 const MODEL = 'onnx-community/kitten-tts-nano-0.1-ONNX';
 // The repo ships expr-voice-{2,3,4,5}-{f,m}. Each is a bare 1 KB style vector
@@ -116,6 +127,7 @@ const _BACKENDS = [
   { label: '1 thread, no simd', apply: () => { env.backends.onnx.wasm.numThreads = 1; env.backends.onnx.wasm.simd = false; } },
 ];
 async function buildKitten() {
+  const T = await _envPrep();
   // REPORT THE DOWNLOAD. ~24 MB over a phone connection is a long silence, and a
   // silent wait is indistinguishable from a hang — which is exactly how it was
   // reported. transformers.js calls this per file with loaded/total.
@@ -130,7 +142,7 @@ async function buildKitten() {
     } catch (e) {}
   };
   const [tokenizer, style] = await Promise.all([
-    AutoTokenizer.from_pretrained(MODEL, { progress_callback }),
+    T.AutoTokenizer.from_pretrained(MODEL, { progress_callback }),
     loadStyle(VOICE),
     espeakGet(),      // warm the phonemizer too — first line pays nothing extra
   ]);
@@ -144,7 +156,7 @@ async function buildKitten() {
       // Left ON everywhere else, where they are free performance.
       const _wk = (() => { try { const ua = String(navigator.userAgent || '');
         return /iPhone|iPad|iPod|CriOS|FxiOS/.test(ua) || (/AppleWebKit/.test(ua) && !/Chrome\//.test(ua)); } catch (e) { return false; } })();
-      model = await StyleTextToSpeech2Model.from_pretrained(MODEL, Object.assign({ dtype: 'q8', progress_callback },
+      model = await T.StyleTextToSpeech2Model.from_pretrained(MODEL, Object.assign({ dtype: 'q8', progress_callback },
         _wk ? { session_options: { enableCpuMemArena: false, enableMemPattern: false } } : null));
       self.postMessage({ backend: 'wasm/q8 · ' + b.label });
       break;
@@ -156,7 +168,7 @@ async function buildKitten() {
     }
   }
   if (!model) throw new Error(String((lastErr && lastErr.message) || lastErr || 'no backend'));
-  return { model, tokenizer, styles: new Map([[VOICE, style]]) };
+  return { model, tokenizer, styles: new Map([[VOICE, style]]), T };
 }
 // An eSpeak (mespeak) fallback engine lived here briefly on 2026-08-01 — asm.js,
 // guaranteed to start anywhere, PCM through the same contract — and was REMOVED
@@ -247,17 +259,69 @@ async function _synthOne(p, text, voice) {
   const { input_ids } = p.tokenizer(ph, { truncation: true });
   const out = await p.model({
     input_ids,
-    style: new Tensor('float32', style, [1, STYLE_DIM]),
-    speed: new Tensor('float32', [1.0], [1]),
+    style: new p.T.Tensor('float32', style, [1, STYLE_DIM]),
+    speed: new p.T.Tensor('float32', [1.0], [1]),
   });
   const wf = out && out.waveform;
   return wf ? wf.data : null;
+}
+
+// ---- SERVER ENGINE (WebKit) -------------------------------------------------
+// On WebKit this worker never runs a model: it asks the Bloops TTS server for
+// finished WAV. Same message contract in and out, so nothing upstream changes.
+// The base URL rides in on each message (main thread owns configuration).
+async function _serverPing(base) {
+  const r = await fetch(String(base).replace(/\/$/, '') + '/ping', { headers: { accept: 'application/json' } });
+  if (!r.ok) throw new Error('ping HTTP ' + r.status);
+  const j = await r.json();
+  if (!j || !j.ok) throw new Error('ping malformed');
+  return j;
+}
+function _wavToFloat32(buf) {
+  const dv = new DataView(buf);
+  if (dv.getUint32(0, false) !== 0x52494646) throw new Error('not RIFF');
+  let off = 12, sr = 24000, dataOff = -1, dataLen = 0;
+  while (off + 8 <= dv.byteLength) {
+    const tag = dv.getUint32(off, false), len = dv.getUint32(off + 4, true);
+    if (tag === 0x666d7420) sr = dv.getUint32(off + 12, true);            // 'fmt '
+    if (tag === 0x64617461) { dataOff = off + 8; dataLen = len; break; }  // 'data'
+    off += 8 + len + (len & 1);
+  }
+  if (dataOff < 0) throw new Error('no data chunk');
+  const n = dataLen >> 1, out = new Float32Array(n);
+  for (let i = 0; i < n; i++) out[i] = dv.getInt16(dataOff + (i << 1), true) / 32768;
+  return { audio: out, sr };
+}
+async function _serverSynth(base, text, voice) {
+  const u = String(base).replace(/\/$/, '') + '?text=' + encodeURIComponent(text) + '&voice=' + encodeURIComponent(voice || '');
+  const r = await fetch(u);
+  if (!r.ok) throw new Error('tts HTTP ' + r.status);
+  return _wavToFloat32(await r.arrayBuffer());
 }
 
 self.onmessage = async (ev) => {
   const msg = ev.data || {};
   const id = msg.id;
   try {
+    if (_WEBKIT) {
+      // Server mode. Warm = one ping (no download, instant); synth = fetch WAV.
+      const base = String(msg.tts || (self.location && self.location.origin || '') + '/tts');
+      if (msg.warm) {
+        try { const j = await _serverPing(base); self.postMessage({ id, warm: true, voices: j.voices || VOICES, gpu: false, server: true }); }
+        catch (e) { self.postMessage({ id, error: 'noserver: ' + String((e && e.message) || e).slice(0, 80) }); }
+        return;
+      }
+      const text = String(msg.text || '').trim();
+      if (!text) { self.postMessage({ id, error: 'empty text' }); return; }
+      try {
+        const t0 = (self.performance && performance.now) ? performance.now() : 0;
+        const { audio, sr } = await _serverSynth(base, text, msg.voice);
+        const ms = t0 ? Math.round(performance.now() - t0) : 0;
+        if (!audio.length) { self.postMessage({ id, error: 'no audio' }); return; }
+        self.postMessage({ id, audio, sampling_rate: sr, ms }, [audio.buffer]);
+      } catch (e) { self.postMessage({ id, error: 'noserver: ' + String((e && e.message) || e).slice(0, 80) }); }
+      return;
+    }
     // WARM-UP: load the model and reply, without synthesising anything. The
     // download is the cold cost, and it has nothing to do with playback — the
     // page kicks this off as soon as a Learn layer exists so the wait is spent

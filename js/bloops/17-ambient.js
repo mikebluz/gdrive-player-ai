@@ -11964,7 +11964,7 @@
     const _ambWordOutEff = (L) => {
       const out = _ambWordOut(L);
       if (out === 'play') return 'play';
-      if ((_AMB_IOS || _ambLearnWorkerErr || _ambVoiceLatched()) && !_ambSysVoiceOK()) return 'play';
+      if ((_ambLearnWorkerErr || _ambVoiceLatched()) && !_ambSysVoiceOK()) return 'play';
       return out;
     };
     const _ambWordOn = (L) => _ambWordOut(L) !== 'speak';
@@ -12104,10 +12104,16 @@
     // inside the app, and a feature that kills the tab is worse than no feature.
     // iOS is words-as-notes by POLICY; desktop is untouched. Escape hatch for
     // future experiments: localStorage bloopsVoiceForceIOS = '1'.
-    const _AMB_IOS = (() => { try {
-      const ua = String((navigator && navigator.userAgent) || '');
-      return /iPhone|iPad|iPod|CriOS|FxiOS/.test(ua) && localStorage.getItem('bloopsVoiceForceIOS') !== '1';
-    } catch (e) { return false; } })();
+    // SUPERSEDED 2026-08-02 (same day): iOS speech now comes from the SERVER.
+    // In-tab inference stays policy-dead, but the worker carries a server engine —
+    // on WebKit it never touches a model, it fetches finished WAV from the Bloops
+    // TTS service (tts-server/). The main thread only supplies the endpoint; no
+    // server reachable → the worker answers 'noserver' and the layer plays words
+    // as notes, the same floor as ever.
+    const _ambTtsUrl = () => {
+      try { const o = localStorage.getItem('bloopsTtsUrl'); if (o) return o; } catch (e) {}
+      try { return location.origin + '/tts'; } catch (e) { return '/tts'; }
+    };
     // ONE-CRASH LATCH. On-device evidence: the voice pipeline can kill an iOS tab
     // (input-length inference crash — mitigated by chunking, but the ceiling is
     // real and unmeasurable from here). The app must never crash-loop: an
@@ -12264,7 +12270,6 @@
     // (Kitten is 24 kHz); a BufferSource resamples on playback, so it does not have
     // to match the context.
     async function _ambLearnSynth(text, voice) {
-      if (_AMB_IOS) return null;
       if (_ambVoiceLatched()) return null;   // BEFORE the worker is even created
       const t = String(text || '').trim();
       if (!t) return null;
@@ -12282,7 +12287,7 @@
         const p = _ambLearnAwait(id, _ambLearnWarm ? _AMB_SYNTH_TIMEOUT_MS : _AMB_WARM_TIMEOUT_MS);
         // The voice is a per-REQUEST style vector against one shared model, so a
         // layer can pick its own without reloading anything.
-        try { w.postMessage({ id: id, text: t, voice: voice || '' }); } catch (e) { _ambLearnPending.delete(id); return null; }
+        try { w.postMessage({ id: id, text: t, voice: voice || '', tts: _ambTtsUrl() }); } catch (e) { _ambLearnPending.delete(id); return null; }
         res = await p;
       } catch (e) { return null; } finally { _ambSynthAt = 0; _ambVoiceMark(false); }
       if (!res || !res.audio || !res.audio.length) return null;
@@ -12561,7 +12566,6 @@
     // and shared: the pipeline is per-worker, so warming once serves every Learn
     // layer, and a second call while one is in flight is a no-op.
     function _ambLearnWarmUp(E, L) {
-      if (_AMB_IOS) return;             // iOS: words-as-notes by policy, no worker, no download
       if (_ambVoiceLatched()) return;   // BEFORE the worker is even created
       // ALWAYS report against the layer's real state. Passing null here said "Voice
       // ready — press play" regardless, and since this runs on every card render it
@@ -12586,7 +12590,7 @@
                try { console.warn('[bloom] Learn voice failed:', _ambLearnErrWhy); } catch (e) {} }
         _ambLearnSayEl(E, L, _ambLearnStatusText(L, _st()));
       });
-      try { w.postMessage({ id: id, warm: true }); }
+      try { w.postMessage({ id: id, warm: true, tts: _ambTtsUrl() }); }
       catch (e) { _ambLearnPending.delete(id); _ambLearnWarming = false; }
     }
     // Speak a rendered buffer THROUGH the layer's own chain, so the voice gets the
@@ -12660,12 +12664,7 @@
         // saying, or the user hears notes where they asked for a voice and has no
         // idea why.
         const fell = _ambWordOut(L) !== 'play';
-        if (fell && _AMB_IOS) {
-          const nI = (st && st.sentences) ? st.sentences.length : 0;
-          return 'The voice needs more memory than a phone browser tab gets — playing the words as notes'
-            + (nI ? ' — ' + nI + ' lines' : '') + '.';
-        }
-        if (fell && _ambVoiceLatched()) {
+                if (fell && _ambVoiceLatched()) {
           const n0 = (st && st.sentences) ? st.sentences.length : 0;
           return 'The voice stopped twice on this device, so it is set aside — playing the words as notes'
             + (n0 ? ' — ' + n0 + ' lines' : '') + '. Tap ⟳ Try the voice again in the layer ⋯ menu.';
@@ -12686,6 +12685,9 @@
           const where = (st && st.title) ? (' — ' + st.title) : '';
           if (st && st._sysBusy && n) { const done = ((((st.si | 0) - 1) % n) + n) % n + 1; return 'Speaking ' + done + '/' + n + where + ' · device voice'; }
           return 'Using the device voice (the built-in one can’t start here; speech skips the FX)' + where;
+        }
+        if (_ambLearnErrWhy.indexOf('noserver') >= 0) {
+          return 'Speech on phones streams from the Bloops voice server, which isn’t reachable — playing the words as notes instead.';
         }
         const why = (_ambLearnErrWhy.indexOf('too little memory') >= 0)
           ? 'This device can’t run the voice'

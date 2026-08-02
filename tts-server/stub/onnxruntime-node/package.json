@@ -1,0 +1,2 @@
+{ "name": "onnxruntime-node", "version": "0.0.0-stub", "main": "index.cjs",
+  "description": "Stub — transformers.js imports onnxruntime-node eagerly and the native binding crashes hosts without prebuilt binaries (shared hosting, Rosetta Node). The real runtime is onnxruntime-web (pure WASM), handed to transformers via globalThis[Symbol.for('onnxruntime')] before import." }

@@ -12089,6 +12089,24 @@
     // show it counting. On a phone the first line legitimately takes a long time —
     // the number climbing is the difference between "slow" and "stuck".
     let _ambLearnDlPct = -1, _ambSynthAt = 0, _ambWarmAt = 0;
+    // SYNTHESIS YIELDS TO AUDIO. Rendering a line is seconds of flat-out inference
+    // (worker thread) plus buffer work, and a spoken layer renders line after line
+    // — sustained load that competes with the render thread. Reported as the Learn
+    // layer "killing playback off and on: everything cuts out for a while then
+    // comes back", which is the adaptive voice budget shedding under a dragging
+    // audio clock and recovering afterwards. So while the transport is PLAYING the
+    // pump paces itself between lines, and backs off HARD whenever the audio clock
+    // is measurably behind — rendering ahead is never worth glitching what is
+    // already sounding, and words-as-notes covers any line not ready in time.
+    let _ambCtRate = 1;
+    const _AMB_PACE_MS = 260, _AMB_PACE_SLOW_MS = 1400;
+    async function _ambPaceSynth(E) {
+      try {
+        if (!E || !E.timer) return;                       // stopped: render flat out
+        const behind = _ambCtRate < 0.97;
+        await new Promise(r => setTimeout(r, behind ? _AMB_PACE_SLOW_MS : _AMB_PACE_MS));
+      } catch (e) {}
+    }
     // WebKit (every iOS browser, Chrome included) needs the voice rationed: see the
     // render-ahead cap in the pump.
     const _AMB_WK = (() => { try {
@@ -12133,7 +12151,10 @@
         document.head.appendChild(el);
       });
     }
-    function _ambWavB64ToF32(b64) {
+    // Decoding happens on the MAIN THREAD (script transport has no worker), and a
+    // 15 s line is ~700 KB of base64 → hundreds of thousands of samples. Done in
+    // one pass that is a visible audio glitch, so it yields every 32k samples.
+    async function _ambWavB64ToF32(b64) {
       const bin = atob(b64), n = bin.length;
       const u8 = new Uint8Array(n);
       for (let i = 0; i < n; i++) u8[i] = bin.charCodeAt(i);
@@ -12147,7 +12168,10 @@
       }
       if (dataOff < 0) return null;
       const cnt = dataLen >> 1, out = new Float32Array(cnt);
-      for (let i = 0; i < cnt; i++) out[i] = dv.getInt16(dataOff + (i << 1), true) / 32768;
+      for (let i = 0; i < cnt; i++) {
+        out[i] = dv.getInt16(dataOff + (i << 1), true) / 32768;
+        if ((i & 32767) === 32767) await new Promise((r) => setTimeout(r, 0));
+      }
       return { audio: out, sr: sr };
     }
     const _ambTtsUrl = () => {
@@ -12319,7 +12343,7 @@
         const base = _ambTtsUrl();
         const d = await _ambTtsJsonp(base + (base.indexOf('?') >= 0 ? '&' : '?') + 'text=' + encodeURIComponent(t) + '&voice=' + encodeURIComponent(voice || ''), 120000);
         if (!d || !d.ok || !d.wav) return null;
-        const r = _ambWavB64ToF32(d.wav);
+        const r = await _ambWavB64ToF32(d.wav);
         if (!r || !r.audio.length) return null;
         _ambLearnWarm = true;
         try {
@@ -13065,6 +13089,7 @@
           if (!buf) { st.phase = 'novoice'; st.prerendering = false; st._say = null; say(); return; }
           ent.cache[next] = buf; ent.buf.set(vk + line, buf);
           st.preDone = ent.cache.filter(Boolean).length; st._say = null; say();
+          await _ambPaceSynth(E);   // let the audio thread breathe before the next line
         }
       } finally {
         ent.running = false;
@@ -19908,6 +19933,7 @@
           const wall = performance.now();
           const dt = (wall - _ambHealthLastWall) / 1000;
           const ctRate = dt > 0 ? (raw.currentTime - _ambHealthLastCt) / dt : 1;
+      _ambCtRate = ctRate;   // read by the voice pump: synthesis yields to audio
           _ambHealthLastCt = raw.currentTime; _ambHealthLastWall = wall;
           const snap = {
             build: BLOOPS_PERF_BUILD,

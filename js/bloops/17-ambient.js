@@ -11964,7 +11964,7 @@
     const _ambWordOutEff = (L) => {
       const out = _ambWordOut(L);
       if (out === 'play') return 'play';
-      if ((_ambLearnWorkerErr || _ambVoiceLatched()) && !_ambSysVoiceOK()) return 'play';
+      if ((_AMB_IOS || _ambLearnWorkerErr || _ambVoiceLatched()) && !_ambSysVoiceOK()) return 'play';
       return out;
     };
     const _ambWordOn = (L) => _ambWordOut(L) !== 'speak';
@@ -12095,6 +12095,19 @@
       return /iPhone|iPad|iPod|CriOS|FxiOS/.test(ua) || (/AppleWebKit/.test(ua) && !/Chrome\//.test(ua));
     } catch (e) { return false; } })();
     const _AMB_WK_AHEAD = 2;
+    // POLICY, NOT A LOTTERY: iOS does not attempt in-tab inference AT ALL. The
+    // model runs fine in an EMPTY iOS tab (measured: warm + chunked synthesis on
+    // the user's own phone) — but this app is not an empty tab: Tone, the DSP
+    // worklet, samplers and 2 MB of UI already occupy the per-tab memory budget,
+    // and every rationing scheme (3-word chunks, 40 ms yields, 2-line lookahead)
+    // still crashed the real app. The margin the probes measured does not exist
+    // inside the app, and a feature that kills the tab is worse than no feature.
+    // iOS is words-as-notes by POLICY; desktop is untouched. Escape hatch for
+    // future experiments: localStorage bloopsVoiceForceIOS = '1'.
+    const _AMB_IOS = (() => { try {
+      const ua = String((navigator && navigator.userAgent) || '');
+      return /iPhone|iPad|iPod|CriOS|FxiOS/.test(ua) && localStorage.getItem('bloopsVoiceForceIOS') !== '1';
+    } catch (e) { return false; } })();
     // ONE-CRASH LATCH. On-device evidence: the voice pipeline can kill an iOS tab
     // (input-length inference crash — mitigated by chunking, but the ceiling is
     // real and unmeasurable from here). The app must never crash-loop: an
@@ -12251,6 +12264,7 @@
     // (Kitten is 24 kHz); a BufferSource resamples on playback, so it does not have
     // to match the context.
     async function _ambLearnSynth(text, voice) {
+      if (_AMB_IOS) return null;
       if (_ambVoiceLatched()) return null;   // BEFORE the worker is even created
       const t = String(text || '').trim();
       if (!t) return null;
@@ -12547,6 +12561,7 @@
     // and shared: the pipeline is per-worker, so warming once serves every Learn
     // layer, and a second call while one is in flight is a no-op.
     function _ambLearnWarmUp(E, L) {
+      if (_AMB_IOS) return;             // iOS: words-as-notes by policy, no worker, no download
       if (_ambVoiceLatched()) return;   // BEFORE the worker is even created
       // ALWAYS report against the layer's real state. Passing null here said "Voice
       // ready — press play" regardless, and since this runs on every card render it
@@ -12645,6 +12660,11 @@
         // saying, or the user hears notes where they asked for a voice and has no
         // idea why.
         const fell = _ambWordOut(L) !== 'play';
+        if (fell && _AMB_IOS) {
+          const nI = (st && st.sentences) ? st.sentences.length : 0;
+          return 'The voice needs more memory than a phone browser tab gets — playing the words as notes'
+            + (nI ? ' — ' + nI + ' lines' : '') + '.';
+        }
         if (fell && _ambVoiceLatched()) {
           const n0 = (st && st.sentences) ? st.sentences.length : 0;
           return 'The voice stopped twice on this device, so it is set aside — playing the words as notes'

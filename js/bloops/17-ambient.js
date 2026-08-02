@@ -11964,7 +11964,7 @@
     const _ambWordOutEff = (L) => {
       const out = _ambWordOut(L);
       if (out === 'play') return 'play';
-      if (_ambLearnWorkerErr && !_ambSysVoiceOK()) return 'play';
+      if ((_ambLearnWorkerErr || _ambVoiceLatched()) && !_ambSysVoiceOK()) return 'play';
       return out;
     };
     const _ambWordOn = (L) => _ambWordOut(L) !== 'speak';
@@ -12088,6 +12088,33 @@
     // show it counting. On a phone the first line legitimately takes a long time —
     // the number climbing is the difference between "slow" and "stuck".
     let _ambLearnDlPct = -1, _ambSynthAt = 0, _ambWarmAt = 0;
+    // ONE-CRASH LATCH. On-device evidence: the voice pipeline can kill an iOS tab
+    // (input-length inference crash — mitigated by chunking, but the ceiling is
+    // real and unmeasurable from here). The app must never crash-loop: an
+    // 'inflight' marker is set before any voice work and cleared when it settles;
+    // a boot that finds the marker means the tab DIED mid-voice-work, and the
+    // latch permanently retires the voice on that device — layers fall to
+    // words-as-notes with a status naming why. pagehide clears the marker so a
+    // user closing the app mid-render does not false-trip it.
+    const _AMB_VOICE_INFLIGHT = 'bloopsVoiceInflight', _AMB_VOICE_LATCH = 'bloopsVoiceCrashLatch';
+    let _ambLatchChecked = false, _ambLatched = false;
+    function _ambVoiceLatched() {
+      if (!_ambLatchChecked) {
+        _ambLatchChecked = true;
+        try {
+          if (localStorage.getItem(_AMB_VOICE_LATCH) === '1') _ambLatched = true;
+          else if (localStorage.getItem(_AMB_VOICE_INFLIGHT)) {
+            localStorage.setItem(_AMB_VOICE_LATCH, '1'); _ambLatched = true;
+            console.warn('[bloom] The voice crashed this device once — retired here; layers play words as notes.');
+          }
+          localStorage.removeItem(_AMB_VOICE_INFLIGHT);
+          if (typeof window !== 'undefined') window.addEventListener('pagehide', () => { try { localStorage.removeItem(_AMB_VOICE_INFLIGHT); } catch (e) {} });
+        } catch (e) {}
+      }
+      return _ambLatched;
+    }
+    const _ambVoiceMark = (on) => { try { if (on) localStorage.setItem(_AMB_VOICE_INFLIGHT, String(Date.now())); else localStorage.removeItem(_AMB_VOICE_INFLIGHT); } catch (e) {} };
+    try { _ambVoiceLatched(); } catch (e) {}   // promote a crash marker at BOOT, before any voice path can run
     // A hard slice(0,90) cut the one message that mattered mid-word ("ERR: [wasm]
     // RangeEr"), which is worse than a long line: the reader cannot even tell what
     // class of failure it was. Trim on a word boundary, keep more of it, and always
@@ -12188,6 +12215,7 @@
     // (Kitten is 24 kHz); a BufferSource resamples on playback, so it does not have
     // to match the context.
     async function _ambLearnSynth(text, voice) {
+      if (_ambVoiceLatched()) return null;   // BEFORE the worker is even created
       const t = String(text || '').trim();
       if (!t) return null;
       const w = _ambLearnWorkerGet();
@@ -12195,6 +12223,7 @@
       const id = ++_ambLearnSeq;
       let res = null;
       _ambSynthAt = Date.now();
+      _ambVoiceMark(true);
       try {
         // The FIRST line queues behind the model download inside the worker, so it
         // gets the warm-up's budget rather than the per-line one — otherwise a slow
@@ -12205,7 +12234,7 @@
         // layer can pick its own without reloading anything.
         try { w.postMessage({ id: id, text: t, voice: voice || '' }); } catch (e) { _ambLearnPending.delete(id); return null; }
         res = await p;
-      } catch (e) { return null; } finally { _ambSynthAt = 0; }
+      } catch (e) { return null; } finally { _ambSynthAt = 0; _ambVoiceMark(false); }
       if (!res || !res.audio || !res.audio.length) return null;
       _ambLearnWarm = true;   // the model is downloaded; later lines are just inference
       try {
@@ -12468,6 +12497,7 @@
     // and shared: the pipeline is per-worker, so warming once serves every Learn
     // layer, and a second call while one is in flight is a no-op.
     function _ambLearnWarmUp(E, L) {
+      if (_ambVoiceLatched()) return;   // BEFORE the worker is even created
       // ALWAYS report against the layer's real state. Passing null here said "Voice
       // ready — press play" regardless, and since this runs on every card render it
       // clobbered "Ready — Pasted text, 3 lines" moments after a pre-render finished
@@ -12479,9 +12509,11 @@
       if (!w) { _ambLearnSayEl(E, L, _ambLearnStatusText(L, _st())); return; }
       _ambLearnWarming = true;
       _ambWarmAt = Date.now();
+      _ambVoiceMark(true);
       _ambLearnSayEl(E, L, _ambLearnStatusText(L, _st()));
       const id = ++_ambLearnSeq;
       _ambLearnAwait(id, _AMB_WARM_TIMEOUT_MS).then((d) => {
+        _ambVoiceMark(false);
         _ambLearnWarming = false;
         if (d && d.warm) { _ambLearnWarm = true; _ambLearnErrWhy = ''; _ambLearnDlPct = -1; }
         else { _ambLearnWorkerErr = _ambLearnWorkerErr || new Error('warm failed');
@@ -12563,6 +12595,10 @@
         // saying, or the user hears notes where they asked for a voice and has no
         // idea why.
         const fell = _ambWordOut(L) !== 'play';
+        if (fell && _ambVoiceLatched()) {
+          const n0 = (st && st.sentences) ? st.sentences.length : 0;
+          return 'The voice crashed this phone once, so it stays off here — playing the words as notes' + (n0 ? ' — ' + n0 + ' lines' : '') + '.';
+        }
         const n = (st && st.sentences) ? st.sentences.length : 0;
         if (st && st.phase === 'fetch') return 'Fetching text…';
         if (st && st.phase === 'nofetch') return 'No text found';

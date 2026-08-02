@@ -11584,6 +11584,31 @@
     }
     // → { title, text, url } or null. Never throws: a dead network or an unknown
     // page must leave the layer silent, not break the tick that called it.
+    // EVERY NETWORK CALL HERE NEEDS A DEADLINE. A bare `await fetch(...)` has none,
+    // and on a stalled mobile connection the promise simply never settles — the pump
+    // sits awaiting it with its `running` latch held, so the layer hangs on
+    // "Fetching an article…" forever with no way back. That is the whole of the
+    // reported mobile bug. AbortController gives it an end, and the REASON is kept
+    // so the status can say which of "timed out", "no connection" and "no such
+    // article" happened; those are three different problems and only one of them is
+    // about the search term.
+    const _AMB_NET_TIMEOUT_MS = 12000;
+    let _ambLearnNetWhy = '';
+    async function _ambFetchJson(url, ms) {
+      const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      let timer = null;
+      try {
+        timer = setTimeout(() => { try { ac && ac.abort(); } catch (e) {} }, ms || _AMB_NET_TIMEOUT_MS);
+        const r = await fetch(url, { headers: { accept: 'application/json' }, signal: ac ? ac.signal : undefined });
+        if (!r || !r.ok) { _ambLearnNetWhy = (r && r.status === 404) ? 'notfound' : 'http'; return null; }
+        const j = await r.json();
+        _ambLearnNetWhy = '';
+        return j;
+      } catch (e) {
+        _ambLearnNetWhy = (e && (e.name === 'AbortError' || /abort/i.test(String(e.message || '')))) ? 'timeout' : 'offline';
+        return null;
+      } finally { if (timer) clearTimeout(timer); }
+    }
     async function _ambLearnFetch(sourceId, term, corpus) {
       try {
         const src = _AMB_LEARN_SOURCES.find(x => x.id === sourceId) || _AMB_LEARN_SOURCES[0];
@@ -11596,14 +11621,16 @@
         } else {
           url = base + 'random/summary';
         }
-        const r = await fetch(url, { headers: { accept: 'application/json' } });
-        if (!r || !r.ok) return null;
-        const j = await r.json();
+        // ONE retry, and only for the failures a retry can fix — a phone changing
+        // cell or waking its radio drops exactly one request. A 404 is not retried.
+        let j = await _ambFetchJson(url);
+        if (!j && (_ambLearnNetWhy === 'timeout' || _ambLearnNetWhy === 'offline')) j = await _ambFetchJson(url);
+        if (!j) return null;
         const text = _ambLearnClean(j && (j.extract || ''));
-        if (!text) return null;
+        if (!text) { _ambLearnNetWhy = 'empty'; return null; }
         return { title: String((j && j.title) || ''), text: text,
                  url: String((j && j.content_urls && j.content_urls.desktop && j.content_urls.desktop.page) || '') };
-      } catch (e) { return null; }
+      } catch (e) { _ambLearnNetWhy = 'offline'; return null; }
     }
     // ---- SIR EEL layer: generated text --------------------------------------
     // Sir Eel = surreal. It writes sentences that are grammatically airtight and
@@ -11928,6 +11955,18 @@
     // same thing here as everywhere else in Bloom and a key change moves the words
     // with the music.
     const _ambWordOut = (L) => { const o = L && L.word && L.word.out; return (o === 'play' || o === 'both') ? o : 'speak'; };
+    // The EFFECTIVE output mode. When the voice terminally cannot run on this
+    // device and there is no usable fallback voice either (iOS: the OS voice
+    // seizes the audio session), a speech mode degrades to PLAY — the words become
+    // notes through the alphabet translator, in the mix, instead of a dead card.
+    // RUNTIME ONLY, never written to the layer: the user's setting is their
+    // setting, and the same project opened on a desktop speaks again.
+    const _ambWordOutEff = (L) => {
+      const out = _ambWordOut(L);
+      if (out === 'play') return 'play';
+      if (_ambLearnWorkerErr && !_ambSysVoiceOK()) return 'play';
+      return out;
+    };
     const _ambWordOn = (L) => _ambWordOut(L) !== 'speak';
     function _ambWordOpt(E, L) {
       const w = (L && L.word) || {};
@@ -12043,6 +12082,37 @@
     // thread; we only ever receive finished samples.
     let _ambLearnWorker = null, _ambLearnWorkerErr = null, _ambLearnSeq = 0, _ambLearnWarm = false, _ambLearnWarming = false;
     let _ambLearnErrWhy = '';   // surfaced in the status — "unavailable" alone is undiagnosable
+    // A SILENT WAIT IS INDISTINGUISHABLE FROM A HANG, which is how both mobile
+    // reports arrived. `_ambLearnDlPct` is the model download (posted by the worker);
+    // `_ambSynthAt` stamps the start of the line being written, so the status can
+    // show it counting. On a phone the first line legitimately takes a long time —
+    // the number climbing is the difference between "slow" and "stuck".
+    let _ambLearnDlPct = -1, _ambSynthAt = 0, _ambWarmAt = 0;
+    // A hard slice(0,90) cut the one message that mattered mid-word ("ERR: [wasm]
+    // RangeEr"), which is worse than a long line: the reader cannot even tell what
+    // class of failure it was. Trim on a word boundary, keep more of it, and always
+    // put the FULL text in the console.
+    function _ambTrimWhy(t) {
+      const s0 = String(t || '').replace(/\s+/g, ' ').trim();
+      try { console.warn('[bloom] Learn voice:', s0); } catch (e) {}
+      if (s0.length <= 150) return s0;
+      const cut = s0.slice(0, 150);
+      return cut.slice(0, Math.max(60, cut.lastIndexOf(' '))) + '…';
+    }
+    // Every await on the worker gets a DEADLINE. postMessage has no timeout, so a
+    // worker that dies quietly (iOS reclaiming memory is the case that matters)
+    // leaves the promise pending forever and the layer sits on "Writing 0/N" with
+    // its pump latched — the same defect as the un-timed fetch, one thread over.
+    const _AMB_SYNTH_TIMEOUT_MS = 90000;    // a line, once the model is loaded
+    const _AMB_WARM_TIMEOUT_MS = 240000;    // includes the ~24 MB download on a phone
+    function _ambLearnAwait(id, ms) {
+      return new Promise((resolve) => {
+        let done = false;
+        const finish = (v) => { if (done) return; done = true; _ambLearnPending.delete(id); resolve(v); };
+        _ambLearnPending.set(id, finish);
+        setTimeout(() => { if (!done) { _ambLearnErrWhy = 'the voice stopped responding'; finish(null); } }, ms);
+      });
+    }
     const _ambLearnPending = new Map();
     // MOBILE WAS BLOCKED HERE, and the block is gone with the model that caused it.
     // Under Xenova/mms-tts-eng this refused to load on any touch-only device: ~60 MB
@@ -12081,6 +12151,16 @@
         const w = new Worker('js/bloops/learn-voice.worker.js?v=DEPLOYVER', { type: 'module' });
         w.onmessage = (ev) => {
           const d = ev.data || {};
+          if (d.note) { try { console.warn('[bloom] Learn voice: ' + d.note); } catch (e) {} return; }
+          if (d.backend) { try { console.warn('[bloom] Learn voice backend: ' + d.backend); } catch (e) {} return; }
+          if (Number.isFinite(d.dl)) {
+            _ambLearnDlPct = d.dl | 0;
+            // _E, not a closure E — this function has no engine argument, and the
+            // earlier `E` here was a swallowed ReferenceError (the popover's own
+            // polling repainted anyway, which hid it).
+            try { _ambLearnSayAll(_E); } catch (e) {}
+            return;
+          }
           const r = _ambLearnPending.get(d.id);
           if (!r) return;
           _ambLearnPending.delete(d.id);
@@ -12088,7 +12168,7 @@
         };
         w.onerror = (err) => {
           _ambLearnWorkerErr = err || new Error('learn worker failed');
-          _ambLearnErrWhy = String((err && (err.message || err.type)) || 'worker error').slice(0, 90);
+          _ambLearnErrWhy = _ambTrimWhy(String((err && (err.message || err.type)) || 'worker error'));
           try { console.warn('[bloom] Learn voice unavailable:', (err && err.message) || err); } catch (e) {}
           // Never leave a caller awaiting forever — the tick would keep `pending`
           // true and the layer would sit silent with no way back.
@@ -12109,14 +12189,18 @@
       if (!w) return null;
       const id = ++_ambLearnSeq;
       let res = null;
+      _ambSynthAt = Date.now();
       try {
-        res = await new Promise((resolve) => {
-          _ambLearnPending.set(id, resolve);
-          // The voice is a per-REQUEST style vector against one shared model, so a
-          // layer can pick its own without reloading anything.
-          try { w.postMessage({ id: id, text: t, voice: voice || '' }); } catch (e) { _ambLearnPending.delete(id); resolve(null); }
-        });
-      } catch (e) { return null; }
+        // The FIRST line queues behind the model download inside the worker, so it
+        // gets the warm-up's budget rather than the per-line one — otherwise a slow
+        // phone would trip a false "the voice stopped responding" while the download
+        // was still perfectly healthy.
+        const p = _ambLearnAwait(id, _ambLearnWarm ? _AMB_SYNTH_TIMEOUT_MS : _AMB_WARM_TIMEOUT_MS);
+        // The voice is a per-REQUEST style vector against one shared model, so a
+        // layer can pick its own without reloading anything.
+        try { w.postMessage({ id: id, text: t, voice: voice || '' }); } catch (e) { _ambLearnPending.delete(id); return null; }
+        res = await p;
+      } catch (e) { return null; } finally { _ambSynthAt = 0; }
       if (!res || !res.audio || !res.audio.length) return null;
       _ambLearnWarm = true;   // the model is downloaded; later lines are just inference
       try {
@@ -12174,9 +12258,8 @@
       if (!q) return [];
       try {
         const url = 'https://' + _ambLearnHost(corpus) + '/w/rest.php/v1/search/title?q=' + encodeURIComponent(q) + '&limit=8';
-        const r = await fetch(url);
-        if (!r.ok) return [];
-        const j = await r.json();
+        const j = await _ambFetchJson(url, 9000);
+        if (!j) return [];
         return (j && Array.isArray(j.pages) ? j.pages : [])
           .map(pg => ({ title: String(pg.title || ''), desc: String(pg.description || '') }))
           .filter(x => x.title);
@@ -12307,7 +12390,7 @@
         // silently swallow this the way one once swallowed every toast.
         overlay.style.setProperty('display', 'flex', 'important');
         const msg = modal.querySelector('.amb-spoken-loading-msg');
-        let done = false;
+        let done = false, failAt = 0;
         const close = () => { if (done) return; done = true; try { clearInterval(iv); } catch (e) {} try { overlay.remove(); } catch (e) {} };
         overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
         modal.querySelector('.amb-spoken-loading-close').addEventListener('click', close);
@@ -12320,11 +12403,30 @@
             const ent = _ambSeelEntry(E, L, false);
             // READY = the first line is audio, or the layer plays notes rather than
             // speech, in which case there was never anything to wait for.
-            if (_ambWordOut(L) === 'play' || (ent && ent.cache && ent.cache[0])) close();
-            if (_ambLearnWorkerErr) close();
+            if (_ambWordOutEff(L) === 'play' || (ent && ent.cache && ent.cache[0])) close();
+            if (_ambLearnWorkerErr && (_ambWordOutEff(L) === 'play' || (st && st.sentences && st.sentences.length))) close();
+            // TERMINAL FAILURE: stop looking like progress. Hold the reason on screen
+            // long enough to read, then get out of the way — the card's status line
+            // keeps the same message, and the fix (📄 New article) is on the card.
+            if (st && (st.phase === 'nofetch' || st.phase === 'novoice')) {
+              if (!failAt) failAt = Date.now();
+              else if (Date.now() - failAt > 3500) close();
+            } else failAt = 0;
           } catch (e) { close(); }
         }, 250);
         setTimeout(close, 180000);   // never leave it up forever
+      } catch (e) {}
+    }
+    // Repaint every spoken card's status — used when a shared, layer-independent
+    // thing moves (the model download), which no single layer owns.
+    function _ambLearnSayAll(E) {
+      try {
+        const cfg = E && E.getCfg && E.getCfg(); if (!cfg) return;
+        (cfg.extras || []).forEach(L => {
+          if (!L || (L.type !== 'learn' && L.type !== 'sireel')) return;
+          const st = (E.seqState && E.seqState[_ambSpokenKey(L)]) || null;
+          _ambLearnSayEl(E, L, _ambLearnStatusText(L, st));
+        });
       } catch (e) {}
     }
     // Paint the header's article chip from the layer's own state. Cheap and
@@ -12371,13 +12473,14 @@
       const w = _ambLearnWorkerGet();
       if (!w) { _ambLearnSayEl(E, L, _ambLearnStatusText(L, _st())); return; }
       _ambLearnWarming = true;
+      _ambWarmAt = Date.now();
       _ambLearnSayEl(E, L, _ambLearnStatusText(L, _st()));
       const id = ++_ambLearnSeq;
-      _ambLearnPending.set(id, (d) => {
+      _ambLearnAwait(id, _AMB_WARM_TIMEOUT_MS).then((d) => {
         _ambLearnWarming = false;
-        if (d && d.warm) { _ambLearnWarm = true; _ambLearnErrWhy = ''; }
+        if (d && d.warm) { _ambLearnWarm = true; _ambLearnErrWhy = ''; _ambLearnDlPct = -1; }
         else { _ambLearnWorkerErr = _ambLearnWorkerErr || new Error('warm failed');
-               _ambLearnErrWhy = String((d && d.error) || 'no reply').slice(0, 90);
+               _ambLearnErrWhy = _ambTrimWhy(String((d && d.error) || _ambLearnErrWhy || 'no reply'));
                try { console.warn('[bloom] Learn voice failed:', _ambLearnErrWhy); } catch (e) {} }
         _ambLearnSayEl(E, L, _ambLearnStatusText(L, _st()));
       });
@@ -12399,23 +12502,102 @@
     // quick; on mobile it is slow enough to watch it oscillate, which is how this
     // was reported. Warming now takes PRECEDENCE over per-layer phase — you cannot
     // be fetching usefully until the voice exists.
+    // ---- SYSTEM-VOICE FALLBACK ----------------------------------------------
+    // When the WASM voice cannot START (the mobile RangeError: ort-web failing to
+    // allocate its heap), the layer used to go dead. But the browser has a voice of
+    // its own. SpeechSynthesis was rejected as the PRIMARY engine for a reason that
+    // still stands — it cannot enter the Web Audio graph, so no FX, no capture, no
+    // sample-accurate scheduling — but on a device that cannot run the model, a
+    // voice OUTSIDE the mix beats a dead card. It engages only when the worker has
+    // terminally failed and the layer wants speech; Words-as-Play never needed the
+    // voice at all and is untouched.
+    const _ambSysVoiceOK = () => { try {
+      if (typeof window === 'undefined' || !('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') return false;
+      // NOT ON iOS. Its speechSynthesis seizes the audio session and DUCKS/OVERRIDES
+      // the page's Web Audio output — the voice does not join the mix, it replaces
+      // it (field-reported). The in-worker espeak engine is the mobile fallback;
+      // this OS path stays for desktop browsers, where the two mix fine.
+      if (/iPad|iPhone|iPod/.test(String(navigator.userAgent || ''))) return false;
+      return true;
+    } catch (e) { return false; } };
+    const _ambSysVoiceActive = (L) => !!(_ambLearnWorkerErr && _ambSysVoiceOK() && _ambWordOut(L) !== 'play');
+    // iOS requires the FIRST speak() to happen inside a user gesture; the play press
+    // is one, so an inaudible unlock utterance there licenses every later line.
+    let _ambSysUnlocked = false;
+    function _ambSysVoiceUnlock() {
+      if (_ambSysUnlocked || !_ambSysVoiceOK()) return;
+      try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; window.speechSynthesis.speak(u); _ambSysUnlocked = true; } catch (e) {}
+    }
+    function _ambSysSpeak(L, line, done, minSec) {
+      let fired = false;
+      const finish = () => { if (fired) return; fired = true; try { done(); } catch (e) {} };
+      try {
+        const u = new SpeechSynthesisUtterance(String(line));
+        const lvl = Math.max(0, Math.min(100, Number.isFinite(L && L.level) ? (L.level | 0) : 70));
+        u.volume = Math.max(0.05, lvl / 100);
+        try { const v = window.speechSynthesis.getVoices().find(x => /^en/i.test(x.lang || '')); if (v) u.voice = v; } catch (e) {}
+        u.onend = finish; u.onerror = finish;
+        window.speechSynthesis.speak(u);
+      } catch (e) { finish(); return; }
+      // FAILSAFE: 'end' is not guaranteed everywhere, and cancel() sometimes eats
+      // it. A stuck busy-latch here would be the same hang bug in a third costume.
+      const words = String(line).split(/\s+/).length;
+      setTimeout(finish, Math.max((minSec || 0) * 1000, 1200 + words * 450));
+    }
+    const _ambSynthElapsed = () => {
+      if (!_ambSynthAt) return '';
+      const sec = Math.round((Date.now() - _ambSynthAt) / 1000);
+      return sec >= 3 ? (' (' + sec + 's)') : '';
+    };
     function _ambLearnStatusText(L, st) {
       // A PLAY-ONLY layer never opens the voice, so none of the voice's states apply
       // to it — reporting "Downloading the voice…" for a layer that will never speak
       // is just noise.
-      if (_ambWordOut(L) === 'play') {
+      if (_ambWordOutEff(L) === 'play') {
+        // Chosen Play vs DEGRADED to Play are different facts: the second one needs
+        // saying, or the user hears notes where they asked for a voice and has no
+        // idea why.
+        const fell = _ambWordOut(L) !== 'play';
         const n = (st && st.sentences) ? st.sentences.length : 0;
         if (st && st.phase === 'fetch') return 'Fetching text…';
         if (st && st.phase === 'nofetch') return 'No text found';
-        if (!n) return 'Idle — press play';
-        return 'Playing the text as notes — ' + n + ' lines';
+        if (!n) return fell ? 'The voice can’t run on this device — this layer will play its words as notes instead.' : 'Idle — press play';
+        return (fell ? 'Voice can’t run here — playing the words as notes — ' : 'Playing the text as notes — ') + n + ' lines';
       }
-      if (_ambLearnWorkerErr) return (_ambLearnErrWhy.indexOf('too little memory') >= 0)
-        ? 'This device can’t run the voice — this layer stays silent here'
-        : ('Voice unavailable' + (_ambLearnErrWhy ? (' — ' + _ambLearnErrWhy) : ' — no connection?'));
-      if (!_ambLearnWarm && _ambLearnWarming) return 'Downloading the voice, first use only…';
+      if (_ambLearnWorkerErr) {
+        // DEVICE VOICE, when there is one: the layer keeps speaking through the OS
+        // instead of going dead. Only when even that is absent does the card fall
+        // back to pointing at Words-as-Play, which never needed a voice at all.
+        if (_ambSysVoiceOK() && _ambWordOut(L) !== 'play') {
+          if (st && st.phase === 'fetch') return 'Fetching an article…';
+          const n = (st && st.sentences) ? st.sentences.length : 0;
+          const where = (st && st.title) ? (' — ' + st.title) : '';
+          if (st && st._sysBusy && n) { const done = ((((st.si | 0) - 1) % n) + n) % n + 1; return 'Speaking ' + done + '/' + n + where + ' · device voice'; }
+          return 'Using the device voice (the built-in one can’t start here; speech skips the FX)' + where;
+        }
+        const why = (_ambLearnErrWhy.indexOf('too little memory') >= 0)
+          ? 'This device can’t run the voice'
+          : ('Voice unavailable' + (_ambLearnErrWhy ? (' — ' + _ambLearnErrWhy) : ' — no connection?'));
+        return why + ' · it can still play the text as notes: Notes → Words as → Play.';
+      }
       const seel = _ambIsSeel(L);
       const paste = (L && L.source === 'paste');
+      // A TERMINAL TEXT FAILURE OUTRANKS the voice download. Warming takes precedence
+      // over ordinary phases (you cannot usefully fetch before the voice exists), but
+      // it must not MASK a fetch that has already given up — the download finishes on
+      // its own and needs nothing from the user, while a failed article is the thing
+      // they have to act on, and hiding it behind a progress message is how a dead
+      // layer looks like a busy one.
+      if (st && (st.phase === 'nofetch' || st.phase === 'novoice')) { /* fall through to the phase text below */ }
+      else if (!_ambLearnWarm && _ambLearnWarming) {
+        if (_ambLearnDlPct >= 0) return 'Downloading the voice, first use only… ' + _ambLearnDlPct + '%';
+        // NO PROGRESS AT ALL is the tell that the worker never got going — a healthy
+        // download reports within a second or two, however slow the connection. The
+        // warm deadline is minutes (a phone on a bad line is legitimately slow), so
+        // say something useful long before it expires rather than sitting mute.
+        if (_ambWarmAt && Date.now() - _ambWarmAt > 25000) return 'Starting the voice… no response yet — reload the page if this persists.';
+        return 'Downloading the voice, first use only…';
+      }
       if (!st) return _ambLearnWarm ? 'Voice ready — press play' : 'Idle — press play';
       const n = st.sentences ? st.sentences.length : 0;
       const done = Math.max(0, (st.si | 0) - (st.q ? st.q.length : 0));
@@ -12425,17 +12607,27 @@
       // layer stops taking on new articles and loops what it has — the whole reason
       // this line exists is that all of it is otherwise invisible waiting.
       if (st.phase === 'fetch') return seel ? 'Reading the text…' : (paste ? 'Reading your text…' : 'Fetching an article…');
-      if (st.phase === 'nofetch') return seel ? 'No text yet — press 🎲 New text' : (paste ? 'Nothing pasted yet' : 'No article found — check the search term');
+      if (st.phase === 'nofetch') {
+        if (seel) return 'No text yet — press 🎲 New text';
+        if (paste) return 'Nothing pasted yet';
+        // Three different problems, and only the last one is about the search term.
+        if (_ambLearnNetWhy === 'timeout') return 'Wikipedia didn’t answer (timed out) — tap 📄 New article to try again.';
+        if (_ambLearnNetWhy === 'offline') return 'Couldn’t reach Wikipedia — check the connection, then tap 📄 New article.';
+        if (_ambLearnNetWhy === 'empty') return 'That article has no readable summary — try another.';
+        return 'No article found — try another search.';
+      }
       if (st.phase === 'novoice') return 'Voice unavailable' + (_ambLearnErrWhy ? (' — ' + _ambLearnErrWhy) : ' — no connection?');
       // SPEAKING wins over "writing", because while it plays the render carries on in
       // the background and the useful number is where the voice is, not the renderer.
       // The cursor counts across loops, so it wraps back into 1..n.
       if (st.q && st.q.length) {
         const at = n ? (done <= 0 ? 1 : ((done - 1) % n) + 1) : done;
-        const ahead = st.prerendering ? (' · writing ' + (st.preDone | 0) + '/' + n) : '';
+        const ahead = st.prerendering ? (' · writing ' + (st.preDone | 0) + '/' + n + _ambSynthElapsed()) : '';
         return 'Speaking ' + at + '/' + n + where + ahead;
       }
-      if (st.prerendering) return 'Writing ' + (st.preDone | 0) + '/' + n + ' lines…' + where;
+      // The elapsed seconds are the point: on a phone a line can take a long time,
+      // and a number that climbs says "slow", where a frozen one says "stuck".
+      if (st.prerendering) return 'Writing ' + (st.preDone | 0) + '/' + n + ' lines…' + where + _ambSynthElapsed();
       if (st.phase === 'render') return 'Writing line ' + Math.min(n, st.si | 0) + '/' + n + where;
       if (n) return 'Ready — ' + (st.title || 'text') + ', ' + n + ' lines. Press play.';
       return _ambLearnWarm ? 'Voice ready — press play' : 'Idle — press play';
@@ -16605,7 +16797,7 @@
         // WORD MUSIC. Play-only skips the voice entirely — no worker, no model, no
         // queue — and walks the LINES, turning each into a passage of notes. Both
         // keeps the spoken path below and adds the passage beside each line.
-        const _wOut = _ambWordOut(L);
+        const _wOut = _ambWordOutEff(L);
         if (_wOut === 'play') {
           _ambWordEnsureLines(E, L, st);
           _ambLearnSay(E, L, st, _ambLearnStatusText(L, st));
@@ -16640,6 +16832,37 @@
         // Pressing play is an explicit "go", so a layer still waiting to be asked
         // stops waiting here rather than staying silent through a whole session.
         if (_ambLearnPickPending.has(L)) _ambLearnPickPending.delete(L);
+        // SYSTEM VOICE: the built-in TTS terminally failed (mobile), so the lines
+        // are spoken by the OS instead. No buffers, no queue — the utterance starts
+        // when its slot comes due and the clock advances when it ENDS, because its
+        // duration is unknowable up front. "Both" still emits the note passage
+        // through Web Audio, which works everywhere.
+        if (_ambSysVoiceActive(L)) {
+          _ambWordEnsureLines(E, L, st);
+          _ambLearnSay(E, L, st, _ambLearnStatusText(L, st));
+          if (!st.sentences.length) { _ambPruneCap(E, key, now); return; }
+          if (!C[key] || C[key] < now) C[key] = _ambWordSnap(E, L, lead + _ambDriftOffset(E, key, L, cfg));
+          if (st._sysBusy) { _ambPruneCap(E, key, now); return; }
+          if (_ambCondFires(L.when, (E.iters[key] | 0), C[key])) {
+            if (C[key] - now > 0.3) return;              // its start is not due yet
+            const line = st.sentences[(st.si | 0) % st.sentences.length];
+            st.si = (st.si | 0) + 1;
+            let _wDur = 0;
+            if (_wOut === 'both') { try { _wDur = _ambEmitWordPassage(E, key, L, line, Math.max(now + 0.05, C[key])); } catch (e) {} }
+            st._sysBusy = true;
+            _ambSysSpeak(L, line, () => {
+              st._sysBusy = false;
+              const t = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : now;
+              C[key] = _ambWordSnap(E, L, t + Math.max(0, (L.intervalMs | 0)) / 1000);
+              E.iters[key] = (E.iters[key] | 0) + 1;
+            }, _wDur);
+          } else {
+            C[key] = _ambWordSnap(E, L, C[key] + Math.max(0.25, (L.intervalMs | 0) / 1000));
+            E.iters[key] = (E.iters[key] | 0) + 1;
+          }
+          _ambPruneCap(E, key, now);
+          return;
+        }
         // EVERY spoken layer plays from the cache now, fetched articles included.
         // The pump renders ahead in the background, so the tick never synthesises:
         // it takes what is ready, and simply waits when the next line is not — which
@@ -19208,6 +19431,12 @@
       // lead, so music starts essentially on the press instead of press +
       // build + 0.3 s. Steady-state ticks keep the protective 0.3 s lead.
       E._pressAt = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      // iOS licenses SpeechSynthesis only from a user gesture, and the play press is
+      // the one gesture we reliably get. Unlocking here (inaudible, once) is what
+      // lets the system-voice fallback speak lines scheduled seconds later.
+      try { const _xs = (cfg.extras || []);
+        if (_xs.some(x => x && (x.type === 'learn' || x.type === 'sireel') && _ambWordOut(x) !== 'play')) _ambSysVoiceUnlock();
+      } catch (e) {}
       E._firstTickLead = true;
       // COLD PRESS: first play of the page, or after a long idle. The voice pool
       // is empty and the paths are de-JITed, so every layer's first voices cost
@@ -19548,6 +19777,10 @@
       });
     }
     function _ambStopGenerator(E) {
+      // The OS voice is a GENERATOR outside the Web Audio graph — the master fade
+      // and the gates cannot touch it, so like the vinyl bed it must follow the
+      // transport explicitly or a line keeps talking over the silence after Stop.
+      try { if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {}
       _E = E;
       // Stopping while paused has to un-suspend the context on the way out —
       // otherwise the whole app's audio (Grid, previews, everything) stays frozen

@@ -860,7 +860,14 @@ whether it happens on the deployed build as well as locally.
 
 ### Sustain-family consolidation: Bed / Drone / Pedal → one type (raised 2026-07-27)
 
-**Status: TBD.** Analysis done, no decision, nothing scheduled.
+**Status: CLOSED 2026-07-30 — shipped.** The header below said "TBD, analysis done,
+nothing scheduled" long after the work landed, which is worse than no status at all;
+corrected 2026-08-01. All three types now emit through the single
+`_ambEmitSustain` (the emit descriptor routes `pedal`/`held` to it and `stepLayer`
+diverts `bed` to it), the Strike / Ring / Pitch-rule dials are in, and the four
+Add-layer presets shipped. The analysis below is kept because it explains WHY the
+axes are what they are — read it as the record of a decision taken, not a pending
+one.
 
 The three types are points on the same small parameter space. From their schemas, the
 only real divergences are:

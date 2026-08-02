@@ -26,8 +26,24 @@
 // And the consequence MMS was originally chosen to avoid: StyleTTS2 eats PHONEMES,
 // so a phonemizer is now a real dependency (`phonemizer`, espeak-ng compiled to
 // JS — one 1.3 MB self-contained module, no side files to fetch).
-import { StyleTextToSpeech2Model, AutoTokenizer, Tensor } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4';
-import { phonemize } from 'https://cdn.jsdelivr.net/npm/phonemizer@1';
+// PINNED, not floating. `@4` follows the latest 4.x, which hands a third party a
+// deploy button for this feature — a breaking minor release would take the voice
+// down with no change on our side. These two versions are the ones every
+// measurement in this file was made against.
+import { StyleTextToSpeech2Model, AutoTokenizer, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0';
+import { phonemize } from 'https://cdn.jsdelivr.net/npm/phonemizer@1.2.1';
+
+// PHONES GET 1 THREAD, DECIDED UP FRONT — this, not the ladder, is the real cure
+// for "no available backend found. ERR: [wasm] RangeError". Threaded WASM needs
+// SharedArrayBuffer, which this site never has (no cross-origin isolation), and on
+// iOS some ort-web builds THROW a RangeError while probing for it instead of
+// falling back. Worse, ort-web LATCHES its init promise: once it rejects, the
+// ladder's later rungs inherit the same rejection, so retrying inside the same
+// worker cannot fix what the first attempt broke. Deciding before the first
+// attempt is the documented fix; the ladder below stays as a backstop for other
+// failure shapes. On desktop this is a no-op — without SAB, ort runs
+// single-threaded anyway.
+try { if (typeof SharedArrayBuffer === 'undefined') env.backends.onnx.wasm.numThreads = 1; } catch (e) {}
 
 const MODEL = 'onnx-community/kitten-tts-nano-0.1-ONNX';
 // The repo ships expr-voice-{2,3,4,5}-{f,m}. Each is a bare 1 KB style vector
@@ -54,15 +70,61 @@ async function loadStyle(voice) {
   if (style.length !== STYLE_DIM) throw new Error('voice vector is ' + style.length + ' floats, expected ' + STYLE_DIM);
   return style;
 }
-async function build() {
-  const [model, tokenizer, style] = await Promise.all([
-    StyleTextToSpeech2Model.from_pretrained(MODEL, { dtype: 'q8' }),
-    AutoTokenizer.from_pretrained(MODEL),
+// BACKEND LADDER, for phones. onnxruntime-web reports an init failure as
+// "no available backend found. ERR: [wasm] RangeError…", which on iOS is the WASM
+// runtime failing to allocate its heap — not the model being too big to download,
+// but the runtime being too greedy to start. The knobs that matter are the thread
+// count (a threaded build needs SharedArrayBuffer, absent without cross-origin
+// isolation, and asking for it can fail outright) and SIMD. Try the plainest
+// configuration LAST rather than first, so a capable device still gets the fast
+// path and a constrained one still gets a voice at all.
+const _BACKENDS = [
+  { label: 'default', apply: () => {} },
+  { label: '1 thread', apply: () => { env.backends.onnx.wasm.numThreads = 1; } },
+  { label: '1 thread, no simd', apply: () => { env.backends.onnx.wasm.numThreads = 1; env.backends.onnx.wasm.simd = false; } },
+];
+async function buildKitten() {
+  // REPORT THE DOWNLOAD. ~24 MB over a phone connection is a long silence, and a
+  // silent wait is indistinguishable from a hang — which is exactly how it was
+  // reported. transformers.js calls this per file with loaded/total.
+  const seen = Object.create(null);
+  const progress_callback = (p) => {
+    try {
+      if (!p || !p.file || !(p.total > 0)) return;
+      seen[p.file] = { loaded: p.loaded || 0, total: p.total };
+      let l = 0, t = 0;
+      for (const k in seen) { l += seen[k].loaded; t += seen[k].total; }
+      if (t > 0) self.postMessage({ dl: Math.max(0, Math.min(100, Math.round((l / t) * 100))) });
+    } catch (e) {}
+  };
+  const [tokenizer, style] = await Promise.all([
+    AutoTokenizer.from_pretrained(MODEL, { progress_callback }),
     loadStyle(VOICE),
   ]);
-  self.postMessage({ backend: 'wasm/q8' });
+  let model = null, lastErr = null;
+  for (const b of _BACKENDS) {
+    try {
+      try { b.apply(); } catch (e) {}
+      model = await StyleTextToSpeech2Model.from_pretrained(MODEL, { dtype: 'q8', progress_callback });
+      self.postMessage({ backend: 'wasm/q8 · ' + b.label });
+      break;
+    } catch (e) {
+      lastErr = e;
+      // Say which rung failed and why, in full — the status line truncates, but the
+      // console is where a device-specific failure actually gets diagnosed.
+      try { self.postMessage({ note: 'backend "' + b.label + '" failed: ' + String((e && e.message) || e) }); } catch (e2) {}
+    }
+  }
+  if (!model) throw new Error(String((lastErr && lastErr.message) || lastErr || 'no backend'));
   return { model, tokenizer, styles: new Map([[VOICE, style]]) };
 }
+// An eSpeak (mespeak) fallback engine lived here briefly on 2026-08-01 — asm.js,
+// guaranteed to start anywhere, PCM through the same contract — and was REMOVED
+// the same day: the formant voice was judged unusable by ear. If a guaranteed
+// in-graph voice is ever wanted again, that build is the known-working shape;
+// meanwhile a device that cannot run THIS voice falls back to playing the text
+// as notes (see _ambWordOutEff in 17-ambient.js).
+const build = buildKitten;
 // Voices are fetched ON DEMAND and kept — 1 KB each, so all eight cost less than a
 // rounding error against the model, and a voice change never touches the session.
 async function styleFor(p, voice) {
@@ -112,13 +174,14 @@ self.onmessage = async (ev) => {
     const p = await getPipeline();
     const t0 = (self.performance && performance.now) ? performance.now() : 0;
     const audio = await synth(p, text, msg.voice);
+    const outSr = SAMPLE_RATE;
     const ms = t0 ? Math.round(performance.now() - t0) : 0;
     if (!audio || !audio.length) { self.postMessage({ id, error: 'no audio' }); return; }
     // TRANSFER the samples rather than copy them: a spoken sentence is hundreds of
     // KB, and a structured clone of that on every line is exactly the main-thread
     // cost this worker exists to avoid.
     const buf = (audio instanceof Float32Array) ? audio : new Float32Array(audio);
-    self.postMessage({ id, audio: buf, sampling_rate: SAMPLE_RATE, ms: ms }, [buf.buffer]);
+    self.postMessage({ id, audio: buf, sampling_rate: outSr, ms: ms }, [buf.buffer]);
   } catch (e) {
     self.postMessage({ id, error: String((e && e.message) || e) });
   }

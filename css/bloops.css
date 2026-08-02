@@ -4221,14 +4221,14 @@
    together. `margin-left: auto` makes it the start of the right-hand cluster,
    so ⋯ and ⌄ ride the right edge as a pair. */
 .ambient-layer-menu-btn {
-  margin-left: auto; flex: 0 0 auto; width: 26px; height: 26px;
+  margin-left: 6px; flex: 0 0 auto; width: 26px; height: 26px;
   border: 1px solid #2d2d3f; border-radius: 7px; background: transparent;
   color: #d6bcfa; cursor: pointer; line-height: 1; transition: all 0.15s ease;
   display: inline-flex; align-items: center; justify-content: center;
   font-family: 'Segoe UI', sans-serif; font-size: 0.9rem; font-weight: 700;
   position: relative;
 }
-/* The caret then sits snug against it rather than claiming its own auto margin. */
+/* Base scale only: inside .ambient-layer-head the unified block gives both 8px. */
 .ambient-layer-menu-btn + .ambient-collapse { margin-left: 6px; }
 .ambient-layer-menu-btn:hover { border-color: #d6bcfa; }
 /* STATES THAT MUST NEVER BE INVISIBLE now that their buttons are in a menu
@@ -4652,9 +4652,9 @@
       display: inline-flex; align-items: center; justify-content: center;
       font-size: 1.02rem; line-height: 1;
     }
-    /* ⋯ keeps the lone auto margin (the old Clone did, before the top-controls
-       row moved into this menu) so the right-hand cluster stays right-aligned. */
-    .ambient-layer-head .ambient-layer-menu-btn { margin-left: auto; }
+    /* The LEVEL DIAL carries the row's only auto margin (it starts the right-hand
+       cluster); ⋯ and ⌄ take the unified 8px so the gap either side of ⋯ is equal.
+       A second auto margin here split the slack and made dial→⋯ visibly wider. */
     /* Clone is the first of the right-hand cluster — it carries the lone auto
        margin so ⧉ S ❄ ✕ ⌄ group and right-align identically on every layer. */
     .ambient-layer-head .ambient-clone-btn { margin-left: auto; }

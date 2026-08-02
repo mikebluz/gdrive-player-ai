@@ -12088,6 +12088,13 @@
     // show it counting. On a phone the first line legitimately takes a long time —
     // the number climbing is the difference between "slow" and "stuck".
     let _ambLearnDlPct = -1, _ambSynthAt = 0, _ambWarmAt = 0;
+    // WebKit (every iOS browser, Chrome included) needs the voice rationed: see the
+    // render-ahead cap in the pump.
+    const _AMB_WK = (() => { try {
+      const ua = String((navigator && navigator.userAgent) || '');
+      return /iPhone|iPad|iPod|CriOS|FxiOS/.test(ua) || (/AppleWebKit/.test(ua) && !/Chrome\//.test(ua));
+    } catch (e) { return false; } })();
+    const _AMB_WK_AHEAD = 2;
     // ONE-CRASH LATCH. On-device evidence: the voice pipeline can kill an iOS tab
     // (input-length inference crash — mitigated by chunking, but the ceiling is
     // real and unmeasurable from here). The app must never crash-loop: an
@@ -12936,6 +12943,20 @@
             ent.lines = ent.lines.slice(0, Math.max(0, nextSeq)); ent.cache = ent.cache.slice(0, Math.max(0, nextSeq));
             st.sentences = ent.lines; st.prerendering = false; st._say = null; say();
             return;
+          }
+          // WEBKIT RENDERS JUST AHEAD OF THE READING, NOT THE WHOLE ARTICLE. The
+          // pump's eager mode renders every line it has — fine on desktop, and the
+          // reason a fetched article is instant there. On iOS a 10-line article is
+          // dozens of chunk inferences back to back, which is what kills the tab
+          // ("crashes while attempting to write 0/10 lines"). Here it renders a
+          // couple of lines past the play cursor and stops; the tick re-kicks the
+          // pump as the cursor advances, and words-as-notes covers anything not
+          // yet written. Blink is untouched.
+          if (_AMB_WK && ent.lines.length > _AMB_WK_AHEAD) {
+            const cur = ((st.ci | 0) % ent.lines.length + ent.lines.length) % ent.lines.length;
+            let ready = 0;
+            for (let k = 0; k < _AMB_WK_AHEAD; k++) if (ent.cache[(cur + k) % ent.lines.length]) ready++;
+            if (ready >= _AMB_WK_AHEAD) { st.prerendering = false; st._say = null; say(); return; }
           }
           st.prerendering = true; st.preDone = ent.cache.filter(Boolean).length; st._say = null; say();
           const line = ent.lines[next];

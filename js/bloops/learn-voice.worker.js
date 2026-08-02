@@ -196,7 +196,17 @@ const _WEBKIT = (() => { try {
   const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
   return /iPhone|iPad|iPod|CriOS|FxiOS/.test(ua) || (/AppleWebKit/.test(ua) && !/Chrome\//.test(ua));
 } catch (e) { return false; } })();
-const _CHUNK_WORDS = 4;
+// 3, not 4. On-device the safe/unsafe boundary sat between 3 words (survived,
+// repeatedly) and ~8 (killed the tab); 4 was a guess at the margin, and a Learn
+// article is far more work than the short lines that guess was tested on.
+const _CHUNK_WORDS = 3;
+// BREATHE BETWEEN INFERENCES. A Wikipedia article is ~10 lines and each line is
+// several chunks, so rendering one runs dozens of WASM inferences back to back —
+// sustained pressure with no idle moment for the runtime to release intermediate
+// buffers, which is a different (and worse) situation from the one-off synthesis
+// that was measured working. A short yield per chunk costs nothing perceptible
+// and gives the collector a window.
+const _breathe = () => new Promise((r) => setTimeout(r, 40));
 function _chunkText(text) {
   try {
     const parts = [];
@@ -212,7 +222,11 @@ async function synth(p, text, voice) {
   const parts = _chunkText(text);
   if (parts.length <= 1) return _synthOne(p, parts[0] || text, voice);
   const bufs = [];
-  for (const t of parts) { const b = await _synthOne(p, t, voice); if (b && b.length) bufs.push(b); }
+  for (const t of parts) {
+    const b = await _synthOne(p, t, voice);
+    if (b && b.length) bufs.push(b);
+    await _breathe();
+  }
   if (!bufs.length) return null;
   const out = new Float32Array(bufs.reduce((n, b) => n + b.length, 0));
   let off = 0;

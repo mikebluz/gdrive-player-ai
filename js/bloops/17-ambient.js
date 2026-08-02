@@ -12097,22 +12097,51 @@
     // words-as-notes with a status naming why. pagehide clears the marker so a
     // user closing the app mid-render does not false-trip it.
     const _AMB_VOICE_INFLIGHT = 'bloopsVoiceInflight', _AMB_VOICE_LATCH = 'bloopsVoiceCrashLatch';
-    let _ambLatchChecked = false, _ambLatched = false;
+    const _AMB_LATCH_AT = 2;    // strikes before the voice is set aside
+    let _ambLatchChecked = false, _ambLatched = false, _ambStrikes = 0;
+    // STRIKES, NOT A HAIR TRIGGER — and always recoverable. The first version of
+    // this latched permanently on ONE unclean shutdown, with no way back, and that
+    // was wrong twice over: iOS discards backgrounded tabs routinely for reasons
+    // that have nothing to do with the voice (so it false-trips), and a switch a
+    // user cannot flip is not a safety feature, it is a dead end — reported in the
+    // field as "TTS is effectively not working on mobile". Now an unclean shutdown
+    // during voice work is a STRIKE; the voice keeps trying until two, then steps
+    // aside with a "Try the voice again" action that clears the count.
     function _ambVoiceLatched() {
       if (!_ambLatchChecked) {
         _ambLatchChecked = true;
         try {
-          if (localStorage.getItem(_AMB_VOICE_LATCH) === '1') _ambLatched = true;
-          else if (localStorage.getItem(_AMB_VOICE_INFLIGHT)) {
-            localStorage.setItem(_AMB_VOICE_LATCH, '1'); _ambLatched = true;
-            console.warn('[bloom] The voice crashed this device once — retired here; layers play words as notes.');
+          const raw = localStorage.getItem(_AMB_VOICE_LATCH);
+          // '1' is the old permanent flag — treat it as ONE strike so devices
+          // stuck on the first version get their voice back on this update.
+          _ambStrikes = (raw === '1') ? 1 : Math.max(0, parseInt(raw || '0', 10) || 0);
+          if (localStorage.getItem(_AMB_VOICE_INFLIGHT)) {
+            _ambStrikes += 1;
+            localStorage.setItem(_AMB_VOICE_LATCH, String(_ambStrikes));
+            console.warn('[bloom] The voice did not shut down cleanly (strike ' + _ambStrikes + '/' + _AMB_LATCH_AT + ').');
+          } else if (raw === '1') {
+            localStorage.setItem(_AMB_VOICE_LATCH, '1');
           }
+          _ambLatched = _ambStrikes >= _AMB_LATCH_AT;
           localStorage.removeItem(_AMB_VOICE_INFLIGHT);
           if (typeof window !== 'undefined') window.addEventListener('pagehide', () => { try { localStorage.removeItem(_AMB_VOICE_INFLIGHT); } catch (e) {} });
         } catch (e) {}
       }
       return _ambLatched;
     }
+    // The way back. Exposed on window so the status line's button, the layer menu
+    // and the console can all reach the same one.
+    function _ambVoiceRetry() {
+      try { localStorage.removeItem(_AMB_VOICE_LATCH); localStorage.removeItem(_AMB_VOICE_INFLIGHT); } catch (e) {}
+      _ambStrikes = 0; _ambLatched = false; _ambLatchChecked = true;
+      _ambLearnWorkerErr = null; _ambLearnErrWhy = ''; _ambLearnWarm = false; _ambLearnWarming = false;
+      try { if (_ambLearnWorker) { _ambLearnWorker.terminate(); } } catch (e) {}
+      _ambLearnWorker = null;
+      try { if (typeof showToast === 'function') showToast('Trying the voice again…'); } catch (e) {}
+      try { _ambLearnWarmUp(_masterEng, null); } catch (e) {}
+      try { _ambRenderExtras(_masterEng); } catch (e) {}
+    }
+    try { if (typeof window !== 'undefined') window.bloopsVoiceRetry = _ambVoiceRetry; } catch (e) {}
     const _ambVoiceMark = (on) => { try { if (on) localStorage.setItem(_AMB_VOICE_INFLIGHT, String(Date.now())); else localStorage.removeItem(_AMB_VOICE_INFLIGHT); } catch (e) {} };
     try { _ambVoiceLatched(); } catch (e) {}   // promote a crash marker at BOOT, before any voice path can run
     // A hard slice(0,90) cut the one message that mattered mid-word ("ERR: [wasm]
@@ -12425,20 +12454,34 @@
         overlay.style.setProperty('display', 'flex', 'important');
         const msg = modal.querySelector('.amb-spoken-loading-msg');
         let done = false, failAt = 0;
-        const close = () => { if (done) return; done = true; try { clearInterval(iv); } catch (e) {} try { overlay.remove(); } catch (e) {} };
+        const close = () => { if (done === true) return; done = true; try { clearInterval(iv); } catch (e) {} try { overlay.remove(); } catch (e) {} };
         overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
         modal.querySelector('.amb-spoken-loading-close').addEventListener('click', close);
         const iv = setInterval(() => {
           try {
+            // The farewell message must OUTLIVE the tick that set it — this guard
+            // has to precede the status repaint below, or the next tick overwrites
+            // the reason with live progress and the close looks unexplained again.
+            if (done === 'closing') return;
             const cfg = E.getCfg && E.getCfg();
             if (cfg && !(cfg.extras || []).some(x => x === L)) { close(); return; }   // layer deleted while we waited
             const st = (E.seqState && E.seqState[_ambSpokenKey(L)]) || null;
             if (msg) msg.textContent = _ambLearnStatusText(L, st);
             const ent = _ambSeelEntry(E, L, false);
-            // READY = the first line is audio, or the layer plays notes rather than
-            // speech, in which case there was never anything to wait for.
-            if (_ambWordOutEff(L) === 'play' || (ent && ent.cache && ent.cache[0])) close();
-            if (_ambLearnWorkerErr && (_ambWordOutEff(L) === 'play' || (st && st.sentences && st.sentences.length))) close();
+            // SAY WHY IT CLOSED, AND CLOSE FOR ONE REASON AT A TIME. This popover
+            // used to vanish on any of three unannounced conditions, which reads as
+            // random — reported as "non-deterministic as to when or why it closes".
+            // Every exit now names itself and lingers ~1.4 s so the reason can be
+            // read, and the card's status line carries the same words afterwards.
+            const bye = (why) => { if (msg) msg.textContent = why; setTimeout(close, 1400); done = 'closing'; };
+            if (_ambWordOutEff(L) === 'play') {
+              bye(_ambVoiceLatched() ? 'The voice is set aside on this device — this layer will play its words as notes.'
+                : 'This layer plays its words as notes — nothing to wait for.');
+            } else if (ent && ent.cache && ent.cache[0]) {
+              bye('Ready — the first line is written. Press play.');
+            } else if (_ambLearnWorkerErr && st && st.sentences && st.sentences.length) {
+              bye('The voice is unavailable — the text is loaded and will play as notes.');
+            }
             // TERMINAL FAILURE: stop looking like progress. Hold the reason on screen
             // long enough to read, then get out of the way — the card's status line
             // keeps the same message, and the fix (📄 New article) is on the card.
@@ -12597,7 +12640,8 @@
         const fell = _ambWordOut(L) !== 'play';
         if (fell && _ambVoiceLatched()) {
           const n0 = (st && st.sentences) ? st.sentences.length : 0;
-          return 'The voice crashed this phone once, so it stays off here — playing the words as notes' + (n0 ? ' — ' + n0 + ' lines' : '') + '.';
+          return 'The voice stopped twice on this device, so it is set aside — playing the words as notes'
+            + (n0 ? ' — ' + n0 + ' lines' : '') + '. Tap ⟳ Try the voice again in the layer ⋯ menu.';
         }
         const n = (st && st.sentences) ? st.sentences.length : 0;
         if (st && st.phase === 'fetch') return 'Fetching text…';
@@ -32135,6 +32179,10 @@
             items.push({ label: (on && labelOn) ? labelOn : label, fn: () => setTimeout(() => { try { b.click(); } catch (err) {} }, 0) });
           };
           add('.ambient-solo-btn', 'S Solo', '✓ S Solo (on)', 'soloed');
+          // THE WAY BACK from a set-aside voice, offered on the layer it affects.
+          if (_ambVoiceLatched() && /^(learn|sireel):/.test(String(lm.dataset.menukey || ''))) {
+            items.push({ label: '⟳ Try the voice again', fn: () => setTimeout(() => { try { _ambVoiceRetry(); } catch (e) {} }, 0) });
+          }
           add('.ambient-piano-rec', '● Record a melody (play along)', '● Stop — keep the melody take', 'rec');
           add('.ambient-hum-rec', '🎤 Hum a melody', '🎤 Stop — keep the hum take', 'rec');
           items.push('hr');

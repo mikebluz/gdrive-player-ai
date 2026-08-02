@@ -138,7 +138,14 @@ async function buildKitten() {
   for (const b of _BACKENDS) {
     try {
       try { b.apply(); } catch (e) {}
-      model = await StyleTextToSpeech2Model.from_pretrained(MODEL, { dtype: 'q8', progress_callback });
+      // WebKit gets ort's memory arena and pattern planner turned OFF: both trade
+      // memory for speed by pre-reserving and reusing large blocks, and memory is
+      // exactly what iOS is short of — the tab dies where it would merely be slow.
+      // Left ON everywhere else, where they are free performance.
+      const _wk = (() => { try { const ua = String(navigator.userAgent || '');
+        return /iPhone|iPad|iPod|CriOS|FxiOS/.test(ua) || (/AppleWebKit/.test(ua) && !/Chrome\//.test(ua)); } catch (e) { return false; } })();
+      model = await StyleTextToSpeech2Model.from_pretrained(MODEL, Object.assign({ dtype: 'q8', progress_callback },
+        _wk ? { session_options: { enableCpuMemArena: false, enableMemPattern: false } } : null));
       self.postMessage({ backend: 'wasm/q8 · ' + b.label });
       break;
     } catch (e) {

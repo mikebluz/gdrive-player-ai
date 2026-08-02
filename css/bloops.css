@@ -3896,7 +3896,20 @@
       color: #9ae6b4; margin: 0 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.9; }
     .ambient-learn-artname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #9ae6b4; }
     /* The Learn "what shall I read?" chooser — same shell as the other modals. */
-    .amb-learn-pick { display: flex; flex-direction: column; gap: 10px; }
+    /* iOS ZOOMS THE WHOLE PAGE when a focused input's font-size is under 16px, and
+   it does NOT zoom back out when the field blurs — the viewport just stays in.
+   Reported from the article search box. 16px is the documented threshold, so
+   every field inside these dialogs is pinned to it (the visual size barely
+   changes; the zoom does not happen at all). */
+.amb-learn-pick input,
+.amb-learn-pick select,
+.amb-learn-pick textarea,
+.step-div-modal input,
+.step-div-modal select,
+.step-div-modal textarea,
+.ambient-seel-textrow textarea,
+.ambient-seel-textrow input { font-size: 16px; }
+.amb-learn-pick { display: flex; flex-direction: column; gap: 10px; }
     .amb-learn-pick .ambient-ctrl { grid-template-columns: 64px minmax(0, 1fr); align-items: center; }
     .amb-learn-pick-btns { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
     /* MODAL TEXT MUST WRAP. `.ambient-hint` is `white-space: nowrap` — correct in a

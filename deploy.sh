@@ -74,6 +74,10 @@ restore_dev_bypass() {
 }
 trap 'rm -rf "$STAGE_DIR"; restore_dev_bypass' EXIT
 
+# TIMING. "The deploy is slow" is unactionable without knowing WHICH phase — the
+# local copy, the remote diff, or the transfer. Each phase reports its seconds.
+_T0=$(date +%s)
+_phase() { local now=$(date +%s); echo "   ⏱  $1: $((now - _T0))s"; _T0=$now; }
 echo "📦 Staging files..."
 # img/ is REQUIRED by index.html — it holds the pixel-art wallpaper, the live
 # photo and the handwritten wordmark. Without it the desktop ships as a flat
@@ -115,23 +119,59 @@ if ! nc -zw5 "$FTP_HOST" 21 2>&1; then
 fi
 echo "✅ Port 21 reachable."
 
+_phase "staging + stamping"
+# DIAGNOSTIC: DEPLOY_DRYRUN=1 ./deploy.sh — ask the mirror what it WOULD transfer
+# and stop. Local staging is ~0.3s for the whole 18 MB, so a slow deploy is always
+# the FTP session, and the only question worth asking is whether it is re-sending
+# files that have not changed. This answers that in one run, uploading nothing.
+if [[ -n "$DEPLOY_DRYRUN" ]]; then
+  echo "🔍 Dry run — files the mirror would transfer (nothing is uploaded):"
+  lftp -u "$FTP_USER","$FTP_PASS" ftp://"$FTP_HOST" <<EOF
+set ftp:ssl-allow no
+set net:timeout 40
+mirror --reverse --verbose --ignore-time --dry-run "$STAGE_DIR/" "$REMOTE_DIR/"
+bye
+EOF
+  _phase "dry-run diff"
+  echo "(plus the 8 always-forced stamped files, ~0.22 MB)"
+  exit 0
+fi
+
 echo "⬆️  Uploading to $REMOTE_DIR..."
 
-lftp -d -u "$FTP_USER","$FTP_PASS" ftp://"$FTP_HOST" <<EOF
+# NO -d. That is lftp DEBUG mode — every protocol exchange echoed to the terminal,
+# a wall of output on a healthy deploy, and terminal I/O is not free. Set
+# DEPLOY_DEBUG=1 to put it back when a transfer is actually misbehaving.
+lftp ${DEPLOY_DEBUG:+-d} -u "$FTP_USER","$FTP_PASS" ftp://"$FTP_HOST" <<EOF
 set ftp:ssl-allow no
 # Robust transfer: retry stalled/failed transfers instead of giving up after
 # one attempt (a truncated big file — e.g. the ~1.3 MB js/bloops/17-ambient.js
 # — over a slow/flaky FTP link parse-errors and black-screens the app). Longer
 # timeout + reconnects + always-overwrite so a partial remote file is replaced.
+# THE SLEEPS COME FROM HERE. When the server refuses or drops a connection, lftp
+# does not fail — it WAITS `reconnect-interval-base` seconds and retries, growing
+# the wait by `reconnect-interval-multiplier` each time. At a 5 s base those pauses
+# dominate a deploy whose actual payload is a few hundred KB. Shared hosting refuses
+# connections routinely (per-user caps, throttling), so this path is HOT, not
+# exceptional. 2 s recovers just as reliably at a fraction of the wall clock, and
+# pinning the multiplier to 1 stops a couple of refusals compounding into 20 s waits.
 set net:max-retries 5
 set net:timeout 40
-set net:reconnect-interval-base 5
+set net:reconnect-interval-base 2
+set net:reconnect-interval-multiplier 1
 set net:persist-retries 5
 set xfer:clobber on
 # --ignore-time: compare by SIZE only (the staged copies all have mtime=now, so
 # a time compare would try to re-send everything; size compare re-sends exactly
 # the files whose bytes changed AND any remote file left truncated by a prior run).
-mirror --reverse --verbose --ignore-time "$STAGE_DIR/" "$REMOTE_DIR/"
+# PARALLEL IS OFF BY DEFAULT — I turned it on at 3 and that was the wrong call for
+# this host. FTP's cost really is per-file round trips, so concurrency looks like the
+# obvious win, but shared hosting caps concurrent connections per user: the extra
+# connections get REFUSED, and lftp's recovery for a refusal is the multi-second
+# sleep configured above. That trades a fast transfer for a guaranteed wait. Try
+# DEPLOY_PARALLEL=3 if you want to measure it; if the run shows reconnect delays,
+# the cap is real and 1 is correct.
+mirror --reverse --verbose --ignore-time --parallel=${DEPLOY_PARALLEL:-1} "$STAGE_DIR/" "$REMOTE_DIR/"
 # Force-upload the credentials file explicitly — guarantees js/config.js
 # lands even if the mirror diff ever decides to skip it. Without config.js
 # the deployed app can't sign in to Google Drive.
@@ -169,7 +209,9 @@ bye
 EOF
 
 echo ""
-echo "🎵 Deployment complete."
+_phase "upload"
+echo ""
+echo "🎵 Deployment complete in $((SECONDS / 60))m $((SECONDS % 60))s."
 echo "🔎 Verify the credentials reached the server:"
 echo "    open https://<your-domain>/js/config.js — it should show your real"
 echo "    clientId/apiKey, not a 404. Then hard-refresh the app (Cmd-Shift-R)."

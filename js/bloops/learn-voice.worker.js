@@ -176,10 +176,50 @@ function getPipeline() {
   return loading;
 }
 
+// WEBKIT SYNTHESIZES IN SMALL PIECES. Field-measured on an iPhone (Chrome = WebKit
+// under Apple's mandate): a 3-word line synthesizes fine, repeatedly, at ~2.2x
+// realtime — an ~8-word line KILLS THE TAB, reproducibly (three runs, telemetry).
+// The killer is inference memory scaling with input length under iOS's per-tab
+// ceiling. So on WebKit each inference is kept in the proven-safe range: the text
+// splits at clause punctuation, then every _CHUNK_WORDS words, each piece is
+// synthesized alone and the audio is concatenated with short edge fades. The
+// prosody gets choppier — each piece carries its own contour — which is the
+// accepted price of running at all; Blink keeps whole-line synthesis untouched.
+const _WEBKIT = (() => { try {
+  const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
+  return /iPhone|iPad|iPod|CriOS|FxiOS/.test(ua) || (/AppleWebKit/.test(ua) && !/Chrome\//.test(ua));
+} catch (e) { return false; } })();
+const _CHUNK_WORDS = 4;
+function _chunkText(text) {
+  try {
+    const parts = [];
+    for (const c of String(text).split(/(?<=[,;:])\s+/)) {
+      const ws = c.trim().split(/\s+/).filter(Boolean);
+      for (let i = 0; i < ws.length; i += _CHUNK_WORDS) parts.push(ws.slice(i, i + _CHUNK_WORDS).join(' '));
+    }
+    return parts.length ? parts : [String(text)];
+  } catch (e) { return [String(text)]; }
+}
+async function synth(p, text, voice) {
+  if (!_WEBKIT) return _synthOne(p, text, voice);
+  const parts = _chunkText(text);
+  if (parts.length <= 1) return _synthOne(p, parts[0] || text, voice);
+  const bufs = [];
+  for (const t of parts) { const b = await _synthOne(p, t, voice); if (b && b.length) bufs.push(b); }
+  if (!bufs.length) return null;
+  const out = new Float32Array(bufs.reduce((n, b) => n + b.length, 0));
+  let off = 0;
+  for (const b of bufs) {
+    const F = Math.min(96, b.length >> 2);          // ~4 ms edge fades kill seam clicks
+    for (let i = 0; i < F; i++) { b[i] *= i / F; b[b.length - 1 - i] *= i / F; }
+    out.set(b, off); off += b.length;
+  }
+  return out;
+}
 // text → Float32Array. The tokenizer's vocab is IPA (its post-processor wraps the
 // sequence in the `$` boundary token), so raw text tokenises to nothing usable —
 // everything must go through espeak first.
-async function synth(p, text, voice) {
+async function _synthOne(p, text, voice) {
   const ph = await phonemize(text);
   if (!ph) throw new Error('no phonemes');
   const style = await styleFor(p, voice);

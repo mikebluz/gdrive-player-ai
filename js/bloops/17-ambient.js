@@ -12111,7 +12111,8 @@
     // server reachable → the worker answers 'noserver' and the layer plays words
     // as notes, the same floor as ever.
     const _ambTtsUrl = () => {
-      try { const o = localStorage.getItem('bloopsTtsUrl'); if (o) return o; } catch (e) {}
+      try { const o = localStorage.getItem('bloopsTtsUrl'); if (o) return o; } catch (e) {}     // per-device override
+      try { if (window.BLOOPS_TTS_URL) return String(window.BLOOPS_TTS_URL); } catch (e) {}     // site-wide (bloops.html)
       try { return location.origin + '/tts'; } catch (e) { return '/tts'; }
     };
     // ONE-CRASH LATCH. On-device evidence: the voice pipeline can kill an iOS tab

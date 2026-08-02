@@ -1096,7 +1096,11 @@ try { if (/[?&]diag=0\b/.test(location.search)) localStorage.removeItem('sbDiag'
        voice Worker). Carrying the token INSIDE a 2.2 MB module meant deploy.sh had
        to rewrite and force-upload that module every single deploy — the stamp is a
        few bytes and belongs somewhere a few bytes big. -->
-  <script>window.__BLOOPS_ASSET_V = '?v=DEPLOYVER';</script>
+  <script>window.__BLOOPS_ASSET_V = '?v=DEPLOYVER';
+  // The Bloops voice server (tts-server repo). Phones fetch speech from here
+  // instead of running a model in the tab. Empty = same-origin /tts; set to the
+  // deployed GoDaddy Node app URL (e.g. 'https://….godaddysites.com/tts').
+  window.BLOOPS_TTS_URL = '';</script>
   <script src="js/bloops/01-core-state.js?v=DEPLOYVER"></script>
   <script src="js/bloops/02-wraps.js?v=DEPLOYVER"></script>
   <script src="js/bloops/03-audio-bus-fx.js?v=DEPLOYVER"></script>

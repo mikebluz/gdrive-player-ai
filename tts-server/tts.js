@@ -18,7 +18,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || '3199', 10);
 const CACHE = path.join(__dirname, 'cache');
-fs.mkdirSync(CACHE, { recursive: true });
+try { fs.mkdirSync(CACHE, { recursive: true }); } catch (e) {}
 
 const MODEL = 'onnx-community/kitten-tts-nano-0.1-ONNX';
 const VOICES = ['expr-voice-2-f', 'expr-voice-2-m', 'expr-voice-3-f', 'expr-voice-3-m',
@@ -120,13 +120,18 @@ http.createServer(async (req, res) => {
   const key = crypto.createHash('sha1').update(voice + '|' + text).digest('hex');
   const file = path.join(CACHE, key + '.wav');
   try {
-    if (!fs.existsSync(file)) {
+    // DISK IS BEST-EFFORT. Managed hosts can hand this process an ephemeral or
+    // read-only filesystem; a failed cache write must never fail the request —
+    // the freshly rendered buffer answers either way, disk just makes repeats free.
+    let body = null;
+    try { if (fs.existsSync(file)) body = fs.readFileSync(file); } catch (e) {}
+    if (!body) {
       const t0 = Date.now();
       const audio = await enqueue(() => synth(text, voice));
-      fs.writeFileSync(file, wav(audio));
+      body = wav(audio);
+      try { fs.writeFileSync(file, body); } catch (e) { console.error('[tts] cache write failed (serving from memory):', String(e.message).slice(0, 80)); }
       console.log('[tts] rendered ' + (audio.length / SR).toFixed(1) + 's in ' + (Date.now() - t0) + 'ms — ' + text.slice(0, 40));
     }
-    const body = fs.readFileSync(file);
     res.writeHead(200, { ...cors, 'content-type': 'audio/wav', 'content-length': body.length,
       'cache-control': 'public, max-age=31536000, immutable', 'etag': '"' + key + '"' });
     res.end(body);

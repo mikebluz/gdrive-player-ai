@@ -31,7 +31,39 @@
 // down with no change on our side. These two versions are the ones every
 // measurement in this file was made against.
 import { StyleTextToSpeech2Model, AutoTokenizer, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0';
-import { phonemize } from 'https://cdn.jsdelivr.net/npm/phonemizer@1.2.1';
+// THE PHONEMIZER IS THE ECHOGARDEN ESPEAK BUILD, NOT the `phonemizer` package.
+// The old package (espeak compiled to one giant JS function via wasm2js) HANGS in
+// WebKit — worker or main thread, alone on the page, never returns — and poisons
+// the process so ort dies beside it with JSC's opaque "Internal error". That was
+// the ENTIRE mobile failure: every iOS browser is WebKit under Apple's mandate,
+// Chrome included. This build is the same espeak-ng as real WASM, which WebKit
+// handles fine (measured: IPA in 1.1 s, model loads beside it, full synthesis
+// completes — the first WebKit synthesis of this whole effort). Output is
+// byte-identical to the old package after separator stripping (verified across
+// test sentences; one dictionary-version vowel nuance in number expansion).
+import * as _ESPEAK_NS from 'https://cdn.jsdelivr.net/npm/@echogarden/espeak-ng-emscripten@0.3.5/+esm';
+const _espFactory = _ESPEAK_NS.default || _ESPEAK_NS;
+let _espeak = null, _espeakLoading = null;
+function espeakGet() {
+  if (_espeak) return Promise.resolve(_espeak);
+  if (!_espeakLoading) {
+    _espeakLoading = (async () => {
+      const m = await _espFactory();
+      const w = new m.eSpeakNGWorker();
+      w.set_voice('en-us');
+      _espeak = w; _espeakLoading = null; return w;
+    })().catch((e) => { _espeakLoading = null; throw e; });
+  }
+  return _espeakLoading;
+}
+// Same duty as the old `phonemize(text, 'en-us')`: text → one IPA string. espeak
+// returns phonemes underscore-joined with clause newlines; strip to the exact
+// shape the Kitten tokenizer was fed all along.
+async function phonemize(text) {
+  const w = await espeakGet();
+  const r = w.synthesize_ipa(String(text));
+  return String((r && r.ipa) || '').replace(/_+/g, '').replace(/\s+/g, ' ').trim();
+}
 
 // PHONES GET 1 THREAD, DECIDED UP FRONT — this, not the ladder, is the real cure
 // for "no available backend found. ERR: [wasm] RangeError". Threaded WASM needs
@@ -100,6 +132,7 @@ async function buildKitten() {
   const [tokenizer, style] = await Promise.all([
     AutoTokenizer.from_pretrained(MODEL, { progress_callback }),
     loadStyle(VOICE),
+    espeakGet(),      // warm the phonemizer too — first line pays nothing extra
   ]);
   let model = null, lastErr = null;
   for (const b of _BACKENDS) {
@@ -147,7 +180,7 @@ function getPipeline() {
 // sequence in the `$` boundary token), so raw text tokenises to nothing usable —
 // everything must go through espeak first.
 async function synth(p, text, voice) {
-  const ph = (await phonemize(text, 'en-us')).join(' ').trim();
+  const ph = await phonemize(text);
   if (!ph) throw new Error('no phonemes');
   const style = await styleFor(p, voice);
   const { input_ids } = p.tokenizer(ph, { truncation: true });

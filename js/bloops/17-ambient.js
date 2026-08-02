@@ -12595,13 +12595,13 @@
       // layer looks like a busy one.
       if (st && (st.phase === 'nofetch' || st.phase === 'novoice')) { /* fall through to the phase text below */ }
       else if (!_ambLearnWarm && _ambLearnWarming) {
-        if (_ambLearnDlPct >= 0) return 'Downloading the voice, first use only… ' + _ambLearnDlPct + '%';
+        if (_ambLearnDlPct >= 0) return (st && st._notesWhile ? '♪ Words as notes meanwhile · downloading the voice… ' : 'Downloading the voice, first use only… ') + _ambLearnDlPct + '%';
         // NO PROGRESS AT ALL is the tell that the worker never got going — a healthy
         // download reports within a second or two, however slow the connection. The
         // warm deadline is minutes (a phone on a bad line is legitimately slow), so
         // say something useful long before it expires rather than sitting mute.
-        if (_ambWarmAt && Date.now() - _ambWarmAt > 25000) return 'Starting the voice… no response yet — reload the page if this persists.';
-        return 'Downloading the voice, first use only…';
+        if (_ambWarmAt && Date.now() - _ambWarmAt > 25000) return (st && st._notesWhile ? '♪ Words as notes meanwhile — ' : '') + 'the voice isn’t responding; reload the page if this persists.';
+        return (st && st._notesWhile ? '♪ Words as notes meanwhile · downloading the voice…' : 'Downloading the voice, first use only…');
       }
       if (!st) return _ambLearnWarm ? 'Voice ready — press play' : 'Idle — press play';
       const n = st.sentences ? st.sentences.length : 0;
@@ -12628,11 +12628,13 @@
       if (st.q && st.q.length) {
         const at = n ? (done <= 0 ? 1 : ((done - 1) % n) + 1) : done;
         const ahead = st.prerendering ? (' · writing ' + (st.preDone | 0) + '/' + n + _ambSynthElapsed()) : '';
+        if (st._notesWhile) return '♪ Playing the words as notes — the voice isn’t ready yet' + where + ahead;
         return 'Speaking ' + at + '/' + n + where + ahead;
       }
       // The elapsed seconds are the point: on a phone a line can take a long time,
       // and a number that climbs says "slow", where a frozen one says "stuck".
-      if (st.prerendering) return 'Writing ' + (st.preDone | 0) + '/' + n + ' lines…' + where + _ambSynthElapsed();
+      if (st.prerendering) return (st._notesWhile ? '♪ Words as notes while the voice gets ready · writing '
+        : 'Writing ') + (st.preDone | 0) + '/' + n + ' lines…' + where + _ambSynthElapsed();
       if (st.phase === 'render') return 'Writing line ' + Math.min(n, st.si | 0) + '/' + n + where;
       if (n) return 'Ready — ' + (st.title || 'text') + ', ' + n + ' lines. Press play.';
       return _ambLearnWarm ? 'Voice ready — press play' : 'Idle — press play';
@@ -12771,7 +12773,12 @@
       // Freshly added and still being asked what to read — do not fetch anything.
       if (_ambLearnPickPending.has(L)) return;
       const ent = _ambSeelEntry(E, L, true);
-      const st = _ambSeelState(E, L);
+      // `let`, and re-resolved EVERY loop pass: the pump outlives a play press, and
+      // `_ambResetClocks` replaces the seqState object on every press — a pump that
+      // captured `st` once keeps writing to the ORPHAN, so it can neither see the
+      // play cursor (the cursor-chasing render searched from a frozen ci of 0,
+      // trace-proven) nor report progress to the state the tick actually reads.
+      let st = _ambSeelState(E, L);
       const ck = _ambSpokenSrcKey(L);
       const local = _ambSpokenLocalText(L);
       const vk = _ambSpokenVoice(L) + '\u0000';
@@ -12787,6 +12794,7 @@
       const say = () => { try { _ambLearnSayEl(E, L, _ambLearnStatusText(L, st)); } catch (e) {} };
       try {
         for (let guard = 0; guard < 64; guard++) {
+          st = _ambSeelState(E, L);               // the press may have replaced it (see above)
           if (stale()) return;                    // settings / requested material moved under us
           // ---- LINES ----------------------------------------------------
           if (local !== null) {
@@ -12818,7 +12826,21 @@
           // is the state that reads as a permanent hang.
           if (st.phase === 'fetch' && ent.lines.length) st.phase = null;
           // ---- RENDER ----------------------------------------------------
-          const next = ent.cache.indexOf(null);
+          // RENDER AT THE PLAY CURSOR, not at the top. While the voice lags, the
+          // tick plays un-rendered lines as NOTES and the cursor moves on — so a
+          // pump that renders 0,1,2… is forever finishing lines the reading has
+          // already passed, and speech only takes over after a full wrap of the
+          // text (measured: never, inside a 26 s window). Starting the search at
+          // st.ci renders the line the reading needs NEXT; one landed line is the
+          // whole bootstrap, because while it plays the pump renders the following
+          // one. Stopped (ci 0) this is byte-identical to the old top-down order.
+          const nextSeq = ent.cache.indexOf(null);
+          let next = nextSeq;
+          if (nextSeq >= 0 && ent.cache.length) {
+            const n = ent.cache.length;
+            const start = (((st.ci | 0) % n) + n) % n;
+            for (let k = 0; k < n; k++) { const idx = (start + k) % n; if (ent.cache[idx] === null) { next = idx; break; } }
+          }
           if (next < 0) {
             // Everything in hand is audio. Fetch more only if the cursor is near the
             // end and there is room; otherwise this pump is done.
@@ -12829,7 +12851,9 @@
             // SPACE LIMIT. Keep what is rendered, stop taking on new articles, and
             // drop the un-rendered tail so the layer loops what it actually has.
             ent.full = true;
-            ent.lines = ent.lines.slice(0, next); ent.cache = ent.cache.slice(0, next);
+            // The cap keeps a PREFIX, so cut at the first sequential gap — `next`
+            // may point mid-list now that rendering follows the play cursor.
+            ent.lines = ent.lines.slice(0, Math.max(0, nextSeq)); ent.cache = ent.cache.slice(0, Math.max(0, nextSeq));
             st.sentences = ent.lines; st.prerendering = false; st._say = null; say();
             return;
           }
@@ -16911,8 +16935,23 @@
             // from the surviving entry rather than re-deriving it.
             if (!st.sentences.length) { st.sentences = ent.lines; st.title = (ent.titles && ent.titles.length) ? ent.titles[ent.titles.length - 1] : ''; }
             while (st.q.length < 2) {
-              const ci = (st.ci | 0) % cache.length;
-              const b = cache[ci];
+              let ci = (st.ci | 0) % cache.length;
+              let b = cache[ci];
+              if (!b && st._notesWhile) {
+                // BOOTSTRAP OUT OF NOTES MODE. While lines play as notes the cursor
+                // keeps moving, and on a device whose synthesis is slower than a
+                // passage the pump lands each render just AFTER the reading passed
+                // it — chasing forever (measured: no speech in 30 s with 2 lines
+                // rendered). So the hand-off is inverted: the moment ANY rendered
+                // line exists, the reading JUMPS to the nearest one ahead and goes
+                // on in order from there. The skipped lines were already heard as
+                // notes; speech engages within one passage of the first render, on
+                // any device, at any synthesis speed.
+                for (let k = 1; k < cache.length; k++) {
+                  const idx = (ci + k) % cache.length;
+                  if (cache[idx]) { st.ci = idx; ci = idx; b = cache[idx]; break; }
+                }
+              }
               if (!b) break;                        // still rendering this line — wait for it
               // The LINE rides along with its buffer: "Both" needs to know which text
               // the audio about to play corresponds to, and the queue is the only
@@ -16921,6 +16960,7 @@
               st.ci = (st.ci | 0) + 1; st.si = st.ci;
             }
           }
+          if (st.q.length) { st._dryAt = 0; st._notesWhile = false; }
         }
         // TELL THE USER WHAT IT IS DOING. The first line can be ~15 s away (voice
         // download) and there is otherwise no signal at all — silence that looks
@@ -16929,9 +16969,41 @@
         if (!C[key] || C[key] < now) C[key] = _ambWordSnap(E, L, lead + _ambDriftOffset(E, key, L, cfg));
         let g = 0;
         while (C[key] < HZ && g++ < 4) {
-          if (!st.q.length) break;   // nothing rendered yet — WAIT rather than advance the
-                                     // clock, or the layer would silently skip its turn and
-                                     // the first line would land arbitrarily late.
+          if (!st.q.length) {
+            // NOTES WHILE THE VOICE ISN'T READY — this replaces waiting in silence,
+            // which was the design flaw behind every "not working on mobile"
+            // report. The voice can be slow (a 24 MB download), dead (ort refusing
+            // to start), or failing in a way that never fires an error, and the
+            // notes fallback used to engage only on a TERMINAL error — a signal
+            // that can be minutes away or never arrive. But the layer has TEXT,
+            // and text can always be played: after a short grace (so a mid-article
+            // render hiccup on a healthy desktop stays a wait, not a ding), each
+            // line the voice hasn't delivered plays as NOTES through the alphabet
+            // translator and the reading moves on. Speech takes over PER LINE the
+            // moment real audio exists. Sound within seconds on any device, with
+            // no error signal required — the fallback can no longer be defeated by
+            // a failure mode nobody predicted.
+            const lines = (st.sentences && st.sentences.length) ? st.sentences : [];
+            if (!lines.length) break;               // nothing to say at all yet
+            if (!st._dryAt) { st._dryAt = now; break; }
+            if (now - st._dryAt < 2.5 && !_ambLearnWorkerErr) break;
+            if (_ambCondFires(L.when, (E.iters[key] | 0), C[key])) {
+              const nci = (st.ci | 0) % lines.length;
+              const nline = lines[nci];
+              st.ci = (st.ci | 0) + 1; st.si = st.ci;
+              st._notesWhile = true;
+              let _nDur = 0;
+              try {
+                window._ambCaptureSink = _ambCapSink(E, key);
+                _nDur = _ambEmitWordPassage(E, key, L, nline, C[key]) || 0;
+              } catch (e) {} finally { window._ambCaptureSink = null; }
+              C[key] = _ambWordSnap(E, L, C[key] + Math.max(0.5, _nDur) + Math.max(0, (L.intervalMs | 0)) / 1000);
+            } else {
+              C[key] = _ambWordSnap(E, L, C[key] + Math.max(0.25, (L.intervalMs | 0) / 1000));
+            }
+            E.iters[key] = (E.iters[key] | 0) + 1;
+            continue;
+          }
           if (_ambCondFires(L.when, (E.iters[key] | 0), C[key])) {
             const buf = st.q.shift();
             const line = (st.qL && st.qL.length) ? st.qL.shift() : '';

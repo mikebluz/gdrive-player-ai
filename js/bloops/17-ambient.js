@@ -12283,6 +12283,27 @@
       try { _ambRenderExtras(_masterEng); } catch (e) {}
     }
     try { if (typeof window !== 'undefined') window.bloopsVoiceRetry = _ambVoiceRetry; } catch (e) {}
+    // CRASH BREADCRUMBS. A tab that dies takes its console with it, so the only way
+    // to learn WHERE a phone died is to write the step down before taking it. Each
+    // stage of the spoken path stamps one short tag into localStorage; a boot that
+    // finds a stale tag reports it (console + the layer status) and clears it. The
+    // write is tiny and synchronous — cheaper than the work it labels.
+    const _AMB_CRUMB = 'bloopsLearnCrumb';
+    let _ambLastCrumb = null;
+    const _ambCrumb = (tag) => { try { localStorage.setItem(_AMB_CRUMB, tag + '@' + Date.now()); } catch (e) {} };
+    const _ambCrumbClear = () => { try { localStorage.removeItem(_AMB_CRUMB); } catch (e) {} };
+    try {
+      const raw = localStorage.getItem(_AMB_CRUMB);
+      if (raw) {
+        _ambLastCrumb = String(raw).split('@')[0];
+        console.warn('[bloom] Learn: the last session stopped during "' + _ambLastCrumb + '" — if the tab crashed, that is the step it died on.');
+        localStorage.removeItem(_AMB_CRUMB);
+      }
+      if (typeof window !== 'undefined') {
+        window.addEventListener('pagehide', _ambCrumbClear);
+        window.bloopsLearnCrumb = () => _ambLastCrumb;
+      }
+    } catch (e) {}
     const _ambVoiceMark = (on) => { try { if (on) localStorage.setItem(_AMB_VOICE_INFLIGHT, String(Date.now())); else localStorage.removeItem(_AMB_VOICE_INFLIGHT); } catch (e) {} };
     try { _ambVoiceLatched(); } catch (e) {}   // promote a crash marker at BOOT, before any voice path can run
     // A hard slice(0,90) cut the one message that mattered mid-word ("ERR: [wasm]
@@ -12390,10 +12411,13 @@
       if (!t) return null;
       if (_ambTtsJsonpMode) {
         // Server voice over the CORS-proof transport — no worker involved.
+        _ambCrumb('jsonp-fetch');
         const base = _ambTtsUrl();
         const d = await _ambTtsJsonp(base + (base.indexOf('?') >= 0 ? '&' : '?') + 'text=' + encodeURIComponent(t) + '&voice=' + encodeURIComponent(voice || ''), 120000);
         if (!d || !d.ok || !d.wav) return null;
+        _ambCrumb('jsonp-decode:' + String(d.wav.length));
         const r = await _ambWavB64ToF32(d.wav);
+        _ambCrumbClear();
         if (!r || !r.audio.length) return null;
         _ambLearnWarm = true;
         try {
@@ -12861,6 +12885,7 @@
         if (_ambWarmAt && Date.now() - _ambWarmAt > 25000) return (st && st._notesWhile ? '♪ Words as notes meanwhile — ' : '') + 'the voice isn’t responding; reload the page if this persists.';
         return (st && st._notesWhile ? '♪ Words as notes meanwhile · downloading the voice…' : 'Downloading the voice, first use only…');
       }
+      if (_ambLastCrumb) return 'Last session stopped during: ' + _ambLastCrumb + ' — tell Claude this line.';
       if (!st) return _ambLearnWarm ? 'Voice ready — press play' : 'Idle — press play';
       const n = st.sentences ? st.sentences.length : 0;
       const done = Math.max(0, (st.si | 0) - (st.q ? st.q.length : 0));
@@ -13063,7 +13088,9 @@
             ent.titles = [_ambIsSeel(L) ? 'Sir Eel' : 'Pasted text'];
           } else if (!ent.lines.length) {
             st.phase = 'fetch'; st._say = null; say();
+            _ambCrumb('article-fetch');
             const doc = await _ambLearnFetch(L.source || 'wiki-random', L.term || '', L.corpus);
+            _ambCrumbClear();
             if (stale()) return;
             if (!doc) { st.phase = 'nofetch'; st._say = null; say(); return; }
             const add = _ambSpokenLines(doc.text);
@@ -13134,7 +13161,9 @@
           // AWAIT each line: the worker is a FIFO, so one in flight at a time lets
           // another layer's line interleave instead of queueing behind a whole
           // article, and lets playback start the moment line 0 lands.
+          _ambCrumb('synth:' + String(line.length) + 'ch');
           const buf = await _ambLearnSynth(line, _ambSpokenVoice(L));
+          _ambCrumbClear();
           if (stale()) return;
           if (!buf) { st.phase = 'novoice'; st.prerendering = false; st._say = null; say(); return; }
           ent.cache[next] = buf; ent.buf.set(vk + line, buf);

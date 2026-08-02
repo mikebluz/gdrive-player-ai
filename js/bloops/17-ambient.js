@@ -2900,7 +2900,7 @@
         // Sir Eel: `text` is user prose (a string, and the only thing that is
         // actually spoken), `sentences` only sizes the NEXT generate. Coerced
         // rather than trusted because both survive a hand-edited save file.
-        if (x.type === 'sireel' || x.type === 'learn') { x.voice = _ambSpokenVoice(x); _ambNormalizeWord(x); _ambNormalizeSpeech(x); x.snapBars = _ambWordBars(x);
+        if (x.type === 'sireel' || x.type === 'learn') { x.voice = _ambSpokenVoice(x); _ambNormalizeWord(x); _ambNormalizeSpeech(x); _ambNormalizeSpeak(x); x.snapBars = _ambWordBars(x);
           if (x.type === 'learn' && typeof x.article !== 'string') x.article = ''; }
         if (x.type === 'sireel') {
           x.text = (typeof x.text === 'string') ? x.text : '';
@@ -11941,6 +11941,50 @@
     }
     // The first grid point at or after `t`. Used for the first onset AND for every
     // advance, so the two can never disagree about where a bar is.
+    // ---- WHEN A LINE SPEAKS -------------------------------------------------
+    // Until now a line simply followed the previous one (its own length + Gap),
+    // which gives a reading, not an arrangement — "lines shouldn't just start
+    // whenever they're loaded". Three modes, absent-by-default so every existing
+    // project keeps its exact behaviour:
+    //   flow  — as before: when the last line finishes, plus Gap.
+    //   every — a FIXED cadence: one line every N bars of the area grid, however
+    //           long the line is. Musical placement rather than a queue; a line
+    //           that overruns its slot simply takes the next one.
+    //   cue   — nothing speaks until asked. The card's ▶ Speak button (and
+    //           window.bloopsSpeakNext) arms exactly one line.
+    // `bars` is the cadence for 'every', in BARS, so it follows the tempo like
+    // every other timing control here.
+    const _AMB_SPEAK_MODES = ['flow', 'every', 'cue'];
+    function _ambSpeakCfg(L) {
+      const sp = (L && L.speak) || null;
+      const mode = (sp && _AMB_SPEAK_MODES.indexOf(sp.mode) >= 0) ? sp.mode : 'flow';
+      const bars = Math.max(1, Math.min(64, (sp && (sp.bars | 0)) || 4));
+      return { mode: mode, bars: bars };
+    }
+    function _ambNormalizeSpeak(L) {
+      if (!L || !L.speak) return;
+      const c = _ambSpeakCfg(L);
+      if (c.mode === 'flow') { delete L.speak; return; }   // default = absent
+      L.speak = { mode: c.mode, bars: c.bars };
+    }
+    // One line, on request. Cue mode reads and clears this.
+    function _ambSpeakNext(E, key) {
+      try {
+        const st = E && E.seqState && E.seqState[key];
+        if (!st) return false;
+        st.cue = (st.cue | 0) + 1;
+        return true;
+      } catch (e) { return false; }
+    }
+    try { if (typeof window !== 'undefined') window.bloopsSpeakNext = (k) => _ambSpeakNext(_masterEng, k); } catch (e) {}
+    // The next slot on an N-bar cadence at or after `t`.
+    function _ambSpeakSlot(E, L, t, bars) {
+      const unit = Math.max(1, bars | 0) * _ambWordGridSec(E);
+      if (!(unit > 0.05)) return t;
+      const A = _ambWordAnchor(E);
+      const k = Math.ceil((t - A) / unit - 1e-6);
+      return A + k * unit;
+    }
     function _ambWordSnap(E, L, t) {
       const bars = _ambWordBars(L);
       if (!bars) return t;
@@ -12012,6 +12056,9 @@
         noteMs: Math.max(40, Math.min(2000, Number.isFinite(w.noteMs) ? (w.noteMs | 0) : 220)),
       };
     }
+    // `speak` rides beside `word` on the same layers; coerced here so both
+    // spoken types get it from the one call site.
+
     // Play ONE line as notes, through the layer's own chain — so the passage gets the
     // layer's instrument, FX, level and Spatialize exactly as its spoken half does,
     // and lands in the capture like any other material. Returns how long it runs, so
@@ -17086,13 +17133,18 @@
           _ambLearnSay(E, L, st, _ambLearnStatusText(L, st));
           if (!C[key] || C[key] < now) C[key] = _ambWordSnap(E, L, lead + _ambDriftOffset(E, key, L, cfg));
           let gp = 0;
+          const _spP = _ambSpeakCfg(L);
           while (C[key] < HZ && gp++ < 4) {
             if (!st.sentences.length) break;
+            if (_spP.mode === 'cue' && !(st.cue | 0)) { C[key] = _ambWordSnap(E, L, Math.max(C[key], now + 0.05)); break; }
             if (_ambCondFires(L.when, (E.iters[key] | 0), C[key])) {
               const line = st.sentences[(st.si | 0) % st.sentences.length];
               st.si = (st.si | 0) + 1;
+              if (_spP.mode === 'cue') st.cue = Math.max(0, (st.cue | 0) - 1);
               const d = _ambEmitWordPassage(E, key, L, line, C[key]);
-              C[key] = _ambWordSnap(E, L, C[key] + Math.max(0.2, d) + Math.max(0, (L.intervalMs | 0)) / 1000);
+              C[key] = (_spP.mode === 'every')
+                ? _ambSpeakSlot(E, L, C[key] + 0.001, _spP.bars)
+                : _ambWordSnap(E, L, C[key] + Math.max(0.2, d) + Math.max(0, (L.intervalMs | 0)) / 1000);
             } else {
               C[key] = _ambWordSnap(E, L, C[key] + Math.max(0.25, (L.intervalMs | 0) / 1000));
             }
@@ -17230,9 +17282,17 @@
             E.iters[key] = (E.iters[key] | 0) + 1;
             continue;
           }
+          const _sp = _ambSpeakCfg(L);
+          if (_sp.mode === 'cue' && !(st.cue | 0)) {
+            // Waiting to be asked. Hold the clock just ahead of now so the moment a
+            // cue lands the line starts on the next grid point, not late.
+            C[key] = _ambWordSnap(E, L, Math.max(C[key], now + 0.05));
+            break;
+          }
           if (_ambCondFires(L.when, (E.iters[key] | 0), C[key])) {
             const buf = st.q.shift();
             const line = (st.qL && st.qL.length) ? st.qL.shift() : '';
+            if (_sp.mode === 'cue') st.cue = Math.max(0, (st.cue | 0) - 1);
             window._ambCaptureSink = _ambCapSink(E, key);
             const _played = _ambLearnPlay(E, key, L, buf, C[key]);
             window._ambCaptureSink = null;
@@ -17243,7 +17303,12 @@
             // Chop / rate / ping-pong change how long the line SOUNDS, so advance by
             // what was scheduled rather than by the raw buffer length.
             const _sDur = (_played && _played.dur > 0) ? _played.dur : buf.duration;
-            C[key] = _ambWordSnap(E, L, C[key] + Math.max(_sDur, _wDur) + Math.max(0, (L.intervalMs | 0)) / 1000);
+            // 'every' keeps a FIXED cadence — the next slot after this one, whatever
+            // the line's length; a line that overruns just loses the slot it covered.
+            // 'flow'/'cue' follow the line itself, plus Gap.
+            C[key] = (_sp.mode === 'every')
+              ? _ambSpeakSlot(E, L, C[key] + 0.001, _sp.bars)
+              : _ambWordSnap(E, L, C[key] + Math.max(_sDur, _wDur) + Math.max(0, (L.intervalMs | 0)) / 1000);
           } else {
             C[key] = _ambWordSnap(E, L, C[key] + Math.max(0.25, (L.intervalMs | 0) / 1000));
           }
@@ -27939,7 +28004,7 @@
         ['grp', 'Source'], ['learnsrc'], ['spokenvoice'], ['learnstatus'],
         ['grp', 'Notes'], ['tone'], ['wordmusic'],
         ['grp', 'Speech'], ['speechfx'],
-        ['grp', 'Timing'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
+        ['grp', 'Timing'], ['speakwhen'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
         ..._AMB_MIX,
       ] },
       // Sir Eel: the same spoken layer with a GENERATOR instead of a library —
@@ -27949,7 +28014,7 @@
         ['grp', 'Source'], ['sl', 'sentences', 'Length', 1, 24, 'sentences per text'], ['seeltext'], ['spokenvoice'], ['learnstatus'],
         ['grp', 'Notes'], ['tone'], ['wordmusic'],
         ['grp', 'Speech'], ['speechfx'],
-        ['grp', 'Timing'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
+        ['grp', 'Timing'], ['speakwhen'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
         ..._AMB_MIX,
       ] },
       beat: { label: 'Beat', ctrls: [
@@ -28557,6 +28622,18 @@
             '<select id="' + p + '-sprev" class="ambient-select"><option value="0"' + (sp.reverse ? '' : ' selected') + '>Off</option><option value="1"' + (sp.reverse ? ' selected' : '') + '>On</option></select>' +
             '<span class="ambient-hint">whole line backwards</span></div>';
       }
+      if (k === 'speakwhen') { const sp = _ambSpeakCfg(inst);
+        const opt = (v, t) => '<option value="' + v + '"' + (sp.mode === v ? ' selected' : '') + '>' + t + '</option>';
+        return '<div class="ambient-ctrl" title="Flow reads straight through: each line follows the last, plus the Gap. Every N bars gives the lines a fixed musical cadence whatever their length. Cue speaks nothing until you press ▶ — one line per press."><label for="' + p + '-speakwhen">Speak</label>' +
+          '<select id="' + p + '-speakwhen" class="ambient-select">' + opt('flow', 'Flow — one after another') + opt('every', 'Every N bars') + opt('cue', 'Only when cued') + '</select>' +
+          '<span class="ambient-hint">when each line starts</span></div>' +
+          (sp.mode === 'every' ? '<div class="ambient-ctrl"><label for="' + p + '-speakbars">Cadence</label>' +
+            '<input type="range" id="' + p + '-speakbars" class="ambient-range" min="1" max="32" step="1" value="' + sp.bars + '">' +
+            '<span class="ambient-hint"><span id="' + p + '-speakbars-v">' + sp.bars + '</span> bars between lines</span></div>' : '') +
+          (sp.mode === 'cue' ? '<div class="ambient-ctrl"><label>Cue</label>' +
+            '<button type="button" class="ambient-seg ambient-speak-cue" data-cuekey="' + _ambSpokenKey(inst) + '">▶ Speak next line</button>' +
+            '<span class="ambient-hint">one line per press</span></div>' : '');
+      }
       if (k === 'wordbars') return '<div class="ambient-ctrl" title="Free lets each line start as soon as the last one finishes plus the Gap. Locking starts every line on the bar grid — a short line waits for the next bar, a long one takes as many as it needs, and nothing is cut off."><label for="' + p + '-wordbars">Bar lock</label>' +
         '<select id="' + p + '-wordbars" class="ambient-select">' + _AMB_WORD_BARS.map(b => '<option value="' + b[0] + '"' + ((_ambWordBars(inst) === b[0]) ? ' selected' : '') + '>' + b[1] + '</option>').join('') + '</select>' +
         '<span class="ambient-hint">start each line on the grid</span></div>';
@@ -29038,6 +29115,22 @@
                 o[key] = asNum ? (parseInt(e2.value, 10) | 0) : e2.value; _ambNormalizeSpeech(get()); persist(); }); };
             num('spchop', 'chop'); num('spstart', 'start'); num('splen', 'len'); num('sprate', 'rate');
             pick('sporder', 'order', false); pick('sprev', 'reverse', true);
+          }
+          else if (k === 'speakwhen') {
+            const sel = el('speakwhen');
+            if (sel) sel.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
+              L.speak = { mode: sel.value, bars: _ambSpeakCfg(L).bars };
+              _ambNormalizeSpeak(L); persist();
+              // The mode changes which extra control shows (cadence / cue button).
+              try { _ambRenderExtras(E); } catch (x) {}
+              if (E.timer) { try { delete E.clocks[_ambSpokenKey(L)]; } catch (x) {} } });
+            const bar = el('speakbars'), barV = el('speakbars-v');
+            if (bar) bar.addEventListener('input', () => { const L = get(); if (!L) return; _E = E;
+              const n = Math.max(1, Math.min(32, parseInt(bar.value, 10) | 0));
+              L.speak = { mode: _ambSpeakCfg(L).mode, bars: n };
+              if (barV) barV.textContent = String(n);
+              persist();
+              if (E.timer) { try { delete E.clocks[_ambSpokenKey(L)]; } catch (x) {} } });
           }
           else if (k === 'wordbars') { const e2 = el('wordbars');
             if (e2) e2.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
@@ -32302,6 +32395,12 @@
         if (cb) { e.stopPropagation(); try { _ambCloneLayer(E, cb.dataset.ckey); } catch (err) { console.warn('Clone failed', err); } return; }
         const pb0 = e.target && e.target.closest && e.target.closest('.ambient-savepreset-btn');
         if (pb0) { e.stopPropagation(); try { _ambSaveLayerAsPreset(E, pb0.dataset.savekey); } catch (err) { console.warn('Save preset failed', err); } return; }
+        const cue = e.target && e.target.closest && e.target.closest('.ambient-speak-cue');
+        if (cue) { e.stopPropagation();
+          const k = cue.dataset.cuekey;
+          const ok = _ambSpeakNext(E, k);
+          try { if (typeof showToast === 'function') showToast(ok ? 'Next line cued.' : 'Press play first — the cue arms a line.'); } catch (x) {}
+          return; }
         const sb = e.target && e.target.closest && e.target.closest('.ambient-solo-btn');
         if (sb) { e.stopPropagation(); try { _ambToggleSolo(E, sb.dataset.skey); } catch (err) { console.warn('Solo failed', err); } return; }
         // Layer menu (the header ⋯): items proxy to the HIDDEN top-controls

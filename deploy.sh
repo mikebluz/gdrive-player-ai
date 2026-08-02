@@ -92,10 +92,14 @@ cp .htaccess "$STAGE_DIR/"
 # -----------------------------------------------
 DEPLOY_VER=$(date +%Y%m%d%H%M%S)
 echo "🏷️  Cache-busting asset URLs with v=$DEPLOY_VER"
-# JS files that fetch versioned assets themselves (worklet module + wasm URLs
-# in the core-voices bridge; the Learn voice Worker URL in 17-ambient.js) carry
-# the same ?v=DEPLOYVER token as the HTML.
-for f in index.html bloops.html player.html artwork.html game.html tracks.html js/bloops/03b-core-voices.js js/bloops/17-ambient.js; do
+# JS files that fetch versioned assets themselves (worklet module + wasm URLs in
+# the core-voices bridge) carry the same ?v=DEPLOYVER token as the HTML. KEEP THIS
+# LIST SMALL: every file on it is rewritten and then force-uploaded below, every
+# deploy, whether or not it changed. js/bloops/17-ambient.js was briefly on it for
+# ONE Worker URL and cost 2.2 MB of forced upload per deploy (~12x the rest of the
+# forced payload combined) — it now reads the stamp from `window.__BLOOPS_ASSET_V`,
+# published by bloops.html, which is 92 KB and already forced.
+for f in index.html bloops.html player.html artwork.html game.html tracks.html js/bloops/03b-core-voices.js; do
   if [[ -f "$STAGE_DIR/$f" ]]; then
     sed "s/?v=DEPLOYVER/?v=$DEPLOY_VER/g" "$STAGE_DIR/$f" > "$STAGE_DIR/$f.tmp" && mv "$STAGE_DIR/$f.tmp" "$STAGE_DIR/$f"
   fi
@@ -148,10 +152,6 @@ put -O "$REMOTE_DIR"           "$STAGE_DIR/artwork.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/game.html"
 put -O "$REMOTE_DIR"           "$STAGE_DIR/tracks.html"
 put -O "$REMOTE_DIR/js/bloops" "$STAGE_DIR/js/bloops/03b-core-voices.js"
-# 17-ambient.js is stamped too (the Learn voice Worker URL), so it needs the same
-# force-put: a stamp-only change is byte-identical in length and the size-only
-# mirror would skip it, leaving phones on a cached worker that loads the old model.
-put -O "$REMOTE_DIR/js/bloops" "$STAGE_DIR/js/bloops/17-ambient.js"
 # RETIRED PAGES. The mirror above is --reverse WITHOUT --delete, so deleting a
 # file from the repo never removes it from the server — it just stops being
 # updated and sits there serving its last version forever. These two were the

@@ -12142,13 +12142,18 @@
       }          // a failure is sticky: without this a
                                                     // dead CDN would respawn a worker per tick
       try {
-        // ?v=DEPLOYVER, stamped by deploy.sh exactly like the <script> tags. A
+        // The cache-bust comes from `window.__BLOOPS_ASSET_V` (set in bloops.html),
+        // NOT from a token in this file. A ?v= token here forced deploy.sh to sed
+        // and force-upload this 2.2 MB module on EVERY deploy — a stamp-only change
+        // is byte-identical in length, and the mirror compares by size, so it had to
+        // be pushed unconditionally. Reading the stamp instead puts this file back
+        // with the other 37 modules: uploaded when its bytes actually change. like the <script> tags. A
         // Worker URL is fetched and cached like any other asset, and this one is
         // NOT in the HTML, so without the token a phone would keep running the
         // cached worker after a deploy — which now means the OLD 60 MB model, the
         // one that crashes the tab. 17-ambient.js is in deploy.sh's stamp list for
         // this line alone; keep the two together.
-        const w = new Worker('js/bloops/learn-voice.worker.js?v=DEPLOYVER', { type: 'module' });
+        const w = new Worker('js/bloops/learn-voice.worker.js' + (self.__BLOOPS_ASSET_V || ''), { type: 'module' });
         w.onmessage = (ev) => {
           const d = ev.data || {};
           if (d.note) { try { console.warn('[bloom] Learn voice: ' + d.note); } catch (e) {} return; }

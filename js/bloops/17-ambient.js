@@ -25649,7 +25649,13 @@
       // double-tap resets. Value/rotation filled by _ambSyncLayerUnits + kept in
       // sync with the mixer fader and card Level slider by _ambSyncLevelUI.
       (freezeKey ? '<span class="ambient-level-dial" data-levelkey="' + freezeKey + '" role="slider" tabindex="0" aria-label="Layer level" aria-valuemin="0" aria-valuemax="100" title="Layer level — drag up/down (double-tap to reset)"><i class="ambient-level-dial-ind"></i></span>' : '') +
-      (freezeKey ? '<button type="button" class="ambient-solo-btn" data-skey="' + freezeKey + '" title="Solo — play only soloed layers">S</button>' : '') +
+      // Layer MENU — the old header Solo button's slot. Solo and the whole
+      // top-controls row live in this dropdown now; the buttons themselves stay in
+      // the DOM (hidden) so every delegated handler and state painter
+      // (_ambSoloSyncAll, _ambFreezeSyncAll) keeps working unchanged — the menu
+      // items just click them. The trigger wears the states that must never be
+      // invisible (an active Solo, an armed take) via :has() badges in CSS.
+      (freezeKey ? '<button type="button" class="ambient-layer-menu-btn" data-menukey="' + freezeKey + '" title="Layer menu — solo, rename, clone, record, design…" aria-label="Layer menu" aria-haspopup="menu">⋯</button>' : '') +
       // Freeze/Loop consolidated into the ONE per-layer "Loop" control (Timing
       // group: Off / Hold / Write). The old header ❄ Freeze + 🔒 Lock buttons
       // were a second surface for the same thing → removed.
@@ -25662,7 +25668,8 @@
       // Per-layer controls row — ABOVE the notes line / roll. Holds Rename, the
       // layer Delete, Clone, Save-preset, the piano toggle (every non-Beat
       // layer) and Dice.
-      (freezeKey ? '<div class="ambient-layer-topctrls"><button type="button" class="ambient-rename-btn" data-rkey="' + freezeKey + '" title="Rename this layer" aria-label="Rename this layer">✎</button>' +
+      (freezeKey ? '<div class="ambient-layer-topctrls"><button type="button" class="ambient-solo-btn" data-skey="' + freezeKey + '" title="Solo — play only soloed layers">S</button>' +
+        '<button type="button" class="ambient-rename-btn" data-rkey="' + freezeKey + '" title="Rename this layer" aria-label="Rename this layer">✎</button>' +
         (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
         '<button type="button" class="ambient-clone-btn" data-ckey="' + freezeKey + '" title="Clone — duplicate this layer" aria-label="Clone layer">⧉</button>' +
         '<button type="button" class="ambient-morph-btn" data-mkey="' + freezeKey + '" title="Re-realize as… — same instrument/key/mix, a different layer type (the material realized as a pad, arp, bassline…)" aria-label="Re-realize layer">⇄</button>' +
@@ -32054,7 +32061,12 @@
           e.stopPropagation();
           const key = mb.dataset.mkey, t0 = String(key).split(':')[0];
           const types = Object.keys(_AMB_LAYER_SCHEMA).filter(t => t !== t0);
-          const r2 = mb.getBoundingClientRect();
+          let r2 = mb.getBoundingClientRect();
+          // Hidden button (it lives in the collapsed top-controls row and is
+          // reached through the layer ⋯ menu) → rect is 0×0; use the anchor the
+          // menu stashed, if it is fresh.
+          const anc = window.__ambMenuAnchor;
+          if (!r2.width && !r2.height && anc && Date.now() - (anc.at || 0) < 5000) r2 = { left: anc.x, bottom: anc.y - 4 };
           if (typeof showCtxMenu === 'function') showCtxMenu(r2.left, r2.bottom + 4,
             [{ label: 'Re-realize as…', disabled: true }].concat(types.map(t => ({ label: _AMB_LAYER_SCHEMA[t].label || t, fn: () => { try { _ambMorphLayer(E, key, t); } catch (err) { console.warn('Morph failed', err); } } }))));
           return;
@@ -32065,6 +32077,42 @@
         if (pb0) { e.stopPropagation(); try { _ambSaveLayerAsPreset(E, pb0.dataset.savekey); } catch (err) { console.warn('Save preset failed', err); } return; }
         const sb = e.target && e.target.closest && e.target.closest('.ambient-solo-btn');
         if (sb) { e.stopPropagation(); try { _ambToggleSolo(E, sb.dataset.skey); } catch (err) { console.warn('Solo failed', err); } return; }
+        // Layer menu (the header ⋯): items proxy to the HIDDEN top-controls
+        // buttons, so all wiring/state stays where it always was. Labels are
+        // state-aware where the button has state (Solo on, a take armed). Every
+        // fn is deferred one tick: showCtxMenu runs fn then dismisses itself, and
+        // several targets open their own menu/modal which must not share a frame
+        // with that teardown (the Add-area menu's idiom).
+        const lm = e.target && e.target.closest && e.target.closest('.ambient-layer-menu-btn');
+        if (lm) {
+          e.stopPropagation();
+          const card = lm.closest('.ambient-layer'); if (!card) return;
+          const rT = lm.getBoundingClientRect();
+          // The ⇄ submenu positions from its button's rect, which is 0×0 now that
+          // the button is hidden — hand it the trigger's rect instead.
+          try { window.__ambMenuAnchor = { x: rT.left, y: rT.bottom + 4, at: Date.now() }; } catch (err) {}
+          const pick = (sel) => card.querySelector('.ambient-layer-topctrls ' + sel);
+          const items = [];
+          const add = (sel, label, labelOn, onClass) => {
+            const b = pick(sel); if (!b) return;
+            const on = !!(onClass && b.classList.contains(onClass));
+            items.push({ label: (on && labelOn) ? labelOn : label, fn: () => setTimeout(() => { try { b.click(); } catch (err) {} }, 0) });
+          };
+          add('.ambient-solo-btn', 'S Solo', '✓ S Solo (on)', 'soloed');
+          add('.ambient-piano-rec', '● Record a melody (play along)', '● Stop — keep the melody take', 'rec');
+          add('.ambient-hum-rec', '🎤 Hum a melody', '🎤 Stop — keep the hum take', 'rec');
+          items.push('hr');
+          add('.ambient-rename-btn', '✎ Rename');
+          add('.ambient-clone-btn', '⧉ Clone');
+          add('.ambient-morph-btn', '⇄ Re-realize as…');
+          add('.ambient-dice-btn', '🎲 Randomize parameters');
+          add('.ambient-design-btn', '✦ Design the sound');
+          add('.ambient-savepreset-btn', '★ Save as preset');
+          items.push('hr');
+          add('.ambient-seq-del', '✕ Delete layer…');
+          if (typeof showCtxMenu === 'function') showCtxMenu(rT.left, rT.bottom + 4, items);
+          return;
+        }
         // (note-edit chips are handled on pointerdown — see below)
         // Task 4: Seed mode toggle (Generate / Author) — one delegated handler for
         // primary + extras cards (key from data-seedkey).

@@ -4197,7 +4197,38 @@
     }
     /* Per-layer top-controls row (above Voice) — holds Rename, hidden when the
        layer is collapsed (covered by .ambient-layer.collapsed > *:not(head)). */
-    .ambient-layer-topctrls { display: flex; align-items: center; gap: 8px; padding: 5px 0 3px; flex-wrap: wrap; }
+    /* The top-controls row lives in the layer ⋯ MENU now — the buttons stay in the
+   DOM (all delegated wiring and state painters key on them) but never render.
+   display:none also removes the row from the card's flow, so cards got a little
+   shorter rather than leaving an empty band. */
+.ambient-layer-topctrls { display: none; }
+/* The layer ⋯ menu trigger — sits in the old Solo slot, dressed like it. */
+.ambient-layer-menu-btn {
+  margin-left: 6px; flex: 0 0 auto;
+  padding: 2px 9px; border: 1px solid #2d2d3f; border-radius: 12px;
+  background: transparent; color: #d6bcfa; font-family: 'Segoe UI', sans-serif;
+  font-size: 0.72rem; font-weight: 700; cursor: pointer; transition: all 0.15s ease;
+  position: relative; line-height: 1.2;
+}
+.ambient-layer-menu-btn:hover { border-color: #d6bcfa; }
+/* STATES THAT MUST NEVER BE INVISIBLE now that their buttons are in a menu
+   (the drum-solo lesson: hidden state + a stateful widget = a bug report).
+   An active Solo turns the trigger solo-yellow with an S badge; an armed
+   take (● or 🎤) pulses it red. :has() reads the hidden buttons' classes, so
+   the badges can never drift from the real state. */
+.ambient-layer:has(.ambient-layer-topctrls .ambient-solo-btn.soloed) .ambient-layer-menu-btn {
+  color: #1a202c; background: #f6e05e; border-color: #f6e05e;
+}
+.ambient-layer:has(.ambient-layer-topctrls .ambient-solo-btn.soloed) .ambient-layer-menu-btn::after {
+  content: 'S'; position: absolute; top: -6px; right: -4px;
+  font-size: 0.58rem; color: #f6e05e; background: #1a202c;
+  border: 1px solid #f6e05e; border-radius: 8px; padding: 0 3px; line-height: 1.2;
+}
+.ambient-layer:has(.ambient-layer-topctrls .ambient-piano-rec.rec) .ambient-layer-menu-btn,
+.ambient-layer:has(.ambient-layer-topctrls .ambient-hum-rec.rec) .ambient-layer-menu-btn {
+  color: #fff; background: #e53e3e; border-color: #e53e3e; animation: ambMenuRec 1.1s ease-in-out infinite;
+}
+@keyframes ambMenuRec { 50% { box-shadow: 0 0 0 4px rgba(229, 62, 62, 0.25); } }
     /* ONE pill spec for EVERY button in this row — identical shape, size,
        border, and font; the FUNCTION is indicated by the glyph's accent color
        (rename purple, clone blue, morph green, save gold, delete rose, rec

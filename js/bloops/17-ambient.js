@@ -12099,6 +12099,9 @@
     // is measurably behind — rendering ahead is never worth glitching what is
     // already sounding, and words-as-notes covers any line not ready in time.
     let _ambCtRate = 1;
+    // Is anything actually PLAYING? (_ambLearnSynth has no engine argument, and
+    // the answer is global anyway — audio in progress anywhere outranks rendering.)
+    const _ambTransportBusy = () => { try { return !!(_masterEng && _masterEng.timer); } catch (e) { return false; } };
     const _AMB_PACE_MS = 260, _AMB_PACE_SLOW_MS = 1400;
     async function _ambPaceSynth(E) {
       try {
@@ -12367,7 +12370,7 @@
         const p = _ambLearnAwait(id, _ambLearnWarm ? _AMB_SYNTH_TIMEOUT_MS : _AMB_WARM_TIMEOUT_MS);
         // The voice is a per-REQUEST style vector against one shared model, so a
         // layer can pick its own without reloading anything.
-        try { w.postMessage({ id: id, text: t, voice: voice || '', tts: _ambTtsUrl() }); } catch (e) { _ambLearnPending.delete(id); return null; }
+        try { w.postMessage({ id: id, text: t, voice: voice || '', tts: _ambTtsUrl(), busy: _ambTransportBusy() }); } catch (e) { _ambLearnPending.delete(id); return null; }
         res = await p;
       } catch (e) { return null; } finally { _ambSynthAt = 0; _ambVoiceMark(false); }
       if (!res || !res.audio || !res.audio.length) return null;

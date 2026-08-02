@@ -219,19 +219,30 @@ const _CHUNK_WORDS = 3;
 // that was measured working. A short yield per chunk costs nothing perceptible
 // and gives the collector a window.
 const _breathe = () => new Promise((r) => setTimeout(r, 40));
-function _chunkText(text) {
+function _chunkText(text, nWords) {
+  const N = nWords || _CHUNK_WORDS;
   try {
     const parts = [];
     for (const c of String(text).split(/(?<=[,;:])\s+/)) {
       const ws = c.trim().split(/\s+/).filter(Boolean);
-      for (let i = 0; i < ws.length; i += _CHUNK_WORDS) parts.push(ws.slice(i, i + _CHUNK_WORDS).join(' '));
+      for (let i = 0; i < ws.length; i += N) parts.push(ws.slice(i, i + N).join(' '));
     }
     return parts.length ? parts : [String(text)];
   } catch (e) { return [String(text)]; }
 }
-async function synth(p, text, voice) {
-  if (!_WEBKIT) return _synthOne(p, text, voice);
-  const parts = _chunkText(text);
+// `busy` = the transport is PLAYING (the main thread tells us). Then EVERY engine
+// chunks, not just WebKit's: a single line is seconds of uninterrupted inference
+// that pegs a core, and the field log showed exactly what that does to a machine
+// under load — the audio clock falling to 0.75x and then overshooting to 1.49x as
+// it caught up, with the voice budget untouched (cost 1-2) and output still
+// flowing. Not a voice-count problem: raw CPU starvation of the render thread.
+// Chunking converts one long burst into short ones with yields between, so the
+// audio thread always gets a window. Bigger chunks than WebKit's 3 (which exists
+// for a memory ceiling, not for CPU) — prosody stays close to whole-line.
+const _BUSY_CHUNK_WORDS = 9;
+async function synth(p, text, voice, busy) {
+  if (!_WEBKIT && !busy) return _synthOne(p, text, voice);
+  const parts = _WEBKIT ? _chunkText(text) : _chunkText(text, _BUSY_CHUNK_WORDS);
   if (parts.length <= 1) return _synthOne(p, parts[0] || text, voice);
   const bufs = [];
   for (const t of parts) {
@@ -331,7 +342,7 @@ self.onmessage = async (ev) => {
     if (!text) { self.postMessage({ id, error: 'empty text' }); return; }
     const p = await getPipeline();
     const t0 = (self.performance && performance.now) ? performance.now() : 0;
-    const audio = await synth(p, text, msg.voice);
+    const audio = await synth(p, text, msg.voice, !!msg.busy);
     const outSr = SAMPLE_RATE;
     const ms = t0 ? Math.round(performance.now() - t0) : 0;
     if (!audio || !audio.length) { self.postMessage({ id, error: 'no audio' }); return; }

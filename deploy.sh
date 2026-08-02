@@ -142,6 +142,11 @@ echo "⬆️  Uploading to $REMOTE_DIR..."
 # NO -d. That is lftp DEBUG mode — every protocol exchange echoed to the terminal,
 # a wall of output on a healthy deploy, and terminal I/O is not free. Set
 # DEPLOY_DEBUG=1 to put it back when a transfer is actually misbehaving.
+# NO BACKTICKS OR $( ) BELOW THIS LINE, INCLUDING IN COMMENTS. The heredoc is
+# UNQUOTED (it must be — $STAGE_DIR/$REMOTE_DIR have to expand), so the shell runs
+# command substitution over the WHOLE body before lftp sees it; `foo` in a comment
+# is executed by the shell. That shipped once: "reconnect-interval-base: command
+# not found" ×2 and a swallowed mirror line, mid-deploy.
 lftp ${DEPLOY_DEBUG:+-d} -u "$FTP_USER","$FTP_PASS" ftp://"$FTP_HOST" <<EOF
 set ftp:ssl-allow no
 # Robust transfer: retry stalled/failed transfers instead of giving up after
@@ -149,8 +154,8 @@ set ftp:ssl-allow no
 # — over a slow/flaky FTP link parse-errors and black-screens the app). Longer
 # timeout + reconnects + always-overwrite so a partial remote file is replaced.
 # THE SLEEPS COME FROM HERE. When the server refuses or drops a connection, lftp
-# does not fail — it WAITS `reconnect-interval-base` seconds and retries, growing
-# the wait by `reconnect-interval-multiplier` each time. At a 5 s base those pauses
+# does not fail — it WAITS net:reconnect-interval-base seconds and retries, growing
+# the wait by net:reconnect-interval-multiplier each time. At a 5 s base those pauses
 # dominate a deploy whose actual payload is a few hundred KB. Shared hosting refuses
 # connections routinely (per-user caps, throttling), so this path is HOT, not
 # exceptional. 2 s recovers just as reliably at a fraction of the wall clock, and
@@ -179,7 +184,7 @@ mkdir -p "$REMOTE_DIR/js"
 put -O "$REMOTE_DIR/js" "$STAGE_DIR/js/config.js"
 # Force-upload the ?v=DEPLOYVER–stamped files. The stamp is always a 14-digit
 # timestamp, so a stamp-only change keeps the file the EXACT SAME SIZE — and the
-# `mirror --ignore-time` above compares by SIZE ONLY, so it SKIPS them, freezing
+# the mirror --ignore-time above compares by SIZE ONLY, so it SKIPS them, freezing
 # the cache-bust stamp and serving stale JS/CSS to returning (mobile) browsers
 # forever. Put them explicitly every deploy so the fresh stamp always lands.
 mkdir -p "$REMOTE_DIR/js/bloops"

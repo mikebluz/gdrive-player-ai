@@ -1,2 +1,0 @@
-{ "name": "sharp", "version": "0.0.0-stub", "main": "index.cjs",
-  "description": "Stub — sharp is transformers.js's IMAGE library (native, Node-version-picky) and a TTS server never touches images. Throws only if something actually calls it." }

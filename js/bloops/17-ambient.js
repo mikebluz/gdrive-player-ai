@@ -12653,6 +12653,27 @@
       st.sentences = []; st.si = 0; st.q = []; st.title = '';
       st.srcKey = _ambSpokenSrcKey(L);
       st.phase = 'fetch'; st._say = null;
+      // THROW AWAY THE ARTICLE IN HAND. The pump only fetches when it has nothing
+      // to say, and it decides that from the ENTRY, not from `st` — so resetting
+      // `st` alone left the old article sitting in `ent.lines`, the pump skipped
+      // fetching, and this 'fetch' phase was never cleared by anyone: the layer
+      // read "Fetching an article…" forever and no request was ever made. An
+      // explicit Load / Random / New article IS the request for a different one.
+      // `ent.gen` makes a pump already in flight bail (it re-kicks in its finally),
+      // and `ent.buf` is deliberately kept — it is audio keyed by voice+line, so
+      // coming back to an article costs nothing.
+      // ONLY when the layer is actually HOLDING an article. With nothing in hand a
+      // fetch is already in flight or about to be (the chooser re-renders the card
+      // first, and the card's hook starts the pump), so invalidating here would
+      // throw away a perfectly good article and fetch a second one — measured, it
+      // doubled the requests for a single press.
+      try {
+        const ent0 = _ambSeelEntry(E, L, true);
+        if ((ent0.lines || []).length) {
+          ent0.gen = (ent0.gen | 0) + 1;
+          ent0.lines = []; ent0.cache = []; ent0.titles = []; ent0.full = false;
+        }
+      } catch (e) {}
       _ambLearnSayEl(E, L, _ambLearnStatusText(L, st));
       st.pending = true;
       const ep = st.epoch | 0;
@@ -12754,10 +12775,14 @@
       if (ent.key !== ck) { ent.key = ck; ent.lines = []; ent.cache = []; ent.full = false; ent.titles = []; st.ci = 0; }
       if (ent.running) return;                    // one pump per layer
       ent.running = true;
+      // Two ways this pump can be made obsolete mid-flight: the SETTINGS changed
+      // (source key) or an explicit load asked for different material (gen).
+      const gen0 = ent.gen | 0;
+      const stale = () => ent.key !== ck || (ent.gen | 0) !== gen0;
       const say = () => { try { _ambLearnSayEl(E, L, _ambLearnStatusText(L, st)); } catch (e) {} };
       try {
         for (let guard = 0; guard < 64; guard++) {
-          if (ent.key !== ck) return;             // settings moved under us
+          if (stale()) return;                    // settings / requested material moved under us
           // ---- LINES ----------------------------------------------------
           if (local !== null) {
             const lines = _ambSpokenLines(local);
@@ -12768,7 +12793,7 @@
           } else if (!ent.lines.length) {
             st.phase = 'fetch'; st._say = null; say();
             const doc = await _ambLearnFetch(L.source || 'wiki-random', L.term || '', L.corpus);
-            if (ent.key !== ck) return;
+            if (stale()) return;
             if (!doc) { st.phase = 'nofetch'; st._say = null; say(); return; }
             const add = _ambSpokenLines(doc.text);
             ent.titles = [doc.title];
@@ -12784,6 +12809,9 @@
             try { _ambLearnHeadSync(E, L); } catch (e) {}
           }
           st.sentences = ent.lines; st.title = (ent.titles && ent.titles.length) ? ent.titles[ent.titles.length - 1] : '';
+          // A 'fetch' phase set by someone else must not survive having text — that
+          // is the state that reads as a permanent hang.
+          if (st.phase === 'fetch' && ent.lines.length) st.phase = null;
           // ---- RENDER ----------------------------------------------------
           const next = ent.cache.indexOf(null);
           if (next < 0) {
@@ -12806,14 +12834,14 @@
           // another layer's line interleave instead of queueing behind a whole
           // article, and lets playback start the moment line 0 lands.
           const buf = await _ambLearnSynth(line, _ambSpokenVoice(L));
-          if (ent.key !== ck) return;
+          if (stale()) return;
           if (!buf) { st.phase = 'novoice'; st.prerendering = false; st._say = null; say(); return; }
           ent.cache[next] = buf; ent.buf.set(vk + line, buf);
           st.preDone = ent.cache.filter(Boolean).length; st._say = null; say();
         }
       } finally {
         ent.running = false;
-        if (ent.key === ck) { st.prerendering = false; st._say = null; try { _ambLearnSayEl(E, L, _ambLearnStatusText(L, st)); } catch (e) {} }
+        if (!stale()) { st.prerendering = false; st._say = null; try { _ambLearnSayEl(E, L, _ambLearnStatusText(L, st)); } catch (e) {} }
         else {
           // We bailed because the article / voice / text changed under us — which
           // means there IS new work and nobody else is going to start it. Without

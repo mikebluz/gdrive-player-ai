@@ -11964,6 +11964,7 @@
     const _ambWordOutEff = (L) => {
       const out = _ambWordOut(L);
       if (out === 'play') return 'play';
+      if (_ambTtsJsonpMode) return out;   // server voice via script transport — worker state is irrelevant
       if ((_ambLearnWorkerErr || _ambVoiceLatched()) && !_ambSysVoiceOK()) return 'play';
       return out;
     };
@@ -12110,6 +12111,45 @@
     // TTS service (tts-server/). The main thread only supplies the endpoint; no
     // server reachable → the worker answers 'noserver' and the layer plays words
     // as notes, the same floor as ever.
+    // JSONP TRANSPORT. GoDaddy's front proxy strips access-control-allow-origin
+    // from every response (the app's other headers flow through — observed), so a
+    // browser can never READ this API by fetch. Script execution is CORS-exempt by
+    // design: the server wraps the same data (audio as base64) in a callback and
+    // it arrives as an ordinary <script>. Engaged only after a direct fetch has
+    // failed — hosts with working CORS never pay the ~33% base64 tax.
+    let _ambTtsJsonpMode = false, _ambTtsCbSeq = 0;
+    function _ambTtsJsonp(url, timeoutMs) {
+      return new Promise((resolve) => {
+        const name = '__bloopsTtsCb' + (++_ambTtsCbSeq);
+        let done = false;
+        const el = document.createElement('script');
+        const finish = (v) => { if (done) return; done = true;
+          try { delete window[name]; } catch (e) { window[name] = undefined; }
+          try { el.remove(); } catch (e) {} resolve(v); };
+        window[name] = (data) => finish(data);
+        el.onerror = () => finish(null);
+        setTimeout(() => finish(null), timeoutMs || 30000);
+        el.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'cb=' + name;
+        document.head.appendChild(el);
+      });
+    }
+    function _ambWavB64ToF32(b64) {
+      const bin = atob(b64), n = bin.length;
+      const u8 = new Uint8Array(n);
+      for (let i = 0; i < n; i++) u8[i] = bin.charCodeAt(i);
+      const dv = new DataView(u8.buffer);
+      let off = 12, sr = 24000, dataOff = -1, dataLen = 0;
+      while (off + 8 <= dv.byteLength) {
+        const tag = dv.getUint32(off, false), len = dv.getUint32(off + 4, true);
+        if (tag === 0x666d7420) sr = dv.getUint32(off + 12, true);
+        if (tag === 0x64617461) { dataOff = off + 8; dataLen = len; break; }
+        off += 8 + len + (len & 1);
+      }
+      if (dataOff < 0) return null;
+      const cnt = dataLen >> 1, out = new Float32Array(cnt);
+      for (let i = 0; i < cnt; i++) out[i] = dv.getInt16(dataOff + (i << 1), true) / 32768;
+      return { audio: out, sr: sr };
+    }
     const _ambTtsUrl = () => {
       try { const o = localStorage.getItem('bloopsTtsUrl'); if (o) return o; } catch (e) {}     // per-device override
       try { if (window.BLOOPS_TTS_URL) return String(window.BLOOPS_TTS_URL); } catch (e) {}     // site-wide (bloops.html)
@@ -12274,6 +12314,21 @@
       if (_ambVoiceLatched()) return null;   // BEFORE the worker is even created
       const t = String(text || '').trim();
       if (!t) return null;
+      if (_ambTtsJsonpMode) {
+        // Server voice over the CORS-proof transport — no worker involved.
+        const base = _ambTtsUrl();
+        const d = await _ambTtsJsonp(base + (base.indexOf('?') >= 0 ? '&' : '?') + 'text=' + encodeURIComponent(t) + '&voice=' + encodeURIComponent(voice || ''), 120000);
+        if (!d || !d.ok || !d.wav) return null;
+        const r = _ambWavB64ToF32(d.wav);
+        if (!r || !r.audio.length) return null;
+        _ambLearnWarm = true;
+        try {
+          const ac = Tone.getContext().rawContext;
+          const buf = ac.createBuffer(1, r.audio.length, r.sr || 24000);
+          buf.getChannelData(0).set(r.audio);
+          return buf;
+        } catch (e) { return null; }
+      }
       const w = _ambLearnWorkerGet();
       if (!w) return null;
       const id = ++_ambLearnSeq;
@@ -12582,10 +12637,25 @@
       _ambVoiceMark(true);
       _ambLearnSayEl(E, L, _ambLearnStatusText(L, _st()));
       const id = ++_ambLearnSeq;
-      _ambLearnAwait(id, _AMB_WARM_TIMEOUT_MS).then((d) => {
+      _ambLearnAwait(id, _AMB_WARM_TIMEOUT_MS).then(async (d) => {
         _ambVoiceMark(false);
         _ambLearnWarming = false;
         if (d && d.warm) { _ambLearnWarm = true; _ambLearnErrWhy = ''; _ambLearnDlPct = -1; }
+        else if (d && /noserver/.test(String(d.error || ''))) {
+          // Direct fetch cannot read the server (the proxy strips CORS) — but a
+          // script tag can. One JSONP ping decides; success flips every later
+          // synth onto that transport.
+          const base = _ambTtsUrl();
+          const j = await _ambTtsJsonp(base.replace(/\/$/, '') + '/ping', 20000);
+          if (j && j.ok) {
+            _ambTtsJsonpMode = true; _ambLearnWarm = true; _ambLearnWorkerErr = null; _ambLearnErrWhy = '';
+            try { console.warn('[bloom] Learn voice: server reachable via script transport (CORS-stripped host)'); } catch (e) {}
+            _ambLearnSayEl(E, L, _ambLearnStatusText(L, _st()));
+            return;
+          }
+          _ambLearnWorkerErr = _ambLearnWorkerErr || new Error('warm failed');
+          _ambLearnErrWhy = _ambTrimWhy(String(d.error));
+        }
         else { _ambLearnWorkerErr = _ambLearnWorkerErr || new Error('warm failed');
                _ambLearnErrWhy = _ambTrimWhy(String((d && d.error) || _ambLearnErrWhy || 'no reply'));
                try { console.warn('[bloom] Learn voice failed:', _ambLearnErrWhy); } catch (e) {} }
@@ -12680,7 +12750,7 @@
         if (!n) return fell ? 'The voice can’t run on this device — this layer will play its words as notes instead.' : 'Idle — press play';
         return (fell ? 'Voice can’t run here — playing the words as notes — ' : 'Playing the text as notes — ') + n + ' lines';
       }
-      if (_ambLearnWorkerErr) {
+      if (_ambLearnWorkerErr && !_ambTtsJsonpMode) {
         // DEVICE VOICE, when there is one: the layer keeps speaking through the OS
         // instead of going dead. Only when even that is absent does the card fall
         // back to pointing at Words-as-Play, which never needed a voice at all.

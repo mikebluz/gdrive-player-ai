@@ -1187,10 +1187,30 @@
       });
 
       document.body.appendChild(ctxMenu);
-      const vw = window.innerWidth, vh = window.innerHeight;
-      const mw = 160, mh = ctxMenu.offsetHeight || 180;
-      ctxMenu.style.left = Math.min(x, vw - mw - 8) + 'px';
-      ctxMenu.style.top  = Math.min(y, vh - mh - 8) + 'px';
+      // PLACEMENT, measured rather than assumed. The old version read
+      // offsetHeight once, immediately after append, with a hardcoded 160px
+      // width — and a menu whose emoji glyphs reflow it TALLER after that read
+      // was then positioned from a stale height and hung off the bottom of the
+      // screen (measured: a 452px menu placed as if 422px, 22px of it unreachable
+      // on a phone). So: measure the real box, cap it to the space actually
+      // available so a long menu SCROLLS instead of overflowing, and re-run the
+      // whole placement on the next frame to catch any late reflow.
+      const place = () => {
+        if (!ctxMenu) return;
+        const pad = 8;
+        // visualViewport is the honest one on mobile: window.innerHeight can
+        // include the area behind the browser's toolbars.
+        const vv = (typeof window !== 'undefined') ? window.visualViewport : null;
+        const vw = vv ? vv.width : window.innerWidth;
+        const vh = vv ? vv.height : window.innerHeight;
+        ctxMenu.style.maxHeight = Math.max(120, vh - pad * 2) + 'px';
+        const mw = ctxMenu.offsetWidth || 160;
+        const mh = ctxMenu.offsetHeight || 180;
+        ctxMenu.style.left = Math.max(pad, Math.min(x, vw - mw - pad)) + 'px';
+        ctxMenu.style.top = Math.max(pad, Math.min(y, vh - mh - pad)) + 'px';
+      };
+      place();
+      requestAnimationFrame(place);
       _ctxMenuXY = { x, y };
     }
     // Tone of a step (first leaf / first chord voice). '' when none.

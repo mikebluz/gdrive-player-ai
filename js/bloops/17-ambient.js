@@ -12664,7 +12664,11 @@
         // saying, or the user hears notes where they asked for a voice and has no
         // idea why.
         const fell = _ambWordOut(L) !== 'play';
-                if (fell && _ambVoiceLatched()) {
+        if (fell && _ambLearnErrWhy.indexOf('noserver') >= 0) {
+          const nS = (st && st.sentences) ? st.sentences.length : 0;
+          return 'The voice server isn’t reachable from this phone — playing the words as notes' + (nS ? ' — ' + nS + ' lines' : '') + '.';
+        }
+        if (fell && _ambVoiceLatched()) {
           const n0 = (st && st.sentences) ? st.sentences.length : 0;
           return 'The voice stopped twice on this device, so it is set aside — playing the words as notes'
             + (n0 ? ' — ' + n0 + ' lines' : '') + '. Tap ⟳ Try the voice again in the layer ⋯ menu.';

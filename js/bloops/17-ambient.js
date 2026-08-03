@@ -11552,8 +11552,14 @@
       { id: 'wiki-random', label: 'Wikipedia — random', needsTerm: false },
       { id: 'wiki-search', label: 'Wikipedia — search', needsTerm: true },
       { id: 'paste', label: 'Pasted text', needsTerm: true },   // no network at all
-      // { id: 'url', label: 'Any page (needs a proxy)', needsTerm: true },
+      // SERVER-SIDE SOURCES. Neither of these sends access-control-allow-origin,
+      // so a browser cannot read them directly at all — the voice server fetches
+      // and strips them (/source?kind=…) and the same script transport that
+      // carries speech carries the text.
+      { id: 'sep', label: 'Stanford Encyclopedia of Philosophy', needsTerm: false, server: 'sep' },
+      { id: 'gutenberg', label: 'Project Gutenberg', needsTerm: false, server: 'gutenberg' },
     ];
+    const _ambSourceServerKind = (id) => { const s0 = _AMB_LEARN_SOURCES.find(x => x.id === id); return (s0 && s0.server) || ''; };
     // WHICH BODY OF TEXT. All three speak the same REST shape, so a corpus is just
     // a host swap. Verified in-browser that each returns 200 with CORS headers;
     // Wiktionary / Wikisource / Wikibooks are absent because they do NOT serve this
@@ -11610,6 +11616,26 @@
       } finally { if (timer) clearTimeout(timer); }
     }
     async function _ambLearnFetch(sourceId, term, corpus) {
+      // SERVER SOURCES first. Try a plain fetch (a host with working CORS would
+      // answer), then the script transport — the same two-step the voice takes,
+      // because our own responses lose their CORS header in transit.
+      const kind = _ambSourceServerKind(sourceId);
+      if (kind) {
+        const base = String(_ambTtsUrl()).replace(/\/tts\/?$/, '');
+        const qs = '?kind=' + encodeURIComponent(kind) + (term ? ('&term=' + encodeURIComponent(term)) : '');
+        let d = null;
+        try {
+          const r = await fetch(base + '/source' + qs, { headers: { accept: 'application/json' } });
+          if (r && r.ok) d = await r.json();
+        } catch (e) {}
+        if (!d) d = await _ambTtsJsonp(base + '/source' + qs, 45000);
+        if (!d) { _ambLearnNetWhy = 'offline'; return null; }
+        if (!d.ok) { _ambLearnNetWhy = /notfound/.test(String(d.error || '')) ? 'notfound' : 'http'; return null; }
+        const text = _ambLearnClean(String(d.text || ''));
+        if (!text) { _ambLearnNetWhy = 'empty'; return null; }
+        _ambLearnNetWhy = '';
+        return { title: String(d.title || ''), text: text, url: String(d.url || '') };
+      }
       try {
         const src = _AMB_LEARN_SOURCES.find(x => x.id === sourceId) || _AMB_LEARN_SOURCES[0];
         const base = 'https://' + _ambLearnHost(corpus) + '/api/rest_v1/page/';
@@ -12218,7 +12244,12 @@
         let done = false;
         const el = document.createElement('script');
         const finish = (v) => { if (done) return; done = true;
-          try { delete window[name]; } catch (e) { window[name] = undefined; }
+          // Do NOT delete the callback here. A timed-out request whose script
+          // arrives later then executes `__bloopsTtsCbN(...)` against nothing and
+          // throws a ReferenceError into the page (seen with a slow Gutenberg
+          // fetch). Leave an inert stub, and sweep it up well after any reply.
+          try { window[name] = function () {}; } catch (e) {}
+          setTimeout(() => { try { delete window[name]; } catch (e) {} }, 120000);
           try { el.remove(); } catch (e) {} resolve(v); };
         window[name] = (data) => finish(data);
         el.onerror = () => finish(null);
@@ -12577,6 +12608,11 @@
             '</span></div>' +
           '<div class="amb-pick-results" id="amb-pick-results" hidden></div>' +
           '<div class="ambient-hint amb-pick-note">Search, then tap a result to load it \u2014 or take a random article. The voice downloads once, on the first line.</div>' +
+          '<div class="ambient-hint amb-pick-note2">Or read from:</div>' +
+          '<div class="amb-learn-pick-btns amb-pick-srcs">' +
+            '<button type="button" class="ambient-seg amb-pick-src" data-src="sep">\ud83c\udf93 Philosophy</button>' +
+            '<button type="button" class="ambient-seg amb-pick-src" data-src="gutenberg">\ud83d\udcda Gutenberg</button>' +
+          '</div>' +
           '<div class="amb-learn-pick-btns">' +
             '<button type="button" class="ambient-seg amb-pick-cancel">Cancel</button>' +
             '<button type="button" class="ambient-seg amb-pick-random">\ud83c\udfb2 Random</button>' +
@@ -12637,6 +12673,21 @@
         overlay.addEventListener('click', (e) => { if (e.target === overlay) cancel(); });
         modal.querySelector('.amb-pick-cancel').addEventListener('click', cancel);
         modal.querySelector('.amb-pick-random').addEventListener('click', () => load(''));
+        // The server-backed sources: the search box doubles as their term, so
+        // typing "free will" and tapping Philosophy reads that entry, and tapping
+        // it empty takes a random one.
+        modal.querySelectorAll('.amb-pick-src').forEach(b => b.addEventListener('click', () => {
+          const kind = b.getAttribute('data-src');
+          const t = String((term && term.value) || '').trim();
+          L.source = kind; L.term = t;
+          _ambLearnPickPending.delete(L);
+          close();
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          try { _ambRenderExtras(E); } catch (e) {}
+          try { _ambLearnHeadSync(E, L); } catch (e) {}
+          try { _ambLearnLoadNow(E, L); } catch (e) {}
+          try { _ambSpokenLoadingModal(E, L); } catch (e) {}
+        }));
         modal.querySelector('.amb-pick-go').addEventListener('click', search);
         // Enter SEARCHES — it is the only thing it could sensibly do now, since
         // loading happens by choosing a result.
@@ -13288,7 +13339,12 @@
           // couple of lines past the play cursor and stops; the tick re-kicks the
           // pump as the cursor advances, and words-as-notes covers anything not
           // yet written. Blink is untouched.
-          if (_AMB_WK && ent.lines.length > _AMB_WK_AHEAD) {
+          // Render just ahead of the reading whenever a line costs a NETWORK round
+          // trip, not only on WebKit: a Stanford entry is 85-95 lines, and
+          // rendering all of them eagerly would be ninety-odd requests before a
+          // word is spoken. Local rendering on desktop stays eager — it is cheap
+          // and it is why a fetched article is instant there.
+          if ((_AMB_WK || _ambTtsJsonpMode) && ent.lines.length > _AMB_WK_AHEAD) {
             const cur = ((st.ci | 0) % ent.lines.length + ent.lines.length) % ent.lines.length;
             let ready = 0;
             for (let k = 0; k < _AMB_WK_AHEAD; k++) if (ent.cache[(cur + k) % ent.lines.length]) ready++;

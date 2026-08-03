@@ -11664,14 +11664,17 @@
         return null;
       } finally { if (timer) clearTimeout(timer); }
     }
-    async function _ambLearnFetch(sourceId, term, corpus) {
+    async function _ambLearnFetch(sourceId, term, corpus, wantChars) {
       // SERVER SOURCES first. Try a plain fetch (a host with working CORS would
       // answer), then the script transport — the same two-step the voice takes,
       // because our own responses lose their CORS header in transit.
       const kind = _ambSourceServerKind(sourceId);
       if (kind) {
         const base = String(_ambTtsUrl()).replace(/\/tts\/?$/, '');
-        const qs = '?kind=' + encodeURIComponent(kind) + (term ? ('&term=' + encodeURIComponent(term)) : '');
+        // Ask the server for the layer's Amount, with headroom so switching to a
+        // bigger setting later usually re-splits from text already in hand.
+        const want = Math.min(24000, Math.max(1200, (wantChars || 6000) * 2));
+        const qs = '?kind=' + encodeURIComponent(kind) + (term ? ('&term=' + encodeURIComponent(term)) : '') + '&chars=' + want;
         let d = null;
         try {
           const r = await fetch(base + '/source' + qs, { headers: { accept: 'application/json' } });
@@ -12753,7 +12756,7 @@
     function _ambWordEnsureLines(E, L, st) {
       if (st.sentences && st.sentences.length) return;
       const local = _ambSpokenLocalText(L);
-      if (local !== null) { st.sentences = _ambSpokenLines(local); st.si = 0; st.title = _ambIsSeel(L) ? 'Sir Eel' : 'Pasted text'; return; }
+      if (local !== null) { st.sentences = _ambSpokenLines(local, L); st.si = 0; st.title = _ambIsSeel(L) ? 'Sir Eel' : 'Pasted text'; return; }
       if (st.pending) return;
       st.pending = true; st.phase = 'fetch';
       const ep = st.epoch | 0;
@@ -12761,7 +12764,7 @@
         st.pending = false;
         if ((st.epoch | 0) !== ep) return;
         if (!doc) { st.phase = 'nofetch'; return; }
-        st.title = doc.title; st.sentences = _ambSpokenLines(doc.text); st.si = 0; st.phase = null;
+        st.title = doc.title; st.sentences = _ambSpokenLines(doc.text, L); st.si = 0; st.phase = null;
       }, () => { st.pending = false; });
     }
     // ---- LEARN layer: the voice ---------------------------------------------
@@ -13139,6 +13142,7 @@
         res = await p;
       } catch (e) { return null; } finally { _ambSynthAt = 0; _ambVoiceMark(false); }
       if (!res || !res.audio || !res.audio.length) return null;
+      try { _ambNoteWriteCost(res.ms || (Date.now() - _ambSynthAt), (res.audio.length / (res.sampling_rate || 24000))); } catch (e) {}
       _ambLearnWarm = true;   // the model is downloaded; later lines are just inference
       try {
         const ac = Tone.getContext().rawContext;
@@ -13469,6 +13473,51 @@
         });
       } catch (e) {}
     }
+    // RE-SPLIT WITHOUT REFETCHING. Amount / line length changed, so rebuild the
+    // take from the raw text we kept — and carry over the audio of any line whose
+    // TEXT is unchanged (the render cache is keyed by voice+text, so an unchanged
+    // line costs nothing to keep).
+    function _ambResplit(E, L) {
+      try {
+        const ent = _ambSeelEntry(E, L, true);
+        const raw = ent.raw || (_ambSpokenLocalText(L) || '');
+        if (!raw) return;
+        const vk = _ambSpokenVoice(L) + '\u0000';
+        const lines = _ambSpokenLines(raw, L);
+        ent.lines = lines;
+        ent.cache = lines.map(t => ent.buf.get(vk + t) || null);
+        ent.full = false;
+        const st = E.seqState && E.seqState[_ambSpokenKey(L)];
+        if (st) { st.sentences = lines; st.ci = 0; st.si = 0; st.q = []; st.qL = []; st.qI = []; }
+        try { _ambRenderExtras(E); } catch (e) {}
+      } catch (e) {}
+    }
+    // WHAT IT WILL COST. The write time is measured, not guessed: each render
+    // updates a rolling average of seconds-per-spoken-second, so the estimate
+    // reflects THIS device and THIS engine (a phone on the server and a desktop
+    // on its local model are wildly different, and a fixed number would lie to
+    // one of them).
+    let _ambWriteRatio = 0;          // seconds of work per second of speech
+    function _ambNoteWriteCost(ms, seconds) {
+      if (!(ms > 0) || !(seconds > 0)) return;
+      const r = (ms / 1000) / seconds;
+      _ambWriteRatio = _ambWriteRatio ? (_ambWriteRatio * 0.7 + r * 0.3) : r;
+    }
+    // ~2.4 words a second is ordinary reading pace; good enough to size a take.
+    function _ambTakeCost(E, L) {
+      const ent = _ambSeelEntry(E, L, false);
+      const lines = (ent && ent.lines) || [];
+      const cache = (ent && ent.cache) || [];
+      const words = lines.reduce((n, t) => n + _ambWordCount(t), 0);
+      const spoken = words / 2.4;
+      const done = cache.filter(Boolean).length;
+      const left = lines.length - done;
+      const leftWords = lines.reduce((n, t, i) => n + (cache[i] ? 0 : _ambWordCount(t)), 0);
+      const ratio = _ambWriteRatio || 2;
+      return { lines: lines.length, written: done, left: left,
+               spokenSec: spoken, writeSec: (leftWords / 2.4) * ratio, measured: !!_ambWriteRatio };
+    }
+    const _ambFmtDur = (s) => (s < 90) ? (Math.round(s) + 's') : (Math.round(s / 60) + ' min');
     // The per-line editor. Everything here is that ONE take's business: when it
     // plays, and how it sounds. The layer's own Speech FX still apply on top —
     // this is a difference from the layer, not a replacement for it.
@@ -14134,7 +14183,7 @@
           if (stale()) return;                    // settings / requested material moved under us
           // ---- LINES ----------------------------------------------------
           if (local !== null) {
-            const lines = _ambSpokenLines(local);
+            const lines = _ambSpokenLines(local, L);
             if (lines.join('\u0000') !== (ent.lines || []).join('\u0000')) {
               ent.lines = lines; ent.cache = lines.map(l => ent.buf.get(vk + l) || null); ent.full = false; st.ci = 0;
             }
@@ -14142,11 +14191,14 @@
           } else if (!ent.lines.length) {
             st.phase = 'fetch'; st._say = null; say();
             _ambCrumb('article-fetch');
-            const doc = await _ambLearnFetch(L.source || 'wiki-random', L.term || '', L.corpus);
+            const doc = await _ambLearnFetch(L.source || 'wiki-random', L.term || '', L.corpus, _ambAmountChars(L));
             _ambCrumbClear();
             if (stale()) return;
             if (!doc) { st.phase = 'nofetch'; st._say = null; say(); return; }
-            const add = _ambSpokenLines(doc.text);
+            // KEEP THE RAW TEXT. Amount and line length re-derive the take from
+            // it locally — changing either must never cost another fetch.
+            ent.raw = String(doc.text || '');
+            const add = _ambSpokenLines(ent.raw, L);
             ent.titles = [doc.title];
             ent.lines = add;
             ent.cache = add.map(l => ent.buf.get(vk + l) || null);
@@ -14158,6 +14210,9 @@
             try { L.article = String(doc.title || ''); if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
             st.ci = 0; st.phase = null;
             try { _ambLearnHeadSync(E, L); } catch (e) {}
+            // The take list has no rows to sync into yet — this is the one moment
+            // it needs a full render, right after the text arrives.
+            try { _ambRenderExtras(E); } catch (e) {}
           }
           st.sentences = ent.lines; st.title = (ent.titles && ent.titles.length) ? ent.titles[ent.titles.length - 1] : '';
           // A 'fetch' phase set by someone else must not survive having text — that
@@ -14265,34 +14320,63 @@
     // so each piece is still something a voice can read with sensible prosody. A
     // clause that is somehow still enormous is left ALONE rather than hard-cut at a
     // word count: a butchered phrase sounds worse than a long one.
+    // HOW MUCH, AND HOW LONG THE LINES ARE — both were fixed constants, invisible
+    // and load-bearing. `amount` is a character budget applied at a SENTENCE
+    // boundary (never mid-sentence), `lineWords` is the split cap. Both absent by
+    // default, so an untouched layer behaves exactly as it always did.
+    const _AMB_AMOUNTS = [
+      ['short', 'A paragraph', 1200], ['medium', 'A few paragraphs', 3000],
+      ['long', 'A page', 6000], ['max', 'Everything the source gives', 24000],
+    ];
+    const _ambAmount = (L) => { const a = L && L.amount; const hit = _AMB_AMOUNTS.find(x => x[0] === a); return hit || _AMB_AMOUNTS[2]; };
+    const _ambAmountChars = (L) => _ambAmount(L)[2];
+    // 14 was tuned when every line was synthesised DURING playback, where the
+    // first line's cost was pure silence. Lines are written once now, so longer
+    // lines are cheap and read far better — but short lines still suit a rhythmic
+    // layer, so it is a control rather than a new constant.
     const _AMB_LINE_MAX_WORDS = 14;
+    const _ambLineWords = (L) => {
+      const n = (L && L.lineWords) | 0;
+      return (n >= 4 && n <= 60) ? n : _AMB_LINE_MAX_WORDS;
+    };
+    // Cut to the budget at a sentence end, so the last line is never a fragment.
+    function _ambTrimToBudget(text, chars) {
+      const t = String(text || '');
+      if (t.length <= chars) return t;
+      const cut = t.slice(0, chars);
+      const end = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '));
+      return (end > chars * 0.4) ? cut.slice(0, end + 1) : cut;
+    }
     const _ambWordCount = (s) => (String(s).trim().match(/\S+/g) || []).length;
-    function _ambSplitLine(line) {
+    function _ambSplitLine(line, maxWords) {
+      const MAX = maxWords || _AMB_LINE_MAX_WORDS;
       const t = String(line || '').trim();
-      if (_ambWordCount(t) <= _AMB_LINE_MAX_WORDS) return [t];
+      if (_ambWordCount(t) <= MAX) return [t];
       // Break points, in order of how natural they are to pause on.
       const marks = [/(?<=[;:])\s+/, /(?<=,)\s+/, /\s+(?=(?:and|but|or|so|yet|because|although|while|which|who|that|when|where)\s)/i];
       let parts = [t];
       for (const re of marks) {
-        if (parts.every(p => _ambWordCount(p) <= _AMB_LINE_MAX_WORDS)) break;
-        parts = parts.flatMap(p => (_ambWordCount(p) > _AMB_LINE_MAX_WORDS) ? p.split(re) : [p]);
+        if (parts.every(p => _ambWordCount(p) <= MAX)) break;
+        parts = parts.flatMap(p => (_ambWordCount(p) > MAX) ? p.split(re) : [p]);
       }
       // Re-join the small pieces so the split does not produce a stutter of 2-word lines
       // — the fixed per-line cost is real, and so is the rhythm of the reading.
       const out = [];
       for (const p of parts.map(x => String(x).trim()).filter(Boolean)) {
         const last = out.length ? out[out.length - 1] : null;
-        if (last && _ambWordCount(last) + _ambWordCount(p) <= _AMB_LINE_MAX_WORDS) out[out.length - 1] = last + ' ' + p;
+        if (last && _ambWordCount(last) + _ambWordCount(p) <= MAX) out[out.length - 1] = last + ' ' + p;
         else out.push(p);
       }
       return out.length ? out : [t];
     }
-    function _ambSpokenLines(text) {
-      return String(text || '')
+    function _ambSpokenLines(text, L) {
+      const maxWords = _ambLineWords(L);
+      const budgeted = L ? _ambTrimToBudget(text, _ambAmountChars(L)) : text;
+      return String(budgeted || '')
         .split(/(?<=[.!?])\s+/)
         .map(x => x.trim())
         .filter(x => x.length > 1)
-        .flatMap(_ambSplitLine);
+        .flatMap(x => _ambSplitLine(x, maxWords));
     }
     const _AMB_LEARN_BOOST = 3.2;   // speech is quiet next to synth layers; Kitten peaks 0.77-0.91, rms ~0.12
     // ---- SPEECH AS A SAMPLE: slice / chop / reverse / rate -------------------
@@ -29133,7 +29217,7 @@
       // rhythm — the utterance is the unit — so it carries Source + Gap + the
       // shared mix block and nothing else.
       learn: { label: 'Learn', ctrls: [
-        ['grp', 'Source'], ['learnsrc'], ['voicefrom'], ['spokenvoice'], ['learnstatus'], ['lines'], ['speakwhen'], ['livewrite'],
+        ['grp', 'Source'], ['learnsrc'], ['voicefrom'], ['spokenvoice'], ['learnstatus'], ['textsize'], ['lines'], ['speakwhen'], ['livewrite'],
         ['grp', 'Notes'], ['tone'], ['wordmusic'],
         ['grp', 'Speech'], ['speechfx'],
         ['grp', 'Timing'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
@@ -29143,7 +29227,7 @@
       // grammatically correct nonsense, written here rather than fetched. Same
       // control set as Learn bar the source block, because it is the same layer.
       sireel: { label: 'Sir Eel', ctrls: [
-        ['grp', 'Source'], ['sl', 'sentences', 'Length', 1, 24, 'sentences per text'], ['seeltext'], ['voicefrom'], ['spokenvoice'], ['learnstatus'], ['lines'], ['speakwhen'], ['livewrite'],
+        ['grp', 'Source'], ['sl', 'sentences', 'Length', 1, 24, 'sentences per text'], ['seeltext'], ['voicefrom'], ['spokenvoice'], ['learnstatus'], ['textsize'], ['lines'], ['speakwhen'], ['livewrite'],
         ['grp', 'Notes'], ['tone'], ['wordmusic'],
         ['grp', 'Speech'], ['speechfx'],
         ['grp', 'Timing'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
@@ -29782,6 +29866,19 @@
           '<button type="button" class="ambient-seg ambient-bus-edit" data-buskey="' + cur + '" title="Name this bus, choose whether it passes through the master colouring, and set its sends into the shared FX">\u2699</button>' +
           '</span><span class="ambient-hint">group + shared FX</span></div>';
       }
+      if (k === 'textsize') { const a = _ambAmount(inst); const lw = _ambLineWords(inst);
+        const cost = (_E && typeof _ambTakeCost === 'function') ? _ambTakeCost(_E, inst) : null;
+        const est = cost ? (cost.lines + ' lines · about ' + _ambFmtDur(cost.spokenSec) + ' spoken'
+          + (cost.left ? ' · ' + _ambFmtDur(cost.writeSec) + ' to write' + (cost.measured ? '' : ' (rough until it has written one)') : ' · all written')) : '';
+        return '<div class="ambient-ctrl" title="How much of the source this layer reads. Changing it re-splits from the text already fetched — it never costs another download."><label for="' + p + '-amount">Amount</label>' +
+          '<select id="' + p + '-amount" class="ambient-select">' +
+          _AMB_AMOUNTS.map(x => '<option value="' + x[0] + '"' + (a[0] === x[0] ? ' selected' : '') + '>' + x[1] + '</option>').join('') +
+          '</select><span class="ambient-hint">how much to read</span></div>' +
+          '<div class="ambient-ctrl" title="The longest a line may be before it is split at a comma or a conjunction. Short lines are rhythmic; long lines read with better phrasing. Splitting never cuts mid-clause."><label for="' + p + '-linewords">Line length</label>' +
+          '<input type="range" id="' + p + '-linewords" class="ambient-range" min="4" max="60" step="1" value="' + lw + '">' +
+          '<span class="ambient-hint">up to <span id="' + p + '-linewords-v">' + lw + '</span> words</span></div>' +
+          '<div class="ambient-ctrl amb-cost"><label>Take</label><span class="ambient-hint amb-cost-v">' + _ambEscText(est) + '</span></div>';
+      }
       if (k === 'lines') {
         const ent = _ambSeelEntry(_E, inst, false);
         const lines = (ent && ent.lines) || [];
@@ -30375,6 +30472,24 @@
               // The chain is wired to the OLD bus — rebuild it onto the new one.
               try { const key = _ambKeyOfLayer(E, L); if (key) { _E = E; _ambTeardownMod(key); _ambSyncMods(); } } catch (x) {}
               try { _ambRenderExtras(E); } catch (x) {} }); }
+          else if (k === 'textsize') {
+            const am = el('amount');
+            if (am) am.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
+              L.amount = (am.value === 'long') ? undefined : am.value;
+              if (!L.amount) delete L.amount;
+              persist(); _ambResplit(E, L); });
+            const lwv = el('linewords'), lwOut = el('linewords-v');
+            if (lwv) {
+              lwv.addEventListener('input', () => { if (lwOut) lwOut.textContent = String(lwv.value | 0); });
+              // Re-split on CHANGE, not input: dragging would rebuild the take on
+              // every pixel, and the take is the expensive thing here.
+              lwv.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
+                const n = lwv.value | 0;
+                L.lineWords = (n === _AMB_LINE_MAX_WORDS) ? undefined : n;
+                if (!L.lineWords) delete L.lineWords;
+                persist(); _ambResplit(E, L); });
+            }
+          }
           else if (k === 'livewrite') { const lw = el('livewrite');
             if (lw) lw.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
               if (lw.value === '1') L.liveWrite = true; else delete L.liveWrite;

@@ -11647,8 +11647,14 @@
         .replace(/\[[^\]]*\]/g, ' ')                 // [1], [citation needed]
         .replace(/\((?:[^()]*(?:IPA|pronounc|listen)[^()]*)\)/gi, ' ')
         .replace(/\/[^\/]{2,40}\//g, ' ')             // /prəˌnʌnsiˈeɪʃən/
-        .replace(/\s+([.,;:!?])/g, '$1')             // stripping a ref leaves "thing ." — a speech engine phrases that as a pause
-        .replace(/\s{2,}/g, ' ')
+        .replace(/[ \t]+([.,;:!?])/g, '$1')          // stripping a ref leaves "thing ." — a speech engine phrases that as a pause
+        // PRESERVE PARAGRAPH BREAKS. This used to collapse every run of
+        // whitespace, which quietly destroyed the blank lines the server works to
+        // keep — and paragraph takes silently fell back to sentences because the
+        // text arrived with no paragraphs left in it.
+        .replace(/\n{2,}/g, '\u0000')
+        .replace(/[ \t\r\n]+/g, ' ')
+        .replace(/\u0000/g, '\n\n')
         .trim();
     }
     // → { title, text, url } or null. Never throws: a dead network or an unknown
@@ -13279,7 +13285,11 @@
               '<button type="button" class="ambient-seg amb-pick-go">\ud83d\udd0d</button>' +
             '</span></div>' +
           '<div class="amb-pick-results" id="amb-pick-results" hidden></div>' +
-          '<div class="ambient-hint amb-pick-note">Search, then tap a result to load it \u2014 or take a random article. The voice downloads once, on the first line.</div>' +
+          '<div class="ambient-ctrl"><label for="amb-pick-chunk">Each take is</label>' +
+            '<select id="amb-pick-chunk" class="ambient-select">' +
+            _AMB_CHUNKS.map(x => '<option value="' + x[0] + '"' + (_ambChunkBy(L) === x[0] ? ' selected' : '') + '>' + esc(x[1]) + '</option>').join('') +
+            '</select><span class="ambient-hint">one continuous sample per take</span></div>' +
+          '<div class="ambient-hint amb-pick-note">Search, then tap a result to load it \u2014 or take a random article. Each take becomes one spoken sample you can place, edit and schedule.</div>' +
           '<div class="ambient-hint amb-pick-note2">Or read from:</div>' +
           '<div class="amb-learn-pick-btns amb-pick-srcs">' +
             '<button type="button" class="ambient-seg amb-pick-src" data-src="sep">\ud83c\udf93 Philosophy</button>' +
@@ -13331,6 +13341,10 @@
         // `title` is the chosen article; empty means take a random one.
         const load = (title) => {
           const t = String(title || '').trim();
+          // The take shape is chosen HERE, before the text is fetched, so the
+          // first split already matches what the user asked for.
+          try { const ck = modal.querySelector('#amb-pick-chunk');
+            if (ck) { L.chunkBy = (ck.value === 'sentence') ? undefined : ck.value; if (!L.chunkBy) delete L.chunkBy; } } catch (e) {}
           L.corpus = (corpus && corpus.value) || 'wikipedia';
           L.term = t;
           L.source = t ? 'wiki-search' : 'wiki-random';
@@ -13351,6 +13365,8 @@
         modal.querySelectorAll('.amb-pick-src').forEach(b => b.addEventListener('click', () => {
           const kind = b.getAttribute('data-src');
           const t = String((term && term.value) || '').trim();
+          try { const ck = modal.querySelector('#amb-pick-chunk');
+            if (ck) { L.chunkBy = (ck.value === 'sentence') ? undefined : ck.value; if (!L.chunkBy) delete L.chunkBy; } } catch (e) {}
           L.source = kind; L.term = t;
           _ambLearnPickPending.delete(L);
           close();
@@ -14441,14 +14457,59 @@
       }
       return out.length ? out : [t];
     }
+    // WHAT ONE TAKE IS. A take is one continuous spoken sample, and how much text
+    // goes into it is a musical choice: single sentences give short, placeable
+    // fragments; a whole paragraph gives continuous narration you can drop in as
+    // one block. Absent = sentences, exactly as before.
+    //   'sentence' — one sentence per take (clause-split if over Line length)
+    //   'para'     — one PARAGRAPH per take, as the source paragraphed it
+    //   2..12      — that many sentences joined into one take
+    const _AMB_CHUNKS = [
+      ['sentence', 'One sentence'], ['2', 'Two sentences'], ['3', 'Three sentences'],
+      ['4', 'Four sentences'], ['6', 'Six sentences'], ['para', 'A whole paragraph'],
+    ];
+    const _ambChunkBy = (L) => { const c = L && L.chunkBy; return _AMB_CHUNKS.some(x => x[0] === c) ? c : 'sentence'; };
+    // A single take should not be unboundedly long — a ten-minute paragraph is one
+    // render that cannot be scheduled, edited or skipped separately, and on a slow
+    // engine it is a very long wait for the first sound. This is a safety ceiling,
+    // not the Line length control (which shapes SENTENCE takes).
+    const _AMB_TAKE_MAX_WORDS = 90;
+    const _ambSentences = (t) => String(t || '').split(/(?<=[.!?])\s+/).map(x => x.trim()).filter(x => x.length > 1);
     function _ambSpokenLines(text, L) {
-      const maxWords = _ambLineWords(L);
       const budgeted = L ? _ambTrimToBudget(text, _ambAmountChars(L)) : text;
-      return String(budgeted || '')
-        .split(/(?<=[.!?])\s+/)
-        .map(x => x.trim())
-        .filter(x => x.length > 1)
-        .flatMap(x => _ambSplitLine(x, maxWords));
+      const mode = _ambChunkBy(L);
+      if (mode === 'sentence') {
+        const maxWords = _ambLineWords(L);
+        return _ambSentences(budgeted).flatMap(x => _ambSplitLine(x, maxWords));
+      }
+      // Paragraph takes come from the source's own paragraphing; grouped takes
+      // join N sentences. Both then respect the safety ceiling.
+      const blocks = (mode === 'para')
+        ? String(budgeted || '').split(/\n\s*\n/).map(x => x.replace(/\s+/g, ' ').trim()).filter(x => x.length > 1)
+        : (() => {
+            const n = Math.max(2, Math.min(12, parseInt(mode, 10) || 2));
+            const sent = _ambSentences(budgeted), out = [];
+            for (let i = 0; i < sent.length; i += n) out.push(sent.slice(i, i + n).join(' '));
+            return out;
+          })();
+      // A source with no paragraph marks at all (pasted text, Wikipedia summaries)
+      // would give one enormous block — fall back to sentences rather than make a
+      // single unusable take.
+      if (mode === 'para' && blocks.length <= 1) {
+        const maxWords = _ambLineWords(L);
+        return _ambSentences(budgeted).flatMap(x => _ambSplitLine(x, maxWords));
+      }
+      return blocks.flatMap(b => (_ambWordCount(b) <= _AMB_TAKE_MAX_WORDS) ? [b] : (() => {
+        // Too long for one take: break it at sentence ends into ceiling-sized pieces.
+        const sent = _ambSentences(b), out = [];
+        let cur = '';
+        for (const x of sent) {
+          if (cur && _ambWordCount(cur) + _ambWordCount(x) > _AMB_TAKE_MAX_WORDS) { out.push(cur); cur = x; }
+          else cur = cur ? (cur + ' ' + x) : x;
+        }
+        if (cur) out.push(cur);
+        return out.length ? out : [b];
+      })());
     }
     const _AMB_LEARN_BOOST = 3.2;   // speech is quiet next to synth layers; Kitten peaks 0.77-0.91, rms ~0.12
     // ---- SPEECH AS A SAMPLE: slice / chop / reverse / rate -------------------
@@ -29920,9 +29981,14 @@
           '<select id="' + p + '-amount" class="ambient-select">' +
           _AMB_AMOUNTS.map(x => '<option value="' + x[0] + '"' + (a[0] === x[0] ? ' selected' : '') + '>' + x[1] + '</option>').join('') +
           '</select><span class="ambient-hint">how much to read</span></div>' +
+          '<div class="ambient-ctrl" title="How much text becomes ONE continuous spoken take. Sentences give short placeable fragments; a paragraph gives continuous narration you can drop in as a block."><label for="' + p + '-chunkby">Each take is</label>' +
+          '<select id="' + p + '-chunkby" class="ambient-select">' +
+          _AMB_CHUNKS.map(x => '<option value="' + x[0] + '"' + (_ambChunkBy(inst) === x[0] ? ' selected' : '') + '>' + x[1] + '</option>').join('') +
+          '</select><span class="ambient-hint">one sample per take</span></div>' +
+          (_ambChunkBy(inst) === 'sentence' ?
           '<div class="ambient-ctrl" title="The longest a line may be before it is split at a comma or a conjunction. Short lines are rhythmic; long lines read with better phrasing. Splitting never cuts mid-clause."><label for="' + p + '-linewords">Line length</label>' +
           '<input type="range" id="' + p + '-linewords" class="ambient-range" min="4" max="60" step="1" value="' + lw + '">' +
-          '<span class="ambient-hint">up to <span id="' + p + '-linewords-v">' + lw + '</span> words</span></div>' +
+          '<span class="ambient-hint">up to <span id="' + p + '-linewords-v">' + lw + '</span> words</span></div>' : '') +
           '<div class="ambient-ctrl amb-cost"><label>Take</label><span class="ambient-hint amb-cost-v">' + _ambEscText(est) + '</span></div>';
       }
       if (k === 'lines') {
@@ -30523,6 +30589,11 @@
             if (am) am.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
               L.amount = (am.value === 'long') ? undefined : am.value;
               if (!L.amount) delete L.amount;
+              persist(); _ambResplit(E, L); });
+            const cb = el('chunkby');
+            if (cb) cb.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
+              L.chunkBy = (cb.value === 'sentence') ? undefined : cb.value;
+              if (!L.chunkBy) delete L.chunkBy;
               persist(); _ambResplit(E, L); });
             const lwv = el('linewords'), lwOut = el('linewords-v');
             if (lwv) {

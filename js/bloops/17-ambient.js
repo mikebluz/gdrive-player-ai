@@ -12683,15 +12683,22 @@
     // notes through the alphabet translator, in the mix, instead of a dead card.
     // RUNTIME ONLY, never written to the layer: the user's setting is their
     // setting, and the same project opened on a desktop speaks again.
-    const _ambWordOutEff = (L) => {
-      const out = _ambWordOut(L);
-      if (out === 'play') return 'play';
-      if (_ambTtsJsonpMode) return out;   // server voice via script transport — worker state is irrelevant
-      // Explicitly server-only and the server is gone → notes, not a surprise voice.
-      if (_ambVoiceFrom(L) === 'server' && _ambLearnErrWhy.indexOf('noserver') >= 0) return 'play';
-      if ((_ambLearnWorkerErr || _ambVoiceLatched()) && !_ambSysVoiceOK()) return 'play';
-      return out;
-    };
+    // WHAT THE USER CHOSE IS WHAT HAPPENS. This used to degrade a speaking layer
+    // to words-as-notes whenever the voice was unavailable, and the tick had its
+    // own fallback that played notes for any line not yet written — so a layer
+    // could switch modes underneath you twice over. Both are gone: Words-as is
+    // absolute. When speech is impossible the layer SAYS SO, loudly, and stays
+    // silent rather than quietly becoming a different instrument.
+    const _ambWordOutEff = (L) => _ambWordOut(L);
+    // Can this layer speak at all right now? Used only to explain itself.
+    function _ambSpeechBlocked(L) {
+      if (_ambWordOut(L) === 'play') return '';
+      if (_ambTtsJsonpMode) return '';
+      if (_ambVoiceFrom(L) === 'server' && _ambLearnErrWhy.indexOf('noserver') >= 0) return 'the voice server isn’t answering';
+      if (_ambVoiceLatched()) return 'the voice was set aside on this device';
+      if (_ambLearnWorkerErr) return _ambLearnErrWhy ? _ambTrimWhy(_ambLearnErrWhy) : 'the voice is unavailable';
+      return '';
+    }
     const _ambWordOn = (L) => _ambWordOut(L) !== 'speak';
     function _ambWordOpt(E, L) {
       const w = (L && L.word) || {};
@@ -13948,10 +13955,8 @@
       // to it — reporting "Downloading the voice…" for a layer that will never speak
       // is just noise.
       if (_ambWordOutEff(L) === 'play') {
-        // Chosen Play vs DEGRADED to Play are different facts: the second one needs
-        // saying, or the user hears notes where they asked for a voice and has no
-        // idea why.
-        const fell = _ambWordOut(L) !== 'play';
+        // Play mode needs no writing at all — the words become notes directly.
+        const fell = false;
         if (fell && _ambVoiceFrom(L) === 'server' && _ambLearnErrWhy.indexOf('noserver') >= 0) {
           const nV = (st && st.sentences) ? st.sentences.length : 0;
           return 'This layer is set to the voice server, which isn’t answering — playing the words as notes'
@@ -14001,15 +14006,31 @@
       // layer looks like a busy one.
       if (st && (st.phase === 'nofetch' || st.phase === 'novoice')) { /* fall through to the phase text below */ }
       else if (!_ambLearnWarm && _ambLearnWarming) {
-        if (_ambLearnDlPct >= 0) return (st && st._notesWhile ? '♪ Words as notes meanwhile · downloading the voice… ' : 'Downloading the voice, first use only… ') + _ambLearnDlPct + '%';
+        if (_ambLearnDlPct >= 0) return '⏳ Getting the voice ready, first use only… ' + _ambLearnDlPct + '%';
         // NO PROGRESS AT ALL is the tell that the worker never got going — a healthy
         // download reports within a second or two, however slow the connection. The
         // warm deadline is minutes (a phone on a bad line is legitimately slow), so
         // say something useful long before it expires rather than sitting mute.
-        if (_ambWarmAt && Date.now() - _ambWarmAt > 25000) return (st && st._notesWhile ? '♪ Words as notes meanwhile — ' : '') + 'the voice isn’t responding; reload the page if this persists.';
-        return (st && st._notesWhile ? '♪ Words as notes meanwhile · downloading the voice…' : 'Downloading the voice, first use only…');
+        if (_ambWarmAt && Date.now() - _ambWarmAt > 25000) return '⚠ The voice isn’t responding — reload the page if this persists.';
+        return '⏳ Getting the voice ready, first use only…';
       }
       if (_ambLastCrumb) return 'Last session stopped during: ' + _ambLastCrumb + ' — tell Claude this line.';
+      // NO seqState (before the first tick, or straight after a play reset) — the
+      // ENTRY still knows the truth, so report from that rather than falling back
+      // to a cheerful "Voice ready" while the take is empty and the layer silent.
+      {
+        const e0 = _ambSeelEntry(_E || E, L, false);
+        const n0 = (e0 && e0.lines) ? e0.lines.length : 0;
+        if (n0) {
+          const d0 = (e0.cache || []).filter(Boolean).length;
+          if (_ambWordOut(L) === 'play') return '✓ Ready — ' + n0 + ' lines as notes. Press play.';
+          const blocked0 = _ambSpeechBlocked(L);
+          if (blocked0) return '⚠ Can’t speak — ' + blocked0 + '. Switch Words as → Play, or fix the voice.';
+          if (!d0) return '⚠ Nothing written yet — press ✍ Write all (' + n0 + ' lines). It will be silent until you do.';
+          if (d0 < n0) return '◑ ' + d0 + ' of ' + n0 + ' written — the rest stay silent; press ✍ Write all.';
+          return '✓ Ready — ' + n0 + ' lines written. Press play.';
+        }
+      }
       if (!st) return _ambLearnWarm ? 'Voice ready — press play' : 'Idle — press play';
       const n = st.sentences ? st.sentences.length : 0;
       const done = Math.max(0, (st.si | 0) - (st.q ? st.q.length : 0));
@@ -14038,21 +14059,26 @@
       if (st.q && st.q.length) {
         const at = n ? (done <= 0 ? 1 : ((done - 1) % n) + 1) : done;
         const ahead = st.prerendering ? (' · writing ' + (st.preDone | 0) + '/' + n + _ambSynthElapsed()) : '';
-        if (st._notesWhile) return '♪ Playing the words as notes — the voice isn’t ready yet' + where + ahead;
         return 'Speaking ' + at + '/' + n + where + ahead;
       }
       // The elapsed seconds are the point: on a phone a line can take a long time,
       // and a number that climbs says "slow", where a frozen one says "stuck".
-      if (st.prerendering) return (st._notesWhile ? '♪ Words as notes while the voice gets ready · writing '
-        : 'Writing ') + (st.preDone | 0) + '/' + n + ' lines…' + where + _ambSynthElapsed();
+      if (st.prerendering) return '✍ Writing ' + (st.preDone | 0) + '/' + n + ' lines…' + where + _ambSynthElapsed();
       if (st.phase === 'render') return 'Writing line ' + Math.min(n, st.si | 0) + '/' + n + where;
       if (n) {
-        // Say how much of the take actually exists. "Ready — 10 lines" while two
-        // are written is the status lying about the thing the user is looking at.
         const _ent = _ambSeelEntry(_E || E, L, false);
         const _done = (_ent && _ent.cache) ? _ent.cache.filter(Boolean).length : n;
-        if (_done < n) return _done + ' of ' + n + ' lines written — ' + (st.title || 'text') + '. Press play, or ✍ Write all.';
-        return 'Ready — ' + (st.title || 'text') + ', ' + n + ' lines. Press play.';
+        const who = st.title || 'text';
+        // SPEAKING LAYERS NEED WRITTEN LINES. Say plainly how many are missing and
+        // what to press — a layer that will be silent must never look ready.
+        if (_ambWordOut(L) !== 'play') {
+          const blocked = _ambSpeechBlocked(L);
+          if (blocked) return '⚠ Can’t speak — ' + blocked + '. Switch Words as → Play, or fix the voice.';
+          if (!_done) return '⚠ Nothing written yet — press ✍ Write all (' + n + ' lines). It will be silent until you do.';
+          if (_done < n) return '◑ ' + _done + ' of ' + n + ' written — ' + who + '. The rest stay silent; press ✍ Write all.';
+          return '✓ Ready — ' + who + ', ' + n + ' lines written. Press play.';
+        }
+        return '✓ Ready — ' + who + ', ' + n + ' lines as notes. Press play.';
       }
       return _ambLearnWarm ? 'Voice ready — press play' : 'Idle — press play';
     }
@@ -14251,6 +14277,15 @@
           // is the state that reads as a permanent hang.
           if (st.phase === 'fetch' && ent.lines.length) st.phase = null;
           // ---- RENDER ----------------------------------------------------
+          // THE ONE GATE THAT MATTERS: writing never happens while the transport
+          // runs. Putting this in the tick was not enough — the card-render hook
+          // kicks this pump too, so a repaint during playback started rendering
+          // behind the performance (measured: 4 synth requests mid-play). One
+          // check here covers every caller.
+          if (E.timer && !_ambWriteWhilePlaying(L) && !L._writeAllOnce) {
+            st.prerendering = false; st._say = null; say();
+            return;
+          }
           // RENDER AT THE PLAY CURSOR, not at the top. While the voice lags, the
           // tick plays un-rendered lines as NOTES and the cursor moves on — so a
           // pump that renders 0,1,2… is forever finishing lines the reading has
@@ -18441,8 +18476,11 @@
           // text (there is nothing to play without it) or when the layer has been
           // told to keep writing while it plays. Otherwise writing happens with
           // the transport stopped, or on the explicit Write action.
+          // NOTHING LOADS DURING PLAYBACK. Fetching mid-play was the last way a
+          // layer could change under the performance; text arrives while stopped
+          // (or on an explicit action) and the status says when it is needed.
           const needText = !cache || !ent.lines.length;
-          if (needText || _ambWriteWhilePlaying(L)) {
+          if ((needText && !E.timer) || _ambWriteWhilePlaying(L)) {
             if (!ent || !ent.running) { try { _ambSeelPrerender(E, L); } catch (e) {} }
           }
           if (cache) {
@@ -18479,7 +18517,7 @@
               st.ci = (st.ci | 0) + 1; st.si = st.ci;
             }
           }
-          if (st.q.length) { st._dryAt = 0; st._notesWhile = false; }
+          if (st.q.length) { st._dryAt = 0; }
         }
         // TELL THE USER WHAT IT IS DOING. The first line can be ~15 s away (voice
         // download) and there is otherwise no signal at all — silence that looks
@@ -18489,39 +18527,10 @@
         let g = 0;
         while (C[key] < HZ && g++ < 4) {
           if (!st.q.length) {
-            // NOTES WHILE THE VOICE ISN'T READY — this replaces waiting in silence,
-            // which was the design flaw behind every "not working on mobile"
-            // report. The voice can be slow (a 24 MB download), dead (ort refusing
-            // to start), or failing in a way that never fires an error, and the
-            // notes fallback used to engage only on a TERMINAL error — a signal
-            // that can be minutes away or never arrive. But the layer has TEXT,
-            // and text can always be played: after a short grace (so a mid-article
-            // render hiccup on a healthy desktop stays a wait, not a ding), each
-            // line the voice hasn't delivered plays as NOTES through the alphabet
-            // translator and the reading moves on. Speech takes over PER LINE the
-            // moment real audio exists. Sound within seconds on any device, with
-            // no error signal required — the fallback can no longer be defeated by
-            // a failure mode nobody predicted.
-            const lines = (st.sentences && st.sentences.length) ? st.sentences : [];
-            if (!lines.length) break;               // nothing to say at all yet
-            if (!st._dryAt) { st._dryAt = now; break; }
-            if (now - st._dryAt < 2.5 && !_ambLearnWorkerErr) break;
-            if (_ambCondFires(L.when, (E.iters[key] | 0), C[key])) {
-              const nci = (st.ci | 0) % lines.length;
-              const nline = lines[nci];
-              st.ci = (st.ci | 0) + 1; st.si = st.ci;
-              st._notesWhile = true;
-              let _nDur = 0;
-              try {
-                window._ambCaptureSink = _ambCapSink(E, key);
-                _nDur = _ambEmitWordPassage(E, key, L, nline, C[key]) || 0;
-              } catch (e) {} finally { window._ambCaptureSink = null; }
-              C[key] = _ambWordSnap(E, L, C[key] + Math.max(0.5, _nDur) + Math.max(0, (L.intervalMs | 0)) / 1000);
-            } else {
-              C[key] = _ambWordSnap(E, L, C[key] + Math.max(0.25, (L.intervalMs | 0) / 1000));
-            }
-            E.iters[key] = (E.iters[key] | 0) + 1;
-            continue;
+            // NOTHING WRITTEN FOR THIS LINE. Wait — do not improvise. A layer set
+            // to speak speaks or says why it cannot; it never turns into notes on
+            // its own (that switching is exactly what was reported as no good).
+            break;
           }
           const _sp = _ambSpeakCfg(L);
           if (_sp.mode === 'cue' && !(st.cue | 0)) {

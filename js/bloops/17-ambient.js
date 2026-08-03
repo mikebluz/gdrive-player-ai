@@ -12009,6 +12009,8 @@
       const out = _ambWordOut(L);
       if (out === 'play') return 'play';
       if (_ambTtsJsonpMode) return out;   // server voice via script transport — worker state is irrelevant
+      // Explicitly server-only and the server is gone → notes, not a surprise voice.
+      if (_ambVoiceFrom(L) === 'server' && _ambLearnErrWhy.indexOf('noserver') >= 0) return 'play';
       if ((_ambLearnWorkerErr || _ambVoiceLatched()) && !_ambSysVoiceOK()) return 'play';
       return out;
     };
@@ -12186,6 +12188,30 @@
     // it arrives as an ordinary <script>. Engaged only after a direct fetch has
     // failed — hosts with working CORS never pay the ~33% base64 tax.
     let _ambTtsJsonpMode = false, _ambTtsCbSeq = 0;
+    // What the SERVER says it can do. The engine there is Kokoro (28 voices) with
+    // Kitten as its fallback, and the list arrives with every ping — so the picker
+    // offers whatever is actually serving rather than a hardcoded eight.
+    let _ambServerVoices = [];
+    // Kokoro ids encode their own description: first letter = accent (a US, b UK),
+    // second = gender, then a name. Turn that into something readable rather than
+    // showing people "bf_emma".
+    function _ambVoiceLabel(id) {
+      const v = String(id || '');
+      const legacy = _AMB_SPOKEN_VOICES.find(x => x[0] === v);
+      if (legacy) return legacy[1];
+      const m = /^([ab])([fm])_(.+)$/.exec(v);
+      if (!m) return v;
+      const name = m[3].charAt(0).toUpperCase() + m[3].slice(1);
+      return name + ' · ' + (m[2] === 'f' ? 'female' : 'male') + (m[1] === 'b' ? ' (UK)' : '');
+    }
+    // The list the picker should show: the server's when the server is the engine,
+    // otherwise the eight this device can synthesise itself.
+    function _ambVoiceChoices() {
+      if (_ambTtsJsonpMode && _ambServerVoices.length) {
+        return _ambServerVoices.map(v => [v, _ambVoiceLabel(v)]);
+      }
+      return _AMB_SPOKEN_VOICES.map(v => [v[0], v[1]]);
+    }
     function _ambTtsJsonp(url, timeoutMs) {
       return new Promise((resolve) => {
         const name = '__bloopsTtsCb' + (++_ambTtsCbSeq);
@@ -12274,6 +12300,7 @@
     // and the console can all reach the same one.
     function _ambVoiceRetry() {
       try { localStorage.removeItem(_AMB_VOICE_LATCH); localStorage.removeItem(_AMB_VOICE_INFLIGHT); } catch (e) {}
+      _ambServerFailAt = 0;   // an explicit ask re-checks the server immediately
       _ambStrikes = 0; _ambLatched = false; _ambLatchChecked = true;
       _ambLearnWorkerErr = null; _ambLearnErrWhy = ''; _ambLearnWarm = false; _ambLearnWarming = false;
       try { if (_ambLearnWorker) { _ambLearnWorker.terminate(); } } catch (e) {}
@@ -12409,6 +12436,7 @@
       if (_ambVoiceLatched()) return null;   // BEFORE the worker is even created
       const t = String(text || '').trim();
       if (!t) return null;
+      if (_ambServerProbe) { try { await _ambServerProbe; } catch (e) {} }   // decide before choosing an engine
       if (_ambTtsJsonpMode) {
         // Server voice over the CORS-proof transport — no worker involved.
         _ambCrumb('jsonp-fetch');
@@ -12474,7 +12502,17 @@
       ['expr-voice-4-f', 'Voice 4 · female'], ['expr-voice-4-m', 'Voice 4 · male'],
       ['expr-voice-5-f', 'Voice 5 · female'], ['expr-voice-5-m', 'Voice 5 · male'],
     ];
-    const _ambSpokenVoice = (L) => (L && typeof L.voice === 'string' && _AMB_SPOKEN_VOICES.some(v => v[0] === L.voice)) ? L.voice : '';
+    // A voice id is valid if it is one of this device's eight OR a server engine id
+    // (Kokoro's `af_heart` / `bm_george` shape). Do NOT validate against the live
+    // server list: normalize runs on load, long before any ping answers, so a
+    // list-based check would WIPE a saved server voice every time a project opened
+    // — the same class of trap as coercing an unknown field back to its default.
+    const _AMB_SERVER_VOICE_RE = /^[ab][fm]_[a-z0-9_]+$/i;
+    const _ambSpokenVoice = (L) => {
+      const v = (L && typeof L.voice === 'string') ? L.voice : '';
+      if (_AMB_SPOKEN_VOICES.some(x => x[0] === v)) return v;
+      return _AMB_SERVER_VOICE_RE.test(v) ? v : '';
+    };
     function _ambSpokenLocalText(L) {
       if (!L) return null;
       if (_ambIsSeel(L)) { const t = String(L.text || '').trim(); return t || null; }
@@ -12719,8 +12757,75 @@
     // Start the model download NOW rather than at the first spoken line. Idempotent
     // and shared: the pipeline is per-worker, so warming once serves every Learn
     // layer, and a second call while one is in flight is a no-op.
+    // WHERE THE VOICE COMES FROM. WebKit has no choice (the server, or nothing —
+    // in-tab inference crashes the app there). Everywhere else this is a real
+    // trade: the server has the better engine and makes a project sound the SAME
+    // on every device, while the local engine works offline and answers instantly
+    // from its cache. 'auto' prefers the server when it answers and falls back to
+    // the device when it does not, which is the behaviour most people want without
+    // having to think about it.
+    const _AMB_VOICE_FROM = [['auto', 'Auto — server if available'], ['device', 'This device'], ['server', 'The voice server']];
+    const _ambVoiceFrom = (L) => { const v = L && L.voiceFrom; return (v === 'device' || v === 'server') ? v : 'auto'; };
+    // Try the server without the worker: one JSONP ping. Returns true when it
+    // answers (and remembers its voice list for the picker).
+    // The in-flight decision. Synthesis must WAIT for it: the pump asks for line 0
+    // within a second of the layer appearing, and without this it beat the ping and
+    // fell through to the local engine — measured as a full 24 MB model download on
+    // a desktop that was about to use the server and never needed it.
+    let _ambServerProbe = null;
+    // A FAILED probe must not be retried on every card render. `_ambLearnWarmUp`
+    // runs whenever a spoken card repaints, so an unreachable server produced a
+    // ping storm — measured at 3208 requests in fourteen seconds with the server
+    // down. One attempt per cooldown; the layer falls back meanwhile, and the ⋯
+    // menu's retry clears it for an explicit re-check.
+    let _ambServerFailAt = 0;
+    const _AMB_SERVER_COOLDOWN_MS = 60000;
+    const _ambServerCooling = () => (_ambServerFailAt > 0 && (Date.now() - _ambServerFailAt) < _AMB_SERVER_COOLDOWN_MS);
+    async function _ambTryServer() {
+      try {
+        const base = _ambTtsUrl();
+        const j = await _ambTtsJsonp(String(base).replace(/\/$/, '') + '/ping', 12000);
+        if (j && j.ok) {
+          _ambTtsJsonpMode = true; _ambLearnWarm = true;
+          _ambLearnWorkerErr = null; _ambLearnErrWhy = ''; _ambLearnWarming = false;
+          if (Array.isArray(j.voices) && j.voices.length) _ambServerVoices = j.voices.slice();
+          try { console.warn('[bloom] Learn voice: using the voice server (' + (j.engine || 'server') + ', ' + _ambServerVoices.length + ' voices)'); } catch (e) {}
+          return true;
+        }
+      } catch (e) {}
+      return false;
+    }
     function _ambLearnWarmUp(E, L) {
       if (_ambVoiceLatched()) return;   // BEFORE the worker is even created
+      // Ask the server FIRST when this layer prefers it — on a hit nothing is
+      // downloaded on this device at all, and desktop and phone share one voice.
+      if (!_ambTtsJsonpMode && !_ambLearnWarm && !_ambLearnWarming && !_ambServerCooling() && _ambVoiceFrom(L) !== 'device') {
+        const _st0 = () => (E.seqState && E.seqState[_ambSpokenKey(L)]) || null;
+        _ambLearnWarming = true;
+        _ambLearnSayEl(E, L, _ambLearnStatusText(L, _st0()));
+        _ambServerProbe = _ambTryServer();
+        _ambServerProbe.then((ok) => {
+          _ambServerProbe = null;
+          _ambLearnWarming = false;
+          if (ok) {
+            try { _ambRenderExtras(E); } catch (e) {}     // the picker now lists the server's voices
+            try { _ambLearnSayAll(E); } catch (e) {}
+            try { _ambSeelPrerender(E, L); } catch (e) {}
+            return;
+          }
+          _ambServerFailAt = Date.now();   // stop hammering an absent server
+          // No server. 'server' means only the server, so say so; 'auto' falls
+          // back to this device's own engine.
+          if (_ambVoiceFrom(L) === 'server') {
+            _ambLearnWorkerErr = new Error('noserver');
+            _ambLearnErrWhy = 'noserver: the voice server did not answer';
+            _ambLearnSayEl(E, L, _ambLearnStatusText(L, _st0()));
+            return;
+          }
+          _ambLearnWarmUp(E, L);
+        });
+        return;
+      }
       // ALWAYS report against the layer's real state. Passing null here said "Voice
       // ready — press play" regardless, and since this runs on every card render it
       // clobbered "Ready — Pasted text, 3 lines" moments after a pre-render finished
@@ -12728,6 +12833,14 @@
       const _st = () => (E.seqState && E.seqState[_ambSpokenKey(L)]) || null;
       if (_ambLearnWarm) { _ambLearnSayEl(E, L, _ambLearnStatusText(L, _st())); return; }
       if (_ambLearnWarming) return;
+      // SERVER-ONLY means server-only: never fall through to the local engine, even
+      // after a failed probe or during its cooldown. Otherwise the setting quietly
+      // does the opposite of what it says and downloads 24 MB anyway.
+      if (_ambVoiceFrom(L) === 'server' && !_ambTtsJsonpMode) {
+        if (!_ambLearnWorkerErr) { _ambLearnWorkerErr = new Error('noserver'); _ambLearnErrWhy = 'noserver: the voice server did not answer'; }
+        _ambLearnSayEl(E, L, _ambLearnStatusText(L, _st()));
+        return;
+      }
       const w = _ambLearnWorkerGet();
       if (!w) { _ambLearnSayEl(E, L, _ambLearnStatusText(L, _st())); return; }
       _ambLearnWarming = true;
@@ -12747,6 +12860,7 @@
           const j = await _ambTtsJsonp(base.replace(/\/$/, '') + '/ping', 20000);
           if (j && j.ok) {
             _ambTtsJsonpMode = true; _ambLearnWarm = true; _ambLearnWorkerErr = null; _ambLearnErrWhy = '';
+            if (Array.isArray(j.voices) && j.voices.length) _ambServerVoices = j.voices.slice();
             try { console.warn('[bloom] Learn voice: server reachable via script transport (CORS-stripped host)'); } catch (e) {}
             // RE-KICK EVERY SPOKEN LAYER. The direct-fetch attempt that got us here
             // also failed a synth on the way (the pump had already asked), which
@@ -12849,6 +12963,11 @@
         // saying, or the user hears notes where they asked for a voice and has no
         // idea why.
         const fell = _ambWordOut(L) !== 'play';
+        if (fell && _ambVoiceFrom(L) === 'server' && _ambLearnErrWhy.indexOf('noserver') >= 0) {
+          const nV = (st && st.sentences) ? st.sentences.length : 0;
+          return 'This layer is set to the voice server, which isn’t answering — playing the words as notes'
+            + (nV ? ' — ' + nV + ' lines' : '') + '. Switch Voice from to Auto to use this device.';
+        }
         if (fell && _ambLearnErrWhy.indexOf('noserver') >= 0) {
           const nS = (st && st.sentences) ? st.sentences.length : 0;
           return 'The voice server isn’t reachable from this phone — playing the words as notes' + (nS ? ' — ' + nS + ' lines' : '') + '.';
@@ -28049,7 +28168,7 @@
       // rhythm — the utterance is the unit — so it carries Source + Gap + the
       // shared mix block and nothing else.
       learn: { label: 'Learn', ctrls: [
-        ['grp', 'Source'], ['learnsrc'], ['spokenvoice'], ['learnstatus'],
+        ['grp', 'Source'], ['learnsrc'], ['voicefrom'], ['spokenvoice'], ['learnstatus'],
         ['grp', 'Notes'], ['tone'], ['wordmusic'],
         ['grp', 'Speech'], ['speechfx'],
         ['grp', 'Timing'], ['speakwhen'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
@@ -28059,7 +28178,7 @@
       // grammatically correct nonsense, written here rather than fetched. Same
       // control set as Learn bar the source block, because it is the same layer.
       sireel: { label: 'Sir Eel', ctrls: [
-        ['grp', 'Source'], ['sl', 'sentences', 'Length', 1, 24, 'sentences per text'], ['seeltext'], ['spokenvoice'], ['learnstatus'],
+        ['grp', 'Source'], ['sl', 'sentences', 'Length', 1, 24, 'sentences per text'], ['seeltext'], ['voicefrom'], ['spokenvoice'], ['learnstatus'],
         ['grp', 'Notes'], ['tone'], ['wordmusic'],
         ['grp', 'Speech'], ['speechfx'],
         ['grp', 'Timing'], ['speakwhen'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
@@ -28688,9 +28807,13 @@
       // console ("where do I select voice in Learn?"). Same shape as every other
       // select here. The voice is part of the render cache key, so switching it
       // re-renders in the background rather than reusing the old audio.
+      if (k === 'voicefrom') return '<div class="ambient-ctrl" title="The voice server has the better engine and makes a project sound the same on every device. This device works offline and answers instantly from its own cache. Auto prefers the server and falls back."><label for="' + p + '-voicefrom">Voice from</label>' +
+        '<select id="' + p + '-voicefrom" class="ambient-select">' +
+        _AMB_VOICE_FROM.map(v => '<option value="' + v[0] + '"' + ((_ambVoiceFrom(inst) === v[0]) ? ' selected' : '') + '>' + _ambEscText(v[1]) + '</option>').join('') +
+        '</select><span class="ambient-hint">where speech is made</span></div>';
       if (k === 'spokenvoice') return '<div class="ambient-ctrl" title="Which voice reads this layer. Changing it re-renders the lines — the audio already made was in the old voice."><label for="' + p + '-spokenvoice">Voice</label>' +
         '<select id="' + p + '-spokenvoice" class="ambient-select">' +
-        _AMB_SPOKEN_VOICES.map(v => '<option value="' + v[0] + '"' + ((_ambSpokenVoice(inst) === v[0]) ? ' selected' : '') + '>' + _ambEscText(v[1]) + '</option>').join('') +
+        _ambVoiceChoices().map(v => '<option value="' + v[0] + '"' + (((inst && inst.voice) || '') === v[0] ? ' selected' : '') + '>' + _ambEscText(v[1]) + '</option>').join('') +
         '</select><span class="ambient-hint">who reads it</span></div>';
       if (k === 'wordbars') return '<div class="ambient-ctrl" title="Free lets each line start as soon as the last one finishes plus the Gap. Locking starts every line on the bar grid — a short line waits for the next bar, a long one takes as many as it needs, and nothing is cut off."><label for="' + p + '-wordbars">Bar lock</label>' +
         '<select id="' + p + '-wordbars" class="ambient-select">' + _AMB_WORD_BARS.map(b => '<option value="' + b[0] + '"' + ((_ambWordBars(inst) === b[0]) ? ' selected' : '') + '>' + b[1] + '</option>').join('') + '</select>' +
@@ -29232,6 +29355,15 @@
             bindSl('wordaoct', 'aOct'); bindSl('wordcents', 'cents'); bindSl('wordchord', 'chord'); bindSl('wordnotems', 'noteMs');
             paint();
           }
+          else if (k === 'voicefrom') { const vf = el('voicefrom');
+            if (vf) vf.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
+              L.voiceFrom = vf.value === 'auto' ? undefined : vf.value;
+              if (!L.voiceFrom) delete L.voiceFrom;
+              // Re-decide from scratch: drop the engine state, keep the layer's text.
+              _ambTtsJsonpMode = false; _ambLearnWarm = false; _ambLearnWarming = false;
+              _ambLearnWorkerErr = null; _ambLearnErrWhy = '';
+              _ambLearnReset(E, L); persist();
+              try { _ambLearnWarmUp(E, L); } catch (x) {} }); }
           else if (k === 'spokenvoice') { const sv = el('spokenvoice');
             if (sv) { sv.value = _ambSpokenVoice(inst);
               sv.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;

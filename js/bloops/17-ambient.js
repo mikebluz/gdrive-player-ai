@@ -28682,6 +28682,16 @@
             '<button type="button" class="ambient-seg ambient-speak-cue" data-cuekey="' + _ambSpokenKey(inst) + '">▶ Speak next line</button>' +
             '<span class="ambient-hint">one line per press</span></div>' : '');
       }
+      // VOICE PICKER. The token and its change handler have been in the schema since
+      // the spoken layers shipped, but the markup was never written — so the control
+      // was listed, wired, and invisible, and `L.voice` could only be set from the
+      // console ("where do I select voice in Learn?"). Same shape as every other
+      // select here. The voice is part of the render cache key, so switching it
+      // re-renders in the background rather than reusing the old audio.
+      if (k === 'spokenvoice') return '<div class="ambient-ctrl" title="Which voice reads this layer. Changing it re-renders the lines — the audio already made was in the old voice."><label for="' + p + '-spokenvoice">Voice</label>' +
+        '<select id="' + p + '-spokenvoice" class="ambient-select">' +
+        _AMB_SPOKEN_VOICES.map(v => '<option value="' + v[0] + '"' + ((_ambSpokenVoice(inst) === v[0]) ? ' selected' : '') + '>' + _ambEscText(v[1]) + '</option>').join('') +
+        '</select><span class="ambient-hint">who reads it</span></div>';
       if (k === 'wordbars') return '<div class="ambient-ctrl" title="Free lets each line start as soon as the last one finishes plus the Gap. Locking starts every line on the bar grid — a short line waits for the next bar, a long one takes as many as it needs, and nothing is cut off."><label for="' + p + '-wordbars">Bar lock</label>' +
         '<select id="' + p + '-wordbars" class="ambient-select">' + _AMB_WORD_BARS.map(b => '<option value="' + b[0] + '"' + ((_ambWordBars(inst) === b[0]) ? ' selected' : '') + '>' + b[1] + '</option>').join('') + '</select>' +
         '<span class="ambient-hint">start each line on the grid</span></div>';

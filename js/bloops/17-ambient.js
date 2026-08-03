@@ -12870,11 +12870,23 @@
     }
     // The list the picker should show: the server's when the server is the engine,
     // otherwise the eight this device can synthesise itself.
-    function _ambVoiceChoices() {
-      if (_ambTtsJsonpMode && _ambServerVoices.length) {
-        return _ambServerVoices.map(v => [v, _ambVoiceLabel(v)]);
+    function _ambVoiceChoices(L) {
+      const base = (_ambTtsJsonpMode && _ambServerVoices.length)
+        ? _ambServerVoices.map(v => [v, _ambVoiceLabel(v)])
+        : _AMB_SPOKEN_VOICES.map(v => [v[0], v[1]]);
+      // ALWAYS include what is actually selected. A layer saved with a server
+      // voice, opened before the ping answers, matched no option at all — and a
+      // <select> with no matching value renders BLANK, which is what "the Voice
+      // box is empty" was.
+      const cur = (L && typeof L.voice === 'string') ? L.voice : '';
+      // The EMPTY id is the default voice and it is a real value — the server maps
+      // it to its own first voice. The server's list contains no '' entry, so
+      // without this the default selection matched nothing and the box rendered
+      // blank (reported as "the Voice box is empty").
+      if (!base.some(v => v[0] === cur)) {
+        base.unshift([cur, cur ? _ambVoiceLabel(cur) : 'Default — whatever the engine picks']);
       }
-      return _AMB_SPOKEN_VOICES.map(v => [v[0], v[1]]);
+      return base;
     }
     function _ambTtsJsonp(url, timeoutMs) {
       return new Promise((resolve) => {
@@ -14021,7 +14033,14 @@
       if (st.prerendering) return (st._notesWhile ? '♪ Words as notes while the voice gets ready · writing '
         : 'Writing ') + (st.preDone | 0) + '/' + n + ' lines…' + where + _ambSynthElapsed();
       if (st.phase === 'render') return 'Writing line ' + Math.min(n, st.si | 0) + '/' + n + where;
-      if (n) return 'Ready — ' + (st.title || 'text') + ', ' + n + ' lines. Press play.';
+      if (n) {
+        // Say how much of the take actually exists. "Ready — 10 lines" while two
+        // are written is the status lying about the thing the user is looking at.
+        const _ent = _ambSeelEntry(_E || E, L, false);
+        const _done = (_ent && _ent.cache) ? _ent.cache.filter(Boolean).length : n;
+        if (_done < n) return _done + ' of ' + n + ' lines written — ' + (st.title || 'text') + '. Press play, or ✍ Write all.';
+        return 'Ready — ' + (st.title || 'text') + ', ' + n + ' lines. Press play.';
+      }
       return _ambLearnWarm ? 'Voice ready — press play' : 'Idle — press play';
     }
     function _ambLearnSay(E, L, st, txt) {
@@ -14266,7 +14285,12 @@
           // and it is why a fetched article is instant there.
           // An explicit "Write all" ignores the render-ahead cap — the user asked
           // for the whole take, so give them the whole take.
-          if (!L._writeAllOnce && (_AMB_WK || _ambTtsJsonpMode) && ent.lines.length > _AMB_WK_AHEAD) {
+          // The cap exists to stop a phone or a remote engine grinding WHILE
+          // AUDIO IS PLAYING. Stopped, there is nothing to protect and every
+          // reason to finish the take — capping there left a layer permanently
+          // stuck at "2 of 10 written" with nothing able to move it, while the
+          // status cheerfully said Ready.
+          if (!L._writeAllOnce && E.timer && (_AMB_WK || _ambTtsJsonpMode) && ent.lines.length > _AMB_WK_AHEAD) {
             const cur = ((st.ci | 0) % ent.lines.length + ent.lines.length) % ent.lines.length;
             let ready = 0;
             for (let k = 0; k < _AMB_WK_AHEAD; k++) if (ent.cache[(cur + k) % ent.lines.length]) ready++;
@@ -29922,7 +29946,7 @@
         '</select><span class="ambient-hint">where speech is made</span></div>';
       if (k === 'spokenvoice') return '<div class="ambient-ctrl" title="Which voice reads this layer. Changing it re-renders the lines — the audio already made was in the old voice."><label for="' + p + '-spokenvoice">Voice</label>' +
         '<select id="' + p + '-spokenvoice" class="ambient-select">' +
-        _ambVoiceChoices().map(v => '<option value="' + v[0] + '"' + (((inst && inst.voice) || '') === v[0] ? ' selected' : '') + '>' + _ambEscText(v[1]) + '</option>').join('') +
+        _ambVoiceChoices(inst).map(v => '<option value="' + v[0] + '"' + (((inst && inst.voice) || '') === v[0] ? ' selected' : '') + '>' + _ambEscText(v[1]) + '</option>').join('') +
         '</select><span class="ambient-hint">who reads it</span></div>';
       if (k === 'wordbars') return '<div class="ambient-ctrl" title="Free lets each line start as soon as the last one finishes plus the Gap. Locking starts every line on the bar grid — a short line waits for the next bar, a long one takes as many as it needs, and nothing is cut off."><label for="' + p + '-wordbars">Bar lock</label>' +
         '<select id="' + p + '-wordbars" class="ambient-select">' + _AMB_WORD_BARS.map(b => '<option value="' + b[0] + '"' + ((_ambWordBars(inst) === b[0]) ? ' selected' : '') + '>' + b[1] + '</option>').join('') + '</select>' +

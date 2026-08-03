@@ -3917,6 +3917,16 @@
   cursor: pointer; font-size: 0.68rem; line-height: 1; }
 .amb-line-row:not(.written) .amb-line-play { color: #4a4a63; cursor: default; }
 .amb-line-play:hover, .amb-line-rw:hover { border-color: #9f7aea; }
+.amb-line-on { flex: 0 0 auto; width: 14px; height: 14px; margin: 0; accent-color: #9f7aea; cursor: pointer; }
+.amb-line-row.off { opacity: 0.42; }
+.amb-line-row.off .amb-line-t { text-decoration: line-through; }
+.amb-line-ed { flex: 0 0 auto; width: 22px; height: 22px; padding: 0; border: 1px solid #2d2d3f;
+  border-radius: 6px; background: transparent; color: #9f7aea; cursor: pointer; font-size: 0.68rem; line-height: 1; }
+.amb-line-ed:hover { border-color: #9f7aea; }
+.amb-line-ed.on { border-color: #f6e05e; color: #f6e05e; }   /* this line differs from the layer */
+.amb-line-tag { flex: 0 0 auto; font-size: 0.62rem; color: #f6e05e; opacity: 0.85; }
+.amb-line-quote { grid-column: 1 / -1; font-style: italic; opacity: 0.85; white-space: normal; }
+@media (max-width: 700px) { .amb-line-on { width: 20px; height: 20px; } .amb-line-ed { width: 30px; height: 30px; font-size: 0.8rem; } }
 .amb-line-n { flex: 0 0 auto; min-width: 16px; text-align: right; opacity: 0.6; }
 .amb-line-t { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .amb-line-d { flex: 0 0 auto; opacity: 0.7; font-variant-numeric: tabular-nums; }

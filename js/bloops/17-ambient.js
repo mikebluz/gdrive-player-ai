@@ -13469,6 +13469,117 @@
         });
       } catch (e) {}
     }
+    // The per-line editor. Everything here is that ONE take's business: when it
+    // plays, and how it sounds. The layer's own Speech FX still apply on top —
+    // this is a difference from the layer, not a replacement for it.
+    function _ambLineModal(E, key, i) {
+      const L = _ambLayerByKey(E, key); if (!L) return;
+      const ent = _ambSeelEntry(E, L, false);
+      const text = ((ent && ent.lines) || [])[i | 0] || '';
+      const c = _ambLineCfg(L, i);
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, '');
+      const overlay = document.createElement('div'); overlay.className = 'modal-overlay';
+      const modal = document.createElement('div'); modal.className = 'step-div-modal amb-line-modal';
+      const sl = (id, label, min, max, val, hint) => '<div class="ambient-ctrl"><label for="amb-ln-' + id + '">' + label + '</label>' +
+        '<input type="range" id="amb-ln-' + id + '" class="ambient-range amb-ln-sl" data-k="' + id + '" min="' + min + '" max="' + max + '" step="1" value="' + val + '">' +
+        '<span class="ambient-hint"><span id="amb-lnv-' + id + '">' + val + '</span>' + (hint || '%') + '</span></div>';
+      modal.innerHTML = '<div class="ambient-mod-sub">Line ' + ((i | 0) + 1) + '</div>' +
+        '<div class="ambient-hint amb-line-quote">' + esc(String(text).slice(0, 160)) + '</div>' +
+        '<div class="ambient-ctrl"><label for="amb-ln-on">Plays</label>' +
+          '<select id="amb-ln-on" class="ambient-select">' +
+            '<option value="1"' + (c.on ? ' selected' : '') + '>Yes</option>' +
+            '<option value="0"' + (c.on ? '' : ' selected') + '>Skip this line</option>' +
+          '</select><span class="ambient-hint">include in the reading</span></div>' +
+        '<div class="ambient-ctrl"><label for="amb-ln-every">When</label>' +
+          '<select id="amb-ln-every" class="ambient-select">' +
+            [1, 2, 3, 4, 6, 8].map(n => '<option value="' + n + '"' + ((!c.cue && c.every === n) ? ' selected' : '') + '>' + (n === 1 ? 'Every pass' : 'Every ' + n + ' passes') + '</option>').join('') +
+            '<option value="cue"' + (c.cue ? ' selected' : '') + '>Only when cued</option>' +
+          '</select><span class="ambient-hint">per-line schedule</span></div>' +
+        (c.every > 1 && !c.cue ? '<div class="ambient-ctrl"><label for="amb-ln-off">Offset</label>' +
+          '<input type="range" id="amb-ln-off" class="ambient-range amb-ln-sl" data-k="off" min="0" max="' + (c.every - 1) + '" step="1" value="' + c.off + '">' +
+          '<span class="ambient-hint">pass <span id="amb-lnv-off">' + c.off + '</span></span></div>' : '') +
+        sl('gain', 'Level', 0, 200, c.gain) +
+        sl('rate', 'Speed', 25, 300, c.rate) +
+        sl('start', 'Trim in', 0, 99, c.start) +
+        sl('len', 'Trim out', 1, 100, c.len) +
+        '<div class="ambient-ctrl"><label for="amb-ln-rev">Reverse</label>' +
+          '<select id="amb-ln-rev" class="ambient-select">' +
+            '<option value="0"' + (c.rev ? '' : ' selected') + '>Off</option>' +
+            '<option value="1"' + (c.rev ? ' selected' : '') + '>Backwards</option>' +
+          '</select><span class="ambient-hint">this line only</span></div>' +
+        '<div class="amb-learn-pick-btns">' +
+          '<button type="button" class="ambient-seg amb-ln-hear">▶ Hear it</button>' +
+          '<button type="button" class="ambient-seg amb-ln-reset">Reset</button>' +
+          '<button type="button" class="ambient-seg amb-ln-done">Done</button>' +
+        '</div>';
+      overlay.appendChild(modal); document.body.appendChild(overlay);
+      overlay.style.setProperty('display', 'flex', 'important');
+      const close = () => { try { overlay.remove(); } catch (e) {} try { _ambRenderExtras(E); } catch (e) {} };
+      overlay.addEventListener('click', (ev) => { if (ev.target === overlay) close(); });
+      modal.querySelector('.amb-ln-done').addEventListener('click', close);
+      const save = (patch) => { _ambLineSet(L, i, patch); if (typeof persistWorkspace === 'function') persistWorkspace(); };
+      modal.querySelectorAll('.amb-ln-sl').forEach(el => el.addEventListener('input', () => {
+        const k = el.getAttribute('data-k'), v = parseInt(el.value, 10) | 0;
+        const out = modal.querySelector('#amb-lnv-' + k); if (out) out.textContent = String(v);
+        save({ [k]: v });
+      }));
+      modal.querySelector('#amb-ln-on').addEventListener('change', (ev) => save({ on: ev.target.value === '1' ? 1 : 0 }));
+      modal.querySelector('#amb-ln-rev').addEventListener('change', (ev) => save({ rev: ev.target.value === '1' ? 1 : 0 }));
+      modal.querySelector('#amb-ln-every').addEventListener('change', (ev) => {
+        const v = ev.target.value;
+        if (v === 'cue') save({ cue: 1, every: 1 });
+        else save({ cue: 0, every: parseInt(v, 10) | 0 });
+        close(); _ambLineModal(E, key, i);   // the Offset row appears/disappears with it
+      });
+      modal.querySelector('.amb-ln-hear').addEventListener('click', () => { try { _ambAuditionLine(E, key, i); } catch (e) {} });
+      modal.querySelector('.amb-ln-reset').addEventListener('click', () => {
+        try { if (L.lineFx) { delete L.lineFx[String(i | 0)]; if (!Object.keys(L.lineFx).length) delete L.lineFx; } } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        close(); _ambLineModal(E, key, i);
+      });
+    }
+    // ---- PER-LINE CONTROL --------------------------------------------------
+    // Each written take can carry its own settings: whether it plays at all,
+    // when it plays, and how it sounds. Stored SPARSELY on the layer as
+    // `lineFx["<i>"]` and absent by default, so a layer nobody has edited
+    // behaves exactly as before and saves nothing extra.
+    //   on    — include this line in the reading (default true)
+    //   every — play only every Nth pass, at offset `off` (default 1 = always)
+    //   cue   — never plays unless cued, whatever the layer's Speak mode
+    //   gain  — 0-200% of the layer level
+    //   rate  — 25-300% playback speed
+    //   start/len — trim, as a percentage of the line
+    //   rev   — play this line backwards
+    const _AMB_LINE_DEFAULTS = { on: 1, every: 1, off: 0, cue: 0, gain: 100, rate: 100, start: 0, len: 100, rev: 0 };
+    function _ambLineCfg(L, i) {
+      const raw = (L && L.lineFx && L.lineFx[String(i | 0)]) || null;
+      const o = Object.assign({}, _AMB_LINE_DEFAULTS);
+      if (raw) for (const k in _AMB_LINE_DEFAULTS) if (raw[k] != null && Number.isFinite(+raw[k])) o[k] = +raw[k];
+      return o;
+    }
+    function _ambLineSet(L, i, patch) {
+      if (!L) return;
+      L.lineFx = L.lineFx || {};
+      const key = String(i | 0);
+      const cur = Object.assign(_ambLineCfg(L, i), patch);
+      // Drop anything at its default so the object stays sparse (and a line the
+      // user reset leaves no trace at all).
+      const keep = {};
+      for (const k in _AMB_LINE_DEFAULTS) if (cur[k] !== _AMB_LINE_DEFAULTS[k]) keep[k] = cur[k];
+      if (Object.keys(keep).length) L.lineFx[key] = keep; else delete L.lineFx[key];
+      if (!Object.keys(L.lineFx).length) delete L.lineFx;
+    }
+    const _ambLineEdited = (L, i) => !!(L && L.lineFx && L.lineFx[String(i | 0)]);
+    // Does line `i` play on this pass? Selection, cycle gate and cue, in that
+    // order — all deterministic given the pass number.
+    function _ambLinePlays(L, i, pass, cued) {
+      const c = _ambLineCfg(L, i);
+      if (!c.on) return false;
+      if (c.cue) return !!cued;
+      const n = Math.max(1, c.every | 0);
+      if (n > 1 && (((pass | 0) - (c.off | 0)) % n + n) % n !== 0) return false;
+      return true;
+    }
     // ---- WRITTEN LINES: the take, as an object the user can act on ---------
     // A line is written ONCE and then belongs to the layer. These four actions
     // are the whole contract: hear one, write one again, write them all, throw
@@ -14246,9 +14357,12 @@
     };
     // Returns the SOUNDING duration so the caller can advance its clock by what it
     // actually scheduled — chop order (ping-pong) and rate both change it.
-    function _ambLearnPlay(E, key, L, buf, at) {
+    // `lineIdx` (optional) applies THAT line's own settings on top of the layer's
+    // — the layer decides the character, a line can differ from it.
+    function _ambLearnPlay(E, key, L, buf, at, lineIdx) {
       try {
         if (!buf) return null;
+        const _lc = (lineIdx == null) ? null : _ambLineCfg(L, lineIdx);
         const ac = Tone.getContext().rawContext;
         const dest = _ambLayerDest(key);
         if (!dest) return null;
@@ -14258,13 +14372,26 @@
         // than under it.
         const g = ac.createGain();
         const lvl = Math.max(0, Math.min(100, Number.isFinite(L && L.level) ? (L.level | 0) : 70));
-        g.gain.value = (lvl / 100) * _AMB_LEARN_BOOST;
+        g.gain.value = (lvl / 100) * _AMB_LEARN_BOOST * (_lc ? Math.max(0, (_lc.gain | 0)) / 100 : 1);
         try { g.connect(dest); } catch (e) { try { g.connect(dest.input || dest); } catch (e2) { return null; } }
         const t0 = Math.max(ac.currentTime, Number.isFinite(at) ? at : 0);
-        if (!_ambSpeechOn(L)) {
+        const _lcEdits = !!(_lc && (_lc.rate !== 100 || _lc.start !== 0 || _lc.len !== 100 || _lc.rev));
+        if (!_ambSpeechOn(L) && !_lcEdits) {
           const src = ac.createBufferSource();
           src.buffer = buf; src.connect(g); src.start(t0);
           return { src: src, dur: buf.duration };
+        }
+        // A line with its own edits and no layer speech-FX: play just this line's
+        // window, at its own rate and direction.
+        if (!_ambSpeechOn(L)) {
+          const pb = _lc.rev ? _ambSpeechReversed(ac, buf) : buf;
+          const r = Math.max(0.25, Math.min(3, (_lc.rate | 0) / 100));
+          const s0 = pb.duration * Math.max(0, Math.min(99, _lc.start | 0)) / 100;
+          const ln = Math.max(0.02, pb.duration * Math.max(1, Math.min(100, _lc.len | 0)) / 100 - s0);
+          const src = ac.createBufferSource();
+          src.buffer = pb; src.playbackRate.value = r; src.connect(g);
+          src.start(t0, s0, ln);
+          return { src: src, dur: ln / r };
         }
         const o = _ambSpeechOpt(L);
         const play = o.reverse ? _ambSpeechReversed(ac, buf) : buf;
@@ -18210,12 +18337,24 @@
               // (it is written) or played as notes (it is not), and the reading
               // always moves 0,1,2,3 — the same order every pass, every device.
               const ci = (st.ci | 0) % cache.length;
+              // SELECTION AND PER-LINE SCHEDULE. A line switched off, gated to
+              // every Nth pass, or marked cue-only is stepped over without
+              // sounding — the reading keeps its order, it just misses that one.
+              // The guard stops an all-excluded take spinning forever.
+              const pass = Math.floor((st.ci | 0) / cache.length);
+              if (!_ambLinePlays(L, ci, pass, (st.cue | 0) > 0)) {
+                st.ci = (st.ci | 0) + 1; st.si = st.ci;
+                if ((st.ci | 0) - (st._skipFrom | 0) > cache.length) { st._skipFrom = st.ci; break; }
+                continue;
+              }
+              st._skipFrom = st.ci;
               const b = cache[ci];
               if (!b) break;                        // not written yet — notes cover it, in place
               // The LINE rides along with its buffer: "Both" needs to know which text
               // the audio about to play corresponds to, and the queue is the only
               // place that mapping still exists by the time it is played.
               st.q.push(b); (st.qL = st.qL || []).push(ent.lines[ci] || '');
+              (st.qI = st.qI || []).push(ci);        // which line this buffer IS
               st.ci = (st.ci | 0) + 1; st.si = st.ci;
             }
           }
@@ -18273,9 +18412,10 @@
           if (_ambCondFires(L.when, (E.iters[key] | 0), C[key])) {
             const buf = st.q.shift();
             const line = (st.qL && st.qL.length) ? st.qL.shift() : '';
+            const lineIx = (st.qI && st.qI.length) ? st.qI.shift() : null;
             if (_sp.mode === 'cue') st.cue = Math.max(0, (st.cue | 0) - 1);
             window._ambCaptureSink = _ambCapSink(E, key);
-            const _played = _ambLearnPlay(E, key, L, buf, C[key]);
+            const _played = _ambLearnPlay(E, key, L, buf, C[key], lineIx);
             window._ambCaptureSink = null;
             // BOTH: the passage starts with the spoken line, so the notes and the
             // words are the same text arriving two ways at once.
@@ -28993,20 +29133,20 @@
       // rhythm — the utterance is the unit — so it carries Source + Gap + the
       // shared mix block and nothing else.
       learn: { label: 'Learn', ctrls: [
-        ['grp', 'Source'], ['learnsrc'], ['voicefrom'], ['spokenvoice'], ['learnstatus'], ['lines'], ['livewrite'],
+        ['grp', 'Source'], ['learnsrc'], ['voicefrom'], ['spokenvoice'], ['learnstatus'], ['lines'], ['speakwhen'], ['livewrite'],
         ['grp', 'Notes'], ['tone'], ['wordmusic'],
         ['grp', 'Speech'], ['speechfx'],
-        ['grp', 'Timing'], ['speakwhen'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
+        ['grp', 'Timing'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
         ..._AMB_MIX,
       ] },
       // Sir Eel: the same spoken layer with a GENERATOR instead of a library —
       // grammatically correct nonsense, written here rather than fetched. Same
       // control set as Learn bar the source block, because it is the same layer.
       sireel: { label: 'Sir Eel', ctrls: [
-        ['grp', 'Source'], ['sl', 'sentences', 'Length', 1, 24, 'sentences per text'], ['seeltext'], ['voicefrom'], ['spokenvoice'], ['learnstatus'], ['lines'], ['livewrite'],
+        ['grp', 'Source'], ['sl', 'sentences', 'Length', 1, 24, 'sentences per text'], ['seeltext'], ['voicefrom'], ['spokenvoice'], ['learnstatus'], ['lines'], ['speakwhen'], ['livewrite'],
         ['grp', 'Notes'], ['tone'], ['wordmusic'],
         ['grp', 'Speech'], ['speechfx'],
-        ['grp', 'Timing'], ['speakwhen'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
+        ['grp', 'Timing'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
         ..._AMB_MIX,
       ] },
       beat: { label: 'Beat', ctrls: [
@@ -29653,11 +29793,16 @@
         const rows = lines.map((t, i) => {
           const have = !!cache[i];
           const secs = have ? (cache[i].duration || 0).toFixed(1) + 's' : '';
-          return '<div class="amb-line-row' + (have ? ' written' : '') + (i === cur ? ' playing' : '') + '">' +
+          const lc = _ambLineCfg(inst, i);
+          const tag = lc.cue ? '⊙' : (lc.every > 1 ? '/' + lc.every : '');
+          return '<div class="amb-line-row' + (have ? ' written' : '') + (i === cur ? ' playing' : '') + (lc.on ? '' : ' off') + '">' +
+            '<input type="checkbox" class="amb-line-on" data-lkey="' + key + '" data-li="' + i + '"' + (lc.on ? ' checked' : '') + ' title="Include this line in the reading">' +
             '<button type="button" class="amb-line-play" data-lkey="' + key + '" data-li="' + i + '" title="' + (have ? 'Audition this line' : 'Not written yet') + '">' + (have ? '▶' : '·') + '</button>' +
             '<span class="amb-line-n">' + (i + 1) + '</span>' +
             '<span class="amb-line-t">' + _ambEscText(String(t).slice(0, 70)) + '</span>' +
+            (tag ? '<span class="amb-line-tag">' + tag + '</span>' : '') +
             '<span class="amb-line-d">' + secs + '</span>' +
+            '<button type="button" class="amb-line-ed' + (_ambLineEdited(inst, i) ? ' on' : '') + '" data-lkey="' + key + '" data-li="' + i + '" title="Edit this line — when it plays, how loud, how fast, trimmed, reversed">✎</button>' +
             '<button type="button" class="amb-line-rw" data-lkey="' + key + '" data-li="' + i + '" title="Write this line again (after a voice change, say)">↻</button>' +
           '</div>';
         }).join('');
@@ -33210,6 +33355,18 @@
       // re-renders. Picking a mode on an unpromoted seed preview PROMOTES it
       // first (same as an edit would), which stamps the keyCtx capture frame.
       host.addEventListener('change', (e) => {
+        // Per-line include/exclude — the one row control that is a checkbox, so
+        // it arrives here rather than on the click handler.
+        const lon = e.target && e.target.closest && e.target.closest('.amb-line-on');
+        if (lon) {
+          try { _E = E;
+            const L2 = _ambLayerByKey(E, lon.dataset.lkey);
+            if (L2) { _ambLineSet(L2, lon.dataset.li | 0, { on: lon.checked ? 1 : 0 });
+              const row = lon.closest('.amb-line-row'); if (row) row.classList.toggle('off', !lon.checked);
+              if (typeof persistWorkspace === 'function') persistWorkspace(); }
+          } catch (x) {}
+          return;
+        }
         // Studio Sim select — regen similarity, stored transiently on the layer.
         const sm2 = e.target && e.target.closest && e.target.closest('.ambient-roll-sim');
         if (sm2) { try { _E = E; const L2 = _ambLayerByKey(E, sm2.dataset.rkey); if (L2) L2._pvSim = (sm2.value | 0); } catch (e2) {} return; }
@@ -33465,6 +33622,10 @@
         const pb0 = e.target && e.target.closest && e.target.closest('.ambient-savepreset-btn');
         if (pb0) { e.stopPropagation(); try { _ambSaveLayerAsPreset(E, pb0.dataset.savekey); } catch (err) { console.warn('Save preset failed', err); } return; }
         // ---- written-line actions ----------------------------------------
+        const led = e.target && e.target.closest && e.target.closest('.amb-line-ed');
+        if (led) { e.stopPropagation();
+          try { _ambLineModal(E, led.dataset.lkey, led.dataset.li | 0); } catch (x) { console.warn('line editor failed', x); }
+          return; }
         const lp = e.target && e.target.closest && e.target.closest('.amb-line-play');
         if (lp) { e.stopPropagation();
           try { _ambAuditionLine(E, lp.dataset.lkey, lp.dataset.li | 0); } catch (x) {}

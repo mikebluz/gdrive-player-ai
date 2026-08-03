@@ -81,9 +81,26 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
      (anti-runaway headroom; live taps bypass via globalSendTap)  before masterBus
 
    Mix BLOOM (master generative engine) ─► its layer mod chains (+ Bloom Freeverb)
-     ─► bloomMasterGain (−6 dB trim) ─► masterBus  — bypasses the grid FX sends
-     above; the trim evens its dense, many-voice mix against lane playback
+     ─► the layer's MIX BUS ─► bloomMasterGain (−6 dB trim) ─► masterBus
+     the trim evens its dense, many-voice mix against lane playback
      (which gets the laneSumBus headroom trim).
+
+   BLOOM MIX BUSES (named groups; layer.bus = 'a'|'b'|'c'|'d', absent = 'a')
+     Each bus is a Gain that its layers sum into, and it decides two things:
+
+       bus gain ──┬─ direct=false ─► bloomMasterGain ─► masterBus   (DEFAULT: the
+                  │                                      historical single path)
+                  ├─ direct=true  ─► masterVolume       (skips Warmth / Glue /
+                  │                                      compressor — but NEVER
+                  │                                      the limiter)
+                  └─ per-FX send gains (0-100) ─► fxSendBus[name] ─► the SHARED
+                                                   FX returns above — the same
+                                                   parallel returns lane playback
+                                                   uses, which Bloom could not
+                                                   reach before buses existed.
+
+     Bus 'a' with no settings is byte-identical to the old routing (golden gate
+     depends on that). Settings live in cfg.buses[id] = {name, direct, sends}.
 
    MASTER CHAIN (series — contains NO FX; the 10 effects are parallel returns):
    masterBus (Gain 0.6) ─► [DC block / sub HPF ~28 Hz] ─► [Master Warmth stage] ─► masterCompressor ─► masterVolume

@@ -1736,6 +1736,62 @@
       return Math.max(1, sounding.length);
     }
     function updateLaneSumCompensation() { setLaneSumCompensation(_soundingLaneCount()); }
+    // ---- BLOOM MIX BUSES ----------------------------------------------------
+    // Named groups a Bloom layer can be assigned to. Every bus is a Gain that
+    // sums its layers and then decides TWO things independently:
+    //   · does it pass through the master colouring (Warmth / Glue / compressor)
+    //     or jump straight to the post-colour stage — `direct`;
+    //   · how much of it goes into each shared FX return (reverb, delay, chorus…)
+    //     — sends, the returns lane playback already uses and Bloom never could.
+    // Bus 'a' with no sends and direct:false IS the old single path, so a project
+    // that never touches this sounds byte-identical (the golden gate depends on
+    // that being true by construction, not by luck).
+    const bloomBuses = {};
+    function getBloomBus(id) {
+      const key = String(id || 'a');
+      if (bloomBuses[key]) return bloomBuses[key];
+      let bus;
+      try { bus = new Tone.Gain(1); } catch (e) { return null; }
+      bloomBuses[key] = { id: key, gain: bus, sends: {}, direct: false, tap: null };
+      routeBloomBus(key, { direct: false });
+      return bloomBuses[key];
+    }
+    // Where a bus lands. 'direct' skips the master colouring but NEVER the
+    // limiter — bypassing that would let a bus clip the output, which is not a
+    // creative choice, just a broken one.
+    function routeBloomBus(id, opts) {
+      const b = bloomBuses[String(id || 'a')];
+      if (!b) return;
+      const direct = !!(opts && opts.direct);
+      b.direct = direct;
+      try { b.gain.disconnect(); } catch (e) {}
+      const post = (typeof masterVolume !== 'undefined' && masterVolume) ? masterVolume : null;
+      const dest = direct ? (post || masterBus) : masterBus;
+      try { b.gain.connect(dest); } catch (e) { try { b.gain.connect(masterBus); } catch (e2) {} }
+      // Re-attach the sends: disconnect() above dropped them too.
+      Object.keys(b.sends).forEach(name => setBloomBusSend(id, name, b.sends[name], true));
+    }
+    // One send gain per (bus, FX). Level is 0-100 like every other send here.
+    function setBloomBusSend(id, name, level, _reattach) {
+      const b = bloomBuses[String(id || 'a')];
+      if (!b || FX_NAMES.indexOf(name) < 0) return;
+      const v = Math.max(0, Math.min(100, level | 0));
+      b.sends[name] = v;
+      b.tap = b.tap || {};
+      if (!b.tap[name]) {
+        try { b.tap[name] = new Tone.Gain(0); } catch (e) { return; }
+      }
+      try { b.gain.connect(b.tap[name]); } catch (e) {}
+      if (fxSendBus[name]) { try { b.tap[name].connect(fxSendBus[name]); } catch (e) {} }
+      try { b.tap[name].gain.value = v / 100; } catch (e) {}
+    }
+    try {
+      window.getBloomBus = getBloomBus;
+      window.routeBloomBus = routeBloomBus;
+      window.setBloomBusSend = setBloomBusSend;
+      window.bloomBuses = bloomBuses;
+    } catch (e) {}
+
     const _globalSendGains = {};
     function applyGlobalSendGains() {
       FX_NAMES.forEach(name => {

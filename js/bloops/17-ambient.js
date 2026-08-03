@@ -1940,6 +1940,55 @@
     // (−6 dB), kept lazy so masterBus/Tone exist when it's first built.
     let _bloomMasterGain = null;
     const _BLOOM_MASTER_TRIM = 0.5;
+    // A layer's own bus, when it has one. `layer.bus` names a group defined in
+    // cfg.buses; absent (or 'a' with default settings) is the single path Bloom
+    // always had, so nothing about an untouched project changes.
+    const _AMB_BUS_IDS = ['a', 'b', 'c', 'd'];
+    const _AMB_BUS_DEFAULT_NAMES = { a: 'Main', b: 'Bus B', c: 'Bus C', d: 'Bus D' };
+    // cfg.buses[id] = { name, direct, sends:{fx:0-100} }. Absent everywhere by
+    // default — the object only appears once someone changes something, so a
+    // project that never opens this panel is byte-identical (and the golden
+    // render stays valid by construction).
+    function _ambBusCfg(cfg, id) {
+      const b = (cfg && cfg.buses && cfg.buses[id]) || null;
+      return {
+        name: (b && typeof b.name === 'string' && b.name.trim()) ? b.name.trim() : (_AMB_BUS_DEFAULT_NAMES[id] || id.toUpperCase()),
+        direct: !!(b && b.direct),
+        sends: (b && b.sends && typeof b.sends === 'object') ? b.sends : {},
+      };
+    }
+    function _ambBusSet(cfg, id, patch) {
+      if (!cfg) return;
+      cfg.buses = cfg.buses || {};
+      const cur = cfg.buses[id] || {};
+      cfg.buses[id] = Object.assign({}, cur, patch);
+      _ambBusApply(cfg, id);
+    }
+    // Push a bus's settings into the audio graph. Bus 'a' with nothing set is
+    // deliberately left alone — that is the untouched historical path.
+    function _ambBusApply(cfg, id) {
+      try {
+        if (typeof getBloomBus !== 'function') return;
+        const c = _ambBusCfg(cfg, id);
+        const has = !!(cfg && cfg.buses && cfg.buses[id]);
+        if (id === 'a' && !has) return;
+        getBloomBus(id);
+        routeBloomBus(id, { direct: c.direct });
+        const names = (typeof FX_NAMES !== 'undefined') ? FX_NAMES : [];
+        names.forEach(n => setBloomBusSend(id, n, (c.sends && c.sends[n]) | 0));
+      } catch (e) {}
+    }
+    function _ambBusApplyAll(cfg) { _AMB_BUS_IDS.forEach(id => _ambBusApply(cfg, id)); }
+    const _ambBusOf = (L) => { const b = L && L.bus; return (_AMB_BUS_IDS.indexOf(b) >= 0) ? b : 'a'; };
+    function _ambBusDest(L) {
+      const id = _ambBusOf(L);
+      if (id === 'a') return _ambMasterBloomBus();     // the historical path
+      try {
+        if (typeof getBloomBus !== 'function') return _ambMasterBloomBus();
+        const b = getBloomBus(id);
+        return (b && b.gain) ? b.gain : _ambMasterBloomBus();
+      } catch (e) { return _ambMasterBloomBus(); }
+    }
     function _ambMasterBloomBus() {
       if (_bloomMasterGain) return _bloomMasterGain;
       if (typeof masterBus === 'undefined' || !masterBus || typeof Tone === 'undefined') return (typeof masterBus !== 'undefined' && masterBus) ? masterBus : Tone.getDestination();
@@ -2001,7 +2050,7 @@
     }
     const _masterEng = _makeAmbientEngine({
       getCfg:  function () { _masterBloomState(); return _normalizeAmbientCfg(masterAmbient); },   // masterAmbient = active area
-      busNode: function () { return _ambMasterBloomBus(); },
+      busNode: function (L) { return _ambBusDest(L); },
       laneIdx: function () { return null; },
       guard:   function () { return true; },
       hostId: 'mix-bloom-host', idPrefix: 'mix-bloom', vizId: 'mix-bloom-viz',
@@ -2045,7 +2094,7 @@
     function _shapeBloomInvalidate() { _shapeBloomCfgCache = null; _shapeBloomCfgSig = ' '; }
     const _shapeBloomEng = _makeAmbientEngine({
       getCfg:  function () { return _shapeBloomSynthCfg(); },
-      busNode: function () { return _ambMasterBloomBus(); },
+      busNode: function (L) { return _ambBusDest(L); },
       laneIdx: function () { return null; },
       guard:   function () { return true; },
       hostId: 'shape-bloom-host', idPrefix: 'shape-bloom', vizId: 'shape-bloom-viz',
@@ -13287,6 +13336,47 @@
     //
     // DISMISSIBLE and non-blocking: the work carries on if you close it, and closing
     // is never required. Nothing here drives the pipeline; it only watches.
+    // BUS EDITOR. One bus at a time: its name, whether it takes the master
+    // colouring, and its ten sends into the shared FX returns — the same returns
+    // lane playback uses and Bloom could never reach before.
+    function _ambBusModal(E, id) {
+      const cfg = E.getCfg(); if (!cfg) return;
+      const names = (typeof FX_NAMES !== 'undefined') ? FX_NAMES : [];
+      const c = _ambBusCfg(cfg, id);
+      const overlay = document.createElement('div'); overlay.className = 'modal-overlay';
+      const modal = document.createElement('div'); modal.className = 'step-div-modal amb-bus-modal';
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, '');
+      modal.innerHTML = '<div class="ambient-mod-sub">Bus \u2014 ' + esc(c.name) + '</div>' +
+        '<div class="ambient-ctrl"><label for="amb-bus-name">Name</label>' +
+          '<input type="text" id="amb-bus-name" class="ambient-bpc-input" value="' + esc(c.name) + '" maxlength="18"></div>' +
+        '<div class="ambient-ctrl"><label for="amb-bus-direct">Master FX</label>' +
+          '<select id="amb-bus-direct" class="ambient-select">' +
+            '<option value="0"' + (c.direct ? '' : ' selected') + '>Through Warmth / Glue</option>' +
+            '<option value="1"' + (c.direct ? ' selected' : '') + '>Skip \u2014 straight to output</option>' +
+          '</select><span class="ambient-hint">the limiter always applies</span></div>' +
+        '<div class="ambient-mod-sub">Sends into the shared FX</div>' +
+        names.map(n => '<div class="ambient-ctrl"><label for="amb-bus-s-' + n + '">' + esc(n) + '</label>' +
+          '<input type="range" id="amb-bus-s-' + n + '" class="ambient-range amb-bus-send" data-fx="' + n + '" min="0" max="100" step="1" value="' + ((c.sends[n] | 0)) + '">' +
+          '<span class="ambient-hint"><span id="amb-bus-v-' + n + '">' + (c.sends[n] | 0) + '</span>%</span></div>').join('') +
+        '<div class="amb-learn-pick-btns"><button type="button" class="ambient-seg amb-bus-close">Done</button></div>';
+      overlay.appendChild(modal); document.body.appendChild(overlay);
+      overlay.style.setProperty('display', 'flex', 'important');
+      const close = () => { try { overlay.remove(); } catch (e) {} try { _ambRenderExtras(E); } catch (e) {} };
+      overlay.addEventListener('click', (ev) => { if (ev.target === overlay) close(); });
+      modal.querySelector('.amb-bus-close').addEventListener('click', close);
+      const nameEl = modal.querySelector('#amb-bus-name');
+      nameEl.addEventListener('change', () => { _ambBusSet(cfg, id, { name: nameEl.value.trim() }); if (typeof persistWorkspace === 'function') persistWorkspace(); });
+      const dirEl = modal.querySelector('#amb-bus-direct');
+      dirEl.addEventListener('change', () => { _ambBusSet(cfg, id, { direct: dirEl.value === '1' }); if (typeof persistWorkspace === 'function') persistWorkspace(); });
+      modal.querySelectorAll('.amb-bus-send').forEach(sl => sl.addEventListener('input', () => {
+        const fx = sl.getAttribute('data-fx'), v = parseInt(sl.value, 10) | 0;
+        const cur = _ambBusCfg(cfg, id);
+        const sends = Object.assign({}, cur.sends); sends[fx] = v;
+        _ambBusSet(cfg, id, { sends: sends });
+        const out = modal.querySelector('#amb-bus-v-' + fx); if (out) out.textContent = String(v);
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      }));
+    }
     function _ambSpokenLoadingModal(E, L) {
       if (!E || !L) return;
       try {
@@ -15837,7 +15927,8 @@
       if (_E.mod[layer]) { _ambUpdateMod(layer, cfg); return; }
       if (typeof Tone === 'undefined') return;
       try {
-        const out = _E.busNode();
+        // The layer's own bus — `layer` here is the KEY, so resolve the object.
+        const out = _E.busNode(_ambLayerByKey(_E, layer));
         // CORE STRIPS (Phase 2): the whole strip + FX runs inside the DSP
         // core — slot output goes straight to the bus, node voices/samples
         // feed the worklet input, and every param write lands as a port
@@ -16041,7 +16132,7 @@
           e._fxOrderSig = _orderSig;
           // delay node type flipped (feedback ↔ ping-pong) — drop the old one so the right type is rebuilt
           if (wantDelay && e.delay && e.delayPing !== wantPing) { try { e.delay.dispose(); } catch (x) {} e.delay = null; }
-          const out = _E.busNode();
+          const out = _E.busNode(_ambLayerByKey(_E, layer));
           const g = e.pan || e.gate || e.vca;   // route the FX tail off the panner (post-gate)
           try { g.disconnect(); } catch (x) {}
           if (!wantDelay && e.delay) { try { e.delay.dispose(); } catch (x) {} e.delay = null; }
@@ -18913,6 +19004,16 @@
       }
       if (typeof persistWorkspace === 'function') persistWorkspace();
       try { _ambRenderMixer(E); } catch (e) {}
+    }
+    // The KEY for a layer object — the reverse of _ambLayerByKey. Primaries are
+    // named; everything else is '<type>:<id>', the convention used everywhere.
+    function _ambKeyOfLayer(E, L) {
+      try {
+        const cfg = (E && E.getCfg && E.getCfg()) || null;
+        if (cfg) { const prim = ['bed', 'motif', 'texture', 'beat'].find(n => cfg[n] === L); if (prim) return prim; }
+        if (L && L.type != null && L.id != null) return L.type + ':' + (L.id | 0);
+      } catch (e) {}
+      return '';
     }
     function _ambLayerByKey(E, key) {
       const cfg = E._cfg || E.getCfg(); if (!cfg) return null;
@@ -28724,7 +28825,7 @@
     // and mirrors the engine's Voice × Source × Generator × Timing × Mix model.
     // The Mix group is byte-identical across every layer (Area fade is hidden at
     // render for bar-native types via _ambCtrlHtml, not omitted here).
-    const _AMB_MIX = [['grp', 'FX / Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['spat'], ['mod'], ['fx']];
+    const _AMB_MIX = [['grp', 'FX / Mix'], ['mixbus'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['spat'], ['mod'], ['fx']];
     // Shared Voice group — same controls everywhere, only the voice token(s)
     // (tone / kit+gen) and the ADSR ranges vary, passed per layer.
     // Tone-cycle editor rows (steps rendered from state; delegated wiring —
@@ -29445,6 +29546,16 @@
       // console ("where do I select voice in Learn?"). Same shape as every other
       // select here. The voice is part of the render cache key, so switching it
       // re-renders in the background rather than reusing the old audio.
+      if (k === 'mixbus') { const cfg0 = (_E && _E.getCfg && _E.getCfg()) || {};
+        const cur = _ambBusOf(inst);
+        return '<div class="ambient-ctrl" title="Which mix bus this layer feeds. A bus can send into the shared FX (reverb, delay, chorus…) that Bloom otherwise never reaches, and can skip the master Warmth/Glue colouring."><label for="' + p + '-mixbus">Bus</label>' +
+          '<span class="ambient-busrow">' +
+          '<select id="' + p + '-mixbus" class="ambient-select">' +
+          _AMB_BUS_IDS.map(id => '<option value="' + id + '"' + (cur === id ? ' selected' : '') + '>' + _ambEscText(_ambBusCfg(cfg0, id).name) + '</option>').join('') +
+          '</select>' +
+          '<button type="button" class="ambient-seg ambient-bus-edit" data-buskey="' + cur + '" title="Name this bus, choose whether it passes through the master colouring, and set its sends into the shared FX">\u2699</button>' +
+          '</span><span class="ambient-hint">group + shared FX</span></div>';
+      }
       if (k === 'voicefrom') return '<div class="ambient-ctrl" title="The voice server has the better engine and makes a project sound the same on every device. This device works offline and answers instantly from its own cache. Auto prefers the server and falls back."><label for="' + p + '-voicefrom">Voice from</label>' +
         '<select id="' + p + '-voicefrom" class="ambient-select">' +
         _AMB_VOICE_FROM.map(v => '<option value="' + v[0] + '"' + ((_ambVoiceFrom(inst) === v[0]) ? ' selected' : '') + '>' + _ambEscText(v[1]) + '</option>').join('') +
@@ -29993,6 +30104,14 @@
             bindSl('wordaoct', 'aOct'); bindSl('wordcents', 'cents'); bindSl('wordchord', 'chord'); bindSl('wordnotems', 'noteMs');
             paint();
           }
+          else if (k === 'mixbus') { const mb = el('mixbus');
+            if (mb) mb.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
+              L.bus = (mb.value === 'a') ? undefined : mb.value;
+              if (!L.bus) delete L.bus;
+              persist();
+              // The chain is wired to the OLD bus — rebuild it onto the new one.
+              try { const key = _ambKeyOfLayer(E, L); if (key) { _E = E; _ambTeardownMod(key); _ambSyncMods(); } } catch (x) {}
+              try { _ambRenderExtras(E); } catch (x) {} }); }
           else if (k === 'voicefrom') { const vf = el('voicefrom');
             if (vf) vf.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
               L.voiceFrom = vf.value === 'auto' ? undefined : vf.value;
@@ -33223,6 +33342,8 @@
         if (cb) { e.stopPropagation(); try { _ambCloneLayer(E, cb.dataset.ckey); } catch (err) { console.warn('Clone failed', err); } return; }
         const pb0 = e.target && e.target.closest && e.target.closest('.ambient-savepreset-btn');
         if (pb0) { e.stopPropagation(); try { _ambSaveLayerAsPreset(E, pb0.dataset.savekey); } catch (err) { console.warn('Save preset failed', err); } return; }
+        const be = e.target && e.target.closest && e.target.closest('.ambient-bus-edit');
+        if (be) { e.stopPropagation(); try { _ambBusModal(E, be.dataset.buskey || 'a'); } catch (x) { console.warn('bus editor failed', x); } return; }
         const cue = e.target && e.target.closest && e.target.closest('.ambient-speak-cue');
         if (cue) { e.stopPropagation();
           const k = cue.dataset.cuekey;

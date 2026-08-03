@@ -12611,6 +12611,10 @@
     //           window.bloopsSpeakNext) arms exactly one line.
     // `bars` is the cadence for 'every', in BARS, so it follows the tempo like
     // every other timing control here.
+    // Writing while the transport runs is OPT-IN (`layer.liveWrite`). Off by
+    // default so a take is stable: what is written when you press play is what
+    // you hear, and nothing appears or re-orders underneath the performance.
+    const _ambWriteWhilePlaying = (L) => !!(L && L.liveWrite);
     const _AMB_SPEAK_MODES = ['flow', 'every', 'cue'];
     function _ambSpeakCfg(L) {
       const sp = (L && L.speak) || null;
@@ -13435,6 +13439,83 @@
         setTimeout(close, 180000);   // never leave it up forever
       } catch (e) {}
     }
+    // Repaint the take list IN PLACE. A full card re-render would fight the user
+    // (it collapses groups, drops focus, and churns while the pump works), so
+    // this touches only the row classes, durations and the counter.
+    function _ambLinesSync(E, L) {
+      try {
+        const host = document.getElementById(E.hostId); if (!host) return;
+        const key = _ambSpokenKey(L);
+        const ent = _ambSeelEntry(E, L, false);
+        const cache = (ent && ent.cache) || [], lines = (ent && ent.lines) || [];
+        const st = (E.seqState && E.seqState[key]) || null;
+        const cur = st ? (((st.ci | 0) - 1 + Math.max(1, lines.length)) % Math.max(1, lines.length)) : -1;
+        let touched = false;
+        host.querySelectorAll('.amb-line-row').forEach((row) => {
+          const btn = row.querySelector('.amb-line-play');
+          if (!btn || btn.dataset.lkey !== key) return;
+          touched = true;
+          const i = btn.dataset.li | 0, buf = cache[i];
+          row.classList.toggle('written', !!buf);
+          row.classList.toggle('playing', i === cur);
+          btn.textContent = buf ? '\u25b6' : '\u00b7';
+          const d = row.querySelector('.amb-line-d');
+          if (d) d.textContent = buf ? (buf.duration || 0).toFixed(1) + 's' : '';
+        });
+        if (!touched) return;
+        host.querySelectorAll('.amb-lines-head').forEach((head) => {
+          const b = head.querySelector('[data-lkey="' + key + '"]');
+          if (b && head.firstChild) head.firstChild.textContent = cache.filter(Boolean).length + ' of ' + lines.length + ' written';
+        });
+      } catch (e) {}
+    }
+    // ---- WRITTEN LINES: the take, as an object the user can act on ---------
+    // A line is written ONCE and then belongs to the layer. These four actions
+    // are the whole contract: hear one, write one again, write them all, throw
+    // the audio away. Nothing here touches the reading order.
+    function _ambLineEnt(E, key) {
+      const L = _ambLayerByKey(E, key);
+      if (!L) return null;
+      const ent = _ambSeelEntry(E, L, false);
+      return (ent && ent.lines && ent.lines.length) ? { L: L, ent: ent } : (L ? { L: L, ent: ent } : null);
+    }
+    function _ambAuditionLine(E, key, i) {
+      const h = _ambLineEnt(E, key); if (!h || !h.ent) return;
+      const buf = (h.ent.cache || [])[i | 0];
+      if (!buf) { try { if (typeof showToast === 'function') showToast('That line isn\u2019t written yet.'); } catch (e) {} return; }
+      // Straight to the layer's own chain, so an audition sounds like the layer.
+      try {
+        window._ambCaptureSink = null;
+        _E = E;
+        _ambLearnPlay(E, key, h.L, buf, (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() + 0.02 : 0);
+      } catch (e) { console.warn('audition failed', e); }
+    }
+    async function _ambRewriteLine(E, key, i) {
+      const h = _ambLineEnt(E, key); if (!h || !h.ent) return;
+      const idx = i | 0, line = (h.ent.lines || [])[idx];
+      if (!line) return;
+      const vk = _ambSpokenVoice(h.L) + '\u0000';
+      try { h.ent.buf.delete(vk + line); } catch (e) {}
+      h.ent.cache[idx] = null;
+      try { _ambLinesSync(E, h.L); } catch (e) {}
+      const buf = await _ambLearnSynth(line, _ambSpokenVoice(h.L));
+      if (buf) { h.ent.cache[idx] = buf; h.ent.buf.set(vk + line, buf); }
+      try { _ambLinesSync(E, h.L); } catch (e) {}
+    }
+    function _ambWriteAll(E, key) {
+      const h = _ambLineEnt(E, key); if (!h) return;
+      // One explicit ask, whatever the transport is doing — the pump renders
+      // every unwritten line and stops. This is the "write it once" button.
+      h.L._writeAllOnce = true;
+      try { if (typeof showToast === 'function') showToast('Writing the lines\u2026'); } catch (e) {}
+      try { _ambSeelPrerender(E, h.L); } catch (e) {}
+    }
+    function _ambClearWritten(E, key) {
+      const h = _ambLineEnt(E, key); if (!h || !h.ent) return;
+      h.ent.cache = (h.ent.lines || []).map(() => null);
+      try { h.ent.buf.clear(); } catch (e) {}
+      try { _ambLinesSync(E, h.L); } catch (e) {}
+    }
     // Repaint every spoken card's status — used when a shared, layer-independent
     // thing moves (the model download), which no single layer owns.
     function _ambLearnSayAll(E) {
@@ -13988,6 +14069,7 @@
             for (let k = 0; k < n; k++) { const idx = (start + k) % n; if (ent.cache[idx] === null) { next = idx; break; } }
           }
           if (next < 0) {
+            try { delete L._writeAllOnce; } catch (e) {}   // the take is complete
             // Everything in hand is audio. Fetch more only if the cursor is near the
             // end and there is room; otherwise this pump is done.
             { st.prerendering = false; st._say = null; say(); return; }
@@ -14016,7 +14098,9 @@
           // rendering all of them eagerly would be ninety-odd requests before a
           // word is spoken. Local rendering on desktop stays eager — it is cheap
           // and it is why a fetched article is instant there.
-          if ((_AMB_WK || _ambTtsJsonpMode) && ent.lines.length > _AMB_WK_AHEAD) {
+          // An explicit "Write all" ignores the render-ahead cap — the user asked
+          // for the whole take, so give them the whole take.
+          if (!L._writeAllOnce && (_AMB_WK || _ambTtsJsonpMode) && ent.lines.length > _AMB_WK_AHEAD) {
             const cur = ((st.ci | 0) % ent.lines.length + ent.lines.length) % ent.lines.length;
             let ready = 0;
             for (let k = 0; k < _AMB_WK_AHEAD; k++) if (ent.cache[(cur + k) % ent.lines.length]) ready++;
@@ -14034,6 +14118,7 @@
           if (!buf) { st.phase = 'novoice'; st.prerendering = false; st._say = null; say(); return; }
           ent.cache[next] = buf; ent.buf.set(vk + line, buf);
           st.preDone = ent.cache.filter(Boolean).length; st._say = null; say();
+          try { _ambLinesSync(E, L); } catch (e) {}   // the take list follows the writing
           await _ambPaceSynth(E);   // let the audio thread breathe before the next line
         }
       } finally {
@@ -18101,7 +18186,15 @@
         {
           const ent = _ambSeelEntry(E, L, false);
           const cache = (ent && ent.key === srcKey && ent.cache.length) ? ent.cache : null;
-          if (!cache || _ambSpokenWantMore(ent) || ent.cache.indexOf(null) >= 0) {
+          // WRITING IS NOT A PLAYBACK ACTIVITY. Rendering mid-play is what made
+          // this feel unstable: lines appeared at unpredictable moments, the
+          // status flickered between writing and speaking, and on a slow engine
+          // the reading raced the writer. The pump is kicked here only to FETCH
+          // text (there is nothing to play without it) or when the layer has been
+          // told to keep writing while it plays. Otherwise writing happens with
+          // the transport stopped, or on the explicit Write action.
+          const needText = !cache || !ent.lines.length;
+          if (needText || _ambWriteWhilePlaying(L)) {
             if (!ent || !ent.running) { try { _ambSeelPrerender(E, L); } catch (e) {} }
           }
           if (cache) {
@@ -18109,24 +18202,16 @@
             // from the surviving entry rather than re-deriving it.
             if (!st.sentences.length) { st.sentences = ent.lines; st.title = (ent.titles && ent.titles.length) ? ent.titles[ent.titles.length - 1] : ''; }
             while (st.q.length < 2) {
-              let ci = (st.ci | 0) % cache.length;
-              let b = cache[ci];
-              if (!b && st._notesWhile) {
-                // BOOTSTRAP OUT OF NOTES MODE. While lines play as notes the cursor
-                // keeps moving, and on a device whose synthesis is slower than a
-                // passage the pump lands each render just AFTER the reading passed
-                // it — chasing forever (measured: no speech in 30 s with 2 lines
-                // rendered). So the hand-off is inverted: the moment ANY rendered
-                // line exists, the reading JUMPS to the nearest one ahead and goes
-                // on in order from there. The skipped lines were already heard as
-                // notes; speech engages within one passage of the first render, on
-                // any device, at any synthesis speed.
-                for (let k = 1; k < cache.length; k++) {
-                  const idx = (ci + k) % cache.length;
-                  if (cache[idx]) { st.ci = idx; ci = idx; b = cache[idx]; break; }
-                }
-              }
-              if (!b) break;                        // still rendering this line — wait for it
+              // STRICTLY IN ORDER. An earlier version JUMPED the cursor to the
+              // nearest rendered line whenever the one at the cursor was missing,
+              // to bootstrap out of notes mode — and that is exactly the reported
+              // "skips around": the reading silently reordered itself according to
+              // which lines happened to be written. A line is now either spoken
+              // (it is written) or played as notes (it is not), and the reading
+              // always moves 0,1,2,3 — the same order every pass, every device.
+              const ci = (st.ci | 0) % cache.length;
+              const b = cache[ci];
+              if (!b) break;                        // not written yet — notes cover it, in place
               // The LINE rides along with its buffer: "Both" needs to know which text
               // the audio about to play corresponds to, and the queue is the only
               // place that mapping still exists by the time it is played.
@@ -18198,6 +18283,7 @@
             if (_wOut === 'both' && line) { try { _wDur = _ambEmitWordPassage(E, key, L, line, C[key]); } catch (e) {} }
             // Chop / rate / ping-pong change how long the line SOUNDS, so advance by
             // what was scheduled rather than by the raw buffer length.
+            try { _ambLinesSync(E, L); } catch (e) {}   // move the row highlight with the reading
             const _sDur = (_played && _played.dur > 0) ? _played.dur : buf.duration;
             // 'every' keeps a FIXED cadence — the next slot after this one, whatever
             // the line's length; a line that overruns just loses the slot it covered.
@@ -28907,7 +28993,7 @@
       // rhythm — the utterance is the unit — so it carries Source + Gap + the
       // shared mix block and nothing else.
       learn: { label: 'Learn', ctrls: [
-        ['grp', 'Source'], ['learnsrc'], ['voicefrom'], ['spokenvoice'], ['learnstatus'],
+        ['grp', 'Source'], ['learnsrc'], ['voicefrom'], ['spokenvoice'], ['learnstatus'], ['lines'], ['livewrite'],
         ['grp', 'Notes'], ['tone'], ['wordmusic'],
         ['grp', 'Speech'], ['speechfx'],
         ['grp', 'Timing'], ['speakwhen'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
@@ -28917,7 +29003,7 @@
       // grammatically correct nonsense, written here rather than fetched. Same
       // control set as Learn bar the source block, because it is the same layer.
       sireel: { label: 'Sir Eel', ctrls: [
-        ['grp', 'Source'], ['sl', 'sentences', 'Length', 1, 24, 'sentences per text'], ['seeltext'], ['voicefrom'], ['spokenvoice'], ['learnstatus'],
+        ['grp', 'Source'], ['sl', 'sentences', 'Length', 1, 24, 'sentences per text'], ['seeltext'], ['voicefrom'], ['spokenvoice'], ['learnstatus'], ['lines'], ['livewrite'],
         ['grp', 'Notes'], ['tone'], ['wordmusic'],
         ['grp', 'Speech'], ['speechfx'],
         ['grp', 'Timing'], ['speakwhen'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
@@ -29556,6 +29642,38 @@
           '<button type="button" class="ambient-seg ambient-bus-edit" data-buskey="' + cur + '" title="Name this bus, choose whether it passes through the master colouring, and set its sends into the shared FX">\u2699</button>' +
           '</span><span class="ambient-hint">group + shared FX</span></div>';
       }
+      if (k === 'lines') {
+        const ent = _ambSeelEntry(_E, inst, false);
+        const lines = (ent && ent.lines) || [];
+        const cache = (ent && ent.cache) || [];
+        const written = cache.filter(Boolean).length;
+        const key = _ambSpokenKey(inst);
+        const st0 = (_E && _E.seqState && _E.seqState[key]) || null;
+        const cur = st0 ? (((st0.ci | 0) - 1 + Math.max(1, lines.length)) % Math.max(1, lines.length)) : -1;
+        const rows = lines.map((t, i) => {
+          const have = !!cache[i];
+          const secs = have ? (cache[i].duration || 0).toFixed(1) + 's' : '';
+          return '<div class="amb-line-row' + (have ? ' written' : '') + (i === cur ? ' playing' : '') + '">' +
+            '<button type="button" class="amb-line-play" data-lkey="' + key + '" data-li="' + i + '" title="' + (have ? 'Audition this line' : 'Not written yet') + '">' + (have ? '▶' : '·') + '</button>' +
+            '<span class="amb-line-n">' + (i + 1) + '</span>' +
+            '<span class="amb-line-t">' + _ambEscText(String(t).slice(0, 70)) + '</span>' +
+            '<span class="amb-line-d">' + secs + '</span>' +
+            '<button type="button" class="amb-line-rw" data-lkey="' + key + '" data-li="' + i + '" title="Write this line again (after a voice change, say)">↻</button>' +
+          '</div>';
+        }).join('');
+        return '<div class="ambient-ctrl amb-lines-ctrl"><label>Lines</label>' +
+          '<span class="amb-lines-head">' + written + ' of ' + lines.length + ' written' +
+            '<button type="button" class="ambient-seg amb-lines-write" data-lkey="' + key + '">✍ Write all</button>' +
+            '<button type="button" class="ambient-seg amb-lines-clear" data-lkey="' + key + '" title="Discard the written audio and start again">✕</button>' +
+          '</span>' +
+          '<span class="ambient-hint">written once, then played in order</span></div>' +
+          (lines.length ? '<div class="amb-lines-list">' + rows + '</div>' : '');
+      }
+      if (k === 'livewrite') return '<div class="ambient-ctrl" title="Off means a take is stable: what is written when you press play is what you hear. On lets the layer keep writing lines while it plays, which fills a long article in sooner but changes what you hear as it goes."><label for="' + p + '-livewrite">While playing</label>' +
+        '<select id="' + p + '-livewrite" class="ambient-select">' +
+          '<option value="0"' + (_ambWriteWhilePlaying(inst) ? '' : ' selected') + '>Don\u2019t write \u2014 keep the take stable</option>' +
+          '<option value="1"' + (_ambWriteWhilePlaying(inst) ? ' selected' : '') + '>Keep writing as it plays</option>' +
+        '</select><span class="ambient-hint">writing vs. stability</span></div>';
       if (k === 'voicefrom') return '<div class="ambient-ctrl" title="The voice server has the better engine and makes a project sound the same on every device. This device works offline and answers instantly from its own cache. Auto prefers the server and falls back."><label for="' + p + '-voicefrom">Voice from</label>' +
         '<select id="' + p + '-voicefrom" class="ambient-select">' +
         _AMB_VOICE_FROM.map(v => '<option value="' + v[0] + '"' + ((_ambVoiceFrom(inst) === v[0]) ? ' selected' : '') + '>' + _ambEscText(v[1]) + '</option>').join('') +
@@ -30112,6 +30230,10 @@
               // The chain is wired to the OLD bus — rebuild it onto the new one.
               try { const key = _ambKeyOfLayer(E, L); if (key) { _E = E; _ambTeardownMod(key); _ambSyncMods(); } } catch (x) {}
               try { _ambRenderExtras(E); } catch (x) {} }); }
+          else if (k === 'livewrite') { const lw = el('livewrite');
+            if (lw) lw.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
+              if (lw.value === '1') L.liveWrite = true; else delete L.liveWrite;
+              persist(); }); }
           else if (k === 'voicefrom') { const vf = el('voicefrom');
             if (vf) vf.addEventListener('change', () => { const L = get(); if (!L) return; _E = E;
               L.voiceFrom = vf.value === 'auto' ? undefined : vf.value;
@@ -33342,6 +33464,23 @@
         if (cb) { e.stopPropagation(); try { _ambCloneLayer(E, cb.dataset.ckey); } catch (err) { console.warn('Clone failed', err); } return; }
         const pb0 = e.target && e.target.closest && e.target.closest('.ambient-savepreset-btn');
         if (pb0) { e.stopPropagation(); try { _ambSaveLayerAsPreset(E, pb0.dataset.savekey); } catch (err) { console.warn('Save preset failed', err); } return; }
+        // ---- written-line actions ----------------------------------------
+        const lp = e.target && e.target.closest && e.target.closest('.amb-line-play');
+        if (lp) { e.stopPropagation();
+          try { _ambAuditionLine(E, lp.dataset.lkey, lp.dataset.li | 0); } catch (x) {}
+          return; }
+        const lr = e.target && e.target.closest && e.target.closest('.amb-line-rw');
+        if (lr) { e.stopPropagation();
+          try { _ambRewriteLine(E, lr.dataset.lkey, lr.dataset.li | 0); } catch (x) {}
+          return; }
+        const lw2 = e.target && e.target.closest && e.target.closest('.amb-lines-write');
+        if (lw2) { e.stopPropagation();
+          try { _ambWriteAll(E, lw2.dataset.lkey); } catch (x) {}
+          return; }
+        const lc = e.target && e.target.closest && e.target.closest('.amb-lines-clear');
+        if (lc) { e.stopPropagation();
+          try { _ambClearWritten(E, lc.dataset.lkey); } catch (x) {}
+          return; }
         const be = e.target && e.target.closest && e.target.closest('.ambient-bus-edit');
         if (be) { e.stopPropagation(); try { _ambBusModal(E, be.dataset.buskey || 'a'); } catch (x) { console.warn('bus editor failed', x); } return; }
         const cue = e.target && e.target.closest && e.target.closest('.ambient-speak-cue');

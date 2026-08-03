@@ -12748,6 +12748,22 @@
           if (j && j.ok) {
             _ambTtsJsonpMode = true; _ambLearnWarm = true; _ambLearnWorkerErr = null; _ambLearnErrWhy = '';
             try { console.warn('[bloom] Learn voice: server reachable via script transport (CORS-stripped host)'); } catch (e) {}
+            // RE-KICK EVERY SPOKEN LAYER. The direct-fetch attempt that got us here
+            // also failed a synth on the way (the pump had already asked), which
+            // parked those layers on phase 'novoice' — and nothing else would ever
+            // restart them, so the transport came up and the layers stayed dead
+            // ("Voice unavailable" on a phone whose server was answering fine).
+            // Found in production, not in any local test.
+            try {
+              const cfg0 = E.getCfg && E.getCfg();
+              (cfg0 && cfg0.extras || []).forEach((x) => {
+                if (!x || (x.type !== 'learn' && x.type !== 'sireel')) return;
+                const st0 = E.seqState && E.seqState[_ambSpokenKey(x)];
+                if (st0 && (st0.phase === 'novoice' || st0.phase === 'nofetch')) { st0.phase = null; st0._say = null; }
+                setTimeout(() => { try { _ambSeelPrerender(E, x); } catch (e2) {} }, 0);
+              });
+            } catch (e) {}
+            try { _ambLearnSayAll(E); } catch (e) {}
             _ambLearnSayEl(E, L, _ambLearnStatusText(L, _st()));
             return;
           }
@@ -12904,6 +12920,9 @@
         if (_ambLearnNetWhy === 'empty') return 'That article has no readable summary — try another.';
         return 'No article found — try another search.';
       }
+      // A 'novoice' left over from an attempt that failed BEFORE the script
+      // transport came up is not the truth any more — the layer is speaking.
+      if (st.phase === 'novoice' && _ambTtsJsonpMode) st.phase = null;
       if (st.phase === 'novoice') return 'Voice unavailable' + (_ambLearnErrWhy ? (' — ' + _ambLearnErrWhy) : ' — no connection?');
       // SPEAKING wins over "writing", because while it plays the render carries on in
       // the background and the useful number is where the voice is, not the renderer.

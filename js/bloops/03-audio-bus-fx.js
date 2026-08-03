@@ -1752,21 +1752,39 @@
       if (bloomBuses[key]) return bloomBuses[key];
       let bus;
       try { bus = new Tone.Gain(1); } catch (e) { return null; }
-      bloomBuses[key] = { id: key, gain: bus, sends: {}, direct: false, tap: null };
-      routeBloomBus(key, { direct: false });
+      bloomBuses[key] = { id: key, gain: bus, sends: {}, direct: false, entry: 'full', tap: null };
+      routeBloomBus(key, { entry: 'full' });
       return bloomBuses[key];
     }
-    // Where a bus lands. 'direct' skips the master colouring but NEVER the
-    // limiter — bypassing that would let a bus clip the output, which is not a
-    // creative choice, just a broken one.
+    // WHERE A BUS ENTERS THE MASTER CHAIN. The chain is serial and shared —
+    //   masterBus → DC → Warmth → Vinyl → Compressor → Glue → Volume → Limiter
+    // — so a bus cannot skip a stage in the MIDDLE and rejoin for the rest: by
+    // the time the signal reaches Warmth every bus is already summed together.
+    // What it CAN do is choose where to join, which is exactly how a console
+    // works. Later entry = less colour. The limiter is never skipped: bypassing
+    // it lets a bus clip the output, which is not a creative choice.
+    const BLOOM_BUS_ENTRIES = ['full', 'postwarmth', 'postvinyl', 'direct'];
+    function _bloomBusEntryNode(entry) {
+      try {
+        switch (entry) {
+          case 'postwarmth': return vinylWobble || masterBus;     // keeps Vinyl, Comp, Glue
+          case 'postvinyl':  return masterCompressor || masterBus; // keeps Comp, Glue — no Vinyl
+          case 'direct':     return masterVolume || masterBus;     // limiter only
+          default:           return masterBus;                     // everything
+        }
+      } catch (e) { return masterBus; }
+    }
     function routeBloomBus(id, opts) {
       const b = bloomBuses[String(id || 'a')];
       if (!b) return;
-      const direct = !!(opts && opts.direct);
-      b.direct = direct;
+      // `direct: true` is the older boolean and still means "skip everything".
+      let entry = (opts && opts.entry) || '';
+      if (!entry) entry = (opts && opts.direct) ? 'direct' : 'full';
+      if (BLOOM_BUS_ENTRIES.indexOf(entry) < 0) entry = 'full';
+      b.entry = entry;
+      b.direct = (entry === 'direct');
       try { b.gain.disconnect(); } catch (e) {}
-      const post = (typeof masterVolume !== 'undefined' && masterVolume) ? masterVolume : null;
-      const dest = direct ? (post || masterBus) : masterBus;
+      const dest = _bloomBusEntryNode(entry);
       try { b.gain.connect(dest); } catch (e) { try { b.gain.connect(masterBus); } catch (e2) {} }
       // Re-attach the sends: disconnect() above dropped them too.
       Object.keys(b.sends).forEach(name => setBloomBusSend(id, name, b.sends[name], true));
@@ -1789,6 +1807,7 @@
       window.getBloomBus = getBloomBus;
       window.routeBloomBus = routeBloomBus;
       window.setBloomBusSend = setBloomBusSend;
+      window.BLOOM_BUS_ENTRIES = BLOOM_BUS_ENTRIES;
       window.bloomBuses = bloomBuses;
     } catch (e) {}
 

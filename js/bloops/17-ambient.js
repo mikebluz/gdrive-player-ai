@@ -1945,15 +1945,29 @@
     // always had, so nothing about an untouched project changes.
     const _AMB_BUS_IDS = ['a', 'b', 'c', 'd'];
     const _AMB_BUS_DEFAULT_NAMES = { a: 'Main', b: 'Bus B', c: 'Bus C', d: 'Bus D' };
+    // Where this bus joins the master chain. The chain is serial and shared
+    // (Warmth → Vinyl → Compressor → Glue), so the honest control is an ENTRY
+    // POINT rather than a set of per-effect switches: a bus cannot take Warmth,
+    // skip Vinyl and rejoin for the Glue, because everything is summed by then.
+    // Each option names exactly what it keeps and what it loses.
+    const _AMB_BUS_ENTRIES = [
+      ['full', 'Everything — Warmth, Vinyl, Glue'],
+      ['postwarmth', 'Skip Warmth — keep Vinyl and Glue'],
+      ['postvinyl', 'Skip Warmth and Vinyl — keep Glue'],
+      ['direct', 'Skip all master FX — limiter only'],
+    ];
     // cfg.buses[id] = { name, direct, sends:{fx:0-100} }. Absent everywhere by
     // default — the object only appears once someone changes something, so a
     // project that never opens this panel is byte-identical (and the golden
     // render stays valid by construction).
     function _ambBusCfg(cfg, id) {
       const b = (cfg && cfg.buses && cfg.buses[id]) || null;
+      const entry = (b && typeof b.entry === 'string' && _AMB_BUS_ENTRIES.some(e => e[0] === b.entry))
+        ? b.entry : ((b && b.direct) ? 'direct' : 'full');   // `direct` is the older boolean
       return {
         name: (b && typeof b.name === 'string' && b.name.trim()) ? b.name.trim() : (_AMB_BUS_DEFAULT_NAMES[id] || id.toUpperCase()),
-        direct: !!(b && b.direct),
+        entry: entry,
+        direct: entry === 'direct',
         sends: (b && b.sends && typeof b.sends === 'object') ? b.sends : {},
       };
     }
@@ -1973,7 +1987,7 @@
         const has = !!(cfg && cfg.buses && cfg.buses[id]);
         if (id === 'a' && !has) return;
         getBloomBus(id);
-        routeBloomBus(id, { direct: c.direct });
+        routeBloomBus(id, { entry: c.entry });
         const names = (typeof FX_NAMES !== 'undefined') ? FX_NAMES : [];
         names.forEach(n => setBloomBusSend(id, n, (c.sends && c.sends[n]) | 0));
       } catch (e) {}
@@ -13371,9 +13385,8 @@
           '<input type="text" id="amb-bus-name" class="ambient-bpc-input" value="' + esc(c.name) + '" maxlength="18"></div>' +
         '<div class="ambient-ctrl"><label for="amb-bus-direct">Master FX</label>' +
           '<select id="amb-bus-direct" class="ambient-select">' +
-            '<option value="0"' + (c.direct ? '' : ' selected') + '>Through Warmth / Glue</option>' +
-            '<option value="1"' + (c.direct ? ' selected' : '') + '>Skip \u2014 straight to output</option>' +
-          '</select><span class="ambient-hint">the limiter always applies</span></div>' +
+            _AMB_BUS_ENTRIES.map(e => '<option value="' + e[0] + '"' + (c.entry === e[0] ? ' selected' : '') + '>' + esc(e[1]) + '</option>').join('') +
+          '</select><span class="ambient-hint">where it joins the master chain \u2014 the limiter always applies</span></div>' +
         '<div class="ambient-mod-sub">Sends into the shared FX</div>' +
         names.map(n => '<div class="ambient-ctrl"><label for="amb-bus-s-' + n + '">' + esc(n) + '</label>' +
           '<input type="range" id="amb-bus-s-' + n + '" class="ambient-range amb-bus-send" data-fx="' + n + '" min="0" max="100" step="1" value="' + ((c.sends[n] | 0)) + '">' +
@@ -13387,7 +13400,7 @@
       const nameEl = modal.querySelector('#amb-bus-name');
       nameEl.addEventListener('change', () => { _ambBusSet(cfg, id, { name: nameEl.value.trim() }); if (typeof persistWorkspace === 'function') persistWorkspace(); });
       const dirEl = modal.querySelector('#amb-bus-direct');
-      dirEl.addEventListener('change', () => { _ambBusSet(cfg, id, { direct: dirEl.value === '1' }); if (typeof persistWorkspace === 'function') persistWorkspace(); });
+      dirEl.addEventListener('change', () => { _ambBusSet(cfg, id, { entry: dirEl.value, direct: dirEl.value === 'direct' }); if (typeof persistWorkspace === 'function') persistWorkspace(); });
       modal.querySelectorAll('.amb-bus-send').forEach(sl => sl.addEventListener('input', () => {
         const fx = sl.getAttribute('data-fx'), v = parseInt(sl.value, 10) | 0;
         const cur = _ambBusCfg(cfg, id);

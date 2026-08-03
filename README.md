@@ -88,11 +88,14 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
    BLOOM MIX BUSES (named groups; layer.bus = 'a'|'b'|'c'|'d', absent = 'a')
      Each bus is a Gain that its layers sum into, and it decides two things:
 
-       bus gain ──┬─ direct=false ─► bloomMasterGain ─► masterBus   (DEFAULT: the
-                  │                                      historical single path)
-                  ├─ direct=true  ─► masterVolume       (skips Warmth / Glue /
-                  │                                      compressor — but NEVER
-                  │                                      the limiter)
+       bus gain ──┬─ entry='full'       ─► masterBus      (DEFAULT: the historical
+                  │                                       single path — all colour)
+                  ├─ entry='postwarmth' ─► vinylWobble    (skips Warmth; keeps
+                  │                                       Vinyl, Comp, Glue)
+                  ├─ entry='postvinyl'  ─► masterCompressor (skips Warmth AND
+                  │                                       Vinyl; keeps Glue)
+                  ├─ entry='direct'     ─► masterVolume   (skips all master FX —
+                  │                                       but NEVER the limiter)
                   └─ per-FX send gains (0-100) ─► fxSendBus[name] ─► the SHARED
                                                    FX returns above — the same
                                                    parallel returns lane playback

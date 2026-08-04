@@ -110,7 +110,14 @@ const rows = CASES.map(c => {
   return { ...c, aliasDb: +r.db.toFixed(1), peak: +peak.toFixed(3) };
 });
 
-if (process.argv.includes('--json')) {
+// The render is fully deterministic (fixed sine, no RNG), so the baseline is an
+// exact gate, not a tolerance band — TOL only absorbs float drift across builds.
+const BASE_PATH = new URL('./alias-baseline.json', import.meta.url);
+const TOL = 0.1;
+if (process.argv.includes('--update')) {
+  fs.writeFileSync(BASE_PATH, JSON.stringify(rows, null, 1) + '\n');
+  console.log(`alias baseline updated — ${rows.length} rows`);
+} else if (process.argv.includes('--json')) {
   console.log(JSON.stringify(rows, null, 1));
 } else {
   console.log('ALIAS-TO-SIGNAL (dB) — more negative is cleaner. 0.5 s sine, full wet.\n');
@@ -123,4 +130,28 @@ if (process.argv.includes('--json')) {
   }
   const worst = rows.slice().sort((a, b) => b.aliasDb - a.aliasDb)[0];
   console.log(`\nworst: ${worst.mode} @ ${worst.f0} Hz drive ${worst.amt} → ${worst.aliasDb} dB`);
+
+  let base = null;
+  try { base = JSON.parse(fs.readFileSync(BASE_PATH, 'utf8')); } catch {}
+  if (!base) {
+    console.log('\n(no baseline — run with --update to record one)');
+  } else {
+    const key = (r) => `${r.mode}|${r.f0}|${r.amt}`;
+    const prev = new Map(base.map(r => [key(r), r]));
+    const worse = [], better = [];
+    for (const r of rows) {
+      const b = prev.get(key(r));
+      if (!b) continue;
+      const d = r.aliasDb - b.aliasDb;          // positive = MORE alias = worse
+      if (d > TOL) worse.push({ r, b, d });
+      else if (d < -TOL) better.push({ r, b, d });
+    }
+    for (const { r, b, d } of better) console.log(`  ✓ ${r.mode} @ ${r.f0} drive ${r.amt}: ${b.aliasDb} → ${r.aliasDb} dB (${d.toFixed(1)})`);
+    for (const { r, b, d } of worse) console.log(`  ✗ ${r.mode} @ ${r.f0} drive ${r.amt}: ${b.aliasDb} → ${r.aliasDb} dB (+${d.toFixed(1)})`);
+    if (worse.length) {
+      console.log(`\nALIASING REGRESSED: ${worse.length} case(s) noisier than baseline. If intentional, re-baseline with --update and commit it WITH the DSP change.`);
+      process.exit(1);
+    }
+    console.log(better.length ? `\nno regressions — ${better.length} case(s) improved (re-baseline with --update to lock the gain in)` : '\nmatches baseline');
+  }
 }

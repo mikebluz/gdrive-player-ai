@@ -3,43 +3,43 @@
   "mode": "classic",
   "f0": 1000,
   "amt": 0.5,
-  "aliasDb": -37.6,
+  "aliasDb": -38.9,
   "peak": 0.314
  },
  {
   "mode": "classic",
   "f0": 1000,
   "amt": 1,
-  "aliasDb": -33.6,
+  "aliasDb": -37.3,
   "peak": 0.33
  },
  {
   "mode": "classic",
   "f0": 3000,
   "amt": 0.5,
-  "aliasDb": -26.1,
-  "peak": 0.315
+  "aliasDb": -33.6,
+  "peak": 0.313
  },
  {
   "mode": "classic",
   "f0": 3000,
   "amt": 1,
-  "aliasDb": -21.8,
-  "peak": 0.331
+  "aliasDb": -30.3,
+  "peak": 0.33
  },
  {
   "mode": "classic",
   "f0": 5000,
   "amt": 0.5,
-  "aliasDb": -18,
-  "peak": 0.316
+  "aliasDb": -24.9,
+  "peak": 0.311
  },
  {
   "mode": "classic",
   "f0": 5000,
   "amt": 1,
-  "aliasDb": -15.2,
-  "peak": 0.331
+  "aliasDb": -22.5,
+  "peak": 0.328
  },
  {
   "mode": "overdrive",
@@ -59,28 +59,28 @@
   "mode": "overdrive",
   "f0": 3000,
   "amt": 0.5,
-  "aliasDb": -38.5,
-  "peak": 0.987
+  "aliasDb": -39.4,
+  "peak": 0.984
  },
  {
   "mode": "overdrive",
   "f0": 3000,
   "amt": 1,
-  "aliasDb": -28.5,
+  "aliasDb": -34.7,
   "peak": 1
  },
  {
   "mode": "overdrive",
   "f0": 5000,
   "amt": 0.5,
-  "aliasDb": -24.2,
-  "peak": 0.988
+  "aliasDb": -30.3,
+  "peak": 0.981
  },
  {
   "mode": "overdrive",
   "f0": 5000,
   "amt": 1,
-  "aliasDb": -16.8,
+  "aliasDb": -23.4,
   "peak": 1
  },
  {

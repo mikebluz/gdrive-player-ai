@@ -56,11 +56,11 @@
  "strip-unitgate-tg": "3d6163a854f769b1",
  "strip-tg": "b0364baea05283d0",
  "strip-revsend": "42ed8d21198aaf1c",
- "strip-fx-dist": "612c8a75ff11908e",
- "strip-fx-dist-dark": "0217664005fdd1a8",
- "strip-fx-dist-brite": "9eecf9a60d93af4e",
- "strip-fx-dist-focus": "940b6d4b48e219bb",
- "strip-fx-dist-tonemix": "0dbd5eb76e01a89c",
+ "strip-fx-dist": "4f6e16e865e62e57",
+ "strip-fx-dist-dark": "da973abf809fd8f5",
+ "strip-fx-dist-brite": "c4ba3dc36f1afdf6",
+ "strip-fx-dist-focus": "1d06388a12df740b",
+ "strip-fx-dist-tonemix": "4c17b9eebfc28d98",
  "strip-fx-dist-crushtone": "e461a03116881097",
  "strip-fx-chorus": "a8b8378e0f9a3a93",
  "strip-fx-phaser": "aa8987a26aa60f0b",
@@ -80,5 +80,5 @@
  "samp-lifecycle": "31bd9cac56cd8b60",
  "samp-steal": "d8c69a9500e8b6b0",
  "samp-through-strip": "6dc653dfe75a5abb",
- "strip-kitchen-sink": "cdf6ca1a9a7e2084"
+ "strip-kitchen-sink": "edfde132af54bb09"
 }

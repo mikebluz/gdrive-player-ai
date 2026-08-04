@@ -239,6 +239,65 @@ pub(crate) fn sat4(x: f32) -> f32 {
 }
 
 
+// ---- antiderivative anti-aliasing (ADAA) -------------------------------------
+// A waveshaper multiplies harmonics and every one above Nyquist folds back as an
+// inharmonic tone — the "digital harshness" oversampling exists to prevent.
+// Measured before this existed (test/alias-measure.js): the classic curve aliased
+// to -15 dB at 5 kHz with full drive, overdrive -17.
+//
+// First-order ADAA replaces f(x) with the AVERAGE of f over the segment between
+// consecutive samples, computed from its antiderivative F:
+//     y[n] = (F(x[n]) - F(x[n-1])) / (x[n] - x[n-1])
+// That is a one-sample box filter applied in the WAVESHAPER's own domain, which
+// suppresses the folded content at roughly 1x cost — no upsampling, no filters.
+//
+// 2x oversampling was measured first and rejected: with any half-band length it
+// plateaued at +3.5 dB mean (worst case NEGATIVE, on the wavefolder) for ~2.5x
+// the CPU, because 2x only moves Nyquist to 88 kHz and these curves generate
+// harmonics far past it. ADAA is applied to the two SMOOTH curves only —
+// classic and overdrive. The hard clip, the wavefolder and the bit crusher have
+// discontinuous or deliberately-aliasing shapes where first-order ADAA earns
+// little, so they keep their exact previous arithmetic.
+//
+// The subtraction is ill-conditioned when consecutive samples are close (0/0), so
+// below a threshold it falls back to the direct curve at the midpoint — standard,
+// and the reason ADAA needs a well-chosen epsilon rather than an exact test.
+const ADAA_EPS: f32 = 1.0e-5;
+
+/// classic: f(x) = A*x/(PI + k|x|). Odd, so F is even and only |x| is needed.
+#[inline(always)]
+fn f_classic(x: f32, a: f32, k: f32) -> f32 {
+    if x.abs() < 0.001 { 0.0 } else { a * x / (PI + k * x.abs()) }
+}
+#[inline(always)]
+fn cap_classic(x: f32, a: f32, k: f32) -> f32 {
+    let ax = x.abs();
+    if k < 1.0e-4 { return a * ax * ax / (2.0 * PI); }        // k -> 0: f is linear
+    a * (ax / k - (PI / (k * k)) * (1.0 + k * ax / PI).ln())
+}
+/// overdrive: f(x) = tanh(g x)/tanh(g); F = ln(cosh(g x)) / (g tanh g).
+#[inline(always)]
+fn f_drive(x: f32, g: f32, t: f32) -> f32 {
+    let e = (2.0 * g * x).exp();
+    ((e - 1.0) / (e + 1.0)) / t
+}
+#[inline(always)]
+fn cap_drive(x: f32, g: f32, t: f32) -> f32 {
+    let z = (g * x).abs();
+    // ln(cosh z) overflows in f32 well before z is large; past ~12 it is z - ln2
+    // to far more precision than f32 carries.
+    let lncosh = if z > 12.0 { z - core::f32::consts::LN_2 } else { (z.cosh()).ln() };
+    lncosh / (g * t)
+}
+/// The ADAA step itself, shared by both curves.
+#[inline(always)]
+fn adaa(x: f32, xp: f32, fp: f32, f: impl Fn(f32) -> f32, cap: impl Fn(f32) -> f32) -> (f32, f32) {
+    let fx = cap(x);
+    let d = x - xp;
+    let y = if d.abs() < ADAA_EPS { f(0.5 * (x + xp)) } else { (fx - fp) / d };
+    (y, fx)
+}
+
 /// Equal-power wet/dry (Tone CrossFade): (dry gain, wet gain).
 #[inline(always)]
 fn xfade(w: f32) -> (f32, f32) {
@@ -326,6 +385,13 @@ pub(crate) struct Strip {
     dist_tn_s: [[f32; 2]; 2],
     // DC blocker state for the asymmetric dist flavors: [x1, y1] per channel.
     dist_dc_s: [[f32; 2]; 2],
+    dist_adaa_x: [f32; 2],       // previous shaper input, per channel (ADAA)
+    // ...and its antiderivative, CACHED. Computing F twice per sample (for x and
+    // for x_prev) doubles the transcendentals and measured +45% CPU on a
+    // dist-heavy scene; carrying F(x_prev) forward halves that back. The cache is
+    // only valid while the curve's parameters hold still, hence the dirty flag.
+    dist_adaa_f: [f32; 2],
+    dist_adaa_dirty: bool,
     fx_order: [u8; 5],
     cho_on: bool,
     cho_wet: f32,
@@ -398,6 +464,9 @@ pub(crate) const STRIP0: Strip = Strip {
     dist_tn_a: [0.0; 2],
     dist_tn_s: [[0.0; 2]; 2],
     dist_dc_s: [[0.0; 2]; 2],
+    dist_adaa_x: [0.0; 2],
+    dist_adaa_f: [0.0; 2],
+    dist_adaa_dirty: true,
     cho_on: false,
     cho_wet: 0.0,
     cho_depth: 0.5,
@@ -563,10 +632,18 @@ fn fx_dist(buf: &mut [[f32; BLOCK]; 2], st: &mut Strip, frames: usize) {
                 dry
             };
             let xc = xin.clamp(-1.0, 1.0);
+            let xp = st.dist_adaa_x[ci];
+            let fp = if st.dist_adaa_dirty { f32::NAN } else { st.dist_adaa_f[ci] };
+            st.dist_adaa_x[ci] = xc;
             let y = match mode {
                 1 => {
+                    // overdrive — smooth, so ADAA earns its keep here
                     let g = 1.0 + k * 0.12;
-                    tanhf(g * xc) / tanhf(g)
+                    let t = tanhf(g);
+                    let fprev = if fp.is_nan() { cap_drive(xp, g, t) } else { fp };
+                    let (y, fx) = adaa(xc, xp, fprev, |v| f_drive(v, g, t), |v| cap_drive(v, g, t));
+                    st.dist_adaa_f[ci] = fx;
+                    y
                 }
                 2 => {
                     let g = 1.0 + k * 0.30;
@@ -583,7 +660,12 @@ fn fx_dist(buf: &mut [[f32; BLOCK]; 2], st: &mut Strip, frames: usize) {
                     (xc * lv).floor() / lv
                 }
                 _ => {
-                    if xc.abs() < 0.001 { 0.0 } else { (3.0 + k) * xc * scale / (PI + k * xc.abs()) }
+                    // classic — the default curve, and the one most layers use
+                    let a = (3.0 + k) * scale;
+                    let fprev = if fp.is_nan() { cap_classic(xp, a, k) } else { fp };
+                    let (y, fx) = adaa(xc, xp, fprev, |v| f_classic(v, a, k), |v| cap_classic(v, a, k));
+                    st.dist_adaa_f[ci] = fx;
+                    y
                 }
             };
             // Tone: tilt the SHAPED signal before it meets the dry.
@@ -598,6 +680,7 @@ fn fx_dist(buf: &mut [[f32; BLOCK]; 2], st: &mut Strip, frames: usize) {
             *x = dry * cd + y * cw;
         }
     }
+    st.dist_adaa_dirty = false;   // both channels now carry a valid F(x_prev)
 }
 
 fn fx_chorus(slot: usize, st: &mut Strip, t: f64, frames: usize) {
@@ -1078,9 +1161,16 @@ pub extern "C" fn strip_dist(slot: u32, on: u32, amount: f32, wet: f32, mode: u3
         let st = &mut STRIPS[(slot as usize) % SLOTS];
         let was_on = st.dist_on;
         st.dist_on = on != 0;
-        if st.dist_on && !was_on { st.dist_dc_s = [[0.0; 2]; 2]; }   // stale DC estimate would step on re-engage
-        st.dist_k = amount.clamp(0.0, 1.0) * 100.0;
+        if st.dist_on && !was_on {
+            st.dist_dc_s = [[0.0; 2]; 2];   // stale DC estimate would step on re-engage
+            st.dist_adaa_x = [0.0; 2];      // and a stale previous sample would click
+            st.dist_adaa_f = [0.0; 2];
+        }
+        let new_k = amount.clamp(0.0, 1.0) * 100.0;
+        if new_k != st.dist_k { st.dist_adaa_dirty = true; }   // F(x_prev) is for the OLD curve
+        st.dist_k = new_k;
         st.dist_wet = wet.clamp(0.0, 1.0);
+        if st.dist_mode != mode % 5 { st.dist_adaa_dirty = true; }
         st.dist_mode = mode % 5;   // 0 classic · 1 overdrive · 2 fuzz · 3 fold · 4 crush
         let sr = SR;
         // Focus: 30 Hz … 600 Hz high-pass, logarithmic. Q −3 dB = Butterworth

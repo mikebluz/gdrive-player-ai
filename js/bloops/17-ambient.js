@@ -8322,7 +8322,14 @@
       // Choke (default off): clamp each note's duration AND release so the chord
       // is silent by the next unit boundary, instead of overlapping/ringing past
       // it — useful for the Chords/Monk modes where you want distinct chords.
-      const unitSec = bed.choke ? _ambLayerPeriodSec(_E, key, bed, _E._cfg || (_E.getCfg && _E.getCfg())) : 0;
+      // Under prog-sync the chord's real span is `_psiSub` — which in MERGE mode is
+      // the whole repeated-chord GROUP, not the uniform sub-slot that
+      // _ambLayerPeriodSec reports. durMs is already sized off _psiSub a few lines
+      // up, so choke has to agree: reading the uniform slot choked a merged 4 s
+      // group at 2 s and left it silent for half of its own group (measured).
+      const unitSec = bed.choke
+        ? (_psi ? _psiSub : _ambLayerPeriodSec(_E, key, bed, _E._cfg || (_E.getCfg && _E.getCfg())))
+        : 0;
       // Start vary: with `startVary`% chance, shift the WHOLE chord's onset to a
       // RANDOM point within the unit (a mid-unit start) instead of the boundary —
       // leaving room for the strum span so the chord still fits. DRAW-GATED on
@@ -30514,8 +30521,12 @@
           else if (k === 'unitsync') { _ambWireUnitSync(E, p, get, type + ':' + id); }
           else if (k === 'notes') { _ambWireNotesBtn(E, p + 'notes', get); }
           else if (k === 'droneedit') { _ambWireDroneEdit(E, inst, p, get); }
-          else if (k === 'chordmode') { const e = el('chordmode'); if (e) { e.value = inst.chordMode || 'chaos'; e.addEventListener('change', () => { const L = get(); if (L) { L.chordMode = e.value || 'chaos'; L.choke = (L.chordMode !== 'chaos'); const ck = el('choke'); if (ck) ck.value = L.choke ? '1' : '0'; sync(); persist(); } }); } }
-          else if (k === 'choke') { const e = el('choke'); if (e) { e.value = inst.choke ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.choke = (e.value === '1'); sync(); persist(); } }); } }
+          else if (k === 'chordmode') { const e = el('chordmode'); if (e) { e.value = inst.chordMode || 'chaos'; e.addEventListener('change', () => { const L = get(); if (L) { L.chordMode = e.value || 'chaos'; L.choke = (L.chordMode !== 'chaos'); const ck = el('choke'); if (ck) ck.value = L.choke ? '1' : '0'; sync(); persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } } }); } }
+          // Choke rewrites every note's LENGTH, so it needs the boundary re-anchor
+          // the sibling controls take. A bed defaults to Write on, so without it the
+          // frozen loop replays the OLD lengths for the rest of its cycle — measured
+          // 12.3 s of nothing happening, which reads as a dead control.
+          else if (k === 'choke') { const e = el('choke'); if (e) { e.value = inst.choke ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.choke = (e.value === '1'); sync(); persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } } }); } }
           else if (k === 'tight') { const e = el('tight'); if (e) { e.value = (inst.tight | 0) ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.tight = (e.value === '1') ? 1 : 0; sync(); persist(); } }); } }
           else if (k === 'progfeel') { const e = el('progfeel'); if (e) { e.value = inst.progFeel || 'even'; e.addEventListener('change', () => { const L = get(); if (L) { L.progFeel = (e.value === 'stochastic') ? 'stochastic' : 'even'; sync(); persist(); } }); } }
           else if (k === 'pitchrule') { const e = el('pitchrule'); if (e) { e.value = _ambPitchRuleOf(inst); e.addEventListener('change', () => { const L = get(); if (!L) return; const v = e.value; if (v === 'voicing' || v === 'stack' || v === 'fixed' || v === 'anchor') L.pitchRule = v; else delete L.pitchRule; if (E.timer) { try { _ambReanchorLayer(E, key); } catch (x) {} } sync(); persist(); }); } }
@@ -34547,7 +34558,7 @@
       bind('ambient-bed-progSubdiv', 'bed', 'progSubdiv');
       bind('ambient-bed-voiceVariety', 'bed', 'voiceVariety');
       { const pf = G('ambient-bed-progfeel'); if (pf) pf.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg.bed) return; cfg.bed.progFeel = pf.value === 'stochastic' ? 'stochastic' : 'even'; persist(); }); }
-      { const cm = G('ambient-bed-chordmode'); if (cm) cm.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg.bed) return; cfg.bed.chordMode = cm.value || 'chaos'; cfg.bed.choke = (cfg.bed.chordMode !== 'chaos'); const ck = G('ambient-bed-choke'); if (ck) ck.value = cfg.bed.choke ? '1' : '0'; persist(); }); }
+      { const cm = G('ambient-bed-chordmode'); if (cm) cm.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg.bed) return; cfg.bed.chordMode = cm.value || 'chaos'; cfg.bed.choke = (cfg.bed.chordMode !== 'chaos'); const ck = G('ambient-bed-choke'); if (ck) ck.value = cfg.bed.choke ? '1' : '0'; persist(); if (E.timer) { try { _ambReanchorLayer(E, 'bed'); } catch (x) {} } }); }
       // Per-chord-voice tones (structured modes) — populate, load + bind the 6 voice selects.
       ['0', '1', '2', '3', '4', '5'].forEach(i => {
         const s = G('ambient-bed-cvt-' + i);
@@ -34576,7 +34587,7 @@
         });
         try { _ambSeedUiRefresh(E, pp, getL, ly); } catch (e) {}
       });
-      { const ck = G('ambient-bed-choke'); if (ck) ck.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg.bed) return; cfg.bed.choke = (ck.value === '1'); persist(); }); }
+      { const ck = G('ambient-bed-choke'); if (ck) ck.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg.bed) return; cfg.bed.choke = (ck.value === '1'); persist(); if (E.timer) { try { _ambReanchorLayer(E, 'bed'); } catch (x) {} } }); }
       ['motif', 'texture', 'beat'].forEach((tk) => { const tg = G('ambient-' + tk + '-tight'); if (tg) tg.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg[tk]) return; cfg[tk].tight = (tg.value === '1') ? 1 : 0; persist(); }); });
       bindTime('ambient-bed-intervalMs', 'bed', 'intervalMs');
       bindTime('ambient-bed-lengthMs', 'bed', 'lengthMs');

@@ -6022,7 +6022,7 @@
         ps.splice(pi, 1);
         if (ed.part >= ps.length) ed.part = ps.length - 1;
       }
-      if (ps.length <= 1) { ed.parts = null; ed.part = -1; }
+      if (ps.length <= 1) { ed.parts = [];   /* staged-but-empty: null would read as 'never staged' in apply() */ ed.part = -1; }
     }
     function _ambPeRender() {
       const host = document.getElementById('ambient-prog-editor'); if (!host || !_ambProgEd) return;
@@ -6137,7 +6137,12 @@
             sec('Structure',
               '<div class="pe-partgrp pe-partgrp-struct">' +
                 '<button type="button" class="pe-partbtn" data-pe="partadd" title="Divide ' + pnm + ' in two at the chord you have selected">✂ Split at selection</button>' +
-                '<button type="button" class="pe-partbtn pe-partdel" data-pe="partdel:' + ed.part + '" title="Remove this part boundary. Its chords are kept — they merge into the neighbouring part.">\u2715 Remove part</button>' +
+                // MERGE — named by direction and by the part absorbed into, because
+                // "Remove part" was always a merge (the chords are never deleted) and
+                // read as destructive. The TARGET's name, repeats, key and salt win;
+                // this part's chords simply join it.
+                (ed.part > 0 ? '<button type="button" class="pe-partbtn pe-partmerge" data-pe="partmerge:' + ed.part + ':prev" title="Join ' + pnm + '\u2019s chords onto the end of ' + esc(_peParts[ed.part - 1].name || ('Part ' + ed.part)) + '. No chords are lost; ' + esc(_peParts[ed.part - 1].name || 'that part') + '\u2019s own settings are kept.">\u21e6 Merge into ' + esc(_peParts[ed.part - 1].name || ('Part ' + ed.part)) + '</button>' : '') +
+                (ed.part < _peParts.length - 1 ? '<button type="button" class="pe-partbtn pe-partmerge" data-pe="partmerge:' + ed.part + ':next" title="Join ' + pnm + '\u2019s chords onto the front of ' + esc(_peParts[ed.part + 1].name || ('Part ' + (ed.part + 2))) + '. No chords are lost; ' + esc(_peParts[ed.part + 1].name || 'that part') + '\u2019s own settings are kept.">Merge into ' + esc(_peParts[ed.part + 1].name || ('Part ' + (ed.part + 2))) + ' \u21e8</button>' : '') +
               '</div>') +
             '</div>';
         }
@@ -6379,13 +6384,28 @@
           if (want && !ps[pi].salt) ps[pi].salt = { len: 0, colors: 0, scatter: 0 };
           else if (!want && ps[pi].salt) delete ps[pi].salt;
         } }
+      // Merge this part into a NAMED neighbour. Parts are contiguous runs, so the
+      // merge is purely additive on `len` — the chord array is never touched, which
+      // is why no chord can be lost here. The surviving part keeps its own name,
+      // repeats, key and salt; the absorbed one's are dropped with it.
+      else if (op === 'partmerge') {
+        const ps = _ambPeParts(ed), pi = parseInt(arg, 10), dir = a[2];
+        if (!ps || !ps[pi]) return;
+        const ti = (dir === 'next') ? pi + 1 : pi - 1;
+        if (ti < 0 || ti >= ps.length) return;
+        ps[ti].len = (ps[ti].len | 0) + (ps[pi].len | 0);
+        ps.splice(pi, 1);
+        if (ps.length <= 1) { ed.parts = [];   /* staged-but-empty: null would read as 'never staged' in apply() */ ed.part = -1; }
+        else ed.part = Math.max(0, Math.min(ps.length - 1, ti > pi ? ti - 1 : ti));
+        ed.altSel = -1;
+      }
       else if (op === 'partdel') { const ps = _ambPeParts(ed), pi = parseInt(arg, 10);
         if (ps && ps[pi]) {
           // Removing a boundary merges this part's chords into its neighbour —
           // the chords themselves are never touched.
           const into = pi > 0 ? pi - 1 : 1;
           if (ps[into]) { ps[into].len = (ps[into].len | 0) + (ps[pi].len | 0); ps.splice(pi, 1); }
-          if (ps.length <= 1) { ed.parts = null; ed.part = -1; } else if (ed.part >= ps.length) ed.part = ps.length - 1;
+          if (ps.length <= 1) { ed.parts = [];   /* staged-but-empty: null would read as 'never staged' in apply() */ ed.part = -1; } else if (ed.part >= ps.length) ed.part = ps.length - 1;
         } }
       else if (op === 'flat' || op === 'sharp') { const ns = notesSorted(); const ni = arg | 0; if (ns[ni] != null) { ns[ni] = (((ns[ni] + (op === 'sharp' ? 1 : -1)) % 12) + 12) % 12; _ambPeSetNotes(tgt, ns, true); } }
       else if (op === 'ndtup' || op === 'ndtdn') { const ns = notesSorted(); const ni = arg | 0; if (ns[ni] != null) { ns[ni] = _ambDiatonicShiftPc(ns[ni], op === 'ndtup' ? 1 : -1, kRoot, kScale); _ambPeSetNotes(tgt, ns, true); } }

@@ -11371,7 +11371,18 @@
     function _ambSaveRhythmPreset(name, L) {
       const list = _ambLoadRhythmPresets().filter(x => x && x.name !== name);
       const row = (Array.isArray(L.euclidPattern) && Array.isArray(L.euclidPattern[0])) ? L.euclidPattern[0].map(v => v ? 1 : 0) : null;
-      list.push({ name: name, steps: L.steps | 0, pulses: L.pulses | 0, rotate: L.rotate | 0, pat: row });
+      // Drum-lanes keep their pattern in the PAGE store, not `euclidPattern`, so a
+      // kit rhythm used to save nothing but the knobs — Save looked like it worked
+      // and restored an empty grid. Keep all eight lanes of the VIEWED page.
+      const lanes = L.euclidKit
+        ? (_ambEuclidViewPat(L) || []).map(r => Array.isArray(r) ? r.map(v => v ? 1 : 0) : [])
+        : null;
+      // `bars` rides along so a multi-bar phrase restores at the length it was
+      // drawn at; without it a 4-bar row loaded onto a 1-bar layer PLAYS four bars
+      // while the grid draws one. Absent on presets saved before this.
+      const rec = { name: name, steps: L.steps | 0, bars: L.bars | 0, pulses: L.pulses | 0, rotate: L.rotate | 0, pat: row };
+      if (lanes && lanes.length) rec.lanes = lanes;
+      list.push(rec);
       try { localStorage.setItem(_AMB_RHY_KEY, JSON.stringify(list.slice(-64))); } catch (e) {}
       return list;
     }
@@ -11387,7 +11398,28 @@
       L.steps = Math.max(2, Math.min(32, pr.steps | 0) || 8);
       L.pulses = Math.max(1, Math.min(L.steps, pr.pulses | 0) || 1);
       L.rotate = Math.max(0, (pr.rotate | 0) % L.steps);
-      if (Array.isArray(pr.pat) && pr.pat.length) L.euclidPattern = [pr.pat.map(v => v ? 1 : 0)];
+      if (pr.bars) L.bars = Math.max(1, Math.min(8, pr.bars | 0));   // absent on older presets → leave the phrase alone
+      const total = Math.max(1, Math.min(8, (L.bars | 0) || 1)) * L.steps;
+      if (L.euclidKit && Array.isArray(pr.lanes) && pr.lanes.length) {
+        _ambEuclidResizePages(L);                       // fit the page store to the restored steps x bars
+        const pg = _ambEuclidPage(L);
+        if (pg) {
+          const rows = [];
+          for (let v = 0; v < _AMB_KIT_LANES; v++) {
+            const src = Array.isArray(pr.lanes[v]) ? pr.lanes[v] : [];
+            const r = new Array(total).fill(0);
+            if (src.length) for (let i = 0; i < total; i++) r[i] = src[i % src.length] ? 1 : 0;
+            rows.push(r);
+          }
+          pg.pat = rows;
+        }
+        return true;
+      }
+      // A kit rhythm loaded onto a melodic layer falls back to its first lane
+      // rather than clearing the pattern, which would read as a broken preset.
+      const flat = (Array.isArray(pr.pat) && pr.pat.length) ? pr.pat
+        : ((Array.isArray(pr.lanes) && Array.isArray(pr.lanes[0]) && pr.lanes[0].length) ? pr.lanes[0] : null);
+      if (flat) L.euclidPattern = [flat.map(v => v ? 1 : 0)];
       else L.euclidPattern = null;
       return true;
     }
@@ -11442,6 +11474,47 @@
         L.euclidPattern = null;   // generated euclidean pattern == the preset
       }
       return pr;
+    }
+    // RANDOM PATTERN — write an ACTUAL random on/off row, not a randomly chosen
+    // preset. Rolled with `Math.random` at UI time and NEVER the seeded `_ambRand`
+    // stream, so note generation (and the invariant harness) are untouched — the
+    // same split `_ambEuclidStochasticInit` uses.
+    //
+    // Density is the layer's own Pulses/Steps ratio, so a 5/8 bass rerolls at
+    // roughly 5-in-8: the Pulses knob keeps meaning what it says, and Random reads
+    // as "same feel, new placement" rather than an unrelated coin flip. Drum lanes
+    // have NO Pulses knob (kitVis hides it), so each lane draws its own density in
+    // a musical band — one flat density across 8 lanes gives eight equally-busy
+    // lanes, which is mush rather than a beat.
+    const _AMB_RAND_KIT_MIN = 0.125, _AMB_RAND_KIT_SPAN = 0.375;   // per-lane density band
+    function _ambRandRow(into, p, idxs) {
+      let any = false;
+      idxs.forEach(i => { const on = Math.random() < p ? 1 : 0; into[i] = on; if (on) any = true; });
+      // An all-off roll reads as a broken button rather than an unlucky one.
+      if (!any && idxs.length) into[idxs[(Math.random() * idxs.length) | 0]] = 1;
+      return into;
+    }
+    function _ambRandomizePattern(L, type) {
+      const d = _ambEuclidGridDims(L, type); if (!d) return false;
+      const total = d.bars * d.steps;
+      if (L.euclidKit) {
+        // Respect the kit's own edit scope — one drum, or all of them (and any
+        // step subset). That is the target every other kit edit writes to, and it
+        // defaults to everything, so "roll just the hat" comes free.
+        let pat = _ambEuclidViewPat(L);
+        if (!(pat.length === d.V && pat.every(r => Array.isArray(r) && r.length === total))) { _ambEuclidResizePages(L); pat = _ambEuclidViewPat(L); }
+        const byLane = new Map();
+        _ambEditScopeCells(L, d).forEach(({ v, i }) => { if (!byLane.has(v)) byLane.set(v, []); byLane.get(v).push(i); });
+        if (!byLane.size) return false;
+        byLane.forEach((idxs, v) => { if (Array.isArray(pat[v])) _ambRandRow(pat[v], _AMB_RAND_KIT_MIN + Math.random() * _AMB_RAND_KIT_SPAN, idxs); });
+        return true;
+      }
+      const p = Math.min(0.9, Math.max(0.1, d.pulses / d.steps));
+      const all = Array.from({ length: total }, (_, i) => i);
+      const rows = [];
+      for (let v = 0; v < d.V; v++) rows.push(_ambRandRow(new Array(total).fill(0), p, all));
+      L.euclidPattern = rows;   // a written override, exactly like a hand-drawn one
+      return true;
     }
     // Euclidean auto-fill for ONE drum lane: write `k` evenly-spread pulses across
     // the lane's phrase (bars×steps), tiling the one-bar euclidean pattern. k = 0
@@ -15083,6 +15156,18 @@
           syncSlider('steps', L.steps); syncSlider('pulses', L.pulses); syncSlider('rotate', L.rotate);
           render(); syncPreset(); persist();
           if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} try { sync && sync(); } catch (e) {} }
+        }); }
+      // RANDOM — roll a new pattern into the grid. It WRITES the grid rather than
+      // setting a generative knob, so the roll is an ordinary editable pattern:
+      // press again for another, hand-edit it, or keep it with Save.
+      { const rb = el('euclidrand'); if (rb) rb.addEventListener('click', () => {
+          _E = E; const L = getL(); if (!L) return;
+          if (!_ambRandomizePattern(L, type)) return;
+          // The pattern is no longer the preset it came from — the select reads
+          // Custom until it is saved under a name (same rule as a cell edit).
+          if (L.euclidPreset) { delete L.euclidPreset; syncPreset(); }
+          render(); persist();
+          if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} }   // heard at the next unit boundary
         }); }
       // Save the current pattern as a named rhythm (appears under "Yours").
       { const sv = el('euclidpresetsave'); if (sv) sv.addEventListener('click', () => {
@@ -29800,6 +29885,7 @@
             '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="grid" data-seedkey="' + _ambEscText(_sk) + '" title="A fixed phrase you compose in the full editor. Replaces the Pattern while it is set \u2014 the two are alternatives, not layers.">\u270e Grid</button>' +
           '</span></div>' +
           '<div class="ambient-euclid-presetrow"><select id="' + p + '-euclidpreset" class="ambient-select ambient-euclid-preset" title="The rhythm this pattern came from. Reads Custom once you edit it — save a Custom to keep it.">' + _ambEuclidPresetOptions(inst) + '</select>' +
+            '<button type="button" id="' + p + '-euclidrand" class="ambient-euclid-rand" title="Roll a brand-new random on/off pattern straight into the grid \u2014 an actual random rhythm, not a randomly chosen preset. Press again for another; keep one with Save.">\ud83c\udfb2 Random</button>' +
             '<button type="button" id="' + p + '-euclidpresetsave" class="ambient-euclid-presetsave" title="Save this pattern as a named rhythm you can load on any layer">\u2b07 Save</button>' +
           '</div>' +
           '<div class="ambient-euclid-grid" id="' + p + '-euclidgrid"></div>' +

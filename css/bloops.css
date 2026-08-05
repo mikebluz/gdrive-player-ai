@@ -3742,7 +3742,14 @@
     /* The active part's settings. One LABELLED group per setting, stacked, with
        real touch targets — the first pass was a row of 0.7rem pills that read as
        decoration rather than as controls. */
-    .pe-partbar { display: flex; flex-direction: column; gap: 8px; width: 100%; padding: 9px 10px; border: 1px solid #3a3a52; border-radius: 10px; background: rgba(159,122,234,0.08); }
+    /* Four subsections: what it IS · how it PLAYS · how it DRIFTS · STRUCTURE.
+       Structure is fenced off last — the only two controls that reshape the chain. */
+    .pe-partsec { display: flex; flex-direction: column; gap: 8px; padding: 8px 0 0; border-top: 1px solid #33334c; }
+    .pe-partsec:first-child { padding-top: 0; border-top: 0; }
+    .pe-partsec-h { font-size: 0.64rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: #8b7fc0; }
+    .pe-partgrp-struct { gap: 10px; }
+    .pe-partsel { min-height: 40px; padding: 6px 10px; border: 1px solid #4a4a68; border-radius: 8px; background: #1c1c34; color: #e2e8f0; font-size: 16px; touch-action: manipulation; }
+    .pe-partbar { display: flex; flex-direction: column; gap: 10px; width: 100%; padding: 9px 10px; border: 1px solid #3a3a52; border-radius: 10px; background: rgba(159,122,234,0.08); }
     .pe-partgrp { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
     .pe-partgrp-lbl { flex: 0 0 auto; min-width: 62px; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.02em; color: #a99ad4; text-transform: uppercase; }
     .pe-partgrp-hint { font-size: 0.7rem; color: #7c7f96; }
@@ -3761,8 +3768,6 @@
     .pe-partplays { display: inline-flex; align-items: center; gap: 8px; font-size: 0.9rem; color: #e2e8f0; }
     .pe-partplays b { min-width: 34px; text-align: center; font-size: 0.95rem; }
     .pe-partstep { min-width: 46px; padding: 8px 0; font-size: 1.15rem; text-align: center; }
-    .pe-partsplit { border-color: #4a5f7a; color: #cfe4ff; }
-    @media (hover: hover) { .pe-partsplit:hover { border-color: #63b3ed; background: rgba(99,179,237,0.16); color: #e6f2ff; } }
     .pe-partdel { align-self: flex-start; border-color: #5a3a46; color: #f0b6c0; }
     @media (hover: hover) { .pe-partdel:hover { border-color: #e06c8a; background: rgba(224,108,138,0.16); color: #ffd9e1; } }
     .pe-partsalt { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; width: 100%; padding-left: 70px; }

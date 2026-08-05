@@ -11000,7 +11000,16 @@
       L.euclidPageIdx = Math.max(0, Math.min(n - 1, idx));
     }
     // Enable Drum-lanes: ensure a page bank exists (seeds a backbeat if fresh).
-    function _ambSeedDrumLanes(L) { if (L) _ambEuclidPages(L); }
+    // Turning Drum lanes ON creates the bank. A BRAND-NEW bank is rolled rather
+    // than seeded with the fixed backbeat, so a kit arrives with a random pattern
+    // like every other euclid layer. An EXISTING bank is left strictly alone —
+    // toggling kit off and back on must never destroy a grid you drew.
+    function _ambSeedDrumLanes(L) {
+      if (!L) return;
+      const fresh = !Array.isArray(L.euclidPages) || !L.euclidPages.length;
+      _ambEuclidPages(L);
+      if (fresh) { try { _ambRandomizePattern(L, L.type || 'beat', true); } catch (e) {} }
+    }
     function _ambDrumName(midi) {
       const pc = (((Math.round(midi) - 36) % 12) + 12) % 12;
       return _AMB_DRUM_NAMES[pc] || ('Drum ' + pc);
@@ -11494,7 +11503,7 @@
       if (!any && idxs.length) into[idxs[(Math.random() * idxs.length) | 0]] = 1;
       return into;
     }
-    function _ambRandomizePattern(L, type) {
+    function _ambRandomizePattern(L, type, allLanes) {
       const d = _ambEuclidGridDims(L, type); if (!d) return false;
       const total = d.bars * d.steps;
       if (L.euclidKit) {
@@ -11504,7 +11513,12 @@
         let pat = _ambEuclidViewPat(L);
         if (!(pat.length === d.V && pat.every(r => Array.isArray(r) && r.length === total))) { _ambEuclidResizePages(L); pat = _ambEuclidViewPat(L); }
         const byLane = new Map();
-        _ambEditScopeCells(L, d).forEach(({ v, i }) => { if (!byLane.has(v)) byLane.set(v, []); byLane.get(v).push(i); });
+        if (allLanes) {   // SEEDING a fresh bank — every lane, regardless of the edit scope
+          const every = Array.from({ length: total }, (_, i) => i);
+          for (let v = 0; v < d.V; v++) byLane.set(v, every);
+        } else {
+          _ambEditScopeCells(L, d).forEach(({ v, i }) => { if (!byLane.has(v)) byLane.set(v, []); byLane.get(v).push(i); });
+        }
         if (!byLane.size) return false;
         byLane.forEach((idxs, v) => { if (Array.isArray(pat[v])) _ambRandRow(pat[v], _AMB_RAND_KIT_MIN + Math.random() * _AMB_RAND_KIT_SPAN, idxs); });
         return true;
@@ -30782,7 +30796,7 @@
           } }); } }
           else if (k === 'euclidregen') { const b = el('euclidregen'); if (b) b.addEventListener('click', () => { _E = E; _ambEuclidRegen(E, type + ':' + id); }); }
           else if (k === 'euclidgrid') { _ambWireEuclidGrid(E, el, get, persist, sync, type, type + ':' + id); }
-          else if (k === 'arpeuclid') { const s = el('euclid'); if (s) { s.value = inst.euclid ? '1' : '0'; s.addEventListener('change', () => { const L = get(); if (!L) return; L.euclid = (s.value === '1'); if (L.euclid) { if (!(L.pulses | 0)) _ambEuclidStochasticInit(L); if (!(L.steps | 0)) L.steps = 8; if (!(L.euclidVoices | 0)) L.euclidVoices = 2; if (!(L.bars | 0)) L.bars = 1; } const gk = type + ':' + id; if (E.runPhase) delete E.runPhase[gk]; if (E.arpState) delete E.arpState[gk]; if (E.clocks) delete E.clocks[gk]; persist(); _ambRenderExtras(E); try { const wrap = _ambGet(E, 'ambient-extra-layers'); const card = wrap && wrap.querySelector('.ambient-layer[data-inst="' + type + ':' + id + '"]'); if (card) card.classList.remove('collapsed'); } catch (e) {} }); } }
+          else if (k === 'arpeuclid') { const s = el('euclid'); if (s) { s.value = inst.euclid ? '1' : '0'; s.addEventListener('change', () => { const L = get(); if (!L) return; L.euclid = (s.value === '1'); if (L.euclid) { const _fresh = !(L.pulses | 0); if (_fresh) _ambEuclidStochasticInit(L); if (!(L.steps | 0)) L.steps = 8; if (!(L.euclidVoices | 0)) L.euclidVoices = 2; if (!(L.bars | 0)) L.bars = 1; if (_fresh) { try { _ambRandomizePattern(L, 'arp'); } catch (e) {} } } const gk = type + ':' + id; if (E.runPhase) delete E.runPhase[gk]; if (E.arpState) delete E.arpState[gk]; if (E.clocks) delete E.clocks[gk]; persist(); _ambRenderExtras(E); try { const wrap = _ambGet(E, 'ambient-extra-layers'); const card = wrap && wrap.querySelector('.ambient-layer[data-inst="' + type + ':' + id + '"]'); if (card) card.classList.remove('collapsed'); } catch (e) {} }); } }
         } catch (err) { console.warn('Bloom extra control wiring failed', type, id, k, err); }
       });
       ['vca', 'vco', 'vcf'].forEach(t => {
@@ -31735,6 +31749,22 @@
       L.rotate = Math.floor(Math.random() * steps);
       L.euclidPattern = null;   // clear any override so the generated euclidean shows
     }
+    // A NEW euclid layer arrives with an actual random WRITTEN pattern — the same
+    // roll the Pattern control's dice makes — instead of the fixed 5/8 default.
+    // The knob roll still runs FIRST: it puts Pulses/Rotate somewhere musical, which
+    // both sets the written roll's density AND leaves the generator underneath in a
+    // sensible place for when a later Pulses/Regen edit clears the override.
+    // CREATION-TIME ONLY, on Math.random — `_ambDefaultLayer` stays deterministic
+    // because the invariant harness builds its layers straight from it.
+    function _ambSeedRandomPattern(L, type) {
+      if (!L) return;
+      _ambEuclidStochasticInit(L);
+      try { _ambRandomizePattern(L, type || L.type); } catch (e) {}
+    }
+    function _ambIsEuclidLayer(L, type) {
+      const t = type || (L && L.type);
+      return (t === 'bass') || (t === 'beat' && L && L.gen === 'euclid') || (t === 'arp' && !!(L && L.euclid));
+    }
     // A layer flagged `takeReroll` re-rolls its RHYTHM with each "New take". For a
     // EUCLID layer (Bass / euclid Arp / euclid single-drum Beat) the euclidean salt
     // (`euclidRegen`) is DERIVED from the area take seed — the salt path in
@@ -31755,7 +31785,7 @@
       const newId = cfg.extras.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
       const L = _ambProgDefaultUnit(cfg, _ambDefaultLayer(type, newId));
       _ambApplyRandomInstVoice(L, type);
-      if (type === 'bass') _ambEuclidStochasticInit(L);   // Bass is always euclid → stochastic initial pattern
+      if (_ambIsEuclidLayer(L, type)) _ambSeedRandomPattern(L, type);   // born with a random written pattern
       // A Sir Eel layer arrives with something already written in it — an empty
       // text field would need a button press before the layer could do anything,
       // and the layer's whole proposition is that it writes its own material.
@@ -31829,7 +31859,7 @@
         const L = Object.assign(_ambDefaultLayer(spec.type, newId), copy, { id: newId, type: spec.type, present: true, on: true });
         // Euclid layers get a stochastic INITIAL pattern (unless the preset pins pulses).
         const isEuclid = (spec.type === 'bass') || (spec.type === 'beat' && L.gen === 'euclid') || (spec.type === 'arp' && L.euclid);
-        if (isEuclid && !Number.isFinite(copy.pulses)) _ambEuclidStochasticInit(L);
+        if (isEuclid && !Number.isFinite(copy.pulses)) _ambSeedRandomPattern(L, spec.type);
         if (L.takeReroll) _ambApplyTakeReroll(L, cfg.seed);   // seed-derive its rhythm now (reproducible per take)
         cfg.extras.push(L);
         _ambMarkFreshLayer(E, L, spec.type + ':' + newId);

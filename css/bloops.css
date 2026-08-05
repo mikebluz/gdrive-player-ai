@@ -3743,14 +3743,18 @@
        real touch targets — the first pass was a row of 0.7rem pills that read as
        decoration rather than as controls. */
     .pe-partgrp-struct { gap: 10px; margin-top: 2px; }
-    /* ONE fold for the whole working area — the part's settings and every chord
-       control below them. Tabs and the Save footer stay outside it. */
-    .pe-bodytog { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; margin: 2px 0 6px; padding: 8px 12px; border: 1px solid #3a3a52; border-radius: 9px; background: #17172c; color: #cbd5e0; cursor: pointer; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.02em; text-align: left; touch-action: manipulation; }
-    @media (hover: hover) { .pe-bodytog:hover { border-color: #9f7aea; color: #e9dcff; } }
-    .pe-bodytog-car { font-size: 0.9rem; opacity: 0.75; }
-    .pe-bodytog-sum { margin-left: auto; font-weight: 400; font-size: 0.72rem; color: #7c7f96; }
-    .pe-body { display: contents; }
-    .pe-body.folded { display: none; }
+    /* TWO collapsible subsections — the part's settings, and the chord editor.
+       Each is its own card so a fold reads as folding THAT section, not the pane. */
+    .pe-sec { display: flex; flex-direction: column; gap: 8px; padding: 6px 10px 10px; border: 1px solid #2f2f46; border-radius: 10px; background: rgba(255,255,255,0.016); }
+    .pe-sec.folded { padding-bottom: 6px; }
+    .pe-sectog { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 38px; padding: 4px 0; border: 0; background: none; color: #cbd5e0; cursor: pointer; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.02em; text-align: left; touch-action: manipulation; }
+    @media (hover: hover) { .pe-sectog:hover { color: #e9dcff; } }
+    .pe-sectog-car { font-size: 0.9rem; opacity: 0.75; }
+    .pe-sectog-sum { margin-left: auto; font-weight: 400; font-size: 0.72rem; color: #7c7f96; }
+    .pe-secbody { display: flex; flex-direction: column; gap: 10px; }
+    .pe-sec.folded .pe-secbody { display: none; }
+    /* The part bar carries its own frame; inside a section card that double-boxes. */
+    .pe-secbody > .pe-partbar { padding: 0; border: 0; background: none; }
     .pe-partsel { min-height: 40px; padding: 6px 10px; border: 1px solid #4a4a68; border-radius: 8px; background: #1c1c34; color: #e2e8f0; font-size: 16px; touch-action: manipulation; }
     .pe-partbar { display: flex; flex-direction: column; gap: 10px; width: 100%; padding: 9px 10px; border: 1px solid #3a3a52; border-radius: 10px; background: rgba(159,122,234,0.08); }
     .pe-partgrp { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

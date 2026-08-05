@@ -6058,19 +6058,42 @@
         if (ed.part >= 0 && _peParts[ed.part]) {
           const pt = _peParts[ed.part], plays = Math.max(1, (pt.plays | 0) || 1);
           const sv = (pt.salt && typeof pt.salt === 'object') ? pt.salt : null;
+          const pnm = esc(pt.name || ('Part ' + (ed.part + 1)));
+          const nch = _peRange.to - _peRange.from;
+          // Each control is a LABELLED group. The bar used to be a row of 0.7rem
+          // pill buttons with terse glyph labels ("✎ Verse", "🧂 own", "✕ Part"),
+          // which read as decoration rather than as this part's settings.
           h += '<div class="pe-partbar">' +
-            '<button type="button" class="pe-partbtn" data-pe="partren:' + ed.part + '" title="Rename this part">✎ ' + esc(pt.name || ('Part ' + (ed.part + 1))) + '</button>' +
-            '<span class="pe-partplays" title="How many times this part runs before the chain moves on">' +
-              '<button type="button" class="pe-partbtn" data-pe="partplays:' + ed.part + ':-1">–</button>' +
-              '<b>' + plays + '×</b>' +
-              '<button type="button" class="pe-partbtn" data-pe="partplays:' + ed.part + ':1">+</button></span>' +
-            '<button type="button" class="pe-partbtn' + (sv ? ' on' : '') + '" data-pe="partsalt:' + ed.part + '" title="' + (sv ? 'This part has its own salt — click to go back to inheriting the progression\u2019s' : 'Give this part its own salt instead of inheriting the progression\u2019s') + '">\ud83e\uddc2 ' + (sv ? 'own' : 'inherit') + '</button>' +
-            (sv ? '<span class="pe-partsalt">' +
-              '<label title="Re-slice this part\u2019s chord lengths each cycle (its own subtotal is preserved)">len<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':len" min="0" max="100" step="5" value="' + (sv.len | 0) + '"></label>' +
-              '<label title="Colour segments per chord instance in this part">col<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':colors" min="0" max="8" step="1" value="' + (sv.colors | 0) + '"></label>' +
-              '<label title="How much the segment count varies between instances">sct<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':scatter" min="0" max="100" step="5" value="' + (sv.scatter | 0) + '"></label>' +
-              '</span>' : '') +
-            '<button type="button" class="pe-partbtn pe-partdel" data-pe="partdel:' + ed.part + '" title="Remove this part boundary — its chords merge into the previous part">\u2715 Part</button>' +
+            '<div class="pe-partgrp">' +
+              '<span class="pe-partgrp-lbl">Name</span>' +
+              '<button type="button" class="pe-partbtn pe-partbtn-name" data-pe="partren:' + ed.part + '" title="Rename this part">' + pnm + ' <i>✎</i></button>' +
+              '<span class="pe-partgrp-hint">' + nch + ' chord' + (nch === 1 ? '' : 's') + '</span>' +
+            '</div>' +
+            '<div class="pe-partgrp">' +
+              '<span class="pe-partgrp-lbl">Repeats</span>' +
+              '<span class="pe-partplays">' +
+                '<button type="button" class="pe-partbtn pe-partstep" data-pe="partplays:' + ed.part + ':-1" title="One fewer repeat" aria-label="One fewer repeat">–</button>' +
+                '<b>' + plays + '×</b>' +
+                '<button type="button" class="pe-partbtn pe-partstep" data-pe="partplays:' + ed.part + ':1" title="One more repeat" aria-label="One more repeat">+</button>' +
+              '</span>' +
+              '<span class="pe-partgrp-hint">' + (plays > 1 ? 'runs ' + plays + '× before the next part' : 'runs once, then the next part') + '</span>' +
+            '</div>' +
+            '<div class="pe-partgrp">' +
+              '<span class="pe-partgrp-lbl">🧂 Salt</span>' +
+              // Segmented, and each side sets an EXPLICIT value — a single toggle
+              // button would flip back off when you pressed the state you were in.
+              '<span class="pe-partseg">' +
+                '<button type="button" class="pe-partbtn pe-partsegbtn' + (!sv ? ' on' : '') + '" data-pe="partsalt:' + ed.part + ':0" title="Use whatever salt the progression has">Inherit</button>' +
+                '<button type="button" class="pe-partbtn pe-partsegbtn' + (sv ? ' on' : '') + '" data-pe="partsalt:' + ed.part + ':1" title="Give this part its own salt — set all three to 0 for no salt here at all">Its own</button>' +
+              '</span>' +
+              '<span class="pe-partgrp-hint">' + (sv ? 'this part only' : 'follows the progression') + '</span>' +
+              (sv ? '<span class="pe-partsalt">' +
+                '<label title="Re-slice this part\u2019s chord lengths each cycle. Its own total is preserved, so the rest of the chain does not move.">Lengths<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':len" min="0" max="100" step="5" value="' + (sv.len | 0) + '"></label>' +
+                '<label title="Colour segments per chord instance in this part. The downbeat is always the written chord.">Colours<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':colors" min="0" max="8" step="1" value="' + (sv.colors | 0) + '"></label>' +
+                '<label title="How much the segment count varies between instances. 0 = every instance the same.">Scatter<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':scatter" min="0" max="100" step="5" value="' + (sv.scatter | 0) + '"></label>' +
+                '</span>' : '') +
+            '</div>' +
+            '<button type="button" class="pe-partbtn pe-partdel" data-pe="partdel:' + ed.part + '" title="Remove this part boundary. Its chords are kept — they merge into the neighbouring part.">\u2715 Remove part</button>' +
             '</div>';
         }
         return h;
@@ -6282,9 +6305,13 @@
         if (ps && ps[pi]) { const v = Math.max(1, Math.min(64, (Math.max(1, (ps[pi].plays | 0) || 1)) + d));
           if (v > 1) ps[pi].plays = v; else delete ps[pi].plays; } }
       else if (op === 'partsalt') { const ps = _ambPeParts(ed), pi = parseInt(arg, 10);
-        // Toggle between inheriting the progression's salt (absent) and owning one.
-        // A fresh override starts at all-zero, which is a real statement: "no salt here".
-        if (ps && ps[pi]) { if (ps[pi].salt) delete ps[pi].salt; else ps[pi].salt = { len: 0, colors: 0, scatter: 0 }; } }
+        // EXPLICIT value, not a toggle: the control is segmented, so pressing the
+        // state you are already in must be a no-op rather than flipping you out of it.
+        if (ps && ps[pi]) {
+          const want = (a[2] == null) ? !ps[pi].salt : (a[2] === '1');
+          if (want && !ps[pi].salt) ps[pi].salt = { len: 0, colors: 0, scatter: 0 };
+          else if (!want && ps[pi].salt) delete ps[pi].salt;
+        } }
       else if (op === 'partdel') { const ps = _ambPeParts(ed), pi = parseInt(arg, 10);
         if (ps && ps[pi]) {
           // Removing a boundary merges this part's chords into its neighbour —

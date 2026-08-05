@@ -3739,15 +3739,38 @@
     .pe-parttab-x { font-style: normal; opacity: 0.7; margin-left: 3px; font-size: 0.66rem; }
     .pe-parttab-add { border-radius: 999px; }
     @media (hover: hover) { .pe-parttab:hover { border-color: #9f7aea; color: #e9dcff; } }
-    .pe-partbar { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; width: 100%; padding: 5px 6px; border: 1px solid #2d2d3f; border-radius: 8px; background: rgba(159,122,234,0.06); }
-    .pe-partbtn { padding: 2px 8px; border: 1px solid #2d2d3f; border-radius: 999px; background: #16162a; color: #cbd5e0; cursor: pointer; font-size: 0.7rem; touch-action: manipulation; }
-    .pe-partbtn.on { border-color: #4fd1c5; background: rgba(79,209,197,0.16); color: #d6fbf6; }
-    .pe-partdel { margin-left: auto; }
-    .pe-partplays { display: inline-flex; align-items: center; gap: 4px; font-size: 0.7rem; color: #cbd5e0; }
-    .pe-partsalt { display: inline-flex; align-items: center; gap: 6px; }
-    .pe-partsalt label { display: inline-flex; align-items: center; gap: 3px; font-size: 0.66rem; color: #7c7f96; }
+    /* The active part's settings. One LABELLED group per setting, stacked, with
+       real touch targets — the first pass was a row of 0.7rem pills that read as
+       decoration rather than as controls. */
+    .pe-partbar { display: flex; flex-direction: column; gap: 8px; width: 100%; padding: 9px 10px; border: 1px solid #3a3a52; border-radius: 10px; background: rgba(159,122,234,0.08); }
+    .pe-partgrp { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .pe-partgrp-lbl { flex: 0 0 auto; min-width: 62px; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.02em; color: #a99ad4; text-transform: uppercase; }
+    .pe-partgrp-hint { font-size: 0.7rem; color: #7c7f96; }
+    .pe-partbtn { min-height: 40px; padding: 8px 16px; border: 1px solid #4a4a68; border-radius: 8px; background: #1c1c34; color: #e2e8f0; cursor: pointer; font-size: 0.82rem; line-height: 1.1; touch-action: manipulation; }
+    @media (hover: hover) { .pe-partbtn:hover { border-color: #9f7aea; background: rgba(159,122,234,0.2); color: #f0e9ff; } }
+    .pe-partbtn:active { transform: scale(0.97); }
+    .pe-partbtn.on { border-color: #4fd1c5; background: rgba(79,209,197,0.2); color: #d6fbf6; }
+    .pe-partbtn-name { font-weight: 600; min-width: 130px; text-align: left; }
+    .pe-partbtn-name i { font-style: normal; opacity: 0.6; float: right; margin-left: 8px; }
+    /* Segmented pair: joined, so it reads as one either/or control. */
+    .pe-partseg { display: inline-flex; }
+    .pe-partsegbtn { border-radius: 0; }
+    .pe-partseg .pe-partsegbtn:first-child { border-radius: 8px 0 0 8px; }
+    .pe-partseg .pe-partsegbtn:last-child { border-radius: 0 8px 8px 0; margin-left: -1px; }
+    .pe-partseg .pe-partsegbtn.on { position: relative; z-index: 1; }
+    .pe-partplays { display: inline-flex; align-items: center; gap: 8px; font-size: 0.9rem; color: #e2e8f0; }
+    .pe-partplays b { min-width: 34px; text-align: center; font-size: 0.95rem; }
+    .pe-partstep { min-width: 46px; padding: 8px 0; font-size: 1.15rem; text-align: center; }
+    .pe-partdel { align-self: flex-start; border-color: #5a3a46; color: #f0b6c0; }
+    @media (hover: hover) { .pe-partdel:hover { border-color: #e06c8a; background: rgba(224,108,138,0.16); color: #ffd9e1; } }
+    .pe-partsalt { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; width: 100%; padding-left: 70px; }
+    .pe-partsalt label { display: inline-flex; align-items: center; gap: 5px; font-size: 0.72rem; color: #a0a4bd; }
     /* 16px so iOS does not zoom the page on focus and never zoom back. */
-    .pe-saltin { width: 52px; font-size: 16px; padding: 1px 4px; border: 1px solid #2d2d3f; border-radius: 5px; background: #0f0f1e; color: #e2e8f0; }
+    .pe-saltin { width: 66px; min-height: 38px; font-size: 16px; padding: 4px 6px; border: 1px solid #4a4a68; border-radius: 7px; background: #0f0f1e; color: #e2e8f0; }
+    @media (max-width: 520px) {
+      .pe-partgrp-lbl { min-width: 100%; }
+      .pe-partsalt { padding-left: 0; }
+    }
     .ambient-euclid-presetrow { display: flex; align-items: center; gap: 6px; }
     .ambient-euclid-preset { flex: 1 1 auto; min-width: 0; }
     /* Roll / keep, beside the picker they belong to. Same pill as the grid's own

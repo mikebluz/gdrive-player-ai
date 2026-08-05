@@ -26964,7 +26964,8 @@
         '|' + (parts ? parts.map(p => p.name + '=' + p.len + (p.key ? ('@' + p.key.root + p.key.scale) : '')).join('/') : '') + '|' + (Number.isFinite(prog.versionIdx) ? prog.versionIdx : -1) + '|' + (Array.isArray(prog.versions) ? prog.versions.length : 0) +
         // The chips are drawn in the SOUNDING key, so the shift is part of what
         // is on screen — without it a key change repaints nothing.
-        '|s' + _ambProgViewShift(E, cfg, chords) + '|' + _ambKeyRootPc(cfg) + _ambKeyScaleName(cfg);
+        '|s' + _ambProgViewShift(E, cfg, chords) + '|' + _ambKeyRootPc(cfg) + _ambKeyScaleName(cfg) +
+        '|n' + (el._povNames ? 1 : 0);   // the label mode is part of what is on screen
       if (el._sig === sig) return;
       el._sig = sig; el._curCi = -2;
       const esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
@@ -26973,7 +26974,12 @@
       const ranges = [];
       if (parts) { let acc = 0; parts.forEach((p, pi) => { ranges.push({ name: p.name, from: acc, to: Math.min(N, acc + (p.len | 0)), pi, key: p.key || null }); acc += (p.len | 0); }); }
       else ranges.push({ name: '', from: 0, to: N, pi: -1 });
-      let h = '';
+      const namesFirst = !!el._povNames;
+      let h = '<div class="ambient-pov-bar">' +
+        '<span role="button" tabindex="0" class="ambient-pov-namesbtn' + (namesFirst ? ' on' : '') + '" data-pov="names" title="' +
+          (namesFirst ? 'Showing chord NAMES first with the numeral after \u2014 click to lead with numerals' :
+                        'Showing ROMAN NUMERALS first with the name after \u2014 click to lead with chord names') + '">' +
+          (namesFirst ? '\u266a Names' : '\u2160 Numerals') + '</span></div>';
       if (Array.isArray(prog.versions) && prog.versions.length) {
         h += '<div class="ambient-pov-vers">' +
           '<span class="ambient-pov-verslbl">Versions</span>' +
@@ -27008,8 +27014,14 @@
           const rn = _ambPeRoman(c, pk ? pk.root : kRoot, pk ? pk.scale : kScale);
           const nm = _ambChordShort(c) || '?';
           const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
-          h += '<span role="button" tabindex="0" class="ambient-pov-chord' + (_ambIsTransition(c) ? ' pov-trans' : '') + '" data-pov="chord:' + i + '" data-ci="' + i + '" title="' + (_ambIsTransition(c) ? 'Transition ' : 'Chord ') + (i + 1) + ' — ' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + ' · click to edit">' +
-            (rn ? '<b>' + esc(rn) + '</b>' : '') + '<span class="ambient-pov-nm">' + esc(nm) + '</span>' +
+          h += '<span role="button" tabindex="0" class="ambient-pov-chord' + (namesFirst ? ' pov-names' : '') + (_ambIsTransition(c) ? ' pov-trans' : '') + '" data-pov="chord:' + i + '" data-ci="' + i + '" title="' + (_ambIsTransition(c) ? 'Transition ' : 'Chord ') + (i + 1) + ' — ' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + ' · click to edit">' +
+            // Names-first swaps the ORDER and the emphasis, never the ROLES: the
+            // playhead relabels `.ambient-pov-nm` to the sounding chord, so that
+            // span must stay the NAME in both modes or the glow would write a
+            // chord name into the numeral slot.
+            (namesFirst
+              ? ('<span class="ambient-pov-nm">' + esc(nm) + '</span>' + (rn ? '<b>(' + esc(rn) + ')</b>' : ''))
+              : ((rn ? '<b>' + esc(rn) + '</b>' : '') + '<span class="ambient-pov-nm">' + esc(nm) + '</span>')) +
             (altN ? '<i class="ambient-pov-alt" title="' + (altN + 1) + ' alternate chords cycle here">×' + (altN + 1) + '</i>' : '') +
             '</span>';
         }
@@ -27165,6 +27177,9 @@
         setTimeout(() => { try { _ambPartKeyMenu(E, prog, pi, r2.left, r2.bottom, refresh, persist); } catch (e) {} }, 0);
         return;
       }
+      // Label mode is a VIEW preference on the strip element (the panel is built
+      // once, so it survives), not a config field — nothing about the music changes.
+      if (op === 'names') { const ov = _ambGet(E, 'ambient-prog-overview'); if (ov) { ov._povNames = !ov._povNames; ov._sig = ''; _ambRenderProgOverview(E); } return; }
       if (op === 'addpart') { const r = t.getBoundingClientRect(); if (_ambProgActions) setTimeout(() => { try { _ambProgActions.addPart(r.left, r.bottom); } catch (e) {} }, 0); return; }
     }
     // Progression-area subsections. Reuses the panel's own .ambient-grp collapsible

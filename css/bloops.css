@@ -3815,6 +3815,15 @@
     @media (hover: hover) { .pg-bx:hover { color: #f0b6c0; } }
     .pg-bempty { font-size: 0.74rem; color: #7c7f96; }
     .pg-builthint { margin-top: 4px; font-size: 0.7rem; color: #7c7f96; }
+    /* Overview label mode — numerals-first (default) vs chord-names-first. Only the
+       emphasis moves; .ambient-pov-nm stays the NAME either way, because the
+       playhead relabels that span to the sounding chord. */
+    .ambient-pov-bar { display: flex; align-items: center; gap: 6px; width: 100%; margin-bottom: 4px; }
+    .ambient-pov-namesbtn { padding: 3px 10px; border: 1px solid #3a3a52; border-radius: 999px; background: #16162a; color: #cbd5e0; cursor: pointer; font-size: 0.7rem; white-space: nowrap; touch-action: manipulation; }
+    .ambient-pov-namesbtn.on { border-color: #4fd1c5; background: rgba(79,209,197,0.16); color: #d6fbf6; }
+    @media (hover: hover) { .ambient-pov-namesbtn:hover { border-color: #9f7aea; color: #e9dcff; } }
+    .ambient-pov-chord.pov-names .ambient-pov-nm { font-weight: 700; font-size: 0.82rem; color: #e9dcff; }
+    .ambient-pov-chord.pov-names b { font-weight: 400; font-size: 0.66rem; opacity: 0.62; }
     .ambient-euclid-presetrow { display: flex; align-items: center; gap: 6px; }
     .ambient-euclid-preset { flex: 1 1 auto; min-width: 0; }
     /* Roll / keep, beside the picker they belong to. Same pill as the grid's own

@@ -5881,14 +5881,28 @@
           _E = E; const c = E.getCfg(); if (!c) return;
           if (!c.prog || typeof c.prog !== 'object') c.prog = { on: false, name: '', chords: [] };
           c.prog.name = nm; c.prog.chords = chs; c.prog.on = true;
-          const rp = _ambRepairParts(c.prog.parts, chs.length); if (rp) c.prog.parts = rp; else delete c.prog.parts;   // keep parts consistent after chord edits
+          // Parts are staged in the editor, so commit THOSE (falling back to
+          // whatever cfg had, for callers that never opened the editor).
+          const _srcParts = (_ambProgEd && _ambProgEd.E === E && Array.isArray(_ambProgEd.parts)) ? _ambProgEd.parts : c.prog.parts;
+          const rp = _ambRepairParts(_srcParts, chs.length); if (rp) c.prog.parts = rp; else delete c.prog.parts;   // keep parts consistent after chord edits
           try { _ambAutoSyncFreeForProg(E, c); } catch (e) {}
           // NO publish here: Save commits to the CURRENT progression only. The seed
           // list is written exclusively by Export (data-pe="export").
           try { _ambSyncControls(E); } catch (e) {}
         } };
       }
-      _ambProgEd = { E, chords, sel: 0, altSel: -1, name, target };
+      // PARTS are staged like the chords. They used to live only on cfg.prog while
+      // chord edits sat in this copy, so `apply`'s _ambRepairParts handed every
+      // chord you added to the LAST part — which is exactly why a part could not
+      // be extended. `part` is the active tab (-1 = All), transient view state.
+      let edParts = null;
+      try {
+        const c0 = E.getCfg();
+        if (!opts.getLayer && c0 && c0.prog && Array.isArray(c0.prog.parts) && c0.prog.parts.length > 1) {
+          edParts = c0.prog.parts.map(x => Object.assign({}, x, x && x.salt ? { salt: Object.assign({}, x.salt) } : {}, x && x.key ? { key: Object.assign({}, x.key) } : {}));
+        }
+      } catch (e) {}
+      _ambProgEd = { E, chords, sel: 0, altSel: -1, name, target, parts: edParts, part: -1 };
       let host = document.getElementById('ambient-prog-editor');
       if (!host) {
         host = document.createElement('div'); host.id = 'ambient-prog-editor'; host.className = 'ambient-prog-editor';
@@ -5900,6 +5914,16 @@
           // can reorder them (tap = select as before, drag ≥6px = move).
           if (/^sel:\d+$/.test(act) && b.classList.contains('pe-chord') && b.closest('.pe-chords')) { _ambPeDragStart(e, b, act); return; }
           _ambPeAct(act, b);
+        });
+        // Per-part salt inputs: numbers, so they need `change`, not the [data-pe]
+        // pointerdown path. No re-render on input — that would kill the field mid-edit.
+        host.addEventListener('change', (e) => {
+          const inp = e.target && e.target.closest && e.target.closest('[data-pesalt]'); if (!inp || !_ambProgEd) return;
+          const ed2 = _ambProgEd, bits = String(inp.getAttribute('data-pesalt')).split(':');
+          const ps = _ambPeParts(ed2), pi = parseInt(bits[0], 10), axis = bits[1];
+          if (!ps || !ps[pi] || !ps[pi].salt) return;
+          const max = (axis === 'colors') ? 8 : 100;
+          ps[pi].salt[axis] = Math.max(0, Math.min(max, parseInt(inp.value, 10) || 0));
         });
         document.addEventListener('pointerdown', (e) => { if (_ambProgEd && host.style.display !== 'none' && !host.contains(e.target) && !(e.target.closest && e.target.closest('#ambient-prog-edit'))) _ambPeClose(); }, true);
         document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && _ambProgEd) _ambPeClose(); });
@@ -5955,6 +5979,33 @@
       window.addEventListener('pointerup', up);
       window.addEventListener('pointercancel', up);
     }
+    // ---- editor PART helpers (all on the STAGED ed.parts) -------------------
+    // A part is a contiguous run of `len` chords; index arithmetic stays ABSOLUTE
+    // everywhere (the chord-matrix doctrine) so setters need no offset maths.
+    function _ambPeParts(ed) { return (ed && Array.isArray(ed.parts) && ed.parts.length > 1) ? ed.parts : null; }
+    function _ambPePartRange(ed, pi) {
+      const ps = _ambPeParts(ed); if (!ps || pi < 0 || pi >= ps.length) return { from: 0, to: ed.chords.length };
+      let from = 0; for (let i = 0; i < pi; i++) from += Math.max(1, ps[i].len | 0);
+      return { from, to: Math.min(ed.chords.length, from + Math.max(1, ps[pi].len | 0)) };
+    }
+    function _ambPePartOf(ed, ci) {
+      const ps = _ambPeParts(ed); if (!ps) return -1;
+      let from = 0;
+      for (let i = 0; i < ps.length; i++) { const n = Math.max(1, ps[i].len | 0); if (ci < from + n) return i; from += n; }
+      return ps.length - 1;
+    }
+    // Grow/shrink the part that OWNS this chord index. A part emptied to zero is
+    // dropped, and a chain of one is no chain at all (matching _ambRepairParts).
+    function _ambPePartBump(ed, ci, delta) {
+      const ps = _ambPeParts(ed); if (!ps) return;
+      const pi = _ambPePartOf(ed, ci); if (pi < 0) return;
+      ps[pi].len = Math.max(0, (ps[pi].len | 0) + delta);
+      if (ps[pi].len <= 0) {
+        ps.splice(pi, 1);
+        if (ed.part >= ps.length) ed.part = ps.length - 1;
+      }
+      if (ps.length <= 1) { ed.parts = null; ed.part = -1; }
+    }
     function _ambPeRender() {
       const host = document.getElementById('ambient-prog-editor'); if (!host || !_ambProgEd) return;
       if (_ambProgEd._pvOn) { try { _ambPePreviewStop(_ambProgEd); } catch (e) {} }   // a full re-render orphans the chord-button refs → halt the preview
@@ -5979,7 +6030,48 @@
       // what this pane edits — and the banner below the title says so.
       const _vsEd = (function () { try { return _ambProgViewShift(ed.E, gcfg, ed.chords); } catch (e) { return 0; } })();
       const fn = (c) => _ambChordShift(c, _vsEd);
+      // PART TABS. `All` plus one per part; the active tab scopes which chords the
+      // strip shows and which part a new chord is added to.
+      const _peParts = _ambPeParts(ed);
+      if (_peParts && ed.part >= _peParts.length) ed.part = -1;
+      const _peRange = (ed.part >= 0) ? _ambPePartRange(ed, ed.part) : { from: 0, to: ed.chords.length };
+      const partTabs = (function () {
+        if (!_peParts) {
+          // No chain yet — still offer the one action that starts one.
+          return '<div class="pe-parts"><span class="pe-parts-lbl" title="Parts split a progression into named sections (Verse, Chorus) that can repeat independently.">Parts</span>' +
+            '<button type="button" class="pe-parttab pe-parttab-add" data-pe="partadd" title="Split this progression into named parts">＋ Part</button></div>';
+        }
+        let h = '<div class="pe-parts"><button type="button" class="pe-parttab' + (ed.part < 0 ? ' on' : '') + '" data-pe="part:-1" title="Show every chord in the chain">All</button>';
+        _peParts.forEach((pt, i) => {
+          const r = _ambPePartRange(ed, i);
+          const plays = Math.max(1, (pt.plays | 0) || 1);
+          h += '<button type="button" class="pe-parttab' + (ed.part === i ? ' on' : '') + '" data-pe="part:' + i + '" title="' + esc(pt.name || ('Part ' + (i + 1))) + ' — ' + (r.to - r.from) + ' chord' + ((r.to - r.from) === 1 ? '' : 's') + (plays > 1 ? ', plays ' + plays + '×' : '') + '">' +
+            esc(pt.name || ('Part ' + (i + 1))) + (plays > 1 ? '<i class="pe-parttab-x">×' + plays + '</i>' : '') + '</button>';
+        });
+        h += '<button type="button" class="pe-parttab pe-parttab-add" data-pe="partadd" title="Add a new part after the current one">＋</button></div>';
+        // Controls for the ACTIVE part: name, how many times it runs, and its salt.
+        if (ed.part >= 0 && _peParts[ed.part]) {
+          const pt = _peParts[ed.part], plays = Math.max(1, (pt.plays | 0) || 1);
+          const sv = (pt.salt && typeof pt.salt === 'object') ? pt.salt : null;
+          h += '<div class="pe-partbar">' +
+            '<button type="button" class="pe-partbtn" data-pe="partren:' + ed.part + '" title="Rename this part">✎ ' + esc(pt.name || ('Part ' + (ed.part + 1))) + '</button>' +
+            '<span class="pe-partplays" title="How many times this part runs before the chain moves on">' +
+              '<button type="button" class="pe-partbtn" data-pe="partplays:' + ed.part + ':-1">–</button>' +
+              '<b>' + plays + '×</b>' +
+              '<button type="button" class="pe-partbtn" data-pe="partplays:' + ed.part + ':1">+</button></span>' +
+            '<button type="button" class="pe-partbtn' + (sv ? ' on' : '') + '" data-pe="partsalt:' + ed.part + '" title="' + (sv ? 'This part has its own salt — click to go back to inheriting the progression\u2019s' : 'Give this part its own salt instead of inheriting the progression\u2019s') + '">\ud83e\uddc2 ' + (sv ? 'own' : 'inherit') + '</button>' +
+            (sv ? '<span class="pe-partsalt">' +
+              '<label title="Re-slice this part\u2019s chord lengths each cycle (its own subtotal is preserved)">len<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':len" min="0" max="100" step="5" value="' + (sv.len | 0) + '"></label>' +
+              '<label title="Colour segments per chord instance in this part">col<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':colors" min="0" max="8" step="1" value="' + (sv.colors | 0) + '"></label>' +
+              '<label title="How much the segment count varies between instances">sct<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':scatter" min="0" max="100" step="5" value="' + (sv.scatter | 0) + '"></label>' +
+              '</span>' : '') +
+            '<button type="button" class="pe-partbtn pe-partdel" data-pe="partdel:' + ed.part + '" title="Remove this part boundary — its chords merge into the previous part">\u2715 Part</button>' +
+            '</div>';
+        }
+        return h;
+      })();
       const chordsRow = ed.chords.map((c, i) => {
+        if (i < _peRange.from || i >= _peRange.to) return '';   // scoped to the active part; indices stay ABSOLUTE
         const rn = _ambPeRoman(fn(c), kRoot, kScale);
         const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
         // A transition is not a chord and must not read as one — it takes the
@@ -6032,7 +6124,7 @@
         host.innerHTML =
           '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
           shiftNote +
-          '<div class="pe-chords">' + chordsRow + '</div>' +
+          partTabs + '<div class="pe-chords">' + chordsRow + '</div>' +
           '<div class="pe-chordhdr">Transition ' + (sel + 1) + ' of ' + ed.chords.length +
             '<span class="pe-chordops"><button type="button" class="pe-x" data-pe="rmchord" title="Remove this transition"' + (ed.chords.length <= 1 ? ' disabled' : '') + '>✕ remove</button></span></div>' +
           '<div class="pe-transnote">A <b>walk</b> from the chord before it to the chord after — composed fresh from the take seed, so it re-rolls with 🎲 New take and loops identically in between. Each layer opts in through its cell in the <b>chord matrix</b>: leave the cell on to walk, set it to <b>never</b> to sit the bar out.</div>' +
@@ -6049,7 +6141,7 @@
       host.innerHTML =
         '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
         shiftNote +
-        '<div class="pe-chords">' + chordsRow + '</div>' +
+        partTabs + '<div class="pe-chords">' + chordsRow + '</div>' +
         '<div class="pe-chordhdr">Chord ' + (sel + 1) + ' of ' + ed.chords.length + (ed.altSel >= 0 ? ' <span class="pe-editing-alt">· editing alt ' + (ed.altSel + 1) + '</span>' : '') +
           '<span class="pe-chordops">' +
             '<button type="button" class="pe-scaletog' + (scaleView ? ' on' : '') + '" data-pe="scaleview" title="' + (diatonic ? (scaleView ? 'Scale coloring ON — in-key roots/notes/chords are highlighted, out-of-key are amber. Click to turn off.' : 'Click to color roots / notes / chords by whether they fit the key.') : 'No diatonic key set — scale coloring needs a key/scale.') + '"' + (diatonic ? '' : ' disabled') + '>◈ Scale</button>' +
@@ -6149,9 +6241,53 @@
       const notesSorted = () => _ambPeNotes(tgt).slice().sort((x, y) => x - y);
       const serialize = () => ed.chords.map(_ambCloneChord);   // preserves bars + alts
       if (op === 'sel') { ed.sel = arg | 0; ed.altSel = -1; }
-      else if (op === 'addchord') { ed.chords.splice(ed.sel + 1, 0, _ambCloneChord(ch)); ed.sel++; ed.altSel = -1; }
-      else if (op === 'addtrans') { ed.chords.splice(ed.sel + 1, 0, { transition: true, bars: 1 }); ed.sel++; ed.altSel = -1; }
-      else if (op === 'rmchord') { if (ed.chords.length > 1) { ed.chords.splice(ed.sel, 1); ed.sel = Math.min(ed.sel, ed.chords.length - 1); ed.altSel = -1; } }
+      // Insertion is positional (after the selected chord), so growing the part
+      // that OWNS ed.sel is what makes "add a chord to THIS part" work — without
+      // it _ambRepairParts hands every new chord to the last part on save.
+      else if (op === 'addchord') { _ambPePartBump(ed, ed.sel, 1); ed.chords.splice(ed.sel + 1, 0, _ambCloneChord(ch)); ed.sel++; ed.altSel = -1; }
+      else if (op === 'addtrans') { _ambPePartBump(ed, ed.sel, 1); ed.chords.splice(ed.sel + 1, 0, { transition: true, bars: 1 }); ed.sel++; ed.altSel = -1; }
+      else if (op === 'rmchord') { if (ed.chords.length > 1) { _ambPePartBump(ed, ed.sel, -1); ed.chords.splice(ed.sel, 1); ed.sel = Math.min(ed.sel, ed.chords.length - 1); ed.altSel = -1; } }
+      // ---- PART ops (all on the staged ed.parts; committed by Save) ----------
+      else if (op === 'part') { const pi = parseInt(arg, 10); ed.part = Number.isFinite(pi) ? pi : -1;
+        if (ed.part >= 0) { const r = _ambPePartRange(ed, ed.part); if (ed.sel < r.from || ed.sel >= r.to) { ed.sel = r.from; ed.altSel = -1; } } }
+      else if (op === 'partadd') {
+        // Split at the selection: the chords from ed.sel+1 onward become a new part.
+        const total = ed.chords.length;
+        if (total < 2) { if (typeof showToast === 'function') showToast('Add a second chord first — a part needs chords to hold'); return; }
+        const cut = Math.min(total - 1, Math.max(1, ed.sel + 1));
+        if (!Array.isArray(ed.parts) || ed.parts.length < 2) {
+          // FIRST split: there is no chain yet, so the helpers (which treat a
+          // single part as "no chain") cannot locate anything — build both sides.
+          ed.parts = [{ name: 'Part 1', len: cut }, { name: 'Part 2', len: total - cut }];
+          ed.part = 1; ed.sel = cut; ed.altSel = -1;   // land on the new part's first chord, not one hidden by the tab
+        } else {
+          const pi = _ambPePartOf(ed, cut - 1);
+          const r = _ambPePartRange(ed, pi);
+          const left = cut - r.from, right = r.to - cut;
+          if (left <= 0 || right <= 0) { if (typeof showToast === 'function') showToast('Pick a chord with room on both sides to split there'); return; }
+          ed.parts[pi].len = left;
+          ed.parts.splice(pi + 1, 0, { name: 'Part ' + (ed.parts.length + 1), len: right });
+          ed.part = pi + 1; ed.sel = cut; ed.altSel = -1;
+        }
+      }
+      else if (op === 'partren') { const ps = _ambPeParts(ed), pi = parseInt(arg, 10);
+        if (ps && ps[pi]) { let nm = null; try { nm = window.prompt('Part name', ps[pi].name || ('Part ' + (pi + 1))); } catch (e) {}
+          if (nm != null) { const v = String(nm).trim().slice(0, 16); if (v) ps[pi].name = v; } } }
+      else if (op === 'partplays') { const ps = _ambPeParts(ed), pi = parseInt(arg, 10), d = parseInt(a[2], 10) || 0;
+        if (ps && ps[pi]) { const v = Math.max(1, Math.min(64, (Math.max(1, (ps[pi].plays | 0) || 1)) + d));
+          if (v > 1) ps[pi].plays = v; else delete ps[pi].plays; } }
+      else if (op === 'partsalt') { const ps = _ambPeParts(ed), pi = parseInt(arg, 10);
+        // Toggle between inheriting the progression's salt (absent) and owning one.
+        // A fresh override starts at all-zero, which is a real statement: "no salt here".
+        if (ps && ps[pi]) { if (ps[pi].salt) delete ps[pi].salt; else ps[pi].salt = { len: 0, colors: 0, scatter: 0 }; } }
+      else if (op === 'partdel') { const ps = _ambPeParts(ed), pi = parseInt(arg, 10);
+        if (ps && ps[pi]) {
+          // Removing a boundary merges this part's chords into its neighbour —
+          // the chords themselves are never touched.
+          const into = pi > 0 ? pi - 1 : 1;
+          if (ps[into]) { ps[into].len = (ps[into].len | 0) + (ps[pi].len | 0); ps.splice(pi, 1); }
+          if (ps.length <= 1) { ed.parts = null; ed.part = -1; } else if (ed.part >= ps.length) ed.part = ps.length - 1;
+        } }
       else if (op === 'flat' || op === 'sharp') { const ns = notesSorted(); const ni = arg | 0; if (ns[ni] != null) { ns[ni] = (((ns[ni] + (op === 'sharp' ? 1 : -1)) % 12) + 12) % 12; _ambPeSetNotes(tgt, ns, true); } }
       else if (op === 'ndtup' || op === 'ndtdn') { const ns = notesSorted(); const ni = arg | 0; if (ns[ni] != null) { ns[ni] = _ambDiatonicShiftPc(ns[ni], op === 'ndtup' ? 1 : -1, kRoot, kScale); _ambPeSetNotes(tgt, ns, true); } }
       else if (op === 'rmnote') { const ns = notesSorted(); if (ns.length > 1) { ns.splice(arg | 0, 1); _ambPeSetNotes(tgt, ns, true); } }

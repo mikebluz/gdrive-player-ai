@@ -3730,6 +3730,24 @@
     @media (hover: hover) { .ambient-slice-cell:hover { border-color: #9f7aea; color: #c9b8ef; } }
     /* Editable euclid step grid: one flex-wrap row of cells per voice. */
     .ambient-euclid-wrap { display: flex; flex-direction: column; gap: 5px; flex: 1 1 auto; min-width: 0; }
+    /* Progression editor PART TABS — one tab per part, plus the active part's own
+       controls (name / repeats / salt). Styled off the editor's existing chrome. */
+    .pe-parts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 5px; }
+    .pe-parts-lbl { font-size: 0.7rem; color: #7c7f96; margin-right: 2px; }
+    .pe-parttab { padding: 3px 10px; border: 1px solid #2d2d3f; border-radius: 999px 999px 0 0; background: #16162a; color: #cbd5e0; cursor: pointer; font-size: 0.74rem; white-space: nowrap; touch-action: manipulation; }
+    .pe-parttab.on { border-color: #9f7aea; background: rgba(159,122,234,0.18); color: #e9dcff; }
+    .pe-parttab-x { font-style: normal; opacity: 0.7; margin-left: 3px; font-size: 0.66rem; }
+    .pe-parttab-add { border-radius: 999px; }
+    @media (hover: hover) { .pe-parttab:hover { border-color: #9f7aea; color: #e9dcff; } }
+    .pe-partbar { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; width: 100%; padding: 5px 6px; border: 1px solid #2d2d3f; border-radius: 8px; background: rgba(159,122,234,0.06); }
+    .pe-partbtn { padding: 2px 8px; border: 1px solid #2d2d3f; border-radius: 999px; background: #16162a; color: #cbd5e0; cursor: pointer; font-size: 0.7rem; touch-action: manipulation; }
+    .pe-partbtn.on { border-color: #4fd1c5; background: rgba(79,209,197,0.16); color: #d6fbf6; }
+    .pe-partdel { margin-left: auto; }
+    .pe-partplays { display: inline-flex; align-items: center; gap: 4px; font-size: 0.7rem; color: #cbd5e0; }
+    .pe-partsalt { display: inline-flex; align-items: center; gap: 6px; }
+    .pe-partsalt label { display: inline-flex; align-items: center; gap: 3px; font-size: 0.66rem; color: #7c7f96; }
+    /* 16px so iOS does not zoom the page on focus and never zoom back. */
+    .pe-saltin { width: 52px; font-size: 16px; padding: 1px 4px; border: 1px solid #2d2d3f; border-radius: 5px; background: #0f0f1e; color: #e2e8f0; }
     .ambient-euclid-presetrow { display: flex; align-items: center; gap: 6px; }
     .ambient-euclid-preset { flex: 1 1 auto; min-width: 0; }
     /* Roll / keep, beside the picker they belong to. Same pill as the grid's own

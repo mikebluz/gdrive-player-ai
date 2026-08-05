@@ -37,6 +37,8 @@ const PI: f32 = core::f32::consts::PI;
 const FRAC_PI_2: f32 = core::f32::consts::FRAC_PI_2;
 const DELAY_LEN: usize = 48000; // 1 s at 48 kHz
 const CH_LEN: usize = 4096; // chorus line: 3.5 ms ± 3.5 ms needs ≤ 0.7 kframes
+const GLITCH_LEN: usize = 48000; // 1 s at 48 kHz — same footprint as the delay line
+const GRAINS: usize = 4;         // concurrent grains per strip
 const CHUNK: usize = 16; // control-rate granularity (matches design voices)
 
 // ---- parameter ramp (mirrors cancel + setValueAtTime + linearRamp) ---------
@@ -393,6 +395,25 @@ pub(crate) struct Strip {
     dist_adaa_f: [f32; 2],
     dist_adaa_dirty: bool,
     fx_order: [u8; 5],
+    // ---- GLITCH: one buffer stage, four read strategies (grain / repeat /
+    // tape-stop / reverse). Runs AFTER the reorderable five so `fx_order` stays a
+    // permutation of 0..4 and no existing routing changed. Feed-forward only —
+    // the ring takes the stage INPUT, never its own output, so there is no
+    // recursive path to flush.
+    gl_on: bool,
+    gl_mode: u8,     // 0 grain · 1 repeat · 2 tape-stop · 3 reverse
+    gl_wet: f32,
+    gl_size: f32,    // grain / slice length, seconds
+    gl_rate: f32,    // grains per second (grain) · slices per second (others)
+    gl_jit: f32,     // 0..1 read-position scatter
+    gl_pitch: f32,   // ± semitones of per-grain pitch scatter
+    gl_w: usize,     // ring write head
+    gl_ph: f64,      // scheduler phase, in samples since the last spawn/slice
+    gl_base: f64,    // captured read origin for repeat / reverse
+    gl_pos: f64,     // read cursor within the current slice
+    gl_rep: u32,     // slices played since the last capture
+    gl_rng: u32,     // per-strip xorshift — deterministic, so golden reproduces
+    gl_g: [[f32; 4]; GRAINS],   // per grain: [pos, inc, len, age] (all in samples)
     cho_on: bool,
     cho_wet: f32,
     cho_depth: f32,
@@ -487,6 +508,20 @@ pub(crate) const STRIP0: Strip = Strip {
     ap_on: false,
     ap_wet: 0.0,
     fx_order: [0, 1, 2, 3, 4],
+    gl_on: false,
+    gl_mode: 0,
+    gl_wet: 0.0,
+    gl_size: 0.08,
+    gl_rate: 20.0,
+    gl_jit: 0.0,
+    gl_pitch: 0.0,
+    gl_w: 0,
+    gl_ph: 0.0,
+    gl_base: 0.0,
+    gl_pos: 0.0,
+    gl_rep: 0,
+    gl_rng: 0x9E3779B9,
+    gl_g: [[0.0; 4]; GRAINS],
     ap_depth: 1.0,
     ap_rate: 1.0,
 };
@@ -494,6 +529,7 @@ pub(crate) const STRIP0: Strip = Strip {
 pub(crate) static mut STRIPS: [Strip; SLOTS] = [STRIP0; SLOTS];
 pub(crate) static mut IN_BUF: [[[f32; BLOCK]; 2]; SLOTS] = [[[0.0; BLOCK]; 2]; SLOTS];
 pub(crate) static mut SEND: [[f32; BLOCK]; 2] = [[0.0; BLOCK]; 2];
+static mut GBUF: [[[f32; GLITCH_LEN]; 2]; SLOTS] = [[[0.0; GLITCH_LEN]; 2]; SLOTS];
 static mut DLINE: [[[f32; DELAY_LEN]; 2]; SLOTS] = [[[0.0; DELAY_LEN]; 2]; SLOTS];
 static mut DPRE: [[f32; DELAY_LEN]; SLOTS] = [[0.0; DELAY_LEN]; SLOTS];
 static mut CBUF: [[[f32; CH_LEN]; 2]; SLOTS] = [[[0.0; CH_LEN]; 2]; SLOTS];
@@ -526,6 +562,9 @@ pub(crate) fn reset_all() {
 fn reset_slot(slot: usize) {
     unsafe {
         for ch in 0..2 {
+            for f in GBUF[slot][ch].iter_mut() {
+                *f = 0.0;
+            }
             for f in DLINE[slot][ch].iter_mut() {
                 *f = 0.0;
             }
@@ -800,6 +839,122 @@ fn fx_delay(slot: usize, st: &mut Strip, frames: usize) {
     }
 }
 
+// Linear read of the glitch ring at a fractional position (already wrapped).
+#[inline(always)]
+fn gread(line: &[f32; GLITCH_LEN], pos: f64) -> f32 {
+    let n = GLITCH_LEN as f64;
+    let p = pos - (pos / n).floor() * n;          // wrap into [0, n)
+    let i0 = p as usize % GLITCH_LEN;
+    let i1 = (i0 + 1) % GLITCH_LEN;
+    let fr = (p - p.floor()) as f32;
+    line[i0] + (line[i1] - line[i0]) * fr
+}
+// Deterministic per-strip xorshift — golden must reproduce exactly, so this can
+// never reach for a host RNG.
+#[inline(always)]
+fn grnd(st: &mut Strip) -> f32 {
+    let mut x = st.gl_rng;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    st.gl_rng = x;
+    (x >> 8) as f32 / 16777216.0
+}
+// GLITCH — one ring buffer, four read strategies. Every mode writes the stage
+// input into the ring and reads it back somewhere else; `wet` crossfades against
+// the untouched dry, so wet 0 is a bypass that still keeps the ring primed (a
+// mode change then has history to work with instead of a second of silence).
+fn fx_glitch(slot: usize, st: &mut Strip, buf: &mut [[f32; BLOCK]; 2], frames: usize) {
+    let sr = unsafe { SR };
+    let wet = st.gl_wet.clamp(0.0, 1.0);
+    let dry = 1.0 - wet;
+    let size = (st.gl_size.clamp(0.005, 0.9) as f64) * sr as f64;   // samples
+    let rate = st.gl_rate.clamp(0.1, 200.0) as f64;
+    let span = (GLITCH_LEN - 4) as f64;
+    for i in 0..frames {
+        let w = st.gl_w;
+        for ch in 0..2 {
+            unsafe { GBUF[slot][ch][w] = buf[ch][i]; }
+        }
+        let wf = w as f64;
+        let mut y = [0.0f32; 2];
+        match st.gl_mode {
+            // ---- REPEAT: capture a slice, loop it, re-capture every `gl_rep` passes.
+            1 => {
+                if st.gl_pos >= size {
+                    st.gl_pos -= size;
+                    st.gl_rep += 1;
+                    let reps = (rate.max(1.0)) as u32;              // rate doubles as "passes per capture"
+                    if st.gl_rep >= reps { st.gl_rep = 0; st.gl_base = wf - size; }
+                }
+                if st.gl_base == 0.0 { st.gl_base = wf - size; }
+                let p = st.gl_base + st.gl_pos;
+                for ch in 0..2 { y[ch] = unsafe { gread(&GBUF[slot][ch], p) }; }
+                st.gl_pos += 1.0;
+            }
+            // ---- TAPE STOP: read rate ramps 1 → 0 across `size`, then re-arms.
+            2 => {
+                let period = (sr as f64 / rate.max(0.05)).max(size);
+                if st.gl_ph >= period { st.gl_ph = 0.0; st.gl_base = wf; st.gl_pos = 0.0; }
+                let frac = (st.gl_ph / size).min(1.0);
+                let speed = 1.0 - frac;                              // 1 → 0
+                let p = st.gl_base + st.gl_pos;
+                for ch in 0..2 { y[ch] = unsafe { gread(&GBUF[slot][ch], p) }; }
+                // Fade out with the speed so the stall lands in silence, not a DC hold.
+                let g = speed as f32;
+                for ch in 0..2 { y[ch] *= g; }
+                st.gl_pos += speed;
+                st.gl_ph += 1.0;
+            }
+            // ---- REVERSE: walk backwards through the last `size` seconds.
+            3 => {
+                if st.gl_pos >= size { st.gl_pos = 0.0; st.gl_base = wf; }
+                let p = st.gl_base - st.gl_pos;
+                for ch in 0..2 { y[ch] = unsafe { gread(&GBUF[slot][ch], p) }; }
+                st.gl_pos += 1.0;
+            }
+            // ---- GRAIN (default): overlapping windowed grains from scattered
+            //      positions, each at its own pitch.
+            _ => {
+                let iv = (sr as f64 / rate).max(16.0);
+                if st.gl_ph >= iv {
+                    st.gl_ph -= iv;
+                    // Claim the oldest finished slot; if all are busy this grain is dropped,
+                    // which is a density ceiling rather than a glitch in the glitch.
+                    let mut idx = usize::MAX;
+                    for g in 0..GRAINS { if st.gl_g[g][2] <= 0.0 { idx = g; break; } }
+                    if idx != usize::MAX {
+                        let back = size + (grnd(st) as f64) * (st.gl_jit.clamp(0.0, 1.0) as f64) * (span - size);
+                        let semis = (grnd(st) * 2.0 - 1.0) * st.gl_pitch;
+                        st.gl_g[idx][0] = (wf - back) as f32;
+                        st.gl_g[idx][1] = (2.0f32).powf(semis / 12.0);
+                        st.gl_g[idx][2] = size as f32;
+                        st.gl_g[idx][3] = 0.0;
+                    }
+                }
+                st.gl_ph += 1.0;
+                for g in 0..GRAINS {
+                    let len = st.gl_g[g][2];
+                    if len <= 0.0 { continue; }
+                    let age = st.gl_g[g][3];
+                    if age >= len { st.gl_g[g][2] = 0.0; continue; }
+                    // Hann window — no clicks at either edge however the grain is placed.
+                    let ph = age / len;
+                    let env = 0.5 - 0.5 * (core::f32::consts::TAU * ph).cos();
+                    let pos = st.gl_g[g][0] as f64 + (age * st.gl_g[g][1]) as f64;
+                    for ch in 0..2 { y[ch] += unsafe { gread(&GBUF[slot][ch], pos) } * env; }
+                    st.gl_g[g][3] = age + 1.0;
+                }
+                // Overlapping Hann grains sum above unity; normalise by the count so
+                // engaging the effect is not also a level jump.
+                let norm = 1.0 / (GRAINS as f32).sqrt();
+                for ch in 0..2 { y[ch] *= norm; }
+            }
+        }
+        for ch in 0..2 { buf[ch][i] = buf[ch][i] * dry + y[ch] * wet; }
+        st.gl_w = (w + 1) % GLITCH_LEN;
+    }
+}
 fn fx_autopan(st: &Strip, buf: &mut [[f32; BLOCK]; 2], t: f64, frames: usize) {
     let (cd, cw) = xfade(st.ap_wet);
     let mut i0 = 0;
@@ -963,6 +1118,10 @@ pub(crate) fn process_strips(t_block: f64, frames: usize) {
                     _ => {}
                 }
             }
+            // GLITCH runs after the reorderable five — it is a destroy-the-signal
+            // stage and belongs at the end of the chain, which is also why it is
+            // not part of the fx_order permutation.
+            if st.gl_on { fx_glitch(slot, st, &mut OUT[slot], frames); }
             // MAIN/dry output gain (layer "Wet only"): scales the post-FX direct
             // output. The reverb SEND was tapped pre-FX (above), so it survives a
             // 0 here — muting the dry while the wash rings. 1.0 = skipped/neutral.
@@ -1009,6 +1168,37 @@ pub extern "C" fn strip_reset(slot: u32) {
         let s = (slot as usize) % SLOTS;
         reset_slot(s);
         STRIPS[s] = STRIP0;
+    }
+}
+
+/// GLITCH — one buffer stage, four read strategies.
+/// mode: 0 grain · 1 repeat · 2 tape-stop · 3 reverse.
+/// `size_s` = grain/slice length; `rate` = grains per second in grain mode, and
+/// passes-per-capture (repeat) or re-arms per second (tape-stop) otherwise.
+/// Engaging, or switching mode, clears the grain slots and read cursors so the
+/// stage never starts mid-grain on stale state — the ring itself is KEPT, so the
+/// effect has history to work with the instant it comes on.
+#[no_mangle]
+pub extern "C" fn strip_glitch(slot: u32, on: u32, mode: u32, wet: f32, size_s: f32, rate: f32, jitter: f32, pitch: f32) {
+    unsafe {
+        let s = (slot as usize) % SLOTS;
+        let st = &mut STRIPS[s];
+        let m = (mode % 4) as u8;
+        if on != 0 && (!st.gl_on || st.gl_mode != m) {
+            st.gl_g = [[0.0; 4]; GRAINS];
+            st.gl_ph = 0.0;
+            st.gl_pos = 0.0;
+            st.gl_base = 0.0;
+            st.gl_rep = 0;
+            st.gl_rng = 0x9E3779B9 ^ ((s as u32) << 16);   // per-slot, still deterministic
+        }
+        st.gl_on = on != 0;
+        st.gl_mode = m;
+        st.gl_wet = wet.clamp(0.0, 1.0);
+        st.gl_size = size_s.clamp(0.005, 0.9);
+        st.gl_rate = rate.clamp(0.1, 200.0);
+        st.gl_jit = jitter.clamp(0.0, 1.0);
+        st.gl_pitch = pitch.clamp(0.0, 24.0);
     }
 }
 

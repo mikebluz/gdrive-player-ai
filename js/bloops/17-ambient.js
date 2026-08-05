@@ -6148,7 +6148,10 @@
       // chord). The part TABS stay outside — they are how you move around the
       // chain — and so does the Save footer, since folding Save away would hide
       // the only way to commit. `_secClosed` is transient view state.
-      const secOpen = (k) => !(ed._secClosed && ed._secClosed[k]);
+      // Both start COLLAPSED — the editor opens compact (title · tabs · two
+      // headers · Save) and you unfold what you came for. Absence = closed, so
+      // `_secOpen` only ever records what the user deliberately opened.
+      const secOpen = (k) => !!(ed._secOpen && ed._secOpen[k]);
       const secWrap = (k, label, body, sum) => {
         const o = secOpen(k);
         return '<div class="pe-sec' + (o ? '' : ' folded') + '" data-sec="' + k + '">' +
@@ -6367,7 +6370,7 @@
           ed.part = pi + 1; ed.sel = cut; ed.altSel = -1;
         }
       }
-      else if (op === 'sectog') { if (!ed._secClosed) ed._secClosed = {}; ed._secClosed[arg] = !ed._secClosed[arg]; }
+      else if (op === 'sectog') { if (!ed._secOpen) ed._secOpen = {}; ed._secOpen[arg] = !ed._secOpen[arg]; }
       else if (op === 'partren') { const ps = _ambPeParts(ed), pi = parseInt(arg, 10);
         if (ps && ps[pi]) { let nm = null; try { nm = window.prompt('Part name', ps[pi].name || ('Part ' + (pi + 1))); } catch (e) {}
           if (nm != null) { const v = String(nm).trim().slice(0, 16); if (v) ps[pi].name = v; } } }

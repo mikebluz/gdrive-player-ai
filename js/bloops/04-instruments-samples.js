@@ -132,6 +132,21 @@
     function isSampleType(type) {
       return typeof type === 'string' && type.startsWith('sample:');
     }
+    // The sine stand-in below is INTERACTIVE FEEDBACK: a tap on a cold sample
+    // should make some sound rather than nothing while the buffer streams in.
+    // It is wrong for a GENERATED note, which is long, chordal and often held for
+    // seconds — a Bed on sample:piano played its whole first chord as 9-second
+    // sines ("a weird loud piercing sustaining sine instead of the piano").
+    // Reading `.sampler` upstream has already kicked the lazy load, so staying
+    // silent costs ONE note and the next is correct, which is exactly the
+    // documented contract for a cold sample ("silent that once").
+    // This got much louder when samplers became lazy in 2026: before that
+    // everything was built at boot, so the not-loaded branch was rare.
+    const _SINE_STANDIN_MAX_MS = 1500;
+    function _wantSineStandIn(durationMs) {
+      try { if (typeof window !== 'undefined' && window._ambEmitKey) return false; } catch (e) {}
+      return !(Number.isFinite(durationMs) && durationMs > _SINE_STANDIN_MAX_MS);
+    }
 
     // ---- Ensembles: user-built multi-tone voices ----
     // An ensemble is a composite voice referenced by the value 'ensemble:<id>'.
@@ -2850,7 +2865,9 @@
           // since the default tone is sample:piano. Fall back to a
           // Tone.Synth sine sustain so the press is audible and held;
           // the next press (likely a few hundred ms later) will use the
-          // real sample.
+          // real sample. A HELD stand-in is open-ended, so a generated
+          // note must never take it — it would ring until released.
+          if (!_wantSineStandIn(Infinity)) return null;
           return startSustainedNote(freq, { ...params, type: 'sine' }, startAt);
         }
         const baseFreq = snapDrumKitFreq(type, freq);
@@ -4180,6 +4197,8 @@
         // since the default tone is sample:piano. Fall back to a sine
         // synth one-shot so the press is audible; the next press
         // (likely a few hundred ms later) will use the real sample.
+        // NOT for generated / long notes — see _wantSineStandIn.
+        if (!_wantSineStandIn(durationMs)) return;
         return playNote(freq, { ...params, type: 'sine' }, durationMs, startTime, destination, trackIdx, laneIdx);
       }
 

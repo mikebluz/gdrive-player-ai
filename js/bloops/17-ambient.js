@@ -6053,6 +6053,7 @@
       const _peParts = _ambPeParts(ed);
       if (_peParts && ed.part >= _peParts.length) ed.part = -1;
       const _peRange = (ed.part >= 0) ? _ambPePartRange(ed, ed.part) : { from: 0, to: ed.chords.length };
+      let partBar = '';   // the active part's settings — folds away with the editor body
       const partTabs = (function () {
         if (!_peParts) {
           // No chain yet — still offer the one action that starts one.
@@ -6080,8 +6081,8 @@
           // written, and edits that change the CHAIN. Structure is last and fenced
           // off because those are the only two that reshape the progression rather
           // than set something on it — and Remove is the one destructive control.
-          const sec = (name, body) => '<div class="pe-partsec"><div class="pe-partsec-h">' + name + '</div>' + body + '</div>';
-          h += '<div class="pe-partbar">' +
+          const sec = (name, body) => body;   // (grouping headings removed — no value; the bar is one flat block)
+          partBar = '<div class="pe-partbar">' +
             sec('Identity',
               '<div class="pe-partgrp">' +
                 '<span class="pe-partgrp-lbl">Name</span>' +
@@ -6139,6 +6140,15 @@
         }
         return h;
       })();
+      // ONE fold for the whole working area: the part's settings plus every chord
+      // control below them. The part TABS stay out of it (they are how you move
+      // around the chain) and so does the Save footer (folding Save away would
+      // hide the only way to commit). Transient, default open.
+      const bodyOpen = ed._bodyOpen !== false;
+      const bodyTog = '<button type="button" class="pe-bodytog' + (bodyOpen ? ' on' : '') + '" data-pe="bodytog" aria-expanded="' + bodyOpen + '" title="' + (bodyOpen ? 'Fold the editor away and leave just the parts' : 'Show the part settings and chord controls') + '">' +
+        '<span class="pe-bodytog-car">' + (bodyOpen ? '▾' : '▸') + '</span> Part settings &amp; chords' +
+        (bodyOpen ? '' : '<span class="pe-bodytog-sum">' + ed.chords.length + ' chord' + (ed.chords.length === 1 ? '' : 's') + '</span>') + '</button>';
+      const bodyOpenTag = '<div class="pe-body' + (bodyOpen ? '' : ' folded') + '">';
       const chordsRow = ed.chords.map((c, i) => {
         if (i < _peRange.from || i >= _peRange.to) return '';   // scoped to the active part; indices stay ABSOLUTE
         const rn = _ambPeRoman(fn(c), kRoot, kScale);
@@ -6193,13 +6203,14 @@
         host.innerHTML =
           '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
           shiftNote +
-          partTabs + '<div class="pe-chords">' + chordsRow + '</div>' +
+          partTabs + bodyTog + bodyOpenTag + partBar + '<div class="pe-chords">' + chordsRow + '</div>' +
           '<div class="pe-chordhdr">Transition ' + (sel + 1) + ' of ' + ed.chords.length +
             '<span class="pe-chordops"><button type="button" class="pe-x" data-pe="rmchord" title="Remove this transition"' + (ed.chords.length <= 1 ? ' disabled' : '') + '>✕ remove</button></span></div>' +
           '<div class="pe-transnote">A <b>walk</b> from the chord before it to the chord after — composed fresh from the take seed, so it re-rolls with 🎲 New take and loops identically in between. Each layer opts in through its cell in the <b>chord matrix</b>: leave the cell on to walk, set it to <b>never</b> to sit the bar out.</div>' +
           '<div class="pe-lenrow"><label>Length</label>' +
             '<input type="text" id="pe-len" value="' + (ch.bars > 0 ? esc(_ambFmtBpc(ch.bars)) : '') + '" placeholder="1" title="How long the walk lasts, in bars (1, 1/2, 2…). Longer = more steps in the line." />' +
             '<span class="pe-lenhint">bars — blank = 1</span></div>' +
+          '</div>' +
           '<div class="pe-save"><input type="text" id="pe-name" value="' + esc(ed.name || '') + '" placeholder="name" />' +
             '<button type="button" data-pe="clone" title="Duplicate this progression into a fresh editable copy">⧉ Clone</button>' +
             '<button type="button" data-pe="export" title="Save this progression into the SEED list under a name of your choosing">⤓ Export…</button>' +
@@ -6210,7 +6221,7 @@
       host.innerHTML =
         '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
         shiftNote +
-        partTabs + '<div class="pe-chords">' + chordsRow + '</div>' +
+        partTabs + bodyTog + bodyOpenTag + partBar + '<div class="pe-chords">' + chordsRow + '</div>' +
         '<div class="pe-chordhdr">Chord ' + (sel + 1) + ' of ' + ed.chords.length + (ed.altSel >= 0 ? ' <span class="pe-editing-alt">· editing alt ' + (ed.altSel + 1) + '</span>' : '') +
           '<span class="pe-chordops">' +
             '<button type="button" class="pe-scaletog' + (scaleView ? ' on' : '') + '" data-pe="scaleview" title="' + (diatonic ? (scaleView ? 'Scale coloring ON — in-key roots/notes/chords are highlighted, out-of-key are amber. Click to turn off.' : 'Click to color roots / notes / chords by whether they fit the key.') : 'No diatonic key set — scale coloring needs a key/scale.') + '"' + (diatonic ? '' : ' disabled') + '>◈ Scale</button>' +
@@ -6245,6 +6256,7 @@
             '<button type="button" data-pe="reharm" title="Reharmonize — rewrite these chords once with same-function substitutions">♺ Reharmonize</button>' +
             '<button type="button" data-pe="detectkey" title="Detect the key these chords imply and offer to set it">🔍 Detect key</button>' +
           '</div>' : '') +
+        '</div>' +
         '<div class="pe-save"><input type="text" id="pe-name" value="' + esc(ed.name) + '" placeholder="Progression name" />' +
           '<button type="button" data-pe="cancel">Cancel</button>' +
           '<button type="button" data-pe="clone" title="Duplicate this progression into a fresh editable copy">⧉ Clone</button>' +
@@ -6342,6 +6354,7 @@
           ed.part = pi + 1; ed.sel = cut; ed.altSel = -1;
         }
       }
+      else if (op === 'bodytog') { ed._bodyOpen = (ed._bodyOpen === false); }
       else if (op === 'partren') { const ps = _ambPeParts(ed), pi = parseInt(arg, 10);
         if (ps && ps[pi]) { let nm = null; try { nm = window.prompt('Part name', ps[pi].name || ('Part ' + (pi + 1))); } catch (e) {}
           if (nm != null) { const v = String(nm).trim().slice(0, 16); if (v) ps[pi].name = v; } } }

@@ -6011,6 +6011,70 @@
       }
       if (ps.length <= 1) { ed.parts = null; ed.part = -1; }
     }
+    // Where should this part be cut in two? Ranked musical heuristics, each
+    // returning the REASON so the UI can say why rather than presenting a bare
+    // number (same principle as the drone pedal's readout). `cut` is the ABSOLUTE
+    // index of the first chord of the NEW part. Returns null when a part is too
+    // short to divide. `nm` formats a chord for the explanation.
+    // Name the half that splits off AFTER the part it came from ("Verse" → "Verse 2"),
+    // not off a global counter — that produced "Part 1, Part 3, Part 2" in play order,
+    // which reads as a mistake. Collisions bump the number; 16 chars is the stored cap.
+    function _ambPeSplitName(parts, base) {
+      const raw = String(base || 'Part').replace(/\s+\d+$/, '').trim() || 'Part';
+      const taken = new Set((parts || []).map(x => (x && x.name) || ''));
+      for (let i = 2; i < 99; i++) { const n = (raw + ' ' + i).slice(0, 16); if (!taken.has(n)) return n; }
+      return raw.slice(0, 14) + ' 2';
+    }
+    // After a split, renumber the AUTO-derived siblings in PLAY order, so a part
+    // subdivided twice reads Verse · Verse 2 · Verse 3 rather than Verse · Verse 3
+    // · Verse 2. Only names matching "<base>" or "<base> <n>" are touched — anything
+    // the user actually named (Bridge, Outro) is left exactly alone.
+    function _ambPeRenumberSiblings(parts, base) {
+      const raw = String(base || '').replace(/\s+\d+$/, '').trim(); if (!raw || !Array.isArray(parts)) return;
+      const re = new RegExp('^' + raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\s+\\d+)?$');
+      let n = 0;
+      parts.forEach(pt => {
+        if (!pt || typeof pt.name !== 'string' || !re.test(pt.name)) return;
+        // A named part reads "Verse · Verse 2"; the generic default keeps its
+        // number so it stays "Part 1 · Part 2" rather than a bare "Part".
+        n++; pt.name = (n === 1 ? (raw === 'Part' ? 'Part 1' : raw) : (raw + ' ' + n)).slice(0, 16);
+      });
+    }
+    function _ambPeSuggestSplit(ed, pi, nm) {
+      const chords = ed.chords || [];
+      const r = (pi >= 0 && _ambPeParts(ed)) ? _ambPePartRange(ed, pi) : { from: 0, to: chords.length };
+      const n = r.to - r.from;
+      if (n < 2) return null;
+      const sig = (c) => (c && c.transition) ? 'T' : ((c ? (c.root | 0) : -1) + ':' + ((c && Array.isArray(c.intervals)) ? c.intervals.join(',') : ''));
+      const ok = (cut) => cut > r.from && cut < r.to;
+      // 1. A TRANSITION is a walk between sections — the section starts after it.
+      for (let i = r.from; i < r.to; i++) {
+        if (chords[i] && chords[i].transition && ok(i + 1)) {
+          return { cut: i + 1, why: 'the walk at chord ' + (i + 1) + ' is already a bridge between sections' };
+        }
+      }
+      // 2. An exactly repeated half (A B A B) — the seam is the midpoint.
+      if (n % 2 === 0 && n >= 4) {
+        const h = n / 2; let same = true;
+        for (let k = 0; k < h; k++) if (sig(chords[r.from + k]) !== sig(chords[r.from + h + k])) { same = false; break; }
+        if (same && ok(r.from + h)) return { cut: r.from + h, why: 'the second half repeats the first' };
+      }
+      // 3. A CADENCE: the run comes back to the chord it opened on, so the phrase
+      //    resolves THERE and the next one starts after it. Prefer the most
+      //    balanced such point when there are several.
+      const first = sig(chords[r.from]);
+      let best = -1, bestD = Infinity;
+      const mid = r.from + n / 2;
+      for (let i = r.from + 1; i < r.to; i++) {
+        if (sig(chords[i]) !== first || !ok(i + 1)) continue;
+        const d = Math.abs((i + 1) - mid);
+        if (d < bestD) { bestD = d; best = i + 1; }
+      }
+      if (best > 0) return { cut: best, why: 'it resolves back to ' + (nm ? nm(chords[r.from]) : 'the opening chord') + ' at chord ' + best };
+      // 4. Nothing structural to go on — halve it, which is what most phrases do.
+      const half = r.from + Math.round(n / 2);
+      return ok(half) ? { cut: half, why: 'an even split — nothing in the harmony marks a seam' } : null;
+    }
     function _ambPeRender() {
       const host = document.getElementById('ambient-prog-editor'); if (!host || !_ambProgEd) return;
       if (_ambProgEd._pvOn) { try { _ambPePreviewStop(_ambProgEd); } catch (e) {} }   // a full re-render orphans the chord-button refs → halt the preview
@@ -6043,8 +6107,11 @@
       const partTabs = (function () {
         if (!_peParts) {
           // No chain yet — still offer the one action that starts one.
+          const sg0 = _ambPeSuggestSplit(ed, -1, (c) => esc(_ambChordShort(fn(c)) || '?'));
           return '<div class="pe-parts"><span class="pe-parts-lbl" title="Parts split a progression into named sections (Verse, Chorus) that can repeat independently.">Parts</span>' +
-            '<button type="button" class="pe-parttab pe-parttab-add" data-pe="partadd" title="Split this progression into named parts">＋ Part</button></div>';
+            (sg0 ? '<button type="button" class="pe-parttab pe-parttab-add pe-partsplit" data-pe="partsplit:-1:' + sg0.cut + '" title="Split into two parts before chord ' + (sg0.cut + 1) + ' — ' + esc(sg0.why) + '">✂ Split before chord ' + (sg0.cut + 1) + '</button>' +
+              '<span class="pe-partgrp-hint">' + esc(sg0.why) + '</span>' : '') +
+            '<button type="button" class="pe-parttab pe-parttab-add" data-pe="partadd" title="Split at the chord you have selected instead">＋ At selection</button></div>';
         }
         let h = '<div class="pe-parts"><button type="button" class="pe-parttab' + (ed.part < 0 ? ' on' : '') + '" data-pe="part:-1" title="Show every chord in the chain">All</button>';
         _peParts.forEach((pt, i) => {
@@ -6093,6 +6160,15 @@
                 '<label title="How much the segment count varies between instances. 0 = every instance the same.">Scatter<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':scatter" min="0" max="100" step="5" value="' + (sv.scatter | 0) + '"></label>' +
                 '</span>' : '') +
             '</div>' +
+            (function () {
+              const sg = _ambPeSuggestSplit(ed, ed.part, (c) => esc(_ambChordShort(fn(c)) || '?'));
+              if (!sg) return '<div class="pe-partgrp"><span class="pe-partgrp-lbl">Split</span><span class="pe-partgrp-hint">too short to divide — add another chord first</span></div>';
+              return '<div class="pe-partgrp">' +
+                '<span class="pe-partgrp-lbl">Split</span>' +
+                '<button type="button" class="pe-partbtn pe-partsplit" data-pe="partsplit:' + ed.part + ':' + sg.cut + '" title="Divide ' + pnm + ' in two before chord ' + (sg.cut + 1) + '">✂ Before chord ' + (sg.cut + 1) + '</button>' +
+                '<span class="pe-partgrp-hint">' + esc(sg.why) + '</span>' +
+                '</div>';
+            })() +
             '<button type="button" class="pe-partbtn pe-partdel" data-pe="partdel:' + ed.part + '" title="Remove this part boundary. Its chords are kept — they merge into the neighbouring part.">\u2715 Remove part</button>' +
             '</div>';
         }
@@ -6293,10 +6369,37 @@
           const r = _ambPePartRange(ed, pi);
           const left = cut - r.from, right = r.to - cut;
           if (left <= 0 || right <= 0) { if (typeof showToast === 'function') showToast('Pick a chord with room on both sides to split there'); return; }
+          const _base = ed.parts[pi].name;
+          const _nn = _ambPeSplitName(ed.parts, _base);
           ed.parts[pi].len = left;
-          ed.parts.splice(pi + 1, 0, { name: 'Part ' + (ed.parts.length + 1), len: right });
+          ed.parts.splice(pi + 1, 0, { name: _nn, len: right });
+          _ambPeRenumberSiblings(ed.parts, _base);
           ed.part = pi + 1; ed.sel = cut; ed.altSel = -1;
         }
+      }
+      // Split at an EXPLICIT absolute index (the suggested boundary), as opposed to
+      // `partadd` which cuts at the selection. Shares the same bootstrap rule: with
+      // no chain yet the range helpers report -1, so build both sides directly.
+      else if (op === 'partsplit') {
+        const pi0 = parseInt(arg, 10), cut = parseInt(a[2], 10);
+        const total = ed.chords.length;
+        if (!Number.isFinite(cut) || cut <= 0 || cut >= total) return;
+        if (!Array.isArray(ed.parts) || ed.parts.length < 2) {
+          ed.parts = [{ name: 'Part 1', len: cut }, { name: 'Part 2', len: total - cut }];
+          ed.part = 1;
+        } else {
+          const pi = (pi0 >= 0) ? pi0 : _ambPePartOf(ed, cut - 1);
+          const r = _ambPePartRange(ed, pi);
+          const left = cut - r.from, right = r.to - cut;
+          if (left <= 0 || right <= 0) return;
+          const base = ed.parts[pi].name;
+          const nn = _ambPeSplitName(ed.parts, base);
+          ed.parts[pi].len = left;
+          ed.parts.splice(pi + 1, 0, { name: nn, len: right });
+          _ambPeRenumberSiblings(ed.parts, base);
+          ed.part = pi + 1;
+        }
+        ed.sel = cut; ed.altSel = -1;
       }
       else if (op === 'partren') { const ps = _ambPeParts(ed), pi = parseInt(arg, 10);
         if (ps && ps[pi]) { let nm = null; try { nm = window.prompt('Part name', ps[pi].name || ('Part ' + (pi + 1))); } catch (e) {}

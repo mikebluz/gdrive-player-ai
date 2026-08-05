@@ -3761,6 +3761,8 @@
     .pe-partplays { display: inline-flex; align-items: center; gap: 8px; font-size: 0.9rem; color: #e2e8f0; }
     .pe-partplays b { min-width: 34px; text-align: center; font-size: 0.95rem; }
     .pe-partstep { min-width: 46px; padding: 8px 0; font-size: 1.15rem; text-align: center; }
+    .pe-partsplit { border-color: #4a5f7a; color: #cfe4ff; }
+    @media (hover: hover) { .pe-partsplit:hover { border-color: #63b3ed; background: rgba(99,179,237,0.16); color: #e6f2ff; } }
     .pe-partdel { align-self: flex-start; border-color: #5a3a46; color: #f0b6c0; }
     @media (hover: hover) { .pe-partdel:hover { border-color: #e06c8a; background: rgba(224,108,138,0.16); color: #ffd9e1; } }
     .pe-partsalt { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; width: 100%; padding-left: 70px; }

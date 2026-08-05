@@ -52,6 +52,9 @@
                // Trance gate: a bar-synced step pattern that chops the layer's output. `steps`
                // = steps per bar (= pattern length); each step on (1) passes, off (0) cuts by
                // `depth`%. `edge` ms softens each transition. Default = an 8th-note gate.
+               // GLITCH — one buffer stage, four read strategies (see fx_glitch in
+               // dsp/src/strip.rs). mix 0 = disengaged, so the default is inert.
+               glitch: { mix: 0, mode: 'grain', sizeMs: 80, rate: 25, jitter: 40, pitch: 0, dryKill: 0 },
                tg: { on: 0, steps: 16, pattern: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0], depth: 100, edge: 6 } };
     }
     function _defaultAmbientConfig() {
@@ -2216,10 +2219,24 @@
       // fxChain only exists once the user has added or removed something, which
       // is exactly when the removal happened, so its absence here is meaningful.
       if (Array.isArray(host.fxChain)) {
-        ['delay', 'dist', 'chorus', 'phaser', 'autopan'].forEach(k => {
+        ['delay', 'dist', 'chorus', 'phaser', 'autopan', 'glitch'].forEach(k => {
           if (host.fxChain.indexOf(k) < 0 && host[k] && typeof host[k] === 'object') host[k].dryKill = 0;
         });
       }
+      // GLITCH: numeric coercion + a validated mode string. An unknown mode falls
+      // back to grain rather than being kept, so a project from a newer build
+      // degrades to a real effect instead of an index the core would modulo into
+      // something arbitrary.
+      if (!host.glitch || typeof host.glitch !== 'object') host.glitch = { ...d.glitch };
+      else {
+        ['mix', 'sizeMs', 'rate', 'jitter', 'pitch'].forEach(k => { if (!Number.isFinite(host.glitch[k])) host.glitch[k] = d.glitch[k]; });
+        if (_AMB_GLITCH_MODES.every(m => m[0] !== host.glitch.mode)) host.glitch.mode = 'grain';
+      }
+      host.glitch.mix = Math.max(0, Math.min(100, host.glitch.mix | 0));
+      host.glitch.sizeMs = Math.max(5, Math.min(900, host.glitch.sizeMs | 0));
+      host.glitch.rate = Math.max(1, Math.min(100, host.glitch.rate | 0));
+      host.glitch.jitter = Math.max(0, Math.min(100, host.glitch.jitter | 0));
+      host.glitch.pitch = Math.max(0, Math.min(24, host.glitch.pitch | 0));
       if (!host.delay || typeof host.delay !== 'object') host.delay = { ...d.delay };
       else ['mix', 'timeMs', 'feedback', 'ping', 'spread'].forEach(k => { if (!Number.isFinite(host.delay[k])) host.delay[k] = d.delay[k]; });
       // BPM sync (additive string; absent/'' = the free ms Time, byte-identical).
@@ -16918,7 +16935,7 @@
       const e = _E.mod[layer];
       if (!e || !lc) return;
       try { _ambApplyLayerFilter(layer, lc); } catch (x) {}   // live cutoff/reso
-      const dly = lc.delay || {}, dst = lc.dist || {}, cho = lc.chorus || {}, pha = lc.phaser || {}, apan = lc.autopan || {};
+      const dly = lc.delay || {}, dst = lc.dist || {}, cho = lc.chorus || {}, pha = lc.phaser || {}, apan = lc.autopan || {}, glt = lc.glitch || {};
       // Dry Kill: a wet FX with dryKill on is ENGAGED even at Mix 0 (it plays fully
       // wet). Wet Only (layer): forces every engaged in-line FX to fully wet so the
       // chain carries no dry, and — when no such FX is engaged — mutes the layer's
@@ -16946,6 +16963,7 @@
       const wantChorus = (cho.mix | 0) > 0 || dk(cho);
       const wantPhaser = (pha.mix | 0) > 0 || dk(pha);
       const wantAutopan = (apan.mix | 0) > 0 || dk(apan);
+      const wantGlitch = (glt.mix | 0) > 0 || dk(glt);
       // Which in-line FX keep the direct output alive under Wet Only — i.e. the
       // ones the forcing above actually strips the dry from. Distortion is NOT one
       // of them (see _wetOnlyFx), so a dist-only layer mutes its direct output and
@@ -16971,6 +16989,12 @@
             _ambDelaySec(dly), Math.max(0, Math.min(0.95, (dly.feedback | 0) / 100)), c01(dly.spread));
           e.core.cmd('strip_autopan', sl, wantAutopan ? 1 : 0, _wet01(apan), c01(apan.depth),
             0.05 + Math.max(0, Math.min(100, apan.rate | 0)) / 100 * 7.95);
+          // GLITCH — CORE ONLY. A granulator has no sane Web Audio node build, so
+          // with core strips off this stage simply does not exist; the card says so
+          // rather than the effect failing silently.
+          e.core.cmd('strip_glitch', sl, wantGlitch ? 1 : 0, _ambGlitchModeIdx(glt), _wet01(glt),
+            Math.max(5, Math.min(900, glt.sizeMs | 0)) / 1000,
+            _ambGlitchRate(glt), c01(glt.jitter), Math.max(0, Math.min(24, glt.pitch | 0)));
           e.revSend.gain.value = _ambRevSendGain(layer, lc.revSend);
           const _fo = _ambFxCoreOrder(lc);
           e.core.cmd('strip_fxorder', sl, _fo[0], _fo[1], _fo[2], _fo[3], _fo[4]);   // in-line FX processed in fxChain order
@@ -26564,6 +26588,29 @@
       const t = Number.isFinite(dst && dst.tone) ? dst.tone : 50;
       return Math.max(-100, Math.min(100, ((Math.max(0, Math.min(100, t | 0)) - 50) * 2) | 0));
     };
+    // Glitch read strategies — index order MUST match fx_glitch's `mode` in
+    // dsp/src/strip.rs (0 grain · 1 repeat · 2 tape-stop · 3 reverse).
+    const _AMB_GLITCH_MODES = [
+      ['grain', 'Grain', 'Overlapping grains of the layer\u2019s own recent output, scattered in position and pitch.'],
+      ['repeat', 'Repeat', 'Captures a slice and loops it, re-capturing every few passes \u2014 the classic stutter.'],
+      ['tapestop', 'Tape stop', 'Speed ramps down to silence, then re-arms.'],
+      ['reverse', 'Reverse', 'Plays the last slice backwards, over and over.']
+    ];
+    // The Rate knob is 0-100 but means different things per mode, so the mapping
+    // lives in ONE place rather than being re-derived at the call site:
+    //   grain     → grains per second (4..80)
+    //   repeat    → passes before re-capturing (1..8)
+    //   tape-stop → re-arms per second (0.2..6)
+    //   reverse   → unused (the slice length is Size)
+    function _ambGlitchRate(g) {
+      const v = Math.max(1, Math.min(100, (g && g.rate) | 0)) / 100;
+      switch (g && g.mode) {
+        case 'repeat':   return 1 + Math.round(v * 7);
+        case 'tapestop': return 0.2 + v * 5.8;
+        default:         return 4 + v * 76;
+      }
+    }
+    function _ambGlitchModeIdx(g) { const i = _AMB_GLITCH_MODES.findIndex(m => m[0] === (g && g.mode)); return i < 0 ? 0 : i; }
     const _AMB_FX_DEFS = [
       { id: 'filter',  label: 'Filter',      engaged: (lc) => ((Number.isFinite(lc.cutoff) ? lc.cutoff : 100) < 100) || ((lc.reso | 0) > 0), off: (lc) => { lc.cutoff = 100; lc.reso = 0; }, zero: [['fx-cutoff', 100], ['fx-reso', 0]] },
       { id: 'rev',     label: 'Reverb send', engaged: (lc) => (lc.revSend | 0) > 0,                    off: (lc) => { lc.revSend = 0; },                zero: [['fx-rev', 0]] },
@@ -26582,6 +26629,9 @@
       { id: 'autopan', label: 'Auto-Pan',    engaged: (lc) => !!(lc.autopan && (lc.autopan.mix | 0) > 0), off: (lc) => { if (lc.autopan) { lc.autopan.mix = 0; lc.autopan.dryKill = 0; } }, zero: [['fx-apan-mix', 0]] },
       // Pitch echo — a GENERATIVE note echo (re-emits pitched notes, not audio),
       // so it's not in the audio chain / not orderable. on materializes on add.
+      // GLITCH is post-chain in the core (it is not in the fx_order permutation),
+      // so it is NOT listed in _AMB_FX_INLINE and gets no reorder arrows.
+      { id: 'glitch',  label: 'Glitch',      engaged: (lc) => !!(lc.glitch && (lc.glitch.mix | 0) > 0), off: (lc) => { if (lc.glitch) { lc.glitch.mix = 0; lc.glitch.dryKill = 0; } }, zero: [['fx-glitch-mix', 0]] },
       { id: 'pecho',   label: 'Pitch echo',  engaged: (lc) => !!(lc.pecho && lc.pecho.on),               off: (lc) => { if (lc.pecho) { lc.pecho.on = false; lc.pecho.dryKill = 0; } }, zero: [], add: (lc) => { lc.pecho = Object.assign({ on: true, timeMs: 300, sync: '', repeats: 3, step: 2, pattern: '', feedback: 65, spread: 0, dryKill: 0 }, lc.pecho || {}, { on: true }); } },
     ];
     // The layer's FX chain: its own list when set, else DERIVED from engagement
@@ -27512,6 +27562,32 @@
         if (addB) addB.style.display = (chain.length >= _AMB_FX_DEFS.length) ? 'none' : '';
         const fl = det.querySelector('.ambient-fx-dist-flavor');
         if (fl) fl.value = (lc.dist && lc.dist.flavor) || '';
+        // Glitch control values + the per-mode labelling (Rate means a different
+        // thing in each mode, and Scatter/Pitch only apply to grains).
+        { const g = lc.glitch || {};
+          const gv = (cls, v) => { const el = det.querySelector(cls); if (el && document.activeElement !== el) el.value = String(v); };
+          const gh = (cls, t) => { const el = det.querySelector(cls); if (el) el.textContent = String(t); };
+          const mode = g.mode || 'grain', grain = mode === 'grain';
+          gv('.ambient-glitch-mode', mode);
+          gv('.ambient-glitch-size', g.sizeMs | 0);   gh('.ambient-glitch-size-v', (g.sizeMs | 0) + ' ms');
+          gv('.ambient-glitch-rate', g.rate | 0);
+          gh('.ambient-glitch-rate-v', mode === 'repeat' ? (Math.round(_ambGlitchRate(g)) + ' passes / capture')
+            : mode === 'tapestop' ? (_ambGlitchRate(g).toFixed(1) + ' stops / s')
+            : mode === 'reverse' ? 'not used — Size is the slice'
+            : (Math.round(_ambGlitchRate(g)) + ' grains / s'));
+          gv('.ambient-glitch-jitter', g.jitter | 0); gh('.ambient-glitch-jitter-v', grain ? ((g.jitter | 0) + '% back through the buffer') : 'grain only');
+          gv('.ambient-glitch-pitch', g.pitch | 0);   gh('.ambient-glitch-pitch-v', grain ? ((g.pitch | 0) > 0 ? '\u00b1' + (g.pitch | 0) + ' st' : 'at pitch') : 'grain only');
+          gh('.ambient-glitch-modehint', (_AMB_GLITCH_MODES.find(m => m[0] === mode) || [])[1] || '');
+          // Grain-only controls are dimmed rather than hidden, so the card does not
+          // change height as you flip modes.
+          ['.ambient-glitch-jitter', '.ambient-glitch-pitch'].forEach(cls => {
+            const el = det.querySelector(cls); const row = el && el.closest('.ambient-ctrl');
+            if (row) { row.style.opacity = grain ? '' : '0.45'; if (el) el.disabled = !grain; }
+          });
+          // CORE ONLY: a granulator has no node build, so say so instead of going quiet.
+          const note = det.querySelector('.ambient-glitch-note');
+          if (note) { let coreOn = true; try { coreOn = (typeof bloopsCoreStrips !== 'function') || bloopsCoreStrips() !== false; } catch (e) {}
+            note.style.display = coreOn ? 'none' : ''; } }
         // Pitch-echo control values from lc.pecho.
         const pe = lc.pecho || {};
         const setv = (cls, v) => { const el = det.querySelector(cls); if (el && document.activeElement !== el) el.value = String(v); };
@@ -27594,6 +27670,15 @@
           _ambSl('Depth', 'ambient-' + layer + '-fx-apan-depth', 0, 100, 100, 'centre → full L↔R') +
           _ambSl('Rate', 'ambient-' + layer + '-fx-apan-rate', 0, 100, 30, 'slow → fast') +
           _ambFxDk('autopan')) +
+        _ambFxItem('glitch', 'Glitch',
+          '<div class="ambient-ctrl"><label title="How the buffer is read back. Grain = overlapping grains scattered in position and pitch. Repeat = capture a slice and loop it. Tape stop = speed ramps to silence, then re-arms. Reverse = play the last slice backwards.">Type</label><select class="ambient-select ambient-glitch-mode">' + _AMB_GLITCH_MODES.map(m => '<option value="' + m[0] + '" title="' + m[2] + '">' + m[1] + '</option>').join('') + '</select><span class="ambient-hint ambient-glitch-modehint"></span></div>' +
+          '<div class="ambient-ctrl"><label title="Grain or slice length in milliseconds.">Size</label><input type="range" class="ambient-glitch-size" min="5" max="900" step="5"><span class="ambient-hint ambient-glitch-size-v"></span></div>' +
+          '<div class="ambient-ctrl"><label title="Grain density, repeat count or re-arm speed — what it means depends on Type, and the hint says which.">Rate</label><input type="range" class="ambient-glitch-rate" min="1" max="100" step="1"><span class="ambient-hint ambient-glitch-rate-v"></span></div>' +
+          '<div class="ambient-ctrl"><label title="How far back through the buffer grains are allowed to reach. Grain only.">Scatter</label><input type="range" class="ambient-glitch-jitter" min="0" max="100" step="1"><span class="ambient-hint ambient-glitch-jitter-v"></span></div>' +
+          '<div class="ambient-ctrl"><label title="Per-grain pitch spread in semitones (0 = every grain at pitch). Grain only.">Pitch</label><input type="range" class="ambient-glitch-pitch" min="0" max="24" step="1"><span class="ambient-hint ambient-glitch-pitch-v"></span></div>' +
+          _ambSl('Mix', 'ambient-' + layer + '-fx-glitch-mix', 0, 100, 0, 'dry → wet') +
+          '<div class="ambient-hint ambient-glitch-note" style="display:none">Needs the core engine — turn core strips back on to hear this.</div>' +
+          _ambFxDk('glitch')) +
         _ambFxItem('pecho', 'Pitch echo',
           '<div class="ambient-ctrl"><label title="Echo spacing. Free ms, or set Sync to lock the repeats to a beat division.">Time</label><input type="number" class="ambient-pecho-time" min="20" max="4000" step="10" title="Echo time (ms)"> <span class="ambient-hint">ms</span> <select class="ambient-select ambient-pecho-sync" title="Sync the echo spacing to a beat division (overrides ms)"><option value="">free</option><option value="1/4">1/4</option><option value="1/8">1/8</option><option value="1/8T">1/8T</option><option value="1/16">1/16</option><option value="1/16T">1/16T</option></select></div>' +
           '<div class="ambient-ctrl"><label title="How many pitched echoes per note.">Repeats</label><input type="range" class="ambient-pecho-reps" min="1" max="12" step="1"><span class="ambient-hint ambient-pecho-reps-v"></span></div>' +
@@ -32332,7 +32417,7 @@
     // Per-layer FX params are rampable too. They live nested (delay.*, dist.*)
     // and need a live node push (handled in _ambRampResolve). Append to every
     // layer type except the global group.
-    const _AMB_FX_RAMP = [['revSend','Reverb send',0,100],['cutoff','Filter cutoff',0,100],['reso','Filter reso',0,100],['delay.mix','Delay mix',0,100],['delay.timeMs','Delay time (ms)',1,1000],['delay.feedback','Delay feedback',0,95],['dist.mix','Distortion mix',0,100],['dist.amount','Distortion drive',0,100],['dist.tone','Distortion tone',0,100],['dist.focus','Distortion focus',0,100],['chorus.mix','Chorus mix',0,100],['chorus.depth','Chorus depth',0,100],['chorus.rate','Chorus rate',0,100],['phaser.mix','Phaser mix',0,100],['phaser.depth','Phaser depth',0,100],['phaser.rate','Phaser rate',0,100],['autopan.mix','Auto-pan mix',0,100],['autopan.depth','Auto-pan depth',0,100],['autopan.rate','Auto-pan rate',0,100]];
+    const _AMB_FX_RAMP = [['revSend','Reverb send',0,100],['cutoff','Filter cutoff',0,100],['reso','Filter reso',0,100],['delay.mix','Delay mix',0,100],['delay.timeMs','Delay time (ms)',1,1000],['delay.feedback','Delay feedback',0,95],['dist.mix','Distortion mix',0,100],['dist.amount','Distortion drive',0,100],['dist.tone','Distortion tone',0,100],['dist.focus','Distortion focus',0,100],['chorus.mix','Chorus mix',0,100],['chorus.depth','Chorus depth',0,100],['chorus.rate','Chorus rate',0,100],['phaser.mix','Phaser mix',0,100],['phaser.depth','Phaser depth',0,100],['phaser.rate','Phaser rate',0,100],['autopan.mix','Auto-pan mix',0,100],['autopan.depth','Auto-pan depth',0,100],['autopan.rate','Auto-pan rate',0,100],['glitch.mix','Glitch mix',0,100],['glitch.sizeMs','Glitch size (ms)',5,900],['glitch.rate','Glitch rate',1,100],['glitch.jitter','Glitch scatter',0,100],['glitch.pitch','Glitch pitch spread',0,24]];
     // Stereo (the Spread/Pan fader, stored in `space`) is rampable on every layer.
     // Range spans the full Pan field (-100..100); in Spread mode the engine reads
     // the magnitude, so the positive half (0..100) is the spread amount.
@@ -35805,6 +35890,38 @@
               else if (cl.contains('ambient-pecho-spread')) seth('.ambient-pecho-spread-v', pe.spread + (pe.spread > 0 ? ' L↔R' : ''));
               if (typeof persistWorkspace === 'function') persistWorkspace();
             };
+            // GLITCH controls — same class-delegated shape as pitch echo above, which
+            // is what keeps this off the four per-cluster bind lists entirely.
+            const _gOf = (el) => { const key = _ambCardKey(el.closest('.ambient-layer')); if (!key) return null; _E = E; const lc = _ambLayerByKey(E, key); if (!lc) return null; if (!lc.glitch || typeof lc.glitch !== 'object') lc.glitch = { ..._ambDefaultFx().glitch }; return { lc: lc, g: lc.glitch, key: key }; };
+            const _gWrite = (el) => {
+              const t = _gOf(el); if (!t) return;
+              const g = t.g, cl = el.classList, v = parseInt(el.value, 10);
+              if (cl.contains('ambient-glitch-mode')) g.mode = String(el.value || 'grain');
+              else if (cl.contains('ambient-glitch-size')) g.sizeMs = Math.max(5, Math.min(900, Number.isFinite(v) ? v : 80));
+              else if (cl.contains('ambient-glitch-rate')) g.rate = Math.max(1, Math.min(100, Number.isFinite(v) ? v : 25));
+              else if (cl.contains('ambient-glitch-jitter')) g.jitter = Math.max(0, Math.min(100, Number.isFinite(v) ? v : 40));
+              else if (cl.contains('ambient-glitch-pitch')) g.pitch = Math.max(0, Math.min(24, Number.isFinite(v) ? v : 0));
+              else return;
+              // Push to the core immediately — the stage reads its params live, so a
+              // drag is audible without waiting for a re-anchor.
+              try { _ambApplyLayerFx(t.key, t.lc); } catch (e) {}
+              const it = el.closest('.ambient-fx-item');
+              const seth = (cls, txt) => { const h = it && it.querySelector(cls); if (h) h.textContent = String(txt); };
+              if (cl.contains('ambient-glitch-size')) seth('.ambient-glitch-size-v', g.sizeMs + ' ms');
+              else if (cl.contains('ambient-glitch-rate')) seth('.ambient-glitch-rate-v',
+                g.mode === 'repeat' ? (Math.round(_ambGlitchRate(g)) + ' passes / capture')
+                : g.mode === 'tapestop' ? (_ambGlitchRate(g).toFixed(1) + ' stops / s')
+                : g.mode === 'reverse' ? 'not used — Size is the slice'
+                : (Math.round(_ambGlitchRate(g)) + ' grains / s'));
+              else if (cl.contains('ambient-glitch-jitter')) seth('.ambient-glitch-jitter-v', g.jitter + '% back through the buffer');
+              else if (cl.contains('ambient-glitch-pitch')) seth('.ambient-glitch-pitch-v', g.pitch > 0 ? '±' + g.pitch + ' st' : 'at pitch');
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+            };
+            const _gSel = '.ambient-glitch-size, .ambient-glitch-rate, .ambient-glitch-jitter, .ambient-glitch-pitch';
+            hostEl.addEventListener('input', (ev) => { const el = ev.target && ev.target.closest && ev.target.closest(_gSel); if (el && hostEl.contains(el)) _gWrite(el); });
+            // The MODE select re-labels Rate and re-dims the grain-only rows, so it
+            // takes the full visibility pass rather than the inline readout update.
+            hostEl.addEventListener('change', (ev) => { const el = ev.target && ev.target.closest && ev.target.closest('.ambient-glitch-mode'); if (el && hostEl.contains(el)) { _gWrite(el); try { _ambSyncFxVis(E); } catch (x) {} } });
             const _pechoSel = '.ambient-pecho-time, .ambient-pecho-sync, .ambient-pecho-reps, .ambient-pecho-step, .ambient-pecho-pat, .ambient-pecho-fb, .ambient-pecho-spread';
             hostEl.addEventListener('input', (ev) => { const el = ev.target && ev.target.closest && ev.target.closest(_pechoSel); if (el && hostEl.contains(el)) _pechoWrite(el); });
             hostEl.addEventListener('change', (ev) => { const el = ev.target && ev.target.closest && ev.target.closest('.ambient-pecho-sync'); if (el && hostEl.contains(el)) _pechoWrite(el); });

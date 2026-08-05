@@ -6207,18 +6207,12 @@
       // tonic = the key root, so the score and the sound are in different keys.
       // Say so explicitly and name what is actually heard, rather than letting
       // the editor read as a chord readout that disagrees with every other one.
-      const shiftNote = _vsEd
-        ? '<div class="pe-shifted" title="The written progression is a template: the engine re-roots it so its first chord lands on the key root. These chords are the score; the names below are what you hear.">' +
-            '↳ transposed +' + _vsEd + ' into ' + esc(_AMB_CHROM[((kRoot % 12) + 12) % 12] + ' ' + kScale) + ' — sounds as <b>' +
-            esc(ed.chords.map(c => _ambChordShort(_ambChordShift(c, _vsEd)) || '?').join(' ')) + '</b></div>'
-        : '';
       // A TRANSITION slot has no harmony to edit — only how long the walk is. Show
       // that instead of the note/quality/alternates machinery, which would
       // otherwise operate on a chord with no root and write one into it.
       if (_ambIsTransition(ch)) {
         host.innerHTML =
           '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
-          shiftNote +
           partTabs + (partBar ? secWrap('part', 'Part settings', partBar, pnmSum) : '') +
           secWrap('chords', 'Chords', '<div class="pe-chords">' + chordsRow + '</div>' +
           '<div class="pe-chordhdr">Transition ' + (sel + 1) + ' of ' + ed.chords.length +
@@ -6227,7 +6221,7 @@
           '<div class="pe-lenrow"><label>Length</label>' +
             '<input type="text" id="pe-len" value="' + (ch.bars > 0 ? esc(_ambFmtBpc(ch.bars)) : '') + '" placeholder="1" title="How long the walk lasts, in bars (1, 1/2, 2…). Longer = more steps in the line." />' +
             '<span class="pe-lenhint">bars — blank = 1</span></div>', chordSum) +
-          '<div class="pe-save"><input type="text" id="pe-name" value="' + esc(ed.name || '') + '" placeholder="name" />' +
+          '<div class="pe-save">' +
             '<button type="button" data-pe="clone" title="Duplicate this progression into a fresh editable copy">⧉ Clone</button>' +
             '<button type="button" data-pe="export" title="Save this progression into the SEED list under a name of your choosing">⤓ Export…</button>' +
             '<button type="button" class="pe-apply" data-pe="save" title="Save these changes to the CURRENT progression">Save</button></div>';
@@ -6236,7 +6230,6 @@
       }
       host.innerHTML =
         '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
-        shiftNote +
         partTabs + (partBar ? secWrap('part', 'Part settings', partBar, pnmSum) : '') +
         secWrap('chords', 'Chords', '<div class="pe-chords">' + chordsRow + '</div>' +
         '<div class="pe-chordhdr">Chord ' + (sel + 1) + ' of ' + ed.chords.length + (ed.altSel >= 0 ? ' <span class="pe-editing-alt">· editing alt ' + (ed.altSel + 1) + '</span>' : '') +
@@ -6273,7 +6266,7 @@
             '<button type="button" data-pe="reharm" title="Reharmonize — rewrite these chords once with same-function substitutions">♺ Reharmonize</button>' +
             '<button type="button" data-pe="detectkey" title="Detect the key these chords imply and offer to set it">🔍 Detect key</button>' +
           '</div>' : ''), chordSum) +
-        '<div class="pe-save"><input type="text" id="pe-name" value="' + esc(ed.name) + '" placeholder="Progression name" />' +
+        '<div class="pe-save">' +
           '<button type="button" data-pe="cancel">Cancel</button>' +
           '<button type="button" data-pe="clone" title="Duplicate this progression into a fresh editable copy">⧉ Clone</button>' +
           '<button type="button" class="pe-preview' + (ed._pvOn ? ' on' : '') + '" data-pe="preview" title="Hear the progression — each chord sounds for its own length">' + (ed._pvOn ? '■ Stop' : '▶ Preview') + '</button>' +
@@ -6284,7 +6277,8 @@
     }
     // Name + per-chord length inputs, shared by the chord and transition bodies.
     function _ambPeWireFooter(host, ed) {
-      const nm = host.querySelector('#pe-name'); if (nm) nm.addEventListener('input', () => { ed.name = nm.value; });
+      // (the name field was removed — `ed.name` carries the CURRENT progression's
+      // name through Save unchanged; Export is where a name is chosen.)
       const ln = host.querySelector('#pe-len');
       if (ln) ln.addEventListener('change', () => {
         const v = (ln.value || '').trim();
@@ -27063,6 +27057,28 @@
       }
       if (op === 'addpart') { const r = t.getBoundingClientRect(); if (_ambProgActions) setTimeout(() => { try { _ambProgActions.addPart(r.left, r.bottom); } catch (e) {} }, 0); return; }
     }
+    // Progression-area subsections. Reuses the panel's own .ambient-grp collapsible
+    // (head + body + caret) so these look and behave like every other group here,
+    // rather than a second bespoke fold. Open state lives on the DOM — the panel is
+    // built once, the same rule the layer cards follow.
+    function _ambProgGrpOpen(key, label, open) {
+      return '<div class="ambient-grp ambient-proggrp' + (open ? ' open' : '') + '" id="ambient-proggrp-' + key + '" data-grp="' + label + '">' +
+        '<button type="button" class="ambient-grp-head" data-grp="' + label + '">' + label + '<span class="ambient-grp-caret" aria-hidden="true"></span></button>' +
+        '<div class="ambient-grp-body">';
+    }
+    function _ambProgGrpClose() { return '</div></div>'; }
+    // A group whose whole body is hidden (Progression off, no sections yet) must
+    // hide its HEADER too — otherwise the area reads as five empty accordions. The
+    // rows and matrices keep setting their own display exactly as before; this just
+    // mirrors the result onto the wrapper, so no renderer had to change.
+    function _ambProgGrpSync(E) {
+      ['salt', 'order', 'overview', 'matrix', 'sections'].forEach(k => {
+        const g = _ambGet(E, 'ambient-proggrp-' + k); if (!g) return;
+        const body = g.querySelector('.ambient-grp-body'); if (!body) return;
+        const any = Array.prototype.some.call(body.children, c => c.style.display !== 'none');
+        g.style.display = any ? '' : 'none';
+      });
+    }
     function _ambRenderChordMatrix(E) {
       const el = _ambGet(E, 'ambient-progmatrix'); if (!el) return;
       const cfg = E.getCfg();
@@ -27434,6 +27450,9 @@
       try { _ambRenderChordMatrix(E); } catch (e) {}
       try { _ambRenderProgOverview(E); } catch (e) {}
       try { _ambRenderSectionMatrix(E); } catch (e) {}
+      // The renderers above are what flip those bodies, so the header visibility
+      // is settled HERE rather than only at panel build.
+      try { _ambProgGrpSync(E); } catch (e) {}
       // Warble sliders reflect their layer's macro value across re-renders.
       try { host.querySelectorAll('.amb-warble').forEach(wb => {
         const L = _ambLayerByKey(E, (wb.dataset.wkey || '').replace(/-(\d+)$/, ':$1'));
@@ -33545,6 +33564,7 @@
             // 🧂 SALT — deterministic per-cycle spice on the global progression
             // (engine: _ambProgSaltCfg / _ambProgSaltLens / colors in
             // _ambProgCurrentChord). All zeros = played exactly as written.
+            _ambProgGrpOpen('salt', '🧂 Salt', false) +
             '<div class="ambient-row ambient-prog-salt" id="ambient-prog-saltrow" style="display:none" title="Salt — deterministic per-cycle spice on the progression. Everything at 0 = play exactly as written.">' +
               '<span class="ambient-sched-lbl salt-lbl">🧂 salt</span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">lengths</span><input type="number" class="ambient-salt-in" id="ambient-salt-len" min="0" max="100" step="5" value="0" title="Random chord scheduling — each cycle re-slices the chord lengths (A 1¼ bars, B ½, C 1¾ …) on a 1/8-bar grid. The cycle total is preserved, so loops/Evolve stay aligned. 0 = as written, 100 = wild."></span>' +
@@ -33554,6 +33574,10 @@
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">🎲 take</span><input type="number" class="ambient-salt-in" id="ambient-prog-reroll" min="0" max="100" step="5" value="0" title="Harmony re-roll — the chance each chord is swapped for a SAME-FUNCTION substitute (relative minor/major, mediant, or a 7th/9th colour) when you press 🎲 New take. Only substitutions that stay in the key are offered. Deterministic: the same take id always gives the same changes, and the written progression is never altered — set it back to 0 to hear it as authored."></span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">scatter</span><input type="number" class="ambient-salt-in" id="ambient-salt-scatter" min="0" max="100" step="5" value="0" title="How unevenly the Colors count lands per chord unit — 0: every unit gets the full count; 100: most units stay plain and only the occasional unit blooms fully (stochastic, seeded — same seed replays identically)."></span>' +
             '</div>' +
+            // the salt/order readout belongs with Salt — it is what salt did.
+            '<div class="ambient-salt-readout" id="ambient-salt-readout" style="display:none" title="What salt/order are doing: this cycle\u2019s chords in PLAYED order (with lengths and \u00d7n color segments), then the next cycle\u2019s \u2014 deterministic per seed, so it plays exactly as shown."></div>' +
+            _ambProgGrpClose() +
+            _ambProgGrpOpen('order', '\u21bb Order', false) +
             // ↻ ORDER — scheduled chord re-ordering (engine: _ambProgOrderPerm).
             '<div class="ambient-row ambient-prog-salt ambient-prog-order" id="ambient-prog-orderrow" style="display:none" title="Play order — re-order the progression’s chords on scheduled cycles (deterministic per seed; the readout below shows each cycle’s actual order).">' +
               // The LABEL is the on/off. Inactive = the implicit defaults (written
@@ -33564,15 +33588,19 @@
               '<select id="ambient-order-mode" class="ambient-select"><option value="shuffle">Random</option><option value="reverse">Reversed</option></select>' +
               '<select id="ambient-order-when" class="ambient-select" title="Which progression cycles play in the altered order (the rest play as written)"><option value="always">every cycle</option><option value="10">1 in 2</option><option value="100">1 in 3</option><option value="1000">1 in 4</option><option value="10000000">1 in 8</option></select>' +
             '</div>' +
-            // 🧂/↻ live readout — this cycle's actual plan (salted lengths, colors,
-            // played order) + the next cycle's. _ambSaltReadoutSync.
-            '<div class="ambient-salt-readout" id="ambient-salt-readout" style="display:none" title="What salt/order are doing: this cycle’s chords in PLAYED order (with lengths and ×n color segments), then the next cycle’s — deterministic per seed, so it plays exactly as shown."></div>' +
+            _ambProgGrpClose() +
             // Overview strip — the whole progression at a glance (chord chips grouped
             // under part labels; alt-bearing chords badged; playing chord glows). Click a
             // chord to edit it there; click a part header to rename/reorder. _ambRenderProgOverview.
+            _ambProgGrpOpen('overview', '\u25a4 Overview', true) +
             '<div class="ambient-pov-strip" id="ambient-prog-overview" style="display:none"></div>' +
+            _ambProgGrpClose() +
+            _ambProgGrpOpen('matrix', '\u2317 Chord matrix', false) +
             '<div class="ambient-progmatrix" id="ambient-progmatrix" style="display:none"></div>' +
+            _ambProgGrpClose() +
+            _ambProgGrpOpen('sections', '\u2637 Section matrix', false) +
             '<div class="ambient-progmatrix ambient-secmatrix" id="ambient-secmatrix" style="display:none"></div>' +
+            _ambProgGrpClose() +
           '</div>' +       // end #ambient-progsec-body
         '</div>') +        // end progsec pane
         // 🕺 Groove — swing / accent / humanize (cascade) + per-layer push;
@@ -33757,6 +33785,10 @@
         }
       } catch (e) {}
       try { _ambWireAreaStrip(E); } catch (e) {}   // area tabs (master only)
+      // (no toggle wiring needed here — the panel already binds EVERY
+      // .ambient-grp-head in the host a few lines below, which now includes these.
+      // Adding a second handler made both fire and cancel out: the group toggled
+      // twice per click and never appeared to open.)
       try { _ambSyncFxVis(E); } catch (e) {}       // FX module: show only the added FX
       try { _ambSyncLayerUnits(E); } catch (e) {}  // unit-fit readouts on first paint
       try { _ambSyncSynthKit(E); } catch (e) {}    // synth-kit editor values + visibility

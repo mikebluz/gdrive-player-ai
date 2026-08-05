@@ -2584,6 +2584,15 @@
       return seed + (edited ? ' · edited' : '');
     }
     // Stamp the seed identity when a seed is loaded into the current progression.
+    // Prepopulated name for a hand-built progression. Math.random at UI time, never
+    // the seeded stream — this is a label, not material.
+    const _AMB_PROG_ADJ = ['Slow', 'Amber', 'Hollow', 'Bright', 'Distant', 'Quiet', 'Velvet', 'Paper', 'Iron', 'Glass', 'Soft', 'Late', 'Low', 'Wide', 'Salt'];
+    const _AMB_PROG_NOUN = ['Drift', 'Ladder', 'Window', 'Tide', 'Circuit', 'Garden', 'Signal', 'Hollow', 'Ember', 'Current', 'Meadow', 'Lantern', 'Orbit', 'Thread', 'Harbour'];
+    function _ambRandProgName() {
+      const a = _AMB_PROG_ADJ[Math.floor(Math.random() * _AMB_PROG_ADJ.length)];
+      const n = _AMB_PROG_NOUN[Math.floor(Math.random() * _AMB_PROG_NOUN.length)];
+      return a + ' ' + n;
+    }
     function _ambProgMarkSeed(prog, seedName) {
       if (!prog) return;
       if (seedName) { prog.seedName = String(seedName); prog.seedSig = _ambProgSig(prog.chords); }
@@ -5513,7 +5522,7 @@
       // append mode, where the menu is choosing a PART to chain on.
       if (!opts.append && _ambProgActions) {
         items.push({ label: 'New progression', disabled: true });
-        items.push({ label: '  ⚄ Generate…', fn: () => setTimeout(() => { try { _ambProgActions.generate(); } catch (e) {} }, 0) });
+        items.push({ label: '  ✎ Create…', fn: () => setTimeout(() => { try { _ambProgActions.generate(); } catch (e) {} }, 0) });
         items.push({ label: '  ⌨ Type roman numerals…', fn: () => setTimeout(() => { try { _ambProgActions.roman(); } catch (e) {} }, 0) });
         items.push('hr');
       }
@@ -5566,6 +5575,37 @@
     const _AMB_PE_QUALITIES = [['maj', [0, 4, 7]], ['min', [0, 3, 7]], ['dim', [0, 3, 6]], ['aug', [0, 4, 8]],
       ['sus2', [0, 2, 7]], ['sus4', [0, 5, 7]], ['7', [0, 4, 7, 10]], ['maj7', [0, 4, 7, 11]],
       ['min7', [0, 3, 7, 10]], ['m7♭5', [0, 3, 6, 10]], ['dim7', [0, 3, 6, 9]], ['6', [0, 4, 7, 9]], ['9', [0, 4, 7, 10, 14]]];
+    // CHARACTER vocabulary for the Create builder, grouped so the picker can offer
+    // more than one KIND of character rather than one flat wall of buttons.
+    // Intervals are pitch classes on purpose — _ambNormalizeProgMeta mods every
+    // interval into 0-11, so a 9th written as 14 would be folded to 2 anyway.
+    const _AMB_CHAR_GROUPS = [
+      ['Triads', [['maj', [0, 4, 7]], ['min', [0, 3, 7]], ['dim', [0, 3, 6]], ['aug', [0, 4, 8]], ['sus2', [0, 2, 7]], ['sus4', [0, 5, 7]]]],
+      ['Sevenths', [['7', [0, 4, 7, 10]], ['maj7', [0, 4, 7, 11]], ['min7', [0, 3, 7, 10]], ['m7\u266d5', [0, 3, 6, 10]], ['dim7', [0, 3, 6, 9]], ['6', [0, 4, 7, 9]], ['mMaj7', [0, 3, 7, 11]], ['7sus4', [0, 5, 7, 10]]]],
+      ['Extended \u00b7 jazz', [['9', [0, 4, 7, 10, 2]], ['maj9', [0, 4, 7, 11, 2]], ['min9', [0, 3, 7, 10, 2]], ['add9', [0, 4, 7, 2]], ['6/9', [0, 4, 7, 9, 2]],
+        ['11', [0, 4, 7, 10, 2, 5]], ['min11', [0, 3, 7, 10, 2, 5]], ['13', [0, 4, 7, 10, 2, 9]],
+        ['7\u266d9', [0, 4, 7, 10, 1]], ['7\u266f9', [0, 4, 7, 10, 3]], ['7\u266f11', [0, 4, 7, 10, 6]], ['7\u266d13', [0, 4, 7, 10, 8]]]]
+    ];
+    // A character "makes sense in the key" when every tone it puts on this root is
+    // in the key's scale. Drives the picker's colouring: in-key · borrowed.
+    function _ambCharInKey(rootPc, ivs, kRoot, kScale) {
+      try { return ivs.every(iv => _ambPeInScale((((rootPc + iv) % 12) + 12) % 12, kRoot, kScale)); } catch (e) { return false; }
+    }
+    // INVERSION in a pitch-class model is a change of BASS, so it is expressed by
+    // re-rooting the chord onto the inverted tone (C/E = root E, [0,3,8]). There is
+    // nowhere else to put it: the engine has no voicing slot on a chord, and
+    // normalize folds octave-raised intervals back into 0-11. The builder keeps the
+    // spoken name ("C/E") for its own chip; anything downstream names the chord from
+    // its own intervals, as it does for every other chord.
+    function _ambCharInvert(rootPc, ivs, inv) {
+      const n = ivs.length;
+      const k = Math.max(0, Math.min(n - 1, inv | 0));
+      if (!k) return { root: (((rootPc % 12) + 12) % 12), intervals: ivs.slice() };
+      const base = ivs[k];
+      const nr = (((rootPc + base) % 12) + 12) % 12;
+      const out = ivs.map(iv => ((((iv - base) % 12) + 12) % 12));
+      return { root: nr, intervals: Array.from(new Set(out)).sort((a, b) => a - b) };
+    }
     function _ambPeNotes(ch) { return (ch.intervals || [0]).map(iv => ((((ch.root | 0) + (iv | 0)) % 12) + 12) % 12); }
     // Which named quality (maj/min/7…) a chord's intervals ARE, for the picker
     // highlight — both sides normalized to a mod-12 sorted set (a 9th's 14 → 2).
@@ -35592,18 +35632,65 @@
           const roll = () => { state.chords = _ambGenProgChords(E.getCfg() || cfg, state.total, state.uniq); };
           roll();
           const ov = document.createElement('div'); ov.id = 'pg-overlay'; ov.className = 'sm-overlay';
+          // BUILD state: the hand-assembled progression, plus the current picker
+          // selection. Separate from `state.chords` (the rolled one) so switching
+          // tabs never discards either.
+          const bs = { built: [], root: null, qi: -1, qj: -1, inv: 0 };
+          const chordOf = () => {
+            if (bs.root == null || bs.qi < 0) return null;
+            const q = _AMB_CHAR_GROUPS[bs.qi][1][bs.qj];
+            const c = _ambCharInvert(bs.root, q[1], bs.inv);
+            const slash = bs.inv > 0 ? (_AMB_CHROM[bs.root] + q[0] + '/' + _AMB_CHROM[c.root]) : (_AMB_CHROM[bs.root] + q[0]);
+            return { root: c.root, intervals: c.intervals, _nm: slash };
+          };
+          const rootBtns = () => _AMB_CHROM.map((nm, pc) =>
+            '<button type="button" class="pg-root' + (bs.root === pc ? ' sel' : '') + (_ambPeInScale(pc, kRoot, kScaleEff) ? ' r-in' : ' r-out') +
+            '" data-root="' + pc + '" title="' + esc(nm) + (_ambPeInScale(pc, kRoot, kScaleEff) ? ' — in ' + esc(keyTxt) : ' — outside the key') + '">' + esc(nm) + '</button>').join('');
+          const charBtns = () => _AMB_CHAR_GROUPS.map((grp, gi) =>
+            '<div class="pg-chargrp"><span class="pg-charlab">' + esc(grp[0]) + '</span><div class="pg-charrow">' +
+            grp[1].map((q, qj) => {
+              const inKey = bs.root != null && _ambCharInKey(bs.root, q[1], kRoot, kScaleEff);
+              const cls = 'pg-char' + (bs.qi === gi && bs.qj === qj ? ' sel' : '') + (bs.root == null ? '' : (inKey ? ' c-in' : ' c-out'));
+              return '<button type="button" class="' + cls + '" data-qi="' + gi + '" data-qj="' + qj + '" title="' +
+                (bs.root == null ? 'Pick a root first' : (inKey ? 'Diatonic to ' + esc(keyTxt) : 'Borrowed — uses notes outside ' + esc(keyTxt))) + '">' + esc(q[0]) + '</button>';
+            }).join('') + '</div></div>').join('');
+          const invBtns = () => {
+            const q = (bs.qi >= 0) ? _AMB_CHAR_GROUPS[bs.qi][1][bs.qj] : null;
+            const n = q ? Math.min(4, q[1].length) : 1;
+            const lab = ['Root', '1st', '2nd', '3rd'];
+            return lab.slice(0, n).map((t, i) =>
+              '<button type="button" class="pg-inv' + (bs.inv === i ? ' sel' : '') + '" data-inv="' + i + '"' + (q ? '' : ' disabled') +
+              ' title="' + (i ? 'Play it over its ' + t.toLowerCase() + ' tone — stored as a re-rooted slash chord, which is how a bass change is expressed here' : 'Root position') + '">' + t + '</button>').join('');
+          };
           ov.innerHTML = '<div class="sm-modal pg-modal">' +
-            '<div class="sm-title">⚄ Generate progression</div>' +
+            '<div class="sm-title">✎ Create progression</div>' +
+            '<div class="pg-tabs" role="tablist">' +
+              '<button type="button" class="pg-tab on" data-tab="roll">⚄ Roll one</button>' +
+              '<button type="button" class="pg-tab" data-tab="build">✎ Build by hand</button>' +
+            '</div>' +
+            '<div class="pg-pane" data-pane="build" style="display:none">' +
+              '<div class="pg-key">in <b>' + esc(keyTxt) + '</b> — green is in the key, amber is borrowed</div>' +
+              '<div class="pg-sec"><span class="pg-seclab">Root</span><div class="pg-roots">' + rootBtns() + '</div></div>' +
+              '<div class="pg-sec"><span class="pg-seclab">Character</span><div class="pg-chars">' + charBtns() + '</div></div>' +
+              '<div class="pg-sec"><span class="pg-seclab">Inversion</span><div class="pg-invs">' + invBtns() + '</div></div>' +
+              '<div class="pg-addrow"><span class="pg-pending">Pick a root and a character</span>' +
+                '<button type="button" class="pg-add" disabled>＋ Add chord</button></div>' +
+              '<div class="pg-built" aria-label="Progression so far"></div>' +
+              '<div class="pg-builthint">Drag the chords to reorder them.</div>' +
+            '</div>' +
+            '<div class="pg-pane" data-pane="roll">' +
             '<div class="pg-key">diatonic to <b>' + esc(keyTxt) + '</b>, starting on the tonic</div>' +
             '<div class="pg-steppers">' +
               '<div class="pg-stepper"><span class="pg-lab">Length</span><button type="button" class="pg-dec" data-k="total">−</button><span class="pg-val pg-total-v">4</span><button type="button" class="pg-inc" data-k="total">+</button><span class="pg-sub">chords in the cycle</span></div>' +
               '<div class="pg-stepper"><span class="pg-lab">Unique</span><button type="button" class="pg-dec" data-k="uniq">−</button><span class="pg-val pg-uniq-v">3</span><button type="button" class="pg-inc" data-k="uniq">+</button><span class="pg-sub">distinct chords</span></div>' +
             '</div>' +
             '<div class="pg-preview" aria-label="Preview"></div>' +
+            '</div>' +
             '<div class="sm-footer pg-footer">' +
               '<button type="button" class="pg-reroll" title="Roll a different progression with these counts">↻ Reroll</button>' +
               '<button type="button" class="sm-cancel pg-cancel">Cancel</button>' +
-              '<button type="button" class="sm-apply pg-apply">Apply</button></div></div>';
+              '<button type="button" class="sm-apply pg-apply">Apply</button>' +
+              '<button type="button" class="sm-apply pg-save" style="display:none">Save…</button></div></div>';
           document.body.appendChild(ov); ov.style.setProperty('display', 'flex', 'important');
           const renderPreview = () => {
             const box = ov.querySelector('.pg-preview'); if (!box) return;
@@ -35615,7 +35702,104 @@
             ov.querySelector('.pg-uniq-v').textContent = state.uniq;
           };
           renderPreview();
+          // ---- BUILD pane rendering ------------------------------------------
+          const renderBuild = () => {
+            const pane = ov.querySelector('.pg-pane[data-pane="build"]'); if (!pane) return;
+            pane.querySelector('.pg-roots').innerHTML = rootBtns();
+            pane.querySelector('.pg-chars').innerHTML = charBtns();
+            pane.querySelector('.pg-invs').innerHTML = invBtns();
+            const pend = chordOf();
+            pane.querySelector('.pg-pending').textContent = pend ? pend._nm : (bs.root == null ? 'Pick a root and a character' : 'Now pick a character');
+            pane.querySelector('.pg-add').disabled = !pend;
+            pane.querySelector('.pg-built').innerHTML = bs.built.length
+              ? bs.built.map((c, i) => '<span class="pg-bchip" draggable="false" data-i="' + i + '" title="Drag to reorder">' +
+                  '<b>' + esc(_ambPeRoman(c, kRoot, kScaleEff) || (i + 1)) + '</b><small>' + esc(c._nm || _ambChordShort(c)) + '</small>' +
+                  '<button type="button" class="pg-bx" data-rm="' + i + '" title="Remove">✕</button></span>').join('')
+              : '<span class="pg-bempty">No chords yet — pick a root, a character, then ＋ Add chord.</span>';
+            ov.querySelector('.pg-save').disabled = !bs.built.length;
+          };
+          const showTab = (t) => {
+            ov.querySelectorAll('.pg-tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+            ov.querySelectorAll('.pg-pane').forEach(pn => { pn.style.display = pn.dataset.pane === t ? '' : 'none'; });
+            // The footer belongs to whichever pane is showing: Roll applies its roll,
+            // Build saves what you assembled.
+            ov.querySelector('.pg-reroll').style.display = t === 'roll' ? '' : 'none';
+            ov.querySelector('.pg-apply').style.display = t === 'roll' ? '' : 'none';
+            ov.querySelector('.pg-save').style.display = t === 'roll' ? 'none' : '';
+            if (t === 'build') renderBuild();
+          };
+          // ---- drag-reorder the built chords (pointer-based → touch + desktop) --
+          let dI = -1, dMoved = false, dX0 = 0, dY0 = 0;
+          // NEAREST-CENTRE rather than a rect hit-test: the chips WRAP, so on a narrow
+          // screen a drag between rows passes through dead space between the boxes
+          // and a containment test finds nothing (worked at desktop width, silently
+          // did nothing at 390px). Distance to the closest chip always resolves.
+          const chipAt = (x, y) => {
+            let best = null, bd = Infinity;
+            ov.querySelectorAll('.pg-bchip').forEach(el => {
+              const r = el.getBoundingClientRect();
+              const dx = x - (r.left + r.width / 2), dy = y - (r.top + r.height / 2);
+              const d = dx * dx + dy * dy;
+              if (d < bd) { bd = d; best = el; }
+            });
+            return best;
+          };
+          ov.addEventListener('pointerdown', (ev) => {
+            const chip = ev.target.closest && ev.target.closest('.pg-bchip');
+            if (!chip || (ev.target.closest && ev.target.closest('.pg-bx'))) return;
+            dI = parseInt(chip.dataset.i, 10); dMoved = false; dX0 = ev.clientX; dY0 = ev.clientY;
+          });
+          ov.addEventListener('pointermove', (ev) => {
+            if (dI < 0) return;
+            // Threshold on TOTAL distance, not horizontal: the chips wrap, so dragging
+            // to the row below is an almost purely VERTICAL move and an x-only test
+            // never armed it (worked at desktop width where everything sat on one row).
+            if (!dMoved && Math.hypot(ev.clientX - dX0, ev.clientY - dY0) < 6) return;
+            dMoved = true;
+            const over = chipAt(ev.clientX, ev.clientY); if (!over) return;
+            const to = parseInt(over.dataset.i, 10);
+            if (to === dI || !Number.isFinite(to)) return;
+            const [m] = bs.built.splice(dI, 1); bs.built.splice(to, 0, m); dI = to;
+            renderBuild();
+          });
+          ov.addEventListener('pointerup', () => { dI = -1; dMoved = false; });
+          ov.addEventListener('pointercancel', () => { dI = -1; dMoved = false; });
           ov.addEventListener('click', (ev) => {
+            // ---- BUILD interactions (checked before the roll handlers below) ----
+            const tab = ev.target.closest && ev.target.closest('.pg-tab');
+            if (tab) { showTab(tab.dataset.tab); return; }
+            const rb = ev.target.closest && ev.target.closest('.pg-root');
+            if (rb) { bs.root = parseInt(rb.dataset.root, 10); renderBuild(); return; }
+            const cb = ev.target.closest && ev.target.closest('.pg-char');
+            if (cb) { bs.qi = parseInt(cb.dataset.qi, 10); bs.qj = parseInt(cb.dataset.qj, 10);
+              const q = _AMB_CHAR_GROUPS[bs.qi][1][bs.qj]; if (bs.inv >= q[1].length) bs.inv = 0;
+              renderBuild(); return; }
+            const ib = ev.target.closest && ev.target.closest('.pg-inv');
+            if (ib) { bs.inv = parseInt(ib.dataset.inv, 10) || 0; renderBuild(); return; }
+            const rm = ev.target.closest && ev.target.closest('.pg-bx');
+            if (rm) { bs.built.splice(parseInt(rm.dataset.rm, 10), 1); renderBuild(); return; }
+            if (ev.target.closest && ev.target.closest('.pg-add')) {
+              const c = chordOf(); if (!c) return;
+              bs.built.push(c);
+              // Clear the selection so the next chord starts from a blank panel,
+              // which is what makes this quick to use repeatedly.
+              bs.root = null; bs.qi = -1; bs.qj = -1; bs.inv = 0;
+              renderBuild(); return;
+            }
+            if (ev.target.closest && ev.target.closest('.pg-save')) {
+              if (!bs.built.length) return;
+              let nm = null;
+              try { nm = window.prompt('Name this progression', _ambRandProgName()); } catch (e) {}
+              if (nm == null) return;                       // cancelled — keep the build
+              const name = String(nm).trim().slice(0, 24) || _ambRandProgName();
+              // Strip the builder's display name: a chord is root + intervals, and
+              // an underscore field would ride into the saved project.
+              const chords = bs.built.map(c => ({ root: c.root, intervals: c.intervals.slice() }));
+              try { _ambApplyGenProg(E, chords, name); } catch (e) { console.warn('Create failed', e); }
+              if (typeof showToast === 'function') showToast('Created “' + name + '” — ' + chords.length + ' chords.');
+              try { ov.remove(); } catch (e) {}
+              return;
+            }
             if (ev.target === ov || ev.target.closest('.pg-cancel')) { try { ov.remove(); } catch (e) {} return; }
             const step = ev.target.closest('.pg-inc, .pg-dec');
             if (step) {

@@ -2675,6 +2675,16 @@
         // How many times this part runs before the progression moves on. 1 is the
         // neutral value and is NOT stored, so a plain chain stays byte-identical.
         if (Number.isFinite(p.plays) && (p.plays | 0) > 1) e.plays = Math.min(64, p.plays | 0);
+        // PER-PART SALT. Carried EXPLICITLY because this builds a fresh object per
+        // part — anything not copied here is dropped on every normalize. An
+        // all-zero object is KEPT on purpose: it means "no salt in this part",
+        // which is a real statement against a salted progression and cannot be
+        // expressed by absence (absence = inherit).
+        if (p.salt && typeof p.salt === 'object') {
+          e.salt = { len: Math.max(0, Math.min(100, p.salt.len | 0)),
+                     colors: Math.max(0, Math.min(8, p.salt.colors | 0)),
+                     scatter: Math.max(0, Math.min(100, p.salt.scatter | 0)) };
+        }
         if (p.key && typeof p.key === 'object' && Number.isFinite(p.key.root)) {
           const sc = (typeof SCALES !== 'undefined' && SCALES[p.key.scale]) ? p.key.scale : 'major';
           e.key = { root: (((p.key.root | 0) % 12) + 12) % 12, scale: sc };
@@ -3791,7 +3801,7 @@
       // segment count and the color pick are pure fns of (seed, step, segIdx) via
       // dedicated seeded RNGs — the >1 reads per onset resolve identically.
       const cfgS = _E && (_E._cfg || (_E.getCfg && _E.getCfg()));
-      const salt = _ambProgSaltCfg(cfgS);
+      const salt = _ambPartSaltAt(cfgS, step);   // the part's own salt while it plays, else the global
       if (!salt || !((salt.colors | 0) > 0)) return ret;
       if (!(cfgS.prog && n.chords === cfgS.prog.chords)) return ret;
       const hint = _ambProgPosHint;
@@ -3828,9 +3838,72 @@
       const s = cfg && cfg.prog && cfg.prog.on && cfg.prog.salt;
       return (s && (((s.len | 0) > 0) || ((s.colors | 0) > 0))) ? s : null;
     }
+    // ---- PER-PART SALT ------------------------------------------------------
+    // A part may carry its OWN `salt` ({len,colors,scatter}) which fully replaces
+    // the progression-wide one WHILE THAT PART PLAYS — including an all-zero
+    // object, which is the only way to say "no salt in the chorus" against a
+    // salted progression. Absent → inherit the global, so an un-parted or
+    // un-salted chain takes the exact prior path (byte-identical).
+    function _ambPartSlotIndex(parts, slot) {
+      if (!Array.isArray(parts)) return -1;
+      let from = 0;
+      for (let i = 0; i < parts.length; i++) {
+        const n = Math.max(1, parts[i] && parts[i].len | 0);
+        if (slot < from + n) return i;
+        from += n;
+      }
+      return parts.length - 1;
+    }
+    function _ambPartSaltAt(cfg, step) {
+      const base = _ambProgSaltCfg(cfg);
+      const prog = cfg && cfg.prog;
+      const parts = (prog && Array.isArray(prog.parts) && prog.parts.length > 1) ? prog.parts : null;
+      if (!parts || !prog.on) return base;
+      const N = (Array.isArray(prog.chords) ? prog.chords : []).length; if (!N) return base;
+      const pi = _ambPartSlotIndex(parts, ((step % N) + N) % N);
+      const ps = (pi >= 0 && parts[pi]) ? parts[pi].salt : null;
+      if (!ps || typeof ps !== 'object') return base;
+      return (((ps.len | 0) > 0) || ((ps.colors | 0) > 0)) ? ps : null;   // explicit all-zero = OFF here
+    }
+    // Length-salt across a chain. Each part's slice is re-sliced against ITS OWN
+    // subtotal, which preserves the cycle total the whole salt design rests on.
+    // If NO part carries its own salt this takes the exact prior whole-cycle
+    // path, so existing parted+salted projects are unchanged (additive-only).
+    function _ambProgSaltLensParted(lens, cyc, seed, cfg) {
+      const prog = cfg && cfg.prog;
+      const base = _ambProgSaltCfg(cfg);
+      const baseAmt = base ? (base.len | 0) : 0;
+      const parts = (prog && Array.isArray(prog.parts) && prog.parts.length > 1) ? prog.parts : null;
+      if (!parts || !parts.some(p => p && p.salt && typeof p.salt === 'object')) {
+        return baseAmt > 0 ? _ambProgSaltLens(lens, cyc, seed, baseAmt) : lens;
+      }
+      const out = lens.slice();
+      let from = 0, any = false;
+      for (let i = 0; i < parts.length && from < lens.length; i++) {
+        const n = Math.max(1, Math.min(lens.length - from, parts[i].len | 0));
+        const ps = (parts[i].salt && typeof parts[i].salt === 'object') ? parts[i].salt : null;
+        const amt = ps ? (ps.len | 0) : baseAmt;
+        if (amt > 0 && n > 1) {
+          // Per-part seed offset so two same-amount parts don't re-slice in lockstep.
+          const seg = _ambProgSaltLens(lens.slice(from, from + n), cyc, ((seed ^ ((i + 1) * 0x9E37)) >>> 0), amt);
+          for (let j = 0; j < n; j++) out[from + j] = seg[j];
+          any = true;
+        }
+        from += n;
+      }
+      return any ? out : lens;
+    }
     // Re-partition one cycle's chord lengths: multiplicative seeded jitter,
     // rescaled to the exact written total, boundaries quantized to 1/8 bar
     // (min segment 1/8). Pure in (lens, cyc, seed, amt).
+    // True when the length axis is engaged anywhere — globally, or on any one part.
+    function _ambProgSaltAnyLen(cfg) {
+      const base = _ambProgSaltCfg(cfg);
+      if (base && (base.len | 0) > 0) return true;
+      const prog = cfg && cfg.prog;
+      if (!prog || !prog.on || !Array.isArray(prog.parts) || prog.parts.length < 2) return false;
+      return prog.parts.some(p => p && p.salt && typeof p.salt === 'object' && (p.salt.len | 0) > 0);
+    }
     function _ambProgSaltLens(lens, cyc, seed, amt) {
       const total = lens.reduce((s, v) => s + v, 0);
       if (!(total > 0) || lens.length < 2) return lens;
@@ -4004,12 +4077,15 @@
       // SALT · len applies only when walking the GLOBAL prog's own chord list
       // (inherited srcs share it by reference; a layer's own prog is untouched).
       const _salt = _ambProgSaltCfg(cfg);
-      const _saltLen = (_salt && (_salt.len | 0) > 0 && chords && chords.length > 1 && cfg && cfg.prog && chords === cfg.prog.chords) ? (_salt.len | 0) : 0;
+      // A part may salt lengths where the progression does not, so the gate asks
+      // whether ANY salt applies, not just the global amount.
+      const _saltAny = _ambProgSaltAnyLen(cfg);
+      const _saltLen = (_saltAny && chords && chords.length > 1 && cfg && cfg.prog && chords === cfg.prog.chords) ? 1 : 0;
       if (chords && chords.length && (_saltLen || chords.some(c => c && Number.isFinite(c.bars) && c.bars > 0))) {
         let lens = chords.map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
         const cycle = lens.reduce((s, v) => s + v, 0) || bpc;   // WRITTEN total — salt preserves it, so cycle math is stable
         const cyc = Math.floor(bars / cycle);
-        if (_saltLen) lens = _ambProgSaltLens(lens, cyc, (cfg.seed | 0), _saltLen);
+        if (_saltLen) lens = _ambProgSaltLensParted(lens, cyc, (cfg.seed | 0), cfg);
         // ↻ ORDER: chord perm[i] plays at slot i WITH ITS OWN length.
         { const permL = (cfg && cfg.prog && chords === cfg.prog.chords) ? _ambProgOrderPerm(cfg, lens.length, cyc) : null;
           if (permL) lens = permL.map(pi => lens[pi]); }
@@ -4036,13 +4112,13 @@
       const bars = Math.max(0, atSec - anchor) / barSec;
       const srcCh = (src && src.type === 'prog' && Array.isArray(src.chords) && src.chords.length) ? src.chords : null;
       const chords = srcCh || ((cfg && cfg.prog && Array.isArray(cfg.prog.chords)) ? cfg.prog.chords : null);
-      const _salt2 = _ambProgSaltCfg(cfg);
-      const _saltLen2 = (_salt2 && (_salt2.len | 0) > 0 && chords && chords.length > 1 && cfg && cfg.prog && chords === cfg.prog.chords) ? (_salt2.len | 0) : 0;
+      const _saltAny2 = _ambProgSaltAnyLen(cfg);
+      const _saltLen2 = (_saltAny2 && chords && chords.length > 1 && cfg && cfg.prog && chords === cfg.prog.chords) ? 1 : 0;
       if (chords && chords.length && (_saltLen2 || chords.some(c => c && Number.isFinite(c.bars) && c.bars > 0))) {
         let lens = chords.map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
         const cycle = lens.reduce((s2, v) => s2 + v, 0) || bpc;
         const cyc = Math.floor(bars / cycle);
-        if (_saltLen2) lens = _ambProgSaltLens(lens, cyc, (cfg.seed | 0), _saltLen2);
+        if (_saltLen2) lens = _ambProgSaltLensParted(lens, cyc, (cfg.seed | 0), cfg);
         { const permL2 = (cfg && cfg.prog && chords === cfg.prog.chords) ? _ambProgOrderPerm(cfg, lens.length, cyc) : null;
           if (permL2) lens = permL2.map(pi => lens[pi]); }
         let pos = bars - cyc * cycle, i = 0;
@@ -26651,9 +26727,13 @@
       const cfg = E._cfg || (E.getCfg && E.getCfg());
       const salt = _ambProgSaltCfg(cfg);
       const p = cfg && cfg.prog;
+      // A part may salt where the progression does not, so the readout has to earn
+      // its place on the parts too — else per-part salt would be invisible.
+      const partSalted = !!(p && Array.isArray(p.parts) && p.parts.length > 1 &&
+        p.parts.some(x => x && x.salt && typeof x.salt === 'object' && (((x.salt.len | 0) > 0) || ((x.salt.colors | 0) > 0))));
       const ordered = !!(p && p.order && p.order.mode);   // ↻ order alone also earns the readout
       const rerolled = !!(p && ((p.reroll | 0) || (p.vary | 0) || (p.tension | 0)));   // 🎲/🌊/🌡 likewise
-      if ((!salt && !ordered && !rerolled) || !p || !p.on || !Array.isArray(p.chords) || !p.chords.length) {
+      if ((!salt && !partSalted && !ordered && !rerolled) || !p || !p.on || !Array.isArray(p.chords) || !p.chords.length) {
         if (el.style.display !== 'none') { el.style.display = 'none'; el._sig = ''; }
         return;
       }
@@ -26663,14 +26743,15 @@
       const seed = cfg.seed | 0;
       const s = salt || { len: 0, colors: 0, scatter: 0 };
       const om = (p.order && p.order.mode) || '', ow = (p.order && p.order.when) || '';
-      const sig = cyc + '|' + (s.len | 0) + '|' + (s.colors | 0) + '|' + (s.scatter | 0) + '|' + om + '|' + ow + '|' + len + '|' + seed + '|' + (p.reroll | 0) + '|' + (p.vary | 0) + '|' + (p.tension | 0) + '|' + (E.timer ? 1 : 0);
+      const psig = (Array.isArray(p.parts) ? p.parts : []).map(x => (x && x.salt) ? ((x.salt.len|0)+','+(x.salt.colors|0)+','+(x.salt.scatter|0)) : '-').join(';');
+      const sig = cyc + '|' + (s.len | 0) + '|' + (s.colors | 0) + '|' + (s.scatter | 0) + '|' + om + '|' + ow + '|' + len + '|' + seed + '|' + (p.reroll | 0) + '|' + (p.vary | 0) + '|' + (p.tension | 0) + '|' + (E.timer ? 1 : 0) + '|' + psig;
       if (force || el._sig !== sig) {
         el._sig = sig;
         const bpc = Math.max(0.01, (cfg && cfg.barsPerChord) || 1);
         const wl = chords.map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
-        const salted = (s.len | 0) > 0;
-        const cur = salted ? _ambProgSaltLens(wl, cyc, seed, s.len | 0) : wl;
-        const nxt = (salted || ordered) ? (salted ? _ambProgSaltLens(wl, cyc + 1, seed, s.len | 0) : wl) : null;
+        const salted = _ambProgSaltAnyLen(cfg);
+        const cur = salted ? _ambProgSaltLensParted(wl, cyc, seed, cfg) : wl;
+        const nxt = (salted || ordered) ? (salted ? _ambProgSaltLensParted(wl, cyc + 1, seed, cfg) : wl) : null;
         // ↻ order: chips display in PLAYED order (chord perm[i] at slot i, its own length).
         const perm = _ambProgOrderPerm(cfg, len, cyc);
         const permN = _ambProgOrderPerm(cfg, len, cyc + 1);
@@ -26680,7 +26761,8 @@
         const nm = (c) => { const iv = Array.isArray(c.intervals) ? c.intervals : []; const min3 = iv.indexOf(3) >= 0 && iv.indexOf(4) < 0;
           return _AMB_CHROM[(((((c.root | 0) + _vsS) % 12) + 12) % 12)] + (min3 ? (iv.indexOf(6) >= 0 && iv.indexOf(7) < 0 ? '°' : 'm') : ''); };
         const curTxt = chords.map((c, i) => {
-          const n = (s.colors | 0) > 0 ? _ambProgSaltSegCount(s, cyc * len + i, seed) : 1;
+          const _sp = _ambPartSaltAt(cfg, cyc * len + i) || s;
+          const n = (_sp.colors | 0) > 0 ? _ambProgSaltSegCount(_sp, cyc * len + i, seed) : 1;
           return '<span class="salt-ch" data-sci="' + i + '">' + nm(chords[ci(i)]) + ' ' + _ambFmtBpc(cur[ci(i)]) + (n > 1 ? '<i title="' + n + ' segments this pass — the downbeat stays the written chord, the rest are colors of it">×' + n + '</i>' : '') + '</span>';
         }).join(' · ');
         // 🎲 What THIS take substituted — named, so the re-roll is inspectable

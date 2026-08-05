@@ -4222,8 +4222,12 @@
           // and these are the explicit "and everything else like it" actions —
           // one click, named, so a wide edit is never something you did by accident.
           // Absent when the modal was opened on a whole row/column already.
-          (o.onRow || o.onCol ? '<div class="ambient-pm-modal-spread">' +
+          (o.onRow || o.onCol || o.onPart ? '<div class="ambient-pm-modal-spread">' +
             (o.onRow ? '<button type="button" class="ambient-seg pm-sp-row">Set all of <b>' + esc(o.rowLabel || 'this layer') + '</b> to <i class="pm-sp-v">' + v0 + '%</i></button>' : '') +
+            // PART macro: the same shape as the row/column spreads, and like them it
+            // just writes the ordinary per-chord values — there is no part-level
+            // field to store, so nothing new to migrate and no new gate at emit.
+            (o.onPart ? '<button type="button" class="ambient-seg pm-sp-part">Set all of <b>' + esc(o.rowLabel || 'this layer') + '</b> in <b>' + esc(o.partLabel || 'this part') + '</b> to <i class="pm-sp-v">' + v0 + '%</i></button>' : '') +
             (o.onCol ? '<button type="button" class="ambient-seg pm-sp-col">Set every layer on <b>' + esc(o.colLabel || 'this ' + o.unit) + '</b> to <i class="pm-sp-v">' + v0 + '%</i></button>' : '') +
           '</div>' : '') +
         '</div>' +
@@ -4246,6 +4250,7 @@
       ov.addEventListener('click', (ev) => {
         if (ev.target === ov || (ev.target.closest && ev.target.closest('.ambient-pm-modal-done'))) { close(); return; }
         if (ev.target.closest && ev.target.closest('.pm-sp-row')) { try { o.onRow(cur); } catch (e) {} close(); return; }
+        if (ev.target.closest && ev.target.closest('.pm-sp-part')) { try { o.onPart(cur); } catch (e) {} close(); return; }
         if (ev.target.closest && ev.target.closest('.pm-sp-col')) { try { o.onCol(cur); } catch (e) {} close(); return; }
         const pr = ev.target.closest && ev.target.closest('.ambient-pm-modal-preset');
         if (pr) set(pr.dataset.v | 0);
@@ -27090,14 +27095,40 @@
           if (typeof persistWorkspace === 'function') persistWorkspace();
         };
         const chLabel = (ci) => { const c3 = (E.getCfg().prog.chords || [])[ci]; return 'chord ' + (ci + 1) + (c3 ? ' (' + chName(c3) + ')' : ''); };
+        // ---- PART macro. Per the design call, opting a layer in/out of a part is
+        // NOT a stored field — it writes the ordinary per-chord values across that
+        // part's span. Zero schema, zero migration, no new gate in the emitter, and
+        // an individual chord inside the part can still be overridden afterwards.
+        const partRange = (pi) => {
+          const ps = ((E.getCfg() || {}).prog || {}).parts;
+          if (!Array.isArray(ps) || pi < 0 || pi >= ps.length) return null;
+          let from = 0; for (let i = 0; i < pi; i++) from += Math.max(1, ps[i].len | 0);
+          return { from: from, to: from + Math.max(1, ps[pi].len | 0) };
+        };
+        const partName = (pi) => { const ps = ((E.getCfg() || {}).prog || {}).parts; return (ps && ps[pi] && ps[pi].name) || ('part ' + (pi + 1)); };
+        const ensureSteps = (L, N2) => {
+          const m = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
+          if (!Array.isArray(m.steps) || m.steps.length !== N2) { const o2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => o2 ? (Number.isFinite(o2[i2 % o2.length]) ? o2[i2 % o2.length] : 100) : 100); }
+          return m;
+        };
+        const setPart = (lkey, pi, v) => {
+          const cfg2 = E.getCfg(); const L = _ambLayerByKey(E, lkey); if (!L || !cfg2 || !cfg2.prog) return;
+          const r = partRange(pi); if (!r) return;
+          const m = ensureSteps(L, cfg2.prog.chords.length);
+          for (let i = r.from; i < Math.min(r.to, m.steps.length); i++) m.steps[i] = v;
+          commit(lkey);
+        };
         const openEditor = (cell) => {
           const sl = slot(cell); if (!sl) return;
+          const pi = Number.isFinite(el._pmPart) ? el._pmPart : -1;
           _ambMaskCellModal(E, {
             label: sl.label + ' · ' + chLabel(sl.ci),
             unit: 'chord', value: sl.m.steps[sl.ci],
             rowLabel: sl.label, colLabel: chLabel(sl.ci),
+            partLabel: pi >= 0 ? partName(pi) : '',
             onSet: (v) => { const s2 = slot(cell) || sl; s2.m.steps[s2.ci] = v; commit(sl.lkey); },
             onRow: (v) => setRow(sl.lkey, v),
+            onPart: pi >= 0 ? ((v) => setPart(sl.lkey, pi, v)) : null,
             onCol: (v) => setCol(sl.ci, v)
           });
         };
@@ -27106,6 +27137,18 @@
         const openRow = (lkey, label) => {
           const L = _ambLayerByKey(E, lkey); if (!L) return;
           const st = (L.chordMask && Array.isArray(L.chordMask.steps)) ? L.chordMask.steps : null;
+          // With a part tab open the row handle means "this layer, in THIS part" —
+          // the tab is already scoping what you can see, so scoping the bulk edit
+          // to match is what the visible grid implies. All tab = the whole row.
+          const pi = Number.isFinite(el._pmPart) ? el._pmPart : -1;
+          const r = pi >= 0 ? partRange(pi) : null;
+          if (r) {
+            _ambMaskCellModal(E, { label: label + ' · every chord in ' + partName(pi), unit: 'chord',
+              bulk: 'chord of ' + partName(pi) + ' for this layer',
+              value: st ? (Number.isFinite(st[r.from]) ? st[r.from] : 100) : 100,
+              onSet: (v) => setPart(lkey, pi, v) });
+            return;
+          }
           _ambMaskCellModal(E, { label: label + ' · every chord', unit: 'chord', bulk: 'chord for this layer',
             value: st ? st[0] : 100, onSet: (v) => setRow(lkey, v) });
         };

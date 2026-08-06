@@ -3847,6 +3847,10 @@
       font-size: 0.6rem; font-style: normal; text-align: left; padding: 0 4px;
       white-space: nowrap; text-overflow: ellipsis; }
     .ambient-sched-partblk.rep { background: rgba(159,122,234,0.07); color: #9a8fc0; }
+    /* A wrapped part's continuation names itself (↳ Verse) but reads as a
+       carry-over, not a second entrance — dimmed, and no left divider, since
+       nothing starts there. */
+    .ambient-sched-partblk.cont { border-left: 0; opacity: 0.62; }
     /* Chord labels clip from the END with an ellipsis rather than centre-clipping
        to an unreadable middle ("#ma" out of "C#maj7"). */
     .ambient-sched-chblk { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: left; }

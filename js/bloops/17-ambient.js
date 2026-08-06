@@ -29147,10 +29147,16 @@
     function _ambSchedPartBlock(r) {
       const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
       const badge = (r.plays > 1) ? (' ' + (r.rep + 1) + '/' + r.plays) : '';
-      const wide = !r.quiet && r.w >= ((typeof window !== 'undefined' && window.innerWidth < 560) ? 12 : 7);
-      return '<i class="ambient-sched-partblk' + (r.rep > 0 ? ' rep' : '') + '" style="width:' + r.w.toFixed(3) + '%" title="' +
-        esc(r.name) + (r.plays > 1 ? ' — pass ' + (r.rep + 1) + ' of ' + r.plays : '') + '">' +
-        (wide ? esc(r.name) + badge : '') + '</i>';
+      // A part spanning a row boundary SPLITS, and every segment names its part.
+      // A chord's continuation can stay blank — it sits directly under its own
+      // head — but a part's cannot: the next row would be an unlabelled box that
+      // says nothing about which part you are looking at.
+      const wide = r.w >= ((typeof window !== 'undefined' && window.innerWidth < 560) ? 12 : 7);
+      return '<i class="ambient-sched-partblk' + (r.rep > 0 ? ' rep' : '') + (r.quiet ? ' cont' : '') +
+        '" style="width:' + r.w.toFixed(3) + '%" title="' +
+        esc(r.name) + (r.plays > 1 ? ' — pass ' + (r.rep + 1) + ' of ' + r.plays : '') +
+        (r.quiet ? ' — continued' : '') + '">' +
+        (wide ? (r.quiet ? '↳ ' : '') + esc(r.name) + badge : '') + '</i>';
     }
     function _ambSchedViewBars(cfg) {
       // ONE full chain, never a cycle repeated to fill the width — the repeat read

@@ -2740,7 +2740,7 @@
       for (let i = 0; i < parts.length && acc < total; i++) {
         const p = parts[i]; if (!p || typeof p !== 'object') continue;
         const len = Math.max(1, Math.min(total - acc, Number.isFinite(p.len) ? (p.len | 0) : 1));
-        const name = (typeof p.name === 'string' && p.name.trim()) ? p.name.trim().slice(0, 16) : ('Part ' + (out.length + 1));
+        const name = (typeof p.name === 'string' && p.name.trim()) ? p.name.trim().slice(0, 16) : ('Changes ' + (out.length + 1));
         // PER-PART KEY (additive): the key in force while this part plays — a real
         // modulation mid-progression, with the AREA key left alone. This builds a
         // FRESH object per part, so anything not carried explicitly is dropped on
@@ -4610,7 +4610,7 @@
       for (let i = 0; i < s.part; i++) from += Math.max(1, parts[i].len | 0);
       const len = Math.max(1, parts[s.part].len | 0);
       if (from >= p.chords.length) return null;
-      return { from, len: Math.min(len, p.chords.length - from), name: parts[s.part].name || ('Part ' + (s.part + 1)) };
+      return { from, len: Math.min(len, p.chords.length - from), name: parts[s.part].name || ('Changes ' + (s.part + 1)) };
     }
     // Per-note SECTION gate — the chord-mask machinery one level up:
     // L.sectionMask = { steps: [prob 0-100 per section], part: {size, place} }.
@@ -6269,22 +6269,22 @@
       const partTabs = (function () {
         if (!_peParts) {
           // No chain yet — still offer the one action that starts one.
-          return '<div class="pe-parts"><span class="pe-parts-lbl" title="Parts split a progression into named sections (Verse, Chorus) that can repeat independently.">Parts</span>' +
-            '<button type="button" class="pe-parttab pe-parttab-add" data-pe="partadd" title="Split into two parts at the chord you have selected">＋ Part</button></div>';
+          return '<div class="pe-parts"><span class="pe-parts-lbl" title="CHANGES are a named run of chords — Verse changes, Chorus changes — with their own repeat count, key and salt. Sections are the other axis: named runs of BARS that decide who plays.">Changes</span>' +
+            '<button type="button" class="pe-parttab pe-parttab-add" data-pe="partadd" title="Split into two sets of changes at the chord you have selected">＋ Changes</button></div>';
         }
         let h = '<div class="pe-parts">';
         _peParts.forEach((pt, i) => {
           const r = _ambPePartRange(ed, i);
           const plays = Math.max(1, (pt.plays | 0) || 1);
-          h += '<button type="button" class="pe-parttab' + (ed.part === i ? ' on' : '') + '" data-pe="part:' + i + '" title="' + esc(pt.name || ('Part ' + (i + 1))) + ' — ' + (r.to - r.from) + ' chord' + ((r.to - r.from) === 1 ? '' : 's') + (plays > 1 ? ', plays ' + plays + '×' : '') + '">' +
-            esc(pt.name || ('Part ' + (i + 1))) + (plays > 1 ? '<i class="pe-parttab-x">×' + plays + '</i>' : '') + '</button>';
+          h += '<button type="button" class="pe-parttab' + (ed.part === i ? ' on' : '') + '" data-pe="part:' + i + '" title="' + esc(pt.name || ('Changes ' + (i + 1))) + ' — ' + (r.to - r.from) + ' chord' + ((r.to - r.from) === 1 ? '' : 's') + (plays > 1 ? ', plays ' + plays + '×' : '') + '">' +
+            esc(pt.name || ('Changes ' + (i + 1))) + (plays > 1 ? '<i class="pe-parttab-x">×' + plays + '</i>' : '') + '</button>';
         });
-        h += '<button type="button" class="pe-parttab pe-parttab-add" data-pe="partadd" title="Add a new part after the current one">＋</button></div>';
+        h += '<button type="button" class="pe-parttab pe-parttab-add" data-pe="partadd" title="Add a new set of changes after this one">＋</button></div>';
         // Controls for the ACTIVE part: name, how many times it runs, and its salt.
         if (ed.part >= 0 && _peParts[ed.part]) {
           const pt = _peParts[ed.part], plays = Math.max(1, (pt.plays | 0) || 1);
           const sv = (pt.salt && typeof pt.salt === 'object') ? pt.salt : null;
-          const pnm = esc(pt.name || ('Part ' + (ed.part + 1)));
+          const pnm = esc(pt.name || ('Changes ' + (ed.part + 1)));
           const nch = _peRange.to - _peRange.from;
           const pk = (pt.key && Number.isFinite(pt.key.root)) ? pt.key : null;
           const scNames = (typeof SCALES !== 'undefined' && SCALES) ? Object.keys(SCALES) : ['major'];
@@ -6298,7 +6298,7 @@
             sec('Identity',
               '<div class="pe-partgrp">' +
                 '<span class="pe-partgrp-lbl">Name</span>' +
-                '<button type="button" class="pe-partbtn pe-partbtn-name" data-pe="partren:' + ed.part + '" title="Rename this part">' + pnm + ' <i>✎</i></button>' +
+                '<button type="button" class="pe-partbtn pe-partbtn-name" data-pe="partren:' + ed.part + '" title="Rename these changes">' + pnm + ' <i>✎</i></button>' +
                 '<span class="pe-partgrp-hint">' + nch + ' chord' + (nch === 1 ? '' : 's') + '</span>' +
               '</div>') +
             sec('Playback',
@@ -6318,11 +6318,11 @@
               // which transposes only when a part is first appended).
               '<div class="pe-partgrp">' +
                 '<span class="pe-partgrp-lbl">Key</span>' +
-                '<select class="pe-partsel" data-pekey="' + ed.part + ':root" title="The key in force while this part plays. Inherit = the area key.">' +
+                '<select class="pe-partsel" data-pekey="' + ed.part + ':root" title="The key in force while these changes play. Inherit = the area key.">' +
                   '<option value=""' + (pk ? '' : ' selected') + '>Inherit</option>' +
                   _AMB_CHROM.map((n2, pc) => '<option value="' + pc + '"' + (pk && pk.root === pc ? ' selected' : '') + '>' + esc(n2) + '</option>').join('') +
                 '</select>' +
-                (pk ? '<select class="pe-partsel" data-pekey="' + ed.part + ':scale" title="Scale for this part\u2019s key">' +
+                (pk ? '<select class="pe-partsel" data-pekey="' + ed.part + ':scale" title="Scale for these changes\u2019 key">' +
                   scNames.map(n3 => '<option value="' + esc(n3) + '"' + (pk.scale === n3 ? ' selected' : '') + '>' + esc(n3) + '</option>').join('') +
                   '</select>' : '') +
                 '<span class="pe-partgrp-hint">' + (pk ? 'modulates while this part plays' : 'follows the area key') + '</span>' +
@@ -6334,12 +6334,12 @@
                 // button would flip back off when you pressed the state you were in.
                 '<span class="pe-partseg">' +
                   '<button type="button" class="pe-partbtn pe-partsegbtn' + (!sv ? ' on' : '') + '" data-pe="partsalt:' + ed.part + ':0" title="Use whatever salt the progression has">Inherit</button>' +
-                  '<button type="button" class="pe-partbtn pe-partsegbtn' + (sv ? ' on' : '') + '" data-pe="partsalt:' + ed.part + ':1" title="Give this part its own salt — set all three to 0 for no salt here at all">Its own</button>' +
+                  '<button type="button" class="pe-partbtn pe-partsegbtn' + (sv ? ' on' : '') + '" data-pe="partsalt:' + ed.part + ':1" title="Give these changes their own salt — set all three to 0 for no salt here at all">Its own</button>' +
                 '</span>' +
                 '<span class="pe-partgrp-hint">' + (sv ? 'this part only' : 'follows the progression') + '</span>' +
                 (sv ? '<span class="pe-partsalt">' +
-                  '<label title="Re-slice this part\u2019s chord lengths each cycle. Its own total is preserved, so the rest of the chain does not move.">Lengths<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':len" min="0" max="100" step="5" value="' + (sv.len | 0) + '"></label>' +
-                  '<label title="Colour segments per chord instance in this part. The downbeat is always the written chord.">Colours<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':colors" min="0" max="8" step="1" value="' + (sv.colors | 0) + '"></label>' +
+                  '<label title="Re-slice these changes\u2019 chord lengths each cycle. Their own total is preserved, so the rest of the chain does not move.">Lengths<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':len" min="0" max="100" step="5" value="' + (sv.len | 0) + '"></label>' +
+                  '<label title="Colour segments per chord instance in these changes. The downbeat is always the written chord.">Colours<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':colors" min="0" max="8" step="1" value="' + (sv.colors | 0) + '"></label>' +
                   '<label title="How much the segment count varies between instances. 0 = every instance the same.">Scatter<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':scatter" min="0" max="100" step="5" value="' + (sv.scatter | 0) + '"></label>' +
                   '</span>' : '') +
               '</div>') +
@@ -6350,8 +6350,8 @@
                 // "Remove part" was always a merge (the chords are never deleted) and
                 // read as destructive. The TARGET's name, repeats, key and salt win;
                 // this part's chords simply join it.
-                (ed.part > 0 ? '<button type="button" class="pe-partbtn pe-partmerge" data-pe="partmerge:' + ed.part + ':prev" title="Join ' + pnm + '\u2019s chords onto the end of ' + esc(_peParts[ed.part - 1].name || ('Part ' + ed.part)) + '. No chords are lost; ' + esc(_peParts[ed.part - 1].name || 'that part') + '\u2019s own settings are kept.">\u21e6 Merge into ' + esc(_peParts[ed.part - 1].name || ('Part ' + ed.part)) + '</button>' : '') +
-                (ed.part < _peParts.length - 1 ? '<button type="button" class="pe-partbtn pe-partmerge" data-pe="partmerge:' + ed.part + ':next" title="Join ' + pnm + '\u2019s chords onto the front of ' + esc(_peParts[ed.part + 1].name || ('Part ' + (ed.part + 2))) + '. No chords are lost; ' + esc(_peParts[ed.part + 1].name || 'that part') + '\u2019s own settings are kept.">Merge into ' + esc(_peParts[ed.part + 1].name || ('Part ' + (ed.part + 2))) + ' \u21e8</button>' : '') +
+                (ed.part > 0 ? '<button type="button" class="pe-partbtn pe-partmerge" data-pe="partmerge:' + ed.part + ':prev" title="Join ' + pnm + '\u2019s chords onto the end of ' + esc(_peParts[ed.part - 1].name || ('Changes ' + ed.part)) + '. No chords are lost; ' + esc(_peParts[ed.part - 1].name || 'that part') + '\u2019s own settings are kept.">\u21e6 Merge into ' + esc(_peParts[ed.part - 1].name || ('Changes ' + ed.part)) + '</button>' : '') +
+                (ed.part < _peParts.length - 1 ? '<button type="button" class="pe-partbtn pe-partmerge" data-pe="partmerge:' + ed.part + ':next" title="Join ' + pnm + '\u2019s chords onto the front of ' + esc(_peParts[ed.part + 1].name || ('Changes ' + (ed.part + 2))) + '. No chords are lost; ' + esc(_peParts[ed.part + 1].name || 'that part') + '\u2019s own settings are kept.">Merge into ' + esc(_peParts[ed.part + 1].name || ('Changes ' + (ed.part + 2))) + ' \u21e8</button>' : '') +
               '</div>') +
             '</div>';
         }
@@ -6387,7 +6387,7 @@
         '<button type="button" class="pe-chord pe-add pe-addtrans" data-pe="addtrans" title="Add a TRANSITION after this chord — a walk from it to the next one. Length is editable like any chord; each layer opts in through its cell in the chord matrix.">⇝</button>';
       // Summaries shown on a folded header, so a fold never hides what state it holds.
       const _pcur = (_peParts && ed.part >= 0) ? _peParts[ed.part] : null;
-      const pnmSum = _pcur ? ((_pcur.name || ('Part ' + (ed.part + 1))) + ((_pcur.plays | 0) > 1 ? ' · ' + (_pcur.plays | 0) + '×' : '') + (_pcur.salt ? ' · salt' : '')) : '';
+      const pnmSum = _pcur ? ((_pcur.name || ('Changes ' + (ed.part + 1))) + ((_pcur.plays | 0) > 1 ? ' · ' + (_pcur.plays | 0) + '×' : '') + (_pcur.salt ? ' · salt' : '')) : '';
       const chordSum = (_peRange.to - _peRange.from) + ' chord' + ((_peRange.to - _peRange.from) === 1 ? '' : 's');
       const notes = _ambPeNotes(tgt).slice().sort((a, b) => a - b);
       const noteChips = notes.map((p, ni) =>
@@ -6427,7 +6427,7 @@
       if (_ambIsTransition(ch)) {
         host.innerHTML =
           '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
-          partTabs + (partBar ? secWrap('part', 'Part settings', partBar, pnmSum) : '') +
+          partTabs + (partBar ? secWrap('part', 'Changes settings', partBar, pnmSum) : '') +
           secWrap('chords', 'Chords', '<div class="pe-chords">' + chordsRow + '</div>' +
           '<div class="pe-chordhdr">Transition ' + (sel + 1) + ' of ' + ed.chords.length +
             '<span class="pe-chordops"><button type="button" class="pe-x" data-pe="rmchord" title="Remove this transition"' + (ed.chords.length <= 1 ? ' disabled' : '') + '>✕ remove</button></span></div>' +
@@ -6444,7 +6444,7 @@
       }
       host.innerHTML =
         '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
-        partTabs + (partBar ? secWrap('part', 'Part settings', partBar, pnmSum) : '') +
+        partTabs + (partBar ? secWrap('part', 'Changes settings', partBar, pnmSum) : '') +
         secWrap('chords', 'Chords', '<div class="pe-chords">' + chordsRow + '</div>' +
         '<div class="pe-chordhdr">Chord ' + (sel + 1) + ' of ' + ed.chords.length + (ed.altSel >= 0 ? ' <span class="pe-editing-alt">· editing alt ' + (ed.altSel + 1) + '</span>' : '') +
           '<span class="pe-chordops">' +
@@ -6563,7 +6563,7 @@
         if (!Array.isArray(ed.parts) || ed.parts.length < 2) {
           // FIRST split: there is no chain yet, so the helpers (which treat a
           // single part as "no chain") cannot locate anything — build both sides.
-          ed.parts = [{ name: 'Part 1', len: cut }, { name: 'Part 2', len: total - cut }];
+          ed.parts = [{ name: 'Changes 1', len: cut }, { name: 'Changes 2', len: total - cut }];
           ed.part = 1; ed.sel = cut; ed.altSel = -1;   // land on the new part's first chord, not one hidden by the tab
         } else {
           const pi = _ambPePartOf(ed, cut - 1);
@@ -6580,7 +6580,7 @@
       }
       else if (op === 'sectog') { if (!ed._secOpen) ed._secOpen = {}; ed._secOpen[arg] = !ed._secOpen[arg]; }
       else if (op === 'partren') { const ps = _ambPeParts(ed), pi = parseInt(arg, 10);
-        if (ps && ps[pi]) { let nm = null; try { nm = window.prompt('Part name', ps[pi].name || ('Part ' + (pi + 1))); } catch (e) {}
+        if (ps && ps[pi]) { let nm = null; try { nm = window.prompt('Name for these changes', ps[pi].name || ('Changes ' + (pi + 1))); } catch (e) {}
           if (nm != null) { const v = String(nm).trim().slice(0, 16); if (v) ps[pi].name = v; } } }
       else if (op === 'partplays') { const ps = _ambPeParts(ed), pi = parseInt(arg, 10), d = parseInt(a[2], 10) || 0;
         if (ps && ps[pi]) { const v = Math.max(1, Math.min(64, (Math.max(1, (ps[pi].plays | 0) || 1)) + d));
@@ -27183,22 +27183,22 @@
       if (!runs) {
         body = '<div class="ps-empty">This progression has no parts — it is one continuous stretch of ' +
           ((cfg.prog && cfg.prog.chords) ? cfg.prog.chords.length : 0) + ' chords.<br><br>' +
-          'Parts are named sections (Verse, Chorus) with their own repeat count, key and salt. ' +
-          'Split one in Edit Progression → Part settings, or chain another on with ＋ Part on the overview strip.</div>';
+          'Changes are a named run of chords — Verse changes, Chorus changes — each with their own repeat count, key and salt. ' +
+          'Split one in Edit Progression → Changes settings, or chain another on with ＋ Changes on the overview strip.</div>';
       } else {
         // Proportional map first (where the sections sit), then the detail.
         const strip = runs.map((r, i) => {
           const w = (r.bars / Math.max(0.001, total)) * 100;
           const ticks = [];
           for (let k = 1; k < r.passes; k++) ticks.push('<s class="pb-tick" style="left:' + ((k / r.passes) * 100).toFixed(3) + '%"></s>');
-          return '<i class="ambient-sched-partblk ps-blk" style="width:' + w.toFixed(3) + '%" title="' + esc(r.name || ('Part ' + (i + 1))) + '">' +
-            ticks.join('') + '<span class="pb-nm">' + esc(r.name || ('Part ' + (i + 1))) + '</span>' +
+          return '<i class="ambient-sched-partblk ps-blk" style="width:' + w.toFixed(3) + '%" title="' + esc(r.name || ('Changes ' + (i + 1))) + '">' +
+            ticks.join('') + '<span class="pb-nm">' + esc(r.name || ('Changes ' + (i + 1))) + '</span>' +
             (r.passes > 1 ? '<span class="pb-bd">×' + r.passes + '</span>' : '') + '</i>';
         }).join('');
         const rows = runs.map((r, i) => {
           const b0 = _ambFmtBpc(r.from + 1), b1 = _ambFmtBpc(r.from + r.bars);
           return '<div class="ps-row">' +
-            '<div class="ps-head"><b class="ps-nm">' + esc(r.name || ('Part ' + (i + 1))) + '</b>' +
+            '<div class="ps-head"><b class="ps-nm">' + esc(r.name || ('Changes ' + (i + 1))) + '</b>' +
             (r.passes > 1 ? '<span class="ps-x">plays ' + r.passes + '×</span>' : '<span class="ps-x">plays once</span>') +
             '<span class="ps-bars">bars ' + b0 + '–' + b1 + '</span></div>' +
             '<div class="ps-chords">' + (r.chords.length ? r.chords.map(c => '<i>' + esc(c) + '</i>').join('') : '<i class="ps-none">—</i>') + '</div>' +
@@ -27233,7 +27233,7 @@
           '<div class="ps-map"><span class="ambient-sched-strip parts">' + sStrip + '</span></div>' +
           '<div class="ps-total">' + _ambFmtBpc(secTotal) + ' bars · ' + secs.length + ' section' + (secs.length === 1 ? '' : 's') + '</div>' +
           '<div class="ps-list">' + sRows + '</div>' +
-          '<div class="ps-secthdr">Parts — the chord timeline</div>';
+          '<div class="ps-secthdr">Changes — the chord timeline</div>';
       }
       const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-step-modal-ov';
       ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-partsched-modal">' +
@@ -27344,10 +27344,10 @@
         if (off) add = add.map(c => (c && !c.transition) ? _ambChordShift(c, off) : c);
       }
       if (!Array.isArray(prog.parts) || !prog.parts.length) {   // seed a part over the existing chords first
-        prog.parts = prog.chords.length ? [{ name: String(prog.name || 'Part 1').slice(0, 16), len: prog.chords.length }] : [];
+        prog.parts = prog.chords.length ? [{ name: String(prog.name || 'Changes 1').slice(0, 16), len: prog.chords.length }] : [];
       }
       prog.chords.push(...add);
-      const part = { name: String(name || 'Part').slice(0, 16), len: add.length };
+      const part = { name: String(name || 'Changes').slice(0, 16), len: add.length };
       if (partKey && Number.isFinite(partKey.root)) part.key = { root: (((partKey.root | 0) % 12) + 12) % 12, scale: partKey.scale || 'major' };
       prog.parts.push(part);
     }
@@ -27469,14 +27469,14 @@
       ranges.forEach(r => {
         if (r.pi >= 0) {
           h += '<div class="ambient-pov-parthdr">' +
-            '<span class="ambient-pov-partname" role="button" tabindex="0" data-pov="partren:' + r.pi + '" title="Rename this part">' + esc(r.name) + ' <em>' + (r.to - r.from) + '</em></span>' +
+            '<span class="ambient-pov-partname" role="button" tabindex="0" data-pov="partren:' + r.pi + '" title="Rename these changes">' + esc(r.name) + ' <em>' + (r.to - r.from) + '</em></span>' +
             '<span class="ambient-pov-partops">' +
               // A part's own key is a modulation, so it is named right on the part
               // header rather than buried — you can see where the music changes key.
               '<span role="button" tabindex="0" class="ambient-pov-partkey' + (r.key ? ' on' : '') + '" data-pov="partkey:' + r.pi + '" title="' + (r.key ? ('This part plays in ' + esc(_AMB_CHROM[r.key.root] + ' ' + r.key.scale) + ' — the area key is unchanged. Click to change or clear it.') : 'No key change — this part follows the area key. Click to give it its own key.') + '">' + (r.key ? esc(_AMB_CHROM[r.key.root] + ' ' + r.key.scale.slice(0, 3)) : '♭♯') + '</span>' +
-              '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':-1" title="Move part earlier">◀</span>' +
-              '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':1" title="Move part later">▶</span>' +
-              '<span role="button" tabindex="0" class="ambient-pov-partbtn ambient-pov-partrm" data-pov="partrm:' + r.pi + '" title="Remove this part (and its chords)">✕</span>' +
+              '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':-1" title="Move these changes earlier">◀</span>' +
+              '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':1" title="Move these changes later">▶</span>' +
+              '<span role="button" tabindex="0" class="ambient-pov-partbtn ambient-pov-partrm" data-pov="partrm:' + r.pi + '" title="Remove these changes (and their chords)">✕</span>' +
             '</span></div>';
         }
         for (let i = r.from; i < r.to; i++) {
@@ -27508,7 +27508,7 @@
       // ＋ Part CHAINS another progression onto the end — this strip is where the
       // parts are drawn and named, so the button lives at the end of the chain
       // rather than in the outer button row.
-      h += '<span role="button" tabindex="0" class="ambient-pov-addpart" data-pov="addpart" title="Chain another progression on as a new part">＋ Part</span>';
+      h += '<span role="button" tabindex="0" class="ambient-pov-addpart" data-pov="addpart" title="Chain another progression on as a new set of changes">＋ Changes</span>';
       el.innerHTML = h;
       if (!el._wired) { el._wired = true; el.addEventListener('pointerdown', (ev) => { try { _ambProgOverviewAct(E, ev); } catch (e) {} }); }
     }
@@ -27641,7 +27641,7 @@
         if (_ambProgEd) { _ambProgEd.sel = Math.max(0, Math.min(_ambProgEd.chords.length - 1, i)); _ambPeRender(); }
         return;
       }
-      if (op === 'partren') { const pi = a[1] | 0; const parts = prog.parts; if (!parts || !parts[pi]) return; const nm = (typeof prompt === 'function') ? prompt('Part name', parts[pi].name) : null; if (nm != null) { const v = String(nm).trim().slice(0, 16); if (v) parts[pi].name = v; persist(); refresh(); } return; }
+      if (op === 'partren') { const pi = a[1] | 0; const parts = prog.parts; if (!parts || !parts[pi]) return; const nm = (typeof prompt === 'function') ? prompt('Name for these changes', parts[pi].name) : null; if (nm != null) { const v = String(nm).trim().slice(0, 16); if (v) parts[pi].name = v; persist(); refresh(); } return; }
       if (op === 'partmv') { _ambProgMovePart(prog, a[1] | 0, a[2] | 0); persist(); refresh(); return; }
       if (op === 'partrm') { _ambProgRemovePart(prog, a[1] | 0); persist(); refresh(); return; }
       if (op === 'ver') { _ambProgSwitchVersion(prog, a[1] | 0); try { _ambAutoSyncFreeForProg(E, cfg); } catch (e) {} persist(); refresh(); return; }
@@ -27757,7 +27757,7 @@
             return '<span class="ambient-pm-tabwrap' + (el._pmPart === pi ? ' on' : '') + '">' +
               '<button type="button" class="ambient-pm-tab' + (el._pmPart === pi ? ' on' : '') + '" data-pmpart="' + pi + '"' +
                 ' title="' + esc(p.name) + ' — chords ' + (from + 1) + '-' + acc0 + kk + '">' + esc(p.name) + '</button>' +
-              '<span class="ambient-pm-plays" title="How many times “' + esc(p.name) + '” runs before the progression moves to the next part.">' +
+              '<span class="ambient-pm-plays" title="How many times “' + esc(p.name) + '” runs before the progression moves on.">' +
                 '<button type="button" class="ambient-pm-playsbtn" data-pmplays="' + pi + ':-1" title="Fewer repeats"' + (plays <= 1 ? ' disabled' : '') + '>−</button>' +
                 '<b>' + plays + '×</b>' +
                 '<button type="button" class="ambient-pm-playsbtn" data-pmplays="' + pi + ':1" title="More repeats"' + (plays >= 64 ? ' disabled' : '') + '>＋</button>' +
@@ -28896,7 +28896,7 @@
             '<span class="ambient-hint">sync chord changes</span></div>' +
           // B3: escape hatch — extract this part's chords into a reusable progression.
           '<div class="ambient-ctrl"><label>Promote</label>' +
-            '<button type="button" id="' + p + 'promote" class="ambient-seg" title="Extract this part’s chords into a reusable progression (appears in every KEY menu)">→ Progression</button>' +
+            '<button type="button" id="' + p + 'promote" class="ambient-seg" title="Extract these changes’ chords into a reusable progression (appears in every KEY menu)">→ Progression</button>' +
             '<span class="ambient-hint">part → prog</span></div>' + gpe() +
         grp('Timing') +
           // Loop length: Auto (one pass == the played sequence's own length) vs
@@ -29317,7 +29317,7 @@
         const n = Math.max(1, pt.len | 0), plays = Math.max(1, (pt.plays | 0) || 1);
         for (let r = 0; r < plays; r++) {
           for (let k = 0; k < n; k++) out.push({ idx: (from + k) % p.chords.length, part: pi,
-            pName: pt.name || ('Part ' + (pi + 1)), pFirst: k === 0, rep: r, plays: plays });
+            pName: pt.name || ('Changes ' + (pi + 1)), pFirst: k === 0, rep: r, plays: plays });
         }
         from += n;
       });
@@ -29661,7 +29661,7 @@
           // _ambRenderScheduler call is event-driven \u2014 nothing repaints this on a
           // timer that could replace an open dropdown mid-pick.
           const _sel = _partIdx >= 0 ? _partList[_partIdx] : null;
-          const _pName = (pl, i) => String(pl.name || ('Part ' + (i + 1)));
+          const _pName = (pl, i) => String(pl.name || ('Changes ' + (i + 1)));
           const partSel = '<select class="ambient-select ambient-sched-partsel" title="Which part of the progression to show. Use ▤ for the whole arrangement at a glance.">' +
             _partList.map((pl, i) => '<option value="' + i + '"' + (_partIdx === i ? ' selected' : '') + '>' +
               esc(_pName(pl, i)) + (pl.idx.length > 1 ? (' \u00d7' + pl.idx.length) : '') + '</option>').join('') +
@@ -30028,7 +30028,7 @@
                 items.push('hr', { label: '♭ Harmony', disabled: true });
                 items.push({ label: (cur < 0 ? '● ' : '○ ') + 'Whole progression', fn: () => { delete sc.part; done(); } });
                 _parts.forEach((p2, pi) => {
-                  items.push({ label: (cur === pi ? '● ' : '○ ') + (p2.name || ('Part ' + (pi + 1))) + ' (' + Math.max(1, p2.len | 0) + ' chord' + ((p2.len | 0) === 1 ? '' : 's') + ')',
+                  items.push({ label: (cur === pi ? '● ' : '○ ') + (p2.name || ('Changes ' + (pi + 1))) + ' (' + Math.max(1, p2.len | 0) + ' chord' + ((p2.len | 0) === 1 ? '' : 's') + ')',
                     fn: () => { sc.part = pi; done(); } });
                 });
               }

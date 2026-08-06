@@ -3842,7 +3842,7 @@
       if (nSeg <= 1) return ret;
       const segIdx = Math.min(nSeg - 1, Math.floor(pos * nSeg));
       if (segIdx <= 0) return ret;   // downbeat segment = the written chord, always
-      const vocab = _ambProgColorVocab(ret.intervals);
+      const vocab = _ambProgColorVocab(ret.intervals, ret.root, _ambSaltColorAllowed(cfgS));
       if (!vocab.length) return ret;
       const rndC = _ambSeededRand((((step + 1) * 2654435761) ^ ((segIdx + 1) * 40503) ^ ((seedS * 131) >>> 0) ^ 0x51CE) >>> 0);
       const cand = vocab[Math.floor(rndC() * vocab.length) % vocab.length];
@@ -3953,18 +3953,54 @@
     }
     // Root-preserving color vocabulary for an interval set: extensions +
     // suspensions + the open fifth — everything stays tonally the same chord.
-    function _ambProgColorVocab(iv) {
+    // Pitch classes a salt COLOUR is allowed to use, in WRITTEN space.
+    // Written space matters: the engine re-roots the whole progression later in
+    // `_ambSrcRootPc` so chords[0] lands on the key root, so filtering against the
+    // key's ABSOLUTE root would be wrong the moment a transpose is on. In written
+    // space the tonic IS chords[0].root, which makes this transpose-proof.
+    // The progression's own tones are always allowed (a written chord can never be
+    // "out of key" with itself); the key scale is unioned on when there is one, and
+    // a chromatic/absent key falls back to the pool alone — the same shape the
+    // take-reroll uses, and for the same reason.
+    function _ambSaltColorAllowed(cfg) {
+      const prog = cfg && cfg.prog; const chords = (prog && Array.isArray(prog.chords)) ? prog.chords : [];
+      if (!chords.length) return null;
+      const set = new Set();
+      chords.forEach(c => { if (!c || c.transition) return; const r = (((c.root | 0) % 12) + 12) % 12;
+        (c.intervals || []).forEach(x => set.add((((r + (x | 0)) % 12) + 12) % 12)); });
+      let scale = null;
+      try { const nm = _ambKeyScaleName(cfg); scale = (typeof SCALES !== 'undefined') ? SCALES[nm] : null; } catch (e) {}
+      if (Array.isArray(scale) && scale.length && scale.length < 12) {
+        const t = (((chords[0].root | 0) % 12) + 12) % 12;
+        scale.forEach(x => set.add((((t + (x | 0)) % 12) + 12) % 12));
+      }
+      return set.size ? set : null;
+    }
+    function _ambProgColorVocab(iv, rootPc, allow) {
       const s0 = Array.from(new Set((iv || []).map(x => ((x | 0) % 12 + 12) % 12))).sort((a, b) => a - b);
       const has = (p) => s0.indexOf(p) >= 0;
       const uniq = (a) => Array.from(new Set(a)).sort((x, y) => x - y);
       const out = [], seen = new Set([s0.join(',')]);
       const push = (a) => { a = uniq(a); const key = a.join(','); if (!seen.has(key) && a.length) { seen.add(key); out.push(a); } };
       const third = has(4) ? 4 : (has(3) ? 3 : null);
-      if (third === 4) { push([...s0, 11]); push([...s0, 2]); push([...s0, 9]); push([...s0, 11, 2]); }   // maj7 · add9 · 6 · maj9
+      // ♭7 is offered alongside maj7 on a major triad. Without it, filtering the
+      // V chord's maj7 (F♯ over G in C) removed its seventh entirely instead of
+      // giving it the dominant 7 the key actually wants.
+      if (third === 4) { push([...s0, 11]); push([...s0, 10]); push([...s0, 2]); push([...s0, 9]); push([...s0, 11, 2]); push([...s0, 10, 2]); }   // maj7 · 7 · add9 · 6 · maj9 · 9
       else if (third === 3) { push([...s0, 10]); push([...s0, 2]); push([...s0, 10, 2]); }                 // m7 · m(add9) · m9
       else push([...s0, 2]);                                                                                // sus/power → add9 color
       if (third != null) { const rest = s0.filter(p => p !== third); push([...rest, 5]); push([...rest, 2]); }   // sus4 · sus2
+      if (has(3) && has(6)) push([...s0, 10]);                                                             // m7♭5 (keeps a diminished chord usable)
       push([0, 7]);                                                                                          // open fifth
+      // KEY FILTER — the whole point. Candidates were built from the chord's own
+      // intervals alone and never consulted the key, so a plain C-major progression
+      // offered 10 of 45 colours containing an out-of-key note. An empty result is
+      // returned as-is: the caller falls back to the written chord, which is the
+      // right answer for a chord with no in-key colour.
+      if (allow && rootPc != null) {
+        const r0 = (((rootPc | 0) % 12) + 12) % 12;
+        return out.filter(cand => cand.every(x => allow.has((((r0 + (x | 0)) % 12) + 12) % 12)));
+      }
       return out;
     }
     // Segment count for ONE chord instance — scatter 0 → always the full count;

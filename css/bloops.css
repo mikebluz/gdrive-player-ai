@@ -3836,16 +3836,57 @@
     .ambient-pov-bar { display: flex; align-items: center; gap: 6px; width: 100%; margin-bottom: 4px; }
     .ambient-pov-namesbtn { padding: 3px 10px; border: 1px solid #3a3a52; border-radius: 999px; background: #16162a; color: #cbd5e0; cursor: pointer; font-size: 0.7rem; white-space: nowrap; touch-action: manipulation; }
     /* Scheduler PART row — named spans above the chords, one block per pass. */
-    .ambient-sched-passtabs { display: flex; flex-wrap: wrap; gap: 3px; flex: 1 1 auto; min-width: 0; }
-    .ambient-sched-passtab { padding: 3px 8px; border: 1px solid #3a3a52; border-radius: 999px; background: #16162a;
-      color: #cbd5e0; cursor: pointer; font-size: 0.66rem; white-space: nowrap; touch-action: manipulation; }
-    .ambient-sched-passtab.on { border-color: #9f7aea; background: rgba(159,122,234,0.2); color: #e9dcff; }
-    .ambient-sched-passtab i { font-style: normal; opacity: 0.65; margin-left: 3px; }
-    @media (hover: hover) { .ambient-sched-passtab:hover { border-color: #9f7aea; color: #e9dcff; } }
-    .ambient-sched-partblk { display: inline-block; height: 14px; line-height: 14px; box-sizing: border-box; overflow: hidden;
+    /* The part/pass pickers: two selects on one row, narrowing left to right.
+       .ambient-select is width:100%, which resolves circularly inside an
+       auto-sized inline-flex group and overflows it — so these are flex children
+       with explicit basis, never intrinsically sized. */
+    .ambient-sched-viewsel { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; }
+    .ambient-sched-viewsel .ambient-select { flex: 1 1 0; min-width: 0; width: auto; height: 26px;
+      font-size: 0.68rem; padding: 0 6px; touch-action: manipulation; }
+    .ambient-sched-viewsel .ambient-sched-passsel { flex: 0 1 46%; }
+    .ambient-sched-viewsel .ambient-select:disabled { opacity: 0.45; }
+    .ambient-sched-viewsel .ambient-sched-partmap { flex: 0 0 auto; min-width: 30px; height: 26px; padding: 0 7px; }
+    /* ▤ Part schedule popover — the bird's-eye view of the arrangement. */
+    .ambient-partsched-modal .ps-map { margin-bottom: 6px; }
+    .ambient-partsched-modal .ps-map .ambient-sched-strip { display: flex; width: 100%; height: 18px;
+      border: 1px solid #2e2e46; border-radius: 4px; overflow: hidden; }
+    .ambient-partsched-modal .ps-blk { height: 18px; line-height: 18px; font-size: 0.66rem; }
+    .ambient-sched-lbl .secmore { font-style: normal; font-weight: 600; color: #f6c177;
+      background: rgba(246,193,119,0.12); border-radius: 3px; padding: 0 3px; margin-left: 3px; }
+    .ambient-partsched-modal .ps-secthdr { font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase;
+      color: #8a90a6; margin: 10px 0 4px; }
+    .ambient-partsched-modal .ps-secthdr:first-child { margin-top: 0; }
+    .ambient-partsched-modal .ps-sec { background: rgba(96,165,250,0.16); color: #bfd8ff; }
+    .ambient-partsched-modal .ps-total { font-size: 0.66rem; color: #8a90a6; margin-bottom: 8px; }
+    .ambient-partsched-modal .ps-list { display: flex; flex-direction: column; gap: 6px;
+      max-height: 46vh; overflow-y: auto; }
+    .ambient-partsched-modal .ps-row { border: 1px solid #2e2e46; border-radius: 6px; padding: 6px 8px;
+      background: rgba(159,122,234,0.06); }
+    .ambient-partsched-modal .ps-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }
+    .ambient-partsched-modal .ps-nm { color: #e9dcff; font-size: 0.8rem; overflow-wrap: anywhere; }
+    .ambient-partsched-modal .ps-x { color: #cbb7f5; font-size: 0.68rem; }
+    .ambient-partsched-modal .ps-bars { color: #8a90a6; font-size: 0.66rem; margin-left: auto; }
+    .ambient-partsched-modal .ps-chords { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+    .ambient-partsched-modal .ps-chords i { font-style: normal; font-size: 0.66rem; color: #cbd5e0;
+      border: 1px solid #3a3a52; border-radius: 3px; padding: 1px 5px; }
+    .ambient-partsched-modal .ps-chords .ps-none { border: 0; color: #6b7280; }
+    .ambient-partsched-modal .ps-empty { font-size: 0.72rem; color: #9aa0b4; line-height: 1.5;
+      white-space: normal; overflow-wrap: anywhere; }
+    /* Flex, so the NAME ellipses and the PASS NUMBER never does — the number is
+       what tells one block from the next along a run of repeats. */
+    .ambient-sched-partblk { display: inline-flex; align-items: center; gap: 3px;
+      height: 14px; line-height: 14px; box-sizing: border-box; overflow: hidden;
       border-left: 1px solid #4a4a68; background: rgba(159,122,234,0.14); color: #cbb7f5;
       font-size: 0.6rem; font-style: normal; text-align: left; padding: 0 4px;
-      white-space: nowrap; text-overflow: ellipsis; }
+      white-space: nowrap; vertical-align: top; }
+    .ambient-sched-partblk .pb-nm { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+    .ambient-sched-partblk .pb-bd { flex: 0 0 auto; opacity: 0.7; font-variant-numeric: tabular-nums; }
+    .ambient-sched-partblk .pb-cont { flex: 0 0 auto; opacity: 0.6; }
+    /* Pass boundaries INSIDE a run — fainter than the run's own left edge, so a
+       part reads as one span subdivided, not as four separate parts. */
+    .ambient-sched-partblk { position: relative; }
+    .ambient-sched-partblk .pb-tick { position: absolute; top: 2px; bottom: 2px; width: 1px;
+      background: rgba(203,183,245,0.3); pointer-events: none; }
     .ambient-sched-partblk.rep { background: rgba(159,122,234,0.07); color: #9a8fc0; }
     /* A wrapped part's continuation names itself (↳ Verse) but reads as a
        carry-over, not a second entrance — dimmed, and no left divider, since

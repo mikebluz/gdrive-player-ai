@@ -1241,6 +1241,9 @@
       // user's Bars (a hard override); this readout flags a Bars value that doesn't tile
       // the unit (⚠ = would cut a layer mid-cycle when locked).
       const unitBars = _ambAreaLoopBars(_masterEng, act);
+      const _auN = Math.max(1, (act.areaUnit && act.areaUnit.num | 0) || 1);
+      const _auD = Math.max(1, (act.areaUnit && act.areaUnit.den | 0) || 1);
+      const _auVal = _auN + '/' + _auD;
       const _ub = Math.max(1, (act.bars | 0) || 4);
       const _clean = unitBars > 0 && (_ub % unitBars === 0);
       const unitLabel = unitBars > 0
@@ -1305,6 +1308,18 @@
           // AREA's random choices, so it belongs with the other per-area actions.
           '<button type="button" id="ambient-regen-btn" class="ambient-regen ambient-area-take" title="Roll a new TAKE of this area — same layers, tones, timing, key &amp; mix (the arrangement), but a fresh realization of the random choices (which notes get picked, where they land). Same song, different performance. The ID beside it names this take; the same ID always replays it, so a take you like is reproducible.">🎲 New take</button>' +
           '<span class="ambient-seed" id="ambient-seed-val" title="This area’s take ID — the fingerprint of its random choices. New take rolls a new one; the same ID replays the same performance.">Take —</span>' +
+        '</div>' +
+        // AREA UNIT — the timing anchor the whole rig references. It lived in the
+        // ⏱ Scheduler, which put a set-once decision inside the densest, most
+        // frequently-read panel (and cost two rows there: a green readout that
+        // only repeated the select, and a permanently EMPTY strip). It is an
+        // area-level setting like Plays and Bars, so it belongs with them.
+        '<div class="ambient-orch ambient-orch-unitrow">' +
+          '<label class="ambient-orch-lbl" title="AREA UNIT — the timing anchor everything else follows. Each layer’s cycle inherits this (× its own ratio) unless it overrides to an absolute bar length or opts out to Free.">◆ Unit</label>' +
+          '<select class="ambient-orch-areaunit" title="AREA UNIT — the timing anchor everything else follows. Each layer’s cycle inherits this (× its own ratio) unless it overrides to an absolute bar length or opts out to Free.">' +
+          [['1/4', '¼ bar'], ['1/2', '½ bar'], ['1/1', '1 bar'], ['2/1', '2 bars'], ['4/1', '4 bars'], ['8/1', '8 bars']]
+            .map(o => '<option value="' + o[0] + '"' + (o[0] === _auVal ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
+          '</select>' +
         '</div>' +
         // Plays × random + Bar Lock + Bars.
         '<div class="ambient-orch">' +
@@ -1543,6 +1558,22 @@
         const v = Math.max(1, Math.min(36, parseInt(playsI.value, 10) || 1)); playsI.value = String(v);
         masterAmbient.plays = v;
         if (_viewIsPlaying()) { _masterEng._curPlays = _ambEffectivePlays(masterAmbient); _masterEng._orchDurSec = _ambAreaDurSec(_ambPlayCfg(_masterEng), _masterEng._curPlays); }
+        try { persistWorkspace(); } catch (e) {}
+      });
+      // AREA UNIT (global anchor) — layers on ref:'area' rescale. Gated on the
+      // viewed area BEING the playing one: re-anchoring from a non-playing area
+      // would disturb a running engine (the _ambLiveApplyOK doctrine).
+      const auI = host.querySelector('.ambient-orch-areaunit');
+      if (auI) auI.addEventListener('change', () => {
+        const parts = String(auI.value).split('/');
+        masterAmbient.areaUnit = { num: Math.max(1, Math.min(64, parseInt(parts[0], 10) || 1)),
+                                   den: Math.max(1, Math.min(64, parseInt(parts[1], 10) || 1)) };
+        if (_viewIsPlaying()) {
+          try { _ambMixerLayers(masterAmbient).forEach(({ key, layer }) => {
+            if (layer && layer.unit && layer.unit.ref === 'area') { try { _ambUnitReanchor(_masterEng, key); } catch (e) {} }
+          }); } catch (e) {}
+        }
+        try { _ambRenderScheduler(_masterEng); } catch (e) {}
         try { persistWorkspace(); } catch (e) {}
       });
       const randB = host.querySelector('.ambient-orch-rand');
@@ -2558,7 +2589,17 @@
     //        chords). All ADDITIVE and absent on legacy projects; _ambNormalizeProgMeta
     //        derives+repairs parts (Σlen === chords.length) and deletes empties, so a
     //        re-normalize of any pre-v6 cfg yields a byte-identical prog.chords.
-    const _AMB_SCHEMA_VERSION = 6;
+    //   v7 — SECTION LENGTH is a unit ratio: sections[i].unit = {num,den,ref}
+    //        ('area' = × the Area Unit, 'bar' = absolute). Sections predate the
+    //        Area Unit by 8 days and were the last structural length still in raw
+    //        bars, so an arrangement boundary could fall mid-cycle for every layer.
+    //        The migration converts each existing `bars` into the EXACT ratio of
+    //        the current Area Unit, so every saved project sounds identical on load
+    //        and only changes if the Area Unit is changed afterwards. `bars` stays
+    //        as the resolved mirror (rewritten every normalize) — that is what
+    //        keeps _ambSectionAt / _ambSectionCycleBars / the Scheduler lane
+    //        untouched. Absent sections (most projects) are unaffected.
+    const _AMB_SCHEMA_VERSION = 7;
     // v6 — normalize the additive PROG metadata (parts / versions / per-chord alts).
     // Every field is ABSENT on pre-v6 projects; this coerces when present and DELETES
     // empties, so a re-normalize of any current cfg leaves prog.chords byte-identical
@@ -2801,8 +2842,32 @@
           cfg.sections = cfg.sections.filter(x => x && typeof x === 'object').slice(0, 16)
             .map((x, i) => {
               const s = { id: Number.isFinite(x.id) ? (x.id | 0) : (i + 1),
-                name: (typeof x.name === 'string' && x.name.trim()) ? x.name.trim().slice(0, 12) : String.fromCharCode(65 + (i % 26)),
-                bars: Math.max(0.25, Math.min(64, Number(x.bars) || 4)) };
+                name: (typeof x.name === 'string' && x.name.trim()) ? x.name.trim().slice(0, 12) : String.fromCharCode(65 + (i % 26)) };
+              // LENGTH as a unit ratio (v7). `unit` is the source of truth; `bars`
+              // below is its resolved mirror, so every existing reader is unchanged.
+              const _clampU = (v, d) => Math.max(1, Math.min(64, (v | 0) || d));
+              if (x.unit && typeof x.unit === 'object' && Number.isFinite(x.unit.num)) {
+                s.unit = { num: _clampU(x.unit.num, 1), den: _clampU(x.unit.den, 1),
+                           ref: (x.unit.ref === 'bar') ? 'bar' : 'area' };
+              } else {
+                // v7 MIGRATION — a section authored in raw bars becomes the exact
+                // ratio of the CURRENT area unit that reproduces its length. So the
+                // arrangement sounds identical today, and a later Area Unit change
+                // rescales it instead of leaving it stranded in absolute bars.
+                // A length with no clean ratio (a hand-typed 3.7) is pinned to
+                // ref:'bar' rather than rounded into a different length.
+                const _b0 = Math.max(0.25, Math.min(64, Number(x.bars) || 4));
+                s.bars = _b0;                       // keep the length whatever happens
+                const _ra = _ambRatioOf(_b0, _ambAreaUnitBars(cfg));
+                if (_ra) s.unit = { num: _ra.num, den: _ra.den, ref: 'area' };
+                else { const _rb = _ambRatioOf(_b0, 1); if (_rb) s.unit = { num: _rb.num, den: _rb.den, ref: 'bar' }; }
+                // No clean ratio either way (a hand-typed 3.14159): the section
+                // keeps its raw `bars` and NO unit. _ambSectionBars falls back to
+                // bars, so the length is preserved exactly rather than rounded into
+                // a different one — and the attempt simply re-runs, unchanged, on
+                // every normalize.
+              }
+              if (s.unit) s.bars = _ambSectionBars(cfg, s);
               // PART BINDING (additive): an index into cfg.prog.parts — while this
               // section runs, the progression plays only that part, looping, anchored
               // at the section's start. ABSENT = the whole progression (today's
@@ -4393,6 +4458,50 @@
     // colour layers (per-layer sectionMask, the chord-matrix pattern one level
     // up) but never own layer STATE — that's what Areas are for. Absent = one
     // implicit endless section (today, byte-identical).
+    // ---- Section length is a UNIT RATIO (schema v7) -------------------------
+    // Sections shipped 2026-07-15, eight days BEFORE the Area Unit, so their
+    // length was authored in raw bars — the one structural length in the rig not
+    // expressed in units, which let an arrangement boundary land mid-cycle for
+    // every layer (the section gate is per-note, so it silences whatever was
+    // mid-phrase). `unit:{num,den,ref}` mirrors the per-layer Unit: ref 'area'
+    // scales with the Area Unit, ref 'bar' pins an absolute length.
+    // `bars` SURVIVES as the resolved mirror, rewritten on every normalize — that
+    // is what lets ~10 existing readers (the lane, the cycle, _ambSectionAt) stay
+    // exactly as they were, and it can never go stale because normalize runs on
+    // every getCfg.
+    function _ambAreaUnitBars(cfg) {
+      const au = cfg && cfg.areaUnit;
+      return Math.max(1, (au && au.num | 0) || 1) / Math.max(1, (au && au.den | 0) || 1);
+    }
+    function _ambSectionBars(cfg, s) {
+      const u = s && s.unit;
+      if (u && Number.isFinite(u.num) && Number.isFinite(u.den)) {
+        const r = Math.max(1, u.num | 0) / Math.max(1, u.den | 0);
+        return Math.max(0.25, Math.min(256, r * ((u.ref === 'bar') ? 1 : _ambAreaUnitBars(cfg))));
+      }
+      return Math.max(0.25, Math.min(64, Number(s && s.bars) || 4));
+    }
+    // Express `bars` as an EXACT small-integer ratio of `base`, or null when it
+    // cannot be — a hand-typed 3.7 bars has no clean unit ratio and stays absolute
+    // rather than being silently rounded into a different length.
+    function _ambRatioOf(bars, base) {
+      const r = bars / Math.max(1e-9, base);
+      const DENS = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48, 64];
+      for (let i = 0; i < DENS.length; i++) {
+        const n = r * DENS[i], ni = Math.round(n);
+        if (Math.abs(n - ni) < 1e-6 && ni >= 1 && ni <= 64) return { num: ni, den: DENS[i] };
+      }
+      return null;
+    }
+    // "2 × Area unit (2 bars)" / "3 bars (fixed)" — the label has to name BOTH the
+    // ratio and what it currently resolves to, or a unit change looks like the
+    // length changed for no reason.
+    function _ambSecLenLabel(cfg, s) {
+      const u = s && s.unit, b = _ambFmtBpc(_ambSectionBars(cfg, s));
+      if (!u || u.ref === 'bar') return b + ' bar' + (_ambSectionBars(cfg, s) === 1 ? '' : 's') + ' fixed';
+      const n = Math.max(1, u.num | 0), d = Math.max(1, u.den | 0);
+      return (d === 1 ? n : n + '/' + d) + '× unit · ' + b + ' bar' + (_ambSectionBars(cfg, s) === 1 ? '' : 's');
+    }
     function _ambSectionCycleBars(cfg) {
       const a = cfg && cfg.sections;
       if (!Array.isArray(a) || !a.length) return 0;
@@ -27059,6 +27168,85 @@
     // key change belongs: a part is a named stretch of the progression, and "the
     // chorus is in F" is one decision, not two. Defaults to the area key, so the
     // common case (another part, same key) is one extra click and nothing else.
+    // ▤ PART SCHEDULE — the arrangement at a glance. This used to be an inline
+    // lane in the Scheduler, where it was squeezed to the panel's width (four
+    // passes of "Neon Nocturne" left each block ~47px, so every one rendered as
+    // an ellipsis) and cost a permanent row for something you consult rather
+    // than edit. As a popover it gets the whole width and can say more.
+    function _ambPartScheduleModal(E) {
+      _E = E;
+      const cfg = E.getCfg() || {};
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const runs = _ambProgPartRuns(E, cfg);
+      const total = runs ? runs.reduce((a, r) => a + r.bars, 0) : 0;
+      let body;
+      if (!runs) {
+        body = '<div class="ps-empty">This progression has no parts — it is one continuous stretch of ' +
+          ((cfg.prog && cfg.prog.chords) ? cfg.prog.chords.length : 0) + ' chords.<br><br>' +
+          'Parts are named sections (Verse, Chorus) with their own repeat count, key and salt. ' +
+          'Split one in Edit Progression → Part settings, or chain another on with ＋ Part on the overview strip.</div>';
+      } else {
+        // Proportional map first (where the sections sit), then the detail.
+        const strip = runs.map((r, i) => {
+          const w = (r.bars / Math.max(0.001, total)) * 100;
+          const ticks = [];
+          for (let k = 1; k < r.passes; k++) ticks.push('<s class="pb-tick" style="left:' + ((k / r.passes) * 100).toFixed(3) + '%"></s>');
+          return '<i class="ambient-sched-partblk ps-blk" style="width:' + w.toFixed(3) + '%" title="' + esc(r.name || ('Part ' + (i + 1))) + '">' +
+            ticks.join('') + '<span class="pb-nm">' + esc(r.name || ('Part ' + (i + 1))) + '</span>' +
+            (r.passes > 1 ? '<span class="pb-bd">×' + r.passes + '</span>' : '') + '</i>';
+        }).join('');
+        const rows = runs.map((r, i) => {
+          const b0 = _ambFmtBpc(r.from + 1), b1 = _ambFmtBpc(r.from + r.bars);
+          return '<div class="ps-row">' +
+            '<div class="ps-head"><b class="ps-nm">' + esc(r.name || ('Part ' + (i + 1))) + '</b>' +
+            (r.passes > 1 ? '<span class="ps-x">plays ' + r.passes + '×</span>' : '<span class="ps-x">plays once</span>') +
+            '<span class="ps-bars">bars ' + b0 + '–' + b1 + '</span></div>' +
+            '<div class="ps-chords">' + (r.chords.length ? r.chords.map(c => '<i>' + esc(c) + '</i>').join('') : '<i class="ps-none">—</i>') + '</div>' +
+          '</div>';
+        }).join('');
+        body = '<div class="ps-map"><span class="ambient-sched-strip parts">' + strip + '</span></div>' +
+          '<div class="ps-total">' + _ambFmtBpc(total) + ' bars · ' + runs.length + ' part' + (runs.length === 1 ? '' : 's') + '</div>' +
+          '<div class="ps-list">' + rows + '</div>';
+      }
+      // SECTIONS — the other timeline, and the reason this popover exists at all:
+      // the strip is scoped to one part pass, so a section starting outside that
+      // pass has nowhere else to be seen. Showing both here is also the only place
+      // the two are drawn against each other, which is where their misalignment
+      // (sections in BARS, parts in CHORDS) becomes visible instead of surprising.
+      const secs = Array.isArray(cfg.sections) ? cfg.sections : null;
+      let secBody = '';
+      if (secs && secs.length) {
+        const secTotal = secs.reduce((a, s) => a + _ambSectionBars(cfg, s), 0);
+        const sStrip = secs.map(s => {
+          const w = (_ambSectionBars(cfg, s) / Math.max(0.001, secTotal)) * 100;
+          return '<i class="ambient-sched-partblk ps-blk ps-sec" style="width:' + w.toFixed(3) + '%" title="' +
+            esc(s.name) + ' · ' + esc(_ambSecLenLabel(cfg, s)) + '"><span class="pb-nm">' + esc(s.name) + '</span></i>';
+        }).join('');
+        const sRows = secs.map((s, i) => {
+          const sp = _ambSectionPart(cfg, i), sk = (s.key | 0);
+          return '<div class="ps-row"><div class="ps-head"><b class="ps-nm">' + esc(s.name) + '</b>' +
+            '<span class="ps-x">' + esc(_ambSecLenLabel(cfg, s)) + '</span>' +
+            (sk ? '<span class="ps-x">⇅ ' + (sk > 0 ? '+' : '') + sk + ' st</span>' : '') +
+            (sp ? '<span class="ps-x">plays “' + esc(sp.name) + '”</span>' : '') + '</div></div>';
+        }).join('');
+        secBody = '<div class="ps-secthdr">Sections — the bar timeline</div>' +
+          '<div class="ps-map"><span class="ambient-sched-strip parts">' + sStrip + '</span></div>' +
+          '<div class="ps-total">' + _ambFmtBpc(secTotal) + ' bars · ' + secs.length + ' section' + (secs.length === 1 ? '' : 's') + '</div>' +
+          '<div class="ps-list">' + sRows + '</div>' +
+          '<div class="ps-secthdr">Parts — the chord timeline</div>';
+      }
+      const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-step-modal-ov';
+      ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-partsched-modal">' +
+        '<div class="sm-title">Arrangement</div>' +
+        '<div class="ambient-step-modal-body">' + secBody + body + '</div>' +
+        '<div class="sm-footer"><button type="button" class="sm-apply ps-close">Close</button></div></div>';
+      document.body.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+      const close = () => { try { ov.remove(); } catch (e) {} };
+      ov.addEventListener('click', (ev) => {
+        if (ev.target === ov || (ev.target.closest && ev.target.closest('.ps-close'))) close();
+      });
+    }
     function _ambAddPartModal(E, x, y) {
       _E = E;
       const cfg = E.getCfg() || {};
@@ -29141,22 +29329,32 @@
       return slots.reduce((a, sl) => { const c = p.chords[sl.idx];
         return a + ((c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc); }, 0);
     }
-    function _ambSchedEmitPart(emit, into, r) {
-      emit(into, r.at, r.bars, (w, first) => _ambSchedPartBlock({ name: r.name, rep: r.rep, plays: r.plays, w: w, quiet: !first }));
-    }
-    function _ambSchedPartBlock(r) {
-      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
-      const badge = (r.plays > 1) ? (' ' + (r.rep + 1) + '/' + r.plays) : '';
-      // A part spanning a row boundary SPLITS, and every segment names its part.
-      // A chord's continuation can stay blank — it sits directly under its own
-      // head — but a part's cannot: the next row would be an unlabelled box that
-      // says nothing about which part you are looking at.
-      const wide = r.w >= ((typeof window !== 'undefined' && window.innerWidth < 560) ? 12 : 7);
-      return '<i class="ambient-sched-partblk' + (r.rep > 0 ? ' rep' : '') + (r.quiet ? ' cont' : '') +
-        '" style="width:' + r.w.toFixed(3) + '%" title="' +
-        esc(r.name) + (r.plays > 1 ? ' — pass ' + (r.rep + 1) + ' of ' + r.plays : '') +
-        (r.quiet ? ' — continued' : '') + '">' +
-        (wide ? (r.quiet ? '↳ ' : '') + esc(r.name) + badge : '') + '</i>';
+    // The played chain collapsed to one entry per PART RUN — name, how many
+    // passes, where it sits in bars, and the chords it plays. The bird's-eye
+    // view of the arrangement, which is what the ▤ Part schedule popover shows.
+    function _ambProgPartRuns(E, cfg) {
+      const sl = _ambProgChainSlots(cfg); if (!sl || !cfg.prog) return null;
+      const bpc = Math.max(0.01, cfg.barsPerChord || 1);
+      const runs = []; let at = 0;
+      sl.forEach(x => {
+        const c = cfg.prog.chords[x.idx];
+        const len = (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc;
+        let r = runs[runs.length - 1];
+        if (!r || r.part !== x.part) {
+          r = { part: x.part, name: x.pName, plays: x.plays || 1, from: at, bars: 0, passes: 0, chords: [] };
+          runs.push(r);
+        }
+        r.passes = Math.max(r.passes, (x.rep | 0) + 1);
+        // Chords are listed for the FIRST pass only — the repeats play the same
+        // ones, which is what a repeat means.
+        if ((x.rep | 0) === 0) {
+          let lbl = '';
+          try { lbl = _ambChordShort(_ambProgSoundAt(E, cfg.prog, x.idx) || c); } catch (e) { lbl = ''; }
+          if (lbl) r.chords.push(lbl);
+        }
+        r.bars += len; at += len;
+      });
+      return runs.length ? runs : null;
     }
     function _ambSchedViewBars(cfg) {
       // ONE full chain, never a cycle repeated to fill the width — the repeat read
@@ -29229,10 +29427,48 @@
         });
         return out.length > 1 ? out : null;
       })();
+      // TIERED PASS PICKER: choose a PART, then an ITERATION of it. One flat row
+      // of every pass grows with plays × parts (8 passes = 9 tabs, all reading
+      // "<name> n/N"), and the two questions — which part, which time through —
+      // are not the same question. A part's passes are always CONTIGUOUS (parts
+      // partition the chords and `plays` repeats sit together), so a whole part
+      // is one window too, which is what tier 2's "All" shows.
+      const _partList = _passes ? (function () {
+        const out = [];
+        _passes.forEach((ps, i) => {
+          const last = out[out.length - 1];
+          if (last && last.part === ps.part) { last.idx.push(i); last.len += ps.len; }
+          else out.push({ part: ps.part, name: ps.name, idx: [i], from: ps.from, len: ps.len });
+        });
+        return out;
+      })() : null;
       const _schedElP = _ambGet(E, 'ambient-sched');
-      let _passIdx = (_schedElP && Number.isFinite(_schedElP._schedPass)) ? _schedElP._schedPass : -1;
-      if (!_passes || _passIdx >= _passes.length) _passIdx = -1;
-      const _win = (_passes && _passIdx >= 0) ? _passes[_passIdx] : { from: 0, len: FULL };
+      // THERE IS NO "ALL PARTS" VIEW. Drawn at once, a chain is too dense to
+      // label — 24 chords across the panel gave every block a few pixels and no
+      // name, so it read as one undifferentiated part. The strip always shows ONE
+      // part, and (by default) ONE pass of it; the selects page through them.
+      let _partIdx = 0, _repIdx = 0;
+      if (_partList) {
+        if (_schedElP && Number.isFinite(_schedElP._schedPart)) {
+          _partIdx = _schedElP._schedPart;
+          _repIdx = Number.isFinite(_schedElP._schedRep) ? _schedElP._schedRep : 0;
+        } else if (_schedElP && Number.isFinite(_schedElP._schedPass) && _schedElP._schedPass >= 0) {
+          // Legacy/flat selection (and the older tests): map it onto the tiers.
+          const f = _schedElP._schedPass;
+          _partList.forEach((pl, pi) => { const r = pl.idx.indexOf(f); if (r >= 0) { _partIdx = pi; _repIdx = r; } });
+        }
+        if (_partIdx < 0 || _partIdx >= _partList.length) _partIdx = 0;
+        // -1 is still meaningful on the PASS tier: "every pass of this part".
+        if (_repIdx >= _partList[_partIdx].idx.length) _repIdx = 0;
+      } else { _partIdx = -1; _repIdx = -1; }
+      const _passIdx = (_partIdx >= 0 && _repIdx >= 0) ? _partList[_partIdx].idx[_repIdx] : -1;
+      const _win = !_partList || _partIdx < 0 ? { from: 0, len: FULL }
+        : (_repIdx >= 0 ? _passes[_passIdx] : _partList[_partIdx]);
+      // THE WINDOW IS EXACTLY THE SELECTED PASS. Widening it to cover a whole
+      // section cycle was tried and reverted: it made "pass 1 of 4" draw two
+      // passes, so the picker described one thing and the strip showed another —
+      // worse than the invisible-section bug it fixed. Sections that start outside
+      // the window are reachable in the ▤ Arrangement popover instead.
       const WFROM = _win.from, CHAIN = Math.max(0.25, _win.len);
       const _schedEl0 = _ambGet(E, 'ambient-sched');
       const _rowPref = (_schedEl0 && Number.isFinite(_schedEl0._schedRow)) ? _schedEl0._schedRow : 0;   // 0 = whole chain
@@ -29247,15 +29483,24 @@
         if (_sb && !_sb._rowSelWired) {
           _sb._rowSelWired = true;
           _sb.addEventListener('click', (ev) => {
-            const t = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-passtab');
-            if (!t) return;
-            const el3 = _ambGet(E, 'ambient-sched'); if (el3) el3._schedPass = parseInt(t.dataset.pass, 10);
-            _ambRenderScheduler(E);
+            const m = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-partmap');
+            if (!m) return;
+            ev.preventDefault();
+            try { _ambPartScheduleModal(E); } catch (e) {}
           });
           _sb.addEventListener('change', (ev) => {
-            const sel = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-rowsel');
-            if (!sel) return;
-            const el2 = _ambGet(E, 'ambient-sched'); if (el2) el2._schedRow = parseInt(sel.value, 10) || 0;
+            const tgt = ev.target && ev.target.closest ? ev.target : null; if (!tgt) return;
+            const el2 = _ambGet(E, 'ambient-sched'); if (!el2) return;
+            if (tgt.closest('.ambient-sched-rowsel')) el2._schedRow = parseInt(tgt.value, 10) || 0;
+            else if (tgt.closest('.ambient-sched-partsel')) {
+              // Choosing a part resets to its FIRST pass — the pass numbers belong
+              // to the part you just left, so carrying "2 of 3" across is
+              // meaningless, and landing on "all passes" would re-create the dense
+              // view that one-part-at-a-time exists to avoid.
+              el2._schedPart = parseInt(tgt.value, 10); el2._schedRep = 0; el2._schedPass = undefined;
+            } else if (tgt.closest('.ambient-sched-passsel')) {
+              el2._schedRep = parseInt(tgt.value, 10); el2._schedPass = undefined;
+            } else return;
             _ambRenderScheduler(E);
           });
         }
@@ -29267,24 +29512,22 @@
         const tw = Math.min(1, VIEW - i) / VIEW * 100;
         ticks += '<i class="ambient-sched-tick' + (i % 4 === 0 ? ' q' : '') + '" style="flex:0 0 ' + tw.toFixed(3) + '%">' + ((i % 4 === 0) ? (i + 1) : '') + '</i>';
       }
-      // AREA UNIT — the global timing anchor every layer can follow (× a ratio) or opt
-      // out of (Free). Set once at the top; the whole rig references it.
-      const _auN = Math.max(1, (cfg.areaUnit && cfg.areaUnit.num | 0) || 1), _auD = Math.max(1, (cfg.areaUnit && cfg.areaUnit.den | 0) || 1);
-      const _auVal = _auN + '/' + _auD;
-      const _auOpts = [['1/4', '¼ bar'], ['1/2', '½ bar'], ['1/1', '1 bar'], ['2/1', '2 bars'], ['4/1', '4 bars'], ['8/1', '8 bars']]
-        .map(o => '<option value="' + o[0] + '"' + (o[0] === _auVal ? ' selected' : '') + '>' + o[1] + '</option>').join('');
-      let html = '<div class="ambient-sched-row ambient-sched-arearow" title="AREA UNIT — the timing anchor everything else follows. Each layer’s cycle inherits this (× its own ratio) unless it overrides to an absolute bar length or opts out to Free.">' +
-          '<span class="ambient-sched-ctl"><span class="ambient-sched-lbl">◆ area unit</span>' +
-          '<select class="ambient-select ambient-sched-areaunit">' + _auOpts + '</select>' +
-          '<span class="ambient-sched-unitcue sync">' + _ambFmtBpc(_auN / _auD) + ' bar' + ((_auN / _auD > 1.02) ? 's' : '') + '</span></span>' +
-          '<span class="ambient-sched-strip"></span></div>';
-      html += '<div class="ambient-sched-row ambient-sched-ruler"><span class="ambient-sched-ctl"><span class="ambient-sched-lbl">bars →</span>' + '<select class="ambient-select ambient-sched-rowsel" title="Bars per row. A long chain squeezed into one row leaves each chord a few pixels wide; a narrower row wraps instead, so every block gets bigger.">' + [[0,'whole chain'],[2,'2 bars'],[4,'4 bars'],[8,'8 bars'],[16,'16 bars']].map(o => '<option value="' + o[0] + '"' + (o[0] === _rowPref ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>' + '</span><span class="ambient-sched-strip">' + ticks + '</span></div>';
+      // The AREA UNIT row used to sit here. It moved to the Areas panel (beside
+      // Plays / Bar Lock / Bars, where the other area-level settings live): it is
+      // set once and rarely touched, and here it cost two rows — a green readout
+      // that only repeated its own select, and a strip that was always empty.
+      let html = '<div class="ambient-sched-row ambient-sched-ruler"><span class="ambient-sched-ctl"><span class="ambient-sched-lbl">bars →</span>' + '<select class="ambient-select ambient-sched-rowsel" title="Bars per row. A long chain squeezed into one row leaves each chord a few pixels wide; a narrower row wraps instead, so every block gets bigger.">' + [[0,'whole chain'],[2,'2 bars'],[4,'4 bars'],[8,'8 bars'],[16,'16 bars']].map(o => '<option value="' + o[0] + '"' + (o[0] === _rowPref ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>' + '</span><span class="ambient-sched-strip">' + ticks + '</span></div>';
       // SECTION lane (sets of bars): named blocks cycling across the ruler —
       // the arrangement level. With none defined, a slim ＋ affordance seeds
       // A/B (4+4 bars). Tap a block → rename / resize / delete.
       {
         const secs = Array.isArray(cfg.sections) ? cfg.sections : null;
         let sBlocks = '';
+        // Which sections actually LAND in this window. The strip is scoped to one
+        // part pass, so a section starting later is simply not here — and silently
+        // omitting it is what made a freshly-added section look like it did
+        // nothing. The label says "2 of 3" and points at ▤ for the rest.
+        const _secSeen = new Set();
         if (secs && secs.length) {
           const lens = secs.map(x => Math.max(0.25, Number(x.bars) || 4));
           let sb = 0, si = 0;
@@ -29298,18 +29541,23 @@
             const _sk = (sc.key | 0);
             const _skTxt = _sk ? ((_sk > 0 ? '+' : '') + _sk) : '';
             sBlocks += '<i class="ambient-sched-secblk' + (si % secs.length === 0 ? ' cyc' : '') + ((_sp || _sk) ? ' harm' : '') +
-              '" data-si="' + (si % secs.length) + '" style="width:' + sw.toFixed(3) + '%" title="' + esc(sc.name) + ' · ' + _ambFmtBpc(slen) + ' bars' +
+              '" data-si="' + (si % secs.length) + '" style="width:' + sw.toFixed(3) + '%" title="' + esc(sc.name) + ' · ' + _ambSecLenLabel(cfg, sc) +
               (_sp ? ' · plays “' + esc(_sp.name) + '” (' + _sp.len + ' chord' + (_sp.len === 1 ? '' : 's') + ')' : '') +
               (_sk ? ' · key ' + _skTxt + ' semitone' + (Math.abs(_sk) === 1 ? '' : 's') : '') +
               ' — tap to edit">' + esc(sc.name) + (_sp ? '<b class="secpart">♭' + esc(_sp.name) + '</b>' : '') +
               (_sk ? '<b class="seckey">⇅' + _skTxt + '</b>' : '') + '</i>';
+            _secSeen.add(si % secs.length);
             sb += slen; si++;
           }
         } else {
           sBlocks = '<button type="button" class="ambient-seg ambient-sched-addsec" title="SECTIONS — named sets of bars (A / B / turnaround) cycling on the bar clock. Layers gate per section in the Section matrix below: arrangement inside one area.">＋ sections</button>';
         }
         html += '<div class="ambient-sched-row ambient-sched-secrow">' +
-          '<span class="ambient-sched-ctl"><span class="ambient-sched-lbl">sections</span>' + (secs && secs.length ? '<button type="button" class="ambient-seg ambient-sched-addsec" title="Append a section">＋</button>' : '') + '</span>' +
+          '<span class="ambient-sched-ctl"><span class="ambient-sched-lbl"' +
+            ((secs && secs.length && _secSeen.size < secs.length)
+              ? ' title="' + (secs.length - _secSeen.size) + ' section(s) start outside this pass — open ▤ Arrangement to see them all.">sections <b class="secmore">' + _secSeen.size + '/' + secs.length + '</b>'
+              : '>sections') + '</span>' +
+          (secs && secs.length ? '<button type="button" class="ambient-seg ambient-sched-addsec" title="Append a section">＋</button>' : '') + '</span>' +
           '<span class="ambient-sched-strip sections">' + sBlocks + '<i class="ambient-sched-ph"></i></span></div>';
       }
       // CHORD lane (area progression active): one labeled block per chord, sized
@@ -29352,8 +29600,8 @@
         // still wins where it applies — it pins one part per section, which is a
         // different walk again.
         const _chain = _bound ? null : _ambProgChainSlots(cfg);
-        let cb = 0, ci = 0, cBlocks = '', pBlocks = '', _pRun = null;
-        const cSegs = [], pSegs = [];
+        let cb = 0, ci = 0, cBlocks = '';
+        const cSegs = [];
         // A block straddling a row boundary is SPLIT, the way the bar grid splits a
         // step crossing a bar line — otherwise its tail is lost off the row end.
         const _emit = (into, at, len, mk) => {
@@ -29363,7 +29611,10 @@
             const seg = Math.min(rem, (Math.floor(rel / VIEW + 1e-9) + 1) * VIEW - rel);
             if (rel >= -1e-6 && rel < CHAIN - 1e-6) {
               const row = Math.max(0, Math.min(CHAIN_ROWS - 1, Math.floor(rel / VIEW + 1e-9)));
-              into.push({ row: row, html: mk(Math.min(seg, CHAIN - rel) / VIEW * 100, first) });
+              // `a` / segLen let a renderer place marks INSIDE its own segment;
+              // the chord renderer ignores them.
+              const segLen = Math.min(seg, CHAIN - rel);
+              into.push({ row: row, html: mk(segLen / VIEW * 100, first, a, segLen) });
             }
             a += seg; rem -= seg; first = false;
           }
@@ -29393,34 +29644,50 @@
           const _mkCh = (w, first) => '<i class="ambient-sched-chblk' + ((_at ? _at.first : (ci % pg.chords.length === 0)) && first ? ' cyc' : '') + (first ? '' : ' cont') + '" style="width:' + w.toFixed(3) + '%" title="' + esc(lbl) + ' · ' + _ambFmtBpc(clen) + ' bar' + (clen === 1 ? '' : 's') + '">' + (showLbl && first ? esc(lbl) : '') + '</i>';
           cBlocks += _mkCh(cw, true);
           _emit(cSegs, cb, Math.min(clen, WFROM + CHAIN - cb), _mkCh);
-          // Accumulate the part runs so they can be named above the chords. A part
-          // that repeats gets one block per pass, badged ×n — that is what makes
-          // "Verse twice, then Chorus" legible instead of an undifferentiated run.
-          if (_cs) {
-            if (_pRun && _pRun.part === _cs.part && _pRun.rep === _cs.rep) { _pRun.w += cw; _pRun.bars += clen; }
-            else { if (_pRun) { pBlocks += _ambSchedPartBlock(_pRun); _ambSchedEmitPart(_emit, pSegs, _pRun); }
-              _pRun = { part: _cs.part, rep: _cs.rep, plays: _cs.plays, name: _cs.pName, w: cw, at: cb, bars: clen }; }
-          }
+          // Accumulate the part runs so they can be named above the chords. A run
+          // spans ALL of a part's consecutive passes — the pass boundaries become
+          // ticks inside it — so "Verse ×4, then Chorus" reads as two named spans
+          // rather than eight boxes too narrow to hold either name.
           cb += clen; ci++;
         }
-        if (_pRun) { pBlocks += _ambSchedPartBlock(_pRun); _ambSchedEmitPart(_emit, pSegs, _pRun); _pRun = null; }
         // data-total + data-srow is the SAME contract the layer strips use, so the
         // playhead picks the right sub-row with no extra work (_ambSchedCursor).
         const _wrapRows = (segs) => { const rows = new Array(CHAIN_ROWS).fill(''); segs.forEach(g => { rows[g.row] += g.html; }); return rows; };
-        const _pRows = _wrapRows(pSegs), _cRows = _wrapRows(cSegs);
+        const _cRows = _wrapRows(cSegs);
         const _tot = CHAIN_ROWS > 1 ? (' data-total="' + CHAIN.toFixed(3) + '"') : '';
-        if (_passes) {
-          html += '<div class="ambient-sched-row ambient-sched-passrow"><span class="ambient-sched-ctl"><span class="ambient-sched-lbl">pass</span></span>' +
-            '<span class="ambient-sched-passtabs">' +
-            '<button type="button" class="ambient-sched-passtab' + (_passIdx < 0 ? ' on' : '') + '" data-pass="-1" title="Show the whole chain at once">All</button>' +
-            _passes.map((ps, i) => '<button type="button" class="ambient-sched-passtab' + (_passIdx === i ? ' on' : '') + '" data-pass="' + i + '" title="' +
-              esc(ps.name) + (ps.plays > 1 ? (' \u2014 pass ' + (ps.rep + 1) + ' of ' + ps.plays) : '') + ' \u00b7 ' + _ambFmtBpc(ps.len) + ' bars">' +
-              esc(String(ps.name).slice(0, 10)) + (ps.plays > 1 ? ('<i>' + (ps.rep + 1) + '/' + ps.plays + '</i>') : '') + '</button>').join('') +
+        if (_partList) {
+          // Two selects on ONE row: WHICH PART, then WHICH TIME THROUGH. Safe as
+          // <select> here (unlike the euclid grid's chrome) because every
+          // _ambRenderScheduler call is event-driven \u2014 nothing repaints this on a
+          // timer that could replace an open dropdown mid-pick.
+          const _sel = _partIdx >= 0 ? _partList[_partIdx] : null;
+          const _pName = (pl, i) => String(pl.name || ('Part ' + (i + 1)));
+          const partSel = '<select class="ambient-select ambient-sched-partsel" title="Which part of the progression to show. Use ▤ for the whole arrangement at a glance.">' +
+            _partList.map((pl, i) => '<option value="' + i + '"' + (_partIdx === i ? ' selected' : '') + '>' +
+              esc(_pName(pl, i)) + (pl.idx.length > 1 ? (' \u00d7' + pl.idx.length) : '') + '</option>').join('') +
+            '</select>';
+          // The pass select stays PRESENT but disabled when there is nothing to
+          // choose, so the row keeps its shape and says why it is inert instead of
+          // appearing and vanishing as you move between parts.
+          const canRep = !!(_sel && _sel.idx.length > 1);
+          const passSel = '<select class="ambient-select ambient-sched-passsel"' + (canRep ? '' : ' disabled') +
+            ' title="' + (canRep ? esc(_pName(_sel, _partIdx)) + ' repeats \u2014 which pass to show, or all of them.'
+              : (_sel ? 'This part plays once.' : 'Pick a part first.')) + '">' +
+            (canRep
+              ? ('<option value="-1"' + (_repIdx < 0 ? ' selected' : '') + '>All passes</option>' +
+                 _sel.idx.map((fi, r) => '<option value="' + r + '"' + (_repIdx === r ? ' selected' : '') + '>pass ' +
+                   (r + 1) + ' of ' + _sel.idx.length + '</option>').join(''))
+              : ('<option>' + (_sel ? 'plays once' : '\u2014') + '</option>')) +
+            '</select>';
+          html += '<div class="ambient-sched-row ambient-sched-passrow">' +
+            '<span class="ambient-sched-ctl"><span class="ambient-sched-lbl">show</span></span>' +
+            '<span class="ambient-sched-viewsel">' + partSel + passSel +
+            '<button type="button" class="ambient-seg ambient-sched-partmap" title="Arrangement — every section and part at a glance, including the ones outside this pass">▤</button>' +
             '</span></div>';
         }
-        if (pSegs.length && pBlocks.replace(/<[^>]*>/g, '').trim()) html += '<div class="ambient-sched-row ambient-sched-partrow"' + _tot + '>' +
-          '<span class="ambient-sched-ctl"><span class="ambient-sched-lbl">parts</span></span>' +
-          (_pRows ? _pRows.map((h, r) => '<span class="ambient-sched-strip parts" data-srow="' + r + '">' + h + '</span>').join('') : '<span class="ambient-sched-strip parts">' + pBlocks + '</span>') + '</div>';
+        // (The inline PARTS lane moved to the ▤ Part schedule popover on the row
+        // above — it is a bird's-eye view you consult, not a lane you edit, and
+        // at panel width the part names were unreadable.)
         html += '<div class="ambient-sched-row ambient-sched-chordrow"' + _tot + '>' +
           '<span class="ambient-sched-ctl"><span class="ambient-sched-name" title="' + esc(pg.name || 'Progression') + '">' + esc(pg.name || 'Progression') + '</span><span class="ambient-sched-lbl">chords</span></span>' +
           (_cRows ? _cRows.map((h, r) => '<span class="ambient-sched-strip chords" data-srow="' + r + '">' + h + '<i class="ambient-sched-ph"></i></span>').join('') : '<span class="ambient-sched-strip chords">' + cBlocks + '<i class="ambient-sched-ph"></i></span>') + '</div>';
@@ -29655,7 +29922,12 @@
           const add = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-addsec');
           if (add) {
             _E = E; const c2 = E.getCfg(); if (!c2) return;
-            if (!Array.isArray(c2.sections) || !c2.sections.length) c2.sections = [{ id: 1, name: 'A', bars: 4 }, { id: 2, name: 'B', bars: 4 }];
+            // ONE section per press. Seeding A+B meant a control labelled "＋
+            // sections" silently made two SEQUENTIAL sections (A bars 1-4, B bars
+            // 5-8); with the strip scoped to one part pass only A was in view, so
+            // deleting it slid B down into the same place and read as a section
+            // that would not die. Press ＋ again for B — deliberate, and visible.
+            if (!Array.isArray(c2.sections) || !c2.sections.length) c2.sections = [{ id: 1, name: 'A', bars: 4 }];
             else if (c2.sections.length < 16) {
               const nid = c2.sections.reduce((m2, x) => Math.max(m2, x.id | 0), 0) + 1;
               c2.sections.push({ id: nid, name: String.fromCharCode(65 + (c2.sections.length % 26)), bars: 4 });
@@ -29671,7 +29943,36 @@
             const done = () => { try { _ambRenderScheduler(E); _ambRenderSectionMatrix(E); } catch (e) {} if (typeof persistWorkspace === 'function') persistWorkspace(); };
             const items = [
               { label: '✎ Rename “' + sc.name + '”', fn: () => { const nm = prompt('Section name:', sc.name); if (nm != null && nm.trim()) { sc.name = nm.trim().slice(0, 12); done(); } } },
-              { label: '⇔ Bars (' + _ambFmtBpc(sc.bars) + ')', fn: () => { const b2 = prompt('Section length in bars:', String(sc.bars)); const v2 = parseFloat(b2); if (Number.isFinite(v2) && v2 > 0) { sc.bars = Math.max(0.25, Math.min(64, v2)); done(); } } },
+              // LENGTH — authored in AREA UNITS, so a section boundary lands on a
+              // unit boundary by construction and the arrangement rescales with the
+              // Area Unit. The absolute-bars escape stays for a deliberate
+              // off-grid length (it pins ref:'bar' and will NOT rescale).
+              { label: '⇔ Length (' + _ambSecLenLabel(c2, sc) + ')', fn: () => {
+                const auB = _ambAreaUnitBars(c2);
+                const cur = sc.unit || {};
+                const opts = [1, 2, 3, 4, 6, 8, 12, 16].map(n => ({
+                  label: (cur.ref !== 'bar' && (cur.num | 0) === n && (cur.den | 0) === 1 ? '✓ ' : '') +
+                    n + ' × Area unit  (' + _ambFmtBpc(n * auB) + ' bar' + (n * auB === 1 ? '' : 's') + ')',
+                  fn: () => { sc.unit = { num: n, den: 1, ref: 'area' }; sc.bars = _ambSectionBars(c2, sc); done(); }
+                }));
+                opts.push({ label: (cur.ref !== 'bar' && (cur.den | 0) === 2 ? '✓ ' : '') + '½ × Area unit  (' + _ambFmtBpc(auB / 2) + ' bar' + (auB / 2 === 1 ? '' : 's') + ')',
+                  fn: () => { sc.unit = { num: 1, den: 2, ref: 'area' }; sc.bars = _ambSectionBars(c2, sc); done(); } });
+                opts.push({ label: (cur.ref === 'bar' ? '✓ ' : '') + '⇢ Absolute bars…  (does not rescale)', fn: () => {
+                  const b2 = prompt('Section length in bars (pins it to an absolute length — it will NOT follow the Area Unit):', String(_ambFmtBpc(sc.bars)));
+                  const v2 = parseFloat(b2);
+                  if (!Number.isFinite(v2) || v2 <= 0) return;
+                  const r = _ambRatioOf(Math.max(0.25, Math.min(64, v2)), 1);
+                  sc.unit = r ? { num: r.num, den: r.den, ref: 'bar' } : { num: 4, den: 1, ref: 'bar' };
+                  sc.bars = _ambSectionBars(c2, sc); done();
+                } });
+                // showCtxMenu is (x, y, actions) — and anchor on the BLOCK's own
+                // rect, not window.__ambMenuAnchor (that is stashed by the layer ⋯
+                // menu and would be stale or absent here, dropping the submenu in
+                // the top-left corner). DEFER A TICK: the parent menu runs this fn
+                // and then dismisses itself, which tears the submenu down inside the
+                // same dispatch — the documented showCtxMenu-from-a-menu trap.
+                setTimeout(() => { try { const rb = blk.getBoundingClientRect(); showCtxMenu(rb.left, rb.bottom + 4, opts); } catch (e) {} }, 0);
+              } },
               // MODULATION: semitones the whole harmonic frame moves during this
               // section. Applied at the root chokepoint, so every layer follows.
               { label: '⇅ Key (' + ((sc.key | 0) ? (((sc.key | 0) > 0 ? '+' : '') + (sc.key | 0) + ' st') : 'no change') + ')', fn: () => {
@@ -34705,17 +35006,8 @@
             if (typeof persistWorkspace === 'function') persistWorkspace();
           });
           scBody.addEventListener('input', (ev) => {
-            // AREA UNIT (global anchor) — set cfg.areaUnit; layers on ref:'area' rescale.
-            const au = ev.target.closest('.ambient-sched-areaunit');
-            if (au) {
-              _E = E; const c2 = E.getCfg(); if (!c2) return;
-              const parts = String(au.value).split('/');
-              c2.areaUnit = { num: Math.max(1, Math.min(64, parseInt(parts[0], 10) || 1)), den: Math.max(1, Math.min(64, parseInt(parts[1], 10) || 1)) };
-              try { if (E.timer) _ambMixerLayers(c2).forEach(({ key, layer }) => { if (layer && layer.unit && layer.unit.ref === 'area') { try { _ambUnitReanchor(E, key); } catch (e) {} } }); } catch (e) {}   // area-followers rescale cleanly
-              _ambRenderScheduler(E);
-              if (typeof persistWorkspace === 'function') persistWorkspace();
-              return;
-            }
+            // (AREA UNIT moved to the Areas panel — its handler lives beside the
+            // other area-level controls in _ambAreaStripHtml's wiring.)
             // Voicings-per-chord (prog-synced Bed/Drone) — writes progSubdiv; the
             // engine reads it live (next tick re-subdivides), so no re-anchor.
             const sub = ev.target.closest('.ambient-sched-subdiv');

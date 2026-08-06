@@ -29199,7 +29199,31 @@
       // chords left each block ~13px. A narrower row WRAPS instead of compressing,
       // and every lane stays column-aligned because the layer strips already tile
       // at exactly this width.
-      const CHAIN = _ambSchedViewBars(cfg);
+      const FULL = _ambSchedViewBars(cfg);
+      // ONE PASS AT A TIME. A chain of 8 part-passes drawn at once is unreadable
+      // however wide the rows are, so the strip shows a single iteration and the
+      // tabs page through them. The window is a BAR RANGE; every lane below is
+      // drawn relative to it, and anything that asks an ABSOLUTE question (which
+      // chord group, which unit-gate slot) adds WFROM back.
+      const _passes = (function () {
+        const sl = _ambProgChainSlots(cfg); if (!sl) return null;
+        const bpc = Math.max(0.01, cfg.barsPerChord || 1);
+        const out = []; let at = 0;
+        sl.forEach(x => {
+          const c = cfg.prog.chords[x.idx];
+          const len = (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc;
+          const last = out[out.length - 1];
+          if (last && last.part === x.part && last.rep === x.rep) last.len += len;
+          else out.push({ part: x.part, rep: x.rep, plays: x.plays, name: x.pName, from: at, len: len });
+          at += len;
+        });
+        return out.length > 1 ? out : null;
+      })();
+      const _schedElP = _ambGet(E, 'ambient-sched');
+      let _passIdx = (_schedElP && Number.isFinite(_schedElP._schedPass)) ? _schedElP._schedPass : -1;
+      if (!_passes || _passIdx >= _passes.length) _passIdx = -1;
+      const _win = (_passes && _passIdx >= 0) ? _passes[_passIdx] : { from: 0, len: FULL };
+      const WFROM = _win.from, CHAIN = Math.max(0.25, _win.len);
       const _schedEl0 = _ambGet(E, 'ambient-sched');
       const _rowPref = (_schedEl0 && Number.isFinite(_schedEl0._schedRow)) ? _schedEl0._schedRow : 0;   // 0 = whole chain
       const VIEW = (_rowPref > 0) ? Math.min(_rowPref, CHAIN) : CHAIN;
@@ -29212,6 +29236,12 @@
         const _sb = _ambGet(E, 'ambient-sched-body');
         if (_sb && !_sb._rowSelWired) {
           _sb._rowSelWired = true;
+          _sb.addEventListener('click', (ev) => {
+            const t = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-passtab');
+            if (!t) return;
+            const el3 = _ambGet(E, 'ambient-sched'); if (el3) el3._schedPass = parseInt(t.dataset.pass, 10);
+            _ambRenderScheduler(E);
+          });
           _sb.addEventListener('change', (ev) => {
             const sel = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-rowsel');
             if (!sel) return;
@@ -29319,13 +29349,16 @@
         const _emit = (into, at, len, mk) => {
           let a = at, rem = len, first = true;
           while (rem > 1e-6) {
-            const row = Math.max(0, Math.min(CHAIN_ROWS - 1, Math.floor(a / VIEW + 1e-9)));
-            const seg = Math.min(rem, (row + 1) * VIEW - a);
-            into.push({ row: row, html: mk(seg / VIEW * 100, first) });
+            const rel = a - WFROM;                       // window-relative position
+            const seg = Math.min(rem, (Math.floor(rel / VIEW + 1e-9) + 1) * VIEW - rel);
+            if (rel >= -1e-6 && rel < CHAIN - 1e-6) {
+              const row = Math.max(0, Math.min(CHAIN_ROWS - 1, Math.floor(rel / VIEW + 1e-9)));
+              into.push({ row: row, html: mk(Math.min(seg, CHAIN - rel) / VIEW * 100, first) });
+            }
             a += seg; rem -= seg; first = false;
           }
         };
-        while (cb < CHAIN - 1e-6 && ci < 512) {
+        while (cb < WFROM + CHAIN - 1e-6 && ci < 512) {
           const _at = _bound ? _chordAtBar(cb) : null;
           const _cs = _chain ? _chain[ci % _chain.length] : null;
           // Resolve through the engine's path so the lane labels the chord that
@@ -29334,7 +29367,7 @@
           const _slotI = _at ? _at.idx : (_cs ? _cs.idx : (ci % pg.chords.length));
           const ch = _ambProgSoundAt(E, pg, _slotI) || pg.chords[_slotI];
           const clen = Math.max(0.05, _at ? _at.len : lens[_slotI % lens.length]);
-          const cw = Math.min(clen, CHAIN - cb) / VIEW * 100;
+          const cw = Math.min(clen, WFROM + CHAIN - cb) / VIEW * 100;
           const lbl = _ambChordShort(ch);
           // Label only when the block is wide enough to read it (narrow chords
           // keep the boundary edge + a hover title instead of clipped garbage).
@@ -29349,25 +29382,33 @@
           const showLbl = cw >= Math.max(_narrow ? 6 : 3, (lbl || '').length * (_narrow ? 1.6 : 0.9));
           const _mkCh = (w, first) => '<i class="ambient-sched-chblk' + ((_at ? _at.first : (ci % pg.chords.length === 0)) && first ? ' cyc' : '') + (first ? '' : ' cont') + '" style="width:' + w.toFixed(3) + '%" title="' + esc(lbl) + ' · ' + _ambFmtBpc(clen) + ' bar' + (clen === 1 ? '' : 's') + '">' + (showLbl && first ? esc(lbl) : '') + '</i>';
           cBlocks += _mkCh(cw, true);
-          _emit(cSegs, cb, Math.min(clen, CHAIN - cb), _mkCh);
+          _emit(cSegs, cb, Math.min(clen, WFROM + CHAIN - cb), _mkCh);
           // Accumulate the part runs so they can be named above the chords. A part
           // that repeats gets one block per pass, badged ×n — that is what makes
           // "Verse twice, then Chorus" legible instead of an undifferentiated run.
           if (_cs) {
-            if (_pRun && _pRun.part === _cs.part && _pRun.rep === _cs.rep) { _pRun.w += cw; _pRun.bars += Math.min(clen, CHAIN - cb); }
+            if (_pRun && _pRun.part === _cs.part && _pRun.rep === _cs.rep) { _pRun.w += cw; _pRun.bars += clen; }
             else { if (_pRun) { pBlocks += _ambSchedPartBlock(_pRun); _ambSchedEmitPart(_emit, pSegs, _pRun); }
-              _pRun = { part: _cs.part, rep: _cs.rep, plays: _cs.plays, name: _cs.pName, w: cw, at: cb, bars: Math.min(clen, CHAIN - cb) }; }
+              _pRun = { part: _cs.part, rep: _cs.rep, plays: _cs.plays, name: _cs.pName, w: cw, at: cb, bars: clen }; }
           }
           cb += clen; ci++;
         }
         if (_pRun) { pBlocks += _ambSchedPartBlock(_pRun); _ambSchedEmitPart(_emit, pSegs, _pRun); _pRun = null; }
         // data-total + data-srow is the SAME contract the layer strips use, so the
         // playhead picks the right sub-row with no extra work (_ambSchedCursor).
-        const _wrapRows = (segs) => { if (CHAIN_ROWS <= 1) return null;
-          const rows = new Array(CHAIN_ROWS).fill(''); segs.forEach(g => { rows[g.row] += g.html; }); return rows; };
+        const _wrapRows = (segs) => { const rows = new Array(CHAIN_ROWS).fill(''); segs.forEach(g => { rows[g.row] += g.html; }); return rows; };
         const _pRows = _wrapRows(pSegs), _cRows = _wrapRows(cSegs);
         const _tot = CHAIN_ROWS > 1 ? (' data-total="' + CHAIN.toFixed(3) + '"') : '';
-        if (pBlocks) html += '<div class="ambient-sched-row ambient-sched-partrow"' + _tot + '>' +
+        if (_passes) {
+          html += '<div class="ambient-sched-row ambient-sched-passrow"><span class="ambient-sched-ctl"><span class="ambient-sched-lbl">pass</span></span>' +
+            '<span class="ambient-sched-passtabs">' +
+            '<button type="button" class="ambient-sched-passtab' + (_passIdx < 0 ? ' on' : '') + '" data-pass="-1" title="Show the whole chain at once">All</button>' +
+            _passes.map((ps, i) => '<button type="button" class="ambient-sched-passtab' + (_passIdx === i ? ' on' : '') + '" data-pass="' + i + '" title="' +
+              esc(ps.name) + (ps.plays > 1 ? (' \u2014 pass ' + (ps.rep + 1) + ' of ' + ps.plays) : '') + ' \u00b7 ' + _ambFmtBpc(ps.len) + ' bars">' +
+              esc(String(ps.name).slice(0, 10)) + (ps.plays > 1 ? ('<i>' + (ps.rep + 1) + '/' + ps.plays + '</i>') : '') + '</button>').join('') +
+            '</span></div>';
+        }
+        if (pSegs.length) html += '<div class="ambient-sched-row ambient-sched-partrow"' + _tot + '>' +
           '<span class="ambient-sched-ctl"><span class="ambient-sched-lbl">parts</span></span>' +
           (_pRows ? _pRows.map((h, r) => '<span class="ambient-sched-strip parts" data-srow="' + r + '">' + h + '</span>').join('') : '<span class="ambient-sched-strip parts">' + pBlocks + '</span>') + '</div>';
         html += '<div class="ambient-sched-row ambient-sched-chordrow"' + _tot + '>' +
@@ -29398,7 +29439,8 @@
         // rounded up to whole rows, capped at 4 rows (a longer super-cycle shows
         // its first 4 rows; the playhead hides while past the rendered span).
         const walkTotal = tuples ? tuples.reduce((s, tu) => s + Math.max(1e-3, _ambWriteEffBars(cfg, Math.max(1, tu.bars | 0), Math.max(1, tu.times | 0))) * Math.max(1, tu.times | 0), 0) : 0;
-        const totalSpan = (tuples && walkTotal > VIEW) ? Math.min(Math.ceil(walkTotal / VIEW - 1e-6), Math.max(4, Math.ceil(CHAIN / VIEW) * 2)) * VIEW : VIEW;
+        const totalSpan = (_passIdx >= 0) ? (CHAIN_ROWS * VIEW)
+          : ((tuples && walkTotal > VIEW) ? Math.min(Math.ceil(walkTotal / VIEW - 1e-6), Math.max(4, Math.ceil(CHAIN / VIEW) * 2)) * VIEW : VIEW);
         const truncated = tuples && walkTotal > totalSpan + 1e-6;
         // Segment walk across the whole span (each tuple → 1 fresh + repeats, looping).
         let segs = null;
@@ -29436,7 +29478,11 @@
             natural.push(ne); bb = ne;
           }
         } else {
-          for (let bb = unitBars; bb < totalSpan - 1e-6; bb += unitBars) natural.push(bb);
+          // Align to the ABSOLUTE unit grid, then express relative to the window —
+          // otherwise a window starting mid-unit draws blocks out of phase with the
+          // chords above it.
+          const _uph = ((WFROM % unitBars) + unitBars) % unitBars;
+          for (let bb = (_uph > 1e-6 ? unitBars - _uph : unitBars); bb < totalSpan - 1e-6; bb += unitBars) natural.push(bb);
           natural.push(totalSpan);
         }
         const naturalSet = new Set(natural.map(x => x.toFixed(4)));
@@ -29455,7 +29501,7 @@
             if (!naturalStart) cls += ' cont';
             // CHORD-GROUP tint/border: which chord (or merged run) this block sits in.
             if (pgActive) {
-              const gp = _ambProgGroupAt(cfg, (b + end) * 0.5, !!layer.progMerge);
+              const gp = _ambProgGroupAt(cfg, WFROM + (b + end) * 0.5, !!layer.progMerge);
               if (gp) { const gabs = gp.cyc * gp.nGroups + gp.gi; cls += (gabs % 2 ? ' chgrp-b' : ' chgrp-a'); if (gabs !== lastGrp && naturalStart) { lastGrp = gabs; cls += ' chgrp-start'; } }
               // MERGE REPEATS: with merge on, consecutive blocks INSIDE one chord
               // group are voicing sub-slots of a single harmonic unit, not separate
@@ -29464,7 +29510,7 @@
               // these blocks are still excluded from the Unit Schedule gate,
               // because a group's sub-slots aren't a uniform repeating unit.
               if (mergeMode && gp) {
-                const gN = _ambProgGroupAt(cfg, end + 1e-4, true);
+                const gN = _ambProgGroupAt(cfg, WFROM + end + 1e-4, true);
                 if (gN && (gN.cyc * gN.nGroups + gN.gi) === (gp.cyc * gp.nGroups + gp.gi)) cls += ' submerged';
               }
             }
@@ -29481,8 +29527,8 @@
             // repeating unit — no index, so they aren't clickable/gateable.
             let uAttr = '', gateHtml = '';
             if (!mergeMode) {
-              const uIdx = Math.round(b / unitBars);
-              if (naturalStart && Math.abs(b - uIdx * unitBars) < 1e-6) {
+              const uIdx = Math.round((WFROM + b) / unitBars);
+              if (naturalStart && Math.abs((WFROM + b) - uIdx * unitBars) < 1e-6) {
                 uAttr = ' data-ui="' + uIdx + '"';
                 const mask = _ambUnitGateMaskAt(layer, uIdx);
                 if (mask) {

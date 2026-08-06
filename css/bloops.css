@@ -3836,6 +3836,12 @@
     .ambient-pov-bar { display: flex; align-items: center; gap: 6px; width: 100%; margin-bottom: 4px; }
     .ambient-pov-namesbtn { padding: 3px 10px; border: 1px solid #3a3a52; border-radius: 999px; background: #16162a; color: #cbd5e0; cursor: pointer; font-size: 0.7rem; white-space: nowrap; touch-action: manipulation; }
     /* Scheduler PART row — named spans above the chords, one block per pass. */
+    .ambient-sched-passtabs { display: flex; flex-wrap: wrap; gap: 3px; flex: 1 1 auto; min-width: 0; }
+    .ambient-sched-passtab { padding: 3px 8px; border: 1px solid #3a3a52; border-radius: 999px; background: #16162a;
+      color: #cbd5e0; cursor: pointer; font-size: 0.66rem; white-space: nowrap; touch-action: manipulation; }
+    .ambient-sched-passtab.on { border-color: #9f7aea; background: rgba(159,122,234,0.2); color: #e9dcff; }
+    .ambient-sched-passtab i { font-style: normal; opacity: 0.65; margin-left: 3px; }
+    @media (hover: hover) { .ambient-sched-passtab:hover { border-color: #9f7aea; color: #e9dcff; } }
     .ambient-sched-partblk { display: inline-block; height: 14px; line-height: 14px; box-sizing: border-box; overflow: hidden;
       border-left: 1px solid #4a4a68; background: rgba(159,122,234,0.14); color: #cbb7f5;
       font-size: 0.6rem; font-style: normal; text-align: left; padding: 0 4px;

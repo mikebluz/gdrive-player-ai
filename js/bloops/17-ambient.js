@@ -8623,8 +8623,18 @@
         _ambProgStepOverride = step;
         _ambProgPosHint = { step: step, pos: (i + 0.5) / nSeg };
         let ch = null; try { ch = _ambProgCurrentChord(notes); } catch (e) {}
-        out.push(ch ? { root: ((ch.root | 0) % 12 + 12) % 12,
-                        pcs: Array.from(new Set((ch.intervals || [0]).map(v => (((((ch.root | 0) + (v | 0)) % 12) + 12) % 12)))) } : null);
+        // SOUNDING SPACE, not written. `_ambProgCurrentChord` returns the WRITTEN
+        // chord — the engine re-roots the whole progression later, inside
+        // `_ambSrcRootPc` (key transpose, section key, part key). Rendering these
+        // pitch classes straight to frequencies therefore played the WRITTEN key
+        // while every other layer played the sounding one: audibly out of key, and
+        // worse the further the key sits from the written tonic. Take the shift
+        // from the same chokepoint every other pitch resolves through, so all three
+        // offsets come along for free.
+        let _shift = 0;
+        if (ch) { try { _shift = ((((_ambSrcRootPc(notes) | 0) - (ch.root | 0)) % 12) + 12) % 12; } catch (e) { _shift = 0; } }
+        out.push(ch ? { root: (((ch.root | 0) + _shift) % 12 + 12) % 12,
+                        pcs: Array.from(new Set((ch.intervals || [0]).map(v => (((((ch.root | 0) + (v | 0) + _shift) % 12) + 12) % 12)))) } : null);
       }
       _ambProgPosHint = saveHint; _ambProgStepOverride = saveOv;
       return out;

@@ -2223,6 +2223,11 @@
           if (host.fxChain.indexOf(k) < 0 && host[k] && typeof host[k] === 'object') host[k].dryKill = 0;
         });
       }
+      // Salt-follow + the voice ceiling are additive per-layer fields, coerced
+      // here rather than defaulted onto every layer (the backfill trap).
+      if ('label' in host) { const lb = (typeof host.label === 'string') ? host.label.trim().slice(0, 16) : ''; if (lb) host.label = lb; else delete host.label; }
+      if ('followSalt' in host) host.followSalt = host.followSalt ? 1 : 0;
+      if ('voiceCap' in host) { const v = host.voiceCap | 0; if (v > 0) host.voiceCap = Math.min(12, v); else delete host.voiceCap; }
       // GLITCH: numeric coercion + a validated mode string. An unknown mode falls
       // back to grain rather than being kept, so a project from a newer build
       // degrades to a real effect instead of an index the core would modulo into
@@ -8562,6 +8567,89 @@
       if (!Number.isFinite(host.sustain)) host.sustain = d.sustain;
       if (!Number.isFinite(host.release)) host.release = d.release;
     }
+    // ---- SALT-FOLLOW (chord layers) ---------------------------------------
+    // Colour salt sub-divides ONE chord instance into segments — C · C(no3) ·
+    // Cmaj7 — but a pad samples its chord once at the onset and holds, so those
+    // changes were inaudible (measured: a bed under colours-4 played one voicing
+    // for the whole 8 s instance while the salt moved three times).
+    // Salt is a PURE function of (seed, step, segIdx), so the entire segment plan
+    // is known at the onset. That is what makes this scheduling rather than
+    // surgery: resolve every segment up front, then emit ONE note per tone
+    // spanning the contiguous run of segments it belongs to. A shared tone
+    // therefore rings straight through with no retrigger and no envelope
+    // restart; a leaver simply ends; an arrival starts at its boundary.
+    function _ambSaltSegSets(notes, step, nSeg) {
+      const out = [];
+      const saveHint = _ambProgPosHint, saveOv = _ambProgStepOverride;
+      for (let i = 0; i < nSeg; i++) {
+        _ambProgStepOverride = step;
+        _ambProgPosHint = { step: step, pos: (i + 0.5) / nSeg };
+        let ch = null; try { ch = _ambProgCurrentChord(notes); } catch (e) {}
+        out.push(ch ? { root: ((ch.root | 0) % 12 + 12) % 12,
+                        pcs: Array.from(new Set((ch.intervals || [0]).map(v => (((((ch.root | 0) + (v | 0)) % 12) + 12) % 12)))) } : null);
+      }
+      _ambProgPosHint = saveHint; _ambProgStepOverride = saveOv;
+      return out;
+    }
+    // How many voices this layer may sound at once. `voiceCap` is the user's
+    // ceiling INCLUDING colour tones; absent/0 means "however many Density asks
+    // for", which is the pre-existing behaviour. Without a cap distinct from
+    // Density the feature silently does nothing at common settings: Density 3
+    // with a maj7 colour trims the arriving 7th straight back off.
+    function _ambVoiceCap(inst) {
+      const c = inst && inst.voiceCap | 0;
+      const d = Math.max(1, Math.min(9, (inst && inst.density | 0) || 1));
+      return c > 0 ? Math.max(d, Math.min(12, c)) : d;
+    }
+    // Build the per-tone note plan for one unit. Returns null when there is
+    // nothing segmented to do, so the caller keeps its existing single-voicing
+    // path byte-for-byte.
+    function _ambBedSaltPlan(bed, notes, at, unitSec, voicing) {
+      if (!bed || !bed.followSalt || !(unitSec > 0.05) || !Array.isArray(voicing) || !voicing.length) return null;
+      const cfg = _E && (_E._cfg || (_E.getCfg && _E.getCfg())); if (!cfg) return null;
+      const salt = _ambPartSaltAt(cfg, (function () { try { return _ambProgStepAt(_E, at) | 0; } catch (e) { return 0; } })());
+      if (!salt || !((salt.colors | 0) > 0)) return null;
+      const n = _ambAsNotes(notes); if (!n || n.type !== 'prog') return null;
+      let step = 0; try { step = _ambProgStepAt(_E, at) | 0; } catch (e) {}
+      const seed = (cfg.seed | 0) || 1;
+      const nSeg = _ambProgSaltSegCount(salt, step, seed);
+      if (!(nSeg > 1)) return null;
+      const sets = _ambSaltSegSets(n, step, nSeg);
+      if (!sets[0]) return null;
+      const cap = _ambVoiceCap(bed);
+      const segSec = unitSec / nSeg;
+      // Segment 0 IS the written chord and is already voiced — keep those exact
+      // frequencies so the downbeat is untouched.
+      const live = voicing.slice().sort((a, b) => a - b);
+      const pcOf = (f) => { const m = Math.round(69 + 12 * Math.log2(f / 440)); return ((m % 12) + 12) % 12; };
+      const open = live.map(f => ({ f: f, from: 0, to: nSeg }));   // assume it survives; trimmed below
+      const plan = [];
+      for (let i = 1; i < nSeg; i++) {
+        const want = sets[i] ? sets[i].pcs : null; if (!want) continue;
+        const have = open.filter(o => o.to === nSeg);
+        // LEAVERS — a sounding tone whose pitch class is gone from this segment.
+        have.forEach(o => { if (want.indexOf(pcOf(o.f)) < 0) { o.to = i; plan.push(o); } });
+        // ARRIVALS — a pitch class that is new here. Place it in the octave of
+        // the voicing it is joining, so the chord keeps its register.
+        const sounding = open.filter(o => o.to === nSeg);
+        const nowPcs = sounding.map(o => pcOf(o.f));
+        want.forEach(pc => {
+          if (nowPcs.indexOf(pc) >= 0) return;
+          if (sounding.length >= cap) return;                       // the user's ceiling
+          const ref = sounding.length ? sounding[sounding.length - 1].f : live[live.length - 1];
+          // nearest placement of this pc at or above the top sounding voice
+          const refM = Math.round(69 + 12 * Math.log2(ref / 440));
+          let m = refM - (((refM % 12) + 12) % 12) + pc; while (m <= refM) m += 12;
+          const f = 440 * Math.pow(2, (m - 69) / 12);
+          open.push({ f: f, from: i, to: nSeg });
+          nowPcs.push(pc);
+        });
+      }
+      open.forEach(o => { if (o.to === nSeg && plan.indexOf(o) < 0) plan.push(o); });
+      // Nothing actually changed across the unit → let the normal path run.
+      if (!plan.some(o => o.from > 0 || o.to < nSeg)) return null;
+      return plan.map(o => ({ f: o.f, offSec: o.from * segSec, durMs: Math.max(60, Math.round((o.to - o.from) * segSec * 1000)) }));
+    }
     function _ambBedParams(noteMs, density, motion, overlap, pan, tone) {
       const base = (typeof cellParams !== 'undefined' && cellParams[0]) ? cellParams[0] : { type: 'sine' };
       const atkMs = Math.max(150, Math.round(noteMs * 0.30));
@@ -8736,6 +8824,28 @@
       // Prog-sync Stochastic feel: nudge this voicing's onset within its sub-slot
       // (seeded above → reproducible). Even feel leaves it on the grid.
       if (_progJit > 0) _startOff += _progJit;
+      // SALT-FOLLOW: when the colour salt moves inside this unit, play the
+      // changes instead of holding one voicing. Shared tones get a single note
+      // spanning every segment they survive (so they ring on, untouched);
+      // leavers end at their boundary, arrivals start at theirs. Returns null
+      // whenever there is nothing segmented to do → the path below is unchanged.
+      {
+        const _sp = (function () { try { return _ambBedSaltPlan(bed, _bedSrc, at, unitSec > 0.05 ? unitSec : (effIntervalMs / 1000), voicing); } catch (e) { return null; } })();
+        if (_sp && _sp.length) {
+          const _u2 = [];
+          _sp.forEach((nt, ix) => {
+            const params = _ambApplyAdsr(_ambBedParams(nt.durMs, n, bed.motion, overlap, pans[ix % pans.length], _ambToneAt(bed, at)), bed);
+            params.volume = _ambApplyLevel(params.volume, bed.level);
+            params.loop = true;
+            const _rp = {}; for (const k in params) if (k !== '_detuneMod') _rp[k] = params[k];
+            _u2.push({ freq: nt.f, off: _startOff + nt.offSec, durMs: nt.durMs, params: _rp });
+            if (dmod) params._detuneMod = dmod;
+            try { playNote(nt.f, params, nt.durMs, at + _startOff + nt.offSec, dest, undefined, _E.laneIdx()); } catch (e) {}
+          });
+          _ambRecordUnit(_E, key, at, _u2);
+          return;
+        }
+      }
       const _unit = [];
       order.forEach((vi, pos) => {
         const f = voicing[vi];
@@ -29949,7 +30059,7 @@
     const _AMB_LAYER_SCHEMA = {
       bed: { label: 'Bed', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'voiceCap', 'Voice cap', 0, 12, '0 = follow Density'], ['followsalt'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
         ['sub', 'Progression', 'When an Area progression is set: the layer locks to it and plays voicings of the current chord. (Repeat/Times in Timing only apply when there is no Area progression.)'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold \u00b7 \u2212N = hold N units \u00b7 +N = N chords per unit'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length \u00b7 % of each strike a chord rings'], ['choke'], ['pitchrule'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
@@ -30537,6 +30647,7 @@
           opts.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
           '</select></div>';
       }
+      if (k === 'followsalt') return '<div class="ambient-ctrl"><label for="' + p + '-followsalt">Follow salt</label><select id="' + p + '-followsalt" class="ambient-select"><option value="0">Hold the chord</option><option value="1">Play the colour changes</option></select><span class="ambient-hint">re-voice inside the unit as salt colours the chord \u2014 shared notes ring on</span></div>';
       if (k === 'choke') return '<div class="ambient-ctrl"><label for="' + p + '-choke">Choke</label><select id="' + p + '-choke" class="ambient-select"><option value="0">Off (overlap)</option><option value="1">At boundary</option></select><span class="ambient-hint">release each chord by the next unit</span></div>';
       if (k === 'toneseq') return '<div class="ambient-ctrl ambient-toneseq-ctrl"><label title="Tone cycle — schedule Instrument Tone changes on the bar clock: e.g. 4 bars Sawtooth, then 4 bars Sine, repeating. Each note picks the step active at its onset; a blank tone = the layer\'s default voice.">Tone cycle</label><span class="ambient-toneseq-box" id="' + p + '-toneseq">' + _ambToneSeqBoxHtml(inst) + '</span></div>';
       if (k === 'tight') return '<div class="ambient-ctrl"><label for="' + p + '-tight">Tight</label><select id="' + p + '-tight" class="ambient-select"><option value="0">Off</option><option value="1">Tight (choke)</option></select><span class="ambient-hint">each note lasts to the next hit, then chokes (overrides the other length controls)</span></div>';
@@ -31066,6 +31177,7 @@
           // the sibling controls take. A bed defaults to Write on, so without it the
           // frozen loop replays the OLD lengths for the rest of its cycle — measured
           // 12.3 s of nothing happening, which reads as a dead control.
+          else if (k === 'followsalt') { const e = el('followsalt'); if (e) { e.value = inst.followSalt ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === '1') L.followSalt = 1; else delete L.followSalt; sync(); persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } } }); } }
           else if (k === 'choke') { const e = el('choke'); if (e) { e.value = inst.choke ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.choke = (e.value === '1'); sync(); persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } } }); } }
           else if (k === 'tight') { const e = el('tight'); if (e) { e.value = (inst.tight | 0) ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.tight = (e.value === '1') ? 1 : 0; sync(); persist(); } }); } }
           else if (k === 'progfeel') { const e = el('progfeel'); if (e) { e.value = inst.progFeel || 'even'; e.addEventListener('change', () => { const L = get(); if (L) { L.progFeel = (e.value === 'stochastic') ? 'stochastic' : 'even'; sync(); persist(); } }); } }
@@ -32708,7 +32820,7 @@
       (cfg.extras || []).forEach((x) => {
         if (!x || !_AMB_LAYER_SCHEMA[x.type] || !_AMB_RAMP_PARAMS[x.type]) return;
         _tc[x.type] = (_tc[x.type] | 0) + 1;
-        add((_AMB_LAYER_SCHEMA[x.type].label || x.type) + ' ' + _tc[x.type], x.type + ':' + x.id, x.type);
+        add(_ambLayerLabel(x, _AMB_LAYER_SCHEMA[x.type].label || x.type) + ' ' + _tc[x.type], x.type + ':' + x.id, x.type);
       });
       // Global params (BPM) — always available.
       if (_AMB_RAMP_PARAMS.global) g.push({ label: 'Global', items: _AMB_RAMP_PARAMS.global.map(p => ({ value: 'global.' + p[0], label: p[1] })) });
@@ -33464,6 +33576,8 @@
       set('ambient-bed-attack', cfg.bed.attack); set('ambient-bed-decay', cfg.bed.decay); set('ambient-bed-sustain', cfg.bed.sustain); set('ambient-bed-release', cfg.bed.release); set('ambient-bed-fine', cfg.bed.fine);
       { const _nb = document.getElementById(tr('ambient-bed-notes')); if (_nb) _nb.textContent = _ambNotesLabel(_ambNotesOf(cfg.bed)); }
       set('ambient-bed-density', cfg.bed.density);
+      set('ambient-bed-voiceCap', cfg.bed.voiceCap | 0);
+      { const _fs = G('ambient-bed-followsalt'); if (_fs) _fs.value = cfg.bed.followSalt ? '1' : '0'; }
       set('ambient-bed-chordmode', cfg.bed.chordMode || 'chaos');
       set('ambient-bed-choke', cfg.bed.choke ? '1' : '0');
       // Tone-cycle boxes: fill each step's tone catalog + reflect state (rebuild
@@ -35104,6 +35218,12 @@
       }
       bind('ambient-bed-attack', 'bed', 'attack'); bind('ambient-bed-decay', 'bed', 'decay'); bind('ambient-bed-sustain', 'bed', 'sustain'); bind('ambient-bed-release', 'bed', 'release'); bind('ambient-bed-fine', 'bed', 'fine'); bind('ambient-bed-portamento', 'bed', 'portamento');
       bind('ambient-bed-density', 'bed', 'density');
+      bind('ambient-bed-voiceCap', 'bed', 'voiceCap');
+      // A select needs its own listener — the numeric bind() helpers can't drive it
+      // (the documented primary-wiring split: schema renders it, primaries wire it).
+      { const fs = G('ambient-bed-followsalt'); if (fs) fs.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c || !c.bed) return;
+          if (fs.value === '1') c.bed.followSalt = 1; else delete c.bed.followSalt; persist();
+          if (E.timer) { try { _ambReanchorLayer(E, 'bed'); } catch (x) {} } }); }
       bind('ambient-bed-register', 'bed', 'register');
       bind('ambient-bed-spread', 'bed', 'spread');
       bind('ambient-bed-chordPhraseLen', 'bed', 'chordPhraseLen');
@@ -36273,6 +36393,17 @@
         // the axis space — a type + a voice + a few axis settings, one tap.
         // Same {type, cfg} shape as user presets → the same _ambAddPreset door.
         const _FACTORY_LAYER_PRESETS = [
+          // KEYS — a chord layer that ARTICULATES instead of swelling. Fast attack
+          // and a short release are what make salt's colour changes legible: with
+          // the pad defaults (attack 2000 / release 3650) an arriving 7th smears in
+          // and a departing 3rd rings for another 3.6 s, so the change is inaudible.
+          // `label` names the layer without adding a whole layer TYPE — see the note
+          // on _ambLayerLabel. Voice cap 6 lets colour tones exceed Density 3;
+          // without it the arriving tones are trimmed straight back off.
+          { name: '🎹 Keys', type: 'bed', cfg: { label: 'Keys', tone: '', level: 62, revSend: 22,
+            attack: 20, decay: 180, sustain: 80, release: 320,
+            density: 3, voiceCap: 6, spread: 0, register: 4, followSalt: 1,
+            intervalMs: 4000, lengthMs: 3600, motion: 0 } },
           { name: '📼 VHS Pad', type: 'bed', cfg: { tone: 'user:f-lagoonvhs', level: 68, revSend: 45, attack: 900, release: 3200 } },
           { name: '🌒 Night Pad', type: 'bed', cfg: { tone: 'user:f-meadow', level: 66, revSend: 50, attack: 1400, release: 4000 } },
           { name: '🏬 Mall Keys', type: 'motif', cfg: { tone: 'user:f-mallfountain', level: 55, revSend: 35, restProb: 45, humanize: 25 } },

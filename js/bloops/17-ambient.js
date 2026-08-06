@@ -1315,7 +1315,7 @@
         // only repeated the select, and a permanently EMPTY strip). It is an
         // area-level setting like Plays and Bars, so it belongs with them.
         '<div class="ambient-orch ambient-orch-unitrow">' +
-          '<label class="ambient-orch-lbl" title="AREA UNIT — the timing anchor everything else follows. Each layer’s cycle inherits this (× its own ratio) unless it overrides to an absolute bar length or opts out to Free.">◆ Unit</label>' +
+          '<label class="ambient-orch-lbl" title="AREA UNIT — the timing anchor everything else follows. Each layer’s cycle inherits this (× its own ratio) unless it overrides to an absolute bar length or opts out to Free.">◆ Area unit</label>' +
           '<select class="ambient-orch-areaunit" title="AREA UNIT — the timing anchor everything else follows. Each layer’s cycle inherits this (× its own ratio) unless it overrides to an absolute bar length or opts out to Free.">' +
           [['1/4', '¼ bar'], ['1/2', '½ bar'], ['1/1', '1 bar'], ['2/1', '2 bars'], ['4/1', '4 bars'], ['8/1', '8 bars']]
             .map(o => '<option value="' + o[0] + '"' + (o[0] === _auVal ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
@@ -27764,7 +27764,7 @@
               '</span></span>';
           }).join('') + '</div>';
       }
-      h += '<div class="ambient-pm-legend"><b>Cell</b> = the chance this layer plays that chord — tap to step <b>always → 60% → 30% → never</b>, or press and hold (✎ % to make a tap do it) for <b>any value 0-100</b>. Rolled once per chord, so the layer is in or out for that whole chord; it never cuts in halfway. <b>Part</b> is the other axis: how much of each chord it plays once it is in.</div>';
+      h += '<div class="ambient-pm-legend"><b>Cell</b> = the chance this layer plays that chord — tap to step <b>always → 60% → 30% → never</b>, or press and hold (✎ % to make a tap do it) for <b>any value 0-100</b>. Rolled once per chord, so the layer is in or out for that whole chord; it never cuts in halfway. <b>Window</b> is the other axis: how much of each chord it plays once it is in.</div>';
       // Column window for the selected tab. Cell/header indices stay ABSOLUTE
       // (data-ci), so every setter keeps writing the right slot of the mask.
       let _pmFrom = 0, _pmTo = N;
@@ -27774,7 +27774,7 @@
       }
       const _pmCols = [];
       for (let i = _pmFrom; i < _pmTo; i++) _pmCols.push(i);
-      h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + _pmCols.map((i) => chords[i]).map((c2, _n) => { const i = _pmCols[_n]; return '<span class="ambient-pm-ch' + (_ambIsTransition(c2) ? ' pm-trans' : '') + '"' + (_ambIsTransition(c2) ? ' title="Transition — a walk into the next chord. Leave this cell on for a layer to walk it, set it to never to sit the bar out."' : '') + '>' + (i + 1) + '·' + chName(c2) + '</span>'; }).join('') + '<span class="ambient-pm-part">Part</span></div>';
+      h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + _pmCols.map((i) => chords[i]).map((c2, _n) => { const i = _pmCols[_n]; return '<span class="ambient-pm-ch' + (_ambIsTransition(c2) ? ' pm-trans' : '') + '"' + (_ambIsTransition(c2) ? ' title="Transition — a walk into the next chord. Leave this cell on for a layer to walk it, set it to never to sit the bar out."' : '') + '>' + (i + 1) + '·' + chName(c2) + '</span>'; }).join('') + '<span class="ambient-pm-part">Window</span></div>';
       rows.forEach(r => {
         const steps = (r.L.chordMask && Array.isArray(r.L.chordMask.steps)) ? r.L.chordMask.steps : null;
         const part = (r.L.chordMask && r.L.chordMask.part) || null;
@@ -27965,8 +27965,8 @@
       el._sig = sig;
       const esc = (t) => String(t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
       let h = '<div class="ambient-pm-title">Section matrix — how often each layer plays in each section' + _ambMaskEditBtnHtml(!!el._pmEdit) + '</div>';
-      h += '<div class="ambient-pm-legend"><b>Cell</b> = the chance this layer plays that section — tap to step <b>always → 60% → 30% → never</b>, or press and hold (✎ % to make a tap do it) for <b>any value 0-100</b>. Rolled once per section, so the layer is in or out for the whole section. <b>Part</b> is the other axis: how much of each section it plays once it is in.</div>';
-      h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + secs.map((x, i) => '<span class="ambient-pm-ch" title="' + esc(x.name) + ' · ' + _ambFmtBpc(x.bars) + ' bars">' + esc(x.name) + '</span>').join('') + '<span class="ambient-pm-part">Part</span></div>';
+      h += '<div class="ambient-pm-legend"><b>Cell</b> = the chance this layer plays that section — tap to step <b>always → 60% → 30% → never</b>, or press and hold (✎ % to make a tap do it) for <b>any value 0-100</b>. Rolled once per section, so the layer is in or out for the whole section. <b>Window</b> is the other axis: how much of each section it plays once it is in.</div>';
+      h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + secs.map((x, i) => '<span class="ambient-pm-ch" title="' + esc(x.name) + ' · ' + _ambFmtBpc(x.bars) + ' bars">' + esc(x.name) + '</span>').join('') + '<span class="ambient-pm-part">Window</span></div>';
       rows.forEach(r => {
         const steps = (r.L.sectionMask && Array.isArray(r.L.sectionMask.steps)) ? r.L.sectionMask.steps : null;
         const part = (r.L.sectionMask && r.L.sectionMask.part) || null;

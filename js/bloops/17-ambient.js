@@ -2643,7 +2643,9 @@
         prog.versions = prog.versions.filter(v => v && typeof v === 'object').slice(0, 12).map(v => {
           const vch = (Array.isArray(v.chords) ? v.chords : []).map(cloneCh).filter(Boolean);
           const vp = _ambRepairParts(v.parts, vch.length);
-          return { name: (typeof v.name === 'string' && v.name.trim()) ? v.name.trim().slice(0, 24) : 'Version', chords: vch, ...(vp ? { parts: vp } : {}) };
+          const vs = (v.salt && typeof v.salt === 'object' && ((v.salt.len | 0) || (v.salt.colors | 0) || (v.salt.scatter | 0)))
+            ? { len: Math.max(0, Math.min(100, v.salt.len | 0)), colors: Math.max(0, Math.min(8, v.salt.colors | 0)), scatter: Math.max(0, Math.min(100, v.salt.scatter | 0)) } : null;
+          return { name: (typeof v.name === 'string' && v.name.trim()) ? v.name.trim().slice(0, 24) : 'Version', chords: vch, ...(vp ? { parts: vp } : {}), ...(vs ? { salt: vs } : {}) };
         }).filter(v => v.chords.length);
         if (!prog.versions.length) { delete prog.versions; delete prog.versionIdx; }
         else if (!Number.isFinite(prog.versionIdx) || prog.versionIdx < 0 || prog.versionIdx >= prog.versions.length) delete prog.versionIdx;
@@ -27076,12 +27078,60 @@
       if (partKey && Number.isFinite(partKey.root)) part.key = { root: (((partKey.root | 0) % 12) + 12) % 12, scale: partKey.scale || 'major' };
       prog.parts.push(part);
     }
+    // CAPTURE ONE PASS of a salted progression as literal chords.
+    // Salt is a pure function of (seed, step, segIdx, cycle), so a pass can simply
+    // be RESOLVED rather than recorded: walk the cycle, ask the same funnel the
+    // engine asks (`_ambProgCurrentChord`, so alts · take-reroll · vary · tension ·
+    // ↻ order all bake in too), and write what comes back.
+    // Colour salt sub-divides a chord instance, so each segment becomes its OWN
+    // chord with a FRACTIONAL `bars` — which the per-chord length model already
+    // supports. Adjacent segments that resolve identically are merged, so a pass
+    // with no colour change stays exactly as long as it was written.
+    function _ambProgCaptureCycle(E, cfg, cyc) {
+      const prog = cfg && cfg.prog; if (!prog || !Array.isArray(prog.chords) || !prog.chords.length) return null;
+      const src = { type: 'prog', chords: prog.chords };   // BY REFERENCE — the salt/reroll gates test identity
+      const len = prog.chords.length;
+      const bpc = Math.max(0.01, cfg.barsPerChord || 1);
+      const seed = (cfg.seed | 0) || 1;
+      const wl = prog.chords.map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
+      const lens = _ambProgSaltAnyLen(cfg) ? _ambProgSaltLensParted(wl, cyc, seed, cfg) : wl;
+      const perm = _ambProgOrderPerm(cfg, len, cyc);
+      const saveHint = _ambProgPosHint, saveOv = _ambProgStepOverride, saveE = _E;
+      _E = E;
+      const out = [];
+      try {
+        for (let i = 0; i < len; i++) {
+          const ci = perm ? perm[i] : i;
+          const step = cyc * len + i;
+          const salt = _ambPartSaltAt(cfg, step);
+          const nSeg = (salt && (salt.colors | 0) > 0) ? _ambProgSaltSegCount(salt, step, seed) : 1;
+          const slotBars = Math.max(0.01, lens[ci]);
+          for (let sg = 0; sg < nSeg; sg++) {
+            _ambProgStepOverride = step;
+            _ambProgPosHint = { step: step, pos: (sg + 0.5) / nSeg };
+            let ch = null; try { ch = _ambProgCurrentChord(src); } catch (e) {}
+            if (!ch) continue;
+            const bars = slotBars / nSeg;
+            const last = out[out.length - 1];
+            const same = last && !last.transition && ((last.root | 0) === (ch.root | 0)) &&
+              (last.intervals || []).join(',') === (ch.intervals || []).join(',');
+            if (same) last.bars = +(last.bars + bars).toFixed(6);
+            else out.push({ root: ((ch.root | 0) % 12 + 12) % 12, intervals: (ch.intervals || [0]).slice(), bars: +bars.toFixed(6) });
+          }
+        }
+      } finally { _ambProgPosHint = saveHint; _ambProgStepOverride = saveOv; _E = saveE; }
+      return out.length ? out : null;
+    }
     function _ambProgAddVersion(prog) {
       if (!Array.isArray(prog.versions)) prog.versions = [];
       if (prog.versions.length >= 12 || !Array.isArray(prog.chords) || !prog.chords.length) return;
       prog.versions.push({ name: String(prog.name || ('Version ' + (prog.versions.length + 1))).slice(0, 24),
         chords: prog.chords.map(_ambCloneChord),
-        ...(Array.isArray(prog.parts) && prog.parts.length ? { parts: prog.parts.map(p => ({ name: p.name, len: p.len })) } : {}) });
+        ...(Array.isArray(prog.parts) && prog.parts.length ? { parts: prog.parts.map(p => ({ name: p.name, len: p.len })) } : {}),
+        // A version stores its SALT too, so switching restores the whole state of
+        // that progression rather than just its notes — a captured pass comes back
+        // fixed, a salted one comes back salted.
+        ...(prog.salt ? { salt: { len: prog.salt.len | 0, colors: prog.salt.colors | 0, scatter: prog.salt.scatter | 0 } } : {}) });
       prog.versionIdx = prog.versions.length - 1;
     }
     function _ambProgSwitchVersion(prog, vi) {
@@ -27089,6 +27139,10 @@
       const v = prog.versions[vi];
       prog.chords = v.chords.map(_ambCloneChord);
       if (Array.isArray(v.parts) && v.parts.length) prog.parts = v.parts.map(p => ({ name: p.name, len: p.len })); else delete prog.parts;
+      // Absent salt on a version means "no salt" — normalize then deletes the
+      // all-zero object, so a captured pass plays exactly as captured.
+      if (v.salt) prog.salt = { len: v.salt.len | 0, colors: v.salt.colors | 0, scatter: v.salt.scatter | 0 };
+      else delete prog.salt;
       prog.versionIdx = vi;
     }
     // ---- PROGRESSION OVERVIEW STRIP -------------------------------------
@@ -27125,7 +27179,13 @@
         '<span role="button" tabindex="0" class="ambient-pov-namesbtn' + (namesFirst ? ' on' : '') + '" data-pov="names" title="' +
           (namesFirst ? 'Showing chord NAMES first with the numeral after \u2014 click to lead with numerals' :
                         'Showing ROMAN NUMERALS first with the name after \u2014 click to lead with chord names') + '">' +
-          (namesFirst ? '\u266a Names' : '\u2160 Numerals') + '</span></div>';
+          (namesFirst ? '\u266a Names' : '\u2160 Numerals') + '</span>' +
+        // CAPTURE — only offered when something actually varies pass to pass;
+        // on a plain written progression it would just clone the chords.
+        ((_ambProgSaltAnyLen(cfg) || (prog.salt && (prog.salt.colors | 0) > 0) || (prog.order && prog.order.mode) ||
+          (prog.reroll | 0) || (prog.vary | 0) || (prog.tension | 0))
+          ? '<span role="button" tabindex="0" class="ambient-pov-capture" data-pov="capture" title="Freeze the pass you are hearing into a fixed, named progression \u2014 salt, order, alternates and re-rolls all baked in. Saved as a version you can switch back to; the live progression keeps varying.">\u2744 Capture pass</span>'
+          : '') + '</div>';
       if (Array.isArray(prog.versions) && prog.versions.length) {
         h += '<div class="ambient-pov-vers">' +
           '<span class="ambient-pov-verslbl">Versions</span>' +
@@ -27313,6 +27373,28 @@
       if (op === 'partrm') { _ambProgRemovePart(prog, a[1] | 0); persist(); refresh(); return; }
       if (op === 'ver') { _ambProgSwitchVersion(prog, a[1] | 0); try { _ambAutoSyncFreeForProg(E, cfg); } catch (e) {} persist(); refresh(); return; }
       if (op === 'veradd') { _ambProgAddVersion(prog); persist(); refresh(); return; }
+      // ❄ CAPTURE — resolve the pass currently sounding into literal chords and
+      // store it as a version with salt cleared, so it replays exactly. The LIVE
+      // progression is untouched and keeps varying; switching versions is how you
+      // choose between "keep surprising me" and "loop that one".
+      if (op === 'capture') {
+        const cyc = (function () {
+          try { const len = prog.chords.length;
+            const st = _ambProgStepAt(E, ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + 0.016) | 0;
+            return Math.max(0, Math.floor(st / Math.max(1, len))); } catch (e) { return 0; }
+        })();
+        const chords = _ambProgCaptureCycle(E, cfg, cyc);
+        if (!chords) { if (typeof showToast === 'function') showToast('Nothing to capture yet.'); return; }
+        let nm = null;
+        try { nm = window.prompt('Name this captured pass', _ambRandProgName()); } catch (e) {}
+        if (nm == null) return;
+        const name = String(nm).trim().slice(0, 24) || _ambRandProgName();
+        if (!Array.isArray(prog.versions)) prog.versions = [];
+        if (prog.versions.length >= 12) { if (typeof showToast === 'function') showToast('12 versions is the limit — remove one first.'); return; }
+        prog.versions.push({ name: name, chords: chords.map(_ambCloneChord) });   // no `salt` ⇒ plays fixed
+        if (typeof showToast === 'function') showToast('Captured “' + name + '” — ' + chords.length + ' chords. Switch to it in Versions to loop it.');
+        persist(); refresh(); return;
+      }
       // DEFERRED: this strip acts on POINTERDOWN (it repaints on the viz timer,
       // so a click would drop), and showCtxMenu arms its own document-level
       // pointerdown dismiss — registered mid-dispatch, that listener still fires

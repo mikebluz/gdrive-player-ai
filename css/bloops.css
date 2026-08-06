@@ -3820,6 +3820,8 @@
        playhead relabels that span to the sounding chord. */
     .ambient-pov-bar { display: flex; align-items: center; gap: 6px; width: 100%; margin-bottom: 4px; }
     .ambient-pov-namesbtn { padding: 3px 10px; border: 1px solid #3a3a52; border-radius: 999px; background: #16162a; color: #cbd5e0; cursor: pointer; font-size: 0.7rem; white-space: nowrap; touch-action: manipulation; }
+    .ambient-pov-capture { padding: 3px 10px; border: 1px solid #4a5f7a; border-radius: 999px; background: #16162a; color: #cfe4ff; cursor: pointer; font-size: 0.7rem; white-space: nowrap; touch-action: manipulation; }
+    @media (hover: hover) { .ambient-pov-capture:hover { border-color: #63b3ed; background: rgba(99,179,237,0.16); color: #e6f2ff; } }
     .ambient-pov-namesbtn.on { border-color: #4fd1c5; background: rgba(79,209,197,0.16); color: #d6fbf6; }
     @media (hover: hover) { .ambient-pov-namesbtn:hover { border-color: #9f7aea; color: #e9dcff; } }
     .ambient-pov-chord.pov-names .ambient-pov-nm { font-weight: 700; font-size: 0.82rem; color: #e9dcff; }

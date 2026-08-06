@@ -29005,12 +29005,51 @@
     // 16-bar window over a 3-bar progression put a truncated extra chord at the
     // end and drifted out of sync with the real harmony after every wrap.
     // 3-bar cycle → 15-bar view (5 cycles); 4 → 16; 7 → 14; cycle > 16 → one cycle.
+    // THE PLAYED CHAIN — the chord slots in the order they are actually heard,
+    // with each part repeated `plays` times. The Scheduler used to walk the WRITTEN
+    // cycle on loop, so a Verse×2 → Chorus chain drew `C F G Am` over and over
+    // while the engine played `C F · C F · G Am`: the lane lied about the harmony.
+    // Deliberately SEPARATE from `_ambProgCycleBars`, which the Write/Evolve phrase
+    // snapping also uses — changing that would resize every Write loop under a
+    // parted progression, which is a sound change and not this fix's business.
+    function _ambProgChainSlots(cfg) {
+      const p = cfg && cfg.prog;
+      if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return null;
+      const parts = (Array.isArray(p.parts) && p.parts.length > 1) ? p.parts : null;
+      const out = [];
+      if (!parts) { for (let i = 0; i < p.chords.length; i++) out.push({ idx: i, part: -1, pName: '', pFirst: i === 0, rep: 0, plays: 1 }); return out; }
+      let from = 0;
+      parts.forEach((pt, pi) => {
+        const n = Math.max(1, pt.len | 0), plays = Math.max(1, (pt.plays | 0) || 1);
+        for (let r = 0; r < plays; r++) {
+          for (let k = 0; k < n; k++) out.push({ idx: (from + k) % p.chords.length, part: pi,
+            pName: pt.name || ('Part ' + (pi + 1)), pFirst: k === 0, rep: r, plays: plays });
+        }
+        from += n;
+      });
+      return out.length ? out : null;
+    }
+    function _ambProgChainBars(cfg) {
+      const slots = _ambProgChainSlots(cfg); if (!slots) return 0;
+      const p = cfg.prog, bpc = Math.max(0.01, cfg.barsPerChord || 1);
+      return slots.reduce((a, sl) => { const c = p.chords[sl.idx];
+        return a + ((c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc); }, 0);
+    }
+    function _ambSchedPartBlock(r) {
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const badge = (r.plays > 1) ? (' ' + (r.rep + 1) + '/' + r.plays) : '';
+      const wide = r.w >= ((typeof window !== 'undefined' && window.innerWidth < 560) ? 12 : 7);
+      return '<i class="ambient-sched-partblk' + (r.rep > 0 ? ' rep' : '') + '" style="width:' + r.w.toFixed(3) + '%" title="' +
+        esc(r.name) + (r.plays > 1 ? ' — pass ' + (r.rep + 1) + ' of ' + r.plays : '') + '">' +
+        (wide ? esc(r.name) + badge : '') + '</i>';
+    }
     function _ambSchedViewBars(cfg) {
-      const cyc = _ambProgCycleBars(cfg);
+      // ONE full chain, never a cycle repeated to fill the width — the repeat read
+      // as "why is this part shown twice" and told you nothing the first pass did not.
+      const cyc = _ambProgChainBars(cfg) || _ambProgCycleBars(cfg);
       let v;
       if (!(cyc > 0)) v = _AMB_SCHED_BARS;
-      else if (cyc >= _AMB_SCHED_BARS) v = cyc;
-      else v = Math.max(1, Math.floor(_AMB_SCHED_BARS / cyc + 1e-6)) * cyc;
+      else v = Math.min(64, cyc);
       // Sections: widen to one full section cycle so its wrap is a real wrap.
       const secCyc = _ambSectionCycleBars(cfg);
       if (secCyc > 0) v = Math.max(v, Math.min(64, secCyc));
@@ -29140,15 +29179,20 @@
           const secEnd = (b - pos) + _secLens[i];
           return { idx, len: Math.min(wLens[k2] - rem, secEnd - b), first: k2 === 0 };
         };
-        let cb = 0, ci = 0, cBlocks = '';
+        // The PLAYED chain (parts expanded by `plays`). The section-bound branch
+        // still wins where it applies — it pins one part per section, which is a
+        // different walk again.
+        const _chain = _bound ? null : _ambProgChainSlots(cfg);
+        let cb = 0, ci = 0, cBlocks = '', pBlocks = '', _pRun = null;
         while (cb < VIEW - 1e-6 && ci < 96) {
           const _at = _bound ? _chordAtBar(cb) : null;
+          const _cs = _chain ? _chain[ci % _chain.length] : null;
           // Resolve through the engine's path so the lane labels the chord that
           // SOUNDS in each block, not the authored one (they differ under ↻ order
           // / alts / 🎲 take-reroll — the same defect the header pill had).
-          const _slotI = _at ? _at.idx : (ci % pg.chords.length);
+          const _slotI = _at ? _at.idx : (_cs ? _cs.idx : (ci % pg.chords.length));
           const ch = _ambProgSoundAt(E, pg, _slotI) || pg.chords[_slotI];
-          const clen = Math.max(0.05, _at ? _at.len : lens[ci % lens.length]);
+          const clen = Math.max(0.05, _at ? _at.len : lens[_slotI % lens.length]);
           const cw = Math.min(clen, VIEW - cb) / VIEW * 100;
           const lbl = _ambChordShort(ch);
           // Label only when the block is wide enough to read it (narrow chords
@@ -29156,10 +29200,26 @@
           // Label only blocks wide enough in PIXELS (a % threshold means fewer px
           // on phones — half-bar labels clipped to mush at 390px). Narrow blocks
           // keep the boundary edge + hover title.
-          const showLbl = cw >= ((typeof window !== 'undefined' && window.innerWidth < 560) ? 6 : 3);
+          // The threshold has to account for LABEL LENGTH: a 6% block fits "C" but
+          // not "C#maj7", and the old fixed threshold let long names through to be
+          // centre-clipped into unreadable middles ("#ma"). Roughly 1.6% of the
+          // strip per character on a phone.
+          const _narrow = (typeof window !== 'undefined' && window.innerWidth < 560);
+          const showLbl = cw >= Math.max(_narrow ? 6 : 3, (lbl || '').length * (_narrow ? 1.6 : 0.9));
           cBlocks += '<i class="ambient-sched-chblk' + ((_at ? _at.first : (ci % pg.chords.length === 0)) ? ' cyc' : '') + '" style="width:' + cw.toFixed(3) + '%" title="' + esc(lbl) + ' · ' + _ambFmtBpc(clen) + ' bar' + (clen === 1 ? '' : 's') + '">' + (showLbl ? esc(lbl) : '') + '</i>';
+          // Accumulate the part runs so they can be named above the chords. A part
+          // that repeats gets one block per pass, badged ×n — that is what makes
+          // "Verse twice, then Chorus" legible instead of an undifferentiated run.
+          if (_cs) {
+            if (_pRun && _pRun.part === _cs.part && _pRun.rep === _cs.rep) _pRun.w += cw;
+            else { if (_pRun) pBlocks += _ambSchedPartBlock(_pRun); _pRun = { part: _cs.part, rep: _cs.rep, plays: _cs.plays, name: _cs.pName, w: cw }; }
+          }
           cb += clen; ci++;
         }
+        if (_pRun) { pBlocks += _ambSchedPartBlock(_pRun); _pRun = null; }
+        if (pBlocks) html += '<div class="ambient-sched-row ambient-sched-partrow">' +
+          '<span class="ambient-sched-ctl"><span class="ambient-sched-lbl">parts</span></span>' +
+          '<span class="ambient-sched-strip parts">' + pBlocks + '</span></div>';
         html += '<div class="ambient-sched-row ambient-sched-chordrow">' +
           '<span class="ambient-sched-ctl"><span class="ambient-sched-name" title="' + esc(pg.name || 'Progression') + '">' + esc(pg.name || 'Progression') + '</span><span class="ambient-sched-lbl">chords</span></span>' +
           '<span class="ambient-sched-strip chords">' + cBlocks + '<i class="ambient-sched-ph"></i></span></div>';

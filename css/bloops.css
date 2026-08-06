@@ -3820,6 +3820,15 @@
        playhead relabels that span to the sounding chord. */
     .ambient-pov-bar { display: flex; align-items: center; gap: 6px; width: 100%; margin-bottom: 4px; }
     .ambient-pov-namesbtn { padding: 3px 10px; border: 1px solid #3a3a52; border-radius: 999px; background: #16162a; color: #cbd5e0; cursor: pointer; font-size: 0.7rem; white-space: nowrap; touch-action: manipulation; }
+    /* Scheduler PART row — named spans above the chords, one block per pass. */
+    .ambient-sched-partblk { display: inline-block; height: 14px; line-height: 14px; box-sizing: border-box; overflow: hidden;
+      border-left: 1px solid #4a4a68; background: rgba(159,122,234,0.14); color: #cbb7f5;
+      font-size: 0.6rem; font-style: normal; text-align: left; padding: 0 4px;
+      white-space: nowrap; text-overflow: ellipsis; }
+    .ambient-sched-partblk.rep { background: rgba(159,122,234,0.07); color: #9a8fc0; }
+    /* Chord labels clip from the END with an ellipsis rather than centre-clipping
+       to an unreadable middle ("#ma" out of "C#maj7"). */
+    .ambient-sched-chblk { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: left; }
     .ambient-pov-capture { padding: 3px 10px; border: 1px solid #4a5f7a; border-radius: 999px; background: #16162a; color: #cfe4ff; cursor: pointer; font-size: 0.7rem; white-space: nowrap; touch-action: manipulation; }
     @media (hover: hover) { .ambient-pov-capture:hover { border-color: #63b3ed; background: rgba(99,179,237,0.16); color: #e6f2ff; } }
     .ambient-pov-namesbtn.on { border-color: #4fd1c5; background: rgba(79,209,197,0.16); color: #d6fbf6; }

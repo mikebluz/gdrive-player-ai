@@ -29127,10 +29127,13 @@
       return slots.reduce((a, sl) => { const c = p.chords[sl.idx];
         return a + ((c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc); }, 0);
     }
+    function _ambSchedEmitPart(emit, into, r) {
+      emit(into, r.at, r.bars, (w, first) => _ambSchedPartBlock({ name: r.name, rep: r.rep, plays: r.plays, w: w, quiet: !first }));
+    }
     function _ambSchedPartBlock(r) {
       const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
       const badge = (r.plays > 1) ? (' ' + (r.rep + 1) + '/' + r.plays) : '';
-      const wide = r.w >= ((typeof window !== 'undefined' && window.innerWidth < 560) ? 12 : 7);
+      const wide = !r.quiet && r.w >= ((typeof window !== 'undefined' && window.innerWidth < 560) ? 12 : 7);
       return '<i class="ambient-sched-partblk' + (r.rep > 0 ? ' rep' : '') + '" style="width:' + r.w.toFixed(3) + '%" title="' +
         esc(r.name) + (r.plays > 1 ? ' — pass ' + (r.rep + 1) + ' of ' + r.plays : '') + '">' +
         (wide ? esc(r.name) + badge : '') + '</i>';
@@ -29181,8 +29184,32 @@
       // View width: whole progression cycles (see _ambSchedViewBars) so the
       // playhead's wrap point is also a harmony wrap point — no truncated chord
       // at the end, no drift after wrapping. Stored for the cursor.
-      const VIEW = _ambSchedViewBars(cfg);
+      // The full chain, and the ROW WIDTH it is drawn at. Fitting a whole chain
+      // into one row is what made a long one unreadable — 8 part-passes and ~30
+      // chords left each block ~13px. A narrower row WRAPS instead of compressing,
+      // and every lane stays column-aligned because the layer strips already tile
+      // at exactly this width.
+      const CHAIN = _ambSchedViewBars(cfg);
+      const _schedEl0 = _ambGet(E, 'ambient-sched');
+      const _rowPref = (_schedEl0 && Number.isFinite(_schedEl0._schedRow)) ? _schedEl0._schedRow : 0;   // 0 = whole chain
+      const VIEW = (_rowPref > 0) ? Math.min(_rowPref, CHAIN) : CHAIN;
+      const CHAIN_ROWS = Math.max(1, Math.ceil(CHAIN / VIEW - 1e-6));
       { const sec = _ambGet(E, 'ambient-sched'); if (sec) sec._schedView = VIEW; }
+      // Bars-per-row picker → re-render at the new row width. View state on the
+      // element (the panel is built once), never a config field: it changes how
+      // the strip is DRAWN, nothing about the music.
+      try {
+        const _sb = _ambGet(E, 'ambient-sched-body');
+        if (_sb && !_sb._rowSelWired) {
+          _sb._rowSelWired = true;
+          _sb.addEventListener('change', (ev) => {
+            const sel = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-rowsel');
+            if (!sel) return;
+            const el2 = _ambGet(E, 'ambient-sched'); if (el2) el2._schedRow = parseInt(sel.value, 10) || 0;
+            _ambRenderScheduler(E);
+          });
+        }
+      } catch (e) {}
       // Bar ruler: a number every 4 bars with a stronger line, explicit per-bar
       // widths so fractional view lengths (fractional chord cycles) stay exact.
       let ticks = '';
@@ -29201,7 +29228,7 @@
           '<select class="ambient-select ambient-sched-areaunit">' + _auOpts + '</select>' +
           '<span class="ambient-sched-unitcue sync">' + _ambFmtBpc(_auN / _auD) + ' bar' + ((_auN / _auD > 1.02) ? 's' : '') + '</span></span>' +
           '<span class="ambient-sched-strip"></span></div>';
-      html += '<div class="ambient-sched-row ambient-sched-ruler"><span class="ambient-sched-ctl"><span class="ambient-sched-lbl">bars →</span></span><span class="ambient-sched-strip">' + ticks + '</span></div>';
+      html += '<div class="ambient-sched-row ambient-sched-ruler"><span class="ambient-sched-ctl"><span class="ambient-sched-lbl">bars →</span>' + '<select class="ambient-select ambient-sched-rowsel" title="Bars per row. A long chain squeezed into one row leaves each chord a few pixels wide; a narrower row wraps instead, so every block gets bigger.">' + [[0,'whole chain'],[2,'2 bars'],[4,'4 bars'],[8,'8 bars'],[16,'16 bars']].map(o => '<option value="' + o[0] + '"' + (o[0] === _rowPref ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>' + '</span><span class="ambient-sched-strip">' + ticks + '</span></div>';
       // SECTION lane (sets of bars): named blocks cycling across the ruler —
       // the arrangement level. With none defined, a slim ＋ affordance seeds
       // A/B (4+4 bars). Tap a block → rename / resize / delete.
@@ -29276,7 +29303,19 @@
         // different walk again.
         const _chain = _bound ? null : _ambProgChainSlots(cfg);
         let cb = 0, ci = 0, cBlocks = '', pBlocks = '', _pRun = null;
-        while (cb < VIEW - 1e-6 && ci < 96) {
+        const cSegs = [], pSegs = [];
+        // A block straddling a row boundary is SPLIT, the way the bar grid splits a
+        // step crossing a bar line — otherwise its tail is lost off the row end.
+        const _emit = (into, at, len, mk) => {
+          let a = at, rem = len, first = true;
+          while (rem > 1e-6) {
+            const row = Math.max(0, Math.min(CHAIN_ROWS - 1, Math.floor(a / VIEW + 1e-9)));
+            const seg = Math.min(rem, (row + 1) * VIEW - a);
+            into.push({ row: row, html: mk(seg / VIEW * 100, first) });
+            a += seg; rem -= seg; first = false;
+          }
+        };
+        while (cb < CHAIN - 1e-6 && ci < 512) {
           const _at = _bound ? _chordAtBar(cb) : null;
           const _cs = _chain ? _chain[ci % _chain.length] : null;
           // Resolve through the engine's path so the lane labels the chord that
@@ -29285,7 +29324,7 @@
           const _slotI = _at ? _at.idx : (_cs ? _cs.idx : (ci % pg.chords.length));
           const ch = _ambProgSoundAt(E, pg, _slotI) || pg.chords[_slotI];
           const clen = Math.max(0.05, _at ? _at.len : lens[_slotI % lens.length]);
-          const cw = Math.min(clen, VIEW - cb) / VIEW * 100;
+          const cw = Math.min(clen, CHAIN - cb) / VIEW * 100;
           const lbl = _ambChordShort(ch);
           // Label only when the block is wide enough to read it (narrow chords
           // keep the boundary edge + a hover title instead of clipped garbage).
@@ -29298,23 +29337,32 @@
           // strip per character on a phone.
           const _narrow = (typeof window !== 'undefined' && window.innerWidth < 560);
           const showLbl = cw >= Math.max(_narrow ? 6 : 3, (lbl || '').length * (_narrow ? 1.6 : 0.9));
-          cBlocks += '<i class="ambient-sched-chblk' + ((_at ? _at.first : (ci % pg.chords.length === 0)) ? ' cyc' : '') + '" style="width:' + cw.toFixed(3) + '%" title="' + esc(lbl) + ' · ' + _ambFmtBpc(clen) + ' bar' + (clen === 1 ? '' : 's') + '">' + (showLbl ? esc(lbl) : '') + '</i>';
+          const _mkCh = (w, first) => '<i class="ambient-sched-chblk' + ((_at ? _at.first : (ci % pg.chords.length === 0)) && first ? ' cyc' : '') + (first ? '' : ' cont') + '" style="width:' + w.toFixed(3) + '%" title="' + esc(lbl) + ' · ' + _ambFmtBpc(clen) + ' bar' + (clen === 1 ? '' : 's') + '">' + (showLbl && first ? esc(lbl) : '') + '</i>';
+          cBlocks += _mkCh(cw, true);
+          _emit(cSegs, cb, Math.min(clen, CHAIN - cb), _mkCh);
           // Accumulate the part runs so they can be named above the chords. A part
           // that repeats gets one block per pass, badged ×n — that is what makes
           // "Verse twice, then Chorus" legible instead of an undifferentiated run.
           if (_cs) {
-            if (_pRun && _pRun.part === _cs.part && _pRun.rep === _cs.rep) _pRun.w += cw;
-            else { if (_pRun) pBlocks += _ambSchedPartBlock(_pRun); _pRun = { part: _cs.part, rep: _cs.rep, plays: _cs.plays, name: _cs.pName, w: cw }; }
+            if (_pRun && _pRun.part === _cs.part && _pRun.rep === _cs.rep) { _pRun.w += cw; _pRun.bars += Math.min(clen, CHAIN - cb); }
+            else { if (_pRun) { pBlocks += _ambSchedPartBlock(_pRun); _ambSchedEmitPart(_emit, pSegs, _pRun); }
+              _pRun = { part: _cs.part, rep: _cs.rep, plays: _cs.plays, name: _cs.pName, w: cw, at: cb, bars: Math.min(clen, CHAIN - cb) }; }
           }
           cb += clen; ci++;
         }
-        if (_pRun) { pBlocks += _ambSchedPartBlock(_pRun); _pRun = null; }
-        if (pBlocks) html += '<div class="ambient-sched-row ambient-sched-partrow">' +
+        if (_pRun) { pBlocks += _ambSchedPartBlock(_pRun); _ambSchedEmitPart(_emit, pSegs, _pRun); _pRun = null; }
+        // data-total + data-srow is the SAME contract the layer strips use, so the
+        // playhead picks the right sub-row with no extra work (_ambSchedCursor).
+        const _wrapRows = (segs) => { if (CHAIN_ROWS <= 1) return null;
+          const rows = new Array(CHAIN_ROWS).fill(''); segs.forEach(g => { rows[g.row] += g.html; }); return rows; };
+        const _pRows = _wrapRows(pSegs), _cRows = _wrapRows(cSegs);
+        const _tot = CHAIN_ROWS > 1 ? (' data-total="' + CHAIN.toFixed(3) + '"') : '';
+        if (pBlocks) html += '<div class="ambient-sched-row ambient-sched-partrow"' + _tot + '>' +
           '<span class="ambient-sched-ctl"><span class="ambient-sched-lbl">parts</span></span>' +
-          '<span class="ambient-sched-strip parts">' + pBlocks + '</span></div>';
-        html += '<div class="ambient-sched-row ambient-sched-chordrow">' +
+          (_pRows ? _pRows.map((h, r) => '<span class="ambient-sched-strip parts" data-srow="' + r + '">' + h + '</span>').join('') : '<span class="ambient-sched-strip parts">' + pBlocks + '</span>') + '</div>';
+        html += '<div class="ambient-sched-row ambient-sched-chordrow"' + _tot + '>' +
           '<span class="ambient-sched-ctl"><span class="ambient-sched-name" title="' + esc(pg.name || 'Progression') + '">' + esc(pg.name || 'Progression') + '</span><span class="ambient-sched-lbl">chords</span></span>' +
-          '<span class="ambient-sched-strip chords">' + cBlocks + '<i class="ambient-sched-ph"></i></span></div>';
+          (_cRows ? _cRows.map((h, r) => '<span class="ambient-sched-strip chords" data-srow="' + r + '">' + h + '<i class="ambient-sched-ph"></i></span>').join('') : '<span class="ambient-sched-strip chords">' + cBlocks + '<i class="ambient-sched-ph"></i></span>') + '</div>';
       }
       layers.forEach(({ name, layer, key }) => {
         // ONE source of truth with the audio gate (_ambUnitGridPos) — a block you
@@ -29340,7 +29388,7 @@
         // rounded up to whole rows, capped at 4 rows (a longer super-cycle shows
         // its first 4 rows; the playhead hides while past the rendered span).
         const walkTotal = tuples ? tuples.reduce((s, tu) => s + Math.max(1e-3, _ambWriteEffBars(cfg, Math.max(1, tu.bars | 0), Math.max(1, tu.times | 0))) * Math.max(1, tu.times | 0), 0) : 0;
-        const totalSpan = (tuples && walkTotal > VIEW) ? Math.min(Math.ceil(walkTotal / VIEW - 1e-6), 4) * VIEW : VIEW;
+        const totalSpan = (tuples && walkTotal > VIEW) ? Math.min(Math.ceil(walkTotal / VIEW - 1e-6), Math.max(4, Math.ceil(CHAIN / VIEW) * 2)) * VIEW : VIEW;
         const truncated = tuples && walkTotal > totalSpan + 1e-6;
         // Segment walk across the whole span (each tuple → 1 fresh + repeats, looping).
         let segs = null;

@@ -3002,6 +3002,21 @@
     }
     /* Live numeric readout for a slider (third grid column). Fixed min-width +
        right align so values don't shift the slider as digits change. */
+    /* Parameter sliders: bigger thumb and a real hit area, and touch-action:none
+       so a slightly-off-horizontal drag is never stolen by the page scroller —
+       that theft is what made them feel unresponsive on a phone. The pointer
+       handler in 17-ambient owns touch/pen gestures; mouse stays native. */
+    .ambient-sl { touch-action: none; height: 28px; }
+    .ambient-sl::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
+      width: 26px; height: 26px; border-radius: 50%; background: #cbb7f5;
+      border: 2px solid #2a2a40; cursor: grab; }
+    .ambient-sl::-moz-range-thumb { width: 24px; height: 24px; border-radius: 50%;
+      background: #cbb7f5; border: 2px solid #2a2a40; cursor: grab; }
+    .ambient-sl:active::-webkit-slider-thumb { background: #e9dcff; cursor: grabbing; }
+    @media (max-width: 560px) {
+      .ambient-sl { height: 34px; }
+      .ambient-sl::-webkit-slider-thumb { width: 30px; height: 30px; }
+    }
     .ambient-sl-v {
       min-width: 2.4em; text-align: right; font-variant-numeric: tabular-nums;
       color: #c7b3f0;

@@ -26322,6 +26322,81 @@
     function _ambTitleAttr(label, hint) {
       return String(_ambParamDesc(label, hint)).replace(/"/g, '&quot;');
     }
+    // ---- TOUCH-FRIENDLY PARAMETER SLIDERS -----------------------------------
+    // Native range inputs are poor on touch: the thumb is a small target, the
+    // browser can steal a slightly-off-horizontal drag for page scrolling (the
+    // "it won't move" feeling — your finger is on it but the gesture went to the
+    // scroller), and tapping the track JUMPS the value, so a mis-tap does not
+    // merely fail, it wrecks the setting.
+    //
+    // For touch and pen we take the gesture over: grab ANYWHERE on the control,
+    // move by DELTA so a touch never jumps the value, and let vertical distance
+    // buy precision (drag away from the control for fine adjustment). A press
+    // without movement opens numeric entry for an exact value.
+    //
+    // The input element is untouched — we set `.value` and dispatch a real
+    // `input`/`change`, so all ~120 sliders and every existing bind, sync and
+    // readout keep working with NO call-site changes. MOUSE keeps native
+    // behaviour, so click-to-position still works on desktop.
+    try {
+      if (typeof window !== 'undefined' && !window.__ambSlDragWired) {
+        window.__ambSlDragWired = true;
+        const D = { el: null, sx: 0, lastX: 0, sy: 0, moved: false, lp: 0, acc: 0 };
+        const clear = () => { if (D.lp) { clearTimeout(D.lp); D.lp = 0; } };
+        const labelOf = (el) => { const row = el.closest && el.closest('.ambient-ctrl');
+          const l = row && row.querySelector('label'); return (l && l.textContent.trim()) || 'value'; };
+        document.addEventListener('pointerdown', (ev) => {
+          if (ev.pointerType === 'mouse') return;                       // desktop keeps native click-to-position
+          const el = ev.target && ev.target.closest && ev.target.closest('input.ambient-sl');
+          if (!el || el.disabled) return;
+          ev.preventDefault();                                          // stop the native jump-to-tap
+          D.el = el; D.sx = ev.clientX; D.lastX = ev.clientX; D.sy = ev.clientY; D.moved = false; D.acc = parseFloat(el.value) || 0;
+          try { el.setPointerCapture(ev.pointerId); } catch (e) {}
+          clear();
+          D.lp = setTimeout(() => {
+            D.lp = 0; if (D.moved || !D.el) return;
+            const el2 = D.el; D.el = null;                              // a press with no drag = type an exact value
+            let v = null; try { v = window.prompt(labelOf(el2), el2.value); } catch (e) {}
+            if (v == null) return;
+            const n = parseFloat(v); if (!isFinite(n)) return;
+            const mn = parseFloat(el2.min) || 0, mx = parseFloat(el2.max);
+            el2.value = String(Math.max(mn, Math.min(isFinite(mx) ? mx : n, n)));
+            el2.dispatchEvent(new Event('input', { bubbles: true }));
+            el2.dispatchEvent(new Event('change', { bubbles: true }));
+          }, 480);
+        }, { passive: false });
+        document.addEventListener('pointermove', (ev) => {
+          const el = D.el; if (!el) return;
+          // Arm on CUMULATIVE travel from the press, not the per-move delta — a slow
+          // drag arrives as many sub-pixel moves that would never cross a threshold.
+          if (!D.moved) {
+            if (Math.hypot(ev.clientX - D.sx, ev.clientY - D.sy) < 3) return;
+            D.moved = true; clear();
+          }
+          const dx = ev.clientX - D.lastX, dy = ev.clientY - D.sy;
+          D.lastX = ev.clientX;
+          const mn = parseFloat(el.min) || 0, mx = isFinite(parseFloat(el.max)) ? parseFloat(el.max) : 100;
+          const step = Math.abs(parseFloat(el.step)) || 1;
+          const w = Math.max(140, el.getBoundingClientRect().width || 140);
+          // Vertical distance divides the travel: at the control it is 1:1 across
+          // its width, 120px away it is a quarter speed. Accumulated INCREMENTALLY
+          // so changing precision mid-drag does not re-scale what you already did.
+          const fine = 1 / (1 + Math.abs(dy) / 45);
+          D.acc += dx * ((mx - mn) / w) * fine;
+          D.acc = Math.max(mn, Math.min(mx, D.acc));
+          const v = Math.max(mn, Math.min(mx, Math.round(D.acc / step) * step));
+          if (String(v) !== el.value) { el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); }
+        }, { passive: true });
+        const end = (ev) => {
+          const el = D.el; clear(); D.el = null;
+          if (!el) return;
+          try { el.releasePointerCapture(ev.pointerId); } catch (e) {}
+          if (D.moved) el.dispatchEvent(new Event('change', { bubbles: true }));   // handlers that commit on change
+        };
+        document.addEventListener('pointerup', end);
+        document.addEventListener('pointercancel', end);
+      }
+    } catch (e) {}
     const _ambSl = (label, id, min, max, val, hint) => {
       const desc = _ambParamDesc(label, hint);
       const dt = desc ? ' title="' + String(desc).replace(/"/g, '&quot;') + '"' : '';

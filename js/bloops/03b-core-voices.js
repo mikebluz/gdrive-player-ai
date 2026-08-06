@@ -58,6 +58,20 @@
       }
       // Phase 2 sub-flag: run the layer strip (vcf/eq/vca/level/tg/gate/pan)
       // and FX inside the core, slot outputs wired straight to the bus.
+      // ONE-TIME SELF-REPAIR. A shipped bug called `bloopsCoreStrips()` as though it
+      // were a getter; it is a SETTER, so the no-argument call wrote '0' and disabled
+      // the core engine on any browser that merely opened the Bloom panel. Clear that
+      // once, restoring the default, and leave a marker so a DELIBERATE later choice
+      // is never touched again. Runs before anything reads the flag.
+      try {
+        if (localStorage.getItem('bloopsCoreStripsRepair') !== '1') {
+          if (localStorage.getItem('bloopsCoreStrips') === '0') {
+            localStorage.removeItem('bloopsCoreStrips');
+            console.info('[bloops-core] core strips were disabled by a known bug — restored to the default (on).');
+          }
+          localStorage.setItem('bloopsCoreStripsRepair', '1');
+        }
+      } catch (e) {}
       function stripsEnabled() {
         try { return enabled() && localStorage.getItem('bloopsCoreStrips') !== '0'; } catch (e) { return false; }
       }
@@ -560,13 +574,20 @@
     })();
     // Live A/B toggles from the console.
     try {
+      // NO ARGUMENT = READ. These were pure setters, so `bloopsCore()` /
+      // `bloopsCoreStrips()` wrote '0' and silently turned the engine off — which is
+      // exactly how a "is the core on?" check disabled it for everyone. Reading is the
+      // obvious thing to want from a name like this, so make it do that instead of
+      // relying on every future caller knowing better.
       window.bloopsCore = (on) => {
+        if (typeof on === 'undefined') return _coreVoices.enabled();
         try { localStorage.setItem('bloopsCoreVoices', on ? '1' : '0'); } catch (e) {}
         if (on) _coreVoices.init();
         else _coreVoices.stopAll();
         console.info('[bloops-core] core voices ' + (on ? 'ON' : 'OFF') + ' (new notes route accordingly)');
       };
       window.bloopsCoreStrips = (on) => {
+        if (typeof on === 'undefined') return _coreVoices.stripsEnabled();
         try { localStorage.setItem('bloopsCoreStrips', on ? '1' : '0'); } catch (e) {}
         if (on) _coreVoices.init();
         console.info('[bloops-core] core STRIPS ' + (on ? 'ON' : 'OFF') + ' (layers rebuild on next play/edit)');

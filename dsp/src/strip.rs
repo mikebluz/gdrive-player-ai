@@ -871,6 +871,13 @@ fn fx_glitch(slot: usize, st: &mut Strip, buf: &mut [[f32; BLOCK]; 2], frames: u
     let size = (st.gl_size.clamp(0.005, 0.9) as f64) * sr as f64;   // samples
     let rate = st.gl_rate.clamp(0.1, 200.0) as f64;
     let span = (GLITCH_LEN - 4) as f64;
+    // SLICE-EDGE FADE. Repeat and Reverse jump the read head back at the end of
+    // every slice, and a jump mid-waveform is a click — measured 21 and 24 clicks
+    // per 3 s with peaks 40x a 220 Hz sine's own slew. Grain never needed this
+    // (its Hann window already lands both ends at zero) and Tape-stop rides its
+    // own speed ramp into silence, so only these two are enveloped. 4 ms, and
+    // never more than a quarter of the slice so a short slice stays audible.
+    let fade = (0.004 * sr as f64).min(size * 0.25).max(1.0);
     for i in 0..frames {
         let w = st.gl_w;
         for ch in 0..2 {
@@ -890,6 +897,8 @@ fn fx_glitch(slot: usize, st: &mut Strip, buf: &mut [[f32; BLOCK]; 2], frames: u
                 if st.gl_base == 0.0 { st.gl_base = wf - size; }
                 let p = st.gl_base + st.gl_pos;
                 for ch in 0..2 { y[ch] = unsafe { gread(&GBUF[slot][ch], p) }; }
+                let env = ((st.gl_pos / fade).min(1.0)).min(((size - st.gl_pos) / fade).max(0.0).min(1.0)) as f32;
+                for ch in 0..2 { y[ch] *= env; }
                 st.gl_pos += 1.0;
             }
             // ---- TAPE STOP: read rate ramps 1 → 0 across `size`, then re-arms.
@@ -911,6 +920,8 @@ fn fx_glitch(slot: usize, st: &mut Strip, buf: &mut [[f32; BLOCK]; 2], frames: u
                 if st.gl_pos >= size { st.gl_pos = 0.0; st.gl_base = wf; }
                 let p = st.gl_base - st.gl_pos;
                 for ch in 0..2 { y[ch] = unsafe { gread(&GBUF[slot][ch], p) }; }
+                let env = ((st.gl_pos / fade).min(1.0)).min(((size - st.gl_pos) / fade).max(0.0).min(1.0)) as f32;
+                for ch in 0..2 { y[ch] *= env; }
                 st.gl_pos += 1.0;
             }
             // ---- GRAIN (default): overlapping windowed grains from scattered
@@ -924,10 +935,18 @@ fn fx_glitch(slot: usize, st: &mut Strip, buf: &mut [[f32; BLOCK]; 2], frames: u
                     let mut idx = usize::MAX;
                     for g in 0..GRAINS { if st.gl_g[g][2] <= 0.0 { idx = g; break; } }
                     if idx != usize::MAX {
-                        let back = size + (grnd(st) as f64) * (st.gl_jit.clamp(0.0, 1.0) as f64) * (span - size);
+                        // The lookback must cover how far this grain will TRAVEL, not
+                        // just its length: a pitched-up grain reads faster than the
+                        // write head advances and would overtake it mid-grain, landing
+                        // on the oldest samples in the ring — a click right where the
+                        // Hann window is at full gain (measured 2 per 3 s at ±24 st).
                         let semis = (grnd(st) * 2.0 - 1.0) * st.gl_pitch;
+                        let inc = (2.0f32).powf(semis / 12.0);
+                        let need = size * (inc.max(1.0) as f64);
+                        let room = (span - need).max(0.0);
+                        let back = need + (grnd(st) as f64) * (st.gl_jit.clamp(0.0, 1.0) as f64) * room;
                         st.gl_g[idx][0] = (wf - back) as f32;
-                        st.gl_g[idx][1] = (2.0f32).powf(semis / 12.0);
+                        st.gl_g[idx][1] = inc;
                         st.gl_g[idx][2] = size as f32;
                         st.gl_g[idx][3] = 0.0;
                     }

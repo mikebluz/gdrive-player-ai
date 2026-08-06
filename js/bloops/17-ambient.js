@@ -27852,6 +27852,7 @@
           const gh = (cls, t) => { const el = det.querySelector(cls); if (el) el.textContent = String(t); };
           const mode = g.mode || 'grain', grain = mode === 'grain';
           gv('.ambient-glitch-mode', mode);
+          gv('.ambient-glitch-mix', g.mix | 0);      gh('.ambient-glitch-mix-v', (g.mix | 0) > 0 ? ((g.mix | 0) + '% wet') : 'dry — raise Mix to hear it');
           gv('.ambient-glitch-size', g.sizeMs | 0);   gh('.ambient-glitch-size-v', (g.sizeMs | 0) + ' ms');
           gv('.ambient-glitch-rate', g.rate | 0);
           gh('.ambient-glitch-rate-v', mode === 'repeat' ? (Math.round(_ambGlitchRate(g)) + ' passes / capture')
@@ -27869,7 +27870,15 @@
           });
           // CORE ONLY: a granulator has no node build, so say so instead of going quiet.
           const note = det.querySelector('.ambient-glitch-note');
-          if (note) { let coreOn = true; try { coreOn = (typeof bloopsCoreStrips !== 'function') || bloopsCoreStrips() !== false; } catch (e) {}
+          if (note) {
+            // READ the state, never call `bloopsCoreStrips()` — it is a pure SETTER
+            // (`localStorage.setItem('bloopsCoreStrips', on ? '1' : '0')`), so calling
+            // it with no argument writes '0' and DISABLES core strips for good. This
+            // ran on every panel sync, so it silently switched the whole engine to the
+            // node fallback: Glitch (core-only) did nothing, and every other layer
+            // quietly moved off the core path.
+            let coreOn = true;
+            try { if (typeof _coreVoices !== 'undefined' && _coreVoices.stripsEnabled) coreOn = !!_coreVoices.stripsEnabled(); } catch (e) {}
             note.style.display = coreOn ? 'none' : ''; } }
         // Pitch-echo control values from lc.pecho.
         const pe = lc.pecho || {};
@@ -27959,7 +27968,15 @@
           '<div class="ambient-ctrl"><label title="Grain density, repeat count or re-arm speed — what it means depends on Type, and the hint says which.">Rate</label><input type="range" class="ambient-glitch-rate" min="1" max="100" step="1"><span class="ambient-hint ambient-glitch-rate-v"></span></div>' +
           '<div class="ambient-ctrl"><label title="How far back through the buffer grains are allowed to reach. Grain only.">Scatter</label><input type="range" class="ambient-glitch-jitter" min="0" max="100" step="1"><span class="ambient-hint ambient-glitch-jitter-v"></span></div>' +
           '<div class="ambient-ctrl"><label title="Per-grain pitch spread in semitones (0 = every grain at pitch). Grain only.">Pitch</label><input type="range" class="ambient-glitch-pitch" min="0" max="24" step="1"><span class="ambient-hint ambient-glitch-pitch-v"></span></div>' +
-          _ambSl('Mix', 'ambient-' + layer + '-fx-glitch-mix', 0, 100, 0, 'dry → wet') +
+          // Mix keeps its ID so the FX registry's `zero` action can still find it,
+          // but it is driven by the CLASS-delegated handler like the rest of this
+          // card. Using _ambSl alone left it inert: an id-based FX slider needs
+          // per-cluster bind + sync in all four clusters, which is exactly the
+          // wiring the class delegation exists to avoid — so Mix stayed 0, the
+          // effect never engaged, and Glitch appeared to do nothing at all.
+          '<div class="ambient-ctrl"><label for="ambient-' + layer + '-fx-glitch-mix">Mix</label>' +
+            '<input type="range" class="ambient-sl ambient-glitch-mix" id="ambient-' + layer + '-fx-glitch-mix" min="0" max="100" step="1" value="0">' +
+            '<span class="ambient-hint ambient-sl-v ambient-glitch-mix-v" id="ambient-' + layer + '-fx-glitch-mix-v">dry</span></div>' +
           '<div class="ambient-hint ambient-glitch-note" style="display:none">Needs the core engine — turn core strips back on to hear this.</div>' +
           _ambFxDk('glitch')) +
         _ambFxItem('pecho', 'Pitch echo',
@@ -36393,7 +36410,8 @@
             const _gWrite = (el) => {
               const t = _gOf(el); if (!t) return;
               const g = t.g, cl = el.classList, v = parseInt(el.value, 10);
-              if (cl.contains('ambient-glitch-mode')) g.mode = String(el.value || 'grain');
+              if (cl.contains('ambient-glitch-mix')) g.mix = Math.max(0, Math.min(100, Number.isFinite(v) ? v : 0));
+              else if (cl.contains('ambient-glitch-mode')) g.mode = String(el.value || 'grain');
               else if (cl.contains('ambient-glitch-size')) g.sizeMs = Math.max(5, Math.min(900, Number.isFinite(v) ? v : 80));
               else if (cl.contains('ambient-glitch-rate')) g.rate = Math.max(1, Math.min(100, Number.isFinite(v) ? v : 25));
               else if (cl.contains('ambient-glitch-jitter')) g.jitter = Math.max(0, Math.min(100, Number.isFinite(v) ? v : 40));
@@ -36404,7 +36422,8 @@
               try { _ambApplyLayerFx(t.key, t.lc); } catch (e) {}
               const it = el.closest('.ambient-fx-item');
               const seth = (cls, txt) => { const h = it && it.querySelector(cls); if (h) h.textContent = String(txt); };
-              if (cl.contains('ambient-glitch-size')) seth('.ambient-glitch-size-v', g.sizeMs + ' ms');
+              if (cl.contains('ambient-glitch-mix')) seth('.ambient-glitch-mix-v', g.mix > 0 ? (g.mix + '% wet') : 'dry — raise Mix to hear it');
+              else if (cl.contains('ambient-glitch-size')) seth('.ambient-glitch-size-v', g.sizeMs + ' ms');
               else if (cl.contains('ambient-glitch-rate')) seth('.ambient-glitch-rate-v',
                 g.mode === 'repeat' ? (Math.round(_ambGlitchRate(g)) + ' passes / capture')
                 : g.mode === 'tapestop' ? (_ambGlitchRate(g).toFixed(1) + ' stops / s')
@@ -36414,7 +36433,7 @@
               else if (cl.contains('ambient-glitch-pitch')) seth('.ambient-glitch-pitch-v', g.pitch > 0 ? '±' + g.pitch + ' st' : 'at pitch');
               if (typeof persistWorkspace === 'function') persistWorkspace();
             };
-            const _gSel = '.ambient-glitch-size, .ambient-glitch-rate, .ambient-glitch-jitter, .ambient-glitch-pitch';
+            const _gSel = '.ambient-glitch-mix, .ambient-glitch-size, .ambient-glitch-rate, .ambient-glitch-jitter, .ambient-glitch-pitch';
             hostEl.addEventListener('input', (ev) => { const el = ev.target && ev.target.closest && ev.target.closest(_gSel); if (el && hostEl.contains(el)) _gWrite(el); });
             // The MODE select re-labels Rate and re-dims the grain-only rows, so it
             // takes the full visibility pass rather than the inline readout update.

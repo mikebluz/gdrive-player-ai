@@ -33577,7 +33577,7 @@
       { const _nb = document.getElementById(tr('ambient-bed-notes')); if (_nb) _nb.textContent = _ambNotesLabel(_ambNotesOf(cfg.bed)); }
       set('ambient-bed-density', cfg.bed.density);
       set('ambient-bed-voiceCap', cfg.bed.voiceCap | 0);
-      { const _fs = G('ambient-bed-followsalt'); if (_fs) _fs.value = cfg.bed.followSalt ? '1' : '0'; }
+      { const _fs = document.getElementById(tr('ambient-bed-followsalt')); if (_fs) _fs.value = cfg.bed.followSalt ? '1' : '0'; }
       set('ambient-bed-chordmode', cfg.bed.chordMode || 'chaos');
       set('ambient-bed-choke', cfg.bed.choke ? '1' : '0');
       // Tone-cycle boxes: fill each step's tone catalog + reflect state (rebuild

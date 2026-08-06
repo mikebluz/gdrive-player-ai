@@ -394,6 +394,19 @@ pub(crate) struct Strip {
     // only valid while the curve's parameters hold still, hence the dirty flag.
     dist_adaa_f: [f32; 2],
     dist_adaa_dirty: bool,
+    // SMOOTHED SHADOWS of the gain-like params a UI toggle can step. Wet only
+    // (main 1→0) and Dry kill (a wet 0.35→1) were applied instantly, so flipping
+    // either mid-note put a step in the signal — heard as a click. These follow
+    // their target with a short per-block glide; the stages read the `_c` value.
+    // `-1.0` means "not primed yet": the first block snaps so engaging a strip is
+    // not a fade-in from silence.
+    main_c: f32,
+    dist_wet_c: f32,
+    cho_wet_c: f32,
+    pha_wet_c: f32,
+    dly_wet_c: f32,
+    ap_wet_c: f32,
+    gl_wet_c: f32,
     fx_order: [u8; 5],
     // ---- GLITCH: one buffer stage, four read strategies (grain / repeat /
     // tape-stop / reverse). Runs AFTER the reorderable five so `fx_order` stays a
@@ -507,6 +520,13 @@ pub(crate) const STRIP0: Strip = Strip {
     dly_spread: 0.0,
     ap_on: false,
     ap_wet: 0.0,
+    main_c: -1.0,
+    dist_wet_c: -1.0,
+    cho_wet_c: -1.0,
+    pha_wet_c: -1.0,
+    dly_wet_c: -1.0,
+    ap_wet_c: -1.0,
+    gl_wet_c: -1.0,
     fx_order: [0, 1, 2, 3, 4],
     gl_on: false,
     gl_mode: 0,
@@ -624,7 +644,7 @@ fn tg_val(st: &Strip, t: f64) -> f32 {
 // symmetric tanh, warm) · 2 = fuzz (pre-gain + asymmetric hard clip + crossover
 // gate sputter) · 3 = wavefold (triangle fold) · 4 = crush (bit-depth quantize).
 fn fx_dist(buf: &mut [[f32; BLOCK]; 2], st: &mut Strip, frames: usize) {
-    let (cd, cw) = xfade(st.dist_wet);
+    let (cd, cw) = xfade(st.dist_wet_c);
     let k = st.dist_k;
     if st.dist_mode == 4 {
         // CRUSH: bit-depth quantize + SAMPLE-RATE reduce (zero-order hold),
@@ -724,7 +744,7 @@ fn fx_dist(buf: &mut [[f32; BLOCK]; 2], st: &mut Strip, frames: usize) {
 
 fn fx_chorus(slot: usize, st: &mut Strip, t: f64, frames: usize) {
     let sr = unsafe { SR };
-    let (cd, cw) = xfade(st.cho_wet);
+    let (cd, cw) = xfade(st.cho_wet_c);
     let dt0 = 0.0035f32;
     let dev = dt0 * st.cho_depth.clamp(0.0, 1.0);
     let fb = 0.15f32;
@@ -764,7 +784,7 @@ fn fx_chorus(slot: usize, st: &mut Strip, t: f64, frames: usize) {
 
 fn fx_phaser(st: &mut Strip, buf: &mut [[f32; BLOCK]; 2], t: f64, frames: usize) {
     let sr = unsafe { SR };
-    let (cd, cw) = xfade(st.pha_wet);
+    let (cd, cw) = xfade(st.pha_wet_c);
     let base = 350.0f32;
     let fmax = base * (st.pha_oct * core::f32::consts::LN_2).exp();
     let mut i0 = 0;
@@ -793,7 +813,7 @@ fn fx_phaser(st: &mut Strip, buf: &mut [[f32; BLOCK]; 2], t: f64, frames: usize)
 
 fn fx_delay(slot: usize, st: &mut Strip, frames: usize) {
     let sr = unsafe { SR };
-    let (cd, cw) = xfade(st.dly_wet);
+    let (cd, cw) = xfade(st.dly_wet_c);
     let fb = st.dly_fb.clamp(0.0, 0.95);
     // TRUE delay on every read; the feedback edge is one quantum old (see
     // the QUANTUM note) — so echo k lands at k·d + (k−1)·128 samples.
@@ -866,7 +886,7 @@ fn grnd(st: &mut Strip) -> f32 {
 // mode change then has history to work with instead of a second of silence).
 fn fx_glitch(slot: usize, st: &mut Strip, buf: &mut [[f32; BLOCK]; 2], frames: usize) {
     let sr = unsafe { SR };
-    let wet = st.gl_wet.clamp(0.0, 1.0);
+    let wet = st.gl_wet_c.clamp(0.0, 1.0);
     let dry = 1.0 - wet;
     let size = (st.gl_size.clamp(0.005, 0.9) as f64) * sr as f64;   // samples
     let rate = st.gl_rate.clamp(0.1, 200.0) as f64;
@@ -975,7 +995,7 @@ fn fx_glitch(slot: usize, st: &mut Strip, buf: &mut [[f32; BLOCK]; 2], frames: u
     }
 }
 fn fx_autopan(st: &Strip, buf: &mut [[f32; BLOCK]; 2], t: f64, frames: usize) {
-    let (cd, cw) = xfade(st.ap_wet);
+    let (cd, cw) = xfade(st.ap_wet_c);
     let mut i0 = 0;
     while i0 < frames {
         let n = (frames - i0).min(CHUNK);
@@ -1122,6 +1142,20 @@ pub(crate) fn process_strips(t_block: f64, frames: usize) {
                 }
                 i0 += n;
             }
+            // Glide the toggle-able gains toward their targets. One step per BLOCK
+            // (2.7 ms at 48 k) with a 0.35 coefficient ≈ a 10 ms glide — inaudible
+            // as a change, but enough that Wet only / Dry kill stop clicking.
+            {
+                let gl = |cur: &mut f32, tgt: f32| {
+                    if *cur < 0.0 { *cur = tgt; } else { *cur += (tgt - *cur) * 0.08; }
+                };
+                gl(&mut st.dist_wet_c, st.dist_wet);
+                gl(&mut st.cho_wet_c, st.cho_wet);
+                gl(&mut st.pha_wet_c, st.pha_wet);
+                gl(&mut st.dly_wet_c, st.dly_wet);
+                gl(&mut st.ap_wet_c, st.ap_wet);
+                gl(&mut st.gl_wet_c, st.gl_wet);
+            }
             // ---- FX chain, processed in the strip's configurable fx_order
             // (default [0,1,2,3,4] = dist → chorus → phaser → delay → autopan,
             // byte-identical to the old fixed chain). Order lets a layer put,
@@ -1144,10 +1178,15 @@ pub(crate) fn process_strips(t_block: f64, frames: usize) {
             // MAIN/dry output gain (layer "Wet only"): scales the post-FX direct
             // output. The reverb SEND was tapped pre-FX (above), so it survives a
             // 0 here — muting the dry while the wash rings. 1.0 = skipped/neutral.
-            if st.main != 1.0 {
-                let g = st.main.clamp(0.0, 1.0);
-                for ch in 0..2 {
-                    for i in 0..frames {
+            if st.main_c < 0.0 { st.main_c = st.main; }
+            if st.main != 1.0 || st.main_c < 0.9995 {
+                // PER-SAMPLE glide (~25 ms). A per-block glide leaves a staircase
+                // whose first step carries most of the change — audible as a tick,
+                // which is what Wet only was doing.
+                for i in 0..frames {
+                    st.main_c += (st.main - st.main_c) * 0.0008;
+                    let g = st.main_c.clamp(0.0, 1.0);
+                    for ch in 0..2 {
                         OUT[slot][ch][i] *= g;
                     }
                 }
@@ -1369,6 +1408,7 @@ pub extern "C" fn strip_dist(slot: u32, on: u32, amount: f32, wet: f32, mode: u3
     unsafe {
         let st = &mut STRIPS[(slot as usize) % SLOTS];
         let was_on = st.dist_on;
+        if on != 0 && !st.dist_on { if st.dist_wet_c >= 0.0 { st.dist_wet_c = 0.0; } }   // fade in mid-playback; snap at render start
         st.dist_on = on != 0;
         if st.dist_on && !was_on {
             st.dist_dc_s = [[0.0; 2]; 2];   // stale DC estimate would step on re-engage
@@ -1427,6 +1467,7 @@ pub extern "C" fn strip_chorus(slot: u32, on: u32, wet: f32, depth: f32, rate: f
             }
             st.cho_w = 0;
         }
+        if on != 0 && !st.cho_on { if st.cho_wet_c >= 0.0 { st.cho_wet_c = 0.0; } }   // fade in mid-playback; snap at render start
         st.cho_on = on != 0;
         st.cho_wet = wet.clamp(0.0, 1.0);
         st.cho_depth = depth.clamp(0.0, 1.0);
@@ -1441,6 +1482,7 @@ pub extern "C" fn strip_phaser(slot: u32, on: u32, wet: f32, octaves: f32, rate:
         if on != 0 && !st.pha_on {
             st.pha_s = [[[0.0; 2]; 10]; 2];
         }
+        if on != 0 && !st.pha_on { if st.pha_wet_c >= 0.0 { st.pha_wet_c = 0.0; } }   // fade in mid-playback; snap at render start
         st.pha_on = on != 0;
         st.pha_wet = wet.clamp(0.0, 1.0);
         st.pha_oct = octaves.clamp(0.0, 8.0);
@@ -1469,6 +1511,7 @@ pub extern "C" fn strip_delay(slot: u32, on: u32, ping: u32, wet: f32, time_s: f
             }
             st.dly_w = 0;
         }
+        if on != 0 && !st.dly_on { if st.dly_wet_c >= 0.0 { st.dly_wet_c = 0.0; } }   // fade in mid-playback; snap at render start
         st.dly_on = on != 0;
         st.dly_ping = want_ping;
         st.dly_wet = wet.clamp(0.0, 1.0);
@@ -1490,6 +1533,7 @@ pub extern "C" fn strip_mainout(slot: u32, gain: f32) {
 pub extern "C" fn strip_autopan(slot: u32, on: u32, wet: f32, depth: f32, rate: f32) {
     unsafe {
         let st = &mut STRIPS[(slot as usize) % SLOTS];
+        if on != 0 && !st.ap_on { if st.ap_wet_c >= 0.0 { st.ap_wet_c = 0.0; } }   // fade in mid-playback; snap at render start
         st.ap_on = on != 0;
         st.ap_wet = wet.clamp(0.0, 1.0);
         st.ap_depth = depth.clamp(0.0, 1.0);

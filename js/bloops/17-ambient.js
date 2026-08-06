@@ -29119,7 +29119,11 @@
       if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return null;
       const parts = (Array.isArray(p.parts) && p.parts.length > 1) ? p.parts : null;
       const out = [];
-      if (!parts) { for (let i = 0; i < p.chords.length; i++) out.push({ idx: i, part: -1, pName: '', pFirst: i === 0, rep: 0, plays: 1 }); return out; }
+      if (!parts) {
+        const solo = (Array.isArray(p.parts) && p.parts.length === 1 && typeof p.parts[0].name === 'string') ? p.parts[0].name.trim() : '';
+        for (let i = 0; i < p.chords.length; i++) out.push({ idx: i, part: solo ? 0 : -1, pName: solo, pFirst: i === 0, rep: 0, plays: 1 });
+        return out;
+      }
       let from = 0;
       parts.forEach((pt, pi) => {
         const n = Math.max(1, pt.len | 0), plays = Math.max(1, (pt.plays | 0) || 1);
@@ -29408,7 +29412,7 @@
               esc(String(ps.name).slice(0, 10)) + (ps.plays > 1 ? ('<i>' + (ps.rep + 1) + '/' + ps.plays + '</i>') : '') + '</button>').join('') +
             '</span></div>';
         }
-        if (pSegs.length) html += '<div class="ambient-sched-row ambient-sched-partrow"' + _tot + '>' +
+        if (pSegs.length && pBlocks.replace(/<[^>]*>/g, '').trim()) html += '<div class="ambient-sched-row ambient-sched-partrow"' + _tot + '>' +
           '<span class="ambient-sched-ctl"><span class="ambient-sched-lbl">parts</span></span>' +
           (_pRows ? _pRows.map((h, r) => '<span class="ambient-sched-strip parts" data-srow="' + r + '">' + h + '</span>').join('') : '<span class="ambient-sched-strip parts">' + pBlocks + '</span>') + '</div>';
         html += '<div class="ambient-sched-row ambient-sched-chordrow"' + _tot + '>' +

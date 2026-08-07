@@ -113,11 +113,28 @@ done
 # Upload via SFTP using lftp
 # -----------------------------------------------
 echo "🔌 Testing connection to $FTP_HOST on port 21..."
-if ! nc -zw5 "$FTP_HOST" 21 2>&1; then
+# A TCP-CONNECT TEST IS NOT ENOUGH. GoDaddy's brute-force protection blocks an IP
+# by accepting the connection and then RESETTING it before the FTP banner, so
+# `nc -z` reports success and every later lftp command dies with the useless
+# "max-retries exceeded". Read the 220 banner instead — that is the difference
+# between "the port is open" and "the FTP service will talk to me".
+if ! nc -zw5 "$FTP_HOST" 21 >/dev/null 2>&1; then
   echo "❌ Cannot reach $FTP_HOST on port 21 (FTP). Check the IP and that FTP is enabled."
   exit 1
 fi
-echo "✅ Port 21 reachable."
+FTP_BANNER=$(printf 'QUIT\r\n' | nc -w 8 "$FTP_HOST" 21 2>/dev/null | head -1)
+if [[ -z "$FTP_BANNER" ]]; then
+  echo "❌ Port 21 accepts the connection but the FTP service sent no banner —"
+  echo "   the server reset us. That is almost always an IP BLOCK, not a network"
+  echo "   fault (repeated FTP logins trip GoDaddy's brute-force protection)."
+  echo "   • the site itself is usually fine — check http://$FTP_HOST/ in a browser"
+  echo "   • the block is normally temporary: wait ~15-60 min and retry"
+  echo "   • to clear it now, unblock this IP in cPanel (Security → IP Blocker)"
+  MY_IP=$(curl -s --max-time 6 https://api.ipify.org 2>/dev/null)
+  [[ -n "$MY_IP" ]] && echo "   • this machine's public IP: $MY_IP"
+  exit 1
+fi
+echo "✅ FTP responding: $FTP_BANNER"
 
 _phase "staging + stamping"
 # DIAGNOSTIC: DEPLOY_DRYRUN=1 ./deploy.sh — ask the mirror what it WOULD transfer

@@ -3853,6 +3853,8 @@
     .ambient-partsched-modal .ps-blk { height: 18px; line-height: 18px; font-size: 0.66rem; }
     .ambient-sched-lbl .secmore { font-style: normal; font-weight: 600; color: #f6c177;
       background: rgba(246,193,119,0.12); border-radius: 3px; padding: 0 3px; margin-left: 3px; }
+    .ambient-partsched-modal .ps-cut { color: #f6c177; font-size: 0.64rem; }
+    .ambient-sched-secblk .seccut { font-style: normal; color: #f6c177; margin-left: 3px; }
     .ambient-partsched-modal .ps-secthdr { font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase;
       color: #8a90a6; margin: 10px 0 4px; }
     .ambient-partsched-modal .ps-secthdr:first-child { margin-top: 0; }

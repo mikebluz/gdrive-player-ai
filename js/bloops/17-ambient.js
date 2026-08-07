@@ -2847,8 +2847,9 @@
               // below is its resolved mirror, so every existing reader is unchanged.
               const _clampU = (v, d) => Math.max(1, Math.min(64, (v | 0) || d));
               if (x.unit && typeof x.unit === 'object' && Number.isFinite(x.unit.num)) {
+                const _r = x.unit.ref;
                 s.unit = { num: _clampU(x.unit.num, 1), den: _clampU(x.unit.den, 1),
-                           ref: (x.unit.ref === 'bar') ? 'bar' : 'area' };
+                           ref: (_r === 'bar' || _r === 'changes') ? _r : 'area' };
               } else {
                 // v7 MIGRATION — a section authored in raw bars becomes the exact
                 // ratio of the CURRENT area unit that reproduces its length. So the
@@ -2867,7 +2868,7 @@
                 // a different one — and the attempt simply re-runs, unchanged, on
                 // every normalize.
               }
-              if (s.unit) s.bars = _ambSectionBars(cfg, s);
+              if (s.unit) s.bars = _ambSectionBars(cfg, s, i);
               // PART BINDING (additive): an index into cfg.prog.parts — while this
               // section runs, the progression plays only that part, looping, anchored
               // at the section's start. ABSENT = the whole progression (today's
@@ -4473,13 +4474,51 @@
       const au = cfg && cfg.areaUnit;
       return Math.max(1, (au && au.num | 0) || 1) / Math.max(1, (au && au.den | 0) || 1);
     }
-    function _ambSectionBars(cfg, s) {
+    // One pass of the CHANGES a section is bound to, in bars — the base for
+    // ref:'changes'. Null when the section names none (or names one that editing
+    // the chords has since removed), which is why every caller falls back.
+    function _ambSectionChangesBars(cfg, secIdx) {
+      const part = _ambSectionPart(cfg, secIdx);
+      if (!part) return 0;
+      const p = cfg && cfg.prog, bpc = Math.max(0.01, (cfg && cfg.barsPerChord) || 1);
+      if (!p || !Array.isArray(p.chords)) return 0;
+      let t = 0;
+      for (let i = 0; i < part.len; i++) {
+        const c = p.chords[part.from + i];
+        t += (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc;
+      }
+      return t > 0 ? t : 0;
+    }
+    function _ambSectionBars(cfg, s, secIdx) {
       const u = s && s.unit;
       if (u && Number.isFinite(u.num) && Number.isFinite(u.den)) {
         const r = Math.max(1, u.num | 0) / Math.max(1, u.den | 0);
-        return Math.max(0.25, Math.min(256, r * ((u.ref === 'bar') ? 1 : _ambAreaUnitBars(cfg))));
+        let base;
+        if (u.ref === 'bar') base = 1;
+        else if (u.ref === 'changes') {
+          // A section measured in CHANGES can never cut them mid-phrase. If the
+          // binding is gone (or the index no longer resolves), fall back to the
+          // Area unit rather than to zero — the section keeps a sane length and
+          // the ⚠ advisory explains it.
+          base = (Number.isFinite(secIdx) ? _ambSectionChangesBars(cfg, secIdx) : 0) || _ambAreaUnitBars(cfg);
+        } else base = _ambAreaUnitBars(cfg);
+        return Math.max(0.25, Math.min(256, r * base));
       }
       return Math.max(0.25, Math.min(64, Number(s && s.bars) || 4));
+    }
+    // Does this section's length divide its bound changes evenly? Returns null
+    // when the question does not apply (unbound, or already measured in changes).
+    // A section SHORTER than its changes cuts them; LONGER leaves a partial pass.
+    function _ambSectionCutInfo(cfg, s, secIdx) {
+      if (!s || !Array.isArray(cfg && cfg.sections)) return null;
+      if (s.unit && s.unit.ref === 'changes') return null;
+      const cb = _ambSectionChangesBars(cfg, secIdx);
+      if (!(cb > 0)) return null;
+      const sb = _ambSectionBars(cfg, s, secIdx);
+      const r = sb / cb;
+      if (Math.abs(r - Math.round(r)) < 1e-6) return null;      // divides cleanly
+      const part = _ambSectionPart(cfg, secIdx);
+      return { secBars: sb, cycBars: cb, name: (part && part.name) || 'its changes' };
     }
     // Express `bars` as an EXACT small-integer ratio of `base`, or null when it
     // cannot be — a hand-typed 3.7 bars has no clean unit ratio and stays absolute
@@ -4496,11 +4535,17 @@
     // "2 × Area unit (2 bars)" / "3 bars (fixed)" — the label has to name BOTH the
     // ratio and what it currently resolves to, or a unit change looks like the
     // length changed for no reason.
-    function _ambSecLenLabel(cfg, s) {
-      const u = s && s.unit, b = _ambFmtBpc(_ambSectionBars(cfg, s));
-      if (!u || u.ref === 'bar') return b + ' bar' + (_ambSectionBars(cfg, s) === 1 ? '' : 's') + ' fixed';
+    function _ambSecLenLabel(cfg, s, secIdx) {
+      const u = s && s.unit, bars = _ambSectionBars(cfg, s, secIdx), b = _ambFmtBpc(bars);
+      const plural = ' bar' + (bars === 1 ? '' : 's');
+      if (!u || u.ref === 'bar') return b + plural + ' fixed';
       const n = Math.max(1, u.num | 0), d = Math.max(1, u.den | 0);
-      return (d === 1 ? n : n + '/' + d) + '× unit · ' + b + ' bar' + (_ambSectionBars(cfg, s) === 1 ? '' : 's');
+      const mult = (d === 1 ? String(n) : n + '/' + d);
+      if (u.ref === 'changes') {
+        const part = Number.isFinite(secIdx) ? _ambSectionPart(cfg, secIdx) : null;
+        return mult + '× ' + (part ? part.name : 'changes') + ' · ' + b + plural;
+      }
+      return mult + '× unit · ' + b + plural;
     }
     function _ambSectionCycleBars(cfg) {
       const a = cfg && cfg.sections;
@@ -27216,18 +27261,21 @@
       const secs = Array.isArray(cfg.sections) ? cfg.sections : null;
       let secBody = '';
       if (secs && secs.length) {
-        const secTotal = secs.reduce((a, s) => a + _ambSectionBars(cfg, s), 0);
-        const sStrip = secs.map(s => {
-          const w = (_ambSectionBars(cfg, s) / Math.max(0.001, secTotal)) * 100;
+        const secTotal = secs.reduce((a, s, i) => a + _ambSectionBars(cfg, s, i), 0);
+        const sStrip = secs.map((s, i) => {
+          const w = (_ambSectionBars(cfg, s, i) / Math.max(0.001, secTotal)) * 100;
           return '<i class="ambient-sched-partblk ps-blk ps-sec" style="width:' + w.toFixed(3) + '%" title="' +
-            esc(s.name) + ' · ' + esc(_ambSecLenLabel(cfg, s)) + '"><span class="pb-nm">' + esc(s.name) + '</span></i>';
+            esc(s.name) + ' · ' + esc(_ambSecLenLabel(cfg, s, i)) + '"><span class="pb-nm">' + esc(s.name) + '</span></i>';
         }).join('');
         const sRows = secs.map((s, i) => {
-          const sp = _ambSectionPart(cfg, i), sk = (s.key | 0);
+          const sp = _ambSectionPart(cfg, i), sk = (s.key | 0), _cut = _ambSectionCutInfo(cfg, s, i);
           return '<div class="ps-row"><div class="ps-head"><b class="ps-nm">' + esc(s.name) + '</b>' +
-            '<span class="ps-x">' + esc(_ambSecLenLabel(cfg, s)) + '</span>' +
+            '<span class="ps-x">' + esc(_ambSecLenLabel(cfg, s, i)) + '</span>' +
             (sk ? '<span class="ps-x">⇅ ' + (sk > 0 ? '+' : '') + sk + ' st</span>' : '') +
-            (sp ? '<span class="ps-x">plays “' + esc(sp.name) + '”</span>' : '') + '</div></div>';
+            (sp ? '<span class="ps-x">plays “' + esc(sp.name) + '”</span>' : '') +
+            (_cut ? '<span class="ps-cut" title="' + esc(_cut.name) + ' is ' + _ambFmtBpc(_cut.cycBars) +
+              ' bars; this section is ' + _ambFmtBpc(_cut.secBars) + ' — it does not divide evenly, so a pass is cut at the boundary.">⚠ cuts ' +
+              esc(_cut.name) + '</span>' : '') + '</div></div>';
         }).join('');
         secBody = '<div class="ps-secthdr">Sections — the bar timeline</div>' +
           '<div class="ps-map"><span class="ambient-sched-strip parts">' + sStrip + '</span></div>' +
@@ -29539,13 +29587,17 @@
             // harmony tint, so the arrangement reads at a glance.
             const _sp = _ambSectionPart(cfg, si % secs.length);
             const _sk = (sc.key | 0);
+            const _scut = _ambSectionCutInfo(cfg, sc, si % secs.length);
             const _skTxt = _sk ? ((_sk > 0 ? '+' : '') + _sk) : '';
             sBlocks += '<i class="ambient-sched-secblk' + (si % secs.length === 0 ? ' cyc' : '') + ((_sp || _sk) ? ' harm' : '') +
-              '" data-si="' + (si % secs.length) + '" style="width:' + sw.toFixed(3) + '%" title="' + esc(sc.name) + ' · ' + _ambSecLenLabel(cfg, sc) +
+              '" data-si="' + (si % secs.length) + '" style="width:' + sw.toFixed(3) + '%" title="' + esc(sc.name) + ' · ' + _ambSecLenLabel(cfg, sc, si % secs.length) +
               (_sp ? ' · plays “' + esc(_sp.name) + '” (' + _sp.len + ' chord' + (_sp.len === 1 ? '' : 's') + ')' : '') +
               (_sk ? ' · key ' + _skTxt + ' semitone' + (Math.abs(_sk) === 1 ? '' : 's') : '') +
+              (_scut ? ' · ⚠ ' + esc(_scut.name) + ' is ' + _ambFmtBpc(_scut.cycBars) + ' bars and this section is ' +
+                _ambFmtBpc(_scut.secBars) + ', so a pass is cut at the boundary' : '') +
               ' — tap to edit">' + esc(sc.name) + (_sp ? '<b class="secpart">♭' + esc(_sp.name) + '</b>' : '') +
-              (_sk ? '<b class="seckey">⇅' + _skTxt + '</b>' : '') + '</i>';
+              (_sk ? '<b class="seckey">⇅' + _skTxt + '</b>' : '') +
+              (_scut ? '<b class="seccut">⚠</b>' : '') + '</i>';
             _secSeen.add(si % secs.length);
             sb += slen; si++;
           }
@@ -29947,23 +29999,36 @@
               // unit boundary by construction and the arrangement rescales with the
               // Area Unit. The absolute-bars escape stays for a deliberate
               // off-grid length (it pins ref:'bar' and will NOT rescale).
-              { label: '⇔ Length (' + _ambSecLenLabel(c2, sc) + ')', fn: () => {
+              { label: '⇔ Length (' + _ambSecLenLabel(c2, sc, si) + ')', fn: () => {
                 const auB = _ambAreaUnitBars(c2);
                 const cur = sc.unit || {};
-                const opts = [1, 2, 3, 4, 6, 8, 12, 16].map(n => ({
-                  label: (cur.ref !== 'bar' && (cur.num | 0) === n && (cur.den | 0) === 1 ? '✓ ' : '') +
+                const opts = [];
+                // BOUND TO CHANGES → offer multiples of them FIRST. A section
+                // measured this way can never cut its changes mid-phrase, which
+                // is the whole point of binding one.
+                const _cb = _ambSectionChangesBars(c2, si);
+                const _cp = _ambSectionPart(c2, si);
+                if (_cb > 0 && _cp) {
+                  [1, 2, 4].forEach(n => opts.push({
+                    label: (cur.ref === 'changes' && (cur.num | 0) === n && (cur.den | 0) === 1 ? '✓ ' : '') +
+                      n + ' × ' + _cp.name + '  (' + _ambFmtBpc(n * _cb) + ' bar' + (n * _cb === 1 ? '' : 's') + ')',
+                    fn: () => { sc.unit = { num: n, den: 1, ref: 'changes' }; sc.bars = _ambSectionBars(c2, sc, si); done(); }
+                  }));
+                }
+                [1, 2, 3, 4, 6, 8, 12, 16].forEach(n => opts.push({
+                  label: (cur.ref === 'area' && (cur.num | 0) === n && (cur.den | 0) === 1 ? '✓ ' : '') +
                     n + ' × Area unit  (' + _ambFmtBpc(n * auB) + ' bar' + (n * auB === 1 ? '' : 's') + ')',
-                  fn: () => { sc.unit = { num: n, den: 1, ref: 'area' }; sc.bars = _ambSectionBars(c2, sc); done(); }
+                  fn: () => { sc.unit = { num: n, den: 1, ref: 'area' }; sc.bars = _ambSectionBars(c2, sc, si); done(); }
                 }));
-                opts.push({ label: (cur.ref !== 'bar' && (cur.den | 0) === 2 ? '✓ ' : '') + '½ × Area unit  (' + _ambFmtBpc(auB / 2) + ' bar' + (auB / 2 === 1 ? '' : 's') + ')',
-                  fn: () => { sc.unit = { num: 1, den: 2, ref: 'area' }; sc.bars = _ambSectionBars(c2, sc); done(); } });
+                opts.push({ label: (cur.ref === 'area' && (cur.den | 0) === 2 ? '✓ ' : '') + '½ × Area unit  (' + _ambFmtBpc(auB / 2) + ' bar' + (auB / 2 === 1 ? '' : 's') + ')',
+                  fn: () => { sc.unit = { num: 1, den: 2, ref: 'area' }; sc.bars = _ambSectionBars(c2, sc, si); done(); } });
                 opts.push({ label: (cur.ref === 'bar' ? '✓ ' : '') + '⇢ Absolute bars…  (does not rescale)', fn: () => {
                   const b2 = prompt('Section length in bars (pins it to an absolute length — it will NOT follow the Area Unit):', String(_ambFmtBpc(sc.bars)));
                   const v2 = parseFloat(b2);
                   if (!Number.isFinite(v2) || v2 <= 0) return;
                   const r = _ambRatioOf(Math.max(0.25, Math.min(64, v2)), 1);
                   sc.unit = r ? { num: r.num, den: r.den, ref: 'bar' } : { num: 4, den: 1, ref: 'bar' };
-                  sc.bars = _ambSectionBars(c2, sc); done();
+                  sc.bars = _ambSectionBars(c2, sc, si); done();
                 } });
                 // showCtxMenu is (x, y, actions) — and anchor on the BLOCK's own
                 // rect, not window.__ambMenuAnchor (that is stashed by the layer ⋯
@@ -30029,7 +30094,18 @@
                 items.push({ label: (cur < 0 ? '● ' : '○ ') + 'Whole progression', fn: () => { delete sc.part; done(); } });
                 _parts.forEach((p2, pi) => {
                   items.push({ label: (cur === pi ? '● ' : '○ ') + (p2.name || ('Changes ' + (pi + 1))) + ' (' + Math.max(1, p2.len | 0) + ' chord' + ((p2.len | 0) === 1 ? '' : 's') + ')',
-                    fn: () => { sc.part = pi; done(); } });
+                    fn: () => {
+                      sc.part = pi;
+                      // One-tap fit: a section that names changes almost always
+                      // wants to be a whole number of them, and doing it here
+                      // saves a second trip through the Length menu.
+                      const _cb2 = _ambSectionChangesBars(c2, si);
+                      if (_cb2 > 0 && _ambSectionCutInfo(c2, sc, si)) {
+                        sc.unit = { num: 1, den: 1, ref: 'changes' };
+                        sc.bars = _ambSectionBars(c2, sc, si);
+                      }
+                      done();
+                    } });
                 });
               }
             }

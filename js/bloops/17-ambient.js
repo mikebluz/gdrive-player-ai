@@ -30586,7 +30586,7 @@
       const pctMode = g.pushMode === 'pct';
       const macro = (id, label, val, hint) =>
         '<div class="ambient-groove-macro"><label>' + label + '</label>' +
-          '<input type="range" class="ambient-groove-mac" data-gm="' + id + '" min="0" max="100" step="1" value="' + (val | 0) + '">' +
+          '<input type="range" class="ambient-sl ambient-groove-mac" data-gm="' + id + '" min="0" max="100" step="1" value="' + (val | 0) + '">' +
           '<span class="ambient-groove-val" data-gv="' + id + '">' + (val | 0) + '</span>' +
           '<span class="ambient-sched-lbl">' + hint + '</span></div>';
       // Preset picker — a named feel (sets the macros + per-type Push).
@@ -30626,7 +30626,7 @@
         const pv = Number.isFinite(layer.push) ? Math.max(-pmax, Math.min(pmax, layer.push)) : 0;
         html += '<div class="ambient-groove-row" data-gkey="' + esc(key) + '">' +
           '<span class="ambient-groove-name" title="' + esc(name) + '">' + esc(name) + '</span>' +
-          '<input type="range" class="ambient-groove-pushsl" min="' + (-pmax) + '" max="' + pmax + '" step="1" value="' + pv + '">' +
+          '<input type="range" class="ambient-sl ambient-groove-pushsl" min="' + (-pmax) + '" max="' + pmax + '" step="1" value="' + pv + '">' +
           '<span class="ambient-groove-pv">' + (pv > 0 ? '+' : '') + pv + (pctMode ? '%' : 'ms') + '</span></div>';
       });
       html += '</div>';

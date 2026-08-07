@@ -5,6 +5,15 @@
 //   npm run samples -- ~/Sounds/Kit     # or pass it
 //   npm run samples -- ~/Sounds --prune # also remove samples no longer in the source
 //   npm run samples -- ~/Sounds --dry   # show what would happen, touch nothing
+//   npm run samples -- samples/sounds   # IN PLACE: source already inside samples/
+//
+// IN-PLACE MODE. If the source folder is INSIDE ./samples (dropping packs into
+// samples/sounds/, say), nothing is copied — the audio is already where it needs
+// to be, so it is registered at its existing path and your folder structure is
+// preserved. Copying would otherwise write a second copy and ship every file
+// twice. The one thing you lose is the filename slugging, so in-place warns
+// about characters a URL cannot carry (`#`, `?`, `%`, `\\`) rather than
+// silently producing entries that 404.
 //
 // Copies every audio file it finds (at any depth) into ./samples, preserving the
 // folder structure, and regenerates samples/manifest.json. deploy.sh already
@@ -127,6 +136,20 @@ const prettyName = (rel) => {
   console.log(c.dim(`  source: ${src}`));
   console.log(c.dim(`  dest:   ${DEST}${DRY ? c.y('   (dry run — nothing will be written)') : ''}\n`));
 
+  // IN-PLACE MODE. When the source folder lives INSIDE samples/ — dropping packs
+  // straight into samples/sounds/ — copying would write a second copy at
+  // samples/<slug>/… and ship every file twice. There is nothing to copy: the
+  // audio is already where it needs to be. So register it where it lies and keep
+  // the folder structure the user built, deriving ids from the path relative to
+  // samples/ (ids must describe where the file actually is, since a project
+  // stores `sample:<id>`).
+  const _rel = path.relative(DEST, src);
+  const INPLACE = _rel === '' || (!_rel.startsWith('..') && !path.isAbsolute(_rel));
+  if (INPLACE) {
+    console.log(c.dim('  mode:   in place — the source is inside samples/, so nothing is copied;'));
+    console.log(c.dim('          files are registered where they already are, structure preserved.\n'));
+  }
+
   const found = walk(src, src);
   const unsupported = found.filter(f => f.unsupported);
   const files = found.filter(f => !f.unsupported).sort((a, b) => a.rel.localeCompare(b.rel));
@@ -142,12 +165,17 @@ const prettyName = (rel) => {
   const entries = [], seen = new Map();
   let added = 0, updated = 0, unchanged = 0, bytes = 0, guessed = 0;
   for (const f of files) {
+    // In place: the path is what it already is under samples/ (NOT slugged — the
+    // file is not being renamed, so the manifest must point at the real name).
+    // Copy mode: the slug IS the destination filename, so id and path agree.
+    const _inRel = INPLACE ? path.join(_rel, f.rel).split(path.sep).join('/') : null;
     const relSlug = slugPath(f.rel);
-    let id = relSlug.replace(/\.[^.]+$/, '');
+    let id = INPLACE ? slugPath(path.join(_rel, f.rel)).replace(/\.[^.]+$/, '')
+                     : relSlug.replace(/\.[^.]+$/, '');
     if (seen.has(id)) { let n = 2; while (seen.has(id + '-' + n)) n++; id = id + '-' + n; }
     seen.set(id, f.rel);
 
-    const destRel = id + path.extname(f.rel).toLowerCase();
+    const destRel = INPLACE ? _inRel : (id + path.extname(f.rel).toLowerCase());
     const destAbs = path.join(DEST, destRel);
     // Re-copy only what actually changed, so re-running on a big library is
     // cheap. Size alone is NOT enough: an audio file edited in place — gain
@@ -158,6 +186,8 @@ const prettyName = (rel) => {
     // newer → hash both and copy only if the bytes really differ, which keeps a
     // merely-touched file from being recopied.
     let need = true, existed = false;
+    if (INPLACE) { unchanged++; bytes += f.size; }
+    else {
     try {
       const st = fs.statSync(destAbs);
       existed = true;
@@ -174,10 +204,25 @@ const prettyName = (rel) => {
       else { added++; changedList.push(['+', destRel]); }
     } else unchanged++;
     bytes += f.size;
+    }
 
     const rn = rootNoteOf(f.rel);
     if (!rn) guessed++;
     entries.push({ id, file: destRel, name: prettyName(f.rel), rootNote: rn || 'C4' });
+  }
+
+  // IN-PLACE ONLY: copy mode SLUGS every filename, which is what quietly removes
+  // characters a URL cannot carry (`#` is the fragment delimiter — a file called
+  // `kick#2.wav` is fetched as `kick` and 404s). In place we keep the real name,
+  // so that safety net is gone and the tool has to say so instead.
+  if (INPLACE) {
+    const hostile = entries.filter(e => /[#?%\\]/.test(e.file));
+    if (hostile.length) {
+      console.log(c.y(`${hostile.length} file(s) contain characters a URL cannot carry (# ? % \\):`));
+      hostile.slice(0, 8).forEach(e => console.log(c.dim('    ' + e.file)));
+      console.log(c.dim('  These will 404 in the app. Rename them in samples/ and re-run —'));
+      console.log(c.dim('  in-place mode keeps your filenames, so it cannot fix this for you.\n'));
+    }
   }
 
   // Anything in samples/ that this import did not produce.

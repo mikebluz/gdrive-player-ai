@@ -128,8 +128,12 @@ if [[ -z "$FTP_BANNER" ]]; then
   echo "   the server reset us. That is almost always an IP BLOCK, not a network"
   echo "   fault (repeated FTP logins trip GoDaddy's brute-force protection)."
   echo "   • the site itself is usually fine — check http://$FTP_HOST/ in a browser"
-  echo "   • the block is normally temporary: wait ~15-60 min and retry"
-  echo "   • to clear it now, unblock this IP in cPanel (Security → IP Blocker)"
+  echo "   • the block is IP-LEVEL, not FTP-specific: ports 990/2222/21098 reset too,"
+  echo "     while http:// still answers 200 — so switching ports will not help"
+  echo "   • FASTEST WAY OUT: deploy from a different IP — tether to your phone's"
+  echo "     hotspot and re-run. A new public IP is not blocked."
+  echo "   • otherwise it is normally temporary: wait ~15-60 min and retry"
+  echo "   • or clear it now: cPanel → Security → IP Blocker (remove this IP)"
   MY_IP=$(curl -s --max-time 6 https://api.ipify.org 2>/dev/null)
   [[ -n "$MY_IP" ]] && echo "   • this machine's public IP: $MY_IP"
   exit 1

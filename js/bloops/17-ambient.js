@@ -2420,8 +2420,12 @@
       const sl = L.salt;
       if (sl == null) return;
       if (typeof sl !== 'object') { delete L.salt; return; }
+      // NO `len`. Length salt re-slices the chord lengths, which IS the shared
+      // harmonic clock (_ambProgStepAt) — per layer it would put the bass on
+      // chord 2 while the pads are on chord 3. It stays an AREA axis, so a layer
+      // simply has no such field rather than one that is stored and ignored.
       const o = {};
-      ['len', 'colors', 'scatter'].forEach(k => {
+      ['colors', 'scatter'].forEach(k => {
         const v = Number(sl[k]);
         o[k] = Number.isFinite(v) ? Math.max(0, Math.min(100, v | 0)) : 0;
       });
@@ -3986,7 +3990,7 @@
         const L = _ambLayerByKey(_E, _ambEmitLayerKey);
         const sl = L && L.salt;
         if (!sl || typeof sl !== 'object') return null;
-        return (((sl.len | 0) > 0) || ((sl.colors | 0) > 0)) ? sl : null;
+        return (((sl.colors | 0) > 0) || ((sl.scatter | 0) > 0)) ? sl : null;
       } catch (e) { return null; }
     }
     function _ambLayerSaltSet(cfg) {
@@ -31641,7 +31645,7 @@
           '<select id="' + p + '-saltmode" class="ambient-select ambient-layersaltmode">' +
             '<option value="inherit"' + (sl ? '' : ' selected') + '>Inherit</option>' +
             '<option value="own"' + (sl ? ' selected' : '') + '>This layer</option>' +
-          '</select><span class="ambient-hint">inherit the Changes\u2019 salt, or set this layer\u2019s own (all 0 = never salt)</span></div>' +
+          '</select><span class="ambient-hint">inherit the Changes\u2019 salt, or override it here (all 0 = this layer never salts). Chord LENGTHS stay area-wide \u2014 they are the shared chord clock.</span></div>' +
           row('colors', 'Salt colour', 'how much the chord recolours inside its unit') +
           row('scatter', 'Salt scatter', 'placement of the colour segments');
       }
@@ -32180,7 +32184,7 @@
             const apply = () => { const L = get(); if (!L) return; sync(); persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } };
             if (md) md.addEventListener('change', () => {
               const L = get(); if (!L) return;
-              if (md.value === 'own') { if (!L.salt || typeof L.salt !== 'object') L.salt = { len: 0, colors: 0, scatter: 0 }; }
+              if (md.value === 'own') { if (!L.salt || typeof L.salt !== 'object') L.salt = { colors: 0, scatter: 0 }; }
               else delete L.salt;
               apply();
               try { _ambRenderExtras(E); } catch (x) {}   // the sliders enable/disable with the mode
@@ -34858,7 +34862,7 @@
             _ambProgGrpOpen('salt', '🧂 Salt', false) +
             '<div class="ambient-row ambient-prog-salt" id="ambient-prog-saltrow" style="display:none" title="Salt — deterministic per-cycle spice on the progression. Everything at 0 = play exactly as written.">' +
               '<span class="ambient-sched-lbl salt-lbl">🧂 salt</span>' +
-              '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">lengths</span><input type="number" class="ambient-salt-in" id="ambient-salt-len" min="0" max="100" step="5" value="0" title="Random chord scheduling — each cycle re-slices the chord lengths (A 1¼ bars, B ½, C 1¾ …) on a 1/8-bar grid. The cycle total is preserved, so loops/Evolve stay aligned. 0 = as written, 100 = wild."></span>' +
+              '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">lengths</span><input type="number" class="ambient-salt-in" id="ambient-salt-len" min="0" max="100" step="5" value="0" title="Random chord scheduling — each cycle re-slices the chord lengths (A 1¼ bars, B ½, C 1¾ …) on a 1/8-bar grid. The cycle total is preserved, so loops/Evolve stay aligned. AREA-WIDE: this is the shared chord clock, so every layer follows it (colour and scatter can be overridden per layer). 0 = as written, 100 = wild."></span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">colors</span><input type="number" class="ambient-salt-in" id="ambient-salt-colors" min="0" max="8" step="1" value="0" title="Chord colors per unit — splits a chord’s unit into segments: the downbeat is always the written chord, later segments become root-preserving colors of it (maj7 · add9 · 6 · maj9 · sus2 · sus4 · open 5). 0 = off, higher = more segments (max 8)."></span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">🌊 vary</span><input type="number" class="ambient-salt-in" id="ambient-prog-vary" min="0" max="100" step="5" value="0" title="Per-CYCLE harmony variance — the chance each chord is swapped for a same-function substitute, RE-ROLLED EVERY PASS, so the changes keep evolving while you listen. (🎲 take fixes one realization per take id; this one moves.) Same candidates, same in-key rule; deterministic per (chord, cycle, take), so a Loop replays it exactly."></span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">🌡 tension</span><input type="number" class="ambient-salt-in" id="ambient-prog-tension" min="0" max="100" step="5" value="0" title="Tension ramp — chords gain colour extensions (♭7 → 9th → 11th) progressively ACROSS the progression cycle and reset at the top, so harmony tightens toward the turnaround. Purely additive: the written tones are never removed. 0 = as written."></span>' +

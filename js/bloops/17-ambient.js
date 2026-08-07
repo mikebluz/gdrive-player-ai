@@ -20633,7 +20633,14 @@
       return { groupStart: gStart, groupLen: gLen, subUnit, subdiv, slot, chordStep, anchor };
     }
     function _ambWriteEffBars(cfg, reqBars, nT) {
-      const cyc = _ambProgCycleBars(cfg);
+      // THE PLAYED CHAIN, not the written cycle. Under a chain (Verse ×2 →
+      // Chorus) the harmony repeats over the whole chain, so a phrase snapped to
+      // the WRITTEN cycle covers different chords on different repeats — exactly
+      // the drift this function exists to prevent, one level up. With no chain
+      // _ambProgChainBars returns the same number as _ambProgCycleBars (its slot
+      // list is one entry per chord), so every unchained project — and the
+      // invariant harness — is unaffected by construction.
+      const cyc = (typeof _ambProgChainBars === 'function' ? _ambProgChainBars(cfg) : 0) || _ambProgCycleBars(cfg);
       // SECTION SNAP: sections are the outer bar clock, so a captured phrase that
       // isn't a whole number of section cycles replays against a DIFFERENT section
       // each time round — the arrangement-level version of the chord-drift this

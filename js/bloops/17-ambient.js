@@ -8886,7 +8886,20 @@
     // deterministic, so the ordinal is too.
     let _vvLastAt = null, _vvSeq = 0;
     function _ambVelJitter01(atSec) {
-      const t = (typeof atSec === 'number' && atSec != null) ? atSec : 0;
+      // REPRODUCIBLE FROM THE TAKE. This was keyed on the ABSOLUTE audio-clock
+      // time, which differs on every press, so Vel var was the one knob in the
+      // Variance group that did not replay — it looked like its reproducible
+      // neighbours and behaved like Humanize. Keying on time ELAPSED FROM THE BAR
+      // GRID ANCHOR makes it a function of position-in-the-performance instead:
+      // same take, same bar, same jitter. (Humanize stays unseeded on purpose.)
+      const _raw = (typeof atSec === 'number' && atSec != null) ? atSec : 0;
+      let _org = 0;
+      try {
+        const E0 = (typeof _E !== 'undefined') ? _E : null;
+        if (E0) _org = Number.isFinite(E0._barGridAnchor) ? E0._barGridAnchor
+                     : (Number.isFinite(E0._playStartAt) ? E0._playStartAt : 0);
+      } catch (e) {}
+      const t = _raw - (Number.isFinite(_org) ? _org : 0);
       if (t !== _vvLastAt) { _vvLastAt = t; _vvSeq = 0; } else _vvSeq++;
       const seed = ((Math.round(t * 8000) | 0) * 2654435761) ^ ((_vvSeq + 1) * 2246822519) ^ ((((typeof _E !== 'undefined' && _E && _E._cfg && _E._cfg.seed) | 0)) * 40503);
       return _ambSeededRand(seed >>> 0)();
@@ -31130,6 +31143,33 @@
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
         ..._AMB_MIX] },
     };
+
+    // ---- PERFORMANCE vs VARIANCE ------------------------------------------
+    // The Variance group mixed two different guarantees with nothing marking
+    // them apart: five knobs that replay identically from the take ID, and two
+    // that never do. Humanize is unseeded BY DESIGN (performance jitter), and
+    // Vel var — even now that it is reproducible — is per-note noise of the same
+    // family. They move to their own PERFORMANCE group so the rule is legible:
+    // Variance is part of the take, Performance is played on top of it.
+    // Done as ONE pass over the schema rather than edited into every layer type,
+    // so a type added later is grouped correctly without anyone remembering.
+    (function _ambSplitPerformanceGroup() {
+      try {
+        const MOVE = { humanize: 1, velVar: 1 };
+        Object.keys(_AMB_LAYER_SCHEMA).forEach(function (t) {
+          const sch = _AMB_LAYER_SCHEMA[t];
+          if (!sch || !Array.isArray(sch.ctrls)) return;
+          const moved = [];
+          const kept = sch.ctrls.filter(function (c) {
+            if (Array.isArray(c) && (c[0] === 'sl' || c[0] === 'tm') && MOVE[c[1]]) { moved.push(c); return false; }
+            return true;
+          });
+          if (!moved.length) return;
+          sch.ctrls = kept.concat([['grp', 'Performance']], moved);
+        });
+      } catch (e) {}
+    })();
+
     // Default-open groups; the rest start collapsed. Remembered per layer in
     // inst.groupsOpen ({ groupName: bool }); Reset clears it back to these.
     const _AMB_GROUP_DEFAULT_OPEN = {};   // all parameter groups start collapsed

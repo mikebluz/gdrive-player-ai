@@ -832,18 +832,22 @@
     // Replace the area progression with a random standard from the catalog
     // (optionally restricted to one family). Returns its name, or null.
     function _ambSibNewProg(cfg, family) {
+      // Drawn from the SAME key-resolved catalog the pickers show, so a sibling
+      // cannot roll a progression you could not have chosen by hand. `family` is
+      // now a catalog GROUP (In key / Borrowed / Vapor) — the old major/minor/
+      // dorian families stopped meaning anything once templates conform to the
+      // key, since every one of them produces the same chords in a given key.
       const pool = [];
       try {
-        _ambProgFamilies().forEach(([label, rows]) => {
+        _ambProgCatalogForKey(cfg).forEach(([label, rows]) => {
           if (family && family !== '*' && label !== family) return;
-          (rows || []).forEach(r => { if (r) pool.push({ name: r[0], f: r[1], steps: r[2] }); });
+          (rows || []).forEach(r => { if (r) pool.push(r); });
         });
       } catch (e) {}
       if (!pool.length) return null;
       const pick = pool[Math.floor(Math.random() * pool.length)];
-      let chords = [];
-      try { chords = _ambResolveStandard(pick.f, pick.steps); } catch (e) {}
-      if (!Array.isArray(chords) || !chords.length) return null;
+      const chords = Array.isArray(pick.chords) ? pick.chords : [];
+      if (!chords.length) return null;
       if (!cfg.prog || typeof cfg.prog !== 'object') cfg.prog = { on: false, name: '', chords: [] };
       cfg.prog.on = true;
       cfg.prog.name = pick.name;
@@ -973,8 +977,8 @@
       // attribute contexts below (layer names are user-editable, and one `"`
       // would break out of a title=/data-key=).
       const escA = (v) => _ambEscText(v).replace(/"/g, '&quot;');
-      const famOpts = ['<option value="*">any family</option>'].concat((() => {
-        try { return _ambProgFamilies().map(f => '<option value="' + escA(f[0]) + '">' + _ambEscText(f[0]) + '</option>'); } catch (e) { return []; }
+      const famOpts = ['<option value="*">any</option>'].concat((() => {
+        try { return _ambProgCatalogForKey(_masterEng && _masterEng.getCfg && _masterEng.getCfg()).map(f => '<option value="' + escA(f[0]) + '">' + _ambEscText(f[0]) + '</option>'); } catch (e) { return []; }
       })()).join('');
       const trOpts = _AMB_SIB_TR.map(t => '<option value="' + t[0] + '">' + _ambEscText(t[1]) + '</option>').join('');
       const aRow = (op, label, title, tail) =>
@@ -4990,11 +4994,29 @@
       if (!c || !c.keyOn) return true;
       const chs = Array.isArray(n.chords) ? n.chords : [];
       if (!chs.length) return true;
+      // PER-CHORD was too permissive: Cm, Fm and Gm are each "one note off" in C
+      // major, so all three passed while together they spell C minor. Judge the
+      // whole progression — the union of its pitch classes — so a parallel-key
+      // progression cannot slip through as three individually-forgivable chords.
       const off = _ambProgKeyOffset(n, _ambKeyRootPc(c));
-      return chs.every(ch => {
+      const seen = Object.create(null);
+      chs.forEach(ch => {
         const r = (((((ch.root | 0) + off) % 12) + 12) % 12);
         const iv = Array.isArray(ch.intervals) ? ch.intervals : [0, 4, 7];
-        return _ambPcsWorkInKey(iv.map(x => (((r + x) % 12) + 12) % 12), c);
+        iv.forEach(x => { seen[(((r + x) % 12) + 12) % 12] = 1; });
+      });
+      if (!_ambPcsWorkInKey(Object.keys(seen).map(Number), c)) return false;
+      // AT LEAST ONE CHORD MUST BE DIATONIC. The extended pool is the union of the
+      // parallel major and minor — modal interchange — so a progression borrowing
+      // a chord or two rightly passes. But one borrowing EVERY chord is not
+      // borrowing, it is the parallel key: Cm–Fm–Gm sits entirely inside C's
+      // extended pool while plainly being C minor. Sharing no chord at all with
+      // the key is the line.
+      const D = _ambKeyDiatonicPcs(c);
+      return chs.some(ch => {
+        const r = (((((ch.root | 0) + off) % 12) + 12) % 12);
+        const iv = Array.isArray(ch.intervals) ? ch.intervals : [0, 4, 7];
+        return iv.every(x => D.has((((r + x) % 12) + 12) % 12));
       });
     }
     // Interval set for a note source. Chord/Wrap/Prog → pitch-class set; scale → SCALES.
@@ -5333,6 +5355,39 @@
         return { root: (((b.chordRoot | 0) % 12) + 12) % 12, intervals };
       });
     }
+    // ---- KEY-CONFORMING PROGRESSION TEMPLATES -------------------------------
+    // A template is a set of SCALE DEGREES. Its chord qualities come from the KEY
+    // you are in, not from the family it was filed under.
+    //
+    // Before this, PROGRESSIONS was keyed by scale name and _ambResolveStandard
+    // passed THE FAMILY NAME AS THE SCALE (and the workspace root as the root), so
+    // the area key's scale was never consulted: picking "I — IV — V" in an A minor
+    // area played A / D / E MAJOR — the parallel major, silently, with every
+    // readout still saying A minor. The family was effectively the mode, which is
+    // why "a major progression in a minor key" was a thing you could pick and why
+    // it made no sense.
+    //
+    // Now: degree → semitone through the AREA scale, quality → the triad that
+    // scale actually builds on that degree. A step whose stored quality is NOT the
+    // diatonic one in its OWN family is a deliberate borrowing (the harmonic-minor
+    // V, a Picardy third) and is kept verbatim — that is the only thing the stored
+    // quality is still used for.
+    const _AMB_TRIAD_Q = [[[0, 4, 7], 'maj'], [[0, 3, 7], 'min'], [[0, 3, 6], 'dim'], [[0, 4, 8], 'aug']];
+    function _ambDiatonicQuality(scaleName, degree) {
+      const iv = (typeof SCALES !== 'undefined' && SCALES[scaleName]) ? SCALES[scaleName] : null;
+      if (!Array.isArray(iv) || !iv.length) return null;
+      const n = iv.length, d0 = (degree | 0) - 1;
+      if (d0 < 0 || d0 >= n) return null;
+      // Stack thirds WITHIN the scale: skip one scale step each time.
+      const at = (k) => iv[(d0 + k) % n] + 12 * Math.floor((d0 + k) / n);
+      const base = at(0), third = at(2) - base, fifth = at(4) - base;
+      const shape = [0, ((third % 12) + 12) % 12, ((fifth % 12) + 12) % 12];
+      for (let i = 0; i < _AMB_TRIAD_Q.length; i++) {
+        const t = _AMB_TRIAD_Q[i][0];
+        if (t[1] === shape[1] && t[2] === shape[2]) return _AMB_TRIAD_Q[i][1];
+      }
+      return null;   // not a recognisable triad (odd scale) — caller keeps the stored quality
+    }
     function _ambResolveStandard(family, steps) {
       const root = (typeof rootIdx === 'number') ? rootIdx : 0;
       // '_lit' = a literal chord table (the Vapor family): transpose to the
@@ -5341,9 +5396,106 @@
         const row = _AMB_VAPOR_PROGS[steps | 0];
         return row ? row[1].map(c => ({ root: (((c.r + root) % 12) + 12) % 12, intervals: c.iv.map(x => ((x % 12) + 12) % 12).filter((v, i2, a2) => a2.indexOf(v) === i2).sort((a3, b3) => a3 - b3) })) : [];
       }
+      // Degrees resolve against the AREA KEY — root AND scale. A keyless
+      // (chromatic) area has no diatonic answer, so it keeps the family's own
+      // scale and stored qualities, which is the pre-existing behaviour.
+      const kc = (typeof _ambKeyCfg === 'function') ? _ambKeyCfg() : null;
+      const keyOn = !!(kc && kc.keyOn);
+      let scale = family, kroot = root;
+      if (keyOn) {
+        try {
+          const ks = _ambResolveScale(_ambKeyScaleName(kc));
+          // Only conform to a scale that HAS a diatonic answer: seven notes that
+          // stack into recognisable triads. A chromatic area (the default, since
+          // the key follows the workspace scale) would otherwise map degree 4 to
+          // 3 semitones and turn I—IV—V into C—D♯—E. Pentatonics fail the same
+          // test. Those keep the family's own scale and stored qualities, which
+          // is exactly the pre-existing behaviour.
+          const iv = (ks && typeof SCALES !== 'undefined') ? SCALES[ks] : null;
+          if (Array.isArray(iv) && iv.length === 7 && _ambDiatonicQuality(ks, 1)) { scale = ks; kroot = _ambKeyRootPc(kc); }
+        } catch (e) {}
+      }
+      const conform = keyOn && scale !== family;
       let blocks = [];
-      try { if (typeof _progAutoFillProgression === 'function') blocks = _progAutoFillProgression(root, family, { steps }); } catch (e) {}
+      try { if (typeof _progAutoFillProgression === 'function') blocks = _progAutoFillProgression(kroot, scale, { steps }); } catch (e) {}
+      if (conform && Array.isArray(steps)) {
+        // Re-quality each step from the AREA scale, keeping any step whose stored
+        // quality was NOT diatonic in its own family — that difference is the
+        // borrowing the template was written for.
+        let bi = 0;
+        for (let i = 0; i < steps.length; i++) {
+          const deg = steps[i] && steps[i][0], stored = steps[i] && steps[i][1];
+          if (_progScaleDegreeToSemi(scale, deg) == null) continue;   // dropped by the fill too
+          const b = blocks[bi++]; if (!b) continue;
+          const homeQ = _ambDiatonicQuality(family, deg);
+          const keyQ = _ambDiatonicQuality(scale, deg);
+          const borrowed = (homeQ && stored && homeQ !== stored);
+          b.chordQuality = borrowed ? stored : (keyQ || stored);
+        }
+      }
       return _ambProgChordsFromBlocks(blocks);
+    }
+    // ---- THE PICKER'S CATALOG, RESOLVED FOR THE CURRENT KEY -----------------
+    // Once templates conform to the key, grouping them by "major / minor /
+    // dorian…" is meaningless — every family produces the SAME chords in a given
+    // key, so the list showed "I — IV — V" and "i — iv — v" as two entries that
+    // are one thing. (That was the user-visible nonsense: being able to pick a
+    // major progression while in a minor key.) The catalog therefore DEDUPES by
+    // the chords each template actually produces here, labels every entry with
+    // the numerals for THIS key, and groups by the one distinction that survives:
+    // does it stay in the key, or does it borrow?
+    function _ambProgNameTail(nm) { const m = /\(([^)]*)\)\s*$/.exec(String(nm || '')); return m ? m[1] : ''; }
+    function _ambProgQualityOf(intervals) {
+      const iv = (intervals || []).map(x => (((x | 0) % 12) + 12) % 12);
+      const has = (x) => iv.indexOf(x) >= 0;
+      if (has(3)) return has(6) ? 'dim' : 'min';
+      if (has(4)) return has(8) ? 'aug' : 'maj';
+      return null;
+    }
+    // Does any chord sit outside what the key builds on its own degrees?
+    function _ambProgBorrows(chords, cfg) {
+      const ks = _ambResolveScale(_ambKeyScaleName(cfg));
+      const iv = (typeof SCALES !== 'undefined' && SCALES[ks]) ? SCALES[ks] : null;
+      if (!Array.isArray(iv) || iv.length !== 7) return false;
+      const kr = _ambKeyRootPc(cfg);
+      return (chords || []).some(c => {
+        const rel = ((((c.root | 0) - kr) % 12) + 12) % 12;
+        const d = iv.indexOf(rel);
+        if (d < 0) return true;                                   // root not in the scale
+        const want = _ambDiatonicQuality(ks, d + 1), got = _ambProgQualityOf(c.intervals);
+        return !!(want && got && want !== got);
+      });
+    }
+    function _ambProgCatalogForKey(cfg) {
+      const c = cfg || _ambKeyCfg();
+      const keyOn = !!(c && c.keyOn);
+      const kr = keyOn ? _ambKeyRootPc(c) : 0, ksName = keyOn ? _ambKeyScaleName(c) : 'major';
+      const seen = Object.create(null), dia = [], bor = [], vap = [];
+      _ambProgFamilies().forEach(function (f) {
+        (f[1] || []).forEach(function (row) {
+          const nm = row[0], fam = row[1], steps = row[2];
+          let chords = [];
+          try { chords = _ambResolveStandard(fam, steps); } catch (e) {}
+          if (!chords.length) return;
+          if (keyOn && !_ambProgWorksInKey({ chords: chords }, c)) return;
+          const sig = chords.map(x => x.root + ':' + (x.intervals || []).join(',')).join('|');
+          if (seen[sig]) return;
+          seen[sig] = 1;
+          const tail = _ambProgNameTail(nm);
+          let label = '';
+          if (keyOn) { try { label = chords.map(x => _ambPeRoman(x, kr, ksName)).filter(Boolean).join(' — '); } catch (e) {} }
+          if (!label) label = String(nm).replace(/\s*\([^)]*\)\s*$/, '');
+          const entry = { name: label + (tail ? (' (' + tail + ')') : ''), fam: fam, steps: steps, chords: chords };
+          if (fam === '_lit') vap.push(entry);
+          else if (keyOn && _ambProgBorrows(chords, c)) bor.push(entry);
+          else dia.push(entry);
+        });
+      });
+      const out = [];
+      if (dia.length) out.push([keyOn ? 'In key' : 'Standard', dia]);
+      if (bor.length) out.push(['Borrowed', bor]);
+      if (vap.length) out.push(['Vapor', vap]);
+      return out;
     }
     function _ambPublishProg(name, blocks) {
       const chords = _ambProgChordsFromBlocks(blocks);
@@ -5743,13 +5895,9 @@
       // (flat it would be ~100 rows). Key-filtered per entry; a family with
       // nothing that fits the key disappears entirely.
       const famItems = [];
-      _ambProgFamilies().forEach(([famLabel, list]) => {
+      _ambProgCatalogForKey(cfg).forEach(([famLabel, list]) => {
         const sub = [];
-        list.forEach(([nm, fam, steps]) => {
-          const chords = _ambResolveStandard(fam, steps);
-          if (keyOn && !_ambProgWorksInKey({ chords }, cfg)) return;
-          sub.push({ label: '  ' + nm, fn: () => apply(nm, chords) });
-        });
+        list.forEach((t) => { sub.push({ label: '  ' + t.name, fn: () => apply(t.name, t.chords) }); });
         if (!sub.length) return;
         famItems.push({ label: famLabel + ' (' + sub.length + ') ▸', fn: () => setTimeout(() => showCtxMenu(x, y, [
           { label: '‹ Back', fn: () => setTimeout(() => _ambOpenGlobalProgMenu(E, x, y), 0) },
@@ -6791,13 +6939,9 @@
         const items = [{ label: 'Standards', disabled: true }];
         // Full Prog-pad catalog, one submenu per family (major, minor,
         // dorian, …) — flat it would be ~100 rows. Key-filtered per entry.
-        _ambProgFamilies().forEach(([famLabel, list]) => {
+        _ambProgCatalogForKey(kcfg).forEach(([famLabel, list]) => {
           const sub = [];
-          list.forEach(([nm, fam, steps]) => {
-            const chords = _ambResolveStandard(fam, steps);
-            if (keyOn && !_ambProgWorksInKey({ chords }, kcfg)) return;
-            sub.push({ label: '  ' + nm, fn: () => apply({ type: 'prog', name: nm, chords }) });
-          });
+          list.forEach((t) => { sub.push({ label: '  ' + t.name, fn: () => apply({ type: 'prog', name: t.name, chords: t.chords }) }); });
           if (!sub.length) return;
           items.push({ label: '  ' + famLabel + ' (' + sub.length + ') ▸', fn: () => setTimeout(() => showCtxMenu(x, y, [
             { label: '‹ Back', fn: () => setTimeout(progSub, 0) },
@@ -31070,9 +31214,9 @@
       const progSub = () => {
         const items = [{ label: 'Progression — this layer follows its own chords', disabled: true },
           { label: '✎ Author / edit chords…', fn: openEditor }, 'hr'];
-        _ambProgFamilies().forEach(fam => {
+        _ambProgCatalogForKey(kcfg).forEach(fam => {
           const famLabel = fam[0], list = fam[1], sub = [];
-          list.forEach(row => { const nm = row[0], f = row[1], steps = row[2]; const chords = _ambResolveStandard(f, steps); if (keyOn && !_ambProgWorksInKey({ chords }, kcfg)) return; sub.push({ label: '  ' + nm, fn: () => setProg(nm, chords) }); });
+          list.forEach(t => { sub.push({ label: '  ' + t.name, fn: () => setProg(t.name, t.chords) }); });
           if (!sub.length) return;
           items.push({ label: '  ' + famLabel + ' (' + sub.length + ') ▸', fn: () => setTimeout(() => showCtxMenu(x, y, [{ label: '‹ Back', fn: () => setTimeout(progSub, 0) }, { label: famLabel, disabled: true }].concat(sub)), 0) });
         });

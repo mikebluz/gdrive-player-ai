@@ -1510,6 +1510,9 @@
         if (meta && meta.rootNote) rec.rootNote = meta.rootNote;
         if (meta && Number.isFinite(meta.tuneCents)) rec.tuneCents = meta.tuneCents;
         if (meta && meta.padLoop) rec.padLoop = true;
+        if (meta && meta.kind) rec.kind = meta.kind;
+        if (meta && Number.isFinite(meta.bpm)) rec.bpm = meta.bpm;
+        if (meta && Number.isFinite(meta.seconds)) rec.seconds = meta.seconds;
         if (meta && Number.isFinite(meta.padAttack)) rec.padAttack = meta.padAttack;
         if (meta && Number.isFinite(meta.padRelease)) rec.padRelease = meta.padRelease;
         await new Promise((resolve, reject) => {
@@ -1542,12 +1545,24 @@
               urls,
               release: 1,
             }).connect(globalSendTap);
+            // Restore the KIND. Without this a reload re-registers every imported
+            // loop as a tuned instrument — the classification would survive only
+            // until you closed the tab. A record saved before `kind` existed has
+            // none, and reads as tuned + NOT explicit, so it keeps the old
+            // sliceability heuristic exactly (same rule as the manifest path).
+            const _kindEx = (rec.kind === 'loop' || rec.kind === 'tuned' || rec.kind === 'kit');
+            const _kind = _kindEx ? rec.kind : 'tuned';
             const _info = {
               sampler,
               name: rec.name || rec.id,
               rootNote,
               tuneCents,
               imported: true,
+              kind: _kind,
+              kindExplicit: _kindEx,
+              loop: _kind === 'loop',
+              bpm: Number.isFinite(rec.bpm) ? rec.bpm : null,
+              seconds: Number.isFinite(rec.seconds) ? rec.seconds : null,
               urls,
               padLoop: !!rec.padLoop,
             };
@@ -1712,6 +1727,47 @@
       return id;
     }
     // Register an audio Blob/File as a single-buffer sample voice (mapped to
+    // KIND for an imported blob — the same question the manifest importer asks
+    // (tools/import-samples.mjs): does this carry its own tempo? A Drive import
+    // used to land as a tuned instrument no matter what, so a drum loop pulled
+    // from Drive was pitched by the note, which is the exact conflation `kind`
+    // exists to remove. Same precedence as the Node importer: an explicit
+    // one-shot/loop word in the path, then a note name (an explicit statement of
+    // pitch — a long pad is tuned however long it is), then duration, then a bpm
+    // in the name. Duration here comes from the DECODED buffer, which is better
+    // than the RIFF-header estimate the Node side has to use.
+    function _classifyImported(nameOrPath, durSec) {
+      const low = String(nameOrPath || '').toLowerCase();
+      const bpm = (function () {
+        const u = low.match(/(\d{2,3})\s*bpm/); if (u) { const v = +u[1]; if (v >= 60 && v <= 200) return v; }
+        const c = (low.match(/\d{2,3}/g) || []).map(Number).filter(v => v >= 60 && v <= 200);
+        return c.length ? c[0] : null;
+      })();
+      const oneShot = /one[_ \-]?shot|oneshot|drum[_ \-]?hit/.test(low);
+      const isLoop = /(^|[\/_\- ])loops?([\/_\- ]|$)/.test(low);
+      let note = null;
+      try { const m = String(nameOrPath).replace(/\.[^.]+$/, '').match(/(?:^|[^A-Za-z])([A-Ga-g])([#b♯♭]?)(-?[0-8])(?![0-9])/);
+        if (m) note = m[1].toUpperCase() + (m[2] === '♯' ? '#' : m[2] === '♭' ? 'b' : m[2]) + m[3]; } catch (e) {}
+      let kind;
+      if (oneShot && !isLoop) kind = 'tuned';
+      else if (isLoop) kind = 'loop';
+      else if (note) kind = 'tuned';
+      else if (Number.isFinite(durSec) && durSec >= 1.6) kind = 'loop';
+      else if (Number.isFinite(durSec) && durSec <= 1.0) kind = 'tuned';
+      else if (bpm) kind = 'loop';
+      else kind = 'tuned';
+      return { kind, bpm: kind === 'loop' ? bpm : null, rootNote: note, seconds: Number.isFinite(durSec) ? +durSec.toFixed(3) : null };
+    }
+    // Decode just far enough to measure. Returns null rather than throwing on a
+    // format the browser cannot decode — the caller then classifies on name only.
+    async function _blobDurationSec(blob) {
+      try {
+        const ac = (typeof Tone !== 'undefined' && Tone.context && Tone.context.rawContext) ? Tone.context.rawContext : null;
+        if (!ac || !blob) return null;
+        const buf = await ac.decodeAudioData(await blob.arrayBuffer());
+        return buf && buf.duration ? buf.duration : null;
+      } catch (e) { return null; }
+    }
     // C4), persisting it to IndexedDB. Returns { id, name }. Shared by the file
     // importer and the "always listening" grab.
     async function registerSampleFromBlob(blob, friendly, opts) {
@@ -1721,7 +1777,15 @@
       // opts.rootNote = the grid note that plays the buffer at natural pitch
       // (others pitch-shift relative to it). opts.tuneCents = a fine offset
       // baked into the voice so a captured sample can be pulled exactly in tune.
-      const rootNote = (opts && opts.rootNote) || 'C4';
+      // Classify unless the caller already knows what this is (a captured sample
+      // states its own rootNote, and a pad is explicitly a pad).
+      let _cls = null;
+      if (!(opts && (opts.rootNote || opts.padLoop || opts.kind))) {
+        try { _cls = _classifyImported(friendly || name, await _blobDurationSec(blob)); } catch (e) { _cls = null; }
+      }
+      const kind = (opts && opts.kind) || (_cls ? _cls.kind : 'tuned');
+      const isLoop = kind === 'loop';
+      const rootNote = (opts && opts.rootNote) || (_cls && _cls.rootNote) || 'C4';
       const tuneCents = (opts && Number.isFinite(opts.tuneCents)) ? opts.tuneCents : 0;
       // A "pad" voice loops its (already-trimmed) buffer for as long as the
       // note event lasts — a held grid press sustains indefinitely, a
@@ -1735,10 +1799,15 @@
       const padRelease = (opts && Number.isFinite(opts.padRelease)) ? opts.padRelease : undefined;
       const urls = { [rootNote]: url };
       const sampler = new Tone.Sampler({ urls, release: 1 }).connect(globalSendTap);
-      const info = { sampler, name, rootNote, tuneCents, imported: true, urls, padLoop };
+      const info = { sampler, name, rootNote, tuneCents, imported: true, urls, padLoop,
+        kind, kindExplicit: true, loop: isLoop,
+        bpm: (_cls && Number.isFinite(_cls.bpm)) ? _cls.bpm : null,
+        seconds: (_cls && Number.isFinite(_cls.seconds)) ? _cls.seconds : null };
       if (padLoop) { if (padAttack != null) info.padAttack = padAttack; if (padRelease != null) info.padRelease = padRelease; }
       sampleSamplers.set(id, info);
-      await persistImportedSample(id, name, blob, { rootNote, tuneCents, padLoop, padAttack, padRelease });
+      // kind/bpm must PERSIST or a reload silently re-tunes every imported loop.
+      await persistImportedSample(id, name, blob, { rootNote, tuneCents, padLoop, padAttack, padRelease,
+        kind, bpm: info.bpm, seconds: info.seconds });
       return { id, name };
     }
     // Estimate the fundamental frequency (Hz) of an AudioBuffer via

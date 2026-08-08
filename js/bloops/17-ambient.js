@@ -16527,7 +16527,15 @@
       const type = 'sample:' + layer.sampleId;
       let baseFreq;
       try { baseFreq = Tone.Frequency(info.rootNote || 'C4').toFrequency(); } catch (e) { baseFreq = 261.63; }
-      baseFreq *= Math.pow(2, Math.max(-24, Math.min(24, layer.pitch | 0)) / 12);   // repitch (varispeed) ± semitones
+      // A LOOP must not be repitched by the NOTE (it carries its own tempo and is
+      // rate-matched instead), so its varispeed cannot ride on baseFreq — it goes
+      // down the explicit "pitch this in place" channel, where the resolver keeps
+      // it. A tuned sample keeps the original behaviour exactly.
+      const _pitchSemis = Math.max(-24, Math.min(24, layer.pitch | 0));
+      let _loopSemis = 0;
+      try { const _si = sampleSamplers.get(layer.sampleId); if (_si && _si.kind === 'loop') _loopSemis = _pitchSemis; } catch (e) {}
+      if (_loopSemis) baseFreq = baseFreq;                       // note stays at the root
+      else baseFreq *= Math.pow(2, _pitchSemis / 12);            // repitch (varispeed) ± semitones
       const chop = Math.max(1, Math.min(32, layer.chop | 0));
       const sliceSec = Math.max(0.02, (layer.intervalMs | 0) / 1000 / chop);
       const vol = _ambApplyLevel(100, layer.level);
@@ -16556,6 +16564,9 @@
           if (chop > 1) { p.sampleOffsetSec = idx * sliceSec; p.sliceDurSec = (effStut > 1) ? subSec : sliceSec; }
           else if (effStut > 1) { p.sampleOffsetSec = 0; p.sliceDurSec = subSec; }   // stutter the whole-sample start
           if (layer.reverse | 0) p.reverse = true;   // play this slice / the whole sample backwards
+          // Loop varispeed rides the explicit in-place pitch channel (see above),
+          // so the resolver keeps it while still ignoring the note.
+          if (_loopSemis) p.drumTune = _loopSemis;
           if (dmod) p._detuneMod = dmod;
           try { playNote(baseFreq, p, dur, at + j * sliceSec + su * subSec, dest, undefined, _E.laneIdx()); } catch (e) {}
         }

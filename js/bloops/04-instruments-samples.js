@@ -359,6 +359,15 @@
     // signal "fall back to the shared sampler's attack/release path": during
     // offline export (the offline render keeps the simple path), when the
     // buffers aren't reachable, or on any construction failure.
+    // The project tempo. getBpm() lives module-scope in 03 and is not exported,
+    // so read the input the way 08 and 17 both do.
+    function _projectBpm() {
+      try {
+        const el = document.getElementById('tempo-input');
+        const v = el ? parseInt(el.value, 10) : NaN;
+        return (Number.isFinite(v) && v > 0) ? v : 120;
+      } catch (e) { return 120; }
+    }
     // Resolve the nearest mapped buffer + playbackRate for a sample note —
     // shared by the node voice builder below and the core sample path
     // (Phase 3), so both play the identical buffer at the identical rate.
@@ -412,6 +421,27 @@
       // drum's zone the way folding the shift into the note/detune would (a tr808
       // maps one drum per semitone, so any non-octave note shift picks a new drum).
       if (Number.isFinite(drumTuneSemis) && drumTuneSemis) playbackRate *= Math.pow(2, drumTuneSemis / 12);
+      // ---- LOOP: tempo-matched, NEVER transposed by the note --------------
+      // A loop carries its own tempo, so the note that triggered it says nothing
+      // about how fast it should run — everything above this line derived the
+      // rate from pitch, which is exactly the behaviour `kind` exists to stop.
+      // Rate-matching changes pitch as a side effect (there is no time-stretch in
+      // Web Audio without heavy DSP); at the few-percent shifts real material
+      // needs — 125 into 120 is 4%, well under a semitone — that is the standard
+      // trade and it is inaudible on drums. Clamped so an extreme mismatch cannot
+      // produce a chipmunk or a drone.
+      if (info && info.kind === 'loop') {
+        const srcBpm = Number.isFinite(info.bpm) && info.bpm > 0 ? info.bpm : 0;
+        // No stated tempo → play it as recorded rather than guess.
+        const tempoRate = srcBpm ? Math.max(0.25, Math.min(4, _projectBpm() / srcBpm)) : 1;
+        // A DELIBERATE varispeed still applies. Only the NOTE is ignored: the
+        // Sample layer's Pitch knob arrives as `drumTuneSemis` ("pitch this in
+        // place"), so it survives, while a melodic emitter's note does not
+        // transpose the loop. Discarding both would leave that knob inert — the
+        // stored-but-ignored-field trap.
+        const semis = Number.isFinite(drumTuneSemis) ? drumTuneSemis : 0;
+        playbackRate = tempoRate * (semis ? Math.pow(2, semis / 12) : 1);
+      }
       return { info, sampleMidi, audioBuf, playbackRate };
     }
     function _buildSampleAdsrVoice(sampler, id, tunedFreq, env, dest, opts) {

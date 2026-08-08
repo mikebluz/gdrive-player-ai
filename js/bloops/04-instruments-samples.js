@@ -229,6 +229,11 @@
       const id = (typeof type === 'string' && type.startsWith('sample:')) ? type.slice(7) : type;
       const info = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(id) : null;
       if (!info || info.drumKit) return false;
+      // `kind` is authoritative when the manifest states it: a loop is exactly
+      // the thing you chop, a tuned instrument is played at a note instead.
+      // Absent (older manifests, imported blobs) → the previous heuristic.
+      if (info.kindExplicit && info.kind === 'loop') return true;
+      if (info.kindExplicit && info.kind === 'tuned') return false;
       if (info.imported) return true;
       try { return !!info.urls && Object.keys(info.urls).length === 1; } catch (e) { return false; }
     }
@@ -1406,12 +1411,34 @@
         const list = Array.isArray(data?.samples) ? data.samples : [];
         list.forEach(s => {
           if (!s || !s.id || !s.file) return;
+          // KIND. A LOOP carries its own tempo, so it is not played AT a note and
+          // has no meaningful rootNote — registering one (C4, as every entry used
+          // to get) is what made a 7-second 130 bpm drum loop behave like a tuned
+          // instrument that transposes when you play C5. `kind` is absent on
+          // pre-existing manifests, which read as 'tuned' — exactly the old
+          // behaviour, so nothing changes for anyone who has not re-imported.
+          // STATED vs INFERRED matters. An older manifest says nothing, and the
+          // pre-existing rule treated any single-url non-kit sample as sliceable;
+          // silently withdrawing that from libraries nobody has re-imported would
+          // be a regression dressed up as a model improvement. So the strict rule
+          // applies only where the manifest actually declares a kind.
+          const kindExplicit = (s.kind === 'loop' || s.kind === 'kit' || s.kind === 'tuned');
+          const kind = kindExplicit ? s.kind : 'tuned';
+          const isLoop = kind === 'loop';
+          // The Sampler still needs a key to hang the file on; C4 is a mechanical
+          // placeholder for a loop, NOT a claim about its pitch, and `kind` is
+          // what downstream code must branch on.
           const rootNote = s.rootNote || 'C4';
           try {
             const urls = { [rootNote]: s.file };
             const entry = {
               name: s.name || s.id,
               rootNote,
+              kind,
+              kindExplicit,
+              loop: isLoop,
+              bpm: Number.isFinite(s.bpm) ? s.bpm : null,
+              seconds: Number.isFinite(s.seconds) ? s.seconds : null,
               urls,
               baseUrl: 'samples/',
             };

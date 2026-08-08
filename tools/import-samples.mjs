@@ -116,6 +116,78 @@ function rootNoteOf(name) {
   return m[1].toUpperCase() + acc + m[3];
 }
 
+// ---- KIND: does this sample carry its own TEMPO? -------------------------
+// The distinction that matters is NOT "can I pitch it" (you can pitch anything)
+// but "does it bring a tempo with it". A LOOP does, so the project tempo has to
+// reconcile with it and a note must not transpose it; a TUNED sample does not,
+// so a note is free to transpose it. Before this, every manifest entry was
+// registered as a Tone.Sampler rooted at C4 — a 7-second 130 bpm drum loop was
+// an "instrument", and playing it at C5 ran it at double speed.
+//
+// Three signals, in precedence order. An explicit path folder beats everything
+// (sample packs are organised by exactly this distinction), then duration, then
+// a bpm in the name. Duration is only available for WAV without pulling in a
+// decoder, which is why it is not the primary signal.
+const LOOP_MIN_SEC = 1.6;      // longest one-shot measured in real packs: 0.62s
+const ONESHOT_MAX_SEC = 1.0;
+
+// RIFF/WAVE header only — no dependency, and every pack ships wav. Other formats
+// fall back to the path/name signals, which is honest rather than guessing.
+function wavDurationSec(file) {
+  try {
+    const fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(4096);
+    const n = fs.readSync(fd, buf, 0, 4096, 0);
+    fs.closeSync(fd);
+    if (n < 44 || buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WAVE') return null;
+    let off = 12, rate = 0, byteRate = 0;
+    while (off + 8 <= n) {
+      const id = buf.toString('ascii', off, off + 4);
+      const sz = buf.readUInt32LE(off + 4);
+      if (id === 'fmt ') { rate = buf.readUInt32LE(off + 12); byteRate = buf.readUInt32LE(off + 16); }
+      else if (id === 'data') {
+        const bytes = (sz > 0 && sz !== 0xffffffff) ? sz : (fs.statSync(file).size - (off + 8));
+        if (byteRate > 0) return bytes / byteRate;
+        return null;
+      }
+      off += 8 + sz + (sz & 1);
+    }
+    return null;
+  } catch (e) { return null; }
+}
+
+// A tempo stated in the filename — "drum125", "_130_", "128bpm". Bounded to a
+// musically plausible range so a catalogue number or a year cannot masquerade
+// as one. This is what makes a loop USABLE: without it the engine cannot
+// rate-match the loop to the project and it drifts against everything else.
+function bpmOf(rel) {
+  const base = path.basename(rel).replace(/\.[^.]+$/, '');
+  const withUnit = base.match(/(\d{2,3})\s*bpm/i);
+  if (withUnit) { const v = +withUnit[1]; if (v >= 60 && v <= 200) return v; }
+  const cands = (base.match(/\d{2,3}/g) || []).map(Number).filter(v => v >= 60 && v <= 200);
+  return cands.length ? cands[0] : null;
+}
+
+function classify(rel, durSec) {
+  const low = rel.toLowerCase().split(path.sep).join('/');
+  const bpm = bpmOf(rel);
+  const inOneShot = /(^|\/)(one[_ -]?shots?|oneshot|hits?|drum_hits)(\/|$)/.test(low) || /one[_ -]?shot/.test(path.basename(low));
+  const inLoops = /(^|\/)([a-z_]*loops?)(\/|$)/.test(low) || /(^|[_-])loop([_-]|$)/.test(path.basename(low));
+  // Precedence: the pack's own folders, then duration, then a bpm in the name.
+  let kind = null, why = '';
+  if (inOneShot && !inLoops) { kind = 'tuned'; why = 'one-shot folder'; }
+  else if (inLoops) { kind = 'loop'; why = 'loop folder'; }
+  // A NOTE IN THE FILENAME IS AN EXPLICIT STATEMENT OF PITCH — "pad C3.wav" is a
+  // tuned instrument however long it is, and long sustained samples (pads,
+  // strings, organ) are exactly the ones duration alone would misfile as loops.
+  else if (rootNoteOf(rel)) { kind = 'tuned'; why = 'note in the name'; }
+  else if (durSec != null && durSec >= LOOP_MIN_SEC) { kind = 'loop'; why = durSec.toFixed(1) + 's long'; }
+  else if (durSec != null && durSec <= ONESHOT_MAX_SEC) { kind = 'tuned'; why = durSec.toFixed(2) + 's short'; }
+  else if (bpm) { kind = 'loop'; why = 'bpm in name'; }
+  else { kind = 'tuned'; why = 'default'; }
+  return { kind, bpm: kind === 'loop' ? bpm : null, why, durSec };
+}
+
 const prettyName = (rel) => {
   const base = path.basename(rel).replace(/\.[^.]+$/, '');
   return base.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40) || base;
@@ -164,6 +236,7 @@ const prettyName = (rel) => {
   const changedList = [];
   const entries = [], seen = new Map();
   let added = 0, updated = 0, unchanged = 0, bytes = 0, guessed = 0;
+  const kinds = {}, classified = [];
   for (const f of files) {
     // In place: the path is what it already is under samples/ (NOT slugged — the
     // file is not being renamed, so the manifest must point at the real name).
@@ -206,9 +279,34 @@ const prettyName = (rel) => {
     bytes += f.size;
     }
 
+    const cls = classify(f.rel, f.full ? wavDurationSec(f.full) : null);
+    kinds[cls.kind] = (kinds[cls.kind] || 0) + 1;
+    classified.push({ rel: destRel, ...cls });
     const rn = rootNoteOf(f.rel);
-    if (!rn) guessed++;
-    entries.push({ id, file: destRel, name: prettyName(f.rel), rootNote: rn || 'C4' });
+    const e = { id, file: destRel, name: prettyName(f.rel), kind: cls.kind };
+    if (cls.kind === 'loop') {
+      // No rootNote: a loop is not played AT a note, so inventing C4 is the very
+      // fiction this change removes. bpm/seconds are what a loop needs instead.
+      if (cls.bpm) e.bpm = cls.bpm;
+      if (cls.durSec) e.seconds = +cls.durSec.toFixed(3);
+    } else {
+      if (!rn) guessed++;
+      e.rootNote = rn || 'C4';
+    }
+    entries.push(e);
+  }
+
+  {
+    const parts = Object.keys(kinds).sort().map(k => c.b(String(kinds[k])) + ' ' + k);
+    if (parts.length) console.log('\n' + c.b('Kinds') + '   ' + parts.join(c.dim('  ·  ')));
+    const loops = classified.filter(x => x.kind === 'loop');
+    if (loops.length) {
+      loops.slice(0, 8).forEach(x => console.log(c.dim('    loop   ' + (x.bpm ? (x.bpm + ' bpm') : c.y('bpm unknown')) + '   ' + x.rel + c.dim('   (' + x.why + ')'))));
+      if (loops.length > 8) console.log(c.dim(`    …and ${loops.length - 8} more`));
+      const noBpm = loops.filter(x => !x.bpm).length;
+      if (noBpm) console.log(c.y(`  ${noBpm} loop(s) have no bpm in the filename — add one (e.g. "…_124.wav") so they can be tempo-matched.`));
+    }
+    console.log(c.dim('  Loops are not played at a note; tuned samples are. Override by editing "kind" in manifest.json.\n'));
   }
 
   // IN-PLACE ONLY: copy mode SLUGS every filename, which is what quietly removes

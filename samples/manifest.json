@@ -1,4 +1,83 @@
 {
   "samples": [
+    {
+      "id": "sounds/packs/Afro-House-Songstarters/Afrohouse_Song_Starters/loops/drums/DSP_ASR_130_drum_amaan",
+      "file": "sounds/packs/Afro-House-Songstarters/Afrohouse_Song_Starters/loops/drums/DSP_ASR_130_drum_amaan.wav",
+      "name": "DSP ASR 130 drum amaan",
+      "kind": "loop",
+      "bpm": 130,
+      "seconds": 7.385
+    },
+    {
+      "id": "sounds/packs/Crusy-Vol.-4-Trademark-Series/Toolroom_-_Crusy_Vol_4_-_Trademark_Series/One_Shots/Drums/Claps/T_TSCR4_clap_oneshot_pariz",
+      "file": "sounds/packs/Crusy-Vol.-4-Trademark-Series/Toolroom_-_Crusy_Vol_4_-_Trademark_Series/One_Shots/Drums/Claps/T_TSCR4_clap_oneshot_pariz.wav",
+      "name": "T TSCR4 clap oneshot pariz",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Mosaic-House/SM152_-_Mosaic_House_-_Wav/drum_loops/mh_drum125_download_full",
+      "file": "sounds/packs/Mosaic-House/SM152_-_Mosaic_House_-_Wav/drum_loops/mh_drum125_download_full.wav",
+      "name": "mh drum125 download full",
+      "kind": "loop",
+      "bpm": 125,
+      "seconds": 3.84
+    },
+    {
+      "id": "sounds/packs/NIGHTS-IN-THE-6IX-MELODIC-HIP-HOP-RNB/Origin_Sound_-_NIGHTS_IN_THE_6IX/one_shots/drum_hits/kicks/OS_6IX_kick_lavish",
+      "file": "sounds/packs/NIGHTS-IN-THE-6IX-MELODIC-HIP-HOP-RNB/Origin_Sound_-_NIGHTS_IN_THE_6IX/one_shots/drum_hits/kicks/OS_6IX_kick_lavish.wav",
+      "name": "OS 6IX kick lavish",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Thomas-Newson-Vol.-2-Trademark-Series/Toolroom_-_Thomas_Newson_Vol_2_-_Trademark_Series/One_Shots/Drums/Kick/T_TSTN2_kick_oneshot_fifth",
+      "file": "sounds/packs/Thomas-Newson-Vol.-2-Trademark-Series/Toolroom_-_Thomas_Newson_Vol_2_-_Trademark_Series/One_Shots/Drums/Kick/T_TSTN2_kick_oneshot_fifth.wav",
+      "name": "T TSTN2 kick oneshot fifth",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/TORONTO-TRAP-COLD-HIP-HOP/Origin_Sound_-_TORONTO_TRAP/one_shots/drum_hits/hihats/OS_ICE_hihat_dent",
+      "file": "sounds/packs/TORONTO-TRAP-COLD-HIP-HOP/Origin_Sound_-_TORONTO_TRAP/one_shots/drum_hits/hihats/OS_ICE_hihat_dent.wav",
+      "name": "OS ICE hihat dent",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/TORONTO-TRAP-COLD-HIP-HOP/Origin_Sound_-_TORONTO_TRAP/one_shots/drum_hits/hihats/OS_ICE_hihat_six",
+      "file": "sounds/packs/TORONTO-TRAP-COLD-HIP-HOP/Origin_Sound_-_TORONTO_TRAP/one_shots/drum_hits/hihats/OS_ICE_hihat_six.wav",
+      "name": "OS ICE hihat six",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/TORONTO-TRAP-COLD-HIP-HOP/Origin_Sound_-_TORONTO_TRAP/one_shots/drum_hits/kicks/OS_ICE_kick_loaded",
+      "file": "sounds/packs/TORONTO-TRAP-COLD-HIP-HOP/Origin_Sound_-_TORONTO_TRAP/one_shots/drum_hits/kicks/OS_ICE_kick_loaded.wav",
+      "name": "OS ICE kick loaded",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/TORONTO-TRAP-COLD-HIP-HOP/Origin_Sound_-_TORONTO_TRAP/one_shots/drum_hits/open_hihat/OS_ICE_open_hihat_crisp",
+      "file": "sounds/packs/TORONTO-TRAP-COLD-HIP-HOP/Origin_Sound_-_TORONTO_TRAP/one_shots/drum_hits/open_hihat/OS_ICE_open_hihat_crisp.wav",
+      "name": "OS ICE open hihat crisp",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/TORONTO-TRAP-COLD-HIP-HOP/Origin_Sound_-_TORONTO_TRAP/one_shots/drum_hits/snares/OS_ICE_snare_crunchy",
+      "file": "sounds/packs/TORONTO-TRAP-COLD-HIP-HOP/Origin_Sound_-_TORONTO_TRAP/one_shots/drum_hits/snares/OS_ICE_snare_crunchy.wav",
+      "name": "OS ICE snare crunchy",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/TORONTO-TRAP-COLD-HIP-HOP/Origin_Sound_-_TORONTO_TRAP/one_shots/drum_hits/snares/OS_ICE_snare_spring",
+      "file": "sounds/packs/TORONTO-TRAP-COLD-HIP-HOP/Origin_Sound_-_TORONTO_TRAP/one_shots/drum_hits/snares/OS_ICE_snare_spring.wav",
+      "name": "OS ICE snare spring",
+      "kind": "tuned",
+      "rootNote": "C4"
+    }
   ]
 }

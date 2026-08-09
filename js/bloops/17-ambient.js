@@ -21684,7 +21684,58 @@
       if (typeof lanes === 'undefined' || typeof _makeLane !== 'function') return;
       const fs = _ambFreezeState(E, key);
       if (!Array.isArray(fs.events)) fs.events = [];
-      if (!(fs.loopLen > 0)) fs.loopLen = (60 / Math.max(20, _ambBpm())) * 4 * 2;   // empty canvas: 2 bars
+      // SEED THE CANVAS FROM THE SOUNDING LOOP. This lock engages the moment
+      // ✎ Grid is pressed — with an empty freeze store the layer locked onto an
+      // EMPTY 2-bar canvas: playback audibly changed on the click (worst case
+      // the layer fell silent) and the editor opened blank instead of showing
+      // the loop the user came to edit. Harvest the last whole window from the
+      // rolling capture instead — the exact lift _ambLockEngage does — sized to
+      // the layer's own cycle (prog cycle / unit, ≥2 bars) and anchored so the
+      // replay takes over at the next boundary with no gap.
+      if (!fs.events.length && E.timer) {
+        try {
+          const cfgH = E._cfg || (E.getCfg && E.getCfg());
+          // the AREA's bpm — the grid the generator actually plays on; _ambBpm()
+          // is the workspace tempo input, which can differ (measured: a 1-bar
+          // window harvested where the prog cycle needed 4)
+          const bpmH = (cfgH && Number.isFinite(cfgH.bpm) && cfgH.bpm > 0) ? cfgH.bpm : _ambBpm();
+          const barSec = (60 / Math.max(20, bpmH)) * 4;
+          let bars = 2;
+          try { const cyc = _ambProgCycleBars(cfgH); if (cyc > 0) bars = Math.max(bars, cyc); } catch (e) {}
+          try {
+            const P = _ambLayerPeriodSec(E, key, L, cfgH);
+            if (P > 0) bars = Math.max(bars, Math.ceil(P / barSec));
+          } catch (e) {}
+          bars = Math.min(16, bars);   // the rolling capture holds ~33 s — stay well inside it
+          const loopSec = bars * barSec;
+          const nowH = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+          const G = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor : nowH;
+          let bEnd = G + Math.floor((nowH - G) / barSec) * barSec;   // last bar boundary ≤ now
+          if (!(bEnd > G)) bEnd = nowH;
+          const bStart = bEnd - loopSec;
+          const capArr = (E.cap && E.cap[key]) || [];
+          const win = capArr.filter(e => e.at >= bStart - 0.001 && e.at < bEnd - 0.001);
+          if (win.length) {
+            fs.events = win.map(e => ({ t: Math.max(0, e.at - bStart), freq: e.freq, dur: e.dur, params: e.params }));
+            fs.loopLen = loopSec;
+            // Bar-Lock's engage recipe: anchor AT the window end (≤ now, phase-
+            // continuous — the replay's from-clamp joins mid-phrase and its
+            // 0.22 s grace fires past-due notes) and cancel the layer's pending
+            // generated voices from there so the loop takes over with no gap.
+            // Stepping the anchor to the NEXT boundary instead left the layer
+            // silent until it arrived — measured up to a whole loop of silence.
+            fs.anchor = bEnd; fs.scheduledUpto = bEnd;
+            // Cancel from NOW, not from the anchor: the live notes in
+            // [bEnd, now] are the very notes the capture recorded — stealing
+            // them left a seam of up to a bar (measured 3.0 s of silence)
+            // while the replay's from-clamp declined to re-fire them. Letting
+            // them ring and cancelling only the PENDING future is the
+            // continuous handoff; the replay owns everything from now on.
+            try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, nowH); } catch (e) {}
+          }
+        } catch (e) {}
+      }
+      if (!(fs.loopLen > 0)) fs.loopLen = (60 / Math.max(20, _ambBpm())) * 4 * 2;   // truly nothing playing: 2-bar empty canvas
       fs.frozen = true; fs._lock = true;
       if (!fs.keyCtx) fs.keyCtx = _ambCurKeyCtx(E);
       const snapshot = { ev: fs.events.map(e => ({ t: e.t, freq: e.freq, dur: e.dur, params: e.params })), loopLen: fs.loopLen };
@@ -36646,7 +36697,14 @@
                 return;
               }
               const L = _ambLayerByKey(E, key);
-              if (!(L && L.lockState && L.lockState.seedEdit)) { _ambSeedPreview(E, key); _ambSeedPromote(E, key); }   // bootstrap the authored lock
+              // Bootstrap the authored lock — but ONLY while STOPPED. Playing,
+              // _ambGridEditStart harvests the SOUNDING loop from the rolling
+              // capture; promoting the seed PREVIEW here instead replaced what
+              // you hear with a different offline take the moment Grid was
+              // pressed ("playback changes when I click Grid"), and
+              // _ambSeedPreview stubs the global clocks, which is off-limits
+              // mid-play (see the spat gotcha).
+              if (!(L && L.lockState && L.lockState.seedEdit) && !E.timer) { _ambSeedPreview(E, key); _ambSeedPromote(E, key); }
               if (!(_bloomGridEdit && _bloomGridEdit.E === E && _bloomGridEdit.key === key)) {
                 try { _ambGridEditStart(E, key); } catch (e2) { console.warn('Grid mode failed', e2); }
               }

@@ -259,9 +259,30 @@
     // 0.84 between timer-on and timer-parked renders of the same notes).
     // Both fields are lexical, so 17 reaches them through this function.
     function _bloomOfflineScope(map) {
-      if (map) { _offlineSamplerOverride = map; _offlineVoiceRefs = []; }
-      else { _offlineSamplerOverride = null; _offlineVoiceRefs = null; }
+      if (map) { _offlineSamplerOverride = map; _offlineVoiceRefs = []; _bloomOfflineDisp = []; }
+      else { _offlineSamplerOverride = null; _offlineVoiceRefs = null; _bloomOfflineDisp = null; }
       return _offlineVoiceRefs;
+    }
+    // End-aware disposal for the BOUNCE's checkpoints. An undisposed finished
+    // voice is not free: a MonoSynth's filterEnvelope stays a signal into a
+    // biquad param (per-sample coefficient recompute) for the node's whole
+    // graph lifetime, so a node-voice-heavy bounce accumulated cost and ran
+    // slower than realtime. Each parked voice records when its sound is over
+    // (start + dur + release + slop); the bounce sweeps at every suspend
+    // checkpoint, so concurrency — and cost — stays at live levels.
+    let _bloomOfflineDisp = null;
+    function _bloomOfflineSweep(t) {
+      if (!Array.isArray(_bloomOfflineDisp) || !_bloomOfflineDisp.length) return 0;
+      let n = 0;
+      for (let i = _bloomOfflineDisp.length - 1; i >= 0; i--) {
+        const d = _bloomOfflineDisp[i];
+        if (!(d.end <= t)) continue;
+        _bloomOfflineDisp.splice(i, 1);
+        try { safeDisposeSynth(d.synth); } catch (e) {}
+        if (d.fx) for (const fn of d.fx) { try { fn.dispose ? fn.dispose() : fn.disconnect(); } catch (e) {} }
+        n++;
+      }
+      return n;
     }
     // Build offline samplers for the given sample ids (bounce pass 2).
     // Called INSIDE Tone.Offline so they bind to the offline context; the
@@ -5019,6 +5040,15 @@
           _offlineVoiceRefs.push(synth);
           effectNodes.forEach(n => _offlineVoiceRefs.push(n));
         }
+        // Bounce checkpoints sweep voices whose sound is over (see
+        // _bloomOfflineSweep) — record when that is. +0.25 slop past the
+        // release so a sweep can never clip a tail.
+        try {
+          if (Array.isArray(_bloomOfflineDisp)) {
+            const _st = (typeof startTime === 'number' && Number.isFinite(startTime)) ? startTime : 0;
+            _bloomOfflineDisp.push({ synth, fx: effectNodes, end: _st + (preReleaseDur || 0) + (rel || 0) + 0.25 });
+          }
+        } catch (e) {}
         return;
       }
       // Always dispose. Sequence playback now passes a startTime and the

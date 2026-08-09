@@ -19215,7 +19215,7 @@
       const horizon = now + 1.4 * _ambHiddenMult();   // hidden tab → 5.6 s runway (throttled ticks can't starve the schedule)
       // Bar Lock: pin the loop grid to the layers' first-onset lead, once per play,
       // so every (re)lock snaps to the same phase (stays in sync with live layers).
-      if (E === _masterEng && E._barGridAnchor == null) E._barGridAnchor = lead;
+      if ((E === _masterEng || E._bounceGrid) && E._barGridAnchor == null) E._barGridAnchor = lead;
       const space = cfg.space | 0;
       const C = E.clocks, I = E.iters;
       // Solo: if ANY on layer is soloed, only soloed layers sound.
@@ -25647,6 +25647,19 @@
       });
       E2.rng = (cfg.seed >>> 0) || 1;
       E2._everRan = true;
+      // Initialize like a REAL play (_ambStartGenerator's state), or the capture
+      // diverges from what the user hears:
+      // - _ambRestoreLocks: a saved project's locked/frozen layers replay their
+      //   persisted phrases; without this they regenerate or fall silent.
+      // - _playStartAt/_pressAt at clock 0: the bar counter / prog anchor.
+      // - _bounceGrid: lets the tick pin _barGridAnchor for this engine (that
+      //   pin is normally _masterEng-only), so unit-synced layers share ONE
+      //   phase grid instead of anchoring on private leads — the documented
+      //   out-of-sync failure.
+      E2._playStartAt = 0;
+      E2._pressAt = 0;
+      E2._bounceGrid = true;
+      try { _ambRestoreLocks(E2); } catch (e) {}
       const notes = [];
       let clock = 0;
       const nowFn = function () { return clock; };
@@ -25750,7 +25763,7 @@
       phase('composed', { notes: notes.length });
       const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
       let buffer = null, played = 0, failed = 0, wetOut = false, coreTaken = 0, coreOn = false;
-      let samplerCount = 0;
+      let samplerCount = 0, _masterBuilt = false;
       // Tell playNote not to DEFER voice construction: the deferred-build queue is
       // pumped by a wall-clock timer that does not advance while an offline
       // context renders, so anything past 0.25 s would never be built — and would
@@ -25787,6 +25800,18 @@
               ctx.suspend(t).then(async () => {
                 try {
                   checkpointsFired++;
+                  // Tone's OfflineContext ticked its OWN clock to the render's
+                  // END before startRendering, so Tone.now() here reads the
+                  // full duration — and Tone.Source.start() clamps against it,
+                  // which made every checkpoint-built Tone voice start past
+                  // the buffer and render SILENT (the "layers cut out after a
+                  // few seconds" report). Node-path notes are therefore
+                  // delivered UP FRONT in the callback; this re-alignment is
+                  // the safety net for a core-fallback build landing here.
+                  try { const tc = Tone.getContext(); if (tc && typeof tc._currentTime === 'number' && tc._currentTime > t) tc._currentTime = t; } catch (e) {}
+                  // reclaim finished node voices — bounds the graph's cost at
+                  // live-concurrency levels (see _bloomOfflineSweep in 04)
+                  try { if (typeof window._bloomOfflineSweep === 'function') window._bloomOfflineSweep(t); } catch (e) {}
                   if (deliverUpTo) deliverUpTo(t + CHUNK + LOOK);
                   // drain the core's port before resuming — a note posted for
                   // t+0.1 must be IN the core before the clock passes it
@@ -25925,7 +25950,8 @@
             }
             // Warmth sits BEFORE everything above, as it does live.
             if (warmIn && warmOut) { warmOut.connect(outStage); outStage = warmIn; }
-          } catch (e) { outStage = null; }
+            _masterBuilt = !!outStage;
+          } catch (e) { outStage = null; _masterBuilt = false; try { console.warn('[bounce] master stage failed to build — rendering unmastered:', e); } catch (e2) {} }
           let E3 = null, wet = false;
           try {
             if (opts && opts.dry) throw new Error('dry requested');
@@ -25956,8 +25982,18 @@
           // entries, since dynamic tones resolve per note. Feed the master
           // stage: node-path samples never had per-layer FX live either.
           try {
-            const idm = (JSON.stringify(cap.cfg).match(/"sample:([^"]+)"/g) || [])
-              .map((m) => m.slice(8, -1));   // strip `"sample:` (8 chars) and the closing quote
+            // The captured notes carry the RESOLVED type of every voice that
+            // will play — the exact sampler list, where a cfg regex misses
+            // samp layers (they store `sampleId`, never a "sample:" string).
+            const idset = new Set();
+            for (const n of notes) {
+              const ty = n.params && n.params.type;
+              if (typeof ty === 'string' && ty.indexOf('sample:') === 0) idset.add(ty.slice(7));
+            }
+            // belt: cfg-referenced tone strings + samp-layer sampleId fields
+            (JSON.stringify(cap.cfg).match(/"sample:([^"]+)"/g) || []).forEach((m) => idset.add(m.slice(8, -1)));
+            (JSON.stringify(cap.cfg).match(/"sampleId":"([^"]+)"/g) || []).forEach((m) => idset.add(m.slice(12, -1)));
+            const idm = Array.from(idset);
             if (idm.length && typeof _bloomOfflineSamplerBank === 'function') {
               const bank = _bloomOfflineSamplerBank(idm, outStage || null);
               samplerCount = bank.size;
@@ -25968,26 +26004,65 @@
             }
           } catch (e) {}
           phase('instrumentsReady', { wet, core: coreOn, samplers: samplerCount, layers: (E3 && E3.mod) ? Object.keys(E3.mod).length : 0 });
-          // Delivery: batches of the time-sorted note list. Each note is
-          // stamped with its layer key so the core sessions slots per layer
-          // (and the capture tee attribution matches live playback).
-          let idx = 0;
-          const prevKey = (typeof window !== 'undefined') ? window._ambEmitKey : null;
-          deliverUpTo = (untilAt) => {
-            while (idx < notes.length && notes[idx].at < untilAt) {
-              const n = notes[idx++];
-              try {
-                let dest = null;
-                if (wet && n.key) { try { dest = _ambLayerDest(n.key) || null; } catch (e) { dest = null; } }
-                if (!dest) dest = outStage || ((Tone.getDestination && Tone.getDestination()) || null);
-                window._ambEmitKey = n.key || null;
-                playNote(n.freq, n.params, n.dur, n.at, dest, undefined, -1);
-                played++;
-              } catch (e) { failed++; }
+          // Tick-driven SIGNAL schedulers (trance gate, unit-gate chop,
+          // stochastic/custom mod sources). Live, the 150 ms tick keeps
+          // ~1.2 s scheduled ahead; nothing ticks during an offline render,
+          // so a gated layer played its first window and then the gate signal
+          // HELD its last value — a 0 step = the layer cuts out a couple of
+          // seconds in, permanently. Schedule the WHOLE timeline here in the
+          // callback (explicit times onto native params — clock-safe).
+          if (wet) {
+            for (let tt = 0; tt < seconds; tt += 0.5) {
+              try { _ambScheduleStochastic(tt); } catch (e) {}
             }
+          }
+          // Delivery routing. Two clocks, two rules:
+          // - NODE-path (Tone) voices must be built HERE in the callback,
+          //   where Tone's offline clock still reads 0. Tone's OfflineContext
+          //   ticks its clock to the render's END before startRendering, and
+          //   Tone.Source.start() clamps starts against Tone.now() — a Tone
+          //   voice built at a checkpoint starts past the buffer = silent.
+          // - CORE notes are wasm-scheduled (immune to Tone's clock) but the
+          //   core's alloc_voice STEALS past ~256 scheduled voices, so they
+          //   are batched from the checkpoints.
+          const prevKey = (typeof window !== 'undefined') ? window._ambEmitKey : null;
+          const deliverNote = (n) => {
+            try {
+              let dest = null;
+              if (wet && n.key) { try { dest = _ambLayerDest(n.key) || null; } catch (e) { dest = null; } }
+              if (!dest) dest = outStage || ((Tone.getDestination && Tone.getDestination()) || null);
+              window._ambEmitKey = n.key || null;
+              playNote(n.freq, n.params, n.dur, n.at, dest, undefined, -1);
+              played++;
+            } catch (e) { failed++; }
             window._ambEmitKey = prevKey;
           };
-          // First batch covers the opening; checkpoints deliver the rest.
+          // Core routing: first 16 distinct eligible layer keys get slots
+          // (mirrors _offSlotFor's first-seen allocation); everything else —
+          // ineligible types, overflow keys — is a Tone voice, built now.
+          const coreKeys = new Set();
+          if (coreOn) {
+            for (const n of notes) {
+              const ty = (n.params && n.params.type) || 'sine';
+              let el = false; try { el = _coreVoices.eligible(ty, n.params) === true; } catch (e) {}
+              if (!el) continue;
+              const k = n.key || 'live';
+              if (coreKeys.size >= 16 && !coreKeys.has(k)) continue;
+              coreKeys.add(k);
+            }
+          }
+          const isCore = (n) => {
+            if (!coreOn) return false;
+            if (!coreKeys.has(n.key || 'live')) return false;
+            try { return _coreVoices.eligible((n.params && n.params.type) || 'sine', n.params) === true; } catch (e) { return false; }
+          };
+          const coreNotes = [];
+          for (const n of notes) { if (isCore(n)) coreNotes.push(n); else deliverNote(n); }
+          let coreIdx = 0;
+          deliverUpTo = (untilAt) => {
+            while (coreIdx < coreNotes.length && coreNotes[coreIdx].at < untilAt) deliverNote(coreNotes[coreIdx++]);
+          };
+          // First core batch covers the opening; checkpoints deliver the rest.
           deliverUpTo(CHUNK + LOOK);
           // Port-drain barrier: every posted note must be IN the core before
           // the render starts (messages are async; the render doesn't wait).
@@ -26016,7 +26091,7 @@
       } catch (e) {}
       phase('rendered', { wallSec: wall, peak });
       return { buffer, notes: notes.length, played, failed, seconds, wallSec: wall,
-               xRealtime: wall > 0 ? seconds / wall : 0, peak, wet: wetOut,
+               xRealtime: wall > 0 ? seconds / wall : 0, peak, wet: wetOut, master: _masterBuilt,
                core: coreOn, coreNotes: coreTaken, samplers: samplerCount, checkpoints: checkpointsFired };
     }
     // NAME THE EXPORTS DIFFERENTLY. This file's top level is SCRIPT scope, so a
@@ -26077,6 +26152,7 @@
       // build — e.g. the Glue worklet being unavailable — rather than a standing
       // list of known gaps.
       const missing = (res && Array.isArray(res.missing)) ? res.missing : [];
+      if (res && res.master === false) missing.push('the master chain (compressor/limiter/clip — this file is unmastered)');
       _ph('banked', { id: rec.id, name: filename });
       try {
         if (typeof showToast === 'function') {

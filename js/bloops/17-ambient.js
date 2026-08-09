@@ -25719,11 +25719,41 @@
           // and less glued than what you hear.
           let outStage = null;
           try {
-            const lim = new Tone.Limiter(-3).toDestination();
+            const g = (typeof globalFx !== 'undefined' && globalFx) ? globalFx : {};
+            // SOFT CLIPPER, after the limiter — exactly as live. Without it the
+            // export CAN clip: Tone.Limiter is a 20:1 compressor, not a brickwall,
+            // so transients overshoot (measured peak 1.49 with 377 samples over
+            // full scale on a hot area). Same curve constants as 03's
+            // _masterClipCurve: identity below 0.85, tanh knee to a 0.97 ceiling.
+            const KNEE = 0.85, CEIL = 0.97, SOFT = 0.6;
+            const clip = new Tone.WaveShaper((x) => {
+              const sg = x < 0 ? -1 : 1, ax = Math.abs(x);
+              if (ax <= KNEE) return x;
+              return sg * (KNEE + (CEIL - KNEE) * Math.tanh((ax - KNEE) / SOFT));
+            }, 4096);
+            try { clip.oversample = '2x'; } catch (e) {}
+            clip.toDestination();
+            const lim = new Tone.Limiter(-3).connect(clip);
             let volDb = 0;
             try { if (typeof masterVolume !== 'undefined' && masterVolume && masterVolume.volume) volDb = masterVolume.volume.value; } catch (e) {}
             if (!Number.isFinite(volDb)) volDb = 0;
-            outStage = new Tone.Volume(volDb).connect(lim);
+            const vol = new Tone.Volume(volDb).connect(lim);
+            // MASTER COMPRESSOR — the one colour stage that is ON BY DEFAULT
+            // (compOn true, ~2:1 at −3 dB). Warmth / Vinyl / Glue all default OFF,
+            // so reproducing this single node closes the gap for a default
+            // workspace; the other three are reported instead (see below), since
+            // Vinyl is a GENERATOR and Glue an AudioWorklet, and neither can be
+            // rebuilt here without the 03 refactor.
+            if (g.compOn !== false) {
+              const comp = new Tone.Compressor({
+                threshold: Number.isFinite(g.compThresh) ? g.compThresh : -3,
+                ratio: Number.isFinite(g.compRatio) ? g.compRatio : 2,
+                attack: (Number.isFinite(g.compAttack) ? g.compAttack : 5) / 1000,
+                release: (Number.isFinite(g.compRelease) ? g.compRelease : 180) / 1000,
+                knee: Number.isFinite(g.compKnee) ? g.compKnee : 10,
+              }).connect(vol);
+              outStage = comp;
+            } else outStage = vol;
           } catch (e) { outStage = null; }
           let E3 = null, wet = false;
           try {
@@ -25802,9 +25832,25 @@
       try { rec.grid = _ambCaptureGrid(E, audioBuf.duration); } catch (e) {}
       _ambCaptureBank.push(rec);
       try { _ambRenderCaptureBank(); } catch (e) {}
-      try { if (typeof showToast === 'function') showToast('Bounced “' + filename + '” in ' + res.wallSec.toFixed(1) + 's (' + res.xRealtime.toFixed(0) + '× realtime) — in the bank below.'); } catch (e) {}
+      // Say what a bounce is missing ONLY when it is actually engaged. Warmth /
+      // Vinyl / Glue default OFF, so a blanket "this sounds thinner" warning
+      // would be wrong for most workspaces — and a warning that cries wolf is
+      // one people stop reading.
+      let missing = [];
+      try {
+        const g = (typeof globalFx !== 'undefined' && globalFx) ? globalFx : {};
+        if (g.warmthOn) missing.push('Warmth');
+        if (g.vinylOn) missing.push('Vinyl');
+        if (g.ottOn) missing.push('Glue');
+      } catch (e) {}
+      try {
+        if (typeof showToast === 'function') {
+          showToast('Bounced “' + filename + '” in ' + res.wallSec.toFixed(1) + 's (' + res.xRealtime.toFixed(0) + '× realtime) — in the bank below.'
+            + (missing.length ? ('  Note: ' + missing.join(' / ') + ' ' + (missing.length > 1 ? 'are' : 'is') + ' not in a bounce yet.') : ''));
+        }
+      } catch (e) {}
       return { ok: true, id: rec.id, name: filename, ext, bytes: blob.size, durSec: rec.durSec,
-               wallSec: res.wallSec, xRealtime: res.xRealtime, notes: res.played, wet: res.wet };
+               wallSec: res.wallSec, xRealtime: res.xRealtime, notes: res.played, wet: res.wet, missing };
     }
     try { if (typeof window !== 'undefined') { window._bloomBounceToBank = (sec, opts) => _ambBounceToBank(_masterEng, sec, opts); } } catch (e) {}
     try { if (typeof window !== 'undefined') { window._bloomBounce = (sec, opts) => _ambRenderOffline(_masterEng, sec, opts);

@@ -2347,6 +2347,7 @@
         }
       } catch (e) {}
       if (_offlineSamplerOverride) return _voiceBudgetDyn;
+      try { if (typeof window !== 'undefined' && window.__bloopsOfflineRender) return _voiceBudgetDyn; } catch (e) {}
       while (_activeVoiceCost() > _voiceBudgetDyn && _activeVoices.length > 1) {
         const idx = _pickVoiceVictim();
         const victim = _activeVoices.splice(idx, 1)[0];
@@ -2391,6 +2392,10 @@
       // which silently kills the entire render except the last 24
       // voices. Bypass the cap when an offline render is in flight.
       if (_offlineSamplerOverride) return;
+      // Same for the Bloom BOUNCE, which renders offline without the Tracks
+      // export's sampler override — without this the cap steals its own voices
+      // mid-render, exactly as the comment above describes.
+      try { if (typeof window !== 'undefined' && window.__bloopsOfflineRender) return; } catch (e) {}
       // Budgeted by DSP cost, not headcount (see _voiceDspCost) — plain voices
       // cost 1 so simple projects keep the exact old behavior at the full cap.
       // The budget itself adapts to measured render health (_setVoiceBudget).

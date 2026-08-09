@@ -25562,6 +25562,135 @@
       E.seedPv[key] = pv ? Object.assign(pv, { sig }) : { events: [], loopLen: 0, sig };
       return E.seedPv[key];
     }
+    // ---- OFFLINE BOUNCE (prototype) ----------------------------------------
+    // Capture is REAL-TIME: it taps the master output while the generator plays,
+    // so a 5-minute piece takes 5 minutes. This renders faster than real time.
+    //
+    // THE DESIGN THAT MAKES IT TRACTABLE: two passes, so the generator never runs
+    // against the rendered clock. Pass 1 drives the engine on a SYNTHETIC clock
+    // (exactly what _ambSeedRender already does, proven) and captures every note.
+    // Pass 2 replays that note list into an OfflineAudioContext. All the
+    // wall-clock machinery the engine depends on — setInterval ticking, the 16 ms
+    // voice-build pump, setTimeout voice disposal, the health watchdog — is
+    // simply absent from pass 2, instead of needing a render-mode path each.
+    // Measured ceiling for pass 2: the core worklet renders ~70x realtime in an
+    // OfflineAudioContext with real voices.
+    //
+    // PROTOTYPE LIMIT, stated rather than hidden: notes are rendered to the
+    // offline destination directly, so per-layer FX chains (_ambBuildMod) and the
+    // master chain are NOT applied — this is a dry bounce of the note stream.
+    // Matching the live signal path means rebuilding the mod graph on the offline
+    // context, which is the next step.
+    function _ambCaptureNotesSynthetic(E, seconds) {
+      const cfg0 = (typeof E.getCfg === 'function') ? E.getCfg() : null; if (!cfg0) return null;
+      const cfg = JSON.parse(JSON.stringify(cfg0));
+      cfg.playing = false;
+      const E2 = _makeAmbientEngine({
+        getCfg: () => cfg,
+        busNode: () => (typeof globalSendTap !== 'undefined' ? globalSendTap : null),
+        laneIdx: () => -1, guard: () => true,
+        hostId: 'bloom-bounce', idPrefix: 'ambient', vizId: 'bloom-bounce-viz',
+        playId: 'bloom-bounce-play', seedId: 'bloom-bounce-seed', isLane: false,
+      });
+      E2.rng = (cfg.seed >>> 0) || 1;
+      E2._everRan = true;
+      const notes = [];
+      let clock = 0;
+      const nowFn = function () { return clock; };
+      const restorers = [];
+      const stubNow = (obj) => {
+        if (!obj) return false;
+        const hadOwn = Object.prototype.hasOwnProperty.call(obj, 'now');
+        const prevDesc = hadOwn ? Object.getOwnPropertyDescriptor(obj, 'now') : null;
+        try {
+          Object.defineProperty(obj, 'now', { configurable: true, writable: true, value: nowFn });
+          restorers.push(() => { try { if (hadOwn && prevDesc) Object.defineProperty(obj, 'now', prevDesc); else delete obj.now; } catch (e) {} });
+          return true;
+        } catch (e) { return false; }
+      };
+      const origPlay = playNote;
+      const prevE = (typeof _E !== 'undefined') ? _E : undefined;
+      const prevSink = (typeof window !== 'undefined') ? window._ambCaptureSink : undefined;
+      const prevEmitKey = (typeof window !== 'undefined') ? window._ambEmitKey : undefined;
+      const prevEmitAt = (typeof window !== 'undefined') ? window._ambEmitAt : undefined;
+      try {
+        stubNow(Tone);
+        try { stubNow((typeof Tone.getContext === 'function') ? Tone.getContext() : Tone.context); } catch (e) {}
+        // eslint-disable-next-line no-global-assign
+        playNote = function (freq, params, durMs, at) {
+          // The capture-sink tee is what stamps _ambEmitKey; a stub that replaces
+          // playNote wholesale must run it or every note reads as unowned.
+          try { if (typeof window !== 'undefined' && typeof window._ambCaptureSink === 'function') window._ambCaptureSink(freq, params, durMs, at); } catch (e) {}
+          notes.push({ at: +at || 0, freq: +freq || 0, dur: Math.max(20, +durMs || 100),
+            key: (typeof window !== 'undefined') ? window._ambEmitKey : null,
+            params: Object.assign({}, params) });
+        };
+        if (typeof _ambInGeneration !== 'undefined') _ambInGeneration = true;
+        const DT = 0.15;
+        const horizon = Math.max(1, seconds) + 2;          // +lookahead so the tail is scheduled
+        const MAXT = Math.ceil(horizon / DT) + 40;
+        for (let i = 0; i < MAXT && clock < horizon; i++) {
+          try { _ambTick(E2); } catch (e) {}
+          clock += DT;
+        }
+      } finally {
+        if (typeof _ambInGeneration !== 'undefined') _ambInGeneration = false;
+        for (let k = restorers.length - 1; k >= 0; k--) restorers[k]();
+        // eslint-disable-next-line no-global-assign
+        playNote = origPlay;
+        if (prevE !== undefined) _E = prevE;
+        if (typeof window !== 'undefined') { window._ambCaptureSink = prevSink; window._ambEmitKey = prevEmitKey; window._ambEmitAt = prevEmitAt; }
+      }
+      notes.sort((a, b) => a.at - b.at);
+      // Anchor at the first onset so the bounce starts on the music, not on the
+      // engine's internal lead.
+      const t0 = notes.length ? notes[0].at : 0;
+      return { notes: notes.map(n => Object.assign({}, n, { at: n.at - t0 })), count: notes.length };
+    }
+    // Pass 2: replay a captured note list into an OfflineAudioContext via
+    // Tone.Offline, which swaps Tone's global context for the duration — the same
+    // mechanism the Tracks export uses, so voices build on the offline context.
+    async function _ambRenderOffline(E, seconds, opts) {
+      seconds = Math.max(1, Math.min(1800, +seconds || 30));
+      const cap = _ambCaptureNotesSynthetic(E, seconds);
+      if (!cap || !cap.notes.length) return { buffer: null, notes: 0, reason: 'no notes captured' };
+      const notes = cap.notes.filter(n => n.at < seconds);
+      const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
+      let buffer = null, played = 0, failed = 0;
+      try {
+        buffer = await Tone.Offline(async () => {
+          for (const n of notes) {
+            try {
+              // Straight to the offline destination: this is a DRY bounce (see the
+              // note above). Passing an explicit destination also avoids
+              // _ambLayerDest reaching for E.mod chains that do not exist here.
+              const dest = (Tone.getDestination && Tone.getDestination()) || null;
+              playNote(n.freq, n.params, n.dur, n.at, dest, undefined, -1);
+              played++;
+            } catch (e) { failed++; }
+          }
+          // Let scheduled voices settle; Tone.Offline renders the full duration
+          // regardless, so this only needs the synchronous scheduling above.
+        }, seconds);
+      } catch (e) {
+        return { buffer: null, notes: notes.length, reason: 'render failed: ' + ((e && e.message) || e) };
+      }
+      const wall = (((typeof performance !== 'undefined') ? performance.now() : 0) - t0) / 1000;
+      let peak = 0;
+      try {
+        const d = buffer.getChannelData ? buffer.getChannelData(0) : (buffer.toArray ? buffer.toArray(0) : null);
+        if (d) for (let i = 0; i < d.length; i += 16) { const a = Math.abs(d[i]); if (a > peak) peak = a; }
+      } catch (e) {}
+      return { buffer, notes: notes.length, played, failed, seconds, wallSec: wall,
+               xRealtime: wall > 0 ? seconds / wall : 0, peak };
+    }
+    // NAME THE EXPORTS DIFFERENTLY. This file's top level is SCRIPT scope, so a
+    // `function _ambFoo` declaration already creates window._ambFoo — assigning a
+    // wrapper to that same name overwrites the function with something that calls
+    // itself (instant stack overflow). Same trap as the documented note that
+    // `_masterEng` is a lexical const and NOT on window.
+    try { if (typeof window !== 'undefined') { window._bloomBounce = (sec, opts) => _ambRenderOffline(_masterEng, sec, opts);
+      window._bloomBounceCapture = (sec) => _ambCaptureNotesSynthetic(_masterEng, sec); } } catch (e) {}
     function _ambSeedRender(E, key) {
       const cfg0 = (typeof E.getCfg === 'function') ? E.getCfg() : null; if (!cfg0) return null;
       const cfg = JSON.parse(JSON.stringify(cfg0));   // clone — ticking must not touch the real area

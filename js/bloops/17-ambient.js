@@ -21057,8 +21057,37 @@
     // probability <100. If ANY is on, the cycles differ → KEEP Write (it locks one
     // realization to repeat). euclidKit (drum-lanes) is excluded — it has pages /
     // per-step FX / its own loop semantics.
+    // Are salt COLOURS in force for this layer? Own salt wins (an explicit
+    // all-zero layer salt is OFF); otherwise the area's prog salt or any
+    // part's own salt. Mirrors the chord-matrix cell's _saltOn check.
+    function _ambLayerSaltColorsOn(cfg, L) {
+      try {
+        if (L && L.salt && typeof L.salt === 'object') return (L.salt.colors | 0) > 0;
+        const prog = cfg && cfg.prog;
+        if (!prog || !prog.on) return false;
+        if (prog.salt && (prog.salt.colors | 0) > 0) return true;
+        return Array.isArray(prog.parts) && prog.parts.some(pp => pp && pp.salt && (pp.salt.colors | 0) > 0);
+      } catch (e) { return false; }
+    }
     function _ambEuclidDeterministic(L) {
       if (!L || typeof L !== 'object') return false;
+      // followSalt bed ("Keys") under a progression with colours in scope: the
+      // salt plan is a per-INSTANCE seeded draw (step-keyed — each pass deals
+      // new segments/colours), which is the drone-under-a-progression case
+      // exactly: Write froze ONE realization and replayed it for bars×times,
+      // reported as "salting produces the same effect on every pass". Skip
+      // Write so the colours evolve natively; returning true also THAWS an
+      // already-frozen Keys (the caller's thaw branch), so existing projects
+      // self-heal on the next play. Cost, stated: the layer runs live (its
+      // other stochastic aspects re-roll per pass too — the Loop-off
+      // behaviour); ❄ Hold still freezes it deliberately.
+      if (L.type === 'bed' && L.followSalt) {
+        try {
+          const cfgD = _E && (_E._cfg || (_E.getCfg && _E.getCfg()));
+          const src = _ambAsNotes(_ambNotesOf(L));
+          if (cfgD && src && src.type === 'prog' && _ambLayerSaltColorsOn(cfgD, L)) return true;
+        } catch (e) {}
+      }
       // Series (non-euclid) ARP: a CONTINUOUS monotonic arpeggio (the arpState
       // `idx` stream), NOT a looped phrase — so layering Write's freeze/replay on
       // top is both needless and GLITCHY (it doubles at the lock/thaw boundary, and

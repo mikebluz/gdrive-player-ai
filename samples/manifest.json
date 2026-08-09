@@ -16,6 +16,202 @@
       "rootNote": "C4"
     },
     {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/cabasa/MARS_LINN_cabasa_linndrum_lm1_hi",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/cabasa/MARS_LINN_cabasa_linndrum_lm1_hi.wav",
+      "name": "MARS LINN cabasa linndrum lm1 hi",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/cabasa/MARS_LINN_cabasa_linndrum_lm1_mid",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/cabasa/MARS_LINN_cabasa_linndrum_lm1_mid.wav",
+      "name": "MARS LINN cabasa linndrum lm1 mid",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/clap/MARS_LINN_clap_linndrum_lm1_mid",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/clap/MARS_LINN_clap_linndrum_lm1_mid.wav",
+      "name": "MARS LINN clap linndrum lm1 mid",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/clap/MARS_LINN_clap_linndrum_lm1_punch_mid",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/clap/MARS_LINN_clap_linndrum_lm1_punch_mid.wav",
+      "name": "MARS LINN clap linndrum lm1 punch mid",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/clap/MARS_LINN_clap_linndrum_lm2_eighties_pitched_lo",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/clap/MARS_LINN_clap_linndrum_lm2_eighties_pitched_lo.wav",
+      "name": "MARS LINN clap linndrum lm2 eighties pit",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/closed_hat/MARS_LINN_closed_hat_linndrum_lm1_accent_classic_mid",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/closed_hat/MARS_LINN_closed_hat_linndrum_lm1_accent_classic_mid.wav",
+      "name": "MARS LINN closed hat linndrum lm1 accent",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/closed_hat/MARS_LINN_closed_hat_linndrum_lm1_accent_tite_mid",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/closed_hat/MARS_LINN_closed_hat_linndrum_lm1_accent_tite_mid.wav",
+      "name": "MARS LINN closed hat linndrum lm1 accent",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/closed_hat/MARS_LINN_closed_hat_linndrum_lm1_fat_mid",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/closed_hat/MARS_LINN_closed_hat_linndrum_lm1_fat_mid.wav",
+      "name": "MARS LINN closed hat linndrum lm1 fat mi",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/closed_hat/MARS_LINN_closed_hat_linndrum_lm1_tite_mid",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/closed_hat/MARS_LINN_closed_hat_linndrum_lm1_tite_mid.wav",
+      "name": "MARS LINN closed hat linndrum lm1 tite m",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/closed_hat/MARS_LINN_closed_hat_linndrum_lm2_tape_lo_mid",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/closed_hat/MARS_LINN_closed_hat_linndrum_lm2_tape_lo_mid.wav",
+      "name": "MARS LINN closed hat linndrum lm2 tape l",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/conga/MARS_LINN_conga_linndrum_lm1_eighties_mid",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/conga/MARS_LINN_conga_linndrum_lm1_eighties_mid.wav",
+      "name": "MARS LINN conga linndrum lm1 eighties mi",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/cowbell/MARS_LINN_cowbell_linndrum_lm2_pitched_lo",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/cowbell/MARS_LINN_cowbell_linndrum_lm2_pitched_lo.wav",
+      "name": "MARS LINN cowbell linndrum lm2 pitched l",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/kick/MARS_LINN_kick_linndrum_lm2_gate",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/kick/MARS_LINN_kick_linndrum_lm2_gate.wav",
+      "name": "MARS LINN kick linndrum lm2 gate",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/kick/MARS_LINN_kick_linndrum_lm2_pitched_mid",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/kick/MARS_LINN_kick_linndrum_lm2_pitched_mid.wav",
+      "name": "MARS LINN kick linndrum lm2 pitched mid",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/kick/MARS_LINN_kick_linndrum_lm2_tape_hi",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/kick/MARS_LINN_kick_linndrum_lm2_tape_hi.wav",
+      "name": "MARS LINN kick linndrum lm2 tape hi",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/open_hat/MARS_LINN_open_hat_linndrum_lm2_tape_heavy_hi",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/open_hat/MARS_LINN_open_hat_linndrum_lm2_tape_heavy_hi.wav",
+      "name": "MARS LINN open hat linndrum lm2 tape hea",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/rim/MARS_LINN_sidestick_linndrum_lm2_tape_bright_lo",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/rim/MARS_LINN_sidestick_linndrum_lm2_tape_bright_lo.wav",
+      "name": "MARS LINN sidestick linndrum lm2 tape br",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/snare/MARS_LINN_snare_linndrum_lm2_boogie_lo",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/snare/MARS_LINN_snare_linndrum_lm2_boogie_lo.wav",
+      "name": "MARS LINN snare linndrum lm2 boogie lo",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/snare/MARS_LINN_snare_linndrum_lm2_classic_tite",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/snare/MARS_LINN_snare_linndrum_lm2_classic_tite.wav",
+      "name": "MARS LINN snare linndrum lm2 classic tit",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/snare/MARS_LINN_snare_linndrum_lm2_eighties_gate",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/snare/MARS_LINN_snare_linndrum_lm2_eighties_gate.wav",
+      "name": "MARS LINN snare linndrum lm2 eighties ga",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/snare/MARS_LINN_snare_linndrum_lm2_vintage_lo_mid",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/snare/MARS_LINN_snare_linndrum_lm2_vintage_lo_mid.wav",
+      "name": "MARS LINN snare linndrum lm2 vintage lo ",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/snare/MARS_LINN_snare_linndrum_lm2_vintage_mid",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/snare/MARS_LINN_snare_linndrum_lm2_vintage_mid.wav",
+      "name": "MARS LINN snare linndrum lm2 vintage mid",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/tamb/MARS_LINN_tamb_linndrum_lm2_classic",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/tamb/MARS_LINN_tamb_linndrum_lm2_classic.wav",
+      "name": "MARS LINN tamb linndrum lm2 classic",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/tom/MARS_LINN_tom_linndrum_lm1_vintage_lo",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/tom/MARS_LINN_tom_linndrum_lm1_vintage_lo.wav",
+      "name": "MARS LINN tom linndrum lm1 vintage lo",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/tom/MARS_LINN_tom_linndrum_lm2_tape_smooth_hi",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/tom/MARS_LINN_tom_linndrum_lm2_tape_smooth_hi.wav",
+      "name": "MARS LINN tom linndrum lm2 tape smooth h",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/tom/MARS_LINN_tom_linndrum_lm2_tape_smooth_lo",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/tom/MARS_LINN_tom_linndrum_lm2_tape_smooth_lo.wav",
+      "name": "MARS LINN tom linndrum lm2 tape smooth l",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/tom/MARS_LINN_tom_linndrum_lm2_tape_smooth_lo_mid",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/tom/MARS_LINN_tom_linndrum_lm2_tape_smooth_lo_mid.wav",
+      "name": "MARS LINN tom linndrum lm2 tape smooth l",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/tom/MARS_LINN_tom_linndrum_lm2_tape_smooth_mid",
+      "file": "sounds/packs/Linndrum-From-Mars/Samples_From_Mars_-_Linndrum_From_Mars/tom/MARS_LINN_tom_linndrum_lm2_tape_smooth_mid.wav",
+      "name": "MARS LINN tom linndrum lm2 tape smooth m",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
       "id": "sounds/packs/Mosaic-House/SM152_-_Mosaic_House_-_Wav/drum_loops/mh_drum125_download_full",
       "file": "sounds/packs/Mosaic-House/SM152_-_Mosaic_House_-_Wav/drum_loops/mh_drum125_download_full.wav",
       "name": "mh drum125 download full",
@@ -78,6 +274,237 @@
       "name": "OS ICE snare spring",
       "kind": "tuned",
       "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_claps/ULTRA_oberheim_dx_clap_01_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_claps/ULTRA_oberheim_dx_clap_01_v2.wav",
+      "name": "ULTRA oberheim dx clap 01 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_claps/ULTRA_oberheim_dx_clap_02_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_claps/ULTRA_oberheim_dx_clap_02_v2.wav",
+      "name": "ULTRA oberheim dx clap 02 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_claps/ULTRA_oberheim_dx_clap_03_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_claps/ULTRA_oberheim_dx_clap_03_v2.wav",
+      "name": "ULTRA oberheim dx clap 03 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_claps/ULTRA_oberheim_dx_clap_05_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_claps/ULTRA_oberheim_dx_clap_05_v2.wav",
+      "name": "ULTRA oberheim dx clap 05 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_claps/ULTRA_oberheim_dx_clap_08_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_claps/ULTRA_oberheim_dx_clap_08_v2.wav",
+      "name": "ULTRA oberheim dx clap 08 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_cymbals/ULTRA_oberheim_dx_cymbal_03_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_cymbals/ULTRA_oberheim_dx_cymbal_03_v2.wav",
+      "name": "ULTRA oberheim dx cymbal 03 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_cymbals/ULTRA_oberheim_dx_cymbal_07_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_cymbals/ULTRA_oberheim_dx_cymbal_07_v2.wav",
+      "name": "ULTRA oberheim dx cymbal 07 v2",
+      "kind": "loop",
+      "seconds": 1.728
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_cymbals/ULTRA_oberheim_dx_cymbal_08_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_cymbals/ULTRA_oberheim_dx_cymbal_08_v2.wav",
+      "name": "ULTRA oberheim dx cymbal 08 v2",
+      "kind": "loop",
+      "seconds": 2.773
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_hihats/ULTRA_oberheim_dx_hihat_01_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_hihats/ULTRA_oberheim_dx_hihat_01_v2.wav",
+      "name": "ULTRA oberheim dx hihat 01 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_hihats/ULTRA_oberheim_dx_hihat_04_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_hihats/ULTRA_oberheim_dx_hihat_04_v2.wav",
+      "name": "ULTRA oberheim dx hihat 04 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_hihats/ULTRA_oberheim_dx_hihat_05_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_hihats/ULTRA_oberheim_dx_hihat_05_v2.wav",
+      "name": "ULTRA oberheim dx hihat 05 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_hihats/ULTRA_oberheim_dx_hihat_06_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_hihats/ULTRA_oberheim_dx_hihat_06_v2.wav",
+      "name": "ULTRA oberheim dx hihat 06 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_hihats/ULTRA_oberheim_dx_hihat_08_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_hihats/ULTRA_oberheim_dx_hihat_08_v2.wav",
+      "name": "ULTRA oberheim dx hihat 08 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_hihats/ULTRA_oberheim_dx_hihat_09_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_hihats/ULTRA_oberheim_dx_hihat_09_v2.wav",
+      "name": "ULTRA oberheim dx hihat 09 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_hihats/ULTRA_oberheim_dx_hihat_18_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_hihats/ULTRA_oberheim_dx_hihat_18_v2.wav",
+      "name": "ULTRA oberheim dx hihat 18 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_hihats/ULTRA_oberheim_dx_hihat_19_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_hihats/ULTRA_oberheim_dx_hihat_19_v2.wav",
+      "name": "ULTRA oberheim dx hihat 19 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_kicks/ULTRA_oberheim_dx_kick_01_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_kicks/ULTRA_oberheim_dx_kick_01_v2.wav",
+      "name": "ULTRA oberheim dx kick 01 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_kicks/ULTRA_oberheim_dx_kick_02_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_kicks/ULTRA_oberheim_dx_kick_02_v2.wav",
+      "name": "ULTRA oberheim dx kick 02 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_kicks/ULTRA_oberheim_dx_kick_03_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_kicks/ULTRA_oberheim_dx_kick_03_v2.wav",
+      "name": "ULTRA oberheim dx kick 03 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_kicks/ULTRA_oberheim_dx_kick_04_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_kicks/ULTRA_oberheim_dx_kick_04_v2.wav",
+      "name": "ULTRA oberheim dx kick 04 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_kicks/ULTRA_oberheim_dx_kick_06_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_kicks/ULTRA_oberheim_dx_kick_06_v2.wav",
+      "name": "ULTRA oberheim dx kick 06 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_shakers/ULTRA_oberheim_dx_shaker_03_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_shakers/ULTRA_oberheim_dx_shaker_03_v2.wav",
+      "name": "ULTRA oberheim dx shaker 03 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_snares/ULTRA_oberheim_dx_snare_01_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_snares/ULTRA_oberheim_dx_snare_01_v2.wav",
+      "name": "ULTRA oberheim dx snare 01 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_snares/ULTRA_oberheim_dx_snare_02_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_snares/ULTRA_oberheim_dx_snare_02_v2.wav",
+      "name": "ULTRA oberheim dx snare 02 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_snares/ULTRA_oberheim_dx_snare_05_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_snares/ULTRA_oberheim_dx_snare_05_v2.wav",
+      "name": "ULTRA oberheim dx snare 05 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_snares/ULTRA_oberheim_dx_snare_06_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_snares/ULTRA_oberheim_dx_snare_06_v2.wav",
+      "name": "ULTRA oberheim dx snare 06 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_toms/ULTRA_oberheim_dx_tom_03_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_toms/ULTRA_oberheim_dx_tom_03_v2.wav",
+      "name": "ULTRA oberheim dx tom 03 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_toms/ULTRA_oberheim_dx_tom_05_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_toms/ULTRA_oberheim_dx_tom_05_v2.wav",
+      "name": "ULTRA oberheim dx tom 05 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_toms/ULTRA_oberheim_dx_tom_09_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_toms/ULTRA_oberheim_dx_tom_09_v2.wav",
+      "name": "ULTRA oberheim dx tom 09 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_toms/ULTRA_oberheim_dx_tom_10_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_toms/ULTRA_oberheim_dx_tom_10_v2.wav",
+      "name": "ULTRA oberheim dx tom 10 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_toms/ULTRA_oberheim_dx_tom_11_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_toms/ULTRA_oberheim_dx_tom_11_v2.wav",
+      "name": "ULTRA oberheim dx tom 11 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_toms/ULTRA_oberheim_dx_tom_14_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_toms/ULTRA_oberheim_dx_tom_14_v2.wav",
+      "name": "ULTRA oberheim dx tom 14 v2",
+      "kind": "tuned",
+      "rootNote": "C4"
+    },
+    {
+      "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_toms/ULTRA_oberheim_dx_tom_18_v2",
+      "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_toms/ULTRA_oberheim_dx_tom_18_v2.wav",
+      "name": "ULTRA oberheim dx tom 18 v2",
+      "kind": "loop",
+      "seconds": 1.884
     }
   ]
 }

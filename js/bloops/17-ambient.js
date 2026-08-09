@@ -31111,6 +31111,7 @@
             // Evolve line — the CADENCE axis as one 3-point control (Continuous /
             // Every N / Locked), then the Every-N detail (Vary/Live + phrase X×Y).
             '<div class="ambient-sched-loopline' + (wOn ? ' on' : '') + (wLock ? ' locked' : '') + '" title="Evolve — how OFTEN the layer re-rolls: Continuous (every cycle) · Every N (freeze a pattern, repeat it, then evolve a fresh one) · Locked (freeze one roll, hold forever).">' +
+              '<span class="ambient-sched-looplbl">Evolve</span>' +
               '<span class="ambient-sched-evolve" role="group" aria-label="Evolve cadence">' +
                 '<button type="button" class="ambient-seg ambient-sched-ev' + (!wOn ? ' active' : '') + '" data-ev="cont" title="Continuous — re-roll a fresh pattern every cycle (no freezing).">Continuous</button>' +
                 '<button type="button" class="ambient-seg ambient-sched-ev' + ((wOn && !wLock) ? ' active' : '') + '" data-ev="every" title="Every N — freeze a pattern, repeat it N plays, then evolve a fresh one.">Every N</button>' +

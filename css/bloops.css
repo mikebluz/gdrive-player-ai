@@ -3521,8 +3521,12 @@
     .ambient-sched-name { flex: 0 0 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9rem; font-weight: 700; color: #e2e8f0; letter-spacing: 0.01em; }
     .ambient-sched-timing { display: flex; align-items: center; gap: 16px; flex: 1 1 auto; min-width: 0; flex-wrap: wrap; row-gap: 4px; }
     /* Loop tier — softly boxed so the phrase controls read as one group with room. */
-    .ambient-sched-loopline { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; row-gap: 6px; padding: 5px 9px; border-radius: 7px; background: rgba(159,122,234,0.045); }
+    .ambient-sched-loopline { position: relative; display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; row-gap: 6px; padding: 16px 9px 6px; border-radius: 7px; background: rgba(159,122,234,0.045); }
     .ambient-sched-loopline.on { background: rgba(159,122,234,0.1); }
+    /* Corner label naming the component — small, muted, out of the tab order
+       and hit-testing; brightens a touch when the row is engaged. */
+    .ambient-sched-looplbl { position: absolute; top: 4px; left: 9px; font: 600 0.56rem 'Segoe UI', sans-serif; color: rgba(159,122,234,0.6); text-transform: uppercase; letter-spacing: 0.1em; pointer-events: none; user-select: none; }
+    .ambient-sched-loopline.on .ambient-sched-looplbl { color: rgba(159,122,234,0.85); }
     .ambient-sched-grp { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
     .ambient-sched-lbl { font-size: 0.64rem; color: #8b9bb4; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
     /* Phrase snapped up to the progression cycle — teal (harmony drove it). */

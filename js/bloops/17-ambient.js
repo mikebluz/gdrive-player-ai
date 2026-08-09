@@ -25669,12 +25669,31 @@
           // destination makes the whole chain (vcf → vca → level → gate → pan →
           // FX → bus) build and route there. A LIVE node here would throw
           // "cannot connect to an AudioNode belonging to a different context".
+          // OUTPUT STAGE — deliberately NOT the master chain. The real master
+          // (DC → Warmth → Vinyl → Compressor → Glue → Volume → Limiter) is built
+          // from module-scope consts in 03 on the LIVE context at boot, so it
+          // cannot be reproduced here without refactoring that file into a
+          // context-parameterised factory — boot-critical audio code whose
+          // failure mode is live playback breaking, and which the golden gate
+          // (Rust core only) cannot cover. What IS reproduced is the part a FILE
+          // actually needs: the −3 dB limiter and the master volume, matching
+          // 03's own values, so a dense bounce cannot clip the export. The tone
+          // colour of Warmth/Vinyl/Glue is still missing — a bounce is thinner
+          // and less glued than what you hear.
+          let outStage = null;
+          try {
+            const lim = new Tone.Limiter(-3).toDestination();
+            let volDb = 0;
+            try { if (typeof masterVolume !== 'undefined' && masterVolume && masterVolume.volume) volDb = masterVolume.volume.value; } catch (e) {}
+            if (!Number.isFinite(volDb)) volDb = 0;
+            outStage = new Tone.Volume(volDb).connect(lim);
+          } catch (e) { outStage = null; }
           let E3 = null, wet = false;
           try {
             if (opts && opts.dry) throw new Error('dry requested');
             E3 = _makeAmbientEngine({
               getCfg: () => cap.cfg,
-              busNode: () => Tone.getDestination(),
+              busNode: () => (outStage || Tone.getDestination()),
               laneIdx: () => -1, guard: () => true,
               hostId: 'bloom-bounce-r', idPrefix: 'ambient', vizId: 'bloom-bounce-r-viz',
               playId: 'bloom-bounce-r-play', seedId: 'bloom-bounce-r-seed', isLane: false,
@@ -25692,7 +25711,7 @@
               // layer whose chain failed to build still gets heard, dry.
               let dest = null;
               if (wet && n.key) { try { dest = _ambLayerDest(n.key) || null; } catch (e) { dest = null; } }
-              if (!dest) dest = (Tone.getDestination && Tone.getDestination()) || null;
+              if (!dest) dest = outStage || ((Tone.getDestination && Tone.getDestination()) || null);
               playNote(n.freq, n.params, n.dur, n.at, dest, undefined, -1);
               played++;
             } catch (e) { failed++; }

@@ -25735,6 +25735,41 @@
     // wrapper to that same name overwrites the function with something that calls
     // itself (instant stack overflow). Same trap as the documented note that
     // `_masterEng` is a lexical const and NOT on window.
+    // Bounce → an actual FILE in the Capture Bank, so it can be auditioned,
+    // downloaded and uploaded exactly like a real-time Capture. Reuses the same
+    // encoders (audioBufferToWav / audioBufferToMp3 from 10-tracks) and the same
+    // bank record shape — a bounce should be indistinguishable from a capture
+    // once it is in the bank, differing only in `source`.
+    async function _ambBounceToBank(E, seconds, opts) {
+      const res = await _ambRenderOffline(E, seconds, opts);
+      if (!res || !res.buffer) return { ok: false, reason: (res && res.reason) || 'render failed' };
+      // Tone.Offline resolves a Tone ToneAudioBuffer; the encoders want a native
+      // AudioBuffer, which it exposes via .get().
+      let audioBuf = res.buffer;
+      try { if (typeof audioBuf.get === 'function') audioBuf = audioBuf.get(); } catch (e) {}
+      if (!audioBuf || !audioBuf.duration) return { ok: false, reason: 'empty buffer' };
+      const wantMp3 = !!(opts && opts.mp3) && typeof audioBufferToMp3 === 'function';
+      let blob = null, ext = 'wav', mime = 'audio/wav';
+      try {
+        if (wantMp3) { blob = await audioBufferToMp3(audioBuf); ext = 'mp3'; mime = 'audio/mpeg'; }
+        else if (typeof audioBufferToWav === 'function') { blob = audioBufferToWav(audioBuf); }
+      } catch (e) { blob = null; }
+      if (!blob) return { ok: false, reason: 'encoder unavailable' };
+      const stamp = (opts && opts.name) || ('bounce-' + Math.round(audioBuf.duration) + 's');
+      const filename = String(stamp).replace(/[^\w.-]+/g, '-').slice(0, 60);
+      let url = null; try { url = URL.createObjectURL(blob); } catch (e) {}
+      const rec = { id: ++_ambCapBankSeq, name: filename, ext, mime,
+        folder: (opts && opts.folder) || 'bloops/exports',
+        durSec: audioBuf.duration, bytes: blob.size, blob, url, uploaded: false,
+        source: 'Bloom (bounce)' };
+      try { rec.grid = _ambCaptureGrid(E, audioBuf.duration); } catch (e) {}
+      _ambCaptureBank.push(rec);
+      try { _ambRenderCaptureBank(); } catch (e) {}
+      try { if (typeof showToast === 'function') showToast('Bounced “' + filename + '” in ' + res.wallSec.toFixed(1) + 's (' + res.xRealtime.toFixed(0) + '× realtime) — in the bank below.'); } catch (e) {}
+      return { ok: true, id: rec.id, name: filename, ext, bytes: blob.size, durSec: rec.durSec,
+               wallSec: res.wallSec, xRealtime: res.xRealtime, notes: res.played, wet: res.wet };
+    }
+    try { if (typeof window !== 'undefined') { window._bloomBounceToBank = (sec, opts) => _ambBounceToBank(_masterEng, sec, opts); } } catch (e) {}
     try { if (typeof window !== 'undefined') { window._bloomBounce = (sec, opts) => _ambRenderOffline(_masterEng, sec, opts);
       window._bloomBounceCapture = (sec) => _ambCaptureNotesSynthetic(_masterEng, sec); } } catch (e) {}
     function _ambSeedRender(E, key) {

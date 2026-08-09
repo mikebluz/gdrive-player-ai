@@ -25718,23 +25718,31 @@
       // label for the whole render and a slow project is indistinguishable from a
       // hang, which is exactly how it was reported.
       const onStatus = (opts && typeof opts.onStatus === 'function') ? opts.onStatus : null;
+      const onProgress = (opts && typeof opts.onProgress === 'function') ? opts.onProgress : null;
       let _pollT = null;
-      // NO PROGRESS BAR, deliberately. The Tracks export polls
-      // Tone.getContext().rawContext.currentTime for this, but that only works
-      // from INSIDE its render call — polled from out here the context swap is
-      // invisible, so the reading is just the LIVE clock. It looked plausible
-      // (0.63 → 1.0 over the render) purely because a dense project renders at
-      // about real time, which is exactly when a wrong bar would mislead most.
-      // An elapsed-seconds counter is true; a fake fraction is not.
+      // PROGRESS. Tone.Offline swaps the global context for the duration, so
+      // Tone.getContext().rawContext.currentTime IS the offline clock while we
+      // await — it advances 0 → seconds as the buffer fills. The first reading
+      // still catches the LIVE clock before the swap, which shows up as a much
+      // larger number; ignore readings until it DROPS, which is the swap.
+      // (I briefly removed this believing the readings were the live clock
+      // throughout. They were not — the drop-detector only ever reported AFTER
+      // seeing a drop, so the values it printed were genuine offline progress.)
       const _t0poll = (typeof performance !== 'undefined') ? performance.now() : 0;
-      if (onStatus) {
-        const say = () => {
-          const el = Math.round((((typeof performance !== 'undefined') ? performance.now() : 0) - _t0poll) / 1000);
-          try { onStatus('Rendering ' + notes.length + ' notes… ' + el + 's'); } catch (e) {}
-        };
-        say();
-        _pollT = setInterval(say, 1000);
-      }
+      let _prev = Infinity, _live = true;
+      const _tick = () => {
+        const el = Math.round((((typeof performance !== 'undefined') ? performance.now() : 0) - _t0poll) / 1000);
+        try { if (onStatus) onStatus('Rendering ' + notes.length + ' notes… ' + el + 's'); } catch (e) {}
+        if (!onProgress) return;
+        try {
+          const cur = Tone.getContext().rawContext.currentTime;
+          if (!Number.isFinite(cur) || !(seconds > 0)) return;
+          if (_live) { if (cur < _prev) _live = false; _prev = cur; if (_live) return; }
+          onProgress(Math.max(0, Math.min(1, cur / seconds)));
+        } catch (e) {}
+      };
+      _tick();
+      _pollT = setInterval(_tick, 100);
       try {
         const prevE2 = (typeof _E !== 'undefined') ? _E : undefined;
         buffer = await Tone.Offline(async () => {

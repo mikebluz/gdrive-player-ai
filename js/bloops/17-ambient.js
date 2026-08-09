@@ -3953,7 +3953,11 @@
       const seedS = (cfgS.seed | 0) || 1;
       const nSeg = _ambProgSaltSegCount(salt, step, seedS);
       if (nSeg <= 1) return ret;
-      const segIdx = Math.min(nSeg - 1, Math.floor(pos * nSeg));
+      // pos → segment via the SNAPPED boundaries (see _ambSaltSegFracs) — the
+      // even floor(pos*nSeg) put colour changes off the beat grid.
+      const _fr = _ambSaltSegFracs(nSeg, _ambSaltSlotBars(cfgS, step));
+      let segIdx = 0;
+      for (let i = _fr.length - 1; i >= 1; i--) { if (pos >= _fr[i] - 1e-6) { segIdx = i; break; } }
       if (segIdx <= 0) return ret;   // downbeat segment = the written chord, always
       const vocab = _ambProgColorVocab(ret.intervals, ret.root, _ambSaltColorAllowed(cfgS));
       if (!vocab.length) return ret;
@@ -9019,12 +9023,43 @@
     // spanning the contiguous run of segments it belongs to. A shared tone
     // therefore rings straight through with no retrigger and no envelope
     // restart; a leaver simply ends; an arrival starts at its boundary.
-    function _ambSaltSegSets(notes, step, nSeg) {
+    // SNAPPED SEGMENT BOUNDARIES (pos-space fractions, 0 first). The even
+    // division put colour changes at e.g. thirds of a bar — measured ±50-100 ms
+    // off the 16th grid on a followSalt Keys layer, heard as "out of sync".
+    // Snap each boundary to the nearest 1/8 BAR (the same grid the len-salt
+    // re-partition uses), dedupe collapsed ones — the effective segment count
+    // is the array length. ONE definition shared by the plan (note times), the
+    // set builder (pos midpoints) and the colour resolver (pos → segIdx), so
+    // the three can never disagree about where a segment starts.
+    function _ambSaltSegFracs(nSeg, slotBars) {
+      const grid = 1 / (8 * Math.max(0.25, slotBars || 1));
+      const fr = [0];
+      for (let i = 1; i < nSeg; i++) {
+        const f = Math.max(0, Math.min(1, Math.round(((i / nSeg)) / grid) * grid));
+        if (f > fr[fr.length - 1] + 1e-6 && f < 1 - 1e-6) fr.push(f);
+      }
+      return fr;
+    }
+    // Bar length of the chord at this step (per-chord bars, else the uniform
+    // fallback) — the pos-space grid above needs it.
+    function _ambSaltSlotBars(cfg, step) {
+      try {
+        const ch = cfg && cfg.prog && cfg.prog.chords;
+        if (!Array.isArray(ch) || !ch.length) return 1;
+        const slot = ((step % ch.length) + ch.length) % ch.length;
+        const b = ch[slot] && ch[slot].bars;
+        if (Number.isFinite(b) && b > 0) return b;
+        const u = cfg.barsPerChord;
+        return (Number.isFinite(u) && u > 0) ? u : 1;
+      } catch (e) { return 1; }
+    }
+    function _ambSaltSegSets(notes, step, fr) {
       const out = [];
+      const nSeg = fr.length;
       const saveHint = _ambProgPosHint, saveOv = _ambProgStepOverride;
       for (let i = 0; i < nSeg; i++) {
         _ambProgStepOverride = step;
-        _ambProgPosHint = { step: step, pos: (i + 0.5) / nSeg };
+        _ambProgPosHint = { step: step, pos: (fr[i] + (i + 1 < nSeg ? fr[i + 1] : 1)) / 2 };
         let ch = null; try { ch = _ambProgCurrentChord(notes); } catch (e) {}
         // SOUNDING SPACE, not written. `_ambProgCurrentChord` returns the WRITTEN
         // chord — the engine re-roots the whole progression later, inside
@@ -9063,12 +9098,15 @@
       const n = _ambAsNotes(notes); if (!n || n.type !== 'prog') return null;
       let step = 0; try { step = _ambProgStepAt(_E, at) | 0; } catch (e) {}
       const seed = (cfg.seed | 0) || 1;
-      const nSeg = _ambProgSaltSegCount(salt, step, seed);
+      const nSeg0 = _ambProgSaltSegCount(salt, step, seed);
+      if (!(nSeg0 > 1)) return null;
+      const fr = _ambSaltSegFracs(nSeg0, _ambSaltSlotBars(cfg, step));
+      const nSeg = fr.length;               // effective count after the snap dedupe
       if (!(nSeg > 1)) return null;
-      const sets = _ambSaltSegSets(n, step, nSeg);
+      const sets = _ambSaltSegSets(n, step, fr);
       if (!sets[0]) return null;
       const cap = _ambVoiceCap(bed);
-      const segSec = unitSec / nSeg;
+      const frEnd = (i) => (i >= nSeg ? 1 : fr[i]);
       // Segment 0 IS the written chord and is already voiced — keep those exact
       // frequencies so the downbeat is untouched.
       const live = voicing.slice().sort((a, b) => a - b);
@@ -9099,7 +9137,8 @@
       open.forEach(o => { if (o.to === nSeg && plan.indexOf(o) < 0) plan.push(o); });
       // Nothing actually changed across the unit → let the normal path run.
       if (!plan.some(o => o.from > 0 || o.to < nSeg)) return null;
-      return plan.map(o => ({ f: o.f, offSec: o.from * segSec, durMs: Math.max(60, Math.round((o.to - o.from) * segSec * 1000)) }));
+      return plan.map(o => ({ f: o.f, offSec: frEnd(o.from) * unitSec,
+        durMs: Math.max(60, Math.round((frEnd(o.to) - frEnd(o.from)) * unitSec * 1000)) }));
     }
     function _ambBedParams(noteMs, density, motion, overlap, pan, tone) {
       const base = (typeof cellParams !== 'undefined' && cellParams[0]) ? cellParams[0] : { type: 'sine' };

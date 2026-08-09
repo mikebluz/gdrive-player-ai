@@ -23099,6 +23099,24 @@
           if (!Number.isFinite(n) || n <= 0) { alert('Enter a positive number of seconds.'); return; }
           _ambCaptureBegin(E, n * 1000);
         } },
+        // BOUNCE — the same lengths, rendered OFFLINE instead of recorded in real
+        // time. Lives in this menu because it answers the same question ("give me
+        // a file of this") and the result lands in the same bank. Labelled with
+        // what it does NOT have, since a bounce is currently missing the master
+        // chain's tone colour and will sound thinner than a capture.
+        'hr',
+        { label: '⚡ Bounce — faster than real time', disabled: true },
+        { label: '   30 sec', fn: () => _ambBounceBegin(E, 30) },
+        { label: '   1 min',  fn: () => _ambBounceBegin(E, 60) },
+        { label: '   2 min',  fn: () => _ambBounceBegin(E, 120) },
+        { label: '   5 min',  fn: () => _ambBounceBegin(E, 300) },
+        { label: '   ⌨ Custom seconds…', fn: () => {
+          let s = null; try { s = prompt('Bounce length in seconds:', '120'); } catch (e) {}
+          if (s == null) return;
+          const n = parseInt(s, 10);
+          if (!Number.isFinite(n) || n <= 0) { alert('Enter a positive number of seconds.'); return; }
+          _ambBounceBegin(E, n);
+        } },
       ];
       if (typeof showCtxMenu === 'function' && btn) {
         const r = btn.getBoundingClientRect();
@@ -23106,6 +23124,25 @@
       } else {
         _ambCaptureBegin(E, 0);
       }
+    }
+    // Run a bounce from the menu: progress modal (a long one still takes seconds,
+    // and the page is BLOCKED during pass 1, which stubs globals and cannot yield),
+    // then the result lands in the bank exactly like a capture.
+    async function _ambBounceBegin(E, seconds) {
+      const prog = (typeof showRenderProgressModal === 'function')
+        ? showRenderProgressModal('Bouncing ' + Math.round(seconds) + 's…') : null;
+      try { if (prog) prog.setStatus('Generating notes…'); } catch (e) {}
+      // Yield once so the modal actually paints before pass 1 blocks the thread.
+      await new Promise(r => setTimeout(r, 30));
+      let res = null;
+      try { res = await _ambBounceToBank(E, seconds, {}); }
+      catch (e) { res = { ok: false, reason: (e && e.message) || String(e) }; }
+      try { if (prog) { prog.markDone(); prog.close(); } } catch (e) {}
+      if (!res || !res.ok) {
+        try { alert('Bounce failed: ' + ((res && res.reason) || 'unknown')); } catch (e) {}
+        return;
+      }
+      return res;
     }
     // Start a capture; lenMs > 0 schedules an automatic Finalize after that long
     // (simulating the user's press), lenMs = 0 records live until they Finalize.

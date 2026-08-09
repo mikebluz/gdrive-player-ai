@@ -25744,6 +25744,32 @@
             // workspace; the other three are reported instead (see below), since
             // Vinyl is a GENERATOR and Glue an AudioWorklet, and neither can be
             // rebuilt here without the 03 refactor.
+            // WARMTH — plain filters plus a tanh waveshaper, so it CAN be rebuilt
+            // here (unlike Vinyl, a generator, and Glue, an AudioWorklet). Same
+            // topology, constants and globalFx mapping as 03's applyMasterWarmth:
+            // low-shelf lift at 160, presence dip at 3k, high-shelf cut at 7k,
+            // drive, then the fizz cut. Off by default, so this is inert unless
+            // the workspace turns it on.
+            let warmIn = null, warmOut = null;
+            if (g.warmthOn) {
+              const w = Math.max(0, Math.min(100, g.warmth || 0)) / 100;
+              const drv = Math.max(0, Math.min(100, g.warmthDrive || 0)) / 100;
+              const cut = Math.max(2000, Math.min(20000, g.warmthCut || 16000));
+              const low = new Tone.Filter({ type: 'lowshelf', frequency: 160, gain: w * 2.5 });
+              const pres = new Tone.Filter({ type: 'peaking', frequency: 3000, Q: 1, gain: -(w * 3) });
+              const high = new Tone.Filter({ type: 'highshelf', frequency: 7000, gain: -(w * 4) });
+              const n = 2048, curve = new Float32Array(n);
+              const k = 1 + drv * 4, norm = Math.tanh(k) || 1;
+              for (let i = 0; i < n; i++) {
+                const x = (i / (n - 1)) * 2 - 1;
+                curve[i] = (drv <= 0) ? x : Math.tanh(k * x) / norm;
+              }
+              const drive = new Tone.WaveShaper(curve, 2048);
+              try { drive.oversample = '4x'; } catch (e) {}
+              const fizz = new Tone.Filter({ type: 'lowpass', frequency: cut, Q: 0.5 });
+              low.connect(pres); pres.connect(high); high.connect(drive); drive.connect(fizz);
+              warmIn = low; warmOut = fizz;
+            }
             if (g.compOn !== false) {
               const comp = new Tone.Compressor({
                 threshold: Number.isFinite(g.compThresh) ? g.compThresh : -3,
@@ -25754,6 +25780,8 @@
               }).connect(vol);
               outStage = comp;
             } else outStage = vol;
+            // Warmth sits BEFORE the compressor, as it does live.
+            if (warmIn && warmOut) { warmOut.connect(outStage); outStage = warmIn; }
           } catch (e) { outStage = null; }
           let E3 = null, wet = false;
           try {
@@ -25839,7 +25867,6 @@
       let missing = [];
       try {
         const g = (typeof globalFx !== 'undefined' && globalFx) ? globalFx : {};
-        if (g.warmthOn) missing.push('Warmth');
         if (g.vinylOn) missing.push('Vinyl');
         if (g.ottOn) missing.push('Glue');
       } catch (e) {}

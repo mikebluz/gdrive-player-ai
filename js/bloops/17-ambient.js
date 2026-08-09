@@ -23110,7 +23110,7 @@
         // without this the menu showed TWO identical "30 sec / 1 min / 2 min"
         // lists and the only thing distinguishing them was an unclickable
         // heading, which read as "Bounce can't be selected".
-        { label: '⚡ Bounce — faster than real time', disabled: true },
+        { label: '⚡ Bounce — render to a file (no playback)', disabled: true },
         { label: '⚡ Bounce 30 sec', fn: () => _ambBounceBegin(E, 30) },
         { label: '⚡ Bounce 1 min',  fn: () => _ambBounceBegin(E, 60) },
         { label: '⚡ Bounce 2 min',  fn: () => _ambBounceBegin(E, 120) },
@@ -23140,7 +23140,11 @@
       // Yield once so the modal actually paints before pass 1 blocks the thread.
       await new Promise(r => setTimeout(r, 30));
       let res = null;
-      try { res = await _ambBounceToBank(E, seconds, {}); }
+      const hooks = {
+        onStatus: (t) => { try { if (prog) prog.setStatus(t); } catch (e) {} },
+        onProgress: (f) => { try { if (prog && prog.setProgress) prog.setProgress(f); } catch (e) {} },
+      };
+      try { res = await _ambBounceToBank(E, seconds, hooks); }
       catch (e) { res = { ok: false, reason: (e && e.message) || String(e) }; }
       try { if (prog) { prog.markDone(); prog.close(); } } catch (e) {}
       if (!res || !res.ok) {
@@ -25707,6 +25711,30 @@
       // then drain onto the LIVE context afterwards, which is audible playback
       // nobody asked for.
       try { if (typeof window !== 'undefined') window.__bloopsOfflineRender = true; } catch (e) {}
+      // PROGRESS. Tone.Offline swaps the global context for the duration, so
+      // Tone.getContext().rawContext.currentTime advances 0 → seconds as the
+      // buffer fills; poll it on a wall-clock interval (the MAIN thread is free —
+      // rendering happens on the audio thread). Without this the modal sits on one
+      // label for the whole render and a slow project is indistinguishable from a
+      // hang, which is exactly how it was reported.
+      const onStatus = (opts && typeof opts.onStatus === 'function') ? opts.onStatus : null;
+      let _pollT = null;
+      // NO PROGRESS BAR, deliberately. The Tracks export polls
+      // Tone.getContext().rawContext.currentTime for this, but that only works
+      // from INSIDE its render call — polled from out here the context swap is
+      // invisible, so the reading is just the LIVE clock. It looked plausible
+      // (0.63 → 1.0 over the render) purely because a dense project renders at
+      // about real time, which is exactly when a wrong bar would mislead most.
+      // An elapsed-seconds counter is true; a fake fraction is not.
+      const _t0poll = (typeof performance !== 'undefined') ? performance.now() : 0;
+      if (onStatus) {
+        const say = () => {
+          const el = Math.round((((typeof performance !== 'undefined') ? performance.now() : 0) - _t0poll) / 1000);
+          try { onStatus('Rendering ' + notes.length + ' notes… ' + el + 's'); } catch (e) {}
+        };
+        say();
+        _pollT = setInterval(say, 1000);
+      }
       try {
         const prevE2 = (typeof _E !== 'undefined') ? _E : undefined;
         buffer = await Tone.Offline(async () => {
@@ -25883,6 +25911,7 @@
         try { if (typeof window !== 'undefined') window.__bloopsOfflineRender = false; } catch (e2) {}
         return { buffer: null, notes: notes.length, reason: 'render failed: ' + ((e && e.message) || e) };
       } finally {
+        if (_pollT) { try { clearInterval(_pollT); } catch (e2) {} }
         try { if (typeof window !== 'undefined') window.__bloopsOfflineRender = false; } catch (e2) {}
         // Belt and braces: drop anything that did reach the queue, so it can never
         // sound on the live context after the render returns.
@@ -25909,6 +25938,7 @@
     // once it is in the bank, differing only in `source`.
     async function _ambBounceToBank(E, seconds, opts) {
       const res = await _ambRenderOffline(E, seconds, opts);
+      try { if (opts && typeof opts.onStatus === 'function') opts.onStatus('Encoding…'); } catch (e) {}
       if (!res || !res.buffer) return { ok: false, reason: (res && res.reason) || 'render failed' };
       // Tone.Offline resolves a Tone ToneAudioBuffer; the encoders want a native
       // AudioBuffer, which it exposes via .get().

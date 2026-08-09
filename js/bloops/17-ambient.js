@@ -2431,6 +2431,18 @@
           if (Object.keys(o2).length) L.saltNudge = o2; else delete L.saltNudge;
         }
       }
+      // Per-chord snap toggle: sparse {slot: 1}, truthy only, dropped when empty.
+      if (L.saltFree != null) {
+        if (typeof L.saltFree !== 'object') { delete L.saltFree; }
+        else {
+          const o3 = {};
+          Object.keys(L.saltFree).forEach(k => {
+            const i = k | 0;
+            if (L.saltFree[k] && i >= 0 && i < 512) o3[i] = 1;
+          });
+          if (Object.keys(o3).length) L.saltFree = o3; else delete L.saltFree;
+        }
+      }
       const sl = L.salt;
       if (sl == null) return;
       if (typeof sl !== 'object') { delete L.salt; return; }
@@ -3955,7 +3967,7 @@
       if (nSeg <= 1) return ret;
       // pos → segment via the SNAPPED boundaries (see _ambSaltSegFracs) — the
       // even floor(pos*nSeg) put colour changes off the beat grid.
-      const _fr = _ambSaltSegFracs(nSeg, _ambSaltSlotBars(cfgS, step));
+      const _fr = _ambSaltSegFracs(nSeg, _ambSaltSlotBars(cfgS, step), _ambSaltFreeNow(step));
       let segIdx = 0;
       for (let i = _fr.length - 1; i >= 1; i--) { if (pos >= _fr[i] - 1e-6) { segIdx = i; break; } }
       if (segIdx <= 0) return ret;   // downbeat segment = the written chord, always
@@ -4024,6 +4036,24 @@
         const v = m[slot] != null ? m[slot] : m[String(slot)];
         return (v | 0) > 0 ? ((v | 0) * 0x9E3779B1) >>> 0 : 0;
       } catch (e) { return 0; }
+    }
+    // PER-CHORD SNAP TOGGLE (layer.saltFree = { "<slot>": 1 }): absent = colour
+    // changes SNAP to the 1/8-bar grid (the default, and the fix for "Keys out
+    // of sync"); set = this layer's colour changes over this chord flow FREE
+    // (the even division — thirds-of-a-bar drift as a deliberate feel).
+    // Resolved through the emit-scope layer key, exactly like the nudge, so
+    // the plan and the colour resolver always agree.
+    function _ambSaltFreeNow(step) {
+      try {
+        if (!_ambEmitLayerKey || !_E) return false;
+        const L = _ambLayerByKey(_E, _ambEmitLayerKey);
+        const m = L && L.saltFree;
+        if (!m || typeof m !== 'object') return false;
+        const cfg = _E._cfg || (_E.getCfg && _E.getCfg());
+        const len = (cfg && cfg.prog && Array.isArray(cfg.prog.chords)) ? cfg.prog.chords.length : 0;
+        const slot = len > 0 ? ((step % len) + len) % len : step;
+        return !!(m[slot] || m[String(slot)]);
+      } catch (e) { return false; }
     }
     function _ambLayerSaltNow() {
       try {
@@ -4454,6 +4484,10 @@
           // chord (salt segmentation + colours re-drawn from a bumped seed).
           (o.onReroll ? '<div class="ambient-pm-modal-spread">' +
             '<button type="button" class="ambient-seg pm-sp-reroll">🎲 Roll a new <b>' + esc(o.colLabel || 'chord') + '</b> for <b>' + esc(o.rowLabel || 'this layer') + '</b></button>' +
+            // Colour-change timing for THIS layer over THIS chord: snapped to
+            // the 1/8-bar grid (default) or flowing free (the even division).
+            (o.onSnapToggle ? '<button type="button" class="ambient-seg pm-sp-snap' + (o.snapFree ? ' free' : '') + '">' +
+              (o.snapFree ? '〰 Colour changes flow <b>free</b> — tap to snap to the beat' : '◈ Colour changes <b>on the beat</b> — tap to let them flow free') + '</button>' : '') +
             (o.rerollWhy ? '<div class="ambient-pm-modal-hint">' + esc(o.rerollWhy) + '</div>' : '') +
           '</div>' : '') +
           (o.onRow || o.onCol || o.onPart ? '<div class="ambient-pm-modal-spread">' +
@@ -4487,6 +4521,15 @@
         if (ev.target.closest && ev.target.closest('.pm-sp-part')) { try { o.onPart(cur); } catch (e) {} close(); return; }
         if (ev.target.closest && ev.target.closest('.pm-sp-col')) { try { o.onCol(cur); } catch (e) {} close(); return; }
         if (ev.target.closest && ev.target.closest('.pm-sp-reroll')) { try { o.onReroll(); } catch (e) {} close(); return; }
+        const snapB = ev.target.closest && ev.target.closest('.pm-sp-snap');
+        if (snapB) {
+          let nowFree = false;
+          try { nowFree = !!o.onSnapToggle(); } catch (e) {}
+          snapB.classList.toggle('free', nowFree);
+          snapB.innerHTML = nowFree ? '〰 Colour changes flow <b>free</b> — tap to snap to the beat'
+                                    : '◈ Colour changes <b>on the beat</b> — tap to let them flow free';
+          return;   // stays open — a toggle you can see flip
+        }
         const pr = ev.target.closest && ev.target.closest('.ambient-pm-modal-preset');
         if (pr) set(pr.dataset.v | 0);
       });
@@ -9031,9 +9074,13 @@
     // is the array length. ONE definition shared by the plan (note times), the
     // set builder (pos midpoints) and the colour resolver (pos → segIdx), so
     // the three can never disagree about where a segment starts.
-    function _ambSaltSegFracs(nSeg, slotBars) {
-      const grid = 1 / (8 * Math.max(0.25, slotBars || 1));
+    function _ambSaltSegFracs(nSeg, slotBars, free) {
       const fr = [0];
+      if (free) {           // deliberate free flow — the even division, unsnapped
+        for (let i = 1; i < nSeg; i++) fr.push(i / nSeg);
+        return fr;
+      }
+      const grid = 1 / (8 * Math.max(0.25, slotBars || 1));
       for (let i = 1; i < nSeg; i++) {
         const f = Math.max(0, Math.min(1, Math.round(((i / nSeg)) / grid) * grid));
         if (f > fr[fr.length - 1] + 1e-6 && f < 1 - 1e-6) fr.push(f);
@@ -9100,7 +9147,7 @@
       const seed = (cfg.seed | 0) || 1;
       const nSeg0 = _ambProgSaltSegCount(salt, step, seed);
       if (!(nSeg0 > 1)) return null;
-      const fr = _ambSaltSegFracs(nSeg0, _ambSaltSlotBars(cfg, step));
+      const fr = _ambSaltSegFracs(nSeg0, _ambSaltSlotBars(cfg, step), _ambSaltFreeNow(step));
       const nSeg = fr.length;               // effective count after the snap dedupe
       if (!(nSeg > 1)) return null;
       const sets = _ambSaltSegSets(n, step, fr);
@@ -28943,6 +28990,17 @@
               // heard at the next boundary; a frozen Write loop re-captures
               try { if (E.timer) _ambReanchorLayer(E, sl.lkey); } catch (e) {}
               try { if (typeof showToast === 'function') showToast('New roll for ' + sl.label + ' on ' + chLabel(sl.ci) + (_saltOn ? ' — lands at the next pass.' : ' — set a Salt colour amount (layer or area) to hear it.')); } catch (e) {}
+            },
+            snapFree: (() => { try { const L = _ambLayerByKey(E, sl.lkey); return !!(L && L.saltFree && L.saltFree[sl.ci]); } catch (e) { return false; } })(),
+            onSnapToggle: () => {
+              const L = _ambLayerByKey(E, sl.lkey); if (!L) return false;
+              if (!L.saltFree || typeof L.saltFree !== 'object') L.saltFree = {};
+              const nowFree = !L.saltFree[sl.ci];
+              if (nowFree) L.saltFree[sl.ci] = 1; else delete L.saltFree[sl.ci];
+              if (!Object.keys(L.saltFree).length) delete L.saltFree;
+              try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+              try { if (E.timer) _ambReanchorLayer(E, sl.lkey); } catch (e) {}
+              return nowFree;
             },
             rerollWhy: _saltOn ? '' : 'This layer has no salt colours yet — the roll is stored, but set Colour (its Salt group, or the area Salt) to hear it.'
           });

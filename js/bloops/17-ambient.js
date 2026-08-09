@@ -23625,6 +23625,9 @@
     function _ambRemoveBankItem(id) {
       const i = _ambCaptureBank.findIndex(x => x.id === id);
       if (i < 0) return;
+      // A deleted capture must not keep sounding — the <audio> element has the
+      // file buffered, so revoking the URL alone does NOT stop playback.
+      try { if (_ambBankPreviewAudio && _ambBankPreviewAudio._capId === id) _ambStopBankPreview(); } catch (e) {}
       try { if (_ambCaptureBank[i].url) URL.revokeObjectURL(_ambCaptureBank[i].url); } catch (e) {}
       _ambCaptureBank.splice(i, 1);
       _ambRenderCaptureBank();
@@ -23643,12 +23646,21 @@
         try { if (a._fx) { try { a._fx.src.disconnect(); } catch (e) {} a._fx.ch.nodes.forEach(n => { try { n.disconnect(); } catch (e) {} }); } } catch (e) {}
       }
       _ambBankPreviewAudio = null;
+      // repaint so the previewing row's ■ flips back to ▶ (delegated handler
+      // lives on the host, so a re-render mid-click is safe)
+      try { _ambRenderCaptureBank(); } catch (e) {}
     }
     function _ambPreviewBankItem(item) {
       try {
+        // Pressing ▶ on the row that's already previewing is a STOP.
+        const wasThis = !!(_ambBankPreviewAudio && item && _ambBankPreviewAudio._capId === item.id);
         _ambStopBankPreview();
+        if (wasThis) return;
         if (!item || !item.url) return;
-        const a = new Audio(item.url); _ambBankPreviewAudio = a;
+        const a = new Audio(item.url); a._capId = item.id; _ambBankPreviewAudio = a;
+        // ended must clear state on EVERY path — it used to be mastered-only,
+        // so a finished plain preview left the state (and the button) stuck.
+        a.addEventListener('ended', () => { if (_ambBankPreviewAudio === a) _ambStopBankPreview(); });
         // Mastered takes preview THROUGH the chain (live, via a MediaElementSource
         // → EQ/Comp/Limiter/Gain → destination). A fresh <audio> each time avoids
         // the "element already has a source node" error. Falls back to direct
@@ -23661,10 +23673,10 @@
             const ch = _ambMasterFxNodes(ctx, _ambHarvestMaster);
             src.connect(ch.input); ch.output.connect(ctx.destination);
             a._fx = { src, ch };
-            a.addEventListener('ended', () => { if (_ambBankPreviewAudio === a) _ambStopBankPreview(); });
           } catch (e) {}
         }
         a.play().catch(() => {});
+        try { _ambRenderCaptureBank(); } catch (e) {}
       } catch (e) {}
     }
     function _ambRenderCaptureBank() {
@@ -23700,7 +23712,7 @@
             '<span class="ambient-cap-name" title="' + (it.uploaded ? 'Uploaded' : 'Not uploaded') + '">' + (it.uploaded ? '✓ ' : '') + String(it.name).replace(/[<>&]/g, '') + '.' + it.ext + '</span>' +
             '<span class="ambient-cap-meta">' + Math.round(it.durSec) + 's · ' + fmtBytes(it.bytes) + (it.grid && it.grid.bars ? ' · ' + it.grid.bpm + ' BPM · ' + it.grid.bars + ' bars' : '') + '</span>' +
             '<button type="button" class="ambient-cap-btn ambient-cap-master' + (it.mastered ? ' on' : '') + '" data-act="master" title="Master this take — preview + Download/Upload run through the Mastering chain above">' + (it.mastered ? '★' : '☆') + '</button>' +
-            '<button type="button" class="ambient-cap-btn" data-act="play" title="Preview' + (it.mastered ? ' (mastered)' : '') + '">▶</button>' +
+            '<button type="button" class="ambient-cap-btn' + ((_ambBankPreviewAudio && _ambBankPreviewAudio._capId === it.id) ? ' previewing' : '') + '" data-act="play" title="' + ((_ambBankPreviewAudio && _ambBankPreviewAudio._capId === it.id) ? 'Stop preview' : 'Preview' + (it.mastered ? ' (mastered)' : '')) + '">' + ((_ambBankPreviewAudio && _ambBankPreviewAudio._capId === it.id) ? '■' : '▶') + '</button>' +
             '<button type="button" class="ambient-cap-btn" data-act="proc" title="Process — reverse / pitch / glide → new take">⚙</button>' +
             '<button type="button" class="ambient-cap-btn" data-act="ren" title="Rename">✎</button>' +
             '<button type="button" class="ambient-cap-btn" data-act="dl" title="Download to this device">⤓</button>' +

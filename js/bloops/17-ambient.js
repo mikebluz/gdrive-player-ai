@@ -2417,6 +2417,20 @@
     // Changes'/area salt; present-and-all-zero = this layer does not salt.
     function _ambNormalizeLayerSalt(L) {
       if (!L || typeof L !== 'object') return;
+      // Per-chord re-roll counts: sparse {slot: count}, ints ≥1 only, dropped
+      // when empty. Independent of L.salt — a layer inheriting the AREA salt
+      // still re-rolls per chord.
+      if (L.saltNudge != null) {
+        if (typeof L.saltNudge !== 'object') { delete L.saltNudge; }
+        else {
+          const o2 = {};
+          Object.keys(L.saltNudge).forEach(k => {
+            const v = L.saltNudge[k] | 0, i = k | 0;
+            if (v > 0 && i >= 0 && i < 512) o2[i] = Math.min(9999, v);
+          });
+          if (Object.keys(o2).length) L.saltNudge = o2; else delete L.saltNudge;
+        }
+      }
       const sl = L.salt;
       if (sl == null) return;
       if (typeof sl !== 'object') { delete L.salt; return; }
@@ -3034,6 +3048,10 @@
       ['bed', 'motif', 'texture'].forEach(l => _ambNormalizeNotes(cfg[l]));
       ['bed', 'motif', 'texture', 'beat'].forEach(l => _ambNormalizeKeyOv(cfg[l]));   // B2 per-layer KEY override
       ['bed', 'motif', 'texture', 'beat'].forEach(l => _ambNormalizeUnit(cfg[l]));
+      // Per-layer salt + per-chord re-roll counts — the extras/seq/samp loops
+      // already ran this; PRIMARIES were missed, so a primary's salt fields
+      // never coerced (found via a saltNudge zero surviving normalize).
+      ['bed', 'motif', 'texture', 'beat'].forEach(l => _ambNormalizeLayerSalt(cfg[l]));
       // Seq layers: ensure array; migrate a legacy single `seq` slot → seqs[].
       if (!Array.isArray(cfg.seqs)) cfg.seqs = [];
       if (cfg.seq && typeof cfg.seq === 'object') {
@@ -3939,7 +3957,7 @@
       if (segIdx <= 0) return ret;   // downbeat segment = the written chord, always
       const vocab = _ambProgColorVocab(ret.intervals, ret.root, _ambSaltColorAllowed(cfgS));
       if (!vocab.length) return ret;
-      const rndC = _ambSeededRand((((step + 1) * 2654435761) ^ ((segIdx + 1) * 40503) ^ ((seedS * 131) >>> 0) ^ 0x51CE) >>> 0);
+      const rndC = _ambSeededRand((((step + 1) * 2654435761) ^ ((segIdx + 1) * 40503) ^ ((seedS * 131) >>> 0) ^ _ambSaltNudgeNow(step) ^ 0x51CE) >>> 0);
       const cand = vocab[Math.floor(rndC() * vocab.length) % vocab.length];
       return Object.assign({}, ret, { intervals: cand });
     }
@@ -3984,6 +4002,25 @@
     // the area. A layer salt object with every axis 0 is an explicit "no salt for
     // this layer", exactly as it is for a set of Changes — absence means inherit,
     // zero means off.
+    // PER-CHORD RE-ROLL (layer.saltNudge = { "<slot>": count }): bump the count
+    // to deal that layer a NEW realization of ONE chord slot — the nudge is
+    // folded into the dedicated per-slot seeded draws (segment count + colour
+    // pick), so nothing else moves: same take, same harmony, same every-other-
+    // chord. Keyed on the WRITTEN slot (step % cycle length) so the re-roll
+    // holds on every pass. 0/absent folds nothing → byte-identical.
+    function _ambSaltNudgeNow(step) {
+      try {
+        if (!_ambEmitLayerKey || !_E) return 0;
+        const L = _ambLayerByKey(_E, _ambEmitLayerKey);
+        const m = L && L.saltNudge;
+        if (!m || typeof m !== 'object') return 0;
+        const cfg = _E._cfg || (_E.getCfg && _E.getCfg());
+        const len = (cfg && cfg.prog && Array.isArray(cfg.prog.chords)) ? cfg.prog.chords.length : 0;
+        const slot = len > 0 ? ((step % len) + len) % len : step;
+        const v = m[slot] != null ? m[slot] : m[String(slot)];
+        return (v | 0) > 0 ? ((v | 0) * 0x9E3779B1) >>> 0 : 0;
+      } catch (e) { return 0; }
+    }
     function _ambLayerSaltNow() {
       try {
         if (!_ambEmitLayerKey || !_E) return null;
@@ -4127,7 +4164,10 @@
       const nTarget = Math.min(8, (salt.colors | 0) + 1);   // knob k = k variations on top of the written chord, ≤8 segments
       if (nTarget <= 1) return 1;
       const seedS = (seed | 0) || 1;
-      const rndN = _ambSeededRand((((step + 1) * 40503) ^ ((seedS * 131) >>> 0) ^ 0xC0105) >>> 0);
+      // per-layer per-chord re-roll rides this hash too, so a nudge re-deals
+      // the segmentation along with the colours (folded HERE so the resolver
+      // and the followSalt plan can never disagree on nSeg)
+      const rndN = _ambSeededRand((((step + 1) * 40503) ^ ((seedS * 131) >>> 0) ^ _ambSaltNudgeNow(step) ^ 0xC0105) >>> 0);
       const shape = ((salt.scatter | 0) / 100) * 4;
       return 1 + Math.round(Math.pow(rndN(), shape) * (nTarget - 1));
     }
@@ -4406,6 +4446,12 @@
           // and these are the explicit "and everything else like it" actions —
           // one click, named, so a wide edit is never something you did by accident.
           // Absent when the modal was opened on a whole row/column already.
+          // PER-CHORD RE-ROLL — deal this layer a new realization of just this
+          // chord (salt segmentation + colours re-drawn from a bumped seed).
+          (o.onReroll ? '<div class="ambient-pm-modal-spread">' +
+            '<button type="button" class="ambient-seg pm-sp-reroll">🎲 Roll a new <b>' + esc(o.colLabel || 'chord') + '</b> for <b>' + esc(o.rowLabel || 'this layer') + '</b></button>' +
+            (o.rerollWhy ? '<div class="ambient-pm-modal-hint">' + esc(o.rerollWhy) + '</div>' : '') +
+          '</div>' : '') +
           (o.onRow || o.onCol || o.onPart ? '<div class="ambient-pm-modal-spread">' +
             (o.onRow ? '<button type="button" class="ambient-seg pm-sp-row">Set all of <b>' + esc(o.rowLabel || 'this layer') + '</b> to <i class="pm-sp-v">' + v0 + '%</i></button>' : '') +
             // PART macro: the same shape as the row/column spreads, and like them it
@@ -4436,6 +4482,7 @@
         if (ev.target.closest && ev.target.closest('.pm-sp-row')) { try { o.onRow(cur); } catch (e) {} close(); return; }
         if (ev.target.closest && ev.target.closest('.pm-sp-part')) { try { o.onPart(cur); } catch (e) {} close(); return; }
         if (ev.target.closest && ev.target.closest('.pm-sp-col')) { try { o.onCol(cur); } catch (e) {} close(); return; }
+        if (ev.target.closest && ev.target.closest('.pm-sp-reroll')) { try { o.onReroll(); } catch (e) {} close(); return; }
         const pr = ev.target.closest && ev.target.closest('.ambient-pm-modal-preset');
         if (pr) set(pr.dataset.v | 0);
       });
@@ -25725,7 +25772,12 @@
       const t0 = notes.length ? notes[0].at : 0;
       // cfg travels with the notes: pass 2 builds its mod chains from the SAME
       // clone, so `n.key` resolves to the same layer.
-      return { notes: notes.map(n => Object.assign({}, n, { at: n.at - t0 })), count: notes.length, cfg };
+      // Whether spread-mode voices were captured at FULL width (live core-strip
+      // semantics — the strip scales the side by space/100 later). Pass 2 has
+      // no strip, so it must scale the pan positions itself.
+      let stripWidth = false;
+      try { stripWidth = !!(typeof _coreVoices !== 'undefined' && _coreVoices.stripsEnabled && _coreVoices.stripsEnabled()); } catch (e) {}
+      return { notes: notes.map(n => Object.assign({}, n, { at: n.at - t0 })), count: notes.length, cfg, stripWidth };
     }
     // Pass 2: replay a captured note list into an OfflineAudioContext via
     // Tone.Offline, which swaps Tone's global context for the duration — the same
@@ -25776,6 +25828,7 @@
       const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
       let buffer = null, played = 0, failed = 0, wetOut = false, coreTaken = 0, coreOn = false;
       let samplerCount = 0, _masterBuilt = false;
+      const _missing = [];
       // Tell playNote not to DEFER voice construction: the deferred-build queue is
       // pumped by a wall-clock timer that does not advance while an offline
       // context renders, so anything past 0.25 s would never be built — and would
@@ -25979,8 +26032,30 @@
             _E = E3;
             _ambSyncMods();
             wet = !!(E3.mod && Object.keys(E3.mod).length);
+            // WIDTH: the node chain's layer Panner is channelCount 1 — it
+            // MONO-DOWNMIXES everything upstream (the documented reason
+            // Spread/Spatialize need core strips live). The bounce's chains
+            // are ALWAYS node chains, so widen each panner to stereo: at
+            // pan 0 a StereoPanner passes L/R through, preserving the
+            // per-voice fan; at a position it applies the stereo pan law.
+            // Offline-only — the live node engine keeps its calibrated mono law.
+            try {
+              for (const k in E3.mod) {
+                const e = E3.mod[k];
+                if (e && !e.core && e.pan) { try { e.pan.channelCount = 2; } catch (x) {} }
+              }
+            } catch (e) {}
           } catch (e) { wet = false; }
           wetOut = wet;
+          // GLITCH runs only inside the core strips (no node build exists), so
+          // a bounce cannot include it — say so instead of failing silently.
+          try {
+            const glitched = [];
+            const scan = (L, nm) => { try { if (L && L.glitch && ((L.glitch.mix | 0) > 0 || L.glitch.dryKill)) glitched.push(nm); } catch (e) {} };
+            ['bed', 'motif', 'texture', 'beat'].forEach((k) => scan(cap.cfg[k], k));
+            (cap.cfg.extras || []).forEach((x) => scan(x, (x && x.type) || 'layer'));
+            if (glitched.length) _missing.push('Glitch on ' + glitched.join('/') + ' (it runs only in the live core engine)');
+          } catch (e) {}
           // CORE SESSION — a second voice-processor node on THIS context.
           // playNote's live core gate then routes eligible notes here. Awaited
           // before any note is delivered, so the wasm is compiled before the
@@ -26038,13 +26113,33 @@
           //   core's alloc_voice STEALS past ~256 scheduled voices, so they
           //   are batched from the checkpoints.
           const prevKey = (typeof window !== 'undefined') ? window._ambEmitKey : null;
+          // Spread scaling: with live core strips on, voices are CAPTURED at the
+          // full fan (the strip scales the side by space/100 in real time). The
+          // bounce has no strip, so scale each note's pan here. Spatialize
+          // positions are absolute placements, not a fan — exempt.
+          const _widthOf = {};
+          const _panScale = (key) => {
+            if (!(cap && cap.stripWidth)) return 1;
+            if (key in _widthOf) return _widthOf[key];
+            let f = 1;
+            try {
+              const L = _ambLayerByKey(E3, key);
+              if (L && L.panMode !== 'pan' && !(L.spat && L.spat.on)) f = Math.max(0, Math.min(100, _ambLayerSpace(L))) / 100;
+            } catch (e) {}
+            _widthOf[key] = f; return f;
+          };
           const deliverNote = (n) => {
             try {
               let dest = null;
               if (wet && n.key) { try { dest = _ambLayerDest(n.key) || null; } catch (e) { dest = null; } }
               if (!dest) dest = outStage || ((Tone.getDestination && Tone.getDestination()) || null);
+              let pp = n.params;
+              if (pp && Number.isFinite(pp.pan) && pp.pan !== 0 && n.key) {
+                const f = _panScale(n.key);
+                if (f !== 1) pp = Object.assign({}, pp, { pan: pp.pan * f });
+              }
               window._ambEmitKey = n.key || null;
-              playNote(n.freq, n.params, n.dur, n.at, dest, undefined, -1);
+              playNote(n.freq, pp, n.dur, n.at, dest, undefined, -1);
               played++;
             } catch (e) { failed++; }
             window._ambEmitKey = prevKey;
@@ -26104,6 +26199,7 @@
       phase('rendered', { wallSec: wall, peak });
       return { buffer, notes: notes.length, played, failed, seconds, wallSec: wall,
                xRealtime: wall > 0 ? seconds / wall : 0, peak, wet: wetOut, master: _masterBuilt,
+               missing: _missing,
                core: coreOn, coreNotes: coreTaken, samplers: samplerCount, checkpoints: checkpointsFired };
     }
     // NAME THE EXPORTS DIFFERENTLY. This file's top level is SCRIPT scope, so a
@@ -28778,6 +28874,19 @@
         const openEditor = (cell) => {
           const sl = slot(cell); if (!sl) return;
           const pi = Number.isFinite(el._pmPart) ? el._pmPart : -1;
+          // Does salt colour anything for this layer? Own salt wins; an explicit
+          // all-zero layer salt is OFF; otherwise the area/part salt applies.
+          const _saltOn = (() => {
+            try {
+              const L = _ambLayerByKey(E, sl.lkey);
+              const cfg2 = E.getCfg();
+              if (L && L.salt && typeof L.salt === 'object') return (L.salt.colors | 0) > 0;
+              const base = cfg2 && cfg2.prog && cfg2.prog.on && cfg2.prog.salt;
+              if (base && (base.colors | 0) > 0) return true;
+              const parts2 = cfg2 && cfg2.prog && Array.isArray(cfg2.prog.parts) ? cfg2.prog.parts : [];
+              return parts2.some(pp => pp && pp.salt && (pp.salt.colors | 0) > 0);
+            } catch (e) { return false; }
+          })();
           _ambMaskCellModal(E, {
             label: sl.label + ' · ' + chLabel(sl.ci),
             unit: 'chord', value: sl.m.steps[sl.ci],
@@ -28786,7 +28895,17 @@
             onSet: (v) => { const s2 = slot(cell) || sl; s2.m.steps[s2.ci] = v; commit(sl.lkey); },
             onRow: (v) => setRow(sl.lkey, v),
             onPart: pi >= 0 ? ((v) => setPart(sl.lkey, pi, v)) : null,
-            onCol: (v) => setCol(sl.ci, v)
+            onCol: (v) => setCol(sl.ci, v),
+            onReroll: () => {
+              const L = _ambLayerByKey(E, sl.lkey); if (!L) return;
+              if (!L.saltNudge || typeof L.saltNudge !== 'object') L.saltNudge = {};
+              L.saltNudge[sl.ci] = ((L.saltNudge[sl.ci] | 0) + 1);
+              try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+              // heard at the next boundary; a frozen Write loop re-captures
+              try { if (E.timer) _ambReanchorLayer(E, sl.lkey); } catch (e) {}
+              try { if (typeof showToast === 'function') showToast('New roll for ' + sl.label + ' on ' + chLabel(sl.ci) + (_saltOn ? ' — lands at the next pass.' : ' — set a Salt colour amount (layer or area) to hear it.')); } catch (e) {}
+            },
+            rerollWhy: _saltOn ? '' : 'This layer has no salt colours yet — the roll is stored, but set Colour (its Salt group, or the area Salt) to hear it.'
           });
         };
         // The row label and the column header are the natural handles for "all of

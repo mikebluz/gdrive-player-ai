@@ -1059,6 +1059,9 @@
     // covers BOTH — otherwise a hiss change would leave the old bed playing.
     const _vinylBedKey = (age01, hiss01) => Math.round(age01 * 20) + ':' + Math.round(hiss01 * 20);
     let _vinylBedTimer = null;
+    // Exposed for the offline bounce, which must generate the SAME crackle/hiss
+    // bed on its own context. Read-only use; the live path is untouched.
+    try { if (typeof window !== 'undefined') window._bloopsMakeVinylBed = (a, h) => _makeVinylBed(a, h); } catch (e) {}
     function _rebuildVinylBed(age01, hiss01) {
       if (_vinylBedTimer) clearTimeout(_vinylBedTimer);
       _vinylBedTimer = setTimeout(() => {
@@ -1568,7 +1571,11 @@
         } catch (e) {
           try { masterCompressor.disconnect(); masterCompressor.connect(masterVolume); } catch (e2) {}
         }
-        try { URL.revokeObjectURL(url); } catch (e) {}
+        // URL deliberately NOT revoked: the offline bounce must addModule the SAME
+        // processor onto ITS own context, and re-implementing this DSP elsewhere
+        // would be a second source of truth that silently drifts from this one.
+        // One blob URL held for the session is negligible.
+        try { if (typeof window !== 'undefined') window._bloopsOttModuleUrl = url; } catch (e) {}
       }).catch(() => { /* worklet unavailable — chain stays compressor → volume */ });
     })();
     // Push the persisted Glue state into the worklet (on/off + depth).

@@ -25645,7 +25645,9 @@
       // Anchor at the first onset so the bounce starts on the music, not on the
       // engine's internal lead.
       const t0 = notes.length ? notes[0].at : 0;
-      return { notes: notes.map(n => Object.assign({}, n, { at: n.at - t0 })), count: notes.length };
+      // cfg travels with the notes: pass 2 builds its mod chains from the SAME
+      // clone, so `n.key` resolves to the same layer.
+      return { notes: notes.map(n => Object.assign({}, n, { at: n.at - t0 })), count: notes.length, cfg };
     }
     // Pass 2: replay a captured note list into an OfflineAudioContext via
     // Tone.Offline, which swaps Tone's global context for the duration — the same
@@ -25656,22 +25658,47 @@
       if (!cap || !cap.notes.length) return { buffer: null, notes: 0, reason: 'no notes captured' };
       const notes = cap.notes.filter(n => n.at < seconds);
       const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
-      let buffer = null, played = 0, failed = 0;
+      let buffer = null, played = 0, failed = 0, wetOut = false;
       try {
+        const prevE2 = (typeof _E !== 'undefined') ? _E : undefined;
         buffer = await Tone.Offline(async () => {
+          // WET PATH: build this area's per-layer mod chains ON THE OFFLINE
+          // CONTEXT. Inside Tone.Offline the global Tone context IS the offline
+          // one, and _ambSyncMods/_ambLayerDest both read the module-global _E —
+          // so pointing _E at an engine whose busNode() is the offline
+          // destination makes the whole chain (vcf → vca → level → gate → pan →
+          // FX → bus) build and route there. A LIVE node here would throw
+          // "cannot connect to an AudioNode belonging to a different context".
+          let E3 = null, wet = false;
+          try {
+            if (opts && opts.dry) throw new Error('dry requested');
+            E3 = _makeAmbientEngine({
+              getCfg: () => cap.cfg,
+              busNode: () => Tone.getDestination(),
+              laneIdx: () => -1, guard: () => true,
+              hostId: 'bloom-bounce-r', idPrefix: 'ambient', vizId: 'bloom-bounce-r-viz',
+              playId: 'bloom-bounce-r-play', seedId: 'bloom-bounce-r-seed', isLane: false,
+            });
+            E3.rng = (cap.cfg.seed >>> 0) || 1;
+            E3._everRan = true;
+            _E = E3;
+            _ambSyncMods();
+            wet = !!(E3.mod && Object.keys(E3.mod).length);
+          } catch (e) { wet = false; }
+          wetOut = wet;
           for (const n of notes) {
             try {
-              // Straight to the offline destination: this is a DRY bounce (see the
-              // note above). Passing an explicit destination also avoids
-              // _ambLayerDest reaching for E.mod chains that do not exist here.
-              const dest = (Tone.getDestination && Tone.getDestination()) || null;
+              // Per-layer chain input when we have one, else straight out — a
+              // layer whose chain failed to build still gets heard, dry.
+              let dest = null;
+              if (wet && n.key) { try { dest = _ambLayerDest(n.key) || null; } catch (e) { dest = null; } }
+              if (!dest) dest = (Tone.getDestination && Tone.getDestination()) || null;
               playNote(n.freq, n.params, n.dur, n.at, dest, undefined, -1);
               played++;
             } catch (e) { failed++; }
           }
-          // Let scheduled voices settle; Tone.Offline renders the full duration
-          // regardless, so this only needs the synchronous scheduling above.
         }, seconds);
+        if (prevE2 !== undefined) _E = prevE2;
       } catch (e) {
         return { buffer: null, notes: notes.length, reason: 'render failed: ' + ((e && e.message) || e) };
       }
@@ -25682,7 +25709,7 @@
         if (d) for (let i = 0; i < d.length; i += 16) { const a = Math.abs(d[i]); if (a > peak) peak = a; }
       } catch (e) {}
       return { buffer, notes: notes.length, played, failed, seconds, wallSec: wall,
-               xRealtime: wall > 0 ? seconds / wall : 0, peak };
+               xRealtime: wall > 0 ? seconds / wall : 0, peak, wet: wetOut };
     }
     // NAME THE EXPORTS DIFFERENTLY. This file's top level is SCRIPT scope, so a
     // `function _ambFoo` declaration already creates window._ambFoo — assigning a

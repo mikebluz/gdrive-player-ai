@@ -23105,12 +23105,17 @@
         // what it does NOT have, since a bounce is currently missing the master
         // chain's tone colour and will sound thinner than a capture.
         'hr',
+        // EVERY bounce row carries the ⚡ itself. The header is a disabled label,
+        // and leading-space indentation is stripped when the menu renders — so
+        // without this the menu showed TWO identical "30 sec / 1 min / 2 min"
+        // lists and the only thing distinguishing them was an unclickable
+        // heading, which read as "Bounce can't be selected".
         { label: '⚡ Bounce — faster than real time', disabled: true },
-        { label: '   30 sec', fn: () => _ambBounceBegin(E, 30) },
-        { label: '   1 min',  fn: () => _ambBounceBegin(E, 60) },
-        { label: '   2 min',  fn: () => _ambBounceBegin(E, 120) },
-        { label: '   5 min',  fn: () => _ambBounceBegin(E, 300) },
-        { label: '   ⌨ Custom seconds…', fn: () => {
+        { label: '⚡ Bounce 30 sec', fn: () => _ambBounceBegin(E, 30) },
+        { label: '⚡ Bounce 1 min',  fn: () => _ambBounceBegin(E, 60) },
+        { label: '⚡ Bounce 2 min',  fn: () => _ambBounceBegin(E, 120) },
+        { label: '⚡ Bounce 5 min',  fn: () => _ambBounceBegin(E, 300) },
+        { label: '⚡ Bounce — custom seconds…', fn: () => {
           let s = null; try { s = prompt('Bounce length in seconds:', '120'); } catch (e) {}
           if (s == null) return;
           const n = parseInt(s, 10);

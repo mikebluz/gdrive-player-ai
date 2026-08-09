@@ -25701,6 +25701,12 @@
       const notes = cap.notes.filter(n => n.at < seconds);
       const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
       let buffer = null, played = 0, failed = 0, wetOut = false;
+      // Tell playNote not to DEFER voice construction: the deferred-build queue is
+      // pumped by a wall-clock timer that does not advance while an offline
+      // context renders, so anything past 0.25 s would never be built — and would
+      // then drain onto the LIVE context afterwards, which is audible playback
+      // nobody asked for.
+      try { if (typeof window !== 'undefined') window.__bloopsOfflineRender = true; } catch (e) {}
       try {
         const prevE2 = (typeof _E !== 'undefined') ? _E : undefined;
         buffer = await Tone.Offline(async () => {
@@ -25874,7 +25880,13 @@
         }, seconds);
         if (prevE2 !== undefined) _E = prevE2;
       } catch (e) {
+        try { if (typeof window !== 'undefined') window.__bloopsOfflineRender = false; } catch (e2) {}
         return { buffer: null, notes: notes.length, reason: 'render failed: ' + ((e && e.message) || e) };
+      } finally {
+        try { if (typeof window !== 'undefined') window.__bloopsOfflineRender = false; } catch (e2) {}
+        // Belt and braces: drop anything that did reach the queue, so it can never
+        // sound on the live context after the render returns.
+        try { if (typeof _vqClear === 'function') _vqClear(); } catch (e2) {}
       }
       const wall = (((typeof performance !== 'undefined') ? performance.now() : 0) - t0) / 1000;
       let peak = 0;

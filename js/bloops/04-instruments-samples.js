@@ -3567,6 +3567,13 @@
     function _vqShouldDefer(startTime) {
       if (!VOICE_BUILD_QUEUE_ENABLED) return false;
       if (_offlineSamplerOverride) return false;
+      // OFFLINE RENDER: never defer. The queue is pumped by a WALL-CLOCK timer,
+      // which does not advance while an OfflineAudioContext renders — so every
+      // note more than 0.25 s in gets queued and never built, and the bounce
+      // contains only its first fraction of a second plus FX tails. Worse, the
+      // queue then drains AFTER the render, on the LIVE context, so choosing
+      // Bounce started audible playback. One flag fixes both.
+      try { if (typeof window !== 'undefined' && window.__bloopsOfflineRender) return false; } catch (e) {}
       if (typeof startTime !== 'number' || !Number.isFinite(startTime)) return false;
       try { return (startTime - Tone.now()) > _VQ_DEFER_MIN_SEC; } catch (e) { return false; }
     }

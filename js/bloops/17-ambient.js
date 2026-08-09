@@ -23101,16 +23101,17 @@
         } },
         // BOUNCE — the same lengths, rendered OFFLINE instead of recorded in real
         // time. Lives in this menu because it answers the same question ("give me
-        // a file of this") and the result lands in the same bank. Labelled with
-        // what it does NOT have, since a bounce is currently missing the master
-        // chain's tone colour and will sound thinner than a capture.
+        // a file of this") and the result lands in the same bank. Eligible voices
+        // render in the WASM core (the same engine live playback uses), so it is
+        // faster than a live capture — measured 4-7x realtime on a dense
+        // 6-layer project, more on light ones.
         'hr',
         // EVERY bounce row carries the ⚡ itself. The header is a disabled label,
         // and leading-space indentation is stripped when the menu renders — so
         // without this the menu showed TWO identical "30 sec / 1 min / 2 min"
         // lists and the only thing distinguishing them was an unclickable
         // heading, which read as "Bounce can't be selected".
-        { label: '⚡ Bounce — render to a file (no playback)', disabled: true },
+        { label: '⚡ Bounce — render to a file, faster than a live capture', disabled: true },
         { label: '⚡ Bounce 30 sec', fn: () => _ambBounceBegin(E, 30) },
         { label: '⚡ Bounce 1 min',  fn: () => _ambBounceBegin(E, 60) },
         { label: '⚡ Bounce 2 min',  fn: () => _ambBounceBegin(E, 120) },
@@ -23134,9 +23135,15 @@
     // and the page is BLOCKED during pass 1, which stubs globals and cannot yield),
     // then the result lands in the bank exactly like a capture.
     async function _ambBounceBegin(E, seconds) {
+      // STOP PLAYBACK FIRST. Inside Tone.Offline the GLOBAL Tone context is the
+      // offline one until the render resolves — a live tick firing during that
+      // window would build its voices into the bounce (or throw cross-context).
+      // The menu label already says "no playback"; make it true.
+      let wasPlaying = false;
+      try { if (E.timer) { wasPlaying = true; _ambStopGenerator(E); } } catch (e) {}
       const prog = (typeof showRenderProgressModal === 'function')
         ? showRenderProgressModal('Bouncing ' + Math.round(seconds) + 's…') : null;
-      try { if (prog) prog.setStatus('Generating notes…'); } catch (e) {}
+      try { if (prog) prog.setStatus((wasPlaying ? 'Stopped playback — ' : '') + '1/4 Composing…'); } catch (e) {}
       // Yield once so the modal actually paints before pass 1 blocks the thread.
       await new Promise(r => setTimeout(r, 30));
       let res = null;
@@ -25698,53 +25705,110 @@
     // Pass 2: replay a captured note list into an OfflineAudioContext via
     // Tone.Offline, which swaps Tone's global context for the duration — the same
     // mechanism the Tracks export uses, so voices build on the offline context.
+    //
+    // SPEED (2026-08-09): notes render in the WASM CORE where the live engine
+    // would — _coreVoices.offlineBegin() builds a second voice-processor node
+    // on the offline context and playNote's existing core gate routes eligible
+    // notes to it (per-layer slots feed the same wet chains). Measured before:
+    // an all-Tone dense render ran ~3x SLOWER than realtime, 95% of it native
+    // graph rendering (per-voice Tone subgraphs — MonoSynth filter envelopes
+    // are signals into biquad params = per-sample coefficient recompute).
+    //
+    // CHECKPOINTS: the core steals voices past ~256 scheduled (alloc_voice),
+    // so the note schedule is delivered in batches from OfflineAudioContext
+    // suspend() checkpoints. Tone's rawContext hides the native context
+    // (standardized-audio-context, no .suspend) — the native instance is
+    // captured by a SCOPED patch of OfflineAudioContext.prototype.
+    // startRendering, which schedules the suspends before the render begins.
+    // Each checkpoint: deliver the next batch, await the core's port-drain
+    // ping (a stats round-trip — FIFO guarantees every posted note arrived),
+    // report REAL progress, resume. This replaced the clock-poll progress hack.
+    //
+    // SAMPLES + DISPOSE TIMERS: pass 2 sets _offlineSamplerOverride (via
+    // _bloomOfflineScope) exactly like the Tracks export — sample notes
+    // resolve through offline-context samplers instead of silently failing
+    // cross-context, voices park in the ref pool, and the wall-clock dispose
+    // timers are never scheduled (on a slow render they fired while the render
+    // clock was behind and truncated voices — measured max sample diff 0.84).
     async function _ambRenderOffline(E, seconds, opts) {
       seconds = Math.max(1, Math.min(1800, +seconds || 30));
+      const onStatus = (opts && typeof opts.onStatus === 'function') ? opts.onStatus : null;
+      const onProgress = (opts && typeof opts.onProgress === 'function') ? opts.onProgress : null;
+      const onPhase = (opts && typeof opts.onPhase === 'function') ? opts.onPhase : null;
+      const say = (t) => { try { if (onStatus) onStatus(t); } catch (e) {} };
+      const phase = (id, info) => { try { if (onPhase) onPhase(id, info || {}); } catch (e) {} };
+      // A live generator ticking during Tone.Offline would schedule its voices
+      // into the bounce (the global Tone context is the offline one until the
+      // render resolves). _ambBounceBegin already stops the UI path; this
+      // covers direct calls (window._bloomBounce).
+      try { if (E && E.timer) _ambStopGenerator(E); } catch (e) {}
+      phase('compose', { seconds });
+      say('1/4 Composing…');
       const cap = _ambCaptureNotesSynthetic(E, seconds);
       if (!cap || !cap.notes.length) return { buffer: null, notes: 0, reason: 'no notes captured' };
       const notes = cap.notes.filter(n => n.at < seconds);
+      phase('composed', { notes: notes.length });
       const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
-      let buffer = null, played = 0, failed = 0, wetOut = false;
+      let buffer = null, played = 0, failed = 0, wetOut = false, coreTaken = 0, coreOn = false;
+      let samplerCount = 0;
       // Tell playNote not to DEFER voice construction: the deferred-build queue is
       // pumped by a wall-clock timer that does not advance while an offline
       // context renders, so anything past 0.25 s would never be built — and would
       // then drain onto the LIVE context afterwards, which is audible playback
       // nobody asked for.
       try { if (typeof window !== 'undefined') window.__bloopsOfflineRender = true; } catch (e) {}
-      // PROGRESS. Tone.Offline swaps the global context for the duration, so
-      // Tone.getContext().rawContext.currentTime advances 0 → seconds as the
-      // buffer fills; poll it on a wall-clock interval (the MAIN thread is free —
-      // rendering happens on the audio thread). Without this the modal sits on one
-      // label for the whole render and a slow project is indistinguishable from a
-      // hang, which is exactly how it was reported.
-      const onStatus = (opts && typeof opts.onStatus === 'function') ? opts.onStatus : null;
-      const onProgress = (opts && typeof opts.onProgress === 'function') ? opts.onProgress : null;
-      let _pollT = null;
-      // PROGRESS. Tone.Offline swaps the global context for the duration, so
-      // Tone.getContext().rawContext.currentTime IS the offline clock while we
-      // await — it advances 0 → seconds as the buffer fills. The first reading
-      // still catches the LIVE clock before the swap, which shows up as a much
-      // larger number; ignore readings until it DROPS, which is the swap.
-      // (I briefly removed this believing the readings were the live clock
-      // throughout. They were not — the drop-detector only ever reported AFTER
-      // seeing a drop, so the values it printed were genuine offline progress.)
+      // Batched delivery — filled in by the Tone.Offline callback, called from
+      // the suspend checkpoints below. CHUNK spaces the checkpoints; LOOK is
+      // how far past the next checkpoint a batch schedules, so a note near a
+      // boundary is always delivered before the render clock reaches it.
+      const CHUNK = 2, LOOK = 2.5;
+      let deliverUpTo = null;         // (untilAt) -> void
+      let checkpointsFired = 0;
       const _t0poll = (typeof performance !== 'undefined') ? performance.now() : 0;
-      let _prev = Infinity, _live = true;
-      const _tick = () => {
+      let _pollT = null;
+      let _renderFrac = 0;
+      let _renderStarted = false;   // set when the Offline callback finishes — the narrator must not stomp the phase-2 status
+      const _narrate = () => {
+        if (!_renderStarted) return;
         const el = Math.round((((typeof performance !== 'undefined') ? performance.now() : 0) - _t0poll) / 1000);
-        try { if (onStatus) onStatus('Rendering ' + notes.length + ' notes… ' + el + 's'); } catch (e) {}
-        if (!onProgress) return;
-        try {
-          const cur = Tone.getContext().rawContext.currentTime;
-          if (!Number.isFinite(cur) || !(seconds > 0)) return;
-          if (_live) { if (cur < _prev) _live = false; _prev = cur; if (_live) return; }
-          onProgress(Math.max(0, Math.min(1, cur / seconds)));
-        } catch (e) {}
+        say('3/4 Rendering ' + notes.length + ' notes… ' + Math.round(_renderFrac * 100) + '% (' + el + 's)');
       };
-      _tick();
-      _pollT = setInterval(_tick, 100);
+      // SCOPED startRendering patch: capture the native OfflineAudioContext
+      // (Tone's rawContext is a wrapper without .suspend) and schedule the
+      // checkpoint suspends before the render starts. Restored in finally.
+      const _OAC = (typeof OfflineAudioContext !== 'undefined') ? OfflineAudioContext : null;
+      const _origSR = _OAC ? _OAC.prototype.startRendering : null;
+      if (_OAC) {
+        _OAC.prototype.startRendering = function (...a) {
+          const ctx = this;
+          const dur = ctx.length / ctx.sampleRate;
+          for (let t = CHUNK; t < dur; t += CHUNK) {
+            try {
+              ctx.suspend(t).then(async () => {
+                try {
+                  checkpointsFired++;
+                  if (deliverUpTo) deliverUpTo(t + CHUNK + LOOK);
+                  // drain the core's port before resuming — a note posted for
+                  // t+0.1 must be IN the core before the clock passes it
+                  try { if (typeof _coreVoices !== 'undefined' && _coreVoices.offlineActive()) await _coreVoices.offlineFlush(); } catch (e) {}
+                  _renderFrac = Math.max(_renderFrac, Math.min(1, t / dur));
+                  try { if (onProgress) onProgress(_renderFrac); } catch (e) {}
+                  _narrate();
+                } catch (e) {} finally {
+                  try { ctx.resume(); } catch (e) {}
+                }
+              }).catch(() => {});   // t past completion → rejection, ignore
+            } catch (e) {}
+          }
+          return _origSR.apply(this, a);
+        };
+      }
+      _narrate();
+      _pollT = setInterval(_narrate, 500);
       try {
         const prevE2 = (typeof _E !== 'undefined') ? _E : undefined;
+        say('2/4 Preparing instruments…');
+        phase('instruments', {});
         buffer = await Tone.Offline(async () => {
           // WET PATH: build this area's per-layer mod chains ON THE OFFLINE
           // CONTEXT. Inside Tone.Offline the global Tone context IS the offline
@@ -25753,17 +25817,9 @@
           // destination makes the whole chain (vcf → vca → level → gate → pan →
           // FX → bus) build and route there. A LIVE node here would throw
           // "cannot connect to an AudioNode belonging to a different context".
-          // OUTPUT STAGE — deliberately NOT the master chain. The real master
-          // (DC → Warmth → Vinyl → Compressor → Glue → Volume → Limiter) is built
-          // from module-scope consts in 03 on the LIVE context at boot, so it
-          // cannot be reproduced here without refactoring that file into a
-          // context-parameterised factory — boot-critical audio code whose
-          // failure mode is live playback breaking, and which the golden gate
-          // (Rust core only) cannot cover. What IS reproduced is the part a FILE
-          // actually needs: the −3 dB limiter and the master volume, matching
-          // 03's own values, so a dense bounce cannot clip the export. The tone
-          // colour of Warmth/Vinyl/Glue is still missing — a bounce is thinner
-          // and less glued than what you hear.
+          // OUTPUT STAGE — the master stages a FILE needs, rebuilt from
+          // globalFx on this context (03's own nodes are live-context consts):
+          // Warmth → [Vinyl] → Compressor → [Glue] → Volume → Limiter → clip.
           let outStage = null;
           try {
             // (async section: Glue must addModule onto THIS context)
@@ -25787,17 +25843,9 @@
             if (!Number.isFinite(volDb)) volDb = 0;
             const vol = new Tone.Volume(volDb).connect(lim);
             // MASTER COMPRESSOR — the one colour stage that is ON BY DEFAULT
-            // (compOn true, ~2:1 at −3 dB). Warmth / Vinyl / Glue all default OFF,
-            // so reproducing this single node closes the gap for a default
-            // workspace; the other three are reported instead (see below), since
-            // Vinyl is a GENERATOR and Glue an AudioWorklet, and neither can be
-            // rebuilt here without the 03 refactor.
-            // WARMTH — plain filters plus a tanh waveshaper, so it CAN be rebuilt
-            // here (unlike Vinyl, a generator, and Glue, an AudioWorklet). Same
-            // topology, constants and globalFx mapping as 03's applyMasterWarmth:
-            // low-shelf lift at 160, presence dip at 3k, high-shelf cut at 7k,
-            // drive, then the fizz cut. Off by default, so this is inert unless
-            // the workspace turns it on.
+            // (compOn true, ~2:1 at −3 dB). Warmth / Vinyl / Glue default OFF.
+            // WARMTH — plain filters plus a tanh waveshaper. Same topology,
+            // constants and globalFx mapping as 03's applyMasterWarmth.
             let warmIn = null, warmOut = null;
             if (g.warmthOn) {
               const w = Math.max(0, Math.min(100, g.warmth || 0)) / 100;
@@ -25829,26 +25877,19 @@
               outStage = comp;
             } else outStage = vol;
             // GLUE — the SAME worklet the live chain uses. 03 keeps its module URL
-            // alive precisely so this context can addModule it; re-deriving the DSP
-            // here would be a second source of truth. Sits compressor → ott →
-            // volume, exactly as live.
+            // alive precisely so this context can addModule it. Built through
+            // TONE's wrapper (a raw AudioWorkletNode is not registered with
+            // Tone's graph bookkeeping, so Tone.connect rejects it — and that
+            // once threw inside this catch and silently bypassed Glue).
             if (g.ottOn && typeof window !== 'undefined' && window._bloopsOttModuleUrl) {
               try {
                 await Tone.getContext().rawContext.audioWorklet.addModule(window._bloopsOttModuleUrl);
-                // Build it through TONE's wrapper, exactly as 03 does. A raw
-                // `new AudioWorkletNode` is not registered with Tone's graph
-                // bookkeeping, so Tone.connect rejects it — and because that threw
-                // inside the catch below, Glue silently did nothing while every
-                // other stage worked (measured: rms identical to 5 dp, i.e. fully
-                // bypassed rather than subtly applied).
                 const ott = Tone.getContext().createAudioWorkletNode('bloops-ott', {
                   numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
                   channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers',
                   processorOptions: { on: true, depth: Math.max(0, Math.min(100, g.ottDepth || 0)) / 100 },
                 });
                 Tone.connect(ott, vol);
-                // outStage is currently the compressor (or vol); re-point its output
-                // through the glue.
                 try { outStage.disconnect(); } catch (e) {}
                 Tone.connect(outStage, ott);
               } catch (e) { /* worklet unavailable — chain stays compressor → volume */ }
@@ -25902,37 +25943,81 @@
             wet = !!(E3.mod && Object.keys(E3.mod).length);
           } catch (e) { wet = false; }
           wetOut = wet;
-          for (const n of notes) {
-            try {
-              // Per-layer chain input when we have one, else straight out — a
-              // layer whose chain failed to build still gets heard, dry.
-              let dest = null;
-              if (wet && n.key) { try { dest = _ambLayerDest(n.key) || null; } catch (e) { dest = null; } }
-              if (!dest) dest = outStage || ((Tone.getDestination && Tone.getDestination()) || null);
-              playNote(n.freq, n.params, n.dur, n.at, dest, undefined, -1);
-              played++;
-            } catch (e) { failed++; }
+          // CORE SESSION — a second voice-processor node on THIS context.
+          // playNote's live core gate then routes eligible notes here. Awaited
+          // before any note is delivered, so the wasm is compiled before the
+          // render begins (a late engine would render the opening as silence).
+          if (!(opts && opts.noCore)) {
+            try { coreOn = !!(typeof _coreVoices !== 'undefined' && await _coreVoices.offlineBegin()); } catch (e) { coreOn = false; }
           }
+          // OFFLINE SAMPLERS — only the ids this area references (regexed from
+          // the cfg clone, the same trick warmSamplesForWorkspace uses); an
+          // unregistered id flips the wild flag and pulls in built+imported
+          // entries, since dynamic tones resolve per note. Feed the master
+          // stage: node-path samples never had per-layer FX live either.
+          try {
+            const idm = (JSON.stringify(cap.cfg).match(/"sample:([^"]+)"/g) || [])
+              .map((m) => m.slice(8, -1));   // strip `"sample:` (8 chars) and the closing quote
+            if (idm.length && typeof _bloomOfflineSamplerBank === 'function') {
+              const bank = _bloomOfflineSamplerBank(idm, outStage || null);
+              samplerCount = bank.size;
+              window._bloomOfflineScope(bank);
+              if (samplerCount) { say('2/4 Decoding ' + samplerCount + ' sample bank' + (samplerCount === 1 ? '' : 's') + '…'); await Tone.loaded(); }
+            } else if (typeof window._bloomOfflineScope === 'function') {
+              window._bloomOfflineScope(new Map());   // ref park + dispose-timer skip even with no samples
+            }
+          } catch (e) {}
+          phase('instrumentsReady', { wet, core: coreOn, samplers: samplerCount, layers: (E3 && E3.mod) ? Object.keys(E3.mod).length : 0 });
+          // Delivery: batches of the time-sorted note list. Each note is
+          // stamped with its layer key so the core sessions slots per layer
+          // (and the capture tee attribution matches live playback).
+          let idx = 0;
+          const prevKey = (typeof window !== 'undefined') ? window._ambEmitKey : null;
+          deliverUpTo = (untilAt) => {
+            while (idx < notes.length && notes[idx].at < untilAt) {
+              const n = notes[idx++];
+              try {
+                let dest = null;
+                if (wet && n.key) { try { dest = _ambLayerDest(n.key) || null; } catch (e) { dest = null; } }
+                if (!dest) dest = outStage || ((Tone.getDestination && Tone.getDestination()) || null);
+                window._ambEmitKey = n.key || null;
+                playNote(n.freq, n.params, n.dur, n.at, dest, undefined, -1);
+                played++;
+              } catch (e) { failed++; }
+            }
+            window._ambEmitKey = prevKey;
+          };
+          // First batch covers the opening; checkpoints deliver the rest.
+          deliverUpTo(CHUNK + LOOK);
+          // Port-drain barrier: every posted note must be IN the core before
+          // the render starts (messages are async; the render doesn't wait).
+          if (coreOn) { try { await _coreVoices.offlineFlush(); } catch (e) {} }
+          _renderStarted = true; _narrate();
         }, seconds);
         if (prevE2 !== undefined) _E = prevE2;
       } catch (e) {
-        try { if (typeof window !== 'undefined') window.__bloopsOfflineRender = false; } catch (e2) {}
         return { buffer: null, notes: notes.length, reason: 'render failed: ' + ((e && e.message) || e) };
       } finally {
         if (_pollT) { try { clearInterval(_pollT); } catch (e2) {} }
+        if (_OAC && _origSR) { try { _OAC.prototype.startRendering = _origSR; } catch (e2) {} }
+        try { coreTaken = (typeof _coreVoices !== 'undefined') ? _coreVoices.offlineEnd() : 0; } catch (e2) {}
+        try { if (typeof window._bloomOfflineScope === 'function') window._bloomOfflineScope(null); } catch (e2) {}
         try { if (typeof window !== 'undefined') window.__bloopsOfflineRender = false; } catch (e2) {}
         // Belt and braces: drop anything that did reach the queue, so it can never
         // sound on the live context after the render returns.
         try { if (typeof _vqClear === 'function') _vqClear(); } catch (e2) {}
       }
+      try { if (onProgress) onProgress(1); } catch (e) {}
       const wall = (((typeof performance !== 'undefined') ? performance.now() : 0) - t0) / 1000;
       let peak = 0;
       try {
         const d = buffer.getChannelData ? buffer.getChannelData(0) : (buffer.toArray ? buffer.toArray(0) : null);
         if (d) for (let i = 0; i < d.length; i += 16) { const a = Math.abs(d[i]); if (a > peak) peak = a; }
       } catch (e) {}
+      phase('rendered', { wallSec: wall, peak });
       return { buffer, notes: notes.length, played, failed, seconds, wallSec: wall,
-               xRealtime: wall > 0 ? seconds / wall : 0, peak, wet: wetOut };
+               xRealtime: wall > 0 ? seconds / wall : 0, peak, wet: wetOut,
+               core: coreOn, coreNotes: coreTaken, samplers: samplerCount, checkpoints: checkpointsFired };
     }
     // NAME THE EXPORTS DIFFERENTLY. This file's top level is SCRIPT scope, so a
     // `function _ambFoo` declaration already creates window._ambFoo — assigning a
@@ -25946,13 +26031,26 @@
     // once it is in the bank, differing only in `source`.
     async function _ambBounceToBank(E, seconds, opts) {
       const res = await _ambRenderOffline(E, seconds, opts);
-      try { if (opts && typeof opts.onStatus === 'function') opts.onStatus('Encoding…'); } catch (e) {}
+      const _ph = (id, info) => { try { if (opts && typeof opts.onPhase === 'function') opts.onPhase(id, info || {}); } catch (e) {} };
+      try { if (opts && typeof opts.onStatus === 'function') opts.onStatus('4/4 Encoding…'); } catch (e) {}
+      _ph('encode', {});
       if (!res || !res.buffer) return { ok: false, reason: (res && res.reason) || 'render failed' };
       // Tone.Offline resolves a Tone ToneAudioBuffer; the encoders want a native
       // AudioBuffer, which it exposes via .get().
       let audioBuf = res.buffer;
       try { if (typeof audioBuf.get === 'function') audioBuf = audioBuf.get(); } catch (e) {}
       if (!audioBuf || !audioBuf.duration) return { ok: false, reason: 'empty buffer' };
+      // END FADE (30 ms): the bounce cuts dead at `seconds`, mid-tail for any
+      // note still ringing — a hard cut at an arbitrary sample value is a
+      // click at the end of every file. A 30 ms linear fade is inaudible and
+      // ends the file at zero.
+      try {
+        const fadeN = Math.min(Math.floor(audioBuf.sampleRate * 0.03), Math.floor(audioBuf.length / 4));
+        for (let c = 0; c < audioBuf.numberOfChannels; c++) {
+          const d = audioBuf.getChannelData(c);
+          for (let i = 0; i < fadeN; i++) d[d.length - 1 - i] *= i / fadeN;
+        }
+      } catch (e) {}
       const wantMp3 = !!(opts && opts.mp3) && typeof audioBufferToMp3 === 'function';
       let blob = null, ext = 'wav', mime = 'audio/wav';
       try {
@@ -25979,14 +26077,18 @@
       // build — e.g. the Glue worklet being unavailable — rather than a standing
       // list of known gaps.
       const missing = (res && Array.isArray(res.missing)) ? res.missing : [];
+      _ph('banked', { id: rec.id, name: filename });
       try {
         if (typeof showToast === 'function') {
-          showToast('Bounced “' + filename + '” in ' + res.wallSec.toFixed(1) + 's (' + res.xRealtime.toFixed(0) + '× realtime) — in the bank below.'
+          const xr = res.xRealtime >= 10 ? res.xRealtime.toFixed(0) : res.xRealtime.toFixed(1);
+          showToast('Bounced “' + filename + '” in ' + res.wallSec.toFixed(1) + 's (' + xr + '× realtime'
+            + (res.core ? '' : ', slow engine') + ') — in the Harvest bank.'
             + (missing.length ? ('  Note: ' + missing.join(' / ') + ' ' + (missing.length > 1 ? 'are' : 'is') + ' not in a bounce yet.') : ''));
         }
       } catch (e) {}
       return { ok: true, id: rec.id, name: filename, ext, bytes: blob.size, durSec: rec.durSec,
-               wallSec: res.wallSec, xRealtime: res.xRealtime, notes: res.played, wet: res.wet, missing };
+               wallSec: res.wallSec, xRealtime: res.xRealtime, notes: res.played, wet: res.wet,
+               core: res.core, coreNotes: res.coreNotes, checkpoints: res.checkpoints, missing };
     }
     try { if (typeof window !== 'undefined') { window._bloomBounceToBank = (sec, opts) => _ambBounceToBank(_masterEng, sec, opts); } } catch (e) {}
     try { if (typeof window !== 'undefined') { window._bloomBounce = (sec, opts) => _ambRenderOffline(_masterEng, sec, opts);

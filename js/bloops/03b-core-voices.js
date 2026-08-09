@@ -98,6 +98,10 @@
           // cache: 'no-cache' revalidates the .wasm with the server on every
           // load — a stale cached core silently reintroduces fixed DSP bugs.
           const bytes = await (await fetch('js/bloops/core/bloops-dsp.wasm?v=DEPLOYVER', { cache: 'no-cache' })).arrayBuffer();
+          // Keep a copy for offline bounce sessions — postMessage TRANSFERS
+          // the buffer (it's neutered after this line), and the bounce should
+          // not depend on a second network fetch.
+          try { _wasmCopy = bytes.slice(0); } catch (e) {}
           node.port.postMessage({ wasmBytes: bytes }, [bytes]);
           // Keep-pull sink: a permanent zero-gain path to the destination so
           // the graph ALWAYS renders this node. Without it, tearing down the
@@ -304,6 +308,7 @@
       // window in BUFFER seconds, loop window). Returns a truthy tag when
       // taken; 0 → node path.
       function sampleNoteOn(key, dest, o) {
+        if (off) return false;   // bounce in flight -> node/sampler path
         if (!stripsEnabled() || failed) return 0;
         if (!ready) { init(); return 0; }
         if (!_running()) return 0;
@@ -333,6 +338,7 @@
       // rides srate_tag (absolute mult vs the base rate), so held-press pitch
       // bends work like the synth holdOn's bendTag.
       function holdSampleOn(key, dest, o) {
+        if (off) return null;   // bounce in flight -> node/sampler path
         if (!stripsEnabled() || failed) return null;
         if (!ready) { init(); return null; }
         if (!_running()) return null;
@@ -504,6 +510,7 @@
       }
       // Returns true when the note was taken by the core.
       function noteOn(key, dest, o) {
+        if (off) return _offNoteOn(key, dest, o);   // bounce in flight → its own node
         if (!enabled() || failed) return false;
         if (!ready) { init(); return false; }  // warm up; fall back meanwhile
         if (!_running()) return false;         // cold start → node engine handles the resume dance
@@ -522,6 +529,7 @@
       // compatible with startSustainedNote's contract, or null → node engine.
       let tagSeq = 0;
       function holdOn(key, dest, o) {
+        if (off) return null;                       // bounce in flight → node engine for holds
         if (!enabled() || failed || !ready || !_running()) { if (!ready && enabled()) init(); return null; }
         const slot = slotFor(key, dest);
         if (slot < 0) return null;
@@ -569,8 +577,113 @@
       function stopAll() {
         if (ready) node.port.postMessage({ cmd: 'stopAll' });
       }
+      // ---- OFFLINE SESSION (the Bloom bounce) ------------------------------
+      // A SECOND voice-processor node, built on whatever context is current —
+      // called from inside Tone.Offline, that is the OFFLINE context, so core
+      // voices render into the bounce buffer instead of falling back to
+      // expensive per-note Tone graphs (measured: a dense project's Tone-only
+      // render runs ~3x SLOWER than realtime; the core benches ~28-70x).
+      // While a session is active, noteOn routes to it — playNote's existing
+      // core gate then works offline unchanged. The session keeps its OWN
+      // slot maps; the live node and its state are never touched.
+      let _wasmCopy = null;   // cached module bytes (init() stores them — see the transfer note there)
+      let off = null;         // active offline session, or null
+      async function offlineBegin(timeoutMs) {
+        if (off) return null;               // one at a time
+        if (!enabled()) return null;        // the kill switch governs offline too
+        try {
+          if (!_wasmCopy) {
+            _wasmCopy = await (await fetch('js/bloops/core/bloops-dsp.wasm?v=DEPLOYVER', { cache: 'no-cache' })).arrayBuffer();
+          }
+          const ctx = Tone.getContext();
+          await ctx.rawContext.audioWorklet.addModule('js/bloops/core/voice-processor.js?v=DEPLOYVER');
+          const n2 = ctx.createAudioWorkletNode('bloops-voice-processor', {
+            numberOfInputs: SLOTS,
+            numberOfOutputs: SLOTS + 1,
+            outputChannelCount: new Array(SLOTS + 1).fill(2),
+            channelCount: 2,
+            channelCountMode: 'clamped-max',
+          });
+          let readyRes; const readyP = new Promise((r) => { readyRes = r; });
+          let statsRes = null;
+          n2.port.onmessage = (e) => {
+            const d = e.data || {};
+            if (d.ready) readyRes(true);
+            if (d.stats && statsRes) { const r = statsRes; statsRes = null; r(true); }
+            if (d.error) { try { console.warn('[bloops-core] offline session:', d.error); } catch (x) {} }
+          };
+          const bcopy = _wasmCopy.slice(0);
+          n2.port.postMessage({ wasmBytes: bcopy }, [bcopy]);
+          const ok = await Promise.race([readyP, new Promise((r) => setTimeout(() => r(false), timeoutMs || 6000))]);
+          if (!ok) { try { n2.disconnect(); } catch (e) {} return null; }
+          off = { node: n2, slots: new Map(), dests: new Array(SLOTS).fill(null), taken: 0 };
+          return true;
+        } catch (e) {
+          try { console.warn('[bloops-core] offline session unavailable:', e); } catch (x) {}
+          off = null; return null;
+        }
+      }
+      // Port-drain barrier: stats is answered AFTER every earlier message on
+      // the port has been dispatched (FIFO), so awaiting the reply guarantees
+      // all posted notes have reached the core — required before resuming a
+      // suspended offline render, or a note near the checkpoint could miss
+      // its onset while the message is still in flight.
+      function offlineFlush(timeoutMs) {
+        if (!off) return Promise.resolve(false);
+        const n2 = off.node;
+        return new Promise((resolve) => {
+          const to = setTimeout(() => { resolve(false); }, timeoutMs || 3000);
+          const prev = n2.port.onmessage;
+          n2.port.onmessage = (e) => {
+            const d = e.data || {};
+            if (d.stats) { clearTimeout(to); n2.port.onmessage = prev; resolve(true); return; }
+            if (prev) prev(e);
+          };
+          try { n2.port.postMessage({ cmd: 'stats' }); } catch (e) { clearTimeout(to); n2.port.onmessage = prev; resolve(false); }
+        });
+      }
+      function offlineEnd() {
+        if (!off) return 0;
+        const taken = off.taken;
+        try { off.node.disconnect(); } catch (e) {}
+        off = null;
+        return taken;
+      }
+      function _offSlotFor(key, dest) {
+        let s = off.slots.get(key);
+        if (s == null) {
+          if (off.slots.size >= SLOTS) return -1;   // out of slots → Tone voice
+          s = off.slots.size;
+          off.slots.set(key, s);
+        }
+        if (off.dests[s] !== dest) {
+          try { off.node.disconnect(s); } catch (e) {}
+          try { Tone.connect(off.node, dest, s, 0); } catch (e) { return -1; }
+          off.dests[s] = dest;
+        }
+        return s;
+      }
+      // Offline noteOn: same marshaling as the live one, minus the _running()
+      // gate (an offline context is 'suspended' until startRendering) and with
+      // t passed verbatim (offline times are absolute buffer positions).
+      function _offNoteOn(key, dest, o) {
+        if (!dest) return false;
+        const slot = _offSlotFor(key, dest);
+        if (slot < 0) return false;
+        const kf = kindFor(o.type);
+        off.node.port.postMessage({
+          cmd: 'note', slot, kind: kf.kind, p0: kf.p0, freq: o.freq, vel: o.vel,
+          pan: Math.max(-1, Math.min(1, (o.pan || 0) / 100)),
+          t: (typeof o.t === 'number' && o.t > 0) ? o.t : 0,
+          dur: o.dur, a: o.a, dcy: o.d, s: o.s, r: o.r, detune: o.detune || 0,
+          dp: o.dp || null, tag: 0,
+        });
+        off.taken++;
+        return true;
+      }
       return { enabled, stripsEnabled, eligible, noteOn, holdOn, sampleNoteOn, holdSampleOn, releaseSampleKeys, cancelFrom, stopBefore, stopAll, init, designParams,
-               stripAcquire, stripRelease, stripRekey, stripFor, connectSend, _node: () => node };
+               stripAcquire, stripRelease, stripRekey, stripFor, connectSend, _node: () => node,
+               offlineBegin, offlineEnd, offlineFlush, offlineActive: () => !!off };
     })();
     // Live A/B toggles from the console.
     try {

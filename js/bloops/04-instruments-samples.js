@@ -250,6 +250,52 @@
     // when _offlineSamplerOverride is set; cleared in the export's
     // finally block alongside _offlineSamplerOverride.
     let _offlineVoiceRefs = null;
+    // The Bloom BOUNCE (17-ambient) shares the Tracks export's offline
+    // machinery — the override map (offline samplers), the ref park (no
+    // GC mid-render), and, crucially, the dispose-timer skip at the voice
+    // cleanup site: those timers run on the WALL clock, and on a render
+    // slower than realtime they fire while the render clock is still behind,
+    // disposing voices before their audio renders (measured: max sample diff
+    // 0.84 between timer-on and timer-parked renders of the same notes).
+    // Both fields are lexical, so 17 reaches them through this function.
+    function _bloomOfflineScope(map) {
+      if (map) { _offlineSamplerOverride = map; _offlineVoiceRefs = []; }
+      else { _offlineSamplerOverride = null; _offlineVoiceRefs = null; }
+      return _offlineVoiceRefs;
+    }
+    // Build offline samplers for the given sample ids (bounce pass 2).
+    // Called INSIDE Tone.Offline so they bind to the offline context; the
+    // caller passes the node they should feed. Unknown ids are skipped; a
+    // wild id ('sequential'/'random'-style dynamic tones) pulls in every
+    // already-built or imported entry, since resolution happens per note.
+    function _bloomOfflineSamplerBank(ids, dest) {
+      const map = new Map();
+      if (!ids || !ids.length) return map;
+      let wild = false;
+      const want = new Set();
+      for (const id of ids) {
+        if (sampleSamplers.has(id)) want.add(id);
+        else wild = true;
+      }
+      if (wild) {
+        sampleSamplers.forEach((info, id) => {
+          if (!info || !info.urls) return;
+          // enumerate WITHOUT tripping the lazy getter: built or imported only
+          const d = Object.getOwnPropertyDescriptor(info, 'sampler');
+          if ((d && !d.get) || info.imported) want.add(id);
+        });
+      }
+      want.forEach((id) => {
+        const info = sampleSamplers.get(id);
+        if (!info || !info.urls) return;
+        try {
+          const s = new Tone.Sampler({ urls: info.urls, baseUrl: info.baseUrl || '', release: 1 });
+          if (dest) s.connect(dest); else s.toDestination();
+          map.set(id, s);
+        } catch (e) {}
+      });
+      return map;
+    }
     // Sample tones are recorded a good bit quieter than the synth voices, so
     // they feel weak next to a sawtooth/FM at the same volume. Lift every
     // sampler's output by a fixed dB so samples sit at roughly synth level.
@@ -735,7 +781,16 @@
       if (!isSampleType(type)) return null;
       const id = type.slice(7);
       if (_offlineSamplerOverride && _offlineSamplerOverride.has(id)) {
-        return { sampler: _boostSampler(_offlineSamplerOverride.get(id)) };
+        // Carry the LIVE entry's metadata (kind/bpm/rootNote/…) alongside the
+        // offline sampler — the loop tempo-match in _resolveSampleVoice reads
+        // info.kind/info.bpm, so a bare {sampler} made loops play unmatched in
+        // offline renders. Copy by name, skipping 'sampler': that property is
+        // a LAZY GETTER on unbuilt entries and reading it here would build a
+        // live-context sampler nobody asked for.
+        const meta = sampleSamplers.get(id);
+        const out = { sampler: _boostSampler(_offlineSamplerOverride.get(id)) };
+        if (meta) for (const k in meta) { if (k !== 'sampler') out[k] = meta[k]; }
+        return out;
       }
       const entry = sampleSamplers.get(id) || null;
       if (entry && entry.sampler) _boostSampler(entry.sampler);

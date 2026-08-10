@@ -156,7 +156,8 @@
       // 2 revSend / 3 pan): mirrors value/cancel/set/ramp onto strip_setv /
       // strip_rampv and tracks the segment locally so `.value` reads work.
       // Covers every param write-site in 17-ambient without branching them.
-      function makeShimParam(slot, which, init) {
+      function makeShimParam(slot, which, init, post) {
+        post = post || _post;
         const seg = { t0: 0, v0: init, t1: 0, v1: init };
         let anchor = null;
         const now = () => { try { return Tone.getContext().rawContext.currentTime; } catch (e) { return 0; } };
@@ -167,7 +168,7 @@
           get value() { return evalAt(now()); },
           set value(v) {
             anchor = null; seg.t0 = seg.t1 = 0; seg.v0 = seg.v1 = v;
-            _post({ cmd: 'strip', fn: 'strip_setv', a: [slot, which, v] });
+            post({ cmd: 'strip', fn: 'strip_setv', a: [slot, which, v] });
           },
           cancelScheduledValues() { anchor = null; return p; },
           setValueAtTime(v, t) {
@@ -175,14 +176,14 @@
             // a lone set must still land core-side; a following linearRamp
             // just overwrites this degenerate segment
             seg.t0 = anchor.t; seg.v0 = v; seg.t1 = anchor.t; seg.v1 = v;
-            _post({ cmd: 'strip', fn: 'strip_rampv', a: [slot, which, anchor.t, v, v, 0.005] });
+            post({ cmd: 'strip', fn: 'strip_rampv', a: [slot, which, anchor.t, v, v, 0.005] });
             return p;
           },
           linearRampToValueAtTime(v1, t1) {
             const a = anchor || { t: now(), v: evalAt(now()) };
             anchor = null;
             seg.t0 = a.t; seg.v0 = a.v; seg.t1 = Math.max(t1, a.t + 0.005); seg.v1 = v1;
-            _post({ cmd: 'strip', fn: 'strip_rampv', a: [slot, which, a.t, a.v, v1, Math.max(0.005, t1 - a.t)] });
+            post({ cmd: 'strip', fn: 'strip_rampv', a: [slot, which, a.t, a.v, v1, Math.max(0.005, t1 - a.t)] });
             return p;
           },
           rampTo(v, dur) {
@@ -198,6 +199,7 @@
       // Returns null when strips are off / engine not ready / out of slots —
       // caller falls back to the node strip.
       function stripAcquire(key, bus) {
+        if (off) return stripsEnabled() ? _offStripAcquire(key, bus) : null;   // bounce in flight
         if (!stripsEnabled() || failed || !bus) return null;
         if (!ready) { init(); return null; }
         if (!_running()) return null;
@@ -231,6 +233,7 @@
         return h;
       }
       function stripRelease(key) {
+        if (off) { const oh = off.strips.get(key); if (oh) { off.strips.delete(key); off.slots.delete(key); try { oh.input.dispose(); } catch (e) {} } return; }
         const h = stripByKey.get(key);
         if (!h) return;
         stripByKey.delete(key);
@@ -246,6 +249,8 @@
       // its gate fade + voice stops hit the old slot, and the fresh build
       // acquires a new one.
       function stripRekey(oldKey, newKey) {
+        if (off) { const oh = off.strips.get(oldKey); if (oh) { off.strips.delete(oldKey); off.strips.set(newKey, oh); oh.key = newKey;
+          const os = off.slots.get(oldKey); off.slots.delete(oldKey); off.slots.set(newKey, os); } return; }
         const h = stripByKey.get(oldKey);
         if (!h) return;
         stripByKey.delete(oldKey);
@@ -255,7 +260,7 @@
         slotByKey.delete(oldKey);
         slotByKey.set(newKey, s);
       }
-      function stripFor(key) { return stripByKey.get(key) || null; }
+      function stripFor(key) { return off ? (off.strips.get(key) || null) : (stripByKey.get(key) || null); }
       // ---- Phase 3: sample voices ----------------------------------------
       // PCM buffers transfer to the core ONCE (keyed by the app's buffer key,
       // e.g. 'pianoC4#60' or '...#loop'); voices then play by id. The core
@@ -384,6 +389,18 @@
       // alone no longer sends into a master reverb that was never built).
       let sendVia = null, sendDest = null;
       function connectSend(dest) {
+        // Offline: claim THIS render's summed reverb-send bus (output 16) for
+        // the offline reverb — without it a core-strip bounce loses every
+        // per-layer Reverb send.
+        if (off) {
+          if (!dest) return;
+          try {
+            if (!off.sendVia) { off.sendVia = Tone.getContext().rawContext.createGain(); Tone.connect(off.node, off.sendVia, SLOTS, 0); }
+            try { off.sendVia.disconnect(); } catch (e) {}
+            Tone.connect(off.sendVia, dest);
+          } catch (e) {}
+          return;
+        }
         if (!dest || dest === sendDest) return;
         try {
           if (!sendVia) {
@@ -616,7 +633,8 @@
           n2.port.postMessage({ wasmBytes: bcopy }, [bcopy]);
           const ok = await Promise.race([readyP, new Promise((r) => setTimeout(() => r(false), timeoutMs || 6000))]);
           if (!ok) { try { n2.disconnect(); } catch (e) {} return null; }
-          off = { node: n2, slots: new Map(), dests: new Array(SLOTS).fill(null), taken: 0 };
+          off = { node: n2, slots: new Map(), dests: new Array(SLOTS).fill(null), taken: 0,
+                  strips: new Map(), post: (m) => { try { n2.port.postMessage(m); } catch (e) {} }, sendVia: null };
           return true;
         } catch (e) {
           try { console.warn('[bloops-core] offline session unavailable:', e); } catch (x) {}
@@ -642,6 +660,45 @@
           try { n2.port.postMessage({ cmd: 'stats' }); } catch (e) { clearTimeout(to); n2.port.onmessage = prev; resolve(false); }
         });
       }
+      // OFFLINE CORE STRIPS. Live playback runs each layer's strip + FX inside
+      // the core; the bounce used to fall back to the NODE implementations,
+      // which are different DSP (and Glitch has no node build at all), so a
+      // bounce did not sound like what you heard. These build the same strips
+      // on the offline node, so the render is the same engine.
+      function _offStripAcquire(key, bus) {
+        if (!bus) return null;
+        const have = off.strips.get(key);
+        if (have) {
+          if (off.dests[have.slot] !== bus) {
+            try { off.node.disconnect(have.slot); } catch (e) {}
+            try { Tone.connect(off.node, bus, have.slot, 0); } catch (e) {}
+            off.dests[have.slot] = bus;
+          }
+          return have;
+        }
+        if (off.slots.size >= SLOTS) return null;   // out of slots → node chain
+        const used = new Set(off.slots.values());
+        let slot = -1;
+        for (let i = 0; i < SLOTS; i++) if (!used.has(i)) { slot = i; break; }
+        if (slot < 0) return null;
+        try { off.node.disconnect(slot); } catch (e) {}
+        try { Tone.connect(off.node, bus, slot, 0); } catch (e) { return null; }
+        off.dests[slot] = bus;
+        off.slots.set(key, slot);
+        const input = new Tone.Gain(1);
+        try { Tone.connect(input, off.node, 0, slot); } catch (e) {}
+        off.post({ cmd: 'strip', fn: 'strip_reset', a: [slot] });
+        off.post({ cmd: 'strip', fn: 'strip_enable', a: [slot, 1] });
+        const h = {
+          key, slot, input,
+          cmd: (fn, ...a) => off.post({ cmd: 'strip', fn, a }),
+          curve: (fn, a, curve) => off.post({ cmd: 'strip', fn, a, curve }),
+          param: (which, init0) => makeShimParam(slot, which, init0, off.post),
+          tap: () => {},   // meters are a live-UI concern
+        };
+        off.strips.set(key, h);
+        return h;
+      }
       function offlineEnd() {
         if (!off) return 0;
         const taken = off.taken;
@@ -650,6 +707,10 @@
         return taken;
       }
       function _offSlotFor(key, dest) {
+        // A strip-managed key already has its slot wired to the bus, and its
+        // notes render INTO the strip — never re-route it to the note's dest
+        // (same contract as the live slotFor).
+        if (off.strips.has(key)) return off.slots.get(key);
         let s = off.slots.get(key);
         if (s == null) {
           if (off.slots.size >= SLOTS) return -1;   // out of slots → Tone voice

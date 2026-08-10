@@ -26193,6 +26193,17 @@
             if (warmIn && warmOut) { warmOut.connect(outStage); outStage = warmIn; }
             _masterBuilt = !!outStage;
           } catch (e) { outStage = null; _masterBuilt = false; try { console.warn('[bounce] master stage failed to build — rendering unmastered:', e); } catch (e2) {} }
+          // CORE SESSION FIRST — a second voice-processor node on THIS context.
+          // It must exist BEFORE _ambSyncMods() runs, because _ambBuildMod asks
+          // _coreVoices.stripAcquire() for a CORE STRIP and falls through to the
+          // node chain when there is none. Building the session afterwards left
+          // every layer on the node FX fallback — different DSP from live
+          // playback (and no Glitch at all), which is exactly the "bounces don't
+          // sound like what I hear" report. Awaiting it also compiles the wasm
+          // before any note is delivered.
+          if (!(opts && opts.noCore) && !(opts && opts.dry)) {
+            try { coreOn = !!(typeof _coreVoices !== 'undefined' && await _coreVoices.offlineBegin()); } catch (e) { coreOn = false; }
+          }
           let E3 = null, wet = false;
           try {
             if (opts && opts.dry) throw new Error('dry requested');
@@ -26225,19 +26236,17 @@
           wetOut = wet;
           // GLITCH runs only inside the core strips (no node build exists), so
           // a bounce cannot include it — say so instead of failing silently.
-          try {
-            const glitched = [];
-            const scan = (L, nm) => { try { if (L && L.glitch && ((L.glitch.mix | 0) > 0 || L.glitch.dryKill)) glitched.push(nm); } catch (e) {} };
-            ['bed', 'motif', 'texture', 'beat'].forEach((k) => scan(cap.cfg[k], k));
-            (cap.cfg.extras || []).forEach((x) => scan(x, (x && x.type) || 'layer'));
-            if (glitched.length) _missing.push('Glitch on ' + glitched.join('/') + ' (it runs only in the live core engine)');
-          } catch (e) {}
-          // CORE SESSION — a second voice-processor node on THIS context.
-          // playNote's live core gate then routes eligible notes here. Awaited
-          // before any note is delivered, so the wasm is compiled before the
-          // render begins (a late engine would render the opening as silence).
-          if (!(opts && opts.noCore)) {
-            try { coreOn = !!(typeof _coreVoices !== 'undefined' && await _coreVoices.offlineBegin()); } catch (e) { coreOn = false; }
+          // GLITCH is core-only. With the offline core session up it renders
+          // like everything else; report it ONLY when we fell back to node
+          // chains (session failed, or the core is switched off).
+          if (!coreOn) {
+            try {
+              const glitched = [];
+              const scan = (L, nm) => { try { if (L && L.glitch && ((L.glitch.mix | 0) > 0 || L.glitch.dryKill)) glitched.push(nm); } catch (e) {} };
+              ['bed', 'motif', 'texture', 'beat'].forEach((k) => scan(cap.cfg[k], k));
+              (cap.cfg.extras || []).forEach((x) => scan(x, (x && x.type) || 'layer'));
+              if (glitched.length) _missing.push('Glitch on ' + glitched.join('/') + ' (the core engine was unavailable for this render)');
+            } catch (e) {}
           }
           // OFFLINE SAMPLERS — only the ids this area references (regexed from
           // the cfg clone, the same trick warmSamplesForWorkspace uses); an
@@ -26299,6 +26308,11 @@
             if (key in _widthOf) return _widthOf[key];
             let f = 1;
             try {
+              // A CORE strip scales the side itself, exactly as live — the
+              // compensation below is only for the node-chain fallback, and
+              // applying both would narrow the image twice.
+              const m = E3 && E3.mod && E3.mod[key];
+              if (m && m.core) { _widthOf[key] = 1; return 1; }
               const L = _ambLayerByKey(E3, key);
               if (L && L.panMode !== 'pan' && !(L.spat && L.spat.on)) f = Math.max(0, Math.min(100, _ambLayerSpace(L))) / 100;
             } catch (e) {}

@@ -3546,6 +3546,13 @@
     .ambient-sched-variety { flex: 1 1 0; min-width: 44px; height: 18px; }
     .ambient-sched-varwrap .ambient-sched-lbl.snap { min-width: 18px; text-align: right; }
     .ambient-sched-timing { flex-wrap: wrap; min-width: 0; row-gap: 5px; }
+    /* Bounce-vs-live comparison table */
+    .ambient-verify-tbl { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 0.72rem; }
+    .ambient-verify-tbl th { color: #8b9bb4; font-weight: 600; text-align: right; padding: 3px 6px; font-size: 0.64rem; text-transform: uppercase; }
+    .ambient-verify-tbl th:first-child { text-align: left; }
+    .ambient-verify-tbl td { padding: 3px 6px; text-align: right; color: #cbd5e0; font-variant-numeric: tabular-nums; }
+    .ambient-verify-tbl td:first-child { text-align: left; color: #8b9bb4; }
+    .ambient-verify-tbl tr + tr td { border-top: 1px solid rgba(255,255,255,0.06); }
     .ambient-sched-btnrow { display: flex; align-items: stretch; gap: 5px; width: 100%; min-width: 0; }
     .ambient-sched-evolve { display: contents; }
     .ambient-sched-btnrow .ambient-seg { flex: 1 1 0; min-width: 0; min-height: 32px; padding: 5px 4px;

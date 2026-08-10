@@ -23339,6 +23339,7 @@
         { label: '⚡ Bounce 1 min',  fn: () => _ambBounceBegin(E, 60) },
         { label: '⚡ Bounce 2 min',  fn: () => _ambBounceBegin(E, 120) },
         { label: '⚡ Bounce 5 min',  fn: () => _ambBounceBegin(E, 300) },
+        { label: '⚖ Compare bounce with live — measure the difference', fn: () => { _ambBounceVerify(E, 8); } },
         { label: '⚡ Bounce — custom seconds…', fn: () => {
           let s = null; try { s = prompt('Bounce length in seconds:', '120'); } catch (e) {}
           if (s == null) return;
@@ -23383,6 +23384,120 @@
       }
       return res;
     }
+    // ---- COMPARE WITH LIVE -------------------------------------------------
+    // The bounce rebuilds the whole signal path offline, so any piece that is
+    // missing or mis-levelled is inaudible to construction checks — five
+    // rounds of "the graph looks right" missed a 4 dB level error that was
+    // making the limiter crush the FX flat. This measures the ONE thing that
+    // matters: does the render match what you hear. It plays live (you will
+    // hear it), measures the master output, bounces the same span, measures
+    // the buffer the same way, and reports where they diverge.
+    //   rms/peak  — level parity (off-level = the limiter behaves differently)
+    //   crest     — peak/rms: how squashed it is (reverb + limiting lower it)
+    //   width     — L/R correlation (1.0 = mono; spatialize/spread raise width)
+    async function _ambBounceVerify(E, seconds) {
+      seconds = Math.max(4, Math.min(30, seconds | 0 || 8));
+      let ac = null, tap = null;
+      try { ac = Tone.getContext().rawContext; tap = _ambMasterTapNode(); } catch (e) {}
+      if (!ac || !tap) { alert('Master output unavailable — cannot compare.'); return null; }
+      const prog = (typeof showRenderProgressModal === 'function')
+        ? showRenderProgressModal('Comparing bounce with live…') : null;
+      const say = (t) => { try { if (prog) prog.setStatus(t); } catch (e) {} };
+      const stat = { };
+      try {
+        // ---- LIVE ----
+        say('1/2 Playing live for ' + seconds + 's — listen…');
+        try { await Tone.start(); } catch (e) {}
+        const split = ac.createChannelSplitter(2);
+        const aL = ac.createAnalyser(), aR = ac.createAnalyser();
+        aL.fftSize = 2048; aR.fftSize = 2048;
+        try { tap.connect(split); split.connect(aL, 0); split.connect(aR, 1); } catch (e) {}
+        const wasPlaying = !!E.timer;
+        if (!wasPlaying) { try { _ambStartGenerator(E); } catch (e) {} }
+        const dl = new Float32Array(2048), dr = new Float32Array(2048);
+        let sl = 0, sr = 0, dot = 0, pk = 0, nSamp = 0;
+        const t0 = performance.now();
+        while (performance.now() - t0 < seconds * 1000) {
+          await new Promise(r => setTimeout(r, 45));
+          aL.getFloatTimeDomainData(dl); aR.getFloatTimeDomainData(dr);
+          for (let k = 0; k < 2048; k++) {
+            sl += dl[k] * dl[k]; sr += dr[k] * dr[k]; dot += dl[k] * dr[k];
+            const m = Math.max(Math.abs(dl[k]), Math.abs(dr[k])); if (m > pk) pk = m;
+          }
+          nSamp += 2048;
+          const el = Math.round((performance.now() - t0) / 1000);
+          say('1/2 Playing live… ' + el + '/' + seconds + 's');
+        }
+        if (!wasPlaying) { try { _ambStopGenerator(E); } catch (e) {} }
+        try { tap.disconnect(split); } catch (e) {}
+        stat.live = { rms: Math.sqrt((sl + sr) / (2 * nSamp)), peak: pk,
+                      width: 1 - (dot / Math.max(1e-12, Math.sqrt(sl * sr))) };
+        // ---- BOUNCE ----
+        say('2/2 Bouncing the same ' + seconds + 's…');
+        const res = await _ambRenderOffline(E, seconds, { onStatus: (t) => say('2/2 ' + t) });
+        let buf = res && res.buffer; try { if (buf && buf.get) buf = buf.get(); } catch (e) {}
+        if (!buf || !buf.getChannelData) throw new Error((res && res.reason) || 'render failed');
+        const BL = buf.getChannelData(0), BR = buf.numberOfChannels > 1 ? buf.getChannelData(1) : BL;
+        let bl = 0, br = 0, bd = 0, bp = 0;
+        for (let i = 0; i < BL.length; i++) {
+          bl += BL[i] * BL[i]; br += BR[i] * BR[i]; bd += BL[i] * BR[i];
+          const m = Math.max(Math.abs(BL[i]), Math.abs(BR[i])); if (m > bp) bp = m;
+        }
+        stat.bounce = { rms: Math.sqrt((bl + br) / (2 * BL.length)), peak: bp,
+                        width: 1 - (bd / Math.max(1e-12, Math.sqrt(bl * br))) };
+        stat.info = { core: !!(res && res.core), wet: !!(res && res.wet), missing: (res && res.missing) || [] };
+      } catch (e) {
+        stat.error = (e && e.message) || String(e);
+      }
+      try { if (prog) { prog.markDone(); prog.close(); } } catch (e) {}
+      _ambShowVerifyResult(stat);
+      return stat;
+    }
+    function _ambShowVerifyResult(stat) {
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+      const L = stat.live, B = stat.bounce;
+      const db = (a, b) => (a > 0 && b > 0) ? (20 * Math.log10(b / a)).toFixed(1) : '—';
+      const crest = (o) => (o && o.rms > 0) ? (o.peak / o.rms).toFixed(1) : '—';
+      const rows = [];
+      let verdict = '';
+      if (stat.error) { verdict = '<b>Comparison failed:</b> ' + esc(stat.error); }
+      else if (L && B) {
+        const dLev = Math.abs(20 * Math.log10(Math.max(1e-9, B.rms) / Math.max(1e-9, L.rms)));
+        const dW = Math.abs((B.width || 0) - (L.width || 0));
+        const dC = Math.abs((B.peak / Math.max(1e-9, B.rms)) - (L.peak / Math.max(1e-9, L.rms)));
+        const bad = [];
+        if (dLev > 1.5) bad.push('LEVEL is off by ' + db(L.rms, B.rms) + ' dB — the limiter is behaving differently, which flattens reverb and delay tails');
+        if (dW > 0.12) bad.push('STEREO WIDTH differs (' + (L.width || 0).toFixed(2) + ' live vs ' + (B.width || 0).toFixed(2) + ') — spread / spatialize is not reaching the render');
+        if (dC > 1.2) bad.push('DYNAMICS differ (crest ' + crest(L) + ' live vs ' + crest(B) + ') — something is compressing or missing tails');
+        verdict = bad.length
+          ? ('<b>Divergence found:</b><ul><li>' + bad.map(esc).join('</li><li>') + '</li></ul>')
+          : '<b>The bounce matches live playback</b> on level, width and dynamics. If it still sounds wrong, the difference is in the material itself (a bounce re-generates the take), not the signal path.';
+        rows.push(['Level (rms)', L.rms.toFixed(5), B.rms.toFixed(5), db(L.rms, B.rms) + ' dB']);
+        rows.push(['Peak', L.peak.toFixed(3), B.peak.toFixed(3), db(L.peak, B.peak) + ' dB']);
+        rows.push(['Crest (peak/rms)', crest(L), crest(B), '']);
+        rows.push(['Stereo width', (L.width || 0).toFixed(3), (B.width || 0).toFixed(3), '']);
+      }
+      const inf = stat.info || {};
+      const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-step-modal-ov';
+      ov.innerHTML = '<div class="sm-modal ambient-step-modal">' +
+        '<div class="sm-title">Bounce vs live</div>' +
+        '<div class="ambient-step-modal-body">' +
+          '<div class="ambient-pm-modal-hint">' + verdict + '</div>' +
+          (rows.length ? ('<table class="ambient-verify-tbl"><tr><th></th><th>live</th><th>bounce</th><th></th></tr>' +
+            rows.map(r => '<tr><td>' + esc(r[0]) + '</td><td>' + esc(r[1]) + '</td><td>' + esc(r[2]) + '</td><td>' + esc(r[3]) + '</td></tr>').join('') +
+            '</table>') : '') +
+          '<div class="ambient-hint" style="white-space:normal">engine: ' + (inf.core ? 'core' : 'node fallback') +
+            ' · chains: ' + (inf.wet ? 'built' : 'NOT BUILT (dry)') +
+            ((inf.missing && inf.missing.length) ? (' · missing: ' + esc(inf.missing.join(' · '))) : '') + '</div>' +
+        '</div>' +
+        '<div class="sm-footer"><button type="button" class="sm-apply">Done</button></div></div>';
+      document.body.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+      ov.addEventListener('click', (ev) => {
+        if (ev.target === ov || (ev.target.closest && ev.target.closest('.sm-apply'))) { try { ov.remove(); } catch (e) {} }
+      });
+    }
+    try { if (typeof window !== 'undefined') window._bloomVerifyBounce = (sec) => _ambBounceVerify(_masterEng, sec || 8); } catch (e) {}
     // Start a capture; lenMs > 0 schedules an automatic Finalize after that long
     // (simulating the user's press), lenMs = 0 records live until they Finalize.
     function _ambCaptureBegin(E, lenMs) {

@@ -22419,6 +22419,12 @@
       try { _ambSyncPauseUi(E); } catch (e) {}
     }
     function _ambStartGenerator(E) {
+      // Belt to the failsafe above: if you press Play and nothing is being
+      // recorded, you must hear it — never leave a stale bounce mute in place.
+      // (…but NOT while a bounce is arming: _ambCaptureStart starts the
+      // generator BEFORE it sets E.capRec, so capRec alone reads as "nothing
+      // is recording" for that instant and would un-mute the bounce.)
+      try { if (_ambSilentSink && !E.capRec && !E._capAsBounce) _ambSetMasterSilent(false); } catch (e) {}
       _E = E;
       const cfg = E.getCfg();
       if (!cfg) return;
@@ -23358,6 +23364,41 @@
     // Run a bounce from the menu: progress modal (a long one still takes seconds,
     // and the page is BLOCKED during pass 1, which stubs globals and cannot yield),
     // then the result lands in the bank exactly like a capture.
+    // SILENT MONITORING. A bounce records the real master output but must not
+    // play aloud. The recorder taps `masterFade`; the SPEAKERS are a separate
+    // connection from that same node, so muting output is just dropping that
+    // one edge — the tap still receives the full signal.
+    //
+    // The zero-gain path to the destination is NOT decoration: an output with
+    // nothing connected stops Chrome driving the graph from the device
+    // callback (the same reason the core worklet keeps a permanent Gain(0)
+    // sink), and a stalled graph records silence. Connect the sink BEFORE
+    // dropping the real edge so the pull is never interrupted.
+    let _ambSilentSink = null;
+    function _ambSetMasterSilent(on) {
+      if (typeof masterFade === 'undefined' || !masterFade || typeof Tone === 'undefined') return false;
+      try {
+        if (on) {
+          if (_ambSilentSink) return true;
+          _ambSilentSink = new Tone.Gain(0);
+          _ambSilentSink.toDestination();
+          masterFade.connect(_ambSilentSink);              // keep the graph pulled
+          try { masterFade.disconnect(Tone.getDestination()); } catch (e) {}   // …and go quiet
+          return true;
+        }
+        if (!_ambSilentSink) return true;
+        try { masterFade.toDestination(); } catch (e) {}    // audible again first
+        try { masterFade.disconnect(_ambSilentSink); } catch (e) {}
+        try { _ambSilentSink.dispose(); } catch (e) {}
+        _ambSilentSink = null;
+        return true;
+      } catch (e) {
+        // Never leave the app muted because of a failure in here.
+        try { if (masterFade) masterFade.toDestination(); } catch (e2) {}
+        _ambSilentSink = null;
+        return false;
+      }
+    }
     // BOUNCE = a real-time CAPTURE, driven automatically.
     //
     // The offline renderer (_ambRenderOffline, still below and still exposed as
@@ -23377,12 +23418,28 @@
     function _ambBounceBegin(E, seconds) {
       const sec = Math.max(1, Math.min(1800, seconds | 0 || 30));
       E._capAsBounce = true;
+      // Silence the speakers for the duration — the recorder's tap is upstream
+      // of the muted edge, so the take is unaffected.
+      const silent = _ambSetMasterSilent(true);
       _ambCaptureBegin(E, sec * 1000);
-      if (!E.capRec) { E._capAsBounce = false; return null; }
+      if (!E.capRec) { E._capAsBounce = false; _ambSetMasterSilent(false); return null; }
+      // FAILSAFE. The un-mute lives in the finalize COMPLETION, which waits for
+      // the output to decay below -76 dB — so a take that never settles (or a
+      // finalize that throws) would leave the app silent with no way back that
+      // the user could guess. Force it after the take plus the finalize tail
+      // ceiling (MAX_TAIL_MS 90 s) whatever happened.
+      if (E._capSilenceGuard) { try { clearTimeout(E._capSilenceGuard); } catch (e) {} }
+      E._capSilenceGuard = setTimeout(() => {
+        E._capSilenceGuard = null;
+        if (_ambSilentSink) {
+          try { _ambSetMasterSilent(false); } catch (e) {}
+          try { if (typeof showToast === 'function') showToast('Bounce finished (or stalled) — sound is back on.'); } catch (e) {}
+        }
+      }, sec * 1000 + 95000);
       try {
         if (typeof showToast === 'function') {
-          showToast('Bouncing ' + sec + 's — recording the live output, so it matches playback exactly. '
-            + 'It plays while it records; the file lands in the Harvest bank.');
+          showToast('Bouncing ' + sec + 's' + (silent ? ' silently' : '') + ' — recording the live output, so it matches playback exactly.'
+            + (silent ? ' You will not hear it;' : ' It plays while it records;') + ' the file lands in the Harvest bank.');
         }
       } catch (e) {}
       return { started: true, seconds: sec };
@@ -23749,6 +23806,8 @@
       // is captured — otherwise a fade-out would leave live taps / the next play
       // silent until something calls masterFadeIn/Reset.
       try { if (typeof masterFadeReset === 'function') masterFadeReset(); } catch (e) {}
+      try { _ambSetMasterSilent(false); } catch (e) {}   // un-mute after a silent bounce
+      if (E._capSilenceGuard) { try { clearTimeout(E._capSilenceGuard); } catch (e) {} E._capSilenceGuard = null; }
       E.windingDown = false;
       E.capRec = null;
       _ambRefreshCaptureBtn(E);

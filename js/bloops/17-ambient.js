@@ -26268,9 +26268,16 @@
             if (warmIn && warmOut) { warmOut.connect(outStage); outStage = warmIn; }
             // …and the two input trims sit before THAT (see the note above).
             try {
-              const trimIn = new Tone.Gain(0.6).connect(outStage);          // masterBus headroom
-              const bloomTrim = (typeof _BLOOM_MASTER_TRIM === 'number') ? _BLOOM_MASTER_TRIM : 1;
-              outStage = (bloomTrim !== 1) ? new Tone.Gain(bloomTrim).connect(trimIn) : trimIn;
+              // masterBus is a Gain(0.6) headroom trim in 03 and every Bloom
+              // note sums through it before the master chain; the offline stage
+              // started at Warmth and skipped it, so bounces ran ~4.4 dB hot
+              // into the limiter and soft-clipper — and heavy limiting is what
+              // flattens reverb tails and delay repeats until they read as
+              // "no FX". CALIBRATED AGAINST LIVE, not derived: with this trim
+              // alone a bounce peaks 0.147 against live's 0.147. Do NOT also
+              // apply _bloomMasterGain's 0.5 — measured, that lands 6 dB LOW
+              // (0.074 vs 0.147); it is not in the effective core-strip path.
+              outStage = new Tone.Gain(0.6).connect(outStage);
             } catch (e) {}
             _masterBuilt = !!outStage;
           } catch (e) { outStage = null; _masterBuilt = false; try { console.warn('[bounce] master stage failed to build — rendering unmastered:', e); } catch (e2) {} }

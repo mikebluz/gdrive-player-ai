@@ -31112,6 +31112,7 @@
             // Every N / Locked), then the Every-N detail (Vary/Live + phrase X×Y).
             '<div class="ambient-sched-loopline' + (wOn ? ' on' : '') + (wLock ? ' locked' : '') + '" title="Evolve — how OFTEN the layer re-rolls: Continuous (every cycle) · Every N (freeze a pattern, repeat it, then evolve a fresh one) · Locked (freeze one roll, hold forever).">' +
               '<span class="ambient-sched-looplbl">Evolve</span>' +
+              '<div class="ambient-sched-btnrow">' +
               '<span class="ambient-sched-evolve" role="group" aria-label="Evolve cadence">' +
                 '<button type="button" class="ambient-seg ambient-sched-ev' + (!wOn ? ' active' : '') + '" data-ev="cont" title="Continuous — re-roll a fresh pattern every cycle (no freezing).">Continuous</button>' +
                 '<button type="button" class="ambient-seg ambient-sched-ev' + ((wOn && !wLock) ? ' active' : '') + '" data-ev="every" title="Every N — freeze a pattern, repeat it N plays, then evolve a fresh one.">Every N</button>' +
@@ -31119,6 +31120,7 @@
               '</span>' +
               ((wOn && !wLock) ? ('<button type="button" class="ambient-seg ambient-sched-vary' + (stoW ? ' active' : '') + '" title="Vary — each cycle roll a random pattern length (bars) and repeat count (plays) inside the min–max ranges, so the layer loops in evolving chunks.">~ Vary</button>' +
                      '<button type="button" class="ambient-seg ambient-sched-live' + ((layer.loopVar === 'live') ? ' active' : '') + '" title="Live — every loop pass RE-PERFORMS the pattern: Humanize / Vel var / Ornament re-roll from the layer’s current sliders (structural variance stays as written).">⚡ Live</button>') : '') +
+              '</div>' +
               ((wOn && !wLock) ? (phraseHtml + (stoW ? '' : chipsHtml)) : (wLock ? '<span class="ambient-sched-lbl snap" title="Locked captures one natural unit and repeats it verbatim.">1 unit · held</span>' : '')) +
             '</div>' +
           '</div>' +

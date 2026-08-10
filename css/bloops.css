@@ -3527,6 +3527,21 @@
        and hit-testing; brightens a touch when the row is engaged. */
     .ambient-sched-looplbl { position: absolute; top: 4px; left: 9px; font: 600 0.56rem 'Segoe UI', sans-serif; color: rgba(159,122,234,0.6); text-transform: uppercase; letter-spacing: 0.1em; pointer-events: none; user-select: none; }
     .ambient-sched-loopline.on .ambient-sched-looplbl { color: rgba(159,122,234,0.85); }
+    /* The five cadence buttons are ONE row of equal-width cells. The segmented
+       group uses display:contents so its three buttons become direct flex
+       items beside Vary/Live — nesting it as a flex child with its own gap
+       would make those three narrower than the other two. flex:1 1 0 + min-
+       width:0 then makes all five exactly uniform, and labels ellipsize
+       rather than overflow (UI rule 1: never a horizontal scrollbar). */
+    .ambient-sched-btnrow { display: flex; align-items: stretch; gap: 5px; width: 100%; min-width: 0; }
+    .ambient-sched-evolve { display: contents; }
+    .ambient-sched-btnrow .ambient-seg { flex: 1 1 0; min-width: 0; min-height: 32px; padding: 5px 4px;
+      font-size: 0.62rem; line-height: 1.2; text-align: center; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis; border-radius: 8px; }
+    @media (max-width: 520px) {
+      .ambient-sched-btnrow { gap: 4px; }
+      .ambient-sched-btnrow .ambient-seg { font-size: 0.55rem; padding: 5px 2px; letter-spacing: -0.02em; }
+    }
     .ambient-sched-grp { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
     .ambient-sched-lbl { font-size: 0.64rem; color: #8b9bb4; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
     /* Phrase snapped up to the progression cycle — teal (harmony drove it). */

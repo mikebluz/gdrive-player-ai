@@ -23334,7 +23334,7 @@
         // without this the menu showed TWO identical "30 sec / 1 min / 2 min"
         // lists and the only thing distinguishing them was an unclickable
         // heading, which read as "Bounce can't be selected".
-        { label: '⚡ Bounce — render to a file, faster than a live capture', disabled: true },
+        { label: '⚡ Bounce — records the live output (matches playback)', disabled: true },
         { label: '⚡ Bounce 30 sec', fn: () => _ambBounceBegin(E, 30) },
         { label: '⚡ Bounce 1 min',  fn: () => _ambBounceBegin(E, 60) },
         { label: '⚡ Bounce 2 min',  fn: () => _ambBounceBegin(E, 120) },
@@ -23358,7 +23358,36 @@
     // Run a bounce from the menu: progress modal (a long one still takes seconds,
     // and the page is BLOCKED during pass 1, which stubs globals and cannot yield),
     // then the result lands in the bank exactly like a capture.
-    async function _ambBounceBegin(E, seconds) {
+    // BOUNCE = a real-time CAPTURE, driven automatically.
+    //
+    // The offline renderer (_ambRenderOffline, still below and still exposed as
+    // window._bloomBounceOffline) rebuilds the entire signal path on an offline
+    // context because live nodes are context-bound. That replica is a SECOND
+    // implementation of the mix, and every divergence from it is silent: across
+    // one session it was missing core strips, then bus FX sends, then a
+    // swallowed chain-build failure, then the adaptive master trim — each fixed,
+    // each measuring perfect afterwards, and the render still did not match what
+    // you hear. A capture cannot have that class of bug: it records the REAL
+    // master output through the REAL chain, which is why captures always sounded
+    // right. So Bounce now IS a capture, with the length driven for you.
+    //
+    // The cost, stated plainly: it renders in real time (the offline path was
+    // 1.5-7x faster) and it plays aloud while it records. Correctness first —
+    // a fast file that does not sound like the piece is worth nothing.
+    function _ambBounceBegin(E, seconds) {
+      const sec = Math.max(1, Math.min(1800, seconds | 0 || 30));
+      E._capAsBounce = true;
+      _ambCaptureBegin(E, sec * 1000);
+      if (!E.capRec) { E._capAsBounce = false; return null; }
+      try {
+        if (typeof showToast === 'function') {
+          showToast('Bouncing ' + sec + 's — recording the live output, so it matches playback exactly. '
+            + 'It plays while it records; the file lands in the Harvest bank.');
+        }
+      } catch (e) {}
+      return { started: true, seconds: sec };
+    }
+    async function _ambBounceBeginOffline(E, seconds) {
       // STOP PLAYBACK FIRST. Inside Tone.Offline the GLOBAL Tone context is the
       // offline one until the render resolves — a live tick firing during that
       // window would build its voices into the bounce (or throw cross-context).
@@ -23760,7 +23789,8 @@
           durSec = 0;
         }
         let url = null; try { url = URL.createObjectURL(blob); } catch (e) {}
-        _ambCaptureBank.push({ id: ++_ambCapBankSeq, name: filename, ext, mime, folder: folder || 'bloops/exports', durSec, bytes: blob.size, blob, url, uploaded: false, source: 'Bloom', grid: _ambCaptureGrid(E, durSec) });
+        _ambCaptureBank.push({ id: ++_ambCapBankSeq, name: filename, ext, mime, folder: folder || 'bloops/exports', durSec, bytes: blob.size, blob, url, uploaded: false, source: E._capAsBounce ? 'Bloom (bounce)' : 'Bloom', grid: _ambCaptureGrid(E, durSec) });
+        E._capAsBounce = false;
         _ambRenderCaptureBank();
         if (typeof showToast === 'function') {
           showToast(audioBuf
@@ -26741,6 +26771,9 @@
                wetErr: res.wetErr, lostFx: res.lostFx };
     }
     try { if (typeof window !== 'undefined') { window._bloomBounceToBank = (sec, opts) => _ambBounceToBank(_masterEng, sec, opts); } } catch (e) {}
+    // The offline renderer stays reachable for development and for the ⚖ compare
+    // tool, but it is no longer what the Bounce menu runs (see _ambBounceBegin).
+    try { if (typeof window !== 'undefined') { window._bloomBounceOffline = (sec, opts) => _ambRenderOffline(_masterEng, sec, opts); } } catch (e) {}
     try { if (typeof window !== 'undefined') { window._bloomBounce = (sec, opts) => _ambRenderOffline(_masterEng, sec, opts);
       window._bloomBounceCapture = (sec) => _ambCaptureNotesSynthetic(_masterEng, sec); } } catch (e) {}
     function _ambSeedRender(E, key) {

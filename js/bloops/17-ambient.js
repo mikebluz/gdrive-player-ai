@@ -25955,6 +25955,76 @@
       try { stripWidth = !!(typeof _coreVoices !== 'undefined' && _coreVoices.stripsEnabled && _coreVoices.stripsEnabled()); } catch (e) {}
       return { notes: notes.map(n => Object.assign({}, n, { at: n.at - t0 })), count: notes.length, cfg, stripWidth };
     }
+    // BLOOM MIX BUSES, offline. Live, a layer's destination is _ambBusDest(L):
+    // its bus gain (a/b/c/d), and each bus taps per-FX SEND gains into the
+    // shared returns (fxSendBus[name] → a fully-wet FX → the master bus). The
+    // bounce routed every layer straight at the output stage, so bus routing
+    // and EVERY BUS FX SEND were silently dropped — a project whose reverb /
+    // delay / chorus live on a bus send bounced completely dry, which is the
+    // "still no FX on bounce" report. Returns { dest(L), missing[] }.
+    // Returns are built LAZILY, only for sends actually in use, with the same
+    // constructor values as 03 and wet forced to 1 (the send gain is the mix).
+    function _bloomOfflineBuses(cfg, outStage) {
+      const out = { dest: () => outStage, missing: [] };
+      if (!outStage) return out;
+      const ids = (typeof _AMB_BUS_IDS !== 'undefined') ? _AMB_BUS_IDS : ['a', 'b', 'c', 'd'];
+      const names = (typeof FX_NAMES !== 'undefined') ? FX_NAMES : [];
+      const buses = {}, returns = {};
+      const mkReturn = (name) => {
+        if (name in returns) return returns[name];
+        let fx = null;
+        try {
+          switch (name) {
+            case 'reverb': {
+              const g = (typeof globalFx !== 'undefined' && globalFx) ? globalFx : {};
+              if (g.reverbType === 'freeverb') fx = new Tone.Freeverb({ roomSize: 0.7, dampening: 3000, wet: 1 });
+              else { fx = new Tone.Convolver({ normalize: true });
+                try { fx.buffer = _makeReverbIR(_reverbDecaySec(70), _reverbToneNorm(50)); } catch (e) {} }
+              break;
+            }
+            case 'delay':      fx = new Tone.FeedbackDelay({ delayTime: '8n', feedback: 0.4, wet: 1 }); break;
+            case 'pingPong':   fx = new Tone.PingPongDelay({ delayTime: 0.25, feedback: 0.3, wet: 1 }); break;
+            case 'chorus':     fx = new Tone.Chorus({ frequency: 4, delayTime: 3.5, depth: 0.7, feedback: 0.1, wet: 1 }); try { fx.start(); } catch (e) {} break;
+            case 'tremolo':    fx = new Tone.Tremolo({ frequency: 5, depth: 0.7, wet: 1 }); try { fx.start(); } catch (e) {} break;
+            case 'vibrato':    fx = new Tone.Vibrato({ frequency: 5, depth: 0.3, wet: 1 }); break;
+            case 'phaser':     fx = new Tone.Phaser({ frequency: 0.5, octaves: 3, baseFrequency: 350, wet: 1 }); break;
+            case 'autoFilter': fx = new Tone.AutoFilter({ frequency: 1, depth: 1, baseFrequency: 200, octaves: 2.6, wet: 1 }); try { fx.start(); } catch (e) {} break;
+            case 'autoPan':    fx = new Tone.AutoPanner({ frequency: 1, depth: 1, wet: 1 }); try { fx.start(); } catch (e) {} break;
+            case 'distortion': fx = new Tone.Distortion({ distortion: 0.4, wet: 1, oversample: '4x' }); break;
+            default: fx = null;
+          }
+          if (fx) fx.connect(outStage);
+        } catch (e) { fx = null; }
+        returns[name] = fx;
+        if (!fx) out.missing.push('the ' + name + ' send');
+        return fx;
+      };
+      ids.forEach((id) => {
+        const has = !!(cfg && cfg.buses && cfg.buses[id]);
+        if (id !== 'a' && !has) return;                 // untouched bus → nothing to build
+        let g = null;
+        try { g = new Tone.Gain(1); g.connect(outStage); } catch (e) { g = null; }
+        if (!g) return;
+        buses[id] = g;
+        if (!has) return;                               // bus 'a' with no config = the plain path
+        const c = (typeof _ambBusCfg === 'function') ? _ambBusCfg(cfg, id) : null;
+        const sends = (c && c.sends) || {};
+        names.forEach((nm) => {
+          const lvl = Math.max(0, Math.min(100, sends[nm] | 0));
+          if (!lvl) return;
+          const fx = mkReturn(nm);
+          if (!fx) return;
+          try { const tap = new Tone.Gain(lvl / 100); g.connect(tap); tap.connect(fx); } catch (e) {}
+        });
+      });
+      out.dest = (L) => {
+        try {
+          const id = (typeof _ambBusOf === 'function') ? _ambBusOf(L) : 'a';
+          return buses[id] || buses.a || outStage;
+        } catch (e) { return outStage; }
+      };
+      return out;
+    }
     // Pass 2: replay a captured note list into an OfflineAudioContext via
     // Tone.Offline, which swaps Tone's global context for the duration — the same
     // mechanism the Tracks export uses, so voices build on the offline context.
@@ -26003,7 +26073,7 @@
       phase('composed', { notes: notes.length });
       const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
       let buffer = null, played = 0, failed = 0, wetOut = false, coreTaken = 0, coreOn = false;
-      let samplerCount = 0, _masterBuilt = false;
+      let samplerCount = 0, _masterBuilt = false, _busRig = null;
       const _missing = [];
       // Tell playNote not to DEFER voice construction: the deferred-build queue is
       // pumped by a wall-clock timer that does not advance while an offline
@@ -26207,9 +26277,12 @@
           let E3 = null, wet = false;
           try {
             if (opts && opts.dry) throw new Error('dry requested');
+            // Mix buses + their FX sends, on THIS context (see above).
+            try { _busRig = _bloomOfflineBuses(cap.cfg, outStage); } catch (e) { _busRig = null; }
+            if (_busRig && _busRig.missing.length) _missing.push(..._busRig.missing);
             E3 = _makeAmbientEngine({
               getCfg: () => cap.cfg,
-              busNode: () => (outStage || Tone.getDestination()),
+              busNode: (L) => ((_busRig ? _busRig.dest(L) : null) || outStage || Tone.getDestination()),
               laneIdx: () => -1, guard: () => true,
               hostId: 'bloom-bounce-r', idPrefix: 'ambient', vizId: 'bloom-bounce-r-viz',
               playId: 'bloom-bounce-r-play', seedId: 'bloom-bounce-r-seed', isLane: false,

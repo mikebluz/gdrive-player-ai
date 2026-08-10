@@ -26073,8 +26073,8 @@
       phase('composed', { notes: notes.length });
       const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
       let buffer = null, played = 0, failed = 0, wetOut = false, coreTaken = 0, coreOn = false;
-      let samplerCount = 0, _masterBuilt = false, _busRig = null;
-      const _missing = [];
+      let samplerCount = 0, _masterBuilt = false, _busRig = null, _wetErr = null;
+      const _missing = [], _lostFx = [];
       // Tell playNote not to DEFER voice construction: the deferred-build queue is
       // pumped by a wall-clock timer that does not advance while an offline
       // context renders, so anything past 0.25 s would never be built — and would
@@ -26290,7 +26290,25 @@
             E3.rng = (cap.cfg.seed >>> 0) || 1;
             E3._everRan = true;
             _E = E3;
-            _ambSyncMods();
+            // DO NOT SWALLOW THIS. A single throw in here used to set wet=false
+            // and send every note straight to the output stage — a completely
+            // dry bounce, reported as "no FX", with nothing said anywhere. Try
+            // the whole set first, then fall back to building layer BY LAYER so
+            // one unbuildable layer costs only its own FX, and record what
+            // failed so the toast can name it.
+            try {
+              _ambSyncMods();
+            } catch (e0) {
+              _wetErr = (e0 && e0.message) || String(e0);
+              try { console.warn('[bounce] _ambSyncMods failed — rebuilding layer by layer:', e0); } catch (x) {}
+              try {
+                const want = _ambWantSet(cap.cfg);
+                Object.keys(want).forEach((k) => {
+                  try { _ambBuildMod(k, { [k]: want[k] }); _ambApplyLayerFx(k, want[k]); }
+                  catch (e1) { _lostFx.push(k + ' (' + ((e1 && e1.message) || e1) + ')'); }
+                });
+              } catch (e2) { /* nothing more to try — reported below */ }
+            }
             wet = !!(E3.mod && Object.keys(E3.mod).length);
             // WIDTH: the node chain's layer Panner is channelCount 1 — it
             // MONO-DOWNMIXES everything upstream (the documented reason
@@ -26305,7 +26323,11 @@
                 if (e && !e.core && e.pan) { try { e.pan.channelCount = 2; } catch (x) {} }
               }
             } catch (e) {}
-          } catch (e) { wet = false; }
+          } catch (e) {
+            wet = false;
+            _wetErr = _wetErr || (e && e.message) || String(e);
+            try { console.warn('[bounce] wet path unavailable — rendering DRY:', e); } catch (x) {}
+          }
           wetOut = wet;
           // GLITCH runs only inside the core strips (no node build exists), so
           // a bounce cannot include it — say so instead of failing silently.
@@ -26459,10 +26481,17 @@
         const d = buffer.getChannelData ? buffer.getChannelData(0) : (buffer.toArray ? buffer.toArray(0) : null);
         if (d) for (let i = 0; i < d.length; i += 16) { const a = Math.abs(d[i]); if (a > peak) peak = a; }
       } catch (e) {}
+      // Say it plainly: a dry render is the difference between "sounds like my
+      // project" and "sounds like nothing", and it used to be reported nowhere.
+      if (!wetOut && !(opts && opts.dry)) {
+        _missing.unshift('EVERY per-layer FX chain — this render is DRY' + (_wetErr ? (': ' + _wetErr) : ''));
+      } else if (_lostFx.length) {
+        _missing.push('FX on ' + _lostFx.slice(0, 4).join(', '));
+      }
       phase('rendered', { wallSec: wall, peak });
       return { buffer, notes: notes.length, played, failed, seconds, wallSec: wall,
                xRealtime: wall > 0 ? seconds / wall : 0, peak, wet: wetOut, master: _masterBuilt,
-               missing: _missing,
+               missing: _missing, wetErr: _wetErr, lostFx: _lostFx,
                core: coreOn, coreNotes: coreTaken, samplers: samplerCount, checkpoints: checkpointsFired };
     }
     // NAME THE EXPORTS DIFFERENTLY. This file's top level is SCRIPT scope, so a
@@ -26528,14 +26557,18 @@
       try {
         if (typeof showToast === 'function') {
           const xr = res.xRealtime >= 10 ? res.xRealtime.toFixed(0) : res.xRealtime.toFixed(1);
-          showToast('Bounced “' + filename + '” in ' + res.wallSec.toFixed(1) + 's (' + xr + '× realtime'
+          // A DRY render leads — it is the difference between "sounds like my
+          // project" and "sounds like nothing", so it must not read as a footnote.
+          const dry = (res.wet === false);
+          showToast((dry ? '⚠ Bounced DRY — ' : 'Bounced ') + '“' + filename + '” in ' + res.wallSec.toFixed(1) + 's (' + xr + '× realtime'
             + (res.core ? '' : ', slow engine') + ') — in the Harvest bank.'
-            + (missing.length ? ('  Note: ' + missing.join(' / ') + ' ' + (missing.length > 1 ? 'are' : 'is') + ' not in a bounce yet.') : ''));
+            + (missing.length ? ('  Missing: ' + missing.join(' · ')) : ''));
         }
       } catch (e) {}
       return { ok: true, id: rec.id, name: filename, ext, bytes: blob.size, durSec: rec.durSec,
                wallSec: res.wallSec, xRealtime: res.xRealtime, notes: res.played, wet: res.wet,
-               core: res.core, coreNotes: res.coreNotes, checkpoints: res.checkpoints, missing };
+               core: res.core, coreNotes: res.coreNotes, checkpoints: res.checkpoints, missing,
+               wetErr: res.wetErr, lostFx: res.lostFx };
     }
     try { if (typeof window !== 'undefined') { window._bloomBounceToBank = (sec, opts) => _ambBounceToBank(_masterEng, sec, opts); } } catch (e) {}
     try { if (typeof window !== 'undefined') { window._bloomBounce = (sec, opts) => _ambRenderOffline(_masterEng, sec, opts);

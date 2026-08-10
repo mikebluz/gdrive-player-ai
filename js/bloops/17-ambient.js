@@ -9147,7 +9147,17 @@
       const seed = (cfg.seed | 0) || 1;
       const nSeg0 = _ambProgSaltSegCount(salt, step, seed);
       if (!(nSeg0 > 1)) return null;
-      const fr = _ambSaltSegFracs(nSeg0, _ambSaltSlotBars(cfg, step), _ambSaltFreeNow(step));
+      // SNAP AGAINST THE SPAN THESE FRACTIONS ARE APPLIED TO, not the chord.
+      // The plan lays segments across `unitSec` — which under prog-sync is ONE
+      // VOICING SUB-SLOT (chord ÷ N), not the whole chord — so grading the grid
+      // by the chord's bars divided it by N and every segment drifted off the
+      // beat (measured 125 ms at ÷2, 83 at ÷3, 63 at ÷4; ÷1 was clean, which is
+      // why the original fix looked complete). Deriving the span's own bar
+      // length keeps the 1/8-bar grid ABSOLUTE at any subdivision, and is
+      // identical to the old value when subdiv is 1.
+      const _barSecP = (60 / Math.max(20, (cfg.bpm > 0 ? cfg.bpm : _ambBpm()))) * 4;
+      const _spanBars = Math.max(0.125, unitSec / _barSecP);
+      const fr = _ambSaltSegFracs(nSeg0, _spanBars, _ambSaltFreeNow(step));
       const nSeg = fr.length;               // effective count after the snap dedupe
       if (!(nSeg > 1)) return null;
       const sets = _ambSaltSegSets(n, step, fr);

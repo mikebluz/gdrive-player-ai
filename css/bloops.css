@@ -3533,6 +3533,19 @@
        would make those three narrower than the other two. flex:1 1 0 + min-
        width:0 then makes all five exactly uniform, and labels ellipsize
        rather than overflow (UI rule 1: never a horizontal scrollbar). */
+    /* Voicing cluster (chord-locked layers). .ambient-sched-grp is flex:0 0 auto
+       — it can neither shrink nor wrap — so adding the Variety slider pushed the
+       track straight off the right edge on a phone. This cluster opts into
+       shrinking AND internal wrapping instead (UI rule 1: shrink or wrap, never
+       overflow); the slider keeps a usable track via its own min-width. */
+    /* COMPOUND selectors on purpose: .ambient-sched-grp{flex:0 0 auto} is
+       declared LATER in this file, so a single-class rule here loses the
+       cascade and the slider kept overflowing. */
+    .ambient-sched-grp.ambient-sched-voi { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; row-gap: 5px; }
+    .ambient-sched-grp.ambient-sched-varwrap { flex: 1 1 100px; min-width: 0; max-width: 200px; }
+    .ambient-sched-variety { flex: 1 1 0; min-width: 44px; height: 18px; }
+    .ambient-sched-varwrap .ambient-sched-lbl.snap { min-width: 18px; text-align: right; }
+    .ambient-sched-timing { flex-wrap: wrap; min-width: 0; row-gap: 5px; }
     .ambient-sched-btnrow { display: flex; align-items: stretch; gap: 5px; width: 100%; min-width: 0; }
     .ambient-sched-evolve { display: contents; }
     .ambient-sched-btnrow .ambient-seg { flex: 1 1 0; min-width: 0; min-height: 32px; padding: 5px 4px;

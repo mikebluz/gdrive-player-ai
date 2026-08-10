@@ -31071,7 +31071,19 @@
               '<span class="ambient-sched-lbl">⇶ chord ÷</span>' +
               '<input type="number" class="ambient-sched-subdiv" min="1" max="16" step="1" value="' + (((layer.progSubdiv | 0) || 1)) + '">' +
               '<span class="ambient-sched-lbl snap">voicing' + ((((layer.progSubdiv | 0) || 1) === 1) ? '' : 's') + '</span>' +
-              '<button type="button" class="ambient-seg ambient-sched-mergebtn' + (layer.progMerge ? ' active' : '') + '" title="Merge repeats — treat a run of the SAME chord (a chord that repeats, or spans multiple bars) as ONE chord, so the N voicings spread across the whole run (e.g. 4 voicings over a 2-bar chord = 2 per bar) instead of restarting every bar.">' + (layer.progMerge ? '⊕ merged' : 'merge') + '</button></span>')
+              '<button type="button" class="ambient-seg ambient-sched-mergebtn' + (layer.progMerge ? ' active' : '') + '" title="Merge repeats — treat a run of the SAME chord (a chord that repeats, or spans multiple bars) as ONE chord, so the N voicings spread across the whole run (e.g. 4 voicings over a 2-bar chord = 2 per bar) instead of restarting every bar.">' + (layer.progMerge ? '⊕ merged' : 'merge') + '</button>' +
+              // FEEL + VARIETY complete the voicing cluster. They are per-LAYER
+              // fields (a second pad under the same progression can differ), so
+              // they stay on the layer — this is the same lift Subdivide/merge
+              // already had: shown where the chord-lock is visible, mirrored
+              // back onto the card by _ambSyncControls.
+              '<button type="button" class="ambient-seg ambient-sched-feelbtn' + ((layer.progFeel === 'stochastic') ? ' active' : '') + '" title="Feel — how the voicings are PLACED across the chord. Even = equal sub-slots, variants cycle in order. Stochastic = random onset timing and a random variant each time (seeded from the take, so a loop replays it identically).">' + ((layer.progFeel === 'stochastic') ? '⁙ stochastic' : '≡ even') + '</button>' +
+              '<span class="ambient-sched-grp ambient-sched-varwrap" title="Variety — how far each voicing strays from the plain chord: 0 = plain inversions, higher adds 9ths / 11ths / sus colours.">' +
+                '<span class="ambient-sched-lbl">variety</span>' +
+                '<input type="range" class="ambient-sl ambient-sched-variety" min="0" max="100" step="1" value="' + Math.max(0, Math.min(100, layer.voiceVariety | 0)) + '">' +
+                '<span class="ambient-sched-lbl snap">' + Math.max(0, Math.min(100, layer.voiceVariety | 0)) + '</span>' +
+              '</span>' +
+              '</span>')
           : (function () {
               const lbl = (aVal === 'free') ? ('⟲ Free · ≈' + _ambFmtBpc(unitBars))
                 : (aVal === 'other') ? ('⧗ ' + _ambFmtBpc(unitBars))
@@ -36277,6 +36289,17 @@
               if (typeof persistWorkspace === 'function') persistWorkspace();
               return;
             }
+            // Feel (prog-synced Bed/Drone): Even ⇄ Stochastic placement. The
+            // emitter reads it per onset, so no re-anchor is needed.
+            const fb = ev.target.closest('.ambient-sched-feelbtn');
+            if (fb) {
+              _E = E; const t = _schedLayer(fb); if (!t || !t.L) return;
+              t.L.progFeel = (t.L.progFeel === 'stochastic') ? 'even' : 'stochastic';
+              _ambRenderScheduler(E);
+              try { _ambSyncControls(E); } catch (e) {}   // mirror onto the card's Feel
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              return;
+            }
             // ~ Vary (stochastic min–max length) toggle.
             const vary = ev.target.closest('.ambient-sched-vary');
             if (vary) {
@@ -36323,6 +36346,20 @@
               if (typeof persistWorkspace === 'function') persistWorkspace();
               try { _ambSyncControls(E); } catch (e) {}   // mirror onto the layer card's Subdivide
               return;   // strip granularity re-renders on blur (focusout)
+            }
+            // Variety (prog-synced Bed/Drone) — read live by the voicer, so
+            // update the readout in place rather than re-rendering the strip
+            // (a re-render mid-drag would drop the pointer capture).
+            const vsl = ev.target.closest('.ambient-sched-variety');
+            if (vsl) {
+              _E = E; const t = _schedLayer(vsl); if (!t || !t.L) return;
+              const vv = Math.max(0, Math.min(100, parseInt(vsl.value, 10) || 0));
+              t.L.voiceVariety = vv;
+              const out = vsl.parentElement && vsl.parentElement.querySelector('.ambient-sched-lbl.snap');
+              if (out) out.textContent = String(vv);
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              try { _ambSyncControls(E); } catch (e) {}   // mirror onto the card's Variety
+              return;
             }
             // ~ Vary min–max range inputs.
             const rng = ev.target.closest('.ambient-sched-bmin, .ambient-sched-bmax, .ambient-sched-tmin, .ambient-sched-tmax');

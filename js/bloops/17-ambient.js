@@ -26178,6 +26178,11 @@
             try { if (typeof masterVolume !== 'undefined' && masterVolume && masterVolume.volume) volDb = masterVolume.volume.value; } catch (e) {}
             if (!Number.isFinite(volDb)) volDb = 0;
             const vol = new Tone.Volume(volDb).connect(lim);
+            // masterBus is a Gain(0.6) headroom trim in 03, and Bloom sums
+            // through its own _BLOOM_MASTER_TRIM before that. Starting the
+            // offline chain at warmth skipped both, so a bounce hit the
+            // limiter and soft-clipper far harder than live playback does —
+            // audibly more squashed even when every FX matched.
             // MASTER COMPRESSOR — the one colour stage that is ON BY DEFAULT
             // (compOn true, ~2:1 at −3 dB). Warmth / Vinyl / Glue default OFF.
             // WARMTH — plain filters plus a tanh waveshaper. Same topology,
@@ -26261,6 +26266,12 @@
             }
             // Warmth sits BEFORE everything above, as it does live.
             if (warmIn && warmOut) { warmOut.connect(outStage); outStage = warmIn; }
+            // …and the two input trims sit before THAT (see the note above).
+            try {
+              const trimIn = new Tone.Gain(0.6).connect(outStage);          // masterBus headroom
+              const bloomTrim = (typeof _BLOOM_MASTER_TRIM === 'number') ? _BLOOM_MASTER_TRIM : 1;
+              outStage = (bloomTrim !== 1) ? new Tone.Gain(bloomTrim).connect(trimIn) : trimIn;
+            } catch (e) {}
             _masterBuilt = !!outStage;
           } catch (e) { outStage = null; _masterBuilt = false; try { console.warn('[bounce] master stage failed to build — rendering unmastered:', e); } catch (e2) {} }
           // CORE SESSION FIRST — a second voice-processor node on THIS context.
@@ -26369,6 +26380,31 @@
             } else if (typeof window._bloomOfflineScope === 'function') {
               window._bloomOfflineScope(new Map());   // ref park + dispose-timer skip even with no samples
             }
+          } catch (e) {}
+          // SELF-AUDIT. Four rounds of "which FX did I forget" say the
+          // enumeration must not live in my head: walk the CONFIG, list every
+          // effect the project actually engages, and check each one has a
+          // node in this render. Anything engaged-but-unbuilt is named in the
+          // toast and the Harvest row instead of going silently missing.
+          try {
+            const eng = [];
+            const chainOf = (k) => (E3 && E3.mod && E3.mod[k]) || null;
+            const seeLayer = (L, key, label) => {
+              if (!L || L.on === false || L.present === false || L.mute) return;
+              const ch = chainOf(key);
+              const fxOn = ['delay', 'dist', 'chorus', 'phaser', 'autopan', 'glitch']
+                .filter((f) => L[f] && (((L[f].mix | 0) > 0) || L[f].dryKill));
+              if (fxOn.length && !ch) eng.push(label + ': ' + fxOn.join('/') + ' (no chain built)');
+              if ((L.revSend | 0) > 0 && !(E3 && E3.reverb)) eng.push(label + ': reverb send (no reverb built)');
+              if (L.glitch && (((L.glitch.mix | 0) > 0) || L.glitch.dryKill) && ch && !ch.core) {
+                eng.push(label + ': Glitch (needs the core engine; this layer is on the node fallback)');
+              }
+            };
+            ['bed', 'motif', 'texture', 'beat'].forEach((k) => seeLayer(cap.cfg[k], k, k));
+            (cap.cfg.extras || []).forEach((x) => {
+              if (x && x.type != null && x.id != null) seeLayer(x, x.type + ':' + x.id, (x.label || x.type) + ' ' + x.id);
+            });
+            if (eng.length) _missing.push(...eng.slice(0, 6));
           } catch (e) {}
           phase('instrumentsReady', { wet, core: coreOn, samplers: samplerCount, layers: (E3 && E3.mod) ? Object.keys(E3.mod).length : 0 });
           // Tick-driven SIGNAL schedulers (trance gate, unit-gate chop,

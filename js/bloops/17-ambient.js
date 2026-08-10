@@ -26533,13 +26533,16 @@
         else if (typeof audioBufferToWav === 'function') { blob = audioBufferToWav(audioBuf); }
       } catch (e) { blob = null; }
       if (!blob) return { ok: false, reason: 'encoder unavailable' };
+      const _dryRender = (res.wet === false) && !(opts && opts.dry);
       const stamp = (opts && opts.name) || ('bounce-' + Math.round(audioBuf.duration) + 's');
-      const filename = String(stamp).replace(/[^\w.-]+/g, '-').slice(0, 60);
+      const filename = String(stamp).replace(/[^\w.-]+/g, '-').slice(0, 60) + (_dryRender ? '-DRY-no-fx' : '');
       let url = null; try { url = URL.createObjectURL(blob); } catch (e) {}
       const rec = { id: ++_ambCapBankSeq, name: filename, ext, mime,
         folder: (opts && opts.folder) || 'bloops/exports',
         durSec: audioBuf.duration, bytes: blob.size, blob, url, uploaded: false,
-        source: 'Bloom (bounce)' };
+        // The row is the durable diagnostic — a toast can be missed or
+        // dismissed, this is still readable in Harvest afterwards.
+        source: 'Bloom (bounce' + (_dryRender ? ' · DRY — no FX' : (res.core ? ' · core' : ' · node')) + ')' };
       try { rec.grid = _ambCaptureGrid(E, audioBuf.duration); } catch (e) {}
       _ambCaptureBank.push(rec);
       try { _ambRenderCaptureBank(); } catch (e) {}

@@ -26383,16 +26383,25 @@
             if (warmIn && warmOut) { warmOut.connect(outStage); outStage = warmIn; }
             // …and the two input trims sit before THAT (see the note above).
             try {
-              // masterBus is a Gain(0.6) headroom trim in 03 and every Bloom
-              // note sums through it before the master chain; the offline stage
-              // started at Warmth and skipped it, so bounces ran ~4.4 dB hot
-              // into the limiter and soft-clipper — and heavy limiting is what
-              // flattens reverb tails and delay repeats until they read as
-              // "no FX". CALIBRATED AGAINST LIVE, not derived: with this trim
-              // alone a bounce peaks 0.147 against live's 0.147. Do NOT also
-              // apply _bloomMasterGain's 0.5 — measured, that lands 6 dB LOW
-              // (0.074 vs 0.147); it is not in the effective core-strip path.
-              outStage = new Tone.Gain(0.6).connect(outStage);
+              // TWO input trims, and the second is ADAPTIVE — which is exactly
+              // what a one-layer test cannot see. Live: every Bloom note sums
+              // through _bloomMasterGain and then masterBus's Gain(0.6).
+              // _bloomMasterGain mirrors the grid's 1/sqrt(N) law FLOORED at
+              // 0.5, so at N=1 it is 1.0 (invisible) and at N>=4 it is 0.5.
+              // Every bounce test I wrote used ONE layer, so the missing trim
+              // measured as a perfect match; on a real 6-layer project the
+              // render came out ~6 dB hot, and that difference is spent in the
+              // limiter — which flattens reverb tails and stereo detail, i.e.
+              // "the FX are gone, it sounds dry and mono".
+              // Counted from the BOUNCE's own cfg, not the live gain: that gain
+              // is stale whenever _ambUpdateBloomMasterTrim has not run for the
+              // current layer set (measured reading 0.5 for a single layer).
+              let nLayers = 0;
+              try { nLayers = Object.keys(_ambWantSet(cap.cfg) || {}).length; } catch (e) { nLayers = 0; }
+              const floorT = (typeof _BLOOM_MASTER_TRIM === 'number') ? _BLOOM_MASTER_TRIM : 0.5;
+              const bloomTrim = Math.max(floorT, Math.min(1, 1 / Math.sqrt(Math.max(1, nLayers))));
+              const trimIn = new Tone.Gain(0.6).connect(outStage);            // masterBus headroom
+              outStage = (Math.abs(bloomTrim - 1) > 1e-6) ? new Tone.Gain(bloomTrim).connect(trimIn) : trimIn;
             } catch (e) {}
             _masterBuilt = !!outStage;
           } catch (e) { outStage = null; _masterBuilt = false; try { console.warn('[bounce] master stage failed to build — rendering unmastered:', e); } catch (e2) {} }

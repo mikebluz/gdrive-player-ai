@@ -23340,23 +23340,21 @@
         // without this the menu showed TWO identical "30 sec / 1 min / 2 min"
         // lists and the only thing distinguishing them was an unclickable
         // heading, which read as "Bounce can't be selected".
-        { label: '⚡ Bounce — silent, records the real output', disabled: true },
-        { label: '⚡ Bounce 30 sec', fn: () => _ambBounceBegin(E, 30) },
-        { label: '⚡ Bounce 1 min',  fn: () => _ambBounceBegin(E, 60) },
-        { label: '⚡ Bounce 2 min',  fn: () => _ambBounceBegin(E, 120) },
-        { label: '⚡ Bounce 5 min',  fn: () => _ambBounceBegin(E, 300) },
+        { label: '⚡ Bounce — silent, faster than real time', disabled: true },
+        { label: '⚡ Bounce 30 sec', fn: () => _ambBounceBeginOffline(E, 30) },
+        { label: '⚡ Bounce 1 min',  fn: () => _ambBounceBeginOffline(E, 60) },
+        { label: '⚡ Bounce 2 min',  fn: () => _ambBounceBeginOffline(E, 120) },
+        { label: '⚡ Bounce 5 min',  fn: () => _ambBounceBeginOffline(E, 300) },
         { label: '⚖ Compare bounce with live — measure the difference', fn: () => { _ambBounceVerify(E, 8); } },
         { label: '⚡ Bounce — custom seconds…', fn: () => {
           let s = null; try { s = prompt('Bounce length in seconds:', '120'); } catch (e) {}
           if (s == null) return;
           const n = parseInt(s, 10);
           if (!Number.isFinite(n) || n <= 0) { alert('Enter a positive number of seconds.'); return; }
-          _ambBounceBegin(E, n);
+          _ambBounceBeginOffline(E, n);
         } },
-        // The OFFLINE renderer is faster but has repeatedly failed to match
-        // playback by ear, so it is not what ⚡ Bounce runs. Kept reachable
-        // (and behind an honest label) while that is worked on.
-        { label: '⚗ Bounce fast (offline) — experimental, may not match', fn: () => _ambBounceBeginOffline(E, 60) },
+        // Real-time fallback: a capture, so it cannot differ from playback.
+        { label: '⏺ Bounce by recording — real time, exact', fn: () => _ambBounceBegin(E, 60) },
       ];
       if (typeof showCtxMenu === 'function' && btn) {
         const r = btn.getBoundingClientRect();
@@ -26285,7 +26283,7 @@
       phase('composed', { notes: notes.length });
       const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
       let buffer = null, played = 0, failed = 0, wetOut = false, coreTaken = 0, coreOn = false;
-      let samplerCount = 0, _masterBuilt = false, _busRig = null, _wetErr = null;
+      let samplerCount = 0, _masterBuilt = false, _busRig = null, _wetErr = null, _bloomTrimGain = null;
       const _missing = [], _lostFx = [];
       // Tell playNote not to DEFER voice construction: the deferred-build queue is
       // pumped by a wall-clock timer that does not advance while an offline
@@ -26513,12 +26511,16 @@
               // Counted from the BOUNCE's own cfg, not the live gain: that gain
               // is stale whenever _ambUpdateBloomMasterTrim has not run for the
               // current layer set (measured reading 0.5 for a single layer).
-              let nLayers = 0;
-              try { nLayers = Object.keys(_ambWantSet(cap.cfg) || {}).length; } catch (e) { nLayers = 0; }
-              const floorT = (typeof _BLOOM_MASTER_TRIM === 'number') ? _BLOOM_MASTER_TRIM : 0.5;
-              const bloomTrim = Math.max(floorT, Math.min(1, 1 / Math.sqrt(Math.max(1, nLayers))));
               const trimIn = new Tone.Gain(0.6).connect(outStage);            // masterBus headroom
-              outStage = (Math.abs(bloomTrim - 1) > 1e-6) ? new Tone.Gain(bloomTrim).connect(trimIn) : trimIn;
+              // The Bloom trim is set AFTER the chains exist: live derives it
+              // from _ambBloomMasterLayerCount(), which counts BUILT chains
+              // (E.mod), not the want-set. Counting the want-set here diverged
+              // at 4 layers — and because the trim feeds the LIMITER, a wrong
+              // count changes how much it ducks, which narrows the stereo image
+              // (measured live 0.491 vs bounce 0.367 at 4 layers; 1 and 2 layers
+              // matched, which is what made it look like a spread bug).
+              _bloomTrimGain = new Tone.Gain(1).connect(trimIn);
+              outStage = _bloomTrimGain;
             } catch (e) {}
             _masterBuilt = !!outStage;
           } catch (e) { outStage = null; _masterBuilt = false; try { console.warn('[bounce] master stage failed to build — rendering unmastered:', e); } catch (e2) {} }
@@ -26588,6 +26590,14 @@
             try { console.warn('[bounce] wet path unavailable — rendering DRY:', e); } catch (x) {}
           }
           wetOut = wet;
+          // …now that E3.mod exists, mirror live's trim law on the SAME quantity.
+          try {
+            if (_bloomTrimGain) {
+              const nBuilt = (E3 && E3.mod) ? Object.keys(E3.mod).filter(k => k.indexOf('#') < 0).length : 0;
+              const floorT = (typeof _BLOOM_MASTER_TRIM === 'number') ? _BLOOM_MASTER_TRIM : 0.5;
+              _bloomTrimGain.gain.value = Math.max(floorT, Math.min(1, 1 / Math.sqrt(Math.max(1, nBuilt))));
+            }
+          } catch (e) {}
           // GLITCH runs only inside the core strips (no node build exists), so
           // a bounce cannot include it — say so instead of failing silently.
           // GLITCH is core-only. With the offline core session up it renders

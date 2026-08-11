@@ -23340,20 +23340,20 @@
         // without this the menu showed TWO identical "30 sec / 1 min / 2 min"
         // lists and the only thing distinguishing them was an unclickable
         // heading, which read as "Bounce can't be selected".
-        { label: '⚡ Bounce — silent, records the real output', disabled: true },
-        { label: '⚡ Bounce 30 sec', fn: () => _ambBounceBegin(E, 30) },
-        { label: '⚡ Bounce 1 min',  fn: () => _ambBounceBegin(E, 60) },
-        { label: '⚡ Bounce 2 min',  fn: () => _ambBounceBegin(E, 120) },
-        { label: '⚡ Bounce 5 min',  fn: () => _ambBounceBegin(E, 300) },
+        { label: '⚡ Bounce — silent, fast, continues from here', disabled: true },
+        { label: '⚡ Bounce 30 sec', fn: () => _ambBounceBeginOffline(E, 30) },
+        { label: '⚡ Bounce 1 min',  fn: () => _ambBounceBeginOffline(E, 60) },
+        { label: '⚡ Bounce 2 min',  fn: () => _ambBounceBeginOffline(E, 120) },
+        { label: '⚡ Bounce 5 min',  fn: () => _ambBounceBeginOffline(E, 300) },
         { label: '⚖ Compare bounce with live — measure the difference', fn: () => { _ambBounceVerify(E, 8); } },
         { label: '⚡ Bounce — custom seconds…', fn: () => {
           let s = null; try { s = prompt('Bounce length in seconds:', '120'); } catch (e) {}
           if (s == null) return;
           const n = parseInt(s, 10);
           if (!Number.isFinite(n) || n <= 0) { alert('Enter a positive number of seconds.'); return; }
-          _ambBounceBegin(E, n);
+          _ambBounceBeginOffline(E, n);
         } },
-        { label: '⚗ Bounce fast (offline) — experimental, does not match yet', fn: () => _ambBounceBeginOffline(E, 60) },
+        { label: '⏺ Bounce by recording — real time, exact', fn: () => _ambBounceBegin(E, 60) },
       ];
       if (typeof showCtxMenu === 'function' && btn) {
         const r = btn.getBoundingClientRect();
@@ -26074,7 +26074,16 @@
     // master chain are NOT applied — this is a dry bounce of the note stream.
     // Matching the live signal path means rebuilding the mod graph on the offline
     // context, which is the next step.
-    function _ambCaptureNotesSynthetic(E, seconds) {
+    // skipSec: simulate this many seconds FIRST and discard them, so the render
+    // begins where playback currently is instead of at bar 1. A bounce built a
+    // fresh engine and ticked from t=0, so it always produced the OPENING of the
+    // piece — sparse entries, Write loops not yet rewritten, the progression on
+    // its first chord, no accumulated tails — while the user was listening to a
+    // piece minutes in. Thin and untailed is exactly what "dry / no reverb /
+    // mono" sounds like. Simulation is cheap (~0.07 s per 30 s of music), so
+    // fast-forwarding costs almost nothing.
+    function _ambCaptureNotesSynthetic(E, seconds, skipSec) {
+      skipSec = Math.max(0, Math.min(3600, +skipSec || 0));
       const cfg0 = (typeof E.getCfg === 'function') ? E.getCfg() : null; if (!cfg0) return null;
       const cfg = JSON.parse(JSON.stringify(cfg0));
       cfg.playing = false;
@@ -26133,7 +26142,7 @@
         };
         if (typeof _ambInGeneration !== 'undefined') _ambInGeneration = true;
         const DT = 0.15;
-        const horizon = Math.max(1, seconds) + 2;          // +lookahead so the tail is scheduled
+        const horizon = Math.max(1, seconds) + skipSec + 2;   // +lookahead so the tail is scheduled
         const MAXT = Math.ceil(horizon / DT) + 40;
         for (let i = 0; i < MAXT && clock < horizon; i++) {
           try { _ambTick(E2); } catch (e) {}
@@ -26150,7 +26159,10 @@
       notes.sort((a, b) => a.at - b.at);
       // Anchor at the first onset so the bounce starts on the music, not on the
       // engine's internal lead.
-      const t0 = notes.length ? notes[0].at : 0;
+      // Anchor: normally the first onset; when fast-forwarding, the skip point,
+      // so everything before it is discarded along with the engine's warm-up.
+      let t0 = notes.length ? notes[0].at : 0;
+      if (skipSec > 0) t0 += skipSec;
       // cfg travels with the notes: pass 2 builds its mod chains from the SAME
       // clone, so `n.key` resolves to the same layer.
       // Whether spread-mode voices were captured at FULL width (live core-strip
@@ -26158,7 +26170,8 @@
       // no strip, so it must scale the pan positions itself.
       let stripWidth = false;
       try { stripWidth = !!(typeof _coreVoices !== 'undefined' && _coreVoices.stripsEnabled && _coreVoices.stripsEnabled()); } catch (e) {}
-      return { notes: notes.map(n => Object.assign({}, n, { at: n.at - t0 })), count: notes.length, cfg, stripWidth };
+      const kept = notes.filter(n => n.at >= t0 - 0.001).map(n => Object.assign({}, n, { at: n.at - t0 }));
+      return { notes: kept, count: kept.length, cfg, stripWidth, skipped: skipSec };
     }
     // BLOOM MIX BUSES, offline. Live, a layer's destination is _ambBusDest(L):
     // its bus gain (a/b/c/d), and each bus taps per-FX SEND gains into the
@@ -26269,10 +26282,20 @@
       // into the bounce (the global Tone context is the offline one until the
       // render resolves). _ambBounceBegin already stops the UI path; this
       // covers direct calls (window._bloomBounce).
+      // How far into the piece is playback right now? Measured BEFORE stopping,
+      // and passed to pass 1 so the render continues from here rather than
+      // restarting at bar 1. opts.fromStart forces the old behaviour.
+      let skipSec = 0;
+      try {
+        if (E && E.timer && Number.isFinite(E._playStartAt) && !(opts && opts.fromStart)) {
+          skipSec = Math.max(0, Math.min(3600, (Tone.now() - E._playStartAt)));
+        }
+      } catch (e) { skipSec = 0; }
       try { if (E && E.timer) _ambStopGenerator(E); } catch (e) {}
-      phase('compose', { seconds });
+      phase('compose', { seconds, from: skipSec });
+      if (skipSec > 0.5) say('1/4 Composing from ' + skipSec.toFixed(0) + 's in…');
       say('1/4 Composing…');
-      const cap = _ambCaptureNotesSynthetic(E, seconds);
+      const cap = _ambCaptureNotesSynthetic(E, seconds, skipSec);
       // A chain-parity probe supplies its own signal and needs no music, so the
       // empty-capture bail must not apply to it.
       if ((!cap || !cap.notes.length) && !(opts && opts.testSignal)) {
@@ -26894,7 +26917,7 @@
     // tool, but it is no longer what the Bounce menu runs (see _ambBounceBegin).
     try { if (typeof window !== 'undefined') { window._bloomBounceOffline = (sec, opts) => _ambRenderOffline(_masterEng, sec, opts); } } catch (e) {}
     try { if (typeof window !== 'undefined') { window._bloomBounce = (sec, opts) => _ambRenderOffline(_masterEng, sec, opts);
-      window._bloomBounceCapture = (sec) => _ambCaptureNotesSynthetic(_masterEng, sec); } } catch (e) {}
+      window._bloomBounceCapture = (sec, skip) => _ambCaptureNotesSynthetic(_masterEng, sec, skip); } } catch (e) {}
     function _ambSeedRender(E, key) {
       const cfg0 = (typeof E.getCfg === 'function') ? E.getCfg() : null; if (!cfg0) return null;
       const cfg = JSON.parse(JSON.stringify(cfg0));   // clone — ticking must not touch the real area

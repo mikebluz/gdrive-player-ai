@@ -37,6 +37,12 @@ const MATRIX = [
   { name: 'trance-gate',   layers: [['bed', { tg: { on: true, steps: 4, pattern: [1, 0, 1, 0], depth: 100, edge: 2 } }], ['bass', {}]] },
   { name: 'gate-sample',   layers: [['bed', { tone: 'sample:piano', tg: { on: true, steps: 4, pattern: [1, 0, 1, 0], depth: 100, edge: 2 } }], ['bass', {}]] },
   { name: 'level-mixed',   layers: [['bed', { level: 94 }], ['run', { level: 42 }], ['bass', { level: 68 }]] },
+  // --- isolation cases for the sample level divergence -----------------
+  { name: 'iso-synth',      layers: [['bed', { tone: '', level: 70, panMode: 'spread', space: 0 }]] },
+  { name: 'iso-sample',     layers: [['bed', { tone: 'sample:piano', level: 70, panMode: 'spread', space: 0 }]] },
+  { name: 'iso-sample-l42', layers: [['bed', { tone: 'sample:piano', level: 42, panMode: 'spread', space: 0 }]] },
+  { name: 'iso-sample-l94', layers: [['bed', { tone: 'sample:piano', level: 94, panMode: 'spread', space: 0 }]] },
+  { name: 'iso-sample-pan', layers: [['bed', { tone: 'sample:piano', level: 70, panMode: 'pan', space: -70 }]] },
   // A REAL reported project (from ⧉ Copy bounce diagnostic): 5 layers, three
   // of them samples, mixed spread/pan/spatialize, FX on two, under a salted
   // 8-chord progression. This is the shape that broke — kept as a case so it
@@ -119,6 +125,13 @@ const cases = only ? MATRIX.filter((m) => m.name.includes(only)) : MATRIX;
       }
 
       // ---- LIVE: meter each layer's own strip output ------------------
+      // TWICE. Live re-generates its material every play, so a single live
+      // reading is not a measurement — it is one sample of a distribution.
+      // Six rounds of this investigation were lost to treating one live number
+      // as ground truth, so the gate measures live's OWN SPREAD and only flags
+      // a bounce that sits outside it.
+      const liveRuns = [];
+      for (let pass = 0; pass < 2; pass++) {
       _ambStartGenerator(_masterEng);
       await new Promise((r2) => setTimeout(r2, 500));    // chains built
       const liveRms = {};
@@ -138,22 +151,25 @@ const cases = only ? MATRIX.filter((m) => m.name.includes(only)) : MATRIX;
           Tone.connect(mn, sink);
         } catch (x) {}
       });
-      const chains = Object.keys(_masterEng.mod || {}).map((k) => k + ':' + (_masterEng.mod[k].core ? 'strip' : 'node'));
+      var chains = Object.keys(_masterEng.mod || {}).map((k) => k + ':' + (_masterEng.mod[k].core ? 'strip' : 'node'));
       // Did LIVE degrade while we measured it? The adaptive voice budget sheds
       // the most-decayed (longest, most sustaining) voices first under render
       // pressure — which is exactly the piano/pad layers — so a "the bounce is
       // hot" reading can be live being quiet. Headless is precisely where this
       // fires, so it must be reported or it will be mistaken for a bounce bug.
-      let health = null;
+      var health = null;
       try { const h = window.__bloomHealthLog || [];
             health = h.length ? { n: h.length, last: h[h.length - 1] } : null; } catch (x) {}
       await new Promise((r2) => setTimeout(r2, SECS * 1000 + 300));
       _ambStopGenerator(_masterEng);
       await new Promise((r2) => setTimeout(r2, 400));
+      liveRuns.push(liveRms);
+      try { sink.disconnect(); } catch (x) {}
+      }
 
       // ---- BOUNCE the same project ------------------------------------
       const res = await window._bloomBounceOffline(SECS, {});
-      return { live: liveRms, bounce: res.layerRms || {}, chains, health,
+      return { liveRuns, bounce: res.layerRms || {}, chains, health,
                dropouts: res.dropouts || [], missing: res.missing || [] };
      } catch (err) { return { error: String((err && err.stack) || err).slice(0, 400) }; }
     }, cs, SECS);
@@ -168,16 +184,31 @@ const cases = only ? MATRIX.filter((m) => m.name.includes(only)) : MATRIX;
   let bad = 0;
   for (const r of results) {
     const rows = [];
-    const keys = Array.from(new Set([...Object.keys(r.live), ...Object.keys(r.bounce)]));
+    const runs = r.liveRuns || [];
+    const keys = Array.from(new Set([].concat(...runs.map((x) => Object.keys(x)), Object.keys(r.bounce))));
     for (const k of keys) {
-      const L = mean(r.live[k]), B = mean(r.bounce[k]);
-      // A layer that sounds live and is ~absent in the bounce is the failure
-      // this gate exists for; 4 dB is well outside generative variation.
+      const ls = runs.map((x) => mean(x[k])).filter((v) => v > 0);
+      const L = mean(ls), B = mean(r.bounce[k]);
+      // Live's OWN spread between its two passes, in dB. A bounce inside that
+      // spread is indistinguishable from live re-generating its material, and
+      // flagging it is how this gate would cry wolf.
+      const spread = ls.length > 1 ? Math.abs(db(Math.min(...ls), Math.max(...ls))) : 0;
       const d = db(L, B);
       const silent = (L > 1e-4 && B < L * 0.15);
-      const flag = silent || Math.abs(d) > 4;
+      // Threshold: 4 dB, or twice live's own spread when that is wider.
+      const lim = Math.max(4, spread * 2);
+      const flag = silent || Math.abs(d) > lim;
       if (flag) bad++;
-      rows.push({ k, L, B, d, flag, silent });
+      rows.push({ k, L, B, d, flag, silent, spread });
+    }
+    const ALL = process.argv.includes('--all');
+    if (ALL) {
+      console.log((rows.some((x) => x.flag) ? '✗ ' : '✓ ') + r.name);
+      rows.forEach((x) => console.log('    ' + x.k.padEnd(10)
+        + ' live ' + x.L.toFixed(5) + '  bounce ' + x.B.toFixed(5)
+        + '  ' + (x.d >= 0 ? '+' : '') + x.d.toFixed(1) + ' dB'
+        + '  (live spread ' + x.spread.toFixed(1) + ' dB)' + (x.flag ? '   ←' : '')));
+      continue;
     }
     const flagged = rows.filter((x) => x.flag);
     if (flagged.length || r.dropouts.length) {
@@ -186,6 +217,7 @@ const cases = only ? MATRIX.filter((m) => m.name.includes(only)) : MATRIX;
       flagged.forEach((x) => console.log('    ' + x.k.padEnd(10)
         + ' live ' + x.L.toFixed(5) + '  bounce ' + x.B.toFixed(5)
         + '  ' + (x.d >= 0 ? '+' : '') + x.d.toFixed(1) + ' dB'
+        + '  (live spread ' + x.spread.toFixed(1) + ' dB)'
         + (x.silent ? '   ← ABSENT IN THE BOUNCE' : '')));
       r.dropouts.forEach((d) => console.log('    dropout: ' + d.key
         + (d.inAndOut ? ' cuts in and out' : ' goes silent') + ' at ' + d.quietAt.join('s, ') + 's'));

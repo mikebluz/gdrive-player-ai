@@ -27277,11 +27277,33 @@
       // measurement because the mix cannot see it; this states which layer went
       // quiet and at which second, from the user's own render.
       try {
+        // …and say WHICH SIDE of the note/audio boundary the fault is on, which
+        // is the one split that decides where to look next. Pass 1 recorded
+        // every note it generated, so count them per layer per second and check
+        // the seconds the meter says went quiet: notes present + no audio = the
+        // AUDIO path (strip / voice / gate); no notes = the MATERIAL (generation
+        // or delivery), a completely different hunt.
+        const _npsOf = (key) => {
+          const out = [];
+          for (const n of notes) {
+            if ((n.key || '') !== key) continue;
+            const s = Math.floor(n.at);
+            out[s] = (out[s] | 0) + 1;
+          }
+          return out;
+        };
         const _dr = _bloomLayerDropouts(_layerRms);
         _dr.slice(0, 4).forEach((d) => {
+          const nps = _npsOf(d.key);
+          const withNotes = d.quietAt.filter((i) => (nps[i] | 0) > 0).length;
+          const verdict = withNotes >= Math.ceil(d.quietAt.length / 2)
+            ? ' — notes ARE delivered there, so the AUDIO path is dropping them'
+            : (withNotes === 0
+                ? ' — NO notes generated there, so this is the material, not the audio'
+                : ' — mixed: notes in ' + withNotes + ' of ' + d.quietAt.length + ' quiet seconds');
           _missing.unshift('layer ' + d.key + (d.inAndOut ? ' CUTS IN AND OUT' : ' goes silent')
             + ' (quiet at ' + d.quietAt.map((i) => i + 's').join(', ')
-            + (d.secs > d.quietAt.length ? ' …' : '') + ')');
+            + (d.secs > d.quietAt.length ? ' …' : '') + ')' + verdict);
         });
       } catch (e) {}
       if (_sampStats && _sampStats.sampFail > 0) {

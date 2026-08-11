@@ -26685,6 +26685,21 @@
             }
             // Warmth sits BEFORE everything above, as it does live.
             if (warmIn && warmOut) { warmOut.connect(outStage); outStage = warmIn; }
+            // DC BLOCKER / SUB-RUMBLE HIGH-PASS — masterDCBlock in 03, which sits
+            // at the very FRONT of the live master chain (masterBus → DC →
+            // Warmth → …) and was the one stage this rebuild never reproduced.
+            // It is not cosmetic: 03's own note says sub-30 Hz from low
+            // oscillators AND REVERB "muddies the low end and steals loudness".
+            // Without it a bounce keeps rumble live strips, and that rumble is
+            // spent in the limiter — which is why the reported bounce measured
+            // sub +0.9 dB but progressively QUIETER upward (−2.7 lo, −8.6 lo-mid,
+            // −13.4 air) with the image collapsing 0.64 → 0.24. A dry-sounding,
+            // narrow render whose reverb was being generated the whole time
+            // (the wet meter read 0.064) — i.e. the wet was made and then ducked.
+            try {
+              const dcb = new Tone.Filter({ type: 'highpass', frequency: 28, Q: 0.707 });
+              dcb.connect(outStage); outStage = dcb;
+            } catch (e) { _missing.push('the DC blocker / sub high-pass'); }
             // …and the two input trims sit before THAT (see the note above).
             try {
               // TWO input trims, and the second is ADAPTIVE — which is exactly

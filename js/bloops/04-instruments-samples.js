@@ -289,8 +289,20 @@
     // caller passes the node they should feed. Unknown ids are skipped; a
     // wild id ('sequential'/'random'-style dynamic tones) pulls in every
     // already-built or imported entry, since resolution happens per note.
-    function _bloomOfflineSamplerBank(ids, dest) {
+    // PER-LAYER ROUTING (opts.pairs / opts.destFor) — without it a bounce sends
+    // EVERY sample voice straight at the master stage, bypassing its layer's
+    // strip: no pan, no spread, no chorus/distortion, i.e. a sample-heavy
+    // project bounces mono and dry while live playback (where the core strip
+    // renders the same notes) is wide and wet. The old comment here claimed
+    // "node-path samples never had per-layer FX live either" — true of the NODE
+    // fallback, and irrelevant under core strips, which is the live default.
+    // One sampler per (id, layerKey) so two layers on the same sample can sit
+    // in different places; `id` alone stays as the fallback for ids that came
+    // from the cfg regex and carry no layer.
+    function _bloomOfflineSamplerBank(ids, dest, opts) {
       const map = new Map();
+      const pairs = (opts && Array.isArray(opts.pairs)) ? opts.pairs : null;
+      const destFor = (opts && typeof opts.destFor === 'function') ? opts.destFor : null;
       if (!ids || !ids.length) return map;
       let wild = false;
       const want = new Set();
@@ -306,14 +318,32 @@
           if ((d && !d.get) || info.imported) want.add(id);
         });
       }
-      want.forEach((id) => {
+      const build = (id, into) => {
         const info = sampleSamplers.get(id);
-        if (!info || !info.urls) return;
+        if (!info || !info.urls) return null;
         try {
           const s = new Tone.Sampler({ urls: info.urls, baseUrl: info.baseUrl || '', release: 1 });
-          if (dest) s.connect(dest); else s.toDestination();
-          map.set(id, s);
-        } catch (e) {}
+          if (into) s.connect(into); else s.toDestination();
+          return s;
+        } catch (e) { return null; }
+      };
+      // Per-layer instances first…
+      if (pairs && destFor) {
+        pairs.forEach((pr) => {
+          if (!pr || !pr.id || !want.has(pr.id)) return;
+          const mk = pr.id + ' ' + (pr.key || '');
+          if (map.has(mk)) return;
+          let into = null;
+          try { into = destFor(pr.key) || dest || null; } catch (e) { into = dest || null; }
+          const s = build(pr.id, into);
+          if (s) map.set(mk, s);
+        });
+      }
+      // …then a plain per-id fallback at the master stage for anything unpaired.
+      want.forEach((id) => {
+        if (map.has(id)) return;
+        const s = build(id, dest);
+        if (s) map.set(id, s);
       });
       return map;
     }
@@ -801,6 +831,20 @@
     function getSampleEntry(type) {
       if (!isSampleType(type)) return null;
       const id = type.slice(7);
+      // Prefer THIS layer's own offline sampler (see _bloomOfflineSamplerBank):
+      // the emitting layer is stamped on window._ambEmitKey by the capture tee,
+      // and the per-layer instance is wired into that layer's chain, so the
+      // sample picks up its pan / spread / FX instead of the bare master stage.
+      if (_offlineSamplerOverride) {
+        let _k = null;
+        try { _k = window._ambEmitKey ? (id + ' ' + window._ambEmitKey) : null; } catch (e) {}
+        if (_k && _offlineSamplerOverride.has(_k)) {
+          const meta0 = sampleSamplers.get(id);
+          const out0 = { sampler: _boostSampler(_offlineSamplerOverride.get(_k)) };
+          if (meta0) for (const k in meta0) { if (k !== 'sampler') out0[k] = meta0[k]; }
+          return out0;
+        }
+      }
       if (_offlineSamplerOverride && _offlineSamplerOverride.has(id)) {
         // Carry the LIVE entry's metadata (kind/bpm/rootNote/…) alongside the
         // offline sampler — the loop tempo-match in _resolveSampleVoice reads
@@ -4281,8 +4325,18 @@
           // Falls through to the node voice on any miss: strips off, core
           // cold, detune-mod LFO (needs a node connection), offline export,
           // buffer table full.
+          // The offline-export bail is `no OFFLINE CORE SESSION`, not `offline`:
+          // the Bloom bounce builds a real core session (offlineBegin) and its
+          // strips are what carry every layer's pan / spread / FX. Bailing on
+          // _offlineSamplerOverride alone sent every sample note in a bounce to
+          // the Tone sampler at the master stage, bypassing the strip — so a
+          // sample-heavy project rendered mono and dry while live playback,
+          // running these same notes through the core, was wide and wet. The
+          // Tracks export has no session, so it still takes the node path.
+          const _offCore = (typeof _coreVoices !== 'undefined' && _coreVoices.offlineActive
+                            && _coreVoices.offlineActive());
           if (typeof _coreVoices !== 'undefined' && _coreVoices.stripsEnabled()
-              && !params._detuneMod && !_offlineSamplerOverride && !fxOverrideGlobal) {
+              && !params._detuneMod && (!_offlineSamplerOverride || _offCore) && !fxOverrideGlobal) {
             const _sid = type.slice(7);
             const _rs = _resolveSampleVoice(sampler, _sid, tunedFreq, params && params.drumTune);
             if (_rs) {

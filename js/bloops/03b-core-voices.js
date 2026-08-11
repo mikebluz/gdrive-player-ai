@@ -312,8 +312,61 @@
       // per-channel gains incl. norm/boost/vel/pan+makeup, env floors, slice
       // window in BUFFER seconds, loop window). Returns a truthy tag when
       // taken; 0 → node path.
+      // Upload a buffer to THIS RENDER's core. The offline session keeps its own
+      // id table (the live one indexes the live node's heap), so a bounce never
+      // borrows a live id and never leaks into it.
+      function _offEnsureSample(bufKey, audioBuf) {
+        let id = off.sampleIdByKey.get(bufKey);
+        if (id != null) return id;
+        if (off.sampleIdSeq >= 96 || !audioBuf || !audioBuf.length) return -1;
+        const ch = Math.min(2, audioBuf.numberOfChannels || 1);
+        const chans = [];
+        try { for (let c = 0; c < ch; c++) chans.push(audioBuf.getChannelData(c).slice()); }
+        catch (e) { return -1; }
+        id = off.sampleIdSeq++;
+        off.sampleIdByKey.set(bufKey, id);
+        try {
+          off.node.port.postMessage(
+            { cmd: 'sample', id, ch, len: audioBuf.length, sr: audioBuf.sampleRate, chans },
+            chans.map((a) => a.buffer),
+          );
+        } catch (e) { off.sampleIdByKey.delete(bufKey); return -1; }
+        return id;
+      }
+      // Offline sample voice: the same marshaling as the live one, on the
+      // bounce's node. WITHOUT THIS a sample note falls through to the Tone
+      // sampler, which is wired at the master stage — so it bypasses its
+      // layer's strip and loses that layer's pan, spread and FX, while live
+      // playback renders the very same note INSIDE the strip. A project whose
+      // layers are samples then bounces mono and dry. Returns 0 on any miss so
+      // the caller still has the node path to fall back to.
+      function _offSampleNoteOn(key, dest, o) {
+        if (!stripsEnabled() || !dest) return 0;
+        const slot = _offSlotFor(key, dest);
+        if (slot == null || slot < 0) return 0;
+        const id = _offEnsureSample(o.bufKey, o.buf);
+        if (id < 0) return 0;
+        const sp = new Float32Array(15);
+        sp[0] = id; sp[1] = o.rate; sp[2] = o.gl; sp[3] = o.gr;
+        sp[4] = o.a; sp[5] = o.d; sp[6] = o.s; sp[7] = o.r;
+        sp[8] = o.off || 0; sp[9] = (o.len != null) ? o.len : -1;
+        sp[10] = (o.loop ? 1 : 0) | (o.reverse ? 2 : 0);
+        sp[11] = o.loopA || 0; sp[12] = o.loopB || 0;
+        sp[13] = (o.cutoff != null) ? o.cutoff : -1; sp[14] = o.fq || 0.7;
+        // Same shape as the live post — pan is already baked into sp[2]/sp[3]
+        // (gain L/R) by the caller, and offline times are absolute buffer
+        // positions, so t is passed verbatim like _offNoteOn does.
+        try {
+          off.node.port.postMessage({
+            cmd: 'snote', slot, t: (typeof o.t === 'number' && o.t > 0) ? o.t : 0,
+            dur: o.dur, tag: 0, sp,
+          });
+        } catch (e) { return 0; }
+        off.taken++;
+        return 1;
+      }
       function sampleNoteOn(key, dest, o) {
-        if (offline()) return false;   // bounce in flight -> node/sampler path
+        if (offline()) return _offSampleNoteOn(key, dest, o);   // render it in THIS bounce's core
         if (!stripsEnabled() || failed) return 0;
         if (!ready) { init(); return 0; }
         if (!_running()) return 0;
@@ -644,7 +697,9 @@
           const ok = await Promise.race([readyP, new Promise((r) => setTimeout(() => r(false), timeoutMs || 6000))]);
           if (!ok) { try { n2.disconnect(); } catch (e) {} return null; }
           off = { node: n2, slots: new Map(), dests: new Array(SLOTS).fill(null), taken: 0,
-                  strips: new Map(), post: (m) => { try { n2.port.postMessage(m); } catch (e) {} }, sendVia: null };
+                  strips: new Map(), post: (m) => { try { n2.port.postMessage(m); } catch (e) {} }, sendVia: null,
+                  // this render's OWN sample-buffer table (see _offEnsureSample)
+                  sampleIdByKey: new Map(), sampleIdSeq: 0 };
           return true;
         } catch (e) {
           try { console.warn('[bloops-core] offline session unavailable:', e); } catch (x) {}

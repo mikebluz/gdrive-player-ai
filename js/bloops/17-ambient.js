@@ -26910,16 +26910,31 @@
             // will play — the exact sampler list, where a cfg regex misses
             // samp layers (they store `sampleId`, never a "sample:" string).
             const idset = new Set();
+            // …and WHICH LAYER each sample plays on, so its sampler can be wired
+            // into that layer's chain rather than straight at the master stage
+            // (see _bloomOfflineSamplerBank — routing them all at the master is
+            // what made a sample-heavy project bounce mono and dry).
+            const pairSeen = new Set(), pairs = [];
             for (const n of notes) {
               const ty = n.params && n.params.type;
-              if (typeof ty === 'string' && ty.indexOf('sample:') === 0) idset.add(ty.slice(7));
+              if (typeof ty === 'string' && ty.indexOf('sample:') === 0) {
+                const sid = ty.slice(7);
+                idset.add(sid);
+                const pk = sid + ' ' + (n.key || '');
+                if (n.key && !pairSeen.has(pk)) { pairSeen.add(pk); pairs.push({ id: sid, key: n.key }); }
+              }
             }
             // belt: cfg-referenced tone strings + samp-layer sampleId fields
             (JSON.stringify(cap.cfg).match(/"sample:([^"]+)"/g) || []).forEach((m) => idset.add(m.slice(8, -1)));
             (JSON.stringify(cap.cfg).match(/"sampleId":"([^"]+)"/g) || []).forEach((m) => idset.add(m.slice(12, -1)));
             const idm = Array.from(idset);
             if (idm.length && typeof _bloomOfflineSamplerBank === 'function') {
-              const bank = _bloomOfflineSamplerBank(idm, outStage || null);
+              const bank = _bloomOfflineSamplerBank(idm, outStage || null, {
+                pairs,
+                // _E is E3 here, so this resolves the OFFLINE chain input — a
+                // core strip's worklet input, or the node chain's vcf.
+                destFor: (key) => { try { return _ambLayerDest(key) || outStage || null; } catch (e) { return outStage || null; } },
+              });
               samplerCount = bank.size;
               window._bloomOfflineScope(bank);
               if (samplerCount) { say('2/4 Decoding ' + samplerCount + ' sample bank' + (samplerCount === 1 ? '' : 's') + '…'); await Tone.loaded(); }

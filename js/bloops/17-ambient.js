@@ -23355,6 +23355,7 @@
           _ambBounceBeginOffline(E, n);
         } },
         { label: '⏺ Bounce by recording — real time, exact', fn: () => _ambBounceBegin(E, 60) },
+        { label: '⧉ Copy bounce diagnostic — the settings, for a bug report', fn: () => _ambCopyBounceDiag(E) },
       ];
       if (typeof showCtxMenu === 'function' && btn) {
         const r = btn.getBoundingClientRect();
@@ -23471,6 +23472,64 @@
         return;
       }
       return res;
+    }
+    // COPY THE SETTINGS THAT DECIDE STEREO AND FX, so a "sounds mono / no FX"
+    // report can be REPRODUCED verbatim instead of approximated. Six rounds were
+    // lost to me rebuilding a project "shaped like" the user's and measuring it
+    // correct — the config IS the missing variable, so hand it over in one tap.
+    // Deliberately narrow: per-layer stereo + sends + FX mixes, the area reverb,
+    // bus routing and sends, and the two engine kill switches. No note material,
+    // no text, no sample ids — nothing that is anyone's private content.
+    function _ambCopyBounceDiag(E) {
+      const out = { note: 'Bloom bounce diagnostic', layers: [] };
+      try {
+        const cfg = _ambPlayCfg(E) || E.getCfg();
+        out.bpm = cfg.bpm; out.reverb = cfg.reverb;
+        out.buses = cfg.buses || null;
+        out.prog = cfg.prog ? { on: !!cfg.prog.on, chords: (cfg.prog.chords || []).length,
+                                parts: (cfg.prog.parts || []).length, salt: cfg.prog.salt || null } : null;
+        try {
+          out.core = { voices: _coreVoices.enabled(), strips: _coreVoices.stripsEnabled() };
+        } catch (e) { out.core = 'unreadable'; }
+        try { out.globalFx = { reverbType: globalFx.reverbType, warmthOn: !!globalFx.warmthOn,
+                               vinylOn: !!globalFx.vinylOn, ottOn: !!globalFx.ottOn, compOn: !!globalFx.compOn }; } catch (e) {}
+        const see = (L, key) => {
+          if (!L || L.on === false || L.present === false) return;
+          out.layers.push({
+            key, label: L.label || null, tone: L.tone || '', mute: !!L.mute, level: L.level,
+            bus: L.bus || 'a',
+            panMode: L.panMode || null, space: L.space,
+            spat: L.spat ? { on: !!L.spat.on, steps: L.spat.steps, width: L.spat.width } : null,
+            revSend: L.revSend | 0,
+            fx: ['delay', 'chorus', 'phaser', 'autopan', 'dist', 'glitch'].reduce((a, f) => {
+              if (L[f] && ((L[f].mix | 0) > 0 || L[f].dryKill)) a[f] = { mix: L[f].mix | 0, dryKill: !!L[f].dryKill };
+              return a;
+            }, {}),
+            wetOnly: !!L.wetOnly,
+          });
+        };
+        ['bed', 'motif', 'texture', 'beat'].forEach((k) => see(cfg[k], k));
+        (cfg.extras || []).forEach((x) => { if (x && x.type != null) see(x, x.type + ':' + x.id); });
+        (typeof _ambSeqList === 'function' ? _ambSeqList(cfg) : []).forEach((s) => see(s, 'seq:' + s.id));
+        (typeof _ambSampleList === 'function' ? _ambSampleList(cfg) : []).forEach((s) => see(s, 'samp:' + s.id));
+        // …and whatever the most recent bounce measured, so the settings and the
+        // symptom travel together.
+        const bank = _ambCaptureBank || [];
+        const last = bank.slice().reverse().find((x) => /bounce/i.test(String(x.source || '')));
+        if (last) out.lastBounce = { name: last.name, durSec: last.durSec, source: last.source };
+      } catch (e) { out.error = (e && e.message) || String(e); }
+      const txt = JSON.stringify(out, null, 1);
+      const done = () => { try { if (typeof showToast === 'function') showToast('Bounce diagnostic copied — paste it into the bug report.', { ms: 6000 }); } catch (e) {} };
+      try {
+        navigator.clipboard.writeText(txt).then(done, () => {
+          try { const t = document.createElement('textarea'); t.value = txt; document.body.appendChild(t);
+            t.select(); document.execCommand('copy'); t.remove(); done(); } catch (e2) {}
+        });
+      } catch (e) {
+        try { const t = document.createElement('textarea'); t.value = txt; document.body.appendChild(t);
+          t.select(); document.execCommand('copy'); t.remove(); done(); } catch (e2) {}
+      }
+      return txt;
     }
     // ---- DIFF TWO TAKES ----------------------------------------------------
     // Compare two files that are ALREADY IN THE BANK — the user's own capture

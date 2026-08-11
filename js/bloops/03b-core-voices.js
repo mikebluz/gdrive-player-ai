@@ -775,6 +775,9 @@
         off.strips.set(key, h);
         return h;
       }
+      // The offline node itself, so a bounce can TAP a strip's slot output for
+      // per-layer metering (the mix cannot show one layer dropping in and out).
+      function offlineNode() { return off ? off.node : null; }
       function offlineStats() { return off ? { sampOk: off.sampOk, sampFail: off.sampFail, bufs: off.sampleIdSeq } : null; }
       function offlineEnd() {
         if (!off) return 0;
@@ -821,7 +824,7 @@
       }
       return { enabled, stripsEnabled, eligible, noteOn, holdOn, sampleNoteOn, holdSampleOn, releaseSampleKeys, cancelFrom, stopBefore, stopAll, init, designParams,
                stripAcquire, stripRelease, stripRekey, stripFor, connectSend, _node: () => node,
-               offlineBegin, offlineEnd, offlineFlush, offlineStats, offlineActive: () => !!off };
+               offlineBegin, offlineEnd, offlineFlush, offlineStats, offlineNode, offlineActive: () => !!off };
     })();
     // Live A/B toggles from the console.
     try {

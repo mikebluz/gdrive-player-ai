@@ -26450,6 +26450,51 @@
     // configured sends + a reading of ~0 means the wet path is the fault;
     // configured sends + a healthy reading means the fault is downstream and
     // the wet path is exonerated. One node and ~100 port messages per render.
+    // PER-LAYER METER. A whole-mix statistic cannot see one layer dropping in
+    // and out — the other four hold the level up — which is why six rounds of
+    // mix measurements all came back healthy against a report of exactly that.
+    // This taps each layer's OWN strip output and posts a per-second rms, so
+    // the render can NAME the layer and the seconds it went quiet.
+    let _bloomLayerMeterUrl = null;
+    function _bloomLayerMeterUrlGet() {
+      if (_bloomLayerMeterUrl) return _bloomLayerMeterUrl;
+      // 375 blocks x 128 frames ~ 1 s at 48k; the exact bucket does not matter,
+      // only that it is the same for every layer in one render.
+      const src = 'class LM extends AudioWorkletProcessor{'
+        + 'constructor(){super();this.s=0;this.n=0;this.b=0;}'
+        + 'process(inputs){const i=inputs[0];'
+        + 'if(i&&i[0]){const L=i[0],R=i[1]||i[0];'
+        + 'for(let k=0;k<L.length;k++){this.s+=L[k]*L[k]+R[k]*R[k];}this.n+=L.length*2;}'
+        + 'if(++this.b>=375){this.port.postMessage(this.n?Math.sqrt(this.s/this.n):0);'
+        + 'this.s=0;this.n=0;this.b=0;}'
+        + 'return true;}}'
+        + 'registerProcessor("bloom-layer-meter",LM);';
+      try { _bloomLayerMeterUrl = URL.createObjectURL(new Blob([src], { type: 'application/javascript' })); }
+      catch (e) { _bloomLayerMeterUrl = null; }
+      return _bloomLayerMeterUrl;
+    }
+    // Given {key: [rms per second]}, name any layer that goes quiet and comes
+    // back — the signature of "cutting in and out", as distinct from a layer
+    // that simply stops (which ends and never returns).
+    function _bloomLayerDropouts(map) {
+      const out = [];
+      Object.keys(map || {}).forEach((k) => {
+        const a = (map[k] || []).filter((v) => Number.isFinite(v));
+        if (a.length < 6) return;
+        const sorted = a.slice().sort((x, y) => x - y);
+        const med = sorted[Math.floor(sorted.length / 2)];
+        if (!(med > 1e-5)) return;                       // layer never sounded — a different report
+        const quiet = [];
+        for (let i = 0; i < a.length; i++) if (a[i] < med * 0.12) quiet.push(i);
+        // ONE quiet second on a sparse layer is a musical rest, not a fault —
+        // a beat and a bass both showed exactly that on a healthy render. Two
+        // or more is a pattern worth naming.
+        if (quiet.length < 2) return;
+        const returns = quiet.some((i) => i < a.length - 1 && a[i + 1] > med * 0.5);
+        out.push({ key: k, quietAt: quiet.slice(0, 8), inAndOut: returns, secs: quiet.length });
+      });
+      return out;
+    }
     let _bloomMeterUrl = null;
     function _bloomWetMeterUrl() {
       if (_bloomMeterUrl) return _bloomMeterUrl;
@@ -26535,6 +26580,7 @@
       let _chainKinds = null;    // {core,node,names} — which chain each layer took (see the audit)
       let _peakVoices = 0;       // peak core voice concurrency across the checkpoints
       let _sampStats = null;     // {sampOk, sampFail, bufs} from the offline core
+      const _layerRms = {};      // per-layer per-second rms (see _bloomLayerMeterUrlGet)
       const _missing = [], _lostFx = [];
       // Tell playNote not to DEFER voice construction: the deferred-build queue is
       // pumped by a wall-clock timer that does not advance while an offline
@@ -26888,6 +26934,36 @@
               _bloomTrimGain.gain.value = Math.max(floorT, Math.min(1, 1 / Math.sqrt(Math.max(1, nBuilt))));
             }
           } catch (e) {}
+          // PER-LAYER METERS — tap each layer's own output so a single layer
+          // dropping in and out is visible (the mix hides it: see
+          // _bloomLayerMeterUrlGet).
+          try {
+            const lurl = _bloomLayerMeterUrlGet();
+            if (lurl && outStage && E3 && E3.mod) {
+              await Tone.getContext().rawContext.audioWorklet.addModule(lurl);
+              const lsink = new Tone.Gain(0); lsink.connect(outStage);
+              Object.keys(E3.mod).forEach((k) => {
+                if (k.indexOf('#') >= 0) return;
+                const e = E3.mod[k];
+                if (!e) return;
+                try {
+                  const mn = Tone.getContext().createAudioWorkletNode('bloom-layer-meter', {
+                    numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+                    channelCount: 2, channelCountMode: 'explicit',
+                  });
+                  const arr = (_layerRms[k] = []);
+                  mn.port.onmessage = (ev) => { if (typeof ev.data === 'number') arr.push(ev.data); };
+                  // A core strip's audio leaves the worklet on its slot output;
+                  // a node chain's leaves its panner.
+                  if (e.core && Number.isFinite(e.core.slot)) {
+                    const _on = _coreVoices.offlineNode && _coreVoices.offlineNode();
+                    if (_on) Tone.connect(_on, mn, e.core.slot, 0);
+                  } else if (e.pan) { Tone.connect(e.pan, mn); }
+                  Tone.connect(mn, lsink);
+                } catch (x) {}
+              });
+            }
+          } catch (e) {}
           // …and meter what actually reaches the FX returns (see _bloomWetMeterUrl).
           try {
             const murl = _bloomWetMeterUrl();
@@ -27197,6 +27273,17 @@
           Object.keys(s).forEach((nm) => { sendsWanted += (s[nm] | 0); });
         });
       } catch (e) {}
+      // NAME THE LAYER. "Layers cut in and out" survived six rounds of whole-mix
+      // measurement because the mix cannot see it; this states which layer went
+      // quiet and at which second, from the user's own render.
+      try {
+        const _dr = _bloomLayerDropouts(_layerRms);
+        _dr.slice(0, 4).forEach((d) => {
+          _missing.unshift('layer ' + d.key + (d.inAndOut ? ' CUTS IN AND OUT' : ' goes silent')
+            + ' (quiet at ' + d.quietAt.map((i) => i + 's').join(', ')
+            + (d.secs > d.quietAt.length ? ' …' : '') + ')');
+        });
+      } catch (e) {}
       if (_sampStats && _sampStats.sampFail > 0) {
         _missing.unshift(_sampStats.sampFail + ' sample note' + (_sampStats.sampFail === 1 ? '' : 's')
           + ' missed their layer strip (of ' + (_sampStats.sampOk + _sampStats.sampFail)
@@ -27214,6 +27301,7 @@
                chains: _chainKinds,
                peakVoices: _peakVoices,
                sampStats: _sampStats,
+               layerRms: _layerRms, dropouts: _bloomLayerDropouts(_layerRms),
                core: coreOn, coreNotes: coreTaken, samplers: samplerCount, checkpoints: checkpointsFired };
     }
     // NAME THE EXPORTS DIFFERENTLY. This file's top level is SCRIPT scope, so a
@@ -27292,6 +27380,8 @@
           + ((res.sampStats && res.sampStats.sampFail)
               ? (' · ' + res.sampStats.sampFail + ' SAMPLES MISSED STRIP') : '')
           + (res.peakVoices ? (' · peak ' + res.peakVoices + ' voices') : '')
+          + ((res.dropouts && res.dropouts.length)
+              ? (' · ' + res.dropouts.map((d) => d.key + (d.inAndOut ? ' IN/OUT' : ' SILENT')).join(', ')) : '')
           + ((res.wetRms == null) ? ''
              : (res.wetRms < 1e-6
                  ? (res.sendsWanted > 0 ? ' · FX RETURNS EMPTY' : ' · no sends')

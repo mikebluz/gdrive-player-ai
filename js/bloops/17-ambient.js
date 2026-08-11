@@ -26579,6 +26579,7 @@
       let _wetMeter = null;       // last {s,n} posted by the wet meter (see _bloomWetMeterUrl)
       let _chainKinds = null;    // {core,node,names} — which chain each layer took (see the audit)
       let _peakVoices = 0;       // peak core voice concurrency across the checkpoints
+      let _svoicePeak = 0;      // peak overlapping SAMPLE voices (pool is 64 — see the ladder)
       let _sampStats = null;     // {sampOk, sampFail, bufs} from the offline core
       const _layerRms = {};      // per-layer per-second rms (see _bloomLayerMeterUrlGet)
       const _missing = [], _lostFx = [];
@@ -26592,7 +26593,47 @@
       // the suspend checkpoints below. CHUNK spaces the checkpoints; LOOK is
       // how far past the next checkpoint a batch schedules, so a note near a
       // boundary is always delivered before the render clock reaches it.
-      const CHUNK = 2, LOOK = 2.5;
+      // SAMPLE VOICES HAVE THEIR OWN, MUCH SMALLER POOL — MAX_SVOICES = 64 in
+      // dsp/src/sample.rs against 256 for synth voices, and `active_voices()`
+      // counts ONLY the synth pool, so sample pressure is invisible to every
+      // stat this render reports (a "peak 14 voices" reading was measuring
+      // nothing relevant). `snote` allocates its slot AT DELIVERY, not at
+      // onset, so a note handed over 4.5 s early holds a voice for that whole
+      // 4.5 s; live only ever schedules ~1.4 s ahead, so the old fixed window
+      // ran ~3x live's occupancy. Past MAX_SVOICES, alloc_svoice steals the most-decayed
+      // voice SILENTLY — heard as the sample layers, and only those, cutting in
+      // and out while the synth layers play on.
+      // So size the window to the project: widest first, for render speed.
+      let CHUNK = 2, LOOK = 2.5;
+      try {
+        const _sn = notes.filter((n) => {
+          const ty = (n.params && n.params.type) || '';
+          return typeof ty === 'string' && ty.indexOf('sample:') === 0;
+        }).map((n) => ({ at: n.at, end: n.at + Math.max(0.05, (n.dur || 100) / 1000) }));
+        if (_sn.length) {
+          // Voices held for lookahead W: a note occupies from (onset − W), when
+          // it is handed over, until its own end.
+          const peakFor = (W) => {
+            const ev = [];
+            _sn.forEach((n) => { ev.push([n.at - W, 1]); ev.push([n.end, -1]); });
+            ev.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+            let cur = 0, mx = 0;
+            for (const e of ev) { cur += e[1]; if (cur > mx) mx = cur; }
+            return mx;
+          };
+          const SAFE = 144;                     // headroom under MAX_SVOICES (192)
+          const LADDER = [[2, 2.5], [1, 1.25], [0.5, 0.7], [0.3, 0.4]];
+          for (const cand of LADDER) {
+            CHUNK = cand[0]; LOOK = cand[1];
+            _svoicePeak = peakFor(CHUNK + LOOK);
+            if (_svoicePeak <= SAFE) break;
+          }
+          if (_svoicePeak > SAFE) {
+            _missing.push('this project overlaps ' + _svoicePeak + ' sample voices — the core holds 192, '
+              + 'so some are stolen (sample layers cut in and out)');
+          }
+        }
+      } catch (e) {}
       let deliverUpTo = null;         // (untilAt) -> void
       let checkpointsFired = 0;
       const _t0poll = (typeof performance !== 'undefined') ? performance.now() : 0;
@@ -27322,6 +27363,7 @@
                missing: _missing, wetErr: _wetErr, lostFx: _lostFx, wetRms, sendsWanted,
                chains: _chainKinds,
                peakVoices: _peakVoices,
+               svoicePeak: _svoicePeak, lookahead: CHUNK + LOOK,
                sampStats: _sampStats,
                layerRms: _layerRms, dropouts: _bloomLayerDropouts(_layerRms),
                core: coreOn, coreNotes: coreTaken, samplers: samplerCount, checkpoints: checkpointsFired };
@@ -27402,6 +27444,7 @@
           + ((res.sampStats && res.sampStats.sampFail)
               ? (' · ' + res.sampStats.sampFail + ' SAMPLES MISSED STRIP') : '')
           + (res.peakVoices ? (' · peak ' + res.peakVoices + ' voices') : '')
+          + (res.svoicePeak ? (' · ' + res.svoicePeak + ' smp voices' + (res.svoicePeak > 144 ? ' OVER POOL' : '')) : '')
           + ((res.dropouts && res.dropouts.length)
               ? (' · ' + res.dropouts.map((d) => d.key + (d.inAndOut ? ' IN/OUT' : ' SILENT')).join(', ')) : '')
           + ((res.wetRms == null) ? ''

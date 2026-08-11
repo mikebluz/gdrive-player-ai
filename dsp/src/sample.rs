@@ -34,7 +34,17 @@
 use crate::{DT, OUT, PARAMS, SLOTS, SR};
 
 const MAX_SAMPLES: usize = 96;
-const MAX_SVOICES: usize = 64;
+// 192, raised from 64 (2026-08-11). Sample notes render in the core on every
+// path now — live playback AND the offline bounce — so a project whose layers
+// are samples routinely overlaps more than 64 voices: measured 60 for four
+// piano layers and 126 for six, with long sustains overlapping by nature.
+// Past the cap alloc_svoice steals the most-decayed voice SILENTLY, heard as
+// the sample layers (and only those) cutting in and out while synth layers,
+// which have a 256-slot pool of their own, play on untouched. Live masks it
+// because _enforceVoiceBudget caps concurrency before the core ever sees it;
+// the bounce deliberately bypasses that budget (bypassing it is what stopped
+// dense projects rendering SILENT), so the bounce is where it bites.
+const MAX_SVOICES: usize = 192;
 
 // ---- PCM heap (bump allocator over memory.grow) ------------------------------
 #[derive(Clone, Copy)]

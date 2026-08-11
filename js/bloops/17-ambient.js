@@ -27074,12 +27074,27 @@
           // Core routing: first 16 distinct eligible layer keys get slots
           // (mirrors _offSlotFor's first-seen allocation); everything else —
           // ineligible types, overflow keys — is a Tone voice, built now.
+          // SAMPLES RENDER IN THE CORE TOO NOW, so they must be BATCHED like
+          // every other core note. `eligible()` only answers for synth kinds
+          // (kindFor returns null for 'sample:*'), so before this a sample note
+          // was delivered UP FRONT — fine while samples went to a Tone sampler,
+          // fatal once they post to the core: a whole project's sample notes
+          // arrived at once, overran the ~256-voice pool, and alloc_voice stole
+          // them. Heard as "every layer except the synth one cuts out after a
+          // few seconds" — the synth layer survived precisely because it WAS
+          // batched.
+          let _stripsOn = false;
+          try { _stripsOn = !!(_coreVoices.stripsEnabled && _coreVoices.stripsEnabled()); } catch (e) {}
+          const _isSampleTy = (ty) => typeof ty === 'string' && ty.indexOf('sample:') === 0;
+          const _coreRenders = (n) => {
+            const ty = (n.params && n.params.type) || 'sine';
+            if (_isSampleTy(ty)) return _stripsOn;      // → _offSampleNoteOn, in the layer's slot
+            try { return _coreVoices.eligible(ty, n.params) === true; } catch (e) { return false; }
+          };
           const coreKeys = new Set();
           if (coreOn) {
             for (const n of notes) {
-              const ty = (n.params && n.params.type) || 'sine';
-              let el = false; try { el = _coreVoices.eligible(ty, n.params) === true; } catch (e) {}
-              if (!el) continue;
+              if (!_coreRenders(n)) continue;
               const k = n.key || 'live';
               if (coreKeys.size >= 16 && !coreKeys.has(k)) continue;
               coreKeys.add(k);
@@ -27088,7 +27103,7 @@
           const isCore = (n) => {
             if (!coreOn) return false;
             if (!coreKeys.has(n.key || 'live')) return false;
-            try { return _coreVoices.eligible((n.params && n.params.type) || 'sine', n.params) === true; } catch (e) { return false; }
+            return _coreRenders(n);
           };
           const coreNotes = [];
           for (const n of notes) { if (isCore(n)) coreNotes.push(n); else deliverNote(n); }

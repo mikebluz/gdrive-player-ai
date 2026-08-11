@@ -199,7 +199,7 @@
       // Returns null when strips are off / engine not ready / out of slots —
       // caller falls back to the node strip.
       function stripAcquire(key, bus) {
-        if (off) return stripsEnabled() ? _offStripAcquire(key, bus) : null;   // bounce in flight
+        if (offline()) return stripsEnabled() ? _offStripAcquire(key, bus) : null;   // bounce in flight
         if (!stripsEnabled() || failed || !bus) return null;
         if (!ready) { init(); return null; }
         if (!_running()) return null;
@@ -233,7 +233,7 @@
         return h;
       }
       function stripRelease(key) {
-        if (off) { const oh = off.strips.get(key); if (oh) { off.strips.delete(key); off.slots.delete(key); try { oh.input.dispose(); } catch (e) {} } return; }
+        if (offline()) { const oh = off.strips.get(key); if (oh) { off.strips.delete(key); off.slots.delete(key); try { oh.input.dispose(); } catch (e) {} } return; }
         const h = stripByKey.get(key);
         if (!h) return;
         stripByKey.delete(key);
@@ -249,7 +249,7 @@
       // its gate fade + voice stops hit the old slot, and the fresh build
       // acquires a new one.
       function stripRekey(oldKey, newKey) {
-        if (off) { const oh = off.strips.get(oldKey); if (oh) { off.strips.delete(oldKey); off.strips.set(newKey, oh); oh.key = newKey;
+        if (offline()) { const oh = off.strips.get(oldKey); if (oh) { off.strips.delete(oldKey); off.strips.set(newKey, oh); oh.key = newKey;
           const os = off.slots.get(oldKey); off.slots.delete(oldKey); off.slots.set(newKey, os); } return; }
         const h = stripByKey.get(oldKey);
         if (!h) return;
@@ -260,7 +260,7 @@
         slotByKey.delete(oldKey);
         slotByKey.set(newKey, s);
       }
-      function stripFor(key) { return off ? (off.strips.get(key) || null) : (stripByKey.get(key) || null); }
+      function stripFor(key) { return offline() ? (off.strips.get(key) || null) : (stripByKey.get(key) || null); }
       // ---- Phase 3: sample voices ----------------------------------------
       // PCM buffers transfer to the core ONCE (keyed by the app's buffer key,
       // e.g. 'pianoC4#60' or '...#loop'); voices then play by id. The core
@@ -313,7 +313,7 @@
       // window in BUFFER seconds, loop window). Returns a truthy tag when
       // taken; 0 → node path.
       function sampleNoteOn(key, dest, o) {
-        if (off) return false;   // bounce in flight -> node/sampler path
+        if (offline()) return false;   // bounce in flight -> node/sampler path
         if (!stripsEnabled() || failed) return 0;
         if (!ready) { init(); return 0; }
         if (!_running()) return 0;
@@ -343,7 +343,7 @@
       // rides srate_tag (absolute mult vs the base rate), so held-press pitch
       // bends work like the synth holdOn's bendTag.
       function holdSampleOn(key, dest, o) {
-        if (off) return null;   // bounce in flight -> node/sampler path
+        if (offline()) return null;   // bounce in flight -> node/sampler path
         if (!stripsEnabled() || failed) return null;
         if (!ready) { init(); return null; }
         if (!_running()) return null;
@@ -392,7 +392,7 @@
         // Offline: claim THIS render's summed reverb-send bus (output 16) for
         // the offline reverb — without it a core-strip bounce loses every
         // per-layer Reverb send.
-        if (off) {
+        if (offline()) {
           if (!dest) return;
           try {
             if (!off.sendVia) { off.sendVia = Tone.getContext().rawContext.createGain(); Tone.connect(off.node, off.sendVia, SLOTS, 0); }
@@ -527,7 +527,7 @@
       }
       // Returns true when the note was taken by the core.
       function noteOn(key, dest, o) {
-        if (off) return _offNoteOn(key, dest, o);   // bounce in flight → its own node
+        if (offline()) return _offNoteOn(key, dest, o);   // bounce in flight → its own node
         if (!enabled() || failed) return false;
         if (!ready) { init(); return false; }  // warm up; fall back meanwhile
         if (!_running()) return false;         // cold start → node engine handles the resume dance
@@ -546,7 +546,7 @@
       // compatible with startSustainedNote's contract, or null → node engine.
       let tagSeq = 0;
       function holdOn(key, dest, o) {
-        if (off) return null;                       // bounce in flight → node engine for holds
+        if (offline()) return null;                 // bounce in flight → node engine for holds
         if (!enabled() || failed || !ready || !_running()) { if (!ready && enabled()) init(); return null; }
         const slot = slotFor(key, dest);
         if (slot < 0) return null;
@@ -605,6 +605,16 @@
       // slot maps; the live node and its state are never touched.
       let _wasmCopy = null;   // cached module bytes (init() stores them — see the transfer note there)
       let off = null;         // active offline session, or null
+      // A session is only honoured while 17-ambient's render flag is ALSO up.
+      // Both are cleared in the same finally, so a bounce that throws, hangs or
+      // returns early can never leave live playback routed at a dead offline
+      // node — which silently costs the reverb send bus (connectSend) and every
+      // strip, i.e. "no reverb on normal playback".
+      const offline = () => {
+        if (!off) return false;
+        try { if (typeof window !== 'undefined' && !window.__bloopsOfflineRender) return false; } catch (e) {}
+        return true;
+      };
       async function offlineBegin(timeoutMs) {
         if (off) return null;               // one at a time
         if (!enabled()) return null;        // the kill switch governs offline too

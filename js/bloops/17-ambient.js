@@ -26485,8 +26485,8 @@
       }
       _narrate();
       _pollT = setInterval(_narrate, 500);
+      const prevE2 = (typeof _E !== 'undefined') ? _E : undefined;
       try {
-        const prevE2 = (typeof _E !== 'undefined') ? _E : undefined;
         say('2/4 Preparing instruments…');
         phase('instruments', {});
         buffer = await Tone.Offline(async () => {
@@ -26912,10 +26912,15 @@
           if (coreOn) { try { await _coreVoices.offlineFlush(); } catch (e) {} }
           _renderStarted = true; _narrate();
         }, seconds);
-        if (prevE2 !== undefined) _E = prevE2;
       } catch (e) {
         return { buffer: null, notes: notes.length, reason: 'render failed: ' + ((e && e.message) || e) };
       } finally {
+        // RESTORE _E HERE, not on the happy path. The module-global _E is what
+        // _ambSyncMods / _ambEnsureReverb / _ambLayerDest all read, so a bounce
+        // that THREW left every later live call operating on the dead offline
+        // engine — live chains and the reverb send would be built against a
+        // disposed context, i.e. no reverb on normal playback.
+        if (prevE2 !== undefined) { try { _E = prevE2; } catch (e2) {} }
         if (_pollT) { try { clearInterval(_pollT); } catch (e2) {} }
         if (_OAC && _origSR) { try { _OAC.prototype.startRendering = _origSR; } catch (e2) {} }
         try { coreTaken = (typeof _coreVoices !== 'undefined') ? _coreVoices.offlineEnd() : 0; } catch (e2) {}

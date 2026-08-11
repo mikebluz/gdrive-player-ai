@@ -10,7 +10,8 @@
     "test:golden": "node test/golden-render.js",
     "samples": "node tools/import-samples.mjs",
     "radio": "node tools/add-radio-track.mjs",
-    "desktop:build": "node tools/build-desktop.mjs"
+    "desktop:build": "node tools/build-desktop.mjs",
+    "test:bounce": "node test/bounce-parity.js"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

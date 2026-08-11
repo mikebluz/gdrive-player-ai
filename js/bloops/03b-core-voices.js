@@ -341,11 +341,16 @@
       // layers are samples then bounces mono and dry. Returns 0 on any miss so
       // the caller still has the node path to fall back to.
       function _offSampleNoteOn(key, dest, o) {
-        if (!stripsEnabled() || !dest) return 0;
+        // Every `return 0` here drops the note to the plain offline sampler,
+        // which is wired at the MASTER STAGE — so it sounds with no level, no
+        // pan and no FX. A layer whose notes alternate between the two reads as
+        // "cutting in and out", and nothing used to count them; off.sampFail is
+        // what makes that audible failure a number.
+        if (!stripsEnabled() || !dest) { off.sampFail++; return 0; }
         const slot = _offSlotFor(key, dest);
-        if (slot == null || slot < 0) return 0;
+        if (slot == null || slot < 0) { off.sampFail++; return 0; }
         const id = _offEnsureSample(o.bufKey, o.buf);
-        if (id < 0) return 0;
+        if (id < 0) { off.sampFail++; return 0; }
         const sp = new Float32Array(15);
         sp[0] = id; sp[1] = o.rate; sp[2] = o.gl; sp[3] = o.gr;
         sp[4] = o.a; sp[5] = o.d; sp[6] = o.s; sp[7] = o.r;
@@ -361,8 +366,8 @@
             cmd: 'snote', slot, t: (typeof o.t === 'number' && o.t > 0) ? o.t : 0,
             dur: o.dur, tag: 0, sp,
           });
-        } catch (e) { return 0; }
-        off.taken++;
+        } catch (e) { off.sampFail++; return 0; }
+        off.taken++; off.sampOk++;
         return 1;
       }
       function sampleNoteOn(key, dest, o) {
@@ -699,7 +704,7 @@
           off = { node: n2, slots: new Map(), dests: new Array(SLOTS).fill(null), taken: 0,
                   strips: new Map(), post: (m) => { try { n2.port.postMessage(m); } catch (e) {} }, sendVia: null,
                   // this render's OWN sample-buffer table (see _offEnsureSample)
-                  sampleIdByKey: new Map(), sampleIdSeq: 0 };
+                  sampleIdByKey: new Map(), sampleIdSeq: 0, sampOk: 0, sampFail: 0 };
           return true;
         } catch (e) {
           try { console.warn('[bloops-core] offline session unavailable:', e); } catch (x) {}
@@ -719,7 +724,13 @@
           const prev = n2.port.onmessage;
           n2.port.onmessage = (e) => {
             const d = e.data || {};
-            if (d.stats) { clearTimeout(to); n2.port.onmessage = prev; resolve(true); return; }
+            // Resolve with the core's ACTIVE VOICE COUNT, not a bare true: the
+            // pool steals past its cap, and a bounce that delivers a wider
+            // lookahead than live playback can sit near that cap without any
+            // other signal — "layers cut in and out". The caller records the
+            // peak so the render can report it instead of it being invisible.
+            if (d.stats) { clearTimeout(to); n2.port.onmessage = prev;
+              resolve((d.stats && typeof d.stats.voices === 'number') ? d.stats.voices : true); return; }
             if (prev) prev(e);
           };
           try { n2.port.postMessage({ cmd: 'stats' }); } catch (e) { clearTimeout(to); n2.port.onmessage = prev; resolve(false); }
@@ -764,6 +775,7 @@
         off.strips.set(key, h);
         return h;
       }
+      function offlineStats() { return off ? { sampOk: off.sampOk, sampFail: off.sampFail, bufs: off.sampleIdSeq } : null; }
       function offlineEnd() {
         if (!off) return 0;
         const taken = off.taken;
@@ -809,7 +821,7 @@
       }
       return { enabled, stripsEnabled, eligible, noteOn, holdOn, sampleNoteOn, holdSampleOn, releaseSampleKeys, cancelFrom, stopBefore, stopAll, init, designParams,
                stripAcquire, stripRelease, stripRekey, stripFor, connectSend, _node: () => node,
-               offlineBegin, offlineEnd, offlineFlush, offlineActive: () => !!off };
+               offlineBegin, offlineEnd, offlineFlush, offlineStats, offlineActive: () => !!off };
     })();
     // Live A/B toggles from the console.
     try {

@@ -26533,6 +26533,8 @@
       let samplerCount = 0, _masterBuilt = false, _busRig = null, _wetErr = null, _bloomTrimGain = null;
       let _wetMeter = null;       // last {s,n} posted by the wet meter (see _bloomWetMeterUrl)
       let _chainKinds = null;    // {core,node,names} — which chain each layer took (see the audit)
+      let _peakVoices = 0;       // peak core voice concurrency across the checkpoints
+      let _sampStats = null;     // {sampOk, sampFail, bufs} from the offline core
       const _missing = [], _lostFx = [];
       // Tell playNote not to DEFER voice construction: the deferred-build queue is
       // pumped by a wall-clock timer that does not advance while an offline
@@ -26585,7 +26587,15 @@
                   if (deliverUpTo) deliverUpTo(t + CHUNK + LOOK);
                   // drain the core's port before resuming — a note posted for
                   // t+0.1 must be IN the core before the clock passes it
-                  try { if (typeof _coreVoices !== 'undefined' && _coreVoices.offlineActive()) await _coreVoices.offlineFlush(); } catch (e) {}
+                  try {
+                    if (typeof _coreVoices !== 'undefined' && _coreVoices.offlineActive()) {
+                      const _v = await _coreVoices.offlineFlush();
+                      // Peak core concurrency. The pool STEALS past its cap, and
+                      // stealing is silent — this is the only number that says a
+                      // render was near it (heard as layers cutting in and out).
+                      if (typeof _v === 'number' && _v > _peakVoices) _peakVoices = _v;
+                    }
+                  } catch (e) {}
                   _renderFrac = Math.max(_renderFrac, Math.min(1, t / dur));
                   try { if (onProgress) onProgress(_renderFrac); } catch (e) {}
                   _narrate();
@@ -27129,6 +27139,8 @@
         if (prevE2 !== undefined) { try { _E = prevE2; } catch (e2) {} }
         if (_pollT) { try { clearInterval(_pollT); } catch (e2) {} }
         if (_OAC && _origSR) { try { _OAC.prototype.startRendering = _origSR; } catch (e2) {} }
+        // read the sample-path stats BEFORE offlineEnd() drops the session
+        try { if (typeof _coreVoices !== 'undefined' && _coreVoices.offlineStats) _sampStats = _coreVoices.offlineStats(); } catch (e2) {}
         try { coreTaken = (typeof _coreVoices !== 'undefined') ? _coreVoices.offlineEnd() : 0; } catch (e2) {}
         try { if (typeof window._bloomOfflineScope === 'function') window._bloomOfflineScope(null); } catch (e2) {}
         try { if (typeof window !== 'undefined') window.__bloopsOfflineRender = false; } catch (e2) {}
@@ -27169,6 +27181,12 @@
           Object.keys(s).forEach((nm) => { sendsWanted += (s[nm] | 0); });
         });
       } catch (e) {}
+      if (_sampStats && _sampStats.sampFail > 0) {
+        _missing.unshift(_sampStats.sampFail + ' sample note' + (_sampStats.sampFail === 1 ? '' : 's')
+          + ' missed their layer strip (of ' + (_sampStats.sampOk + _sampStats.sampFail)
+          + ') — those play with no level, pan or FX'
+          + (_sampStats.bufs >= 96 ? ', and the render ran out of sample buffer slots' : ''));
+      }
       if (sendsWanted > 0 && wetRms !== null && wetRms < 1e-6) {
         _missing.unshift('the FX RETURNS carried NO signal — this project has sends turned up '
           + '(' + sendsWanted + ' total) but nothing reached the reverb/delay returns');
@@ -27178,6 +27196,8 @@
                xRealtime: wall > 0 ? seconds / wall : 0, peak, wet: wetOut, master: _masterBuilt,
                missing: _missing, wetErr: _wetErr, lostFx: _lostFx, wetRms, sendsWanted,
                chains: _chainKinds,
+               peakVoices: _peakVoices,
+               sampStats: _sampStats,
                core: coreOn, coreNotes: coreTaken, samplers: samplerCount, checkpoints: checkpointsFired };
     }
     // NAME THE EXPORTS DIFFERENTLY. This file's top level is SCRIPT scope, so a
@@ -27250,6 +27270,12 @@
           + (_dryRender ? ' · DRY — no FX' : (res.core ? ' · core' : ' · node'))
           + (res.chains ? (' · ' + res.chains.core + ' strip/' + res.chains.node + ' node') : '')
           + (_bWidth == null ? '' : (_bWidth < 0.05 ? ' · MONO' : ' · width ' + _bWidth.toFixed(2)))
+          // Sample notes that MISSED their strip fall to the bare sampler at the
+          // master stage — no level, no pan, no FX — so a layer alternating
+          // between the two reads as "cutting in and out". Silent until now.
+          + ((res.sampStats && res.sampStats.sampFail)
+              ? (' · ' + res.sampStats.sampFail + ' SAMPLES MISSED STRIP') : '')
+          + (res.peakVoices ? (' · peak ' + res.peakVoices + ' voices') : '')
           + ((res.wetRms == null) ? ''
              : (res.wetRms < 1e-6
                  ? (res.sendsWanted > 0 ? ' · FX RETURNS EMPTY' : ' · no sends')

@@ -26824,6 +26824,22 @@
             });
             E3.rng = (cap.cfg.seed >>> 0) || 1;
             E3._everRan = true;
+            // ANCHOR THE GRID, exactly as pass 1 does for its own engine. Every
+            // tick-scheduled SIGNAL (trance gate, unit-gate chop) anchors its bar
+            // grid on `_playStartAt`, falling back to `_progAnchor` and then to
+            // NOW — and "now" in the offline sub-step loop is the loop variable,
+            // stepping 0, 0.5, 1.0, … So with these unset the gate grid
+            // RE-ANCHORED every half second, restarting the pattern instead of
+            // locking to the bar: a gated layer switched on and off at incoherent
+            // times for the whole render. Heard as "the layers cut in and out",
+            // with ungated layers (and the synth bass) untouched — which is why
+            // no note, chain, voice or FX measurement could see it.
+            // 0 is the render's own origin: offline times are absolute buffer
+            // positions, so bar 1 begins at 0.
+            E3._playStartAt = 0;
+            E3._pressAt = 0;
+            E3._barGridAnchor = 0;
+            E3._bounceGrid = true;
             _E = E3;
             // DO NOT SWALLOW THIS. A single throw in here used to set wet=false
             // and send every note straight to the output stage — a completely

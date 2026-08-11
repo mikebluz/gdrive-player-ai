@@ -23346,6 +23346,7 @@
         { label: '⚡ Bounce 2 min',  fn: () => _ambBounceBeginOffline(E, 120) },
         { label: '⚡ Bounce 5 min',  fn: () => _ambBounceBeginOffline(E, 300) },
         { label: '⚖ Compare bounce with live — measure the difference', fn: () => { _ambBounceVerify(E, 8); } },
+        { label: '⚖ Diff my capture vs my bounce — compare the two files', fn: () => { _ambDiffTakes(E); } },
         { label: '⚡ Bounce — custom seconds…', fn: () => {
           let s = null; try { s = prompt('Bounce length in seconds:', '120'); } catch (e) {}
           if (s == null) return;
@@ -23471,6 +23472,114 @@
       }
       return res;
     }
+    // ---- DIFF TWO TAKES ----------------------------------------------------
+    // Compare two files that are ALREADY IN THE BANK — the user's own capture
+    // and their own bounce — instead of anything synthetic. This is the test
+    // that should have existed first: their artifacts, their project, their
+    // ears' disagreement made numeric.
+    async function _ambDiffTakes(E) {
+      const bank = _ambCaptureBank || [];
+      const bounce = bank.slice().reverse().find(x => /bounce/i.test(String(x.source || '')));
+      const cap = bank.slice().reverse().find(x => x !== bounce && !/bounce/i.test(String(x.source || '')));
+      if (!cap || !bounce) {
+        alert('Need one CAPTURE and one BOUNCE in the bank.\n\n'
+          + 'Record a capture, then bounce the same passage, then run this again.');
+        return null;
+      }
+      const prog = (typeof showRenderProgressModal === 'function')
+        ? showRenderProgressModal('Comparing your two takes…') : null;
+      const out = { capName: cap.name, bounceName: bounce.name };
+      try {
+        const ctx = new OfflineAudioContext(2, 44100, 44100);
+        const dec = async (rec) => ctx.decodeAudioData(await rec.blob.arrayBuffer());
+        const A = await dec(cap), B = await dec(bounce);
+        const first = (d) => { const x = d.getChannelData(0);
+          for (let i = 0; i < x.length; i++) if (Math.abs(x[i]) > 0.005) return i; return 0; };
+        const aL = A.getChannelData(0), aR = A.numberOfChannels > 1 ? A.getChannelData(1) : aL;
+        const bL = B.getChannelData(0), bR = B.numberOfChannels > 1 ? B.getChannelData(1) : bL;
+        const ao = first(A), bo = first(B), SR = A.sampleRate;
+        const N = 8192;
+        const bandOf = (X, s) => {
+          const re = new Float64Array(N), im = new Float64Array(N);
+          for (let i = 0; i < N; i++) { const w = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1)); re[i] = (X[s + i] || 0) * w; }
+          for (let i = 1, j = 0; i < N; i++) { let bt = N >> 1; for (; j & bt; bt >>= 1) j ^= bt; j ^= bt;
+            if (i < j) { const t1 = re[i]; re[i] = re[j]; re[j] = t1; const t2 = im[i]; im[i] = im[j]; im[j] = t2; } }
+          for (let L2 = 2; L2 <= N; L2 <<= 1) { const an = -2 * Math.PI / L2;
+            for (let i = 0; i < N; i += L2) for (let k = 0; k < L2 / 2; k++) {
+              const wr = Math.cos(an * k), wi = Math.sin(an * k);
+              const ur = re[i + k], ui = im[i + k];
+              const vr = re[i + k + L2 / 2] * wr - im[i + k + L2 / 2] * wi;
+              const vi = re[i + k + L2 / 2] * wi + im[i + k + L2 / 2] * wr;
+              re[i + k] = ur + vr; im[i + k] = ui + vi;
+              re[i + k + L2 / 2] = ur - vr; im[i + k + L2 / 2] = ui - vi; } }
+          const ed = [0, 120, 400, 1200, 3500, 10000, 22050], o = new Array(6).fill(0);
+          for (let bi = 1; bi < N / 2; bi++) { const f = bi * SR / N, pw = re[bi] * re[bi] + im[bi] * im[bi];
+            for (let k = 0; k < 6; k++) if (f >= ed[k] && f < ed[k + 1]) o[k] += pw; }
+          return o;
+        };
+        const W = Math.floor(SR * 0.5);
+        const nW = Math.max(0, Math.min(Math.floor((aL.length - ao) / W), Math.floor((bL.length - bo) / W), 40) - 1);
+        const acc = new Array(6).fill(0), cnt = new Array(6).fill(0);
+        let worst = 0, worstAt = 0;
+        const widthOf = (L, R, s) => { let a = 0, b2 = 0, d = 0;
+          for (let i = s; i < s + W && i < L.length; i++) { a += L[i] * L[i]; b2 += R[i] * R[i]; d += L[i] * R[i]; }
+          return a > 1e-9 ? 1 - (d / Math.max(1e-12, Math.sqrt(a * b2))) : null; };
+        let wA = 0, wB = 0, wN = 0;
+        for (let w = 1; w < nW; w++) {
+          const ca = bandOf(aL, ao + w * W), cb = bandOf(bL, bo + w * W);
+          let wsum = 0;
+          for (let k = 0; k < 6; k++) {
+            if (ca[k] > 1e-12 && cb[k] > 1e-12) { const d = 10 * Math.log10(cb[k] / ca[k]);
+              acc[k] += d; cnt[k]++; wsum += Math.abs(d); }
+          }
+          if (wsum / 6 > worst) { worst = wsum / 6; worstAt = w * 0.5; }
+          const x = widthOf(aL, aR, ao + w * W), y = widthOf(bL, bR, bo + w * W);
+          if (x !== null && y !== null) { wA += x; wB += y; wN++; }
+        }
+        out.bands = acc.map((v, i) => cnt[i] ? v / cnt[i] : null);
+        out.worst = worst; out.worstAt = worstAt;
+        out.widthCap = wN ? wA / wN : null; out.widthBounce = wN ? wB / wN : null;
+        out.windows = nW;
+        out.durCap = A.duration; out.durBounce = B.duration;
+      } catch (e) { out.error = (e && e.message) || String(e); }
+      try { if (prog) { prog.markDone(); prog.close(); } } catch (e) {}
+      _ambShowDiffResult(out);
+      return out;
+    }
+    function _ambShowDiffResult(o) {
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+      const nm = ['sub', 'low', 'lo-mid', 'mid', 'high', 'air'];
+      let verdict = '', rows = '';
+      if (o.error) verdict = '<b>Comparison failed:</b> ' + esc(o.error);
+      else {
+        const big = (o.bands || []).map((v, i) => ({ v, n: nm[i] })).filter(x => x.v !== null && Math.abs(x.v) > 2);
+        const wd = (o.widthCap !== null && o.widthBounce !== null) ? Math.abs(o.widthBounce - o.widthCap) : 0;
+        const parts = [];
+        if (big.length) parts.push('tone differs in <b>' + big.map(x => esc(x.n) + ' ' + (x.v > 0 ? '+' : '') + x.v.toFixed(1) + ' dB').join(', ') + '</b>');
+        if (wd > 0.12) parts.push('<b>stereo width differs</b> (' + o.widthCap.toFixed(2) + ' capture vs ' + o.widthBounce.toFixed(2) + ' bounce)');
+        if (o.worst > 8) parts.push('<b>they diverge strongly at ' + o.worstAt.toFixed(1) + 's</b> (' + o.worst.toFixed(0) + ' dB average across bands) — that size of swing means they are playing DIFFERENT MATERIAL there, not the same music processed differently');
+        verdict = parts.length ? ('Differences found: ' + parts.join('; ') + '.')
+          : 'These two takes match within about 2 dB in every band, and their stereo width agrees. If they still sound different to you, the difference is not level, tone or width — tell me what you hear and I will measure that instead.';
+        rows = '<table class="ambient-verify-tbl"><tr><th>band</th><th>bounce − capture</th></tr>'
+          + (o.bands || []).map((v, i) => '<tr><td>' + nm[i] + '</td><td>' + (v === null ? '—' : (v > 0 ? '+' : '') + v.toFixed(1) + ' dB') + '</td></tr>').join('')
+          + '<tr><td>stereo width</td><td>' + (o.widthCap === null ? '—' : o.widthCap.toFixed(2) + ' → ' + o.widthBounce.toFixed(2)) + '</td></tr>'
+          + '</table>';
+      }
+      const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-step-modal-ov';
+      ov.innerHTML = '<div class="sm-modal ambient-step-modal">' +
+        '<div class="sm-title">Capture vs bounce</div>' +
+        '<div class="ambient-step-modal-body">' +
+          '<div class="ambient-hint" style="white-space:normal">capture: <b>' + esc(o.capName || '?') + '</b> (' + (o.durCap || 0).toFixed(1) + 's) · bounce: <b>' + esc(o.bounceName || '?') + '</b> (' + (o.durBounce || 0).toFixed(1) + 's)</div>' +
+          '<div class="ambient-pm-modal-hint">' + verdict + '</div>' + rows +
+        '</div>' +
+        '<div class="sm-footer"><button type="button" class="sm-apply">Done</button></div></div>';
+      document.body.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+      ov.addEventListener('click', (ev) => {
+        if (ev.target === ov || (ev.target.closest && ev.target.closest('.sm-apply'))) { try { ov.remove(); } catch (e) {} }
+      });
+    }
+    try { if (typeof window !== 'undefined') window._bloomDiffTakes = () => _ambDiffTakes(_masterEng); } catch (e) {}
     // ---- COMPARE WITH LIVE -------------------------------------------------
     // The bounce rebuilds the whole signal path offline, so any piece that is
     // missing or mis-levelled is inaudible to construction checks — five

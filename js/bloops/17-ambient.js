@@ -23340,19 +23340,22 @@
         // without this the menu showed TWO identical "30 sec / 1 min / 2 min"
         // lists and the only thing distinguishing them was an unclickable
         // heading, which read as "Bounce can't be selected".
-        { label: '⚡ Bounce — records the live output (matches playback)', disabled: true },
-        { label: '⚡ Bounce 30 sec', fn: () => _ambBounceBegin(E, 30) },
-        { label: '⚡ Bounce 1 min',  fn: () => _ambBounceBegin(E, 60) },
-        { label: '⚡ Bounce 2 min',  fn: () => _ambBounceBegin(E, 120) },
-        { label: '⚡ Bounce 5 min',  fn: () => _ambBounceBegin(E, 300) },
+        { label: '⚡ Bounce — silent, faster than real time', disabled: true },
+        { label: '⚡ Bounce 30 sec', fn: () => _ambBounceBeginOffline(E, 30) },
+        { label: '⚡ Bounce 1 min',  fn: () => _ambBounceBeginOffline(E, 60) },
+        { label: '⚡ Bounce 2 min',  fn: () => _ambBounceBeginOffline(E, 120) },
+        { label: '⚡ Bounce 5 min',  fn: () => _ambBounceBeginOffline(E, 300) },
         { label: '⚖ Compare bounce with live — measure the difference', fn: () => { _ambBounceVerify(E, 8); } },
         { label: '⚡ Bounce — custom seconds…', fn: () => {
           let s = null; try { s = prompt('Bounce length in seconds:', '120'); } catch (e) {}
           if (s == null) return;
           const n = parseInt(s, 10);
           if (!Number.isFinite(n) || n <= 0) { alert('Enter a positive number of seconds.'); return; }
-          _ambBounceBegin(E, n);
+          _ambBounceBeginOffline(E, n);
         } },
+        // The real-time fallback: identical to a Capture by construction, for
+        // when a render must be beyond doubt. Slower, and still silent.
+        { label: '⏺ Bounce by recording — real time, exact', fn: () => _ambBounceBegin(E, 60) },
       ];
       if (typeof showCtxMenu === 'function' && btn) {
         const r = btn.getBoundingClientRect();
@@ -26377,7 +26380,27 @@
             }, 4096);
             try { clip.oversample = '2x'; } catch (e) {}
             clip.toDestination();
-            const lim = new Tone.Limiter(-3).connect(clip);
+            // LIMITER — live replaces the feedforward Tone.Limiter with a TRUE
+            // LOOKAHEAD worklet (masterVolume → worklet → clipper). Using the
+            // Tone limiter here rendered different transients and a narrower
+            // image than playback (peak 0.697 live vs 0.789 offline, width
+            // 0.398 vs 0.326) — a limiter that ducks differently changes the
+            // stereo picture, not just the level. Register the SAME processor
+            // on this context; fall back to Tone.Limiter only if it is absent.
+            let lim = null;
+            if (typeof window !== 'undefined' && window._bloopsLookaheadModuleUrl) {
+              try {
+                await Tone.getContext().rawContext.audioWorklet.addModule(window._bloopsLookaheadModuleUrl);
+                const lk = Tone.getContext().createAudioWorkletNode('bloops-lookahead-limiter', {
+                  numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+                  channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers',
+                  processorOptions: { ceiling: 0.84, lookaheadMs: 3, releaseMs: 90 },
+                });
+                Tone.connect(lk, clip);
+                lim = lk;
+              } catch (e) { lim = null; }
+            }
+            if (!lim) { lim = new Tone.Limiter(-3).connect(clip); _missing.push('the lookahead limiter (fell back to the feedforward one)'); }
             let volDb = 0;
             try { if (typeof masterVolume !== 'undefined' && masterVolume && masterVolume.volume) volDb = masterVolume.volume.value; } catch (e) {}
             if (!Number.isFinite(volDb)) volDb = 0;

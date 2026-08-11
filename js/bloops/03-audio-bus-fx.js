@@ -770,7 +770,13 @@
           // Rewire failed mid-way — restore the original feedforward chain.
           try { masterVolume.disconnect(); masterVolume.connect(masterLimiter); masterLimiter.connect(masterClipper); } catch (e2) {}
         }
-        try { URL.revokeObjectURL(url); } catch (e) {}
+        // KEEP the blob URL alive and publish it: an OFFLINE context must be
+        // able to addModule the SAME processor, or a bounce silently falls back
+        // to the feedforward Tone.Limiter and renders with different peaks and
+        // stereo behaviour than what you hear (measured: peak 0.697 live vs
+        // 0.789 offline, width 0.398 vs 0.326). Same reasoning — and the same
+        // fix — as _bloopsOttModuleUrl.
+        try { window._bloopsLookaheadModuleUrl = url; } catch (e) {}
       }).catch(() => { /* worklet unavailable — keep the Tone-limiter fallback */ });
     })();
     // Recorder worklet — taps the master output and posts raw PCM (batched) to

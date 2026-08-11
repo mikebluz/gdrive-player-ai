@@ -26287,7 +26287,10 @@
       // restarting at bar 1. opts.fromStart forces the old behaviour.
       let skipSec = 0;
       try {
-        if (E && E.timer && Number.isFinite(E._playStartAt) && !(opts && opts.fromStart)) {
+        // opts.fromSec pins the start explicitly (used to render the SAME span a
+        // capture recorded, so the two artifacts can be diffed).
+        if (opts && Number.isFinite(opts.fromSec)) skipSec = Math.max(0, Math.min(3600, opts.fromSec));
+        else if (E && E.timer && Number.isFinite(E._playStartAt) && !(opts && opts.fromStart)) {
           skipSec = Math.max(0, Math.min(3600, (Tone.now() - E._playStartAt)));
         }
       } catch (e) { skipSec = 0; }

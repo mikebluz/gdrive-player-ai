@@ -23452,8 +23452,22 @@
       // offline one until the render resolves — a live tick firing during that
       // window would build its voices into the bounce (or throw cross-context).
       // The menu label already says "no playback"; make it true.
-      let wasPlaying = false;
-      try { if (E.timer) { wasPlaying = true; _ambStopGenerator(E); } } catch (e) {}
+      // MEASURE THE PLAY POSITION BEFORE STOPPING. _ambRenderOffline derives
+      // skipSec from `E.timer && E._playStartAt` — but this function stops the
+      // generator first, so by the time it looks, E.timer is null and skipSec
+      // is 0. Every menu bounce therefore rendered from BAR 1 however long you
+      // had been listening: layers at their sparse entry, Write loops not yet
+      // rewritten, and no accumulated reverb wash. Against a capture of a
+      // developed passage that reads as "thinner, less reverb, less width" —
+      // which is exactly how it was reported.
+      let wasPlaying = false, fromSec = null;
+      try {
+        if (E.timer) {
+          wasPlaying = true;
+          if (Number.isFinite(E._playStartAt)) fromSec = Math.max(0, Tone.now() - E._playStartAt);
+          _ambStopGenerator(E);
+        }
+      } catch (e) {}
       const prog = (typeof showRenderProgressModal === 'function')
         ? showRenderProgressModal('Bouncing ' + Math.round(seconds) + 's…') : null;
       try { if (prog) prog.setStatus((wasPlaying ? 'Stopped playback — ' : '') + '1/4 Composing…'); } catch (e) {}
@@ -23464,6 +23478,8 @@
         onStatus: (t) => { try { if (prog) prog.setStatus(t); } catch (e) {} },
         onProgress: (f) => { try { if (prog && prog.setProgress) prog.setProgress(f); } catch (e) {} },
       };
+      // Render the passage you were LISTENING to, not the opening.
+      if (fromSec != null) hooks.fromSec = fromSec;
       try { res = await _ambBounceToBank(E, seconds, hooks); }
       catch (e) { res = { ok: false, reason: (e && e.message) || String(e) }; }
       try { if (prog) { prog.markDone(); prog.close(); } } catch (e) {}
@@ -26538,6 +26554,9 @@
     // cross-context, voices park in the ref pool, and the wall-clock dispose
     // timers are never scheduled (on a slow render they fired while the render
     // clock was behind and truncated voices — measured max sample diff 0.84).
+    // Seconds of real music rendered BEFORE the requested start, purely to
+    // charge the reverb / delay / FX state, then trimmed off (see _preroll).
+    const _AMB_BOUNCE_PREROLL = 2.5;
     async function _ambRenderOffline(E, seconds, opts) {
       seconds = Math.max(1, Math.min(1800, +seconds || 30));
       const onStatus = (opts && typeof opts.onStatus === 'function') ? opts.onStatus : null;
@@ -26561,17 +26580,29 @@
           skipSec = Math.max(0, Math.min(3600, (Tone.now() - E._playStartAt)));
         }
       } catch (e) { skipSec = 0; }
+      // REVERB PRE-ROLL. Pass 2 renders audio from t=0 into an EMPTY reverb, so
+      // a bounce opens with no tail while a capture of a passage already in
+      // flight is sitting in accumulated wash — "the capture has more reverb
+      // and more stereo spacing", the width partly BEING the reverb's
+      // decorrelated tails. So start a little EARLIER than asked, render the
+      // real music of those seconds (which charges the reverb, the delays and
+      // every FX with state), and trim them off the front afterwards. Only
+      // possible when there IS music before the start point: a bounce from bar 1
+      // genuinely begins dry, and pretending otherwise would invent material.
+      const _preroll = Math.min(_AMB_BOUNCE_PREROLL, skipSec);
+      skipSec = Math.max(0, skipSec - _preroll);
+      const _renderSec = seconds + _preroll;
       try { if (E && E.timer) _ambStopGenerator(E); } catch (e) {}
       phase('compose', { seconds, from: skipSec });
       if (skipSec > 0.5) say('1/4 Composing from ' + skipSec.toFixed(0) + 's in…');
       say('1/4 Composing…');
-      const cap = _ambCaptureNotesSynthetic(E, seconds, skipSec);
+      const cap = _ambCaptureNotesSynthetic(E, _renderSec, skipSec);
       // A chain-parity probe supplies its own signal and needs no music, so the
       // empty-capture bail must not apply to it.
       if ((!cap || !cap.notes.length) && !(opts && opts.testSignal)) {
         return { buffer: null, notes: 0, reason: 'no notes captured' };
       }
-      const notes = (cap ? cap.notes : []).filter(n => n.at < seconds);
+      const notes = (cap ? cap.notes : []).filter(n => n.at < _renderSec);
       phase('composed', { notes: notes.length });
       const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
       let buffer = null, played = 0, failed = 0, wetOut = false, coreTaken = 0, coreOn = false;
@@ -27260,7 +27291,7 @@
           // the render starts (messages are async; the render doesn't wait).
           if (coreOn) { try { await _coreVoices.offlineFlush(); } catch (e) {} }
           _renderStarted = true; _narrate();
-        }, seconds);
+        }, _renderSec);
       } catch (e) {
         return { buffer: null, notes: notes.length, reason: 'render failed: ' + ((e && e.message) || e) };
       } finally {
@@ -27281,6 +27312,26 @@
         // sound on the live context after the render returns.
         try { if (typeof _vqClear === 'function') _vqClear(); } catch (e2) {}
       }
+      // TRIM THE PRE-ROLL. Those extra seconds existed only to charge the
+      // reverb / delay / FX state; the file must start where the user asked.
+      try {
+        if (_preroll > 0 && buffer) {
+          let nb = buffer; try { if (typeof nb.get === 'function') nb = nb.get(); } catch (e) {}
+          if (nb && nb.length) {
+            const skipN = Math.min(nb.length - 1, Math.floor(_preroll * nb.sampleRate));
+            const keep = nb.length - skipN;
+            const ctx2 = (typeof OfflineAudioContext !== 'undefined')
+              ? new OfflineAudioContext(nb.numberOfChannels, keep, nb.sampleRate) : null;
+            if (ctx2) {
+              const out2 = ctx2.createBuffer(nb.numberOfChannels, keep, nb.sampleRate);
+              for (let c = 0; c < nb.numberOfChannels; c++) {
+                out2.getChannelData(c).set(nb.getChannelData(c).subarray(skipN));
+              }
+              buffer = out2;
+            }
+          }
+        }
+      } catch (e) {}
       try { if (onProgress) onProgress(1); } catch (e) {}
       const wall = (((typeof performance !== 'undefined') ? performance.now() : 0) - t0) / 1000;
       let peak = 0;

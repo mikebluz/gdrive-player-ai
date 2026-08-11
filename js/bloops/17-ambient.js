@@ -23340,21 +23340,20 @@
         // without this the menu showed TWO identical "30 sec / 1 min / 2 min"
         // lists and the only thing distinguishing them was an unclickable
         // heading, which read as "Bounce can't be selected".
-        { label: '⚡ Bounce — silent, faster than real time', disabled: true },
-        { label: '⚡ Bounce 30 sec', fn: () => _ambBounceBeginOffline(E, 30) },
-        { label: '⚡ Bounce 1 min',  fn: () => _ambBounceBeginOffline(E, 60) },
-        { label: '⚡ Bounce 2 min',  fn: () => _ambBounceBeginOffline(E, 120) },
-        { label: '⚡ Bounce 5 min',  fn: () => _ambBounceBeginOffline(E, 300) },
+        { label: '⚡ Bounce — silent, records the real output', disabled: true },
+        { label: '⚡ Bounce 30 sec', fn: () => _ambBounceBegin(E, 30) },
+        { label: '⚡ Bounce 1 min',  fn: () => _ambBounceBegin(E, 60) },
+        { label: '⚡ Bounce 2 min',  fn: () => _ambBounceBegin(E, 120) },
+        { label: '⚡ Bounce 5 min',  fn: () => _ambBounceBegin(E, 300) },
         { label: '⚖ Compare bounce with live — measure the difference', fn: () => { _ambBounceVerify(E, 8); } },
         { label: '⚡ Bounce — custom seconds…', fn: () => {
           let s = null; try { s = prompt('Bounce length in seconds:', '120'); } catch (e) {}
           if (s == null) return;
           const n = parseInt(s, 10);
           if (!Number.isFinite(n) || n <= 0) { alert('Enter a positive number of seconds.'); return; }
-          _ambBounceBeginOffline(E, n);
+          _ambBounceBegin(E, n);
         } },
-        // Real-time fallback: a capture, so it cannot differ from playback.
-        { label: '⏺ Bounce by recording — real time, exact', fn: () => _ambBounceBegin(E, 60) },
+        { label: '⚗ Bounce fast (offline) — experimental, does not match yet', fn: () => _ambBounceBeginOffline(E, 60) },
       ];
       if (typeof showCtxMenu === 'function' && btn) {
         const r = btn.getBoundingClientRect();

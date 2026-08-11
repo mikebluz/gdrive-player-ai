@@ -23557,7 +23557,29 @@
         const parts = [];
         if (big.length) parts.push('tone differs in <b>' + big.map(x => esc(x.n) + ' ' + (x.v > 0 ? '+' : '') + x.v.toFixed(1) + ' dB').join(', ') + '</b>');
         if (wd > 0.12) parts.push('<b>stereo width differs</b> (' + o.widthCap.toFixed(2) + ' capture vs ' + o.widthBounce.toFixed(2) + ' bounce)');
-        if (o.worst > 8) parts.push('<b>they diverge strongly at ' + o.worstAt.toFixed(1) + 's</b> (' + o.worst.toFixed(0) + ' dB average across bands) — that size of swing means they are playing DIFFERENT MATERIAL there, not the same music processed differently');
+        // Distinguish MISSING WET SIGNAL from different material. Reverb, delay
+        // and chorus contribute mostly upper-mid/treble energy and decorrelated
+        // tails, so losing them reads as a progressive loss that SPARES the sub
+        // and worsens toward the top, with the image collapsing. Random per-band
+        // signs are what different material looks like. Calling the first case
+        // "different material" sent the user chasing the generator instead of
+        // the wet path — it is the shape of the deltas that tells them apart.
+        const bs = (o.bands || []);
+        const wetShape = bs.length === 6 && bs[0] !== null && bs[5] !== null
+          && bs[0] > -2 && bs[5] < -5 && bs[3] < -3
+          && (o.widthCap !== null && o.widthBounce !== null && o.widthBounce < o.widthCap * 0.6);
+        if (wetShape) {
+          parts.length = 0;
+          parts.push('<b>the bounce is missing its WET signal</b> — reverb / delay / chorus. '
+            + 'The sub is intact (' + bs[0].toFixed(1) + ' dB) while everything above it falls away, worst at the top ('
+            + bs[5].toFixed(1) + ' dB air), and the stereo image collapses ('
+            + o.widthCap.toFixed(2) + ' → ' + o.widthBounce.toFixed(2) + '). '
+            + 'That is the shape of dry-vs-wet, not of two different performances');
+        } else if (o.worst > 8) {
+          parts.push('<b>they diverge strongly at ' + o.worstAt.toFixed(1) + 's</b> (' + o.worst.toFixed(0)
+            + ' dB average across bands). If the per-band deltas are RANDOM in sign this is different material; '
+            + 'if they worsen toward the top with the sub intact, it is missing wet signal');
+        }
         verdict = parts.length ? ('Differences found: ' + parts.join('; ') + '.')
           : 'These two takes match within about 2 dB in every band, and their stereo width agrees. If they still sound different to you, the difference is not level, tone or width — tell me what you hear and I will measure that instead.';
         rows = '<table class="ambient-verify-tbl"><tr><th>band</th><th>bounce − capture</th></tr>'

@@ -23663,7 +23663,9 @@
         }
         stat.bounce = { rms: Math.sqrt((bl + br) / (2 * BL.length)), peak: bp,
                         width: 1 - (bd / Math.max(1e-12, Math.sqrt(bl * br))) };
-        stat.info = { core: !!(res && res.core), wet: !!(res && res.wet), missing: (res && res.missing) || [] };
+        stat.info = { core: !!(res && res.core), wet: !!(res && res.wet), missing: (res && res.missing) || [],
+                      wetRms: (res && res.wetRms != null) ? res.wetRms : null,
+                      sendsWanted: (res && res.sendsWanted) || 0 };
       } catch (e) {
         stat.error = (e && e.message) || String(e);
       }
@@ -23706,6 +23708,11 @@
             '</table>') : '') +
           '<div class="ambient-hint" style="white-space:normal">engine: ' + (inf.core ? 'core' : 'node fallback') +
             ' · chains: ' + (inf.wet ? 'built' : 'NOT BUILT (dry)') +
+            // MEASURED wet path, not "the nodes exist" (see _bloomWetMeterUrl).
+            ' · FX returns: ' + (inf.wetRms == null ? 'not measured'
+              : (inf.wetRms < 1e-6
+                  ? ('NO SIGNAL' + (inf.sendsWanted ? ' (sends are up: ' + inf.sendsWanted + ')' : ' — no sends configured'))
+                  : ('carrying ' + inf.wetRms.toFixed(4)))) +
             ((inf.missing && inf.missing.length) ? (' · missing: ' + esc(inf.missing.join(' · '))) : '') + '</div>' +
         '</div>' +
         '<div class="sm-footer"><button type="button" class="sm-apply">Done</button></div></div>';
@@ -26372,7 +26379,32 @@
           return buses[id] || buses.a || outStage;
         } catch (e) { return outStage; }
       };
+      out.returns = returns;      // the wet meter taps these (see _bloomWetMeterUrl)
       return out;
+    }
+    // WET METER (offline only). "The bounce has no FX" was reported four times
+    // and every diagnosis was a GUESS, because no render ever measured its own
+    // wet path — the audit walked the config and checked that nodes EXIST,
+    // which a send wired to the wrong place passes trivially. AudioWorklets do
+    // run inside an OfflineAudioContext (the lookahead limiter already proves
+    // it), so a meter across the FX returns turns the question into a number:
+    // configured sends + a reading of ~0 means the wet path is the fault;
+    // configured sends + a healthy reading means the fault is downstream and
+    // the wet path is exonerated. One node and ~100 port messages per render.
+    let _bloomMeterUrl = null;
+    function _bloomWetMeterUrl() {
+      if (_bloomMeterUrl) return _bloomMeterUrl;
+      const src = 'class M extends AudioWorkletProcessor{'
+        + 'constructor(){super();this.s=0;this.n=0;this.b=0;}'
+        + 'process(inputs){const i=inputs[0];'
+        + 'if(i&&i[0]){const L=i[0],R=i[1]||i[0];'
+        + 'for(let k=0;k<L.length;k++){this.s+=L[k]*L[k]+R[k]*R[k];}this.n+=L.length*2;}'
+        + 'if(++this.b%100===0)this.port.postMessage({s:this.s,n:this.n});'
+        + 'return true;}}'
+        + 'registerProcessor("bloom-wet-meter",M);';
+      try { _bloomMeterUrl = URL.createObjectURL(new Blob([src], { type: 'application/javascript' })); }
+      catch (e) { _bloomMeterUrl = null; }
+      return _bloomMeterUrl;      // never revoked: each offline context re-registers the SAME url
     }
     // Pass 2: replay a captured note list into an OfflineAudioContext via
     // Tone.Offline, which swaps Tone's global context for the duration — the same
@@ -26440,6 +26472,7 @@
       const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
       let buffer = null, played = 0, failed = 0, wetOut = false, coreTaken = 0, coreOn = false;
       let samplerCount = 0, _masterBuilt = false, _busRig = null, _wetErr = null, _bloomTrimGain = null;
+      let _wetMeter = null;       // last {s,n} posted by the wet meter (see _bloomWetMeterUrl)
       const _missing = [], _lostFx = [];
       // Tell playNote not to DEFER voice construction: the deferred-build queue is
       // pumped by a wall-clock timer that does not advance while an offline
@@ -26754,6 +26787,30 @@
               _bloomTrimGain.gain.value = Math.max(floorT, Math.min(1, 1 / Math.sqrt(Math.max(1, nBuilt))));
             }
           } catch (e) {}
+          // …and meter what actually reaches the FX returns (see _bloomWetMeterUrl).
+          try {
+            const murl = _bloomWetMeterUrl();
+            const wetSrc = [];
+            if (E3 && E3.reverb) wetSrc.push(E3.reverb);
+            if (_busRig && _busRig.returns) {
+              Object.keys(_busRig.returns).forEach((k) => { if (_busRig.returns[k]) wetSrc.push(_busRig.returns[k]); });
+            }
+            if (murl && wetSrc.length && outStage) {
+              await Tone.getContext().rawContext.audioWorklet.addModule(murl);
+              const mn = Tone.getContext().createAudioWorkletNode('bloom-wet-meter', {
+                numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+                channelCount: 2, channelCountMode: 'explicit',
+              });
+              mn.port.onmessage = (ev) => { if (ev && ev.data) _wetMeter = ev.data; };
+              const sum = new Tone.Gain(1);
+              wetSrc.forEach((s) => { try { s.connect(sum); } catch (x) {} });
+              try { Tone.connect(sum, mn); } catch (x) {}
+              // A node nothing pulls is never processed offline — park the
+              // meter behind a zero gain so it runs and adds no signal.
+              const msink = new Tone.Gain(0);
+              try { Tone.connect(mn, msink); msink.connect(outStage); } catch (x) {}
+            }
+          } catch (e) {}
           // GLITCH runs only inside the core strips (no node build exists), so
           // a bounce cannot include it — say so instead of failing silently.
           // GLITCH is core-only. With the offline core session up it renders
@@ -26966,10 +27023,33 @@
       } else if (_lostFx.length) {
         _missing.push('FX on ' + _lostFx.slice(0, 4).join(', '));
       }
+      // WET-PATH VERDICT. Did the sends this project asks for actually carry
+      // signal? Structural checks pass whenever the nodes merely exist, so the
+      // meter is what decides — measured, on the user's own project.
+      let wetRms = null;
+      try { if (_wetMeter && _wetMeter.n) wetRms = Math.sqrt(_wetMeter.s / _wetMeter.n); } catch (e) {}
+      let sendsWanted = 0;
+      try {
+        const c = cap.cfg;
+        const see = (L) => { try { if (L && L.on !== false && L.present !== false && !L.mute) sendsWanted += (L.revSend | 0); } catch (e) {} };
+        ['bed', 'motif', 'texture', 'beat'].forEach((k) => see(c[k]));
+        (c.extras || []).forEach(see);
+        (typeof _ambSeqList === 'function' ? _ambSeqList(c) : []).forEach(see);
+        (typeof _ambSampleList === 'function' ? _ambSampleList(c) : []).forEach(see);
+        const bs = (c && c.buses) || {};
+        Object.keys(bs).forEach((id) => {
+          const s = (bs[id] && bs[id].sends) || {};
+          Object.keys(s).forEach((nm) => { sendsWanted += (s[nm] | 0); });
+        });
+      } catch (e) {}
+      if (sendsWanted > 0 && wetRms !== null && wetRms < 1e-6) {
+        _missing.unshift('the FX RETURNS carried NO signal — this project has sends turned up '
+          + '(' + sendsWanted + ' total) but nothing reached the reverb/delay returns');
+      }
       phase('rendered', { wallSec: wall, peak });
       return { buffer, notes: notes.length, played, failed, seconds, wallSec: wall,
                xRealtime: wall > 0 ? seconds / wall : 0, peak, wet: wetOut, master: _masterBuilt,
-               missing: _missing, wetErr: _wetErr, lostFx: _lostFx,
+               missing: _missing, wetErr: _wetErr, lostFx: _lostFx, wetRms, sendsWanted,
                core: coreOn, coreNotes: coreTaken, samplers: samplerCount, checkpoints: checkpointsFired };
     }
     // NAME THE EXPORTS DIFFERENTLY. This file's top level is SCRIPT scope, so a
@@ -27049,7 +27129,7 @@
       return { ok: true, id: rec.id, name: filename, ext, bytes: blob.size, durSec: rec.durSec,
                wallSec: res.wallSec, xRealtime: res.xRealtime, notes: res.played, wet: res.wet,
                core: res.core, coreNotes: res.coreNotes, checkpoints: res.checkpoints, missing,
-               wetErr: res.wetErr, lostFx: res.lostFx };
+               wetErr: res.wetErr, lostFx: res.lostFx, wetRms: res.wetRms, sendsWanted: res.sendsWanted };
     }
     try { if (typeof window !== 'undefined') { window._bloomBounceToBank = (sec, opts) => _ambBounceToBank(_masterEng, sec, opts); } } catch (e) {}
     // The offline renderer stays reachable for development and for the ⚖ compare

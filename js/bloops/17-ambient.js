@@ -26473,6 +26473,7 @@
       let buffer = null, played = 0, failed = 0, wetOut = false, coreTaken = 0, coreOn = false;
       let samplerCount = 0, _masterBuilt = false, _busRig = null, _wetErr = null, _bloomTrimGain = null;
       let _wetMeter = null;       // last {s,n} posted by the wet meter (see _bloomWetMeterUrl)
+      let _chainKinds = null;    // {core,node,names} — which chain each layer took (see the audit)
       const _missing = [], _lostFx = [];
       // Tell playNote not to DEFER voice construction: the deferred-build queue is
       // pumped by a wall-clock timer that does not advance while an offline
@@ -26892,6 +26893,28 @@
             });
             if (eng.length) _missing.push(...eng.slice(0, 6));
           } catch (e) {}
+          // WHICH CHAIN DID EACH LAYER ACTUALLY TAKE? `res.core` only reports
+          // that the offline VOICE SESSION started — it says nothing about
+          // strips, so nothing has ever reported the one branch that decides
+          // both stereo width and which FX implementation runs. A layer that
+          // fails stripAcquire offline falls back to a NODE chain: its panner
+          // is channelCount 1 (the documented mono-downmix) and its FX are the
+          // Tone versions, not the core's. Full level, right notes, no width,
+          // wrong FX — exactly the "sounds mono with no FX" report.
+          try {
+            const kinds = { core: 0, node: 0, names: [] };
+            for (const k in (E3 && E3.mod) || {}) {
+              if (k.indexOf('#') >= 0) continue;
+              if (E3.mod[k] && E3.mod[k].core) kinds.core++;
+              else { kinds.node++; kinds.names.push(k); }
+            }
+            _chainKinds = kinds;
+            if (kinds.node > 0 && coreOn) {
+              _missing.push(kinds.node + ' layer' + (kinds.node === 1 ? '' : 's')
+                + ' fell back to NODE chains (' + kinds.names.slice(0, 4).join(', ')
+                + ') — narrower stereo and different FX than live playback');
+            }
+          } catch (e) {}
           phase('instrumentsReady', { wet, core: coreOn, samplers: samplerCount, layers: (E3 && E3.mod) ? Object.keys(E3.mod).length : 0 });
           // CHAIN-PARITY PROBE. With opts.testSignal we play a supplied buffer
           // through the output stage and deliver NO notes — isolating the master
@@ -27065,6 +27088,7 @@
       return { buffer, notes: notes.length, played, failed, seconds, wallSec: wall,
                xRealtime: wall > 0 ? seconds / wall : 0, peak, wet: wetOut, master: _masterBuilt,
                missing: _missing, wetErr: _wetErr, lostFx: _lostFx, wetRms, sendsWanted,
+               chains: _chainKinds,
                core: coreOn, coreNotes: coreTaken, samplers: samplerCount, checkpoints: checkpointsFired };
     }
     // NAME THE EXPORTS DIFFERENTLY. This file's top level is SCRIPT scope, so a
@@ -27110,6 +27134,19 @@
       const stamp = (opts && opts.name) || ('bounce-' + Math.round(audioBuf.duration) + 's');
       const filename = String(stamp).replace(/[^\w.-]+/g, '-').slice(0, 60) + (_dryRender ? '-DRY-no-fx' : '');
       let url = null; try { url = URL.createObjectURL(blob); } catch (e) {}
+      // MEASURE THE REPORTED SYMPTOM, on the file itself. "It sounds mono" is
+      // 1 − L/R correlation, so the render can simply state it: ~0 IS mono, and
+      // a healthy spread project sits well above 0.3. Reported beside the wet
+      // reading so one glance covers both halves of "mono with no FX".
+      let _bWidth = null;
+      try {
+        if (audioBuf.numberOfChannels > 1) {
+          const A = audioBuf.getChannelData(0), B = audioBuf.getChannelData(1);
+          let a = 0, b2 = 0, d = 0;
+          for (let i = 0; i < A.length; i += 2) { a += A[i] * A[i]; b2 += B[i] * B[i]; d += A[i] * B[i]; }
+          _bWidth = 1 - (d / Math.max(1e-12, Math.sqrt(a * b2)));
+        } else _bWidth = 0;
+      } catch (e) {}
       const rec = { id: ++_ambCapBankSeq, name: filename, ext, mime,
         folder: (opts && opts.folder) || 'bloops/exports',
         durSec: audioBuf.duration, bytes: blob.size, blob, url, uploaded: false,
@@ -27118,7 +27155,12 @@
         // wet reading rides along for the same reason: the toast lives 2.6 s
         // and fires while the render modal is still up, so it is the wrong
         // place for the one number that says whether the FX arrived.
-        source: 'Bloom (bounce' + (_dryRender ? ' · DRY — no FX' : (res.core ? ' · core' : ' · node'))
+        // `core` here is the offline VOICE SESSION; the chain counts are what
+        // decide stereo width and which FX implementation ran, so both show.
+        source: 'Bloom (bounce'
+          + (_dryRender ? ' · DRY — no FX' : (res.core ? ' · core' : ' · node'))
+          + (res.chains ? (' · ' + res.chains.core + ' strip/' + res.chains.node + ' node') : '')
+          + (_bWidth == null ? '' : (_bWidth < 0.05 ? ' · MONO' : ' · width ' + _bWidth.toFixed(2)))
           + ((res.wetRms == null) ? ''
              : (res.wetRms < 1e-6
                  ? (res.sendsWanted > 0 ? ' · FX RETURNS EMPTY' : ' · no sends')

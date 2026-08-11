@@ -26276,8 +26276,12 @@
       phase('compose', { seconds });
       say('1/4 Composing…');
       const cap = _ambCaptureNotesSynthetic(E, seconds);
-      if (!cap || !cap.notes.length) return { buffer: null, notes: 0, reason: 'no notes captured' };
-      const notes = cap.notes.filter(n => n.at < seconds);
+      // A chain-parity probe supplies its own signal and needs no music, so the
+      // empty-capture bail must not apply to it.
+      if ((!cap || !cap.notes.length) && !(opts && opts.testSignal)) {
+        return { buffer: null, notes: 0, reason: 'no notes captured' };
+      }
+      const notes = (cap ? cap.notes : []).filter(n => n.at < seconds);
       phase('composed', { notes: notes.length });
       const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
       let buffer = null, played = 0, failed = 0, wetOut = false, coreTaken = 0, coreOn = false;
@@ -26536,7 +26540,7 @@
             try { _busRig = _bloomOfflineBuses(cap.cfg, outStage); } catch (e) { _busRig = null; }
             if (_busRig && _busRig.missing.length) _missing.push(..._busRig.missing);
             E3 = _makeAmbientEngine({
-              getCfg: () => cap.cfg,
+              getCfg: () => (cap && cap.cfg) || E.getCfg(),
               busNode: (L) => ((_busRig ? _busRig.dest(L) : null) || outStage || Tone.getDestination()),
               laneIdx: () => -1, guard: () => true,
               hostId: 'bloom-bounce-r', idPrefix: 'ambient', vizId: 'bloom-bounce-r-viz',
@@ -26651,6 +26655,29 @@
             if (eng.length) _missing.push(...eng.slice(0, 6));
           } catch (e) {}
           phase('instrumentsReady', { wet, core: coreOn, samplers: samplerCount, layers: (E3 && E3.mod) ? Object.keys(E3.mod).length : 0 });
+          // CHAIN-PARITY PROBE. With opts.testSignal we play a supplied buffer
+          // through the output stage and deliver NO notes — isolating the master
+          // chain from the music, so a live-vs-offline comparison measures the
+          // chain alone. This is how the lookahead-limiter divergence should
+          // have been caught (it changed width by 18% and nothing flagged it).
+          if (opts && opts.testSignal) {
+            try {
+              const tsrc = Tone.getContext().rawContext.createBufferSource();
+              tsrc.buffer = opts.testSignal;                 // AudioBuffers cross contexts
+              // opts.testKey routes through THAT LAYER's chain instead of straight
+              // at the output stage, so the per-layer strip (FX / EQ / pan / width
+              // / level) can be compared against live in the same way.
+              let into = outStage || Tone.getDestination();
+              if (opts.testKey) {
+                let d = null; try { d = _ambLayerDest(opts.testKey); } catch (e2) {}
+                if (d) into = d; else _missing.push('test layer ' + opts.testKey + ' has no chain');
+              }
+              Tone.connect(tsrc, into);
+              tsrc.start(0);
+            } catch (e) { _missing.push('test signal: ' + ((e && e.message) || e)); }
+            deliverUpTo = () => {};
+            return;
+          }
           // Tick-driven SIGNAL schedulers (trance gate, unit-gate chop,
           // stochastic/custom mod sources). Live, the 150 ms tick keeps
           // ~1.2 s scheduled ahead; nothing ticks during an offline render,

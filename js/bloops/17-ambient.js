@@ -27099,8 +27099,16 @@
         folder: (opts && opts.folder) || 'bloops/exports',
         durSec: audioBuf.duration, bytes: blob.size, blob, url, uploaded: false,
         // The row is the durable diagnostic — a toast can be missed or
-        // dismissed, this is still readable in Harvest afterwards.
-        source: 'Bloom (bounce' + (_dryRender ? ' · DRY — no FX' : (res.core ? ' · core' : ' · node')) + ')' };
+        // dismissed, this is still readable in Harvest afterwards. The MEASURED
+        // wet reading rides along for the same reason: the toast lives 2.6 s
+        // and fires while the render modal is still up, so it is the wrong
+        // place for the one number that says whether the FX arrived.
+        source: 'Bloom (bounce' + (_dryRender ? ' · DRY — no FX' : (res.core ? ' · core' : ' · node'))
+          + ((res.wetRms == null) ? ''
+             : (res.wetRms < 1e-6
+                 ? (res.sendsWanted > 0 ? ' · FX RETURNS EMPTY' : ' · no sends')
+                 : ' · wet ' + res.wetRms.toFixed(3)))
+          + ')' };
       try { rec.grid = _ambCaptureGrid(E, audioBuf.duration); } catch (e) {}
       _ambCaptureBank.push(rec);
       try { _ambRenderCaptureBank(); } catch (e) {}
@@ -27121,9 +27129,14 @@
           // A DRY render leads — it is the difference between "sounds like my
           // project" and "sounds like nothing", so it must not read as a footnote.
           const dry = (res.wet === false);
+          // A 2.6 s toast is fine for "done"; it is NOT enough for "your FX did
+          // not make it" — that one has to survive being glanced away from, so
+          // it holds for 12 s and takes the warn styling.
+          const bad = dry || missing.length > 0;
           showToast((dry ? '⚠ Bounced DRY — ' : 'Bounced ') + '“' + filename + '” in ' + res.wallSec.toFixed(1) + 's (' + xr + '× realtime'
             + (res.core ? '' : ', slow engine') + ') — in the Harvest bank.'
-            + (missing.length ? ('  Missing: ' + missing.join(' · ')) : ''));
+            + (missing.length ? ('  Missing: ' + missing.join(' · ')) : ''),
+            bad ? { warn: true, ms: 12000 } : undefined);
         }
       } catch (e) {}
       return { ok: true, id: rec.id, name: filename, ext, bytes: blob.size, durSec: rec.durSec,

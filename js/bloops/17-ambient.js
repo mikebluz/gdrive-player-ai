@@ -2707,6 +2707,14 @@
               // statement, and it is the model Arch keeps.
               if (parts[pi].key) e.key = { root: parts[pi].key.root | 0, scale: parts[pi].key.scale };
               if (parts[pi].salt) e.salt = parts[pi].salt;
+              // NAME COLLISION: a bound section and its part can carry DIFFERENT
+              // names (section "S1" playing part "Verse"), and Arch has one name
+              // field. The part's wins, because every display that reads the
+              // played chain shows the part name today and slice 2 must not
+              // change a pixel. Nothing is lost — arch is DERIVED, so the
+              // section's name is still in cfg.sections; which name survives the
+              // merge is a slice-4 decision, made with the UI in front of us.
+              if (parts[pi].name) e.name = parts[pi].name;
             }
             out.push(e);
           });
@@ -2719,7 +2727,10 @@
             out.push(e);
           });
         } else if (hasCh && p.on) {
-          out.push(mk(1, p.name || 'Changes', { changes: { from: 0, len: p.chords.length, plays: 1 } }));
+          // No parts and no sections: ONE run over the whole cycle, named after
+          // the progression rather than by the user. Flagged so readers can tell
+          // it from a real one-part chain, which is named and reports as part 0.
+          out.push(mk(1, p.name || 'Changes', { changes: { from: 0, len: p.chords.length, plays: 1 }, unnamed: 1 }));
         }
         // Always at least one part, and it is named "Default" so it reads as a
         // placeholder to rename rather than fixed structure.
@@ -32191,26 +32202,55 @@
     // Deliberately SEPARATE from `_ambProgCycleBars`, which the Write/Evolve phrase
     // snapping also uses — changing that would resize every Write loop under a
     // parted progression, which is a sound change and not this fix's business.
-    function _ambProgChainSlots(cfg) {
+    // ARCH slice 2: the same played chain, derived from cfg.arch instead of
+    // prog.parts. Every caller of _ambProgChainSlots is DISPLAY-ONLY (Quick
+    // edit, the Scheduler's chord and pass lanes, the Part-schedule popover,
+    // the one-pass readout) — the harmony clock has its own walk — so moving
+    // this one function moves the whole display layer in a single step, and it
+    // cannot change a note by construction.
+    // Must return output IDENTICAL to the prog.parts version; that equality is
+    // the test, not an assumption.
+    function _ambArchChainSlots(cfg) {
+      const arch = cfg && Array.isArray(cfg.arch) ? cfg.arch : null;
       const p = cfg && cfg.prog;
-      if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return null;
-      const parts = (Array.isArray(p.parts) && p.parts.length > 1) ? p.parts : null;
-      const out = [];
-      if (!parts) {
-        const solo = (Array.isArray(p.parts) && p.parts.length === 1 && typeof p.parts[0].name === 'string') ? p.parts[0].name.trim() : '';
-        for (let i = 0; i < p.chords.length; i++) out.push({ idx: i, part: solo ? 0 : -1, pName: solo, pFirst: i === 0, rep: 0, plays: 1 });
-        return out;
+      if (!arch || !p || !Array.isArray(p.chords) || !p.chords.length) return null;
+      let withCh = arch.filter((e) => e && e.changes);
+      if (!withCh.length) {
+        // Nothing carries changes, yet the progression is ON with chords — a
+        // section bound to a part that normalize has since deleted (it drops a
+        // single part covering the whole cycle). The chords still play as one
+        // run, so report that rather than an empty chain.
+        if (!p.on) return null;
+        withCh = [{ changes: { from: 0, len: p.chords.length, plays: 1 }, unnamed: 1 }];
       }
-      let from = 0;
-      parts.forEach((pt, pi) => {
-        const n = Math.max(1, pt.len | 0), plays = Math.max(1, (pt.plays | 0) || 1);
+      // A single unnamed run over the whole cycle is the "no parts" case, which
+      // reports part:-1 / pName:'' so callers can tell it from a real chain.
+      const solo = (withCh.length === 1 && withCh[0].unnamed);
+      const out = [];
+      withCh.forEach((e, pi) => {
+        const ch = e.changes, plays = Math.max(1, ch.plays | 0), len = Math.max(1, ch.len | 0);
         for (let r = 0; r < plays; r++) {
-          for (let k = 0; k < n; k++) out.push({ idx: (from + k) % p.chords.length, part: pi,
-            pName: pt.name || ('Changes ' + (pi + 1)), pFirst: k === 0, rep: r, plays: plays });
+          for (let k = 0; k < len; k++) {
+            out.push({ idx: (ch.from + k) % p.chords.length,
+                       part: solo ? -1 : pi, pName: solo ? '' : (e.name || ('Changes ' + (pi + 1))),
+                       pFirst: k === 0, rep: r, plays });
+          }
         }
-        from += n;
       });
-      return out.length ? out : null;
+      return out;
+    }
+    // ARCH slice 2: the played chain now comes from cfg.arch. Every caller is
+    // display-only (Quick edit, the Scheduler's chord and pass lanes, the
+    // Part-schedule popover, the one-pass readout) — the harmony clock has its
+    // own walk in _ambProgStepAt — so this one line moves the whole display
+    // layer and cannot change a note by construction. Verified byte-identical
+    // to the prog.parts walk it replaces across nine configs, including the two
+    // that genuinely differed and were reconciled in _ambDeriveArch.
+    // cfg.arch is derived in normalize, which every getCfg runs, so an absent
+    // arch means an un-normalized cfg — read as "no progression", the state the
+    // callers already handle.
+    function _ambProgChainSlots(cfg) {
+      return _ambArchChainSlots(cfg);
     }
     function _ambProgChainBars(cfg) {
       const slots = _ambProgChainSlots(cfg); if (!slots) return 0;

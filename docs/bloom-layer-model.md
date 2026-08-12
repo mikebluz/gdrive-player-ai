@@ -1316,5 +1316,27 @@ later area-key edit and an absolute key does not; transposing is unaffected,
 since `_ambTransposeArea` already rewrites absolute part keys and every part now
 takes that one rule.
 
+**Slice 2 SHIPPED 2026-08-12 — the display layer reads `arch`.** It turned out
+to be ONE function: every caller of `_ambProgChainSlots` (Quick edit, the
+Scheduler's chord and pass lanes, the Part-schedule popover, the one-pass
+readout) is display-only, and the harmony clock has its own walk in
+`_ambProgStepAt` — so pointing that one function at `cfg.arch` moved the whole
+display layer and cannot change a note by construction.
+
+The gate was an equality test, not an argument: the arch-derived chain was built
+alongside the old one and both were compared across nine configs until they
+matched exactly. Two genuinely differed and were reconciled in `_ambDeriveArch`
+rather than papered over:
+
+- **A bound section and its part can carry different names** ("S1" playing
+  "Verse") and Arch has one name field. The PART's name wins, because that is
+  what every display shows today. Nothing is lost — arch is derived, so the
+  section's name is still in `cfg.sections`; which name survives the merge is a
+  slice-4 decision to make with the UI in front of us.
+- **A section bound to a part that normalize has since deleted** (it drops a
+  single part covering the whole cycle) left arch with no changes at all, where
+  the old walk played the chords as one unnamed run. Arch now falls back to that
+  same run, so a degenerate config keeps sounding as it did.
+
 **Still open.** Whether the Chord and Section matrices merge (see the Edit
 overlap note) — deferred to slice 4.

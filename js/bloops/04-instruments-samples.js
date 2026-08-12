@@ -1840,17 +1840,21 @@
       // Candidate members: the user's own samples, metadata ONLY. Reading
       // `.sampler` here would trip the lazy getter and build every sampler in
       // the library (the documented __sampleStats trap). Kits cannot nest.
-      // EVERY single sample is a candidate, not just imported ones: the shipped
-      // library is mostly drum ONE-SHOTS (Linndrum, 808 packs, claps, hats), and
-      // those are exactly what a kit is made of — restricting this to imports
-      // would have hidden the best material in the app. Excluded: other kits (no
-      // nesting) and loops (a tempo-carrying loop is not a drum slot).
+      // EVERY single sample is a candidate. The shipped library is mostly drum
+      // ONE-SHOTS (Linndrum, 808 packs, claps, hats) — exactly what a kit is
+      // made of — and your own imports must be here too.
+      // NOT filtered by `kind`: the importer calls anything ≥1.6 s with no note
+      // name and no "oneshot" hint a LOOP (_classifyImported), which quietly
+      // hid imported crashes, long snares, toms and vocal chops from the slots.
+      // That classification exists to decide tempo-matching on PLAYBACK; it has
+      // no business vetoing what you may put in a drum slot. Loops are LABELLED
+      // instead, so the choice is informed rather than made for you.
+      // Only other kits are excluded — kits cannot nest.
       const members = [];
       try {
         sampleSamplers.forEach((info, id) => {
           if (!info || info.drumKit || !info.urls) return;
-          if (info.kind === 'loop') return;
-          members.push([id, info.name || id, !!info.imported]);
+          members.push([id, (info.name || id) + (info.kind === 'loop' ? '  (loop)' : ''), !!info.imported]);
         });
       } catch (e) {}
       // Your own samples first — you are likelier to be reaching for those —

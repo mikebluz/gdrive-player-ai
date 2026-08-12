@@ -12942,3 +12942,17 @@
        it adds to, rather than on the on/off row where it read as a readout. */
     .ambient-pov-actions { display: flex; margin: 0 0 6px; }
     .ambient-pov-actions .ambient-prog-pick { min-height: 36px; padding: 7px 12px; font-size: 0.76rem; }
+
+    /* A section heading that IS its switch. Keeps the heading's typography so
+       the panel still reads as headed sections, and takes a full-width target
+       plus an on-state so it is legible as a control rather than a label. */
+    .ambient-seclbl-btn {
+      display: block; width: 100%; text-align: left; cursor: pointer;
+      background: transparent; border: 1px solid transparent; border-radius: 8px;
+      padding: 6px 8px; min-height: 34px; font: inherit; color: inherit;
+      touch-action: manipulation;
+    }
+    .ambient-seclbl-btn::before { content: '○ '; opacity: 0.5; }
+    .ambient-seclbl-btn:hover { background: rgba(255,255,255,0.04); border-color: #2d2d3f; }
+    .ambient-seclbl-btn.active { color: #9df3cd; border-color: rgba(53,201,142,0.45); background: rgba(53,201,142,0.08); }
+    .ambient-seclbl-btn.active::before { content: '● '; opacity: 1; }

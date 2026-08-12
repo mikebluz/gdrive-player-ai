@@ -36962,6 +36962,7 @@
         const follow = rk.follow;
         const keyOn = !!cfg.keyOn, progOn = !!p.on;
         const kTog = document.getElementById(tr('ambient-key-toggle'));
+        // The heading IS the switch, so its text is the state: "Key" / "Chromatic".
         if (kTog) { kTog.textContent = keyOn ? 'Key' : 'Chromatic'; kTog.classList.toggle('active', keyOn); }
         const pTog = document.getElementById(tr('ambient-prog-onoff'));
         if (pTog) pTog.classList.toggle('active', progOn);
@@ -37310,10 +37311,11 @@
       // sub-controls). Built once here so the MASTER can host it inside the
       // "Key / Progression" section while LANES (no Progression section) keep
       // it in Configure. The Progression mode button is master-only.
+      // The SECTION LABEL is the toggle (see the headings below) — a heading and
+      // a switch that say the same word are one control, so there is no
+      // separate button in the row and no repeated "Key" hint beside it.
       const keyRowHtml =
         '<div class="ambient-row ambient-key">' +
-          '<span class="ambient-hint ambient-key-lbl">Key</span>' +
-          '<button type="button" class="ambient-seg amb-keytoggle" id="ambient-key-toggle" title="Chromatic ⟷ Key — OFF (Chromatic): every layer plays freely, no key constraint. ON (Key): constrain all layers to one key (root + scale); only in-key scales/chords (plus borrowed &amp; passing tones) are selectable.">Chromatic</button>' +
           '<span class="ambient-key-sub" id="ambient-key-sub">' +
             '<button type="button" class="ambient-seg" id="ambient-key-follow" title="Follow the workspace key (header pill / key picker) — one source of truth. Click to LOCK: snapshots the current key as this Area’s own (later workspace-key changes can’t re-key it); click again to re-follow.">= Workspace</button>' +
             '<select id="ambient-key-root" class="ambient-select" title="Key root">' + keyOpts + '</select>' +
@@ -37378,15 +37380,16 @@
             // Current-key indicator (from the dissolved Configure summary).
             '<div class="ambient-progsec-topline"><span class="ambient-cfg-keyind" id="ambient-cfg-keyind" title="Current Area KEY (grey = following the workspace key · amber = overridden for this Area)"></span></div>' +
             '<div class="ambient-sched-body" id="ambient-progsec-body">' +
-            '<div class="ambient-mod-sub ambient-progsec-lbl">Key</div>' +
+            '<button type="button" class="ambient-mod-sub ambient-progsec-lbl ambient-seclbl-btn amb-keytoggle" id="ambient-key-toggle" ' +
+              'title="Chromatic \u27f7 Key — OFF (Chromatic): every layer plays freely, no key constraint. ON (Key): constrain all layers to one key (root + scale); only in-key scales/chords (plus borrowed &amp; passing tones) are selectable.">Chromatic</button>' +
             keyRowHtml +
-            '<div class="ambient-mod-sub ambient-progsec-lbl">Progression</div>' +
+            '<button type="button" class="ambient-mod-sub ambient-progsec-lbl ambient-seclbl-btn ambient-prog-onoff" id="ambient-prog-onoff" ' +
+              'title="Progression — when ON, every layer follows a shared chord progression (the per-layer Notes chip is read-only while on). Combine with Key above for a progression diatonic to that key.">Progression</button>' +
             // The row is now just the switch. Choosing WHICH changes moved to
             // "＋ Add changes" in Overview, beside the chips it affects, and
             // Edit is gone: that editor already opens from any chord chip in
             // Overview, so a second door was a button that only repeated one.
             '<div class="ambient-row ambient-prog-row">' +
-              '<button type="button" class="ambient-seg ambient-prog-onoff" id="ambient-prog-onoff" title="Progression — when ON, every layer follows a shared chord progression (the per-layer Notes chip is read-only while on). Combine with Key above for a progression diatonic to that key.">On</button>' +
               '<span class="ambient-prog-sub ambient-prog-actions" id="ambient-prog-sub"></span>' +
               '<span class="ambient-hint" id="ambient-progsec-off" style="display:none">turn Progression on to build a chord sequence</span>' +
             '</div>' +

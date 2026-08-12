@@ -1498,6 +1498,32 @@ Fixed in passing, and it was a real bug: the part TABS advanced their chord
 cursor by `Math.max(1, len)`, so a part with NO chords consumed one of somebody
 else's and shifted every later range by one.
 
-**Still open.** Nothing in the matrix line — see the key-model unification and
-`prog.on` below. (see the Edit
+**Slice 4h SHIPPED 2026-08-12 — `keyOff` and `key` are NOT a duplication to
+unify. They are two different operations that happened to share a word**, and the
+measurement is what settled it. On a C-major area over C F G:
+
+```
+no modulation                    C F G C F G
+SECTION offset +2 (bars 3-5)     C F G D G A     ← shifts the frame, in that span
+part key = D major (absolute)    C F G C F G     ← did NOTHING
+```
+
+An absolute `key` on a part with NO CHANGES is INERT, because `_ambPartKeyNow`
+finds the current part by counting CHORDS and a part with none can never be
+current. The add-part dialog was offering a dead control. So an open part now
+stores `keyOff` — the span-based mechanism sections always used — and the dialog
+relabels it "Shift to" and hides the scale picker, because only the root shift is
+expressible that way. Measured after: an appended open part shifts `D G A`.
+
+Per the naming rule (divergent behaviour ⇒ divergent label) the two fields KEEP
+their separate names. Collapsing them would have made one of them silently stop
+working, which is the opposite of a unification.
+
+**`prog.on` STAYS, deliberately.** Retiring it has no inaudible migration: a
+project with the progression off either loses its chords (destructive) or starts
+playing them (an audible change on load). Both break the rule every other slice
+here was held to. It is one boolean, and keeping it costs less than either.
+
+**ARCH is complete.** What remains is chord lengths in UNITS (unit-first Level 2,
+independent of this work) and the semantics note below. (see the Edit
 overlap note) — deferred to slice 4.

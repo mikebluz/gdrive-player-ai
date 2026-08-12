@@ -30345,6 +30345,7 @@
       };
       let kind = 'changes', hold = 1;
       const holdNote = ov.querySelector('.ap-holdnote');
+      const keyRow = ov.querySelector('.ambient-addpart-key') ? ov.querySelector('.ambient-addpart-key').closest('.ambient-step-row') : null;
       const setHold = (h) => {
         hold = h;
         ov.querySelectorAll('.ap-hold .ambient-seg').forEach(b => b.classList.toggle('active', (b.dataset.hold | 0) === h));
@@ -30357,6 +30358,15 @@
       const setKind = (k) => {
         kind = k;
         openBox.style.display = (k === 'open') ? '' : 'none';
+        // On a part with no changes the key is a SHIFT of the area key while it
+        // runs, so the scale picker does not apply — saying so beats leaving a
+        // control that silently does nothing.
+        if (keyRow) {
+          const sc0 = keyRow.querySelector('.ap-scale');
+          if (sc0) sc0.style.display = (k === 'open') ? 'none' : '';
+          const lb0 = keyRow.querySelector('label');
+          if (lb0) lb0.textContent = (k === 'open') ? 'Shift to' : 'Key';
+        }
         ov.querySelectorAll('.ap-changes-only').forEach(el => { el.style.display = (k === 'open') ? 'none' : ''; });
         ov.querySelectorAll('.ap-kind .ambient-seg').forEach(b => b.classList.toggle('active', b.dataset.kind === k));
         // The label states what the button DOES — a part with no changes has no
@@ -30382,7 +30392,7 @@
           if (!cfg0.prog) cfg0.prog = { on: true, name: '', chords: [] };
           _ambProgAppendOpenPart(cfg0.prog, ov.querySelector('.ap-name').value,
             parseFloat(ov.querySelector('.ap-bars').value),
-            (r0 === aRoot && sc0 === aScale) ? null : { root: r0, scale: sc0 }, hold);
+            (r0 === aRoot && sc0 === aScale) ? null : { root: r0, scale: sc0 }, hold, aRoot);
           close();
           try { E.getCfg(); } catch (e) {}                      // normalize + re-derive arch
           try { _ambSyncControls(E); } catch (e) {}
@@ -30432,14 +30442,27 @@
     // harmony holds. The subtlety: if the progression's chords have no part of
     // their own yet, one must be materialized FIRST, or appending this would
     // leave every chord unassigned and the chain would hold from bar 1.
-    function _ambProgAppendOpenPart(prog, name, bars, partKey, hold) {
+    function _ambProgAppendOpenPart(prog, name, bars, partKey, hold, areaRoot) {
       if (!prog) return;
       const chords = Array.isArray(prog.chords) ? prog.chords : [];
       let parts = (Array.isArray(prog.parts) && prog.parts.length) ? prog.parts.slice() : null;
       if (!parts) parts = chords.length ? [{ name: prog.name || 'Changes', len: chords.length }] : [];
       const e = { name: (name || '').trim().slice(0, 16) || ('Part ' + (parts.length + 1)),
                   open: 1, bars: Math.max(0.25, Math.min(64, Number.isFinite(bars) ? bars : 4)) };
-      if (partKey && Number.isFinite(partKey.root)) e.key = { root: partKey.root | 0, scale: partKey.scale };
+      // A KEY ON A PART WITH NO CHANGES IS AN OFFSET, NOT AN ABSOLUTE KEY — and
+      // this is not a naming preference, it is the only one that works.
+      // _ambPartKeyNow finds the current part by counting CHORDS, so a part with
+      // none can never be "current" and an absolute `key` on it is inert
+      // (measured: the roots did not move at all). The span-based mechanism is
+      // the one sections always used, so an open part stores `keyOff` and the
+      // mirror hands it to that path. Only the ROOT shift is expressible this
+      // way; the scale comes from the area, which is what the dialog now says.
+      if (partKey && Number.isFinite(partKey.root)) {
+        const _ar = Number.isFinite(areaRoot) ? (areaRoot | 0) : 0;
+        let d = (((partKey.root | 0) - _ar) % 12 + 12) % 12;
+        if (d > 6) d -= 12;                       // take the short way round
+        if (d) e.keyOff = d;
+      }
       if (hold) e.hold = 1;
       parts.push(e);
       prog.parts = parts;

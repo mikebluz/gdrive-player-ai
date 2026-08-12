@@ -1260,6 +1260,27 @@ existing fast path, exactly as `_ambProgStepAt`'s gated branches do today.
    can change what is heard, and the one to gate hardest.
 4. `prog.on` and `sections[i].part` are deleted, and the pane becomes Arch.
 
-**Open decisions.** Whether a chromatic part can still carry a key (it should —
-`sections[i].key` already does); whether `plays` stays per part or becomes a
-repeat on the part itself; and what the default single part is called.
+**VOCABULARY, corrected 2026-08-12 — the first draft above says "chromatic
+part" and that is WRONG.** It conflated two INDEPENDENT axes:
+
+- **changes / no changes** — does this part carry a chord progression?
+- **keyed / chromatic** — is there a key constraint at all (`keyOn`)?
+
+All four combinations are meaningful, and the interesting one the old wording
+erased is *no changes + a key*: eight bars in F with no progression, i.e. free
+playing over a key, which is a completely ordinary thing to write. A part with
+no changes is an **OPEN part**; "chromatic" stays what it already means in this
+codebase — no key constraint — and applies to a part with or without changes.
+Read every "chromatic part" above as "open part". Per the naming rule
+(divergent behaviour ⇒ divergent label) this matters beyond documentation: the
+UI must not offer "add a chromatic part" for something that can be keyed.
+
+**Decisions taken 2026-08-12:**
+- An open part CAN carry a key (`sections[i].key` already does exactly this).
+- `plays` stays per part — "four bars, twice" is as useful for an open part as
+  for one with changes.
+- Every area's default single part is named **"Default"**, chosen so it reads as
+  a placeholder the user is invited to rename rather than a fixed structure.
+
+**Still open.** Whether the Chord and Section matrices merge (see the Edit
+overlap note) — deliberately deferred to slice 4.

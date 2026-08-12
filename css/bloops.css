@@ -12738,6 +12738,10 @@
     .ambient-pov-open:hover { border-color: #6b5b95; color: #b0b0c8; }
     .ambient-pov-open b { font-weight: 600; letter-spacing: 0.02em; }
     .ambient-pov-openhdr .ambient-pov-partname { color: #8a8aa8; }
+    /* Prose, so it must WRAP — .ambient-hint is nowrap by default (UI rule 2). */
+    .ambient-sched-nosec { white-space: normal; overflow-wrap: anywhere; line-height: 1.4;
+      display: block; padding: 4px 6px; color: #8a8aa8; }
+    .ambient-sched-nosec b { color: #b0b0c8; }
     .ambient-addpart-hint { font-size: 0.72rem; line-height: 1.45; color: #8a8aa8; margin: 0 0 10px; }
     .ambient-addpart-key { display: inline-flex; gap: 5px; min-width: 0; }
     .ambient-addpart-key select { width: 84px; }

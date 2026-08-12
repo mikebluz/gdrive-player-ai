@@ -32737,7 +32737,15 @@
             sb += slen; si++;
           }
         } else {
-          sBlocks = '<button type="button" class="ambient-seg ambient-sched-addsec" title="SECTIONS — named sets of bars (A / B / turnaround) cycling on the bar clock. Layers gate per section in the Section matrix below: arrangement inside one area.">＋ sections</button>';
+          // NO NEW SECTIONS. A section and a part-with-no-changes are the same
+          // idea, and a part is the one that survives (§15) — so an area with no
+          // sections is never offered them; it is pointed at ＋ Part instead.
+          // The append ＋ below stays for an area that ALREADY has sections, so
+          // nothing existing loses its editing. This stops new duplication being
+          // created without migrating anybody's saved project, which is a much
+          // larger job than it looks (see the blockers in §15).
+          sBlocks = '<span class="ambient-hint ambient-sched-nosec">Use <b>＋ Part</b> on the progression overview — '
+            + 'a part with no changes is a named stretch of bars, which is what a section was.</span>';
         }
         html += '<div class="ambient-sched-secwrap"' + (E._schedSections ? '' : ' hidden') + '>';
         html += '<div class="ambient-sched-row ambient-sched-secrow">' +

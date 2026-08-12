@@ -1417,5 +1417,33 @@ moved from an assumption about open parts to a stored field, and the two
 behaviours are pinned side by side — `open-mid` holds chord 1 for four bars while
 `open-run` walks straight through.
 
+**Slice 4d SHIPPED 2026-08-12 — no NEW sections.** An area with no sections is
+no longer offered them: the Scheduler's "＋ sections" seed is replaced by a line
+pointing at ＋ Part, since a part with no changes IS a named stretch of bars. An
+area that already HAS sections keeps its append ＋, so nothing existing loses its
+editing. This stops the duplication growing without touching a single saved
+project.
+
+**THE SECTIONS→PARTS MIGRATION IS DEFERRED, and these are the blockers — found
+by measuring, so they do not need re-deriving.** It looks mechanical and is not:
+
+1. **A section carries fields a part does not** — a key OFFSET, `keyModeRot`, and
+   sparse `groove` overrides applied only while it runs. A lossless migration
+   needs all three on a part.
+2. **`sectionMask` keys off the section INDEX**, across ~36 reference sites. Fold
+   sections into the parts list and every one of those indices moves.
+3. **A non-holding open part contributes nothing to the chain or the clock** —
+   which is exactly right, and exactly why it cannot yet REPLACE a section: the
+   section features gate on bar spans, so open parts must first become readable
+   as the arrangement spine. This is the real work, and it is bigger than it
+   looks from the data model.
+4. **Interleaving is ambiguous when BOTH spines exist.** Sections divide bars and
+   parts divide chords; for a project with sections A(4) B(4) and parts Verse(2)
+   Chorus(2) there is no canonical merged order to migrate to.
+
+So the migration is a piece of engineering in its own right, not a coda to slice
+4 — and its value is removing a concept rather than adding one, which is why
+stopping new duplication first is the better trade.
+
 **Still open.** Whether the Chord and Section matrices merge (see the Edit
 overlap note) — deferred to slice 4.

@@ -40,6 +40,7 @@ const URL = process.env.BLOOPS_URL || 'http://localhost:3001/bloops.html';
 const CHROME = process.env.CHROME_PATH
   || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const UPDATE = process.argv.includes('--update');
+const FORCE = process.argv.includes('--force');
 const ONLY = (process.argv.find(a => a.startsWith('--only=')) || '').slice(7);
 
 // Every config is a plain description the page turns into a cfg. Keeping them
@@ -62,6 +63,12 @@ const CONFIGS = [
   // both, so this is the case that decides how far slice 3 can reach.
   { id: 'sections-unbound-plays', chords: [0, 5, 7, 9], parts: [['Verse', 2, 2], ['Chorus', 2, 1]], sections: [['A', 4], ['B', 4]] },
   { id: 'sections-plays',   chords: [0, 5, 7, 9], parts: [['Verse', 2, 2], ['Chorus', 2, 1]], sections: [['A', 6, 0], ['B', 2, 1]] },
+  // OPEN PARTS (slice 4) — a named block with no changes. The chord clock must
+  // HOLD while one runs: time advances, the harmony does not move.
+  { id: 'open-mid',    chords: [0, 5, 7, 9], parts: [['Verse', 2], { name: 'Bridge', open: 4 }, ['Chorus', 2]] },
+  { id: 'open-first',  chords: [0, 5, 7, 9], parts: [{ name: 'Intro', open: 2 }, ['Verse', 4]] },
+  { id: 'open-plays',  chords: [0, 5, 7, 9], parts: [['Verse', 2, 2], { name: 'Bridge', open: 3, plays: 2 }, ['Chorus', 2]] },
+  { id: 'open-key',    chords: [0, 5, 7, 9], parts: [['Verse', 2], { name: 'Bridge', open: 4 }, ['Chorus', 2]], key: { root: 9, scale: 'minor' } },
   { id: 'salt-len',         chords: [0, 5, 7, 9], salt: { len: 70, colors: 0, scatter: 0 } },
   { id: 'salt-colors',      chords: [0, 5, 7, 9], salt: { len: 0, colors: 80, scatter: 0 } },
   { id: 'salt-both',        chords: [0, 5, 7, 9], salt: { len: 50, colors: 50, scatter: 30 } },
@@ -119,8 +126,15 @@ const WALK_BARS = 32, WALK_STEP = 0.25;
       cfg.prog = { on: c.on !== false, name: 'P', chords: (c.chords || [0, 5, 7, 9]).map((r, i) => (
         r === -1 ? { transition: true, bars: 1 }
                  : { root: r, intervals: [0, 4, 7], ...(c.bars ? { bars: c.bars[i] } : {}) })) };
-      if (c.parts) cfg.prog.parts = c.parts.map(([name, len, plays, key, salt]) => ({
-        name, len, ...(plays ? { plays } : {}), ...(key ? { key } : {}), ...(salt ? { salt } : {}) }));
+      // A part is [name, len, plays, key, salt], or {name, open: <bars>, plays}
+      // for an OPEN part — a named block carrying no changes, during which the
+      // chord clock holds. That is the slice-4 consolidation: sections were this
+      // all along.
+      if (c.parts) cfg.prog.parts = c.parts.map((x) => {
+        if (!Array.isArray(x)) return { name: x.name, open: 1, bars: x.open, ...(x.plays ? { plays: x.plays } : {}) };
+        const [name, len, plays, key, salt] = x;
+        return { name, len, ...(plays ? { plays } : {}), ...(key ? { key } : {}), ...(salt ? { salt } : {}) };
+      });
       if (c.salt) cfg.prog.salt = c.salt;
       if (c.sections) cfg.sections = c.sections.map(([name, bars, part, key]) => ({
         name, bars, ...(part != null ? { part } : {}), ...(key != null ? { key } : {}) }));
@@ -224,9 +238,37 @@ const WALK_BARS = 32, WALK_STEP = 0.25;
   }
 
   if (UPDATE || !fs.existsSync(BASELINE)) {
+    // ADDING a config is routine and safe; CHANGING a pinned one is the whole
+    // thing this gate exists to prevent, so --update will not do it silently.
+    // (Written after doing exactly that: running --update in the same breath as
+    // a failing check baked a regression straight into the baseline, and the
+    // next run then reported the FIX as the drift. --force is the deliberate
+    // path, and it names what it is about to overwrite either way.)
+    if (fs.existsSync(BASELINE)) {
+      const prev = JSON.parse(fs.readFileSync(BASELINE, 'utf8'));
+      const changed = Object.keys(result).filter(id => prev[id]
+        && JSON.stringify(prev[id]) !== JSON.stringify(result[id]));
+      const added = Object.keys(result).filter(id => !prev[id]);
+      const removed = Object.keys(prev).filter(id => !result[id]);
+      if (added.length) console.log('  + adding: ' + added.join(', '));
+      if (removed.length) console.log('  - removing: ' + removed.join(', '));
+      if (changed.length) {
+        changed.forEach((id) => {
+          const n = prev[id].filter((r, i) => r !== result[id][i]).length;
+          console.log('  ! ' + id + ' — ' + n + ' pinned samples would CHANGE');
+        });
+        if (!FORCE) {
+          console.error('\nRefusing to overwrite ' + changed.length + ' pinned config(s).'
+            + '\nRun the gate WITHOUT --update first and read the diff. If the change is'
+            + '\nintended, re-run with:  node test/arch-parity.js --update --force');
+          process.exit(1);
+        }
+        console.log('  (--force: overwriting them)');
+      }
+    }
     fs.writeFileSync(BASELINE, JSON.stringify(result, null, 1) + '\n');
-    console.log((fs.existsSync(BASELINE) && !UPDATE ? 'Baseline created' : 'Baseline updated')
-      + ': ' + Object.keys(result).length + ' configs × ' + (WALK_BARS / WALK_STEP) + ' samples');
+    console.log('Baseline written: ' + Object.keys(result).length + ' configs × '
+      + (WALK_BARS / WALK_STEP) + ' samples');
     process.exit(0);
   }
 

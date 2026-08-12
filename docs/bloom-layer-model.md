@@ -1365,5 +1365,27 @@ during the unbound one, must walk the whole part sequence. **Merging the two
 spines is the slice-4 decision** — and it is the same decision as the
 Chord/Section matrix merge below, not a separate one.
 
+**Slice 4a SHIPPED 2026-08-12 — OPEN PARTS.** A part may now carry NO changes:
+a named block that occupies bars while the chord clock HOLDS. That is the
+consolidation the whole redesign was for — "parts that aren't progressions
+alongside parts that are" — and it is what a section was, folded into the one
+spine. Purely additive: no existing project has one, so arch-parity is identical
+across all 22 prior configs, the invariant harness across all 30, golden 82/82.
+
+**The length rule is now unconditional.** A part WITH changes never stores a
+length — its changes are its length. An open part stores one precisely BECAUSE
+it has no chords to derive it from. Two stored answers could disagree; one
+cannot. Cutting a phrase short moves to the Scheduler (where the unit schedule
+and chord matrix already live) and fractional phrase lengths belong on the
+chord — so neither needs a length override here.
+
+**`open` and `hold` are DIFFERENT PROPERTIES, and conflating them is a trap.**
+`open` = carries no changes, which is true of a legacy SECTION too; `hold` = the
+harmony stops moving while this block runs, which is true ONLY of an open part.
+A section does not hold — the progression keeps running underneath it. The first
+build inferred one from the other and would have silently frozen the harmony in
+every project that has a section, so provenance is marked explicitly at
+derivation instead.
+
 **Still open.** Whether the Chord and Section matrices merge (see the Edit
 overlap note) — deferred to slice 4.

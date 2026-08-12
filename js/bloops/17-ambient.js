@@ -2676,8 +2676,12 @@
         // truth while both models are live.
         const sliceOf = (pi) => {
           if (!parts || !parts[pi]) return null;
+          if (parts[pi].open) return null;               // no chords, no slice
           let from = 0;
-          for (let i = 0; i < pi; i++) from += Math.max(1, parts[i].len | 0);
+          // Open parts consume no chords, so they must not advance the cursor —
+          // Math.max(1, 0) would silently step it by one per open part and shift
+          // every later part's chords.
+          for (let i = 0; i < pi; i++) from += (parts[i].open ? 0 : Math.max(1, parts[i].len | 0));
           return { from, len: Math.max(1, parts[pi].len | 0), plays: Math.max(1, (parts[pi].plays | 0) || 1) };
         };
         const mk = (id, name, extra) => Object.assign({ id, name }, extra || {});
@@ -2746,8 +2750,15 @@
           });
         } else if (parts && hasCh && p.on) {
           parts.forEach((pt, i) => {
-            const e = mk(i + 1, pt.name || ('Changes ' + (i + 1)));
-            e.changes = sliceOf(i);
+            const e = mk(i + 1, pt.name || (pt.open ? ('Part ' + (i + 1)) : ('Changes ' + (i + 1))));
+            // `hold` = this block HOLDS the harmony while it runs. Distinct from
+            // `open` (= carries no changes), which is also true of a legacy
+            // SECTION — and a section does NOT hold: the progression keeps
+            // running underneath it. Provenance is marked explicitly rather than
+            // inferred, or migrating sections would silently freeze the harmony
+            // in every project that has one.
+            if (pt.open) { e.len = { num: pt.bars, den: 1, ref: 'bar' }; e.hold = 1; }
+            else e.changes = sliceOf(i);
             if (pt.key) e.key = { root: pt.key.root | 0, scale: pt.key.scale };
             if (pt.salt) e.salt = pt.salt;
             out.push(e);
@@ -2905,8 +2916,31 @@
     function _ambRepairParts(parts, total) {
       if (!Array.isArray(parts) || !parts.length || total <= 0) return undefined;
       const out = []; let acc = 0;
-      for (let i = 0; i < parts.length && acc < total; i++) {
+      for (let i = 0; i < parts.length; i++) {
         const p = parts[i]; if (!p || typeof p !== 'object') continue;
+        // OPEN PART — a named block that carries NO changes. This is what a
+        // section was, folded into the one spine: it occupies BARS and the chord
+        // clock HOLDS while it runs, so it consumes no chords and takes no part
+        // in the Σlen clamp. Its length is explicit precisely BECAUSE it has no
+        // chords to derive one from — a part WITH changes never stores a length
+        // (its changes are its length, and two stored answers could disagree).
+        if (p.open) {
+          const nm = (typeof p.name === 'string' && p.name.trim()) ? p.name.trim().slice(0, 16) : ('Part ' + (out.length + 1));
+          const e0 = { name: nm, len: 0, open: 1,
+            bars: Math.max(0.25, Math.min(64, Number.isFinite(p.bars) && p.bars > 0 ? p.bars : 4)) };
+          if (p.key && typeof p.key === 'object' && Number.isFinite(p.key.root)) {
+            const sc0 = (typeof SCALES !== 'undefined' && SCALES[p.key.scale]) ? p.key.scale : 'major';
+            e0.key = { root: (((p.key.root | 0) % 12) + 12) % 12, scale: sc0 };
+          }
+          if (p.salt && typeof p.salt === 'object') {
+            e0.salt = { len: Math.max(0, Math.min(100, p.salt.len | 0)),
+                        colors: Math.max(0, Math.min(8, p.salt.colors | 0)),
+                        scatter: Math.max(0, Math.min(100, p.salt.scatter | 0)) };
+          }
+          if (Number.isFinite(p.plays) && (p.plays | 0) > 1) e0.plays = Math.min(64, p.plays | 0);
+          out.push(e0); continue;
+        }
+        if (acc >= total) break;                 // no chords left for a changes part
         const len = Math.max(1, Math.min(total - acc, Number.isFinite(p.len) ? (p.len | 0) : 1));
         const name = (typeof p.name === 'string' && p.name.trim()) ? p.name.trim().slice(0, 16) : ('Changes ' + (out.length + 1));
         // PER-PART KEY (additive): the key in force while this part plays — a real
@@ -2934,8 +2968,15 @@
         out.push(e); acc += len;
       }
       if (!out.length) return undefined;
-      if (acc < total) out[out.length - 1].len += (total - acc);
-      if (out.length === 1) return undefined;   // one part spanning everything = no chain
+      if (acc < total) {
+        // The remainder goes to the last part that HOLDS CHANGES; handing it to
+        // an open part would silently give it chords and a second length.
+        for (let i = out.length - 1; i >= 0; i--) { if (!out[i].open) { out[i].len += (total - acc); break; } }
+      }
+      // One CHANGES part spanning everything is not a chain (it is just the
+      // progression). One OPEN part is, though — it is a named block of the
+      // arrangement and there is nothing else expressing it.
+      if (out.length === 1 && !out[0].open) return undefined;
       return out;
     }
     // REBUILD-SCOPED normalize memo. getCfg() normalizes on EVERY call, and a
@@ -4445,15 +4486,13 @@
       // this branch must walk the whole part sequence — so that shape keeps the
       // legacy expansion until slice 4 merges the two spines.
       if (!_ownSrc && cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length
-          && Array.isArray(cfg.prog.parts) && cfg.prog.parts.some(p => p && (p.plays | 0) > 1)) {
+          && Array.isArray(cfg.prog.parts)
+          && cfg.prog.parts.some(p => p && (((p.plays | 0) > 1) || p.open))) {
         const all = cfg.prog.chords, L = all.length;
         const seq = [];
         const _chain = _ambArchOwnsChain(cfg) ? _ambArchChainSlots(cfg) : null;
         if (_chain && _chain.length) {
-          _chain.forEach((sl) => {
-            const c = all[sl.idx];
-            seq.push({ abs: sl.idx, len: (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc });
-          });
+          _chain.forEach((sl) => { seq.push({ abs: sl.idx, len: _ambChainSlotBars(cfg, sl) }); });
         } else {
           let from = 0;
           cfg.prog.parts.forEach(p => {
@@ -32268,7 +32307,8 @@
       const arch = cfg && Array.isArray(cfg.arch) ? cfg.arch : null;
       const p = cfg && cfg.prog;
       if (!arch || !p || !Array.isArray(p.chords) || !p.chords.length) return null;
-      let withCh = arch.filter((e) => e && e.changes);
+      const _hasCh = arch.some((e) => e && e.changes), _hasHold = arch.some((e) => e && e.hold);
+      let withCh = (_hasCh || _hasHold) ? arch.filter((e) => e && (e.changes || e.hold)) : [];
       if (!withCh.length) {
         // Nothing carries changes, yet the progression is ON with chords — a
         // section bound to a part that normalize has since deleted (it drops a
@@ -32281,8 +32321,30 @@
       // reports part:-1 / pName:'' so callers can tell it from a real chain.
       const solo = (withCh.length === 1 && withCh[0].unnamed);
       const out = [];
-      withCh.forEach((e, pi) => {
-        const ch = e.changes, plays = Math.max(1, ch.plays | 0), len = Math.max(1, ch.len | 0);
+      // The entries that OCCUPY TIME: those with changes, plus HOLD blocks (open
+      // parts) — selected above, so the changes-less fallback is carried rather
+      // than filtered back out. Legacy sections are `open` too but are NOT holds
+      // (the progression runs underneath them), so they are absent here and the
+      // chain is exactly what it was before open parts existed.
+      const seqEntries = withCh;
+      let pi = -1;
+      seqEntries.forEach((e) => {
+        if (e.changes) pi++;
+        const plays = Math.max(1, ((e.changes ? e.changes.plays : e.plays) | 0)) || 1;
+        if (!e.changes) {
+          // HOLD: no chords, so the chord in force STAYS in force. It takes the
+          // previous slot's chord (chord 0 when the arrangement opens with one),
+          // which is what "a part with no changes" means — time passes, the
+          // harmony does not move.
+          const bars = (e.len && Number.isFinite(e.len.num) && e.len.num > 0) ? e.len.num : 4;
+          for (let r = 0; r < plays; r++) {
+            out.push({ idx: out.length ? out[out.length - 1].idx : 0,
+                       part: pi, pName: e.name || 'Part', pFirst: true, rep: r, plays,
+                       hold: 1, bars });
+          }
+          return;
+        }
+        const ch = e.changes, len = Math.max(1, ch.len | 0);
         for (let r = 0; r < plays; r++) {
           for (let k = 0; k < len; k++) {
             out.push({ idx: (ch.from + k) % p.chords.length,
@@ -32306,11 +32368,19 @@
     function _ambProgChainSlots(cfg) {
       return _ambArchChainSlots(cfg);
     }
+    // How long ONE chain slot lasts, in bars. A HOLD slot (an open part) carries
+    // its own length because it has no chord to ask; a chord slot takes the
+    // chord's own `bars`, else barsPerChord. One definition, shared by the clock
+    // and every readout, so they cannot disagree about the length of the piece.
+    function _ambChainSlotBars(cfg, sl) {
+      if (sl && sl.hold) return Math.max(0.01, sl.bars || 1);
+      const bpc = Math.max(0.01, (cfg && cfg.barsPerChord) || 1);
+      const c = cfg && cfg.prog && cfg.prog.chords ? cfg.prog.chords[sl.idx] : null;
+      return (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc;
+    }
     function _ambProgChainBars(cfg) {
       const slots = _ambProgChainSlots(cfg); if (!slots) return 0;
-      const p = cfg.prog, bpc = Math.max(0.01, cfg.barsPerChord || 1);
-      return slots.reduce((a, sl) => { const c = p.chords[sl.idx];
-        return a + ((c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc); }, 0);
+      return slots.reduce((a, sl) => a + _ambChainSlotBars(cfg, sl), 0);
     }
     // The played chain collapsed to one entry per PART RUN — name, how many
     // passes, where it sits in bars, and the chords it plays. The bird's-eye

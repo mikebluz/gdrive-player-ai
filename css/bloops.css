@@ -12883,6 +12883,29 @@
     .ambient-qe-cell.chgrp-b { box-shadow: inset 0 -3px 0 rgba(255, 170, 110, 0.30); }
     .ambient-qe-cell.chgrp-start { margin-left: 8px; }
     .ambient-qe-cell.chgrp-start:first-child { margin-left: 0; }
+    /* WHOLE-CELL chord colour. Hue comes from --qe-h (root pitch class × 30°),
+       set per cell, so the same chord is the same colour wherever it appears —
+       a repeated pass is recognisable and "which layers play on the F" is one
+       colour scanned down the grid. A 3px underline was not legible at cell
+       size, which is what "more prominent" was about.
+       ON/OFF stays readable on top: a playing cell is saturated, a silent one
+       drained and dim. Colour carries CHORD, brightness carries ON/OFF. */
+    .ambient-qe-cell[style*="--qe-h"].on {
+      background: hsl(var(--qe-h) 62% 30%);
+      border-color: hsl(var(--qe-h) 62% 52%);
+      color: hsl(var(--qe-h) 78% 88%);
+    }
+    .ambient-qe-cell[style*="--qe-h"]:not(.on) {
+      background: hsl(var(--qe-h) 20% 12%);
+      border-color: hsl(var(--qe-h) 18% 24%);
+      color: hsl(var(--qe-h) 14% 44%);
+    }
+    .ambient-qe-cell[style*="--qe-h"].on:hover { background: hsl(var(--qe-h) 66% 38%); }
+    .ambient-qe-cell.chgrp-start { margin-left: 10px; }
+    /* Chord names need more room than a step number. */
+    .ambient-qe-cell.wide { min-width: 48px; font-size: 0.66rem; letter-spacing: -0.01em; }
+    .ambient-qe-gap { flex: 0 0 12px; }
     .ambient-qe-steps-row { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin: 8px 0 4px; }
     .ambient-qe-steps-row > span:first-child { font-size: 0.72rem; color: #a0aec0; flex: 0 0 auto; }
-    .ambient-qe-steps { min-height: 34px; min-width: 40px; padding: 5px 9px; font-size: 0.74rem; }
+    .ambient-qe-steps, .ambient-qe-disp { min-height: 34px; min-width: 40px; padding: 5px 9px; font-size: 0.74rem; }
+    @media (max-width: 520px) { .ambient-qe-steps, .ambient-qe-disp { min-height: 36px; } }

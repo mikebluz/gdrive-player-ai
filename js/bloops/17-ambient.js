@@ -11742,6 +11742,26 @@
     // before. Same storage as the unit gate (all-zero slot mask = off, absent =
     // on), so it is a different VIEW of the same setting rather than a second
     // one that could disagree with it.
+    // A COMPACT chord label for a small cell — "C", "Am", "G7", "Bdim".
+    // _ambChordFormOf names the form for the editor ("Min 7"), which is right
+    // there and far too wide here, so this derives a short suffix from the
+    // intervals directly.
+    function _ambQeChordLabel(ch) {
+      try {
+        if (!ch || _ambIsTransition(ch)) return '⇝';
+        const root = (typeof CHROMATIC !== 'undefined')
+          ? (CHROMATIC[((((ch.root | 0) % 12) + 12) % 12)] || '?') : '?';
+        const iv = Array.isArray(ch.intervals) ? ch.intervals.map(v => ((v % 12) + 12) % 12) : [];
+        const has = (n) => iv.indexOf(n) >= 0;
+        let q = '';
+        if (has(3) && has(6)) q = 'dim';
+        else if (has(3)) q = 'm';
+        else if (has(4) && has(8)) q = 'aug';
+        else if (!has(3) && !has(4)) q = has(5) ? 'sus4' : (has(2) ? 'sus2' : '');
+        if (has(10)) q += '7'; else if (has(11)) q += 'maj7';
+        return root + q;
+      } catch (e) { return '?'; }
+    }
     function _ambQuickUnitsModal(E) {
       _E = E;
       const cfg = E.getCfg(); if (!cfg) return;
@@ -11793,17 +11813,22 @@
             // CHORD-GROUP TINT, the same alternating a/b the lane uses, taken at
             // the MIDDLE of the unit so a block that straddles a change is
             // attributed to where most of it sits.
-            let gcls = '', chName = '';
+            let gcls = '', chName = '', shortName = '', hue = -1;
             if (pgActive && chainLen && !(E._qeSteps | 0)) {
               // One cell = one change. Tint alternates per change; a new part
               // (Verse → Chorus) takes the group-start gap.
               const sl = chainSlots[i % chainLen];
-              gcls = ((i % 2) ? ' chgrp-b' : ' chgrp-a') + (sl && sl.pFirst ? ' chgrp-start' : '');
+              gcls = (sl && sl.pFirst ? ' chgrp-start' : '');
               try {
                 const ch = _ambProgSoundAt(E, { type: 'prog', chords: cfg.prog.chords }, sl.idx);
-                if (ch && _ambIsTransition(ch)) chName = '⇝';
-                else if (ch && typeof CHROMATIC !== 'undefined') chName = CHROMATIC[((((ch.root | 0) % 12) + 12) % 12)] || '';
-                if (sl && sl.pName) chName = sl.pName + ' · ' + chName
+                shortName = _ambQeChordLabel(ch);
+                // HUE BY CHORD, not an alternating a/b: the same chord is the
+                // same colour wherever it appears, so a repeated pass is
+                // recognisable at a glance and "which layers play on the F"
+                // is answerable by scanning one colour down the grid.
+                if (ch && !_ambIsTransition(ch)) hue = ((((ch.root | 0) % 12) + 12) % 12) * 30;
+                chName = shortName;
+                if (sl && sl.pName) chName = sl.pName + ' · ' + shortName
                   + (sl.plays > 1 ? ('  ' + (sl.rep + 1) + '/' + sl.plays) : '');
               } catch (e) {}
             } else if (pgActive) {
@@ -11825,10 +11850,13 @@
                 } catch (e) {}
               }
             }
-            return '<button type="button" class="ambient-qe-cell' + (off ? '' : ' on') + gcls + '"'
+            const showCh = !!E._qeChords && shortName;
+            return '<button type="button" class="ambient-qe-cell' + (off ? '' : ' on') + gcls
+              + (showCh ? ' wide' : '') + '"'
+              + (hue >= 0 ? (' style="--qe-h:' + hue + '"') : '')
               + ' data-qe-key="' + esc(t.key) + '" data-qe-i="' + i + '"'
               + ' title="Unit ' + (i + 1) + (chName ? (' · ' + esc(chName)) : '') + ' — ' + (off ? 'silent' : 'plays') + '">'
-              + (i + 1) + '</button>';
+              + (showCh ? esc(shortName) : (i + 1)) + '</button>';
           }).join('');
           return '<div class="ambient-qe-row">'
             + '<span class="ambient-qe-name" title="' + esc(t.name || t.key) + '">' + esc(t.name || t.key) + '</span>'
@@ -11838,12 +11866,17 @@
         const stepHtml = OPTS.map((v) => '<button type="button" class="ambient-seg ambient-qe-steps'
           + (((E._qeSteps | 0) === v) ? ' active' : '') + '" data-qe-steps="' + v + '">'
           + (v ? v : 'Auto') + '</button>').join('');
+        const dispHtml = '<button type="button" class="ambient-seg ambient-qe-disp'
+          + (E._qeChords ? ' active' : '') + '" data-qe-disp="1" '
+          + 'title="Show each cell as its step number, or as the chord sounding there">'
+          + (E._qeChords ? '♪ Chord' : '① Step') + '</button>';
         modal.innerHTML =
           '<div class="sm-title">Quick edit — units</div>' +
           '<div class="ambient-ug-sub">Click a unit to turn that layer off there, and again to bring it back. '
             + 'Same setting as Edit Unit Schedule, which still handles slices within a unit.'
             + (pgActive ? ' Shading groups the units by chord.' : '') + '</div>' +
-          '<div class="ambient-qe-steps-row"><span>Steps</span>' + stepHtml +
+          '<div class="ambient-qe-steps-row"><span>Show</span>' + dispHtml +
+            '<span class="ambient-qe-gap"></span><span>Steps</span>' + stepHtml +
             '<span class="ambient-hint">' + ((E._qeSteps | 0)
               ? ('every ' + (E._qeSteps | 0) + ' units, then repeat')
               : (chainLen ? ('one per change — ' + chainLen + ' in the chain')
@@ -11853,6 +11886,8 @@
       };
       draw();
       ov.addEventListener('click', (ev) => {
+        const dp = ev.target && ev.target.closest && ev.target.closest('[data-qe-disp]');
+        if (dp) { E._qeChords = !E._qeChords; draw(); return; }
         const st = ev.target && ev.target.closest && ev.target.closest('[data-qe-steps]');
         if (st) { E._qeSteps = st.getAttribute('data-qe-steps') | 0; draw(); return; }
         const c = ev.target && ev.target.closest && ev.target.closest('[data-qe-i]');

@@ -29950,7 +29950,25 @@
     function _ambAddPartModal(E, x, y) {
       _E = E;
       const cfg = E.getCfg() || {};
-      const aRoot = _ambKeyRootPc(cfg), aScale = _ambKeyScaleName(cfg);
+      // A NEW SET INHERITS THE KEY OF THE LAST SET, and the first set inherits
+      // the workspace key. Seeding from the AREA key instead meant every set
+      // after a modulation offered to snap back to the area's key — so adding
+      // "another chorus in F" defaulted to C and had to be corrected by hand.
+      // Inheriting forward is what writing music actually does: you stay where
+      // you are until you decide to move.
+      const _inh = (() => {
+        try {
+          const parts = (cfg.prog && Array.isArray(cfg.prog.parts)) ? cfg.prog.parts : [];
+          for (let i = parts.length - 1; i >= 0; i--) {
+            const k = parts[i] && parts[i].key;
+            if (k && Number.isFinite(k.root)) return { root: ((k.root % 12) + 12) % 12, scale: k.scale || 'major', from: parts[i].name || 'the last set' };
+          }
+        } catch (e) {}
+        return null;
+      })();
+      const aRoot = _inh ? _inh.root : _ambKeyRootPc(cfg);
+      const aScale = _inh ? _inh.scale : _ambKeyScaleName(cfg);
+      const _inhFrom = _inh ? _inh.from : ((cfg.keyOn && cfg.keyFollow !== false) ? 'the workspace' : 'this area');
       const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
       const scales = (typeof SCALES !== 'undefined') ? Object.keys(SCALES) : ['major', 'minor'];
       const rootOpts = _AMB_CHROM.map((n, i) => '<option value="' + i + '"' + (i === aRoot ? ' selected' : '') + '>' + esc(n) + '</option>').join('');
@@ -29959,7 +29977,9 @@
       ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-addpart-modal">' +
         '<div class="sm-title">Add a part</div>' +
         '<div class="ambient-step-modal-body">' +
-          '<div class="ambient-addpart-hint">A part is a named stretch of the progression — Verse, Chorus. Give it its own key and the music MODULATES while it plays; the area key is left alone. The progression you pick next is transposed into this key, keeping its relative motion.</div>' +
+          '<div class="ambient-addpart-hint">A set of changes is a named stretch of the progression — Verse, Chorus. '
+            + 'It starts in the key of ' + esc(_inhFrom) + '; change it and the music MODULATES while this set plays, leaving the others alone. '
+            + 'The progression you pick next is transposed into this key, keeping its relative motion.</div>' +
           '<div class="ambient-ctrl ambient-step-row"><label>Key</label>' +
             '<span class="ambient-addpart-key">' +
               '<select class="ambient-select ap-root">' + rootOpts + '</select>' +

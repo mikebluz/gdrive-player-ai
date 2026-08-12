@@ -1554,6 +1554,18 @@ appending changes flips the flag.
 **This supersedes the "prog.on stays" note in slice 4h**, which was right about
 the DATA and wrong to conclude the control should stay with it.
 
+**Slice 4k — `open` means BLOCK, `hold` means the harmony freezes.** They are
+separate questions and the mirror was conflating them: it emitted a section only
+for NON-holding open parts, so a vamp had no section, therefore no mask column,
+therefore could not be gated per layer — while its own matrix tab still drew a
+cell whose section index was −1, which would have written `steps[-1]`.
+
+Every open part is a block now. `open` earns a section and a matrix column;
+`hold` says only whether the chord clock freezes while it runs. Verified across
+27 configs that ONLY the section field moved — step, chord, key, the per-section
+overrides and the layer gate are all untouched — so this adds structure without
+changing a note.
+
 **ARCH is complete.** What remains is chord lengths in UNITS (unit-first Level 2,
 independent of this work) and the semantics note below. (see the Edit
 overlap note) — deferred to slice 4.

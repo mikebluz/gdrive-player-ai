@@ -3104,8 +3104,15 @@
       }
       // THE MIRROR — rebuild cfg.sections from the non-holding open parts.
       {
+        // EVERY open part is a block, holding or not. `open` says "this is a
+        // named stretch of bars" — which is what a section is, and what earns a
+        // column in the matrix; `hold` says only whether the HARMONY freezes
+        // while it runs, which is a question for the chord clock, not for the
+        // arrangement. Excluding holds here left a vamp with no section, so it
+        // had no mask column, so it could not be gated per layer — and its
+        // matrix tab still drew a cell whose section index was -1.
         const _op = (cfg.prog && Array.isArray(cfg.prog.parts))
-          ? cfg.prog.parts.filter(x => x && x.open && !x.hold) : [];
+          ? cfg.prog.parts.filter(x => x && x.open) : [];
         if (_op.length) {
           cfg.sections = _op.map((x, i) => {
             const s2 = { id: i + 1, name: x.name, bars: x.bars };
@@ -30981,9 +30988,7 @@
       const _openParts = [];
       if (Array.isArray(prog.parts)) { let _si = 0; prog.parts.forEach((p2, pi2) => {
         if (!p2 || !p2.open) return;
-        const rec = { pi: pi2, si: p2.hold ? -1 : _si, part: p2 };
-        if (!p2.hold) _si++;
-        _openParts.push(rec);
+        _openParts.push({ pi: pi2, si: _si++, part: p2 });
       }); }
       const _onOpenTab = !!(_pmParts && el._pmPart >= 0 && _pmParts[el._pmPart].open);
       if (_onOpenTab) {
@@ -30992,7 +30997,7 @@
       } else {
         for (let i = _pmFrom; i < _pmTo; i++) _pmCols.push({ kind: 'chord', i });
         // The "All" tab shows the whole arrangement, part columns included.
-        if (!_pmParts || el._pmPart < 0) _openParts.forEach(rec => { if (rec.si >= 0) _pmCols.push({ kind: 'part', rec }); });
+        if (!_pmParts || el._pmPart < 0) _openParts.forEach(rec => _pmCols.push({ kind: 'part', rec }));
       }
       h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + _pmCols.map((col) => {
         if (col.kind === 'part') return '<span class="ambient-pm-ch pm-partcol" title="' + esc(col.rec.part.name) + ' — a part with no changes. The cell is how often each layer plays through it.">' + esc(col.rec.part.name) + '</span>';

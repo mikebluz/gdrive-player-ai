@@ -12876,3 +12876,13 @@
        finger one, and it was the only control in here under the floor. */
     .ambient-sched-qe { min-height: 40px; padding: 8px 14px; }
     #drum-kit-editor .sm-footer button, .ambient-qe-modal .sm-footer button { min-height: 40px; }
+
+    /* Quick-edit: chord-group shading, matching the Scheduler lane's a/b tint so
+       the two read as the same grouping rather than two colour schemes. */
+    .ambient-qe-cell.chgrp-a { box-shadow: inset 0 -3px 0 rgba(120, 160, 255, 0.30); }
+    .ambient-qe-cell.chgrp-b { box-shadow: inset 0 -3px 0 rgba(255, 170, 110, 0.30); }
+    .ambient-qe-cell.chgrp-start { margin-left: 8px; }
+    .ambient-qe-cell.chgrp-start:first-child { margin-left: 0; }
+    .ambient-qe-steps-row { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin: 8px 0 4px; }
+    .ambient-qe-steps-row > span:first-child { font-size: 0.72rem; color: #a0aec0; flex: 0 0 auto; }
+    .ambient-qe-steps { min-height: 34px; min-width: 40px; padding: 5px 9px; font-size: 0.74rem; }

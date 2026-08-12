@@ -11755,40 +11755,92 @@
       ov.className = 'sm-overlay ambient-qe-ov';
       ov.innerHTML = '<div class="sm-modal ambient-qe-modal"></div>';
       const modal = ov.querySelector('.ambient-qe-modal');
+      const pgActive = !!(cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length);
+      // HOW MANY STEPS. Left alone it is AUTO: the Scheduler's view width divided
+      // by that layer's own unit length — i.e. exactly the blocks the lane draws,
+      // which is why rows can differ in length (a 1-bar layer gets more cells than
+      // a 4-bar one over the same music). Choosing a number instead fixes every
+      // row to N and makes the gate REPEAT every N units, which is the thing most
+      // people actually mean by "how many steps" — a 4-step pattern that loops.
+      // Transient view state on the engine, like the chord matrix's _pmPart: it
+      // is a way of looking, not a property of the music.
+      const stepsOf = (L, key) => {
+        const fixed = E._qeSteps | 0;
+        if (fixed > 0) return Math.max(1, Math.min(_AMB_UG_MAXSLOTS, fixed));
+        const uBars = Math.max(0.05, _ambUnitLaneBars(E, key, L, cfg, VIEW, barSec));
+        return Math.max(1, Math.min(_AMB_UG_MAXSLOTS, Math.round(VIEW / uBars)));
+      };
       const draw = () => {
         const rows = layers.map((t) => {
           const L = t.L || _ambLayerByKey(E, t.key);
           if (!L) return '';
-          // Each layer's OWN unit length — the same figure the lane uses, so a
-          // cell here is the same block you see there.
           const uBars = Math.max(0.05, _ambUnitLaneBars(E, t.key, L, cfg, VIEW, barSec));
-          const n = Math.max(1, Math.min(_AMB_UG_MAXSLOTS, Math.round(VIEW / uBars)));
+          const n = stepsOf(L, t.key);
+          let lastG = -1;
           const cells = Array.from({ length: n }, (_, i) => {
             const off = _ambUnitWholeOff(L, i);
-            return '<button type="button" class="ambient-qe-cell' + (off ? '' : ' on') + '"'
+            // CHORD-GROUP TINT, the same alternating a/b the lane uses, taken at
+            // the MIDDLE of the unit so a block that straddles a change is
+            // attributed to where most of it sits.
+            let gcls = '', chName = '';
+            if (pgActive) {
+              const gp = _ambProgGroupAt(cfg, (i + 0.5) * uBars, !!L.progMerge);
+              if (gp) {
+                const gabs = gp.cyc * gp.nGroups + gp.gi;
+                gcls = (gabs % 2 ? ' chgrp-b' : ' chgrp-a') + (gabs !== lastG ? ' chgrp-start' : '');
+                lastG = gabs;
+                // Name the chord for the tooltip. _ambProgSoundAt gives the
+                // SOUNDING chord (key transpose / section / part all folded in),
+                // which is what the header pill and the lane show — see the
+                // "every chord DISPLAY must resolve through" note in CLAUDE.md.
+                try {
+                  const ch = _ambProgSoundAt(E, { type: 'prog', chords: cfg.prog.chords },
+                    (gp.slot != null ? gp.slot : gp.gi));
+                  if (ch && !_ambIsTransition(ch) && typeof CHROMATIC !== 'undefined') {
+                    chName = CHROMATIC[((((ch.root | 0) % 12) + 12) % 12)] || '';
+                  } else if (ch && _ambIsTransition(ch)) chName = '⇝';
+                } catch (e) {}
+              }
+            }
+            return '<button type="button" class="ambient-qe-cell' + (off ? '' : ' on') + gcls + '"'
               + ' data-qe-key="' + esc(t.key) + '" data-qe-i="' + i + '"'
-              + ' title="Unit ' + (i + 1) + ' — ' + (off ? 'silent' : 'plays') + '">' + (i + 1) + '</button>';
+              + ' title="Unit ' + (i + 1) + (chName ? (' · ' + esc(chName)) : '') + ' — ' + (off ? 'silent' : 'plays') + '">'
+              + (i + 1) + '</button>';
           }).join('');
           return '<div class="ambient-qe-row">'
             + '<span class="ambient-qe-name" title="' + esc(t.name || t.key) + '">' + esc(t.name || t.key) + '</span>'
             + '<span class="ambient-qe-cells">' + cells + '</span></div>';
         }).join('');
+        const OPTS = [0, 2, 3, 4, 6, 8, 12, 16, 32];
+        const stepHtml = OPTS.map((v) => '<button type="button" class="ambient-seg ambient-qe-steps'
+          + (((E._qeSteps | 0) === v) ? ' active' : '') + '" data-qe-steps="' + v + '">'
+          + (v ? v : 'Auto') + '</button>').join('');
         modal.innerHTML =
           '<div class="sm-title">Quick edit — units</div>' +
           '<div class="ambient-ug-sub">Click a unit to turn that layer off there, and again to bring it back. '
-            + 'Same setting as Edit Unit Schedule, which still handles slices within a unit.</div>' +
+            + 'Same setting as Edit Unit Schedule, which still handles slices within a unit.'
+            + (pgActive ? ' Shading groups the units by chord.' : '') + '</div>' +
+          '<div class="ambient-qe-steps-row"><span>Steps</span>' + stepHtml +
+            '<span class="ambient-hint">' + ((E._qeSteps | 0)
+              ? ('every ' + (E._qeSteps | 0) + ' units, then repeat')
+              : 'as many as the Scheduler shows') + '</span></div>' +
           '<div class="ambient-qe-body">' + rows + '</div>' +
           '<div class="sm-footer"><button type="button" class="sm-apply">Done</button></div>';
       };
       draw();
       ov.addEventListener('click', (ev) => {
+        const st = ev.target && ev.target.closest && ev.target.closest('[data-qe-steps]');
+        if (st) { E._qeSteps = st.getAttribute('data-qe-steps') | 0; draw(); return; }
         const c = ev.target && ev.target.closest && ev.target.closest('[data-qe-i]');
         if (c) {
           const key = c.getAttribute('data-qe-key');
           const i = c.getAttribute('data-qe-i') | 0;
           const L = _ambLayerByKey(E, key);
           if (L) {
-            const per = c.parentElement ? c.parentElement.children.length : 1;
+            // With an explicit step count the gate must REPEAT at that length,
+            // so the grid and the music agree; on Auto, keep the lane's period.
+            const per = (E._qeSteps | 0) || (c.parentElement ? c.parentElement.children.length : 1);
+            if ((E._qeSteps | 0) && L.unitGate) L.unitGate.period = Math.max(1, Math.min(_AMB_UG_MAXSLOTS, E._qeSteps | 0));
             _ambUnitSetWhole(L, i, _ambUnitWholeOff(L, i), per);
             try { _ambUnitGateBump(); } catch (e) {}
             try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}

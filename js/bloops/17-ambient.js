@@ -32859,7 +32859,11 @@
       // that only repeated its own select, and a strip that was always empty.
       let html = '';
       const _rowSelHtml = '<select class="ambient-select ambient-sched-rowsel" title="Bars per row. A long chain squeezed into one row leaves each chord a few pixels wide; a narrower row wraps instead, so every block gets bigger.">'
-        + [[0, 'whole chain'], [2, '2 bars'], [4, '4 bars'], [8, '8 bars'], [16, '16 bars']]
+        // Each option names the JOB, not just the value. Its label ("bars →")
+        // lived in the ruler's control cell, so once that went the dropdown read
+        // "whole chain" — which says what it is set to and nothing about what it
+        // does, and got asked about immediately.
+        + [[0, 'all in 1 row'], [2, '2 bars/row'], [4, '4 bars/row'], [8, '8 bars/row'], [16, '16 bars/row']]
             .map(o => '<option value="' + o[0] + '"' + (o[0] === _rowPref ? ' selected' : '') + '>' + o[1] + '</option>').join('')
         + '</select>';
       // SECTION lane (sets of bars): named blocks cycling across the ruler —

@@ -12961,8 +12961,8 @@
        nothing (min-width:0 lets them). An EXPLICIT width plus flex:0 0 auto is
        the documented fix — it must not grow and must not be sized from its own
        content. */
-    .ambient-sched-qebar > select { flex: 0 0 auto; width: 116px; min-height: 40px; }
-    @media (max-width: 420px) { .ambient-sched-qebar > select { width: 96px; } }
+    .ambient-sched-qebar > select { flex: 0 0 auto; width: 132px; min-height: 40px; }
+    @media (max-width: 420px) { .ambient-sched-qebar > select { width: 116px; } }
     .ambient-sched-secbtn.active, .ambient-sched-qe.active { border-color: #35c98e; color: #9df3cd; }
     .ambient-sched-secwrap[hidden] { display: none; }
     /* Quick edit: one row per SET of changes; a continued row drops the layer

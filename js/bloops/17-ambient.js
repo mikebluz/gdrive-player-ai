@@ -36969,10 +36969,10 @@
         if (keySub) keySub.style.display = keyOn ? '' : 'none';
         const progSub = document.getElementById(tr('ambient-prog-sub'));
         if (progSub) progSub.style.display = progOn ? '' : 'none';
-        // The picker moved out of #ambient-prog-sub onto the on/off row, so it
-        // carries its own visibility now.
-        { const pk = document.getElementById(tr('ambient-prog-pick'));
-          if (pk) pk.style.display = progOn ? '' : 'none'; }
+        // The picker is now "＋ Add changes" INSIDE Overview, so its own row
+        // carries the visibility (the button itself is display:inline within it).
+        { const pa = document.getElementById(tr('ambient-pov-actions'));
+          if (pa) pa.style.display = progOn ? '' : 'none'; }
         // Progression subsection: the pick/edit/clone/part row shows when Progression
         // is on; else the "turn Progression on" hint.
         { const progOff = document.getElementById(tr('ambient-progsec-off'));
@@ -37032,8 +37032,12 @@
         // Shows WHICH SEED is loaded (+ "· edited" once the current progression
         // diverges) — deliberately NOT the current progression's name, which is
         // what made this control read as both a chooser and a readout.
-        if (pPick) { pPick.textContent = _ambProgSeedLabel(p);
-          pPick.title = 'Pick a SEED progression — it loads into the current progression, which you then edit independently. The seed list is only changed by Export.'; }
+        if (pPick) { pPick.textContent = '\uFF0B Add changes';
+          // The label is a fixed ACTION now ("＋ Add changes"); which seed is
+          // loaded is read off the Overview chips right beside it, so the
+          // button no longer doubles as a readout.
+          pPick.title = 'Add a set of changes — pick a seed progression, generate one, or write it in roman numerals. '
+            + 'The seed list is only changed by Export.'; }
         const nCh = (Array.isArray(p.chords) ? p.chords.length : 0);
         const pEdit = document.getElementById(tr('ambient-prog-edit'));
         if (pEdit) pEdit.disabled = !(nCh > 0);   // editable only when a progression is selected
@@ -37377,17 +37381,26 @@
             '<div class="ambient-mod-sub ambient-progsec-lbl">Key</div>' +
             keyRowHtml +
             '<div class="ambient-mod-sub ambient-progsec-lbl">Progression</div>' +
+            // The row is now just the switch. Choosing WHICH changes moved to
+            // "＋ Add changes" in Overview, beside the chips it affects, and
+            // Edit is gone: that editor already opens from any chord chip in
+            // Overview, so a second door was a button that only repeated one.
             '<div class="ambient-row ambient-prog-row">' +
-              '<button type="button" class="ambient-seg ambient-prog-onoff" id="ambient-prog-onoff" title="Progression — when ON, every layer follows a shared chord progression (the per-layer Notes chip is read-only while on). Combine with Key above for a progression diatonic to that key.">Progression</button>' +
-              // The SEED picker sits with the on/off button — together they answer
-              // "is a progression on, and which one". The action buttons wrap to
-              // their own line below (see .ambient-prog-actions).
-              '<button type="button" class="ambient-select ambient-prog-pick" id="ambient-prog-pick" title="Pick a chord progression for all layers">— pick —</button>' +
-              '<span class="ambient-prog-sub ambient-prog-actions" id="ambient-prog-sub">' +
-                '<button type="button" class="ambient-seg ambient-prog-edit" id="ambient-prog-edit" title="Edit the selected progression chord-by-chord and Save As New">Edit</button>' +
-              '</span>' +
+              '<button type="button" class="ambient-seg ambient-prog-onoff" id="ambient-prog-onoff" title="Progression — when ON, every layer follows a shared chord progression (the per-layer Notes chip is read-only while on). Combine with Key above for a progression diatonic to that key.">On</button>' +
+              '<span class="ambient-prog-sub ambient-prog-actions" id="ambient-prog-sub"></span>' +
               '<span class="ambient-hint" id="ambient-progsec-off" style="display:none">turn Progression on to build a chord sequence</span>' +
             '</div>' +
+            // OVERVIEW sits directly under the switch: it is the progression
+            // itself — the chips, their order, and the way in to editing any of
+            // them — so it belongs before the things that COLOUR it (Salt) or
+            // REORDER it (Order), not after.
+            _ambProgGrpOpen('overview', '\u25a4 Overview', true) +
+            '<div class="ambient-pov-actions" id="ambient-pov-actions" style="display:none">' +
+              '<button type="button" class="ambient-seg ambient-prog-pick" id="ambient-prog-pick" ' +
+              'title="Add a set of changes — pick a progression, generate one, or write it in roman numerals">' +
+              '\uFF0B Add changes</button></div>' +
+            '<div class="ambient-pov-strip" id="ambient-prog-overview" style="display:none"></div>' +
+            _ambProgGrpClose() +
             // 🧂 SALT — deterministic per-cycle spice on the global progression
             // (engine: _ambProgSaltCfg / _ambProgSaltLens / colors in
             // _ambProgCurrentChord). All zeros = played exactly as written.
@@ -37419,9 +37432,6 @@
             // Overview strip — the whole progression at a glance (chord chips grouped
             // under part labels; alt-bearing chords badged; playing chord glows). Click a
             // chord to edit it there; click a part header to rename/reorder. _ambRenderProgOverview.
-            _ambProgGrpOpen('overview', '\u25a4 Overview', true) +
-            '<div class="ambient-pov-strip" id="ambient-prog-overview" style="display:none"></div>' +
-            _ambProgGrpClose() +
             _ambProgGrpOpen('matrix', '\u2317 Chord matrix', false) +
             '<div class="ambient-progmatrix" id="ambient-progmatrix" style="display:none"></div>' +
             _ambProgGrpClose() +

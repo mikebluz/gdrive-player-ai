@@ -12937,3 +12937,8 @@
                       background: #14141f; color: #e9e9f4; border: 1px solid #3a3a55;
                       border-radius: 8px; cursor: pointer; font-size: 0.82rem; }
     .ambient-qe-adv.on { border-color: #35c98e; color: #9df3cd; }
+
+    /* "＋ Add changes" leads the Overview strip — the action sits with the chips
+       it adds to, rather than on the on/off row where it read as a readout. */
+    .ambient-pov-actions { display: flex; margin: 0 0 6px; }
+    .ambient-pov-actions .ambient-prog-pick { min-height: 36px; padding: 7px 12px; font-size: 0.76rem; }

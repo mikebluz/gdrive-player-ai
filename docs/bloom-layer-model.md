@@ -1482,5 +1482,22 @@ its name** (a seq layer's units, `_ambSeqSectionsBtnLabel` — nothing to do wit
 the arrangement). A blanket rename would have hit it; the two were told apart by
 reading each site rather than by matching the string.
 
-**Still open.** Whether the Chord and Part matrices merge (see the Edit
+**Slice 4g SHIPPED 2026-08-12 — ONE MATRIX.** The separate Part matrix is gone:
+a part that carries no changes is now a COLUMN in the chord grid, beside the
+chords. Two grids existed because sections and chords were two concepts; there is
+one concept now, so there is one grid.
+
+The STORES are unchanged — a chord column writes `chordMask`, a part column
+writes `sectionMask` — so merging the UI moved no data. The cell says which it is
+(`data-si`), `slot()` routes on that, and the chord-shaped actions (spread down
+the column, salt re-roll, snap-to-grid) are WITHHELD on a part column rather than
+silently writing the wrong store. Verified: clicking a part cell moves
+`sectionMask` and leaves `chordMask` untouched, and vice versa.
+
+Fixed in passing, and it was a real bug: the part TABS advanced their chord
+cursor by `Math.max(1, len)`, so a part with NO chords consumed one of somebody
+else's and shifted every later range by one.
+
+**Still open.** Nothing in the matrix line — see the key-model unification and
+`prog.on` below. (see the Edit
 overlap note) — deferred to slice 4.

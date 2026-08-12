@@ -4686,9 +4686,13 @@
     // per-value attribute rules, because those only matched the four hardcoded
     // rungs — a hand-set 45% fell through to the base rule and drew FULL green,
     // i.e. the one thing the colour is supposed to tell you was wrong.
-    function _ambMaskCellHtml(v, ci, title) {
+    // `si` (optional) marks the cell as belonging to a PART column rather than a
+    // chord column — the two write different stores (chordMask vs sectionMask),
+    // so the cell has to say which one it is.
+    function _ambMaskCellHtml(v, ci, title, si) {
       const n = Math.max(0, Math.min(100, v | 0));
-      return '<button type="button" class="ambient-pm-cell' + (n >= 70 ? ' pm-dark' : '') + '" data-ci="' + ci +
+      return '<button type="button" class="ambient-pm-cell' + (n >= 70 ? ' pm-dark' : '') + (si != null ? ' pm-partcell' : '') + '" data-ci="' + ci +
+        (si != null ? '" data-si="' + si : '') +
         '" data-v="' + n + '" style="--pv:' + n + '" title="' + title + '">' + _ambMaskCellTxt(n) + '</button>';
     }
     // "✎ %" turns a tap into "set an exact value" instead of a ladder step — the
@@ -30872,7 +30876,8 @@
       const sig = N + '|' + rows.map(r => r.key + ':' + JSON.stringify(r.L.chordMask || 0)).join(',') +
         '|s' + _ambProgViewShift(E, cfg, chords) + '|' + chords.map(c2 => c2.root).join('.') +
         '|t' + (Number.isFinite(el._pmPart) ? el._pmPart : -1) +
-        '|p' + (Array.isArray(prog.parts) ? prog.parts.map(p => p.name + ':' + p.len + ':' + (p.plays | 0)).join('/') : '');
+        '|p' + (Array.isArray(prog.parts) ? prog.parts.map(p => p.name + ':' + p.len + ':' + (p.plays | 0) + ':' + (p.open ? 'o' + (p.hold ? 'h' : '') : '')).join('/') : '') +
+        '|sm' + rows.map(r => JSON.stringify(r.L.sectionMask || 0)).join(',');
       if (el._sig === sig) return;
       el._sig = sig;
       // Name the chord as it SOUNDS. Missed in the readout sweep: this header
@@ -30898,18 +30903,20 @@
       if (_pmParts) {
         if (!Number.isFinite(el._pmPart) || el._pmPart >= _pmParts.length) el._pmPart = -1;
       } else el._pmPart = -1;
-      let h = '<div class="ambient-pm-title">Chord matrix — how often each layer plays on each chord' + _ambMaskEditBtnHtml(!!el._pmEdit) + '</div>';
+      let h = '<div class="ambient-pm-title">Matrix — how often each layer plays on each chord, and through each part with no changes' + _ambMaskEditBtnHtml(!!el._pmEdit) + '</div>';
       if (_pmParts) {
         let acc0 = 0;
         h += '<div class="ambient-pm-tabs">' +
           '<button type="button" class="ambient-pm-tab' + (el._pmPart < 0 ? ' on' : '') + '" data-pmpart="-1" title="Every chord in the progression">All</button>' +
           _pmParts.map((p, pi) => {
             const plays = Math.max(1, p.plays | 0);
-            const from = acc0; acc0 += Math.max(1, p.len | 0);
+            // Math.max(1, len) would give a part with NO chords a chord of
+            // somebody else's, shifting every later range by one.
+            const from = acc0; acc0 += (p.open ? 0 : Math.max(1, p.len | 0));
             const kk = p.key ? (' · ' + _AMB_CHROM[p.key.root] + ' ' + p.key.scale.slice(0, 3)) : '';
             return '<span class="ambient-pm-tabwrap' + (el._pmPart === pi ? ' on' : '') + '">' +
               '<button type="button" class="ambient-pm-tab' + (el._pmPart === pi ? ' on' : '') + '" data-pmpart="' + pi + '"' +
-                ' title="' + esc(p.name) + ' — chords ' + (from + 1) + '-' + acc0 + kk + '">' + esc(p.name) + '</button>' +
+                ' title="' + esc(p.name) + (p.open ? (' — no changes, ' + (p.bars || 4) + ' bars' + (p.hold ? ' (harmony holds)' : '')) : (' — chords ' + (from + 1) + '-' + acc0)) + kk + '">' + esc(p.name) + '</button>' +
               '<span class="ambient-pm-plays" title="How many times “' + esc(p.name) + '” runs before the progression moves on.">' +
                 '<button type="button" class="ambient-pm-playsbtn" data-pmplays="' + pi + ':-1" title="Fewer repeats"' + (plays <= 1 ? ' disabled' : '') + '>−</button>' +
                 '<b>' + plays + '×</b>' +
@@ -30921,19 +30928,55 @@
       // Column window for the selected tab. Cell/header indices stay ABSOLUTE
       // (data-ci), so every setter keeps writing the right slot of the mask.
       let _pmFrom = 0, _pmTo = N;
-      if (_pmParts && el._pmPart >= 0) {
+      if (_pmParts && el._pmPart >= 0 && !_pmParts[el._pmPart].open) {
         let a0 = 0;
-        for (let i = 0; i < _pmParts.length; i++) { const l2 = Math.max(1, _pmParts[i].len | 0); if (i === el._pmPart) { _pmFrom = a0; _pmTo = Math.min(N, a0 + l2); break; } a0 += l2; }
+        for (let i = 0; i < _pmParts.length; i++) {
+          if (_pmParts[i].open) { if (i === el._pmPart) break; continue; }
+          const l2 = Math.max(1, _pmParts[i].len | 0);
+          if (i === el._pmPart) { _pmFrom = a0; _pmTo = Math.min(N, a0 + l2); break; }
+          a0 += l2;
+        }
       }
+      // ONE GRID (slice 4g). Columns are what actually plays: every chord, plus a
+      // column per part that carries NO changes — which is what the separate
+      // Section matrix used to be. A part column writes `sectionMask`, a chord
+      // column writes `chordMask`; the stores stay as they are, and the grid
+      // stops being two grids. Section indices are the mirror's order, i.e. the
+      // non-holding open parts in order (see the fold in normalize).
       const _pmCols = [];
-      for (let i = _pmFrom; i < _pmTo; i++) _pmCols.push(i);
-      h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + _pmCols.map((i) => chords[i]).map((c2, _n) => { const i = _pmCols[_n]; return '<span class="ambient-pm-ch' + (_ambIsTransition(c2) ? ' pm-trans' : '') + '"' + (_ambIsTransition(c2) ? ' title="Transition — a walk into the next chord. Leave this cell on for a layer to walk it, set it to never to sit the bar out."' : '') + '>' + (i + 1) + '·' + chName(c2) + '</span>'; }).join('') + '<span class="ambient-pm-part">Window</span></div>';
+      const _openParts = [];
+      if (Array.isArray(prog.parts)) { let _si = 0; prog.parts.forEach((p2, pi2) => {
+        if (!p2 || !p2.open) return;
+        const rec = { pi: pi2, si: p2.hold ? -1 : _si, part: p2 };
+        if (!p2.hold) _si++;
+        _openParts.push(rec);
+      }); }
+      const _onOpenTab = !!(_pmParts && el._pmPart >= 0 && _pmParts[el._pmPart].open);
+      if (_onOpenTab) {
+        const rec = _openParts.find(o => o.pi === el._pmPart);
+        if (rec) _pmCols.push({ kind: 'part', rec });
+      } else {
+        for (let i = _pmFrom; i < _pmTo; i++) _pmCols.push({ kind: 'chord', i });
+        // The "All" tab shows the whole arrangement, part columns included.
+        if (!_pmParts || el._pmPart < 0) _openParts.forEach(rec => { if (rec.si >= 0) _pmCols.push({ kind: 'part', rec }); });
+      }
+      h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + _pmCols.map((col) => {
+        if (col.kind === 'part') return '<span class="ambient-pm-ch pm-partcol" title="' + esc(col.rec.part.name) + ' — a part with no changes. The cell is how often each layer plays through it.">' + esc(col.rec.part.name) + '</span>';
+        const c2 = chords[col.i];
+        return '<span class="ambient-pm-ch' + (_ambIsTransition(c2) ? ' pm-trans' : '') + '"' + (_ambIsTransition(c2) ? ' title="Transition — a walk into the next chord. Leave this cell on for a layer to walk it, set it to never to sit the bar out."' : '') + '>' + (col.i + 1) + '·' + chName(c2) + '</span>';
+      }).join('') + '<span class="ambient-pm-part">Window</span></div>';
       rows.forEach(r => {
         const steps = (r.L.chordMask && Array.isArray(r.L.chordMask.steps)) ? r.L.chordMask.steps : null;
         const part = (r.L.chordMask && r.L.chordMask.part) || null;
         h += '<div class="ambient-pm-row" data-lkey="' + r.key + '"><span class="ambient-pm-lbl" title="' + r.label + '">' + r.label + '</span>' +
-          _pmCols.map((i) => {
-            const c2 = chords[i];
+          _pmCols.map((col) => {
+            if (col.kind === 'part') {
+              const sm = (r.L.sectionMask && Array.isArray(r.L.sectionMask.steps)) ? r.L.sectionMask.steps : null;
+              const si = col.rec.si;
+              const pv = sm ? (Number.isFinite(sm[si % sm.length]) ? sm[si % sm.length] : 100) : 100;
+              return _ambMaskCellHtml(pv, si, r.label + ' · ' + esc(col.rec.part.name) + ' (no changes) — ' + _ambMaskCellTip(pv, 'part', !!el._pmEdit), si);
+            }
+            const i = col.i, c2 = chords[i];
             const v = steps ? (Number.isFinite(steps[i % steps.length]) ? steps[i % steps.length] : 100) : 100;
             return _ambMaskCellHtml(v, i, r.label + ' · chord ' + (i + 1) + ' (' + chName(c2) + ') — ' + _ambMaskCellTip(v, 'chord', !!el._pmEdit));
           }).join('') +
@@ -30954,10 +30997,20 @@
         const slot = (cell) => {
           _E = E; const cfg2 = E.getCfg(); if (!cfg2 || !cfg2.prog) return null;
           const row = cell.closest('.ambient-pm-row'); const L = _ambLayerByKey(E, row.dataset.lkey); if (!L) return null;
+          const lbl0 = row.querySelector('.ambient-pm-lbl').textContent;
+          // A PART column writes sectionMask, sized to the sections the mirror
+          // emits — the same store the separate Section matrix used to write, so
+          // merging the grids changed no data, only where you edit it.
+          if (cell.dataset.si != null && cell.dataset.si !== '') {
+            const NS = Math.max(1, (Array.isArray(cfg2.sections) ? cfg2.sections.length : 1));
+            const sm = (L.sectionMask && typeof L.sectionMask === 'object') ? L.sectionMask : (L.sectionMask = {});
+            if (!Array.isArray(sm.steps) || sm.steps.length !== NS) { const o3 = Array.isArray(sm.steps) ? sm.steps : null; sm.steps = Array.from({ length: NS }, (_, i3) => o3 ? (Number.isFinite(o3[i3 % o3.length]) ? o3[i3 % o3.length] : 100) : 100); }
+            return { m: sm, ci: cell.dataset.si | 0, lkey: row.dataset.lkey, label: lbl0, isPart: 1 };
+          }
           const N2 = cfg2.prog.chords.length;
           const m = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
           if (!Array.isArray(m.steps) || m.steps.length !== N2) { const old2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => old2 ? (Number.isFinite(old2[i2 % old2.length]) ? old2[i2 % old2.length] : 100) : 100); }
-          return { m: m, ci: cell.dataset.ci | 0, lkey: row.dataset.lkey, label: row.querySelector('.ambient-pm-lbl').textContent };
+          return { m: m, ci: cell.dataset.ci | 0, lkey: row.dataset.lkey, label: lbl0 };
         };
         const commit = (lkey) => {
           _ambMaskEditPoke(E, lkey);
@@ -31029,15 +31082,21 @@
               return parts2.some(pp => pp && pp.salt && (pp.salt.colors | 0) > 0);
             } catch (e) { return false; }
           })();
+          // A part column has no chord behind it, so the chord-shaped actions
+          // (spread down the column, salt re-roll, snap) do not apply and are
+          // withheld rather than silently writing the wrong store.
+          const _colLbl = sl.isPart
+            ? ((cell.closest('.ambient-pm-row') && _ambLayerByKey(E, sl.lkey)) ? 'this part' : 'this part')
+            : chLabel(sl.ci);
           _ambMaskCellModal(E, {
-            label: sl.label + ' · ' + chLabel(sl.ci),
-            unit: 'chord', value: sl.m.steps[sl.ci],
-            rowLabel: sl.label, colLabel: chLabel(sl.ci),
-            partLabel: pi >= 0 ? partName(pi) : '',
+            label: sl.label + ' · ' + _colLbl,
+            unit: sl.isPart ? 'part' : 'chord', value: sl.m.steps[sl.ci],
+            rowLabel: sl.label, colLabel: _colLbl,
+            partLabel: (!sl.isPart && pi >= 0) ? partName(pi) : '',
             onSet: (v) => { const s2 = slot(cell) || sl; s2.m.steps[s2.ci] = v; commit(sl.lkey); },
-            onRow: (v) => setRow(sl.lkey, v),
-            onPart: pi >= 0 ? ((v) => setPart(sl.lkey, pi, v)) : null,
-            onCol: (v) => setCol(sl.ci, v),
+            onRow: sl.isPart ? null : ((v) => setRow(sl.lkey, v)),
+            onPart: (!sl.isPart && pi >= 0) ? ((v) => setPart(sl.lkey, pi, v)) : null,
+            onCol: sl.isPart ? null : ((v) => setCol(sl.ci, v)),
             onReroll: () => {
               const L = _ambLayerByKey(E, sl.lkey); if (!L) return;
               if (!L.saltNudge || typeof L.saltNudge !== 'object') L.saltNudge = {};
@@ -38024,12 +38083,17 @@
           // on/off per change, the chord matrix is a 0-100 PROBABILITY per
           // chord. Same question, two grains; merging is a separate decision.
           (E.isLane ? '' :
-            _ambProgGrpOpen('matrix', '\u2317 Chord matrix', false) +
+            // ONE MATRIX (slice 4g). The Part matrix is gone as a separate grid:
+            // a part that carries no changes is now a COLUMN in this one, beside
+            // the chords. Two grids existed because sections and chords were two
+            // concepts; there is one concept now, so there is one grid. The
+            // #ambient-secmatrix host is kept (hidden) so _ambRenderSectionMatrix
+            // and its handler stay live for anything still reaching for them,
+            // rather than being deleted in the same change that moves the UI.
+            _ambProgGrpOpen('matrix', '\u2317 Matrix', false) +
             '<div class="ambient-progmatrix" id="ambient-progmatrix" style="display:none"></div>' +
             _ambProgGrpClose() +
-            _ambProgGrpOpen('sections', '\u2637 Part matrix', false) +
-            '<div class="ambient-progmatrix ambient-secmatrix" id="ambient-secmatrix" style="display:none"></div>' +
-            _ambProgGrpClose()) +
+            '<div class="ambient-progmatrix ambient-secmatrix" id="ambient-secmatrix" style="display:none"></div>') +
         '</div>' +
         // 🎚️ Mixer — layer faders + master fade + global FX. Strip (re)rendered
         // by _ambRenderMixer. Keeps the .ambient-mixer class for its inner styles.

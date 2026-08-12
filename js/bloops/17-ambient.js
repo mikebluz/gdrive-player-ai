@@ -11764,9 +11764,20 @@
       // people actually mean by "how many steps" — a 4-step pattern that loops.
       // Transient view state on the engine, like the chord matrix's _pmPart: it
       // is a way of looking, not a property of the music.
+      // AUTO = the SUM OF THE CHANGES' ITERATIONS: one cell per chord instance
+      // in the played chain, part repeats included (_ambProgChainSlots IS that
+      // chain — Verse×2 → Chorus expands to two verses' chords then the
+      // chorus's). That is what makes a cell mean something: it is one CHANGE,
+      // so the shading is one tint per cell and "turn this layer off here"
+      // reads as "off for that chord". Sizing by the Scheduler's view width
+      // divided by unit length — the old rule — gave rows of differing lengths
+      // that lined up with the harmony only by luck.
+      const chainSlots = _ambProgChainSlots(cfg);
+      const chainLen = (chainSlots && chainSlots.length) ? chainSlots.length : 0;
       const stepsOf = (L, key) => {
         const fixed = E._qeSteps | 0;
         if (fixed > 0) return Math.max(1, Math.min(_AMB_UG_MAXSLOTS, fixed));
+        if (chainLen) return Math.max(1, Math.min(_AMB_UG_MAXSLOTS, chainLen));
         const uBars = Math.max(0.05, _ambUnitLaneBars(E, key, L, cfg, VIEW, barSec));
         return Math.max(1, Math.min(_AMB_UG_MAXSLOTS, Math.round(VIEW / uBars)));
       };
@@ -11783,7 +11794,19 @@
             // the MIDDLE of the unit so a block that straddles a change is
             // attributed to where most of it sits.
             let gcls = '', chName = '';
-            if (pgActive) {
+            if (pgActive && chainLen && !(E._qeSteps | 0)) {
+              // One cell = one change. Tint alternates per change; a new part
+              // (Verse → Chorus) takes the group-start gap.
+              const sl = chainSlots[i % chainLen];
+              gcls = ((i % 2) ? ' chgrp-b' : ' chgrp-a') + (sl && sl.pFirst ? ' chgrp-start' : '');
+              try {
+                const ch = _ambProgSoundAt(E, { type: 'prog', chords: cfg.prog.chords }, sl.idx);
+                if (ch && _ambIsTransition(ch)) chName = '⇝';
+                else if (ch && typeof CHROMATIC !== 'undefined') chName = CHROMATIC[((((ch.root | 0) % 12) + 12) % 12)] || '';
+                if (sl && sl.pName) chName = sl.pName + ' · ' + chName
+                  + (sl.plays > 1 ? ('  ' + (sl.rep + 1) + '/' + sl.plays) : '');
+              } catch (e) {}
+            } else if (pgActive) {
               const gp = _ambProgGroupAt(cfg, (i + 0.5) * uBars, !!L.progMerge);
               if (gp) {
                 const gabs = gp.cyc * gp.nGroups + gp.gi;
@@ -11823,7 +11846,8 @@
           '<div class="ambient-qe-steps-row"><span>Steps</span>' + stepHtml +
             '<span class="ambient-hint">' + ((E._qeSteps | 0)
               ? ('every ' + (E._qeSteps | 0) + ' units, then repeat')
-              : 'as many as the Scheduler shows') + '</span></div>' +
+              : (chainLen ? ('one per change — ' + chainLen + ' in the chain')
+                          : 'as many as the Scheduler shows')) + '</span></div>' +
           '<div class="ambient-qe-body">' + rows + '</div>' +
           '<div class="sm-footer"><button type="button" class="sm-apply">Done</button></div>';
       };

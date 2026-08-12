@@ -57,6 +57,10 @@ const CONFIGS = [
   { id: 'sections-key',     chords: [0, 5, 7, 9], sections: [['A', 4], ['B', 4, null, 2]] },
   { id: 'sections-bound',   chords: [0, 5, 7, 9], parts: [['Verse', 2], ['Chorus', 2]], sections: [['A', 4, 0], ['B', 4, 1]] },
   { id: 'sections-mixed',   chords: [0, 5, 7, 9], parts: [['Verse', 2], ['Chorus', 2]], sections: [['free', 4], ['B', 4, 1]] },
+  // Sections present but UNBOUND, with part repeats — the shape where sections
+  // and parts are two INDEPENDENT spines. Arch is a flat list and cannot carry
+  // both, so this is the case that decides how far slice 3 can reach.
+  { id: 'sections-unbound-plays', chords: [0, 5, 7, 9], parts: [['Verse', 2, 2], ['Chorus', 2, 1]], sections: [['A', 4], ['B', 4]] },
   { id: 'sections-plays',   chords: [0, 5, 7, 9], parts: [['Verse', 2, 2], ['Chorus', 2, 1]], sections: [['A', 6, 0], ['B', 2, 1]] },
   { id: 'salt-len',         chords: [0, 5, 7, 9], salt: { len: 70, colors: 0, scatter: 0 } },
   { id: 'salt-colors',      chords: [0, 5, 7, 9], salt: { len: 0, colors: 80, scatter: 0 } },

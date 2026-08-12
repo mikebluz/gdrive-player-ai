@@ -1338,5 +1338,32 @@ rather than papered over:
   the old walk played the chords as one unnamed run. Arch now falls back to that
   same run, so a degenerate config keeps sounding as it did.
 
+**Slice 3 SHIPPED 2026-08-12 — the CLOCK reads `arch`.** Both branches of
+`_ambProgStepAt` now go through the derived structure: the part-repeats branch
+walks `_ambArchChainSlots`, the SAME chain the Scheduler, Quick edit and the
+Part-schedule popover draw, and a bound section takes its chord slice from its
+arch entry. What you see and what you hear are one walk now, so they cannot
+drift apart. Zero note change: the arch-parity gate is identical across all 22
+configs and the invariant harness is byte-identical across all 30.
+
+**Sections and parts are TWO SPINES, and arch is one flat list.** Sections
+divide BARS, parts divide the CHORD LIST, and arch can only hold whichever
+carries the changes — `_ambArchOwnsChain(cfg)` is the single predicate, used by
+the derivation AND the clock so they cannot disagree about which spine is which:
+
+- a section BOUND to a part IS a changes-run, so sections win;
+- parts with changes and no section binding them means the parts are the changes
+  spine and the sections are the other one, which arch does not represent yet.
+
+Taking sections unconditionally (as slice 2 shipped) silently DROPPED the parts:
+a project with unbound sections and Verse ×2 showed the plain written cycle in
+every display while the engine played the repeat. The gate's
+`sections-unbound-plays` config exists for exactly that shape and is what caught
+it. One shape is deliberately left on the legacy walk: a bound section beside an
+unbound one, where arch holds only the bound section's chords while the clock,
+during the unbound one, must walk the whole part sequence. **Merging the two
+spines is the slice-4 decision** — and it is the same decision as the
+Chord/Section matrix merge below, not a separate one.
+
 **Still open.** Whether the Chord and Section matrices merge (see the Edit
 overlap note) — deferred to slice 4.

@@ -2654,6 +2654,18 @@
     // Build cfg.arch from sections + prog.parts + prog.chords. Pure derivation:
     // reads only already-normalized fields, writes only cfg.arch, changes no
     // behaviour. The six cases are exactly the migration table in §15.
+    // Does arch carry the CHANGES spine? True when NO section binds a prog part
+    // — then arch's entries with changes ARE prog.parts in play order, so the
+    // clock may walk arch instead of prog.parts. False when a section IS bound:
+    // arch then holds the SECTIONS (a bound section is a changes-run), and a
+    // config mixing a bound section with an unbound one would give arch only the
+    // bound section's chords while the clock, during the unbound one, walks the
+    // whole part sequence. ONE predicate, used by the derivation and the clock,
+    // so the two can never drift into disagreeing about which spine is which.
+    function _ambArchOwnsChain(cfg) {
+      const secs = (cfg && Array.isArray(cfg.sections)) ? cfg.sections : null;
+      return !(secs && secs.some(sc => sc && Number.isFinite(sc.part) && (sc.part | 0) >= 0));
+    }
     function _ambDeriveArch(cfg) {
       try {
         const out = [];
@@ -2670,7 +2682,21 @@
         };
         const mk = (id, name, extra) => Object.assign({ id, name }, extra || {});
         const secs = Array.isArray(cfg.sections) ? cfg.sections : null;
-        if (secs && secs.length) {
+        // WHICH SPINE OWNS THE CHANGES. Sections and prog parts are two
+        // INDEPENDENT spines today — sections divide BARS, parts divide the
+        // CHORD LIST — and arch is one flat list that cannot hold both. So it
+        // holds whichever one carries the changes:
+        //   · a section BOUND to a part IS a changes-run → sections win;
+        //   · parts with changes and NOT ONE section binding them → the parts
+        //     are the changes spine and the sections are the other one, which
+        //     arch does not represent yet (that merge is the slice-4 decision).
+        // Taking sections unconditionally silently DROPPED the parts: a project
+        // with unbound sections and Verse ×2 showed the plain written cycle
+        // while the engine played the repeat, i.e. the display disagreed with
+        // what you hear. Caught by the arch-parity gate's sections-unbound-plays
+        // config, which is the whole reason that config exists.
+        const _partsOwn = !!(parts && hasCh && p.on && _ambArchOwnsChain(cfg));
+        if (secs && secs.length && !_partsOwn) {
           // Sections ARE parts. One bound to a prog part carries that part's
           // changes; an unbound one is open.
           secs.forEach((sc, i) => {
@@ -4368,7 +4394,16 @@
       if (!_ownSrc && cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.sections) && cfg.sections.length
           && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length) {
         const _at = _ambSectionAt(E, atSec, cfg);
-        const _part = _at ? _ambSectionPart(cfg, _at.idx) : null;
+        // ARCH slice 3: a bound section's chord slice comes from its ARCH entry.
+        // When a section is bound, arch IS the sections (one entry per section,
+        // same order), so arch[idx].changes is that section's run — the same
+        // {from, len} _ambSectionPart derives from cfg.sections + prog.parts,
+        // read from the one derived structure instead of re-deriving it here.
+        // Falls back to _ambSectionPart whenever arch is not the section spine,
+        // so nothing depends on arch being present.
+        const _ae = (_at && !_ambArchOwnsChain(cfg) && Array.isArray(cfg.arch)) ? cfg.arch[_at.idx] : null;
+        const _part = (_ae && _ae.changes) ? { from: _ae.changes.from, len: _ae.changes.len }
+                                           : (_at ? _ambSectionPart(cfg, _at.idx) : null);
         if (_part) {
           const _all = cfg.prog.chords, _L = _all.length;
           const _lens = [];
@@ -4399,21 +4434,40 @@
       // `floor(step / L)` the variation cycle — the latter advancing once per full
       // pass through the part sequence, so repeats of a part play the same chords
       // (which is what a repeat means) while alts still evolve pass to pass.
+      // ARCH slice 3: the played order comes from _ambArchChainSlots — the SAME
+      // chain the Scheduler, Quick edit and the Part-schedule popover draw. That
+      // is the point of the whole exercise: what you see and what you hear are
+      // now one walk, so they cannot drift. The expansion this replaced built
+      // its own sequence from prog.parts and was byte-identical (pinned by
+      // test/arch-parity.js across every parts/repeats/sections config).
+      // GATED on _ambArchOwnsChain: with a section bound to a part, arch holds
+      // the sections and the chain would be only that section's chords, while
+      // this branch must walk the whole part sequence — so that shape keeps the
+      // legacy expansion until slice 4 merges the two spines.
       if (!_ownSrc && cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length
           && Array.isArray(cfg.prog.parts) && cfg.prog.parts.some(p => p && (p.plays | 0) > 1)) {
         const all = cfg.prog.chords, L = all.length;
-        const seq = []; let from = 0;
-        cfg.prog.parts.forEach(p => {
-          const plen = Math.max(1, p.len | 0), plays = Math.max(1, p.plays | 0);
-          for (let r = 0; r < plays; r++) {
-            for (let i = 0; i < plen; i++) {
-              const abs = from + i; if (abs >= L) break;
-              const c = all[abs];
-              seq.push({ abs, len: (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc });
+        const seq = [];
+        const _chain = _ambArchOwnsChain(cfg) ? _ambArchChainSlots(cfg) : null;
+        if (_chain && _chain.length) {
+          _chain.forEach((sl) => {
+            const c = all[sl.idx];
+            seq.push({ abs: sl.idx, len: (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc });
+          });
+        } else {
+          let from = 0;
+          cfg.prog.parts.forEach(p => {
+            const plen = Math.max(1, p.len | 0), plays = Math.max(1, p.plays | 0);
+            for (let r = 0; r < plays; r++) {
+              for (let i = 0; i < plen; i++) {
+                const abs = from + i; if (abs >= L) break;
+                const c = all[abs];
+                seq.push({ abs, len: (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc });
+              }
             }
-          }
-          from += plen;
-        });
+            from += plen;
+          });
+        }
         if (seq.length) {
           const cycle = seq.reduce((a2, v) => a2 + v.len, 0) || bpc;
           const loops = Math.floor(bars / cycle);

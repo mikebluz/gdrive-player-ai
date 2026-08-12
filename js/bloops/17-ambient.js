@@ -4696,11 +4696,14 @@
     // `si` (optional) marks the cell as belonging to a PART column rather than a
     // chord column — the two write different stores (chordMask vs sectionMask),
     // so the cell has to say which one it is.
-    function _ambMaskCellHtml(v, ci, title, si) {
+    // `grow` (optional) makes the column TIME-PROPORTIONAL: a chord lasting two
+    // bars is twice as wide as one lasting one. Equal columns implied equal time,
+    // which is wrong the moment a chord carries its own length.
+    function _ambMaskCellHtml(v, ci, title, si, grow) {
       const n = Math.max(0, Math.min(100, v | 0));
       return '<button type="button" class="ambient-pm-cell' + (n >= 70 ? ' pm-dark' : '') + (si != null ? ' pm-partcell' : '') + '" data-ci="' + ci +
         (si != null ? '" data-si="' + si : '') +
-        '" data-v="' + n + '" style="--pv:' + n + '" title="' + title + '">' + _ambMaskCellTxt(n) + '</button>';
+        '" data-v="' + n + '" style="--pv:' + n + (grow ? ';flex-grow:' + grow : '') + '" title="' + title + '">' + _ambMaskCellTxt(n) + '</button>';
     }
     // "✎ %" turns a tap into "set an exact value" instead of a ladder step — the
     // same mode-toggle shape the euclid grid's "✎ Step" uses, so the exact-value
@@ -30914,7 +30917,8 @@
       const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
       const rows = _ambChordMatrixRows(cfg);
       // cheap re-render guard (masks + shape + labels)
-      const sig = N + '|' + rows.map(r => r.key + ':' + JSON.stringify(r.L.chordMask || 0)).join(',') +
+      const sig = N + '|' + chords.map(c2 => (c2 && c2.bars) || 0).join('.') + '|'
+        + rows.map(r => r.key + ':' + JSON.stringify(r.L.chordMask || 0)).join(',') +
         '|s' + _ambProgViewShift(E, cfg, chords) + '|' + chords.map(c2 => c2.root).join('.') +
         '|t' + (Number.isFinite(el._pmPart) ? el._pmPart : -1) +
         '|p' + (Array.isArray(prog.parts) ? prog.parts.map(p => p.name + ':' + p.len + ':' + (p.plays | 0) + ':' + (p.open ? 'o' + (p.hold ? 'h' : '') : '')).join('/') : '') +
@@ -30990,6 +30994,14 @@
         if (!p2 || !p2.open) return;
         _openParts.push({ pi: pi2, si: _si++, part: p2 });
       }); }
+      // A column's WIDTH is its length in bars. Same source the clock uses, so
+      // the picture and the playback cannot disagree about how long a chord is.
+      const _bpc = Math.max(0.01, (cfg.barsPerChord || 1));
+      const colBars = (col) => {
+        if (col.kind === 'part') return Math.max(0.25, col.rec.part.bars || 4);
+        const c3 = chords[col.i];
+        return (c3 && Number.isFinite(c3.bars) && c3.bars > 0) ? c3.bars : _bpc;
+      };
       const _onOpenTab = !!(_pmParts && el._pmPart >= 0 && _pmParts[el._pmPart].open);
       if (_onOpenTab) {
         const rec = _openParts.find(o => o.pi === el._pmPart);
@@ -30999,10 +31011,14 @@
         // The "All" tab shows the whole arrangement, part columns included.
         if (!_pmParts || el._pmPart < 0) _openParts.forEach(rec => _pmCols.push({ kind: 'part', rec }));
       }
+      const _fmtB = (b) => (typeof _ambFmtBpc === 'function' ? _ambFmtBpc(b) : String(b));
       h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + _pmCols.map((col) => {
-        if (col.kind === 'part') return '<span class="ambient-pm-ch pm-partcol" title="' + esc(col.rec.part.name) + ' — a part with no changes. The cell is how often each layer plays through it.">' + esc(col.rec.part.name) + '</span>';
+        const gb = colBars(col);
+        if (col.kind === 'part') return '<span class="ambient-pm-ch pm-partcol" style="flex-grow:' + gb + '" title="' + esc(col.rec.part.name) + ' — a part with no changes, ' + _fmtB(gb) + ' bars. The cell is how often each layer plays through it.">' + esc(col.rec.part.name) + '</span>';
         const c2 = chords[col.i];
-        return '<span class="ambient-pm-ch' + (_ambIsTransition(c2) ? ' pm-trans' : '') + '"' + (_ambIsTransition(c2) ? ' title="Transition — a walk into the next chord. Leave this cell on for a layer to walk it, set it to never to sit the bar out."' : '') + '>' + (col.i + 1) + '·' + chName(c2) + '</span>';
+        return '<span class="ambient-pm-ch' + (_ambIsTransition(c2) ? ' pm-trans' : '') + '" style="flex-grow:' + gb + '"'
+          + ' title="' + (_ambIsTransition(c2) ? 'Transition — a walk into the next chord. Leave this cell on for a layer to walk it, set it to never to sit the bar out. ' : 'Chord ' + (col.i + 1) + ' — ')
+          + _fmtB(gb) + ' bar' + (gb === 1 ? '' : 's') + ' long; the column is that wide.">' + (col.i + 1) + '·' + chName(c2) + '</span>';
       }).join('') + '<span class="ambient-pm-part">Window</span></div>';
       rows.forEach(r => {
         const steps = (r.L.chordMask && Array.isArray(r.L.chordMask.steps)) ? r.L.chordMask.steps : null;
@@ -31013,11 +31029,11 @@
               const sm = (r.L.sectionMask && Array.isArray(r.L.sectionMask.steps)) ? r.L.sectionMask.steps : null;
               const si = col.rec.si;
               const pv = sm ? (Number.isFinite(sm[si % sm.length]) ? sm[si % sm.length] : 100) : 100;
-              return _ambMaskCellHtml(pv, si, r.label + ' · ' + esc(col.rec.part.name) + ' (no changes) — ' + _ambMaskCellTip(pv, 'part', !!el._pmEdit), si);
+              return _ambMaskCellHtml(pv, si, r.label + ' · ' + esc(col.rec.part.name) + ' (no changes, ' + _fmtB(colBars(col)) + ' bars) — ' + _ambMaskCellTip(pv, 'part', !!el._pmEdit), si, colBars(col));
             }
             const i = col.i, c2 = chords[i];
             const v = steps ? (Number.isFinite(steps[i % steps.length]) ? steps[i % steps.length] : 100) : 100;
-            return _ambMaskCellHtml(v, i, r.label + ' · chord ' + (i + 1) + ' (' + chName(c2) + ') — ' + _ambMaskCellTip(v, 'chord', !!el._pmEdit));
+            return _ambMaskCellHtml(v, i, r.label + ' · chord ' + (i + 1) + ' (' + chName(c2) + ', ' + _fmtB(colBars(col)) + ' bars) — ' + _ambMaskCellTip(v, 'chord', !!el._pmEdit), null, colBars(col));
           }).join('') +
           '<span class="ambient-pm-part">' +
             '<select class="ambient-select ambient-pm-size" title="How much of each chord this layer plays once it is in — a DURATION, not a chance. Full = the whole chord.">' +

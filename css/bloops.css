@@ -12701,12 +12701,24 @@
     .ambient-pm-legend b { color: #cbd5e0; font-weight: 700; }
     .ambient-pm-head, .ambient-pm-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
     .ambient-pm-lbl { flex: 0 0 72px; font-size: 0.66rem; color: #9a9ac0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .ambient-pm-ch { flex: 1 1 0; min-width: 0; text-align: center; font-size: 0.58rem; color: #6b6b8a; overflow: hidden; }
+    /* Columns are TIME-PROPORTIONAL: flex-grow is set inline from the column's
+       length in bars. The min-width floor is deliberate — a 1/4-bar chord would
+       otherwise be too narrow to tap, so strict proportionality yields to the
+       touch target at the extremes. */
+    /* The header must carry the SAME padding + border as a cell. flex-basis is
+       resolved on the CONTENT box, so a cell's 1px padding and 1px border sit
+       OUTSIDE its share — 4px each. With unequal column weights that shifts the
+       split (a 2:1 pair landed 203/101 in the header and 201/103 in the rows),
+       and a matrix whose columns do not line up is not a matrix. Transparent
+       border, so it costs space without drawing anything. */
+    .ambient-pm-ch { flex: 1 1 0; min-width: 16px; box-sizing: border-box; text-align: center;
+      padding: 0 1px; border: 1px solid transparent;
+      font-size: 0.58rem; color: #6b6b8a; overflow: hidden; }
     /* Colour lives in the value-driven rule below; this is geometry only.
        The callout/selection kills matter: a 450ms press is the exact-value
        gesture, and iOS would otherwise answer it with a text-selection
        callout over the cell. */
-    .ambient-pm-cell { flex: 1 1 0; min-width: 0; height: 22px; padding: 0 1px; overflow: hidden; border: 1px solid #2d2d3f; border-radius: 5px; font-size: 0.6rem; font-variant-numeric: tabular-nums; cursor: pointer; touch-action: manipulation; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+    .ambient-pm-cell { flex: 1 1 0; min-width: 16px; box-sizing: border-box; height: 22px; padding: 0 1px; overflow: hidden; border: 1px solid #2d2d3f; border-radius: 5px; font-size: 0.6rem; font-variant-numeric: tabular-nums; cursor: pointer; touch-action: manipulation; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
     /* "60%" needs the room a bare "60" didn't — shrink rather than clip or
        widen the row (a matrix must never introduce horizontal scroll). */
     @media (max-width: 560px) { .ambient-pm-cell { font-size: 0.54rem; } .ambient-pm-lbl { flex: 0 0 58px; } .ambient-pm-part { flex: 0 0 104px; } .ambient-pm-size, .ambient-pm-place { width: 49px; } }

@@ -2757,7 +2757,7 @@
             // running underneath it. Provenance is marked explicitly rather than
             // inferred, or migrating sections would silently freeze the harmony
             // in every project that has one.
-            if (pt.open) { e.len = { num: pt.bars, den: 1, ref: 'bar' }; e.hold = 1; }
+            if (pt.open) { e.len = { num: pt.bars, den: 1, ref: 'bar' }; if (pt.hold) e.hold = 1; }
             else e.changes = sliceOf(i);
             if (pt.key) e.key = { root: pt.key.root | 0, scale: pt.key.scale };
             if (pt.salt) e.salt = pt.salt;
@@ -2938,6 +2938,14 @@
                         scatter: Math.max(0, Math.min(100, p.salt.scatter | 0)) };
           }
           if (Number.isFinite(p.plays) && (p.plays | 0) > 1) e0.plays = Math.min(64, p.plays | 0);
+          // HOLD is the part's own property, not something inferred from having
+          // no changes. Both kinds are real and musically different:
+          //   hold  — the harmony FREEZES; the chord in force stays in force.
+          //   (none) — the changes keep running underneath; the part is a named
+          //            span of time only. This is what a SECTION has always been,
+          //            which is what lets sections fold in here without changing
+          //            what a single saved project plays.
+          if (p.hold) e0.hold = 1;
           out.push(e0); continue;
         }
         if (acc >= total) break;                 // no chords left for a changes part
@@ -30232,6 +30240,12 @@
             '<div class="ambient-ctrl ambient-step-row"><label>Length</label>' +
               '<input type="number" class="ambient-step-inp ap-bars" min="0.25" max="64" step="0.25" value="4">' +
               '<span class="ambient-step-val">bars</span></div>' +
+            '<div class="ambient-ctrl ambient-step-row"><label>Harmony</label>' +
+              '<span class="ambient-seg-row ap-hold">' +
+                '<button type="button" class="ambient-seg active" data-hold="1">Holds</button>' +
+                '<button type="button" class="ambient-seg" data-hold="0">Keeps running</button>' +
+              '</span></div>' +
+            '<div class="ambient-addpart-note ap-holdnote"></div>' +
           '</div>' +
           '<div class="ambient-addpart-hint ap-changes-only">A set of changes is a named stretch of the progression — Verse, Chorus. '
             + 'It starts in the key of ' + esc(_inhFrom) + '; change it and the music MODULATES while this set plays, leaving the others alone. '
@@ -30261,7 +30275,15 @@
           ? 'No key change — this part stays in ' + _AMB_CHROM[aRoot] + ' ' + aScale + ' like the rest of the area.'
           : 'This part will play in ' + _AMB_CHROM[r] + ' ' + sc + ', while the area stays in ' + _AMB_CHROM[aRoot] + ' ' + aScale + '.';
       };
-      let kind = 'changes';
+      let kind = 'changes', hold = 1;
+      const holdNote = ov.querySelector('.ap-holdnote');
+      const setHold = (h) => {
+        hold = h;
+        ov.querySelectorAll('.ap-hold .ambient-seg').forEach(b => b.classList.toggle('active', (b.dataset.hold | 0) === h));
+        holdNote.textContent = h
+          ? 'The chord in force stays in force for the whole part — a vamp or a pedal — and the changes resume after it.'
+          : 'The changes keep moving underneath; this part just names a stretch of time.';
+      };
       const openBox = ov.querySelector('.ap-open-only');
       const nextBtn = ov.querySelector('.ap-next');
       const setKind = (k) => {
@@ -30274,11 +30296,17 @@
         nextBtn.textContent = (k === 'open') ? 'Add part' : 'Choose progression…';
       };
       sync();
+      // Paint the DEFAULT state, don't wait for a click — the note explaining
+      // what "Holds" means was blank until you touched the other option, which
+      // left the default the one choice with no explanation.
+      setHold(1);
       rootSel.addEventListener('change', sync); scaleSel.addEventListener('change', sync);
       ov.addEventListener('click', (ev) => {
         if (ev.target === ov || (ev.target.closest && ev.target.closest('.ap-cancel'))) { close(); return; }
         const kb = ev.target.closest && ev.target.closest('.ap-kind .ambient-seg');
         if (kb) { setKind(kb.dataset.kind); return; }
+        const hb = ev.target.closest && ev.target.closest('.ap-hold .ambient-seg');
+        if (hb) { setHold(hb.dataset.hold | 0); return; }
         if (!(ev.target.closest && ev.target.closest('.ap-next'))) return;
         if (kind === 'open') {
           const r0 = rootSel.value | 0, sc0 = scaleSel.value;
@@ -30286,7 +30314,7 @@
           if (!cfg0.prog) cfg0.prog = { on: true, name: '', chords: [] };
           _ambProgAppendOpenPart(cfg0.prog, ov.querySelector('.ap-name').value,
             parseFloat(ov.querySelector('.ap-bars').value),
-            (r0 === aRoot && sc0 === aScale) ? null : { root: r0, scale: sc0 });
+            (r0 === aRoot && sc0 === aScale) ? null : { root: r0, scale: sc0 }, hold);
           close();
           try { E.getCfg(); } catch (e) {}                      // normalize + re-derive arch
           try { _ambSyncControls(E); } catch (e) {}
@@ -30336,7 +30364,7 @@
     // harmony holds. The subtlety: if the progression's chords have no part of
     // their own yet, one must be materialized FIRST, or appending this would
     // leave every chord unassigned and the chain would hold from bar 1.
-    function _ambProgAppendOpenPart(prog, name, bars, partKey) {
+    function _ambProgAppendOpenPart(prog, name, bars, partKey, hold) {
       if (!prog) return;
       const chords = Array.isArray(prog.chords) ? prog.chords : [];
       let parts = (Array.isArray(prog.parts) && prog.parts.length) ? prog.parts.slice() : null;
@@ -30344,6 +30372,7 @@
       const e = { name: (name || '').trim().slice(0, 16) || ('Part ' + (parts.length + 1)),
                   open: 1, bars: Math.max(0.25, Math.min(64, Number.isFinite(bars) ? bars : 4)) };
       if (partKey && Number.isFinite(partKey.root)) e.key = { root: partKey.root | 0, scale: partKey.scale };
+      if (hold) e.hold = 1;
       parts.push(e);
       prog.parts = parts;
     }
@@ -30468,7 +30497,7 @@
       // empty run of chips.
       if (parts) { let acc = 0; parts.forEach((p, pi) => {
         ranges.push({ name: p.name, from: acc, to: Math.min(N, acc + (p.open ? 0 : (p.len | 0))), pi,
-                      key: p.key || null, open: !!p.open, bars: p.bars });
+                      key: p.key || null, open: !!p.open, bars: p.bars, hold: !!p.hold });
         acc += (p.open ? 0 : (p.len | 0)); }); }
       else ranges.push({ name: '', from: 0, to: N, pi: -1 });
       const namesFirst = !!el._povNames;
@@ -30503,8 +30532,8 @@
               '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':1" title="Move this part later">▶</span>' +
               '<span role="button" tabindex="0" class="ambient-pov-partbtn ambient-pov-partrm" data-pov="partrm:' + r.pi + '" title="Remove this part">✕</span>' +
             '</span></div>' +
-            '<span role="button" tabindex="0" class="ambient-pov-open" data-pov="openlen:' + r.pi + '" title="No changes here — the harmony holds for ' + (r.bars || 4) + ' bars. Click to change the length.">' +
-              '<b>no changes</b><span class="ambient-pov-nm">' + (r.bars || 4) + ' bars</span></span>';
+            '<span role="button" tabindex="0" class="ambient-pov-open' + (r.hold ? ' pov-hold' : '') + '" data-pov="openlen:' + r.pi + '" title="No changes here — ' + (r.hold ? 'the harmony HOLDS' : 'the changes keep running underneath') + ' for ' + (r.bars || 4) + ' bars. Click to change the length.">' +
+              '<b>' + (r.hold ? 'holds' : 'no changes') + '</b><span class="ambient-pov-nm">' + (r.bars || 4) + ' bars</span></span>';
           return;
         }
         if (r.pi >= 0) {

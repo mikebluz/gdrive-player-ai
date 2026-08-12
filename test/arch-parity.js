@@ -69,6 +69,10 @@ const CONFIGS = [
   { id: 'open-first',  chords: [0, 5, 7, 9], parts: [{ name: 'Intro', open: 2 }, ['Verse', 4]] },
   { id: 'open-plays',  chords: [0, 5, 7, 9], parts: [['Verse', 2, 2], { name: 'Bridge', open: 3, plays: 2 }, ['Chorus', 2]] },
   { id: 'open-key',    chords: [0, 5, 7, 9], parts: [['Verse', 2], { name: 'Bridge', open: 4 }, ['Chorus', 2]], key: { root: 9, scale: 'minor' } },
+  // A non-holding open part: the changes keep running underneath it. This is
+  // what a SECTION is, and it is the shape sections migrate to — so it needs a
+  // pin of its own before that migration lands.
+  { id: 'open-run',    chords: [0, 5, 7, 9], parts: [['Verse', 2], { name: 'Bridge', open: 4, hold: false }, ['Chorus', 2]] },
   { id: 'salt-len',         chords: [0, 5, 7, 9], salt: { len: 70, colors: 0, scatter: 0 } },
   { id: 'salt-colors',      chords: [0, 5, 7, 9], salt: { len: 0, colors: 80, scatter: 0 } },
   { id: 'salt-both',        chords: [0, 5, 7, 9], salt: { len: 50, colors: 50, scatter: 30 } },
@@ -131,7 +135,7 @@ const WALK_BARS = 32, WALK_STEP = 0.25;
       // chord clock holds. That is the slice-4 consolidation: sections were this
       // all along.
       if (c.parts) cfg.prog.parts = c.parts.map((x) => {
-        if (!Array.isArray(x)) return { name: x.name, open: 1, bars: x.open, ...(x.plays ? { plays: x.plays } : {}) };
+        if (!Array.isArray(x)) return { name: x.name, open: 1, bars: x.open, ...(x.hold === false ? {} : { hold: 1 }), ...(x.plays ? { plays: x.plays } : {}) };
         const [name, len, plays, key, salt] = x;
         return { name, len, ...(plays ? { plays } : {}), ...(key ? { key } : {}), ...(salt ? { salt } : {}) };
       });
@@ -168,7 +172,7 @@ const WALK_BARS = 32, WALK_STEP = 0.25;
       // harmony the moment arch is read), and it keeps the slice-2 display path
       // under a durable gate now that its one-off equality test has been spent.
       rows.push('arch  ' + probe(() => (cfg.arch || []).map(e => e.name
-        + (e.changes ? ('[' + e.changes.from + '+' + e.changes.len + '×' + e.changes.plays + ']') : '[open]')
+        + (e.changes ? ('[' + e.changes.from + '+' + e.changes.len + '×' + e.changes.plays + ']') : ('[open' + (e.hold ? ' hold' : '') + (e.len ? ' ' + e.len.num + 'b' : '') + ']'))
         + (e.key ? ('key' + e.key.root + '/' + e.key.scale) : '')
         + (e.salt ? 'salt' : '')).join(' · ')));
       rows.push('chain ' + probe(() => {

@@ -1402,5 +1402,20 @@ chords have no part of their own yet, one is materialized FIRST — otherwise
 appending an open part would leave every chord unassigned and the chain would
 hold from bar 1.
 
+**Slice 4c SHIPPED 2026-08-12 — `hold` is a PART'S OWN PROPERTY.** A part with
+no changes comes in two kinds, and they are musically different:
+
+- **Holds** — the chord in force stays in force. A vamp, a pedal.
+- **Keeps running** — the changes move underneath; the part names a stretch of
+  time only. **This is exactly what a SECTION has always been**, which is what
+  lets sections fold in without changing what a single saved project plays
+  (decided 2026-08-12: migrate sections as non-holding).
+
+It fell out of the model almost for free: a non-holding open part contributes no
+chord slot, which the chain already did for section-derived entries. So `hold`
+moved from an assumption about open parts to a stored field, and the two
+behaviours are pinned side by side — `open-mid` holds chord 1 for four bars while
+`open-run` walks straight through.
+
 **Still open.** Whether the Chord and Section matrices merge (see the Edit
 overlap note) — deferred to slice 4.

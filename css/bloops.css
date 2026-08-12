@@ -12813,6 +12813,10 @@
        Twelve slot rows in the shared .sm-modal shell. One column on a phone,
        two where there is room — the grid must never force a horizontal
        scroll (UI rule 1), so the picker is the flexible cell. */
+    /* ABOVE the sample bank (#sample-bank-mgr is 10600) — the editor is opened
+       FROM that overlay and must stack on top of it. Inheriting .sm-overlay's
+       10300 put the form behind the popover that launched it. */
+    #drum-kit-editor { z-index: 10700; }
     .dk-modal { width: min(560px, 94vw); }
     .dk-namerow { display: flex; align-items: center; gap: 8px; margin: 10px 0 6px; }
     .dk-namerow > span { font-size: 0.72rem; color: #a0aec0; flex: 0 0 auto; }

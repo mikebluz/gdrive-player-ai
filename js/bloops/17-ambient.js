@@ -37047,9 +37047,23 @@
         const kQual = (typeof prettyScaleName === 'function') ? prettyScaleName(effScale) : effScale;
         // Key-subsection hint reflects ONLY the key state (chromatic vs key) now that
         // Progression is its own independent toggle/subsection.
+        // A SET OF CHANGES CAN CARRY ITS OWN KEY (prog.parts[i].key), and while
+        // it plays it WINS — _ambKeyRootPc / _ambKeyScaleName consult
+        // _ambPartKeyNow before anything here. So this section is the AREA key:
+        // the default, and the frame every set without its own key follows.
+        // Say so when any set overrides it, or the heading reads as though
+        // there were one key for the whole area and the ♭♯ chips in Overview
+        // look like they are doing nothing.
+        let _keyOverrides = '';
+        try {
+          const _pk = (p.parts || []).filter((pt) => pt && pt.key)
+            .map((pt) => (pt.name || 'set') + ' in ' + ((typeof _AMB_CHROM !== 'undefined' ? _AMB_CHROM[pt.key.root | 0] : '') || '') + ' ' + (pt.key.scale || ''));
+          if (_pk.length) _keyOverrides = ' · ' + _pk.join(' · ');
+        } catch (e) {}
         hint('ambient-key-hint',
-          !keyOn ? 'free — no key constraint'
-          : ((follow ? '= workspace · ' : '') + kName + ' ' + kQual + ' · ' + ((cfg.keyMode === 'quantize') ? 'snap' : 'shift')));
+          (!keyOn ? 'free — no key constraint'
+            : ((follow ? '= workspace · ' : '') + kName + ' ' + kQual + ' · ' + ((cfg.keyMode === 'quantize') ? 'snap' : 'shift')))
+          + (_keyOverrides ? ((keyOn ? '' : '') + '   area key' + _keyOverrides) : ''));
         // (The Key/Progression section subtitle is the #ambient-cfg-keyind
         //  indicator, updated below — no separate head hint.)
         // Area START slider + per-layer cascade cue: a layer INHERITING (no own

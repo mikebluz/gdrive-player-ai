@@ -11818,7 +11818,7 @@
           const uBars = Math.max(0.05, _ambUnitLaneBars(E, t.key, L, cfg, VIEW, barSec));
           const n = stepsOf(L, t.key);
           let lastG = -1;
-          const cells = Array.from({ length: n }, (_, i) => {
+          const cellHtml = Array.from({ length: n }, (_, i) => {
             const off = _ambUnitWholeOff(L, i);
             // CHORD-GROUP TINT, the same alternating a/b the lane uses, taken at
             // the MIDDLE of the unit so a block that straddles a change is
@@ -11868,10 +11868,42 @@
               + ' data-qe-key="' + esc(t.key) + '" data-qe-i="' + i + '"'
               + ' title="Unit ' + (i + 1) + (chName ? (' · ' + esc(chName)) : '') + ' — ' + (off ? 'silent' : 'plays') + '">'
               + (showCh ? esc(shortName) : (i + 1)) + '</button>';
-          }).join('');
-          return '<div class="ambient-qe-row">'
-            + '<span class="ambient-qe-name" title="' + esc(t.name || t.key) + '">' + esc(t.name || t.key) + '</span>'
-            + '<span class="ambient-qe-cells">' + cells + '</span></div>';
+          });
+          // ONE ROW PER SET OF CHANGES, capped at 8 cells. A set whose
+          // iterations overflow breaks at a NATURAL boundary — the last pass
+          // boundary at or before the cap, never mid-pass — and resumes on the
+          // next row; the following set always starts a fresh row. Wrapping by
+          // width alone put half of one set on the end of another's line, which
+          // is the thing that made a long chain unreadable.
+          const MAXC = 8;
+          const groups = [];                     // [{part, cells:[html], name}]
+          cellHtml.forEach((h, i) => {
+            const sl = chainSlots ? chainSlots[i % chainLen] : null;
+            const pk = sl ? (sl.part | 0) : 0;
+            const last = groups[groups.length - 1];
+            if (!last || last.part !== pk) groups.push({ part: pk, name: (sl && sl.pName) || '', cells: [h], marks: [!!(sl && sl.pFirst)] });
+            else { last.cells.push(h); last.marks.push(!!(sl && sl.pFirst)); }
+          });
+          const lines = [];
+          groups.forEach((g) => {
+            let from = 0;
+            while (from < g.cells.length) {
+              let take = Math.min(MAXC, g.cells.length - from);
+              if (from + take < g.cells.length) {
+                // step back to the last pass start at or before the cap
+                let cut = take;
+                while (cut > 1 && !g.marks[from + cut]) cut--;
+                if (cut > 1) take = cut;
+              }
+              lines.push({ name: g.name, cells: g.cells.slice(from, from + take), cont: from > 0 });
+              from += take;
+            }
+          });
+          return lines.map((ln, li) => '<div class="ambient-qe-row' + (li ? ' cont' : '') + '">'
+            + '<span class="ambient-qe-name" title="' + esc(t.name || t.key) + (ln.name ? (' · ' + esc(ln.name)) : '') + '">'
+            + (li ? '' : esc(t.name || t.key)) + (ln.name ? ('<i class="ambient-qe-set">' + esc(ln.name) + '</i>') : '')
+            + '</span>'
+            + '<span class="ambient-qe-cells">' + ln.cells.join('') + '</span></div>').join('');
         }).join('');
 
         const dispHtml = '<button type="button" class="ambient-seg ambient-qe-disp'
@@ -11889,10 +11921,23 @@
                  + (partNames.length > 1 ? (', coloured by set: ' + esc(partNames.join(' · '))) : ''))
               : 'one cell per unit') + '</span></div>' +
           '<div class="ambient-qe-body">' + rows + '</div>' +
-          '<div class="sm-footer"><button type="button" class="sm-apply">Done</button></div>';
+          '<div class="sm-footer">'
+            + '<button type="button" class="ambient-qe-adv' + (E._schedAdv ? ' on' : '') + '" data-qe-adv="1" '
+            + 'title="Advanced edit — the chord lane and every layer\u2019s schedule (Evolve, phrase, timing), in the Scheduler behind this">'
+            + (E._schedAdv ? '\u25BE Advanced edit' : '\u25B8 Advanced edit') + '</button>'
+            + '<button type="button" class="sm-apply">Done</button></div>';
       };
       draw();
       ov.addEventListener('click', (ev) => {
+        const av = ev.target && ev.target.closest && ev.target.closest('[data-qe-adv]');
+        if (av) {
+          // Toggle and CLOSE: you turned it on to look at it, and it is behind
+          // this popover.
+          E._schedAdv = !E._schedAdv;
+          try { _ambRenderScheduler(E); } catch (e) {}
+          try { ov.remove(); } catch (e) {}
+          return;
+        }
         const dp = ev.target && ev.target.closest && ev.target.closest('[data-qe-disp]');
         if (dp) { E._qeChords = !E._qeChords; draw(); return; }
 
@@ -32245,6 +32290,7 @@
         } else {
           sBlocks = '<button type="button" class="ambient-seg ambient-sched-addsec" title="SECTIONS — named sets of bars (A / B / turnaround) cycling on the bar clock. Layers gate per section in the Section matrix below: arrangement inside one area.">＋ sections</button>';
         }
+        html += '<div class="ambient-sched-secwrap"' + (E._schedSections ? '' : ' hidden') + '>';
         html += '<div class="ambient-sched-row ambient-sched-secrow">' +
           '<span class="ambient-sched-ctl"><span class="ambient-sched-lbl"' +
             ((secs && secs.length && _secSeen.size < secs.length)
@@ -32258,6 +32304,7 @@
       // strip below shares the same x-scale, so the block edges ARE the chord
       // boundaries the layers re-voice on.
       const pg = cfg.prog;
+      html += '</div>';   // /.ambient-sched-secwrap
       // ADVANCED EDIT wraps the dense part: the pass row, the chord lane and
       // every layer's schedule. Collapsed by default so the Scheduler opens as
       // a compact panel — Quick edit answers "which layers play here" without
@@ -32628,15 +32675,17 @@
         '</div>';
       });
       html += '</div>';   // /.ambient-sched-adv
-      // The two ways in, side by side: Quick edit for "which layers play here",
-      // Advanced edit for everything else.
+      // TWO EQUAL BUTTONS filling the row: Sections (the arrangement frame) and
+      // Edit (the grid). Advanced edit is not here — it lives beside Done in the
+      // Edit popover, because that is where you are when you decide you want
+      // more than the grid.
       html = '<div class="ambient-sched-qebar">'
+        + '<button type="button" class="ambient-seg ambient-sched-secbtn' + (E._schedSections ? ' active' : '') + '" '
+        + 'title="Sections — named sets of bars cycling on the bar clock">'
+        + 'Sections</button>'
         + '<button type="button" class="ambient-seg ambient-sched-qe" '
-        + 'title="Quick edit — every layer\u2019s units in one grid; click a unit to turn that layer off there">'
-        + '\u25A6 Quick edit</button>'
-        + '<button type="button" class="ambient-seg ambient-sched-adv-btn' + (E._schedAdv ? ' active' : '') + '" '
-        + 'title="Advanced edit — the chord lane and every layer\u2019s schedule (Evolve, phrase, timing)">'
-        + (E._schedAdv ? '\u25BE Advanced edit' : '\u25B8 Advanced edit') + '</button></div>' + html;
+        + 'title="Edit — every layer\u2019s changes in one grid; click a cell to turn that layer off there">'
+        + 'Edit</button></div>' + html;
       // Legend — name what the strip shows (block/fresh/repeat/playhead).
       html += '<div class="ambient-sched-legend">' +
         '<i class="ambient-sched-blk lg"></i> 1 unit' +
@@ -32647,8 +32696,8 @@
       if (!body._secWired) {
         body._secWired = true;
         body.addEventListener('click', (ev) => {
-          const advb = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-adv-btn');
-          if (advb) { ev.preventDefault(); ev.stopPropagation(); E._schedAdv = !E._schedAdv; _ambRenderScheduler(E); return; }
+          const secb = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-secbtn');
+          if (secb) { ev.preventDefault(); ev.stopPropagation(); E._schedSections = !E._schedSections; _ambRenderScheduler(E); return; }
           const qe = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-qe');
           if (qe) { ev.preventDefault(); ev.stopPropagation(); _ambQuickUnitsModal(E); return; }
           const add = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-addsec');

@@ -12920,3 +12920,20 @@
     .ambient-sched-qebar { gap: 6px; }
     .ambient-sched-adv-btn { min-height: 40px; padding: 8px 14px; }
     .ambient-sched-adv-btn.active { border-color: #35c98e; color: #9df3cd; }
+
+    /* Scheduler bar: Sections | Edit, equal width, filling the row. */
+    .ambient-sched-qebar { display: flex; gap: 8px; margin-bottom: 6px; }
+    .ambient-sched-qebar > button { flex: 1 1 0; min-width: 0; min-height: 40px; padding: 8px 10px; }
+    .ambient-sched-secbtn.active, .ambient-sched-qe.active { border-color: #35c98e; color: #9df3cd; }
+    .ambient-sched-secwrap[hidden] { display: none; }
+    /* Quick edit: one row per SET of changes; a continued row drops the layer
+       name so the eye follows the indent instead of re-reading it. */
+    .ambient-qe-row.cont .ambient-qe-name { opacity: 0.55; }
+    .ambient-qe-set { display: block; font-style: normal; font-size: 0.62rem; color: #718096;
+                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* Advanced edit sits beside Done, left-aligned so Done stays where Done is. */
+    .ambient-qe-modal .sm-footer { display: flex; gap: 8px; align-items: center; }
+    .ambient-qe-adv { margin-right: auto; min-height: 40px; padding: 9px 14px;
+                      background: #14141f; color: #e9e9f4; border: 1px solid #3a3a55;
+                      border-radius: 8px; cursor: pointer; font-size: 0.82rem; }
+    .ambient-qe-adv.on { border-color: #35c98e; color: #9df3cd; }

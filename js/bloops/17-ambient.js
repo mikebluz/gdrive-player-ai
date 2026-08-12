@@ -23312,50 +23312,45 @@
       // (record until the user presses Finalize). Either way Finalize winds Bloom
       // down and ends on silence for a clean tail.
       const btn = _ambGet(E, 'ambient-export-btn') || _ambGet(E, 'ambient-io-btn');   // master: anchor to the ⬡▾ I/O menu button
+      // ONE ARTIFACT, ONE LENGTH LIST, AND THE METHOD IS A SETTING.
+      // This menu used to offer the same durations TWICE — "15 sec / 30 sec /
+      // 1 min…" under Capture and "30 sec / 1 min / 2 min…" under Bounce — plus
+      // a third entry, "Bounce by recording", which was the first list again.
+      // Three names for two methods of making ONE thing, and both methods land
+      // the SAME record in the SAME bank. That is a bad model, and it cost real
+      // time: a report of "the capture is quiet" was investigated against the
+      // recorder for a round before it turned out to mean the rendered file.
+      // So: pick a length; HOW it is made is a remembered preference.
+      const _meth = _ambCapMethod();
+      const _fast = _meth === 'fast';
+      const go = (sec) => (_fast ? _ambBounceBeginOffline(E, sec) : _ambCaptureBegin(E, sec * 1000));
       const opts = [
-        { label: '● Live — until Finalize', fn: () => _ambCaptureBegin(E, 0) },
+        { label: (_fast ? '⚡ Method: FAST' : '⏺ Method: REAL TIME')
+                 + ' — tap to switch to ' + (_fast ? 'real time' : 'fast'),
+          fn: () => { _ambSetCapMethod(_fast ? 'realtime' : 'fast'); setTimeout(() => _ambCaptureToBank(E), 0); } },
+        { label: _fast ? '   silent · faster than real time · from where you were listening'
+                       : '   plays aloud · records the real output · exact',
+          disabled: true },
         'hr',
-        { label: '15 sec', fn: () => _ambCaptureBegin(E, 15000) },
-        { label: '30 sec', fn: () => _ambCaptureBegin(E, 30000) },
-        { label: '1 min',  fn: () => _ambCaptureBegin(E, 60000) },
-        { label: '2 min',  fn: () => _ambCaptureBegin(E, 120000) },
-        { label: '4 min',  fn: () => _ambCaptureBegin(E, 240000) },
-        'hr',
+        { label: '15 sec', fn: () => go(15) },
+        { label: '30 sec', fn: () => go(30) },
+        { label: '1 min',  fn: () => go(60) },
+        { label: '2 min',  fn: () => go(120) },
+        { label: '4 min',  fn: () => go(240) },
         { label: '⌨ Custom seconds…', fn: () => {
-          let s = null; try { s = prompt('Capture length in seconds:', '60'); } catch (e) {}
-          if (s == null) return;
-          const n = parseInt(s, 10);
+          let sv = null; try { sv = prompt('Length in seconds:', '60'); } catch (e) {}
+          if (sv == null) return;
+          const n = parseInt(sv, 10);
           if (!Number.isFinite(n) || n <= 0) { alert('Enter a positive number of seconds.'); return; }
-          _ambCaptureBegin(E, n * 1000);
+          go(n);
         } },
-        // BOUNCE — the same lengths, rendered OFFLINE instead of recorded in real
-        // time. Lives in this menu because it answers the same question ("give me
-        // a file of this") and the result lands in the same bank. Eligible voices
-        // render in the WASM core (the same engine live playback uses), so it is
-        // faster than a live capture — measured 4-7x realtime on a dense
-        // 6-layer project, more on light ones.
         'hr',
-        // EVERY bounce row carries the ⚡ itself. The header is a disabled label,
-        // and leading-space indentation is stripped when the menu renders — so
-        // without this the menu showed TWO identical "30 sec / 1 min / 2 min"
-        // lists and the only thing distinguishing them was an unclickable
-        // heading, which read as "Bounce can't be selected".
-        { label: '⚡ Bounce — silent, fast, continues from here', disabled: true },
-        { label: '⚡ Bounce 30 sec', fn: () => _ambBounceBeginOffline(E, 30) },
-        { label: '⚡ Bounce 1 min',  fn: () => _ambBounceBeginOffline(E, 60) },
-        { label: '⚡ Bounce 2 min',  fn: () => _ambBounceBeginOffline(E, 120) },
-        { label: '⚡ Bounce 5 min',  fn: () => _ambBounceBeginOffline(E, 300) },
-        { label: '⚖ Compare bounce with live — measure the difference', fn: () => { _ambBounceVerify(E, 8); } },
-        { label: '⚖ Diff my capture vs my bounce — compare the two files', fn: () => { _ambDiffTakes(E); } },
-        { label: '⚡ Bounce — custom seconds…', fn: () => {
-          let s = null; try { s = prompt('Bounce length in seconds:', '120'); } catch (e) {}
-          if (s == null) return;
-          const n = parseInt(s, 10);
-          if (!Number.isFinite(n) || n <= 0) { alert('Enter a positive number of seconds.'); return; }
-          _ambBounceBeginOffline(E, n);
-        } },
-        { label: '⏺ Bounce by recording — real time, exact', fn: () => _ambBounceBegin(E, 60) },
-        { label: '⧉ Copy bounce diagnostic — the settings, for a bug report', fn: () => _ambCopyBounceDiag(E) },
+        // Open-ended is REAL TIME by nature — there is no length to render.
+        { label: '● Live — record until Finalize', fn: () => _ambCaptureBegin(E, 0) },
+        'hr',
+        { label: '⚖ Compare with live playback — measure the difference', fn: () => { _ambBounceVerify(E, 8); } },
+        { label: '⚖ Diff my last two takes', fn: () => { _ambDiffTakes(E); } },
+        { label: '⧉ Copy diagnostic — the settings, for a bug report', fn: () => _ambCopyBounceDiag(E) },
       ];
       if (typeof showCtxMenu === 'function' && btn) {
         const r = btn.getBoundingClientRect();
@@ -23531,8 +23526,8 @@
         // …and whatever the most recent bounce measured, so the settings and the
         // symptom travel together.
         const bank = _ambCaptureBank || [];
-        const last = bank.slice().reverse().find((x) => /bounce/i.test(String(x.source || '')));
-        if (last) out.lastBounce = { name: last.name, durSec: last.durSec, source: last.source };
+        const last = bank.slice().reverse().find((x) => /^Bloom/.test(String(x.source || '')));
+        if (last) out.lastTake = { name: last.name, durSec: last.durSec, source: last.source };
       } catch (e) { out.error = (e && e.message) || String(e); }
       const txt = JSON.stringify(out, null, 1);
       const done = () => { try { if (typeof showToast === 'function') showToast('Bounce diagnostic copied — paste it into the bug report.', { ms: 6000 }); } catch (e) {} };
@@ -23554,11 +23549,17 @@
     // ears' disagreement made numeric.
     async function _ambDiffTakes(E) {
       const bank = _ambCaptureBank || [];
-      const bounce = bank.slice().reverse().find(x => /bounce/i.test(String(x.source || '')));
-      const cap = bank.slice().reverse().find(x => x !== bounce && !/bounce/i.test(String(x.source || '')));
+      // THE LAST TWO TAKES, whichever way each was made. This used to demand
+      // "one capture and one bounce", matching the word 'bounce' in the source
+      // string — a rule that only existed because the two were modelled as
+      // different objects. They are one kind of thing made two ways, so the
+      // useful comparison is simply the two most recent.
+      const takes = bank.filter((x) => /^Bloom/.test(String(x.source || '')));
+      const bounce = takes[takes.length - 1];
+      const cap = takes[takes.length - 2];
       if (!cap || !bounce) {
-        alert('Need one CAPTURE and one BOUNCE in the bank.\n\n'
-          + 'Record a capture, then bounce the same passage, then run this again.');
+        alert('Need two takes in the bank.\n\n'
+          + 'Make one, then make another of the same passage, then run this again.');
         return null;
       }
       const prog = (typeof showRenderProgressModal === 'function')
@@ -23666,7 +23667,7 @@
       ov.innerHTML = '<div class="sm-modal ambient-step-modal">' +
         '<div class="sm-title">Capture vs bounce</div>' +
         '<div class="ambient-step-modal-body">' +
-          '<div class="ambient-hint" style="white-space:normal">capture: <b>' + esc(o.capName || '?') + '</b> (' + (o.durCap || 0).toFixed(1) + 's) · bounce: <b>' + esc(o.bounceName || '?') + '</b> (' + (o.durBounce || 0).toFixed(1) + 's)</div>' +
+          '<div class="ambient-hint" style="white-space:normal">earlier: <b>' + esc(o.capName || '?') + '</b> (' + (o.durCap || 0).toFixed(1) + 's) · later: <b>' + esc(o.bounceName || '?') + '</b> (' + (o.durBounce || 0).toFixed(1) + 's)</div>' +
           '<div class="ambient-pm-modal-hint">' + verdict + '</div>' + rows +
         '</div>' +
         '<div class="sm-footer"><button type="button" class="sm-apply">Done</button></div></div>';
@@ -23823,6 +23824,18 @@
       else { btn.textContent = '⬡▾'; btn.title = 'Send to Shape · Listen (rolling Grab buffer) · Capture'; btn.disabled = false; btn.classList.remove('recording'); }
     }
     // Begin live recording the master output (fan-out tap, no seed restart).
+    // HOW a take is made — 'fast' (offline render) or 'realtime' (record the
+    // live output). A remembered preference rather than two parallel menus,
+    // because both produce the same artifact in the same bank. Default fast:
+    // it is silent, quicker than real time, and (since the parity gate) verified
+    // per layer against live playback.
+    function _ambCapMethod() {
+      try { return localStorage.getItem('bloomCapMethod') === 'realtime' ? 'realtime' : 'fast'; }
+      catch (e) { return 'fast'; }
+    }
+    function _ambSetCapMethod(m) {
+      try { localStorage.setItem('bloomCapMethod', m === 'realtime' ? 'realtime' : 'fast'); } catch (e) {}
+    }
     function _ambCaptureStart(E) {
       let ac; try { ac = Tone.getContext().rawContext; } catch (e) { alert('No audio context'); return; }
       // Tap the FINAL master node (post lookahead-limiter + soft-clip) so the
@@ -24062,7 +24075,7 @@
           durSec = 0;
         }
         let url = null; try { url = URL.createObjectURL(blob); } catch (e) {}
-        _ambCaptureBank.push({ id: ++_ambCapBankSeq, name: filename, ext, mime, folder: folder || 'bloops/exports', durSec, bytes: blob.size, blob, url, uploaded: false, source: E._capAsBounce ? 'Bloom (bounce)' : 'Bloom', grid: _ambCaptureGrid(E, durSec) });
+        _ambCaptureBank.push({ id: ++_ambCapBankSeq, name: filename, ext, mime, folder: folder || 'bloops/exports', durSec, bytes: blob.size, blob, url, uploaded: false, source: 'Bloom (real time)', grid: _ambCaptureGrid(E, durSec) });
         E._capAsBounce = false;
         _ambRenderCaptureBank();
         if (typeof showToast === 'function') {
@@ -27459,7 +27472,7 @@
       } catch (e) { blob = null; }
       if (!blob) return { ok: false, reason: 'encoder unavailable' };
       const _dryRender = (res.wet === false) && !(opts && opts.dry);
-      const stamp = (opts && opts.name) || ('bounce-' + Math.round(audioBuf.duration) + 's');
+      const stamp = (opts && opts.name) || ('take-' + Math.round(audioBuf.duration) + 's');
       const filename = String(stamp).replace(/[^\w.-]+/g, '-').slice(0, 60) + (_dryRender ? '-DRY-no-fx' : '');
       let url = null; try { url = URL.createObjectURL(blob); } catch (e) {}
       // MEASURE THE REPORTED SYMPTOM, on the file itself. "It sounds mono" is
@@ -27485,7 +27498,9 @@
         // place for the one number that says whether the FX arrived.
         // `core` here is the offline VOICE SESSION; the chain counts are what
         // decide stereo width and which FX implementation ran, so both show.
-        source: 'Bloom (bounce'
+        // One vocabulary: a take is a take. The METHOD is a tag on it, not a
+        // different kind of object (see _ambCapMethod).
+        source: 'Bloom (fast'
           + (_dryRender ? ' · DRY — no FX' : (res.core ? ' · core' : ' · node'))
           + (res.chains ? (' · ' + res.chains.core + ' strip/' + res.chains.node + ' node') : '')
           + (_bWidth == null ? '' : (_bWidth < 0.05 ? ' · MONO' : ' · width ' + _bWidth.toFixed(2)))
@@ -27527,7 +27542,7 @@
           // not make it" — that one has to survive being glanced away from, so
           // it holds for 12 s and takes the warn styling.
           const bad = dry || missing.length > 0;
-          showToast((dry ? '⚠ Bounced DRY — ' : 'Bounced ') + '“' + filename + '” in ' + res.wallSec.toFixed(1) + 's (' + xr + '× realtime'
+          showToast((dry ? '⚠ Rendered DRY — ' : 'Rendered ') + '“' + filename + '” in ' + res.wallSec.toFixed(1) + 's (' + xr + '× realtime'
             + (res.core ? '' : ', slow engine') + ') — in the Harvest bank.'
             + (missing.length ? ('  Missing: ' + missing.join(' · ')) : ''),
             bad ? { warn: true, ms: 12000 } : undefined);

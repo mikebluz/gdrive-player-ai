@@ -12909,3 +12909,9 @@
     .ambient-qe-steps-row > span:first-child { font-size: 0.72rem; color: #a0aec0; flex: 0 0 auto; }
     .ambient-qe-steps, .ambient-qe-disp { min-height: 34px; min-width: 40px; padding: 5px 9px; font-size: 0.74rem; }
     @media (max-width: 520px) { .ambient-qe-steps, .ambient-qe-disp { min-height: 36px; } }
+
+    /* Advanced edit — the dense half of the Scheduler, collapsed by default. */
+    .ambient-sched-adv[hidden] { display: none; }
+    .ambient-sched-qebar { gap: 6px; }
+    .ambient-sched-adv-btn { min-height: 40px; padding: 8px 14px; }
+    .ambient-sched-adv-btn.active { border-color: #35c98e; color: #9df3cd; }

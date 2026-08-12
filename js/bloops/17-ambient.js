@@ -32252,6 +32252,13 @@
       // strip below shares the same x-scale, so the block edges ARE the chord
       // boundaries the layers re-voice on.
       const pg = cfg.prog;
+      // ADVANCED EDIT wraps the dense part: the pass row, the chord lane and
+      // every layer's schedule. Collapsed by default so the Scheduler opens as
+      // a compact panel — Quick edit answers "which layers play here" without
+      // any of it — and expanded when you actually want to work on cadence,
+      // phrase lengths and per-layer timing. The ruler and the section rows
+      // stay out of it: they are the arrangement frame, not the detail.
+      html += '<div class="ambient-sched-adv"' + (E._schedAdv ? '' : ' hidden') + '>';
       if (pg && pg.on && Array.isArray(pg.chords) && pg.chords.length) {
         const bpc = Math.max(0.01, cfg.barsPerChord || 1);
         const lens = pg.chords.map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
@@ -32614,11 +32621,16 @@
           blocksHtml +
         '</div>';
       });
-      // Quick edit — the whole grid of layers x units in one place.
+      html += '</div>';   // /.ambient-sched-adv
+      // The two ways in, side by side: Quick edit for "which layers play here",
+      // Advanced edit for everything else.
       html = '<div class="ambient-sched-qebar">'
         + '<button type="button" class="ambient-seg ambient-sched-qe" '
         + 'title="Quick edit — every layer\u2019s units in one grid; click a unit to turn that layer off there">'
-        + '\u25A6 Quick edit</button></div>' + html;
+        + '\u25A6 Quick edit</button>'
+        + '<button type="button" class="ambient-seg ambient-sched-adv-btn' + (E._schedAdv ? ' active' : '') + '" '
+        + 'title="Advanced edit — the chord lane and every layer\u2019s schedule (Evolve, phrase, timing)">'
+        + (E._schedAdv ? '\u25BE Advanced edit' : '\u25B8 Advanced edit') + '</button></div>' + html;
       // Legend — name what the strip shows (block/fresh/repeat/playhead).
       html += '<div class="ambient-sched-legend">' +
         '<i class="ambient-sched-blk lg"></i> 1 unit' +
@@ -32629,6 +32641,8 @@
       if (!body._secWired) {
         body._secWired = true;
         body.addEventListener('click', (ev) => {
+          const advb = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-adv-btn');
+          if (advb) { ev.preventDefault(); ev.stopPropagation(); E._schedAdv = !E._schedAdv; _ambRenderScheduler(E); return; }
           const qe = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-qe');
           if (qe) { ev.preventDefault(); ev.stopPropagation(); _ambQuickUnitsModal(E); return; }
           const add = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-addsec');

@@ -1471,5 +1471,16 @@ same projects unfolded — plain, key offset, groove overrides, mode rotation, a
 a three-section layer mask — and all five are IDENTICAL sample for sample.
 Invariant harness identical across all 30, golden 82/82.
 
-**Still open.** Whether the Chord and Section matrices merge (see the Edit
+**Slice 4f SHIPPED 2026-08-12 — the vocabulary follows the model.** "Section" no
+longer names anything a user can create, so the arrangement-facing labels say
+PART: the ☷ group and its title, the Scheduler's toggle and lane label, and the
+append tooltip. Label-only, per the naming rule — every key, id and class is
+untouched.
+
+**The Seq layer's own "Sections" is a DIFFERENT CONCEPT and deliberately keeps
+its name** (a seq layer's units, `_ambSeqSectionsBtnLabel` — nothing to do with
+the arrangement). A blanket rename would have hit it; the two were told apart by
+reading each site rather than by matching the string.
+
+**Still open.** Whether the Chord and Part matrices merge (see the Edit
 overlap note) — deferred to slice 4.

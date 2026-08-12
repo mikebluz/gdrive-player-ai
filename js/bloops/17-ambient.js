@@ -31151,7 +31151,7 @@
       if (el._sig === sig) return;
       el._sig = sig;
       const esc = (t) => String(t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
-      let h = '<div class="ambient-pm-title">Section matrix — how often each layer plays in each section' + _ambMaskEditBtnHtml(!!el._pmEdit) + '</div>';
+      let h = '<div class="ambient-pm-title">Part matrix — how often each layer plays in each part' + _ambMaskEditBtnHtml(!!el._pmEdit) + '</div>';
       h += '<div class="ambient-pm-legend"><b>Cell</b> = the chance this layer plays that section — tap to step <b>always → 60% → 30% → never</b>, or press and hold (✎ % to make a tap do it) for <b>any value 0-100</b>. Rolled once per section, so the layer is in or out for the whole section. <b>Window</b> is the other axis: how much of each section it plays once it is in.</div>';
       h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + secs.map((x, i) => '<span class="ambient-pm-ch" title="' + esc(x.name) + ' · ' + _ambFmtBpc(x.bars) + ' bars">' + esc(x.name) + '</span>').join('') + '<span class="ambient-pm-part">Window</span></div>';
       rows.forEach(r => {
@@ -32815,9 +32815,9 @@
         html += '<div class="ambient-sched-row ambient-sched-secrow">' +
           '<span class="ambient-sched-ctl"><span class="ambient-sched-lbl"' +
             ((secs && secs.length && _secSeen.size < secs.length)
-              ? ' title="' + (secs.length - _secSeen.size) + ' section(s) start outside this pass — open ▤ Arrangement to see them all.">sections <b class="secmore">' + _secSeen.size + '/' + secs.length + '</b>'
-              : '>sections') + '</span>' +
-          (secs && secs.length ? '<button type="button" class="ambient-seg ambient-sched-addsec" title="Append a section">＋</button>' : '') + '</span>' +
+              ? ' title="' + (secs.length - _secSeen.size) + ' part(s) start outside this pass — open ▤ Arrangement to see them all.">parts <b class="secmore">' + _secSeen.size + '/' + secs.length + '</b>'
+              : '>parts') + '</span>' +
+          (secs && secs.length ? '<button type="button" class="ambient-seg ambient-sched-addsec" title="Append a part">＋</button>' : '') + '</span>' +
           '<span class="ambient-sched-strip sections">' + sBlocks + '<i class="ambient-sched-ph"></i></span></div>';
       }
       // CHORD lane (area progression active): one labeled block per chord, sized
@@ -33202,8 +33202,8 @@
       // more than the grid.
       html = '<div class="ambient-sched-qebar">'
         + '<button type="button" class="ambient-seg ambient-sched-secbtn' + (E._schedSections ? ' active' : '') + '" '
-        + 'title="Sections — named sets of bars cycling on the bar clock">'
-        + 'Sections</button>'
+        + 'title="Parts — named stretches of bars on the bar clock. A part with changes plays them; one without is just time.">'
+        + 'Parts</button>'
         + '<button type="button" class="ambient-seg ambient-sched-qe" '
         + 'title="Edit — every layer\u2019s changes in one grid; click a cell to turn that layer off there">'
         + 'Edit</button></div>' + html;
@@ -33451,7 +33451,7 @@
       });
       // Live CHORD readout: light the chord block the playhead is inside, so the
       // lane shows which chord is sounding right now (matches the header readout).
-      // Current SECTION: light the scheduler lane block + the Section matrix column.
+      // Current PART: light the scheduler lane block + the Part matrix column.
       try {
         const secAt = _ambSectionAt(E, now, cfg);
         const sb = box.querySelectorAll('.ambient-sched-secblk');
@@ -38027,7 +38027,7 @@
             _ambProgGrpOpen('matrix', '\u2317 Chord matrix', false) +
             '<div class="ambient-progmatrix" id="ambient-progmatrix" style="display:none"></div>' +
             _ambProgGrpClose() +
-            _ambProgGrpOpen('sections', '\u2637 Section matrix', false) +
+            _ambProgGrpOpen('sections', '\u2637 Part matrix', false) +
             '<div class="ambient-progmatrix ambient-secmatrix" id="ambient-secmatrix" style="display:none"></div>' +
             _ambProgGrpClose()) +
         '</div>' +

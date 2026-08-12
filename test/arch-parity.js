@@ -73,6 +73,12 @@ const CONFIGS = [
   // what a SECTION is, and it is the shape sections migrate to — so it needs a
   // pin of its own before that migration lands.
   { id: 'open-run',    chords: [0, 5, 7, 9], parts: [['Verse', 2], { name: 'Bridge', open: 4, hold: false }, ['Chorus', 2]] },
+  // WHAT A SECTION CARRIES BEYOND ITS LENGTH. None of this had coverage, and
+  // all of it has to survive a sections→parts migration — so it is pinned first.
+  { id: 'sec-groove',  chords: [0, 5, 7, 9], sections: [['A', 4], ['B', 4, null, null, { swing: 60, accent: 80, density: 30 }]] },
+  { id: 'sec-rot',     chords: [0, 5, 7, 9], key: { root: 0, scale: 'major' }, sections: [['A', 4], ['B', 4, null, null, null, 3]] },
+  { id: 'sec-mask',    chords: [0, 5, 7, 9], sections: [['A', 4], ['B', 4]], mask: [100, 0] },
+  { id: 'sec-mask-pct', chords: [0, 5, 7, 9], sections: [['A', 4], ['B', 4], ['C', 4]], mask: [100, 40, 0] },
   { id: 'salt-len',         chords: [0, 5, 7, 9], salt: { len: 70, colors: 0, scatter: 0 } },
   { id: 'salt-colors',      chords: [0, 5, 7, 9], salt: { len: 0, colors: 80, scatter: 0 } },
   { id: 'salt-both',        chords: [0, 5, 7, 9], salt: { len: 50, colors: 50, scatter: 30 } },
@@ -140,8 +146,16 @@ const WALK_BARS = 32, WALK_STEP = 0.25;
         return { name, len, ...(plays ? { plays } : {}), ...(key ? { key } : {}), ...(salt ? { salt } : {}) };
       });
       if (c.salt) cfg.prog.salt = c.salt;
-      if (c.sections) cfg.sections = c.sections.map(([name, bars, part, key]) => ({
-        name, bars, ...(part != null ? { part } : {}), ...(key != null ? { key } : {}) }));
+      if (c.sections) cfg.sections = c.sections.map(([name, bars, part, key, groove, rot]) => ({
+        name, bars, ...(part != null ? { part } : {}), ...(key != null ? { key } : {}),
+        ...(groove ? { groove } : {}), ...(rot != null ? { keyModeRot: rot } : {}) }));
+      // A layer carrying a SECTION MASK, so the per-section gate is measurable.
+      if (c.mask) {
+        cfg.extras = [];
+        try { _ambAddExtra(_masterEng, 'bass'); } catch (e) {}
+        const L0 = (_masterEng.getCfg().extras || [])[0];
+        if (L0) { L0.sectionMask = { steps: c.mask.slice() }; L0.mute = false; L0.on = true; }
+      }
       cfg.barsPerChord = c.barsPerChord || 1;
       cfg.bpm = 120;
       cfg.seed = 12345;                       // salt and alts are seeded — pin it
@@ -189,7 +203,7 @@ const WALK_BARS = 32, WALK_STEP = 0.25;
         // as a constant and a modulation regression would sail through.
         const prevT = (typeof _ambKeyTime !== 'undefined') ? _ambKeyTime : undefined;
         const prevS = (typeof _ambProgStepOverride !== 'undefined') ? _ambProgStepOverride : undefined;
-        let step = '-', sec = '-', chord = '-', key = '-';
+        let step = '-', sec = '-', chord = '-', key = '-', ov = '-', gate = '-';
         try {
           _ambKeyTime = t;
           step = probe(() => _ambProgStepAt(_masterEng, t));
@@ -217,11 +231,27 @@ const WALK_BARS = 32, WALK_STEP = 0.25;
           // transpose, the section offset and the part key together.
           const root = probe(() => _ambSrcRootPc({ type: 'prog', chords: cfg.prog.chords }));
           key = probe(() => _ambKeyRootPc(cfg) + '/' + _ambKeyScaleName(cfg)) + '>' + root;
+          // Per-section overrides and the per-section layer gate. These resolve
+          // off _ambKeyTime like everything else here, which is why the stamp
+          // above has to be in place before any of it is read.
+          ov = probe(() => {
+            const g = (typeof _ambSectionGroove === 'function') ? _ambSectionGroove(cfg, cfg.groove || {}) : null;
+            const so = (typeof _ambSectionNowObj === 'function') ? _ambSectionNowObj(cfg) : null;
+            const bits = [];
+            if (g) ['swing', 'accent', 'density', 'ghost', 'rolls'].forEach(k2 => { if (Number.isFinite(g[k2])) bits.push(k2[0] + g[k2]); });
+            if (so && Number.isFinite(so.keyModeRot) && so.keyModeRot) bits.push('rot' + so.keyModeRot);
+            return bits.length ? bits.join(',') : '-';
+          });
+          gate = probe(() => {
+            const L0 = (cfg.extras || [])[0];
+            if (!L0 || !L0.sectionMask) return '-';
+            return _ambSectionGateOK(_masterEng, L0, t, cfg, true) ? 'play' : 'off';
+          });
         } finally {
           _ambKeyTime = prevT;
           _ambProgStepOverride = prevS;
         }
-        rows.push([b.toFixed(2), step, sec, chord, key].join(' '));
+        rows.push([b.toFixed(2), step, sec, chord, key, ov, gate].join(' '));
       }
       out[c.id] = rows;
     });

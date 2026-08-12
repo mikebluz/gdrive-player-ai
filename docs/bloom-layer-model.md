@@ -1282,5 +1282,25 @@ UI must not offer "add a chromatic part" for something that can be keyed.
 - Every area's default single part is named **"Default"**, chosen so it reads as
   a placeholder the user is invited to rename rather than a fixed structure.
 
-**Still open.** Whether the Chord and Section matrices merge (see the Edit
-overlap note) — deliberately deferred to slice 4.
+**FOUND BY SLICE 1, and it is a real decision, not a detail: THE TWO THINGS
+ARCH MERGES USE DIFFERENT MODULATION MODELS.**
+
+    sections[i].key    a NUMBER — a relative semitone offset (-12..12)
+    prog.parts[i].key  an OBJECT — {root, scale}, an absolute key
+
+A section's offset RIDES ALONG when the area is transposed (`_ambTransposeArea`
+says so explicitly: "cfg.sections[i].key is a RELATIVE offset so it rides along
+untouched"), while a part's absolute key does not — transposing an area must
+walk part keys and leave section offsets alone. Unified naively, transposing an
+area would either double-shift the sections or stop moving the parts.
+
+Arch must choose, and the choice is musical, not technical: an offset says
+"this passage is a fourth up from wherever we are", an absolute key says "this
+passage is in F". Offsets survive re-keying the whole piece; absolute keys
+survive re-ordering the parts. The derivation records which model each part came
+from (`key: {offset}` vs `key: {root, scale}`, and `keyAbs` for the collision
+case where a bound section has an offset AND its part an absolute key) so slice
+3 can resolve it deliberately rather than by whichever code path ran last.
+
+**Still open.** That key-model decision; and whether the Chord and Section
+matrices merge (see the Edit overlap note) — deferred to slice 4.

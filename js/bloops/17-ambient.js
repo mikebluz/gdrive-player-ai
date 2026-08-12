@@ -2651,6 +2651,74 @@
     //        as the resolved mirror (rewritten every normalize) — that is what
     //        keeps _ambSectionAt / _ambSectionCycleBars / the Scheduler lane
     //        untouched. Absent sections (most projects) are unaffected.
+    // Build cfg.arch from sections + prog.parts + prog.chords. Pure derivation:
+    // reads only already-normalized fields, writes only cfg.arch, changes no
+    // behaviour. The six cases are exactly the migration table in §15.
+    function _ambDeriveArch(cfg) {
+      try {
+        const out = [];
+        const p = cfg.prog, hasCh = !!(p && Array.isArray(p.chords) && p.chords.length);
+        const parts = (p && Array.isArray(p.parts) && p.parts.length) ? p.parts : null;
+        // A part's chord slice, as OFFSETS into prog.chords — slice 1 references
+        // the existing array rather than copying it, so there is one source of
+        // truth while both models are live.
+        const sliceOf = (pi) => {
+          if (!parts || !parts[pi]) return null;
+          let from = 0;
+          for (let i = 0; i < pi; i++) from += Math.max(1, parts[i].len | 0);
+          return { from, len: Math.max(1, parts[pi].len | 0), plays: Math.max(1, (parts[pi].plays | 0) || 1) };
+        };
+        const mk = (id, name, extra) => Object.assign({ id, name }, extra || {});
+        const secs = Array.isArray(cfg.sections) ? cfg.sections : null;
+        if (secs && secs.length) {
+          // Sections ARE parts. One bound to a prog part carries that part's
+          // changes; an unbound one is open.
+          secs.forEach((sc, i) => {
+            const e = mk(sc.id != null ? sc.id : (i + 1), sc.name || String.fromCharCode(65 + (i % 26)));
+            if (sc.unit) e.len = { num: sc.unit.num, den: sc.unit.den, ref: sc.unit.ref };
+            else if (Number.isFinite(sc.bars)) e.len = { num: sc.bars, den: 1, ref: 'bar' };
+            // TWO MODULATION MODELS, carried as they are rather than flattened.
+            // A SECTION's key is a NUMBER — a relative semitone offset that
+            // rides along when the area is transposed. A PART's key is
+            // {root, scale} — an absolute key. Arch has to pick one (§15), and
+            // guessing here would bake the answer in before it is decided; so
+            // slice 1 records which model each part came from and slice 3
+            // resolves it.
+            if (Number.isFinite(sc.key) && (sc.key | 0)) e.key = { offset: sc.key | 0 };
+            const pi = Number.isFinite(sc.part) ? (sc.part | 0) : -1;
+            // prog.on OFF with chords present must stay OPEN — otherwise a
+            // project with the progression switched off would gain harmony the
+            // moment this list is read (the §15 trap).
+            if (pi >= 0 && parts && parts[pi] && hasCh && p.on) {
+              e.changes = sliceOf(pi);
+              if (parts[pi].key && !e.key) e.key = { root: parts[pi].key.root | 0, scale: parts[pi].key.scale };
+              // A bound section with its OWN offset AND a part with an absolute
+              // key is the collision case; keep both so it is visible.
+              if (parts[pi].key && e.key && e.key.offset != null) e.keyAbs = { root: parts[pi].key.root | 0, scale: parts[pi].key.scale };
+              if (parts[pi].salt) e.salt = parts[pi].salt;
+            }
+            out.push(e);
+          });
+        } else if (parts && hasCh && p.on) {
+          parts.forEach((pt, i) => {
+            const e = mk(i + 1, pt.name || ('Changes ' + (i + 1)));
+            e.changes = sliceOf(i);
+            if (pt.key) e.key = { root: pt.key.root | 0, scale: pt.key.scale };
+            if (pt.salt) e.salt = pt.salt;
+            out.push(e);
+          });
+        } else if (hasCh && p.on) {
+          out.push(mk(1, p.name || 'Changes', { changes: { from: 0, len: p.chords.length, plays: 1 } }));
+        }
+        // Always at least one part, and it is named "Default" so it reads as a
+        // placeholder to rename rather than fixed structure.
+        if (!out.length) out.push(mk(1, 'Default', { len: { num: 1, den: 1, ref: 'area' } }));
+        // `open` is DERIVED, never stored as an independent flag: a part is open
+        // exactly when it has no changes, so the two can never disagree.
+        out.forEach((e) => { e.open = !e.changes; });
+        cfg.arch = out;
+      } catch (e) { /* derivation must never break a load */ }
+    }
     const _AMB_SCHEMA_VERSION = 7;
     // v6 — normalize the additive PROG metadata (parts / versions / per-chord alts).
     // Every field is ABSENT on pre-v6 projects; this coerces when present and DELETES
@@ -2961,6 +3029,19 @@
           }
         }
       }
+      // ---- ARCH (slice 1: DERIVED, READ BY NOTHING) ------------------------
+      // See docs/bloom-layer-model.md §15. An area is one list of PARTS, each
+      // with a length; a part may carry a set of CHANGES, or not — an OPEN part
+      // is just N bars, and it may still be keyed (open and chromatic are
+      // independent axes; that correction is in §15).
+      //
+      // This derives that list from what already exists and NOTHING READS IT
+      // yet. Derived fresh on every normalize rather than trusted from the
+      // save, so it can never drift from the fields it describes and a stale
+      // one from an older build is simply overwritten. Deriving it now is what
+      // lets the migration be verified against real projects before a single
+      // reader — let alone the harmony clock — depends on it.
+      _ambDeriveArch(cfg);
       // Orchestration play UNIT: 'sections' counts one play as a full section cycle.
       // Absent = bars (today's behaviour) and is DROPPED rather than stored, so the
       // default leaves no residue in the save.

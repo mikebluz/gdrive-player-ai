@@ -37547,12 +37547,6 @@
             // Overview strip — the whole progression at a glance (chord chips grouped
             // under part labels; alt-bearing chords badged; playing chord glows). Click a
             // chord to edit it there; click a part header to rename/reorder. _ambRenderProgOverview.
-            _ambProgGrpOpen('matrix', '\u2317 Chord matrix', false) +
-            '<div class="ambient-progmatrix" id="ambient-progmatrix" style="display:none"></div>' +
-            _ambProgGrpClose() +
-            _ambProgGrpOpen('sections', '\u2637 Section matrix', false) +
-            '<div class="ambient-progmatrix ambient-secmatrix" id="ambient-secmatrix" style="display:none"></div>' +
-            _ambProgGrpClose() +
           '</div>' +       // end #ambient-progsec-body
         '</div>') +        // end progsec pane
         // 🕺 Groove — swing / accent / humanize (cascade) + per-layer push;
@@ -37563,6 +37557,21 @@
         // ⏱ Scheduler — the per-layer TIME matrix; rendered by _ambRenderScheduler.
         '<div class="ambient-tabsec-pane ambient-sched" data-pane="sched" id="ambient-sched">' +
           '<div class="ambient-sched-body" id="ambient-sched-body"></div>' +
+          // THE MATRICES LIVE HERE, not in Progression. Everything that answers
+          // "which layers play WHEN" belongs together: Edit (layer × changes),
+          // the layer schedules, the unit gates, and these two — layer × chord
+          // probability, and layer × section. Progression is then about the
+          // changes THEMSELVES (Overview, Salt, Order).
+          // NOTE the overlap with Edit, deliberately left for now: Edit is
+          // on/off per change, the chord matrix is a 0-100 PROBABILITY per
+          // chord. Same question, two grains; merging is a separate decision.
+          (E.isLane ? '' :
+            _ambProgGrpOpen('matrix', '\u2317 Chord matrix', false) +
+            '<div class="ambient-progmatrix" id="ambient-progmatrix" style="display:none"></div>' +
+            _ambProgGrpClose() +
+            _ambProgGrpOpen('sections', '\u2637 Section matrix', false) +
+            '<div class="ambient-progmatrix ambient-secmatrix" id="ambient-secmatrix" style="display:none"></div>' +
+            _ambProgGrpClose()) +
         '</div>' +
         // 🎚️ Mixer — layer faders + master fade + global FX. Strip (re)rendered
         // by _ambRenderMixer. Keeps the .ambient-mixer class for its inner styles.

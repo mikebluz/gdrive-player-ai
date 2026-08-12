@@ -12980,3 +12980,12 @@
     .ambient-qe-ev:hover { border-color: #5a5a7a; }
     .ambient-qe-improv { font-style: normal; font-size: 0.6rem; color: #f6ad55;
       border: 1px solid rgba(246,173,85,0.4); border-radius: 5px; padding: 2px 4px; align-self: center; }
+
+    /* .ambient-hint is white-space:nowrap — right for a one-word readout in a
+       sized cell, wrong for a sentence. Any prose using it must re-enable
+       wrapping or it runs straight out of its container (this footnote measured
+       723px inside a 506px box). See the text-wrapping rule in CLAUDE.md. */
+    .ambient-keysec-foot {
+      white-space: normal; overflow-wrap: anywhere; line-height: 1.5;
+      display: block; margin-top: 10px;
+    }

@@ -23936,7 +23936,10 @@
       if (E.capRec && E.windingDown) { btn.textContent = '⏳'; btn.title = 'Finalizing — ending on silence'; btn.disabled = true; btn.classList.add('recording'); }
       else if (E.capRec) { btn.textContent = '■'; btn.title = 'Finalize capture'; btn.disabled = false; btn.classList.add('recording'); }
       else if (ex) { btn.textContent = '⤓'; btn.title = 'Capture — pick a length or record live'; btn.disabled = false; btn.classList.remove('recording'); }
-      else { btn.textContent = '⬡▾'; btn.title = 'Send to Shape · Listen (rolling Grab buffer) · Capture'; btn.disabled = false; btn.classList.remove('recording'); }
+      // Keep in step with the MARKUP's title (~37257): this runs on every
+      // capture-state sync and overwrites it, so a label changed in only one
+      // place silently reverts the moment the button next re-syncs.
+      else { btn.textContent = '⬡▾'; btn.title = 'Send to Shape · Listen (rolling Grab buffer) · Capture · Samples & drum kits'; btn.disabled = false; btn.classList.remove('recording'); }
     }
     // Begin live recording the master output (fan-out tap, no seed restart).
     // HOW a take is made — 'fast' (offline render) or 'realtime' (record the
@@ -37254,7 +37257,7 @@
           // ⬡▾ I/O menu (master only) — Send to Shape · Listen · Capture folded
           // into ONE footer menu (the old standalone ⬡ / 🎙 / ⤓ buttons). The
           // Grab controls stay in the footer, unhidden while Listen is rolling.
-          (!E.isLane ? '<button type="button" id="ambient-io-btn" class="ambient-footer-shapeit" title="Send to Shape · Listen (rolling Grab buffer) · Capture">⬡▾</button>' +
+          (!E.isLane ? '<button type="button" id="ambient-io-btn" class="ambient-footer-shapeit" title="Send to Shape · Listen (rolling Grab buffer) · Capture · Samples & drum kits">⬡▾</button>' +
             '<select id="ambient-grab-bars" class="ambient-select ambient-grab-bars" title="How many bars Grab saves" hidden>' +
               [1, 2, 4, 8].map(n => '<option value="' + n + '"' + (n === 4 ? ' selected' : '') + '>' + n + ' bar' + (n === 1 ? '' : 's') + '</option>').join('') + '</select>' +
             '<button type="button" id="ambient-grab-btn" class="ambient-footer-capture" title="Grab — save the last N bars of what just played (bar-aligned, loop-ready)" hidden>⤓🎙</button>' : '') +

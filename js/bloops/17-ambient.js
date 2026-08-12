@@ -38007,7 +38007,7 @@
         '<div class="ambient-tabsec" id="ambient-tabsec">' +
           '<div class="ambient-tabsec-bar" role="tablist">' +
             (E.isLane ? '' : '<button type="button" class="ambient-tabsec-tab" data-tab="keysec" role="tab" title="Key — the area key every set of changes inherits from, and how it is applied">♯ Key</button>') +
-            (E.isLane ? '' : '<button type="button" class="ambient-tabsec-tab" data-tab="progsec" role="tab" title="Progression — sets of changes, salt, order, matrices">⇶ Prog</button>') +
+            (E.isLane ? '' : '<button type="button" class="ambient-tabsec-tab" data-tab="progsec" role="tab" title="Arch — the arrangement: parts (with changes or without), salt, order, the matrix">⇶ Arch</button>') +
             '<button type="button" class="ambient-tabsec-tab" data-tab="groove" role="tab" title="Groove — swing / accent / humanize / push">🕺 Groove</button>' +
             '<button type="button" class="ambient-tabsec-tab" data-tab="sched" role="tab" title="Scheduler — per-layer time matrix">⏱ Sched</button>' +
             '<button type="button" class="ambient-tabsec-tab" data-tab="mixer" role="tab" title="Mixer — faders + master fade + global FX">🎚️ Mixer</button>' +
@@ -38030,14 +38030,14 @@
           '<div class="ambient-tabsec-pane ambient-progsec" data-pane="progsec" id="ambient-progsec">' +
             '<div class="ambient-sched-body" id="ambient-progsec-body">' +
             '<button type="button" class="ambient-mod-sub ambient-progsec-lbl ambient-seclbl-btn ambient-prog-onoff" id="ambient-prog-onoff" ' +
-              'title="Progression — when ON, every layer follows a shared chord progression (the per-layer Notes chip is read-only while on). Combine with Key above for a progression diatonic to that key.">Progression</button>' +
+              'title="Changes — when ON, every layer follows this area’s shared chord changes (the per-layer Notes chip is read-only while on). Combine with Key above for changes diatonic to that key.">Changes</button>' +
             // The row is now just the switch. Choosing WHICH changes moved to
             // "＋ Add changes" in Overview, beside the chips it affects, and
             // Edit is gone: that editor already opens from any chord chip in
             // Overview, so a second door was a button that only repeated one.
             '<div class="ambient-row ambient-prog-row">' +
               '<span class="ambient-prog-sub ambient-prog-actions" id="ambient-prog-sub"></span>' +
-              '<span class="ambient-hint" id="ambient-progsec-off" style="display:none">turn Progression on to build a chord sequence</span>' +
+              '<span class="ambient-hint" id="ambient-progsec-off" style="display:none">turn Changes on to build a chord sequence</span>' +
             '</div>' +
             // OVERVIEW sits directly under the switch: it is the progression
             // itself — the chips, their order, and the way in to editing any of

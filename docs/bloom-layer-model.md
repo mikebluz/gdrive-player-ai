@@ -1524,6 +1524,16 @@ project with the progression off either loses its chords (destructive) or starts
 playing them (an audible change on load). Both break the rule every other slice
 here was held to. It is one boolean, and keeping it costs less than either.
 
+**Slice 4i SHIPPED 2026-08-12 — the pane is ARCH.** The tab reads `⇶ Arch`, and
+the switch inside it reads **Changes**, not "Progression". That second half is
+the reason the rename had been half-done: the switch carried the pane's name, so
+renaming the pane alone would have left two things called Progression sitting on
+top of each other. The switch governs whether the area's chord CHANGES play —
+which is what it always did, and it now matches "＋ Add changes" beside it.
+
+Deliberately untouched, because they are different concepts that merely share the
+word: the Seq layer's **Prog sync** and its **Promote → progression**.
+
 **ARCH is complete.** What remains is chord lengths in UNITS (unit-first Level 2,
 independent of this work) and the semantics note below. (see the Edit
 overlap note) — deferred to slice 4.

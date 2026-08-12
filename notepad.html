@@ -83,6 +83,25 @@
     <label class="ctl"><span>Volume</span>
       <input id="vol" type="number" min="0" max="100" step="5" value="70" style="width:5.2em" />
     </label>
+    <label class="ctl"><span>Play as</span>
+      <select id="mode" title="Letters — every keystroke sounds as you type. Chords — a word makes no sound while you type it, then sounds as one chord when you finish it with a space, Enter or punctuation.">
+        <option value="letters">Letters</option>
+        <option value="chord">Chords</option>
+      </select>
+    </label>
+    <label class="ctl"><span>Rate</span>
+      <input id="rate" type="number" min="20" max="600" step="10" value="140" style="width:5.2em"
+        title="Milliseconds per character when playing the document back. Typing always sounds immediately." />
+    </label>
+    <label class="ctl"><span>Length</span>
+      <input id="len" type="number" min="10" max="400" step="10" value="100" style="width:5.2em"
+        title="How long each note rings, as a % of normal. Short is percussive, long overlaps into the next note." />
+    </label>
+    <label class="ctl"><span>Groove</span>
+      <input id="swing" type="number" min="0" max="100" step="5" value="0" style="width:5.2em"
+        title="Swing: pushes every other character later, up to half a step. 0 is straight." />
+    </label>
+    <button id="keys" class="on" title="Sounds for space, Enter, Backspace and punctuation">⌨ Keys</button>
     <button id="sound" class="on" title="Mute or unmute typing">🔊 Sound</button>
     <button id="play" title="Play the whole document back">▶ Play</button>
     <button id="copy" title="Copy the text, to paste into a Bloops Sir Eel or Learn layer">⧉ Copy</button>
@@ -91,14 +110,18 @@
   <textarea class="pad" id="pad" spellcheck="false" autocomplete="off" autocapitalize="off"
     placeholder="Type. Every letter is a note.
 
-Space is a rest, Enter breaks the phrase, and . ! ? lift the octave for one note.
-Key, scale, mapping and tone are above; the text is saved in this browser."></textarea>
+Play as → Chords makes a WORD the unit: nothing sounds while you type it, then the
+whole word lands as a chord on space, Enter or punctuation.
+
+Space, Enter, Backspace and punctuation have their own sounds (⌨ Keys), and . ! ?
+still lift the octave for one note. Rate, Length and Groove shape the playback.
+The text is saved in this browser."></textarea>
 
   <div class="foot">
     <span>last note <span class="note-readout" id="last">—</span></span>
     <span id="count">0 characters</span>
     <span class="spacer"></span>
-    <span>Letters are degrees of the key. Non-letters shape the phrase.</span>
+    <span>Letters are degrees of the key. Non-letters punctuate it — and sound.</span>
   </div>
 
 <script>
@@ -161,7 +184,8 @@ Key, scale, mapping and tone are above; the text is saved in this browser."></te
   // ---- persistence (this browser only) --------------------------------
   const LS = 'notepad-v1';
   const cfg = Object.assign(
-    { root: 0, scale: 'major', map: 'scale', preset: 'single', tone: 'sine', oct: 4, vol: 70, text: '', sound: true },
+    { root: 0, scale: 'major', map: 'scale', preset: 'single', tone: 'sine', oct: 4, vol: 70, text: '', sound: true,
+      mode: 'letters', rate: 140, len: 100, swing: 0, keys: true },
     (() => { try { return JSON.parse(localStorage.getItem(LS) || '{}'); } catch (e) { return {}; } })()
   );
   const save = (() => {
@@ -253,7 +277,31 @@ Key, scale, mapping and tone are above; the text is saved in this browser."></te
     }
     if (kind !== 'pad') g.connect(master);
     const stop = t + atk + rel + 0.05;
-    oscs.forEach((o) => { o.start(t); o.stop(stop); });
+    // EVERY oscillator is tracked. Playback schedules AHEAD of the clock, so
+    // "stop" that only cancels the pump leaves whatever is already scheduled to
+    // play out — which is exactly what "stop doesn't stop right away" was. The
+    // set is what makes a stop actually silence the page.
+    oscs.forEach((o) => {
+      o.start(t); o.stop(stop);
+      live.add(o);
+      o.onended = () => { live.delete(o); };
+    });
+    liveGains.add(g);
+  }
+
+  // Everything currently sounding or scheduled. Cleared as nodes end.
+  const live = new Set(), liveGains = new Set();
+  // Silence NOW: cut the gains (a ramp, not a step — stopping oscillators mid
+  // cycle clicks) and stop every oscillator, scheduled ones included.
+  function silenceAll() {
+    const c = ac; if (!c) return;
+    const t = c.currentTime;
+    liveGains.forEach((g) => {
+      try { g.gain.cancelScheduledValues(t); g.gain.setValueAtTime(g.gain.value, t);
+            g.gain.linearRampToValueAtTime(0, t + 0.012); } catch (e) {}
+    });
+    live.forEach((o) => { try { o.stop(t + 0.015); } catch (e) {} });
+    setTimeout(() => { live.clear(); liveGains.clear(); }, 60);
   }
 
   // ---- the mapping from a character to a musical event -----------------
@@ -262,6 +310,41 @@ Key, scale, mapping and tone are above; the text is saved in this browser."></te
   let octaveLift = 0;            // set by . ! ? — applies to the NEXT note only
   let letterN = 0;               // letters typed, drives 'cycle' tones and 'bounce'
   let pedalAt = -9;              // when the pedal root last struck
+  // ---- key sounds -------------------------------------------------------
+  // Space, Enter, Backspace and punctuation used to be silent rests. They are
+  // the punctuation of the typing itself, so they get their own short, clearly
+  // NON-melodic voices — pitched away from the letter range and much quieter, so
+  // they read as mechanism rather than as notes.
+  function keySound(kind, when, ch) {
+    if (!cfg.keys) return;
+    const c = audio(); if (!c) return;
+    const t = Math.max(when, c.currentTime);
+    const g = c.createGain(); g.connect(master); liveGains.add(g);
+    const o = c.createOscillator();
+    const V = (cfg.vol / 100);
+    let f0 = 2000, f1 = 2000, dur = 0.05, amp = 0.10, type = 'triangle';
+    if (kind === 'space')      { f0 = 1900; f1 = 1500; dur = 0.045; amp = 0.075; }
+    else if (kind === 'enter') { f0 = 300;  f1 = 150;  dur = 0.16;  amp = 0.16; type = 'sine'; }
+    else if (kind === 'back')  { f0 = 760;  f1 = 300;  dur = 0.09;  amp = 0.12; type = 'sawtooth'; }
+    else if (kind === 'punct') {
+      // Each mark gets its own pitch, so a comma and a full stop are audibly
+      // different marks rather than the same tick.
+      const map = { '.': 1200, ',': 1500, '!': 1750, '?': 1950, ';': 1380, ':': 1320,
+                    '-': 1100, '—': 1060, "'": 2100, '"': 2200, '(': 1000, ')': 980 };
+      f0 = map[ch] || 1450; f1 = f0 * 0.82; dur = 0.07; amp = 0.11;
+    }
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(Math.max(30, f1), t + dur);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(amp * V, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g);
+    o.start(t); o.stop(t + dur + 0.02);
+    live.add(o); o.onended = () => { live.delete(o); };
+  }
+  const PUNCT = /[.,!?;:'"()\u2014-]/;
+
   function speak(ch, when) {
     const lower = ch.toLowerCase();
     if (lower >= 'a' && lower <= 'z') {
@@ -281,7 +364,7 @@ Key, scale, mapping and tone are above; the text is saved in this browser."></te
           const f = freqForIndex(i + d) * Math.pow(2, lift + o);
           if (!first) first = f;
           const tn = (P.tone === 'cycle') ? TONES[(letterN + di) % TONES.length] : null;
-          voice(f, when + (P.spread || 0) * v, 0.22, vel * (di ? 0.8 : 1), tn);
+          voice(f, when + (P.spread || 0) * v, 0.22 * lenMul(), vel * (di ? 0.8 : 1), tn);
           v++;
         });
       });
@@ -296,12 +379,41 @@ Key, scale, mapping and tone are above; the text is saved in this browser."></te
     }
     if (lower >= '0' && lower <= '9') {                 // digits: low pedal tones
       const f = freqForIndex(lower.charCodeAt(0) - 48) / 2;
-      voice(f, when, 0.3, 0.6);
+      voice(f, when, 0.3 * lenMul(), 0.6);
       return f;
     }
-    if (ch === '.' || ch === '!' || ch === '?') { octaveLift = 1; return null; }  // lift the next note
-    return null;                                        // space, enter, punctuation: rest
+    if (ch === '.' || ch === '!' || ch === '?') { octaveLift = 1; keySound('punct', when, ch); return null; }
+    if (ch === ' ' || ch === '\t') { keySound('space', when); return null; }
+    if (ch === '\n' || ch === '\r') { keySound('enter', when); return null; }
+    if (PUNCT.test(ch)) { keySound('punct', when, ch); return null; }
+    return null;
   }
+
+  // ---- chord mode -------------------------------------------------------
+  // A word is a chord: nothing sounds while you type it, and the whole word
+  // lands at once when you finish it — space, Enter or punctuation. So the
+  // sound follows the WORD, which is the unit the text is actually made of.
+  let wordBuf = [];
+  function lenMul() { return Math.max(0.1, Math.min(4, (cfg.len | 0) / 100)); }
+  function flushWord(when) {
+    if (!wordBuf.length) return null;
+    const P = PRESETS[cfg.preset] || PRESETS.single;
+    const n = wordBuf.length;
+    // A nine-letter word must not be nine times as loud as a one-letter word.
+    const vel = 0.9 / Math.sqrt(n);
+    let first = 0;
+    wordBuf.forEach((ch, k) => {
+      const lower = ch.toLowerCase();
+      const f = freqForIndex(lower.charCodeAt(0) - 97) * Math.pow(2, octaveLift);
+      if (!first) first = f;
+      // A chord RINGS — longer than a single letter, which is a tap.
+      voice(f, when + (P.spread || 0) * k, 0.6 * lenMul(), vel * (ch !== lower ? 1.3 : 1));
+    });
+    wordBuf = [];
+    octaveLift = 0;
+    return first;
+  }
+  const isLetter = (ch) => { const l = (ch || '').toLowerCase(); return l >= 'a' && l <= 'z'; };
 
   // ---- typing ----------------------------------------------------------
   // Fire the note on KEYDOWN and BEFORE any DOM work — a note that waits for
@@ -311,9 +423,32 @@ Key, scale, mapping and tone are above; the text is saved in this browser."></te
     if (e.repeat) return;                       // OS key-repeat would machine-gun
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const ch = e.key;
-    if (!ch || ch.length !== 1) return;         // Enter/Backspace/arrows are silent
     const c = audio(); if (!c) return;
     if (c.state === 'suspended') { try { c.resume(); } catch (err) {} }
+    const chord = cfg.mode === 'chord';
+    // Enter and Backspace are not single characters, so the old length check
+    // returned before either could make a sound. They are handled first now.
+    if (ch === 'Backspace') {
+      if (chord) wordBuf.pop();                 // un-type a letter out of the chord
+      keySound('back', c.currentTime);
+      return;
+    }
+    if (ch === 'Enter') {
+      const f0 = chord ? flushWord(c.currentTime) : null;
+      keySound('enter', c.currentTime);
+      if (f0) lastEl.textContent = nameForFreq(f0);
+      return;
+    }
+    if (!ch || ch.length !== 1) return;         // arrows, modifiers, F-keys
+    if (chord) {
+      if (isLetter(ch)) { wordBuf.push(ch); return; }   // silent until the word ends
+      // Anything that is not a letter ENDS the word: the chord lands, then the
+      // separator sounds, in that order, so you hear the word before its break.
+      const f1 = flushWord(c.currentTime);
+      speak(ch, c.currentTime);
+      if (f1) lastEl.textContent = nameForFreq(f1);
+      return;
+    }
     const f = speak(ch, c.currentTime);
     if (f) lastEl.textContent = nameForFreq(f);
   });
@@ -324,8 +459,12 @@ Key, scale, mapping and tone are above; the text is saved in this browser."></te
 
   // ---- play the document back ------------------------------------------
   let playing = false, playTimer = null;
-  function stopPlay() {
+  function stopPlay(silence) {
     playing = false; clearTimeout(playTimer);
+    // Cancelling the pump only stops SCHEDULING. Everything already handed to
+    // the audio clock keeps playing, which is why Stop used to run on for
+    // seconds — so a user-pressed stop also silences what is in flight.
+    if (silence !== false) silenceAll();
     $('play').textContent = '▶ Play'; $('play').classList.remove('on');
   }
   $('play').addEventListener('click', () => {
@@ -336,20 +475,38 @@ Key, scale, mapping and tone are above; the text is saved in this browser."></te
     if (!text.trim()) return;
     playing = true;
     $('play').textContent = '■ Stop'; $('play').classList.add('on');
-    const STEP = 0.14;                    // seconds per character
+    const STEP = Math.max(0.02, (cfg.rate | 0) / 1000);   // seconds per character
+    // GROOVE: push every other character late, up to half a step.
+    const SW = Math.max(0, Math.min(100, cfg.swing | 0)) / 100 * STEP * 0.5;
+    const at = (n) => base + n * STEP + ((n % 2) ? SW : 0);
+    const chord = cfg.mode === 'chord';
     // Schedule in CHUNKS rather than all at once: a long document would
     // otherwise build thousands of oscillators up front.
     let i = 0, base = c.currentTime + 0.06;
-    octaveLift = 0; letterN = 0; pedalAt = -9;
+    octaveLift = 0; letterN = 0; pedalAt = -9; wordBuf = [];
+    let wordAt = 0;                       // when the current word started
     (function pump() {
       if (!playing) return;
-      const until = i + 120;
-      for (; i < text.length && i < until; i++) speak(text[i], base + i * STEP);
+      // Schedule roughly a second ahead rather than a fixed 120 CHARACTERS —
+      // at a slow rate that was 17 seconds of audio committed in advance, and
+      // everything committed is something Stop has to chase.
+      const horizon = c.currentTime + 1.0;
+      while (i < text.length && at(i) < horizon) {
+        const ch = text[i];
+        if (chord) {
+          if (isLetter(ch)) { if (!wordBuf.length) wordAt = at(i); wordBuf.push(ch); }
+          else { flushWord(wordAt || at(i)); speak(ch, at(i)); }
+        } else {
+          speak(ch, at(i));
+        }
+        i++;
+      }
       if (i >= text.length) {
-        playTimer = setTimeout(stopPlay, Math.max(0, (base + i * STEP - c.currentTime)) * 1000 + 400);
+        if (chord) flushWord(wordAt || at(i));   // a document ending mid-word still sounds it
+        playTimer = setTimeout(() => stopPlay(false), Math.max(0, (at(i) - c.currentTime)) * 1000 + 700);
         return;
       }
-      playTimer = setTimeout(pump, Math.max(20, (base + i * STEP - c.currentTime - 1) * 1000));
+      playTimer = setTimeout(pump, 120);
     })();
   });
 
@@ -379,6 +536,17 @@ Key, scale, mapping and tone are above; the text is saved in this browser."></te
   };
   bind('root', 'root', Number); bind('scale', 'scale'); bind('map', 'map');
   bind('preset', 'preset'); bind('tone', 'tone'); bind('oct', 'oct', Number); bind('vol', 'vol', Number);
+  bind('mode', 'mode'); bind('rate', 'rate', Number); bind('len', 'len', Number); bind('swing', 'swing', Number);
+  // Switching away from chord mode must not leave a half-typed word buffered —
+  // it would land on the next separator, minutes later, as a surprise.
+  $('mode').addEventListener('change', () => { wordBuf = []; });
+  $('keys').addEventListener('click', () => {
+    cfg.keys = !cfg.keys; save();
+    $('keys').classList.toggle('on', cfg.keys);
+    $('keys').textContent = cfg.keys ? '⌨ Keys' : '⌨ Keys off';
+  });
+  $('keys').classList.toggle('on', cfg.keys);
+  $('keys').textContent = cfg.keys ? '⌨ Keys' : '⌨ Keys off';
   // 'Rainbow' presets choose the timbre themselves — say so rather than leaving
   // a Tone control that silently does nothing.
   const syncToneVis = () => {

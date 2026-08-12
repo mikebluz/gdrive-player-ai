@@ -1203,3 +1203,63 @@ The honest middle is standalone first, with an "open in Bloops" hand-off.
 - Config = Key (root + scale) and Tone, mirroring `word.*` so a notepad document
   can be handed to a Bloom Word/Sir Eel layer verbatim — that hand-off is what
   makes this a Bloops tool rather than a toy.
+
+---
+
+## 15. Backlog — ARCH: one list of parts; a progression is a KIND of part (not started, 2026-08-12)
+
+Proposed 2026-08-12. Generalise the Progression pane into **Arch**
+(Architecture): an area is a list of PARTS, always at least one, each with a
+user-defined length. A part may carry a set of changes — or not, in which case
+it is simply N bars of chromatic time. `prog.on` disappears: you do not turn a
+progression on, you add a part that has changes.
+
+**THE KEY OBSERVATION, and it makes this a simplification rather than a new
+feature: `cfg.sections` ALREADY IS "a part that just lasts X bars".** A section
+carries `{id, name, unit:{num,den,ref}, bars (resolved mirror), key, part}` —
+named, length as a unit ratio, its own key offset, and per-layer gating via the
+Section matrix. A `prog.parts[i]` carries `{name, len, plays, key, salt}` — named,
+a length (in chords), its own key, its own salt. **Two concepts with the same
+shape**, and `sections[i].part` (the section→part binding) exists ONLY because
+they are separate: it is the seam. Arch removes the seam by making them one
+list.
+
+**Shape.** One `cfg.arch: [{ id, name, len:{num,den,ref}, key?, salt?, changes? }]`
+where `changes` (absent = chromatic part) holds the chord slice + `plays`. The
+two matrices converge for the same reason — Section matrix is layer × part, and
+the Chord matrix is layer × chord WITHIN a part (see §the Edit/chord-matrix
+overlap note, already flagged).
+
+**Migration (schema v8, in `_normalizeAmbientCfg`, the one chokepoint).**
+Build the unified list from what exists: a section BOUND to a part becomes one
+part carrying those changes; an unbound section becomes a chromatic part; a
+`prog.parts` entry with no section becomes a part with changes; a progression
+with no parts becomes ONE part covering the whole cycle. `prog.on === false`
+with chords present must land as chromatic parts, or turning the old switch off
+would silently gain harmony on load.
+
+**What it touches — none of it optional, all of it the harmony clock.**
+`_ambProgStepAt` (which already has TWO branches: section-bound, and
+parts-with-plays — they merge), `_ambSectionAt`, `_ambProgChainSlots` /
+`_ambProgChainBars`, `_ambPartKeyNow` + `_ambSectionKeyNow` (one lookup after
+this), `_ambPartSaltAt`, the Section and Chord matrices, `_ambProgPartRuns`, the
+Scheduler's chord/pass lanes, and Quick edit (which is already one-cell-per-
+change and would become one-cell-per-change-or-bar).
+
+**Harness/golden are byte-identical BY CONSTRUCTION** — no harness config has
+sections or parts, so every unified path must keep the no-parts case on the
+existing fast path, exactly as `_ambProgStepAt`'s gated branches do today.
+
+**Do it in slices, in this order**, each shippable and verifiable alone:
+1. `arch` written and normalized ALONGSIDE the existing fields, derived from
+   them, read by nothing. Proves the migration on real projects.
+2. Readers move to `arch` one at a time, starting with the pure-display ones
+   (Scheduler lanes, Quick edit, Part schedule popover), which cannot change a
+   note.
+3. The clock (`_ambProgStepAt`) and key/salt lookups move — the only step that
+   can change what is heard, and the one to gate hardest.
+4. `prog.on` and `sections[i].part` are deleted, and the pane becomes Arch.
+
+**Open decisions.** Whether a chromatic part can still carry a key (it should —
+`sections[i].key` already does); whether `plays` stays per part or becomes a
+repeat on the part itself; and what the default single part is called.

@@ -11,7 +11,8 @@
     "samples": "node tools/import-samples.mjs",
     "radio": "node tools/add-radio-track.mjs",
     "desktop:build": "node tools/build-desktop.mjs",
-    "test:bounce": "node test/bounce-parity.js"
+    "test:bounce": "node test/bounce-parity.js",
+    "test:arch": "node test/arch-parity.js"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

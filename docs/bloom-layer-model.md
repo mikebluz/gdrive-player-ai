@@ -1387,5 +1387,20 @@ build inferred one from the other and would have silently frozen the harmony in
 every project that has a section, so provenance is marked explicitly at
 derivation instead.
 
+**Slice 4b SHIPPED 2026-08-12 — open parts are REACHABLE.** ＋ Changes on the
+overview strip became **＋ Part**, and the add-part dialog now asks the only
+question that matters first: does this part carry changes, or not? Picking "No
+changes" swaps the progression chooser for a name and a length, and the footer
+button relabels from "Choose progression…" to "Add part" — a part with no
+changes has no progression to choose, so offering one would be a lie. The strip
+draws it as a dashed block reading "no changes · N bars", and clicking that block
+opens a menu of musical lengths (a free-text bar count is what let section
+lengths silently accept values that divide nothing).
+
+`_ambProgAppendOpenPart` has one subtlety worth keeping: if the progression's
+chords have no part of their own yet, one is materialized FIRST — otherwise
+appending an open part would leave every chord unassigned and the chain would
+hold from bar 1.
+
 **Still open.** Whether the Chord and Section matrices merge (see the Edit
 overlap note) — deferred to slice 4.

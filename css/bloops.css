@@ -12730,9 +12730,29 @@
     .ambient-pm-editbtn:hover { border-color: #4a5568; color: #cbd5e0; }
     .ambient-pm-editbtn.active { border-color: #35c98e; background: rgba(53,201,142,0.18); color: #7fe0b6; }
     .ambient-pm-cell:active { filter: brightness(1.25); }
+    /* A part with no changes: drawn like a chord chip so it sits in the same
+       rhythm as the strip, but dashed and muted so it never reads as harmony. */
+    .ambient-pov-open { display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 1px; padding: 4px 10px; min-height: 34px; border: 1px dashed #4a4a68; border-radius: 6px;
+      background: rgba(120,120,160,0.07); color: #8a8aa8; font-size: 0.7rem; cursor: pointer; }
+    .ambient-pov-open:hover { border-color: #6b5b95; color: #b0b0c8; }
+    .ambient-pov-open b { font-weight: 600; letter-spacing: 0.02em; }
+    .ambient-pov-openhdr .ambient-pov-partname { color: #8a8aa8; }
     .ambient-addpart-hint { font-size: 0.72rem; line-height: 1.45; color: #8a8aa8; margin: 0 0 10px; }
     .ambient-addpart-key { display: inline-flex; gap: 5px; min-width: 0; }
     .ambient-addpart-key select { width: 84px; }
+    /* Touch floor. Every control in this dialog is a primary tap target on a
+       phone, and the shared modal chrome renders at 24-29px here. Scoped to this
+       modal rather than raising .sm-cancel/.sm-apply globally, which would move
+       every dialog in the app. */
+    .ambient-addpart-modal .ambient-seg,
+    .ambient-addpart-modal .ambient-select,
+    .ambient-addpart-modal .ambient-step-inp,
+    .ambient-addpart-modal .sm-cancel,
+    .ambient-addpart-modal .sm-apply { min-height: 32px; }
+    .ambient-addpart-modal .ap-kind { display: inline-flex; gap: 4px; }
+    .ambient-addpart-modal .ap-name { width: 110px; }
+    .ambient-addpart-modal .ap-bars { width: 74px; }
     .ambient-addpart-modal .ap-same { color: #6b7280; font-size: 0.72rem; }
     .ambient-addpart-modal .ap-same.ap-mod { color: #9f7aea; font-weight: 700; }
     .ambient-addpart-note { margin-top: 8px; padding: 6px 9px; border: 1px solid #23233a; border-left: 3px solid #9f7aea; border-radius: 6px; background: rgba(159,122,234,0.07); color: #a9b3c4; font-size: 0.74rem; line-height: 1.45; }

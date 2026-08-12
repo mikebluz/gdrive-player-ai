@@ -30216,7 +30216,24 @@
       ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-addpart-modal">' +
         '<div class="sm-title">Add a part</div>' +
         '<div class="ambient-step-modal-body">' +
-          '<div class="ambient-addpart-hint">A set of changes is a named stretch of the progression — Verse, Chorus. '
+          // A part either carries changes or it does not. The open kind is the
+          // whole point of the consolidation — an arrangement block that is just
+          // time, which is what a section used to be.
+          '<div class="ambient-ctrl ambient-step-row"><label>Kind</label>' +
+            '<span class="ambient-seg-row ap-kind">' +
+              '<button type="button" class="ambient-seg active" data-kind="changes">Changes</button>' +
+              '<button type="button" class="ambient-seg" data-kind="open">No changes</button>' +
+            '</span></div>' +
+          '<div class="ap-open-only" style="display:none">' +
+            '<div class="ambient-addpart-hint">A part with no changes is a named block of time — an intro, a break, a vamp. '
+              + 'The harmony HOLDS while it plays: the chord in force stays in force and the changes resume after it.</div>' +
+            '<div class="ambient-ctrl ambient-step-row"><label>Name</label>' +
+              '<input type="text" class="ambient-step-inp ap-name" maxlength="16" placeholder="Bridge"></div>' +
+            '<div class="ambient-ctrl ambient-step-row"><label>Length</label>' +
+              '<input type="number" class="ambient-step-inp ap-bars" min="0.25" max="64" step="0.25" value="4">' +
+              '<span class="ambient-step-val">bars</span></div>' +
+          '</div>' +
+          '<div class="ambient-addpart-hint ap-changes-only">A set of changes is a named stretch of the progression — Verse, Chorus. '
             + 'It starts in the key of ' + esc(_inhFrom) + '; change it and the music MODULATES while this set plays, leaving the others alone. '
             + 'The progression you pick next is transposed into this key, keeping its relative motion.</div>' +
           '<div class="ambient-ctrl ambient-step-row"><label>Key</label>' +
@@ -30244,11 +30261,38 @@
           ? 'No key change — this part stays in ' + _AMB_CHROM[aRoot] + ' ' + aScale + ' like the rest of the area.'
           : 'This part will play in ' + _AMB_CHROM[r] + ' ' + sc + ', while the area stays in ' + _AMB_CHROM[aRoot] + ' ' + aScale + '.';
       };
+      let kind = 'changes';
+      const openBox = ov.querySelector('.ap-open-only');
+      const nextBtn = ov.querySelector('.ap-next');
+      const setKind = (k) => {
+        kind = k;
+        openBox.style.display = (k === 'open') ? '' : 'none';
+        ov.querySelectorAll('.ap-changes-only').forEach(el => { el.style.display = (k === 'open') ? 'none' : ''; });
+        ov.querySelectorAll('.ap-kind .ambient-seg').forEach(b => b.classList.toggle('active', b.dataset.kind === k));
+        // The label states what the button DOES — a part with no changes has no
+        // progression to choose, so offering to choose one would be a lie.
+        nextBtn.textContent = (k === 'open') ? 'Add part' : 'Choose progression…';
+      };
       sync();
       rootSel.addEventListener('change', sync); scaleSel.addEventListener('change', sync);
       ov.addEventListener('click', (ev) => {
         if (ev.target === ov || (ev.target.closest && ev.target.closest('.ap-cancel'))) { close(); return; }
+        const kb = ev.target.closest && ev.target.closest('.ap-kind .ambient-seg');
+        if (kb) { setKind(kb.dataset.kind); return; }
         if (!(ev.target.closest && ev.target.closest('.ap-next'))) return;
+        if (kind === 'open') {
+          const r0 = rootSel.value | 0, sc0 = scaleSel.value;
+          const cfg0 = E.getCfg() || {};
+          if (!cfg0.prog) cfg0.prog = { on: true, name: '', chords: [] };
+          _ambProgAppendOpenPart(cfg0.prog, ov.querySelector('.ap-name').value,
+            parseFloat(ov.querySelector('.ap-bars').value),
+            (r0 === aRoot && sc0 === aScale) ? null : { root: r0, scale: sc0 });
+          close();
+          try { E.getCfg(); } catch (e) {}                      // normalize + re-derive arch
+          try { _ambSyncControls(E); } catch (e) {}
+          try { persistWorkspace(); } catch (e) {}
+          return;
+        }
         const r = rootSel.value | 0, sc = scaleSel.value;
         const unchanged = (r === aRoot && sc === aScale);
         close();
@@ -30287,6 +30331,21 @@
         ]), 0) });
       });
       showCtxMenu(x, y, items);
+    }
+    // Append an OPEN part — a named block with no changes, during which the
+    // harmony holds. The subtlety: if the progression's chords have no part of
+    // their own yet, one must be materialized FIRST, or appending this would
+    // leave every chord unassigned and the chain would hold from bar 1.
+    function _ambProgAppendOpenPart(prog, name, bars, partKey) {
+      if (!prog) return;
+      const chords = Array.isArray(prog.chords) ? prog.chords : [];
+      let parts = (Array.isArray(prog.parts) && prog.parts.length) ? prog.parts.slice() : null;
+      if (!parts) parts = chords.length ? [{ name: prog.name || 'Changes', len: chords.length }] : [];
+      const e = { name: (name || '').trim().slice(0, 16) || ('Part ' + (parts.length + 1)),
+                  open: 1, bars: Math.max(0.25, Math.min(64, Number.isFinite(bars) ? bars : 4)) };
+      if (partKey && Number.isFinite(partKey.root)) e.key = { root: partKey.root | 0, scale: partKey.scale };
+      parts.push(e);
+      prog.parts = parts;
     }
     function _ambProgAppendPart(prog, name, chords, partKey) {
       if (!Array.isArray(chords) || !chords.length) return;
@@ -30404,7 +30463,13 @@
       const kRoot = _ambKeyRootPc(cfg), kScale = _ambKeyScaleName(cfg);
       const vShift = _ambProgViewShift(E, cfg, chords);
       const ranges = [];
-      if (parts) { let acc = 0; parts.forEach((p, pi) => { ranges.push({ name: p.name, from: acc, to: Math.min(N, acc + (p.len | 0)), pi, key: p.key || null }); acc += (p.len | 0); }); }
+      // An OPEN part consumes no chords, so from === to and it must not advance
+      // the cursor — it is drawn as its own block rather than as a header over an
+      // empty run of chips.
+      if (parts) { let acc = 0; parts.forEach((p, pi) => {
+        ranges.push({ name: p.name, from: acc, to: Math.min(N, acc + (p.open ? 0 : (p.len | 0))), pi,
+                      key: p.key || null, open: !!p.open, bars: p.bars });
+        acc += (p.open ? 0 : (p.len | 0)); }); }
       else ranges.push({ name: '', from: 0, to: N, pi: -1 });
       const namesFirst = !!el._povNames;
       let h = '<div class="ambient-pov-bar">' +
@@ -30426,6 +30491,22 @@
           '</div>';
       }
       ranges.forEach(r => {
+        if (r.open) {
+          // A part with no changes: name, length, and the same ops as any other
+          // part. It reads as a block of time because that is what it is — the
+          // harmony holds through it.
+          h += '<div class="ambient-pov-parthdr ambient-pov-openhdr">' +
+            '<span class="ambient-pov-partname" role="button" tabindex="0" data-pov="partren:' + r.pi + '" title="Rename this part">' + esc(r.name) + '</span>' +
+            '<span class="ambient-pov-partops">' +
+              '<span role="button" tabindex="0" class="ambient-pov-partkey' + (r.key ? ' on' : '') + '" data-pov="partkey:' + r.pi + '" title="' + (r.key ? ('This part plays in ' + esc(_AMB_CHROM[r.key.root] + ' ' + r.key.scale) + '. Click to change or clear it.') : 'No key change — this part follows the area key.') + '">' + (r.key ? esc(_AMB_CHROM[r.key.root] + ' ' + r.key.scale.slice(0, 3)) : '♭♯') + '</span>' +
+              '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':-1" title="Move this part earlier">◀</span>' +
+              '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':1" title="Move this part later">▶</span>' +
+              '<span role="button" tabindex="0" class="ambient-pov-partbtn ambient-pov-partrm" data-pov="partrm:' + r.pi + '" title="Remove this part">✕</span>' +
+            '</span></div>' +
+            '<span role="button" tabindex="0" class="ambient-pov-open" data-pov="openlen:' + r.pi + '" title="No changes here — the harmony holds for ' + (r.bars || 4) + ' bars. Click to change the length.">' +
+              '<b>no changes</b><span class="ambient-pov-nm">' + (r.bars || 4) + ' bars</span></span>';
+          return;
+        }
         if (r.pi >= 0) {
           h += '<div class="ambient-pov-parthdr">' +
             '<span class="ambient-pov-partname" role="button" tabindex="0" data-pov="partren:' + r.pi + '" title="Rename these changes">' + esc(r.name) + ' <em>' + (r.to - r.from) + '</em></span>' +
@@ -30467,7 +30548,7 @@
       // ＋ Part CHAINS another progression onto the end — this strip is where the
       // parts are drawn and named, so the button lives at the end of the chain
       // rather than in the outer button row.
-      h += '<span role="button" tabindex="0" class="ambient-pov-addpart" data-pov="addpart" title="Chain another progression on as a new set of changes">＋ Changes</span>';
+      h += '<span role="button" tabindex="0" class="ambient-pov-addpart" data-pov="addpart" title="Add a part — a new set of changes, or a block with no changes at all">＋ Part</span>';
       el.innerHTML = h;
       if (!el._wired) { el._wired = true; el.addEventListener('pointerdown', (ev) => { try { _ambProgOverviewAct(E, ev); } catch (e) {} }); }
     }
@@ -30640,6 +30721,26 @@
       // Label mode is a VIEW preference on the strip element (the panel is built
       // once, so it survives), not a config field — nothing about the music changes.
       if (op === 'names') { const ov = _ambGet(E, 'ambient-prog-overview'); if (ov) { ov._povNames = !ov._povNames; ov._sig = ''; _ambRenderProgOverview(E); } return; }
+      // Length of a part that carries NO changes. A menu of musical lengths
+      // rather than a raw prompt — a free-text bar count is what made section
+      // length silently accept values that divide nothing. Deferred a tick for
+      // the same dismiss-listener reason as partkey above.
+      if (op === 'openlen') {
+        const pi = a[1] | 0; const parts2 = prog.parts; if (!parts2 || !parts2[pi] || !parts2[pi].open) return;
+        const r3 = t.getBoundingClientRect();
+        setTimeout(() => { try {
+          if (typeof showCtxMenu !== 'function') return;
+          const cur = parts2[pi].bars;
+          showCtxMenu(r3.left, r3.bottom, [
+            { label: '“' + (parts2[pi].name || 'Part') + '” length', disabled: true },
+            ...[0.5, 1, 2, 4, 8, 12, 16, 32].map(bn => ({
+              label: '  ' + (cur === bn ? '✓ ' : '') + bn + (bn === 1 ? ' bar' : ' bars'),
+              fn: () => { parts2[pi].bars = bn; persist(); refresh(); }
+            })),
+          ]);
+        } catch (e) {} }, 0);
+        return;
+      }
       if (op === 'addpart') { const r = t.getBoundingClientRect(); if (_ambProgActions) setTimeout(() => { try { _ambProgActions.addPart(r.left, r.bottom); } catch (e) {} }, 0); return; }
     }
     // Progression-area subsections. Reuses the panel's own .ambient-grp collapsible

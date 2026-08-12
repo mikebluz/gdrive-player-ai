@@ -2677,14 +2677,24 @@
             const e = mk(sc.id != null ? sc.id : (i + 1), sc.name || String.fromCharCode(65 + (i % 26)));
             if (sc.unit) e.len = { num: sc.unit.num, den: sc.unit.den, ref: sc.unit.ref };
             else if (Number.isFinite(sc.bars)) e.len = { num: sc.bars, den: 1, ref: 'bar' };
-            // TWO MODULATION MODELS, carried as they are rather than flattened.
-            // A SECTION's key is a NUMBER — a relative semitone offset that
-            // rides along when the area is transposed. A PART's key is
-            // {root, scale} — an absolute key. Arch has to pick one (§15), and
-            // guessing here would bake the answer in before it is decided; so
-            // slice 1 records which model each part came from and slice 3
-            // resolves it.
-            if (Number.isFinite(sc.key) && (sc.key | 0)) e.key = { offset: sc.key | 0 };
+            // ONE MODULATION MODEL: ABSOLUTE (decided 2026-08-12, §15). A
+            // SECTION's key is stored as a relative semitone OFFSET from the
+            // area key; a PART's is an absolute {root, scale}. Arch is one
+            // field, and one field can only mean one thing — so offsets are
+            // CONVERTED here, against the area key AT LOAD TIME, which makes
+            // the conversion inaudible: +2 in a C area becomes D, the same key
+            // it was already sounding.
+            // The honest cost, accepted: an offset used to FOLLOW later
+            // area-key edits and an absolute key does not. Transposing the area
+            // is unaffected — _ambTransposeArea already rewrites absolute part
+            // keys, and after this every part takes that one rule.
+            // _ambAreaKeyRootPc, NOT _ambKeyRootPc: the latter resolves the
+            // PLAYING part's key first, which would make this depend on where
+            // the playhead happens to be.
+            if (Number.isFinite(sc.key) && (sc.key | 0)) {
+              const _ar = _ambAreaKeyRootPc(cfg), _as = _ambKeyScaleName(cfg);
+              e.key = { root: ((((_ar + (sc.key | 0)) % 12) + 12) % 12), scale: _as };
+            }
             const pi = Number.isFinite(sc.part) ? (sc.part | 0) : -1;
             // prog.on OFF with chords present must stay OPEN — otherwise a
             // project with the progression switched off would gain harmony the
@@ -2692,9 +2702,10 @@
             if (pi >= 0 && parts && parts[pi] && hasCh && p.on) {
               e.changes = sliceOf(pi);
               if (parts[pi].key && !e.key) e.key = { root: parts[pi].key.root | 0, scale: parts[pi].key.scale };
-              // A bound section with its OWN offset AND a part with an absolute
-              // key is the collision case; keep both so it is visible.
-              if (parts[pi].key && e.key && e.key.offset != null) e.keyAbs = { root: parts[pi].key.root | 0, scale: parts[pi].key.scale };
+              // Collision: a bound section with its own offset AND a part with
+              // an absolute key. The PART wins — it is the more specific
+              // statement, and it is the model Arch keeps.
+              if (parts[pi].key) e.key = { root: parts[pi].key.root | 0, scale: parts[pi].key.scale };
               if (parts[pi].salt) e.salt = parts[pi].salt;
             }
             out.push(e);

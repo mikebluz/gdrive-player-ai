@@ -1302,5 +1302,19 @@ from (`key: {offset}` vs `key: {root, scale}`, and `keyAbs` for the collision
 case where a bound section has an offset AND its part an absolute key) so slice
 3 can resolve it deliberately rather than by whichever code path ran last.
 
-**Still open.** That key-model decision; and whether the Chord and Section
-matrices merge (see the Edit overlap note) — deferred to slice 4.
+**DECIDED 2026-08-12 — ARCH KEYS ARE ABSOLUTE `{root, scale}`.** Parts already
+use it, the UI says "Chorus in F", and it is what makes "each set of changes can
+be its own key" literally true: a set's key is ITS key, not a function of
+something else's. Section offsets are converted at derivation time against the
+AREA key as it stands at load (`_ambAreaKeyRootPc`, deliberately not
+`_ambKeyRootPc`, which resolves the PLAYING part first and would make the result
+depend on where the playhead is). +2 in a C area becomes D — the key it was
+already sounding — so **the conversion is inaudible**, which was the condition
+for taking it. On a bound section whose part also has an absolute key, the PART
+wins as the more specific statement. Accepted cost: an offset used to FOLLOW a
+later area-key edit and an absolute key does not; transposing is unaffected,
+since `_ambTransposeArea` already rewrites absolute part keys and every part now
+takes that one rule.
+
+**Still open.** Whether the Chord and Section matrices merge (see the Edit
+overlap note) — deferred to slice 4.

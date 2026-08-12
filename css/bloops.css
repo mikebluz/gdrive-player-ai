@@ -12808,3 +12808,30 @@
 /* Docked editor mode tabs */
 .ambient-seedgrid-modes { display: inline-flex; gap: 3px; margin-left: 8px; }
 .ambient-seedgrid-modes .ambient-seg { font-size: 0.62rem; padding: 2px 7px; }
+
+    /* ---- Drum-kit editor (showDrumKitEditor, 04-instruments-samples) ----
+       Twelve slot rows in the shared .sm-modal shell. One column on a phone,
+       two where there is room — the grid must never force a horizontal
+       scroll (UI rule 1), so the picker is the flexible cell. */
+    .dk-modal { width: min(560px, 94vw); }
+    .dk-namerow { display: flex; align-items: center; gap: 8px; margin: 10px 0 6px; }
+    .dk-namerow > span { font-size: 0.72rem; color: #a0aec0; flex: 0 0 auto; }
+    .dk-name { flex: 1 1 auto; min-width: 0; }
+    .dk-grid { display: grid; grid-template-columns: 1fr; gap: 5px; max-height: 46vh; overflow-y: auto; }
+    @media (min-width: 520px) { .dk-grid { grid-template-columns: 1fr 1fr; } }
+    .dk-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .dk-slot { flex: 0 0 5.6em; font-size: 0.72rem; color: #a0aec0;
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* width:100% selects resolve circularly inside auto-sized flex groups
+       (documented gotcha) — the picker gets an explicit flexible basis. */
+    /* 36px floor on EVERY control in here — the shared .ambient-select /
+       .ambient-step-btn sizing is tuned for dense desktop cards and lands
+       under 30px, which is not a touch target. */
+    .dk-pick { flex: 1 1 0; min-width: 0; width: auto; min-height: 36px; font-size: 16px; }
+    .dk-au { flex: 0 0 auto; min-width: 36px; min-height: 36px; }
+    .dk-name { min-height: 36px; font-size: 16px; }
+    #drum-kit-editor .sm-footer button { min-height: 40px; padding: 9px 16px; }
+    .sbm-kit { background: #14141f; color: #9df3cd; border: 1px solid #35c98e;
+               border-radius: 8px; padding: 5px 10px; font-size: 0.76rem;
+               min-height: 32px; cursor: pointer; margin-left: auto; margin-right: 8px; }
+    .sbm-kit:hover { background: #1b2b24; }

@@ -1654,6 +1654,9 @@
           req.onsuccess = () => resolve(req.result || []);
           req.onerror = () => reject(req.error);
         });
+        // TWO PASSES. A kit references member samples by id, so every member
+        // must be registered before any kit is built — otherwise _kitMemberUrl
+        // finds nothing and the kit restores silent.
         for (const rec of records) {
           if (!rec || !rec.id || !rec.blob) continue;
           try {
@@ -1695,6 +1698,11 @@
             console.warn('Failed to restore imported sample', rec.id, e);
           }
         }
+        for (const rec of records) {
+          if (!rec || !rec.id || rec.kind !== 'kit' || !rec.slots) continue;
+          try { registerDrumKit(rec.id, rec.name || rec.id, rec.slots); }
+          catch (e) { console.warn('Failed to restore drum kit', rec.id, e); }
+        }
       } catch (e) {
         // No DB or read failure — not fatal.
       }
@@ -1726,11 +1734,185 @@
       } catch (e) {}
       return true;
     }
+    // ---- USER DRUM KITS -----------------------------------------------------
+    // A kit is NOT a new kind of object: it is an ordinary sampleSamplers entry
+    // with `drumKit: true` and a urls map, exactly like the built-in TR-808.
+    // snapDrumKitFreq folds ANY played pitch to 36 + pitchClass, so a kit is
+    // exactly these twelve slots — and building user kits into the SAME layout
+    // is what makes every existing feature work untouched: the drum-lane step
+    // editor and its per-step Sound/Pitch, _AMB_DRUM_NAMES, the grid's kit cells
+    // (15-grid-build mirrors the same mapping), and euclidKit's 8 lanes.
+    const KIT_SLOTS = ['C2', 'C#2', 'D2', 'D#2', 'E2', 'F2', 'F#2', 'G2', 'G#2', 'A2', 'A#2', 'B2'];
+    // The names the rest of the app already uses for those pitch classes, so a
+    // kit's slots are labelled the same everywhere (17-ambient's _AMB_DRUM_NAMES
+    // is the source; duplicated here because 04 loads first).
+    const KIT_SLOT_NAMES = ['Kick', 'Rim', 'Snare', 'Clap', 'Hat', 'Open hat',
+                            'Low tom', 'Tom', 'Cowbell', 'Crash', 'High tom', 'Perc'];
+    // A member's playable URL. Manifest entries carry a baseUrl + relative file;
+    // imported ones carry an absolute blob: URL and no base. Kits mix both, so
+    // every url is made absolute here rather than relying on one shared baseUrl.
+    function _kitMemberUrl(memberId) {
+      const m = sampleSamplers.get(memberId);
+      if (!m || !m.urls) return null;
+      const k = Object.keys(m.urls)[0];
+      if (!k) return null;
+      const u = m.urls[k];
+      return (m.baseUrl && !/^(blob:|https?:|data:)/.test(u)) ? (m.baseUrl + u) : u;
+    }
+    // Register a kit into the live library. `slots` maps a KIT_SLOTS note name to
+    // a member sample id; missing slots are simply silent.
+    function registerDrumKit(id, name, slots) {
+      const urls = {};
+      KIT_SLOTS.forEach((note) => {
+        const mid = slots && slots[note];
+        if (!mid) return;
+        const u = _kitMemberUrl(mid);
+        if (u) urls[note] = u;
+      });
+      const info = {
+        name: name || id, drumKit: true, kind: 'kit', kindExplicit: true,
+        imported: true, userKit: true, slots: Object.assign({}, slots), urls,
+      };
+      // LAZY, like every other entry: constructing a Tone.Sampler fetches its
+      // urls, and a library of kits should not cost a dozen requests at boot.
+      _defineLazySampler(info, () => new Tone.Sampler({ urls, release: 1 }).connect(globalSendTap));
+      sampleSamplers.set(id, info);
+      return info;
+    }
+    async function persistDrumKit(id, name, slots) {
+      try {
+        const db = await getImportedDB();
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction('blobs', 'readwrite');
+          // NO blob: a kit references its members rather than copying their
+          // audio, so deleting a member is visible instead of silently
+          // duplicating megabytes per kit.
+          tx.objectStore('blobs').put({ id, name, kind: 'kit', slots: Object.assign({}, slots) });
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+        return true;
+      } catch (e) { console.warn('Failed to persist drum kit', id, e); return false; }
+    }
+    try { window.registerDrumKit = registerDrumKit; window.persistDrumKit = persistDrumKit;
+           window.KIT_SLOTS = KIT_SLOTS; window.KIT_SLOT_NAMES = KIT_SLOT_NAMES; } catch (e) {}
+
     // ---- Sample-bank manager ------------------------------------------------
     // Overlay listing every USER sample (imported / captured / grab / TTS) with
     // preview + delete. The custom tone pickers carry a per-option delete ×,
     // but the <select>-based pickers (Bloom layer cards, wraps, shape) can't —
     // they get a ⚙ button (populateGroupedToneSelect) that opens this instead.
+    // The kit editor: twelve slots, each a picker over the user's own samples.
+    // Opened from the bank manager; `existingId` edits in place, absent creates.
+    function showDrumKitEditor(existingId, onDone) {
+      const cur = existingId ? sampleSamplers.get(existingId) : null;
+      const slots = Object.assign({}, (cur && cur.slots) || {});
+      const old = document.getElementById('drum-kit-editor');
+      if (old) { try { old.remove(); } catch (e) {} }
+      const ov = document.createElement('div');
+      ov.id = 'drum-kit-editor';
+      ov.className = 'sm-overlay';
+      ov.style.setProperty('display', 'flex', 'important');
+      const panel = document.createElement('div');
+      panel.className = 'sm-modal dk-modal';
+      const h = document.createElement('div');
+      h.className = 'sm-title';
+      h.textContent = existingId ? 'Edit drum kit' : 'New drum kit';
+      panel.appendChild(h);
+      const body = document.createElement('div');
+      body.className = 'ambient-step-modal-body';
+      const hint = document.createElement('div');
+      hint.className = 'ambient-pm-modal-hint';
+      hint.style.whiteSpace = 'normal';
+      hint.textContent = 'A kit is twelve drums, one per semitone from C2. Playing a note '
+        + 'picks a drum rather than pitching one sample — so a kit works in the drum-lane grid, '
+        + 'the step editor and every Tone picker like the built-in kits do.';
+      body.appendChild(hint);
+      const nameRow = document.createElement('div');
+      nameRow.className = 'dk-namerow';
+      const nameLbl = document.createElement('span');
+      nameLbl.textContent = 'Name';
+      const nameIn = document.createElement('input');
+      nameIn.type = 'text'; nameIn.className = 'ambient-step-inp dk-name';
+      nameIn.value = (cur && cur.name) || 'My kit';
+      nameRow.appendChild(nameLbl); nameRow.appendChild(nameIn);
+      body.appendChild(nameRow);
+      // Candidate members: the user's own samples, metadata ONLY. Reading
+      // `.sampler` here would trip the lazy getter and build every sampler in
+      // the library (the documented __sampleStats trap). Kits cannot nest.
+      const members = [];
+      try {
+        sampleSamplers.forEach((info, id) => {
+          if (!info || !info.imported || info.drumKit) return;
+          members.push([id, info.name || id]);
+        });
+      } catch (e) {}
+      members.sort((a, b) => String(a[1]).localeCompare(String(b[1])));
+      const grid = document.createElement('div');
+      grid.className = 'dk-grid';
+      KIT_SLOTS.forEach((note, i) => {
+        const row = document.createElement('div');
+        row.className = 'dk-row';
+        const lbl = document.createElement('span');
+        lbl.className = 'dk-slot';
+        lbl.textContent = KIT_SLOT_NAMES[i];
+        lbl.title = note;
+        const sel = document.createElement('select');
+        sel.className = 'ambient-select dk-pick';
+        sel.add(new Option('— empty —', ''));
+        members.forEach(([id, nm]) => sel.add(new Option(nm, id)));
+        sel.value = slots[note] || '';
+        sel.addEventListener('change', () => {
+          if (sel.value) slots[note] = sel.value; else delete slots[note];
+        });
+        const au = document.createElement('button');
+        au.type = 'button'; au.className = 'ambient-step-btn dk-au'; au.textContent = '▶';
+        au.title = 'Hear this slot';
+        au.addEventListener('click', async () => {
+          const mid = slots[note];
+          if (!mid) return;
+          try { await Tone.start(); } catch (e) {}
+          try { playRawSample(mid); } catch (e) {}
+        });
+        row.appendChild(lbl); row.appendChild(sel); row.appendChild(au);
+        grid.appendChild(row);
+      });
+      body.appendChild(grid);
+      panel.appendChild(body);
+      const foot = document.createElement('div');
+      foot.className = 'sm-footer';
+      const cancel = document.createElement('button');
+      cancel.type = 'button'; cancel.textContent = 'Cancel';
+      cancel.addEventListener('click', () => ov.remove());
+      const save = document.createElement('button');
+      save.type = 'button'; save.className = 'sm-apply'; save.textContent = 'Save kit';
+      save.addEventListener('click', async () => {
+        if (!Object.keys(slots).length) { alert('Fill at least one slot before saving.'); return; }
+        const nm = (nameIn.value || 'My kit').trim() || 'My kit';
+        // Ids must be STABLE — a project stores `sample:<id>`, so an edit keeps
+        // the id and only a NEW kit mints one.
+        const id = existingId || ('kit-' + nm.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+                                  + '-' + Math.random().toString(36).slice(2, 7));
+        try {
+          if (existingId) { try { sampleSamplers.delete(existingId); } catch (e) {} }
+          registerDrumKit(id, nm, slots);
+          await persistDrumKit(id, nm, slots);
+          try { if (typeof refreshAllToneSelects === 'function') refreshAllToneSelects(); } catch (e) {}
+          try { if (typeof _ambRefreshToneSelects === 'function') _ambRefreshToneSelects(); } catch (e) {}
+          try { if (typeof showToast === 'function') showToast('Kit “' + nm + '” saved — it is in every Tone picker.'); } catch (e) {}
+        } catch (e) {
+          try { if (typeof showToast === 'function') showToast('Could not save the kit: ' + ((e && e.message) || e), { warn: true }); } catch (e2) {}
+        }
+        ov.remove();
+        if (typeof onDone === 'function') { try { onDone(id); } catch (e) {} }
+      });
+      foot.appendChild(cancel); foot.appendChild(save);
+      panel.appendChild(foot);
+      ov.appendChild(panel);
+      document.body.appendChild(ov);
+      ov.addEventListener('click', (ev) => { if (ev.target === ov) ov.remove(); });
+    }
+    try { window.showDrumKitEditor = showDrumKitEditor; } catch (e) {}
     function showSampleBankManager() {
       const old = document.getElementById('sample-bank-mgr');
       if (old) { try { old.remove(); } catch (e) {} }
@@ -1750,6 +1932,15 @@
       close.type = 'button'; close.className = 'sbm-close'; close.textContent = '×';
       close.title = 'Close';
       close.addEventListener('click', () => ov.remove());
+      const mkKit = document.createElement('button');
+      mkKit.type = 'button'; mkKit.className = 'sbm-kit'; mkKit.textContent = '＋ Drum kit';
+      mkKit.title = 'Collect your samples into one kit, mapped to notes';
+      mkKit.addEventListener('click', () => {
+        showDrumKitEditor(null, () => { ov.remove(); showSampleBankManager(); });
+      });
+      // appended BEFORE close, which is not a child of head yet — insertBefore
+      // against an un-appended reference node throws NotFoundError.
+      head.appendChild(mkKit);
       head.appendChild(close);
       panel.appendChild(head);
       const list = document.createElement('div');
@@ -1772,16 +1963,40 @@
         play.type = 'button'; play.className = 'sbm-play'; play.textContent = '▶';
         play.title = 'Preview';
         play.addEventListener('click', async () => {
-          try { await Tone.start(); info.sampler.triggerAttackRelease(info.rootNote || 'C4', 1.2, Tone.now()); } catch (e) {}
+          try {
+            await Tone.start();
+            if (info.userKit) {
+              // Play the kit's own slots in order — that IS the preview of a kit.
+              const filled = KIT_SLOTS.filter((n) => info.slots && info.slots[n]);
+              filled.slice(0, 8).forEach((n, k) => {
+                try { info.sampler.triggerAttackRelease(n, 0.6, Tone.now() + k * 0.22); } catch (e) {}
+              });
+            } else {
+              info.sampler.triggerAttackRelease(info.rootNote || 'C4', 1.2, Tone.now());
+            }
+          } catch (e) {}
         });
         const raw = document.createElement('button');
-        raw.type = 'button'; raw.className = 'sbm-raw'; raw.textContent = '🎧';
-        raw.title = 'Hear the raw tuned sample (no processing)';
-        raw.addEventListener('click', () => { try { Tone.start(); } catch (e) {} try { playRawSample(id); } catch (e) {} });
+        raw.type = 'button'; raw.className = 'sbm-raw';
+        // A kit has no single "raw sample" to audition and no root pitch to
+        // preview — its second button EDITS it instead.
+        if (info.userKit) {
+          raw.textContent = '✎';
+          raw.title = 'Edit this kit';
+          raw.addEventListener('click', () => {
+            showDrumKitEditor(id, () => { ov.remove(); showSampleBankManager(); });
+          });
+        } else {
+          raw.textContent = '🎧';
+          raw.title = 'Hear the raw tuned sample (no processing)';
+          raw.addEventListener('click', () => { try { Tone.start(); } catch (e) {} try { playRawSample(id); } catch (e) {} });
+        }
         const nm = document.createElement('span');
         nm.className = 'sbm-name';
         nm.textContent = info.name || id;
-        nm.title = id + (info.padLoop ? ' · pad' : '');
+        nm.title = id + (info.padLoop ? ' · pad' : '')
+          + (info.userKit ? (' · kit, ' + Object.keys(info.slots || {}).length + ' drums') : '');
+        if (info.userKit) nm.textContent = '🥁 ' + (info.name || id);
         const del = document.createElement('button');
         del.type = 'button'; del.className = 'sbm-del'; del.textContent = '×';
         del.title = 'Delete sample “' + (info.name || id) + '”';

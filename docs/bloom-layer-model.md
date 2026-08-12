@@ -1115,7 +1115,11 @@ hum feature already does exactly that.
 
 ---
 
-## 13. Backlog — USER DRUM KITS: collect samples into one note-mapped instrument (not started, 2026-08-11)
+## 13. ~~Backlog~~ SHIPPED 2026-08-12 — USER DRUM KITS
+
+`registerDrumKit` / `persistDrumKit` / `showDrumKitEditor` in
+04-instruments-samples. The analysis below is kept because it explains WHY
+the 12-slot layout is not negotiable.
 
 **A kit is already just a `sampleSamplers` entry with `drumKit: true` and a `urls`
 map of note names.** The built-ins (tr808 etc., 04-instruments-samples ~1226) are

@@ -12956,6 +12956,13 @@
     /* Scheduler bar: Sections | Edit, equal width, filling the row. */
     .ambient-sched-qebar { display: flex; gap: 8px; margin-bottom: 6px; }
     .ambient-sched-qebar > button { flex: 1 1 0; min-width: 0; min-height: 40px; padding: 8px 10px; }
+    /* .ambient-select is width:100%, so dropped into this flex row bare it
+       demands the whole line and the flex:1 1 0 buttons beside it collapse to
+       nothing (min-width:0 lets them). An EXPLICIT width plus flex:0 0 auto is
+       the documented fix — it must not grow and must not be sized from its own
+       content. */
+    .ambient-sched-qebar > select { flex: 0 0 auto; width: 116px; min-height: 40px; }
+    @media (max-width: 420px) { .ambient-sched-qebar > select { width: 96px; } }
     .ambient-sched-secbtn.active, .ambient-sched-qe.active { border-color: #35c98e; color: #9df3cd; }
     .ambient-sched-secwrap[hidden] { display: none; }
     /* Quick edit: one row per SET of changes; a continued row drops the layer

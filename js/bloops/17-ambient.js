@@ -11899,10 +11899,34 @@
               from += take;
             }
           });
+          // WHAT IS THIS LAYER DOING WITH ITS MATERIAL — and one tap to change
+          // it. Three states, and until now they were only visible (and only
+          // switchable) in the Scheduler's Evolve control, which is behind
+          // Advanced edit; so "is this layer looping or re-rolling?" had no
+          // answer on the screen you actually work on.
+          //   ↻ Re-roll  — write off: fresh material every cycle
+          //   ⟳ Loop N   — write on: freeze a pattern, repeat it, then evolve
+          //   🔒 Hold    — write.lock: freeze one roll and keep it forever
+          // Improvise (euclid layers) rides on top of Loop, so it is shown as a
+          // suffix rather than a fourth state it is not.
+          const w = L.write || {};
+          const st = (w.lock ? 'lock' : (w.on ? 'every' : 'cont'));
+          const improv = !!(L.improv && L.improv.on);
+          const stateBtn = (v, lbl, tip) => '<button type="button" class="ambient-qe-ev'
+            + (st === v ? ' on' : '') + '" data-qe-ev="' + v + '" data-qe-evkey="' + esc(t.key) + '"'
+            + ' title="' + tip + '">' + lbl + '</button>';
+          const evHtml = '<span class="ambient-qe-evrow">'
+            + stateBtn('cont', '\u21bb', 'Re-roll — fresh material every cycle')
+            + stateBtn('every', '\u27f3' + (w.bars ? ('&nbsp;' + ((w.bars | 0) || 2) + '\u00d7' + ((w.times | 0) || 4)) : ''),
+                'Loop — freeze a pattern, repeat it, then evolve a fresh one')
+            + stateBtn('lock', '\uD83D\uDD12', 'Hold — freeze one roll and keep it forever')
+            + (improv ? '<i class="ambient-qe-improv" title="Improvise schedule is on — this layer alternates written and improvised passes">imp</i>' : '')
+            + '</span>';
           return lines.map((ln, li) => '<div class="ambient-qe-row' + (li ? ' cont' : '') + '">'
             + '<span class="ambient-qe-name" title="' + esc(t.name || t.key) + (ln.name ? (' · ' + esc(ln.name)) : '') + '">'
             + (li ? '' : esc(t.name || t.key)) + (ln.name ? ('<i class="ambient-qe-set">' + esc(ln.name) + '</i>') : '')
             + '</span>'
+            + (li ? '<span class="ambient-qe-evrow"></span>' : evHtml)
             + '<span class="ambient-qe-cells">' + ln.cells.join('') + '</span></div>').join('');
         }).join('');
 
@@ -11929,6 +11953,25 @@
       };
       draw();
       ov.addEventListener('click', (ev) => {
+        const evb = ev.target && ev.target.closest && ev.target.closest('[data-qe-ev]');
+        if (evb) {
+          const k = evb.getAttribute('data-qe-evkey'), v = evb.getAttribute('data-qe-ev');
+          const L2 = _ambLayerByKey(E, k);
+          if (L2) {
+            // Same three-way the Scheduler's Evolve writes, so the two controls
+            // are one setting seen twice rather than two that can disagree.
+            if (!L2.write || typeof L2.write !== 'object') L2.write = { on: true, bars: 2, times: 4 };
+            if (v === 'cont') { L2.write.on = false; delete L2.write.lock; }
+            else if (v === 'every') { L2.write.on = true; delete L2.write.lock; }
+            else { L2.write.on = true; L2.write.lock = true; }
+            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            try { if (E.timer) _ambReanchorLayer(E, k); } catch (e) {}
+            try { _ambLoopSyncAll(E); } catch (e) {}
+            try { _ambRenderScheduler(E); } catch (e) {}
+            draw();
+          }
+          return;
+        }
         const av = ev.target && ev.target.closest && ev.target.closest('[data-qe-adv]');
         if (av) {
           // Toggle and CLOSE: you turned it on to look at it, and it is behind
@@ -36994,6 +37037,25 @@
         // carries the visibility (the button itself is display:inline within it).
         { const pa = document.getElementById(tr('ambient-pov-actions'));
           if (pa) pa.style.display = progOn ? '' : 'none'; }
+        // One pass of the whole series, in bars AND in time at this tempo.
+        { const cl = document.getElementById(tr('ambient-prog-chainlen'));
+          if (cl) {
+            let txt = '';
+            try {
+              const bars = _ambProgChainBars(cfg);
+              if (bars > 0) {
+                const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+                const secs = bars * (60 / Math.max(20, bpm)) * 4;
+                const nCh = (_ambProgChainSlots(cfg) || []).length;
+                const mm = Math.floor(secs / 60), ss = Math.round(secs - mm * 60);
+                txt = 'one pass · ' + _ambFmtBpc(bars) + ' bar' + (Math.abs(bars - 1) < 0.01 ? '' : 's')
+                  + ' · ' + (mm ? (mm + ':' + String(ss).padStart(2, '0')) : (Math.round(secs * 10) / 10 + 's'))
+                  + ' · ' + nCh + ' change' + (nCh === 1 ? '' : 's');
+              }
+            } catch (e) {}
+            cl.textContent = txt;
+            cl.title = 'How long ONE full pass of the changes takes at ' + ((cfg.bpm | 0) || _ambBpm()) + ' BPM';
+          } }
         // Progression subsection: the pick/edit/clone/part row shows when Progression
         // is on; else the "turn Progression on" hint.
         { const progOff = document.getElementById(tr('ambient-progsec-off'));
@@ -37445,7 +37507,13 @@
             '<div class="ambient-pov-actions" id="ambient-pov-actions" style="display:none">' +
               '<button type="button" class="ambient-seg ambient-prog-pick" id="ambient-prog-pick" ' +
               'title="Add a set of changes — pick a progression, generate one, or write it in roman numerals">' +
-              '\uFF0B Add changes</button></div>' +
+              '\uFF0B Add changes</button>' +
+              // HOW LONG ONE PASS IS. The chips say what the changes are and the
+              // Scheduler says what each layer does inside them, but nothing
+              // said how long the whole series actually runs — which is the
+              // number you need to set a phrase length against.
+              '<span class="ambient-hint ambient-pov-len" id="ambient-prog-chainlen"></span>' +
+              '</div>' +
             '<div class="ambient-pov-strip" id="ambient-prog-overview" style="display:none"></div>' +
             _ambProgGrpClose() +
             // 🧂 SALT — deterministic per-cycle spice on the global progression

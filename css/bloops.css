@@ -12956,3 +12956,19 @@
     .ambient-seclbl-btn:hover { background: rgba(255,255,255,0.04); border-color: #2d2d3f; }
     .ambient-seclbl-btn.active { color: #9df3cd; border-color: rgba(53,201,142,0.45); background: rgba(53,201,142,0.08); }
     .ambient-seclbl-btn.active::before { content: '● '; opacity: 1; }
+
+    /* One-pass length, beside ＋ Add changes. */
+    .ambient-pov-actions { align-items: center; gap: 10px; }
+    .ambient-pov-len { color: #7fd6c4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+    /* Per-layer material state in the Edit grid: Re-roll / Loop / Hold. */
+    .ambient-qe-evrow { flex: 0 0 auto; display: flex; gap: 3px; margin-right: 8px; }
+    .ambient-qe-ev {
+      min-height: 30px; min-width: 30px; padding: 3px 6px; border-radius: 6px;
+      border: 1px solid #2d2d3f; background: #14141f; color: #4a5568;
+      font-size: 0.68rem; cursor: pointer; touch-action: manipulation; white-space: nowrap;
+    }
+    .ambient-qe-ev.on { border-color: #35c98e; background: #12211b; color: #9df3cd; }
+    .ambient-qe-ev:hover { border-color: #5a5a7a; }
+    .ambient-qe-improv { font-style: normal; font-size: 0.6rem; color: #f6ad55;
+      border: 1px solid rgba(246,173,85,0.4); border-radius: 5px; padding: 2px 4px; align-self: center; }

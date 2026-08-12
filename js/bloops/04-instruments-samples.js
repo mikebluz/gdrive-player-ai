@@ -1779,6 +1779,15 @@
       sampleSamplers.set(id, info);
       return info;
     }
+    // The in-flight kit preview (see the userKit branch in the bank manager).
+    let _kitPreview = null;
+    function _stopKitPreview() {
+      if (!_kitPreview) return;
+      try { clearTimeout(_kitPreview.timer); } catch (e) {}
+      try { if (_kitPreview.info && _kitPreview.info.sampler) _kitPreview.info.sampler.releaseAll(); } catch (e) {}
+      _kitPreview = null;
+    }
+    try { window._stopKitPreview = _stopKitPreview; } catch (e) {}
     async function persistDrumKit(id, name, slots) {
       try {
         const db = await getImportedDB();
@@ -1956,7 +1965,7 @@
       const close = document.createElement('button');
       close.type = 'button'; close.className = 'sbm-close'; close.textContent = '×';
       close.title = 'Close';
-      close.addEventListener('click', () => ov.remove());
+      close.addEventListener('click', () => { _stopKitPreview(); ov.remove(); });
       const mkKit = document.createElement('button');
       mkKit.type = 'button'; mkKit.className = 'sbm-kit'; mkKit.textContent = '＋ Drum kit';
       mkKit.title = 'Collect your samples into one kit, mapped to notes';
@@ -1994,11 +2003,23 @@
           try {
             await Tone.start();
             if (info.userKit) {
-              // Play the kit's own slots in order — that IS the preview of a kit.
+              // Play the kit's slots in order — but ONE AT A TIME, on a timer we
+              // can cancel. Scheduling all eight ~1.8 s ahead put hits into the
+              // audio graph that nothing could retract: a kit's sampler hangs off
+              // globalSendTap, not a layer chain, so neither Stop nor the mod
+              // teardown could silence them and the hits kept coming after the
+              // transport stopped. This is what "some drum hits play after stop"
+              // was. Cancelled when the preview is re-pressed or the bank closes.
               const filled = KIT_SLOTS.filter((n) => info.slots && info.slots[n]);
-              filled.slice(0, 8).forEach((n, k) => {
-                try { info.sampler.triggerAttackRelease(n, 0.6, Tone.now() + k * 0.22); } catch (e) {}
-              });
+              _stopKitPreview();
+              let k = 0;
+              const step = () => {
+                if (k >= filled.length || k >= 8) { _kitPreview = null; return; }
+                try { info.sampler.triggerAttackRelease(filled[k], 0.5, Tone.now() + 0.02); } catch (e) {}
+                k++;
+                _kitPreview = { timer: setTimeout(step, 220), info };
+              };
+              step();
             } else {
               info.sampler.triggerAttackRelease(info.rootNote || 'C4', 1.2, Tone.now());
             }

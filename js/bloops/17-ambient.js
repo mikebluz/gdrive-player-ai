@@ -22791,6 +22791,10 @@
       // and the gates cannot touch it, so like the vinyl bed it must follow the
       // transport explicitly or a line keeps talking over the silence after Stop.
       try { if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {}
+      // A drum-kit preview is the same class of thing: it plays from the sample
+      // bank straight into globalSendTap, outside every layer chain, so the mod
+      // teardown below cannot reach it. Stop must mean stop.
+      try { if (typeof window !== 'undefined' && window._stopKitPreview) window._stopKitPreview(); } catch (e) {}
       _E = E;
       // Stopping while paused has to un-suspend the context on the way out —
       // otherwise the whole app's audio (Grid, previews, everything) stays frozen
@@ -22801,6 +22805,24 @@
         _ambClearPaused(E);
       }
       if (E.timer) { clearInterval(E.timer); E.timer = null; }
+      // CANCEL WHAT IS SCHEDULED BUT HAS NOT SOUNDED YET. Stopping only stopped
+      // the TICK — every note already handed out still fired, including ones
+      // sitting in the DEFERRED BUILD QUEUE (which is pumped by its own timer
+      // and does not care that the generator stopped). The engine schedules
+      // ~1.4 s ahead, so on a pad that reads as a tail and passes unnoticed; on
+      // DRUMS it is discrete hits after you pressed stop, which is how it was
+      // finally reported. cancelBloomFutureVoices targets `_akAt >= now`, so a
+      // voice that has already STARTED is untouched and tails still ring out.
+      // Skipped while a capture is winding down: that path is deliberately
+      // ending on silence and owns its own tail.
+      try {
+        if (!E.windingDown && typeof cancelBloomFutureVoices === 'function') {
+          const _nw = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+          Object.keys(E.mod || {}).forEach((k) => {
+            try { cancelBloomFutureVoices(k, _nw); } catch (e) {}
+          });
+        }
+      } catch (e) {}
       _AMB_TICKING.delete(E); _ambTickWorkerMaybeStop();
       E._freshKeys = null; E._freshJoin = null;   // added-while-playing marks die with the session (a stopped toggle is plain)
       // Stamp the stop so the NEXT press can tell warm from cold (see _ambStartGenerator).

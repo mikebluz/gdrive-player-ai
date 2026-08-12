@@ -79,6 +79,15 @@ const CONFIGS = [
   { id: 'sec-rot',     chords: [0, 5, 7, 9], key: { root: 0, scale: 'major' }, sections: [['A', 4], ['B', 4, null, null, null, 3]] },
   { id: 'sec-mask',    chords: [0, 5, 7, 9], sections: [['A', 4], ['B', 4]], mask: [100, 0] },
   { id: 'sec-mask-pct', chords: [0, 5, 7, 9], sections: [['A', 4], ['B', 4], ['C', 4]], mask: [100, 40, 0] },
+  // THE FOLD ITSELF (v8): a legacy project whose sections must survive being
+  // turned into non-holding open parts — same names, lengths, overrides, and
+  // crucially the same ORDER, since sectionMask keys off the section index.
+  { id: 'fold-plain',  legacy: true, chords: [0, 5, 7, 9], sections: [['A', 4], ['B', 4]] },
+  { id: 'fold-key',    legacy: true, chords: [0, 5, 7, 9], sections: [['A', 4], ['B', 4, null, 2]] },
+  { id: 'fold-groove', legacy: true, chords: [0, 5, 7, 9], sections: [['A', 4], ['B', 4, null, null, { swing: 60, accent: 80, density: 30 }]] },
+  { id: 'fold-rot',    legacy: true, chords: [0, 5, 7, 9], key: { root: 0, scale: 'major' }, sections: [['A', 4], ['B', 4, null, null, null, 3]] },
+  { id: 'fold-mask',   legacy: true, chords: [0, 5, 7, 9], sections: [['A', 4], ['B', 4], ['C', 4]], mask: [100, 40, 0] },
+  { id: 'fold-parts',  legacy: true, chords: [0, 5, 7, 9], parts: [['Verse', 2, 2], ['Chorus', 2]], sections: [['A', 4], ['B', 4]] },
   { id: 'salt-len',         chords: [0, 5, 7, 9], salt: { len: 70, colors: 0, scatter: 0 } },
   { id: 'salt-colors',      chords: [0, 5, 7, 9], salt: { len: 0, colors: 80, scatter: 0 } },
   { id: 'salt-both',        chords: [0, 5, 7, 9], salt: { len: 50, colors: 50, scatter: 30 } },
@@ -149,9 +158,13 @@ const WALK_BARS = 32, WALK_STEP = 0.25;
       if (c.sections) cfg.sections = c.sections.map(([name, bars, part, key, groove, rot]) => ({
         name, bars, ...(part != null ? { part } : {}), ...(key != null ? { key } : {}),
         ...(groove ? { groove } : {}), ...(rot != null ? { keyModeRot: rot } : {}) }));
+      // Reset layers UNCONDITIONALLY. Clearing them only when a config declares
+      // a mask let the masked layer leak into every later config, so the gate
+      // column read "play" where it should have read "-" — which made a folded
+      // project look different from an unfolded one when only the test differed.
+      cfg.extras = [];
       // A layer carrying a SECTION MASK, so the per-section gate is measurable.
       if (c.mask) {
-        cfg.extras = [];
         try { _ambAddExtra(_masterEng, 'bass'); } catch (e) {}
         const L0 = (_masterEng.getCfg().extras || [])[0];
         if (L0) { L0.sectionMask = { steps: c.mask.slice() }; L0.mute = false; L0.on = true; }
@@ -166,6 +179,10 @@ const WALK_BARS = 32, WALK_STEP = 0.25;
       cfg.keyOn = !!c.key;
       cfg.keyRoot = c.key ? c.key.root : 0;
       cfg.keyScale = c.key ? c.key.scale : 'major';
+      // A LEGACY project: force the schema back so the v8 fold actually runs.
+      // Without this every config here is already stamped current, the migration
+      // never fires, and "identical to baseline" would mean nothing at all.
+      if (c.legacy) cfg.schemaVersion = 0;
       const live = _masterEng.getCfg();        // re-read: normalize is the chokepoint
       _ambSyncControls(_masterEng);
       _masterEng._cfg = live;

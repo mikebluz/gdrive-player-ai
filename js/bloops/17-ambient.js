@@ -2778,7 +2778,7 @@
         cfg.arch = out;
       } catch (e) { /* derivation must never break a load */ }
     }
-    const _AMB_SCHEMA_VERSION = 7;
+    const _AMB_SCHEMA_VERSION = 8;
     // v6 — normalize the additive PROG metadata (parts / versions / per-chord alts).
     // Every field is ABSENT on pre-v6 projects; this coerces when present and DELETES
     // empties, so a re-normalize of any current cfg leaves prog.chords byte-identical
@@ -2946,6 +2946,26 @@
           //            which is what lets sections fold in here without changing
           //            what a single saved project plays.
           if (p.hold) e0.hold = 1;
+          // A part with no changes has to be able to hold everything a SECTION
+          // holds, or folding sections in here would quietly drop them. `keyOff`
+          // is a semitone OFFSET, deliberately distinct from `key` (absolute):
+          // it is what a section stored and what _ambSectionKeyNow applies, and
+          // preserving it verbatim is what makes the fold inaudible. Unifying
+          // the two key models is a later step, not this one.
+          if (Number.isFinite(p.keyOff) && (p.keyOff | 0)) e0.keyOff = Math.max(-12, Math.min(12, p.keyOff | 0));
+          if (Number.isFinite(p.keyModeRot)) { const _m = (((p.keyModeRot | 0) % 7) + 7) % 7; if (_m) e0.keyModeRot = _m; }
+          if (p.groove && typeof p.groove === 'object') {
+            const g0 = {};
+            ['swing', 'accent', 'density', 'ghost', 'rolls'].forEach(k2 => {
+              if (Number.isFinite(p.groove[k2])) g0[k2] = Math.max(0, Math.min(100, p.groove[k2] | 0)); });
+            if (Object.keys(g0).length) e0.groove = g0;
+          }
+          if (p.unit && typeof p.unit === 'object' && Number.isFinite(p.unit.num)) {
+            const _ru = p.unit.ref;
+            e0.unit = { num: Math.max(1, Math.min(64, (p.unit.num | 0) || 1)),
+                        den: Math.max(1, Math.min(64, (p.unit.den | 0) || 1)),
+                        ref: (_ru === 'bar' || _ru === 'changes') ? _ru : 'area' };
+          }
           out.push(e0); continue;
         }
         if (acc >= total) break;                 // no chords left for a changes part
@@ -3053,6 +3073,50 @@
       // override) can never leave a hot path believing an override still exists.
       if (cfg._secOvGroove) delete cfg._secOvGroove;
       if (cfg._secOvMode) delete cfg._secOvMode;
+      // ---- SECTIONS FOLD INTO PARTS (v8) --------------------------------------
+      // A section and a part with no changes are the same idea, and the part is
+      // the one that survives. Rather than rewrite the ~36 sectionMask sites and
+      // every per-section reader, this uses the mirror pattern the codebase
+      // already relies on for `sections[i].bars`: the PART becomes the source of
+      // truth and cfg.sections is REBUILT from it on every normalize. Every
+      // existing reader is untouched and the mirror cannot go stale, because
+      // normalize runs on every getCfg.
+      // ORDER IS LOAD-BEARING: sectionMask keys off the section INDEX, so the
+      // mirror emits one section per non-holding open part IN ORDER, which
+      // reproduces the original indices exactly.
+      if (_fromVer < 8 && Array.isArray(cfg.sections) && cfg.sections.length && cfg.prog) {
+        const _mv = cfg.sections.map((x, i) => {
+          const e = { name: (typeof x.name === 'string' && x.name.trim()) ? x.name.trim().slice(0, 16) : String.fromCharCode(65 + (i % 26)),
+                      open: 1, len: 0, bars: Math.max(0.25, Math.min(64, Number(x.bars) || 4)) };
+          // NON-holding: a section lets the changes run underneath it, and that
+          // is exactly what a non-holding open part does. Migrating them as
+          // holding would freeze the harmony in every project that has one.
+          if (x.unit) e.unit = x.unit;
+          if (Number.isFinite(x.key) && (x.key | 0)) e.keyOff = x.key | 0;
+          if (Number.isFinite(x.keyModeRot) && (x.keyModeRot | 0)) e.keyModeRot = x.keyModeRot | 0;
+          if (x.groove) e.groove = x.groove;
+          return e;
+        });
+        const _pv = (Array.isArray(cfg.prog.parts) && cfg.prog.parts.length) ? cfg.prog.parts.slice() : [];
+        // A section BOUND to a part is that part's arrangement slot; the binding
+        // is preserved by leaving both in place, so nothing is dropped here.
+        cfg.prog.parts = _pv.concat(_mv);
+      }
+      // THE MIRROR — rebuild cfg.sections from the non-holding open parts.
+      {
+        const _op = (cfg.prog && Array.isArray(cfg.prog.parts))
+          ? cfg.prog.parts.filter(x => x && x.open && !x.hold) : [];
+        if (_op.length) {
+          cfg.sections = _op.map((x, i) => {
+            const s2 = { id: i + 1, name: x.name, bars: x.bars };
+            if (x.unit) s2.unit = x.unit;
+            if (Number.isFinite(x.keyOff) && (x.keyOff | 0)) s2.key = x.keyOff | 0;
+            if (Number.isFinite(x.keyModeRot) && (x.keyModeRot | 0)) s2.keyModeRot = x.keyModeRot | 0;
+            if (x.groove) s2.groove = x.groove;
+            return s2;
+          });
+        }
+      }
       if (cfg.sections != null) {
         if (!Array.isArray(cfg.sections)) delete cfg.sections;
         else {

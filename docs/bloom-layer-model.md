@@ -1445,5 +1445,31 @@ So the migration is a piece of engineering in its own right, not a coda to slice
 4 — and its value is removing a concept rather than adding one, which is why
 stopping new duplication first is the better trade.
 
+**Slice 4e SHIPPED 2026-08-12 — SECTIONS FOLD INTO PARTS (schema v8).** Every
+section becomes a NON-HOLDING open part, which is what a section always was: the
+changes keep running underneath it. The four blockers recorded above were solved
+rather than worked around, and the mechanism is the mirror pattern this codebase
+already uses for `sections[i].bars`:
+
+**The PART is the source of truth; `cfg.sections` is REBUILT from it on every
+normalize.** So all ~36 `sectionMask` sites and every per-section reader are
+untouched, and the mirror cannot go stale because normalize runs on every
+`getCfg`. That is what made blockers 2 and 3 disappear: nothing had to be
+rewired, and open parts became the arrangement spine by being the thing the
+spine is now derived FROM.
+
+**Order is load-bearing** — `sectionMask` keys off the section INDEX, so the
+mirror emits one section per non-holding open part IN ORDER, reproducing the
+original indices exactly. **`keyOff` is deliberately distinct from `key`**: a
+section stored a semitone OFFSET and `_ambSectionKeyNow` applies it, so it is
+preserved verbatim rather than converted to an absolute key. Unifying the two key
+models is a later step; doing it here would have made the fold audible, which was
+the one thing it must not be.
+
+**Proof, and it is the point:** five folded projects were compared against the
+same projects unfolded — plain, key offset, groove overrides, mode rotation, and
+a three-section layer mask — and all five are IDENTICAL sample for sample.
+Invariant harness identical across all 30, golden 82/82.
+
 **Still open.** Whether the Chord and Section matrices merge (see the Edit
 overlap note) — deferred to slice 4.

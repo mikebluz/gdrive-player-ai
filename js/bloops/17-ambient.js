@@ -11746,6 +11746,9 @@
     // _ambChordFormOf names the form for the editor ("Min 7"), which is right
     // there and far too wide here, so this derives a short suffix from the
     // intervals directly.
+    // One hue per SET OF CHANGES (part). Spaced far enough apart to tell two
+    // adjacent sets apart at cell size; wraps for projects with many parts.
+    const _AMB_QE_HUES = [205, 28, 145, 285, 55, 330, 175, 100];
     function _ambQeChordLabel(ch) {
       try {
         if (!ch || _ambIsTransition(ch)) return '⇝';
@@ -11794,9 +11797,16 @@
       // that lined up with the harmony only by luck.
       const chainSlots = _ambProgChainSlots(cfg);
       const chainLen = (chainSlots && chainSlots.length) ? chainSlots.length : 0;
+      const partNames = [];
+      if (chainSlots) chainSlots.forEach((sl) => {
+        const nm = sl.pName || '';
+        if (nm && partNames.indexOf(nm) < 0) partNames.push(nm);
+      });
+      // The length IS the chain — no override. Two sets of changes, two chords
+      // each, each played twice, is eight cells. A hand-set step count could
+      // only ever disagree with the harmony, and the grid's whole value is that
+      // a cell IS a change.
       const stepsOf = (L, key) => {
-        const fixed = E._qeSteps | 0;
-        if (fixed > 0) return Math.max(1, Math.min(_AMB_UG_MAXSLOTS, fixed));
         if (chainLen) return Math.max(1, Math.min(_AMB_UG_MAXSLOTS, chainLen));
         const uBars = Math.max(0.05, _ambUnitLaneBars(E, key, L, cfg, VIEW, barSec));
         return Math.max(1, Math.min(_AMB_UG_MAXSLOTS, Math.round(VIEW / uBars)));
@@ -11814,7 +11824,7 @@
             // the MIDDLE of the unit so a block that straddles a change is
             // attributed to where most of it sits.
             let gcls = '', chName = '', shortName = '', hue = -1;
-            if (pgActive && chainLen && !(E._qeSteps | 0)) {
+            if (pgActive && chainLen) {
               // One cell = one change. Tint alternates per change; a new part
               // (Verse → Chorus) takes the group-start gap.
               const sl = chainSlots[i % chainLen];
@@ -11822,11 +11832,12 @@
               try {
                 const ch = _ambProgSoundAt(E, { type: 'prog', chords: cfg.prog.chords }, sl.idx);
                 shortName = _ambQeChordLabel(ch);
-                // HUE BY CHORD, not an alternating a/b: the same chord is the
-                // same colour wherever it appears, so a repeated pass is
-                // recognisable at a glance and "which layers play on the F"
-                // is answerable by scanning one colour down the grid.
-                if (ch && !_ambIsTransition(ch)) hue = ((((ch.root | 0) % 12) + 12) % 12) * 30;
+                // HUE BY THE SET OF CHANGES — the part — not the individual
+                // chord. What the grid is for is "which layers play during the
+                // Verse", so the Verse is ONE colour across all its chords and
+                // all its repeats, and the Chorus is another. Colouring per
+                // chord made a 6-cell chain look like six unrelated things.
+                hue = _AMB_QE_HUES[Math.max(0, sl.part | 0) % _AMB_QE_HUES.length];
                 chName = shortName;
                 if (sl && sl.pName) chName = sl.pName + ' · ' + shortName
                   + (sl.plays > 1 ? ('  ' + (sl.rep + 1) + '/' + sl.plays) : '');
@@ -11862,10 +11873,7 @@
             + '<span class="ambient-qe-name" title="' + esc(t.name || t.key) + '">' + esc(t.name || t.key) + '</span>'
             + '<span class="ambient-qe-cells">' + cells + '</span></div>';
         }).join('');
-        const OPTS = [0, 2, 3, 4, 6, 8, 12, 16, 32];
-        const stepHtml = OPTS.map((v) => '<button type="button" class="ambient-seg ambient-qe-steps'
-          + (((E._qeSteps | 0) === v) ? ' active' : '') + '" data-qe-steps="' + v + '">'
-          + (v ? v : 'Auto') + '</button>').join('');
+
         const dispHtml = '<button type="button" class="ambient-seg ambient-qe-disp'
           + (E._qeChords ? ' active' : '') + '" data-qe-disp="1" '
           + 'title="Show each cell as its step number, or as the chord sounding there">'
@@ -11876,11 +11884,10 @@
             + 'Same setting as Edit Unit Schedule, which still handles slices within a unit.'
             + (pgActive ? ' Shading groups the units by chord.' : '') + '</div>' +
           '<div class="ambient-qe-steps-row"><span>Show</span>' + dispHtml +
-            '<span class="ambient-qe-gap"></span><span>Steps</span>' + stepHtml +
-            '<span class="ambient-hint">' + ((E._qeSteps | 0)
-              ? ('every ' + (E._qeSteps | 0) + ' units, then repeat')
-              : (chainLen ? ('one per change — ' + chainLen + ' in the chain')
-                          : 'as many as the Scheduler shows')) + '</span></div>' +
+            '<span class="ambient-hint">' + (chainLen
+              ? ('one cell per change — ' + chainLen + ' in the chain'
+                 + (partNames.length > 1 ? (', coloured by set: ' + esc(partNames.join(' · '))) : ''))
+              : 'one cell per unit') + '</span></div>' +
           '<div class="ambient-qe-body">' + rows + '</div>' +
           '<div class="sm-footer"><button type="button" class="sm-apply">Done</button></div>';
       };
@@ -11888,18 +11895,17 @@
       ov.addEventListener('click', (ev) => {
         const dp = ev.target && ev.target.closest && ev.target.closest('[data-qe-disp]');
         if (dp) { E._qeChords = !E._qeChords; draw(); return; }
-        const st = ev.target && ev.target.closest && ev.target.closest('[data-qe-steps]');
-        if (st) { E._qeSteps = st.getAttribute('data-qe-steps') | 0; draw(); return; }
+
         const c = ev.target && ev.target.closest && ev.target.closest('[data-qe-i]');
         if (c) {
           const key = c.getAttribute('data-qe-key');
           const i = c.getAttribute('data-qe-i') | 0;
           const L = _ambLayerByKey(E, key);
           if (L) {
-            // With an explicit step count the gate must REPEAT at that length,
-            // so the grid and the music agree; on Auto, keep the lane's period.
-            const per = (E._qeSteps | 0) || (c.parentElement ? c.parentElement.children.length : 1);
-            if ((E._qeSteps | 0) && L.unitGate) L.unitGate.period = Math.max(1, Math.min(_AMB_UG_MAXSLOTS, E._qeSteps | 0));
+            // The gate must repeat at the CHAIN length so the grid and the
+            // music stay 1:1 — cell 5 is always the fifth change.
+            const per = chainLen || (c.parentElement ? c.parentElement.children.length : 1);
+            if (chainLen && L.unitGate) L.unitGate.period = Math.max(1, Math.min(_AMB_UG_MAXSLOTS, chainLen));
             _ambUnitSetWhole(L, i, _ambUnitWholeOff(L, i), per);
             try { _ambUnitGateBump(); } catch (e) {}
             try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}

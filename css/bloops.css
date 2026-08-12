@@ -12904,11 +12904,10 @@
     .ambient-qe-cell.chgrp-start { margin-left: 10px; }
     /* Chord names need more room than a step number. */
     .ambient-qe-cell.wide { min-width: 48px; font-size: 0.66rem; letter-spacing: -0.01em; }
-    .ambient-qe-gap { flex: 0 0 12px; }
     .ambient-qe-steps-row { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin: 8px 0 4px; }
     .ambient-qe-steps-row > span:first-child { font-size: 0.72rem; color: #a0aec0; flex: 0 0 auto; }
-    .ambient-qe-steps, .ambient-qe-disp { min-height: 34px; min-width: 40px; padding: 5px 9px; font-size: 0.74rem; }
-    @media (max-width: 520px) { .ambient-qe-steps, .ambient-qe-disp { min-height: 36px; } }
+    .ambient-qe-disp { min-height: 34px; min-width: 40px; padding: 5px 9px; font-size: 0.74rem; }
+    @media (max-width: 520px) { .ambient-qe-disp { min-height: 36px; } }
 
     /* Advanced edit — the dense half of the Scheduler, collapsed by default. */
     .ambient-sched-adv[hidden] { display: none; }

@@ -11736,6 +11736,75 @@
     // or every 2nd/3rd/4th from this one (growing `period` to a multiple so the
     // selection is expressible). Body-attached overlay → shown with an inline
     // `display !important` (the view-mode CSS force-hides body children).
+    // QUICK EDIT — every layer's units as one grid, click to toggle.
+    // The Scheduler lane answers "what is this layer doing"; this answers the
+    // other question, "which layers play HERE", which needed a popover per unit
+    // before. Same storage as the unit gate (all-zero slot mask = off, absent =
+    // on), so it is a different VIEW of the same setting rather than a second
+    // one that could disagree with it.
+    function _ambQuickUnitsModal(E) {
+      _E = E;
+      const cfg = E.getCfg(); if (!cfg) return;
+      const layers = _ambMixerLayers(cfg);
+      if (!layers.length) { try { if (typeof showToast === 'function') showToast('No layers yet.'); } catch (e) {} return; }
+      const esc = (s2) => String(s2).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const VIEW = _ambSchedViewBars(cfg);
+      const ov = document.createElement('div');
+      ov.className = 'sm-overlay ambient-qe-ov';
+      ov.innerHTML = '<div class="sm-modal ambient-qe-modal"></div>';
+      const modal = ov.querySelector('.ambient-qe-modal');
+      const draw = () => {
+        const rows = layers.map((t) => {
+          const L = t.L || _ambLayerByKey(E, t.key);
+          if (!L) return '';
+          // Each layer's OWN unit length — the same figure the lane uses, so a
+          // cell here is the same block you see there.
+          const uBars = Math.max(0.05, _ambUnitLaneBars(E, t.key, L, cfg, VIEW, barSec));
+          const n = Math.max(1, Math.min(_AMB_UG_MAXSLOTS, Math.round(VIEW / uBars)));
+          const cells = Array.from({ length: n }, (_, i) => {
+            const off = _ambUnitWholeOff(L, i);
+            return '<button type="button" class="ambient-qe-cell' + (off ? '' : ' on') + '"'
+              + ' data-qe-key="' + esc(t.key) + '" data-qe-i="' + i + '"'
+              + ' title="Unit ' + (i + 1) + ' — ' + (off ? 'silent' : 'plays') + '">' + (i + 1) + '</button>';
+          }).join('');
+          return '<div class="ambient-qe-row">'
+            + '<span class="ambient-qe-name" title="' + esc(t.name || t.key) + '">' + esc(t.name || t.key) + '</span>'
+            + '<span class="ambient-qe-cells">' + cells + '</span></div>';
+        }).join('');
+        modal.innerHTML =
+          '<div class="sm-title">Quick edit — units</div>' +
+          '<div class="ambient-ug-sub">Click a unit to turn that layer off there, and again to bring it back. '
+            + 'Same setting as Edit Unit Schedule, which still handles slices within a unit.</div>' +
+          '<div class="ambient-qe-body">' + rows + '</div>' +
+          '<div class="sm-footer"><button type="button" class="sm-apply">Done</button></div>';
+      };
+      draw();
+      ov.addEventListener('click', (ev) => {
+        const c = ev.target && ev.target.closest && ev.target.closest('[data-qe-i]');
+        if (c) {
+          const key = c.getAttribute('data-qe-key');
+          const i = c.getAttribute('data-qe-i') | 0;
+          const L = _ambLayerByKey(E, key);
+          if (L) {
+            const per = c.parentElement ? c.parentElement.children.length : 1;
+            _ambUnitSetWhole(L, i, _ambUnitWholeOff(L, i), per);
+            try { _ambUnitGateBump(); } catch (e) {}
+            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            try { if (E.timer) _ambSyncUnitGate(E, key); } catch (e) {}
+            try { _ambRenderScheduler(E); } catch (e) {}
+            draw();
+          }
+          return;
+        }
+        if (ev.target === ov || (ev.target.closest && ev.target.closest('.sm-apply'))) {
+          try { ov.remove(); } catch (e) {}
+        }
+      });
+      document.body.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+    }
     function _ambUnitGateModal(E, key, uIdx, refresh) {
       const L = _ambLayerByKey(E, key); if (!L) return;
       _E = E;
@@ -32434,6 +32503,11 @@
           blocksHtml +
         '</div>';
       });
+      // Quick edit — the whole grid of layers x units in one place.
+      html = '<div class="ambient-sched-qebar">'
+        + '<button type="button" class="ambient-seg ambient-sched-qe" '
+        + 'title="Quick edit — every layer\u2019s units in one grid; click a unit to turn that layer off there">'
+        + '\u25A6 Quick edit</button></div>' + html;
       // Legend — name what the strip shows (block/fresh/repeat/playhead).
       html += '<div class="ambient-sched-legend">' +
         '<i class="ambient-sched-blk lg"></i> 1 unit' +
@@ -32444,6 +32518,8 @@
       if (!body._secWired) {
         body._secWired = true;
         body.addEventListener('click', (ev) => {
+          const qe = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-qe');
+          if (qe) { ev.preventDefault(); ev.stopPropagation(); _ambQuickUnitsModal(E); return; }
           const add = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-addsec');
           if (add) {
             _E = E; const c2 = E.getCfg(); if (!c2) return;

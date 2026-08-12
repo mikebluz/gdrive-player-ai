@@ -12853,3 +12853,26 @@
        row of tiny off-ticks indistinguishable from a busy gate. */
     .ambient-sched-blk.ug-mute { opacity: 0.28; }
     .ambient-sched-blk.ug-mute .ambient-sched-ug { display: none; }
+
+    /* ---- Quick edit: layers × units (_ambQuickUnitsModal) ----
+       One row per layer, one cell per unit. Cells WRAP rather than scroll
+       sideways (UI rule 1) and stay finger-sized. */
+    .ambient-qe-modal { width: min(680px, 95vw); }
+    .ambient-qe-body { max-height: 56vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+    .ambient-qe-row { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+    .ambient-qe-name { flex: 0 0 6.4em; font-size: 0.72rem; color: #a0aec0; padding-top: 7px;
+                       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ambient-qe-cells { flex: 1 1 0; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+    .ambient-qe-cell {
+      flex: 0 0 auto; min-width: 34px; min-height: 34px; padding: 0 6px;
+      border-radius: 7px; border: 1px solid #2d2d3f; background: #14141f;
+      color: #4a5568; font-size: 0.68rem; cursor: pointer; touch-action: manipulation;
+      font-variant-numeric: tabular-nums;
+    }
+    .ambient-qe-cell.on { border-color: #35c98e; background: #12211b; color: #9df3cd; }
+    .ambient-qe-cell:hover { border-color: #5a5a7a; }
+    .ambient-sched-qebar { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+    /* 40px like every other footer action — 32 was a mouse target, not a
+       finger one, and it was the only control in here under the floor. */
+    .ambient-sched-qe { min-height: 40px; padding: 8px 14px; }
+    #drum-kit-editor .sm-footer button, .ambient-qe-modal .sm-footer button { min-height: 40px; }

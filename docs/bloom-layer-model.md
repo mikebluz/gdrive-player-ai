@@ -1158,7 +1158,11 @@ sample.
 
 ---
 
-## 14. Backlog — MUSICAL NOTEPAD: a Tools page where typing plays notes (not started, 2026-08-11)
+## 14. ~~Backlog~~ SHIPPED 2026-08-11 — MUSICAL NOTEPAD (`notepad.html`)
+
+Built as a standalone page, linked from index.html's Tools window. The
+analysis below is kept because the mapping is duplicated BY HAND from the
+Word layer and the two must be kept in step.
 
 A plain text notepad where each keystroke sounds a note, with Key and Tone
 configurable. Reachable from the main page's **Tools** window (index.html ~541,

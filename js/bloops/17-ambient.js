@@ -31231,6 +31231,10 @@
     // Same interaction grammar as the chord matrix: tap steps the ladder, ✎ % /
     // long-press / right-click sets an exact 0-100, per-row Part sub-window. Writes L.sectionMask; the emitters gate via
     // _ambSectionGateOK. Shown whenever the area has sections.
+    // DEAD as of slice 4g — the part columns live in _ambRenderChordMatrix now,
+    // and its host element no longer exists, so this early-returns if called.
+    // Kept only until the merged grid has had some use; delete it and its
+    // handler once that is settled.
     function _ambRenderSectionMatrix(E) {
       const el = _ambGet(E, 'ambient-secmatrix'); if (!el) return;
       const cfg = E.getCfg();
@@ -31355,7 +31359,6 @@
       try { _ambSyncProgVis(E); } catch (e) {}
       try { _ambRenderChordMatrix(E); } catch (e) {}
       try { _ambRenderProgOverview(E); } catch (e) {}
-      try { _ambRenderSectionMatrix(E); } catch (e) {}
       // The renderers above are what flip those bodies, so the header visibility
       // is settled HERE rather than only at panel build.
       try { _ambProgGrpSync(E); } catch (e) {}
@@ -33336,7 +33339,7 @@
               const nid = c2.sections.reduce((m2, x) => Math.max(m2, x.id | 0), 0) + 1;
               c2.sections.push({ id: nid, name: String.fromCharCode(65 + (c2.sections.length % 26)), bars: 4 });
             }
-            try { _ambRenderScheduler(E); _ambRenderSectionMatrix(E); } catch (e) {}
+            try { _ambRenderScheduler(E); } catch (e) {}
             if (typeof persistWorkspace === 'function') persistWorkspace();
             return;
           }
@@ -33344,7 +33347,7 @@
           if (blk) {
             _E = E; const c2 = E.getCfg(); if (!c2 || !Array.isArray(c2.sections)) return;
             const si = blk.dataset.si | 0; const sc = c2.sections[si]; if (!sc) return;
-            const done = () => { try { _ambRenderScheduler(E); _ambRenderSectionMatrix(E); } catch (e) {} if (typeof persistWorkspace === 'function') persistWorkspace(); };
+            const done = () => { try { _ambRenderScheduler(E); } catch (e) {} if (typeof persistWorkspace === 'function') persistWorkspace(); };
             const items = [
               { label: '✎ Rename “' + sc.name + '”', fn: () => { const nm = prompt('Section name:', sc.name); if (nm != null && nm.trim()) { sc.name = nm.trim().slice(0, 12); done(); } } },
               // LENGTH — authored in AREA UNITS, so a section boundary lands on a
@@ -38131,17 +38134,16 @@
           // on/off per change, the chord matrix is a 0-100 PROBABILITY per
           // chord. Same question, two grains; merging is a separate decision.
           (E.isLane ? '' :
-            // ONE MATRIX (slice 4g). The Part matrix is gone as a separate grid:
-            // a part that carries no changes is now a COLUMN in this one, beside
-            // the chords. Two grids existed because sections and chords were two
-            // concepts; there is one concept now, so there is one grid. The
-            // #ambient-secmatrix host is kept (hidden) so _ambRenderSectionMatrix
-            // and its handler stay live for anything still reaching for them,
-            // rather than being deleted in the same change that moves the UI.
+            // ONE MATRIX (slice 4g). A part that carries no changes is a COLUMN
+            // in this grid, beside the chords — two grids existed because
+            // sections and chords were two concepts, and there is one concept
+            // now. The old #ambient-secmatrix host is GONE: keeping it "hidden
+            // but live" did not work, because _ambRenderSectionMatrix un-hides
+            // itself whenever it has content, so both grids rendered and the
+            // page showed "Matrix" and "Part matrix" one under the other.
             _ambProgGrpOpen('matrix', '\u2317 Matrix', false) +
             '<div class="ambient-progmatrix" id="ambient-progmatrix" style="display:none"></div>' +
-            _ambProgGrpClose() +
-            '<div class="ambient-progmatrix ambient-secmatrix" id="ambient-secmatrix" style="display:none"></div>') +
+            _ambProgGrpClose()) +
         '</div>' +
         // 🎚️ Mixer — layer faders + master fade + global FX. Strip (re)rendered
         // by _ambRenderMixer. Keeps the .ambient-mixer class for its inner styles.

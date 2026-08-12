@@ -12570,6 +12570,12 @@
       color: var(--ac, #7fd6c4);
     }
     .ambient-orch-bar-hdr:empty { display: none; }
+    /* HIDDEN FOR NOW (2026-08-12, on request). The sticky bar-counter mirror in
+       the Areas strip. Hidden in CSS rather than removed: _ambUpdateBarIndicator
+       (17-ambient ~25626) still writes to it every frame, so restoring it is
+       deleting this one rule — no wiring to rebuild. The bar reading is still
+       available in the panel's own bar line. */
+    .ambient-orch-bar-hdr { display: none !important; }
 
     /* Trance-gate step grid: max 8 UNIFORM cells per row, aligned into columns
        (the shared flex-wrap slice-grid sizes cells by their digits → misaligned). */

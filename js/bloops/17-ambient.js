@@ -30095,7 +30095,11 @@
     function _ambSyncProgVis(E) {
       const host = E && document.getElementById(E.hostId); if (!host) return;
       const cfg = (E && (E._cfg || (E.getCfg && E.getCfg()))) || null;
-      const progOn = !!(cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length);
+      // Show the arrangement blocks whenever the area HAS an arrangement, not
+      // only when the changes flag is on — same dead-end reasoning as the
+      // overview above.
+      const progOn = !!(cfg && cfg.prog && ((Array.isArray(cfg.prog.chords) && cfg.prog.chords.length)
+        || (Array.isArray(cfg.prog.parts) && cfg.prog.parts.length)));
       // Post-B the Progression block is a SUB-BLOCK inside Seed (data-sub), not
       // its own group; keep the old selector too for any straggler markup.
       host.querySelectorAll('[data-grp="Progression"], [data-sub="Progression"]').forEach(g => { g.style.display = progOn ? '' : 'none'; });
@@ -30469,6 +30473,8 @@
     }
     function _ambProgAppendPart(prog, name, chords, partKey) {
       if (!Array.isArray(chords) || !chords.length) return;
+      // Adding changes is what turns them on, now that no switch does.
+      prog.on = true;
       let add = chords.map(_ambCloneChord);
       // A part with its OWN key is a real modulation: transpose the incoming
       // chords so their tonic lands on that root (the progression keeps its
@@ -30566,7 +30572,12 @@
     function _ambRenderProgOverview(E) {
       const el = _ambGet(E, 'ambient-prog-overview'); if (!el) return;
       const cfg = E.getCfg();
-      const on = !!(cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length);
+      // Render whenever there is anything to show — chords OR parts — and NOT
+      // only when prog.on. With the on/off switch gone, gating this on the flag
+      // would leave a project whose changes are off with no overview, hence no
+      // ＋ Part, hence no way to add changes back: a dead end.
+      const _pn = (cfg && cfg.prog && Array.isArray(cfg.prog.parts)) ? cfg.prog.parts.length : 0;
+      const on = !!(cfg && cfg.prog && ((Array.isArray(cfg.prog.chords) && cfg.prog.chords.length) || _pn));
       el.style.display = on ? '' : 'none';
       if (!on) { el.innerHTML = ''; el._sig = ''; el._curCi = -2; return; }
       const prog = cfg.prog, chords = prog.chords, N = chords.length;
@@ -38029,8 +38040,13 @@
             '</div></div>' +
           '<div class="ambient-tabsec-pane ambient-progsec" data-pane="progsec" id="ambient-progsec">' +
             '<div class="ambient-sched-body" id="ambient-progsec-body">' +
-            '<button type="button" class="ambient-mod-sub ambient-progsec-lbl ambient-seclbl-btn ambient-prog-onoff" id="ambient-prog-onoff" ' +
-              'title="Changes — when ON, every layer follows this area’s shared chord changes (the per-layer Notes chip is read-only while on). Combine with Key above for changes diatonic to that key.">Changes</button>' +
+            // NO CHANGES ON/OFF SWITCH. A part either carries changes or it does
+            // not, so an area-wide toggle is the two-concept model showing
+            // through: it asked a question the parts already answer. `prog.on`
+            // survives as DATA (a saved project with it off must keep sounding
+            // the way it does — there is no inaudible migration, see §15), and
+            // adding changes sets it, so there is no state you can be stuck in.
+            '' +
             // The row is now just the switch. Choosing WHICH changes moved to
             // "＋ Add changes" in Overview, beside the chips it affects, and
             // Edit is gone: that editor already opens from any chord chip in

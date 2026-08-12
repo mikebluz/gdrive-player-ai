@@ -1534,6 +1534,26 @@ which is what it always did, and it now matches "＋ Add changes" beside it.
 Deliberately untouched, because they are different concepts that merely share the
 word: the Seq layer's **Prog sync** and its **Promote → progression**.
 
+**Slice 4j SHIPPED 2026-08-12 — there is NO Changes on/off.** A part either
+carries changes or it does not, so an area-wide switch was the two-concept model
+showing through: it asked a question the parts already answer. The control is
+gone.
+
+`prog.on` survives as DATA — a saved project with the changes off must keep
+sounding as it does, and there is no inaudible migration (retiring the field
+either drops its chords or starts playing them). **Adding changes sets it**, so
+the flag can never trap you in a state with no way out.
+
+Closing that dead end was the actual work. The overview strip and the pane's
+blocks were both gated on `prog.on`, so with the switch removed a project whose
+changes were off would have shown no overview, hence no ＋ Part, hence no way to
+add changes back. Both now render whenever the area HAS an arrangement — chords
+OR parts. Verified: changes off → ＋ Part reachable, overview rendered, and
+appending changes flips the flag.
+
+**This supersedes the "prog.on stays" note in slice 4h**, which was right about
+the DATA and wrong to conclude the control should stay with it.
+
 **ARCH is complete.** What remains is chord lengths in UNITS (unit-first Level 2,
 independent of this work) and the semantics note below. (see the Edit
 overlap note) — deferred to slice 4.

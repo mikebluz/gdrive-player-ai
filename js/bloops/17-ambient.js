@@ -23689,56 +23689,139 @@
     //   rms/peak  — level parity (off-level = the limiter behaves differently)
     //   crest     — peak/rms: how squashed it is (reverb + limiting lower it)
     //   width     — L/R correlation (1.0 = mono; spatialize/spread raise width)
+    // Blob worklet that posts CONTIGUOUS PCM. The old live measurement here
+    // sampled an AnalyserNode every 45 ms — 2048 frames a time, i.e. roughly 5%
+    // of the audio — so its rms was a sparse sample and its peak was badly
+    // under-read. That is the exact method this file's own notes warn against.
+    let _bloomVerifyRecUrl = null;
+    function _bloomVerifyRec() {
+      if (_bloomVerifyRecUrl) return _bloomVerifyRecUrl;
+      const src = 'class VR extends AudioWorkletProcessor{constructor(){super();this.on=false;'
+        + 'this.port.onmessage=e=>{if(e.data.go)this.on=true;if(e.data.stop)this.on=false;};}'
+        + 'process(i){const x=i[0];if(this.on&&x&&x[0])'
+        + 'this.port.postMessage({l:x[0].slice(),r:(x[1]||x[0]).slice()});return true;}}'
+        + 'registerProcessor("bloom-verify-rec",VR);';
+      try { _bloomVerifyRecUrl = URL.createObjectURL(new Blob([src], { type: 'application/javascript' })); }
+      catch (e) { _bloomVerifyRecUrl = null; }
+      return _bloomVerifyRecUrl;
+    }
+    // Everything "presence" actually is. rms alone cannot answer "does it sound
+    // as loud and present", which is why that report survived a level match:
+    // perceived loudness tracks SHORT-TERM (400 ms) peaks, and presence lives in
+    // the upper-mids and in transient sharpness.
+    function _bloomTakeStats(L, R, rate) {
+      let s = 0, pk = 0;
+      for (let i = 0; i < L.length; i++) {
+        s += (L[i] * L[i] + R[i] * R[i]) / 2;
+        const a = Math.max(Math.abs(L[i]), Math.abs(R[i])); if (a > pk) pk = a;
+      }
+      const rms = Math.sqrt(s / Math.max(1, L.length));
+      let sl = 0, sr = 0, dot = 0;
+      for (let i = 0; i < L.length; i++) { sl += L[i] * L[i]; sr += R[i] * R[i]; dot += L[i] * R[i]; }
+      const W = Math.floor(rate * 0.4); let st = 0;
+      for (let w = 0; w + W < L.length; w += Math.max(1, Math.floor(W / 2))) {
+        let q = 0; for (let i = w; i < w + W; i++) q += (L[i] * L[i] + R[i] * R[i]) / 2;
+        const v = Math.sqrt(q / W); if (v > st) st = v;
+      }
+      const N = 8192, ed = [0, 120, 400, 1200, 3500, 10000, 22050], acc = new Array(6).fill(0);
+      let win = 0;
+      for (let s0 = 0; s0 + N < L.length; s0 += N * 2) {
+        const re = new Float64Array(N), im = new Float64Array(N);
+        for (let i = 0; i < N; i++) { const w = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1)); re[i] = L[s0 + i] * w; }
+        for (let i = 1, j = 0; i < N; i++) { let bt = N >> 1; for (; j & bt; bt >>= 1) j ^= bt; j ^= bt;
+          if (i < j) { const t = re[i]; re[i] = re[j]; re[j] = t; const t2 = im[i]; im[i] = im[j]; im[j] = t2; } }
+        for (let L2 = 2; L2 <= N; L2 <<= 1) { const an = -2 * Math.PI / L2;
+          for (let i = 0; i < N; i += L2) for (let k = 0; k < L2 / 2; k++) {
+            const wr = Math.cos(an * k), wi = Math.sin(an * k);
+            const ur = re[i + k], ui = im[i + k];
+            const vr = re[i + k + L2 / 2] * wr - im[i + k + L2 / 2] * wi;
+            const vi = re[i + k + L2 / 2] * wi + im[i + k + L2 / 2] * wr;
+            re[i + k] = ur + vr; im[i + k] = ui + vi;
+            re[i + k + L2 / 2] = ur - vr; im[i + k + L2 / 2] = ui - vi; } }
+        for (let bi = 1; bi < N / 2; bi++) { const f = bi * rate / N, pw = re[bi] * re[bi] + im[bi] * im[bi];
+          for (let k = 0; k < 6; k++) if (f >= ed[k] && f < ed[k + 1]) acc[k] += pw; }
+        win++;
+      }
+      return { rms, peak: pk, crest: pk / Math.max(1e-9, rms), st,
+               width: 1 - (dot / Math.max(1e-12, Math.sqrt(sl * sr))),
+               bands: acc.map(v => v / Math.max(1, win)) };
+    }
     async function _ambBounceVerify(E, seconds) {
       seconds = Math.max(4, Math.min(30, seconds | 0 || 8));
       let ac = null, tap = null;
       try { ac = Tone.getContext().rawContext; tap = _ambMasterTapNode(); } catch (e) {}
       if (!ac || !tap) { alert('Master output unavailable — cannot compare.'); return null; }
       const prog = (typeof showRenderProgressModal === 'function')
-        ? showRenderProgressModal('Comparing bounce with live…') : null;
+        ? showRenderProgressModal('Comparing with live playback…') : null;
       const say = (t) => { try { if (prog) prog.setStatus(t); } catch (e) {} };
       const stat = { };
       try {
-        // ---- LIVE ----
-        say('1/2 Playing live for ' + seconds + 's — listen…');
         try { await Tone.start(); } catch (e) {}
-        const split = ac.createChannelSplitter(2);
-        const aL = ac.createAnalyser(), aR = ac.createAnalyser();
-        aL.fftSize = 2048; aR.fftSize = 2048;
-        try { tap.connect(split); split.connect(aL, 0); split.connect(aR, 1); } catch (e) {}
-        const wasPlaying = !!E.timer;
-        if (!wasPlaying) { try { _ambStartGenerator(E); } catch (e) {} }
-        const dl = new Float32Array(2048), dr = new Float32Array(2048);
-        let sl = 0, sr = 0, dot = 0, pk = 0, nSamp = 0;
-        const t0 = performance.now();
-        while (performance.now() - t0 < seconds * 1000) {
-          await new Promise(r => setTimeout(r, 45));
-          aL.getFloatTimeDomainData(dl); aR.getFloatTimeDomainData(dr);
-          for (let k = 0; k < 2048; k++) {
-            sl += dl[k] * dl[k]; sr += dr[k] * dr[k]; dot += dl[k] * dr[k];
-            const m = Math.max(Math.abs(dl[k]), Math.abs(dr[k])); if (m > pk) pk = m;
+        const url = _bloomVerifyRec();
+        if (!url) throw new Error('recorder unavailable');
+        await ac.audioWorklet.addModule(url);
+        const rec = Tone.getContext().createAudioWorkletNode('bloom-verify-rec', {
+          numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+          channelCount: 2, channelCountMode: 'explicit',
+        });
+        let Ls = [], Rs = [];
+        rec.port.onmessage = (e) => { if (e.data && e.data.l) { Ls.push(e.data.l); Rs.push(e.data.r); } };
+        try { tap.connect(rec); } catch (e) {}
+        const sink = new Tone.Gain(0); try { Tone.connect(rec, sink); sink.toDestination(); } catch (e) {}
+        // LIVE, TWICE. One live reading is a single sample of a distribution —
+        // the material re-generates every play — and treating one as ground
+        // truth produced a confident false finding once already. Two passes give
+        // the spread, and the verdict is measured against THAT.
+        const runs = [];
+        for (let pass = 0; pass < 2; pass++) {
+          const wasPlaying = !!E.timer;
+          Ls = []; Rs = [];
+          rec.port.postMessage({ go: true });
+          if (!wasPlaying) { try { _ambStartGenerator(E); } catch (e) {} }
+          const t0 = performance.now();
+          while (performance.now() - t0 < seconds * 1000) {
+            await new Promise(r => setTimeout(r, 120));
+            say('1/2 Playing live, pass ' + (pass + 1) + ' of 2 — '
+              + Math.round((performance.now() - t0) / 1000) + '/' + seconds + 's');
           }
-          nSamp += 2048;
-          const el = Math.round((performance.now() - t0) / 1000);
-          say('1/2 Playing live… ' + el + '/' + seconds + 's');
+          rec.port.postMessage({ stop: true });
+          await new Promise(r => setTimeout(r, 150));
+          if (!wasPlaying) { try { _ambStopGenerator(E); } catch (e) {} }
+          const n = Ls.reduce((a, c) => a + c.length, 0);
+          const A = new Float32Array(n), B = new Float32Array(n);
+          { let o = 0; for (let i = 0; i < Ls.length; i++) { A.set(Ls[i], o); B.set(Rs[i], o); o += Ls[i].length; } }
+          if (n) runs.push(_bloomTakeStats(A, B, ac.sampleRate));
+          await new Promise(r => setTimeout(r, 300));
         }
-        if (!wasPlaying) { try { _ambStopGenerator(E); } catch (e) {} }
-        try { tap.disconnect(split); } catch (e) {}
-        stat.live = { rms: Math.sqrt((sl + sr) / (2 * nSamp)), peak: pk,
-                      width: 1 - (dot / Math.max(1e-12, Math.sqrt(sl * sr))) };
-        // ---- BOUNCE ----
-        say('2/2 Bouncing the same ' + seconds + 's…');
+        try { tap.disconnect(rec); } catch (e) {}
+        if (!runs.length) throw new Error('recorded no live audio');
+        const avg = (k) => runs.reduce((a, r) => a + r[k], 0) / runs.length;
+        stat.live = { rms: avg('rms'), peak: avg('peak'), crest: avg('crest'), st: avg('st'), width: avg('width'),
+                      bands: [0, 1, 2, 3, 4, 5].map(i => runs.reduce((a, r) => a + r.bands[i], 0) / runs.length) };
+        stat.spread = runs.length > 1
+          ? { rms: Math.abs(runs[0].rms - runs[1].rms), peak: Math.abs(runs[0].peak - runs[1].peak),
+              crest: Math.abs(runs[0].crest - runs[1].crest), st: Math.abs(runs[0].st - runs[1].st),
+              width: Math.abs(runs[0].width - runs[1].width) }
+          : { rms: 0, peak: 0, crest: 0, st: 0, width: 0 };
+        // BANDS NEED A SPREAD TOO. Judging tone against a fixed dB threshold is
+        // the same error as judging level against one: on a short window the
+        // opening of a generative piece varies enormously between plays, and a
+        // tool that cries wolf on presence would send someone chasing a phantom.
+        try {
+          if (runs.length > 1) {
+            const tot = (x) => x.reduce((a, c) => a + c, 0);
+            const t0 = tot(runs[0].bands), t1 = tot(runs[1].bands);
+            stat.bandSpread = runs[0].bands.map((v, i) =>
+              Math.abs(10 * Math.log10((runs[1].bands[i] / t1) / (v / t0))));
+          }
+        } catch (e) {}
+        // ---- THE TAKE ----
+        say('2/2 Rendering the same ' + seconds + 's…');
         const res = await _ambRenderOffline(E, seconds, { onStatus: (t) => say('2/2 ' + t) });
         let buf = res && res.buffer; try { if (buf && buf.get) buf = buf.get(); } catch (e) {}
         if (!buf || !buf.getChannelData) throw new Error((res && res.reason) || 'render failed');
-        const BL = buf.getChannelData(0), BR = buf.numberOfChannels > 1 ? buf.getChannelData(1) : BL;
-        let bl = 0, br = 0, bd = 0, bp = 0;
-        for (let i = 0; i < BL.length; i++) {
-          bl += BL[i] * BL[i]; br += BR[i] * BR[i]; bd += BL[i] * BR[i];
-          const m = Math.max(Math.abs(BL[i]), Math.abs(BR[i])); if (m > bp) bp = m;
-        }
-        stat.bounce = { rms: Math.sqrt((bl + br) / (2 * BL.length)), peak: bp,
-                        width: 1 - (bd / Math.max(1e-12, Math.sqrt(bl * br))) };
+        stat.bounce = _bloomTakeStats(buf.getChannelData(0),
+          buf.numberOfChannels > 1 ? buf.getChannelData(1) : buf.getChannelData(0), buf.sampleRate);
         stat.info = { core: !!(res && res.core), wet: !!(res && res.wet), missing: (res && res.missing) || [],
                       wetRms: (res && res.wetRms != null) ? res.wetRms : null,
                       sendsWanted: (res && res.sendsWanted) || 0 };
@@ -23751,27 +23834,59 @@
     }
     function _ambShowVerifyResult(stat) {
       const esc = (t) => String(t == null ? '' : t).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
-      const L = stat.live, B = stat.bounce;
+      const L = stat.live, B = stat.bounce, SP = stat.spread || {};
       const db = (a, b) => (a > 0 && b > 0) ? (20 * Math.log10(b / a)).toFixed(1) : '—';
-      const crest = (o) => (o && o.rms > 0) ? (o.peak / o.rms).toFixed(1) : '—';
       const rows = [];
       let verdict = '';
       if (stat.error) { verdict = '<b>Comparison failed:</b> ' + esc(stat.error); }
       else if (L && B) {
-        const dLev = Math.abs(20 * Math.log10(Math.max(1e-9, B.rms) / Math.max(1e-9, L.rms)));
-        const dW = Math.abs((B.width || 0) - (L.width || 0));
-        const dC = Math.abs((B.peak / Math.max(1e-9, B.rms)) - (L.peak / Math.max(1e-9, L.rms)));
+        // Judge against LIVE'S OWN SPREAD, never a fixed threshold: the material
+        // re-generates every play, so a difference smaller than live's own
+        // run-to-run variation is not a finding.
         const bad = [];
-        if (dLev > 1.5) bad.push('LEVEL is off by ' + db(L.rms, B.rms) + ' dB — the limiter is behaving differently, which flattens reverb and delay tails');
-        if (dW > 0.12) bad.push('STEREO WIDTH differs (' + (L.width || 0).toFixed(2) + ' live vs ' + (B.width || 0).toFixed(2) + ') — spread / spatialize is not reaching the render');
-        if (dC > 1.2) bad.push('DYNAMICS differ (crest ' + crest(L) + ' live vs ' + crest(B) + ') — something is compressing or missing tails');
+        const over = (k, mult, floor) => {
+          const sp = Math.max(SP[k] || 0, floor);
+          return Math.abs((B[k] || 0) - (L[k] || 0)) > sp * mult;
+        };
+        if (over('st', 2, L.st * 0.08)) {
+          bad.push('LOUDNESS differs — short-term loudness ' + db(L.st, B.st)
+            + ' dB. This is what "not as loud/present" measures as; whole-take rms can match while this does not.');
+        }
+        if (over('crest', 2, 1.2)) {
+          bad.push('DYNAMICS differ — crest ' + L.crest.toFixed(1) + ' live vs ' + B.crest.toFixed(1)
+            + '. Lower crest reads as flatter and less lively; higher reads as thinner.');
+        }
+        if (over('width', 2, 0.10)) {
+          bad.push('STEREO WIDTH differs (' + (L.width || 0).toFixed(2) + ' live vs ' + (B.width || 0).toFixed(2)
+            + ') — spread / spatialize / reverb tails are not arriving the same way.');
+        }
+        // presence = the upper-mid band, normalised for overall level
+        let bandTxt = '';
+        try {
+          const tot = (x) => x.reduce((a, c) => a + c, 0);
+          const lt = tot(L.bands), bt = tot(B.bands);
+          const nm = ['sub', 'low', 'lo-mid', 'mid', 'presence', 'air'];
+          const d = L.bands.map((v, i) => 10 * Math.log10((B.bands[i] / bt) / (v / lt)));
+          bandTxt = nm.map((x, i) => x + ' ' + (d[i] >= 0 ? '+' : '') + d[i].toFixed(1)).join(' · ');
+          const bsp = stat.bandSpread || [];
+          const lim4 = Math.max(1.5, (bsp[4] || 0) * 2);
+          if (Math.abs(d[4]) > lim4) {
+            bad.push('PRESENCE band (1.2–3.5 kHz) is ' + (d[4] >= 0 ? '+' : '') + d[4].toFixed(1)
+              + ' dB vs live (live varies ±' + (bsp[4] || 0).toFixed(1) + ') — that band is what "present" means.');
+          }
+          if (bsp.length) bandTxt += '   ·   live varies ± ' + bsp.map((v) => v.toFixed(1)).join(' / ');
+        } catch (e) {}
         verdict = bad.length
-          ? ('<b>Divergence found:</b><ul><li>' + bad.map(esc).join('</li><li>') + '</li></ul>')
-          : '<b>The bounce matches live playback</b> on level, width and dynamics. If it still sounds wrong, the difference is in the material itself (a bounce re-generates the take), not the signal path.';
-        rows.push(['Level (rms)', L.rms.toFixed(5), B.rms.toFixed(5), db(L.rms, B.rms) + ' dB']);
-        rows.push(['Peak', L.peak.toFixed(3), B.peak.toFixed(3), db(L.peak, B.peak) + ' dB']);
-        rows.push(['Crest (peak/rms)', crest(L), crest(B), '']);
-        rows.push(['Stereo width', (L.width || 0).toFixed(3), (B.width || 0).toFixed(3), '']);
+          ? ('<b>Difference found:</b><ul><li>' + bad.map(esc).join('</li><li>') + '</li></ul>')
+          : ('<b>The take matches live playback</b> on loudness, dynamics, width and tone — '
+             + 'every difference is inside live\'s own run-to-run variation (it re-generates each play, '
+             + 'so that variation is the noise floor of this test).');
+        rows.push(['Short-term loudness', L.st.toFixed(5), B.st.toFixed(5), db(L.st, B.st) + ' dB  (±' + (SP.st || 0).toFixed(5) + ')']);
+        rows.push(['Level (rms)', L.rms.toFixed(5), B.rms.toFixed(5), db(L.rms, B.rms) + ' dB  (±' + (SP.rms || 0).toFixed(5) + ')']);
+        rows.push(['Peak', L.peak.toFixed(3), B.peak.toFixed(3), db(L.peak, B.peak) + ' dB  (±' + (SP.peak || 0).toFixed(3) + ')']);
+        rows.push(['Crest (peak/rms)', L.crest.toFixed(1), B.crest.toFixed(1), '(±' + (SP.crest || 0).toFixed(1) + ')']);
+        rows.push(['Stereo width', (L.width || 0).toFixed(3), (B.width || 0).toFixed(3), '(±' + (SP.width || 0).toFixed(3) + ')']);
+        if (bandTxt) rows.push(['Tone (take − live)', '', '', bandTxt]);
       }
       const inf = stat.info || {};
       const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-step-modal-ov';

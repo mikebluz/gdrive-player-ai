@@ -37404,19 +37404,29 @@
         // Every body keeps its id so renderers/handlers bind unchanged.
         '<div class="ambient-tabsec" id="ambient-tabsec">' +
           '<div class="ambient-tabsec-bar" role="tablist">' +
-            (E.isLane ? '' : '<button type="button" class="ambient-tabsec-tab" data-tab="progsec" role="tab" title="Key &amp; progression">⇶ Key/Prog</button>') +
+            (E.isLane ? '' : '<button type="button" class="ambient-tabsec-tab" data-tab="keysec" role="tab" title="Key — the area key every set of changes inherits from, and how it is applied">♯ Key</button>') +
+            (E.isLane ? '' : '<button type="button" class="ambient-tabsec-tab" data-tab="progsec" role="tab" title="Progression — sets of changes, salt, order, matrices">⇶ Prog</button>') +
             '<button type="button" class="ambient-tabsec-tab" data-tab="groove" role="tab" title="Groove — swing / accent / humanize / push">🕺 Groove</button>' +
             '<button type="button" class="ambient-tabsec-tab" data-tab="sched" role="tab" title="Scheduler — per-layer time matrix">⏱ Sched</button>' +
             '<button type="button" class="ambient-tabsec-tab" data-tab="mixer" role="tab" title="Mixer — faders + master fade + global FX">🎚️ Mixer</button>' +
           '</div>' +
           (E.isLane ? '' :
-          '<div class="ambient-tabsec-pane ambient-progsec" data-pane="progsec" id="ambient-progsec">' +
-            // Current-key indicator (from the dissolved Configure summary).
+          // KEY IS ITS OWN TAB. It is not a property of the progression: it is
+          // the AREA key — what the first set of changes inherits, what every
+          // set without its own key follows, and the only key an area with NO
+          // progression has at all (every scale-source layer resolves through
+          // _ambKeyRootPc). Sitting inside Progression it read as a competing
+          // area-wide key; on its own it reads as the default it is.
+          '<div class="ambient-tabsec-pane ambient-keysec" data-pane="keysec" id="ambient-keysec">' +
             '<div class="ambient-progsec-topline"><span class="ambient-cfg-keyind" id="ambient-cfg-keyind" title="Current Area KEY (grey = following the workspace key · amber = overridden for this Area)"></span></div>' +
-            '<div class="ambient-sched-body" id="ambient-progsec-body">' +
+            '<div class="ambient-sched-body" id="ambient-keysec-body">' +
             '<button type="button" class="ambient-mod-sub ambient-progsec-lbl ambient-seclbl-btn amb-keytoggle" id="ambient-key-toggle" ' +
               'title="Chromatic \u27f7 Key — OFF (Chromatic): every layer plays freely, no key constraint. ON (Key): constrain all layers to one key (root + scale); only in-key scales/chords (plus borrowed &amp; passing tones) are selectable.">Chromatic</button>' +
             keyRowHtml +
+            '<div class="ambient-hint ambient-keysec-foot">This is the area key: the first set of changes inherits it, and any set without its own key follows it. A set can depart from it in the progression\u2019s Overview.</div>' +
+            '</div></div>' +
+          '<div class="ambient-tabsec-pane ambient-progsec" data-pane="progsec" id="ambient-progsec">' +
+            '<div class="ambient-sched-body" id="ambient-progsec-body">' +
             '<button type="button" class="ambient-mod-sub ambient-progsec-lbl ambient-seclbl-btn ambient-prog-onoff" id="ambient-prog-onoff" ' +
               'title="Progression — when ON, every layer follows a shared chord progression (the per-layer Notes chip is read-only while on). Combine with Key above for a progression diatonic to that key.">Progression</button>' +
             // The row is now just the switch. Choosing WHICH changes moved to

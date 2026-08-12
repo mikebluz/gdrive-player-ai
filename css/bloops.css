@@ -3232,8 +3232,16 @@
       background: transparent; color: #6b6b8a; font-family: 'Segoe UI', sans-serif;
       font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.15s ease;
     }
-    .ambient-seg:hover { border-color: #9f7aea; color: #d6bcfa; }
-    .ambient-seg.active { border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.18); }
+    /* HOVER MUST NOT LOOK LIKE ACTIVE. These two were the same border AND the
+       same text colour, separated only by a 0.18-alpha background — so with the
+       pointer still on a button you had just switched OFF, it looked exactly as
+       lit as before. Reported as "the first click doesn't unhighlight it"; the
+       state was changing correctly all along and the hover style hid it.
+       Hover is now a dimmer, cooler edge with no text-colour change; active is
+       brighter and heavier than either. */
+    .ambient-seg:hover { border-color: #6b5b95; }
+    .ambient-seg.active { border-color: #b794f4; color: #e9d8fd; background: rgba(159,122,234,0.30); font-weight: 600; }
+    .ambient-seg.active:hover { border-color: #d6bcfa; background: rgba(159,122,234,0.38); }
     .ambient-seg.on { border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.18); }
 
     /* Seq Sections popover (edit a Seq layer's sections: reps / order / key) */

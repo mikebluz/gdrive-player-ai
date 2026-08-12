@@ -1112,3 +1112,86 @@ is about `Tone.setContext`, but the failure mode (clocks ~0.5 s apart) is the sa
 helps; the master tap is available as a reference signal but true echo subtraction
 is hard. Say "headphones recommended" in the UI rather than pretend — the existing
 hum feature already does exactly that.
+
+---
+
+## 13. Backlog — USER DRUM KITS: collect samples into one note-mapped instrument (not started, 2026-08-11)
+
+**A kit is already just a `sampleSamplers` entry with `drumKit: true` and a `urls`
+map of note names.** The built-ins (tr808 etc., 04-instruments-samples ~1226) are
+hardcoded exactly that way, and `snapDrumKitFreq(type, freq)` folds ANY played
+pitch to `36 + pitchClass` (C2) — so a kit is **exactly 12 slots, C2 … B2**, and
+picking a note plays a specific drum rather than a pitch-shifted single hit.
+
+**THE ONE DESIGN CONSTRAINT THAT MAKES THIS CHEAP: build user kits into that SAME
+12-slot C2–B2 layout.** Everything downstream then works with no engine change —
+the drum-lanes step editor (`euclidKit`, its 8 fixed lanes and per-step Sound /
+Pitch / Vel / Length / Ratchet / Prob / Pan), `_AMB_DRUM_NAMES`, the grid's kit
+cells (15-grid-build ~305 mirrors the same mapping), and the per-step "Sound"
+field that selects a neighbouring drum by semitone. Deviating from the layout
+means touching all of it.
+
+**Storage: reference member samples by id, do not copy audio.**
+`{ id, label, drumKit: true, kind: 'kit', kitOf: { 'C2': '<sampleId>', … } }`,
+resolved to `urls` at build time from each member's own url/blob. Persist through
+the existing imported-sample path (`persistImportedSample` / `loadImportedSamples`,
+04 ~1626/1648) — it already destructures `const { blob, ...meta } = rec` precisely
+so new fields ride along.
+
+**TRAPS, all documented elsewhere in CLAUDE.md and all live here:**
+- `sampleSamplers` entries carry `sampler` as a LAZY GETTER. A kit builder that
+  enumerates the library to offer choices must read metadata only
+  (`Object.getOwnPropertyDescriptor`, never `.sampler`) or it constructs every
+  sampler in the library — the same mistake `window.__sampleStats()` had to avoid.
+- Ids derive from source-relative paths and must stay STABLE: a project stores
+  `sample:<id>`, so renaming a member orphans saved projects.
+- `isSliceableSample` and the `kind` classification (`tuned` / `loop` / `kit`)
+  already exist from the importer — a kit is `kind: 'kit'`, and `info.drumKit`
+  already suppresses slicing (04 ~231).
+- `#` in a filename breaks the URL fragment; the importer maps it to `s`.
+
+**UI**: the Sample-bank manager shell is the obvious host — 12 rows named by
+`_AMB_DRUM_NAMES` (Kick / Rim / Snare / Clap / … in pitch-class order), each a
+picker over the user's imported samples, plus an audition button per slot. "Save
+as kit" writes the entry and it appears in every Tone dropdown like any other
+sample.
+
+---
+
+## 14. Backlog — MUSICAL NOTEPAD: a Tools page where typing plays notes (not started, 2026-08-11)
+
+A plain text notepad where each keystroke sounds a note, with Key and Tone
+configurable. Reachable from the main page's **Tools** window (index.html ~541,
+beside Bloops / Tracks / Player / Game).
+
+**MOST OF IT EXISTS: `_ambAlphaFreq(i, o)` (17-ambient ~13682) already maps a
+letter INDEX to a frequency**, with three modes and full key-awareness —
+`chromatic` (root + i semitones, deliberately climbing past an octave so the
+shape of a word is visible), `scale` (the i-th note OF THE AREA KEY, so "abcd" in
+C major is C D E F), and `micro` (i steps of `cents`). The Word layer
+(`layer.word`, §Word music) is already "text → notes" end to end, including
+`_ambWordEvents` (run / chord / chord+run shaping) and `_ambTextPassage` (laying
+words out in time). **The notepad is that translator with a typing UI instead of a
+generator**, which also means the two should share the mapping code rather than
+grow a second one that drifts.
+
+**Page shape.** Siblings are SELF-CONTAINED — `game.html` is a single inline
+script with no external `src`. So either:
+- *standalone* (recommended to start): own small page, Tone from CDN or raw
+  WebAudio, a curated tone list. Loads fast, no dependency on the Bloops engine
+  booting, but does NOT get the 212-entry tone list or user samples.
+- *engine-backed*: load the bloops script set to get `playNote` and
+  `getAllSoundOptions` — every tone and every user sample, at the cost of a heavy
+  page and a boot-order dependency.
+The honest middle is standalone first, with an "open in Bloops" hand-off.
+
+**Details that matter:**
+- Fire the note on `keydown`, BEFORE any DOM work — UI rule 2, and the reason the
+  existing engine keeps `lookAhead` at 25 ms.
+- Non-letters need a decision, not an accident: space = rest, punctuation =
+  accent/octave shift, Enter = phrase break (the Word layer already treats
+  sentence structure as musical).
+- Held/repeated keys: OS key-repeat will machine-gun; gate on `event.repeat`.
+- Config = Key (root + scale) and Tone, mirroring `word.*` so a notepad document
+  can be handed to a Bloom Word/Sir Eel layer verbatim — that hand-off is what
+  makes this a Bloops tool rather than a toy.

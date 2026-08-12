@@ -1051,3 +1051,64 @@ stack, held single note that roams per cycle, strummed pedal).
 Supporting evidence the merge is already half-built by hand: the Drone's pedal mode does
 what the Pedal layer does (one note per cycle, roaming), and a Bed at Density 1 with a Hold
 is a Drone.
+
+---
+
+## 12. Backlog — LISTEN: play along with live input (not started, 2026-08-11)
+
+Bloom reacts to what is played into it, in as close to real time as music allows.
+Recorded here with the analysis done so it can be picked up without re-deriving.
+
+**Most of the parts already exist.** `_ambAcfPitch(buf, sr)` → `{f, rms}`;
+`_ambHumSegment(frames)` → notes; `_ambDetectKey(chords)`; mic capture with the
+hard-won constraints (`noiseSuppression: false` — Chrome's suppressor is built to
+remove steady-state signal, which is exactly a sustained note; `echoCancellation:
+true` so the tracker does not follow the speakers);
+`cancelBloomFutureVoices(key, at)` to retract scheduled-ahead notes;
+`_ambReanchorLayer` to land a change on the next boundary; `_barGridAnchor` as the
+one shared clock.
+
+**THE BLOCKER, and it must be fixed first: the existing mic path builds a SECOND
+`new AudioContext()`** (`_ambHumToggle`, ~22053). Frames are stamped with
+`Tone.now()` from a different clock, so a mic onset cannot be correlated with
+Bloom's grid — fine for transcribing a hum after the fact, useless for playing
+along. It also polls an AnalyserNode on a 35 ms `setInterval`, the sparse-sampling
+method that has misled this codebase repeatedly. Play-along needs the mic on
+**Bloom's own context**, analysed in an **AudioWorklet** (sample-accurate
+`currentTime`, no polling). See the two-contexts gotcha in CLAUDE.md — that entry
+is about `Tone.setContext`, but the failure mode (clocks ~0.5 s apart) is the same.
+
+**Architecture.**
+1. **Listen bus** — mic → analysis worklet on the Tone context. Per 128-frame
+   block: RMS, spectral flux (onsets), ACF pitch. Post a compact feature frame
+   every ~10 ms with sample-accurate stamps.
+2. **Three estimators, three time constants** — onsets → inter-onset histogram →
+   tempo + phase; pitch classes over a sliding window → key / current chord;
+   smoothed RMS → an intensity macro 0..1.
+3. **React on the next musical boundary, not instantly.** This is a feature, not a
+   compromise: a response 12 ms late but off-grid sounds worse than one landing on
+   the next 1/8. Budget: mic→worklet ~3 ms, onset detection ~15 ms, decision, then
+   schedule to the next subdivision — percussive response lands within ~40 ms.
+   Harmonic following is inherently slower (a pitch-class histogram needs seconds
+   to be confident) and SHOULD be.
+4. **A reactive layer needs its own short lead** (~80 ms) or must retract via
+   `cancelBloomFutureVoices` + re-emit — the normal tick schedules too far ahead
+   to respond.
+5. **Drive the knobs that already exist** — key/scale, chord selection, chord
+   mask, density, rests, level, trance/unit gates — rather than building a
+   parallel engine.
+
+**Four behaviours, deliberately separable; pick one to prove the loop.**
+- *Follow my timing* — beat-lock `_barGridAnchor` to the player. Fastest to prove,
+  most convincing, no harmony guessing; everything else layers on top.
+- *Follow my harmony* — steer key/progression. Slower by nature, and a wrong guess
+  is audible as wrong notes.
+- *Answer me* — detect a phrase on silence, reply transposed/quantised/salted.
+  Reuses `_ambHumSegment`. Most "musical partner", least continuous.
+- *React to my intensity* — loudness/onset density → density, level, gates.
+  Simplest signal, continuous, no pitch or beat tracking.
+
+**Honest risk: without headphones the mic hears Bloom and reacts to itself.** AEC
+helps; the master tap is available as a reference signal but true echo subtraction
+is hard. Say "headphones recommended" in the UI rather than pretend — the existing
+hum feature already does exactly that.

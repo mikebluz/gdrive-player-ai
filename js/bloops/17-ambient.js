@@ -39818,6 +39818,17 @@
             // Defer past this menu's own dismiss (showCtxMenu runs fn() THEN
             // dismissCtxMenu(), which would close the length picker we open).
             { label: '⤓ Capture — record Bloom into the bank', fn: () => { setTimeout(() => _ambCaptureToBank(E), 0); } },
+            // THE way in to samples and drum kits. It used to be reachable only
+            // via a ⚙ that populateGroupedToneSelect adds beside a tone select —
+            // which Bloom's own layer cards do not use (they build options from
+            // _ambToneOptions), and which only rendered when an IMPORTED sample
+            // already existed. So the kit builder sat behind a button that did
+            // not appear on the cards people actually use, and not at all until
+            // you had imported something the feature does not need. A named menu
+            // item is findable; a conditional adornment on a control in another
+            // subsystem is not.
+            { label: '🥁 Samples & drum kits — import, preview, build a kit',
+              fn: () => { setTimeout(() => { try { showSampleBankManager(); } catch (e) {} }, 0); } },
           ];
           if (typeof showCtxMenu === 'function') showCtxMenu(r.left, r.top, acts);
         });

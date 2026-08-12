@@ -1351,8 +1351,13 @@
       // re-populates; removed again if the last user sample is deleted before
       // the next rebuild.
       try {
-        const hasUser = (opts || []).some(o => typeof o.value === 'string' && o.value.startsWith('sample:')
-          && typeof sampleSamplers !== 'undefined' && !!((sampleSamplers.get(o.value.slice(7)) || {}).imported));
+        // ANY sample option is enough now, not just an IMPORTED one. This used
+        // to require `.imported`, which made the sample bank unreachable until
+        // you had already imported something — and the bank is where drum kits
+        // are BUILT, from a shipped library that is mostly drum one-shots. So a
+        // user with no imports had no way in at all: the only door to the
+        // feature was behind the thing the feature does not need.
+        const hasUser = (opts || []).some(o => typeof o.value === 'string' && o.value.startsWith('sample:'));
         const next = sel.nextElementSibling;
         const already = !!(next && next.classList && next.classList.contains('tone-manage-btn'));
         if (hasUser && !already) {
@@ -1360,7 +1365,7 @@
           b.type = 'button';
           b.className = 'tone-manage-btn';
           b.textContent = '⚙';
-          b.title = 'Manage user samples (preview / delete)';
+          b.title = 'Samples & drum kits — preview, delete, build a kit';
           b.addEventListener('click', (e) => {
             e.preventDefault(); e.stopPropagation();
             if (typeof showSampleBankManager === 'function') showSampleBankManager();

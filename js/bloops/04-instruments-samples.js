@@ -1947,7 +1947,7 @@
       const head = document.createElement('div');
       head.className = 'sbm-head';
       const title = document.createElement('span');
-      title.textContent = 'User samples';
+      title.textContent = 'Samples & drum kits';
       head.appendChild(title);
       const close = document.createElement('button');
       close.type = 'button'; close.className = 'sbm-close'; close.textContent = '×';
@@ -1970,7 +1970,10 @@
       const showEmpty = () => {
         const empty = document.createElement('div');
         empty.className = 'sbm-empty';
-        empty.textContent = 'No user samples yet — Import or Grab to create one.';
+        // The kit builder needs NO imports — say so, or an empty bank reads as
+        // "nothing to do here" when the ＋ Drum kit button above is fully usable.
+        empty.textContent = 'No user samples yet — Import or Grab to add one. '
+          + 'You can still build a drum kit above from the shipped library.';
         list.appendChild(empty);
       };
       const entries = [];

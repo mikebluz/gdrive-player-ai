@@ -12839,3 +12839,17 @@
                border-radius: 8px; padding: 5px 10px; font-size: 0.76rem;
                min-height: 32px; cursor: pointer; margin-left: auto; margin-right: 8px; }
     .sbm-kit:hover { background: #1b2b24; }
+
+    /* ---- Whole-unit on/off (Edit Unit Schedule) ----
+       The common edit is "this layer, off for this chord". It leads the
+       popover so it never requires reading the slice grid below. */
+    .ambient-ug-whole { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+    .ambient-ug-whole > span { font-size: 0.72rem; color: #a0aec0; flex: 0 0 auto; }
+    .ambient-ug-whole-btn { flex: 1 1 auto; min-height: 40px; font-size: 0.82rem;
+      border-color: #6b3a3a; color: #ffbdbd; background: #1d1414; }
+    .ambient-ug-whole-btn.on { border-color: #35c98e; color: #9df3cd; background: #12211b; }
+    .ambient-ug-tip { color: #718096; }
+    /* A unit with EVERY slice off reads as silent at a glance, rather than as a
+       row of tiny off-ticks indistinguishable from a busy gate. */
+    .ambient-sched-blk.ug-mute { opacity: 0.28; }
+    .ambient-sched-blk.ug-mute .ambient-sched-ug { display: none; }

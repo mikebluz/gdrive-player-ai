@@ -11582,6 +11582,23 @@
       if (!arr || !arr.some(v => !v)) delete g.slots[idx]; else g.slots[idx] = arr;
       if (!Object.keys(g.slots).length) delete L.unitGate;
     }
+    // WHOLE-UNIT ON/OFF — the common case, without opening the slice editor.
+    // A unit is "off" when every slice of its slot is 0; "on" is simply no slot
+    // stored (the absent-is-neutral grammar the gate already uses, so an on unit
+    // costs nothing and a project that never touches this carries no field).
+    function _ambUnitWholeOff(L, uIdx) {
+      const m = _ambUnitGateMaskAt(L, uIdx);
+      return !!(m && m.length && !m.some(v => v));
+    }
+    function _ambUnitSetWhole(L, uIdx, on, periodHint) {
+      const div = _ambUnitGateDiv(L);
+      const period = (L && L.unitGate) ? _ambUnitGatePeriod(L)
+        : Math.max(1, Math.min(_AMB_UG_MAXSLOTS, (periodHint | 0) || 1));
+      const mask = Array.from({ length: div }, () => (on ? 1 : 0));
+      // All-on prunes the slot (and the whole gate when it empties), which is
+      // exactly what "on" should mean.
+      _ambUnitGateSet(L, uIdx, mask, div, period);
+    }
     // Coerce a loaded unitGate; drop it entirely when it says nothing.
     function _ambNormalizeUnitGate(L) {
       if (!L || typeof L !== 'object') return;
@@ -11758,11 +11775,21 @@
           (i % 4 === 0 ? ' q' : '') + '" data-ug-i="' + i + '" title="Slice ' + (i + 1) + ' of ' + div + '">' + (i % 4 === 0 ? (i / 4 + 1) : '') + '</button>').join('');
         const divOpts = _AMB_UG_DIVS.map(d => '<option value="' + d + '"' + (d === div ? ' selected' : '') + '>' + d + '</option>').join('');
         const onCount = mask.filter(v => v).length;
+        // WHOLE UNIT, first and plainly: turning a layer off for one chord is
+        // the common edit, and it should not require reading a slice grid.
+        const allOff = !onCount;
+        const wholeHtml = '<div class="ambient-ug-whole">'
+          + '<span>This unit</span>'
+          + '<button type="button" class="ambient-step-btn ambient-ug-whole-btn' + (allOff ? '' : ' on') + '" data-ug-whole="1">'
+          + (allOff ? '⏻ OFF — the layer is silent here' : '⏻ ON — the layer plays here') + '</button>'
+          + '</div>';
         modal.innerHTML =
           '<div class="sm-title">Edit Unit Schedule</div>' +
           '<div class="ambient-ug-sub">' + esc(_ambLayerLabel(L, key) || key) + ' · unit ' + (uIdx + 1) +
-            ' · ' + _ambFmtBpc(unitBars) + ' bar' + (Math.abs(unitBars - 1) < 0.01 ? '' : 's') + '</div>' +
+            ' · ' + _ambFmtBpc(unitBars) + ' bar' + (Math.abs(unitBars - 1) < 0.01 ? '' : 's') +
+            ' &middot; <span class="ambient-ug-tip">⌥/⌘-click a block to toggle it without opening this</span></div>' +
           '<div class="ambient-ug-body">' +
+            wholeHtml +
             '<div class="ambient-ctrl"><label title="How many equal segments this unit is cut into.">Slices</label>' +
               '<select class="ambient-select ambient-ug-div">' + divOpts + '</select>' +
               '<span class="ambient-hint">' + esc(sliceLbl()) + ' each</span></div>' +
@@ -11820,6 +11847,15 @@
       const close = () => { try { ov.remove(); } catch (e) {} };
       ov.addEventListener('click', (ev) => {
         const t = ev.target;
+        // WHOLE UNIT first — flips every slice at once, which is what the
+        // grid below would otherwise take a dozen taps to say.
+        const wh = t.closest && t.closest('[data-ug-whole]');
+        if (wh) {
+          const nowOn = mask.some(v => v);
+          for (let i = 0; i < mask.length; i++) mask[i] = nowOn ? 0 : 1;
+          _ambUnitGateSet(L, slot, mask, div, period);
+          after(); return;
+        }
         const cell = t.closest && t.closest('[data-ug-i]');
         if (cell) { const i = cell.getAttribute('data-ug-i') | 0; mask[i] = mask[i] ? 0 : 1; _ambUnitGateSet(L, slot, mask, div, period); after(); return; }
         const ap = t.closest && t.closest('[data-ug-apply]');
@@ -32280,7 +32316,10 @@
                 uAttr = ' data-ui="' + uIdx + '"';
                 const mask = _ambUnitGateMaskAt(layer, uIdx);
                 if (mask) {
-                  cls += ' ugated';
+                  // A unit with EVERY slice off is not "partly gated" — it is
+                  // silent, and the lane should say so at a glance rather than
+                  // showing twelve tiny off-ticks.
+                  cls += mask.some(v => v) ? ' ugated' : ' ugated ug-mute';
                   gateHtml = '<i class="ambient-sched-ug">' + mask.map(v => '<i' + (v ? '' : ' class="off"') + '></i>').join('') + '</i>';
                 }
               }
@@ -37502,6 +37541,25 @@
             if (ublk) {
               const t = _schedLayer(ublk); if (!t || !t.L) return;
               const ui = parseInt(ublk.getAttribute('data-ui'), 10) | 0;
+              // ALT / RIGHT-CLICK = the shortcut: silence or restore this whole
+              // unit outright, no popover. Turning one chord off for one layer
+              // is the common edit and it should not cost a dialog and a slice
+              // grid; the full editor stays on a plain click.
+              if (ev.altKey || ev.metaKey) {
+                const per = ublk.closest('.ambient-sched-row')
+                  ? ublk.closest('.ambient-sched-row').querySelectorAll('.ambient-sched-blk[data-ui]').length : 1;
+                const wasOff = _ambUnitWholeOff(t.L, ui);
+                _ambUnitSetWhole(t.L, ui, wasOff, per);
+                // Same commit path the editor uses (_ambUnitGateModal's after()).
+                try { _ambUnitGateBump(); } catch (e) {}
+                try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+                try { if (E.timer) _ambSyncUnitGate(E, t.key); } catch (e) {}
+                _ambRenderScheduler(E);
+                try { if (typeof showToast === 'function') {
+                  showToast(_ambLayerLabel(t.L, t.key) + ' — unit ' + (ui + 1) + (wasOff ? ' on' : ' off'));
+                } } catch (e) {}
+                return;
+              }
               try { _ambUnitGateModal(E, t.key, ui, () => _ambRenderScheduler(E)); } catch (e) {}
               return;
             }

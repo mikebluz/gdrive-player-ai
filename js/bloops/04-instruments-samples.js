@@ -1840,14 +1840,24 @@
       // Candidate members: the user's own samples, metadata ONLY. Reading
       // `.sampler` here would trip the lazy getter and build every sampler in
       // the library (the documented __sampleStats trap). Kits cannot nest.
+      // EVERY single sample is a candidate, not just imported ones: the shipped
+      // library is mostly drum ONE-SHOTS (Linndrum, 808 packs, claps, hats), and
+      // those are exactly what a kit is made of — restricting this to imports
+      // would have hidden the best material in the app. Excluded: other kits (no
+      // nesting) and loops (a tempo-carrying loop is not a drum slot).
       const members = [];
       try {
         sampleSamplers.forEach((info, id) => {
-          if (!info || !info.imported || info.drumKit) return;
-          members.push([id, info.name || id]);
+          if (!info || info.drumKit || !info.urls) return;
+          if (info.kind === 'loop') return;
+          members.push([id, info.name || id, !!info.imported]);
         });
       } catch (e) {}
-      members.sort((a, b) => String(a[1]).localeCompare(String(b[1])));
+      // Your own samples first — you are likelier to be reaching for those —
+      // then the library, alphabetically within each.
+      members.sort((a, b) => (a[2] === b[2])
+        ? String(a[1]).localeCompare(String(b[1]))
+        : (a[2] ? -1 : 1));
       const grid = document.createElement('div');
       grid.className = 'dk-grid';
       KIT_SLOTS.forEach((note, i) => {
@@ -1860,7 +1870,18 @@
         const sel = document.createElement('select');
         sel.className = 'ambient-select dk-pick';
         sel.add(new Option('— empty —', ''));
-        members.forEach(([id, nm]) => sel.add(new Option(nm, id)));
+        let grpMine = null, grpLib = null;
+        members.forEach(([id, nm, mine]) => {
+          // Grouped so a 150-entry library stays navigable.
+          let g = mine ? grpMine : grpLib;
+          if (!g) {
+            g = document.createElement('optgroup');
+            g.label = mine ? 'Your samples' : 'Library';
+            sel.appendChild(g);
+            if (mine) grpMine = g; else grpLib = g;
+          }
+          g.appendChild(new Option(nm, id));
+        });
         sel.value = slots[note] || '';
         sel.addEventListener('change', () => {
           if (sel.value) slots[note] = sel.value; else delete slots[note];

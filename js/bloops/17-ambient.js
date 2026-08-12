@@ -32845,18 +32845,23 @@
           });
         }
       } catch (e) {}
-      // Bar ruler: a number every 4 bars with a stronger line, explicit per-bar
-      // widths so fractional view lengths (fractional chord cycles) stay exact.
-      let ticks = '';
-      for (let i = 0; i < Math.ceil(VIEW - 1e-6); i++) {
-        const tw = Math.min(1, VIEW - i) / VIEW * 100;
-        ticks += '<i class="ambient-sched-tick' + (i % 4 === 0 ? ' q' : '') + '" style="flex:0 0 ' + tw.toFixed(3) + '%">' + ((i % 4 === 0) ? (i + 1) : '') + '</i>';
-      }
+      // THE BAR RULER IS GONE. It cost 20px — a fifth of the whole Scheduler —
+      // and at the default 4-bar view it drew exactly ONE number ("1") and three
+      // blank ticks, because labels only land every 4th bar. Worse, the row's
+      // one real control (bars-per-row) sat inside a `.ambient-sched-ctl` that a
+      // rule hid unconditionally to make the ruler "compact full-width", so it
+      // had an offsetParent of null on every viewport: an invisible control and
+      // a near-empty scale, in a panel where vertical space is the scarce thing.
+      // The control moved to the button bar below, where it is reachable.
       // The AREA UNIT row used to sit here. It moved to the Areas panel (beside
       // Plays / Bar Lock / Bars, where the other area-level settings live): it is
       // set once and rarely touched, and here it cost two rows — a green readout
       // that only repeated its own select, and a strip that was always empty.
-      let html = '<div class="ambient-sched-row ambient-sched-ruler"><span class="ambient-sched-ctl"><span class="ambient-sched-lbl">bars →</span>' + '<select class="ambient-select ambient-sched-rowsel" title="Bars per row. A long chain squeezed into one row leaves each chord a few pixels wide; a narrower row wraps instead, so every block gets bigger.">' + [[0,'whole chain'],[2,'2 bars'],[4,'4 bars'],[8,'8 bars'],[16,'16 bars']].map(o => '<option value="' + o[0] + '"' + (o[0] === _rowPref ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>' + '</span><span class="ambient-sched-strip">' + ticks + '</span></div>';
+      let html = '';
+      const _rowSelHtml = '<select class="ambient-select ambient-sched-rowsel" title="Bars per row. A long chain squeezed into one row leaves each chord a few pixels wide; a narrower row wraps instead, so every block gets bigger.">'
+        + [[0, 'whole chain'], [2, '2 bars'], [4, '4 bars'], [8, '8 bars'], [16, '16 bars']]
+            .map(o => '<option value="' + o[0] + '"' + (o[0] === _rowPref ? ' selected' : '') + '>' + o[1] + '</option>').join('')
+        + '</select>';
       // SECTION lane (sets of bars): named blocks cycling across the ruler —
       // the arrangement level. With none defined, a slim ＋ affordance seeds
       // A/B (4+4 bars). Tap a block → rename / resize / delete.
@@ -33299,13 +33304,13 @@
         + 'Parts</button>'
         + '<button type="button" class="ambient-seg ambient-sched-qe" '
         + 'title="Edit — every layer\u2019s changes in one grid; click a cell to turn that layer off there">'
-        + 'Edit</button></div>' + html;
-      // Legend — name what the strip shows (block/fresh/repeat/playhead).
-      html += '<div class="ambient-sched-legend">' +
-        '<i class="ambient-sched-blk lg"></i> 1 unit' +
-        '<span class="lgtxt">✎ fresh material is written &amp; plays</span>' +
-        '<span class="lgtxt">↻ <i class="ambient-sched-blk lg rep"></i> that exact pattern repeats</span>' +
-        '<i class="ambient-sched-ph lg"></i> playhead</div>';
+        + 'Edit</button>' + _rowSelHtml + '</div>' + html;
+      // THE LEGEND IS GONE TOO. A static key naming block / fresh / repeat /
+      // playhead, which never changed and never responded to anything — and it
+      // described marks that only appear once layers are running, so on a quiet
+      // panel it explained things that were not on screen. The same information
+      // is on the blocks themselves as tooltips, where it is asked for rather
+      // than always present.
       body.innerHTML = html;
       if (!body._secWired) {
         body._secWired = true;

@@ -688,7 +688,14 @@
         try { if (typeof window !== 'undefined' && !window.__bloopsOfflineRender) return false; } catch (e) {}
         return true;
       };
-      async function offlineBegin(timeoutMs) {
+      // maxSlots: build the offline node only as wide as this render needs. The
+      // live node is 16 in / 17 stereo out because a session can grow layers;
+      // a RENDER knows its layer count up front, and 17 stereo outputs is 34
+      // channel buffers per block that iOS has to find room for in a fresh
+      // worklet, beside the live core, the samplers and the app. On desktop the
+      // width costs about 1% — the reason to shrink it is not speed, it is
+      // giving a phone a smaller allocation to refuse.
+      async function offlineBegin(timeoutMs, maxSlots) {
         // A LEFTOVER SESSION MUST NOT POISON EVERY LATER RENDER. `off` is meant
         // to mean "a render is in flight", but any path that ends a render
         // without calling offlineEnd — a throw, a reload of the panel, an
@@ -703,10 +710,11 @@
           }
           const ctx = Tone.getContext();
           await ctx.rawContext.audioWorklet.addModule('js/bloops/core/voice-processor.js?v=DEPLOYVER');
+          const _cap = Math.max(1, Math.min(SLOTS, (maxSlots | 0) || SLOTS));
           const n2 = ctx.createAudioWorkletNode('bloops-voice-processor', {
-            numberOfInputs: SLOTS,
-            numberOfOutputs: SLOTS + 1,
-            outputChannelCount: new Array(SLOTS + 1).fill(2),
+            numberOfInputs: _cap,
+            numberOfOutputs: _cap + 1,
+            outputChannelCount: new Array(_cap + 1).fill(2),
             channelCount: 2,
             channelCountMode: 'clamped-max',
           });
@@ -729,7 +737,7 @@
           // succeeds; giving up early costs the whole render.
           const ok = await Promise.race([readyP, new Promise((r) => setTimeout(() => r(false), timeoutMs || 30000))]);
           if (!ok) { try { n2.disconnect(); } catch (e) {} return null; }
-          off = { node: n2, slots: new Map(), dests: new Array(SLOTS).fill(null), taken: 0,
+          off = { node: n2, cap: _cap, slots: new Map(), dests: new Array(SLOTS).fill(null), taken: 0,
                   strips: new Map(), post: (m) => { try { n2.port.postMessage(m); } catch (e) {} }, sendVia: null,
                   // this render's OWN sample-buffer table (see _offEnsureSample)
                   sampleIdByKey: new Map(), sampleIdSeq: 0, sampOk: 0, sampFail: 0 };
@@ -821,7 +829,8 @@
         if (off.strips.has(key)) return off.slots.get(key);
         let s = off.slots.get(key);
         if (s == null) {
-          if (off.slots.size >= SLOTS) return -1;   // out of slots → Tone voice
+          // …against THIS session's width, not the live one's.
+          if (off.slots.size >= (off.cap || SLOTS)) return -1;   // out of slots → Tone voice
           s = off.slots.size;
           off.slots.set(key, s);
         }

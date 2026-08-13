@@ -27872,7 +27872,11 @@
           // sound like what I hear" report. Awaiting it also compiles the wasm
           // before any note is delivered.
           if (!(opts && opts.noCore) && !(opts && opts.dry)) {
-            try { coreOn = !!(typeof _coreVoices !== 'undefined' && await _coreVoices.offlineBegin()); } catch (e) { coreOn = false; }
+            // Ask for only as many slots as this render has layers (+ headroom
+            // for the send). A narrower node is a smaller thing for a phone to
+            // refuse; it makes no measurable difference to speed.
+            const _wantSlots = (() => { try { return Math.max(2, Math.min(16, Object.keys(_ambWantSet(cap.cfg) || {}).length + 1)); } catch (e) { return 16; } })();
+            try { coreOn = !!(typeof _coreVoices !== 'undefined' && await _coreVoices.offlineBegin(undefined, _wantSlots)); } catch (e) { coreOn = false; }
             // SAY SO. Without the core the notes render through Tone nodes and
             // the whole bounce runs 5-10x slower — the difference between a
             // 4-minute take in one minute and in twenty. It used to fail

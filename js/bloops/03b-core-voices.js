@@ -71,6 +71,21 @@
           }
           localStorage.setItem('bloopsCoreStripsRepair', '1');
         }
+        // THE SAME REPAIR FOR THE VOICES SWITCH. The setter bug applied to
+        // `bloopsCore()` exactly as it did to `bloopsCoreStrips()`, but only the
+        // strips flag was ever healed — so a device whose bloopsCoreVoices got
+        // written '0' has run the NODE engine ever since, silently. That costs
+        // 5-10x on a bounce and is per-device and permanent, which is what a
+        // desktop rendering 4 minutes in 33s while a phone takes twenty looks
+        // like. Same shape: clear it once, mark it, never touch a deliberate
+        // later choice.
+        if (localStorage.getItem('bloopsCoreVoicesRepair') !== '1') {
+          if (localStorage.getItem('bloopsCoreVoices') === '0') {
+            localStorage.removeItem('bloopsCoreVoices');
+            console.info('[bloops-core] core VOICES were disabled by a known bug — restored to the default (on).');
+          }
+          localStorage.setItem('bloopsCoreVoicesRepair', '1');
+        }
       } catch (e) {}
       function stripsEnabled() {
         try { return enabled() && localStorage.getItem('bloopsCoreStrips') !== '0'; } catch (e) { return false; }
@@ -674,7 +689,13 @@
         return true;
       };
       async function offlineBegin(timeoutMs) {
-        if (off) return null;               // one at a time
+        // A LEFTOVER SESSION MUST NOT POISON EVERY LATER RENDER. `off` is meant
+        // to mean "a render is in flight", but any path that ends a render
+        // without calling offlineEnd — a throw, a reload of the panel, an
+        // abandoned bounce — leaves it set, and then every bounce for the rest
+        // of the page silently returns null and runs on the node fallback.
+        // Ending the stale one and continuing is strictly better than refusing.
+        if (off) { try { offlineEnd(); } catch (e) { off = null; } }
         if (!enabled()) return null;        // the kill switch governs offline too
         try {
           if (!_wasmCopy) {

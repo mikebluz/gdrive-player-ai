@@ -27601,10 +27601,19 @@
                     const _nowMs = ((typeof performance !== 'undefined') ? performance.now() : Date.now());
                     if (!_renderT0) _renderT0 = _nowMs;
                     const _el = _nowMs - _renderT0;
-                    // 10s of ACTUAL rendering and 5% done before projecting: far
-                    // enough in that the rate is real, early enough that a phone
-                    // bails in about a minute instead of twenty.
-                    if (_el > 10000 && _renderFrac >= 0.05) {
+                    // 4s of ACTUAL rendering and 2% done before projecting. The
+                    // window is this tight only because the clock starts at the
+                    // first checkpoint, so setup is already excluded: a healthy
+                    // machine is ~12% done by 4s and projects well under the
+                    // recording time, while a phone-class device (measured at
+                    // 0.18x under 6x CPU throttling, against the 0.2x reported)
+                    // reaches 2% in about half a minute instead of ninety
+                    // seconds. Every second here is a second the user waits
+                    // before the recording that was always going to be faster.
+                    // …and never past halfway: finishing what is already half
+                    // rendered beats starting the whole take again as a
+                    // recording, however poor the rate looks.
+                    if (_el > 4000 && _renderFrac >= 0.02 && _renderFrac < 0.5) {
                       const _proj = (_el / _renderFrac) / 1000;      // seconds to finish
                       if (_proj > seconds * 1.2 && _proj > 60 && !_bail) {
                         _bail = { projSec: Math.round(_proj), xrt: +(seconds / _proj).toFixed(2) };

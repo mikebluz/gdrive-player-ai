@@ -24183,8 +24183,10 @@
           if (typeof showToast === 'function') {
             const m = _tooSlow.projSec >= 120 ? (Math.round(_tooSlow.projSec / 60) + ' min') : (_tooSlow.projSec + 's');
             showToast('Rendering this take would take about ' + m + ' on this device ('
-              + _tooSlow.xrt + '\u00d7). Recording it in real time instead \u2014 ' + Math.round(seconds) + 's.',
-              { warn: true, ms: 9000 });
+              + _tooSlow.xrt + '\u00d7'
+              + (_tooSlow.core === false ? ', and the CORE ENGINE did not start here \u2014 that alone costs 5-10\u00d7' : ', core engine running')
+              + '). Recording it in real time instead \u2014 ' + Math.round(seconds) + 's.',
+              { warn: true, ms: 12000 });
           }
         } catch (e) {}
         E._capAsBounce = true;
@@ -27616,7 +27618,11 @@
                     if (_el > 4000 && _renderFrac >= 0.02 && _renderFrac < 0.5) {
                       const _proj = (_el / _renderFrac) / 1000;      // seconds to finish
                       if (_proj > seconds * 1.2 && _proj > 60 && !_bail) {
-                        _bail = { projSec: Math.round(_proj), xrt: +(seconds / _proj).toFixed(2) };
+                        // Carry WHY it is slow, not just that it is. A render
+                        // without the core is 5-10x slower on its own, and that
+                        // is a different problem from a slow device — the two
+                        // are indistinguishable from the outside otherwise.
+                        _bail = { projSec: Math.round(_proj), xrt: +(seconds / _proj).toFixed(2), core: !!coreOn };
                         if (_bailResolve) _bailResolve(_bail);
                         return;                       // and do NOT resume, below
                       }

@@ -33059,7 +33059,13 @@
               ? ' title="' + (secs.length - _secSeen.size) + ' part(s) start outside this pass — open ▤ Arrangement to see them all.">parts <b class="secmore">' + _secSeen.size + '/' + secs.length + '</b>'
               : '>parts') + '</span>' +
           (secs && secs.length ? '<button type="button" class="ambient-seg ambient-sched-addsec" title="Append a part">＋</button>' : '') + '</span>' +
-          '<span class="ambient-sched-strip sections">' + sBlocks + '<i class="ambient-sched-ph"></i></span></div>';
+          // This strip no longer shares the x-scale of the lanes below: it spans
+          // the WHOLE arrangement while they span one part pass. The playhead has
+          // to be told, or it sweeps this row at the view's rate — the full width
+          // every few bars, against blocks that represent minutes.
+          '<span class="ambient-sched-strip sections"'
+            + ((_laneSpans && _laneSpans.total > 0) ? ' data-arrbars="' + _laneSpans.total.toFixed(4) + '"' : '')
+            + '>' + sBlocks + '<i class="ambient-sched-ph"></i></span></div>';
       }
       // CHORD lane (area progression active): one labeled block per chord, sized
       // by its own bars (fractional OK), cycling across the ruler — every layer
@@ -33745,6 +33751,14 @@
       // without data-total (ruler / chord lane) wrap at the plain view.
       phs.forEach(el => {
         const strip = el.closest('.ambient-sched-strip');
+        // ARRANGEMENT-SCALED strip (the parts navigator): its own span in bars,
+        // so the head walks the whole piece once rather than the view many times.
+        const arr = strip && strip.getAttribute && parseFloat(strip.getAttribute('data-arrbars') || '');
+        if (arr > 0) {
+          el.style.display = 'block';
+          el.style.left = (((bars % arr) / arr) * 100).toFixed(2) + '%';
+          return;
+        }
         const rowEl = el.closest('[data-total]');
         const total = rowEl ? parseFloat(rowEl.getAttribute('data-total')) : V;
         if (!(total > V) || !strip || !strip.hasAttribute('data-srow')) {

@@ -25943,6 +25943,22 @@
     }
     function _ambVizFrame(E) {
       if (!E.viz) return;
+      // A RENDER OWNS THE MACHINE. Every suspend checkpoint resumes through the
+      // MAIN thread, and a 4-minute bounce has ~120 of them — so this rAF's DOM
+      // work (playheads, layer bars, note lines, rolls, canvases) sits directly
+      // between each chunk and the next. Nothing here can be seen during a
+      // bounce anyway: playback is stopped and the numbers are frozen. Keep the
+      // loop alive (so it resumes by itself) and skip the work.
+      // E.viz is the {analyser, raf} OBJECT, not a handle — assigning a rAF id to
+      // it destroys the analyser and the loop's own bookkeeping, and then every
+      // frame schedules a SECOND rAF: a storm that made renders 3x slower, which
+      // is the opposite of the point. Reschedule the way the tail of this
+      // function does, through E.viz.raf.
+      if (window.__bloopsOfflineRender) {
+        if (E.timer && !document.hidden) E.viz.raf = requestAnimationFrame(() => _ambVizFrame(E));
+        else E.viz.raf = 0;
+        return;
+      }
       // The spectrum canvas is OPTIONAL (the master Bloom has none) — draw it only if
       // present, but ALWAYS run the playheads/readouts + keep this rAF alive, since this
       // loop also drives the layer bars, elapsed time, note lines and live rolls.
@@ -27381,6 +27397,19 @@
     // clock was behind and truncated voices — measured max sample diff 0.84).
     // Seconds of real music rendered BEFORE the requested start, purely to
     // charge the reverb / delay / FX state, then trimmed off (see _preroll).
+    // Diagnostic meters on a bounce: per-layer level (the cuts-in-and-out
+    // report) and the wet-path reading. Off by default — they are per-sample
+    // worklets on every layer and they do not shape the file. Persisted so a
+    // diagnosis survives a reload: window.bloomBounceMeters(true).
+    try {
+      window.__bloomBounceMeters = (localStorage.getItem('bloomBounceMeters') === '1');
+      window.bloomBounceMeters = (on) => {
+        if (on === undefined) return !!window.__bloomBounceMeters;
+        window.__bloomBounceMeters = !!on;
+        try { localStorage.setItem('bloomBounceMeters', on ? '1' : '0'); } catch (e) {}
+        return !!on;
+      };
+    } catch (e) { window.__bloomBounceMeters = false; }
     const _AMB_BOUNCE_PREROLL = 2.5;
     async function _ambRenderOffline(E, seconds, opts) {
       seconds = Math.max(1, Math.min(1800, +seconds || 30));
@@ -27835,7 +27864,12 @@
           // dropping in and out is visible (the mix hides it: see
           // _bloomLayerMeterUrlGet).
           try {
-            const lurl = _bloomLayerMeterUrlGet();
+            // OPT-IN. One AudioWorklet meter per layer plus one on the wet path
+            // is real per-sample work on every render, and it exists to DIAGNOSE
+            // (the per-layer dropout report, the wet-path reading) — not to make
+            // the file. Measured ~11% of a 4-layer render. Turn it on with
+            // window.bloomBounceMeters(true) when something needs diagnosing.
+            const lurl = (window.__bloomBounceMeters ? _bloomLayerMeterUrlGet() : null);
             if (lurl && outStage && E3 && E3.mod) {
               await Tone.getContext().rawContext.audioWorklet.addModule(lurl);
               const lsink = new Tone.Gain(0); lsink.connect(outStage);
@@ -27863,7 +27897,7 @@
           } catch (e) {}
           // …and meter what actually reaches the FX returns (see _bloomWetMeterUrl).
           try {
-            const murl = _bloomWetMeterUrl();
+            const murl = (window.__bloomBounceMeters ? _bloomWetMeterUrl() : null);
             const wetSrc = [];
             if (E3 && E3.reverb) wetSrc.push(E3.reverb);
             if (_busRig && _busRig.returns) {
@@ -28137,6 +28171,7 @@
         // sound on the live context after the render returns.
         try { if (typeof _vqClear === 'function') _vqClear(); } catch (e2) {}
       }
+      // (diagnostic meters are opt-in — see _bloomBounceMeters below)
       // TRIM THE PRE-ROLL. Those extra seconds existed only to charge the
       // reverb / delay / FX state; the file must start where the user asked.
       try {

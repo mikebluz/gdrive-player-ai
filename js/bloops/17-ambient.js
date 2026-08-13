@@ -24140,8 +24140,18 @@
         onStatus: (t) => { try { if (prog) prog.setStatus(t); } catch (e) {} },
         onProgress: (f) => { try { if (prog && prog.setProgress) prog.setProgress(f); } catch (e) {} },
       };
-      // Render the passage you were LISTENING to, not the opening.
-      if (fromSec != null) hooks.fromSec = fromSec;
+      // A TAKE STARTS AT THE BEGINNING. Rendering from the playhead was added to
+      // answer "the bounce sounds thinner than what I am hearing" — but it makes
+      // a capture taken while playing open MID-PHRASE, which reads exactly as
+      // reported: "cutting off the very first milliseconds". Measured on a
+      // playing project: the file's first sample was already at 0.169 and the
+      // first 20ms peaked at half the take's peak, i.e. music in progress.
+      // The thinness that motivated it had other causes, since fixed (samples
+      // bypassing their strips, the missing DC/limiter stages, the un-charged
+      // reverb — the 2.5s pre-roll still covers that last one). So the default
+      // is the beginning; opts.fromSec stays for a caller that wants the span it
+      // was listening to (the ⚖ compare tool uses it).
+      if (fromSec != null) hooks.fromPos = fromSec;   // recorded, not applied
       try { res = await _ambBounceToBank(E, seconds, hooks); }
       catch (e) { res = { ok: false, reason: (e && e.message) || String(e) }; }
       try { if (prog) { prog.markDone(); prog.close(); } } catch (e) {}
@@ -24628,8 +24638,23 @@
       const tap = _ambMasterTapNode();
       if (!tap) { alert('Master output unavailable.'); return; }
       E.windingDown = false;
+      // ARM THE RECORDER BEFORE STARTING THE MUSIC. This used to start the
+      // generator first and then spend real time building the rig — an
+      // AudioWorkletNode, a MediaStreamDestination and a MediaStreamSource, then
+      // four connects — so the opening milliseconds were already sounding before
+      // anything was listening, and the take began mid-attack. The generator is
+      // started at the END of this function instead (both the worklet path and
+      // the MediaRecorder fallback), after a couple of render quanta so audio is
+      // provably flowing through the recorder first.
+      const _wasRunning = !!E.timer;
       let _startedHere = false;
-      try { if (!E.timer) { _ambStartGenerator(E); _startedHere = true; } } catch (e) {}    // make sure something is generating
+      const _startMusic = () => {
+        if (_wasRunning || _startedHere) return;
+        _startedHere = true;
+        // ~2 render quanta at 48k is under 6ms; 60ms is inaudible as a delay
+        // before a take and leaves no doubt the first block was captured.
+        setTimeout(() => { try { if (!E.timer) _ambStartGenerator(E); } catch (e) {} }, 60);
+      };
       // Silence detector — drives Finalize in both capture modes.
       let analyser = null;
       try { analyser = ac.createAnalyser(); analyser.fftSize = 1024; tap.connect(analyser); } catch (e) { analyser = null; }
@@ -24690,6 +24715,7 @@
           if (_wired) {
             E.capRec = r;
             _ambRefreshCaptureBtn(E);
+            _startMusic();                       // recorder is live — now play
             if (typeof showToast === 'function') showToast('Capturing… press Finalize to wind down and end cleanly.');
             return;
           }
@@ -24717,6 +24743,7 @@
       E.capRec = { mode: 'mr', rec, dest, analyser, tap, chunks, silentMs: 0, pollTimer: null, finalizing: false };
       try { rec.start(); } catch (e) { try { tap.disconnect(dest); } catch (_) {} E.capRec = null; _bail('Capture failed', e); return; }
       _ambRefreshCaptureBtn(E);
+      _startMusic();                             // recorder is live — now play
       if (typeof showToast === 'function') showToast('Capturing… press Finalize to wind down and end cleanly.');
     }
     // Wind Bloom down (no new iterations) and end the recording once the output

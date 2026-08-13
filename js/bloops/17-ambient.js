@@ -6880,6 +6880,29 @@
       else ed.part = -1;
       const _peRange = (ed.part >= 0) ? _ambPePartRange(ed, ed.part) : { from: 0, to: ed.chords.length };
       let partBar = '';   // the active part's settings — folds away with the editor body
+      // QUICK LENGTH — every chord in the progression at once. Defined once and
+      // used twice: in the part bar (below Repeats) when there is a chain, and in
+      // the Chords section when there is not — a plain progression has no part
+      // settings at all, and that is the commonest case, so putting it only
+      // beside Repeats would hide it from most projects.
+      const _quickLenHtml = () => {
+        const _all = ed.chords || [];
+        // The default comes from the LIVE cfg — `defBars` belongs to a different
+        // function here, and reaching for it threw on every render of a plain
+        // progression (the editor opened to an exception, not a panel).
+        const _dfl = (() => { try { const g = ed.E && ed.E.getCfg && ed.E.getCfg();
+          return (g && Number.isFinite(g.barsPerChord) && g.barsPerChord > 0) ? g.barsPerChord : 1; } catch (e) { return 1; } })();
+        const _cb = _all.filter(c => !_ambIsTransition(c)).map(c => (Number.isFinite(c.bars) && c.bars > 0) ? c.bars : _dfl);
+        if (!_cb.length) return '';
+        const _uni = _cb.every(v => v === _cb[0]);
+        return '<div class="pe-partgrp">' +
+          '<span class="pe-partgrp-lbl">Length</span>' +
+          '<input type="text" class="pe-partlen" id="pe-alllen" value="' + (_uni ? esc(_ambFmtBpc(_cb[0])) : '') + '"' +
+            (_uni ? '' : ' placeholder="mixed"') +
+            ' title="Set EVERY chord in this progression to one length (1, 1/2, 8/7…). The per-chord field below still sets them individually." />' +
+          '<span class="pe-partgrp-hint">' + (_uni ? ('all ' + _cb.length + ' chord' + (_cb.length === 1 ? '' : 's')) : (new Set(_cb).size + ' different lengths')) + '</span>' +
+          '</div>';
+      };
       const partTabs = (function () {
         if (!_peParts) {
           // No chain yet — still offer the one action that starts one.
@@ -6925,6 +6948,7 @@
                 '</span>' +
                 '<span class="pe-partgrp-hint">' + (plays > 1 ? 'runs ' + plays + '× before the next part' : 'runs once, then the next part') + '</span>' +
               '</div>' +
+              _quickLenHtml() +
               // PER-PART KEY: a real mid-progression modulation. It already existed
               // in the engine but its only UI was a chip on the overview strip.
               // Setting it here records the key in force; it does NOT transpose the
@@ -7041,7 +7065,8 @@
       if (_ambIsTransition(ch)) {
         host.innerHTML =
           '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
-          partTabs + (partBar ? secWrap('part', 'Changes settings', partBar, pnmSum) : '') +
+          partTabs + (partBar ? secWrap('part', 'Changes settings', partBar, pnmSum)
+                               : (_quickLenHtml() ? '<div class="pe-partbar pe-partbar-solo">' + _quickLenHtml() + '</div>' : '')) +
           secWrap('chords', 'Chords', '<div class="pe-chords">' + chordsRow + '</div>' +
           '<div class="pe-chordhdr">Transition ' + (sel + 1) + ' of ' + ed.chords.length +
             '<span class="pe-chordops"><button type="button" class="pe-x" data-pe="rmchord" title="Remove this transition"' + (ed.chords.length <= 1 ? ' disabled' : '') + '>✕ remove</button></span></div>' +
@@ -7058,7 +7083,8 @@
       }
       host.innerHTML =
         '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
-        partTabs + (partBar ? secWrap('part', 'Changes settings', partBar, pnmSum) : '') +
+        partTabs + (partBar ? secWrap('part', 'Changes settings', partBar, pnmSum)
+                             : (_quickLenHtml() ? '<div class="pe-partbar pe-partbar-solo">' + _quickLenHtml() + '</div>' : '')) +
         secWrap('chords', 'Chords', '<div class="pe-chords">' + chordsRow + '</div>' +
         '<div class="pe-chordhdr">Chord ' + (sel + 1) + ' of ' + ed.chords.length + (ed.altSel >= 0 ? ' <span class="pe-editing-alt">· editing alt ' + (ed.altSel + 1) + '</span>' : '') +
           '<span class="pe-chordops">' +
@@ -7112,6 +7138,33 @@
         const v = (ln.value || '').trim();
         if (!v) { delete ed.chords[ed.sel].bars; }   // blank → inherit global Bars/chord
         else { const f = _ambParseBpc(v); if (f != null) ed.chords[ed.sel].bars = f; }
+        _ambPeRender();
+      });
+      // QUICK LENGTH — one value onto every chord. It can DESTROY information (a
+      // progression whose chords differ loses those differences), so when they
+      // are not uniform it says exactly what it is about to replace and asks
+      // first. Uniform → no prompt; the answer is not in doubt there.
+      const al = host.querySelector('#pe-alllen');
+      if (al) al.addEventListener('change', () => {
+        const raw = (al.value || '').trim();
+        const list = (ed.chords || []).map((c, i) => ({ c, i })).filter(x => !_ambIsTransition(x.c));
+        if (!list.length) return;
+        const dflt = (ed.E && ed.E.getCfg && Number.isFinite(ed.E.getCfg().barsPerChord)) ? ed.E.getCfg().barsPerChord : 1;
+        const cur = list.map(x => (Number.isFinite(x.c.bars) && x.c.bars > 0) ? x.c.bars : dflt);
+        const distinct = Array.from(new Set(cur));
+        let f = null;
+        if (raw) { f = _ambParseBpc(raw); if (f == null) { _ambPeRender(); return; } }   // unparseable → put it back
+        if (distinct.length > 1) {
+          const shown = distinct.slice().sort((a, b) => a - b).map(_ambFmtBpc).join(', ');
+          const to = raw ? _ambFmtBpc(f) : _ambFmtBpc(dflt) + ' (the default)';
+          let ok = false;
+          try {
+            ok = window.confirm('These ' + list.length + ' chords have ' + distinct.length + ' different lengths (' + shown + ').\n\n'
+              + 'Set every one of them to ' + to + ' bars? The individual lengths will be lost.');
+          } catch (e) { ok = false; }
+          if (!ok) { _ambPeRender(); return; }                 // put the field back as it was
+        }
+        list.forEach(x => { if (raw) x.c.bars = f; else delete x.c.bars; });
         _ambPeRender();
       });
     }

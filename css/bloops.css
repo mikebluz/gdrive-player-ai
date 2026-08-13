@@ -2955,7 +2955,18 @@
     /* B3: roman-numeral header on each chord (relative to the key). */
     .pe-chord .pe-rn { font-size: 0.86rem; font-weight: 800; color: #e2c9ff; letter-spacing: 0.02em; }
     .pe-lenrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 0.85rem; color: #a0aec0; }
-    .pe-lenrow input { width: 84px; min-width: 0; box-sizing: border-box; padding: 5px 8px; background: #0f0f1e; border: 1px solid #2d2d3f; border-radius: 6px; color: #e2e8f0; text-align: center; }
+    /* The per-chord length is a primary edit in this section, not a footnote —
+       sized and weighted to match, and above the 40px touch floor. */
+    .pe-lenrow input { width: 116px; min-width: 0; box-sizing: border-box; min-height: 40px; padding: 8px 10px;
+      font-size: 1rem; font-weight: 700; background: #0f0f1e; border: 1px solid #3a3a52; border-radius: 8px;
+      color: #e2e8f0; text-align: center; }
+    .pe-lenrow label { font-weight: 600; color: #cbd5e0; }
+    /* Quick length, in the part bar: same shape as the Repeats stepper beside it. */
+    .pe-partlen { width: 78px; min-width: 0; box-sizing: border-box; min-height: 32px; padding: 5px 8px;
+      background: #0f0f1e; border: 1px solid #2d2d3f; border-radius: 6px; color: #e2e8f0;
+      text-align: center; font-size: 0.86rem; font-weight: 700; }
+    .pe-partlen:focus { outline: none; border-color: #9f7aea; }
+    .pe-partlen::placeholder { color: #7a7a99; font-weight: 500; font-style: italic; }
     .pe-lenrow input:focus { outline: none; border-color: #9f7aea; }
     .pe-lenhint { font-size: 0.72rem; color: #718096; }
     .ambient-prog-editor button[disabled] { opacity: 0.4; cursor: default; }

@@ -24117,55 +24117,16 @@
     // gets the slow path silently.
     // So ask first, with a throwaway 0.25s render, and cache the answer for the
     // session. Cheap to ask; the whole render to get wrong.
-    // ASK THE DEVICE, DO NOT ASSUME. Whether offline rendering is worth using
-    // is a question about THIS device and THIS project, and the only honest way
-    // to answer it is to render a few seconds and time them. A core that fails
-    // to start shows up here as a low number without needing to be diagnosed —
-    // and so does a device that starts the core and is simply slow.
-    let _bloomRenderXrt = null;              // × realtime, measured once per session
-    async function _ambRenderSpeed(E) {
-      if (_bloomRenderXrt !== null) return _bloomRenderXrt;
-      _bloomRenderXrt = 0;
-      try {
-        const t = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-        const r = await _ambRenderOffline(E, 4, {});
-        const dt = ((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t) / 1000;
-        // A short render carries fixed setup (worklet + wasm + chains), so this
-        // UNDER-states the real rate — which is the safe direction: it can only
-        // make us over-estimate the cost, never under-estimate it.
-        if (dt > 0) _bloomRenderXrt = 4 / dt;
-        try { if (r && r.buffer) r.buffer = null; } catch (e) {}
-      } catch (e) { _bloomRenderXrt = 0; }
-      return _bloomRenderXrt;
-    }
     async function _ambBounceBeginOffline(E, seconds) {
       // Without the core, rendering is slower than simply recording the output.
       // Recording takes exactly `seconds`; the node-fallback render takes about
       // five times that. So hand it to the real-time capture rather than let the
       // menu's "fast" spend twenty minutes on a four-minute take.
-      // Recording takes exactly `seconds`. Rendering takes seconds / rate. Below
-      // about 0.6x the render is the slower of the two even before its own
-      // overhead, so hand a long take to the recorder rather than spend twenty
-      // minutes on four. Short takes stay on the render either way — the
-      // difference is not worth a calibration pass.
-      try {
-        if (seconds >= 30) {
-          const xrt = await _ambRenderSpeed(E);
-          if (xrt > 0 && xrt < 0.6) {
-            const est = Math.round(seconds / xrt);
-            try {
-              if (typeof showToast === 'function') {
-                showToast('Rendering runs at ' + xrt.toFixed(2) + '\u00d7 on this device \u2014 about '
-                  + (est >= 120 ? Math.round(est / 60) + ' min' : est + 's') + ' for this take. Recording it in real time '
-                  + 'instead (' + Math.round(seconds) + 's).', { warn: true, ms: 9000 });
-              }
-            } catch (e) {}
-            E._capAsBounce = true;
-            try { _ambCaptureBegin(E, Math.max(1, Math.round(seconds)) * 1000); } catch (e) {}
-            return;
-          }
-        }
-      } catch (e) {}
+      // (The decision to record instead of render is made DURING the render —
+      //  see the bail in _ambRenderOffline. A pre-flight calibration was tried
+      //  and removed: it renders the opening seconds, which are the sparsest
+      //  part of a piece, so it measured fast and handed 1897 notes to a path
+      //  that then crawled.)
       // STOP PLAYBACK FIRST. Inside Tone.Offline the GLOBAL Tone context is the
       // offline one until the render resolves — a live tick firing during that
       // window would build its voices into the bounce (or throw cross-context).
@@ -24208,8 +24169,28 @@
       // is the beginning; opts.fromSec stays for a caller that wants the span it
       // was listening to (the ⚖ compare tool uses it).
       if (fromSec != null) hooks.fromPos = fromSec;   // recorded, not applied
+      let _tooSlow = null;
       try { res = await _ambBounceToBank(E, seconds, hooks); }
-      catch (e) { res = { ok: false, reason: (e && e.message) || String(e) }; }
+      catch (e) {
+        if (e && e._bloomTooSlow) { _tooSlow = e._bloomTooSlow; res = null; }
+        else res = { ok: false, reason: (e && e.message) || String(e) };
+      }
+      // RENDERING WAS LOSING TO THE CLOCK — record the output instead, which
+      // takes exactly the length of the take.
+      if (_tooSlow) {
+        try { if (prog) { prog.markDone(); prog.close(); } } catch (e) {}
+        try {
+          if (typeof showToast === 'function') {
+            const m = _tooSlow.projSec >= 120 ? (Math.round(_tooSlow.projSec / 60) + ' min') : (_tooSlow.projSec + 's');
+            showToast('Rendering this take would take about ' + m + ' on this device ('
+              + _tooSlow.xrt + '\u00d7). Recording it in real time instead \u2014 ' + Math.round(seconds) + 's.',
+              { warn: true, ms: 9000 });
+          }
+        } catch (e) {}
+        E._capAsBounce = true;
+        try { _ambCaptureBegin(E, Math.max(1, Math.round(seconds)) * 1000); } catch (e) {}
+        return;
+      }
       try { if (prog) { prog.markDone(); prog.close(); } } catch (e) {}
       if (!res || !res.ok) {
         try { alert('Bounce failed: ' + ((res && res.reason) || 'unknown')); } catch (e) {}
@@ -27546,6 +27527,16 @@
           }
         }
       } catch (e) {}
+      // BAIL CHANNEL. A suspended OfflineAudioContext consumes nothing, so the
+      // way to abandon a render is simply NOT to resume it — then settle the
+      // outer wait through this promise and let the context be collected.
+      let _bail = null, _bailResolve = null;
+      const _bailP = new Promise((r) => { _bailResolve = r; });
+      // Rendering starts at the FIRST checkpoint, not when this function does.
+      // Projecting from setup-inclusive time made a healthy 8.3s render look
+      // like 80s and bail — the fixed cost of pass 1, the chains and the wasm
+      // was being divided by a fraction still near zero.
+      let _renderT0 = 0;
       let deliverUpTo = null;         // (untilAt) -> void
       let checkpointsFired = 0;
       const _t0poll = (typeof performance !== 'undefined') ? performance.now() : 0;
@@ -27598,8 +27589,34 @@
                   _renderFrac = Math.max(_renderFrac, Math.min(1, t / dur));
                   try { if (onProgress) onProgress(_renderFrac); } catch (e) {}
                   _narrate();
+                  // LOSING TO THE CLOCK? Recording the output takes exactly the
+                  // take's length; rendering takes length / rate. Once enough of
+                  // the render has happened to project honestly, a rate that
+                  // would finish LATER than simply recording means this path is
+                  // the wrong one — so stop, and let the caller record instead.
+                  // Measured on the real workload, mid-flight: a pre-flight
+                  // calibration cannot do this, because the first seconds of a
+                  // piece are its sparsest and it measures them as fast.
+                  if (!opts || !opts.noBail) {
+                    const _nowMs = ((typeof performance !== 'undefined') ? performance.now() : Date.now());
+                    if (!_renderT0) _renderT0 = _nowMs;
+                    const _el = _nowMs - _renderT0;
+                    // 10s of ACTUAL rendering and 5% done before projecting: far
+                    // enough in that the rate is real, early enough that a phone
+                    // bails in about a minute instead of twenty.
+                    if (_el > 10000 && _renderFrac >= 0.05) {
+                      const _proj = (_el / _renderFrac) / 1000;      // seconds to finish
+                      if (_proj > seconds * 1.2 && _proj > 60 && !_bail) {
+                        _bail = { projSec: Math.round(_proj), xrt: +(seconds / _proj).toFixed(2) };
+                        if (_bailResolve) _bailResolve(_bail);
+                        return;                       // and do NOT resume, below
+                      }
+                    }
+                  }
                 } catch (e) {} finally {
-                  try { ctx.resume(); } catch (e) {}
+                  // Abandoned renders stay suspended: that is what makes them
+                  // free rather than a 20-minute background CPU burn.
+                  if (!_bail) { try { ctx.resume(); } catch (e) {} }
                 }
               }).catch(() => {});   // t past completion → rejection, ignore
             } catch (e) {}
@@ -27613,7 +27630,7 @@
       try {
         say('2/4 Preparing instruments…');
         phase('instruments', {});
-        buffer = await Tone.Offline(async () => {
+        buffer = await Promise.race([_bailP.then((b) => { const e = new Error('render slower than recording'); e._bloomTooSlow = b; throw e; }), Tone.Offline(async () => {
           // WET PATH: build this area's per-layer mod chains ON THE OFFLINE
           // CONTEXT. Inside Tone.Offline the global Tone context IS the offline
           // one, and _ambSyncMods/_ambLayerDest both read the module-global _E —
@@ -28180,8 +28197,13 @@
           // the render starts (messages are async; the render doesn't wait).
           if (coreOn) { try { await _coreVoices.offlineFlush(); } catch (e) {} }
           _renderStarted = true; _narrate();
-        }, _renderSec);
+        }, _renderSec)]);
       } catch (e) {
+        // The BAIL is not a failure — it is a decision to record instead, and it
+        // has to reach the caller to be acted on. Re-throw it; the finally below
+        // still runs, so the offline session, the _E restore and the flags are
+        // cleaned up exactly as on any other exit.
+        if (e && e._bloomTooSlow) throw e;
         return { buffer: null, notes: notes.length, reason: 'render failed: ' + ((e && e.message) || e) };
       } finally {
         // RESTORE _E HERE, not on the happy path. The module-global _E is what

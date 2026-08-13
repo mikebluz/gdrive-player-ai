@@ -32910,6 +32910,7 @@
             const el2 = _ambGet(E, 'ambient-sched'); if (!el2) return;
             if (tgt.closest('.ambient-sched-rowsel')) el2._schedRow = parseInt(tgt.value, 10) || 0;
             else if (tgt.closest('.ambient-sched-partsel')) {
+              el2._schedFollow = false;                 // an explicit pick pins it
               // Choosing a part resets to its FIRST pass — the pass numbers belong
               // to the part you just left, so carrying "2 of 3" across is
               // meaningless, and landing on "all passes" would re-create the dense
@@ -33167,9 +33168,18 @@
                    (r + 1) + ' of ' + _sel.idx.length + '</option>').join(''))
               : ('<option>' + (_sel ? 'plays once' : '\u2014') + '</option>')) +
             '</select>';
+          const _fol = (_schedElP && _schedElP._schedFollow === false) ? '' : ' active';
           html += '<div class="ambient-sched-row ambient-sched-passrow">' +
             '<span class="ambient-sched-ctl"><span class="ambient-sched-lbl">show</span></span>' +
-            '<span class="ambient-sched-viewsel">' + partSel + passSel +
+            '<span class="ambient-sched-viewsel">' +
+            // FOLLOW is the default and says so. Picking a part by hand pins the
+            // view; this is how you get back, and how you can tell which mode you
+            // are in — without it, "the strip moved on its own" and "the strip is
+            // stuck" look identical.
+            '<button type="button" class="ambient-seg ambient-sched-follow' + _fol + '" title="' +
+              (_fol ? 'Following playback — the strip moves to whichever part is sounding. Pick a part to pin it here.'
+                    : 'Pinned to this part. Click to follow playback again.') + '">▶</button>' +
+            partSel + passSel +
             '<button type="button" class="ambient-seg ambient-sched-partmap" title="Arrangement — every section and part at a glance, including the ones outside this pass">▤</button>' +
             '</span></div>';
         }
@@ -33441,6 +33451,12 @@
           if (secb) { ev.preventDefault(); ev.stopPropagation(); E._schedSections = !E._schedSections; _ambRenderScheduler(E); return; }
           const qe = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-qe');
           if (qe) { ev.preventDefault(); ev.stopPropagation(); _ambQuickUnitsModal(E); return; }
+          const fol = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-follow');
+          if (fol) {
+            _E = E; const elF = _ambGet(E, 'ambient-sched');
+            if (elF) { elF._schedFollow = (elF._schedFollow === false); try { _ambRenderScheduler(E); } catch (e) {} }
+            return;
+          }
           const add = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-addsec');
           if (add) {
             _E = E; const c2 = E.getCfg(); if (!c2) return;
@@ -33596,6 +33612,22 @@
     }
     // One global playhead across every row: position on the shared bar grid,
     // wrapped to the ruler width. Driven each viz frame; cheap when collapsed.
+    // The arrangement as PLAYED, in bars: one entry per part PASS, with where it
+    // starts. Shared by the Scheduler's parts lane and by follow-the-playhead, so
+    // the blocks drawn and the block followed are the same list.
+    function _ambPartSpans(cfg) {
+      const sl = (typeof _ambProgChainSlots === 'function') ? _ambProgChainSlots(cfg) : null;
+      if (!sl || !sl.length) return null;
+      const list = []; let at = 0;
+      sl.forEach((x) => {
+        const w = _ambChainSlotBars(cfg, x);
+        const last = list[list.length - 1];
+        if (last && last.pi === x.part && last.rep === x.rep) { last.bars += w; at += w; return; }
+        list.push({ name: x.pName || 'Changes', pi: x.part, rep: x.rep, plays: x.plays || 1, from: at, bars: w, hold: !!x.hold });
+        at += w;
+      });
+      return list.length ? { list, total: at } : null;
+    }
     function _ambSchedCursor(E, now) {
       const box = _ambGet(E, 'ambient-sched');
       if (!box || box.classList.contains('collapsed')) return;
@@ -33623,6 +33655,29 @@
       const barSec = (60 / Math.max(20, bpm)) * 4;
       const bars = (now - G) / barSec; if (bars < 0) return;
       const V = (Number.isFinite(box._schedView) && box._schedView > 0) ? box._schedView : _AMB_SCHED_BARS;   // one ROW = the view (whole prog cycles)
+      // FOLLOW THE PLAYHEAD. The strip shows one part pass at a time, so without
+      // this the view sat on pass 1 while the music moved on — and the cursor,
+      // which wraps within the window, kept sweeping as though it were still the
+      // right block. A playhead that moves while the label is wrong is worse than
+      // no playhead. Choosing a part by hand pins the view (_schedFollow false).
+      if (box._schedFollow !== false) {
+        const sp = _ambPartSpans(cfg);
+        if (sp && sp.total > 0) {
+          const at2 = ((bars % sp.total) + sp.total) % sp.total;
+          const cur = sp.list.find(x => at2 >= x.from - 1e-6 && at2 < x.from + x.bars - 1e-6);
+          if (cur && (box._schedPart !== cur.pi || box._schedRep !== cur.rep)) {
+            // Re-rendering from a TIMER would replace an open <select> mid-pick —
+            // the very thing the part/pass selects are documented as safe from.
+            // Skip while one has focus; the next boundary catches up.
+            const af = document.activeElement;
+            if (!(af && af.tagName === 'SELECT' && box.contains(af))) {
+              box._schedPart = cur.pi; box._schedRep = cur.rep;
+              try { _ambRenderScheduler(E); } catch (e) {}
+              return;                      // this frame's DOM is gone; next tick draws it
+            }
+          }
+        }
+      }
       const fracPct = (bars % V) / V * 100;
       const pct = fracPct.toFixed(2) + '%';
       // Per-strip playhead: a layer row may span SEVERAL sub-rows (data-total >

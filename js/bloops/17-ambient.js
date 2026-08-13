@@ -32982,44 +32982,37 @@
         // wearing a new label. The spans come from the played chain, so a part
         // that repeats draws one block per pass and every block is as wide as it
         // actually sounds.
-        const _laneParts = (() => {
-          const sl = _ambProgChainSlots(cfg);
-          if (!sl || !sl.length) return null;
-          const o = [];
-          sl.forEach((x) => {
-            const last = o[o.length - 1];
-            const w = _ambChainSlotBars(cfg, x);
-            if (last && last.pi === x.part && last.rep === x.rep) { last.bars += w; return; }
-            o.push({ name: x.pName || 'Changes', pi: x.part, rep: x.rep, plays: x.plays || 1, bars: w, hold: !!x.hold });
-          });
-          return o.length ? o : null;
-        })();
+        // THE PARTS LANE IS THE NAVIGATOR — the WHOLE arrangement, every part,
+        // always. Scoping it to the view meant it showed only the part already
+        // selected, so there was no way to reach any other one: "how do you edit
+        // the other parts" had no answer on screen. Everything BELOW stays scoped
+        // to the selected part; this row is how you change that selection.
+        const _laneSpans = _ambPartSpans(cfg);
         let sBlocks = '';
         // Which sections actually LAND in this window. The strip is scoped to one
         // part pass, so a section starting later is simply not here — and silently
         // omitting it is what made a freshly-added section look like it did
         // nothing. The label says "2 of 3" and points at ▤ for the rest.
         const _secSeen = new Set();
-        if (_laneParts) {
-          let sb = 0, si = 0;
-          while (sb < VIEW - 1e-6 && si < 96) {
-            const lp = _laneParts[si % _laneParts.length];
-            const slen = Math.max(0.25, lp.bars);
-            const sw2 = Math.min(slen, VIEW - sb) / VIEW * 100;
-            // An open part maps to a SECTION (the mirror emits one per open part
-            // in order), so those stay tap-to-edit; a changes part has no section
-            // behind it and is a read-out here — it is edited in ⇶ Arch.
-            const _si2 = lp.hold || !secs ? -1 : (secs.findIndex(z => z && z.name === lp.name));
-            sBlocks += '<i class="ambient-sched-secblk' + ((si % _laneParts.length) === 0 ? ' cyc' : '') + (lp.hold ? ' harm' : '') + '"'
+        if (_laneSpans && _laneSpans.total > 0) {
+          const _selPi = (_schedElP && Number.isFinite(_schedElP._schedPart)) ? _schedElP._schedPart : -1;
+          const _selRp = (_schedElP && Number.isFinite(_schedElP._schedRep)) ? _schedElP._schedRep : -1;
+          _laneSpans.list.forEach((lp, li) => {
+            const sw2 = Math.max(0.5, lp.bars / _laneSpans.total * 100);
+            // Every block selects its part; an OPEN part also gets the rename /
+            // length menu, since this lane is the only place it can be edited.
+            const _si2 = (lp.open && secs) ? secs.findIndex(z => z && z.name === lp.name) : -1;
+            const _on = (lp.pi === _selPi && (_selRp < 0 || lp.rep === _selRp));
+            sBlocks += '<i class="ambient-sched-secblk' + (li === 0 ? ' cyc' : '') + (lp.hold ? ' harm' : '') + (_on ? ' on' : '') + '"'
+              + ' data-pi="' + lp.pi + '" data-rep="' + lp.rep + '"'
               + (_si2 >= 0 ? ' data-si="' + _si2 + '"' : '')
               + ' style="width:' + sw2.toFixed(3) + '%" title="' + esc(lp.name) + ' · ' + _ambFmtBpc(lp.bars) + ' bars'
               + (lp.plays > 1 ? ' · pass ' + (lp.rep + 1) + ' of ' + lp.plays : '')
-              + (lp.hold ? ' · no changes, the harmony holds' : '')
-              + (_si2 >= 0 ? ' — tap to edit' : ' — edit in ⇶ Arch') + '">'
+              + (lp.open ? (lp.hold ? ' · no changes, the harmony holds' : ' · no changes, the changes run underneath') : '')
+              + ' — tap to show this part' + (_si2 >= 0 ? ', or rename / resize it' : '') + '">'
               + esc(lp.name) + (lp.plays > 1 ? '<b class="secpart">' + (lp.rep + 1) + '/' + lp.plays + '</b>' : '') + '</i>';
             if (_si2 >= 0) _secSeen.add(_si2);
-            sb += slen; si++;
-          }
+          });
         } else if (secs && secs.length) {
           const lens = secs.map(x => Math.max(0.25, Number(x.bars) || 4));
           let sb = 0, si = 0;
@@ -33062,7 +33055,7 @@
             // The "N of M" counter counts SECTIONS, so it only makes sense on the
             // legacy path; with the lane drawing parts it would report "0/1"
             // whenever the one open part sits outside the window.
-            ((!_laneParts && secs && secs.length && _secSeen.size < secs.length)
+            ((!_laneSpans && secs && secs.length && _secSeen.size < secs.length)
               ? ' title="' + (secs.length - _secSeen.size) + ' part(s) start outside this pass — open ▤ Arrangement to see them all.">parts <b class="secmore">' + _secSeen.size + '/' + secs.length + '</b>'
               : '>parts') + '</span>' +
           (secs && secs.length ? '<button type="button" class="ambient-seg ambient-sched-addsec" title="Append a part">＋</button>' : '') + '</span>' +
@@ -33508,7 +33501,25 @@
           }
           const blk = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-secblk');
           if (blk) {
-            _E = E; const c2 = E.getCfg(); if (!c2 || !Array.isArray(c2.sections)) return;
+            _E = E; const c2 = E.getCfg(); if (!c2) return;
+            // A TAP SELECTS THAT PART. This lane shows the whole arrangement
+            // while everything below is scoped to one part, so this is how you
+            // get at the others — the question "how do you edit the other parts"
+            // had no answer before, because only a part with a SECTION behind it
+            // responded at all, and it answered with the wrong part's menu.
+            if (blk.dataset.pi != null) {
+              const elS = _ambGet(E, 'ambient-sched');
+              if (elS) {
+                elS._schedPart = blk.dataset.pi | 0;
+                elS._schedRep = blk.dataset.rep | 0;
+                elS._schedFollow = false;             // an explicit pick pins the view
+                try { _ambRenderScheduler(E); } catch (e) {}
+              }
+            }
+            // Only an OPEN part has a section behind it, and this menu is the
+            // only place it can be renamed or resized; a changes part is edited
+            // in ⇶ Arch, and selecting it (above) is all this tap does.
+            if (blk.dataset.si == null || !Array.isArray(c2.sections)) return;
             const si = blk.dataset.si | 0; const sc = c2.sections[si]; if (!sc) return;
             const done = () => { try { _ambRenderScheduler(E); } catch (e) {} if (typeof persistWorkspace === 'function') persistWorkspace(); };
             const items = [
@@ -33639,19 +33650,40 @@
     }
     // One global playhead across every row: position on the shared bar grid,
     // wrapped to the ruler width. Driven each viz frame; cheap when collapsed.
-    // The arrangement as PLAYED, in bars: one entry per part PASS, with where it
-    // starts. Shared by the Scheduler's parts lane and by follow-the-playhead, so
-    // the blocks drawn and the block followed are the same list.
+    // THE ARRANGEMENT IN BARS: one entry per part PASS, with where it starts.
+    // Built from cfg.prog.parts, NOT from the chord chain — a part that carries
+    // no changes and does not hold contributes no chord slots, so a chain-derived
+    // list left it out entirely and the lane could not draw it. It occupies bars
+    // all the same, which is what this list is about. Shared by the Scheduler's
+    // parts lane and by follow-the-playhead, so the block drawn and the block
+    // followed are the same list.
     function _ambPartSpans(cfg) {
-      const sl = (typeof _ambProgChainSlots === 'function') ? _ambProgChainSlots(cfg) : null;
-      if (!sl || !sl.length) return null;
+      const p = cfg && cfg.prog; if (!p) return null;
+      const chords = Array.isArray(p.chords) ? p.chords : [];
+      const bpc = Math.max(0.01, (cfg.barsPerChord || 1));
+      const parts = (Array.isArray(p.parts) && p.parts.length) ? p.parts : null;
       const list = []; let at = 0;
-      sl.forEach((x) => {
-        const w = _ambChainSlotBars(cfg, x);
-        const last = list[list.length - 1];
-        if (last && last.pi === x.part && last.rep === x.rep) { last.bars += w; at += w; return; }
-        list.push({ name: x.pName || 'Changes', pi: x.part, rep: x.rep, plays: x.plays || 1, from: at, bars: w, hold: !!x.hold });
-        at += w;
+      if (!parts) {
+        if (!chords.length || !p.on) return null;
+        const bars = chords.reduce((a, c) => a + ((c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc), 0);
+        list.push({ name: p.name || 'Changes', pi: 0, rep: 0, plays: 1, from: 0, bars, hold: false, open: false });
+        return { list, total: bars };
+      }
+      let from = 0;
+      parts.forEach((pt, pi) => {
+        const plays = Math.max(1, (pt.plays | 0) || 1);
+        let bars;
+        if (pt.open) bars = Math.max(0.25, pt.bars || 4);
+        else {
+          const len = Math.max(1, pt.len | 0); bars = 0;
+          for (let k = 0; k < len; k++) { const c = chords[from + k]; bars += (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc; }
+          from += len;
+        }
+        for (let r = 0; r < plays; r++) {
+          list.push({ name: pt.name || ('Changes ' + (pi + 1)), pi, rep: r, plays, from: at, bars,
+                      hold: !!pt.hold, open: !!pt.open });
+          at += bars;
+        }
       });
       return list.length ? { list, total: at } : null;
     }

@@ -24117,7 +24117,41 @@
     // gets the slow path silently.
     // So ask first, with a throwaway 0.25s render, and cache the answer for the
     // session. Cheap to ask; the whole render to get wrong.
+    // CAN THE CORE RUN OFFLINE ON THIS DEVICE? This is a capability question,
+    // not a speed guess — it costs ~30ms and it is reliable, unlike timing the
+    // opening seconds of a piece (tried, removed: the opening is the sparsest
+    // part and it measured fast). Without the core a render is 5-10x slower than
+    // with it, which on a phone is the difference between beating real time and
+    // losing to it by twenty minutes. Cached for the session.
+    let _bloomOfflineCoreOK = null;
+    async function _ambOfflineCoreUsable() {
+      if (_bloomOfflineCoreOK !== null) return _bloomOfflineCoreOK;
+      _bloomOfflineCoreOK = false;
+      try {
+        if (typeof _coreVoices === 'undefined' || !_coreVoices.enabled || !_coreVoices.enabled()) return false;
+        await Tone.Offline(async () => {
+          try { _bloomOfflineCoreOK = !!(await _coreVoices.offlineBegin(8000)); } catch (e) { _bloomOfflineCoreOK = false; }
+          try { if (_coreVoices.offlineEnd) _coreVoices.offlineEnd(); } catch (e) {}
+        }, 0.25);
+      } catch (e) { _bloomOfflineCoreOK = false; }
+      return _bloomOfflineCoreOK;
+    }
     async function _ambBounceBeginOffline(E, seconds) {
+      // No core here → rendering cannot win, so do not spend a minute proving it
+      // mid-render. Record straight away.
+      try {
+        if (seconds >= 30 && !(await _ambOfflineCoreUsable())) {
+          try {
+            if (typeof showToast === 'function') {
+              showToast('The core engine can\u2019t render offline on this device, and rendering without it is far slower '
+                + 'than recording. Capturing in real time instead \u2014 ' + Math.round(seconds) + 's.', { warn: true, ms: 10000 });
+            }
+          } catch (e) {}
+          E._capAsBounce = true;
+          try { _ambCaptureBegin(E, Math.max(1, Math.round(seconds)) * 1000); } catch (e) {}
+          return;
+        }
+      } catch (e) {}
       // Without the core, rendering is slower than simply recording the output.
       // Recording takes exactly `seconds`; the node-fallback render takes about
       // five times that. So hand it to the real-time capture rather than let the

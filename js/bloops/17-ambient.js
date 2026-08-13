@@ -27751,6 +27751,14 @@
           // before any note is delivered.
           if (!(opts && opts.noCore) && !(opts && opts.dry)) {
             try { coreOn = !!(typeof _coreVoices !== 'undefined' && await _coreVoices.offlineBegin()); } catch (e) { coreOn = false; }
+            // SAY SO. Without the core the notes render through Tone nodes and
+            // the whole bounce runs 5-10x slower — the difference between a
+            // 4-minute take in one minute and in twenty. It used to fail
+            // silently, so a slow render looked like the renderer simply being
+            // slow rather than a handshake that timed out.
+            if (!coreOn && typeof _coreVoices !== 'undefined' && _coreVoices.enabled && _coreVoices.enabled()) {
+              _missing.push('the CORE engine did not start for this render — it ran on the node fallback, which is 5-10x slower');
+            }
           }
           let E3 = null, wet = false;
           try {

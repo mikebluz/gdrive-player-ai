@@ -699,7 +699,14 @@
           };
           const bcopy = _wasmCopy.slice(0);
           n2.port.postMessage({ wasmBytes: bcopy }, [bcopy]);
-          const ok = await Promise.race([readyP, new Promise((r) => setTimeout(() => r(false), timeoutMs || 6000))]);
+          // 30s, not 6. This wait is a one-time WASM COMPILE inside a fresh
+          // worklet, and on timeout the caller silently falls back to Tone node
+          // voices — a render that then runs 5-10x SLOWER, with nothing said.
+          // Six seconds is fine on a warm desktop and far too tight on a phone
+          // compiling 300KB under memory pressure, which is exactly where the
+          // slow-bounce reports come from. Waiting longer costs nothing when it
+          // succeeds; giving up early costs the whole render.
+          const ok = await Promise.race([readyP, new Promise((r) => setTimeout(() => r(false), timeoutMs || 30000))]);
           if (!ok) { try { n2.disconnect(); } catch (e) {} return null; }
           off = { node: n2, slots: new Map(), dests: new Array(SLOTS).fill(null), taken: 0,
                   strips: new Map(), post: (m) => { try { n2.port.postMessage(m); } catch (e) {} }, sendVia: null,

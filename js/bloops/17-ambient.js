@@ -32948,13 +32948,51 @@
       // A/B (4+4 bars). Tap a block → rename / resize / delete.
       {
         const secs = Array.isArray(cfg.sections) ? cfg.sections : null;
+        // THE PARTS LANE DRAWS PARTS. It used to draw cfg.sections, which after
+        // the fold holds only the changes-LESS parts — so a project with Verse ×2
+        // / Break / Chorus showed one block, "Break", and the lane was sections
+        // wearing a new label. The spans come from the played chain, so a part
+        // that repeats draws one block per pass and every block is as wide as it
+        // actually sounds.
+        const _laneParts = (() => {
+          const sl = _ambProgChainSlots(cfg);
+          if (!sl || !sl.length) return null;
+          const o = [];
+          sl.forEach((x) => {
+            const last = o[o.length - 1];
+            const w = _ambChainSlotBars(cfg, x);
+            if (last && last.pi === x.part && last.rep === x.rep) { last.bars += w; return; }
+            o.push({ name: x.pName || 'Changes', pi: x.part, rep: x.rep, plays: x.plays || 1, bars: w, hold: !!x.hold });
+          });
+          return o.length ? o : null;
+        })();
         let sBlocks = '';
         // Which sections actually LAND in this window. The strip is scoped to one
         // part pass, so a section starting later is simply not here — and silently
         // omitting it is what made a freshly-added section look like it did
         // nothing. The label says "2 of 3" and points at ▤ for the rest.
         const _secSeen = new Set();
-        if (secs && secs.length) {
+        if (_laneParts) {
+          let sb = 0, si = 0;
+          while (sb < VIEW - 1e-6 && si < 96) {
+            const lp = _laneParts[si % _laneParts.length];
+            const slen = Math.max(0.25, lp.bars);
+            const sw2 = Math.min(slen, VIEW - sb) / VIEW * 100;
+            // An open part maps to a SECTION (the mirror emits one per open part
+            // in order), so those stay tap-to-edit; a changes part has no section
+            // behind it and is a read-out here — it is edited in ⇶ Arch.
+            const _si2 = lp.hold || !secs ? -1 : (secs.findIndex(z => z && z.name === lp.name));
+            sBlocks += '<i class="ambient-sched-secblk' + ((si % _laneParts.length) === 0 ? ' cyc' : '') + (lp.hold ? ' harm' : '') + '"'
+              + (_si2 >= 0 ? ' data-si="' + _si2 + '"' : '')
+              + ' style="width:' + sw2.toFixed(3) + '%" title="' + esc(lp.name) + ' · ' + _ambFmtBpc(lp.bars) + ' bars'
+              + (lp.plays > 1 ? ' · pass ' + (lp.rep + 1) + ' of ' + lp.plays : '')
+              + (lp.hold ? ' · no changes, the harmony holds' : '')
+              + (_si2 >= 0 ? ' — tap to edit' : ' — edit in ⇶ Arch') + '">'
+              + esc(lp.name) + (lp.plays > 1 ? '<b class="secpart">' + (lp.rep + 1) + '/' + lp.plays + '</b>' : '') + '</i>';
+            if (_si2 >= 0) _secSeen.add(_si2);
+            sb += slen; si++;
+          }
+        } else if (secs && secs.length) {
           const lens = secs.map(x => Math.max(0.25, Number(x.bars) || 4));
           let sb = 0, si = 0;
           while (sb < VIEW - 1e-6 && si < 96) {
@@ -32993,7 +33031,10 @@
         html += '<div class="ambient-sched-secwrap"' + (E._schedSections ? '' : ' hidden') + '>';
         html += '<div class="ambient-sched-row ambient-sched-secrow">' +
           '<span class="ambient-sched-ctl"><span class="ambient-sched-lbl"' +
-            ((secs && secs.length && _secSeen.size < secs.length)
+            // The "N of M" counter counts SECTIONS, so it only makes sense on the
+            // legacy path; with the lane drawing parts it would report "0/1"
+            // whenever the one open part sits outside the window.
+            ((!_laneParts && secs && secs.length && _secSeen.size < secs.length)
               ? ' title="' + (secs.length - _secSeen.size) + ' part(s) start outside this pass — open ▤ Arrangement to see them all.">parts <b class="secmore">' + _secSeen.size + '/' + secs.length + '</b>'
               : '>parts') + '</span>' +
           (secs && secs.length ? '<button type="button" class="ambient-seg ambient-sched-addsec" title="Append a part">＋</button>' : '') + '</span>' +
@@ -33408,10 +33449,15 @@
             // 5-8); with the strip scoped to one part pass only A was in view, so
             // deleting it slid B down into the same place and read as a section
             // that would not die. Press ＋ again for B — deliberate, and visible.
-            if (!Array.isArray(c2.sections) || !c2.sections.length) c2.sections = [{ id: 1, name: 'A', bars: 4 }];
-            else if (c2.sections.length < 16) {
-              const nid = c2.sections.reduce((m2, x) => Math.max(m2, x.id | 0), 0) + 1;
-              c2.sections.push({ id: nid, name: String.fromCharCode(65 + (c2.sections.length % 26)), bars: 4 });
+            // ADD A PART, not a section. Pushing onto cfg.sections became a
+            // SILENT NO-OP the moment the fold made sections a mirror rebuilt
+            // from the open parts on every normalize: the new section was wiped
+            // by the next getCfg and the button did nothing at all.
+            if (!c2.prog) c2.prog = { on: true, name: '', chords: [] };
+            const _np = (Array.isArray(c2.prog.parts) ? c2.prog.parts.filter(x => x && x.open).length : 0);
+            if (_np < 16) {
+              _ambProgAppendOpenPart(c2.prog, String.fromCharCode(65 + (_np % 26)), 4, null, 0);
+              try { E.getCfg(); } catch (e) {}          // re-derive arch + the mirror
             }
             try { _ambRenderScheduler(E); } catch (e) {}
             if (typeof persistWorkspace === 'function') persistWorkspace();

@@ -24109,7 +24109,63 @@
       } catch (e) {}
       return { started: true, seconds: sec };
     }
+    // CAN THIS DEVICE RENDER OFFLINE AT ALL? The fast path is only fast because
+    // the WASM core runs the voices; without it the render falls back to Tone
+    // nodes and crawls at ~0.2x — SLOWER THAN REAL TIME, so "fast" becomes a lie
+    // and a 4-minute take takes twenty. That is the reported mobile case: a
+    // phone that cannot start an AudioWorklet core inside an OfflineAudioContext
+    // gets the slow path silently.
+    // So ask first, with a throwaway 0.25s render, and cache the answer for the
+    // session. Cheap to ask; the whole render to get wrong.
+    // ASK THE DEVICE, DO NOT ASSUME. Whether offline rendering is worth using
+    // is a question about THIS device and THIS project, and the only honest way
+    // to answer it is to render a few seconds and time them. A core that fails
+    // to start shows up here as a low number without needing to be diagnosed —
+    // and so does a device that starts the core and is simply slow.
+    let _bloomRenderXrt = null;              // × realtime, measured once per session
+    async function _ambRenderSpeed(E) {
+      if (_bloomRenderXrt !== null) return _bloomRenderXrt;
+      _bloomRenderXrt = 0;
+      try {
+        const t = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+        const r = await _ambRenderOffline(E, 4, {});
+        const dt = ((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t) / 1000;
+        // A short render carries fixed setup (worklet + wasm + chains), so this
+        // UNDER-states the real rate — which is the safe direction: it can only
+        // make us over-estimate the cost, never under-estimate it.
+        if (dt > 0) _bloomRenderXrt = 4 / dt;
+        try { if (r && r.buffer) r.buffer = null; } catch (e) {}
+      } catch (e) { _bloomRenderXrt = 0; }
+      return _bloomRenderXrt;
+    }
     async function _ambBounceBeginOffline(E, seconds) {
+      // Without the core, rendering is slower than simply recording the output.
+      // Recording takes exactly `seconds`; the node-fallback render takes about
+      // five times that. So hand it to the real-time capture rather than let the
+      // menu's "fast" spend twenty minutes on a four-minute take.
+      // Recording takes exactly `seconds`. Rendering takes seconds / rate. Below
+      // about 0.6x the render is the slower of the two even before its own
+      // overhead, so hand a long take to the recorder rather than spend twenty
+      // minutes on four. Short takes stay on the render either way — the
+      // difference is not worth a calibration pass.
+      try {
+        if (seconds >= 30) {
+          const xrt = await _ambRenderSpeed(E);
+          if (xrt > 0 && xrt < 0.6) {
+            const est = Math.round(seconds / xrt);
+            try {
+              if (typeof showToast === 'function') {
+                showToast('Rendering runs at ' + xrt.toFixed(2) + '\u00d7 on this device \u2014 about '
+                  + (est >= 120 ? Math.round(est / 60) + ' min' : est + 's') + ' for this take. Recording it in real time '
+                  + 'instead (' + Math.round(seconds) + 's).', { warn: true, ms: 9000 });
+              }
+            } catch (e) {}
+            E._capAsBounce = true;
+            try { _ambCaptureBegin(E, Math.max(1, Math.round(seconds)) * 1000); } catch (e) {}
+            return;
+          }
+        }
+      } catch (e) {}
       // STOP PLAYBACK FIRST. Inside Tone.Offline the GLOBAL Tone context is the
       // offline one until the render resolves — a live tick firing during that
       // window would build its voices into the bounce (or throw cross-context).

@@ -82,7 +82,7 @@ echo "📦 Staging files..."
 # img/ is REQUIRED by index.html — it holds the pixel-art wallpaper, the live
 # photo and the handwritten wordmark. Without it the desktop ships as a flat
 # green field with three broken images.
-cp -r index.html bloops.html player.html artwork.html game.html tracks.html css js img audio banner.jpg me2026.jpg samples artwork vendor "$STAGE_DIR/"
+cp -r index.html bloops.html player.html artwork.html game.html tracks.html notepad.html css js img audio banner.jpg me2026.jpg samples artwork vendor "$STAGE_DIR/"
 # Caching policy (HTML revalidates every load; versioned assets cache long) —
 # without it, phones cache stale HTML pointing at old ?v= assets and boot dies.
 cp .htaccess "$STAGE_DIR/"
@@ -103,6 +103,10 @@ echo "🏷️  Cache-busting asset URLs with v=$DEPLOY_VER"
 # ONE Worker URL and cost 2.2 MB of forced upload per deploy (~12x the rest of the
 # forced payload combined) — it now reads the stamp from `window.__BLOOPS_ASSET_V`,
 # published by bloops.html, which is 92 KB and already forced.
+# notepad.html is deliberately ABSENT from this list: its script is INLINE, so
+# there is no external asset URL to cache-bust, and every stamped file is
+# rewritten and force-uploaded on EVERY deploy whether it changed or not. It is
+# mirrored by size like any other page.
 for f in index.html bloops.html player.html artwork.html game.html tracks.html js/bloops/03b-core-voices.js; do
   if [[ -f "$STAGE_DIR/$f" ]]; then
     sed "s/?v=DEPLOYVER/?v=$DEPLOY_VER/g" "$STAGE_DIR/$f" > "$STAGE_DIR/$f.tmp" && mv "$STAGE_DIR/$f.tmp" "$STAGE_DIR/$f"

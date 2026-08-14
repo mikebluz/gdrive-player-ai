@@ -27572,7 +27572,7 @@
       // Projecting from setup-inclusive time made a healthy 8.3s render look
       // like 80s and bail — the fixed cost of pass 1, the chains and the wasm
       // was being divided by a fraction still near zero.
-      let _renderT0 = 0;
+      let _renderT0 = 0, _renderT0Audio = 0;
       let deliverUpTo = null;         // (untilAt) -> void
       let checkpointsFired = 0;
       const _t0poll = (typeof performance !== 'undefined') ? performance.now() : 0;
@@ -27648,7 +27648,7 @@
                   // piece are its sparsest and it measures them as fast.
                   if (!opts || !opts.noBail) {
                     const _nowMs = ((typeof performance !== 'undefined') ? performance.now() : Date.now());
-                    if (!_renderT0) _renderT0 = _nowMs;
+                    if (!_renderT0) { _renderT0 = _nowMs; _renderT0Audio = t; }
                     const _el = _nowMs - _renderT0;
                     // 4s of ACTUAL rendering and 2% done before projecting. The
                     // window is this tight only because the clock starts at the
@@ -27662,8 +27662,25 @@
                     // …and never past halfway: finishing what is already half
                     // rendered beats starting the whole take again as a
                     // recording, however poor the rate looks.
-                    if (_el > 4000 && _renderFrac >= 0.02 && _renderFrac < 0.5) {
-                      const _proj = (_el / _renderFrac) / 1000;      // seconds to finish
+                    // MEASURE THE RATE, NOT THE PERCENTAGE. Waiting for a
+                    // fraction of the whole take is the wrong clock: on a
+                    // 4-minute render each 2s chunk is 0.83%, so a 2% threshold
+                    // needs THREE chunks — about 21s of rendering at 0.29x, plus
+                    // setup, which is why a phone sat at "2%" without ever
+                    // deciding. Seconds-of-audio per second-of-wall answers the
+                    // same question after one or two chunks, whatever the length.
+                    const _rate = (t - _renderT0Audio) / Math.max(0.001, _el / 1000);
+                    // DECIDE AS SOON AS TWO CHUNKS HAVE BEEN MEASURED, and let
+                    // the projection alone decide — no fixed time ceiling. A
+                    // ceiling on "wasted time" was tried and removed: 30% of the
+                    // take's length made a HEALTHY machine bail at 44% while
+                    // rendering at ~1.5x, where finishing was still faster than
+                    // recording. Two chunks is enough to know the rate, and the
+                    // wait scales with the device — about 1s on a fast one, a
+                    // few seconds on a phone — instead of a fraction of the take.
+                    const _measured = (t - _renderT0Audio) >= (CHUNK * 1.5);
+                    if (_measured && _rate > 0 && _renderFrac < 0.5) {
+                      const _proj = seconds / _rate;                 // seconds to finish
                       if (_proj > seconds * 1.2 && _proj > 60 && !_bail) {
                         // Carry WHY it is slow, not just that it is. A render
                         // without the core is 5-10x slower on its own, and that

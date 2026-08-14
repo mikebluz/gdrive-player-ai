@@ -33673,6 +33673,23 @@
       body.innerHTML = html;
       if (!body._secWired) {
         body._secWired = true;
+        // PARTS LANE: pointerdown, not click. This strip is redrawn whenever the
+        // view follows the playhead, and a click needs press AND release on the
+        // SAME element — so a repaint between the two drops it, which on a phone
+        // reads as "tapping the part chips does nothing". Same fix, and the same
+        // reason, as the live-readout chips.
+        body.addEventListener('pointerdown', (ev) => {
+          try {
+            const b2 = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-secblk');
+            if (!b2) return;
+            // ORDER MATTERS: do the work FIRST, then set the flag so the
+            // browser's own trailing click is the one that gets skipped. Setting
+            // it first made the synthetic click hit the guard and return, so the
+            // tap did nothing at all — the bug this was meant to fix.
+            b2.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            b2._pdHandled = true;
+          } catch (e) {}
+        });
         body.addEventListener('click', (ev) => {
           const secb = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-secbtn');
           if (secb) { ev.preventDefault(); ev.stopPropagation(); E._schedSections = !E._schedSections; _ambRenderScheduler(E); return; }
@@ -33708,6 +33725,9 @@
           }
           const blk = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-secblk');
           if (blk) {
+            // pointerdown already ran this block; the trailing click must not
+            // run it a second time.
+            if (blk._pdHandled) { blk._pdHandled = false; return; }
             _E = E; const c2 = E.getCfg(); if (!c2) return;
             // A TAP SELECTS THAT PART. This lane shows the whole arrangement
             // while everything below is scoped to one part, so this is how you

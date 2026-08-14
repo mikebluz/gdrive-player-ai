@@ -12836,6 +12836,15 @@
 
 /* Sections (sets of bars): scheduler lane blocks */
 .ambient-sched-secrow .ambient-sched-strip.sections { display: flex; position: relative; }
+    /* TOUCH TARGET. These chips are 18px on a mouse, which is fine to click and
+       far too small to tap — and this row is the arrangement navigator, so it is
+       tapped constantly. On a coarse pointer give the chips and their strip the
+       usual floor. touch-action stops a tap being read as a scroll gesture. */
+    .ambient-sched-secblk { touch-action: manipulation; }
+    @media (pointer: coarse) {
+      .ambient-sched-secrow .ambient-sched-strip.sections { height: 34px; }
+      .ambient-sched-secblk { height: 32px; font-size: 0.66rem; }
+    }
 .ambient-sched-secblk { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; height: 18px; font: 600 0.62rem 'Segoe UI', sans-serif; color: #cfd4ff; background: rgba(110, 120, 255, 0.14); border: 1px solid rgba(110, 120, 255, 0.35); border-radius: 3px; overflow: hidden; white-space: nowrap; cursor: pointer; font-style: normal; }
 .ambient-sched-secblk.cyc { border-left-width: 2px; border-left-color: rgba(110, 120, 255, 0.8); }
 .ambient-sched-secblk:hover { background: rgba(110, 120, 255, 0.28); }

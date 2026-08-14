@@ -2858,6 +2858,19 @@
     }
     .ambient-seed { font-family: 'Segoe UI', sans-serif; font-size: 0.75rem; color: #6b6b8a; }
     .ambient-ctrl { display: grid; grid-template-columns: 84px 1fr auto; align-items: center; gap: 10px; }
+    /* A LONG HINT MUST NOT EAT THE SLIDER. The third column is `auto`, and
+       .ambient-hint is nowrap, so a wordy hint takes whatever it needs and the
+       1fr control column collapses around it — measured on a phone: "Salt
+       colour" had 46px of travel and its hint 212px, while every other slider
+       in the same card had 232px. Below 560px the hint drops to its own row
+       (spanning both control columns, indented past the label) and the control
+       keeps the width. Same fix, same cause, as the groove macros. */
+    @media (max-width: 560px) {
+      .ambient-ctrl:has(> input.ambient-sl) { grid-template-columns: 84px 1fr; }
+      .ambient-ctrl:has(> input.ambient-sl) > .ambient-hint {
+        grid-column: 2 / -1; white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
+      .ambient-ctrl > input.ambient-sl { min-width: 120px; }
+    }
     .ambient-ctrl.amb-disabled { opacity: 0.4; }   /* Area fade disabled: layer is synced/bar-native → it hard-cuts at the boundary */
     .ambient-ctrl label { font-family: 'Segoe UI', sans-serif; font-size: 0.8rem; color: #a0aec0; }
     .ambient-bpc-input { width: 100%; min-width: 0; box-sizing: border-box; padding: 5px 8px; background: #0f0f1e; border: 1px solid #2d2d3f; border-radius: 6px; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; font-size: 0.85rem; text-align: center; }

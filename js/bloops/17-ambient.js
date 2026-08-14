@@ -24137,6 +24137,7 @@
       return _bloomOfflineCoreOK;
     }
     async function _ambBounceBeginOffline(E, seconds) {
+      _ambWakeAcquire();
       // No core here → rendering cannot win, so do not spend a minute proving it
       // mid-render. Record straight away.
       try {
@@ -24705,6 +24706,7 @@
       try { localStorage.setItem('bloomCapMethod', m === 'realtime' ? 'realtime' : 'fast'); } catch (e) {}
     }
     function _ambCaptureStart(E) {
+      _ambWakeAcquire();          // a real-time take needs the page awake throughout
       let ac; try { ac = Tone.getContext().rawContext; } catch (e) { alert('No audio context'); return; }
       // Tap the FINAL master node (post lookahead-limiter + soft-clip) so the
       // capture matches what's actually heard.
@@ -24900,6 +24902,7 @@
     // into a buffer (always WAV/MP3-able); MediaRecorder mode decodes the blob
     // and falls back to saving it raw if decoding fails.
     async function _ambCaptureFinish(E) {
+      _ambWakeRelease();          // the take is over — let the screen sleep again
       const r = E.capRec;
       if (r && r.pollTimer) { clearInterval(r.pollTimer); r.pollTimer = null; }
       try { if (r && r.analyser) r.tap.disconnect(r.analyser); } catch (e) {}
@@ -27454,6 +27457,34 @@
     // clock was behind and truncated voices — measured max sample diff 0.84).
     // Seconds of real music rendered BEFORE the requested start, purely to
     // charge the reverb / delay / FX state, then trimmed off (see _preroll).
+    // KEEP THE SCREEN AWAKE WHILE A TAKE IS BEING MADE. A real-time capture
+    // needs the page in the foreground for its whole length, and an offline
+    // render pauses the moment iOS suspends the page — so in both cases a screen
+    // that locks at 30 seconds ruins a 4-minute take. The Screen Wake Lock API
+    // exists precisely for this (iOS 16.4+, and every desktop browser); where it
+    // is missing this is a no-op and nothing changes.
+    // It is released on completion and re-acquired if the page comes back to
+    // the foreground with a take still running, because iOS drops the lock on
+    // every visibility change.
+    let _ambWakeLock = null, _ambWakeWanted = false;
+    async function _ambWakeAcquire() {
+      _ambWakeWanted = true;
+      try {
+        if (!navigator.wakeLock || _ambWakeLock) return;
+        _ambWakeLock = await navigator.wakeLock.request('screen');
+        _ambWakeLock.addEventListener('release', () => { _ambWakeLock = null; });
+      } catch (e) { _ambWakeLock = null; }
+    }
+    function _ambWakeRelease() {
+      _ambWakeWanted = false;
+      try { if (_ambWakeLock) _ambWakeLock.release(); } catch (e) {}
+      _ambWakeLock = null;
+    }
+    try {
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && _ambWakeWanted && !_ambWakeLock) { _ambWakeAcquire(); }
+      });
+    } catch (e) {}
     const _AMB_BOUNCE_PREROLL = 2.5;
     async function _ambRenderOffline(E, seconds, opts) {
       seconds = Math.max(1, Math.min(1800, +seconds || 30));

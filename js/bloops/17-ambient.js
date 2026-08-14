@@ -2514,6 +2514,7 @@
       _ambNormalizeLayerSalt(s);
       _ambNormalizeUnit(s);
       _ambNormalizeUnitGate(s);
+      _ambNormalizeIterGate(s);
       return s;
     }
     // A Sample layer plays a single-buffer `sample:<id>` raw. `chop` 1 = retrigger
@@ -2557,6 +2558,7 @@
       _ambNormalizeLayerSalt(s);
       _ambNormalizeUnit(s);
       _ambNormalizeUnitGate(s);
+      _ambNormalizeIterGate(s);
       return s;
     }
     // Migrate + backfill a Bloom config in place (shared by per-lane + master).
@@ -3298,6 +3300,7 @@
         _ambNormalizeEuclidPattern(cfg[layer]);   // beat (euclid) editable-grid override
         _ambNormalizeStepFx(cfg[layer]);          // per-step Step-Edit overrides
         _ambNormalizeUnitGate(cfg[layer]);        // per-unit on/off step gate (Edit Unit Schedule)
+        _ambNormalizeIterGate(cfg[layer]);        // per-ITERATION on/off (the metascheduler)
         _ambNormalizeSpat(cfg[layer]);            // per-note pan sequence (absent = off)
       });
       // Built-in layers are now "addable": only present ones show + play. New
@@ -3370,6 +3373,7 @@
         _ambNormalizeEuclidPattern(x);   // bass/beat/arp (euclid) editable-grid override
         _ambNormalizeStepFx(x);          // per-step Step-Edit overrides (bass/melodic euclid)
         _ambNormalizeUnitGate(x);        // per-unit on/off step gate (Edit Unit Schedule)
+        _ambNormalizeIterGate(x);        // per-ITERATION on/off (the metascheduler)
         _ambNormalizeSpat(x);            // per-note pan sequence (absent = off)
         _ambNormalizeLayerSalt(x);       // per-layer salt (absent = inherit, all-zero = off)
         _ambNormalizeUnit(x);
@@ -11935,6 +11939,64 @@
       _ambUnitGateSet(L, uIdx, mask, div, period);
     }
     // Coerce a loaded unitGate; drop it entirely when it says nothing.
+    // ---- ITERATION SCHEDULE (the metascheduler) ------------------------------
+    // `layer.iterGate = { len, steps:[0|1…], ref:'plot'|'round' }` — on/off per
+    // ITERATION of the whole arrangement, the axis above every existing one.
+    // What each gate answers, narrowest first: chordMask = per change · unitGate
+    // = per unit · cycleGate = per iteration of a LAYER's own pattern · iterGate
+    // = per iteration of the WHOLE thing. That last one was the gap: a layer
+    // could be scheduled everywhere inside one pass and not across passes, so
+    // "bass enters the second time round" was inexpressible.
+    // TWO CLOCKS, because measurement showed one is inert in most projects:
+    //   'plot'  = one full pass through the AREA sequence (E._plotCount) — but
+    //             _ambOrchAdvance returns early below 2 areas, so in a
+    //             single-area project the plot counter sits at 1 forever.
+    //   'round' = one full trip through the played chain (every part, every
+    //             repeat, back to the top) = floor(step / chords.length), the
+    //             same variation cycle `alts` and ↻ Order already hash on.
+    // Absent = plays every iteration, and an all-on mask prunes to absent, so
+    // absence is the neutral state exactly as it is for unitGate/cycleGate.
+    // Kept OUT of _ambDefaultLayer (the object-in-defaults backfill trap).
+    const _AMB_ITER_MAXLEN = 32;
+    function _ambNormalizeIterGate(L) {
+      if (!L || typeof L !== 'object') return;
+      const g = L.iterGate;
+      if (g == null) return;
+      if (typeof g !== 'object' || Array.isArray(g)) { delete L.iterGate; return; }
+      g.len = Math.max(2, Math.min(_AMB_ITER_MAXLEN, (g.len | 0) || 4));
+      g.ref = (g.ref === 'plot') ? 'plot' : 'round';
+      if (!Array.isArray(g.steps) || !g.steps.length) { delete L.iterGate; return; }
+      const arr = g.steps.slice(0, g.len).map(v => (v ? 1 : 0));
+      while (arr.length < g.len) arr.push(1);
+      if (!arr.some(v => !v)) { delete L.iterGate; return; }   // all-on = no gate
+      g.steps = arr;
+    }
+    // Which iteration is sounding at `at`, 0-based, or -1 when this clock cannot
+    // advance here (single area on the 'plot' clock — the gate then stays open
+    // rather than pinning every layer to iteration 0 forever).
+    function _ambIterIndexAt(E, cfg, ref, at) {
+      try {
+        if (ref === 'plot') {
+          const s = _masterBloomState && _masterBloomState();
+          if (!s || !Array.isArray(s.areas) || s.areas.length < 2) return -1;
+          if (!(s.orch && s.orch.mode === 'sequence')) return -1;
+          return Math.max(0, (E._plotCount | 0 || 1) - 1);
+        }
+        const ch = cfg && cfg.prog && cfg.prog.chords;
+        if (!cfg || !cfg.prog || !cfg.prog.on || !Array.isArray(ch) || !ch.length) return -1;
+        const step = _ambProgStepAt(E, at);
+        if (!Number.isFinite(step)) return -1;
+        return Math.floor(step / ch.length);
+      } catch (e) { return -1; }
+    }
+    function _ambIterGateOpen(E, cfg, L, at) {
+      const g = L && L.iterGate;
+      if (!g || !Array.isArray(g.steps) || !g.steps.length) return true;
+      const i = _ambIterIndexAt(E, cfg, g.ref, at);
+      if (i < 0) return true;                       // this clock cannot advance here
+      const n = g.steps.length;
+      return !!g.steps[((i % n) + n) % n];
+    }
     function _ambNormalizeUnitGate(L) {
       if (!L || typeof L !== 'object') return;
       const g = L.unitGate;
@@ -12003,7 +12065,32 @@
       if (!pos || !pos.L.unitGate || _ambUnitGateMode(pos.L) !== 'skip') return false;
       return !_ambUnitGateOpenAt(pos.L, pos.u, pos.frac);
     }
-    if (typeof window !== 'undefined') window._ambUnitGateSkip = _ambUnitGateShouldSkip;
+    // The ITERATION gate rides the SAME playNote hook as the unit gate — one
+    // chokepoint, so every layer type is covered with no emitter change, and for
+    // the same reason it sits after the capture tee: Write/Bar-Lock keep the
+    // whole phrase and this stays a PLAYBACK filter, editable live on a frozen
+    // loop with no rewrite.
+    function _ambIterGateShouldSkip(key, at) {
+      const E = _E;
+      // DELIBERATELY NOT gated on E.timer. The first tick is kicked from
+      // _ambStartGenerator BEFORE the timer is assigned, and it schedules the
+      // whole first lookahead — measured as the first ~1.2 s of a gated-off
+      // iteration sounding anyway (8 notes at t=0…1.0 played, everything from
+      // 1.25 s skipped). Reaching here at all means a Bloom layer emitted the
+      // note (_ambEmitKey is set by the capture tee), which is the only scope
+      // this needs. NOTE the per-unit gate above still carries that guard and
+      // therefore still has the hole — same class, left alone here because it
+      // would change existing projects and the offline bounce.
+      if (!E) return false;
+      const L = _ambLayerByKey(E, key);
+      if (!L || !L.iterGate) return false;
+      const cfg = E._cfg || (E.getCfg && E.getCfg());
+      return !_ambIterGateOpen(E, cfg, L, at);
+    }
+    function _ambPlaybackGateShouldSkip(key, at) {
+      return _ambUnitGateShouldSkip(key, at) || _ambIterGateShouldSkip(key, at);
+    }
+    if (typeof window !== 'undefined') window._ambUnitGateSkip = _ambPlaybackGateShouldSkip;
     // ---- PHASE DIAGNOSTIC (read-only) ---------------------------------------
     // window.__ambPhase() dumps every layer's ACTUAL phase anchor next to the
     // shared grid, so a "layer X starts earlier" report can be settled with the
@@ -12141,20 +12228,113 @@
       // each, each played twice, is eight cells. A hand-set step count could
       // only ever disagree with the harmony, and the grid's whole value is that
       // a cell IS a change.
+      // THE SECOND AXIS (the metascheduler). Same grid, one row per layer — but
+      // a cell is one ITERATION of the whole arrangement rather than one change.
+      // It lives here because "which layers play when" is one question, and this
+      // is the coarsest grain of it; the switch is what says which grain.
+      // The CLOCK defaults to whichever one can actually advance in this
+      // workspace: plots need 2+ areas in sequence (_ambOrchAdvance returns early
+      // below that, so the plot counter would sit at 1 forever and every cell
+      // past the first would be unreachable), otherwise rounds.
+      const _plotOK = (() => {
+        try {
+          const s = _masterBloomState && _masterBloomState();
+          return !!(s && Array.isArray(s.areas) && s.areas.length >= 2 && s.orch && s.orch.mode === 'sequence');
+        } catch (e) { return false; }
+      })();
+      // ALWAYS OPEN ON THE WITHIN GRID. The axis is a per-open choice, not a
+      // sticky mode: left sticky, a session that once visited Across reopens
+      // there, and the familiar units grid reads as "gone" — a control that
+      // silently isn't what it was last time is the drum-solo lesson again.
+      E._qeAxis = 'units';
+      if (E._qeIterRef !== 'plot' && E._qeIterRef !== 'round') E._qeIterRef = _plotOK ? 'plot' : 'round';
+      if (!_plotOK && E._qeIterRef === 'plot') E._qeIterRef = 'round';
+      if (!Number.isFinite(E._qeIterLen)) E._qeIterLen = 4;
+      // READ LIVE, never captured: draw() re-runs on every edit, so a const
+      // snapshotted at modal-creation time makes the axis switch a no-op (it
+      // sets the flag and the redraw still reads the old value).
+      const iterModeNow = () => (E._qeAxis === 'iter');
+      const iterLenNow = () => Math.max(2, Math.min(_AMB_ITER_MAXLEN, E._qeIterLen | 0));
+      // Write one iteration cell. An all-on mask prunes the whole gate, so a
+      // layer that plays every time round carries no field — absence is neutral,
+      // exactly as it is for unitGate.
+      const _iterSet = (L, i, on) => {
+        const n = iterLenNow(), ref = E._qeIterRef;
+        let g = L.iterGate;
+        if (!g || typeof g !== 'object' || Array.isArray(g)) {
+          g = L.iterGate = { len: n, ref, steps: Array.from({ length: n }, () => 1) };
+        }
+        if (!Array.isArray(g.steps) || !g.steps.length) g.steps = Array.from({ length: n }, () => 1);
+        if (g.steps.length !== n) {                      // length changed → keep the pattern, resize
+          const old = g.steps;
+          g.steps = Array.from({ length: n }, (_, k) => (old[k % old.length] ? 1 : 0));
+        }
+        g.len = n; g.ref = ref;
+        g.steps[((i % n) + n) % n] = on ? 1 : 0;
+        if (!g.steps.some(v => !v)) delete L.iterGate;
+      };
+      const _iterOff = (L, i) => {
+        const g = L && L.iterGate;
+        if (!g || !Array.isArray(g.steps) || !g.steps.length) return false;
+        const n = g.steps.length;
+        return !g.steps[((i % n) + n) % n];
+      };
       const stepsOf = (L, key) => {
         if (chainLen) return Math.max(1, Math.min(_AMB_UG_MAXSLOTS, chainLen));
         const uBars = Math.max(0.05, _ambUnitLaneBars(E, key, L, cfg, VIEW, barSec));
         return Math.max(1, Math.min(_AMB_UG_MAXSLOTS, Math.round(VIEW / uBars)));
       };
+      // ONE CELL = ONE CHANGE, BUT THE GATE STORES ONE SLOT PER UNIT — so a cell
+      // covers the RANGE of units its change spans. Writing the cell index
+      // straight into the gate silenced a DIFFERENT span than the cell names
+      // whenever a layer's unit isn't the chord length: measured on a 1-bar beat
+      // under 2-bar changes, the cell labelled "F" (bars 2-3) silenced bar 1,
+      // which is still C. Beat layers have the shortest units, so they are where
+      // the two indexes diverge most — reported as "on/off doesn't work for beat
+      // layers". The gate's only notion of a slot is the unit (that is what
+      // _ambUnitGridPos resolves at play time), so the MAPPING belongs here.
+      // A unit LONGER than a change maps several cells onto one unit; they then
+      // toggle together, which is the truth — that layer cannot be silenced for
+      // one change alone.
+      const _qeUnitMap = (L, key) => {
+        if (!chainLen) return null;
+        const uBars = Math.max(0.05, _ambUnitLaneBars(E, key, L, cfg, VIEW, barSec));
+        const ranges = []; let bar = 0;
+        chainSlots.forEach((sl) => {
+          const a = Math.round(bar / uBars);
+          bar += Math.max(0.01, _ambChainSlotBars(cfg, sl));
+          ranges.push([a, Math.max(a + 1, Math.round(bar / uBars))]);
+        });
+        return { ranges, total: Math.max(1, Math.round(bar / uBars)) };
+      };
+      // A cell reads OFF only when every unit its change covers is off.
+      const _qeCellOff = (L, map, i) => {
+        const rg = map && map.ranges[i]; if (!rg) return false;
+        for (let u = rg[0]; u < rg[1]; u++) if (!_ambUnitWholeOff(L, u)) return false;
+        return true;
+      };
       const draw = () => {
+        const iterMode = iterModeNow(), iterLen = iterLenNow();
         const rows = layers.map((t) => {
           const L = t.L || _ambLayerByKey(E, t.key);
           if (!L) return '';
           const uBars = Math.max(0.05, _ambUnitLaneBars(E, t.key, L, cfg, VIEW, barSec));
-          const n = stepsOf(L, t.key);
+          const n = iterMode ? iterLen : stepsOf(L, t.key);
+          const uMap = iterMode ? null : _qeUnitMap(L, t.key);
           let lastG = -1;
           const cellHtml = Array.from({ length: n }, (_, i) => {
-            const off = _ambUnitWholeOff(L, i);
+            // ITERATION AXIS: one cell per time round, no chord tinting — the
+            // harmony is the same every iteration, so colouring by it would say
+            // nothing and the alternating tint would read as a grouping that
+            // isn't there.
+            if (iterMode) {
+              const offI = _iterOff(L, i);
+              return '<button type="button" class="ambient-qe-cell iter' + (offI ? '' : ' on') + '"'
+                + ' data-qe-key="' + esc(t.key) + '" data-qe-i="' + i + '"'
+                + ' title="' + (E._qeIterRef === 'plot' ? 'Plot ' : 'Round ') + (i + 1) + ' — '
+                + (offI ? 'silent' : 'plays') + '">' + (i + 1) + '</button>';
+            }
+            const off = uMap ? _qeCellOff(L, uMap, i) : _ambUnitWholeOff(L, i);
             // CHORD-GROUP TINT, the same alternating a/b the lane uses, taken at
             // the MIDDLE of the unit so a block that straddles a change is
             // attributed to where most of it sits.
@@ -12201,7 +12381,10 @@
               + (showCh ? ' wide' : '') + '"'
               + (hue >= 0 ? (' style="--qe-h:' + hue + '"') : '')
               + ' data-qe-key="' + esc(t.key) + '" data-qe-i="' + i + '"'
-              + ' title="Unit ' + (i + 1) + (chName ? (' · ' + esc(chName)) : '') + ' — ' + (off ? 'silent' : 'plays') + '">'
+              // With a chain a cell IS a change, not a unit — say so, or the
+              // tooltip names the very thing the indexes used to disagree about.
+              + ' title="' + (chainLen ? 'Change ' : 'Unit ') + (i + 1)
+              + (chName ? (' · ' + esc(chName)) : '') + ' — ' + (off ? 'silent' : 'plays') + '">'
               + (showCh ? esc(shortName) : (i + 1)) + '</button>';
           });
           // ONE ROW PER SET OF CHANGES, capped at 8 cells. A set whose
@@ -12212,7 +12395,14 @@
           // is the thing that made a long chain unreadable.
           const MAXC = 8;
           const groups = [];                     // [{part, cells:[html], name}]
-          cellHtml.forEach((h, i) => {
+          // Iterations have no parts to group by — one plain run of cells, wrapped
+          // at the same cap so a 16-round grid still reads.
+          if (iterMode) cellHtml.forEach((h) => {
+            const last = groups[groups.length - 1];
+            if (!last) groups.push({ part: 0, name: '', cells: [h], marks: [false] });
+            else { last.cells.push(h); last.marks.push(false); }
+          });
+          else cellHtml.forEach((h, i) => {
             const sl = chainSlots ? chainSlots[i % chainLen] : null;
             const pk = sl ? (sl.part | 0) : 0;
             const last = groups[groups.length - 1];
@@ -12250,44 +12440,131 @@
           const stateBtn = (v, lbl, tip) => '<button type="button" class="ambient-qe-ev'
             + (st === v ? ' on' : '') + '" data-qe-ev="' + v + '" data-qe-evkey="' + esc(t.key) + '"'
             + ' title="' + tip + '">' + lbl + '</button>';
-          const evHtml = '<span class="ambient-qe-evrow">'
+          const evNa = _ambEvolveInertWhy(L);
+          const evHtml = '<span class="ambient-qe-evrow' + (evNa ? ' is-overridden' : '') + '">'
             + stateBtn('cont', '\u21bb', 'Re-roll — fresh material every cycle')
             + stateBtn('every', '\u27f3' + (w.bars ? ('&nbsp;' + ((w.bars | 0) || 2) + '\u00d7' + ((w.times | 0) || 4)) : ''),
                 'Loop — freeze a pattern, repeat it, then evolve a fresh one')
             + stateBtn('lock', '\uD83D\uDD12', 'Hold — freeze one roll and keep it forever')
             + (improv ? '<i class="ambient-qe-improv" title="Improvise schedule is on — this layer alternates written and improvised passes">imp</i>' : '')
+            + (evNa ? ('<i class="ambient-qe-evna" title="' + esc('Evolve does not apply here — ' + evNa + '.')
+                + '">doesn’t apply here</i>') : '')
+            // A stored ACROSS-rounds gate silences this layer for whole passes.
+            // Invisible from the Within grid, that reads as "my schedule is
+            // ignored" — so it is named here, where you would look.
+            + ((L.iterGate && Array.isArray(L.iterGate.steps))
+              ? ('<i class="ambient-qe-evna" title="Across schedule: this layer plays only '
+                 + L.iterGate.steps.filter(v => v).length + ' of every ' + L.iterGate.steps.length + ' '
+                 + (L.iterGate.ref === 'plot' ? 'plots' : 'rounds') + ' — switch to ⟳ Across to edit or clear it.">⟳ '
+                 + L.iterGate.steps.filter(v => v).length + '/' + L.iterGate.steps.length + ' '
+                 + (L.iterGate.ref === 'plot' ? 'plots' : 'rounds') + '</i>')
+              : '')
             + '</span>';
-          return lines.map((ln, li) => '<div class="ambient-qe-row' + (li ? ' cont' : '') + '">'
-            + '<span class="ambient-qe-name" title="' + esc(t.name || t.key) + (ln.name ? (' · ' + esc(ln.name)) : '') + '">'
-            + (li ? '' : esc(t.name || t.key)) + (ln.name ? ('<i class="ambient-qe-set">' + esc(ln.name) + '</i>') : '')
-            + '</span>'
-            + (li ? '<span class="ambient-qe-evrow"></span>' : evHtml)
-            + '<span class="ambient-qe-cells">' + ln.cells.join('') + '</span></div>').join('');
+          // ONE BLOCK PER LAYER: its cell lines, then the evolve buttons. A
+          // layer's cells WRAP into several rows, so hanging evolve off the
+          // first row sat it BETWEEN two lines of the same layer's cells —
+          // which reads as belonging to neither. It is one control for the
+          // whole layer, so it goes after all of them, indented to the cell
+          // column so the block reads as that layer's.
+          return '<div class="ambient-qe-layer">'
+            + lines.map((ln, li) => '<div class="ambient-qe-row' + (li ? ' cont' : '') + '">'
+              + '<span class="ambient-qe-name" title="' + esc(t.name || t.key) + (ln.name ? (' · ' + esc(ln.name)) : '') + '">'
+              + (li ? '' : esc(t.name || t.key)) + (ln.name ? ('<i class="ambient-qe-set">' + esc(ln.name) + '</i>') : '')
+              + '</span>'
+              + '<span class="ambient-qe-cells">' + ln.cells.join('') + '</span></div>').join('')
+            + '<div class="ambient-qe-row ambient-qe-evline">' + evHtml + '</div></div>';
         }).join('');
 
         const dispHtml = '<button type="button" class="ambient-seg ambient-qe-disp'
           + (E._qeChords ? ' active' : '') + '" data-qe-disp="1" '
           + 'title="Show each cell as its step number, or as the chord sounding there">'
           + (E._qeChords ? '♪ Chord' : '① Step') + '</button>';
+        // A cell press REDRAWS the whole modal, which resets the scrolling body
+        // to the top — so toggling a layer near the bottom threw you back up and
+        // you had to scroll down again for every cell. Carry the scroll across
+        // the rewrite (the body is the scroller: max-height + overflow-y).
+        const _keepScroll = (() => { const el = modal.querySelector('.ambient-qe-body'); return el ? el.scrollTop : 0; })();
+        // THE AXIS SWITCH. Two grains of the same question, so one grid and one
+        // switch rather than two places to look: WITHIN one time round (a cell =
+        // a change) or ACROSS them (a cell = a whole time round).
+        const axisHtml = '<span class="ambient-seg-row ambient-qe-axis">'
+          + '<button type="button" class="ambient-seg' + (iterMode ? '' : ' active') + '" data-qe-axis="units" '
+          + 'title="Within one time round — a cell is one change">⊞ Within</button>'
+          + '<button type="button" class="ambient-seg' + (iterMode ? ' active' : '') + '" data-qe-axis="iter" '
+          + 'title="Across time rounds — a cell is one whole pass of the arrangement">⟳ Across</button></span>';
+        const refWord = (E._qeIterRef === 'plot') ? 'plot' : 'round';
+        const iterCtl = '<span class="ambient-qe-iterctl">'
+          + '<button type="button" class="ambient-seg" data-qe-ilen="-1" title="Fewer">−</button>'
+          + '<span class="ambient-qe-ilen">' + iterLen + ' ' + refWord + 's</span>'
+          + '<button type="button" class="ambient-seg" data-qe-ilen="1" title="More">＋</button>'
+          + (_plotOK
+            ? ('<button type="button" class="ambient-seg ambient-qe-iref" data-qe-iref="1" title="'
+               + 'Round = one full trip through this area’s arrangement. Plot = one full pass through the AREA sequence.">'
+               + (E._qeIterRef === 'plot' ? '⛭ plots' : '⛭ rounds') + '</button>')
+            : '')
+          + '</span>';
         modal.innerHTML =
-          '<div class="sm-title">Quick edit — units</div>' +
-          '<div class="ambient-ug-sub">Click a unit to turn that layer off there, and again to bring it back. '
-            + 'Same setting as Edit Unit Schedule, which still handles slices within a unit.'
-            + (pgActive ? ' Shading groups the units by chord.' : '') + '</div>' +
-          '<div class="ambient-qe-steps-row"><span>Show</span>' + dispHtml +
-            '<span class="ambient-hint">' + (chainLen
-              ? ('one cell per change — ' + chainLen + ' in the chain'
-                 + (partNames.length > 1 ? (', coloured by set: ' + esc(partNames.join(' · '))) : ''))
-              : 'one cell per unit') + '</span></div>' +
+          '<div class="sm-title">Quick edit — ' + (iterMode ? 'across ' + refWord + 's' : 'units') + '</div>' +
+          '<div class="ambient-ug-sub">' + (iterMode
+            ? ('Click a ' + refWord + ' to turn that layer off for the whole of it. This is the coarsest schedule — '
+               + 'a ' + refWord + ' is ' + (E._qeIterRef === 'plot'
+                 ? 'one full pass through the area sequence.' : 'one full trip through this area’s arrangement.')
+               + ' It repeats every ' + iterLen + '.')
+            : ('Click a unit to turn that layer off there, and again to bring it back. '
+               + 'Same setting as Edit Unit Schedule, which still handles slices within a unit.'
+               + (pgActive ? ' Shading groups the units by chord.' : ''))) + '</div>' +
+          '<div class="ambient-qe-steps-row">' + axisHtml + (iterMode ? iterCtl : dispHtml) +
+            '<span class="ambient-hint">' + (iterMode
+              ? ('one cell per ' + refWord + (_plotOK ? '' : ' — plots need 2+ areas in sequence, so this counts rounds'))
+              : (chainLen
+                ? ('one cell per change — ' + chainLen + ' in the chain'
+                   + (partNames.length > 1 ? (', coloured by set: ' + esc(partNames.join(' · '))) : ''))
+                : 'one cell per unit')) + '</span></div>' +
           '<div class="ambient-qe-body">' + rows + '</div>' +
           '<div class="sm-footer">'
             + '<button type="button" class="ambient-qe-adv' + (E._schedAdv ? ' on' : '') + '" data-qe-adv="1" '
             + 'title="Advanced edit — the chord lane and every layer\u2019s schedule (Evolve, phrase, timing), in the Scheduler behind this">'
             + (E._schedAdv ? '\u25BE Advanced edit' : '\u25B8 Advanced edit') + '</button>'
             + '<button type="button" class="sm-apply">Done</button></div>';
+        if (_keepScroll) {
+          const el = modal.querySelector('.ambient-qe-body');
+          if (el) el.scrollTop = _keepScroll;
+        }
       };
       draw();
       ov.addEventListener('click', (ev) => {
+        // ---- the metascheduler's own chrome (axis / length / clock) ----------
+        const ax = ev.target && ev.target.closest && ev.target.closest('[data-qe-axis]');
+        if (ax) { E._qeAxis = ax.getAttribute('data-qe-axis'); draw(); return; }
+        const il = ev.target && ev.target.closest && ev.target.closest('[data-qe-ilen]');
+        if (il) {
+          const d = (il.getAttribute('data-qe-ilen') | 0) || 0;
+          E._qeIterLen = Math.max(2, Math.min(_AMB_ITER_MAXLEN, (E._qeIterLen | 0) + d));
+          // Resize every gate that exists so the grid and the music agree — a
+          // layer whose steps still had the old length would repeat on a
+          // different cycle from the one the grid draws.
+          layers.forEach((t) => {
+            const L2 = t.L || _ambLayerByKey(E, t.key);
+            const g = L2 && L2.iterGate;
+            if (!g || !Array.isArray(g.steps) || !g.steps.length) return;
+            const n = Math.max(2, Math.min(_AMB_ITER_MAXLEN, E._qeIterLen | 0)), old = g.steps;
+            g.steps = Array.from({ length: n }, (_, k) => (old[k % old.length] ? 1 : 0));
+            g.len = n;
+            if (!g.steps.some(v => !v)) delete L2.iterGate;
+          });
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          draw(); return;
+        }
+        const ir = ev.target && ev.target.closest && ev.target.closest('[data-qe-iref]');
+        if (ir) {
+          E._qeIterRef = (E._qeIterRef === 'plot') ? 'round' : 'plot';
+          layers.forEach((t) => {
+            const L2 = t.L || _ambLayerByKey(E, t.key);
+            if (L2 && L2.iterGate) L2.iterGate.ref = E._qeIterRef;
+          });
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          draw(); return;
+        }
         const evb = ev.target && ev.target.closest && ev.target.closest('[data-qe-ev]');
         if (evb) {
           const k = evb.getAttribute('data-qe-evkey'), v = evb.getAttribute('data-qe-ev');
@@ -12324,12 +12601,31 @@
           const key = c.getAttribute('data-qe-key');
           const i = c.getAttribute('data-qe-i') | 0;
           const L = _ambLayerByKey(E, key);
+          if (L && iterModeNow()) {
+            _iterSet(L, i, _iterOff(L, i));      // currently off → turn on
+            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            // No re-anchor: this gate is applied at PLAYBACK in the playNote
+            // hook, so it bites on the very next note with no rewrite — the same
+            // reasoning as the unit gate and the chord mask.
+            draw();
+            return;
+          }
           if (L) {
             // The gate must repeat at the CHAIN length so the grid and the
-            // music stay 1:1 — cell 5 is always the fifth change.
-            const per = chainLen || (c.parentElement ? c.parentElement.children.length : 1);
-            if (chainLen && L.unitGate) L.unitGate.period = Math.max(1, Math.min(_AMB_UG_MAXSLOTS, chainLen));
-            _ambUnitSetWhole(L, i, _ambUnitWholeOff(L, i), per);
+            // music stay 1:1 — cell 5 is always the fifth change. That length is
+            // counted in UNITS (what the gate stores), not in changes.
+            const map = _qeUnitMap(L, key);
+            // Without a chain the cells ARE units, and the period is the whole
+            // row set — reading it off c.parentElement gave the WRAPPED row's
+            // length (capped at 8), so a layer with 16 units repeated every 8
+            // and cells 9-16 silently aliased cells 1-8.
+            const per = map ? map.total : stepsOf(L, key);
+            if (L.unitGate) L.unitGate.period = Math.max(1, Math.min(_AMB_UG_MAXSLOTS, per));
+            if (map) {
+              const rg = map.ranges[i] || [i, i + 1];
+              const on = _qeCellOff(L, map, i);          // currently off → turn on
+              for (let u = rg[0]; u < rg[1]; u++) _ambUnitSetWhole(L, u, on, per);
+            } else _ambUnitSetWhole(L, i, _ambUnitWholeOff(L, i), per);
             try { _ambUnitGateBump(); } catch (e) {}
             try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
             try { if (E.timer) _ambSyncUnitGate(E, key); } catch (e) {}
@@ -21724,6 +22020,26 @@
         return Array.isArray(prog.parts) && prog.parts.some(pp => pp && pp.salt && (pp.salt.colors | 0) > 0);
       } catch (e) { return false; }
     }
+    // WHY Evolve does nothing on this layer, or null when it applies. The gate
+    // below deliberately keeps Write away from a layer that already loops
+    // natively — correct, and INVISIBLE: the Evolve control still rendered
+    // "⟳ 2×4" as the active state while the engine ignored it, reported as
+    // "sched settings still not being respected for beat layer" (a drum-lanes
+    // kit, which is deterministic by construction — rhythmVar and rests are
+    // forced off in the emit, so every pass is byte-identical). Same lesson as
+    // the drum-solo flag and the "Wet only wins" tag: state that silently does
+    // not apply gets reported as a bug, so SAY it rather than hiding it.
+    function _ambEvolveInertWhy(L) {
+      try {
+        if (!L || !_ambEuclidDeterministic(L)) return null;
+        if (_ambImprovOn(L)) return 'Improvise already alternates written and improvised passes';
+        if (L.type === 'bed' && L.followSalt) return 'its colours re-deal every pass on their own';
+        if (L.type === 'drone') return 'it follows the changes live';
+        if (L.type === 'arp' && !L.euclid) return 'a continuous arpeggio, not a looped phrase';
+        return 'every pass is identical — there is nothing to freeze. Add variance '
+          + '(Rhythm var, Ghosts, Improvise) and Evolve applies';
+      } catch (e) { return null; }
+    }
     function _ambEuclidDeterministic(L) {
       if (!L || typeof L !== 'object') return false;
       // followSalt bed ("Keys") under a progression with colours in scope: the
@@ -23475,6 +23791,30 @@
           // A kit AUDITION is scheduled ahead on the global tap and carries no
           // layer key at all, so nothing above can see it.
           try { if (typeof _stopKitPreview === 'function') _stopKitPreview(); } catch (e) {}
+          // ...AND AGAIN A MOMENT LATER. Clearing the interval does not stop a
+          // tick that is ALREADY RUNNING, and a tick emits a whole lookahead:
+          // notes it hands out after the sweep above has run are never cancelled
+          // by it. Same for a deferred voice build that completes in the same
+          // window. That race is narrow — one tick — so it shows up as a SINGLE
+          // stray hit rather than a run of them, which is exactly how it keeps
+          // being reported on drums (a pad's stray note is a tail nobody
+          // notices). Six configurations of the kit could not reproduce it on
+          // demand, which is itself the signature of a race rather than a
+          // missing sweep. Guarded on !E.timer so a fast stop→play restart is
+          // never cut, and it costs one timeout per stop.
+          const _reap = () => {
+            if (E.timer) return;                       // played again in the meantime
+            try {
+              const t2 = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+              Object.keys(E.mod || {}).forEach((k) => {
+                try { cancelBloomFutureVoices(k, t2); } catch (e) {}
+              });
+              cancelBloomFutureVoices('*', t2);
+              if (typeof _stopKitPreview === 'function') _stopKitPreview();
+            } catch (e) {}
+          };
+          try { setTimeout(_reap, 90); } catch (e) {}
+          try { setTimeout(_reap, 260); } catch (e) {}   // and past one tick period
         }
       } catch (e) {}
       _AMB_TICKING.delete(E); _ambTickWorkerMaybeStop();
@@ -24262,6 +24602,17 @@
         try {
           out.core = { voices: _coreVoices.enabled(), strips: _coreVoices.stripsEnabled() };
         } catch (e) { out.core = 'unreadable'; }
+        // THE REVERB PATH, stated rather than inferred — "no reverb on playback"
+        // has three different causes with three different fixes: no sends up, no
+        // reverb node built, or the shared send bus claimed by another engine
+        // (the last engine to build strips owns worklet output 16).
+        try {
+          out.reverbPath = {
+            engineReverbBuilt: !!E.reverb,
+            engines: { master: !!_masterEng.timer, lane: !!_laneEng.timer, shape: !!_shapeBloomEng.timer },
+            areaReverb: cfg.reverb,
+          };
+        } catch (e) { out.reverbPath = 'unreadable: ' + (e && e.message); }
         try { out.globalFx = { reverbType: globalFx.reverbType, warmthOn: !!globalFx.warmthOn,
                                vinylOn: !!globalFx.vinylOn, ottOn: !!globalFx.ottOn, compOn: !!globalFx.compOn }; } catch (e) {}
         const see = (L, key) => {
@@ -24277,6 +24628,20 @@
               return a;
             }, {}),
             wetOnly: !!L.wetOnly,
+            // EVERY GATE THAT CAN SILENCE THIS LAYER — the fields two hunts went
+            // in blind without ("layers cut in and out" needed unitGate/tg; "the
+            // schedule is ignored" needs all of them). Only non-neutral state is
+            // recorded, so a clean layer stays one line.
+            write: L.write ? { on: !!L.write.on, lock: !!L.write.lock, bars: L.write.bars | 0, times: L.write.times | 0 } : null,
+            tg: (L.tg && L.tg.on) ? { steps: L.tg.steps, pattern: L.tg.pattern } : null,
+            unitGate: L.unitGate ? { div: L.unitGate.div, period: L.unitGate.period, mode: L.unitGate.mode,
+                                     slots: Object.keys(L.unitGate.slots || {}) } : null,
+            iterGate: L.iterGate ? { len: L.iterGate.len, ref: L.iterGate.ref, steps: L.iterGate.steps } : null,
+            cycleGate: L.cycleGate ? { len: L.cycleGate.len, steps: L.cycleGate.steps } : null,
+            chordMask: (L.chordMask && L.chordMask.steps) ? L.chordMask.steps : null,
+            sectionMask: (L.sectionMask && L.sectionMask.steps) ? L.sectionMask.steps : null,
+            improv: !!(L.improv && L.improv.on),
+            soloLane: Number.isFinite(L.soloLane) ? L.soloLane : null,
           });
         };
         ['bed', 'motif', 'texture', 'beat'].forEach((k) => see(cfg[k], k));
@@ -33219,7 +33584,7 @@
               + ' style="width:' + sw2.toFixed(3) + '%" title="' + esc(lp.name) + ' · ' + _ambFmtBpc(lp.bars) + ' bars'
               + (lp.plays > 1 ? ' · pass ' + (lp.rep + 1) + ' of ' + lp.plays : '')
               + (lp.open ? (lp.hold ? ' · no changes, the harmony holds' : ' · no changes, the changes run underneath') : '')
-              + ' — tap to show this part' + (_si2 >= 0 ? ', or rename / resize it' : '') + '">'
+              + ' — tap: open the Matrix scoped to this part' + (_si2 >= 0 ? ', or rename / resize it' : '') + '">'
               + esc(lp.name) + (lp.plays > 1 ? '<b class="secpart">' + (lp.rep + 1) + '/' + lp.plays + '</b>' : '') + '</i>';
             if (_si2 >= 0) _secSeen.add(_si2);
           });
@@ -33622,6 +33987,10 @@
         // Loop line (the phrase structure) — its own row so cycles×plays + chips breathe.
         const stoW = !!(w && w.stochastic);   // ~ Vary: random length/plays in a min–max range each cycle
         const wLock = !!(w && w.on && w.lock);   // Evolve = Locked: freeze one unit, hold forever (X×Y inert)
+        // Why Evolve is bypassed on this layer (null when it applies) — the
+        // engine already skips Write for natively-looping layers; this is what
+        // stops that being invisible.
+        const _evInert = _ambEvolveInertWhy(layer);
         const phraseHtml = '<span class="ambient-sched-xy"' + ((wOn && !wLock) ? '' : ' style="display:none"') + '>' +
             (stoW
               ? ('<span class="ambient-sched-lbl">bars</span>' +
@@ -33644,10 +34013,18 @@
             '</div>' +
             // Evolve line — the CADENCE axis as one 3-point control (Continuous /
             // Every N / Locked), then the Every-N detail (Vary/Live + phrase X×Y).
-            '<div class="ambient-sched-loopline' + (wOn ? ' on' : '') + (wLock ? ' locked' : '') + '" title="Evolve — how OFTEN the layer re-rolls: Continuous (every cycle) · Every N (freeze a pattern, repeat it, then evolve a fresh one) · Locked (freeze one roll, hold forever).">' +
+            '<div class="ambient-sched-loopline' + (wOn ? ' on' : '') + (wLock ? ' locked' : '') + (_evInert ? ' inert' : '') + '" title="Evolve — how OFTEN the layer re-rolls: Continuous (every cycle) · Every N (freeze a pattern, repeat it, then evolve a fresh one) · Locked (freeze one roll, hold forever).">' +
               '<span class="ambient-sched-looplbl">Evolve</span>' +
+              (_evInert ? ('<i class="ambient-sched-evna" title="' + esc('Evolve does not apply here — ' + _evInert + '.')
+                + '">n/a — ' + esc(_evInert.split(' — ')[0].split(', Ghosts')[0]) + '</i>') : '') +
+              ((layer.iterGate && Array.isArray(layer.iterGate.steps))
+                ? ('<i class="ambient-sched-evna" title="Across schedule: plays only '
+                   + layer.iterGate.steps.filter(v => v).length + ' of every ' + layer.iterGate.steps.length + ' '
+                   + (layer.iterGate.ref === 'plot' ? 'plots' : 'rounds') + ' — Edit → ⟳ Across to change or clear.">⟳ '
+                   + layer.iterGate.steps.filter(v => v).length + '/' + layer.iterGate.steps.length + '</i>')
+                : '') +
               '<div class="ambient-sched-btnrow">' +
-              '<span class="ambient-sched-evolve" role="group" aria-label="Evolve cadence">' +
+              '<span class="ambient-sched-evolve' + (_evInert ? ' is-overridden' : '') + '" role="group" aria-label="Evolve cadence">' +
                 '<button type="button" class="ambient-seg ambient-sched-ev' + (!wOn ? ' active' : '') + '" data-ev="cont" title="Continuous — re-roll a fresh pattern every cycle (no freezing).">Continuous</button>' +
                 '<button type="button" class="ambient-seg ambient-sched-ev' + ((wOn && !wLock) ? ' active' : '') + '" data-ev="every" title="Every N — freeze a pattern, repeat it N plays, then evolve a fresh one.">Every N</button>' +
                 '<button type="button" class="ambient-seg ambient-sched-ev' + (wLock ? ' active' : '') + '" data-ev="lock" title="Locked — freeze one roll and hold it forever (never re-rolls). Persists across reload.">🔒 Locked</button>' +
@@ -33751,6 +34128,25 @@
                 elS._schedFollow = false;             // an explicit pick pins the view
                 try { _ambRenderScheduler(E); } catch (e) {}
               }
+              // THE TAP MUST DO SOMETHING YOU CAN SEE. Everything `_schedPart`
+              // scopes — the chord lane, the layer strips, the pass picker —
+              // lives inside the ADVANCED block, hidden by default; measured on
+              // the default view, a tap changed nothing but the chip highlight,
+              // reported (twice) as "clicking parts does nothing / what is the
+              // point of this". The visible thing in the default view is the
+              // ⌗ Matrix directly below, and it already has part tabs
+              // (`_pmPart`, absolute `data-ci`) — so a tap scopes it to this
+              // part and OPENS it. One selection, expressed everywhere it can
+              // be seen.
+              try {
+                const mx = _ambGet(E, 'ambient-progmatrix');
+                if (mx) {
+                  mx._pmPart = blk.dataset.pi | 0;
+                  const grp = _ambGet(E, 'ambient-proggrp-matrix');
+                  if (grp) grp.classList.add('open');
+                  if (typeof _ambRenderChordMatrix === 'function') _ambRenderChordMatrix(E);
+                }
+              } catch (e) {}
             }
             // Only an OPEN part has a section behind it, and this menu is the
             // only place it can be renamed or resized; a changes part is edited

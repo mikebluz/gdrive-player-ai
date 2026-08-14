@@ -12861,6 +12861,16 @@
 .ambient-sched-secblk { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; height: 18px; font: 600 0.62rem 'Segoe UI', sans-serif; color: #cfd4ff; background: rgba(110, 120, 255, 0.14); border: 1px solid rgba(110, 120, 255, 0.35); border-radius: 3px; overflow: hidden; white-space: nowrap; cursor: pointer; font-style: normal; }
 .ambient-sched-secblk.cyc { border-left-width: 2px; border-left-color: rgba(110, 120, 255, 0.8); }
 .ambient-sched-secblk:hover { background: rgba(110, 120, 255, 0.28); }
+/* THE SELECTED PART. The renderer has always added `.on` to the part the rest of
+   the Scheduler is scoped to, and NOTHING styled it — so tapping a part chip
+   selected it (verified: _schedPart moves, the class lands) while background,
+   border and colour stayed byte-identical, i.e. "nothing happens when I click on
+   a part". The inset bar is what survives the harm/playing variants below, which
+   set their own background. */
+.ambient-sched-secblk.on { background: rgba(110, 120, 255, 0.44); border-color: rgba(160, 170, 255, 0.95);
+                           color: #fff; box-shadow: inset 0 -3px 0 rgba(170, 180, 255, 0.95); }
+.ambient-sched-secblk.harm.on { background: rgba(79, 209, 197, 0.36); border-color: rgba(127, 214, 196, 0.95);
+                                box-shadow: inset 0 -3px 0 rgba(127, 214, 196, 0.95); }
 /* A section bound to a progression PART — its changes are that part's, looping
    from the top each time the section comes round. Teal = the harmony colour used
    by the chord lane / chord-group tints, so the two lanes read as one system.
@@ -12941,8 +12951,10 @@
        One row per layer, one cell per unit. Cells WRAP rather than scroll
        sideways (UI rule 1) and stay finger-sized. */
     .ambient-qe-modal { width: min(680px, 95vw); }
-    .ambient-qe-body { max-height: 56vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
-    .ambient-qe-row { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+    /* Body gap now separates LAYERS (each is one .ambient-qe-layer child), so it
+       must be clearly bigger than the 4px gap inside one. */
+    .ambient-qe-body { max-height: 56vh; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; margin: 10px 0; }
+    .ambient-qe-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; min-width: 0; }
     .ambient-qe-name { flex: 0 0 6.4em; font-size: 0.72rem; color: #a0aec0; padding-top: 7px;
                        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ambient-qe-cells { flex: 1 1 0; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px; }
@@ -12989,6 +13001,12 @@
     .ambient-qe-cell.wide { min-width: 48px; font-size: 0.66rem; letter-spacing: -0.01em; }
     .ambient-qe-steps-row { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin: 8px 0 4px; }
     .ambient-qe-steps-row > span:first-child { font-size: 0.72rem; color: #a0aec0; flex: 0 0 auto; }
+    /* `.ambient-hint` is nowrap — right for a one-word readout in a sized cell,
+       wrong the moment it carries a sentence (the trap in CLAUDE.md). Here it
+       names every set in the chain, so it ran straight off the modal edge and
+       was CLIPPED. Its own full-width line, wrapping. */
+    .ambient-qe-steps-row .ambient-hint { flex: 1 1 100%; white-space: normal;
+                                          overflow-wrap: anywhere; line-height: 1.35; }
     .ambient-qe-disp { min-height: 34px; min-width: 40px; padding: 5px 9px; font-size: 0.74rem; }
     @media (max-width: 520px) { .ambient-qe-disp { min-height: 36px; } }
 
@@ -13046,7 +13064,27 @@
     .ambient-pov-len { color: #7fd6c4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
     /* Per-layer material state in the Edit grid: Re-roll / Loop / Hold. */
-    .ambient-qe-evrow { flex: 0 0 auto; display: flex; gap: 3px; margin-right: 8px; }
+    /* EVOLVE TAKES ITS OWN LINE, AFTER ALL OF THAT LAYER'S CELLS. In the row it
+       ate a third of a 390px phone (measured name 74px · evolve 109px · cells
+       126px), squeezing the cells — the thing the grid is for — into a wrapping
+       sliver; on the first row alone it landed between two lines of the same
+       layer's cells. `.ambient-qe-layer` is the grouping that makes the gap
+       inside a layer smaller than the gap between layers, so the trailing
+       control still reads as belonging above it and not below. */
+    .ambient-qe-layer { display: flex; flex-direction: column; gap: 4px; }
+    .ambient-qe-evline { padding-left: calc(6.4em + 8px); }
+    .ambient-qe-evrow { flex: 0 0 auto; display: flex; gap: 3px; align-items: center; flex-wrap: wrap; }
+    /* Evolve is BYPASSED on a natively-looping layer (a drum-lanes kit repeats
+       byte-identically, so there is nothing for Write to freeze). The engine has
+       always skipped it; these two rules are what stop that being silent. */
+    .ambient-qe-evrow.is-overridden .ambient-qe-ev,
+    .ambient-sched-evolve.is-overridden .ambient-sched-ev { opacity: 0.42; }
+    .ambient-qe-evna, .ambient-sched-evna {
+      font-size: 0.64rem; font-style: normal; color: #f6ad55; opacity: 0.9;
+      border: 1px dashed rgba(246,173,85,0.45); border-radius: 5px; padding: 1px 5px;
+      white-space: normal; overflow-wrap: anywhere;
+    }
+    @media (max-width: 460px) { .ambient-qe-evline { padding-left: 0; } }
     .ambient-qe-ev {
       min-height: 30px; min-width: 30px; padding: 3px 6px; border-radius: 6px;
       border: 1px solid #2d2d3f; background: #14141f; color: #4a5568;
@@ -13065,3 +13103,12 @@
       white-space: normal; overflow-wrap: anywhere; line-height: 1.5;
       display: block; margin-top: 10px;
     }
+
+    /* Metascheduler: the across-iterations axis of Quick edit. Its cells carry
+       no chord tint (the harmony is identical every time round), so they take a
+       neutral fill and only on/off differs. */
+    .ambient-qe-axis { flex: 0 0 auto; }
+    .ambient-qe-iterctl { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+    .ambient-qe-ilen { font-size: 0.7rem; color: #cfd4ff; min-width: 62px; text-align: center; }
+    .ambient-qe-cell.iter { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.14); color: #8f97b8; }
+    .ambient-qe-cell.iter.on { background: rgba(110,120,255,0.42); border-color: rgba(150,160,255,0.85); color: #fff; }

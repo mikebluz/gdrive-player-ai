@@ -34650,7 +34650,9 @@
         // A spoken layer plays NOTES too (Words as → Play / Both), and those
         // notes want the same dynamics every other layer has. Speech itself has
         // its own level shaping in Speech FX, so this rides the note passage.
-        ['grp', 'Variance'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'],
+        // Declared here WITHOUT a group of its own: the Performance pass lifts it
+        // out, and a group whose only control has been moved away renders empty.
+        ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'],
         ['grp', 'Speech'], ['speechfx'],
         ['grp', 'Timing'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
         ..._AMB_MIX,
@@ -34664,7 +34666,9 @@
         // A spoken layer plays NOTES too (Words as → Play / Both), and those
         // notes want the same dynamics every other layer has. Speech itself has
         // its own level shaping in Speech FX, so this rides the note passage.
-        ['grp', 'Variance'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'],
+        // Declared here WITHOUT a group of its own: the Performance pass lifts it
+        // out, and a group whose only control has been moved away renders empty.
+        ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'],
         ['grp', 'Speech'], ['speechfx'],
         ['grp', 'Timing'], ['wordbars'], ['tm', 'intervalMs', 'Gap', 0, 5000, 50], ['cond'],
         ..._AMB_MIX,
@@ -34730,13 +34734,11 @@
     // so a type added later is grouped correctly without anyone remembering.
     (function _ambSplitPerformanceGroup() {
       try {
-        // Only HUMANIZE moves. Dynamics (velVar) was moved out here too, on the
-        // reading that velocity and timing jitter are both "performance" — but
-        // Dynamics is SEEDED and replays exactly from the take, which is the
-        // property that defines the Variance group, while Humanize is the
-        // deliberately unseeded one. So Dynamics belongs with its reproducible
-        // neighbours, which is also where it is looked for.
-        const MOVE = { humanize: 1 };
+        // Dynamics and Humanize are both PERFORMANCE: how the notes are played,
+        // as against Variance, which is what notes there are. (Dynamics being
+        // seeded and Humanize not is a fair distinction, but it is a detail of
+        // reproducibility rather than what the control does.)
+        const MOVE = { humanize: 1, velVar: 1 };
         Object.keys(_AMB_LAYER_SCHEMA).forEach(function (t) {
           const sch = _AMB_LAYER_SCHEMA[t];
           if (!sch || !Array.isArray(sch.ctrls)) return;

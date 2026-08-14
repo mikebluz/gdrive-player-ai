@@ -3002,6 +3002,24 @@
     // iteration. Untagged voices (no start time) are kept when thresholding.
     function cancelBloomFutureVoices(key, fromAt) {
       if (!key) return;
+      // '*' = EVERY Bloom-tagged voice, whatever its key. Stop iterates the live
+      // mod chains, so a voice whose key is not among them survives — a kit
+      // preview, a layer torn down mid-session, a departed '#dep' key. Those are
+      // exactly the hits still arriving after Stop. Collect the distinct keys
+      // actually present and run the normal path for each, so the core bridge
+      // and the build queue are handled by the same code as always.
+      if (key === '*') {
+        const keys = new Set();
+        const add = (e) => { if (e && e._ak) keys.add(e._ak); };
+        try { _pendingVoices.forEach(add); } catch (e) {}
+        try { _pendingSampleVoices.forEach(add); } catch (e) {}
+        try { _activeVoices.forEach(add); } catch (e) {}
+        try { _activeSampleVoices.forEach(add); } catch (e) {}
+        try { _activePadVoices.forEach(add); } catch (e) {}
+        try { (_voiceBuildQueue || []).forEach((q) => { if (q && q.ak) keys.add(q.ak); }); } catch (e) {}
+        keys.forEach((k) => { try { cancelBloomFutureVoices(k, fromAt); } catch (e) {} });
+        return;
+      }
       // Not-yet-BUILT voices sitting in the deferred construction queue.
       _vqPurge(key, (at) => fromAt == null || at >= fromAt);
       // Core-engine voices scheduled for this layer.

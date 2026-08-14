@@ -23466,6 +23466,15 @@
           Object.keys(E.mod || {}).forEach((k) => {
             try { cancelBloomFutureVoices(k, _nw); } catch (e) {}
           });
+          // …and then EVERYTHING else that is still scheduled. The loop above
+          // only reaches layers with a live mod chain, so anything keyed
+          // elsewhere plays on: a kit preview, a layer torn down mid-session, a
+          // departed '#dep' key. Reported as pattern hits continuing after Stop
+          // on a beat layer with a custom kit.
+          try { cancelBloomFutureVoices('*', _nw); } catch (e) {}
+          // A kit AUDITION is scheduled ahead on the global tap and carries no
+          // layer key at all, so nothing above can see it.
+          try { if (typeof _stopKitPreview === 'function') _stopKitPreview(); } catch (e) {}
         }
       } catch (e) {}
       _AMB_TICKING.delete(E); _ambTickWorkerMaybeStop();

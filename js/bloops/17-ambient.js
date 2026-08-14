@@ -27579,10 +27579,23 @@
       let _pollT = null;
       let _renderFrac = 0;
       let _renderStarted = false;   // set when the Offline callback finishes — the narrator must not stomp the phase-2 status
+      // THE PROGRESS LINE SAYS WHAT IS HAPPENING. Whether the core engine is
+      // running, and how fast the render is actually going, decide everything
+      // about a slow bounce — and both were invisible, so a slow render looked
+      // identical whatever the cause. They belong on the one screen someone is
+      // already staring at while they wait.
+      let _coreLabel = '';
       const _narrate = () => {
         if (!_renderStarted) return;
-        const el = Math.round((((typeof performance !== 'undefined') ? performance.now() : 0) - _t0poll) / 1000);
-        say('3/4 Rendering ' + notes.length + ' notes… ' + Math.round(_renderFrac * 100) + '% (' + el + 's)');
+        const nowMs = ((typeof performance !== 'undefined') ? performance.now() : 0);
+        const el = Math.round((nowMs - _t0poll) / 1000);
+        let rate = '';
+        if (_renderT0 && _renderFrac > 0.005) {
+          const x = (_renderFrac * _renderSec) / Math.max(0.001, (nowMs - _renderT0) / 1000);
+          rate = ' · ' + x.toFixed(2) + '\u00d7';
+        }
+        say('3/4 Rendering ' + notes.length + ' notes… ' + Math.round(_renderFrac * 100) + '% (' + el + 's)'
+          + _coreLabel + rate);
       };
       // SCOPED startRendering patch: capture the native OfflineAudioContext
       // (Tone's rawContext is a wrapper without .suspend) and schedule the
@@ -27882,6 +27895,7 @@
             // 4-minute take in one minute and in twenty. It used to fail
             // silently, so a slow render looked like the renderer simply being
             // slow rather than a handshake that timed out.
+            _coreLabel = coreOn ? ' \u00b7 core \u2713' : ' \u00b7 CORE OFF';
             if (!coreOn && typeof _coreVoices !== 'undefined' && _coreVoices.enabled && _coreVoices.enabled()) {
               _missing.push('the CORE engine did not start for this render — it ran on the node fallback, which is 5-10x slower');
             }

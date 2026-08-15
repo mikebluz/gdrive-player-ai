@@ -34287,7 +34287,35 @@
             items.push(
               'hr',
               { label: '✕ Delete section', danger: true, fn: () => { c2.sections.splice(si, 1); if (!c2.sections.length) delete c2.sections; done(); } });
-            if (typeof showCtxMenu === 'function') showCtxMenu(ev.clientX, ev.clientY, items);
+            // DEFER A TICK, or this menu tears itself down the instant it opens.
+            // We are inside the dispatch of the chip's POINTERDOWN (the lane
+            // dispatches its own click from there, because a repaint between
+            // press and release drops a real click). showCtxMenu arms a
+            // document-level pointerdown dismiss listener, and a listener
+            // registered mid-dispatch on a node the event has not reached yet
+            // still fires for THAT event — so the menu was created and destroyed
+            // in one gesture, and the section editor (rename / length / key /
+            // mode / groove / harmony / delete) was unreachable. Verified: 14
+            // items built, showCtxMenu called, nothing in the DOM afterwards.
+            // The documented showCtxMenu-from-a-pointerdown trap, and the same
+            // fix the Length submenu below already uses.
+            // Coordinates are read NOW (the event is live) and the chip is
+            // re-queried as a fallback, since _ambRenderScheduler above has
+            // already detached the one that was tapped.
+            const _mx = ev.clientX, _my = ev.clientY, _mpi = blk.dataset.pi;
+            if (typeof showCtxMenu === 'function') {
+              setTimeout(() => {
+                try {
+                  let x = _mx, y = _my;
+                  if (!(x > 0 || y > 0)) {
+                    const live = document.querySelector('.ambient-sched-secblk[data-pi="' + _mpi + '"]');
+                    const rb = live && live.getBoundingClientRect();
+                    if (rb) { x = rb.left; y = rb.bottom + 4; }
+                  }
+                  showCtxMenu(x, y, items);
+                } catch (e) {}
+              }, 0);
+            }
             else { const nm = prompt('Section name:', sc.name); if (nm != null && nm.trim()) { sc.name = nm.trim().slice(0, 12); done(); } }
             return;
           }

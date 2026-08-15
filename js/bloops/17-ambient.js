@@ -39437,7 +39437,33 @@
             if (mac) { const c = _grCfg(); if (!c) return; const gm = mac.getAttribute('data-gm'), v = Math.max(0, Math.min(100, parseInt(mac.value, 10) || 0));
               if (gm === 'humanize') c.startVary = v; else c.groove[gm] = v;
               const vo = grBody.querySelector('[data-gv="' + gm + '"]'); if (vo) vo.textContent = v;
-              if (gm === 'humanize') { try { _ambSyncControls(E); } catch (e) {} } _grLiveSwing();
+              // DO NOT re-sync the whole panel mid-drag. Humanize writes
+              // cfg.startVary, which is MIRRORED by the Configure "Area start"
+              // slider and the bed/motif inherit cues — so this used to call
+              // _ambSyncControls on every input event, which re-renders and
+              // REPLACES this very input. The browser is tracking the element
+              // the pointer grabbed, so destroying it kills the drag after the
+              // first pixel: measured, Humanize was the only macro whose
+              // element was gone from the DOM after one input, and the only one
+              // reported as not sliding. Mirror the few elements that actually
+              // shadow this value, and leave the full sync to `change` (below),
+              // which fires once the drag ends (handler added below).
+              if (gm === 'humanize') {
+                try {
+                  const sv = document.getElementById(_ambTrId(E, 'ambient-area-startvary'));
+                  if (sv && sv !== mac) sv.value = String(v);
+                  const svv = document.getElementById(_ambTrId(E, 'ambient-area-startvary-v'));
+                  if (svv) svv.textContent = String(v);
+                  ['bed', 'motif'].forEach((ty) => {
+                    const fld = (ty === 'bed') ? 'startVary' : 'phraseVary';
+                    const own = c[ty] && typeof c[ty] === 'object' ? c[ty][fld] : undefined;
+                    if (Number.isFinite(own)) return;              // has its own value — not inheriting
+                    const el2 = document.getElementById(_ambTrId(E, 'ambient-' + ty + '-' + fld));
+                    if (el2) el2.value = String(v);
+                  });
+                } catch (e) {}
+              }
+              _grLiveSwing();
               if (typeof persistWorkspace === 'function') persistWorkspace(); return; }
             const tb = ev.target.closest('.ambient-groove-tapbars, .ambient-groove-tapsteps');
             if (tb) { const t = _ambTapState(E); const v = parseInt(tb.value, 10) || 0; if (tb.classList.contains('ambient-groove-tapbars')) t.bars = Math.max(1, Math.min(8, v)); else t.steps = Math.max(2, Math.min(32, v)); return; }
@@ -39447,6 +39473,16 @@
               L.push = v; const pv = psl.parentElement.querySelector('.ambient-groove-pv'); if (pv) pv.textContent = (v > 0 ? '+' : '') + v + (pct ? '%' : 'ms');
               if (E.timer) { try { _ambUnitReanchor(E, key); } catch (e) {} }   // re-anchor so the new offset applies at the next boundary
               if (typeof persistWorkspace === 'function') persistWorkspace(); return; }
+          });
+          // A macro's CHANGE fires once the drag ends — the safe moment to bring
+          // every mirrored readout back in step (Humanize writes cfg.startVary,
+          // which the Configure "Area start" slider and the bed/motif inherit
+          // cues shadow). Doing this on `input` is what killed the drag.
+          grBody.addEventListener('change', (ev) => {
+            const mac2 = ev.target.closest && ev.target.closest('.ambient-groove-mac');
+            if (mac2 && mac2.getAttribute('data-gm') === 'humanize') {
+              try { _ambSyncControls(E); } catch (e) {}
+            }
           });
           // Preset apply (select) — sets the whole feel, then re-anchors + syncs.
           grBody.addEventListener('change', (ev) => {

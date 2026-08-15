@@ -34248,30 +34248,82 @@
                 elS._schedFollow = false;             // an explicit pick pins the view
                 try { _ambRenderScheduler(E); } catch (e) {}
               }
-              // THE TAP MUST DO SOMETHING YOU CAN SEE. Everything `_schedPart`
-              // scopes — the chord lane, the layer strips, the pass picker —
-              // lives inside the ADVANCED block, hidden by default; measured on
-              // the default view, a tap changed nothing but the chip highlight,
-              // reported (twice) as "clicking parts does nothing / what is the
-              // point of this". The visible thing in the default view is the
-              // ⌗ Matrix directly below, and it already has part tabs
-              // (`_pmPart`, absolute `data-ci`) — so a tap scopes it to this
-              // part and OPENS it. One selection, expressed everywhere it can
-              // be seen.
-              try {
-                const mx = _ambGet(E, 'ambient-progmatrix');
-                if (mx) {
-                  mx._pmPart = blk.dataset.pi | 0;
-                  const grp = _ambGet(E, 'ambient-proggrp-matrix');
-                  if (grp) grp.classList.add('open');
-                  if (typeof _ambRenderChordMatrix === 'function') _ambRenderChordMatrix(E);
-                }
-              } catch (e) {}
+              // NO MATRIX SCOPING HERE. A tap used to open the ⌗ Matrix scoped
+              // to this part, because nothing else visible responded — but the
+              // Matrix has its own part tabs directly below, so that was one
+              // selector duplicating another. The tap's own menu (below) is now
+              // the visible consequence.
             }
-            // Only an OPEN part has a section behind it, and this menu is the
-            // only place it can be renamed or resized; a changes part is edited
-            // in ⇶ Arch, and selecting it (above) is all this tap does.
-            if (blk.dataset.si == null || !Array.isArray(c2.sections)) return;
+            // EVERY CHIP OPENS A MENU. Only an OPEN part has a section behind
+            // it, so a CHANGES part used to fall through here and the tap did
+            // nothing but move a highlight — reported three times over
+            // ("clicking parts does nothing", "what is the point of this", "I
+            // still don't see the section menu"), because which chip you happen
+            // to press decides whether anything opens. A changes part gets the
+            // fields it actually HAS: name, repeats, its own key, its own salt.
+            // Groove and Length are deliberately absent — the engine resolves
+            // those per SECTION, and sections are built from open parts, so
+            // offering them here would be a control that does nothing.
+            if (blk.dataset.si == null || !Array.isArray(c2.sections) || !c2.sections[blk.dataset.si | 0]) {
+              const pi = blk.dataset.pi | 0;
+              const parts = (c2.prog && Array.isArray(c2.prog.parts)) ? c2.prog.parts : null;
+              const pt = parts && parts[pi];
+              if (!pt) return;
+              const doneP = () => {
+                try { E.getCfg(); } catch (e) {}
+                try { _ambRenderScheduler(E); _ambRenderProgOverview(E); _ambSyncControls(E); } catch (e) {}
+                if (typeof persistWorkspace === 'function') persistWorkspace();
+              };
+              const plays = Math.max(1, pt.plays | 0 || 1);
+              const kTxt = pt.key
+                ? (((typeof CHROMATIC !== 'undefined' && CHROMATIC[((pt.key.root | 0) % 12 + 12) % 12]) || '')
+                   + ' ' + ((typeof prettyScaleName === 'function') ? prettyScaleName(pt.key.scale || 'major') : (pt.key.scale || 'major')))
+                : 'area key';
+              const sTxt = pt.salt ? 'its own' : 'inherits';
+              const pItems = [
+                { label: '✎ Rename “' + pt.name + '”', fn: () => {
+                  const nm = prompt('Name for this set of changes:', pt.name);
+                  if (nm != null && nm.trim()) { pt.name = nm.trim().slice(0, 16); doneP(); } } },
+                { label: '⟳ Repeats (' + plays + '×)', fn: () => setTimeout(() => {
+                  const opts = [1, 2, 3, 4, 6, 8].map(n => ({
+                    label: (n === plays ? '✓ ' : '') + n + '× ' + (n === 1 ? '(plays once)' : ''),
+                    fn: () => { if (n > 1) pt.plays = n; else delete pt.plays; doneP(); } }));
+                  try { const rb = blk.getBoundingClientRect(); showCtxMenu(rb.left, rb.bottom + 4, opts); } catch (e) {}
+                }, 0) },
+                { label: '⇅ Key (' + kTxt + ')', fn: () => setTimeout(() => {
+                  const CH = (typeof CHROMATIC !== 'undefined') ? CHROMATIC : [];
+                  const sc2 = (pt.key && pt.key.scale) || _ambKeyScaleName(c2);
+                  const opts = [{ label: (pt.key ? '' : '✓ ') + '↩ Follow the area key',
+                                  fn: () => { delete pt.key; doneP(); } }];
+                  for (let r2 = 0; r2 < 12; r2++) opts.push({
+                    label: ((pt.key && (pt.key.root | 0) === r2) ? '✓ ' : '  ') + (CH[r2] || r2) + ' ' + sc2,
+                    fn: () => { pt.key = { root: r2, scale: sc2 }; doneP(); } });
+                  try { const rb = blk.getBoundingClientRect(); showCtxMenu(rb.left, rb.bottom + 4, opts); } catch (e) {}
+                }, 0) },
+                // Absent = inherit; present-and-all-zero = never salt here. That
+                // absent/zero grammar is the engine's, not this menu's.
+                { label: '🧂 Salt (' + sTxt + ')', fn: () => {
+                  if (pt.salt) delete pt.salt; else pt.salt = { colors: 0, scatter: 0 };
+                  doneP(); } },
+              ];
+              const mx2 = blk.dataset.pi, rb2 = blk.getBoundingClientRect();
+              const cx = ev.clientX, cy = ev.clientY;
+              // Deferred for the same reason as the section menu below: we are
+              // inside the chip's POINTERDOWN, and showCtxMenu's own dismiss
+              // listener would eat that very event.
+              if (typeof showCtxMenu === 'function') setTimeout(() => {
+                try {
+                  let x = cx, y = cy;
+                  if (!(x > 0 || y > 0)) {
+                    const live = document.querySelector('.ambient-sched-secblk[data-pi="' + mx2 + '"]');
+                    const r3 = live ? live.getBoundingClientRect() : rb2;
+                    x = r3.left; y = r3.bottom + 4;
+                  }
+                  showCtxMenu(x, y, pItems);
+                } catch (e) {}
+              }, 0);
+              return;
+            }
             const si = blk.dataset.si | 0; const sc = c2.sections[si]; if (!sc) return;
             const done = () => { try { _ambRenderScheduler(E); } catch (e) {} if (typeof persistWorkspace === 'function') persistWorkspace(); };
             const items = [

@@ -22515,6 +22515,20 @@
     function _ambFreezeGate(E, key, now, horizon) {
       const st = E.freeze && E.freeze[key];
       if (!st) return false;
+      // CAPTURE FINALIZE STOPS A FROZEN LOOP TOO. Every live emitter honours
+      // windingDown ("no new iterations; already-scheduled ones play out"), but
+      // a layer running a frozen Write/Evolve loop never reached those guards:
+      // this gate replays and RETURNS before runLayer's check, so the replay
+      // kept scheduling fresh iterations while every other layer fell silent —
+      // one layer playing on alone past the end of the take, and since the
+      // capture ends on silence, a take that runs long. Measured on a 4-layer
+      // rig: the only layer with `frozen=true` emitted for ~10 s after
+      // wind-down (last onset +9.8 s) while the unfrozen ones stopped at the
+      // 1.3 s lookahead. Returning TRUE means "handled — emit nothing", so the
+      // layer stops scheduling exactly like the live ones and whatever is
+      // already in the graph rings out. Only ever true during capture finalize,
+      // so generation and both gates are untouched.
+      if (E.windingDown) return true;
       // Deferred lock-ON: keep generating until the armed cycle's boundary, then
       // capture that (now-complete) cycle and engage the locked loop.
       if (!st.frozen && st.pendingFreezeAt != null) {

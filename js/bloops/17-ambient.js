@@ -31327,6 +31327,14 @@
         // gone — that lane navigates, it does not author).
         '<span role="button" tabindex="0" class="ambient-pov-addpart" data-pov="addpart" ' +
           'title="Add a part — a new set of changes, or a block with no changes at all">＋ Part</span>' +
+        // SALT and ORDER open as popovers from here. They are things you do TO
+        // the progression on screen, so they belong on its own bar rather than
+        // as two more accordions below it — and as accordions they pushed the
+        // matrices further down every time they were opened.
+        '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="grp:salt" ' +
+          'title="Salt — deterministic per-cycle spice: lengths, colours, vary, tension, take, scatter">🧂 Salt</span>' +
+        '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="grp:order" ' +
+          'title="Order — scheduled re-ordering of the changes">↻ Order</span>' +
         '<span role="button" tabindex="0" class="ambient-pov-namesbtn' + (namesFirst ? ' on' : '') + '" data-pov="names" title="' +
           (namesFirst ? 'Showing chord NAMES first with the numeral after \u2014 click to lead with numerals' :
                         'Showing ROMAN NUMERALS first with the name after \u2014 click to lead with chord names') + '">' +
@@ -31522,6 +31530,11 @@
       const t = ev.target && ev.target.closest && ev.target.closest('[data-pov]'); if (!t) return;
       ev.preventDefault();
       const a = String(t.getAttribute('data-pov')).split(':'), op = a[0];
+      if (op === 'grp') {
+        _E = E;
+        _ambProgGrpPopover(E, a[1], a[1] === 'salt' ? '\uD83E\uDDC2 Salt' : '\u21bb Order');
+        return;
+      }
       _E = E; const cfg = E.getCfg(); if (!cfg || !cfg.prog) return; const prog = cfg.prog;
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
       const refresh = () => { el0(); _ambRenderProgOverview(E); try { _ambSyncControls(E); } catch (e) {} try { _ambRefreshSrcChips(E); } catch (e) {} if (E.timer) { try { _ambSyncMods(); } catch (e) {} } };
@@ -31598,8 +31611,14 @@
     // (head + body + caret) so these look and behave like every other group here,
     // rather than a second bespoke fold. Open state lives on the DOM — the panel is
     // built once, the same rule the layer cards follow.
-    function _ambProgGrpOpen(key, label, open) {
-      return '<div class="ambient-grp ambient-proggrp' + (open ? ' open' : '') + '" id="ambient-proggrp-' + key + '" data-grp="' + label + '">' +
+    // `pop` = this group's home is a POPOVER opened from the Overview bar, not
+    // the pane. It still renders and syncs in place (every control is wired by
+    // id, and getElementById only finds elements in the document) — it is just
+    // parked hidden until the button moves the live node into the modal, which
+    // is what keeps all the existing wiring working untouched.
+    function _ambProgGrpOpen(key, label, open, pop) {
+      return '<div class="ambient-grp ambient-proggrp' + (open ? ' open' : '') + '" id="ambient-proggrp-' + key + '"'
+        + (pop ? ' data-pop="1"' : '') + ' data-grp="' + label + '">' +
         '<button type="button" class="ambient-grp-head" data-grp="' + label + '">' + label + '<span class="ambient-grp-caret" aria-hidden="true"></span></button>' +
         '<div class="ambient-grp-body">';
     }
@@ -31608,10 +31627,64 @@
     // hide its HEADER too — otherwise the area reads as five empty accordions. The
     // rows and matrices keep setting their own display exactly as before; this just
     // mirrors the result onto the wrapper, so no renderer had to change.
+    // Open a `data-pop` group as a popover by MOVING the live node into the
+    // modal and putting it back on close. Element identity is preserved, so
+    // every listener bound to those controls — and every id the sync functions
+    // look up — keeps working with no rewiring; rebuilding the markup inside a
+    // modal instead would have meant duplicating the salt/order wiring, which is
+    // exactly how two copies of a control drift apart.
+    function _ambProgGrpPopover(E, key, title) {
+      _E = E;
+      const grp = _ambGet(E, 'ambient-proggrp-' + key); if (!grp) return;
+      if (document.querySelector('.ambient-grp-pop')) return;   // one at a time
+      const home = grp.parentElement, mark = document.createComment('grp:' + key);
+      if (home) home.insertBefore(mark, grp);                   // remember the exact slot
+      const ov = document.createElement('div');
+      ov.className = 'sm-overlay ambient-grp-pop';
+      ov.innerHTML = '<div class="sm-modal ambient-grppop-modal">' +
+        '<div class="sm-title">' + title + '</div>' +
+        '<div class="ambient-grppop-host"></div>' +
+        '<div class="sm-footer"><button type="button" class="sm-apply">Done</button></div></div>';
+      const host = ov.querySelector('.ambient-grppop-host');
+      grp.classList.add('open');            // inside the popover it is always open
+      grp.style.display = '';
+      host.appendChild(grp);
+      const close = () => {
+        try {
+          if (mark.parentElement) mark.parentElement.insertBefore(grp, mark);
+          else if (home) home.appendChild(grp);
+          if (mark.parentElement) mark.parentElement.removeChild(mark);
+        } catch (e) { try { if (home) home.appendChild(grp); } catch (e2) {} }
+        grp.style.display = 'none';         // parked again
+        try { ov.remove(); } catch (e) {}
+      };
+      // ARM THE BACKDROP LATE. This strip acts on POINTERDOWN, so the trailing
+      // click of that same press lands on the overlay we just appended and would
+      // close it instantly — the popover would flash open and shut. Done always
+      // works; only the click-outside dismissal waits.
+      let armed = false;
+      setTimeout(() => { armed = true; }, 300);
+      ov.addEventListener('click', (ev) => {
+        if (ev.target.closest && ev.target.closest('.sm-apply')) { close(); return; }
+        if (armed && ev.target === ov) close();
+      });
+      document.body.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+      // Refresh what it shows now that it is on screen (the readouts skip work
+      // while parked, since their rows are hidden).
+      try { _ambSyncControls(E); } catch (e) {}
+      try { _ambSaltReadoutSync(E, true); } catch (e) {}
+    }
     function _ambProgGrpSync(E) {
       ['salt', 'order', 'overview', 'matrix', 'sections'].forEach(k => {
         const g = _ambGet(E, 'ambient-proggrp-' + k); if (!g) return;
         const body = g.querySelector('.ambient-grp-body'); if (!body) return;
+        // A popover group shows only while it is inside the popover host; parked
+        // in the pane it stays hidden, or this sync would un-hide it every frame.
+        if (g.dataset && g.dataset.pop === '1') {
+          g.style.display = g.closest('.ambient-grppop-host') ? '' : 'none';
+          return;
+        }
         const any = Array.prototype.some.call(body.children, c => c.style.display !== 'none');
         g.style.display = any ? '' : 'none';
       });
@@ -39036,7 +39109,7 @@
             // 🧂 SALT — deterministic per-cycle spice on the global progression
             // (engine: _ambProgSaltCfg / _ambProgSaltLens / colors in
             // _ambProgCurrentChord). All zeros = played exactly as written.
-            _ambProgGrpOpen('salt', '🧂 Salt', false) +
+            _ambProgGrpOpen('salt', '🧂 Salt', false, true) +
             '<div class="ambient-row ambient-prog-salt" id="ambient-prog-saltrow" style="display:none" title="Salt — deterministic per-cycle spice on the progression. Everything at 0 = play exactly as written.">' +
               '<span class="ambient-sched-lbl salt-lbl">🧂 salt</span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">lengths</span><input type="number" class="ambient-salt-in" id="ambient-salt-len" min="0" max="100" step="5" value="0" title="Random chord scheduling — each cycle re-slices the chord lengths (A 1¼ bars, B ½, C 1¾ …) on a 1/8-bar grid. The cycle total is preserved, so loops/Evolve stay aligned. AREA-WIDE: this is the shared chord clock, so every layer follows it (colour and scatter can be overridden per layer). 0 = as written, 100 = wild."></span>' +
@@ -39049,7 +39122,7 @@
             // the salt/order readout belongs with Salt — it is what salt did.
             '<div class="ambient-salt-readout" id="ambient-salt-readout" style="display:none" title="What salt/order are doing: this cycle\u2019s chords in PLAYED order (with lengths and \u00d7n color segments), then the next cycle\u2019s \u2014 deterministic per seed, so it plays exactly as shown."></div>' +
             _ambProgGrpClose() +
-            _ambProgGrpOpen('order', '\u21bb Order', false) +
+            _ambProgGrpOpen('order', '\u21bb Order', false, true) +
             // ↻ ORDER — scheduled chord re-ordering (engine: _ambProgOrderPerm).
             '<div class="ambient-row ambient-prog-salt ambient-prog-order" id="ambient-prog-orderrow" style="display:none" title="Play order — re-order the progression’s chords on scheduled cycles (deterministic per seed; the readout below shows each cycle’s actual order).">' +
               // The LABEL is the on/off. Inactive = the implicit defaults (written

@@ -13111,3 +13111,17 @@
     .ambient-qe-ilen { font-size: 0.7rem; color: #cfd4ff; min-width: 62px; text-align: center; }
     .ambient-qe-cell.iter { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.14); color: #8f97b8; }
     .ambient-qe-cell.iter.on { background: rgba(110,120,255,0.42); border-color: rgba(150,160,255,0.85); color: #fff; }
+
+    /* Salt / Order as popovers from the Overview bar. The live group node is
+       MOVED in here, so it must show regardless of the parked display:none it
+       carries in the pane, and its own accordion head is redundant beside the
+       modal title. */
+    .ambient-pov-grpbtn { display: inline-flex; align-items: center; min-height: 30px; padding: 3px 10px;
+                          border: 1px solid #3a3a52; border-radius: 8px; background: transparent;
+                          color: #cfd4ff; cursor: pointer; font-size: 0.72rem; flex: 0 0 auto; }
+    .ambient-pov-grpbtn:hover { border-color: #6e78ff; background: rgba(110,120,255,0.12); }
+    .ambient-grppop-modal { width: min(560px, 94vw); }
+    .ambient-grppop-host { max-height: 62vh; overflow-y: auto; margin: 8px 0; }
+    .ambient-grppop-host > .ambient-grp { display: block !important; border: none; background: transparent; }
+    .ambient-grppop-host > .ambient-grp > .ambient-grp-head { display: none; }
+    .ambient-grppop-host > .ambient-grp > .ambient-grp-body { display: block; }

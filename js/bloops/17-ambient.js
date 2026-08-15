@@ -5200,6 +5200,15 @@
       if (c && c.keyOn && c.keyFollow !== false) return (typeof rootIdx === 'number') ? (((rootIdx % 12) + 12) % 12) : 0;
       return c ? ((((c.keyRoot | 0) % 12) + 12) % 12) : 0;
     }
+    // THESE ANSWER "WHAT KEY WOULD APPLY", NOT "IS THERE A KEY". With `keyOn`
+    // false the area is CHROMATIC, yet both still return the stored keyRoot /
+    // keyScale (measured: C major on a Free area whose workspace was D blues) —
+    // so every caller must check `cfg.keyOn` first. Audio already does: the same
+    // Free area measured 9 chromatic pitch-classes where keyed measured exactly
+    // the 7 of its scale. Left as-is deliberately — 45 call sites and the
+    // arch-parity gate pin this behaviour, and no display reads them unguarded
+    // (audited). If you add a consumer, guard it, or it will silently believe a
+    // chromatic area is in C major.
     function _ambKeyRootPc(cfg) {
       const c = cfg || _ambKeyCfg();
       { const pk = _ambPartKeyNow(c); if (pk) return (((pk.root | 0) % 12) + 12) % 12; }
@@ -38746,10 +38755,23 @@
         // it follows the workspace, amber when overridden for this Area.
         const kind = document.getElementById(tr('ambient-cfg-keyind'));
         if (kind) {
+          // THE KEY TAB SAYS WHAT THE KEY IS — nothing else. The old first
+          // branch named `cfg.prog.name`, and _ambProgAppendPart seeds part 1
+          // FROM that field ("seed a part over the existing chords first"), so
+          // once a chain existed this line showed PART 1's name — stale the
+          // moment that part was renamed, and silent about every other part.
+          // Arch owns the parts; this owns the key. It also names the WORKSPACE
+          // key when the area is Free, so "the workspace key disappeared" is
+          // answered on the spot: it is still there, this area just stopped
+          // following it (which is also why the header pill greys out).
+          const _wsR = (typeof rootIdx === 'number') ? (((rootIdx % 12) + 12) % 12) : 0;
+          const _wsS = (typeof currentScale === 'string') ? currentScale : 'major';
+          const _wsTxt = ((typeof CHROMATIC !== 'undefined' && CHROMATIC[_wsR]) || '')
+            + ' ' + ((typeof prettyScaleName === 'function') ? prettyScaleName(_wsS) : _wsS);
           let txt, override;
-          if (rk.mode === 'progression') { txt = '⇶ ' + ((p.name && p.name.trim()) || 'Progression') + (cfg.keyOn ? ' · ' + kName + ' ' + kQual : ''); override = true; }
-          else if (rk.mode === 'key') { txt = '♪ ' + kName + ' ' + kQual; override = !follow; }
-          else { txt = '∅ Chromatic'; override = true; }   // Free while the workspace may carry a key → a divergence
+          if (!cfg.keyOn) { txt = '∅ Chromatic · workspace: ' + _wsTxt; override = true; }
+          else if (follow) { txt = '♪ ' + kName + ' ' + kQual + ' · = workspace'; override = false; }
+          else { txt = '♪ ' + kName + ' ' + kQual + ' · this area'; override = true; }
           kind.textContent = txt;
           kind.classList.toggle('is-override', !!override);
           kind.classList.toggle('is-ws', !override);

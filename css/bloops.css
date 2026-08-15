@@ -3456,7 +3456,11 @@
     .ambient-progsec .ambient-progsec-lbl:first-child { margin-top: 0; }
     /* OVERVIEW STRIP — the whole progression at a glance. WRAPS (no horizontal
        scroll); part headers are full-width flex breaks so each part starts a new run. */
-    .ambient-pov-strip { display: flex; flex-wrap: wrap; align-items: stretch; gap: 5px; margin: 6px 0 2px; padding: 8px; border: 1px solid #23233a; border-radius: 10px; background: #0d0d18; }
+    /* Tight under the one-pass readout: that line and this strip are one
+       thought, and the stack of margin + grp gap + margin + padding put 31px
+       of nothing between them (measured). Only the top is trimmed — the
+       strip keeps its own inner padding on the other three sides. */
+    .ambient-pov-strip { display: flex; flex-wrap: wrap; align-items: stretch; gap: 5px; margin: 0 0 2px; padding: 2px 8px 8px; border: 1px solid #23233a; border-radius: 10px; background: #0d0d18; }
     .ambient-pov-vers { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding-bottom: 4px; border-bottom: 1px solid #1f1f33; margin-bottom: 2px; }
     .ambient-pov-verslbl { font-size: 0.72rem; color: #8aa; margin-right: 2px; }
     .ambient-pov-ver { padding: 2px 9px; border: 1px solid #2d2d3f; border-radius: 999px; background: #16162a; color: #cbd5e0; cursor: pointer; font-size: 0.74rem; font-weight: 600; touch-action: manipulation; }
@@ -13041,7 +13045,7 @@
 
     /* "＋ Add changes" leads the Overview strip — the action sits with the chips
        it adds to, rather than on the on/off row where it read as a readout. */
-    .ambient-pov-actions { display: flex; margin: 0 0 6px; }
+    .ambient-pov-actions { display: flex; margin: 0; }
     .ambient-pov-actions .ambient-prog-pick { min-height: 36px; padding: 7px 12px; font-size: 0.76rem; }
 
     /* A section heading that IS its switch. Keeps the heading's typography so

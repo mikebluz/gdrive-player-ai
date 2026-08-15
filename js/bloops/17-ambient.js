@@ -33647,7 +33647,12 @@
             ((!_laneSpans && secs && secs.length && _secSeen.size < secs.length)
               ? ' title="' + (secs.length - _secSeen.size) + ' part(s) start outside this pass — open ▤ Arrangement to see them all.">parts <b class="secmore">' + _secSeen.size + '/' + secs.length + '</b>'
               : '>parts') + '</span>' +
-          (secs && secs.length ? '<button type="button" class="ambient-seg ambient-sched-addsec" title="Append a part">＋</button>' : '') + '</span>' +
+          // NO ＋ HERE. Parts are authored in ⇶ Arch now; this lane is the
+          // NAVIGATOR — it shows the arrangement and selects within it. A second
+          // door that appends a part put creation in two places, and the one
+          // here could only ever make the OPEN kind, so it silently answered a
+          // different question from the one Arch answers.
+          '</span>' +
           // This strip no longer shares the x-scale of the lanes below: it spans
           // the WHOLE arrangement while they span one part pass. The playhead has
           // to be told, or it sweeps this row at the view's rate — the full width
@@ -34099,28 +34104,6 @@
           if (fol) {
             _E = E; const elF = _ambGet(E, 'ambient-sched');
             if (elF) { elF._schedFollow = (elF._schedFollow === false); try { _ambRenderScheduler(E); } catch (e) {} }
-            return;
-          }
-          const add = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-addsec');
-          if (add) {
-            _E = E; const c2 = E.getCfg(); if (!c2) return;
-            // ONE section per press. Seeding A+B meant a control labelled "＋
-            // sections" silently made two SEQUENTIAL sections (A bars 1-4, B bars
-            // 5-8); with the strip scoped to one part pass only A was in view, so
-            // deleting it slid B down into the same place and read as a section
-            // that would not die. Press ＋ again for B — deliberate, and visible.
-            // ADD A PART, not a section. Pushing onto cfg.sections became a
-            // SILENT NO-OP the moment the fold made sections a mirror rebuilt
-            // from the open parts on every normalize: the new section was wiped
-            // by the next getCfg and the button did nothing at all.
-            if (!c2.prog) c2.prog = { on: true, name: '', chords: [] };
-            const _np = (Array.isArray(c2.prog.parts) ? c2.prog.parts.filter(x => x && x.open).length : 0);
-            if (_np < 16) {
-              _ambProgAppendOpenPart(c2.prog, String.fromCharCode(65 + (_np % 26)), 4, null, 0);
-              try { E.getCfg(); } catch (e) {}          // re-derive arch + the mirror
-            }
-            try { _ambRenderScheduler(E); } catch (e) {}
-            if (typeof persistWorkspace === 'function') persistWorkspace();
             return;
           }
           const blk = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-secblk');

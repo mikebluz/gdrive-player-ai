@@ -12881,7 +12881,6 @@
 /* Section KEY OFFSET (modulation) badge — amber, distinct from the teal part
    badge, so "which changes" and "what key" read as two different facts. */
 .ambient-sched-secblk .seckey { margin-left: 4px; font-weight: 700; color: #f6ad55; flex: 0 0 auto; }
-.ambient-sched-addsec { font-size: 0.62rem; padding: 1px 7px; }
 
 /* Matrix "now playing" column + section lane playing block */
 .ambient-pm-cell.cur { box-shadow: inset 0 0 0 1px rgba(127, 214, 196, 0.75); }

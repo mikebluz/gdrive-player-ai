@@ -31283,6 +31283,14 @@
       else ranges.push({ name: '', from: 0, to: N, pi: -1 });
       const namesFirst = !!el._povNames;
       let h = '<div class="ambient-pov-bar">' +
+        // ＋ PART LEADS THE BAR. It used to sit at the far end of the chain,
+        // after every chord chip — so on a long progression it was pushed off
+        // the first screenful and had to be hunted for, and it read as an
+        // afterthought rather than the way you build the arrangement. It is
+        // also now the ONLY place a part is created (the Scheduler's ＋ is
+        // gone — that lane navigates, it does not author).
+        '<span role="button" tabindex="0" class="ambient-pov-addpart" data-pov="addpart" ' +
+          'title="Add a part — a new set of changes, or a block with no changes at all">＋ Part</span>' +
         '<span role="button" tabindex="0" class="ambient-pov-namesbtn' + (namesFirst ? ' on' : '') + '" data-pov="names" title="' +
           (namesFirst ? 'Showing chord NAMES first with the numeral after \u2014 click to lead with numerals' :
                         'Showing ROMAN NUMERALS first with the name after \u2014 click to lead with chord names') + '">' +
@@ -31355,10 +31363,7 @@
             '</span>';
         }
       });
-      // ＋ Part CHAINS another progression onto the end — this strip is where the
-      // parts are drawn and named, so the button lives at the end of the chain
-      // rather than in the outer button row.
-      h += '<span role="button" tabindex="0" class="ambient-pov-addpart" data-pov="addpart" title="Add a part — a new set of changes, or a block with no changes at all">＋ Part</span>';
+      // (＋ Part now leads the bar at the top of this strip — see above.)
       el.innerHTML = h;
       if (!el._wired) { el._wired = true; el.addEventListener('pointerdown', (ev) => { try { _ambProgOverviewAct(E, ev); } catch (e) {} }); }
     }

@@ -6248,9 +6248,25 @@
       return seq.map(c => ({ root: c.root, intervals: c.intervals.slice() }));
     }
     // Commit a rolled chord array to the Area progression.
-    function _ambApplyGenProg(E, chords, name) {
+    // aOpts.append → CHAIN the result on as a new part instead of replacing the
+    // progression. Authoring (Create / Generate / roman numerals) is reachable
+    // from ＋ Part now, and ＋ Part must never wipe the chain — so the APPEND
+    // decision lives at the commit, where both doors pass through, rather than
+    // being duplicated per caller. With nothing to append to (a fresh area) it
+    // falls through to the plain set, which is what starting from empty means.
+    function _ambApplyGenProg(E, chords, name, aOpts) {
       _E = E; const cfg = E.getCfg(); if (!cfg || !Array.isArray(chords) || !chords.length) return;
       if (!cfg.prog || typeof cfg.prog !== 'object') cfg.prog = { on: false, name: '', chords: [] };
+      if (aOpts && aOpts.append && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length) {
+        _ambProgAppendPart(cfg.prog, name || ('Gen ' + chords.length), chords, aOpts.partKey);
+        cfg.prog.on = true;
+        if (typeof _ambAutoSyncFreeForProg === 'function') { try { _ambAutoSyncFreeForProg(E, cfg); } catch (e) {} }
+        try { _ambSyncControls(E); } catch (e) {}
+        try { _ambRefreshSrcChips(E); } catch (e) {}
+        try { _ambSaltReadoutSync(E, true); } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        return;
+      }
       cfg.prog.name = name || ('Gen ' + chords.length);
       cfg.prog.chords = chords.map(_ambCloneChord); cfg.prog.on = true;
       delete cfg.prog.parts;
@@ -6294,10 +6310,17 @@
       // list does ("where does this progression come from"), so Generate and
       // Roman live here rather than as separate buttons outside. Suppressed in
       // append mode, where the menu is choosing a PART to chain on.
-      if (!opts.append && _ambProgActions) {
+      // NESTED IN ＋ PART TOO. These were suppressed in append mode, which left
+      // authoring reachable only from a separate "＋ Add changes" button whose
+      // only other behaviour was to REPLACE the progression and drop the part
+      // chain (measured: 4 chords + Verse/Chorus → 3 chords, no parts). Offering
+      // them here makes ＋ Part the one door: the same three routes, chained on
+      // as a part in the key that dialog just asked for.
+      if (_ambProgActions) {
+        const _aOpts = opts.append ? { append: true, partKey: opts.partKey } : null;
         items.push({ label: 'New progression', disabled: true });
-        items.push({ label: '  ✎ Create…', fn: () => setTimeout(() => { try { _ambProgActions.generate(); } catch (e) {} }, 0) });
-        items.push({ label: '  ⌨ Type roman numerals…', fn: () => setTimeout(() => { try { _ambProgActions.roman(); } catch (e) {} }, 0) });
+        items.push({ label: '  ✎ Create…', fn: () => setTimeout(() => { try { _ambProgActions.generate(_aOpts); } catch (e) {} }, 0) });
+        items.push({ label: '  ⌨ Type roman numerals…', fn: () => setTimeout(() => { try { _ambProgActions.roman(_aOpts); } catch (e) {} }, 0) });
         items.push('hr');
       }
       // USER group — wrap progressions (resolved to chords) + published progs.
@@ -31257,8 +31280,21 @@
       // ＋ Part, hence no way to add changes back: a dead end.
       const _pn = (cfg && cfg.prog && Array.isArray(cfg.prog.parts)) ? cfg.prog.parts.length : 0;
       const on = !!(cfg && cfg.prog && ((Array.isArray(cfg.prog.chords) && cfg.prog.chords.length) || _pn));
-      el.style.display = on ? '' : 'none';
-      if (!on) { el.innerHTML = ''; el._sig = ''; el._curCi = -2; return; }
+      el.style.display = '';
+      if (!on) {
+        // EMPTY STATE, NOT HIDDEN. ＋ Part is the only door to a progression now
+        // that "＋ Add changes" folded into it — so hiding this strip on a fresh
+        // area left no way in at all. That is the dead end the comment above
+        // warns about, reached from the other side: measured as ＋ Part absent
+        // and the whole host empty on an area with no chords.
+        el.innerHTML = '<div class="ambient-pov-bar">' +
+          '<span role="button" tabindex="0" class="ambient-pov-addpart" data-pov="addpart" ' +
+            'title="Add a part — a set of changes, or a block with no changes at all">＋ Part</span>' +
+          '<span class="ambient-hint">no changes yet — add a part to start</span></div>';
+        el._sig = 'empty'; el._curCi = -2;
+        if (!el._wired) { el._wired = true; el.addEventListener('pointerdown', (ev) => { try { _ambProgOverviewAct(E, ev); } catch (e) {} }); }
+        return;
+      }
       const prog = cfg.prog, chords = prog.chords, N = chords.length;
       const parts = (Array.isArray(prog.parts) && prog.parts.length) ? prog.parts : null;
       const sig = N + '|' + chords.map(c => c.root + ':' + (c.intervals || []).join('.') + (Array.isArray(c.alts) && c.alts.length ? ('a' + c.alts.length + (c.altMode || '')) : '')).join(',') +
@@ -38593,17 +38629,7 @@
         if (kMode) { kMode.textContent = (cfg.keyMode === 'quantize') ? 'Quantize' : 'Transpose'; kMode.disabled = !cfg.keyOn; kMode.classList.toggle('active', !!cfg.keyOn); }
         const kModeRot = document.getElementById(tr('ambient-key-moderot'));
         if (kModeRot) { kModeRot.value = String(((cfg.keyModeRot | 0) % 7 + 7) % 7); kModeRot.disabled = !cfg.keyOn; }
-        // Progression sub-controls.
-        const pPick = document.getElementById(tr('ambient-prog-pick'));
-        // Shows WHICH SEED is loaded (+ "· edited" once the current progression
-        // diverges) — deliberately NOT the current progression's name, which is
-        // what made this control read as both a chooser and a readout.
-        if (pPick) { pPick.textContent = '\uFF0B Add changes';
-          // The label is a fixed ACTION now ("＋ Add changes"); which seed is
-          // loaded is read off the Overview chips right beside it, so the
-          // button no longer doubles as a readout.
-          pPick.title = 'Add a set of changes — pick a seed progression, generate one, or write it in roman numerals. '
-            + 'The seed list is only changed by Export.'; }
+        // (＋ Add changes is gone — ＋ Part on the Overview bar is the one door.)
         const nCh = (Array.isArray(p.chords) ? p.chords.length : 0);
         const pEdit = document.getElementById(tr('ambient-prog-edit'));
         if (pEdit) pEdit.disabled = !(nCh > 0);   // editable only when a progression is selected
@@ -38993,9 +39019,12 @@
             // REORDER it (Order), not after.
             _ambProgGrpOpen('overview', '\u25a4 Overview', true) +
             '<div class="ambient-pov-actions" id="ambient-pov-actions" style="display:none">' +
-              '<button type="button" class="ambient-seg ambient-prog-pick" id="ambient-prog-pick" ' +
-              'title="Add a set of changes — pick a progression, generate one, or write it in roman numerals">' +
-              '\uFF0B Add changes</button>' +
+              // ＋ Add changes is GONE. Its seed list, Create and roman-numeral
+              // routes all live in ＋ Part now, which chains them on instead of
+              // replacing — and replacing was its only other behaviour, which
+              // silently dropped the part chain (measured: 4 chords with
+              // Verse/Chorus became 3 chords and no parts, on one click of a
+              // button labelled "Add"). One door, and it adds.
               // HOW LONG ONE PASS IS. The chips say what the changes are and the
               // Scheduler says what each layer does inside them, but nothing
               // said how long the whole series actually runs — which is the
@@ -40838,12 +40867,7 @@
       }
       // Progression sub-controls (chord picker + editor) — the on/off toggle now
       // lives in the KEY axis mode selector above (Progression mode).
-      { const pPick = G('ambient-prog-pick');
-        if (pPick) pPick.addEventListener('click', () => {
-          _E = E; const r = pPick.getBoundingClientRect();
-          _ambOpenGlobalProgMenu(E, r.left, r.bottom);
-        });
-        const pEdit = G('ambient-prog-edit');
+      { const pEdit = G('ambient-prog-edit');
         if (pEdit) pEdit.addEventListener('click', () => { _E = E; try { _ambOpenProgEditor(E); } catch (e) {} });
         // ⧉ Clone's outer button is GONE — the editor footer already had one
         // (data-pe="clone"), so it was a duplicate; one extra click to open the
@@ -40895,7 +40919,7 @@
             try { if (typeof showToast === 'function') showToast('Key set to ' + nm + '.'); } catch (e) {}
           };
         // ⌨ Numerals — type the changes instead of clicking them in.
-        const _pgRoman = () => {
+        const _pgRoman = (aOpts) => {
             _E = E; const c = E.getCfg(); if (!c) return;
             const kRoot = _ambKeyRootPc(c), kScale = _ambKeyScaleName(c);
             // Prefill the numerals the progression SOUNDS as. Typing them back
@@ -40911,9 +40935,16 @@
             const chords = _ambParseRomanProg(txt, kRoot, kScale);
             if (!chords) { try { if (typeof showToast === 'function') showToast('Couldn’t read any numerals in that — progression unchanged.'); } catch (e) {} return; }
             if (!c.prog || typeof c.prog !== 'object') c.prog = { on: false, name: '', chords: [] };
-            c.prog.chords = chords; c.prog.on = true;
-            c.prog.name = txt.trim().slice(0, 24);
-            delete c.prog.parts;                       // a fresh progression, not a chain
+            // From ＋ Part this CHAINS on (in that part's key); on its own it is
+            // a fresh progression and the chain goes with it.
+            if (aOpts && aOpts.append && Array.isArray(c.prog.chords) && c.prog.chords.length) {
+              _ambProgAppendPart(c.prog, txt.trim().slice(0, 24), chords, aOpts.partKey);
+              c.prog.on = true;
+            } else {
+              c.prog.chords = chords; c.prog.on = true;
+              c.prog.name = txt.trim().slice(0, 24);
+              delete c.prog.parts;                     // a fresh progression, not a chain
+            }
             try { _ambAutoSyncFreeForProg(E, c); } catch (e) {}
             try { _ambRenderProgOverview(E); _ambSyncControls(E); _ambRefreshSrcChips(E); _ambRenderScheduler(E); } catch (e) {}
             if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
@@ -40972,7 +41003,7 @@
         });
         // ⚄ Generate — popover: pick Length + Unique with steppers, PREVIEW the
         // rolled chords as chips (roman numeral + name), reroll, then Apply.
-        const _pgGenerate = () => {
+        const _pgGenerate = (aOpts) => {
           _E = E;
           const esc = (s) => String(s == null ? '' : s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
           const old = document.getElementById('pg-overlay'); if (old) old.remove();
@@ -41151,7 +41182,7 @@
               // Strip the builder's display name: a chord is root + intervals, and
               // an underscore field would ride into the saved project.
               const chords = bs.built.map(c => ({ root: c.root, intervals: c.intervals.slice() }));
-              try { _ambApplyGenProg(E, chords, name); } catch (e) { console.warn('Create failed', e); }
+              try { _ambApplyGenProg(E, chords, name, aOpts); } catch (e) { console.warn('Create failed', e); }
               if (typeof showToast === 'function') showToast('Created “' + name + '” — ' + chords.length + ' chords.');
               try { ov.remove(); } catch (e) {}
               return;
@@ -41167,7 +41198,7 @@
             }
             if (ev.target.closest('.pg-reroll')) { roll(); renderPreview(); return; }
             if (ev.target.closest('.pg-apply')) {
-              try { _ambApplyGenProg(E, state.chords, 'Gen ' + state.total + '×' + state.uniq); } catch (e) { console.warn('Generate failed', e); }
+              try { _ambApplyGenProg(E, state.chords, 'Gen ' + state.total + '×' + state.uniq, aOpts); } catch (e) { console.warn('Generate failed', e); }
               if (typeof showToast === 'function') showToast('Applied — ' + state.chords.length + ' chords.');
               try { ov.remove(); } catch (e) {}
             }

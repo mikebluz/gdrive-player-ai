@@ -12092,7 +12092,18 @@
     // reasoning as the chord-mask edits).
     function _ambUnitGateShouldSkip(key, at) {
       const E = _E;
-      if (!E || !E.timer) return false;
+      // NOT gated on E.timer — the same first-tick hole the iteration gate below
+      // documents. _ambStartGenerator kicks the first tick BEFORE assigning the
+      // timer, and that tick schedules the whole first lookahead, so every gate
+      // decision in it was skipped: measured on a layer with EVERY unit switched
+      // off, 6 notes still played (t = 0.00, 0.50, 1.00) before the gate began
+      // to bite — reported as "a layer that should not be playing is playing".
+      // Reaching here at all means a Bloom layer emitted the note (_ambEmitKey
+      // is stamped by the capture tee), which is the only scope this needs.
+      // It also means the gate now applies during an offline BOUNCE (no timer
+      // there either) — which is correct: a render must reproduce playback, and
+      // a silenced unit was previously audible in the file.
+      if (!E) return false;
       const pos = _ambUnitGridPos(E, key, at);
       if (!pos || !pos.L.unitGate || _ambUnitGateMode(pos.L) !== 'skip') return false;
       return !_ambUnitGateOpenAt(pos.L, pos.u, pos.frac);

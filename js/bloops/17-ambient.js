@@ -19915,6 +19915,17 @@
     function _ambSyncMods() {
       const cfg = _ambPlayCfg(_E);   // build chains for the PLAYING area (≠ viewed area while editing during play)
       if (!cfg) return;
+      // PUSH THE BUSES FIRST. `cfg.buses` holds each mix bus's entry point and
+      // its per-FX send levels, and until now the ONLY thing that applied them
+      // was `_ambBusSet` — i.e. moving a bus control by hand. `_ambBusApplyAll`
+      // existed and was never called, so a SAVED project came back with the bus
+      // GAIN created (getBloomBus, via _ambBusDest) but its sends never
+      // attached: every layer whose FX come from a bus played completely dry
+      // until you happened to touch a bus fader. Measured on a layer routed to
+      // bus b with sends {reverb:90, delay:70} and no per-layer send: as loaded
+      // quiet-15% 0.0000 and tail 0.0001, after applying 0.3155 and 0.3705.
+      // Before the chains, so a layer routing into a bus finds it already wired.
+      try { _ambBusApplyAll(cfg); } catch (e) {}
       const want = _ambWantSet(cfg);
       // Build/update wanted chains (pass a one-key cfg-shim so the existing
       // _ambSyncTarget keeps reading cfg[layerKey].mod unchanged), then FX.

@@ -13148,3 +13148,8 @@
     .ps-cstep > i { font-style: normal; opacity: 0.6; }
     .ps-chainadd { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
     .ps-chainadd .ambient-seg { min-height: 30px; }
+
+    /* The scheduler, inlined at the bottom of Arrangement (it is no longer a tab
+       pane, so it needs its own separation from the Overview above it). */
+    .ambient-sched-inline { display: block; margin-top: 10px; padding-top: 10px;
+                            border-top: 1px solid #23233a; }

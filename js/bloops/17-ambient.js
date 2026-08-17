@@ -39291,9 +39291,13 @@
         '<div class="ambient-tabsec" id="ambient-tabsec">' +
           '<div class="ambient-tabsec-bar" role="tablist">' +
             (E.isLane ? '' : '<button type="button" class="ambient-tabsec-tab" data-tab="keysec" role="tab" title="Key — the area key every set of changes inherits from, and how it is applied">♯ Key</button>') +
-            (E.isLane ? '' : '<button type="button" class="ambient-tabsec-tab" data-tab="progsec" role="tab" title="Arch — the arrangement: parts (with changes or without), salt, order, the matrix">⇶ Arch</button>') +
+            (E.isLane ? '' : '<button type="button" class="ambient-tabsec-tab" data-tab="progsec" role="tab" title="Arch — the arrangement: parts (with changes or without), salt, order, the matrix">⇶ Arrangement</button>') +
             '<button type="button" class="ambient-tabsec-tab" data-tab="groove" role="tab" title="Groove — swing / accent / humanize / push">🕺 Groove</button>' +
-            '<button type="button" class="ambient-tabsec-tab" data-tab="sched" role="tab" title="Scheduler — per-layer time matrix">⏱ Sched</button>' +
+            // ⏱ Sched is GONE as a tab — its contents live inside Arrangement
+            // now. Two panes were one subject: Arch drew the parts and Sched
+            // drew the same parts again as a lane, so "which one owns parts?"
+            // had no answer. See the merged pane below.
+
             '<button type="button" class="ambient-tabsec-tab" data-tab="mixer" role="tab" title="Mixer — faders + master fade + global FX">🎚️ Mixer</button>' +
           '</div>' +
           (E.isLane ? '' :
@@ -39379,36 +39383,33 @@
             // Overview strip — the whole progression at a glance (chord chips grouped
             // under part labels; alt-bearing chords badged; playing chord glows). Click a
             // chord to edit it there; click a part header to rename/reorder. _ambRenderProgOverview.
+            // ---- THE SCHEDULER, MERGED IN --------------------------------------
+            // Arch and Sched were one subject split across two tabs: Arch drew the
+            // parts, Sched drew the SAME parts again as a lane, and the Matrix had
+            // already migrated here from Progression. Which pane owned a part had
+            // no answer, which is exactly how it kept being reported.
+            // The ids are UNCHANGED and the nodes are MOVED, not rebuilt:
+            // _ambRenderScheduler writes #ambient-sched-body, and the part
+            // selection state (_schedPart / _schedRep / _schedFollow) lives on the
+            // #ambient-sched element itself — recreating either would have meant
+            // re-wiring both, which is how two copies of a control drift apart.
+            // It keeps the .ambient-sched class for its own styles but is no
+            // longer a tab pane, so it is simply the bottom of this one.
+            '<div class="ambient-sched ambient-sched-inline" id="ambient-sched">' +
+              '<div class="ambient-sched-body" id="ambient-sched-body"></div>' +
+              (E.isLane ? '' :
+                _ambProgGrpOpen('matrix', '\u2317 Matrix', false) +
+                '<div class="ambient-progmatrix" id="ambient-progmatrix" style="display:none"></div>' +
+                _ambProgGrpClose()) +
+            '</div>' +
           '</div>' +       // end #ambient-progsec-body
-        '</div>') +        // end progsec pane
+        '</div>') +        // end the merged Arrangement pane
         // 🕺 Groove — swing / accent / humanize (cascade) + per-layer push;
         // rendered by _ambRenderGroove into #ambient-groove-body.
         '<div class="ambient-tabsec-pane ambient-groove" data-pane="groove" id="ambient-groove">' +
           '<div class="ambient-sched-body" id="ambient-groove-body"></div>' +
         '</div>' +
-        // ⏱ Scheduler — the per-layer TIME matrix; rendered by _ambRenderScheduler.
-        '<div class="ambient-tabsec-pane ambient-sched" data-pane="sched" id="ambient-sched">' +
-          '<div class="ambient-sched-body" id="ambient-sched-body"></div>' +
-          // THE MATRICES LIVE HERE, not in Progression. Everything that answers
-          // "which layers play WHEN" belongs together: Edit (layer × changes),
-          // the layer schedules, the unit gates, and these two — layer × chord
-          // probability, and layer × section. Progression is then about the
-          // changes THEMSELVES (Overview, Salt, Order).
-          // NOTE the overlap with Edit, deliberately left for now: Edit is
-          // on/off per change, the chord matrix is a 0-100 PROBABILITY per
-          // chord. Same question, two grains; merging is a separate decision.
-          (E.isLane ? '' :
-            // ONE MATRIX (slice 4g). A part that carries no changes is a COLUMN
-            // in this grid, beside the chords — two grids existed because
-            // sections and chords were two concepts, and there is one concept
-            // now. The old #ambient-secmatrix host is GONE: keeping it "hidden
-            // but live" did not work, because _ambRenderSectionMatrix un-hides
-            // itself whenever it has content, so both grids rendered and the
-            // page showed "Matrix" and "Part matrix" one under the other.
-            _ambProgGrpOpen('matrix', '\u2317 Matrix', false) +
-            '<div class="ambient-progmatrix" id="ambient-progmatrix" style="display:none"></div>' +
-            _ambProgGrpClose()) +
-        '</div>' +
+
         // 🎚️ Mixer — layer faders + master fade + global FX. Strip (re)rendered
         // by _ambRenderMixer. Keeps the .ambient-mixer class for its inner styles.
         '<div class="ambient-tabsec-pane ambient-mixer" data-pane="mixer" id="ambient-mixer">' +
@@ -39629,7 +39630,9 @@
               if (pane) pane.classList.add('active');
               try {
                 if (name === 'groove') _ambRenderGroove(E);
-                else if (name === 'sched') _ambRenderScheduler(E);
+                // Arrangement now CONTAINS the scheduler, so opening it must
+                // paint that too — there is no 'sched' tab left to do it.
+                else if (name === 'progsec') { try { _ambRenderProgOverview(E); } catch (e) {} _ambRenderScheduler(E); }
                 else if (name === 'mixer') _ambRenderMixer(E);
               } catch (e) {}
             }

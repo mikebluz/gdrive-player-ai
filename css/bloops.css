@@ -13159,3 +13159,30 @@
     .ambient-advpop-modal { width: min(760px, 96vw); }
     .ambient-advpop-host { max-height: 64vh; overflow-y: auto; margin: 8px 0; }
     .ambient-advpop-host > .ambient-sched-adv { display: block !important; }
+
+    /* Per-layer Evolve as a fold. Collapsed by default; the header states what
+       it is set to, so folding never hides the setting itself. */
+    .ambient-sched-loophead {
+      display: flex; align-items: center; gap: 7px; width: 100%; min-height: 32px;
+      padding: 4px 8px; border: 1px solid #2a2a44; border-radius: 8px;
+      background: rgba(110,120,255,0.07); color: #cfd4ff; cursor: pointer; text-align: left;
+    }
+    .ambient-sched-loophead:hover { border-color: #6e78ff; background: rgba(110,120,255,0.14); }
+    .ambient-sched-loophead .ambient-sched-caret { opacity: 0.75; font-size: 0.7rem; }
+    /* The base rule positions this label ABSOLUTELY in the row's corner (tiny,
+       0.56rem, pointer-events:none) — inside the header button that made it
+       float out of the button and read as a separate stray label. Put it back
+       in normal flow and give it real weight: it is the section's name now. */
+    .ambient-sched-loophead .ambient-sched-looplbl {
+      position: static; font: 700 0.72rem/1 'Segoe UI', sans-serif; letter-spacing: 0.08em;
+      color: #c4b5fd; text-transform: none; pointer-events: none;
+    }
+    /* The row reserved 16px of top padding for that corner label; with the
+       header carrying it, that space is just a gap. */
+    .ambient-sched-loopline:has(> .ambient-sched-loophead) { padding-top: 6px; }
+    .ambient-sched-loopsum { margin-left: auto; font-size: 0.7rem; color: #8f97b8; }
+    .ambient-sched-loopline.on .ambient-sched-loopsum { color: #7fd6c4; }
+    .ambient-sched-loopline.locked .ambient-sched-loopsum { color: #f6ad55; }
+    .ambient-sched-loopline.inert .ambient-sched-loopsum { color: #f6ad55; opacity: 0.9; }
+    .ambient-sched-loopbody { display: none; }
+    .ambient-sched-loopline.evopen .ambient-sched-loopbody { display: block; margin-top: 6px; }

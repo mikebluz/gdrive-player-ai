@@ -34338,6 +34338,19 @@
         // engine already skips Write for natively-looping layers; this is what
         // stops that being invisible.
         const _evInert = _ambEvolveInertWhy(layer);
+        // FOLD STATE + HEADER SUMMARY. Collapsed by default; the summary keeps
+        // the setting visible while folded, because a fold that hides what it is
+        // set to just moves the confusion somewhere else. Transient view state on
+        // the ENGINE (a Set of layer keys), not a saved field — and it has to live
+        // there rather than on the element, because this row is re-rendered
+        // constantly (the playhead alone) and a class toggled onto the node would
+        // be dropped by the next repaint.
+        const _evSet = E._evOpen || (E._evOpen = new Set());
+        const _evOpen = _evSet.has(key);
+        const _evSum = _evInert ? 'n/a' : (wLock ? '\uD83D\uDD12 Locked'
+          : (wOn ? ('Every ' + ((w && w.bars) | 0 || 2) + '\u00d7' + ((w && w.times) | 0 || 4)
+                    + (stoW ? ' \u00b7 ~vary' : '') + ((layer.loopVar === 'live') ? ' \u00b7 live' : ''))
+                 : 'Continuous'));
         const phraseHtml = '<span class="ambient-sched-xy"' + ((wOn && !wLock) ? '' : ' style="display:none"') + '>' +
             (stoW
               ? ('<span class="ambient-sched-lbl">bars</span>' +
@@ -34360,8 +34373,13 @@
             '</div>' +
             // Evolve line — the CADENCE axis as one 3-point control (Continuous /
             // Every N / Locked), then the Every-N detail (Vary/Live + phrase X×Y).
-            '<div class="ambient-sched-loopline' + (wOn ? ' on' : '') + (wLock ? ' locked' : '') + (_evInert ? ' inert' : '') + '" title="Evolve — how OFTEN the layer re-rolls: Continuous (every cycle) · Every N (freeze a pattern, repeat it, then evolve a fresh one) · Locked (freeze one roll, hold forever).">' +
-              '<span class="ambient-sched-looplbl">Evolve</span>' +
+            '<div class="ambient-sched-loopline' + (wOn ? ' on' : '') + (wLock ? ' locked' : '') + (_evInert ? ' inert' : '') + (_evOpen ? ' evopen' : '') + '" title="Evolve — how OFTEN the layer re-rolls: Continuous (every cycle) · Every N (freeze a pattern, repeat it, then evolve a fresh one) · Locked (freeze one roll, hold forever).">' +
+              '<button type="button" class="ambient-sched-loophead" data-evtog="' + esc(key) + '" '
+                + 'title="Evolve \u2014 how OFTEN this layer re-rolls its material. Click to open.">'
+                + '<span class="ambient-sched-caret">' + (_evOpen ? '\u25be' : '\u25b8') + '</span>'
+                + '<span class="ambient-sched-looplbl">\u27f3 EVOLVE</span>'
+                + '<span class="ambient-sched-loopsum">' + esc(_evSum) + '</span>'
+              + '</button>' +
               (_evInert ? ('<i class="ambient-sched-evna" title="' + esc('Evolve does not apply here — ' + _evInert + '.')
                 + '">n/a — ' + esc(_evInert.split(' — ')[0].split(', Ghosts')[0]) + '</i>') : '') +
               ((layer.iterGate && Array.isArray(layer.iterGate.steps))
@@ -34370,6 +34388,7 @@
                    + (layer.iterGate.ref === 'plot' ? 'plots' : 'rounds') + ' — Edit → ⟳ Across to change or clear.">⟳ '
                    + layer.iterGate.steps.filter(v => v).length + '/' + layer.iterGate.steps.length + '</i>')
                 : '') +
+              '<div class="ambient-sched-loopbody">' +
               '<div class="ambient-sched-btnrow">' +
               '<span class="ambient-sched-evolve' + (_evInert ? ' is-overridden' : '') + '" role="group" aria-label="Evolve cadence">' +
                 '<button type="button" class="ambient-seg ambient-sched-ev' + (!wOn ? ' active' : '') + '" data-ev="cont" title="Continuous — re-roll a fresh pattern every cycle (no freezing).">Continuous</button>' +
@@ -34378,7 +34397,7 @@
               '</span>' +
               ((wOn && !wLock) ? ('<button type="button" class="ambient-seg ambient-sched-vary' + (stoW ? ' active' : '') + '" title="Vary — each cycle roll a random pattern length (bars) and repeat count (plays) inside the min–max ranges, so the layer loops in evolving chunks.">~ Vary</button>' +
                      '<button type="button" class="ambient-seg ambient-sched-live' + ((layer.loopVar === 'live') ? ' active' : '') + '" title="Live — every loop pass RE-PERFORMS the pattern: Humanize / Vel var / Ornament re-roll from the layer’s current sliders (structural variance stays as written).">⚡ Live</button>') : '') +
-              '</div>' +
+              '</div></div>' +
               ((wOn && !wLock) ? (phraseHtml + (stoW ? '' : chipsHtml)) : (wLock ? '<span class="ambient-sched-lbl snap" title="Locked captures one natural unit and repeats it verbatim.">1 unit · held</span>' : '')) +
             '</div>' +
           '</div>' +
@@ -39958,6 +39977,18 @@
               try { _ambFreezeSyncAll(E); } catch (e) {}
               _ambRenderScheduler(E);
               if (typeof persistWorkspace === 'function') persistWorkspace();
+              return;
+            }
+            // Fold / unfold this layer's Evolve. Handled before the Evolve
+            // buttons below, and it re-renders so the state survives the next
+            // repaint (the open set lives on the engine, not the node).
+            const evtog = ev.target.closest('[data-evtog]');
+            if (evtog) {
+              ev.preventDefault(); ev.stopPropagation();
+              const k = evtog.getAttribute('data-evtog');
+              const set = E._evOpen || (E._evOpen = new Set());
+              if (set.has(k)) set.delete(k); else set.add(k);
+              try { _ambRenderScheduler(E); } catch (e) {}
               return;
             }
             const evb = ev.target.closest('.ambient-sched-ev'); if (!evb) return;

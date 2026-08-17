@@ -13173,10 +13173,21 @@
        0.56rem, pointer-events:none) — inside the header button that made it
        float out of the button and read as a separate stray label. Put it back
        in normal flow and give it real weight: it is the section's name now. */
-    .ambient-sched-loophead .ambient-sched-looplbl {
-      position: static; font: 700 0.72rem/1 'Segoe UI', sans-serif; letter-spacing: 0.08em;
-      color: #c4b5fd; text-transform: none; pointer-events: none;
+    /* HOT PINK, and it must beat `.ambient-sched-loopline.on .ambient-sched-looplbl`
+       (0,3,0) — a header rule of (0,2,0) loses to it, so an ENGAGED row would
+       quietly fall back to the old violet. Matched at (0,3,0) and stated for
+       every row state so the colour never depends on which rule loads last. */
+    .ambient-sched-loopline .ambient-sched-loophead .ambient-sched-looplbl,
+    .ambient-sched-loopline.on .ambient-sched-loophead .ambient-sched-looplbl,
+    .ambient-sched-loopline.locked .ambient-sched-loophead .ambient-sched-looplbl,
+    .ambient-sched-loopline.inert .ambient-sched-loophead .ambient-sched-looplbl {
+      position: static; font: 800 0.74rem/1 'Segoe UI', sans-serif; letter-spacing: 0.09em;
+      color: #ff4fa3; text-transform: none; pointer-events: none;
+      text-shadow: 0 0 10px rgba(255,79,163,0.35);
     }
+    .ambient-sched-loophead .ambient-sched-caret { color: #ff4fa3; opacity: 0.85; }
+    .ambient-sched-loophead { border-color: rgba(255,79,163,0.28); background: rgba(255,79,163,0.07); }
+    .ambient-sched-loophead:hover { border-color: #ff4fa3; background: rgba(255,79,163,0.15); }
     /* The row reserved 16px of top padding for that corner label; with the
        header carrying it, that space is just a gap. */
     .ambient-sched-loopline:has(> .ambient-sched-loophead) { padding-top: 6px; }

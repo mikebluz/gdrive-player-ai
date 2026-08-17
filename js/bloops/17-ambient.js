@@ -31070,7 +31070,7 @@
       const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-step-modal-ov';
       const paint = () => {
         ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-partsched-modal">' +
-          '<div class="sm-title">Arrangement</div>' +
+          '<div class="sm-title">Song map</div>' +
           '<div class="ambient-step-modal-body">' + _chainUi() + secBody + body + '</div>' +
           '<div class="sm-footer"><button type="button" class="sm-apply ps-close">Close</button></div></div>';
       };
@@ -31477,8 +31477,11 @@
         // measures 0x0 until you turn that on — so the chain editor was
         // effectively unreachable. Parts are authored on this bar; the order
         // they play in belongs next to them.
+        // NOT "Arrangement" — that is the name of the tab this button sits in, and
+        // a button repeating its own container's name says nothing about what it
+        // opens. It opens the whole piece laid out end to end: the song map.
         '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="arrmap" ' +
-          'title="Arrangement — every part and section at a glance, and the order of play">▤ Arrangement</span>' +
+          'title="Song map — the whole piece end to end: order of play, every part and section, and the bars they occupy">▤ Song map</span>' +
         '<span role="button" tabindex="0" class="ambient-pov-namesbtn' + (namesFirst ? ' on' : '') + '" data-pov="names" title="' +
           (namesFirst ? 'Showing chord NAMES first with the numeral after \u2014 click to lead with numerals' :
                         'Showing ROMAN NUMERALS first with the name after \u2014 click to lead with chord names') + '">' +
@@ -34002,6 +34005,11 @@
       // phrase lengths and per-layer timing. The ruler and the section rows
       // stay out of it: they are the arrangement frame, not the detail.
       html += '<div class="ambient-sched-adv"' + (E._schedAdv ? '' : ' hidden') + '>';
+      // THE HEADER UNIT — everything above the layers (which pass is shown, and
+      // the chord lane it is shown against) is one thing you read once; each
+      // layer below is another. Without a boundary they ran together into one
+      // undifferentiated column, which is what made this popover hard to scan.
+      html += '<div class="ambient-sched-advhead">';
       if (pg && pg.on && Array.isArray(pg.chords) && pg.chords.length) {
         const bpc = Math.max(0.01, cfg.barsPerChord || 1);
         const lens = pg.chords.map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
@@ -34128,7 +34136,7 @@
               (_fol ? 'Following playback — the strip moves to whichever part is sounding. Pick a part to pin it here.'
                     : 'Pinned to this part. Click to follow playback again.') + '">▶</button>' +
             partSel + passSel +
-            '<button type="button" class="ambient-seg ambient-sched-partmap" title="Arrangement — every section and part at a glance, including the ones outside this pass">▤</button>' +
+            '<button type="button" class="ambient-seg ambient-sched-partmap" title="Song map — every section and part at a glance, including the ones outside this pass">▤</button>' +
             '</span></div>';
         }
         // (The inline PARTS lane moved to the ▤ Part schedule popover on the row
@@ -34138,6 +34146,7 @@
           '<span class="ambient-sched-ctl"><span class="ambient-sched-name" title="' + esc(pg.name || 'Progression') + '">' + esc(pg.name || 'Progression') + '</span><span class="ambient-sched-lbl">chords</span></span>' +
           (_cRows ? _cRows.map((h, r) => '<span class="ambient-sched-strip chords" data-srow="' + r + '">' + h + '<i class="ambient-sched-ph"></i></span>').join('') : '<span class="ambient-sched-strip chords">' + cBlocks + '<i class="ambient-sched-ph"></i></span>') + '</div>';
       }
+      html += '</div>';   // /.ambient-sched-advhead — layers follow, each its own unit
       layers.forEach(({ name, layer, key }) => {
         // ONE source of truth with the audio gate (_ambUnitGridPos) — a block you
         // click must be exactly the span that gets gated.
@@ -34397,9 +34406,9 @@
               '</span>' +
               ((wOn && !wLock) ? ('<button type="button" class="ambient-seg ambient-sched-vary' + (stoW ? ' active' : '') + '" title="Vary — each cycle roll a random pattern length (bars) and repeat count (plays) inside the min–max ranges, so the layer loops in evolving chunks.">~ Vary</button>' +
                      '<button type="button" class="ambient-seg ambient-sched-live' + ((layer.loopVar === 'live') ? ' active' : '') + '" title="Live — every loop pass RE-PERFORMS the pattern: Humanize / Vel var / Ornament re-roll from the layer’s current sliders (structural variance stays as written).">⚡ Live</button>') : '') +
-              '</div></div>' +
+              '</div>' +
               ((wOn && !wLock) ? (phraseHtml + (stoW ? '' : chipsHtml)) : (wLock ? '<span class="ambient-sched-lbl snap" title="Locked captures one natural unit and repeats it verbatim.">1 unit · held</span>' : '')) +
-            '</div>' +
+            '</div></div>' +
           '</div>' +
           blocksHtml +
         '</div>';

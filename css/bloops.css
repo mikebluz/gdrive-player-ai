@@ -13197,3 +13197,19 @@
     .ambient-sched-loopline.inert .ambient-sched-loopsum { color: #f6ad55; opacity: 0.9; }
     .ambient-sched-loopbody { display: none; }
     .ambient-sched-loopline.evopen .ambient-sched-loopbody { display: block; margin-top: 6px; }
+
+    /* LAYER SCHEDULES — two kinds of unit, each with its own boundary so the eye
+       can find them: ONE header (which pass, against which chords) and then ONE
+       CARD PER LAYER. Scoped to the popover so the inline Scheduler is unchanged. */
+    .ambient-advpop-host .ambient-sched-advhead {
+      border: 1px solid #2a2a44; border-radius: 10px; padding: 8px 10px; margin-bottom: 12px;
+      background: rgba(127, 214, 196, 0.05);
+    }
+    .ambient-advpop-host .ambient-sched-advhead > .ambient-sched-row { margin: 0; }
+    .ambient-advpop-host .ambient-sched-advhead > .ambient-sched-row + .ambient-sched-row { margin-top: 6px; }
+    .ambient-advpop-host .ambient-sched-row[data-schkey] {
+      border: 1px solid #23233a; border-radius: 10px; padding: 10px; margin-bottom: 10px;
+      background: #0d0d18;
+    }
+    /* The layer's own name leads its card. */
+    .ambient-advpop-host .ambient-sched-row[data-schkey] > .ambient-sched-ctl:first-child { margin-bottom: 4px; }

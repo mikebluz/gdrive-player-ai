@@ -2827,6 +2827,24 @@
     }
     function _ambNormalizeProgMeta(prog) {
       if (!prog || typeof prog !== 'object') return;
+      // PART CHAIN — the order the parts are PLAYED in, as indices into the
+      // parts that occupy time. Absent = the written order (each part once,
+      // times its `plays`), which is every existing project, so this is
+      // additive by construction. Coerced here and dropped when it says nothing:
+      // an empty list, or one that is exactly the written order with no repeats,
+      // is the neutral state and carries no field — the same absent-is-neutral
+      // grammar as unitGate / salt / iterGate.
+      if (prog.chain != null) {
+        const np = Array.isArray(prog.parts) ? prog.parts.length : 0;
+        const cl = Array.isArray(prog.chain)
+          ? prog.chain.map(x => x | 0).filter(x => x >= 0 && (np ? x < np : x === 0)).slice(0, 64)
+          : null;
+        if (!cl || !cl.length) delete prog.chain;
+        else {
+          const natural = np && cl.length === np && cl.every((x, i) => x === i);
+          if (natural) delete prog.chain; else prog.chain = cl;
+        }
+      }
       // Seed identity (additive; absent = hand-authored "Custom").
       if (prog.seedName != null && typeof prog.seedName !== 'string') delete prog.seedName;
       if (prog.seedSig != null && typeof prog.seedSig !== 'string') delete prog.seedSig;
@@ -4570,7 +4588,8 @@
       // legacy expansion until slice 4 merges the two spines.
       if (!_ownSrc && cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length
           && Array.isArray(cfg.prog.parts)
-          && cfg.prog.parts.some(p => p && (((p.plays | 0) > 1) || p.open))) {
+          && (cfg.prog.parts.some(p => p && (((p.plays | 0) > 1) || p.open))
+              || (Array.isArray(cfg.prog.chain) && cfg.prog.chain.length))) {
         const all = cfg.prog.chords, L = all.length;
         const seq = [];
         const _chain = _ambArchOwnsChain(cfg) ? _ambArchChainSlots(cfg) : null;
@@ -31024,16 +31043,65 @@
           '<div class="ps-list">' + sRows + '</div>' +
           '<div class="ps-secthdr">Changes — the chord timeline</div>';
       }
+      // ORDER OF PLAY — the chain. Without it the arrangement is the parts in
+      // written order, so a part can never be revisited; this is where you say
+      // "Verse Chorus Verse Bridge Chorus". Empty = the written order, and
+      // that is what the buttons seed from, so switching it on is inaudible.
+      const _chainUi = () => {
+        const c2 = E.getCfg() || {};
+        const pl = (c2.prog && Array.isArray(c2.prog.parts)) ? c2.prog.parts : [];
+        if (pl.length < 2) return '';
+        const seq = (c2.prog && Array.isArray(c2.prog.chain) && c2.prog.chain.length)
+          ? c2.prog.chain : pl.map((_, i) => i);
+        const custom = !!(c2.prog && Array.isArray(c2.prog.chain) && c2.prog.chain.length);
+        return '<div class="ps-chain">' +
+          '<div class="ps-head"><b class="ps-nm">Order of play</b>' +
+            '<span class="ps-x">' + (custom ? 'custom order' : 'written order') + '</span></div>' +
+          '<div class="ps-chainseq">' +
+            seq.map((ix, k) => '<span class="ps-cstep" data-cs="' + k + '" title="Remove this step">' +
+              esc((pl[ix] && pl[ix].name) || ('Part ' + (ix + 1))) + '<i>✕</i></span>').join('') +
+          '</div>' +
+          '<div class="ps-chainadd"><span class="ps-x">add</span>' +
+            pl.map((pt, i) => '<button type="button" class="ambient-seg ps-cadd" data-ca="' + i + '">'
+              + esc(pt.name || ('Part ' + (i + 1))) + '</button>').join('') +
+            (custom ? '<button type="button" class="ambient-seg ps-creset">↩ written order</button>' : '') +
+          '</div></div>';
+      };
       const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-step-modal-ov';
-      ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-partsched-modal">' +
-        '<div class="sm-title">Arrangement</div>' +
-        '<div class="ambient-step-modal-body">' + secBody + body + '</div>' +
-        '<div class="sm-footer"><button type="button" class="sm-apply ps-close">Close</button></div></div>';
+      const paint = () => {
+        ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-partsched-modal">' +
+          '<div class="sm-title">Arrangement</div>' +
+          '<div class="ambient-step-modal-body">' + _chainUi() + secBody + body + '</div>' +
+          '<div class="sm-footer"><button type="button" class="sm-apply ps-close">Close</button></div></div>';
+      };
+      paint();
       document.body.appendChild(ov);
       ov.style.setProperty('display', 'flex', 'important');
       const close = () => { try { ov.remove(); } catch (e) {} };
+      // Edits write the chain, re-derive (getCfg rebuilds arch), and repaint the
+      // whole popover — the strip and the bar totals below are derived from the
+      // same walk, so they follow for free.
+      const commit = (fn) => {
+        const c2 = E.getCfg(); if (!c2 || !c2.prog) return;
+        const pl = Array.isArray(c2.prog.parts) ? c2.prog.parts : [];
+        const cur = (Array.isArray(c2.prog.chain) && c2.prog.chain.length)
+          ? c2.prog.chain.slice() : pl.map((_, i) => i);
+        const next = fn(cur);
+        if (next) c2.prog.chain = next; else delete c2.prog.chain;
+        try { E.getCfg(); } catch (e) {}
+        try { _ambRenderScheduler(E); _ambRenderProgOverview(E); _ambSyncControls(E); } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        paint();
+      };
       ov.addEventListener('click', (ev) => {
-        if (ev.target === ov || (ev.target.closest && ev.target.closest('.ps-close'))) close();
+        const t = ev.target;
+        const add = t.closest && t.closest('.ps-cadd');
+        if (add) { const i = add.getAttribute('data-ca') | 0; commit((cur) => cur.concat([i])); return; }
+        const rm = t.closest && t.closest('.ps-cstep');
+        if (rm) { const k = rm.getAttribute('data-cs') | 0;
+          commit((cur) => { const n2 = cur.filter((_, j) => j !== k); return n2.length ? n2 : null; }); return; }
+        if (t.closest && t.closest('.ps-creset')) { commit(() => null); return; }
+        if (t === ov || (t.closest && t.closest('.ps-close'))) close();
       });
     }
     function _ambAddPartModal(E, x, y) {
@@ -33488,11 +33556,37 @@
       // than filtered back out. Legacy sections are `open` too but are NOT holds
       // (the progression runs underneath them), so they are absent here and the
       // chain is exactly what it was before open parts existed.
-      const seqEntries = withCh;
+      // PART CHAINING (`prog.chain`). Without it the arrangement is the parts in
+      // written order, each repeated `plays` times — so a part can never be
+      // REVISITED: Verse Chorus Verse Bridge Chorus was inexpressible, because
+      // the order was the storage order. `chain` is a list of indices INTO the
+      // entries that occupy time (exactly the blocks the Parts lane draws), so a
+      // part may appear as often as you like, in any order, with no duplicated
+      // chords. Each chain step is ONE pass — repetition is written out
+      // (`[0,0,1]` = Verse twice then Chorus) rather than hidden in `plays`,
+      // which is what makes an arbitrary order possible at all. Absent = the
+      // old walk exactly, so every existing project and the arch-parity
+      // baseline are untouched by construction.
+      let seqEntries = withCh;
+      let chained = false;
+      {
+        const ch2 = p && Array.isArray(p.chain) ? p.chain : null;
+        if (ch2 && ch2.length && withCh.length) {
+          const picked = [];
+          ch2.forEach((ix) => {
+            const e2 = withCh[(ix | 0)];
+            if (e2) picked.push(e2);
+          });
+          if (picked.length) { seqEntries = picked; chained = true; }
+        }
+      }
       let pi = -1;
       seqEntries.forEach((e) => {
-        if (e.changes) pi++;
-        const plays = Math.max(1, ((e.changes ? e.changes.plays : e.plays) | 0)) || 1;
+        // The part INDEX must identify the part itself — a revisited part is the
+        // same part, and every consumer (masks, tabs, selection) keys on this.
+        if (chained) pi = withCh.indexOf(e);
+        else if (e.changes) pi++;
+        const plays = chained ? 1 : (Math.max(1, ((e.changes ? e.changes.plays : e.plays) | 0)) || 1);
         if (!e.changes) {
           // HOLD: no chords, so the chord in force STAYS in force. It takes the
           // previous slot's chord (chord 0 when the arrangement opens with one),

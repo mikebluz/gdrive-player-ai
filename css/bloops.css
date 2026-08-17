@@ -13129,3 +13129,14 @@
     .ambient-grppop-host > .ambient-grp { display: block !important; border: none; background: transparent; }
     .ambient-grppop-host > .ambient-grp > .ambient-grp-head { display: none; }
     .ambient-grppop-host > .ambient-grp > .ambient-grp-body { display: block; }
+
+    /* Order of play — the part chain, in the Arrangement popover. */
+    .ps-chain { border: 1px solid #23233a; border-radius: 10px; padding: 8px; margin-bottom: 10px; background: #0d0d18; }
+    .ps-chainseq { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 8px; }
+    .ps-cstep { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 3px 8px;
+                border: 1px solid rgba(110,120,255,0.45); border-radius: 8px; background: rgba(110,120,255,0.14);
+                color: #cfd4ff; font-size: 0.72rem; cursor: pointer; }
+    .ps-cstep:hover { border-color: #ff8fa3; background: rgba(255,143,163,0.14); }
+    .ps-cstep > i { font-style: normal; opacity: 0.6; }
+    .ps-chainadd { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+    .ps-chainadd .ambient-seg { min-height: 30px; }

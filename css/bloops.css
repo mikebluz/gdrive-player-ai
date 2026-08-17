@@ -13203,8 +13203,16 @@
        CARD PER LAYER. Scoped to the popover so the inline Scheduler is unchanged. */
     .ambient-advpop-host .ambient-sched-advhead {
       border: 1px solid #2a2a44; border-radius: 10px; padding: 8px 10px; margin-bottom: 12px;
-      background: rgba(127, 214, 196, 0.05);
+      /* Lighter than the layer cards below it, so the header reads as the thing
+         they all sit under. The tint rides as a gradient over an opaque base —
+         a lone rgba would composite against the popover and stay dark. */
+      background-color: #191932;
+      background-image: linear-gradient(rgba(127, 214, 196, 0.05), rgba(127, 214, 196, 0.05));
     }
+    /* The progression/part name and a LAYER name share .ambient-sched-name, so in
+       one column they read as the same kind of thing. The header's is harmony —
+       teal, like the chord blocks under it; a layer name stays light. */
+    .ambient-advpop-host .ambient-sched-advhead .ambient-sched-name { color: #7fd6c4; }
     .ambient-advpop-host .ambient-sched-advhead > .ambient-sched-row { margin: 0; }
     .ambient-advpop-host .ambient-sched-advhead > .ambient-sched-row + .ambient-sched-row { margin-top: 6px; }
     .ambient-advpop-host .ambient-sched-row[data-schkey] {

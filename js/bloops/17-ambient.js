@@ -12650,9 +12650,9 @@
         if (av) {
           // Toggle and CLOSE: you turned it on to look at it, and it is behind
           // this popover.
-          E._schedAdv = !E._schedAdv;
-          try { _ambRenderScheduler(E); } catch (e) {}
+          // Opens the popover now rather than unfolding the block inline.
           try { ov.remove(); } catch (e) {}
+          setTimeout(() => { try { _ambSchedAdvPopover(E); } catch (e) {} }, 0);
           return;
         }
         const dp = ev.target && ev.target.closest && ev.target.closest('[data-qe-disp]');
@@ -31826,6 +31826,43 @@
       try { _ambSyncControls(E); } catch (e) {}
       try { _ambSaltReadoutSync(E, true); } catch (e) {}
     }
+    // ADVANCED PART EDIT AS A POPOVER. The per-layer schedules (Unit, Evolve,
+    // phrase, seq chips) and the chord lane are a deep edit you visit, not a
+    // lane you read — inline they doubled the pane's height and pushed the
+    // Matrix down. TWO things make this work without rewiring anything:
+    //   · the overlay is a CHILD of #ambient-sched-body, because every control
+    //     in that block is DELEGATED on that body — a document-level overlay
+    //     puts them outside the delegation root and the clicks reach nothing.
+    //   · the block is RENDERED INTO the popover rather than moved once:
+    //     _ambRenderScheduler rewrites the body wholesale (the playhead alone
+    //     repaints constantly), so anything merely moved here would be replaced
+    //     by the next repaint. The renderer re-homes it after each build.
+    function _ambSchedAdvPopover(E) {
+      _E = E;
+      const host0 = _ambGet(E, 'ambient-sched-body');
+      if (!host0 || host0.querySelector('.ambient-advpop')) return;
+      const ov = document.createElement('div');
+      ov.className = 'sm-overlay ambient-advpop';
+      ov.innerHTML = '<div class="sm-modal ambient-advpop-modal">' +
+        '<div class="sm-title">Layer schedules</div>' +
+        '<div class="ambient-advpop-host"></div>' +
+        '<div class="sm-footer"><button type="button" class="sm-apply">Done</button></div></div>';
+      host0.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+      let armed = false;
+      setTimeout(() => { armed = true; }, 300);   // the opening press's trailing click
+      ov.addEventListener('click', (ev) => {
+        const done = ev.target.closest && ev.target.closest('.sm-apply');
+        if (done || (armed && ev.target === ov)) {
+          ev.stopPropagation();
+          E._schedAdv = false;
+          try { ov.remove(); } catch (e) {}
+          try { _ambRenderScheduler(E); } catch (e) {}
+        }
+      });
+      E._schedAdv = true;
+      try { _ambRenderScheduler(E); } catch (e) {}
+    }
     function _ambProgGrpSync(E) {
       ['salt', 'order', 'overview', 'matrix', 'sections'].forEach(k => {
         const g = _ambGet(E, 'ambient-proggrp-' + k); if (!g) return;
@@ -34359,14 +34396,34 @@
         + 'Parts</button>'
         + '<button type="button" class="ambient-seg ambient-sched-qe" '
         + 'title="Edit — every layer\u2019s changes in one grid; click a cell to turn that layer off there">'
-        + 'Edit</button>' + _rowSelHtml + '</div>' + html;
+        + 'Edit</button>'
+        + '<button type="button" class="ambient-seg ambient-sched-advbtn" '
+        + 'title="Layer schedules — each layer\u2019s Unit, Evolve and phrase, plus the chord lane">'
+        + '\u2699 Layers</button>' + _rowSelHtml + '</div>' + html;
       // THE LEGEND IS GONE TOO. A static key naming block / fresh / repeat /
       // playhead, which never changed and never responded to anything — and it
       // described marks that only appear once layers are running, so on a quiet
       // panel it explained things that were not on screen. The same information
       // is on the blocks themselves as tooltips, where it is asked for rather
       // than always present.
+      // The advanced-edit popover is a CHILD of this body, so this rewrite
+      // would destroy it. Detach the LIVE node and put it back — rebuilding it
+      // from HTML would silently drop its own listeners.
+      let _advPop = null;
+      try { _advPop = body.querySelector('.ambient-advpop'); if (_advPop) _advPop.remove(); } catch (e) {}
       body.innerHTML = html;
+      try { if (_advPop) body.appendChild(_advPop); } catch (e) {}
+      // …and the freshly built advanced block belongs in it while it is open.
+      // Clear first: appending without removing stacks a second copy on every
+      // repaint (measured as 4 layer rows for 2 layers).
+      try {
+        const _ah = _advPop && _advPop.querySelector('.ambient-advpop-host');
+        if (_ah) {
+          _ah.querySelectorAll('.ambient-sched-adv').forEach(n => n.remove());
+          const _adv = body.querySelector(':scope > .ambient-sched-adv');
+          if (_adv) { _adv.removeAttribute('hidden'); _ah.appendChild(_adv); }
+        }
+      } catch (e) {}
       if (!body._secWired) {
         body._secWired = true;
         // PARTS LANE: pointerdown, not click. This strip is redrawn whenever the
@@ -34391,6 +34448,9 @@
           if (secb) { ev.preventDefault(); ev.stopPropagation(); E._schedSections = !E._schedSections; _ambRenderScheduler(E); return; }
           const qe = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-qe');
           if (qe) { ev.preventDefault(); ev.stopPropagation(); _ambQuickUnitsModal(E); return; }
+          const advb = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-advbtn');
+          if (advb) { ev.preventDefault(); ev.stopPropagation();
+            setTimeout(() => { try { _ambSchedAdvPopover(E); } catch (e) {} }, 0); return; }
           const fol = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-follow');
           if (fol) {
             _E = E; const elF = _ambGet(E, 'ambient-sched');

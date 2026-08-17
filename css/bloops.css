@@ -13153,3 +13153,9 @@
        pane, so it needs its own separation from the Overview above it). */
     .ambient-sched-inline { display: block; margin-top: 10px; padding-top: 10px;
                             border-top: 1px solid #23233a; }
+
+    /* Advanced part edit, as a popover. The block is rendered INTO this host,
+       so it must show regardless of the `hidden` attribute it carries inline. */
+    .ambient-advpop-modal { width: min(760px, 96vw); }
+    .ambient-advpop-host { max-height: 64vh; overflow-y: auto; margin: 8px 0; }
+    .ambient-advpop-host > .ambient-sched-adv { display: block !important; }

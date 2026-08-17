@@ -13095,6 +13095,13 @@
       border: 1px dashed rgba(246,173,85,0.45); border-radius: 5px; padding: 1px 5px;
       white-space: normal; overflow-wrap: anywhere;
     }
+    /* The inert REASON, at the top of the open Evolve body — its own row, full
+       width, wrapping (it is prose, not a chip). */
+    .ambient-sched-evwhy {
+      font-size: 0.66rem; color: #f6ad55; opacity: 0.9; line-height: 1.35;
+      border-left: 2px solid rgba(246,173,85,0.45); padding: 2px 0 2px 7px; margin-bottom: 7px;
+      white-space: normal; overflow-wrap: anywhere;
+    }
     @media (max-width: 460px) { .ambient-qe-evline { padding-left: 0; } }
     .ambient-qe-ev {
       min-height: 30px; min-width: 30px; padding: 3px 6px; border-radius: 6px;

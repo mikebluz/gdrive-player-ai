@@ -34389,8 +34389,6 @@
                 + '<span class="ambient-sched-looplbl">\u27f3 EVOLVE</span>'
                 + '<span class="ambient-sched-loopsum">' + esc(_evSum) + '</span>'
               + '</button>' +
-              (_evInert ? ('<i class="ambient-sched-evna" title="' + esc('Evolve does not apply here — ' + _evInert + '.')
-                + '">n/a — ' + esc(_evInert.split(' — ')[0].split(', Ghosts')[0]) + '</i>') : '') +
               ((layer.iterGate && Array.isArray(layer.iterGate.steps))
                 ? ('<i class="ambient-sched-evna" title="Across schedule: plays only '
                    + layer.iterGate.steps.filter(v => v).length + ' of every ' + layer.iterGate.steps.length + ' '
@@ -34398,16 +34396,31 @@
                    + layer.iterGate.steps.filter(v => v).length + '/' + layer.iterGate.steps.length + '</i>')
                 : '') +
               '<div class="ambient-sched-loopbody">' +
+              // WHY IT IS INERT gets its own full-width line at the top of the
+              // body. As a sibling of the body it was a flex item on the same
+              // wrapping row, so the reason sat to the LEFT of the controls it
+              // was explaining. No "n/a —" prefix: the fold header already
+              // carries that word, and saying it twice is the noise.
+              (_evInert ? ('<div class="ambient-sched-evwhy">Evolve doesn’t apply here — '
+                + esc(_evInert) + '.</div>') : '') +
               '<div class="ambient-sched-btnrow">' +
               '<span class="ambient-sched-evolve' + (_evInert ? ' is-overridden' : '') + '" role="group" aria-label="Evolve cadence">' +
                 '<button type="button" class="ambient-seg ambient-sched-ev' + (!wOn ? ' active' : '') + '" data-ev="cont" title="Continuous — re-roll a fresh pattern every cycle (no freezing).">Continuous</button>' +
                 '<button type="button" class="ambient-seg ambient-sched-ev' + ((wOn && !wLock) ? ' active' : '') + '" data-ev="every" title="Every N — freeze a pattern, repeat it N plays, then evolve a fresh one.">Every N</button>' +
                 '<button type="button" class="ambient-seg ambient-sched-ev' + (wLock ? ' active' : '') + '" data-ev="lock" title="Locked — freeze one roll and hold it forever (never re-rolls). Persists across reload.">🔒 Locked</button>' +
               '</span>' +
-              ((wOn && !wLock) ? ('<button type="button" class="ambient-seg ambient-sched-vary' + (stoW ? ' active' : '') + '" title="Vary — each cycle roll a random pattern length (bars) and repeat count (plays) inside the min–max ranges, so the layer loops in evolving chunks.">~ Vary</button>' +
+              // The Every-N DETAIL is hidden while Evolve is inert — a phrase
+              // length and a repeat count for a mechanism the engine is skipping
+              // are controls that do nothing, which is the trap this whole inert
+              // marker exists to close. The 3-way stays (dimmed) so the intent is
+              // still visible, and comes back with its stored values the moment
+              // the layer has variance again.
+              ((wOn && !wLock && !_evInert) ? ('<button type="button" class="ambient-seg ambient-sched-vary' + (stoW ? ' active' : '') + '" title="Vary — each cycle roll a random pattern length (bars) and repeat count (plays) inside the min–max ranges, so the layer loops in evolving chunks.">~ Vary</button>' +
                      '<button type="button" class="ambient-seg ambient-sched-live' + ((layer.loopVar === 'live') ? ' active' : '') + '" title="Live — every loop pass RE-PERFORMS the pattern: Humanize / Vel var / Ornament re-roll from the layer’s current sliders (structural variance stays as written).">⚡ Live</button>') : '') +
               '</div>' +
-              ((wOn && !wLock) ? (phraseHtml + (stoW ? '' : chipsHtml)) : (wLock ? '<span class="ambient-sched-lbl snap" title="Locked captures one natural unit and repeats it verbatim.">1 unit · held</span>' : '')) +
+              (_evInert ? ''
+                : ((wOn && !wLock) ? (phraseHtml + (stoW ? '' : chipsHtml))
+                  : (wLock ? '<span class="ambient-sched-lbl snap" title="Locked captures one natural unit and repeats it verbatim.">1 unit · held</span>' : ''))) +
             '</div></div>' +
           '</div>' +
           blocksHtml +

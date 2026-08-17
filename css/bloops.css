@@ -3926,8 +3926,16 @@
     /* Overview label mode — numerals-first (default) vs chord-names-first. Only the
        emphasis moves; .ambient-pov-nm stays the NAME either way, because the
        playhead relabels that span to the sounding chord. */
-    .ambient-pov-bar { display: flex; align-items: center; gap: 6px; width: 100%; margin-bottom: 4px; }
-    .ambient-pov-namesbtn { padding: 3px 10px; border: 1px solid #3a3a52; border-radius: 999px; background: #16162a; color: #cbd5e0; cursor: pointer; font-size: 0.7rem; white-space: nowrap; touch-action: manipulation; }
+    /* Five controls live here now (＋ Part · Salt · Order · Arrangement ·
+       Numerals), so it must WRAP rather than squeeze — at 390px one child
+       was pushed past the edge and a button shrank to 23px, under the touch
+       floor. Wrapping keeps every one full size on the next line (UI rule 1:
+       never solve overflow with sideways scroll). */
+    .ambient-pov-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; margin-bottom: 4px; }
+    .ambient-pov-bar > * { flex: 0 0 auto; }
+    /* 23px tall on a phone — under the touch floor, and the odd one out on a
+       bar where every sibling is 30px. */
+    .ambient-pov-namesbtn { display: inline-flex; align-items: center; min-height: 30px; padding: 3px 10px; border: 1px solid #3a3a52; border-radius: 999px; background: #16162a; color: #cbd5e0; cursor: pointer; font-size: 0.7rem; white-space: nowrap; touch-action: manipulation; }
     /* Scheduler PART row — named spans above the chords, one block per pass. */
     /* The part/pass pickers: two selects on one row, narrowing left to right.
        .ambient-select is width:100%, which resolves circularly inside an

@@ -31471,6 +31471,14 @@
           'title="Salt — deterministic per-cycle spice: lengths, colours, vary, tension, take, scatter">🧂 Salt</span>' +
         '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="grp:order" ' +
           'title="Order — scheduled re-ordering of the changes">↻ Order</span>' +
+        // ▤ ARRANGEMENT — the whole piece at a glance, and where the ORDER OF
+        // PLAY (the part chain) is edited. Its only other door is the ▤ in the
+        // Scheduler's pass row, which lives inside the Advanced block and
+        // measures 0x0 until you turn that on — so the chain editor was
+        // effectively unreachable. Parts are authored on this bar; the order
+        // they play in belongs next to them.
+        '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="arrmap" ' +
+          'title="Arrangement — every part and section at a glance, and the order of play">▤ Arrangement</span>' +
         '<span role="button" tabindex="0" class="ambient-pov-namesbtn' + (namesFirst ? ' on' : '') + '" data-pov="names" title="' +
           (namesFirst ? 'Showing chord NAMES first with the numeral after \u2014 click to lead with numerals' :
                         'Showing ROMAN NUMERALS first with the name after \u2014 click to lead with chord names') + '">' +
@@ -31666,6 +31674,13 @@
       const t = ev.target && ev.target.closest && ev.target.closest('[data-pov]'); if (!t) return;
       ev.preventDefault();
       const a = String(t.getAttribute('data-pov')).split(':'), op = a[0];
+      if (op === 'arrmap') {
+        _E = E;
+        // Deferred: this strip acts on POINTERDOWN, and the overlay's own
+        // backdrop would otherwise eat the trailing click of that same press.
+        setTimeout(() => { try { _ambPartScheduleModal(E); } catch (e) {} }, 0);
+        return;
+      }
       if (op === 'grp') {
         _E = E;
         _ambProgGrpPopover(E, a[1], a[1] === 'salt' ? '\uD83E\uDDC2 Salt' : '\u21bb Order');

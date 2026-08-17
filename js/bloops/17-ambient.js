@@ -19938,6 +19938,19 @@
       // Before the chains, so a layer routing into a bus finds it already wired.
       try { _ambBusApplyAll(cfg); } catch (e) {}
       const want = _ambWantSet(cfg);
+      // REMEMBER EVERY KEY WE HAVE SOUNDED — and it must sit AFTER `want`:
+      // placed above it, this read as a silent no-op, because the try swallowed
+      // the TDZ error and the set stayed empty (measured: []). A note the CORE
+      // takes registers no JS voice at all (04: `if (_took) return;`), so a
+      // layer whose notes are all core-rendered — a drum kit, the reported case
+      // — contributes nothing to the `'*'` sweep, which collects keys FROM
+      // those JS collections. The per-key loop covers it only while E.mod still
+      // holds the key, and the stop's follow-up sweep runs AFTER
+      // _ambTeardownMods has emptied it.
+      try {
+        const seen = _E._emitKeys || (_E._emitKeys = new Set());
+        Object.keys(want).forEach(k => seen.add(k));
+      } catch (e) {}
       // Build/update wanted chains (pass a one-key cfg-shim so the existing
       // _ambSyncTarget keeps reading cfg[layerKey].mod unchanged), then FX.
       Object.keys(want).forEach(key => { _ambBuildMod(key, { [key]: want[key] }); _ambApplyLayerFx(key, want[key]); });
@@ -23847,7 +23860,12 @@
       try {
         if (!E.windingDown && typeof cancelBloomFutureVoices === 'function') {
           const _nw = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
-          Object.keys(E.mod || {}).forEach((k) => {
+          // Every key with a LIVE chain, plus every key this engine has sounded
+          // this session — core-rendered notes are invisible to the '*' sweep,
+          // and a departed or torn-down chain is no longer in E.mod at all.
+          const _allKeys = new Set(Object.keys(E.mod || {}));
+          try { (E._emitKeys || []).forEach((k) => _allKeys.add(k)); } catch (e) {}
+          _allKeys.forEach((k) => {
             try { cancelBloomFutureVoices(k, _nw); } catch (e) {}
           });
           // …and then EVERYTHING else that is still scheduled. The loop above
@@ -23874,11 +23892,30 @@
             if (E.timer) return;                       // played again in the meantime
             try {
               const t2 = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
-              Object.keys(E.mod || {}).forEach((k) => {
+              // E.mod is EMPTY by now (teardown ran), which is exactly why this
+              // sweep needs the remembered key set — without it the follow-up
+              // reached nothing at all for a core-rendered layer.
+              const k2 = new Set(Object.keys(E.mod || {}));
+              try { (E._emitKeys || []).forEach((k) => k2.add(k)); } catch (e) {}
+              k2.forEach((k) => {
                 try { cancelBloomFutureVoices(k, t2); } catch (e) {}
               });
               cancelBloomFutureVoices('*', t2);
               if (typeof _stopKitPreview === 'function') _stopKitPreview();
+              // AND A CORE BACKSTOP. By now _ambTeardownMods has released the
+              // strip slots, so slotByKey no longer maps these keys and a
+              // per-key cancelFrom posts NOTHING (measured: the reap's cancels
+              // reach the core not at all). A note handed to the core between
+              // the immediate sweep and teardown would therefore survive — and
+              // core-rendered notes are exactly the ones the '*' sweep cannot
+              // see, since the core path registers no JS voice. stopAll is the
+              // one command that still reaches them, and it is safe here only
+              // because no other Bloom engine is sounding — the same condition
+              // _ambStopGenerator uses for silenceActiveVoices.
+              try {
+                const _quiet = !_laneEng.timer && !_masterEng.timer && !_shapeBloomEng.timer;
+                if (_quiet && typeof _coreVoices !== 'undefined' && _coreVoices.stopAll) _coreVoices.stopAll();
+              } catch (e) {}
             } catch (e) {}
           };
           try { setTimeout(_reap, 90); } catch (e) {}

@@ -31977,7 +31977,29 @@
     function _ambProgOverviewPlayheadCore(E) {
       const el = _ambGet(E, 'ambient-prog-overview'); if (!el || el.style.display === 'none' || !el._wired) return;
       const cfg = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : (E.getCfg && E.getCfg()));
-      const p = cfg && cfg.prog; if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) { if (el._curCi !== -1) { el._curCi = -1; el.querySelectorAll('.ambient-pov-chord.cur').forEach(n => n.classList.remove('cur')); } return; }
+      // CLEAR when nothing is sounding — the glow means "this chord is playing",
+      // and there was no check that anything WAS. `_ambProgStepAt` reads the
+      // free-running audio clock, so with the transport stopped it still returns
+      // a step and a chip lit up green: whichever chord the clock happened to
+      // land on, reported as "why is the second chord selected". Also clears
+      // while a DIFFERENT area is being viewed, the same condition the Scheduler
+      // cursor and the Pattern step-playhead already use.
+      const _live = !!E.timer && _ambViewIsPlaying(E);
+      const p = cfg && cfg.prog;
+      if (!_live || !p || !p.on || !Array.isArray(p.chords) || !p.chords.length) {
+        if (el._curCi !== -1) {
+          el._curCi = -1; el._curTxt = '';
+          // RESTORE THE WRITTEN LABEL as well as dropping the class: the glowing
+          // chip may have been relabelled to a sounding alt, and clearing only
+          // the class would strand that substituted name on the strip.
+          el.querySelectorAll('.ambient-pov-chord.cur').forEach(n => {
+            n.classList.remove('cur');
+            const w = n.querySelector('.ambient-pov-nm, .ambient-pov-rn');
+            if (w && n._writtenNm != null) { w.textContent = n._writtenNm; n._writtenNm = null; }
+          });
+        }
+        return;
+      }
       const tnow = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + 0.016;
       let step = 0; try { step = _ambProgStepAt(E, tnow) | 0; } catch (e) {}
       let ci = ((step % p.chords.length) + p.chords.length) % p.chords.length;

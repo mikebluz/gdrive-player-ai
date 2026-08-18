@@ -23857,6 +23857,105 @@
         _AMB_TICKING.forEach(E => { if (E.timer) _ambRunTick(E); });   // top up now, not at the next interval
       });
     }
+    // ── STRAY-AFTER-STOP WATCH ────────────────────────────────────────────────
+    // "Errant drum hits after stop" has been reported repeatedly and has never
+    // reproduced here — 24 stop cycles on the reported config, with the drums
+    // proven audible, produced no post-stop audio at all. So this is the
+    // instrument rather than another guess: arm it, play, stop, and it reports
+    // whether anything SOUNDED after the stop and which layer handed it out.
+    //
+    // Two measurements, because either alone is misleading. The ENVELOPE off the
+    // master tap says whether audio actually happened (a note that is cancelled
+    // or routed into a torn-down chain is silent, and counting playNote calls
+    // would call that a hit — the documented trap). The NOTE LOG says who
+    // scheduled it, which the envelope cannot. A stray is a JUMP above the
+    // decaying tail: reverb legitimately rings for seconds after Stop, so an
+    // absolute level proves nothing.
+    function _ambStrayWatch(seconds) {
+      const E = _masterEng;
+      const secs = Math.max(2, Math.min(20, Number(seconds) || 6));
+      if (E._strayWatch) { try { showToast('Stray watch already armed — press Stop.'); } catch (e) {} return; }
+      const tap = _ambMasterTapNode();
+      if (!tap || typeof Tone === 'undefined') { try { showToast('No master output to listen to.'); } catch (e) {} return; }
+      const an = Tone.getContext().createAnalyser(); an.fftSize = 2048;
+      try { tap.connect(an); } catch (e) { try { showToast('Could not tap the master output.'); } catch (x) {} return; }
+      const buf = new Float32Array(an.fftSize);
+      const notes = [];
+      const origPN = window.playNote;
+      window.playNote = function (freq, params, dur, at) {
+        const r = origPN.apply(this, arguments);
+        // Read _ambEmitKey AFTER calling through: the capture tee inside playNote
+        // stamps it for THIS note, so reading it first attributes every note to
+        // the previous one.
+        try {
+          notes.push({ at: (typeof at === 'number' ? at : Tone.now()),
+                       key: window._ambEmitKey || null, drum: !!(params && params._drumKit) });
+          if (notes.length > 4000) notes.splice(0, 2000);
+        } catch (e) {}
+        return r;
+      };
+      const env = [];
+      const poll = setInterval(() => {
+        an.getFloatTimeDomainData(buf);
+        let m = 0; for (let i = 0; i < buf.length; i++) { const v = buf[i] < 0 ? -buf[i] : buf[i]; if (v > m) m = v; }
+        env.push([Tone.now(), m]);
+      }, 20);
+      E._strayWatch = { report: (stopAt) => {
+        setTimeout(() => {
+          try { clearInterval(poll); } catch (e) {}
+          try { window.playNote = origPN; } catch (e) {}
+          try { tap.disconnect(an); } catch (e) {}
+          E._strayWatch = null;
+          const before = env.filter(x => x[0] <= stopAt);
+          const after = env.filter(x => x[0] > stopAt);
+          const peakPlaying = before.reduce((m, x) => Math.max(m, x[1]), 0);
+          const jumps = [];
+          for (let i = 4; i < after.length; i++) {
+            const prev = Math.max(after[i-1][1], after[i-2][1], after[i-3][1], after[i-4][1]);
+            if (after[i][1] > 0.015 && after[i][1] > prev * 2.5 + 0.008)
+              jumps.push({ atSec: +(after[i][0] - stopAt).toFixed(3), level: +after[i][1].toFixed(4), from: +prev.toFixed(4) });
+          }
+          const past = notes.filter(n => n.at > stopAt + 0.02);
+          const byKey = {}; past.forEach(n => { byKey[n.key || '?'] = (byKey[n.key || '?'] | 0) + 1; });
+          // Attribute each jump to whatever was scheduled within ±120 ms of it.
+          jumps.forEach(j => {
+            const t = stopAt + j.atSec;
+            j.scheduledNear = [...new Set(past.filter(n => Math.abs(n.at - t) < 0.12).map(n => (n.key || '?') + (n.drum ? ' (drum)' : '')))];
+          });
+          const rep = {
+            note: 'Bloom stray-after-stop watch',
+            heardWhilePlaying: +peakPlaying.toFixed(4),
+            // A zero here means the watch could not hear the music, so a clean
+            // result below would prove nothing.
+            probeValid: peakPlaying > 0.02,
+            windowSec: secs,
+            straysHeard: jumps.length, strays: jumps.slice(0, 8),
+            tailLevel: { at0_5s: +((after.find(x => x[0] > stopAt + 0.5) || [0, 0])[1]).toFixed(4),
+                         at1s: +((after.find(x => x[0] > stopAt + 1) || [0, 0])[1]).toFixed(4),
+                         at2s: +((after.find(x => x[0] > stopAt + 2) || [0, 0])[1]).toFixed(4) },
+            scheduledPastStop: past.length,
+            drumsScheduledPastStop: past.filter(n => n.drum).length,
+            maxLeadSec: past.length ? +Math.max(...past.map(n => n.at - stopAt)).toFixed(3) : 0,
+            byLayer: byKey,
+            capture: { windingDown: !!E.windingDown, capRec: !!E.capRec },
+            core: { voices: (typeof _coreVoices !== 'undefined') && _coreVoices.enabled(),
+                    strips: (typeof _coreVoices !== 'undefined') && _coreVoices.stripsEnabled() },
+          };
+          const txt = JSON.stringify(rep, null, 1);
+          try { console.log('[bloom-stray]', txt); } catch (e) {}
+          try { navigator.clipboard.writeText(txt); } catch (e) {}
+          try {
+            showToast(rep.straysHeard
+              ? ('⚠ ' + rep.straysHeard + ' stray hit' + (rep.straysHeard === 1 ? '' : 's') + ' after Stop — report copied')
+              : (rep.probeValid ? '✓ Nothing sounded after Stop — report copied'
+                                : '⚠ The watch heard nothing while playing — result means nothing'),
+              { warn: !!rep.straysHeard || !rep.probeValid, ms: 9000 });
+          } catch (e) {}
+        }, secs * 1000);
+      } };
+      try { showToast('Stray watch armed — play, then press Stop. It listens for ' + secs + 's after.', { ms: 6000 }); } catch (e) {}
+    }
+    window.bloomStrayWatch = _ambStrayWatch;
     function _ambStopGenerator(E) {
       // The OS voice is a GENERATOR outside the Web Audio graph — the master fade
       // and the gates cannot touch it, so like the vinyl bed it must follow the
@@ -23875,6 +23974,7 @@
         try { raw && raw.resume && raw.resume(); } catch (e) {}
         _ambClearPaused(E);
       }
+      const _nowForStray = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
       if (E.timer) { clearInterval(E.timer); E.timer = null; }
       // CANCEL WHAT IS SCHEDULED BUT HAS NOT SOUNDED YET. Stopping only stopped
       // the TICK — every note already handed out still fired, including ones
@@ -23885,9 +23985,18 @@
       // finally reported. cancelBloomFutureVoices targets `_akAt >= now`, so a
       // voice that has already STARTED is untouched and tails still ring out.
       // Skipped while a capture is winding down: that path is deliberately
-      // ending on silence and owns its own tail.
+      // ending on silence and owns its own tail. GATED ON THE CAPTURE, not on the
+      // flag alone — `windingDown` is still true when _ambCaptureFinish calls this
+      // and is cleared several statements later, so anything that throws in
+      // between (or any finalize that never completes) would leave it set and
+      // silently disable the whole sweep for every later stop, i.e. the full
+      // ~1.3 s lookahead sounding after Stop. Not demonstrated as the cause of
+      // the reported stray — 24 stop cycles on the reported config never
+      // reproduced it — but a flag whose stale value disables a safety sweep is
+      // worth not having. With a real capture in flight capRec is set, so the
+      // deliberate skip is unchanged.
       try {
-        if (!E.windingDown && typeof cancelBloomFutureVoices === 'function') {
+        if (!(E.windingDown && E.capRec) && typeof cancelBloomFutureVoices === 'function') {
           const _nw = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
           // Every key with a LIVE chain, plus every key this engine has sounded
           // this session — core-rendered notes are invisible to the '*' sweep,
@@ -23951,6 +24060,9 @@
           try { setTimeout(_reap, 260); } catch (e) {}   // and past one tick period
         }
       } catch (e) {}
+      // Hand the stop instant to an armed stray watch, before anything else
+      // resets. It reports on its own timer, so this costs nothing when unarmed.
+      try { if (E._strayWatch && E._strayWatch.report) E._strayWatch.report(_nowForStray); } catch (e) {}
       _AMB_TICKING.delete(E); _ambTickWorkerMaybeStop();
       E._freshKeys = null; E._freshJoin = null;   // added-while-playing marks die with the session (a stopped toggle is plain)
       // Stamp the stop so the NEXT press can tell warm from cold (see _ambStartGenerator).

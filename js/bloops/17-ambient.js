@@ -6414,7 +6414,7 @@
     const _AMB_CHROM = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
     const _AMB_PE_QUALITIES = [['maj', [0, 4, 7]], ['min', [0, 3, 7]], ['dim', [0, 3, 6]], ['aug', [0, 4, 8]],
       ['sus2', [0, 2, 7]], ['sus4', [0, 5, 7]], ['7', [0, 4, 7, 10]], ['maj7', [0, 4, 7, 11]],
-      ['min7', [0, 3, 7, 10]], ['m7♭5', [0, 3, 6, 10]], ['dim7', [0, 3, 6, 9]], ['6', [0, 4, 7, 9]], ['9', [0, 4, 7, 10, 14]]];
+      ['min7', [0, 3, 7, 10]], ['m7♭5', [0, 3, 6, 10]], ['dim7', [0, 3, 6, 9]], ['6', [0, 4, 7, 9]], ['9', [0, 2, 4, 7, 10]]];   // 9th as STORED: normalize mods every interval into 0-11, so a literal 14 could never match
     // CHARACTER vocabulary for the Create builder, grouped so the picker can offer
     // more than one KIND of character rather than one flat wall of buttons.
     // Intervals are pitch classes on purpose — _ambNormalizeProgMeta mods every
@@ -6476,6 +6476,72 @@
     // Compact chord name for the header readout: root note + quality suffix
     // (C, Am, G7, D°…). Falls back to just the root for a custom voicing.
     const _AMB_CH_SYM = { maj: '', min: 'm', dim: '°', aug: '+', sus2: 'sus2', sus4: 'sus4', '7': '7', maj7: 'maj7', min7: 'm7', 'm7♭5': 'm7♭5', dim7: '°7', '6': '6', '9': '9' };
+    // THE CHORD'S QUALITY, RESOLVED ONCE. The name (_ambChordShort) and the roman
+    // numeral (_ambPeRoman) used to work this out SEPARATELY — the name by exact
+    // set-match against _AMB_PE_QUALITIES, the numeral by interval membership —
+    // so they disagreed on any chord the table does not list: 9 of 21 common
+    // voicings came out named as a bare root while the numeral still stated a
+    // quality ("C (i7)" for a C minor 9). Membership, not exact match, so an
+    // EXTENDED chord still resolves; both renderers read this and cannot diverge.
+    function _ambChordQual(ch) {
+      const iv = (Array.isArray(ch && ch.intervals) ? ch.intervals : [0]).map(x => (((x | 0) % 12) + 12) % 12);
+      const has = (x) => iv.indexOf(x) >= 0;
+      const min3 = has(3) && !has(4), maj3 = has(4);
+      const third = min3 ? 'min' : (maj3 ? 'maj' : '');
+      const dim5 = has(6) && !has(7), aug5 = has(8) && !has(7) && maj3;
+      // A diminished SEVENTH is interval 9 over a diminished triad — the same
+      // pitch class as a 6th, which is why it must be read before `six`.
+      const dim7 = min3 && dim5 && has(9) && !has(10) && !has(11);
+      const sev = has(11) ? 'maj7' : (has(10) ? '7' : (dim7 ? 'dim7' : ''));
+      const sus = (!third && has(2)) ? 'sus2' : ((!third && has(5)) ? 'sus4' : '');
+      const six = !sev && maj3 && has(9);
+      // Extensions only count ON TOP of a seventh — an added 9 with no 7th is an
+      // add9, which is a different chord and is named as one.
+      const nine = has(2) && !!third, thirteen = !!sev && has(9) && !dim7;
+      const eleven = has(5) && !!third;
+      return { third, dim5, aug5, sev, sus, six, nine, eleven, thirteen,
+               // Half-diminished (m7♭5) and fully diminished (°7) are different
+               // chords and were both rendered `i°7` before.
+               halfDim: min3 && dim5 && has(10), fullDim: dim7 };
+    }
+    // The extension TOKEN the name and the numeral share, so "9" can never appear
+    // on one and "7" on the other. Highest wins, as in lead-sheet practice, and
+    // the MAJOR-seventh flavour is carried through it — a maj9 is not a 9 (that
+    // one implies a dominant 7th), which is a different chord.
+    function _ambQualExt(q) {
+      if (!q.sev) return q.six ? '6' : (q.nine ? 'add9' : '');
+      const top = q.thirteen ? '13' : (q.eleven ? '11' : (q.nine ? '9' : '7'));
+      return (q.sev === 'maj7') ? (top === '7' ? 'maj7' : ('maj' + top)) : top;
+    }
+    // THE SUFFIX, BUILT ONCE, in two dialects. The name and the numeral used to
+    // apply the same facts in a DIFFERENT ORDER — the name checked sus first, the
+    // numeral checked the fifth first — so a suspended chord with a ♭5 came out
+    // "Csus2" beside "i°": two different chords, from one set of intervals.
+    // `roman` only changes how minorness is carried (by case, not by an `m`) and
+    // the half-diminished glyph.
+    function _ambQualSym(q, roman) {
+      const ext = _ambQualExt(q);
+      if (q.fullDim) return '\u00b07';
+      if (q.halfDim) return roman ? '\u00f87' : 'm7\u266d5';
+      // SUS FIRST in both: a suspension is the chord's identity, and an altered
+      // fifth on top of it is an alteration of that chord, not a different one.
+      if (q.sus) return ext + q.sus + (q.dim5 ? '\u266d5' : (q.aug5 ? '\u266f5' : ''));
+      // ° and + name a diminished/augmented TRIAD, which needs a third. With no
+      // third at all it is a root with an altered fifth and nothing else, so say
+      // that — `°` here would imply a minor third the chord does not contain,
+      // which is exactly what made the name and the numeral disagree.
+      // ° names a DIMINISHED TRIAD, which is a MINOR third with a ♭5. A major
+      // third (or none at all) over a ♭5 is an altered chord, not a diminished
+      // one — calling it ° implied a minor third it does not contain, and that
+      // is precisely where the name and the numeral parted company.
+      if (q.dim5) return (q.third === 'min') ? ('\u00b0' + ext) : (ext + '\u266d5');
+      if (q.aug5) return '+' + ext;   // aug5 already requires a major third
+      if (q.third === 'min') return roman ? ext : ('m' + (ext.indexOf('maj') === 0 ? ('Maj' + ext.slice(3)) : ext));
+      return ext;
+    }
+    // Lowercase carries MINOR, so it needs a real minor third — a chord with no
+    // third at all (a sus with a ♭5) is neither, and was being lowercased.
+    function _ambQualIsMinor(q) { return q.third === 'min' || q.fullDim || q.halfDim; }
     function _ambChordShort(ch) {
       if (!ch || typeof ch !== 'object') return '';
       if (ch.transition) return '⇝';
@@ -6485,7 +6551,10 @@
         const q = _AMB_PE_QUALITIES[i];
         if (q[1].slice().sort((a, b) => a - b).join(',') === norm) return root + (q[0] in _AMB_CH_SYM ? _AMB_CH_SYM[q[0]] : q[0]);
       }
-      return root;
+      // NOT IN THE TABLE — spell it from the shared quality rather than giving up
+      // and returning a bare root, which is what made the name contradict the
+      // numeral beside it.
+      return root + _ambQualSym(_ambChordQual(ch), false);
     }
     // Current progression chord label for the header ('' when no Area prog plays).
     function _ambHeaderChord(E) { return _ambAsAudibleArea(E, () => _ambHeaderChordCore(E)); }
@@ -6516,12 +6585,11 @@
         if (deg < 0) for (let i = 0; i < 7; i++) { if (MAJ[i] === (((rel - 1) % 12) + 12) % 12) { deg = i; acc = '♯'; break; } }
         if (deg < 0) return '';
       }
-      const iv = (ch.intervals || []).map(x => (((x | 0) % 12) + 12) % 12);
-      const has = (x) => iv.indexOf(x) >= 0;
-      const minor = has(3) && !has(4), dim = has(3) && has(6) && !has(7), aug = has(4) && has(8) && !has(7);
-      let num = R[deg]; if (minor || dim) num = num.toLowerCase();
-      let sym = dim ? '°' : (aug ? '+' : ''); if (has(10)) sym += '7'; else if (has(11)) sym += 'maj7';
-      return acc + num + sym;
+      // SAME quality resolution as the NAME beside it (_ambChordShort) — these two
+      // used to derive it separately and contradict each other.
+      const q = _ambChordQual(ch);
+      const num = _ambQualIsMinor(q) ? R[deg].toLowerCase() : R[deg];
+      return acc + num + _ambQualSym(q, true);
     }
     // ---- DETECT KEY -----------------------------------------------------------
     // Which (root, scale) best fits a progression's pitch classes. Scores every

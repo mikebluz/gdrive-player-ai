@@ -3965,6 +3965,16 @@
       max-height: 46vh; overflow-y: auto; }
     .ambient-partsched-modal .ps-row { border: 1px solid #2e2e46; border-radius: 6px; padding: 6px 8px;
       background: rgba(159,122,234,0.06); }
+    /* A SECTION row opens the section editor — the only door to it now that the
+       Scheduler's parts lane is gone, so it has to look like one and take a
+       finger (44px). The ✎ sits at the end of the head row, after the badges. */
+    .ambient-partsched-modal .ps-secrow { cursor: pointer; min-height: 44px; display: flex;
+      align-items: center; -webkit-tap-highlight-color: transparent; }
+    .ambient-partsched-modal .ps-secrow > .ps-head { flex: 1 1 auto; min-width: 0; }
+    .ambient-partsched-modal .ps-secrow:hover { background: rgba(159,122,234,0.14); border-color: #45456a; }
+    .ambient-partsched-modal .ps-secrow:focus-visible { outline: 2px solid #7fd6c4; outline-offset: 1px; }
+    .ambient-partsched-modal .ps-edit { margin-left: auto; color: #8a90a6; font-size: 0.8rem; flex: 0 0 auto; }
+    .ambient-partsched-modal .ps-secrow:hover .ps-edit { color: #cbb7f5; }
     .ambient-partsched-modal .ps-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }
     .ambient-partsched-modal .ps-nm { color: #e9dcff; font-size: 0.8rem; overflow-wrap: anywhere; }
     .ambient-partsched-modal .ps-x { color: #cbb7f5; font-size: 0.68rem; }

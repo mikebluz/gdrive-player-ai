@@ -2986,6 +2986,10 @@
                         den: Math.max(1, Math.min(64, (p.unit.den | 0) || 1)),
                         ref: (_ru === 'bar' || _ru === 'changes') ? _ru : 'area' };
           }
+          // HARMONY BINDING — which set of CHANGES this block plays (an index
+          // into prog.parts). It is the last section field that was not carried
+          // here, so binding one survived exactly until the next getCfg.
+          if (Number.isFinite(p.part) && (p.part | 0) >= 0) e0.part = p.part | 0;
           out.push(e0); continue;
         }
         if (acc >= total) break;                 // no chords left for a changes part
@@ -3140,6 +3144,12 @@
             if (Number.isFinite(x.keyOff) && (x.keyOff | 0)) s2.key = x.keyOff | 0;
             if (Number.isFinite(x.keyModeRot) && (x.keyModeRot | 0)) s2.keyModeRot = x.keyModeRot | 0;
             if (x.groove) s2.groove = x.groove;
+            // HARMONY BINDING. _ambSectionPart reads it off the SECTION, and the
+            // mirror never carried it — so binding a section to a set of changes
+            // was discarded on the next getCfg the moment any open part existed,
+            // which is the modern regime. It lives on the part like every other
+            // section field; this is what makes it reach the chord clock.
+            if (Number.isFinite(x.part) && x.part >= 0) s2.part = x.part | 0;
             return s2;
           });
         }
@@ -31018,6 +31028,7 @@
       // pass has nowhere else to be seen. Showing both here is also the only place
       // the two are drawn against each other, which is where their misalignment
       // (sections in BARS, parts in CHORDS) becomes visible instead of surprising.
+      const secBodyHtml = () => {
       const secs = Array.isArray(cfg.sections) ? cfg.sections : null;
       let secBody = '';
       if (secs && secs.length) {
@@ -31029,13 +31040,15 @@
         }).join('');
         const sRows = secs.map((s, i) => {
           const sp = _ambSectionPart(cfg, i), sk = (s.key | 0), _cut = _ambSectionCutInfo(cfg, s, i);
-          return '<div class="ps-row"><div class="ps-head"><b class="ps-nm">' + esc(s.name) + '</b>' +
+          return '<div class="ps-row ps-secrow" data-smsec="' + i + '" role="button" tabindex="0" ' +
+            'title="Edit “' + esc(s.name) + '” — rename, length, key, mode, groove, harmony, delete">' +
+            '<div class="ps-head"><b class="ps-nm">' + esc(s.name) + '</b>' +
             '<span class="ps-x">' + esc(_ambSecLenLabel(cfg, s, i)) + '</span>' +
             (sk ? '<span class="ps-x">⇅ ' + (sk > 0 ? '+' : '') + sk + ' st</span>' : '') +
             (sp ? '<span class="ps-x">plays “' + esc(sp.name) + '”</span>' : '') +
             (_cut ? '<span class="ps-cut" title="' + esc(_cut.name) + ' is ' + _ambFmtBpc(_cut.cycBars) +
               ' bars; this section is ' + _ambFmtBpc(_cut.secBars) + ' — it does not divide evenly, so a pass is cut at the boundary.">⚠ cuts ' +
-              esc(_cut.name) + '</span>' : '') + '</div></div>';
+              esc(_cut.name) + '</span>' : '') + '<span class="ps-edit">✎</span></div></div>';
         }).join('');
         secBody = '<div class="ps-secthdr">Sections — the bar timeline</div>' +
           '<div class="ps-map"><span class="ambient-sched-strip parts">' + sStrip + '</span></div>' +
@@ -31043,6 +31056,8 @@
           '<div class="ps-list">' + sRows + '</div>' +
           '<div class="ps-secthdr">Changes — the chord timeline</div>';
       }
+      return secBody;
+      };
       // ORDER OF PLAY — the chain. Without it the arrangement is the parts in
       // written order, so a part can never be revisited; this is where you say
       // "Verse Chorus Verse Bridge Chorus". Empty = the written order, and
@@ -31071,7 +31086,7 @@
       const paint = () => {
         ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-partsched-modal">' +
           '<div class="sm-title">Song map</div>' +
-          '<div class="ambient-step-modal-body">' + _chainUi() + secBody + body + '</div>' +
+          '<div class="ambient-step-modal-body">' + _chainUi() + secBodyHtml() + body + '</div>' +
           '<div class="sm-footer"><button type="button" class="sm-apply ps-close">Close</button></div></div>';
       };
       paint();
@@ -31095,6 +31110,19 @@
       };
       ov.addEventListener('click', (ev) => {
         const t = ev.target;
+        // SECTION ROW → the section editor. `paint` is passed as the after-hook
+        // because this popover rebuilds its whole body from the config, so an
+        // edit made in the menu has to reach it or the row goes stale under the
+        // menu that just changed it.
+        const srow = t.closest && t.closest('.ps-secrow');
+        if (srow) {
+          const si = srow.getAttribute('data-smsec') | 0;
+          const rb = srow.getBoundingClientRect();
+          const x = ev.clientX > 0 ? ev.clientX : rb.left;
+          const y = ev.clientY > 0 ? ev.clientY : rb.bottom + 4;
+          try { _ambSectionMenu(E, si, x, y, () => { try { paint(); } catch (e) {} }); } catch (e) {}
+          return;
+        }
         const add = t.closest && t.closest('.ps-cadd');
         if (add) { const i = add.getAttribute('data-ca') | 0; commit((cur) => cur.concat([i])); return; }
         const rm = t.closest && t.closest('.ps-cstep');
@@ -33891,113 +33919,14 @@
         + [[0, 'all in 1 row'], [2, '2 bars/row'], [4, '4 bars/row'], [8, '8 bars/row'], [16, '16 bars/row']]
             .map(o => '<option value="' + o[0] + '"' + (o[0] === _rowPref ? ' selected' : '') + '>' + o[1] + '</option>').join('')
         + '</select>';
-      // SECTION lane (sets of bars): named blocks cycling across the ruler —
-      // the arrangement level. With none defined, a slim ＋ affordance seeds
-      // A/B (4+4 bars). Tap a block → rename / resize / delete.
-      {
-        const secs = Array.isArray(cfg.sections) ? cfg.sections : null;
-        // THE PARTS LANE DRAWS PARTS. It used to draw cfg.sections, which after
-        // the fold holds only the changes-LESS parts — so a project with Verse ×2
-        // / Break / Chorus showed one block, "Break", and the lane was sections
-        // wearing a new label. The spans come from the played chain, so a part
-        // that repeats draws one block per pass and every block is as wide as it
-        // actually sounds.
-        // THE PARTS LANE IS THE NAVIGATOR — the WHOLE arrangement, every part,
-        // always. Scoping it to the view meant it showed only the part already
-        // selected, so there was no way to reach any other one: "how do you edit
-        // the other parts" had no answer on screen. Everything BELOW stays scoped
-        // to the selected part; this row is how you change that selection.
-        const _laneSpans = _ambPartSpans(cfg);
-        let sBlocks = '';
-        // Which sections actually LAND in this window. The strip is scoped to one
-        // part pass, so a section starting later is simply not here — and silently
-        // omitting it is what made a freshly-added section look like it did
-        // nothing. The label says "2 of 3" and points at ▤ for the rest.
-        const _secSeen = new Set();
-        if (_laneSpans && _laneSpans.total > 0) {
-          const _selPi = (_schedElP && Number.isFinite(_schedElP._schedPart)) ? _schedElP._schedPart : -1;
-          const _selRp = (_schedElP && Number.isFinite(_schedElP._schedRep)) ? _schedElP._schedRep : -1;
-          _laneSpans.list.forEach((lp, li) => {
-            const sw2 = Math.max(0.5, lp.bars / _laneSpans.total * 100);
-            // Every block selects its part; an OPEN part also gets the rename /
-            // length menu, since this lane is the only place it can be edited.
-            const _si2 = (lp.open && secs) ? secs.findIndex(z => z && z.name === lp.name) : -1;
-            const _on = (lp.pi === _selPi && (_selRp < 0 || lp.rep === _selRp));
-            sBlocks += '<i class="ambient-sched-secblk' + (li === 0 ? ' cyc' : '') + (lp.hold ? ' harm' : '') + (_on ? ' on' : '') + '"'
-              + ' data-pi="' + lp.pi + '" data-rep="' + lp.rep + '"'
-              + (_si2 >= 0 ? ' data-si="' + _si2 + '"' : '')
-              + ' style="width:' + sw2.toFixed(3) + '%" title="' + esc(lp.name) + ' · ' + _ambFmtBpc(lp.bars) + ' bars'
-              + (lp.plays > 1 ? ' · pass ' + (lp.rep + 1) + ' of ' + lp.plays : '')
-              + (lp.open ? (lp.hold ? ' · no changes, the harmony holds' : ' · no changes, the changes run underneath') : '')
-              + ' — tap: open the Matrix scoped to this part' + (_si2 >= 0 ? ', or rename / resize it' : '') + '">'
-              + esc(lp.name) + (lp.plays > 1 ? '<b class="secpart">' + (lp.rep + 1) + '/' + lp.plays + '</b>' : '') + '</i>';
-            if (_si2 >= 0) _secSeen.add(_si2);
-          });
-        } else if (secs && secs.length) {
-          const lens = secs.map(x => Math.max(0.25, Number(x.bars) || 4));
-          let sb = 0, si = 0;
-          while (sb < VIEW - 1e-6 && si < 96) {
-            const sc = secs[si % secs.length];
-            const slen = Math.max(0.25, lens[si % lens.length]);
-            const sw = Math.min(slen, VIEW - sb) / VIEW * 100;
-            // A section bound to a progression part shows the part name and a
-            // harmony tint, so the arrangement reads at a glance.
-            const _sp = _ambSectionPart(cfg, si % secs.length);
-            const _sk = (sc.key | 0);
-            const _scut = _ambSectionCutInfo(cfg, sc, si % secs.length);
-            const _skTxt = _sk ? ((_sk > 0 ? '+' : '') + _sk) : '';
-            sBlocks += '<i class="ambient-sched-secblk' + (si % secs.length === 0 ? ' cyc' : '') + ((_sp || _sk) ? ' harm' : '') +
-              '" data-si="' + (si % secs.length) + '" style="width:' + sw.toFixed(3) + '%" title="' + esc(sc.name) + ' · ' + _ambSecLenLabel(cfg, sc, si % secs.length) +
-              (_sp ? ' · plays “' + esc(_sp.name) + '” (' + _sp.len + ' chord' + (_sp.len === 1 ? '' : 's') + ')' : '') +
-              (_sk ? ' · key ' + _skTxt + ' semitone' + (Math.abs(_sk) === 1 ? '' : 's') : '') +
-              (_scut ? ' · ⚠ ' + esc(_scut.name) + ' is ' + _ambFmtBpc(_scut.cycBars) + ' bars and this section is ' +
-                _ambFmtBpc(_scut.secBars) + ', so a pass is cut at the boundary' : '') +
-              ' — tap to edit">' + esc(sc.name) + (_sp ? '<b class="secpart">♭' + esc(_sp.name) + '</b>' : '') +
-              (_sk ? '<b class="seckey">⇅' + _skTxt + '</b>' : '') +
-              (_scut ? '<b class="seccut">⚠</b>' : '') + '</i>';
-            _secSeen.add(si % secs.length);
-            sb += slen; si++;
-          }
-        } else {
-          // NO NEW SECTIONS. A section and a part-with-no-changes are the same
-          // idea, and a part is the one that survives (§15) — so an area with no
-          // sections is never offered them; it is pointed at ＋ Part instead.
-          // The append ＋ below stays for an area that ALREADY has sections, so
-          // nothing existing loses its editing. This stops new duplication being
-          // created without migrating anybody's saved project, which is a much
-          // larger job than it looks (see the blockers in §15).
-          sBlocks = '<span class="ambient-hint ambient-sched-nosec">Use <b>＋ Part</b> on the progression overview — '
-            + 'a part with no changes is a named stretch of bars, which is what a section was.</span>';
-        }
-        html += '<div class="ambient-sched-secwrap"' + (E._schedSections ? '' : ' hidden') + '>';
-        html += '<div class="ambient-sched-row ambient-sched-secrow">' +
-          '<span class="ambient-sched-ctl"><span class="ambient-sched-lbl"' +
-            // The "N of M" counter counts SECTIONS, so it only makes sense on the
-            // legacy path; with the lane drawing parts it would report "0/1"
-            // whenever the one open part sits outside the window.
-            ((!_laneSpans && secs && secs.length && _secSeen.size < secs.length)
-              ? ' title="' + (secs.length - _secSeen.size) + ' part(s) start outside this pass — open ▤ Arrangement to see them all.">parts <b class="secmore">' + _secSeen.size + '/' + secs.length + '</b>'
-              : '>parts') + '</span>' +
-          // NO ＋ HERE. Parts are authored in ⇶ Arch now; this lane is the
-          // NAVIGATOR — it shows the arrangement and selects within it. A second
-          // door that appends a part put creation in two places, and the one
-          // here could only ever make the OPEN kind, so it silently answered a
-          // different question from the one Arch answers.
-          '</span>' +
-          // This strip no longer shares the x-scale of the lanes below: it spans
-          // the WHOLE arrangement while they span one part pass. The playhead has
-          // to be told, or it sweeps this row at the view's rate — the full width
-          // every few bars, against blocks that represent minutes.
-          '<span class="ambient-sched-strip sections"'
-            + ((_laneSpans && _laneSpans.total > 0) ? ' data-arrbars="' + _laneSpans.total.toFixed(4) + '"' : '')
-            + '>' + sBlocks + '<i class="ambient-sched-ph"></i></span></div>';
-      }
-      // CHORD lane (area progression active): one labeled block per chord, sized
-      // by its own bars (fractional OK), cycling across the ruler — every layer
-      // strip below shares the same x-scale, so the block edges ARE the chord
-      // boundaries the layers re-voice on.
+      // THE PARTS LANE IS GONE. Its one unique value was ALIGNMENT — the
+      // arrangement drawn on the same x-scale as the layer strips under it — and
+      // that ended when the strips moved into the ⚙ Fine popover: the lane stayed
+      // in the inline body, so the two were never on screen together. What it
+      // showed is in ▤ Song map (with room for full names, lengths, keys and bar
+      // ranges), what it selected is the pass row's part/pass selects, and the
+      // section editor it opened is now on Song map's own section rows.
       const pg = cfg.prog;
-      html += '</div>';   // /.ambient-sched-secwrap
       // ADVANCED EDIT wraps the dense part: the pass row, the chord lane and
       // every layer's schedule. Collapsed by default so the Scheduler opens as
       // a compact panel — Quick edit answers "which layers play here" without
@@ -34427,14 +34356,11 @@
         '</div>';
       });
       html += '</div>';   // /.ambient-sched-adv
-      // TWO EQUAL BUTTONS filling the row: Sections (the arrangement frame) and
-      // Edit (the grid). Advanced edit is not here — it lives beside Done in the
-      // Edit popover, because that is where you are when you decide you want
-      // more than the grid.
+      // TWO EDITORS, at the two grains — and nothing else. The third button was
+      // Parts, which toggled the lane above; with that gone the bar is exactly
+      // the two doors, and ▤ Song map (on the Arrangement bar) is where the
+      // arrangement is read.
       html = '<div class="ambient-sched-qebar">'
-        + '<button type="button" class="ambient-seg ambient-sched-secbtn' + (E._schedSections ? ' active' : '') + '" '
-        + 'title="Parts — named stretches of bars on the bar clock. A part with changes plays them; one without is just time.">'
-        + 'Parts</button>'
         + '<button type="button" class="ambient-seg ambient-sched-qe" '
         + 'title="Coarse — every layer\u2019s changes in one grid; click a cell to turn that layer off there">'
         + 'Coarse</button>'
@@ -34467,26 +34393,7 @@
       } catch (e) {}
       if (!body._secWired) {
         body._secWired = true;
-        // PARTS LANE: pointerdown, not click. This strip is redrawn whenever the
-        // view follows the playhead, and a click needs press AND release on the
-        // SAME element — so a repaint between the two drops it, which on a phone
-        // reads as "tapping the part chips does nothing". Same fix, and the same
-        // reason, as the live-readout chips.
-        body.addEventListener('pointerdown', (ev) => {
-          try {
-            const b2 = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-secblk');
-            if (!b2) return;
-            // ORDER MATTERS: do the work FIRST, then set the flag so the
-            // browser's own trailing click is the one that gets skipped. Setting
-            // it first made the synthetic click hit the guard and return, so the
-            // tap did nothing at all — the bug this was meant to fix.
-            b2.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-            b2._pdHandled = true;
-          } catch (e) {}
-        });
         body.addEventListener('click', (ev) => {
-          const secb = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-secbtn');
-          if (secb) { ev.preventDefault(); ev.stopPropagation(); E._schedSections = !E._schedSections; _ambRenderScheduler(E); return; }
           const qe = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-qe');
           if (qe) { ev.preventDefault(); ev.stopPropagation(); _ambQuickUnitsModal(E); return; }
           const advb = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-advbtn');
@@ -34498,266 +34405,176 @@
             if (elF) { elF._schedFollow = (elF._schedFollow === false); try { _ambRenderScheduler(E); } catch (e) {} }
             return;
           }
-          const blk = ev.target && ev.target.closest && ev.target.closest('.ambient-sched-secblk');
-          if (blk) {
-            // pointerdown already ran this block; the trailing click must not
-            // run it a second time.
-            if (blk._pdHandled) { blk._pdHandled = false; return; }
-            _E = E; const c2 = E.getCfg(); if (!c2) return;
-            // A TAP SELECTS THAT PART. This lane shows the whole arrangement
-            // while everything below is scoped to one part, so this is how you
-            // get at the others — the question "how do you edit the other parts"
-            // had no answer before, because only a part with a SECTION behind it
-            // responded at all, and it answered with the wrong part's menu.
-            if (blk.dataset.pi != null) {
-              const elS = _ambGet(E, 'ambient-sched');
-              if (elS) {
-                elS._schedPart = blk.dataset.pi | 0;
-                elS._schedRep = blk.dataset.rep | 0;
-                elS._schedFollow = false;             // an explicit pick pins the view
-                try { _ambRenderScheduler(E); } catch (e) {}
-              }
-              // NO MATRIX SCOPING HERE. A tap used to open the ⌗ Matrix scoped
-              // to this part, because nothing else visible responded — but the
-              // Matrix has its own part tabs directly below, so that was one
-              // selector duplicating another. The tap's own menu (below) is now
-              // the visible consequence.
-            }
-            // EVERY CHIP OPENS A MENU. Only an OPEN part has a section behind
-            // it, so a CHANGES part used to fall through here and the tap did
-            // nothing but move a highlight — reported three times over
-            // ("clicking parts does nothing", "what is the point of this", "I
-            // still don't see the section menu"), because which chip you happen
-            // to press decides whether anything opens. A changes part gets the
-            // fields it actually HAS: name, repeats, its own key, its own salt.
-            // Groove and Length are deliberately absent — the engine resolves
-            // those per SECTION, and sections are built from open parts, so
-            // offering them here would be a control that does nothing.
-            if (blk.dataset.si == null || !Array.isArray(c2.sections) || !c2.sections[blk.dataset.si | 0]) {
-              const pi = blk.dataset.pi | 0;
-              const parts = (c2.prog && Array.isArray(c2.prog.parts)) ? c2.prog.parts : null;
-              const pt = parts && parts[pi];
-              if (!pt) return;
-              const doneP = () => {
-                try { E.getCfg(); } catch (e) {}
-                try { _ambRenderScheduler(E); _ambRenderProgOverview(E); _ambSyncControls(E); } catch (e) {}
-                if (typeof persistWorkspace === 'function') persistWorkspace();
-              };
-              const plays = Math.max(1, pt.plays | 0 || 1);
-              const kTxt = pt.key
-                ? (((typeof CHROMATIC !== 'undefined' && CHROMATIC[((pt.key.root | 0) % 12 + 12) % 12]) || '')
-                   + ' ' + ((typeof prettyScaleName === 'function') ? prettyScaleName(pt.key.scale || 'major') : (pt.key.scale || 'major')))
-                : 'area key';
-              const sTxt = pt.salt ? 'its own' : 'inherits';
-              const pItems = [
-                { label: '✎ Rename “' + pt.name + '”', fn: () => {
-                  const nm = prompt('Name for this set of changes:', pt.name);
-                  if (nm != null && nm.trim()) { pt.name = nm.trim().slice(0, 16); doneP(); } } },
-                { label: '⟳ Repeats (' + plays + '×)', fn: () => setTimeout(() => {
-                  const opts = [1, 2, 3, 4, 6, 8].map(n => ({
-                    label: (n === plays ? '✓ ' : '') + n + '× ' + (n === 1 ? '(plays once)' : ''),
-                    fn: () => { if (n > 1) pt.plays = n; else delete pt.plays; doneP(); } }));
-                  try { const rb = blk.getBoundingClientRect(); showCtxMenu(rb.left, rb.bottom + 4, opts); } catch (e) {}
-                }, 0) },
-                { label: '⇅ Key (' + kTxt + ')', fn: () => setTimeout(() => {
-                  const CH = (typeof CHROMATIC !== 'undefined') ? CHROMATIC : [];
-                  const sc2 = (pt.key && pt.key.scale) || _ambKeyScaleName(c2);
-                  const opts = [{ label: (pt.key ? '' : '✓ ') + '↩ Follow the area key',
-                                  fn: () => { delete pt.key; doneP(); } }];
-                  for (let r2 = 0; r2 < 12; r2++) opts.push({
-                    label: ((pt.key && (pt.key.root | 0) === r2) ? '✓ ' : '  ') + (CH[r2] || r2) + ' ' + sc2,
-                    fn: () => { pt.key = { root: r2, scale: sc2 }; doneP(); } });
-                  try { const rb = blk.getBoundingClientRect(); showCtxMenu(rb.left, rb.bottom + 4, opts); } catch (e) {}
-                }, 0) },
-                // Absent = inherit; present-and-all-zero = never salt here. That
-                // absent/zero grammar is the engine's, not this menu's.
-                { label: '🧂 Salt (' + sTxt + ')', fn: () => {
-                  if (pt.salt) delete pt.salt; else pt.salt = { colors: 0, scatter: 0 };
-                  doneP(); } },
-              ];
-              const mx2 = blk.dataset.pi, rb2 = blk.getBoundingClientRect();
-              const cx = ev.clientX, cy = ev.clientY;
-              // Deferred for the same reason as the section menu below: we are
-              // inside the chip's POINTERDOWN, and showCtxMenu's own dismiss
-              // listener would eat that very event.
-              if (typeof showCtxMenu === 'function') setTimeout(() => {
-                try {
-                  let x = cx, y = cy;
-                  if (!(x > 0 || y > 0)) {
-                    const live = document.querySelector('.ambient-sched-secblk[data-pi="' + mx2 + '"]');
-                    const r3 = live ? live.getBoundingClientRect() : rb2;
-                    x = r3.left; y = r3.bottom + 4;
-                  }
-                  showCtxMenu(x, y, pItems);
-                } catch (e) {}
-              }, 0);
-              return;
-            }
-            const si = blk.dataset.si | 0; const sc = c2.sections[si]; if (!sc) return;
-            const done = () => { try { _ambRenderScheduler(E); } catch (e) {} if (typeof persistWorkspace === 'function') persistWorkspace(); };
-            const items = [
-              { label: '✎ Rename “' + sc.name + '”', fn: () => { const nm = prompt('Section name:', sc.name); if (nm != null && nm.trim()) { sc.name = nm.trim().slice(0, 12); done(); } } },
-              // LENGTH — authored in AREA UNITS, so a section boundary lands on a
-              // unit boundary by construction and the arrangement rescales with the
-              // Area Unit. The absolute-bars escape stays for a deliberate
-              // off-grid length (it pins ref:'bar' and will NOT rescale).
-              { label: '⇔ Length (' + _ambSecLenLabel(c2, sc, si) + ')', fn: () => {
-                const auB = _ambAreaUnitBars(c2);
-                const cur = sc.unit || {};
-                const opts = [];
-                // BOUND TO CHANGES → offer multiples of them FIRST. A section
-                // measured this way can never cut its changes mid-phrase, which
-                // is the whole point of binding one.
-                const _cb = _ambSectionChangesBars(c2, si);
-                const _cp = _ambSectionPart(c2, si);
-                if (_cb > 0 && _cp) {
-                  [1, 2, 4].forEach(n => opts.push({
-                    label: (cur.ref === 'changes' && (cur.num | 0) === n && (cur.den | 0) === 1 ? '✓ ' : '') +
-                      n + ' × ' + _cp.name + '  (' + _ambFmtBpc(n * _cb) + ' bar' + (n * _cb === 1 ? '' : 's') + ')',
-                    fn: () => { sc.unit = { num: n, den: 1, ref: 'changes' }; sc.bars = _ambSectionBars(c2, sc, si); done(); }
-                  }));
-                }
-                [1, 2, 3, 4, 6, 8, 12, 16].forEach(n => opts.push({
-                  label: (cur.ref === 'area' && (cur.num | 0) === n && (cur.den | 0) === 1 ? '✓ ' : '') +
-                    n + ' × Area unit  (' + _ambFmtBpc(n * auB) + ' bar' + (n * auB === 1 ? '' : 's') + ')',
-                  fn: () => { sc.unit = { num: n, den: 1, ref: 'area' }; sc.bars = _ambSectionBars(c2, sc, si); done(); }
-                }));
-                opts.push({ label: (cur.ref === 'area' && (cur.den | 0) === 2 ? '✓ ' : '') + '½ × Area unit  (' + _ambFmtBpc(auB / 2) + ' bar' + (auB / 2 === 1 ? '' : 's') + ')',
-                  fn: () => { sc.unit = { num: 1, den: 2, ref: 'area' }; sc.bars = _ambSectionBars(c2, sc, si); done(); } });
-                opts.push({ label: (cur.ref === 'bar' ? '✓ ' : '') + '⇢ Absolute bars…  (does not rescale)', fn: () => {
-                  const b2 = prompt('Section length in bars (pins it to an absolute length — it will NOT follow the Area Unit):', String(_ambFmtBpc(sc.bars)));
-                  const v2 = parseFloat(b2);
-                  if (!Number.isFinite(v2) || v2 <= 0) return;
-                  const r = _ambRatioOf(Math.max(0.25, Math.min(64, v2)), 1);
-                  sc.unit = r ? { num: r.num, den: r.den, ref: 'bar' } : { num: 4, den: 1, ref: 'bar' };
-                  sc.bars = _ambSectionBars(c2, sc, si); done();
-                } });
-                // showCtxMenu is (x, y, actions) — and anchor on the BLOCK's own
-                // rect, not window.__ambMenuAnchor (that is stashed by the layer ⋯
-                // menu and would be stale or absent here, dropping the submenu in
-                // the top-left corner). DEFER A TICK: the parent menu runs this fn
-                // and then dismisses itself, which tears the submenu down inside the
-                // same dispatch — the documented showCtxMenu-from-a-menu trap.
-                setTimeout(() => { try { const rb = blk.getBoundingClientRect(); showCtxMenu(rb.left, rb.bottom + 4, opts); } catch (e) {} }, 0);
-              } },
-              // MODULATION: semitones the whole harmonic frame moves during this
-              // section. Applied at the root chokepoint, so every layer follows.
-              { label: '⇅ Key (' + ((sc.key | 0) ? (((sc.key | 0) > 0 ? '+' : '') + (sc.key | 0) + ' st') : 'no change') + ')', fn: () => {
-                const k2 = prompt('Key offset for “' + sc.name + '” in semitones (0 = no change, e.g. 2 = up a tone):', String(sc.key | 0));
-                if (k2 == null) return;
-                const v3 = parseInt(k2, 10);
-                if (!Number.isFinite(v3)) return;
-                const cl = Math.max(-12, Math.min(12, v3));
-                if (cl) sc.key = cl; else delete sc.key;
-                done();
-              } },
-              // RELATIVE MODE while this section runs — the area's keyModeRot,
-              // overridden per section. Only meaningful with the area Key on, so
-              // the label says so rather than failing silently.
-              { label: '◑ Mode (' + (Number.isFinite(sc.keyModeRot) && (sc.keyModeRot | 0) ? ('+' + (sc.keyModeRot | 0)) : 'area') + ')', fn: () => {
-                const m2 = prompt('Relative mode for “' + sc.name + '” (0-6 scale degrees; 0 = follow the area)'
-                  + ((c2.keyOn === false || !c2.keyOn) ? '\n\nNote: the area Key is OFF, so mode has no effect until you turn it on.' : ''),
-                  String((sc.keyModeRot | 0) || 0));
-                if (m2 == null) return;
-                const v4 = parseInt(m2, 10);
-                if (!Number.isFinite(v4)) return;
-                const cl2 = (((v4 % 7) + 7) % 7);
-                if (cl2) sc.keyModeRot = cl2; else delete sc.keyModeRot;
-                done();
-              } },
-              // GROOVE while this section runs — sparse: only the knobs you set are
-              // overridden, the rest keep following the area.
-              { label: '🕺 Groove (' + (sc.groove ? Object.keys(sc.groove).map(k3 => k3 + ' ' + sc.groove[k3]).join(', ') : 'area') + ')', fn: () => {
-                const cur = sc.groove || {};
-                const txt = prompt('Groove overrides for “' + sc.name + '” — comma-separated name=value, 0-100.'
-                  + '\nKnobs: swing, accent, density, ghost, rolls.'
-                  + '\nLeave EMPTY to clear all overrides and follow the area.',
-                  Object.keys(cur).map(k3 => k3 + '=' + cur[k3]).join(', '));
-                if (txt == null) return;
-                const g2 = {};
-                String(txt).split(',').forEach(pair => {
-                  const mm = /^\s*(swing|accent|density|ghost|rolls)\s*=\s*(-?\d+)\s*$/i.exec(pair);
-                  if (mm) g2[mm[1].toLowerCase()] = Math.max(0, Math.min(100, parseInt(mm[2], 10) || 0));
-                });
-                if (Object.keys(g2).length) sc.groove = g2; else delete sc.groove;
-                done();
-              } },
-            ];
-            // HARMONY: bind this section to one PART of the area progression —
-            // verse changes vs chorus changes. Only offered when a progression is
-            // on AND it has named parts (a single part covering everything isn't a
-            // chain; _ambRepairParts returns undefined for that case).
-            {
-              const _pg = c2.prog;
-              const _parts = (_pg && _pg.on && Array.isArray(_pg.parts) && _pg.parts.length) ? _pg.parts : null;
-              if (_parts) {
-                const cur = Number.isFinite(sc.part) ? (sc.part | 0) : -1;
-                items.push('hr', { label: '♭ Harmony', disabled: true });
-                items.push({ label: (cur < 0 ? '● ' : '○ ') + 'Whole progression', fn: () => { delete sc.part; done(); } });
-                _parts.forEach((p2, pi) => {
-                  items.push({ label: (cur === pi ? '● ' : '○ ') + (p2.name || ('Changes ' + (pi + 1))) + ' (' + Math.max(1, p2.len | 0) + ' chord' + ((p2.len | 0) === 1 ? '' : 's') + ')',
-                    fn: () => {
-                      sc.part = pi;
-                      // One-tap fit: a section that names changes almost always
-                      // wants to be a whole number of them, and doing it here
-                      // saves a second trip through the Length menu.
-                      const _cb2 = _ambSectionChangesBars(c2, si);
-                      if (_cb2 > 0 && _ambSectionCutInfo(c2, sc, si)) {
-                        sc.unit = { num: 1, den: 1, ref: 'changes' };
-                        sc.bars = _ambSectionBars(c2, sc, si);
-                      }
-                      done();
-                    } });
-                });
-              }
-            }
-            items.push(
-              'hr',
-              { label: '✕ Delete section', danger: true, fn: () => { c2.sections.splice(si, 1); if (!c2.sections.length) delete c2.sections; done(); } });
-            // DEFER A TICK, or this menu tears itself down the instant it opens.
-            // We are inside the dispatch of the chip's POINTERDOWN (the lane
-            // dispatches its own click from there, because a repaint between
-            // press and release drops a real click). showCtxMenu arms a
-            // document-level pointerdown dismiss listener, and a listener
-            // registered mid-dispatch on a node the event has not reached yet
-            // still fires for THAT event — so the menu was created and destroyed
-            // in one gesture, and the section editor (rename / length / key /
-            // mode / groove / harmony / delete) was unreachable. Verified: 14
-            // items built, showCtxMenu called, nothing in the DOM afterwards.
-            // The documented showCtxMenu-from-a-pointerdown trap, and the same
-            // fix the Length submenu below already uses.
-            // Coordinates are read NOW (the event is live) and the chip is
-            // re-queried as a fallback, since _ambRenderScheduler above has
-            // already detached the one that was tapped.
-            const _mx = ev.clientX, _my = ev.clientY, _mpi = blk.dataset.pi;
-            if (typeof showCtxMenu === 'function') {
-              setTimeout(() => {
-                try {
-                  let x = _mx, y = _my;
-                  if (!(x > 0 || y > 0)) {
-                    const live = document.querySelector('.ambient-sched-secblk[data-pi="' + _mpi + '"]');
-                    const rb = live && live.getBoundingClientRect();
-                    if (rb) { x = rb.left; y = rb.bottom + 4; }
-                  }
-                  showCtxMenu(x, y, items);
-                } catch (e) {}
-              }, 0);
-            }
-            else { const nm = prompt('Section name:', sc.name); if (nm != null && nm.trim()) { sc.name = nm.trim().slice(0, 12); done(); } }
-            return;
-          }
         });
       }
     }
     // One global playhead across every row: position on the shared bar grid,
     // wrapped to the ruler width. Driven each viz frame; cheap when collapsed.
+    // THE SECTION EDITOR — rename / length / key / mode / groove / harmony /
+    // delete. It used to be inline in the Scheduler's parts-lane tap, which was
+    // THE SECTION EDITOR — rename / length / key / mode / groove / harmony /
+    // delete. It used to be inline in the Scheduler's parts-lane tap, which was
+    // its only door; the lane is gone, so this stands on its own and Song map's
+    // section rows open it. `after` lets a caller repaint itself.
+    //
+    // EVERY EDIT WRITES THROUGH TO THE OPEN PART, and re-resolves the record on
+    // each pick. cfg.sections is a MIRROR: with open parts present it is rebuilt
+    // from them on every getCfg, and even without them it is re-mapped into FRESH
+    // objects — so a section object captured when the menu opened is an orphan the
+    // moment any getCfg runs before you choose an item, which _ambRenderScheduler
+    // does constantly. Writes to it were silently discarded.
+    function _ambSectionMenu(E, si, x, y, after) {
+      _E = E;
+      const c0 = E.getCfg(); if (!c0 || !Array.isArray(c0.sections) || !c0.sections[si]) return;
+      const done = () => {
+        try { E.getCfg(); } catch (e) {}
+        try { _ambRenderScheduler(E); _ambRenderProgOverview(E); _ambSyncControls(E); } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        try { if (typeof after === 'function') after(); } catch (e) {}
+      };
+      // The writable record for section `si`, resolved fresh. `K` is the key the
+      // modulation lives under: a part calls it keyOff, the mirror calls it key.
+      const rec = () => {
+        const c = E.getCfg(); if (!c) return null;
+        const op = (c.prog && Array.isArray(c.prog.parts)) ? c.prog.parts.filter(z => z && z.open) : [];
+        if (op.length) return { o: op[si] || null, K: 'keyOff', part: true, cfg: c };
+        return { o: (Array.isArray(c.sections) && c.sections[si]) || null, K: 'key', part: false, cfg: c };
+      };
+      const set = (k, v) => {
+        const r = rec(); if (!r || !r.o) return;
+        const key = (k === 'key') ? r.K : k;
+        if (v === undefined) delete r.o[key]; else r.o[key] = v;
+        done();
+      };
+      const sc = c0.sections[si];                       // for LABELS only, never written
+      const items = [
+        { label: '✎ Rename “' + sc.name + '”', fn: () => {
+          const nm = prompt('Section name:', sc.name);
+          if (nm != null && nm.trim()) set('name', nm.trim().slice(0, 12)); } },
+        // LENGTH as a unit ratio, so a boundary lands on a unit boundary by
+        // construction and rescales with the Area Unit. The absolute-bars escape
+        // pins ref:'bar' and deliberately will NOT rescale.
+        { label: '⇔ Length (' + _ambSecLenLabel(c0, sc, si) + ')', fn: () => {
+          const c = E.getCfg(); const s2 = c.sections[si]; if (!s2) return;
+          const auB = _ambAreaUnitBars(c), cur = s2.unit || {}, opts = [];
+          const put = (u) => { const r = rec(); if (!r || !r.o) return;
+            r.o.unit = u; r.o.bars = _ambSectionBars(r.cfg, { unit: u, bars: r.o.bars }, si); done(); };
+          // BOUND TO CHANGES → offer multiples of them first: a section measured
+          // that way can never cut its own changes mid-phrase.
+          const cb = _ambSectionChangesBars(c, si), cp = _ambSectionPart(c, si);
+          if (cb > 0 && cp) [1, 2, 4].forEach(n => opts.push({
+            label: (cur.ref === 'changes' && (cur.num | 0) === n && (cur.den | 0) === 1 ? '✓ ' : '') +
+              n + ' × ' + cp.name + '  (' + _ambFmtBpc(n * cb) + ' bar' + (n * cb === 1 ? '' : 's') + ')',
+            fn: () => put({ num: n, den: 1, ref: 'changes' }) }));
+          [1, 2, 3, 4, 6, 8, 12, 16].forEach(n => opts.push({
+            label: (cur.ref === 'area' && (cur.num | 0) === n && (cur.den | 0) === 1 ? '✓ ' : '') +
+              n + ' × Area unit  (' + _ambFmtBpc(n * auB) + ' bar' + (n * auB === 1 ? '' : 's') + ')',
+            fn: () => put({ num: n, den: 1, ref: 'area' }) }));
+          opts.push({ label: (cur.ref === 'area' && (cur.den | 0) === 2 ? '✓ ' : '') + '½ × Area unit  (' +
+            _ambFmtBpc(auB / 2) + ' bar' + (auB / 2 === 1 ? '' : 's') + ')',
+            fn: () => put({ num: 1, den: 2, ref: 'area' }) });
+          opts.push({ label: (cur.ref === 'bar' ? '✓ ' : '') + '⇢ Absolute bars…  (does not rescale)', fn: () => {
+            const b2 = prompt('Section length in bars (pins it to an absolute length — it will NOT follow the Area Unit):', String(_ambFmtBpc(s2.bars)));
+            const v2 = parseFloat(b2); if (!Number.isFinite(v2) || v2 <= 0) return;
+            const r2 = _ambRatioOf(Math.max(0.25, Math.min(64, v2)), 1);
+            put(r2 ? { num: r2.num, den: r2.den, ref: 'bar' } : { num: 4, den: 1, ref: 'bar' });
+          } });
+          // DEFER: the parent menu runs this fn and then dismisses itself, which
+          // would tear the submenu down inside the same dispatch.
+          setTimeout(() => { try { showCtxMenu(x, y, opts); } catch (e) {} }, 0);
+        } },
+        // MODULATION: semitones the whole harmonic frame moves while this runs.
+        { label: '⇅ Key (' + ((sc.key | 0) ? (((sc.key | 0) > 0 ? '+' : '') + (sc.key | 0) + ' st') : 'no change') + ')', fn: () => {
+          const k2 = prompt('Key offset for “' + sc.name + '” in semitones (0 = no change, e.g. 2 = up a tone):', String(sc.key | 0));
+          if (k2 == null) return;
+          const v3 = parseInt(k2, 10); if (!Number.isFinite(v3)) return;
+          const cl = Math.max(-12, Math.min(12, v3));
+          set('key', cl ? cl : undefined);
+        } },
+        // RELATIVE MODE — the area's keyModeRot, overridden per section. Only
+        // meaningful with the area Key on, so the prompt says so.
+        { label: '◑ Mode (' + (Number.isFinite(sc.keyModeRot) && (sc.keyModeRot | 0) ? ('+' + (sc.keyModeRot | 0)) : 'area') + ')', fn: () => {
+          const m2 = prompt('Relative mode for “' + sc.name + '” (0-6 scale degrees; 0 = follow the area)'
+            + (!c0.keyOn ? '\n\nNote: the area Key is OFF, so mode has no effect until you turn it on.' : ''),
+            String((sc.keyModeRot | 0) || 0));
+          if (m2 == null) return;
+          const v4 = parseInt(m2, 10); if (!Number.isFinite(v4)) return;
+          const cl2 = (((v4 % 7) + 7) % 7);
+          set('keyModeRot', cl2 ? cl2 : undefined);
+        } },
+        // GROOVE — sparse: only the knobs you set are overridden.
+        { label: '🕺 Groove (' + (sc.groove ? Object.keys(sc.groove).map(k3 => k3 + ' ' + sc.groove[k3]).join(', ') : 'area') + ')', fn: () => {
+          const cur = sc.groove || {};
+          const txt = prompt('Groove overrides for “' + sc.name + '” — comma-separated name=value, 0-100.'
+            + '\nKnobs: swing, accent, density, ghost, rolls.'
+            + '\nLeave EMPTY to clear all overrides and follow the area.',
+            Object.keys(cur).map(k3 => k3 + '=' + cur[k3]).join(', '));
+          if (txt == null) return;
+          const g2 = {};
+          String(txt).split(',').forEach(pair => {
+            const mm = /^\s*(swing|accent|density|ghost|rolls)\s*=\s*(-?\d+)\s*$/i.exec(pair);
+            if (mm) g2[mm[1].toLowerCase()] = Math.max(0, Math.min(100, parseInt(mm[2], 10) || 0));
+          });
+          set('groove', Object.keys(g2).length ? g2 : undefined);
+        } },
+      ];
+      // HARMONY: bind this section to one PART of the progression — verse changes
+      // vs chorus changes. Only offered with a progression on that has named parts.
+      {
+        // INDEX INTO THE FULL parts ARRAY, not into a filtered copy —
+        // _ambSectionPart walks prog.parts by that index to find the chord slice,
+        // so a filtered index would bind to the wrong changes. Only the parts
+        // that HAVE changes are offered (an open one carries none), but they keep
+        // their real positions.
+        const _parts = (c0.prog && c0.prog.on && Array.isArray(c0.prog.parts) && c0.prog.parts.length)
+          ? c0.prog.parts : null;
+        if (_parts && _parts.some(z => z && !z.open)) {
+          const cur = Number.isFinite(sc.part) ? (sc.part | 0) : -1;
+          items.push('hr', { label: '♭ Harmony', disabled: true });
+          items.push({ label: (cur < 0 ? '● ' : '○ ') + 'Whole progression', fn: () => set('part', undefined) });
+          _parts.forEach((p2, pi) => {
+            if (!p2 || p2.open) return;
+            items.push({ label: (cur === pi ? '● ' : '○ ') + (p2.name || ('Changes ' + (pi + 1))) +
+              ' (' + Math.max(1, p2.len | 0) + ' chord' + ((p2.len | 0) === 1 ? '' : 's') + ')',
+              fn: () => {
+                const r = rec(); if (!r || !r.o) return;
+                r.o.part = pi;
+                // ONE-TAP FIT: a section that names changes almost always wants to
+                // be a whole number of them, and doing it here saves a second trip
+                // through the Length menu.
+                const c = E.getCfg();
+                if (_ambSectionChangesBars(c, si) > 0 && _ambSectionCutInfo(c, c.sections[si], si)) {
+                  r.o.unit = { num: 1, den: 1, ref: 'changes' };
+                }
+                done();
+              } });
+          });
+        }
+      }
+      items.push('hr', { label: '✕ Delete section', danger: true, fn: () => {
+        const r = rec(); if (!r) return;
+        if (r.part) {
+          const ps = r.cfg.prog.parts, ix = ps.indexOf(r.o);
+          if (ix >= 0) ps.splice(ix, 1);
+        } else if (Array.isArray(r.cfg.sections)) {
+          r.cfg.sections.splice(si, 1);
+          if (!r.cfg.sections.length) delete r.cfg.sections;
+        }
+        done();
+      } });
+      // DEFER A TICK. showCtxMenu arms a document-level pointerdown dismiss
+      // listener, and a listener registered mid-dispatch on a node the event has
+      // not reached yet still fires for THAT event — so an undeferred menu is
+      // created and destroyed in one gesture. The documented trap.
+      if (typeof showCtxMenu === 'function') setTimeout(() => { try { showCtxMenu(x, y, items); } catch (e) {} }, 0);
+      else { const nm = prompt('Section name:', sc.name); if (nm != null && nm.trim()) set('name', nm.trim().slice(0, 12)); }
+    }
     // THE ARRANGEMENT IN BARS: one entry per part PASS, with where it starts.
     // Built from cfg.prog.parts, NOT from the chord chain — a part that carries
     // no changes and does not hold contributes no chord slots, so a chain-derived
     // list left it out entirely and the lane could not draw it. It occupies bars
-    // all the same, which is what this list is about. Shared by the Scheduler's
-    // parts lane and by follow-the-playhead, so the block drawn and the block
-    // followed are the same list.
+    // all the same, which is what this list is about. Shared by follow-the-
+    // playhead and by the Song map, so what is drawn and what is followed agree.
     function _ambPartSpans(cfg) {
       const p = cfg && cfg.prog; if (!p) return null;
       const chords = Array.isArray(p.chords) ? p.chords : [];
@@ -34899,16 +34716,15 @@
       });
       // Live CHORD readout: light the chord block the playhead is inside, so the
       // lane shows which chord is sounding right now (matches the header readout).
-      // Current PART: light the scheduler lane block + the Part matrix column.
+      // Current PART: light the Part matrix column. This used to also light the
+      // parts-lane blocks, and the matrix half was NESTED inside that lane's
+      // length check — so deleting the lane would have silently taken the matrix
+      // highlight with it.
       try {
         const secAt = _ambSectionAt(E, now, cfg);
-        const sb = box.querySelectorAll('.ambient-sched-secblk');
-        if (secAt && sb.length) {
-          const nS = (cfg.sections || []).length;
-          // lane blocks tile cyclically; light every block of the current index
+        if (secAt) {
           if (box._schSecIdx !== secAt.idx) {
             box._schSecIdx = secAt.idx;
-            sb.forEach(el => el.classList.toggle('playing', (el.dataset.si | 0) === secAt.idx));
             const smx = _ambGet(E, 'ambient-secmatrix');
             if (smx && smx.style.display !== 'none') {
               smx.querySelectorAll('.ambient-pm-cell.cur, .ambient-pm-ch.cur').forEach(x => x.classList.remove('cur'));

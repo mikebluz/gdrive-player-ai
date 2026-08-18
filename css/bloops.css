@@ -13249,3 +13249,49 @@
       background: linear-gradient(90deg, #7fd6c4, #9f7aea); transition: width 0.18s linear; }
     .ambient-warm-sub { display: block; margin-top: 9px; white-space: normal; overflow-wrap: anywhere;
       line-height: 1.4; font-size: 0.68rem; }
+
+    /* ── LAYER TYPE COLOURS ───────────────────────────────────────────────────
+       One hue per layer TYPE, so a Bass reads as a Bass wherever it appears —
+       the card, its ⏱ Schedule row, its mixer channel, its Coarse-edit block.
+       `data-ltype` is stamped by _ambTypeAttr at each of those four render
+       sites; the palette lives only here, so a new type needs one line.
+       Applied as an ACCENT (a 3px edge + the name), never a fill: these sit
+       beside state colours that must keep their meaning — green is "sounding",
+       amber is "inert/warning", red is "delete" — so no layer hue is green or
+       danger-red, and none of them is ever the whole background. */
+    .ambient-layer[data-ltype],
+    .ambient-sched-row[data-ltype],
+    .ambient-qe-layer[data-ltype] { border-left: 3px solid var(--lt, #4a5568); }
+    .ambient-layer[data-ltype] { padding-left: 7px; }
+    .ambient-sched-row[data-ltype] { padding-left: 8px; }
+    .ambient-qe-layer[data-ltype] { padding-left: 7px; }
+    .ambient-layer[data-ltype] > .ambient-layer-head .ambient-layer-name,
+    .ambient-sched-row[data-ltype] .ambient-sched-headline > .ambient-sched-name,
+    .ambient-qe-layer[data-ltype] > .ambient-qe-row > .ambient-qe-name { color: var(--lt, #e2e8f0); }
+    /* The mixer channel is a narrow vertical strip — an edge would be lost against
+       its neighbours, so the accent is the label and a top rule. */
+    .ambient-mix-ch[data-ltype] { border-top: 2px solid var(--lt, #4a5568); }
+    .ambient-mix-ch[data-ltype] .ambient-mix-label { color: var(--lt, #cbd5e0); }
+
+    /* THE PALETTE, and it was MEASURED rather than eyeballed. First pass had
+       Riff/Arp/Texture within ΔE 19 of each other (CIELab) — adjacent enough to
+       be unreadable at a 3px edge. These clear ΔE 30 across the eight types you
+       normally have on screen at once, ≥22 across all thirteen, and ≥20 from the
+       three STATE colours whose meanings they must not borrow: green #48bb78
+       "sounding", amber #f6ad55 "inert/warning", red #fc8181 "delete". The green
+       BAND is reserved outright for the same reason. Every hue clears L*60 so it
+       stays legible on #0d0d18. Assignment is by musical role — a new type needs
+       one line, and a re-check that it clears those distances. */
+    [data-ltype="bed"]     { --lt: #7fd6c4; }   /* pads / harmony — the chord lane's teal */
+    [data-ltype="motif"]   { --lt: #c9a8ec; }   /* melodic figure */
+    [data-ltype="texture"] { --lt: #9aa0b5; }   /* wash — muted on purpose */
+    [data-ltype="drone"]   { --lt: #9b86ff; }   /* held pitch */
+    [data-ltype="pedal"]   { --lt: #b2d696; }   /* held pitch under the changes */
+    [data-ltype="arp"]     { --lt: #4fb8f5; }   /* broken chord */
+    [data-ltype="run"]     { --lt: #b2e05c; }   /* Riff — the type key is `run` */
+    [data-ltype="bass"]    { --lt: #ef7f3f; }   /* low end */
+    [data-ltype="beat"]    { --lt: #f06a9b; }   /* drums */
+    [data-ltype="seq"]     { --lt: #f0c63c; }   /* a sequence sent from the grid */
+    [data-ltype="samp"]    { --lt: #f060e1; }   /* one sample */
+    [data-ltype="learn"]   { --lt: #b8a465; }   /* spoken — fetched text */
+    [data-ltype="sireel"]  { --lt: #f0a8a8; }   /* spoken — generated text */

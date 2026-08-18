@@ -3500,9 +3500,25 @@
        which pushed the label off-centre horizontally by its own width (18.7px of
        padding on one side against 6px on the other). */
     .ambient-pov-chords { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; min-width: 0; }
+    /* A FIXED WIDTH, so a chip never resizes. It used to shrink-wrap its label, and
+       the playhead REWRITES that label as it moves (an alt or take-reroll
+       substitutes a chord that isn't the written one) — "C" becoming "Am", or "I"
+       becoming "vi", reflowed the whole run under the cursor. The width is
+       MEASURED, not guessed: every quality the editor offers plus every extension
+       the resolver spells, across all 12 roots, in both label modes — 480 labels,
+       widest 68px (♭VII7sus4). 72px clears them all, so nothing has to resize.
+       (The theoretical worst case over every 3-to-5-note interval set is 119px —
+       ♭VIImaj13sus2♭5 — but those are clusters no progression contains, and
+       sizing for them would fit two chips on a phone. One of those grows the
+       chip; nothing else does.) */
     .ambient-pov-chord { display: inline-flex; flex-direction: row; align-items: center; justify-content: center; gap: 3px;
-      min-height: 30px; padding: 2px 5px; border: 1px solid transparent; border-radius: 6px;
+      min-width: 72px; min-height: 30px; padding: 2px 5px; border: 1px solid transparent; border-radius: 6px;
       background: none; color: #cbd5e0; cursor: pointer; position: relative; touch-action: manipulation; }
+    /* NO PHONE EXCEPTION. Tightening to the 95th percentile (58px) looked like a
+       reasonable saving and reintroduced the exact bug on the top 5%: G♯maj7,
+       C7sus4 and Cm7♭5 all grew the chip again. 72px is what "does not resize"
+       costs, and four still fit across a 390px pane.
+     */
     /* A hairline between chords, so the run reads as a sequence rather than one
        long string. Never before the first — that would hang off the card edge.
        ABSOLUTE, so it lives in the container's gap instead of inside the chip:

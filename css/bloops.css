@@ -3494,13 +3494,23 @@
        in the editor) and keep their classes, so the playhead's relabel and the
        ×N alt badge are untouched; only the box is gone. Still 30px tall for the
        touch floor. */
-    .ambient-pov-chords { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 2px; min-width: 0; }
-    .ambient-pov-chord { display: inline-flex; flex-direction: row; align-items: baseline; gap: 3px;
+    /* CENTRED, both axes. `align-items: baseline` left the label riding the top of
+       the 30px chip with 14px of dead space under it (measured 3px above, 13.9
+       below), and the separator below used to sit INSIDE the chip as content,
+       which pushed the label off-centre horizontally by its own width (18.7px of
+       padding on one side against 6px on the other). */
+    .ambient-pov-chords { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; min-width: 0; }
+    .ambient-pov-chord { display: inline-flex; flex-direction: row; align-items: center; justify-content: center; gap: 3px;
       min-height: 30px; padding: 2px 5px; border: 1px solid transparent; border-radius: 6px;
       background: none; color: #cbd5e0; cursor: pointer; position: relative; touch-action: manipulation; }
     /* A hairline between chords, so the run reads as a sequence rather than one
-       long string. Never before the first — that would hang off the card edge. */
-    .ambient-pov-chord + .ambient-pov-chord::before { content: '·'; color: #3d3d55; margin-right: 4px; align-self: center; }
+       long string. Never before the first — that would hang off the card edge.
+       ABSOLUTE, so it lives in the container's gap instead of inside the chip:
+       as flow content it was part of what the chip centred around. */
+    .ambient-pov-chord + .ambient-pov-chord::before {
+      content: '·'; color: #3d3d55; position: absolute; left: -7px; top: 50%;
+      transform: translateY(-50%); pointer-events: none;
+    }
     /* ONE reading per chip, so both get the same weight — there is no longer a
        lead and an aside. (.ambient-pov-nm is the NAME, .ambient-pov-rn the
        numeral; the playhead relabels whichever is on screen.) */

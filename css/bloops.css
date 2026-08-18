@@ -13194,3 +13194,15 @@
     }
     /* The layer's own name leads its card. */
     .ambient-advpop-host .ambient-sched-row[data-schkey] > .ambient-sched-ctl:first-child { margin-bottom: 4px; }
+
+    /* WARM-UP panel — shown only when a press has real work to do first (cold
+       context, unloaded samplers, de-JITed voice paths), so every layer starts
+       on the same grid instead of cascading in. */
+    .ambient-warm-modal { width: min(320px, 92vw); text-align: center; }
+    .ambient-warm-msg { font-size: 0.82rem; color: #cbd5e0; margin: 10px 0 8px; min-height: 1.2em;
+      white-space: normal; overflow-wrap: anywhere; }
+    .ambient-warm-bar { height: 6px; border-radius: 3px; background: #1a1a2c; overflow: hidden; }
+    .ambient-warm-bar > i { display: block; height: 100%; width: 5%; border-radius: 3px;
+      background: linear-gradient(90deg, #7fd6c4, #9f7aea); transition: width 0.18s linear; }
+    .ambient-warm-sub { display: block; margin-top: 9px; white-space: normal; overflow-wrap: anywhere;
+      line-height: 1.4; font-size: 0.68rem; }

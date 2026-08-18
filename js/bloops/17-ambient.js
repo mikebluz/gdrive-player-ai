@@ -23489,6 +23489,177 @@
       window.__bloopsAudioPaused = false;
       try { _ambSyncPauseUi(E); } catch (e) {}
     }
+    // ── WARM-UP ───────────────────────────────────────────────────────────────
+    // "After not playing for a while, not all layers start right away." Three
+    // real causes, all of which are WORK THAT HAPPENS DURING THE FIRST BAR:
+    //   · the AudioContext resumes ASYNCHRONOUSLY, and _ambTick deliberately
+    //     schedules nothing until it is 'running' — so the layers that miss that
+    //     window enter late;
+    //   · samplers are lazy (registered, not loaded), and a note on a cold sample
+    //     is silent that once — which on a sparse layer is a whole phrase;
+    //   · the first voice of each kind costs milliseconds to construct on a
+    //     de-JITed path, and a cold press builds all of them at once.
+    // Rather than shave the lead and hope, do that work BEFORE the transport
+    // starts, with the wait made visible. Every layer then begins on the same
+    // grid instead of cascading in.
+    function _ambWarmSampleIds(cfg) {
+      const ids = new Set();
+      try {
+        // Every reference is the literal string "sample:<id>" — the same cheap
+        // scan warmSamplesForWorkspace uses, so no object-graph walk and no
+        // dependency on which layer kinds exist.
+        const raw = JSON.stringify(cfg || {});
+        const re = /"sample:([^"]+)"/g; let m;
+        while ((m = re.exec(raw))) ids.add(m[1]);
+        // A Sample layer stores a bare `sampleId`, and a Beat stores its kit id
+        // in `kit` — neither carries the "sample:" prefix, so the regex misses
+        // both. A kit is exactly the case where a cold buffer is most audible.
+        const seen = (x) => { if (typeof x === 'string' && x && x !== 'synth') ids.add(x); };
+        (cfg && Array.isArray(cfg.extras) ? cfg.extras : []).forEach(x => { if (x) { seen(x.sampleId); seen(x.kit); } });
+        ['bed', 'motif', 'texture', 'beat'].forEach(k => { const L = cfg && cfg[k]; if (L) { seen(L.sampleId); seen(L.kit); } });
+      } catch (e) {}
+      return [...ids];
+    }
+    // A small, honest status panel. .sm-overlay is already exempt from the
+    // view-mode hide rules, and display is set inline-!important because those
+    // rules beat a plain class (the documented body-overlay trap).
+    function _ambWarmPanel() {
+      const ov = document.createElement('div');
+      ov.className = 'sm-overlay ambient-warm-ov';
+      ov.innerHTML = '<div class="sm-modal ambient-warm-modal">' +
+        '<div class="sm-title">Warming up</div>' +
+        '<div class="ambient-warm-msg">Waking the audio engine…</div>' +
+        '<div class="ambient-warm-bar"><i></i></div>' +
+        '<div class="ambient-hint ambient-warm-sub">Loading every layer first, so they all start together.</div>' +
+        '</div>';
+      document.body.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+      const msg = ov.querySelector('.ambient-warm-msg');
+      const bar = ov.querySelector('.ambient-warm-bar > i');
+      return {
+        set: (t, frac) => {
+          try { if (msg) msg.textContent = t; } catch (e) {}
+          try { if (bar && Number.isFinite(frac)) bar.style.width = Math.max(0, Math.min(1, frac)) * 100 + '%'; } catch (e) {}
+        },
+        close: () => { try { ov.remove(); } catch (e) {} },
+      };
+    }
+    const _AMB_WARM_MAX_MS = 6000;      // never hold the transport longer than this
+    async function _ambWarmUp(E, panel) {
+      const cfg = _ambPlayCfg(E) || E.getCfg() || {};
+      const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
+      const left = () => _AMB_WARM_MAX_MS - (((typeof performance !== 'undefined') ? performance.now() : 0) - t0);
+      // 1. THE CONTEXT. _ambTick schedules nothing until this is 'running', so a
+      //    press that starts the transport first simply loses whatever the layers
+      //    would have emitted in the meantime.
+      panel && panel.set('Waking the audio engine…', 0.05);
+      try { if (typeof Tone !== 'undefined' && Tone.start) await Tone.start(); } catch (e) {}
+      try {
+        const raw = _ambRawCtx();
+        if (raw && raw.state !== 'running') { try { await raw.resume(); } catch (e) {} }
+        const deadline = 2500;
+        const s0 = (typeof performance !== 'undefined') ? performance.now() : 0;
+        while (raw && raw.state !== 'running' && ((typeof performance !== 'undefined' ? performance.now() : 0) - s0) < deadline)
+          await new Promise(r => setTimeout(r, 40));
+      } catch (e) {}
+      // 2. THE SAMPLES. Build every referenced sampler (they are lazy getters —
+      //    reading .sampler is what kicks the fetch) and then WAIT for the
+      //    buffers, which ensureSampleLoaded on its own does not do.
+      const ids = _ambWarmSampleIds(cfg);
+      if (ids.length) {
+        panel && panel.set('Loading sounds… 0/' + ids.length, 0.15);
+        try { if (typeof window !== 'undefined' && window.__warmSamples) window.__warmSamples(ids); } catch (e) {}
+        const built = ids.map(id => { try { return sampleSamplers.get(String(id)) || null; } catch (e) { return null; } })
+                         .filter(Boolean);
+        const done = () => built.reduce((n, info) => {
+          try {
+            const d = Object.getOwnPropertyDescriptor(info, 'sampler');
+            const s = (d && 'value' in d) ? d.value : null;      // never re-read the getter
+            return n + ((s && s.loaded) ? 1 : 0);
+          } catch (e) { return n; }
+        }, 0);
+        // STOP WAITING ON A STALLED FETCH. Some kits live on a CDN and may never
+        // arrive (offline, blocked, or simply gone); holding the transport for
+        // the full budget on one of those would make every cold press feel
+        // broken. Wait while progress is being made, and give up on the rest
+        // after a short lull — those layers start silent-once as they always did.
+        let _got = done(), _lastAt = (typeof performance !== 'undefined') ? performance.now() : 0;
+        while (_got < built.length && left() > 800) {
+          panel && panel.set('Loading sounds… ' + _got + '/' + built.length, 0.15 + 0.55 * (_got / Math.max(1, built.length)));
+          await new Promise(r => setTimeout(r, 60));
+          const n = done();
+          const t = (typeof performance !== 'undefined') ? performance.now() : 0;
+          if (n > _got) { _got = n; _lastAt = t; }
+          else if (t - _lastAt > 1200) break;          // no progress — move on
+        }
+        panel && panel.set('Loading sounds… ' + done() + '/' + built.length, 0.7);
+      }
+      // 3. THE CHAINS. _ambStartGenerator builds these too, but doing it here
+      //    means the strips and FX exist before the first tick rather than in
+      //    the same frame as it.
+      panel && panel.set('Building layers…', 0.78);
+      try { _E = E; _ambSyncMods(); } catch (e) {}
+      await new Promise(r => setTimeout(r, 0));
+      // 4. THE VOICE PATHS. One short silent note per distinct voice, into a
+      //    zero gain — the construction is the point, and it is what a cold
+      //    press otherwise pays for on every layer's first note at once.
+      try {
+        const types = new Set();
+        const add = (L) => { if (L && typeof L.tone === 'string' && L.tone) types.add(L.tone); };
+        ['bed', 'motif', 'texture', 'beat'].forEach(k => add(cfg[k]));
+        (Array.isArray(cfg.extras) ? cfg.extras : []).forEach(add);
+        if (types.size && typeof playNote === 'function' && typeof Tone !== 'undefined') {
+          const ctx = Tone.getContext();
+          const sink = ctx.createGain(); sink.gain.value = 0;
+          try { sink.connect(ctx.destination); } catch (e) {}
+          const now = Tone.now();
+          let i = 0;
+          [...types].slice(0, 16).forEach(t => {
+            try { playNote(220, { type: t, volume: 1, attack: 1, decay: 1, sustain: 0, release: 1 }, 12, now + 0.002 + (i++) * 0.001, sink); } catch (e) {}
+          });
+          panel && panel.set('Building layers…', 0.92);
+          await new Promise(r => setTimeout(r, 90));
+          try { sink.disconnect(); } catch (e) {}
+        }
+      } catch (e) {}
+      panel && panel.set('Ready', 1);
+      await new Promise(r => setTimeout(r, 90));
+    }
+    // Does this press need warming? A press that follows a recent stop does not —
+    // everything is still hot, and holding the transport for a panel nobody needs
+    // would be worse than the problem.
+    function _ambNeedsWarm(E) {
+      try {
+        const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        if (!_ambEverPlayed || (now - _ambLastStopAt) > _AMB_COLD_IDLE_SEC) return true;
+        const raw = _ambRawCtx();
+        if (raw && raw.state !== 'running') return true;
+        // Any referenced sample not yet built-and-loaded is a layer that would
+        // start late (or silent) — worth the wait however warm the rest is.
+        const ids = _ambWarmSampleIds(_ambPlayCfg(E) || E.getCfg() || {});
+        for (const id of ids) {
+          const info = sampleSamplers.get(String(id)); if (!info) continue;
+          const d = Object.getOwnPropertyDescriptor(info, 'sampler');
+          if (!d || !('value' in d) || !d.value || !d.value.loaded) return true;
+        }
+      } catch (e) {}
+      return false;
+    }
+    // THE PLAY PRESS. Internal restarts (capture, bounce, an area rebuild) keep
+    // calling _ambStartGenerator directly and are unaffected — only the button
+    // waits, and only when there is something to wait for.
+    function _ambPlayPress(E) {
+      if (E.timer) { _ambStopGenerator(E); return; }
+      if (E._warming) return;
+      if (!_ambNeedsWarm(E)) { _ambStartGenerator(E); return; }
+      E._warming = true;
+      const panel = _ambWarmPanel();
+      _ambWarmUp(E, panel).catch(() => {}).then(() => {
+        E._warming = false;
+        try { panel.close(); } catch (e) {}
+        if (!E.timer) _ambStartGenerator(E);
+      });
+    }
     function _ambStartGenerator(E) {
       // Belt to the failsafe above: if you press Play and nothing is being
       // recorded, you must hear it — never leave a stale bounce mute in place.
@@ -42122,7 +42293,8 @@
       });
 
       const playBtn = G('ambient-play-btn');
-      if (playBtn) playBtn.addEventListener('click', () => { if (E.timer) _ambStopGenerator(E); else _ambStartGenerator(E); });
+      // The BUTTON goes through the warm-up; internal restarts do not.
+      if (playBtn) playBtn.addEventListener('click', () => _ambPlayPress(E));
       const pauseBtn = G('ambient-pause-btn');
       if (pauseBtn) pauseBtn.addEventListener('click', () => _ambPauseToggle(E));
       try { _ambSyncPauseUi(E); } catch (e) {}   // a panel rebuild must not lose the paused face

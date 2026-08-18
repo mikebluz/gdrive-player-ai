@@ -31755,7 +31755,7 @@
         // The chips are drawn in the SOUNDING key, so the shift is part of what
         // is on screen — without it a key change repaints nothing.
         '|s' + _ambProgViewShift(E, cfg, chords) + '|' + _ambKeyRootPc(cfg) + _ambKeyScaleName(cfg) +
-        '|n' + (el._povNames ? 1 : 0);   // the label mode is part of what is on screen
+        '|n' + (_ambPovNamesOn(el) ? 1 : 0);   // the label mode is part of what is on screen
       if (el._sig === sig) return;
       el._sig = sig; el._curCi = -2;
       const esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
@@ -31770,7 +31770,7 @@
                       key: p.key || null, open: !!p.open, bars: p.bars, hold: !!p.hold });
         acc += (p.open ? 0 : (p.len | 0)); }); }
       else ranges.push({ name: '', from: 0, to: N, pi: -1 });
-      const namesFirst = !!el._povNames;
+      const namesFirst = _ambPovNamesOn(el);
       let h = '<div class="ambient-pov-bar">' +
         // ＋ PART LEADS THE BAR. It used to sit at the far end of the chain,
         // after every chord chip — so on a long progression it was pushed off
@@ -32055,7 +32055,7 @@
       }
       // Label mode is a VIEW preference on the strip element (the panel is built
       // once, so it survives), not a config field — nothing about the music changes.
-      if (op === 'names') { const ov = _ambGet(E, 'ambient-prog-overview'); if (ov) { ov._povNames = !ov._povNames; ov._sig = ''; _ambRenderProgOverview(E); } return; }
+      if (op === 'names') { const ov = _ambGet(E, 'ambient-prog-overview'); if (ov) { ov._povNames = !_ambPovNamesOn(ov); ov._sig = ''; _ambRenderProgOverview(E); } return; }
       // Length of a part that carries NO changes. A menu of musical lengths
       // rather than a raw prompt — a free-text bar count is what made section
       // length silently accept values that divide nothing. Deferred a tick for
@@ -32087,6 +32087,14 @@
     // id, and getElementById only finds elements in the document) — it is just
     // parked hidden until the button moves the live node into the modal, which
     // is what keeps all the existing wiring working untouched.
+    // NAMES-FIRST IS THE DEFAULT. The chips read “Fmaj7 (IVmaj7)” unless you ask
+    // for numerals: a chord name is what you play, and the numeral is the analysis
+    // of it. ABSENCE MEANS NAMES, so the toggle has to flip the EFFECTIVE value —
+    // `!el._povNames` on an absent field yields true, which is what absence
+    // already means, so the first click would do nothing. Transient view state on
+    // the strip element (like the matrix's _pmPart), never a config field: nothing
+    // about the music changes.
+    const _ambPovNamesOn = (el) => !!el && el._povNames !== false;
     function _ambProgGrpOpen(key, label, open, pop) {
       return '<div class="ambient-grp ambient-proggrp' + (open ? ' open' : '') + '" id="ambient-proggrp-' + key + '"'
         + (pop ? ' data-pop="1"' : '') + ' data-grp="' + label + '">' +

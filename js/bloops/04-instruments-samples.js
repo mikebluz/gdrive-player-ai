@@ -489,6 +489,27 @@
         const targetMidi = Math.round(Tone.Frequency(tunedFreq).toMidi());
         if (info.drumKit) {
           if (sampler._buffers.has(targetMidi)) sampleMidi = targetMidi;
+          // …BUT AN UNFILLED SLOT IS NOT A LOADING SLOT. The exact-only rule
+          // above exists to stop a kick resolving to whichever neighbour's
+          // buffer won the fetch race WHILE A KIT STREAMS IN. Once the sampler
+          // reports loaded there is no race left: a zone that is still absent is
+          // one the kit simply does not define, which is the normal state of a
+          // USER kit (registerDrumKit writes urls only for filled slots). Going
+          // silent there took the whole custom kit off the lanes it does not
+          // fill. Fall back to the nearest DEFINED zone in that case — which is
+          // what the shared-sampler path used to do anyway, except that path was
+          // untracked and unstoppable (the after-stop hits); resolving it here
+          // keeps the note on the per-voice path, routed to the layer chain and
+          // cancellable like every other note.
+          else if (sampler.loaded) {
+            let bestD = Infinity;
+            for (const noteName of Object.keys(info.urls)) {
+              let m; try { m = Math.round(Tone.Frequency(noteName).toMidi()); } catch (e) { continue; }
+              if (!sampler._buffers.has(m)) continue;
+              const d = Math.abs(m - targetMidi);
+              if (d < bestD) { bestD = d; sampleMidi = m; }
+            }
+          }
         } else {
           let bestD = Infinity;
           for (const noteName of Object.keys(info.urls)) {
@@ -4770,9 +4791,11 @@
           // and let Tone.Sampler repitch a neighbouring drum instead. A custom
           // kit is usually only part-filled, so for every unfilled lane that was
           // not a load-time blip but every hit, forever.
-          // `info` from the resolver is not in scope here — read the entry.
-          const _kitInfo = (typeof getSampleEntry === 'function') ? getSampleEntry(type) : null;
-          if (_kitInfo && _kitInfo.drumKit) return;
+          // A DRUM KIT never takes it: while the kit is loading the exact-only
+          // rule in _resolveSampleVoice deliberately yields silence rather than
+          // the wrong drum, and once loaded it resolves through the per-voice
+          // path (nearest DEFINED zone), so there is nothing left for the shared
+          // sampler to do except make an unstoppable hit.
           // Anything GENERATED or scheduled AHEAD is skipped for the same reason:
           // it cannot be retracted. Interactive presses (no emit key, no lead)
           // keep the fallback, which is what it was written for.

@@ -3952,10 +3952,7 @@
     .ambient-partsched-modal .ps-map .ambient-sched-strip { display: flex; width: 100%; height: 18px;
       border: 1px solid #2e2e46; border-radius: 4px; overflow: hidden; }
     .ambient-partsched-modal .ps-blk { height: 18px; line-height: 18px; font-size: 0.66rem; }
-    .ambient-sched-lbl .secmore { font-style: normal; font-weight: 600; color: #f6c177;
-      background: rgba(246,193,119,0.12); border-radius: 3px; padding: 0 3px; margin-left: 3px; }
     .ambient-partsched-modal .ps-cut { color: #f6c177; font-size: 0.64rem; }
-    .ambient-sched-secblk .seccut { font-style: normal; color: #f6c177; margin-left: 3px; }
     .ambient-partsched-modal .ps-secthdr { font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase;
       color: #8a90a6; margin: 10px 0 4px; }
     .ambient-partsched-modal .ps-secthdr:first-child { margin-top: 0; }
@@ -12796,10 +12793,6 @@
     .ambient-pov-open:hover { border-color: #6b5b95; color: #b0b0c8; }
     .ambient-pov-open b { font-weight: 600; letter-spacing: 0.02em; }
     .ambient-pov-openhdr .ambient-pov-partname { color: #8a8aa8; }
-    /* Prose, so it must WRAP — .ambient-hint is nowrap by default (UI rule 2). */
-    .ambient-sched-nosec { white-space: normal; overflow-wrap: anywhere; line-height: 1.4;
-      display: block; padding: 4px 6px; color: #8a8aa8; }
-    .ambient-sched-nosec b { color: #b0b0c8; }
     .ambient-addpart-hint { font-size: 0.72rem; line-height: 1.45; color: #8a8aa8; margin: 0 0 10px; }
     .ambient-addpart-key { display: inline-flex; gap: 5px; min-width: 0; }
     .ambient-addpart-key select { width: 84px; }
@@ -12869,45 +12862,9 @@
 
 /* Hum rec (audio → phrase transcription) */
 
-/* Sections (sets of bars): scheduler lane blocks */
-.ambient-sched-secrow .ambient-sched-strip.sections { display: flex; position: relative; }
-    /* TOUCH TARGET. These chips are 18px on a mouse, which is fine to click and
-       far too small to tap — and this row is the arrangement navigator, so it is
-       tapped constantly. On a coarse pointer give the chips and their strip the
-       usual floor. touch-action stops a tap being read as a scroll gesture. */
-    .ambient-sched-secblk { touch-action: manipulation; }
-    @media (pointer: coarse) {
-      .ambient-sched-secrow .ambient-sched-strip.sections { height: 34px; }
-      .ambient-sched-secblk { height: 32px; font-size: 0.66rem; }
-    }
-.ambient-sched-secblk { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; height: 18px; font: 600 0.62rem 'Segoe UI', sans-serif; color: #cfd4ff; background: rgba(110, 120, 255, 0.14); border: 1px solid rgba(110, 120, 255, 0.35); border-radius: 3px; overflow: hidden; white-space: nowrap; cursor: pointer; font-style: normal; }
-.ambient-sched-secblk.cyc { border-left-width: 2px; border-left-color: rgba(110, 120, 255, 0.8); }
-.ambient-sched-secblk:hover { background: rgba(110, 120, 255, 0.28); }
-/* THE SELECTED PART. The renderer has always added `.on` to the part the rest of
-   the Scheduler is scoped to, and NOTHING styled it — so tapping a part chip
-   selected it (verified: _schedPart moves, the class lands) while background,
-   border and colour stayed byte-identical, i.e. "nothing happens when I click on
-   a part". The inset bar is what survives the harm/playing variants below, which
-   set their own background. */
-.ambient-sched-secblk.on { background: rgba(110, 120, 255, 0.44); border-color: rgba(160, 170, 255, 0.95);
-                           color: #fff; box-shadow: inset 0 -3px 0 rgba(170, 180, 255, 0.95); }
-.ambient-sched-secblk.harm.on { background: rgba(79, 209, 197, 0.36); border-color: rgba(127, 214, 196, 0.95);
-                                box-shadow: inset 0 -3px 0 rgba(127, 214, 196, 0.95); }
-/* A section bound to a progression PART — its changes are that part's, looping
-   from the top each time the section comes round. Teal = the harmony colour used
-   by the chord lane / chord-group tints, so the two lanes read as one system.
-   The name clips (min-width:0) rather than widening the block. */
-.ambient-sched-secblk.harm { border-color: rgba(79, 209, 197, 0.55); background: rgba(79, 209, 197, 0.13); }
-.ambient-sched-secblk.harm:hover { background: rgba(79, 209, 197, 0.24); }
-.ambient-sched-secblk .secpart { margin-left: 4px; font-weight: 600; color: #7fd6c4; opacity: 0.95; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-/* Section KEY OFFSET (modulation) badge — amber, distinct from the teal part
-   badge, so "which changes" and "what key" read as two different facts. */
-.ambient-sched-secblk .seckey { margin-left: 4px; font-weight: 700; color: #f6ad55; flex: 0 0 auto; }
-
-/* Matrix "now playing" column + section lane playing block */
+/* Matrix "now playing" column — the section playhead's only surface now. */
 .ambient-pm-cell.cur { box-shadow: inset 0 0 0 1px rgba(127, 214, 196, 0.75); }
 .ambient-pm-ch.cur { color: #7fd6c4; text-shadow: 0 0 6px rgba(127, 214, 196, 0.5); }
-.ambient-sched-secblk.playing { background: rgba(127, 214, 196, 0.3); border-color: rgba(127, 214, 196, 0.7); color: #eafffa; }
 
 /* Now Playing: bar-grid rows (16 slots, shared columns across layers) */
 .ambient-npg { display: flex; width: 100%; min-width: 0; }
@@ -13047,8 +13004,7 @@
        content. */
     .ambient-sched-qebar > select { flex: 0 0 auto; width: 132px; min-height: 40px; }
     @media (max-width: 420px) { .ambient-sched-qebar > select { width: 116px; } }
-    .ambient-sched-secbtn.active, .ambient-sched-qe.active { border-color: #35c98e; color: #9df3cd; }
-    .ambient-sched-secwrap[hidden] { display: none; }
+    .ambient-sched-qe.active { border-color: #35c98e; color: #9df3cd; }
     /* Quick edit: one row per SET of changes; a continued row drops the layer
        name so the eye follows the indent instead of re-reading it. */
     .ambient-qe-row.cont .ambient-qe-name { opacity: 0.55; }

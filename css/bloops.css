@@ -13122,10 +13122,21 @@
     .ps-chainadd { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
     .ps-chainadd .ambient-seg { min-height: 30px; }
 
-    /* The scheduler, inlined at the bottom of Arrangement (it is no longer a tab
-       pane, so it needs its own separation from the Overview above it). */
-    .ambient-sched-inline { display: block; margin-top: 10px; padding-top: 10px;
-                            border-top: 1px solid #23233a; }
+    /* THE SCHEDULER, INLINED AT THE BOTTOM OF ARRANGEMENT — and it must drop the
+       standalone SECTION FRAME to do it. `.ambient-sched` carries a full card
+       (1px border all round, radius 8, padding, background) for when it was its
+       own section; `.ambient-tabsec-pane.ambient-sched` stripped that while it
+       was a tab pane, and the Arch/Sched merge stopped it being one, so the
+       frame came back — a card floating inside a pane whose other sections
+       (Overview / Salt / Order / Matrix) are borderless `.ambient-grp` rules.
+       Then this rule piled a SECOND separator on top of it (10px margin + 10px
+       padding + its own border-top), which is the visible moat: 18px of dead
+       space above the card and another 11px inside it before the buttons.
+       Separation matches the sibling groups instead — 6px and a hairline. */
+    .ambient-sched-inline {
+      display: block; border: 0; border-radius: 0; background: none; padding: 0;
+      margin: 6px 0 0; border-top: 1px solid #1c1c2e; padding-top: 8px;
+    }
 
     /* Advanced part edit, as a popover. The block is rendered INTO this host,
        so it must show regardless of the `hidden` attribute it carries inline. */

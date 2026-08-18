@@ -31952,13 +31952,16 @@
           const nm = _ambChordShort(c) || '?';
           const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
           h += '<span role="button" tabindex="0" class="ambient-pov-chord' + (namesFirst ? ' pov-names' : '') + (_ambIsTransition(c) ? ' pov-trans' : '') + '" data-pov="chord:' + i + '" data-ci="' + i + '" title="' + (_ambIsTransition(c) ? 'Transition ' : 'Chord ') + (i + 1) + ' — ' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + ' · click to edit">' +
-            // Names-first swaps the ORDER and the emphasis, never the ROLES: the
-            // playhead relabels `.ambient-pov-nm` to the sounding chord, so that
-            // span must stay the NAME in both modes or the glow would write a
-            // chord name into the numeral slot.
+            // ONE READING AT A TIME. The chip used to print both — the name and
+            // the numeral in parentheses — which is the toggle failing to be a
+            // toggle: it only moved the emphasis, so the strip stayed twice as
+            // dense whichever mode you were in. The OTHER reading is on the
+            // tooltip, which already carries it. `.ambient-pov-nm` is still the
+            // NAME and `.ambient-pov-rn` the numeral, so the playhead can tell
+            // which one is on screen and relabel THAT one (see the playhead).
             (namesFirst
-              ? ('<span class="ambient-pov-nm">' + esc(nm) + '</span>' + (rn ? '<b>(' + esc(rn) + ')</b>' : ''))
-              : ((rn ? '<b>' + esc(rn) + '</b>' : '') + '<span class="ambient-pov-nm">' + esc(nm) + '</span>')) +
+              ? ('<span class="ambient-pov-nm">' + esc(nm) + '</span>')
+              : ('<b class="ambient-pov-rn">' + esc(rn || nm) + '</b>')) +
             (altN ? '<i class="ambient-pov-alt" title="' + (altN + 1) + ' alternate chords cycle here">×' + (altN + 1) + '</i>' : '') +
             '</span>';
         }
@@ -31992,20 +31995,34 @@
       // the GLOWING chip would name one chord while another sounds. Relabel just
       // that chip with what is actually playing; the previous glow is restored
       // from the written name stashed on the node.
+      // MATCH THE READING ON SCREEN. Only one is drawn now, so relabelling the
+      // name span would write into a chip that is showing a numeral (or into
+      // nothing at all). Whichever is there gets the sounding chord expressed
+      // the same way — the numeral in the key of THAT slot's part, since a part
+      // with its own key numbers its chords against it.
+      const namesOn = _ambPovNamesOn(el);
       const sndTxt = (function () {
-        try { return _snd ? (_ambChordShort(_ambChordShift(_snd, _ambProgViewShift(E, cfg, p.chords, tnow))) || '') : ''; } catch (e) { return ''; }
+        try {
+          if (!_snd) return '';
+          const sc = _ambChordShift(_snd, _ambProgViewShift(E, cfg, p.chords, tnow));
+          if (namesOn) return _ambChordShort(sc) || '';
+          const pk = _ambPartKeyForSlot(p, ci);
+          return _ambPeRoman(sc, pk ? pk.root : _ambAreaKeyRootPc(cfg),
+                                 pk ? pk.scale : _ambAreaKeyScaleName(cfg)) || '';
+        } catch (e) { return ''; }
       })();
       if (ci === el._curCi && sndTxt === el._curTxt) return;
       el._curCi = ci; el._curTxt = sndTxt;
+      const slot = (n) => n.querySelector(namesOn ? '.ambient-pov-nm' : '.ambient-pov-rn');
       el.querySelectorAll('.ambient-pov-chord.cur').forEach(n => {
         n.classList.remove('cur');
-        const w = n.querySelector('.ambient-pov-nm');
+        const w = slot(n);
         if (w && n._writtenNm != null) { w.textContent = n._writtenNm; n._writtenNm = null; }
       });
       const cell = el.querySelector('.ambient-pov-chord[data-ci="' + ci + '"]');
       if (cell) {
         cell.classList.add('cur');
-        const w = cell.querySelector('.ambient-pov-nm');
+        const w = slot(cell);
         if (w && sndTxt && w.textContent !== sndTxt) { cell._writtenNm = w.textContent; w.textContent = sndTxt; }
       }
     }

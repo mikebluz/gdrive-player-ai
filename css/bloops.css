@@ -13133,9 +13133,14 @@
        padding + its own border-top), which is the visible moat: 18px of dead
        space above the card and another 11px inside it before the buttons.
        Separation matches the sibling groups instead — 6px and a hairline. */
+    /* Inside the ⏱ Schedule group now, so it carries NO frame and NO separation
+       of its own — the group provides both, exactly as it does for Overview and
+       Matrix. Left over from being a tab pane, `.ambient-sched` still declares a
+       full card (border, radius, padding, background); that is what made this
+       read as a box floating in a moat, and it is what this clears. */
     .ambient-sched-inline {
-      display: block; border: 0; border-radius: 0; background: none; padding: 0;
-      margin: 6px 0 0; border-top: 1px solid #1c1c2e; padding-top: 8px;
+      display: block; border: 0; border-radius: 0; background: none;
+      padding: 0; margin: 0;
     }
 
     /* Advanced part edit, as a popover. The block is rendered INTO this host,

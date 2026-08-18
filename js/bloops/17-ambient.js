@@ -32184,7 +32184,7 @@
       try { _ambRenderScheduler(E); } catch (e) {}
     }
     function _ambProgGrpSync(E) {
-      ['salt', 'order', 'overview', 'matrix', 'sections'].forEach(k => {
+      ['salt', 'order', 'overview', 'sched', 'matrix', 'sections'].forEach(k => {
         const g = _ambGet(E, 'ambient-proggrp-' + k); if (!g) return;
         const body = g.querySelector('.ambient-grp-body'); if (!body) return;
         // A popover group shows only while it is inside the popover host; parked
@@ -39601,13 +39601,25 @@
             // re-wiring both, which is how two copies of a control drift apart.
             // It keeps the .ambient-sched class for its own styles but is no
             // longer a tab pane, so it is simply the bottom of this one.
-            '<div class="ambient-sched ambient-sched-inline" id="ambient-sched">' +
-              '<div class="ambient-sched-body" id="ambient-sched-body"></div>' +
-              (E.isLane ? '' :
-                _ambProgGrpOpen('matrix', '\u2317 Matrix', false) +
-                '<div class="ambient-progmatrix" id="ambient-progmatrix" style="display:none"></div>' +
-                _ambProgGrpClose()) +
-            '</div>' +
+            // A SUBSECTION LIKE ITS NEIGHBOURS. It used to be a bare block with no
+            // header sitting between two accordions, still wearing the standalone
+            // section frame it had as a tab pane — a card with a moat around it,
+            // and nothing naming it. Now it is ▤ Overview · ⏱ Schedule · ⌗ Matrix,
+            // one grammar for the three. The head toggle is bound by the panel
+            // build's own `.ambient-grp-head` sweep — do NOT add a second handler
+            // (two would fire and cancel out, the documented double-toggle trap).
+            // #ambient-sched and #ambient-sched-body keep their ids and their
+            // state (_schedPart / _schedRep / _schedFollow live on the element),
+            // so the renderer and every handler are untouched.
+            _ambProgGrpOpen('sched', '\u23f1 Schedule', true) +
+              '<div class="ambient-sched ambient-sched-inline" id="ambient-sched">' +
+                '<div class="ambient-sched-body" id="ambient-sched-body"></div>' +
+              '</div>' +
+            _ambProgGrpClose() +
+            (E.isLane ? '' :
+              _ambProgGrpOpen('matrix', '\u2317 Matrix', false) +
+              '<div class="ambient-progmatrix" id="ambient-progmatrix" style="display:none"></div>' +
+              _ambProgGrpClose()) +
           '</div>' +       // end #ambient-progsec-body
         '</div>') +        // end the merged Arrangement pane
         // 🕺 Groove — swing / accent / humanize (cascade) + per-layer push;

@@ -23965,6 +23965,12 @@
       // bank straight into globalSendTap, outside every layer chain, so the mod
       // teardown below cannot reach it. Stop must mean stop.
       try { if (typeof window !== 'undefined' && window._stopKitPreview) window._stopKitPreview(); } catch (e) {}
+      // ...and release every BUILT kit sampler. A kit's sampler is SHARED and
+      // hangs off globalSendTap, so a note queued into it reaches no layer chain
+      // and registers no voice — the cancel sweeps below and the mod teardown are
+      // both blind to it. That is the backstop for the "errant drum hits after
+      // stop" class; the path that queued them is closed in 04.
+      try { if (typeof window !== 'undefined' && window.stopAllKitSamplers) window.stopAllKitSamplers(); } catch (e) {}
       _E = E;
       // Stopping while paused has to un-suspend the context on the way out —
       // otherwise the whole app's audio (Grid, previews, everything) stays frozen

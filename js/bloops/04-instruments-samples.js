@@ -1788,6 +1788,22 @@
       _kitPreview = null;
     }
     try { window._stopKitPreview = _stopKitPreview; } catch (e) {}
+    // Release every BUILT kit sampler. A kit's sampler is shared and hangs off
+    // globalSendTap, so a note scheduled into it is reachable by nothing else —
+    // this is the backstop for anything that still gets one queued. Read the
+    // property DESCRIPTOR, never `.sampler`: the entries are lazy getters and
+    // touching one would BUILD every kit in the library (the __sampleStats trap).
+    function stopAllKitSamplers() {
+      try {
+        sampleSamplers.forEach((info) => {
+          if (!info || !info.drumKit) return;
+          const d = Object.getOwnPropertyDescriptor(info, 'sampler');
+          if (!d || typeof d.get === 'function') return;      // never built — nothing queued
+          try { d.value && d.value.releaseAll && d.value.releaseAll(); } catch (e) {}
+        });
+      } catch (e) {}
+    }
+    try { window.stopAllKitSamplers = stopAllKitSamplers; } catch (e) {}
     async function persistDrumKit(id, name, slots) {
       try {
         const db = await getImportedDB();
@@ -4731,6 +4747,38 @@
           }
           // Fallback — shared sampler, attack/release fade only (Tone.Sampler
           // has no decay / sustain-level). Captured per-voice at trigger time.
+          //
+          // IT IS FOR INTERACTIVE, IMMEDIATE NOTES ONLY, and that is not a style
+          // preference — a note fired this way is UNSTOPPABLE. It goes to the
+          // shared sampler's own output (for a user kit, registerDrumKit wires
+          // that straight to globalSendTap), so it never reaches `destination`
+          // and the mod teardown cannot silence it; and no voice is registered,
+          // so cancelBloomFutureVoices, silenceActiveVoices and every stop sweep
+          // are blind to it. Bloom schedules ~1.3 s ahead, so a generated note
+          // taking this path is a hit that WILL sound after Stop, whatever the
+          // transport does. That is the long-standing "errant drum hits after
+          // stop": measured on a custom kit with unfilled slots, 12-14 notes per
+          // play scheduled past the stop instant and 5-7 audible transients
+          // after it, evenly spaced out to 1.4 s. The same failure was found and
+          // fixed for the kit PREVIEW (see the userKit branch in the bank
+          // manager) and the identical hazard was left here on the playback path.
+          //
+          // A DRUM KIT never takes it. _resolveSampleVoice deliberately returns
+          // null unless the EXACT zone is loaded — "better a missed hit than the
+          // wrong drum", its own words — and the intent recorded there is that
+          // "the callers skip the hit". This caller never did: it fell through
+          // and let Tone.Sampler repitch a neighbouring drum instead. A custom
+          // kit is usually only part-filled, so for every unfilled lane that was
+          // not a load-time blip but every hit, forever.
+          // `info` from the resolver is not in scope here — read the entry.
+          const _kitInfo = (typeof getSampleEntry === 'function') ? getSampleEntry(type) : null;
+          if (_kitInfo && _kitInfo.drumKit) return;
+          // Anything GENERATED or scheduled AHEAD is skipped for the same reason:
+          // it cannot be retracted. Interactive presses (no emit key, no lead)
+          // keep the fallback, which is what it was written for.
+          const _lead = (typeof startTime === 'number' && Number.isFinite(startTime))
+            ? (startTime - Tone.now()) : 0;
+          if ((typeof window !== 'undefined' && window._ambEmitKey) || _lead > 0.25) return;
           try {
             if (typeof sampler.attack  !== 'undefined') sampler.attack  = Math.max(0, atk);
             if (typeof sampler.release !== 'undefined') sampler.release = Math.max(0.01, rel);

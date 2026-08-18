@@ -12547,7 +12547,7 @@
           // which reads as belonging to neither. It is one control for the
           // whole layer, so it goes after all of them, indented to the cell
           // column so the block reads as that layer's.
-          return '<div class="ambient-qe-layer"' + _ambTypeAttr(t.key) + '>'
+          return '<div class="ambient-qe-layer"' + _ambTypeAttr(t.key, _ambLayerByKey(E, t.key)) + '>'
             + lines.map((ln, li) => '<div class="ambient-qe-row' + (li ? ' cont' : '') + '">'
               + '<span class="ambient-qe-name" title="' + esc(t.name || t.key) + (ln.name ? (' · ' + esc(ln.name)) : '') + '">'
               + (li ? '' : esc(t.name || t.key)) + (ln.name ? ('<i class="ambient-qe-set">' + esc(ln.name) + '</i>') : '')
@@ -33046,7 +33046,22 @@
     // the mixer channel, the quick-edit block — so the colour is one CSS palette
     // rather than a colour decision repeated at four render sites.
     const _ambLayerTypeOf = (key) => String(key || '').split(':')[0];
-    const _ambTypeAttr = (key) => { const t = _ambLayerTypeOf(key); return t ? (' data-ltype="' + t + '"') : ''; };
+    // A NAMED PRESET IS ITS OWN THING. Keys is `type: 'bed'` with a label — it is
+    // an articulated chord layer, not the swelling pad — so type alone painted it
+    // and the Bed the same colour. The VARIANT rides alongside the type (never
+    // instead of it: it is still a bed, and everything else keys on the type), and
+    // only a label the palette actually knows becomes one, so renaming a layer
+    // "Pad 2" leaves it the Bed colour rather than inventing a hue for it.
+    const _AMB_LVARS = { keys: 1 };
+    const _ambLayerVarOf = (layer) => {
+      const lb = (layer && typeof layer.label === 'string') ? layer.label.trim().toLowerCase() : '';
+      return (lb && _AMB_LVARS[lb]) ? lb : '';
+    };
+    const _ambTypeAttr = (key, layer) => {
+      const t = _ambLayerTypeOf(key); if (!t) return '';
+      const v = _ambLayerVarOf(layer);
+      return ' data-ltype="' + t + '"' + (v ? (' data-lvar="' + v + '"') : '');
+    };
     const _ambEscText = (s) => String(s == null ? '' : s).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
     // Does this layer TYPE carry a step Pattern (the euclid grid)? Marked in the
     // header so you can tell at a glance which layers you can draw a rhythm on —
@@ -33903,7 +33918,8 @@
         const lvl = Number.isFinite(layer.level) ? layer.level : 70;
         const ch = document.createElement('div');
         ch.className = 'ambient-mix-ch';
-        try { ch.dataset.ltype = _ambLayerTypeOf(key); } catch (e) {}
+        try { ch.dataset.ltype = _ambLayerTypeOf(key);
+              const _lv = _ambLayerVarOf(layer); if (_lv) ch.dataset.lvar = _lv; } catch (e) {}
         const val = document.createElement('span');
         val.className = 'ambient-mix-val';
         val.textContent = lvl + '%';
@@ -34648,7 +34664,7 @@
                   : ('<input type="number" class="ambient-sched-bars" min="1" max="32" step="1" value="' + ((selTu && selTu.bars) || 2) + '" title="Pattern length in bars"><span class="ambient-sched-lbl">bars ×</span>')) +
                 '<input type="number" class="ambient-sched-times" min="1" max="32" step="1" value="' + ((selTu && selTu.times) || 4) + '" title="Times each pattern repeats before a fresh one is written"><span class="ambient-sched-lbl">plays</span>' +
                 ((cycBars > 0 && wOn) ? '<span class="ambient-sched-lbl snap" title="One cycle = one full pass through the progression (' + _ambFmtBpc(cycBars) + ' bars).">= ' + _ambFmtBpc(effBars) + ' bars</span>' : ''))) + '</span>';
-        html += '<div class="ambient-sched-row" data-schkey="' + esc(key) + '"' + _ambTypeAttr(key) + ' data-total="' + totalSpan.toFixed(4) + '">' +
+        html += '<div class="ambient-sched-row" data-schkey="' + esc(key) + '"' + _ambTypeAttr(key, layer) + ' data-total="' + totalSpan.toFixed(4) + '">' +
           '<div class="ambient-sched-ctl">' +
             // Header line: layer name (prominent) + the timing cluster to the right.
             '<div class="ambient-sched-headline">' +
@@ -36618,7 +36634,7 @@
       // Every layer (Shape included) starts collapsed — just its header — so a
       // fresh Bloom panel stays compact and you expand only what you're tuning.
       const _collapsed = ' collapsed';
-      let html = '<div class="ambient-layer' + _collapsed + '" data-inst="' + fkey + '"' + _ambTypeAttr(fkey) + '>' + _ambHead(_ambLayerLabel(inst, sch.label), p + '-on', p + '-del', fkey, _ambComposeReadoutHtml(inst));
+      let html = '<div class="ambient-layer' + _collapsed + '" data-inst="' + fkey + '"' + _ambTypeAttr(fkey, inst) + '>' + _ambHead(_ambLayerLabel(inst, sch.label), p + '-on', p + '-del', fkey, _ambComposeReadoutHtml(inst));
       // Kit-voice DRUM params for any layer whose voice derives to kit (a native
       // Beat — euclid or random — or a Bass voice-swapped to Kit) — the type schema
       // carries no single-drum control. Voices row only for a swapped layer that
@@ -39783,16 +39799,16 @@
           '</details>' +
         '</div>' +        // end mixer pane
         '</div>' +        // end .ambient-tabsec
-        '<div class="ambient-layer collapsed" data-ltype="bed">' + head(_plabel('bed', 'Bed'), 'ambient-bed-on', 'ambient-bed-del', 'bed', _ambComposePrimaryHtml('bed', _cfg0.bed)) +
+        '<div class="ambient-layer collapsed"' + _ambTypeAttr('bed', _cfg0.bed) + '>' + head(_plabel('bed', 'Bed'), 'ambient-bed-on', 'ambient-bed-del', 'bed', _ambComposePrimaryHtml('bed', _cfg0.bed)) +
           _ambPrimaryCardBody('bed', _cfg0.bed) +
         '</div>' +
-        '<div class="ambient-layer collapsed" data-ltype="motif">' + head(_plabel('motif', 'Motif'), 'ambient-motif-on', 'ambient-motif-del', 'motif', _ambComposePrimaryHtml('motif', _cfg0.motif)) +
+        '<div class="ambient-layer collapsed"' + _ambTypeAttr('motif', _cfg0.motif) + '>' + head(_plabel('motif', 'Motif'), 'ambient-motif-on', 'ambient-motif-del', 'motif', _ambComposePrimaryHtml('motif', _cfg0.motif)) +
           _ambPrimaryCardBody('motif', _cfg0.motif) +
         '</div>' +
-        '<div class="ambient-layer collapsed" data-ltype="texture">' + head(_plabel('texture', 'Texture'), 'ambient-texture-on', 'ambient-texture-del', 'texture', _ambComposePrimaryHtml('texture', _cfg0.texture)) +
+        '<div class="ambient-layer collapsed"' + _ambTypeAttr('texture', _cfg0.texture) + '>' + head(_plabel('texture', 'Texture'), 'ambient-texture-on', 'ambient-texture-del', 'texture', _ambComposePrimaryHtml('texture', _cfg0.texture)) +
           _ambPrimaryCardBody('texture', _cfg0.texture) +
         '</div>' +
-        '<div class="ambient-layer collapsed" data-ltype="beat">' + head(_plabel('beat', 'Beat'), 'ambient-beat-on', 'ambient-beat-del', 'beat', _ambComposePrimaryHtml('beat', _cfg0.beat)) +
+        '<div class="ambient-layer collapsed"' + _ambTypeAttr('beat', _cfg0.beat) + '>' + head(_plabel('beat', 'Beat'), 'ambient-beat-on', 'ambient-beat-del', 'beat', _ambComposePrimaryHtml('beat', _cfg0.beat)) +
           _ambPrimaryCardBody('beat', _cfg0.beat) +
         '</div>' +
         // Extra generative instances render here (below the built-in Bed/Motif/

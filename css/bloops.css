@@ -13295,3 +13295,10 @@
     [data-ltype="samp"]    { --lt: #f060e1; }   /* one sample */
     [data-ltype="learn"]   { --lt: #b8a465; }   /* spoken — fetched text */
     [data-ltype="sireel"]  { --lt: #f0a8a8; }   /* spoken — generated text */
+    /* NAMED VARIANTS — after the type block so they win. A preset with a label is
+       its own instrument to whoever added it: 🎹 Keys is `type: 'bed'`, so type
+       alone painted it and the Bed identically. It stays in the harmony family
+       (bed's teal, deeper and bluer) because it IS a chord layer — ΔE 27.6 from
+       bed, 25.9 from Arp, clear of the state colours. Only labels listed in
+       _AMB_LVARS become variants, so renaming a layer does not invent a hue. */
+    [data-lvar="keys"]     { --lt: #25a4b8; }   /* 🎹 Keys — articulated chords, not a swelling pad */

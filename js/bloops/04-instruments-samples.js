@@ -488,20 +488,28 @@
       try {
         const targetMidi = Math.round(Tone.Frequency(tunedFreq).toMidi());
         if (info.drumKit) {
+          // EXACT FIRST — a kit maps one DRUM per semitone, so the exact zone is
+          // always the right answer when it is there.
           if (sampler._buffers.has(targetMidi)) sampleMidi = targetMidi;
-          // …BUT AN UNFILLED SLOT IS NOT A LOADING SLOT. The exact-only rule
-          // above exists to stop a kick resolving to whichever neighbour's
-          // buffer won the fetch race WHILE A KIT STREAMS IN. Once the sampler
-          // reports loaded there is no race left: a zone that is still absent is
-          // one the kit simply does not define, which is the normal state of a
-          // USER kit (registerDrumKit writes urls only for filled slots). Going
-          // silent there took the whole custom kit off the lanes it does not
-          // fill. Fall back to the nearest DEFINED zone in that case — which is
-          // what the shared-sampler path used to do anyway, except that path was
-          // untracked and unstoppable (the after-stop hits); resolving it here
-          // keeps the note on the per-voice path, routed to the layer chain and
-          // cancellable like every other note.
-          else if (sampler.loaded) {
+          else {
+            // …OTHERWISE THE NEAREST LOADED ZONE, same as any other sampler.
+            // This used to return null, on the reasoning that a repitched
+            // neighbour is a DIFFERENT DRUM and a kit streaming in would flip a
+            // kick to whichever buffer won the fetch race. True, but it was only
+            // ever half the story: the CALLER did not skip the hit, it fell
+            // through to playNote's shared-sampler fallback, which repitched a
+            // neighbour ANYWAY — untracked, routed past the layer chain and
+            // impossible to stop (the "errant drum hits after stop"). So the
+            // wrong-drum-while-loading case was never actually prevented; only
+            // the cancellability was lost. Resolving it here gets the same sound
+            // on the per-voice path, where the note is tracked and stoppable.
+            //
+            // It also has to cover the case that matters far more in practice: a
+            // USER kit declares urls only for the slots it FILLS, so most of a
+            // drum-lanes beat's zones are absent permanently. Gating this on
+            // `sampler.loaded` was not enough either — one dead member (a stale
+            // blob URL after a reload) keeps `loaded` false forever and silenced
+            // the whole kit.
             let bestD = Infinity;
             for (const noteName of Object.keys(info.urls)) {
               let m; try { m = Math.round(Tone.Frequency(noteName).toMidi()); } catch (e) { continue; }
@@ -1825,6 +1833,52 @@
       } catch (e) {}
     }
     try { window.stopAllKitSamplers = stopAllKitSamplers; } catch (e) {}
+    // WHY ISN'T MY KIT PLAYING? Everything that decides it, in one paste. A kit
+    // resolves a hit by ZONE (one drum per semitone, C2-B2 = MIDI 36-47), so the
+    // answers are: is the sampler built, did its buffers arrive, which zones does
+    // it declare, and how many of the twelve lanes actually resolve to a buffer.
+    // Reads the property DESCRIPTOR, never `.sampler`, so it cannot build the
+    // lazy entries it is reporting on.
+    function bloomKitCheck() {
+      const out = { note: 'Bloom drum-kit check', kits: [] };
+      try {
+        sampleSamplers.forEach((info, id) => {
+          if (!info || !info.drumKit) return;
+          const d = Object.getOwnPropertyDescriptor(info, 'sampler');
+          const built = !!(d && 'value' in d && d.value);
+          const s = built ? d.value : null;
+          const declared = Object.keys(info.urls || {});
+          let loadedZones = [], resolves = 0, firstErr = null;
+          if (s) {
+            for (let m = 36; m < 48; m++) {
+              try { if (s._buffers && s._buffers.has(m)) loadedZones.push(m); } catch (e) {}
+              try {
+                const f = Tone.Frequency(m, 'midi').toFrequency();
+                if (_resolveSampleVoice(s, id, f)) resolves++;
+              } catch (e) { if (!firstErr) firstErr = String(e).slice(0, 80); }
+            }
+          }
+          out.kits.push({ id, name: info.name || id, userKit: !!info.userKit,
+            built, loaded: !!(s && s.loaded), declaredZones: declared,
+            loadedZones, lanesResolving: resolves + '/12',
+            urlKinds: [...new Set(Object.values(info.urls || {}).map(u => String(u).split(':')[0]))],
+            err: firstErr });
+        });
+        // …and which kits the areas actually ask for.
+        const used = new Set();
+        try {
+          const st = JSON.parse(localStorage.getItem('bloops-workspace') || '{}');
+          JSON.stringify(st).replace(/"kit":"([^"]+)"/g, (m, k) => { if (k && k !== 'synth') used.add(k); return m; });
+        } catch (e) {}
+        out.kitsUsedByProject = [...used];
+      } catch (e) { out.err = String(e).slice(0, 120); }
+      const txt = JSON.stringify(out, null, 1);
+      try { console.log('[bloom-kit]', txt); } catch (e) {}
+      try { navigator.clipboard.writeText(txt); } catch (e) {}
+      try { if (typeof showToast === 'function') showToast('Kit check copied — ' + out.kits.length + ' kit(s)', { ms: 6000 }); } catch (e) {}
+      return out;
+    }
+    try { window.bloomKitCheck = bloomKitCheck; } catch (e) {}
     async function persistDrumKit(id, name, slots) {
       try {
         const db = await getImportedDB();

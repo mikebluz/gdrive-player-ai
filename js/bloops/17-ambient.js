@@ -12566,7 +12566,7 @@
             : '')
           + '</span>';
         modal.innerHTML =
-          '<div class="sm-title">Quick edit — ' + (iterMode ? 'across ' + refWord + 's' : 'units') + '</div>' +
+          '<div class="sm-title">Coarse — ' + (iterMode ? 'across ' + refWord + 's' : 'units') + '</div>' +
           '<div class="ambient-ug-sub">' + (iterMode
             ? ('Click a ' + refWord + ' to turn that layer off for the whole of it. This is the coarsest schedule — '
                + 'a ' + refWord + ' is ' + (E._qeIterRef === 'plot'
@@ -31847,7 +31847,7 @@
       const ov = document.createElement('div');
       ov.className = 'sm-overlay ambient-advpop';
       ov.innerHTML = '<div class="sm-modal ambient-advpop-modal">' +
-        '<div class="sm-title">Layer schedules</div>' +
+        '<div class="sm-title">Fine \u2014 layer schedules</div>' +
         '<div class="ambient-advpop-host"></div>' +
         '<div class="sm-footer"><button type="button" class="sm-apply">Done</button></div></div>';
       host0.appendChild(ov);
@@ -34436,11 +34436,11 @@
         + 'title="Parts — named stretches of bars on the bar clock. A part with changes plays them; one without is just time.">'
         + 'Parts</button>'
         + '<button type="button" class="ambient-seg ambient-sched-qe" '
-        + 'title="Edit — every layer\u2019s changes in one grid; click a cell to turn that layer off there">'
-        + 'Edit</button>'
+        + 'title="Coarse — every layer\u2019s changes in one grid; click a cell to turn that layer off there">'
+        + 'Coarse</button>'
         + '<button type="button" class="ambient-seg ambient-sched-advbtn" '
-        + 'title="Layer schedules — each layer\u2019s Unit, Evolve and phrase, plus the chord lane">'
-        + '\u2699 Layers</button>' + _rowSelHtml + '</div>' + html;
+        + 'title="Fine — each layer\u2019s Unit, Evolve and phrase, plus the chord lane">'
+        + '\u2699 Fine</button>' + _rowSelHtml + '</div>' + html;
       // THE LEGEND IS GONE TOO. A static key naming block / fresh / repeat /
       // playhead, which never changed and never responded to anything — and it
       // described marks that only appear once layers are running, so on a quiet

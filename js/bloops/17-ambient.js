@@ -5238,6 +5238,15 @@
     // arch-parity gate pin this behaviour, and no display reads them unguarded
     // (audited). If you add a consumer, guard it, or it will silently believe a
     // chromatic area is in C major.
+    function _ambAreaKeyScaleName(cfg) {
+      const c = cfg || _ambKeyCfg();
+      if (c && c.keyOn && c.keyFollow !== false) {
+        const ws = (typeof currentScale === 'string') ? currentScale : 'major';
+        return (typeof SCALES !== 'undefined' && SCALES[ws]) ? ws : 'major';
+      }
+      const q = (c && typeof c.keyScale === 'string' && c.keyScale) ? c.keyScale : 'major';
+      return (typeof SCALES !== 'undefined' && SCALES[q]) ? q : 'major';
+    }
     function _ambKeyRootPc(cfg) {
       const c = cfg || _ambKeyCfg();
       { const pk = _ambPartKeyNow(c); if (pk) return (((pk.root | 0) % 12) + 12) % 12; }
@@ -31759,7 +31768,16 @@
       if (el._sig === sig) return;
       el._sig = sig; el._curCi = -2;
       const esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
-      const kRoot = _ambKeyRootPc(cfg), kScale = _ambKeyScaleName(cfg);
+      // THE AREA KEY, NOT THE TIME-RESOLVED ONE. _ambKeyRootPc / _ambKeyScaleName
+      // consult _ambPartKeyNow — whichever part's key is in force AT THIS INSTANT.
+      // That is right for a note and wrong for a static drawing of every part at
+      // once: this strip repaints on edits and on the viz clock, so a part with
+      // no key of its own inherited whatever part happened to be sounding, and
+      // its numerals moved with it. Reproduced by toggling Names→Numerals mid
+      // -play: the first part's C read `I`, repainted, and came back `♭VII`
+      // (borrowing the chorus's D minor), and its key chip flipped C Major →
+      // D Minor. `_ambPartKeyForSlot` still gives each chip its OWN part's key.
+      const kRoot = _ambAreaKeyRootPc(cfg), kScale = _ambAreaKeyScaleName(cfg);
       const vShift = _ambProgViewShift(E, cfg, chords);
       const ranges = [];
       // An OPEN part consumes no chords, so from === to and it must not advance
@@ -31817,6 +31835,10 @@
           '</div>';
       }
       ranges.forEach(r => {
+        // ONE CARD PER PART. The header used to force a row break in a single
+        // flat strip (flex-basis 100%), so where one part ended and the next
+        // began was left to the reader to infer.
+        h += '<div class="ambient-pov-part' + (r.open ? ' pov-part-open' : '') + '">';
         if (r.open) {
           // A part with no changes: name, length, and the same ops as any other
           // part. It reads as a block of time because that is what it is — the
@@ -31824,13 +31846,14 @@
           h += '<div class="ambient-pov-parthdr ambient-pov-openhdr">' +
             '<span class="ambient-pov-partname" role="button" tabindex="0" data-pov="partren:' + r.pi + '" title="Rename this part">' + esc(r.name) + '</span>' +
             '<span class="ambient-pov-partops">' +
-              '<span role="button" tabindex="0" class="ambient-pov-partkey' + (r.key ? ' on' : '') + '" data-pov="partkey:' + r.pi + '" title="' + (r.key ? ('This part plays in ' + esc(_AMB_CHROM[r.key.root] + ' ' + r.key.scale) + '. Click to change or clear it.') : 'No key change — this part follows the area key.') + '">' + (r.key ? esc(_AMB_CHROM[r.key.root] + ' ' + r.key.scale.slice(0, 3)) : '♭♯') + '</span>' +
+              '<span role="button" tabindex="0" class="ambient-pov-partkey' + (r.key ? ' on' : '') + '" data-pov="partkey:' + r.pi + '" title="' + (r.key ? ('This part plays in ' + esc(_ambKeyLabel(r.key.root, r.key.scale)) + '. Click to change or clear it.') : ('No key change — this part follows the area key (' + esc(_ambKeyLabel(kRoot, kScale)) + '). Click to give it its own key.')) + '">' + _ambPovKeyHtml(r.key, kRoot, kScale) + '</span>' +
               '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':-1" title="Move this part earlier">◀</span>' +
               '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':1" title="Move this part later">▶</span>' +
               '<span role="button" tabindex="0" class="ambient-pov-partbtn ambient-pov-partrm" data-pov="partrm:' + r.pi + '" title="Remove this part">✕</span>' +
             '</span></div>' +
             '<span role="button" tabindex="0" class="ambient-pov-open' + (r.hold ? ' pov-hold' : '') + '" data-pov="openlen:' + r.pi + '" title="No changes here — ' + (r.hold ? 'the harmony HOLDS' : 'the changes keep running underneath') + ' for ' + (r.bars || 4) + ' bars. Click to change the length.">' +
               '<b>' + (r.hold ? 'holds' : 'no changes') + '</b><span class="ambient-pov-nm">' + (r.bars || 4) + ' bars</span></span>';
+          h += '</div>';
           return;
         }
         if (r.pi >= 0) {
@@ -31839,12 +31862,13 @@
             '<span class="ambient-pov-partops">' +
               // A part's own key is a modulation, so it is named right on the part
               // header rather than buried — you can see where the music changes key.
-              '<span role="button" tabindex="0" class="ambient-pov-partkey' + (r.key ? ' on' : '') + '" data-pov="partkey:' + r.pi + '" title="' + (r.key ? ('This part plays in ' + esc(_AMB_CHROM[r.key.root] + ' ' + r.key.scale) + ' — the area key is unchanged. Click to change or clear it.') : 'No key change — this part follows the area key. Click to give it its own key.') + '">' + (r.key ? esc(_AMB_CHROM[r.key.root] + ' ' + r.key.scale.slice(0, 3)) : '♭♯') + '</span>' +
+              '<span role="button" tabindex="0" class="ambient-pov-partkey' + (r.key ? ' on' : '') + '" data-pov="partkey:' + r.pi + '" title="' + (r.key ? ('These changes play in ' + esc(_ambKeyLabel(r.key.root, r.key.scale)) + ' — the area key is unchanged. Click to change or clear it.') : ('No key change — these changes follow the area key (' + esc(_ambKeyLabel(kRoot, kScale)) + '). Click to give them their own key.')) + '">' + _ambPovKeyHtml(r.key, kRoot, kScale) + '</span>' +
               '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':-1" title="Move these changes earlier">◀</span>' +
               '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':1" title="Move these changes later">▶</span>' +
               '<span role="button" tabindex="0" class="ambient-pov-partbtn ambient-pov-partrm" data-pov="partrm:' + r.pi + '" title="Remove these changes (and their chords)">✕</span>' +
             '</span></div>';
         }
+        h += '<div class="ambient-pov-chords">';
         for (let i = r.from; i < r.to; i++) {
           // The strip is the SCORE — written chords in written order, so the
           // playhead's identity lookup and the ×N alt badge still line up — but
@@ -31870,6 +31894,7 @@
             (altN ? '<i class="ambient-pov-alt" title="' + (altN + 1) + ' alternate chords cycle here">×' + (altN + 1) + '</i>' : '') +
             '</span>';
         }
+        h += '</div></div>';
       });
       // (＋ Part now leads the bar at the top of this strip — see above.)
       el.innerHTML = h;
@@ -32095,6 +32120,22 @@
     // the strip element (like the matrix's _pmPart), never a config field: nothing
     // about the music changes.
     const _ambPovNamesOn = (el) => !!el && el._povNames !== false;
+    // THE KEY, SPELLED OUT. "D min" was terse and "♭♯" — what a part following
+    // the area key used to show — named nothing at all, which is the opposite of
+    // what a key chip is for. A part with its own key states it; one that follows
+    // the area states the AREA's key, dimmed, so the header always answers "what
+    // key is this in" rather than only "does it differ from the area".
+    function _ambKeyLabel(root, scale) {
+      const nm = (typeof _AMB_CHROM !== 'undefined' && _AMB_CHROM[((root | 0) % 12 + 12) % 12]) || '';
+      const sc = (typeof prettyScaleName === 'function') ? prettyScaleName(scale || 'major') : (scale || 'major');
+      return (nm + ' ' + sc).trim();
+    }
+    function _ambPovKeyHtml(partKey, areaRoot, areaScale) {
+      const e = (x) => String(x).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const k = partKey ? _ambKeyLabel(partKey.root, partKey.scale) : _ambKeyLabel(areaRoot, areaScale);
+      return '<i>\u266a</i>' + e(k);
+    }
+
     function _ambProgGrpOpen(key, label, open, pop) {
       return '<div class="ambient-grp ambient-proggrp' + (open ? ' open' : '') + '" id="ambient-proggrp-' + key + '"'
         + (pop ? ' data-pop="1"' : '') + ' data-grp="' + label + '">' +

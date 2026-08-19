@@ -7432,6 +7432,55 @@
       }
       if (ps.length <= 1) { ed.parts = [];   /* staged-but-empty: null would read as 'never staged' in apply() */ ed.part = -1; }
     }
+    // DELETE A PART OUTRIGHT — the part AND its chords. Distinct from merging,
+    // which keeps the chords by folding them into a neighbour; this is the one
+    // destructive answer, so it confirms and it names what it will take.
+    //
+    // Everything that POINTS at a part or a chord has to move with it, or it
+    // silently re-points at whatever slid into the gap:
+    //   · prog.chords          — the part's own window is spliced out
+    //   · prog.chain           — part indices: drop this one, shift the rest down
+    //   · prog.arrGrid.seq     — same, the meta grid schedules parts by index
+    //   · sections[i].part     — the harmony binding
+    //   · layer chordMask.steps — keyed by CHORD index, so the same window goes
+    // Normalize would merely CLAMP most of these, which is not the same thing:
+    // a clamped index still resolves, just to the wrong part.
+    function _ambProgDeletePart(E, pi) {
+      const cfg = E && E.getCfg && E.getCfg(); const p = cfg && cfg.prog;
+      if (!p || !Array.isArray(p.parts) || !Array.isArray(p.chords)) return false;
+      const ps = p.parts;
+      if (!ps[pi] || ps.length <= 1) return false;          // the last part is the progression
+      let from = 0;
+      for (let i = 0; i < pi; i++) if (!ps[i].open) from += Math.max(1, ps[i].len | 0);
+      const len = ps[pi].open ? 0 : Math.max(1, ps[pi].len | 0);
+      const to = Math.min(p.chords.length, from + len);
+      const n = Math.max(0, to - from);
+      if (n && (p.chords.length - n) < 1) return false;      // never leave a progression with no chords
+      if (n) p.chords.splice(from, n);
+      ps.splice(pi, 1);
+      const fix = (v) => (v === pi ? -1 : (v > pi ? v - 1 : v));
+      if (Array.isArray(p.chain)) {
+        p.chain = p.chain.map(x => fix(x | 0)).filter(x => x >= 0);
+        if (!p.chain.length) delete p.chain;
+      }
+      if (p.arrGrid && p.arrGrid.seq) {
+        Object.keys(p.arrGrid.seq).forEach(k => {
+          p.arrGrid.seq[k] = (p.arrGrid.seq[k] || []).map(x => fix(x | 0)).filter(x => x >= 0);
+        });
+      }
+      if (Array.isArray(cfg.sections)) cfg.sections.forEach(sec => {
+        if (sec && Number.isFinite(sec.part)) { const nv = fix(sec.part | 0); if (nv < 0) delete sec.part; else sec.part = nv; }
+      });
+      if (n) {
+        try {
+          (_ambChordMatrixRows(cfg) || []).forEach(row => {
+            const m = row && row.L && row.L.chordMask;
+            if (m && Array.isArray(m.steps)) m.steps.splice(from, n);
+          });
+        } catch (e) {}
+      }
+      return true;
+    }
     function _ambPeRender() {
       const host = document.getElementById('ambient-prog-editor'); if (!host || !_ambProgEd) return;
       if (_ambProgEd._pvOn) { try { _ambPePreviewStop(_ambProgEd); } catch (e) {} }   // a full re-render orphans the chord-button refs → halt the preview
@@ -7574,6 +7623,7 @@
                 // read as destructive. The TARGET's name, repeats, key and salt win;
                 // this part's chords simply join it.
                 (ed.part > 0 ? '<button type="button" class="pe-partbtn pe-partmerge" data-pe="partmerge:' + ed.part + ':prev" title="Join ' + pnm + '\u2019s chords onto the end of ' + esc(_peParts[ed.part - 1].name || ('Changes ' + ed.part)) + '. No chords are lost; ' + esc(_peParts[ed.part - 1].name || 'that part') + '\u2019s own settings are kept.">\u21e6 Merge into ' + esc(_peParts[ed.part - 1].name || ('Changes ' + ed.part)) + '</button>' : '') +
+                (_peParts.length > 1 ? '<button type="button" class="pe-partbtn pe-partkill" data-pe="partkill:' + ed.part + '" title="Delete ' + pnm + ' AND its chords. Merging keeps the chords; this does not.">\u2715 Delete part</button>' : '') +
                 (ed.part < _peParts.length - 1 ? '<button type="button" class="pe-partbtn pe-partmerge" data-pe="partmerge:' + ed.part + ':next" title="Join ' + pnm + '\u2019s chords onto the front of ' + esc(_peParts[ed.part + 1].name || ('Changes ' + (ed.part + 2))) + '. No chords are lost; ' + esc(_peParts[ed.part + 1].name || 'that part') + '\u2019s own settings are kept.">Merge into ' + esc(_peParts[ed.part + 1].name || ('Changes ' + (ed.part + 2))) + ' \u21e8</button>' : '') +
               '</div>') +
             '</div>';
@@ -7894,6 +7944,43 @@
         try { if (_ambProgActions) (op === 'reharm' ? _ambProgActions.reharm() : _ambProgActions.detectKey()); } catch (e) {}
         // Re-seed the editor from whatever the operation left behind.
         try { const c = E.getCfg(); if (c && c.prog && Array.isArray(c.prog.chords)) ed.chords = c.prog.chords.map(_ambCloneChord); } catch (e) {}
+        _ambPeRender(); return;
+      }
+      else if (op === 'partkill') {
+        // Commit what is staged BEFORE deleting, the same order reharm/detectkey
+        // use: this operates on cfg.prog directly, so running it against the
+        // pre-edit chords would discard whatever is on screen — and it also
+        // means the delete is immediate rather than pending a Save, which is
+        // what stops chain/arrGrid being remapped for an edit you then cancel.
+        const E = ed.E, pi = parseInt(arg, 10);
+        const ps0 = _ambPeParts(ed);
+        if (!ps0 || !ps0[pi] || ps0.length <= 1) {
+          if (typeof showToast === 'function') showToast('A progression needs at least one set of changes — split it first, or merge instead.');
+          return;
+        }
+        const r0 = _ambPePartRange(ed, pi);
+        const nCh = Math.max(0, (r0 ? r0.to - r0.from : 0));
+        const nm0 = ps0[pi].name || ('Changes ' + (pi + 1));
+        if (typeof confirm === 'function' && !confirm(
+            'Delete "' + nm0 + '" and its ' + nCh + ' chord' + (nCh === 1 ? '' : 's') + '?\n\n' +
+            'The chords go with it. To keep them, merge this part into a neighbour instead.')) return;
+        try { if (ed.target && typeof ed.target.apply === 'function') ed.target.apply((ed.name || 'Prog').trim() || 'Prog', serialize()); } catch (e) {}
+        if (!_ambProgDeletePart(E, pi)) { if (typeof showToast === 'function') showToast('Could not delete that part.'); return; }
+        try {
+          const c = E.getCfg();
+          if (c && c.prog && Array.isArray(c.prog.chords)) {
+            ed.chords = c.prog.chords.map(_ambCloneChord);
+            ed.parts = (Array.isArray(c.prog.parts) && c.prog.parts.length > 1)
+              ? c.prog.parts.map(x => Object.assign({}, x)) : [];
+          }
+        } catch (e) {}
+        ed.part = Math.max(-1, Math.min((_ambPeParts(ed) || []).length - 1, pi - 1));
+        ed.sel = 0; ed.altSel = -1;
+        try { _ambRenderProgOverview(E); _ambRenderScheduler(E); } catch (e) {}
+        try { _ambRenderPassMatrix(E); } catch (e) {}
+        try { _ambProgChainLenSync(E); } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        if (typeof showToast === 'function') showToast('Deleted "' + nm0 + '" — ' + nCh + ' chord' + (nCh === 1 ? '' : 's') + ' removed.');
         _ambPeRender(); return;
       }
       else if (op === 'cancel') { _ambPeClose(); return; }

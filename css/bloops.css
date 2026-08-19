@@ -3951,6 +3951,10 @@
     .pe-partplays b { min-width: 34px; text-align: center; font-size: 0.95rem; }
     .pe-partstep { min-width: 46px; padding: 8px 0; font-size: 1.15rem; text-align: center; }
     .pe-partmerge { border-color: #4a5f7a; color: #cfe4ff; }
+    /* The one destructive part op — merging keeps the chords, this does not.
+       Styled as danger so it can never be mistaken for a merge. */
+    .pe-partkill { border-color: rgba(252,129,129,0.55); color: #fc8181; }
+    .pe-partkill:hover { border-color: #fc8181; background: rgba(252,129,129,0.16); color: #fed7d7; }
     @media (hover: hover) { .pe-partmerge:hover { border-color: #63b3ed; background: rgba(99,179,237,0.16); color: #e6f2ff; } }
     .pe-partdel { align-self: flex-start; border-color: #5a3a46; color: #f0b6c0; }
     @media (hover: hover) { .pe-partdel:hover { border-color: #e06c8a; background: rgba(224,108,138,0.16); color: #ffd9e1; } }

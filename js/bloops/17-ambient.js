@@ -31889,6 +31889,24 @@
         // opens. It opens the whole piece laid out end to end: the song map.
         '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="arrmap" ' +
           'title="Song map — the whole piece end to end: order of play, every part and section, and the bars they occupy">▤ Song map</span>' +
+        // CADENCE, when there are no PARTS to hang it on. A progression without a
+        // chain renders no part header — and `_ambRepairParts` collapses a
+        // single part to none — so hanging this only on the header made it
+        // invisible on the common case: measured 0 chips with no parts AND with
+        // one, 2 chips with two. Without parts the whole progression is one
+        // cadence, which is exactly what `_ambCadRange(cfg, 0)` already returns.
+        ((function () {
+          const _hasParts = !!(Array.isArray(prog.parts) && prog.parts.length);
+          if (_hasParts) return '';                      // each part carries its own
+          const _cad = _ambCadence(cfg, 0);
+          if (!_cad.length) return '';
+          const _flat = _cad.every(v => Math.abs(v - _cad[0]) < 1e-6);
+          const _tot = _cad.reduce((a, v) => a + v, 0);
+          return '<span role="button" tabindex="0" class="ambient-pov-cad' + (_flat ? '' : ' on') + '" data-pov="cad:0"'
+            + ' title="Cadence — how many bars each chord is held (' + esc(_ambCadStr(_cad)) + ' = '
+            + esc(_ambFmtBpc(_tot)) + ' bars). Click to edit or generate a new shape.">'
+            + '<i>\u29d6</i>' + esc(_flat ? ('even \u00d7' + _cad.length) : _ambCadStr(_cad)) + '</span>';
+        })()) +
         '<span role="button" tabindex="0" class="ambient-pov-namesbtn' + (namesFirst ? ' on' : '') + '" data-pov="names" title="' +
           (namesFirst ? 'Showing chord NAMES first with the numeral after \u2014 click to lead with numerals' :
                         'Showing ROMAN NUMERALS first with the name after \u2014 click to lead with chord names') + '">' +

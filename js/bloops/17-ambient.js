@@ -9038,13 +9038,18 @@
       // clock through all three of its branches. A progression where no chord
       // carries a length keeps the original arithmetic exactly — same number,
       // and no bisection to pay for.
-      let chordSec = Math.max(0.05, (Math.max(0.01, cfg.barsPerChord || 1)) * barSec);
-      if (_ambProgHasCadence(cfg)) {
-        const _t = Number.isFinite(atSec) ? atSec
-          : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0);
-        try { const sp = _ambChordSpanAt(E, cfg, _t); if (sp && sp.len > 0.05) chordSec = sp.len; } catch (e) {}
-      }
+      // `subUnit` STAYS UNIFORM. It is the SCHEDULER's grid — runLayer steps
+      // `psi.anchor + n * subUnit` — so making it vary per chord moved the
+      // lattice underfoot and the walk SKIPPED a chord entirely: measured, a
+      // 2·½·1·1 cadence played chords 0, 1, 3 and never 2. The real chord length
+      // rides ALONGSIDE it as `chordNowSec`, for readouts only, and only when a
+      // time is supplied — so no scheduler path can see it or pay for it.
+      const chordSec = Math.max(0.05, (Math.max(0.01, cfg.barsPerChord || 1)) * barSec);
       const subUnit = Math.max(0.03, chordSec / subdiv);
+      let chordNowSec = 0;
+      if (Number.isFinite(atSec) && _ambProgHasCadence(cfg)) {
+        try { const sp = _ambChordSpanAt(E, cfg, atSec); if (sp && sp.len > 0.05) chordNowSec = sp.len; } catch (e) {}
+      }
       // Anchor the chord sub-grid on the LAYERS' shared grid (_barGridAnchor =
       // the first-onset lead) — the same grid unit-synced layers snap to — NOT
       // _playStartAt. The two differ by the first tick's lead (~60-150 ms), and
@@ -9056,7 +9061,7 @@
       // harness) never set _barGridAnchor → same playStart fallback as before.
       const anchor = Number.isFinite(E && E._barGridAnchor) ? E._barGridAnchor
         : (Number.isFinite(E && E._playStartAt) ? E._playStartAt : 0);
-      return { subdiv, chordSec, subUnit, anchor, feel: (lc && lc.progFeel) === 'stochastic' ? 'stochastic' : 'even' };
+      return { subdiv, chordSec, subUnit, chordNowSec, anchor, feel: (lc && lc.progFeel) === 'stochastic' ? 'stochastic' : 'even' };
     }
     // ---- DRONE PEDAL NOTE (one note per progression cycle) -------------------
     // Score every pitch class against ALL of a progression's chords + the key,
@@ -19774,14 +19779,28 @@
     }
     // The layer's effective unit length (Sync-aware) — used by the status bar,
     // unit readout, queue boundaries, and Unit-Match.
-    function _ambLayerPeriodSec(E, key, L, cfg, atSec) {
+    function _ambLayerPeriodSec(E, key, L, cfg) {
       // PROG-SYNC: the layer's real iteration IS the chord sub-slot, so the period
       // that drives the status bar / boundary / choke must be the sub-unit — else
       // the bar fills at the layer's own (unused) unit rate while onsets land on the
       // chord grid, and the fraction lurches at each onset. Null → normal unit.
-      const psi = _ambProgSyncInfo(E, key, L, cfg, atSec);
+      const psi = _ambProgSyncInfo(E, key, L, cfg);
       if (psi) return psi.subUnit;
       return _ambResolvedUnitSec(E, key, cfg, new Set());
+    }
+    // THE PERIOD A READOUT SHOULD DRAW — the chord actually in force, where
+    // _ambLayerPeriodSec gives the scheduler's fixed grid. They were briefly the
+    // same function and that is what dropped a chord: the progress bar wants
+    // "how long is THIS chord", the onset walk wants a lattice that does not
+    // move under it. Falls back to the period, so a layer with no cadence (or no
+    // prog-sync at all) draws exactly as before.
+    function _ambLayerBarPeriodSec(E, key, L, cfg, atSec) {
+      try {
+        const psi = _ambProgSyncInfo(E, key, L, cfg,
+          Number.isFinite(atSec) ? atSec : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0));
+        if (psi && psi.chordNowSec > 0.05) return psi.chordNowSec / Math.max(1, psi.subdiv);
+      } catch (e) {}
+      return _ambLayerPeriodSec(E, key, L, cfg);
     }
     // UNIT-SYNC SHARED GRID: a unit-synced layer's onsets snap to the play-wide
     // grid (E._barGridAnchor = the layers' first-onset lead, pinned once per
@@ -27239,7 +27258,7 @@
             // Bar-Lock loop: fill per the LAYER's own unit (per chord), consistent
             // with its generative phase — the area counter shows the whole loop.
             const layer = _ambLayerByKey(E, key);
-            const P = layer ? _ambLayerPeriodSec(E, key, layer, E._cfg || E.getCfg()) : 0;
+            const P = layer ? _ambLayerBarPeriodSec(E, key, layer, E._cfg || E.getCfg()) : 0;
             const unitP = (P > 0.05) ? P : fs.loopLen;
             prog = d <= 0 ? 0 : (((d % unitP) / unitP) + 1) % 1;
             if (d > 0) cyc = Math.floor(d / unitP);   // keep the When cursor moving per unit
@@ -27256,7 +27275,7 @@
             // scheduling cursor (which runs out to the 1.4 s horizon and made the
             // Arp bar lead ~a second and never line up with phase-anchored layers).
             const cfg2 = E._cfg || E.getCfg();
-            const P = _ambLayerPeriodSec(E, key, layer, cfg2);
+            const P = _ambLayerBarPeriodSec(E, key, layer, cfg2);
             const st = E.arpState && E.arpState[key];
             if (st && st.startAt != null && P > 0 && now >= st.startAt) {
               prog = (((now - st.startAt) % P) / P + 1) % 1;
@@ -27269,7 +27288,7 @@
             let st = null;
             if (type === 'bass') st = E.bassPhase && E.bassPhase[key];
             else st = E.runPhase && E.runPhase[key];
-            const P = _ambLayerPeriodSec(E, key, layer, E._cfg || E.getCfg());
+            const P = _ambLayerBarPeriodSec(E, key, layer, E._cfg || E.getCfg());
             if (st && st.startAt != null && P > 0 && now >= st.startAt) {
               prog = (((now - st.startAt) % P) / P + 1) % 1;
               cyc = Math.floor((now - st.startAt) / P);   // absolute When-cycle (= unit/loop index)
@@ -27286,7 +27305,7 @@
             // have; seq was the last branch missing it.
             const next = E.clocks && E.clocks[key];
             const idx = E.iters && E.iters[key];
-            const P = _ambLayerPeriodSec(E, key, layer, E._cfg || E.getCfg());
+            const P = _ambLayerBarPeriodSec(E, key, layer, E._cfg || E.getCfg());
             if (typeof next === 'number' && Number.isFinite(idx) && next > now && P > 0.001) {
               const pos = idx - (next - now) / P;
               if (pos >= 0) { prog = ((pos % 1) + 1) % 1; active = true; }
@@ -27298,7 +27317,7 @@
             // this bar permanently empty. Track the phase anchor like the other
             // windowed layers.
             const st = E.runPhase && E.runPhase[key];
-            const P = _ambLayerPeriodSec(E, key, layer, E._cfg || E.getCfg());
+            const P = _ambLayerBarPeriodSec(E, key, layer, E._cfg || E.getCfg());
             if (st && st.startAt != null && P > 0 && now >= st.startAt) {
               prog = (((now - st.startAt) % P) / P + 1) % 1;
               cyc = Math.floor((now - st.startAt) / P);
@@ -27317,7 +27336,7 @@
               // area progression drives the chord clock. In Free timing this equals
               // the old _ambStepSecFor×scale×Hold, so the common path is unchanged.
               const cfg2 = E._cfg || E.getCfg();
-              const iv = Math.max(0.05, _ambLayerPeriodSec(E, key, layer, cfg2) || 1);
+              const iv = Math.max(0.05, _ambLayerBarPeriodSec(E, key, layer, cfg2) || 1);
               // Continuous iteration index at `now`; <0 = before the first onset, so
               // stay EMPTY instead of rendering ~full ("near the end of a phantom
               // previous cycle") right after Play. (Same guard as the texture branch.)

@@ -9019,7 +9019,7 @@
     // up with chord boundaries) or null when there's no active prog / not a chord
     // layer. Subdivision 1 = one voicing per area chord. Uniform barsPerChord
     // (per-chord `bars` fall back to the area default for the grid — v1).
-    function _ambProgSyncInfo(E, key, lc, cfg) {
+    function _ambProgSyncInfo(E, key, lc, cfg, atSec) {
       cfg = cfg || (E && (E._cfg || (E.getCfg && E.getCfg())));
       const p = cfg && cfg.prog;
       if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return null;
@@ -9028,7 +9028,22 @@
       const subdiv = Math.max(1, Math.min(16, (lc && lc.progSubdiv | 0) || 1));
       const bpm = (cfg.bpm > 0) ? cfg.bpm : _ambBpm();
       const barSec = (60 / Math.max(20, bpm)) * 4;
-      const chordSec = Math.max(0.05, (Math.max(0.01, cfg.barsPerChord || 1)) * barSec);
+      // THE CHORD IN FORCE, not a uniform assumption. This used to be
+      // `barsPerChord * barSec` for every chord — fine while per-chord lengths
+      // were rare, and wrong the moment CADENCE made them normal: a prog-synced
+      // layer's period stayed 1 bar under a 2·½·1·1 shape, so its progress bar
+      // filled at a rate the onsets did not follow and lurched at every chord
+      // (reported as "unit length should reset with each chord length"). The
+      // span comes from `_ambProgStepAt` by bisection, so it agrees with the
+      // clock through all three of its branches. A progression where no chord
+      // carries a length keeps the original arithmetic exactly — same number,
+      // and no bisection to pay for.
+      let chordSec = Math.max(0.05, (Math.max(0.01, cfg.barsPerChord || 1)) * barSec);
+      if (_ambProgHasCadence(cfg)) {
+        const _t = Number.isFinite(atSec) ? atSec
+          : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0);
+        try { const sp = _ambChordSpanAt(E, cfg, _t); if (sp && sp.len > 0.05) chordSec = sp.len; } catch (e) {}
+      }
       const subUnit = Math.max(0.03, chordSec / subdiv);
       // Anchor the chord sub-grid on the LAYERS' shared grid (_barGridAnchor =
       // the first-onset lead) — the same grid unit-synced layers snap to — NOT
@@ -19759,12 +19774,12 @@
     }
     // The layer's effective unit length (Sync-aware) — used by the status bar,
     // unit readout, queue boundaries, and Unit-Match.
-    function _ambLayerPeriodSec(E, key, L, cfg) {
+    function _ambLayerPeriodSec(E, key, L, cfg, atSec) {
       // PROG-SYNC: the layer's real iteration IS the chord sub-slot, so the period
       // that drives the status bar / boundary / choke must be the sub-unit — else
       // the bar fills at the layer's own (unused) unit rate while onsets land on the
       // chord grid, and the fraction lurches at each onset. Null → normal unit.
-      const psi = _ambProgSyncInfo(E, key, L, cfg);
+      const psi = _ambProgSyncInfo(E, key, L, cfg, atSec);
       if (psi) return psi.subUnit;
       return _ambResolvedUnitSec(E, key, cfg, new Set());
     }
@@ -20569,6 +20584,15 @@
             } else {
               // snap to the next chord-grid slot strictly after C[key] (with a min gap
               // so a prompt first onset can't sit right on top of the next slot).
+              // NOTE: this lattice assumes every chord is the same length. Under a
+              // CADENCE it is wrong — the onsets walk a fixed psi.subUnit while the
+              // harmony moves on its own spans. A span-following version was written
+              // and REVERTED: measured against boundaries 0, 2, 2½, 3½ it produced
+              // 0, 2, 2½, 3, 4 — advancing by the PREVIOUS chord's length, which I
+              // could not account for. The layer PERIOD (and so the progress bar)
+              // does follow the chord now; re-gridding the onsets themselves is a
+              // change to the drivers — the bed's walk is in _ambEmitSustain, the
+              // drone's here — and is not done.
               ng = psi.anchor + (Math.floor((C[key] - psi.anchor) / psi.subUnit) + 1) * psi.subUnit;
               while (ng < C[key] + minSec) ng += psi.subUnit;
             }
@@ -32547,6 +32571,63 @@
     // the engine by construction.
     const _AMB_CHOKE_GAP = 0.012;        // leave the boundary clean, as the bed choke does
     let _ambChokeMemo = null;            // { sig, at, end } — one entry; steps repeat, so it hits
+    // Does ANY chord carry its own length? When none does, every chord is exactly
+    // barsPerChord and the callers below keep their original arithmetic — so a
+    // flat progression is byte-identical and never pays for a bisection.
+    function _ambProgHasCadence(cfg) {
+      const ch = cfg && cfg.prog && cfg.prog.chords;
+      return !!(Array.isArray(ch) && ch.some(c => c && Number.isFinite(c.bars) && c.bars > 0));
+    }
+    // The SPAN of the chord sounding at `atSec` — start, end and length. Both
+    // edges come from `_ambProgStepAt` by bisection, never from a second walk of
+    // the chord lengths: that function has three branches (section-bound parts,
+    // part repeats, salted lengths) and re-deriving edges beside it is how the
+    // Scheduler lane used to lie about the harmony.
+    let _ambSpanMemo = null;
+    function _ambChordSpanAt(E, cfg, atSec) {
+      const p = cfg && cfg.prog;
+      if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return null;
+      const bpm = (cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      let step0; try { step0 = _ambProgStepAt(E, atSec) | 0; } catch (e) { return null; }
+      const sig = step0 + '|' + (E._barGridAnchor || 0) + '|' + (E._progAnchor || 0) + '|' + bpm
+        + '|' + p.chords.map(c => (c && c.bars) || 0).join(',');
+      if (_ambSpanMemo && _ambSpanMemo.sig === sig
+          && atSec >= _ambSpanMemo.start && atSec < _ambSpanMemo.end) return _ambSpanMemo;
+      const win = barSec * 8;                       // > the 4-bar cadence ceiling
+      const edge = (lo, hi, want) => {              // last t in [lo,hi] whose step === want
+        for (let i = 0; i < 14; i++) {
+          const mid = (lo + hi) / 2; let sm;
+          try { sm = _ambProgStepAt(E, mid) | 0; } catch (e) { return hi; }
+          if (sm === want) lo = mid; else hi = mid;
+        }
+        return hi;
+      };
+      let end = atSec + win;
+      try { if ((_ambProgStepAt(E, end) | 0) !== step0) end = edge(atSec, atSec + win, step0); } catch (e) { return null; }
+      // START: walk back to the first instant still on this step — but never past
+      // the chord clock's OWN ORIGIN. Before it there is no progression, and
+      // _ambProgStepAt clamps to step 0 there, so an unbounded search made the
+      // FIRST chord look ~10 bars long (measured 9.988 for a 2-bar chord) and
+      // handed that to the progress bar as its period.
+      const origin = Number.isFinite(E && E._progAnchor) ? E._progAnchor
+        : (Number.isFinite(E && E._playStartAt) ? E._playStartAt : 0);
+      let start = Math.max(origin, atSec - win);
+      if (start < atSec) {
+        try {
+          if ((_ambProgStepAt(E, start) | 0) !== step0) {
+            let lo = start, hi = atSec;              // last t BEFORE this step began
+            for (let i = 0; i < 14; i++) { const mid = (lo + hi) / 2; let sm;
+              try { sm = _ambProgStepAt(E, mid) | 0; } catch (e) { break; }
+              if (sm === step0) hi = mid; else lo = mid; }
+            start = hi;
+          }
+        } catch (e) {}
+      }
+      const out = { start, end, len: Math.max(0.05, end - start), step: step0, sig };
+      _ambSpanMemo = out;
+      return out;
+    }
     function _ambChordEndAt(E, cfg, atSec) {
       const p = cfg && cfg.prog;
       if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return 0;

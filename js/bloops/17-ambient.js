@@ -4532,6 +4532,27 @@
     // progression tight across the ~1.4 s lookahead. `_progAnchor` lets Bar Lock
     // later make this LOOP-relative; until set it falls back to play start.
     // (Phase 1a: defined but NOT yet wired into the emits — that's 1b.)
+    // WHICH CHORD INSTANCE is sounding — a strictly increasing count of chord
+    // instances since the chord clock's origin, as opposed to _ambProgStepAt's
+    // `step`, which identifies WHICH WRITTEN CHORD and deliberately repeats.
+    //
+    // They diverge exactly when a part is revisited: a chain of V C V plays the
+    // Verse's chords twice in ONE pass, so `step` takes the same value in two
+    // disjoint stretches of time. Anything that searches for the EXTENT of the
+    // current chord has to bisect on the instance, or it joins the two stretches
+    // into one — measured on chain [V,C,V]: a 1-bar G reported a 5.5-bar span and
+    // a 2-bar C reported 6.5 bars starting from the wrong Verse.
+    //
+    // Set as a side effect of the one walk in _ambProgStepAt (never a second walk
+    // of the chord lengths — that is how the Scheduler lane used to lie about the
+    // harmony), and read straight after. Sites that ask "which chord" keep using
+    // step and its `% len` / `floor(/ len)` contract, untouched.
+    let _ambProgInstHint = 0;
+    function _ambProgInstanceAt(E, atSec, src) {
+      _ambProgInstHint = 0;
+      let st = 0; try { st = _ambProgStepAt(E, atSec, src) | 0; } catch (e) { return 0; }
+      return Number.isFinite(_ambProgInstHint) ? _ambProgInstHint : st;
+    }
     function _ambProgStepAt(E, atSec, src) {
       E = E || _E; if (!E) return 0;
       const cfg = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : (E.getCfg && E.getCfg()));
@@ -4585,6 +4606,8 @@
           // Keep BOTH caller contracts: `step % chords.length` is the chord index,
           // and `floor(step / chords.length)` is the variation cycle the alternates
           // and order-perm hash on — so alts still evolve inside a bound section.
+          // …and a MONOTONIC instance ordinal beside it — see _ambProgInstanceAt.
+          _ambProgInstHint = ((_at.step | 0) + _loops) * Math.max(1, _part.len) + _k;
           return ((_at.step | 0) + _loops) * _L + ((_part.from + _k) % _L);
         }
       }
@@ -4639,6 +4662,12 @@
           let rem = bars - loops * cycle, k = 0;
           while (k < seq.length - 1 && rem >= seq[k].len) { rem -= seq[k].len; k++; }
           const step = loops * L + seq[k].abs;
+          // THE STEP IS NOT MONOTONIC HERE and cannot be: a chain that revisits a
+          // part (V C V) plays the same `abs` twice in one cycle, so the value
+          // repeats within a single pass. `k` is the position in the played
+          // sequence, which is monotonic by construction — that is what the span
+          // search must bisect on.
+          _ambProgInstHint = loops * seq.length + k;
           _ambProgPosHint = { step: step, pos: Math.max(0, Math.min(1, rem / Math.max(1e-6, seq[k].len))) };
           return step;
         }
@@ -4672,10 +4701,12 @@
         let pos = bars - cyc * cycle, i = 0;
         while (i < lens.length - 1 && pos >= lens[i]) { pos -= lens[i]; i++; }
         const step = cyc * chords.length + i;
+        _ambProgInstHint = step;   // already monotonic: i only grows within a cycle
         _ambProgPosHint = { step: step, pos: Math.max(0, Math.min(1, pos / Math.max(1e-6, lens[i]))) };
         return step;
       }
       const _ustep = Math.floor(bars / bpc);
+      _ambProgInstHint = _ustep;   // uniform grid — monotonic by definition
       _ambProgPosHint = { step: _ustep, pos: Math.max(0, Math.min(1, (bars - _ustep * bpc) / bpc)) };
       return _ustep;
     }
@@ -32865,21 +32896,26 @@
       const bpm = (cfg.bpm > 0) ? cfg.bpm : _ambBpm();
       const barSec = (60 / Math.max(20, bpm)) * 4;
       let step0; try { step0 = _ambProgStepAt(E, atSec) | 0; } catch (e) { return null; }
-      const sig = step0 + '|' + (E._barGridAnchor || 0) + '|' + (E._progAnchor || 0) + '|' + bpm
+      // BISECT ON THE INSTANCE, NOT THE STEP. `step` says which written chord and
+      // repeats within one pass whenever a chain revisits a part (V C V), so an
+      // equality search on it joins two disjoint stretches of time into one span.
+      // The instance ordinal only ever increases — see _ambProgInstanceAt.
+      let inst0; try { inst0 = _ambProgInstanceAt(E, atSec) | 0; } catch (e) { return null; }
+      const sig = step0 + '#' + inst0 + '|' + (E._barGridAnchor || 0) + '|' + (E._progAnchor || 0) + '|' + bpm
         + '|' + p.chords.map(c => (c && c.bars) || 0).join(',');
       if (_ambSpanMemo && _ambSpanMemo.sig === sig
           && atSec >= _ambSpanMemo.start && atSec < _ambSpanMemo.end) return _ambSpanMemo;
       const win = barSec * 8;                       // > the 4-bar cadence ceiling
-      const edge = (lo, hi, want) => {              // last t in [lo,hi] whose step === want
+      const edge = (lo, hi, want) => {              // last t in [lo,hi] whose instance === want
         for (let i = 0; i < 14; i++) {
           const mid = (lo + hi) / 2; let sm;
-          try { sm = _ambProgStepAt(E, mid) | 0; } catch (e) { return hi; }
+          try { sm = _ambProgInstanceAt(E, mid) | 0; } catch (e) { return hi; }
           if (sm === want) lo = mid; else hi = mid;
         }
         return hi;
       };
       let end = atSec + win;
-      try { if ((_ambProgStepAt(E, end) | 0) !== step0) end = edge(atSec, atSec + win, step0); } catch (e) { return null; }
+      try { if ((_ambProgInstanceAt(E, end) | 0) !== inst0) end = edge(atSec, atSec + win, inst0); } catch (e) { return null; }
       // START: walk back to the first instant still on this step — but never past
       // the chord clock's OWN ORIGIN. Before it there is no progression, and
       // _ambProgStepAt clamps to step 0 there, so an unbounded search made the
@@ -32890,11 +32926,11 @@
       let start = Math.max(origin, atSec - win);
       if (start < atSec) {
         try {
-          if ((_ambProgStepAt(E, start) | 0) !== step0) {
-            let lo = start, hi = atSec;              // last t BEFORE this step began
+          if ((_ambProgInstanceAt(E, start) | 0) !== inst0) {
+            let lo = start, hi = atSec;              // last t BEFORE this instance began
             for (let i = 0; i < 14; i++) { const mid = (lo + hi) / 2; let sm;
-              try { sm = _ambProgStepAt(E, mid) | 0; } catch (e) { break; }
-              if (sm === step0) hi = mid; else lo = mid; }
+              try { sm = _ambProgInstanceAt(E, mid) | 0; } catch (e) { break; }
+              if (sm === inst0) hi = mid; else lo = mid; }
             start = hi;
           }
         } catch (e) {}

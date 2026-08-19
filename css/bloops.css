@@ -13394,6 +13394,70 @@
     .ambient-cad-modal .cad-total.is-even .cad-total-w { color: #4fd1c5; }
     .ambient-cad-modal .cad-total.is-odd { border-color: rgba(246,173,85,0.38); background: rgba(246,173,85,0.09); }
     .ambient-cad-modal .cad-total.is-odd .cad-total-w { color: #f6ad55; }
+    /* ▦ PASSES — the part matrix. Columns are passes, rows are the part's
+       chords. The grid must never scroll sideways (UI rule 1), so the columns
+       share the row via 1fr and the chord label takes a fixed gutter. */
+    .ambient-passmx { display: block; }
+    .ambient-passmx .pmx-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+    .ambient-passmx .pmx-tab { min-height: 30px; padding: 4px 10px; }
+    .ambient-passmx .pmx-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 7px; }
+    .ambient-passmx .pmx-bar .ambient-hint { flex: 1 1 160px; }
+    .ambient-passmx .pmx-cols { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+    .ambient-passmx .pmx-cols .ambient-seg { min-width: 34px; min-height: 30px; }
+    .ambient-passmx .pmx-colsn { min-width: 18px; text-align: center; color: #e2e8f0; font-size: 0.82rem; }
+    .ambient-passmx .pmx-grid { display: flex; flex-direction: column; gap: 3px; }
+    .ambient-passmx .pmx-row {
+      display: grid; grid-template-columns: 54px repeat(var(--pmxc), minmax(0, 1fr));
+      gap: 3px; align-items: stretch;
+    }
+    @media (max-width: 460px) {
+      .ambient-passmx .pmx-row { grid-template-columns: 34px repeat(var(--pmxc), minmax(0, 1fr)); gap: 2px; }
+      .ambient-passmx .pmx-rowlbl { font-size: 0.62rem; }
+    }
+    .ambient-passmx .pmx-rowlbl {
+      font: 600 0.68rem 'Segoe UI', sans-serif; color: #a0aec0; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      display: flex; align-items: center;
+    }
+    .ambient-passmx .pmx-head .pmx-h {
+      font: 600 0.6rem 'Segoe UI', sans-serif; color: #6b6b8a; text-align: center;
+    }
+    .ambient-passmx .pmx-head .pmx-h.empty { color: #4a4a63; }
+    .ambient-passmx .pmx-cell {
+      min-height: 30px; min-width: 0; padding: 2px; border-radius: 6px;
+      font: 600 0.62rem 'Segoe UI', sans-serif; letter-spacing: -0.02em;
+      background: rgba(255,255,255,0.03); border: 1px solid rgba(160,174,192,0.18); color: #6b6b8a;
+      touch-action: manipulation; overflow: hidden;
+    }
+    .ambient-passmx .pmx-cell.on {
+      background: rgba(159,122,234,0.26); border-color: #9f7aea; color: #e9d8fd;
+    }
+    .ambient-passmx .pmx-seqrow { margin-top: 4px; }
+    .ambient-passmx .pmx-seq {
+      font: 600 0.58rem 'Segoe UI', sans-serif; color: #cbd5e0; text-align: center;
+      padding: 4px 2px; border-radius: 6px; cursor: pointer; min-width: 0;
+      background: rgba(255,255,255,0.03); border: 1px dashed rgba(160,174,192,0.22);
+      /* WRAPS, never ellipses. This caption exists precisely so a pass can be
+         read without sorting the cells by eye — clipping it to "C·C…" defeats
+         the one thing it is for. At 390px with 8 columns 6 of 8 were clipped. */
+      white-space: normal; overflow-wrap: anywhere; line-height: 1.15;
+    }
+    .ambient-passmx .pmx-seq.empty { color: #4a4a63; }
+    .ambient-passmx .pmx-foot { display: block; margin-top: 7px; }
+    /* The per-pass order editor. */
+    .ambient-pseq-modal .pseq-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; min-height: 34px; }
+    .ambient-pseq-modal .pseq-chip {
+      display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 4px 9px;
+      border-radius: 999px; background: rgba(159,122,234,0.22); border: 1px solid #9f7aea;
+      color: #e9d8fd; font: 600 0.72rem 'Segoe UI', sans-serif; cursor: grab; user-select: none;
+    }
+    .ambient-pseq-modal .pseq-chip i { font-style: normal; opacity: 0.6; font-size: 0.66rem; }
+    .ambient-pseq-modal .pseq-addlbl {
+      font: 600 0.62rem 'Segoe UI', sans-serif; letter-spacing: 0.06em; text-transform: uppercase;
+      color: #6b6b8a; margin-top: 6px;
+    }
+    .ambient-pseq-modal .pseq-add { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+    .ambient-pseq-modal .pseq-add .ambient-seg { min-height: 30px; padding: 4px 10px; }
     .ambient-cad-modal .cad-genlbl { font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase;
       color: #8a90a6; margin: 12px 0 5px; }
     .ambient-cad-modal .cad-gen { display: flex; flex-wrap: wrap; gap: 5px; }

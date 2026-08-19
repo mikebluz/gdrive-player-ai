@@ -4682,6 +4682,36 @@
       }
       return out.length ? out : null;
     }
+    // ---- PASS EDITOR writers (phase 3) --------------------------------------
+    // A column is stored as its SEQUENCE. Normalize prunes a column equal to the
+    // written order and drops a grid with nothing left, so "edit it back to
+    // normal" removes the field rather than storing a redundant copy.
+    function _ambPassWrite(cfg, pi, col, arr) {
+      const parts = cfg && cfg.prog && cfg.prog.parts;
+      if (!Array.isArray(parts) || !parts[pi] || parts[pi].open) return false;
+      const p = parts[pi], plen = Math.max(1, p.len | 0);
+      if (!p.grid || typeof p.grid !== 'object') p.grid = { cols: _AMB_GRID_COLS, seq: {} };
+      if (!p.grid.seq || typeof p.grid.seq !== 'object') p.grid.seq = {};
+      p.grid.cols = _ambGridCols(p.grid);
+      p.grid.seq[String(col | 0)] = (arr || []).map(v => v | 0).filter(v => v >= 0 && v < plen).slice(0, 64);
+      return true;
+    }
+    function _ambPassColsSet(cfg, pi, n) {
+      const parts = cfg && cfg.prog && cfg.prog.parts;
+      if (!Array.isArray(parts) || !parts[pi] || parts[pi].open) return false;
+      const p = parts[pi];
+      const want = Math.max(1, Math.min(32, n | 0));
+      if (!p.grid || typeof p.grid !== 'object') {
+        if (want === _AMB_GRID_COLS) return false;             // nothing to say yet
+        p.grid = { cols: want, seq: {} };
+        return true;
+      }
+      p.grid.cols = want;
+      // Drop any column beyond the new width — it can never be reached, and a
+      // stored row nobody plays is the stale-mirror bug this model avoids.
+      if (p.grid.seq) Object.keys(p.grid.seq).forEach(k => { if ((k | 0) >= want) delete p.grid.seq[k]; });
+      return true;
+    }
     // WHICH CHORD INSTANCE is sounding — a strictly increasing count of chord
     // instances since the chord clock's origin, as opposed to _ambProgStepAt's
     // `step`, which identifies WHICH WRITTEN CHORD and deliberately repeats.
@@ -33282,7 +33312,7 @@
       try { _ambRenderScheduler(E); } catch (e) {}
     }
     function _ambProgGrpSync(E) {
-      ['salt', 'order', 'overview', 'sched', 'matrix', 'sections'].forEach(k => {
+      ['salt', 'order', 'overview', 'sched', 'matrix', 'passes', 'sections'].forEach(k => {
         const g = _ambGet(E, 'ambient-proggrp-' + k); if (!g) return;
         const body = g.querySelector('.ambient-grp-body'); if (!body) return;
         // A popover group shows only while it is inside the popover host; parked
@@ -33293,6 +33323,208 @@
         }
         const any = Array.prototype.some.call(body.children, c => c.style.display !== 'none');
         g.style.display = any ? '' : 'none';
+      });
+    }
+    // ===== ▦ PASSES — the part matrix (docs/bloom-part-matrix.md) ===========
+    // Rows are the part's chords, columns are its passes. A cell shows the
+    // POSITIONS that chord occupies in that pass, and the caption under each
+    // column spells the resulting sequence so nothing has to be sorted by eye.
+    // Per part, with tabs — the same shape the ⌗ Matrix already uses.
+    function _ambRenderPassMatrix(E) {
+      const el = _ambGet(E, 'ambient-passmx'); if (!el) return;
+      const cfg = E.getCfg();
+      const prog = cfg && cfg.prog;
+      const on = !!(prog && prog.on && Array.isArray(prog.chords) && prog.chords.length);
+      el.style.display = on ? '' : 'none';
+      if (!on) { el.innerHTML = ''; el._sig = ''; return; }
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const ranges = _ambGridRanges(cfg);
+      const parts = Array.isArray(prog.parts) ? prog.parts : null;
+      let pi = Number.isFinite(el._pmsPart) ? el._pmsPart : 0;
+      if (pi < 0 || pi >= ranges.length) pi = 0;
+      el._pmsPart = pi;
+      const r = ranges[pi];
+      const shift = _ambProgViewShift(E, cfg, prog.chords);
+      const names = [];
+      for (let i = 0; i < r.len; i++) {
+        const ch = prog.chords[r.from + i];
+        names.push(_ambIsTransition(ch) ? '⇝' : (_ambChordShort(_ambChordShift(ch, shift)) || '?'));
+      }
+      const g = (parts && parts[r.pi]) ? parts[r.pi].grid : null;
+      const cols = g ? _ambGridCols(g) : _AMB_GRID_COLS;
+      const seqs = [];
+      for (let c = 0; c < cols; c++) seqs.push(_ambPartGridSeq(cfg, r.pi, c, r.len));
+      const sig = pi + '|' + cols + '|' + r.from + '.' + r.len + '|' + names.join(',') + '|'
+        + seqs.map(q => q.join('.')).join('/') + '|' + ranges.map(x => x.pi).join('.')
+        + '|' + (parts ? parts.map(p2 => p2.name).join('.') : '');
+      if (el._sig === sig) return;
+      el._sig = sig;
+      let h = '';
+      if (ranges.length > 1) {
+        h += '<div class="pmx-tabs">' + ranges.map((x, k) => {
+          const nm = (parts && parts[x.pi] && parts[x.pi].name) || ('Part ' + (k + 1));
+          return '<button type="button" class="ambient-seg pmx-tab' + (k === pi ? ' active' : '') +
+            '" data-pmx="tab:' + k + '">' + esc(nm) + '</button>';
+        }).join('') + '</div>';
+      }
+      h += '<div class="pmx-bar"><span class="ambient-hint">How many passes this part runs before it repeats.</span>' +
+        '<span class="pmx-cols"><button type="button" class="ambient-seg" data-pmx="cols:-1">−</button>' +
+        '<b class="pmx-colsn">' + cols + '</b>' +
+        '<button type="button" class="ambient-seg" data-pmx="cols:1">＋</button></span></div>';
+      // The grid. One column per pass, one row per chord of this part.
+      h += '<div class="pmx-grid" style="--pmxc:' + cols + '">';
+      h += '<div class="pmx-row pmx-head"><span class="pmx-rowlbl"></span>' +
+        seqs.map((q, c) => '<span class="pmx-h' + (q.length ? '' : ' empty') + '">' + (c + 1) + '</span>').join('') + '</div>';
+      for (let i = 0; i < r.len; i++) {
+        h += '<div class="pmx-row"><span class="pmx-rowlbl" title="' + esc(names[i]) + '">' + esc(names[i]) + '</span>';
+        for (let c = 0; c < cols; c++) {
+          const pos = [];
+          seqs[c].forEach((v, k2) => { if (v === i) pos.push(k2 + 1); });
+          h += '<button type="button" class="ambient-seg pmx-cell' + (pos.length ? ' on' : '') +
+            '" data-pmx="cell:' + c + ':' + i + '" title="' +
+            (pos.length ? esc(names[i]) + ' plays at position ' + pos.join(', ') + ' of pass ' + (c + 1)
+                        : esc(names[i]) + ' does not play in pass ' + (c + 1)) +
+            '">' + (pos.length ? pos.join(',') : '') + '</button>';
+        }
+        h += '</div>';
+      }
+      // The sequence caption — what each pass actually plays, in order.
+      h += '<div class="pmx-row pmx-seqrow"><span class="pmx-rowlbl">plays</span>' +
+        seqs.map((q, c) => '<span class="pmx-seq' + (q.length ? '' : ' empty') + '" data-pmx="seq:' + c + '">' +
+          (q.length ? q.map(v => esc(names[v])).join('·') : '—') + '</span>').join('') + '</div>';
+      h += '</div>';
+      h += '<div class="ambient-hint pmx-foot">Tap a cell to add or remove that chord from a pass. ' +
+        'A chord can appear more than once — tap a <b>plays</b> caption to edit that pass\u2019s order.</div>';
+      el.innerHTML = h;
+    }
+    // Reorder / repeat editor for ONE pass. The grid answers WHICH chords; this
+    // answers in what ORDER and how often — the two questions kept apart so the
+    // grid stays scannable (a cell full of positions is hard to read at a glance).
+    function _ambPassSeqModal(E, pi, col) {
+      _E = E;
+      const cfg = E.getCfg(); if (!cfg || !cfg.prog) return;
+      const esc = (x) => String(x).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-pseq-ov';
+      const state = () => {
+        const c2 = E.getCfg(), rg = _ambGridRanges(c2)[pi];
+        if (!rg) return null;
+        const shift = _ambProgViewShift(E, c2, c2.prog.chords);
+        const nm = [];
+        for (let i = 0; i < rg.len; i++) {
+          const ch = c2.prog.chords[rg.from + i];
+          nm.push(_ambIsTransition(ch) ? '⇝' : (_ambChordShort(_ambChordShift(ch, shift)) || '?'));
+        }
+        return { rg, nm, seq: _ambPartGridSeq(c2, rg.pi, col, rg.len) };
+      };
+      const commit = (arr) => {
+        const c2 = E.getCfg(), rg = _ambGridRanges(c2)[pi]; if (!rg) return;
+        _ambPassWrite(c2, rg.pi, col, arr);
+        try { E.getCfg(); } catch (e) {}                 // normalize prunes/keeps
+        try { _ambRenderPassMatrix(E); } catch (e) {}
+        try { _ambRenderProgOverview(E); } catch (e) {}
+        try { _ambRenderScheduler(E); } catch (e) {}
+        try { _ambProgChainLenSync(E); } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        paint();
+      };
+      const paint = () => {
+        const st = state();
+        if (!st) { ov.innerHTML = '<div class="sm-modal"><div class="sm-title">Pass</div>' +
+          '<div class="ambient-hint">These changes carry no chords.</div>' +
+          '<div class="sm-footer"><button type="button" class="sm-apply pseq-close">Close</button></div></div>'; return; }
+        ov.innerHTML = '<div class="sm-modal ambient-pseq-modal">' +
+          '<div class="sm-title">Pass ' + (col + 1) + ' — order</div>' +
+          '<div class="ambient-hint">Drag to reorder. Tap a chip to remove it; a chord may appear more than once.</div>' +
+          '<div class="pseq-chips">' + (st.seq.length
+            ? st.seq.map((v, k) => '<span class="pseq-chip" draggable="true" data-k="' + k + '">' +
+                esc(st.nm[v]) + '<i>✕</i></span>').join('')
+            : '<span class="ambient-hint">This pass plays nothing.</span>') + '</div>' +
+          '<div class="pseq-addlbl">Add a chord</div>' +
+          '<div class="pseq-add">' + st.nm.map((n, i) =>
+            '<button type="button" class="ambient-seg pseq-addbtn" data-add="' + i + '">' + esc(n) + '</button>').join('') + '</div>' +
+          '<div class="sm-footer">' +
+          '<button type="button" class="ambient-seg pseq-reset">↩ Written order</button>' +
+          '<button type="button" class="sm-apply pseq-close">Done</button></div></div>';
+      };
+      paint();
+      document.body.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+      const close = () => { try { ov.remove(); } catch (e) {} };
+      ov.addEventListener('click', (ev) => {
+        const t = ev.target;
+        if (t === ov || (t.classList && t.classList.contains('pseq-close'))) { close(); return; }
+        const st = state(); if (!st) return;
+        const add = t.closest && t.closest('[data-add]');
+        if (add) { const a = st.seq.slice(); a.push(add.getAttribute('data-add') | 0); commit(a); return; }
+        if (t.closest && t.closest('.pseq-reset')) { const a = []; for (let i = 0; i < st.rg.len; i++) a.push(i); commit(a); return; }
+        const chip = t.closest && t.closest('.pseq-chip');
+        if (chip) { const a = st.seq.slice(); a.splice(chip.getAttribute('data-k') | 0, 1); commit(a); return; }
+      });
+      // Drag to reorder. Nearest-CENTRE drop, never rect containment — chips wrap,
+      // and containment finds nothing in the dead space between rows (the trap the
+      // chord builder already hit at 390px).
+      let dragK = -1;
+      ov.addEventListener('dragstart', (ev) => {
+        const c2 = ev.target.closest && ev.target.closest('.pseq-chip');
+        if (!c2) return; dragK = c2.getAttribute('data-k') | 0;
+        try { ev.dataTransfer.effectAllowed = 'move'; ev.dataTransfer.setData('text/plain', String(dragK)); } catch (e) {}
+      });
+      ov.addEventListener('dragover', (ev) => { if (dragK >= 0) ev.preventDefault(); });
+      ov.addEventListener('drop', (ev) => {
+        if (dragK < 0) return; ev.preventDefault();
+        const st = state(); if (!st) return;
+        const chips = [...ov.querySelectorAll('.pseq-chip')];
+        let best = -1, bd = Infinity;
+        chips.forEach((c2, k) => {
+          const rc = c2.getBoundingClientRect();
+          const d = Math.hypot(ev.clientX - (rc.left + rc.width / 2), ev.clientY - (rc.top + rc.height / 2));
+          if (d < bd) { bd = d; best = k; }
+        });
+        if (best < 0) { dragK = -1; return; }
+        const a = st.seq.slice(); const [m] = a.splice(dragK, 1); a.splice(best, 0, m);
+        dragK = -1; commit(a);
+      });
+    }
+    // ONE delegated handler on the host — it survives every re-render, and the
+    // cells are rebuilt on each edit so a per-element bind would be dead after
+    // the first tap.
+    function _ambWirePassMatrix(E) {
+      const el = _ambGet(E, 'ambient-passmx'); if (!el || el._wired) return;
+      el._wired = 1;
+      el.addEventListener('click', (ev) => {
+        const t = ev.target && ev.target.closest && ev.target.closest('[data-pmx]');
+        if (!t) return;
+        _E = E;
+        const a = String(t.getAttribute('data-pmx')).split(':');
+        const cfg = E.getCfg(); if (!cfg || !cfg.prog) return;
+        const ranges = _ambGridRanges(cfg);
+        const pi = Number.isFinite(el._pmsPart) ? el._pmsPart : 0;
+        const r = ranges[pi]; if (!r) return;
+        const after = () => {
+          try { E.getCfg(); } catch (e) {}
+          el._sig = '';
+          try { _ambRenderPassMatrix(E); } catch (e) {}
+          try { _ambRenderProgOverview(E); } catch (e) {}
+          try { _ambRenderScheduler(E); } catch (e) {}
+          try { _ambProgChainLenSync(E); } catch (e) {}
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        };
+        if (a[0] === 'tab') { el._pmsPart = a[1] | 0; el._sig = ''; _ambRenderPassMatrix(E); return; }
+        if (a[0] === 'cols') {
+          const g = (cfg.prog.parts && cfg.prog.parts[r.pi]) ? cfg.prog.parts[r.pi].grid : null;
+          _ambPassColsSet(cfg, r.pi, (g ? _ambGridCols(g) : _AMB_GRID_COLS) + (a[1] | 0));
+          after(); return;
+        }
+        if (a[0] === 'cell') {
+          const col = a[1] | 0, ci = a[2] | 0;
+          const cur = _ambPartGridSeq(cfg, r.pi, col, r.len);
+          const has = cur.indexOf(ci) >= 0;
+          // Tap toggles membership; ORDER and repeats live in the caption editor,
+          // so one tap can never silently reorder a pass you were not editing.
+          _ambPassWrite(cfg, r.pi, col, has ? cur.filter(v => v !== ci) : cur.concat([ci]));
+          after(); return;
+        }
+        if (a[0] === 'seq') { _ambPassSeqModal(E, pi, a[1] | 0); return; }
       });
     }
     function _ambRenderChordMatrix(E) {
@@ -33768,6 +34000,7 @@
       const host = E && document.getElementById(E.hostId); if (!host) return;
       try { _ambSyncProgVis(E); } catch (e) {}
       try { _ambRenderChordMatrix(E); } catch (e) {}
+      try { _ambWirePassMatrix(E); _ambRenderPassMatrix(E); } catch (e) {}
       try { _ambRenderProgOverview(E); } catch (e) {}
       // The renderers above are what flip those bodies, so the header visibility
       // is settled HERE rather than only at panel build.
@@ -40823,6 +41056,13 @@
             (E.isLane ? '' :
               _ambProgGrpOpen('matrix', '\u2317 Matrix', false) +
               '<div class="ambient-progmatrix" id="ambient-progmatrix" style="display:none"></div>' +
+              _ambProgGrpClose() +
+              // PASSES — the part matrix. Deliberately NOT called a third
+              // "matrix": ⌗ Matrix is layers × chords and ☷ Sections is layers ×
+              // sections, so a third one with a third axis pair would repeat the
+              // _ambProgDefaultUnit naming mistake. This one schedules PASSES.
+              _ambProgGrpOpen('passes', '\u25a6 Passes', false) +
+              '<div class="ambient-passmx" id="ambient-passmx" style="display:none"></div>' +
               _ambProgGrpClose()) +
           '</div>' +       // end #ambient-progsec-body
         '</div>') +        // end the merged Arrangement pane

@@ -2892,6 +2892,15 @@
       // PARTS (Feat 1): a view over the flat chord list; repair so Σlen === chords.length.
       const rp = _ambRepairParts(prog.parts, chords.length);
       if (rp) prog.parts = rp; else delete prog.parts;
+      // META GRID — which PARTS play in each arrangement iteration, and in what
+      // order. Indices are into the parts that OCCUPY TIME, the same convention
+      // `chain` uses. Coerced after the repair above so its width is the repaired
+      // part count, and dropped when it says nothing.
+      {
+        const _tp = Array.isArray(prog.parts) ? prog.parts.filter(x => x && !x.open).length : 1;
+        const _ag = _ambNormalizeGridObj(prog.arrGrid, Math.max(1, _tp));
+        if (_ag) prog.arrGrid = _ag; else delete prog.arrGrid;
+      }
       // VERSIONS (Feat 2b): whole-prog snapshots; coerce + cap; each carries its own parts.
       if (prog.versions != null && Array.isArray(prog.versions)) {
         prog.versions = prog.versions.filter(v => v && typeof v === 'object').slice(0, 12).map(v => {
@@ -2947,6 +2956,30 @@
     // final part swallows any remainder. Returns undefined for absent/empty OR a trivial
     // single-part cover (keeps legacy cfgs noise-free — the UI treats "no parts" as one
     // implicit whole-progression part), so parts can never desync from chords.
+    // Coerce one grid and PRUNE it back to absent when it says nothing. A column
+    // equal to the WRITTEN ORDER (each index once, ascending) is the neutral state
+    // and carries no entry; a grid with no entries left carries no field at all —
+    // the same absent-is-neutral grammar as unitGate / iterGate / salt / cadence.
+    // An EMPTY column is NOT neutral and is kept: it means this pass plays nothing.
+    // The column clamp is inlined rather than calling _ambGridCols, so this cannot
+    // depend on a module-scope const that may not be initialised when a normalize
+    // runs during boot.
+    function _ambNormalizeGridObj(g, n) {
+      if (!g || typeof g !== 'object' || !g.seq || typeof g.seq !== 'object') return undefined;
+      const cols = Math.max(1, Math.min(64, (g.cols | 0) || 8));
+      const N = Math.max(0, n | 0);
+      const seq = {};
+      for (let c = 0; c < cols; c++) {
+        const row = g.seq[String(c)];
+        if (!Array.isArray(row)) continue;
+        const cl = row.map(v => v | 0).filter(v => v >= 0 && v < N).slice(0, 64);
+        let written = (cl.length === N);
+        if (written) for (let i = 0; i < N; i++) if (cl[i] !== i) { written = false; break; }
+        if (written) continue;
+        seq[String(c)] = cl;
+      }
+      return Object.keys(seq).length ? { cols, seq } : undefined;
+    }
     function _ambRepairParts(parts, total) {
       if (!Array.isArray(parts) || !parts.length || total <= 0) return undefined;
       const out = []; let acc = 0;
@@ -3017,6 +3050,10 @@
         // How many times this part runs before the progression moves on. 1 is the
         // neutral value and is NOT stored, so a plain chain stays byte-identical.
         if (Number.isFinite(p.plays) && (p.plays | 0) > 1) e.plays = Math.min(64, p.plays | 0);
+        // PART MATRIX — carried EXPLICITLY, like key/salt above: this builds a
+        // fresh object per part, so anything not copied here is dropped on every
+        // normalize (the trap that once silently ate per-part keys).
+        { const _g = _ambNormalizeGridObj(p.grid, len); if (_g) e.grid = _g; }
         // PER-PART SALT. Carried EXPLICITLY because this builds a fresh object per
         // part — anything not copied here is dropped on every normalize. An
         // all-zero object is KEPT on purpose: it means "no salt in this part",
@@ -4532,6 +4569,105 @@
     // progression tight across the ~1.4 s lookahead. `_progAnchor` lets Bar Lock
     // later make this LOOP-relative; until set it falls back to play start.
     // (Phase 1a: defined but NOT yet wired into the emits — that's 1b.)
+    // ===== PART MATRIX (docs/bloom-part-matrix.md) ==========================
+    // A part is a SET of chords plus a per-iteration schedule over that set; the
+    // meta grid (`prog.arrGrid`) schedules the PARTS the same way. Storage is the
+    // SEQUENCE — a column IS an ordered list of indices, so repeats need no
+    // special case and the positions-in-cells view is a pure derivation. Both are
+    // ABSENT by default and pruned back to absent when trivial, so every existing
+    // progression walks the untouched code below.
+    //
+    // A part's column index is its CUMULATIVE VISIT COUNT, not the arrangement
+    // iteration: an iteration whose meta column plays the Verse twice consumes two
+    // of the Verse's own columns. That is what makes "iteration of part" well
+    // defined without a second clock.
+    const _AMB_GRID_COLS = 8;
+    const _ambGridCols = (g) => Math.max(1, Math.min(64, (g && (g.cols | 0)) || _AMB_GRID_COLS));
+    function _ambGridOn(cfg) {
+      const p = cfg && cfg.prog;
+      if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return false;
+      if (p.arrGrid && p.arrGrid.seq && Object.keys(p.arrGrid.seq).length) return true;
+      return Array.isArray(p.parts) && p.parts.some(x => x && x.grid && x.grid.seq && Object.keys(x.grid.seq).length);
+    }
+    // The time-occupying parts and their chord ranges. Mirrors _ambCadRange's walk
+    // (an OPEN part carries no chords and does not advance `from`); open parts are
+    // holds, not chord sets, so the grid does not schedule them in v1.
+    function _ambGridRanges(cfg) {
+      const p = cfg && cfg.prog, chords = p && p.chords;
+      if (!chords) return [];
+      const parts = Array.isArray(p.parts) ? p.parts : null;
+      if (!parts || !parts.length) return [{ pi: 0, from: 0, len: chords.length }];
+      const out = []; let from = 0;
+      parts.forEach((pt, i) => {
+        if (!pt || pt.open) return;
+        const len = Math.max(1, pt.len | 0);
+        if (from < chords.length) out.push({ pi: i, from, len: Math.min(len, chords.length - from) });
+        from += len;
+      });
+      return out.length ? out : [{ pi: 0, from: 0, len: chords.length }];
+    }
+    // The chord indices WITHIN part `pi` that its `visit`-th pass plays. Absent
+    // column (or absent grid) = the written order, each chord once.
+    function _ambPartGridSeq(cfg, pi, visit, plen) {
+      const n = Math.max(1, plen | 0);
+      const dflt = () => { const a = []; for (let i = 0; i < n; i++) a.push(i); return a; };
+      const parts = cfg && cfg.prog && cfg.prog.parts;
+      const g = (Array.isArray(parts) && parts[pi]) ? parts[pi].grid : null;
+      if (!g || !g.seq) return dflt();
+      const cols = _ambGridCols(g);
+      const row = g.seq[String(((visit % cols) + cols) % cols)];
+      if (!Array.isArray(row)) return dflt();
+      return row.map(v => v | 0).filter(v => v >= 0 && v < n);   // may be EMPTY: the part sits this pass out
+    }
+    // The part indices played in arrangement iteration `iter`. Absent = the chain
+    // if there is one, else the written order — i.e. exactly today's behaviour.
+    function _ambArrGridSeq(cfg, iter, nParts) {
+      const p = cfg && cfg.prog, g = p && p.arrGrid;
+      const dflt = () => {
+        if (Array.isArray(p.chain) && p.chain.length) return p.chain.map(v => v | 0).filter(v => v >= 0 && v < nParts);
+        const a = []; for (let i = 0; i < nParts; i++) a.push(i); return a;
+      };
+      if (!g || !g.seq) return dflt();
+      const cols = _ambGridCols(g);
+      const row = g.seq[String(((iter % cols) + cols) % cols)];
+      if (!Array.isArray(row)) return dflt();
+      return row.map(v => v | 0).filter(v => v >= 0 && v < nParts);
+    }
+    // THE PLAYED SLOT LIST for one full super-cycle. The grids do not simply
+    // repeat every `cols` iterations: a part's column advances per VISIT, so the
+    // pattern only closes when the meta column AND every part's column line up
+    // again. Rather than derive that period, simulate until the state repeats —
+    // bounded, because a pathological set of column counts could otherwise run
+    // long. Returns null when it produces nothing, so the caller falls through.
+    const _AMB_GRID_MAX_ITERS = 512, _AMB_GRID_MAX_SLOTS = 4096;
+    function _ambGridSlots(cfg) {
+      if (!_ambGridOn(cfg)) return null;
+      const p = cfg.prog, chords = p.chords;
+      const ranges = _ambGridRanges(cfg);
+      if (!ranges.length) return null;
+      const parts = Array.isArray(p.parts) ? p.parts : null;
+      const partCols = ranges.map(r => {
+        const g = (parts && parts[r.pi]) ? parts[r.pi].grid : null;
+        return (g && g.seq) ? _ambGridCols(g) : 1;
+      });
+      const arrCols = (p.arrGrid && p.arrGrid.seq) ? _ambGridCols(p.arrGrid) : 1;
+      const visits = ranges.map(() => 0), seen = new Set(), out = [];
+      for (let it = 0; it < _AMB_GRID_MAX_ITERS && out.length < _AMB_GRID_MAX_SLOTS; it++) {
+        const key = (it % arrCols) + '|' + visits.map((v, k) => v % partCols[k]).join(',');
+        if (out.length && seen.has(key)) break;      // the super-cycle has closed
+        seen.add(key);
+        _ambArrGridSeq(cfg, it, ranges.length).forEach(k => {
+          const r = ranges[k]; if (!r) return;
+          const seq = _ambPartGridSeq(cfg, r.pi, visits[k], r.len);
+          visits[k]++;
+          seq.forEach(ci => {
+            const abs = r.from + ci;
+            if (abs >= 0 && abs < chords.length) out.push({ idx: abs, pi: r.pi });
+          });
+        });
+      }
+      return out.length ? out : null;
+    }
     // WHICH CHORD INSTANCE is sounding — a strictly increasing count of chord
     // instances since the chord clock's origin, as opposed to _ambProgStepAt's
     // `step`, which identifies WHICH WRITTEN CHORD and deliberately repeats.
@@ -4548,10 +4684,21 @@
     // harmony), and read straight after. Sites that ask "which chord" keep using
     // step and its `% len` / `floor(/ len)` contract, untouched.
     let _ambProgInstHint = 0;
+    // MUST NOT DISTURB `_ambProgPosHint`. _ambProgStepAt sets that as a side
+    // effect, and the salt COLOUR resolver reads it for the segment position — so
+    // calling through here (28 times per span bisection) left the resolver reading
+    // a position from some arbitrary probe time. Caught by arch-parity: the
+    // `everything` config's chords turned from [0,4,7] to [0,5,7] at 8 of 130
+    // samples, i.e. a different colour was picked. Save and restore so this stays
+    // a pure query.
     function _ambProgInstanceAt(E, atSec, src) {
+      const _savedPos = _ambProgPosHint;
       _ambProgInstHint = 0;
-      let st = 0; try { st = _ambProgStepAt(E, atSec, src) | 0; } catch (e) { return 0; }
-      return Number.isFinite(_ambProgInstHint) ? _ambProgInstHint : st;
+      let st = 0;
+      try { st = _ambProgStepAt(E, atSec, src) | 0; } catch (e) { st = 0; }
+      const inst = Number.isFinite(_ambProgInstHint) ? _ambProgInstHint : st;
+      _ambProgPosHint = _savedPos;
+      return inst;
     }
     function _ambProgStepAt(E, atSec, src) {
       E = E || _E; if (!E) return 0;
@@ -4609,6 +4756,29 @@
           // …and a MONOTONIC instance ordinal beside it — see _ambProgInstanceAt.
           _ambProgInstHint = ((_at.step | 0) + _loops) * Math.max(1, _part.len) + _k;
           return ((_at.step | 0) + _loops) * _L + ((_part.from + _k) % _L);
+        }
+      }
+      // ---- PART MATRIX --------------------------------------------------------
+      // Same shape as the repeats branch below, and it supersedes it: a repeat is
+      // just a part appearing more than once in a meta column. GATED on a grid
+      // actually existing, so with none present this costs one boolean and the
+      // walk below is byte-identical (arch-parity 37/37 pins that).
+      if (!_ownSrc && cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords)
+          && cfg.prog.chords.length && _ambGridOn(cfg)) {
+        const gs = _ambGridSlots(cfg);
+        if (gs && gs.length) {
+          const L = cfg.prog.chords.length;
+          const glens = gs.map(sl => _ambChainSlotBars(cfg, sl));
+          const gcycle = glens.reduce((a2, v) => a2 + v, 0) || bpc;
+          const gloops = Math.floor(bars / gcycle);
+          let grem = bars - gloops * gcycle, gk = 0;
+          while (gk < gs.length - 1 && grem >= glens[gk]) { grem -= glens[gk]; gk++; }
+          const gstep = gloops * L + gs[gk].idx;
+          // `gk` is the position in the PLAYED sequence — monotonic even though a
+          // chord (and a whole part) may recur inside one pass.
+          _ambProgInstHint = gloops * gs.length + gk;
+          _ambProgPosHint = { step: gstep, pos: Math.max(0, Math.min(1, grem / Math.max(1e-6, glens[gk]))) };
+          return gstep;
         }
       }
       // ---- PART REPEATS -------------------------------------------------------

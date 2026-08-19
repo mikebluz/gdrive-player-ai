@@ -9019,6 +9019,32 @@
     // up with chord boundaries) or null when there's no active prog / not a chord
     // layer. Subdivision 1 = one voicing per area chord. Uniform barsPerChord
     // (per-chord `bars` fall back to the area default for the grid — v1).
+    // THE NEXT ONSET ON THE CHORD GRID, honouring per-chord lengths. Both layer
+    // drivers used to step a fixed `psi.anchor + n * subUnit`, which is only a
+    // grid while every chord is the same length. Under a cadence it fights the
+    // harmony three ways at once: onsets land mid-chord, the chord choke then
+    // cuts them well before the layer's own unit is up, and the progress bar
+    // (which draws the chord) agrees with neither — reported as "very choppy…
+    // fighting between variable chord lengths and units". Walking the SPANS
+    // makes all three agree, because they are then the same thing.
+    // Returns null when there is no cadence, so a flat progression keeps the
+    // original lattice byte-identical.
+    function _ambProgNextSlot(E, cfg, psi, from, minSec) {
+      if (!psi || !_ambProgHasCadence(cfg)) return null;
+      const subdiv = Math.max(1, psi.subdiv | 0);
+      const step = (t) => {
+        const sp = _ambChordSpanAt(E, cfg, t + 1e-4);
+        if (!sp) return null;
+        const sub = Math.max(0.03, sp.len / subdiv);
+        const slot = Math.floor((t + 1e-4 - sp.start) / sub + 1e-6);
+        return (slot + 1 < subdiv) ? (sp.start + (slot + 1) * sub) : sp.end;
+      };
+      let ng = step(from);
+      if (ng == null) return null;
+      let g = 0;
+      while (ng < from + minSec && g++ < 64) { const n2 = step(ng); if (n2 == null) return null; ng = n2; }
+      return ng;
+    }
     function _ambProgSyncInfo(E, key, lc, cfg, atSec) {
       cfg = cfg || (E && (E._cfg || (E.getCfg && E.getCfg())));
       const p = cfg && cfg.prog;
@@ -10536,8 +10562,13 @@
             } else {
               // snap to the next chord-grid slot strictly after C[key] (with a min gap
               // so a prompt first onset can't sit right on top of the next slot).
-              ng = psi.anchor + (Math.floor((C[key] - psi.anchor) / psi.subUnit) + 1) * psi.subUnit;
-              while (ng < C[key] + minSec) ng += psi.subUnit;
+              // CHORD GRID when the cadence varies; the uniform lattice otherwise.
+              const _cg = _ambProgNextSlot(E, cfg, psi, C[key], minSec);
+              if (_cg != null) ng = _cg;
+              else {
+                ng = psi.anchor + (Math.floor((C[key] - psi.anchor) / psi.subUnit) + 1) * psi.subUnit;
+                while (ng < C[key] + minSec) ng += psi.subUnit;
+              }
             }
             C[key] = ng;
           } else {
@@ -20612,8 +20643,13 @@
               // does follow the chord now; re-gridding the onsets themselves is a
               // change to the drivers — the bed's walk is in _ambEmitSustain, the
               // drone's here — and is not done.
-              ng = psi.anchor + (Math.floor((C[key] - psi.anchor) / psi.subUnit) + 1) * psi.subUnit;
-              while (ng < C[key] + minSec) ng += psi.subUnit;
+              // CHORD GRID when the cadence varies; the uniform lattice otherwise.
+              const _cg = _ambProgNextSlot(E, cfg, psi, C[key], minSec);
+              if (_cg != null) ng = _cg;
+              else {
+                ng = psi.anchor + (Math.floor((C[key] - psi.anchor) / psi.subUnit) + 1) * psi.subUnit;
+                while (ng < C[key] + minSec) ng += psi.subUnit;
+              }
             }
             C[key] = ng;
           } else {

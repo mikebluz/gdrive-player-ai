@@ -22101,6 +22101,18 @@
           return _ambProgSyncInfo(E, key, _ambLayerByKey(E, key), _c) ? _c : null;
         } catch (e) { return null; }
       })();
+      // THE ORIGIN MUST BE ON THE GRID TOO. Snapping only the events left every
+      // t measured from the off-grid window start, so the phrase played 0.175
+      // bar early all the way through — 6.325 where the chord changes at 6.5 —
+      // and collided with the next cycle. Measure from the window's own chord
+      // boundary and the whole phrase lands on the changes.
+      let _base = w.bStart;
+      if (_snapCad) {
+        try {
+          const sp0 = _ambChordSpanAt(E, _snapCad, w.bStart);
+          if (sp0 && (w.bStart - sp0.start) < sp0.len * 0.5) _base = sp0.start;
+        } catch (x) {}
+      }
       st.events = win.map(e => {
         let at = e.at;
         if (_snapCad) {
@@ -22109,10 +22121,10 @@
             // Only pull BACK to the chord's own start, and only when the event is
             // already close to it — a genuine mid-chord onset (a subdivided layer)
             // must keep its place.
-            if (sp && (at - sp.start) < Math.min(0.35, sp.len * 0.4)) at = sp.start;
+            if (sp && (at - sp.start) < sp.len * 0.5) at = sp.start;
           } catch (x) {}
         }
-        return { t: Math.max(0, at - w.bStart), freq: e.freq, dur: e.dur, params: e.params };
+        return { t: Math.max(0, at - _base), freq: e.freq, dur: e.dur, params: e.params };
       });
       st.loopLen = w.loopLen;
       st.keyCtx = _ambCurKeyCtx(E);   // the capture frame — anchors any later Harmony remap
@@ -22123,15 +22135,26 @@
       let A;
       if (st._barLock) {
         A = w.bEnd;
+        // SNAP THE ANCHOR ONTO THE CHORD GRID FIRST, then cancel from there. The
+        // window ends where the play's first (prompt, off-grid) onset put it, so
+        // the loop restarted `lead` late while the live emit was already on the
+        // boundary — measured 4.5 live against 4.676 replayed, the reported
+        // double hit at the loop start. Snapping BEFORE the cancel is the whole
+        // point: cancelBloomFutureVoices then retracts the live strike at 4.5
+        // that the replay is about to play itself.
+        // (A previous attempt at this measured "no difference" and was removed —
+        // it was gated on an ABSOLUTE 0.35 s and the offset is 0.352 s. Gate on a
+        // FRACTION of the chord, which is the thing that actually varies.)
+        if (_snapCad) {
+          try {
+            const sp = _ambChordSpanAt(E, _snapCad, A);
+            if (sp && (A - sp.start) < sp.len * 0.5) A = sp.start;
+          } catch (x) {}
+        }
         try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, A); } catch (e) {}
       } else {
         A = w.bEnd; while (A < now + 0.001) A += st.loopLen;   // first loop boundary ≥ now
       }
-      // NOTE: snapping A to the chord grid here was tried and made NO measurable
-      // difference (the seam still doubled at 4.5 live / 4.676 replayed), so it
-      // is not left in as dead reassurance. The remaining seam double is the
-      // FIRST handoff into the frozen loop only — the steady-state loop is clean
-      // — and is not solved. See the events snap above for what did work.
       st.anchor = A; st.scheduledUpto = A;
       st.frozen = true; st.pendingFreezeAt = null; st._lockWin = null;
       try { _ambFreezeSyncAll(E); _ambLockSyncAll(E); } catch (e) {}
@@ -27318,6 +27341,28 @@
         const key = el.dataset.phkey; if (!key) return;
         let prog = 0, active = false, frozen = false, cyc = null;
         const fs = E.freeze && E.freeze[key];
+        // THE BAR IS THE CHORD, when the layer rides the chord grid. Every branch
+        // below phases with a MODULO against the layer's own anchor, which only
+        // means something on a fixed period: under a cadence the period changes
+        // per chord while the origin does not, so the fill wrapped at the wrong
+        // places and read as noise ("the progress bar is all over the place").
+        // The chord's own span answers it directly — how far through THIS chord
+        // are we — and it is what the layer's onsets and the choke already use,
+        // so all three finally describe the same thing. Null unless the layer is
+        // prog-synced AND the progression varies, so nothing else changes.
+        let _chordPh = null;
+        try {
+          const _c = E._cfg || (E.getCfg && E.getCfg());
+          if (E.timer && _ambProgHasCadence(_c)) {
+            const _L = _ambLayerByKey(E, key);
+            if (_L && _ambProgSyncInfo(E, key, _L, _c)) {
+              const sp = _ambChordSpanAt(E, _c, now);
+              if (sp && sp.len > 0.05 && now >= sp.start) {
+                _chordPh = { prog: Math.max(0, Math.min(0.9999, (now - sp.start) / sp.len)), active: true };
+              }
+            }
+          }
+        } catch (e) {}
         if (fs && fs.frozen && fs.loopLen > 0) {
           frozen = true;
           const d = now - (fs.anchor || now);
@@ -27445,6 +27490,8 @@
             }
           } catch (e) {}
         }
+        // The chord phase wins over the modulo above — see the note at the top.
+        if (_chordPh) { prog = _chordPh.prog; active = _chordPh.active; }
         el.style.setProperty('--ph', active ? prog.toFixed(3) : '0');
         el.classList.toggle('active', active);
         el.classList.toggle('frozen', frozen);

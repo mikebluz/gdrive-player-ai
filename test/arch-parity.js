@@ -126,6 +126,16 @@ const CONFIGS = [
   { id: 'grid-sections', chords: [0, 5, 7, 9],
     parts: [['Verse', 2, 0, null, null, { cols: 2, seq: { 1: [0] } }], ['Chorus', 2]],
     sections: [['A', 4, 0], ['B', 4, 1]] },
+  // CADENCE INSIDE A GRID. `fit` makes the written cadence a rhythm TEMPLATE the
+  // remaining chords shift into (drop a chord and the rest move left, trailing
+  // lengths unused); `bars` states a length per POSITION per pass, which also
+  // lets two occurrences of one chord differ. Both are absent by default.
+  { id: 'grid-fit',     chords: [0, 5, 7, 9], bars: [2, 0.5, 1, 1],
+    parts: [['Verse', 3, 0, null, null, { cols: 2, fit: 1, seq: { 0: [0, 2] } }], ['Chorus', 1]] },
+  { id: 'grid-bars',    chords: [0, 5, 7, 9], bars: [2, 0.5, 1, 1],
+    parts: [['Verse', 3, 0, null, null, { cols: 2, seq: {}, bars: { 0: [1, 1, 1] } }], ['Chorus', 1]] },
+  { id: 'grid-fit-bars', chords: [0, 5, 7, 9], bars: [2, 0.5, 1, 1],
+    parts: [['Verse', 3, 0, null, null, { cols: 2, fit: 1, seq: { 0: [0, 2, 0] }, bars: { 0: [0, 4] } }], ['Chorus', 1]] },
 ];
 
 // The walk: 32 bars at a quarter bar. Long enough that part repeats, section

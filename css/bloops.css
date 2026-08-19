@@ -13466,6 +13466,21 @@
       color: #e9d8fd; font: 600 0.72rem 'Segoe UI', sans-serif; cursor: grab; user-select: none;
     }
     .ambient-pseq-modal .pseq-chip i { font-style: normal; opacity: 0.6; font-size: 0.66rem; }
+    .ambient-pseq-modal .pseq-chip b { font-weight: 700; }
+    /* The length this position sounds at. Dimmed = whatever would apply anyway
+       (the chord's own, or the cadence template); solid = this pass states it. */
+    .ambient-pseq-modal .pseq-chip em {
+      font-style: normal; font-size: 0.68rem; color: #8b8ba7; min-width: 16px; text-align: center;
+    }
+    .ambient-pseq-modal .pseq-chip.has-len em { color: #4fd1c5; font-weight: 700; }
+    .ambient-pseq-modal .pseq-len {
+      min-width: 22px; min-height: 24px; padding: 0 4px; border-radius: 5px;
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(160,174,192,0.25);
+      color: #cbd5e0; font: 600 0.7rem 'Segoe UI', sans-serif; touch-action: manipulation;
+    }
+    .ambient-passmx .pmx-fit { min-height: 30px; padding: 4px 10px; flex: 0 0 auto; }
+    .ambient-passmx .pmx-fit.active { border-color: #4fd1c5; color: #d6fffb; background: rgba(79,209,197,0.24); }
+    .ambient-passmx .pmx-seq i { font-style: normal; display: block; color: #6b6b8a; font-size: 0.55rem; }
     .ambient-pseq-modal .pseq-addlbl {
       font: 600 0.62rem 'Segoe UI', sans-serif; letter-spacing: 0.06em; text-transform: uppercase;
       color: #6b6b8a; margin-top: 6px;

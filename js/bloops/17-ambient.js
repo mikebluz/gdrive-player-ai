@@ -2984,7 +2984,24 @@
         if (written) continue;
         seq[String(c)] = cl;
       }
-      return Object.keys(seq).length ? { cols, seq } : undefined;
+      const out = { cols, seq };
+      if (g.fit) out.fit = 1;
+      // Per-iteration lengths, parallel to each column's sequence. Clamped to the
+      // cadence ladder's own range, so a grid can never state a length the cadence
+      // editor could not; a row with nothing set carries nothing.
+      if (g.bars && typeof g.bars === 'object') {
+        const bars = {};
+        Object.keys(g.bars).forEach(k => {
+          if ((k | 0) < 0 || (k | 0) >= cols) return;
+          const row = g.bars[k];
+          if (!Array.isArray(row) || !row.length) return;
+          const cl = row.map(v => (Number.isFinite(v) && v > 0)
+            ? Math.max(_AMB_CAD_MIN, Math.min(_AMB_CAD_MAX, v)) : 0).slice(0, 64);
+          if (cl.some(v => v > 0)) bars[k] = cl;
+        });
+        if (Object.keys(bars).length) out.bars = bars;
+      }
+      return (Object.keys(seq).length || out.fit || out.bars) ? out : undefined;
     }
     function _ambRepairParts(parts, total) {
       if (!Array.isArray(parts) || !parts.length || total <= 0) return undefined;
@@ -4609,7 +4626,12 @@
     function _ambGridOn(cfg) {
       const p = cfg && cfg.prog;
       if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return false;
-      const live = (g) => !!(g && g.seq && Object.keys(g.seq).length);
+      // A grid can say something WITHOUT reordering anything: "fill the cadence",
+      // or per-iteration lengths over the written order. Gating on `seq` alone
+      // dropped exactly those — a lengths-only grid normalises its column away
+      // (it IS the written order) and then measured as no grid at all.
+      const live = (g) => !!(g && ((g.seq && Object.keys(g.seq).length) || g.fit
+        || (g.bars && Object.keys(g.bars).length)));
       if (live(p.arrGrid)) return true;
       if (!Array.isArray(p.parts)) return live(p.grid);
       return p.parts.some(x => x && live(x.grid));
@@ -4657,6 +4679,27 @@
       if (!Array.isArray(row)) return dflt();
       return row.map(v => v | 0).filter(v => v >= 0 && v < nParts);
     }
+    // HOW LONG A SLOT LASTS inside a grid pass. Three answers, narrowest first:
+    //   1. `grid.bars[col][k]` — a length written for THAT position of THAT pass.
+    //      This is per-iteration cadence, and because it is keyed on the POSITION
+    //      it also lets two occurrences of one chord differ inside a single pass.
+    //   2. `grid.fit` — treat the part's WRITTEN cadence as a rhythm TEMPLATE:
+    //      slot k takes the k-th written length whatever chord landed there, so
+    //      omitting a chord makes the rest shift LEFT into the gap and the
+    //      trailing lengths are simply unused. The default is the opposite — a
+    //      chord's `bars` belongs to the chord, so omitting it removes its time
+    //      and the pass gets shorter.
+    //   3. the chord's own `bars` — today's behaviour, and the fallback whenever
+    //      a pass runs LONGER than the template (repeats can do that).
+    // Returns null when nothing overrides, so the slot carries no field at all.
+    function _ambGridSlotBars(cfg, g, col, k, tmpl) {
+      if (g && g.bars) {
+        const row = g.bars[String(col)];
+        if (Array.isArray(row) && Number.isFinite(row[k]) && row[k] > 0) return row[k];
+      }
+      if (g && g.fit && tmpl && k < tmpl.length && tmpl[k] > 0) return tmpl[k];
+      return null;
+    }
     // THE PLAYED SLOT LIST for one full super-cycle. The grids do not simply
     // repeat every `cols` iterations: a part's column advances per VISIT, so the
     // pattern only closes when the meta column AND every part's column line up
@@ -4672,7 +4715,8 @@
     // The signature is the grids' own shape, so any edit invalidates it and no
     // caller has to remember to.
     const _ambGridSigOf = (g) => (g && g.seq)
-      ? ((g.cols | 0) + '{' + Object.keys(g.seq).map(k => k + ':' + (g.seq[k] || []).join('.')).join('|') + '}')
+      ? ((g.cols | 0) + (g.fit ? 'F' : '') + '{' + Object.keys(g.seq).map(k => k + ':' + (g.seq[k] || []).join('.')).join('|') + '}'
+         + (g.bars ? ('B{' + Object.keys(g.bars).map(k => k + ':' + (g.bars[k] || []).join('.')).join('|') + '}') : ''))
       : '-';
     let _ambGridMemo = null;
     function _ambGridSig(cfg) {
@@ -4717,22 +4761,34 @@
           const r = ranges[k]; if (!r) return;
           const seq = _ambPartGridSeq(cfg, r.pi, visits[k], r.len);
           const visit = visits[k]; visits[k]++;
+          const gg = _ambGridStore(cfg, r.pi, false);
+          const gcols = gg ? _ambGridCols(gg) : 1;
+          const gcol = ((visit % gcols) + gcols) % gcols;
+          // The part's WRITTEN cadence in written order — the template `fit` fills.
+          let tmpl = null;
+          if (gg && gg.fit) {
+            tmpl = [];
+            for (let z = 0; z < r.len; z++) tmpl.push(_ambCadLen(cfg, chords[r.from + z]));
+          }
           // …plus what the DISPLAY needs, so one walk feeds both (the clock reads
           // only .idx). `rep`/`plays` are the part's column within its own grid —
           // "2/3" reads as the 2nd of 3 columns, which is what the badge means
           // once a repeat is just a part appearing again.
-          let first = true;
+          let first = true, posK = -1;
           seq.forEach(ci => {
+            posK++;
             const abs = r.from + ci;
             if (abs < 0 || abs >= chords.length) return;
+            const gb = _ambGridSlotBars(cfg, gg, gcol, posK, tmpl);
             // `rep`/`plays` mean "repeat r of plays" to every existing consumer,
             // and a grid visit is ONE run that happens ONCE — reporting the column
             // count there made _ambProgPartRuns badge every Verse run "×3", which
             // is a claim that the run repeats three times. The column rides
             // separately as `col`, for the UI that will draw it.
             out.push({ idx: abs, pi: r.pi, part: k, visit,
+                       ...(gb != null ? { gbars: gb } : {}),
                        rep: 0, plays: 1, col: visit % partCols[k], cols: partCols[k],
-                       iter: it, pFirst: first });
+                       iter: it, pos: posK, pFirst: first });
             first = false;
           });
         });
@@ -4772,6 +4828,44 @@
       p.arrGrid.cols = want;
       if (p.arrGrid.seq) Object.keys(p.arrGrid.seq).forEach(k => { if ((k | 0) >= want) delete p.arrGrid.seq[k]; });
       return true;
+    }
+    // "Fill the cadence" for one part: the written cadence becomes a rhythm
+    // TEMPLATE the remaining chords shift into, rather than each chord carrying
+    // its own length. Absent = off = today's behaviour.
+    function _ambPassFitSet(cfg, pi, on) {
+      const g = _ambGridStore(cfg, pi, !!on); if (!g) return false;
+      if (on) g.fit = 1; else delete g.fit;
+      return true;
+    }
+    // One position's length inside one pass. 0 / absent = "whatever would apply
+    // anyway", so clearing an override restores fit-or-the-chord's-own without
+    // needing to know which of them it was.
+    function _ambPassBarsSet(cfg, pi, col, k, bars) {
+      const g = _ambGridStore(cfg, pi, true); if (!g) return false;
+      if (!g.bars || typeof g.bars !== 'object') g.bars = {};
+      const key = String(col | 0);
+      const row = Array.isArray(g.bars[key]) ? g.bars[key].slice() : [];
+      while (row.length <= k) row.push(0);
+      row[k] = (Number.isFinite(bars) && bars > 0) ? _ambCadClamp(bars) : 0;
+      if (row.some(v => v > 0)) g.bars[key] = row; else delete g.bars[key];
+      if (!Object.keys(g.bars).length) delete g.bars;
+      return true;
+    }
+    // The length a position WOULD sound at, override or not — what the editor
+    // shows, so a dimmed value still tells you what you will hear.
+    function _ambPassBarsAt(cfg, pi, col, k, seq) {
+      const g = _ambGridStore(cfg, pi, false);
+      const rg = _ambGridRanges(cfg).find(r => r.pi === pi) || _ambGridRanges(cfg)[0];
+      if (!rg) return { bars: 1, own: true };
+      let tmpl = null;
+      if (g && g.fit) { tmpl = []; for (let z = 0; z < rg.len; z++) tmpl.push(_ambCadLen(cfg, cfg.prog.chords[rg.from + z])); }
+      const ov = _ambGridSlotBars(cfg, g, col, k, tmpl);
+      if (ov != null) {
+        const isOwn = !!(g && g.bars && Array.isArray(g.bars[String(col)]) && g.bars[String(col)][k] > 0);
+        return { bars: ov, own: isOwn };
+      }
+      const ci = (seq && seq[k] != null) ? seq[k] : 0;
+      return { bars: _ambCadLen(cfg, cfg.prog.chords[rg.from + ci]), own: false };
     }
     function _ambPassColsSet(cfg, pi, n) {
       const want = Math.max(1, Math.min(32, n | 0));
@@ -33454,7 +33548,12 @@
             '" data-pmx="tab:' + k + '">' + esc(nm) + '</button>';
         }).join('') + '</div>';
       }
+      const fitOn = !!(g && g.fit);
       h += '<div class="pmx-bar"><span class="ambient-hint">How many passes this part runs before it repeats.</span>' +
+        '<button type="button" class="ambient-seg pmx-fit' + (fitOn ? ' active' : '') + '" data-pmx="fit" title="' +
+        (fitOn ? 'On — the written cadence is a rhythm the chords fill, so dropping one shifts the rest into the gap.'
+               : 'Off — each chord keeps its own length, so dropping one makes the pass shorter.') +
+        '">\u21e5 Fill cadence</button>' +
         '<span class="pmx-cols"><button type="button" class="ambient-seg" data-pmx="cols:-1">−</button>' +
         '<b class="pmx-colsn">' + cols + '</b>' +
         '<button type="button" class="ambient-seg" data-pmx="cols:1">＋</button></span></div>';
@@ -33477,8 +33576,14 @@
       }
       // The sequence caption — what each pass actually plays, in order.
       h += '<div class="pmx-row pmx-seqrow"><span class="pmx-rowlbl">plays</span>' +
-        seqs.map((q, c) => '<span class="pmx-seq' + (q.length ? '' : ' empty') + '" data-pmx="seq:' + c + '">' +
-          (q.length ? q.map(v => esc(names[v])).join('·') : '—') + '</span>').join('') + '</div>';
+        seqs.map((q, c) => {
+          // Each pass states its own LENGTH, because with per-iteration cadence
+          // (or Fill cadence) two passes over the same chords can differ.
+          let tot = 0;
+          for (let k = 0; k < q.length; k++) tot += _ambPassBarsAt(cfg, r.pi, c, k, q).bars;
+          return '<span class="pmx-seq' + (q.length ? '' : ' empty') + '" data-pmx="seq:' + c + '">' +
+            (q.length ? esc(q.map(v => names[v]).join('·')) + '<i>' + _ambFmtBarsMixed(tot) + '</i>' : '—') + '</span>';
+        }).join('') + '</div>';
       h += '</div>';
       h += '<div class="ambient-hint pmx-foot">Tap a cell to add or remove that chord from a pass. ' +
         'A chord can appear more than once — tap a <b>plays</b> caption to edit that pass\u2019s order.</div>';
@@ -33551,12 +33656,14 @@
         const c2 = E.getCfg();
         if (meta) {
           const rgs = _ambGridRanges(c2), ps = Array.isArray(c2.prog.parts) ? c2.prog.parts : null;
-          return { rg: { len: rgs.length },
+          return { rg: { len: rgs.length, pi: -1 },
                    nm: rgs.map((x, k) => (ps && ps[x.pi] && ps[x.pi].name) || ('Part ' + (k + 1))),
                    seq: _ambArrGridSeq(c2, col, rgs.length) };
         }
         const rg = _ambGridRanges(c2)[pi];
         if (!rg) return null;
+        // `pi` here indexes the RANGES; the writers key on the part index.
+        rg.pi = rg.pi;
         const shift = _ambProgViewShift(E, c2, c2.prog.chords);
         const nm = [];
         for (let i = 0; i < rg.len; i++) {
@@ -33590,13 +33697,26 @@
           '<div class="ambient-hint">Drag to reorder. Tap a chip to remove it; ' +
           (meta ? 'a part' : 'a chord') + ' may appear more than once.</div>' +
           '<div class="pseq-chips">' + (st.seq.length
-            ? st.seq.map((v, k) => '<span class="pseq-chip" draggable="true" data-k="' + k + '">' +
-                esc(st.nm[v]) + '<i>✕</i></span>').join('')
+            ? st.seq.map((v, k) => {
+                if (meta) return '<span class="pseq-chip" draggable="true" data-k="' + k + '">' +
+                  esc(st.nm[v]) + '<i>✕</i></span>';
+                // …with its own LENGTH. A dimmed value is the one that would apply
+                // anyway (the chord's own, or the cadence template under Fill
+                // cadence); solid means this pass states it.
+                const bi = _ambPassBarsAt(E.getCfg(), st.rg.pi, col, k, st.seq);
+                return '<span class="pseq-chip' + (bi.own ? ' has-len' : '') + '" draggable="true" data-k="' + k + '">' +
+                  '<b>' + esc(st.nm[v]) + '</b>' +
+                  '<button type="button" class="pseq-len" data-len="' + k + ':-1" title="Shorter">−</button>' +
+                  '<em>' + esc(_ambCadNum(bi.bars)) + '</em>' +
+                  '<button type="button" class="pseq-len" data-len="' + k + ':1" title="Longer">＋</button>' +
+                  '<i>✕</i></span>';
+              }).join('')
             : '<span class="ambient-hint">This pass plays nothing.</span>') + '</div>' +
           '<div class="pseq-addlbl">Add ' + (meta ? 'a part' : 'a chord') + '</div>' +
           '<div class="pseq-add">' + st.nm.map((n, i) =>
             '<button type="button" class="ambient-seg pseq-addbtn" data-add="' + i + '">' + esc(n) + '</button>').join('') + '</div>' +
           '<div class="sm-footer">' +
+          (meta ? '' : '<button type="button" class="ambient-seg pseq-clearlen">↩ Lengths</button>') +
           '<button type="button" class="ambient-seg pseq-reset">↩ Written order</button>' +
           '<button type="button" class="sm-apply pseq-close">Done</button></div></div>';
       };
@@ -33611,6 +33731,27 @@
         const add = t.closest && t.closest('[data-add]');
         if (add) { const a = st.seq.slice(); a.push(add.getAttribute('data-add') | 0); commit(a); return; }
         if (t.closest && t.closest('.pseq-reset')) { const a = []; for (let i = 0; i < st.rg.len; i++) a.push(i); commit(a); return; }
+        // The steppers sit INSIDE the chip, so they must be handled first — a
+        // tap on − would otherwise fall through to "remove this chip".
+        const lb = t.closest && t.closest('[data-len]');
+        if (lb) {
+          const q = String(lb.getAttribute('data-len')).split(':'), k = q[0] | 0, d = q[1] | 0;
+          const c3 = E.getCfg();
+          const cur = _ambPassBarsAt(c3, st.rg.pi, col, k, st.seq).bars;
+          let i = 0, best = Infinity;
+          _AMB_CAD_STEPS.forEach((v, ix) => { const e2 = Math.abs(v - cur); if (e2 < best) { best = e2; i = ix; } });
+          const nx = _AMB_CAD_STEPS[Math.max(0, Math.min(_AMB_CAD_STEPS.length - 1, i + d))];
+          _ambPassBarsSet(c3, st.rg.pi, col, k, nx);
+          commit(st.seq.slice());          // rewrite the sequence unchanged, so one path persists
+          return;
+        }
+        if (t.closest && t.closest('.pseq-clearlen')) {
+          const c3 = E.getCfg();
+          const g = _ambGridStore(c3, st.rg.pi, false);
+          if (g && g.bars) { delete g.bars[String(col)]; if (!Object.keys(g.bars).length) delete g.bars; }
+          commit(st.seq.slice());
+          return;
+        }
         const chip = t.closest && t.closest('.pseq-chip');
         if (chip) { const a = st.seq.slice(); a.splice(chip.getAttribute('data-k') | 0, 1); commit(a); return; }
       });
@@ -33734,6 +33875,11 @@
           after(); return;
         }
         if (a[0] === 'mseq') { _ambPassSeqModal(E, -1, a[1] | 0, true); return; }
+        if (a[0] === 'fit') {
+          const g = _ambGridStore(cfg, r.pi, false);
+          _ambPassFitSet(cfg, r.pi, !(g && g.fit));
+          after(); return;
+        }
         if (a[0] === 'cols') {
           const g = _ambGridStore(cfg, r.pi, false);
           _ambPassColsSet(cfg, r.pi, (g ? _ambGridCols(g) : _AMB_GRID_COLS) + (a[1] | 0));
@@ -35501,7 +35647,12 @@
           return gs.map(sl => ({
             idx: sl.idx, part: sl.part, pName: (parts && parts[sl.pi] && parts[sl.pi].name) || 'Part',
             pFirst: !!sl.pFirst, rep: sl.rep, plays: sl.plays,
-            col: sl.col, cols: sl.cols, iter: sl.iter,
+            col: sl.col, cols: sl.cols, iter: sl.iter, pos: sl.pos,
+            // CARRY THE LENGTH. This builds a fresh object per slot, so anything
+            // not copied is dropped — the same trap _ambRepairParts has with
+            // per-part fields. Without it the clock played per-iteration cadence
+            // while every readout showed the chord's own length.
+            ...(sl.gbars != null ? { gbars: sl.gbars } : {}),
           }));
         }
       }
@@ -35599,6 +35750,10 @@
     // and every readout, so they cannot disagree about the length of the piece.
     function _ambChainSlotBars(cfg, sl) {
       if (sl && sl.hold) return Math.max(0.01, sl.bars || 1);
+      // A grid slot may carry its own length — per-iteration cadence, or the
+      // written cadence used as a template. A DISTINCT field from `bars`, which
+      // already means something else on a HOLD slot.
+      if (sl && Number.isFinite(sl.gbars) && sl.gbars > 0) return sl.gbars;
       const bpc = Math.max(0.01, (cfg && cfg.barsPerChord) || 1);
       const c = cfg && cfg.prog && cfg.prog.chords ? cfg.prog.chords[sl.idx] : null;
       return (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc;

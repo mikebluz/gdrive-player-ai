@@ -4317,6 +4317,20 @@
           && typeof window._ambUnitGateSkip === 'function') {
         try { if (window._ambUnitGateSkip(window._ambEmitKey, startTime)) return; } catch (e) {}
       }
+      // CHORD CHOKE: release a Bloom note by the next chord boundary, so a long
+      // tail does not ring three chords deep under a short cadence. Same hook as
+      // the gate above and for the same reasons — one place covers every layer
+      // type with no emitter change, it sits AFTER the capture tee so the capture
+      // keeps the full phrase and a ring-out toggle needs no rewrite, and the
+      // invariant harness stubs playNote so it never sees this. A layer that opts
+      // out (`ring`) is returned unchanged and keeps its tone's own ADSR.
+      if (typeof window !== 'undefined' && window._ambEmitKey && Number.isFinite(startTime)
+          && typeof window._ambNoteChoke === 'function') {
+        try {
+          const _ch = window._ambNoteChoke(window._ambEmitKey, startTime, durationMs, params);
+          if (Number.isFinite(_ch) && _ch > 0 && _ch < durationMs) durationMs = _ch;
+        } catch (e) {}
+      }
       // Cold-start guard: if the AudioContext hasn't actually resumed yet
       // (very first gesture race — the gesture's resume() is async, the
       // synchronous call into playNote loses), kick the resume now and

@@ -32524,6 +32524,88 @@
         }
       });
     }
+    // ── CHORD CHOKE ───────────────────────────────────────────────────────────
+    // A pad with a 3-second release under a ½-bar chord is still sounding three
+    // chords later, and short cadences made that the normal case rather than the
+    // exception. So a Bloom note is released by the chord boundary BY DEFAULT,
+    // and a layer can opt out (`ring`) to hold its tone's own ADSR instead.
+    //
+    // It rides the same playNote hook as the unit gate — one place, every layer
+    // type, no emitter change — and sits AFTER the capture tee, so it is a
+    // PLAYBACK filter: the capture keeps the full phrase, toggling ring-out takes
+    // effect immediately on a frozen Write loop with no rewrite, and the
+    // invariant harness (which stubs playNote) never sees it.
+    //
+    // THE BOUNDARY COMES FROM `_ambProgStepAt`, never from a second walk of the
+    // chord lengths. That function has three branches — section-bound parts,
+    // parts with repeats, salted lengths — and re-deriving the edges beside it is
+    // exactly how the Scheduler lane used to lie about the harmony. The step is
+    // monotonic in time, so a bisection on it finds the boundary and agrees with
+    // the engine by construction.
+    const _AMB_CHOKE_GAP = 0.012;        // leave the boundary clean, as the bed choke does
+    let _ambChokeMemo = null;            // { sig, at, end } — one entry; steps repeat, so it hits
+    function _ambChordEndAt(E, cfg, atSec) {
+      const p = cfg && cfg.prog;
+      if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return 0;
+      const bpm = (cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      let step0;
+      try { step0 = _ambProgStepAt(E, atSec) | 0; } catch (e) { return 0; }
+      // One-entry memo: consecutive notes in a chord ask the same question.
+      const sig = step0 + '|' + (E._barGridAnchor || 0) + '|' + (E._progAnchor || 0) + '|' + bpm;
+      if (_ambChokeMemo && _ambChokeMemo.sig === sig && _ambChokeMemo.end > atSec) return _ambChokeMemo.end;
+      // Bracket: the longest a single chord can be here. Chord lengths are capped
+      // at 4 bars (the cadence ceiling), and a part repeat cannot extend ONE
+      // chord — so 8 bars is a safe outer bound with room to spare.
+      const span = barSec * 8;
+      let lo = atSec, hi = atSec + span;
+      try { if ((_ambProgStepAt(E, hi) | 0) === step0) return 0; } catch (e) { return 0; }   // no boundary in range
+      for (let i = 0; i < 14; i++) {                       // ~0.5ms resolution over 8 bars
+        const mid = (lo + hi) / 2;
+        let sm; try { sm = _ambProgStepAt(E, mid) | 0; } catch (e) { return 0; }
+        if (sm === step0) lo = mid; else hi = mid;
+      }
+      _ambChokeMemo = { sig, at: atSec, end: hi };
+      return hi;
+    }
+    // Does this layer ring out instead of choking? Absent = choke (the default).
+    const _ambLayerRings = (L) => !!(L && L.ring);
+    // The hook. Returns the duration the note should actually sound for.
+    function _ambNoteChoke(key, atSec, durMs, params) {
+      try {
+        // THE ENGINE THAT IS EMITTING, not _masterEng — `_E` is set by every emit
+        // scope. Gating on `_masterEng.timer` would have skipped the BOUNCE
+        // entirely (its pass-1 capture drives a synthetic engine with no timer),
+        // so the render would have rung out where live playback chokes: the
+        // second-implementation divergence this file keeps paying for. Nothing
+        // reaches here without `_ambEmitKey`, which only a Bloom emit sets.
+        const E = (typeof _E !== 'undefined' && _E) ? _E : _masterEng;
+        if (!E) return durMs;
+        if (!(durMs > 0) || !Number.isFinite(atSec)) return durMs;
+        const cfg = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : null);
+        if (!cfg || !cfg.prog || !cfg.prog.on) return durMs; // no changes ⇒ no boundary to choke at
+        const L = _ambLayerByKey(E, key);
+        if (!L || _ambLayerRings(L)) return durMs;           // opted out — obey the tone's ADSR
+        // A note that cannot reach the next boundary needs no work, and this is
+        // what keeps percussive layers off the bisection entirely.
+        const bpm = (cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+        const barSec = (60 / Math.max(20, bpm)) * 4;
+        const tail = durMs / 1000 + Math.max(0, (params && params.release) || 0) / 1000;
+        if (tail < barSec / 8) return durMs;
+        const end = _ambChordEndAt(E, cfg, atSec);
+        if (!(end > atSec)) return durMs;
+        const room = (end - _AMB_CHOKE_GAP) - atSec;
+        if (room <= 0.03) return durMs;                      // already at the edge; leave it alone
+        if (tail <= room) return durMs;                      // it already finishes in time
+        const ms = Math.max(60, Math.round(room * 1000));
+        // Keep the release INSIDE the shortened note, or the voice collapses to a
+        // near-silent stub instead of releasing by the boundary (the bed choke
+        // learned this the same way).
+        if (params && Number.isFinite(params.release)) params.release = Math.min(params.release, Math.max(20, Math.round(ms * 0.5)));
+        return ms;
+      } catch (e) { return durMs; }
+    }
+    try { window._ambNoteChoke = _ambNoteChoke; } catch (e) {}
     function _ambProgGrpOpen(key, label, open, pop) {
       return '<div class="ambient-grp ambient-proggrp' + (open ? ' open' : '') + '" id="ambient-proggrp-' + key + '"'
         + (pop ? ' data-pop="1"' : '') + ' data-grp="' + label + '">' +
@@ -36086,19 +36168,19 @@
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'voiceCap', 'Voice cap', 0, 12, '0 = follow Density'], ['followsalt'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
         ['sub', 'Progression', 'When an Area progression is set: the layer locks to it and plays voicings of the current chord. (Repeat/Times in Timing only apply when there is no Area progression.)'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
-        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold \u00b7 \u2212N = hold N units \u00b7 +N = N chords per unit'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length \u00b7 % of each strike a chord rings'], ['choke'], ['pitchrule'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold \u00b7 \u2212N = hold N units \u00b7 +N = N chords per unit'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length \u00b7 % of each strike a chord rings'], ['choke'], ['ring'], ['pitchrule'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
-        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['ring'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'gravity', 'Gravity', 0, 100, 'free → chord tones'], ['sl', 'contour', 'Contour', -100, 100, 'fall → rise'], ['sl', 'stutter', 'Stutter', 0, 100, 'walk → repeats'], ['sl', 'phrasing', 'Phrasing', 0, 100, 'stream → gestures'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
-        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['ring'], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'syncop', 'Syncopate', 0, 100, 'straight → offbeat'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       // Learn: fetched prose spoken over the music. No pitch material and no
@@ -36146,7 +36228,7 @@
       arp: { label: 'Arp', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Source'], ['keyov'], ['salt'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['grp', 'Pattern'], ['arpeuclid'], ['euclidgrid'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
-        ['grp', 'Timing'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'pattern length — fills the Unit'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (euclid; 0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'pattern length — fills the Unit'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['ring'], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (euclid; 0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'rateVar', 'Rate var', 0, 100, 'steady → rushes'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
@@ -36154,7 +36236,7 @@
       bass: { label: 'Bass', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['grp', 'Pattern'], ['euclidgrid'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'pattern length — the seed fills the Unit'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'pattern length — the seed fills the Unit'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['ring'], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['tight'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Walk', 0, 100, 'hold → wander (proximity-capped)'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Riff (internal type 'run'): a fixed RANDOM note phrase, `bars` bars long,
@@ -36162,14 +36244,14 @@
       run: { label: 'Riff', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['ring'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'phrasing', 'Articulate', 0, 100, 'even → arrivals sustain, runs detach'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Density · −N = 1 hit per N bars · +N = N per bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length · % of each strike a hit rings'], ['pitchrule'], ['st', 'voices', 'Voices', 1, 9, 'tones per hit (Stack)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Density · −N = 1 hit per N bars · +N = N per bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['ring'], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length · % of each strike a hit rings'], ['pitchrule'], ['st', 'voices', 'Voices', 1, 9, 'tones per hit (Stack)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'vary', 'Roam', 0, 100, 'root → wander degrees'], ['tight'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
@@ -36733,6 +36815,11 @@
           row('scatter', 'Salt scatter', 'placement of the colour segments');
       }
       if (k === 'followsalt') return '<div class="ambient-ctrl"><label for="' + p + '-followsalt">Follow salt</label><select id="' + p + '-followsalt" class="ambient-select"><option value="0">Hold the chord</option><option value="1">Play the colour changes</option></select><span class="ambient-hint">re-voice inside the unit as salt colours the chord \u2014 shared notes ring on</span></div>';
+      // RING OUT — the opt-out from the chord choke. Default (absent) chokes: a
+      // note is released by the next chord boundary, so a long tail does not
+      // hang three chords deep under a short cadence. Turned on, the note keeps
+      // its tone's own ADSR and rings across the change.
+      if (k === 'ring') return '<div class="ambient-ctrl"><label for="' + p + '-ring">Ring out</label><select id="' + p + '-ring" class="ambient-select"><option value="0">Choke at the chord</option><option value="1">Ring out (tone\u2019s ADSR)</option></select><span class="ambient-hint">off = released by the next chord change</span></div>';
       if (k === 'choke') return '<div class="ambient-ctrl"><label for="' + p + '-choke">Choke</label><select id="' + p + '-choke" class="ambient-select"><option value="0">Off (overlap)</option><option value="1">At boundary</option></select><span class="ambient-hint">release each chord by the next unit</span></div>';
       if (k === 'toneseq') return '<div class="ambient-ctrl ambient-toneseq-ctrl"><label title="Tone cycle — schedule Instrument Tone changes on the bar clock: e.g. 4 bars Sawtooth, then 4 bars Sine, repeating. Each note picks the step active at its onset; a blank tone = the layer\'s default voice.">Tone cycle</label><span class="ambient-toneseq-box" id="' + p + '-toneseq">' + _ambToneSeqBoxHtml(inst) + '</span></div>';
       if (k === 'tight') return '<div class="ambient-ctrl"><label for="' + p + '-tight">Tight</label><select id="' + p + '-tight" class="ambient-select"><option value="0">Off</option><option value="1">Tight (choke)</option></select><span class="ambient-hint">each note lasts to the next hit, then chokes (overrides the other length controls)</span></div>';
@@ -37283,6 +37370,10 @@
           }
           else if (k === 'followsalt') { const e = el('followsalt'); if (e) { e.value = inst.followSalt ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === '1') L.followSalt = 1; else delete L.followSalt; sync(); persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } } }); } }
           else if (k === 'choke') { const e = el('choke'); if (e) { e.value = inst.choke ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.choke = (e.value === '1'); sync(); persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } } }); } }
+          // RING OUT is a PLAYBACK filter (the choke lives in playNote, after the
+          // capture tee), so it needs no re-anchor: the very next note obeys it,
+          // even on a frozen Write loop.
+          else if (k === 'ring') { const e = el('ring'); if (e) { e.value = inst.ring ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === '1') L.ring = 1; else delete L.ring; persist(); } }); } }
           else if (k === 'tight') { const e = el('tight'); if (e) { e.value = (inst.tight | 0) ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.tight = (e.value === '1') ? 1 : 0; sync(); persist(); } }); } }
           else if (k === 'progfeel') { const e = el('progfeel'); if (e) { e.value = inst.progFeel || 'even'; e.addEventListener('change', () => { const L = get(); if (L) { L.progFeel = (e.value === 'stochastic') ? 'stochastic' : 'even'; sync(); persist(); } }); } }
           else if (k === 'pitchrule') { const e = el('pitchrule'); if (e) { e.value = _ambPitchRuleOf(inst); e.addEventListener('change', () => { const L = get(); if (!L) return; const v = e.value; if (v === 'voicing' || v === 'stack' || v === 'fixed' || v === 'anchor') L.pitchRule = v; else delete L.pitchRule; if (E.timer) { try { _ambReanchorLayer(E, key); } catch (x) {} } sync(); persist(); }); } }
@@ -39725,6 +39816,10 @@
       { const _fs = document.getElementById(tr('ambient-bed-followsalt')); if (_fs) _fs.value = cfg.bed.followSalt ? '1' : '0'; }
       set('ambient-bed-chordmode', cfg.bed.chordMode || 'chaos');
       set('ambient-bed-choke', cfg.bed.choke ? '1' : '0');
+      // RING OUT — primaries render from the schema but wire from this hardcoded
+      // list, so a new token is inert on the built-in layers until it is added
+      // HERE and to the listener block below (the documented primary-bind trap).
+      ['bed', 'motif', 'texture'].forEach(t => { if (cfg[t]) set('ambient-' + t + '-ring', cfg[t].ring ? '1' : '0'); });
       // Tone-cycle boxes: fill each step's tone catalog + reflect state (rebuild
       // rows only when the step count changed, so open dropdowns aren't stomped).
       try {
@@ -41556,6 +41651,16 @@
         try { _ambSeedUiRefresh(E, pp, getL, ly); } catch (e) {}
       });
       { const ck = G('ambient-bed-choke'); if (ck) ck.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg.bed) return; cfg.bed.choke = (ck.value === '1'); persist(); if (E.timer) { try { _ambReanchorLayer(E, 'bed'); } catch (x) {} } }); }
+      // Ring out needs NO re-anchor: the choke is a playback filter inside
+      // playNote, so the next note obeys the change even on a frozen loop.
+      ['bed', 'motif', 'texture'].forEach(t => {
+        const rg = G('ambient-' + t + '-ring');
+        if (rg) rg.addEventListener('change', () => {
+          _E = E; const cfg = cfg0(); if (!cfg || !cfg[t]) return;
+          if (rg.value === '1') cfg[t].ring = 1; else delete cfg[t].ring;
+          persist();
+        });
+      });
       ['motif', 'texture', 'beat'].forEach((tk) => { const tg = G('ambient-' + tk + '-tight'); if (tg) tg.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg[tk]) return; cfg[tk].tight = (tg.value === '1') ? 1 : 0; persist(); }); });
       bindTime('ambient-bed-intervalMs', 'bed', 'intervalMs');
       bindTime('ambient-bed-lengthMs', 'bed', 'lengthMs');

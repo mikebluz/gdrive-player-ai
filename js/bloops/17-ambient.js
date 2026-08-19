@@ -32435,11 +32435,22 @@
         const c2 = E.getCfg(), ps = (c2.prog && Array.isArray(c2.prog.parts)) ? c2.prog.parts : null;
         return (ps && ps[pi] && ps[pi].name) || (c2.prog && c2.prog.name) || 'Changes';
       };
+      // NO _ambSyncControls HERE. It rebuilds every layer card — measured 193ms of
+      // a 197ms press on an 8-layer project, i.e. the whole of the reported lag —
+      // and a cadence changes chord LENGTHS, which no layer control displays. What
+      // DOES display them is repainted directly: the overview strip (0.6ms) and
+      // the Scheduler chord lane (3.6ms), plus the progression editor if it is open.
       const commit = () => {
         try { E.getCfg(); } catch (e) {}
-        try { _ambRenderProgOverview(E); _ambRenderScheduler(E); _ambSyncControls(E); } catch (e) {}
+        try { _ambRenderProgOverview(E); } catch (e) {}
+        try { _ambRenderScheduler(E); } catch (e) {}
+        try { if (_ambProgEd && typeof _ambPeRender === 'function') _ambPeRender(); } catch (e) {}
+        // The SALT READOUT prints each chord's slice length, so it goes stale on a
+        // cadence change too — it was riding on _ambSyncControls. Called direct and
+        // forced past its own cache, which is cheap where the panel rebuild was not.
+        try { _ambSaltReadoutSync(E, true); } catch (e) {}
         if (typeof persistWorkspace === 'function') persistWorkspace();
-        paint();
+        repaint();
       };
       const paint = () => {
         const c2 = E.getCfg();
@@ -32471,6 +32482,25 @@
           '<div class="cad-gen">' + _AMB_CAD_FEELS.map(f =>
             '<button type="button" class="ambient-seg cad-feel" data-cad="gen:' + f[0] + '" title="' + esc(f[2]) + '">' + esc(f[1]) + '</button>').join('') + '</div>' +
           '<div class="sm-footer"><button type="button" class="sm-apply cad-close">Done</button></div></div>';
+      };
+      // Update the values and the bars WITHOUT rebuilding the list: an innerHTML
+      // rewrite destroys the button under the finger, so a quick second press
+      // lands on a node that is already detached and does nothing.
+      const repaint = () => {
+        const c2 = E.getCfg();
+        const r = _ambCadRange(c2, pi);
+        const list = ov.querySelector('.cad-list');
+        if (!r || !list || list.children.length !== (r.to - r.from)) { paint(); return; }
+        const lens = _ambCadence(c2, pi);
+        const total = lens.reduce((a, v) => a + v, 0);
+        lens.forEach((v, k) => {
+          const row = list.children[k]; if (!row) return;
+          const val = row.querySelector('.cad-val'); if (val) val.textContent = _ambCadNum(v);
+          const bar = row.querySelector('.cad-bar > i');
+          if (bar) bar.style.width = ((v / Math.max(0.001, total)) * 100).toFixed(2) + '%';
+        });
+        const sub = ov.querySelector('.cad-sub b');
+        if (sub) sub.textContent = _ambFmtBpc(total) + ' bars';
       };
       paint();
       document.body.appendChild(ov);

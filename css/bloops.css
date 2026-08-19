@@ -3021,7 +3021,12 @@
     .ambient-ctrl-seg .ambient-seg-field { display: inline-flex; width: 100%; min-width: 0; gap: 4px; }
     .ambient-ctrl-seg .ambient-seg-opt {
       flex: 1 1 0; min-width: 0; min-height: 32px; padding: 5px 6px; border-radius: 7px;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      /* WRAP rather than ellipse the label away: sharing a row at 390px gives each
+         option ~47px, and "♩ Pedal note" (87px) ellipsed down to a couple of
+         characters — a button whose text is gone names nothing. Two short lines
+         fit; the min-height floor keeps the touch target. */
+      white-space: normal; overflow-wrap: anywhere; overflow: hidden;
+      line-height: 1.15; hyphens: auto;
       font: 600 0.74rem 'Segoe UI', sans-serif; touch-action: manipulation;
     }
     /* Live numeric readout for a slider (third grid column). Fixed min-width +
@@ -3214,7 +3219,17 @@
       font-family: 'Segoe UI', sans-serif; font-size: 0.7rem; font-weight: 600;
       color: #a0aec0;
     }
-    .ambient-hint { font-family: 'Segoe UI', sans-serif; font-size: 0.68rem; color: #6b6b8a; white-space: nowrap; }
+    /* HINTS WRAP BY DEFAULT. This was `white-space: nowrap` — right for the
+       one-word readouts it was built for (a value in a sized cell) and wrong the
+       moment it carries a sentence, which it does in a dozen places now: the Salt
+       hint measured 685px of text running 440px past its container at 390px, and
+       three more prose hints did the same. The codebase had accumulated FIVE
+       per-site `white-space: normal` patches for exactly this, i.e. every new
+       prose hint had to remember — so the default is the wrapping one and the few
+       places that genuinely want one line (the Key row) opt out explicitly.
+       min-width:0 is what lets a hint shrink inside a flex/grid cell at all. */
+    .ambient-hint { font-family: 'Segoe UI', sans-serif; font-size: 0.68rem; color: #6b6b8a;
+      white-space: normal; overflow-wrap: anywhere; min-width: 0; }
     .ambient-note {
       font-family: 'Segoe UI', sans-serif; font-size: 0.72rem; color: #6b6b8a;
       line-height: 1.5; padding-top: 4px;
@@ -13358,6 +13373,27 @@
       background: #16162a; overflow: hidden; }
     .ambient-cad-modal .cad-bar > i { display: block; height: 100%; border-radius: 4px;
       background: linear-gradient(90deg, #7fd6c4, #9f7aea); }
+    /* TOTAL BAR COUNT + its parity. Two colours, and neither is a state colour
+       already in use here: teal for even, amber for odd/uneven — NOT the green
+       (#48bb78 = sounding) or red (#fc8181 = delete) those would collide with.
+       An odd cadence is a choice, not a fault, so the amber carries no ⚠ and the
+       wording stays factual. Wraps like everything else in a fixed-width modal. */
+    .ambient-cad-modal .cad-total {
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px;
+      margin: 9px 0 2px; padding: 7px 10px; border-radius: 8px;
+      border: 1px solid rgba(160,174,192,0.22); background: rgba(255,255,255,0.03);
+      font-family: 'Segoe UI', sans-serif; white-space: normal; overflow-wrap: anywhere;
+    }
+    .ambient-cad-modal .cad-total-n { font-size: 0.86rem; font-weight: 700; color: #e2e8f0; }
+    .ambient-cad-modal .cad-total-w {
+      font-size: 0.62rem; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;
+      padding: 2px 7px; border-radius: 999px; border: 1px solid currentColor;
+    }
+    .ambient-cad-modal .cad-total-d { font-size: 0.68rem; color: #8b8ba7; flex: 1 1 100%; }
+    .ambient-cad-modal .cad-total.is-even { border-color: rgba(79,209,197,0.38); background: rgba(79,209,197,0.09); }
+    .ambient-cad-modal .cad-total.is-even .cad-total-w { color: #4fd1c5; }
+    .ambient-cad-modal .cad-total.is-odd { border-color: rgba(246,173,85,0.38); background: rgba(246,173,85,0.09); }
+    .ambient-cad-modal .cad-total.is-odd .cad-total-w { color: #f6ad55; }
     .ambient-cad-modal .cad-genlbl { font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase;
       color: #8a90a6; margin: 12px 0 5px; }
     .ambient-cad-modal .cad-gen { display: flex; flex-wrap: wrap; gap: 5px; }

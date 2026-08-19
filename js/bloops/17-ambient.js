@@ -2571,6 +2571,20 @@
       const f = parseFloat(str);
       return (Number.isFinite(f) && f > 0) ? f : null;
     }
+    // Bars as a MIXED number, not _ambFmtBpc's improper fraction: a 4¼-bar total
+    // reads "17/4 bars" there, which nobody counts in. Shared by the one-pass
+    // readout and the cadence total so the two cannot render the same length two
+    // different ways (this file's recurring duplicate-walk bug).
+    function _ambFmtBarsMixed(bars) {
+      const b = Number(bars) || 0;
+      const whole = Math.floor(b + 1e-6), frac = b - whole;
+      if (frac < 1e-6) return String(whole);
+      const g = { 0.125: '\u215B', 0.25: '\u00BC', 0.5: '\u00BD', 0.75: '\u00BE' }[Math.round(frac * 1000) / 1000];
+      if (g) return (whole ? String(whole) : '') + g;
+      if (Math.abs(frac - 1 / 3) < 0.005) return (whole ? String(whole) : '') + '\u2153';
+      if (Math.abs(frac - 2 / 3) < 0.005) return (whole ? String(whole) : '') + '\u2154';
+      return String(Math.round(b * 100) / 100);
+    }
     function _ambFmtBpc(v) {
       if (!(v > 0)) return '1';
       if (Math.abs(v - Math.round(v)) < 1e-6) return String(Math.round(v));
@@ -6203,24 +6217,37 @@
     // against the chord changes. Bar-native layers (Bass/Run/Pedal/Euclid) are
     // already aligned; Arp is handled separately. Only touches layers currently in
     // Free mode, and is reversible (set a layer back to Free in its Unit menu).
+    // Snap ONE layer's Unit to the nearest bar RATIO of its own natural length:
+    // grid-locked without changing how often it actually plays. A bed whose
+    // natural unit is ~4 bars becomes Bar ×4, not Bar ×1 — a blanket ×1 would
+    // quadruple its strike rate, which is a sound change, not a phase fix.
+    // Shared by the progression auto-snap and the new-layer default below so the
+    // two cannot drift apart (this file's recurring "two walks of the same idea"
+    // bug). Returns false and leaves the layer FREE when the natural length
+    // can't be measured — never guesses.
+    function _ambUnitSnapNatural(E, key, L, cfg) {
+      if (!L) return false;
+      const bpm = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      if (!(barSec > 0.05)) return false;
+      let nat = 0; try { nat = _ambNaturalUnitSec(E, key, L, cfg); } catch (e) {}
+      if (!(nat > 0.02)) return false;
+      const want = nat / barSec;
+      let best = null, err = Infinity;
+      _AMB_RATIOS.forEach(r => { const e = Math.abs((r[0] / r[1]) - want); if (e < err) { err = e; best = r; } });
+      if (!best) return false;
+      L.unit = { mode: 'sync', ref: 'bar', num: best[0], den: best[1] };
+      return true;
+    }
     function _ambAutoSyncFreeForProg(E, cfg) {
       if (!cfg) return 0;
       _E = E;
       const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
       const barSec = (60 / Math.max(20, bpm)) * 4;
       if (!(barSec > 0.05)) return 0;
-      const nearest = (natBars) => {
-        let best = null, err = Infinity;
-        _AMB_RATIOS.forEach(r => { const e = Math.abs((r[0] / r[1]) - natBars); if (e < err) { err = e; best = r; } });
-        return best;
-      };
       const snap = (key, L) => {
         if (!L || (L.unit && L.unit.mode === 'sync')) return false;   // missing / already synced
-        let nat = 0; try { nat = _ambNaturalUnitSec(E, key, L, cfg); } catch (e) {}
-        if (!(nat > 0.02)) return false;
-        const r = nearest(nat / barSec); if (!r) return false;
-        L.unit = { mode: 'sync', ref: 'bar', num: r[0], den: r[1] };
-        return true;
+        return _ambUnitSnapNatural(E, key, L, cfg);
       };
       let count = 0;
       if (snap('bed', cfg.bed)) count++;
@@ -9029,15 +9056,39 @@
     // makes all three agree, because they are then the same thing.
     // Returns null when there is no cadence, so a flat progression keeps the
     // original lattice byte-identical.
+    // THE CHORD CLOCK → LAYER GRID OFFSET, in one place. _ambChordSpanAt answers
+    // on the chord clock (_progAnchor / _playStartAt); every layer's onsets sit on
+    // _barGridAnchor, which is the first-tick lead later (measured 115-350ms, and
+    // it differs per press). Anything that compares a chord edge against a LAYER's
+    // timing — the onset walk, the freeze snaps — must cross with this; anything
+    // asking "which chord is sounding" (the resolver, the readouts) must NOT.
+    // Mixing the two is what put prog-synced layers ahead of every other layer.
+    function _ambChordGridOff(E) {
+      const pA = Number.isFinite(E && E._progAnchor) ? E._progAnchor : (E && E._playStartAt);
+      return (Number.isFinite(E && E._barGridAnchor) && Number.isFinite(pA))
+        ? Math.max(0, E._barGridAnchor - pA) : 0;
+    }
     function _ambProgNextSlot(E, cfg, psi, from, minSec) {
       if (!psi || !_ambProgHasCadence(cfg)) return null;
       const subdiv = Math.max(1, psi.subdiv | 0);
+      // TRANSLATE ONTO THE LAYER GRID. _ambChordSpanAt's edges are on the CHORD
+      // clock (_progAnchor / _playStartAt); every layer's onsets are on
+      // _barGridAnchor, and the two differ by the first-tick lead — measured 350ms
+      // on one press and 115ms on another. Returning the raw chord-clock boundary
+      // put prog-synced layers exactly that far AHEAD of every bar-grid layer the
+      // moment a cadence existed: a flat progression's bed sat at +0.175 bar (the
+      // grid) and the same bed under 2·½·1·1 sat at +0.000 (the chord clock).
+      // Reported as "chords are hitting too early", and this is the file's own
+      // documented rule — anything grid-anchored anchors on _barGridAnchor, never
+      // on the prog clock. All the span math stays on the chord clock; only the
+      // crossing is translated, in both directions.
+      const off = _ambChordGridOff(E);
       const step = (t) => {
-        const sp = _ambChordSpanAt(E, cfg, t + 1e-4);
+        const sp = _ambChordSpanAt(E, cfg, t - off + 1e-4);
         if (!sp) return null;
         const sub = Math.max(0.03, sp.len / subdiv);
-        const slot = Math.floor((t + 1e-4 - sp.start) / sub + 1e-6);
-        return (slot + 1 < subdiv) ? (sp.start + (slot + 1) * sub) : sp.end;
+        const slot = Math.floor((t - off + 1e-4 - sp.start) / sub + 1e-6);
+        return ((slot + 1 < subdiv) ? (sp.start + (slot + 1) * sub) : sp.end) + off;
       };
       let ng = step(from);
       if (ng == null) return null;
@@ -19114,7 +19165,11 @@
     function _ambLayerUnitText(E, key, L, cfg) {
       if (!L) return '';
       let period = 0;
-      try { period = _ambLayerPeriodSec(E, key, L, cfg); } catch (e) {}
+      // A READOUT states the chord in force, not the scheduler's fixed grid —
+      // the card read "1 bar" under a 2-bar chord. Same split as the progress
+      // bar: _ambLayerPeriodSec is the lattice the onsets walk, and must not
+      // move; _ambLayerBarPeriodSec is what a human is being shown.
+      try { period = _ambLayerBarPeriodSec(E, key, L, cfg); } catch (e) {}
       if (!(period > 0)) return '';
       // Synced / bar-native layers read out in grid STEPS (bars for whole-bar loops);
       // free layers read out in absolute TIME (ms / seconds).
@@ -19144,7 +19199,11 @@
     function _ambLayerBarsText(E, key, L, cfg) {
       if (!L) return '';
       let period = 0;
-      try { period = _ambLayerPeriodSec(E, key, L, cfg); } catch (e) {}
+      // A READOUT states the chord in force, not the scheduler's fixed grid —
+      // the card read "1 bar" under a 2-bar chord. Same split as the progress
+      // bar: _ambLayerPeriodSec is the lattice the onsets walk, and must not
+      // move; _ambLayerBarPeriodSec is what a human is being shown.
+      try { period = _ambLayerBarPeriodSec(E, key, L, cfg); } catch (e) {}
       if (!(period > 0)) return '';
       const bpm = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
       if (!(bpm > 0)) return '';
@@ -22109,23 +22168,37 @@
       let _base = w.bStart;
       if (_snapCad) {
         try {
-          const sp0 = _ambChordSpanAt(E, _snapCad, w.bStart);
-          if (sp0 && (w.bStart - sp0.start) < sp0.len * 0.5) _base = sp0.start;
+          // …+ the grid offset, because that is where the LIVE onsets are. Snapping
+          // to the raw chord edge made the replay play `lead` earlier than the live
+          // emit, which is the same double at the seam in a new costume.
+          const _o = _ambChordGridOff(E);
+          const sp0 = _ambChordSpanAt(E, _snapCad, w.bStart - _o);
+          if (sp0 && (w.bStart - _o - sp0.start) < sp0.len * 0.5) _base = sp0.start + _o;
         } catch (x) {}
       }
       st.events = win.map(e => {
         let at = e.at;
         if (_snapCad) {
           try {
-            const sp = _ambChordSpanAt(E, _snapCad, at);
-            // Only pull BACK to the chord's own start, and only when the event is
-            // already close to it — a genuine mid-chord onset (a subdivided layer)
-            // must keep its place.
-            if (sp && (at - sp.start) < sp.len * 0.5) at = sp.start;
+            const _o = _ambChordGridOff(E);
+            const sp = _ambChordSpanAt(E, _snapCad, at - _o);
+            // Only pull BACK to the chord's own start (on the layer grid), and only
+            // when the event is already close to it — a genuine mid-chord onset (a
+            // subdivided layer) must keep its place.
+            if (sp && (at - _o - sp.start) < sp.len * 0.5) at = sp.start + _o;
           } catch (x) {}
         }
         return { t: Math.max(0, at - _base), freq: e.freq, dur: e.dur, params: e.params };
-      });
+      })
+      // …AND DROP ANYTHING THAT LANDED ON THE LOOP'S OWN END. Snapping the origin
+      // back to the chord boundary lengthens every `t` by the lead, so the last
+      // onset in the window — the one that opens the NEXT cycle — comes out at
+      // exactly loopLen and replays on top of t=0. That is two copies of the same
+      // chord at the same instant, which is not a flam but a comb filter:
+      // reported as "the first chord sounds different, like EQ is off… or there's
+      // two copies of the notes". Measured 8 notes with 4 duplicate frequencies
+      // at every loop start, and 4 clean notes everywhere else.
+      .filter(e => e.t < w.loopLen - 0.002);   // st.loopLen is not assigned until below
       st.loopLen = w.loopLen;
       st.keyCtx = _ambCurKeyCtx(E);   // the capture frame — anchors any later Harmony remap
       // Bar-Lock: anchor the loop at the captured window's END and cancel the layer's
@@ -22147,8 +22220,9 @@
         // FRACTION of the chord, which is the thing that actually varies.)
         if (_snapCad) {
           try {
-            const sp = _ambChordSpanAt(E, _snapCad, A);
-            if (sp && (A - sp.start) < sp.len * 0.5) A = sp.start;
+            const _o = _ambChordGridOff(E);
+            const sp = _ambChordSpanAt(E, _snapCad, A - _o);
+            if (sp && (A - _o - sp.start) < sp.len * 0.5) A = sp.start + _o;
           } catch (x) {}
         }
         try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, A); } catch (e) {}
@@ -27495,6 +27569,32 @@
         el.style.setProperty('--ph', active ? prog.toFixed(3) : '0');
         el.classList.toggle('active', active);
         el.classList.toggle('frozen', frozen);
+        // …AND THE BAR READOUT BESIDE IT, which under a cadence is TIME-VARYING.
+        // _ambSyncLayerUnits fills it on EDITS (a Timing change, Lock-to, a panel
+        // sync) — right while every chord was the same length, and stale the moment
+        // chord 2 is half a bar: the card read "1 bar" under a 2-bar chord for the
+        // whole pass. It follows the same clock as the bar it labels now.
+        // Gated on _ambProgHasCadence so a flat progression never repaints (the
+        // text cannot change with time there) and cached on the element so the DOM
+        // is touched only when the string actually differs — the grid._phStep idiom.
+        // `cfg` is NOT a local here (the branches above each say `E._cfg ||
+        // E.getCfg()`) — a bare reference throws a ReferenceError straight into
+        // the enclosing catch and the whole rest of the sweep silently stops,
+        // which is the trap the comment at the orch branch already records.
+        try {
+          const _c3 = E._cfg || E.getCfg();
+          if (_c3 && _ambProgHasCadence(_c3)) {
+            if (el._barsEl === undefined) {
+              const card = el.closest('.ambient-layer');
+              el._barsEl = (card && card.querySelector('.ambient-layer-bars[data-barkey]')) || null;
+            }
+            if (el._barsEl) {
+              const _L3 = _ambLayerByKey(E, key);
+              const _bt = _L3 ? _ambLayerBarsText(E, key, _L3, _c3) : '';
+              if (el._barsTxt !== _bt) { el._barsTxt = _bt; el._barsEl.textContent = _bt; }
+            }
+          }
+        } catch (e) {}
         // Flash the layer label exactly when the AUDIBLE loop boundary crosses —
         // the bar's progress wraps high→low (prog drops sharply). Driven off the
         // same audible clock as the bar, so the pulse lands with the sound.
@@ -32498,6 +32598,32 @@
       return _ambFmtBpc(v);
     }
     function _ambCadStr(lens) { return (lens || []).map(_ambCadNum).join('·'); }
+    // Classify a cadence's TOTAL length. A part that is an even number of bars
+    // sits under the 2/4/8-bar phrasing everything else in the app assumes, so
+    // it is worth stating outright — along with the ways it splits into equal
+    // whole-bar groups, which is what "how do I divide this" actually asks.
+    // Three outcomes, TWO colours: even, odd, and "uneven" for a total that is
+    // not a whole number of bars at all (4½), which cannot be either and takes
+    // the odd colour. Nothing here is a warning — an odd part is a choice.
+    function _ambCadTotalHtml(total) {
+      const info = _ambCadTotalInfo(total);
+      const n = _ambFmtBarsMixed(total) + ' bar' + (Math.abs(total - 1) < 1e-6 ? '' : 's');
+      return '<div class="cad-total is-' + info.kind + '">' +
+        '<span class="cad-total-n">' + n + '</span>' +
+        '<span class="cad-total-w">' + info.word + '</span>' +
+        '<span class="cad-total-d">' + info.detail + '</span></div>';
+    }
+    function _ambCadTotalInfo(total) {
+      const t = Math.round((Number(total) || 0) * 1000) / 1000;
+      const n = Math.round(t);
+      if (Math.abs(t - n) > 1e-6) return { kind: 'odd', word: 'uneven', detail: 'not a whole number of bars' };
+      if (n <= 0) return { kind: 'odd', word: 'empty', detail: '' };
+      const divs = [];
+      for (let d = 2; d <= n; d++) if (n % d === 0) divs.push(d);
+      const list = divs.length > 6 ? (divs.slice(0, 6).join(', ') + '…') : divs.join(', ');
+      if (n % 2 === 0) return { kind: 'even', word: 'even', detail: 'divides by ' + list };
+      return { kind: 'odd', word: 'odd', detail: divs.length > 1 ? ('divides by ' + list) : 'won\u2019t divide' };
+    }
     // Write one chord's length. Absent when it is the default, so a plain
     // progression carries no `bars` at all and stays byte-identical.
     function _ambCadSet(cfg, absIdx, bars) {
@@ -32525,7 +32651,11 @@
     //   drive    ½ ½ 1 2        — short chords accelerating into a hold
     //   scatter  free           — any ladder value, still bounded
     const _AMB_CAD_FEELS = [
-      ['even', 'Even', 'One bar each — the flat default.'],
+      // Labelled "Flat", NOT "Even": the total readout below now uses even/odd for
+      // the PARITY of the bar count, and one dialog cannot have "even" meaning both
+      // "every chord the same length" and "divisible by 2". Key stays `even` for
+      // save-compat (divergent behaviour ⇒ divergent label; keys never move).
+      ['even', 'Flat', 'One bar each — the flat default.'],
       ['anchor', 'Anchor', 'Lean on the first chord, then move.'],
       ['breath', 'Breath', 'Long, short, long, short.'],
       ['drive', 'Drive', 'Short chords accelerating into a hold.'],
@@ -32640,8 +32770,9 @@
         ov.innerHTML = '<div class="sm-modal ambient-cad-modal">' +
           '<div class="sm-title">Cadence — ' + esc(partName()) + '</div>' +
           '<div class="ambient-hint cad-sub">How long each chord is held, in bars. '
-            + lens.length + ' chord' + (lens.length === 1 ? '' : 's') + ' · <b>' + esc(_ambFmtBpc(total)) + ' bars</b> in all.</div>' +
+            + lens.length + ' chord' + (lens.length === 1 ? '' : 's') + '.</div>' +
           '<div class="cad-list">' + rows + '</div>' +
+          _ambCadTotalHtml(total) +
           '<div class="cad-genlbl">Generate a shape</div>' +
           '<div class="cad-gen">' + _AMB_CAD_FEELS.map(f =>
             '<button type="button" class="ambient-seg cad-feel" data-cad="gen:' + f[0] + '" title="' + esc(f[2]) + '">' + esc(f[1]) + '</button>').join('') + '</div>' +
@@ -32663,8 +32794,15 @@
           const bar = row.querySelector('.cad-bar > i');
           if (bar) bar.style.width = ((v / Math.max(0.001, total)) * 100).toFixed(2) + '%';
         });
-        const sub = ov.querySelector('.cad-sub b');
-        if (sub) sub.textContent = _ambFmtBpc(total) + ' bars';
+        const tot = ov.querySelector('.cad-total');
+        if (tot) {
+          const info = _ambCadTotalInfo(total);
+          tot.className = 'cad-total is-' + info.kind;
+          const q = (sel, txt) => { const e = tot.querySelector(sel); if (e) e.textContent = txt; };
+          q('.cad-total-n', _ambFmtBarsMixed(total) + ' bar' + (Math.abs(total - 1) < 1e-6 ? '' : 's'));
+          q('.cad-total-w', info.word);
+          q('.cad-total-d', info.detail);
+        }
       };
       paint();
       document.body.appendChild(ov);
@@ -38716,14 +38854,33 @@
       try { _ambSyncFxVis(E); } catch (e) {}               // FX module: show only the added FX
       try { _ambSyncLayerUnits(E); } catch (e) {}          // header unit + bar-length readouts
     }
-    // Active area progression → new layers drop in already phase-locked:
-    // Unit=Sync, Lock to=Bar ×1, Rate ×1. The progression is bar-native, so a
-    // free-interval default would sit off the chord grid from its first onset.
-    function _ambProgDefaultUnit(cfg, L) {
+    // A NEW LAYER DEFAULTS TO UNIT=SYNC (2026-08-19; was Free unless a progression
+    // was on, hence the old name _ambProgDefaultUnit — renamed per the naming rule,
+    // since it now decides the default in every case). Two branches, because they
+    // are answering different questions:
+    //   · progression ON  → Bar ×1, Rate ×1, exactly as before. The chord grid is
+    //     bar-native and a new layer must land ON it from its very first onset.
+    //   · progression OFF → the nearest bar RATIO of the layer's own natural unit,
+    //     so it is phase-locked to the shared grid while still playing at the rate
+    //     its type intends (a bed stays ~4 bars rather than being forced to 1).
+    // Spoken layers are EXCLUDED: their length is however long the text takes, and
+    // they already have their own grid axis (`snapBars` / _ambWordSnap) — a unit
+    // ratio there would be a control that means nothing.
+    // DELIBERATELY NOT in _ambDefaultLayer: the invariant harness builds its layers
+    // straight from that, so a change there drifts the baseline. This is the UI
+    // creation seam, the same split _ambEuclidStochasticInit / _ambSeedRandomPattern
+    // already use — harness/golden/arch byte-identical by construction.
+    function _ambDefaultUnit(E, cfg, key, L) {
+      if (!L) return L;
+      const type = String(key || '').split(':')[0];
+      if (type === 'learn' || type === 'sireel') return L;
       const p = cfg && cfg.prog;
-      if (!L || !p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return L;
-      L.unit = { mode: 'sync', ref: 'bar', num: 1, den: 1 };
-      L.speed = 1;
+      if (p && p.on && Array.isArray(p.chords) && p.chords.length) {
+        L.unit = { mode: 'sync', ref: 'bar', num: 1, den: 1 };
+        L.speed = 1;
+        return L;
+      }
+      try { _ambUnitSnapNatural(E, key, L, cfg); } catch (e) {}
       return L;
     }
     // ---- Re-realize as… (layer type morph) --------------------------------
@@ -38742,7 +38899,9 @@
       if (newType === t0) return;
       if (!Array.isArray(cfg.extras)) cfg.extras = [];
       const newId = cfg.extras.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
-      const L = _ambDefaultLayer(newType, newId);
+      // A morph is a NEW layer, and TIMING deliberately takes the target's
+      // idiomatic defaults (COPY carries no `unit`), so it takes this one too.
+      const L = _ambDefaultUnit(E, cfg, newType + ':' + newId, _ambDefaultLayer(newType, newId));
       const COPY = ['tone', 'fine', 'attack', 'decay', 'sustain', 'release', 'portamento',
         'level', 'panMode', 'space', 'areaFadeMs', 'when', 'wetOnly',
         'modeRot', 'rootPc', 'colorAmt', 'colorUsage',
@@ -38862,7 +39021,7 @@
       _E = E; const cfg = E.getCfg(); if (!cfg || !_AMB_LAYER_SCHEMA[type]) return;
       if (!Array.isArray(cfg.extras)) cfg.extras = [];
       const newId = cfg.extras.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
-      const L = _ambProgDefaultUnit(cfg, _ambDefaultLayer(type, newId));
+      const L = _ambDefaultUnit(E, cfg, type + ':' + newId, _ambDefaultLayer(type, newId));
       _ambApplyRandomInstVoice(L, type);
       if (_ambIsEuclidLayer(L, type)) _ambSeedRandomPattern(L, type);   // born with a random written pattern
       // A Sir Eel layer arrives with something already written in it — an empty
@@ -38939,6 +39098,9 @@
         // Euclid layers get a stochastic INITIAL pattern (unless the preset pins pulses).
         const isEuclid = (spec.type === 'bass') || (spec.type === 'beat' && L.gen === 'euclid') || (spec.type === 'arp' && L.euclid);
         if (isEuclid && !Number.isFinite(copy.pulses)) _ambSeedRandomPattern(L, spec.type);
+        // …and the same Unit default — but ONLY when the preset didn't state one.
+        // A saved preset IS a composed layer, so an explicit unit is a decision.
+        if (!copy.unit) _ambDefaultUnit(E, cfg, spec.type + ':' + newId, L);
         if (L.takeReroll) _ambApplyTakeReroll(L, cfg.seed);   // seed-derive its rhythm now (reproducible per take)
         cfg.extras.push(L);
         _ambMarkFreshLayer(E, L, spec.type + ':' + newId);
@@ -39825,10 +39987,7 @@
           const mm = Math.floor(secs / 60), ss = Math.round(secs - mm * 60);
           // A MIXED number, not _ambFmtBpc's improper fraction: a 4¼-bar pass read
           // "17/4 bars", which nobody counts in.
-          const _whole = Math.floor(bars + 1e-6), _frac = bars - _whole;
-          const _fg = { 0.125: '⅛', 0.25: '¼', 0.5: '½', 0.75: '¾' }[Math.round(_frac * 1000) / 1000];
-          const _len = (_frac < 1e-6) ? String(_whole)
-            : (_fg ? ((_whole ? _whole : '') + _fg) : String(Math.round(bars * 100) / 100));
+          const _len = _ambFmtBarsMixed(bars);
           txt = 'one pass · ' + _len + ' bar' + (Math.abs(bars - 1) < 0.01 ? '' : 's')
             + ' · ' + (mm ? (mm + ':' + String(ss).padStart(2, '0')) : (Math.round(secs * 10) / 10 + 's'))
             + ' · ' + nCh + ' change' + (nCh === 1 ? '' : 's');

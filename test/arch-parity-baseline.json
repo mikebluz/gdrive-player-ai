@@ -4885,7 +4885,7 @@
  ],
  "grid-subset": [
   "arch  Verse[0+2×1] · Chorus[2+2×1]",
-  "chain Verse:0* Verse:1 Chorus:2* Chorus:3",
+  "chain Verse:0* Verse:1 Chorus:2* Chorus:3 Verse:0* Chorus:2* Chorus:3 Verse:1* Chorus:2* Chorus:3",
   "0.00 0 - 0[0,4,7] 0/major>0 s0,a0,d0,g0,r0 -",
   "0.25 0 - 0[0,4,7] 0/major>0 s0,a0,d0,g0,r0 -",
   "0.50 0 - 0[0,4,7] 0/major>0 s0,a0,d0,g0,r0 -",
@@ -5017,7 +5017,7 @@
  ],
  "grid-repeat": [
   "arch  Verse[0+2×1] · Chorus[2+2×1]",
-  "chain Verse:0* Verse:1 Chorus:2* Chorus:3",
+  "chain Verse:1* Verse:0 Verse:1 Chorus:2* Chorus:3 Verse:0* Verse:1 Chorus:2* Chorus:3",
   "0.00 1 - 5[0,4,7] 0/major>5 s0,a0,d0,g0,r0 -",
   "0.25 1 - 5[0,4,7] 0/major>5 s0,a0,d0,g0,r0 -",
   "0.50 1 - 5[0,4,7] 0/major>5 s0,a0,d0,g0,r0 -",
@@ -5149,7 +5149,7 @@
  ],
  "grid-empty": [
   "arch  Verse[0+2×1] · Chorus[2+2×1]",
-  "chain Verse:0* Verse:1 Chorus:2* Chorus:3",
+  "chain Verse:0* Verse:1 Chorus:2* Chorus:3 Verse:0* Verse:1",
   "0.00 0 - 0[0,4,7] 0/major>0 s0,a0,d0,g0,r0 -",
   "0.25 0 - 0[0,4,7] 0/major>0 s0,a0,d0,g0,r0 -",
   "0.50 0 - 0[0,4,7] 0/major>0 s0,a0,d0,g0,r0 -",
@@ -5281,7 +5281,7 @@
  ],
  "grid-meta": [
   "arch  Verse[0+2×1] · Chorus[2+2×1]",
-  "chain Verse:0* Verse:1 Chorus:2* Chorus:3",
+  "chain Verse:0* Verse:1 Chorus:2* Chorus:3 Verse:0* Verse:1 Chorus:2* Chorus:3 Verse:0* Verse:1",
   "0.00 0 - 0[0,4,7] 0/major>0 s0,a0,d0,g0,r0 -",
   "0.25 0 - 0[0,4,7] 0/major>0 s0,a0,d0,g0,r0 -",
   "0.50 0 - 0[0,4,7] 0/major>0 s0,a0,d0,g0,r0 -",
@@ -5413,7 +5413,7 @@
  ],
  "grid-both": [
   "arch  Verse[0+2×1] · Chorus[2+2×1]",
-  "chain Verse:0* Verse:1 Chorus:2* Chorus:3",
+  "chain Verse:0* Verse:1 Chorus:2* Chorus:3 Verse:0*",
   "0.00 0 - 0[0,4,7] 0/major>0 s0,a0,d0,g0,r0 -",
   "0.25 0 - 0[0,4,7] 0/major>0 s0,a0,d0,g0,r0 -",
   "0.50 0 - 0[0,4,7] 0/major>0 s0,a0,d0,g0,r0 -",
@@ -5545,7 +5545,7 @@
  ],
  "grid-cadence": [
   "arch  Verse[0+2×1] · Chorus[2+2×1]",
-  "chain Verse:0* Verse:1 Chorus:2* Chorus:3",
+  "chain Verse:0* Verse:1 Chorus:2* Chorus:3 Verse:1* Verse:0 Verse:1 Chorus:2* Chorus:3",
   "0.00 0 - 0[0,4,7] 0/major>0 s0,a0,d0,g0,r0 -",
   "0.25 0 - 0[0,4,7] 0/major>0 s0,a0,d0,g0,r0 -",
   "0.50 0 - 0[0,4,7] 0/major>0 s0,a0,d0,g0,r0 -",
@@ -5677,7 +5677,7 @@
  ],
  "grid-key": [
   "arch  Verse[0+2×1] · Chorus[2+2×1]key5/major",
-  "chain Verse:0* Verse:1 Chorus:2* Chorus:3",
+  "chain Verse:0* Verse:1 Chorus:2* Chorus:3 Verse:0* Chorus:2* Chorus:3",
   "0.00 0 - 9[0,4,7] 9/minor>9 s0,a0,d0,g0,r0 -",
   "0.25 0 - 9[0,4,7] 9/minor>9 s0,a0,d0,g0,r0 -",
   "0.50 0 - 9[0,4,7] 9/minor>9 s0,a0,d0,g0,r0 -",
@@ -5809,7 +5809,7 @@
  ],
  "grid-sections": [
   "arch  Verse[0+2×1] · Chorus[2+2×1]",
-  "chain Verse:0* Verse:1 Chorus:2* Chorus:3",
+  "chain Verse:0* Verse:1 Chorus:2* Chorus:3 Verse:0* Chorus:2* Chorus:3",
   "0.00 0 0:A@0/0 0[0,4,7] 0/major>0 s0,a0,d0,g0,r0 -",
   "0.25 0 0:A@0/0 0[0,4,7] 0/major>0 s0,a0,d0,g0,r0 -",
   "0.50 0 0:A@0/0 0[0,4,7] 0/major>0 s0,a0,d0,g0,r0 -",

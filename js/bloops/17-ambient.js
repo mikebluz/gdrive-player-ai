@@ -4659,10 +4659,24 @@
         _ambArrGridSeq(cfg, it, ranges.length).forEach(k => {
           const r = ranges[k]; if (!r) return;
           const seq = _ambPartGridSeq(cfg, r.pi, visits[k], r.len);
-          visits[k]++;
+          const visit = visits[k]; visits[k]++;
+          // …plus what the DISPLAY needs, so one walk feeds both (the clock reads
+          // only .idx). `rep`/`plays` are the part's column within its own grid —
+          // "2/3" reads as the 2nd of 3 columns, which is what the badge means
+          // once a repeat is just a part appearing again.
+          let first = true;
           seq.forEach(ci => {
             const abs = r.from + ci;
-            if (abs >= 0 && abs < chords.length) out.push({ idx: abs, pi: r.pi });
+            if (abs < 0 || abs >= chords.length) return;
+            // `rep`/`plays` mean "repeat r of plays" to every existing consumer,
+            // and a grid visit is ONE run that happens ONCE — reporting the column
+            // count there made _ambProgPartRuns badge every Verse run "×3", which
+            // is a claim that the run repeats three times. The column rides
+            // separately as `col`, for the UI that will draw it.
+            out.push({ idx: abs, pi: r.pi, part: k, visit,
+                       rep: 0, plays: 1, col: visit % partCols[k], cols: partCols[k],
+                       iter: it, pFirst: first });
+            first = false;
           });
         });
       }
@@ -35016,6 +35030,23 @@
     function _ambArchChainSlots(cfg) {
       const arch = cfg && Array.isArray(cfg.arch) ? cfg.arch : null;
       const p = cfg && cfg.prog;
+      // PART MATRIX: the played order comes from the grid expansion — the SAME
+      // walk the chord clock uses, so the Scheduler lane, the pass windowing, the
+      // one-pass readout and the chain length cannot drift from what is heard.
+      // That is the whole reason this function exists as one insertion point.
+      // The list is the full SUPER-CYCLE, which is what "the played chain" means
+      // once a part's behaviour changes from visit to visit.
+      if (_ambGridOn(cfg)) {
+        const gs = _ambGridSlots(cfg);
+        if (gs && gs.length) {
+          const parts = Array.isArray(p.parts) ? p.parts : null;
+          return gs.map(sl => ({
+            idx: sl.idx, part: sl.part, pName: (parts && parts[sl.pi] && parts[sl.pi].name) || 'Part',
+            pFirst: !!sl.pFirst, rep: sl.rep, plays: sl.plays,
+            col: sl.col, cols: sl.cols, iter: sl.iter,
+          }));
+        }
+      }
       if (!arch || !p || !Array.isArray(p.chords) || !p.chords.length) return null;
       const _hasCh = arch.some((e) => e && e.changes), _hasHold = arch.some((e) => e && e.hold);
       let withCh = (_hasCh || _hasHold) ? arch.filter((e) => e && (e.changes || e.hold)) : [];
@@ -40194,7 +40225,19 @@
           // A MIXED number, not _ambFmtBpc's improper fraction: a 4¼-bar pass read
           // "17/4 bars", which nobody counts in.
           const _len = _ambFmtBarsMixed(bars);
-          txt = 'one pass · ' + _len + ' bar' + (Math.abs(bars - 1) < 0.01 ? '' : 's')
+          // "one pass" is a lie once a grid is on: the chain is a SUPER-CYCLE of
+          // however many arrangement iterations it takes for every part's column
+          // to come round again. Name the count rather than quietly redefining
+          // the phrase (a 3-column grid measured 10 bars and read "one pass").
+          let _lead = 'one pass';
+          try {
+            if (_ambGridOn(cfg)) {
+              const _its = new Set((_ambProgChainSlots(cfg) || []).map(sl => sl.iter));
+              const _n = _its.size;
+              if (_n > 1) _lead = _n + ' passes';
+            }
+          } catch (e) {}
+          txt = _lead + ' · ' + _len + ' bar' + (Math.abs(bars - 1) < 0.01 ? '' : 's')
             + ' · ' + (mm ? (mm + ':' + String(ss).padStart(2, '0')) : (Math.round(secs * 10) / 10 + 's'))
             + ' · ' + nCh + ' change' + (nCh === 1 ? '' : 's');
         }

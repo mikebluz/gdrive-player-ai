@@ -32449,6 +32449,9 @@
         // cadence change too — it was riding on _ambSyncControls. Called direct and
         // forced past its own cache, which is cheap where the panel rebuild was not.
         try { _ambSaltReadoutSync(E, true); } catch (e) {}
+        // The one-pass readout states the length of the very thing being edited,
+        // and it used to ride on the panel rebuild this commit deliberately drops.
+        try { _ambProgChainLenSync(E); } catch (e) {}
         if (typeof persistWorkspace === 'function') persistWorkspace();
         repaint();
       };
@@ -39580,6 +39583,42 @@
       return true;
     }
 
+    // ONE PASS, in bars and in time. EXTRACTED from _ambSyncControls, because a
+    // cadence edit changes this and must not pay for a 193ms panel rebuild to
+    // say so — dropping that rebuild for responsiveness left this readout
+    // stating the PRE-EDIT length: "4 bars · 8s" beside a chip reading 2·½·1·1,
+    // which is 4.5. A length readout that contradicts the shape next to it reads
+    // as the engine playing the wrong thing; it was not — the clock played
+    // 2·½·1·1 the whole time (verified by walking _ambProgStepAt).
+    function _ambProgChainLenSync(E, cfg0) {
+      if (!E) return;
+      const cfg = cfg0 || (E.getCfg && E.getCfg()); if (!cfg) return;
+      // The same id mapping _ambSyncControls uses — this pane is master-only
+      // chrome, so `ambient-*` becomes `mix-bloom-*` there.
+      const tr = (id) => (E.idPrefix === 'ambient') ? id : id.replace(/^ambient-/, E.idPrefix + '-');
+      const cl = document.getElementById(tr('ambient-prog-chainlen')); if (!cl) return;
+      let txt = '';
+      try {
+        const bars = _ambProgChainBars(cfg);
+        if (bars > 0) {
+          const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+          const secs = bars * (60 / Math.max(20, bpm)) * 4;
+          const nCh = (_ambProgChainSlots(cfg) || []).length;
+          const mm = Math.floor(secs / 60), ss = Math.round(secs - mm * 60);
+          // A MIXED number, not _ambFmtBpc's improper fraction: a 4¼-bar pass read
+          // "17/4 bars", which nobody counts in.
+          const _whole = Math.floor(bars + 1e-6), _frac = bars - _whole;
+          const _fg = { 0.125: '⅛', 0.25: '¼', 0.5: '½', 0.75: '¾' }[Math.round(_frac * 1000) / 1000];
+          const _len = (_frac < 1e-6) ? String(_whole)
+            : (_fg ? ((_whole ? _whole : '') + _fg) : String(Math.round(bars * 100) / 100));
+          txt = 'one pass · ' + _len + ' bar' + (Math.abs(bars - 1) < 0.01 ? '' : 's')
+            + ' · ' + (mm ? (mm + ':' + String(ss).padStart(2, '0')) : (Math.round(secs * 10) / 10 + 's'))
+            + ' · ' + nCh + ' change' + (nCh === 1 ? '' : 's');
+        }
+      } catch (e) {}
+      cl.textContent = txt;
+      cl.title = 'How long ONE full pass of the changes takes at ' + ((cfg.bpm | 0) || _ambBpm()) + ' BPM';
+    }
     function _ambSyncControls(E) {
       _E = E;
       const cfg = E.getCfg();
@@ -39617,24 +39656,7 @@
         { const pa = document.getElementById(tr('ambient-pov-actions'));
           if (pa) pa.style.display = progOn ? '' : 'none'; }
         // One pass of the whole series, in bars AND in time at this tempo.
-        { const cl = document.getElementById(tr('ambient-prog-chainlen'));
-          if (cl) {
-            let txt = '';
-            try {
-              const bars = _ambProgChainBars(cfg);
-              if (bars > 0) {
-                const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
-                const secs = bars * (60 / Math.max(20, bpm)) * 4;
-                const nCh = (_ambProgChainSlots(cfg) || []).length;
-                const mm = Math.floor(secs / 60), ss = Math.round(secs - mm * 60);
-                txt = 'one pass · ' + _ambFmtBpc(bars) + ' bar' + (Math.abs(bars - 1) < 0.01 ? '' : 's')
-                  + ' · ' + (mm ? (mm + ':' + String(ss).padStart(2, '0')) : (Math.round(secs * 10) / 10 + 's'))
-                  + ' · ' + nCh + ' change' + (nCh === 1 ? '' : 's');
-              }
-            } catch (e) {}
-            cl.textContent = txt;
-            cl.title = 'How long ONE full pass of the changes takes at ' + ((cfg.bpm | 0) || _ambBpm()) + ' BPM';
-          } }
+        _ambProgChainLenSync(E, cfg);
         // Progression subsection: the pick/edit/clone/part row shows when Progression
         // is on; else the "turn Progression on" hint.
         { const progOff = document.getElementById(tr('ambient-progsec-off'));

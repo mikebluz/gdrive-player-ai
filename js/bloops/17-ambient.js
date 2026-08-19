@@ -2900,6 +2900,12 @@
         const _tp = Array.isArray(prog.parts) ? prog.parts.filter(x => x && !x.open).length : 1;
         const _ag = _ambNormalizeGridObj(prog.arrGrid, Math.max(1, _tp));
         if (_ag) prog.arrGrid = _ag; else delete prog.arrGrid;
+        // The PARTLESS store: with no parts the whole chord list is one part, and
+        // its grid has nowhere else to live.
+        if (!Array.isArray(prog.parts)) {
+          const _pg = _ambNormalizeGridObj(prog.grid, chords.length);
+          if (_pg) prog.grid = _pg; else delete prog.grid;
+        } else if (prog.grid) { delete prog.grid; }
       }
       // VERSIONS (Feat 2b): whole-prog snapshots; coerce + cap; each carries its own parts.
       if (prog.versions != null && Array.isArray(prog.versions)) {
@@ -4583,11 +4589,30 @@
     // defined without a second clock.
     const _AMB_GRID_COLS = 8;
     const _ambGridCols = (g) => Math.max(1, Math.min(64, (g && (g.cols | 0)) || _AMB_GRID_COLS));
+    // WHERE A PART'S GRID LIVES. With NO parts at all — which is the common case,
+    // since _ambRepairParts collapses a single part covering the whole cycle —
+    // there is no part object to hang one on, so the PROGRESSION carries it.
+    // Without this the editor rendered perfectly and every cell write returned
+    // false: "clicking the chips does nothing".
+    function _ambGridStore(cfg, pi, create) {
+      const p = cfg && cfg.prog; if (!p) return null;
+      const parts = Array.isArray(p.parts) ? p.parts : null;
+      if (parts && parts[pi]) {
+        if (parts[pi].open) return null;
+        if (!parts[pi].grid && create) parts[pi].grid = { cols: _AMB_GRID_COLS, seq: {} };
+        return parts[pi].grid || null;
+      }
+      if (parts) return null;                      // a real part list that has no such index
+      if (!p.grid && create) p.grid = { cols: _AMB_GRID_COLS, seq: {} };
+      return p.grid || null;
+    }
     function _ambGridOn(cfg) {
       const p = cfg && cfg.prog;
       if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return false;
-      if (p.arrGrid && p.arrGrid.seq && Object.keys(p.arrGrid.seq).length) return true;
-      return Array.isArray(p.parts) && p.parts.some(x => x && x.grid && x.grid.seq && Object.keys(x.grid.seq).length);
+      const live = (g) => !!(g && g.seq && Object.keys(g.seq).length);
+      if (live(p.arrGrid)) return true;
+      if (!Array.isArray(p.parts)) return live(p.grid);
+      return p.parts.some(x => x && live(x.grid));
     }
     // The time-occupying parts and their chord ranges. Mirrors _ambCadRange's walk
     // (an OPEN part carries no chords and does not advance `from`); open parts are
@@ -4611,8 +4636,7 @@
     function _ambPartGridSeq(cfg, pi, visit, plen) {
       const n = Math.max(1, plen | 0);
       const dflt = () => { const a = []; for (let i = 0; i < n; i++) a.push(i); return a; };
-      const parts = cfg && cfg.prog && cfg.prog.parts;
-      const g = (Array.isArray(parts) && parts[pi]) ? parts[pi].grid : null;
+      const g = _ambGridStore(cfg, pi, false);
       if (!g || !g.seq) return dflt();
       const cols = _ambGridCols(g);
       const row = g.seq[String(((visit % cols) + cols) % cols)];
@@ -4640,6 +4664,39 @@
     // bounded, because a pathological set of column counts could otherwise run
     // long. Returns null when it produces nothing, so the caller falls through.
     const _AMB_GRID_MAX_ITERS = 512, _AMB_GRID_MAX_SLOTS = 4096;
+    // MEMOISED, because this is on the hot path twice over: _ambProgStepAt runs it
+    // per note emit, and _ambChordSpanAt bisects 28 times per lookup. Measured
+    // before: a super-cycle of 1442 slots at 0.26ms to build and a LINEAR scan to
+    // walk, giving _ambProgStepAt 0.375ms/call — about 10ms per span bisection,
+    // which is the kind of number that made the cadence steppers lag.
+    // The signature is the grids' own shape, so any edit invalidates it and no
+    // caller has to remember to.
+    const _ambGridSigOf = (g) => (g && g.seq)
+      ? ((g.cols | 0) + '{' + Object.keys(g.seq).map(k => k + ':' + (g.seq[k] || []).join('.')).join('|') + '}')
+      : '-';
+    let _ambGridMemo = null;
+    function _ambGridSig(cfg) {
+      const p = cfg.prog, parts = Array.isArray(p.parts) ? p.parts : null;
+      let out = (p.chords ? p.chords.length : 0) + ';' + (cfg.barsPerChord || 1) + ';';
+      if (p.chords) out += p.chords.map(c => (c && c.bars) || 0).join('.');
+      out += ';';
+      if (parts) parts.forEach(pt => { out += (pt.open ? 'o' : '') + (pt.len | 0) + ':' + _ambGridSigOf(pt.grid) + ','; });
+      else out += _ambGridSigOf(p.grid);
+      return out + ';' + _ambGridSigOf(p.arrGrid) + ';' + (Array.isArray(p.chain) ? p.chain.join('.') : '');
+    }
+    // The expansion PLUS the cumulative bar edges, so the clock can bisect the
+    // slot instead of walking it.
+    function _ambGridPlan(cfg) {
+      if (!_ambGridOn(cfg)) return null;
+      const sig = _ambGridSig(cfg);
+      if (_ambGridMemo && _ambGridMemo.sig === sig) return _ambGridMemo;
+      const slots = _ambGridSlots(cfg);
+      if (!slots || !slots.length) { _ambGridMemo = null; return null; }
+      const cum = new Float64Array(slots.length + 1);
+      for (let i = 0; i < slots.length; i++) cum[i + 1] = cum[i] + _ambChainSlotBars(cfg, slots[i]);
+      _ambGridMemo = { sig, slots, cum, cycle: cum[slots.length] || 1 };
+      return _ambGridMemo;
+    }
     function _ambGridSlots(cfg) {
       if (!_ambGridOn(cfg)) return null;
       const p = cfg.prog, chords = p.chords;
@@ -4647,7 +4704,7 @@
       if (!ranges.length) return null;
       const parts = Array.isArray(p.parts) ? p.parts : null;
       const partCols = ranges.map(r => {
-        const g = (parts && parts[r.pi]) ? parts[r.pi].grid : null;
+        const g = _ambGridStore(cfg, r.pi, false);
         return (g && g.seq) ? _ambGridCols(g) : 1;
       });
       const arrCols = (p.arrGrid && p.arrGrid.seq) ? _ambGridCols(p.arrGrid) : 1;
@@ -4687,13 +4744,12 @@
     // written order and drops a grid with nothing left, so "edit it back to
     // normal" removes the field rather than storing a redundant copy.
     function _ambPassWrite(cfg, pi, col, arr) {
-      const parts = cfg && cfg.prog && cfg.prog.parts;
-      if (!Array.isArray(parts) || !parts[pi] || parts[pi].open) return false;
-      const p = parts[pi], plen = Math.max(1, p.len | 0);
-      if (!p.grid || typeof p.grid !== 'object') p.grid = { cols: _AMB_GRID_COLS, seq: {} };
-      if (!p.grid.seq || typeof p.grid.seq !== 'object') p.grid.seq = {};
-      p.grid.cols = _ambGridCols(p.grid);
-      p.grid.seq[String(col | 0)] = (arr || []).map(v => v | 0).filter(v => v >= 0 && v < plen).slice(0, 64);
+      const g = _ambGridStore(cfg, pi, true); if (!g) return false;
+      const rg = _ambGridRanges(cfg).find(r => r.pi === pi) || _ambGridRanges(cfg)[0];
+      const plen = Math.max(1, rg ? rg.len : 1);
+      if (!g.seq || typeof g.seq !== 'object') g.seq = {};
+      g.cols = _ambGridCols(g);
+      g.seq[String(col | 0)] = (arr || []).map(v => v | 0).filter(v => v >= 0 && v < plen).slice(0, 64);
       return true;
     }
     function _ambArrWrite(cfg, col, arr) {
@@ -4718,19 +4774,14 @@
       return true;
     }
     function _ambPassColsSet(cfg, pi, n) {
-      const parts = cfg && cfg.prog && cfg.prog.parts;
-      if (!Array.isArray(parts) || !parts[pi] || parts[pi].open) return false;
-      const p = parts[pi];
       const want = Math.max(1, Math.min(32, n | 0));
-      if (!p.grid || typeof p.grid !== 'object') {
-        if (want === _AMB_GRID_COLS) return false;             // nothing to say yet
-        p.grid = { cols: want, seq: {} };
-        return true;
-      }
-      p.grid.cols = want;
+      const g0 = _ambGridStore(cfg, pi, false);
+      if (!g0 && want === _AMB_GRID_COLS) return false;         // nothing to say yet
+      const g = _ambGridStore(cfg, pi, true); if (!g) return false;
+      g.cols = want;
       // Drop any column beyond the new width — it can never be reached, and a
       // stored row nobody plays is the stale-mirror bug this model avoids.
-      if (p.grid.seq) Object.keys(p.grid.seq).forEach(k => { if ((k | 0) >= want) delete p.grid.seq[k]; });
+      if (g.seq) Object.keys(g.seq).forEach(k => { if ((k | 0) >= want) delete g.seq[k]; });
       return true;
     }
     // WHICH CHORD INSTANCE is sounding — a strictly increasing count of chord
@@ -4830,19 +4881,24 @@
       // walk below is byte-identical (arch-parity 37/37 pins that).
       if (!_ownSrc && cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords)
           && cfg.prog.chords.length && _ambGridOn(cfg)) {
-        const gs = _ambGridSlots(cfg);
-        if (gs && gs.length) {
+        const plan = _ambGridPlan(cfg);
+        if (plan && plan.slots.length) {
+          const gs = plan.slots, cum = plan.cum;
           const L = cfg.prog.chords.length;
-          const glens = gs.map(sl => _ambChainSlotBars(cfg, sl));
-          const gcycle = glens.reduce((a2, v) => a2 + v, 0) || bpc;
+          const gcycle = plan.cycle || bpc;
           const gloops = Math.floor(bars / gcycle);
-          let grem = bars - gloops * gcycle, gk = 0;
-          while (gk < gs.length - 1 && grem >= glens[gk]) { grem -= glens[gk]; gk++; }
+          const grem0 = bars - gloops * gcycle;
+          // BISECT the cumulative edges — the super-cycle can be well over a
+          // thousand slots, and a linear walk here is what made this 0.375ms.
+          let lo = 0, hi = gs.length - 1;
+          while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (cum[mid] <= grem0) lo = mid; else hi = mid - 1; }
+          const gk = lo, grem = grem0 - cum[gk];
+          const glenK = Math.max(1e-6, cum[gk + 1] - cum[gk]);
           const gstep = gloops * L + gs[gk].idx;
           // `gk` is the position in the PLAYED sequence — monotonic even though a
           // chord (and a whole part) may recur inside one pass.
           _ambProgInstHint = gloops * gs.length + gk;
-          _ambProgPosHint = { step: gstep, pos: Math.max(0, Math.min(1, grem / Math.max(1e-6, glens[gk]))) };
+          _ambProgPosHint = { step: gstep, pos: Math.max(0, Math.min(1, grem / glenK)) };
           return gstep;
         }
       }
@@ -24824,6 +24880,7 @@
       E._keySched = null;   // drop the keyMaster key schedule on stop
       try { _ambRampVizClear(E); } catch (e) {}
       try { _ambClearEuclidPlayheads(E); } catch (e) {}   // drop the step-playhead highlight on stop
+      try { _ambClearPassPlayhead(_ambGet(E, 'ambient-passmx')); } catch (e) {}
       try { _ambRestoreTempWhen(E); } catch (e) {}   // drop lingering "Temp" When edits back to baseline
       try { _ambFreezeStopAll(E); } catch (e) {}
       _ambResetClocks(E);
@@ -27394,6 +27451,7 @@
       }
       try { _ambUpdatePlayheads(E); } catch (e) {}
       try { _ambEuclidStepPlayheads(E); } catch (e) {}
+      try { _ambPassPlayhead(E); } catch (e) {}
       try { _ambProgOverviewPlayhead(E); } catch (e) {}
       try { _ambSaltReadoutSync(E); } catch (e) {}
       try { _ambSynthVoicePlayheads(E); } catch (e) {}
@@ -33376,7 +33434,7 @@
         const ch = prog.chords[r.from + i];
         names.push(_ambIsTransition(ch) ? '⇝' : (_ambChordShort(_ambChordShift(ch, shift)) || '?'));
       }
-      const g = (parts && parts[r.pi]) ? parts[r.pi].grid : null;
+      const g = _ambGridStore(cfg, r.pi, false);
       const cols = g ? _ambGridCols(g) : _AMB_GRID_COLS;
       const seqs = [];
       for (let c = 0; c < cols; c++) seqs.push(_ambPartGridSeq(cfg, r.pi, c, r.len));
@@ -33581,15 +33639,69 @@
         dragK = -1; commit(a);
       });
     }
+    // ▦ PASSES PLAYHEAD — which pass is sounding, and where inside it. Driven off
+    // the SAME walk the clock uses: _ambProgInstanceAt is a monotonic count of
+    // chord instances, so `inst % slots.length` is the position in the played
+    // super-cycle and the slot carries its part, its column and its iteration.
+    // No second derivation, so it cannot drift from what is heard.
+    // Touches the DOM only when the position CHANGES (the grid._phStep idiom) —
+    // a per-frame innerHTML rewrite would also destroy the button under the
+    // finger, which is the documented reason the chips act on pointerdown.
+    function _ambPassPlayhead(E) {
+      const el = _ambGet(E, 'ambient-passmx'); if (!el) return;
+      const cfg = E && (E._cfg || (E.getCfg && E.getCfg()));
+      if (!E || !E.timer || !cfg || !_ambGridOn(cfg) || !_ambViewIsPlaying(E)) { _ambClearPassPlayhead(el); return; }
+      let slots = null; try { const _pl = _ambGridPlan(cfg); slots = _pl && _pl.slots; } catch (e) {}
+      if (!slots || !slots.length) { _ambClearPassPlayhead(el); return; }
+      let inst = 0; try { inst = _ambProgInstanceAt(E, Tone.now()) | 0; } catch (e) { return; }
+      const k = ((inst % slots.length) + slots.length) % slots.length;
+      const sl = slots[k]; if (!sl) return;
+      const meta = (el._pmsPart === -1);
+      const col = meta ? (sl.iter | 0) % Math.max(1, _ambGridCols(cfg.prog.arrGrid)) : (sl.col | 0);
+      // Which ROW: the part in the meta view, the chord-within-part otherwise.
+      let row = -1;
+      if (meta) row = sl.part | 0;
+      else if (sl.part === el._pmsPart) {
+        const rg = _ambGridRanges(cfg)[el._pmsPart];
+        if (rg) row = sl.idx - rg.from;
+      }
+      const key = col + ':' + row + ':' + (meta ? 'm' : 'p');
+      if (el._phKey === key && el.querySelector('.pmx-cell.playing')) return;
+      el._phKey = key;
+      _ambClearPassPlayhead(el, true);
+      // The COLUMN is lit whether or not this view owns the row, so a part you
+      // are not looking at still shows which iteration is running.
+      el.querySelectorAll('[data-pmx]').forEach(n => {
+        const a = String(n.getAttribute('data-pmx')).split(':');
+        const isCell = (a[0] === 'cell' || a[0] === 'mcell');
+        const isSeq = (a[0] === 'seq' || a[0] === 'mseq');
+        if (!isCell && !isSeq) return;
+        if ((a[1] | 0) !== col) return;
+        n.classList.add('incol');
+        if (isCell && row >= 0 && (a[2] | 0) === row) n.classList.add('playing');
+      });
+      const hs = el.querySelectorAll('.pmx-head .pmx-h');
+      if (hs[col]) hs[col].classList.add('incol');
+    }
+    function _ambClearPassPlayhead(el, keepKey) {
+      if (!el) return;
+      if (!keepKey) el._phKey = '';
+      el.querySelectorAll('.playing, .incol').forEach(n => n.classList.remove('playing', 'incol'));
+    }
     // ONE delegated handler on the host — it survives every re-render, and the
     // cells are rebuilt on each edit so a per-element bind would be dead after
     // the first tap.
     function _ambWirePassMatrix(E) {
       const el = _ambGet(E, 'ambient-passmx'); if (!el || el._wired) return;
       el._wired = 1;
-      el.addEventListener('click', (ev) => {
+      // POINTERDOWN, not click. The playhead re-marks this host every frame while
+      // the transport runs, and a `click` needs mousedown+mouseup on the SAME
+      // element — the documented live-readout trap. Acting on the press also
+      // makes the cells feel immediate.
+      el.addEventListener('pointerdown', (ev) => {
         const t = ev.target && ev.target.closest && ev.target.closest('[data-pmx]');
         if (!t) return;
+        ev.preventDefault();
         _E = E;
         const a = String(t.getAttribute('data-pmx')).split(':');
         const cfg = E.getCfg(); if (!cfg || !cfg.prog) return;
@@ -33623,7 +33735,7 @@
         }
         if (a[0] === 'mseq') { _ambPassSeqModal(E, -1, a[1] | 0, true); return; }
         if (a[0] === 'cols') {
-          const g = (cfg.prog.parts && cfg.prog.parts[r.pi]) ? cfg.prog.parts[r.pi].grid : null;
+          const g = _ambGridStore(cfg, r.pi, false);
           _ambPassColsSet(cfg, r.pi, (g ? _ambGridCols(g) : _AMB_GRID_COLS) + (a[1] | 0));
           after(); return;
         }
@@ -35382,7 +35494,8 @@
       // The list is the full SUPER-CYCLE, which is what "the played chain" means
       // once a part's behaviour changes from visit to visit.
       if (_ambGridOn(cfg)) {
-        const gs = _ambGridSlots(cfg);
+        const _pl = _ambGridPlan(cfg);
+        const gs = _pl && _pl.slots;
         if (gs && gs.length) {
           const parts = Array.isArray(p.parts) ? p.parts : null;
           return gs.map(sl => ({

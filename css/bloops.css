@@ -13436,6 +13436,15 @@
     .ambient-passmx .pmx-cell.on {
       background: rgba(159,122,234,0.26); border-color: #9f7aea; color: #e9d8fd;
     }
+    /* PLAYHEAD. The column in force is tinted; the cell actually sounding gets
+       the green that means "sounding" everywhere else in this app. */
+    .ambient-passmx .pmx-h.incol { color: #cbd5e0; }
+    .ambient-passmx .pmx-cell.incol { border-color: rgba(203,213,224,0.4); }
+    .ambient-passmx .pmx-seq.incol { border-color: rgba(203,213,224,0.45); border-style: solid; color: #e2e8f0; }
+    .ambient-passmx .pmx-cell.playing {
+      background: rgba(72,187,120,0.34); border-color: #48bb78; color: #f0fff4;
+      box-shadow: 0 0 0 1px rgba(72,187,120,0.5);
+    }
     .ambient-passmx .pmx-seqrow { margin-top: 4px; }
     .ambient-passmx .pmx-seq {
       font: 600 0.58rem 'Segoe UI', sans-serif; color: #cbd5e0; text-align: center;

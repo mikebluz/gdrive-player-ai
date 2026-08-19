@@ -13400,6 +13400,10 @@
     .ambient-passmx { display: block; }
     .ambient-passmx .pmx-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
     .ambient-passmx .pmx-tab { min-height: 30px; padding: 4px 10px; }
+    /* The meta tab is a different SCOPE, not another part — mark it so the two
+       grids are never confused for one another. */
+    .ambient-passmx .pmx-tab-meta { border-color: #4fd1c5; color: #4fd1c5; }
+    .ambient-passmx .pmx-tab-meta.active { background: rgba(79,209,197,0.24); border-color: #4fd1c5; color: #d6fffb; }
     .ambient-passmx .pmx-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 7px; }
     .ambient-passmx .pmx-bar .ambient-hint { flex: 1 1 160px; }
     .ambient-passmx .pmx-cols { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
@@ -13444,6 +13448,7 @@
     }
     .ambient-passmx .pmx-seq.empty { color: #4a4a63; }
     .ambient-passmx .pmx-foot { display: block; margin-top: 7px; }
+    .ambient-passmx .pmx-super { color: #f6ad55; }
     /* The per-pass order editor. */
     .ambient-pseq-modal .pseq-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; min-height: 34px; }
     .ambient-pseq-modal .pseq-chip {

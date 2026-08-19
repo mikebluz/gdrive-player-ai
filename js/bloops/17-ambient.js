@@ -4696,6 +4696,27 @@
       p.grid.seq[String(col | 0)] = (arr || []).map(v => v | 0).filter(v => v >= 0 && v < plen).slice(0, 64);
       return true;
     }
+    function _ambArrWrite(cfg, col, arr) {
+      const p = cfg && cfg.prog; if (!p) return false;
+      const n = _ambGridRanges(cfg).length;
+      if (!p.arrGrid || typeof p.arrGrid !== 'object') p.arrGrid = { cols: _AMB_GRID_COLS, seq: {} };
+      if (!p.arrGrid.seq || typeof p.arrGrid.seq !== 'object') p.arrGrid.seq = {};
+      p.arrGrid.cols = _ambGridCols(p.arrGrid);
+      p.arrGrid.seq[String(col | 0)] = (arr || []).map(v => v | 0).filter(v => v >= 0 && v < n).slice(0, 64);
+      return true;
+    }
+    function _ambArrColsSet(cfg, n) {
+      const p = cfg && cfg.prog; if (!p) return false;
+      const want = Math.max(1, Math.min(32, n | 0));
+      if (!p.arrGrid || typeof p.arrGrid !== 'object') {
+        if (want === _AMB_GRID_COLS) return false;
+        p.arrGrid = { cols: want, seq: {} };
+        return true;
+      }
+      p.arrGrid.cols = want;
+      if (p.arrGrid.seq) Object.keys(p.arrGrid.seq).forEach(k => { if ((k | 0) >= want) delete p.arrGrid.seq[k]; });
+      return true;
+    }
     function _ambPassColsSet(cfg, pi, n) {
       const parts = cfg && cfg.prog && cfg.prog.parts;
       if (!Array.isArray(parts) || !parts[pi] || parts[pi].open) return false;
@@ -33341,8 +33362,13 @@
       const ranges = _ambGridRanges(cfg);
       const parts = Array.isArray(prog.parts) ? prog.parts : null;
       let pi = Number.isFinite(el._pmsPart) ? el._pmsPart : 0;
-      if (pi < 0 || pi >= ranges.length) pi = 0;
+      // −1 is the META view: which PARTS play in each arrangement iteration. It
+      // lives here rather than in a seventh accordion because the two grids
+      // COMPOSE — a part's column advances per visit, and the meta grid is what
+      // decides how many visits an iteration contains.
+      if (pi !== -1 && (pi < 0 || pi >= ranges.length)) pi = 0;
       el._pmsPart = pi;
+      if (pi === -1) { _ambRenderArrMatrix(E, el, cfg, ranges, parts); return; }
       const r = ranges[pi];
       const shift = _ambProgViewShift(E, cfg, prog.chords);
       const names = [];
@@ -33360,8 +33386,11 @@
       if (el._sig === sig) return;
       el._sig = sig;
       let h = '';
-      if (ranges.length > 1) {
-        h += '<div class="pmx-tabs">' + ranges.map((x, k) => {
+      {
+        h += '<div class="pmx-tabs">' +
+          '<button type="button" class="ambient-seg pmx-tab pmx-tab-meta" data-pmx="tab:-1" ' +
+          'title="Which parts play in each iteration, and in what order">\u21f6 Parts</button>' +
+          ranges.map((x, k) => {
           const nm = (parts && parts[x.pi] && parts[x.pi].name) || ('Part ' + (k + 1));
           return '<button type="button" class="ambient-seg pmx-tab' + (k === pi ? ' active' : '') +
             '" data-pmx="tab:' + k + '">' + esc(nm) + '</button>';
@@ -33397,16 +33426,78 @@
         'A chord can appear more than once — tap a <b>plays</b> caption to edit that pass\u2019s order.</div>';
       el.innerHTML = h;
     }
+    // THE META GRID — parts down, iterations across (iterations are horizontal in
+    // both grids, so one pass is always one column). Same grammar as the part
+    // view: a cell shows the positions that part occupies in that iteration, the
+    // caption spells the order, and a part may appear more than once — which is
+    // what `prog.chain` expresses today, gaining an iteration axis.
+    function _ambRenderArrMatrix(E, el, cfg, ranges, parts) {
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const prog = cfg.prog;
+      const names = ranges.map((x, k) => (parts && parts[x.pi] && parts[x.pi].name) || ('Part ' + (k + 1)));
+      const g = prog.arrGrid;
+      const cols = g ? _ambGridCols(g) : _AMB_GRID_COLS;
+      const seqs = [];
+      for (let c = 0; c < cols; c++) seqs.push(_ambArrGridSeq(cfg, c, ranges.length));
+      const sig = 'meta|' + cols + '|' + names.join(',') + '|' + seqs.map(q => q.join('.')).join('/');
+      if (el._sig === sig) return;
+      el._sig = sig;
+      let h = '<div class="pmx-tabs">' +
+        '<button type="button" class="ambient-seg pmx-tab pmx-tab-meta active" data-pmx="tab:-1">\u21f6 Parts</button>' +
+        ranges.map((x, k) => '<button type="button" class="ambient-seg pmx-tab" data-pmx="tab:' + k + '">' +
+          esc(names[k]) + '</button>').join('') + '</div>';
+      h += '<div class="pmx-bar"><span class="ambient-hint">Which parts play in each iteration, and in what order.</span>' +
+        '<span class="pmx-cols"><button type="button" class="ambient-seg" data-pmx="mcols:-1">−</button>' +
+        '<b class="pmx-colsn">' + cols + '</b>' +
+        '<button type="button" class="ambient-seg" data-pmx="mcols:1">＋</button></span></div>';
+      h += '<div class="pmx-grid" style="--pmxc:' + cols + '">';
+      h += '<div class="pmx-row pmx-head"><span class="pmx-rowlbl"></span>' +
+        seqs.map((q, c) => '<span class="pmx-h' + (q.length ? '' : ' empty') + '">' + (c + 1) + '</span>').join('') + '</div>';
+      names.forEach((nm, i) => {
+        h += '<div class="pmx-row"><span class="pmx-rowlbl" title="' + esc(nm) + '">' + esc(nm) + '</span>';
+        for (let c = 0; c < cols; c++) {
+          const pos = [];
+          seqs[c].forEach((v, k2) => { if (v === i) pos.push(k2 + 1); });
+          h += '<button type="button" class="ambient-seg pmx-cell' + (pos.length ? ' on' : '') +
+            '" data-pmx="mcell:' + c + ':' + i + '" title="' +
+            (pos.length ? esc(nm) + ' plays at position ' + pos.join(', ') + ' of iteration ' + (c + 1)
+                        : esc(nm) + ' does not play in iteration ' + (c + 1)) +
+            '">' + (pos.length ? pos.join(',') : '') + '</button>';
+        }
+        h += '</div>';
+      });
+      h += '<div class="pmx-row pmx-seqrow"><span class="pmx-rowlbl">plays</span>' +
+        seqs.map((q, c) => '<span class="pmx-seq' + (q.length ? '' : ' empty') + '" data-pmx="mseq:' + c + '">' +
+          (q.length ? q.map(v => esc(names[v])).join('·') : '—') + '</span>').join('') + '</div>';
+      h += '</div>';
+      h += '<div class="ambient-hint pmx-foot">A part can play more than once in one iteration — tap a ' +
+        '<b>plays</b> caption to set that iteration\u2019s order. Each visit advances that part\u2019s own pass.' +
+        // A control that is silently bypassed must SAY so — the Evolve-is-inert
+        // lesson. Once anything here is set, the played order comes from this
+        // grid, so the written order, `chain` and per-part repeats stop applying.
+        (_ambGridOn(cfg)
+          ? ' <b class="pmx-super">This grid now sets the played order</b> — the written order, the part chain and per-part repeats no longer apply.'
+          : ' Until you change something here, the played order is whatever the parts already say.') +
+        '</div>';
+      el.innerHTML = h;
+    }
     // Reorder / repeat editor for ONE pass. The grid answers WHICH chords; this
     // answers in what ORDER and how often — the two questions kept apart so the
     // grid stays scannable (a cell full of positions is hard to read at a glance).
-    function _ambPassSeqModal(E, pi, col) {
+    function _ambPassSeqModal(E, pi, col, meta) {
       _E = E;
       const cfg = E.getCfg(); if (!cfg || !cfg.prog) return;
       const esc = (x) => String(x).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
       const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-pseq-ov';
       const state = () => {
-        const c2 = E.getCfg(), rg = _ambGridRanges(c2)[pi];
+        const c2 = E.getCfg();
+        if (meta) {
+          const rgs = _ambGridRanges(c2), ps = Array.isArray(c2.prog.parts) ? c2.prog.parts : null;
+          return { rg: { len: rgs.length },
+                   nm: rgs.map((x, k) => (ps && ps[x.pi] && ps[x.pi].name) || ('Part ' + (k + 1))),
+                   seq: _ambArrGridSeq(c2, col, rgs.length) };
+        }
+        const rg = _ambGridRanges(c2)[pi];
         if (!rg) return null;
         const shift = _ambProgViewShift(E, c2, c2.prog.chords);
         const nm = [];
@@ -33417,8 +33508,12 @@
         return { rg, nm, seq: _ambPartGridSeq(c2, rg.pi, col, rg.len) };
       };
       const commit = (arr) => {
-        const c2 = E.getCfg(), rg = _ambGridRanges(c2)[pi]; if (!rg) return;
-        _ambPassWrite(c2, rg.pi, col, arr);
+        const c2 = E.getCfg();
+        if (meta) { _ambArrWrite(c2, col, arr); }
+        else {
+          const rg = _ambGridRanges(c2)[pi]; if (!rg) return;
+          _ambPassWrite(c2, rg.pi, col, arr);
+        }
         try { E.getCfg(); } catch (e) {}                 // normalize prunes/keeps
         try { _ambRenderPassMatrix(E); } catch (e) {}
         try { _ambRenderProgOverview(E); } catch (e) {}
@@ -33433,13 +33528,14 @@
           '<div class="ambient-hint">These changes carry no chords.</div>' +
           '<div class="sm-footer"><button type="button" class="sm-apply pseq-close">Close</button></div></div>'; return; }
         ov.innerHTML = '<div class="sm-modal ambient-pseq-modal">' +
-          '<div class="sm-title">Pass ' + (col + 1) + ' — order</div>' +
-          '<div class="ambient-hint">Drag to reorder. Tap a chip to remove it; a chord may appear more than once.</div>' +
+          '<div class="sm-title">' + (meta ? 'Iteration ' : 'Pass ') + (col + 1) + ' — order</div>' +
+          '<div class="ambient-hint">Drag to reorder. Tap a chip to remove it; ' +
+          (meta ? 'a part' : 'a chord') + ' may appear more than once.</div>' +
           '<div class="pseq-chips">' + (st.seq.length
             ? st.seq.map((v, k) => '<span class="pseq-chip" draggable="true" data-k="' + k + '">' +
                 esc(st.nm[v]) + '<i>✕</i></span>').join('')
             : '<span class="ambient-hint">This pass plays nothing.</span>') + '</div>' +
-          '<div class="pseq-addlbl">Add a chord</div>' +
+          '<div class="pseq-addlbl">Add ' + (meta ? 'a part' : 'a chord') + '</div>' +
           '<div class="pseq-add">' + st.nm.map((n, i) =>
             '<button type="button" class="ambient-seg pseq-addbtn" data-add="' + i + '">' + esc(n) + '</button>').join('') + '</div>' +
           '<div class="sm-footer">' +
@@ -33499,7 +33595,10 @@
         const cfg = E.getCfg(); if (!cfg || !cfg.prog) return;
         const ranges = _ambGridRanges(cfg);
         const pi = Number.isFinite(el._pmsPart) ? el._pmsPart : 0;
-        const r = ranges[pi]; if (!r) return;
+        // The META view has no part range — only the part branches below need one,
+        // and a bare `if (!r) return` here silently killed every meta cell.
+        const r = ranges[pi] || null;
+        if (!r && a[0] !== 'tab' && String(a[0]).charAt(0) !== 'm') return;
         const after = () => {
           try { E.getCfg(); } catch (e) {}
           el._sig = '';
@@ -33509,7 +33608,20 @@
           try { _ambProgChainLenSync(E); } catch (e) {}
           if (typeof persistWorkspace === 'function') persistWorkspace();
         };
-        if (a[0] === 'tab') { el._pmsPart = a[1] | 0; el._sig = ''; _ambRenderPassMatrix(E); return; }
+        if (a[0] === 'tab') { el._pmsPart = parseInt(a[1], 10); el._sig = ''; _ambRenderPassMatrix(E); return; }
+        // ---- META: parts x iterations ----------------------------------------
+        if (a[0] === 'mcols') {
+          _ambArrColsSet(cfg, (cfg.prog.arrGrid ? _ambGridCols(cfg.prog.arrGrid) : _AMB_GRID_COLS) + (a[1] | 0));
+          after(); return;
+        }
+        if (a[0] === 'mcell') {
+          const col = a[1] | 0, k2 = a[2] | 0;
+          const cur = _ambArrGridSeq(cfg, col, ranges.length);
+          const has = cur.indexOf(k2) >= 0;
+          _ambArrWrite(cfg, col, has ? cur.filter(v => v !== k2) : cur.concat([k2]));
+          after(); return;
+        }
+        if (a[0] === 'mseq') { _ambPassSeqModal(E, -1, a[1] | 0, true); return; }
         if (a[0] === 'cols') {
           const g = (cfg.prog.parts && cfg.prog.parts[r.pi]) ? cfg.prog.parts[r.pi].grid : null;
           _ambPassColsSet(cfg, r.pi, (g ? _ambGridCols(g) : _AMB_GRID_COLS) + (a[1] | 0));

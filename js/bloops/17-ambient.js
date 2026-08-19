@@ -7358,9 +7358,9 @@
       // Insertion is positional (after the selected chord), so growing the part
       // that OWNS ed.sel is what makes "add a chord to THIS part" work — without
       // it _ambRepairParts hands every new chord to the last part on save.
-      else if (op === 'addchord') { _ambPePartBump(ed, ed.sel, 1); ed.chords.splice(ed.sel + 1, 0, _ambCloneChord(ch)); ed.sel++; ed.altSel = -1; }
-      else if (op === 'addtrans') { _ambPePartBump(ed, ed.sel, 1); ed.chords.splice(ed.sel + 1, 0, { transition: true, bars: 1 }); ed.sel++; ed.altSel = -1; }
-      else if (op === 'rmchord') { if (ed.chords.length > 1) { _ambPePartBump(ed, ed.sel, -1); ed.chords.splice(ed.sel, 1); ed.sel = Math.min(ed.sel, ed.chords.length - 1); ed.altSel = -1; } }
+      else if (op === 'addchord') { const _b = _ambCadNote(ed); _ambPePartBump(ed, ed.sel, 1); ed.chords.splice(ed.sel + 1, 0, _ambCloneChord(ch)); ed.sel++; ed.altSel = -1; _ambCadNote(ed, _b, 'added'); }
+      else if (op === 'addtrans') { const _b = _ambCadNote(ed); _ambPePartBump(ed, ed.sel, 1); ed.chords.splice(ed.sel + 1, 0, { transition: true, bars: 1 }); ed.sel++; ed.altSel = -1; _ambCadNote(ed, _b, 'added'); }
+      else if (op === 'rmchord') { if (ed.chords.length > 1) { const _b = _ambCadNote(ed); _ambPePartBump(ed, ed.sel, -1); ed.chords.splice(ed.sel, 1); ed.sel = Math.min(ed.sel, ed.chords.length - 1); ed.altSel = -1; _ambCadNote(ed, _b, 'removed'); } }
       // ---- PART ops (all on the staged ed.parts; committed by Save) ----------
       else if (op === 'part') { const pi = parseInt(arg, 10); ed.part = Number.isFinite(pi) ? pi : -1;
         if (ed.part >= 0) { const r = _ambPePartRange(ed, ed.part); if (ed.sel < r.from || ed.sel >= r.to) { ed.sel = r.from; ed.altSel = -1; } } }
@@ -31827,7 +31827,11 @@
       }
       const prog = cfg.prog, chords = prog.chords, N = chords.length;
       const parts = (Array.isArray(prog.parts) && prog.parts.length) ? prog.parts : null;
-      const sig = N + '|' + chords.map(c => c.root + ':' + (c.intervals || []).join('.') + (Array.isArray(c.alts) && c.alts.length ? ('a' + c.alts.length + (c.altMode || '')) : '')).join(',') +
+      // CADENCE IS PART OF WHAT IS ON SCREEN — a length change repaints nothing
+      // without it (the documented _sig trap), so editing a cadence left the
+      // header chip stating the old shape while the clock already played the new
+      // one. Measured: chips still read "even ×3" after 2·½·½ was written.
+      const sig = N + '|' + chords.map(c => c.root + ':' + (c.intervals || []).join('.') + '@' + (c.bars || 0) + (Array.isArray(c.alts) && c.alts.length ? ('a' + c.alts.length + (c.altMode || '')) : '')).join(',') +
         '|' + (parts ? parts.map(p => p.name + '=' + p.len + (p.key ? ('@' + p.key.root + p.key.scale) : '')).join('/') : '') + '|' + (Number.isFinite(prog.versionIdx) ? prog.versionIdx : -1) + '|' + (Array.isArray(prog.versions) ? prog.versions.length : 0) +
         // The chips are drawn in the SOUNDING key, so the shift is part of what
         // is on screen — without it a key change repaints nothing.
@@ -31925,9 +31929,21 @@
           return;
         }
         if (r.pi >= 0) {
+          // CADENCE AT A GLANCE — how long each of these chords is held. Flat
+          // 1-1-1-1 says so plainly rather than hiding; anything else shows the
+          // shape. Only on a CHANGES part: an open part carries no chords.
+          const _cad = _ambCadence(cfg, r.pi);
+          const _cadFlat = _cad.length && _cad.every(v => Math.abs(v - _cad[0]) < 1e-6);
+          const _cadTot = _cad.reduce((a, v) => a + v, 0);
+          const _cadHtml = _cad.length
+            ? ('<span role="button" tabindex="0" class="ambient-pov-cad' + (_cadFlat ? '' : ' on') + '" data-pov="cad:' + r.pi + '"'
+               + ' title="Cadence — how many bars each chord is held (' + esc(_ambCadStr(_cad)) + ' = '
+               + esc(_ambFmtBpc(_cadTot)) + ' bars). Click to edit or generate a new shape.">'
+               + '<i>\u29d6</i>' + esc(_cadFlat ? ('even \u00d7' + _cad.length) : _ambCadStr(_cad)) + '</span>')
+            : '';
           h += '<div class="ambient-pov-parthdr">' +
             '<span class="ambient-pov-partname" role="button" tabindex="0" data-pov="partren:' + r.pi + '" title="Rename these changes">' + esc(r.name) + ' <em>' + (r.to - r.from) + '</em></span>' +
-            '<span class="ambient-pov-partops">' +
+            '<span class="ambient-pov-partops">' + _cadHtml +
               // A part's own key is a modulation, so it is named right on the part
               // header rather than buried — you can see where the music changes key.
               '<span role="button" tabindex="0" class="ambient-pov-partkey' + (r.key ? ' on' : '') + '" data-pov="partkey:' + r.pi + '" title="' + (r.key ? ('These changes play in ' + esc(_ambKeyLabel(r.key.root, r.key.scale)) + ' — the area key is unchanged. Click to change or clear it.') : ('No key change — these changes follow the area key (' + esc(_ambKeyLabel(kRoot, kScale)) + '). Click to give them their own key.')) + '">' + _ambPovKeyHtml(r.key, kRoot, kScale) + '</span>' +
@@ -32187,6 +32203,7 @@
       }
       // Label mode is a VIEW preference on the strip element (the panel is built
       // once, so it survives), not a config field — nothing about the music changes.
+      if (op === 'cad') { const pi = a[1] | 0; setTimeout(() => { try { _ambCadenceModal(E, pi); } catch (e) {} }, 0); return; }
       if (op === 'names') { const ov = _ambGet(E, 'ambient-prog-overview'); if (ov) { ov._povNames = !_ambPovNamesOn(ov); ov._sig = ''; _ambRenderProgOverview(E); } return; }
       // Length of a part that carries NO changes. A menu of musical lengths
       // rather than a raw prompt — a free-text bar count is what made section
@@ -32243,6 +32260,222 @@
       return '<i>\u266a</i>' + e(k);
     }
 
+    // ── CADENCE ───────────────────────────────────────────────────────────────
+    // The SHAPE of a part: how long each of its chords is held. Until now every
+    // chord took one bar, so a progression could only ever go 1-1-1-1 and every
+    // part had the same flat tread.
+    //
+    // A cadence IS the per-chord `bars` — not a shape stored beside them. The
+    // engine already walks cumulative per-chord lengths (`_ambProgStepAt`), so
+    // this needs NO engine change; and a separate stored shape could disagree
+    // with the chords it describes the moment one is added, which is the stale
+    // -mirror bug this codebase keeps paying for (cfg.sections, the parts lane,
+    // _povNames). Because it is the lengths themselves, "revise when a chord is
+    // added or removed" is not a synchronisation problem — there is nothing to
+    // revise, only a new total to report.
+    //
+    // Measured in BARS, matching what is stored and what the chord editor's
+    // Length field already edits.
+    const _AMB_CAD_MIN = 0.125, _AMB_CAD_MAX = 4;      // ⅛ … 4 bars
+    // The ladder the steppers walk and the generator draws from. Eighths and
+    // triplets both present, so a shape can swing or divide evenly.
+    const _AMB_CAD_STEPS = [0.125, 0.25, 1 / 3, 0.5, 2 / 3, 0.75, 1, 1.5, 2, 3, 4];
+    const _ambCadClamp = (v) => Math.max(_AMB_CAD_MIN, Math.min(_AMB_CAD_MAX, Number(v) || 1));
+    // A chord with no `bars` of its own is one barsPerChord long — the same
+    // fallback every consumer of chord length already uses.
+    function _ambCadLen(cfg, ch) {
+      const bpc = Math.max(0.01, (cfg && cfg.barsPerChord) || 1);
+      return (ch && Number.isFinite(ch.bars) && ch.bars > 0) ? ch.bars : bpc;
+    }
+    // The chord range a part covers. Mirrors _ambPartSpans' walk (open parts
+    // carry no chords), so the cadence describes exactly the chords that part
+    // plays. Returns null when the progression has no parts — then the whole
+    // chord list is one cadence.
+    function _ambCadRange(cfg, pi) {
+      const p = cfg && cfg.prog; if (!p || !Array.isArray(p.chords)) return null;
+      const parts = (Array.isArray(p.parts) && p.parts.length) ? p.parts : null;
+      if (!parts) return (pi === 0 || pi == null) ? { from: 0, to: p.chords.length } : null;
+      if (pi == null || pi < 0 || pi >= parts.length) return null;
+      let from = 0;
+      for (let i = 0; i < pi; i++) if (!parts[i].open) from += Math.max(1, parts[i].len | 0);
+      if (parts[pi].open) return { from, to: from };          // a block of time, no chords
+      return { from, to: Math.min(p.chords.length, from + Math.max(1, parts[pi].len | 0)) };
+    }
+    // This part's cadence, as lengths in bars.
+    function _ambCadence(cfg, pi) {
+      const r = _ambCadRange(cfg, pi); if (!r) return [];
+      const chords = cfg.prog.chords, out = [];
+      for (let i = r.from; i < r.to; i++) out.push(_ambCadLen(cfg, chords[i]));
+      return out;
+    }
+    // "2·1·½·½" — the shape at a glance. Fractions as glyphs so a shape stays
+    // short enough to sit on a part header.
+    const _AMB_CAD_GLYPH = { 0.125: '⅛', 0.25: '¼', 0.5: '½', 0.75: '¾', 1.5: '1½' };
+    function _ambCadNum(v) {
+      const g = _AMB_CAD_GLYPH[Math.round(v * 1000) / 1000];
+      if (g) return g;
+      if (Math.abs(v - 1 / 3) < 0.005) return '⅓';
+      if (Math.abs(v - 2 / 3) < 0.005) return '⅔';
+      return _ambFmtBpc(v);
+    }
+    function _ambCadStr(lens) { return (lens || []).map(_ambCadNum).join('·'); }
+    // Write one chord's length. Absent when it is the default, so a plain
+    // progression carries no `bars` at all and stays byte-identical.
+    function _ambCadSet(cfg, absIdx, bars) {
+      const p = cfg && cfg.prog; if (!p || !Array.isArray(p.chords)) return false;
+      const ch = p.chords[absIdx]; if (!ch) return false;
+      const bpc = Math.max(0.01, (cfg.barsPerChord | 0) || 1);
+      const v = _ambCadClamp(bars);
+      if (Math.abs(v - bpc) < 1e-6) delete ch.bars; else ch.bars = v;
+      return true;
+    }
+    // Step one chord's length along the ladder.
+    function _ambCadStep(cfg, absIdx, dir) {
+      const cur = _ambCadLen(cfg, cfg.prog.chords[absIdx]);
+      let i = 0, best = Infinity;
+      _AMB_CAD_STEPS.forEach((s, k) => { const d = Math.abs(s - cur); if (d < best) { best = d; i = k; } });
+      const j = Math.max(0, Math.min(_AMB_CAD_STEPS.length - 1, i + (dir < 0 ? -1 : 1)));
+      return _ambCadSet(cfg, absIdx, _AMB_CAD_STEPS[j]);
+    }
+    // GENERATE a shape over n chords. Seeded, so the same take reproduces it —
+    // and drawn from a FEEL rather than uniformly at random, because a random
+    // length per chord is not a cadence, it is noise.
+    //   even     1 1 1 1        — the old flat tread, offered so it can be got back
+    //   anchor   2 1 1 1        — land on the first chord, run the rest
+    //   breath   2 1 2 1        — long/short alternating
+    //   drive    ½ ½ 1 2        — short chords accelerating into a hold
+    //   scatter  free           — any ladder value, still bounded
+    const _AMB_CAD_FEELS = [
+      ['even', 'Even', 'One bar each — the flat default.'],
+      ['anchor', 'Anchor', 'Lean on the first chord, then move.'],
+      ['breath', 'Breath', 'Long, short, long, short.'],
+      ['drive', 'Drive', 'Short chords accelerating into a hold.'],
+      ['scatter', 'Scatter', 'Free — any length, still in range.'],
+    ];
+    function _ambCadGen(n, feel, seed) {
+      if (!(n > 0)) return [];
+      const rnd = _ambSeededRand(((seed | 0) * 2654435761 ^ (n * 40503) ^ 0x9e3779b9) >>> 0);
+      const pick = (arr) => arr[Math.min(arr.length - 1, Math.floor(rnd() * arr.length))];
+      const out = [];
+      for (let i = 0; i < n; i++) {
+        switch (feel) {
+          case 'anchor':  out.push(i === 0 ? pick([2, 2, 3]) : pick([1, 1, 1, 0.5])); break;
+          case 'breath':  out.push((i % 2 === 0) ? pick([2, 1.5, 2]) : pick([1, 0.5, 1])); break;
+          case 'drive':   out.push(i >= n - 1 ? pick([2, 3]) : pick([0.5, 0.5, 0.75, 1])); break;
+          case 'scatter': out.push(pick(_AMB_CAD_STEPS)); break;
+          default:        out.push(1);
+        }
+      }
+      return out.map(_ambCadClamp);
+    }
+    // Apply a generated shape to a part's chords.
+    function _ambCadApply(cfg, pi, lens) {
+      const r = _ambCadRange(cfg, pi); if (!r) return 0;
+      let n = 0;
+      for (let i = r.from; i < r.to; i++) {
+        const v = lens[i - r.from]; if (!Number.isFinite(v)) continue;
+        if (_ambCadSet(cfg, i, v)) n++;
+      }
+      return n;
+    }
+    // THE CADENCE EDITOR. One row per chord — its name, its length, and a
+    // proportional bar so the SHAPE is visible rather than inferred from numbers.
+    // Generating offers feels, not randomness: a random length per chord is not a
+    // cadence. Every edit writes straight through to the chord and re-renders, so
+    // there is no staged copy to get out of step with the progression.
+    // A chord added or removed CHANGES THE CADENCE — the part gets longer or
+    // shorter. There is nothing to re-sync (the cadence is the lengths), but the
+    // move is silent otherwise, and a part quietly growing by a bar is the sort
+    // of thing you discover much later. Called twice: once for the before, once
+    // to report against it.
+    function _ambCadNote(ed, before, verb) {
+      const lens = () => {
+        const ps = _ambPeParts(ed);
+        const r = ps ? _ambPePartRange(ed, _ambPePartOf(ed, ed.sel)) : { from: 0, to: ed.chords.length };
+        const bpc = 1; let n = 0, t = 0;
+        for (let i = r.from; i < r.to; i++) {
+          const c = ed.chords[i]; if (!c) continue;
+          n++; t += (Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc;
+        }
+        return { n, t };
+      };
+      if (before === undefined) return lens();
+      const after = lens();
+      if (!before || after.n === before.n) return;
+      try {
+        if (typeof showToast === 'function') showToast('Cadence revised — chord ' + verb + ': '
+          + after.n + ' chord' + (after.n === 1 ? '' : 's') + ' · '
+          + _ambFmtBpc(after.t) + ' bars (was ' + _ambFmtBpc(before.t) + ')', { ms: 5000 });
+      } catch (e) {}
+    }
+    function _ambCadenceModal(E, pi) {
+      _E = E;
+      const cfg = E.getCfg(); if (!cfg || !cfg.prog) return;
+      const esc = (x) => String(x).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-cad-ov';
+      const partName = () => {
+        const c2 = E.getCfg(), ps = (c2.prog && Array.isArray(c2.prog.parts)) ? c2.prog.parts : null;
+        return (ps && ps[pi] && ps[pi].name) || (c2.prog && c2.prog.name) || 'Changes';
+      };
+      const commit = () => {
+        try { E.getCfg(); } catch (e) {}
+        try { _ambRenderProgOverview(E); _ambRenderScheduler(E); _ambSyncControls(E); } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        paint();
+      };
+      const paint = () => {
+        const c2 = E.getCfg();
+        const r = _ambCadRange(c2, pi);
+        if (!r || r.to <= r.from) { ov.innerHTML = '<div class="sm-modal ambient-cad-modal">' +
+          '<div class="sm-title">Cadence</div><div class="ambient-hint">These changes carry no chords.</div>' +
+          '<div class="sm-footer"><button type="button" class="sm-apply cad-close">Close</button></div></div>'; return; }
+        const lens = _ambCadence(c2, pi);
+        const total = lens.reduce((a, v) => a + v, 0);
+        const rows = lens.map((v, k) => {
+          const abs = r.from + k, ch = c2.prog.chords[abs];
+          const nm = _ambIsTransition(ch) ? '⇝ walk' : (_ambChordShort(_ambChordShift(ch, _ambProgViewShift(E, c2, c2.prog.chords))) || '?');
+          const pct = (v / Math.max(0.001, total)) * 100;
+          return '<div class="cad-row" data-abs="' + abs + '">' +
+            '<span class="cad-nm">' + esc(nm) + '</span>' +
+            '<button type="button" class="ambient-seg cad-step" data-cad="dn:' + abs + '" title="Shorter">−</button>' +
+            '<span class="cad-val" title="Bars this chord is held">' + esc(_ambCadNum(v)) + '</span>' +
+            '<button type="button" class="ambient-seg cad-step" data-cad="up:' + abs + '" title="Longer">＋</button>' +
+            // The proportional bar is the point: numbers alone do not read as a shape.
+            '<span class="cad-bar"><i style="width:' + pct.toFixed(2) + '%"></i></span>' +
+            '</div>';
+        }).join('');
+        ov.innerHTML = '<div class="sm-modal ambient-cad-modal">' +
+          '<div class="sm-title">Cadence — ' + esc(partName()) + '</div>' +
+          '<div class="ambient-hint cad-sub">How long each chord is held, in bars. '
+            + lens.length + ' chord' + (lens.length === 1 ? '' : 's') + ' · <b>' + esc(_ambFmtBpc(total)) + ' bars</b> in all.</div>' +
+          '<div class="cad-list">' + rows + '</div>' +
+          '<div class="cad-genlbl">Generate a shape</div>' +
+          '<div class="cad-gen">' + _AMB_CAD_FEELS.map(f =>
+            '<button type="button" class="ambient-seg cad-feel" data-cad="gen:' + f[0] + '" title="' + esc(f[2]) + '">' + esc(f[1]) + '</button>').join('') + '</div>' +
+          '<div class="sm-footer"><button type="button" class="sm-apply cad-close">Done</button></div></div>';
+      };
+      paint();
+      document.body.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+      const close = () => { try { ov.remove(); } catch (e) {} };
+      ov.addEventListener('click', (ev) => {
+        const t = ev.target;
+        if (t.closest && t.closest('.cad-close')) { close(); return; }
+        if (t === ov) { close(); return; }
+        const btn = t.closest && t.closest('[data-cad]'); if (!btn) return;
+        const a = String(btn.getAttribute('data-cad')).split(':');
+        const c2 = E.getCfg();
+        if (a[0] === 'up' || a[0] === 'dn') { _ambCadStep(c2, a[1] | 0, a[0] === 'up' ? 1 : -1); commit(); return; }
+        if (a[0] === 'gen') {
+          const n = _ambCadence(c2, pi).length;
+          // Seeded on the take AND on how many times you have pressed, so pressing
+          // again gives a different shape while the same take still reproduces.
+          ov._genN = (ov._genN | 0) + 1;
+          _ambCadApply(c2, pi, _ambCadGen(n, a[1], ((c2.seed | 0) + ov._genN * 7919)));
+          commit(); return;
+        }
+      });
+    }
     function _ambProgGrpOpen(key, label, open, pop) {
       return '<div class="ambient-grp ambient-proggrp' + (open ? ' open' : '') + '" id="ambient-proggrp-' + key + '"'
         + (pop ? ' data-pop="1"' : '') + ' data-grp="' + label + '">' +

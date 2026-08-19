@@ -13327,3 +13327,41 @@
        bed, 25.9 from Arp, clear of the state colours. Only labels listed in
        _AMB_LVARS become variants, so renaming a layer does not invent a hue. */
     [data-lvar="keys"]     { --lt: #25a4b8; }   /* 🎹 Keys — articulated chords, not a swelling pad */
+
+    /* ── CADENCE ──────────────────────────────────────────────────────────────
+       The shape of a part: how long each chord is held. The chip states it on
+       the part header (flat says "even ×4" rather than hiding); the editor draws
+       it, because a column of numbers does not read as a shape. */
+    .ambient-pov-cad { display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 7px;
+      border: 1px dashed #3a3a52; border-radius: 6px; background: transparent; color: #6b7280;
+      cursor: pointer; font-size: 0.66rem; font-weight: 700; white-space: nowrap;
+      max-width: 40%; overflow: hidden; text-overflow: ellipsis; touch-action: manipulation; }
+    .ambient-pov-cad > i { font-style: normal; opacity: 0.75; }
+    /* Solid once the shape is not flat — the same grammar as the key chip: dashed
+       inherits/default, solid means this part carries something of its own. */
+    .ambient-pov-cad.on { border-style: solid; border-color: #7fd6c4; background: rgba(127,214,196,0.16); color: #bff0e5; }
+    @media (hover: hover) { .ambient-pov-cad:hover { border-color: #9f7aea; color: #d6bcfa; } }
+
+    .ambient-cad-modal { width: min(420px, 94vw); }
+    .ambient-cad-modal .cad-sub { display: block; white-space: normal; overflow-wrap: anywhere;
+      line-height: 1.4; margin: 8px 0 10px; }
+    .ambient-cad-modal .cad-sub b { color: #cbd5e0; }
+    .ambient-cad-modal .cad-list { display: flex; flex-direction: column; gap: 5px;
+      max-height: 46vh; overflow-y: auto; }
+    .ambient-cad-modal .cad-row { display: flex; align-items: center; gap: 6px; min-height: 34px; }
+    .ambient-cad-modal .cad-nm { flex: 0 0 74px; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; font-size: 0.74rem; font-weight: 700; color: #e2c9ff; }
+    .ambient-cad-modal .cad-step { flex: 0 0 auto; min-width: 30px; min-height: 30px; padding: 0 8px; font-size: 0.9rem; }
+    .ambient-cad-modal .cad-val { flex: 0 0 34px; text-align: center; font-size: 0.76rem; font-weight: 800; color: #cbd5e0; }
+    /* The proportional bar IS the shape — width ∝ this chord's share of the part. */
+    .ambient-cad-modal .cad-bar { flex: 1 1 auto; min-width: 40px; height: 8px; border-radius: 4px;
+      background: #16162a; overflow: hidden; }
+    .ambient-cad-modal .cad-bar > i { display: block; height: 100%; border-radius: 4px;
+      background: linear-gradient(90deg, #7fd6c4, #9f7aea); }
+    .ambient-cad-modal .cad-genlbl { font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase;
+      color: #8a90a6; margin: 12px 0 5px; }
+    .ambient-cad-modal .cad-gen { display: flex; flex-wrap: wrap; gap: 5px; }
+    .ambient-cad-modal .cad-feel { flex: 1 1 auto; min-height: 34px; font-size: 0.72rem; }
+    /* The shared .sm-apply renders at 27px here — under the touch floor, and this
+       is the only way out of the dialog. */
+    .ambient-cad-modal .cad-close { min-height: 34px; padding: 6px 18px; }

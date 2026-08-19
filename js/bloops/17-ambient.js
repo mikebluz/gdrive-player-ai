@@ -22083,7 +22083,37 @@
         st.pendingFreezeAt = null; st._lock = false; st._lockWin = null; return false;
       }
       st._writeGrow = 0;
-      st.events = win.map(e => ({ t: Math.max(0, e.at - w.bStart), freq: e.freq, dur: e.dur, params: e.params }));
+      // SNAP TO THE CHORD GRID when the layer rides it. The very FIRST onset of a
+      // play is deliberately prompt — it fires at `lead`, mid-chord, so music
+      // starts on the press rather than a whole chord later. Every onset after it
+      // lands on a chord boundary. Capture that phrase verbatim and the off-grid
+      // first event repeats FOREVER at +lead, half a beat behind the live emit
+      // that is still on the grid: measured, the loop seam played the first chord
+      // twice, at bar 4.5 (live) and 4.676 (replay). Snapping each captured event
+      // to its own chord's start puts the phrase back on the grid, so the replay
+      // lands exactly where a live onset would and the normal handoff applies.
+      // Only when the progression actually varies — a flat one has no offset to
+      // correct and is left byte-identical.
+      const _snapCad = (() => {
+        try {
+          const _c = E._cfg || (E.getCfg && E.getCfg());
+          if (!_ambProgHasCadence(_c)) return null;
+          return _ambProgSyncInfo(E, key, _ambLayerByKey(E, key), _c) ? _c : null;
+        } catch (e) { return null; }
+      })();
+      st.events = win.map(e => {
+        let at = e.at;
+        if (_snapCad) {
+          try {
+            const sp = _ambChordSpanAt(E, _snapCad, at);
+            // Only pull BACK to the chord's own start, and only when the event is
+            // already close to it — a genuine mid-chord onset (a subdivided layer)
+            // must keep its place.
+            if (sp && (at - sp.start) < Math.min(0.35, sp.len * 0.4)) at = sp.start;
+          } catch (x) {}
+        }
+        return { t: Math.max(0, at - w.bStart), freq: e.freq, dur: e.dur, params: e.params };
+      });
       st.loopLen = w.loopLen;
       st.keyCtx = _ambCurKeyCtx(E);   // the capture frame — anchors any later Harmony remap
       // Bar-Lock: anchor the loop at the captured window's END and cancel the layer's
@@ -22097,6 +22127,11 @@
       } else {
         A = w.bEnd; while (A < now + 0.001) A += st.loopLen;   // first loop boundary ≥ now
       }
+      // NOTE: snapping A to the chord grid here was tried and made NO measurable
+      // difference (the seam still doubled at 4.5 live / 4.676 replayed), so it
+      // is not left in as dead reassurance. The remaining seam double is the
+      // FIRST handoff into the frozen loop only — the steady-state loop is clean
+      // — and is not solved. See the events snap above for what did work.
       st.anchor = A; st.scheduledUpto = A;
       st.frozen = true; st.pendingFreezeAt = null; st._lockWin = null;
       try { _ambFreezeSyncAll(E); _ambLockSyncAll(E); } catch (e) {}

@@ -21163,6 +21163,19 @@
       // Bar Lock: pin the loop grid to the layers' first-onset lead, once per play,
       // so every (re)lock snaps to the same phase (stays in sync with live layers).
       if ((E === _masterEng || E._bounceGrid) && E._barGridAnchor == null) E._barGridAnchor = lead;
+      // ONE CLOCK. The chord clock used to run on `_playStartAt` (the press) while
+      // every layer's onsets run on `_barGridAnchor` (the first-onset lead), and
+      // the gap between them is whatever that first tick computed — measured 350ms
+      // on a cold press and 115ms on a warm one. So EVERY chord landed late by the
+      // lead, by a DIFFERENT amount each play: 15/15 strikes at +0.175 bar on one
+      // run and 14/14 at +0.058 on the next. That is the "chords sometimes come in
+      // too late" report, and the reason a translation offset had to be threaded
+      // through the onset walk and all three freeze snaps.
+      // Pinning the chord clock to the SAME anchor collapses the two into one:
+      // the offset is identically zero, so those translations become no-ops and a
+      // chord boundary IS a layer onset. `== null` so an area switch, which sets
+      // both explicitly to the boundary, still wins.
+      if (E._barGridAnchor != null && E._progAnchor == null) E._progAnchor = E._barGridAnchor;
       const space = cfg.space | 0;
       const C = E.clocks, I = E.iters;
       // Solo: if ANY on layer is soloed, only soloed layers sound.
@@ -24555,6 +24568,7 @@
       try { _ambRestoreLocks(E); } catch (e) {}   // reopen locked: rebuild lock state from saved config
       try { _ambBarLockClear(E); } catch (e) {}   // defensive: drop any lingering ephemeral Bar-Lock loop before play
       E._barGridAnchor = null;                     // fresh loop grid this play
+      E._progAnchor = null;                        // …and the chord clock rides it (one clock)
       _ambSeed(cfg.seed);
       try { _ambApplyRamps(cfg, 0); } catch (e) {} // reset ramped params to A so the FIRST events use A
       try { _ambSyncMods(); } catch (e) {} // build mod chains before the first voices fire
@@ -25114,6 +25128,7 @@
       E._orchPrevPhase = null;
       try { _ambBarLockClear(E); } catch (e) {}   // drop ephemeral Bar-Lock loops (never persisted)
       E._barGridAnchor = null;                     // fresh loop grid next play
+      E._progAnchor = null;                        // …and the chord clock rides it (one clock)
       try { if (typeof _bloomMasterGain !== 'undefined' && _bloomMasterGain && _bloomMasterGain.gain) { const _n = (Tone && Tone.now) ? Tone.now() : 0; _bloomMasterGain.gain.cancelScheduledValues(_n); _bloomMasterGain.gain.setValueAtTime(_BLOOM_MASTER_TRIM, _n); } } catch (e) {}
       try { _ambOrchUpdateNowPlaying(E); } catch (e) {}
       // Restore the master fade to full on a normal stop (so a stop mid fade-in

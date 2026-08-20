@@ -20797,7 +20797,12 @@
           const bpm0 = (cfg0 && Number.isFinite(cfg0.bpm) && cfg0.bpm > 0) ? cfg0.bpm : (typeof _ambBpm === 'function' ? _ambBpm() : 120);
           const barSec0 = (60 / Math.max(20, bpm0)) * 4;
           const steps0 = Math.max(2, Math.min(64, (tg0.steps | 0) || 16));
-          const anchor0 = Number.isFinite(E._playStartAt) ? E._playStartAt : (Number.isFinite(E._progAnchor) ? E._progAnchor : now);
+          // BAR GRID FIRST — the trance gate's steps must sit on the same bars the
+          // layers play. Anchoring on _playStartAt (the press) put the gate the
+          // first-tick lead away from every layer, 115-350ms and different each
+          // play: the same two-clock split the chord clock had.
+          const anchor0 = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor
+            : (Number.isFinite(E._playStartAt) ? E._playStartAt : (Number.isFinite(E._progAnchor) ? E._progAnchor : now));
           // Generative: re-roll the mask for the CURRENT bar (swap slightly early
           // so the new bar's first steps aren't a tick late); sig carries the bar
           // index so each bar resends exactly once.
@@ -20844,7 +20849,10 @@
       const barSec = (60 / Math.max(20, bpm)) * 4;
       const steps = Math.max(2, Math.min(64, (tg.steps | 0) || 16));
       const stepDur = Math.max(0.01, barSec / steps);
-      const anchor = Number.isFinite(E._playStartAt) ? E._playStartAt : (Number.isFinite(E._progAnchor) ? E._progAnchor : now);
+      // BAR GRID FIRST — see the note at the mask re-roll above. The gate and the
+      // layers it chops have to share one grid.
+      const anchor = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor
+        : (Number.isFinite(E._playStartAt) ? E._playStartAt : (Number.isFinite(E._progAnchor) ? E._progAnchor : now));
       const offGain = Math.max(0, 1 - Math.max(0, Math.min(100, tg.depth | 0)) / 100);
       const edge = Math.max(0, Math.min(80, tg.edge | 0)) / 1000;
       const pat = tg.pattern;
@@ -27942,7 +27950,11 @@
       const barSec = (60 / Math.max(20, bpm)) * 4;
       const now = playing ? (((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow()
         : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0)) + 0.016) : 0;
-      const anchor = Number.isFinite(E._playStartAt) ? E._playStartAt : (Number.isFinite(E._progAnchor) ? E._progAnchor : 0);
+      // The gate's AUDIO is anchored on the bar grid, so its playhead must be too
+      // — otherwise the highlight sits the first-tick lead away from the step you
+      // are hearing, which is the display-vs-audio split in miniature.
+      const anchor = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor
+        : (Number.isFinite(E._playStartAt) ? E._playStartAt : (Number.isFinite(E._progAnchor) ? E._progAnchor : 0));
       grids.forEach(grid => {
         const key = (typeof _ambCardKey === 'function') ? _ambCardKey(grid.closest('.ambient-layer')) : null;
         const L = key ? _ambLayerByKey(E, key) : null;

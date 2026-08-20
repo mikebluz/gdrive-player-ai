@@ -8719,6 +8719,21 @@
       if (areaCfg && areaCfg.groove && areaCfg.groove.bypass) return 0;
       return Math.max(0, Math.min(100, (areaCfg && areaCfg.startVary) | 0));
     }
+    // START OFFSET — where this phrase begins inside its unit. Bed and Motif had
+    // this written out twice under two field names (`startVary` / `phraseVary`,
+    // both labelled "Start", both cascading through _ambEffStart, both computing
+    // the same slack): one algorithm, two copies, free to drift. The only genuine
+    // difference is which span has to still fit — the bed's strum, the motif's
+    // burst — so that is the argument.
+    // DRAW ORDER IS LOAD-BEARING: the gate draw fires only when the value is > 0,
+    // and the placement draw only when the gate passed AND there is slack. Any
+    // other order shifts every downstream draw in the shared stream.
+    function _ambStartOffset(own, areaCfg, unitSec, spanSec) {
+      const v = _ambEffStart(own, areaCfg);
+      if (!(v > 0) || _ambRand() * 100 >= v) return 0;
+      const slack = Math.max(0, Math.max(0.05, unitSec) - Math.max(0, spanSec) - 0.02);
+      return (slack > 0.02) ? _ambRand() * slack : 0;
+    }
     // Is a layer INHERITING the area Start (no own value)? — for the UI cue.
     function _ambStartInherits(own) { return !Number.isFinite(own); }
     // Length Vary: at 0 every note is exactly `baseMs` (homebase); above 0 each
@@ -10498,16 +10513,12 @@
       // leaving room for the strum span so the chord still fits. DRAW-GATED on
       // startVary>0 (0 → no RNG draw → byte-identical). Folds into each note's
       // `offset` below, so playNote onset, the recorded unit, and choke all follow.
-      let _startOff = 0;
-      const _startV = _ambEffStart(bed.startVary, _E._cfg || (_E.getCfg && _E.getCfg()));   // own else area cascade
-      if (_startV > 0 && _ambRand() * 100 < _startV) {
-        const _uSec = Math.max(0.05, effIntervalMs / 1000);
-        const _strumSpanSec = (spanSec > 0)
-          ? (_strumSynced ? ((n - 1) * hitSpacing) : ((n - 1) / Math.max(1, n)) * spanSec)
-          : 0;
-        const slack = Math.max(0, _uSec - _strumSpanSec - 0.02);
-        if (slack > 0.02) _startOff = _ambRand() * slack;
-      }
+      // The strum has to still fit inside the unit — that is this layer's span.
+      const _strumSpanSec = (spanSec > 0)
+        ? (_strumSynced ? ((n - 1) * hitSpacing) : ((n - 1) / Math.max(1, n)) * spanSec)
+        : 0;
+      const _startOff = _ambStartOffset(bed.startVary, _E._cfg || (_E.getCfg && _E.getCfg()),
+        effIntervalMs / 1000, _strumSpanSec);
       // Prog-sync Stochastic feel: nudge this voicing's onset within its sub-slot
       // (seeded above → reproducible). Even feel leaves it on the grid.
       if (_progJit > 0) _startOff += _progJit;
@@ -11709,13 +11720,9 @@
       // sometimes early, sometimes near the end (its tail then spills into the next
       // unit, giving continuity). Default 0 = always on the 1 → no RNG consumed →
       // byte-identical stream (harness-safe).
-      let _startOff = 0;
-      const _pv = _ambEffStart(motif.phraseVary, _E._cfg || (_E.getCfg && _E.getCfg()));   // own else area Start cascade
-      if (_pv > 0 && _ambRand() * 100 < _pv) {
-        const unitSec = Math.max(0.05, _ambEffIntervalSec(motif));
-        const slack = Math.max(0, unitSec - Math.max(0, (count - 1) * burstGap) - 0.02);
-        if (slack > 0.02) _startOff = _ambRand() * slack;   // uniformly anywhere in the unit
-      }
+      // The note-burst has to still fit inside the unit — this layer's span.
+      const _startOff = _ambStartOffset(motif.phraseVary, _E._cfg || (_E.getCfg && _E.getCfg()),
+        _ambEffIntervalSec(motif), (count - 1) * burstGap);
       const _motifProg = (_mnotes && _mnotes.type === 'prog');
       const _unit = [];
       for (let i = 0; i < count; i++) {
@@ -37929,8 +37936,8 @@
       motif: { label: 'Motif', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
-        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['ring'], ['loop'], ['cond'],
-        ['grp', 'Variance'], ['tight'], ['sl', 'gravity', 'Gravity', 0, 100, 'free → chord tones'], ['sl', 'contour', 'Contour', -100, 100, 'fall → rise'], ['sl', 'stutter', 'Stutter', 0, 100, 'walk → repeats'], ['sl', 'phrasing', 'Phrasing', 0, 100, 'stream → gestures'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'phrasing', 'Phrasing', 0, 100, 'stream → gestures'], ['ring'], ['loop'], ['cond'],
+        ['grp', 'Variance'], ['tight'], ['sl', 'gravity', 'Gravity', 0, 100, 'free → chord tones'], ['sl', 'contour', 'Contour', -100, 100, 'fall → rise'], ['sl', 'stutter', 'Stutter', 0, 100, 'walk → repeats'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
@@ -37999,8 +38006,8 @@
       run: { label: 'Riff', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['ring'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
-        ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'phrasing', 'Articulate', 0, 100, 'even → arrivals sustain, runs detach'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'phrasing', 'Articulate', 0, 100, 'even → arrivals sustain, runs detach'], ['ring'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
+        ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [

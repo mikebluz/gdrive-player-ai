@@ -7630,7 +7630,7 @@
                 // read as destructive. The TARGET's name, repeats, key and salt win;
                 // this part's chords simply join it.
                 (ed.part > 0 ? '<button type="button" class="pe-partbtn pe-partmerge" data-pe="partmerge:' + ed.part + ':prev" title="Join ' + pnm + '\u2019s chords onto the end of ' + esc(_peParts[ed.part - 1].name || ('Changes ' + ed.part)) + '. No chords are lost; ' + esc(_peParts[ed.part - 1].name || 'that part') + '\u2019s own settings are kept.">\u21e6 Merge into ' + esc(_peParts[ed.part - 1].name || ('Changes ' + ed.part)) + '</button>' : '') +
-                (_peParts.length > 1 ? '<button type="button" class="pe-partbtn pe-partkill" data-pe="partkill:' + ed.part + '" title="Delete ' + pnm + ' AND its chords. Merging keeps the chords; this does not.">\u2715 Delete part</button>' : '') +
+                (_peParts.length > 1 ? '<button type="button" class="pe-partbtn pe-partkill" data-pe="partkill:' + ed.part + '" title="Delete ' + pnm + ' AND its chords. Merging keeps the chords; this does not.">\u2715 Delete changes</button>' : '') +
                 (ed.part < _peParts.length - 1 ? '<button type="button" class="pe-partbtn pe-partmerge" data-pe="partmerge:' + ed.part + ':next" title="Join ' + pnm + '\u2019s chords onto the front of ' + esc(_peParts[ed.part + 1].name || ('Changes ' + (ed.part + 2))) + '. No chords are lost; ' + esc(_peParts[ed.part + 1].name || 'that part') + '\u2019s own settings are kept.">Merge into ' + esc(_peParts[ed.part + 1].name || ('Changes ' + (ed.part + 2))) + ' \u21e8</button>' : '') +
               '</div>') +
             '</div>';

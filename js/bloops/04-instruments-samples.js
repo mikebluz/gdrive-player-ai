@@ -1728,8 +1728,8 @@
           }
         }
         for (const rec of records) {
-          if (!rec || !rec.id || rec.kind !== 'kit' || !rec.slots) continue;
-          try { registerDrumKit(rec.id, rec.name || rec.id, rec.slots); }
+          if (!rec || !rec.id || rec.kind !== 'kit' || !(rec.slots || rec.direct)) continue;
+          try { registerDrumKit(rec.id, rec.name || rec.id, rec.slots || {}, rec.direct); }
           catch (e) { console.warn('Failed to restore drum kit', rec.id, e); }
         }
       } catch (e) {
@@ -1790,17 +1790,24 @@
     }
     // Register a kit into the live library. `slots` maps a KIT_SLOTS note name to
     // a member sample id; missing slots are simply silent.
-    function registerDrumKit(id, name, slots) {
+    // `direct` = absolute urls for slots that have NO member id. A kit assembled
+    // from another kit's zones needs this: a built-in kit carries `urls` (CDN
+    // paths) and no `slots`, so there is no member to reference — while a library
+    // sample DOES have one and must stay referenced, because its blob: url is
+    // session-scoped and only survives a reload by being re-resolved from the id.
+    // Hence both: ids where they exist, absolute urls where they cannot.
+    function registerDrumKit(id, name, slots, direct) {
       const urls = {};
       KIT_SLOTS.forEach((note) => {
         const mid = slots && slots[note];
-        if (!mid) return;
-        const u = _kitMemberUrl(mid);
-        if (u) urls[note] = u;
+        if (mid) { const u = _kitMemberUrl(mid); if (u) { urls[note] = u; return; } }
+        const d = direct && direct[note];
+        if (d) urls[note] = d;
       });
       const info = {
         name: name || id, drumKit: true, kind: 'kit', kindExplicit: true,
         imported: true, userKit: true, slots: Object.assign({}, slots), urls,
+        ...(direct && Object.keys(direct).length ? { direct: Object.assign({}, direct) } : {}),
       };
       // LAZY, like every other entry: constructing a Tone.Sampler fetches its
       // urls, and a library of kits should not cost a dozen requests at boot.
@@ -1879,7 +1886,7 @@
       return out;
     }
     try { window.bloomKitCheck = bloomKitCheck; } catch (e) {}
-    async function persistDrumKit(id, name, slots) {
+    async function persistDrumKit(id, name, slots, direct) {
       try {
         const db = await getImportedDB();
         await new Promise((resolve, reject) => {
@@ -1887,7 +1894,8 @@
           // NO blob: a kit references its members rather than copying their
           // audio, so deleting a member is visible instead of silently
           // duplicating megabytes per kit.
-          tx.objectStore('blobs').put({ id, name, kind: 'kit', slots: Object.assign({}, slots) });
+          tx.objectStore('blobs').put({ id, name, kind: 'kit', slots: Object.assign({}, slots),
+            ...(direct && Object.keys(direct).length ? { direct: Object.assign({}, direct) } : {}) });
           tx.oncomplete = () => resolve();
           tx.onerror = () => reject(tx.error);
         });

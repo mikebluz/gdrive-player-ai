@@ -13549,3 +13549,11 @@
       /* 16px or iOS zooms the page on focus and never zooms back (documented). */
       font-size: 16px;
     }
+
+    .ambient-euclid-savekit {
+      min-height: 24px; padding: 2px 8px; border-radius: 6px; margin-left: 6px;
+      background: rgba(255,255,255,0.04); border: 1px solid rgba(160,174,192,0.28);
+      color: #a0aec0; font: 600 0.6rem 'Segoe UI', sans-serif;
+      touch-action: manipulation; cursor: pointer; white-space: nowrap;
+    }
+    .ambient-euclid-savekit:hover { border-color: #4fd1c5; color: #4fd1c5; }

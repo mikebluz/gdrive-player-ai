@@ -14058,6 +14058,82 @@
     // to a couple of hundred sounds and a flat context menu of that length cannot
     // be searched, only scrolled. Three sources in one list: the kit's default for
     // this lane, any other drum the kit contains, and any library sample.
+    // SAVE THE LANES AS A KIT. You assemble drums by ear ON the lanes — that is
+    // where you hear them in context — and until now that arrangement could not
+    // become a reusable kit; you had to re-pick everything in the kit builder.
+    // Each lane maps to its own slot note (lane v → _AMB_VDRUM[v] → KIT_SLOTS[pc]),
+    // and its sound resolves to either a MEMBER ID (a library sample, which must
+    // stay referenced so a session-scoped blob: url is re-resolved on reload) or a
+    // DIRECT url (another kit's zone, which has no member to reference).
+    function _ambLanesToKitSpec(L) {
+      const slots = {}, direct = {};
+      let filled = 0, missing = [];
+      const KS = (typeof KIT_SLOTS !== 'undefined') ? KIT_SLOTS : null;
+      if (!KS) return { slots, direct, filled, missing };
+      let src = null;
+      try { src = (typeof getSampleEntry === 'function') ? getSampleEntry('sample:' + L.kit) : null; } catch (e) {}
+      for (let v = 0; v < _AMB_KIT_LANES; v++) {
+        const pc = _ambLaneDrumPc(L, v);
+        const note = KS[((pc % 12) + 12) % 12];
+        const dn = _AMB_DRUM_NAMES[_AMB_VDRUM[v]] || ('Drum ' + v);
+        if (!note) continue;
+        const smp = _ambLaneSample(L, v);
+        if (smp) { slots[note] = smp; filled++; continue; }
+        // The lane's drum inside its source kit: a user kit names a member, a
+        // built-in one only has a url (made absolute against its baseUrl).
+        const mid = src && src.slots && src.slots[note];
+        if (mid) { slots[note] = mid; filled++; continue; }
+        const u = src && src.urls && src.urls[note];
+        if (u) {
+          direct[note] = (src.baseUrl && !/^(blob:|https?:|data:)/.test(u)) ? (src.baseUrl + u) : u;
+          filled++; continue;
+        }
+        missing.push(dn);
+      }
+      return { slots, direct, filled, missing };
+    }
+    async function _ambSaveLanesAsKit(E, key, L) {
+      _E = E;
+      if (!L || !L.euclidKit) return;
+      if (_ambBeatIsSynth(L)) {
+        if (typeof showToast === 'function') showToast('A synth kit has no samples to save \u2014 it is already a recipe. Use \u21bb Regen / \ud83c\udfb2 Roll to shape it.', { warn: true });
+        return;
+      }
+      if (typeof registerDrumKit !== 'function' || typeof persistDrumKit !== 'function') return;
+      const spec = _ambLanesToKitSpec(L);
+      if (!spec.filled) {
+        if (typeof showToast === 'function') showToast('Nothing to save \u2014 no lane has a sound yet.', { warn: true });
+        return;
+      }
+      const base = (L.kit ? (L.kit + ' edit') : 'My kit');
+      const nm = (typeof prompt === 'function') ? prompt('Save these ' + spec.filled + ' lane sounds as a kit named:', base) : base;
+      if (nm == null) return;
+      const name = (String(nm).trim() || 'My kit').slice(0, 40);
+      const id = 'kit-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+        + '-' + Math.random().toString(36).slice(2, 7);
+      try {
+        registerDrumKit(id, name, spec.slots, spec.direct);
+        await persistDrumKit(id, name, spec.slots, spec.direct);
+      } catch (e) {
+        if (typeof showToast === 'function') showToast('Could not save the kit: ' + ((e && e.message) || e), { warn: true });
+        return;
+      }
+      // Point the layer at what it just saved and DROP the per-lane overrides —
+      // they are baked into the kit now, and leaving them would silently override
+      // the very kit they created.
+      L.kit = id;
+      delete L.euclidSamples; delete L.euclidDrums;
+      try { if (typeof _ambRefreshToneSelects === 'function') _ambRefreshToneSelects(); } catch (e) {}
+      try { if (typeof refreshAllToneSelects === 'function') refreshAllToneSelects(); } catch (e) {}
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      try { _ambSyncControls(E); } catch (e) {}
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+      if (typeof showToast === 'function') {
+        showToast('Kit \u201c' + name + '\u201d saved from ' + spec.filled + ' lane' + (spec.filled === 1 ? '' : 's') +
+          (spec.missing.length ? (' \u2014 ' + spec.missing.join(', ') + ' had no sound') : '') +
+          '. It is in every kit picker.');
+      }
+    }
     function _ambLaneSoundModal(E, key, L, v, after) {
       _E = E;
       if (!L) return;
@@ -17902,6 +17978,12 @@
             '<button type="button" class="ambient-euclid-playsbtn" data-plays="1">+</button></div>';
         }
         if (pages.length > 1) bar1 += '<button type="button" class="ambient-euclid-pagedel" title="Delete this page">🗑</button>';
+        // SAVE THE ASSEMBLED LANES AS A KIT — you pick drums by ear on the lanes,
+        // so this is where turning them into something reusable belongs. Only for
+        // a sample kit: a synth kit is already a recipe and has nothing to save.
+        if (inst.euclidKit && !_ambBeatIsSynth(inst)) {
+          bar1 += '<button type="button" class="ambient-euclid-savekit" title="Save the sounds these 8 lanes play as a reusable kit — it appears in every kit picker">\u2b07 Save kit</button>';
+        }
         bar1 += '</div>';
         html += bar1;
       }
@@ -18415,7 +18497,7 @@
       // re-render can never cancel a half-open native <select> — the "Sequence never
       // sticks" bug.
       grid.addEventListener('click', (ev) => {
-        const t = ev.target.closest && ev.target.closest('.ambient-euclid-tab, .ambient-euclid-pagedel, .ambient-euclid-segbtn, .ambient-euclid-playsbtn, .ambient-euclid-drumlbl, .ambient-euclid-lanesnd, .ambient-euclid-laneplay, .ambient-step-fx-trig, .ambient-step-fx-solo, .ambient-step-fx-clear, .ambient-stepmode, .ambient-stepscope-btn'); if (!t) return;
+        const t = ev.target.closest && ev.target.closest('.ambient-euclid-tab, .ambient-euclid-pagedel, .ambient-euclid-segbtn, .ambient-euclid-playsbtn, .ambient-euclid-drumlbl, .ambient-euclid-lanesnd, .ambient-euclid-savekit, .ambient-euclid-laneplay, .ambient-step-fx-trig, .ambient-step-fx-solo, .ambient-step-fx-clear, .ambient-stepmode, .ambient-stepscope-btn'); if (!t) return;
         if (_suppressTabClick) { _suppressTabClick = false; if (t.dataset.page != null) return; }   // a drag just reordered — don't also select
         _E = E; const L = getL(); if (!L || !L.euclidKit) return;
         const d = _ambEuclidGridDims(L, type); const total = d ? d.bars * d.steps : 0;
@@ -18437,6 +18519,10 @@
         // What this lane plays — a filterable modal, not a menu: the library runs
         // to a couple of hundred sounds and a flat context menu that long can be
         // scrolled but not searched.
+        if (t.classList.contains('ambient-euclid-savekit')) {
+          _ambSaveLanesAsKit(E, key, L).then(() => { try { render(); } catch (e) {} });
+          return;
+        }
         if (t.classList.contains('ambient-euclid-lanesnd')) {
           const v2 = parseInt(t.getAttribute('data-lanesnd'), 10) | 0;
           _ambLaneSoundModal(E, key, L, v2, () => {

@@ -14054,6 +14054,95 @@
       out.sort((a, b) => a.pc - b.pc);
       return out;
     }
+    // WHAT THIS LANE PLAYS — a modal rather than a menu, because the library runs
+    // to a couple of hundred sounds and a flat context menu of that length cannot
+    // be searched, only scrolled. Three sources in one list: the kit's default for
+    // this lane, any other drum the kit contains, and any library sample.
+    function _ambLaneSoundModal(E, key, L, v, after) {
+      _E = E;
+      if (!L) return;
+      const esc = (x) => String(x == null ? '' : x).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const dn = _AMB_DRUM_NAMES[_AMB_VDRUM[v]] || ('Drum ' + v);
+      const ov = document.createElement('div');
+      ov.className = 'sm-overlay ambient-lanesnd-ov';
+      let filter = '';
+      const curSample = () => _ambLaneSample(L, v);
+      const curZone = () => (Array.isArray(L.euclidDrums) && L.euclidDrums[v] != null) ? (L.euclidDrums[v] | 0) : null;
+      const clearLane = () => {
+        if (Array.isArray(L.euclidSamples)) { L.euclidSamples[v] = null; _ambNormalizeLaneSamples(L); }
+        if (Array.isArray(L.euclidDrums)) { L.euclidDrums[v] = null; if (!L.euclidDrums.some(x => x != null)) delete L.euclidDrums; }
+      };
+      const commit = () => {
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        try { if (after) after(); } catch (e) {}
+        try { _ambTriggerLaneStep(E, key, L, v); } catch (e) {}   // hear the pick
+        paint();
+      };
+      const paint = () => {
+        const cs = curSample(), cz = curZone();
+        let zones = [];
+        try { zones = _ambBeatIsSynth(L) ? [] : _ambKitZones(L.kit); } catch (e) {}
+        let ids = [];
+        try { ids = _ambDrumSampleIds(); } catch (e) {}
+        const f = filter.trim().toLowerCase();
+        const hits = f ? ids.filter(id => id.toLowerCase().indexOf(f) >= 0) : ids;
+        const row = (sel, kind, val, label, sub) =>
+          '<button type="button" class="lsnd-row' + (sel ? ' on' : '') + '" data-pick="' + kind + ':' + esc(val) + '">' +
+          '<span class="lsnd-nm">' + esc(label) + '</span>' +
+          (sub ? '<span class="lsnd-sub">' + esc(sub) + '</span>' : '') + '</button>';
+        ov.innerHTML = '<div class="sm-modal ambient-lanesnd-modal">' +
+          '<div class="sm-title">' + esc(dn) + ' lane \u2014 sound</div>' +
+          '<div class="ambient-hint">Pick what this lane plays. Choosing auditions it.</div>' +
+          '<div class="lsnd-list">' +
+            row(!cs && cz == null, 'kit', '', 'Kit \u2014 ' + dn, 'the kit\u2019s own slot for this lane') +
+            (zones.length > 1 ? zones.map(z => row(cz === z.pc && !cs, 'zone', z.pc, '\u25c8 ' + z.name, 'another drum in this kit')).join('') : '') +
+          '</div>' +
+          '<div class="lsnd-filterrow">' +
+            '<input type="text" class="lsnd-filter" placeholder="Search samples\u2026" value="' + esc(filter) + '">' +
+            '<span class="ambient-hint">' + hits.length + ' of ' + ids.length + '</span></div>' +
+          '<div class="lsnd-list lsnd-samples">' +
+            (hits.length ? hits.slice(0, 400).map(id => row(cs === id, 'smp', id, id, '')).join('')
+                         : '<span class="ambient-hint">Nothing matches \u201c' + esc(filter) + '\u201d.</span>') +
+          '</div>' +
+          '<div class="sm-footer"><button type="button" class="sm-apply lsnd-close">Done</button></div></div>';
+      };
+      paint();
+      document.body.appendChild(ov);
+      // Body-attached overlays are force-hidden by the view-mode CSS unless the
+      // display is set INLINE with !important (documented).
+      ov.style.setProperty('display', 'flex', 'important');
+      const close = () => { try { ov.remove(); } catch (e) {} };
+      ov.addEventListener('click', (ev) => {
+        const t = ev.target;
+        if (t === ov || (t.classList && t.classList.contains('lsnd-close'))) { close(); return; }
+        const b = t.closest && t.closest('[data-pick]');
+        if (!b) return;
+        const a = String(b.getAttribute('data-pick'));
+        const kind = a.slice(0, a.indexOf(':')), val = a.slice(a.indexOf(':') + 1);
+        clearLane();
+        if (kind === 'zone') { if (!Array.isArray(L.euclidDrums)) L.euclidDrums = []; L.euclidDrums[v] = val | 0; }
+        else if (kind === 'smp') { if (!Array.isArray(L.euclidSamples)) L.euclidSamples = []; L.euclidSamples[v] = val; }
+        commit();
+      });
+      // Filter as you type, WITHOUT repainting the input out from under the
+      // caret — rewriting the list only.
+      ov.addEventListener('input', (ev) => {
+        const inp = ev.target && ev.target.closest && ev.target.closest('.lsnd-filter');
+        if (!inp) return;
+        filter = inp.value || '';
+        const host = ov.querySelector('.lsnd-samples'); if (!host) return;
+        let ids = []; try { ids = _ambDrumSampleIds(); } catch (e) {}
+        const f = filter.trim().toLowerCase();
+        const hits = f ? ids.filter(id => id.toLowerCase().indexOf(f) >= 0) : ids;
+        const cs = curSample();
+        host.innerHTML = hits.length
+          ? hits.slice(0, 400).map(id => '<button type="button" class="lsnd-row' + (cs === id ? ' on' : '') +
+              '" data-pick="smp:' + esc(id) + '"><span class="lsnd-nm">' + esc(id) + '</span></button>').join('')
+          : '<span class="ambient-hint">Nothing matches \u201c' + esc(filter) + '\u201d.</span>';
+        const cnt = ov.querySelector('.lsnd-filterrow .ambient-hint');
+        if (cnt) cnt.textContent = hits.length + ' of ' + ids.length;
+      });
+    }
     function _ambSampleRootMidi(id) {
       try {
         const e = (typeof getSampleEntry === 'function') ? getSampleEntry('sample:' + id) : null;
@@ -18345,55 +18434,15 @@
           return;
         }
         if (t.classList.contains('ambient-euclid-laneplay')) { _ambTriggerLaneStep(E, key, L, parseInt(t.dataset.laneplay, 10) | 0); return; }
-        // Pick ANY library sample for this lane (or clear back to the kit).
+        // What this lane plays — a filterable modal, not a menu: the library runs
+        // to a couple of hundred sounds and a flat context menu that long can be
+        // scrolled but not searched.
         if (t.classList.contains('ambient-euclid-lanesnd')) {
           const v2 = parseInt(t.getAttribute('data-lanesnd'), 10) | 0;
-          const dn2 = _AMB_DRUM_NAMES[_AMB_VDRUM[v2]] || ('Drum ' + v2);
-          const cur = _ambLaneSample(L, v2);
-          const items = [];
-          const curZone = (Array.isArray(L.euclidDrums) && L.euclidDrums[v2] != null) ? (L.euclidDrums[v2] | 0) : null;
-          const clearLane = () => {
-            if (Array.isArray(L.euclidSamples)) { L.euclidSamples[v2] = null; _ambNormalizeLaneSamples(L); }
-            if (Array.isArray(L.euclidDrums)) { L.euclidDrums[v2] = null; if (!L.euclidDrums.some(x => x != null)) delete L.euclidDrums; }
-          };
-          items.push({ label: ((!cur && curZone == null) ? '\u2713 ' : '   ') + 'Kit \u2014 ' + dn2 + ' (default)', fn: () => {
-            clearLane();
-            render(); persist(); if (E.timer) { try { sync && sync(); } catch (e) {} }
-          } });
-          // THIS KIT'S OWN DRUMS. A kit is a sample set as well, and its zones were
-          // only reachable through the one slot each lane maps to — so "play the
-          // 808's cowbell on the perc lane" was inexpressible without a new kit.
-          let zones = [];
-          try { zones = _ambBeatIsSynth(L) ? [] : _ambKitZones(L.kit); } catch (e) {}
-          if (zones.length > 1) {
-            items.push('hr');
-            zones.forEach(z => {
-              if (z.pc === _ambLaneDrumPc({}, v2) && curZone == null && !cur) return;   // that IS the default row above
-              items.push({ label: (curZone === z.pc && !cur ? '\u2713 ' : '   ') + '\u25c8 ' + z.name, fn: () => {
-                clearLane();
-                if (!Array.isArray(L.euclidDrums)) L.euclidDrums = [];
-                L.euclidDrums[v2] = z.pc;
-                render(); persist(); if (E.timer) { try { sync && sync(); } catch (e) {} }
-                try { _ambTriggerLaneStep(E, key, L, v2); } catch (e) {}
-              } });
-            });
-            items.push('hr');
-          }
-          let ids = [];
-          try { ids = _ambDrumSampleIds(); } catch (e) {}
-          if (!ids.length) items.push({ label: '   (no samples imported yet)', fn: () => {} });
-          ids.forEach(id => items.push({ label: (cur === id ? '\u2713 ' : '   ') + id, fn: () => {
-            clearLane();
-            if (!Array.isArray(L.euclidSamples)) L.euclidSamples = [];
-            L.euclidSamples[v2] = id;
-            _ambNormalizeLaneSamples(L);
-            render(); persist(); if (E.timer) { try { sync && sync(); } catch (e) {} }
-            try { _ambTriggerLaneStep(E, key, L, v2); } catch (e) {}   // hear the pick
-          } }));
-          const r2 = t.getBoundingClientRect();
-          // Deferred one tick — showCtxMenu arms its own document dismiss listener,
-          // and opening from inside a live dispatch tears it down immediately.
-          setTimeout(() => { try { showCtxMenu(r2.left, r2.bottom + 4, items); } catch (e) {} }, 0);
+          _ambLaneSoundModal(E, key, L, v2, () => {
+            render();
+            if (E.timer) { try { sync && sync(); } catch (e) {} }
+          });
           return;
         }
         // Reset the steps in scope to default FX.

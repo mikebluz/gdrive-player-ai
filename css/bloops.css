@@ -13520,3 +13520,32 @@
       touch-action: manipulation; cursor: pointer;
     }
     .ambient-euclid-lanesnd.on { border-color: #4fd1c5; color: #4fd1c5; background: rgba(79,209,197,0.14); }
+
+    /* Lane-sound picker. Two lists (the kit's own drums, then the library) with a
+       filter between them, because a couple of hundred samples cannot be found by
+       scrolling. Both scroll internally so the modal never grows past the screen. */
+    .ambient-lanesnd-modal { width: min(420px, 94vw); }
+    .ambient-lanesnd-modal .ambient-hint { display: block; white-space: normal; overflow-wrap: anywhere; }
+    .ambient-lanesnd-modal .lsnd-list {
+      display: flex; flex-direction: column; gap: 3px; margin: 7px 0;
+      max-height: 26vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    }
+    .ambient-lanesnd-modal .lsnd-samples { max-height: 34vh; }
+    .ambient-lanesnd-modal .lsnd-row {
+      display: flex; align-items: baseline; gap: 8px; text-align: left;
+      min-height: 34px; padding: 5px 9px; border-radius: 7px;
+      background: rgba(255,255,255,0.03); border: 1px solid rgba(160,174,192,0.2);
+      color: #cbd5e0; font: 600 0.74rem 'Segoe UI', sans-serif;
+      touch-action: manipulation; cursor: pointer; width: 100%;
+    }
+    .ambient-lanesnd-modal .lsnd-row:hover { border-color: rgba(160,174,192,0.45); }
+    .ambient-lanesnd-modal .lsnd-row.on { border-color: #4fd1c5; background: rgba(79,209,197,0.16); color: #d6fffb; }
+    .ambient-lanesnd-modal .lsnd-nm { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+    .ambient-lanesnd-modal .lsnd-sub { flex: 0 1 auto; font-size: 0.62rem; color: #6b6b8a; }
+    .ambient-lanesnd-modal .lsnd-filterrow { display: flex; align-items: center; gap: 8px; }
+    .ambient-lanesnd-modal .lsnd-filter {
+      flex: 1 1 auto; min-width: 0; min-height: 34px; padding: 4px 9px; border-radius: 7px;
+      background: rgba(0,0,0,0.35); border: 1px solid rgba(160,174,192,0.3); color: #e2e8f0;
+      /* 16px or iOS zooms the page on focus and never zooms back (documented). */
+      font-size: 16px;
+    }

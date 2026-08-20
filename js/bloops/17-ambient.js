@@ -3001,7 +3001,14 @@
         });
         if (Object.keys(bars).length) out.bars = bars;
       }
-      return (Object.keys(seq).length || out.fit || out.bars) ? out : undefined;
+      // A NON-DEFAULT COLUMN COUNT IS ALSO A STATEMENT — "this part runs 5 passes"
+      // — and pruning on seq/fit/bars alone threw it away: the ± stepper wrote
+      // cols, the very next getCfg deleted the object, and the readout snapped
+      // back to 8. Reported as "the +/- Pass count doesn't work". Note this does
+      // NOT engage the clock: _ambGridOn still requires seq/fit/bars, so a grid
+      // that only sets its width changes nothing about what plays.
+      // 8 is _AMB_GRID_COLS, inlined for the same reason the clamp above is.
+      return (Object.keys(seq).length || out.fit || out.bars || cols !== 8) ? out : undefined;
     }
     function _ambRepairParts(parts, total) {
       if (!Array.isArray(parts) || !parts.length || total <= 0) return undefined;
@@ -7635,10 +7642,19 @@
       // chord). The part TABS stay outside — they are how you move around the
       // chain — and so does the Save footer, since folding Save away would hide
       // the only way to commit. `_secClosed` is transient view state.
-      // Both start COLLAPSED — the editor opens compact (title · tabs · two
-      // headers · Save) and you unfold what you came for. Absence = closed, so
-      // `_secOpen` only ever records what the user deliberately opened.
-      const secOpen = (k) => !!(ed._secOpen && ed._secOpen[k]);
+      // Chords starts COLLAPSED — the editor opens compact (title · tabs · two
+      // headers · Save) and you unfold what you came for. `_secOpen` records
+      // what the user deliberately toggled, so an explicit choice always wins.
+      // PART SETTINGS defaults OPEN when there is a chain, because that section
+      // is the only home of rename / repeats / salt / merge / delete, and folded
+      // they are invisible: asked as "where is the delete part button?", and the
+      // button measured 0x0 until the fold was opened. A progression with no
+      // chain renders no part section at all, so the compact-open intent is
+      // untouched for the simple case this protects.
+      const secOpen = (k) => {
+        if (ed._secOpen && Object.prototype.hasOwnProperty.call(ed._secOpen, k)) return !!ed._secOpen[k];
+        return k === 'part' && !!(_peParts && _peParts.length > 1);
+      };
       const secWrap = (k, label, body, sum) => {
         const o = secOpen(k);
         return '<div class="pe-sec' + (o ? '' : ' folded') + '" data-sec="' + k + '">' +

@@ -13411,7 +13411,11 @@
     .ambient-passmx .pmx-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 7px; }
     .ambient-passmx .pmx-bar .ambient-hint { flex: 1 1 160px; }
     .ambient-passmx .pmx-cols { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-    .ambient-passmx .pmx-cols .ambient-seg { min-width: 34px; min-height: 30px; }
+    /* touch-action: manipulation on every tappable control here — headless taps
+       work without it, but a real phone adds the double-tap-zoom delay. */
+    .ambient-passmx .pmx-cols .ambient-seg { min-width: 34px; min-height: 30px; touch-action: manipulation; }
+    .ambient-passmx .pmx-tab, .ambient-passmx .pmx-fit, .ambient-passmx .pmx-seq { touch-action: manipulation; }
+    .ambient-pseq-modal .pseq-chip, .ambient-pseq-modal .pseq-addbtn { touch-action: manipulation; }
     .ambient-passmx .pmx-colsn { min-width: 18px; text-align: center; color: #e2e8f0; font-size: 0.82rem; }
     .ambient-passmx .pmx-grid { display: flex; flex-direction: column; gap: 3px; }
     .ambient-passmx .pmx-row {

@@ -7454,9 +7454,27 @@
     // a clamped index still resolves, just to the wrong part.
     function _ambProgDeletePart(E, pi) {
       const cfg = E && E.getCfg && E.getCfg(); const p = cfg && cfg.prog;
-      if (!p || !Array.isArray(p.parts) || !Array.isArray(p.chords)) return false;
-      const ps = p.parts;
-      if (!ps[pi] || ps.length <= 1) return false;          // the last part is the progression
+      if (!p || !Array.isArray(p.chords)) return false;
+      const ps = Array.isArray(p.parts) ? p.parts : null;
+      // THE ONLY SET OF CHANGES *IS* THE PROGRESSION, so deleting it clears the
+      // progression rather than refusing. Everything keyed on a part or a chord
+      // goes with it, and the Progression switch turns off — an empty, still-on
+      // progression is a state nothing else in the engine expects.
+      if (!ps || ps.length <= 1) {
+        p.chords = [];
+        delete p.parts; delete p.chain; delete p.arrGrid; delete p.grid;
+        delete p.versions; delete p.versionIdx;
+        p.on = false;
+        if (Array.isArray(cfg.sections)) cfg.sections.forEach(sec => { if (sec) delete sec.part; });
+        try {
+          (_ambChordMatrixRows(cfg) || []).forEach(row => {
+            const m = row && row.L && row.L.chordMask;
+            if (m && Array.isArray(m.steps)) m.steps.length = 0;
+          });
+        } catch (e) {}
+        return true;
+      }
+      if (!ps[pi]) return false;
       let from = 0;
       for (let i = 0; i < pi; i++) if (!ps[i].open) from += Math.max(1, ps[i].len | 0);
       const len = ps[pi].open ? 0 : Math.max(1, ps[pi].len | 0);
@@ -7783,10 +7801,12 @@
             const _kp = (_peParts && ed.part >= 0) ? _peParts[ed.part] : null;
             const _kn = _kp ? ((_kp.name || ('Changes ' + (ed.part + 1)))) : '';
             const _kok = !!(_peParts && _peParts.length > 1 && _kp);
-            return '<button type="button" class="pe-killbtn" data-pe="partkill:' + (ed.part | 0) + '"' +
-              (_kok ? '' : ' disabled') + ' title="' +
+            // Live in BOTH cases: with a chain it deletes that set of changes,
+            // and with a single set it clears the progression — which is the
+            // same act, since one set of changes IS the progression.
+            return '<button type="button" class="pe-killbtn" data-pe="partkill:' + (ed.part | 0) + '" title="' +
               (_kok ? ('Delete ' + esc(_kn) + ' AND its chords. Merging keeps the chords; this does not.')
-                    : 'Nothing to delete yet \u2014 this progression is one set of changes, which IS the progression. Use \u2702 Split at selection, or \uff0b Changes, to make a second set first.') +
+                    : ('Delete the whole progression \u2014 all ' + ed.chords.length + ' chord' + (ed.chords.length === 1 ? '' : 's') + '. This is the only set of changes, so it IS the progression.')) +
               '">\u2715 Delete</button>';
           })() +
           '<button type="button" data-pe="clone" title="Duplicate this progression into a fresh editable copy">⧉ Clone</button>' +
@@ -7986,16 +8006,15 @@
         // what stops chain/arrGrid being remapped for an edit you then cancel.
         const E = ed.E, pi = parseInt(arg, 10);
         const ps0 = _ambPeParts(ed);
-        if (!ps0 || !ps0[pi] || ps0.length <= 1) {
-          if (typeof showToast === 'function') showToast('A progression needs at least one set of changes — split it first, or merge instead.');
-          return;
-        }
-        const r0 = _ambPePartRange(ed, pi);
-        const nCh = Math.max(0, (r0 ? r0.to - r0.from : 0));
-        const nm0 = ps0[pi].name || ('Changes ' + (pi + 1));
-        if (typeof confirm === 'function' && !confirm(
-            'Delete "' + nm0 + '" and its ' + nCh + ' chord' + (nCh === 1 ? '' : 's') + '?\n\n' +
-            'The chords go with it. To keep them, merge this part into a neighbour instead.')) return;
+        const sole = !ps0 || ps0.length <= 1 || !ps0[pi];
+        const r0 = sole ? null : _ambPePartRange(ed, pi);
+        const nCh = sole ? ed.chords.length : Math.max(0, (r0 ? r0.to - r0.from : 0));
+        const nm0 = sole ? '' : (ps0[pi].name || ('Changes ' + (pi + 1)));
+        if (typeof confirm === 'function' && !confirm(sole
+            ? ('Delete the whole progression — all ' + nCh + ' chord' + (nCh === 1 ? '' : 's') + '?\n\n' +
+               'This is the only set of changes, so it IS the progression. The Progression switch will be turned off.')
+            : ('Delete "' + nm0 + '" and its ' + nCh + ' chord' + (nCh === 1 ? '' : 's') + '?\n\n' +
+               'The chords go with it. To keep them, merge it into a neighbour instead.'))) return;
         try { if (ed.target && typeof ed.target.apply === 'function') ed.target.apply((ed.name || 'Prog').trim() || 'Prog', serialize()); } catch (e) {}
         if (!_ambProgDeletePart(E, pi)) { if (typeof showToast === 'function') showToast('Could not delete that part.'); return; }
         try {
@@ -8006,6 +8025,18 @@
               ? c.prog.parts.map(x => Object.assign({}, x)) : [];
           }
         } catch (e) {}
+        // Nothing left to edit — the editor would render a chord that is not
+        // there (sel clamps to 0 against an empty list and the body reads
+        // chords[0]). Close it and report, rather than leaving a broken pane.
+        if (!ed.chords.length) {
+          try { _ambRenderProgOverview(E); _ambRenderScheduler(E); } catch (e) {}
+          try { _ambRenderPassMatrix(E); } catch (e) {}
+          try { _ambProgChainLenSync(E); } catch (e) {}
+          try { _ambSyncControls(E); } catch (e) {}
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+          if (typeof showToast === 'function') showToast('Progression cleared — ' + nCh + ' chord' + (nCh === 1 ? '' : 's') + ' removed, Progression switched off.');
+          _ambPeClose(); return;
+        }
         ed.part = Math.max(-1, Math.min((_ambPeParts(ed) || []).length - 1, pi - 1));
         ed.sel = 0; ed.altSel = -1;
         try { _ambRenderProgOverview(E); _ambRenderScheduler(E); } catch (e) {}

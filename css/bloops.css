@@ -3954,7 +3954,10 @@
     /* Delete sits in the always-visible footer, pushed away from Save so the
        destructive action and the commit are never adjacent. */
     .pe-save .pe-killbtn { margin-right: auto; border-color: rgba(252,129,129,0.55); color: #fc8181; }
-    .pe-save .pe-killbtn:hover { border-color: #fc8181; background: rgba(252,129,129,0.16); color: #fed7d7; }
+    .pe-save .pe-killbtn:hover:not(:disabled) { border-color: #fc8181; background: rgba(252,129,129,0.16); color: #fed7d7; }
+    /* Present but inert — the button never moves, so it can always be found, and
+       its tooltip says what to do first. */
+    .pe-save .pe-killbtn:disabled { opacity: 0.4; cursor: not-allowed; }
     /* The one destructive part op — merging keeps the chords, this does not.
        Styled as danger so it can never be mistaken for a merge. */
     .pe-partkill { border-color: rgba(252,129,129,0.55); color: #fc8181; }

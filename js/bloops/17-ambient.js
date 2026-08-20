@@ -7772,16 +7772,23 @@
           '</div>' : ''), chordSum) +
         '<div class="pe-save">' +
           '<button type="button" data-pe="cancel">Cancel</button>' +
-          // DELETE LIVES IN THE FOOTER. Inside "Changes settings" it was behind a
-          // fold — reported twice as not being there at all — and the footer is
-          // the one row that is never folded, alongside the other whole-editor
-          // actions. Only with a chain: with a single set of changes there is
-          // nothing to delete into, since it IS the progression.
-          ((_peParts && _peParts.length > 1 && ed.part >= 0)
-            ? '<button type="button" class="pe-killbtn" data-pe="partkill:' + ed.part + '" title="Delete ' +
-              esc((_peParts[ed.part] && _peParts[ed.part].name) || ('Changes ' + (ed.part + 1))) +
-              ' AND its chords. Merging keeps the chords; this does not.">\u2715 Delete</button>'
-            : '') +
+          // DELETE LIVES IN THE FOOTER, AND IT IS ALWAYS RENDERED. It was behind a
+          // fold, then conditional on having a chain — and BOTH times the report
+          // was the same: "I still see no delete button". A control that vanishes
+          // in the state you happen to be in is indistinguishable from one that
+          // does not exist, and the state it vanished in (a single set of
+          // changes) is the common one. So it is always here, and DISABLED with
+          // a title that says what to do instead when it cannot apply.
+          (function () {
+            const _kp = (_peParts && ed.part >= 0) ? _peParts[ed.part] : null;
+            const _kn = _kp ? ((_kp.name || ('Changes ' + (ed.part + 1)))) : '';
+            const _kok = !!(_peParts && _peParts.length > 1 && _kp);
+            return '<button type="button" class="pe-killbtn" data-pe="partkill:' + (ed.part | 0) + '"' +
+              (_kok ? '' : ' disabled') + ' title="' +
+              (_kok ? ('Delete ' + esc(_kn) + ' AND its chords. Merging keeps the chords; this does not.')
+                    : 'Nothing to delete yet \u2014 this progression is one set of changes, which IS the progression. Use \u2702 Split at selection, or \uff0b Changes, to make a second set first.') +
+              '">\u2715 Delete</button>';
+          })() +
           '<button type="button" data-pe="clone" title="Duplicate this progression into a fresh editable copy">⧉ Clone</button>' +
           '<button type="button" class="pe-preview' + (ed._pvOn ? ' on' : '') + '" data-pe="preview" title="Hear the progression — each chord sounds for its own length">' + (ed._pvOn ? '■ Stop' : '▶ Preview') + '</button>' +
           '<button type="button" data-pe="pad" title="Add a pad layer that plays this progression">＋ Pad</button>' +

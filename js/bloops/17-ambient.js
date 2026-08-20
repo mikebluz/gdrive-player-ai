@@ -21332,6 +21332,21 @@
       };
       // Freeze-aware wrapper: frozen → replay the captured loop; recording →
       // generate normally while teeing each note into the capture sink.
+      // DON'T CREATE THE TWIN. A layer with a Write/lock boundary armed must not
+      // SCHEDULE live voices past it — the replay owns that region. The extras
+      // path set this; stepLayer (bed / motif / texture / random beat) and
+      // windowLayer did not, so their look-ahead voices past the boundary were
+      // created and then had to be retracted by cancelBloomFutureVoices at
+      // engage. That is why the engage seam logged a strike with one frozen and
+      // one live copy of every note. The emit still runs in full — every RNG
+      // draw intact, so generation is byte-identical and the harness (which
+      // stubs playNote and never sees this gate) is unaffected; playNote simply
+      // drops any note at or past the boundary.
+      const _emitCutoffFor = (key) => {
+        const fs = E.freeze && E.freeze[key];
+        return (fs && !fs.frozen && Number.isFinite(fs.pendingFreezeAt) && fs.pendingFreezeAt > now)
+          ? fs.pendingFreezeAt : null;
+      };
       const stepLayer = (key, lc, guardMax, minSec, emit) => {
         if (!lc) return;
         if (_muted(lc)) return; // silenced by another layer's solo
@@ -21339,13 +21354,14 @@
         if (!g.run) return;
         if (_ambFreezeGate(E, key, now, g.hz)) return;
         window._ambCaptureSink = _ambCapSink(E, key); // always roll-capture
+        window._ambEmitCutoff = _emitCutoffFor(key);   // …and never past a pending boundary
         try {
           // BED belongs to the sustain family: its clock walk lives in
           // _ambEmitSustain (the §11 fold). Everything else steps via runLayer.
           if (String(key).split(':')[0] === 'bed') _ambEmitSustain(E, lc, key, now, g.hz, lead, space, cfg);
           else runLayer(key, lc, guardMax, minSec, emit, g.hz);
         }
-        catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+        catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; window._ambEmitCutoff = null; _ambPruneCap(E, key, now); }
       };
       // Windowed wrapper — like stepLayer but for engines that schedule a whole
       // BPM-locked phrase over the lookahead (e.g. the Euclidean Beat). Anchors a
@@ -21358,8 +21374,9 @@
         if (!gate.run) return;
         if (_ambFreezeGate(E, key, now, gate.hz)) return;
         window._ambCaptureSink = _ambCapSink(E, key);
+        window._ambEmitCutoff = _emitCutoffFor(key);   // …and never past a pending boundary
         try { emit(E, lc, key, now, gate.hz, lead, space, cfg); }
-        catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+        catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; window._ambEmitCutoff = null; _ambPruneCap(E, key, now); }
       };
       stepLayer('bed', cfg.bed, 8, 0.05, (at) => _ambEmitBedOnset(at, cfg.bed, space));   // callback kept for shape; stepLayer diverts bed to _ambEmitSustain
       stepLayer('motif', cfg.motif, 16, 0.04, (at) => _ambEmitMotif(at, cfg.motif, space));

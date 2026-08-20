@@ -7630,7 +7630,6 @@
                 // read as destructive. The TARGET's name, repeats, key and salt win;
                 // this part's chords simply join it.
                 (ed.part > 0 ? '<button type="button" class="pe-partbtn pe-partmerge" data-pe="partmerge:' + ed.part + ':prev" title="Join ' + pnm + '\u2019s chords onto the end of ' + esc(_peParts[ed.part - 1].name || ('Changes ' + ed.part)) + '. No chords are lost; ' + esc(_peParts[ed.part - 1].name || 'that part') + '\u2019s own settings are kept.">\u21e6 Merge into ' + esc(_peParts[ed.part - 1].name || ('Changes ' + ed.part)) + '</button>' : '') +
-                (_peParts.length > 1 ? '<button type="button" class="pe-partbtn pe-partkill" data-pe="partkill:' + ed.part + '" title="Delete ' + pnm + ' AND its chords. Merging keeps the chords; this does not.">\u2715 Delete changes</button>' : '') +
                 (ed.part < _peParts.length - 1 ? '<button type="button" class="pe-partbtn pe-partmerge" data-pe="partmerge:' + ed.part + ':next" title="Join ' + pnm + '\u2019s chords onto the front of ' + esc(_peParts[ed.part + 1].name || ('Changes ' + (ed.part + 2))) + '. No chords are lost; ' + esc(_peParts[ed.part + 1].name || 'that part') + '\u2019s own settings are kept.">Merge into ' + esc(_peParts[ed.part + 1].name || ('Changes ' + (ed.part + 2))) + ' \u21e8</button>' : '') +
               '</div>') +
             '</div>';
@@ -7773,6 +7772,16 @@
           '</div>' : ''), chordSum) +
         '<div class="pe-save">' +
           '<button type="button" data-pe="cancel">Cancel</button>' +
+          // DELETE LIVES IN THE FOOTER. Inside "Changes settings" it was behind a
+          // fold — reported twice as not being there at all — and the footer is
+          // the one row that is never folded, alongside the other whole-editor
+          // actions. Only with a chain: with a single set of changes there is
+          // nothing to delete into, since it IS the progression.
+          ((_peParts && _peParts.length > 1 && ed.part >= 0)
+            ? '<button type="button" class="pe-killbtn" data-pe="partkill:' + ed.part + '" title="Delete ' +
+              esc((_peParts[ed.part] && _peParts[ed.part].name) || ('Changes ' + (ed.part + 1))) +
+              ' AND its chords. Merging keeps the chords; this does not.">\u2715 Delete</button>'
+            : '') +
           '<button type="button" data-pe="clone" title="Duplicate this progression into a fresh editable copy">⧉ Clone</button>' +
           '<button type="button" class="pe-preview' + (ed._pvOn ? ' on' : '') + '" data-pe="preview" title="Hear the progression — each chord sounds for its own length">' + (ed._pvOn ? '■ Stop' : '▶ Preview') + '</button>' +
           '<button type="button" data-pe="pad" title="Add a pad layer that plays this progression">＋ Pad</button>' +

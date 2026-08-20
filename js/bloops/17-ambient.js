@@ -31892,7 +31892,7 @@
                    draws: 'approach a leap by step' },
       contour:   { type: 'pit', grain: 'note',
                    does: 'Leans the line in one direction',
-                   off: 'no direction bias — the line wanders either way',
+                   off: 'no direction bias; the line wanders either way',
                    at: function (v) { return v < 0 ? 'Leans the line downward' : 'Leans the line upward'; },
                    draws: 'walk-direction bias; draws at every setting' },
       gravity:   { type: 'pit', grain: 'note', does: 'Pulls notes onto chord tones',
@@ -31947,10 +31947,60 @@
       vary:      { type: 'pit', grain: 'cycle', does: 'Roams to different notes',
                    off: 'stays on the notes it was given',
                    draws: 'Riff/Pedal, from the per-phrase cRnd' },
+      // ---- OUTSIDE the Variance/Performance groups ---------------------------
+      // The GROUP IS NOT THE PREDICATE. These roll too, and every one of them was
+      // unmarked until 2026-08-20 — which made the marker lie by omission, since
+      // an unmarked control read as "this one is deterministic". Three of them
+      // (Salt, Stereo, Spatialize) are custom tokens rather than `sl` rows, so
+      // they were not even in the sweep that built this table. `token` records
+      // which schema token renders them, so the doc generator can still find out
+      // which layers carry them.
+      strumFidelity:{ type: 'art', grain: 'note', does: 'Shuffles the order the chord’s voices are struck in',
+                   off: 'voices are struck in order, bottom to top',
+                   every: 'a fresh choice each time the chord is struck',
+                   draws: '_ambStrumOrder — Fisher-Yates, two _ambRand() per swap' },
+      fill:      { type: 'rhy', grain: 'slot', does: 'Decides which steps of the pattern play',
+                   off: 'no steps play at all — the layer is silent',
+                   draws: 'rnd() >= fill*0.6 per slot in _ambEmitStepGrid; also seeds the freeze pattern' },
+      proximity: { type: 'pit', grain: 'note', does: 'Lets the line leap instead of always stepping to a neighbour',
+                   off: 'the line always moves to the nearest note',
+                   draws: '_ambRand() < _grav per note' },
+      poly:      { type: 'pit', grain: 'note', does: 'Stacks extra drums on the same hit, each one picked at random',
+                   off: 'one drum per hit',
+                   at: function (v) { return v <= 1 ? 'One drum per hit — no random extras' : 'Stacks up to ' + (v | 0) + ' drums on a hit, the extras picked at random'; },
+                   draws: '_ambPickDrumPc() — a weighted _ambRand() per extra voice' },
+      voiceVariety:{ type: 'pit', grain: 'slot', does: 'Opens up richer voicings — 9ths, 11ths, sus, augmented',
+                   off: 'plain voicings only',
+                   every: 'one choice per voicing — and only while Feel is Stochastic; on Even it cycles in order',
+                   draws: '_ambSeededRand over the variant menu, gated on progFeel' },
+      // Space is its own axis: none of rhythm/pitch/dynamics/articulation/length
+      // describes where a note sits in the stereo field.
+      space:     { type: 'pan', grain: 'note', token: 'spread', does: 'Scatters each event across the stereo field',
+                   off: 'every event sits dead centre',
+                   every: 'a fresh choice on every note — in Pan mode it places the whole layer instead, and rolls nothing',
+                   draws: '_ambLayerPan — _ambRand()*2-1 scaled by Spread; returns 0 with no draw in Pan mode' },
+      spat:      { type: 'pan', grain: 'note', token: 'spat', select: true,
+                   does: 'Walks the layer through the stereo field, a new position per note',
+                   off: 'off — Stereo places the notes instead',
+                   every: 'only Mode “Random” rolls; Fan, Alternate, Sine and Sweep are fixed patterns',
+                   draws: '_ambSpatPan — dedicated _ambSeededRand on (ordinal, take), random mode only' },
+      saltColors:{ type: 'pit', grain: 'chord', token: 'salt', does: 'Recolours the chord as it plays — added 7ths, 9ths, suspensions',
+                   off: 'the chord is played exactly as written',
+                   draws: '_ambProgSaltSegCount / the colour pick — _ambSeededRand per chord instance' },
+      saltScatter:{ type: 'rhy', grain: 'chord', token: 'salt', does: 'Varies where inside the chord the colour changes land',
+                   off: 'colour changes are evenly spaced',
+                   draws: 'shape exponent on the same per-chord _ambSeededRand draw' },
     };
+    // Controls whose ELEMENT ID does not end in their config key, because they are
+    // rendered by a custom token rather than by _ambSl. Marking resolves through
+    // this first. MARK_ONLY entries are part of a stochastic control but are not
+    // the row that carries its description (Spatialize's Width and Positions).
+    const _AMB_STOCH_ALIAS = { stereo: 'space', spatmode: 'spat', colors: 'saltColors', scatter: 'saltScatter' };
+    const _AMB_STOCH_MARK_ONLY = { spatwidth: 'spat', spatsteps: 'spat' };
     const _AMB_STOCH_GRAIN = {
       note:  'a fresh choice on every note',
       slot:  'a fresh choice at every step',
+      chord: 'one choice per chord — re-dealt every time the chord comes round',
       cycle: 'one choice per phrase — changes at the next loop',
     };
     // The line under a stochastic slider: what it is doing AT THIS VALUE, and how
@@ -31958,6 +32008,8 @@
     function _ambStochDesc(key, v) {
       const st = _AMB_STOCH[key];
       if (!st) return '';
+      // A select-driven control (Spatialize) is off on the empty value, not on 0.
+      if (st.select) return (!v) ? 'Off — ' + st.off : st.does + ' · ' + (st.every || _AMB_STOCH_GRAIN[st.grain] || '');
       const n = Number(v);
       if (!Number.isFinite(n) || n === 0) return 'Off — ' + st.off;
       let what = st.does;
@@ -31968,7 +32020,16 @@
     // lands on all 11. The colour and the data are global; only the readout line
     // is gated. Widen by adding a type key here, remove the gate when it is right.
     const _AMB_STOCH_UI = { motif: 1 };
-    function _ambStochKeyOf(id) { return String(id || '').split('-').pop(); }
+    function _ambStochKeyOf(id) {
+      const tail = String(id || '').split('-').pop();
+      return _AMB_STOCH_ALIAS[tail] || (_AMB_STOCH[tail] ? tail : '');
+    }
+    // Marking is wider than describing: a control can be PART of a stochastic
+    // control without being the row that explains it.
+    function _ambStochMarkKey(id) {
+      const tail = String(id || '').split('-').pop();
+      return _ambStochKeyOf(id) || _AMB_STOCH_MARK_ONLY[tail] || '';
+    }
     function _ambStochUiOn(id) {
       const s = String(id || '');
       return Object.keys(_AMB_STOCH_UI).some(function (t) { return s.indexOf('-' + t + '-') >= 0; });
@@ -32066,8 +32127,8 @@
       // A stochastic control is MARKED (one colour, meaning "this one rolls") and
       // carries a plain-language line saying what it does at this value and how
       // often it decides. See _AMB_STOCH.
-      const sk = _ambStochKeyOf(id), st = _AMB_STOCH[sk];
-      const sd = (st && _ambStochUiOn(id))
+      const sk = _ambStochKeyOf(id), st = _AMB_STOCH[_ambStochMarkKey(id)];
+      const sd = (_AMB_STOCH[sk] && _ambStochUiOn(id))
         ? '<span class="ambient-stoch-desc" id="' + id + '-sd">' + _ambStochDesc(sk, val) + '</span>' : '';
       return '<div class="ambient-ctrl' + (st ? ' ambient-ctrl-stoch' : '') + '"' + dt + '>' +
       '<label for="' + id + '"' + dt + '>' + label + '</label>' +
@@ -35503,13 +35564,14 @@
     const _ambSpreadCtrl = (stem, layer) => {
       const mode = (layer && layer.panMode === 'pan') ? 'pan' : 'spread';
       const val = (layer && Number.isFinite(layer.space)) ? (layer.space | 0) : 0;
-      return '<div class="ambient-ctrl ambient-spread"><label>Stereo</label>' +
+      return '<div class="ambient-ctrl ambient-ctrl-stoch ambient-spread"><label>Stereo</label>' +
         '<span class="ambient-spread-seg">' +
           '<button type="button" class="ambient-seg' + (mode === 'spread' ? ' active' : '') + '" id="' + stem + '-stereo-mode-spread">Spread</button>' +
           '<button type="button" class="ambient-seg' + (mode === 'pan' ? ' active' : '') + '" id="' + stem + '-stereo-mode-pan">Pan</button>' +
         '</span>' +
         '<input type="range" id="' + stem + '-stereo" min="' + (mode === 'pan' ? -100 : 0) + '" max="100" step="1" value="' + val + '" />' +
-        '<span class="ambient-hint" id="' + stem + '-stereo-v">' + _ambSpreadLabel(mode, val) + '</span></div>';
+        '<span class="ambient-hint" id="' + stem + '-stereo-v">' + _ambSpreadLabel(mode, val) + '</span>' +
+        (_ambStochUiOn(stem) ? '<span class="ambient-stoch-desc" id="' + stem + '-stereo-sd">' + _ambStochDesc('space', val) + '</span>' : '') + '</div>';
     };
     // SPATIALIZE control — sits directly under Stereo because it supersedes the
     // Spread half of it. Rendered for every layer type (it is in _AMB_MIX), and
@@ -35521,11 +35583,12 @@
       const on = !!s.on, mode = on ? (s.mode || 'fan') : '';
       const width = Number.isFinite(s.width) ? (s.width | 0) : 60;
       const steps = Number.isFinite(s.steps) ? (s.steps | 0) : 5;
-      return '<div class="ambient-ctrl" title="Move the layer through the stereo field a note at a time, instead of holding one image. Replaces Spread while it is on; Pan still offsets the whole layer."><label for="' + stem + '-spatmode">Spatialize</label>' +
+      return '<div class="ambient-ctrl ambient-ctrl-stoch" title="Move the layer through the stereo field a note at a time, instead of holding one image. Replaces Spread while it is on; Pan still offsets the whole layer."><label for="' + stem + '-spatmode">Spatialize</label>' +
         '<select id="' + stem + '-spatmode" class="ambient-select">' +
           '<option value=""' + (on ? '' : ' selected') + '>Off</option>' +
           _AMB_SPAT_MODES.map(m => '<option value="' + m[0] + '"' + (on && mode === m[0] ? ' selected' : '') + '>' + m[1] + '</option>').join('') +
-        '</select><span class="ambient-hint">per-note pan · overrides Spread</span></div>' +
+        '</select><span class="ambient-hint">per-note pan · overrides Spread</span>' +
+        (_ambStochUiOn(stem) ? '<span class="ambient-stoch-desc" id="' + stem + '-spatmode-sd">' + _ambStochDesc('spat', mode) + '</span>' : '') + '</div>' +
         _ambSl('Width', stem + '-spatwidth', 0, 100, width, 'how far from centre it travels') +
         _ambSl('Positions', stem + '-spatsteps', 2, 16, steps, 'notes before the pattern repeats');
     };
@@ -38707,9 +38770,10 @@
         // — the same absent/zero grammar the Changes use.
         const sl = (inst && inst.salt && typeof inst.salt === 'object') ? inst.salt : null;
         const v = (k2) => sl ? Math.max(0, Math.min(100, sl[k2] | 0)) : 0;
-        const row = (k2, lbl, hint) => '<div class="ambient-ctrl"><label for="' + p + '-salt-' + k2 + '">' + lbl + '</label>' +
+        const row = (k2, lbl, hint) => '<div class="ambient-ctrl ambient-ctrl-stoch"><label for="' + p + '-salt-' + k2 + '">' + lbl + '</label>' +
           '<input type="range" id="' + p + '-salt-' + k2 + '" class="ambient-sl ambient-layersalt" data-saltk="' + k2 + '" min="0" max="100" step="1" value="' + v(k2) + '"' + (sl ? '' : ' disabled') + '>' +
-          '<span class="ambient-hint">' + hint + '</span></div>';
+          '<span class="ambient-hint">' + hint + '</span>' +
+          (_ambStochUiOn(p) ? '<span class="ambient-stoch-desc" id="' + p + '-salt-' + k2 + '-sd">' + _ambStochDesc(k2 === 'colors' ? 'saltColors' : 'saltScatter', v(k2)) + '</span>' : '') + '</div>';
         return '<div class="ambient-ctrl"><label for="' + p + '-saltmode">Salt</label>' +
           '<select id="' + p + '-saltmode" class="ambient-select ambient-layersaltmode">' +
             '<option value="inherit"' + (sl ? '' : ' selected') + '>Inherit</option>' +

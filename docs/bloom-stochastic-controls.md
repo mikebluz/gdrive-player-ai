@@ -6,8 +6,8 @@
 > Do not hand-edit; edit `_AMB_STOCH` and re-run.
 > Visual version: https://claude.ai/code/artifact/5283fea5-96be-46ca-a878-44c845451f28
 
-Every control in each layer's **Variance** and **Performance** groups — 23 controls
-across 11 layer types. Two axes:
+Every control that makes a stochastic decision — 32 of them across
+11 layer types. Two axes:
 
 - **Type** — what the control edits.
 - **Grain** — what counts as ONE set of choices. This is the axis that matters:
@@ -17,82 +17,108 @@ across 11 layer types. Two axes:
 Neither is derivable from a label — both come from each control's **draw site**
 in the emitters. That is why they are recorded in the app rather than here.
 
+**The group is not the predicate.** 9 of these 32 live outside the Variance and
+Performance groups (space · spat · Proximity · Poly · Fidelity · Variety · Fill · saltColors · saltScatter),
+and every one of them went unmarked until 2026-08-20 because the first sweep used
+the group to decide what counted. Three are custom tokens rather than `sl` rows,
+so they were not in that sweep at all. This generator can catch a Variance control
+with no description; it can never catch a stochastic control somewhere else.
+
 ## By grain
 
 ### one NOTE — a fresh choice for every note played
 
-| control | key | type | layers | what a user sees | what it draws |
-|---|---|---|---|---|---|
-| Dynamics | `velVar` | Dynamics | 11 | Varies the volume note to note | volume jitter, seeded on position in the performance |
-| Humanize | `humanize` | Rhythm | 9 | Nudges each note off the grid | onset jitter — the ONLY unseeded draw (Math.random) |
-| Len var | `lenVary` | Length | 7 | Varies how long each note rings, around Length | _ambVaryLen around the layer Length |
-| Accent | `accent` | Dynamics | 5 | Accents some notes and ghosts others | one draw picks accented / ghost / plain |
-| Ornament | `ornament` | Articulation | 2 | Adds grace notes, mordents and turns | grace / mordent / turn; draws from the caller stream |
-| Slide | `slide` | Articulation | 2 | Slides into leaps instead of jumping | approach a leap by step |
-| Contour | `contour` | Pitch | 1 | Leans the line in one direction | walk-direction bias; draws at every setting |
-| Gravity | `gravity` | Pitch | 1 | Pulls notes onto chord tones | pull toward chord tones |
-| Motion | `motion` | Pitch | 1 | Detunes each voice, so the chord shimmers | seeded detune offset per voice |
-| Randomness | `randomness` | Pitch | 1 | Scrambles which step of the arp comes next | scramble the arp index |
-| Stutter | `stutter` | Pitch | 1 | Repeats the same note instead of moving on | repeat instead of walking |
-| Twist | `twist` | Rhythm | 1 | Breaks into bursts of extra notes | burst of extra walk-steps on one fire |
+| control | key | type | group | layers | what a user sees | what it draws |
+|---|---|---|---|---|---|---|
+| space | `space` | Space | token: spread | 11 | Scatters each event across the stereo field | _ambLayerPan — _ambRand()*2-1 scaled by Spread; returns 0 with no draw in Pan mode |
+| spat | `spat` | Space | token: spat | 11 | Walks the layer through the stereo field, a new position per note | _ambSpatPan — dedicated _ambSeededRand on (ordinal, take), random mode only |
+| Dynamics | `velVar` | Dynamics | Performance | 11 | Varies the volume note to note | volume jitter, seeded on position in the performance |
+| Humanize | `humanize` | Rhythm | Performance | 9 | Nudges each note off the grid | onset jitter — the ONLY unseeded draw (Math.random) |
+| Len var | `lenVary` | Length | Variance | 7 | Varies how long each note rings, around Length | _ambVaryLen around the layer Length |
+| Accent | `accent` | Dynamics | Variance | 5 | Accents some notes and ghosts others | one draw picks accented / ghost / plain |
+| Ornament | `ornament` | Articulation | Variance | 2 | Adds grace notes, mordents and turns | grace / mordent / turn; draws from the caller stream |
+| Proximity | `proximity` | Pitch | Source, Pattern | 2 | Lets the line leap instead of always stepping to a neighbour | _ambRand() < _grav per note |
+| Slide | `slide` | Articulation | Variance | 2 | Slides into leaps instead of jumping | approach a leap by step |
+| Contour | `contour` | Pitch | Variance | 1 | Leans the line in one direction | walk-direction bias; draws at every setting |
+| Gravity | `gravity` | Pitch | Variance | 1 | Pulls notes onto chord tones | pull toward chord tones |
+| Motion | `motion` | Pitch | Variance | 1 | Detunes each voice, so the chord shimmers | seeded detune offset per voice |
+| Poly | `poly` | Pitch | Source | 1 | Stacks extra drums on the same hit, each one picked at random | _ambPickDrumPc() — a weighted _ambRand() per extra voice |
+| Randomness | `randomness` | Pitch | Variance | 1 | Scrambles which step of the arp comes next | scramble the arp index |
+| Fidelity | `strumFidelity` | Articulation | Timing | 1 | Shuffles the order the chord’s voices are struck in | _ambStrumOrder — Fisher-Yates, two _ambRand() per swap |
+| Stutter | `stutter` | Pitch | Variance | 1 | Repeats the same note instead of moving on | repeat instead of walking |
+| Twist | `twist` | Rhythm | Variance | 1 | Breaks into bursts of extra notes | burst of extra walk-steps on one fire |
 
 ### one SLOT — a choice per candidate onset, played or not
 
-| control | key | type | layers | what a user sees | what it draws |
-|---|---|---|---|---|---|
-| Rests | `restProb` | Rhythm | 7 | Skips steps, leaving gaps | rest gate per candidate onset |
-| Ghosts | `ghosts` | Rhythm | 2 | Adds quiet pickup hits just before the beat | quiet pickup hit half a slot early |
-| Walk | `pitchVar` | Pitch | 1 | Walks to a new note as the pattern plays | Walk — advances per euclidean HIT |
-| Syncopate | `syncop` | Rhythm | 1 | Pushes hits off the beat | offbeat bias in the stochastic fill |
+| control | key | type | group | layers | what a user sees | what it draws |
+|---|---|---|---|---|---|---|
+| Rests | `restProb` | Rhythm | Variance | 7 | Skips steps, leaving gaps | rest gate per candidate onset |
+| Ghosts | `ghosts` | Rhythm | Variance | 2 | Adds quiet pickup hits just before the beat | quiet pickup hit half a slot early |
+| Variety | `voiceVariety` | Pitch | Source/Progression | 2 | Opens up richer voicings — 9ths, 11ths, sus, augmented | _ambSeededRand over the variant menu, gated on progFeel |
+| Fill | `fill` | Rhythm | Source | 1 | Decides which steps of the pattern play | rnd() >= fill*0.6 per slot in _ambEmitStepGrid; also seeds the freeze pattern |
+| Walk | `pitchVar` | Pitch | Variance | 1 | Walks to a new note as the pattern plays | Walk — advances per euclidean HIT |
+| Syncopate | `syncop` | Rhythm | Variance | 1 | Pushes hits off the beat | offbeat bias in the stochastic fill |
+
+### one CHORD — one choice per chord, re-dealt each time it comes round
+
+| control | key | type | group | layers | what a user sees | what it draws |
+|---|---|---|---|---|---|---|
+| saltColors | `saltColors` | Pitch | token: salt | 9 | Recolours the chord as it plays — added 7ths, 9ths, suspensions | _ambProgSaltSegCount / the colour pick — _ambSeededRand per chord instance |
+| saltScatter | `saltScatter` | Rhythm | token: salt | 9 | Varies where inside the chord the colour changes land | shape exponent on the same per-chord _ambSeededRand draw |
 
 ### one CYCLE — one choice for the whole phrase / pass
 
-| control | key | type | layers | what a user sees | what it draws |
-|---|---|---|---|---|---|
-| Rhythm var | `rhythmVar` | Rhythm | 3 | Re-rolls the pattern | re-rolls the euclid pattern per cycle |
-| Pitch vary | `pitchVary` | Pitch | 2 | Picks a different note of the chord | drone: one slot per phrase, so per cycle |
-| Vary / Roam | `vary` | Pitch | 2 | Roams to different notes | Riff/Pedal, from the per-phrase cRnd |
-| Start | `phraseVary` | Rhythm | 1 | Starts the phrase off the 1 | Start — where the phrase begins (Motif) |
-| Rate var | `rateVar` | Rhythm | 1 | Changes how fast the notes run | note rate per series pass |
-| Start | `startVary` | Rhythm | 1 | Starts the phrase off the 1 | Start — where the phrase begins (Bed) |
-| Time vary | `timeVary` | Rhythm | 1 | Moves where the drone comes in | drone onset, from the per-phrase cRnd |
+| control | key | type | group | layers | what a user sees | what it draws |
+|---|---|---|---|---|---|---|
+| Rhythm var | `rhythmVar` | Rhythm | Variance | 3 | Re-rolls the pattern | re-rolls the euclid pattern per cycle |
+| Pitch vary | `pitchVary` | Pitch | Variance | 2 | Picks a different note of the chord | drone: one slot per phrase, so per cycle |
+| Vary / Roam | `vary` | Pitch | Variance | 2 | Roams to different notes | Riff/Pedal, from the per-phrase cRnd |
+| Start | `phraseVary` | Rhythm | Variance | 1 | Starts the phrase off the 1 | Start — where the phrase begins (Motif) |
+| Rate var | `rateVar` | Rhythm | Variance | 1 | Changes how fast the notes run | note rate per series pass |
+| Start | `startVary` | Rhythm | Variance | 1 | Starts the phrase off the 1 | Start — where the phrase begins (Bed) |
+| Time vary | `timeVary` | Rhythm | Variance | 1 | Moves where the drone comes in | drone onset, from the per-phrase cRnd |
 
 ## By type
 
 | type | controls | count |
 |---|---|---|
-| Rhythm | Humanize · Twist · Rests · Ghosts · Syncopate · Rhythm var · Start · Rate var · Start · Time vary | 10 |
-| Pitch | Contour · Gravity · Motion · Randomness · Stutter · Walk · Pitch vary · Vary / Roam | 8 |
+| Rhythm | Humanize · Twist · Rests · Ghosts · Fill · Syncopate · saltScatter · Rhythm var · Start · Rate var · Start · Time vary | 12 |
+| Pitch | Proximity · Contour · Gravity · Motion · Poly · Randomness · Stutter · Variety · Walk · saltColors · Pitch vary · Vary / Roam | 12 |
+| Articulation | Ornament · Slide · Fidelity | 3 |
+| Space | space · spat | 2 |
 | Dynamics | Dynamics · Accent | 2 |
-| Articulation | Ornament · Slide | 2 |
 | Length | Len var | 1 |
 
 ## By layer
 
 | layer | controls | count |
 |---|---|---|
-| Bed | Dynamics · Humanize · Len var · Motion · Rests · Start | 6 |
-| Motif | Dynamics · Humanize · Len var · Accent · Ornament · Slide · Contour · Gravity · Stutter · Twist · Rests · Start | 12 |
-| Texture | Dynamics · Humanize · Len var · Syncopate | 4 |
-| Learn | Dynamics | 1 |
-| Sir Eel | Dynamics | 1 |
-| Beat | Dynamics · Humanize · Len var · Rests · Ghosts · Rhythm var | 6 |
-| Arp | Dynamics · Humanize · Len var · Accent · Randomness · Rests · Rhythm var · Pitch vary · Rate var | 9 |
-| Bass | Dynamics · Humanize · Len var · Accent · Rests · Ghosts · Walk · Rhythm var | 8 |
-| Riff | Dynamics · Humanize · Len var · Accent · Ornament · Slide · Rests · Vary / Roam | 8 |
-| Pedal | Dynamics · Humanize · Accent · Rests · Vary / Roam | 5 |
-| Drone | Dynamics · Humanize · Pitch vary · Time vary | 4 |
+| Bed | space · spat · Dynamics · Humanize · Len var · Motion · Fidelity · Rests · Variety · saltColors · saltScatter · Start | 12 |
+| Motif | space · spat · Dynamics · Humanize · Len var · Accent · Ornament · Proximity · Slide · Contour · Gravity · Stutter · Twist · Rests · saltColors · saltScatter · Start | 17 |
+| Texture | space · spat · Dynamics · Humanize · Len var · Fill · Syncopate · saltColors · saltScatter | 9 |
+| Learn | space · spat · Dynamics | 3 |
+| Sir Eel | space · spat · Dynamics | 3 |
+| Beat | space · spat · Dynamics · Humanize · Len var · Poly · Rests · Ghosts · saltColors · saltScatter · Rhythm var | 11 |
+| Arp | space · spat · Dynamics · Humanize · Len var · Accent · Randomness · Rests · saltColors · saltScatter · Rhythm var · Pitch vary · Rate var | 13 |
+| Bass | space · spat · Dynamics · Humanize · Len var · Accent · Proximity · Rests · Ghosts · Walk · saltColors · saltScatter · Rhythm var | 13 |
+| Riff | space · spat · Dynamics · Humanize · Len var · Accent · Ornament · Slide · Rests · saltColors · saltScatter · Vary / Roam | 12 |
+| Pedal | space · spat · Dynamics · Humanize · Accent · Rests · saltColors · saltScatter · Vary / Roam | 9 |
+| Drone | space · spat · Dynamics · Humanize · Variety · saltColors · saltScatter · Pitch vary · Time vary | 9 |
 
 ## What the shape says
 
-- **12 of 23** controls re-decide on every note, so no amount of freezing
+- **17 of 32** controls re-decide on every note, so no amount of freezing
   makes them repeat. Only the **7 cycle** controls are what Write / Evolve captures.
-- **Rhythm and Pitch are 18 of 23.** Loudness, articulation and length are
-  5 controls between them.
+- **Rhythm and Pitch are 24 of 32.** Loudness, articulation, length and space are
+  8 controls between them.
 - `humanize` is the only control on unseeded `Math.random` — which is exactly why
   the same take replays identically except for its humanize.
-- **12** controls belong to a single layer. That tail is per-layer character,
+- **15** controls belong to a single layer. That tail is per-layer character,
   not duplication, and collapsing it would flatten what makes a Motif a Motif.
+- Some controls roll only in certain **modes**: Stereo draws nothing in Pan mode,
+  Spatialize only in Mode = Random, Variety only while Feel is Stochastic. The
+  marker still applies — it describes what the control does when it is active —
+  and the description carries the condition.
 
 ## Resolved
 
@@ -106,6 +132,14 @@ in the emitters. That is why they are recorded in the app rather than here.
 
 ## Open
 
+- **`mutateRate` (Texture "Mutate", `slow→fast`) is DEAD** and is deliberately not
+  listed above. Nine occurrences in the tree — defaults, two presets, the unit
+  table, the ramp list, one `bind`, one `set` — and no emitter reads it.
+  `_ambTexBuildPattern` has one caller, guarded `if (!_E.texPattern)`, and
+  `_E.texMutateAt` is assigned 0 in three places and never read. Either implement
+  it (it would be the only "how often does this re-decide" control in the app) or
+  remove it; leaving a slider that does nothing is the worst case for a panel
+  whose whole problem is that people cannot tell what the controls do.
 - `pitchVar` (Bass "Walk", per **slot**) and `pitchVary` (Arp/Drone, per **cycle**)
   differ by one letter *and* by grain — a live trap when reading this code.
 - Rests and Ghosts are one bipolar density axis pointing opposite ways. Merging is

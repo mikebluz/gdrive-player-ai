@@ -13825,8 +13825,16 @@
         _ambPlaySynthDrum(E, dest0, L, v, at0, _vol, _ambLayerDetuneMod(key), 0);
         return;
       }
-      let f; try { f = Tone.Frequency(36 + _ambLaneDrumPc(L, v), 'midi').toFrequency(); } catch (e) { return; }
-      const bp = _ambApplyAdsr(_ambBeatParams(L.kit, lenMs, 0), L);
+      // A lane that names its own sample auditions THAT — mirroring the emit.
+      // Without this, picking a sample previewed the kit drum instead, which is
+      // the worst possible feedback for a picker that auditions on choose.
+      const _ls0 = L.euclidKit ? _ambLaneSample(L, v) : null;
+      let f;
+      try {
+        f = _ls0 ? Tone.Frequency(_ambSampleRootMidi(_ls0), 'midi').toFrequency()
+                 : Tone.Frequency(36 + _ambLaneDrumPc(L, v), 'midi').toFrequency();
+      } catch (e) { return; }
+      const bp = _ambApplyAdsr(_ambBeatParams(_ls0 || L.kit, lenMs, 0), L);
       bp.volume = Math.max(0, Math.round(_ambApplyLevel(bp.volume, L.level)));
       try { playNote(f, bp, lenMs, at0, dest0, undefined, (E && E.laneIdx) ? E.laneIdx() : -1); } catch (e) {}
     }
@@ -14026,6 +14034,25 @@
       } catch (e) {}
       out.sort();
       return out.slice(0, 300);
+    }
+    // A KIT IS A SAMPLE SET TOO — its filled zones, so a lane can play any drum
+    // the kit contains rather than only the one its slot maps to. Reads `urls`
+    // (metadata) and never `.sampler`, the lazy getter.
+    function _ambKitZones(kitId) {
+      const out = [];
+      try {
+        const e = (typeof getSampleEntry === 'function') ? getSampleEntry('sample:' + kitId) : null;
+        if (!e || !e.urls) return out;
+        Object.keys(e.urls).forEach(note => {
+          let midi; try { midi = Tone.Frequency(note).toMidi(); } catch (x) { return; }
+          if (!Number.isFinite(midi)) return;
+          const pc = (((midi | 0) % 12) + 12) % 12;
+          if (out.some(z => z.pc === pc)) return;
+          out.push({ pc, name: _AMB_DRUM_NAMES[pc] || note });
+        });
+      } catch (e) {}
+      out.sort((a, b) => a.pc - b.pc);
+      return out;
     }
     function _ambSampleRootMidi(id) {
       try {
@@ -17839,10 +17866,15 @@
            // directly and the zone map stops applying to this lane. The chip shows
            // the override, so a lane no longer playing its kit drum says so.
            { const _ls = _ambLaneSample(inst, v);
-             html += '<button type="button" class="ambient-euclid-lanesnd' + (_ls ? ' on' : '') + '" data-lanesnd="' + v + '" title="' +
+             const _lz = (!_ls && Array.isArray(inst.euclidDrums) && inst.euclidDrums[v] != null) ? (inst.euclidDrums[v] | 0) : null;
+             const _lzn = (_lz != null) ? (_AMB_DRUM_NAMES[_lz] || ('pc ' + _lz)) : null;
+             const _on = !!(_ls || _lzn);
+             html += '<button type="button" class="ambient-euclid-lanesnd' + (_on ? ' on' : '') + '" data-lanesnd="' + v + '" title="' +
                (_ls ? ('This lane plays the sample \u201c' + _ls + '\u201d instead of the kit\u2019s ' + dn + '. Tap to change or clear.')
-                    : ('Pick any library sample for this lane, instead of the kit\u2019s ' + dn)) +
-               '">' + (_ls ? ('\u266a ' + _ls.split('/').pop().slice(0, 10)) : '\u266a') + '</button>'; }
+                : _lzn ? ('This lane plays the kit\u2019s ' + _lzn + ' instead of its ' + dn + '. Tap to change or clear.')
+                : ('Choose what this lane plays \u2014 another drum from this kit, or any library sample')) +
+               '">' + (_ls ? ('\u266a ' + _ls.split('/').pop().slice(0, 10))
+                       : _lzn ? ('\u25c8 ' + _lzn.slice(0, 10)) : '\u266a') + '</button>'; }
           { const _soL = _ambSoloLane(inst);
             html += '<button type="button" class="ambient-euclid-drumlbl' + ((editMode === 'lane' && v === editLane) ? ' on' : '') + ((_soL === v) ? ' solo' : (_soL != null ? ' muted-by-solo' : '')) + '" data-lane="' + v + '" title="' + (_soL === v ? dn + ' — SOLOED (others muted)' : 'Edit the ' + dn + ' lane') + '">' + dn + ((_soL === v) ? '<i class="solo-dot">S</i>' : '') + '</button>'; }
         } else if (d.V > 1) {
@@ -18319,14 +18351,39 @@
           const dn2 = _AMB_DRUM_NAMES[_AMB_VDRUM[v2]] || ('Drum ' + v2);
           const cur = _ambLaneSample(L, v2);
           const items = [];
-          items.push({ label: (cur ? '   ' : '\u2713 ') + 'Kit \u2014 ' + dn2, fn: () => {
+          const curZone = (Array.isArray(L.euclidDrums) && L.euclidDrums[v2] != null) ? (L.euclidDrums[v2] | 0) : null;
+          const clearLane = () => {
             if (Array.isArray(L.euclidSamples)) { L.euclidSamples[v2] = null; _ambNormalizeLaneSamples(L); }
+            if (Array.isArray(L.euclidDrums)) { L.euclidDrums[v2] = null; if (!L.euclidDrums.some(x => x != null)) delete L.euclidDrums; }
+          };
+          items.push({ label: ((!cur && curZone == null) ? '\u2713 ' : '   ') + 'Kit \u2014 ' + dn2 + ' (default)', fn: () => {
+            clearLane();
             render(); persist(); if (E.timer) { try { sync && sync(); } catch (e) {} }
           } });
+          // THIS KIT'S OWN DRUMS. A kit is a sample set as well, and its zones were
+          // only reachable through the one slot each lane maps to — so "play the
+          // 808's cowbell on the perc lane" was inexpressible without a new kit.
+          let zones = [];
+          try { zones = _ambBeatIsSynth(L) ? [] : _ambKitZones(L.kit); } catch (e) {}
+          if (zones.length > 1) {
+            items.push('hr');
+            zones.forEach(z => {
+              if (z.pc === _ambLaneDrumPc({}, v2) && curZone == null && !cur) return;   // that IS the default row above
+              items.push({ label: (curZone === z.pc && !cur ? '\u2713 ' : '   ') + '\u25c8 ' + z.name, fn: () => {
+                clearLane();
+                if (!Array.isArray(L.euclidDrums)) L.euclidDrums = [];
+                L.euclidDrums[v2] = z.pc;
+                render(); persist(); if (E.timer) { try { sync && sync(); } catch (e) {} }
+                try { _ambTriggerLaneStep(E, key, L, v2); } catch (e) {}
+              } });
+            });
+            items.push('hr');
+          }
           let ids = [];
           try { ids = _ambDrumSampleIds(); } catch (e) {}
           if (!ids.length) items.push({ label: '   (no samples imported yet)', fn: () => {} });
           ids.forEach(id => items.push({ label: (cur === id ? '\u2713 ' : '   ') + id, fn: () => {
+            clearLane();
             if (!Array.isArray(L.euclidSamples)) L.euclidSamples = [];
             L.euclidSamples[v2] = id;
             _ambNormalizeLaneSamples(L);

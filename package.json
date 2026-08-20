@@ -12,7 +12,8 @@
     "radio": "node tools/add-radio-track.mjs",
     "desktop:build": "node tools/build-desktop.mjs",
     "test:bounce": "node test/bounce-parity.js",
-    "test:arch": "node test/arch-parity.js"
+    "test:arch": "node test/arch-parity.js",
+    "stoch": "node tools/stochastic-matrix.mjs"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

@@ -12379,6 +12379,29 @@
     // Neutral global macros (shape the whole kit): tune ± semitones, decay %, grit
     // (added noise). Default = no effect.
     function _ambSynthDefaultMacros() { return { tune: 0, decay: 100, grit: 0 }; }
+    // The layer's kit as a REAL object with all eight voices written out. A kit is
+    // normally implied by its seed (`_ambSynthVoiceOf` generates on read), which is
+    // why a single voice cannot be replaced in place — there is nothing to replace.
+    // Materialising first is what makes "roll just this drum" expressible.
+    function _ambSynthKitMaterialize(inst) {
+      const sk = inst.synthKit && typeof inst.synthKit === 'object' ? inst.synthKit : {};
+      const seed = Number.isFinite(sk.seed) ? sk.seed : (((inst && inst.id) | 0) * 40503 + 1);
+      const voices = _AMB_SYNTH_ROLES.map((_, role) => {
+        const v = (Array.isArray(sk.voices) && sk.voices[role]) ? sk.voices[role] : _ambGenSynthVoice(seed, role);
+        return { body: v.body, tune: v.tune | 0, decay: v.decay | 0, noise: v.noise | 0,
+                 bright: v.bright | 0, drop: v.drop | 0, snap: v.snap | 0 };
+      });
+      inst.synthKit = { seed: seed | 0, macros: sk.macros || _ambSynthDefaultMacros(), voices };
+      return inst.synthKit;
+    }
+    // Roll ONE role. Math.random at UI time — never the seeded _ambRand stream,
+    // which generation hashes (the documented split, same as _ambEuclidStochasticInit).
+    function _ambRollSynthVoice(inst, role) {
+      const sk = _ambSynthKitMaterialize(inst);
+      const r = Math.max(0, Math.min(_AMB_SYNTH_ROLES.length - 1, role | 0));
+      sk.voices[r] = _ambGenSynthVoice(Math.floor(Math.random() * 1e9), r);
+      return sk.voices[r];
+    }
     function _ambGenSynthKit(seed) {
       return { seed: seed | 0, macros: _ambSynthDefaultMacros(), voices: _AMB_SYNTH_ROLES.map((_, role) => _ambGenSynthVoice(seed, role)) };
     }
@@ -12446,7 +12469,13 @@
       return '<div class="ambient-synthkit" style="display:none">' +
         '<div class="ambient-ctrl ambient-sk-head"><label title="A drum kit synthesized from scratch (no samples). Regen rolls a fresh kit from a new seed; edit each drum below.">Synth kit</label>' +
           '<button type="button" class="ambient-seg ambient-sk-hear" title="Play the selected drum so you can hear it">▶ Hear</button>' +
-          '<button type="button" class="ambient-seg ambient-sk-regen" title="Roll a new random kit (new seed)">↻ Regen voices</button>' +
+          // ROLL ONE DRUM. Regen re-rolls all eight from a new seed, which throws
+          // away every voice you had already tweaked — so there was no way to say
+          // "keep my kick, give me another snare". This rolls the SELECTED role
+          // only, inside that role's own bands (a kick stays a kick), and leaves
+          // the other seven exactly as they are.
+          '<button type="button" class="ambient-seg ambient-sk-roll" title="Roll a new sound for the SELECTED drum only — the rest of the kit is left alone">🎲 Roll drum</button>' +
+          '<button type="button" class="ambient-seg ambient-sk-regen" title="Roll a new random kit (new seed) — replaces ALL eight voices">↻ Regen voices</button>' +
           '<span class="ambient-hint ambient-sk-seed"></span></div>' +
         '<div class="ambient-sk-macros">' +
           '<div class="ambient-ctrl"><label title="Tune the WHOLE kit up/down (semitones).">Tune</label><input type="range" class="ambient-sk-mac-tune" min="-24" max="24" step="1"><span class="ambient-hint ambient-sk-mac-tune-v"></span></div>' +
@@ -44002,6 +44031,28 @@
             hostEl.addEventListener('click', (ev) => {
               const tab = ev.target && ev.target.closest && ev.target.closest('.ambient-sk-role');
               if (tab && hostEl.contains(tab)) { const ed = tab.closest('.ambient-synthkit'); if (ed) { ed.setAttribute('data-active', tab.getAttribute('data-skrole')); try { _ambSyncSynthKit(E); } catch (e) {} } return; }
+              const rl = ev.target && ev.target.closest && ev.target.closest('.ambient-sk-roll');
+              if (rl && hostEl.contains(rl)) {
+                const L = _skOf(rl); if (!L) return;
+                const ed = rl.closest('.ambient-synthkit');
+                const role = ed ? Math.max(0, Math.min(7, (ed.getAttribute('data-active') | 0))) : 0;
+                _ambRollSynthVoice(L, role);
+                try { _ambSyncSynthKit(E); } catch (e) {}
+                if (typeof persistWorkspace === 'function') persistWorkspace();
+                // Hear it immediately — rolling a drum you cannot hear is a dice
+                // throw with the result face-down. Same path ▶ Hear uses.
+                try {
+                  if (typeof Tone !== 'undefined' && Tone.start) Tone.start();
+                  const key2 = _ambCardKey(rl.closest('.ambient-layer'));
+                  const dest2 = (key2 && E && E.mod && E.mod[key2]) ? _ambLayerDest(key2) : undefined;
+                  const at2 = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + 0.03;
+                  _E = E;
+                  _ambPlaySynthDrum(E, dest2, L, role, at2,
+                    Math.max(0, Math.round(_ambApplyLevel(100, L.level))),
+                    key2 ? _ambLayerDetuneMod(key2) : 0, _ambLayerPan(L));
+                } catch (e) {}
+                return;
+              }
               const rg = ev.target && ev.target.closest && ev.target.closest('.ambient-sk-regen');
               if (rg && hostEl.contains(rg)) { const L = _skOf(rg); if (!L) return; L.synthKit = _ambGenSynthKit(Math.floor(Math.random() * 1e9)); try { _ambSyncSynthKit(E); } catch (e) {} if (E.timer) { try { _ambSyncMods(); } catch (e) {} } if (typeof persistWorkspace === 'function') persistWorkspace(); return; }
               // ▶ Hear — audition the SELECTED role's drum through the real recipe.

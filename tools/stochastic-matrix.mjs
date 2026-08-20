@@ -1,50 +1,19 @@
 #!/usr/bin/env node
 // Bloom's stochastic controls, as a layer × parameter matrix.
 //
-//   npm run stoch            → rewrite docs/bloom-stochastic-controls.md
-//   npm run stoch -- --html  → also write /tmp/…/stochastic-matrix.html
+//   npm run stoch      → rewrite docs/bloom-stochastic-controls.md
 //
-// MEMBERSHIP is read from the LIVE `_AMB_LAYER_SCHEMA` (needs `npm start`), so
-// the doc cannot drift from the schema. TYPE and GRAIN are the one hand-authored
-// part: they come from reading each control's DRAW SITE in the emitters, which
-// no amount of schema introspection can tell you. When you add a control, add it
-// to META below — the script fails loudly on anything it does not know.
+// EVERYTHING comes from the app: MEMBERSHIP from `_AMB_LAYER_SCHEMA`, and TYPE /
+// GRAIN / description from `_AMB_STOCH` (js/bloops/17-ambient.js), which is the
+// same table the card readouts render from. So the doc cannot drift from the UI,
+// and a control that is in a Variance/Performance group but missing from
+// _AMB_STOCH fails HERE, by name, instead of quietly going undescribed in both.
 //
-//   TYPE  = what the control edits.
-//   GRAIN = what counts as ONE set of choices. This is the axis that matters for
-//           any "how often does this layer play something new" model: only the
-//           `cycle` controls are what Write / Evolve actually captures.
+// Needs the dev server (`npm start`).
 import fs from 'fs';
 import path from 'path';
 
-const META = {
-  // ── one NOTE: a fresh choice for every note played ──────────────────────
-  velVar:    { t: 'Dynamics',     u: 'note',  n: 'volume jitter, seeded on position in the performance' },
-  humanize:  { t: 'Rhythm',       u: 'note',  n: 'onset jitter — the ONLY unseeded draw (Math.random)' },
-  lenVary:   { t: 'Length',       u: 'note',  n: '_ambVaryLen around the layer Length' },
-  accent:    { t: 'Dynamics',     u: 'note',  n: 'one draw picks accented / ghost / plain' },
-  ornament:  { t: 'Articulation', u: 'note',  n: 'grace / mordent / turn; draws from the caller stream' },
-  slide:     { t: 'Articulation', u: 'note',  n: 'approach a leap by step' },
-  contour:   { t: 'Pitch',        u: 'note',  n: 'walk-direction bias; draws at every setting' },
-  gravity:   { t: 'Pitch',        u: 'note',  n: 'pull toward chord tones' },
-  stutter:   { t: 'Pitch',        u: 'note',  n: 'repeat instead of walking' },
-  motion:    { t: 'Pitch',        u: 'note',  n: 'seeded detune offset per voice' },
-  randomness:{ t: 'Pitch',        u: 'note',  n: 'scramble the arp index' },
-  twist:     { t: 'Rhythm',       u: 'note',  n: 'burst of extra walk-steps on one fire' },
-  // ── one SLOT: a choice per candidate onset, played or not ───────────────
-  restProb:  { t: 'Rhythm',       u: 'slot',  n: 'rest gate per candidate onset' },
-  ghosts:    { t: 'Rhythm',       u: 'slot',  n: 'quiet pickup hit half a slot early' },
-  syncop:    { t: 'Rhythm',       u: 'slot',  n: 'offbeat bias in the stochastic fill' },
-  pitchVar:  { t: 'Pitch',        u: 'slot',  n: 'Walk — advances per euclidean HIT' },
-  // ── one CYCLE: one choice for the whole phrase / pass ───────────────────
-  rhythmVar: { t: 'Rhythm',       u: 'cycle', n: 're-rolls the euclid pattern per cycle' },
-  rateVar:   { t: 'Rhythm',       u: 'cycle', n: 'note rate per series pass' },
-  timeVary:  { t: 'Rhythm',       u: 'cycle', n: 'drone onset, from the per-phrase cRnd' },
-  phraseVary:{ t: 'Rhythm',       u: 'cycle', n: 'Start — where the phrase begins (Motif)' },
-  startVary: { t: 'Rhythm',       u: 'cycle', n: 'Start — where the phrase begins (Bed)' },
-  pitchVary: { t: 'Pitch',        u: 'cycle', n: 'drone: one slot per phrase, so per cycle' },
-  vary:      { t: 'Pitch',        u: 'cycle', n: 'Riff/Pedal, from the per-phrase cRnd' },
-};
+const TYPE_NAME = { rhy: 'Rhythm', pit: 'Pitch', dyn: 'Dynamics', art: 'Articulation', len: 'Length' };
 const GRAINS = [
   ['note',  'one NOTE',  'a fresh choice for every note played'],
   ['slot',  'one SLOT',  'a choice per candidate onset, played or not'],
@@ -75,32 +44,43 @@ const data = await page.evaluate(() => {
       cells[k] = cells[k] || {}; cells[k][t] = 1;
       labels[k] = labels[k] || new Set(); labels[k].add(c[2] || k);
     }); });
-  return { types: types.map(t => ({ key: t, label: S[t].label || t })), cells,
+  // _AMB_STOCH holds functions (the value-aware `at`); ship only what serialises.
+  const meta = {};
+  Object.keys(_AMB_STOCH).forEach(k => {
+    const m = _AMB_STOCH[k];
+    meta[k] = { type: m.type, grain: m.grain, draws: m.draws || '', does: m.does || '', off: m.off || '' };
+  });
+  return { types: types.map(t => ({ key: t, label: S[t].label || t })), cells, meta,
     labels: Object.fromEntries(Object.entries(labels).map(([k, v]) => [k, [...v]])) };
 });
 await browser.close();
 
+const META = data.meta;
 const keys = Object.keys(data.cells);
 const unknown = keys.filter(k => !META[k]);
 if (unknown.length) {
-  console.error('Unknown control(s): ' + unknown.join(', ') +
-    '\nAdd each to META in tools/stochastic-matrix.mjs with its TYPE and GRAIN — ' +
-    'read them from the control’s draw site in the emitter, not from its label.');
+  console.error('Control(s) in a Variance/Performance group but missing from _AMB_STOCH: ' + unknown.join(', ') +
+    '\nAdd each to _AMB_STOCH in js/bloops/17-ambient.js with its type, grain, does and off — ' +
+    'read type and grain from the control’s draw site in the emitter, not from its label.\n' +
+    'Until you do, the card shows no description for it and this doc cannot list it.');
   process.exit(1);
 }
 const stale = Object.keys(META).filter(k => !data.cells[k]);
 const cnt = k => Object.keys(data.cells[k]).length;
+const tname = k => TYPE_NAME[META[k].type] || META[k].type;
 const cols = keys.sort((a, b) =>
-  GRAINS.findIndex(g => g[0] === META[a].u) - GRAINS.findIndex(g => g[0] === META[b].u)
+  GRAINS.findIndex(g => g[0] === META[a].grain) - GRAINS.findIndex(g => g[0] === META[b].grain)
   || cnt(b) - cnt(a) || a.localeCompare(b));
 const lab = k => data.labels[k].join(' / ');
 const rowTotal = t => cols.filter(k => data.cells[k][t.key]).length;
-const byType = {}; cols.forEach(k => { (byType[META[k].t] = byType[META[k].t] || []).push(k); });
+const byType = {}; cols.forEach(k => { (byType[tname(k)] = byType[tname(k)] || []).push(k); });
 
 let md = `# Bloom — stochastic controls by layer
 
-> Generated by \`npm run stoch\` from the live \`_AMB_LAYER_SCHEMA\`. Do not hand-edit:
-> re-run it after adding, moving or removing a Variance / Performance control.
+> Generated by \`npm run stoch\`. Every column comes from the running app —
+> membership from \`_AMB_LAYER_SCHEMA\`, type/grain/wording from \`_AMB_STOCH\`
+> (\`js/bloops/17-ambient.js\`), which is also what the card readouts render from.
+> Do not hand-edit; edit \`_AMB_STOCH\` and re-run.
 > Visual version: https://claude.ai/code/artifact/5283fea5-96be-46ca-a878-44c845451f28
 
 Every control in each layer's **Variance** and **Performance** groups — ${cols.length} controls
@@ -111,18 +91,17 @@ across ${data.types.length} layer types. Two axes:
   only the \`cycle\` controls are what Write / Evolve actually captures, so a
   "play something new every N passes" setting governs those and nothing else.
 
-Membership is read from the schema. Type and grain are hand-authored in
-\`tools/stochastic-matrix.mjs\` from each control's **draw site** in the emitters —
-a label cannot tell you either.
+Neither is derivable from a label — both come from each control's **draw site**
+in the emitters. That is why they are recorded in the app rather than here.
 
 ## By grain
 
 `;
 GRAINS.forEach(([u, title, desc]) => {
-  const ks = cols.filter(k => META[k].u === u);
+  const ks = cols.filter(k => META[k].grain === u);
   md += `### ${title} — ${desc}\n\n`;
-  md += `| control | key | type | layers | what it draws |\n|---|---|---|---|---|\n`;
-  ks.forEach(k => { md += `| ${lab(k)} | \`${k}\` | ${META[k].t} | ${cnt(k)} | ${META[k].n} |\n`; });
+  md += `| control | key | type | layers | what a user sees | what it draws |\n|---|---|---|---|---|---|\n`;
+  ks.forEach(k => { md += `| ${lab(k)} | \`${k}\` | ${tname(k)} | ${cnt(k)} | ${META[k].does} | ${META[k].draws} |\n`; });
   md += `\n`;
 });
 md += `## By type
@@ -137,15 +116,16 @@ md += `\n## By layer\n\n| layer | controls | count |\n|---|---|---|\n`;
 data.types.forEach(t => {
   md += `| ${t.label} | ${cols.filter(k => data.cells[k][t.key]).map(k => lab(k)).join(' · ') || '—'} | ${rowTotal(t)} |\n`;
 });
-const nNote = cols.filter(k => META[k].u === 'note').length;
-const nCycle = cols.filter(k => META[k].u === 'cycle').length;
+const nNote = cols.filter(k => META[k].grain === 'note').length;
+const nCycle = cols.filter(k => META[k].grain === 'cycle').length;
+const nRhyPit = (byType.Rhythm || []).length + (byType.Pitch || []).length;
 md += `
 ## What the shape says
 
 - **${nNote} of ${cols.length}** controls re-decide on every note, so no amount of freezing
   makes them repeat. Only the **${nCycle} cycle** controls are what Write / Evolve captures.
-- **Rhythm and Pitch are ${(byType.Rhythm || []).length + (byType.Pitch || []).length} of ${cols.length}.** Loudness, articulation and length are
-  ${cols.length - (byType.Rhythm || []).length - (byType.Pitch || []).length} controls between them.
+- **Rhythm and Pitch are ${nRhyPit} of ${cols.length}.** Loudness, articulation and length are
+  ${cols.length - nRhyPit} controls between them.
 - \`humanize\` is the only control on unseeded \`Math.random\` — which is exactly why
   the same take replays identically except for its humanize.
 - **${cols.filter(k => cnt(k) === 1).length}** controls belong to a single layer. That tail is per-layer character,
@@ -158,6 +138,8 @@ md += `
   Timing, so every control listed here genuinely draws.
 - \`startVary\` (Bed) and \`phraseVary\` (Motif) were the same algorithm written twice.
   Still two fields, now one implementation: \`_ambStartOffset\`.
+- Type and grain used to live in this generator, where the UI could not reach them.
+  They now live in \`_AMB_STOCH\` and feed both the doc and the card readouts.
 
 ## Open
 
@@ -167,11 +149,13 @@ md += `
   a real behaviour change: it hands ghosts to five layers that never had them.
 - Six of Motif's controls (Contour, Gravity, Stutter, Twist, Ornament, Slide) are
   one idea — how the walk behaves — presented as six sliders.
+- The readout is gated to one layer type (\`_AMB_STOCH_UI\`) while the wording is
+  reviewed. Widen it, then delete the gate.
 `;
-if (stale.length) md += `\n> **Note:** \`${stale.join('`, `')}\` ${stale.length === 1 ? 'is' : 'are'} in META but no longer in the schema.\n`;
+if (stale.length) md += `\n> **Note:** \`${stale.join('`, `')}\` ${stale.length === 1 ? 'is' : 'are'} in \`_AMB_STOCH\` but no longer in any Variance/Performance group.\n`;
 
 const out = path.join(ROOT, 'docs/bloom-stochastic-controls.md');
 fs.writeFileSync(out, md);
 console.log('wrote ' + path.relative(ROOT, out) + ' — ' + cols.length + ' controls, ' +
   data.types.length + ' layers, ' + Object.keys(byType).length + ' types' +
-  (stale.length ? ' (stale META: ' + stale.join(',') + ')' : ''));
+  (stale.length ? ' (stale: ' + stale.join(',') + ')' : ''));

@@ -31843,6 +31843,141 @@
     function _ambSlUnit(id) {
       return _AMB_PARAM_UNIT[String(id || '').split('-').pop()] || '';
     }
+    // ---- STOCHASTIC CONTROLS ------------------------------------------------
+    // The controls that ROLL for an outcome, plus the two facts a user needs in
+    // order to predict what one will do: WHAT it edits, and HOW OFTEN it decides.
+    //
+    // Neither is derivable from the schema. A label cannot tell you that Motion
+    // is pitch rather than volume, or that Rhythm var only re-decides once per
+    // cycle — which is why turning it up appears to do nothing until the next
+    // loop, the single most confusing thing about this whole group. Both facts
+    // come from reading each control's DRAW SITE in the emitters, so they are
+    // recorded here once and read by two consumers: the card readout below, and
+    // `npm run stoch`, which regenerates docs/bloom-stochastic-controls.md from
+    // this table. A control added to a Variance/Performance group and NOT added
+    // here fails the doc generator by name rather than quietly going undescribed.
+    //
+    //   type  — what it edits: rhy | pit | dyn | art | len
+    //   grain — what counts as ONE set of choices: note | slot | cycle. Only the
+    //           `cycle` controls are what Write/Evolve can capture; a `note`
+    //           control re-decides forever and no freezing makes it repeat.
+    //   does  — what turning it up does, in a player's words
+    //   off   — what you get INSTEAD at 0. A control at zero should say what you
+    //           are not getting rather than go blank.
+    //   at    — optional value-aware phrase, only where the number means
+    //           something concrete (a probability). Omitted where it just means
+    //           "more", since the value is already displayed beside it.
+    //   every — optional override of the grain sentence.
+    //   draws — the mechanism. For the doc; never shown in the UI.
+    const _AMB_STOCH = {
+      // one NOTE — a fresh choice for every note played
+      velVar:    { type: 'dyn', grain: 'note', does: 'Varies the volume note to note',
+                   off: 'every note plays at the same volume',
+                   draws: 'volume jitter, seeded on position in the performance' },
+      humanize:  { type: 'rhy', grain: 'note', does: 'Nudges each note off the grid',
+                   off: 'every note lands exactly on the grid',
+                   every: 'a fresh choice on every note, and never the same one twice',
+                   draws: 'onset jitter — the ONLY unseeded draw (Math.random)' },
+      lenVary:   { type: 'len', grain: 'note', does: 'Varies how long each note rings, around Length',
+                   off: 'every note holds for exactly Length',
+                   draws: '_ambVaryLen around the layer Length' },
+      accent:    { type: 'dyn', grain: 'note', does: 'Accents some notes and ghosts others',
+                   off: 'every note is played with the same weight',
+                   draws: 'one draw picks accented / ghost / plain' },
+      ornament:  { type: 'art', grain: 'note', does: 'Adds grace notes, mordents and turns',
+                   off: 'notes are played plain',
+                   draws: 'grace / mordent / turn; draws from the caller stream' },
+      slide:     { type: 'art', grain: 'note', does: 'Slides into leaps instead of jumping',
+                   off: 'leaps are taken straight',
+                   draws: 'approach a leap by step' },
+      contour:   { type: 'pit', grain: 'note',
+                   does: 'Leans the line in one direction',
+                   off: 'no direction bias — the line wanders either way',
+                   at: function (v) { return v < 0 ? 'Leans the line downward' : 'Leans the line upward'; },
+                   draws: 'walk-direction bias; draws at every setting' },
+      gravity:   { type: 'pit', grain: 'note', does: 'Pulls notes onto chord tones',
+                   off: 'notes are picked without regard to the chord',
+                   draws: 'pull toward chord tones' },
+      stutter:   { type: 'pit', grain: 'note', does: 'Repeats the same note instead of moving on',
+                   off: 'the line always moves on',
+                   draws: 'repeat instead of walking' },
+      motion:    { type: 'pit', grain: 'note', does: 'Detunes each voice, so the chord shimmers',
+                   off: 'every voice is dead in tune',
+                   draws: 'seeded detune offset per voice' },
+      randomness:{ type: 'pit', grain: 'note', does: 'Scrambles which step of the arp comes next',
+                   off: 'the arp runs in order',
+                   draws: 'scramble the arp index' },
+      twist:     { type: 'rhy', grain: 'note', does: 'Breaks into bursts of extra notes',
+                   off: 'an even stream',
+                   draws: 'burst of extra walk-steps on one fire' },
+      // one SLOT — a choice per candidate onset, played or not
+      restProb:  { type: 'rhy', grain: 'slot', does: 'Skips steps, leaving gaps',
+                   off: 'every step plays',
+                   at: function (v) { return v >= 67 ? 'Skips most steps' : 'Skips roughly 1 step in ' + Math.round(100 / v); },
+                   draws: 'rest gate per candidate onset' },
+      ghosts:    { type: 'rhy', grain: 'slot', does: 'Adds quiet pickup hits just before the beat',
+                   off: 'no pickups — hits land on the beat only',
+                   at: function (v) { return v >= 67 ? 'Adds a quiet pickup before most hits' : 'Adds a quiet pickup before roughly 1 hit in ' + Math.round(100 / v); },
+                   draws: 'quiet pickup hit half a slot early' },
+      syncop:    { type: 'rhy', grain: 'slot', does: 'Pushes hits off the beat',
+                   off: 'hits land straight on the beat',
+                   draws: 'offbeat bias in the stochastic fill' },
+      pitchVar:  { type: 'pit', grain: 'slot', does: 'Walks to a new note as the pattern plays',
+                   off: 'sits on the same note',
+                   draws: 'Walk — advances per euclidean HIT' },
+      // one CYCLE — one choice for the whole phrase / pass
+      rhythmVar: { type: 'rhy', grain: 'cycle', does: 'Re-rolls the pattern',
+                   off: 'the same pattern every time round',
+                   draws: 're-rolls the euclid pattern per cycle' },
+      rateVar:   { type: 'rhy', grain: 'cycle', does: 'Changes how fast the notes run',
+                   off: 'one steady rate',
+                   draws: 'note rate per series pass' },
+      timeVary:  { type: 'rhy', grain: 'cycle', does: 'Moves where the drone comes in',
+                   off: 'comes in at the same point every time',
+                   draws: 'drone onset, from the per-phrase cRnd' },
+      phraseVary:{ type: 'rhy', grain: 'cycle', does: 'Starts the phrase off the 1',
+                   off: 'every phrase starts on the 1',
+                   draws: 'Start — where the phrase begins (Motif)' },
+      startVary: { type: 'rhy', grain: 'cycle', does: 'Starts the phrase off the 1',
+                   off: 'every phrase starts on the 1',
+                   draws: 'Start — where the phrase begins (Bed)' },
+      pitchVary: { type: 'pit', grain: 'cycle', does: 'Picks a different note of the chord',
+                   off: 'holds the same note every time round',
+                   draws: 'drone: one slot per phrase, so per cycle' },
+      vary:      { type: 'pit', grain: 'cycle', does: 'Roams to different notes',
+                   off: 'stays on the notes it was given',
+                   draws: 'Riff/Pedal, from the per-phrase cRnd' },
+    };
+    const _AMB_STOCH_GRAIN = {
+      note:  'a fresh choice on every note',
+      slot:  'a fresh choice at every step',
+      cycle: 'one choice per phrase — changes at the next loop',
+    };
+    // The line under a stochastic slider: what it is doing AT THIS VALUE, and how
+    // often it decides. At 0 it names what you are not getting instead.
+    function _ambStochDesc(key, v) {
+      const st = _AMB_STOCH[key];
+      if (!st) return '';
+      const n = Number(v);
+      if (!Number.isFinite(n) || n === 0) return 'Off — ' + st.off;
+      let what = st.does;
+      if (typeof st.at === 'function') { try { what = st.at(n) || what; } catch (e) {} }
+      return what + ' · ' + (st.every || _AMB_STOCH_GRAIN[st.grain] || '');
+    }
+    // ROLLING OUT ONE LAYER TYPE AT A TIME so the wording can be judged before it
+    // lands on all 11. The colour and the data are global; only the readout line
+    // is gated. Widen by adding a type key here, remove the gate when it is right.
+    const _AMB_STOCH_UI = { motif: 1 };
+    function _ambStochKeyOf(id) { return String(id || '').split('-').pop(); }
+    function _ambStochUiOn(id) {
+      const s = String(id || '');
+      return Object.keys(_AMB_STOCH_UI).some(function (t) { return s.indexOf('-' + t + '-') >= 0; });
+    }
+    // Repaint a stochastic slider's description in place (drag, sync, restore).
+    function _ambStochSync(id, val) {
+      let sd; try { sd = document.getElementById(id + '-sd'); } catch (e) { return; }
+      if (sd) sd.textContent = _ambStochDesc(_ambStochKeyOf(id), val);
+    }
     function _ambSlReadout(id, val) {
       return (val != null && val !== '') ? (val + _ambSlUnit(id)) : '';
     }
@@ -31928,10 +32063,16 @@
     const _ambSl = (label, id, min, max, val, hint) => {
       const desc = _ambParamDesc(label, hint);
       const dt = desc ? ' title="' + String(desc).replace(/"/g, '&quot;') + '"' : '';
-      return '<div class="ambient-ctrl"' + dt + '>' +
+      // A stochastic control is MARKED (one colour, meaning "this one rolls") and
+      // carries a plain-language line saying what it does at this value and how
+      // often it decides. See _AMB_STOCH.
+      const sk = _ambStochKeyOf(id), st = _AMB_STOCH[sk];
+      const sd = (st && _ambStochUiOn(id))
+        ? '<span class="ambient-stoch-desc" id="' + id + '-sd">' + _ambStochDesc(sk, val) + '</span>' : '';
+      return '<div class="ambient-ctrl' + (st ? ' ambient-ctrl-stoch' : '') + '"' + dt + '>' +
       '<label for="' + id + '"' + dt + '>' + label + '</label>' +
       '<input type="range" class="ambient-sl" id="' + id + '" min="' + min + '" max="' + max + '" step="1" value="' + val + '" />' +
-      '<span class="ambient-hint ambient-sl-v" id="' + id + '-v">' + _ambSlReadout(id, val) + '</span></div>';
+      '<span class="ambient-hint ambient-sl-v" id="' + id + '-v">' + _ambSlReadout(id, val) + '</span>' + sd + '</div>';
     };
     // STEPPER — a −/value/+ control for DISCRETE integer COUNTS (Register, Density,
     // Subdivide, Repeat…), where the exact number is the meaning (a 0–100-feeling
@@ -31988,6 +32129,7 @@
           } catch (e) {}
         }
         v.textContent = t.value + _ambSlUnit(t.id);
+        _ambStochSync(t.id, parseInt(t.value, 10));
       }, true);
     } catch (e) {}
     // Mirror PROGRAMMATIC slider changes (sync / restore — these don't fire
@@ -31995,7 +32137,7 @@
     function _ambSyncSliderReadouts(root) {
       const r = root || document;
       let list; try { list = r.querySelectorAll('input.ambient-sl'); } catch (e) { return; }
-      list.forEach(sl => { if (!sl.id) return; const v = document.getElementById(sl.id + '-v'); if (v) v.textContent = sl.value + _ambSlUnit(sl.id); });
+      list.forEach(sl => { if (!sl.id) return; const v = document.getElementById(sl.id + '-v'); if (v) v.textContent = sl.value + _ambSlUnit(sl.id); _ambStochSync(sl.id, sl.value | 0); });
     }
     const _ambTm = (label, id, min, max, step, val) => {
       const desc = _ambParamDesc(label, '');

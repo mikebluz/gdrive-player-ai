@@ -3230,6 +3230,25 @@
        min-width:0 is what lets a hint shrink inside a flex/grid cell at all. */
     .ambient-hint { font-family: 'Segoe UI', sans-serif; font-size: 0.68rem; color: #6b6b8a;
       white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+    /* STOCHASTIC CONTROLS — the ones that roll for an outcome. One colour on the
+       label says "this introduces randomness"; the line beneath says what it is
+       doing at this value and how often it decides (see _AMB_STOCH in 17).
+       #d94dff was MEASURED against the existing palette, not eyeballed: CIELab
+       ΔE 91 from the delete red and 69+ from every other state colour, so it can
+       never read as destructive or as "sounding"; >=20 from all 14 layer-type
+       hues (nearest is samp at 25) and 64 from Motif's own lavender; 5.9:1
+       contrast on the panel background, clearing AA for body text. If a new
+       layer-type hue is added, re-run the distance check rather than eyeballing. */
+    .ambient-ctrl-stoch > label { color: #d94dff; }
+    .ambient-stoch-desc {
+      grid-column: 2 / -1; min-width: 0;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.64rem; line-height: 1.35;
+      color: #8f86a6; white-space: normal; overflow-wrap: anywhere;
+      margin: -3px 0 2px;
+    }
+    /* A muted layer already dims its whole control block; don't let the marker
+       colour survive that and read as active. */
+    .ambient-layer:has(> .ambient-layer-head > .ambient-toggle:not(.on)) .ambient-ctrl-stoch > label { color: #9c7fa8; }
     .ambient-note {
       font-family: 'Segoe UI', sans-serif; font-size: 0.72rem; color: #6b6b8a;
       line-height: 1.5; padding-top: 4px;

@@ -10777,8 +10777,19 @@
                     ctx.cap++;
                     continue;
                   }
-                  const bp = _ambApplyAdsr(_ambBeatParams(inst.kit, lenMs, panEff), inst);
-                  if (tuneEff) bp.drumTune = tuneEff;   // "Pitch" (+ ramp): pitch the selected drum in place (playbackRate multiply in _resolveSampleVoice)
+                  // A lane that names its OWN sample plays that, not the kit's zone.
+                  // With no zone map, "Sound" has nothing to select — so it tunes
+                  // like the synth kit does (both Sound and Pitch shift real pitch),
+                  // and the note is the sample's own root so an untouched hit plays
+                  // at its recorded speed.
+                  const _lsmp = inst.euclidKit ? _ambLaneSample(inst, v) : null;
+                  const bp = _ambApplyAdsr(_ambBeatParams(_lsmp || inst.kit, lenMs, panEff), inst);
+                  let f2 = f;
+                  if (_lsmp) {
+                    const _st = (stPitch | 0) + (tuneEff | 0);
+                    if (_st) bp.drumTune = _st;
+                    try { f2 = Tone.Frequency(_ambSampleRootMidi(_lsmp), 'midi').toFrequency(); } catch (e) {}
+                  } else if (tuneEff) bp.drumTune = tuneEff;   // "Pitch" (+ ramp): pitch the selected drum in place (playbackRate multiply in _resolveSampleVoice)
                   bp.volume = Math.max(0, Math.round(_ambApplyLevel(bp.volume, inst.level) * velS));
                   if (dmod) bp._detuneMod = dmod;
                   if (_ambTightOn(inst)) _ambTightChoke(bp);
@@ -10786,7 +10797,7 @@
                     ? _ambTightGap((j2) => vpat[j2 % vpat.length] === 1, absI, bars * steps) * slotSec * 1000 * lenS
                     : _ambVaryLen(_holdMs || lenMs, inst.lenVary, rnd) * lenS;
                   const noteLen = (rat > 1) ? Math.min(baseLen, ratSpace * 1000 * 0.95) : baseLen;
-                  try { playNote(f, bp, noteLen, rAt, dest, undefined, _E.laneIdx()); } catch (e) {}
+                  try { playNote(f2, bp, noteLen, rAt, dest, undefined, _E.laneIdx()); } catch (e) {}
                   ctx.cap++;
                 }
                 // Ghosts (Variance): with prob ∝ ghosts, a QUIET pickup hit half a
@@ -12524,6 +12535,26 @@
     }
 
 
+    // PER-LANE SAMPLE (`inst.euclidSamples[v]` = a bare sample id). A KIT is a map
+    // of 12 semitone zones, so using one sound out of a pack meant authoring a
+    // whole kit first. A lane can now name ANY library sample directly and the
+    // zone map simply does not apply to it — which makes every sound you have
+    // imported playable on any lane with no kit at all.
+    // Sparse and absent by default: a lane with no entry takes the kit exactly as
+    // before, so existing beats are byte-identical.
+    function _ambLaneSample(inst, v) {
+      const a = inst && inst.euclidSamples;
+      if (!Array.isArray(a)) return null;
+      const id = a[v | 0];
+      return (typeof id === 'string' && id) ? id : null;
+    }
+    function _ambNormalizeLaneSamples(L) {
+      if (!L || typeof L !== 'object') return;
+      if (L.euclidSamples == null) return;
+      if (!Array.isArray(L.euclidSamples)) { delete L.euclidSamples; return; }
+      const out = L.euclidSamples.slice(0, _AMB_KIT_LANES).map(x => (typeof x === 'string' && x) ? x.slice(0, 64) : null);
+      if (out.some(x => x)) L.euclidSamples = out; else delete L.euclidSamples;
+    }
     // The drum a euclid Beat lane `v` plays: an explicit per-lane override
     // (inst.euclidDrums[v]) wins; else the fixed kit slot for that lane.
     function _ambLaneDrumPc(inst, v) {
@@ -13976,6 +14007,35 @@
       for (const d of _AMB_DRUMS) { if ((r -= d.w) < 0) return d.pc; }
       return 0;
     }
+    // A sample's recorded root as MIDI — playing it there means playbackRate 1,
+    // i.e. exactly as recorded. A drum one-shot usually states no root, so C4 is
+    // the same fallback the sampler itself uses.
+    // Every individually-addressable library sample, for the per-lane picker.
+    // Reads METADATA only — never `.sampler`, which is a lazy getter that would
+    // build all 155 (the documented __sampleStats trap). Loops are excluded: a
+    // lane hit is a one-shot, and a tempo-matched loop is a different animal.
+    function _ambDrumSampleIds() {
+      const out = [];
+      try {
+        if (typeof sampleSamplers === 'undefined' || !sampleSamplers.forEach) return out;
+        sampleSamplers.forEach((meta, id) => {
+          if (!meta || meta.drumKit) return;               // a KIT is chosen as a kit
+          if (meta.kind === 'loop') return;                // carries its own tempo
+          out.push(String(id));
+        });
+      } catch (e) {}
+      out.sort();
+      return out.slice(0, 300);
+    }
+    function _ambSampleRootMidi(id) {
+      try {
+        const e = (typeof getSampleEntry === 'function') ? getSampleEntry('sample:' + id) : null;
+        const rn = e && e.rootNote;
+        if (typeof rn === 'string' && rn) return Tone.Frequency(rn).toMidi();
+        if (Number.isFinite(rn)) return rn | 0;
+      } catch (e) {}
+      return 60;
+    }
     function _ambBeatParams(kit, lenMs, pan) {
       // Percussive envelope; Length drives the release tail (the choke/open).
       const rel = Math.max(20, Math.round(Math.max(60, lenMs) * 0.6));
@@ -14113,6 +14173,7 @@
     // before, so the invariant harness is unaffected (schema rule #3/#5).
     function _ambNormalizeEuclidPattern(L) {
       if (!L || typeof L !== 'object') return;
+      _ambNormalizeLaneSamples(L);   // per-lane sample override (additive; absent = the kit)
       _ambNormalizeCycleGate(L);   // ⏱ Schedule tab (additive; absent = every iteration plays)
       _ambNormalizeImprov(L);      // 🎲 Improvise tab (additive; absent = always plays as written)
       // Remembered rhythm-preset NAME (additive; absent = Custom).
@@ -17773,6 +17834,15 @@
           // The lane LABEL selects which lane the edit panel targets (Lane mode).
           const dn = _AMB_DRUM_NAMES[_AMB_VDRUM[v]] || ('Drum ' + v);
           html += '<button type="button" class="ambient-euclid-laneplay" data-laneplay="' + v + '" title="Play the ' + dn + ' (audition)">▶</button>';
+           // WHAT THIS LANE PLAYS. A kit maps 12 semitone zones, so using one sound
+           // out of a pack used to mean authoring a kit first; this names a sample
+           // directly and the zone map stops applying to this lane. The chip shows
+           // the override, so a lane no longer playing its kit drum says so.
+           { const _ls = _ambLaneSample(inst, v);
+             html += '<button type="button" class="ambient-euclid-lanesnd' + (_ls ? ' on' : '') + '" data-lanesnd="' + v + '" title="' +
+               (_ls ? ('This lane plays the sample \u201c' + _ls + '\u201d instead of the kit\u2019s ' + dn + '. Tap to change or clear.')
+                    : ('Pick any library sample for this lane, instead of the kit\u2019s ' + dn)) +
+               '">' + (_ls ? ('\u266a ' + _ls.split('/').pop().slice(0, 10)) : '\u266a') + '</button>'; }
           { const _soL = _ambSoloLane(inst);
             html += '<button type="button" class="ambient-euclid-drumlbl' + ((editMode === 'lane' && v === editLane) ? ' on' : '') + ((_soL === v) ? ' solo' : (_soL != null ? ' muted-by-solo' : '')) + '" data-lane="' + v + '" title="' + (_soL === v ? dn + ' — SOLOED (others muted)' : 'Edit the ' + dn + ' lane') + '">' + dn + ((_soL === v) ? '<i class="solo-dot">S</i>' : '') + '</button>'; }
         } else if (d.V > 1) {
@@ -18224,7 +18294,7 @@
       // re-render can never cancel a half-open native <select> — the "Sequence never
       // sticks" bug.
       grid.addEventListener('click', (ev) => {
-        const t = ev.target.closest && ev.target.closest('.ambient-euclid-tab, .ambient-euclid-pagedel, .ambient-euclid-segbtn, .ambient-euclid-playsbtn, .ambient-euclid-drumlbl, .ambient-euclid-laneplay, .ambient-step-fx-trig, .ambient-step-fx-solo, .ambient-step-fx-clear, .ambient-stepmode, .ambient-stepscope-btn'); if (!t) return;
+        const t = ev.target.closest && ev.target.closest('.ambient-euclid-tab, .ambient-euclid-pagedel, .ambient-euclid-segbtn, .ambient-euclid-playsbtn, .ambient-euclid-drumlbl, .ambient-euclid-lanesnd, .ambient-euclid-laneplay, .ambient-step-fx-trig, .ambient-step-fx-solo, .ambient-step-fx-clear, .ambient-stepmode, .ambient-stepscope-btn'); if (!t) return;
         if (_suppressTabClick) { _suppressTabClick = false; if (t.dataset.page != null) return; }   // a drag just reordered — don't also select
         _E = E; const L = getL(); if (!L || !L.euclidKit) return;
         const d = _ambEuclidGridDims(L, type); const total = d ? d.bars * d.steps : 0;
@@ -18243,6 +18313,32 @@
           return;
         }
         if (t.classList.contains('ambient-euclid-laneplay')) { _ambTriggerLaneStep(E, key, L, parseInt(t.dataset.laneplay, 10) | 0); return; }
+        // Pick ANY library sample for this lane (or clear back to the kit).
+        if (t.classList.contains('ambient-euclid-lanesnd')) {
+          const v2 = parseInt(t.getAttribute('data-lanesnd'), 10) | 0;
+          const dn2 = _AMB_DRUM_NAMES[_AMB_VDRUM[v2]] || ('Drum ' + v2);
+          const cur = _ambLaneSample(L, v2);
+          const items = [];
+          items.push({ label: (cur ? '   ' : '\u2713 ') + 'Kit \u2014 ' + dn2, fn: () => {
+            if (Array.isArray(L.euclidSamples)) { L.euclidSamples[v2] = null; _ambNormalizeLaneSamples(L); }
+            render(); persist(); if (E.timer) { try { sync && sync(); } catch (e) {} }
+          } });
+          let ids = [];
+          try { ids = _ambDrumSampleIds(); } catch (e) {}
+          if (!ids.length) items.push({ label: '   (no samples imported yet)', fn: () => {} });
+          ids.forEach(id => items.push({ label: (cur === id ? '\u2713 ' : '   ') + id, fn: () => {
+            if (!Array.isArray(L.euclidSamples)) L.euclidSamples = [];
+            L.euclidSamples[v2] = id;
+            _ambNormalizeLaneSamples(L);
+            render(); persist(); if (E.timer) { try { sync && sync(); } catch (e) {} }
+            try { _ambTriggerLaneStep(E, key, L, v2); } catch (e) {}   // hear the pick
+          } }));
+          const r2 = t.getBoundingClientRect();
+          // Deferred one tick — showCtxMenu arms its own document dismiss listener,
+          // and opening from inside a live dispatch tears it down immediately.
+          setTimeout(() => { try { showCtxMenu(r2.left, r2.bottom + 4, items); } catch (e) {} }, 0);
+          return;
+        }
         // Reset the steps in scope to default FX.
         if (t.classList.contains('ambient-step-fx-clear')) {
           const pg = _ambEuclidPage(L);

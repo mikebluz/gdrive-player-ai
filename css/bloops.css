@@ -13509,3 +13509,14 @@
     /* The shared .sm-apply renders at 27px here — under the touch floor, and this
        is the only way out of the dialog. */
     .ambient-cad-modal .cad-close { min-height: 34px; padding: 6px 18px; }
+
+    /* Per-lane sound chip on a drum-lanes grid: '♪' means the lane plays its
+       kit drum, a named chip means it plays a library sample instead. */
+    .ambient-euclid-lanesnd {
+      min-height: 22px; padding: 1px 5px; border-radius: 5px; max-width: 74px;
+      background: rgba(255,255,255,0.04); border: 1px solid rgba(160,174,192,0.25);
+      color: #8b8ba7; font: 600 0.55rem 'Segoe UI', sans-serif;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      touch-action: manipulation; cursor: pointer;
+    }
+    .ambient-euclid-lanesnd.on { border-color: #4fd1c5; color: #4fd1c5; background: rgba(79,209,197,0.14); }

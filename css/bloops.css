@@ -13531,17 +13531,26 @@
       max-height: 26vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
     }
     .ambient-lanesnd-modal .lsnd-samples { max-height: 34vh; }
+    /* A COLUMN, not a baseline row: an imported id is a source-relative path, so
+       the name and its folder each need their own line — side by side they wrapped
+       to three lines and collided with the next row. Both stay on ONE line each
+       and ellipse, because a file name is an identifier and not prose. */
     .ambient-lanesnd-modal .lsnd-row {
-      display: flex; align-items: baseline; gap: 8px; text-align: left;
+      display: flex; flex-direction: column; align-items: stretch; gap: 1px; text-align: left;
       min-height: 34px; padding: 5px 9px; border-radius: 7px;
       background: rgba(255,255,255,0.03); border: 1px solid rgba(160,174,192,0.2);
       color: #cbd5e0; font: 600 0.74rem 'Segoe UI', sans-serif;
-      touch-action: manipulation; cursor: pointer; width: 100%;
+      touch-action: manipulation; cursor: pointer; width: 100%; overflow: hidden;
     }
     .ambient-lanesnd-modal .lsnd-row:hover { border-color: rgba(160,174,192,0.45); }
     .ambient-lanesnd-modal .lsnd-row.on { border-color: #4fd1c5; background: rgba(79,209,197,0.16); color: #d6fffb; }
-    .ambient-lanesnd-modal .lsnd-nm { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-    .ambient-lanesnd-modal .lsnd-sub { flex: 0 1 auto; font-size: 0.62rem; color: #6b6b8a; }
+    .ambient-lanesnd-modal .lsnd-nm {
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.25;
+    }
+    .ambient-lanesnd-modal .lsnd-sub {
+      min-width: 0; font-size: 0.6rem; font-weight: 600; color: #6b6b8a; line-height: 1.2;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     .ambient-lanesnd-modal .lsnd-filterrow { display: flex; align-items: center; gap: 8px; }
     .ambient-lanesnd-modal .lsnd-filter {
       flex: 1 1 auto; min-width: 0; min-height: 34px; padding: 4px 9px; border-radius: 7px;

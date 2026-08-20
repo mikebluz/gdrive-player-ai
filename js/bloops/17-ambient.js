@@ -14033,11 +14033,40 @@
         });
       } catch (e) {}
       out.sort();
-      return out.slice(0, 300);
+      return out;   // NOT capped — the picker's count must be the real total
+    }
+    // An imported id is its SOURCE-RELATIVE PATH, so it can be 90 characters of
+    // pack/folder/folder/name. Rendering that as one string is what made the list
+    // cramped: every row wrapped to three lines and ran into its neighbour. Split
+    // it — the file name is what identifies a sound, the folder is just where it
+    // came from — and keep FILTERING on the whole id so typing a pack name works.
+    function _ambSampleLabel(id) {
+      const str = String(id || '');
+      const i = str.lastIndexOf('/');
+      if (i < 0) return { name: str, path: '' };
+      let name = str.slice(i + 1);
+      // KEEP THE TAIL. These names differ at the END — MARS_LINN_kick_linndrum_lm2
+      // vs …_lm2_ga vs …_lm2_pi — so a plain end-ellipsis renders three different
+      // drums as the same row. Truncate the MIDDLE instead, in JS rather than with
+      // a `direction: rtl` trick, which reorders punctuation in names like this.
+      if (name.length > 38) name = name.slice(0, 18) + '\u2026' + name.slice(-18);
+      const rest = str.slice(0, i);
+      const j = rest.lastIndexOf('/');
+      // Just the immediate folder — enough to tell two kicks apart, short enough
+      // to sit on one line.
+      return { name, path: (j < 0 ? rest : rest.slice(j + 1)) };
     }
     // A KIT IS A SAMPLE SET TOO — its filled zones, so a lane can play any drum
     // the kit contains rather than only the one its slot maps to. Reads `urls`
     // (metadata) and never `.sampler`, the lazy getter.
+    // Names for ALL TWELVE zones. `_AMB_DRUM_NAMES` covers only the 8 LANE drums
+    // (it labels lanes and step readouts, so it is not the place to add the rest),
+    // which left a kit's other four zones showing as note names — tr808's C#2 is
+    // a rimshot, not "C#2". Display-only, and it follows the zone map 04 documents:
+    // kick · rim · snare · clap · closed hat · open hat · low tom · mid tom ·
+    // cowbell · crash · high tom · perc.
+    const _AMB_ZONE_NAMES = ['Kick', 'Rim', 'Snare', 'Clap', 'Closed hat', 'Open hat',
+      'Low tom', 'Mid tom', 'Cowbell', 'Crash', 'High tom', 'Perc'];
     function _ambKitZones(kitId) {
       const out = [];
       try {
@@ -14048,7 +14077,7 @@
           if (!Number.isFinite(midi)) return;
           const pc = (((midi | 0) % 12) + 12) % 12;
           if (out.some(z => z.pc === pc)) return;
-          out.push({ pc, name: _AMB_DRUM_NAMES[pc] || note });
+          out.push({ pc, name: _AMB_ZONE_NAMES[pc] || _AMB_DRUM_NAMES[pc] || note });
         });
       } catch (e) {}
       out.sort((a, b) => a.pc - b.pc);
@@ -14163,9 +14192,11 @@
         const f = filter.trim().toLowerCase();
         const hits = f ? ids.filter(id => id.toLowerCase().indexOf(f) >= 0) : ids;
         const row = (sel, kind, val, label, sub) =>
-          '<button type="button" class="lsnd-row' + (sel ? ' on' : '') + '" data-pick="' + kind + ':' + esc(val) + '">' +
+          '<button type="button" class="lsnd-row' + (sel ? ' on' : '') + '" data-pick="' + kind + ':' + esc(val) + '"' +
+          (kind === 'smp' ? ' title="' + esc(val) + '"' : '') + '>' +
           '<span class="lsnd-nm">' + esc(label) + '</span>' +
           (sub ? '<span class="lsnd-sub">' + esc(sub) + '</span>' : '') + '</button>';
+        const smpRow = (id) => { const L2 = _ambSampleLabel(id); return row(curSample() === id, 'smp', id, L2.name, L2.path); };
         ov.innerHTML = '<div class="sm-modal ambient-lanesnd-modal">' +
           '<div class="sm-title">' + esc(dn) + ' lane \u2014 sound</div>' +
           '<div class="ambient-hint">Pick what this lane plays. Choosing auditions it.</div>' +
@@ -14177,7 +14208,7 @@
             '<input type="text" class="lsnd-filter" placeholder="Search samples\u2026" value="' + esc(filter) + '">' +
             '<span class="ambient-hint">' + hits.length + ' of ' + ids.length + '</span></div>' +
           '<div class="lsnd-list lsnd-samples">' +
-            (hits.length ? hits.slice(0, 400).map(id => row(cs === id, 'smp', id, id, '')).join('')
+            (hits.length ? hits.slice(0, 400).map(smpRow).join('')
                          : '<span class="ambient-hint">Nothing matches \u201c' + esc(filter) + '\u201d.</span>') +
           '</div>' +
           '<div class="sm-footer"><button type="button" class="sm-apply lsnd-close">Done</button></div></div>';
@@ -14212,8 +14243,12 @@
         const hits = f ? ids.filter(id => id.toLowerCase().indexOf(f) >= 0) : ids;
         const cs = curSample();
         host.innerHTML = hits.length
-          ? hits.slice(0, 400).map(id => '<button type="button" class="lsnd-row' + (cs === id ? ' on' : '') +
-              '" data-pick="smp:' + esc(id) + '"><span class="lsnd-nm">' + esc(id) + '</span></button>').join('')
+          ? hits.slice(0, 400).map(id => { const L2 = _ambSampleLabel(id);
+              return '<button type="button" class="lsnd-row' + (cs === id ? ' on' : '') +
+                '" data-pick="smp:' + esc(id) + '" title="' + esc(id) + '">' +
+                '<span class="lsnd-nm">' + esc(L2.name) + '</span>' +
+                (L2.path ? '<span class="lsnd-sub">' + esc(L2.path) + '</span>' : '') + '</button>'; }).join('')
+            + (hits.length > 400 ? '<span class="ambient-hint">\u2026 and ' + (hits.length - 400) + ' more \u2014 narrow the search.</span>' : '')
           : '<span class="ambient-hint">Nothing matches \u201c' + esc(filter) + '\u201d.</span>';
         const cnt = ov.querySelector('.lsnd-filterrow .ambient-hint');
         if (cnt) cnt.textContent = hits.length + ' of ' + ids.length;

@@ -7576,6 +7576,10 @@
     /* PART -> SEQUENCE map, in the layer grid: compose here, bank it here, say
        which part plays it here. */
     /* The banked phrases, in the layer that composes them. */
+    /* The bank, on the layer card. Wraps rather than scrolling (UI rule 1). */
+    .ambient-seqbank-row { align-items: start; }
+    .ambient-seqbank { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; grid-column: 2 / -1; }
+    .amb-seedmode.has-phrase { border-color: #9f7aea; color: #d6bcfa; }
     .ambient-seedgrid-seqs { display: flex; flex-wrap: wrap; gap: 5px; margin: 4px 0 2px; align-items: center; }
     .ambient-sgseqs-title { flex: 1 0 100%; font-family: 'Segoe UI', sans-serif; font-size: 0.64rem; color: #6b6b8a; }
     .ambient-sgseq { min-height: 30px; padding: 4px 9px; font-size: 0.68rem; max-width: 100%; }

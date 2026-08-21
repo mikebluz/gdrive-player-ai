@@ -28391,6 +28391,46 @@
     // composing, the bank you just saved it to, and the part it plays under are
     // all one surface. Only shown when the area HAS parts and the bank has
     // something in it — otherwise it would be a table of empty pickers.
+    // One delegated CLICK listener for the bank chips, on document — they render
+    // on the layer card as well as in the compose dock, and the dock's handler is
+    // bound to the panel host, so card chips never reached it.
+    try {
+      if (typeof window !== 'undefined' && !window.__ambSgSeqWired) {
+        window.__ambSgSeqWired = true;
+        document.addEventListener('click', (ev) => {
+          const sq = ev.target && ev.target.closest && ev.target.closest('.ambient-sgseq');
+          if (!sq) return;
+          const nm = sq.dataset.sgseq || ''; const saved = _ambBankByName(nm); if (!saved) return;
+          const ge = _bloomGridEdit;
+          const key = sq.dataset.sbkey || (ge && ge.key) || ''; if (!key) return;
+          const E = (ge && ge.E) || _masterEng; if (!E) return;
+          ev.stopPropagation();
+          try {
+            const cl = (typeof cloneStep === 'function') ? cloneStep : (o => JSON.parse(JSON.stringify(o)));
+            const steps = saved.steps.map(cl);
+            if (ge && ge.key === key && ge.lane) {
+              ge.lane.steps = steps;
+              if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane();
+              if (typeof _syncFluidGridToActiveLane === 'function') _syncFluidGridToActiveLane();
+              if (typeof renderSequence === 'function') renderSequence();
+            }
+            _ambStepsToLock(E, key, steps, true);
+            const f3 = _ambFreezeState(E, key);
+            f3.frozen = true; f3._lock = true;
+            if (!f3.keyCtx) f3.keyCtx = _ambCurKeyCtx(E);
+            // AFTER _ambPersistLock — it rewrites lockState from the freeze
+            // state, so setting the flag first loses it and the layer never
+            // reads as composed.
+            try { _ambPersistLock(E, key); } catch (x) {}
+            const L3 = _ambLayerByKey(E, key);
+            if (L3) { if (!L3.lockState || typeof L3.lockState !== 'object') L3.lockState = {}; L3.lockState.seedEdit = true; }
+            try { _ambRefreshSeedModes(E); _ambUpdateNotesLive(E); } catch (x) {}
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+            if (typeof showToast === 'function') showToast('\u201c' + (saved.name || 'sequence') + '\u201d is now this layer\u2019s phrase.');
+          } catch (err) { console.warn('Load sequence failed', err); }
+        }, true);
+      }
+    } catch (e) {}
     // One delegated change listener for every part picker, on document — the map
     // re-renders from the viz frame, so a per-element bind would be lost.
     try {
@@ -28399,8 +28439,10 @@
         document.addEventListener('change', (ev) => {
           const sel = ev.target && ev.target.closest && ev.target.closest('.ambient-sgpart-sel');
           if (!sel) return;
-          const ge = _bloomGridEdit; if (!ge) return;
-          const E = ge.E, L = _ambLayerByKey(E, ge.key); if (!L) return;
+          const ge = _bloomGridEdit;
+          const key = sel.dataset.sbkey || (ge && ge.key) || '';
+          const E = (ge && ge.E) || _masterEng;
+          const L = key && E && _ambLayerByKey(E, key); if (!L) return;
           const pi = sel.dataset.pi | 0;
           if (!L.partSeqs || typeof L.partSeqs !== 'object') L.partSeqs = {};
           if (sel.value) L.partSeqs[pi] = sel.value; else delete L.partSeqs[pi];
@@ -31353,7 +31395,16 @@
         // still carries lockState.seedEdit — it reads as Grid now, which is what it
         // is: a hand-authored fixed phrase. No migration needed, just the label.
         if (gen) gen.classList.toggle('active', !authored && !gridActive);
-        if (grd) grd.classList.toggle('active', gridActive || authored);
+        // ACTIVE means the editor is OPEN. It used to also light for `authored`,
+        // which is persisted — so after a reload the button claimed an editor that
+        // was not there and the revealed slot sat empty ("still shows as active but
+        // grid does not show"). A layer that HAS a phrase says so on the button's
+        // own label instead.
+        if (grd) {
+          grd.classList.toggle('active', !!gridActive);
+          grd.classList.toggle('has-phrase', !gridActive && !!authored);
+          grd.textContent = gridActive ? '\u270e Editing\u2026' : (authored ? '\u270e Grid \u00b7 composed' : '\u270e Grid');
+        }
         // MUTUAL EXCLUSION, made visible: a Grid phrase replaces the Pattern, so
         // dim the pattern controls while one is in force rather than leaving two
         // live-looking sources of the same thing on screen.
@@ -38689,20 +38740,20 @@
     const _AMB_LAYER_SCHEMA = {
       bed: { label: 'Bed', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'voiceCap', 'Voice cap', 0, 12, '0 = follow Density'], ['followsalt'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['seqbank'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'voiceCap', 'Voice cap', 0, 12, '0 = follow Density'], ['followsalt'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
         ['sub', 'Progression', 'When an Area progression is set: the layer locks to it and plays voicings of the current chord. (Repeat/Times in Timing only apply when there is no Area progression.)'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold \u00b7 \u2212N = hold N units \u00b7 +N = N chords per unit'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length \u00b7 % of each strike a chord rings'], ['choke'], ['ring'], ['pitchrule'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['seqbank'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'phrasing', 'Phrasing', 0, 100, 'stream → gestures'], ['ring'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'gravity', 'Gravity', 0, 100, 'free → chord tones'], ['sl', 'contour', 'Contour', -100, 100, 'fall → rise'], ['sl', 'stutter', 'Stutter', 0, 100, 'walk → repeats'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['seqbank'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['ring'], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'syncop', 'Syncopate', 0, 100, 'straight → offbeat'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
@@ -38750,7 +38801,7 @@
       // Direction); Randomness deviates from it. Pitch material is the series.
       arp: { label: 'Arp', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['seedmode'], ['harmony'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['grp', 'Pattern'], ['arpeuclid'], ['euclidgrid'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
+        ['grp', 'Source'], ['keyov'], ['seedmode'], ['harmony'], ['seqbank'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['grp', 'Pattern'], ['arpeuclid'], ['euclidgrid'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
         ['grp', 'Timing'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'pattern length — fills the Unit'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['ring'], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (euclid; 0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'rateVar', 'Rate var', 0, 100, 'steady → rushes'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -38758,7 +38809,7 @@
       // long; Rhythm/Pitch var add per-repeat variation.
       bass: { label: 'Bass', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['grp', 'Pattern'], ['euclidgrid'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['seqbank'], ['grp', 'Pattern'], ['euclidgrid'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'pattern length — the seed fills the Unit'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['ring'], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['tight'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Walk', 0, 100, 'hold → wander (proximity-capped)'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -38766,14 +38817,14 @@
       // looping; Vary re-rolls; Len var spreads note lengths around Length.
       run: { label: 'Riff', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['seqbank'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'phrasing', 'Articulate', 0, 100, 'even → arrivals sustain, runs detach'], ['ring'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['seqbank'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Density · −N = 1 hit per N bars · +N = N per bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['ring'], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length · % of each strike a hit rings'], ['pitchrule'], ['st', 'voices', 'Voices', 1, 9, 'tones per hit (Stack)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'vary', 'Roam', 0, 100, 'root → wander degrees'], ['tight'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -38781,7 +38832,7 @@
       // vary are independent. A chord Notes source holds the whole chord.
       drone: { label: 'Drone', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['seqbank'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
         ['sub', 'Progression', 'When an Area progression is set: PEDAL (default) holds ONE note per progression cycle, auto-chosen to work across every chord — the card explains the pick, and Note overrides it. VOICINGS re-voices the current chord instead (Subdivide/Feel/Variety).'], ['dronepedal'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold · −N = hold N units · +N = N per unit'], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = fill the hold · % of each strike the note rings'], ['pitchrule'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
@@ -39344,6 +39395,57 @@
       //
       // Marked inert when the layer holds NO phrase, because a layer that is
       // generating already follows the changes and this would decide nothing.
+      // THE SEQUENCE BANK, IN THE LAYER. These used to render only inside the
+      // compose dock, so they existed only while a session was open — which is
+      // most of the time not, and made the bank look like it lived "over in the
+      // workspace". They are part of the LAYER now: visible whenever the card is,
+      // whether or not the grid is open.
+      if (k === 'seqbank') {
+        // `lk` is the DOM key (motif-1); the ENGINE key is motif:1. Passing the
+        // former to _ambLayerByKey returns undefined and every handler bails in
+        // silence — the trap CLAUDE.md records as "_ambLayerByKey('run-1') →
+        // cfg['run-1'] = undefined and Author silently no-ops". Same conversion
+        // the keyov branch above does.
+        const _ek = (lk === type) ? type : (type + ':' + String(lk).slice(type.length + 1));
+        const bank = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences : [];
+        const usable = [];
+        for (let i = bank.length - 1; i >= 0; i--) { const x = bank[i];
+          if (x && x.type !== 'audio' && Array.isArray(x.steps) && x.steps.length) usable.push(x); }
+        const map = (inst && inst.partSeqs && typeof inst.partSeqs === 'object') ? inst.partSeqs : {};
+        let parts = [];
+        try { const c0 = (_E && (_E._cfg || (_E.getCfg && _E.getCfg()))) || null;
+          if (c0 && c0.prog && c0.prog.on && Array.isArray(c0.prog.parts)) parts = c0.prog.parts; } catch (e) {}
+        const boundTo = {};
+        Object.keys(map).forEach(k2 => { const pp = parts[k2 | 0];
+          if (map[k2]) (boundTo[map[k2]] = boundTo[map[k2]] || []).push((pp && pp.name) || ('Part ' + ((k2 | 0) + 1))); });
+        let h = '<div class="ambient-ctrl ambient-seqbank-row"><label title="' +
+          _ambEscAttr('Phrases saved from this layer\\u2019s grid. Tap one to load it into this layer.') +
+          '">Sequences</label><span class="ambient-seqbank" data-sbkey="' + _ambEscText(_ek) + '">';
+        h += usable.length
+          ? usable.map(x => {
+              const bt = boundTo[x.name];
+              return '<button type="button" class="ambient-seg ambient-sgseq' + (bt ? ' bound' : '') +
+                '" data-sgseq="' + _ambEscAttr(x.name) + '" data-sbkey="' + _ambEscText(_ek) + '" title="' +
+                _ambEscAttr(x.name + ' \\u2014 ' + x.steps.length + ' steps' + (bt ? ' \\u00b7 plays on ' + bt.join(', ') : '') +
+                  '. Tap to make it this layer\\u2019s phrase.') + '">' + _ambEscAttr(x.name) +
+                (bt ? '<i>' + _ambEscAttr(bt.join(', ')) + '</i>' : '') + '</button>';
+            }).join('')
+          : '<span class="ambient-hint">none yet \\u2014 compose in \\u270e Grid, then \\u2b07 Save as sequence</span>';
+        h += '</span></div>';
+        if (usable.length && parts.length > 1) {
+          h += '<div class="ambient-ctrl ambient-seqbank-row"><label title="' +
+            _ambEscAttr('Which banked phrase this layer plays under each part of the changes.') +
+            '">Plays</label><span class="ambient-seedgrid-parts" style="margin:0">' +
+            parts.map((pp, i) =>
+              '<label class="ambient-sgpart"><span>' + _ambEscAttr((pp && pp.name) || ('Part ' + (i + 1))) + '</span>' +
+              '<select class="ambient-select ambient-sgpart-sel" data-pi="' + i + '" data-sbkey="' + _ambEscText(_ek) + '">' +
+                '<option value="">\\u2014 this layer\\u2019s phrase \\u2014</option>' +
+                usable.map(x => '<option value="' + _ambEscAttr(x.name) + '"' + (map[i] === x.name ? ' selected' : '') + '>' +
+                  _ambEscAttr(x.name) + '</option>').join('') +
+              '</select></label>').join('') + '</span></div>';
+        }
+        return h;
+      }
       if (k === 'harmony') {
         const _hv = (inst && (inst.harmony === 'diatonic' || inst.harmony === 'chordlock')) ? inst.harmony : 'fixed';
         const _authored = !!(inst && inst.lockState && inst.lockState.seedEdit);
@@ -45037,17 +45139,32 @@
             const sq = ev.target && ev.target.closest && ev.target.closest('.ambient-sgseq');
             if (sq) {
               ev.stopPropagation();
-              const ge2 = _bloomGridEdit; if (!ge2 || !ge2.lane) return;
               const saved = _ambBankByName(sq.dataset.sgseq || ''); if (!saved) return;
+              // The chips live on the CARD as well as in the dock, so this works
+              // with or without an open session: with one, the phrase goes into
+              // the lane you are editing; without, straight into the layer's lock.
+              const ge2 = _bloomGridEdit;
+              const key2 = sq.dataset.sbkey || (ge2 && ge2.key) || '';
+              if (!key2) return;
               try {
                 const cl = (typeof cloneStep === 'function') ? cloneStep : (o => JSON.parse(JSON.stringify(o)));
-                ge2.lane.steps = saved.steps.map(cl);
-                if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane();
-                if (typeof _syncFluidGridToActiveLane === 'function') _syncFluidGridToActiveLane();
-                if (typeof renderSequence === 'function') renderSequence();
-                // Into the sounding lock, the same live path a keystroke takes.
-                _ambStepsToLock(ge2.E, ge2.key, ge2.lane.steps, true);
-                if (typeof showToast === 'function') showToast('Loaded “' + (saved.name || 'sequence') + '” — edit it, or ✕ Cancel to put the old phrase back.');
+                const steps = saved.steps.map(cl);
+                if (ge2 && ge2.key === key2 && ge2.lane) {
+                  ge2.lane.steps = steps;
+                  if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane();
+                  if (typeof _syncFluidGridToActiveLane === 'function') _syncFluidGridToActiveLane();
+                  if (typeof renderSequence === 'function') renderSequence();
+                }
+                _ambStepsToLock(E, key2, steps, true);        // the live install path
+                const f3 = _ambFreezeState(E, key2);
+                f3.frozen = true; f3._lock = true;
+                if (!f3.keyCtx) f3.keyCtx = _ambCurKeyCtx(E);
+                const L3 = _ambLayerByKey(E, key2);
+                if (L3) { if (!L3.lockState || typeof L3.lockState !== 'object') L3.lockState = {}; L3.lockState.seedEdit = true; }
+                try { _ambPersistLock(E, key2); } catch (x) {}
+                try { _ambRefreshSeedModes(E); _ambUpdateNotesLive(E); } catch (x) {}
+                if (typeof persistWorkspace === 'function') persistWorkspace();
+                if (typeof showToast === 'function') showToast('“' + (saved.name || 'sequence') + '” is now this layer’s phrase.');
               } catch (err) { console.warn('Load sequence failed', err); }
               return;
             }

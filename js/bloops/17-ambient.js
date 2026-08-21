@@ -39456,6 +39456,24 @@
             }).join('')
           : '<span class="ambient-hint">none yet — compose in ✎ Grid, then ⬇ Save as sequence</span>';
         h += '</span></div>';
+        // ALWAYS RENDER THE ROW once there is something to map. It used to be
+        // gated on parts.length > 1, so a layer with a saved sequence and a
+        // one-part (or absent) progression showed Sequences and NO Plays row and
+        // nothing said why — "a conditionally-RENDERED control cannot be found,
+        // a conditionally-ENABLED one can", which this file already learned the
+        // hard way with the Delete button. Say what is missing instead.
+        if (usable.length && parts.length <= 1) {
+          let _pw;
+          try {
+            const c1 = (_E && (_E._cfg || (_E.getCfg && _E.getCfg()))) || null;
+            const pr = c1 && c1.prog;
+            _pw = (!pr || !pr.on || !(Array.isArray(pr.chords) && pr.chords.length))
+              ? 'Turn the Progression on and split it into parts (⇶ Arch → ＋ Part) to play a different sequence in each.'
+              : 'This progression has one part. Split it (⇶ Arch → ＋ Part) to play a different sequence in each.';
+          } catch (e) { _pw = 'Add a second part to the progression to map sequences to parts.'; }
+          h += '<div class="ambient-ctrl ambient-seqbank-row is-overridden"><label>Plays</label>' +
+            '<span class="ambient-hint">' + _ambEscAttr(_pw) + '</span></div>';
+        }
         if (usable.length && parts.length > 1) {
           h += '<div class="ambient-ctrl ambient-seqbank-row"><label title="' +
             _ambEscAttr('Which banked phrase this layer plays under each part of the changes.') +

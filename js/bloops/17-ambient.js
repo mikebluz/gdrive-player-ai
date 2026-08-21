@@ -31492,7 +31492,13 @@
                   '<button type="button" class="ambient-seg ambient-seedgrid-mode" data-gmode="' + m2[0] + '" data-sgk="' + _ambEscText(lk) + '" title="Switch the docked editor to ' + m2[1] + ' mode">' + m2[1] + '</button>').join('') +
               '</span>' +
             '</span>' +
-          '</div><div class="ambient-seedgrid-prib" hidden></div><div class="ambient-seedgrid-seqs" hidden></div><div class="ambient-seedgrid-parts" hidden></div><div class="ambient-seedgrid-chords" hidden></div><div class="ambient-seedgrid-dockhost"></div><div class="ambient-seedgrid-striphost"></div></div>';
+          '</div><div class="ambient-seedgrid-seqs" hidden></div><div class="ambient-seedgrid-parts" hidden></div>' +
+          '<div class="ambient-seedgrid-dockhost"></div>' +
+          // The part and chord ribbons sit DIRECTLY ABOVE THE STRIP, not at the top
+          // of the dock: they exist to say where a step falls, and a reader looking
+          // at the steps had them scrolled off somewhere above the editor.
+          '<div class="ambient-seedgrid-prib" hidden></div><div class="ambient-seedgrid-chords" hidden></div>' +
+          '<div class="ambient-seedgrid-striphost"></div></div>';
     }
     // Reveal an element that lives inside collapsed card groups: opens every
     // closed .ambient-grp ancestor (persisting groupsOpen) + un-collapses the

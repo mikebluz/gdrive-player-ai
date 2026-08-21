@@ -134,7 +134,7 @@
         // forces present/on in mk() (its pins predate this default).
         bed:     { on: false, present: false, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, strum: 0, strumFidelity: 0, tone: '', scale: '', attack: 2000, decay: 200, sustain: 85, release: 3650, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
         motif:   { on: false, present: false, register: 5, range: 2, proximity: 35, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, accent: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', attack: 100, decay: 120, sustain: 70, release: 500, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
-        texture: { on: false, present: false, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', attack: 40, decay: 80, sustain: 0, release: 240, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        texture: { on: false, present: false, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', attack: 40, decay: 80, sustain: 0, release: 240, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
         beat:    { on: false, present: false, kit: 'tr808', gen: 'random', poly: 2, intervalMs: 250, lengthMs: 200, restProb: 15, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, attack: 1, decay: 60, sustain: 70, release: 120, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
         // `seqs` is a DYNAMIC list of sequence-seeded layers (Seq1, Seq2…),
         // created by "Send to Bloom". Each replays one or more saved-sequence
@@ -516,7 +516,7 @@
           // Music-box GLINTS — the timbral counter-voice, syncopated, evolving,
           // echoing; strongest where the e-piano thins.
           Object.assign(a.texture, { present: true, on: true, tone: 'sample:flmusicbox', level: 40, revSend: 55,
-            register: 6, fill: 30, syncop: 55, mutateRate: 50, intervalMs: 700, humanize: 20,
+            register: 6, fill: 30, syncop: 55, intervalMs: 700, humanize: 20,
             chordMask: { steps: [55, 100, 55, 100] },
             delay: { mix: 35, timeMs: 600, feedback: 45, ping: 1, spread: 55, dryKill: 0 } });
           a.beat.present = false; a.beat.on = false;
@@ -549,7 +549,7 @@
           // Echo glints — brighter voice (bell FM), EVOLVING pattern (mutate),
           // heavy ping delay; sits out the IV chord so the melodica answers.
           Object.assign(a.texture, { present: true, on: true, tone: 'user:f-chromedolphin', level: 40, revSend: 40,
-            fill: 35, syncop: 70, register: 5, mutateRate: 65, humanize: 20,
+            fill: 35, syncop: 70, register: 5, humanize: 20,
             chordMask: { steps: [100, 40, 100, 100] },
             delay: { mix: 50, timeMs: 500, feedback: 60, ping: 1, spread: 60, dryKill: 0 } });
           // Melodica — THE dub voice: sparse, yoked, drenched, answering on the
@@ -1956,7 +1956,7 @@
         hostId: opts.hostId, idPrefix: opts.idPrefix, vizId: opts.vizId,
         playId: opts.playId, seedId: opts.seedId, isLane: !!opts.isLane,
         // per-run state (was module-global, single-instance)
-        rng: 1, motifDeg: null, texPattern: null, texStep: 0, texMutateAt: 0,
+        rng: 1, motifDeg: null, texPattern: null, texStep: 0,
         mod: {}, reverb: null, timer: null, rampTimer: null, _cfg: null, progStep: 0, clocks: {}, iters: {}, seqState: {}, inited: false, viz: null,
       };
     }
@@ -2924,7 +2924,7 @@
           const vch = (Array.isArray(v.chords) ? v.chords : []).map(cloneCh).filter(Boolean);
           const vp = _ambRepairParts(v.parts, vch.length);
           const vs = (v.salt && typeof v.salt === 'object' && ((v.salt.len | 0) || (v.salt.colors | 0) || (v.salt.scatter | 0)))
-            ? { len: Math.max(0, Math.min(100, v.salt.len | 0)), colors: Math.max(0, Math.min(8, v.salt.colors | 0)), scatter: Math.max(0, Math.min(100, v.salt.scatter | 0)) } : null;
+            ? { len: Math.max(0, Math.min(100, v.salt.len | 0)), colors: Math.max(0, Math.min(7, v.salt.colors | 0)), scatter: Math.max(0, Math.min(100, v.salt.scatter | 0)) } : null;
           return { name: (typeof v.name === 'string' && v.name.trim()) ? v.name.trim().slice(0, 24) : 'Version', chords: vch, ...(vp ? { parts: vp } : {}), ...(vs ? { salt: vs } : {}) };
         }).filter(v => v.chords.length);
         if (!prog.versions.length) { delete prog.versions; delete prog.versionIdx; }
@@ -2940,7 +2940,7 @@
         if (typeof s !== 'object') delete prog.salt;
         else {
           s.len = Math.max(0, Math.min(100, s.len | 0));
-          s.colors = Math.max(0, Math.min(8, s.colors | 0));
+          s.colors = Math.max(0, Math.min(7, s.colors | 0));
           s.scatter = Math.max(0, Math.min(100, s.scatter | 0));
           if (!s.len && !s.colors && !s.scatter) delete prog.salt;
         }
@@ -3042,7 +3042,7 @@
           }
           if (p.salt && typeof p.salt === 'object') {
             e0.salt = { len: Math.max(0, Math.min(100, p.salt.len | 0)),
-                        colors: Math.max(0, Math.min(8, p.salt.colors | 0)),
+                        colors: Math.max(0, Math.min(7, p.salt.colors | 0)),
                         scatter: Math.max(0, Math.min(100, p.salt.scatter | 0)) };
           }
           if (Number.isFinite(p.plays) && (p.plays | 0) > 1) e0.plays = Math.min(64, p.plays | 0);
@@ -3102,7 +3102,7 @@
         // expressed by absence (absence = inherit).
         if (p.salt && typeof p.salt === 'object') {
           e.salt = { len: Math.max(0, Math.min(100, p.salt.len | 0)),
-                     colors: Math.max(0, Math.min(8, p.salt.colors | 0)),
+                     colors: Math.max(0, Math.min(7, p.salt.colors | 0)),
                      scatter: Math.max(0, Math.min(100, p.salt.scatter | 0)) };
         }
         if (p.key && typeof p.key === 'object' && Number.isFinite(p.key.root)) {
@@ -7678,7 +7678,7 @@
                 '<span class="pe-partgrp-hint">' + (sv ? 'this part only' : 'follows the progression') + '</span>' +
                 (sv ? '<span class="pe-partsalt">' +
                   '<label title="Re-slice these changes\u2019 chord lengths each cycle. Their own total is preserved, so the rest of the chain does not move.">Lengths<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':len" min="0" max="100" step="5" value="' + (sv.len | 0) + '"></label>' +
-                  '<label title="Colour segments per chord instance in these changes. The downbeat is always the written chord.">Colours<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':colors" min="0" max="8" step="1" value="' + (sv.colors | 0) + '"></label>' +
+                  '<label title="Colour segments per chord instance in these changes. The downbeat is always the written chord.">Colours<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':colors" min="0" max="7" step="1" value="' + (sv.colors | 0) + '"></label>' +
                   '<label title="How much the segment count varies between instances. 0 = every instance the same.">Scatter<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':scatter" min="0" max="100" step="5" value="' + (sv.scatter | 0) + '"></label>' +
                   '</span>' : '') +
               '</div>') +
@@ -11822,7 +11822,13 @@
     }
 
     // ================= TEXTURE engine ===============================
-    // texture pattern/cursor/mutate-clock live on the engine: _E.texPattern / _E.texStep / _E.texMutateAt
+    // texture pattern + cursor live on the engine: _E.texPattern / _E.texStep.
+    // NOTE the pattern is built ONCE per play (the one caller is guarded by
+    // `if (!_E.texPattern)`) and never re-rolls. There used to be a "Mutate"
+    // slider and a `texMutateAt` clock for exactly that; nothing ever read
+    // either, so both were removed 2026-08-20 rather than left as a control that
+    // does nothing. If a re-roll is wanted, build it as the general "re-decide
+    // every N" idea rather than reviving one layer's orphan.
     function _ambTexBuildPattern(texture) {
       const intervals = _ambScaleIntervals(_ambNotesOf(texture));
       const N = intervals.length;
@@ -21418,7 +21424,7 @@
       E.clocks = {}; E.iters = {}; E.seqState = {};
       E._spat = {};       // per-note pan ordinals — a fresh play restarts every layer's Spatialize pattern
       E.motifDeg = null;
-      E.texPattern = null; E.texStep = 0; E.texMutateAt = 0;
+      E.texPattern = null; E.texStep = 0;
       E.shapePhase = {};   // per Shape-layer wheel: { startAt, lastAt } phase clocks
       E.arpState = {};     // per Arp layer: { entry, note, pos } series/sweep cursor
       E.bassPhase = {};    // per Bass layer: { startAt, lastAt } phrase-cycle clock
@@ -24742,7 +24748,7 @@
       try { _ambFreezeStopAll(E); } catch (e) {}
       try { _ambTeardownMods(); } catch (e) {}
       E.seqState = {}; E.clocks = {}; E.iters = {}; E.progStep = 0;
-      E.motifDeg = null; E.texPattern = null; E.texStep = 0; E.texMutateAt = 0;
+      E.motifDeg = null; E.texPattern = null; E.texStep = 0;
       _ambSyncControls(E);
       if (wasPlaying) { try { _ambStartGenerator(E); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();
@@ -30925,6 +30931,26 @@
     // fourth lock state that would need its own replay path.
     const _AMB_SEEDSAVE_TITLE = 'Keep this phrase AND let the layer perform it again: it becomes the layer\u2019s material and the variance sliders re-apply on every pass \u2014 Humanize, Dynamics and Ornament re-roll from your current settings. The notes and rhythm you drew stay as written. \u2713 Done keeps it fixed instead.';
     function _ambEscAttr(t) { return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+    // WHY the layer Key control does nothing, or null when it applies. Same shape
+    // as _ambEvolveInertWhy, and the same lesson: _ambNotesOf returns the AREA
+    // PROGRESSION before it ever looks at `keyOv` —
+    //
+    //     { const gp = _ambGlobalProg(); if (gp) return gp; }
+    //
+    // — so with a progression on, Inherit / Key / Progression / Yoke all resolve
+    // identically (measured: same source type, same chords array, all four). That
+    // is deliberate, and its own comment says so: the area progression locks the
+    // whole area to one harmony. But a control that silently refuses what it
+    // offers is the bug we keep paying for, so it says so instead.
+    function _ambKeyInertWhy(cfg) {
+      try {
+        const p = cfg && cfg.prog;
+        if (p && p.on && Array.isArray(p.chords) && p.chords.length) {
+          return 'Not in force — the Area progression sets the harmony for every layer. Turn Progression off to use this.';
+        }
+      } catch (e) {}
+      return null;
+    }
     function _ambSeedModeHtml(lk, patCap) {
       const _ambSeedModePatCap = !!patCap;
       // "Generate" is gone as a named mode (2026-07-30). It overclaimed: it never
@@ -31991,7 +32017,7 @@
     // stay unit-less. Variance params are all percentages.
     const _AMB_PARAM_UNIT = {
       motion: '%', strum: '%', strumFidelity: '%', restProb: '%', twist: '%', proximity: '%',
-      accent: '%', fill: '%', mutateRate: '%', rhythmVar: '%', pitchVar: '%', vary: '%',
+      accent: '%', fill: '%', rhythmVar: '%', pitchVar: '%', vary: '%',
       timeVary: '%', pitchVary: '%', randomness: '%', varyDepth: '%', returnChance: '%', pvary: '%', lenvary: '%', lenVary: '%',
       spread: '%', sustain: '%', level: '%', fine: '¢',
     };
@@ -38338,7 +38364,7 @@
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['ring'], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'syncop', 'Syncopate', 0, 100, 'straight → offbeat'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
@@ -38466,7 +38492,7 @@
       const base = { id: id | 0, type: type, on: true, present: true, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, fine: 0, areaFadeMs: 250, write: { on: true, bars: 2, times: 4 }, mod: _ambDefaultMod(), ..._ambDefaultFx() };
       if (type === 'bed') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, strum: 0, strumFidelity: 0, chordMode: 'chaos', chordPhraseLen: 4, chordRepeats: 4, lenVary: 0, choke: false, progSubdiv: 1, progFeel: 'even', voiceVariety: 0, ..._AMB_ADSR_DEFAULTS.bed });
       if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, proximity: 35, gravity: 50, contour: 0, stutter: 0, phrasing: 0, ornament: 0, slide: 0, tight: 0, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, lenVary: 0, phraseVary: 0, ..._AMB_ADSR_DEFAULTS.motif });
-      if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, syncop: 0, holdSteps: 0, tight: 0, intervalMs: 450, lengthMs: 300, mutateRate: 40, lenVary: 0, ..._AMB_ADSR_DEFAULTS.texture });
+      if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, syncop: 0, holdSteps: 0, tight: 0, intervalMs: 450, lengthMs: 300, lenVary: 0, ..._AMB_ADSR_DEFAULTS.texture });
       if (type === 'beat') return Object.assign(base, { kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, ghosts: 0, holdSteps: 0, tight: 0, lenVary: 0, ..._AMB_ADSR_DEFAULTS.beat });
       // Learn: speaks fetched prose over the music. `intervalMs` is the GAP between
       // spoken lines, not a note length — the utterance sets its own duration.
@@ -38898,13 +38924,18 @@
           if (Number.isFinite(_r)) _inhLbl = _AMB_NOTE12[((_r % 12) + 12) % 12] + (_sc ? ' ' + _sc : '') + ' (inherited)';
         } catch (e) {}
         const hints = { '': _inhLbl, key: 'this layer only', prog: 'its own changes', yoke: 'follows that layer’s notes' };
-        return '<div class="ambient-ctrl"><label title="' + _ambTitleAttr('Key', 'harmonic frame') + '">Key</label>' +
+        // Marked, not hidden: the stored setting stays visible and comes back the
+        // moment the Area progression is switched off.
+        let _koWhy = null;
+        try { _koWhy = _ambKeyInertWhy((_E && (_E._cfg || (_E.getCfg && _E.getCfg()))) || null); } catch (e) {}
+        const _koHint = _koWhy || hints[mode];
+        return '<div class="ambient-ctrl' + (_koWhy ? ' is-overridden' : '') + '"><label title="' + _ambTitleAttr('Key', 'harmonic frame') + '">Key</label>' +
           '<select class="ambient-select amb-keyov-mode" data-kokey="' + kk + '" title="The layer’s harmonic frame: Inherit = the Area’s key / progression; Key = pin this layer to its own root + scale; Progression = this layer follows its own chord changes">' +
             '<option value=""' + (mode === '' ? ' selected' : '') + '>Inherit</option>' +
             '<option value="key"' + (mode === 'key' ? ' selected' : '') + '>Key</option>' +
             '<option value="prog"' + (mode === 'prog' ? ' selected' : '') + '>Progression</option>' +
             '<option value="yoke"' + (mode === 'yoke' ? ' selected' : '') + '>Yoke</option>' +
-          '</select><span class="ambient-hint amb-keyov-hint" data-kokey="' + kk + '">' + hints[mode] + '</span></div>' +
+          '</select><span class="ambient-hint amb-keyov-hint" data-kokey="' + kk + '"' + (_koWhy ? ' title="' + _ambEscAttr(_koWhy) + '"' : '') + '>' + _koHint + '</span></div>' +
           '<div class="ambient-ctrl amb-keyov-yokerow" data-kokey="' + kk + '"' + (mode === 'yoke' ? '' : ' hidden') + '><label>Follow</label>' +
             '<select class="ambient-select amb-keyov-yoke" data-kokey="' + kk + '" data-cur="' + ((ko && ko.mode === 'yoke' && ko.src) || '') + '" title="The layer this one harmonizes with — its SOUNDING notes at each onset become this layer’s chord frame"><option value="">— pick a layer —</option></select>' +
             '<span class="ambient-hint">harmonize with its notes</span></div>' +
@@ -40917,7 +40948,7 @@
     const _AMB_RAMP_PARAMS = {
       bed:     [['density','Density',1,8],['register','Register',2,6],['spread','Spread',0,3],['intervalMs','Interval (ms)',200,12000],['lengthMs','Length (ms)',300,16000],['drift','Drift',0,99],['motion','Motion',0,100],['strum','Strum',0,100],['strumFidelity','Fidelity',0,100],['level','Level',0,100]],
       motif:   [['register','Register',2,7],['range','Range',1,4],['intervalMs','Interval (ms)',100,4000],['lengthMs','Length (ms)',80,4000],['drift','Drift',0,99],['restProb','Rests',0,100],['twist','Twist',0,100],['level','Level',0,100]],
-      texture: [['register','Register',3,7],['fill','Fill',0,100],['intervalMs','Interval (ms)',80,2000],['lengthMs','Length (ms)',60,2000],['drift','Drift',0,99],['mutateRate','Mutate',0,100],['level','Level',0,100]],
+      texture: [['register','Register',3,7],['fill','Fill',0,100],['intervalMs','Interval (ms)',80,2000],['lengthMs','Length (ms)',60,2000],['drift','Drift',0,99],['level','Level',0,100]],
       beat:    [['intervalMs','Interval (ms)',80,2000],['lengthMs','Length (ms)',60,2000],['drift','Drift',0,99],['restProb','Rests',0,100],['level','Level',0,100]],
       seq:     [['varyDepth','Amount',0,100],['intervalMs','Interval (ms)',200,16000],['lengthMs','Length (ms)',300,16000],['drift','Drift',0,99],['returnChance','Return %',0,100],['level','Level',0,100]],
       samp:    [['chop','Chop',1,32],['stutter','Stutter',1,8],['pitch','Pitch',-24,24],['intervalMs','Interval (ms)',200,120000],['lengthMs','Length (ms)',80,120000],['drift','Drift',0,99],['level','Level',0,100]],
@@ -42085,7 +42116,6 @@
       set('ambient-texture-lengthMs', cfg.texture.lengthMs);     hint('ambient-texture-lengthMs-v', _ambFmtMs(cfg.texture.lengthMs));
       set('ambient-texture-swing', cfg.texture.swing | 0); set('ambient-texture-lenVary', cfg.texture.lenVary | 0);
       setWhen('ambient-texture', cfg.texture.when);
-      set('ambient-texture-mutateRate', cfg.texture.mutateRate);
       set('ambient-texture-level', cfg.texture.level);
        set('ambient-texture-areaFadeMs', cfg.texture.areaFadeMs); hint('ambient-texture-areaFadeMs-v', _ambFmtMs(cfg.texture.areaFadeMs));
       chk('ambient-beat-on', cfg.beat.on);
@@ -42304,7 +42334,7 @@
             '<div class="ambient-row ambient-prog-salt" id="ambient-prog-saltrow" style="display:none" title="Salt — deterministic per-cycle spice on the progression. Everything at 0 = play exactly as written.">' +
               '<span class="ambient-sched-lbl salt-lbl">🧂 salt</span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">lengths</span><input type="number" class="ambient-salt-in" id="ambient-salt-len" min="0" max="100" step="5" value="0" title="Random chord scheduling — each cycle re-slices the chord lengths (A 1¼ bars, B ½, C 1¾ …) on a 1/8-bar grid. The cycle total is preserved, so loops/Evolve stay aligned. AREA-WIDE: this is the shared chord clock, so every layer follows it (colour and scatter can be overridden per layer). 0 = as written, 100 = wild."></span>' +
-              '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">colors</span><input type="number" class="ambient-salt-in" id="ambient-salt-colors" min="0" max="8" step="1" value="0" title="Chord colors per unit — splits a chord’s unit into segments: the downbeat is always the written chord, later segments become root-preserving colors of it (maj7 · add9 · 6 · maj9 · sus2 · sus4 · open 5). 0 = off, higher = more segments (max 8)."></span>' +
+              '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">colors</span><input type="number" class="ambient-salt-in" id="ambient-salt-colors" min="0" max="7" step="1" value="0" title="How many times each chord recolours inside its unit. The chord is cut into colours+1 sections: the downbeat is always the written chord, the later ones become root-preserving colours of it (maj7 · add9 · 6 · maj9 · sus2 · sus4 · open 5). 0 = off; 7 is the ceiling, because a chord is never cut into more than 8 sections."></span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">🌊 vary</span><input type="number" class="ambient-salt-in" id="ambient-prog-vary" min="0" max="100" step="5" value="0" title="Per-CYCLE harmony variance — the chance each chord is swapped for a same-function substitute, RE-ROLLED EVERY PASS, so the changes keep evolving while you listen. (🎲 take fixes one realization per take id; this one moves.) Same candidates, same in-key rule; deterministic per (chord, cycle, take), so a Loop replays it exactly."></span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">🌡 tension</span><input type="number" class="ambient-salt-in" id="ambient-prog-tension" min="0" max="100" step="5" value="0" title="Tension ramp — chords gain colour extensions (♭7 → 9th → 11th) progressively ACROSS the progression cycle and reset at the top, so harmony tightens toward the turnaround. Purely additive: the written tones are never removed. 0 = as written."></span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">🎲 take</span><input type="number" class="ambient-salt-in" id="ambient-prog-reroll" min="0" max="100" step="5" value="0" title="Harmony re-roll — the chance each chord is swapped for a SAME-FUNCTION substitute (relative minor/major, mediant, or a 7th/9th colour) when you press 🎲 New take. Only substitutions that stay in the key are offered. Deterministic: the same take id always gives the same changes, and the written progression is never altered — set it back to 0 to hear it as authored."></span>' +
@@ -43958,7 +43988,6 @@
       bindTime('ambient-texture-lengthMs', 'texture', 'lengthMs');
       bind('ambient-texture-swing', 'texture', 'swing');
       bind('ambient-texture-lenVary', 'texture', 'lenVary');
-      bind('ambient-texture-mutateRate', 'texture', 'mutateRate');
       bind('ambient-texture-level', 'texture', 'level');
       bindTime('ambient-texture-areaFadeMs', 'texture', 'areaFadeMs');
       // Rate (free/sync) — the schema carries it for texture; the old hardcoded
@@ -44325,7 +44354,7 @@
         // 🧂 Salt knobs → cfg.prog.salt (normalize deletes the key when all zero,
         // so untouched projects stay byte-identical). Engine reads per onset —
         // changes land within the lookahead, no re-anchor needed.
-        [['ambient-salt-len', 'len', 100], ['ambient-salt-colors', 'colors', 8], ['ambient-salt-scatter', 'scatter', 100]].forEach(pr => {
+        [['ambient-salt-len', 'len', 100], ['ambient-salt-colors', 'colors', 7], ['ambient-salt-scatter', 'scatter', 100]].forEach(pr => {
           const el = G(pr[0]); if (!el) return;
           el.addEventListener('input', () => {
             _E = E; const c = E.getCfg(); if (!c || !c.prog) return;

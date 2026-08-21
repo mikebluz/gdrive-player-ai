@@ -3250,6 +3250,15 @@
        layers x chords grid, so the toggle sits in its title beside ✎ %. */
     .ambient-pm-modes { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: middle; }
     .ambient-pm-modes .ambient-seg { padding: 3px 8px; font-size: 0.66rem; min-height: 26px; }
+    /* A CONTROL THAT CANNOT TAKE EFFECT SAYS SO. Same treatment the Evolve row
+       and the Dry-kill checkbox already get: dim the control, and put the reason
+       in the hint in the amber this palette already uses for "inert". Marked
+       rather than hidden, so the stored setting stays visible and returns the
+       moment the thing overriding it is switched off. */
+    .ambient-ctrl.is-overridden > label,
+    .ambient-ctrl.is-overridden > .ambient-select,
+    .ambient-ctrl.is-overridden > .ambient-seg-row { opacity: 0.5; }
+    .ambient-ctrl.is-overridden > .ambient-hint { color: #f6ad55; }
     .ambient-ctrl-stoch > label { color: #d94dff; }
     /* COMPOSING IN THE GRID BYPASSES THE STOCHASTICS, so the marked controls must
        stop claiming to be doing something. Keyed off the live bar being visible

@@ -7600,6 +7600,18 @@
       font-family: 'Segoe UI', sans-serif; font-size: 0.66rem; color: #c9b8ef;
     }
     .ambient-sgpart > select { flex: 1 1 0; min-width: 0; width: auto; }
+    /* Which PART each stretch of the composed phrase falls in — the level above
+       the chord ribbon, so they read as a hierarchy: parts, then chords, then
+       the grid. Proportional to time, same as the chords. */
+    .ambient-seedgrid-prib { display: flex; gap: 2px; margin: 4px 0 2px; }
+    .ambient-sgpartspan {
+      flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      text-align: center; padding: 3px 2px; border-radius: 5px 5px 0 0;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.04em;
+      background: rgba(246,173,85,0.16); color: #ffd9a8; border: 1px solid rgba(246,173,85,0.28); border-bottom: 0;
+    }
+    .ambient-sgpartspan.alt { background: rgba(246,173,85,0.09); }
+    .ambient-sgpartspan.none { background: rgba(107,107,138,0.12); color: #6b6b8a; border-color: rgba(107,107,138,0.25); }
     .ambient-seedgrid-chords { display: flex; gap: 2px; margin: 2px 0 4px; }
     .ambient-sgchord {
       flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

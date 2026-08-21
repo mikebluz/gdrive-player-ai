@@ -24423,7 +24423,7 @@
       // Clear the ribbon HERE rather than waiting for the next viz frame — the
       // session is over the moment this returns, and a stale ribbon under a strip
       // that is about to be wiped reads as a hang.
-      try { document.querySelectorAll('.ambient-seedgrid-chords, .ambient-seedgrid-parts, .ambient-seedgrid-seqs').forEach(h => { h.hidden = true; h.innerHTML = ''; h._sig = ''; }); } catch (e) {}
+      try { document.querySelectorAll('.ambient-seedgrid-chords, .ambient-seedgrid-parts, .ambient-seedgrid-seqs, .ambient-seedgrid-prib').forEach(h => { h.hidden = true; h.innerHTML = ''; h._sig = ''; }); } catch (e) {}
       try { document.querySelectorAll('.ambient-seedgrid-striphost').forEach(el => { el.innerHTML = ''; }); } catch (e) {}
       try {
         const i = lanes.indexOf(ge.lane); if (i >= 0) lanes.splice(i, 1);
@@ -28531,6 +28531,48 @@
             '</select></label>').join('');
       });
     }
+    // PART RIBBON — which part of the arrangement each stretch of the phrase you
+    // are composing falls in. The chord ribbon below it answers "what chord is
+    // under this bar"; this answers the level above, so a phrase written across a
+    // Verse/Chorus boundary is visible as one while you write it.
+    //
+    // Same construction as the chord ribbon: sample the loop, coalesce equal
+    // spans, size by time. The part comes from _ambSeqPartIdxAt — the same
+    // resolver the part→sequence swap uses — so the picture and the playback
+    // cannot disagree about where a part starts.
+    function _ambGridPartRibbon(E) {
+      let hosts; try { hosts = document.querySelectorAll('.ambient-seedgrid-prib'); } catch (e) { return; }
+      if (!hosts || !hosts.length) return;
+      const ge = _bloomGridEdit;
+      const hide = () => hosts.forEach(h => { if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } });
+      if (!ge || !E || ge.E !== E) { hide(); return; }
+      const cfg = E._cfg || (E.getCfg && E.getCfg()) || null;
+      const parts = (cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.parts)) ? cfg.prog.parts : null;
+      const fs = E.freeze && E.freeze[ge.key];
+      if (!parts || parts.length < 2 || !fs || !(fs.loopLen > 0) || !Number.isFinite(fs.anchor)) { hide(); return; }
+      const N = 192, L = fs.loopLen, spans = [];
+      for (let i = 0; i < N; i++) {
+        const t = fs.anchor + (i + 0.5) * (L / N);
+        let pi = -1; try { pi = _ambSeqPartIdxAt(t); } catch (e) { pi = -1; }
+        const last = spans[spans.length - 1];
+        if (last && last.pi === pi) { last.n++; continue; }
+        spans.push({ pi: pi, n: 1 });
+      }
+      if (!spans.length) { hide(); return; }
+      const nameOf = (pi) => (pi >= 0 && parts[pi] && parts[pi].name) ? parts[pi].name : '—';
+      const sig = spans.map(sp => sp.pi + ':' + sp.n).join('|') + '#' + parts.map(p => p && p.name).join(',');
+      hosts.forEach(h => {
+        const slot = h.closest ? h.closest('.ambient-seedgrid-slot') : null;
+        if (!(slot && slot.getAttribute('data-sgkey') === ge.key)) { if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } return; }
+        if (h._sig === sig && !h.hidden) return;
+        h._sig = sig; h.hidden = false;
+        h.innerHTML = spans.map((sp, i) =>
+          '<span class="ambient-sgpartspan' + (i % 2 ? ' alt' : '') + (sp.pi < 0 ? ' none' : '') +
+          '" style="flex-grow:' + sp.n + '" title="' + _ambEscAttr(
+            sp.pi < 0 ? 'No part here' : (nameOf(sp.pi) + ' — the phrase is in this part across this stretch')) + '">' +
+          _ambEscAttr(nameOf(sp.pi)) + '</span>').join('');
+      });
+    }
     function _ambGridChordRibbon(E) {
       let hosts; try { hosts = document.querySelectorAll('.ambient-seedgrid-chords'); } catch (e) { return; }
       if (!hosts || !hosts.length) return;
@@ -28601,6 +28643,7 @@
       try { _ambUpdatePlayheads(E); } catch (e) {}
       try { _ambEuclidStepPlayheads(E); } catch (e) {}
       try { _ambGridComposePlayhead(E); } catch (e) {}
+      try { _ambGridPartRibbon(E); } catch (e) {}
       try { _ambGridChordRibbon(E); } catch (e) {}
       try { _ambGridPartMap(E); } catch (e) {}
       try { _ambGridSeqBank(E); } catch (e) {}
@@ -31364,7 +31407,7 @@
                   '<button type="button" class="ambient-seg ambient-seedgrid-mode" data-gmode="' + m2[0] + '" data-sgk="' + _ambEscText(lk) + '" title="Switch the docked editor to ' + m2[1] + ' mode">' + m2[1] + '</button>').join('') +
               '</span>' +
             '</span>' +
-          '</div><div class="ambient-seedgrid-seqs" hidden></div><div class="ambient-seedgrid-parts" hidden></div><div class="ambient-seedgrid-chords" hidden></div><div class="ambient-seedgrid-dockhost"></div><div class="ambient-seedgrid-striphost"></div></div>';
+          '</div><div class="ambient-seedgrid-prib" hidden></div><div class="ambient-seedgrid-seqs" hidden></div><div class="ambient-seedgrid-parts" hidden></div><div class="ambient-seedgrid-chords" hidden></div><div class="ambient-seedgrid-dockhost"></div><div class="ambient-seedgrid-striphost"></div></div>';
     }
     // Reveal an element that lives inside collapsed card groups: opens every
     // closed .ambient-grp ancestor (persisting groupsOpen) + un-collapses the

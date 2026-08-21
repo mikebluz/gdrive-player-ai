@@ -3247,6 +3247,18 @@
        contrast on the panel background, clearing AA for body text. If a new
        layer-type hue is added, re-run the distance check rather than eyeballing. */
     .ambient-ctrl-stoch > label { color: #d94dff; }
+    /* A LOCKED CONTROL MUST LOOK LOCKED. Salt's override controls are `disabled`
+       while the mode is Inherit, and nothing said so — reported as "the params
+       can't be edited, nothing happens when click/drag", which is exactly what a
+       fully-styled control that ignores you looks like. `.ambient-area-btn` and
+       the FX order arrows already carry a :disabled state; the Bloom slider and
+       the stepper were the two that never got one. The DESCRIPTION line stays at
+       full strength deliberately — it is the thing that says how to unlock it. */
+    .ambient-step-btn:disabled { opacity: 0.28; cursor: not-allowed; }
+    .ambient-step-inp:disabled { opacity: 0.4; cursor: not-allowed; }
+    input.ambient-sl:disabled { opacity: 0.4; cursor: not-allowed; }
+    .ambient-ctrl:has(input:disabled) > label { opacity: 0.5; }
+    .ambient-ctrl:has(input:disabled) > .ambient-stepper { border-color: #2c2c40; background: rgba(45,45,63,0.15); }
     .ambient-stoch-desc {
       grid-column: 2 / -1; min-width: 0;
       font-family: 'Segoe UI', sans-serif; font-size: 0.64rem; line-height: 1.35;

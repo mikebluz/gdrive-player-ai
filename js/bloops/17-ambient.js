@@ -32030,6 +32030,28 @@
       if (typeof st.at === 'function') { try { what = st.at(n) || what; } catch (e) {} }
       return what + ' · ' + (st.every || _AMB_STOCH_GRAIN[st.grain] || '');
     }
+    // What a layer on Salt = Inherit is ACTUALLY doing. The override controls read
+    // 0 while inheriting, so describing them from their own value reported
+    // "Off — the chord is played exactly as written" on a layer that was busy
+    // recolouring. Resolved from the progression the same way the emitter does.
+    function _ambSaltInheritDesc(cfg, k2) {
+      const how = ' Switch Salt to “This layer” to set your own.';
+      let base = null, parted = false;
+      try { base = _ambProgSaltCfg(cfg); } catch (e) {}
+      try { const pr = cfg && cfg.prog;
+        parted = !!(pr && Array.isArray(pr.parts) && pr.parts.some(pp => pp && pp.salt && typeof pp.salt === 'object'));
+      } catch (e) {}
+      if (!base && !parted) return 'Inheriting the Changes’ salt — none is set there, so chords play exactly as written.' + how;
+      if (!base) return 'Inheriting the Changes’ salt — it is set per part, so it differs across the arrangement.' + how;
+      const also = parted ? ' Some parts override it.' : '';
+      if (k2 === 'colors') {
+        return ((base.colors | 0) > 0
+          ? 'Inheriting the Changes’ salt — each chord is cut into ' + Math.min(8, (base.colors | 0) + 1) + ' sections.'
+          : 'Inheriting the Changes’ salt — no colour is set there, so chords play as written.') + also + how;
+      }
+      return 'Inheriting the Changes’ salt — scatter ' + (base.scatter | 0) +
+        (((base.scatter | 0) > 0) ? ', so the section count varies chord to chord.' : ', so every chord gets the full count.') + also + how;
+    }
     // ROLLING OUT ONE LAYER TYPE AT A TIME so the wording can be judged before it
     // lands on all 11. The colour and the data are global; only the readout line
     // is gated. Widen by adding a type key here, remove the gate when it is right.
@@ -32049,9 +32071,15 @@
       return Object.keys(_AMB_STOCH_UI).some(function (t) { return s.indexOf('-' + t + '-') >= 0; });
     }
     // Repaint a stochastic slider's description in place (drag, sync, restore).
+    // A DISABLED control is skipped: its line explains the lock ("Inheriting the
+    // Changes' salt…"), not its own value, which reads 0 while locked. Without
+    // this, _ambSyncSliderReadouts sweeps every .ambient-sl and stomps that line
+    // back to "Off — …", i.e. tells you the layer is silent while it is salting.
     function _ambStochSync(id, val) {
-      let sd; try { sd = document.getElementById(id + '-sd'); } catch (e) { return; }
-      if (sd) sd.textContent = _ambStochDesc(_ambStochKeyOf(id), val);
+      let sd, el;
+      try { sd = document.getElementById(id + '-sd'); el = document.getElementById(id); } catch (e) { return; }
+      if (!sd || (el && el.disabled)) return;
+      sd.textContent = _ambStochDesc(_ambStochKeyOf(id), val);
     }
     function _ambSlReadout(id, val) {
       return (val != null && val !== '') ? (val + _ambSlUnit(id)) : '';
@@ -38798,7 +38826,10 @@
               '</span>'
             : '<input type="range" id="' + p + '-salt-' + k2 + '" class="ambient-sl ambient-layersalt" data-saltk="' + k2 + '" min="0" max="100" step="1" value="' + v(k2) + '"' + (sl ? '' : ' disabled') + '>') +
           '<span class="ambient-hint">' + hint + '</span>' +
-          (_ambStochUiOn(p) ? '<span class="ambient-stoch-desc" id="' + p + '-salt-' + k2 + '-sd">' + _ambStochDesc(k2 === 'colors' ? 'saltColors' : 'saltScatter', v(k2)) + '</span>' : '') + '</div>';
+          (_ambStochUiOn(p) ? '<span class="ambient-stoch-desc" id="' + p + '-salt-' + k2 + '-sd">' +
+            (sl ? _ambStochDesc(k2 === 'colors' ? 'saltColors' : 'saltScatter', v(k2))
+                : _ambSaltInheritDesc((_E && (_E._cfg || (_E.getCfg && _E.getCfg()))) || null, k2)) +
+            '</span>' : '') + '</div>';
         return '<div class="ambient-ctrl"><label for="' + p + '-saltmode">Salt</label>' +
           '<select id="' + p + '-saltmode" class="ambient-select ambient-layersaltmode">' +
             '<option value="inherit"' + (sl ? '' : ' selected') + '>Inherit</option>' +

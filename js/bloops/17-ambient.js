@@ -24006,6 +24006,14 @@
         if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
       }, 2000);
     }
+    // How long one grid step lasts. Extracted because TWO things now need it —
+    // _ambStepsToLock, which places the events you hear, and the compose playhead,
+    // which lights the chip you are looking at. A second copy of this expression
+    // is a highlight that drifts out of the audio, which is this file's most
+    // repeated bug (the Scheduler lane walking the chords a second way).
+    function _ambGridStepAdv(st, gsub, beat) {
+      return beat * ((st && st.subdivision != null) ? st.subdivision : gsub) * ((st && st.duration) || 1);
+    }
     function _ambStepsToLock(E, key, steps, live) {
       const L = _ambLayerByKey(E, key); if (!L) return;
       const fs = _ambFreezeState(E, key);
@@ -24021,7 +24029,7 @@
       };
       (Array.isArray(steps) ? steps : []).forEach(st => {
         if (!st) return;
-        const adv = beat * (st.subdivision != null ? st.subdivision : gsub) * (st.duration || 1);
+        const adv = _ambGridStepAdv(st, gsub, beat);
         const durMs = Math.max(80, Math.round(adv * 1000 * 0.92));
         if (Array.isArray(st.chord) && st.chord.length) st.chord.forEach(nn => push(nn && nn.freq, t, durMs));
         else if (st.freq != null) push(st.freq, t, durMs);
@@ -24302,6 +24310,7 @@
       window._bloomGridPersistDirty = false;
       // Clear the docked strip (renderSequence won't re-append once the
       // scratch lane is gone, so a stale row would linger).
+      try { _ambClearGridComposePlayhead(); } catch (e) {}
       try { document.querySelectorAll('.ambient-seedgrid-striphost').forEach(el => { el.innerHTML = ''; }); } catch (e) {}
       try {
         const i = lanes.indexOf(ge.lane); if (i >= 0) lanes.splice(i, 1);
@@ -28205,6 +28214,60 @@
         });
       });
     }
+    // COMPOSE PLAYHEAD — light the scratch lane's chip that is sounding.
+    //
+    // The scratch lane is MUTED and is not sequenced: the LAYER plays the phrase
+    // through the freeze replay, so none of the lane machinery (_startBarPlayhead,
+    // the .active-loop tee in 07) ever fires for it and the strip sat dead while
+    // the loop played. The position therefore comes from the layer's own lock —
+    // fs.anchor + fs.loopLen, the same pair the replay schedules from — walked
+    // through _ambGridStepAdv, which is what places the events in the first place.
+    function _ambGridComposePlayhead(E) {
+      let hosts; try { hosts = document.querySelectorAll('.ambient-seedgrid-striphost'); } catch (e) { return; }
+      if (!hosts || !hosts.length) return;
+      const ge = _bloomGridEdit;
+      if (!ge || !E || ge.E !== E || !E.timer) { _ambClearGridComposePlayhead(); return; }
+      const fs = E.freeze && E.freeze[ge.key];
+      if (!fs || !(fs.loopLen > 0) || !Number.isFinite(fs.anchor)) { _ambClearGridComposePlayhead(); return; }
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      // Before the first pass the modulo would wrap to ~the end of the loop and
+      // light the last chip — the pre-first-onset trap this file has hit three
+      // times. Nothing is sounding yet, so light nothing.
+      if (now < fs.anchor) { _ambClearGridComposePlayhead(); return; }
+      const pos = ((now - fs.anchor) % fs.loopLen + fs.loopLen) % fs.loopLen;
+      const steps = (ge.lane && Array.isArray(ge.lane.steps)) ? ge.lane.steps : [];
+      const gsub = (typeof stepSubdivision === 'number' && stepSubdivision > 0) ? stepSubdivision : 0.5;
+      // _ambBpm() deliberately, NOT the area bpm: this must match whatever
+      // _ambStepsToLock used to place the events, and that is what it uses.
+      const beat = 60 / Math.max(20, _ambBpm());
+      let t = 0, idx = -1;
+      for (let i = 0; i < steps.length; i++) {
+        const adv = _ambGridStepAdv(steps[i], gsub, beat);
+        if (pos >= t && pos < t + adv) { idx = i; break; }
+        t += adv;
+      }
+      hosts.forEach(host => {
+        const slot = host.closest ? host.closest('.ambient-seedgrid-slot') : null;
+        const mine = slot && slot.getAttribute('data-sgkey') === ge.key;
+        let chips; try { chips = host.querySelectorAll('.seq-step:not(.cont-segment):not(.chord-pending)'); } catch (e) { return; }
+        const want = mine ? idx : -1;
+        // Touch the DOM only when the step changes — but RE-VERIFY the class is
+        // still there, because a strip re-render wipes it and the cache would
+        // then never repaint (the euclid grid's _phStep lesson).
+        if (host._gcStep === want && (want < 0 || (chips[want] && chips[want].classList.contains('gc-playing')))) return;
+        host._gcStep = want;
+        chips.forEach(c => c.classList.remove('gc-playing'));
+        if (want >= 0 && chips[want]) chips[want].classList.add('gc-playing');
+      });
+    }
+    function _ambClearGridComposePlayhead() {
+      try {
+        document.querySelectorAll('.ambient-seedgrid-striphost').forEach(h => {
+          h._gcStep = -1;
+          h.querySelectorAll('.seq-step.gc-playing').forEach(c => c.classList.remove('gc-playing'));
+        });
+      } catch (e) {}
+    }
     function _ambVizFrame(E) {
       if (!E.viz) return;
       // The spectrum canvas is OPTIONAL (the master Bloom has none) — draw it only if
@@ -28231,6 +28294,7 @@
       }
       try { _ambUpdatePlayheads(E); } catch (e) {}
       try { _ambEuclidStepPlayheads(E); } catch (e) {}
+      try { _ambGridComposePlayhead(E); } catch (e) {}
       try { _ambPassPlayhead(E); } catch (e) {}
       try { _ambProgOverviewPlayhead(E); } catch (e) {}
       try { _ambSaltReadoutSync(E); } catch (e) {}

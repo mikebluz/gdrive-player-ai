@@ -7567,6 +7567,16 @@
       outline-offset: -3px;
       box-shadow: 0 0 12px rgba(0, 191, 255, 0.45);
     }
+    /* COMPOSE PLAYHEAD — the chip sounding right now while you edit in the Grid.
+       Its own class rather than reusing .active, which the step editor already
+       uses for selection; same magenta as .seq-step.active so a playing chip
+       looks the same wherever you are looking at it. */
+    .seq-step.gc-playing {
+      background: linear-gradient(135deg, #d91e7c, #f472b6);
+      border-color: #f472b6;
+      color: #fff;
+      box-shadow: 0 0 14px rgba(244, 114, 182, 0.55);
+    }
     .seq-step.subseq.active {
       background: linear-gradient(135deg, #38a169, #68d391);
       border-color: #68d391;

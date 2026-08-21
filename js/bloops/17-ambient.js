@@ -9359,7 +9359,7 @@
         return false;
       }
       if (!E.unit) E.unit = {};
-      E.unit[key] = { lock: true, keyCtx: _ambCurKeyCtx(E), notes: u.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) })) };
+      E.unit[key] = { lock: true, keyCtx: _ambCurKeyCtx(E), notes: u.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: _ambLockParams(n.params) })) };
       return true;
     }
     // Update every Drift slider's readout within E's panel (step-div in Sync,
@@ -31485,7 +31485,7 @@
       if (!pv || !Array.isArray(pv.events) || !pv.events.length) return false;
       const layer = _ambLayerByKey(E, key); if (!layer) return false;
       layer.lockState = { kind: 'loop', seedEdit: true, loopLen: pv.loopLen || 1, keyCtx: _ambCurKeyCtx(E),
-        notes: pv.events.map(n => ({ t: n.t, freq: n.freq, dur: n.dur, params: Object.assign({}, n.params) })) };
+        notes: pv.events.map(n => ({ t: n.t, freq: n.freq, dur: n.dur, params: _ambLockParams(n.params) })) };
       try { _ambRestoreLocks(E); } catch (e) {}
       delete E.seedPv[key];
       if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
@@ -31536,20 +31536,33 @@
     // Mirror a layer's live lock into its CONFIG (layer.lockState) so the
     // workspace save carries it; clear it when the layer is unlocked. Only
     // lock-initiated state is saved (a transient manual Freeze is not).
+    // Params for a PERSISTED lock. `glideLayer` is a live back-reference to the
+    // layer itself (portamento sets it so the glide can track _glidePrev), so a
+    // lock captured on a layer with portamento > 0 made layer → lockState →
+    // notes → params → layer, and JSON.stringify threw "Converting circular
+    // structure to JSON". That surfaced as a failed save with no usable reason —
+    // and, before the storage catch was fixed, as "Storage full" on a 3%-full
+    // store. It is dropped rather than serialized: _ambApplyAdsr re-attaches it
+    // from the layer's own portamento at play time, so nothing is lost.
+    function _ambLockParams(p) {
+      const o = Object.assign({}, p);
+      delete o.glideLayer;
+      return o;
+    }
     function _ambSyncLockState(E, key) {
       const layer = _ambLayerByKey(E, key); if (!layer) return;
       // A single Bed/Motif unit saves as 'unit'; a multi-unit lock or any other
       // layer's lock is a frozen loop → save as 'loop'. Branch on the live store.
       const u = E.unit && E.unit[key];
       if (u && u.lock && Array.isArray(u.notes) && u.notes.length) {
-        layer.lockState = { kind: 'unit', keyCtx: u.keyCtx || null, notes: u.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) })) };
+        layer.lockState = { kind: 'unit', keyCtx: u.keyCtx || null, notes: u.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: _ambLockParams(n.params) })) };
         return;
       }
       const fs = E.freeze && E.freeze[key];
       if (fs && fs.frozen && fs._lock && Array.isArray(fs.events) && fs.events.length) {
         // seedEdit marks a lock created by editing the SEED PREVIEW (not a live
         // freeze) — it drives the "↺ Original" revert affordance across reloads.
-        layer.lockState = { kind: 'loop', loopLen: fs.loopLen || 0, seedEdit: !!fs._seedEdit, keyCtx: fs.keyCtx || null, notes: fs.events.map(e => ({ freq: e.freq, t: e.t, dur: e.dur, params: Object.assign({}, e.params) })) };
+        layer.lockState = { kind: 'loop', loopLen: fs.loopLen || 0, seedEdit: !!fs._seedEdit, keyCtx: fs.keyCtx || null, notes: fs.events.map(e => ({ freq: e.freq, t: e.t, dur: e.dur, params: _ambLockParams(e.params) })) };
         return;
       }
       delete layer.lockState;
@@ -31568,7 +31581,7 @@
         if (ls.kind === 'unit') {                                      // single Bed/Motif unit
           if (E.unit && E.unit[key] && E.unit[key].lock) return;       // runtime wins
           E.unit = E.unit || {};
-          E.unit[key] = { lock: true, keyCtx: ls.keyCtx || null, notes: ls.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) })) };
+          E.unit[key] = { lock: true, keyCtx: ls.keyCtx || null, notes: ls.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: _ambLockParams(n.params) })) };
         } else {                                                       // frozen loop (multi-unit / other layers)
           if (E.freeze && E.freeze[key] && E.freeze[key].frozen) return; // runtime wins
           E.freeze = E.freeze || {};

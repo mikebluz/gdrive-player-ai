@@ -7571,6 +7571,16 @@
        Its own class rather than reusing .active, which the step editor already
        uses for selection; same magenta as .seq-step.active so a playing chip
        looks the same wherever you are looking at it. */
+    /* The chords under the phrase you are composing. Spans are proportional to
+       time, so a half-bar chord under a cadence reads as half the width. */
+    .ambient-seedgrid-chords { display: flex; gap: 2px; margin: 2px 0 4px; }
+    .ambient-sgchord {
+      flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      text-align: center; padding: 3px 2px; border-radius: 5px;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.62rem; letter-spacing: 0.02em;
+      background: rgba(159,122,234,0.13); color: #c9b8ef; border: 1px solid rgba(159,122,234,0.20);
+    }
+    .ambient-sgchord.alt { background: rgba(159,122,234,0.07); }
     .seq-step.gc-playing {
       background: linear-gradient(135deg, #d91e7c, #f472b6);
       border-color: #f472b6;

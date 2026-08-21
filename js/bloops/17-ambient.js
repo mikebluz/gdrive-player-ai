@@ -24311,6 +24311,10 @@
       // Clear the docked strip (renderSequence won't re-append once the
       // scratch lane is gone, so a stale row would linger).
       try { _ambClearGridComposePlayhead(); } catch (e) {}
+      // Clear the ribbon HERE rather than waiting for the next viz frame — the
+      // session is over the moment this returns, and a stale ribbon under a strip
+      // that is about to be wiped reads as a hang.
+      try { document.querySelectorAll('.ambient-seedgrid-chords').forEach(h => { h.hidden = true; h.innerHTML = ''; h._sig = ''; }); } catch (e) {}
       try { document.querySelectorAll('.ambient-seedgrid-striphost').forEach(el => { el.innerHTML = ''; }); } catch (e) {}
       try {
         const i = lanes.indexOf(ge.lane); if (i >= 0) lanes.splice(i, 1);
@@ -28260,6 +28264,55 @@
         if (want >= 0 && chips[want]) chips[want].classList.add('gc-playing');
       });
     }
+    // CHORD RIBBON — what you are composing OVER.
+    //
+    // The Grid is key-aware (the session snaps the editor's root/scale to the
+    // layer's key) but was chord-BLIND: you wrote a phrase with no indication of
+    // which chord any bar sat under, which matters as soon as Harmony is set to
+    // anything but Fixed. The window is already the right size — _ambGridEditStart
+    // harvests whole progression cycles — so the chords are known, they were just
+    // never drawn.
+    //
+    // Spans are proportional to time, labelled with the SOUNDING chord
+    // (_ambProgSoundAt, never the written one — the documented rule for every
+    // chord readout), and sampled off _ambProgStepAt rather than walking the
+    // chord lengths a second way. It lives OUTSIDE the striphost because
+    // renderSequence owns that element and wipes it on every re-render.
+    function _ambGridChordRibbon(E) {
+      let hosts; try { hosts = document.querySelectorAll('.ambient-seedgrid-chords'); } catch (e) { return; }
+      if (!hosts || !hosts.length) return;
+      const ge = _bloomGridEdit;
+      const hide = () => hosts.forEach(h => { if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } });
+      if (!ge || !E || ge.E !== E) { hide(); return; }
+      const cfg = E._cfg || (E.getCfg && E.getCfg()) || null;
+      const fs = E.freeze && E.freeze[ge.key];
+      if (!cfg || !cfg.prog || !cfg.prog.on || !fs || !(fs.loopLen > 0) || !Number.isFinite(fs.anchor)) { hide(); return; }
+      const src = { type: 'prog', chords: cfg.prog.chords };
+      // Sample finely enough for a half-bar chord under a cadence, then coalesce
+      // equal steps into spans.
+      const N = 192, L = fs.loopLen, spans = [];
+      for (let i = 0; i < N; i++) {
+        const t = fs.anchor + (i + 0.5) * (L / N);
+        let step = 0; try { step = _ambProgStepAt(E, t) | 0; } catch (e) { step = 0; }
+        const last = spans[spans.length - 1];
+        if (last && last.step === step) { last.n++; continue; }
+        let nm = '?';
+        try { const ch = _ambProgSoundAt(E, src, step, t); nm = ch ? _ambChordShort(ch) : '?'; } catch (e) {}
+        spans.push({ step: step, n: 1, name: nm });
+      }
+      if (!spans.length) { hide(); return; }
+      const sig = spans.map(sp => sp.name + ':' + sp.n).join('|');
+      hosts.forEach(h => {
+        const slot = h.closest ? h.closest('.ambient-seedgrid-slot') : null;
+        const mine = slot && slot.getAttribute('data-sgkey') === ge.key;
+        if (!mine) { if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } return; }
+        if (h._sig === sig && !h.hidden) return;
+        h._sig = sig; h.hidden = false;
+        h.innerHTML = spans.map((sp, i) =>
+          '<span class="ambient-sgchord' + (i % 2 ? ' alt' : '') + '" style="flex-grow:' + sp.n + '" title="' +
+          _ambEscAttr(sp.name + ' — the chord under this part of the phrase') + '">' + _ambEscAttr(sp.name) + '</span>').join('');
+      });
+    }
     function _ambClearGridComposePlayhead() {
       try {
         document.querySelectorAll('.ambient-seedgrid-striphost').forEach(h => {
@@ -28295,6 +28348,7 @@
       try { _ambUpdatePlayheads(E); } catch (e) {}
       try { _ambEuclidStepPlayheads(E); } catch (e) {}
       try { _ambGridComposePlayhead(E); } catch (e) {}
+      try { _ambGridChordRibbon(E); } catch (e) {}
       try { _ambPassPlayhead(E); } catch (e) {}
       try { _ambProgOverviewPlayhead(E); } catch (e) {}
       try { _ambSaltReadoutSync(E); } catch (e) {}
@@ -31051,7 +31105,7 @@
                   '<button type="button" class="ambient-seg ambient-seedgrid-mode" data-gmode="' + m2[0] + '" data-sgk="' + _ambEscText(lk) + '" title="Switch the docked editor to ' + m2[1] + ' mode">' + m2[1] + '</button>').join('') +
               '</span>' +
             '</span>' +
-          '</div><div class="ambient-seedgrid-dockhost"></div><div class="ambient-seedgrid-striphost"></div></div>';
+          '</div><div class="ambient-seedgrid-chords" hidden></div><div class="ambient-seedgrid-dockhost"></div><div class="ambient-seedgrid-striphost"></div></div>';
     }
     // Reveal an element that lives inside collapsed card groups: opens every
     // closed .ambient-grp ancestor (persisting groupsOpen) + un-collapses the
@@ -38415,20 +38469,20 @@
     const _AMB_LAYER_SCHEMA = {
       bed: { label: 'Bed', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'voiceCap', 'Voice cap', 0, 12, '0 = follow Density'], ['followsalt'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'voiceCap', 'Voice cap', 0, 12, '0 = follow Density'], ['followsalt'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
         ['sub', 'Progression', 'When an Area progression is set: the layer locks to it and plays voicings of the current chord. (Repeat/Times in Timing only apply when there is no Area progression.)'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold \u00b7 \u2212N = hold N units \u00b7 +N = N chords per unit'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length \u00b7 % of each strike a chord rings'], ['choke'], ['ring'], ['pitchrule'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'phrasing', 'Phrasing', 0, 100, 'stream → gestures'], ['ring'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'gravity', 'Gravity', 0, 100, 'free → chord tones'], ['sl', 'contour', 'Contour', -100, 100, 'fall → rise'], ['sl', 'stutter', 'Stutter', 0, 100, 'walk → repeats'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['ring'], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'syncop', 'Syncopate', 0, 100, 'straight → offbeat'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
@@ -38476,7 +38530,7 @@
       // Direction); Randomness deviates from it. Pitch material is the series.
       arp: { label: 'Arp', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['grp', 'Pattern'], ['arpeuclid'], ['euclidgrid'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
+        ['grp', 'Source'], ['keyov'], ['seedmode'], ['harmony'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['grp', 'Pattern'], ['arpeuclid'], ['euclidgrid'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
         ['grp', 'Timing'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'pattern length — fills the Unit'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['ring'], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (euclid; 0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'rateVar', 'Rate var', 0, 100, 'steady → rushes'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -38484,7 +38538,7 @@
       // long; Rhythm/Pitch var add per-repeat variation.
       bass: { label: 'Bass', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['grp', 'Pattern'], ['euclidgrid'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['grp', 'Pattern'], ['euclidgrid'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'pattern length — the seed fills the Unit'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['ring'], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['tight'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Walk', 0, 100, 'hold → wander (proximity-capped)'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -38492,14 +38546,14 @@
       // looping; Vary re-rolls; Len var spreads note lengths around Length.
       run: { label: 'Riff', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'phrasing', 'Articulate', 0, 100, 'even → arrivals sustain, runs detach'], ['ring'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Density · −N = 1 hit per N bars · +N = N per bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['ring'], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length · % of each strike a hit rings'], ['pitchrule'], ['st', 'voices', 'Voices', 1, 9, 'tones per hit (Stack)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'vary', 'Roam', 0, 100, 'root → wander degrees'], ['tight'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -38507,7 +38561,7 @@
       // vary are independent. A chord Notes source holds the whole chord.
       drone: { label: 'Drone', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
         ['sub', 'Progression', 'When an Area progression is set: PEDAL (default) holds ONE note per progression cycle, auto-chosen to work across every chord — the card explains the pick, and Note overrides it. VOICINGS re-voices the current chord instead (Subdivide/Feel/Variety).'], ['dronepedal'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold · −N = hold N units · +N = N per unit'], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = fill the hold · % of each strike the note rings'], ['pitchrule'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
@@ -39059,6 +39113,32 @@
       // for the same instant rather than one colouring more than the other. Salt
       // is now defined once by the Changes, and which layers follow it, chord by
       // chord, is the 🧂 Salt mode of the ⌗ Matrix. See _ambSaltFollowOK.
+      // HARMONY — what a COMPOSED phrase does when the chords move under it.
+      // The engine has had this since Option C: _ambLockHarmonizeFreq sits on the
+      // frozen-replay path (the exact path a Grid phrase plays through) and reads
+      // L.harmony. Seq layers got the control; Bloom layers never did, so every
+      // authored phrase was stuck on `fixed` — compose over C and it played
+      // unchanged over F and G, with no way to say otherwise. Measured on a
+      // locked Motif over C-F-G: fixed/diatonic hold their pitches, chordlock
+      // moves them (C→C G, F→D A, G→D G B).
+      //
+      // Marked inert when the layer holds NO phrase, because a layer that is
+      // generating already follows the changes and this would decide nothing.
+      if (k === 'harmony') {
+        const _hv = (inst && (inst.harmony === 'diatonic' || inst.harmony === 'chordlock')) ? inst.harmony : 'fixed';
+        const _authored = !!(inst && inst.lockState && inst.lockState.seedEdit);
+        const _why = _authored ? null : 'Nothing to remap yet — this layer is generating, so it already follows the changes. Compose a phrase in the Grid and this decides what happens to it when the chords move.';
+        return '<div class="ambient-ctrl' + (_why ? ' is-overridden' : '') + '"><label for="' + p + '-harmony" title="' +
+          _ambEscAttr('What a composed phrase does when the chords move under it.') + '">Harmony</label>' +
+          '<select id="' + p + '-harmony" class="ambient-select amb-harmony" title="' + _ambEscAttr(
+            'Fixed — the phrase plays exactly as written, whatever chord is underneath. ' +
+            'Follow the key — each note replays as its scale DEGREE in the current key, so a 3rd stays a 3rd through a modulation. ' +
+            'Lock to the chords — each degree re-anchors to the chord sounding at that moment, so the phrase comps the changes.') + '">' +
+            '<option value="fixed"' + (_hv === 'fixed' ? ' selected' : '') + '>Fixed — as written</option>' +
+            '<option value="diatonic"' + (_hv === 'diatonic' ? ' selected' : '') + '>Follow the key</option>' +
+            '<option value="chordlock"' + (_hv === 'chordlock' ? ' selected' : '') + '>Lock to the chords</option>' +
+          '</select><span class="ambient-hint">' + (_why || 'what the phrase does when the chords move') + '</span></div>';
+      }
       if (k === 'followsalt') return '<div class="ambient-ctrl"><label for="' + p + '-followsalt">Follow salt</label><select id="' + p + '-followsalt" class="ambient-select"><option value="0">Hold the chord</option><option value="1">Play the colour changes</option></select><span class="ambient-hint">re-voice inside the unit as salt colours the chord \u2014 shared notes ring on</span></div>';
       // RING OUT — the opt-out from the chord choke. Default (absent) chokes: a
       // note is released by the next chord boundary, so a long tail does not
@@ -39594,6 +39674,17 @@
           // the sibling controls take. A bed defaults to Write on, so without it the
           // frozen loop replays the OLD lengths for the rest of its cycle — measured
           // 12.3 s of nothing happening, which reads as a dead control.
+          else if (k === 'harmony') {
+            const e = el('harmony');
+            if (e) e.addEventListener('change', () => {
+              const L = get(); if (!L) return;
+              if (e.value === 'diatonic' || e.value === 'chordlock') L.harmony = e.value; else delete L.harmony;
+              sync(); persist();
+              // The remap runs per NOTE on the replay path, so a frozen loop picks
+              // it up on its very next note — no re-anchor needed, and re-anchoring
+              // would cost a phrase boundary for nothing.
+            });
+          }
           else if (k === 'followsalt') { const e = el('followsalt'); if (e) { e.value = inst.followSalt ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === '1') L.followSalt = 1; else delete L.followSalt; sync(); persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } } }); } }
           else if (k === 'choke') { const e = el('choke'); if (e) { e.value = inst.choke ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.choke = (e.value === '1'); sync(); persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } } }); } }
           // RING OUT is a PLAYBACK filter (the choke lives in playNote, after the

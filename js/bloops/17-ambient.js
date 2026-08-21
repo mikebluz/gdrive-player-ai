@@ -2469,6 +2469,7 @@
       delete L.salt;
     }
     function _ambNormalizeSpread(L) {
+      _ambNormalizePartSeqs(L);
       if (!L || typeof L !== 'object') return;
       if (!Number.isFinite(L.humanize)) L.humanize = 0;   // Variance: universal onset jitter (shared default, portamento pattern)
       if (!Number.isFinite(L.velVar)) L.velVar = 0;       // Variance: universal velocity noise (same pattern)
@@ -18932,6 +18933,58 @@
     // chord matrix use — so this cannot disagree with what is sounding.
     // The area's parts as <option>s — named, so a section is bound to "Chorus"
     // rather than to an index the user has to count out.
+    // ---- A PHRASE PER PART, BY NAME ----------------------------------------
+    // `L.partSeqs = { "<partIdx>": "<saved sequence name>" }` — additive, absent
+    // is today's behaviour exactly. Keyed by NAME, not by bank index, because the
+    // bank is reorderable and a stored index would silently repoint at whatever
+    // moved into that slot; the name is also what the user sees and picks.
+    //
+    // The swap reuses _ambStepsToLock, which is the path every keystroke in the
+    // layer grid already takes to install steps into a live lock — so this is an
+    // exercised seam rather than new surgery on the replay path.
+    function _ambNormalizePartSeqs(L) {
+      if (!L || typeof L !== 'object') return;
+      const m = L.partSeqs;
+      if (m == null) return;
+      if (typeof m !== 'object') { delete L.partSeqs; return; }
+      const o = {};
+      Object.keys(m).forEach(k => {
+        const i = k | 0, v = m[k];
+        if (i >= 0 && i < 64 && typeof v === 'string' && v) o[i] = v;
+      });
+      if (Object.keys(o).length) L.partSeqs = o; else delete L.partSeqs;
+    }
+    function _ambBankByName(nm) {
+      try {
+        const bank = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences : [];
+        return bank.find(x => x && x.name === nm && Array.isArray(x.steps) && x.steps.length) || null;
+      } catch (e) { return null; }
+    }
+    // Install the mapped sequence when the part changes. Called once per tick.
+    function _ambPartSeqSync(E, cfg, now) {
+      if (!E || !cfg) return;
+      const pi = _ambSeqPartIdxAt(now);
+      if (pi < 0) return;
+      const one = (key, L) => {
+        const m = L && L.partSeqs; if (!m) return;
+        const nm = m[pi]; if (!nm) return;
+        // Never yank the phrase out from under the editor.
+        if (_ambGridComposing(key)) return;
+        const fs = E.freeze && E.freeze[key];
+        if (fs && fs._partSeqName === nm && fs.frozen) return;   // already loaded
+        const saved = _ambBankByName(nm); if (!saved) return;
+        try {
+          _ambStepsToLock(E, key, saved.steps, true);
+          const f2 = _ambFreezeState(E, key);
+          f2.frozen = true; f2._lock = true; f2._partSeqName = nm;
+          if (!f2.keyCtx) f2.keyCtx = _ambCurKeyCtx(E);
+        } catch (e) {}
+      };
+      try {
+        ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k]) one(k, cfg[k]); });
+        (cfg.extras || []).forEach(x => { if (x && x.type != null && x.id != null) one(x.type + ':' + x.id, x); });
+      } catch (e) {}
+    }
     function _ambSeqPartOptions(cur) {
       try {
         const E = _E; if (!E) return '';
@@ -22164,6 +22217,9 @@
         window._ambCaptureSink = null; _ambPruneCap(E, key, now);
       }
 
+      // A layer mapping parts → bank sequences swaps its phrase when the part
+      // changes. Before the emit loops, so the new material is what gets played.
+      try { _ambPartSeqSync(E, cfg, now); } catch (e) { _ambLogTickErr(e); }
       // C2: Seq/Sample layers dispatch from the CANONICAL lists (extras-hosted
       // entries after the v2 migration; legacy array entries as the safety
       // net) with their historical keys/stateKeys/reflect semantics. The
@@ -24367,7 +24423,7 @@
       // Clear the ribbon HERE rather than waiting for the next viz frame — the
       // session is over the moment this returns, and a stale ribbon under a strip
       // that is about to be wiped reads as a hang.
-      try { document.querySelectorAll('.ambient-seedgrid-chords').forEach(h => { h.hidden = true; h.innerHTML = ''; h._sig = ''; }); } catch (e) {}
+      try { document.querySelectorAll('.ambient-seedgrid-chords, .ambient-seedgrid-parts').forEach(h => { h.hidden = true; h.innerHTML = ''; h._sig = ''; }); } catch (e) {}
       try { document.querySelectorAll('.ambient-seedgrid-striphost').forEach(el => { el.innerHTML = ''; }); } catch (e) {}
       try {
         const i = lanes.indexOf(ge.lane); if (i >= 0) lanes.splice(i, 1);
@@ -28331,6 +28387,57 @@
     // chord readout), and sampled off _ambProgStepAt rather than walking the
     // chord lengths a second way. It lives OUTSIDE the striphost because
     // renderSequence owns that element and wipes it on every re-render.
+    // PART → SEQUENCE map, rendered in the layer grid so the phrase you are
+    // composing, the bank you just saved it to, and the part it plays under are
+    // all one surface. Only shown when the area HAS parts and the bank has
+    // something in it — otherwise it would be a table of empty pickers.
+    // One delegated change listener for every part picker, on document — the map
+    // re-renders from the viz frame, so a per-element bind would be lost.
+    try {
+      if (typeof window !== 'undefined' && !window.__ambSgPartWired) {
+        window.__ambSgPartWired = true;
+        document.addEventListener('change', (ev) => {
+          const sel = ev.target && ev.target.closest && ev.target.closest('.ambient-sgpart-sel');
+          if (!sel) return;
+          const ge = _bloomGridEdit; if (!ge) return;
+          const E = ge.E, L = _ambLayerByKey(E, ge.key); if (!L) return;
+          const pi = sel.dataset.pi | 0;
+          if (!L.partSeqs || typeof L.partSeqs !== 'object') L.partSeqs = {};
+          if (sel.value) L.partSeqs[pi] = sel.value; else delete L.partSeqs[pi];
+          if (!Object.keys(L.partSeqs).length) delete L.partSeqs;
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+        }, true);
+      }
+    } catch (e) {}
+    function _ambGridPartMap(E) {
+      let hosts; try { hosts = document.querySelectorAll('.ambient-seedgrid-parts'); } catch (e) { return; }
+      if (!hosts || !hosts.length) return;
+      const ge = _bloomGridEdit;
+      const hide = () => hosts.forEach(h => { if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } });
+      if (!ge || !E || ge.E !== E) { hide(); return; }
+      const cfg = E._cfg || (E.getCfg && E.getCfg()) || null;
+      const parts = (cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.parts)) ? cfg.prog.parts : null;
+      const bank = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences : [];
+      const usable = bank.filter(x => x && x.type !== 'audio' && Array.isArray(x.steps) && x.steps.length);
+      if (!parts || parts.length < 2 || !usable.length) { hide(); return; }
+      const L = _ambLayerByKey(E, ge.key); if (!L) { hide(); return; }
+      const map = (L.partSeqs && typeof L.partSeqs === 'object') ? L.partSeqs : {};
+      const sig = parts.map((p, i) => (p && p.name) + '>' + (map[i] || '')).join('|') + '#' + usable.map(x => x.name).join(',');
+      hosts.forEach(h => {
+        const slot = h.closest ? h.closest('.ambient-seedgrid-slot') : null;
+        if (!(slot && slot.getAttribute('data-sgkey') === ge.key)) { if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } return; }
+        if (h._sig === sig && !h.hidden) return;
+        h._sig = sig; h.hidden = false;
+        h.innerHTML = '<div class="ambient-sgparts-title">This layer plays…</div>' +
+          parts.map((p, i) =>
+            '<label class="ambient-sgpart"><span>' + _ambEscAttr((p && p.name) || ('Part ' + (i + 1))) + '</span>' +
+            '<select class="ambient-select ambient-sgpart-sel" data-pi="' + i + '">' +
+              '<option value="">— the phrase on this layer —</option>' +
+              usable.map(x => '<option value="' + _ambEscAttr(x.name) + '"' + (map[i] === x.name ? ' selected' : '') + '>' +
+                _ambEscAttr(x.name) + '</option>').join('') +
+            '</select></label>').join('');
+      });
+    }
     function _ambGridChordRibbon(E) {
       let hosts; try { hosts = document.querySelectorAll('.ambient-seedgrid-chords'); } catch (e) { return; }
       if (!hosts || !hosts.length) return;
@@ -28402,6 +28509,7 @@
       try { _ambEuclidStepPlayheads(E); } catch (e) {}
       try { _ambGridComposePlayhead(E); } catch (e) {}
       try { _ambGridChordRibbon(E); } catch (e) {}
+      try { _ambGridPartMap(E); } catch (e) {}
       try { _ambPassPlayhead(E); } catch (e) {}
       try { _ambProgOverviewPlayhead(E); } catch (e) {}
       try { _ambSaltReadoutSync(E); } catch (e) {}
@@ -31162,7 +31270,7 @@
                   '<button type="button" class="ambient-seg ambient-seedgrid-mode" data-gmode="' + m2[0] + '" data-sgk="' + _ambEscText(lk) + '" title="Switch the docked editor to ' + m2[1] + ' mode">' + m2[1] + '</button>').join('') +
               '</span>' +
             '</span>' +
-          '</div><div class="ambient-seedgrid-chords" hidden></div><div class="ambient-seedgrid-dockhost"></div><div class="ambient-seedgrid-striphost"></div></div>';
+          '</div><div class="ambient-seedgrid-parts" hidden></div><div class="ambient-seedgrid-chords" hidden></div><div class="ambient-seedgrid-dockhost"></div><div class="ambient-seedgrid-striphost"></div></div>';
     }
     // Reveal an element that lives inside collapsed card groups: opens every
     // closed .ambient-grp ancestor (persisting groupsOpen) + un-collapses the
@@ -44870,6 +44978,8 @@
               }
               return;
             }
+            const ps = ev.target && ev.target.closest && ev.target.closest('.ambient-sgpart-sel');
+            if (ps) { return; }   // <select> commits on 'change', not click
             const sb = ev.target && ev.target.closest && ev.target.closest('.ambient-seedgrid-bank');
             if (sb) {
               ev.stopPropagation();

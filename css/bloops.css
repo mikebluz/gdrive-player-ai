@@ -7573,6 +7573,16 @@
        looks the same wherever you are looking at it. */
     /* The chords under the phrase you are composing. Spans are proportional to
        time, so a half-bar chord under a cadence reads as half the width. */
+    /* PART -> SEQUENCE map, in the layer grid: compose here, bank it here, say
+       which part plays it here. */
+    .ambient-seedgrid-parts { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; align-items: center; }
+    .ambient-sgparts-title { flex: 1 0 100%; font-family: 'Segoe UI', sans-serif; font-size: 0.64rem; color: #6b6b8a; }
+    .ambient-sgpart { display: flex; align-items: center; gap: 5px; min-width: 0; flex: 1 1 150px; }
+    .ambient-sgpart > span {
+      flex: 0 0 auto; max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.66rem; color: #c9b8ef;
+    }
+    .ambient-sgpart > select { flex: 1 1 0; min-width: 0; width: auto; }
     .ambient-seedgrid-chords { display: flex; gap: 2px; margin: 2px 0 4px; }
     .ambient-sgchord {
       flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

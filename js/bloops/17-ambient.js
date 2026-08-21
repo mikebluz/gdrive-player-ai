@@ -4853,6 +4853,18 @@
     // A column is stored as its SEQUENCE. Normalize prunes a column equal to the
     // written order and drops a grid with nothing left, so "edit it back to
     // normal" removes the field rather than storing a redundant copy.
+    // Put `v` back where ROW ORDER says it belongs: before the first entry that
+    // sorts after it, else at the end. On an untouched (ascending) pass that is
+    // exactly the slot it left; on a hand-ordered one it is the nearest sensible
+    // place rather than the end. See docs/bloom-part-iterations.md.
+    function _ambSeqInsertRowOrder(list, v) {
+      const out = Array.isArray(list) ? list.slice() : [];
+      let at = -1;
+      for (let i = 0; i < out.length; i++) { if ((out[i] | 0) > (v | 0)) { at = i; break; } }
+      if (at < 0) at = out.length;
+      out.splice(at, 0, v | 0);
+      return out;
+    }
     function _ambPassWrite(cfg, pi, col, arr) {
       const g = _ambGridStore(cfg, pi, true); if (!g) return false;
       const rg = _ambGridRanges(cfg).find(r => r.pi === pi) || _ambGridRanges(cfg)[0];
@@ -35363,7 +35375,18 @@
           const has = cur.indexOf(ci) >= 0;
           // Tap toggles membership; ORDER and repeats live in the caption editor,
           // so one tap can never silently reorder a pass you were not editing.
-          _ambPassWrite(cfg, r.pi, col, has ? cur.filter(v => v !== ci) : cur.concat([ci]));
+          //
+          // RE-ENABLING INSERTS AT ROW-ORDER POSITION, NOT AT THE END. Membership
+          // and position are the same stored thing here (seq[col] is an ordered
+          // list), so appending meant turning a chord off and back on silently
+          // moved it from first to last: Cmaj7 Am7 Dm7 G7 -> tap Cmaj7 twice ->
+          // Am7 Dm7 G7 Cmaj7. Row order is the written chord order, i.e. the
+          // default sequence for every pass, so a chord that was never
+          // hand-reordered returns exactly where it was and no other chord's
+          // relative order changes. A pass that HAS been hand-reordered puts it
+          // back at row-order position rather than where it was dragged --
+          // accepted, and recorded in docs/bloom-part-iterations.md.
+          _ambPassWrite(cfg, r.pi, col, has ? cur.filter(v => v !== ci) : _ambSeqInsertRowOrder(cur, ci));
           after(); return;
         }
         if (a[0] === 'seq') { _ambPassSeqModal(E, pi, a[1] | 0); return; }

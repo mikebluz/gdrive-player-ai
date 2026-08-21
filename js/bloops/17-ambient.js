@@ -30911,6 +30911,16 @@
     function _ambOrchIcon(state) {
       return state === 'single' ? '\u25b6' : (state === 'sequence' ? '\u21c9' : '\u2928');
     }
+    // 💾 SAVE — the third way out of the Grid, and the one the other two do not
+    // cover. ✓ Done keeps the phrase as a FIXED loop; ✕ Cancel throws it away.
+    // Save commits it and then hands the layer back to itself: the phrase becomes
+    // the material and the variance sliders re-apply over it on every pass. That
+    // is `loopVar = 'live'`, which already exists and is already the documented
+    // meaning of ⚡ Live in the Scheduler — Humanize / Dynamics / Ornament re-roll
+    // per pass while the structure stays as written. Reusing it beats inventing a
+    // fourth lock state that would need its own replay path.
+    const _AMB_SEEDSAVE_TITLE = 'Keep this phrase AND let the layer perform it again: it becomes the layer\u2019s material and the variance sliders re-apply on every pass \u2014 Humanize, Dynamics and Ornament re-roll from your current settings. The notes and rhythm you drew stay as written. \u2713 Done keeps it fixed instead.';
+    function _ambEscAttr(t) { return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
     function _ambSeedModeHtml(lk, patCap) {
       const _ambSeedModePatCap = !!patCap;
       // "Generate" is gone as a named mode (2026-07-30). It overclaimed: it never
@@ -30929,6 +30939,7 @@
         '<span class="ambient-seg-row">' +
           '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="generate" data-seedkey="' + _ambEscText(lk) + '" hidden></button>' +
           '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="grid" data-seedkey="' + _ambEscText(lk) + '" title="Compose in the FULL editor — edits land in the loop live. ✕ Cancel discards.">✎ Grid</button>' +
+          '<button type="button" class="ambient-seg amb-seedsave" data-savekey="' + _ambEscText(lk) + '" disabled title="' + _ambEscAttr(_AMB_SEEDSAVE_TITLE) + '">\u{1F4BE} Save</button>' +
         '</span><span class="ambient-hint">plays itself unless composed</span></div>') +
         // Author docks the layer's grid (roll + keyboard) HERE — composing
         // happens where the seed is chosen (filled by _ambRefreshSeedModes).
@@ -30988,6 +30999,8 @@
         // dim the pattern controls while one is in force rather than leaving two
         // live-looking sources of the same thing on screen.
         try {
+          const sv = row.querySelector('.amb-seedsave');
+          if (sv) sv.disabled = !gridActive;   // only while you are actually composing
           const _card = row.closest('.ambient-layer');
           if (_card) _card.classList.toggle('amb-grid-owns', !!(gridActive || authored));
           // …and a SECOND class for the narrower fact the engine acts on. The
@@ -38853,6 +38866,7 @@
           '<div class="ambient-ctrl ambient-patsrc"><label>Notes from</label><span class="ambient-seg-row">' +
             '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="generate" data-seedkey="' + _ambEscText(_sk) + '" title="This layer\u2019s Pattern: the rhythm below, with the engine picking each note from the Notes pool.">\u2ff4 Pattern</button>' +
             '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="grid" data-seedkey="' + _ambEscText(_sk) + '" title="A fixed phrase you compose in the full editor. Replaces the Pattern while it is set \u2014 the two are alternatives, not layers.">\u270e Grid</button>' +
+            '<button type="button" class="ambient-seg amb-seedsave" data-savekey="' + _ambEscText(_sk) + '" disabled title="' + _ambEscAttr(_AMB_SEEDSAVE_TITLE) + '">\u{1F4BE} Save</button>' +
           '</span></div>' +
           '<div class="ambient-euclid-presetrow"><select id="' + p + '-euclidpreset" class="ambient-select ambient-euclid-preset" title="The rhythm this pattern came from. Reads Custom once you edit it — save a Custom to keep it.">' + _ambEuclidPresetOptions(inst) + '</select>' +
             '<button type="button" id="' + p + '-euclidrand" class="ambient-euclid-rand" title="Roll a brand-new random on/off pattern straight into the grid \u2014 an actual random rhythm, not a randomly chosen preset. Press again for another; keep one with Save.">\ud83c\udfb2 Random</button>' +
@@ -43283,6 +43297,26 @@
         // (note-edit chips are handled on pointerdown — see below)
         // Task 4: Seed mode toggle (Generate / Author) — one delegated handler for
         // primary + extras cards (key from data-seedkey).
+        const sv = e.target && e.target.closest && e.target.closest('.amb-seedsave');
+        if (sv) {
+          e.stopPropagation();
+          if (sv.disabled) return;
+          const key = sv.dataset.savekey;
+          try {
+            if (!(_bloomGridEdit && _bloomGridEdit.E === E && _bloomGridEdit.key === key)) return;
+            _ambGridEditStop(false);                       // commit the phrase, close the session
+            const L = _ambLayerByKey(E, key);
+            if (L) {
+              L.loopVar = 'live';                          // the variance sliders play over it again
+              try { _ambReanchorLayer(E, key); } catch (x) {}
+            }
+            _ambRefreshSeedModes(E);
+            try { _ambSyncControls(E); } catch (x) {}
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+            try { if (typeof showToast === 'function') showToast('Saved — the layer performs your phrase, variance and all.'); } catch (x) {}
+          } catch (err) { console.warn('Grid save failed', err); }
+          return;
+        }
         const sm = e.target && e.target.closest && e.target.closest('.amb-seedmode');
         if (sm) {
           e.stopPropagation();

@@ -253,6 +253,12 @@ body{
   font:700 11px/1 'SF Mono',monospace;cursor:pointer;padding:0}
 .tb button:active{border-color:var(--bevel);border-right-color:#fff;border-bottom-color:#fff}
 .body{background:var(--paper);padding:10px;overflow:auto;flex:1}
+/* LATEST is a FEED: it grows by one post per release, so it gets a ceiling and
+   scrolls rather than growing the window off the desktop. .body was already
+   overflow:auto — all it lacked was a height to overflow. Scoped to this window
+   because the others hold fixed content and should keep sizing to it. */
+#w-grains .body{max-height:58vh}
+#w-video .body{max-height:58vh}
 .body::-webkit-scrollbar{width:12px}
 .body::-webkit-scrollbar-thumb{background:var(--chrome);border:1px solid #fff;
   border-right-color:var(--bevel);border-bottom-color:var(--bevel)}
@@ -275,6 +281,14 @@ p{margin-bottom:7px}
 a{color:var(--link)}
 a:hover{color:var(--link-h)}
 .hr{height:1px;background:var(--chrome-d);margin:7px 0}
+/* One entry in the LATEST feed. The h2 carries the window's own title style,
+   so an entry looks like a release rather than a list row. */
+.post{margin:0 0 2px}
+/* Cover art is SQUARE. .shot is aspect-ratio:2/1 (press shots), which would
+   crop a sleeve to a letterbox and lose most of it. */
+.art{display:block;width:100%;height:auto;aspect-ratio:1/1;object-fit:cover;
+  border:2px solid var(--bevel);margin:0 0 9px}
+.post .wt{margin:2px 0 7px}
 .btn{display:inline-block;padding:6px 13px;background:var(--chrome);border:2px solid #fff;
   border-right-color:var(--bevel);border-bottom-color:var(--bevel);color:var(--ink);
   font:inherit;font-size:12px;cursor:pointer;text-decoration:none;margin:0 5px 5px 0}
@@ -383,7 +397,7 @@ dl.f dd{font-weight:700}
     margin:0;box-shadow:none;z-index:auto!important;display:none}
   .win.tabon,.win.tabon.hidden{display:flex}
   .tb{display:none}
-  .body{max-height:none}
+  .body,#w-grains .body,#w-video .body{max-height:none}   /* the ID rule above outranks a bare .body */
   .stack{padding:0 8px 60px}   /* top is measured — see padForChrome */
   body{overflow:auto}
 }
@@ -446,13 +460,41 @@ dl.f dd{font-weight:700}
 
 <div class="stack" id="stack">
 
-  <!-- GRAINS — the release, with the video inside it -->
+  <!-- LATEST — a feed, newest at the top. Was the GRAINS window; a release that
+       is no longer the newest should not be the whole window, and renaming it
+       means the next single is a new .post block rather than a rewrite.
+       The window id stays w-grains so ICONS/PATHS/focus/routing keep working. -->
   <div class="win" id="w-grains" data-x="440" data-y="66" data-w="450">
-    <div class="tb"><span class="t">GRAINS.mp4 — new single</span><button data-close>✕</button></div>
+    <div class="tb"><span class="t">LATEST</span><button data-close>✕</button></div>
     <div class="body">
-      <div class="vid" id="vid"></div>
-      <div style="margin-top:9px">
-        <a class="btn hot" href="https://tr.ee/YKRcNe0nlW" target="_blank" rel="noopener">▶ STREAM</a>
+
+      <div class="post">
+        <p class="note">New single</p>
+        <h2 class="wt">THE FEELING I LOVE</h2>
+        <img class="art" src="img/the-feeling-i-love.jpg" width="800" height="800" loading="lazy"
+             alt="Cover art for The Feeling I Love: a man in sunglasses shoulder-deep in a swimming pool, looking at the camera, with a poolside boulder, a folded blue cover and dense summer trees behind him">
+        <a class="btn hot" href="https://linktr.ee/mercywizard?lt_utm_source=lt_share_link#566143467"
+           target="_blank" rel="noopener">▶ STREAM</a>
+      </div>
+
+
+    </div>
+  </div>
+
+  <!-- VIDEO — the films, split out of LATEST so a release and a video are not
+       the same kind of thing in one list. #vid keeps its id: the YouTube
+       facade at the bottom of this file resolves it by id, so the embed moved
+       with no change to that code. -->
+  <div class="win" id="w-video" data-x="440" data-y="340" data-w="450">
+    <div class="tb"><span class="t">VIDEO</span><button data-close>✕</button></div>
+    <div class="body">
+      <div class="post">
+        <p class="note">Music video</p>
+        <h2 class="wt">GRAINS</h2>
+        <div class="vid" id="vid"></div>
+        <div style="margin-top:9px">
+          <a class="btn hot" href="https://tr.ee/YKRcNe0nlW" target="_blank" rel="noopener">▶ STREAM</a>
+        </div>
       </div>
     </div>
   </div>
@@ -882,7 +924,7 @@ const wins = [...document.querySelectorAll('.win')];
 // Glyphs split performer from producer on sight: a mic for the one you book,
 // a mixer for the one that makes the records. 💿/💽 were the first pick and
 // are indistinguishable at 24px.
-const ICONS = { 'w-grains':['💿','GRAINS'], 'w-luz':['🎤','MIKE LUZ'], 'w-wiz':['🎛','MERCY WIZARD'],
+const ICONS = { 'w-grains':['💿','LATEST'], 'w-video':['🎬','VIDEO'], 'w-luz':['🎤','MIKE LUZ'], 'w-wiz':['🎛','MERCY WIZARD'],
                 'w-live':['🎫','LIVE'], 'w-book':['✉','BOOKING'], 'w-tools':['🛠','TOOLS'],
                 'w-links':['🔗','LINKS'] };
 let z = 10;
@@ -996,7 +1038,7 @@ tick(); setInterval(tick, 20000);
 // one-at-a-time with a chooser beats scrolling past six things to reach the
 // seventh. Reuses ICONS for the labels and the SAME DOM for the content, so
 // there is no second copy of the page to keep in step.
-const PATHS = { 'w-grains':'/grains', 'w-luz':'/', 'w-wiz':'/mercy-wizard',
+const PATHS = { 'w-grains':'/latest', 'w-video':'/video', 'w-luz':'/', 'w-wiz':'/mercy-wizard',
                 'w-live':'/shows', 'w-book':'/booking', 'w-tools':'/tools',
                 'w-links':'/links' };
 const btabs = document.getElementById('btabs'), burl = document.getElementById('burl');

@@ -192,8 +192,6 @@ md += `
   a real behaviour change: it hands ghosts to five layers that never had them.
 - Six of Motif's controls (Contour, Gravity, Stutter, Twist, Ornament, Slide) are
   one idea — how the walk behaves — presented as six sliders.
-- The readout is gated to one layer type (\`_AMB_STOCH_UI\`) while the wording is
-  reviewed. Widen it, then delete the gate.
 `;
 
 const out = path.join(ROOT, 'docs/bloom-stochastic-controls.md');

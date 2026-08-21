@@ -5251,11 +5251,15 @@
       ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-pm-modal">' +
         '<div class="sm-title">' + esc(o.label) + '</div>' +
         '<div class="ambient-step-modal-body">' +
-          '<div class="ambient-pm-modal-hint">' + (o.bulk
-            ? ('Sets <b>every ' + esc(o.bulk) + '</b> at once. The chance is rolled once per ' + esc(o.unit) + ', so a layer is in or out for the whole ' + esc(o.unit) + '.')
-            : ('The chance this layer plays. Rolled once per ' + esc(o.unit) +
-               ', so it is in or out for the whole ' + esc(o.unit) + ' — a lower % means it sits out more passes, not that it plays quieter or shorter.')) + '</div>' +
-          '<div class="ambient-ctrl ambient-step-row"><label>Chance</label>' +
+          '<div class="ambient-pm-modal-hint">' + (o.salt
+            ? (o.bulk
+              ? ('Sets <b>every ' + esc(o.bulk) + '</b> at once. This is how much of the Changes’ recolouring the layer follows — at <b>never</b> it holds the chord as written while the others recolour.')
+              : ('How much of the Changes’ recolouring this layer follows on this chord. Every layer shares ONE colouring, so wherever two layers both follow, they agree; at <b>never</b> this one holds the chord as written.'))
+            : (o.bulk
+              ? ('Sets <b>every ' + esc(o.bulk) + '</b> at once. The chance is rolled once per ' + esc(o.unit) + ', so a layer is in or out for the whole ' + esc(o.unit) + '.')
+              : ('The chance this layer plays. Rolled once per ' + esc(o.unit) +
+                 ', so it is in or out for the whole ' + esc(o.unit) + ' — a lower % means it sits out more passes, not that it plays quieter or shorter.'))) + '</div>' +
+          '<div class="ambient-ctrl ambient-step-row"><label>' + (o.salt ? 'Follows' : 'Chance') + '</label>' +
             '<input type="range" class="ambient-pm-modal-sl" min="0" max="100" step="1" value="' + v0 + '">' +
             '<span class="ambient-step-val ambient-pm-modal-val">' + v0 + '%</span></div>' +
           '<div class="ambient-pm-modal-presets">' +
@@ -32166,10 +32170,6 @@
       if (typeof st.at === 'function') { try { what = st.at(n) || what; } catch (e) {} }
       return what + ' · ' + (st.every || _AMB_STOCH_GRAIN[st.grain] || '');
     }
-    // ROLLING OUT ONE LAYER TYPE AT A TIME so the wording can be judged before it
-    // lands on all 11. The colour and the data are global; only the readout line
-    // is gated. Widen by adding a type key here, remove the gate when it is right.
-    const _AMB_STOCH_UI = { motif: 1 };
     function _ambStochKeyOf(id) {
       const tail = String(id || '').split('-').pop();
       return _AMB_STOCH_ALIAS[tail] || (_AMB_STOCH[tail] ? tail : '');
@@ -32179,10 +32179,6 @@
     function _ambStochMarkKey(id) {
       const tail = String(id || '').split('-').pop();
       return _ambStochKeyOf(id) || _AMB_STOCH_MARK_ONLY[tail] || '';
-    }
-    function _ambStochUiOn(id) {
-      const s = String(id || '');
-      return Object.keys(_AMB_STOCH_UI).some(function (t) { return s.indexOf('-' + t + '-') >= 0; });
     }
     // Repaint a stochastic slider's description in place (drag, sync, restore).
     // A DISABLED control is skipped: its line explains the lock ("Inheriting the
@@ -32284,7 +32280,7 @@
       // carries a plain-language line saying what it does at this value and how
       // often it decides. See _AMB_STOCH.
       const sk = _ambStochKeyOf(id), st = _AMB_STOCH[_ambStochMarkKey(id)];
-      const sd = (_AMB_STOCH[sk] && _ambStochUiOn(id))
+      const sd = _AMB_STOCH[sk]
         ? '<span class="ambient-stoch-desc" id="' + id + '-sd">' + _ambStochDesc(sk, val) + '</span>' : '';
       return '<div class="ambient-ctrl' + (st ? ' ambient-ctrl-stoch' : '') + '"' + dt + '>' +
       '<label for="' + id + '"' + dt + '>' + label + '</label>' +
@@ -35085,6 +35081,7 @@
             : chLabel(sl.ci);
           _ambMaskCellModal(E, {
             label: sl.label + ' · ' + _colLbl,
+            salt: (el._pmMask === 'salt'),
             unit: sl.isPart ? 'part' : 'chord', value: sl.m.steps[sl.ci],
             rowLabel: sl.label, colLabel: _colLbl,
             partLabel: (!sl.isPart && pi >= 0) ? partName(pi) : '',
@@ -35126,17 +35123,17 @@
           const pi = Number.isFinite(el._pmPart) ? el._pmPart : -1;
           const r = pi >= 0 ? partRange(pi) : null;
           if (r) {
-            _ambMaskCellModal(E, { label: label + ' · every chord in ' + partName(pi), unit: 'chord',
+            _ambMaskCellModal(E, { label: label + ' · every chord in ' + partName(pi), unit: 'chord', salt: (el._pmMask === 'salt'),
               bulk: 'chord of ' + partName(pi) + ' for this layer',
               value: st ? (Number.isFinite(st[r.from]) ? st[r.from] : 100) : 100,
               onSet: (v) => setPart(lkey, pi, v) });
             return;
           }
-          _ambMaskCellModal(E, { label: label + ' · every chord', unit: 'chord', bulk: 'chord for this layer',
+          _ambMaskCellModal(E, { label: label + ' · every chord', unit: 'chord', salt: (el._pmMask === 'salt'), bulk: 'chord for this layer',
             value: st ? st[0] : 100, onSet: (v) => setRow(lkey, v) });
         };
         const openCol = (ci) => {
-          _ambMaskCellModal(E, { label: chLabel(ci) + ' · every layer', unit: 'chord', bulk: 'layer on this chord',
+          _ambMaskCellModal(E, { label: chLabel(ci) + ' · every layer', unit: 'chord', salt: (el._pmMask === 'salt'), bulk: 'layer on this chord',
             value: 100, onSet: (v) => setCol(ci, v) });
         };
         _ambWireMaskCells(el, openEditor);
@@ -35766,7 +35763,7 @@
         '</span>' +
         '<input type="range" id="' + stem + '-stereo" min="' + (mode === 'pan' ? -100 : 0) + '" max="100" step="1" value="' + val + '" />' +
         '<span class="ambient-hint" id="' + stem + '-stereo-v">' + _ambSpreadLabel(mode, val) + '</span>' +
-        (_ambStochUiOn(stem) ? '<span class="ambient-stoch-desc" id="' + stem + '-stereo-sd">' + _ambStochDesc('space', val) + '</span>' : '') + '</div>';
+        '<span class="ambient-stoch-desc" id="' + stem + '-stereo-sd">' + _ambStochDesc('space', val) + '</span></div>';
     };
     // SPATIALIZE control — sits directly under Stereo because it supersedes the
     // Spread half of it. Rendered for every layer type (it is in _AMB_MIX), and
@@ -35783,7 +35780,7 @@
           '<option value=""' + (on ? '' : ' selected') + '>Off</option>' +
           _AMB_SPAT_MODES.map(m => '<option value="' + m[0] + '"' + (on && mode === m[0] ? ' selected' : '') + '>' + m[1] + '</option>').join('') +
         '</select><span class="ambient-hint">per-note pan · overrides Spread</span>' +
-        (_ambStochUiOn(stem) ? '<span class="ambient-stoch-desc" id="' + stem + '-spatmode-sd">' + _ambStochDesc('spat', mode) + '</span>' : '') + '</div>' +
+        '<span class="ambient-stoch-desc" id="' + stem + '-spatmode-sd">' + _ambStochDesc('spat', mode) + '</span></div>' +
         _ambSl('Width', stem + '-spatwidth', 0, 100, width, 'how far from centre it travels') +
         _ambSl('Positions', stem + '-spatsteps', 2, 16, steps, 'notes before the pattern repeats');
     };

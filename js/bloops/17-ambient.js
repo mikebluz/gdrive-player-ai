@@ -2490,7 +2490,17 @@
       // unitMode: migrate legacy 'interleave' → 'random'; everything else but
       // 'random' is the ordered 'sequence'. ('single' stays meaningful for 1 unit.)
       if (s.unitMode === 'interleave') s.unitMode = 'random';
-      if (s.unitMode !== 'single' && s.unitMode !== 'sequence' && s.unitMode !== 'random') s.unitMode = 'single';
+      if (['single', 'sequence', 'random', 'part'].indexOf(s.unitMode) < 0) s.unitMode = 'single';
+      // 'part' binds a section to a PART of the area's changes. The binding is an
+      // explicit index per unit (renames and reorders can't break it); absent
+      // means "by order", so sending three sequences to a three-part
+      // arrangement already lines up with nothing to configure.
+      if (Array.isArray(s.units)) s.units.forEach(u => {
+        if (!u || typeof u !== 'object') return;
+        if (u.part == null) { delete u.part; return; }
+        const v = u.part | 0;
+        if (Number.isFinite(v) && v >= 0 && v < 64) u.part = v; else delete u.part;
+      });
       if (typeof s.keyMaster !== 'boolean') s.keyMaster = false;
       // B4: Harmony toggle — how the captured phrase relates to the current key.
       // 'fixed' (default) plays the absolute captured pitches (byte-identical to
@@ -18916,10 +18926,53 @@
     //  • 'random' (bag) — a pool of Σreps picks (each unit repeated `reps`×),
     //    drawn WITHOUT replacement; when the bag empties it refills (a fresh full
     //    schedule). Legacy 'interleave'/'single' map to random/sequence.
-    function _ambSeqPickUnitIdx(seq, st) {
+    // Which PART of the area's changes is playing at `at`, or -1 when the
+    // question doesn't apply (no progression, no parts). Resolved through
+    // _ambProgStepAt and _ambPartSlotIndex — the same pair the salt and the
+    // chord matrix use — so this cannot disagree with what is sounding.
+    // The area's parts as <option>s — named, so a section is bound to "Chorus"
+    // rather than to an index the user has to count out.
+    function _ambSeqPartOptions(cur) {
+      try {
+        const E = _E; if (!E) return '';
+        const cfg = E._cfg || (E.getCfg && E.getCfg());
+        const parts = (cfg && cfg.prog && Array.isArray(cfg.prog.parts)) ? cfg.prog.parts : [];
+        return parts.map((p, i) => '<option value="' + i + '"' + ((cur | 0) === i && cur != null ? ' selected' : '') + '>' +
+          String((p && p.name) || ('Part ' + (i + 1))).replace(/[<>&"]/g, '') + '</option>').join('');
+      } catch (e) { return ''; }
+    }
+    function _ambSeqPartIdxAt(at) {
+      try {
+        const E = _E; if (!E) return -1;
+        const cfg = E._cfg || (E.getCfg && E.getCfg()); if (!cfg) return -1;
+        const p = cfg.prog;
+        if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return -1;
+        const parts = Array.isArray(p.parts) ? p.parts : null;
+        if (!parts || !parts.length) return -1;
+        const N = p.chords.length;
+        const step = _ambProgStepAt(E, at) | 0;
+        return _ambPartSlotIndex(parts, ((step % N) + N) % N);
+      } catch (e) { return -1; }
+    }
+    function _ambSeqPickUnitIdx(seq, st, at) {
       const n = seq.units.length;
       if (n <= 1) return 0;
       const repsOf = (i) => Math.max(1, (seq.units[i] && (seq.units[i].reps | 0)) || 1);
+      // PART mode: the section that plays is the one bound to the part of the
+      // changes now sounding — a saved sequence per part. Consumes NO rng draw
+      // (unlike the bag), so a layer switched to this shifts no other layer's
+      // stream. Falls through to the ordered walk when there is no progression
+      // or no parts, so the mode is never a dead end.
+      if (seq.unitMode === 'part') {
+        const pi = _ambSeqPartIdxAt(at);
+        if (pi >= 0) {
+          for (let i = 0; i < n; i++) {
+            const bnd = seq.units[i] && seq.units[i].part;
+            if (Number.isFinite(bnd) && (bnd | 0) === pi) return i;
+          }
+          return ((pi % n) + n) % n;   // unbound → by order, part k ↔ section k
+        }
+      }
       const mode = (seq.unitMode === 'random' || seq.unitMode === 'interleave') ? 'random' : 'sequence';
       if (mode === 'random') {
         if (!Array.isArray(st.bag) || !st.bag.length) {
@@ -19205,7 +19258,7 @@
       if (!Array.isArray(seq.units) || !seq.units.length) return null;
       let unit;
       if (seq.units.length > 1) {
-        st.pick = _ambSeqPickUnitIdx(seq, st);
+        st.pick = _ambSeqPickUnitIdx(seq, st, at);
         unit = seq.units[st.pick];
         // Publish the section's key at its start time (boundary) on change only.
         if (seq.keyMaster && st._keyUnit !== st.pick) {
@@ -36075,6 +36128,7 @@
         h += '<div class="amb-sec-modes">' +
           '<button type="button" class="ambient-seg amb-sec-mode' + (sq.unitMode !== 'random' ? ' on' : '') + '" data-mode="sequence" title="Play sections in order, each for its iteration count.">Order</button>' +
           '<button type="button" class="ambient-seg amb-sec-mode' + (sq.unitMode === 'random' ? ' on' : '') + '" data-mode="random" title="Random bag: a pool of all iterations, drawn without repeats, refilled when empty.">Random</button>' +
+          '<button type="button" class="ambient-seg amb-sec-mode' + (sq.unitMode === 'part' ? ' on' : '') + '" data-mode="part" title="Follow the changes: each section is bound to a PART of the area\u2019s progression and plays while that part does. Unbound sections fall back to part order.">Parts</button>' +
           '<button type="button" class="ambient-seg amb-sec-km' + (sq.keyMaster ? ' on' : '') + '" data-km="1" title="This Seq drives the global Key — the grid and every generative layer follow each section\'s key.">🔑 Key master</button>' +
         '</div>';
         h += '<div class="amb-sec-list">';
@@ -36083,6 +36137,9 @@
             '<span class="amb-sec-name">' + (i + 1) + '. ' + esc(u.name || ('Section ' + (i + 1))) + '</span>' +
             '<span class="amb-sec-key">' + esc(keyLabel(u)) + '</span>' +
             '<span class="amb-sec-reps"><button type="button" data-rep="-1">−</button><b>' + ((u.reps | 0) || 1) + '×</b><button type="button" data-rep="1">+</button></span>' +
+            (sq.unitMode === 'part' ? ('<select class="ambient-select amb-sec-part" data-partsel="1" title="Which part of the changes this section plays under.">' +
+              '<option value=""' + (u.part == null ? ' selected' : '') + '>by order</option>' +
+              _ambSeqPartOptions(u.part) + '</select>') : '') +
             '<span class="amb-sec-move"><button type="button" data-mv="-1"' + (i === 0 ? ' disabled' : '') + '>▲</button><button type="button" data-mv="1"' + (i === units.length - 1 ? ' disabled' : '') + '>▼</button></span>' +
             '<button type="button" class="amb-sec-del" data-del="1" title="Remove section">✕</button>' +
             // Loop size + time-stretch: ×½/×2 halve/double the phrase; ±1b
@@ -36111,6 +36168,11 @@
         });
         modal.querySelectorAll('.amb-sec-row').forEach(row => {
           const i = parseInt(row.dataset.i, 10);
+          row.querySelectorAll('[data-partsel]').forEach(sel => sel.addEventListener('change', () => {
+            const sq2 = getSq(); if (!sq2 || !sq2.units[i]) return;
+            if (sel.value === '') delete sq2.units[i].part; else sq2.units[i].part = sel.value | 0;
+            resetState(); persist(); render();
+          }));
           row.querySelectorAll('[data-rep]').forEach(b => b.addEventListener('click', () => {
             const sq2 = getSq(); if (!sq2 || !sq2.units[i]) return;
             sq2.units[i].reps = Math.max(1, Math.min(64, (((sq2.units[i].reps | 0) || 1) + parseInt(b.dataset.rep, 10))));

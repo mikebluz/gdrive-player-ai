@@ -43832,6 +43832,30 @@
           const key = sv.dataset.savekey;
           try {
             if (!(_bloomGridEdit && _bloomGridEdit.E === E && _bloomGridEdit.key === key)) return;
+            // SAVE MEANS ONE THING. This button and "⬇ Save as sequence" were two
+            // different saves: this one committed the phrase to the layer, that
+            // one banked it, and the obvious button — the one sitting next to
+            // ✎ Grid — put nothing in Sequences. Reported six times as the saved
+            // sequence never appearing. It banks FIRST (while the scratch lane is
+            // still the active lane, which is what currentSequenceSnapshot reads),
+            // then commits and quits.
+            try {
+              if (typeof saveAsNewSeq === 'function' && typeof currentSequenceSnapshot === 'function') {
+                const L1 = _ambLayerByKey(E, key);
+                const dflt = (L1 && (L1.name || _ambLayerLabel(L1, String(key).split(':')[0]))) || 'Phrase';
+                const nm = (typeof prompt === 'function')
+                  ? prompt('Name this sequence (it will appear under Sequences on the layer):', dflt) : dflt;
+                if (nm === null) return;                   // cancelled: stay in the grid
+                const before = Array.isArray(savedSequences) ? savedSequences.length : -1;
+                saveAsNewSeq(String(nm).trim() || dflt);
+                if (Array.isArray(savedSequences) && savedSequences.length <= before && typeof showToast === 'function') {
+                  showToast('Nothing was added to the sequence bank.', { warn: true, ms: 10000 });
+                }
+              }
+            } catch (e2) {
+              try { if (typeof showToast === 'function') showToast('Could not bank the sequence: ' + ((e2 && e2.message) || e2), { warn: true, ms: 12000 }); } catch (x) {}
+              try { console.error('Bank on Save failed:', e2); } catch (x) {}
+            }
             _ambGridEditStop(false);                       // commit the phrase, close the session
             const L = _ambLayerByKey(E, key);
             if (L) {
@@ -43841,7 +43865,7 @@
             _ambRefreshSeedModes(E);
             try { _ambSyncControls(E); } catch (x) {}
             if (typeof persistWorkspace === 'function') persistWorkspace();
-            try { if (typeof showToast === 'function') showToast('Saved — the layer performs your phrase, variance and all.'); } catch (x) {}
+            try { if (typeof showToast === 'function') showToast('Saved — it is in Sequences on this layer, and the layer performs it with variance.'); } catch (x) {}
           } catch (err) { console.warn('Grid save failed', err); }
           return;
         }

@@ -64,6 +64,32 @@ about how many passes there are.
 
 Colours (section 3) still apply, on the layer's chips rather than in the grid.
 
+### When the Passes grid changes under it
+
+The per-layer grid takes its column count from the part's `grid.cols`, so editing
+the Passes grid can invalidate a mapping. Four cases, decided:
+
+**Pass count grows** — new columns start empty ("own phrase"). Nothing to do.
+
+**Pass count shrinks** — the cells past the new count are KEPT, stored but not
+shown, and come back if the count is raised again. A ± stepper is easy to hit by
+accident and there is no undo here; silent data loss from a stepper is the worse
+failure mode, and stale keys cost only bytes. This means normalize must NOT clamp
+`partSeqs` columns to `cols`, which is the opposite of what it does for
+`grid.seq`/`grid.bars` — deliberate, and the reason is this paragraph.
+(Explicitly NOT a versions/permutations feature: one mapping per part, the extra
+columns are just remembered.)
+
+**A pass becomes empty** (every chord toggled off) — the mapping stays and the
+cell is marked inert with the reason, "this pass plays no chords". Not cleared:
+the pass still runs, and the user may be mid-edit.
+
+**A part is deleted or reordered** — `partSeqs` is keyed by part INDEX, so this
+silently repoints mappings at the wrong part unless it is re-indexed.
+`_ambProgDeletePart` already does exactly this for four other stores
+(`prog.chain`, `arrGrid.seq`, `sections[i].part`, every layer's `chordMask`);
+`partSeqs` has to join that list. Not optional.
+
 ### The original in-grid design, for the record
 
 ## 2b. (superseded) Sequence rows

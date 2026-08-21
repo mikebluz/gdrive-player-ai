@@ -122,17 +122,18 @@ with no description; it can never catch a stochastic control somewhere else.
   Still two fields, now one implementation: `_ambStartOffset`.
 - Type and grain used to live in this generator, where the UI could not reach them.
   They now live in `_AMB_STOCH` and feed both the doc and the card readouts.
+- **`mutateRate` (Texture "Mutate") was DEAD and is now removed** (2026-08-20).
+  It had a schema row, a bind, a set, a ramp entry, a unit entry and two presets,
+  and no emitter read it — `_ambTexBuildPattern` has one caller guarded by
+  `if (!_E.texPattern)`, so the texture pattern is rolled once per play and
+  never re-rolls, and the `texMutateAt` clock meant to drive that was written in
+  three places and read in none. Implementing it instead would have started every
+  saved Texture layer mutating on load, since the stored default was 40. If a
+  re-roll is wanted it belongs in the general "re-decide every N" idea rather
+  than in one layer's orphan slider.
 
 ## Open
 
-- **`mutateRate` (Texture "Mutate", `slow→fast`) is DEAD** and is deliberately not
-  listed above. Nine occurrences in the tree — defaults, two presets, the unit
-  table, the ramp list, one `bind`, one `set` — and no emitter reads it.
-  `_ambTexBuildPattern` has one caller, guarded `if (!_E.texPattern)`, and
-  `_E.texMutateAt` is assigned 0 in three places and never read. Either implement
-  it (it would be the only "how often does this re-decide" control in the app) or
-  remove it; leaving a slider that does nothing is the worst case for a panel
-  whose whole problem is that people cannot tell what the controls do.
 - `pitchVar` (Bass "Walk", per **slot**) and `pitchVary` (Arp/Drone, per **cycle**)
   differ by one letter *and* by grain — a live trap when reading this code.
 - Rests and Ghosts are one bipolar density axis pointing opposite ways. Merging is

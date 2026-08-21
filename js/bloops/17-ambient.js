@@ -18942,6 +18942,11 @@
     // The swap reuses _ambStepsToLock, which is the path every keystroke in the
     // layer grid already takes to install steps into a live lock — so this is an
     // exercised seam rather than new surgery on the replay path.
+    // MANY-TO-MANY. A part holds a LIST of sequence names, and one name may sit in
+    // as many parts as you like — so "two riffs alternating over the verse, one of
+    // them also in the chorus" is expressible. Values are stored as ARRAYS; a bare
+    // string from the one-per-part version migrates to a single-entry list, so
+    // existing projects keep working and nothing needs a schema bump.
     function _ambNormalizePartSeqs(L) {
       if (!L || typeof L !== 'object') return;
       const m = L.partSeqs;
@@ -18949,10 +18954,28 @@
       if (typeof m !== 'object') { delete L.partSeqs; return; }
       const o = {};
       Object.keys(m).forEach(k => {
-        const i = k | 0, v = m[k];
-        if (i >= 0 && i < 64 && typeof v === 'string' && v) o[i] = v;
+        const i = k | 0; if (!(i >= 0 && i < 64)) return;
+        const v = m[k];
+        const list = Array.isArray(v) ? v : (typeof v === 'string' && v ? [v] : []);
+        const clean = [];
+        list.forEach(n => { if (typeof n === 'string' && n && clean.indexOf(n) < 0) clean.push(n); });
+        if (clean.length) o[i] = clean;
       });
       if (Object.keys(o).length) L.partSeqs = o; else delete L.partSeqs;
+    }
+    // Which of a part's sequences plays on THIS pass. Deterministic: the
+    // progression's own cycle count (floor(step / chords)) indexes the list, so
+    // successive passes through the part walk it in order and every layer, the
+    // readouts and a re-emit all agree without a counter to keep in sync.
+    function _ambPartSeqNameAt(E, cfg, list, at) {
+      if (!Array.isArray(list) || !list.length) return null;
+      if (list.length === 1) return list[0];
+      let cyc = 0;
+      try {
+        const N = Math.max(1, (cfg.prog.chords || []).length);
+        cyc = Math.floor((_ambProgStepAt(E, at) | 0) / N);
+      } catch (e) { cyc = 0; }
+      return list[((cyc % list.length) + list.length) % list.length];
     }
     function _ambBankByName(nm) {
       try {
@@ -18967,7 +18990,8 @@
       if (pi < 0) return;
       const one = (key, L) => {
         const m = L && L.partSeqs; if (!m) return;
-        const nm = m[pi]; if (!nm) return;
+        const nm = _ambPartSeqNameAt(E, cfg, Array.isArray(m[pi]) ? m[pi] : (m[pi] ? [m[pi]] : []), now);
+        if (!nm) return;
         // Never yank the phrase out from under the editor.
         if (_ambGridComposing(key)) return;
         const fs = E.freeze && E.freeze[key];
@@ -28442,6 +28466,49 @@
     try {
       if (typeof window !== 'undefined' && !window.__ambSgPartWired) {
         window.__ambSgPartWired = true;
+        // Many-to-many toggles: add/remove one sequence from one part's list.
+        document.addEventListener('click', (ev) => {
+          const chip = ev.target && ev.target.closest && ev.target.closest('.ambient-pmchip');
+          if (!chip) return;
+          ev.stopPropagation();
+          const ge2 = _bloomGridEdit;
+          const key2 = chip.dataset.sbkey || (ge2 && ge2.key) || '';
+          const E2 = (ge2 && ge2.E) || _masterEng;
+          const L2 = key2 && E2 && _ambLayerByKey(E2, key2); if (!L2) return;
+          const pi2 = chip.dataset.pmpi | 0, nm2 = chip.dataset.pmseq || '';
+          if (!L2.partSeqs || typeof L2.partSeqs !== 'object') L2.partSeqs = {};
+          const cur = Array.isArray(L2.partSeqs[pi2]) ? L2.partSeqs[pi2].slice()
+                    : (L2.partSeqs[pi2] ? [L2.partSeqs[pi2]] : []);
+          const at = cur.indexOf(nm2);
+          if (at >= 0) cur.splice(at, 1); else cur.push(nm2);   // order of adding IS the play order
+          if (cur.length) L2.partSeqs[pi2] = cur; else delete L2.partSeqs[pi2];
+          if (!Object.keys(L2.partSeqs).length) delete L2.partSeqs;
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          // UPDATE IN PLACE. Re-rendering the card here rebuilt every chip, so the
+          // one under your finger was detached before a second tap could land —
+          // only the first toggle of a burst registered, and the card jumped. Same
+          // lesson as the groove macro that could not be dragged: a control must
+          // not re-render the panel it lives in. Repaint this row only.
+          try {
+            const row = chip.closest('.ambient-pmrow');
+            if (row) {
+              row.querySelectorAll('.ambient-pmchip').forEach(el => {
+                const nm3 = el.dataset.pmseq || '', at3 = cur.indexOf(nm3);
+                el.classList.toggle('on', at3 >= 0);
+                const old = el.querySelector('i'); if (old) old.remove();
+                if (at3 >= 0 && cur.length > 1) {
+                  const b3 = document.createElement('i'); b3.textContent = String(at3 + 1); el.appendChild(b3);
+                }
+              });
+              const hint = row.querySelector('.ambient-hint');
+              if (cur.length && hint) hint.remove();
+              else if (!cur.length && !hint) {
+                const sp = document.createElement('span');
+                sp.className = 'ambient-hint'; sp.textContent = 'this layer’s own phrase'; row.appendChild(sp);
+              }
+            }
+          } catch (e) {}
+        }, true);
         document.addEventListener('change', (ev) => {
           const sel = ev.target && ev.target.closest && ev.target.closest('.ambient-sgpart-sel');
           if (!sel) return;
@@ -39536,16 +39603,28 @@
             '<span class="ambient-hint">' + _ambEscAttr(_pw) + '</span></div>';
         }
         if (usable.length && parts.length > 1) {
+          // TOGGLE CHIPS, not a dropdown: a part can hold SEVERAL sequences and a
+          // sequence can sit in several parts, which a single-value <select>
+          // cannot express. Several in one part play in turn, one per pass.
           h += '<div class="ambient-ctrl ambient-seqbank-row"><label title="' +
-            _ambEscAttr('Which banked phrase this layer plays under each part of the changes.') +
-            '">Plays</label><span class="ambient-seedgrid-parts" style="margin:0">' +
-            parts.map((pp, i) =>
-              '<label class="ambient-sgpart"><span>' + _ambEscAttr((pp && pp.name) || ('Part ' + (i + 1))) + '</span>' +
-              '<select class="ambient-select ambient-sgpart-sel" data-pi="' + i + '" data-sbkey="' + _ambEscText(_ek) + '">' +
-                '<option value="">— this layer’s phrase —</option>' +
-                usable.map(x => '<option value="' + _ambEscAttr(x.name) + '"' + (map[i] === x.name ? ' selected' : '') + '>' +
-                  _ambEscAttr(x.name) + '</option>').join('') +
-              '</select></label>').join('') + '</span></div>';
+            _ambEscAttr('Which banked sequences this layer plays under each part. Pick more than one and they take turns, a different one each pass.') +
+            '">Plays</label><span class="ambient-seqbank ambient-partmap">' +
+            parts.map((pp, i2) => {
+              const cur = Array.isArray(map[i2]) ? map[i2] : (map[i2] ? [map[i2]] : []);
+              return '<span class="ambient-pmrow"><b>' + _ambEscAttr((pp && pp.name) || ('Part ' + (i2 + 1))) + '</b>' +
+                usable.map(x => {
+                  const on = cur.indexOf(x.name) >= 0;
+                  const ord = on && cur.length > 1 ? '<i>' + (cur.indexOf(x.name) + 1) + '</i>' : '';
+                  return '<button type="button" class="ambient-seg ambient-pmchip' + (on ? ' on' : '') +
+                    '" data-pmseq="' + _ambEscAttr(x.name) + '" data-pmpi="' + i2 + '" data-sbkey="' + _ambEscText(_ek) + '" title="' +
+                    _ambEscAttr(on
+                      ? (x.name + ' plays in ' + ((pp && pp.name) || ('part ' + (i2 + 1))) + (cur.length > 1 ? ' — pass ' + (cur.indexOf(x.name) + 1) + ' of ' + cur.length : '') + '. Tap to remove.')
+                      : ('Add ' + x.name + ' to ' + ((pp && pp.name) || ('part ' + (i2 + 1))) + '.')) + '">' +
+                    _ambEscAttr(x.name) + ord + '</button>';
+                }).join('') +
+                (cur.length ? '' : '<span class="ambient-hint">this layer’s own phrase</span>') +
+              '</span>';
+            }).join('') + '</span></div>';
         }
         return h;
       }

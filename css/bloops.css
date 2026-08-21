@@ -7577,6 +7577,14 @@
        which part plays it here. */
     /* The banked phrases, in the layer that composes them. */
     /* The bank, on the layer card. Wraps rather than scrolling (UI rule 1). */
+    /* Many-to-many part map: one row per part, a toggle per banked sequence. */
+    .ambient-partmap { flex-direction: column; gap: 6px; align-items: stretch; }
+    .ambient-pmrow { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; }
+    .ambient-pmrow > b { flex: 0 0 auto; max-width: 92px; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; font-size: 0.64rem; color: #ffd9a8; letter-spacing: 0.03em; }
+    .ambient-pmchip { min-height: 28px; padding: 3px 8px; font-size: 0.64rem; opacity: 0.55; }
+    .ambient-pmchip.on { opacity: 1; border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.18); }
+    .ambient-pmchip > i { font-style: normal; font-size: 0.54rem; opacity: 0.8; margin-left: 3px; }
     .ambient-seqbank-row { align-items: start; }
     .ambient-seqbank { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; grid-column: 2 / -1; }
     .amb-seedmode.has-phrase { border-color: #9f7aea; color: #d6bcfa; }

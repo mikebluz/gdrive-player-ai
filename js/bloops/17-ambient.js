@@ -43738,7 +43738,17 @@
               // was already authored bounced straight back out on the first
               // press: it read as "can't select Grid, stuck on Pattern".
               const _soleBtn = !_ambHasPattern(L0, String(key).split(':')[0]);
-              if (_soleBtn && (_authored || _live)) {
+              // RE-ENTER, don't revert. This used to leave on `_authored || _live`,
+              // so an AUTHORED layer with no live session — every layer after a
+              // reload, since _bloomGridEdit is runtime state and lockState.seedEdit
+              // is persisted — answered ✎ Grid by discarding the phrase. The button
+              // read "active" (authored) while the dock showed nothing, and there was
+              // no way back INTO the editor: reported as "the layer grid stays
+              // selected but the grid doesn't show", and it is also why the banked
+              // sequences were invisible, since the list only renders during a
+              // session. Leaving is now only what a press does while one is OPEN;
+              // otherwise the press opens the editor on the phrase already there.
+              if (_soleBtn && _live) {
                 if (_live) {
                   // Ask before throwing the composition away. Keep → the phrase
                   // becomes the layer's; Discard → the layer goes back to exactly

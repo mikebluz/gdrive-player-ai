@@ -63,8 +63,8 @@ with no description; it can never catch a stochastic control somewhere else.
 
 | control | key | type | group | layers | what a user sees | what it draws |
 |---|---|---|---|---|---|---|
-| saltColors | `saltColors` | Pitch | token: salt | 9 | Recolours the chord as it plays — added 7ths, 9ths, suspensions | _ambProgSaltSegCount / the colour pick — _ambSeededRand per chord instance |
-| saltScatter | `saltScatter` | Rhythm | token: salt | 9 | Varies where inside the chord the colour changes land | shape exponent on the same per-chord _ambSeededRand draw |
+| saltColors | `saltColors` | Pitch | token: salt | 9 | Recolours the chord as it plays | _ambProgSaltSegCount — nTarget = min(8, colours+1), _ambSeededRand per chord instance |
+| saltScatter | `saltScatter` | Pitch | token: salt | 9 | Varies how many colour sections each chord gets | shape exponent on the same per-chord draw: 1 + round(rnd^(scatter/100*4) * (nTarget-1)) |
 
 ### one CYCLE — one choice for the whole phrase / pass
 
@@ -82,8 +82,8 @@ with no description; it can never catch a stochastic control somewhere else.
 
 | type | controls | count |
 |---|---|---|
-| Rhythm | Humanize · Twist · Rests · Ghosts · Fill · Syncopate · saltScatter · Rhythm var · Start · Rate var · Start · Time vary | 12 |
-| Pitch | Proximity · Contour · Gravity · Motion · Poly · Randomness · Stutter · Variety · Walk · saltColors · Pitch vary · Vary / Roam | 12 |
+| Pitch | Proximity · Contour · Gravity · Motion · Poly · Randomness · Stutter · Variety · Walk · saltColors · saltScatter · Pitch vary · Vary / Roam | 13 |
+| Rhythm | Humanize · Twist · Rests · Ghosts · Fill · Syncopate · Rhythm var · Start · Rate var · Start · Time vary | 11 |
 | Articulation | Ornament · Slide · Fidelity | 3 |
 | Space | space · spat | 2 |
 | Dynamics | Dynamics · Accent | 2 |

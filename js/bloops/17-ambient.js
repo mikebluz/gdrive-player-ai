@@ -2450,10 +2450,14 @@
       // harmonic clock (_ambProgStepAt) — per layer it would put the bass on
       // chord 2 while the pads are on chord 3. It stays an AREA axis, so a layer
       // simply has no such field rather than one that is stored and ignored.
+      // Colours is a COUNT capped at 8 by _ambProgSaltSegCount, so storing more
+      // was storing a number that could never be heard; clamping is
+      // sound-preserving (8 and 100 both resolve to 8 sections). Scatter is a
+      // genuine 0-100 shape exponent.
       const o = {};
-      ['colors', 'scatter'].forEach(k => {
+      [['colors', 8], ['scatter', 100]].forEach(([k, hi]) => {
         const v = Number(sl[k]);
-        o[k] = Number.isFinite(v) ? Math.max(0, Math.min(100, v | 0)) : 0;
+        o[k] = Number.isFinite(v) ? Math.max(0, Math.min(hi, v | 0)) : 0;
       });
       L.salt = o;   // all-zero is MEANINGFUL here (explicit off), so it is not pruned
     }
@@ -31984,12 +31988,22 @@
                    off: 'off — Stereo places the notes instead',
                    every: 'only Mode “Random” rolls; Fan, Alternate, Sine and Sweep are fixed patterns',
                    draws: '_ambSpatPan — dedicated _ambSeededRand on (ordinal, take), random mode only' },
-      saltColors:{ type: 'pit', grain: 'chord', token: 'salt', does: 'Recolours the chord as it plays — added 7ths, 9ths, suspensions',
+      // COLOUR IS A COUNT, not an amount: the knob IS how many times the chord
+      // recolours inside its own unit (sections = colours + 1, capped at 8 by
+      // _ambProgSaltSegCount). Scatter then varies that count per instance —
+      // measured at colours 4: scatter 0 gives exactly 5 sections every time,
+      // scatter 60 gave 1,1,4,5,1,3,1,2 over eight passes of the same slot.
+      saltColors:{ type: 'pit', grain: 'chord', token: 'salt', does: 'Recolours the chord as it plays',
                    off: 'the chord is played exactly as written',
-                   draws: '_ambProgSaltSegCount / the colour pick — _ambSeededRand per chord instance' },
-      saltScatter:{ type: 'rhy', grain: 'chord', token: 'salt', does: 'Varies where inside the chord the colour changes land',
-                   off: 'colour changes are evenly spaced',
-                   draws: 'shape exponent on the same per-chord _ambSeededRand draw' },
+                   at: function (v) { return 'Cuts each chord into ' + Math.min(8, (v | 0) + 1) +
+                         ' sections — the first is the chord as written, the rest are colours of it'; },
+                   every: 'a fresh deal every time the chord comes round — Scatter varies how many sections it actually gets',
+                   draws: '_ambProgSaltSegCount — nTarget = min(8, colours+1), _ambSeededRand per chord instance' },
+      saltScatter:{ type: 'pit', grain: 'chord', token: 'salt', does: 'Varies how many colour sections each chord gets',
+                   off: 'every chord gets the full count from Salt colour',
+                   at: function (v) { return v >= 67 ? 'Most chords stay plain; the occasional one blooms fully'
+                         : 'Varies the section count chord to chord — some plainer than others'; },
+                   draws: 'shape exponent on the same per-chord draw: 1 + round(rnd^(scatter/100*4) * (nTarget-1))' },
     };
     // Controls whose ELEMENT ID does not end in their config key, because they are
     // rendered by a custom token rather than by _ambSl. Marking resolves through
@@ -38770,8 +38784,19 @@
         // — the same absent/zero grammar the Changes use.
         const sl = (inst && inst.salt && typeof inst.salt === 'object') ? inst.salt : null;
         const v = (k2) => sl ? Math.max(0, Math.min(100, sl[k2] | 0)) : 0;
-        const row = (k2, lbl, hint) => '<div class="ambient-ctrl ambient-ctrl-stoch"><label for="' + p + '-salt-' + k2 + '">' + lbl + '</label>' +
-          '<input type="range" id="' + p + '-salt-' + k2 + '" class="ambient-sl ambient-layersalt" data-saltk="' + k2 + '" min="0" max="100" step="1" value="' + v(k2) + '"' + (sl ? '' : ' disabled') + '>' +
+        // COLOUR IS A COUNT (sections = colours + 1, capped at 8), so it is a
+        // STEPPER 0-8 exactly like the area-level control — it used to be a
+        // 0-100 slider, where 93 of the 100 positions were identical because
+        // _ambProgSaltSegCount clamps to 8. Scatter really is 0-100 (a shape
+        // exponent) and stays a slider.
+        const row = (k2, lbl, hint) => '<div class="ambient-ctrl ambient-ctrl-stoch' + (k2 === 'colors' ? ' ambient-ctrl-step' : '') + '"><label for="' + p + '-salt-' + k2 + '">' + lbl + '</label>' +
+          (k2 === 'colors'
+            ? '<span class="ambient-stepper">' +
+                '<button type="button" class="ambient-step-btn ambient-step-dn" tabindex="-1" aria-label="Decrease"' + (sl ? '' : ' disabled') + '>−</button>' +
+                '<input type="number" inputmode="numeric" id="' + p + '-salt-' + k2 + '" class="ambient-step-inp ambient-layersalt" data-saltk="' + k2 + '" min="0" max="8" step="1" value="' + v(k2) + '"' + (sl ? '' : ' disabled') + '>' +
+                '<button type="button" class="ambient-step-btn ambient-step-up" tabindex="-1" aria-label="Increase"' + (sl ? '' : ' disabled') + '>+</button>' +
+              '</span>'
+            : '<input type="range" id="' + p + '-salt-' + k2 + '" class="ambient-sl ambient-layersalt" data-saltk="' + k2 + '" min="0" max="100" step="1" value="' + v(k2) + '"' + (sl ? '' : ' disabled') + '>') +
           '<span class="ambient-hint">' + hint + '</span>' +
           (_ambStochUiOn(p) ? '<span class="ambient-stoch-desc" id="' + p + '-salt-' + k2 + '-sd">' + _ambStochDesc(k2 === 'colors' ? 'saltColors' : 'saltScatter', v(k2)) + '</span>' : '') + '</div>';
         return '<div class="ambient-ctrl"><label for="' + p + '-saltmode">Salt</label>' +
@@ -39329,11 +39354,18 @@
             });
             ['colors', 'scatter'].forEach(k2 => {
               const e2 = el('salt-' + k2);
-              if (e2) e2.addEventListener('change', () => {
+              if (!e2) return;
+              // Colours is a stepper now: its +/- buttons dispatch 'input', never
+              // 'change', so a change-only listener would leave them dead.
+              const hi = (k2 === 'colors') ? 8 : 100;
+              const write = () => {
                 const L = get(); if (!L || !L.salt) return;
-                L.salt[k2] = Math.max(0, Math.min(100, parseInt(e2.value, 10) || 0));
+                L.salt[k2] = Math.max(0, Math.min(hi, parseInt(e2.value, 10) || 0));
+                _ambStochSync(e2.id, L.salt[k2]);
                 apply();
-              });
+              };
+              e2.addEventListener('input', write);
+              e2.addEventListener('change', write);
             });
           }
           else if (k === 'followsalt') { const e = el('followsalt'); if (e) { e.value = inst.followSalt ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === '1') L.followSalt = 1; else delete L.followSalt; sync(); persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } } }); } }

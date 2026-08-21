@@ -3000,7 +3000,14 @@
     .ambient-ctrl input[type="range"] { width: 100%; min-width: 0; accent-color: #9f7aea; }
     /* Stepper (−/value/+) — discrete integer counts. Occupies the slider column. */
     .ambient-ctrl-step .ambient-stepper {
-      display: inline-flex; align-items: stretch; width: 100%; min-width: 0;
+      /* A STEPPER MUST NOT BE CRUSHED BY A LONG HINT. `.ambient-ctrl` is
+         `84px 1fr auto`, so a wordy third column eats the control column —
+         measured at 390px, Salt colour's stepper was squeezed to 51px (two 34px
+         buttons plus a number field, clipped) while short-hinted steppers beside
+         it had 177-249. The floor is two buttons + a legible field; min-width only
+         lifts a CRUSHED stepper, so the roomy ones are untouched. Same cause as
+         the documented long-hint-vs-slider case. */
+      display: inline-flex; align-items: stretch; width: 100%; min-width: 112px;
       border: 1px solid #3a3a52; border-radius: 8px; overflow: hidden; background: rgba(45,45,63,0.35);
     }
     .ambient-step-btn {

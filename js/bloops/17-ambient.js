@@ -28549,7 +28549,25 @@
       const cfg = E._cfg || (E.getCfg && E.getCfg()) || null;
       const parts = (cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.parts)) ? cfg.prog.parts : null;
       const fs = E.freeze && E.freeze[ge.key];
-      if (!parts || parts.length < 2 || !fs || !(fs.loopLen > 0) || !Number.isFinite(fs.anchor)) { hide(); return; }
+      if (!fs || !(fs.loopLen > 0) || !Number.isFinite(fs.anchor)) { hide(); return; }
+      // FEWER THAN TWO PARTS IS NOT A REASON TO VANISH. Returning silently here
+      // is the same mistake the Plays row had one function away: the ribbon was
+      // absent, and nothing said whether the feature was missing, broken, or
+      // simply had nothing to draw. Say which.
+      if (!parts || parts.length < 2) {
+        const why = (!cfg || !cfg.prog || !cfg.prog.on || !(Array.isArray(cfg.prog.chords) && cfg.prog.chords.length))
+          ? 'No progression — turn one on to see parts and chords under the phrase'
+          : 'One part — split it in ⇶ Arch → ＋ Part to compose across sections';
+        hosts.forEach(h => {
+          const sl0 = h.closest ? h.closest('.ambient-seedgrid-slot') : null;
+          if (!(sl0 && sl0.getAttribute('data-sgkey') === ge.key)) { if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } return; }
+          if (h._sig === why && !h.hidden) return;
+          h._sig = why; h.hidden = false;
+          h.innerHTML = '<span class="ambient-sgpartspan none" style="flex-grow:1" title="' +
+            _ambEscAttr(why) + '">' + _ambEscAttr(why) + '</span>';
+        });
+        return;
+      }
       const N = 192, L = fs.loopLen, spans = [];
       for (let i = 0; i < N; i++) {
         const t = fs.anchor + (i + 0.5) * (L / N);

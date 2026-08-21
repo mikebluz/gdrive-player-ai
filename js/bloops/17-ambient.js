@@ -39443,18 +39443,18 @@
         Object.keys(map).forEach(k2 => { const pp = parts[k2 | 0];
           if (map[k2]) (boundTo[map[k2]] = boundTo[map[k2]] || []).push((pp && pp.name) || ('Part ' + ((k2 | 0) + 1))); });
         let h = '<div class="ambient-ctrl ambient-seqbank-row"><label title="' +
-          _ambEscAttr('Phrases saved from this layer\\u2019s grid. Tap one to load it into this layer.') +
+          _ambEscAttr('Phrases saved from this layer’s grid. Tap one to load it into this layer.') +
           '">Sequences</label><span class="ambient-seqbank" data-sbkey="' + _ambEscText(_ek) + '">';
         h += usable.length
           ? usable.map(x => {
               const bt = boundTo[x.name];
               return '<button type="button" class="ambient-seg ambient-sgseq' + (bt ? ' bound' : '') +
                 '" data-sgseq="' + _ambEscAttr(x.name) + '" data-sbkey="' + _ambEscText(_ek) + '" title="' +
-                _ambEscAttr(x.name + ' \\u2014 ' + x.steps.length + ' steps' + (bt ? ' \\u00b7 plays on ' + bt.join(', ') : '') +
-                  '. Tap to make it this layer\\u2019s phrase.') + '">' + _ambEscAttr(x.name) +
+                _ambEscAttr(x.name + ' — ' + x.steps.length + ' steps' + (bt ? ' · plays on ' + bt.join(', ') : '') +
+                  '. Tap to make it this layer’s phrase.') + '">' + _ambEscAttr(x.name) +
                 (bt ? '<i>' + _ambEscAttr(bt.join(', ')) + '</i>' : '') + '</button>';
             }).join('')
-          : '<span class="ambient-hint">none yet \\u2014 compose in \\u270e Grid, then \\u2b07 Save as sequence</span>';
+          : '<span class="ambient-hint">none yet — compose in ✎ Grid, then ⬇ Save as sequence</span>';
         h += '</span></div>';
         if (usable.length && parts.length > 1) {
           h += '<div class="ambient-ctrl ambient-seqbank-row"><label title="' +
@@ -39463,7 +39463,7 @@
             parts.map((pp, i) =>
               '<label class="ambient-sgpart"><span>' + _ambEscAttr((pp && pp.name) || ('Part ' + (i + 1))) + '</span>' +
               '<select class="ambient-select ambient-sgpart-sel" data-pi="' + i + '" data-sbkey="' + _ambEscText(_ek) + '">' +
-                '<option value="">\\u2014 this layer\\u2019s phrase \\u2014</option>' +
+                '<option value="">— this layer’s phrase —</option>' +
                 usable.map(x => '<option value="' + _ambEscAttr(x.name) + '"' + (map[i] === x.name ? ' selected' : '') + '>' +
                   _ambEscAttr(x.name) + '</option>').join('') +
               '</select></label>').join('') + '</span></div>';
@@ -45202,36 +45202,39 @@
                   if (typeof showToast === 'function') showToast('The sequence bank isn’t available here.');
                   return;
                 }
-                // The scratch lane IS the active lane for the whole session
-                // (_ambGridEditStart activates it), so the workspace snapshot the
-                // bank already takes is exactly this phrase — no new converter.
                 const _lk = sb.dataset.sgk || '';
                 const L0 = _ambLayerByKey(E, _lk);
                 const dflt = (L0 && (L0.name || _ambLayerLabel(L0, String(_lk).split(':')[0]))) || 'Phrase';
                 const nm = (typeof prompt === 'function') ? prompt('Save this phrase to the sequence bank as:', dflt) : dflt;
                 if (nm == null) return;                       // cancelled
-                const ok = saveAsNewSeq(String(nm).trim() || dflt);
+                const before = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences.length : -1;
+                let failed = null;
+                try { saveAsNewSeq(String(nm).trim() || dflt); }
+                catch (e2) { failed = e2; }
+                const after = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences.length : -1;
+                // SAY WHAT HAPPENED. A silent failure here is what made this look
+                // like the feature was missing rather than broken: the bank stayed
+                // empty, the row said "none yet", and nothing named a reason.
                 if (typeof showToast === 'function') {
-                  showToast(ok === false ? 'Could not save to the bank.'
-                    : 'Saved to the sequence bank — reusable on any layer, and bindable to a part.');
+                  if (failed) showToast('Could not save: ' + ((failed && failed.message) || failed), { warn: true, ms: 12000 });
+                  else if (after <= before) showToast('Save did not add anything to the bank — nothing to report from saveAsNewSeq.', { warn: true, ms: 12000 });
+                  else showToast('Saved to the sequence bank — reusable on any layer, and bindable to a part.');
                 }
-                // The Sequences chips are built with the CARD, so a new bank
-                // entry is invisible until the card is rebuilt. Without this the
-                // phrase really was saved and really did not appear — reported
-                // repeatedly as "still not seeing the saved sequences".
-                try { _ambRenderExtras(E); _ambSyncControls(E); _ambRefreshSeedModes(E); } catch (x) {}
-                // RE-DOCK. _ambRenderExtras rebuilds the cards, which recreates
-                // .ambient-seedgrid-striphost EMPTY — so re-rendering to reveal
-                // the new chip wiped the grid you were composing in. The strip
-                // only returns when renderSequence() runs again with the scratch
-                // lane still active, exactly as _ambGridEditStart ends.
+                if (failed) { try { console.error('Save as sequence failed:', failed); } catch (x) {} }
+              } catch (err) { console.warn('Save as sequence failed', err); }
+              finally {
+                // THE GRID STAYS OPEN. Save banks a phrase; it is not a decision
+                // about this layer, and it must never close the editor — Quit does
+                // that. The re-render below reveals the new chip, so the editor is
+                // re-docked here whether the save worked or not.
                 try {
+                  _ambRenderExtras(E); _ambSyncControls(E); _ambRefreshSeedModes(E);
                   if (_bloomGridEdit) {
                     if (typeof renderSequence === 'function') renderSequence();
                     if (typeof _placeLaneExpander === 'function') _placeLaneExpander();
                   }
-                } catch (x) {}
-              } catch (err) { console.warn('Save as sequence failed', err); }
+                } catch (x) { console.warn('re-dock after save failed', x); }
+              }
               return;
             }
             const sg = ev.target && ev.target.closest && ev.target.closest('.ambient-seedgrid-done, .ambient-seedgrid-cancel');

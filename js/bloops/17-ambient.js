@@ -28425,6 +28425,12 @@
             const L3 = _ambLayerByKey(E, key);
             if (L3) { if (!L3.lockState || typeof L3.lockState !== 'object') L3.lockState = {}; L3.lockState.seedEdit = true; }
             try { _ambRenderExtras(E); _ambSyncControls(E); _ambRefreshSeedModes(E); _ambUpdateNotesLive(E); } catch (x) {}
+            try {
+              if (_bloomGridEdit) {                      // same re-dock as above
+                if (typeof renderSequence === 'function') renderSequence();
+                if (typeof _placeLaneExpander === 'function') _placeLaneExpander();
+              }
+            } catch (x) {}
             if (typeof persistWorkspace === 'function') persistWorkspace();
             if (typeof showToast === 'function') showToast('\u201c' + (saved.name || 'sequence') + '\u201d is now this layer\u2019s phrase.');
           } catch (err) { console.warn('Load sequence failed', err); }
@@ -45214,6 +45220,17 @@
                 // phrase really was saved and really did not appear — reported
                 // repeatedly as "still not seeing the saved sequences".
                 try { _ambRenderExtras(E); _ambSyncControls(E); _ambRefreshSeedModes(E); } catch (x) {}
+                // RE-DOCK. _ambRenderExtras rebuilds the cards, which recreates
+                // .ambient-seedgrid-striphost EMPTY — so re-rendering to reveal
+                // the new chip wiped the grid you were composing in. The strip
+                // only returns when renderSequence() runs again with the scratch
+                // lane still active, exactly as _ambGridEditStart ends.
+                try {
+                  if (_bloomGridEdit) {
+                    if (typeof renderSequence === 'function') renderSequence();
+                    if (typeof _placeLaneExpander === 'function') _placeLaneExpander();
+                  }
+                } catch (x) {}
               } catch (err) { console.warn('Save as sequence failed', err); }
               return;
             }

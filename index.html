@@ -433,12 +433,14 @@ dl.f dd{font-weight:700}
 
 <div class="radio" id="radio" data-on="0">
   <button class="pw" id="rpw" type="button" aria-pressed="false"
-          title="Unmute — everything but channel 1 is generated live."><svg class="spk" viewBox="0 0 16 16" aria-hidden="true"><path class="cone" d="M2 6h3l4-3v10L5 10H2z"/><g class="waves" fill="none" stroke-linecap="round"><path d="M11 6.2a2.6 2.6 0 0 1 0 3.6"/><path d="M12.9 4.4a5.2 5.2 0 0 1 0 7.2"/></g><g class="cross" fill="none" stroke-linecap="round"><path d="M11.3 6.3l3.4 3.4"/><path d="M14.7 6.3l-3.4 3.4"/></g></svg></button>
+          title="Unmute — these channels are generated live."><svg class="spk" viewBox="0 0 16 16" aria-hidden="true"><path class="cone" d="M2 6h3l4-3v10L5 10H2z"/><g class="waves" fill="none" stroke-linecap="round"><path d="M11 6.2a2.6 2.6 0 0 1 0 3.6"/><path d="M12.9 4.4a5.2 5.2 0 0 1 0 7.2"/></g><g class="cross" fill="none" stroke-linecap="round"><path d="M11.3 6.3l3.4 3.4"/><path d="M14.7 6.3l-3.4 3.4"/></g></svg></button>
   <button class="ch" id="rch" type="button" title="Next channel">
-    <span class="n">1</span><span class="t">GRAINS</span>
+    <span class="n">1</span><span class="t">TIDE</span>
   </button>
   <span class="lv" aria-hidden="true"><i></i><i></i><i></i></span>
-  <audio id="rgr" preload="none" loop src="audio/grains.m4a"></audio>
+  <!-- src is set per track channel by startTrack(); no default, since the
+       built-ins are all generated and only an imported channel has a file. -->
+  <audio id="rgr" preload="none" loop></audio>
 </div>
 
 <div class="bar">
@@ -662,8 +664,11 @@ const YT = 'UKcZJ31ZHH0';
   const nEl = chb.querySelector('.n'), tEl = chb.querySelector('.t');
   const T0 = performance.now();          // channel 1 has "been playing" since this
 
+  // GRAINS was channel 1 (the one real recording among the generated ones) and
+  // was removed from the player 2026-08-21. Every built-in is generated live now;
+  // track channels still exist and arrive from Bloops via `npm run radio`, which
+  // is why the <audio> element and the track branch below both stay.
   const CH = [
-    { name: 'GRAINS', track: true, src: 'audio/grains.m4a' },
     // dorian, low and slow — the sea at night
     { name: 'TIDE',   scale: [0, 2, 3, 5, 7, 9, 10], roots: [130.81, 146.83, 164.81],
       hold: [15, 25], bell: [7, 16], oct: -1, cut: 1100, chords: [[0,2,4],[3,5,0],[4,6,1],[5,0,2]] },
@@ -765,7 +770,10 @@ const YT = 'UKcZJ31ZHH0';
   function startTrack() {
     // Each track channel carries its own src; swapping it resets readyState, so
     // the seek has to wait for metadata again.
-    const want = cfg().src || 'audio/grains.m4a';
+    // No fallback file: this used to default to audio/grains.m4a, which would
+    // now pull a removed channel back in for any track entry missing a src.
+    const want = cfg().src;
+    if (!want) return;
     if (!trk.getAttribute('src') || !trk.getAttribute('src').endsWith(want.split('/').pop())) {
       trk.setAttribute('src', want);
       trk.load();

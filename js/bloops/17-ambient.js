@@ -31150,6 +31150,10 @@
               '<span class="ambient-hint">editing in Grid — changes land live, and variance is bypassed: you hear exactly what you draw</span>' +
               '<button type="button" class="ambient-seg ambient-seedgrid-done" data-sgk="' + _ambEscText(lk) + '">✓ Done</button>' +
               '<button type="button" class="ambient-seg ambient-seedgrid-cancel" data-sgk="' + _ambEscText(lk) + '" title="Discard grid edits — restore the pattern as it was">✕ Cancel</button>' +
+              // Into the SEQUENCE BANK, from here. Composing and the bank used to
+              // be two workflows sharing an editor: the only way to bank a phrase
+              // was to leave, re-compose it in the grid workspace and Save there.
+              '<button type="button" class="ambient-seg ambient-seedgrid-bank" data-sgk="' + _ambEscText(lk) + '" title="Save this phrase to the sequence bank under a name, so it can be reused — on another layer, in another area, or bound to a part.">\u2b07 Save as sequence</button>' +
               // The docked editor is the WHOLE lane-expander — every mode surface
               // is already inside it; these tabs are the mode switcher (the top-bar
               // one isn't reachable from the card). Phrase-writing modes only.
@@ -44864,6 +44868,31 @@
                 const bar = gm.closest('.ambient-seedgrid-bar');
                 if (bar) bar.querySelectorAll('.ambient-seedgrid-mode').forEach(b2 => b2.classList.toggle('active', b2 === gm));
               }
+              return;
+            }
+            const sb = ev.target && ev.target.closest && ev.target.closest('.ambient-seedgrid-bank');
+            if (sb) {
+              ev.stopPropagation();
+              try {
+                if (typeof saveAsNewSeq !== 'function' || typeof currentSequenceSnapshot !== 'function') {
+                  if (typeof showToast === 'function') showToast('The sequence bank isn’t available here.');
+                  return;
+                }
+                // The scratch lane IS the active lane for the whole session
+                // (_ambGridEditStart activates it), so the workspace snapshot the
+                // bank already takes is exactly this phrase — no new converter.
+                const _lk = sb.dataset.sgk || '';
+                const L0 = _ambLayerByKey(E, _lk);
+                const dflt = (L0 && (L0.name || _ambLayerLabel(L0, String(_lk).split(':')[0]))) || 'Phrase';
+                const nm = (typeof prompt === 'function') ? prompt('Save this phrase to the sequence bank as:', dflt) : dflt;
+                if (nm == null) return;                       // cancelled
+                const ok = saveAsNewSeq(String(nm).trim() || dflt);
+                if (typeof showToast === 'function') {
+                  showToast(ok === false ? 'Could not save to the bank.'
+                    : 'Saved to the sequence bank — reusable on any layer, and bindable to a part.');
+                }
+                try { _ambRefreshSeedModes(E); } catch (x) {}
+              } catch (err) { console.warn('Save as sequence failed', err); }
               return;
             }
             const sg = ev.target && ev.target.closest && ev.target.closest('.ambient-seedgrid-done, .ambient-seedgrid-cancel');

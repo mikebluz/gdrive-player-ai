@@ -28424,7 +28424,7 @@
             try { _ambPersistLock(E, key); } catch (x) {}
             const L3 = _ambLayerByKey(E, key);
             if (L3) { if (!L3.lockState || typeof L3.lockState !== 'object') L3.lockState = {}; L3.lockState.seedEdit = true; }
-            try { _ambRefreshSeedModes(E); _ambUpdateNotesLive(E); } catch (x) {}
+            try { _ambRenderExtras(E); _ambSyncControls(E); _ambRefreshSeedModes(E); _ambUpdateNotesLive(E); } catch (x) {}
             if (typeof persistWorkspace === 'function') persistWorkspace();
             if (typeof showToast === 'function') showToast('\u201c' + (saved.name || 'sequence') + '\u201d is now this layer\u2019s phrase.');
           } catch (err) { console.warn('Load sequence failed', err); }
@@ -31403,7 +31403,12 @@
         if (grd) {
           grd.classList.toggle('active', !!gridActive);
           grd.classList.toggle('has-phrase', !gridActive && !!authored);
-          grd.textContent = gridActive ? '\u270e Editing\u2026' : (authored ? '\u270e Grid \u00b7 composed' : '\u270e Grid');
+          // While a session is open the button's job is to LEAVE, so it says so.
+          // "Editing…" described a state; "Quit" names what pressing it does.
+          grd.textContent = gridActive ? '\u2715 Quit' : (authored ? '\u270e Grid \u00b7 composed' : '\u270e Grid');
+          grd.title = gridActive
+            ? 'Leave the grid. You\u2019ll be asked whether to keep what you composed.'
+            : (authored ? 'Open the grid on this layer\u2019s phrase.' : 'Compose a fixed phrase in the full editor.');
         }
         // MUTUAL EXCLUSION, made visible: a Grid phrase replaces the Pattern, so
         // dim the pattern controls while one is in force rather than leaving two
@@ -45191,7 +45196,11 @@
                   showToast(ok === false ? 'Could not save to the bank.'
                     : 'Saved to the sequence bank — reusable on any layer, and bindable to a part.');
                 }
-                try { _ambRefreshSeedModes(E); } catch (x) {}
+                // The Sequences chips are built with the CARD, so a new bank
+                // entry is invisible until the card is rebuilt. Without this the
+                // phrase really was saved and really did not appear — reported
+                // repeatedly as "still not seeing the saved sequences".
+                try { _ambRenderExtras(E); _ambSyncControls(E); _ambRefreshSeedModes(E); } catch (x) {}
               } catch (err) { console.warn('Save as sequence failed', err); }
               return;
             }

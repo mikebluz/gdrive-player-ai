@@ -7580,6 +7580,13 @@
     .ambient-seqbank-row { align-items: start; }
     .ambient-seqbank { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; grid-column: 2 / -1; }
     .amb-seedmode.has-phrase { border-color: #9f7aea; color: #d6bcfa; }
+    /* IN a session the button leaves rather than enters, so it reads as an exit,
+       not as another "on" state — amber, the palette's own inert/act-now colour,
+       against the purple that means "this layer has a phrase". */
+    .amb-seedmode.active {
+      border-color: #f6ad55; color: #ffd9a8;
+      background: rgba(246,173,85,0.16); box-shadow: 0 0 10px rgba(246,173,85,0.25);
+    }
     .ambient-seedgrid-seqs { display: flex; flex-wrap: wrap; gap: 5px; margin: 4px 0 2px; align-items: center; }
     .ambient-sgseqs-title { flex: 1 0 100%; font-family: 'Segoe UI', sans-serif; font-size: 0.64rem; color: #6b6b8a; }
     .ambient-sgseq { min-height: 30px; padding: 4px 9px; font-size: 0.68rem; max-width: 100%; }

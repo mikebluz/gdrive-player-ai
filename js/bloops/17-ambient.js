@@ -2443,23 +2443,30 @@
           if (Object.keys(o3).length) L.saltFree = o3; else delete L.saltFree;
         }
       }
+      // PER-LAYER SALT FOLLOW MASK — chord-matrix grammar, absent = follows fully.
+      const sm = L.saltMask;
+      if (sm != null) {
+        if (typeof sm !== 'object') delete L.saltMask;
+        else {
+          let st = Array.isArray(sm.steps)
+            ? sm.steps.slice(0, 32).map(v => Number.isFinite(v) ? Math.max(0, Math.min(100, v | 0)) : 100) : null;
+          if (st && !st.some(v => v < 100)) st = null;      // all-100 IS absent
+          if (st) L.saltMask = { steps: st }; else delete L.saltMask;
+        }
+      }
+      // MIGRATION off the retired per-layer salt OBJECT. An explicit all-zero
+      // meant "this layer never salts" and is preserved exactly, as a length-1
+      // mask (indexed modulo, so it covers every chord). A layer that carried its
+      // OWN colours/scatter cannot be expressed in the shared-plan model at all —
+      // those numbers are dropped and the layer follows the Changes in full.
+      // Length salt is deliberately absent per layer and always was: it re-slices
+      // the chord LENGTHS, which are the shared harmonic clock (_ambProgStepAt),
+      // so per layer it would put the bass on chord 2 while the pads are on 3.
       const sl = L.salt;
-      if (sl == null) return;
-      if (typeof sl !== 'object') { delete L.salt; return; }
-      // NO `len`. Length salt re-slices the chord lengths, which IS the shared
-      // harmonic clock (_ambProgStepAt) — per layer it would put the bass on
-      // chord 2 while the pads are on chord 3. It stays an AREA axis, so a layer
-      // simply has no such field rather than one that is stored and ignored.
-      // Colours is a COUNT capped at 8 by _ambProgSaltSegCount, so storing more
-      // was storing a number that could never be heard; clamping is
-      // sound-preserving (8 and 100 both resolve to 8 sections). Scatter is a
-      // genuine 0-100 shape exponent.
-      const o = {};
-      [['colors', 8], ['scatter', 100]].forEach(([k, hi]) => {
-        const v = Number(sl[k]);
-        o[k] = Number.isFinite(v) ? Math.max(0, Math.min(hi, v | 0)) : 0;
-      });
-      L.salt = o;   // all-zero is MEANINGFUL here (explicit off), so it is not pruned
+      if (sl == null || typeof sl !== 'object') { delete L.salt; return; }
+      const zero = !(((sl.colors | 0) > 0) || ((sl.scatter | 0) > 0));
+      if (zero && !L.saltMask) L.saltMask = { steps: [0] };
+      delete L.salt;
     }
     function _ambNormalizeSpread(L) {
       if (!L || typeof L !== 'object') return;
@@ -4337,6 +4344,9 @@
       let segIdx = 0;
       for (let i = _fr.length - 1; i >= 1; i--) { if (pos >= _fr[i] - 1e-6) { segIdx = i; break; } }
       if (segIdx <= 0) return ret;   // downbeat segment = the written chord, always
+      // Per-layer follow mask: this layer may sit this section out and hold the
+      // written chord while others take the colour (see _ambSaltFollowOK).
+      if (!_ambSaltFollowOK(step, segIdx, (Array.isArray(n.chords) ? n.chords.length : 0) || 1)) return ret;
       const vocab = _ambProgColorVocab(ret.intervals, ret.root, _ambSaltColorAllowed(cfgS));
       if (!vocab.length) return ret;
       const rndC = _ambSeededRand((((step + 1) * 2654435761) ^ ((segIdx + 1) * 40503) ^ ((seedS * 131) >>> 0) ^ _ambSaltNudgeNow(step) ^ 0x51CE) >>> 0);
@@ -4421,25 +4431,47 @@
         return !!(m[slot] || m[String(slot)]);
       } catch (e) { return false; }
     }
-    function _ambLayerSaltNow() {
+    // ---- PER-LAYER SALT IS A FOLLOW MASK, NOT A SECOND SET OF SETTINGS ------
+    // The Changes deal ONE segment plan per chord instance — the boundaries, the
+    // count and the colour of every section. A layer does not re-declare any of
+    // that; it says, per written chord, HOW MUCH of that plan it takes.
+    //
+    // Why it cannot be per-layer settings (the shape this replaced): the colour
+    // pick hashes (step, segIdx, seed) and NOT the layer, so two layers with the
+    // same numbers agree on every colour while two layers with different numbers
+    // pick DIFFERENT colours for the same instant — which is not "the pad
+    // colours more than the bass", it is the pad and the bass disagreeing about
+    // the harmony. Sharing one plan and opting in or out of each section keeps
+    // them consonant by construction: a layer either takes THE colour or holds
+    // the written chord.
+    //
+    // `L.saltMask = { steps:[0-100 …] }`, the chord-matrix grammar exactly —
+    // indexed by WRITTEN chord slot, absent = follows in full, an all-100 array
+    // prunes back to absent, and `[0]` (length 1, indexed modulo) is the compact
+    // "this layer never salts". Gated with a DEDICATED hash, never the shared
+    // `_ambRand()` stream, so a masked layer shifts no other draw.
+    function _ambSaltFollowOK(step, segIdx, N) {
       try {
-        if (!_ambEmitLayerKey || !_E) return null;
+        if (!_ambEmitLayerKey || !_E) return true;
         const L = _ambLayerByKey(_E, _ambEmitLayerKey);
-        const sl = L && L.salt;
-        if (!sl || typeof sl !== 'object') return null;
-        return (((sl.colors | 0) > 0) || ((sl.scatter | 0) > 0)) ? sl : null;
-      } catch (e) { return null; }
-    }
-    function _ambLayerSaltSet(cfg) {
-      try {
-        if (!_ambEmitLayerKey || !_E) return false;
-        const L = _ambLayerByKey(_E, _ambEmitLayerKey);
-        return !!(L && L.salt && typeof L.salt === 'object');
-      } catch (e) { return false; }
+        const m = L && L.saltMask; if (!m) return true;
+        const steps = Array.isArray(m.steps) ? m.steps : null;
+        if (!steps || !steps.length) return true;
+        const n = Math.max(1, N | 0), ci = ((step % n) + n) % n;
+        const pv = steps[ci % steps.length];
+        const p = Number.isFinite(pv) ? Math.max(0, Math.min(100, pv | 0)) : 100;
+        if (p >= 100) return true;
+        if (p <= 0) return false;
+        // Same layer-identity derivation as _ambChordGateOK — primaries carry no
+        // id, so without a per-type base they would gate in lockstep.
+        const _lb = Number.isFinite(L.id) ? (L.id | 0) : ({ bed: 0, motif: 101, texture: 211, beat: 307 }[L.type] || 0);
+        const lid = (_lb + 1) * 13 + 7;
+        return _ambChordHash01((step + 1) * 31 + (segIdx + 1), lid) * 100 < p;
+      } catch (e) { return true; }
     }
     function _ambPartSaltAt(cfg, step) {
-      { const own = _ambLayerSaltNow(); if (own) return own; }
-      if (_ambLayerSaltSet(cfg)) return null;   // set, but all-zero → this layer does not salt
+      // No per-layer branch: salt is defined once, by the Changes (or the part
+      // that is playing). Which layers take it is _ambSaltFollowOK's job.
       const base = _ambProgSaltCfg(cfg);
       const prog = cfg && cfg.prog;
       const parts = (prog && Array.isArray(prog.parts) && prog.parts.length > 1) ? prog.parts : null;
@@ -23364,7 +23396,10 @@
     // part's own salt. Mirrors the chord-matrix cell's _saltOn check.
     function _ambLayerSaltColorsOn(cfg, L) {
       try {
-        if (L && L.salt && typeof L.salt === 'object') return (L.salt.colors | 0) > 0;
+        // Masked to zero on every chord → this layer never salts, whatever the
+        // Changes say.
+        const m = L && L.saltMask;
+        if (m && Array.isArray(m.steps) && m.steps.length && !m.steps.some(v => (v | 0) > 0)) return false;
         const prog = cfg && cfg.prog;
         if (!prog || !prog.on) return false;
         if (prog.salt && (prog.salt.colors | 0) > 0) return true;
@@ -31988,28 +32023,17 @@
                    off: 'off — Stereo places the notes instead',
                    every: 'only Mode “Random” rolls; Fan, Alternate, Sine and Sweep are fixed patterns',
                    draws: '_ambSpatPan — dedicated _ambSeededRand on (ordinal, take), random mode only' },
-      // COLOUR IS A COUNT, not an amount: the knob IS how many times the chord
-      // recolours inside its own unit (sections = colours + 1, capped at 8 by
-      // _ambProgSaltSegCount). Scatter then varies that count per instance —
-      // measured at colours 4: scatter 0 gives exactly 5 sections every time,
-      // scatter 60 gave 1,1,4,5,1,3,1,2 over eight passes of the same slot.
-      saltColors:{ type: 'pit', grain: 'chord', token: 'salt', does: 'Recolours the chord as it plays',
-                   off: 'the chord is played exactly as written',
-                   at: function (v) { return 'Cuts each chord into ' + Math.min(8, (v | 0) + 1) +
-                         ' sections — the first is the chord as written, the rest are colours of it'; },
-                   every: 'a fresh deal every time the chord comes round — Scatter varies how many sections it actually gets',
-                   draws: '_ambProgSaltSegCount — nTarget = min(8, colours+1), _ambSeededRand per chord instance' },
-      saltScatter:{ type: 'pit', grain: 'chord', token: 'salt', does: 'Varies how many colour sections each chord gets',
-                   off: 'every chord gets the full count from Salt colour',
-                   at: function (v) { return v >= 67 ? 'Most chords stay plain; the occasional one blooms fully'
-                         : 'Varies the section count chord to chord — some plainer than others'; },
-                   draws: 'shape exponent on the same per-chord draw: 1 + round(rnd^(scatter/100*4) * (nTarget-1))' },
+      // saltColors / saltScatter USED TO BE HERE. Salt is no longer a per-layer
+      // control: the Changes define one colouring and each layer says how much of
+      // it to follow, per chord, in the 🧂 Salt mode of the ⌗ Matrix. The follow
+      // mask is a gate, not a stochastic AMOUNT, so it does not belong in this
+      // table — the same reason chordMask is not in it.
     };
     // Controls whose ELEMENT ID does not end in their config key, because they are
     // rendered by a custom token rather than by _ambSl. Marking resolves through
     // this first. MARK_ONLY entries are part of a stochastic control but are not
     // the row that carries its description (Spatialize's Width and Positions).
-    const _AMB_STOCH_ALIAS = { stereo: 'space', spatmode: 'spat', colors: 'saltColors', scatter: 'saltScatter' };
+    const _AMB_STOCH_ALIAS = { stereo: 'space', spatmode: 'spat' };
     const _AMB_STOCH_MARK_ONLY = { spatwidth: 'spat', spatsteps: 'spat' };
     const _AMB_STOCH_GRAIN = {
       note:  'a fresh choice on every note',
@@ -32029,28 +32053,6 @@
       let what = st.does;
       if (typeof st.at === 'function') { try { what = st.at(n) || what; } catch (e) {} }
       return what + ' · ' + (st.every || _AMB_STOCH_GRAIN[st.grain] || '');
-    }
-    // What a layer on Salt = Inherit is ACTUALLY doing. The override controls read
-    // 0 while inheriting, so describing them from their own value reported
-    // "Off — the chord is played exactly as written" on a layer that was busy
-    // recolouring. Resolved from the progression the same way the emitter does.
-    function _ambSaltInheritDesc(cfg, k2) {
-      const how = ' Switch Salt to “This layer” to set your own.';
-      let base = null, parted = false;
-      try { base = _ambProgSaltCfg(cfg); } catch (e) {}
-      try { const pr = cfg && cfg.prog;
-        parted = !!(pr && Array.isArray(pr.parts) && pr.parts.some(pp => pp && pp.salt && typeof pp.salt === 'object'));
-      } catch (e) {}
-      if (!base && !parted) return 'Inheriting the Changes’ salt — none is set there, so chords play exactly as written.' + how;
-      if (!base) return 'Inheriting the Changes’ salt — it is set per part, so it differs across the arrangement.' + how;
-      const also = parted ? ' Some parts override it.' : '';
-      if (k2 === 'colors') {
-        return ((base.colors | 0) > 0
-          ? 'Inheriting the Changes’ salt — each chord is cut into ' + Math.min(8, (base.colors | 0) + 1) + ' sections.'
-          : 'Inheriting the Changes’ salt — no colour is set there, so chords play as written.') + also + how;
-      }
-      return 'Inheriting the Changes’ salt — scatter ' + (base.scatter | 0) +
-        (((base.scatter | 0) > 0) ? ', so the section count varies chord to chord.' : ', so every chord gets the full count.') + also + how;
     }
     // ROLLING OUT ONE LAYER TYPE AT A TIME so the wording can be judged before it
     // lands on all 11. The colour and the data are global; only the readout line
@@ -34710,6 +34712,9 @@
         + rows.map(r => r.key + ':' + JSON.stringify(r.L.chordMask || 0)).join(',') +
         '|s' + _ambProgViewShift(E, cfg, chords) + '|' + chords.map(c2 => c2.root).join('.') +
         '|t' + (Number.isFinite(el._pmPart) ? el._pmPart : -1) +
+        '|mk' + (el._pmMask === 'salt' ? 1 : 0) +
+        '|sk' + rows.map(r => JSON.stringify(r.L.saltMask || 0)).join(',') +
+        '|sc' + JSON.stringify((prog.salt && { c: prog.salt.colors | 0, s: prog.salt.scatter | 0 }) || 0) +
         '|p' + (Array.isArray(prog.parts) ? prog.parts.map(p => p.name + ':' + p.len + ':' + (p.plays | 0) + ':' + (p.open ? 'o' + (p.hold ? 'h' : '') : '')).join('/') : '') +
         '|sm' + rows.map(r => JSON.stringify(r.L.sectionMask || 0)).join(',');
       if (el._sig === sig) return;
@@ -34737,7 +34742,21 @@
       if (_pmParts) {
         if (!Number.isFinite(el._pmPart) || el._pmPart >= _pmParts.length) el._pmPart = -1;
       } else el._pmPart = -1;
-      let h = '<div class="ambient-pm-title">Matrix — how often each layer plays on each chord, and through each part with no changes' + _ambMaskEditBtnHtml(!!el._pmEdit) + '</div>';
+      // TWO QUESTIONS, ONE GRID. "Which layers play this chord" and "which layers
+      // take the Changes' salt on this chord" are the same layers x chords shape,
+      // so they share the tabs, the columns, the widths, the cell ladder and the
+      // exact editor rather than becoming a third bespoke matrix (this file
+      // already carries the cost of the chord/section pair doing that).
+      const _isSalt = el._pmMask === 'salt';
+      const _saltAmt = (prog.salt && (prog.salt.colors | 0) > 0) ? (prog.salt.colors | 0) : 0;
+      const _saltParted = !!(Array.isArray(prog.parts) && prog.parts.some(p2 => p2 && p2.salt && (p2.salt.colors | 0) > 0));
+      let h = '<div class="ambient-pm-title">' + (_isSalt
+          ? 'Salt — how much of the Changes’ recolouring each layer follows, chord by chord'
+          : 'Matrix — how often each layer plays on each chord, and through each part with no changes') +
+        '<span class="ambient-seg-row ambient-pm-modes">' +
+          '<button type="button" class="ambient-seg' + (_isSalt ? '' : ' active') + '" data-pmmask="plays" title="Which layers play each chord.">⌗ Plays</button>' +
+          '<button type="button" class="ambient-seg' + (_isSalt ? ' active' : '') + '" data-pmmask="salt" title="Which layers follow the Changes’ salt on each chord.">🧂 Salt</button>' +
+        '</span>' + _ambMaskEditBtnHtml(!!el._pmEdit) + '</div>';
       if (_pmParts) {
         let acc0 = 0;
         h += '<div class="ambient-pm-tabs">' +
@@ -34758,6 +34777,12 @@
               '</span></span>';
           }).join('') + '</div>';
       }
+      if (_isSalt) {
+        h += '<div class="ambient-pm-legend">' + (_saltAmt || _saltParted
+          ? ('The Changes cut each chord into sections and recolour the later ones' + (_saltAmt ? ' (Salt colour ' + _saltAmt + ' → up to ' + Math.min(8, _saltAmt + 1) + ' sections)' : ' per part') +
+             '. <b>Cell</b> = how much of that this layer follows on that chord — <b>always → 60% → 30% → never</b> by tap, any value on press-and-hold. At <b>never</b> the layer holds the chord as written while the others recolour. Every layer shares ONE colouring, so wherever two layers both follow, they agree.')
+          : '<b>No salt is set on the Changes</b>, so nothing here has an effect yet. Set Salt colour above 0 in the 🧂 Salt section first, then use this grid to say which layers follow it.') + '</div>';
+      } else
       h += '<div class="ambient-pm-legend"><b>Cell</b> = the chance this layer plays that chord — tap to step <b>always → 60% → 30% → never</b>, or press and hold (✎ % to make a tap do it) for <b>any value 0-100</b>. Rolled once per chord, so the layer is in or out for that whole chord; it never cuts in halfway. <b>Window</b> is the other axis: how much of each chord it plays once it is in.</div>';
       // Column window for the selected tab. Cell/header indices stay ABSOLUTE
       // (data-ci), so every setter keeps writing the right slot of the mask.
@@ -34797,8 +34822,10 @@
         if (rec) _pmCols.push({ kind: 'part', rec });
       } else {
         for (let i = _pmFrom; i < _pmTo; i++) _pmCols.push({ kind: 'chord', i });
-        // The "All" tab shows the whole arrangement, part columns included.
-        if (!_pmParts || el._pmPart < 0) _openParts.forEach(rec => _pmCols.push({ kind: 'part', rec }));
+        // The "All" tab shows the whole arrangement, part columns included — but
+        // NOT in salt mode: a part with no changes has no chord to recolour, so a
+        // cell there could only ever do nothing.
+        if ((!_pmParts || el._pmPart < 0) && !_isSalt) _openParts.forEach(rec => _pmCols.push({ kind: 'part', rec }));
       }
       const _fmtB = (b) => (typeof _ambFmtBpc === 'function' ? _ambFmtBpc(b) : String(b));
       h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + _pmCols.map((col) => {
@@ -34808,10 +34835,11 @@
         return '<span class="ambient-pm-ch' + (_ambIsTransition(c2) ? ' pm-trans' : '') + '" style="flex-grow:' + gb + '"'
           + ' title="' + (_ambIsTransition(c2) ? 'Transition — a walk into the next chord. Leave this cell on for a layer to walk it, set it to never to sit the bar out. ' : 'Chord ' + (col.i + 1) + ' — ')
           + _fmtB(gb) + ' bar' + (gb === 1 ? '' : 's') + ' long; the column is that wide.">' + (col.i + 1) + '·' + chName(c2) + '</span>';
-      }).join('') + '<span class="ambient-pm-part">Window</span></div>';
+      }).join('') + (_isSalt ? '' : '<span class="ambient-pm-part">Window</span>') + '</div>';
       rows.forEach(r => {
-        const steps = (r.L.chordMask && Array.isArray(r.L.chordMask.steps)) ? r.L.chordMask.steps : null;
-        const part = (r.L.chordMask && r.L.chordMask.part) || null;
+        const _mk = _isSalt ? r.L.saltMask : r.L.chordMask;
+        const steps = (_mk && Array.isArray(_mk.steps)) ? _mk.steps : null;
+        const part = (!_isSalt && r.L.chordMask && r.L.chordMask.part) || null;
         h += '<div class="ambient-pm-row" data-lkey="' + r.key + '"><span class="ambient-pm-lbl" title="' + r.label + '">' + r.label + '</span>' +
           _pmCols.map((col) => {
             if (col.kind === 'part') {
@@ -34822,20 +34850,31 @@
             }
             const i = col.i, c2 = chords[i];
             const v = steps ? (Number.isFinite(steps[i % steps.length]) ? steps[i % steps.length] : 100) : 100;
-            return _ambMaskCellHtml(v, i, r.label + ' · chord ' + (i + 1) + ' (' + chName(c2) + ', ' + _fmtB(colBars(col)) + ' bars) — ' + _ambMaskCellTip(v, 'chord', !!el._pmEdit), null, colBars(col));
+            const _tip = _isSalt
+              ? (r.label + ' · chord ' + (i + 1) + ' (' + chName(c2) + ') — ' + (v >= 100 ? 'follows every colour change' : v <= 0 ? 'holds the chord as written' : 'follows ' + v + '% of the colour changes'))
+              : (r.label + ' · chord ' + (i + 1) + ' (' + chName(c2) + ', ' + _fmtB(colBars(col)) + ' bars) — ' + _ambMaskCellTip(v, 'chord', !!el._pmEdit));
+            return _ambMaskCellHtml(v, i, _tip, null, colBars(col));
           }).join('') +
-          '<span class="ambient-pm-part">' +
+          (_isSalt ? '' : '<span class="ambient-pm-part">' +
             '<select class="ambient-select ambient-pm-size" title="How much of each chord this layer plays once it is in — a DURATION, not a chance. Full = the whole chord.">' +
               [[100, 'Full'], [75, '¾'], [50, '½'], [25, '¼']].map(o => '<option value="' + o[0] + '"' + ((part ? part.size : 100) === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
             '</select>' +
             '<select class="ambient-select ambient-pm-place"' + ((part ? part.size : 100) >= 100 ? ' disabled' : '') + ' title="Where in the chord the window sits — Random re-rolls per chord">' +
               [['start', 'Start'], ['center', 'Mid'], ['end', 'End'], ['random', 'Rnd']].map(o => '<option value="' + o[0] + '"' + ((part ? part.place : 'start') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
-            '</select>' +
-          '</span></div>';
+            '</select>' + '</span>') + '</div>';
       });
       el.innerHTML = h;
       if (!el._wired) {
         el._wired = true;
+        // WHICH MASK THIS GRID IS EDITING. The mode toggle swaps the field and
+        // nothing else: same tabs, same columns, same ladder, same exact editor.
+        // Every write path goes through here — the cell tap, the row apply, the
+        // column apply and the part macro — because a mode that only some of them
+        // honoured would silently write the wrong store.
+        const maskOf = (L) => {
+          const f = (el._pmMask === 'salt') ? 'saltMask' : 'chordMask';
+          return (L[f] && typeof L[f] === 'object') ? L[f] : (L[f] = {});
+        };
         // Resolve a cell to its live steps array, creating/resizing it on demand —
         // shared by the ladder tap and the exact editor so both write one place.
         const slot = (cell) => {
@@ -34852,7 +34891,7 @@
             return { m: sm, ci: cell.dataset.si | 0, lkey: row.dataset.lkey, label: lbl0, isPart: 1 };
           }
           const N2 = cfg2.prog.chords.length;
-          const m = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
+          const m = maskOf(L);
           if (!Array.isArray(m.steps) || m.steps.length !== N2) { const old2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => old2 ? (Number.isFinite(old2[i2 % old2.length]) ? old2[i2 % old2.length] : 100) : 100); }
           return { m: m, ci: cell.dataset.ci | 0, lkey: row.dataset.lkey, label: lbl0 };
         };
@@ -34869,7 +34908,7 @@
         const setRow = (lkey, v) => {
           const cfg2 = E.getCfg(); const L = _ambLayerByKey(E, lkey); if (!L || !cfg2 || !cfg2.prog) return;
           const N2 = cfg2.prog.chords.length;
-          const m = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
+          const m = maskOf(L);
           m.steps = Array.from({ length: N2 }, () => v);
           commit(lkey);
         };
@@ -34878,7 +34917,7 @@
           const N2 = cfg2.prog.chords.length;
           _ambChordMatrixRows(cfg2).forEach(r2 => {
             const L = r2.L; if (!L) return;
-            const m = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
+            const m = maskOf(L);
             if (!Array.isArray(m.steps) || m.steps.length !== N2) { const old2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => old2 ? (Number.isFinite(old2[i2 % old2.length]) ? old2[i2 % old2.length] : 100) : 100); }
             m.steps[ci] = v;
             try { _ambMaskEditPoke(E, r2.key); } catch (e) {}
@@ -34899,7 +34938,7 @@
         };
         const partName = (pi) => { const ps = ((E.getCfg() || {}).prog || {}).parts; return (ps && ps[pi] && ps[pi].name) || ('part ' + (pi + 1)); };
         const ensureSteps = (L, N2) => {
-          const m = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
+          const m = maskOf(L);
           if (!Array.isArray(m.steps) || m.steps.length !== N2) { const o2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => o2 ? (Number.isFinite(o2[i2 % o2.length]) ? o2[i2 % o2.length] : 100) : 100); }
           return m;
         };
@@ -34995,6 +35034,8 @@
           if (eb) { el._pmEdit = !el._pmEdit; el._sig = ''; _ambRenderChordMatrix(E); return; }
           const tb = ev.target && ev.target.closest && ev.target.closest('[data-pmpart]');
           if (tb) { el._pmPart = tb.dataset.pmpart | 0; el._sig = ''; _ambRenderChordMatrix(E); return; }
+          const mb = ev.target && ev.target.closest && ev.target.closest('[data-pmmask]');
+          if (mb) { el._pmMask = (mb.dataset.pmmask === 'salt') ? 'salt' : 'plays'; el._sig = ''; _ambRenderChordMatrix(E); return; }
           // The repeat stepper sits ON the tab, because "how many times does the
           // verse run" belongs next to the verse. 1 is neutral and is deleted
           // rather than stored, so a plain chain keeps no plays field at all.
@@ -38175,20 +38216,20 @@
     const _AMB_LAYER_SCHEMA = {
       bed: { label: 'Bed', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'voiceCap', 'Voice cap', 0, 12, '0 = follow Density'], ['followsalt'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'voiceCap', 'Voice cap', 0, 12, '0 = follow Density'], ['followsalt'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
         ['sub', 'Progression', 'When an Area progression is set: the layer locks to it and plays voicings of the current chord. (Repeat/Times in Timing only apply when there is no Area progression.)'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold \u00b7 \u2212N = hold N units \u00b7 +N = N chords per unit'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length \u00b7 % of each strike a chord rings'], ['choke'], ['ring'], ['pitchrule'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'phrasing', 'Phrasing', 0, 100, 'stream → gestures'], ['ring'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'gravity', 'Gravity', 0, 100, 'free → chord tones'], ['sl', 'contour', 'Contour', -100, 100, 'fall → rise'], ['sl', 'stutter', 'Stutter', 0, 100, 'walk → repeats'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['ring'], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'syncop', 'Syncopate', 0, 100, 'straight → offbeat'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
@@ -38226,7 +38267,7 @@
       ] },
       beat: { label: 'Beat', ctrls: [
         ..._ambVoiceCtrls([['kit']], 500, 2000, 2000), ['synthkit'],
-        ['grp', 'Source'], ['keyov'], ['salt'], ['gen'], ['sl', 'poly', 'Poly', 1, 4, 'drums per hit (Random)'], ['grp', 'Pattern'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'],
+        ['grp', 'Source'], ['keyov'], ['gen'], ['sl', 'poly', 'Poly', 1, 4, 'drums per hit (Random)'], ['grp', 'Pattern'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'],
         ['grp', 'Timing', 'How fast and how long the beat plays. In Random mode, Interval sets the gap between hits; in Program mode the grid follows Sync + Bars. Length is how long each hit rings.'], ['unitsync'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'bars per loop'], ['tm', 'lengthMs', 'Hit length', 60, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around hit length'], ['tight'],
         ..._AMB_MIX] },
@@ -38236,7 +38277,7 @@
       // Direction); Randomness deviates from it. Pitch material is the series.
       arp: { label: 'Arp', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['salt'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['grp', 'Pattern'], ['arpeuclid'], ['euclidgrid'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
+        ['grp', 'Source'], ['keyov'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['grp', 'Pattern'], ['arpeuclid'], ['euclidgrid'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
         ['grp', 'Timing'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'pattern length — fills the Unit'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['ring'], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (euclid; 0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'rateVar', 'Rate var', 0, 100, 'steady → rushes'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -38244,7 +38285,7 @@
       // long; Rhythm/Pitch var add per-repeat variation.
       bass: { label: 'Bass', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['grp', 'Pattern'], ['euclidgrid'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['grp', 'Pattern'], ['euclidgrid'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'pattern length — the seed fills the Unit'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['ring'], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['tight'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Walk', 0, 100, 'hold → wander (proximity-capped)'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -38252,14 +38293,14 @@
       // looping; Vary re-rolls; Len var spreads note lengths around Length.
       run: { label: 'Riff', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'phrasing', 'Articulate', 0, 100, 'even → arrivals sustain, runs detach'], ['ring'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Density · −N = 1 hit per N bars · +N = N per bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['ring'], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length · % of each strike a hit rings'], ['pitchrule'], ['st', 'voices', 'Voices', 1, 9, 'tones per hit (Stack)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'vary', 'Roam', 0, 100, 'root → wander degrees'], ['tight'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -38267,7 +38308,7 @@
       // vary are independent. A chord Notes source holds the whole chord.
       drone: { label: 'Drone', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
         ['sub', 'Progression', 'When an Area progression is set: PEDAL (default) holds ONE note per progression cycle, auto-chosen to work across every chord — the card explains the pick, and Note overrides it. VOICINGS re-voices the current chord instead (Subdivide/Feel/Variety).'], ['dronepedal'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold · −N = hold N units · +N = N per unit'], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = fill the hold · % of each strike the note rings'], ['pitchrule'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
@@ -38806,38 +38847,13 @@
           opts.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
           '</select></div>';
       }
-      if (k === 'salt') {
-        // PER-LAYER SALT. Absent = inherit (the Changes' salt, else the area's);
-        // present = this layer's own, and all-zero is an explicit "do not salt me"
-        // — the same absent/zero grammar the Changes use.
-        const sl = (inst && inst.salt && typeof inst.salt === 'object') ? inst.salt : null;
-        const v = (k2) => sl ? Math.max(0, Math.min(100, sl[k2] | 0)) : 0;
-        // COLOUR IS A COUNT (sections = colours + 1, capped at 8), so it is a
-        // STEPPER 0-8 exactly like the area-level control — it used to be a
-        // 0-100 slider, where 93 of the 100 positions were identical because
-        // _ambProgSaltSegCount clamps to 8. Scatter really is 0-100 (a shape
-        // exponent) and stays a slider.
-        const row = (k2, lbl, hint) => '<div class="ambient-ctrl ambient-ctrl-stoch' + (k2 === 'colors' ? ' ambient-ctrl-step' : '') + '"><label for="' + p + '-salt-' + k2 + '">' + lbl + '</label>' +
-          (k2 === 'colors'
-            ? '<span class="ambient-stepper">' +
-                '<button type="button" class="ambient-step-btn ambient-step-dn" tabindex="-1" aria-label="Decrease"' + (sl ? '' : ' disabled') + '>−</button>' +
-                '<input type="number" inputmode="numeric" id="' + p + '-salt-' + k2 + '" class="ambient-step-inp ambient-layersalt" data-saltk="' + k2 + '" min="0" max="8" step="1" value="' + v(k2) + '"' + (sl ? '' : ' disabled') + '>' +
-                '<button type="button" class="ambient-step-btn ambient-step-up" tabindex="-1" aria-label="Increase"' + (sl ? '' : ' disabled') + '>+</button>' +
-              '</span>'
-            : '<input type="range" id="' + p + '-salt-' + k2 + '" class="ambient-sl ambient-layersalt" data-saltk="' + k2 + '" min="0" max="100" step="1" value="' + v(k2) + '"' + (sl ? '' : ' disabled') + '>') +
-          '<span class="ambient-hint">' + hint + '</span>' +
-          (_ambStochUiOn(p) ? '<span class="ambient-stoch-desc" id="' + p + '-salt-' + k2 + '-sd">' +
-            (sl ? _ambStochDesc(k2 === 'colors' ? 'saltColors' : 'saltScatter', v(k2))
-                : _ambSaltInheritDesc((_E && (_E._cfg || (_E.getCfg && _E.getCfg()))) || null, k2)) +
-            '</span>' : '') + '</div>';
-        return '<div class="ambient-ctrl"><label for="' + p + '-saltmode">Salt</label>' +
-          '<select id="' + p + '-saltmode" class="ambient-select ambient-layersaltmode">' +
-            '<option value="inherit"' + (sl ? '' : ' selected') + '>Inherit</option>' +
-            '<option value="own"' + (sl ? ' selected' : '') + '>This layer</option>' +
-          '</select><span class="ambient-hint">inherit the Changes\u2019 salt, or override it here (all 0 = this layer never salts). Chord LENGTHS stay area-wide \u2014 they are the shared chord clock.</span></div>' +
-          row('colors', 'Salt colour', 'how much the chord recolours inside its unit') +
-          row('scatter', 'Salt scatter', 'placement of the colour segments');
-      }
+      // ['salt'] RETIRED 2026-08-20. Salt was a per-layer OBJECT here — each
+      // layer re-declaring its own colours/scatter — which could not do what it
+      // looked like it did: the colour pick hashes (step, segIdx, seed) and not
+      // the layer, so two layers with different numbers picked DIFFERENT colours
+      // for the same instant rather than one colouring more than the other. Salt
+      // is now defined once by the Changes, and which layers follow it, chord by
+      // chord, is the 🧂 Salt mode of the ⌗ Matrix. See _ambSaltFollowOK.
       if (k === 'followsalt') return '<div class="ambient-ctrl"><label for="' + p + '-followsalt">Follow salt</label><select id="' + p + '-followsalt" class="ambient-select"><option value="0">Hold the chord</option><option value="1">Play the colour changes</option></select><span class="ambient-hint">re-voice inside the unit as salt colours the chord \u2014 shared notes ring on</span></div>';
       // RING OUT — the opt-out from the chord choke. Default (absent) chokes: a
       // note is released by the next chord boundary, so a long tail does not
@@ -39373,32 +39389,6 @@
           // the sibling controls take. A bed defaults to Write on, so without it the
           // frozen loop replays the OLD lengths for the rest of its cycle — measured
           // 12.3 s of nothing happening, which reads as a dead control.
-          else if (k === 'salt') {
-            const md = el('saltmode');
-            const apply = () => { const L = get(); if (!L) return; sync(); persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } };
-            if (md) md.addEventListener('change', () => {
-              const L = get(); if (!L) return;
-              if (md.value === 'own') { if (!L.salt || typeof L.salt !== 'object') L.salt = { colors: 0, scatter: 0 }; }
-              else delete L.salt;
-              apply();
-              try { _ambRenderExtras(E); } catch (x) {}   // the sliders enable/disable with the mode
-            });
-            ['colors', 'scatter'].forEach(k2 => {
-              const e2 = el('salt-' + k2);
-              if (!e2) return;
-              // Colours is a stepper now: its +/- buttons dispatch 'input', never
-              // 'change', so a change-only listener would leave them dead.
-              const hi = (k2 === 'colors') ? 8 : 100;
-              const write = () => {
-                const L = get(); if (!L || !L.salt) return;
-                L.salt[k2] = Math.max(0, Math.min(hi, parseInt(e2.value, 10) || 0));
-                _ambStochSync(e2.id, L.salt[k2]);
-                apply();
-              };
-              e2.addEventListener('input', write);
-              e2.addEventListener('change', write);
-            });
-          }
           else if (k === 'followsalt') { const e = el('followsalt'); if (e) { e.value = inst.followSalt ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === '1') L.followSalt = 1; else delete L.followSalt; sync(); persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } } }); } }
           else if (k === 'choke') { const e = el('choke'); if (e) { e.value = inst.choke ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.choke = (e.value === '1'); sync(); persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } } }); } }
           // RING OUT is a PLAYBACK filter (the choke lives in playNote, after the

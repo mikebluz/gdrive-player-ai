@@ -3246,6 +3246,10 @@
        hues (nearest is samp at 25) and 64 from Motif's own lavender; 5.9:1
        contrast on the panel background, clearing AA for body text. If a new
        layer-type hue is added, re-run the distance check rather than eyeballing. */
+    /* ⌗ Plays | 🧂 Salt — the matrix answers two questions about the same
+       layers x chords grid, so the toggle sits in its title beside ✎ %. */
+    .ambient-pm-modes { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: middle; }
+    .ambient-pm-modes .ambient-seg { padding: 3px 8px; font-size: 0.66rem; min-height: 26px; }
     .ambient-ctrl-stoch > label { color: #d94dff; }
     /* A LOCKED CONTROL MUST LOOK LOCKED. Salt's override controls are `disabled`
        while the mode is Inherit, and nothing said so — reported as "the params

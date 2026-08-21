@@ -6,7 +6,7 @@
 > Do not hand-edit; edit `_AMB_STOCH` and re-run.
 > Visual version: https://claude.ai/code/artifact/5283fea5-96be-46ca-a878-44c845451f28
 
-Every control that makes a stochastic decision — 32 of them across
+Every control that makes a stochastic decision — 30 of them across
 11 layer types. Two axes:
 
 - **Type** — what the control edits.
@@ -17,8 +17,8 @@ Every control that makes a stochastic decision — 32 of them across
 Neither is derivable from a label — both come from each control's **draw site**
 in the emitters. That is why they are recorded in the app rather than here.
 
-**The group is not the predicate.** 9 of these 32 live outside the Variance and
-Performance groups (space · spat · Proximity · Poly · Fidelity · Variety · Fill · saltColors · saltScatter),
+**The group is not the predicate.** 7 of these 30 live outside the Variance and
+Performance groups (space · spat · Proximity · Poly · Fidelity · Variety · Fill),
 and every one of them went unmarked until 2026-08-20 because the first sweep used
 the group to decide what counted. Three are custom tokens rather than `sl` rows,
 so they were not in that sweep at all. This generator can catch a Variance control
@@ -59,13 +59,6 @@ with no description; it can never catch a stochastic control somewhere else.
 | Walk | `pitchVar` | Pitch | Variance | 1 | Walks to a new note as the pattern plays | Walk — advances per euclidean HIT |
 | Syncopate | `syncop` | Rhythm | Variance | 1 | Pushes hits off the beat | offbeat bias in the stochastic fill |
 
-### one CHORD — one choice per chord, re-dealt each time it comes round
-
-| control | key | type | group | layers | what a user sees | what it draws |
-|---|---|---|---|---|---|---|
-| saltColors | `saltColors` | Pitch | token: salt | 9 | Recolours the chord as it plays | _ambProgSaltSegCount — nTarget = min(8, colours+1), _ambSeededRand per chord instance |
-| saltScatter | `saltScatter` | Pitch | token: salt | 9 | Varies how many colour sections each chord gets | shape exponent on the same per-chord draw: 1 + round(rnd^(scatter/100*4) * (nTarget-1)) |
-
 ### one CYCLE — one choice for the whole phrase / pass
 
 | control | key | type | group | layers | what a user sees | what it draws |
@@ -82,8 +75,8 @@ with no description; it can never catch a stochastic control somewhere else.
 
 | type | controls | count |
 |---|---|---|
-| Pitch | Proximity · Contour · Gravity · Motion · Poly · Randomness · Stutter · Variety · Walk · saltColors · saltScatter · Pitch vary · Vary / Roam | 13 |
 | Rhythm | Humanize · Twist · Rests · Ghosts · Fill · Syncopate · Rhythm var · Start · Rate var · Start · Time vary | 11 |
+| Pitch | Proximity · Contour · Gravity · Motion · Poly · Randomness · Stutter · Variety · Walk · Pitch vary · Vary / Roam | 11 |
 | Articulation | Ornament · Slide · Fidelity | 3 |
 | Space | space · spat | 2 |
 | Dynamics | Dynamics · Accent | 2 |
@@ -93,23 +86,23 @@ with no description; it can never catch a stochastic control somewhere else.
 
 | layer | controls | count |
 |---|---|---|
-| Bed | space · spat · Dynamics · Humanize · Len var · Motion · Fidelity · Rests · Variety · saltColors · saltScatter · Start | 12 |
-| Motif | space · spat · Dynamics · Humanize · Len var · Accent · Ornament · Proximity · Slide · Contour · Gravity · Stutter · Twist · Rests · saltColors · saltScatter · Start | 17 |
-| Texture | space · spat · Dynamics · Humanize · Len var · Fill · Syncopate · saltColors · saltScatter | 9 |
+| Bed | space · spat · Dynamics · Humanize · Len var · Motion · Fidelity · Rests · Variety · Start | 10 |
+| Motif | space · spat · Dynamics · Humanize · Len var · Accent · Ornament · Proximity · Slide · Contour · Gravity · Stutter · Twist · Rests · Start | 15 |
+| Texture | space · spat · Dynamics · Humanize · Len var · Fill · Syncopate | 7 |
 | Learn | space · spat · Dynamics | 3 |
 | Sir Eel | space · spat · Dynamics | 3 |
-| Beat | space · spat · Dynamics · Humanize · Len var · Poly · Rests · Ghosts · saltColors · saltScatter · Rhythm var | 11 |
-| Arp | space · spat · Dynamics · Humanize · Len var · Accent · Randomness · Rests · saltColors · saltScatter · Rhythm var · Pitch vary · Rate var | 13 |
-| Bass | space · spat · Dynamics · Humanize · Len var · Accent · Proximity · Rests · Ghosts · Walk · saltColors · saltScatter · Rhythm var | 13 |
-| Riff | space · spat · Dynamics · Humanize · Len var · Accent · Ornament · Slide · Rests · saltColors · saltScatter · Vary / Roam | 12 |
-| Pedal | space · spat · Dynamics · Humanize · Accent · Rests · saltColors · saltScatter · Vary / Roam | 9 |
-| Drone | space · spat · Dynamics · Humanize · Variety · saltColors · saltScatter · Pitch vary · Time vary | 9 |
+| Beat | space · spat · Dynamics · Humanize · Len var · Poly · Rests · Ghosts · Rhythm var | 9 |
+| Arp | space · spat · Dynamics · Humanize · Len var · Accent · Randomness · Rests · Rhythm var · Pitch vary · Rate var | 11 |
+| Bass | space · spat · Dynamics · Humanize · Len var · Accent · Proximity · Rests · Ghosts · Walk · Rhythm var | 11 |
+| Riff | space · spat · Dynamics · Humanize · Len var · Accent · Ornament · Slide · Rests · Vary / Roam | 10 |
+| Pedal | space · spat · Dynamics · Humanize · Accent · Rests · Vary / Roam | 7 |
+| Drone | space · spat · Dynamics · Humanize · Variety · Pitch vary · Time vary | 7 |
 
 ## What the shape says
 
-- **17 of 32** controls re-decide on every note, so no amount of freezing
+- **17 of 30** controls re-decide on every note, so no amount of freezing
   makes them repeat. Only the **7 cycle** controls are what Write / Evolve captures.
-- **Rhythm and Pitch are 24 of 32.** Loudness, articulation, length and space are
+- **Rhythm and Pitch are 22 of 30.** Loudness, articulation, length and space are
   8 controls between them.
 - `humanize` is the only control on unseeded `Math.random` — which is exactly why
   the same take replays identically except for its humanize.

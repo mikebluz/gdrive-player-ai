@@ -5337,6 +5337,8 @@
       return x - Math.floor(x);
     }
     function _ambChordGateOK(E, L, atSec, cfg, src, hard) {
+      // Composing in the Grid: play every chord (see _ambGridComposing).
+      if (L && _bloomGridEdit && _ambGridComposing(_ambKeyOfLayer(E, L))) return true;
       const m = L && L.chordMask; if (!m) return true;
       const eff = (src && src.type === 'prog') ? src : ((typeof _ambGlobalProg === 'function') ? _ambGlobalProg() : null);
       if (!eff || !Array.isArray(eff.chords) || !eff.chords.length) return true;
@@ -8642,6 +8644,8 @@
       return idx;
     }
     function _ambSpatApply(E, key, params, at) {
+      // Composing in the Grid: hold the image still (see _ambGridComposing).
+      if (_ambGridComposing(key)) return;
       if (!params || typeof at !== 'number' || params._pecho) return;
       const L = _ambLayerByKey(E, key);
       if (!_ambSpatOn(L)) return;
@@ -13007,7 +13011,9 @@
       const cfg = E._cfg || (E.getCfg && E.getCfg());
       return !_ambIterGateOpen(E, cfg, L, at);
     }
+    // Composing in the Grid bypasses every playback gate — see _ambGridComposing.
     function _ambPlaybackGateShouldSkip(key, at) {
+      if (_ambGridComposing(key)) return false;
       return _ambUnitGateShouldSkip(key, at) || _ambIterGateShouldSkip(key, at);
     }
     if (typeof window !== 'undefined') window._ambUnitGateSkip = _ambPlaybackGateShouldSkip;
@@ -24027,6 +24033,32 @@
       if (live) { _ambGridPersistSoon(E, key); }
       else { try { _ambPersistLock(E, key); } catch (e) {} }
     }
+    // ---- COMPOSING BYPASS ---------------------------------------------------
+    // While a layer is open in the Grid, WHAT YOU DRAW IS WHAT YOU HEAR. Nothing
+    // stochastic may sit between the two, or you are editing one thing and
+    // listening to another.
+    //
+    // Measured before building this, because "bypass all stochastic settings"
+    // needed a definition rather than a gesture: a Grid session locks the layer,
+    // and a locked layer already replays its captured events verbatim — with
+    // every stochastic control on that layer maxed, three consecutive passes were
+    // IDENTICAL in time, pitch, duration and volume. So the lock already bypasses
+    // the generation-time ones by construction. Exactly two things still reach a
+    // locked loop, and they are what this gates:
+    //
+    //   SPATIALIZE — recomputed per note on replay (deliberately, so a live edit
+    //     is audible), which is why pan was the ONE field that moved pass to pass.
+    //   THE PLAYBACK GATES — unit schedule, iteration schedule, chord matrix and
+    //     section matrix run inside playNote, so they silence a drawn phrase on
+    //     some passes. A phrase you are drawing must play every pass.
+    //
+    // Nothing is written to the layer: this is a read-time gate keyed on the
+    // session, so there is no state to restore and no way to leave a layer
+    // zeroed if the session dies badly.
+    function _ambGridComposing(key) {
+      const ge = _bloomGridEdit;
+      return !!(ge && key != null && ge.key === key);
+    }
     function _ambGridEditSig(steps) {
       try { return JSON.stringify((steps || []).map(s => s && [s.freq, s.duration, s.subdivision, s.chord && s.chord.map(c => c.freq), s.isSub && s.subSteps && s.subSteps.map(c => c && c.freq)])); } catch (e) { return String(Math.random()); }
     }
@@ -24079,7 +24111,14 @@
       } catch (e) {}
     }
     function _ambGridEditStart(E, key, dockEl) {
-      if (_bloomGridEdit) _ambGridEditStop(false);
+      // Opening a session elsewhere used to COMMIT the open one without asking.
+      if (_bloomGridEdit) {
+        if (_bloomGridEdit.key !== key && _ambGridEditDirty()) {
+          _ambGridExitAsk(() => { try { _ambGridEditStart(E, key, dockEl); } catch (e) {} });
+          return;
+        }
+        _ambGridEditStop(false);
+      }
       const L = _ambLayerByKey(E, key); if (!L) return;
       if (typeof lanes === 'undefined' || typeof _makeLane !== 'function') return;
       const fs = _ambFreezeState(E, key);
@@ -24143,8 +24182,16 @@
       lane._bloomScratch = true; lane.muted = true; lane.name = '✎' + String(key);
       try { if (typeof _defaultVoice === 'function') lane.voice = _defaultVoice(); } catch (e) {}
       lanes.push(lane);
+      const _sig0 = _ambGridEditSig(lane.steps);
       _bloomGridEdit = { E: E, key: key, lane: lane, prevActive: (typeof activeLaneIdx !== 'undefined') ? activeLaneIdx : 0,
-        prevOpen: (typeof _laneExpanderOpen !== 'undefined') ? _laneExpanderOpen : false, snapshot: snapshot, sig: _ambGridEditSig(lane.steps), timer: null };
+        prevOpen: (typeof _laneExpanderOpen !== 'undefined') ? _laneExpanderOpen : false, snapshot: snapshot,
+        sig: _sig0,
+        // What the layer was BEFORE this session, so Discard restores it exactly
+        // rather than leaving a half-authored layer behind: the steps as opened,
+        // and whether the layer was authored at all.
+        startSig: _sig0,
+        wasAuthored: !!(L.lockState && L.lockState.seedEdit),
+        timer: null };
       // ✎ PLACE and ⤸ BAR work in the dock now that the scratch lane's
       // STRIP renders in the strip host (the lane-based composing view).
       window._bloomGridKey = key;   // _placeLaneExpander resolves the dockhost live by key
@@ -24185,6 +24232,47 @@
         } catch (e) {}
       }, 400);
       try { _ambRefreshSeedModes(E); } catch (e) {}
+    }
+    // LEAVING THE GRID IS REVERSIBLE. Deselecting used to commit the steps and
+    // then _ambSeedRevert the layer — a silent discard of work you may have spent
+    // real time on. Now any exit that is not an explicit ✓ Done / ✕ Cancel asks
+    // first, and only when something actually changed (the session tracks a
+    // signature of the lane's steps, so an untouched visit closes silently).
+    function _ambGridEditDirty() {
+      const ge = _bloomGridEdit; if (!ge || !ge.lane) return false;
+      try { return _ambGridEditSig(ge.lane.steps) !== ge.startSig; } catch (e) { return true; }
+    }
+    // Ask, then run one of the two exits. `onDone(saved)` fires either way so the
+    // caller can finish whatever it was doing (revert the seed, switch layers…).
+    function _ambGridExitAsk(onDone) {
+      const ge = _bloomGridEdit;
+      if (!ge) { onDone && onDone(false); return; }
+      if (!_ambGridEditDirty()) { _ambGridEditStop(true); onDone && onDone(false); return; }
+      const ov = document.createElement('div');
+      ov.className = 'sm-overlay ambient-step-modal-ov';
+      ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-gridexit-modal">' +
+        '<div class="sm-title">Keep what you composed?</div>' +
+        '<div class="ambient-step-modal-body">' +
+          '<div class="ambient-pm-modal-hint">You edited this layer’s phrase in the Grid. ' +
+            '<b>Keep</b> makes it the layer’s phrase. <b>Discard</b> puts the layer back exactly as it was ' +
+            'before you opened the Grid.</div>' +
+          '<div class="ambient-pm-modal-spread">' +
+            '<button type="button" class="ambient-seg gx-keep">✓ Keep it</button>' +
+            '<button type="button" class="ambient-seg gx-discard">✕ Discard my edits</button>' +
+          '</div>' +
+        '</div></div>';
+      // Body-attached overlays are force-hidden by the view-mode CSS unless the
+      // display is set INLINE with !important (the documented trap).
+      document.body.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+      const close = () => { try { ov.remove(); } catch (e) {} };
+      ov.querySelector('.gx-keep').addEventListener('click', () => {
+        close(); try { _ambGridEditStop(false); } catch (e) {} onDone && onDone(true);
+      });
+      ov.querySelector('.gx-discard').addEventListener('click', () => {
+        close(); try { _ambGridEditStop(true); } catch (e) {} onDone && onDone(false);
+      });
+      ov.addEventListener('click', (ev) => { if (ev.target === ov) { /* outside click = stay in the Grid */ close(); } });
     }
     function _ambGridEditStop(cancel) {
       const ge = _bloomGridEdit; if (!ge) return;
@@ -30847,7 +30935,7 @@
         '<div class="ambient-seedgrid-slot" data-sgkey="' + _ambEscText(lk) + '" hidden>' +
           '<div class="ambient-seedgrid-bar">' +
             '<span class="ambient-seedgrid-live" hidden>' +
-              '<span class="ambient-hint">editing in Grid — changes land live</span>' +
+              '<span class="ambient-hint">editing in Grid — changes land live, and variance is bypassed: you hear exactly what you draw</span>' +
               '<button type="button" class="ambient-seg ambient-seedgrid-done" data-sgk="' + _ambEscText(lk) + '">✓ Done</button>' +
               '<button type="button" class="ambient-seg ambient-seedgrid-cancel" data-sgk="' + _ambEscText(lk) + '" title="Discard grid edits — restore the pattern as it was">✕ Cancel</button>' +
               // The docked editor is the WHOLE lane-expander — every mode surface
@@ -30902,6 +30990,11 @@
         try {
           const _card = row.closest('.ambient-layer');
           if (_card) _card.classList.toggle('amb-grid-owns', !!(gridActive || authored));
+          // …and a SECOND class for the narrower fact the engine acts on. The
+          // stochastic bypass keys on an OPEN SESSION (_ambGridComposing), not on
+          // the layer merely being authored, so a card that claimed "bypassed"
+          // off `amb-grid-owns` would be lying on every authored-but-closed layer.
+          if (_card) _card.classList.toggle('amb-grid-editing', !!gridActive);
         } catch (e) {}
         // Arp Direction is a Generate-mode control (the series sweep) — keep its
         // visibility in step with the seed mode (and the euclid toggle).
@@ -30922,7 +31015,13 @@
           if (slot) {
             const pe = card.querySelector('.ambient-piano[data-pkey="' + key + '"]');
             const nl = card.querySelector('.ambient-notes-live[data-nkey="' + key + '"]');
-            if (authored) {
+            // `|| gridActive`: a session started while PLAYING never sets
+            // lockState.seedEdit (that bootstrap is deliberately stopped-only —
+            // promoting the seed preview mid-play swaps what you are hearing), so
+            // gating the dock on `authored` alone left ✓ Done and ✕ Cancel HIDDEN
+            // for the whole session. The two ways out of the Grid cannot be
+            // invisible while you are in it.
+            if (authored || gridActive) {
               slot.hidden = false;
               const dock = (el2) => { if (el2 && el2.parentElement !== slot) { if (!el2._seedHome) el2._seedHome = { p: el2.parentElement, n: el2.nextSibling }; slot.appendChild(el2); } };
               dock(nl); dock(pe);
@@ -43204,7 +43303,18 @@
               // press: it read as "can't select Grid, stuck on Pattern".
               const _soleBtn = !_ambHasPattern(L0, String(key).split(':')[0]);
               if (_soleBtn && (_authored || _live)) {
-                try { if (_live) _ambGridEditStop(false); } catch (e2) {}
+                if (_live) {
+                  // Ask before throwing the composition away. Keep → the phrase
+                  // becomes the layer's; Discard → the layer goes back to exactly
+                  // what it was, including whether it was authored at all.
+                  const _wasAuthored = !!(_bloomGridEdit && _bloomGridEdit.wasAuthored);
+                  _ambGridExitAsk((saved) => {
+                    if (!saved && !_wasAuthored) _ambSeedRevert(E, key);
+                    _ambRefreshSeedModes(E);
+                    if (typeof persistWorkspace === 'function') persistWorkspace();
+                  });
+                  return;
+                }
                 _ambSeedRevert(E, key);
                 _ambRefreshSeedModes(E);
                 if (typeof persistWorkspace === 'function') persistWorkspace();

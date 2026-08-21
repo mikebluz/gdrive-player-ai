@@ -3251,6 +3251,18 @@
     .ambient-pm-modes { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: middle; }
     .ambient-pm-modes .ambient-seg { padding: 3px 8px; font-size: 0.66rem; min-height: 26px; }
     .ambient-ctrl-stoch > label { color: #d94dff; }
+    /* COMPOSING IN THE GRID BYPASSES THE STOCHASTICS, so the marked controls must
+       stop claiming to be doing something. Keyed off the live bar being visible
+       rather than a JS-set class: the session already shows/hides that element,
+       so there is one source of truth and nothing to keep in sync. */
+    .ambient-layer.amb-grid-editing .ambient-ctrl-stoch { opacity: 0.45; }
+    .ambient-layer.amb-grid-editing .ambient-ctrl-stoch > label::after {
+      content: ' · bypassed'; color: #6b6b8a; font-size: 0.6rem; letter-spacing: 0.02em;
+    }
+    /* The leave-the-Grid prompt: two named outcomes, no silent default. */
+    .ambient-gridexit-modal .ambient-pm-modal-spread { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .ambient-gridexit-modal .ambient-pm-modal-spread .ambient-seg { flex: 1 1 auto; min-height: 40px; padding: 8px 12px; }
+    .ambient-gridexit-modal .gx-discard { border-color: #7a3b46; color: #fca5a5; }
     /* A LOCKED CONTROL MUST LOOK LOCKED. Salt's override controls are `disabled`
        while the mode is Inherit, and nothing said so — reported as "the params
        can't be edited, nothing happens when click/drag", which is exactly what a

@@ -36,10 +36,19 @@
       return soloMode ? !!track.solo : true;
     }
 
+    // A CLONED STEP MUST NOT CARRY A LIVE LAYER REFERENCE. Portamento sets
+    // params.glideLayer = the layer object so the glide can track _glidePrev on
+    // it; a step cloned into the BANK or a TRACK then holds a back-reference,
+    // and the very next JSON.stringify (persistSaved, persistWorkspace) throws
+    // "Converting circular structure to JSON" — which is what made saving a
+    // sequence from the layer grid fail on any layer with portamento above zero.
+    // It is re-attached from the layer's own portamento at play time, so
+    // dropping it here costs nothing and the copy stays serializable.
+    const _stripLive = (p) => { if (!p) return p; const o = { ...p }; delete o.glideLayer; return o; };
     function cloneStep(s) {
       const copy = { ...s };
-      if (s.chord) copy.chord = s.chord.map(n => ({ ...n, params: n.params ? { ...n.params } : undefined }));
-      if (s.params) copy.params = { ...s.params };
+      if (s.chord) copy.chord = s.chord.map(n => ({ ...n, params: n.params ? _stripLive(n.params) : undefined }));
+      if (s.params) copy.params = _stripLive(s.params);
       // Per-step bypass switches — copy by value so duplicated/banked steps
       // don't share the active/bypass state object with the original.
       if (s._off) copy._off = { ...s._off };

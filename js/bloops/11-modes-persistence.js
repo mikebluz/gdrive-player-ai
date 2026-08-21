@@ -756,10 +756,19 @@
         // write actually fails and risks corrupting a value.
         try { const u = _lsUsageBytes(); if (u > _LS_BUDGET * 0.9) _bloopsStorageWarn('Storage is ' + Math.round(u / _LS_BUDGET * 100) + '% full — free up space soon so saves don’t fail.'); } catch (w) {}
       } catch (e) {
-        // Quota hit: the slim (audio-stripped) fallback still saves the project
-        // structure, but the user lost the rendered audio from this snapshot —
-        // tell them so they can back up + clean up (see _bloopsStorageOpen).
-        try { _bloopsStorageWarn('Storage full — audio was dropped from the last save to make it fit. Back up and free space to keep everything.'); } catch (w) {}
+        // ONLY a real quota failure is "storage full". This catch used to say so
+        // for ANY throw — a serialization error in buildSnap(), anything — which
+        // sent people to Manage storage to find 3% used and no way forward.
+        // Reported as "it's saying storage full when I try to save the sequence,
+        // but then I go to manage storage and I have plenty of space."
+        const _quota = !!(e && (e.name === 'QuotaExceededError' ||
+          e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22 || e.code === 1014));
+        try {
+          _bloopsStorageWarn(_quota
+            ? 'Storage full — audio was dropped from the last save to make it fit. Back up and free space to keep everything.'
+            : ('Could not save: ' + ((e && e.message) || e) + ' — this is NOT a space problem; the save was rejected.'));
+        } catch (w) {}
+        if (!_quota) { try { console.error('persistWorkspace failed (not quota):', e); } catch (w) {} }
         try {
           const slim = buildSnap();
           (slim.savedSequences || []).forEach(s => { if (s && s.type === 'audio') delete s.audioDataUrl; });

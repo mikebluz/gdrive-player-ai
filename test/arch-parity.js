@@ -99,6 +99,43 @@ const CONFIGS = [
   { id: 'everything',       chords: [0, 5, 7, 9, 2, 4], key: { root: 9, scale: 'minor' },
     parts: [['Verse', 3, 2], ['Chorus', 3, 1, { root: 5, scale: 'major' }]],
     sections: [['A', 6, 0], ['B', 3, 1]], salt: { len: 40, colors: 40, scatter: 20 } },
+  // ---- PART MATRIX (docs/bloom-part-matrix.md) -----------------------------
+  // A part is a SET of chords plus a per-iteration schedule over it; `arrGrid`
+  // schedules the parts the same way. A part tuple's 6th slot is its grid.
+  // These pin the new clock branch: subsets, repeats WITHIN a pass (which is what
+  // makes the step non-monotonic), a part sitting a pass out, and the grid
+  // composed with the things that already bend the clock.
+  { id: 'grid-subset',  chords: [0, 5, 7, 9],
+    parts: [['Verse', 2, 0, null, null, { cols: 3, seq: { 1: [0], 2: [1] } }], ['Chorus', 2]] },
+  { id: 'grid-repeat',  chords: [0, 5, 7, 9],
+    parts: [['Verse', 2, 0, null, null, { cols: 2, seq: { 0: [1, 0, 1] } }], ['Chorus', 2]] },
+  { id: 'grid-empty',   chords: [0, 5, 7, 9],
+    parts: [['Verse', 2], ['Chorus', 2, 0, null, null, { cols: 2, seq: { 1: [] } }]] },
+  { id: 'grid-meta',    chords: [0, 5, 7, 9], parts: [['Verse', 2], ['Chorus', 2]],
+    arrGrid: { cols: 2, seq: { 1: [0, 1, 0] } } },
+  { id: 'grid-both',    chords: [0, 5, 7, 9],
+    parts: [['Verse', 2, 0, null, null, { cols: 2, seq: { 1: [0] } }], ['Chorus', 2]],
+    arrGrid: { cols: 1, seq: { 0: [0, 1, 0] } } },
+  { id: 'grid-cadence', chords: [0, 5, 7, 9], bars: [2, 0.5, 1, 1],
+    parts: [['Verse', 2, 0, null, null, { cols: 2, seq: { 1: [1, 0, 1] } }], ['Chorus', 2]] },
+  { id: 'grid-key',     chords: [0, 5, 7, 9], key: { root: 9, scale: 'minor' },
+    parts: [['Verse', 2, 0, null, null, { cols: 2, seq: { 1: [0] } }],
+            ['Chorus', 2, 1, { root: 5, scale: 'major' }]] },
+  // A bound section pins ONE part and returns BEFORE the grid branch — so this
+  // must read exactly as if no grid existed. That precedence is the pin.
+  { id: 'grid-sections', chords: [0, 5, 7, 9],
+    parts: [['Verse', 2, 0, null, null, { cols: 2, seq: { 1: [0] } }], ['Chorus', 2]],
+    sections: [['A', 4, 0], ['B', 4, 1]] },
+  // CADENCE INSIDE A GRID. `fit` makes the written cadence a rhythm TEMPLATE the
+  // remaining chords shift into (drop a chord and the rest move left, trailing
+  // lengths unused); `bars` states a length per POSITION per pass, which also
+  // lets two occurrences of one chord differ. Both are absent by default.
+  { id: 'grid-fit',     chords: [0, 5, 7, 9], bars: [2, 0.5, 1, 1],
+    parts: [['Verse', 3, 0, null, null, { cols: 2, fit: 1, seq: { 0: [0, 2] } }], ['Chorus', 1]] },
+  { id: 'grid-bars',    chords: [0, 5, 7, 9], bars: [2, 0.5, 1, 1],
+    parts: [['Verse', 3, 0, null, null, { cols: 2, seq: {}, bars: { 0: [1, 1, 1] } }], ['Chorus', 1]] },
+  { id: 'grid-fit-bars', chords: [0, 5, 7, 9], bars: [2, 0.5, 1, 1],
+    parts: [['Verse', 3, 0, null, null, { cols: 2, fit: 1, seq: { 0: [0, 2, 0] }, bars: { 0: [0, 4] } }], ['Chorus', 1]] },
 ];
 
 // The walk: 32 bars at a quarter bar. Long enough that part repeats, section
@@ -151,10 +188,12 @@ const WALK_BARS = 32, WALK_STEP = 0.25;
       // all along.
       if (c.parts) cfg.prog.parts = c.parts.map((x) => {
         if (!Array.isArray(x)) return { name: x.name, open: 1, bars: x.open, ...(x.hold === false ? {} : { hold: 1 }), ...(x.plays ? { plays: x.plays } : {}) };
-        const [name, len, plays, key, salt] = x;
-        return { name, len, ...(plays ? { plays } : {}), ...(key ? { key } : {}), ...(salt ? { salt } : {}) };
+        const [name, len, plays, key, salt, grid] = x;
+        return { name, len, ...(plays ? { plays } : {}), ...(key ? { key } : {}), ...(salt ? { salt } : {}),
+                 ...(grid ? { grid } : {}) };
       });
       if (c.salt) cfg.prog.salt = c.salt;
+      if (c.arrGrid) cfg.prog.arrGrid = c.arrGrid;   // PART MATRIX: the meta grid
       if (c.sections) cfg.sections = c.sections.map(([name, bars, part, key, groove, rot]) => ({
         name, bars, ...(part != null ? { part } : {}), ...(key != null ? { key } : {}),
         ...(groove ? { groove } : {}), ...(rot != null ? { keyModeRot: rot } : {}) }));

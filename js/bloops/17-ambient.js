@@ -134,7 +134,7 @@
         // forces present/on in mk() (its pins predate this default).
         bed:     { on: false, present: false, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, strum: 0, strumFidelity: 0, tone: '', scale: '', attack: 2000, decay: 200, sustain: 85, release: 3650, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
         motif:   { on: false, present: false, register: 5, range: 2, proximity: 35, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, accent: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', attack: 100, decay: 120, sustain: 70, release: 500, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
-        texture: { on: false, present: false, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', attack: 40, decay: 80, sustain: 0, release: 240, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        texture: { on: false, present: false, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', attack: 40, decay: 80, sustain: 0, release: 240, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
         beat:    { on: false, present: false, kit: 'tr808', gen: 'random', poly: 2, intervalMs: 250, lengthMs: 200, restProb: 15, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, attack: 1, decay: 60, sustain: 70, release: 120, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
         // `seqs` is a DYNAMIC list of sequence-seeded layers (Seq1, Seq2…),
         // created by "Send to Bloom". Each replays one or more saved-sequence
@@ -516,7 +516,7 @@
           // Music-box GLINTS — the timbral counter-voice, syncopated, evolving,
           // echoing; strongest where the e-piano thins.
           Object.assign(a.texture, { present: true, on: true, tone: 'sample:flmusicbox', level: 40, revSend: 55,
-            register: 6, fill: 30, syncop: 55, mutateRate: 50, intervalMs: 700, humanize: 20,
+            register: 6, fill: 30, syncop: 55, intervalMs: 700, humanize: 20,
             chordMask: { steps: [55, 100, 55, 100] },
             delay: { mix: 35, timeMs: 600, feedback: 45, ping: 1, spread: 55, dryKill: 0 } });
           a.beat.present = false; a.beat.on = false;
@@ -549,7 +549,7 @@
           // Echo glints — brighter voice (bell FM), EVOLVING pattern (mutate),
           // heavy ping delay; sits out the IV chord so the melodica answers.
           Object.assign(a.texture, { present: true, on: true, tone: 'user:f-chromedolphin', level: 40, revSend: 40,
-            fill: 35, syncop: 70, register: 5, mutateRate: 65, humanize: 20,
+            fill: 35, syncop: 70, register: 5, humanize: 20,
             chordMask: { steps: [100, 40, 100, 100] },
             delay: { mix: 50, timeMs: 500, feedback: 60, ping: 1, spread: 60, dryKill: 0 } });
           // Melodica — THE dub voice: sparse, yoked, drenched, answering on the
@@ -1956,7 +1956,7 @@
         hostId: opts.hostId, idPrefix: opts.idPrefix, vizId: opts.vizId,
         playId: opts.playId, seedId: opts.seedId, isLane: !!opts.isLane,
         // per-run state (was module-global, single-instance)
-        rng: 1, motifDeg: null, texPattern: null, texStep: 0, texMutateAt: 0,
+        rng: 1, motifDeg: null, texPattern: null, texStep: 0,
         mod: {}, reverb: null, timer: null, rampTimer: null, _cfg: null, progStep: 0, clocks: {}, iters: {}, seqState: {}, inited: false, viz: null,
       };
     }
@@ -2443,21 +2443,33 @@
           if (Object.keys(o3).length) L.saltFree = o3; else delete L.saltFree;
         }
       }
+      // PER-LAYER SALT FOLLOW MASK — chord-matrix grammar, absent = follows fully.
+      const sm = L.saltMask;
+      if (sm != null) {
+        if (typeof sm !== 'object') delete L.saltMask;
+        else {
+          let st = Array.isArray(sm.steps)
+            ? sm.steps.slice(0, 32).map(v => Number.isFinite(v) ? Math.max(0, Math.min(100, v | 0)) : 100) : null;
+          if (st && !st.some(v => v < 100)) st = null;      // all-100 IS absent
+          if (st) L.saltMask = { steps: st }; else delete L.saltMask;
+        }
+      }
+      // MIGRATION off the retired per-layer salt OBJECT. An explicit all-zero
+      // meant "this layer never salts" and is preserved exactly, as a length-1
+      // mask (indexed modulo, so it covers every chord). A layer that carried its
+      // OWN colours/scatter cannot be expressed in the shared-plan model at all —
+      // those numbers are dropped and the layer follows the Changes in full.
+      // Length salt is deliberately absent per layer and always was: it re-slices
+      // the chord LENGTHS, which are the shared harmonic clock (_ambProgStepAt),
+      // so per layer it would put the bass on chord 2 while the pads are on 3.
       const sl = L.salt;
-      if (sl == null) return;
-      if (typeof sl !== 'object') { delete L.salt; return; }
-      // NO `len`. Length salt re-slices the chord lengths, which IS the shared
-      // harmonic clock (_ambProgStepAt) — per layer it would put the bass on
-      // chord 2 while the pads are on chord 3. It stays an AREA axis, so a layer
-      // simply has no such field rather than one that is stored and ignored.
-      const o = {};
-      ['colors', 'scatter'].forEach(k => {
-        const v = Number(sl[k]);
-        o[k] = Number.isFinite(v) ? Math.max(0, Math.min(100, v | 0)) : 0;
-      });
-      L.salt = o;   // all-zero is MEANINGFUL here (explicit off), so it is not pruned
+      if (sl == null || typeof sl !== 'object') { delete L.salt; return; }
+      const zero = !(((sl.colors | 0) > 0) || ((sl.scatter | 0) > 0));
+      if (zero && !L.saltMask) L.saltMask = { steps: [0] };
+      delete L.salt;
     }
     function _ambNormalizeSpread(L) {
+      _ambNormalizePartSeqs(L);
       if (!L || typeof L !== 'object') return;
       if (!Number.isFinite(L.humanize)) L.humanize = 0;   // Variance: universal onset jitter (shared default, portamento pattern)
       if (!Number.isFinite(L.velVar)) L.velVar = 0;       // Variance: universal velocity noise (same pattern)
@@ -2479,7 +2491,17 @@
       // unitMode: migrate legacy 'interleave' → 'random'; everything else but
       // 'random' is the ordered 'sequence'. ('single' stays meaningful for 1 unit.)
       if (s.unitMode === 'interleave') s.unitMode = 'random';
-      if (s.unitMode !== 'single' && s.unitMode !== 'sequence' && s.unitMode !== 'random') s.unitMode = 'single';
+      if (['single', 'sequence', 'random', 'part'].indexOf(s.unitMode) < 0) s.unitMode = 'single';
+      // 'part' binds a section to a PART of the area's changes. The binding is an
+      // explicit index per unit (renames and reorders can't break it); absent
+      // means "by order", so sending three sequences to a three-part
+      // arrangement already lines up with nothing to configure.
+      if (Array.isArray(s.units)) s.units.forEach(u => {
+        if (!u || typeof u !== 'object') return;
+        if (u.part == null) { delete u.part; return; }
+        const v = u.part | 0;
+        if (Number.isFinite(v) && v >= 0 && v < 64) u.part = v; else delete u.part;
+      });
       if (typeof s.keyMaster !== 'boolean') s.keyMaster = false;
       // B4: Harmony toggle — how the captured phrase relates to the current key.
       // 'fixed' (default) plays the absolute captured pitches (byte-identical to
@@ -2892,13 +2914,28 @@
       // PARTS (Feat 1): a view over the flat chord list; repair so Σlen === chords.length.
       const rp = _ambRepairParts(prog.parts, chords.length);
       if (rp) prog.parts = rp; else delete prog.parts;
+      // META GRID — which PARTS play in each arrangement iteration, and in what
+      // order. Indices are into the parts that OCCUPY TIME, the same convention
+      // `chain` uses. Coerced after the repair above so its width is the repaired
+      // part count, and dropped when it says nothing.
+      {
+        const _tp = Array.isArray(prog.parts) ? prog.parts.filter(x => x && !x.open).length : 1;
+        const _ag = _ambNormalizeGridObj(prog.arrGrid, Math.max(1, _tp));
+        if (_ag) prog.arrGrid = _ag; else delete prog.arrGrid;
+        // The PARTLESS store: with no parts the whole chord list is one part, and
+        // its grid has nowhere else to live.
+        if (!Array.isArray(prog.parts)) {
+          const _pg = _ambNormalizeGridObj(prog.grid, chords.length);
+          if (_pg) prog.grid = _pg; else delete prog.grid;
+        } else if (prog.grid) { delete prog.grid; }
+      }
       // VERSIONS (Feat 2b): whole-prog snapshots; coerce + cap; each carries its own parts.
       if (prog.versions != null && Array.isArray(prog.versions)) {
         prog.versions = prog.versions.filter(v => v && typeof v === 'object').slice(0, 12).map(v => {
           const vch = (Array.isArray(v.chords) ? v.chords : []).map(cloneCh).filter(Boolean);
           const vp = _ambRepairParts(v.parts, vch.length);
           const vs = (v.salt && typeof v.salt === 'object' && ((v.salt.len | 0) || (v.salt.colors | 0) || (v.salt.scatter | 0)))
-            ? { len: Math.max(0, Math.min(100, v.salt.len | 0)), colors: Math.max(0, Math.min(8, v.salt.colors | 0)), scatter: Math.max(0, Math.min(100, v.salt.scatter | 0)) } : null;
+            ? { len: Math.max(0, Math.min(100, v.salt.len | 0)), colors: Math.max(0, Math.min(7, v.salt.colors | 0)), scatter: Math.max(0, Math.min(100, v.salt.scatter | 0)) } : null;
           return { name: (typeof v.name === 'string' && v.name.trim()) ? v.name.trim().slice(0, 24) : 'Version', chords: vch, ...(vp ? { parts: vp } : {}), ...(vs ? { salt: vs } : {}) };
         }).filter(v => v.chords.length);
         if (!prog.versions.length) { delete prog.versions; delete prog.versionIdx; }
@@ -2914,7 +2951,7 @@
         if (typeof s !== 'object') delete prog.salt;
         else {
           s.len = Math.max(0, Math.min(100, s.len | 0));
-          s.colors = Math.max(0, Math.min(8, s.colors | 0));
+          s.colors = Math.max(0, Math.min(7, s.colors | 0));
           s.scatter = Math.max(0, Math.min(100, s.scatter | 0));
           if (!s.len && !s.colors && !s.scatter) delete prog.salt;
         }
@@ -2947,6 +2984,54 @@
     // final part swallows any remainder. Returns undefined for absent/empty OR a trivial
     // single-part cover (keeps legacy cfgs noise-free — the UI treats "no parts" as one
     // implicit whole-progression part), so parts can never desync from chords.
+    // Coerce one grid and PRUNE it back to absent when it says nothing. A column
+    // equal to the WRITTEN ORDER (each index once, ascending) is the neutral state
+    // and carries no entry; a grid with no entries left carries no field at all —
+    // the same absent-is-neutral grammar as unitGate / iterGate / salt / cadence.
+    // An EMPTY column is NOT neutral and is kept: it means this pass plays nothing.
+    // The column clamp is inlined rather than calling _ambGridCols, so this cannot
+    // depend on a module-scope const that may not be initialised when a normalize
+    // runs during boot.
+    function _ambNormalizeGridObj(g, n) {
+      if (!g || typeof g !== 'object' || !g.seq || typeof g.seq !== 'object') return undefined;
+      const cols = Math.max(1, Math.min(64, (g.cols | 0) || 8));
+      const N = Math.max(0, n | 0);
+      const seq = {};
+      for (let c = 0; c < cols; c++) {
+        const row = g.seq[String(c)];
+        if (!Array.isArray(row)) continue;
+        const cl = row.map(v => v | 0).filter(v => v >= 0 && v < N).slice(0, 64);
+        let written = (cl.length === N);
+        if (written) for (let i = 0; i < N; i++) if (cl[i] !== i) { written = false; break; }
+        if (written) continue;
+        seq[String(c)] = cl;
+      }
+      const out = { cols, seq };
+      if (g.fit) out.fit = 1;
+      // Per-iteration lengths, parallel to each column's sequence. Clamped to the
+      // cadence ladder's own range, so a grid can never state a length the cadence
+      // editor could not; a row with nothing set carries nothing.
+      if (g.bars && typeof g.bars === 'object') {
+        const bars = {};
+        Object.keys(g.bars).forEach(k => {
+          if ((k | 0) < 0 || (k | 0) >= cols) return;
+          const row = g.bars[k];
+          if (!Array.isArray(row) || !row.length) return;
+          const cl = row.map(v => (Number.isFinite(v) && v > 0)
+            ? Math.max(_AMB_CAD_MIN, Math.min(_AMB_CAD_MAX, v)) : 0).slice(0, 64);
+          if (cl.some(v => v > 0)) bars[k] = cl;
+        });
+        if (Object.keys(bars).length) out.bars = bars;
+      }
+      // A NON-DEFAULT COLUMN COUNT IS ALSO A STATEMENT — "this part runs 5 passes"
+      // — and pruning on seq/fit/bars alone threw it away: the ± stepper wrote
+      // cols, the very next getCfg deleted the object, and the readout snapped
+      // back to 8. Reported as "the +/- Pass count doesn't work". Note this does
+      // NOT engage the clock: _ambGridOn still requires seq/fit/bars, so a grid
+      // that only sets its width changes nothing about what plays.
+      // 8 is _AMB_GRID_COLS, inlined for the same reason the clamp above is.
+      return (Object.keys(seq).length || out.fit || out.bars || cols !== 8) ? out : undefined;
+    }
     function _ambRepairParts(parts, total) {
       if (!Array.isArray(parts) || !parts.length || total <= 0) return undefined;
       const out = []; let acc = 0;
@@ -2968,7 +3053,7 @@
           }
           if (p.salt && typeof p.salt === 'object') {
             e0.salt = { len: Math.max(0, Math.min(100, p.salt.len | 0)),
-                        colors: Math.max(0, Math.min(8, p.salt.colors | 0)),
+                        colors: Math.max(0, Math.min(7, p.salt.colors | 0)),
                         scatter: Math.max(0, Math.min(100, p.salt.scatter | 0)) };
           }
           if (Number.isFinite(p.plays) && (p.plays | 0) > 1) e0.plays = Math.min(64, p.plays | 0);
@@ -3017,6 +3102,10 @@
         // How many times this part runs before the progression moves on. 1 is the
         // neutral value and is NOT stored, so a plain chain stays byte-identical.
         if (Number.isFinite(p.plays) && (p.plays | 0) > 1) e.plays = Math.min(64, p.plays | 0);
+        // PART MATRIX — carried EXPLICITLY, like key/salt above: this builds a
+        // fresh object per part, so anything not copied here is dropped on every
+        // normalize (the trap that once silently ate per-part keys).
+        { const _g = _ambNormalizeGridObj(p.grid, len); if (_g) e.grid = _g; }
         // PER-PART SALT. Carried EXPLICITLY because this builds a fresh object per
         // part — anything not copied here is dropped on every normalize. An
         // all-zero object is KEPT on purpose: it means "no salt in this part",
@@ -3024,7 +3113,7 @@
         // expressed by absence (absence = inherit).
         if (p.salt && typeof p.salt === 'object') {
           e.salt = { len: Math.max(0, Math.min(100, p.salt.len | 0)),
-                     colors: Math.max(0, Math.min(8, p.salt.colors | 0)),
+                     colors: Math.max(0, Math.min(7, p.salt.colors | 0)),
                      scatter: Math.max(0, Math.min(100, p.salt.scatter | 0)) };
         }
         if (p.key && typeof p.key === 'object' && Number.isFinite(p.key.root)) {
@@ -4266,6 +4355,9 @@
       let segIdx = 0;
       for (let i = _fr.length - 1; i >= 1; i--) { if (pos >= _fr[i] - 1e-6) { segIdx = i; break; } }
       if (segIdx <= 0) return ret;   // downbeat segment = the written chord, always
+      // Per-layer follow mask: this layer may sit this section out and hold the
+      // written chord while others take the colour (see _ambSaltFollowOK).
+      if (!_ambSaltFollowOK(step, segIdx, (Array.isArray(n.chords) ? n.chords.length : 0) || 1)) return ret;
       const vocab = _ambProgColorVocab(ret.intervals, ret.root, _ambSaltColorAllowed(cfgS));
       if (!vocab.length) return ret;
       const rndC = _ambSeededRand((((step + 1) * 2654435761) ^ ((segIdx + 1) * 40503) ^ ((seedS * 131) >>> 0) ^ _ambSaltNudgeNow(step) ^ 0x51CE) >>> 0);
@@ -4350,25 +4442,47 @@
         return !!(m[slot] || m[String(slot)]);
       } catch (e) { return false; }
     }
-    function _ambLayerSaltNow() {
+    // ---- PER-LAYER SALT IS A FOLLOW MASK, NOT A SECOND SET OF SETTINGS ------
+    // The Changes deal ONE segment plan per chord instance — the boundaries, the
+    // count and the colour of every section. A layer does not re-declare any of
+    // that; it says, per written chord, HOW MUCH of that plan it takes.
+    //
+    // Why it cannot be per-layer settings (the shape this replaced): the colour
+    // pick hashes (step, segIdx, seed) and NOT the layer, so two layers with the
+    // same numbers agree on every colour while two layers with different numbers
+    // pick DIFFERENT colours for the same instant — which is not "the pad
+    // colours more than the bass", it is the pad and the bass disagreeing about
+    // the harmony. Sharing one plan and opting in or out of each section keeps
+    // them consonant by construction: a layer either takes THE colour or holds
+    // the written chord.
+    //
+    // `L.saltMask = { steps:[0-100 …] }`, the chord-matrix grammar exactly —
+    // indexed by WRITTEN chord slot, absent = follows in full, an all-100 array
+    // prunes back to absent, and `[0]` (length 1, indexed modulo) is the compact
+    // "this layer never salts". Gated with a DEDICATED hash, never the shared
+    // `_ambRand()` stream, so a masked layer shifts no other draw.
+    function _ambSaltFollowOK(step, segIdx, N) {
       try {
-        if (!_ambEmitLayerKey || !_E) return null;
+        if (!_ambEmitLayerKey || !_E) return true;
         const L = _ambLayerByKey(_E, _ambEmitLayerKey);
-        const sl = L && L.salt;
-        if (!sl || typeof sl !== 'object') return null;
-        return (((sl.colors | 0) > 0) || ((sl.scatter | 0) > 0)) ? sl : null;
-      } catch (e) { return null; }
-    }
-    function _ambLayerSaltSet(cfg) {
-      try {
-        if (!_ambEmitLayerKey || !_E) return false;
-        const L = _ambLayerByKey(_E, _ambEmitLayerKey);
-        return !!(L && L.salt && typeof L.salt === 'object');
-      } catch (e) { return false; }
+        const m = L && L.saltMask; if (!m) return true;
+        const steps = Array.isArray(m.steps) ? m.steps : null;
+        if (!steps || !steps.length) return true;
+        const n = Math.max(1, N | 0), ci = ((step % n) + n) % n;
+        const pv = steps[ci % steps.length];
+        const p = Number.isFinite(pv) ? Math.max(0, Math.min(100, pv | 0)) : 100;
+        if (p >= 100) return true;
+        if (p <= 0) return false;
+        // Same layer-identity derivation as _ambChordGateOK — primaries carry no
+        // id, so without a per-type base they would gate in lockstep.
+        const _lb = Number.isFinite(L.id) ? (L.id | 0) : ({ bed: 0, motif: 101, texture: 211, beat: 307 }[L.type] || 0);
+        const lid = (_lb + 1) * 13 + 7;
+        return _ambChordHash01((step + 1) * 31 + (segIdx + 1), lid) * 100 < p;
+      } catch (e) { return true; }
     }
     function _ambPartSaltAt(cfg, step) {
-      { const own = _ambLayerSaltNow(); if (own) return own; }
-      if (_ambLayerSaltSet(cfg)) return null;   // set, but all-zero → this layer does not salt
+      // No per-layer branch: salt is defined once, by the Changes (or the part
+      // that is playing). Which layers take it is _ambSaltFollowOK's job.
       const base = _ambProgSaltCfg(cfg);
       const prog = cfg && cfg.prog;
       const parts = (prog && Array.isArray(prog.parts) && prog.parts.length > 1) ? prog.parts : null;
@@ -4532,6 +4646,324 @@
     // progression tight across the ~1.4 s lookahead. `_progAnchor` lets Bar Lock
     // later make this LOOP-relative; until set it falls back to play start.
     // (Phase 1a: defined but NOT yet wired into the emits — that's 1b.)
+    // ===== PART MATRIX (docs/bloom-part-matrix.md) ==========================
+    // A part is a SET of chords plus a per-iteration schedule over that set; the
+    // meta grid (`prog.arrGrid`) schedules the PARTS the same way. Storage is the
+    // SEQUENCE — a column IS an ordered list of indices, so repeats need no
+    // special case and the positions-in-cells view is a pure derivation. Both are
+    // ABSENT by default and pruned back to absent when trivial, so every existing
+    // progression walks the untouched code below.
+    //
+    // A part's column index is its CUMULATIVE VISIT COUNT, not the arrangement
+    // iteration: an iteration whose meta column plays the Verse twice consumes two
+    // of the Verse's own columns. That is what makes "iteration of part" well
+    // defined without a second clock.
+    const _AMB_GRID_COLS = 8;
+    const _ambGridCols = (g) => Math.max(1, Math.min(64, (g && (g.cols | 0)) || _AMB_GRID_COLS));
+    // WHERE A PART'S GRID LIVES. With NO parts at all — which is the common case,
+    // since _ambRepairParts collapses a single part covering the whole cycle —
+    // there is no part object to hang one on, so the PROGRESSION carries it.
+    // Without this the editor rendered perfectly and every cell write returned
+    // false: "clicking the chips does nothing".
+    function _ambGridStore(cfg, pi, create) {
+      const p = cfg && cfg.prog; if (!p) return null;
+      const parts = Array.isArray(p.parts) ? p.parts : null;
+      if (parts && parts[pi]) {
+        if (parts[pi].open) return null;
+        if (!parts[pi].grid && create) parts[pi].grid = { cols: _AMB_GRID_COLS, seq: {} };
+        return parts[pi].grid || null;
+      }
+      if (parts) return null;                      // a real part list that has no such index
+      if (!p.grid && create) p.grid = { cols: _AMB_GRID_COLS, seq: {} };
+      return p.grid || null;
+    }
+    function _ambGridOn(cfg) {
+      const p = cfg && cfg.prog;
+      if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return false;
+      // A grid can say something WITHOUT reordering anything: "fill the cadence",
+      // or per-iteration lengths over the written order. Gating on `seq` alone
+      // dropped exactly those — a lengths-only grid normalises its column away
+      // (it IS the written order) and then measured as no grid at all.
+      const live = (g) => !!(g && ((g.seq && Object.keys(g.seq).length) || g.fit
+        || (g.bars && Object.keys(g.bars).length)));
+      if (live(p.arrGrid)) return true;
+      if (!Array.isArray(p.parts)) return live(p.grid);
+      return p.parts.some(x => x && live(x.grid));
+    }
+    // The time-occupying parts and their chord ranges. Mirrors _ambCadRange's walk
+    // (an OPEN part carries no chords and does not advance `from`); open parts are
+    // holds, not chord sets, so the grid does not schedule them in v1.
+    function _ambGridRanges(cfg) {
+      const p = cfg && cfg.prog, chords = p && p.chords;
+      if (!chords) return [];
+      const parts = Array.isArray(p.parts) ? p.parts : null;
+      if (!parts || !parts.length) return [{ pi: 0, from: 0, len: chords.length }];
+      const out = []; let from = 0;
+      parts.forEach((pt, i) => {
+        if (!pt || pt.open) return;
+        const len = Math.max(1, pt.len | 0);
+        if (from < chords.length) out.push({ pi: i, from, len: Math.min(len, chords.length - from) });
+        from += len;
+      });
+      return out.length ? out : [{ pi: 0, from: 0, len: chords.length }];
+    }
+    // The chord indices WITHIN part `pi` that its `visit`-th pass plays. Absent
+    // column (or absent grid) = the written order, each chord once.
+    function _ambPartGridSeq(cfg, pi, visit, plen) {
+      const n = Math.max(1, plen | 0);
+      const dflt = () => { const a = []; for (let i = 0; i < n; i++) a.push(i); return a; };
+      const g = _ambGridStore(cfg, pi, false);
+      if (!g || !g.seq) return dflt();
+      const cols = _ambGridCols(g);
+      const row = g.seq[String(((visit % cols) + cols) % cols)];
+      if (!Array.isArray(row)) return dflt();
+      return row.map(v => v | 0).filter(v => v >= 0 && v < n);   // may be EMPTY: the part sits this pass out
+    }
+    // The part indices played in arrangement iteration `iter`. Absent = the chain
+    // if there is one, else the written order — i.e. exactly today's behaviour.
+    function _ambArrGridSeq(cfg, iter, nParts) {
+      const p = cfg && cfg.prog, g = p && p.arrGrid;
+      const dflt = () => {
+        if (Array.isArray(p.chain) && p.chain.length) return p.chain.map(v => v | 0).filter(v => v >= 0 && v < nParts);
+        const a = []; for (let i = 0; i < nParts; i++) a.push(i); return a;
+      };
+      if (!g || !g.seq) return dflt();
+      const cols = _ambGridCols(g);
+      const row = g.seq[String(((iter % cols) + cols) % cols)];
+      if (!Array.isArray(row)) return dflt();
+      return row.map(v => v | 0).filter(v => v >= 0 && v < nParts);
+    }
+    // HOW LONG A SLOT LASTS inside a grid pass. Three answers, narrowest first:
+    //   1. `grid.bars[col][k]` — a length written for THAT position of THAT pass.
+    //      This is per-iteration cadence, and because it is keyed on the POSITION
+    //      it also lets two occurrences of one chord differ inside a single pass.
+    //   2. `grid.fit` — treat the part's WRITTEN cadence as a rhythm TEMPLATE:
+    //      slot k takes the k-th written length whatever chord landed there, so
+    //      omitting a chord makes the rest shift LEFT into the gap and the
+    //      trailing lengths are simply unused. The default is the opposite — a
+    //      chord's `bars` belongs to the chord, so omitting it removes its time
+    //      and the pass gets shorter.
+    //   3. the chord's own `bars` — today's behaviour, and the fallback whenever
+    //      a pass runs LONGER than the template (repeats can do that).
+    // Returns null when nothing overrides, so the slot carries no field at all.
+    function _ambGridSlotBars(cfg, g, col, k, tmpl) {
+      if (g && g.bars) {
+        const row = g.bars[String(col)];
+        if (Array.isArray(row) && Number.isFinite(row[k]) && row[k] > 0) return row[k];
+      }
+      if (g && g.fit && tmpl && k < tmpl.length && tmpl[k] > 0) return tmpl[k];
+      return null;
+    }
+    // THE PLAYED SLOT LIST for one full super-cycle. The grids do not simply
+    // repeat every `cols` iterations: a part's column advances per VISIT, so the
+    // pattern only closes when the meta column AND every part's column line up
+    // again. Rather than derive that period, simulate until the state repeats —
+    // bounded, because a pathological set of column counts could otherwise run
+    // long. Returns null when it produces nothing, so the caller falls through.
+    const _AMB_GRID_MAX_ITERS = 512, _AMB_GRID_MAX_SLOTS = 4096;
+    // MEMOISED, because this is on the hot path twice over: _ambProgStepAt runs it
+    // per note emit, and _ambChordSpanAt bisects 28 times per lookup. Measured
+    // before: a super-cycle of 1442 slots at 0.26ms to build and a LINEAR scan to
+    // walk, giving _ambProgStepAt 0.375ms/call — about 10ms per span bisection,
+    // which is the kind of number that made the cadence steppers lag.
+    // The signature is the grids' own shape, so any edit invalidates it and no
+    // caller has to remember to.
+    const _ambGridSigOf = (g) => (g && g.seq)
+      ? ((g.cols | 0) + (g.fit ? 'F' : '') + '{' + Object.keys(g.seq).map(k => k + ':' + (g.seq[k] || []).join('.')).join('|') + '}'
+         + (g.bars ? ('B{' + Object.keys(g.bars).map(k => k + ':' + (g.bars[k] || []).join('.')).join('|') + '}') : ''))
+      : '-';
+    let _ambGridMemo = null;
+    function _ambGridSig(cfg) {
+      const p = cfg.prog, parts = Array.isArray(p.parts) ? p.parts : null;
+      let out = (p.chords ? p.chords.length : 0) + ';' + (cfg.barsPerChord || 1) + ';';
+      if (p.chords) out += p.chords.map(c => (c && c.bars) || 0).join('.');
+      out += ';';
+      if (parts) parts.forEach(pt => { out += (pt.open ? 'o' : '') + (pt.len | 0) + ':' + _ambGridSigOf(pt.grid) + ','; });
+      else out += _ambGridSigOf(p.grid);
+      return out + ';' + _ambGridSigOf(p.arrGrid) + ';' + (Array.isArray(p.chain) ? p.chain.join('.') : '');
+    }
+    // The expansion PLUS the cumulative bar edges, so the clock can bisect the
+    // slot instead of walking it.
+    function _ambGridPlan(cfg) {
+      if (!_ambGridOn(cfg)) return null;
+      const sig = _ambGridSig(cfg);
+      if (_ambGridMemo && _ambGridMemo.sig === sig) return _ambGridMemo;
+      const slots = _ambGridSlots(cfg);
+      if (!slots || !slots.length) { _ambGridMemo = null; return null; }
+      const cum = new Float64Array(slots.length + 1);
+      for (let i = 0; i < slots.length; i++) cum[i + 1] = cum[i] + _ambChainSlotBars(cfg, slots[i]);
+      _ambGridMemo = { sig, slots, cum, cycle: cum[slots.length] || 1 };
+      return _ambGridMemo;
+    }
+    function _ambGridSlots(cfg) {
+      if (!_ambGridOn(cfg)) return null;
+      const p = cfg.prog, chords = p.chords;
+      const ranges = _ambGridRanges(cfg);
+      if (!ranges.length) return null;
+      const parts = Array.isArray(p.parts) ? p.parts : null;
+      const partCols = ranges.map(r => {
+        const g = _ambGridStore(cfg, r.pi, false);
+        return (g && g.seq) ? _ambGridCols(g) : 1;
+      });
+      const arrCols = (p.arrGrid && p.arrGrid.seq) ? _ambGridCols(p.arrGrid) : 1;
+      const visits = ranges.map(() => 0), seen = new Set(), out = [];
+      for (let it = 0; it < _AMB_GRID_MAX_ITERS && out.length < _AMB_GRID_MAX_SLOTS; it++) {
+        const key = (it % arrCols) + '|' + visits.map((v, k) => v % partCols[k]).join(',');
+        if (out.length && seen.has(key)) break;      // the super-cycle has closed
+        seen.add(key);
+        _ambArrGridSeq(cfg, it, ranges.length).forEach(k => {
+          const r = ranges[k]; if (!r) return;
+          const seq = _ambPartGridSeq(cfg, r.pi, visits[k], r.len);
+          const visit = visits[k]; visits[k]++;
+          const gg = _ambGridStore(cfg, r.pi, false);
+          const gcols = gg ? _ambGridCols(gg) : 1;
+          const gcol = ((visit % gcols) + gcols) % gcols;
+          // The part's WRITTEN cadence in written order — the template `fit` fills.
+          let tmpl = null;
+          if (gg && gg.fit) {
+            tmpl = [];
+            for (let z = 0; z < r.len; z++) tmpl.push(_ambCadLen(cfg, chords[r.from + z]));
+          }
+          // …plus what the DISPLAY needs, so one walk feeds both (the clock reads
+          // only .idx). `rep`/`plays` are the part's column within its own grid —
+          // "2/3" reads as the 2nd of 3 columns, which is what the badge means
+          // once a repeat is just a part appearing again.
+          let first = true, posK = -1;
+          seq.forEach(ci => {
+            posK++;
+            const abs = r.from + ci;
+            if (abs < 0 || abs >= chords.length) return;
+            const gb = _ambGridSlotBars(cfg, gg, gcol, posK, tmpl);
+            // `rep`/`plays` mean "repeat r of plays" to every existing consumer,
+            // and a grid visit is ONE run that happens ONCE — reporting the column
+            // count there made _ambProgPartRuns badge every Verse run "×3", which
+            // is a claim that the run repeats three times. The column rides
+            // separately as `col`, for the UI that will draw it.
+            out.push({ idx: abs, pi: r.pi, part: k, visit,
+                       ...(gb != null ? { gbars: gb } : {}),
+                       rep: 0, plays: 1, col: visit % partCols[k], cols: partCols[k],
+                       iter: it, pos: posK, pFirst: first });
+            first = false;
+          });
+        });
+      }
+      return out.length ? out : null;
+    }
+    // ---- PASS EDITOR writers (phase 3) --------------------------------------
+    // A column is stored as its SEQUENCE. Normalize prunes a column equal to the
+    // written order and drops a grid with nothing left, so "edit it back to
+    // normal" removes the field rather than storing a redundant copy.
+    function _ambPassWrite(cfg, pi, col, arr) {
+      const g = _ambGridStore(cfg, pi, true); if (!g) return false;
+      const rg = _ambGridRanges(cfg).find(r => r.pi === pi) || _ambGridRanges(cfg)[0];
+      const plen = Math.max(1, rg ? rg.len : 1);
+      if (!g.seq || typeof g.seq !== 'object') g.seq = {};
+      g.cols = _ambGridCols(g);
+      g.seq[String(col | 0)] = (arr || []).map(v => v | 0).filter(v => v >= 0 && v < plen).slice(0, 64);
+      return true;
+    }
+    function _ambArrWrite(cfg, col, arr) {
+      const p = cfg && cfg.prog; if (!p) return false;
+      const n = _ambGridRanges(cfg).length;
+      if (!p.arrGrid || typeof p.arrGrid !== 'object') p.arrGrid = { cols: _AMB_GRID_COLS, seq: {} };
+      if (!p.arrGrid.seq || typeof p.arrGrid.seq !== 'object') p.arrGrid.seq = {};
+      p.arrGrid.cols = _ambGridCols(p.arrGrid);
+      p.arrGrid.seq[String(col | 0)] = (arr || []).map(v => v | 0).filter(v => v >= 0 && v < n).slice(0, 64);
+      return true;
+    }
+    function _ambArrColsSet(cfg, n) {
+      const p = cfg && cfg.prog; if (!p) return false;
+      const want = Math.max(1, Math.min(32, n | 0));
+      if (!p.arrGrid || typeof p.arrGrid !== 'object') {
+        if (want === _AMB_GRID_COLS) return false;
+        p.arrGrid = { cols: want, seq: {} };
+        return true;
+      }
+      p.arrGrid.cols = want;
+      if (p.arrGrid.seq) Object.keys(p.arrGrid.seq).forEach(k => { if ((k | 0) >= want) delete p.arrGrid.seq[k]; });
+      return true;
+    }
+    // "Fill the cadence" for one part: the written cadence becomes a rhythm
+    // TEMPLATE the remaining chords shift into, rather than each chord carrying
+    // its own length. Absent = off = today's behaviour.
+    function _ambPassFitSet(cfg, pi, on) {
+      const g = _ambGridStore(cfg, pi, !!on); if (!g) return false;
+      if (on) g.fit = 1; else delete g.fit;
+      return true;
+    }
+    // One position's length inside one pass. 0 / absent = "whatever would apply
+    // anyway", so clearing an override restores fit-or-the-chord's-own without
+    // needing to know which of them it was.
+    function _ambPassBarsSet(cfg, pi, col, k, bars) {
+      const g = _ambGridStore(cfg, pi, true); if (!g) return false;
+      if (!g.bars || typeof g.bars !== 'object') g.bars = {};
+      const key = String(col | 0);
+      const row = Array.isArray(g.bars[key]) ? g.bars[key].slice() : [];
+      while (row.length <= k) row.push(0);
+      row[k] = (Number.isFinite(bars) && bars > 0) ? _ambCadClamp(bars) : 0;
+      if (row.some(v => v > 0)) g.bars[key] = row; else delete g.bars[key];
+      if (!Object.keys(g.bars).length) delete g.bars;
+      return true;
+    }
+    // The length a position WOULD sound at, override or not — what the editor
+    // shows, so a dimmed value still tells you what you will hear.
+    function _ambPassBarsAt(cfg, pi, col, k, seq) {
+      const g = _ambGridStore(cfg, pi, false);
+      const rg = _ambGridRanges(cfg).find(r => r.pi === pi) || _ambGridRanges(cfg)[0];
+      if (!rg) return { bars: 1, own: true };
+      let tmpl = null;
+      if (g && g.fit) { tmpl = []; for (let z = 0; z < rg.len; z++) tmpl.push(_ambCadLen(cfg, cfg.prog.chords[rg.from + z])); }
+      const ov = _ambGridSlotBars(cfg, g, col, k, tmpl);
+      if (ov != null) {
+        const isOwn = !!(g && g.bars && Array.isArray(g.bars[String(col)]) && g.bars[String(col)][k] > 0);
+        return { bars: ov, own: isOwn };
+      }
+      const ci = (seq && seq[k] != null) ? seq[k] : 0;
+      return { bars: _ambCadLen(cfg, cfg.prog.chords[rg.from + ci]), own: false };
+    }
+    function _ambPassColsSet(cfg, pi, n) {
+      const want = Math.max(1, Math.min(32, n | 0));
+      const g0 = _ambGridStore(cfg, pi, false);
+      if (!g0 && want === _AMB_GRID_COLS) return false;         // nothing to say yet
+      const g = _ambGridStore(cfg, pi, true); if (!g) return false;
+      g.cols = want;
+      // Drop any column beyond the new width — it can never be reached, and a
+      // stored row nobody plays is the stale-mirror bug this model avoids.
+      if (g.seq) Object.keys(g.seq).forEach(k => { if ((k | 0) >= want) delete g.seq[k]; });
+      return true;
+    }
+    // WHICH CHORD INSTANCE is sounding — a strictly increasing count of chord
+    // instances since the chord clock's origin, as opposed to _ambProgStepAt's
+    // `step`, which identifies WHICH WRITTEN CHORD and deliberately repeats.
+    //
+    // They diverge exactly when a part is revisited: a chain of V C V plays the
+    // Verse's chords twice in ONE pass, so `step` takes the same value in two
+    // disjoint stretches of time. Anything that searches for the EXTENT of the
+    // current chord has to bisect on the instance, or it joins the two stretches
+    // into one — measured on chain [V,C,V]: a 1-bar G reported a 5.5-bar span and
+    // a 2-bar C reported 6.5 bars starting from the wrong Verse.
+    //
+    // Set as a side effect of the one walk in _ambProgStepAt (never a second walk
+    // of the chord lengths — that is how the Scheduler lane used to lie about the
+    // harmony), and read straight after. Sites that ask "which chord" keep using
+    // step and its `% len` / `floor(/ len)` contract, untouched.
+    let _ambProgInstHint = 0;
+    // MUST NOT DISTURB `_ambProgPosHint`. _ambProgStepAt sets that as a side
+    // effect, and the salt COLOUR resolver reads it for the segment position — so
+    // calling through here (28 times per span bisection) left the resolver reading
+    // a position from some arbitrary probe time. Caught by arch-parity: the
+    // `everything` config's chords turned from [0,4,7] to [0,5,7] at 8 of 130
+    // samples, i.e. a different colour was picked. Save and restore so this stays
+    // a pure query.
+    function _ambProgInstanceAt(E, atSec, src) {
+      const _savedPos = _ambProgPosHint;
+      _ambProgInstHint = 0;
+      let st = 0;
+      try { st = _ambProgStepAt(E, atSec, src) | 0; } catch (e) { st = 0; }
+      const inst = Number.isFinite(_ambProgInstHint) ? _ambProgInstHint : st;
+      _ambProgPosHint = _savedPos;
+      return inst;
+    }
     function _ambProgStepAt(E, atSec, src) {
       E = E || _E; if (!E) return 0;
       const cfg = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : (E.getCfg && E.getCfg()));
@@ -4585,7 +5017,37 @@
           // Keep BOTH caller contracts: `step % chords.length` is the chord index,
           // and `floor(step / chords.length)` is the variation cycle the alternates
           // and order-perm hash on — so alts still evolve inside a bound section.
+          // …and a MONOTONIC instance ordinal beside it — see _ambProgInstanceAt.
+          _ambProgInstHint = ((_at.step | 0) + _loops) * Math.max(1, _part.len) + _k;
           return ((_at.step | 0) + _loops) * _L + ((_part.from + _k) % _L);
+        }
+      }
+      // ---- PART MATRIX --------------------------------------------------------
+      // Same shape as the repeats branch below, and it supersedes it: a repeat is
+      // just a part appearing more than once in a meta column. GATED on a grid
+      // actually existing, so with none present this costs one boolean and the
+      // walk below is byte-identical (arch-parity 37/37 pins that).
+      if (!_ownSrc && cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords)
+          && cfg.prog.chords.length && _ambGridOn(cfg)) {
+        const plan = _ambGridPlan(cfg);
+        if (plan && plan.slots.length) {
+          const gs = plan.slots, cum = plan.cum;
+          const L = cfg.prog.chords.length;
+          const gcycle = plan.cycle || bpc;
+          const gloops = Math.floor(bars / gcycle);
+          const grem0 = bars - gloops * gcycle;
+          // BISECT the cumulative edges — the super-cycle can be well over a
+          // thousand slots, and a linear walk here is what made this 0.375ms.
+          let lo = 0, hi = gs.length - 1;
+          while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (cum[mid] <= grem0) lo = mid; else hi = mid - 1; }
+          const gk = lo, grem = grem0 - cum[gk];
+          const glenK = Math.max(1e-6, cum[gk + 1] - cum[gk]);
+          const gstep = gloops * L + gs[gk].idx;
+          // `gk` is the position in the PLAYED sequence — monotonic even though a
+          // chord (and a whole part) may recur inside one pass.
+          _ambProgInstHint = gloops * gs.length + gk;
+          _ambProgPosHint = { step: gstep, pos: Math.max(0, Math.min(1, grem / glenK)) };
+          return gstep;
         }
       }
       // ---- PART REPEATS -------------------------------------------------------
@@ -4639,6 +5101,12 @@
           let rem = bars - loops * cycle, k = 0;
           while (k < seq.length - 1 && rem >= seq[k].len) { rem -= seq[k].len; k++; }
           const step = loops * L + seq[k].abs;
+          // THE STEP IS NOT MONOTONIC HERE and cannot be: a chain that revisits a
+          // part (V C V) plays the same `abs` twice in one cycle, so the value
+          // repeats within a single pass. `k` is the position in the played
+          // sequence, which is monotonic by construction — that is what the span
+          // search must bisect on.
+          _ambProgInstHint = loops * seq.length + k;
           _ambProgPosHint = { step: step, pos: Math.max(0, Math.min(1, rem / Math.max(1e-6, seq[k].len))) };
           return step;
         }
@@ -4672,10 +5140,12 @@
         let pos = bars - cyc * cycle, i = 0;
         while (i < lens.length - 1 && pos >= lens[i]) { pos -= lens[i]; i++; }
         const step = cyc * chords.length + i;
+        _ambProgInstHint = step;   // already monotonic: i only grows within a cycle
         _ambProgPosHint = { step: step, pos: Math.max(0, Math.min(1, pos / Math.max(1e-6, lens[i]))) };
         return step;
       }
       const _ustep = Math.floor(bars / bpc);
+      _ambProgInstHint = _ustep;   // uniform grid — monotonic by definition
       _ambProgPosHint = { step: _ustep, pos: Math.max(0, Math.min(1, (bars - _ustep * bpc) / bpc)) };
       return _ustep;
     }
@@ -4792,11 +5262,15 @@
       ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-pm-modal">' +
         '<div class="sm-title">' + esc(o.label) + '</div>' +
         '<div class="ambient-step-modal-body">' +
-          '<div class="ambient-pm-modal-hint">' + (o.bulk
-            ? ('Sets <b>every ' + esc(o.bulk) + '</b> at once. The chance is rolled once per ' + esc(o.unit) + ', so a layer is in or out for the whole ' + esc(o.unit) + '.')
-            : ('The chance this layer plays. Rolled once per ' + esc(o.unit) +
-               ', so it is in or out for the whole ' + esc(o.unit) + ' — a lower % means it sits out more passes, not that it plays quieter or shorter.')) + '</div>' +
-          '<div class="ambient-ctrl ambient-step-row"><label>Chance</label>' +
+          '<div class="ambient-pm-modal-hint">' + (o.salt
+            ? (o.bulk
+              ? ('Sets <b>every ' + esc(o.bulk) + '</b> at once. This is how much of the Changes’ recolouring the layer follows — at <b>never</b> it holds the chord as written while the others recolour.')
+              : ('How much of the Changes’ recolouring this layer follows on this chord. Every layer shares ONE colouring, so wherever two layers both follow, they agree; at <b>never</b> this one holds the chord as written.'))
+            : (o.bulk
+              ? ('Sets <b>every ' + esc(o.bulk) + '</b> at once. The chance is rolled once per ' + esc(o.unit) + ', so a layer is in or out for the whole ' + esc(o.unit) + '.')
+              : ('The chance this layer plays. Rolled once per ' + esc(o.unit) +
+                 ', so it is in or out for the whole ' + esc(o.unit) + ' — a lower % means it sits out more passes, not that it plays quieter or shorter.'))) + '</div>' +
+          '<div class="ambient-ctrl ambient-step-row"><label>' + (o.salt ? 'Follows' : 'Chance') + '</label>' +
             '<input type="range" class="ambient-pm-modal-sl" min="0" max="100" step="1" value="' + v0 + '">' +
             '<span class="ambient-step-val ambient-pm-modal-val">' + v0 + '%</span></div>' +
           '<div class="ambient-pm-modal-presets">' +
@@ -4878,6 +5352,8 @@
       return x - Math.floor(x);
     }
     function _ambChordGateOK(E, L, atSec, cfg, src, hard) {
+      // Composing in the Grid: play every chord (see _ambGridComposing).
+      if (L && _bloomGridEdit && _ambGridComposing(_ambKeyOfLayer(E, L))) return true;
       const m = L && L.chordMask; if (!m) return true;
       const eff = (src && src.type === 'prog') ? src : ((typeof _ambGlobalProg === 'function') ? _ambGlobalProg() : null);
       if (!eff || !Array.isArray(eff.chords) || !eff.chords.length) return true;
@@ -7016,6 +7492,73 @@
       }
       if (ps.length <= 1) { ed.parts = [];   /* staged-but-empty: null would read as 'never staged' in apply() */ ed.part = -1; }
     }
+    // DELETE A PART OUTRIGHT — the part AND its chords. Distinct from merging,
+    // which keeps the chords by folding them into a neighbour; this is the one
+    // destructive answer, so it confirms and it names what it will take.
+    //
+    // Everything that POINTS at a part or a chord has to move with it, or it
+    // silently re-points at whatever slid into the gap:
+    //   · prog.chords          — the part's own window is spliced out
+    //   · prog.chain           — part indices: drop this one, shift the rest down
+    //   · prog.arrGrid.seq     — same, the meta grid schedules parts by index
+    //   · sections[i].part     — the harmony binding
+    //   · layer chordMask.steps — keyed by CHORD index, so the same window goes
+    // Normalize would merely CLAMP most of these, which is not the same thing:
+    // a clamped index still resolves, just to the wrong part.
+    function _ambProgDeletePart(E, pi) {
+      const cfg = E && E.getCfg && E.getCfg(); const p = cfg && cfg.prog;
+      if (!p || !Array.isArray(p.chords)) return false;
+      const ps = Array.isArray(p.parts) ? p.parts : null;
+      // THE ONLY SET OF CHANGES *IS* THE PROGRESSION, so deleting it clears the
+      // progression rather than refusing. Everything keyed on a part or a chord
+      // goes with it, and the Progression switch turns off — an empty, still-on
+      // progression is a state nothing else in the engine expects.
+      if (!ps || ps.length <= 1) {
+        p.chords = [];
+        delete p.parts; delete p.chain; delete p.arrGrid; delete p.grid;
+        delete p.versions; delete p.versionIdx;
+        p.on = false;
+        if (Array.isArray(cfg.sections)) cfg.sections.forEach(sec => { if (sec) delete sec.part; });
+        try {
+          (_ambChordMatrixRows(cfg) || []).forEach(row => {
+            const m = row && row.L && row.L.chordMask;
+            if (m && Array.isArray(m.steps)) m.steps.length = 0;
+          });
+        } catch (e) {}
+        return true;
+      }
+      if (!ps[pi]) return false;
+      let from = 0;
+      for (let i = 0; i < pi; i++) if (!ps[i].open) from += Math.max(1, ps[i].len | 0);
+      const len = ps[pi].open ? 0 : Math.max(1, ps[pi].len | 0);
+      const to = Math.min(p.chords.length, from + len);
+      const n = Math.max(0, to - from);
+      if (n && (p.chords.length - n) < 1) return false;      // never leave a progression with no chords
+      if (n) p.chords.splice(from, n);
+      ps.splice(pi, 1);
+      const fix = (v) => (v === pi ? -1 : (v > pi ? v - 1 : v));
+      if (Array.isArray(p.chain)) {
+        p.chain = p.chain.map(x => fix(x | 0)).filter(x => x >= 0);
+        if (!p.chain.length) delete p.chain;
+      }
+      if (p.arrGrid && p.arrGrid.seq) {
+        Object.keys(p.arrGrid.seq).forEach(k => {
+          p.arrGrid.seq[k] = (p.arrGrid.seq[k] || []).map(x => fix(x | 0)).filter(x => x >= 0);
+        });
+      }
+      if (Array.isArray(cfg.sections)) cfg.sections.forEach(sec => {
+        if (sec && Number.isFinite(sec.part)) { const nv = fix(sec.part | 0); if (nv < 0) delete sec.part; else sec.part = nv; }
+      });
+      if (n) {
+        try {
+          (_ambChordMatrixRows(cfg) || []).forEach(row => {
+            const m = row && row.L && row.L.chordMask;
+            if (m && Array.isArray(m.steps)) m.steps.splice(from, n);
+          });
+        } catch (e) {}
+      }
+      return true;
+    }
     function _ambPeRender() {
       const host = document.getElementById('ambient-prog-editor'); if (!host || !_ambProgEd) return;
       if (_ambProgEd._pvOn) { try { _ambPePreviewStop(_ambProgEd); } catch (e) {} }   // a full re-render orphans the chord-button refs → halt the preview
@@ -7146,7 +7689,7 @@
                 '<span class="pe-partgrp-hint">' + (sv ? 'this part only' : 'follows the progression') + '</span>' +
                 (sv ? '<span class="pe-partsalt">' +
                   '<label title="Re-slice these changes\u2019 chord lengths each cycle. Their own total is preserved, so the rest of the chain does not move.">Lengths<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':len" min="0" max="100" step="5" value="' + (sv.len | 0) + '"></label>' +
-                  '<label title="Colour segments per chord instance in these changes. The downbeat is always the written chord.">Colours<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':colors" min="0" max="8" step="1" value="' + (sv.colors | 0) + '"></label>' +
+                  '<label title="Colour segments per chord instance in these changes. The downbeat is always the written chord.">Colours<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':colors" min="0" max="7" step="1" value="' + (sv.colors | 0) + '"></label>' +
                   '<label title="How much the segment count varies between instances. 0 = every instance the same.">Scatter<input type="number" class="pe-saltin" data-pesalt="' + ed.part + ':scatter" min="0" max="100" step="5" value="' + (sv.scatter | 0) + '"></label>' +
                   '</span>' : '') +
               '</div>') +
@@ -7169,10 +7712,19 @@
       // chord). The part TABS stay outside — they are how you move around the
       // chain — and so does the Save footer, since folding Save away would hide
       // the only way to commit. `_secClosed` is transient view state.
-      // Both start COLLAPSED — the editor opens compact (title · tabs · two
-      // headers · Save) and you unfold what you came for. Absence = closed, so
-      // `_secOpen` only ever records what the user deliberately opened.
-      const secOpen = (k) => !!(ed._secOpen && ed._secOpen[k]);
+      // Chords starts COLLAPSED — the editor opens compact (title · tabs · two
+      // headers · Save) and you unfold what you came for. `_secOpen` records
+      // what the user deliberately toggled, so an explicit choice always wins.
+      // PART SETTINGS defaults OPEN when there is a chain, because that section
+      // is the only home of rename / repeats / salt / merge / delete, and folded
+      // they are invisible: asked as "where is the delete part button?", and the
+      // button measured 0x0 until the fold was opened. A progression with no
+      // chain renders no part section at all, so the compact-open intent is
+      // untouched for the simple case this protects.
+      const secOpen = (k) => {
+        if (ed._secOpen && Object.prototype.hasOwnProperty.call(ed._secOpen, k)) return !!ed._secOpen[k];
+        return k === 'part' && !!(_peParts && _peParts.length > 1);
+      };
       const secWrap = (k, label, body, sum) => {
         const o = secOpen(k);
         return '<div class="pe-sec' + (o ? '' : ' folded') + '" data-sec="' + k + '">' +
@@ -7291,6 +7843,25 @@
           '</div>' : ''), chordSum) +
         '<div class="pe-save">' +
           '<button type="button" data-pe="cancel">Cancel</button>' +
+          // DELETE LIVES IN THE FOOTER, AND IT IS ALWAYS RENDERED. It was behind a
+          // fold, then conditional on having a chain — and BOTH times the report
+          // was the same: "I still see no delete button". A control that vanishes
+          // in the state you happen to be in is indistinguishable from one that
+          // does not exist, and the state it vanished in (a single set of
+          // changes) is the common one. So it is always here, and DISABLED with
+          // a title that says what to do instead when it cannot apply.
+          (function () {
+            const _kp = (_peParts && ed.part >= 0) ? _peParts[ed.part] : null;
+            const _kn = _kp ? ((_kp.name || ('Changes ' + (ed.part + 1)))) : '';
+            const _kok = !!(_peParts && _peParts.length > 1 && _kp);
+            // Live in BOTH cases: with a chain it deletes that set of changes,
+            // and with a single set it clears the progression — which is the
+            // same act, since one set of changes IS the progression.
+            return '<button type="button" class="pe-killbtn" data-pe="partkill:' + (ed.part | 0) + '" title="' +
+              (_kok ? ('Delete ' + esc(_kn) + ' AND its chords. Merging keeps the chords; this does not.')
+                    : ('Delete the whole progression \u2014 all ' + ed.chords.length + ' chord' + (ed.chords.length === 1 ? '' : 's') + '. This is the only set of changes, so it IS the progression.')) +
+              '">\u2715 Delete</button>';
+          })() +
           '<button type="button" data-pe="clone" title="Duplicate this progression into a fresh editable copy">⧉ Clone</button>' +
           '<button type="button" class="pe-preview' + (ed._pvOn ? ' on' : '') + '" data-pe="preview" title="Hear the progression — each chord sounds for its own length">' + (ed._pvOn ? '■ Stop' : '▶ Preview') + '</button>' +
           '<button type="button" data-pe="pad" title="Add a pad layer that plays this progression">＋ Pad</button>' +
@@ -7478,6 +8049,54 @@
         try { if (_ambProgActions) (op === 'reharm' ? _ambProgActions.reharm() : _ambProgActions.detectKey()); } catch (e) {}
         // Re-seed the editor from whatever the operation left behind.
         try { const c = E.getCfg(); if (c && c.prog && Array.isArray(c.prog.chords)) ed.chords = c.prog.chords.map(_ambCloneChord); } catch (e) {}
+        _ambPeRender(); return;
+      }
+      else if (op === 'partkill') {
+        // Commit what is staged BEFORE deleting, the same order reharm/detectkey
+        // use: this operates on cfg.prog directly, so running it against the
+        // pre-edit chords would discard whatever is on screen — and it also
+        // means the delete is immediate rather than pending a Save, which is
+        // what stops chain/arrGrid being remapped for an edit you then cancel.
+        const E = ed.E, pi = parseInt(arg, 10);
+        const ps0 = _ambPeParts(ed);
+        const sole = !ps0 || ps0.length <= 1 || !ps0[pi];
+        const r0 = sole ? null : _ambPePartRange(ed, pi);
+        const nCh = sole ? ed.chords.length : Math.max(0, (r0 ? r0.to - r0.from : 0));
+        const nm0 = sole ? '' : (ps0[pi].name || ('Changes ' + (pi + 1)));
+        if (typeof confirm === 'function' && !confirm(sole
+            ? ('Delete the whole progression — all ' + nCh + ' chord' + (nCh === 1 ? '' : 's') + '?\n\n' +
+               'This is the only set of changes, so it IS the progression. The Progression switch will be turned off.')
+            : ('Delete "' + nm0 + '" and its ' + nCh + ' chord' + (nCh === 1 ? '' : 's') + '?\n\n' +
+               'The chords go with it. To keep them, merge it into a neighbour instead.'))) return;
+        try { if (ed.target && typeof ed.target.apply === 'function') ed.target.apply((ed.name || 'Prog').trim() || 'Prog', serialize()); } catch (e) {}
+        if (!_ambProgDeletePart(E, pi)) { if (typeof showToast === 'function') showToast('Could not delete that part.'); return; }
+        try {
+          const c = E.getCfg();
+          if (c && c.prog && Array.isArray(c.prog.chords)) {
+            ed.chords = c.prog.chords.map(_ambCloneChord);
+            ed.parts = (Array.isArray(c.prog.parts) && c.prog.parts.length > 1)
+              ? c.prog.parts.map(x => Object.assign({}, x)) : [];
+          }
+        } catch (e) {}
+        // Nothing left to edit — the editor would render a chord that is not
+        // there (sel clamps to 0 against an empty list and the body reads
+        // chords[0]). Close it and report, rather than leaving a broken pane.
+        if (!ed.chords.length) {
+          try { _ambRenderProgOverview(E); _ambRenderScheduler(E); } catch (e) {}
+          try { _ambRenderPassMatrix(E); } catch (e) {}
+          try { _ambProgChainLenSync(E); } catch (e) {}
+          try { _ambSyncControls(E); } catch (e) {}
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+          if (typeof showToast === 'function') showToast('Progression cleared — ' + nCh + ' chord' + (nCh === 1 ? '' : 's') + ' removed, Progression switched off.');
+          _ambPeClose(); return;
+        }
+        ed.part = Math.max(-1, Math.min((_ambPeParts(ed) || []).length - 1, pi - 1));
+        ed.sel = 0; ed.altSel = -1;
+        try { _ambRenderProgOverview(E); _ambRenderScheduler(E); } catch (e) {}
+        try { _ambRenderPassMatrix(E); } catch (e) {}
+        try { _ambProgChainLenSync(E); } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        if (typeof showToast === 'function') showToast('Deleted "' + nm0 + '" — ' + nCh + ' chord' + (nCh === 1 ? '' : 's') + ' removed.');
         _ambPeRender(); return;
       }
       else if (op === 'cancel') { _ambPeClose(); return; }
@@ -8040,6 +8659,8 @@
       return idx;
     }
     function _ambSpatApply(E, key, params, at) {
+      // Composing in the Grid: hold the image still (see _ambGridComposing).
+      if (_ambGridComposing(key)) return;
       if (!params || typeof at !== 'number' || params._pecho) return;
       const L = _ambLayerByKey(E, key);
       if (!_ambSpatOn(L)) return;
@@ -8152,6 +8773,21 @@
       // for inheriting layers (a layer's OWN startVary above is untouched).
       if (areaCfg && areaCfg.groove && areaCfg.groove.bypass) return 0;
       return Math.max(0, Math.min(100, (areaCfg && areaCfg.startVary) | 0));
+    }
+    // START OFFSET — where this phrase begins inside its unit. Bed and Motif had
+    // this written out twice under two field names (`startVary` / `phraseVary`,
+    // both labelled "Start", both cascading through _ambEffStart, both computing
+    // the same slack): one algorithm, two copies, free to drift. The only genuine
+    // difference is which span has to still fit — the bed's strum, the motif's
+    // burst — so that is the argument.
+    // DRAW ORDER IS LOAD-BEARING: the gate draw fires only when the value is > 0,
+    // and the placement draw only when the gate passed AND there is slack. Any
+    // other order shifts every downstream draw in the shared stream.
+    function _ambStartOffset(own, areaCfg, unitSec, spanSec) {
+      const v = _ambEffStart(own, areaCfg);
+      if (!(v > 0) || _ambRand() * 100 >= v) return 0;
+      const slack = Math.max(0, Math.max(0.05, unitSec) - Math.max(0, spanSec) - 0.02);
+      return (slack > 0.02) ? _ambRand() * slack : 0;
     }
     // Is a layer INHERITING the area Start (no own value)? — for the UI cue.
     function _ambStartInherits(own) { return !Number.isFinite(own); }
@@ -8723,7 +9359,7 @@
         return false;
       }
       if (!E.unit) E.unit = {};
-      E.unit[key] = { lock: true, keyCtx: _ambCurKeyCtx(E), notes: u.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) })) };
+      E.unit[key] = { lock: true, keyCtx: _ambCurKeyCtx(E), notes: u.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: _ambLockParams(n.params) })) };
       return true;
     }
     // Update every Drift slider's readout within E's panel (step-div in Sync,
@@ -9932,16 +10568,12 @@
       // leaving room for the strum span so the chord still fits. DRAW-GATED on
       // startVary>0 (0 → no RNG draw → byte-identical). Folds into each note's
       // `offset` below, so playNote onset, the recorded unit, and choke all follow.
-      let _startOff = 0;
-      const _startV = _ambEffStart(bed.startVary, _E._cfg || (_E.getCfg && _E.getCfg()));   // own else area cascade
-      if (_startV > 0 && _ambRand() * 100 < _startV) {
-        const _uSec = Math.max(0.05, effIntervalMs / 1000);
-        const _strumSpanSec = (spanSec > 0)
-          ? (_strumSynced ? ((n - 1) * hitSpacing) : ((n - 1) / Math.max(1, n)) * spanSec)
-          : 0;
-        const slack = Math.max(0, _uSec - _strumSpanSec - 0.02);
-        if (slack > 0.02) _startOff = _ambRand() * slack;
-      }
+      // The strum has to still fit inside the unit — that is this layer's span.
+      const _strumSpanSec = (spanSec > 0)
+        ? (_strumSynced ? ((n - 1) * hitSpacing) : ((n - 1) / Math.max(1, n)) * spanSec)
+        : 0;
+      const _startOff = _ambStartOffset(bed.startVary, _E._cfg || (_E.getCfg && _E.getCfg()),
+        effIntervalMs / 1000, _strumSpanSec);
       // Prog-sync Stochastic feel: nudge this voicing's onset within its sub-slot
       // (seeded above → reproducible). Even feel leaves it on the grid.
       if (_progJit > 0) _startOff += _progJit;
@@ -10211,8 +10843,19 @@
                     ctx.cap++;
                     continue;
                   }
-                  const bp = _ambApplyAdsr(_ambBeatParams(inst.kit, lenMs, panEff), inst);
-                  if (tuneEff) bp.drumTune = tuneEff;   // "Pitch" (+ ramp): pitch the selected drum in place (playbackRate multiply in _resolveSampleVoice)
+                  // A lane that names its OWN sample plays that, not the kit's zone.
+                  // With no zone map, "Sound" has nothing to select — so it tunes
+                  // like the synth kit does (both Sound and Pitch shift real pitch),
+                  // and the note is the sample's own root so an untouched hit plays
+                  // at its recorded speed.
+                  const _lsmp = inst.euclidKit ? _ambLaneSample(inst, v) : null;
+                  const bp = _ambApplyAdsr(_ambBeatParams(_lsmp || inst.kit, lenMs, panEff), inst);
+                  let f2 = f;
+                  if (_lsmp) {
+                    const _st = (stPitch | 0) + (tuneEff | 0);
+                    if (_st) bp.drumTune = _st;
+                    try { f2 = Tone.Frequency(_ambSampleRootMidi(_lsmp), 'midi').toFrequency(); } catch (e) {}
+                  } else if (tuneEff) bp.drumTune = tuneEff;   // "Pitch" (+ ramp): pitch the selected drum in place (playbackRate multiply in _resolveSampleVoice)
                   bp.volume = Math.max(0, Math.round(_ambApplyLevel(bp.volume, inst.level) * velS));
                   if (dmod) bp._detuneMod = dmod;
                   if (_ambTightOn(inst)) _ambTightChoke(bp);
@@ -10220,7 +10863,7 @@
                     ? _ambTightGap((j2) => vpat[j2 % vpat.length] === 1, absI, bars * steps) * slotSec * 1000 * lenS
                     : _ambVaryLen(_holdMs || lenMs, inst.lenVary, rnd) * lenS;
                   const noteLen = (rat > 1) ? Math.min(baseLen, ratSpace * 1000 * 0.95) : baseLen;
-                  try { playNote(f, bp, noteLen, rAt, dest, undefined, _E.laneIdx()); } catch (e) {}
+                  try { playNote(f2, bp, noteLen, rAt, dest, undefined, _E.laneIdx()); } catch (e) {}
                   ctx.cap++;
                 }
                 // Ghosts (Variance): with prob ∝ ghosts, a QUIET pickup hit half a
@@ -11132,13 +11775,9 @@
       // sometimes early, sometimes near the end (its tail then spills into the next
       // unit, giving continuity). Default 0 = always on the 1 → no RNG consumed →
       // byte-identical stream (harness-safe).
-      let _startOff = 0;
-      const _pv = _ambEffStart(motif.phraseVary, _E._cfg || (_E.getCfg && _E.getCfg()));   // own else area Start cascade
-      if (_pv > 0 && _ambRand() * 100 < _pv) {
-        const unitSec = Math.max(0.05, _ambEffIntervalSec(motif));
-        const slack = Math.max(0, unitSec - Math.max(0, (count - 1) * burstGap) - 0.02);
-        if (slack > 0.02) _startOff = _ambRand() * slack;   // uniformly anywhere in the unit
-      }
+      // The note-burst has to still fit inside the unit — this layer's span.
+      const _startOff = _ambStartOffset(motif.phraseVary, _E._cfg || (_E.getCfg && _E.getCfg()),
+        _ambEffIntervalSec(motif), (count - 1) * burstGap);
       const _motifProg = (_mnotes && _mnotes.type === 'prog');
       const _unit = [];
       for (let i = 0; i < count; i++) {
@@ -11194,7 +11833,13 @@
     }
 
     // ================= TEXTURE engine ===============================
-    // texture pattern/cursor/mutate-clock live on the engine: _E.texPattern / _E.texStep / _E.texMutateAt
+    // texture pattern + cursor live on the engine: _E.texPattern / _E.texStep.
+    // NOTE the pattern is built ONCE per play (the one caller is guarded by
+    // `if (!_E.texPattern)`) and never re-rolls. There used to be a "Mutate"
+    // slider and a `texMutateAt` clock for exactly that; nothing ever read
+    // either, so both were removed 2026-08-20 rather than left as a control that
+    // does nothing. If a re-roll is wanted, build it as the general "re-decide
+    // every N" idea rather than reviving one layer's orphan.
     function _ambTexBuildPattern(texture) {
       const intervals = _ambScaleIntervals(_ambNotesOf(texture));
       const N = intervals.length;
@@ -11813,6 +12458,29 @@
     // Neutral global macros (shape the whole kit): tune ± semitones, decay %, grit
     // (added noise). Default = no effect.
     function _ambSynthDefaultMacros() { return { tune: 0, decay: 100, grit: 0 }; }
+    // The layer's kit as a REAL object with all eight voices written out. A kit is
+    // normally implied by its seed (`_ambSynthVoiceOf` generates on read), which is
+    // why a single voice cannot be replaced in place — there is nothing to replace.
+    // Materialising first is what makes "roll just this drum" expressible.
+    function _ambSynthKitMaterialize(inst) {
+      const sk = inst.synthKit && typeof inst.synthKit === 'object' ? inst.synthKit : {};
+      const seed = Number.isFinite(sk.seed) ? sk.seed : (((inst && inst.id) | 0) * 40503 + 1);
+      const voices = _AMB_SYNTH_ROLES.map((_, role) => {
+        const v = (Array.isArray(sk.voices) && sk.voices[role]) ? sk.voices[role] : _ambGenSynthVoice(seed, role);
+        return { body: v.body, tune: v.tune | 0, decay: v.decay | 0, noise: v.noise | 0,
+                 bright: v.bright | 0, drop: v.drop | 0, snap: v.snap | 0 };
+      });
+      inst.synthKit = { seed: seed | 0, macros: sk.macros || _ambSynthDefaultMacros(), voices };
+      return inst.synthKit;
+    }
+    // Roll ONE role. Math.random at UI time — never the seeded _ambRand stream,
+    // which generation hashes (the documented split, same as _ambEuclidStochasticInit).
+    function _ambRollSynthVoice(inst, role) {
+      const sk = _ambSynthKitMaterialize(inst);
+      const r = Math.max(0, Math.min(_AMB_SYNTH_ROLES.length - 1, role | 0));
+      sk.voices[r] = _ambGenSynthVoice(Math.floor(Math.random() * 1e9), r);
+      return sk.voices[r];
+    }
     function _ambGenSynthKit(seed) {
       return { seed: seed | 0, macros: _ambSynthDefaultMacros(), voices: _AMB_SYNTH_ROLES.map((_, role) => _ambGenSynthVoice(seed, role)) };
     }
@@ -11880,7 +12548,13 @@
       return '<div class="ambient-synthkit" style="display:none">' +
         '<div class="ambient-ctrl ambient-sk-head"><label title="A drum kit synthesized from scratch (no samples). Regen rolls a fresh kit from a new seed; edit each drum below.">Synth kit</label>' +
           '<button type="button" class="ambient-seg ambient-sk-hear" title="Play the selected drum so you can hear it">▶ Hear</button>' +
-          '<button type="button" class="ambient-seg ambient-sk-regen" title="Roll a new random kit (new seed)">↻ Regen voices</button>' +
+          // ROLL ONE DRUM. Regen re-rolls all eight from a new seed, which throws
+          // away every voice you had already tweaked — so there was no way to say
+          // "keep my kick, give me another snare". This rolls the SELECTED role
+          // only, inside that role's own bands (a kick stays a kick), and leaves
+          // the other seven exactly as they are.
+          '<button type="button" class="ambient-seg ambient-sk-roll" title="Roll a new sound for the SELECTED drum only — the rest of the kit is left alone">🎲 Roll drum</button>' +
+          '<button type="button" class="ambient-seg ambient-sk-regen" title="Roll a new random kit (new seed) — replaces ALL eight voices">↻ Regen voices</button>' +
           '<span class="ambient-hint ambient-sk-seed"></span></div>' +
         '<div class="ambient-sk-macros">' +
           '<div class="ambient-ctrl"><label title="Tune the WHOLE kit up/down (semitones).">Tune</label><input type="range" class="ambient-sk-mac-tune" min="-24" max="24" step="1"><span class="ambient-hint ambient-sk-mac-tune-v"></span></div>' +
@@ -11929,6 +12603,26 @@
     }
 
 
+    // PER-LANE SAMPLE (`inst.euclidSamples[v]` = a bare sample id). A KIT is a map
+    // of 12 semitone zones, so using one sound out of a pack meant authoring a
+    // whole kit first. A lane can now name ANY library sample directly and the
+    // zone map simply does not apply to it — which makes every sound you have
+    // imported playable on any lane with no kit at all.
+    // Sparse and absent by default: a lane with no entry takes the kit exactly as
+    // before, so existing beats are byte-identical.
+    function _ambLaneSample(inst, v) {
+      const a = inst && inst.euclidSamples;
+      if (!Array.isArray(a)) return null;
+      const id = a[v | 0];
+      return (typeof id === 'string' && id) ? id : null;
+    }
+    function _ambNormalizeLaneSamples(L) {
+      if (!L || typeof L !== 'object') return;
+      if (L.euclidSamples == null) return;
+      if (!Array.isArray(L.euclidSamples)) { delete L.euclidSamples; return; }
+      const out = L.euclidSamples.slice(0, _AMB_KIT_LANES).map(x => (typeof x === 'string' && x) ? x.slice(0, 64) : null);
+      if (out.some(x => x)) L.euclidSamples = out; else delete L.euclidSamples;
+    }
     // The drum a euclid Beat lane `v` plays: an explicit per-lane override
     // (inst.euclidDrums[v]) wins; else the fixed kit slot for that lane.
     function _ambLaneDrumPc(inst, v) {
@@ -12338,7 +13032,9 @@
       const cfg = E._cfg || (E.getCfg && E.getCfg());
       return !_ambIterGateOpen(E, cfg, L, at);
     }
+    // Composing in the Grid bypasses every playback gate — see _ambGridComposing.
     function _ambPlaybackGateShouldSkip(key, at) {
+      if (_ambGridComposing(key)) return false;
       return _ambUnitGateShouldSkip(key, at) || _ambIterGateShouldSkip(key, at);
     }
     if (typeof window !== 'undefined') window._ambUnitGateSkip = _ambPlaybackGateShouldSkip;
@@ -13199,8 +13895,16 @@
         _ambPlaySynthDrum(E, dest0, L, v, at0, _vol, _ambLayerDetuneMod(key), 0);
         return;
       }
-      let f; try { f = Tone.Frequency(36 + _ambLaneDrumPc(L, v), 'midi').toFrequency(); } catch (e) { return; }
-      const bp = _ambApplyAdsr(_ambBeatParams(L.kit, lenMs, 0), L);
+      // A lane that names its own sample auditions THAT — mirroring the emit.
+      // Without this, picking a sample previewed the kit drum instead, which is
+      // the worst possible feedback for a picker that auditions on choose.
+      const _ls0 = L.euclidKit ? _ambLaneSample(L, v) : null;
+      let f;
+      try {
+        f = _ls0 ? Tone.Frequency(_ambSampleRootMidi(_ls0), 'midi').toFrequency()
+                 : Tone.Frequency(36 + _ambLaneDrumPc(L, v), 'midi').toFrequency();
+      } catch (e) { return; }
+      const bp = _ambApplyAdsr(_ambBeatParams(_ls0 || L.kit, lenMs, 0), L);
       bp.volume = Math.max(0, Math.round(_ambApplyLevel(bp.volume, L.level)));
       try { playNote(f, bp, lenMs, at0, dest0, undefined, (E && E.laneIdx) ? E.laneIdx() : -1); } catch (e) {}
     }
@@ -13381,6 +14085,254 @@
       for (const d of _AMB_DRUMS) { if ((r -= d.w) < 0) return d.pc; }
       return 0;
     }
+    // A sample's recorded root as MIDI — playing it there means playbackRate 1,
+    // i.e. exactly as recorded. A drum one-shot usually states no root, so C4 is
+    // the same fallback the sampler itself uses.
+    // Every individually-addressable library sample, for the per-lane picker.
+    // Reads METADATA only — never `.sampler`, which is a lazy getter that would
+    // build all 155 (the documented __sampleStats trap). Loops are excluded: a
+    // lane hit is a one-shot, and a tempo-matched loop is a different animal.
+    function _ambDrumSampleIds() {
+      const out = [];
+      try {
+        if (typeof sampleSamplers === 'undefined' || !sampleSamplers.forEach) return out;
+        sampleSamplers.forEach((meta, id) => {
+          if (!meta || meta.drumKit) return;               // a KIT is chosen as a kit
+          if (meta.kind === 'loop') return;                // carries its own tempo
+          out.push(String(id));
+        });
+      } catch (e) {}
+      out.sort();
+      return out;   // NOT capped — the picker's count must be the real total
+    }
+    // An imported id is its SOURCE-RELATIVE PATH, so it can be 90 characters of
+    // pack/folder/folder/name. Rendering that as one string is what made the list
+    // cramped: every row wrapped to three lines and ran into its neighbour. Split
+    // it — the file name is what identifies a sound, the folder is just where it
+    // came from — and keep FILTERING on the whole id so typing a pack name works.
+    function _ambSampleLabel(id) {
+      const str = String(id || '');
+      const i = str.lastIndexOf('/');
+      if (i < 0) return { name: str, path: '' };
+      let name = str.slice(i + 1);
+      // KEEP THE TAIL. These names differ at the END — MARS_LINN_kick_linndrum_lm2
+      // vs …_lm2_ga vs …_lm2_pi — so a plain end-ellipsis renders three different
+      // drums as the same row. Truncate the MIDDLE instead, in JS rather than with
+      // a `direction: rtl` trick, which reorders punctuation in names like this.
+      if (name.length > 38) name = name.slice(0, 18) + '\u2026' + name.slice(-18);
+      const rest = str.slice(0, i);
+      const j = rest.lastIndexOf('/');
+      // Just the immediate folder — enough to tell two kicks apart, short enough
+      // to sit on one line.
+      return { name, path: (j < 0 ? rest : rest.slice(j + 1)) };
+    }
+    // A KIT IS A SAMPLE SET TOO — its filled zones, so a lane can play any drum
+    // the kit contains rather than only the one its slot maps to. Reads `urls`
+    // (metadata) and never `.sampler`, the lazy getter.
+    // Names for ALL TWELVE zones. `_AMB_DRUM_NAMES` covers only the 8 LANE drums
+    // (it labels lanes and step readouts, so it is not the place to add the rest),
+    // which left a kit's other four zones showing as note names — tr808's C#2 is
+    // a rimshot, not "C#2". Display-only, and it follows the zone map 04 documents:
+    // kick · rim · snare · clap · closed hat · open hat · low tom · mid tom ·
+    // cowbell · crash · high tom · perc.
+    const _AMB_ZONE_NAMES = ['Kick', 'Rim', 'Snare', 'Clap', 'Closed hat', 'Open hat',
+      'Low tom', 'Mid tom', 'Cowbell', 'Crash', 'High tom', 'Perc'];
+    function _ambKitZones(kitId) {
+      const out = [];
+      try {
+        const e = (typeof getSampleEntry === 'function') ? getSampleEntry('sample:' + kitId) : null;
+        if (!e || !e.urls) return out;
+        Object.keys(e.urls).forEach(note => {
+          let midi; try { midi = Tone.Frequency(note).toMidi(); } catch (x) { return; }
+          if (!Number.isFinite(midi)) return;
+          const pc = (((midi | 0) % 12) + 12) % 12;
+          if (out.some(z => z.pc === pc)) return;
+          out.push({ pc, name: _AMB_ZONE_NAMES[pc] || _AMB_DRUM_NAMES[pc] || note });
+        });
+      } catch (e) {}
+      out.sort((a, b) => a.pc - b.pc);
+      return out;
+    }
+    // WHAT THIS LANE PLAYS — a modal rather than a menu, because the library runs
+    // to a couple of hundred sounds and a flat context menu of that length cannot
+    // be searched, only scrolled. Three sources in one list: the kit's default for
+    // this lane, any other drum the kit contains, and any library sample.
+    // SAVE THE LANES AS A KIT. You assemble drums by ear ON the lanes — that is
+    // where you hear them in context — and until now that arrangement could not
+    // become a reusable kit; you had to re-pick everything in the kit builder.
+    // Each lane maps to its own slot note (lane v → _AMB_VDRUM[v] → KIT_SLOTS[pc]),
+    // and its sound resolves to either a MEMBER ID (a library sample, which must
+    // stay referenced so a session-scoped blob: url is re-resolved on reload) or a
+    // DIRECT url (another kit's zone, which has no member to reference).
+    function _ambLanesToKitSpec(L) {
+      const slots = {}, direct = {};
+      let filled = 0, missing = [];
+      const KS = (typeof KIT_SLOTS !== 'undefined') ? KIT_SLOTS : null;
+      if (!KS) return { slots, direct, filled, missing };
+      let src = null;
+      try { src = (typeof getSampleEntry === 'function') ? getSampleEntry('sample:' + L.kit) : null; } catch (e) {}
+      for (let v = 0; v < _AMB_KIT_LANES; v++) {
+        const pc = _ambLaneDrumPc(L, v);
+        const note = KS[((pc % 12) + 12) % 12];
+        const dn = _AMB_DRUM_NAMES[_AMB_VDRUM[v]] || ('Drum ' + v);
+        if (!note) continue;
+        const smp = _ambLaneSample(L, v);
+        if (smp) { slots[note] = smp; filled++; continue; }
+        // The lane's drum inside its source kit: a user kit names a member, a
+        // built-in one only has a url (made absolute against its baseUrl).
+        const mid = src && src.slots && src.slots[note];
+        if (mid) { slots[note] = mid; filled++; continue; }
+        const u = src && src.urls && src.urls[note];
+        if (u) {
+          direct[note] = (src.baseUrl && !/^(blob:|https?:|data:)/.test(u)) ? (src.baseUrl + u) : u;
+          filled++; continue;
+        }
+        missing.push(dn);
+      }
+      return { slots, direct, filled, missing };
+    }
+    async function _ambSaveLanesAsKit(E, key, L) {
+      _E = E;
+      if (!L || !L.euclidKit) return;
+      if (_ambBeatIsSynth(L)) {
+        if (typeof showToast === 'function') showToast('A synth kit has no samples to save \u2014 it is already a recipe. Use \u21bb Regen / \ud83c\udfb2 Roll to shape it.', { warn: true });
+        return;
+      }
+      if (typeof registerDrumKit !== 'function' || typeof persistDrumKit !== 'function') return;
+      const spec = _ambLanesToKitSpec(L);
+      if (!spec.filled) {
+        if (typeof showToast === 'function') showToast('Nothing to save \u2014 no lane has a sound yet.', { warn: true });
+        return;
+      }
+      const base = (L.kit ? (L.kit + ' edit') : 'My kit');
+      const nm = (typeof prompt === 'function') ? prompt('Save these ' + spec.filled + ' lane sounds as a kit named:', base) : base;
+      if (nm == null) return;
+      const name = (String(nm).trim() || 'My kit').slice(0, 40);
+      const id = 'kit-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+        + '-' + Math.random().toString(36).slice(2, 7);
+      try {
+        registerDrumKit(id, name, spec.slots, spec.direct);
+        await persistDrumKit(id, name, spec.slots, spec.direct);
+      } catch (e) {
+        if (typeof showToast === 'function') showToast('Could not save the kit: ' + ((e && e.message) || e), { warn: true });
+        return;
+      }
+      // Point the layer at what it just saved and DROP the per-lane overrides —
+      // they are baked into the kit now, and leaving them would silently override
+      // the very kit they created.
+      L.kit = id;
+      delete L.euclidSamples; delete L.euclidDrums;
+      try { if (typeof _ambRefreshToneSelects === 'function') _ambRefreshToneSelects(); } catch (e) {}
+      try { if (typeof refreshAllToneSelects === 'function') refreshAllToneSelects(); } catch (e) {}
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      try { _ambSyncControls(E); } catch (e) {}
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+      if (typeof showToast === 'function') {
+        showToast('Kit \u201c' + name + '\u201d saved from ' + spec.filled + ' lane' + (spec.filled === 1 ? '' : 's') +
+          (spec.missing.length ? (' \u2014 ' + spec.missing.join(', ') + ' had no sound') : '') +
+          '. It is in every kit picker.');
+      }
+    }
+    function _ambLaneSoundModal(E, key, L, v, after) {
+      _E = E;
+      if (!L) return;
+      const esc = (x) => String(x == null ? '' : x).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const dn = _AMB_DRUM_NAMES[_AMB_VDRUM[v]] || ('Drum ' + v);
+      const ov = document.createElement('div');
+      ov.className = 'sm-overlay ambient-lanesnd-ov';
+      let filter = '';
+      const curSample = () => _ambLaneSample(L, v);
+      const curZone = () => (Array.isArray(L.euclidDrums) && L.euclidDrums[v] != null) ? (L.euclidDrums[v] | 0) : null;
+      const clearLane = () => {
+        if (Array.isArray(L.euclidSamples)) { L.euclidSamples[v] = null; _ambNormalizeLaneSamples(L); }
+        if (Array.isArray(L.euclidDrums)) { L.euclidDrums[v] = null; if (!L.euclidDrums.some(x => x != null)) delete L.euclidDrums; }
+      };
+      const commit = () => {
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        try { if (after) after(); } catch (e) {}
+        try { _ambTriggerLaneStep(E, key, L, v); } catch (e) {}   // hear the pick
+        paint();
+      };
+      const paint = () => {
+        const cs = curSample(), cz = curZone();
+        let zones = [];
+        try { zones = _ambBeatIsSynth(L) ? [] : _ambKitZones(L.kit); } catch (e) {}
+        let ids = [];
+        try { ids = _ambDrumSampleIds(); } catch (e) {}
+        const f = filter.trim().toLowerCase();
+        const hits = f ? ids.filter(id => id.toLowerCase().indexOf(f) >= 0) : ids;
+        const row = (sel, kind, val, label, sub) =>
+          '<button type="button" class="lsnd-row' + (sel ? ' on' : '') + '" data-pick="' + kind + ':' + esc(val) + '"' +
+          (kind === 'smp' ? ' title="' + esc(val) + '"' : '') + '>' +
+          '<span class="lsnd-nm">' + esc(label) + '</span>' +
+          (sub ? '<span class="lsnd-sub">' + esc(sub) + '</span>' : '') + '</button>';
+        const smpRow = (id) => { const L2 = _ambSampleLabel(id); return row(curSample() === id, 'smp', id, L2.name, L2.path); };
+        ov.innerHTML = '<div class="sm-modal ambient-lanesnd-modal">' +
+          '<div class="sm-title">' + esc(dn) + ' lane \u2014 sound</div>' +
+          '<div class="ambient-hint">Pick what this lane plays. Choosing auditions it.</div>' +
+          '<div class="lsnd-list">' +
+            row(!cs && cz == null, 'kit', '', 'Kit \u2014 ' + dn, 'the kit\u2019s own slot for this lane') +
+            (zones.length > 1 ? zones.map(z => row(cz === z.pc && !cs, 'zone', z.pc, '\u25c8 ' + z.name, 'another drum in this kit')).join('') : '') +
+          '</div>' +
+          '<div class="lsnd-filterrow">' +
+            '<input type="text" class="lsnd-filter" placeholder="Search samples\u2026" value="' + esc(filter) + '">' +
+            '<span class="ambient-hint">' + hits.length + ' of ' + ids.length + '</span></div>' +
+          '<div class="lsnd-list lsnd-samples">' +
+            (hits.length ? hits.slice(0, 400).map(smpRow).join('')
+                         : '<span class="ambient-hint">Nothing matches \u201c' + esc(filter) + '\u201d.</span>') +
+          '</div>' +
+          '<div class="sm-footer"><button type="button" class="sm-apply lsnd-close">Done</button></div></div>';
+      };
+      paint();
+      document.body.appendChild(ov);
+      // Body-attached overlays are force-hidden by the view-mode CSS unless the
+      // display is set INLINE with !important (documented).
+      ov.style.setProperty('display', 'flex', 'important');
+      const close = () => { try { ov.remove(); } catch (e) {} };
+      ov.addEventListener('click', (ev) => {
+        const t = ev.target;
+        if (t === ov || (t.classList && t.classList.contains('lsnd-close'))) { close(); return; }
+        const b = t.closest && t.closest('[data-pick]');
+        if (!b) return;
+        const a = String(b.getAttribute('data-pick'));
+        const kind = a.slice(0, a.indexOf(':')), val = a.slice(a.indexOf(':') + 1);
+        clearLane();
+        if (kind === 'zone') { if (!Array.isArray(L.euclidDrums)) L.euclidDrums = []; L.euclidDrums[v] = val | 0; }
+        else if (kind === 'smp') { if (!Array.isArray(L.euclidSamples)) L.euclidSamples = []; L.euclidSamples[v] = val; }
+        commit();
+      });
+      // Filter as you type, WITHOUT repainting the input out from under the
+      // caret — rewriting the list only.
+      ov.addEventListener('input', (ev) => {
+        const inp = ev.target && ev.target.closest && ev.target.closest('.lsnd-filter');
+        if (!inp) return;
+        filter = inp.value || '';
+        const host = ov.querySelector('.lsnd-samples'); if (!host) return;
+        let ids = []; try { ids = _ambDrumSampleIds(); } catch (e) {}
+        const f = filter.trim().toLowerCase();
+        const hits = f ? ids.filter(id => id.toLowerCase().indexOf(f) >= 0) : ids;
+        const cs = curSample();
+        host.innerHTML = hits.length
+          ? hits.slice(0, 400).map(id => { const L2 = _ambSampleLabel(id);
+              return '<button type="button" class="lsnd-row' + (cs === id ? ' on' : '') +
+                '" data-pick="smp:' + esc(id) + '" title="' + esc(id) + '">' +
+                '<span class="lsnd-nm">' + esc(L2.name) + '</span>' +
+                (L2.path ? '<span class="lsnd-sub">' + esc(L2.path) + '</span>' : '') + '</button>'; }).join('')
+            + (hits.length > 400 ? '<span class="ambient-hint">\u2026 and ' + (hits.length - 400) + ' more \u2014 narrow the search.</span>' : '')
+          : '<span class="ambient-hint">Nothing matches \u201c' + esc(filter) + '\u201d.</span>';
+        const cnt = ov.querySelector('.lsnd-filterrow .ambient-hint');
+        if (cnt) cnt.textContent = hits.length + ' of ' + ids.length;
+      });
+    }
+    function _ambSampleRootMidi(id) {
+      try {
+        const e = (typeof getSampleEntry === 'function') ? getSampleEntry('sample:' + id) : null;
+        const rn = e && e.rootNote;
+        if (typeof rn === 'string' && rn) return Tone.Frequency(rn).toMidi();
+        if (Number.isFinite(rn)) return rn | 0;
+      } catch (e) {}
+      return 60;
+    }
     function _ambBeatParams(kit, lenMs, pan) {
       // Percussive envelope; Length drives the release tail (the choke/open).
       const rel = Math.max(20, Math.round(Math.max(60, lenMs) * 0.6));
@@ -13518,6 +14470,7 @@
     // before, so the invariant harness is unaffected (schema rule #3/#5).
     function _ambNormalizeEuclidPattern(L) {
       if (!L || typeof L !== 'object') return;
+      _ambNormalizeLaneSamples(L);   // per-lane sample override (additive; absent = the kit)
       _ambNormalizeCycleGate(L);   // ⏱ Schedule tab (additive; absent = every iteration plays)
       _ambNormalizeImprov(L);      // 🎲 Improvise tab (additive; absent = always plays as written)
       // Remembered rhythm-preset NAME (additive; absent = Custom).
@@ -17130,6 +18083,12 @@
             '<button type="button" class="ambient-euclid-playsbtn" data-plays="1">+</button></div>';
         }
         if (pages.length > 1) bar1 += '<button type="button" class="ambient-euclid-pagedel" title="Delete this page">🗑</button>';
+        // SAVE THE ASSEMBLED LANES AS A KIT — you pick drums by ear on the lanes,
+        // so this is where turning them into something reusable belongs. Only for
+        // a sample kit: a synth kit is already a recipe and has nothing to save.
+        if (inst.euclidKit && !_ambBeatIsSynth(inst)) {
+          bar1 += '<button type="button" class="ambient-euclid-savekit" title="Save the sounds these 8 lanes play as a reusable kit — it appears in every kit picker">\u2b07 Save kit</button>';
+        }
         bar1 += '</div>';
         html += bar1;
       }
@@ -17178,6 +18137,20 @@
           // The lane LABEL selects which lane the edit panel targets (Lane mode).
           const dn = _AMB_DRUM_NAMES[_AMB_VDRUM[v]] || ('Drum ' + v);
           html += '<button type="button" class="ambient-euclid-laneplay" data-laneplay="' + v + '" title="Play the ' + dn + ' (audition)">▶</button>';
+           // WHAT THIS LANE PLAYS. A kit maps 12 semitone zones, so using one sound
+           // out of a pack used to mean authoring a kit first; this names a sample
+           // directly and the zone map stops applying to this lane. The chip shows
+           // the override, so a lane no longer playing its kit drum says so.
+           { const _ls = _ambLaneSample(inst, v);
+             const _lz = (!_ls && Array.isArray(inst.euclidDrums) && inst.euclidDrums[v] != null) ? (inst.euclidDrums[v] | 0) : null;
+             const _lzn = (_lz != null) ? (_AMB_DRUM_NAMES[_lz] || ('pc ' + _lz)) : null;
+             const _on = !!(_ls || _lzn);
+             html += '<button type="button" class="ambient-euclid-lanesnd' + (_on ? ' on' : '') + '" data-lanesnd="' + v + '" title="' +
+               (_ls ? ('This lane plays the sample \u201c' + _ls + '\u201d instead of the kit\u2019s ' + dn + '. Tap to change or clear.')
+                : _lzn ? ('This lane plays the kit\u2019s ' + _lzn + ' instead of its ' + dn + '. Tap to change or clear.')
+                : ('Choose what this lane plays \u2014 another drum from this kit, or any library sample')) +
+               '">' + (_ls ? ('\u266a ' + _ls.split('/').pop().slice(0, 10))
+                       : _lzn ? ('\u25c8 ' + _lzn.slice(0, 10)) : '\u266a') + '</button>'; }
           { const _soL = _ambSoloLane(inst);
             html += '<button type="button" class="ambient-euclid-drumlbl' + ((editMode === 'lane' && v === editLane) ? ' on' : '') + ((_soL === v) ? ' solo' : (_soL != null ? ' muted-by-solo' : '')) + '" data-lane="' + v + '" title="' + (_soL === v ? dn + ' — SOLOED (others muted)' : 'Edit the ' + dn + ' lane') + '">' + dn + ((_soL === v) ? '<i class="solo-dot">S</i>' : '') + '</button>'; }
         } else if (d.V > 1) {
@@ -17629,7 +18602,7 @@
       // re-render can never cancel a half-open native <select> — the "Sequence never
       // sticks" bug.
       grid.addEventListener('click', (ev) => {
-        const t = ev.target.closest && ev.target.closest('.ambient-euclid-tab, .ambient-euclid-pagedel, .ambient-euclid-segbtn, .ambient-euclid-playsbtn, .ambient-euclid-drumlbl, .ambient-euclid-laneplay, .ambient-step-fx-trig, .ambient-step-fx-solo, .ambient-step-fx-clear, .ambient-stepmode, .ambient-stepscope-btn'); if (!t) return;
+        const t = ev.target.closest && ev.target.closest('.ambient-euclid-tab, .ambient-euclid-pagedel, .ambient-euclid-segbtn, .ambient-euclid-playsbtn, .ambient-euclid-drumlbl, .ambient-euclid-lanesnd, .ambient-euclid-savekit, .ambient-euclid-laneplay, .ambient-step-fx-trig, .ambient-step-fx-solo, .ambient-step-fx-clear, .ambient-stepmode, .ambient-stepscope-btn'); if (!t) return;
         if (_suppressTabClick) { _suppressTabClick = false; if (t.dataset.page != null) return; }   // a drag just reordered — don't also select
         _E = E; const L = getL(); if (!L || !L.euclidKit) return;
         const d = _ambEuclidGridDims(L, type); const total = d ? d.bars * d.steps : 0;
@@ -17648,6 +18621,21 @@
           return;
         }
         if (t.classList.contains('ambient-euclid-laneplay')) { _ambTriggerLaneStep(E, key, L, parseInt(t.dataset.laneplay, 10) | 0); return; }
+        // What this lane plays — a filterable modal, not a menu: the library runs
+        // to a couple of hundred sounds and a flat context menu that long can be
+        // scrolled but not searched.
+        if (t.classList.contains('ambient-euclid-savekit')) {
+          _ambSaveLanesAsKit(E, key, L).then(() => { try { render(); } catch (e) {} });
+          return;
+        }
+        if (t.classList.contains('ambient-euclid-lanesnd')) {
+          const v2 = parseInt(t.getAttribute('data-lanesnd'), 10) | 0;
+          _ambLaneSoundModal(E, key, L, v2, () => {
+            render();
+            if (E.timer) { try { sync && sync(); } catch (e) {} }
+          });
+          return;
+        }
         // Reset the steps in scope to default FX.
         if (t.classList.contains('ambient-step-fx-clear')) {
           const pg = _ambEuclidPage(L);
@@ -17939,10 +18927,129 @@
     //  • 'random' (bag) — a pool of Σreps picks (each unit repeated `reps`×),
     //    drawn WITHOUT replacement; when the bag empties it refills (a fresh full
     //    schedule). Legacy 'interleave'/'single' map to random/sequence.
-    function _ambSeqPickUnitIdx(seq, st) {
+    // Which PART of the area's changes is playing at `at`, or -1 when the
+    // question doesn't apply (no progression, no parts). Resolved through
+    // _ambProgStepAt and _ambPartSlotIndex — the same pair the salt and the
+    // chord matrix use — so this cannot disagree with what is sounding.
+    // The area's parts as <option>s — named, so a section is bound to "Chorus"
+    // rather than to an index the user has to count out.
+    // ---- A PHRASE PER PART, BY NAME ----------------------------------------
+    // `L.partSeqs = { "<partIdx>": "<saved sequence name>" }` — additive, absent
+    // is today's behaviour exactly. Keyed by NAME, not by bank index, because the
+    // bank is reorderable and a stored index would silently repoint at whatever
+    // moved into that slot; the name is also what the user sees and picks.
+    //
+    // The swap reuses _ambStepsToLock, which is the path every keystroke in the
+    // layer grid already takes to install steps into a live lock — so this is an
+    // exercised seam rather than new surgery on the replay path.
+    // MANY-TO-MANY. A part holds a LIST of sequence names, and one name may sit in
+    // as many parts as you like — so "two riffs alternating over the verse, one of
+    // them also in the chorus" is expressible. Values are stored as ARRAYS; a bare
+    // string from the one-per-part version migrates to a single-entry list, so
+    // existing projects keep working and nothing needs a schema bump.
+    function _ambNormalizePartSeqs(L) {
+      if (!L || typeof L !== 'object') return;
+      const m = L.partSeqs;
+      if (m == null) return;
+      if (typeof m !== 'object') { delete L.partSeqs; return; }
+      const o = {};
+      Object.keys(m).forEach(k => {
+        const i = k | 0; if (!(i >= 0 && i < 64)) return;
+        const v = m[k];
+        const list = Array.isArray(v) ? v : (typeof v === 'string' && v ? [v] : []);
+        const clean = [];
+        list.forEach(n => { if (typeof n === 'string' && n && clean.indexOf(n) < 0) clean.push(n); });
+        if (clean.length) o[i] = clean;
+      });
+      if (Object.keys(o).length) L.partSeqs = o; else delete L.partSeqs;
+    }
+    // Which of a part's sequences plays on THIS pass. Deterministic: the
+    // progression's own cycle count (floor(step / chords)) indexes the list, so
+    // successive passes through the part walk it in order and every layer, the
+    // readouts and a re-emit all agree without a counter to keep in sync.
+    function _ambPartSeqNameAt(E, cfg, list, at) {
+      if (!Array.isArray(list) || !list.length) return null;
+      if (list.length === 1) return list[0];
+      let cyc = 0;
+      try {
+        const N = Math.max(1, (cfg.prog.chords || []).length);
+        cyc = Math.floor((_ambProgStepAt(E, at) | 0) / N);
+      } catch (e) { cyc = 0; }
+      return list[((cyc % list.length) + list.length) % list.length];
+    }
+    function _ambBankByName(nm) {
+      try {
+        const bank = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences : [];
+        return bank.find(x => x && x.name === nm && Array.isArray(x.steps) && x.steps.length) || null;
+      } catch (e) { return null; }
+    }
+    // Install the mapped sequence when the part changes. Called once per tick.
+    function _ambPartSeqSync(E, cfg, now) {
+      if (!E || !cfg) return;
+      const pi = _ambSeqPartIdxAt(now);
+      if (pi < 0) return;
+      const one = (key, L) => {
+        const m = L && L.partSeqs; if (!m) return;
+        const nm = _ambPartSeqNameAt(E, cfg, Array.isArray(m[pi]) ? m[pi] : (m[pi] ? [m[pi]] : []), now);
+        if (!nm) return;
+        // Never yank the phrase out from under the editor.
+        if (_ambGridComposing(key)) return;
+        const fs = E.freeze && E.freeze[key];
+        if (fs && fs._partSeqName === nm && fs.frozen) return;   // already loaded
+        const saved = _ambBankByName(nm); if (!saved) return;
+        try {
+          _ambStepsToLock(E, key, saved.steps, true);
+          const f2 = _ambFreezeState(E, key);
+          f2.frozen = true; f2._lock = true; f2._partSeqName = nm;
+          if (!f2.keyCtx) f2.keyCtx = _ambCurKeyCtx(E);
+        } catch (e) {}
+      };
+      try {
+        ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k]) one(k, cfg[k]); });
+        (cfg.extras || []).forEach(x => { if (x && x.type != null && x.id != null) one(x.type + ':' + x.id, x); });
+      } catch (e) {}
+    }
+    function _ambSeqPartOptions(cur) {
+      try {
+        const E = _E; if (!E) return '';
+        const cfg = E._cfg || (E.getCfg && E.getCfg());
+        const parts = (cfg && cfg.prog && Array.isArray(cfg.prog.parts)) ? cfg.prog.parts : [];
+        return parts.map((p, i) => '<option value="' + i + '"' + ((cur | 0) === i && cur != null ? ' selected' : '') + '>' +
+          String((p && p.name) || ('Part ' + (i + 1))).replace(/[<>&"]/g, '') + '</option>').join('');
+      } catch (e) { return ''; }
+    }
+    function _ambSeqPartIdxAt(at) {
+      try {
+        const E = _E; if (!E) return -1;
+        const cfg = E._cfg || (E.getCfg && E.getCfg()); if (!cfg) return -1;
+        const p = cfg.prog;
+        if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return -1;
+        const parts = Array.isArray(p.parts) ? p.parts : null;
+        if (!parts || !parts.length) return -1;
+        const N = p.chords.length;
+        const step = _ambProgStepAt(E, at) | 0;
+        return _ambPartSlotIndex(parts, ((step % N) + N) % N);
+      } catch (e) { return -1; }
+    }
+    function _ambSeqPickUnitIdx(seq, st, at) {
       const n = seq.units.length;
       if (n <= 1) return 0;
       const repsOf = (i) => Math.max(1, (seq.units[i] && (seq.units[i].reps | 0)) || 1);
+      // PART mode: the section that plays is the one bound to the part of the
+      // changes now sounding — a saved sequence per part. Consumes NO rng draw
+      // (unlike the bag), so a layer switched to this shifts no other layer's
+      // stream. Falls through to the ordered walk when there is no progression
+      // or no parts, so the mode is never a dead end.
+      if (seq.unitMode === 'part') {
+        const pi = _ambSeqPartIdxAt(at);
+        if (pi >= 0) {
+          for (let i = 0; i < n; i++) {
+            const bnd = seq.units[i] && seq.units[i].part;
+            if (Number.isFinite(bnd) && (bnd | 0) === pi) return i;
+          }
+          return ((pi % n) + n) % n;   // unbound → by order, part k ↔ section k
+        }
+      }
       const mode = (seq.unitMode === 'random' || seq.unitMode === 'interleave') ? 'random' : 'sequence';
       if (mode === 'random') {
         if (!Array.isArray(st.bag) || !st.bag.length) {
@@ -18228,7 +19335,7 @@
       if (!Array.isArray(seq.units) || !seq.units.length) return null;
       let unit;
       if (seq.units.length > 1) {
-        st.pick = _ambSeqPickUnitIdx(seq, st);
+        st.pick = _ambSeqPickUnitIdx(seq, st, at);
         unit = seq.units[st.pick];
         // Publish the section's key at its start time (boundary) on change only.
         if (seq.keyMaster && st._keyUnit !== st.pick) {
@@ -20231,7 +21338,12 @@
           const bpm0 = (cfg0 && Number.isFinite(cfg0.bpm) && cfg0.bpm > 0) ? cfg0.bpm : (typeof _ambBpm === 'function' ? _ambBpm() : 120);
           const barSec0 = (60 / Math.max(20, bpm0)) * 4;
           const steps0 = Math.max(2, Math.min(64, (tg0.steps | 0) || 16));
-          const anchor0 = Number.isFinite(E._playStartAt) ? E._playStartAt : (Number.isFinite(E._progAnchor) ? E._progAnchor : now);
+          // BAR GRID FIRST — the trance gate's steps must sit on the same bars the
+          // layers play. Anchoring on _playStartAt (the press) put the gate the
+          // first-tick lead away from every layer, 115-350ms and different each
+          // play: the same two-clock split the chord clock had.
+          const anchor0 = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor
+            : (Number.isFinite(E._playStartAt) ? E._playStartAt : (Number.isFinite(E._progAnchor) ? E._progAnchor : now));
           // Generative: re-roll the mask for the CURRENT bar (swap slightly early
           // so the new bar's first steps aren't a tick late); sig carries the bar
           // index so each bar resends exactly once.
@@ -20278,7 +21390,10 @@
       const barSec = (60 / Math.max(20, bpm)) * 4;
       const steps = Math.max(2, Math.min(64, (tg.steps | 0) || 16));
       const stepDur = Math.max(0.01, barSec / steps);
-      const anchor = Number.isFinite(E._playStartAt) ? E._playStartAt : (Number.isFinite(E._progAnchor) ? E._progAnchor : now);
+      // BAR GRID FIRST — see the note at the mask re-roll above. The gate and the
+      // layers it chops have to share one grid.
+      const anchor = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor
+        : (Number.isFinite(E._playStartAt) ? E._playStartAt : (Number.isFinite(E._progAnchor) ? E._progAnchor : now));
       const offGain = Math.max(0, 1 - Math.max(0, Math.min(100, tg.depth | 0)) / 100);
       const edge = Math.max(0, Math.min(80, tg.edge | 0)) / 1000;
       const pat = tg.pattern;
@@ -20439,7 +21554,7 @@
       E.clocks = {}; E.iters = {}; E.seqState = {};
       E._spat = {};       // per-note pan ordinals — a fresh play restarts every layer's Spatialize pattern
       E.motifDeg = null;
-      E.texPattern = null; E.texStep = 0; E.texMutateAt = 0;
+      E.texPattern = null; E.texStep = 0;
       E.shapePhase = {};   // per Shape-layer wheel: { startAt, lastAt } phase clocks
       E.arpState = {};     // per Arp layer: { entry, note, pos } series/sweep cursor
       E.bassPhase = {};    // per Bass layer: { startAt, lastAt } phrase-cycle clock
@@ -20597,6 +21712,19 @@
       // Bar Lock: pin the loop grid to the layers' first-onset lead, once per play,
       // so every (re)lock snaps to the same phase (stays in sync with live layers).
       if ((E === _masterEng || E._bounceGrid) && E._barGridAnchor == null) E._barGridAnchor = lead;
+      // ONE CLOCK. The chord clock used to run on `_playStartAt` (the press) while
+      // every layer's onsets run on `_barGridAnchor` (the first-onset lead), and
+      // the gap between them is whatever that first tick computed — measured 350ms
+      // on a cold press and 115ms on a warm one. So EVERY chord landed late by the
+      // lead, by a DIFFERENT amount each play: 15/15 strikes at +0.175 bar on one
+      // run and 14/14 at +0.058 on the next. That is the "chords sometimes come in
+      // too late" report, and the reason a translation offset had to be threaded
+      // through the onset walk and all three freeze snaps.
+      // Pinning the chord clock to the SAME anchor collapses the two into one:
+      // the offset is identically zero, so those translations become no-ops and a
+      // chord boundary IS a layer onset. `== null` so an area switch, which sets
+      // both explicitly to the boundary, still wins.
+      if (E._barGridAnchor != null && E._progAnchor == null) E._progAnchor = E._barGridAnchor;
       const space = cfg.space | 0;
       const C = E.clocks, I = E.iters;
       // Solo: if ANY on layer is soloed, only soloed layers sound.
@@ -20745,6 +21873,21 @@
       };
       // Freeze-aware wrapper: frozen → replay the captured loop; recording →
       // generate normally while teeing each note into the capture sink.
+      // DON'T CREATE THE TWIN. A layer with a Write/lock boundary armed must not
+      // SCHEDULE live voices past it — the replay owns that region. The extras
+      // path set this; stepLayer (bed / motif / texture / random beat) and
+      // windowLayer did not, so their look-ahead voices past the boundary were
+      // created and then had to be retracted by cancelBloomFutureVoices at
+      // engage. That is why the engage seam logged a strike with one frozen and
+      // one live copy of every note. The emit still runs in full — every RNG
+      // draw intact, so generation is byte-identical and the harness (which
+      // stubs playNote and never sees this gate) is unaffected; playNote simply
+      // drops any note at or past the boundary.
+      const _emitCutoffFor = (key) => {
+        const fs = E.freeze && E.freeze[key];
+        return (fs && !fs.frozen && Number.isFinite(fs.pendingFreezeAt) && fs.pendingFreezeAt > now)
+          ? fs.pendingFreezeAt : null;
+      };
       const stepLayer = (key, lc, guardMax, minSec, emit) => {
         if (!lc) return;
         if (_muted(lc)) return; // silenced by another layer's solo
@@ -20752,13 +21895,14 @@
         if (!g.run) return;
         if (_ambFreezeGate(E, key, now, g.hz)) return;
         window._ambCaptureSink = _ambCapSink(E, key); // always roll-capture
+        window._ambEmitCutoff = _emitCutoffFor(key);   // …and never past a pending boundary
         try {
           // BED belongs to the sustain family: its clock walk lives in
           // _ambEmitSustain (the §11 fold). Everything else steps via runLayer.
           if (String(key).split(':')[0] === 'bed') _ambEmitSustain(E, lc, key, now, g.hz, lead, space, cfg);
           else runLayer(key, lc, guardMax, minSec, emit, g.hz);
         }
-        catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+        catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; window._ambEmitCutoff = null; _ambPruneCap(E, key, now); }
       };
       // Windowed wrapper — like stepLayer but for engines that schedule a whole
       // BPM-locked phrase over the lookahead (e.g. the Euclidean Beat). Anchors a
@@ -20771,8 +21915,9 @@
         if (!gate.run) return;
         if (_ambFreezeGate(E, key, now, gate.hz)) return;
         window._ambCaptureSink = _ambCapSink(E, key);
+        window._ambEmitCutoff = _emitCutoffFor(key);   // …and never past a pending boundary
         try { emit(E, lc, key, now, gate.hz, lead, space, cfg); }
-        catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+        catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; window._ambEmitCutoff = null; _ambPruneCap(E, key, now); }
       };
       stepLayer('bed', cfg.bed, 8, 0.05, (at) => _ambEmitBedOnset(at, cfg.bed, space));   // callback kept for shape; stepLayer diverts bed to _ambEmitSustain
       stepLayer('motif', cfg.motif, 16, 0.04, (at) => _ambEmitMotif(at, cfg.motif, space));
@@ -21096,6 +22241,9 @@
         window._ambCaptureSink = null; _ambPruneCap(E, key, now);
       }
 
+      // A layer mapping parts → bank sequences swaps its phrase when the part
+      // changes. Before the emit loops, so the new material is what gets played.
+      try { _ambPartSeqSync(E, cfg, now); } catch (e) { _ambLogTickErr(e); }
       // C2: Seq/Sample layers dispatch from the CANONICAL lists (extras-hosted
       // entries after the v2 migration; legacy array entries as the safety
       // net) with their historical keys/stateKeys/reflect semantics. The
@@ -22397,7 +23545,10 @@
     // part's own salt. Mirrors the chord-matrix cell's _saltOn check.
     function _ambLayerSaltColorsOn(cfg, L) {
       try {
-        if (L && L.salt && typeof L.salt === 'object') return (L.salt.colors | 0) > 0;
+        // Masked to zero on every chord → this layer never salts, whatever the
+        // Changes say.
+        const m = L && L.saltMask;
+        if (m && Array.isArray(m.steps) && m.steps.length && !m.steps.some(v => (v | 0) > 0)) return false;
         const prog = cfg && cfg.prog;
         if (!prog || !prog.on) return false;
         if (prog.salt && (prog.salt.colors | 0) > 0) return true;
@@ -22988,6 +24139,14 @@
         if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
       }, 2000);
     }
+    // How long one grid step lasts. Extracted because TWO things now need it —
+    // _ambStepsToLock, which places the events you hear, and the compose playhead,
+    // which lights the chip you are looking at. A second copy of this expression
+    // is a highlight that drifts out of the audio, which is this file's most
+    // repeated bug (the Scheduler lane walking the chords a second way).
+    function _ambGridStepAdv(st, gsub, beat) {
+      return beat * ((st && st.subdivision != null) ? st.subdivision : gsub) * ((st && st.duration) || 1);
+    }
     function _ambStepsToLock(E, key, steps, live) {
       const L = _ambLayerByKey(E, key); if (!L) return;
       const fs = _ambFreezeState(E, key);
@@ -23003,7 +24162,7 @@
       };
       (Array.isArray(steps) ? steps : []).forEach(st => {
         if (!st) return;
-        const adv = beat * (st.subdivision != null ? st.subdivision : gsub) * (st.duration || 1);
+        const adv = _ambGridStepAdv(st, gsub, beat);
         const durMs = Math.max(80, Math.round(adv * 1000 * 0.92));
         if (Array.isArray(st.chord) && st.chord.length) st.chord.forEach(nn => push(nn && nn.freq, t, durMs));
         else if (st.freq != null) push(st.freq, t, durMs);
@@ -23024,6 +24183,32 @@
       if (!fs.keyCtx) fs.keyCtx = _ambCurKeyCtx(E);
       if (live) { _ambGridPersistSoon(E, key); }
       else { try { _ambPersistLock(E, key); } catch (e) {} }
+    }
+    // ---- COMPOSING BYPASS ---------------------------------------------------
+    // While a layer is open in the Grid, WHAT YOU DRAW IS WHAT YOU HEAR. Nothing
+    // stochastic may sit between the two, or you are editing one thing and
+    // listening to another.
+    //
+    // Measured before building this, because "bypass all stochastic settings"
+    // needed a definition rather than a gesture: a Grid session locks the layer,
+    // and a locked layer already replays its captured events verbatim — with
+    // every stochastic control on that layer maxed, three consecutive passes were
+    // IDENTICAL in time, pitch, duration and volume. So the lock already bypasses
+    // the generation-time ones by construction. Exactly two things still reach a
+    // locked loop, and they are what this gates:
+    //
+    //   SPATIALIZE — recomputed per note on replay (deliberately, so a live edit
+    //     is audible), which is why pan was the ONE field that moved pass to pass.
+    //   THE PLAYBACK GATES — unit schedule, iteration schedule, chord matrix and
+    //     section matrix run inside playNote, so they silence a drawn phrase on
+    //     some passes. A phrase you are drawing must play every pass.
+    //
+    // Nothing is written to the layer: this is a read-time gate keyed on the
+    // session, so there is no state to restore and no way to leave a layer
+    // zeroed if the session dies badly.
+    function _ambGridComposing(key) {
+      const ge = _bloomGridEdit;
+      return !!(ge && key != null && ge.key === key);
     }
     function _ambGridEditSig(steps) {
       try { return JSON.stringify((steps || []).map(s => s && [s.freq, s.duration, s.subdivision, s.chord && s.chord.map(c => c.freq), s.isSub && s.subSteps && s.subSteps.map(c => c && c.freq)])); } catch (e) { return String(Math.random()); }
@@ -23077,7 +24262,14 @@
       } catch (e) {}
     }
     function _ambGridEditStart(E, key, dockEl) {
-      if (_bloomGridEdit) _ambGridEditStop(false);
+      // Opening a session elsewhere used to COMMIT the open one without asking.
+      if (_bloomGridEdit) {
+        if (_bloomGridEdit.key !== key && _ambGridEditDirty()) {
+          _ambGridExitAsk(() => { try { _ambGridEditStart(E, key, dockEl); } catch (e) {} });
+          return;
+        }
+        _ambGridEditStop(false);
+      }
       const L = _ambLayerByKey(E, key); if (!L) return;
       if (typeof lanes === 'undefined' || typeof _makeLane !== 'function') return;
       const fs = _ambFreezeState(E, key);
@@ -23141,8 +24333,16 @@
       lane._bloomScratch = true; lane.muted = true; lane.name = '✎' + String(key);
       try { if (typeof _defaultVoice === 'function') lane.voice = _defaultVoice(); } catch (e) {}
       lanes.push(lane);
+      const _sig0 = _ambGridEditSig(lane.steps);
       _bloomGridEdit = { E: E, key: key, lane: lane, prevActive: (typeof activeLaneIdx !== 'undefined') ? activeLaneIdx : 0,
-        prevOpen: (typeof _laneExpanderOpen !== 'undefined') ? _laneExpanderOpen : false, snapshot: snapshot, sig: _ambGridEditSig(lane.steps), timer: null };
+        prevOpen: (typeof _laneExpanderOpen !== 'undefined') ? _laneExpanderOpen : false, snapshot: snapshot,
+        sig: _sig0,
+        // What the layer was BEFORE this session, so Discard restores it exactly
+        // rather than leaving a half-authored layer behind: the steps as opened,
+        // and whether the layer was authored at all.
+        startSig: _sig0,
+        wasAuthored: !!(L.lockState && L.lockState.seedEdit),
+        timer: null };
       // ✎ PLACE and ⤸ BAR work in the dock now that the scratch lane's
       // STRIP renders in the strip host (the lane-based composing view).
       window._bloomGridKey = key;   // _placeLaneExpander resolves the dockhost live by key
@@ -23184,6 +24384,47 @@
       }, 400);
       try { _ambRefreshSeedModes(E); } catch (e) {}
     }
+    // LEAVING THE GRID IS REVERSIBLE. Deselecting used to commit the steps and
+    // then _ambSeedRevert the layer — a silent discard of work you may have spent
+    // real time on. Now any exit that is not an explicit ✓ Done / ✕ Cancel asks
+    // first, and only when something actually changed (the session tracks a
+    // signature of the lane's steps, so an untouched visit closes silently).
+    function _ambGridEditDirty() {
+      const ge = _bloomGridEdit; if (!ge || !ge.lane) return false;
+      try { return _ambGridEditSig(ge.lane.steps) !== ge.startSig; } catch (e) { return true; }
+    }
+    // Ask, then run one of the two exits. `onDone(saved)` fires either way so the
+    // caller can finish whatever it was doing (revert the seed, switch layers…).
+    function _ambGridExitAsk(onDone) {
+      const ge = _bloomGridEdit;
+      if (!ge) { onDone && onDone(false); return; }
+      if (!_ambGridEditDirty()) { _ambGridEditStop(true); onDone && onDone(false); return; }
+      const ov = document.createElement('div');
+      ov.className = 'sm-overlay ambient-step-modal-ov';
+      ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-gridexit-modal">' +
+        '<div class="sm-title">Keep what you composed?</div>' +
+        '<div class="ambient-step-modal-body">' +
+          '<div class="ambient-pm-modal-hint">You edited this layer’s phrase in the Grid. ' +
+            '<b>Keep</b> makes it the layer’s phrase. <b>Discard</b> puts the layer back exactly as it was ' +
+            'before you opened the Grid.</div>' +
+          '<div class="ambient-pm-modal-spread">' +
+            '<button type="button" class="ambient-seg gx-keep">✓ Keep it</button>' +
+            '<button type="button" class="ambient-seg gx-discard">✕ Discard my edits</button>' +
+          '</div>' +
+        '</div></div>';
+      // Body-attached overlays are force-hidden by the view-mode CSS unless the
+      // display is set INLINE with !important (the documented trap).
+      document.body.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+      const close = () => { try { ov.remove(); } catch (e) {} };
+      ov.querySelector('.gx-keep').addEventListener('click', () => {
+        close(); try { _ambGridEditStop(false); } catch (e) {} onDone && onDone(true);
+      });
+      ov.querySelector('.gx-discard').addEventListener('click', () => {
+        close(); try { _ambGridEditStop(true); } catch (e) {} onDone && onDone(false);
+      });
+      ov.addEventListener('click', (ev) => { if (ev.target === ov) { /* outside click = stay in the Grid */ close(); } });
+    }
     function _ambGridEditStop(cancel) {
       const ge = _bloomGridEdit; if (!ge) return;
       _bloomGridEdit = null;
@@ -23202,6 +24443,11 @@
       window._bloomGridPersistDirty = false;
       // Clear the docked strip (renderSequence won't re-append once the
       // scratch lane is gone, so a stale row would linger).
+      try { _ambClearGridComposePlayhead(); } catch (e) {}
+      // Clear the ribbon HERE rather than waiting for the next viz frame — the
+      // session is over the moment this returns, and a stale ribbon under a strip
+      // that is about to be wiped reads as a hang.
+      try { document.querySelectorAll('.ambient-seedgrid-chords, .ambient-seedgrid-parts, .ambient-seedgrid-seqs, .ambient-seedgrid-prib').forEach(h => { h.hidden = true; h.innerHTML = ''; h._sig = ''; }); } catch (e) {}
       try { document.querySelectorAll('.ambient-seedgrid-striphost').forEach(el => { el.innerHTML = ''; }); } catch (e) {}
       try {
         const i = lanes.indexOf(ge.lane); if (i >= 0) lanes.splice(i, 1);
@@ -23648,7 +24894,7 @@
       try { _ambFreezeStopAll(E); } catch (e) {}
       try { _ambTeardownMods(); } catch (e) {}
       E.seqState = {}; E.clocks = {}; E.iters = {}; E.progStep = 0;
-      E.motifDeg = null; E.texPattern = null; E.texStep = 0; E.texMutateAt = 0;
+      E.motifDeg = null; E.texPattern = null; E.texStep = 0;
       _ambSyncControls(E);
       if (wasPlaying) { try { _ambStartGenerator(E); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();
@@ -23989,6 +25235,7 @@
       try { _ambRestoreLocks(E); } catch (e) {}   // reopen locked: rebuild lock state from saved config
       try { _ambBarLockClear(E); } catch (e) {}   // defensive: drop any lingering ephemeral Bar-Lock loop before play
       E._barGridAnchor = null;                     // fresh loop grid this play
+      E._progAnchor = null;                        // …and the chord clock rides it (one clock)
       _ambSeed(cfg.seed);
       try { _ambApplyRamps(cfg, 0); } catch (e) {} // reset ramped params to A so the FIRST events use A
       try { _ambSyncMods(); } catch (e) {} // build mod chains before the first voices fire
@@ -24548,6 +25795,7 @@
       E._orchPrevPhase = null;
       try { _ambBarLockClear(E); } catch (e) {}   // drop ephemeral Bar-Lock loops (never persisted)
       E._barGridAnchor = null;                     // fresh loop grid next play
+      E._progAnchor = null;                        // …and the chord clock rides it (one clock)
       try { if (typeof _bloomMasterGain !== 'undefined' && _bloomMasterGain && _bloomMasterGain.gain) { const _n = (Tone && Tone.now) ? Tone.now() : 0; _bloomMasterGain.gain.cancelScheduledValues(_n); _bloomMasterGain.gain.setValueAtTime(_BLOOM_MASTER_TRIM, _n); } } catch (e) {}
       try { _ambOrchUpdateNowPlaying(E); } catch (e) {}
       // Restore the master fade to full on a normal stop (so a stop mid fade-in
@@ -24558,6 +25806,7 @@
       E._keySched = null;   // drop the keyMaster key schedule on stop
       try { _ambRampVizClear(E); } catch (e) {}
       try { _ambClearEuclidPlayheads(E); } catch (e) {}   // drop the step-playhead highlight on stop
+      try { _ambClearPassPlayhead(_ambGet(E, 'ambient-passmx')); } catch (e) {}
       try { _ambRestoreTempWhen(E); } catch (e) {}   // drop lingering "Temp" When edits back to baseline
       try { _ambFreezeStopAll(E); } catch (e) {}
       _ambResetClocks(E);
@@ -27102,6 +28351,356 @@
         });
       });
     }
+    // COMPOSE PLAYHEAD — light the scratch lane's chip that is sounding.
+    //
+    // The scratch lane is MUTED and is not sequenced: the LAYER plays the phrase
+    // through the freeze replay, so none of the lane machinery (_startBarPlayhead,
+    // the .active-loop tee in 07) ever fires for it and the strip sat dead while
+    // the loop played. The position therefore comes from the layer's own lock —
+    // fs.anchor + fs.loopLen, the same pair the replay schedules from — walked
+    // through _ambGridStepAdv, which is what places the events in the first place.
+    function _ambGridComposePlayhead(E) {
+      let hosts; try { hosts = document.querySelectorAll('.ambient-seedgrid-striphost'); } catch (e) { return; }
+      if (!hosts || !hosts.length) return;
+      const ge = _bloomGridEdit;
+      if (!ge || !E || ge.E !== E || !E.timer) { _ambClearGridComposePlayhead(); return; }
+      const fs = E.freeze && E.freeze[ge.key];
+      if (!fs || !(fs.loopLen > 0) || !Number.isFinite(fs.anchor)) { _ambClearGridComposePlayhead(); return; }
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      // Before the first pass the modulo would wrap to ~the end of the loop and
+      // light the last chip — the pre-first-onset trap this file has hit three
+      // times. Nothing is sounding yet, so light nothing.
+      if (now < fs.anchor) { _ambClearGridComposePlayhead(); return; }
+      const pos = ((now - fs.anchor) % fs.loopLen + fs.loopLen) % fs.loopLen;
+      const steps = (ge.lane && Array.isArray(ge.lane.steps)) ? ge.lane.steps : [];
+      const gsub = (typeof stepSubdivision === 'number' && stepSubdivision > 0) ? stepSubdivision : 0.5;
+      // _ambBpm() deliberately, NOT the area bpm: this must match whatever
+      // _ambStepsToLock used to place the events, and that is what it uses.
+      const beat = 60 / Math.max(20, _ambBpm());
+      let t = 0, idx = -1;
+      for (let i = 0; i < steps.length; i++) {
+        const adv = _ambGridStepAdv(steps[i], gsub, beat);
+        if (pos >= t && pos < t + adv) { idx = i; break; }
+        t += adv;
+      }
+      hosts.forEach(host => {
+        const slot = host.closest ? host.closest('.ambient-seedgrid-slot') : null;
+        const mine = slot && slot.getAttribute('data-sgkey') === ge.key;
+        let chips; try { chips = host.querySelectorAll('.seq-step:not(.cont-segment):not(.chord-pending)'); } catch (e) { return; }
+        const want = mine ? idx : -1;
+        // Touch the DOM only when the step changes — but RE-VERIFY the class is
+        // still there, because a strip re-render wipes it and the cache would
+        // then never repaint (the euclid grid's _phStep lesson).
+        if (host._gcStep === want && (want < 0 || (chips[want] && chips[want].classList.contains('gc-playing')))) return;
+        host._gcStep = want;
+        chips.forEach(c => c.classList.remove('gc-playing'));
+        if (want >= 0 && chips[want]) chips[want].classList.add('gc-playing');
+      });
+    }
+    // CHORD RIBBON — what you are composing OVER.
+    //
+    // The Grid is key-aware (the session snaps the editor's root/scale to the
+    // layer's key) but was chord-BLIND: you wrote a phrase with no indication of
+    // which chord any bar sat under, which matters as soon as Harmony is set to
+    // anything but Fixed. The window is already the right size — _ambGridEditStart
+    // harvests whole progression cycles — so the chords are known, they were just
+    // never drawn.
+    //
+    // Spans are proportional to time, labelled with the SOUNDING chord
+    // (_ambProgSoundAt, never the written one — the documented rule for every
+    // chord readout), and sampled off _ambProgStepAt rather than walking the
+    // chord lengths a second way. It lives OUTSIDE the striphost because
+    // renderSequence owns that element and wipes it on every re-render.
+    // PART → SEQUENCE map, rendered in the layer grid so the phrase you are
+    // composing, the bank you just saved it to, and the part it plays under are
+    // all one surface. Only shown when the area HAS parts and the bank has
+    // something in it — otherwise it would be a table of empty pickers.
+    // One delegated CLICK listener for the bank chips, on document — they render
+    // on the layer card as well as in the compose dock, and the dock's handler is
+    // bound to the panel host, so card chips never reached it.
+    try {
+      if (typeof window !== 'undefined' && !window.__ambSgSeqWired) {
+        window.__ambSgSeqWired = true;
+        document.addEventListener('click', (ev) => {
+          const sq = ev.target && ev.target.closest && ev.target.closest('.ambient-sgseq');
+          if (!sq) return;
+          const nm = sq.dataset.sgseq || ''; const saved = _ambBankByName(nm); if (!saved) return;
+          const ge = _bloomGridEdit;
+          const key = sq.dataset.sbkey || (ge && ge.key) || ''; if (!key) return;
+          const E = (ge && ge.E) || _masterEng; if (!E) return;
+          ev.stopPropagation();
+          try {
+            const cl = (typeof cloneStep === 'function') ? cloneStep : (o => JSON.parse(JSON.stringify(o)));
+            const steps = saved.steps.map(cl);
+            if (ge && ge.key === key && ge.lane) {
+              ge.lane.steps = steps;
+              if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane();
+              if (typeof _syncFluidGridToActiveLane === 'function') _syncFluidGridToActiveLane();
+              if (typeof renderSequence === 'function') renderSequence();
+            }
+            _ambStepsToLock(E, key, steps, true);
+            const f3 = _ambFreezeState(E, key);
+            f3.frozen = true; f3._lock = true;
+            if (!f3.keyCtx) f3.keyCtx = _ambCurKeyCtx(E);
+            // AFTER _ambPersistLock — it rewrites lockState from the freeze
+            // state, so setting the flag first loses it and the layer never
+            // reads as composed.
+            try { _ambPersistLock(E, key); } catch (x) {}
+            const L3 = _ambLayerByKey(E, key);
+            if (L3) { if (!L3.lockState || typeof L3.lockState !== 'object') L3.lockState = {}; L3.lockState.seedEdit = true; }
+            try { _ambRenderExtras(E); _ambSyncControls(E); _ambRefreshSeedModes(E); _ambUpdateNotesLive(E); } catch (x) {}
+            try {
+              if (_bloomGridEdit) {                      // same re-dock as above
+                if (typeof renderSequence === 'function') renderSequence();
+                if (typeof _placeLaneExpander === 'function') _placeLaneExpander();
+              }
+            } catch (x) {}
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+            if (typeof showToast === 'function') showToast('\u201c' + (saved.name || 'sequence') + '\u201d is now this layer\u2019s phrase.');
+          } catch (err) { console.warn('Load sequence failed', err); }
+        }, true);
+      }
+    } catch (e) {}
+    // One delegated change listener for every part picker, on document — the map
+    // re-renders from the viz frame, so a per-element bind would be lost.
+    try {
+      if (typeof window !== 'undefined' && !window.__ambSgPartWired) {
+        window.__ambSgPartWired = true;
+        // Many-to-many toggles: add/remove one sequence from one part's list.
+        document.addEventListener('click', (ev) => {
+          const chip = ev.target && ev.target.closest && ev.target.closest('.ambient-pmchip');
+          if (!chip) return;
+          ev.stopPropagation();
+          const ge2 = _bloomGridEdit;
+          const key2 = chip.dataset.sbkey || (ge2 && ge2.key) || '';
+          const E2 = (ge2 && ge2.E) || _masterEng;
+          const L2 = key2 && E2 && _ambLayerByKey(E2, key2); if (!L2) return;
+          const pi2 = chip.dataset.pmpi | 0, nm2 = chip.dataset.pmseq || '';
+          if (!L2.partSeqs || typeof L2.partSeqs !== 'object') L2.partSeqs = {};
+          const cur = Array.isArray(L2.partSeqs[pi2]) ? L2.partSeqs[pi2].slice()
+                    : (L2.partSeqs[pi2] ? [L2.partSeqs[pi2]] : []);
+          const at = cur.indexOf(nm2);
+          if (at >= 0) cur.splice(at, 1); else cur.push(nm2);   // order of adding IS the play order
+          if (cur.length) L2.partSeqs[pi2] = cur; else delete L2.partSeqs[pi2];
+          if (!Object.keys(L2.partSeqs).length) delete L2.partSeqs;
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          // UPDATE IN PLACE. Re-rendering the card here rebuilt every chip, so the
+          // one under your finger was detached before a second tap could land —
+          // only the first toggle of a burst registered, and the card jumped. Same
+          // lesson as the groove macro that could not be dragged: a control must
+          // not re-render the panel it lives in. Repaint this row only.
+          try {
+            const row = chip.closest('.ambient-pmrow');
+            if (row) {
+              row.querySelectorAll('.ambient-pmchip').forEach(el => {
+                const nm3 = el.dataset.pmseq || '', at3 = cur.indexOf(nm3);
+                el.classList.toggle('on', at3 >= 0);
+                const old = el.querySelector('i'); if (old) old.remove();
+                if (at3 >= 0 && cur.length > 1) {
+                  const b3 = document.createElement('i'); b3.textContent = String(at3 + 1); el.appendChild(b3);
+                }
+              });
+              const hint = row.querySelector('.ambient-hint');
+              if (cur.length && hint) hint.remove();
+              else if (!cur.length && !hint) {
+                const sp = document.createElement('span');
+                sp.className = 'ambient-hint'; sp.textContent = 'this layer’s own phrase'; row.appendChild(sp);
+              }
+            }
+          } catch (e) {}
+        }, true);
+        document.addEventListener('change', (ev) => {
+          const sel = ev.target && ev.target.closest && ev.target.closest('.ambient-sgpart-sel');
+          if (!sel) return;
+          const ge = _bloomGridEdit;
+          const key = sel.dataset.sbkey || (ge && ge.key) || '';
+          const E = (ge && ge.E) || _masterEng;
+          const L = key && E && _ambLayerByKey(E, key); if (!L) return;
+          const pi = sel.dataset.pi | 0;
+          if (!L.partSeqs || typeof L.partSeqs !== 'object') L.partSeqs = {};
+          if (sel.value) L.partSeqs[pi] = sel.value; else delete L.partSeqs[pi];
+          if (!Object.keys(L.partSeqs).length) delete L.partSeqs;
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+        }, true);
+      }
+    } catch (e) {}
+    // THE SEQUENCES, IN THE LAYER. Saving used to drop a phrase into the global
+    // bank and give you no way back to it from here — the layer grid could write
+    // to the bank but never show it. These are the banked phrases, newest first:
+    // tap one to load it into the grid and keep editing, and the ones this layer
+    // has bound to a part are marked so the map below is readable at a glance.
+    function _ambGridSeqBank(E) {
+      let hosts; try { hosts = document.querySelectorAll('.ambient-seedgrid-seqs'); } catch (e) { return; }
+      if (!hosts || !hosts.length) return;
+      const ge = _bloomGridEdit;
+      const hide = () => hosts.forEach(h => { if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } });
+      if (!ge || !E || ge.E !== E) { hide(); return; }
+      const bank = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences : [];
+      const usable = [];
+      for (let i = bank.length - 1; i >= 0; i--) {           // newest first
+        const x = bank[i];
+        if (x && x.type !== 'audio' && Array.isArray(x.steps) && x.steps.length) usable.push(x);
+      }
+      const L = _ambLayerByKey(E, ge.key);
+      const map = (L && L.partSeqs && typeof L.partSeqs === 'object') ? L.partSeqs : {};
+      const boundTo = {};
+      try {
+        const cfg = E._cfg || (E.getCfg && E.getCfg());
+        const parts = (cfg && cfg.prog && Array.isArray(cfg.prog.parts)) ? cfg.prog.parts : [];
+        Object.keys(map).forEach(k => { const p = parts[k | 0];
+          if (map[k]) (boundTo[map[k]] = boundTo[map[k]] || []).push((p && p.name) || ('Part ' + ((k | 0) + 1))); });
+      } catch (e) {}
+      const sig = usable.map(x => x.name + ':' + x.steps.length).join('|') + '#' +
+        Object.keys(boundTo).map(k => k + '>' + boundTo[k].join('/')).join(',');
+      hosts.forEach(h => {
+        const slot = h.closest ? h.closest('.ambient-seedgrid-slot') : null;
+        if (!(slot && slot.getAttribute('data-sgkey') === ge.key)) { if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } return; }
+        if (h._sig === sig && !h.hidden) return;
+        h._sig = sig; h.hidden = false;
+        h.innerHTML = '<div class="ambient-sgseqs-title">Sequences' +
+          (usable.length ? '' : ' — none yet; compose here and press ⬇ Save as sequence') + '</div>' +
+          usable.map(x => {
+            const bt = boundTo[x.name];
+            return '<button type="button" class="ambient-seg ambient-sgseq' + (bt ? ' bound' : '') +
+              '" data-sgseq="' + _ambEscAttr(x.name) + '" title="' + _ambEscAttr(
+                x.name + ' — ' + x.steps.length + ' steps' + (bt ? ' · plays on ' + bt.join(', ') : '') +
+                '. Tap to load it into the grid and keep editing; the phrase now on this layer is replaced.') + '">' +
+              _ambEscAttr(x.name) + (bt ? '<i>' + _ambEscAttr(bt.join(', ')) + '</i>' : '') + '</button>';
+          }).join('');
+      });
+    }
+    function _ambGridPartMap(E) {
+      let hosts; try { hosts = document.querySelectorAll('.ambient-seedgrid-parts'); } catch (e) { return; }
+      if (!hosts || !hosts.length) return;
+      const ge = _bloomGridEdit;
+      const hide = () => hosts.forEach(h => { if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } });
+      if (!ge || !E || ge.E !== E) { hide(); return; }
+      const cfg = E._cfg || (E.getCfg && E.getCfg()) || null;
+      const parts = (cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.parts)) ? cfg.prog.parts : null;
+      const bank = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences : [];
+      const usable = bank.filter(x => x && x.type !== 'audio' && Array.isArray(x.steps) && x.steps.length);
+      if (!parts || parts.length < 2 || !usable.length) { hide(); return; }
+      const L = _ambLayerByKey(E, ge.key); if (!L) { hide(); return; }
+      const map = (L.partSeqs && typeof L.partSeqs === 'object') ? L.partSeqs : {};
+      const sig = parts.map((p, i) => (p && p.name) + '>' + (map[i] || '')).join('|') + '#' + usable.map(x => x.name).join(',');
+      hosts.forEach(h => {
+        const slot = h.closest ? h.closest('.ambient-seedgrid-slot') : null;
+        if (!(slot && slot.getAttribute('data-sgkey') === ge.key)) { if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } return; }
+        if (h._sig === sig && !h.hidden) return;
+        h._sig = sig; h.hidden = false;
+        h.innerHTML = '<div class="ambient-sgparts-title">This layer plays…</div>' +
+          parts.map((p, i) =>
+            '<label class="ambient-sgpart"><span>' + _ambEscAttr((p && p.name) || ('Part ' + (i + 1))) + '</span>' +
+            '<select class="ambient-select ambient-sgpart-sel" data-pi="' + i + '">' +
+              '<option value="">— the phrase on this layer —</option>' +
+              usable.map(x => '<option value="' + _ambEscAttr(x.name) + '"' + (map[i] === x.name ? ' selected' : '') + '>' +
+                _ambEscAttr(x.name) + '</option>').join('') +
+            '</select></label>').join('');
+      });
+    }
+    // PART RIBBON — which part of the arrangement each stretch of the phrase you
+    // are composing falls in. The chord ribbon below it answers "what chord is
+    // under this bar"; this answers the level above, so a phrase written across a
+    // Verse/Chorus boundary is visible as one while you write it.
+    //
+    // Same construction as the chord ribbon: sample the loop, coalesce equal
+    // spans, size by time. The part comes from _ambSeqPartIdxAt — the same
+    // resolver the part→sequence swap uses — so the picture and the playback
+    // cannot disagree about where a part starts.
+    function _ambGridPartRibbon(E) {
+      let hosts; try { hosts = document.querySelectorAll('.ambient-seedgrid-prib'); } catch (e) { return; }
+      if (!hosts || !hosts.length) return;
+      const ge = _bloomGridEdit;
+      const hide = () => hosts.forEach(h => { if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } });
+      if (!ge || !E || ge.E !== E) { hide(); return; }
+      const cfg = E._cfg || (E.getCfg && E.getCfg()) || null;
+      const parts = (cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.parts)) ? cfg.prog.parts : null;
+      const fs = E.freeze && E.freeze[ge.key];
+      if (!fs || !(fs.loopLen > 0) || !Number.isFinite(fs.anchor)) { hide(); return; }
+      // FEWER THAN TWO PARTS IS NOT A REASON TO VANISH. Returning silently here
+      // is the same mistake the Plays row had one function away: the ribbon was
+      // absent, and nothing said whether the feature was missing, broken, or
+      // simply had nothing to draw. Say which.
+      if (!parts || parts.length < 2) {
+        const why = (!cfg || !cfg.prog || !cfg.prog.on || !(Array.isArray(cfg.prog.chords) && cfg.prog.chords.length))
+          ? 'No progression — turn one on to see parts and chords under the phrase'
+          : 'One part — split it in ⇶ Arch → ＋ Part to compose across sections';
+        hosts.forEach(h => {
+          const sl0 = h.closest ? h.closest('.ambient-seedgrid-slot') : null;
+          if (!(sl0 && sl0.getAttribute('data-sgkey') === ge.key)) { if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } return; }
+          if (h._sig === why && !h.hidden) return;
+          h._sig = why; h.hidden = false;
+          h.innerHTML = '<span class="ambient-sgpartspan none" style="flex-grow:1" title="' +
+            _ambEscAttr(why) + '">' + _ambEscAttr(why) + '</span>';
+        });
+        return;
+      }
+      const N = 192, L = fs.loopLen, spans = [];
+      for (let i = 0; i < N; i++) {
+        const t = fs.anchor + (i + 0.5) * (L / N);
+        let pi = -1; try { pi = _ambSeqPartIdxAt(t); } catch (e) { pi = -1; }
+        const last = spans[spans.length - 1];
+        if (last && last.pi === pi) { last.n++; continue; }
+        spans.push({ pi: pi, n: 1 });
+      }
+      if (!spans.length) { hide(); return; }
+      const nameOf = (pi) => (pi >= 0 && parts[pi] && parts[pi].name) ? parts[pi].name : '—';
+      const sig = spans.map(sp => sp.pi + ':' + sp.n).join('|') + '#' + parts.map(p => p && p.name).join(',');
+      hosts.forEach(h => {
+        const slot = h.closest ? h.closest('.ambient-seedgrid-slot') : null;
+        if (!(slot && slot.getAttribute('data-sgkey') === ge.key)) { if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } return; }
+        if (h._sig === sig && !h.hidden) return;
+        h._sig = sig; h.hidden = false;
+        h.innerHTML = spans.map((sp, i) =>
+          '<span class="ambient-sgpartspan' + (i % 2 ? ' alt' : '') + (sp.pi < 0 ? ' none' : '') +
+          '" style="flex-grow:' + sp.n + '" title="' + _ambEscAttr(
+            sp.pi < 0 ? 'No part here' : (nameOf(sp.pi) + ' — the phrase is in this part across this stretch')) + '">' +
+          _ambEscAttr(nameOf(sp.pi)) + '</span>').join('');
+      });
+    }
+    function _ambGridChordRibbon(E) {
+      let hosts; try { hosts = document.querySelectorAll('.ambient-seedgrid-chords'); } catch (e) { return; }
+      if (!hosts || !hosts.length) return;
+      const ge = _bloomGridEdit;
+      const hide = () => hosts.forEach(h => { if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } });
+      if (!ge || !E || ge.E !== E) { hide(); return; }
+      const cfg = E._cfg || (E.getCfg && E.getCfg()) || null;
+      const fs = E.freeze && E.freeze[ge.key];
+      if (!cfg || !cfg.prog || !cfg.prog.on || !fs || !(fs.loopLen > 0) || !Number.isFinite(fs.anchor)) { hide(); return; }
+      const src = { type: 'prog', chords: cfg.prog.chords };
+      // Sample finely enough for a half-bar chord under a cadence, then coalesce
+      // equal steps into spans.
+      const N = 192, L = fs.loopLen, spans = [];
+      for (let i = 0; i < N; i++) {
+        const t = fs.anchor + (i + 0.5) * (L / N);
+        let step = 0; try { step = _ambProgStepAt(E, t) | 0; } catch (e) { step = 0; }
+        const last = spans[spans.length - 1];
+        if (last && last.step === step) { last.n++; continue; }
+        let nm = '?';
+        try { const ch = _ambProgSoundAt(E, src, step, t); nm = ch ? _ambChordShort(ch) : '?'; } catch (e) {}
+        spans.push({ step: step, n: 1, name: nm });
+      }
+      if (!spans.length) { hide(); return; }
+      const sig = spans.map(sp => sp.name + ':' + sp.n).join('|');
+      hosts.forEach(h => {
+        const slot = h.closest ? h.closest('.ambient-seedgrid-slot') : null;
+        const mine = slot && slot.getAttribute('data-sgkey') === ge.key;
+        if (!mine) { if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } return; }
+        if (h._sig === sig && !h.hidden) return;
+        h._sig = sig; h.hidden = false;
+        h.innerHTML = spans.map((sp, i) =>
+          '<span class="ambient-sgchord' + (i % 2 ? ' alt' : '') + '" style="flex-grow:' + sp.n + '" title="' +
+          _ambEscAttr(sp.name + ' — the chord under this part of the phrase') + '">' + _ambEscAttr(sp.name) + '</span>').join('');
+      });
+    }
+    function _ambClearGridComposePlayhead() {
+      try {
+        document.querySelectorAll('.ambient-seedgrid-striphost').forEach(h => {
+          h._gcStep = -1;
+          h.querySelectorAll('.seq-step.gc-playing').forEach(c => c.classList.remove('gc-playing'));
+        });
+      } catch (e) {}
+    }
     function _ambVizFrame(E) {
       if (!E.viz) return;
       // The spectrum canvas is OPTIONAL (the master Bloom has none) — draw it only if
@@ -27128,6 +28727,12 @@
       }
       try { _ambUpdatePlayheads(E); } catch (e) {}
       try { _ambEuclidStepPlayheads(E); } catch (e) {}
+      try { _ambGridComposePlayhead(E); } catch (e) {}
+      try { _ambGridPartRibbon(E); } catch (e) {}
+      try { _ambGridChordRibbon(E); } catch (e) {}
+      try { _ambGridPartMap(E); } catch (e) {}
+      try { _ambGridSeqBank(E); } catch (e) {}
+      try { _ambPassPlayhead(E); } catch (e) {}
       try { _ambProgOverviewPlayhead(E); } catch (e) {}
       try { _ambSaltReadoutSync(E); } catch (e) {}
       try { _ambSynthVoicePlayheads(E); } catch (e) {}
@@ -27359,7 +28964,11 @@
       const barSec = (60 / Math.max(20, bpm)) * 4;
       const now = playing ? (((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow()
         : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0)) + 0.016) : 0;
-      const anchor = Number.isFinite(E._playStartAt) ? E._playStartAt : (Number.isFinite(E._progAnchor) ? E._progAnchor : 0);
+      // The gate's AUDIO is anchored on the bar grid, so its playhead must be too
+      // — otherwise the highlight sits the first-tick lead away from the step you
+      // are hearing, which is the display-vs-audio split in miniature.
+      const anchor = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor
+        : (Number.isFinite(E._playStartAt) ? E._playStartAt : (Number.isFinite(E._progAnchor) ? E._progAnchor : 0));
       grids.forEach(grid => {
         const key = (typeof _ambCardKey === 'function') ? _ambCardKey(grid.closest('.ambient-layer')) : null;
         const L = key ? _ambLayerByKey(E, key) : null;
@@ -29813,6 +31422,36 @@
     function _ambOrchIcon(state) {
       return state === 'single' ? '\u25b6' : (state === 'sequence' ? '\u21c9' : '\u2928');
     }
+    // 💾 SAVE — the third way out of the Grid, and the one the other two do not
+    // cover. ✓ Done keeps the phrase as a FIXED loop; ✕ Cancel throws it away.
+    // Save commits it and then hands the layer back to itself: the phrase becomes
+    // the material and the variance sliders re-apply over it on every pass. That
+    // is `loopVar = 'live'`, which already exists and is already the documented
+    // meaning of ⚡ Live in the Scheduler — Humanize / Dynamics / Ornament re-roll
+    // per pass while the structure stays as written. Reusing it beats inventing a
+    // fourth lock state that would need its own replay path.
+    const _AMB_SEEDSAVE_TITLE = 'Keep this phrase AND let the layer perform it again: it becomes the layer\u2019s material and the variance sliders re-apply on every pass \u2014 Humanize, Dynamics and Ornament re-roll from your current settings. The notes and rhythm you drew stay as written. \u2713 Done keeps it fixed instead.';
+    function _ambEscAttr(t) { return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+    // WHY the layer Key control does nothing, or null when it applies. Same shape
+    // as _ambEvolveInertWhy, and the same lesson: _ambNotesOf returns the AREA
+    // PROGRESSION before it ever looks at `keyOv` —
+    //
+    //     { const gp = _ambGlobalProg(); if (gp) return gp; }
+    //
+    // — so with a progression on, Inherit / Key / Progression / Yoke all resolve
+    // identically (measured: same source type, same chords array, all four). That
+    // is deliberate, and its own comment says so: the area progression locks the
+    // whole area to one harmony. But a control that silently refuses what it
+    // offers is the bug we keep paying for, so it says so instead.
+    function _ambKeyInertWhy(cfg) {
+      try {
+        const p = cfg && cfg.prog;
+        if (p && p.on && Array.isArray(p.chords) && p.chords.length) {
+          return 'Not in force — the Area progression sets the harmony for every layer. Turn Progression off to use this.';
+        }
+      } catch (e) {}
+      return null;
+    }
     function _ambSeedModeHtml(lk, patCap) {
       const _ambSeedModePatCap = !!patCap;
       // "Generate" is gone as a named mode (2026-07-30). It overclaimed: it never
@@ -29831,15 +31470,20 @@
         '<span class="ambient-seg-row">' +
           '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="generate" data-seedkey="' + _ambEscText(lk) + '" hidden></button>' +
           '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="grid" data-seedkey="' + _ambEscText(lk) + '" title="Compose in the FULL editor — edits land in the loop live. ✕ Cancel discards.">✎ Grid</button>' +
+          '<button type="button" class="ambient-seg amb-seedsave" data-savekey="' + _ambEscText(lk) + '" disabled title="' + _ambEscAttr(_AMB_SEEDSAVE_TITLE) + '">\u{1F4BE} Save</button>' +
         '</span><span class="ambient-hint">plays itself unless composed</span></div>') +
         // Author docks the layer's grid (roll + keyboard) HERE — composing
         // happens where the seed is chosen (filled by _ambRefreshSeedModes).
         '<div class="ambient-seedgrid-slot" data-sgkey="' + _ambEscText(lk) + '" hidden>' +
           '<div class="ambient-seedgrid-bar">' +
             '<span class="ambient-seedgrid-live" hidden>' +
-              '<span class="ambient-hint">editing in Grid — changes land live</span>' +
+              '<span class="ambient-hint">editing in Grid — changes land live, and variance is bypassed: you hear exactly what you draw</span>' +
               '<button type="button" class="ambient-seg ambient-seedgrid-done" data-sgk="' + _ambEscText(lk) + '">✓ Done</button>' +
               '<button type="button" class="ambient-seg ambient-seedgrid-cancel" data-sgk="' + _ambEscText(lk) + '" title="Discard grid edits — restore the pattern as it was">✕ Cancel</button>' +
+              // Into the SEQUENCE BANK, from here. Composing and the bank used to
+              // be two workflows sharing an editor: the only way to bank a phrase
+              // was to leave, re-compose it in the grid workspace and Save there.
+              '<button type="button" class="ambient-seg ambient-seedgrid-bank" data-sgk="' + _ambEscText(lk) + '" title="Save this phrase to the sequence bank under a name, so it can be reused — on another layer, in another area, or bound to a part.">\u2b07 Save as sequence</button>' +
               // The docked editor is the WHOLE lane-expander — every mode surface
               // is already inside it; these tabs are the mode switcher (the top-bar
               // one isn't reachable from the card). Phrase-writing modes only.
@@ -29848,7 +31492,13 @@
                   '<button type="button" class="ambient-seg ambient-seedgrid-mode" data-gmode="' + m2[0] + '" data-sgk="' + _ambEscText(lk) + '" title="Switch the docked editor to ' + m2[1] + ' mode">' + m2[1] + '</button>').join('') +
               '</span>' +
             '</span>' +
-          '</div><div class="ambient-seedgrid-dockhost"></div><div class="ambient-seedgrid-striphost"></div></div>';
+          '</div><div class="ambient-seedgrid-seqs" hidden></div><div class="ambient-seedgrid-parts" hidden></div>' +
+          '<div class="ambient-seedgrid-dockhost"></div>' +
+          // The part and chord ribbons sit DIRECTLY ABOVE THE STRIP, not at the top
+          // of the dock: they exist to say where a step falls, and a reader looking
+          // at the steps had them scrolled off somewhere above the editor.
+          '<div class="ambient-seedgrid-prib" hidden></div><div class="ambient-seedgrid-chords" hidden></div>' +
+          '<div class="ambient-seedgrid-striphost"></div></div>';
     }
     // Reveal an element that lives inside collapsed card groups: opens every
     // closed .ambient-grp ancestor (persisting groupsOpen) + un-collapses the
@@ -29885,13 +31535,34 @@
         // still carries lockState.seedEdit — it reads as Grid now, which is what it
         // is: a hand-authored fixed phrase. No migration needed, just the label.
         if (gen) gen.classList.toggle('active', !authored && !gridActive);
-        if (grd) grd.classList.toggle('active', gridActive || authored);
+        // ACTIVE means the editor is OPEN. It used to also light for `authored`,
+        // which is persisted — so after a reload the button claimed an editor that
+        // was not there and the revealed slot sat empty ("still shows as active but
+        // grid does not show"). A layer that HAS a phrase says so on the button's
+        // own label instead.
+        if (grd) {
+          grd.classList.toggle('active', !!gridActive);
+          grd.classList.toggle('has-phrase', !gridActive && !!authored);
+          // While a session is open the button's job is to LEAVE, so it says so.
+          // "Editing…" described a state; "Quit" names what pressing it does.
+          grd.textContent = gridActive ? '\u2715 Quit' : (authored ? '\u270e Grid \u00b7 composed' : '\u270e Grid');
+          grd.title = gridActive
+            ? 'Leave the grid. You\u2019ll be asked whether to keep what you composed.'
+            : (authored ? 'Open the grid on this layer\u2019s phrase.' : 'Compose a fixed phrase in the full editor.');
+        }
         // MUTUAL EXCLUSION, made visible: a Grid phrase replaces the Pattern, so
         // dim the pattern controls while one is in force rather than leaving two
         // live-looking sources of the same thing on screen.
         try {
+          const sv = row.querySelector('.amb-seedsave');
+          if (sv) sv.disabled = !gridActive;   // only while you are actually composing
           const _card = row.closest('.ambient-layer');
           if (_card) _card.classList.toggle('amb-grid-owns', !!(gridActive || authored));
+          // …and a SECOND class for the narrower fact the engine acts on. The
+          // stochastic bypass keys on an OPEN SESSION (_ambGridComposing), not on
+          // the layer merely being authored, so a card that claimed "bypassed"
+          // off `amb-grid-owns` would be lying on every authored-but-closed layer.
+          if (_card) _card.classList.toggle('amb-grid-editing', !!gridActive);
         } catch (e) {}
         // Arp Direction is a Generate-mode control (the series sweep) — keep its
         // visibility in step with the seed mode (and the euclid toggle).
@@ -29912,7 +31583,13 @@
           if (slot) {
             const pe = card.querySelector('.ambient-piano[data-pkey="' + key + '"]');
             const nl = card.querySelector('.ambient-notes-live[data-nkey="' + key + '"]');
-            if (authored) {
+            // `|| gridActive`: a session started while PLAYING never sets
+            // lockState.seedEdit (that bootstrap is deliberately stopped-only —
+            // promoting the seed preview mid-play swaps what you are hearing), so
+            // gating the dock on `authored` alone left ✓ Done and ✕ Cancel HIDDEN
+            // for the whole session. The two ways out of the Grid cannot be
+            // invisible while you are in it.
+            if (authored || gridActive) {
               slot.hidden = false;
               const dock = (el2) => { if (el2 && el2.parentElement !== slot) { if (!el2._seedHome) el2._seedHome = { p: el2.parentElement, n: el2.nextSibling }; slot.appendChild(el2); } };
               dock(nl); dock(pe);
@@ -29948,7 +31625,7 @@
       if (!pv || !Array.isArray(pv.events) || !pv.events.length) return false;
       const layer = _ambLayerByKey(E, key); if (!layer) return false;
       layer.lockState = { kind: 'loop', seedEdit: true, loopLen: pv.loopLen || 1, keyCtx: _ambCurKeyCtx(E),
-        notes: pv.events.map(n => ({ t: n.t, freq: n.freq, dur: n.dur, params: Object.assign({}, n.params) })) };
+        notes: pv.events.map(n => ({ t: n.t, freq: n.freq, dur: n.dur, params: _ambLockParams(n.params) })) };
       try { _ambRestoreLocks(E); } catch (e) {}
       delete E.seedPv[key];
       if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
@@ -29999,20 +31676,33 @@
     // Mirror a layer's live lock into its CONFIG (layer.lockState) so the
     // workspace save carries it; clear it when the layer is unlocked. Only
     // lock-initiated state is saved (a transient manual Freeze is not).
+    // Params for a PERSISTED lock. `glideLayer` is a live back-reference to the
+    // layer itself (portamento sets it so the glide can track _glidePrev), so a
+    // lock captured on a layer with portamento > 0 made layer → lockState →
+    // notes → params → layer, and JSON.stringify threw "Converting circular
+    // structure to JSON". That surfaced as a failed save with no usable reason —
+    // and, before the storage catch was fixed, as "Storage full" on a 3%-full
+    // store. It is dropped rather than serialized: _ambApplyAdsr re-attaches it
+    // from the layer's own portamento at play time, so nothing is lost.
+    function _ambLockParams(p) {
+      const o = Object.assign({}, p);
+      delete o.glideLayer;
+      return o;
+    }
     function _ambSyncLockState(E, key) {
       const layer = _ambLayerByKey(E, key); if (!layer) return;
       // A single Bed/Motif unit saves as 'unit'; a multi-unit lock or any other
       // layer's lock is a frozen loop → save as 'loop'. Branch on the live store.
       const u = E.unit && E.unit[key];
       if (u && u.lock && Array.isArray(u.notes) && u.notes.length) {
-        layer.lockState = { kind: 'unit', keyCtx: u.keyCtx || null, notes: u.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) })) };
+        layer.lockState = { kind: 'unit', keyCtx: u.keyCtx || null, notes: u.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: _ambLockParams(n.params) })) };
         return;
       }
       const fs = E.freeze && E.freeze[key];
       if (fs && fs.frozen && fs._lock && Array.isArray(fs.events) && fs.events.length) {
         // seedEdit marks a lock created by editing the SEED PREVIEW (not a live
         // freeze) — it drives the "↺ Original" revert affordance across reloads.
-        layer.lockState = { kind: 'loop', loopLen: fs.loopLen || 0, seedEdit: !!fs._seedEdit, keyCtx: fs.keyCtx || null, notes: fs.events.map(e => ({ freq: e.freq, t: e.t, dur: e.dur, params: Object.assign({}, e.params) })) };
+        layer.lockState = { kind: 'loop', loopLen: fs.loopLen || 0, seedEdit: !!fs._seedEdit, keyCtx: fs.keyCtx || null, notes: fs.events.map(e => ({ freq: e.freq, t: e.t, dur: e.dur, params: _ambLockParams(e.params) })) };
         return;
       }
       delete layer.lockState;
@@ -30031,7 +31721,7 @@
         if (ls.kind === 'unit') {                                      // single Bed/Motif unit
           if (E.unit && E.unit[key] && E.unit[key].lock) return;       // runtime wins
           E.unit = E.unit || {};
-          E.unit[key] = { lock: true, keyCtx: ls.keyCtx || null, notes: ls.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) })) };
+          E.unit[key] = { lock: true, keyCtx: ls.keyCtx || null, notes: ls.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: _ambLockParams(n.params) })) };
         } else {                                                       // frozen loop (multi-unit / other layers)
           if (E.freeze && E.freeze[key] && E.freeze[key].frozen) return; // runtime wins
           E.freeze = E.freeze || {};
@@ -30865,12 +32555,205 @@
     // stay unit-less. Variance params are all percentages.
     const _AMB_PARAM_UNIT = {
       motion: '%', strum: '%', strumFidelity: '%', restProb: '%', twist: '%', proximity: '%',
-      accent: '%', fill: '%', mutateRate: '%', rhythmVar: '%', pitchVar: '%', vary: '%',
+      accent: '%', fill: '%', rhythmVar: '%', pitchVar: '%', vary: '%',
       timeVary: '%', pitchVary: '%', randomness: '%', varyDepth: '%', returnChance: '%', pvary: '%', lenvary: '%', lenVary: '%',
       spread: '%', sustain: '%', level: '%', fine: '¢',
     };
     function _ambSlUnit(id) {
       return _AMB_PARAM_UNIT[String(id || '').split('-').pop()] || '';
+    }
+    // ---- STOCHASTIC CONTROLS ------------------------------------------------
+    // The controls that ROLL for an outcome, plus the two facts a user needs in
+    // order to predict what one will do: WHAT it edits, and HOW OFTEN it decides.
+    //
+    // Neither is derivable from the schema. A label cannot tell you that Motion
+    // is pitch rather than volume, or that Rhythm var only re-decides once per
+    // cycle — which is why turning it up appears to do nothing until the next
+    // loop, the single most confusing thing about this whole group. Both facts
+    // come from reading each control's DRAW SITE in the emitters, so they are
+    // recorded here once and read by two consumers: the card readout below, and
+    // `npm run stoch`, which regenerates docs/bloom-stochastic-controls.md from
+    // this table. A control added to a Variance/Performance group and NOT added
+    // here fails the doc generator by name rather than quietly going undescribed.
+    //
+    //   type  — what it edits: rhy | pit | dyn | art | len
+    //   grain — what counts as ONE set of choices: note | slot | cycle. Only the
+    //           `cycle` controls are what Write/Evolve can capture; a `note`
+    //           control re-decides forever and no freezing makes it repeat.
+    //   does  — what turning it up does, in a player's words
+    //   off   — what you get INSTEAD at 0. A control at zero should say what you
+    //           are not getting rather than go blank.
+    //   at    — optional value-aware phrase, only where the number means
+    //           something concrete (a probability). Omitted where it just means
+    //           "more", since the value is already displayed beside it.
+    //   every — optional override of the grain sentence.
+    //   draws — the mechanism. For the doc; never shown in the UI.
+    const _AMB_STOCH = {
+      // one NOTE — a fresh choice for every note played
+      velVar:    { type: 'dyn', grain: 'note', does: 'Varies the volume note to note',
+                   off: 'every note plays at the same volume',
+                   draws: 'volume jitter, seeded on position in the performance' },
+      humanize:  { type: 'rhy', grain: 'note', does: 'Nudges each note off the grid',
+                   off: 'every note lands exactly on the grid',
+                   every: 'a fresh choice on every note, and never the same one twice',
+                   draws: 'onset jitter — the ONLY unseeded draw (Math.random)' },
+      lenVary:   { type: 'len', grain: 'note', does: 'Varies how long each note rings, around Length',
+                   off: 'every note holds for exactly Length',
+                   draws: '_ambVaryLen around the layer Length' },
+      accent:    { type: 'dyn', grain: 'note', does: 'Accents some notes and ghosts others',
+                   off: 'every note is played with the same weight',
+                   draws: 'one draw picks accented / ghost / plain' },
+      ornament:  { type: 'art', grain: 'note', does: 'Adds grace notes, mordents and turns',
+                   off: 'notes are played plain',
+                   draws: 'grace / mordent / turn; draws from the caller stream' },
+      slide:     { type: 'art', grain: 'note', does: 'Slides into leaps instead of jumping',
+                   off: 'leaps are taken straight',
+                   draws: 'approach a leap by step' },
+      contour:   { type: 'pit', grain: 'note',
+                   does: 'Leans the line in one direction',
+                   off: 'no direction bias; the line wanders either way',
+                   at: function (v) { return v < 0 ? 'Leans the line downward' : 'Leans the line upward'; },
+                   draws: 'walk-direction bias; draws at every setting' },
+      gravity:   { type: 'pit', grain: 'note', does: 'Pulls notes onto chord tones',
+                   off: 'notes are picked without regard to the chord',
+                   draws: 'pull toward chord tones' },
+      stutter:   { type: 'pit', grain: 'note', does: 'Repeats the same note instead of moving on',
+                   off: 'the line always moves on',
+                   draws: 'repeat instead of walking' },
+      motion:    { type: 'pit', grain: 'note', does: 'Detunes each voice, so the chord shimmers',
+                   off: 'every voice is dead in tune',
+                   draws: 'seeded detune offset per voice' },
+      randomness:{ type: 'pit', grain: 'note', does: 'Scrambles which step of the arp comes next',
+                   off: 'the arp runs in order',
+                   draws: 'scramble the arp index' },
+      twist:     { type: 'rhy', grain: 'note', does: 'Breaks into bursts of extra notes',
+                   off: 'an even stream',
+                   draws: 'burst of extra walk-steps on one fire' },
+      // one SLOT — a choice per candidate onset, played or not
+      restProb:  { type: 'rhy', grain: 'slot', does: 'Skips steps, leaving gaps',
+                   off: 'every step plays',
+                   at: function (v) { return v >= 67 ? 'Skips most steps' : 'Skips roughly 1 step in ' + Math.round(100 / v); },
+                   draws: 'rest gate per candidate onset' },
+      ghosts:    { type: 'rhy', grain: 'slot', does: 'Adds quiet pickup hits just before the beat',
+                   off: 'no pickups — hits land on the beat only',
+                   at: function (v) { return v >= 67 ? 'Adds a quiet pickup before most hits' : 'Adds a quiet pickup before roughly 1 hit in ' + Math.round(100 / v); },
+                   draws: 'quiet pickup hit half a slot early' },
+      syncop:    { type: 'rhy', grain: 'slot', does: 'Pushes hits off the beat',
+                   off: 'hits land straight on the beat',
+                   draws: 'offbeat bias in the stochastic fill' },
+      pitchVar:  { type: 'pit', grain: 'slot', does: 'Walks to a new note as the pattern plays',
+                   off: 'sits on the same note',
+                   draws: 'Walk — advances per euclidean HIT' },
+      // one CYCLE — one choice for the whole phrase / pass
+      rhythmVar: { type: 'rhy', grain: 'cycle', does: 'Re-rolls the pattern',
+                   off: 'the same pattern every time round',
+                   draws: 're-rolls the euclid pattern per cycle' },
+      rateVar:   { type: 'rhy', grain: 'cycle', does: 'Changes how fast the notes run',
+                   off: 'one steady rate',
+                   draws: 'note rate per series pass' },
+      timeVary:  { type: 'rhy', grain: 'cycle', does: 'Moves where the drone comes in',
+                   off: 'comes in at the same point every time',
+                   draws: 'drone onset, from the per-phrase cRnd' },
+      phraseVary:{ type: 'rhy', grain: 'cycle', does: 'Starts the phrase off the 1',
+                   off: 'every phrase starts on the 1',
+                   draws: 'Start — where the phrase begins (Motif)' },
+      startVary: { type: 'rhy', grain: 'cycle', does: 'Starts the phrase off the 1',
+                   off: 'every phrase starts on the 1',
+                   draws: 'Start — where the phrase begins (Bed)' },
+      pitchVary: { type: 'pit', grain: 'cycle', does: 'Picks a different note of the chord',
+                   off: 'holds the same note every time round',
+                   draws: 'drone: one slot per phrase, so per cycle' },
+      vary:      { type: 'pit', grain: 'cycle', does: 'Roams to different notes',
+                   off: 'stays on the notes it was given',
+                   draws: 'Riff/Pedal, from the per-phrase cRnd' },
+      // ---- OUTSIDE the Variance/Performance groups ---------------------------
+      // The GROUP IS NOT THE PREDICATE. These roll too, and every one of them was
+      // unmarked until 2026-08-20 — which made the marker lie by omission, since
+      // an unmarked control read as "this one is deterministic". Three of them
+      // (Salt, Stereo, Spatialize) are custom tokens rather than `sl` rows, so
+      // they were not even in the sweep that built this table. `token` records
+      // which schema token renders them, so the doc generator can still find out
+      // which layers carry them.
+      strumFidelity:{ type: 'art', grain: 'note', does: 'Shuffles the order the chord’s voices are struck in',
+                   off: 'voices are struck in order, bottom to top',
+                   every: 'a fresh choice each time the chord is struck',
+                   draws: '_ambStrumOrder — Fisher-Yates, two _ambRand() per swap' },
+      fill:      { type: 'rhy', grain: 'slot', does: 'Decides which steps of the pattern play',
+                   off: 'no steps play at all — the layer is silent',
+                   draws: 'rnd() >= fill*0.6 per slot in _ambEmitStepGrid; also seeds the freeze pattern' },
+      proximity: { type: 'pit', grain: 'note', does: 'Lets the line leap instead of always stepping to a neighbour',
+                   off: 'the line always moves to the nearest note',
+                   draws: '_ambRand() < _grav per note' },
+      poly:      { type: 'pit', grain: 'note', does: 'Stacks extra drums on the same hit, each one picked at random',
+                   off: 'one drum per hit',
+                   at: function (v) { return v <= 1 ? 'One drum per hit — no random extras' : 'Stacks up to ' + (v | 0) + ' drums on a hit, the extras picked at random'; },
+                   draws: '_ambPickDrumPc() — a weighted _ambRand() per extra voice' },
+      voiceVariety:{ type: 'pit', grain: 'slot', does: 'Opens up richer voicings — 9ths, 11ths, sus, augmented',
+                   off: 'plain voicings only',
+                   every: 'one choice per voicing — and only while Feel is Stochastic; on Even it cycles in order',
+                   draws: '_ambSeededRand over the variant menu, gated on progFeel' },
+      // Space is its own axis: none of rhythm/pitch/dynamics/articulation/length
+      // describes where a note sits in the stereo field.
+      space:     { type: 'pan', grain: 'note', token: 'spread', does: 'Scatters each event across the stereo field',
+                   off: 'every event sits dead centre',
+                   every: 'a fresh choice on every note — in Pan mode it places the whole layer instead, and rolls nothing',
+                   draws: '_ambLayerPan — _ambRand()*2-1 scaled by Spread; returns 0 with no draw in Pan mode' },
+      spat:      { type: 'pan', grain: 'note', token: 'spat', select: true,
+                   does: 'Walks the layer through the stereo field, a new position per note',
+                   off: 'off — Stereo places the notes instead',
+                   every: 'only Mode “Random” rolls; Fan, Alternate, Sine and Sweep are fixed patterns',
+                   draws: '_ambSpatPan — dedicated _ambSeededRand on (ordinal, take), random mode only' },
+      // saltColors / saltScatter USED TO BE HERE. Salt is no longer a per-layer
+      // control: the Changes define one colouring and each layer says how much of
+      // it to follow, per chord, in the 🧂 Salt mode of the ⌗ Matrix. The follow
+      // mask is a gate, not a stochastic AMOUNT, so it does not belong in this
+      // table — the same reason chordMask is not in it.
+    };
+    // Controls whose ELEMENT ID does not end in their config key, because they are
+    // rendered by a custom token rather than by _ambSl. Marking resolves through
+    // this first. MARK_ONLY entries are part of a stochastic control but are not
+    // the row that carries its description (Spatialize's Width and Positions).
+    const _AMB_STOCH_ALIAS = { stereo: 'space', spatmode: 'spat' };
+    const _AMB_STOCH_MARK_ONLY = { spatwidth: 'spat', spatsteps: 'spat' };
+    const _AMB_STOCH_GRAIN = {
+      note:  'a fresh choice on every note',
+      slot:  'a fresh choice at every step',
+      chord: 'one choice per chord — re-dealt every time the chord comes round',
+      cycle: 'one choice per phrase — changes at the next loop',
+    };
+    // The line under a stochastic slider: what it is doing AT THIS VALUE, and how
+    // often it decides. At 0 it names what you are not getting instead.
+    function _ambStochDesc(key, v) {
+      const st = _AMB_STOCH[key];
+      if (!st) return '';
+      // A select-driven control (Spatialize) is off on the empty value, not on 0.
+      if (st.select) return (!v) ? 'Off — ' + st.off : st.does + ' · ' + (st.every || _AMB_STOCH_GRAIN[st.grain] || '');
+      const n = Number(v);
+      if (!Number.isFinite(n) || n === 0) return 'Off — ' + st.off;
+      let what = st.does;
+      if (typeof st.at === 'function') { try { what = st.at(n) || what; } catch (e) {} }
+      return what + ' · ' + (st.every || _AMB_STOCH_GRAIN[st.grain] || '');
+    }
+    function _ambStochKeyOf(id) {
+      const tail = String(id || '').split('-').pop();
+      return _AMB_STOCH_ALIAS[tail] || (_AMB_STOCH[tail] ? tail : '');
+    }
+    // Marking is wider than describing: a control can be PART of a stochastic
+    // control without being the row that explains it.
+    function _ambStochMarkKey(id) {
+      const tail = String(id || '').split('-').pop();
+      return _ambStochKeyOf(id) || _AMB_STOCH_MARK_ONLY[tail] || '';
+    }
+    // Repaint a stochastic slider's description in place (drag, sync, restore).
+    // A DISABLED control is skipped: its line explains the lock ("Inheriting the
+    // Changes' salt…"), not its own value, which reads 0 while locked. Without
+    // this, _ambSyncSliderReadouts sweeps every .ambient-sl and stomps that line
+    // back to "Off — …", i.e. tells you the layer is silent while it is salting.
+    function _ambStochSync(id, val) {
+      let sd, el;
+      try { sd = document.getElementById(id + '-sd'); el = document.getElementById(id); } catch (e) { return; }
+      if (!sd || (el && el.disabled)) return;
+      sd.textContent = _ambStochDesc(_ambStochKeyOf(id), val);
     }
     function _ambSlReadout(id, val) {
       return (val != null && val !== '') ? (val + _ambSlUnit(id)) : '';
@@ -30957,10 +32840,16 @@
     const _ambSl = (label, id, min, max, val, hint) => {
       const desc = _ambParamDesc(label, hint);
       const dt = desc ? ' title="' + String(desc).replace(/"/g, '&quot;') + '"' : '';
-      return '<div class="ambient-ctrl"' + dt + '>' +
+      // A stochastic control is MARKED (one colour, meaning "this one rolls") and
+      // carries a plain-language line saying what it does at this value and how
+      // often it decides. See _AMB_STOCH.
+      const sk = _ambStochKeyOf(id), st = _AMB_STOCH[_ambStochMarkKey(id)];
+      const sd = _AMB_STOCH[sk]
+        ? '<span class="ambient-stoch-desc" id="' + id + '-sd">' + _ambStochDesc(sk, val) + '</span>' : '';
+      return '<div class="ambient-ctrl' + (st ? ' ambient-ctrl-stoch' : '') + '"' + dt + '>' +
       '<label for="' + id + '"' + dt + '>' + label + '</label>' +
       '<input type="range" class="ambient-sl" id="' + id + '" min="' + min + '" max="' + max + '" step="1" value="' + val + '" />' +
-      '<span class="ambient-hint ambient-sl-v" id="' + id + '-v">' + _ambSlReadout(id, val) + '</span></div>';
+      '<span class="ambient-hint ambient-sl-v" id="' + id + '-v">' + _ambSlReadout(id, val) + '</span>' + sd + '</div>';
     };
     // STEPPER — a −/value/+ control for DISCRETE integer COUNTS (Register, Density,
     // Subdivide, Repeat…), where the exact number is the meaning (a 0–100-feeling
@@ -31017,6 +32906,7 @@
           } catch (e) {}
         }
         v.textContent = t.value + _ambSlUnit(t.id);
+        _ambStochSync(t.id, parseInt(t.value, 10));
       }, true);
     } catch (e) {}
     // Mirror PROGRAMMATIC slider changes (sync / restore — these don't fire
@@ -31024,7 +32914,7 @@
     function _ambSyncSliderReadouts(root) {
       const r = root || document;
       let list; try { list = r.querySelectorAll('input.ambient-sl'); } catch (e) { return; }
-      list.forEach(sl => { if (!sl.id) return; const v = document.getElementById(sl.id + '-v'); if (v) v.textContent = sl.value + _ambSlUnit(sl.id); });
+      list.forEach(sl => { if (!sl.id) return; const v = document.getElementById(sl.id + '-v'); if (v) v.textContent = sl.value + _ambSlUnit(sl.id); _ambStochSync(sl.id, sl.value | 0); });
     }
     const _ambTm = (label, id, min, max, step, val) => {
       const desc = _ambParamDesc(label, '');
@@ -32865,21 +34755,26 @@
       const bpm = (cfg.bpm > 0) ? cfg.bpm : _ambBpm();
       const barSec = (60 / Math.max(20, bpm)) * 4;
       let step0; try { step0 = _ambProgStepAt(E, atSec) | 0; } catch (e) { return null; }
-      const sig = step0 + '|' + (E._barGridAnchor || 0) + '|' + (E._progAnchor || 0) + '|' + bpm
+      // BISECT ON THE INSTANCE, NOT THE STEP. `step` says which written chord and
+      // repeats within one pass whenever a chain revisits a part (V C V), so an
+      // equality search on it joins two disjoint stretches of time into one span.
+      // The instance ordinal only ever increases — see _ambProgInstanceAt.
+      let inst0; try { inst0 = _ambProgInstanceAt(E, atSec) | 0; } catch (e) { return null; }
+      const sig = step0 + '#' + inst0 + '|' + (E._barGridAnchor || 0) + '|' + (E._progAnchor || 0) + '|' + bpm
         + '|' + p.chords.map(c => (c && c.bars) || 0).join(',');
       if (_ambSpanMemo && _ambSpanMemo.sig === sig
           && atSec >= _ambSpanMemo.start && atSec < _ambSpanMemo.end) return _ambSpanMemo;
       const win = barSec * 8;                       // > the 4-bar cadence ceiling
-      const edge = (lo, hi, want) => {              // last t in [lo,hi] whose step === want
+      const edge = (lo, hi, want) => {              // last t in [lo,hi] whose instance === want
         for (let i = 0; i < 14; i++) {
           const mid = (lo + hi) / 2; let sm;
-          try { sm = _ambProgStepAt(E, mid) | 0; } catch (e) { return hi; }
+          try { sm = _ambProgInstanceAt(E, mid) | 0; } catch (e) { return hi; }
           if (sm === want) lo = mid; else hi = mid;
         }
         return hi;
       };
       let end = atSec + win;
-      try { if ((_ambProgStepAt(E, end) | 0) !== step0) end = edge(atSec, atSec + win, step0); } catch (e) { return null; }
+      try { if ((_ambProgInstanceAt(E, end) | 0) !== inst0) end = edge(atSec, atSec + win, inst0); } catch (e) { return null; }
       // START: walk back to the first instant still on this step — but never past
       // the chord clock's OWN ORIGIN. Before it there is no progression, and
       // _ambProgStepAt clamps to step 0 there, so an unbounded search made the
@@ -32890,11 +34785,11 @@
       let start = Math.max(origin, atSec - win);
       if (start < atSec) {
         try {
-          if ((_ambProgStepAt(E, start) | 0) !== step0) {
-            let lo = start, hi = atSec;              // last t BEFORE this step began
+          if ((_ambProgInstanceAt(E, start) | 0) !== inst0) {
+            let lo = start, hi = atSec;              // last t BEFORE this instance began
             for (let i = 0; i < 14; i++) { const mid = (lo + hi) / 2; let sm;
-              try { sm = _ambProgStepAt(E, mid) | 0; } catch (e) { break; }
-              if (sm === step0) hi = mid; else lo = mid; }
+              try { sm = _ambProgInstanceAt(E, mid) | 0; } catch (e) { break; }
+              if (sm === inst0) hi = mid; else lo = mid; }
             start = hi;
           }
         } catch (e) {}
@@ -33062,7 +34957,7 @@
       try { _ambRenderScheduler(E); } catch (e) {}
     }
     function _ambProgGrpSync(E) {
-      ['salt', 'order', 'overview', 'sched', 'matrix', 'sections'].forEach(k => {
+      ['salt', 'order', 'overview', 'sched', 'matrix', 'passes', 'sections'].forEach(k => {
         const g = _ambGet(E, 'ambient-proggrp-' + k); if (!g) return;
         const body = g.querySelector('.ambient-grp-body'); if (!body) return;
         // A popover group shows only while it is inside the popover host; parked
@@ -33073,6 +34968,405 @@
         }
         const any = Array.prototype.some.call(body.children, c => c.style.display !== 'none');
         g.style.display = any ? '' : 'none';
+      });
+    }
+    // ===== ▦ PASSES — the part matrix (docs/bloom-part-matrix.md) ===========
+    // Rows are the part's chords, columns are its passes. A cell shows the
+    // POSITIONS that chord occupies in that pass, and the caption under each
+    // column spells the resulting sequence so nothing has to be sorted by eye.
+    // Per part, with tabs — the same shape the ⌗ Matrix already uses.
+    function _ambRenderPassMatrix(E) {
+      const el = _ambGet(E, 'ambient-passmx'); if (!el) return;
+      const cfg = E.getCfg();
+      const prog = cfg && cfg.prog;
+      const on = !!(prog && prog.on && Array.isArray(prog.chords) && prog.chords.length);
+      el.style.display = on ? '' : 'none';
+      if (!on) { el.innerHTML = ''; el._sig = ''; return; }
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const ranges = _ambGridRanges(cfg);
+      const parts = Array.isArray(prog.parts) ? prog.parts : null;
+      let pi = Number.isFinite(el._pmsPart) ? el._pmsPart : 0;
+      // −1 is the META view: which PARTS play in each arrangement iteration. It
+      // lives here rather than in a seventh accordion because the two grids
+      // COMPOSE — a part's column advances per visit, and the meta grid is what
+      // decides how many visits an iteration contains.
+      if (pi !== -1 && (pi < 0 || pi >= ranges.length)) pi = 0;
+      el._pmsPart = pi;
+      if (pi === -1) { _ambRenderArrMatrix(E, el, cfg, ranges, parts); return; }
+      const r = ranges[pi];
+      const shift = _ambProgViewShift(E, cfg, prog.chords);
+      const names = [];
+      for (let i = 0; i < r.len; i++) {
+        const ch = prog.chords[r.from + i];
+        names.push(_ambIsTransition(ch) ? '⇝' : (_ambChordShort(_ambChordShift(ch, shift)) || '?'));
+      }
+      const g = _ambGridStore(cfg, r.pi, false);
+      const cols = g ? _ambGridCols(g) : _AMB_GRID_COLS;
+      const seqs = [];
+      for (let c = 0; c < cols; c++) seqs.push(_ambPartGridSeq(cfg, r.pi, c, r.len));
+      const sig = pi + '|' + cols + '|' + r.from + '.' + r.len + '|' + names.join(',') + '|'
+        + seqs.map(q => q.join('.')).join('/') + '|' + ranges.map(x => x.pi).join('.')
+        + '|' + (parts ? parts.map(p2 => p2.name).join('.') : '');
+      if (el._sig === sig) return;
+      el._sig = sig;
+      let h = '';
+      {
+        h += '<div class="pmx-tabs">' +
+          '<button type="button" class="ambient-seg pmx-tab pmx-tab-meta" data-pmx="tab:-1" ' +
+          'title="Which parts play in each iteration, and in what order">\u21f6 Parts</button>' +
+          ranges.map((x, k) => {
+          const nm = (parts && parts[x.pi] && parts[x.pi].name) || ('Part ' + (k + 1));
+          return '<button type="button" class="ambient-seg pmx-tab' + (k === pi ? ' active' : '') +
+            '" data-pmx="tab:' + k + '">' + esc(nm) + '</button>';
+        }).join('') + '</div>';
+      }
+      const fitOn = !!(g && g.fit);
+      h += '<div class="pmx-bar"><span class="ambient-hint">How many passes this part runs before it repeats.</span>' +
+        '<button type="button" class="ambient-seg pmx-fit' + (fitOn ? ' active' : '') + '" data-pmx="fit" title="' +
+        (fitOn ? 'On — the written cadence is a rhythm the chords fill, so dropping one shifts the rest into the gap.'
+               : 'Off — each chord keeps its own length, so dropping one makes the pass shorter.') +
+        '">\u21e5 Fill cadence</button>' +
+        '<span class="pmx-cols"><button type="button" class="ambient-seg" data-pmx="cols:-1">−</button>' +
+        '<b class="pmx-colsn">' + cols + '</b>' +
+        '<button type="button" class="ambient-seg" data-pmx="cols:1">＋</button></span></div>';
+      // The grid. One column per pass, one row per chord of this part.
+      h += '<div class="pmx-grid" style="--pmxc:' + cols + '">';
+      h += '<div class="pmx-row pmx-head"><span class="pmx-rowlbl"></span>' +
+        seqs.map((q, c) => '<span class="pmx-h' + (q.length ? '' : ' empty') + '">' + (c + 1) + '</span>').join('') + '</div>';
+      for (let i = 0; i < r.len; i++) {
+        h += '<div class="pmx-row"><span class="pmx-rowlbl" title="' + esc(names[i]) + '">' + esc(names[i]) + '</span>';
+        for (let c = 0; c < cols; c++) {
+          const pos = [];
+          seqs[c].forEach((v, k2) => { if (v === i) pos.push(k2 + 1); });
+          h += '<button type="button" class="ambient-seg pmx-cell' + (pos.length ? ' on' : '') +
+            '" data-pmx="cell:' + c + ':' + i + '" title="' +
+            (pos.length ? esc(names[i]) + ' plays at position ' + pos.join(', ') + ' of pass ' + (c + 1)
+                        : esc(names[i]) + ' does not play in pass ' + (c + 1)) +
+            '">' + (pos.length ? pos.join(',') : '') + '</button>';
+        }
+        h += '</div>';
+      }
+      // The sequence caption — what each pass actually plays, in order.
+      h += '<div class="pmx-row pmx-seqrow"><span class="pmx-rowlbl">plays</span>' +
+        seqs.map((q, c) => {
+          // Each pass states its own LENGTH, because with per-iteration cadence
+          // (or Fill cadence) two passes over the same chords can differ.
+          let tot = 0;
+          for (let k = 0; k < q.length; k++) tot += _ambPassBarsAt(cfg, r.pi, c, k, q).bars;
+          return '<span class="pmx-seq' + (q.length ? '' : ' empty') + '" data-pmx="seq:' + c + '">' +
+            (q.length ? esc(q.map(v => names[v]).join('·')) + '<i>' + _ambFmtBarsMixed(tot) + '</i>' : '—') + '</span>';
+        }).join('') + '</div>';
+      h += '</div>';
+      h += '<div class="ambient-hint pmx-foot">Tap a cell to add or remove that chord from a pass. ' +
+        'A chord can appear more than once — tap a <b>plays</b> caption to edit that pass\u2019s order.</div>';
+      el.innerHTML = h;
+    }
+    // THE META GRID — parts down, iterations across (iterations are horizontal in
+    // both grids, so one pass is always one column). Same grammar as the part
+    // view: a cell shows the positions that part occupies in that iteration, the
+    // caption spells the order, and a part may appear more than once — which is
+    // what `prog.chain` expresses today, gaining an iteration axis.
+    function _ambRenderArrMatrix(E, el, cfg, ranges, parts) {
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const prog = cfg.prog;
+      const names = ranges.map((x, k) => (parts && parts[x.pi] && parts[x.pi].name) || ('Part ' + (k + 1)));
+      const g = prog.arrGrid;
+      const cols = g ? _ambGridCols(g) : _AMB_GRID_COLS;
+      const seqs = [];
+      for (let c = 0; c < cols; c++) seqs.push(_ambArrGridSeq(cfg, c, ranges.length));
+      const sig = 'meta|' + cols + '|' + names.join(',') + '|' + seqs.map(q => q.join('.')).join('/');
+      if (el._sig === sig) return;
+      el._sig = sig;
+      let h = '<div class="pmx-tabs">' +
+        '<button type="button" class="ambient-seg pmx-tab pmx-tab-meta active" data-pmx="tab:-1">\u21f6 Parts</button>' +
+        ranges.map((x, k) => '<button type="button" class="ambient-seg pmx-tab" data-pmx="tab:' + k + '">' +
+          esc(names[k]) + '</button>').join('') + '</div>';
+      h += '<div class="pmx-bar"><span class="ambient-hint">Which parts play in each iteration, and in what order.</span>' +
+        '<span class="pmx-cols"><button type="button" class="ambient-seg" data-pmx="mcols:-1">−</button>' +
+        '<b class="pmx-colsn">' + cols + '</b>' +
+        '<button type="button" class="ambient-seg" data-pmx="mcols:1">＋</button></span></div>';
+      h += '<div class="pmx-grid" style="--pmxc:' + cols + '">';
+      h += '<div class="pmx-row pmx-head"><span class="pmx-rowlbl"></span>' +
+        seqs.map((q, c) => '<span class="pmx-h' + (q.length ? '' : ' empty') + '">' + (c + 1) + '</span>').join('') + '</div>';
+      names.forEach((nm, i) => {
+        h += '<div class="pmx-row"><span class="pmx-rowlbl" title="' + esc(nm) + '">' + esc(nm) + '</span>';
+        for (let c = 0; c < cols; c++) {
+          const pos = [];
+          seqs[c].forEach((v, k2) => { if (v === i) pos.push(k2 + 1); });
+          h += '<button type="button" class="ambient-seg pmx-cell' + (pos.length ? ' on' : '') +
+            '" data-pmx="mcell:' + c + ':' + i + '" title="' +
+            (pos.length ? esc(nm) + ' plays at position ' + pos.join(', ') + ' of iteration ' + (c + 1)
+                        : esc(nm) + ' does not play in iteration ' + (c + 1)) +
+            '">' + (pos.length ? pos.join(',') : '') + '</button>';
+        }
+        h += '</div>';
+      });
+      h += '<div class="pmx-row pmx-seqrow"><span class="pmx-rowlbl">plays</span>' +
+        seqs.map((q, c) => '<span class="pmx-seq' + (q.length ? '' : ' empty') + '" data-pmx="mseq:' + c + '">' +
+          (q.length ? q.map(v => esc(names[v])).join('·') : '—') + '</span>').join('') + '</div>';
+      h += '</div>';
+      h += '<div class="ambient-hint pmx-foot">A part can play more than once in one iteration — tap a ' +
+        '<b>plays</b> caption to set that iteration\u2019s order. Each visit advances that part\u2019s own pass.' +
+        // A control that is silently bypassed must SAY so — the Evolve-is-inert
+        // lesson. Once anything here is set, the played order comes from this
+        // grid, so the written order, `chain` and per-part repeats stop applying.
+        (_ambGridOn(cfg)
+          ? ' <b class="pmx-super">This grid now sets the played order</b> — the written order, the part chain and per-part repeats no longer apply.'
+          : ' Until you change something here, the played order is whatever the parts already say.') +
+        '</div>';
+      el.innerHTML = h;
+    }
+    // Reorder / repeat editor for ONE pass. The grid answers WHICH chords; this
+    // answers in what ORDER and how often — the two questions kept apart so the
+    // grid stays scannable (a cell full of positions is hard to read at a glance).
+    function _ambPassSeqModal(E, pi, col, meta) {
+      _E = E;
+      const cfg = E.getCfg(); if (!cfg || !cfg.prog) return;
+      const esc = (x) => String(x).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-pseq-ov';
+      const state = () => {
+        const c2 = E.getCfg();
+        if (meta) {
+          const rgs = _ambGridRanges(c2), ps = Array.isArray(c2.prog.parts) ? c2.prog.parts : null;
+          return { rg: { len: rgs.length, pi: -1 },
+                   nm: rgs.map((x, k) => (ps && ps[x.pi] && ps[x.pi].name) || ('Part ' + (k + 1))),
+                   seq: _ambArrGridSeq(c2, col, rgs.length) };
+        }
+        const rg = _ambGridRanges(c2)[pi];
+        if (!rg) return null;
+        // `pi` here indexes the RANGES; the writers key on the part index.
+        rg.pi = rg.pi;
+        const shift = _ambProgViewShift(E, c2, c2.prog.chords);
+        const nm = [];
+        for (let i = 0; i < rg.len; i++) {
+          const ch = c2.prog.chords[rg.from + i];
+          nm.push(_ambIsTransition(ch) ? '⇝' : (_ambChordShort(_ambChordShift(ch, shift)) || '?'));
+        }
+        return { rg, nm, seq: _ambPartGridSeq(c2, rg.pi, col, rg.len) };
+      };
+      const commit = (arr) => {
+        const c2 = E.getCfg();
+        if (meta) { _ambArrWrite(c2, col, arr); }
+        else {
+          const rg = _ambGridRanges(c2)[pi]; if (!rg) return;
+          _ambPassWrite(c2, rg.pi, col, arr);
+        }
+        try { E.getCfg(); } catch (e) {}                 // normalize prunes/keeps
+        try { _ambRenderPassMatrix(E); } catch (e) {}
+        try { _ambRenderProgOverview(E); } catch (e) {}
+        try { _ambRenderScheduler(E); } catch (e) {}
+        try { _ambProgChainLenSync(E); } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        paint();
+      };
+      const paint = () => {
+        const st = state();
+        if (!st) { ov.innerHTML = '<div class="sm-modal"><div class="sm-title">Pass</div>' +
+          '<div class="ambient-hint">These changes carry no chords.</div>' +
+          '<div class="sm-footer"><button type="button" class="sm-apply pseq-close">Close</button></div></div>'; return; }
+        ov.innerHTML = '<div class="sm-modal ambient-pseq-modal">' +
+          '<div class="sm-title">' + (meta ? 'Iteration ' : 'Pass ') + (col + 1) + ' — order</div>' +
+          '<div class="ambient-hint">Drag to reorder. Tap a chip to remove it; ' +
+          (meta ? 'a part' : 'a chord') + ' may appear more than once.</div>' +
+          '<div class="pseq-chips">' + (st.seq.length
+            ? st.seq.map((v, k) => {
+                if (meta) return '<span class="pseq-chip" draggable="true" data-k="' + k + '">' +
+                  esc(st.nm[v]) + '<i>✕</i></span>';
+                // …with its own LENGTH. A dimmed value is the one that would apply
+                // anyway (the chord's own, or the cadence template under Fill
+                // cadence); solid means this pass states it.
+                const bi = _ambPassBarsAt(E.getCfg(), st.rg.pi, col, k, st.seq);
+                return '<span class="pseq-chip' + (bi.own ? ' has-len' : '') + '" draggable="true" data-k="' + k + '">' +
+                  '<b>' + esc(st.nm[v]) + '</b>' +
+                  '<button type="button" class="pseq-len" data-len="' + k + ':-1" title="Shorter">−</button>' +
+                  '<em>' + esc(_ambCadNum(bi.bars)) + '</em>' +
+                  '<button type="button" class="pseq-len" data-len="' + k + ':1" title="Longer">＋</button>' +
+                  '<i>✕</i></span>';
+              }).join('')
+            : '<span class="ambient-hint">This pass plays nothing.</span>') + '</div>' +
+          '<div class="pseq-addlbl">Add ' + (meta ? 'a part' : 'a chord') + '</div>' +
+          '<div class="pseq-add">' + st.nm.map((n, i) =>
+            '<button type="button" class="ambient-seg pseq-addbtn" data-add="' + i + '">' + esc(n) + '</button>').join('') + '</div>' +
+          '<div class="sm-footer">' +
+          (meta ? '' : '<button type="button" class="ambient-seg pseq-clearlen">↩ Lengths</button>') +
+          '<button type="button" class="ambient-seg pseq-reset">↩ Written order</button>' +
+          '<button type="button" class="sm-apply pseq-close">Done</button></div></div>';
+      };
+      paint();
+      document.body.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+      const close = () => { try { ov.remove(); } catch (e) {} };
+      ov.addEventListener('click', (ev) => {
+        const t = ev.target;
+        if (t === ov || (t.classList && t.classList.contains('pseq-close'))) { close(); return; }
+        const st = state(); if (!st) return;
+        const add = t.closest && t.closest('[data-add]');
+        if (add) { const a = st.seq.slice(); a.push(add.getAttribute('data-add') | 0); commit(a); return; }
+        if (t.closest && t.closest('.pseq-reset')) { const a = []; for (let i = 0; i < st.rg.len; i++) a.push(i); commit(a); return; }
+        // The steppers sit INSIDE the chip, so they must be handled first — a
+        // tap on − would otherwise fall through to "remove this chip".
+        const lb = t.closest && t.closest('[data-len]');
+        if (lb) {
+          const q = String(lb.getAttribute('data-len')).split(':'), k = q[0] | 0, d = q[1] | 0;
+          const c3 = E.getCfg();
+          const cur = _ambPassBarsAt(c3, st.rg.pi, col, k, st.seq).bars;
+          let i = 0, best = Infinity;
+          _AMB_CAD_STEPS.forEach((v, ix) => { const e2 = Math.abs(v - cur); if (e2 < best) { best = e2; i = ix; } });
+          const nx = _AMB_CAD_STEPS[Math.max(0, Math.min(_AMB_CAD_STEPS.length - 1, i + d))];
+          _ambPassBarsSet(c3, st.rg.pi, col, k, nx);
+          commit(st.seq.slice());          // rewrite the sequence unchanged, so one path persists
+          return;
+        }
+        if (t.closest && t.closest('.pseq-clearlen')) {
+          const c3 = E.getCfg();
+          const g = _ambGridStore(c3, st.rg.pi, false);
+          if (g && g.bars) { delete g.bars[String(col)]; if (!Object.keys(g.bars).length) delete g.bars; }
+          commit(st.seq.slice());
+          return;
+        }
+        const chip = t.closest && t.closest('.pseq-chip');
+        if (chip) { const a = st.seq.slice(); a.splice(chip.getAttribute('data-k') | 0, 1); commit(a); return; }
+      });
+      // Drag to reorder. Nearest-CENTRE drop, never rect containment — chips wrap,
+      // and containment finds nothing in the dead space between rows (the trap the
+      // chord builder already hit at 390px).
+      let dragK = -1;
+      ov.addEventListener('dragstart', (ev) => {
+        const c2 = ev.target.closest && ev.target.closest('.pseq-chip');
+        if (!c2) return; dragK = c2.getAttribute('data-k') | 0;
+        try { ev.dataTransfer.effectAllowed = 'move'; ev.dataTransfer.setData('text/plain', String(dragK)); } catch (e) {}
+      });
+      ov.addEventListener('dragover', (ev) => { if (dragK >= 0) ev.preventDefault(); });
+      ov.addEventListener('drop', (ev) => {
+        if (dragK < 0) return; ev.preventDefault();
+        const st = state(); if (!st) return;
+        const chips = [...ov.querySelectorAll('.pseq-chip')];
+        let best = -1, bd = Infinity;
+        chips.forEach((c2, k) => {
+          const rc = c2.getBoundingClientRect();
+          const d = Math.hypot(ev.clientX - (rc.left + rc.width / 2), ev.clientY - (rc.top + rc.height / 2));
+          if (d < bd) { bd = d; best = k; }
+        });
+        if (best < 0) { dragK = -1; return; }
+        const a = st.seq.slice(); const [m] = a.splice(dragK, 1); a.splice(best, 0, m);
+        dragK = -1; commit(a);
+      });
+    }
+    // ▦ PASSES PLAYHEAD — which pass is sounding, and where inside it. Driven off
+    // the SAME walk the clock uses: _ambProgInstanceAt is a monotonic count of
+    // chord instances, so `inst % slots.length` is the position in the played
+    // super-cycle and the slot carries its part, its column and its iteration.
+    // No second derivation, so it cannot drift from what is heard.
+    // Touches the DOM only when the position CHANGES (the grid._phStep idiom) —
+    // a per-frame innerHTML rewrite would also destroy the button under the
+    // finger, which is the documented reason the chips act on pointerdown.
+    function _ambPassPlayhead(E) {
+      const el = _ambGet(E, 'ambient-passmx'); if (!el) return;
+      const cfg = E && (E._cfg || (E.getCfg && E.getCfg()));
+      if (!E || !E.timer || !cfg || !_ambGridOn(cfg) || !_ambViewIsPlaying(E)) { _ambClearPassPlayhead(el); return; }
+      let slots = null; try { const _pl = _ambGridPlan(cfg); slots = _pl && _pl.slots; } catch (e) {}
+      if (!slots || !slots.length) { _ambClearPassPlayhead(el); return; }
+      let inst = 0; try { inst = _ambProgInstanceAt(E, Tone.now()) | 0; } catch (e) { return; }
+      const k = ((inst % slots.length) + slots.length) % slots.length;
+      const sl = slots[k]; if (!sl) return;
+      const meta = (el._pmsPart === -1);
+      const col = meta ? (sl.iter | 0) % Math.max(1, _ambGridCols(cfg.prog.arrGrid)) : (sl.col | 0);
+      // Which ROW: the part in the meta view, the chord-within-part otherwise.
+      let row = -1;
+      if (meta) row = sl.part | 0;
+      else if (sl.part === el._pmsPart) {
+        const rg = _ambGridRanges(cfg)[el._pmsPart];
+        if (rg) row = sl.idx - rg.from;
+      }
+      const key = col + ':' + row + ':' + (meta ? 'm' : 'p');
+      if (el._phKey === key && el.querySelector('.pmx-cell.playing')) return;
+      el._phKey = key;
+      _ambClearPassPlayhead(el, true);
+      // The COLUMN is lit whether or not this view owns the row, so a part you
+      // are not looking at still shows which iteration is running.
+      el.querySelectorAll('[data-pmx]').forEach(n => {
+        const a = String(n.getAttribute('data-pmx')).split(':');
+        const isCell = (a[0] === 'cell' || a[0] === 'mcell');
+        const isSeq = (a[0] === 'seq' || a[0] === 'mseq');
+        if (!isCell && !isSeq) return;
+        if ((a[1] | 0) !== col) return;
+        n.classList.add('incol');
+        if (isCell && row >= 0 && (a[2] | 0) === row) n.classList.add('playing');
+      });
+      const hs = el.querySelectorAll('.pmx-head .pmx-h');
+      if (hs[col]) hs[col].classList.add('incol');
+    }
+    function _ambClearPassPlayhead(el, keepKey) {
+      if (!el) return;
+      if (!keepKey) el._phKey = '';
+      el.querySelectorAll('.playing, .incol').forEach(n => n.classList.remove('playing', 'incol'));
+    }
+    // ONE delegated handler on the host — it survives every re-render, and the
+    // cells are rebuilt on each edit so a per-element bind would be dead after
+    // the first tap.
+    function _ambWirePassMatrix(E) {
+      const el = _ambGet(E, 'ambient-passmx'); if (!el || el._wired) return;
+      el._wired = 1;
+      // POINTERDOWN, not click. The playhead re-marks this host every frame while
+      // the transport runs, and a `click` needs mousedown+mouseup on the SAME
+      // element — the documented live-readout trap. Acting on the press also
+      // makes the cells feel immediate.
+      el.addEventListener('pointerdown', (ev) => {
+        const t = ev.target && ev.target.closest && ev.target.closest('[data-pmx]');
+        if (!t) return;
+        ev.preventDefault();
+        _E = E;
+        const a = String(t.getAttribute('data-pmx')).split(':');
+        const cfg = E.getCfg(); if (!cfg || !cfg.prog) return;
+        const ranges = _ambGridRanges(cfg);
+        const pi = Number.isFinite(el._pmsPart) ? el._pmsPart : 0;
+        // The META view has no part range — only the part branches below need one,
+        // and a bare `if (!r) return` here silently killed every meta cell.
+        const r = ranges[pi] || null;
+        if (!r && a[0] !== 'tab' && String(a[0]).charAt(0) !== 'm') return;
+        const after = () => {
+          try { E.getCfg(); } catch (e) {}
+          el._sig = '';
+          try { _ambRenderPassMatrix(E); } catch (e) {}
+          try { _ambRenderProgOverview(E); } catch (e) {}
+          try { _ambRenderScheduler(E); } catch (e) {}
+          try { _ambProgChainLenSync(E); } catch (e) {}
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        };
+        if (a[0] === 'tab') { el._pmsPart = parseInt(a[1], 10); el._sig = ''; _ambRenderPassMatrix(E); return; }
+        // ---- META: parts x iterations ----------------------------------------
+        if (a[0] === 'mcols') {
+          _ambArrColsSet(cfg, (cfg.prog.arrGrid ? _ambGridCols(cfg.prog.arrGrid) : _AMB_GRID_COLS) + (a[1] | 0));
+          after(); return;
+        }
+        if (a[0] === 'mcell') {
+          const col = a[1] | 0, k2 = a[2] | 0;
+          const cur = _ambArrGridSeq(cfg, col, ranges.length);
+          const has = cur.indexOf(k2) >= 0;
+          _ambArrWrite(cfg, col, has ? cur.filter(v => v !== k2) : cur.concat([k2]));
+          after(); return;
+        }
+        if (a[0] === 'mseq') { _ambPassSeqModal(E, -1, a[1] | 0, true); return; }
+        if (a[0] === 'fit') {
+          const g = _ambGridStore(cfg, r.pi, false);
+          _ambPassFitSet(cfg, r.pi, !(g && g.fit));
+          after(); return;
+        }
+        if (a[0] === 'cols') {
+          const g = _ambGridStore(cfg, r.pi, false);
+          _ambPassColsSet(cfg, r.pi, (g ? _ambGridCols(g) : _AMB_GRID_COLS) + (a[1] | 0));
+          after(); return;
+        }
+        if (a[0] === 'cell') {
+          const col = a[1] | 0, ci = a[2] | 0;
+          const cur = _ambPartGridSeq(cfg, r.pi, col, r.len);
+          const has = cur.indexOf(ci) >= 0;
+          // Tap toggles membership; ORDER and repeats live in the caption editor,
+          // so one tap can never silently reorder a pass you were not editing.
+          _ambPassWrite(cfg, r.pi, col, has ? cur.filter(v => v !== ci) : cur.concat([ci]));
+          after(); return;
+        }
+        if (a[0] === 'seq') { _ambPassSeqModal(E, pi, a[1] | 0); return; }
       });
     }
     function _ambRenderChordMatrix(E) {
@@ -33090,6 +35384,9 @@
         + rows.map(r => r.key + ':' + JSON.stringify(r.L.chordMask || 0)).join(',') +
         '|s' + _ambProgViewShift(E, cfg, chords) + '|' + chords.map(c2 => c2.root).join('.') +
         '|t' + (Number.isFinite(el._pmPart) ? el._pmPart : -1) +
+        '|mk' + (el._pmMask === 'salt' ? 1 : 0) +
+        '|sk' + rows.map(r => JSON.stringify(r.L.saltMask || 0)).join(',') +
+        '|sc' + JSON.stringify((prog.salt && { c: prog.salt.colors | 0, s: prog.salt.scatter | 0 }) || 0) +
         '|p' + (Array.isArray(prog.parts) ? prog.parts.map(p => p.name + ':' + p.len + ':' + (p.plays | 0) + ':' + (p.open ? 'o' + (p.hold ? 'h' : '') : '')).join('/') : '') +
         '|sm' + rows.map(r => JSON.stringify(r.L.sectionMask || 0)).join(',');
       if (el._sig === sig) return;
@@ -33117,7 +35414,21 @@
       if (_pmParts) {
         if (!Number.isFinite(el._pmPart) || el._pmPart >= _pmParts.length) el._pmPart = -1;
       } else el._pmPart = -1;
-      let h = '<div class="ambient-pm-title">Matrix — how often each layer plays on each chord, and through each part with no changes' + _ambMaskEditBtnHtml(!!el._pmEdit) + '</div>';
+      // TWO QUESTIONS, ONE GRID. "Which layers play this chord" and "which layers
+      // take the Changes' salt on this chord" are the same layers x chords shape,
+      // so they share the tabs, the columns, the widths, the cell ladder and the
+      // exact editor rather than becoming a third bespoke matrix (this file
+      // already carries the cost of the chord/section pair doing that).
+      const _isSalt = el._pmMask === 'salt';
+      const _saltAmt = (prog.salt && (prog.salt.colors | 0) > 0) ? (prog.salt.colors | 0) : 0;
+      const _saltParted = !!(Array.isArray(prog.parts) && prog.parts.some(p2 => p2 && p2.salt && (p2.salt.colors | 0) > 0));
+      let h = '<div class="ambient-pm-title">' + (_isSalt
+          ? 'Salt — how much of the Changes’ recolouring each layer follows, chord by chord'
+          : 'Matrix — how often each layer plays on each chord, and through each part with no changes') +
+        '<span class="ambient-seg-row ambient-pm-modes">' +
+          '<button type="button" class="ambient-seg' + (_isSalt ? '' : ' active') + '" data-pmmask="plays" title="Which layers play each chord.">⌗ Plays</button>' +
+          '<button type="button" class="ambient-seg' + (_isSalt ? ' active' : '') + '" data-pmmask="salt" title="Which layers follow the Changes’ salt on each chord.">🧂 Salt</button>' +
+        '</span>' + _ambMaskEditBtnHtml(!!el._pmEdit) + '</div>';
       if (_pmParts) {
         let acc0 = 0;
         h += '<div class="ambient-pm-tabs">' +
@@ -33138,6 +35449,12 @@
               '</span></span>';
           }).join('') + '</div>';
       }
+      if (_isSalt) {
+        h += '<div class="ambient-pm-legend">' + (_saltAmt || _saltParted
+          ? ('The Changes cut each chord into sections and recolour the later ones' + (_saltAmt ? ' (Salt colour ' + _saltAmt + ' → up to ' + Math.min(8, _saltAmt + 1) + ' sections)' : ' per part') +
+             '. <b>Cell</b> = how much of that this layer follows on that chord — <b>always → 60% → 30% → never</b> by tap, any value on press-and-hold. At <b>never</b> the layer holds the chord as written while the others recolour. Every layer shares ONE colouring, so wherever two layers both follow, they agree.')
+          : '<b>No salt is set on the Changes</b>, so nothing here has an effect yet. Set Salt colour above 0 in the 🧂 Salt section first, then use this grid to say which layers follow it.') + '</div>';
+      } else
       h += '<div class="ambient-pm-legend"><b>Cell</b> = the chance this layer plays that chord — tap to step <b>always → 60% → 30% → never</b>, or press and hold (✎ % to make a tap do it) for <b>any value 0-100</b>. Rolled once per chord, so the layer is in or out for that whole chord; it never cuts in halfway. <b>Window</b> is the other axis: how much of each chord it plays once it is in.</div>';
       // Column window for the selected tab. Cell/header indices stay ABSOLUTE
       // (data-ci), so every setter keeps writing the right slot of the mask.
@@ -33177,8 +35494,10 @@
         if (rec) _pmCols.push({ kind: 'part', rec });
       } else {
         for (let i = _pmFrom; i < _pmTo; i++) _pmCols.push({ kind: 'chord', i });
-        // The "All" tab shows the whole arrangement, part columns included.
-        if (!_pmParts || el._pmPart < 0) _openParts.forEach(rec => _pmCols.push({ kind: 'part', rec }));
+        // The "All" tab shows the whole arrangement, part columns included — but
+        // NOT in salt mode: a part with no changes has no chord to recolour, so a
+        // cell there could only ever do nothing.
+        if ((!_pmParts || el._pmPart < 0) && !_isSalt) _openParts.forEach(rec => _pmCols.push({ kind: 'part', rec }));
       }
       const _fmtB = (b) => (typeof _ambFmtBpc === 'function' ? _ambFmtBpc(b) : String(b));
       h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + _pmCols.map((col) => {
@@ -33188,10 +35507,11 @@
         return '<span class="ambient-pm-ch' + (_ambIsTransition(c2) ? ' pm-trans' : '') + '" style="flex-grow:' + gb + '"'
           + ' title="' + (_ambIsTransition(c2) ? 'Transition — a walk into the next chord. Leave this cell on for a layer to walk it, set it to never to sit the bar out. ' : 'Chord ' + (col.i + 1) + ' — ')
           + _fmtB(gb) + ' bar' + (gb === 1 ? '' : 's') + ' long; the column is that wide.">' + (col.i + 1) + '·' + chName(c2) + '</span>';
-      }).join('') + '<span class="ambient-pm-part">Window</span></div>';
+      }).join('') + (_isSalt ? '' : '<span class="ambient-pm-part">Window</span>') + '</div>';
       rows.forEach(r => {
-        const steps = (r.L.chordMask && Array.isArray(r.L.chordMask.steps)) ? r.L.chordMask.steps : null;
-        const part = (r.L.chordMask && r.L.chordMask.part) || null;
+        const _mk = _isSalt ? r.L.saltMask : r.L.chordMask;
+        const steps = (_mk && Array.isArray(_mk.steps)) ? _mk.steps : null;
+        const part = (!_isSalt && r.L.chordMask && r.L.chordMask.part) || null;
         h += '<div class="ambient-pm-row" data-lkey="' + r.key + '"><span class="ambient-pm-lbl" title="' + r.label + '">' + r.label + '</span>' +
           _pmCols.map((col) => {
             if (col.kind === 'part') {
@@ -33202,20 +35522,31 @@
             }
             const i = col.i, c2 = chords[i];
             const v = steps ? (Number.isFinite(steps[i % steps.length]) ? steps[i % steps.length] : 100) : 100;
-            return _ambMaskCellHtml(v, i, r.label + ' · chord ' + (i + 1) + ' (' + chName(c2) + ', ' + _fmtB(colBars(col)) + ' bars) — ' + _ambMaskCellTip(v, 'chord', !!el._pmEdit), null, colBars(col));
+            const _tip = _isSalt
+              ? (r.label + ' · chord ' + (i + 1) + ' (' + chName(c2) + ') — ' + (v >= 100 ? 'follows every colour change' : v <= 0 ? 'holds the chord as written' : 'follows ' + v + '% of the colour changes'))
+              : (r.label + ' · chord ' + (i + 1) + ' (' + chName(c2) + ', ' + _fmtB(colBars(col)) + ' bars) — ' + _ambMaskCellTip(v, 'chord', !!el._pmEdit));
+            return _ambMaskCellHtml(v, i, _tip, null, colBars(col));
           }).join('') +
-          '<span class="ambient-pm-part">' +
+          (_isSalt ? '' : '<span class="ambient-pm-part">' +
             '<select class="ambient-select ambient-pm-size" title="How much of each chord this layer plays once it is in — a DURATION, not a chance. Full = the whole chord.">' +
               [[100, 'Full'], [75, '¾'], [50, '½'], [25, '¼']].map(o => '<option value="' + o[0] + '"' + ((part ? part.size : 100) === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
             '</select>' +
             '<select class="ambient-select ambient-pm-place"' + ((part ? part.size : 100) >= 100 ? ' disabled' : '') + ' title="Where in the chord the window sits — Random re-rolls per chord">' +
               [['start', 'Start'], ['center', 'Mid'], ['end', 'End'], ['random', 'Rnd']].map(o => '<option value="' + o[0] + '"' + ((part ? part.place : 'start') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
-            '</select>' +
-          '</span></div>';
+            '</select>' + '</span>') + '</div>';
       });
       el.innerHTML = h;
       if (!el._wired) {
         el._wired = true;
+        // WHICH MASK THIS GRID IS EDITING. The mode toggle swaps the field and
+        // nothing else: same tabs, same columns, same ladder, same exact editor.
+        // Every write path goes through here — the cell tap, the row apply, the
+        // column apply and the part macro — because a mode that only some of them
+        // honoured would silently write the wrong store.
+        const maskOf = (L) => {
+          const f = (el._pmMask === 'salt') ? 'saltMask' : 'chordMask';
+          return (L[f] && typeof L[f] === 'object') ? L[f] : (L[f] = {});
+        };
         // Resolve a cell to its live steps array, creating/resizing it on demand —
         // shared by the ladder tap and the exact editor so both write one place.
         const slot = (cell) => {
@@ -33232,7 +35563,7 @@
             return { m: sm, ci: cell.dataset.si | 0, lkey: row.dataset.lkey, label: lbl0, isPart: 1 };
           }
           const N2 = cfg2.prog.chords.length;
-          const m = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
+          const m = maskOf(L);
           if (!Array.isArray(m.steps) || m.steps.length !== N2) { const old2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => old2 ? (Number.isFinite(old2[i2 % old2.length]) ? old2[i2 % old2.length] : 100) : 100); }
           return { m: m, ci: cell.dataset.ci | 0, lkey: row.dataset.lkey, label: lbl0 };
         };
@@ -33249,7 +35580,7 @@
         const setRow = (lkey, v) => {
           const cfg2 = E.getCfg(); const L = _ambLayerByKey(E, lkey); if (!L || !cfg2 || !cfg2.prog) return;
           const N2 = cfg2.prog.chords.length;
-          const m = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
+          const m = maskOf(L);
           m.steps = Array.from({ length: N2 }, () => v);
           commit(lkey);
         };
@@ -33258,7 +35589,7 @@
           const N2 = cfg2.prog.chords.length;
           _ambChordMatrixRows(cfg2).forEach(r2 => {
             const L = r2.L; if (!L) return;
-            const m = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
+            const m = maskOf(L);
             if (!Array.isArray(m.steps) || m.steps.length !== N2) { const old2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => old2 ? (Number.isFinite(old2[i2 % old2.length]) ? old2[i2 % old2.length] : 100) : 100); }
             m.steps[ci] = v;
             try { _ambMaskEditPoke(E, r2.key); } catch (e) {}
@@ -33279,7 +35610,7 @@
         };
         const partName = (pi) => { const ps = ((E.getCfg() || {}).prog || {}).parts; return (ps && ps[pi] && ps[pi].name) || ('part ' + (pi + 1)); };
         const ensureSteps = (L, N2) => {
-          const m = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
+          const m = maskOf(L);
           if (!Array.isArray(m.steps) || m.steps.length !== N2) { const o2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => o2 ? (Number.isFinite(o2[i2 % o2.length]) ? o2[i2 % o2.length] : 100) : 100); }
           return m;
         };
@@ -33314,6 +35645,7 @@
             : chLabel(sl.ci);
           _ambMaskCellModal(E, {
             label: sl.label + ' · ' + _colLbl,
+            salt: (el._pmMask === 'salt'),
             unit: sl.isPart ? 'part' : 'chord', value: sl.m.steps[sl.ci],
             rowLabel: sl.label, colLabel: _colLbl,
             partLabel: (!sl.isPart && pi >= 0) ? partName(pi) : '',
@@ -33355,17 +35687,17 @@
           const pi = Number.isFinite(el._pmPart) ? el._pmPart : -1;
           const r = pi >= 0 ? partRange(pi) : null;
           if (r) {
-            _ambMaskCellModal(E, { label: label + ' · every chord in ' + partName(pi), unit: 'chord',
+            _ambMaskCellModal(E, { label: label + ' · every chord in ' + partName(pi), unit: 'chord', salt: (el._pmMask === 'salt'),
               bulk: 'chord of ' + partName(pi) + ' for this layer',
               value: st ? (Number.isFinite(st[r.from]) ? st[r.from] : 100) : 100,
               onSet: (v) => setPart(lkey, pi, v) });
             return;
           }
-          _ambMaskCellModal(E, { label: label + ' · every chord', unit: 'chord', bulk: 'chord for this layer',
+          _ambMaskCellModal(E, { label: label + ' · every chord', unit: 'chord', salt: (el._pmMask === 'salt'), bulk: 'chord for this layer',
             value: st ? st[0] : 100, onSet: (v) => setRow(lkey, v) });
         };
         const openCol = (ci) => {
-          _ambMaskCellModal(E, { label: chLabel(ci) + ' · every layer', unit: 'chord', bulk: 'layer on this chord',
+          _ambMaskCellModal(E, { label: chLabel(ci) + ' · every layer', unit: 'chord', salt: (el._pmMask === 'salt'), bulk: 'layer on this chord',
             value: 100, onSet: (v) => setCol(ci, v) });
         };
         _ambWireMaskCells(el, openEditor);
@@ -33375,6 +35707,8 @@
           if (eb) { el._pmEdit = !el._pmEdit; el._sig = ''; _ambRenderChordMatrix(E); return; }
           const tb = ev.target && ev.target.closest && ev.target.closest('[data-pmpart]');
           if (tb) { el._pmPart = tb.dataset.pmpart | 0; el._sig = ''; _ambRenderChordMatrix(E); return; }
+          const mb = ev.target && ev.target.closest && ev.target.closest('[data-pmmask]');
+          if (mb) { el._pmMask = (mb.dataset.pmmask === 'salt') ? 'salt' : 'plays'; el._sig = ''; _ambRenderChordMatrix(E); return; }
           // The repeat stepper sits ON the tab, because "how many times does the
           // verse run" belongs next to the verse. 1 is neutral and is deleted
           // rather than stored, so a plain chain keeps no plays field at all.
@@ -33548,6 +35882,7 @@
       const host = E && document.getElementById(E.hostId); if (!host) return;
       try { _ambSyncProgVis(E); } catch (e) {}
       try { _ambRenderChordMatrix(E); } catch (e) {}
+      try { _ambWirePassMatrix(E); _ambRenderPassMatrix(E); } catch (e) {}
       try { _ambRenderProgOverview(E); } catch (e) {}
       // The renderers above are what flip those bodies, so the header visibility
       // is settled HERE rather than only at panel build.
@@ -33985,13 +36320,14 @@
     const _ambSpreadCtrl = (stem, layer) => {
       const mode = (layer && layer.panMode === 'pan') ? 'pan' : 'spread';
       const val = (layer && Number.isFinite(layer.space)) ? (layer.space | 0) : 0;
-      return '<div class="ambient-ctrl ambient-spread"><label>Stereo</label>' +
+      return '<div class="ambient-ctrl ambient-ctrl-stoch ambient-spread"><label>Stereo</label>' +
         '<span class="ambient-spread-seg">' +
           '<button type="button" class="ambient-seg' + (mode === 'spread' ? ' active' : '') + '" id="' + stem + '-stereo-mode-spread">Spread</button>' +
           '<button type="button" class="ambient-seg' + (mode === 'pan' ? ' active' : '') + '" id="' + stem + '-stereo-mode-pan">Pan</button>' +
         '</span>' +
         '<input type="range" id="' + stem + '-stereo" min="' + (mode === 'pan' ? -100 : 0) + '" max="100" step="1" value="' + val + '" />' +
-        '<span class="ambient-hint" id="' + stem + '-stereo-v">' + _ambSpreadLabel(mode, val) + '</span></div>';
+        '<span class="ambient-hint" id="' + stem + '-stereo-v">' + _ambSpreadLabel(mode, val) + '</span>' +
+        '<span class="ambient-stoch-desc" id="' + stem + '-stereo-sd">' + _ambStochDesc('space', val) + '</span></div>';
     };
     // SPATIALIZE control — sits directly under Stereo because it supersedes the
     // Spread half of it. Rendered for every layer type (it is in _AMB_MIX), and
@@ -34003,11 +36339,12 @@
       const on = !!s.on, mode = on ? (s.mode || 'fan') : '';
       const width = Number.isFinite(s.width) ? (s.width | 0) : 60;
       const steps = Number.isFinite(s.steps) ? (s.steps | 0) : 5;
-      return '<div class="ambient-ctrl" title="Move the layer through the stereo field a note at a time, instead of holding one image. Replaces Spread while it is on; Pan still offsets the whole layer."><label for="' + stem + '-spatmode">Spatialize</label>' +
+      return '<div class="ambient-ctrl ambient-ctrl-stoch" title="Move the layer through the stereo field a note at a time, instead of holding one image. Replaces Spread while it is on; Pan still offsets the whole layer."><label for="' + stem + '-spatmode">Spatialize</label>' +
         '<select id="' + stem + '-spatmode" class="ambient-select">' +
           '<option value=""' + (on ? '' : ' selected') + '>Off</option>' +
           _AMB_SPAT_MODES.map(m => '<option value="' + m[0] + '"' + (on && mode === m[0] ? ' selected' : '') + '>' + m[1] + '</option>').join('') +
-        '</select><span class="ambient-hint">per-note pan · overrides Spread</span></div>' +
+        '</select><span class="ambient-hint">per-note pan · overrides Spread</span>' +
+        '<span class="ambient-stoch-desc" id="' + stem + '-spatmode-sd">' + _ambStochDesc('spat', mode) + '</span></div>' +
         _ambSl('Width', stem + '-spatwidth', 0, 100, width, 'how far from centre it travels') +
         _ambSl('Positions', stem + '-spatsteps', 2, 16, steps, 'notes before the pattern repeats');
     };
@@ -34158,6 +36495,7 @@
         h += '<div class="amb-sec-modes">' +
           '<button type="button" class="ambient-seg amb-sec-mode' + (sq.unitMode !== 'random' ? ' on' : '') + '" data-mode="sequence" title="Play sections in order, each for its iteration count.">Order</button>' +
           '<button type="button" class="ambient-seg amb-sec-mode' + (sq.unitMode === 'random' ? ' on' : '') + '" data-mode="random" title="Random bag: a pool of all iterations, drawn without repeats, refilled when empty.">Random</button>' +
+          '<button type="button" class="ambient-seg amb-sec-mode' + (sq.unitMode === 'part' ? ' on' : '') + '" data-mode="part" title="Follow the changes: each section is bound to a PART of the area\u2019s progression and plays while that part does. Unbound sections fall back to part order.">Parts</button>' +
           '<button type="button" class="ambient-seg amb-sec-km' + (sq.keyMaster ? ' on' : '') + '" data-km="1" title="This Seq drives the global Key — the grid and every generative layer follow each section\'s key.">🔑 Key master</button>' +
         '</div>';
         h += '<div class="amb-sec-list">';
@@ -34166,6 +36504,9 @@
             '<span class="amb-sec-name">' + (i + 1) + '. ' + esc(u.name || ('Section ' + (i + 1))) + '</span>' +
             '<span class="amb-sec-key">' + esc(keyLabel(u)) + '</span>' +
             '<span class="amb-sec-reps"><button type="button" data-rep="-1">−</button><b>' + ((u.reps | 0) || 1) + '×</b><button type="button" data-rep="1">+</button></span>' +
+            (sq.unitMode === 'part' ? ('<select class="ambient-select amb-sec-part" data-partsel="1" title="Which part of the changes this section plays under.">' +
+              '<option value=""' + (u.part == null ? ' selected' : '') + '>by order</option>' +
+              _ambSeqPartOptions(u.part) + '</select>') : '') +
             '<span class="amb-sec-move"><button type="button" data-mv="-1"' + (i === 0 ? ' disabled' : '') + '>▲</button><button type="button" data-mv="1"' + (i === units.length - 1 ? ' disabled' : '') + '>▼</button></span>' +
             '<button type="button" class="amb-sec-del" data-del="1" title="Remove section">✕</button>' +
             // Loop size + time-stretch: ×½/×2 halve/double the phrase; ±1b
@@ -34194,6 +36535,11 @@
         });
         modal.querySelectorAll('.amb-sec-row').forEach(row => {
           const i = parseInt(row.dataset.i, 10);
+          row.querySelectorAll('[data-partsel]').forEach(sel => sel.addEventListener('change', () => {
+            const sq2 = getSq(); if (!sq2 || !sq2.units[i]) return;
+            if (sel.value === '') delete sq2.units[i].part; else sq2.units[i].part = sel.value | 0;
+            resetState(); persist(); render();
+          }));
           row.querySelectorAll('[data-rep]').forEach(b => b.addEventListener('click', () => {
             const sq2 = getSq(); if (!sq2 || !sq2.units[i]) return;
             sq2.units[i].reps = Math.max(1, Math.min(64, (((sq2.units[i].reps | 0) || 1) + parseInt(b.dataset.rep, 10))));
@@ -34810,6 +37156,29 @@
     function _ambArchChainSlots(cfg) {
       const arch = cfg && Array.isArray(cfg.arch) ? cfg.arch : null;
       const p = cfg && cfg.prog;
+      // PART MATRIX: the played order comes from the grid expansion — the SAME
+      // walk the chord clock uses, so the Scheduler lane, the pass windowing, the
+      // one-pass readout and the chain length cannot drift from what is heard.
+      // That is the whole reason this function exists as one insertion point.
+      // The list is the full SUPER-CYCLE, which is what "the played chain" means
+      // once a part's behaviour changes from visit to visit.
+      if (_ambGridOn(cfg)) {
+        const _pl = _ambGridPlan(cfg);
+        const gs = _pl && _pl.slots;
+        if (gs && gs.length) {
+          const parts = Array.isArray(p.parts) ? p.parts : null;
+          return gs.map(sl => ({
+            idx: sl.idx, part: sl.part, pName: (parts && parts[sl.pi] && parts[sl.pi].name) || 'Part',
+            pFirst: !!sl.pFirst, rep: sl.rep, plays: sl.plays,
+            col: sl.col, cols: sl.cols, iter: sl.iter, pos: sl.pos,
+            // CARRY THE LENGTH. This builds a fresh object per slot, so anything
+            // not copied is dropped — the same trap _ambRepairParts has with
+            // per-part fields. Without it the clock played per-iteration cadence
+            // while every readout showed the chord's own length.
+            ...(sl.gbars != null ? { gbars: sl.gbars } : {}),
+          }));
+        }
+      }
       if (!arch || !p || !Array.isArray(p.chords) || !p.chords.length) return null;
       const _hasCh = arch.some((e) => e && e.changes), _hasHold = arch.some((e) => e && e.hold);
       let withCh = (_hasCh || _hasHold) ? arch.filter((e) => e && (e.changes || e.hold)) : [];
@@ -34904,6 +37273,10 @@
     // and every readout, so they cannot disagree about the length of the piece.
     function _ambChainSlotBars(cfg, sl) {
       if (sl && sl.hold) return Math.max(0.01, sl.bars || 1);
+      // A grid slot may carry its own length — per-iteration cadence, or the
+      // written cadence used as a template. A DISTINCT field from `bars`, which
+      // already means something else on a HOLD slot.
+      if (sl && Number.isFinite(sl.gbars) && sl.gbars > 0) return sl.gbars;
       const bpc = Math.max(0.01, (cfg && cfg.barsPerChord) || 1);
       const c = cfg && cfg.prog && cfg.prog.chords ? cfg.prog.chords[sl.idx] : null;
       return (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc;
@@ -36525,20 +38898,20 @@
     const _AMB_LAYER_SCHEMA = {
       bed: { label: 'Bed', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'voiceCap', 'Voice cap', 0, 12, '0 = follow Density'], ['followsalt'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['seqbank'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'voiceCap', 'Voice cap', 0, 12, '0 = follow Density'], ['followsalt'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
         ['sub', 'Progression', 'When an Area progression is set: the layer locks to it and plays voicings of the current chord. (Repeat/Times in Timing only apply when there is no Area progression.)'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold \u00b7 \u2212N = hold N units \u00b7 +N = N chords per unit'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length \u00b7 % of each strike a chord rings'], ['choke'], ['ring'], ['pitchrule'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
-        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['ring'], ['loop'], ['cond'],
-        ['grp', 'Variance'], ['tight'], ['sl', 'gravity', 'Gravity', 0, 100, 'free → chord tones'], ['sl', 'contour', 'Contour', -100, 100, 'fall → rise'], ['sl', 'stutter', 'Stutter', 0, 100, 'walk → repeats'], ['sl', 'phrasing', 'Phrasing', 0, 100, 'stream → gestures'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['seqbank'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'phrasing', 'Phrasing', 0, 100, 'stream → gestures'], ['ring'], ['loop'], ['cond'],
+        ['grp', 'Variance'], ['tight'], ['sl', 'gravity', 'Gravity', 0, 100, 'free → chord tones'], ['sl', 'contour', 'Contour', -100, 100, 'fall → rise'], ['sl', 'stutter', 'Stutter', 0, 100, 'walk → repeats'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['seqbank'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['ring'], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'syncop', 'Syncopate', 0, 100, 'straight → offbeat'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
@@ -36576,7 +38949,7 @@
       ] },
       beat: { label: 'Beat', ctrls: [
         ..._ambVoiceCtrls([['kit']], 500, 2000, 2000), ['synthkit'],
-        ['grp', 'Source'], ['keyov'], ['salt'], ['gen'], ['sl', 'poly', 'Poly', 1, 4, 'drums per hit (Random)'], ['grp', 'Pattern'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'],
+        ['grp', 'Source'], ['keyov'], ['gen'], ['sl', 'poly', 'Poly', 1, 4, 'drums per hit (Random)'], ['grp', 'Pattern'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'],
         ['grp', 'Timing', 'How fast and how long the beat plays. In Random mode, Interval sets the gap between hits; in Program mode the grid follows Sync + Bars. Length is how long each hit rings.'], ['unitsync'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'bars per loop'], ['tm', 'lengthMs', 'Hit length', 60, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around hit length'], ['tight'],
         ..._AMB_MIX] },
@@ -36586,7 +38959,7 @@
       // Direction); Randomness deviates from it. Pitch material is the series.
       arp: { label: 'Arp', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['salt'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['grp', 'Pattern'], ['arpeuclid'], ['euclidgrid'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
+        ['grp', 'Source'], ['keyov'], ['seedmode'], ['harmony'], ['seqbank'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['grp', 'Pattern'], ['arpeuclid'], ['euclidgrid'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
         ['grp', 'Timing'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'pattern length — fills the Unit'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['ring'], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (euclid; 0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'rateVar', 'Rate var', 0, 100, 'steady → rushes'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -36594,7 +38967,7 @@
       // long; Rhythm/Pitch var add per-repeat variation.
       bass: { label: 'Bass', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['grp', 'Pattern'], ['euclidgrid'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['seqbank'], ['grp', 'Pattern'], ['euclidgrid'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'pattern length — the seed fills the Unit'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['ring'], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['tight'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Walk', 0, 100, 'hold → wander (proximity-capped)'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -36602,14 +38975,14 @@
       // looping; Vary re-rolls; Len var spreads note lengths around Length.
       run: { label: 'Riff', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['ring'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
-        ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'phrasing', 'Articulate', 0, 100, 'even → arrivals sustain, runs detach'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['seqbank'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'phrasing', 'Articulate', 0, 100, 'even → arrivals sustain, runs detach'], ['ring'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
+        ['grp', 'Variance'], ['tight'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['seqbank'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Density · −N = 1 hit per N bars · +N = N per bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['ring'], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = use Length · % of each strike a hit rings'], ['pitchrule'], ['st', 'voices', 'Voices', 1, 9, 'tones per hit (Stack)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'vary', 'Roam', 0, 100, 'root → wander degrees'], ['tight'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -36617,7 +38990,7 @@
       // vary are independent. A chord Notes source holds the whole chord.
       drone: { label: 'Drone', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Source'], ['keyov'], ['salt'], ['notes'], ['seedmode'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
+        ['grp', 'Source'], ['keyov'], ['notes'], ['seedmode'], ['harmony'], ['seqbank'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
         ['sub', 'Progression', 'When an Area progression is set: PEDAL (default) holds ONE note per progression cycle, auto-chosen to work across every chord — the card explains the pick, and Note overrides it. VOICINGS re-voices the current chord instead (Subdivide/Feel/Variety).'], ['dronepedal'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['sl', 'strike', 'Strike', -16, 16, '0 = use Hold · −N = hold N units · +N = N per unit'], ['sl', 'lenRatio', 'Ring', 0, 200, '0 = fill the hold · % of each strike the note rings'], ['pitchrule'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Dynamics', 0, 100, 'note-to-note volume'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
@@ -36666,7 +39039,7 @@
       const base = { id: id | 0, type: type, on: true, present: true, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, fine: 0, areaFadeMs: 250, write: { on: true, bars: 2, times: 4 }, mod: _ambDefaultMod(), ..._ambDefaultFx() };
       if (type === 'bed') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, strum: 0, strumFidelity: 0, chordMode: 'chaos', chordPhraseLen: 4, chordRepeats: 4, lenVary: 0, choke: false, progSubdiv: 1, progFeel: 'even', voiceVariety: 0, ..._AMB_ADSR_DEFAULTS.bed });
       if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, proximity: 35, gravity: 50, contour: 0, stutter: 0, phrasing: 0, ornament: 0, slide: 0, tight: 0, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, lenVary: 0, phraseVary: 0, ..._AMB_ADSR_DEFAULTS.motif });
-      if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, syncop: 0, holdSteps: 0, tight: 0, intervalMs: 450, lengthMs: 300, mutateRate: 40, lenVary: 0, ..._AMB_ADSR_DEFAULTS.texture });
+      if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, syncop: 0, holdSteps: 0, tight: 0, intervalMs: 450, lengthMs: 300, lenVary: 0, ..._AMB_ADSR_DEFAULTS.texture });
       if (type === 'beat') return Object.assign(base, { kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, ghosts: 0, holdSteps: 0, tight: 0, lenVary: 0, ..._AMB_ADSR_DEFAULTS.beat });
       // Learn: speaks fetched prose over the music. `intervalMs` is the GAP between
       // spoken lines, not a note length — the utterance sets its own duration.
@@ -37063,6 +39436,7 @@
           '<div class="ambient-ctrl ambient-patsrc"><label>Notes from</label><span class="ambient-seg-row">' +
             '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="generate" data-seedkey="' + _ambEscText(_sk) + '" title="This layer\u2019s Pattern: the rhythm below, with the engine picking each note from the Notes pool.">\u2ff4 Pattern</button>' +
             '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="grid" data-seedkey="' + _ambEscText(_sk) + '" title="A fixed phrase you compose in the full editor. Replaces the Pattern while it is set \u2014 the two are alternatives, not layers.">\u270e Grid</button>' +
+            '<button type="button" class="ambient-seg amb-seedsave" data-savekey="' + _ambEscText(_sk) + '" disabled title="' + _ambEscAttr(_AMB_SEEDSAVE_TITLE) + '">\u{1F4BE} Save</button>' +
           '</span></div>' +
           '<div class="ambient-euclid-presetrow"><select id="' + p + '-euclidpreset" class="ambient-select ambient-euclid-preset" title="The rhythm this pattern came from. Reads Custom once you edit it — save a Custom to keep it.">' + _ambEuclidPresetOptions(inst) + '</select>' +
             '<button type="button" id="' + p + '-euclidrand" class="ambient-euclid-rand" title="Roll a brand-new random on/off pattern straight into the grid \u2014 an actual random rhythm, not a randomly chosen preset. Press again for another; keep one with Save.">\ud83c\udfb2 Random</button>' +
@@ -37097,13 +39471,18 @@
           if (Number.isFinite(_r)) _inhLbl = _AMB_NOTE12[((_r % 12) + 12) % 12] + (_sc ? ' ' + _sc : '') + ' (inherited)';
         } catch (e) {}
         const hints = { '': _inhLbl, key: 'this layer only', prog: 'its own changes', yoke: 'follows that layer’s notes' };
-        return '<div class="ambient-ctrl"><label title="' + _ambTitleAttr('Key', 'harmonic frame') + '">Key</label>' +
+        // Marked, not hidden: the stored setting stays visible and comes back the
+        // moment the Area progression is switched off.
+        let _koWhy = null;
+        try { _koWhy = _ambKeyInertWhy((_E && (_E._cfg || (_E.getCfg && _E.getCfg()))) || null); } catch (e) {}
+        const _koHint = _koWhy || hints[mode];
+        return '<div class="ambient-ctrl' + (_koWhy ? ' is-overridden' : '') + '"><label title="' + _ambTitleAttr('Key', 'harmonic frame') + '">Key</label>' +
           '<select class="ambient-select amb-keyov-mode" data-kokey="' + kk + '" title="The layer’s harmonic frame: Inherit = the Area’s key / progression; Key = pin this layer to its own root + scale; Progression = this layer follows its own chord changes">' +
             '<option value=""' + (mode === '' ? ' selected' : '') + '>Inherit</option>' +
             '<option value="key"' + (mode === 'key' ? ' selected' : '') + '>Key</option>' +
             '<option value="prog"' + (mode === 'prog' ? ' selected' : '') + '>Progression</option>' +
             '<option value="yoke"' + (mode === 'yoke' ? ' selected' : '') + '>Yoke</option>' +
-          '</select><span class="ambient-hint amb-keyov-hint" data-kokey="' + kk + '">' + hints[mode] + '</span></div>' +
+          '</select><span class="ambient-hint amb-keyov-hint" data-kokey="' + kk + '"' + (_koWhy ? ' title="' + _ambEscAttr(_koWhy) + '"' : '') + '>' + _koHint + '</span></div>' +
           '<div class="ambient-ctrl amb-keyov-yokerow" data-kokey="' + kk + '"' + (mode === 'yoke' ? '' : ' hidden') + '><label>Follow</label>' +
             '<select class="ambient-select amb-keyov-yoke" data-kokey="' + kk + '" data-cur="' + ((ko && ko.mode === 'yoke' && ko.src) || '') + '" title="The layer this one harmonizes with — its SOUNDING notes at each onset become this layer’s chord frame"><option value="">— pick a layer —</option></select>' +
             '<span class="ambient-hint">harmonize with its notes</span></div>' +
@@ -37156,22 +39535,119 @@
           opts.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
           '</select></div>';
       }
-      if (k === 'salt') {
-        // PER-LAYER SALT. Absent = inherit (the Changes' salt, else the area's);
-        // present = this layer's own, and all-zero is an explicit "do not salt me"
-        // — the same absent/zero grammar the Changes use.
-        const sl = (inst && inst.salt && typeof inst.salt === 'object') ? inst.salt : null;
-        const v = (k2) => sl ? Math.max(0, Math.min(100, sl[k2] | 0)) : 0;
-        const row = (k2, lbl, hint) => '<div class="ambient-ctrl"><label for="' + p + '-salt-' + k2 + '">' + lbl + '</label>' +
-          '<input type="range" id="' + p + '-salt-' + k2 + '" class="ambient-sl ambient-layersalt" data-saltk="' + k2 + '" min="0" max="100" step="1" value="' + v(k2) + '"' + (sl ? '' : ' disabled') + '>' +
-          '<span class="ambient-hint">' + hint + '</span></div>';
-        return '<div class="ambient-ctrl"><label for="' + p + '-saltmode">Salt</label>' +
-          '<select id="' + p + '-saltmode" class="ambient-select ambient-layersaltmode">' +
-            '<option value="inherit"' + (sl ? '' : ' selected') + '>Inherit</option>' +
-            '<option value="own"' + (sl ? ' selected' : '') + '>This layer</option>' +
-          '</select><span class="ambient-hint">inherit the Changes\u2019 salt, or override it here (all 0 = this layer never salts). Chord LENGTHS stay area-wide \u2014 they are the shared chord clock.</span></div>' +
-          row('colors', 'Salt colour', 'how much the chord recolours inside its unit') +
-          row('scatter', 'Salt scatter', 'placement of the colour segments');
+      // ['salt'] RETIRED 2026-08-20. Salt was a per-layer OBJECT here — each
+      // layer re-declaring its own colours/scatter — which could not do what it
+      // looked like it did: the colour pick hashes (step, segIdx, seed) and not
+      // the layer, so two layers with different numbers picked DIFFERENT colours
+      // for the same instant rather than one colouring more than the other. Salt
+      // is now defined once by the Changes, and which layers follow it, chord by
+      // chord, is the 🧂 Salt mode of the ⌗ Matrix. See _ambSaltFollowOK.
+      // HARMONY — what a COMPOSED phrase does when the chords move under it.
+      // The engine has had this since Option C: _ambLockHarmonizeFreq sits on the
+      // frozen-replay path (the exact path a Grid phrase plays through) and reads
+      // L.harmony. Seq layers got the control; Bloom layers never did, so every
+      // authored phrase was stuck on `fixed` — compose over C and it played
+      // unchanged over F and G, with no way to say otherwise. Measured on a
+      // locked Motif over C-F-G: fixed/diatonic hold their pitches, chordlock
+      // moves them (C→C G, F→D A, G→D G B).
+      //
+      // Marked inert when the layer holds NO phrase, because a layer that is
+      // generating already follows the changes and this would decide nothing.
+      // THE SEQUENCE BANK, IN THE LAYER. These used to render only inside the
+      // compose dock, so they existed only while a session was open — which is
+      // most of the time not, and made the bank look like it lived "over in the
+      // workspace". They are part of the LAYER now: visible whenever the card is,
+      // whether or not the grid is open.
+      if (k === 'seqbank') {
+        // `lk` is the DOM key (motif-1); the ENGINE key is motif:1. Passing the
+        // former to _ambLayerByKey returns undefined and every handler bails in
+        // silence — the trap CLAUDE.md records as "_ambLayerByKey('run-1') →
+        // cfg['run-1'] = undefined and Author silently no-ops". Same conversion
+        // the keyov branch above does.
+        const _ek = (lk === type) ? type : (type + ':' + String(lk).slice(type.length + 1));
+        const bank = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences : [];
+        const usable = [];
+        for (let i = bank.length - 1; i >= 0; i--) { const x = bank[i];
+          if (x && x.type !== 'audio' && Array.isArray(x.steps) && x.steps.length) usable.push(x); }
+        const map = (inst && inst.partSeqs && typeof inst.partSeqs === 'object') ? inst.partSeqs : {};
+        let parts = [];
+        try { const c0 = (_E && (_E._cfg || (_E.getCfg && _E.getCfg()))) || null;
+          if (c0 && c0.prog && c0.prog.on && Array.isArray(c0.prog.parts)) parts = c0.prog.parts; } catch (e) {}
+        const boundTo = {};
+        Object.keys(map).forEach(k2 => { const pp = parts[k2 | 0];
+          if (map[k2]) (boundTo[map[k2]] = boundTo[map[k2]] || []).push((pp && pp.name) || ('Part ' + ((k2 | 0) + 1))); });
+        let h = '<div class="ambient-ctrl ambient-seqbank-row"><label title="' +
+          _ambEscAttr('Phrases saved from this layer’s grid. Tap one to load it into this layer.') +
+          '">Sequences</label><span class="ambient-seqbank" data-sbkey="' + _ambEscText(_ek) + '">';
+        h += usable.length
+          ? usable.map(x => {
+              const bt = boundTo[x.name];
+              return '<button type="button" class="ambient-seg ambient-sgseq' + (bt ? ' bound' : '') +
+                '" data-sgseq="' + _ambEscAttr(x.name) + '" data-sbkey="' + _ambEscText(_ek) + '" title="' +
+                _ambEscAttr(x.name + ' — ' + x.steps.length + ' steps' + (bt ? ' · plays on ' + bt.join(', ') : '') +
+                  '. Tap to make it this layer’s phrase.') + '">' + _ambEscAttr(x.name) +
+                (bt ? '<i>' + _ambEscAttr(bt.join(', ')) + '</i>' : '') + '</button>';
+            }).join('')
+          : '<span class="ambient-hint">none yet — compose in ✎ Grid, then ⬇ Save as sequence</span>';
+        h += '</span></div>';
+        // ALWAYS RENDER THE ROW once there is something to map. It used to be
+        // gated on parts.length > 1, so a layer with a saved sequence and a
+        // one-part (or absent) progression showed Sequences and NO Plays row and
+        // nothing said why — "a conditionally-RENDERED control cannot be found,
+        // a conditionally-ENABLED one can", which this file already learned the
+        // hard way with the Delete button. Say what is missing instead.
+        if (usable.length && parts.length <= 1) {
+          let _pw;
+          try {
+            const c1 = (_E && (_E._cfg || (_E.getCfg && _E.getCfg()))) || null;
+            const pr = c1 && c1.prog;
+            _pw = (!pr || !pr.on || !(Array.isArray(pr.chords) && pr.chords.length))
+              ? 'Turn the Progression on and split it into parts (⇶ Arch → ＋ Part) to play a different sequence in each.'
+              : 'This progression has one part. Split it (⇶ Arch → ＋ Part) to play a different sequence in each.';
+          } catch (e) { _pw = 'Add a second part to the progression to map sequences to parts.'; }
+          h += '<div class="ambient-ctrl ambient-seqbank-row is-overridden"><label>Plays</label>' +
+            '<span class="ambient-hint">' + _ambEscAttr(_pw) + '</span></div>';
+        }
+        if (usable.length && parts.length > 1) {
+          // TOGGLE CHIPS, not a dropdown: a part can hold SEVERAL sequences and a
+          // sequence can sit in several parts, which a single-value <select>
+          // cannot express. Several in one part play in turn, one per pass.
+          h += '<div class="ambient-ctrl ambient-seqbank-row"><label title="' +
+            _ambEscAttr('Which banked sequences this layer plays under each part. Pick more than one and they take turns, a different one each pass.') +
+            '">Plays</label><span class="ambient-seqbank ambient-partmap">' +
+            parts.map((pp, i2) => {
+              const cur = Array.isArray(map[i2]) ? map[i2] : (map[i2] ? [map[i2]] : []);
+              return '<span class="ambient-pmrow"><b>' + _ambEscAttr((pp && pp.name) || ('Part ' + (i2 + 1))) + '</b>' +
+                usable.map(x => {
+                  const on = cur.indexOf(x.name) >= 0;
+                  const ord = on && cur.length > 1 ? '<i>' + (cur.indexOf(x.name) + 1) + '</i>' : '';
+                  return '<button type="button" class="ambient-seg ambient-pmchip' + (on ? ' on' : '') +
+                    '" data-pmseq="' + _ambEscAttr(x.name) + '" data-pmpi="' + i2 + '" data-sbkey="' + _ambEscText(_ek) + '" title="' +
+                    _ambEscAttr(on
+                      ? (x.name + ' plays in ' + ((pp && pp.name) || ('part ' + (i2 + 1))) + (cur.length > 1 ? ' — pass ' + (cur.indexOf(x.name) + 1) + ' of ' + cur.length : '') + '. Tap to remove.')
+                      : ('Add ' + x.name + ' to ' + ((pp && pp.name) || ('part ' + (i2 + 1))) + '.')) + '">' +
+                    _ambEscAttr(x.name) + ord + '</button>';
+                }).join('') +
+                (cur.length ? '' : '<span class="ambient-hint">this layer’s own phrase</span>') +
+              '</span>';
+            }).join('') + '</span></div>';
+        }
+        return h;
+      }
+      if (k === 'harmony') {
+        const _hv = (inst && (inst.harmony === 'diatonic' || inst.harmony === 'chordlock')) ? inst.harmony : 'fixed';
+        const _authored = !!(inst && inst.lockState && inst.lockState.seedEdit);
+        const _why = _authored ? null : 'Nothing to remap yet — this layer is generating, so it already follows the changes. Compose a phrase in the Grid and this decides what happens to it when the chords move.';
+        return '<div class="ambient-ctrl' + (_why ? ' is-overridden' : '') + '"><label for="' + p + '-harmony" title="' +
+          _ambEscAttr('What a composed phrase does when the chords move under it.') + '">Harmony</label>' +
+          '<select id="' + p + '-harmony" class="ambient-select amb-harmony" title="' + _ambEscAttr(
+            'Fixed — the phrase plays exactly as written, whatever chord is underneath. ' +
+            'Follow the key — each note replays as its scale DEGREE in the current key, so a 3rd stays a 3rd through a modulation. ' +
+            'Lock to the chords — each degree re-anchors to the chord sounding at that moment, so the phrase comps the changes.') + '">' +
+            '<option value="fixed"' + (_hv === 'fixed' ? ' selected' : '') + '>Fixed — as written</option>' +
+            '<option value="diatonic"' + (_hv === 'diatonic' ? ' selected' : '') + '>Follow the key</option>' +
+            '<option value="chordlock"' + (_hv === 'chordlock' ? ' selected' : '') + '>Lock to the chords</option>' +
+          '</select><span class="ambient-hint">' + (_why || 'what the phrase does when the chords move') + '</span></div>';
       }
       if (k === 'followsalt') return '<div class="ambient-ctrl"><label for="' + p + '-followsalt">Follow salt</label><select id="' + p + '-followsalt" class="ambient-select"><option value="0">Hold the chord</option><option value="1">Play the colour changes</option></select><span class="ambient-hint">re-voice inside the unit as salt colours the chord \u2014 shared notes ring on</span></div>';
       // RING OUT — the opt-out from the chord choke. Default (absent) chokes: a
@@ -37708,23 +40184,15 @@
           // the sibling controls take. A bed defaults to Write on, so without it the
           // frozen loop replays the OLD lengths for the rest of its cycle — measured
           // 12.3 s of nothing happening, which reads as a dead control.
-          else if (k === 'salt') {
-            const md = el('saltmode');
-            const apply = () => { const L = get(); if (!L) return; sync(); persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } };
-            if (md) md.addEventListener('change', () => {
+          else if (k === 'harmony') {
+            const e = el('harmony');
+            if (e) e.addEventListener('change', () => {
               const L = get(); if (!L) return;
-              if (md.value === 'own') { if (!L.salt || typeof L.salt !== 'object') L.salt = { colors: 0, scatter: 0 }; }
-              else delete L.salt;
-              apply();
-              try { _ambRenderExtras(E); } catch (x) {}   // the sliders enable/disable with the mode
-            });
-            ['colors', 'scatter'].forEach(k2 => {
-              const e2 = el('salt-' + k2);
-              if (e2) e2.addEventListener('change', () => {
-                const L = get(); if (!L || !L.salt) return;
-                L.salt[k2] = Math.max(0, Math.min(100, parseInt(e2.value, 10) || 0));
-                apply();
-              });
+              if (e.value === 'diatonic' || e.value === 'chordlock') L.harmony = e.value; else delete L.harmony;
+              sync(); persist();
+              // The remap runs per NOTE on the replay path, so a frozen loop picks
+              // it up on its very next note — no re-anchor needed, and re-anchoring
+              // would cost a phrase boundary for nothing.
             });
           }
           else if (k === 'followsalt') { const e = el('followsalt'); if (e) { e.value = inst.followSalt ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === '1') L.followSalt = 1; else delete L.followSalt; sync(); persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } } }); } }
@@ -39145,7 +41613,7 @@
     const _AMB_RAMP_PARAMS = {
       bed:     [['density','Density',1,8],['register','Register',2,6],['spread','Spread',0,3],['intervalMs','Interval (ms)',200,12000],['lengthMs','Length (ms)',300,16000],['drift','Drift',0,99],['motion','Motion',0,100],['strum','Strum',0,100],['strumFidelity','Fidelity',0,100],['level','Level',0,100]],
       motif:   [['register','Register',2,7],['range','Range',1,4],['intervalMs','Interval (ms)',100,4000],['lengthMs','Length (ms)',80,4000],['drift','Drift',0,99],['restProb','Rests',0,100],['twist','Twist',0,100],['level','Level',0,100]],
-      texture: [['register','Register',3,7],['fill','Fill',0,100],['intervalMs','Interval (ms)',80,2000],['lengthMs','Length (ms)',60,2000],['drift','Drift',0,99],['mutateRate','Mutate',0,100],['level','Level',0,100]],
+      texture: [['register','Register',3,7],['fill','Fill',0,100],['intervalMs','Interval (ms)',80,2000],['lengthMs','Length (ms)',60,2000],['drift','Drift',0,99],['level','Level',0,100]],
       beat:    [['intervalMs','Interval (ms)',80,2000],['lengthMs','Length (ms)',60,2000],['drift','Drift',0,99],['restProb','Rests',0,100],['level','Level',0,100]],
       seq:     [['varyDepth','Amount',0,100],['intervalMs','Interval (ms)',200,16000],['lengthMs','Length (ms)',300,16000],['drift','Drift',0,99],['returnChance','Return %',0,100],['level','Level',0,100]],
       samp:    [['chop','Chop',1,32],['stutter','Stutter',1,8],['pitch','Pitch',-24,24],['intervalMs','Interval (ms)',200,120000],['lengthMs','Length (ms)',80,120000],['drift','Drift',0,99],['level','Level',0,100]],
@@ -39988,7 +42456,19 @@
           // A MIXED number, not _ambFmtBpc's improper fraction: a 4¼-bar pass read
           // "17/4 bars", which nobody counts in.
           const _len = _ambFmtBarsMixed(bars);
-          txt = 'one pass · ' + _len + ' bar' + (Math.abs(bars - 1) < 0.01 ? '' : 's')
+          // "one pass" is a lie once a grid is on: the chain is a SUPER-CYCLE of
+          // however many arrangement iterations it takes for every part's column
+          // to come round again. Name the count rather than quietly redefining
+          // the phrase (a 3-column grid measured 10 bars and read "one pass").
+          let _lead = 'one pass';
+          try {
+            if (_ambGridOn(cfg)) {
+              const _its = new Set((_ambProgChainSlots(cfg) || []).map(sl => sl.iter));
+              const _n = _its.size;
+              if (_n > 1) _lead = _n + ' passes';
+            }
+          } catch (e) {}
+          txt = _lead + ' · ' + _len + ' bar' + (Math.abs(bars - 1) < 0.01 ? '' : 's')
             + ' · ' + (mm ? (mm + ':' + String(ss).padStart(2, '0')) : (Math.round(secs * 10) / 10 + 's'))
             + ' · ' + nCh + ' change' + (nCh === 1 ? '' : 's');
         }
@@ -40301,7 +42781,6 @@
       set('ambient-texture-lengthMs', cfg.texture.lengthMs);     hint('ambient-texture-lengthMs-v', _ambFmtMs(cfg.texture.lengthMs));
       set('ambient-texture-swing', cfg.texture.swing | 0); set('ambient-texture-lenVary', cfg.texture.lenVary | 0);
       setWhen('ambient-texture', cfg.texture.when);
-      set('ambient-texture-mutateRate', cfg.texture.mutateRate);
       set('ambient-texture-level', cfg.texture.level);
        set('ambient-texture-areaFadeMs', cfg.texture.areaFadeMs); hint('ambient-texture-areaFadeMs-v', _ambFmtMs(cfg.texture.areaFadeMs));
       chk('ambient-beat-on', cfg.beat.on);
@@ -40520,7 +42999,7 @@
             '<div class="ambient-row ambient-prog-salt" id="ambient-prog-saltrow" style="display:none" title="Salt — deterministic per-cycle spice on the progression. Everything at 0 = play exactly as written.">' +
               '<span class="ambient-sched-lbl salt-lbl">🧂 salt</span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">lengths</span><input type="number" class="ambient-salt-in" id="ambient-salt-len" min="0" max="100" step="5" value="0" title="Random chord scheduling — each cycle re-slices the chord lengths (A 1¼ bars, B ½, C 1¾ …) on a 1/8-bar grid. The cycle total is preserved, so loops/Evolve stay aligned. AREA-WIDE: this is the shared chord clock, so every layer follows it (colour and scatter can be overridden per layer). 0 = as written, 100 = wild."></span>' +
-              '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">colors</span><input type="number" class="ambient-salt-in" id="ambient-salt-colors" min="0" max="8" step="1" value="0" title="Chord colors per unit — splits a chord’s unit into segments: the downbeat is always the written chord, later segments become root-preserving colors of it (maj7 · add9 · 6 · maj9 · sus2 · sus4 · open 5). 0 = off, higher = more segments (max 8)."></span>' +
+              '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">colors</span><input type="number" class="ambient-salt-in" id="ambient-salt-colors" min="0" max="7" step="1" value="0" title="How many times each chord recolours inside its unit. The chord is cut into colours+1 sections: the downbeat is always the written chord, the later ones become root-preserving colours of it (maj7 · add9 · 6 · maj9 · sus2 · sus4 · open 5). 0 = off; 7 is the ceiling, because a chord is never cut into more than 8 sections."></span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">🌊 vary</span><input type="number" class="ambient-salt-in" id="ambient-prog-vary" min="0" max="100" step="5" value="0" title="Per-CYCLE harmony variance — the chance each chord is swapped for a same-function substitute, RE-ROLLED EVERY PASS, so the changes keep evolving while you listen. (🎲 take fixes one realization per take id; this one moves.) Same candidates, same in-key rule; deterministic per (chord, cycle, take), so a Loop replays it exactly."></span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">🌡 tension</span><input type="number" class="ambient-salt-in" id="ambient-prog-tension" min="0" max="100" step="5" value="0" title="Tension ramp — chords gain colour extensions (♭7 → 9th → 11th) progressively ACROSS the progression cycle and reset at the top, so harmony tightens toward the turnaround. Purely additive: the written tones are never removed. 0 = as written."></span>' +
               '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">🎲 take</span><input type="number" class="ambient-salt-in" id="ambient-prog-reroll" min="0" max="100" step="5" value="0" title="Harmony re-roll — the chance each chord is swapped for a SAME-FUNCTION substitute (relative minor/major, mediant, or a 7th/9th colour) when you press 🎲 New take. Only substitutions that stay in the key are offered. Deterministic: the same take id always gives the same changes, and the written progression is never altered — set it back to 0 to hear it as authored."></span>' +
@@ -40574,6 +43053,13 @@
             (E.isLane ? '' :
               _ambProgGrpOpen('matrix', '\u2317 Matrix', false) +
               '<div class="ambient-progmatrix" id="ambient-progmatrix" style="display:none"></div>' +
+              _ambProgGrpClose() +
+              // PASSES — the part matrix. Deliberately NOT called a third
+              // "matrix": ⌗ Matrix is layers × chords and ☷ Sections is layers ×
+              // sections, so a third one with a third axis pair would repeat the
+              // _ambProgDefaultUnit naming mistake. This one schedules PASSES.
+              _ambProgGrpOpen('passes', '\u25a6 Passes', false) +
+              '<div class="ambient-passmx" id="ambient-passmx" style="display:none"></div>' +
               _ambProgGrpClose()) +
           '</div>' +       // end #ambient-progsec-body
         '</div>') +        // end the merged Arrangement pane
@@ -41503,6 +43989,50 @@
         // (note-edit chips are handled on pointerdown — see below)
         // Task 4: Seed mode toggle (Generate / Author) — one delegated handler for
         // primary + extras cards (key from data-seedkey).
+        const sv = e.target && e.target.closest && e.target.closest('.amb-seedsave');
+        if (sv) {
+          e.stopPropagation();
+          if (sv.disabled) return;
+          const key = sv.dataset.savekey;
+          try {
+            if (!(_bloomGridEdit && _bloomGridEdit.E === E && _bloomGridEdit.key === key)) return;
+            // SAVE MEANS ONE THING. This button and "⬇ Save as sequence" were two
+            // different saves: this one committed the phrase to the layer, that
+            // one banked it, and the obvious button — the one sitting next to
+            // ✎ Grid — put nothing in Sequences. Reported six times as the saved
+            // sequence never appearing. It banks FIRST (while the scratch lane is
+            // still the active lane, which is what currentSequenceSnapshot reads),
+            // then commits and quits.
+            try {
+              if (typeof saveAsNewSeq === 'function' && typeof currentSequenceSnapshot === 'function') {
+                const L1 = _ambLayerByKey(E, key);
+                const dflt = (L1 && (L1.name || _ambLayerLabel(L1, String(key).split(':')[0]))) || 'Phrase';
+                const nm = (typeof prompt === 'function')
+                  ? prompt('Name this sequence (it will appear under Sequences on the layer):', dflt) : dflt;
+                if (nm === null) return;                   // cancelled: stay in the grid
+                const before = Array.isArray(savedSequences) ? savedSequences.length : -1;
+                saveAsNewSeq(String(nm).trim() || dflt);
+                if (Array.isArray(savedSequences) && savedSequences.length <= before && typeof showToast === 'function') {
+                  showToast('Nothing was added to the sequence bank.', { warn: true, ms: 10000 });
+                }
+              }
+            } catch (e2) {
+              try { if (typeof showToast === 'function') showToast('Could not bank the sequence: ' + ((e2 && e2.message) || e2), { warn: true, ms: 12000 }); } catch (x) {}
+              try { console.error('Bank on Save failed:', e2); } catch (x) {}
+            }
+            _ambGridEditStop(false);                       // commit the phrase, close the session
+            const L = _ambLayerByKey(E, key);
+            if (L) {
+              L.loopVar = 'live';                          // the variance sliders play over it again
+              try { _ambReanchorLayer(E, key); } catch (x) {}
+            }
+            _ambRefreshSeedModes(E);
+            try { _ambSyncControls(E); } catch (x) {}
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+            try { if (typeof showToast === 'function') showToast('Saved — it is in Sequences on this layer, and the layer performs it with variance.'); } catch (x) {}
+          } catch (err) { console.warn('Grid save failed', err); }
+          return;
+        }
         const sm = e.target && e.target.closest && e.target.closest('.amb-seedmode');
         if (sm) {
           e.stopPropagation();
@@ -41522,8 +44052,29 @@
               // was already authored bounced straight back out on the first
               // press: it read as "can't select Grid, stuck on Pattern".
               const _soleBtn = !_ambHasPattern(L0, String(key).split(':')[0]);
-              if (_soleBtn && (_authored || _live)) {
-                try { if (_live) _ambGridEditStop(false); } catch (e2) {}
+              // RE-ENTER, don't revert. This used to leave on `_authored || _live`,
+              // so an AUTHORED layer with no live session — every layer after a
+              // reload, since _bloomGridEdit is runtime state and lockState.seedEdit
+              // is persisted — answered ✎ Grid by discarding the phrase. The button
+              // read "active" (authored) while the dock showed nothing, and there was
+              // no way back INTO the editor: reported as "the layer grid stays
+              // selected but the grid doesn't show", and it is also why the banked
+              // sequences were invisible, since the list only renders during a
+              // session. Leaving is now only what a press does while one is OPEN;
+              // otherwise the press opens the editor on the phrase already there.
+              if (_soleBtn && _live) {
+                if (_live) {
+                  // Ask before throwing the composition away. Keep → the phrase
+                  // becomes the layer's; Discard → the layer goes back to exactly
+                  // what it was, including whether it was authored at all.
+                  const _wasAuthored = !!(_bloomGridEdit && _bloomGridEdit.wasAuthored);
+                  _ambGridExitAsk((saved) => {
+                    if (!saved && !_wasAuthored) _ambSeedRevert(E, key);
+                    _ambRefreshSeedModes(E);
+                    if (typeof persistWorkspace === 'function') persistWorkspace();
+                  });
+                  return;
+                }
                 _ambSeedRevert(E, key);
                 _ambRefreshSeedModes(E);
                 if (typeof persistWorkspace === 'function') persistWorkspace();
@@ -42136,7 +44687,6 @@
       bindTime('ambient-texture-lengthMs', 'texture', 'lengthMs');
       bind('ambient-texture-swing', 'texture', 'swing');
       bind('ambient-texture-lenVary', 'texture', 'lenVary');
-      bind('ambient-texture-mutateRate', 'texture', 'mutateRate');
       bind('ambient-texture-level', 'texture', 'level');
       bindTime('ambient-texture-areaFadeMs', 'texture', 'areaFadeMs');
       // Rate (free/sync) — the schema carries it for texture; the old hardcoded
@@ -42503,7 +45053,7 @@
         // 🧂 Salt knobs → cfg.prog.salt (normalize deletes the key when all zero,
         // so untouched projects stay byte-identical). Engine reads per onset —
         // changes land within the lookahead, no re-anchor needed.
-        [['ambient-salt-len', 'len', 100], ['ambient-salt-colors', 'colors', 8], ['ambient-salt-scatter', 'scatter', 100]].forEach(pr => {
+        [['ambient-salt-len', 'len', 100], ['ambient-salt-colors', 'colors', 7], ['ambient-salt-scatter', 'scatter', 100]].forEach(pr => {
           const el = G(pr[0]); if (!el) return;
           el.addEventListener('input', () => {
             _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
@@ -42798,6 +45348,83 @@
               }
               return;
             }
+            const sq = ev.target && ev.target.closest && ev.target.closest('.ambient-sgseq');
+            if (sq) {
+              ev.stopPropagation();
+              const saved = _ambBankByName(sq.dataset.sgseq || ''); if (!saved) return;
+              // The chips live on the CARD as well as in the dock, so this works
+              // with or without an open session: with one, the phrase goes into
+              // the lane you are editing; without, straight into the layer's lock.
+              const ge2 = _bloomGridEdit;
+              const key2 = sq.dataset.sbkey || (ge2 && ge2.key) || '';
+              if (!key2) return;
+              try {
+                const cl = (typeof cloneStep === 'function') ? cloneStep : (o => JSON.parse(JSON.stringify(o)));
+                const steps = saved.steps.map(cl);
+                if (ge2 && ge2.key === key2 && ge2.lane) {
+                  ge2.lane.steps = steps;
+                  if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane();
+                  if (typeof _syncFluidGridToActiveLane === 'function') _syncFluidGridToActiveLane();
+                  if (typeof renderSequence === 'function') renderSequence();
+                }
+                _ambStepsToLock(E, key2, steps, true);        // the live install path
+                const f3 = _ambFreezeState(E, key2);
+                f3.frozen = true; f3._lock = true;
+                if (!f3.keyCtx) f3.keyCtx = _ambCurKeyCtx(E);
+                const L3 = _ambLayerByKey(E, key2);
+                if (L3) { if (!L3.lockState || typeof L3.lockState !== 'object') L3.lockState = {}; L3.lockState.seedEdit = true; }
+                try { _ambPersistLock(E, key2); } catch (x) {}
+                try { _ambRefreshSeedModes(E); _ambUpdateNotesLive(E); } catch (x) {}
+                if (typeof persistWorkspace === 'function') persistWorkspace();
+                if (typeof showToast === 'function') showToast('“' + (saved.name || 'sequence') + '” is now this layer’s phrase.');
+              } catch (err) { console.warn('Load sequence failed', err); }
+              return;
+            }
+            const ps = ev.target && ev.target.closest && ev.target.closest('.ambient-sgpart-sel');
+            if (ps) { return; }   // <select> commits on 'change', not click
+            const sb = ev.target && ev.target.closest && ev.target.closest('.ambient-seedgrid-bank');
+            if (sb) {
+              ev.stopPropagation();
+              try {
+                if (typeof saveAsNewSeq !== 'function' || typeof currentSequenceSnapshot !== 'function') {
+                  if (typeof showToast === 'function') showToast('The sequence bank isn’t available here.');
+                  return;
+                }
+                const _lk = sb.dataset.sgk || '';
+                const L0 = _ambLayerByKey(E, _lk);
+                const dflt = (L0 && (L0.name || _ambLayerLabel(L0, String(_lk).split(':')[0]))) || 'Phrase';
+                const nm = (typeof prompt === 'function') ? prompt('Save this phrase to the sequence bank as:', dflt) : dflt;
+                if (nm == null) return;                       // cancelled
+                const before = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences.length : -1;
+                let failed = null;
+                try { saveAsNewSeq(String(nm).trim() || dflt); }
+                catch (e2) { failed = e2; }
+                const after = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences.length : -1;
+                // SAY WHAT HAPPENED. A silent failure here is what made this look
+                // like the feature was missing rather than broken: the bank stayed
+                // empty, the row said "none yet", and nothing named a reason.
+                if (typeof showToast === 'function') {
+                  if (failed) showToast('Could not save: ' + ((failed && failed.message) || failed), { warn: true, ms: 12000 });
+                  else if (after <= before) showToast('Save did not add anything to the bank — nothing to report from saveAsNewSeq.', { warn: true, ms: 12000 });
+                  else showToast('Saved to the sequence bank — reusable on any layer, and bindable to a part.');
+                }
+                if (failed) { try { console.error('Save as sequence failed:', failed); } catch (x) {} }
+              } catch (err) { console.warn('Save as sequence failed', err); }
+              finally {
+                // THE GRID STAYS OPEN. Save banks a phrase; it is not a decision
+                // about this layer, and it must never close the editor — Quit does
+                // that. The re-render below reveals the new chip, so the editor is
+                // re-docked here whether the save worked or not.
+                try {
+                  _ambRenderExtras(E); _ambSyncControls(E); _ambRefreshSeedModes(E);
+                  if (_bloomGridEdit) {
+                    if (typeof renderSequence === 'function') renderSequence();
+                    if (typeof _placeLaneExpander === 'function') _placeLaneExpander();
+                  }
+                } catch (x) { console.warn('re-dock after save failed', x); }
+              }
+              return;
+            }
             const sg = ev.target && ev.target.closest && ev.target.closest('.ambient-seedgrid-done, .ambient-seedgrid-cancel');
             if (sg && hostEl.contains(sg)) {
               _E = E;
@@ -42939,6 +45566,28 @@
             hostEl.addEventListener('click', (ev) => {
               const tab = ev.target && ev.target.closest && ev.target.closest('.ambient-sk-role');
               if (tab && hostEl.contains(tab)) { const ed = tab.closest('.ambient-synthkit'); if (ed) { ed.setAttribute('data-active', tab.getAttribute('data-skrole')); try { _ambSyncSynthKit(E); } catch (e) {} } return; }
+              const rl = ev.target && ev.target.closest && ev.target.closest('.ambient-sk-roll');
+              if (rl && hostEl.contains(rl)) {
+                const L = _skOf(rl); if (!L) return;
+                const ed = rl.closest('.ambient-synthkit');
+                const role = ed ? Math.max(0, Math.min(7, (ed.getAttribute('data-active') | 0))) : 0;
+                _ambRollSynthVoice(L, role);
+                try { _ambSyncSynthKit(E); } catch (e) {}
+                if (typeof persistWorkspace === 'function') persistWorkspace();
+                // Hear it immediately — rolling a drum you cannot hear is a dice
+                // throw with the result face-down. Same path ▶ Hear uses.
+                try {
+                  if (typeof Tone !== 'undefined' && Tone.start) Tone.start();
+                  const key2 = _ambCardKey(rl.closest('.ambient-layer'));
+                  const dest2 = (key2 && E && E.mod && E.mod[key2]) ? _ambLayerDest(key2) : undefined;
+                  const at2 = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + 0.03;
+                  _E = E;
+                  _ambPlaySynthDrum(E, dest2, L, role, at2,
+                    Math.max(0, Math.round(_ambApplyLevel(100, L.level))),
+                    key2 ? _ambLayerDetuneMod(key2) : 0, _ambLayerPan(L));
+                } catch (e) {}
+                return;
+              }
               const rg = ev.target && ev.target.closest && ev.target.closest('.ambient-sk-regen');
               if (rg && hostEl.contains(rg)) { const L = _skOf(rg); if (!L) return; L.synthKit = _ambGenSynthKit(Math.floor(Math.random() * 1e9)); try { _ambSyncSynthKit(E); } catch (e) {} if (E.timer) { try { _ambSyncMods(); } catch (e) {} } if (typeof persistWorkspace === 'function') persistWorkspace(); return; }
               // ▶ Hear — audition the SELECTED role's drum through the real recipe.

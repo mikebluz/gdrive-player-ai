@@ -3000,7 +3000,14 @@
     .ambient-ctrl input[type="range"] { width: 100%; min-width: 0; accent-color: #9f7aea; }
     /* Stepper (−/value/+) — discrete integer counts. Occupies the slider column. */
     .ambient-ctrl-step .ambient-stepper {
-      display: inline-flex; align-items: stretch; width: 100%; min-width: 0;
+      /* A STEPPER MUST NOT BE CRUSHED BY A LONG HINT. `.ambient-ctrl` is
+         `84px 1fr auto`, so a wordy third column eats the control column —
+         measured at 390px, Salt colour's stepper was squeezed to 51px (two 34px
+         buttons plus a number field, clipped) while short-hinted steppers beside
+         it had 177-249. The floor is two buttons + a legible field; min-width only
+         lifts a CRUSHED stepper, so the roomy ones are untouched. Same cause as
+         the documented long-hint-vs-slider case. */
+      display: inline-flex; align-items: stretch; width: 100%; min-width: 112px;
       border: 1px solid #3a3a52; border-radius: 8px; overflow: hidden; background: rgba(45,45,63,0.35);
     }
     .ambient-step-btn {
@@ -3230,6 +3237,62 @@
        min-width:0 is what lets a hint shrink inside a flex/grid cell at all. */
     .ambient-hint { font-family: 'Segoe UI', sans-serif; font-size: 0.68rem; color: #6b6b8a;
       white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+    /* STOCHASTIC CONTROLS — the ones that roll for an outcome. One colour on the
+       label says "this introduces randomness"; the line beneath says what it is
+       doing at this value and how often it decides (see _AMB_STOCH in 17).
+       #d94dff was MEASURED against the existing palette, not eyeballed: CIELab
+       ΔE 91 from the delete red and 69+ from every other state colour, so it can
+       never read as destructive or as "sounding"; >=20 from all 14 layer-type
+       hues (nearest is samp at 25) and 64 from Motif's own lavender; 5.9:1
+       contrast on the panel background, clearing AA for body text. If a new
+       layer-type hue is added, re-run the distance check rather than eyeballing. */
+    /* ⌗ Plays | 🧂 Salt — the matrix answers two questions about the same
+       layers x chords grid, so the toggle sits in its title beside ✎ %. */
+    .ambient-pm-modes { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: middle; }
+    .ambient-pm-modes .ambient-seg { padding: 3px 8px; font-size: 0.66rem; min-height: 26px; }
+    /* A CONTROL THAT CANNOT TAKE EFFECT SAYS SO. Same treatment the Evolve row
+       and the Dry-kill checkbox already get: dim the control, and put the reason
+       in the hint in the amber this palette already uses for "inert". Marked
+       rather than hidden, so the stored setting stays visible and returns the
+       moment the thing overriding it is switched off. */
+    .ambient-ctrl.is-overridden > label,
+    .ambient-ctrl.is-overridden > .ambient-select,
+    .ambient-ctrl.is-overridden > .ambient-seg-row { opacity: 0.5; }
+    .ambient-ctrl.is-overridden > .ambient-hint { color: #f6ad55; }
+    .ambient-ctrl-stoch > label { color: #d94dff; }
+    /* COMPOSING IN THE GRID BYPASSES THE STOCHASTICS, so the marked controls must
+       stop claiming to be doing something. Keyed off the live bar being visible
+       rather than a JS-set class: the session already shows/hides that element,
+       so there is one source of truth and nothing to keep in sync. */
+    .ambient-layer.amb-grid-editing .ambient-ctrl-stoch { opacity: 0.45; }
+    .ambient-layer.amb-grid-editing .ambient-ctrl-stoch > label::after {
+      content: ' · bypassed'; color: #6b6b8a; font-size: 0.6rem; letter-spacing: 0.02em;
+    }
+    /* The leave-the-Grid prompt: two named outcomes, no silent default. */
+    .ambient-gridexit-modal .ambient-pm-modal-spread { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .ambient-gridexit-modal .ambient-pm-modal-spread .ambient-seg { flex: 1 1 auto; min-height: 40px; padding: 8px 12px; }
+    .ambient-gridexit-modal .gx-discard { border-color: #7a3b46; color: #fca5a5; }
+    /* A LOCKED CONTROL MUST LOOK LOCKED. Salt's override controls are `disabled`
+       while the mode is Inherit, and nothing said so — reported as "the params
+       can't be edited, nothing happens when click/drag", which is exactly what a
+       fully-styled control that ignores you looks like. `.ambient-area-btn` and
+       the FX order arrows already carry a :disabled state; the Bloom slider and
+       the stepper were the two that never got one. The DESCRIPTION line stays at
+       full strength deliberately — it is the thing that says how to unlock it. */
+    .ambient-step-btn:disabled { opacity: 0.28; cursor: not-allowed; }
+    .ambient-step-inp:disabled { opacity: 0.4; cursor: not-allowed; }
+    input.ambient-sl:disabled { opacity: 0.4; cursor: not-allowed; }
+    .ambient-ctrl:has(input:disabled) > label { opacity: 0.5; }
+    .ambient-ctrl:has(input:disabled) > .ambient-stepper { border-color: #2c2c40; background: rgba(45,45,63,0.15); }
+    .ambient-stoch-desc {
+      grid-column: 2 / -1; min-width: 0;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.64rem; line-height: 1.35;
+      color: #8f86a6; white-space: normal; overflow-wrap: anywhere;
+      margin: -3px 0 2px;
+    }
+    /* A muted layer already dims its whole control block; don't let the marker
+       colour survive that and read as active. */
+    .ambient-layer:has(> .ambient-layer-head > .ambient-toggle:not(.on)) .ambient-ctrl-stoch > label { color: #9c7fa8; }
     .ambient-note {
       font-family: 'Segoe UI', sans-serif; font-size: 0.72rem; color: #6b6b8a;
       line-height: 1.5; padding-top: 4px;
@@ -3951,6 +4014,17 @@
     .pe-partplays b { min-width: 34px; text-align: center; font-size: 0.95rem; }
     .pe-partstep { min-width: 46px; padding: 8px 0; font-size: 1.15rem; text-align: center; }
     .pe-partmerge { border-color: #4a5f7a; color: #cfe4ff; }
+    /* Delete sits in the always-visible footer, pushed away from Save so the
+       destructive action and the commit are never adjacent. */
+    .pe-save .pe-killbtn { margin-right: auto; border-color: rgba(252,129,129,0.55); color: #fc8181; }
+    .pe-save .pe-killbtn:hover:not(:disabled) { border-color: #fc8181; background: rgba(252,129,129,0.16); color: #fed7d7; }
+    /* Present but inert — the button never moves, so it can always be found, and
+       its tooltip says what to do first. */
+    .pe-save .pe-killbtn:disabled { opacity: 0.4; cursor: not-allowed; }
+    /* The one destructive part op — merging keeps the chords, this does not.
+       Styled as danger so it can never be mistaken for a merge. */
+    .pe-partkill { border-color: rgba(252,129,129,0.55); color: #fc8181; }
+    .pe-partkill:hover { border-color: #fc8181; background: rgba(252,129,129,0.16); color: #fed7d7; }
     @media (hover: hover) { .pe-partmerge:hover { border-color: #63b3ed; background: rgba(99,179,237,0.16); color: #e6f2ff; } }
     .pe-partdel { align-self: flex-start; border-color: #5a3a46; color: #f0b6c0; }
     @media (hover: hover) { .pe-partdel:hover { border-color: #e06c8a; background: rgba(224,108,138,0.16); color: #ffd9e1; } }
@@ -7492,6 +7566,74 @@
       outline: 2px solid #00bfff;
       outline-offset: -3px;
       box-shadow: 0 0 12px rgba(0, 191, 255, 0.45);
+    }
+    /* COMPOSE PLAYHEAD — the chip sounding right now while you edit in the Grid.
+       Its own class rather than reusing .active, which the step editor already
+       uses for selection; same magenta as .seq-step.active so a playing chip
+       looks the same wherever you are looking at it. */
+    /* The chords under the phrase you are composing. Spans are proportional to
+       time, so a half-bar chord under a cadence reads as half the width. */
+    /* PART -> SEQUENCE map, in the layer grid: compose here, bank it here, say
+       which part plays it here. */
+    /* The banked phrases, in the layer that composes them. */
+    /* The bank, on the layer card. Wraps rather than scrolling (UI rule 1). */
+    /* Many-to-many part map: one row per part, a toggle per banked sequence. */
+    .ambient-partmap { flex-direction: column; gap: 6px; align-items: stretch; }
+    .ambient-pmrow { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; }
+    .ambient-pmrow > b { flex: 0 0 auto; max-width: 92px; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; font-size: 0.64rem; color: #ffd9a8; letter-spacing: 0.03em; }
+    .ambient-pmchip { min-height: 28px; padding: 3px 8px; font-size: 0.64rem; opacity: 0.55; }
+    .ambient-pmchip.on { opacity: 1; border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.18); }
+    .ambient-pmchip > i { font-style: normal; font-size: 0.54rem; opacity: 0.8; margin-left: 3px; }
+    .ambient-seqbank-row { align-items: start; }
+    .ambient-seqbank { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; grid-column: 2 / -1; }
+    .amb-seedmode.has-phrase { border-color: #9f7aea; color: #d6bcfa; }
+    /* IN a session the button leaves rather than enters, so it reads as an exit,
+       not as another "on" state — amber, the palette's own inert/act-now colour,
+       against the purple that means "this layer has a phrase". */
+    .amb-seedmode.active {
+      border-color: #f6ad55; color: #ffd9a8;
+      background: rgba(246,173,85,0.16); box-shadow: 0 0 10px rgba(246,173,85,0.25);
+    }
+    .ambient-seedgrid-seqs { display: flex; flex-wrap: wrap; gap: 5px; margin: 4px 0 2px; align-items: center; }
+    .ambient-sgseqs-title { flex: 1 0 100%; font-family: 'Segoe UI', sans-serif; font-size: 0.64rem; color: #6b6b8a; }
+    .ambient-sgseq { min-height: 30px; padding: 4px 9px; font-size: 0.68rem; max-width: 100%; }
+    .ambient-sgseq > i { display: block; font-style: normal; font-size: 0.56rem; opacity: 0.75; }
+    .ambient-sgseq.bound { border-color: #9f7aea; color: #d6bcfa; }
+    .ambient-seedgrid-parts { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; align-items: center; }
+    .ambient-sgparts-title { flex: 1 0 100%; font-family: 'Segoe UI', sans-serif; font-size: 0.64rem; color: #6b6b8a; }
+    .ambient-sgpart { display: flex; align-items: center; gap: 5px; min-width: 0; flex: 1 1 150px; }
+    .ambient-sgpart > span {
+      flex: 0 0 auto; max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.66rem; color: #c9b8ef;
+    }
+    .ambient-sgpart > select { flex: 1 1 0; min-width: 0; width: auto; }
+    /* Which PART each stretch of the composed phrase falls in — the level above
+       the chord ribbon, so they read as a hierarchy: parts, then chords, then
+       the grid. Proportional to time, same as the chords. */
+    .ambient-seedgrid-prib { display: flex; gap: 2px; margin: 6px 0 0; }
+    .ambient-sgpartspan {
+      flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      text-align: center; padding: 3px 2px; border-radius: 5px 5px 0 0;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.04em;
+      background: rgba(246,173,85,0.16); color: #ffd9a8; border: 1px solid rgba(246,173,85,0.28); border-bottom: 0;
+    }
+    .ambient-sgpartspan.alt { background: rgba(246,173,85,0.09); }
+    .ambient-sgpartspan.none { background: rgba(107,107,138,0.12); color: #6b6b8a; border-color: rgba(107,107,138,0.25); }
+    /* Butted against the strip below it — parts, chords, then the steps. */
+    .ambient-seedgrid-chords { display: flex; gap: 2px; margin: 0 0 1px; }
+    .ambient-sgchord {
+      flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      text-align: center; padding: 3px 2px; border-radius: 5px;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.62rem; letter-spacing: 0.02em;
+      background: rgba(159,122,234,0.13); color: #c9b8ef; border: 1px solid rgba(159,122,234,0.20);
+    }
+    .ambient-sgchord.alt { background: rgba(159,122,234,0.07); }
+    .seq-step.gc-playing {
+      background: linear-gradient(135deg, #d91e7c, #f472b6);
+      border-color: #f472b6;
+      color: #fff;
+      box-shadow: 0 0 14px rgba(244, 114, 182, 0.55);
     }
     .seq-step.subseq.active {
       background: linear-gradient(135deg, #38a169, #68d391);
@@ -13394,6 +13536,103 @@
     .ambient-cad-modal .cad-total.is-even .cad-total-w { color: #4fd1c5; }
     .ambient-cad-modal .cad-total.is-odd { border-color: rgba(246,173,85,0.38); background: rgba(246,173,85,0.09); }
     .ambient-cad-modal .cad-total.is-odd .cad-total-w { color: #f6ad55; }
+    /* ▦ PASSES — the part matrix. Columns are passes, rows are the part's
+       chords. The grid must never scroll sideways (UI rule 1), so the columns
+       share the row via 1fr and the chord label takes a fixed gutter. */
+    .ambient-passmx { display: block; }
+    .ambient-passmx .pmx-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+    .ambient-passmx .pmx-tab { min-height: 30px; padding: 4px 10px; }
+    /* The meta tab is a different SCOPE, not another part — mark it so the two
+       grids are never confused for one another. */
+    .ambient-passmx .pmx-tab-meta { border-color: #4fd1c5; color: #4fd1c5; }
+    .ambient-passmx .pmx-tab-meta.active { background: rgba(79,209,197,0.24); border-color: #4fd1c5; color: #d6fffb; }
+    .ambient-passmx .pmx-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 7px; }
+    .ambient-passmx .pmx-bar .ambient-hint { flex: 1 1 160px; }
+    .ambient-passmx .pmx-cols { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+    /* touch-action: manipulation on every tappable control here — headless taps
+       work without it, but a real phone adds the double-tap-zoom delay. */
+    .ambient-passmx .pmx-cols .ambient-seg { min-width: 34px; min-height: 30px; touch-action: manipulation; }
+    .ambient-passmx .pmx-tab, .ambient-passmx .pmx-fit, .ambient-passmx .pmx-seq { touch-action: manipulation; }
+    .ambient-pseq-modal .pseq-chip, .ambient-pseq-modal .pseq-addbtn { touch-action: manipulation; }
+    .ambient-passmx .pmx-colsn { min-width: 18px; text-align: center; color: #e2e8f0; font-size: 0.82rem; }
+    .ambient-passmx .pmx-grid { display: flex; flex-direction: column; gap: 3px; }
+    .ambient-passmx .pmx-row {
+      display: grid; grid-template-columns: 54px repeat(var(--pmxc), minmax(0, 1fr));
+      gap: 3px; align-items: stretch;
+    }
+    @media (max-width: 460px) {
+      .ambient-passmx .pmx-row { grid-template-columns: 34px repeat(var(--pmxc), minmax(0, 1fr)); gap: 2px; }
+      .ambient-passmx .pmx-rowlbl { font-size: 0.62rem; }
+    }
+    .ambient-passmx .pmx-rowlbl {
+      font: 600 0.68rem 'Segoe UI', sans-serif; color: #a0aec0; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      display: flex; align-items: center;
+    }
+    .ambient-passmx .pmx-head .pmx-h {
+      font: 600 0.6rem 'Segoe UI', sans-serif; color: #6b6b8a; text-align: center;
+    }
+    .ambient-passmx .pmx-head .pmx-h.empty { color: #4a4a63; }
+    .ambient-passmx .pmx-cell {
+      min-height: 30px; min-width: 0; padding: 2px; border-radius: 6px;
+      font: 600 0.62rem 'Segoe UI', sans-serif; letter-spacing: -0.02em;
+      background: rgba(255,255,255,0.03); border: 1px solid rgba(160,174,192,0.18); color: #6b6b8a;
+      touch-action: manipulation; overflow: hidden;
+    }
+    .ambient-passmx .pmx-cell.on {
+      background: rgba(159,122,234,0.26); border-color: #9f7aea; color: #e9d8fd;
+    }
+    /* PLAYHEAD. The column in force is tinted; the cell actually sounding gets
+       the green that means "sounding" everywhere else in this app. */
+    .ambient-passmx .pmx-h.incol { color: #cbd5e0; }
+    .ambient-passmx .pmx-cell.incol { border-color: rgba(203,213,224,0.4); }
+    .ambient-passmx .pmx-seq.incol { border-color: rgba(203,213,224,0.45); border-style: solid; color: #e2e8f0; }
+    .ambient-passmx .pmx-cell.playing {
+      background: rgba(72,187,120,0.34); border-color: #48bb78; color: #f0fff4;
+      box-shadow: 0 0 0 1px rgba(72,187,120,0.5);
+    }
+    .ambient-passmx .pmx-seqrow { margin-top: 4px; }
+    .ambient-passmx .pmx-seq {
+      font: 600 0.58rem 'Segoe UI', sans-serif; color: #cbd5e0; text-align: center;
+      padding: 4px 2px; border-radius: 6px; cursor: pointer; min-width: 0;
+      background: rgba(255,255,255,0.03); border: 1px dashed rgba(160,174,192,0.22);
+      /* WRAPS, never ellipses. This caption exists precisely so a pass can be
+         read without sorting the cells by eye — clipping it to "C·C…" defeats
+         the one thing it is for. At 390px with 8 columns 6 of 8 were clipped. */
+      white-space: normal; overflow-wrap: anywhere; line-height: 1.15;
+    }
+    .ambient-passmx .pmx-seq.empty { color: #4a4a63; }
+    .ambient-passmx .pmx-foot { display: block; margin-top: 7px; }
+    .ambient-passmx .pmx-super { color: #f6ad55; }
+    /* The per-pass order editor. */
+    .ambient-pseq-modal .pseq-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; min-height: 34px; }
+    .ambient-pseq-modal .pseq-chip {
+      display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 4px 9px;
+      border-radius: 999px; background: rgba(159,122,234,0.22); border: 1px solid #9f7aea;
+      color: #e9d8fd; font: 600 0.72rem 'Segoe UI', sans-serif; cursor: grab; user-select: none;
+    }
+    .ambient-pseq-modal .pseq-chip i { font-style: normal; opacity: 0.6; font-size: 0.66rem; }
+    .ambient-pseq-modal .pseq-chip b { font-weight: 700; }
+    /* The length this position sounds at. Dimmed = whatever would apply anyway
+       (the chord's own, or the cadence template); solid = this pass states it. */
+    .ambient-pseq-modal .pseq-chip em {
+      font-style: normal; font-size: 0.68rem; color: #8b8ba7; min-width: 16px; text-align: center;
+    }
+    .ambient-pseq-modal .pseq-chip.has-len em { color: #4fd1c5; font-weight: 700; }
+    .ambient-pseq-modal .pseq-len {
+      min-width: 22px; min-height: 24px; padding: 0 4px; border-radius: 5px;
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(160,174,192,0.25);
+      color: #cbd5e0; font: 600 0.7rem 'Segoe UI', sans-serif; touch-action: manipulation;
+    }
+    .ambient-passmx .pmx-fit { min-height: 30px; padding: 4px 10px; flex: 0 0 auto; }
+    .ambient-passmx .pmx-fit.active { border-color: #4fd1c5; color: #d6fffb; background: rgba(79,209,197,0.24); }
+    .ambient-passmx .pmx-seq i { font-style: normal; display: block; color: #6b6b8a; font-size: 0.55rem; }
+    .ambient-pseq-modal .pseq-addlbl {
+      font: 600 0.62rem 'Segoe UI', sans-serif; letter-spacing: 0.06em; text-transform: uppercase;
+      color: #6b6b8a; margin-top: 6px;
+    }
+    .ambient-pseq-modal .pseq-add { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+    .ambient-pseq-modal .pseq-add .ambient-seg { min-height: 30px; padding: 4px 10px; }
     .ambient-cad-modal .cad-genlbl { font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase;
       color: #8a90a6; margin: 12px 0 5px; }
     .ambient-cad-modal .cad-gen { display: flex; flex-wrap: wrap; gap: 5px; }
@@ -13401,3 +13640,60 @@
     /* The shared .sm-apply renders at 27px here — under the touch floor, and this
        is the only way out of the dialog. */
     .ambient-cad-modal .cad-close { min-height: 34px; padding: 6px 18px; }
+
+    /* Per-lane sound chip on a drum-lanes grid: '♪' means the lane plays its
+       kit drum, a named chip means it plays a library sample instead. */
+    .ambient-euclid-lanesnd {
+      min-height: 22px; padding: 1px 5px; border-radius: 5px; max-width: 74px;
+      background: rgba(255,255,255,0.04); border: 1px solid rgba(160,174,192,0.25);
+      color: #8b8ba7; font: 600 0.55rem 'Segoe UI', sans-serif;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      touch-action: manipulation; cursor: pointer;
+    }
+    .ambient-euclid-lanesnd.on { border-color: #4fd1c5; color: #4fd1c5; background: rgba(79,209,197,0.14); }
+
+    /* Lane-sound picker. Two lists (the kit's own drums, then the library) with a
+       filter between them, because a couple of hundred samples cannot be found by
+       scrolling. Both scroll internally so the modal never grows past the screen. */
+    .ambient-lanesnd-modal { width: min(420px, 94vw); }
+    .ambient-lanesnd-modal .ambient-hint { display: block; white-space: normal; overflow-wrap: anywhere; }
+    .ambient-lanesnd-modal .lsnd-list {
+      display: flex; flex-direction: column; gap: 3px; margin: 7px 0;
+      max-height: 26vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    }
+    .ambient-lanesnd-modal .lsnd-samples { max-height: 34vh; }
+    /* A COLUMN, not a baseline row: an imported id is a source-relative path, so
+       the name and its folder each need their own line — side by side they wrapped
+       to three lines and collided with the next row. Both stay on ONE line each
+       and ellipse, because a file name is an identifier and not prose. */
+    .ambient-lanesnd-modal .lsnd-row {
+      display: flex; flex-direction: column; align-items: stretch; gap: 1px; text-align: left;
+      min-height: 34px; padding: 5px 9px; border-radius: 7px;
+      background: rgba(255,255,255,0.03); border: 1px solid rgba(160,174,192,0.2);
+      color: #cbd5e0; font: 600 0.74rem 'Segoe UI', sans-serif;
+      touch-action: manipulation; cursor: pointer; width: 100%; overflow: hidden;
+    }
+    .ambient-lanesnd-modal .lsnd-row:hover { border-color: rgba(160,174,192,0.45); }
+    .ambient-lanesnd-modal .lsnd-row.on { border-color: #4fd1c5; background: rgba(79,209,197,0.16); color: #d6fffb; }
+    .ambient-lanesnd-modal .lsnd-nm {
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.25;
+    }
+    .ambient-lanesnd-modal .lsnd-sub {
+      min-width: 0; font-size: 0.6rem; font-weight: 600; color: #6b6b8a; line-height: 1.2;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .ambient-lanesnd-modal .lsnd-filterrow { display: flex; align-items: center; gap: 8px; }
+    .ambient-lanesnd-modal .lsnd-filter {
+      flex: 1 1 auto; min-width: 0; min-height: 34px; padding: 4px 9px; border-radius: 7px;
+      background: rgba(0,0,0,0.35); border: 1px solid rgba(160,174,192,0.3); color: #e2e8f0;
+      /* 16px or iOS zooms the page on focus and never zooms back (documented). */
+      font-size: 16px;
+    }
+
+    .ambient-euclid-savekit {
+      min-height: 24px; padding: 2px 8px; border-radius: 6px; margin-left: 6px;
+      background: rgba(255,255,255,0.04); border: 1px solid rgba(160,174,192,0.28);
+      color: #a0aec0; font: 600 0.6rem 'Segoe UI', sans-serif;
+      touch-action: manipulation; cursor: pointer; white-space: nowrap;
+    }
+    .ambient-euclid-savekit:hover { border-color: #4fd1c5; color: #4fd1c5; }

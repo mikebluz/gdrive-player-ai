@@ -1,8 +1,16 @@
 # Bloom Part Matrix — Design Spec
 
-Status: **design settled 2026-08-19, not implemented.** Strictly additive by
-intent: absent = today's behaviour, byte-identical.
+Status: **phases 1-4 implemented 2026-08-19** on `bloom-part-matrix`; additive
+throughout (absent = today's behaviour, byte-identical — golden 82/82, arch
+45/45 with all 37 pre-existing configs unmoved, harness green).
+Phase 5 — retiring `chain` / `plays` — is deliberately NOT done: the grid marks
+them superseded in the UI and nothing is removed until it has earned it.
 **Living doc — revise as we develop.**
+
+Implemented: `_ambGridSlots` (the super-cycle expansion), the gated branch in
+`_ambProgStepAt`, `_ambProgInstanceAt` (the monotonic ordinal the span search
+needs — see §4, which turned out to describe a PRE-EXISTING bug), the display
+hook in `_ambArchChainSlots`, and the ▦ Passes editor with its ⇶ Parts meta tab.
 
 Redefines a **part** as a *set* of chords plus a per-iteration schedule over that
 set, instead of one fixed sequence. Two grids, one nested inside the other.
@@ -92,9 +100,16 @@ Proposed shape:
 - a new `_ambProgSlotAt(E, at)` → `{ writtenIdx, partIdx, partVisit, iteration }`
   is what the resolvers ask. The six `% len` / `/ len` sites read from it when a
   grid is present and keep their arithmetic when it is absent.
-- **open:** two occurrences of the same chord in one pass currently resolve to
-  the same `alts` pick and the same order-perm slot. Right (it is the same
-  chord) or wrong (they are different musical moments)? Undecided.
+- **RESOLVED, and better than proposed:** `_ambProgStepAt` keeps its `step`
+  exactly as it was, and the monotonic ordinal rides ALONGSIDE it as
+  `_ambProgInstHint` / `_ambProgInstanceAt`. So the six `% len` / `floor(/ len)`
+  sites never had to change, and the span search bisects on the instance. This
+  also fixed a bug that predates the feature: a chain revisiting a part already
+  made `step` repeat within one pass, so `_ambChordSpanAt` joined two disjoint
+  stretches — a 1-bar chord measured 5.5 bars.
+- **still open:** two occurrences of the same chord in one pass resolve to the
+  same `alts` pick and the same order-perm slot. Right (it is the same chord) or
+  wrong (they are different musical moments)? Undecided.
 
 ## 5. What breaks: "how long is a pass?"
 

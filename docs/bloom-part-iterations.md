@@ -37,7 +37,36 @@ position rather than where you dragged it. Fully preserving that needs the
 removed position remembered per cell. Start without it; add only if hand-ordered
 passes turn out to get clobbered in practice.
 
-## 2. Sequence rows
+## 2. Sequence rows — REVERSED 2026-08-21: NOT in the Passes grid
+
+Built as layer rows inside the Passes grid, then reverted the same day. The grid
+holds the CHORD SCHEDULE, which is the shared harmonic clock and **cannot** be
+per-layer — per layer it would put the bass on chord 2 while the pads are on
+chord 3, the same constraint that keeps length salt an area axis. Sequence choice
+IS per-layer. So the grid ended up showing two scopes with nothing marking the
+seam, and every layer that gained a row made it worse.
+
+**Per-iteration mapping belongs on the LAYER**, next to the Sequences row and the
+existing Plays rows, as a small grid per part: iterations across, tap a cell to
+rotate through the bank. Storage stays on the layer and becomes explicitly
+per-iteration:
+
+```js
+L.partSeqs = { "<partIdx>": { "<iteration>": "<seqName>" } }
+```
+
+One shape, not two: the list form that cycled (`["riffA","riffB"]`) becomes
+consecutive iterations filled in, so "alternate two riffs" and "riffC only on
+pass 3" are the same mechanism. Many-to-many still holds — the same name may
+appear in as many cells and as many parts as you like. The iteration COUNT comes
+from the part's own `grid.cols` so the layer and the arrangement cannot disagree
+about how many passes there are.
+
+Colours (section 3) still apply, on the layer's chips rather than in the grid.
+
+### The original in-grid design, for the record
+
+## 2b. (superseded) Sequence rows
 
 One row per layer that has banked sequences (layers without any add a dead row —
 don't render them).

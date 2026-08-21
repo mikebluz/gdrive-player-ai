@@ -7584,16 +7584,6 @@
       white-space: nowrap; font-size: 0.64rem; color: #ffd9a8; letter-spacing: 0.03em; }
     .ambient-pmchip { min-height: 28px; padding: 3px 8px; font-size: 0.64rem; opacity: 0.55; }
     .ambient-pmchip.on { opacity: 1; border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.18); }
-    /* Per-iteration sequence cells in the Passes grid. --sqc is derived from the
-       sequence NAME (see _ambSeqColor), so the same sequence is the same colour
-       in every pass and every part. */
-    .pmx-lrow .pmx-rowlbl { font-style: italic; opacity: 0.85; }
-    .pmx-cell.pmx-lcell { font-size: 0.6rem; letter-spacing: 0; overflow: hidden;
-      text-overflow: ellipsis; white-space: nowrap; }
-    .pmx-cell.pmx-lcell.on {
-      color: var(--sqc, #d6bcfa); border-color: var(--sqc, #9f7aea);
-      background: color-mix(in srgb, var(--sqc, #9f7aea) 18%, transparent);
-    }
     .ambient-pmchip > i { font-style: normal; font-size: 0.54rem; opacity: 0.8; margin-left: 3px; }
     .ambient-seqbank-row { align-items: start; }
     .ambient-seqbank { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; grid-column: 2 / -1; }

@@ -2992,16 +2992,8 @@
     // The column clamp is inlined rather than calling _ambGridCols, so this cannot
     // depend on a module-scope const that may not be initialised when a normalize
     // runs during boot.
-    // NOTE for the pruning below: a grid carrying ONLY `seqs` is meaningful — a
-    // part whose chord schedule is the written order but whose LAYERS swap
-    // sequences per pass. Pruning on seq/fit/bars alone deleted it, the fourth
-    // time that absent-is-neutral rule has eaten a new field.
     function _ambNormalizeGridObj(g, n) {
-      if (!g || typeof g !== 'object') return undefined;
-      // `seqs` alone is enough to keep a grid: a part whose chord schedule is the
-      // written order can still have layers swapping sequences per pass.
-      if ((!g.seq || typeof g.seq !== 'object') && !(g.seqs && typeof g.seqs === 'object')) return undefined;
-      if (!g.seq || typeof g.seq !== 'object') g = Object.assign({}, g, { seq: {} });
+      if (!g || typeof g !== 'object' || !g.seq || typeof g.seq !== 'object') return undefined;
       const cols = Math.max(1, Math.min(64, (g.cols | 0) || 8));
       const N = Math.max(0, n | 0);
       const seq = {};
@@ -3038,25 +3030,7 @@
       // NOT engage the clock: _ambGridOn still requires seq/fit/bars, so a grid
       // that only sets its width changes nothing about what plays.
       // 8 is _AMB_GRID_COLS, inlined for the same reason the clamp above is.
-      // Per-iteration sequences, keyed by layer then column. Names are free text
-      // (the bank's own), so they are length-capped rather than validated against
-      // the bank — a sequence deleted from the bank simply stops resolving, and
-      // the mapping survives if it is put back.
-      if (g.seqs && typeof g.seqs === 'object') {
-        const sq = {};
-        Object.keys(g.seqs).slice(0, 64).forEach(k => {
-          const m = g.seqs[k]; if (!m || typeof m !== 'object') return;
-          const o = {};
-          Object.keys(m).forEach(c2 => {
-            if ((c2 | 0) < 0 || (c2 | 0) >= cols) return;
-            const v = m[c2];
-            if (typeof v === 'string' && v) o[c2 | 0] = v.slice(0, 120);
-          });
-          if (Object.keys(o).length) sq[k] = o;
-        });
-        if (Object.keys(sq).length) out.seqs = sq;
-      }
-      return (Object.keys(seq).length || out.fit || out.bars || out.seqs || cols !== 8) ? out : undefined;
+      return (Object.keys(seq).length || out.fit || out.bars || cols !== 8) ? out : undefined;
     }
     function _ambRepairParts(parts, total) {
       if (!Array.isArray(parts) || !parts.length || total <= 0) return undefined;
@@ -4889,76 +4863,6 @@
       for (let i = 0; i < out.length; i++) { if ((out[i] | 0) > (v | 0)) { at = i; break; } }
       if (at < 0) at = out.length;
       out.splice(at, 0, v | 0);
-      return out;
-    }
-    // ---- PER-ITERATION SEQUENCES -------------------------------------------
-    // `parts[i].grid.seqs = { "<layerKey>": { "<col>": "<seqName>" } }` — which
-    // banked sequence a layer plays on one PASS of one part. It lives in the
-    // ARRANGEMENT, beside the chord schedule it is indexed by, so the column
-    // count, the part tabs, the playhead and the pass windowing all come free
-    // and there is exactly ONE notion of "iteration". Absent = the layer plays
-    // its own phrase, so an untouched project stores nothing.
-    // A SEQUENCE'S COLOUR IS DERIVED FROM ITS NAME, never stored: a stored colour
-    // or a bank index breaks the moment the bank is reordered or an entry is
-    // renamed, and two projects sharing a name should agree on the colour.
-    //
-    // The hues are a fixed set rather than hash→360, so every sequence colour is
-    // well separated by construction instead of by luck, and the reserved arcs
-    // are simply absent: nothing in the GREEN BAND (95-165, which means
-    // "sounding" everywhere in this app) and nothing near 321, the stochastic
-    // marker #d94dff. Fixed S/L keeps them equally weighted and legible on the
-    // #0d0d18 ground — none of them can read as a state colour.
-    const _AMB_SEQ_HUES = [205, 262, 22, 178, 288, 42, 232, 345, 75, 250];
-    function _ambSeqColor(name) {
-      const t = String(name == null ? '' : name);
-      let hsh = 5381;
-      for (let i = 0; i < t.length; i++) hsh = ((hsh * 33) ^ t.charCodeAt(i)) >>> 0;
-      return 'hsl(' + _AMB_SEQ_HUES[hsh % _AMB_SEQ_HUES.length] + ' 70% 66%)';
-    }
-    function _ambPassSeqGet(cfg, pi, key, col) {
-      try {
-        const g = _ambGridStore(cfg, pi, false);
-        const m = g && g.seqs && g.seqs[key];
-        const v = m && m[col | 0];
-        return (typeof v === 'string' && v) ? v : null;
-      } catch (e) { return null; }
-    }
-    function _ambPassSeqSet(cfg, pi, key, col, name) {
-      const g = _ambGridStore(cfg, pi, true); if (!g) return false;
-      if (!g.seqs || typeof g.seqs !== 'object') g.seqs = {};
-      const m = (g.seqs[key] && typeof g.seqs[key] === 'object') ? g.seqs[key] : (g.seqs[key] = {});
-      if (name) m[col | 0] = name; else delete m[col | 0];
-      if (!Object.keys(m).length) delete g.seqs[key];
-      if (!Object.keys(g.seqs).length) delete g.seqs;
-      return true;
-    }
-    // Rotate: none -> each banked sequence in bank order -> back to none. A cell
-    // is single-valued (one layer, one pass, one sequence), which is what makes
-    // rotate safe here where it would be wrong on a chord cell.
-    function _ambPassSeqNext(cur, names) {
-      if (!names.length) return null;
-      const i = cur ? names.indexOf(cur) : -1;
-      if (i < 0) return names[0];
-      return (i + 1 < names.length) ? names[i + 1] : null;
-    }
-    // Layers worth a row: the ones actually working with phrases. A row for every
-    // layer in the project would be mostly dead rows.
-    function _ambPassSeqRows(cfg) {
-      const out = [];
-      try {
-        _ambChordMatrixRows(cfg).forEach(r => {
-          const L = r.L; if (!L) return;
-          const authored = !!(L.lockState && L.lockState.seedEdit);
-          const mapped = !!(L.partSeqs && Object.keys(L.partSeqs).length);
-          let inGrid = false;
-          try {
-            (Array.isArray(cfg.prog && cfg.prog.parts) ? cfg.prog.parts : []).forEach(p => {
-              if (p && p.grid && p.grid.seqs && p.grid.seqs[r.key]) inGrid = true; });
-            if (cfg.prog && cfg.prog.grid && cfg.prog.grid.seqs && cfg.prog.grid.seqs[r.key]) inGrid = true;
-          } catch (e) {}
-          if (authored || mapped || inGrid) out.push(r);
-        });
-      } catch (e) {}
       return out;
     }
     function _ambPassWrite(cfg, pi, col, arr) {
@@ -19097,21 +19001,8 @@
       const pi = _ambSeqPartIdxAt(now);
       if (pi < 0) return;
       const one = (key, L) => {
-        // The ARRANGEMENT wins: a sequence set for this exact pass in the Passes
-        // grid beats the layer's own per-part list, which stays the fallback for
-        // "every pass of this part".
-        let nm = null;
-        try {
-          const N2 = Math.max(1, (cfg.prog.chords || []).length);
-          const cyc = Math.floor((_ambProgStepAt(E, now) | 0) / N2);
-          const g2 = _ambGridStore(cfg, pi, false);
-          const colN = Math.max(1, g2 ? _ambGridCols(g2) : _AMB_GRID_COLS);
-          nm = _ambPassSeqGet(cfg, pi, key, ((cyc % colN) + colN) % colN);
-        } catch (e) {}
-        if (!nm) {
-          const m = L && L.partSeqs; if (!m) return;
-          nm = _ambPartSeqNameAt(E, cfg, Array.isArray(m[pi]) ? m[pi] : (m[pi] ? [m[pi]] : []), now);
-        }
+        const m = L && L.partSeqs; if (!m) return;
+        const nm = _ambPartSeqNameAt(E, cfg, Array.isArray(m[pi]) ? m[pi] : (m[pi] ? [m[pi]] : []), now);
         if (!nm) return;
         // Never yank the phrase out from under the editor.
         if (_ambGridComposing(key)) return;
@@ -35167,31 +35058,6 @@
         }
         h += '</div>';
       }
-      // PER-ITERATION SEQUENCES — one row per layer that is working with phrases,
-      // a cell per pass. Tap ROTATES through the bank; the cell is single-valued,
-      // which is what makes rotate safe here where it would be wrong on a chord
-      // cell above (there, tap is membership and order lives in `plays`).
-      {
-        const bank = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences : [];
-        const names = [];
-        for (let i2 = bank.length - 1; i2 >= 0; i2--) { const x = bank[i2];
-          if (x && x.type !== 'audio' && Array.isArray(x.steps) && x.steps.length) names.push(x.name); }
-        const lrows = names.length ? _ambPassSeqRows(cfg) : [];
-        lrows.forEach(lr => {
-          h += '<div class="pmx-row pmx-lrow"><span class="pmx-rowlbl" title="' + esc(lr.label) +
-            ' — which banked sequence this layer plays on each pass">' + esc(lr.label) + '</span>';
-          for (let c = 0; c < cols; c++) {
-            const nm = _ambPassSeqGet(cfg, r.pi, lr.key, c);
-            h += '<button type="button" class="ambient-seg pmx-cell pmx-lcell' + (nm ? ' on' : '') +
-              '" data-pmx="lseq:' + c + ':' + esc(lr.key) + '"' +
-              (nm ? ' style="--sqc:' + _ambSeqColor(nm) + '"' : '') +
-              ' title="' + (nm ? esc(lr.label) + ' plays ' + esc(nm) + ' on pass ' + (c + 1) + '. Tap for the next sequence.'
-                               : esc(lr.label) + ' plays its own phrase on pass ' + (c + 1) + '. Tap to pick a sequence.') +
-              '">' + (nm ? esc(nm) : '—') + '</button>';
-          }
-          h += '</div>';
-        });
-      }
       // The sequence caption — what each pass actually plays, in order.
       h += '<div class="pmx-row pmx-seqrow"><span class="pmx-rowlbl">plays</span>' +
         seqs.map((q, c) => {
@@ -35204,8 +35070,7 @@
         }).join('') + '</div>';
       h += '</div>';
       h += '<div class="ambient-hint pmx-foot">Tap a cell to add or remove that chord from a pass. ' +
-        'A chord can appear more than once — tap a <b>plays</b> caption to edit that pass\u2019s order. ' +
-        'Layer rows below the chords step through the saved sequences: tap to pick which one that layer plays on that pass.</div>';
+        'A chord can appear more than once — tap a <b>plays</b> caption to edit that pass\u2019s order.</div>';
       el.innerHTML = h;
     }
     // THE META GRID — parts down, iterations across (iterations are horizontal in
@@ -35502,17 +35367,6 @@
         if (a[0] === 'cols') {
           const g = _ambGridStore(cfg, r.pi, false);
           _ambPassColsSet(cfg, r.pi, (g ? _ambGridCols(g) : _AMB_GRID_COLS) + (a[1] | 0));
-          after(); return;
-        }
-        if (a[0] === 'lseq') {
-          // a[2] is a LAYER KEY and can contain ':' (motif:1), so take the rest.
-          const col = a[1] | 0, lkey = a.slice(2).join(':');
-          const bank = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences : [];
-          const names = [];
-          for (let i2 = bank.length - 1; i2 >= 0; i2--) { const x = bank[i2];
-            if (x && x.type !== 'audio' && Array.isArray(x.steps) && x.steps.length) names.push(x.name); }
-          const cur = _ambPassSeqGet(cfg, r.pi, lkey, col);
-          _ambPassSeqSet(cfg, r.pi, lkey, col, _ambPassSeqNext(cur, names));
           after(); return;
         }
         if (a[0] === 'cell') {

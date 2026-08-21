@@ -24423,7 +24423,7 @@
       // Clear the ribbon HERE rather than waiting for the next viz frame — the
       // session is over the moment this returns, and a stale ribbon under a strip
       // that is about to be wiped reads as a hang.
-      try { document.querySelectorAll('.ambient-seedgrid-chords, .ambient-seedgrid-parts').forEach(h => { h.hidden = true; h.innerHTML = ''; h._sig = ''; }); } catch (e) {}
+      try { document.querySelectorAll('.ambient-seedgrid-chords, .ambient-seedgrid-parts, .ambient-seedgrid-seqs').forEach(h => { h.hidden = true; h.innerHTML = ''; h._sig = ''; }); } catch (e) {}
       try { document.querySelectorAll('.ambient-seedgrid-striphost').forEach(el => { el.innerHTML = ''; }); } catch (e) {}
       try {
         const i = lanes.indexOf(ge.lane); if (i >= 0) lanes.splice(i, 1);
@@ -28409,6 +28409,51 @@
         }, true);
       }
     } catch (e) {}
+    // THE SEQUENCES, IN THE LAYER. Saving used to drop a phrase into the global
+    // bank and give you no way back to it from here — the layer grid could write
+    // to the bank but never show it. These are the banked phrases, newest first:
+    // tap one to load it into the grid and keep editing, and the ones this layer
+    // has bound to a part are marked so the map below is readable at a glance.
+    function _ambGridSeqBank(E) {
+      let hosts; try { hosts = document.querySelectorAll('.ambient-seedgrid-seqs'); } catch (e) { return; }
+      if (!hosts || !hosts.length) return;
+      const ge = _bloomGridEdit;
+      const hide = () => hosts.forEach(h => { if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } });
+      if (!ge || !E || ge.E !== E) { hide(); return; }
+      const bank = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences : [];
+      const usable = [];
+      for (let i = bank.length - 1; i >= 0; i--) {           // newest first
+        const x = bank[i];
+        if (x && x.type !== 'audio' && Array.isArray(x.steps) && x.steps.length) usable.push(x);
+      }
+      const L = _ambLayerByKey(E, ge.key);
+      const map = (L && L.partSeqs && typeof L.partSeqs === 'object') ? L.partSeqs : {};
+      const boundTo = {};
+      try {
+        const cfg = E._cfg || (E.getCfg && E.getCfg());
+        const parts = (cfg && cfg.prog && Array.isArray(cfg.prog.parts)) ? cfg.prog.parts : [];
+        Object.keys(map).forEach(k => { const p = parts[k | 0];
+          if (map[k]) (boundTo[map[k]] = boundTo[map[k]] || []).push((p && p.name) || ('Part ' + ((k | 0) + 1))); });
+      } catch (e) {}
+      const sig = usable.map(x => x.name + ':' + x.steps.length).join('|') + '#' +
+        Object.keys(boundTo).map(k => k + '>' + boundTo[k].join('/')).join(',');
+      hosts.forEach(h => {
+        const slot = h.closest ? h.closest('.ambient-seedgrid-slot') : null;
+        if (!(slot && slot.getAttribute('data-sgkey') === ge.key)) { if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } return; }
+        if (h._sig === sig && !h.hidden) return;
+        h._sig = sig; h.hidden = false;
+        h.innerHTML = '<div class="ambient-sgseqs-title">Sequences' +
+          (usable.length ? '' : ' — none yet; compose here and press ⬇ Save as sequence') + '</div>' +
+          usable.map(x => {
+            const bt = boundTo[x.name];
+            return '<button type="button" class="ambient-seg ambient-sgseq' + (bt ? ' bound' : '') +
+              '" data-sgseq="' + _ambEscAttr(x.name) + '" title="' + _ambEscAttr(
+                x.name + ' — ' + x.steps.length + ' steps' + (bt ? ' · plays on ' + bt.join(', ') : '') +
+                '. Tap to load it into the grid and keep editing; the phrase now on this layer is replaced.') + '">' +
+              _ambEscAttr(x.name) + (bt ? '<i>' + _ambEscAttr(bt.join(', ')) + '</i>' : '') + '</button>';
+          }).join('');
+      });
+    }
     function _ambGridPartMap(E) {
       let hosts; try { hosts = document.querySelectorAll('.ambient-seedgrid-parts'); } catch (e) { return; }
       if (!hosts || !hosts.length) return;
@@ -28510,6 +28555,7 @@
       try { _ambGridComposePlayhead(E); } catch (e) {}
       try { _ambGridChordRibbon(E); } catch (e) {}
       try { _ambGridPartMap(E); } catch (e) {}
+      try { _ambGridSeqBank(E); } catch (e) {}
       try { _ambPassPlayhead(E); } catch (e) {}
       try { _ambProgOverviewPlayhead(E); } catch (e) {}
       try { _ambSaltReadoutSync(E); } catch (e) {}
@@ -31270,7 +31316,7 @@
                   '<button type="button" class="ambient-seg ambient-seedgrid-mode" data-gmode="' + m2[0] + '" data-sgk="' + _ambEscText(lk) + '" title="Switch the docked editor to ' + m2[1] + ' mode">' + m2[1] + '</button>').join('') +
               '</span>' +
             '</span>' +
-          '</div><div class="ambient-seedgrid-parts" hidden></div><div class="ambient-seedgrid-chords" hidden></div><div class="ambient-seedgrid-dockhost"></div><div class="ambient-seedgrid-striphost"></div></div>';
+          '</div><div class="ambient-seedgrid-seqs" hidden></div><div class="ambient-seedgrid-parts" hidden></div><div class="ambient-seedgrid-chords" hidden></div><div class="ambient-seedgrid-dockhost"></div><div class="ambient-seedgrid-striphost"></div></div>';
     }
     // Reveal an element that lives inside collapsed card groups: opens every
     // closed .ambient-grp ancestor (persisting groupsOpen) + un-collapses the
@@ -44976,6 +45022,23 @@
                 const bar = gm.closest('.ambient-seedgrid-bar');
                 if (bar) bar.querySelectorAll('.ambient-seedgrid-mode').forEach(b2 => b2.classList.toggle('active', b2 === gm));
               }
+              return;
+            }
+            const sq = ev.target && ev.target.closest && ev.target.closest('.ambient-sgseq');
+            if (sq) {
+              ev.stopPropagation();
+              const ge2 = _bloomGridEdit; if (!ge2 || !ge2.lane) return;
+              const saved = _ambBankByName(sq.dataset.sgseq || ''); if (!saved) return;
+              try {
+                const cl = (typeof cloneStep === 'function') ? cloneStep : (o => JSON.parse(JSON.stringify(o)));
+                ge2.lane.steps = saved.steps.map(cl);
+                if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane();
+                if (typeof _syncFluidGridToActiveLane === 'function') _syncFluidGridToActiveLane();
+                if (typeof renderSequence === 'function') renderSequence();
+                // Into the sounding lock, the same live path a keystroke takes.
+                _ambStepsToLock(ge2.E, ge2.key, ge2.lane.steps, true);
+                if (typeof showToast === 'function') showToast('Loaded “' + (saved.name || 'sequence') + '” — edit it, or ✕ Cancel to put the old phrase back.');
+              } catch (err) { console.warn('Load sequence failed', err); }
               return;
             }
             const ps = ev.target && ev.target.closest && ev.target.closest('.ambient-sgpart-sel');

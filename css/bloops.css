@@ -7575,6 +7575,12 @@
        time, so a half-bar chord under a cadence reads as half the width. */
     /* PART -> SEQUENCE map, in the layer grid: compose here, bank it here, say
        which part plays it here. */
+    /* The banked phrases, in the layer that composes them. */
+    .ambient-seedgrid-seqs { display: flex; flex-wrap: wrap; gap: 5px; margin: 4px 0 2px; align-items: center; }
+    .ambient-sgseqs-title { flex: 1 0 100%; font-family: 'Segoe UI', sans-serif; font-size: 0.64rem; color: #6b6b8a; }
+    .ambient-sgseq { min-height: 30px; padding: 4px 9px; font-size: 0.68rem; max-width: 100%; }
+    .ambient-sgseq > i { display: block; font-style: normal; font-size: 0.56rem; opacity: 0.75; }
+    .ambient-sgseq.bound { border-color: #9f7aea; color: #d6bcfa; }
     .ambient-seedgrid-parts { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; align-items: center; }
     .ambient-sgparts-title { flex: 1 0 100%; font-family: 'Segoe UI', sans-serif; font-size: 0.64rem; color: #6b6b8a; }
     .ambient-sgpart { display: flex; align-items: center; gap: 5px; min-width: 0; flex: 1 1 150px; }

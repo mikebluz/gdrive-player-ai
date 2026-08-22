@@ -1414,6 +1414,35 @@
     // lane out from under the user right after saving.
     function saveAsNewSeq(name) {
       name = (name && name.trim()) || seqName(savedSequences.length);
+      // NAMES MUST BE UNIQUE. A Bloom layer schedules a phrase BY NAME
+      // (`L.partSeqs` → `_ambBankByName`, which takes the FIRST match), so a
+      // second entry called the same thing is unreachable forever: you can see
+      // its chip and tap it, but every mapping plays the other one. Reported as
+      // "I don't know what these sequence buttons are doing anymore", with two
+      // `motif3` in the bank.
+      //
+      // Overwrite is the likely intent when the name is reused deliberately, so
+      // it is offered first; declining suffixes rather than silently shadowing.
+      const dupAt = savedSequences.findIndex(x => x && x.name === name);
+      if (dupAt >= 0) {
+        const replace = (typeof confirm === 'function')
+          ? confirm('“' + name + '” already exists.\n\nReplace it? Layers that play “' + name + '” will follow the new phrase.\n\nCancel to save alongside it under a new name.')
+          : false;
+        if (replace) {
+          const _up = { name, ...currentSequenceSnapshot() };
+          savedSequences[dupAt] = _up;
+          persistSaved();
+          try { if (typeof _shapeReflectSavedSeq === 'function') _shapeReflectSavedSeq(_up); } catch (e) {}
+          activeSeqIndex = dupAt;
+          _resetSaveSelectionAndMulti();
+          renderSequence(); renderSavedSequences(); flashSaveConfirm();
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+          return;
+        }
+        let n = 2, cand = name + ' ' + n;
+        while (savedSequences.some(x => x && x.name === cand) && n < 999) { n++; cand = name + ' ' + n; }
+        name = cand;
+      }
       const _entry = { name, ...currentSequenceSnapshot() };
       savedSequences.push(_entry);
       persistSaved();

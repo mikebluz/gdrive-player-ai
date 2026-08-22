@@ -761,6 +761,43 @@ C-track discipline).
 
 ## 11. Backlog — TBD
 
+### Fold Home / Register / Range into ONE pitch-span control (raised 2026-08-21)
+
+**Status: OPEN, parked deliberately.** Three consecutive rows on a layer card
+state one idea — where the layer sits in pitch and how far it reaches — and read
+as unrelated because each has its own row and label. Home in particular gives no
+clue that it is saying *where Register sits inside Range*.
+
+Proposed: one `['pitchspan']` schema token replacing the two or three rows,
+rendering only the axes that type declares.
+
+```
+Pitch   [ Floor | Center | Ceiling ]   − 5 +  G5   ± 2 oct
+```
+
+Wraps to two lines at 390px rather than one — but two beats three: roughly 120px
+of card height down to ~70px on the types carrying the full set.
+
+**THE DISTRIBUTION IS PATCHY, and this is the part to settle first** — the three
+do NOT travel together:
+
+| token | types |
+|---|---|
+| `home` | 3 — bed, motif, riff |
+| `register` | 8 — every pitched type |
+| `range` | 2 — motif, riff |
+
+All three co-occur on **motif and riff only**. Bed has home + register and NO
+range (it has `spread`, a different axis). The other five have register alone.
+Register bounds also differ per type (2-6, 2-7, 3-7, 1-4, 1-7, 1-6), so the
+control needs a per-type table rather than one pair of limits.
+
+**Open question that blocks it: what does Home MEAN on a bed?** With no range
+there is no span for the anchor to sit inside, so Home may be doing nothing
+there — a latent bug in its own right, and one that has to be answered before
+folding it into a control whose whole premise is a span. Answer that first; the
+consolidation is easy afterwards.
+
 ### Playback hardening — unreproduced audio anomalies (raised 2026-07-27/28)
 
 **Status: OPEN — NO REPRODUCIBLE CASE.** Two user reports, folded into one item

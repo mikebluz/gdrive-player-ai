@@ -13,6 +13,7 @@
     "desktop:build": "node tools/build-desktop.mjs",
     "test:bounce": "node test/bounce-parity.js",
     "test:arch": "node test/arch-parity.js",
+    "test:partseq": "node test/partseq.js",
     "stoch": "node tools/stochastic-matrix.mjs"
   },
   "dependencies": {

@@ -21314,6 +21314,25 @@
     function _ambSeamReport(W) {
       const E = W.E, out = [];
       const P = (x) => out.push(x);
+      // A REPORT THAT MEASURED NOTHING MUST SAY SO. `W.edge` at or before the
+      // take's start means no real boundary was captured — every "before" column
+      // comes out empty and the level reads 0.0000 on both sides, which reads
+      // like the engine went silent when in fact the watch never saw the take.
+      // (Seen in the field: "boundary at t+-2.218s", both pass edges negative,
+      // and HEALTH showing the master at rms 0.11 the whole time.)
+      const _span = W.edge - W.t0;
+      if (!(W.edge > 0) || _span <= 0) {
+        const txt0 = '=== BLOOM SEAM WATCH ===\n' +
+          'NO USABLE BOUNDARY — this report would be all zeros, so it is not being written.\n' +
+          '  first boundary landed ' + (+_span.toFixed(3)) + 's from the start of the take' +
+          (_span <= 0 ? '  (i.e. BEFORE it — the clock carried state from a previous play)' : '') + '\n' +
+          '  Re-run it like this: press ■ Stop, then bloomSeamWatch() , then ▶ Play, and leave it alone\n' +
+          '  until it prints. Arming it mid-take, or stopping and starting during the take, is what\n' +
+          '  produces this.';
+        try { console.warn(txt0); } catch (e) {}
+        try { if (typeof showToast === 'function') showToast('Seam watch caught no usable boundary — see the console.', { warn: true, ms: 9000 }); } catch (e) {}
+        return txt0;
+      }
       const rel = (t) => (t == null ? 'null' : (+(t - W.edge).toFixed(3)));
       P('=== BLOOM SEAM WATCH ===============================================');
       P('boundary #1 at t+' + (+(W.edge - W.t0).toFixed(3)) + 's after play' +
@@ -21321,7 +21340,22 @@
       P('bpm ' + _ambBpm() + ' · area bpm ' + (W.cfg && W.cfg.bpm != null ? W.cfg.bpm : '(none)') +
         ' · chords ' + ((W.cfg.prog && W.cfg.prog.chords || []).length) +
         ' · parts ' + ((W.cfg.prog && W.cfg.prog.parts || []).length) +
-        ' · grid ' + (W.cfg.prog && W.cfg.prog.grid ? JSON.stringify(W.cfg.prog.grid) : 'none'));
+        // WITH PARTS THE GRID LIVES ON THE PART (`_ambGridStore`), so reading
+        // `prog.grid` reported "grid none" for a project plainly using the Passes
+        // matrix — and sent the reader looking for a missing grid.
+        ' · grid ' + (() => {
+          try {
+            const gs = (_ambGridRanges(W.cfg) || []).map(r => {
+              const g = _ambGridStore(W.cfg, r.pi, false);
+              return _ambPartLabel(W.cfg, r.pi) + ':' + (g ? JSON.stringify(g) : 'none');
+            });
+            return gs.length ? gs.join(' | ') : 'none';
+          } catch (e) { return 'ERR'; }
+        })() +
+        ' · passes ' + (() => {
+          try { return (_ambGridRanges(W.cfg) || []).map(r => _ambPartPassCols(W.cfg, r.pi)).join(','); }
+          catch (e) { return '?'; }
+        })());
       P('chord lengths (bars): ' + JSON.stringify((W.cfg.prog && W.cfg.prog.chords || [])
         .map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : (W.cfg.barsPerChord || 1))));
       P('pass edges (s from play): ' + JSON.stringify(W.edges.map(e => +(e.t - W.t0).toFixed(3))));
@@ -21363,6 +21397,17 @@
           '   onsets before ' + JSON.stringify(before) + '   after ' + JSON.stringify(after));
         P('   pre : ' + f(a));
         P('   post: ' + f(b));
+        // DOUBLING: the same pitch at the same instant, more than once.
+        { const h = W.hits[k] || {};
+          const dup = Object.keys(h).filter(x => h[x] > 1);
+          if (dup.length) {
+            const near = dup.filter(x => { const t = parseFloat(x); return t >= W.edge - 4 && t < W.edge + 4; });
+            P('   DOUBLED: ' + dup.length + ' (time,pitch) pairs played more than once' +
+              (near.length ? ('; ' + near.length + ' at this seam: ' + near.slice(0, 6).map(x => {
+                const bits = x.split('@'); return rel(parseFloat(bits[0])) + 's ' + bits[1] + 'Hz x' + h[x];
+              }).join(', ')) : '') + '   <-- this is what comb-filters');
+          }
+        }
         // The tell: did the FIRST onset after the boundary land where the
         // spacing before it says it should?
         if (before.length >= 2 && after.length) {
@@ -21482,7 +21527,7 @@
       const E = _masterEng; if (!E) { console.warn('[seam] no engine'); return; }
       const o = opts || {};
       const W = { E, cfg: null, t0: 0, edge: 0, edgeFrom: -1, edgeTo: -1, edges: [], keys: [],
-                  notes: {}, state: {}, env: [], done: false, lastPass: -1, armed: true };
+                  notes: {}, state: {}, hits: {}, env: [], done: false, lastPass: -1, armed: true };
       window.__bloomSeam = W;
       let tap = null, an = null, buf = null;
       const startCapture = () => {
@@ -21492,7 +21537,7 @@
           ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (W.cfg[k] && W.cfg[k].present !== false) W.keys.push(k); });
           (W.cfg.extras || []).forEach(x => { if (x && x.type != null && x.id != null) W.keys.push(x.type + ':' + x.id); });
         } catch (e) {}
-        W.keys.forEach(k => { W.notes[k] = []; W.state[k] = []; });
+        W.keys.forEach(k => { W.notes[k] = []; W.state[k] = []; W.hits[k] = {}; });
         W.t0 = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
         try {
           const node = (typeof _ambMasterTapNode === 'function') ? _ambMasterTapNode() : null;
@@ -21509,6 +21554,16 @@
             const at = (ev.at != null) ? ev.at : ev.time;
             if (at == null) return;
             if (!W.notes[k].some(x => Math.abs(x - at) < 1e-4)) W.notes[k].push(at);
+            // …and the PITCH, keyed on (time, freq). A repeated timestamp is a
+            // chord; a repeated (time, freq) is the same note twice, which is the
+            // only thing that comb-filters. Counting notes per instant cannot
+            // tell those apart, and reads a healthy 4-note chord as a fault.
+            const fq = (ev.freq != null) ? ev.freq : (ev.f != null ? ev.f : null);
+            if (fq != null) {
+              const kk = at.toFixed(4) + '@' + (+fq).toFixed(2);
+              W.hits[k] = W.hits[k] || {};
+              W.hits[k][kk] = (W.hits[k][kk] | 0) + 1;
+            }
           });
           const fs = E.freeze && E.freeze[k];
           W.state[k].push({ t: now, frozen: !!(fs && fs.frozen), loop: fs && fs.loopLen ? +fs.loopLen.toFixed(3) : null,

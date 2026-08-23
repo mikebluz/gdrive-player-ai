@@ -3505,6 +3505,26 @@
     .ambient-prog-order > .ambient-select { flex: 1 1 0; width: auto; min-width: 0; }
     .ambient-prog-salt .salt-lbl { color: #9f7aea; font-weight: 600; }
     .ambient-prog-salt .ambient-sched-grp { display: inline-flex; align-items: center; gap: 5px; }
+    /* Its own row under the six inputs — `.ambient-prog-salt` is a wrapping flex
+       row, so a prose hint sharing a line would be squeezed to a couple of words
+       per line beside them (the `.ambient-ctrl` sibling-hint trap, one container
+       over). `flex: 1 0 100%` gives it the whole line and lets it wrap normally. */
+    /* ↔ RUBATO — its own row, mirroring the salt row's layout. Dim the CHILDREN
+       when inert, never the group: `opacity` composites the whole subtree, so
+       dimming the wrapper would dim the explanatory note with it (the documented
+       repeat-row trap). The note takes its own line, or a `flex: 1 0 100%` inside
+       the narrow inline-flex group forces the GROUP wide instead — measured 99px
+       of container overflow at 390px while `documentElement` reported none. */
+    .ambient-prog-rubato { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 7px; }
+    .ambient-prog-rubato .ambient-salt-in { width: 52px; background: #11111c; border: 1px solid #2d2d3f; border-radius: 6px; color: #cbd5e0; padding: 3px 5px; font-size: 0.8rem; }
+    .ambient-prog-rubato .ambient-rubato-grp.is-inert > .ambient-sched-lbl,
+    .ambient-prog-rubato .ambient-rubato-grp.is-inert > input { opacity: .45; }
+    .ambient-prog-rubato .rubato-na { color: #f6ad55; flex: 1 0 100%; white-space: normal; overflow-wrap: anywhere; }
+    .ambient-prog-rubato .rubato-ladder { flex: 1 0 100%; margin-top: 2px; white-space: normal; overflow-wrap: anywhere; }
+
+    .ambient-prog-salt .salt-ladder {
+      flex: 1 0 100%; margin-top: 4px; white-space: normal; overflow-wrap: anywhere;
+    }
     .ambient-prog-salt .ambient-salt-in { width: 52px; background: #11111c; border: 1px solid #2d2d3f; border-radius: 6px; color: #cbd5e0; padding: 3px 5px; font-size: 0.8rem; }
     /* ⚄ Generate-progression popover — steppers + live chord preview. */
     .pg-modal { width: min(440px, 94vw); }
@@ -13936,6 +13956,26 @@
     .ambient-passmx .pmx-cell.on {
       background: rgba(159,122,234,0.26); border-color: #9f7aea; color: #e9d8fd;
     }
+    /* 🧂 SALT CELLS. A solid cell STATES something, a dashed one follows what it
+       inherits — the same solid/dashed grammar the Plays cells use, so nothing
+       new has to be learned. `off` is an explicit all-zero: it states something
+       too (no salt here), so it is solid, but muted rather than purple because it
+       is the absence of an effect rather than an amount of one. */
+    /* WRAPS, never ellipses — the same reasoning as `.pmx-seq`. Eight passes at
+       390px is a 41px cell, and `100·7·100` has to stay readable. The break
+       opportunities are ZERO-WIDTH SPACES the face puts after each separator, so
+       `overflow-wrap` stays `normal` and a number is never split down the middle. */
+    .ambient-passmx .pmx-saltcell {
+      letter-spacing: -0.04em; white-space: normal; overflow-wrap: normal;
+      line-height: 1.05; padding: 2px 1px; min-height: 34px; font-size: 0.6rem;
+    }
+    .ambient-passmx .pmx-saltcell.inherits {
+      border-style: dashed; border-color: rgba(160,174,192,0.28); color: #6b6b8a;
+    }
+    .ambient-passmx .pmx-saltcell.saltoff {
+      background: rgba(255,255,255,0.04); border-color: rgba(160,174,192,0.45); color: #a0aec0;
+    }
+    @media (max-width: 460px) { .ambient-passmx .pmx-saltcell { font-size: 0.56rem; } }
     /* PLAYHEAD. The column in force is tinted; the cell actually sounding gets
        the green that means "sounding" everywhere else in this app. */
     .ambient-passmx .pmx-h.incol { color: #cbd5e0; }
@@ -13966,6 +14006,25 @@
     .ambient-passmx .pmx-seq.empty { color: #4a4a63; }
     .ambient-passmx .pmx-foot { display: block; margin-top: 7px; }
     .ambient-passmx .pmx-super { color: #f6ad55; }
+    /* The per-pass salt editor. Fields are `.pe-saltin` (16px — anything smaller
+       and iOS zooms the page on focus and never zooms back); the hint WRAPS,
+       because `.sm-modal` is width: min(360px, 92vw) and a nowrap line simply
+       exits the dialog. */
+    .ambient-psalt-modal .psalt-seg { display: inline-flex; margin: 6px 0 4px; }
+    .ambient-psalt-modal .psalt-mode { min-height: 38px; padding: 4px 14px; border-radius: 0; }
+    .ambient-psalt-modal .psalt-mode:first-child { border-radius: 8px 0 0 8px; }
+    .ambient-psalt-modal .psalt-mode:last-child { border-radius: 0 8px 8px 0; margin-left: -1px; }
+    .ambient-psalt-modal .psalt-mode.active {
+      background: rgba(159,122,234,0.24); border-color: #9f7aea; color: #e9d8fd; position: relative; z-index: 1;
+    }
+    .ambient-psalt-modal .psalt-fields { display: flex; flex-wrap: wrap; gap: 8px 12px; margin: 8px 0 4px; }
+    .ambient-psalt-modal .psalt-fields label {
+      display: inline-flex; align-items: center; gap: 5px;
+      font: 600 0.72rem 'Segoe UI', sans-serif; color: #a0a4bd;
+    }
+    .ambient-psalt-modal .psalt-note {
+      display: block; white-space: normal; overflow-wrap: anywhere; margin-top: 4px;
+    }
     /* The per-pass order editor. */
     .ambient-pseq-modal .pseq-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; min-height: 34px; }
     .ambient-pseq-modal .pseq-chip {

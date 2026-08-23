@@ -131,13 +131,196 @@ what is needed is for the *arrangement* axis to gain its missing level.
 
 ## 6. Suggested order
 
-1. **Per-pass `colors`/`scatter`** — new level in `_ambPartSaltAt`, Salt mode in
-   ▦ Passes. Additive; absent everywhere by default, so the gates stay
-   byte-identical by construction.
-2. **Rename the layer axis** to `Follows salt` (label only; keys unchanged, per
-   the naming rule).
-3. **Fold `saltNudge` / `saltFree`** into the Salt column's own cell modal.
-4. **Reduce the 🧂 subsection** to the area default once the other levels are
-   reachable where they belong.
+1. ~~**Per-pass `colors`/`scatter`**~~ — **DONE.** See §7.
+2. ~~**Rename the layer axis** to `Follows salt`~~ — **DONE.** See §8.
+3. ~~**Fold `saltNudge` / `saltFree`** into the Salt column's own cell modal~~ —
+   **DONE, and it was worse than a fold: they were UNREACHABLE.** See §8.
+4. ~~**Reduce the 🧂 subsection** to the area default~~ — **DONE.** See §8.
 5. **Per-pass `len`** — only if wanted, and as its own change, because it moves
-   pass lengths.
+   pass lengths. NOTE: the store already carries `len` and `_ambPartSaltAt`
+   returns it, but nothing re-slices per pass yet — `_ambProgSaltLensParted`
+   works at the PART level. So a per-pass `len` is currently stored, shown and
+   only partly acted on; that is step 5's job.
+
+---
+
+## 7. What shipped (2026-08-23)
+
+**Store.** `parts[i].passSalt['<pass>']` = `{len, colors, scatter}`, and
+`prog.passSalt` when the progression has no parts — which is the shape most
+projects have, since `_ambRepairParts` collapses a lone part covering the whole
+cycle. The two homes mirror `_ambGridStore` / `prog.grid` exactly, migration
+included (`_ambPassSaltStore` / `_ambPassSaltSet`). Gating on a part list would
+have repeated the documented `parts.length > 1` mistake a fourth time.
+
+**Grammar.** Absent = inherit (the cell DRAWS what it inherits, dashed, never a
+bare dash). An explicit all-zero object = *off on this pass*, and it is never
+pruned — the meaningful-zero rule `parts[i].salt` already relies on. An emptied
+store is deleted so "inherits everywhere" keeps one representation.
+
+**Surface.** ▦ Passes, ALL LAYERS scope, `Cells show: [Which chords] [🧂 Salt]`
+— one cell per pass, tap for a modal with `Inherit | Its own` and the three
+axes. Switching to *Its own* seeds from what the pass was already inheriting,
+so engaging it is inaudible.
+
+**Deviation from §4.** The plan called for a third cell mode in the LAYER scope
+too. It was not built, deliberately: `saltMask.steps` has no pass axis (it is
+per (layer, chord)), so a layer-scope Salt grid would have been columns of
+identical values — a picture asserting something the store cannot express. That
+column already stands in "Which phrase", which is its correct home. The layer
+scope therefore keeps two modes and the all-layers scope gains its first.
+
+**Not reachable, and it says so:** one pass (nothing to vary) and an open part
+(no chords to salt) both render a sentence naming the way forward instead of
+dead cells.
+
+**Gates.** `npm run test:partseq` §5e (8 checks, poison-verified). Everything is
+absent by default, so golden 82/82, arch 51/51 and the invariant harness are
+byte-identical by construction.
+
+---
+
+## 8. Steps 2–4 (2026-08-23)
+
+### The layer axis is named, and so is the control it collided with
+
+The ▦ Passes trailing column reads **`Follows salt`**, not `Salt` — "Salt" alone
+read as *this layer's salt settings*, which is exactly what `layer.salt` WAS
+before it was retired, and exactly the wrong model. Key (`saltMask`) unchanged.
+
+That rename collided with the Bed/Keys select already labelled `Follow salt`, so
+that one became **`Salt re-voice`**. They are different questions and one label
+for both would be the naming rule's converse mistake:
+
+| control | question | store |
+|---|---|---|
+| `Follows salt` (column, per layer × chord) | how much of the one shared colouring this layer TAKES | `saltMask.steps` |
+| `Salt re-voice` (Bed/Keys select) | whether a sustained chord RE-VOICES when the colour moves mid-unit, or holds what it struck | `followSalt` |
+
+A layer can follow the salt in full and still hold, which is why both exist.
+
+### `saltNudge` / `saltFree` were not scattered — they were UNREACHABLE
+
+`_ambMaskCellModal` renders the 🎲 re-roll and the ◈/〰 timing toggle **only when
+the caller passes `onReroll` / `onSnapToggle`**, and after `f410bf3` (the ⌗
+Matrix fold) *no caller did* — the fold deleted the only block that supplied
+them. Two engine-read features went silent with nothing to notice: the
+`_ambReconfigSharedQuiet` shape (code that exists, reads correctly, and nothing
+invokes). Confirmed with `git log -S onReroll`.
+
+They are reconnected on the **salt** cell only — they modify the salt that cell
+governs, and that column IS their scope; the Plays cell asks a different
+question and is deliberately left without them.
+
+`_ambAnySaltColors(cfg)` replaces the old "does salt colour anything here" test,
+which asked `L.salt` — retired 2026-08-20, so it was answering a question the
+model no longer has. It now walks the whole ladder, **the pass rung included**.
+
+### The 🧂 subsection says it is the area rung
+
+Its `lengths` tooltip ended *"(colour and scatter can be overridden per layer)"*
+— also `layer.salt`, also retired. A caption asserting a model the code no longer
+has is worse than no caption. It now names the ladder and where each rung lives
+(changes → the progression editor, pass → ▦ Passes → 🧂 Salt, layer → the
+`Follows salt` column).
+
+**Gates.** 14 more checks in `npm run test:partseq` (192), poison-verified —
+severing the wiring fails 5 named checks. The section dispatches a real
+`contextmenu` at the cell, which is the handler `_ambWireMaskCells` actually
+arms, rather than calling the modal directly; and every `.click()` is guarded, so
+a missing button reports as a red line instead of killing the run.
+
+---
+
+## 9. ↔ RUBATO — the type boundary inside Salt (2026-08-23)
+
+**Salt was two different kinds of thing wearing one name.** Measured across every
+per-cycle harmony axis, with and without a Passes grid:
+
+```
+axis               no grid          with grid
+                   lengths ids      lengths ids
+salt lengths       yes     -        -      -     <-- LOST
+salt colours        -     yes       -     yes
+salt scatter        -     yes       -     yes
+🌊 vary             -     yes       -     yes
+🌡 tension          -     yes       -     yes
+🎲 take-reroll      -     yes       -     yes
+↻ order             -     yes       -     yes
+```
+
+The pattern is exact and self-explaining: **`lengths` is the only axis that
+changes HOW LONG a chord is; every other axis changes WHICH CHORD it is.** That
+maps onto where each is applied — identity resolves at read time in
+`_ambProgCurrentChord` (never sees the grid), length is decided in the walk
+(`_ambProgStepAt`, which under a grid returns from `_ambGridPlan`'s cached `cum`
+edges without reaching `_ambProgSaltLensParted`).
+
+So the length axis is now **↔ Rubato**, label-only — `prog.salt.len`,
+`parts[i].salt.len` and `passSalt[].len` are untouched, per the naming rule.
+`Rubato` is the exact word: time is borrowed and paid back, and the cycle total
+is always preserved (measured 8.00 bars at every setting). `Stretch`, `Swing` and
+`Drift` were all already taken.
+
+### Where it appears
+
+| rung | Salt (colours · scatter) | ↔ Rubato |
+|---|---|---|
+| area | 🧂 Salt row | same row, own label; marked **n/a** while a grid is engaged |
+| changes | Variation → Colours / Scatter | Variation → ↔ Rubato |
+| pass | ▦ Passes → 🧂 Salt | **absent — see below** |
+
+### Rubato is absent at the PASS rung on purpose
+
+Not "not yet". Per-pass salt resolves only through `_ambProgPassHint`, which is
+stashed by the GRID branch of `_ambProgStepAt` — and that same branch is the one
+that skips length salt. **The only state in which a per-pass value can be read is
+the state in which Rubato does nothing.** Offering the field would be a control
+that can never act. The store still coerces `len` and the edit path carries it
+forward, so nothing is lost if the plan learns about it later.
+
+### §9b — Rubato is now its own STORE and its own SECTION (schema v10)
+
+Renaming was not enough: it is a different **axis of editing**, and further
+timing variations (anticipation, skipped changes, a swing on the harmonic
+rhythm) need a home that does not distort Salt's meaning.
+
+| | store | grammar |
+|---|---|---|
+| area | `prog.rubato = { amount }` | absent/0 = as written |
+| changes | `parts[i].rubato = { amount }` | absent = inherit, explicit `{amount:0}` = none here |
+| pass | — | cannot act at this rung (see above) |
+
+An **object, not a number**, precisely so siblings can be added beside `amount`.
+`prog.salt` is now `{colors, scatter}` only, and the canonical salt coercion is
+where `len` is dropped — a `delete` anywhere earlier is silently undone by it.
+
+Each rung has its **own Inherit / Its own** control now, which was impossible
+while the two axes shared one stored object. UI: `↔ Rubato` is its own accordion
+beside `🧂 Salt`, and its own group in the changes editor.
+
+**Migration (v10)** lives in `_normalizeAmbientCfg` — the only scope with
+`_fromVer` — and must run BEFORE `_ambNormalizeProgMeta`, which deletes
+`salt.len`; reading it afterwards finds nothing. It carries the area, every part
+(including a **meaningful zero**, which is how "no rubato in the chorus" was
+expressed) and every version.
+
+**The proof it preserved behaviour:** `arch-parity` drifted on exactly the two
+configs that set `salt.len` — so the test's config BUILDER was taught to split
+the axes the same way the migration does, and all 51 configs then matched the
+**untouched** baseline. No re-baseline was needed, which is a stronger result
+than re-recording one.
+
+### Still open
+
+- **Make Rubato work under a grid.** `_ambGridPlan`'s `cum` is memoised on
+  `_ambGridSig`, which carries no seed and no salt — cycle-independent BY DESIGN
+  (that caching took the clock from 0.375ms to 0.0049ms). Either fold the cycle
+  into the memo key (bounded cache; the slot expansion, which is the expensive
+  part, stays shared) or split the plan into a cached structural half and a cheap
+  per-cycle length pass. A SOUND change for anyone currently running a grid with
+  Rubato set. `_ambRubatoInertWhy(cfg)` is the single place that decides the
+  control is inert, so it is also the thing to delete when this lands.
+- **The stores are still coupled at the part rung**: `parts[i].salt` holds `len`,
+  `colors` and `scatter` in one object, so Inherit/Its own governs both axes
+  together. The button says so. Splitting them is a migration, not a label.

@@ -202,10 +202,21 @@ const WALK_BARS = 32, WALK_STEP = 0.25;
       if (c.parts) cfg.prog.parts = c.parts.map((x) => {
         if (!Array.isArray(x)) return { name: x.name, open: 1, bars: x.open, ...(x.hold === false ? {} : { hold: 1 }), ...(x.plays ? { plays: x.plays } : {}) };
         const [name, len, plays, key, salt, grid] = x;
-        return { name, len, ...(plays ? { plays } : {}), ...(key ? { key } : {}), ...(salt ? { salt } : {}),
+        // ↔ RUBATO left Salt at schema v10. The config table above still spells a
+        // part's variation as one `{len, colors, scatter}` object because that is
+        // how it reads musically; the split happens here, exactly as the migration
+        // does it — so these configs keep their MEANING and the baseline is the
+        // proof that the split preserved behaviour.
+        const _rb = (salt && Number.isFinite(salt.len)) ? { amount: salt.len | 0 } : null;
+        const _st = salt ? { colors: salt.colors | 0, scatter: salt.scatter | 0 } : null;
+        return { name, len, ...(plays ? { plays } : {}), ...(key ? { key } : {}),
+                 ...(_st ? { salt: _st } : {}), ...(_rb ? { rubato: _rb } : {}),
                  ...(grid ? { grid } : {}) };
       });
-      if (c.salt) cfg.prog.salt = c.salt;
+      if (c.salt) {
+        cfg.prog.salt = { colors: c.salt.colors | 0, scatter: c.salt.scatter | 0 };
+        if ((c.salt.len | 0) > 0) cfg.prog.rubato = { amount: c.salt.len | 0 };
+      }
       if (c.arrGrid) cfg.prog.arrGrid = c.arrGrid;   // PART MATRIX: the meta grid
       if (c.chain) cfg.prog.chain = c.chain;        // ORDER OF PLAY (outranks `plays`)
       if (c.sections) cfg.sections = c.sections.map(([name, bars, part, key, groove, rot]) => ({

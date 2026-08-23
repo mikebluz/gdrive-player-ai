@@ -104,7 +104,9 @@ const CHROME = process.env.CHROME_PATH
       // part", on every pass — which is the PART DEFAULT, not N identical cells.
       eq('migrate/bare string becomes the part default',
         c2.motif.partSeqs[1], { all: 'solo' });
-      eq('migrate/stamped v9', c2.schemaVersion, 9);
+      // v10 (↔ Rubato leaves Salt) is the current stamp. This check pins the
+      // CONTRACT "normalize stamps the current version", not the number 9.
+      eq('migrate/stamped current', c2.schemaVersion, 10);
       // Re-normalising must be a no-op, or the migration is not idempotent.
       eq('migrate/idempotent', E.getCfg().bed.partSeqs[0],
         { '0:*': 'riffA', '1:*': 'riffB', '2:*': 'riffA', '3:*': 'riffB', '4:*': 'riffA', '5:*': 'riffB' });
@@ -539,8 +541,314 @@ const CHROME = process.env.CHROME_PATH
       eq('passsalt/another part falls to the area', amt(6), 3);
       // An explicit all-zero is MEANINGFUL ("off here") and must survive the
       // normalize that rebuilds every part object from scratch.
+      // NO `len` — ↔ Rubato is its own store since v10, and cannot act at this
+      // rung at all (per-pass salt resolves only under a grid, which is exactly
+      // when rubato is silenced). Was `{len:0,colors:0,scatter:0}`.
       eq('passsalt/survives normalize', (E.getCfg().prog.parts[0] || {}).passSalt,
-        { '1': { len: 0, colors: 0, scatter: 0 } });
+        { '1': { colors: 0, scatter: 0 } });
+    }
+
+    // ---- 5e. PER-PASS SALT WITH NO PARTS -------------------------------------
+    // `_ambRepairParts` COLLAPSES a lone part covering the whole cycle, so "no
+    // parts" is the shape most projects have — and a store that only existed on
+    // a part object would have been dead in exactly that case (the documented
+    // `parts.length > 1` gate, which has hidden a finished feature three times).
+    // The part-less home mirrors `prog.grid` exactly, migration included.
+    {
+      const cfg = baseProg([['Only', 4]]);          // one part -> repair drops `parts`
+      delete cfg.prog.parts;
+      cfg.prog.salt = { len: 0, colors: 2, scatter: 0 };
+      _ambGridStore(cfg, 0, true).cols = 2;
+      eq('passsalt0/no parts after repair', Array.isArray(E.getCfg().prog.parts), false);
+
+      // The store resolves without a part, and writing through it lands on prog.
+      eq('passsalt0/writes to prog', _ambPassSaltSet(cfg, 0, 1, { len: 0, colors: 6, scatter: 0 }), true);
+      eq('passsalt0/stored on prog', (E.getCfg().prog.passSalt || {})['1'],
+        { colors: 6, scatter: 0 });
+
+      cfg.bpm = 240; cfg.barsPerChord = 1;
+      E._cfg = E.getCfg(); E._progAnchor = 0; E._barGridAnchor = 0; E._playStartAt = 0;
+      const c3 = E._cfg, bs = (60 / 240) * 4, at3 = (b2) => b2 * bs;
+      const amt3 = (b2) => { const st = _ambProgStepAt(E, at3(b2)) | 0;
+        const s2 = _ambPartSaltAt(c3, st); return s2 ? (s2.colors | 0) : -1; };
+      eq('passsalt0/pass 1 takes the area', amt3(0), 2);
+      eq('passsalt0/pass 2 takes its own', amt3(4), 6);
+
+      // Clearing prunes back to a single representation of "inherits everywhere".
+      _ambPassSaltSet(cfg, 0, 1, null);
+      eq('passsalt0/cleared prunes the store', 'passSalt' in E.getCfg().prog, false);
+
+      // A MOVE IS A DELETE PLUS AN ADD. When a part appears, the part-less store
+      // is carried onto the part that covers the same chords rather than thrown
+      // away — the bug that once reset the pass count from 2 back to 8.
+      _ambPassSaltSet(cfg, 0, 0, { len: 0, colors: 4, scatter: 0 });
+      cfg.prog.parts = [{ name: 'A', len: 2 }, { name: 'B', len: 2 }];
+      const c4 = E.getCfg();
+      eq('passsalt0/migrated onto part 0', (c4.prog.parts[0] || {}).passSalt,
+        { '0': { colors: 4, scatter: 0 } });
+      eq('passsalt0/the part-less copy is gone', 'passSalt' in c4.prog, false);
+      delete cfg.prog.passSalt; cfg.prog.parts.forEach(p => { delete p.passSalt; });
+    }
+
+    // ---- 5f. THE SALT CELL'S OWN ACTIONS -------------------------------------
+    // `saltNudge` (per-chord re-roll) and `saltFree` (colour-change timing) are
+    // engine-read and reachable ONLY from this modal. `_ambMaskCellModal` renders
+    // their buttons only when the caller supplies the callbacks — and between
+    // f410bf3 (the ⌗ Matrix fold) and 2026-08-23 NO caller did, so both features
+    // were silently unreachable with nothing to notice. This pins the wiring, not
+    // the modal: it dispatches a real `contextmenu` at the cell, which is the
+    // handler `_ambWireMaskCells` actually arms.
+    {
+      const cfg = baseProg([['Verse', 2], ['Chorus', 2]]);
+      cfg.prog.salt = { len: 0, colors: 0, scatter: 0 };      // nothing colouring yet
+      cfg.bed.present = true;
+      delete cfg.bed.saltNudge; delete cfg.bed.saltFree;
+      _ambGridStore(cfg, 0, true).cols = 2;
+      E._cfg = E.getCfg();
+      E.inited = false; _ambientInit(E); _ambSyncControls(E);
+
+      const host = document.getElementById('mix-bloom-passmx');
+      eq('saltcell/the Passes host exists', !!host, true);
+      host._sig = ''; host._pmsPart = 0; host._pmsLayer = 'bed'; host._pmsMode = 'phrase';
+      _ambRenderPassMatrix(E);
+
+      const openAt = (kind) => {
+        document.querySelectorAll('.ambient-step-modal-ov').forEach(o => o.remove());
+        const c = host.querySelector('.ambient-pm-cell[data-pmkind="' + kind + '"]');
+        if (!c) return null;
+        c.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        return document.querySelector('.ambient-step-modal-ov');
+      };
+
+      // The PLAYS cell asks a different question and must not offer them.
+      const povP = openAt('chord');
+      eq('saltcell/plays cell opens', !!povP, true);
+      eq('saltcell/plays has no re-roll', !!(povP && povP.querySelector('.pm-sp-reroll')), false);
+      eq('saltcell/plays has no snap', !!(povP && povP.querySelector('.pm-sp-snap')), false);
+
+      const pov = openAt('salt');
+      eq('saltcell/salt cell opens', !!pov, true);
+      eq('saltcell/salt offers the re-roll', !!(pov && pov.querySelector('.pm-sp-reroll')), true);
+      eq('saltcell/salt offers the snap toggle', !!(pov && pov.querySelector('.pm-sp-snap')), true);
+      // With nothing colouring, the modal SAYS the roll will be stored but silent
+      // rather than letting it read as broken.
+      eq('saltcell/warns when nothing colours',
+        [...pov.querySelectorAll('.ambient-pm-modal-hint')].some(h => /Nothing is colouring/.test(h.textContent)), true);
+
+      // GUARDED. A missing button is exactly the regression this section exists to
+      // catch, so it has to report as a failed CHECK — an unguarded `.click()`
+      // throws and kills the whole run, which tells you less than one red line.
+      const hit = (root, sel) => { const b2 = root && root.querySelector(sel); if (b2) b2.click(); return !!b2; };
+
+      hit(pov, '.pm-sp-reroll');
+      eq('saltcell/re-roll bumps saltNudge', (E.getCfg().bed.saltNudge || {})['0'], 1);
+
+      const pov2 = openAt('salt');
+      hit(pov2, '.pm-sp-snap');
+      eq('saltcell/snap writes saltFree', (E.getCfg().bed.saltFree || {})['0'], 1);
+      // A toggle that closes its modal reads as "did that work?" — it flips in place.
+      eq('saltcell/the modal stays open', !!document.querySelector('.ambient-step-modal-ov'), true);
+      hit(pov2, '.pm-sp-snap');
+      eq('saltcell/toggling back prunes it', 'saltFree' in E.getCfg().bed, false);
+
+      // Any rung of the ladder counts as "something is colouring" — the PASS rung
+      // included, which is the one that did not exist when this check was written.
+      eq('saltcell/no colours anywhere', _ambAnySaltColors(E.getCfg()), false);
+      _ambPassSaltSet(E.getCfg(), 0, 1, { len: 0, colors: 4, scatter: 0 });
+      eq('saltcell/a per-pass colour counts', _ambAnySaltColors(E.getCfg()), true);
+
+      document.querySelectorAll('.ambient-step-modal-ov').forEach(o => o.remove());
+      delete cfg.bed.saltNudge; delete cfg.bed.saltFree;
+      cfg.prog.parts.forEach(p => { delete p.passSalt; });
+    }
+
+    // ---- 5g. ONE PASS IS THE NEUTRAL WIDTH -----------------------------------
+    // `_AMB_GRID_COLS` (8) was both "the width a new grid is created at" and "how
+    // many passes a part has when it says nothing". As a COUNT it was wrong — a
+    // part with no chain and no Repeats runs ONCE — so ▦ Passes drew 8 columns
+    // beside its own caption saying "One pass, then it repeats."
+    //
+    // Moving the neutral to 1 has to happen in every place at once, which is what
+    // this section pins: get the prune rule wrong and setting the count to exactly
+    // 8 stores nothing and snaps back (the "+/- Pass count doesn't work" bug from
+    // the other side); get the CREATE width wrong and storing a cadence silently
+    // declares eight passes.
+    {
+      const cfg = baseProg([['Verse', 2], ['Chorus', 2]]);
+      E._cfg = E.getCfg();
+
+      eq('cols/a plain part runs one pass', _ambPartPassCols(E.getCfg(), 0), 1);
+      eq('cols/and stores no grid to say so', !!_ambGridStore(E.getCfg(), 0, false), false);
+
+      // Asking for the count it already has says nothing and stores nothing.
+      eq('cols/asking for 1 is a no-op', _ambPassColsSet(cfg, 0, 1), false);
+      eq('cols/still no grid', !!_ambGridStore(E.getCfg(), 0, false), false);
+
+      _ambPassColsSet(cfg, 0, 2);
+      eq('cols/2 is stored', (_ambGridStore(E.getCfg(), 0, false) || {}).cols, 2);
+      // THE REGRESSION THIS SECTION EXISTS FOR: 8 must survive normalize.
+      _ambPassColsSet(cfg, 0, 8);
+      eq('cols/8 survives normalize', (_ambGridStore(E.getCfg(), 0, false) || {}).cols, 8);
+      eq('cols/and the helper reports it', _ambPartPassCols(E.getCfg(), 0), 8);
+      // Back to the natural count prunes, so "inherits" has one representation.
+      _ambPassColsSet(cfg, 0, 1);
+      eq('cols/back to 1 prunes the grid', !!_ambGridStore(E.getCfg(), 0, false), false);
+
+      // Creating a grid to store something ELSE must not declare a pass count.
+      _ambPassFitSet(cfg, 0, true);
+      eq('cols/fit creates at the natural width', (_ambGridStore(E.getCfg(), 0, false) || {}).cols, 1);
+      eq('cols/fit still engages the clock', _ambGridOn(E.getCfg()), true);
+      _ambPassFitSet(cfg, 0, false);
+      eq('cols/clearing fit prunes it again', !!_ambGridStore(E.getCfg(), 0, false), false);
+
+      // Repeats is the natural count when there is no grid.
+      cfg.prog.parts[0].plays = 3;
+      eq('cols/Repeats 3 is three passes', _ambPartPassCols(E.getCfg(), 0), 3);
+      eq('cols/without storing a grid', !!_ambGridStore(E.getCfg(), 0, false), false);
+      delete cfg.prog.parts[0].plays;
+
+      // A chain states the order, so its visit count is the natural width.
+      cfg.prog.chain = [0, 1, 0];
+      eq('cols/a chain revisit counts', _ambPartPassCols(E.getCfg(), 0), 2);
+      delete cfg.prog.chain;
+
+      // The meta grid has the same neutral: one iteration until told otherwise.
+      eq('cols/meta is one iteration', _ambArrCols(E.getCfg()), 1);
+      eq('cols/asking for 1 stores nothing', _ambArrColsSet(cfg, 1), false);
+      _ambArrColsSet(cfg, 3);
+      eq('cols/meta 3 is stored', (E.getCfg().prog.arrGrid || {}).cols, 3);
+      delete cfg.prog.arrGrid;
+
+      // THE INVARIANT the helper's own comment demands: the layer matrix and the
+      // ▦ Passes grid are two views of ONE pass count and must never disagree.
+      cfg.prog.parts[0].plays = 2;
+      E._cfg = E.getCfg();
+      E.inited = false; _ambientInit(E); _ambSyncControls(E);
+      const host = document.getElementById('mix-bloom-passmx');
+      host._sig = ''; host._pmsPart = 0; host._pmsLayer = 'bed'; host._pmsMode = 'phrase';
+      _ambRenderPassMatrix(E);
+      const layerCols = host.querySelectorAll('.psq-passhdr').length;
+      host._sig = ''; host._pmsLayer = ''; host._pmsMode = 'chords';
+      _ambRenderPassMatrix(E);
+      const gridCols = host.querySelectorAll('.pmx-row.pmx-head .pmx-h').length;
+      eq('cols/the two grids agree', [layerCols, gridCols], [2, 2]);
+      delete cfg.prog.parts[0].plays;
+    }
+
+    // ---- 5h. ↔ RUBATO IS ITS OWN AXIS AND ITS OWN STORE (v10) ---------------
+    // Salt asks what the CHORD IS; Rubato asks WHEN THE CHANGES FALL. Measured
+    // before splitting: of every per-cycle axis, Rubato is the only one a Passes
+    // grid silences — because it is the only one touching bar edges rather than
+    // chord identity. An OBJECT, not a bare number, so further timing variations
+    // have a home that does not distort Salt's meaning.
+    {
+      const cfg = baseProg([['A', 2], ['B', 2]]);
+      cfg.bpm = 240; cfg.barsPerChord = 1; cfg.seed = 4242;
+      cfg.prog.salt = { colors: 0, scatter: 0 };
+      delete cfg.prog.rubato;
+      if (cfg.prog.parts) cfg.prog.parts.forEach(x => { delete x.salt; delete x.rubato; });
+      E._cfg = E.getCfg();
+
+      const lens = () => {
+        E._cfg = E.getCfg(); E._progAnchor = 0; E._barGridAnchor = 0; E._playStartAt = 0;
+        const bs = (60 / 240) * 4, out = [];
+        let prev = null, st = 0;
+        for (let bar = 0; bar < 8; bar += 1 / 32) {
+          const s2 = _ambProgStepAt(E, bar * bs) | 0;
+          if (prev === null) { prev = s2; st = bar; continue; }
+          if (s2 !== prev) { out.push(+(bar - st).toFixed(3)); prev = s2; st = bar; }
+        }
+        return out.slice(0, 4);
+      };
+      const written = lens();
+      eq('rubato/written cadence is flat', written, [1, 1, 1, 1]);
+
+      // AREA rung.
+      cfg.prog.rubato = { amount: 80 };
+      const moved = lens();
+      eq('rubato/area amount moves the boundaries', JSON.stringify(moved) !== JSON.stringify(written), true);
+      // The cycle TOTAL is preserved — that is what makes it rubato rather than
+      // a tempo change, and what keeps loops and Evolve aligned.
+      eq('rubato/the total is preserved',
+        +moved.reduce((a, v) => a + v, 0).toFixed(3), +written.reduce((a, v) => a + v, 0).toFixed(3));
+
+      // It is NOT salt: colours must be reachable with no rubato, and vice versa.
+      delete cfg.prog.rubato; cfg.prog.salt = { colors: 3, scatter: 0 };
+      eq('rubato/colours alone leave the lengths alone', lens(), written);
+      eq('rubato/…and salt still resolves', (() => {
+        const s2 = _ambPartSaltAt(E._cfg, 0); return s2 ? (s2.colors | 0) : -1;
+      })(), 3);
+      cfg.prog.salt = { colors: 0, scatter: 0 };
+
+      // PART rung, with its own inherit/override — including a meaningful zero.
+      cfg.prog.rubato = { amount: 80 };
+      cfg.prog.parts[0].rubato = { amount: 0 };          // part A: none, explicitly
+      E._cfg = E.getCfg();
+      eq('rubato/a part can switch it off', _ambRubatoAt(E._cfg, 0), 0);
+      eq('rubato/…while another inherits', _ambRubatoAt(E._cfg, 2), 80);
+      delete cfg.prog.parts[0].rubato;
+      eq('rubato/absent inherits the area', _ambRubatoAt(E.getCfg(), 0), 80);
+
+      // Pruning: 0 at the area level is "as written", stored as absence.
+      cfg.prog.rubato = { amount: 0 };
+      eq('rubato/zero prunes at the area', 'rubato' in E.getCfg().prog, false);
+
+      // The store SURVIVES the parts repair, which rebuilds a fresh object per
+      // part (the trap that already ate per-part `key` and `passSalt`).
+      cfg.prog.rubato = { amount: 55 };
+      cfg.prog.parts[1].rubato = { amount: 20 };
+      const c5 = E.getCfg();
+      eq('rubato/survives the parts repair', (c5.prog.parts[1] || {}).rubato, { amount: 20 });
+      eq('rubato/area survives too', c5.prog.rubato, { amount: 55 });
+
+      // MIGRATION: an old project carried it inside salt.
+      {
+        const old = E.getCfg();
+        old.schemaVersion = 9;
+        old.prog.salt = { len: 65, colors: 2, scatter: 0 };
+        delete old.prog.rubato;
+        old.prog.parts.forEach(x => { delete x.rubato; });
+        old.prog.parts[0].salt = { len: 0, colors: 4, scatter: 0 };   // "no rubato in A"
+        const m = E.getCfg();
+        eq('rubato/migrated off salt.len', m.prog.rubato, { amount: 65 });
+        eq('rubato/salt keeps its own axes', m.prog.salt, { colors: 2, scatter: 0 });
+        eq('rubato/salt.len is gone', 'len' in (m.prog.salt || {}), false);
+        // A part's explicit zero is MEANINGFUL and has to survive as an explicit
+        // zero, not as absence — absence would inherit the area's 65.
+        eq('rubato/a part zero migrates as explicit', (m.prog.parts[0] || {}).rubato, { amount: 0 });
+        eq('rubato/…and still means off', _ambRubatoAt(m, 0), 0);
+        eq('rubato/stamped v10', m.schemaVersion, 10);
+      }
+      delete cfg.prog.rubato;
+      cfg.prog.parts.forEach(x => { delete x.rubato; delete x.salt; });
+    }
+
+    // ---- 5i. EVERY POPOVER GROUP HAS A DOOR ---------------------------------
+    // A `data-pop="1"` group is PARKED HIDDEN in the pane and is visible only
+    // while lifted into its popover — so without a button on the Overview bar it
+    // is not merely hard to find, it is UNREACHABLE. ↔ Rubato shipped that way
+    // for an hour: the whole section existed, rendered and synced, and no door
+    // opened it. This is the structural version of "surface the UI", so it is a
+    // gate rather than a note: adding a pop group without its button now fails.
+    {
+      const cfg = baseProg([['Verse', 2], ['Chorus', 2]]);
+      cfg.bed.present = true;
+      E._cfg = E.getCfg();
+      E.inited = false; _ambientInit(E); _ambSyncControls(E);
+
+      const groups = [...document.querySelectorAll('.ambient-proggrp[data-pop="1"]')]
+        .map(g => g.id.replace(/^mix-bloom-proggrp-/, ''));
+      const doors = [...document.querySelectorAll('[data-pov^="grp:"]')]
+        .map(x => x.getAttribute('data-pov').slice(4));
+
+      eq('doors/there are pop groups to check', groups.length > 0, true);
+      // Both directions: a group with no button is unreachable, a button with no
+      // group opens nothing.
+      eq('doors/every pop group has a button', groups.filter(g => doors.indexOf(g) < 0), []);
+      eq('doors/every button has a group', doors.filter(d => groups.indexOf(d) < 0), []);
+      // …and every one of them has a TITLE, or the popover header shows a raw key.
+      eq('doors/every group has a title',
+        groups.filter(g => !_AMB_PROG_GRP_TITLES[g]), []);
     }
 
     // ---- 6. THE CELL PICKER ------------------------------------------------

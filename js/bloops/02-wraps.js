@@ -584,7 +584,72 @@
       if (!chords.length) return prog && prog.name ? prog.name : 'Prog';
       return chords.map(_wrapProgChordQuality).join('/');
     }
+    // ---- The AREA progression as a wrap bank -----------------------------
+    // The Prog banks above are the PUBLISHED library — a separate store that a
+    // progression only reaches by being exported. The set of changes you are
+    // actually working on lives on the area (`cfg.prog`), it is the one whose
+    // parts the whole app is organised around, and it was the one progression
+    // you could not play from the grid.
+    //
+    // Every chord of every part, in written order, each chip carrying the part
+    // it belongs to so the strip says which chords go with which part rather
+    // than being an undifferentiated run.
+    //
+    // NAMES AND STEPS ARE BOTH SHIFTED. `cfg.prog.chords` holds the WRITTEN
+    // chords and the engine re-roots the whole progression later (key transpose
+    // / section key / part key), so a bank built from the raw array would be
+    // named — and voiced — in a key the area does not sound in. That is the
+    // documented rule for every chord readout; here it has to reach the STEP as
+    // well, because this one is played.
+    function _wrapAreaChords() {
+      let E = null, cfg = null;
+      try { E = _masterEng; cfg = E && E.getCfg && E.getCfg(); } catch (e) { return []; }
+      const prog = cfg && cfg.prog;
+      if (!prog || !prog.on || !Array.isArray(prog.chords) || !prog.chords.length) return [];
+      let ranges = [];
+      try { ranges = _ambGridRanges(cfg) || []; } catch (e) { ranges = []; }
+      if (!ranges.length) return [];
+      let shift = 0;
+      try { shift = _ambProgViewShift(E, cfg, prog.chords) | 0; } catch (e) { shift = 0; }
+      const out = [];
+      ranges.forEach(r => {
+        let part = 'Part';
+        try { part = _ambPartLabel(cfg, r.pi); } catch (e) { part = 'Part ' + ((r.pi | 0) + 1); }
+        for (let k = 0; k < r.len; k++) {
+          const abs = r.from + k;
+          const ch = prog.chords[abs];
+          if (!ch) continue;
+          // A TRANSITION slot is a walk between two chords — it has no harmony
+          // of its own, so there is no wrap to make from it.
+          try { if (_ambIsTransition(ch)) continue; } catch (e) {}
+          let sh = ch;
+          try { sh = _ambChordShift(ch, shift) || ch; } catch (e) { sh = ch; }
+          const step = _wrapChordStepFromProgChord(sh);
+          if (!step) continue;
+          let nm = '';
+          try { nm = _ambChordShort(sh) || ''; } catch (e) { nm = ''; }
+          if (!nm) nm = _wrapProgChordName(sh);
+          out.push({ pi: r.pi, part, n: k + 1, of: r.len, abs, name: nm, step });
+        }
+      });
+      return out;
+    }
     function _wrapBankList() {
+      // Area progression: every part's chords, each chip tagged with its part.
+      if (wrapBank === 'area') {
+        const list = _wrapAreaChords();
+        if (list.length) {
+          return {
+            kind: 'area', readOnly: true,
+            chips: list.map(c => ({
+              key: 'area:' + c.abs, name: c.name,
+              label: c.part + ' · ' + c.n + '/' + c.of,
+              part: c.part, partIdx: c.pi, step: c.step,
+            })),
+          };
+        }
+        return { kind: 'area', readOnly: true, chips: [] };
+      }
       // Progression bank: wrapBank === 'prog:<id>'. Each chord in the published
       // progression becomes a read-only chip (armed via recallGeneratedWrap,
       // cycled like the Chords palette). Falls through to Chords if the prog is
@@ -656,6 +721,7 @@
 
     // Short bank name for the "Wraps" label.
     function _wrapBankLabel() {
+      if (wrapBank === 'area') return 'Area';
       if (typeof wrapBank === 'string' && wrapBank.indexOf('userprog:') === 0) {
         const uid = parseInt(wrapBank.slice(9), 10);
         const up = _wrapUserProgList().find(p => (p.id | 0) === uid);
@@ -1510,6 +1576,17 @@
       };
       // (The generated "Chords" palette bank was removed — User + Prog only.)
       addBankBtn('user', 'User' + (savedWraps.length ? ` (${savedWraps.length})` : ''));
+      // The area's OWN changes — every part's chords, playable from the grid.
+      // Offered whether or not it has any, because the empty state is the thing
+      // that says how to get some (a bank that only appears once it is populated
+      // cannot teach you it exists — the gate this file keeps re-learning).
+      {
+        const areaN = _wrapAreaChords().length;
+        const ab = addBankBtn('area', 'Area' + (areaN ? ` (${areaN})` : ''));
+        ab.title = areaN
+          ? areaN + ' chords across this area’s parts — grouped by part in the strip'
+          : 'This area has no progression yet';
+      }
       menu.appendChild(picker);
 
       // (The "Key" mirror section was removed — standard progressions are now
@@ -1809,6 +1886,10 @@
       // picker) reachable to switch back to a populated bank.
       bank.hidden = false;
       chipsEl.innerHTML = '';
+      // The Area bank's chips carry a chord NAME, not a bank letter, so they
+      // keep their width instead of collapsing to the 34px square the User
+      // bank's A/B/C chips are sized for.
+      chipsEl.classList.toggle('wb-area', data.kind === 'area');
 
       if (data.chips.length === 0) {
         // Only the (empty) User bank reaches here.
@@ -1816,7 +1897,9 @@
         empty.className = 'wrap-bank-empty';
         empty.textContent = (data.kind === 'user')
           ? 'No saved wraps yet'
-          : 'No chords for this bank';
+          : (data.kind === 'area')
+            ? 'This area has no progression — switch Progression on to play its chords here'
+            : 'No chords for this bank';
         chipsEl.appendChild(empty);
         if (wrapCycleMode) { wrapCycleMode = false; _wrapCyclePendingAdvance = false; }
         updateWrapCycleLabel();
@@ -1828,7 +1911,21 @@
         ? (data.chips.find(c => c.userId === activeWrapBankId) || {}).key
         : wrapGenActiveKey;
 
+      let lastPart = null;
       data.chips.forEach((entry) => {
+        // WHICH CHORDS GO WITH WHICH PART, said once per group rather than on
+        // every chip: a chip that has to spell its own part is too wide to scan,
+        // and the label inside it is hidden until the chip is armed. The
+        // separator is not a chip — it is skipped by `_wrapCycleChips`, which
+        // reads `data.chips`, so cycling still walks chords only.
+        if (entry.part && entry.part !== lastPart) {
+          lastPart = entry.part;
+          const sep = document.createElement('span');
+          sep.className = 'wrap-bank-part';
+          sep.textContent = entry.part;
+          sep.title = 'The chords of “' + entry.part + '”';
+          chipsEl.appendChild(sep);
+        }
         const chip = document.createElement('div');
         chip.className = 'wrap-bank-chip' + (entry.key === activeKey ? ' active' : '');
         chip.setAttribute('role', 'option');

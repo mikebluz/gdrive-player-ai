@@ -266,6 +266,56 @@
       try { return localStorage.getItem('lock-mode') === '1'; }
       catch (e) { return false; }
     })();
+    // THE GRID PLAYS THE LAYER'S INSTRUMENT while a Bloom ✎ Grid session is
+    // open. The scratch LANE already adopts the layer's Tone (`lane.voice`, set
+    // in `_ambGridEditStart`), but the lane voice governs LANE playback — it has
+    // nothing to do with the pad you actually press, which reads `cellParams[i]`,
+    // i.e. the WORKSPACE voice. So every audition sounded like the workspace and,
+    // worse, every step written carried `sound: <workspace type>` with it, since
+    // the same params object is stamped onto the step.
+    //
+    // One helper rather than a dozen edited call sites. It returns the LAYER'S
+    // OWN note params — tone, envelope and level-compensated volume — so what you
+    // hear on the pad is what the layer will play. A layer with no tone set
+    // (`''` = "whatever the grid uses") still falls back to the cell, the same
+    // rule `_ambGridEditStart` applies to the lane voice.
+    function _gridCellParams(i) {
+      const p = (typeof cellParams !== 'undefined' && cellParams[i])
+        ? { ...cellParams[i] } : { type: 'sine' };
+      try {
+        const ge = _bloomGridEdit;   // bare name: a top-level `let` in 17-ambient
+        if (!ge || !ge.E) return p;
+        const L = (typeof _ambLayerByKey === 'function') ? _ambLayerByKey(ge.E, ge.key) : null;
+        if (!L) return p;
+        // THE WHOLE VOICE, NOT JUST THE TONE. Overriding only `type` left the pad
+        // playing the grid CELL's envelope and full volume while the layer plays
+        // its own — measured at the master tap, the same note through the layer
+        // was 4.3 dB down at level 70 and still 2.9 dB down at level 100, with a
+        // 10 ms attack against the layer's 100 ms. That is the "press it and it's
+        // loud and present, play it back and it's quiet and weak" report, and it
+        // is not a level problem: the note params differ.
+        //
+        // So the audition is built the way the LAYER builds its notes
+        // (`_ambMotifParams` + `_ambApplyAdsr`), which is exactly what
+        // `_ambStepsToLock` will use for the composed phrase. A slow-attack layer
+        // therefore auditions slowly — that IS the layer, and hearing it while
+        // composing is the point; the previous compromise hid it until playback.
+        let q = null;
+        try { q = _ambApplyAdsr(_ambMotifParams(300, 0, L.tone), L); } catch (e) { q = null; }
+        if (!q) { const t = (typeof L.tone === 'string' && L.tone) ? L.tone : ''; if (t) p.type = t; return p; }
+        // …AND THE LEVEL, because the audition does NOT go through the layer's
+        // chain: playback multiplies these notes by `e.levelGain` (×1.3 at the
+        // default 70, ×4 at 100), so using the layer's raw staged volume here
+        // would swing the mismatch the other way and make the pad too quiet.
+        let g = 1;
+        try { g = _ambLevelGain(Number.isFinite(L.level) ? L.level : 70) || 1; } catch (e) { g = 1; }
+        q.volume = Math.max(1, Math.min(100, Math.round((q.volume || 32) * g)));
+        // Keep the CELL's bend/detune — the radial gesture writes it per press.
+        if (Number.isFinite(p.detune)) q.detune = p.detune;
+        return q;
+      } catch (e) {}
+      return p;
+    }
     // Keep toggle (the "Keep" button to the left of the BPM row): when
     // on, pressing a cell in the grid creates a step in the current
     // sequence (per the active note mode). When off (default), the note
@@ -293,6 +343,14 @@
     let performMic = false;
     let _performStartMs = null;
     let _performEmittedUnits = 0;
+    // WHERE the take lands. Null = append to the end of the phrase (the original
+    // behaviour, and what every non-Bloom take does). With a chord SCOPED in the
+    // compose strip, `_ambComposeRecordBegin` opens that chord's range and parks
+    // the cursor there so "record to the fourth chord" writes into the fourth
+    // chord; `_performScope` remembers the range so finalizing can fit the take
+    // back to the chord's own length.
+    let _performInsertAt = null;
+    let _performScope = null;
     // While a count-in click is playing, Perform is armed but not yet
     // capturing — presses still audition but aren't recorded until the
     // downbeat after the count-in.

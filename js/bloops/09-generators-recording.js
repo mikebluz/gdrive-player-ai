@@ -1212,15 +1212,95 @@
     // count via the spread-merge in the Save handler. JSON round-trip
     // is safe here because saved entries are pure data (no functions
     // or DOM refs).
+    // ---- SAVED-SEQUENCE NAMES ARE UNIQUE -----------------------------------
+    // A Bloom layer schedules a phrase BY NAME (`L.partSeqs` → `_ambBankByName`,
+    // which takes the FIRST match), so a second entry with the same name is
+    // unreachable forever: you can see its chip and tap it, and every mapping
+    // still plays the other one. That is a silent, permanent shadow, so the
+    // bank refuses to hold two — every writer goes through here.
+    //
+    // `skipIdx` is the entry being renamed or replaced, which must not count as
+    // a collision with itself.
+    function seqNameTaken(name, skipIdx) {
+      const n = String(name == null ? '' : name).trim();
+      if (!n) return false;
+      for (let i = 0; i < savedSequences.length; i++) {
+        if (i === skipIdx) continue;
+        const x = savedSequences[i];
+        if (x && x.name === n) return true;
+      }
+      return false;
+    }
+    // The name it can actually have: the one asked for, or that name with the
+    // lowest free counter. Suffixes with a SPACE ("motif3 2"), matching what
+    // saveAsNewSeq has always produced, so the two cannot drift.
+    function uniqueSeqName(base, skipIdx) {
+      let b = String(base == null ? '' : base).trim();
+      if (!b) b = seqName(savedSequences.length);
+      if (!seqNameTaken(b, skipIdx)) return b;
+      const stem = b.replace(/\s+\d+$/, '');            // "motif3 2" → "motif3"
+      for (let n = 2; n < 999; n++) {
+        const cand = stem + ' ' + n;
+        if (!seqNameTaken(cand, skipIdx)) return cand;
+      }
+      return b + ' ' + Date.now();
+    }
+    // ONE-TIME REPAIR on load. A bank saved before names were enforced can hold
+    // duplicates, and those entries are invisible to every mapping. Renaming the
+    // LATER copies changes nothing about what plays — a mapping resolves to the
+    // first match, which keeps its name — and makes the shadowed ones reachable.
+    function dedupeSavedSequenceNames() {
+      let fixed = 0;
+      const seen = Object.create(null);
+      for (let i = 0; i < savedSequences.length; i++) {
+        const x = savedSequences[i];
+        if (!x || typeof x.name !== 'string') continue;
+        if (seen[x.name]) { x.name = uniqueSeqName(x.name, i); fixed++; }
+        seen[x.name] = 1;
+      }
+      return fixed;
+    }
+    // ---- DELETING A BANKED PHRASE, from anywhere ----------------------------
+    // Two surfaces delete (the saved-block menu and the Sequences popover) and
+    // there is more to it than a splice: the active index shifts, track items
+    // that referenced it have to become silence, and — since a Bloom layer
+    // schedules a phrase BY NAME — every mapping that named it must be dropped,
+    // in EVERY area, or those cells point at nothing and the layer silently
+    // falls back to its own phrase with nothing saying why.
+    function deleteSavedSequence(seqIndex, opts) {
+      const i = seqIndex | 0;
+      const removed = savedSequences[i];
+      if (!removed) return null;
+      const o = opts || {};
+      const name = removed.name || '';
+      // ASK FIRST when something references it, and say what will be lost.
+      if (!o.silent) {
+        let warn = '';
+        try { warn = (typeof _ambSeqDeleteWarn === 'function') ? _ambSeqDeleteWarn(name) : ''; } catch (e) { warn = ''; }
+        const msg = 'Delete “' + name + '”?' +
+          (warn ? ('\n\nThis will also remove ' + warn + '. Layers that adopted it as their own phrase keep playing it — they hold their own copy.')
+                : '\n\nNothing is mapped to it.');
+        let ok = false;
+        try { ok = (typeof confirm === 'function') ? confirm(msg) : true; } catch (e) { ok = false; }
+        if (!ok) return null;
+      }
+      savedSequences.splice(i, 1);
+      if (activeSeqIndex === i) { activeSeqIndex = null; sequence = []; try { renderSequence(); } catch (e) {} }
+      else if (activeSeqIndex !== null && i < activeSeqIndex) { activeSeqIndex--; }
+      let dropped = 0;
+      try { if (name && typeof _ambSeqForget === 'function') dropped = _ambSeqForget(name); } catch (e) {}
+      try { if (name && typeof replaceMatchingTrackItemsWithSilent === 'function') replaceMatchingTrackItemsWithSilent(new Set([name])); } catch (e) {}
+      try { persistSaved(); } catch (e) {}
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      try { renderSavedSequences(); } catch (e) {}
+      return { name, dropped };
+    }
     function _cloneSavedSequence(seq) {
       if (!seq) return null;
       let copy;
       try { copy = JSON.parse(JSON.stringify(seq)); }
       catch (e) { return null; }
-      const base = (seq.name || '').replace(/\.\d+$/, '');
-      let n = 1;
-      while (savedSequences.some(s => s.name === `${base}.${n}`)) n++;
-      copy.name = `${base}.${n}`;
+      copy.name = uniqueSeqName((seq.name || '').replace(/\.\d+$/, ''), -1);
       return copy;
     }
     function currentSequenceSnapshot(extra = {}) {
@@ -1439,9 +1519,7 @@
           if (typeof persistWorkspace === 'function') persistWorkspace();
           return;
         }
-        let n = 2, cand = name + ' ' + n;
-        while (savedSequences.some(x => x && x.name === cand) && n < 999) { n++; cand = name + ' ' + n; }
-        name = cand;
+        name = uniqueSeqName(name, -1);
       }
       const _entry = { name, ...currentSequenceSnapshot() };
       savedSequences.push(_entry);
@@ -1639,7 +1717,7 @@
       const dataUrl = await blobToDataUrl(blob);
       const name = (suggestedName && suggestedName.trim()) || seqName(savedSequences.length);
       const entry = {
-        name,
+        name: uniqueSeqName(name, -1),
         type: 'audio',
         audioDataUrl: dataUrl,
         durationSec,
@@ -1669,7 +1747,7 @@
     function saveRecordingToLibrary(dataUrl, durationSec) {
       const name = seqName(savedSequences.length);
       const entry = {
-        name,
+        name: uniqueSeqName(name, -1),
         type: 'audio',
         audioDataUrl: dataUrl,
         durationSec,

@@ -441,6 +441,10 @@
       const addHandle = (cls, edge) => {
         const h = document.createElement('span');
         h.className = 'seq-resize-handle ' + cls;
+        // SAY WHAT IT IS. It rendered as an unexplained vertical line on every
+        // chip — "what are these vertical lines in steps" — and a control with
+        // no name is one nobody uses on purpose.
+        h.title = 'Drag to change this step\u2019s length. (Resize mode — switch the lane to Reorder to drag steps around instead.)';
         h.addEventListener('pointerdown', (e) => _startStepResize(chip, step, edge, e, h));
         chip.appendChild(h);
       };
@@ -3228,6 +3232,19 @@
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
 
+    // EVERY Perform capture goes through here, not straight to addToSequence: with
+    // a chord scoped in the compose strip the take is written INTO that chord's
+    // range instead of onto the end of the phrase. addToSequence clears
+    // `insertionPoint` after each call (one-shot insert by design), so the cursor
+    // is re-armed per step and advanced by however many steps actually landed.
+    function _performAddStep(step) {
+      if (_performInsertAt == null) { addToSequence(step); return; }
+      const at = Math.max(0, Math.min(sequence.length, _performInsertAt));
+      const n0 = sequence.length;
+      insertionPoint = at;
+      addToSequence(step);
+      _performInsertAt = at + Math.max(0, sequence.length - n0);
+    }
     // Step-div prompt for the Keep flow. Called after a note/chord is
     // appended in Spell or Stack mode while Keep is on. Skipped in Run
     // (arpeggio) mode per the user spec, and skipped while a session
@@ -3314,16 +3331,24 @@
     // the just-added note. The "Use for…" checkbox locks the chosen
     // value for the rest of the current Keep session so subsequent
     // notes don't re-prompt.
-    function showStepDivPicker(stepRef) {
+    // `opts` (optional): { title, onDone } — used by the click-a-step /
+    // click-a-note flow, which needs its own prompt and has to RELEASE the step
+    // afterwards whether a size was picked or the picker was dismissed. The
+    // pitch has already landed by then, so the step is populated either way and
+    // leaving it selected would make the next grid tap re-pitch it instead of
+    // moving on.
+    function showStepDivPicker(stepRef, opts) {
+      const _o = opts || {};
+      const _done = () => { try { if (typeof _o.onDone === 'function') _o.onDone(); } catch (e) {} };
       // Don't stack pickers — if one is already up, dismiss and the
       // newer note just keeps its default subdivision.
-      if (document.querySelector('.step-div-overlay')) return;
+      if (document.querySelector('.step-div-overlay')) { _done(); return; }
       const overlay = document.createElement('div');
       overlay.className = 'modal-overlay step-div-overlay';
       const modal = document.createElement('div');
       modal.className = 'step-div-modal';
       modal.innerHTML = `
-        <button type="button" class="sdiv-title-toggle" id="sdiv-title-toggle" aria-pressed="false" title="Tap to lock the next-picked size for the rest of this Keep session — no more re-prompting until Keep turns off.">Step size for this note</button>
+        <button type="button" class="sdiv-title-toggle" id="sdiv-title-toggle" aria-pressed="false" title="Tap to lock the next-picked size — no more re-prompting until Keep turns off.">${_o.title ? String(_o.title).replace(/[<>&]/g, '') : 'Step size for this note'}</button>
         <div class="sdiv-grid">
           <button type="button" class="sdiv-opt" data-sub="0.08333333333333333">1/32t</button>
           <button type="button" class="sdiv-opt" data-sub="0.125">1/32</button>
@@ -3372,6 +3397,7 @@
         }
         renderSequence();
         overlay.remove();
+        _done();
       };
       _wireSdivCustom(modal, _pickDiv);
       modal.querySelectorAll('.sdiv-opt').forEach(b => {
@@ -3392,7 +3418,7 @@
       // pick a size.
       requestAnimationFrame(() => {
         overlay.addEventListener('click', (e) => {
-          if (e.target === overlay) overlay.remove();
+          if (e.target === overlay) { overlay.remove(); _done(); }
         });
       });
     }

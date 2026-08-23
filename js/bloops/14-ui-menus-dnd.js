@@ -557,6 +557,11 @@
       savedSequences = Array.isArray(snap.savedSequences)
         ? snap.savedSequences.map(s => JSON.parse(JSON.stringify(s)))
         : [];
+      // A project saved before names were enforced can hold duplicates, and a
+      // duplicate is permanently unreachable (a layer schedules a phrase by
+      // NAME and the first match wins). Renaming the LATER copies changes
+      // nothing about what plays and makes the shadowed ones reachable.
+      try { if (typeof dedupeSavedSequenceNames === 'function') dedupeSavedSequenceNames(); } catch (e) {}
       persistSaved();
 
       // Tracks — dispose existing live audio nodes before swapping the
@@ -1246,6 +1251,7 @@
       modal.innerHTML = `
         <div class="sm-title">Rename sequence</div>
         <input type="text" class="rename-input" maxlength="40" />
+        <div class="sm-warn rename-warn" style="display:none"></div>
         <div class="sm-footer">
           <button type="button" class="sm-preview sm-cancel">Cancel</button>
           <button type="button" class="sm-apply sm-save">Save</button>
@@ -1257,15 +1263,31 @@
       input.value = seq.name;
       input.focus();
       input.select();
+      const warn = modal.querySelector('.rename-warn');
+      // REFUSE A DUPLICATE RATHER THAN SILENTLY SUFFIXING IT. A layer schedules
+      // a phrase by NAME, so two entries called the same thing leave the second
+      // permanently unreachable — but the user typed this name deliberately, and
+      // quietly storing something else is the worse surprise. Say it is taken,
+      // name the free one, keep the dialog open.
       const commit = () => {
         const newName = input.value.trim();
-        if (newName) {
-          savedSequences[seqIndex].name = newName;
-          persistSaved();
-          renderSavedSequences();
+        if (!newName) { overlay.remove(); return; }
+        if (newName !== savedSequences[seqIndex].name &&
+            typeof seqNameTaken === 'function' && seqNameTaken(newName, seqIndex)) {
+          const free = (typeof uniqueSeqName === 'function') ? uniqueSeqName(newName, seqIndex) : '';
+          warn.textContent = '“' + newName + '” is already in the bank. ' +
+            'Two phrases with one name means anything scheduled as “' + newName + '” plays the other one.' +
+            (free ? ' “' + free + '” is free.' : '');
+          warn.style.display = '';
+          input.focus(); input.select();
+          return;
         }
+        savedSequences[seqIndex].name = newName;
+        persistSaved();
+        renderSavedSequences();
         overlay.remove();
       };
+      input.addEventListener('input', () => { warn.style.display = 'none'; });
       modal.querySelector('.sm-save').addEventListener('click', commit);
       modal.querySelector('.sm-cancel').addEventListener('click', () => overlay.remove());
       input.addEventListener('keydown', (e) => {
@@ -1389,14 +1411,10 @@
         }
       }, 0) });
       actions.push('hr');
+      // ONE delete path (09) — it also drops the Bloom mappings that named this
+      // phrase, which a bare splice here left dangling in every area.
       actions.push({ label: 'Delete', danger: true, fn: () => {
-        const removed = savedSequences[seqIndex];
-        savedSequences.splice(seqIndex, 1);
-        if (activeSeqIndex === seqIndex) { activeSeqIndex = null; sequence = []; renderSequence(); }
-        else if (activeSeqIndex !== null && seqIndex < activeSeqIndex) { activeSeqIndex--; }
-        if (removed && removed.name) replaceMatchingTrackItemsWithSilent(new Set([removed.name]));
-        persistSaved();
-        renderSavedSequences();
+        try { deleteSavedSequence(seqIndex); } catch (e) {}
       } });
       return actions;
     }
@@ -5600,7 +5618,7 @@
     function polyStartCell(cellIdx, pointerId, opts = {}) {
       if (!notes[cellIdx]) return;
       const note = notes[cellIdx];
-      const params = { ...cellParams[cellIdx] };
+      const params = _gridCellParams(cellIdx);
       // Radial Tone overrides the cell's stored detune with a press-position-
       // derived value (see radialBendCents); subsequent pointermoves update
       // the live synth via the sustain handle.
@@ -5799,9 +5817,10 @@
       const unitMs = Math.max(1, (60000 / bpm) * unitSub);
       if (_performStartMs == null) {
         _performStartMs = Math.min.apply(null, live.map(v => v.pressStart)); _performEmittedUnits = 0;
-        // Listen mode: recording begins on this first note — start the lanes so
-        // the performance overdubs in time with the existing playback.
-        try { if (typeof playSequence === 'function') playSequence(); } catch (e) {}
+        // Listen mode: recording begins on this first note — start whichever
+        // transport owns the moment (the AREA in a compose session, the grid lanes
+        // otherwise) so the performance overdubs in time with what is playing.
+        try { _performStartTransport(); } catch (e) {}
       }
       // A perform "chord" is only notes pressed (near-)SIMULTANEOUSLY. Cluster the
       // session's voices by press time: notes within a tight window become a chord,
@@ -5825,7 +5844,7 @@
       clusters.forEach(cl => {
         const desiredStart = Math.max(0, Math.round((cl.startMs - _performStartMs) / unitMs));
         const restUnits = Math.max(0, desiredStart - _performEmittedUnits);
-        if (restUnits > 0) addToSequence({ freq: null, label: '—', cellIndex: null, duration: restUnits, subdivision: unitSub });
+        if (restUnits > 0) _performAddStep({ freq: null, label: '—', cellIndex: null, duration: restUnits, subdivision: unitSub });
         // Note length: a HOLD sizes by how long it was held (rounded to the
         // resolution grid). A quick TAP carries no length information — it
         // used to floor at ONE resolution unit, so with the default 1/16
@@ -5847,7 +5866,7 @@
           const v = cl.voices[0];
           step = { freq: v.freq, label: v.label, cellIndex: v.cellIndex, sound: v.sound, params: v.params ? { ...v.params } : undefined, duration: noteUnits, subdivision: unitSub };
         }
-        addToSequence(step);
+        _performAddStep(step);
         _performEmittedUnits = desiredStart + noteUnits;
       });
     }
@@ -5859,7 +5878,14 @@
       _polySession.pressed.clear();
       // Perform mode owns capture in default Sequencer mode: record the press
       // with timing instead of the normal Keep single/chord append below.
-      if (performMode && gridMode === 'sequencer' && !wrapTemplate && !chordMode && !stepMode && selectedStepRefs.length === 0) {
+      // NOT gated on an empty selection any more. That guard existed so the
+      // "click a step, click a note" re-pitch flow won over an append — but the
+      // grid's own click handler already bails outright on `performMode`, so
+      // there is no competing path once PERF is armed, and the guard's only
+      // remaining effect was to DROP the take whenever a chord was scoped in the
+      // compose strip (scoping IS a selection). "Record to the fourth chord"
+      // recorded nothing at all.
+      if (performMode && gridMode === 'sequencer' && !wrapTemplate && !chordMode && !stepMode) {
         // During a count-in the layer is armed but not yet recording. With
         // "Translate mic input" on, the MIC owns the take — grid presses
         // audition only (the hum is translated to steps at finalize).
@@ -6021,5 +6047,16 @@
       }
     });
 
+    // ONE-TIME REPAIR AT BOOT. localStorage can hold a bank saved before names
+    // were unique; a duplicate there is invisible to every layer mapping, so it
+    // is renamed once on load (later copies only — the first keeps its name, so
+    // nothing that plays today changes).
+    try {
+      if (typeof dedupeSavedSequenceNames === 'function') {
+        const _fixed = dedupeSavedSequenceNames();
+        if (_fixed) { try { persistSaved(); } catch (e) {}
+          try { console.info('[bloops] renamed ' + _fixed + ' duplicate saved-sequence name(s)'); } catch (e) {} }
+      }
+    } catch (e) {}
     renderSavedSequences();
 

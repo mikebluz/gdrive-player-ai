@@ -656,7 +656,7 @@
           // of the regular wrap / poly handlers below.
           if (_fixedSeqActive && stepMode && keepMode && notes[i]) {
             try {
-              const params = { ...cellParams[i] };
+              const params = _gridCellParams(i);
               const prev = _suppressCellFlash;
               _suppressCellFlash = true;
               try { playNote(notes[i].freq, params); }
@@ -666,8 +666,8 @@
               freq: notes[i].freq,
               label: notes[i].label,
               cellIndex: i,
-              sound: cellParams[i].type,
-              params: { ...cellParams[i] },
+              sound: params.type,
+              params: { ...params },
             };
             _fixedSeqWrite(step);
             return;
@@ -717,7 +717,7 @@
                 const _sci = _smartCells[_t];
                 const _n = notes[_sci];
                 if (!_n) continue;
-                const _p = { ...cellParams[_sci] };
+                const _p = _gridCellParams(_sci);
                 pendingChord.push({
                   freq: _n.freq, label: _n.label, cellIndex: _sci,
                   sound: _p.type, params: _p,
@@ -732,14 +732,14 @@
                 for (let _t = 0; _t < _smartCells.length; _t++) {
                   const _sci = _smartCells[_t];
                   const _n = notes[_sci];
-                  if (_n) playNote(_n.freq, { ...cellParams[_sci] });
+                  if (_n) playNote(_n.freq, _gridCellParams(_sci));
                 }
               } finally { _suppressCellFlash = _prevSuppress; }
               renderSequence();
               updateChordDisplay();
               return;
             }
-            const params = { ...cellParams[i] };
+            const params = _gridCellParams(i);
             // Wrap accumulation always builds the pending form (the
             // committed step becomes wrapTemplate regardless of Keep).
             // Keep only gates the sequence-append at commit time.
@@ -917,12 +917,18 @@
           // Arpeggio / Chord modes already played their audio on
           // pointerdown — don't append to the workspace sequence.
           if (gridMode !== 'sequencer') return;
+          // FILLING A SELECTED STEP IS NOT APPENDING, so it runs whatever Keep
+          // says. This is the whole "click a step, then click a note" flow —
+          // gating it on Keep is what made the two fight: it only worked with
+          // Keep on, and with Keep on every other tap appended a step as well.
+          const _fillSel = (typeof selectedStepRefs !== 'undefined' && Array.isArray(selectedStepRefs))
+            ? selectedStepRefs.filter(s => s && !s.isSub && !s.chord) : [];
           // Keep off: Spell-mode click event also bails out here. The
           // sustained-tap audio from pointerdown still played; this
           // gate just prevents the workspace mutation. ✎ Place mode passes
           // through — its cell click only ARMS (no mutation), and gating it
           // on Keep made PLACE look completely dead at the default Keep-off.
-          if (!keepMode && !(typeof placeMode !== 'undefined' && placeMode)) return;
+          if (!keepMode && !_fillSel.length && !(typeof placeMode !== 'undefined' && placeMode)) return;
           // Wrap template — pointerdown already auditioned the form
           // and (with Keep on) appended a transposed copy. Bail so
           // we don't also tack on a single-note step here.
@@ -936,7 +942,7 @@
           // through _gridChordPlayAt, so a click there should never append.
           if (typeof _progWrapActive === 'function' && _progWrapActive()) return;
           if (typeof currentProgression !== 'undefined' && currentProgression.length > 0) return;
-          const params = { ...cellParams[i] };
+          const params = _gridCellParams(i);
           // Audio already played via pointerdown/pointerup sustain. The
           // click handler only runs the workspace-mutation work.
           cell.classList.add('flash');
@@ -981,7 +987,64 @@
                 s.params    = { ...params };
               });
               renderSequence();
+              try {
+                if (typeof _bloomGridEdit !== 'undefined' && _bloomGridEdit) {
+                  document.querySelectorAll('.ambient-seedgrid-chords, .ambient-seedgrid-gran')
+                    .forEach(h => { h._sig = ''; });
+                  if (typeof _ambGridBarStrip === 'function') _ambGridBarStrip(_bloomGridEdit.E);
+                }
+              } catch (e2) {}
               _cellTapAdded = true; // covered — keep polyFinalizeSession out
+              // ASK HOW LONG, then RELEASE THE STEP. Four moves, in the order
+              // you would say them: pick the step, pick the note, say how long,
+              // done. Leaving it selected meant the next grid tap silently
+              // re-pitched the same step instead of moving on — which is what
+              // made this read as two features fighting rather than one flow.
+              // THE PITCH IS ALREADY ON THE STEP by this point (the loop above),
+              // and it must STAY there whatever the picker does — the bug was
+              // that a size pick appeared to discard it and the note only landed
+              // on a second press. So: re-assert the pitch when the size is
+              // chosen, then let the step go.
+              //
+              // A MULTI-selection is a bulk re-pitch and KEEPS its selection, so
+              // the next tap can keep shaping the same group.
+              if (editable.length === 1) {
+                const _step = editable[0];
+                const _pitch = { freq: notes[i].freq, label: notes[i].label, cellIndex: i,
+                                 sound: params.type, params: { ...params } };
+                const _finish = () => {
+                  try {
+                    // Re-assert — a size apply can rebuild a step (a Run wrap
+                    // spreads across subSteps), and the pitch must survive it.
+                    Object.assign(_step, _pitch);
+                    selectedStepRefs = [];
+                    if (typeof insertionPoint !== 'undefined') insertionPoint = null;
+                    renderSequence();
+                    // AND REPAINT THE COMPOSE STRIP. While ✎ Grid is open the
+                    // chips you are looking at are MIRROR CLONES of the real
+                    // lane; `renderSequence` rebuilds the lane, and the mirror is
+                    // only rebuilt by `_ambGridBarStrip` — which otherwise runs
+                    // off the viz frame, and that only re-arms while the
+                    // transport is going. Composing happens STOPPED, so the note
+                    // landed in the data and stayed invisible until some other
+                    // action happened to repaint: "I have to click it again or
+                    // click another step and it finally shows up."
+                    try {
+                      if (typeof _bloomGridEdit !== 'undefined' && _bloomGridEdit) {
+                        const _E2 = _bloomGridEdit.E;
+                        document.querySelectorAll('.ambient-seedgrid-chords, .ambient-seedgrid-gran')
+                          .forEach(h => { h._sig = ''; });
+                        if (typeof _ambGridBarStrip === 'function') _ambGridBarStrip(_E2);
+                        if (typeof _ambGridGranBar === 'function') _ambGridGranBar(_E2);
+                      }
+                    } catch (e2) {}
+                  } catch (e) {}
+                };
+                if (typeof showStepDivPicker === 'function') {
+                  try { showStepDivPicker(_step, { onDone: _finish, title: 'How long?' }); }
+                  catch (e) { _finish(); }
+                } else _finish();
+              }
             } else {
               // Nothing editable in the selection (e.g. only sub/chord steps);
               // fall back to the normal append behavior so the click does

@@ -931,6 +931,30 @@
       });
     })();
 
+    // IN A BLOOM COMPOSE SESSION THE TRANSPORT IS THE AREA, NOT THE GRID — and
+    // the check for that has to be "is a session open", not "is the area idle".
+    // The compose scratch lane is created MUTED, so starting the GRID lanes gives
+    // a record head sweeping a silent lane with nothing to play along to, which is
+    // exactly the "the record head runs over the chips… and no playback" report.
+    // The previous version started the area only when it was NOT already running
+    // and otherwise fell through to playSequence(), so arming PERF over a playing
+    // area took the wrong branch every time.
+    //
+    // Returns true when the AREA owns the transport (so callers know the grid
+    // lanes were deliberately left alone).
+    function _performStartTransport() {
+      const ge = (typeof _bloomGridEdit !== 'undefined') ? _bloomGridEdit : null;
+      if (ge && ge.E) {
+        try { if (!ge.E.timer && typeof _ambStartGenerator === 'function') _ambStartGenerator(ge.E); }
+        catch (e) {
+          console.warn('Perform: Bloom start failed', e);
+          if (typeof showToast === 'function') showToast('Perform: could not start the area — recording anyway, but you will not hear it play along.');
+        }
+        return true;
+      }
+      try { if (typeof playSequence === 'function') playSequence(); } catch (e) {}
+      return false;
+    }
     // ---- Perform button — real-time record-what-you-play mode ----
     // Pressing PERF (while idle) opens a config popover: choose a start mode
     // (Listen = wait for first note, or Count-in = N bars of click then
@@ -1012,7 +1036,7 @@
               const trig = Math.min(0.02, Math.max(0.01, _nf * 3));
               if (_performStartMs == null && !_performCountingIn && r.f > 0 && r.rms > trig) {
                 _performStartMs = tMs; _performEmittedUnits = 0;
-                try { if (typeof playSequence === 'function') playSequence(); } catch (e) {}
+                _performStartTransport();
               }
               rec.frames.push({ t: tMs / 1000, f: r.f, rms: r.rms });
               if (rec.frames.length > 4000) rec.frames.shift();   // ~2.3 min cap
@@ -1054,7 +1078,7 @@
           if (atMs + n.durMs <= anchorMs) return;   // hummed during the count-in
           const desiredStart = Math.max(0, Math.round((atMs - anchorMs) / unitMs));
           const restUnits = Math.max(0, desiredStart - _performEmittedUnits);
-          if (restUnits > 0) addToSequence({ freq: null, label: '—', cellIndex: null, duration: restUnits, subdivision: unitSub });
+          if (restUnits > 0) _performAddStep({ freq: null, label: '—', cellIndex: null, duration: restUnits, subdivision: unitSub });
           const noteUnits = Math.max(1, Math.round(n.durMs / unitMs));
           const midi = Math.round(_freqToMidi(n.f));
           // Land on a grid cell when the hummed pitch matches one, so the
@@ -1066,14 +1090,14 @@
               const gi = notes.findIndex(gn => gn && Number.isFinite(gn.freq) && Math.abs(_freqToMidi(gn.freq) - midi) < 0.5);
               if (gi >= 0) {
                 ci = gi; freq = notes[gi].freq; label = notes[gi].label;
-                if (typeof cellParams !== 'undefined' && cellParams[gi]) { params = { ...cellParams[gi] }; sound = params.type; }
+                if (typeof cellParams !== 'undefined' && cellParams[gi]) { params = _gridCellParams(gi); sound = params.type; }
               }
             }
           } catch (e) {}
           const step = { freq, label, cellIndex: ci, duration: noteUnits, subdivision: unitSub };
           if (sound) step.sound = sound;
           if (params) step.params = params;
-          addToSequence(step);
+          _performAddStep(step);
           _performEmittedUnits = desiredStart + noteUnits;
           added++;
         });
@@ -1100,6 +1124,22 @@
       const arm = (countInBars) => {
         performMode = true;
         _performEmittedUnits = 0;
+        // RECORD INTO THE SCOPED CHORD. With a chord scoped in the compose strip
+        // the take replaces that chord's steps instead of landing on the end of
+        // the phrase; with nothing scoped this is null and capture appends as it
+        // always did.
+        _performScope = null; _performInsertAt = null;
+        try {
+          const _geA = (typeof _bloomGridEdit !== 'undefined') ? _bloomGridEdit : null;
+          if (_geA && _geA.E && typeof _ambComposeRecordBegin === 'function') {
+            _performScope = _ambComposeRecordBegin(_geA.E);
+            if (_performScope) {
+              _performInsertAt = _performScope.at;
+              try { _ambComposeRepaint(_geA.E); } catch (e) {}
+              if (typeof showToast === 'function') showToast('Perform: recording into this chord — it will be replaced.');
+            }
+          }
+        } catch (e) { console.warn('Perform: compose scope failed', e); _performScope = null; _performInsertAt = null; }
         closePop();
         refresh();
         try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
@@ -1127,9 +1167,10 @@
             // Keep the click running through the take if Click is checked;
             // otherwise silence it (the count-in has served its purpose).
             if (!performClick) restoreMetro();
-            // Start the lanes the instant recording starts, so the take
-            // overdubs in time with playback.
-            try { if (typeof playSequence === 'function') playSequence(); } catch (e) {}
+            // Start the transport the instant recording starts, so the take
+            // overdubs in time with playback — the AREA in a compose session, the
+            // grid lanes otherwise (see _performStartTransport).
+            _performStartTransport();
             if (typeof showToast === 'function') showToast('Perform: recording…');
           }, Math.max(0, delayMs));
         } else {
@@ -1146,9 +1187,28 @@
         // Finalize a mic take BEFORE the flags reset — the translation
         // reads _performStartMs / _performEmittedUnits.
         try { _micFinalize(); } catch (e) { console.warn('Perform mic translate failed', e); }
+        // CLOSE THE SCOPED RANGE — fit the take back to the chord's own length and
+        // re-install the phrase — AFTER the mic translate, which writes through the
+        // same cursor, and BEFORE the flags reset.
+        try {
+          const _geD = (typeof _bloomGridEdit !== 'undefined') ? _bloomGridEdit : null;
+          if (_performScope && _geD && _geD.E && typeof _ambComposeRecordEnd === 'function') {
+            _ambComposeRecordEnd(_geD.E, _performScope, _performInsertAt == null ? _performScope.at : _performInsertAt);
+          }
+        } catch (e) { console.warn('Perform: compose scope close failed', e); }
+        _performScope = null; _performInsertAt = null;
+        try { insertionPoint = null; } catch (e) {}
         performMode = false; _performCountingIn = false;
         restoreMetro();
         closePop(); refresh();
+        // Composing happens STOPPED, and the strip's repaint rides the viz rAF —
+        // which only re-arms while the transport runs. Repaint by hand or the take
+        // lands in the data and stays invisible (and the real lane, rebuilt by
+        // renderSequence, sits un-parked under the strip as a block of dim rows).
+        try {
+          const _geR = (typeof _bloomGridEdit !== 'undefined') ? _bloomGridEdit : null;
+          if (_geR && _geR.E && typeof _ambComposeRepaint === 'function') _ambComposeRepaint(_geR.E);
+        } catch (e) {}
       };
 
       btn.addEventListener('click', (e) => {
@@ -1158,6 +1218,15 @@
         // Playback restarts when recording actually begins (first note /
         // post-count-in) so the take overdubs in sync.
         try { if (typeof stopSequence === 'function') stopSequence(); } catch (e) {}
+        // stopSequence re-renders the lane, and while a compose session is open
+        // (i.e. STOPPED — where composing happens) nothing repaints the strip: its
+        // repaint rides the viz rAF, which only re-arms while the transport runs.
+        // Without this the fresh, un-parked real lane appears as a block of dimmed
+        // rows below the strip the moment PERF is pressed.
+        try {
+          const _geP = (typeof _bloomGridEdit !== 'undefined') ? _bloomGridEdit : null;
+          if (_geP && _geP.E && typeof _ambComposeRepaint === 'function') _ambComposeRepaint(_geP.E);
+        } catch (e) {}
         if (pop && pop.hidden) openPop(); else closePop();
       });
       if (listenBtn) listenBtn.addEventListener('click', () => arm(0));

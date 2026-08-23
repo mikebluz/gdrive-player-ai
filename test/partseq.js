@@ -518,6 +518,31 @@ const CHROME = process.env.CHROME_PATH
       delete L.chordMask;
     }
 
+    // ---- 5d. PER-PASS SALT ---------------------------------------------------
+    // The arrangement salt axis gains its missing level: pass -> part -> area.
+    // Deliberately NOT per-layer — the colour pick hashes on (step, segIdx, seed)
+    // and not on the layer, which is why `layer.salt` was retired.
+    {
+      const cfg = baseProg([['A', 2], ['B', 2]]);
+      cfg.prog.salt = { len: 0, colors: 3, scatter: 0 };            // area
+      cfg.prog.parts[0].salt = { len: 0, colors: 5, scatter: 0 };   // part A
+      _ambGridStore(cfg, 0, true).cols = 3;
+      cfg.prog.parts[0].passSalt = { '1': { len: 0, colors: 0, scatter: 0 } };  // pass 2 OFF
+      cfg.bpm = 240; cfg.barsPerChord = 1;
+      E._cfg = E.getCfg(); E._progAnchor = 0; E._barGridAnchor = 0; E._playStartAt = 0;
+      const c2 = E._cfg, barSec = (60 / 240) * 4, at = (b2) => b2 * barSec;
+      const amt = (b2) => { const st = _ambProgStepAt(E, at(b2)) | 0;
+        const s2 = _ambPartSaltAt(c2, st); return s2 ? (s2.colors | 0) : -1; };
+      eq('passsalt/pass 1 takes the part', amt(0), 5);
+      eq('passsalt/pass 2 is explicitly OFF', amt(2), -1);
+      eq('passsalt/pass 3 takes the part again', amt(4), 5);
+      eq('passsalt/another part falls to the area', amt(6), 3);
+      // An explicit all-zero is MEANINGFUL ("off here") and must survive the
+      // normalize that rebuilds every part object from scratch.
+      eq('passsalt/survives normalize', (E.getCfg().prog.parts[0] || {}).passSalt,
+        { '1': { len: 0, colors: 0, scatter: 0 } });
+    }
+
     // ---- 6. THE CELL PICKER ------------------------------------------------
     // A cell is set from a LIST, not by rotating: rotation is unusable once the
     // bank grows. The menu must name the SCOPE it is editing and what blank

@@ -3110,6 +3110,23 @@
       // 8 is _AMB_GRID_COLS, inlined for the same reason the clamp above is.
       return (Object.keys(seq).length || out.fit || out.bars || cols !== 8) ? out : undefined;   // `len` is a stamp, never content
     }
+    // PER-PASS SALT on a part: { '<pass>': {len, colors, scatter} }. Absent =
+    // that pass inherits the part's own salt; an explicit all-zero object means
+    // "no salt on this pass", the same meaningful-zero `parts[i].salt` relies on
+    // — so it must NOT be pruned. Anything else empty is dropped, keeping one
+    // representation of "inherit".
+    function _ambPassSaltCoerce(v) {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+      const out = {};
+      Object.keys(v).forEach(k => {
+        const i = k | 0; if (!(i >= 0 && i < 64) || String(i) !== String(k)) return;
+        const o = v[k]; if (!o || typeof o !== 'object') return;
+        out[String(i)] = { len: Math.max(0, Math.min(100, o.len | 0)),
+                           colors: Math.max(0, Math.min(7, o.colors | 0)),
+                           scatter: Math.max(0, Math.min(100, o.scatter | 0)) };
+      });
+      return Object.keys(out).length ? out : null;
+    }
     function _ambRepairParts(parts, total) {
       if (!Array.isArray(parts) || !parts.length || total <= 0) return undefined;
       const out = []; let acc = 0;
@@ -3134,6 +3151,7 @@
                         colors: Math.max(0, Math.min(7, p.salt.colors | 0)),
                         scatter: Math.max(0, Math.min(100, p.salt.scatter | 0)) };
           }
+          { const _psx = _ambPassSaltCoerce(p.passSalt); if (_psx) e0.passSalt = _psx; }
           if (Number.isFinite(p.plays) && (p.plays | 0) > 1) e0.plays = Math.min(64, p.plays | 0);
           // HOLD is the part's own property, not something inferred from having
           // no changes. Both kinds are real and musically different:
@@ -3194,6 +3212,7 @@
                      colors: Math.max(0, Math.min(7, p.salt.colors | 0)),
                      scatter: Math.max(0, Math.min(100, p.salt.scatter | 0)) };
         }
+        { const _psx = _ambPassSaltCoerce(p.passSalt); if (_psx) e.passSalt = _psx; }
         if (p.key && typeof p.key === 'object' && Number.isFinite(p.key.root)) {
           const sc = (typeof SCALES !== 'undefined' && SCALES[p.key.scale]) ? p.key.scale : 'major';
           e.key = { root: (((p.key.root | 0) % 12) + 12) % 12, scale: sc };
@@ -4641,6 +4660,21 @@
       if (!parts || !prog.on) return base;
       const N = (Array.isArray(prog.chords) ? prog.chords : []).length; if (!N) return base;
       const pi = _ambPartSlotIndex(parts, ((step % N) + N) % N);
+      // THE PASS LEVEL, narrowest first. Only the slot walk knows which visit of
+      // the part this is, so it is read from the hint that walk stashed for THIS
+      // step; absent or stale → the part level answers exactly as before, which
+      // is what keeps every existing project and the arch gate byte-identical.
+      // Deliberately ARRANGEMENT-scoped and never per-layer: the colour pick
+      // hashes on (step, segIdx, seed) and not on the layer, which is why the old
+      // per-layer `layer.salt` was retired — it looked like an intensity control
+      // and could not be one.
+      const _ph = _ambProgPassHint;
+      if (_ph && _ph.step === step && _ph.pi === pi && parts[pi] && parts[pi].passSalt) {
+        const _pv = parts[pi].passSalt[String(_ph.pass | 0)];
+        if (_pv && typeof _pv === 'object') {
+          return (((_pv.len | 0) > 0) || ((_pv.colors | 0) > 0)) ? _pv : null;   // explicit all-zero = OFF on this pass
+        }
+      }
       const ps = (pi >= 0 && parts[pi]) ? parts[pi].salt : null;
       if (!ps || typeof ps !== 'object') return base;
       return (((ps.len | 0) > 0) || ((ps.colors | 0) > 0)) ? ps : null;   // explicit all-zero = OFF here
@@ -4791,6 +4825,14 @@
     // as it resolves each onset; _ambProgCurrentChord uses it only when the
     // step matches (a stale/absent hint → pos 0 = the plain written chord).
     let _ambProgPosHint = null;
+    // WHICH PART AND PASS the step just resolved belongs to. `_ambPartSaltAt`
+    // receives only a `step`, and the pass cannot be derived from one: a chain
+    // that revisits a part makes `step` repeat inside a single cycle (the
+    // documented non-monotonicity `_ambProgInstanceAt` exists to answer). The
+    // slot walk already knows it — `gs[gk]` carries `part` and `col` — so it is
+    // stashed here for THIS step, exactly as `_ambProgPosHint` is. Stamped with
+    // the step so a stale read is ignored rather than believed.
+    let _ambProgPassHint = null;
     // Bar-aligned chord step at an absolute onset time `atSec` (Tone seconds):
     //   floor(barsElapsed / barsPerChord), anchored at play start.
     // This is the per-ONSET replacement for the legacy ms `progStep`: resolving
@@ -5253,6 +5295,7 @@
           // chord (and a whole part) may recur inside one pass.
           _ambProgInstHint = gloops * gs.length + gk;
           _ambProgPosHint = { step: gstep, pos: Math.max(0, Math.min(1, grem / glenK)) };
+          _ambProgPassHint = { step: gstep, pi: gs[gk].pi | 0, pass: gs[gk].col | 0 };
           return gstep;
         }
       }

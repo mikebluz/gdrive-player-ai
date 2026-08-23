@@ -3517,9 +3517,6 @@
        of container overflow at 390px while `documentElement` reported none. */
     .ambient-prog-rubato { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 7px; }
     .ambient-prog-rubato .ambient-salt-in { width: 52px; background: #11111c; border: 1px solid #2d2d3f; border-radius: 6px; color: #cbd5e0; padding: 3px 5px; font-size: 0.8rem; }
-    .ambient-prog-rubato .ambient-rubato-grp.is-inert > .ambient-sched-lbl,
-    .ambient-prog-rubato .ambient-rubato-grp.is-inert > input { opacity: .45; }
-    .ambient-prog-rubato .rubato-na { color: #f6ad55; flex: 1 0 100%; white-space: normal; overflow-wrap: anywhere; }
     .ambient-prog-rubato .rubato-ladder { flex: 1 0 100%; margin-top: 2px; white-space: normal; overflow-wrap: anywhere; }
 
     .ambient-prog-salt .salt-ladder {

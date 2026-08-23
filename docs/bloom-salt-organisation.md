@@ -311,16 +311,45 @@ the axes the same way the migration does, and all 51 configs then matched the
 **untouched** baseline. No re-baseline was needed, which is a stronger result
 than re-recording one.
 
+### §9c — Rubato works under a Passes grid (2026-08-23)
+
+The plan's `cum` is the WRITTEN bar edges, memoised on `_ambGridSig` and
+cycle-independent by design — that caching took the clock from 0.375ms to
+0.0049ms, and it is exactly why Rubato was silent under a grid. So the edges got
+a **second, small memo**: `_ambGridCumAt(cfg, plan, loop)`. The slot expansion
+(the expensive half — up to `_AMB_GRID_MAX_SLOTS`, simulated until the state
+repeats) stays shared; only the edges re-derive, once per super-cycle.
+
+**Each part-visit — one pass — is re-sliced against its own subtotal**, exactly as
+`_ambProgSaltLensParted` does for a part. That is what keeps the arrangement
+still: every pass, and therefore the whole super-cycle, keeps its length, so the
+Scheduler lane, the bar counts and every phrase fit read the same numbers. Only
+where the chords fall *inside* a pass moves. Measured: pass lengths `[2,2,2,2]`
+identical across written / loop 0 / loop 1, super-cycle 8 → 8, edges moving
+inside, loops differing from each other.
+
+The total is the load-bearing invariant — `gloops` is derived from `plan.cycle`,
+so edges summing to anything else would walk the clock off its own grid.
+`_ambProgSaltLens` enforces a 1/8-bar minimum segment, which on a pathologically
+short pass could exceed the subtotal, so a drift over 1e-6 falls back to the
+written edges rather than drifting.
+
+`_ambRubatoInertWhy` and its UI marking are **deleted** — the marker was always
+meant to be removed by the fix, not kept beside it.
+
+**Gates:** two new arch configs, `grid-rubato` and `grid-rubato-part` (a part
+switching it off against an area that has it, under a grid) — appended at the END,
+since those configs are order-dependent. Every prior rubato config was grid-less
+and every grid config rubato-less, so the two axes could each stay green while
+their interaction was broken; the standing rule is to gate the COMBINATION.
+Poison-verified: putting the clock back on `plan.cum` fails both and nothing else.
+Clock cost measured unchanged (0.00227 → 0.00215 ms/call).
+
 ### Still open
 
-- **Make Rubato work under a grid.** `_ambGridPlan`'s `cum` is memoised on
-  `_ambGridSig`, which carries no seed and no salt — cycle-independent BY DESIGN
-  (that caching took the clock from 0.375ms to 0.0049ms). Either fold the cycle
-  into the memo key (bounded cache; the slot expansion, which is the expensive
-  part, stays shared) or split the plan into a cached structural half and a cheap
-  per-cycle length pass. A SOUND change for anyone currently running a grid with
-  Rubato set. `_ambRubatoInertWhy(cfg)` is the single place that decides the
-  control is inert, so it is also the thing to delete when this lands.
+- Nothing on the Rubato axis. Further TIMING variations now have a home beside
+  `amount` in the same store (anticipation, skipped changes, a swing on the
+  harmonic rhythm) — that was the reason for splitting rather than relabelling.
 - **The stores are still coupled at the part rung**: `parts[i].salt` holds `len`,
   `colors` and `scatter` in one object, so Inherit/Its own governs both axes
   together. The button says so. Splitting them is a migration, not a label.

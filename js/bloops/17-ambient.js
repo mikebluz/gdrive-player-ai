@@ -4761,22 +4761,11 @@
         return parts.some(pp => pp && (((pp.salt && (pp.salt.colors | 0) > 0)) || anyPass(pp.passSalt)));
       } catch (e) { return false; }
     }
-    // ↔ RUBATO IS INERT WHILE A PASSES GRID IS ENGAGED — measured, and it is the
-    // ONLY per-cycle axis that is. Colours, scatter, 🌊 vary, 🌡 tension, 🎲 take
-    // and ↻ order all resolve at read time in `_ambProgCurrentChord` and sail
-    // through; Rubato is decided in the walk, and under a grid `_ambProgStepAt`
-    // returns from `_ambGridPlan`'s cached `cum` edges without ever reaching
-    // `_ambProgSaltLensParted`. The plan is memoised on `_ambGridSig`, which
-    // carries no seed and no salt — cycle-independent BY DESIGN (that caching is
-    // what took the clock from 0.375ms to 0.0049ms), and Rubato varies per cycle.
-    // Returns the reason, or null when it applies. Display only.
-    function _ambRubatoInertWhy(cfg) {
-      try {
-        if (!cfg || !cfg.prog || !cfg.prog.on) return null;
-        if (!_ambGridOn(cfg)) return null;
-        return 'a Passes grid decides the bar edges, so chord lengths cannot move';
-      } catch (e) { return null; }
-    }
+    // `_ambRubatoInertWhy` LIVED HERE and is gone: ↔ Rubato was inert under a
+    // Passes grid because the clock returned from `_ambGridPlan`'s cached edges,
+    // and `_ambGridCumAt` now derives those edges per super-cycle. The marker was
+    // always meant to be deleted by the fix rather than kept beside it — a
+    // permanent "n/a" is a feature standing down for another.
     function _ambPartSaltAt(cfg, step) {
       // No per-layer branch: salt is defined once, by the Changes (or the part
       // that is playing). Which layers take it is _ambSaltFollowOK's job.
@@ -5218,6 +5207,74 @@
       _ambGridMemo = { sig, slots, cum, cycle: cum[slots.length] || 1 };
       return _ambGridMemo;
     }
+    // The rubato amount in force for one PLAYED SLOT. The slot knows its part
+    // outright, so this is exact where `_ambRubatoAt` has to derive it from a
+    // chord index; both read part → area.
+    function _ambRubatoForSlot(cfg, slot) {
+      const p = cfg && cfg.prog; if (!p) return 0;
+      const parts = Array.isArray(p.parts) ? p.parts : null;
+      const pr = (parts && slot && parts[slot.pi | 0]) ? parts[slot.pi | 0].rubato : null;
+      if (pr && typeof pr === 'object') return pr.amount | 0;
+      return (p.rubato && (p.rubato.amount | 0)) || 0;
+    }
+    // Everything the per-loop edges depend on that `_ambGridSig` does NOT carry.
+    // The plan's signature is deliberately structural — no seed, no salt — so a
+    // memo keyed on it alone would serve stale edges the moment an amount moved.
+    function _ambRubatoSig(cfg) {
+      const p = cfg && cfg.prog; if (!p) return '';
+      const parts = Array.isArray(p.parts) ? p.parts : [];
+      return ((p.rubato && (p.rubato.amount | 0)) || 0) + ':' +
+        parts.map(x => (x && x.rubato) ? (x.rubato.amount | 0) : '-').join(',');
+    }
+    // ---- ↔ RUBATO UNDER A PASSES GRID --------------------------------------
+    // The plan's `cum` is the WRITTEN bar edges, memoised on the grid signature
+    // and cycle-independent BY DESIGN — that caching is what took this clock from
+    // 0.375ms to 0.0049ms, and it is why rubato was silent under a grid at all.
+    // So the edges get a SECOND, small memo: the slot expansion (the expensive
+    // half — up to _AMB_GRID_MAX_SLOTS, simulated until the state repeats) stays
+    // shared, and only the edges re-derive per super-cycle.
+    //
+    // EACH PART-VISIT — one pass — IS RE-SLICED AGAINST ITS OWN SUBTOTAL, exactly
+    // as `_ambProgSaltLensParted` does for a part. That is what keeps the
+    // arrangement still: every pass, and so the whole super-cycle, keeps its
+    // length, and only where the chords fall INSIDE a pass moves. Anything else
+    // would move pass boundaries, which the Scheduler lane, the bar counts and
+    // every phrase fit read.
+    let _ambGridCumMemo = null;
+    function _ambGridCumAt(cfg, plan, loop) {
+      if (!plan) return null;
+      // Not engaged → the shared written edges, and not one byte of extra work.
+      if (!_ambProgSaltAnyLen(cfg)) return plan.cum;
+      const seed = cfg.seed | 0;
+      const key = plan.sig + '|' + (loop | 0) + '|' + seed + '|' + _ambRubatoSig(cfg);
+      if (_ambGridCumMemo && _ambGridCumMemo.key === key) return _ambGridCumMemo.cum;
+      const gs = plan.slots, n = gs.length;
+      const cum = new Float64Array(n + 1);
+      let i = 0, run = 0;
+      while (i < n) {
+        // `pFirst` marks the first slot of a part-visit, which is what a pass IS.
+        let j = i + 1;
+        while (j < n && !gs[j].pFirst) j++;
+        const lens = [];
+        for (let k = i; k < j; k++) lens.push(plan.cum[k + 1] - plan.cum[k]);
+        const amt = _ambRubatoForSlot(cfg, gs[i]);
+        // Per-run seed offset, so two visits of the same part in one super-cycle
+        // do not re-slice in lockstep — the same reasoning as the per-part offset.
+        const out = (amt > 0 && lens.length > 1)
+          ? _ambProgSaltLens(lens, loop, ((seed ^ ((run + 1) * 0x9E37)) >>> 0), amt)
+          : lens;
+        for (let k = 0; k < out.length; k++) cum[i + k + 1] = cum[i + k] + out[k];
+        i = j; run++;
+      }
+      // THE TOTAL IS THE INVARIANT the whole design rests on: `gloops` is computed
+      // from `plan.cycle`, so edges summing to anything else would walk the clock
+      // off its own grid. `_ambProgSaltLens` enforces a 1/8-bar minimum segment,
+      // which on a pathologically short pass can exceed the subtotal — fall back
+      // rather than drift.
+      if (Math.abs(cum[n] - (plan.cycle || 0)) > 1e-6) return plan.cum;
+      _ambGridCumMemo = { key, cum };
+      return cum;
+    }
     function _ambGridSlots(cfg) {
       if (!_ambGridOn(cfg)) return null;
       const p = cfg.prog, chords = p.chords;
@@ -5481,11 +5538,17 @@
           && cfg.prog.chords.length && _ambGridOn(cfg)) {
         const plan = _ambGridPlan(cfg);
         if (plan && plan.slots.length) {
-          const gs = plan.slots, cum = plan.cum;
+          const gs = plan.slots;
           const L = cfg.prog.chords.length;
+          // `gcycle` comes from the WRITTEN edges and never moves — rubato
+          // re-slices inside each pass and preserves every subtotal, so the
+          // super-cycle length is invariant and `gloops` is safe to derive first.
           const gcycle = plan.cycle || bpc;
           const gloops = Math.floor(bars / gcycle);
           const grem0 = bars - gloops * gcycle;
+          // …then bisect THIS super-cycle's edges. Absent rubato this is
+          // `plan.cum` itself, so the untouched path is byte-identical.
+          const cum = _ambGridCumAt(cfg, plan, gloops) || plan.cum;
           // BISECT the cumulative edges — the super-cycle can be well over a
           // thousand slots, and a linear walk here is what made this 0.375ms.
           let lo = 0, hi = gs.length - 1;
@@ -48042,33 +48105,16 @@
               const el = document.getElementById(tr(pr[0]));
               if (el && document.activeElement !== el) el.value = String(pr[1]);
             });
-            // ↔ Rubato lives in its OWN row now — same visibility rule, its own
-            // store, and it carries the inert marking (the Evolve-is-inert
-            // precedent: mark it and name the fix, never leave a control that
-            // silently does nothing).
+            // ↔ Rubato lives in its OWN row — same visibility rule, its own store.
             { const rRow = document.getElementById(tr('ambient-prog-rubatorow'));
               if (rRow) {
                 rRow.style.display = progOn ? '' : 'none';
                 const amt = (cfg.prog && cfg.prog.rubato && (cfg.prog.rubato.amount | 0)) || 0;
                 const inp = rRow.querySelector('#' + tr('ambient-rubato-amt'));
                 if (inp && document.activeElement !== inp) inp.value = String(amt);
-                const why = _ambRubatoInertWhy(cfg);
-                const grp = rRow.querySelector('.ambient-rubato-grp');
-                if (grp) grp.classList.toggle('is-inert', !!why);
-                let note = rRow.querySelector('.rubato-na');
-                if (why && !note) {
-                  note = document.createElement('span');
-                  note.className = 'ambient-hint rubato-na';
-                  rRow.appendChild(note);
-                }
-                if (note) {
-                  note.style.display = why ? '' : 'none';
-                  note.textContent = why ? ('n/a — ' + why) : '';
-                }
-                if (inp) inp.title = why
-                  ? ('NOT ACTIVE right now: ' + why +
-                     '. Set the pass count back to 1, or clear the Passes grid, to hear it.')
-                  : 'Each cycle re-slices the CHORD LENGTHS on a 1/8-bar grid. The cycle total is always preserved, so loops and Evolve stay aligned — only where the changes fall moves. 0 = as written, 100 = wild.';
+                if (inp) inp.title = 'Each cycle re-slices the CHORD LENGTHS on a 1/8-bar grid. '
+                  + 'The cycle total is always preserved — with a Passes grid, every PASS keeps its length too, '
+                  + 'so only where the changes fall inside a pass moves. 0 = as written, 100 = wild.';
               } }
             // ↻ order row: same visibility; mirror cfg.prog.order.
             { const orow = document.getElementById(tr('ambient-prog-orderrow'));
@@ -48572,8 +48618,8 @@
               '<span class="ambient-sched-lbl salt-lbl">\u2194 rubato</span>' +
               '<span class="ambient-sched-grp ambient-rubato-grp"><span class="ambient-sched-lbl">amount</span><input type="number" class="ambient-salt-in" id="ambient-rubato-amt" min="0" max="100" step="5" value="0" title="Each cycle re-slices the CHORD LENGTHS (A 1\u00bc bars, B \u00bd, C 1\u00be \u2026) on a 1/8-bar grid. The cycle total is ALWAYS preserved, so loops and Evolve stay aligned \u2014 only where the changes fall moves. AREA-WIDE by nature: this is the shared chord clock, so every layer agrees about which chord is sounding. 0 = as written, 100 = wild."></span>' +
               '<span class="ambient-hint rubato-ladder">The <b>area</b> default. A set of changes can carry its own ' +
-              '(\u270e Edit \u2192 Changes settings \u2192 Variation). Not set per pass \u2014 see the note below if a ' +
-              'Passes grid is running.</span>' +
+              '(\u270e Edit \u2192 Changes settings \u2192 Variation). Under a Passes grid every pass keeps its ' +
+              'LENGTH \u2014 only where the changes fall inside it moves.</span>' +
             '</div>' +
             _ambProgGrpClose() +
             _ambProgGrpOpen('order', '\u21bb Order', false, true) +

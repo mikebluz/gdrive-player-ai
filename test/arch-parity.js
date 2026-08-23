@@ -149,6 +149,21 @@ const CONFIGS = [
   { id: 'grid-chain-plays', chords: [0, 5, 7, 9],
     parts: [['Verse', 2, 2, null, null, { cols: 2, seq: { 1: [1] } }], ['Chorus', 2]],
     chain: [0, 1, 0] },
+  // ↔ RUBATO x A PASSES GRID — the COMBINATION, which nothing else here covers.
+  // Every existing rubato config (salt-len, salt-both, parts-salt) is grid-less
+  // and every grid config is rubato-less, so the two could each stay green while
+  // their interaction was broken — which it was: the clock returned from the
+  // plan's cached edges and rubato was silent under a grid. The standing rule is
+  // to gate the COMBINATION, not just the new axis.
+  // APPENDED AT THE END: these run sequentially against one cfg and are
+  // order-dependent, so inserting earlier drifts whatever follows.
+  { id: 'grid-rubato', chords: [0, 5, 7, 9],
+    parts: [['A', 2, 1, null, null, { cols: 2, seq: { 1: [1, 0] } }], ['B', 2]],
+    salt: { len: 80, colors: 0, scatter: 0 } },
+  // …and a part that switches it off against an area that has it, under a grid.
+  { id: 'grid-rubato-part', chords: [0, 5, 7, 9],
+    parts: [['A', 2, 1, null, { len: 0, colors: 0, scatter: 0 }, { cols: 2, seq: { 1: [1, 0] } }], ['B', 2]],
+    salt: { len: 80, colors: 0, scatter: 0 } },
 ];
 
 // The walk: 32 bars at a quarter bar. Long enough that part repeats, section

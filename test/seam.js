@@ -26,10 +26,26 @@ await pg.evaluate(()=>document.body.classList.add('view-mix'));
 const start = (opts) => pg.evaluate(async (opts) => {
   const E=_masterEng; const cfg=E.getCfg();
   cfg.prog = { on:1, name:'T', chords: (opts.bars||[1,1,1,1]).map((bars,i)=>({ root:[0,9,2,7][i], intervals:[0,4,7], ...(bars!==1?{bars}:{}) })) };
-  delete cfg.prog.parts;
-  if (opts.grid) cfg.prog.grid = opts.grid; else delete cfg.prog.grid;
+  // PARTS + PLAYS. This harness used to hard-delete parts, so every case was a
+  // part-less progression — which is exactly the axis a real project has and the
+  // reason the reported shape (two parts + plays + phrases + a Passes grid) was
+  // uncovered. Each axis was green while the COMBINATION was untested.
+  if (opts.parts) cfg.prog.parts = opts.parts.map(([name,len,plays]) => ({ name, len, ...(plays?{plays}:{}) }));
+  else delete cfg.prog.parts;
+  if (opts.grid) {
+    // With parts the grid lives on the PART, not on prog.
+    if (opts.parts) { cfg.prog.parts[opts.gridPart||0].grid = opts.grid; delete cfg.prog.grid; }
+    else cfg.prog.grid = opts.grid;
+  } else { delete cfg.prog.grid; if (cfg.prog.parts) cfg.prog.parts.forEach(x=>{ delete x.grid; }); }
   cfg.extras = []; (opts.layers||['motif']).forEach(t => _ambAddExtra(E, t));
   cfg.extras.forEach(x => { x.mute = 0; });
+  // PHRASES (partSeqs) — a banked phrase mapped onto passes. The bank has to be
+  // seeded before the layer reads it.
+  if (opts.phrases) {
+    savedSequences.length = 0;
+    Object.entries(opts.phrases.bank).forEach(([name, steps]) => savedSequences.push({ name, steps }));
+    cfg.extras.forEach(x => { x.partSeqs = JSON.parse(JSON.stringify(opts.phrases.map)); });
+  }
   E.inited=false; _ambientInit(E); _E=E;
   try { await Tone.start(); } catch(e){}
   try { await Tone.getContext().rawContext.resume(); } catch(e){}
@@ -48,8 +64,9 @@ const poll = () => pg.evaluate(() => {
     const at=ev.at!=null?ev.at:ev.time; if(at==null) return;
     const kk=at.toFixed(4); if(!(kk in H.seen[k])) H.seen[k][kk]=at; }));
   try { const w=_ambPartChordAt(E,cfg,now);
-    if (w && (w.pass!==H.last)) { H.last=w.pass;
-      H.edges.push({ t:+(now-H.t0).toFixed(3), pass:w.pass, pi:w.pi }); } } catch(e){}
+    const id = (w?w.pi:'-')+':'+(w?w.pass:'-');
+    if (w && (id!==H.last)) { H.last=id;
+      H.edges.push({ t:+(now-H.t0).toFixed(3), pass:id, pi:w.pi }); } } catch(e){}
   // the layer's own clock: when is its NEXT onset, and what does it think its period is?
   H.keys.forEach(k=>{ try {
     const c=E.clocks&&E.clocks[k];
@@ -70,14 +87,14 @@ const finish = () => pg.evaluate(() => {
       const e=H.edges[i], nx=H.edges[i+1];
       const lo=e.t, hi=nx?nx.t:1e9;
       const rel=on.filter(x=>x>=lo-1e-6&&x<hi).map(x=>+(x-lo).toFixed(3));
-      (byPass[e.pass]=byPass[e.pass]||[]).push({ at:lo, rel });
+      (byPass[e.pass]=byPass[e.pass]||[]).push({ at:lo, rel });   // e.pass is "pi:pass"
     }
     // compare consecutive occurrences of the SAME pass
     const diffs=[];
     Object.entries(byPass).forEach(([p,runs])=>{
       for (let i=1;i<runs.length;i++){
         const a=JSON.stringify(runs[i-1].rel), c=JSON.stringify(runs[i].rel);
-        if (a!==c) diffs.push({ pass:+p, at:runs[i].at, prev:runs[i-1].rel.slice(0,8), now:runs[i].rel.slice(0,8) });
+        if (a!==c) diffs.push({ pass:p, at:runs[i].at, prev:runs[i-1].rel.slice(0,8), now:runs[i].rel.slice(0,8) });
       }
     });
     out.layers[k]={ notes:on.length, first:on.slice(0,10),
@@ -88,10 +105,25 @@ const finish = () => pg.evaluate(() => {
   return out;
 });
 
+const PH = { bank: { riffA: [ {freq:220,duration:0.25,subdivision:1}, {freq:277,duration:0.25,subdivision:1},
+                              {freq:330,duration:0.25,subdivision:1}, {freq:440,duration:0.25,subdivision:1} ],
+                     riffB: [ {freq:196,duration:0.5,subdivision:1}, {freq:294,duration:0.5,subdivision:1} ] },
+             map: { 0: { all: 'riffA', '1:*': 'riffB' } } };
 const CASES = [
   ['motif, NO grid',   { bars:[1,1,1,1], layers:['motif'] }],
   ['motif, passes',    { bars:[1,1,1,1], grid:{ cols:3, seq:{ 1:[0,2], 2:[0,1,2] }, len:4 }, layers:['motif'] }],
   ['bed, passes',      { bars:[1,1,1,1], grid:{ cols:3, seq:{ 1:[0,2], 2:[0,1,2] }, len:4 }, layers:['bed'] }],
+  // THE REPORTED SHAPE: two parts, plays, phrases mapped onto passes, and a
+  // Passes grid — each axis was already covered somewhere, the combination by
+  // nothing.
+  ['2 parts + plays',        { bars:[1,1,1,1], parts:[['Verse',2,2],['Chorus',2]], layers:['motif'] }],
+  ['2 parts + passes',       { bars:[1,1,1,1], parts:[['Verse',2,2],['Chorus',2]],
+                               grid:{ cols:2, seq:{ 1:[1] }, len:2 }, layers:['motif'] }],
+  ['2 parts + phrases',      { bars:[1,1,1,1], parts:[['Verse',2,2],['Chorus',2]],
+                               phrases:PH, layers:['motif'] }],
+  ['2 parts + all of it',    { bars:[1,1,1,1], parts:[['Verse',2,2],['Chorus',2]],
+                               grid:{ cols:2, seq:{ 1:[1] }, len:2 }, phrases:PH,
+                               layers:['motif','bed'] }],
 ];
 for (const [name,opts] of CASES){
   await start(opts);

@@ -1561,6 +1561,11 @@
       if (playsI) playsI.addEventListener('change', () => {
         const v = Math.max(1, Math.min(36, parseInt(playsI.value, 10) || 1)); playsI.value = String(v);
         masterAmbient.plays = v;
+        // THE LAYER PLAYS MATRIX IS SIZED FROM THIS NUMBER, and it is written once
+        // when the card is built — so without an explicit repaint it goes on
+        // showing the old column count until something else rebuilds the card.
+        try { _masterEng._cfg = _masterEng.getCfg(); } catch (e) {}
+        try { _ambPartSeqMatrixSync(_masterEng); } catch (e) {}
         if (_viewIsPlaying()) { _masterEng._curPlays = _ambEffectivePlays(masterAmbient); _masterEng._orchDurSec = _ambAreaDurSec(_ambPlayCfg(_masterEng), _masterEng._curPlays); }
         try { persistWorkspace(); } catch (e) {}
       });
@@ -2863,8 +2868,40 @@
       if (seedName) { prog.seedName = String(seedName); prog.seedSig = _ambProgSig(prog.chords); }
       else { delete prog.seedName; delete prog.seedSig; }
     }
+    // An auto-generated progression NAME is a list of what the chords are
+    // ("Imaj7 — vi7 — ii — V"). Detect that shape so a stale one can be spotted:
+    // a list whose length disagrees with the chord count is describing a
+    // progression that no longer exists.
+    const _ambProgNameIsList = (nm) => String(nm || '').indexOf(' — ') >= 0;
+    function _ambProgNameFromChords(chords) {
+      const parts = (chords || []).map(c => {
+        try { return _ambIsTransition(c) ? '⇝' : (_ambChordShort(c) || '?'); } catch (e) { return '?'; }
+      });
+      return parts.join(' — ');
+    }
     function _ambNormalizeProgMeta(prog) {
       if (!prog || typeof prog !== 'object') return;
+      // KEEP AN AUTO-GENERATED NAME HONEST. `prog.name` is written once — when a
+      // progression is picked, generated, typed or exported — and NO chord-editing
+      // path updates it: not the editor's Save, not add/remove chord, not
+      // reharmonize, not deleting a part. So it goes wrong on the first edit and
+      // everything downstream inherits it, which is how a name listing four chords
+      // came to sit on a progression with one ("why would a prog name of 4 chords
+      // be 1 chord" — because nothing kept them in agreement).
+      //
+      // Only names that ARE a list are touched, and only when the count
+      // disagrees: an accurate list is left byte-identical, and a title someone
+      // chose ("Neon Nocturne") is never second-guessed. Runs in normalize, so it
+      // cannot drift again.
+      try {
+        if (_ambProgNameIsList(prog.name) && Array.isArray(prog.chords)) {
+          const segs = String(prog.name).split(' — ').length;
+          if (segs !== prog.chords.length) {
+            const fresh = _ambProgNameFromChords(prog.chords);
+            if (fresh) prog.name = fresh;
+          }
+        }
+      } catch (e) {}
       // PART CHAIN — the order the parts are PLAYED in, as indices into the
       // parts that occupy time. Absent = the written order (each part once,
       // times its `plays`), which is every existing project, so this is
@@ -2929,7 +2966,23 @@
         if (!Array.isArray(prog.parts)) {
           const _pg = _ambNormalizeGridObj(prog.grid, chords.length);
           if (_pg) prog.grid = _pg; else delete prog.grid;
-        } else if (prog.grid) { delete prog.grid; }
+        } else if (prog.grid) {
+          // MIGRATE IT, DON'T DROP IT. With no parts the pass count lives on
+          // `prog.grid`; the moment a part exists the store moves to
+          // `parts[i].grid`, and deleting the old one threw the user's setting
+          // away — reported as "I had Passes set to 2 and adding a part put it
+          // back to 8". The seeded part covers exactly the chords the part-less
+          // store was written against, so its grid is still true of them.
+          // A move is a delete plus an ADD; only the delete was here.
+          try {
+            const _p0 = (prog.parts || []).find(x => x && !x.open);
+            if (_p0 && !_p0.grid) {
+              const _mg = _ambNormalizeGridObj(prog.grid, Math.max(1, _p0.len | 0));
+              if (_mg) _p0.grid = _mg;
+            }
+          } catch (e) {}
+          delete prog.grid;
+        }
       }
       // VERSIONS (Feat 2b): whole-prog snapshots; coerce + cap; each carries its own parts.
       if (prog.versions != null && Array.isArray(prog.versions)) {
@@ -2998,6 +3051,29 @@
       if (!g || typeof g !== 'object' || !g.seq || typeof g.seq !== 'object') return undefined;
       const cols = Math.max(1, Math.min(64, (g.cols | 0) || 8));
       const N = Math.max(0, n | 0);
+      // A PASSES GRID IS ONLY MEANINGFUL OVER THE CHORDS IT WAS WRITTEN FOR.
+      // `seq` (and `bars`) index chords BY POSITION within the part, so the
+      // moment the part's chord count changes those positions mean something
+      // else. The old behaviour was to FILTER out-of-range indices, which turned
+      // an authored pass of [Am7, G7] into [Am7] — a pass silently playing one
+      // chord where two were written, with nothing to say why. Reported as "now
+      // it's only looping the first 3 chords" after editing parts.
+      //
+      // So the length it was authored against is stamped, and a change RESETS
+      // the schedule to the written order rather than mangling it. `cols` and
+      // `fit` survive — how many passes the part runs, and whether the cadence
+      // is a template, are both still true of the new chords.
+      //
+      // An existing grid carries no stamp; it gets one at its current length and
+      // is left alone, so nothing already authored is thrown away on upgrade.
+      if (Number.isFinite(g.len) && (g.len | 0) !== N) {
+        // `seq: {}` is NOT optional — this function's own first line drops any
+        // grid without one, so returning a bare {cols, len} threw the whole grid
+        // away on the NEXT normalize and the part silently lost its pass count.
+        const kept = { cols, seq: {}, len: N };
+        if (g.fit) kept.fit = 1;
+        return kept;
+      }
       const seq = {};
       for (let c = 0; c < cols; c++) {
         const row = g.seq[String(c)];
@@ -3008,7 +3084,7 @@
         if (written) continue;
         seq[String(c)] = cl;
       }
-      const out = { cols, seq };
+      const out = { cols, seq, len: N };
       if (g.fit) out.fit = 1;
       // Per-iteration lengths, parallel to each column's sequence. Clamped to the
       // cadence ladder's own range, so a grid can never state a length the cadence
@@ -3032,7 +3108,7 @@
       // NOT engage the clock: _ambGridOn still requires seq/fit/bars, so a grid
       // that only sets its width changes nothing about what plays.
       // 8 is _AMB_GRID_COLS, inlined for the same reason the clamp above is.
-      return (Object.keys(seq).length || out.fit || out.bars || cols !== 8) ? out : undefined;
+      return (Object.keys(seq).length || out.fit || out.bars || cols !== 8) ? out : undefined;   // `len` is a stamp, never content
     }
     function _ambRepairParts(parts, total) {
       if (!Array.isArray(parts) || !parts.length || total <= 0) return undefined;
@@ -4760,8 +4836,19 @@
       // or per-iteration lengths over the written order. Gating on `seq` alone
       // dropped exactly those — a lengths-only grid normalises its column away
       // (it IS the written order) and then measured as no grid at all.
+      // A PASS COUNT ON ITS OWN SAYS SOMETHING: "run this part N times". It used
+      // to be treated as inert — only an authored subset (`seq`), a cadence
+      // template (`fit`) or per-pass lengths (`bars`) engaged the grid clock — so
+      // setting Passes to 2 drew two columns, moved the playhead across them and
+      // changed NOTHING about what played. That is the "it's skipping the second
+      // pass" report: there was no second pass to skip.
+      //
+      // Width-only was deliberately inert once, to keep the v9 migration (which
+      // widens a part to the LCM of the layers' cycling lists) inaudible. That
+      // migration is long done; a control that does nothing is the worse of the
+      // two costs. A width of 1 still says nothing and stays inert.
       const live = (g) => !!(g && ((g.seq && Object.keys(g.seq).length) || g.fit
-        || (g.bars && Object.keys(g.bars).length)));
+        || (g.bars && Object.keys(g.bars).length) || _ambGridCols(g) > 1));
       if (live(p.arrGrid)) return true;
       if (!Array.isArray(p.parts)) return live(p.grid);
       return p.parts.some(x => x && live(x.grid));
@@ -4797,11 +4884,42 @@
     }
     // The part indices played in arrangement iteration `iter`. Absent = the chain
     // if there is one, else the written order — i.e. exactly today's behaviour.
-    function _ambArrGridSeq(cfg, iter, nParts) {
+    function _ambArrGridSeq(cfg, iter, nParts, ranges) {
       const p = cfg && cfg.prog, g = p && p.arrGrid;
       const dflt = () => {
         if (Array.isArray(p.chain) && p.chain.length) return p.chain.map(v => v | 0).filter(v => v >= 0 && v < nParts);
-        const a = []; for (let i = 0; i < nParts; i++) a.push(i); return a;
+        // A PART RUNS ITS PASSES BACK TO BACK, then the next part starts.
+        //
+        // This used to visit each part ONCE per iteration and let its column
+        // advance per visit, so two parts at two passes played
+        // `Verse1 Chorus1 Verse2 Chorus2` — interleaved. Every pass did occur
+        // (the clock was walked and verified), but that is not what "this part
+        // runs 2 passes" says to anyone, and it is indistinguishable from
+        // skipping whenever the columns hold the written order and therefore
+        // sound alike. Reported three times. The order is now
+        // `Verse1 Verse2 Chorus1 Chorus2`.
+        //
+        // A part is therefore visited `cols x plays` times: `cols` consecutive
+        // visits walk its columns 0..cols-1 (the column is `visit % cols`), and
+        // `plays` — Repeats — runs that whole cycle again, so 2 passes x 2
+        // repeats reads 1,2,1,2. The two axes still compose and neither has
+        // changed meaning; only the ORDER the default walk emits has.
+        //
+        // A CHAIN or a META GRID still wins: both state the order themselves,
+        // and this is only the default for a progression that states none.
+        const rg = ranges || (typeof _ambGridRanges === 'function' ? _ambGridRanges(cfg) : null);
+        const parts = Array.isArray(p.parts) ? p.parts : null;
+        const a = [];
+        for (let i = 0; i < nParts; i++) {
+          const r = rg && rg[i];
+          const pp = (parts && r && parts[r.pi]) || null;
+          let n = pp ? (pp.plays | 0) : 1; if (!(n > 0)) n = 1; if (n > 64) n = 64;
+          let cols = 1;
+          try { if (r) cols = Math.max(1, _ambPartPassCols(cfg, r.pi)); } catch (e) { cols = 1; }
+          const total = Math.min(64, n * cols);
+          for (let z = 0; z < total; z++) a.push(i);
+        }
+        return a;
       };
       if (!g || !g.seq) return dflt();
       const cols = _ambGridCols(g);
@@ -4887,7 +5005,7 @@
         const key = (it % arrCols) + '|' + visits.map((v, k) => v % partCols[k]).join(',');
         if (out.length && seen.has(key)) break;      // the super-cycle has closed
         seen.add(key);
-        _ambArrGridSeq(cfg, it, ranges.length).forEach(k => {
+        _ambArrGridSeq(cfg, it, ranges.length, ranges).forEach(k => {
           const r = ranges[k]; if (!r) return;
           const seq = _ambPartGridSeq(cfg, r.pi, visits[k], r.len);
           const visit = visits[k]; visits[k]++;
@@ -5304,9 +5422,37 @@
     // `grow` (optional) makes the column TIME-PROPORTIONAL: a chord lasting two
     // bars is twice as wide as one lasting one. Equal columns implied equal time,
     // which is wrong the moment a chord carries its own length.
-    function _ambMaskCellHtml(v, ci, title, si, grow) {
+    // ---- MASK STORES, reachable from any editor ---------------------------
+    // `chordMask` / `saltMask` / `sectionMask` were only ever written by the ⌗
+    // Matrix, through a resolver that read the layer off `row.dataset.lkey` and
+    // the mask kind off that grid's own mode toggle. Both facts are known
+    // directly wherever else these get edited, so the STORE access is what has to
+    // be shared, not the resolver. Sizing lives here too: chord/salt masks are
+    // sized to the WHOLE progression (their indices are absolute chord positions,
+    // never per-part offsets) and section masks to the sections.
+    function _ambMaskField(kind) {
+      return kind === 'salt' ? 'saltMask' : kind === 'section' ? 'sectionMask' : 'chordMask';
+    }
+    function _ambMaskRead(L, kind, i) {
+      const m = L && L[_ambMaskField(kind)];
+      const st = (m && Array.isArray(m.steps)) ? m.steps : null;
+      return st ? (Number.isFinite(st[i % st.length]) ? st[i % st.length] : 100) : 100;
+    }
+    function _ambMaskStore(cfg, L, kind) {
+      const N = (kind === 'section')
+        ? Math.max(1, (Array.isArray(cfg.sections) ? cfg.sections.length : 1))
+        : Math.max(1, (((cfg.prog && cfg.prog.chords) || []).length));
+      const f = _ambMaskField(kind);
+      const m = (L[f] && typeof L[f] === 'object') ? L[f] : (L[f] = {});
+      if (!Array.isArray(m.steps) || m.steps.length !== N) {
+        const o = Array.isArray(m.steps) ? m.steps : null;
+        m.steps = Array.from({ length: N }, (_, i) => o ? (Number.isFinite(o[i % o.length]) ? o[i % o.length] : 100) : 100);
+      }
+      return m;
+    }
+    function _ambMaskCellHtml(v, ci, title, si, grow, extra) {
       const n = Math.max(0, Math.min(100, v | 0));
-      return '<button type="button" class="ambient-pm-cell' + (n >= 70 ? ' pm-dark' : '') + (si != null ? ' pm-partcell' : '') + '" data-ci="' + ci +
+      return '<button type="button" class="ambient-pm-cell' + (n >= 70 ? ' pm-dark' : '') + (si != null ? ' pm-partcell' : '') + '"' + (extra || '') + ' data-ci="' + ci +
         (si != null ? '" data-si="' + si : '') +
         '" data-v="' + n + '" style="--pv:' + n + (grow ? ';flex-grow:' + grow : '') + '" title="' + title + '">' + _ambMaskCellTxt(n) + '</button>';
     }
@@ -5454,9 +5600,39 @@
       const _lb = Number.isFinite(L.id) ? (L.id | 0) : ({ bed: 0, motif: 101, texture: 211, beat: 307 }[L.type] || 0);
       const lid = (_lb + 1) * 13 + 7;
       const steps = Array.isArray(m.steps) ? m.steps : null;
-      if (steps && steps.length) {
+      // A PER-PASS OVERRIDE WINS OVER THE CHORD'S OWN DEFAULT. Resolved from the
+      // pass this note falls in, so "only the second time round" is expressible;
+      // absent (the overwhelmingly common case) costs one property read and the
+      // chord default applies exactly as before.
+      let p = null;
+      if (m.passes) {
+        try {
+          const cfg0 = cfg || _E._cfg || (_E.getCfg && _E.getCfg());
+          const w = cfg0 ? _ambPartChordAt(E, cfg0, atSec) : null;
+          if (w && w.pi >= 0) {
+            const cols = Math.max(1, _ambPartPassCols(cfg0, w.pi | 0));
+            const row = m.passes[String(((w.pass % cols) + cols) % cols)];
+            // DERIVE THE CHORD THE WAY THE GRID DOES, not from `ci`. `ci` comes
+            // from `sp.step`, the raw progression index; the cell is keyed on
+            // `rg.from + w.ci`, which is what `_ambPartSeqMatrixHtml` writes.
+            // Under parts those two are DIFFERENT numbers for the same sounding
+            // chord — measured `ci = 2` while the cell said absolute 0 — so the
+            // lookup missed every time and the gate silently fell through to the
+            // per-chord default. The renderer and the gate must reach the key by
+            // the same route or they cannot agree.
+            let _rg = null;
+            try { _rg = (_ambGridRanges(cfg0) || []).find(x => x.pi === w.pi); } catch (e2) { _rg = null; }
+            const _abs = _rg ? ((_rg.from | 0) + (w.ci | 0)) : ci;
+            const v = row && row[String(_abs)];
+            if (Number.isFinite(v)) p = Math.max(0, Math.min(100, v | 0));
+          }
+        } catch (e) { p = null; }
+      }
+      if (p == null && steps && steps.length) {
         const pv = steps[ci % steps.length];
-        const p = Number.isFinite(pv) ? Math.max(0, Math.min(100, pv)) : 100;
+        p = Number.isFinite(pv) ? Math.max(0, Math.min(100, pv)) : 100;
+      }
+      if (p != null) {
         if (p <= 0) return false;
         if (!hard && p < 100 && _ambChordHash01(sp.step + 1, lid) * 100 >= p) return false;
       }
@@ -5473,6 +5649,31 @@
       return true;
     }
     // Additive validation (kept OUT of layer defaults — the backfill trap).
+    // ---- PER-PASS CHORD MASK accessors -------------------------------------
+    // `chordMask.passes['<pass>']['<absChordIdx>'] = 0-100`. The chord index is
+    // ABSOLUTE — the same index `chordMask.steps` uses — because the store has no
+    // part dimension of its own: keying it on the chord's index WITHIN the part
+    // made pass 1 · chord 0 of the Verse and of the Chorus the SAME cell, so an
+    // edit aimed at one silenced the other. Absent = inherit the chord's default.
+    function _ambChordPassGet(L, pass, ciLocal) {
+      try {
+        const row = L && L.chordMask && L.chordMask.passes && L.chordMask.passes[String(pass | 0)];
+        const v = row && row[String(ciLocal | 0)];
+        return Number.isFinite(v) ? Math.max(0, Math.min(100, v | 0)) : null;
+      } catch (e) { return null; }
+    }
+    // `v === null` clears the override back to inherit. Prunes an empty row and
+    // an empty map, so "no override" has exactly one representation.
+    function _ambChordPassSet(L, pass, ciLocal, v) {
+      if (!L) return;
+      const cm = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
+      const ps = (cm.passes && typeof cm.passes === 'object') ? cm.passes : (cm.passes = {});
+      const pk = String(pass | 0), ck = String(ciLocal | 0);
+      if (v == null) { if (ps[pk]) { delete ps[pk][ck]; if (!Object.keys(ps[pk]).length) delete ps[pk]; } }
+      else { (ps[pk] || (ps[pk] = {}))[ck] = Math.max(0, Math.min(100, v | 0)); }
+      if (!Object.keys(ps).length) delete cm.passes;
+      if (!cm.steps && !cm.part && !cm.passes) delete L.chordMask;
+    }
     function _ambNormalizeChordMask(L) {
       if (!L || typeof L !== 'object') return;
       const m = L.chordMask;
@@ -5485,8 +5686,36 @@
         const place = (['start', 'center', 'end', 'random'].indexOf(part.place) >= 0) ? part.place : 'start';
         part = (size < 100) ? { size: size, place: place } : null;
       }
-      if (!steps && !part) { delete L.chordMask; return; }
-      L.chordMask = {}; if (steps) L.chordMask.steps = steps; if (part) L.chordMask.part = part;
+      // PER-PASS OVERRIDES — `passes['<pass>']['<chord>'] = 0-100`, sparse and
+      // absent-by-default. `steps` says how often a layer plays a chord AT ALL;
+      // this says it for ONE pass, which is the axis `steps` has never had ("play
+      // the bass on the turnaround only the second time round"). Narrowest wins:
+      // pass cell → `steps[ci]` → 100, the absent-is-inherit grammar the salt,
+      // the masks and `partSeqs` all use. A value equal to the chord's own
+      // default says nothing and is dropped, so absence has one representation.
+      let passes = null;
+      if (m.passes && typeof m.passes === 'object') {
+        const out = {};
+        Object.keys(m.passes).forEach(pk => {
+          const pi = pk | 0; if (!(pi >= 0 && pi < 64)) return;
+          const row = m.passes[pk]; if (!row || typeof row !== 'object') return;
+          const cells = {};
+          Object.keys(row).forEach(ck => {
+            const ci = ck | 0; if (!(ci >= 0 && ci < 512)) return;   // ABSOLUTE chord index — spans the whole progression
+            const v = row[ck]; if (!Number.isFinite(v)) return;
+            const n = Math.max(0, Math.min(100, v | 0));
+            const dflt = steps ? (Number.isFinite(steps[ci % steps.length]) ? steps[ci % steps.length] : 100) : 100;
+            if (n !== dflt) cells[String(ci)] = n;
+          });
+          if (Object.keys(cells).length) out[String(pi)] = cells;
+        });
+        if (Object.keys(out).length) passes = out;
+      }
+      if (!steps && !part && !passes) { delete L.chordMask; return; }
+      L.chordMask = {};
+      if (steps) L.chordMask.steps = steps;
+      if (part) L.chordMask.part = part;
+      if (passes) L.chordMask.passes = passes;
     }
     // ---- SECTIONS (sets of bars — the arrangement level) -------------------
     // cfg.sections = [{ id, name, bars }] — an ordered, CYCLING list of named
@@ -7557,6 +7786,43 @@
     // A part is a contiguous run of `len` chords; index arithmetic stays ABSOLUTE
     // everywhere (the chord-matrix doctrine) so setters need no offset maths.
     function _ambPeParts(ed) { return (ed && Array.isArray(ed.parts) && ed.parts.length > 1) ? ed.parts : null; }
+    // A progression with no chain still has a NAME, and it is the one the user
+    // gave it — never the auto-derived roman-numeral list (`Imaj7 — vi7 — …`),
+    // which is long, ellipses to nothing, and names nothing. `_ambProgNameIsList`
+    // is the same test `_ambNormalizeProgMeta` uses to decide the field is
+    // derived rather than authored, so the two can never disagree about it.
+    // The fallback is the PART NAME the ▦ Passes tabs already use ("Part 1"), not
+    // "The changes" — which was asked for repeatedly and is the right call: two
+    // surfaces naming one thing two ways is the ambiguity. `_AMB_SOLO_PART` is
+    // the single spelling of it.
+    const _AMB_SOLO_PART = 'Part 1';
+    // WHAT TO CALL PART `pi` — its own name, else the progression's when there is
+    // only one set of changes, else the positional fallback. Every display that
+    // hand-wrote `parts[i].name || ('Part ' + (i+1))` skipped the middle case, so
+    // a renamed part-less progression showed as "Part 1" on the Sequences chips
+    // while the compose strip beside them read its real name. One helper.
+    function _ambPartLabel(cfg, pi) {
+      const p = cfg && cfg.prog;
+      const parts = (p && Array.isArray(p.parts) && p.parts.length) ? p.parts : null;
+      const own = parts && parts[pi] && typeof parts[pi].name === 'string' ? parts[pi].name.trim() : '';
+      if (own) return own;
+      if (!parts) return _ambProgTitle(p && p.name);
+      return 'Part ' + ((pi | 0) + 1);
+    }
+    function _ambProgTitle(nm) {
+      const s0 = String(nm == null ? '' : nm).trim();
+      return (!s0 || _ambProgNameIsList(s0)) ? _AMB_SOLO_PART : s0;
+    }
+    function _ambPeProgName(ed) { return _ambProgTitle(ed && ed.name); }
+    // "Changes N" for the next set, skipping any number already taken — so
+    // adding, deleting and adding again cannot mint a duplicate name.
+    function _ambPeNewPartName(parts) {
+      const used = new Set((parts || []).map(p => String((p && p.name) || '')));
+      for (let n = (parts ? parts.length : 1) + 1; n < 200; n++) {
+        const nm = 'Changes ' + n; if (!used.has(nm)) return nm;
+      }
+      return 'Changes';
+    }
     function _ambPePartRange(ed, pi) {
       const ps = _ambPeParts(ed); if (!ps || pi < 0 || pi >= ps.length) return { from: 0, to: ed.chords.length };
       let from = 0; for (let i = 0; i < pi; i++) from += Math.max(1, ps[i].len | 0);
@@ -7720,11 +7986,25 @@
           '<span class="pe-partgrp-hint">' + (_uni ? ('all ' + _cb.length + ' chord' + (_cb.length === 1 ? '' : 's')) : (new Set(_cb).size + ' different lengths')) + '</span>' +
           '</div>';
       };
+      // With no chain there is no "Changes settings" section, so ✂ Split lived
+      // nowhere — which is why ＋ Changes used to BE the splitter, and why
+      // pressing "add" divided the chords you already had. Now that ＋ adds, the
+      // split needs its own home in that state too, or the operation is
+      // unreachable until a chain exists (and the only way to make one would be
+      // the button that no longer makes one).
+      const _soloBarHtml = () => {
+        const canSplit = ed.chords.length >= 2;
+        return '<div class="pe-partbar pe-partbar-solo">' + _quickLenHtml() +
+          '<div class="pe-partgrp"><span class="pe-partgrp-lbl">Divide</span>' +
+          '<button type="button" class="pe-partbtn" data-pe="partadd"' + (canSplit ? '' : ' disabled') +
+          ' title="' + (canSplit ? 'Divide these chords in two at the chord you have selected \u2014 the chords from the selection onward become a second set'
+                                 : 'Add a second chord first \u2014 there is nothing to divide') + '">\u2702 Split at selection</button></div></div>';
+      };
       const partTabs = (function () {
         if (!_peParts) {
           // No chain yet — still offer the one action that starts one.
           return '<div class="pe-parts"><span class="pe-parts-lbl" title="CHANGES are a named run of chords — Verse changes, Chorus changes — with their own repeat count, key and salt. Sections are the other axis: named runs of BARS that decide who plays.">Changes</span>' +
-            '<button type="button" class="pe-parttab pe-parttab-add" data-pe="partadd" title="Split into two sets of changes at the chord you have selected">＋ Changes</button></div>';
+            '<button type="button" class="pe-parttab pe-parttab-add" data-pe="partnew" title="Add a SECOND set of changes, starting with one new chord. Your existing chords all stay in the first set — to divide these chords instead, use ✂ Split at selection.">＋ Changes</button></div>';
         }
         let h = '<div class="pe-parts">';
         _peParts.forEach((pt, i) => {
@@ -7733,7 +8013,7 @@
           h += '<button type="button" class="pe-parttab' + (ed.part === i ? ' on' : '') + '" data-pe="part:' + i + '" title="' + esc(pt.name || ('Changes ' + (i + 1))) + ' — ' + (r.to - r.from) + ' chord' + ((r.to - r.from) === 1 ? '' : 's') + (plays > 1 ? ', plays ' + plays + '×' : '') + '">' +
             esc(pt.name || ('Changes ' + (i + 1))) + (plays > 1 ? '<i class="pe-parttab-x">×' + plays + '</i>' : '') + '</button>';
         });
-        h += '<button type="button" class="pe-parttab pe-parttab-add" data-pe="partadd" title="Add a new set of changes after this one">＋</button></div>';
+        h += '<button type="button" class="pe-parttab pe-parttab-add" data-pe="partnew" title="Add a new set of changes after this one, starting with one new chord. No existing chord moves — to divide THIS set instead, use ✂ Split at selection.">＋</button></div>';
         // Controls for the ACTIVE part: name, how many times it runs, and its salt.
         if (ed.part >= 0 && _peParts[ed.part]) {
           const pt = _peParts[ed.part], plays = Math.max(1, (pt.plays | 0) || 1);
@@ -7864,8 +8144,19 @@
       const curRoot = (((tgt.root | 0) % 12) + 12) % 12;
       const curQual = _ambPeQualityOf(tgt);
       const digIn = !!ed._digIn;
-      const rootBtns = _AMB_CHROM.map((nm, pc) => '<button type="button" class="pe-root' + (pc === curRoot ? ' sel' : '') + (showScale ? (_ambPeInScale(pc, kRoot, kScale) ? ' r-in' : ' r-out') : '') + '" data-pe="setroot:' + pc + '" title="Root ' + esc(nm) + (showScale ? (_ambPeInScale(pc, kRoot, kScale) ? ' · in key' : ' · out of key') : '') + '">' + esc(nm) + '</button>').join('');
-      const qButtons = _AMB_PE_QUALITIES.map(q => '<button type="button" class="pe-q' + (q[0] === curQual ? ' sel' : '') + '" data-pe="qual:' + q[0] + '">' + q[0] + '</button>').join('');
+      // ROOT and QUALITY are SELECTS, not chip rows. Twelve roots plus fifteen
+      // qualities is 27 buttons, all lit, all the same size — "noisy and hard on
+      // the eyes", and on a phone they wrapped into five dense rows for a
+      // question with exactly one answer each. A select states the current value
+      // in one line and hides the rest until asked. The in-key colouring the
+      // chips carried survives as a marker in the option TEXT (◈ / ·), since
+      // option styling is not reliable across platforms.
+      const rootSel = '<select class="ambient-select pe-rootsel" id="pe-rootsel" title="The chord\u2019s root note">' +
+        _AMB_CHROM.map((nm, pc) => '<option value="' + pc + '"' + (pc === curRoot ? ' selected' : '') + '>' +
+          esc(nm) + (showScale ? (_ambPeInScale(pc, kRoot, kScale) ? ' \u25c8' : ' \u00b7') : '') + '</option>').join('') + '</select>';
+      const qualSel = '<select class="ambient-select pe-qualsel" id="pe-qualsel" title="The chord\u2019s quality \u2014 which notes sit above the root">' +
+        (curQual ? '' : '<option value="" selected>custom</option>') +
+        _AMB_PE_QUALITIES.map(q => '<option value="' + esc(q[0]) + '"' + (q[0] === curQual ? ' selected' : '') + '>' + esc(q[0]) + '</option>').join('') + '</select>';
       // Alternates row — the base chord (◆) + each alternate (◇) as selectable edit
       // targets; a mode toggle (cycle/random) appears once there's ≥1 alternate.
       const altChip = (glyph, j, active, chObj) =>
@@ -7888,11 +8179,28 @@
       // A TRANSITION slot has no harmony to edit — only how long the walk is. Show
       // that instead of the note/quality/alternates machinery, which would
       // otherwise operate on a chord with no root and write one into it.
+      // TITLE = what you are editing, BY NAME, plus the way to change that name.
+      // With a chain the part tabs carry the name; with a SINGLE set of changes
+      // there are no tabs and no "Changes settings" section, so nothing on
+      // screen said what this progression was called and nothing could rename
+      // it — a control that is absent in the common state cannot be found.
+      const _peTitle = (() => {
+        const base = esc((ed.target && ed.target.label) || 'Edit progression');
+        const ps = _ambPeParts(ed);
+        const pi = Math.max(0, ed.part | 0);
+        let nm = '', act = '';
+        if (ps && ps[pi]) { nm = ps[pi].name || ('Changes ' + (pi + 1)); act = 'partren:' + pi; }
+        else { nm = _ambPeProgName(ed); act = 'progren'; }
+        return '<div class="pe-title">' + base +
+          '<span class="pe-title-nm" title="What these changes are called">' + esc(nm) + '</span>' +
+          '<button type="button" class="pe-title-ren" data-pe="' + act + '" title="Rename these changes">\u270e Rename</button>' +
+          '</div>';
+      })();
       if (_ambIsTransition(ch)) {
         host.innerHTML =
-          '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
+          _peTitle +
           partTabs + (partBar ? secWrap('part', 'Changes settings', partBar, pnmSum)
-                               : (_quickLenHtml() ? '<div class="pe-partbar pe-partbar-solo">' + _quickLenHtml() + '</div>' : '')) +
+                               : _soloBarHtml()) +
           secWrap('chords', 'Chords', '<div class="pe-chords">' + chordsRow + '</div>' +
           '<div class="pe-chordhdr">Transition ' + (sel + 1) + ' of ' + ed.chords.length +
             '<span class="pe-chordops"><button type="button" class="pe-x" data-pe="rmchord" title="Remove this transition"' + (ed.chords.length <= 1 ? ' disabled' : '') + '>✕ remove</button></span></div>' +
@@ -7908,9 +8216,9 @@
         return;
       }
       host.innerHTML =
-        '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
+        _peTitle +
         partTabs + (partBar ? secWrap('part', 'Changes settings', partBar, pnmSum)
-                             : (_quickLenHtml() ? '<div class="pe-partbar pe-partbar-solo">' + _quickLenHtml() + '</div>' : '')) +
+                             : _soloBarHtml()) +
         secWrap('chords', 'Chords', '<div class="pe-chords">' + chordsRow + '</div>' +
         '<div class="pe-chordhdr">Chord ' + (sel + 1) + ' of ' + ed.chords.length + (ed.altSel >= 0 ? ' <span class="pe-editing-alt">· editing alt ' + (ed.altSel + 1) + '</span>' : '') +
           '<span class="pe-chordops">' +
@@ -7921,8 +8229,9 @@
         '<div class="pe-lenrow"><label>Chord length</label>' +
           '<input type="text" id="pe-len" value="' + (ch.bars > 0 ? esc(_ambFmtBpc(ch.bars)) : '') + '" placeholder="' + esc(gbpcStr) + '" title="How long THIS chord lasts, in bars (1, 1/2, 8/7…). Blank = ' + esc(gbpcStr) + ' bar (default)." />' +
           '<span class="pe-lenhint">bars — blank = ' + esc(gbpcStr) + ' (default)</span></div>' +
-        '<div class="pe-pickrow"><label>Root</label><span class="pe-roots">' + rootBtns + '</span></div>' +
-        '<div class="pe-qrow"><label>Quality</label>' + qButtons + '</div>' +
+        '<div class="pe-pickrow"><label>Root</label>' + rootSel +
+          (showScale ? '<span class="pe-pickhint" title="\u25c8 marks a root that is in the area key">\u25c8 in key</span>' : '') + '</div>' +
+        '<div class="pe-qrow"><label>Quality</label>' + qualSel + '</div>' +
         '<div class="pe-nudgerow"><label>Nudge chord</label>' +
           '<button type="button" data-pe="trdn" title="Down a semitone (chromatic)">◀ ½ step</button>' +
           '<button type="button" data-pe="trup" title="Up a semitone (chromatic)">½ step ▶</button>' +
@@ -7978,6 +8287,10 @@
     function _ambPeWireFooter(host, ed) {
       // (the name field was removed — `ed.name` carries the CURRENT progression's
       // name through Save unchanged; Export is where a name is chosen.)
+      const rs = host.querySelector('#pe-rootsel');
+      if (rs) rs.addEventListener('change', () => { _ambPeAct('setroot:' + (parseInt(rs.value, 10) | 0)); });
+      const qs = host.querySelector('#pe-qualsel');
+      if (qs) qs.addEventListener('change', () => { if (qs.value) _ambPeAct('qual:' + qs.value); });
       const ln = host.querySelector('#pe-len');
       if (ln) ln.addEventListener('change', () => {
         const v = (ln.value || '').trim();
@@ -8067,6 +8380,35 @@
       // ---- PART ops (all on the staged ed.parts; committed by Save) ----------
       else if (op === 'part') { const pi = parseInt(arg, 10); ed.part = Number.isFinite(pi) ? pi : -1;
         if (ed.part >= 0) { const r = _ambPePartRange(ed, ed.part); if (ed.sel < r.from || ed.sel >= r.to) { ed.sel = r.from; ed.altSel = -1; } } }
+      // ＋ ADDS a set of changes. It never takes chords off an existing one —
+      // pressing it used to SPLIT at the selection, so on a 4-chord progression
+      // with chord 1 selected you got "Changes 1" holding ONE chord and
+      // "Changes 2" holding the other three, which is not what "add" means and
+      // was reported as exactly that. A part is a contiguous RANGE, so a new set
+      // needs at least one chord of its own: it gets a copy of the chord it
+      // follows (in key, in style, ready to edit) rather than an invented tonic.
+      // SPLITTING is still available, under its own name (✂ Split at selection).
+      else if (op === 'partnew') {
+        const arr = Array.isArray(ed.parts) ? ed.parts : null;
+        const chain = arr && arr.length > 1;
+        // Insert AFTER the active set (or after everything when there is no
+        // chain), so the new set lands where the button says it will.
+        const at = chain ? _ambPePartRange(ed, Math.max(0, ed.part | 0)).to : ed.chords.length;
+        const seed = ed.chords[Math.max(0, Math.min(ed.chords.length - 1, at - 1))];
+        ed.chords.splice(at, 0, (seed && !_ambIsTransition(seed)) ? _ambCloneChord(seed) : { root: 0, intervals: [0, 4, 7] });
+        const nm = _ambPeNewPartName(arr);
+        if (!chain) {
+          const base = (arr && arr[0] && arr[0].name) || _ambPeProgName(ed);
+          ed.parts = [{ ...(arr && arr[0] ? arr[0] : {}), name: String(base === _AMB_SOLO_PART ? 'Changes 1' : base).slice(0, 16), len: at },
+                      { name: nm, len: 1 }];
+          ed.part = 1;
+        } else {
+          const pi = Math.max(0, ed.part | 0);
+          ed.parts.splice(pi + 1, 0, { name: nm, len: 1 });
+          ed.part = pi + 1;
+        }
+        ed.sel = at; ed.altSel = -1;
+      }
       else if (op === 'partadd') {
         // Split at the selection: the chords from ed.sel+1 onward become a new part.
         const total = ed.chords.length;
@@ -8091,6 +8433,8 @@
         }
       }
       else if (op === 'sectog') { if (!ed._secOpen) ed._secOpen = {}; ed._secOpen[arg] = !ed._secOpen[arg]; }
+      else if (op === 'progren') { let nm = null; try { nm = window.prompt('Name for these changes', _ambPeProgName(ed)); } catch (e) {}
+        if (nm != null) { const v = String(nm).trim().slice(0, 32); if (v) ed.name = v; } }
       else if (op === 'partren') { const ps = _ambPeParts(ed), pi = parseInt(arg, 10);
         if (ps && ps[pi]) { let nm = null; try { nm = window.prompt('Name for these changes', ps[pi].name || ('Changes ' + (pi + 1))); } catch (e) {}
           if (nm != null) { const v = String(nm).trim().slice(0, 16); if (v) ps[pi].name = v; } } }
@@ -19090,8 +19434,41 @@
     const _ambPartSeqCellKey = (pass, ci) => String(pass | 0) + ':' +
       (ci === '*' ? '*' : String(ci | 0));
     const _AMB_PARTSEQ_RE = /^(\d{1,2}):(\*|\d{1,2})$/;
+    // THE LOOP OVERRIDE. `L.phraseLoop` names ONE banked phrase that this layer
+    // loops for the whole piece, and it OUTRANKS the Plays matrix — the matrix is
+    // shown disabled while it is set, because a schedule that cannot be heard is
+    // worse than no schedule. Absent by default, so it changes nothing until it
+    // is chosen, and it is a plain string: a phrase is referenced by name.
+    // GENERATE HERE — the third answer a cell can give, beside "play this phrase"
+    // and "inherit". A phrase-driven layer that resolves to NOTHING goes SILENT
+    // (_ambPartSeqSilence), so before this there was no way to say "this pass
+    // ignores the schedule AND this layer's own composed phrase, and generates".
+    // A NUL prefix keeps it out of the name space a banked phrase can occupy —
+    // names come from prompts, which cannot produce one — the same trick
+    // `_AMB_PSQ_SILENT` already uses for the engine-side marker.
+    const _AMB_PARTSEQ_GEN = '\u0000gen';
+    function _ambPsqIsGen(v) { return v === _AMB_PARTSEQ_GEN; }
+    try { if (typeof window !== 'undefined') window._ambPartSeqGenSentinel = _AMB_PARTSEQ_GEN; } catch (e) {}
+    // What a stored value LOOKS like. The sentinel carries a NUL, so anything
+    // putting a cell value on screen has to come through here or it prints an
+    // invisible character followed by "gen".
+    function _ambPsqFace(v, blank) { return _ambPsqIsGen(v) ? '\u26a1 gen' : (v || (blank || '')); }
+    function _ambPhraseLoopOf(L) {
+      const n = L && L.phraseLoop;
+      return (typeof n === 'string' && n) ? n : null;
+    }
+    // Is this layer driven by PHRASES at all? A layer with neither a mapping nor
+    // an override generates live exactly as it always did — without this gate,
+    // switching a progression on would silence every layer in the project.
+    function _ambPhraseDriven(L) {
+      if (!L) return false;
+      if (_ambPhraseLoopOf(L)) return true;
+      try { return !!(L.partSeqs && Object.keys(L.partSeqs).length); } catch (e) { return false; }
+    }
     function _ambNormalizePartSeqs(L) {
       if (!L || typeof L !== 'object') return;
+      try { _ambNormalizeNoVary(L); } catch (e) {}
+      if (L.phraseLoop != null && (typeof L.phraseLoop !== 'string' || !L.phraseLoop)) delete L.phraseLoop;
       const m = L.partSeqs;
       if (m == null) return;
       if (typeof m !== 'object') { delete L.partSeqs; return; }
@@ -19106,8 +19483,11 @@
           v.forEach(n => { if (typeof n === 'string' && n) cell[_ambPartSeqCellKey(it++, '*')] = n; });
         } else if (v && typeof v === 'object') {
           Object.keys(v).forEach(k2 => {
-            const n = v[k2];
-            if (typeof n !== 'string' || !n) return;
+            // A cell value is a NAME or a SLICE SPEC. `_ambPsqStore` prunes a
+            // whole-phrase-looped spec back to a bare string, so the stored shape
+            // stays exactly what it was before slices existed.
+            const n = _ambPsqStore(_ambPsqSpec(v[k2]));
+            if (!n) return;
             // `all` is the PART's default and is NOT a pass index — `'all' | 0`
             // is 0, so a numeric coercion would silently file it as pass 1.
             if (k2 === _AMB_PARTSEQ_ALL) { cell[_AMB_PARTSEQ_ALL] = n; return; }
@@ -19160,8 +19540,37 @@
     // grid and the arrangement cannot disagree about how many there are. No grid
     // = _ambGridCols' own default (8), which is exactly what the Passes editor
     // draws for such a part, so the two axes still line up.
+    // HOW MANY PASSES A PART ACTUALLY GETS — the visits per iteration, which is
+    // what `plays` (or the chain) states. The Passes grid's own `cols` is a
+    // WIDTH the ▦ editor sets and OUTRANKS this when present; absent, the count
+    // has to come from the arrangement rather than from a fixed 8, or setting
+    // Repeats to 2 leaves the layer matrix drawing eight columns of which six
+    // can never play. Reported exactly that way.
+    function _ambPartNaturalPasses(cfg, pi) {
+      const p = cfg && cfg.prog; if (!p) return 1;
+      // A chain states the order outright: count this part's occurrences.
+      try {
+        if (Array.isArray(p.chain) && p.chain.length) {
+          const n = p.chain.reduce((a, x) => a + ((x | 0) === (pi | 0) ? 1 : 0), 0);
+          if (n > 0) return Math.max(1, Math.min(64, n));
+        }
+      } catch (e) {}
+      try {
+        const parts = Array.isArray(p.parts) ? p.parts : null;
+        if (parts && parts[pi]) return Math.max(1, Math.min(64, (parts[pi].plays | 0) || 1));
+      } catch (e) {}
+      // NOT multiplied by the area's Plays. The layer matrix and the ▦ Passes
+      // grid must show the SAME number of columns — they are two views of one
+      // pass count — and folding cfg.plays in here made them disagree.
+      return 1;
+    }
     function _ambPartPassCols(cfg, pi) {
-      try { return _ambGridCols(_ambGridStore(cfg, pi, false)); } catch (e) { return _AMB_GRID_COLS; }
+      try {
+        const g = _ambGridStore(cfg, pi, false);
+        // An explicit width wins — that is the ▦ Passes editor stating it.
+        if (g && (g.cols | 0) > 0) return _ambGridCols(g);
+        return _ambPartNaturalPasses(cfg, pi);
+      } catch (e) { return _AMB_GRID_COLS; }
     }
     // WHICH PASS OF ITS PART is sounding at `at` — the cumulative visit count,
     // which is the number the Passes grid calls a column (_ambGridSlots' `visit`).
@@ -19267,16 +19676,28 @@
       const r = _ambPartSeqResolve(L, w.pi, pass, w.ci);
       return r.name || null;
     }
+    // Returns the spec AND THE LEVEL THAT NAMED IT. The level is not decoration:
+    // it is the FRAME the phrase is written against, and throwing it away is what
+    // made a pass-level mapping unlistenable (see _ambPartSeqSync).
+    function _ambPartSeqSpecAt(E, cfg, L, at, where) {
+      const w = where || _ambPartChordAt(E, cfg, at);
+      if (!w) return null;
+      const cols = Math.max(1, _ambPartPassCols(cfg, w.pi | 0));
+      const pass = ((w.pass % cols) + cols) % cols;
+      const r = _ambPartSeqResolve(L, w.pi, pass, w.ci);
+      if (r.gen) return { spec: null, from: r.from, gen: true };
+      return r.spec ? { spec: r.spec, from: r.from } : null;
+    }
     // Which parts each banked sequence plays in — for the "bound" marks on the
     // Sequences row. Reads the CELL shape, so a name mapped to several passes of
     // one part is named once ("Verse"), not once per pass.
-    function _ambPartSeqBoundTo(map, parts) {
+    function _ambPartSeqBoundTo(map, cfg) {
       const out = {};
       if (!map || typeof map !== 'object') return out;
       Object.keys(map).forEach(k => {
         const cell = map[k];
         if (!cell || typeof cell !== 'object') return;
-        const pn = (parts && parts[k | 0] && parts[k | 0].name) || ('Part ' + ((k | 0) + 1));
+        const pn = _ambPartLabel(cfg, k | 0);
         Object.keys(cell).forEach(it => {
           const nm = cell[it]; if (typeof nm !== 'string' || !nm) return;
           const list = (out[nm] = out[nm] || []);
@@ -19292,34 +19713,335 @@
     // stored key ('all' / '<pass>:*' / '<pass>:<ci>'), so callers build it with
     // _ambPartSeqCellKey and nothing on this path ever coerces it to a number
     // ('all' | 0 is 0, which would file the part default as pass 1).
+    // The NAME only — every existing caller wants a display string, and a slice
+    // spec must never leak into one as "[object Object]".
     function _ambPartSeqCellGet(L, pi, key) {
-      const m = L && L.partSeqs; if (!m || typeof m !== 'object') return '';
+      const sp = _ambPartSeqCellSpec(L, pi, key);
+      return sp ? sp.n : '';
+    }
+    // The full spec (name + slice + fit), or null.
+    function _ambPartSeqCellSpec(L, pi, key) {
+      const m = L && L.partSeqs; if (!m || typeof m !== 'object') return null;
       const cell = m[pi | 0];
-      if (!cell || typeof cell !== 'object') return '';
-      const nm = cell[key];
-      return (typeof nm === 'string' && nm) ? nm : '';
+      if (!cell || typeof cell !== 'object') return null;
+      return _ambPsqSpec(cell[key]);
     }
     function _ambPartSeqCellSet(L, pi, key, nm) {
       if (!L) return;
       if (!L.partSeqs || typeof L.partSeqs !== 'object') L.partSeqs = {};
       const m = L.partSeqs, k = String(pi | 0);
       if (!m[k] || typeof m[k] !== 'object' || Array.isArray(m[k])) m[k] = {};
-      if (nm) m[k][key] = nm; else delete m[k][key];
+      const val = (nm && typeof nm === 'object') ? _ambPsqStore(_ambPsqSpec(nm)) : nm;
+      if (val) m[k][key] = val; else delete m[k][key];
       if (!Object.keys(m[k]).length) delete m[k];
       if (!Object.keys(m).length) delete L.partSeqs;
+    }
+    // LOAD A BANKED PHRASE ONTO A LAYER — and, when its ✎ Grid is open, INTO the
+    // lane, so selecting a sequence is how you go back and edit one. Both
+    // surfaces (the compose-dock chips and the Sequences popover) call this;
+    // they used to be two copies and only one of them repopulated the lane,
+    // which is why choosing in the popover appeared to do nothing to the grid.
+    //
+    // `ge.seqName` records WHICH entry is loaded, so the dock can say so and
+    // Save can offer to update it rather than always minting a new one.
+    function _ambSeqLoadIntoLayer(E, key, nm) {
+      const saved = _ambBankByName(nm);
+      if (!E || !key || !saved) return false;
+      const cl = (typeof cloneStep === 'function') ? cloneStep : (o => JSON.parse(JSON.stringify(o)));
+      const steps = saved.steps.map(cl);
+      const ge = _bloomGridEdit;
+      if (ge && ge.E === E && ge.key === key && ge.lane) {
+        ge.lane.steps = steps;
+        ge.seqName = nm;                      // what the dock reports and Save updates
+        ge._rzBase = null; ge._rzSig = '';    // a new phrase — the resize history is not its
+        ge._barSel = null;
+        try { if (typeof selectedStepRefs !== 'undefined') selectedStepRefs = []; } catch (e) {}
+        try { if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane(); } catch (e) {}
+        try { if (typeof _syncFluidGridToActiveLane === 'function') _syncFluidGridToActiveLane(); } catch (e) {}
+        try { if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
+        // A loaded phrase may be shorter than the pass it is landing in.
+        try { _ambGridPadLaneToPass(E, ge); } catch (e) {}
+        // AFTER the pad — the padding is framing, so it belongs to the clean
+        // state. Stamping before it makes a just-opened phrase read as unsaved.
+        ge.savedSig = _ambGridEditSig(ge.lane.steps);
+      }
+      // Adopting a phrase RELEASES any Plays mapping — installing it persists it,
+      // and the runtime guard refuses to write while a mapped phrase is loaded.
+      try { const f0 = _ambFreezeState(E, key); delete f0._partSeqName; delete f0._partSeqSig; } catch (e) {}
+      try {
+        // PADDED TO THE PASS above — so the loop is the pass's length, not the
+        // next whole bar. Rounding here is what made a 4½-bar pass drift.
+        const _lb = (_bloomGridEdit && _bloomGridEdit.key === key) ? _ambComposeLoopBars(E, _bloomGridEdit) : null;
+        _ambStepsToLock(E, key, (ge && ge.key === key && ge.lane) ? ge.lane.steps : steps, true, _lb);
+        const f3 = _ambFreezeState(E, key);
+        f3.frozen = true; f3._lock = true;
+        delete f3._partSeqName; delete f3._partSeqSig;
+        if (!f3.keyCtx) f3.keyCtx = _ambCurKeyCtx(E);
+        // AFTER _ambPersistLock — it rewrites lockState from the freeze state,
+        // so setting the flag first loses it and the layer never reads as composed.
+        try { _ambPersistLock(E, key); } catch (e) {}
+        const L3 = _ambLayerByKey(E, key);
+        if (L3) { if (!L3.lockState || typeof L3.lockState !== 'object') L3.lockState = {}; L3.lockState.seedEdit = true; }
+      } catch (e) {}
+      try { _ambRefreshSeedModes(E); _ambUpdateNotesLive(E); } catch (e) {}
+      try { document.querySelectorAll('.ambient-seedgrid-chords, .ambient-seedgrid-gran').forEach(h => { h._sig = ''; }); } catch (e) {}
+      try { _ambGridBarStrip(E); _ambGridGranBar(E); _ambGridLoadedBar(E); } catch (e) {}
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      return true;
+    }
+    // ONLY THE UPDATE BUTTON. The visible "Editing <name>" bar this used to draw
+    // is gone: the strip's headline dropdown says which phrase is loaded AND
+    // lets you change it, so a second read-only surface saying the same thing
+    // was one to keep in sync for nothing.
+    function _ambGridLoadedBar(E) {
+      const ge = _bloomGridEdit;
+      let ups; try { ups = document.querySelectorAll('.ambient-seedgrid-update'); } catch (e) { return; }
+      if (!ups || !ups.length) return;
+      ups.forEach(up => {
+        const mine = !!(ge && E && ge.E === E && up.dataset.sgk === ge.key);
+        const nm = mine ? (ge.seqName || '') : '';
+        if (up._sig === nm) return;
+        up._sig = nm;
+        up.hidden = !nm;
+        if (nm) {
+          up.textContent = '⬇ Update “' + nm + '”';
+          up.title = 'Write these steps back to “' + nm + '” in the bank. Every layer that plays it follows.';
+        }
+      });
+    }
+    // ---- DELETING A BANKED PHRASE ---------------------------------------------
+    // A mapping references a phrase BY NAME, across every AREA, so deleting one
+    // silently strands every cell that named it — the layer falls back to its
+    // own phrase with nothing saying why. Count first, so the confirm can state
+    // the cost, then prune, so no cell is left pointing at nothing.
+    function _ambSeqUses(nm) {
+      // NOT counted: a layer that ADOPTED this phrase. Adoption copies the steps
+      // into the layer's own `lockState`, so deleting the bank entry does not
+      // touch it — the confirm says so rather than warning about a loss that
+      // will not happen.
+      const out = { cells: 0, layers: 0, areas: 0 };
+      if (!nm) return out;
+      let areas = [];
+      try { areas = _ambAreas() || []; } catch (e) { areas = []; }
+      areas.forEach(cfg => {
+        let hitArea = false;
+        try {
+          _ambPartSeqLayers(cfg).forEach(L => {
+            let hitLayer = false;
+            const m = L && L.partSeqs;
+            if (m && typeof m === 'object') {
+              Object.keys(m).forEach(k => {
+                const cell = m[k]; if (!cell || typeof cell !== 'object') return;
+                Object.keys(cell).forEach(ck => {
+                  const sp = _ambPsqSpec(cell[ck]);
+                  if (sp && sp.n === nm) { out.cells++; hitLayer = true; }
+                });
+              });
+            }
+            if (hitLayer) { out.layers++; hitArea = true; }
+          });
+        } catch (e) {}
+        if (hitArea) out.areas++;
+      });
+      return out;
+    }
+    // Drop every cell naming `nm`, everywhere. Prunes empty parts and empty maps
+    // on the way out, so "no mapping" keeps its single representation.
+    function _ambSeqForget(nm) {
+      if (!nm) return 0;
+      let n = 0, areas = [];
+      try { areas = _ambAreas() || []; } catch (e) { areas = []; }
+      areas.forEach(cfg => {
+        try {
+          _ambPartSeqLayers(cfg).forEach(L => {
+            const m = L && L.partSeqs; if (!m || typeof m !== 'object') return;
+            Object.keys(m).forEach(k => {
+              const cell = m[k]; if (!cell || typeof cell !== 'object') return;
+              Object.keys(cell).forEach(ck => {
+                const sp = _ambPsqSpec(cell[ck]);
+                if (sp && sp.n === nm) { delete cell[ck]; n++; }
+              });
+              if (!Object.keys(cell).length) delete m[k];
+            });
+            if (!Object.keys(m).length) delete L.partSeqs;
+          });
+        } catch (e) {}
+      });
+      // Anything currently PLAYING a mapped copy of it must let go, or the
+      // freeze keeps replaying a phrase the bank no longer has.
+      try {
+        const E = _masterEng;
+        if (E && E.freeze) Object.keys(E.freeze).forEach(k => {
+          const fs = E.freeze[k];
+          if (fs && fs._partSeqName === nm) { delete fs._partSeqName; delete fs._partSeqSig; }
+        });
+      } catch (e) {}
+      return n;
+    }
+    // What the confirm should say — the count, in words, or '' when nothing
+    // references it (in which case there is nothing to warn about).
+    function _ambSeqDeleteWarn(nm) {
+      const u = _ambSeqUses(nm);
+      if (!u.cells) return '';
+      return u.cells + ' mapping' + (u.cells === 1 ? '' : 's') +
+        ' on ' + u.layers + ' layer' + (u.layers === 1 ? '' : 's') +
+        (u.areas > 1 ? (' across ' + u.areas + ' areas') : '');
+    }
+    // ---- SEQUENCE SLICES (map part OF a phrase to part OF the changes) -------
+    // A cell used to name a whole banked phrase. It can now name a SUBSECTION of
+    // one — "bars 2-3 of motif3 over chord 4 of the Chorus" — which is what makes
+    // this a mapping rather than a swap. Stored as an object; a whole phrase at
+    // the default fit still prunes back to a plain STRING, so every existing
+    // project, the gate's 94 checks and the absent-is-neutral doctrine are
+    // untouched by construction.
+    //   { n: name, s: firstBar, l: bars, f: fit }   — s/l/f omitted when default
+    const _AMB_PSQ_FITS = ['loop', 'stretch', 'once'];
+    const _AMB_PSQ_FIT_LBL = { loop: 'Loop to fill', stretch: 'Stretch to fit', once: 'Play once, then rest' };
+    function _ambPsqSpec(v) {
+      if (typeof v === 'string' && v) return { n: v, s: 0, l: 0, f: 'loop' };
+      if (!v || typeof v !== 'object' || typeof v.n !== 'string' || !v.n) return null;
+      const s0 = Math.max(0, Math.min(64, (v.s | 0) || 0));
+      const l0 = Math.max(0, Math.min(64, (v.l | 0) || 0));     // 0 = to the end
+      const f0 = _AMB_PSQ_FITS.indexOf(v.f) >= 0 ? v.f : 'loop';
+      return { n: v.n, s: s0, l: l0, f: f0 };
+    }
+    // Back to what is STORED: a whole phrase looped is just its name.
+    function _ambPsqStore(spec) {
+      if (!spec || !spec.n) return '';
+      if (!spec.s && !spec.l && spec.f === 'loop') return spec.n;
+      const o = { n: spec.n };
+      if (spec.s) o.s = spec.s | 0;
+      if (spec.l) o.l = spec.l | 0;
+      if (spec.f && spec.f !== 'loop') o.f = spec.f;
+      return o;
+    }
+    // The install guard compares this, not the name — otherwise re-slicing or
+    // changing the fit would leave the old phrase playing ("already loaded").
+    //
+    // `dstBars` IS PART OF IT. A mapped phrase is FITTED to the chord it plays
+    // over (looped, stretched or cut to that length), so the same spec over a
+    // different chord is a different phrase. Without it the install was skipped
+    // as "already loaded" and the phrase kept the loop it was fitted to the
+    // FIRST time — a field report showed `loop 1.001` (a ½-bar chord at 120bpm)
+    // still running under that part's 1-bar and 2-bar chords, so it looped twice
+    // and four times inside them and landed somewhere different at every change.
+    // Heard as a delay and a skip at the boundary, on a cycle as long as the
+    // chord lengths take to repeat.
+    function _ambPsqSig(spec, dstBars) {
+      if (!spec) return '';
+      const d = (dstBars > 0) ? ('@' + (+dstBars).toFixed(4)) : '';
+      return spec.n + '#' + (spec.s | 0) + '#' + (spec.l | 0) + '#' + spec.f + d;
+    }
+    function _ambPsqLabel(spec) {
+      if (!spec) return '';
+      if (!spec.s && !spec.l) return spec.n + (spec.f !== 'loop' ? (' ' + (spec.f === 'stretch' ? '⤡' : '┄')) : '');
+      const a = (spec.s | 0) + 1, b = spec.l ? (spec.s + spec.l) : 0;
+      return spec.n + ' ♪' + a + (b && b !== a ? ('-' + b) : (b ? '' : '+')) +
+        (spec.f !== 'loop' ? (' ' + (spec.f === 'stretch' ? '⤡' : '┄')) : '');
+    }
+    // ---- the steps themselves -------------------------------------------------
+    // A step's advance is `subdivision x duration` BEATS (_ambGridStepAdv), so a
+    // phrase's own bar grid is derivable without storing anything alongside it.
+    function _ambSeqGsub() { return (typeof stepSubdivision === 'number' && stepSubdivision > 0) ? stepSubdivision : 0.5; }
+    function _ambSeqStepBars(st, gsub) {
+      const sub = (st && st.subdivision != null) ? st.subdivision : gsub;
+      return (sub * ((st && st.duration) || 1)) / 4;
+    }
+    function _ambSeqBars(steps, gsub) {
+      const g = gsub || _ambSeqGsub();
+      let t = 0; (Array.isArray(steps) ? steps : []).forEach(st => { if (st) t += _ambSeqStepBars(st, g); });
+      return t;
+    }
+    // The steps whose ONSET falls inside [fromBar, fromBar+lenBars). Sliced on
+    // onsets, not on overlap: a note that starts before the window belongs to the
+    // previous slice, and half a note is not a musical unit. A step that runs PAST
+    // the end is kept whole — cutting a sustain to the bar line is what the fit
+    // modes are for, and truncating here would do it twice.
+    function _ambSeqSlice(steps, fromBar, lenBars) {
+      const g = _ambSeqGsub();
+      const src = Array.isArray(steps) ? steps : [];
+      if (!(fromBar > 0) && !(lenBars > 0)) return src.slice();
+      const to = lenBars > 0 ? (fromBar + lenBars) : Infinity;
+      const out = []; let t = 0;
+      src.forEach(st => {
+        if (!st) return;
+        const b = _ambSeqStepBars(st, g);
+        if (t >= fromBar - 1e-6 && t < to - 1e-6) out.push(st);
+        t += b;
+      });
+      return out;
+    }
+    // FIT a slice of `srcBars` into a chord of `dstBars`. The three answers a
+    // musician would give, and none of them is "leave it wrong":
+    //   loop    — repeat until the chord is full, cutting the last repeat at the
+    //             bar line (the default: a 1-bar figure over a 2-bar chord plays
+    //             twice, which is what anyone would expect it to do)
+    //   stretch — scale every step so the slice spans the chord exactly (a 1-bar
+    //             figure over 2 bars plays at half speed)
+    //   once    — play it once and rest for the remainder
+    // A slice LONGER than the chord is cut at the boundary under loop/once, and
+    // compressed under stretch.
+    function _ambSeqFit(steps, dstBars, mode) {
+      const src = Array.isArray(steps) ? steps.filter(Boolean) : [];
+      if (!src.length || !(dstBars > 0)) return src;
+      const g = _ambSeqGsub();
+      const srcBars = _ambSeqBars(src, g);
+      if (!(srcBars > 0)) return src;
+      if (Math.abs(srcBars - dstBars) < 1e-6) return src;
+      if (mode === 'stretch') {
+        const k = dstBars / srcBars;
+        return src.map(st => ({ ...st, duration: ((st.duration || 1) * k) }));
+      }
+      // loop / once — emit until the chord is full.
+      const out = []; let t = 0; let guard = 0;
+      const reps = (mode === 'once') ? 1 : 64;
+      for (let r = 0; r < reps && t < dstBars - 1e-6 && guard++ < 4096; r++) {
+        for (let i = 0; i < src.length; i++) {
+          if (t >= dstBars - 1e-6) break;
+          const st = src[i], b = _ambSeqStepBars(st, g);
+          const room = dstBars - t;
+          if (b - room > 1e-6) {
+            // CUT the step at the bar line rather than dropping it — a phrase
+            // that ends on a held note would otherwise lose that note entirely.
+            const k = room / b;
+            out.push({ ...st, duration: ((st.duration || 1) * k) });
+            t = dstBars; break;
+          }
+          out.push(st); t += b;
+        }
+      }
+      // `once` leaves the rest of the chord silent, which is the whole point of
+      // it — no padding step is added, the loop simply ends short and
+      // _ambStepsToLock rounds the loop up to the bar.
+      return out;
+    }
+    // The steps to install for `spec` over a chord `dstBars` long.
+    function _ambPartSeqStepsFor(spec, dstBars) {
+      const saved = _ambBankByName(spec && spec.n);
+      if (!saved) return null;
+      const sliced = _ambSeqSlice(saved.steps, spec.s | 0, spec.l | 0);
+      if (!sliced.length) return null;
+      return _ambSeqFit(sliced, dstBars, spec.f);
     }
     // WHAT ACTUALLY PLAYS over chord `ci` on `pass` of part `pi`, and which level
     // said so. Narrowest first — the chord on this pass, then the whole pass, then
     // the part, then nothing, which the caller reads as "the layer's own phrase".
     // The same absent-is-inherit grammar the salt and the masks use.
     function _ambPartSeqResolve(L, pi, pass, ci) {
-      const at = _ambPartSeqCellGet(L, pi, _ambPartSeqCellKey(pass, ci));
-      if (at) return { name: at, from: 'cell' };
-      const row = _ambPartSeqCellGet(L, pi, _ambPartSeqCellKey(pass, '*'));
-      if (row) return { name: row, from: 'pass' };
-      const all = _ambPartSeqCellGet(L, pi, _AMB_PARTSEQ_ALL);
-      if (all) return { name: all, from: 'all' };
-      return { name: '', from: '' };
+      // GENERATE is a real answer, not an absence — so it STOPS the cascade at
+      // the level that said it, exactly as a phrase name does. Returning it as
+      // `{spec:null}` alone would be indistinguishable from "nothing set here"
+      // and the next level up would answer instead.
+      const g = (sp, from) => (_ambPsqIsGen(sp.n)
+        ? { name: '', spec: null, from: from, gen: true }
+        : { name: sp.n, spec: sp, from: from });
+      const at = _ambPartSeqCellSpec(L, pi, _ambPartSeqCellKey(pass, ci));
+      if (at) return g(at, 'cell');
+      const row = _ambPartSeqCellSpec(L, pi, _ambPartSeqCellKey(pass, '*'));
+      if (row) return g(row, 'pass');
+      const all = _ambPartSeqCellSpec(L, pi, _AMB_PARTSEQ_ALL);
+      if (all) return g(all, 'all');
+      return { name: '', spec: null, from: '' };
     }
     // WHICH ROWS THE PASS GRID DRAWS. A progression with ONE part — or none at
     // all, which is the common case since _ambRepairParts collapses a single part
@@ -19334,13 +20056,13 @@
       if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return [];
       const parts = Array.isArray(p.parts) ? p.parts : null;
       if (parts && parts.length) {
-        return parts.map((pp, i) => ({ pi: i, name: (pp && pp.name) || ('Part ' + (i + 1)), open: !!(pp && pp.open) }));
+        return parts.map((pp, i) => ({ pi: i, name: _ambPartLabel(cfg, i), open: !!(pp && pp.open) }));
       }
       // An unnamed progression is auto-named from its roman numerals ("Imaj7 —
       // vi7 — …"), which is long, ellipses to nothing and names nothing. With no
       // parts there is exactly one set of changes, and the tab that selects it
       // should say what it IS, not repeat the progression's identifier.
-      return [{ pi: 0, name: 'The changes', open: false }];
+      return [{ pi: 0, name: _ambProgTitle(p.name), open: false }];   // `_ambGridRanges` uses pi 0 for a part-less progression — matching it is what lets the compose strip find its range
     }
     // THE PER-LAYER MATRIX — chords DOWN, passes ACROSS. Deliberately the same
     // shape (and the same .pmx-* markup) as the ▦ Passes grid, because that grid
@@ -19356,7 +20078,14 @@
     // (the chord matrix's row label and column header are handles): the corner is
     // the PART default, and a column header is that whole PASS. Narrowest wins —
     // cell → column → part → the layer's own phrase.
-    function _ambPartSeqMatrixHtml(E, cfg, L, ek, row) {
+    // `opts.perChord` adds the two settings that are per (layer, CHORD) — how
+    // often this layer plays that chord (`chordMask`) and whether it takes the
+    // changes' salt there (`saltMask`) — as trailing columns beside the row that
+    // already names that chord. The ⌗ Matrix was a second grid for the same pair.
+    // The Window is NOT here: `chordMask.part` is one {size, place} for the whole
+    // layer, so it is a single control in the scope bar, not a column.
+    // Off by default — the layer CARD's copy of this grid has nowhere near the width.
+    function _ambPartSeqMatrixHtml(E, cfg, L, ek, row, opts) {
       _ambWirePartMapOnce();
       const pi = row.pi, pName = row.name;
       if (row.open) {
@@ -19398,22 +20127,40 @@
       let h = '<div class="psq-grid pmx-grid" style="--pmxc:' + cols + '">';
       // Header: the corner is the part default, each column header is that pass.
       h += '<div class="pmx-row pmx-head">' +
-        btn(_AMB_PARTSEQ_ALL, 'psq-all' + (allNm ? ' on' : ''), '', allNm || 'all —',
-          pName + ' — every chord of every pass plays ' +
-          (allNm ? ('“' + allNm + '”') : 'this layer’s own phrase') +
+        btn(_AMB_PARTSEQ_ALL, 'psq-all' + (allNm ? ' on' : '') + (_ambPsqIsGen(allNm) ? ' psq-gen' : ''),
+          '', _ambPsqFace(allNm, 'all —'),
+          pName + ' — every chord of every pass ' +
+          (_ambPsqIsGen(allNm) ? 'generates — no composed phrase'
+            : allNm ? ('plays “' + allNm + '”') : 'plays this layer’s own phrase') +
           ' unless something narrower says otherwise. Tap to walk the bank.');
       for (let c = 0; c < cols; c++) {
         const rowNm = _ambPartSeqCellGet(L, pi, _ambPartSeqCellKey(c, '*'));
         const dead = plays[c] && !plays[c].length;
-        h += btn(_ambPartSeqCellKey(c, '*'), 'psq-passhdr' + (rowNm ? ' on' : '') + (dead ? ' inert' : ''),
-          String(c + 1), rowNm || '—',
-          'Pass ' + (c + 1) + ' of ' + cols + ' — the whole pass plays ' +
-          (rowNm ? ('“' + rowNm + '”') : 'whatever each chord says') +
+        h += btn(_ambPartSeqCellKey(c, '*'), 'psq-passhdr' + (rowNm ? ' on' : '') +
+          (_ambPsqIsGen(rowNm) ? ' psq-gen' : '') + (dead ? ' inert' : ''),
+          String(c + 1), _ambPsqFace(rowNm, '—'),
+          'Pass ' + (c + 1) + ' of ' + cols + ' — the whole pass ' +
+          (_ambPsqIsGen(rowNm) ? 'generates — no composed phrase'
+            : rowNm ? ('plays “' + rowNm + '”') : 'plays whatever each chord says') +
           (dead ? '. This pass plays no chords.' : '') + '. Tap to walk the bank.');
       }
+      const _pc = !!(opts && opts.perChord);
+      const _pcMode = !!(opts && opts.playsMode);
+      // THE HEADERS ARE HANDLES, which is how every other matrix in this file
+      // works. In the LAYER scope the axes are swapped relative to the ⌗ Matrix,
+      // so the two bulk applies swap with them: a COLUMN here is one layer over
+      // every chord (the ⌗ Matrix's row apply) and a ROW is one chord over every
+      // layer (its column apply).
+      if (_pc) h += '<span role="button" tabindex="0" class="psq-trailhd psq-bulk" data-pmbulk="chord" data-pmk="' +
+        _ambEscAttr(ek) + '" title="' + _ambEscAttr('How often this layer plays that chord \u2014 tap to set every chord of ' + pName + ' at once') + '">Plays</span>' +
+        '<span role="button" tabindex="0" class="psq-trailhd psq-bulk" data-pmbulk="salt" data-pmk="' +
+        _ambEscAttr(ek) + '" title="' + _ambEscAttr('How much of the recolouring this layer follows \u2014 tap to set every chord of ' + pName + ' at once') + '">Salt</span>';
       h += '</div>';
       for (let i = 0; i < len; i++) {
-        h += '<div class="pmx-row"><span class="pmx-rowlbl" title="' + _ambEscAttr(names[i]) + '">' +
+        const _absL = (rg ? rg.from : 0) + i;
+        h += '<div class="pmx-row"><span class="pmx-rowlbl' + (_pc ? ' psq-bulk' : '') + '"' +
+          (_pc ? (' role="button" tabindex="0" data-pmbulkci="' + _absL + '"') : '') +
+          ' title="' + _ambEscAttr(names[i] + (_pc ? ' \u2014 tap to set EVERY layer on this chord at once' : '')) + '">' +
           _ambEscText(names[i]) + '</span>';
         for (let c = 0; c < cols; c++) {
           const set = _ambPartSeqCellGet(L, pi, _ambPartSeqCellKey(c, i));
@@ -19425,17 +20172,52 @@
           // A blank cell shows what it INHERITS rather than a bare dash: "—"
           // beside a default that is quietly supplying something else would be
           // the picture contradicting the audio.
-          const face = set ? set : (eff.name ? ('↳ ' + eff.name) : '—');
+          if (_pcMode) {
+            // PLAYS MODE — the same cell, a different question: how often this
+            // layer plays THAT CHORD ON THAT PASS. Blank inherits the chord's own
+            // default (the Plays column), which is what makes this a secondary
+            // VIEW of one store rather than a second store to keep in step.
+            const _abs2 = (rg ? rg.from : 0) + i;
+            const _dflt = _ambMaskRead(L, 'chord', _abs2);
+            const _ov = _ambChordPassGet(L, c, _abs2);
+            const _v2 = (_ov == null) ? _dflt : _ov;
+            h += _ambMaskCellHtml(_v2, _abs2,
+              _ambEscAttr(names[i] + ' · pass ' + (c + 1) + ' — ' +
+                (_ov == null ? ('follows the chord default (' + _ambMaskCellTip(_dflt, 'chord', false) + ')')
+                             : ('set for this pass: ' + _ambMaskCellTip(_v2, 'chord', false)))),
+              null, 0,
+              ' data-pmk="' + _ambEscAttr(ek) + '" data-pmkind="chordpass" data-pmpass="' + c +
+              '" data-pmlocal="' + _abs2 + '"' + (_ov == null ? ' data-pminherit="1"' : ''));
+            continue;
+          }
+          const _gen = _ambPsqIsGen(set) || (!set && eff.gen);
+          const face = _gen ? (set ? '⚡ gen' : '↳ ⚡ gen')
+                            : (set ? set : (eff.name ? ('↳ ' + eff.name) : '—'));
           h += btn(_ambPartSeqCellKey(c, i),
-            (set ? 'on' : '') + (eff.name && !set ? ' inherits' : '') + (dropped ? ' inert' : ''),
+            (set ? 'on' : '') + ((eff.name || eff.gen) && !set ? ' inherits' : '') +
+            (_gen ? ' psq-gen' : '') + (dropped ? ' inert' : ''),
             '', face,
             names[i] + ' on pass ' + (c + 1) + ' — ' +
-            (set ? ('plays “' + set + '”')
-                 : (eff.name
+            (_ambPsqIsGen(set) ? 'generates — no composed phrase here'
+             : set ? ('plays “' + set + '”')
+                 : (eff.gen
+                     ? ('follows the ' + (eff.from === 'pass' ? 'pass' : 'part') + ' default, which generates')
+                     : eff.name
                      ? ('follows the ' + (eff.from === 'pass' ? 'pass' : 'part') + ' default, “' + eff.name + '”')
-                     : 'plays this layer’s own phrase')) +
+                     : 'plays nothing — nothing here or above says what to play')) +
             (dropped ? '. This chord does not play in pass ' + (c + 1) + '.' : '') +
             '. Tap to walk the bank.');
+        }
+        if (_pc) {
+          // ABSOLUTE chord index. `chordMask.steps` spans the whole progression,
+          // so the part's own offset has to be added or every edit in a second
+          // part lands on a chord from the first.
+          const abs = (rg ? rg.from : 0) + i;
+          const ex = ' data-pmk="' + _ambEscAttr(ek) + '"';
+          h += _ambMaskCellHtml(_ambMaskRead(L, 'chord', abs), abs,
+            _ambEscAttr(names[i] + ' \u2014 how often this layer plays it'), null, 0, ex + ' data-pmkind="chord"');
+          h += _ambMaskCellHtml(_ambMaskRead(L, 'salt', abs), abs,
+            _ambEscAttr(names[i] + ' \u2014 how much of the recolouring it follows'), null, 0, ex + ' data-pmkind="salt"');
         }
         h += '</div>';
       }
@@ -19490,6 +20272,18 @@
     // Shared by the picker below and by anything else that sets a cell, so the
     // three things a write must do can never drift apart.
     function _ambPartSeqApply(E, L, layerKey, pi, cellKey, next, fromEl) {
+      // THE GRID OWNS THE LAYER WHILE IT IS OPEN. Marking the matrix
+      // `.is-overridden` made it LOOK inert without making it inert — the cells
+      // stayed live, so a tap still wrote a mapping and the installer put it
+      // straight over the phrase on the bench. "Looks disabled" is not disabled;
+      // that is the same gap as a class rule beating `hidden`.
+      if (_ambGridComposing(layerKey)) {
+        try {
+          showToast('The ✎ Grid is open on this layer — close it to schedule phrases. What you draw is what it plays.',
+            { warn: true, ms: 6000 });
+        } catch (e) {}
+        return;
+      }
       _ambPartSeqCellSet(L, pi, cellKey, next);
       try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
       // REPAINT THE WHOLE MATRIX. Setting a column header or the corner changes
@@ -19502,15 +20296,19 @@
           const k2 = el.dataset.pmkey || '';
           const set = _ambPartSeqCellGet(L, pi, k2);
           let face, inh = false;
-          if (k2 === _AMB_PARTSEQ_ALL) face = set || 'all —';
-          else if (/:\*$/.test(k2)) face = set || '—';
+          let gen = _ambPsqIsGen(set);
+          if (k2 === _AMB_PARTSEQ_ALL) face = _ambPsqFace(set, 'all —');
+          else if (/:\*$/.test(k2)) face = _ambPsqFace(set, '—');
           else {
             const mm = /^(\d+):(\d+)$/.exec(k2);
             const eff = mm ? _ambPartSeqResolve(L, pi, mm[1] | 0, mm[2] | 0) : { name: '' };
-            inh = !set && !!eff.name;
-            face = set ? set : (eff.name ? ('↳ ' + eff.name) : '—');
+            inh = !set && !!(eff.name || eff.gen);
+            gen = gen || (!set && !!eff.gen);
+            face = gen ? (set ? '⚡ gen' : '↳ ⚡ gen')
+                       : (set ? set : (eff.name ? ('↳ ' + eff.name) : '—'));
           }
           el.classList.toggle('on', !!set);
+          el.classList.toggle('psq-gen', gen);
           el.classList.toggle('inherits', inh);
           let txt = null;
           el.childNodes.forEach(n => { if (n.nodeType === 3) txt = n; });
@@ -19523,7 +20321,7 @@
         if (E && E.timer && typeof _ambPartSeqSync === 'function') {
           const cfg2 = E._cfg || (E.getCfg && E.getCfg());
           const fs2 = E.freeze && E.freeze[layerKey];
-          if (fs2) delete fs2._partSeqName;
+          if (fs2) { delete fs2._partSeqName; delete fs2._partSeqSig; }
           const now2 = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
           _ambPartSeqSync(E, cfg2, now2);
         }
@@ -19546,9 +20344,13 @@
       // multi-step one. So the scope this menu is editing rides as an inert
       // first item; without it "— this layer's own phrase" gives no clue whether
       // you are setting one chord, a pass, or the whole part.
+      const isGen = _ambPsqIsGen(cur);
       const items = [{ label: title, fn: () => {} }, 'hr',
-                     { label: (cur ? '' : '✓ ') + '— ' + fallbackTxt,
-                       fn: () => _ambPartSeqApply(E, L, layerKey, pi, cellKey, '', el) }];
+                     { label: ((!cur) ? '✓ ' : '') + '— ' + fallbackTxt,
+                       fn: () => _ambPartSeqApply(E, L, layerKey, pi, cellKey, '', el) },
+                     { label: (isGen ? '✓ ' : '') + '⚡ Generate — no composed phrase here',
+                       fn: () => _ambPartSeqApply(E, L, layerKey, pi, cellKey, _AMB_PARTSEQ_GEN, el) },
+                     'hr'];
       names.forEach(n => items.push({ label: (cur === n ? '✓ ' : '') + n,
                        fn: () => _ambPartSeqApply(E, L, layerKey, pi, cellKey, n, el) }));
       if (!names.length) {
@@ -19556,6 +20358,307 @@
       }
       const r = el.getBoundingClientRect();
       showCtxMenu(r.left, r.bottom, items);
+    }
+    // ---- THE SEQUENCES POPOVER ------------------------------------------------
+    // The inline chips row could do exactly one thing: adopt a whole phrase. It
+    // could not say "bars 2-3 of motif3 over chord 4 of the Chorus", which is the
+    // mapping people actually want — and a row of chips has nowhere to put the
+    // four extra choices that needs. So the row is a BUTTON and the choices live
+    // in a popover with room to state them.
+    let _ambSeqMapState = null;                 // transient view state — never persisted
+    function _ambSeqMapBank() {
+      const bank = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences : [];
+      const out = [];
+      for (let i = bank.length - 1; i >= 0; i--) { const x = bank[i];
+        if (x && x.type !== 'audio' && Array.isArray(x.steps) && x.steps.length) out.push(x); }
+      return out;
+    }
+    // Every mapping this layer holds, flattened for display: part, scope, spec.
+    function _ambSeqMapList(cfg, L) {
+      const out = [];
+      const m = (L && L.partSeqs && typeof L.partSeqs === 'object') ? L.partSeqs : null;
+      if (!m) return out;
+      Object.keys(m).forEach(k => {
+        const pi = k | 0, cell = m[k];
+        if (!cell || typeof cell !== 'object') return;
+        Object.keys(cell).forEach(ck => {
+          const spec = _ambPsqSpec(cell[ck]); if (!spec) return;
+          out.push({ pi, key: ck, spec, part: _ambPartLabel(cfg, pi), scope: _ambPsqScopeText(cfg, pi, ck) });
+        });
+      });
+      return out;
+    }
+    function _ambPsqScopeText(cfg, pi, ck) {
+      if (ck === _AMB_PARTSEQ_ALL) return 'every pass';
+      const mm = _AMB_PARTSEQ_RE.exec(ck);
+      if (!mm) return ck;
+      const pass = 'pass ' + ((mm[1] | 0) + 1);
+      if (mm[2] === '*') return pass + ', every chord';
+      return pass + ', ' + _ambPsqChordName(cfg, pi, mm[2] | 0);
+    }
+    // The chord NAMES of a part, in written order — the same labels the compose
+    // strip and the ▦ Passes rows use, so one chord is called one thing.
+    function _ambPsqChordNames(cfg, pi) {
+      const out = [];
+      try {
+        const rg = (_ambGridRanges(cfg) || []).find(x => x.pi === pi);
+        if (!rg) return out;
+        let shift = 0;
+        try { shift = _ambProgViewShift(_E, cfg, cfg.prog.chords); } catch (e) { shift = 0; }
+        for (let i = 0; i < rg.len; i++) {
+          const ch = cfg.prog.chords[rg.from + i];
+          let nm = '?';
+          try { nm = _ambIsTransition(ch) ? '⇝' : (_ambChordShort(_ambChordShift(ch, shift)) || '?'); } catch (e) { nm = '?'; }
+          out.push(nm);
+        }
+      } catch (e) {}
+      return out;
+    }
+    function _ambPsqChordName(cfg, pi, ci) {
+      const ns = _ambPsqChordNames(cfg, pi);
+      return ns[ci] ? ('chord ' + (ci + 1) + ' (' + ns[ci] + ')') : ('chord ' + (ci + 1));
+    }
+    function _ambSeqMapClose() {
+      const h = document.getElementById('ambient-seqmap');
+      if (h) h.style.setProperty('display', 'none', 'important');
+      _ambSeqMapState = null;
+    }
+    function _ambSeqMapOpen(E, layerKey) {
+      const cfg = (E && (E._cfg || (E.getCfg && E.getCfg()))) || null;
+      const L = _ambLayerByKey(E, layerKey);
+      if (!cfg || !L) return;
+      const bank = _ambSeqMapBank();
+      _ambSeqMapState = { E, key: layerKey,
+        n: bank.length ? bank[0].name : '',
+        s: 0, l: 0, f: 'loop', pi: 0, pass: -1, ci: -1 };   // -1 = every
+      let host = document.getElementById('ambient-seqmap');
+      if (!host) {
+        host = document.createElement('div');
+        host.id = 'ambient-seqmap';
+        host.className = 'sm-overlay ambient-seqmap';
+        document.body.appendChild(host);
+        // Body-attached, so the view-mode rules force-hide it unless display is
+        // set INLINE with !important. Same trap every overlay here hits.
+        host.addEventListener('pointerdown', (ev) => {
+          if (ev.target === host) { _ambSeqMapClose(); return; }
+          const b = ev.target.closest && ev.target.closest('[data-smq]');
+          if (!b) return;
+          ev.preventDefault(); ev.stopPropagation();
+          try { _ambSeqMapAct(b.getAttribute('data-smq')); } catch (e) {}
+        }, true);
+        host.addEventListener('change', (ev) => {
+          const el = ev.target.closest && ev.target.closest('[data-smqf]');
+          if (!el || !_ambSeqMapState) return;
+          const f = el.getAttribute('data-smqf');
+          const v = el.value;
+          if (f === 'n') _ambSeqMapState.n = v;
+          else if (f === 'f') _ambSeqMapState.f = v;
+          else if (f === 'pi') { _ambSeqMapState.pi = v | 0; _ambSeqMapState.ci = -1; _ambSeqMapState.pass = -1; }
+          else if (f === 'pass') _ambSeqMapState.pass = parseInt(v, 10);
+          else if (f === 'ci') _ambSeqMapState.ci = parseInt(v, 10);
+          // The two inputs are 1-BASED BAR NUMBERS ("take bars 2 to 3"), because
+          // that is how the compose strip numbers them; the STORE is a start and
+          // a length. Reading one as the other put "bars 3-5" in the box when
+          // "2 to 3" was typed — the render already converted, the handler did
+          // not, and the two must be inverses of each other.
+          else if (f === 's') {
+            const a = Math.max(1, Math.min(64, parseInt(v, 10) || 1));
+            const st0 = _ambSeqMapState;
+            const to = st0.l ? (st0.s + st0.l) : 0;               // keep the END where it was
+            st0.s = a - 1;
+            st0.l = to > 0 ? Math.max(1, to - st0.s) : 0;
+          } else if (f === 'l') {
+            const to = Math.max(0, Math.min(64, parseInt(v, 10) || 0));
+            _ambSeqMapState.l = to > 0 ? Math.max(1, to - _ambSeqMapState.s) : 0;
+          }
+          _ambSeqMapRender();
+        });
+      }
+      host.style.setProperty('display', 'flex', 'important');
+      _ambSeqMapRender();
+    }
+    function _ambSeqMapAct(act) {
+      const st = _ambSeqMapState; if (!st) return;
+      const a = String(act).split(':'), op = a[0];
+      const E = st.E, cfg = (E._cfg || E.getCfg()), L = _ambLayerByKey(E, st.key);
+      if (!L) return;
+      if (op === 'close') { _ambSeqMapClose(); return; }
+      if (op === 'adopt') {
+        // ADOPTION RELEASES THE MAPPING FIRST — installing a phrase persists it
+        // (_ambStepsToLock writes through), and the runtime guard refuses to
+        // write while a mapped phrase is loaded, so without this the toast said
+        // it worked and nothing was recorded.
+        const nm = a.slice(1).join(':');
+        // The SAME loader the dock chips use — which also repopulates the lane
+        // when ✎ Grid is open, so choosing here is how you go back and edit a
+        // phrase. Doing less than that was the bug: the popover installed the
+        // steps on the layer and left the grid showing the old ones.
+        try {
+          if (_ambSeqLoadIntoLayer(E, st.key, nm)) {
+            // ORDER MATTERS: _ambRenderExtras REBUILDS the card, so the dock
+            // surfaces the loader just painted are thrown away and the fresh
+            // ones come back in their default (hidden) state. Repaint them
+            // AFTER the rebuild — _ambRefreshSeedModes is the sync path that
+            // drives them, and it runs whether or not the transport is going.
+            try { _ambRenderExtras(E); } catch (e) {}
+            try { _ambRefreshSeedModes(E); } catch (e) {}
+            try {
+              const composing = !!(_bloomGridEdit && _bloomGridEdit.key === st.key);
+              if (typeof showToast === 'function') {
+                showToast(composing ? ('“' + nm + '” loaded into the grid — edit it, then ⬇ Update to write it back.')
+                                    : _ambAdoptedMsg(L, nm));
+              }
+            } catch (e) {}
+            // Loading one into the grid is a move TO the grid; leaving the
+            // popover over it would hide the thing you just asked to edit.
+            if (_bloomGridEdit && _bloomGridEdit.key === st.key) { _ambSeqMapClose(); return; }
+          }
+        } catch (e) {}
+        _ambSeqMapRender();
+        return;
+      }
+      if (op === 'del') {
+        const nm = a.slice(1).join(':');
+        let idx = -1;
+        try { idx = savedSequences.findIndex(x => x && x.name === nm); } catch (e) { idx = -1; }
+        if (idx < 0) { _ambSeqMapRender(); return; }
+        let res = null;
+        try { res = deleteSavedSequence(idx); } catch (e) { res = null; }
+        if (res) {
+          // The builder may have been pointing at the entry that just went.
+          if (st.n === nm) { const b2 = _ambSeqMapBank(); st.n = b2.length ? b2[0].name : ''; }
+          try {
+            if (typeof showToast === 'function') {
+              showToast('Deleted “' + nm + '”' + (res.dropped ? (' · ' + res.dropped + ' mapping' + (res.dropped === 1 ? '' : 's') + ' removed') : ''));
+            }
+          } catch (e) {}
+          // Cards show the bank count and what is mapped, so they go stale —
+          // and the rebuild resets the dock surfaces, so repaint those after it.
+          try { _ambRenderExtras(E); } catch (e) {}
+          try { if (typeof _placeLaneExpander === 'function') _placeLaneExpander(); } catch (e) {}
+          try { if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
+          try { _ambRefreshSeedModes(E); } catch (e) {}
+        }
+        _ambSeqMapRender();
+        return;
+      }
+      if (op === 'map') {
+        if (!st.n) return;
+        const key = (st.pass < 0) ? _AMB_PARTSEQ_ALL
+                                  : _ambPartSeqCellKey(st.pass, st.ci < 0 ? '*' : st.ci);
+        _ambPartSeqApply(E, L, st.key, st.pi, key, _ambPsqStore({ n: st.n, s: st.s, l: st.l, f: st.f }), null);
+        _ambSeqMapRender();
+        return;
+      }
+      if (op === 'rm') {
+        const pi = a[1] | 0, ck = a.slice(2).join(':');
+        _ambPartSeqApply(E, L, st.key, pi, ck, '', null);
+        _ambSeqMapRender();
+        return;
+      }
+      if (op === 'clear') {
+        try { delete L.partSeqs; if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+        _ambSeqMapRender();
+        return;
+      }
+    }
+    function _ambSeqMapRender() {
+      const st = _ambSeqMapState; const host = document.getElementById('ambient-seqmap');
+      if (!st || !host) return;
+      const E = st.E, cfg = (E._cfg || E.getCfg()), L = _ambLayerByKey(E, st.key);
+      if (!L) { _ambSeqMapClose(); return; }
+      const esc = (t) => _ambEscText(String(t == null ? '' : t));
+      const bank = _ambSeqMapBank();
+      const rows = _ambPartSeqRows(cfg);
+      if (!(st.pi >= 0 && st.pi < Math.max(1, rows.length))) st.pi = 0;
+      const row = rows[st.pi] || null;
+      const sel = bank.find(x => x.name === st.n) || null;
+      const srcBars = sel ? _ambSeqBars(sel.steps) : 0;
+      const sliceBars = sel ? _ambSeqBars(_ambSeqSlice(sel.steps, st.s, st.l)) : 0;
+      const cols = row ? Math.max(1, _ambPartPassCols(cfg, row.pi)) : 1;
+      const chordNames = row ? _ambPsqChordNames(cfg, row.pi) : [];
+      // What the chosen TARGET is worth in bars, so the fit can be described
+      // before it is committed rather than only heard afterwards.
+      let dstBars = 0;
+      if (row && st.ci >= 0) { try { dstBars = _ambCadLen(cfg, cfg.prog.chords[(_ambGridRanges(cfg).find(x => x.pi === row.pi) || { from: 0 }).from + st.ci]); } catch (e) { dstBars = 0; } }
+      const opt = (v, t, on) => '<option value="' + esc(v) + '"' + (on ? ' selected' : '') + '>' + esc(t) + '</option>';
+      const list = _ambSeqMapList(cfg, L);
+      let h = '<div class="sm-modal seqmap-modal">';
+      h += '<div class="seqmap-hd"><b>Sequences</b><span>' + esc(_ambLayerLabel(L, st.key)) + '</span>' +
+        '<button type="button" class="seqmap-x" data-smq="close" title="Close">✕</button></div>';
+      // 1. THE LAYER'S OWN PHRASE
+      h += '<div class="seqmap-sec"><div class="seqmap-lbl">This layer plays</div>' +
+        '<div class="seqmap-chips">' +
+        (bank.length ? bank.map(x => {
+            const bars = _ambSeqBars(x.steps);
+            let used = ''; try { used = _ambSeqDeleteWarn(x.name); } catch (e) { used = ''; }
+            return '<span class="seqmap-chipwrap">' +
+              '<button type="button" class="ambient-seg seqmap-chip" data-smq="adopt:' + _ambEscAttr(x.name) + '" title="' +
+                _ambEscAttr('Make “' + x.name + '” this layer’s own phrase — what it plays wherever nothing below is mapped.') + '">' +
+                esc(x.name) + '<i>' + _ambFmtBpc(bars) + ' bar' + (Math.abs(bars - 1) < 1e-6 ? '' : 's') +
+                (used ? (' · ' + used) : '') + '</i></button>' +
+              '<button type="button" class="seqmap-del" data-smq="del:' + _ambEscAttr(x.name) + '" title="' +
+                _ambEscAttr('Delete “' + x.name + '” from the bank' + (used ? (' — it is mapped: ' + used) : '')) + '">✕</button>' +
+              '</span>';
+          }).join('')
+          : '<span class="ambient-hint">Nothing banked yet — compose in ✎ Grid, then ⬇ Save as sequence.</span>') +
+        '</div></div>';
+      if (bank.length && rows.length) {
+        // 2. THE MAPPING BUILDER
+        h += '<div class="seqmap-sec"><div class="seqmap-lbl">Map a slice</div>';
+        h += '<div class="seqmap-row"><label>Sequence</label>' +
+          '<select class="ambient-select" data-smqf="n">' + bank.map(x => opt(x.name, x.name, x.name === st.n)).join('') + '</select>' +
+          '<span class="ambient-hint">' + esc(_ambFmtBpc(srcBars) + ' bars long') + '</span></div>';
+        h += '<div class="seqmap-row"><label>Take bars</label>' +
+          '<input type="number" min="1" max="64" step="1" value="' + ((st.s | 0) + 1) + '" data-smqf="s" title="The first bar of the sequence to take" />' +
+          '<span class="seqmap-dash">to</span>' +
+          '<input type="number" min="0" max="64" step="1" value="' + (st.l ? (st.s + st.l) : 0) + '" data-smqf="l" title="The last bar to take — 0 means to the end" />' +
+          '<span class="ambient-hint">' + esc(st.l ? (_ambFmtBpc(sliceBars) + ' bars') : 'to the end (' + _ambFmtBpc(sliceBars) + ' bars)') + '</span></div>';
+        h += '<div class="seqmap-row"><label>Onto</label>' +
+          '<select class="ambient-select" data-smqf="pi">' + rows.map((r, i) => opt(i, r.name, i === st.pi)).join('') + '</select>' +
+          '<select class="ambient-select" data-smqf="pass">' +
+            opt(-1, 'every pass', st.pass < 0) +
+            Array.from({ length: cols }, (_, c) => opt(c, 'pass ' + (c + 1), st.pass === c)).join('') +
+          '</select>' +
+          '<select class="ambient-select" data-smqf="ci"' + (st.pass < 0 ? ' disabled' : '') + '>' +
+            opt(-1, 'every chord', st.ci < 0) +
+            chordNames.map((nm, i) => opt(i, (i + 1) + ' · ' + nm, st.ci === i)).join('') +
+          '</select></div>';
+        h += '<div class="seqmap-row"><label>If sizes differ</label>' +
+          '<select class="ambient-select" data-smqf="f">' + _AMB_PSQ_FITS.map(f => opt(f, _AMB_PSQ_FIT_LBL[f], f === st.f)).join('') + '</select>' +
+          '<span class="ambient-hint">' + esc(_ambSeqFitHint(sliceBars, dstBars, st.f, st.ci >= 0)) + '</span></div>';
+        h += '<div class="seqmap-row seqmap-go"><button type="button" class="ambient-seg seqmap-map" data-smq="map">＋ Map it</button>' +
+          '<span class="ambient-hint">' + esc(st.pass < 0 ? 'Every pass of ' + (row ? row.name : '') + ' — the fallback for any pass with nothing more specific.'
+            : (st.ci < 0 ? 'Pass ' + (st.pass + 1) + ' of ' + (row ? row.name : '') + ', every chord.'
+                         : 'Pass ' + (st.pass + 1) + ', ' + _ambPsqChordName(cfg, row ? row.pi : 0, st.ci) + '.')) + '</span></div>';
+        h += '</div>';
+      }
+      // 3. WHAT IS MAPPED — narrowest wins, and it says so.
+      h += '<div class="seqmap-sec"><div class="seqmap-lbl">Mapped' +
+        (list.length ? '<button type="button" class="seqmap-clear" data-smq="clear" title="Remove every mapping on this layer">clear all</button>' : '') +
+        '</div>';
+      h += list.length
+        ? '<div class="seqmap-list">' + list.map(x =>
+            '<div class="seqmap-item"><b>' + esc(_ambPsqLabel(x.spec)) + '</b>' +
+            '<span>' + esc(x.part + ' · ' + x.scope) + '</span>' +
+            '<button type="button" class="seqmap-rm" data-smq="rm:' + (x.pi | 0) + ':' + _ambEscAttr(x.key) + '" title="Remove this mapping">✕</button></div>').join('') + '</div>'
+        : '<span class="ambient-hint">Nothing mapped — this layer plays its own phrase throughout.</span>';
+      h += '</div>';
+      h += '<div class="ambient-hint seqmap-foot">A chord beats a pass, a pass beats the part, and anything left blank plays the layer’s own phrase.</div>';
+      h += '</div>';
+      host.innerHTML = h;
+    }
+    // Say what the fit will DO, in bars, before it is committed.
+    function _ambSeqFitHint(srcBars, dstBars, mode, haveTarget) {
+      if (!haveTarget || !(dstBars > 0)) return 'Only matters when the slice and the chord are different lengths.';
+      if (!(srcBars > 0)) return '';
+      if (Math.abs(srcBars - dstBars) < 1e-6) return 'Same length — nothing to reconcile.';
+      const bars = (v) => _ambFmtBpc(v) + ' bar' + (Math.abs(v - 1) < 1e-6 ? '' : 's');
+      const a = bars(srcBars), b = bars(dstBars);
+      if (mode === 'stretch') return a + ' stretched over ' + b + ' — same notes, ' + (srcBars < dstBars ? 'slower' : 'faster') + '.';
+      if (mode === 'once') return a + ' played once' + (srcBars < dstBars ? (', then ' + bars(dstBars - srcBars) + ' of rest.') : ', cut at the chord.');
+      const n = Math.floor(dstBars / srcBars);
+      return srcBars < dstBars ? (a + ' looped ' + (n > 1 ? (n + '× ') : '') + 'to fill ' + b + '.') : (a + ' cut at ' + b + '.');
     }
     // The tabs + the matrix for the selected part.
     function _ambPartSeqGridHtml(E, cfg, L, ek, rows, sel) {
@@ -19601,6 +20704,63 @@
     //
     // A layer that had NO phrase of its own was generating; there the answer is to
     // drop the freeze entirely and let the emitter run again.
+    // NOTHING MAPPED HERE MEANS SILENCE, not the layer's own material. A phrase-
+    // driven layer plays what the schedule says and nothing else — an unmapped
+    // pass is a deliberate rest, which is what "empty by default" has meant all
+    // along. Implemented as an EMPTY FROZEN LOOP rather than a mute: the freeze
+    // gate short-circuits the emitter, so the layer is silent without any
+    // emitter knowing about it, and the next mapped chord installs over it.
+    //
+    // loopLen must be > 0 — _ambReplayFrozen steps `anchor + k * loopLen` and a
+    // zero length never advances, spinning to its 4096 guard every tick.
+    const _AMB_PSQ_SILENT = '\u0000silent';
+    function _ambPartSeqSilence(E, key) {
+      const fs = E.freeze && E.freeze[key];
+      if (fs && fs._partSeqSig === _AMB_PSQ_SILENT && fs.frozen) return false;   // already silent
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, now + 0.05); } catch (e) {}
+      const barSec = (60 / Math.max(20, _ambBpm())) * 4;
+      const A0 = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor : ((E._t0 != null) ? E._t0 : 0);
+      E.freeze[key] = {
+        frozen: true, _lock: true, _seedEdit: false, keyCtx: null,
+        recording: false, recStart: 0, events: [], loopLen: barSec,
+        anchor: A0 + Math.floor((now - A0) / barSec) * barSec,
+        scheduledUpto: now, pendingThawAt: null, pendingFreezeAt: null, _lockWin: null,
+        _partSeqName: _AMB_PSQ_SILENT, _partSeqSig: _AMB_PSQ_SILENT,
+      };
+      return true;
+    }
+    // GENERATE — hand the layer back to its emitter. Deliberately NOT
+    // `_ambPartSeqRestoreOwn`: that reinstates the layer's own `lockState`, i.e.
+    // a composed phrase, and "generate" is precisely the instruction not to play
+    // one. Dropping the freeze is what makes the emitter run again (the freeze
+    // gate short-circuits it), and the re-anchor lands that on the next boundary.
+    function _ambPartSeqGenerate(E, key) {
+      // ALREADY HANDED BACK — measured, without this the sync re-resolves to
+      // "generate" every tick and cancels the layer's voices twice per tick
+      // (81 cancels in 6 s), which is churn on a layer that is supposed to be
+      // left alone. The ledger is dropped the moment any other branch installs
+      // or silences, so a mapping added later still takes effect at once.
+      if (E._psqGen && E._psqGen[key]) return false;
+      const fs = E.freeze && E.freeze[key];
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      // Only disturb the layer if OUR phrase is what is playing. A freeze the
+      // layer built for itself (Write/Evolve on a generative layer) is not a
+      // composed phrase and is none of this function's business — tearing it
+      // down would make "generate" mean "and never loop", which it does not.
+      if (fs && fs._partSeqName) {
+        try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, now + 0.05); } catch (e) {}
+        try { delete E.freeze[key]; } catch (e) {}
+        try { _ambReanchorLayer(E, key); } catch (e) {}
+      }
+      if (!E._psqGen) E._psqGen = Object.create(null);
+      E._psqGen[key] = 1;
+      return true;
+    }
+    // Any other outcome means this layer is no longer being left to generate.
+    function _ambPsqGenClear(E, key) {
+      if (E && E._psqGen && E._psqGen[key]) delete E._psqGen[key];
+    }
     function _ambPartSeqRestoreOwn(E, key) {
       const fs = E.freeze && E.freeze[key];
       if (!fs || !fs._partSeqName) return false;        // nothing of ours is installed
@@ -19631,28 +20791,572 @@
       }
       return true;
     }
+    // THE SPAN OF THE WHOLE CURRENT PASS, in seconds. Walks back over chord
+    // spans while the part AND pass stay the same, so it is one question asked
+    // of the shared chord clock rather than a second walk of the chord lengths.
+    function _ambPassSpanAt(E, cfg, at) {
+      let w = null;
+      try { w = _ambPartChordAt(E, cfg, at); } catch (e) { return null; }
+      if (!w || w.pi < 0) return null;
+      let sp = null;
+      try { sp = _ambChordSpanAt(E, cfg, at); } catch (e) { return null; }
+      // `{start, end}` — NOT `{from, len}`. Reading the wrong field left the
+      // start undefined and every caller silently did nothing.
+      if (!sp || !(sp.end > sp.start)) return null;
+      let from = sp.start, guard = 0;
+      while (guard++ < 64) {
+        const probe = from - 1e-3;
+        if (probe <= 0) break;
+        let w2 = null, sp2 = null;
+        try { w2 = _ambPartChordAt(E, cfg, probe); sp2 = _ambChordSpanAt(E, cfg, probe); } catch (e) { break; }
+        if (!w2 || !sp2 || w2.pi !== w.pi || w2.pass !== w.pass) break;
+        from = sp2.start;
+      }
+      // …and forward, so callers can have the pass's LENGTH and not just where it
+      // began. A phrase mapped at pass level is fitted to this.
+      let to = sp.end; guard = 0;
+      while (guard++ < 64) {
+        const probe = to + 1e-3;
+        let w2 = null, sp2 = null;
+        try { w2 = _ambPartChordAt(E, cfg, probe); sp2 = _ambChordSpanAt(E, cfg, probe); } catch (e) { break; }
+        if (!w2 || !sp2 || w2.pi !== w.pi || w2.pass !== w.pass) break;
+        if (!(sp2.end > to)) break;
+        to = sp2.end;
+      }
+      return { from, to, pass: w.pass, pi: w.pi };
+    }
+    // ---- PASS LOCK — hold the pass that is playing, and keep playing it ------
+    //
+    // "Loop the pass I am hearing so I can edit it" — which means the CHORD CLOCK
+    // has to replay that window. It does NOT fold time: `_ambProgStepAt` is what
+    // answers "which pass is this", and folding `atSec` inside it would recurse
+    // (the window itself is measured with `_ambPassSpanAt`, which asks that same
+    // clock) and would leave time non-monotonic for every other consumer.
+    //
+    // Instead the clock's ANCHOR is pushed forward by exactly one pass each time
+    // the pass completes. `bars = (atSec - anchor) / barSec`, so adding the span
+    // to the anchor lands the walk back at the top of the same pass — which is
+    // precisely what the walk does anyway when a part repeats. Time stays
+    // monotonic, nothing else changes, and EVERY consumer follows for free: the
+    // chords, the per-pass Plays gate, the mapped phrases, the readouts and the
+    // playhead all resolve through that one clock.
+    //
+    // RELEASING IS THEN NOTHING AT ALL. Stop shifting and the current repetition
+    // simply runs on into the NEXT pass, which is the requested behaviour ("press
+    // again … advance to the next pass at the end of the current pass play") —
+    // there is no jump to arrange, because we never went anywhere.
+    //
+    // TRANSIENT, and deliberately so. It names "the pass playing right now",
+    // which has no meaning stopped, so it lives on the ENGINE and is cleared on
+    // stop — never on the layer or the cfg, where `persistWorkspace` would save
+    // it and a project would reload stuck on one pass (the `_soloLane` lesson).
+    // The counterpart of that lesson — state that can vanish while its widget
+    // keeps state gets reported as a bug — is paid for by making the button LOUD
+    // while held and by clearing it in the one place playback ends.
+    // SHIFTING EARLY IS HARMLESS, SHIFTING LATE IS NOT — which is what sets this
+    // number. The window LOOPS, so a time folded one span earlier lands at the
+    // same position WITHIN the pass and sounds identical; only which repetition
+    // it belongs to changes, and that is inaudible. Shifting late, though, lets
+    // the tick schedule genuine next-pass content before the wrap. So this
+    // deliberately sits at the top of the tick's real lookahead rather than the
+    // budget-throttled floor (_AMB_DEFER_HORIZON) — but it must not run far
+    // ahead of real time either, or releasing the lock would leave the anchor
+    // stranded in the future.
+    const _AMB_PASSLOCK_HORIZON = 1.4;
+    function _ambPassHoldBtnHtml(E) {
+      const pl = E && E._passLock;
+      const live = !!(E && E.timer) && (typeof _ambViewIsPlaying === 'function' ? _ambViewIsPlaying(E) : true);
+      if (!live && !pl) {
+        // Rendered-but-disabled rather than absent: a control that vanishes
+        // cannot be found, learned, or asked about (the Delete lesson).
+        return '<button type="button" class="ambient-seg pmx-hold" disabled title="' +
+          _ambEscAttr('Hold the pass that is playing and keep repeating it \u2014 press play first.') +
+          '">\u21bb Hold pass</button>';
+      }
+      if (!pl) {
+        return '<button type="button" class="ambient-seg pmx-hold" data-pmx="hold" title="' +
+          _ambEscAttr('Repeat the pass that is playing right now, so you can edit it and hear the edit. ' +
+            'Press again to let it run on into the next pass.') + '">\u21bb Hold pass</button>';
+      }
+      const nm = (() => { try { const cfg = E._cfg || E.getCfg(); return _ambPartLabel(cfg, pl.pi); } catch (e) { return 'part'; } })();
+      return '<button type="button" class="ambient-seg pmx-hold on" data-pmx="hold" title="' +
+        _ambEscAttr('Holding ' + nm + ' \u00b7 pass ' + ((pl.pass | 0) + 1) + ' \u2014 repeated ' +
+          (pl.reps | 0) + '\u00d7. Press to release: this repetition finishes, then the next pass runs.') +
+        '">\u21bb Holding ' + _ambEscText(nm) + ' \u00b7 ' + ((pl.pass | 0) + 1) + '</button>';
+    }
+    function _ambPassLockOn(E) { return !!(E && E._passLock); }
+    function _ambPassLockEngage(E, cfg, at) {
+      if (!E) return null;
+      let sp = null;
+      try { sp = _ambPassSpanAt(E, cfg, at); } catch (e) { sp = null; }
+      if (!sp || !(sp.to > sp.from)) return null;
+      // SNAP THE SPAN. `_ambPassSpanAt` BISECTS `_ambProgStepAt` for its edges, so
+      // a plain 2-bar pass measures 2.0000234 bars — and an over-long span means
+      // the wrap test never fires on the boundary bar, so the loop plays one bar
+      // of the NEXT pass before restarting (measured exactly that: p3.c0 between
+      // repetitions). Same float-noise trap `_ambSnapBars` was added for.
+      const _bpm = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const _barSec = (60 / Math.max(20, _bpm)) * 4;
+      const _span = Math.max(1e-6, _ambSnapBars((sp.to - sp.from) / _barSec) * _barSec);
+      E._passLock = { pi: sp.pi, pass: sp.pass, from: sp.from, to: sp.from + _span, span: _span, reps: 0 };
+      return E._passLock;
+    }
+    function _ambPassLockRelease(E) { if (E) E._passLock = null; }
+    // Called at the TOP of the tick, before anything schedules — shifting the
+    // anchor changes what every emit in this tick resolves to, so it cannot
+    // happen halfway through one. Acts on the HORIZON, not on `now`: the tick
+    // schedules ~1.4 s ahead, so waiting until `now` passes the boundary would
+    // let a lookahead of the NEXT pass be scheduled before the shift lands.
+    function _ambPassLockSync(E, cfg, now, lead) {
+      const pl = E && E._passLock; if (!pl) return;
+      if (!(pl.span > 0)) { E._passLock = null; return; }
+      const horizon = now + Math.max(0, lead || 0);
+      let guard = 0;
+      while (horizon >= pl.to && guard++ < 64) {
+        E._progAnchor = (Number.isFinite(E._progAnchor) ? E._progAnchor : 0) + pl.span;
+        pl.from += pl.span; pl.to += pl.span; pl.reps++;
+      }
+    }
+    // A PHRASE COMPOSED FOR A PASS RESTARTS WITH THE PASS.
+    //
+    // A frozen loop runs on its OWN length from its own anchor, which is right
+    // for a phrase that just repeats — and wrong for one WRITTEN AGAINST a set
+    // of changes, because passes are not all the same length. A part whose
+    // passes run 4, 2 and 3 bars puts a fixed 4-bar phrase at phase 0, then
+    // ½, then ¼, then ¾ at successive pass starts (measured): it coincides with
+    // the changes only now and then. Heard as a delay and a skip "roughly every
+    // other boundary, or every 3 or 4" — that period IS the pass count.
+    //
+    // So the anchor follows the pass. Gated on `lockState.seedEdit`, i.e. a
+    // phrase drawn in the grid: a Write/Evolve capture is not written against
+    // anything and must keep its own clock.
+    function _ambComposedPassSync(E, cfg, now) {
+      if (!E || !cfg || !cfg.prog || !cfg.prog.on) return;
+      if (!E.freeze) return;
+      const one = (key, L) => {
+        if (!L || !L.lockState || !L.lockState.seedEdit) return;
+        if (_ambGridComposing(key)) return;               // never move it under the editor
+        const fs = E.freeze[key];
+        if (!fs || !fs.frozen || !fs._lock) return;
+        if (fs._partSeqName) return;                      // a MAPPED phrase has its own installer
+        if (!(fs.loopLen > 0)) return;
+        // MOVE THE ANCHOR ONLY FOR TIME NOT YET SCHEDULED. Re-anchoring across
+        // a window the replay has already emitted makes it emit that window
+        // AGAIN under the new mapping — measured as pairs of onsets 0.1-0.4 ms
+        // apart, which is a comb filter rather than a flam. So the pass we align
+        // to is the one containing the FIRST UNSCHEDULED instant, and the change
+        // lands strictly ahead of the playhead: nothing is cancelled, nothing is
+        // re-filled, and the new alignment simply begins at the next boundary.
+        const edge = Math.max(now, Number.isFinite(fs.scheduledUpto) ? fs.scheduledUpto : now);
+        let span = null;
+        try { span = _ambPassSpanAt(E, cfg, edge); } catch (e) { return; }
+        if (!span || !(span.from >= 0)) return;
+        if (span.from < edge - 1e-3) return;          // that pass is already under way
+        if (Math.abs((fs.anchor || 0) - span.from) < 1e-3) return;
+        fs.anchor = span.from;
+      };
+      try {
+        ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k]) one(k, cfg[k]); });
+        (cfg.extras || []).forEach(x => { if (x && x.type != null && x.id != null) one(x.type + ':' + x.id, x); });
+      } catch (e) {}
+    }
+    // ---- SEAM WATCH ----------------------------------------------------------
+    // `bloomSeamWatch()` in the console: arms, waits for Play, and captures the
+    // FIRST pass boundary in full — every layer's onsets around it, the audio
+    // envelope across it, and each layer's clock/freeze/write state on both
+    // sides. Prints a report and copies it to the clipboard.
+    //
+    // It exists because a gap-size detector cannot tell a sparse layer's rests
+    // from a real hole (a euclid bass scored 31 false "holes" that way), so the
+    // useful evidence is not "was there a gap" but WHAT EACH LAYER WAS DOING at
+    // the seam, next to whether the master output actually dipped.
+    function _ambSeamReport(W) {
+      const E = W.E, out = [];
+      const P = (x) => out.push(x);
+      const rel = (t) => (t == null ? 'null' : (+(t - W.edge).toFixed(3)));
+      P('=== BLOOM SEAM WATCH ===============================================');
+      P('boundary #1 at t+' + (+(W.edge - W.t0).toFixed(3)) + 's after play' +
+        '   (pass ' + W.edgeFrom + ' -> ' + W.edgeTo + ')');
+      P('bpm ' + _ambBpm() + ' · area bpm ' + (W.cfg && W.cfg.bpm != null ? W.cfg.bpm : '(none)') +
+        ' · chords ' + ((W.cfg.prog && W.cfg.prog.chords || []).length) +
+        ' · parts ' + ((W.cfg.prog && W.cfg.prog.parts || []).length) +
+        ' · grid ' + (W.cfg.prog && W.cfg.prog.grid ? JSON.stringify(W.cfg.prog.grid) : 'none'));
+      P('chord lengths (bars): ' + JSON.stringify((W.cfg.prog && W.cfg.prog.chords || [])
+        .map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : (W.cfg.barsPerChord || 1))));
+      P('pass edges (s from play): ' + JSON.stringify(W.edges.map(e => +(e.t - W.t0).toFixed(3))));
+      P('pass spans (s): ' + JSON.stringify(W.edges.map((e, i) =>
+        W.edges[i + 1] ? +(W.edges[i + 1].t - e.t).toFixed(3) : null)));
+      P('');
+      P('--- AUDIO across the boundary (rms per 50ms, t=0 is the boundary) ----');
+      P(W.env.map(b => rel(b.t) + ':' + b.v.toFixed(4)).join('  '));
+      const pre = W.env.filter(b => b.t < W.edge), post = W.env.filter(b => b.t >= W.edge);
+      const avg = (a) => a.length ? a.reduce((x, y) => x + y.v, 0) / a.length : 0;
+      const preAvg = avg(pre);
+      const dipTo = post.length ? Math.min.apply(null, post.map(b => b.v)) : 0;
+      const lowRun = (() => { let n = 0, best = 0; post.forEach(b => { if (preAvg > 0 && b.v < preAvg * 0.45) { n++; best = Math.max(best, n); } else n = 0; }); return best; })();
+      P('level before ' + preAvg.toFixed(4) + ' · lowest after ' + dipTo.toFixed(4) +
+        ' (' + (preAvg > 0 ? (dipTo / preAvg).toFixed(2) : '?') + 'x)' +
+        ' · consecutive buckets under half: ' + lowRun + ' (' + (lowRun * 0.05).toFixed(2) + 's)');
+      P(lowRun >= 4
+        ? '   <-- THE MIX THINS ACROSS THE SEAM. Which layer stopped is below.'
+        : '   (no dip in the master across the boundary)');
+      P('');
+      P('--- LAYERS ----------------------------------------------------------');
+      W.keys.forEach(k => {
+        const L = _ambLayerByKey(E, k);
+        const on = (W.notes[k] || []).slice().sort((a, b) => a - b);
+        const before = on.filter(t => t < W.edge && t >= W.edge - 4).map(t => rel(t));
+        const after = on.filter(t => t >= W.edge && t < W.edge + 4).map(t => rel(t));
+        const st = (W.state[k] || []);
+        const at = (side) => { const r = st.filter(x => side === 'pre' ? x.t < W.edge : x.t >= W.edge); return r[side === 'pre' ? r.length - 1 : 0] || null; };
+        const a = at('pre'), b = at('post');
+        const f = (x) => x ? ('frozen ' + (x.frozen ? 'Y' : 'n') + ' loop ' + x.loop + ' anchor ' + rel(x.anchor) +
+                              ' upto ' + rel(x.upto) + ' thaw ' + rel(x.thaw) + ' seq ' + (x.seq || '-')) : '(none)';
+        P('');
+        P('[' + k + ']  ' + (L ? (_ambLayerLabel(L, k) || '') : '') +
+          '  unit ' + (L && L.unit ? JSON.stringify(L.unit) : '?') +
+          '  write ' + (L && L.write ? (L.write.on ? (L.write.bars + 'x' + L.write.times) : 'off') : '?') +
+          '  composed ' + (!!(L && L.lockState && L.lockState.seedEdit)) +
+          '  mapped ' + (!!(L && L.partSeqs)));
+        P('   period ' + (+(_ambLayerPeriodSec(E, k) || 0).toFixed(3)) + 's' +
+          '   onsets before ' + JSON.stringify(before) + '   after ' + JSON.stringify(after));
+        P('   pre : ' + f(a));
+        P('   post: ' + f(b));
+        // The tell: did the FIRST onset after the boundary land where the
+        // spacing before it says it should?
+        if (before.length >= 2 && after.length) {
+          const gap = +(before[before.length - 1] - before[before.length - 2]).toFixed(3);
+          const cross = +(after[0] - before[before.length - 1]).toFixed(3);
+          P('   spacing before ' + gap + 's · across the seam ' + cross + 's' +
+            (Math.abs(cross - gap) > Math.max(0.05, gap * 0.3) ? '   <-- LATE by ' + (+(cross - gap).toFixed(3)) + 's' : '   (on time)'));
+        }
+      });
+      P('');
+      P('--- HEALTH ----------------------------------------------------------');
+      try { P((window.__bloomHealthLog || []).slice(-4).map(x => JSON.stringify(x)).join('  ') || '(nothing logged)'); } catch (e) { P('(unavailable)'); }
+      P('=== END =============================================================');
+      const txt = out.join('\n');
+      try { console.log(txt); } catch (e) {}
+      const shown = (ok) => { try { if (typeof showToast === 'function') showToast(ok
+        ? 'Seam report copied — paste it back.'
+        : 'Seam report is in the console, and in the box on screen — select and copy.', { ms: 11000 }); } catch (e) {} };
+      let copied = false;
+      try { if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(() => shown(true)).catch(() => { _ambSeamBox(txt); shown(false); });
+        copied = true;
+      } } catch (e) {}
+      if (!copied) { _ambSeamBox(txt); shown(false); }
+      return txt;
+    }
+    // A selectable copy on screen, for when the clipboard is refused.
+    function _ambSeamBox(txt) {
+      try {
+        let host = document.getElementById('ambient-seambox');
+        if (!host) {
+          host = document.createElement('div');
+          host.id = 'ambient-seambox';
+          host.className = 'sm-overlay ambient-seambox';
+          host.addEventListener('pointerdown', (ev) => { if (ev.target === host) host.style.setProperty('display', 'none', 'important'); }, true);
+          document.body.appendChild(host);
+        }
+        host.innerHTML = '';
+        const modal = document.createElement('div');
+        modal.className = 'sm-modal seambox-modal';
+        const ta = document.createElement('textarea');
+        ta.readOnly = true; ta.value = txt; ta.className = 'seambox-ta';
+        const bar = document.createElement('div'); bar.className = 'seambox-bar';
+        const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'ambient-seg';
+        btn.textContent = 'Select all'; btn.addEventListener('click', () => { ta.focus(); ta.select(); });
+        const cl = document.createElement('button'); cl.type = 'button'; cl.className = 'ambient-seg';
+        cl.textContent = 'Close'; cl.addEventListener('click', () => host.style.setProperty('display', 'none', 'important'));
+        bar.appendChild(btn); bar.appendChild(cl);
+        modal.appendChild(bar); modal.appendChild(ta);
+        host.appendChild(modal);
+        host.style.setProperty('display', 'flex', 'important');
+        ta.focus(); ta.select();
+      } catch (e) {}
+    }
+    // ---- bloomDump() ---------------------------------------------------------
+    // THE ANSWER TO DEBUG CHURN. Every round of "I can't reproduce it" is me
+    // guessing at your project; this hands the project over instead. It dumps
+    // the AREA CONFIG verbatim, the banked sequences it references, and each
+    // layer's live freeze state, as JSON — which `npm run test:replay` loads
+    // into a headless engine and plays, so the same notes come out here as
+    // there. No more approximations of the shape.
+    //
+    // Deliberately NOT a screenshot or a summary: a summary is my reading of
+    // your project, which is exactly the step that keeps being wrong.
+    function bloomDump() {
+      const E = _masterEng; if (!E) { console.warn('[dump] no engine'); return; }
+      const cfg = E._cfg || E.getCfg();
+      const out = { v: 1, when: null, bpm: _ambBpm(), cfg: null, seqs: [], freeze: {}, layers: [] };
+      try { out.cfg = JSON.parse(JSON.stringify(cfg)); } catch (e) { out.cfgErr = String(e && e.message); }
+      // The banked phrases this area REFERENCES — by name, with their steps, so a
+      // replay resolves the same material rather than an empty bank.
+      try {
+        const want = new Set();
+        _ambPartSeqLayers(cfg).forEach(L => {
+          const m = L && L.partSeqs; if (!m) return;
+          Object.keys(m).forEach(k => { const c = m[k]; if (!c) return;
+            Object.keys(c).forEach(ck => { const sp = _ambPsqSpec(c[ck]); if (sp) want.add(sp.n); }); });
+        });
+        (savedSequences || []).forEach(x => {
+          if (!x || !Array.isArray(x.steps)) return;
+          if (want.has(x.name)) out.seqs.push(JSON.parse(JSON.stringify(x)));
+        });
+      } catch (e) {}
+      // WHAT EACH LAYER IS ACTUALLY HOLDING right now — mapped vs composed vs a
+      // Write capture is the distinction that decides whether a symptom is a bug.
+      try {
+        const keys = [];
+        ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k]) keys.push(k); });
+        (cfg.extras || []).forEach(x => { if (x && x.type != null && x.id != null) keys.push(x.type + ':' + x.id); });
+        keys.forEach(k => {
+          const L = _ambLayerByKey(E, k), fs = E.freeze && E.freeze[k];
+          out.layers.push({ key: k, label: L ? _ambLayerLabel(L, k) : null,
+            mapped: !!(fs && fs._partSeqName), mappedTo: fs ? (fs._partSeqName || null) : null,
+            composed: !!(L && L.lockState && L.lockState.seedEdit),
+            write: L && L.write ? (L.write.on ? (L.write.bars + 'x' + L.write.times) : 'off') : null,
+            unit: L ? L.unit : null, present: L ? (L.present !== false) : null, mute: L ? !!L.mute : null });
+          out.freeze[k] = fs ? { frozen: !!fs.frozen, lock: !!fs._lock, loopLen: fs.loopLen || null,
+            events: (fs.events || []).length, seq: fs._partSeqName || null } : null;
+        });
+      } catch (e) {}
+      const txt = JSON.stringify(out);
+      try { console.log('[dump] ' + (txt.length / 1024).toFixed(1) + ' KB'); } catch (e) {}
+      let copied = false;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(txt)
+            .then(() => { try { showToast('Project dump copied — paste it back.', { ms: 9000 }); } catch (e) {} })
+            .catch(() => _ambSeamBox(txt));
+          copied = true;
+        }
+      } catch (e) {}
+      if (!copied) _ambSeamBox(txt);
+      return txt;
+    }
+    try { if (typeof window !== 'undefined') window.bloomDump = bloomDump; } catch (e) {}
+    function bloomSeamWatch(opts) {
+      const E = _masterEng; if (!E) { console.warn('[seam] no engine'); return; }
+      const o = opts || {};
+      const W = { E, cfg: null, t0: 0, edge: 0, edgeFrom: -1, edgeTo: -1, edges: [], keys: [],
+                  notes: {}, state: {}, env: [], done: false, lastPass: -1, armed: true };
+      window.__bloomSeam = W;
+      let tap = null, an = null, buf = null;
+      const startCapture = () => {
+        W.cfg = E._cfg || E.getCfg();
+        W.keys = [];
+        try {
+          ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (W.cfg[k] && W.cfg[k].present !== false) W.keys.push(k); });
+          (W.cfg.extras || []).forEach(x => { if (x && x.type != null && x.id != null) W.keys.push(x.type + ':' + x.id); });
+        } catch (e) {}
+        W.keys.forEach(k => { W.notes[k] = []; W.state[k] = []; });
+        W.t0 = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        try {
+          const node = (typeof _ambMasterTapNode === 'function') ? _ambMasterTapNode() : null;
+          if (node) { an = new Tone.Analyser('waveform', 1024); Tone.connect(node, an); buf = an; }
+        } catch (e) {}
+        console.log('[seam] recording — hold on…');
+      };
+      const sample = () => {
+        if (W.done) return;
+        const now = Tone.now(), cfg = E._cfg || E.getCfg();
+        // notes
+        W.keys.forEach(k => {
+          ((E.cap && E.cap[k]) || []).forEach(ev => {
+            const at = (ev.at != null) ? ev.at : ev.time;
+            if (at == null) return;
+            if (!W.notes[k].some(x => Math.abs(x - at) < 1e-4)) W.notes[k].push(at);
+          });
+          const fs = E.freeze && E.freeze[k];
+          W.state[k].push({ t: now, frozen: !!(fs && fs.frozen), loop: fs && fs.loopLen ? +fs.loopLen.toFixed(3) : null,
+            anchor: fs ? fs.anchor : null, upto: fs ? fs.scheduledUpto : null,
+            thaw: fs ? fs.pendingThawAt : null, seq: fs ? fs._partSeqName : null });
+          if (W.state[k].length > 400) W.state[k].shift();
+        });
+        // pass edges
+        try {
+          const w = _ambPartChordAt(E, cfg, now);
+          if (w && w.pass !== W.lastPass) {
+            // ONLY A BOUNDARY THAT HAPPENS DURING THE TAKE. The clock carries
+            // state from before Play, so the first sample saw a "pass 1 -> 2"
+            // at t-0.15s and reported on a boundary with nothing before it —
+            // every "before" column empty and the level reading 0.
+            const settled = (now - W.t0) > 1.0;
+            if (settled && W.lastPass >= 0 && !W.edge) { W.edge = now; W.edgeFrom = W.lastPass; W.edgeTo = w.pass; }
+            W.lastPass = w.pass;
+            if (settled) W.edges.push({ t: now, pass: w.pass });
+          }
+        } catch (e) {}
+        // audio envelope
+        if (buf) {
+          try {
+            const v = buf.getValue(); let sum = 0;
+            for (let i = 0; i < v.length; i++) sum += v[i] * v[i];
+            W.env.push({ t: now, v: Math.sqrt(sum / v.length) });
+            if (W.env.length > 600) W.env.shift();
+          } catch (e) {}
+        }
+        // finish 4s after the first boundary
+        if (W.edge && now > W.edge + 4) {
+          W.done = true;
+          W.env = W.env.filter(b => b.t >= W.edge - 2 && b.t <= W.edge + 2);
+          try { clearInterval(W.iv); } catch (e) {}
+          try { if (an) an.dispose(); } catch (e) {}
+          _ambSeamReport(W);
+        }
+      };
+      if (E.timer) { startCapture(); }
+      else {
+        console.log('[seam] armed — press ▶ Play.');
+        const wait = setInterval(() => { if (E.timer) { clearInterval(wait); startCapture(); } }, 120);
+        setTimeout(() => clearInterval(wait), 60000);
+      }
+      W.iv = setInterval(sample, 40);
+      setTimeout(() => { if (!W.done) { W.done = true; try { clearInterval(W.iv); } catch (e) {}
+        console.warn('[seam] no pass boundary seen in 60s — is the Progression on?'); } }, 60000);
+      return 'watching…';
+    }
+    try { if (typeof window !== 'undefined') window.bloomSeamWatch = bloomSeamWatch; } catch (e) {}
     // Install the mapped sequence when the pass changes. Called once per tick.
+    // A CHORD'S LENGTH MEASURED BACK OUT OF THE CLOCK IS NOT EXACT, AND IT IS USED
+    // AS AN IDENTITY. `_ambChordSpanAt` BISECTS `_ambProgStepAt` for its edges, so
+    // `(end - start) / barSec` for a plain 1-bar chord comes back 1.0002929687,
+    // 1.0000615433, 1.0002403126 … — a different float on every chord. That value
+    // is BOTH the fit target and half of `_ambPsqSig`, whose `toFixed(4)` preserves
+    // the noise, so the "already loaded" guard never matched: the mapped phrase
+    // RE-INSTALLED on every chord, and `_ambStepsToLock` cancels the layer's
+    // scheduled voices as part of installing. Measured on a 4-chord, 2-pass
+    // schedule at 120 bpm: of every 8-note phrase only the 2 notes already
+    // dispatched and the 2 emitted after the cancel survived — 5 of 8 killed and
+    // never re-scheduled, every bar, which is "not all the notes are playing".
+    // It also wobbled the FIT: a target a hair over 1 bar padded a ninth step.
+    //
+    // Snap to the 1/48-bar grid the progression's own step→bars conversion already
+    // uses (`_ambProgFromSteps`), so quarters, eighths, triplets and 16ths all stay
+    // exact and a real cadence length is untouched — only the bisection's noise is.
+    function _ambSnapBars(b) {
+      if (!Number.isFinite(b) || b <= 0) return 0;
+      const G = 48;
+      const snapped = Math.round(b * G) / G;
+      // Never snap a genuinely odd length away to nothing.
+      return snapped > 0 ? snapped : b;
+    }
     function _ambPartSeqSync(E, cfg, now) {
       if (!E || !cfg) return;
       // WHERE we are — part, pass AND chord. The chord is the narrowest axis a
       // cell can name, so the install has to be re-resolved as the changes move,
       // not only when the pass turns over.
-      const at = _ambPartChordAt(E, cfg, now);
-      if (!at || at.pi < 0) return;
       const one = (key, L) => {
         // NEVER TOUCH A LAYER BEING COMPOSED — checked FIRST, before anything is
         // resolved, so no path below can install, restore or thaw underneath the
         // editor. "What you draw is what you hear" is the whole contract of a
         // Grid session, and this function's job is to swap the layer's phrase.
         if (_ambGridComposing(key)) return;
-        const m = L && L.partSeqs; if (!m) return;
-        const nm = _ambPartSeqNameAt(E, cfg, L, now, at);
-        // NOTHING SET AT ANY LEVEL — cell, pass, part — means this layer plays its
-        // OWN phrase here. Absent is neutral, and neutral is the layer's own
-        // material, exactly as the grid says.
-        if (!nm) { _ambPartSeqRestoreOwn(E, key); return; }
+        // A layer with neither a mapping nor an override is not phrase-driven and
+        // is left entirely alone — it generates live, as every layer always has.
+        if (!_ambPhraseDriven(L)) return;
+        // RESOLVE ON THE HORIZON, NOT ON `now` — the rule this codebase already
+        // learned for the Write engage and the area advance, in the one place
+        // that had not learned it. The tick schedules ~1.4 s ahead, so by the
+        // time it NOTICES a chord that chord has already begun: the swap landed
+        // ~0.4 s late, `_ambStepsToLock` retracted the outgoing phrase's
+        // remaining notes, and the incoming one started from wherever the cancel
+        // fell. That is fine when every chord is the same length (the guard then
+        // says "already loaded" and no swap happens at all) and it is exactly the
+        // loss a CADENCE exposes, where every chord genuinely re-fits.
+        //
+        // The horizon is only usable once the OUTGOING phrase has been scheduled
+        // all the way TO the boundary — `scheduledUpto` is that statement — or
+        // replacing the freeze would leave a hole at the end of the chord it is
+        // still playing. So: resolve at `scheduledUpto` when it is ahead of us
+        // (capped at one lookahead), and at `now` when nothing is installed yet.
+        const _fs0 = E.freeze && E.freeze[key];
+        let tRes = now;
+        if (_fs0 && _fs0.frozen && _fs0._partSeqSig && Number.isFinite(_fs0.scheduledUpto) && _fs0.scheduledUpto > now) {
+          tRes = Math.min(_fs0.scheduledUpto, now + 1.4);
+        }
+        const at = _ambPartChordAt(E, cfg, tRes);
+        if (!at || at.pi < 0) return;
+        // THE OVERRIDE OUTRANKS THE SCHEDULE. One phrase, looped at ITS OWN
+        // length for the whole piece — so it is installed with no chord target
+        // (dstBars 0) and is not re-fitted as the changes move.
+        const _ov = _ambPhraseLoopOf(L);
+        let spec, dstBars = 0, dstFrom = null, scope = '';
+        if (_ov) {
+          _ambPsqGenClear(E, key);
+          spec = { n: _ov, s: 0, l: 0, f: 'loop' };
+          // ANCHOR IT ON THE PASS, not on its own loop grid. Without a target the
+          // install falls through to `_ambStepsToLock`'s snap — the most recent
+          // grid-aligned loop start AT OR BEFORE `now` — and the replay's
+          // from-clamp then joins at `now`, i.e. PARTWAY THROUGH THE PHRASE.
+          // Whether that bites depends on where in the loop the install happens
+          // to land, which is why it was intermittent ("sometimes starts mid
+          // phrase"). Anchoring on the pass start also makes it restart with the
+          // part, which is the lockstep the schedule promises.
+          //
+          // dstBars stays 0: the override loops at ITS OWN length and is never
+          // re-fitted to the pass — only its starting point comes from here.
+          try {
+            // `{from, pass, pi}` — NOT `.start`. That function's own comment
+            // warns about the mirror of this mistake, and reading the wrong
+            // field leaves dstFrom null and the anchor silently unmoved.
+            const ps = _ambPassSpanAt(E, cfg, tRes);
+            if (ps && ps.from != null) dstFrom = ps.from;
+          } catch (e) { dstFrom = null; }
+        } else {
+          const _r = _ambPartSeqSpecAt(E, cfg, L, tRes, at);
+          // GENERATE outranks the silence fallback: a layer that resolved to
+          // nothing is silent (nobody said what to play), a layer that resolved
+          // to GENERATE was told exactly what to do.
+          if (_r && _r.gen) { _ambPartSeqGenerate(E, key); return; }
+          _ambPsqGenClear(E, key);
+          spec = _r && _r.spec;
+          scope = (_r && _r.from) || '';
+          if (!spec || !spec.n) { _ambPartSeqSilence(E, key); return; }
+        }
+        const nm = spec.n;
+        // HOW LONG THE CHORD IS, in bars — the target the fit works against, and
+        // part of the identity of the installed phrase. Computed BEFORE the
+        // guard: a chord of a different length needs a different fit, so it has
+        // to count as a change.
+        // THE FRAME IS THE SCOPE THAT NAMED THE PHRASE, and reading it off the
+        // chord unconditionally is why a pass-level mapping was unlistenable.
+        //
+        // `_ambPartSeqResolve` already answers at three levels — a CHORD cell
+        // ('<pass>:<chord>'), a PASS row ('<pass>:*') and the part default
+        // ('all') — and `_ambPartSeqSpecAt` threw the level away, so every
+        // mapping was fitted to the CHORD. A chord cell should be: it names one
+        // chord. A pass row must not be: it says "this phrase plays on this
+        // pass", across all of it, and re-fitting it per chord RESTARTS it at
+        // every chord and CUTS it to that chord's length.
+        //
+        // From a real project: a 4-bar phrase mapped '0:*' over changes of
+        // 0.5 · 1 · 0.5 · 2 bars played its first 4, 8, 4 and 16 steps — the
+        // same opening four times — and steps 17-32 could never sound at all,
+        // because no chord is longer than 2 bars. Reported as "not all notes are
+        // playing", and it is not a race: it is the fit target.
+        const _passScope = (scope === 'pass' || scope === 'all');
+        if (!_ov) try {
+          const barSec = (60 / Math.max(20, _ambBpm())) * 4;
+          let s0 = null, e0 = null;
+          if (_passScope) {
+            const ps2 = _ambPassSpanAt(E, cfg, tRes);
+            if (ps2 && ps2.from != null && ps2.to > ps2.from) { s0 = ps2.from; e0 = ps2.to; }
+          }
+          if (s0 == null) {                       // chord cell, or the pass could not be measured
+            const sp2 = _ambChordSpanAt(E, cfg, tRes);
+            if (sp2 && sp2.end > sp2.start) { s0 = sp2.start; e0 = sp2.end; }
+          }
+          if (s0 != null && barSec > 0) { dstBars = _ambSnapBars((e0 - s0) / barSec); dstFrom = s0; }
+        } catch (e) { dstBars = 0; dstFrom = null; }
+        // COMPARE THE WHOLE SPEC, not the name — re-slicing "motif3" or changing
+        // its fit leaves the name identical, and a name-only guard would report
+        // "already loaded" and go on playing the old phrase.
+        const sig = _ambPsqSig(spec, dstBars);
         const fs = E.freeze && E.freeze[key];
-        if (fs && fs._partSeqName === nm && fs.frozen) return;   // already loaded
+        if (fs && fs._partSeqSig === sig && fs.frozen) return;   // already loaded
         // ONE INSTALL PER PHRASE CHANGE, NOT PER TICK. The resolver runs per
         // CHORD now (that is the point — a cell can name a chord), so a layer
         // whose cells differ chord to chord would re-install every chord, and
@@ -19662,8 +21366,31 @@
         // second randomised copy of the layer competing with itself. The guard
         // above already stops same-name churn; this stops a change from landing
         // mid-phrase more than once in a lookahead.
-        if (fs && fs._psqAt != null && (now - fs._psqAt) < 0.25) return;
-        const saved = _ambBankByName(nm); if (!saved) return;
+        // RE-FIT ONLY AT THE CHORD'S START, never mid-chord.
+        //
+        // A re-install re-anchors the phrase and re-schedules from the new
+        // anchor. Done partway through a chord, the incoming fit lays its notes
+        // over the outgoing one's — measured as 23 same-pitch pairs 0.2-1.0 ms
+        // apart in 30 s, which is a comb filter, heard as phantom notes and
+        // quick unexpected sounds "like two things competing". It appeared to
+        // settle after a few passes only because the two anchors drifted in and
+        // out of coincidence.
+        //
+        // A layer with NOTHING installed still installs immediately — waiting
+        // would leave it silent until the next chord.
+        //
+        // Resolving on the horizon makes `dstFrom` normally a FUTURE boundary, so
+        // this reads as "not late" and passes; it still catches the case where the
+        // horizon could not be used (nothing scheduled ahead yet) and the chord is
+        // already well under way.
+        if (fs && fs.frozen && fs._partSeqSig && dstFrom != null && (now - dstFrom) > 0.30) return;
+        // The anti-churn window only applies to a re-install of the SAME phrase
+        // at the same length; a chord of a different length must re-fit at its
+        // own start or it plays the previous chord's fit for its whole span.
+        if (fs && fs._psqAt != null && (now - fs._psqAt) < 0.25 &&
+            fs._partSeqSig && sig.split('@')[0] === String(fs._partSeqSig).split('@')[0]) return;
+        const steps = _ambPartSeqStepsFor(spec, dstBars);
+        if (!steps || !steps.length) return;
         try {
           // MARK IT FIRST. _ambStepsToLock persists the lock as part of installing
           // it, so setting _partSeqName afterwards left _ambSyncLockState's guard
@@ -19671,9 +21398,86 @@
           // over the layer's own lockState and "own phrase" degraded to "the last
           // mapping that loaded". Caught by test/partseq.js, not by reading it.
           _ambFreezeState(E, key)._partSeqName = nm;
-          _ambStepsToLock(E, key, saved.steps, true);
+          // The mapped phrase fills THIS CHORD, so its loop is the chord's own
+          // length — a ½-bar chord otherwise gets a 1-bar loop and drifts.
+          // ANCHOR THE FIT ON ITS CHORD, and clear the previous fit's pending
+          // voices from that point. `_ambStepsToLock` snaps the anchor to its own
+          // loop grid and cancels only from `now + 0.05`, which is right for a
+          // phrase that owns the layer and wrong for one re-fitted per chord:
+          // the outgoing fit kept its scheduled tail while the incoming one
+          // started on a different grid, so the two overlapped — heard as
+          // phantom notes and quick unexpected sounds, "like two things
+          // competing", settling once the fits happened to line up.
+          // AHEAD OF THE BOUNDARY when the horizon gave us one: install AT it, so
+          // the outgoing phrase keeps every note it has already scheduled and the
+          // incoming one starts on the chord rather than wherever a cancel fell.
+          const _ahead = (dstFrom != null && dstFrom > now + 0.01);
+          _ambStepsToLock(E, key, steps, true, dstBars > 0 ? dstBars : null,
+            _ahead ? { at: dstFrom } : null);
           const f2 = _ambFreezeState(E, key);
-          f2.frozen = true; f2._lock = true; f2._partSeqName = nm; f2._psqAt = now;
+          if (!_ahead && dstFrom != null && Math.abs((f2.anchor || 0) - dstFrom) > 0.005) {
+            const at0 = Math.max(now, dstFrom);
+            try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, at0); } catch (e) {}
+            f2.anchor = dstFrom;                 // the phrase starts where the chord does
+            // THE WINDOW OPENS AT THE CHORD, NOT AT `now` — THIS IS THE MISSING
+            // FIRST NOTE. The tick only NOTICES a chord after it has begun, so
+            // `now` is always a little past `dstFrom`; starting the replay window
+            // there skips every event in the gap, and the event at t=0 is by
+            // definition in it. The phrase came in from its second note, every
+            // time, which reads as "the first note never plays".
+            //
+            // playNote fires a past-due note immediately, so opening the window at
+            // the anchor plays it a few ms late rather than not at all — the same
+            // trade `_ambReplayFrozen`'s 0.22 s grace already makes for the loop
+            // boundary. Floored so a very late install cannot dump a whole chord's
+            // worth of past-due notes at once.
+            // NO FLOOR. A `now - 0.25` clamp still lands past the anchor whenever
+            // the install is more than a quarter-second into the chord, and the
+            // t=0 event is then dropped — the whole bug. The catch-up this admits
+            // is bounded by ONE TICK in practice (the install fires the first tick
+            // that sees the new chord), and playNote fires past-due notes
+            // immediately, so the cost is a first note a few ms late instead of
+            // absent.
+            f2.scheduledUpto = dstFrom;
+          }
+          // AND WHEN THE ANCHOR ALREADY MATCHED. The branch above only runs if the
+          // anchor MOVED, so on the very first install of a play — where
+          // `_ambStepsToLock` has already anchored on the same grid point the chord
+          // starts at — it is skipped, and `scheduledUpto` keeps the small positive
+          // value that install left. The t=0 event sits before it and is dropped:
+          // that is the "first note missing on first play" half of the report,
+          // which is why it behaved differently from every later chord.
+          if (!_ahead && dstFrom != null && (f2.scheduledUpto || 0) > (f2.anchor || 0)) {
+            f2.scheduledUpto = f2.anchor || 0;
+          }
+          // CANCELLING SCHEDULED VOICES AND FORGETTING THEY WERE EMITTED ARE TWO
+          // HALVES OF ONE OPERATION, and only the first half was being done.
+          // `_ambStepsToLock` retracts this layer's voices from `now + 0.05` as
+          // part of installing, but `_ambReplayFrozen` keeps a 2 s (time, pitch)
+          // memory (`_emitRecent`) so a re-anchor cannot re-emit a window it has
+          // already scheduled — a comb filter. That memory cannot tell "already
+          // sounding" from "cancelled a moment ago", so every re-fit killed the
+          // rest of the chord's phrase and was then forbidden to re-issue it.
+          //
+          // A cancel at `cut` is exactly the statement that nothing at or after
+          // `cut` is sounding any more, so everything the memory holds from there
+          // is stale by construction. Prune it, drop the per-iteration key set,
+          // and ask the replay for one rewound pass from the chord's own start —
+          // notes still ringing in [dstFrom, cut) stay in the memory and are
+          // correctly NOT re-issued.
+          //
+          // Installed AHEAD, the cut IS the boundary and nothing before it was
+          // touched, so the memory is pruned from there and no rewind is wanted —
+          // the replay simply carries on from `scheduledUpto`, which is the
+          // boundary. Only a late install (nothing was scheduled ahead yet) needs
+          // the rewind.
+          try {
+            const cut = _ahead ? dstFrom : (now + 0.05);
+            if (Array.isArray(f2._emitRecent)) f2._emitRecent = f2._emitRecent.filter(r => r && r.t < cut - 1e-6);
+            f2._emitted = null;
+            if (!_ahead && dstFrom != null) f2._replayFrom = dstFrom;
+          } catch (e) {}
+          f2.frozen = true; f2._lock = true; f2._partSeqName = nm; f2._partSeqSig = sig; f2._psqAt = now;
           if (!f2.keyCtx) f2.keyCtx = _ambCurKeyCtx(E);
         } catch (e) {}
       };
@@ -22224,6 +24028,19 @@
     // CYCLES for return-to-original. Two engines can tick concurrently; each
     // tick sets the current-engine pointer _E first.
     function _ambResetClocks(E) {
+      // DROP THE INSTALL SIGNATURES. `_ambPartSeqSync` skips a re-install when the
+      // signature matches — right within one play, wrong across a stop: the freeze
+      // keeps the ANCHOR from the previous play, which is a stale absolute time, so
+      // the replay's from-clamp joins wherever that lands. Heard as a phrase that
+      // "sometimes starts in the middle" on the second play and not the first.
+      // Clearing the signature forces one re-install, which re-anchors on the pass
+      // (override) or the chord (mapped).
+      try {
+        Object.keys(E.freeze || {}).forEach(k => {
+          const f = E.freeze[k]; if (!f) return;
+          if (f._partSeqSig) { f._partSeqSig = ''; f._psqAt = null; }
+        });
+      } catch (e) {}
       E.clocks = {}; E.iters = {}; E.seqState = {};
       E._spat = {};       // per-note pan ordinals — a fresh play restarts every layer's Spatialize pattern
       E.motifDeg = null;
@@ -22305,6 +24122,9 @@
       _ambTickBudgetOn = (typeof performance !== 'undefined') && !(typeof window !== 'undefined' && window._ambSilentCapture);
       _ambTickBudgetAt = (_ambTickBudgetOn ? performance.now() : 0) + _AMB_TICK_BUDGET_MS;
       if (E._t0 == null) E._t0 = now;   // engine grid anchor (queued-START alignment)
+      // HOLD THE PASS, if one is held. Before every emit below, and on the
+      // horizon — see _ambPassLockSync.
+      try { _ambPassLockSync(E, cfg, now, _AMB_PASSLOCK_HORIZON); } catch (e) { _ambLogTickErr(e); }
       // AREAS orchestration: once this area has played its plays×bars, advance to
       // the next area via a SEAMLESS handoff (no dip) — the outgoing area's tails
       // ring out while the incoming area starts (see _ambOrchAdvance).
@@ -22917,6 +24737,9 @@
       // A layer mapping parts → bank sequences swaps its phrase when the part
       // changes. Before the emit loops, so the new material is what gets played.
       try { _ambPartSeqSync(E, cfg, now); } catch (e) { _ambLogTickErr(e); }
+      // AFTER the mapped-phrase installer: a mapped phrase owns its own anchor
+      // (it is installed per chord), and this must not move it.
+      try { _ambComposedPassSync(E, cfg, now); } catch (e) { _ambLogTickErr(e); }
       // C2: Seq/Sample layers dispatch from the CANONICAL lists (extras-hosted
       // entries after the v2 migration; legacy array entries as the safety
       // net) with their historical keys/stateKeys/reflect semantics. The
@@ -24578,6 +26401,18 @@
       // iteration went silent. Fire up to ~one tick late instead — playNote
       // starts past-due notes immediately, and a ≤0.2 s late attack beats a hole.
       if (from == null || from < now) from = Math.max(now - 0.22, st.anchor || now);
+      // AN EXPLICIT REWIND OUTRANKS THE GRACE. A per-chord re-fit cancels this
+      // layer's scheduled voices and then wants the chord re-issued from its own
+      // start; the 0.22 s grace above — right for the engage handoff, where
+      // nothing was cancelled — clamped `from` forward past most of it, so the
+      // install's careful `scheduledUpto = dstFrom` never reached this loop and
+      // the cancelled notes were simply lost. One-shot, set by the install and
+      // consumed here; bounded by the chord span, and playNote fires a past-due
+      // note immediately, so the cost is a few notes a little late, not absent.
+      if (st._replayFrom != null) {
+        from = Math.min(from, Math.max(st._replayFrom, st.anchor || st._replayFrom));
+        st._replayFrom = null;
+      }
       const L = st.loopLen, A = st.anchor || now;
       let k = Math.max(0, Math.floor((from - A) / L)), guard = 0;
       // CAPTURE these replay voices like generated ones: _ambCapSink both tags
@@ -24596,12 +26431,57 @@
       // (mutate/rhythm/rests) was decided when the phrase was written and
       // stays as written — the loop remains the loop; the touch varies.
       const _live = !!(lyr && lyr.loopVar === 'live');
+      // Spread state, resolved once per replay pass rather than per note.
+      // Pan MODE puts the position on the layer's own Panner and draws nothing,
+      // and Spatialize replaces the fan entirely — both leave this off.
+      let _spreadOn = false, _spreadAmt = 0, _spreadSeed = 0;
+      try {
+        const _sv = _ambLayerSpace(lyr);
+        _spreadOn = !!(lyr && lyr.panMode !== 'pan' && _sv > 0 && !_ambSpatOn(lyr));
+        if (_spreadOn) {
+          _spreadAmt = _ambStripWidthLive(lyr) ? 100 : Math.max(0, Math.min(100, _sv));
+          const _cf = E._cfg || (E.getCfg && E.getCfg()) || null;
+          // Per-layer, per-take: the same take reproduces, two layers scatter
+          // differently. Same arithmetic idiom as the other isolated draws here.
+          let _kh = 0; for (let _z = 0; _z < key.length; _z++) _kh = (Math.imul(_kh, 31) + key.charCodeAt(_z)) | 0;
+          _spreadSeed = ((((_cf && _cf.seed) | 0) * 2654435761) ^ (_kh * 40503) ^ 0x5D2A) >>> 0;
+        }
+      } catch (e) { _spreadOn = false; }
       const _liveOrn = _live ? Math.max(0, Math.min(100, lyr.ornament | 0)) : 0;
+      // ONE NOTE PER (TIME, PITCH). Two copies of the same pitch a fraction of a
+      // millisecond apart is a COMB FILTER, not a flam — it is heard as phantom
+      // notes and quick unexpected sounds, and it appears to "settle after a few
+      // passes" only when the two copies drift into coincidence. It arises
+      // whenever a re-anchor or a re-fit re-emits a window this replay has
+      // already scheduled, and there is more than one path that can do that
+      // (engage, thaw, a per-chord re-fit, a pass re-anchor), so the guard
+      // belongs HERE, at the one point they all emit through, rather than in
+      // each of them. Measured: 23 same-pitch pairs 0.2-1.0 ms apart in 30 s of
+      // a mapped motif, and 0 after.
+      if (!st._emitted || !(Math.abs((st._emitAnchor == null ? -1e9 : st._emitAnchor) - A) < L * 0.5)) {
+        st._emitted = new Set(); st._emitAnchor = A;
+      }
+      // AND A TOLERANCE CHECK THAT SURVIVES A RE-ANCHOR. The identity key above
+      // cannot help when the anchor legitimately moves (a per-chord re-fit) and
+      // the set is cleared: the new fit then re-emits notes the old one already
+      // scheduled, and `cancelBloomFutureVoices` cannot retract what has been
+      // dispatched. So the last couple of seconds of (time, pitch) are kept
+      // ACROSS the reset and a note within 8 ms of an identical pitch is
+      // dropped. 8 ms is well under any musical repeat and well over the
+      // sub-millisecond drift a bisected chord start introduces.
+      if (!Array.isArray(st._emitRecent)) st._emitRecent = [];
+      const _rec = st._emitRecent;
+      while (_rec.length && _rec[0].t < now - 2) _rec.shift();
+      const _seen = st._emitted;
+      // Bounded: the set is dropped whenever the anchor moves, and pruned here
+      // so a long unbroken run cannot grow it without limit.
+      if (_seen.size > 4096) _seen.clear();
       try {
         while (guard++ < 4096) {
           const base = A + k * L;
           if (base >= horizon) break;
-          for (const e of st.events) {
+          for (let _ei = 0; _ei < st.events.length; _ei++) {
+            const e = st.events[_ei];
             // Baked pitch-echo events (captured before echoes were excluded from
             // the rolling capture): skip at replay — when the FX is ON the sink
             // regenerates fresh echoes from the dry notes (playing the baked
@@ -24610,6 +26490,19 @@
             if (e.params && e.params._pecho) continue;
             const at = base + e.t;
             if (at >= from && at < horizon) { try {
+              // Already scheduled this exact note at this exact time — a second
+              // copy is a comb filter, never a musical event.
+              const _dk = k + ':' + _ei;
+              if (_seen.has(_dk)) continue;
+              const _f0 = (e.freq != null) ? e.freq : 0;
+              let _dup = false;
+              for (let _r = _rec.length - 1; _r >= 0 && at - _rec[_r].t < 0.05; _r--) {
+                if (Math.abs(_rec[_r].t - at) < 0.008 && Math.abs(_rec[_r].f - _f0) < 0.5) { _dup = true; break; }
+              }
+              if (_dup) continue;
+              _seen.add(_dk);
+              _rec.push({ t: at, f: _f0 });
+              if (_rec.length > 512) _rec.splice(0, 256);
               // Masks gate NOTES at their onset, whatever produced them —
               // matrix edits are live even on frozen loops (Write default!).
               // HARD-ONLY for every loop kind: 0-cells kill, deterministic Part
@@ -24667,6 +26560,30 @@
                     _ambOrnamentFlicks(lyr, src, d, Math.round((midi - pc) / 12) - 1, at, pp, e.dur, dest, E.laneIdx(), Math.random);
                   } catch (x2) {}
                 }
+              }
+              // SPREAD IS PER NOTE, INCLUDING ON A REPLAYED PHRASE. `_ambStepsToLock`
+              // computes `_ambLayerPan(L)` ONCE for the whole phrase and bakes that
+              // one value into every event, so a mapped/composed layer put the
+              // entire phrase in a single spot and moved it wholesale on each
+              // install — "spread only applies to the whole phrase, so each phrase
+              // turns up in a different panning spot instead of each note". A
+              // generated layer draws its pan per note; a written one must too, or
+              // the same control means two different things depending on where the
+              // notes came from.
+              //
+              // Applied HERE, at replay, for the reason Spatialize is (see its note
+              // above): this is where the note and its index are both in hand, a
+              // live Spread edit is heard at once, and — decisively — the draw is
+              // an ISOLATED `_ambSeededRand`, never the shared `_ambRand()` stream,
+              // so switching panning on cannot shift a single downstream draw and
+              // rewrite the layer's music. Keyed on the EVENT INDEX and the take,
+              // so each note holds its own place in the image and the same take
+              // reproduces; Spatialize still overrides it in the capture tee.
+              if (_spreadOn) {
+                if (pp === e.params) pp = Object.assign({}, pp);   // never mutate the stored event
+                // `_ambSeededRand` returns a GENERATOR, not a value — one draw per note.
+                const _pr = _ambSeededRand((_spreadSeed ^ ((_ei + 1) * 2246822519)) >>> 0)();
+                pp.pan = Math.round((_pr * 2 - 1) * _spreadAmt);
               }
               playNote(f2, pp, e.dur, at, dest, undefined, E.laneIdx());
             } catch (x) {} }
@@ -24760,8 +26677,27 @@
       // Deferred lock-ON: keep generating until the armed cycle's boundary, then
       // capture that (now-complete) cycle and engage the locked loop.
       if (!st.frozen && st.pendingFreezeAt != null) {
-        if (now < st.pendingFreezeAt) return false;    // cycle still finishing → generate
-        if (!_ambLockEngage(E, key, now)) return false; // engage failed → resume generation
+        // ENGAGE WHEN THE BOUNDARY ENTERS THE LOOKAHEAD, NOT WHEN `now` PASSES IT.
+        //
+        // This tick schedules ~1.3 s ahead. The live emitter is capped at the
+        // boundary by `_ambEmitCutoff`, so it stops filling one lookahead BEFORE
+        // the seam; the replay used to start only once `now` reached the
+        // boundary, a full lookahead later. Nobody scheduled the window in
+        // between — the notes across the seam were emitted past-due (fired late)
+        // or not at all. Measured on a 4-bar cycle: the master fell from 0.053
+        // to 0.001 for 0.63 s around the first iteration boundary, and again at
+        // every rewrite — reliably at the first seam, then every `times` (4)
+        // iterations, which is exactly "roughly every other, or every 3 or 4".
+        //
+        // The THAW a few lines below has always been horizon-based; the engage
+        // being `now`-based is the asymmetry. Engaging early is safe because the
+        // rolling capture is populated AT EMIT TIME, i.e. already a lookahead
+        // ahead of the audio clock — so the cycle's window is complete in
+        // `E.cap` by the time the horizon reaches its end. An incomplete window
+        // still returns false and resumes generation, as before.
+        const _fz = st.pendingFreezeAt;
+        if (horizon < _fz && now < _fz) return false;   // cycle still finishing → generate
+        if (!_ambLockEngage(E, key, Math.max(now, _fz))) return false; // engage failed → resume
       }
       if (!st.frozen) return false;
       const tA = st.pendingThawAt;
@@ -24840,7 +26776,20 @@
     function _ambGridStepAdv(st, gsub, beat) {
       return beat * ((st && st.subdivision != null) ? st.subdivision : gsub) * ((st && st.duration) || 1);
     }
-    function _ambStepsToLock(E, key, steps, live) {
+    // `loopBars` (optional) — the length the loop MUST be, in bars, when the
+    // caller knows it. Without it the loop is rounded UP to a whole bar, which
+    // is right for a free phrase and WRONG for one written against a pass whose
+    // length is not a whole number of bars: a 4½-bar pass got a 5-bar loop, so
+    // the phrase slipped half a bar against the changes every time round, heard
+    // as a delay and a skip at the boundary between iterations. Cadences make
+    // fractional passes ordinary, so the length has to be stated, not inferred.
+    // `opts.at` — INSTALL AT A STATED TIME, which may be in the FUTURE. Without it
+    // this function's recipe is "the phrase owns the layer from now": snap the
+    // anchor to its own loop grid at `now`, retract everything from `now + 0.05`,
+    // resume at `now`. That is right for a phrase taking the layer over, and wrong
+    // for one scheduled to start at a boundary that has not arrived — it would
+    // kill the outgoing phrase's remaining notes and start the incoming one late.
+    function _ambStepsToLock(E, key, steps, live, loopBars, opts) {
       const L = _ambLayerByKey(E, key); if (!L) return;
       const fs = _ambFreezeState(E, key);
       const gsub = (typeof stepSubdivision === 'number' && stepSubdivision > 0) ? stepSubdivision : 0.5;
@@ -24865,13 +26814,25 @@
         }
         t += adv;
       });
-      const loopLen = Math.max(barSec, Math.ceil((t - 0.01) / barSec) * barSec);
+      const loopLen = (loopBars > 0)
+        ? Math.max(barSec * 0.125, loopBars * barSec)          // stated by the caller
+        : Math.max(barSec, Math.ceil((t - 0.01) / barSec) * barSec);
       const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
       const A0 = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor : ((E._t0 != null) ? E._t0 : 0);
       fs.events = evs; fs.loopLen = loopLen;
-      fs.anchor = A0 + Math.floor((now - A0) / loopLen) * loopLen;
-      try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, now + 0.05); } catch (e) {}
-      fs.scheduledUpto = now;
+      const _atOpt = (opts && Number.isFinite(opts.at)) ? opts.at : null;
+      if (_atOpt != null) {
+        // Stated start: the phrase begins exactly there and everything scheduled
+        // from there is retracted — never from `now`, which is what would cut the
+        // outgoing phrase off mid-chord.
+        fs.anchor = _atOpt;
+        try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, _atOpt); } catch (e) {}
+        fs.scheduledUpto = _atOpt;
+      } else {
+        fs.anchor = A0 + Math.floor((now - A0) / loopLen) * loopLen;
+        try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, now + 0.05); } catch (e) {}
+        fs.scheduledUpto = now;
+      }
       fs.frozen = true; fs._lock = true;
       if (!fs.keyCtx) fs.keyCtx = _ambCurKeyCtx(E);
       if (live) { _ambGridPersistSoon(E, key); }
@@ -24906,12 +26867,169 @@
     function _ambGridEditSig(steps) {
       try { return JSON.stringify((steps || []).map(s => s && [s.freq, s.duration, s.subdivision, s.chord && s.chord.map(c => c.freq), s.isSub && s.subSteps && s.subSteps.map(c => c && c.freq)])); } catch (e) { return String(Math.random()); }
     }
+    // ---- THE PHRASE DOCUMENT --------------------------------------------------
+    // A PHRASE IS A SAVED SEQUENCE BEING EDITED — open one, change it, save it,
+    // save it under another name, delete it. That is the whole entity, and the
+    // grid edits exactly ONE of them.
+    //
+    // The grid deliberately does NOT know which layer will play it. "The layer's
+    // phrase" is a REFERENCE to a saved sequence, owned by the layer card, and a
+    // separate concern; composing never writes material into a layer. Before
+    // this the two were one thing — every keystroke installed into `lockState`
+    // — which is why the phrase had three homes that disagreed about its length.
+    //
+    // A phrase is stored LEAN. `currentSequenceSnapshot` captures the whole
+    // workspace (lanes, FX, palette, cell params, grid layout) because that is
+    // what a MONO/POLY bank entry has always meant; measured, that is 14,394
+    // bytes for 32 steps of music, and it embeds the scratch compose lane
+    // itself. A phrase is notes and rhythm, so that is what gets saved.
+    // Trailing rests are the FRAME, not the phrase: the lane is padded to cover
+    // the pass, and saving that back makes every phrase pass-shaped again. One
+    // trailing rest is kept so a phrase that deliberately ends in silence still
+    // reads as ending there.
+    function _ambPhraseTrim(steps) {
+      const a = (steps || []).slice();
+      while (a.length > 1 && _ambStepIsRest && _ambStepIsRest(a[a.length - 1]) &&
+             _ambStepIsRest(a[a.length - 2])) a.pop();
+      return a;
+    }
+    function _ambPhraseEntry(name, steps) {
+      steps = _ambPhraseTrim(steps);
+      const cl = (typeof cloneStep === 'function') ? cloneStep : (o => JSON.parse(JSON.stringify(o)));
+      let bpm = 120; try { bpm = parseInt(document.getElementById('tempo-input').value) || 120; } catch (e) {}
+      let sub = 1; try { if (typeof stepSubdivision !== 'undefined') sub = stepSubdivision; } catch (e) {}
+      return { name: name, kind: 'phrase', steps: (steps || []).map(cl), bpm: bpm, subdivision: sub };
+    }
+    function _ambPhraseBankIdx(nm) {
+      try {
+        if (typeof savedSequences === 'undefined' || !Array.isArray(savedSequences)) return -1;
+        return savedSequences.findIndex(x => x && x.name === nm);
+      } catch (e) { return -1; }
+    }
+    // DIRTY IS MEASURED AGAINST THE BANK, never against what the layer was
+    // holding when the session opened. The only question a guard has to answer
+    // is "would this throw away WRITING", and material the engine improvised is
+    // not writing — measuring against it would put a dialog in front of every
+    // ordinary exit. `ge.seqName` names the open phrase; absent = untitled.
+    function _ambPhraseBankSig(nm) {
+      const e = _ambBankByName(nm);
+      return e ? _ambGridEditSig(e.steps) : null;
+    }
+    // An UNTITLED phrase counts as work only once it has a note in it. A blank
+    // canvas nobody typed into is not something to protect, and guarding it
+    // would make ✓ Done ask a question on every session that changed nothing.
+    function _ambPhraseHasContent(steps) {
+      try {
+        return (steps || []).some(s => s && (s.freq != null ||
+          (Array.isArray(s.chord) && s.chord.length) ||
+          (s.isSub && Array.isArray(s.subSteps) && s.subSteps.some(x => x && x.freq != null))));
+      } catch (e) { return false; }
+    }
+    // DIRTY COMPARES AGAINST THE BENCH, NOT THE BANK. Opening a phrase PADS the
+    // lane with rests to cover the pass (`_ambGridPadLaneToPass`) — framing, not
+    // writing — so a bank comparison reports every freshly-opened phrase as
+    // unsaved and the guard fires on every exit. `ge.savedSig` is the phrase as
+    // it sat on the bench at open/save; that is the clean state.
+    function _ambPhraseDirty(ge0) {
+      const ge = ge0 || _bloomGridEdit;
+      if (!ge || !ge.lane) return false;
+      if (!ge.seqName) return _ambPhraseHasContent(ge.lane.steps);
+      // Deleted or rewritten from elsewhere while it was open — there is nothing
+      // to go back to, so it is unsaved.
+      if (_ambPhraseBankSig(ge.seqName) == null) return _ambPhraseHasContent(ge.lane.steps);
+      if (!ge.savedSig) return false;
+      return _ambGridEditSig(ge.lane.steps) !== ge.savedSig;
+    }
+    // Save the open phrase. An untitled one asks for a name; a named one is
+    // UPDATED IN PLACE, because that is what "save it again" means — minting a
+    // suffixed copy on every save is how a bank fills with motif1, motif1 2,
+    // motif1 3 and nothing can be found again.
+    function _ambPhraseSave(ge0, asNew) {
+      const ge = ge0 || _bloomGridEdit;
+      if (!ge || !ge.lane) return false;
+      let nm = ge.seqName;
+      if (asNew || !nm) {
+        const dflt = nm || ((typeof uniqueSeqName === 'function') ? uniqueSeqName('phrase') : 'phrase');
+        const t = prompt('Save this phrase as:', dflt);
+        if (t == null) return false;
+        nm = String(t).trim() || dflt;
+      }
+      const at = _ambPhraseBankIdx(nm);
+      // Reusing a name that is not the phrase you have open would SHADOW the
+      // other one — a mapping resolves the first match, so the older entry
+      // becomes unreachable while still visible. Ask rather than shadow.
+      if (at >= 0 && nm !== ge.seqName &&
+          !confirm('"' + nm + '" already exists. Replace it?\n\nAnything mapped to that name will play this phrase instead.')) return false;
+      const ent = _ambPhraseEntry(nm, ge.lane.steps);
+      try {
+        if (at >= 0) savedSequences[at] = ent; else savedSequences.push(ent);
+        if (typeof persistSaved === 'function') persistSaved();
+        if (typeof renderSavedList === 'function') renderSavedList();
+      } catch (e) { return false; }
+      ge.seqName = nm;
+      ge.savedSig = _ambGridEditSig(ge.lane.steps);
+      try { _ambRefreshSeedModes(ge.E); } catch (e) {}
+      try { showToast('Saved "' + nm + '"', { ms: 2600 }); } catch (e) {}
+      return true;
+    }
+    // THE GUARD. Anything that would drop the open phrase routes through this:
+    // it names the phrase AND what is about to happen to it, because "you have
+    // unsaved changes" makes the user reconstruct what they are losing. Clean
+    // phrases pass straight through, so this is invisible except when it matters.
+    function _ambPhraseGuard(what, proceed) {
+      const ge = _bloomGridEdit;
+      // ONE-SHOT BYPASS. `proceed` for the sequence picker re-dispatches the
+      // select's `change`, which re-enters the handler; with nothing actually
+      // discarded the phrase is still dirty, so the guard re-opened and Discard
+      // appeared to do nothing. Discarding is a DECISION about the open phrase,
+      // so it has to be recorded before the action that consumes it runs.
+      // NOTE: the flag is consumed by the CALLER, not here. proceed() re-dispatches
+      // the select's `change`, so the handler re-tests dirtiness before this
+      // function is reached again — clearing it here let the modal reopen on the
+      // third pass, which is what "Discard does nothing" actually was.
+      if (ge && ge._pgSkip) { proceed(); return; }
+      if (!ge || !_ambPhraseDirty(ge)) { proceed(); return; }
+      const nm = ge.seqName || '';
+      let host = document.getElementById('ambient-phrase-guard');
+      if (!host) {
+        host = document.createElement('div');
+        host.id = 'ambient-phrase-guard';
+        host.className = 'sm-overlay';
+        document.body.appendChild(host);
+      }
+      const close = () => { try { host.style.setProperty('display', 'none', 'important'); } catch (e) {} };
+      host.innerHTML =
+        '<div class="sm-modal step-div-modal" style="max-width:min(420px,94vw)">' +
+          '<div style="font-weight:600;margin-bottom:6px">' +
+            (nm ? ('Unsaved changes to “' + _ambEscText(nm) + '”') : 'This phrase has never been saved') + '</div>' +
+          '<div class="ambient-hint" style="white-space:normal;overflow-wrap:anywhere;margin-bottom:12px">' +
+            _ambEscText(what) + ' will lose ' + (nm ? 'the changes' : 'it') + '.</div>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+            '<button type="button" class="btn btn-small" data-pg="save" style="flex:1 1 auto;min-height:40px">⬇ Save' + (nm ? '' : '…') + '</button>' +
+            '<button type="button" class="btn btn-small" data-pg="discard" style="flex:1 1 auto;min-height:40px">Discard</button>' +
+            '<button type="button" class="btn btn-small" data-pg="cancel" style="flex:1 1 auto;min-height:40px">Cancel</button>' +
+          '</div>' +
+        '</div>';
+      host.style.setProperty('display', 'flex', 'important');
+      host.onclick = (ev) => {
+        const b = ev.target && ev.target.closest && ev.target.closest('[data-pg]');
+        if (!b) { if (ev.target === host) close(); return; }
+        const a = b.dataset.pg;
+        if (a === 'cancel') { close(); return; }
+        if (a === 'save') { if (!_ambPhraseSave(ge)) return; close(); ge._pgSkip = true; proceed(); return; }
+        // Discard: accept the loss, then let the action through exactly once.
+        ge._pgSkip = true;
+        close(); proceed();
+      };
+    }
+    try { if (typeof window !== 'undefined') { window._ambPhraseDirty = _ambPhraseDirty; window._ambPhraseSave = _ambPhraseSave; window._ambPhraseGuard = _ambPhraseGuard; } } catch (e) {}
+
     function _ambGridEditSync() {
       const ge = _bloomGridEdit; if (!ge || !ge.lane) return;
       const sig = _ambGridEditSig(ge.lane.steps);
       if (sig === ge.sig) return;
       ge.sig = sig;
-      try { _ambStepsToLock(ge.E, ge.key, ge.lane.steps, true); } catch (e) {}
+      try { _ambStepsToLock(ge.E, ge.key, ge.lane.steps, true, _ambComposeLoopBars(ge.E, ge)); } catch (e) {}
     }
     // ONE COMPOSING WORKFLOW — transport decides the semantics. Stopped, the
     // card's ● / 🎤 buttons AUTHOR: enter the lane-based Grid session (strip +
@@ -25024,10 +27142,32 @@
       const snapshot = { ev: fs.events.map(e => ({ t: e.t, freq: e.freq, dur: e.dur, params: e.params })), loopLen: fs.loopLen };
       const lane = _makeLane(lanes.length, _ambLockToSteps(fs));
       lane._bloomScratch = true; lane.muted = true; lane.name = '✎' + String(key);
-      try { if (typeof _defaultVoice === 'function') lane.voice = _defaultVoice(); } catch (e) {}
+      // THE GRID AND THE PLAYS SCHEDULER ARE MUTUALLY EXCLUSIVE. While a session
+      // is open the grid OWNS what the layer plays — "what you draw is what you
+      // hear" — so the scheduler's install has to be released, not merely skipped.
+      // `_ambPartSeqSync` already returns early for a composing layer, but the
+      // freeze it installed BEFORE the session opened stays behind: its anchor,
+      // its chord-fitted loop length and its events all remain, so the phrase you
+      // load into the lane plays against a loop the scheduler sized for a chord.
+      // That is the "not all the notes play" and "starts mid-part" pair — two
+      // owners, one freeze.
+      try {
+        const _f0 = _ambFreezeState(E, key);
+        delete _f0._partSeqName; delete _f0._partSeqSig; _f0._psqAt = null;
+      } catch (e) {}
+      // THE GRID PLAYS THE LAYER'S INSTRUMENT. The scratch lane used to take the
+      // WORKSPACE default voice, so auditioning a step in the dock sounded nothing
+      // like the layer that will play it — two tone settings for one phrase, and
+      // the grid's was the one you never chose. The layer's Tone is the answer;
+      // the dock needs no tone control of its own.
+      try {
+        const _lt = (L && typeof L.tone === 'string' && L.tone) ? L.tone : null;
+        if (_lt) lane.voice = _lt;
+        else if (typeof _defaultVoice === 'function') lane.voice = _defaultVoice();
+      } catch (e) {}
       lanes.push(lane);
       const _sig0 = _ambGridEditSig(lane.steps);
-      _bloomGridEdit = { E: E, key: key, lane: lane, prevActive: (typeof activeLaneIdx !== 'undefined') ? activeLaneIdx : 0,
+      _bloomGridEdit = { E: E, key: key, lane: lane, seqName: '', prevActive: (typeof activeLaneIdx !== 'undefined') ? activeLaneIdx : 0,
         prevOpen: (typeof _laneExpanderOpen !== 'undefined') ? _laneExpanderOpen : false, snapshot: snapshot,
         sig: _sig0,
         // What the layer was BEFORE this session, so Discard restores it exactly
@@ -25036,6 +27176,13 @@
         startSig: _sig0,
         wasAuthored: !!(L.lockState && L.lockState.seedEdit),
         timer: null };
+    // COVER THE PASS. A phrase shorter than the changes it is written against
+    // left the later chords with no steps at all — the strip could only draw
+    // them by repeating what came before, which is not editable and reads as
+    // the app duplicating your work. Padding with RESTS gives every chord real
+    // empty steps; the phrase gets longer, and since the added bars are silent
+    // it plays as it did until you write in them.
+    try { _ambGridPadAndCommit(E, _bloomGridEdit); } catch (e) {}
       // ✎ PLACE and ⤸ BAR work in the dock now that the scratch lane's
       // STRIP renders in the strip host (the lane-based composing view).
       window._bloomGridKey = key;   // _placeLaneExpander resolves the dockhost live by key
@@ -25119,6 +27266,17 @@
       ov.addEventListener('click', (ev) => { if (ev.target === ov) { /* outside click = stay in the Grid */ close(); } });
     }
     function _ambGridEditStop(cancel) {
+      // HAND THE LAYER BACK. The scheduler skipped this layer for the whole
+      // session, so its freeze carries whatever the grid left; clearing the
+      // signature forces exactly one re-install, which re-anchors on the pass or
+      // the chord instead of inheriting the compose session's anchor.
+      try {
+        const _ge0 = _bloomGridEdit;
+        if (_ge0 && _ge0.E && _ge0.key) {
+          const _f = _ge0.E.freeze && _ge0.E.freeze[_ge0.key];
+          if (_f) { _f._partSeqSig = ''; _f._psqAt = null; }
+        }
+      } catch (e) {}
       const ge = _bloomGridEdit; if (!ge) return;
       _bloomGridEdit = null;
       if (ge.timer) { try { clearInterval(ge.timer); } catch (e) {} }
@@ -25130,7 +27288,18 @@
         try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(ge.key, now + 0.05); } catch (e) {}
         fs.scheduledUpto = now;
         try { _ambPersistLock(ge.E, ge.key); } catch (e) {}
-      } else { try { _ambStepsToLock(ge.E, ge.key, ge.lane.steps); } catch (e) {} }
+      } else {
+        try { _ambStepsToLock(ge.E, ge.key, ge.lane.steps, false, _ambComposeLoopBars(ge.E, ge)); } catch (e) {}
+        // MARK IT AS COMPOSED. AFTER the install — _ambStepsToLock persists the
+        // lock and rewrites lockState from the freeze state, so setting the flag
+        // first loses it (the same ordering the sequence-load path documents).
+        try {
+          const _L = _ambLayerByKey(ge.E, ge.key);
+          if (_L) { if (!_L.lockState || typeof _L.lockState !== 'object') _L.lockState = {}; _L.lockState.seedEdit = true; }
+          const _f = _ambFreezeState(ge.E, ge.key); if (_f) _f._seedEdit = true;
+          _ambPersistLock(ge.E, ge.key);
+        } catch (e) {}
+      }
       window._bloomGridKey = null;
       window._bloomGridHoldPersist = false;
       window._bloomGridPersistDirty = false;
@@ -25159,7 +27328,22 @@
         }
       } catch (e) {}
       if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
+      // REBUILD THE CARD. ✓ Done / ✕ Cancel / ⬇ To bank… are part of the live
+      // COMPOSE row, which only exists while a session does — but nothing
+      // re-rendered the card on the way out, so the row stayed on screen and the
+      // Compose button still read "Grid · composed" while the strip it belonged
+      // to had just been cleared. Reported as "why do these buttons stick around
+      // after clicking Done, and why does the grid disappear" — one symptom: the
+      // session ended and only half the UI was told.
+      //
+      // Order is the documented one: rebuild, re-dock, re-render the lane, THEN
+      // repaint the dock surfaces (`_ambRefreshSeedModes` last, since it is the
+      // sync path they hang off and it runs whether or not the transport does).
+      try { _ambRenderExtras(ge.E); } catch (e) {}
+      try { if (typeof _placeLaneExpander === 'function') _placeLaneExpander(); } catch (e) {}
+      try { if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
       try { _ambRefreshSeedModes(ge.E); _ambUpdateNotesLive(ge.E); } catch (e) {}
+      try { _ambSyncControls(ge.E); } catch (e) {}
     }
     // ---- HUM REC (audio → phrase transcription) ---------------------------
     // 🎤 on a layer's piano bar: arm → the layer goes silent (same empty-frozen
@@ -25929,6 +28113,7 @@
       try { _ambBarLockClear(E); } catch (e) {}   // defensive: drop any lingering ephemeral Bar-Lock loop before play
       E._barGridAnchor = null;                     // fresh loop grid this play
       E._progAnchor = null;                        // …and the chord clock rides it (one clock)
+      E._passLock = null;                          // a held pass names "what is playing now" — meaningless stopped
       _ambSeed(cfg.seed);
       try { _ambApplyRamps(cfg, 0); } catch (e) {} // reset ramped params to A so the FIRST events use A
       try { _ambSyncMods(); } catch (e) {} // build mod chains before the first voices fire
@@ -26489,6 +28674,7 @@
       try { _ambBarLockClear(E); } catch (e) {}   // drop ephemeral Bar-Lock loops (never persisted)
       E._barGridAnchor = null;                     // fresh loop grid next play
       E._progAnchor = null;                        // …and the chord clock rides it (one clock)
+      E._passLock = null;                          // never survives a stop (the _soloLane lesson: no silently-stuck state)
       try { if (typeof _bloomMasterGain !== 'undefined' && _bloomMasterGain && _bloomMasterGain.gain) { const _n = (Tone && Tone.now) ? Tone.now() : 0; _bloomMasterGain.gain.cancelScheduledValues(_n); _bloomMasterGain.gain.setValueAtTime(_BLOOM_MASTER_TRIM, _n); } } catch (e) {}
       try { _ambOrchUpdateNowPlaying(E); } catch (e) {}
       // Restore the master fade to full on a normal stop (so a stop mid fade-in
@@ -29115,6 +31301,17 @@
       if (typeof window !== 'undefined' && !window.__ambSgSeqWired) {
         window.__ambSgSeqWired = true;
         document.addEventListener('click', (ev) => {
+          // The Sequences ROW is a button that opens the popover now; the chips
+          // it replaced live in there. Same delegated listener, because the
+          // button renders on every layer card exactly as the chips did.
+          const op = ev.target && ev.target.closest && ev.target.closest('[data-sgmap]');
+          if (op) {
+            ev.preventDefault();
+            const k = op.getAttribute('data-sgmap') || '';
+            const E0 = (typeof _masterEng !== 'undefined' && _masterEng) ? _masterEng : (_E || null);
+            try { if (E0 && k) _ambSeqMapOpen(E0, k); } catch (e) {}
+            return;
+          }
           const sq = ev.target && ev.target.closest && ev.target.closest('.ambient-sgseq');
           if (!sq) return;
           const nm = sq.dataset.sgseq || ''; const saved = _ambBankByName(nm); if (!saved) return;
@@ -29123,36 +31320,11 @@
           const E = (ge && ge.E) || _masterEng; if (!E) return;
           ev.stopPropagation();
           try {
-            const cl = (typeof cloneStep === 'function') ? cloneStep : (o => JSON.parse(JSON.stringify(o)));
-            const steps = saved.steps.map(cl);
-            if (ge && ge.key === key && ge.lane) {
-              ge.lane.steps = steps;
-              if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane();
-              if (typeof _syncFluidGridToActiveLane === 'function') _syncFluidGridToActiveLane();
-              if (typeof renderSequence === 'function') renderSequence();
-            }
-            // Adopting a sequence releases any Plays mapping — see the twin of
-            // this comment on the card's chip handler.
-            try { delete _ambFreezeState(E, key)._partSeqName; } catch (x) {}
-            _ambStepsToLock(E, key, steps, true);
-            const f3 = _ambFreezeState(E, key);
-            f3.frozen = true; f3._lock = true;
-            delete f3._partSeqName;
-            if (!f3.keyCtx) f3.keyCtx = _ambCurKeyCtx(E);
-            // AFTER _ambPersistLock — it rewrites lockState from the freeze
-            // state, so setting the flag first loses it and the layer never
-            // reads as composed.
-            try { _ambPersistLock(E, key); } catch (x) {}
-            const L3 = _ambLayerByKey(E, key);
-            if (L3) { if (!L3.lockState || typeof L3.lockState !== 'object') L3.lockState = {}; L3.lockState.seedEdit = true; }
-            try { _ambRenderExtras(E); _ambSyncControls(E); _ambRefreshSeedModes(E); _ambUpdateNotesLive(E); } catch (x) {}
-            try {
-              if (_bloomGridEdit) {                      // same re-dock as above
-                if (typeof renderSequence === 'function') renderSequence();
-                if (typeof _placeLaneExpander === 'function') _placeLaneExpander();
-              }
-            } catch (x) {}
-            if (typeof persistWorkspace === 'function') persistWorkspace();
+            // ONE loader — it also repopulates the LANE when the grid is open,
+            // and records which entry is on the bench (ge.seqName).
+            _ambSeqLoadIntoLayer(E, key, saved.name);
+            try { _ambRenderExtras(E); _ambSyncControls(E); } catch (x) {}
+            try { if (_bloomGridEdit && typeof _placeLaneExpander === 'function') _placeLaneExpander(); } catch (x) {}
             if (typeof showToast === 'function') showToast(_ambAdoptedMsg(_ambLayerByKey(E, key), saved.name));
           } catch (err) { console.warn('Load sequence failed', err); }
         }, true);
@@ -29173,13 +31345,249 @@
         // STEP SIZE + JOIN, from the compose bar. Both commit through the same
         // path a banked-sequence load uses (lane → alias → render → lock), so
         // what you hear is what the strip shows, live.
+        // THE TWO HEADLINE DROPDOWNS. A `change` listener on document, because
+        // the strip is rebuilt constantly and a per-element bind would be lost.
+        document.addEventListener('change', (ev) => {
+          const el = ev.target && ev.target.closest && ev.target.closest('.sgru-part, .sgru-seq, .sgru-pass');
+          if (!el) return;
+          const ge5 = _bloomGridEdit;
+          if (!ge5 || el.getAttribute('data-sgk') !== ge5.key) return;
+          const E5 = ge5.E || _masterEng; if (!E5) return;
+          ev.stopPropagation();
+          if (el.classList.contains('sgru-part')) {
+            // THE PART IS THE TOP OF THE HIERARCHY. A different set of changes
+            // has its own pass count and its own mapped phrases, so the pass
+            // resets (pass 3 of the Verse means nothing in a 2-pass Chorus) and
+            // the sequence list re-groups. `_ambPsqPart` is the SAME state the
+            // Plays matrix tab uses, so the two can never disagree about which
+            // part you are on.
+            _ambPsqPart[ge5.key] = Math.max(0, parseInt(el.value, 10) || 0);
+            _ambPsqPass[ge5.key] = 0;
+            try { _ambGridPadAndCommit(E5, ge5); } catch (e) {}
+            try { _ambPartViewRepaint(E5, ge5.key); } catch (e) {}
+            try {
+              document.querySelectorAll('.ambient-seedgrid-chords').forEach(h => { h._sig = ''; });
+              _ambGridBarStrip(E5);
+            } catch (e) {}
+            return;
+          }
+          if (el.classList.contains('sgru-pass')) {
+            _ambPsqPass[ge5.key] = Math.max(0, parseInt(el.value, 10) || 0);
+            try { _ambGridPadAndCommit(E5, ge5); } catch (e) {}
+            // _ambPartViewRepaint is the shared repaint — it rewrites the matrix
+            // host and the dock surfaces WITHOUT rebuilding the cards, which is
+            // what a view-only change must do (rebuilding destroys the docked
+            // editor and every surface painted before it).
+            try { _ambPartViewRepaint(E5, ge5.key); } catch (e) {}
+            try {
+              document.querySelectorAll('.ambient-seedgrid-chords').forEach(h => { h._sig = ''; });
+              _ambGridBarStrip(E5);
+            } catch (e) {}
+            return;
+          }
+          const want = el.value;
+          // GUARD THE OPEN PHRASE. Switching away from unsaved writing loses it,
+          // and a <select> has already moved by the time `change` fires — so a
+          // Cancel has to put the select back to the phrase still on the bench.
+          // The bypass is tested HERE, before dirtiness, and consumed on the way
+          // through — otherwise the re-dispatch below lands back on this line
+          // with the phrase still unsaved and guards forever.
+          if (ge5._pgSkip) { ge5._pgSkip = false; }
+          else if (_ambPhraseDirty(ge5)) {
+            const _back = ge5.seqName || '';
+            _ambPhraseGuard(want === ' new' ? 'Starting a fresh phrase' : ('Opening \u201c' + want + '\u201d'), () => {
+              ge5._pgSkip = true;
+              try { el.value = want; } catch (e) {}
+              try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+            });
+            try { el.value = _back; } catch (e) {}
+            return;
+          }
+          if (want === ' new') {
+            // A FRESH PHRASE: empty the lane and detach, so the next save mints
+            // a new entry instead of writing over whatever was loaded. The
+            // steps are cleared rather than the session closed - you are still
+            // composing for the same layer, pass and part.
+            try {
+              // COVER THE PASS, AT THE CURRENT STEP SIZE. One bar of rests left a
+              // 4-bar pass with its first chord filled, the second half-filled and
+              // the rest empty — the phrase simply did not reach them. And
+              // `_ambMakeRest()` with no argument stores `subdivision: undefined`,
+              // so the steps it did make were not the size the ✎ size row says.
+              const _sub = (typeof stepSubdivision === 'number' && stepSubdivision > 0) ? stepSubdivision : 0.5;
+              const _perBar = Math.max(1, Math.round(4 / _sub));
+              let _bars = 1;
+              try { const _fr = _ambComposeFrame(ge5.E, ge5); if (_fr && _fr.passBars > 0) _bars = Math.ceil(_fr.passBars - 1e-6); } catch (e) {}
+              ge5.lane.steps = Array.from({ length: _perBar * Math.max(1, _bars) }, () => _ambMakeRest(_sub));
+              // Belt: the frame is in whole bars, the pass may not be.
+              try { _ambGridPadLaneToPass(E5, ge5); } catch (e) {}
+              ge5.seqName = ''; ge5._rzBase = null; ge5._rzSig = ''; ge5._barSel = null;
+              try { if (typeof selectedStepRefs !== 'undefined') selectedStepRefs = []; } catch (e) {}
+              if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane();
+              if (typeof _syncFluidGridToActiveLane === 'function') _syncFluidGridToActiveLane();
+              if (typeof renderSequence === 'function') renderSequence();
+              _ambStepsToLock(E5, ge5.key, ge5.lane.steps, true, _ambComposeLoopBars(E5, ge5));
+              const f5 = _ambFreezeState(E5, ge5.key);
+              f5.frozen = true; f5._lock = true;
+              delete f5._partSeqName; delete f5._partSeqSig;
+              try { _ambPersistLock(E5, ge5.key); } catch (e) {}
+            } catch (e) {}
+            try {
+              document.querySelectorAll('.ambient-seedgrid-chords, .ambient-seedgrid-gran').forEach(h => { h._sig = ''; });
+              _ambRenderExtras(E5);
+              try { if (typeof _placeLaneExpander === 'function') _placeLaneExpander(); } catch (e2) {}
+              try { if (typeof renderSequence === 'function') renderSequence(); } catch (e2) {}
+              _ambRefreshSeedModes(E5);
+            } catch (e) {}
+            try { if (typeof showToast === 'function') showToast('Fresh phrase - draw it, then To bank... to name and keep it.'); } catch (e) {}
+            return;
+          }
+          if (want === (ge5.seqName || '')) return;
+          if (!want) {
+            // Detach: keep these steps on the bench but stop writing back to that
+            // entry. The phrase becomes untitled, so the next save mints one.
+            ge5.seqName = '';
+            try {
+              document.querySelectorAll('.ambient-seedgrid-chords').forEach(h => { h._sig = ''; });
+              _ambRenderExtras(E5);
+              try { if (typeof _placeLaneExpander === 'function') _placeLaneExpander(); } catch (e2) {}
+              try { if (typeof renderSequence === 'function') renderSequence(); } catch (e2) {}
+              _ambRefreshSeedModes(E5);
+            } catch (e) {}
+            return;
+          }
+          try {
+            if (_ambSeqLoadIntoLayer(E5, ge5.key, want)) {
+              try { _ambRenderExtras(E5); } catch (e) {}
+            try { if (typeof _placeLaneExpander === 'function') _placeLaneExpander(); } catch (e) {}
+          try { if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
+            try { if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
+            try { _ambRefreshSeedModes(E5); } catch (e) {}
+              if (typeof showToast === 'function') showToast('Editing "' + want + '" - Update writes your edits back to it.');
+            }
+          } catch (e) {}
+        }, true);
+        // GIVE A REPEATED BAR ITS OWN STEPS. Grows the phrase through that bar,
+        // seeded with what it already replays, so the audio is unchanged and
+        // every bar up to it becomes independently editable.
         document.addEventListener('click', (ev) => {
-          const t = ev.target && ev.target.closest && ev.target.closest('.ambient-sggran, .ambient-sgjoin');
+          const ob = ev.target && ev.target.closest && ev.target.closest('[data-sgcopy]');
+          if (!ob) return;
+          const ge6 = _bloomGridEdit;
+          if (!ge6 || ob.getAttribute('data-sgk') !== ge6.key) return;
+          ev.preventDefault(); ev.stopPropagation();
+          const E6 = ge6.E || _masterEng; if (!E6) return;
+          const fr6 = _ambComposeFrame(E6, ge6); if (!fr6) return;
+          const dstCi = parseInt(ob.getAttribute('data-sgcopy'), 10) | 0;
+          const dst = fr6.seq[dstCi]; if (!dst) return;
+          if (typeof showCtxMenu !== 'function') return;
+          const items = [{ label: 'Copy into ' + dst.nm + ' from…', fn: () => {} }, 'hr'];
+          fr6.seq.forEach((src, ci) => {
+            if (ci === dstCi) return;
+            items.push({ label: src.nm + '  (' + _ambBarsWord(src.to - src.from) + ')', fn: () => {
+              try {
+                const gsub = _ambSeqGsub();
+                const cl = (typeof cloneStep === 'function') ? cloneStep : (o => JSON.parse(JSON.stringify(o)));
+                const steps = (ge6.lane && ge6.lane.steps) || [];
+                // Take the SOURCE chord's steps, reconcile the length with the
+                // same rules a mapped slice uses (loop to fill / cut at the
+                // end), then splice them over the DESTINATION's own range.
+                const took = _ambSeqSlice(steps, src.from, src.to - src.from);
+                const fitted = _ambSeqFit(took, dst.to - dst.from, 'loop').map(cl);
+                // Rebuild the phrase around the destination window.
+                const out = []; let t = 0;
+                steps.forEach(st => {
+                  const b = _ambSeqStepBars(st, gsub);
+                  const inDst = (t >= dst.from - 1e-6 && t < dst.to - 1e-6);
+                  if (!inDst) out.push(st);
+                  else if (Math.abs(t - dst.from) < 1e-6) fitted.forEach(f => out.push(f));
+                  t += b;
+                });
+                if (!out.length) return;
+                ge6.lane.steps = out;
+                ge6._rzBase = null; ge6._rzSig = '';
+                try { if (typeof selectedStepRefs !== 'undefined') selectedStepRefs = []; } catch (e) {}
+                if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane();
+                if (typeof _syncFluidGridToActiveLane === 'function') _syncFluidGridToActiveLane();
+                if (typeof renderSequence === 'function') renderSequence();
+                _ambStepsToLock(E6, ge6.key, ge6.lane.steps, true, _ambComposeLoopBars(E6, ge6));
+                const f6 = _ambFreezeState(E6, ge6.key);
+                f6.frozen = true; f6._lock = true;
+                try { _ambPersistLock(E6, ge6.key); } catch (e) {}
+                document.querySelectorAll('.ambient-seedgrid-chords, .ambient-seedgrid-gran').forEach(h => { h._sig = ''; });
+                _ambGridBarStrip(E6); _ambGridGranBar(E6);
+                if (typeof showToast === 'function') showToast('Copied ' + src.nm + ' → ' + dst.nm + '. They are separate copies — editing one leaves the other alone.');
+              } catch (e) {}
+            } });
+          });
+          const rr6 = ob.getBoundingClientRect();
+          // Deferred a tick: showCtxMenu arms its own document-level dismiss, and
+          // opening it inside a live dispatch tears it down in the same event.
+          setTimeout(() => { try { showCtxMenu(rr6.left, rr6.bottom, items); } catch (e) {} }, 0);
+        }, true);
+        // SCOPE TO A BAR by tapping its chord in the ruler. It sets the ordinary
+        // SELECTION, so every action that already scopes to a selection — step
+        // size, Join, Hold, Step Div, the step editor — follows with no further
+        // wiring. Tapping the scoped bar again releases it.
+        document.addEventListener('click', (ev) => {
+          const bc = ev.target && ev.target.closest && ev.target.closest('[data-sgbar]');
+          if (bc) {
+            const ge2 = _bloomGridEdit;
+            if (!ge2 || bc.getAttribute('data-sgk') !== ge2.key) return;
+            ev.stopPropagation();
+            const bi = parseInt(bc.getAttribute('data-sgbar'), 10) | 0;
+            // ITS OWN RANGE, in bars — a chord is not a bar once a cadence gives
+            // them different lengths, so reading the index as a bar selected a
+            // different chord's steps (measured: tapping chord 2 lit chord 1).
+            const from = parseFloat(bc.getAttribute('data-sgfrom'));
+            const blen = parseFloat(bc.getAttribute('data-sglen'));
+            const same = (ge2._barSel === bi);
+            ge2._barSel = same ? null : bi;
+            try {
+              // The steps are taken from the LANE, by bar position — never from
+              // the mirrored chips, which include visual-only continuation
+              // clones and would select phantoms.
+              const picked = same ? [] : _ambSeqSlice((ge2.lane && ge2.lane.steps) || [],
+                                                      (from >= 0 ? from : bi), (blen > 0 ? blen : 1))
+                .filter(st => st && !st.isSub);
+              selectedStepRefs = picked;
+              if (picked.length > 1) { try { multiSelectMode = true;
+                const mt = document.getElementById('multi-select-toggle'); if (mt) mt.checked = true; } catch (e) {} }
+            } catch (e) {}
+            try { if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
+            try {
+              document.querySelectorAll('.ambient-seedgrid-chords').forEach(h => { h._sig = ''; });
+              document.querySelectorAll('.ambient-seedgrid-gran').forEach(h => { h._sig = ''; });
+              const E4 = ge2.E || _masterEng;
+              _ambGridBarStrip(E4); _ambGridGranBar(E4);
+            } catch (e) {}
+            return;
+          }
+          const t = ev.target && ev.target.closest && ev.target.closest('.ambient-sggran, .ambient-sgjoin, .ambient-sgclear');
           if (!t || t.disabled) return;
           ev.stopPropagation();
           const ge = _bloomGridEdit; if (!ge) return;
           const E3 = ge.E || _masterEng; if (!E3 || t.dataset.sgk !== ge.key) return;
           let changed = false;
+          if (t.classList.contains('ambient-sgclear')) {
+            try {
+              const sub0 = (typeof stepSubdivision === 'number' && stepSubdivision > 0) ? stepSubdivision : 0.5;
+              const st = (ge.lane && ge.lane.steps) || [];
+              const sel = (typeof selectedStepRefs !== 'undefined' && Array.isArray(selectedStepRefs))
+                ? selectedStepRefs.filter(Boolean) : [];
+              // Replace IN PLACE by index — a selection holds step OBJECTS, and a
+              // cleared step is a NEW object, so mutating the array is what makes
+              // the change visible rather than silently editing an orphan.
+              sel.forEach(ref => {
+                const i = st.indexOf(ref);
+                if (i >= 0) { st[i] = _ambMakeRest(sub0); changed = true; }
+              });
+              if (changed) {
+                try { selectedStepRefs = []; } catch (e) {}
+                try { if (typeof multiSelectMode !== 'undefined') multiSelectMode = false; } catch (e) {}
+              }
+            } catch (e) {}
+          } else
           if (t.classList.contains('ambient-sgjoin')) {
             try { changed = _ambGridJoinStep(E3); } catch (e) { changed = false; }
           } else {
@@ -29193,7 +31601,7 @@
               // here it reads as a dead control. But nor is it "set subdivision
               // on every step" — that rescales the rests too, so every note
               // slides and the phrase changes length. See _ambGridResizeLane.
-              try { _ambGridResizeLane(_bloomGridEdit && _bloomGridEdit.lane, v); } catch (e) {}
+              try { _ambGridResizeTo(_bloomGridEdit, v); } catch (e) {}
               try { stepSubdivision = v; } catch (e) {}
               changed = true;
             }
@@ -29203,11 +31611,14 @@
             if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane();
             if (typeof _syncFluidGridToActiveLane === 'function') _syncFluidGridToActiveLane();
             if (typeof renderSequence === 'function') renderSequence();
-            if (ge.lane && Array.isArray(ge.lane.steps)) _ambStepsToLock(E3, ge.key, ge.lane.steps, true);
+            if (ge.lane && Array.isArray(ge.lane.steps)) _ambStepsToLock(E3, ge.key, ge.lane.steps, true, _ambComposeLoopBars(E3, ge));
           } catch (e) {}
           try {
             document.querySelectorAll('.ambient-seedgrid-gran').forEach(h => { h._sig = ''; });
             _ambGridGranBar(E3);
+            // …AND the strip: the lane was just rebuilt, so the mirror is stale
+            // and the new lane row is unhidden. Without this both are on screen.
+            _ambGridBarStrip(E3);
           } catch (e) {}
         }, true);
         // "COMPOSING FOR" — the same choice as the matrix's part tab, made from
@@ -29268,7 +31679,7 @@
           if (!st) return;
           const ge2 = _bloomGridEdit; if (!ge2 || st.dataset.sgk !== ge2.key) return;
           const slot = st.closest('.ambient-seedgrid-slot');
-          const chips = slot && slot.querySelector('.lane-chips');
+          const chips = slot && slot.querySelector('.lane-chips:not(.sglane-row)');
           const real = chips ? chips.querySelectorAll(':scope > .seq-step') : null;
           const target = real && real[st.dataset.mi | 0];
           if (!target) return;
@@ -29346,7 +31757,16 @@
           let title, fallback;
           if (ck === _AMB_PARTSEQ_ALL) {
             title = pName + ' — every chord, every pass';
-            fallback = 'this layer’s own phrase';
+            let _others = 0;
+            try {
+              const _m = L2.partSeqs || {};
+              Object.keys(_m).forEach(k => Object.keys(_m[k] || {}).forEach(kk => {
+                if (!(k === String(pi2) && kk === _AMB_PARTSEQ_ALL)) _others++;
+              }));
+            } catch (e) { _others = 0; }
+            fallback = _others
+              ? 'play nothing here (other passes are still mapped)'
+              : 'this layer’s own phrase';
           } else if (/:\*$/.test(ck)) {
             title = pName + ' — the whole of pass ' + ((ck.split(':')[0] | 0) + 1);
             fallback = 'let each chord decide';
@@ -29361,6 +31781,13 @@
               ? ('follow the ' + (eff.from === 'pass' ? 'pass' : 'part') + ' default, “' + eff.name + '”')
               : (eff.name ? ('follow the ' + (eff.from === 'pass' ? 'pass' : 'part') + ' default')
                           : 'this layer’s own phrase');
+          }
+          if (_ambGridComposing(key2)) {
+            try {
+              showToast('Inactive while the ✎ Grid is open on this layer — close the grid to schedule phrases.',
+                { warn: true, ms: 6000 });
+            } catch (e) {}
+            return;
           }
           _ambPartSeqPickMenu(E2, L2, key2, pi2, ck, cellEl, title, fallback);
         }, true);
@@ -29386,7 +31813,30 @@
     // spans, size by time. The part comes from _ambSeqPartIdxAt — the same
     // resolver the part→sequence swap uses — so the picture and the playback
     // cannot disagree about where a part starts.
+    // RETIRED. The part ribbon predates the compose HEADLINE, which now states the
+    // part, the phrase and the pass as three chosers — so this said the same thing
+    // a second time, and said it WRONG: it drew passes off the LIVE CLOCK rather
+    // than the pass being composed for, so with two passes it rendered "pass 2"
+    // then "pass 1" at odd proportional widths while the headline read "pass 1".
+    //
+    // It was also visually broken by construction here: `.ambient-sgpartspan` is a
+    // TAB (top-only radius, `border-bottom: 0`) designed to butt onto the chord
+    // CHIPS, and the chords host now begins with the headline — so its open bottom
+    // edge met a row of dropdowns and read as being cut off.
+    //
+    // A move is a delete plus an add; the headline was the add, this is the delete.
+    // Kept as a hider rather than removed outright so its three call sites and any
+    // stale host resolve to "hidden" instead of throwing — the same shape
+    // _ambGridComposeFor was retired with.
     function _ambGridPartRibbon(E) {
+      try {
+        document.querySelectorAll('.ambient-seedgrid-prib').forEach(h => {
+          if (!h.hidden || h.innerHTML) { h.hidden = true; h.innerHTML = ''; h._sig = ''; }
+        });
+      } catch (e) {}
+      return;
+    }
+    function _ambGridPartRibbonLegacy(E) {
       let hosts; try { hosts = document.querySelectorAll('.ambient-seedgrid-prib'); } catch (e) { return; }
       if (!hosts || !hosts.length) return;
       const ge = _bloomGridEdit;
@@ -29430,10 +31880,17 @@
         spans.push({ pi, pass, n: 1 });
       }
       if (!spans.length) { hide(); return; }
+      // DO NOT REPEAT THE NAME WHEN THERE IS ONLY ONE. With a single, unnamed
+      // set of changes the ribbon read "The changes · 1", "The changes · 2" —
+      // which looks exactly like two PARTS, and was reported as a part that had
+      // been deleted still being there. There is one set of changes; those are
+      // its passes, so say only that.
+      const oneRow = _rows.length < 2;
       const label = (sp) => {
         if (sp.pi < 0) return '—';
         const cols = Math.max(1, _ambPartPassCols(cfg, sp.pi));
-        return nameOf(sp.pi) + ' · ' + ((sp.pass % cols) + 1);
+        const n = (sp.pass % cols) + 1;
+        return oneRow ? ('pass ' + n) : (nameOf(sp.pi) + ' · ' + n);
       };
       const sig = spans.map(sp => sp.pi + '/' + sp.pass + ':' + sp.n).join('|') +
         '#' + _rows.map(r => r.name).join(',');
@@ -29453,38 +31910,17 @@
     }
     // The part chooser in the compose bar. Rendered from _ambPartSeqRows, so it
     // offers exactly what the Plays matrix offers and cannot drift from it.
+    // RETIRED, kept as a hider. The compose strip's headline carries the part
+    // AND the pass as dropdowns now, directly above the chord ruler they govern,
+    // so this row asked the same two questions twice — and two surfaces naming
+    // one thing is the duplication this file keeps paying for. The STATE
+    // (_ambPsqPart / _ambPsqPass) is untouched and still shared with the Plays
+    // matrix tab; only this rendering is gone. The function stays so its three
+    // call sites, and any stale host in a saved layout, resolve to "hidden".
     function _ambGridComposeFor(E) {
       let hosts; try { hosts = document.querySelectorAll('.ambient-seedgrid-for'); } catch (e) { return; }
       if (!hosts || !hosts.length) return;
-      const ge = _bloomGridEdit;
-      const cfg = (E && (E._cfg || (E.getCfg && E.getCfg()))) || null;
-      const rows = _ambPartSeqRows(cfg);
-      hosts.forEach(h => {
-        const mine = !!(ge && E && ge.E === E && h.dataset.sgk === ge.key);
-        if (!mine || !rows.length) { if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } return; }
-        const sel = Math.max(0, Math.min(rows.length - 1, _ambPsqPart[ge.key] | 0));
-        const sig = rows.map(r => r.name).join('|') + '#' + sel + '#' +
-          (_ambPsqPass[ge.key] | 0) + '#' + _ambPartPassCols(cfg, rows[sel].pi);
-        if (h._sig === sig && !h.hidden) return;
-        h._sig = sig; h.hidden = false;
-        const cols = Math.max(1, _ambPartPassCols(cfg, rows[sel].pi));
-        const pass = Math.max(0, Math.min(cols - 1, _ambPsqPass[ge.key] | 0));
-        h.innerHTML = '<span class="ambient-hint">composing for</span>' +
-          rows.map((r, k) => '<button type="button" class="ambient-seg ambient-sgfor' +
-            (k === sel ? ' active' : '') + '" data-sgfor="' + k + '" data-sgk="' + _ambEscAttr(ge.key) +
-            '" title="' + _ambEscAttr('Show ' + r.name + '\u2019s chords under the phrase you are writing.') +
-            '">' + _ambEscText(r.name) + '</button>').join('') +
-          // PASS, mirroring the ▦ Passes grid's columns — a pass that drops a
-          // chord plays a different structure, so "which pass" is part of the
-          // question "what am I writing against". Only offered when there is
-          // more than one; a single pass is not a choice.
-          (cols > 1 ? ('<span class="ambient-hint sgpass-lbl">pass</span>' +
-            Array.from({ length: cols }, (_, c) =>
-              '<button type="button" class="ambient-seg ambient-sgpass' + (c === pass ? ' active' : '') +
-              '" data-sgpass="' + c + '" data-sgk="' + _ambEscAttr(ge.key) + '" title="' +
-              _ambEscAttr('Show the chords ' + rows[sel].name + ' plays on pass ' + (c + 1) + ' of ' + cols + '.') +
-              '">' + (c + 1) + '</button>').join('')) : '');
-      });
+      hosts.forEach(h => { if (!h.hidden || h.innerHTML) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } });
     }
     // STEPS PER BAR, as note values. `subdivision` is in BEATS (1 = 1/4), so N
     // steps to a bar is 4/N — the sizes the step-div hue table already calls
@@ -29521,9 +31957,8 @@
         // rule the workspace Step Div follows, so the two cannot mean different
         // things — and set the next-note default when there is not. Say which.
         h.innerHTML = '<span class="ambient-hint">' +
-            _ambEscText(selN ? ('step size — ' + selN + ' selected')
-                             : (nSteps ? ('step size — all ' + nSteps + ' step' + (nSteps === 1 ? '' : 's'))
-                                       : 'step size — for new notes')) + '</span>' +
+            _ambEscText(selN ? ('size · ' + selN + ' sel')
+                             : (nSteps ? 'size · all' : 'size · new')) + '</span>' +
           _AMB_GRAN.map(g => '<button type="button" class="ambient-seg ambient-sggran' +
             (!selN && !mixed && Math.abs(shown - g[1]) < 1e-6 ? ' active' : '') +
             '" data-sggran="' + g[1] + '" data-sgk="' + _ambEscAttr(ge.key) + '" title="' +
@@ -29536,8 +31971,25 @@
             '"' + (selN ? '' : ' disabled') + ' title="' + _ambEscAttr(
               'Combine the selected step with the one after it into ONE sustained note, as long as both together. ' +
               'Resizing alone cannot do this — it pushes the rest of the phrase later instead of absorbing the next slot.') +
-            '">\u27f7 Join</button>';
+            '">\u27f7 Join</button>' +
+          // CLEAR. Emptying a step needed the step editor and a rest pick; this is
+          // the one-tap version, and it acts on the SAME selection the size buttons
+          // and Join do, so there is one notion of "which steps" on this row.
+          '<button type="button" class="ambient-seg ambient-sgclear" data-sgk="' + _ambEscAttr(ge.key) +
+            '"' + (selN ? '' : ' disabled') + ' title="' + _ambEscAttr(
+              selN ? ('Empty the ' + selN + ' selected step' + (selN === 1 ? '' : 's') +
+                      ' — no note, back to the default size (' + _ambGranLabel(gsub) + ').')
+                   : 'Select a step first, then Clear empties it and returns it to the default size.') +
+            '">\u2715 Clear</button>';
       });
+    }
+    // The size row's own label for a subdivision, so Clear's tooltip names the
+    // size it will restore rather than printing a bare number.
+    function _ambGranLabel(sub) {
+      try {
+        const g = _AMB_GRAN.find(x => Math.abs(x[1] - sub) < 1e-6);
+        return g ? g[0] : String(sub);
+      } catch (e) { return String(sub); }
     }
     // RESIZE THE LANE TO A NEW STEP SIZE, KEEPING THE MUSIC.
     //
@@ -29559,6 +32011,79 @@
     // grid (`subdivision: v, duration: n`) so the size buttons keep reading it as
     // that size; one that is not keeps its exact length verbatim.
     const _ambStepIsRest = (st) => !!st && !st.isSub && !Array.isArray(st.chord) && st.freq == null;
+    // A REST THE RENDERER CAN DRAW. `{subdivision, duration}` alone is enough
+    // for every timing calculation here and NOT enough for the chip, which
+    // reads `label` — a hand-rolled rest rendered as the literal word
+    // "undefined" in the compose strip, once per padded cell.
+    function _ambMakeRest(sub) {
+      const v = (sub > 0) ? sub : ((typeof stepSubdivision === 'number' && stepSubdivision > 0) ? stepSubdivision : 0.5);
+      return { freq: null, label: '\u2014', cellIndex: null, duration: 1, subdivision: v };
+    }
+    // RESIZING IS REVERSIBLE, because every size is derived from ONE base.
+    //
+    // Re-ruling is lossy in both directions and it COMPOUNDS: enlarging snaps
+    // each note's start onto the coarser grid (two 1/8-apart notes land on the
+    // same 1/4 and the second is pushed later), and the old `len = max(len, v)`
+    // grew a short note to the new step and could never shrink it back. So
+    // 1/8 → 1/4 → 1/8 did not return the phrase you started with — reported as
+    // exactly that.
+    //
+    // Fix: keep the phrase as it was before the FIRST resize of this session and
+    // derive every later size from THAT, never from the already-re-ruled steps.
+    // Returning to the base size restores it verbatim. The snapshot lives on
+    // `_bloomGridEdit` — transient by construction, dies with the session, and
+    // never reachable by `persistWorkspace` (an underscore field on the LANE
+    // would be serialised, the documented trap).
+    //
+    // Any edit that is not a resize RE-BASES: the signature below is what the
+    // last resize left behind, so a note added or moved in between makes the old
+    // base stale and it is replaced rather than silently un-doing the edit.
+    function _ambRzSig(steps) {
+      try {
+        return (Array.isArray(steps) ? steps : []).map(st => st
+          ? [st.subdivision == null ? 'g' : st.subdivision, st.duration || 1,
+             st.freq == null ? '' : Math.round(st.freq * 100),
+             Array.isArray(st.chord) ? st.chord.length : 0, st.isSub ? 1 : 0].join('.')
+          : '-').join('|');
+      } catch (e) { return String(Math.random()); }
+    }
+    function _ambRzClone(steps) {
+      try { return JSON.parse(JSON.stringify(steps || [])); } catch (e) { return null; }
+    }
+    // The size the lane is written at now — its first step's, or the global
+    // default when it has none. Only meaningful as "what to restore to".
+    function _ambRzSizeOf(lane) {
+      const gsub = (typeof stepSubdivision === 'number' && stepSubdivision > 0) ? stepSubdivision : 0.5;
+      const st = ((lane && lane.steps) || []).find(x => x && !x.isSub);
+      return (st && st.subdivision != null) ? st.subdivision : gsub;
+    }
+    function _ambGridResizeTo(ge, v) {
+      const lane = ge && ge.lane;
+      if (!lane || !Array.isArray(lane.steps) || !(v > 0)) return false;
+      const sigNow = _ambRzSig(lane.steps);
+      if (!ge._rzBase || ge._rzSig !== sigNow) {
+        // First resize, or the phrase has been edited since the last one.
+        ge._rzBase = { v: _ambRzSizeOf(lane), steps: _ambRzClone(lane.steps) };
+        ge._rzSig = sigNow;
+      }
+      const base = ge._rzBase;
+      if (!base || !base.steps) return false;
+      if (Math.abs(v - base.v) < 1e-6) {
+        // BACK TO WHERE IT STARTED — restore verbatim rather than re-deriving,
+        // which is what makes the round trip exact instead of merely close.
+        const back = _ambRzClone(base.steps);
+        if (!back) return false;
+        lane.steps = back;
+      } else {
+        const from = _ambRzClone(base.steps);
+        if (!from) return false;
+        const tmp = { steps: from };
+        if (!_ambGridResizeLane(tmp, v)) return false;
+        lane.steps = tmp.steps;
+      }
+      ge._rzSig = _ambRzSig(lane.steps);
+      return true;
+    }
     function _ambGridResizeLane(lane, v) {
       const steps = (lane && lane.steps) || [];
       if (!steps.length || !(v > 0)) return false;
@@ -29571,7 +32096,7 @@
       if (!notes.length) {                       // all rests — just re-rule them
         const n = Math.max(1, Math.round(oldTotal / v));
         lane.steps = [];
-        for (let i = 0; i < n; i++) lane.steps.push({ subdivision: v, duration: 1 });
+        for (let i = 0; i < n; i++) lane.steps.push(_ambMakeRest(v));
         return true;
       }
       // 2. re-place the notes on the new grid, in order, never overlapping
@@ -29581,13 +32106,20 @@
         // Gaps are multiples of v by construction (every start is snapped), so
         // this cannot leave a fractional rest behind.
         let guard = 0;
-        while (edge - cursor > v * 0.5 && guard++ < 512) { out.push({ subdivision: v, duration: 1 }); cursor += v; }
+        while (edge - cursor > v * 0.5 && guard++ < 512) { out.push(_ambMakeRest(v)); cursor += v; }
       };
       notes.sort((a, b) => a.start - b.start);
       notes.forEach(n => {
         const start = Math.max(cursor, snap(n.start));
         restsTo(start);
-        const len = Math.max(n.len, v);          // shrink keeps it, enlarge grows it
+        // Enlarging GROWS a note to the new step, shrinking keeps its own length
+        // (v is smaller then, so the note wins). That is destructive on its own
+        // — coming back down there is nothing left to say it had been shorter —
+        // and reversibility is provided by _ambGridResizeTo, which re-derives
+        // every size from ONE base snapshot instead of from the last result.
+        // Dropping the growth here was tried and is worse: pressing 1/4 on a
+        // phrase of 1/8 notes then does nothing at all.
+        const len = Math.max(n.len, v);
         const d = len / v, dr = Math.round(d);
         const st = n.st;
         if (Math.abs(d - dr) < 1e-6 && dr >= 1) { st.subdivision = v; st.duration = dr; }
@@ -29638,26 +32170,174 @@
     // is FORWARDED to the real chip by index, so every editing gesture stays
     // wired to the markup it was written for. The real lane row is hidden, not
     // removed: its handlers are what we are forwarding to.
-    function _ambGridBarStrip(E) {
-      let hosts; try { hosts = document.querySelectorAll('.ambient-seedgrid-chords'); } catch (e) { return; }
-      if (!hosts || !hosts.length) return;
-      const ge = _bloomGridEdit;
-      const hide = () => hosts.forEach(h => {
-        if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; }
-        try {
-          const sl = h.closest && h.closest('.ambient-seedgrid-slot');
-          if (sl) sl.querySelectorAll('.lane-row').forEach(r => r.classList.remove('sg-mirrored'));
-        } catch (e2) {}
-      });
-      if (!ge || !E || ge.E !== E) { hide(); return; }
+    // THE STRIP'S HEADLINE IS TWO CHOOSERS AND A READOUT:
+    //   [ which sequence v ] . [ which pass v ] . N chords . N bars
+    // It used to be plain text naming the PART, which the part chooser above it
+    // already says - so the space was spent repeating one answer while the two
+    // questions you actually ask while composing ("which phrase am I editing",
+    // "which pass am I looking at") had no control at all.
+    //
+    // UPDATED IN PLACE, never re-emitted: the options and the value are written
+    // only when they differ, so a dropdown the user has open is never replaced.
+    function _ambGridLabelSync(lbl, ge, cols, pass, row, nOn, nAll, passBars) {
+      const esc = (t) => _ambEscText(String(t == null ? '' : t));
+      let seqSel = lbl.querySelector('.sgru-seq');
+      let passSel = lbl.querySelector('.sgru-pass');
+      let tail = lbl.querySelector('.sgru-tail');
+      let partSel = lbl.querySelector('.sgru-part');
+      if (!seqSel) {
+        // ORDER IS THE HIERARCHY: part, then the phrase, then the pass. The part
+        // decides what the other two even mean - its own pass count, and which
+        // phrases are mapped to it - so it reads first and changing it resets
+        // them.
+        lbl.innerHTML =
+          '<select class="ambient-select sgru-part" title="Which set of changes you are composing against. Its chords are the ruler below."></select>' +
+          '<span class="sgru-dot">·</span>' +
+          '<select class="ambient-select sgru-seq" title="Which banked phrase this lane is editing. Choosing one loads it; New starts a fresh phrase."></select>' +
+          '<span class="sgru-dot">·</span>' +
+          '<select class="ambient-select sgru-pass" title="Which pass of these changes you are composing for. The chords below follow it."></select>' +
+          '<span class="sgru-tail"></span>';
+        partSel = lbl.querySelector('.sgru-part');
+        seqSel = lbl.querySelector('.sgru-seq');
+        passSel = lbl.querySelector('.sgru-pass');
+        tail = lbl.querySelector('.sgru-tail');
+        partSel.setAttribute('data-sgk', ge.key);
+        seqSel.setAttribute('data-sgk', ge.key);
+        passSel.setAttribute('data-sgk', ge.key);
+      }
+      // --- which part ---------------------------------------------------------
+      let cfg0 = null;
+      try { cfg0 = (ge.E && (ge.E._cfg || ge.E.getCfg())) || null; } catch (e) { cfg0 = null; }
+      const rows0 = _ambPartSeqRows(cfg0);
+      const partIdx = Math.max(0, Math.min(Math.max(0, rows0.length - 1), _ambPsqPart[ge.key] | 0));
+      const partSig = rows0.map(r => r.name).join('|') + '#' + partIdx;
+      if (partSel._sig !== partSig) {
+        partSel._sig = partSig;
+        partSel.innerHTML = rows0.length
+          ? rows0.map((r, k) => '<option value="' + k + '"' + (k === partIdx ? ' selected' : '') + '>' +
+              esc(r.name) + '</option>').join('')
+          : '<option value="0">no changes</option>';
+        // One set of changes is not a choice - it says what it is, and cannot be
+        // pressed to no effect (the "what is the purpose of this button" lesson).
+        partSel.disabled = rows0.length < 2;
+      }
+      if (partSel.value !== String(partIdx)) partSel.value = String(partIdx);
+      // --- which sequence -----------------------------------------------------
+      const bank = _ambSeqMapBank();
+      const cur = ge.seqName || '';
+      // WHAT IS MAPPED TO THIS PART leads the list, so changing the part
+      // re-groups it. The rest of the bank still follows - hiding an unmapped
+      // phrase would make it unreachable from the one place you compose.
+      const here = new Set();
+      try {
+        const Lp = _ambLayerByKey(ge.E, ge.key);
+        const pi0 = rows0[partIdx] ? rows0[partIdx].pi : 0;
+        const m0 = Lp && Lp.partSeqs && Lp.partSeqs[pi0];
+        if (m0 && typeof m0 === 'object') Object.keys(m0).forEach(ck => {
+          const sp0 = _ambPsqSpec(m0[ck]); if (sp0) here.add(sp0.n);
+        });
+      } catch (e) {}
+      const mine0 = bank.filter(x => here.has(x.name));
+      const rest0 = bank.filter(x => !here.has(x.name));
+      // THE OPEN PHRASE CARRIES A DIRTY MARK. This picker is the only place that
+      // names what is on the bench, so an unsaved edit has to be visible here or
+      // the guard is the first time you hear about it.
+      const _dty = (() => { try { return _ambPhraseDirty(_bloomGridEdit); } catch (e) { return false; } })();
+      const opt0 = (x) => '<option value="' + _ambEscAttr(x.name) + '"' + (x.name === cur ? ' selected' : '') + '>' +
+        esc(x.name) + ((x.name === cur && _dty) ? ' •' : '') + '</option>';
+      const seqSig = cur + '|' + (_dty ? '1' : '0') + '|' + bank.map(x => x.name).join('') + '|' + [...here].sort().join(',');
+      if (seqSel._sig !== seqSig) {
+        seqSel._sig = seqSig;
+        seqSel.innerHTML =
+          '<option value=" new">＋ New phrase</option>' +
+          // NOT "this layer's phrase". The grid edits a PHRASE and does not know
+          // which layer will play it — that is a reference the card owns. With no
+          // phrase open, what is on the bench is simply untitled.
+          (cur ? '' : ('<option value="" selected>Untitled' + (_dty ? ' • unsaved' : '') + '</option>')) +
+          (mine0.length
+            ? ('<optgroup label="' + _ambEscAttr('on ' + (rows0[partIdx] ? rows0[partIdx].name : 'this part')) + '">' +
+               mine0.map(opt0).join('') + '</optgroup>' +
+               (rest0.length ? ('<optgroup label="rest of the bank">' + rest0.map(opt0).join('') + '</optgroup>') : ''))
+            : bank.map(opt0).join(''));
+      }
+      if (seqSel.value !== cur) seqSel.value = cur;
+      // --- which pass ---------------------------------------------------------
+      const passSig = cols + '|' + pass;
+      if (passSel._sig !== passSig) {
+        passSel._sig = passSig;
+        passSel.innerHTML = Array.from({ length: Math.max(1, cols) }, (_, c) =>
+          '<option value="' + c + '"' + (c === pass ? ' selected' : '') + '>pass ' + (c + 1) + '</option>').join('');
+      }
+      if (passSel.value !== String(pass)) passSel.value = String(pass);
+      // --- the readout --------------------------------------------------------
+      const txt = ' · ' + (nOn === nAll ? (nAll + ' chord' + (nAll === 1 ? '' : 's'))
+                                             : (nOn + ' of ' + nAll + ' chords')) +
+        ' · ' + _ambFmtBarsMixed(passBars) + ' bar' + (passBars > 1 + 1e-6 ? 's' : '');   // MIXED, not 9/2 — nobody counts in improper fractions
+      if (tail.textContent !== txt) tail.textContent = txt;
+    }
+    // THE COMPOSE STRIP, and what each piece is CALLED. One vocabulary shared
+    // with docs/bloom-part-iterations.md §0, so a report and the code agree:
+    //
+    //   COMPOSE STRIP  .ambient-seedgrid-chords   the whole surface
+    //     HEADLINE     .ambient-sgruler-lbl       part / sequence / pass + readout
+    //     BAR BLOCK    .sgbar-block               ONE BAR of the pass
+    //       CHORD RULER  .sgruler-row               the chords covering that bar
+    //         CHORD CELL   .ambient-sgbar             one chord; tap to scope
+    //       STEP ROW     .lane-chips.sglane-row     that bar's steps
+    //         BAR NUMBER   i.sgbar-n                  1, or "2 ↻" on a repeat
+    //         STEP         .seq-step.sgstep           one chip
+    //         COPY         .sgbar-copy                on the chord header
+    //
+    // A BAR BLOCK is a BAR, not a chord - they coincide at one chord per bar and
+    // part company when a chord runs two bars or two chords share one. A STEP
+    // ROW is a MIRROR of the real lane, which stays parked off-screen and owns
+    // every handler.
+    // "1/2 bars" is wrong — anything at or below one bar is singular. One helper,
+    // because three call sites had already written the ternary three ways.
+    function _ambBarsWord(b) {
+      return _ambFmtBpc(b) + ' bar' + (b > 1 + 1e-6 ? 's' : '');
+    }
+    // THE FRAME a compose session is writing into: which part, which pass, the
+    // chords of that pass and how long it runs. Extracted so the strip and the
+    // handlers that PAD the phrase share one answer - two walks of the chord
+    // lengths is how the Scheduler lane once came to disagree with the clock.
+    // The length a composed phrase's loop must be: the pass it is written
+    // against. Null when there is no session, so the caller falls back to the
+    // whole-bar rounding.
+    function _ambComposeLoopBars(E, ge0) {
+      try {
+        const fr = _ambComposeFrame(E, ge0);
+        if (!fr) return null;
+        const ge = ge0 || _bloomGridEdit;
+        const have = _ambSeqBars((ge && ge.lane && ge.lane.steps) || []);
+        // THE PASS IS THE CEILING, NOT THE ANSWER. Forcing every composed phrase
+        // to the pass turned ONE BAR of drawing into an eight-second loop —
+        // three notes and then seven seconds of nothing, reported as "the motif
+        // takes an entire pass to complete" and visible in a dump as
+        // `lockState: { loopLen: 8, notes: [3] }`.
+        //
+        // A phrase loops at ITS OWN length, rounded up to a whole bar — as long
+        // as that length DIVIDES the pass, so it still lands on the changes
+        // every time round. When it does not divide (the 4½-bar case that
+        // started this), the pass is the only length that stays in step, and it
+        // wins.
+        if (!(have > 0)) return fr.passBars;
+        const own = Math.max(1, Math.ceil(have - 1e-6));
+        if (own >= fr.passBars - 1e-6) return fr.passBars;
+        const reps = fr.passBars / own;
+        return (Math.abs(reps - Math.round(reps)) < 1e-6) ? own : fr.passBars;
+      } catch (e) { return null; }
+    }
+    function _ambComposeFrame(E, ge0) {
+      const ge = ge0 || _bloomGridEdit;
+      if (!ge || !E || ge.E !== E) return null;
       const cfg = E._cfg || (E.getCfg && E.getCfg()) || null;
       const rows = _ambPartSeqRows(cfg);
-      if (!rows.length) { hide(); return; }
+      if (!rows.length) return null;
       const row = rows[Math.max(0, Math.min(rows.length - 1, _ambPsqPart[ge.key] | 0))];
       let rg = null;
       try { rg = (_ambGridRanges(cfg) || []).find(x => x.pi === row.pi); } catch (e) { rg = null; }
-      if (!rg || row.open) { hide(); return; }
-      const SUB = _AMB_RULER_SUB;
+      if (!rg || row.open) return null;
       const bpc = Math.max(0.01, cfg.barsPerChord || 1);
       const cols = Math.max(1, _ambPartPassCols(cfg, row.pi));
       const pass = Math.max(0, Math.min(cols - 1, _ambPsqPass[ge.key] | 0));
@@ -29674,18 +32354,162 @@
         try { nm = _ambIsTransition(ch) ? '⇝' : (_ambChordShort(_ambChordShift(ch, shift)) || '?'); } catch (e) { nm = '?'; }
         seq.push({ nm, from: acc, to: acc + len }); acc += len;
       });
-      const passBars = acc || 1;
-      const chordCells = (bar) => {                 // the chords covering [bar, bar+1)
-        const out = []; let x = 0, guard = 0;
-        while (x < 1 - 1e-6 && guard++ < 64) {
-          const t = (bar + x) % passBars;
-          const seg = seq.find(g => t >= g.from - 1e-6 && t < g.to - 1e-6) || seq[0];
-          const room = Math.min(1 - x, seg.to - t);
-          out.push({ nm: seg.nm, span: Math.max(1, Math.round(room * SUB)), head: Math.abs(t - seg.from) < 1e-6 });
-          x += room;
-        }
-        return out;
-      };
+      return { cfg, rows, row, rg, cols, pass, seq, passBars: acc || 1 };
+    }
+    // A CHORD THE PHRASE DOES NOT REACH IS EMPTY, NOT A COPY. Filling it by
+    // repeating what came before was the wrong default: it looked like the app
+    // had duplicated your work ("I only wrote the first chord and it copied
+    // itself to the others"), and it made the strip a picture of something you
+    // could not edit. The phrase is PADDED WITH RESTS to cover the pass, so
+    // every chord has real, empty, editable steps of its own - and copying one
+    // chord's steps onto another is an explicit action (the header's copy menu).
+    //
+    // Only ever PADS. A phrase longer than the pass keeps its extra bars.
+    function _ambGridPadLaneToPass(E, ge0) {
+      const ge = ge0 || _bloomGridEdit;
+      const fr = _ambComposeFrame(E, ge);
+      if (!fr || !ge.lane || !Array.isArray(ge.lane.steps)) return false;
+      const gsub = _ambSeqGsub();
+      const have = _ambSeqBars(ge.lane.steps, gsub);
+      const want = fr.passBars;
+      if (!(want > have + 1e-6)) return false;
+      const stepBars = Math.max(1 / 64, gsub / 4);
+      const n = Math.max(1, Math.round((want - have) / stepBars));
+      for (let i = 0; i < n && i < 1024; i++) ge.lane.steps.push(_ambMakeRest(gsub));
+      ge._rzBase = null; ge._rzSig = '';
+      return true;
+    }
+    // Pad if needed, then ALWAYS re-install — the loop length has to be stated
+    // even when nothing was added, or a phrase authored at exactly the pass's
+    // length keeps whatever loop the previous install rounded it to (measured: a
+    // 4½-bar phrase sitting in a 6-bar loop, which is the drift this fixes).
+    function _ambGridPadAndCommit(E, ge0) {
+      const ge = ge0 || _bloomGridEdit;
+      if (!ge || !ge.lane || !Array.isArray(ge.lane.steps) || !ge.lane.steps.length) return false;
+      _ambGridPadLaneToPass(E, ge);
+      try {
+        if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane();
+        if (typeof _syncFluidGridToActiveLane === 'function') _syncFluidGridToActiveLane();
+        if (typeof renderSequence === 'function') renderSequence();
+        _ambStepsToLock(E, ge.key, ge.lane.steps, true, _ambComposeLoopBars(E, ge));
+        const f = _ambFreezeState(E, ge.key);
+        f.frozen = true; f._lock = true;
+        try { _ambPersistLock(E, ge.key); } catch (e) {}
+      } catch (e) {}
+      return true;
+    }
+    // PERF RECORDS INTO THE SCOPED CHORD — it could only ever APPEND before, and
+    // "record to the fourth chord" is what scoping a chord and arming PERF plainly
+    // means. Two separate things made it record nothing at all: Perform capture
+    // yields whenever `selectedStepRefs` is non-empty (right for the click-a-step-
+    // then-click-a-note edit flow) and scoping a chord IS a selection, so the take
+    // was dropped; and even if it had been captured, `addToSequence` would have put
+    // it on the END of the phrase, past every chord.
+    //
+    // BEGIN opens the chord's range — its steps are removed and the insert cursor
+    // is parked there — and END fits whatever was played back to that chord's own
+    // length, so the chords after it stay where they were. No scope = the old
+    // append, unchanged.
+    function _ambComposeRecordBegin(E) {
+      const ge = _bloomGridEdit;
+      if (!ge || !E || ge.E !== E || ge._barSel == null) return null;
+      const steps = (ge.lane && Array.isArray(ge.lane.steps)) ? ge.lane.steps : null;
+      if (!steps) return null;
+      let g = null;
+      try { const fr = _ambComposeFrame(E, ge); g = fr && fr.seq[ge._barSel | 0]; } catch (e) { g = null; }
+      if (!g) return null;
+      const bars = g.to - g.from;
+      const picked = _ambSeqSlice(steps, g.from, bars).filter(s => s && !s.isSub);
+      let at = picked.length ? steps.indexOf(picked[0]) : -1;
+      let had = [];
+      if (at < 0) at = steps.length;                 // chord past the phrase's end
+      else {
+        try { if (typeof snapshotForUndo === 'function') snapshotForUndo('Perform into chord'); } catch (e) {}
+        had = picked.slice();
+        picked.forEach(s => { const i = steps.indexOf(s); if (i >= 0) steps.splice(i, 1); });
+      }
+      // The scope WAS the selection and those objects have just been removed —
+      // leaving them selected would re-pitch orphans on the next grid tap.
+      try { selectedStepRefs = []; } catch (e) {}
+      try { if (typeof multiSelectMode !== 'undefined') multiSelectMode = false; } catch (e) {}
+      return { key: ge.key, ci: ge._barSel | 0, at, bars, from: g.from, had };
+    }
+    function _ambComposeRecordEnd(E, sc, endIdx) {
+      const ge = _bloomGridEdit;
+      if (!sc || !ge || !E || ge.E !== E || ge.key !== sc.key) return;
+      const steps = (ge.lane && Array.isArray(ge.lane.steps)) ? ge.lane.steps : null;
+      if (!steps) return;
+      const gsub = _ambSeqGsub();
+      let end = Math.max(sc.at, Math.min(steps.length, endIdx | 0));
+      // A TAKE THAT CAPTURED NOTHING PUTS THE CHORD BACK. Arming opens the range
+      // by removing its steps, so finalizing an empty take would silently wipe the
+      // chord you meant to record over — a mis-press, a mic that never triggered,
+      // or a mind changed mid-count-in would all cost real work.
+      if (end === sc.at && Array.isArray(sc.had) && sc.had.length) {
+        steps.splice(sc.at, 0, ...sc.had);
+        ge._rzBase = null; ge._rzSig = '';
+        try { _ambGridPadAndCommit(E, ge); } catch (e) {}
+        try {
+          selectedStepRefs = sc.had.slice();
+          if (typeof multiSelectMode !== 'undefined') multiSelectMode = sc.had.length > 1;
+        } catch (e) {}
+        _ambComposeRepaint(E);
+        try { if (typeof showToast === 'function') showToast('Perform: nothing was played — this chord is unchanged.'); } catch (e) {}
+        return;
+      }
+      // FIT THE TAKE TO THE CHORD. Over-long is cut at the chord line, short is
+      // filled with rests — either way the phrase keeps its shape and every later
+      // chord stays on the bar it was on.
+      let guard = 0;
+      while (end > sc.at && _ambSeqBars(steps.slice(sc.at, end), gsub) > sc.bars + 1e-6 && guard++ < 1024) {
+        steps.splice(end - 1, 1); end--;
+      }
+      guard = 0;
+      while (_ambSeqBars(steps.slice(sc.at, end), gsub) < sc.bars - 1e-6 && guard++ < 1024) {
+        steps.splice(end, 0, _ambMakeRest(gsub)); end++;
+      }
+      ge._rzBase = null; ge._rzSig = '';
+      try { _ambGridPadAndCommit(E, ge); } catch (e) {}
+      // Leave the chord scoped and its (new) steps selected, so the take can be
+      // shaped straight away — and so the strip still shows what you recorded into.
+      try {
+        selectedStepRefs = steps.slice(sc.at, end).filter(s => s && !s.isSub);
+        if (typeof multiSelectMode !== 'undefined') multiSelectMode = selectedStepRefs.length > 1;
+      } catch (e) {}
+      _ambComposeRepaint(E);
+    }
+    // REPAINT THE COMPOSE SURFACES BY HAND. `_ambGridBarStrip` normally rides the
+    // viz rAF, and that only re-arms while the transport runs — composing happens
+    // STOPPED, so anything that rebuilds the lane while stopped (PERF's
+    // stopSequence, a take landing) leaves the mirror stale AND the real lane
+    // un-parked, which is the block of dimmed rows that appears under the strip.
+    function _ambComposeRepaint(E) {
+      try { if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
+      try {
+        document.querySelectorAll('.ambient-seedgrid-chords, .ambient-seedgrid-gran').forEach(h => { h._sig = ''; });
+        _ambGridBarStrip(E); _ambGridGranBar(E);
+      } catch (e) {}
+    }
+    function _ambGridBarStrip(E) {
+      let hosts; try { hosts = document.querySelectorAll('.ambient-seedgrid-chords'); } catch (e) { return; }
+      if (!hosts || !hosts.length) return;
+      const ge = _bloomGridEdit;
+      const hide = () => hosts.forEach(h => {
+        if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; }
+        try {
+          const sl = h.closest && h.closest('.ambient-seedgrid-slot');
+          if (sl) sl.querySelectorAll('.lane-row').forEach(r => r.classList.remove('sg-mirrored'));
+        } catch (e2) {}
+      });
+      if (!ge || !E || ge.E !== E) { hide(); return; }
+      const fr = _ambComposeFrame(E, ge);
+      if (!fr) { hide(); return; }
+      const cfg = fr.cfg, row = fr.row, rg = fr.rg, cols = fr.cols, pass = fr.pass;
+      const seq = fr.seq, passBars = fr.passBars;
+      const SUB = _AMB_RULER_SUB;
+      // (chordCells retired: the strip is one block per CHORD now, so the
+      // "which chords cover this bar" split is no longer needed — a chord's own
+      // header stands above its rows.)
       const spanOf = (el) => { const m = /span\s+(\d+)/.exec((el.style && el.style.gridColumn) || ''); return m ? (m[1] | 0) : 0; };
 
       hosts.forEach(h => {
@@ -29693,8 +32517,29 @@
         if (!(slot && slot.getAttribute('data-sgkey') === ge.key)) {
           if (!h.hidden) { h.hidden = true; h.innerHTML = ''; h._sig = ''; } return;
         }
-        const chips = slot.querySelector('.lane-chips');
+        // NOT just `.lane-chips` — the mirror rows carry that class too (it is
+        // how they inherit the chip styling), and they come FIRST in the DOM,
+        // so a bare query returned the mirror and it mirrored ITSELF: frozen
+        // at whatever it last drew while the real lane changed underneath.
+        const chips = slot.querySelector('.lane-chips:not(.sglane-row)');
         const laneRow = slot.querySelector('.lane-row');
+        // PARK THE REAL LANE BEFORE ANY EARLY RETURN — the comment further down
+        // promised exactly this and the `!chips` return below broke the promise.
+        // `renderSequence` builds a FRESH `.lane-row`, so the class is gone after
+        // anything redraws the lane; the descendant rule covers it while it sits
+        // in the strip host, but a repaint that bails here left it wearing neither.
+        // WIDTH MUST BE PINNED with it: parked absolutely it would shrink to fit,
+        // which changes the grid's column widths and therefore every chip rect —
+        // the very thing the gesture forwarding maps onto.
+        const _park = () => {
+          if (!laneRow || laneRow.classList.contains('sg-mirrored')) return;
+          try {
+            const wRef = (h.parentElement || slot).getBoundingClientRect().width;
+            if (wRef > 1) laneRow.style.width = Math.round(wRef) + 'px';
+          } catch (e2) {}
+          laneRow.classList.add('sg-mirrored');
+        };
+        _park();
         if (!chips) {
           // The strip has not rendered yet — re-measure next frame, once.
           if (!h._reflow && typeof requestAnimationFrame === 'function') {
@@ -29703,39 +32548,182 @@
           }
           return;
         }
-        // Split the REAL chips into bars by their own sub-cell spans.
+        // ONE BLOCK PER CHORD, not per bar. A cadence gives chords different
+        // lengths, and a bar-shaped strip could only say so in the RULER — the
+        // step rows all looked the same, so the shape of the music was invisible
+        // in the one place you write it.
+        //
+        // ROW LENGTH IS THE CHORD'S LENGTH, and a step keeps the SAME WIDTH
+        // everywhere: a row covering `f` of a bar is `f` of the strip wide and
+        // holds `f x 32` sub-cells, so f/(f*32) = 1/32 either way. That is what
+        // makes two rows comparable by eye. A chord longer than a bar WRAPS into
+        // whole-bar rows (no horizontal scroll, UI rule 1); a chord shorter than
+        // one gets a short row holding only ITS steps, so editing it cannot
+        // reach the chord beside it.
         const real = [...chips.querySelectorAll(':scope > .seq-step')];
-        const bars = []; let cur = [], used = 0;
+        const chipAt = []; let used = 0;
         real.forEach((el, i) => {
           const sp = spanOf(el) || 1;
-          cur.push({ i, sp, cls: el.className, txt: (el.textContent || '').trim() });
+          chipAt.push({ i, sp, el, at: used, cls: el.className, txt: (el.textContent || '').trim() });
           used += sp;
-          if (used >= SUB) { bars.push(cur); cur = []; used = 0; }
         });
-        if (cur.length) bars.push(cur);
-        if (!bars.length) bars.push([]);
-        const sig = row.name + '#' + pass + '#' + bars.map(bcs =>
-          bcs.map(c => c.i + ':' + c.sp + ':' + c.cls + ':' + c.txt).join(',')).join('|');
+        const laneSub = Math.max(1, used);              // the phrase's own length, in sub-cells
+        const laneBars = laneSub / SUB;
+        // Rows: each chord of the pass, cut at whole-bar lines.
+        const rowsDef = [];
+        seq.forEach((g, ci) => {
+          let b = g.from, guard = 0;
+          while (b < g.to - 1e-6 && guard++ < 256) {
+            const len = Math.min(1, g.to - b);          // never more than a bar per row
+            rowsDef.push({ ci, nm: g.nm, from: b, len, first: Math.abs(b - g.from) < 1e-6,
+                           chordBars: g.to - g.from });
+            b += len;
+          }
+        });
+        if (!rowsDef.length) rowsDef.push({ ci: 0, nm: (seq[0] && seq[0].nm) || '?', from: 0, len: 1, first: true, chordBars: 1 });
+        // The chips of one row, taken from the phrase — wrapping back to its
+        // start when the pass runs past its end (a short phrase REPEATS; it does
+        // not fall silent).
+        // PAST THE PHRASE IS EMPTY, NOT A REPEAT. The window used to wrap, so a
+        // chord the phrase did not reach showed the phrase's own opening again
+        // - which reads as the app having duplicated your work, and cannot be
+        // edited on its own. The phrase is padded with rests to cover the pass
+        // (_ambGridPadLaneToPass) so those rows are real and empty; anything
+        // still past the end simply draws nothing.
+        const chipAtSub = (pos) => {
+          if (pos < 0 || pos >= laneSub) return null;
+          for (let k = 0; k < chipAt.length; k++) {
+            const c = chipAt[k];
+            if (pos >= c.at && pos < c.at + Math.max(1, c.sp)) return c;
+          }
+          return null;
+        };
+        const rowChips = (r) => {
+          const a0 = Math.round(r.from * SUB), n0 = Math.max(1, Math.round(r.len * SUB));
+          const out = []; let pos = 0, guard = 0, last = null;
+          while (pos < n0 && guard++ < 512) {
+            const abs = a0 + pos;
+            const c = chipAtSub(abs);
+            if (!c) break;                       // the phrase ends here
+            if (c !== last) { out.push({ c, echo: false }); last = c; }
+            pos += Math.max(1, Math.max(1, c.sp) - (abs - c.at));
+          }
+          return out;
+        };
+        // (The real lane is parked by `_park()` above — before every early return,
+        // including the signature match below. It used to be parked only here,
+        // which is after two of them.)
+        _park();
+        // The headline's dirty mark rides on this strip's repaint, so the phrase's
+        // unsaved state has to be IN this signature — otherwise an edit that does
+        // not move a chip (a pitch change) leaves the mark stale.
+        const _dirtySig = (() => { try { return _ambPhraseDirty(ge) ? 'D' : 'C'; } catch (e) { return 'C'; } })();
+        const sig = row.name + '#' + pass + '#' + _dirtySig + '#b' + (ge._barSel == null ? -1 : ge._barSel) + '#' +
+          rowsDef.map(r => r.ci + ':' + r.from.toFixed(3) + ':' + r.len.toFixed(3) + ':' + r.nm).join('|') + '#' +
+          chipAt.map(c => c.i + ':' + c.sp + ':' + c.cls + ':' + c.txt).join(',');
         if (h._sig === sig && !h.hidden) return;
         h._sig = sig; h.hidden = false;
-        h.innerHTML = '<span class="ambient-sgruler-lbl">' +
-            _ambEscText(row.name + (cols > 1 ? (' · pass ' + (pass + 1)) : '') +
-              ' · ' + passBars + ' bars · ' + bars.length + ' in the lane') + '</span>' +
-          bars.map((bcs, bIdx) =>
-            '<div class="sgbar-block">' +
-              '<div class="sgruler-row" style="--sgsub:' + SUB + '">' +
-                chordCells(bIdx).map(c => '<span class="ambient-sgbar' + (bIdx % 2 ? ' alt' : '') +
-                  (c.head ? '' : ' cont') + '" style="grid-column: span ' + c.span + '" title="' +
-                  _ambEscAttr('Bar ' + (bIdx + 1) + ' — ' + c.nm + (c.head ? '' : ' (held over)')) + '">' +
-                  _ambEscText(c.nm) + '</span>').join('') +
-              '</div>' +
-              '<div class="sglane-row" style="--sgsub:' + SUB + '">' +
-                '<i class="sgbar-n">' + (bIdx + 1) + '</i>' +
-                bcs.map(c => '<span class="' + _ambEscAttr(c.cls) + ' sgstep" data-mi="' + c.i +
-                  '" data-sgk="' + _ambEscAttr(ge.key) + '" style="grid-column: span ' + c.sp + '">' +
-                  _ambEscText(c.txt) + '</span>').join('') +
-              '</div>' +
-            '</div>').join('');
+        // BUILT AS NODES, and the lane row is a REAL `.lane-chips` holding CLONES
+        // of the real chips.
+        //
+        // Re-emitting chips as fresh markup from a class name and their text was
+        // unusable: every chip rule is scoped to the container
+        // (`.lane-chips .seq-step { width: auto; min-width: 0 }` and the triplet
+        // and playhead rules besides), so outside it the chips fell back to
+        // intrinsic width and piled on top of each other — and the inner
+        // structure of a chord or sub-step chip was flattened to a text label.
+        // Cloning inside the real container inherits all of it for nothing.
+        // THE LABEL SURVIVES THE REBUILD. It holds three `<select>`s, and this
+        // strip re-renders whenever a chip's class changes — which playback does
+        // constantly — so rebuilding it wholesale would replace a dropdown while
+        // it was open and silently drop the pick. That is the trap the euclid
+        // page bar solved by using buttons; here the lists are long enough that
+        // selects are right, so the node is kept and updated in place instead.
+        let lbl = h.querySelector(':scope > .ambient-sgruler-lbl');
+        if (!lbl) { lbl = document.createElement('div'); lbl.className = 'ambient-sgruler-lbl'; h.appendChild(lbl); }
+        [...h.children].forEach(n => { if (n !== lbl) n.remove(); });
+        // Say what this pass PLAYS — a pass with chords switched off is shorter
+        // than the part, and the strip has to state that rather than look wrong.
+        const nAll = rg.len, nOn = seq.length;
+        _ambGridLabelSync(lbl, ge, cols, pass, row, nOn, nAll, passBars);
+        // (The "your phrase repeats" notice is gone: the phrase is padded to the
+        // pass, so a chord the phrase does not reach cannot occur.)
+        let block = null, curCi = -1;
+        rowsDef.forEach((r, rIdx) => {
+          if (r.first || r.ci !== curCi) {
+            curCi = r.ci;
+            block = document.createElement('div');
+            block.className = 'sgbar-block';
+            // THE CHORD HEADER names the chord and its LENGTH. One per chord, so
+            // it cannot say "held over" any more — the chord's rows are under it.
+            const rr = document.createElement('div');
+            rr.className = 'sgruler-row';
+            rr.setAttribute('aria-label', 'Chord ruler — ' + r.nm);
+            const scoped = (ge._barSel === r.ci);
+            const cell = document.createElement('span');
+            cell.className = 'ambient-sgbar' + (r.ci % 2 ? ' alt' : '') + (scoped ? ' scoped' : '');
+            cell.setAttribute('data-sgbar', String(r.ci));
+            cell.setAttribute('data-sgfrom', String(r.from));
+            cell.setAttribute('data-sglen', String(r.chordBars));
+            cell.setAttribute('data-sgk', ge.key);
+            cell.title = 'Chord cell — ' + r.nm + ', ' + _ambBarsWord(r.chordBars) +
+              (scoped ? '. Scoped: every action applies to this chord’s step rows. Tap again to release.'
+                      : '. Tap to scope the grid actions to this chord’s step rows.');
+            cell.textContent = r.nm;
+            // COPY ANOTHER CHORD'S STEPS HERE - the explicit alternative to the
+            // repeat-filling this replaced. Per chord, because that is the unit
+            // you are writing; sizes are reconciled by the same fit rules a
+            // mapped slice uses (loop / cut), so a 2-bar chord copied onto a
+            // 1-bar one is cut at the bar rather than refused.
+            if (seq.length > 1) {
+              const cp = document.createElement('button');
+              cp.type = 'button';
+              cp.className = 'sgbar-copy';
+              cp.textContent = '⧉';
+              cp.setAttribute('data-sgcopy', String(r.ci));
+              cp.setAttribute('data-sgk', ge.key);
+              cp.title = 'Copy another chord’s steps into ' + r.nm + '.';
+              cell.appendChild(cp);
+            }
+            const len = document.createElement('em');
+            len.className = 'sgbar-len';
+            len.textContent = _ambBarsWord(r.chordBars);
+            cell.appendChild(len);
+            rr.appendChild(cell);
+            block.appendChild(rr);
+            h.appendChild(block);
+          }
+          const lr = document.createElement('div');
+          lr.className = 'lane-chips sglane-row' + (ge._barSel === r.ci ? ' sgbar-scoped' : '');
+          lr.setAttribute('aria-label', 'Step row — ' + r.nm + (r.len < 1 ? '' : ', bar ' + (Math.floor(r.from) + 1)));
+          // PROPORTIONAL: the row is `len` of a bar wide and holds `len x 32`
+          // cells, so every step is the same width whatever the chord's length.
+          const subN = Math.max(1, Math.round(r.len * SUB));
+          if (r.len < 1 - 1e-6) {
+            lr.style.width = (r.len * 100).toFixed(3) + '%';
+            lr.style.gridTemplateColumns = 'repeat(' + subN + ', 1fr)';
+          }
+          const num = document.createElement('i');
+          num.className = 'sgbar-n';
+          num.textContent = (r.len < 1 ? _ambFmtBpc(r.len) : String(Math.floor(r.from) + 1));
+          lr.appendChild(num);
+          rowChips(r).forEach(ent => {
+            const c = ent.c;
+            let cl;
+            try { cl = c.el.cloneNode(true); } catch (e2) { cl = null; }
+            if (!cl) return;
+            cl.removeAttribute('id');
+            cl.classList.add('sgstep');
+            cl.dataset.mi = String(c.i);
+            cl.dataset.sgk = ge.key;
+            // A REPEAT ROW SHOWS THE SAME CHIPS, so it also showed their
+            // SELECTION - scoping one chord lit every echo of it, and selecting
+            // one step lit "the whole column". An echo may show what the step IS
+            // and must not claim to be the step you are working on.
+            lr.appendChild(cl);
+          });
+          block.appendChild(lr);
+        });
         // Hide the real lane — but keep it in the DOM, because forwarding a tap
         // means clicking the very chip whose handlers we rely on.
         if (laneRow) {
@@ -29827,9 +32815,12 @@
       try { _ambGridComposeFor(E); } catch (e) {}
       try { _ambGridGranBar(E); } catch (e) {}
       try { _ambGridBarStrip(E); } catch (e) {}
+      try { _ambGridLoadedBar(E); } catch (e) {}
       // Per FRAME, not per sync: this is the one that has to track the music.
       try { _ambGridRulerPlayhead(E); } catch (e) {}
       try { _ambPassPlayhead(E); } catch (e) {}
+      try { _ambPartSeqPlayhead(E); } catch (e) {}
+      try { _ambPartSeqMatrixSync(E); } catch (e) {}
       try { _ambProgOverviewPlayhead(E); } catch (e) {}
       try { _ambSaltReadoutSync(E); } catch (e) {}
       try { _ambSynthVoicePlayheads(E); } catch (e) {}
@@ -30158,6 +33149,32 @@
             const unitP = (P > 0.05) ? P : fs.loopLen;
             prog = d <= 0 ? 0 : (((d % unitP) / unitP) + 1) % 1;
             if (d > 0) cyc = Math.floor(d / unitP);   // keep the When cursor moving per unit
+          } else if (fs._partSeqName && (_chordPh = _chordPh || (() => {
+            // DO NOT DEPEND ON `_chordPh` ABOVE: it is gated on
+            // `_ambProgSyncInfo`, which is null for a motif (measured), so the
+            // mapped branch never fired and the bar fell back to the FIT's
+            // length — right for the first chord after an install and wrong
+            // from then on, which is exactly "correct for the first pass, then
+            // it takes an entire pass". A mapped phrase is fitted to its chord
+            // whether or not the layer is prog-synced, so ask the chord clock
+            // directly.
+            try {
+              const _c2 = E._cfg || E.getCfg();
+              const sp3 = _ambChordSpanAt(E, _c2, now);
+              if (sp3 && sp3.len > 0.05 && now >= sp3.start) {
+                return { prog: Math.max(0, Math.min(0.9999, (now - sp3.start) / sp3.len)), active: true };
+              }
+            } catch (e) {}
+            return null;
+          })()) && _chordPh.active) {
+            // A MAPPED PHRASE IS FITTED TO ITS CHORD, so the chord is what the
+            // bar means. Reading `fs.loopLen` showed the FIT instead: with
+            // chords of 0.5/1/0.5/2 bars the phrase is re-fitted at each change,
+            // so the bar's own period changed under it and it read as "all over
+            // the place for the first passes, then taking a whole pass". The
+            // chord progress is already computed above for exactly this kind of
+            // layer; use it, and the bar fills once per chord as the phrase does.
+            prog = _chordPh.prog; active = true;
           } else {
             prog = d <= 0 ? 0 : (d % fs.loopLen) / fs.loopLen;   // user Freeze: the captured loop length
           }
@@ -32527,7 +35544,14 @@
     // meaning of ⚡ Live in the Scheduler — Humanize / Dynamics / Ornament re-roll
     // per pass while the structure stays as written. Reusing it beats inventing a
     // fourth lock state that would need its own replay path.
-    const _AMB_SEEDSAVE_TITLE = 'Keep this phrase AND let the layer perform it again: it becomes the layer\u2019s material and the variance sliders re-apply on every pass \u2014 Humanize, Dynamics and Ornament re-roll from your current settings. The notes and rhythm you drew stay as written. \u2713 Done keeps it fixed instead.';
+    // (_AMB_SEEDSAVE_TITLE removed with the button — see below.)
+    // 💾 KEEP + PERFORM IS GONE. It committed the drawn phrase INTO THE LAYER
+    // and re-applied the variance sliders on every pass — the grid↔layer
+    // coupling this work removed, and the same job ✓ Done had. A phrase is a
+    // document now: ⬇ To bank… saves it, the Plays matrix decides where it
+    // plays, and the layer's own variance is a separate axis. Its sync sites
+    // and click handler are left as no-ops rather than hunted out, so a stale
+    // reference resolves to nothing instead of throwing.
     function _ambEscAttr(t) { return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
     // WHY the layer Key control does nothing, or null when it applies. Same shape
     // as _ambEvolveInertWhy, and the same lesson: _ambNotesOf returns the AREA
@@ -32567,20 +35591,39 @@
         '<span class="ambient-seg-row">' +
           '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="generate" data-seedkey="' + _ambEscText(lk) + '" hidden></button>' +
           '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="grid" data-seedkey="' + _ambEscText(lk) + '" title="Compose in the FULL editor — edits land in the loop live. ✕ Cancel discards.">✎ Grid</button>' +
-          '<button type="button" class="ambient-seg amb-seedsave" data-savekey="' + _ambEscText(lk) + '" disabled title="' + _ambEscAttr(_AMB_SEEDSAVE_TITLE) + '">\u{1F4BE} Save</button>' +
         '</span><span class="ambient-hint">plays itself unless composed</span></div>') +
         // Author docks the layer's grid (roll + keyboard) HERE — composing
         // happens where the seed is chosen (filled by _ambRefreshSeedModes).
         '<div class="ambient-seedgrid-slot" data-sgkey="' + _ambEscText(lk) + '" hidden>' +
+          '<div class="ambient-seedgrid-dockhost"></div>' +
+          // THE CONTROL BAR SITS BETWEEN THE GRID AND THE PASS RULER — under the
+          // surface it acts on, above the context it is written against.
+          //
+          // BEFORE the part ribbon, not between it and the chords: the RULER IS
+          // BOTH of them. `.ambient-sgpartspan` is styled as a TAB — top-only
+          // radius, `border-bottom: 0` — so it butts flush onto the chord ribbon
+          // beneath it. Putting the bar in that seam left an open-bottomed tab
+          // floating above the buttons, which reads as the ruler being cut off.
           '<div class="ambient-seedgrid-bar">' +
             '<span class="ambient-seedgrid-live" hidden>' +
-              '<span class="ambient-hint">editing in Grid — changes land live, and variance is bypassed: you hear exactly what you draw</span>' +
-              '<button type="button" class="ambient-seg ambient-seedgrid-done" data-sgk="' + _ambEscText(lk) + '">✓ Done</button>' +
-              '<button type="button" class="ambient-seg ambient-seedgrid-cancel" data-sgk="' + _ambEscText(lk) + '" title="Discard grid edits — restore the pattern as it was">✕ Cancel</button>' +
+              // THREE ROWS, not one wrapping blob of twenty controls. And the
+              // prose is a TOOLTIP: as a flex sibling it wrapped THROUGH the
+              // buttons on a phone, two lines of text running underneath ✓ Done
+              // and ✕ Cancel. It says the same thing on the row itself.
+              '<span class="sglive-row sglive-actions" title="' +
+                _ambEscAttr('Editing in Grid — changes land live, and variance is bypassed: you hear exactly what you draw.') + '">' +
+              // NO "✓ Done". It committed the phrase INTO THE LAYER, which is the
+              // coupling being removed: the grid edits a phrase, and what a layer
+              // plays comes from the Plays matrix or the loop override. Saving is
+              // ⬇ To bank…, closing is ✕ Close, and the unsaved-work guard sits
+              // between them — so "Done" had no job left that was not one of those.
+              '<button type="button" class="ambient-seg ambient-seedgrid-cancel" data-sgk="' + _ambEscText(lk) + '" title="Close the grid. Unsaved changes are offered for saving first.">✕ Close</button>' +
               // Into the SEQUENCE BANK, from here. Composing and the bank used to
               // be two workflows sharing an editor: the only way to bank a phrase
               // was to leave, re-compose it in the grid workspace and Save there.
-              '<button type="button" class="ambient-seg ambient-seedgrid-bank" data-sgk="' + _ambEscText(lk) + '" title="Save this phrase to the sequence bank under a name, so it can be reused — on another layer, in another area, or bound to a part.">\u2b07 Save as sequence</button>' +
+              '<button type="button" class="ambient-seg ambient-seedgrid-update" data-sgk="' + _ambEscText(lk) + '" hidden></button>' +
+              '<button type="button" class="ambient-seg ambient-seedgrid-bank" data-sgk="' + _ambEscText(lk) + '" title="Save this phrase to the sequence bank under a name, so it can be reused — on another layer, in another area, or bound to a part.">\u2b07 To bank\u2026</button>' +
+              '</span>' +
               // WHICH PART YOU ARE COMPOSING FOR. Without it the chord ribbon below
               // showed whatever the live clock happened to be on, so writing a
               // phrase intended for the Chorus meant reading the Verse's harmony —
@@ -32604,11 +35647,11 @@
               // copy sitting above the editor's own header.)
             '</span>' +
           '</div>' +
-          '<div class="ambient-seedgrid-dockhost"></div>' +
           // The part and chord ribbons sit DIRECTLY ABOVE THE STRIP, not at the top
           // of the dock: they exist to say where a step falls, and a reader looking
           // at the steps had them scrolled off somewhere above the editor.
-          '<div class="ambient-seedgrid-prib" hidden></div><div class="ambient-seedgrid-chords" hidden></div>' +
+          '<div class="ambient-seedgrid-prib" hidden></div>' +
+          '<div class="ambient-seedgrid-chords" hidden></div>' +
           '<div class="ambient-seedgrid-striphost"></div></div>';
     }
     // Reveal an element that lives inside collapsed card groups: opens every
@@ -32634,7 +35677,340 @@
         if (card) card.classList.remove('collapsed');
       } catch (e) {}
     }
+    // THE PLAYS MATRIX HAS NO _sig CACHE — it is written once when the card is
+    // built and then only by _ambPartViewRepaint, which nothing calls when the
+    // ARRANGEMENT changes. So raising a part's Repeats redrew the progression
+    // everywhere except the one grid that schedules against those passes: it
+    // went on showing the old column count ("I changed passes to 3 and the layer
+    // Plays still says 2").
+    //
+    // Rather than hunt every writer — the editor's Save, the chain, the ▦ Passes
+    // width, the area strip — this rides the sync that runs after essentially
+    // every committed edit, guarded by a signature so it rewrites ONLY when the
+    // shape actually moved. A bare rewrite here would run on every sync.
+    function _ambPartSeqMatrixSync(E) {
+      let cfg = null;
+      try { cfg = E && (E._cfg || (E.getCfg && E.getCfg())); } catch (e) { return; }
+      if (!cfg) return;
+      let rows = null;
+      try { rows = _ambPartSeqRows(cfg); } catch (e) { return; }
+      if (!rows || !rows.length) return;
+      let hosts; try { hosts = document.querySelectorAll('.ambient-partmap[data-sbkey]'); } catch (e) { return; }
+      hosts.forEach(host => {
+        const key = host.dataset.sbkey; if (!key) return;
+        const L = _ambLayerByKey(E, key); if (!L) return;
+        const sel = Math.max(0, Math.min(rows.length - 1, _ambPsqPart[key] | 0));
+        let sig = '';
+        try {
+          // Column COUNT per row is the thing that was going stale; the cells and
+          // the selected tab have to be in here too or an edit to either is lost.
+          sig = key + '|' + sel + '|' +
+            rows.map(r => r.pi + ':' + r.name + ':' + _ambPartPassCols(cfg, r.pi)).join(',') +
+            '|' + JSON.stringify(L.partSeqs || null) + '|' + (L.phraseLoop || '');
+        } catch (e) { sig = String(Math.random()); }
+        // Composing OWNS the layer, so the matrix is inert for the duration —
+        // marked rather than hidden, and it says which switch is in charge.
+        const _comp = _ambGridComposing(key);
+        if (host._psqSig === sig && host._psqComp === _comp) return;
+        host._psqSig = sig; host._psqComp = _comp;
+        try {
+          host.classList.toggle('is-overridden', _comp);
+          host.title = _comp
+            ? 'Inactive while the ✎ Grid is open — what you draw is what this layer plays. Close the grid to schedule phrases again.'
+            : '';
+        } catch (e) {}
+        try { host.innerHTML = _ambPartSeqGridHtml(E, cfg, L, key, rows, sel); } catch (e) {}
+      });
+    }
+    // ---- PITCH PLACEMENT AS ONE PARAMETER --------------------------------------
+    // Home · Register · Range · Proximity are four rows answering ONE question —
+    // where this layer's notes sit and how far they roam — and they took four rows
+    // of a card that has to fit a phone. They collapse to a single row with a
+    // summary and a popover.
+    //
+    // The rows are MOVED, never re-created. Every one of these controls is bound by
+    // id or by a delegated handler on the card; rebuilding their markup inside a
+    // popover would either lose the binding or need all four wired a second time.
+    // Moving preserves identity, so nothing downstream knows the difference —
+    // the same reason the compose dock relocates the lane expander rather than
+    // cloning it. (Cloning is what made the compose strip go stale; see the
+    // mirror-clone note.)
+    const _AMB_PITCH_KEYS = ['home', 'register', 'range', 'proximity'];
+    function _ambPitchRowOf(card, p, k) {
+      // `home` is a segmented row with no single id — find it by the attribute
+      // `_ambSeg` ACTUALLY EMITS, which is `data-field`, not `data-seg`. It was
+      // written as `data-seg` and therefore matched nothing, so Home stayed on the
+      // card as its own row while the popover it belongs to said "3 settings" and
+      // its summary already named the value ("… · Center · …") — the one control
+      // in the group that never moved.
+      // BY SUFFIX, NOT BY FULL ID. `_ambNamespaceHtml` rewrites `id="ambient-…"`
+      // to the engine's own prefix (`mix-bloom-…` on the master panel), so a
+      // literal `ambient-motif-1-register` matches nothing there — the card
+      // rendered fine and this found zero rows, which looked like the collapse
+      // silently not running.
+      let el = null;
+      try {
+        el = (k === 'home') ? card.querySelector('.ambient-seg-field[data-field="home"]')
+                            : card.querySelector('[id$="-' + k + '"]');
+      } catch (e) { el = null; }
+      return el ? (el.closest('.ambient-ctrl') || null) : null;
+    }
+    function _ambPitchSummary(inst, type, card, p) {
+      const bits = [];
+      try {
+        const reg = card.querySelector('[id$="-register"]');
+        // The note name beside Register is the readout the row already shows —
+        // reuse it rather than deriving a second answer that can disagree.
+        const regTxt = reg && reg.parentElement ? (reg.parentElement.parentElement || {}).textContent : '';
+        const note = (String(regTxt || '').match(/\b([A-G][#b]?\d)\b/) || [])[1];
+        if (note) bits.push(note);
+        else if (inst.register != null) bits.push('oct ' + inst.register);
+      } catch (e) {}
+      try { if (inst.range != null) bits.push('±' + inst.range + ' oct'); } catch (e) {}
+      try {
+        const h = _ambHomeOf(inst, type);
+        if (h) bits.push(h.charAt(0).toUpperCase() + h.slice(1));
+      } catch (e) {}
+      try { if (inst.proximity) bits.push('prox ' + (inst.proximity | 0) + '%'); } catch (e) {}
+      return bits.length ? bits.join(' · ') : 'default';
+    }
+    // WHY Placement has nothing to do here, or null when it applies. Narrowest
+    // cause first, because a layer can be both composed and mapped and the one
+    // that is SOUNDING is the mapping.
+    function _ambPlacementInertWhy(L) {
+      if (!L) return null;
+      try {
+        if (_ambPhraseDriven(L)) return {
+          short: 'n/a — plays a phrase',
+          long: 'This layer plays a banked phrase (its Plays schedule / phrase loop), so its notes are written, not generated. '
+              + 'Home, Register, Range and Proximity shape notes as they are INVENTED — they do not move a phrase you wrote. '
+              + 'Clear the Plays mapping to hear them.' };
+        if (L.lockState && L.lockState.seedEdit) return {
+          short: 'n/a — composed in the Grid',
+          long: 'This layer plays the phrase you composed in ✎ Grid, so its pitches are written, not generated. '
+              + 'Home, Register, Range and Proximity shape notes as they are INVENTED — they do not move a phrase you wrote. '
+              + 'Discard the composed phrase to hear them.' };
+      } catch (e) {}
+      return null;
+    }
+    function _ambPitchCollapse(E, card, inst, type, fkey) {
+      if (!card || !inst) return;
+      const p = 'ambient-' + type + '-' + inst.id;
+      const rows = _AMB_PITCH_KEYS.map(k => _ambPitchRowOf(card, p, k)).filter(Boolean);
+      if (!rows.length) return;
+      let holder = card.querySelector('.ambient-pitchhold');
+      let row = card.querySelector('.ambient-ctrl.ambient-pitchrow');
+      if (!row) {
+        row = document.createElement('div');
+        row.className = 'ambient-ctrl ambient-pitchrow';
+        row.innerHTML = '<label title="' + _ambEscAttr(
+            'Where this layer’s notes sit and how far they roam — Home, Register, Range and Proximity together.') +
+          '">Placement</label>' +
+          '<button type="button" class="ambient-seg ambient-pitchbtn" data-pkey="' + _ambEscAttr(fkey) + '"></button>' +
+          '<span class="ambient-hint ambient-pitchsum"></span>';
+        // Sits where the FIRST of the four was, so the card's order is unchanged.
+        rows[0].parentElement.insertBefore(row, rows[0]);
+      }
+      if (!holder) {
+        holder = document.createElement('div');
+        holder.className = 'ambient-pitchhold';
+        holder.hidden = true;
+        row.parentElement.insertBefore(holder, row.nextSibling);
+      }
+      rows.forEach(r => { if (r.parentElement !== holder) holder.appendChild(r); });
+      const sum = _ambPitchSummary(inst, type, holder, p);
+      const btn = row.querySelector('.ambient-pitchbtn');
+      const sp = row.querySelector('.ambient-pitchsum');
+      if (btn && btn.textContent !== sum) btn.textContent = sum;
+      if (btn) btn.title = 'Home, Register, Range and Proximity — tap to open';
+      // PLACEMENT IS A GENERATION CONTROL, so it does nothing to a layer whose
+      // notes come from a PHRASE. Every one of the four is read inside an emitter
+      // (`inst.register` / `inst.proximity` in _ambEmitRun, _ambEmitMotif,
+      // _ambEmitEuclid…); the freeze replay re-applies only the harmony remap and
+      // the voice envelope, so a composed or mapped phrase keeps the exact pitches
+      // it was written with — which is right (re-registering notes you authored
+      // would move your music) and silently confusing, because the control still
+      // moves and the summary still reads back. Marked, not hidden: the same
+      // "Wet only wins" / Evolve-is-inert treatment the rest of this panel uses.
+      const why = _ambPlacementInertWhy(inst);
+      row.classList.toggle('is-overridden', !!why);
+      if (btn) {
+        // INACTIVE, not merely annotated. The four controls inside cannot change
+        // what this layer plays, so opening them offers an edit that silently
+        // does nothing — worse than a disabled control, which at least states the
+        // fact. The `title` carries the reason and the way out.
+        btn.classList.toggle('is-overridden', !!why);
+        btn.disabled = !!why;
+        if (why) btn.title = why.long;
+      }
+      if (sp) {
+        sp.textContent = why ? why.short : (rows.length + ' setting' + (rows.length === 1 ? '' : 's'));
+        sp.title = why ? why.long : '';
+      }
+    }
+    // The popover MOVES the holder in and puts it back on close, so the controls
+    // keep their identity and their bindings across every open.
+    function _ambPitchOpen(E, fkey) {
+      const card = document.querySelector('.ambient-layer[data-inst="' + fkey + '"]');
+      const holder = card && card.querySelector('.ambient-pitchhold');
+      if (!holder) return;
+      let host = document.getElementById('ambient-pitchpop');
+      if (!host) {
+        host = document.createElement('div');
+        host.id = 'ambient-pitchpop';
+        host.className = 'sm-overlay';
+        document.body.appendChild(host);
+      }
+      host.innerHTML = '<div class="sm-modal step-div-modal" style="max-width:min(460px,94vw)">' +
+        '<div class="ambient-pitchpop-title" style="font-weight:600;margin-bottom:8px">Placement</div>' +
+        '<div class="ambient-pitchpop-body"></div>' +
+        '<div style="display:flex;gap:8px;margin-top:12px">' +
+          '<button type="button" class="btn btn-small" data-pp="done" style="flex:1 1 auto;min-height:40px">Done</button>' +
+        '</div></div>';
+      const body = host.querySelector('.ambient-pitchpop-body');
+      const home = { p: holder.parentElement, n: holder.nextSibling };
+      holder.hidden = false;
+      body.appendChild(holder);
+      // Body-attached overlay: the view-mode rules force-hide anything not
+      // exempt, so display must be set INLINE with !important.
+      host.style.setProperty('display', 'flex', 'important');
+      let pendingSync = false;
+      const close = () => {
+        try { holder.hidden = true; home.p.insertBefore(holder, home.n); } catch (e) {}
+        try { host.style.setProperty('display', 'none', 'important'); } catch (e) {}
+        // AFTER re-parking, never before: the sync rebuilds the cards, so running
+        // it while the holder is still lifted out would put the rows back into a
+        // parent that no longer exists. The collapse then re-gathers the fresh
+        // rows from the rebuilt card, so the explicit call below is only for the
+        // case where no sync ran.
+        if (pendingSync) { pendingSync = false; try { _ambSyncControls(E); } catch (e) {} }
+        try {
+          const card2 = document.querySelector('.ambient-layer[data-inst="' + fkey + '"]') || card;
+          const inst2 = _ambLayerByKey(E, fkey);
+          if (inst2 && card2) _ambPitchCollapse(E, card2, inst2, String(fkey).split(':')[0], fkey);
+        } catch (e) {}
+      };
+      host.onclick = (ev) => {
+        // The rows in here are the CARD'S rows, moved — so they are outside the
+        // panel host and outside `.ambient-layer`, and the card's delegated
+        // segmented-row handler cannot see them. Home is the only member of this
+        // group wired that way (the rest are bound by id and survive the move
+        // untouched), which is why it needs its own commit here.
+        const opt = ev.target && ev.target.closest && ev.target.closest('.ambient-seg-field .ambient-seg-opt');
+        if (opt && host.contains(opt)) {
+          const row = opt.closest('.ambient-seg-field');
+          if (_ambSegCommit(E, fkey, row, opt, true)) pendingSync = true;
+          try {
+            const inst3 = _ambLayerByKey(E, fkey);
+            const btn = card && card.querySelector('.ambient-pitchbtn');
+            if (inst3 && btn) btn.textContent = _ambPitchSummary(inst3, String(fkey).split(':')[0], holder, '');
+          } catch (e) {}
+          return;
+        }
+        if (ev.target === host) { close(); return; }
+        const b = ev.target && ev.target.closest && ev.target.closest('[data-pp="done"]');
+        if (b) close();
+      };
+    }
+    try {
+      if (typeof document !== 'undefined' && !window.__ambPitchWired) {
+        window.__ambPitchWired = true;
+        document.addEventListener('click', (ev) => {
+          const b = ev.target && ev.target.closest && ev.target.closest('.ambient-pitchbtn');
+          if (!b) return;
+          ev.preventDefault(); ev.stopPropagation();
+          const k = b.dataset.pkey; if (!k) return;
+          setTimeout(() => { try { _ambPitchOpen(_masterEng, k); } catch (e) {} }, 0);
+        }, true);
+      }
+    } catch (e) {}
+
+    // RE-PARK THE MIRRORED LANE. `renderSequence` builds a FRESH `.lane-row`, so
+    // the class that parks it off-screen is gone the moment anything redraws the
+    // lane — pressing PERF brought the whole real phrase back on screen under the
+    // mirror as a second block of rows. `_ambGridBarStrip` re-applies it when it
+    // repaints, but nothing guarantees it repaints first.
+    //
+    // Only the row the MIRROR owns is parked — the one whose chips the chord strip
+    // has cloned. Parking every lane row in the dock by CSS location also parked
+    // `.ambient-seedgrid-striphost`, which is where the lane's own strip is meant
+    // to render, and that killed the Perform view.
+    function _ambGridRepark() {
+      const ge = _bloomGridEdit; if (!ge || !ge.lane) return;
+      let mirrored = false;
+      try { mirrored = !!document.querySelector('.sglane-row .sgstep, .ambient-seedgrid-chords .sglane-row'); } catch (e) {}
+      if (!mirrored) return;                       // no mirror on screen — nothing to hide behind
+      // FOUND THE SAME WAY THE STRIP FINDS IT — inside the compose SLOT, and the
+      // real one, not a mirror row. Mirror rows carry `.lane-chips` too (that is
+      // how they inherit the chip styling) and come FIRST in the DOM, so a bare
+      // query returns the mirror. `.lane-row` scoped to the slot is the row the
+      // strip itself parks; there is no `data-lane` attribute to key on.
+      try {
+        const slot = document.querySelector('.ambient-seedgrid-slot[data-sgkey="' + ge.key + '"]');
+        const row = slot && slot.querySelector('.lane-row');
+        if (row && !row.classList.contains('sg-mirrored')) {
+          try {
+            const w = (row.parentElement || slot).getBoundingClientRect().width;
+            if (w > 1) row.style.width = Math.round(w) + 'px';
+          } catch (e2) {}
+          row.classList.add('sg-mirrored');
+        }
+      } catch (e) {}
+    }
+    // THE HEADER SAYS WHERE THE NOTES COME FROM. Three states, one silent:
+    //
+    //   ✎ Composing  — the Grid session is open on THIS layer. What is drawn is
+    //                  what plays, and `_ambPartSeqSync` returns early for it, so
+    //                  a Plays mapping is genuinely not in force. This wins over
+    //                  the mapped badge for that reason, not merely by order.
+    //   ▦ Scheduled  — a Plays mapping (or a phrase loop) drives it; the tooltip
+    //                  names the phrase actually installed when there is one.
+    //   (nothing)    — generating. A badge on every layer would say nothing.
+    //
+    // Runs from _ambRefreshSeedModes, which fires on every sync whether or not
+    // the transport is going — composing happens STOPPED, and anything driven
+    // only from the viz rAF is structurally invisible exactly then.
+    function _ambSrcBadgeSync(E) {
+      let els; try { els = document.querySelectorAll('.ambient-srcbadge[data-srckey]'); } catch (e) { return; }
+      els.forEach(el => {
+        const key = el.getAttribute('data-srckey'); if (!key) return;
+        let mode = '', txt = '', tip = '';
+        try {
+          const L = _ambLayerByKey(E, key);
+          if (_ambGridComposing(key)) {
+            mode = 'compose'; txt = '\u270e<span class="ambient-srcbadge-w"> Composing</span>';
+            tip = 'The Grid is open on this layer \u2014 it plays exactly what is drawn in the lane. '
+                + 'Its Plays schedule is not applied while you are composing.';
+          } else if (L && _ambPhraseDriven(L)) {
+            mode = 'sched'; txt = '\u25a6<span class="ambient-srcbadge-w"> Scheduled</span>';
+            let nm = ''; try { const fs = E.freeze && E.freeze[key]; nm = (fs && fs._partSeqName) || ''; } catch (e2) {}
+            tip = 'This layer plays banked phrases from its Plays schedule'
+                + (nm ? (' \u2014 currently \u201c' + nm + '\u201d') : '') + '.';
+          }
+        } catch (e) { mode = ''; }
+        if (el._srcMode === mode) return;      // touch the DOM only on a change
+        el._srcMode = mode;
+        el.hidden = !mode;
+        el.innerHTML = txt;
+        el.title = tip;
+        el.classList.toggle('is-compose', mode === 'compose');
+        el.classList.toggle('is-sched', mode === 'sched');
+      });
+    }
     function _ambRefreshSeedModes(E) {
+      try { _ambSrcBadgeSync(E); } catch (e) {}
+      try { _ambPartSeqMatrixSync(E); } catch (e) {}
+      try { _ambGridRepark(); } catch (e) {}
+      // Collapse the placement rows on every sync — cards are rebuilt often, and a
+      // rebuild recreates the four rows loose. Idempotent: it reuses the row and
+      // holder it already made, and writes the summary only when it differs.
+      try {
+        document.querySelectorAll('.ambient-layer[data-inst]').forEach(card => {
+          const fk = card.dataset.inst; if (!fk) return;
+          const L = _ambLayerByKey(E, fk); if (!L) return;
+          _ambPitchCollapse(E, card, L, String(fk).split(':')[0], fk);
+        });
+      } catch (e) {}
       const host = E && document.getElementById(E.hostId); if (!host) return;
       // THE DOCK'S SURFACES MUST PAINT WHILE STOPPED. They used to be driven only
       // from _ambVizFrame, whose rAF re-arms on `E.timer && !document.hidden` —
@@ -32645,6 +36021,7 @@
       try { _ambGridComposeFor(E); } catch (e) {}
       try { _ambGridGranBar(E); } catch (e) {}
       try { _ambGridBarStrip(E); } catch (e) {}
+      try { _ambGridLoadedBar(E); } catch (e) {}
       try { _ambGridRulerPlayhead(E); } catch (e) {}
       try { _ambGridPartRibbon(E); } catch (e) {}
       host.querySelectorAll('.ambient-seedmode, .ambient-patsrc').forEach(row => {   // .ambient-patsrc is the pattern layers' Pattern|Grid pair
@@ -32718,6 +36095,57 @@
               // Grid-edit bar: reflect whether THIS layer is being grid-edited.
               const editing = !!(_bloomGridEdit && _bloomGridEdit.key === key && _bloomGridEdit.E === E);
               const lb = slot.querySelector('.ambient-seedgrid-live'); if (lb) lb.hidden = !editing;
+              // KEEP + PERFORM IS A SESSION CONTROL AND LIVES IN THE COMPOSE ROW,
+              // outside the slot — so hiding the slot never hid it, and it sat
+              // under Compose with no grid open. It follows the session like the
+              // rest of the session chrome.
+              try {
+                const sv = card.querySelector('.amb-seedsave[data-savekey="' + key + '"]');
+                if (sv) sv.hidden = !editing;
+              } catch (e2) {}
+              // THE SLOT'S SESSION-ONLY CHILDREN MUST NOT RESERVE SPACE. The slot
+              // legitimately stays open to host the readout and the piano, but the
+              // editor hosts (dock, ribbons, chord ruler, strip) are empty boxes
+              // with margins when nothing is being composed — that band of nothing
+              // between Compose and Harmony is exactly what they add up to.
+              try {
+                // HIDING WITHOUT AN UN-HIDE IS A ONE-WAY DOOR. The first version
+                // hid all five when idle and only ever brought the BAR back, so
+                // once a layer had been synced idle the dock host stayed hidden
+                // for good and starting a session showed the strip with NO GRID.
+                // Every host hidden here has to be un-hidden here.
+                //
+                // `prib` and `chords` own their own hidden state while composing
+                // (their renderers hide them when there is nothing to draw), so
+                // they are only ever forced OFF — never forced back on.
+                const _own = { '.ambient-seedgrid-prib': 1, '.ambient-seedgrid-chords': 1 };
+                ['.ambient-seedgrid-dockhost', '.ambient-seedgrid-prib',
+                 '.ambient-seedgrid-chords', '.ambient-seedgrid-striphost',
+                 '.ambient-seedgrid-bar'].forEach(sel => {
+                  const el3 = slot.querySelector(sel);
+                  if (!el3) return;
+                  if (!editing) { el3.hidden = true; return; }
+                  if (!_own[sel]) el3.hidden = false;
+                });
+              } catch (e2) {}
+              // NO TONE CONTROL IN THE DOCK. The lane plays the LAYER's Instrument,
+              // so the editor's own sound banner would be a second, contradicting
+              // answer to the same question — and the one the user never set.
+              if (editing) {
+                try {
+                  ['tone-banner-half', 'scale-banner-half'].forEach(id => {
+                    const tb = document.getElementById(id);
+                    if (tb) tb.style.setProperty('display', 'none', 'important');
+                  });
+                } catch (e2) {}
+              } else {
+                try {
+                  ['tone-banner-half', 'scale-banner-half'].forEach(id => {
+                    const tb = document.getElementById(id);
+                    if (tb) tb.style.removeProperty('display');
+                  });
+                } catch (e2) {}
+              }
               // Self-heal: a card rebuild recreates the dockhost — re-dock the
               // expander on the refresh cadence if it drifted home.
               if (editing) { try { const dh = slot.querySelector('.ambient-seedgrid-dockhost'); const exp2 = document.getElementById('lane-expander'); if (dh && exp2 && exp2.parentElement !== dh) _placeLaneExpander(); } catch (e) {} }
@@ -33874,6 +37302,73 @@
     // rendered by a custom token rather than by _ambSl. Marking resolves through
     // this first. MARK_ONLY entries are part of a stochastic control but are not
     // the row that carries its description (Spatialize's Width and Positions).
+    // ---- BYPASS EVERY STOCHASTIC CONTROL ON A LAYER, WITH ONE SWITCH ----------
+    // `L.noVary` parks every one of them at zero and remembers what they were, so
+    // it is a BYPASS and not an erase — flip it back and the layer sounds exactly
+    // as it did. Absent by default, so an untouched layer is byte-identical and
+    // the harness/golden are unaffected by construction.
+    //
+    // Driven off `_AMB_STOCH`, which is the canonical registry the docs and the
+    // card readouts are generated from — 30 controls across 11 types, 7 of which
+    // live OUTSIDE the Variance group (space · spat · Proximity · Poly · Fidelity
+    // · Variety · Fill). Hand-listing them is exactly how the first sweep of that
+    // registry missed those 7 for months; deriving from it cannot.
+    //
+    // The backup rides on the layer as `_varyBak` and IS persisted — underscore
+    // fields survive persistWorkspace, which is usually the trap and here is the
+    // requirement: a project saved while bypassed must restore its real values.
+    function _ambStochKeys() {
+      try { return Object.keys(_AMB_STOCH || {}); } catch (e) { return []; }
+    }
+    function _ambVaryBypassOn(L) { return !!(L && L.noVary); }
+    function _ambVaryBypassSet(L, on) {
+      if (!L || typeof L !== 'object') return false;
+      const keys = _ambStochKeys();
+      if (on) {
+        if (L.noVary) return false;
+        const bak = {};
+        keys.forEach(k => {
+          const v = L[k];
+          // Only NUMERIC controls are parked. `spat` and friends carry object or
+          // string state whose neutral value is absence, not 0 — zeroing those
+          // would change what the control MEANS rather than switching it off.
+          if (typeof v === 'number' && v !== 0) { bak[k] = v; L[k] = 0; }
+        });
+        L._varyBak = bak;
+        L.noVary = 1;
+      } else {
+        if (!L.noVary) return false;
+        const bak = (L._varyBak && typeof L._varyBak === 'object') ? L._varyBak : {};
+        Object.keys(bak).forEach(k => { if (typeof bak[k] === 'number') L[k] = bak[k]; });
+        delete L._varyBak;
+        delete L.noVary;
+      }
+      return true;
+    }
+    // Coerced beside the other additive per-layer fields. An all-empty backup is
+    // dropped so "bypassed, nothing to restore" keeps one representation.
+    function _ambNormalizeNoVary(L) {
+      if (!L || typeof L !== 'object') return;
+      if (L.noVary != null && !L.noVary) { delete L.noVary; }
+      if (L.noVary) L.noVary = 1;
+      if (L._varyBak != null) {
+        if (typeof L._varyBak !== 'object' || !L.noVary) { delete L._varyBak; }
+        else {
+          const o = {};
+          Object.keys(L._varyBak).forEach(k => {
+            const v = L._varyBak[k];
+            if (typeof v === 'number' && Number.isFinite(v) && v !== 0) o[k] = v;
+          });
+          if (Object.keys(o).length) L._varyBak = o; else delete L._varyBak;
+        }
+      }
+    }
+    try {
+      if (typeof window !== 'undefined') {
+        window._ambVaryBypassSet = _ambVaryBypassSet;
+        window._ambVaryBypassOn = _ambVaryBypassOn;
+      }
+    } catch (e) {}
     const _AMB_STOCH_ALIAS = { stereo: 'space', spatmode: 'spat' };
     const _AMB_STOCH_MARK_ONLY = { spatwidth: 'spat', spatsteps: 'spat' };
     const _AMB_STOCH_GRAIN = {
@@ -34035,6 +37530,37 @@
     // Floor|Center|Ceiling) — all options visible, one tap, no dropdown hunt.
     // `field` is the config KEY it writes; one delegated handler + _ambSyncSegs
     // wire every row by data-field (no per-layer wiring). `opts` = [[val,label]…].
+    // COMMITTING A SEGMENTED ROW, shared by the card's delegated handler and the
+    // Placement popover. The rows in that popover are the card's OWN rows, MOVED —
+    // so once they are inside the body-attached overlay they are no longer inside
+    // the panel host or a `.ambient-layer`, and the card's handler (which requires
+    // both) stops seeing them. Everything else in that group is bound by id and so
+    // survives the move; Home was the only member wired by delegation, which is why
+    // relocating it needs this and the id-bound rows needed nothing.
+    // `deferSync` is for the popover: `_ambSyncControls` REBUILDS the cards, and
+    // rebuilding the card the holder was lifted out of orphans it — the rows would
+    // be put back into a detached parent and disappear. The caller runs the sync
+    // after re-parking instead.
+    function _ambSegCommit(E, key, row, btn, deferSync) {
+      const field = row && row.getAttribute('data-field'); if (!field || !key) return false;
+      _E = E; const lc = _ambLayerByKey(E, key); if (!lc) return false;
+      lc[field] = btn.getAttribute('data-val');
+      row.querySelectorAll('.ambient-seg-opt').forEach(b => b.classList.toggle('active', b === btn));
+      if (field === 'home' && !deferSync) { try { _ambSyncControls(E); } catch (e) {} }   // Home shifts the seed preview
+      // Drone Prog mode (Pedal ↔ Voicings): a MODE flip mid-play must drop the
+      // scheduled-ahead notes of the OLD mode (a pedal hold can span many bars)
+      // and refresh the explanation line under the Note picker.
+      if (field === 'progMode') {
+        if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} }
+        try {
+          const lay = btn.closest('.ambient-layer');
+          const inf = lay && lay.querySelector('.ambient-pedal-info');
+          if (inf && inf._pedalRefresh) inf._pedalRefresh();
+        } catch (e) {}
+      }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      return true;
+    }
     const _ambSeg = (label, field, opts, hint, cur, title) => {
       const t = title ? ' title="' + String(title).replace(/"/g, '&quot;') + '"' : '';
       return '<div class="ambient-ctrl ambient-ctrl-seg"' + t + '><label>' + label + '</label>' +
@@ -35032,7 +38558,49 @@
         if (off) add = add.map(c => (c && !c.transition) ? _ambChordShift(c, off) : c);
       }
       if (!Array.isArray(prog.parts) || !prog.parts.length) {   // seed a part over the existing chords first
-        prog.parts = prog.chords.length ? [{ name: String(prog.name || 'Changes 1').slice(0, 16), len: prog.chords.length }] : [];
+        // NAME IT AFTER THE CHORDS IT ACTUALLY COVERS. `prog.name` is set when a
+        // progression is picked or exported and is NEVER re-derived when the
+        // chords change, so it goes stale on the first edit — and seeding the
+        // part from it produced "Imaj7 — vi7 — ii" over a single Cmaj7, which
+        // reads as three chords having been destroyed by adding a part. Nothing
+        // was destroyed; the name was describing a progression that no longer
+        // existed.
+        //
+        // A name that is a LIST (auto-generated, "A — B — C") is checked against
+        // the chord count and re-derived when it disagrees. A name with no list
+        // shape is someone's own title for these changes and is left alone.
+        const _seedName = (() => {
+          const nm = String(prog.name || '').trim();
+          const looksListy = nm.indexOf(' — ') >= 0;
+          if (nm && !looksListy) return nm;
+          if (nm && looksListy && nm.split(' — ').length === prog.chords.length) return nm;
+          const parts = prog.chords.map(c => {
+            try { return _ambIsTransition(c) ? '⇝' : (_ambChordShort(c) || '?'); } catch (e) { return '?'; }
+          });
+          return parts.join(' — ') || 'Changes 1';
+        })();
+        prog.parts = prog.chords.length ? [{ name: _seedName.slice(0, 16), len: prog.chords.length }] : [];
+      } else {
+        // THE EXISTING PARTS MUST COVER EVERY EXISTING CHORD BEFORE WE APPEND.
+        // Parts are contiguous RANGES measured in `len`, so if they cover fewer
+        // chords than exist, the chords past the end silently become part of
+        // whatever is pushed next — the earlier part appears to shrink to its
+        // stated `len` and its remaining chords are swallowed by the new one.
+        // Reported as "I added a new part and the first part was basically
+        // nuked, reduced to a single chord".
+        //
+        // Repair by giving the shortfall to the LAST part that holds changes,
+        // which is where those chords actually are; `_ambRepairParts` uses the
+        // same rule when it clamps. An OVER-count is left alone — normalize
+        // clamps that on the next read and guessing here could destroy a range.
+        let covered = 0, lastCh = -1;
+        prog.parts.forEach((pt, i) => {
+          if (!pt || pt.open) return;
+          covered += Math.max(1, pt.len | 0); lastCh = i;
+        });
+        const short = prog.chords.length - covered;
+        if (short > 0 && lastCh >= 0) prog.parts[lastCh].len = Math.max(1, prog.parts[lastCh].len | 0) + short;
+        else if (short > 0) prog.parts.push({ name: String(prog.name || 'Changes').slice(0, 16), len: short });
       }
       prog.chords.push(...add);
       const part = { name: String(name || 'Changes').slice(0, 16), len: add.length };
@@ -35113,6 +38681,25 @@
     // Delegated POINTERDOWN (the strip repaints on the viz timer → click would drop; the
     // live-readout gotcha). NO horizontal scroll: the container wraps, part headers are
     // full-width flex breaks.
+    // ⌂ <root> — WHAT A RUN OF CHANGES IS ROOTED ON, beside the key it plays in.
+    // A distinct fact from the key: under transpose the first chord lands on the
+    // key root and the two agree, but with Key off — or a progression that does
+    // not start on its tonic — they differ, which is exactly when both are worth
+    // showing. Empty for a run with no chords (an open part) or with no rooted
+    // chord in it (a leading transition). `shift` is the view shift, so this
+    // names the SOUNDING root like every other chord readout in this app.
+    function _ambPovRootHtml(chords, from, to, shift) {
+      try {
+        const c0 = (chords || []).slice(from, to)
+          .find(c => c && !_ambIsTransition(c) && Number.isFinite(c.root));
+        if (!c0) return '';
+        const pc = (((_ambChordShift(c0, shift).root % 12) + 12) % 12);
+        const nm = _pcName(pc) || '';
+        if (!nm) return '';
+        return '<em class="ambient-pov-partroot" title="These changes are rooted on ' + nm +
+          ' (the sounding root of their first chord).">\u2302 ' + nm + '</em>';
+      } catch (e) { return ''; }
+    }
     function _ambRenderProgOverview(E) {
       const el = _ambGet(E, 'ambient-prog-overview'); if (!el) return;
       const cfg = E.getCfg();
@@ -35148,7 +38735,9 @@
         // The chips are drawn in the SOUNDING key, so the shift is part of what
         // is on screen — without it a key change repaints nothing.
         '|s' + _ambProgViewShift(E, cfg, chords) + '|' + _ambKeyRootPc(cfg) + _ambKeyScaleName(cfg) +
-        '|n' + (_ambPovNamesOn(el) ? 1 : 0);   // the label mode is part of what is on screen
+        '|k' + (cfg.keyOn ? 1 : 0) +            // the header states Key vs Chromatic, and _ambKeyRootPc answers either way
+        '|n' + (_ambPovNamesOn(el) ? 1 : 0) +   // the label mode is part of what is on screen
+        '|t' + _ambProgTitle(prog.name);       // the sole set's header names it, so a rename must repaint
       if (el._sig === sig) return;
       el._sig = sig; el._curCi = -2;
       const esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
@@ -35277,10 +38866,42 @@
               // A part's own key is a modulation, so it is named right on the part
               // header rather than buried — you can see where the music changes key.
               '<span role="button" tabindex="0" class="ambient-pov-partkey' + (r.key ? ' on' : '') + '" data-pov="partkey:' + r.pi + '" title="' + (r.key ? ('These changes play in ' + esc(_ambKeyLabel(r.key.root, r.key.scale)) + ' — the area key is unchanged. Click to change or clear it.') : ('No key change — these changes follow the area key (' + esc(_ambKeyLabel(kRoot, kScale)) + '). Click to give them their own key.')) + '">' + _ambPovKeyHtml(r.key, kRoot, kScale) + '</span>' +
+              _ambPovRootHtml(chords, r.from, r.to, vShift) +
               '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':-1" title="Move these changes earlier">◀</span>' +
               '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':1" title="Move these changes later">▶</span>' +
               '<span role="button" tabindex="0" class="ambient-pov-partbtn ambient-pov-partrm" data-pov="partrm:' + r.pi + '" title="Remove these changes (and their chords)">✕</span>' +
             '</span></div>';
+        }
+        if (r.pi < 0) {
+          // NO CHAIN — one set of changes, which still HAS a name, and until now
+          // nothing on this strip said what it was or let you change it (the
+          // name and its ✎ live on a part header, and `_ambRepairParts`
+          // collapses a lone part covering the whole cycle, so the common
+          // project has no part to hang one on). Same header, same handle; the
+          // per-part ops (key, move, remove) are deliberately absent — there is
+          // no part to move, and the key here IS the area key.
+          // THE KEY THESE CHANGES PLAY IN, and what they are rooted on. A part
+          // header has carried its key since per-part keys landed; the part-LESS
+          // header carried nothing, so the one project shape most people have
+          // said nothing about key at all. Two different facts, both wanted:
+          //   ♪ <key>   the key/mode in force (the AREA key here — there is no
+          //             part to hold one of its own)
+          //   ⌂ <root>  what the changes are ROOTED on: the sounding root of the
+          //             first chord. Under transpose that lands on the key root
+          //             and the two agree; with Key off, or a progression that
+          //             does not start on its tonic, they differ — which is
+          //             exactly when you want to see both.
+          const _kl = esc(_ambKeyLabel(kRoot, kScale));
+          const _rootH = _ambPovRootHtml(chords, r.from, r.to, vShift);
+          h += '<div class="ambient-pov-parthdr ambient-pov-solohdr">' +
+            '<span class="ambient-pov-partname" role="button" tabindex="0" data-pov="progren" title="Rename these changes">' +
+              esc(_ambProgTitle(prog.name)) + ' <em>' + (r.to - r.from) + '</em></span>' +
+            '<span class="ambient-pov-partkey" title="' + (cfg.keyOn
+                ? ('These changes play in ' + _kl + ' (the area key).')
+                : ('No key is set \u2014 the area is chromatic.')) + '">' +
+              '<i>♪</i> ' + (cfg.keyOn ? _kl : 'Chromatic') +
+            '</span>' + _rootH +
+            '</div>';
         }
         h += '<div class="ambient-pov-chords">';
         for (let i = r.from; i < r.to; i++) {
@@ -35494,6 +39115,8 @@
         if (_ambProgEd) { _ambProgEd.sel = Math.max(0, Math.min(_ambProgEd.chords.length - 1, i)); _ambPeRender(); }
         return;
       }
+      if (op === 'progren') { const nm = (typeof prompt === 'function') ? prompt('Name for these changes', _ambProgTitle(prog.name)) : null;
+        if (nm != null) { const v = String(nm).trim().slice(0, 32); if (v) prog.name = v; persist(); refresh(); } return; }
       if (op === 'partren') { const pi = a[1] | 0; const parts = prog.parts; if (!parts || !parts[pi]) return; const nm = (typeof prompt === 'function') ? prompt('Name for these changes', parts[pi].name) : null; if (nm != null) { const v = String(nm).trim().slice(0, 16); if (v) parts[pi].name = v; persist(); refresh(); } return; }
       if (op === 'partmv') { _ambProgMovePart(prog, a[1] | 0, a[2] | 0); persist(); refresh(); return; }
       if (op === 'partrm') { _ambProgRemovePart(prog, a[1] | 0); persist(); refresh(); return; }
@@ -36118,7 +39741,7 @@
       try { _ambRenderScheduler(E); } catch (e) {}
     }
     function _ambProgGrpSync(E) {
-      ['salt', 'order', 'overview', 'sched', 'matrix', 'passes', 'sections'].forEach(k => {
+      ['salt', 'order', 'overview', 'sched', 'passes', 'sections'].forEach(k => {
         const g = _ambGet(E, 'ambient-proggrp-' + k); if (!g) return;
         const body = g.querySelector('.ambient-grp-body'); if (!body) return;
         // A popover group shows only while it is inside the popover host; parked
@@ -36153,7 +39776,23 @@
       // decides how many visits an iteration contains.
       if (pi !== -1 && (pi < 0 || pi >= ranges.length)) pi = 0;
       el._pmsPart = pi;
-      if (pi === -1) { _ambRenderArrMatrix(E, el, cfg, ranges, parts); return; }
+      // ONE GRID, TWO SCOPES. ▦ Passes and the per-layer Plays row were the same
+      // picture — chords down, passes across, the same part tabs — drawn twice in
+      // two places. The scope selector makes them one surface: "All layers" is the
+      // chord schedule (the shared harmonic clock, which cannot be per-layer), and
+      // picking a layer shows what THAT layer plays in each cell. Transient view
+      // state, like `_pmsPart` — nothing about the music changes.
+      const _mrows = (() => { try { return _ambChordMatrixRows(cfg) || []; } catch (e) { return []; } })();
+      let _lk = (typeof el._pmsLayer === 'string') ? el._pmsLayer : '';
+      if (_lk && !_mrows.some(x => x.key === _lk)) _lk = '';     // layer deleted while scoped
+      el._pmsLayer = _lk;
+      const _lrow = _lk ? _mrows.find(x => x.key === _lk) : null;
+      // PHRASE or PLAYS — a SECONDARY MODE over the same grid, not a second grid.
+      // Both ask a question about (layer, chord, pass); only the question differs,
+      // so the axes, the part tabs and the cell wiring are shared. Transient view
+      // state like `_pmsPart`/`_pmsLayer` — nothing about the music changes.
+      const _pmode = (el._pmsMode === 'plays' && _lrow) ? 'plays' : 'phrase';
+      if (pi === -1) { _ambRenderArrMatrix(E, el, cfg, ranges, parts, _lrow ? { key: _lk, L: _lrow.L, label: _lrow.label } : null); return; }
       const r = ranges[pi];
       const shift = _ambProgViewShift(E, cfg, prog.chords);
       const names = [];
@@ -36167,7 +39806,13 @@
       for (let c = 0; c < cols; c++) seqs.push(_ambPartGridSeq(cfg, r.pi, c, r.len));
       const sig = pi + '|' + cols + '|' + r.from + '.' + r.len + '|' + names.join(',') + '|'
         + seqs.map(q => q.join('.')).join('/') + '|' + ranges.map(x => x.pi).join('.')
-        + '|' + (parts ? parts.map(p2 => p2.name).join('.') : '');
+        + '|' + (parts ? parts.map(p2 => p2.name).join('.') : '')
+        + '|L' + _lk + '|' + _mrows.map(x => x.key).join('.')
+        + '|m' + (_lrow ? JSON.stringify(_lrow.L.partSeqs || 0) : '')
+        + '|' + _pmode + (_lrow ? '|k' + JSON.stringify(_lrow.L.chordMask || 0) : '')
+        // The hold button lives in this markup, so its state has to be in the
+        // signature or engaging the lock repaints nothing.
+        + '|h' + (E._passLock ? (E._passLock.pi + ':' + E._passLock.pass) : '') + (E.timer ? 'T' : '');
       if (el._sig === sig) return;
       el._sig = sig;
       let h = '';
@@ -36176,20 +39821,93 @@
           '<button type="button" class="ambient-seg pmx-tab pmx-tab-meta" data-pmx="tab:-1" ' +
           'title="Which parts play in each iteration, and in what order">\u21f6 Parts</button>' +
           ranges.map((x, k) => {
-          const nm = (parts && parts[x.pi] && parts[x.pi].name) || ('Part ' + (k + 1));
+          const nm = _ambPartLabel(cfg, x.pi);
           return '<button type="button" class="ambient-seg pmx-tab' + (k === pi ? ' active' : '') +
             '" data-pmx="tab:' + k + '">' + esc(nm) + '</button>';
         }).join('') + '</div>';
       }
+      // SHOWING — all layers (the schedule) or one layer (what it plays).
+      if (_mrows.length) {
+        h += '<div class="pmx-tabs pmx-scope"><span class="pmx-scopelbl">Showing</span>' +
+          '<button type="button" class="ambient-seg pmx-tab' + (_lk ? '' : ' active') +
+          '" data-pmx="scope:" title="The chord schedule — which chords play in each pass, and in what order">All layers</button>' +
+          _mrows.map(x => '<button type="button" class="ambient-seg pmx-tab' + (x.key === _lk ? ' active' : '') +
+            '" data-pmx="scope:' + esc(x.key) + '" title="' + esc('What ' + x.label + ' plays on each chord of each pass') +
+            '">' + esc(x.label) + '</button>').join('') + '</div>';
+      }
       const fitOn = !!(g && g.fit);
-      h += '<div class="pmx-bar"><span class="ambient-hint">How many passes this part runs before it repeats.</span>' +
+      // SAY THE ORDER THIS PRODUCES, built from the same numbers the clock walks.
+      const _ordTxt = (() => {
+        try {
+          const vis = ranges.map(x => ({ nm: _ambPartLabel(cfg, x.pi),
+            cols: Math.max(1, _ambPartPassCols(cfg, x.pi)),
+            plays: Math.max(1, (parts && parts[x.pi] && parts[x.pi].plays | 0) || 1) }));
+          if (!vis.length) return '';
+          const seq = [];
+          vis.forEach(v => { for (let q = 0; q < v.plays && seq.length < 8; q++)
+            for (let c = 0; c < v.cols && seq.length < 8; c++)
+              seq.push((vis.length > 1 ? v.nm + '\u00b7' : 'Pass ') + (c + 1)); });
+          if (vis.length === 1) {
+            return vis[0].cols > 1
+              ? ('Runs ' + seq.join(' \u2192 ') + ', then back to the first.')
+              : 'One pass, then it repeats.';
+          }
+          return 'Each part runs its passes in order, then the next part starts: ' +
+            seq.join(' \u2192 ') + ' \u2026';
+        } catch (e) { return ''; }
+      })();
+      h += '<div class="pmx-bar"><span class="ambient-hint" title="' + esc(
+          'A pass is one time through this part. A part runs all of its passes before the next part starts \u2014 '
+        + 'raise Repeats on the part tab (\u21f6 Arch) to run the whole part again.') +
+        '">' + esc(_ordTxt) + '</span>' +
         '<button type="button" class="ambient-seg pmx-fit' + (fitOn ? ' active' : '') + '" data-pmx="fit" title="' +
         (fitOn ? 'On — the written cadence is a rhythm the chords fill, so dropping one shifts the rest into the gap.'
                : 'Off — each chord keeps its own length, so dropping one makes the pass shorter.') +
         '">\u21e5 Fill cadence</button>' +
+        _ambPassHoldBtnHtml(E) +
         '<span class="pmx-cols"><button type="button" class="ambient-seg" data-pmx="cols:-1">−</button>' +
         '<b class="pmx-colsn">' + cols + '</b>' +
         '<button type="button" class="ambient-seg" data-pmx="cols:1">＋</button></span></div>';
+      // LAYER SCOPE — the Plays grid, built by the function the layer card already
+      // uses, so the two surfaces cannot drift apart. Its cells carry their own
+      // delegated wiring (`data-pmpi`/`data-pmkey`), which works wherever they are
+      // rendered, so nothing about the picker had to move with them.
+      if (_lrow) {
+        // THE WINDOW IS PER LAYER, not per chord — one {size, place} governing how
+        // much of any chord this layer plays once it is in. A single control.
+        h += '<div class="pmx-bar pmx-mode"><span class="pmx-scopelbl">Cells show</span>' +
+          '<button type="button" class="ambient-seg pmx-tab' + (_pmode === 'phrase' ? ' active' : '') +
+          '" data-pmx="pmode:phrase" title="' + esc('Which phrase ' + _lrow.label + ' plays on each chord of each pass') +
+          '">Which phrase</button>' +
+          '<button type="button" class="ambient-seg pmx-tab' + (_pmode === 'plays' ? ' active' : '') +
+          '" data-pmx="pmode:plays" title="' + esc('How often ' + _lrow.label +
+            ' plays each chord ON EACH PASS \u2014 blank follows the chord\u2019s own Plays setting') +
+          '">How often</button></div>';
+        const _wp = (_lrow.L.chordMask && _lrow.L.chordMask.part) || null;
+        const _wsz = _wp ? (_wp.size | 0) : 100, _wpl = _wp ? (_wp.place || 'start') : 'start';
+        h += '<div class="pmx-bar psq-winbar"><span class="pmx-scopelbl">Window</span>' +
+          '<select class="ambient-select ambient-pm-size psq-winsel" data-pmwin="size" data-pmk="' + esc(_lrow.key) +
+          '" title="How much of each chord this layer plays once it is in \u2014 a DURATION, not a chance.">' +
+          [[100, 'Full'], [75, '\u00be'], [50, '\u00bd'], [25, '\u00bc']].map(o =>
+            '<option value="' + o[0] + '"' + (_wsz === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
+          '</select>' +
+          '<select class="ambient-select ambient-pm-place psq-winsel" data-pmwin="place" data-pmk="' + esc(_lrow.key) + '"' +
+          (_wsz >= 100 ? ' disabled' : '') + ' title="Where in the chord the window sits \u2014 Random re-rolls per chord">' +
+          [['start', 'Start'], ['center', 'Mid'], ['end', 'End'], ['random', 'Rnd']].map(o =>
+            '<option value="' + o[0] + '"' + (_wpl === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
+          '</select></div>';
+        h += _ambPartSeqMatrixHtml(E, cfg, _lrow.L, _lrow.key, { pi: r.pi, name: _ambPartLabel(cfg, r.pi), open: false },
+          { perChord: _pmode === 'phrase', playsMode: _pmode === 'plays' });
+        h += (_pmode === 'plays')
+          ? ('<div class="ambient-hint pmx-foot">How often <b>' + esc(_lrow.label) +
+             '</b> plays each chord <b>on that pass</b>. A cell with no setting of its own follows the chord\u2019s ' +
+             'Plays column (the dashed ones) \u2014 tap to give just that pass its own, and hold to clear it back.</div>')
+          : ('<div class="ambient-hint pmx-foot">Cells are the phrase <b>' + esc(_lrow.label) +
+             '</b> plays. <b>\u21b3</b> means it is inherited from the pass or the part \u2014 ' +
+             'tap a cell to give just that chord its own.</div>');
+        el.innerHTML = h;
+        return;
+      }
       // The grid. One column per pass, one row per chord of this part.
       h += '<div class="pmx-grid" style="--pmxc:' + cols + '">';
       h += '<div class="pmx-row pmx-head"><span class="pmx-rowlbl"></span>' +
@@ -36220,6 +39938,38 @@
       h += '</div>';
       h += '<div class="ambient-hint pmx-foot">Tap a cell to add or remove that chord from a pass. ' +
         'A chord can appear more than once — tap a <b>plays</b> caption to edit that pass\u2019s order.</div>';
+      // WHO PLAYS HERE — every layer at once, over this part's chords.
+      //
+      // LAYERS DOWN, CHORDS ACROSS. A transposed version (chords down, matching
+      // the grid above) was tried and rejected: the point of this strip is to
+      // read ONE LAYER along its row and see where it drops out, and that is the
+      // horizontal scan. It deliberately does NOT share the grid's orientation.
+      //
+      // It shows the PROBABILITY, which is per (layer, chord) and has no pass
+      // axis — `chordMask.steps` is indexed by chord alone. That is not a gap in
+      // the picture: `_ambChordGateOK` hashes on `sp.step`, which advances every
+      // pass, so a layer at 60% genuinely sits out DIFFERENT passes. Per-pass
+      // variation is what the probability produces, not a second setting; drawing
+      // it per pass would be showing one realisation of a die roll.
+      if (_mrows.length) {
+        h += '<div class="psq-strip"><div class="psq-striphd">Who plays here \u2014 ' +
+          'the chance each layer plays that chord, rolled again every pass. ' +
+          '<b>Tap a row</b> to set it pass by pass.</div>';
+        _mrows.forEach(x => {
+          h += '<div class="psq-striprow"><span class="psq-stripnm" title="' + esc(x.label) + '">' +
+            esc(x.label) + '</span>';
+          for (let i = 0; i < r.len; i++) {
+            const v = _ambMaskRead(x.L, 'chord', r.from + i);
+            h += '<button type="button" class="psq-dot" style="--pv:' + v + '" data-pmx="scopeplays:' + esc(x.key) +
+              '" title="' + esc(x.label + ' \u00b7 ' + names[i] + ' \u2014 ' +
+                (v >= 100 ? 'always' : v <= 0 ? 'never' : v + '% of passes') +
+                '. Tap to edit this layer \u2014 Plays mode there sets each pass on its own.') + '"></button>';
+          }
+          h += '</div>';
+        });
+        h += '<div class="psq-stripfoot"><span></span>' +
+          names.map(n => '<span>' + esc(n) + '</span>').join('') + '</div></div>';
+      }
       el.innerHTML = h;
     }
     // THE META GRID — parts down, iterations across (iterations are horizontal in
@@ -36227,15 +39977,29 @@
     // view: a cell shows the positions that part occupies in that iteration, the
     // caption spells the order, and a part may appear more than once — which is
     // what `prog.chain` expresses today, gaining an iteration axis.
-    function _ambRenderArrMatrix(E, el, cfg, ranges, parts) {
+    function _ambRenderArrMatrix(E, el, cfg, ranges, parts, lrow) {
       const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
       const prog = cfg.prog;
-      const names = ranges.map((x, k) => (parts && parts[x.pi] && parts[x.pi].name) || ('Part ' + (k + 1)));
+      const names = ranges.map((x) => _ambPartLabel(cfg, x.pi));
       const g = prog.arrGrid;
       const cols = g ? _ambGridCols(g) : _AMB_GRID_COLS;
       const seqs = [];
-      for (let c = 0; c < cols; c++) seqs.push(_ambArrGridSeq(cfg, c, ranges.length));
-      const sig = 'meta|' + cols + '|' + names.join(',') + '|' + seqs.map(q => q.join('.')).join('/');
+      for (let c = 0; c < cols; c++) seqs.push(_ambArrGridSeq(cfg, c, ranges.length, ranges));
+      // OPEN PARTS — named blocks that carry no changes. They are the only thing
+      // `sectionMask` indexes, and they appear as a row in NEITHER grid: the part
+      // tabs and the meta rows both come from `_ambGridRanges`, which skips them.
+      // So the ⌗ Matrix's part columns were their only editor. They belong here —
+      // the meta view is already the "which parts play" surface, and "does this
+      // layer play through this block" is the same question one level down.
+      const _mrowsMeta = (() => { try { return _ambChordMatrixRows(cfg) || []; } catch (e) { return []; } })();
+      const _open = [];
+      if (Array.isArray(prog.parts)) { let _si = 0; prog.parts.forEach((p2) => {
+        if (p2 && p2.open) _open.push({ si: _si++, part: p2 });
+      }); }
+      const sig = 'meta|' + cols + '|' + names.join(',') + '|' + seqs.map(q => q.join('.')).join('/')
+        + '|R' + _mrowsMeta.map(x => x.key).join('.')
+        + '|L' + (lrow ? lrow.key : '')
+        + '|o' + _open.map(o => o.part.name + ':' + (lrow ? _ambMaskRead(lrow.L, 'section', o.si) : '')).join(',');
       if (el._sig === sig) return;
       el._sig = sig;
       let h = '<div class="pmx-tabs">' +
@@ -36275,6 +40039,42 @@
           ? ' <b class="pmx-super">This grid now sets the played order</b> — the written order, the part chain and per-part repeats no longer apply.'
           : ' Until you change something here, the played order is whatever the parts already say.') +
         '</div>';
+      // The scope row, so switching layers works from the meta view as well —
+      // it builds its own chrome and would otherwise be the one tab you cannot
+      // change scope from.
+      if (_mrowsMeta.length) {
+        h += '<div class="pmx-tabs pmx-scope"><span class="pmx-scopelbl">Showing</span>' +
+          '<button type="button" class="ambient-seg pmx-tab' + (lrow ? '' : ' active') +
+          '" data-pmx="scope:">All layers</button>' +
+          _mrowsMeta.map(x => '<button type="button" class="ambient-seg pmx-tab' +
+            ((lrow && x.key === lrow.key) ? ' active' : '') + '" data-pmx="scope:' + esc(x.key) + '">' +
+            esc(x.label) + '</button>').join('') + '</div>';
+      }
+      // BLOCKS — the open parts, and how often the scoped layer plays through
+      // each. Only in a layer scope: with no layer chosen there is no per-layer
+      // value to show, and a row of blanks would read as "nothing set here".
+      if (_open.length) {
+        if (lrow) {
+          h += '<div class="pmx-grid psq-blocks" style="--pmxc:1">';
+          h += '<div class="pmx-row pmx-head"><span class="pmx-rowlbl">Blocks</span>' +
+            '<span class="psq-trailhd" title="How often ' + esc(lrow.label) +
+            ' plays through that block">Plays</span></div>';
+          _open.forEach(o => {
+            h += '<div class="pmx-row"><span class="pmx-rowlbl" title="' + esc(o.part.name) +
+              '">' + esc(o.part.name) + '</span>' +
+              _ambMaskCellHtml(_ambMaskRead(lrow.L, 'section', o.si), o.si,
+                esc(lrow.label + ' \u00b7 ' + o.part.name + ' \u2014 a block with no changes'),
+                null, 0, ' data-pmk="' + esc(lrow.key) + '" data-pmkind="section"') + '</div>';
+          });
+          h += '</div>';
+          h += '<div class="ambient-hint pmx-foot">A <b>block</b> is a named part that carries no changes \u2014 ' +
+            'the harmony holds while it runs. This is how often <b>' + esc(lrow.label) + '</b> plays through it.</div>';
+        } else {
+          h += '<div class="ambient-hint pmx-foot">' + _open.length + ' block' + (_open.length === 1 ? '' : 's') +
+            ' with no changes (' + esc(_open.map(o => o.part.name).join(', ')) +
+            ') \u2014 pick a layer above to set how often it plays through them.</div>';
+        }
+      }
       el.innerHTML = h;
     }
     // Reorder / repeat editor for ONE pass. The grid answers WHICH chords; this
@@ -36290,8 +40090,8 @@
         if (meta) {
           const rgs = _ambGridRanges(c2), ps = Array.isArray(c2.prog.parts) ? c2.prog.parts : null;
           return { rg: { len: rgs.length, pi: -1 },
-                   nm: rgs.map((x, k) => (ps && ps[x.pi] && ps[x.pi].name) || ('Part ' + (k + 1))),
-                   seq: _ambArrGridSeq(c2, col, rgs.length) };
+                   nm: rgs.map((x) => _ambPartLabel(c2, x.pi)),
+                   seq: _ambArrGridSeq(c2, col, rgs.length, rgs) };
         }
         const rg = _ambGridRanges(c2)[pi];
         if (!rg) return null;
@@ -36424,21 +40224,44 @@
     function _ambPassPlayhead(E) {
       const el = _ambGet(E, 'ambient-passmx'); if (!el) return;
       const cfg = E && (E._cfg || (E.getCfg && E.getCfg()));
-      if (!E || !E.timer || !cfg || !_ambGridOn(cfg) || !_ambViewIsPlaying(E)) { _ambClearPassPlayhead(el); return; }
-      let slots = null; try { const _pl = _ambGridPlan(cfg); slots = _pl && _pl.slots; } catch (e) {}
-      if (!slots || !slots.length) { _ambClearPassPlayhead(el); return; }
-      let inst = 0; try { inst = _ambProgInstanceAt(E, Tone.now()) | 0; } catch (e) { return; }
-      const k = ((inst % slots.length) + slots.length) % slots.length;
-      const sl = slots[k]; if (!sl) return;
+      if (!E || !E.timer || !cfg || !_ambViewIsPlaying(E)) { _ambClearPassPlayhead(el); return; }
       const meta = (el._pmsPart === -1);
-      const col = meta ? (sl.iter | 0) % Math.max(1, _ambGridCols(cfg.prog.arrGrid)) : (sl.col | 0);
-      // Which ROW: the part in the meta view, the chord-within-part otherwise.
-      let row = -1;
-      if (meta) row = sl.part | 0;
-      else if (sl.part === el._pmsPart) {
-        const rg = _ambGridRanges(cfg)[el._pmsPart];
-        if (rg) row = sl.idx - rg.from;
+      let col = -1, row = -1;
+      // THE GRID IS NOT REQUIRED. `_ambGridOn` is false whenever the parts have a
+      // pass COUNT but no authored subsets — which is the normal state, and the
+      // passes still genuinely run (a part cycles its columns as it is revisited).
+      // Gating the playhead on it meant nothing ever lit up until you had toggled
+      // a cell: "Passes is not lighting up like it should".
+      if (_ambGridOn(cfg)) {
+        let slots = null; try { const _pl = _ambGridPlan(cfg); slots = _pl && _pl.slots; } catch (e) {}
+        if (!slots || !slots.length) { _ambClearPassPlayhead(el); return; }
+        let inst = 0; try { inst = _ambProgInstanceAt(E, Tone.now()) | 0; } catch (e) { return; }
+        const k = ((inst % slots.length) + slots.length) % slots.length;
+        const sl = slots[k]; if (!sl) return;
+        col = meta ? (sl.iter | 0) % Math.max(1, _ambGridCols(cfg.prog.arrGrid)) : (sl.col | 0);
+        if (meta) row = sl.part | 0;
+        else if (sl.part === el._pmsPart) {
+          const rg = _ambGridRanges(cfg)[el._pmsPart];
+          if (rg) row = sl.idx - rg.from;
+        }
+      } else {
+        // No grid engaged: the same resolver the layer pass cells key on knows
+        // the part, the pass and the chord within it, which is all this needs.
+        let w = null;
+        try { w = _ambPartChordAt(E, cfg, (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0); } catch (e) { w = null; }
+        if (!w || w.pi < 0) { _ambClearPassPlayhead(el); return; }
+        const ranges = _ambGridRanges(cfg);
+        const ri = ranges.findIndex(r => r.pi === w.pi);
+        if (meta) {
+          col = 0; row = ri;
+        } else {
+          const cols = Math.max(1, _ambPartPassCols(cfg, w.pi));
+          col = ((w.pass % cols) + cols) % cols;
+          const shown = ranges[el._pmsPart];
+          if (shown && shown.pi === w.pi) row = w.ci;
+        }
       }
+      if (col < 0) { _ambClearPassPlayhead(el); return; }
       const key = col + ':' + row + ':' + (meta ? 'm' : 'p');
       if (el._phKey === key && el.querySelector('.pmx-cell.playing')) return;
       el._phKey = key;
@@ -36457,7 +40280,63 @@
       const hs = el.querySelectorAll('.pmx-head .pmx-h');
       if (hs[col]) hs[col].classList.add('incol');
     }
+    // THE LAYER'S PLAYS MATRIX LIGHTS UP TOO. It is the same question the ▦ Passes
+    // grid answers — which pass, which chord — drawn per layer, so it gets the
+    // same treatment: the running COLUMN tinted, the exact cell lit. Without it
+    // the two grids showed the same schedule and only one of them moved.
+    //
+    // Reuses `.playing`/`.incol`, so the styling is whatever the pass matrix
+    // already uses and the two cannot drift apart.
+    function _ambPartSeqPlayhead(E) {
+      let hosts; try { hosts = document.querySelectorAll('.ambient-partmap[data-sbkey]'); } catch (e) { return; }
+      if (!hosts || !hosts.length) return;
+      const cfg = E && (E._cfg || (E.getCfg && E.getCfg()));
+      // Stopped, or looking at an area that is not the one sounding — the amber
+      // `.viewing-other` rim already says why, so show no cursor rather than a
+      // false one (the _ambViewIsPlaying doctrine the Scheduler cursor follows).
+      if (!E || !E.timer || !cfg || !_ambViewIsPlaying(E)) {
+        hosts.forEach(h => _ambClearPassPlayhead(h));
+        return;
+      }
+      let w = null;
+      try { w = _ambPartChordAt(E, cfg, (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0); } catch (e) { w = null; }
+      if (!w || w.pi < 0) { hosts.forEach(h => _ambClearPassPlayhead(h)); return; }
+      const cols = Math.max(1, _ambPartPassCols(cfg, w.pi));
+      const pass = ((w.pass % cols) + cols) % cols;
+      const ci = w.ci | 0;
+      const key = w.pi + ':' + pass + ':' + ci;
+      hosts.forEach(host => {
+        try {
+          const hb = host.parentElement && host.parentElement.querySelector
+            ? host.parentElement.querySelector('.pmx-hold') : null;
+          const pl = E._passLock;
+          if (hb && pl) {
+            const t = 'r' + (pl.reps | 0) + ':' + pl.pi + ':' + pl.pass;
+            if (hb._holdSig !== t) {
+              hb._holdSig = t;
+              hb.title = 'Holding pass ' + ((pl.pass | 0) + 1) + ' — repeated ' + (pl.reps | 0) +
+                '×. Press to release: this repetition finishes, then the next pass runs.';
+            }
+          } else if (hb) hb._holdSig = '';
+        } catch (e) {}
+        if (host._psqPh === key && host.querySelector('.psq-cell.playing')) return;
+        host._psqPh = key;
+        _ambClearPassPlayhead(host, true);
+        host.querySelectorAll('.psq-cell[data-pmkey]').forEach(n => {
+          if ((n.getAttribute('data-pmpi') | 0) !== (w.pi | 0)) return;
+          const k = String(n.getAttribute('data-pmkey'));
+          if (k === _AMB_PARTSEQ_ALL) return;          // the part default is not a pass
+          const a = k.split(':');
+          if ((a[0] | 0) !== pass) return;
+          n.classList.add('incol');                    // this pass's whole column
+          // `<pass>:*` is the pass default and `<pass>:<chord>` the exact cell —
+          // light whichever names the chord now sounding.
+          if (a[1] === '*' || (a[1] | 0) === ci) n.classList.add('playing');
+        });
+      });
+    }
     function _ambClearPassPlayhead(el, keepKey) {
+      if (el && el._psqPh != null && !keepKey) el._psqPh = '';
       if (!el) return;
       if (!keepKey) el._phKey = '';
       el.querySelectorAll('.playing, .incol').forEach(n => n.classList.remove('playing', 'incol'));
@@ -36468,6 +40347,144 @@
     function _ambWirePassMatrix(E) {
       const el = _ambGet(E, 'ambient-passmx'); if (!el || el._wired) return;
       el._wired = 1;
+      // THE PER-CHORD MASK CELLS in the layer scope. Same grammar as the ⌗ Matrix
+      // — tap steps the ladder, long-press / right-click sets an exact 0-100 —
+      // because they are literally its cells (`_ambMaskCellHtml`); only the store
+      // access had to be shared (`_ambMaskStore`). The layer and the mask kind are
+      // on the cell rather than inferred from a row and a mode toggle, which is
+      // what made the wiring host-bound in the first place.
+      const _mkOpen = (c) => {
+        const cfg2 = E.getCfg(); if (!cfg2) return;
+        const lk = c.getAttribute('data-pmk'), kind = c.getAttribute('data-pmkind') || 'chord';
+        const L = _ambLayerByKey(E, lk); if (!L) return;
+        const ci = c.dataset.ci | 0;
+        if (kind === 'chordpass') {
+          const pass = c.getAttribute('data-pmpass') | 0, local = c.getAttribute('data-pmlocal') | 0;
+          const dflt = _ambMaskRead(L, 'chord', ci);
+          const cur = _ambChordPassGet(L, pass, local);
+          _ambMaskCellModal(E, {
+            value: cur == null ? dflt : cur, unit: 'pass',
+            label: (_ambLayerLabel(L, lk) || lk) + ' \u00b7 ' + (c.getAttribute('title') || ''),
+            onSet: (v) => {
+              const n = Math.max(0, Math.min(100, v | 0));
+              _ambChordPassSet(L, pass, local, n === dflt ? null : n);
+              _ambMaskEditPoke(E, lk); el._sig = ''; _ambRenderPassMatrix(E);
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+            },
+          });
+          return;
+        }
+        _ambMaskCellModal(E, {
+          value: _ambMaskRead(L, kind, ci), salt: kind === 'salt', unit: 'chord',
+          label: (_ambLayerLabel(L, lk) || lk) + ' \u00b7 ' + (c.getAttribute('title') || ''),
+          onSet: (v) => { _ambMaskStore(cfg2, L, kind).steps[ci] = Math.max(0, Math.min(100, v | 0));
+            _ambMaskEditPoke(E, lk); el._sig = ''; _ambRenderPassMatrix(E);
+            if (typeof persistWorkspace === 'function') persistWorkspace(); },
+        });
+      };
+      _ambWireMaskCells(el, _mkOpen);
+      // BULK APPLY. `_ambMaskCellModal` already speaks `bulk` — it just needs the
+      // set of targets. Every cell it writes gets its own `_ambMaskEditPoke`, or
+      // a layer mid-loop keeps the old gate (the documented column-apply rule).
+      const _bulk = (label, bulkTxt, kind, targets, seed) => {
+        const cfg2 = E.getCfg(); if (!cfg2) return;
+        _ambMaskCellModal(E, {
+          value: seed, salt: kind === 'salt', unit: 'chord', label: label, bulk: bulkTxt,
+          onSet: (v) => {
+            const n = Math.max(0, Math.min(100, v | 0));
+            targets.forEach(t => {
+              const L = _ambLayerByKey(E, t.lkey); if (!L) return;
+              _ambMaskStore(cfg2, L, kind).steps[t.ci] = n;
+              _ambMaskEditPoke(E, t.lkey);
+            });
+            el._sig = ''; _ambRenderPassMatrix(E);
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+          },
+        });
+      };
+      el.addEventListener('pointerup', (ev) => {
+        const b = ev.target && ev.target.closest && ev.target.closest('.psq-bulk');
+        if (!b) return;
+        ev.preventDefault();
+        const cfg2 = E.getCfg(); if (!cfg2 || !cfg2.prog) return;
+        const ranges = _ambGridRanges(cfg2);
+        const pi = Number.isFinite(el._pmsPart) ? el._pmsPart : 0;
+        const rg = ranges[pi]; if (!rg) return;
+        const kind = b.getAttribute('data-pmbulk');
+        if (kind) {
+          // A COLUMN — this layer, every chord of the part on screen.
+          const lk = b.getAttribute('data-pmk'); const L = _ambLayerByKey(E, lk); if (!L) return;
+          const t = []; for (let i = 0; i < rg.len; i++) t.push({ lkey: lk, ci: rg.from + i });
+          _bulk((_ambLayerLabel(L, lk) || lk) + ' \u00b7 ' + _ambPartLabel(cfg2, rg.pi),
+            'chord of ' + _ambPartLabel(cfg2, rg.pi), kind, t, _ambMaskRead(L, kind, rg.from));
+          return;
+        }
+        const ci = b.getAttribute('data-pmbulkci');
+        if (ci != null) {
+          // A ROW — this chord, every layer. Always the Plays mask: Salt is the
+          // narrower question and is left per layer.
+          const abs = ci | 0;
+          let rows = []; try { rows = _ambChordMatrixRows(cfg2) || []; } catch (e) { rows = []; }
+          if (!rows.length) return;
+          const nm = (b.getAttribute('title') || '').split(' \u2014 ')[0];
+          _bulk(nm, 'layer on ' + nm, 'chord', rows.map(x => ({ lkey: x.key, ci: abs })),
+            _ambMaskRead(rows[0].L, 'chord', abs));
+        }
+      }, true);
+      // ON POINTERUP, not a delayed pointerdown. `_ambWireMaskCells` arms a 450 ms
+      // long-press for the exact editor and cancels it on pointerup, so a tap has
+      // to commit AFTER that cancel — but deferring the commit by 460 ms makes
+      // every tap feel broken, and a press held past 450 ms would then do both.
+      // Pointerup fires the moment the finger lifts, and by then the long-press
+      // has either been cancelled (quick tap → step the ladder) or already fired
+      // and set `_suppressClick` (held → the editor is open, do nothing).
+      el.addEventListener('pointerup', (ev) => {
+        const c = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-cell[data-pmk]');
+        if (!c) return;
+        if (el._suppressClick) { el._suppressClick = false; return; }
+        ev.preventDefault();
+        const cfg2 = E.getCfg(); if (!cfg2) return;
+        const lk = c.getAttribute('data-pmk'), kind = c.getAttribute('data-pmkind') || 'chord';
+        const L = _ambLayerByKey(E, lk); if (!L) return;
+        const ci = c.dataset.ci | 0;
+        if (kind === 'chordpass') {
+          // The ladder starts from what the cell EFFECTIVELY plays, so a first tap
+          // on an inheriting cell steps down from the value it was showing rather
+          // than jumping. Landing back on the chord's own default CLEARS the
+          // override instead of storing a duplicate of it — that keeps "follows
+          // the chord" with a single representation and gives the way back with
+          // no second gesture.
+          const pass = c.getAttribute('data-pmpass') | 0, local = c.getAttribute('data-pmlocal') | 0;
+          const dflt = _ambMaskRead(L, 'chord', ci);
+          const cur = _ambChordPassGet(L, pass, local);
+          const nxt = _ambMaskCellNext(cur == null ? dflt : cur);
+          _ambChordPassSet(L, pass, local, nxt === dflt ? null : nxt);
+          _ambMaskEditPoke(E, lk);
+          el._sig = ''; _ambRenderPassMatrix(E);
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+          return;
+        }
+        _ambMaskStore(cfg2, L, kind).steps[ci] = _ambMaskCellNext(_ambMaskRead(L, kind, ci));
+        _ambMaskEditPoke(E, lk);
+        el._sig = ''; _ambRenderPassMatrix(E);
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      }, true);
+      // The per-layer Window.
+      el.addEventListener('change', (ev) => {
+        const sel = ev.target && ev.target.closest && ev.target.closest('[data-pmwin]');
+        if (!sel) return;
+        const cfg2 = E.getCfg(); if (!cfg2) return;
+        const lk = sel.getAttribute('data-pmk'); const L = _ambLayerByKey(E, lk); if (!L) return;
+        const cm = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
+        const part = (cm.part && typeof cm.part === 'object') ? cm.part : (cm.part = { size: 100, place: 'start' });
+        if (sel.getAttribute('data-pmwin') === 'size') part.size = parseInt(sel.value, 10) || 100;
+        else part.place = sel.value || 'start';
+        // Absent-is-neutral: a full window says nothing, so it is not stored.
+        if ((part.size | 0) >= 100) delete cm.part;
+        _ambMaskEditPoke(E, lk);
+        el._sig = ''; _ambRenderPassMatrix(E);
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
       // POINTERDOWN, not click. The playhead re-marks this host every frame while
       // the transport runs, and a `click` needs mousedown+mouseup on the SAME
       // element — the documented live-readout trap. Acting on the press also
@@ -36492,9 +40509,41 @@
           try { _ambRenderProgOverview(E); } catch (e) {}
           try { _ambRenderScheduler(E); } catch (e) {}
           try { _ambProgChainLenSync(E); } catch (e) {}
+          // THE LAYER'S PLAYS MATRIX IS SIZED FROM THE PASS COUNT these steppers
+          // write, so it belongs in this repaint list. Without it the ▦ editor
+          // and the layer disagreed about how many passes exist — the editor
+          // said 2 and the layer went on drawing 3.
+          try { E._cfg = E.getCfg(); } catch (e) {}
+          try { _ambPartSeqMatrixSync(E); } catch (e) {}
           if (typeof persistWorkspace === 'function') persistWorkspace();
         };
         if (a[0] === 'tab') { el._pmsPart = parseInt(a[1], 10); el._sig = ''; _ambRenderPassMatrix(E); return; }
+        // `scope:` carries a LAYER KEY, which contains a colon ('motif:4') — so it
+        // is the REST of the split, not a[1]. Splitting on ':' and reading one
+        // field would scope to 'motif' and silently never match a row.
+        if (a[0] === 'scope') { el._pmsLayer = a.slice(1).join(':'); el._sig = ''; _ambRenderPassMatrix(E); return; }
+        if (a[0] === 'pmode') { el._pmsMode = a[1]; el._sig = ''; _ambRenderPassMatrix(E); return; }
+        if (a[0] === 'hold') {
+          if (_ambPassLockOn(E)) {
+            // RELEASE IS NOTHING AT ALL — stop shifting the anchor and the
+            // current repetition simply runs on into the next pass.
+            _ambPassLockRelease(E);
+            try { showToast('Released — this pass finishes, then the next one runs.'); } catch (e) {}
+          } else {
+            const now2 = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+            const got = _ambPassLockEngage(E, E._cfg || cfg, now2);
+            try {
+              if (got) showToast('Holding ' + _ambPartLabel(cfg, got.pi) + ' \u00b7 pass ' + ((got.pass | 0) + 1) +
+                ' \u2014 edits are heard on the next time round. Press again to release.');
+              else showToast('Nothing is playing on a pass right now.', { warn: true });
+            } catch (e) {}
+          }
+          el._sig = ''; _ambRenderPassMatrix(E); return;
+        }
+        if (a[0] === 'scopeplays') {
+          el._pmsLayer = a.slice(1).join(':'); el._pmsMode = 'plays';
+          el._sig = ''; _ambRenderPassMatrix(E); return;
+        }
         // ---- META: parts x iterations ----------------------------------------
         if (a[0] === 'mcols') {
           _ambArrColsSet(cfg, (cfg.prog.arrGrid ? _ambGridCols(cfg.prog.arrGrid) : _AMB_GRID_COLS) + (a[1] | 0));
@@ -36502,7 +40551,7 @@
         }
         if (a[0] === 'mcell') {
           const col = a[1] | 0, k2 = a[2] | 0;
-          const cur = _ambArrGridSeq(cfg, col, ranges.length);
+          const cur = _ambArrGridSeq(cfg, col, ranges.length, ranges);
           const has = cur.indexOf(k2) >= 0;
           _ambArrWrite(cfg, col, has ? cur.filter(v => v !== k2) : cur.concat([k2]));
           after(); return;
@@ -36541,396 +40590,35 @@
         if (a[0] === 'seq') { _ambPassSeqModal(E, pi, a[1] | 0); return; }
       });
     }
-    function _ambRenderChordMatrix(E) {
-      const el = _ambGet(E, 'ambient-progmatrix'); if (!el) return;
-      const cfg = E.getCfg();
-      const on = !!(cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length);
-      el.style.display = on ? '' : 'none';
-      if (!on) { el.innerHTML = ''; el._sig = ''; return; }
-      const chords = cfg.prog.chords, N = chords.length;
-      const prog = cfg.prog;
-      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
-      const rows = _ambChordMatrixRows(cfg);
-      // cheap re-render guard (masks + shape + labels)
-      const sig = N + '|' + chords.map(c2 => (c2 && c2.bars) || 0).join('.') + '|'
-        + rows.map(r => r.key + ':' + JSON.stringify(r.L.chordMask || 0)).join(',') +
-        '|s' + _ambProgViewShift(E, cfg, chords) + '|' + chords.map(c2 => c2.root).join('.') +
-        '|t' + (Number.isFinite(el._pmPart) ? el._pmPart : -1) +
-        '|mk' + (el._pmMask === 'salt' ? 1 : 0) +
-        '|sk' + rows.map(r => JSON.stringify(r.L.saltMask || 0)).join(',') +
-        '|sc' + JSON.stringify((prog.salt && { c: prog.salt.colors | 0, s: prog.salt.scatter | 0 }) || 0) +
-        '|p' + (Array.isArray(prog.parts) ? prog.parts.map(p => p.name + ':' + p.len + ':' + (p.plays | 0) + ':' + (p.open ? 'o' + (p.hold ? 'h' : '') : '')).join('/') : '') +
-        '|sm' + rows.map(r => JSON.stringify(r.L.sectionMask || 0)).join(',');
-      if (el._sig === sig) return;
-      el._sig = sig;
-      // Name the chord as it SOUNDS. Missed in the readout sweep: this header
-      // reads the raw root, so under Key/transpose it labelled the columns C F G
-      // for chords the engine plays as A D E — and the cell tooltips + the exact
-      // editor's title quote this same helper, so all three were wrong together.
-      const _vsM = _ambProgViewShift(E, cfg, chords);
-      // A transition column has no root of its own — `ch.root|0` would read 0 and
-      // label it "C", which is both wrong and indistinguishable from a real C.
-      const chName = (ch) => { try { if (_ambIsTransition(ch)) return '⇝'; return (typeof CHROMATIC !== 'undefined' && CHROMATIC[((((ch.root | 0) + _vsM) % 12) + 12) % 12]) || '?'; } catch (e) { return '?'; } };
-      // The cells are a PROBABILITY and the Part column is a DURATION fraction —
-      // two different axes side by side, so a bare "60" reads as either. Name the
-      // axis in the title, spell the scale out in words, and say that the roll is
-      // once per chord (the thing that makes 60% sound like "sits out some passes"
-      // rather than "plays quieter" or "plays 60% of the bar").
-      // PART TABS — a long progression is a chain of named parts, and editing all
-      // of it at once means a 16-column grid on a 390px phone. One tab per part
-      // scopes the grid to that part's chords; "All" is the whole thing, and is
-      // the only view when there are no parts. The tab also carries the part's
-      // REPEAT count, because "how many times does the verse run" belongs next to
-      // the verse, not in a separate panel.
-      const _pmParts = (Array.isArray(prog.parts) && prog.parts.length > 1) ? prog.parts : null;
-      if (_pmParts) {
-        if (!Number.isFinite(el._pmPart) || el._pmPart >= _pmParts.length) el._pmPart = -1;
-      } else el._pmPart = -1;
-      // TWO QUESTIONS, ONE GRID. "Which layers play this chord" and "which layers
-      // take the Changes' salt on this chord" are the same layers x chords shape,
-      // so they share the tabs, the columns, the widths, the cell ladder and the
-      // exact editor rather than becoming a third bespoke matrix (this file
-      // already carries the cost of the chord/section pair doing that).
-      const _isSalt = el._pmMask === 'salt';
-      const _saltAmt = (prog.salt && (prog.salt.colors | 0) > 0) ? (prog.salt.colors | 0) : 0;
-      const _saltParted = !!(Array.isArray(prog.parts) && prog.parts.some(p2 => p2 && p2.salt && (p2.salt.colors | 0) > 0));
-      let h = '<div class="ambient-pm-title">' + (_isSalt
-          ? 'Salt — how much of the Changes’ recolouring each layer follows, chord by chord'
-          : 'Matrix — how often each layer plays on each chord, and through each part with no changes') +
-        '<span class="ambient-seg-row ambient-pm-modes">' +
-          '<button type="button" class="ambient-seg' + (_isSalt ? '' : ' active') + '" data-pmmask="plays" title="Which layers play each chord.">⌗ Plays</button>' +
-          '<button type="button" class="ambient-seg' + (_isSalt ? ' active' : '') + '" data-pmmask="salt" title="Which layers follow the Changes’ salt on each chord.">🧂 Salt</button>' +
-        '</span>' + _ambMaskEditBtnHtml(!!el._pmEdit) + '</div>';
-      if (_pmParts) {
-        let acc0 = 0;
-        h += '<div class="ambient-pm-tabs">' +
-          '<button type="button" class="ambient-pm-tab' + (el._pmPart < 0 ? ' on' : '') + '" data-pmpart="-1" title="Every chord in the progression">All</button>' +
-          _pmParts.map((p, pi) => {
-            const plays = Math.max(1, p.plays | 0);
-            // Math.max(1, len) would give a part with NO chords a chord of
-            // somebody else's, shifting every later range by one.
-            const from = acc0; acc0 += (p.open ? 0 : Math.max(1, p.len | 0));
-            const kk = p.key ? (' · ' + _AMB_CHROM[p.key.root] + ' ' + p.key.scale.slice(0, 3)) : '';
-            return '<span class="ambient-pm-tabwrap' + (el._pmPart === pi ? ' on' : '') + '">' +
-              '<button type="button" class="ambient-pm-tab' + (el._pmPart === pi ? ' on' : '') + '" data-pmpart="' + pi + '"' +
-                ' title="' + esc(p.name) + (p.open ? (' — no changes, ' + (p.bars || 4) + ' bars' + (p.hold ? ' (harmony holds)' : '')) : (' — chords ' + (from + 1) + '-' + acc0)) + kk + '">' + esc(p.name) + '</button>' +
-              '<span class="ambient-pm-plays" title="How many times “' + esc(p.name) + '” runs before the progression moves on.">' +
-                '<button type="button" class="ambient-pm-playsbtn" data-pmplays="' + pi + ':-1" title="Fewer repeats"' + (plays <= 1 ? ' disabled' : '') + '>−</button>' +
-                '<b>' + plays + '×</b>' +
-                '<button type="button" class="ambient-pm-playsbtn" data-pmplays="' + pi + ':1" title="More repeats"' + (plays >= 64 ? ' disabled' : '') + '>＋</button>' +
-              '</span></span>';
-          }).join('') + '</div>';
-      }
-      if (_isSalt) {
-        h += '<div class="ambient-pm-legend">' + (_saltAmt || _saltParted
-          ? ('The Changes cut each chord into sections and recolour the later ones' + (_saltAmt ? ' (Salt colour ' + _saltAmt + ' → up to ' + Math.min(8, _saltAmt + 1) + ' sections)' : ' per part') +
-             '. <b>Cell</b> = how much of that this layer follows on that chord — <b>always → 60% → 30% → never</b> by tap, any value on press-and-hold. At <b>never</b> the layer holds the chord as written while the others recolour. Every layer shares ONE colouring, so wherever two layers both follow, they agree.')
-          : '<b>No salt is set on the Changes</b>, so nothing here has an effect yet. Set Salt colour above 0 in the 🧂 Salt section first, then use this grid to say which layers follow it.') + '</div>';
-      } else
-      h += '<div class="ambient-pm-legend"><b>Cell</b> = the chance this layer plays that chord — tap to step <b>always → 60% → 30% → never</b>, or press and hold (✎ % to make a tap do it) for <b>any value 0-100</b>. Rolled once per chord, so the layer is in or out for that whole chord; it never cuts in halfway. <b>Window</b> is the other axis: how much of each chord it plays once it is in.</div>';
-      // Column window for the selected tab. Cell/header indices stay ABSOLUTE
-      // (data-ci), so every setter keeps writing the right slot of the mask.
-      let _pmFrom = 0, _pmTo = N;
-      if (_pmParts && el._pmPart >= 0 && !_pmParts[el._pmPart].open) {
-        let a0 = 0;
-        for (let i = 0; i < _pmParts.length; i++) {
-          if (_pmParts[i].open) { if (i === el._pmPart) break; continue; }
-          const l2 = Math.max(1, _pmParts[i].len | 0);
-          if (i === el._pmPart) { _pmFrom = a0; _pmTo = Math.min(N, a0 + l2); break; }
-          a0 += l2;
-        }
-      }
-      // ONE GRID (slice 4g). Columns are what actually plays: every chord, plus a
-      // column per part that carries NO changes — which is what the separate
-      // Section matrix used to be. A part column writes `sectionMask`, a chord
-      // column writes `chordMask`; the stores stay as they are, and the grid
-      // stops being two grids. Section indices are the mirror's order, i.e. the
-      // non-holding open parts in order (see the fold in normalize).
-      const _pmCols = [];
-      const _openParts = [];
-      if (Array.isArray(prog.parts)) { let _si = 0; prog.parts.forEach((p2, pi2) => {
-        if (!p2 || !p2.open) return;
-        _openParts.push({ pi: pi2, si: _si++, part: p2 });
-      }); }
-      // A column's WIDTH is its length in bars. Same source the clock uses, so
-      // the picture and the playback cannot disagree about how long a chord is.
-      const _bpc = Math.max(0.01, (cfg.barsPerChord || 1));
-      const colBars = (col) => {
-        if (col.kind === 'part') return Math.max(0.25, col.rec.part.bars || 4);
-        const c3 = chords[col.i];
-        return (c3 && Number.isFinite(c3.bars) && c3.bars > 0) ? c3.bars : _bpc;
-      };
-      const _onOpenTab = !!(_pmParts && el._pmPart >= 0 && _pmParts[el._pmPart].open);
-      if (_onOpenTab) {
-        const rec = _openParts.find(o => o.pi === el._pmPart);
-        if (rec) _pmCols.push({ kind: 'part', rec });
-      } else {
-        for (let i = _pmFrom; i < _pmTo; i++) _pmCols.push({ kind: 'chord', i });
-        // The "All" tab shows the whole arrangement, part columns included — but
-        // NOT in salt mode: a part with no changes has no chord to recolour, so a
-        // cell there could only ever do nothing.
-        if ((!_pmParts || el._pmPart < 0) && !_isSalt) _openParts.forEach(rec => _pmCols.push({ kind: 'part', rec }));
-      }
-      const _fmtB = (b) => (typeof _ambFmtBpc === 'function' ? _ambFmtBpc(b) : String(b));
-      h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + _pmCols.map((col) => {
-        const gb = colBars(col);
-        if (col.kind === 'part') return '<span class="ambient-pm-ch pm-partcol" style="flex-grow:' + gb + '" title="' + esc(col.rec.part.name) + ' — a part with no changes, ' + _fmtB(gb) + ' bars. The cell is how often each layer plays through it.">' + esc(col.rec.part.name) + '</span>';
-        const c2 = chords[col.i];
-        return '<span class="ambient-pm-ch' + (_ambIsTransition(c2) ? ' pm-trans' : '') + '" style="flex-grow:' + gb + '"'
-          + ' title="' + (_ambIsTransition(c2) ? 'Transition — a walk into the next chord. Leave this cell on for a layer to walk it, set it to never to sit the bar out. ' : 'Chord ' + (col.i + 1) + ' — ')
-          + _fmtB(gb) + ' bar' + (gb === 1 ? '' : 's') + ' long; the column is that wide.">' + (col.i + 1) + '·' + chName(c2) + '</span>';
-      }).join('') + (_isSalt ? '' : '<span class="ambient-pm-part">Window</span>') + '</div>';
-      rows.forEach(r => {
-        const _mk = _isSalt ? r.L.saltMask : r.L.chordMask;
-        const steps = (_mk && Array.isArray(_mk.steps)) ? _mk.steps : null;
-        const part = (!_isSalt && r.L.chordMask && r.L.chordMask.part) || null;
-        h += '<div class="ambient-pm-row" data-lkey="' + r.key + '"><span class="ambient-pm-lbl" title="' + r.label + '">' + r.label + '</span>' +
-          _pmCols.map((col) => {
-            if (col.kind === 'part') {
-              const sm = (r.L.sectionMask && Array.isArray(r.L.sectionMask.steps)) ? r.L.sectionMask.steps : null;
-              const si = col.rec.si;
-              const pv = sm ? (Number.isFinite(sm[si % sm.length]) ? sm[si % sm.length] : 100) : 100;
-              return _ambMaskCellHtml(pv, si, r.label + ' · ' + esc(col.rec.part.name) + ' (no changes, ' + _fmtB(colBars(col)) + ' bars) — ' + _ambMaskCellTip(pv, 'part', !!el._pmEdit), si, colBars(col));
-            }
-            const i = col.i, c2 = chords[i];
-            const v = steps ? (Number.isFinite(steps[i % steps.length]) ? steps[i % steps.length] : 100) : 100;
-            const _tip = _isSalt
-              ? (r.label + ' · chord ' + (i + 1) + ' (' + chName(c2) + ') — ' + (v >= 100 ? 'follows every colour change' : v <= 0 ? 'holds the chord as written' : 'follows ' + v + '% of the colour changes'))
-              : (r.label + ' · chord ' + (i + 1) + ' (' + chName(c2) + ', ' + _fmtB(colBars(col)) + ' bars) — ' + _ambMaskCellTip(v, 'chord', !!el._pmEdit));
-            return _ambMaskCellHtml(v, i, _tip, null, colBars(col));
-          }).join('') +
-          (_isSalt ? '' : '<span class="ambient-pm-part">' +
-            '<select class="ambient-select ambient-pm-size" title="How much of each chord this layer plays once it is in — a DURATION, not a chance. Full = the whole chord.">' +
-              [[100, 'Full'], [75, '¾'], [50, '½'], [25, '¼']].map(o => '<option value="' + o[0] + '"' + ((part ? part.size : 100) === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
-            '</select>' +
-            '<select class="ambient-select ambient-pm-place"' + ((part ? part.size : 100) >= 100 ? ' disabled' : '') + ' title="Where in the chord the window sits — Random re-rolls per chord">' +
-              [['start', 'Start'], ['center', 'Mid'], ['end', 'End'], ['random', 'Rnd']].map(o => '<option value="' + o[0] + '"' + ((part ? part.place : 'start') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
-            '</select>' + '</span>') + '</div>';
-      });
-      el.innerHTML = h;
-      if (!el._wired) {
-        el._wired = true;
-        // WHICH MASK THIS GRID IS EDITING. The mode toggle swaps the field and
-        // nothing else: same tabs, same columns, same ladder, same exact editor.
-        // Every write path goes through here — the cell tap, the row apply, the
-        // column apply and the part macro — because a mode that only some of them
-        // honoured would silently write the wrong store.
-        const maskOf = (L) => {
-          const f = (el._pmMask === 'salt') ? 'saltMask' : 'chordMask';
-          return (L[f] && typeof L[f] === 'object') ? L[f] : (L[f] = {});
-        };
-        // Resolve a cell to its live steps array, creating/resizing it on demand —
-        // shared by the ladder tap and the exact editor so both write one place.
-        const slot = (cell) => {
-          _E = E; const cfg2 = E.getCfg(); if (!cfg2 || !cfg2.prog) return null;
-          const row = cell.closest('.ambient-pm-row'); const L = _ambLayerByKey(E, row.dataset.lkey); if (!L) return null;
-          const lbl0 = row.querySelector('.ambient-pm-lbl').textContent;
-          // A PART column writes sectionMask, sized to the sections the mirror
-          // emits — the same store the separate Section matrix used to write, so
-          // merging the grids changed no data, only where you edit it.
-          if (cell.dataset.si != null && cell.dataset.si !== '') {
-            const NS = Math.max(1, (Array.isArray(cfg2.sections) ? cfg2.sections.length : 1));
-            const sm = (L.sectionMask && typeof L.sectionMask === 'object') ? L.sectionMask : (L.sectionMask = {});
-            if (!Array.isArray(sm.steps) || sm.steps.length !== NS) { const o3 = Array.isArray(sm.steps) ? sm.steps : null; sm.steps = Array.from({ length: NS }, (_, i3) => o3 ? (Number.isFinite(o3[i3 % o3.length]) ? o3[i3 % o3.length] : 100) : 100); }
-            return { m: sm, ci: cell.dataset.si | 0, lkey: row.dataset.lkey, label: lbl0, isPart: 1 };
-          }
-          const N2 = cfg2.prog.chords.length;
-          const m = maskOf(L);
-          if (!Array.isArray(m.steps) || m.steps.length !== N2) { const old2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => old2 ? (Number.isFinite(old2[i2 % old2.length]) ? old2[i2 % old2.length] : 100) : 100); }
-          return { m: m, ci: cell.dataset.ci | 0, lkey: row.dataset.lkey, label: lbl0 };
-        };
-        const commit = (lkey) => {
-          _ambMaskEditPoke(E, lkey);
-          el._sig = ''; _ambRenderChordMatrix(E);
-          if (typeof persistWorkspace === 'function') persistWorkspace();
-        };
-        // Write one value across a whole ROW (this layer, every chord) or a whole
-        // COLUMN (this chord, every layer). The column form has to reach layers
-        // other than the clicked row, so it goes through _ambChordMatrixRows
-        // rather than the row element — and each layer it touches needs its own
-        // _ambMaskEditPoke, or the ones that are mid-loop keep the old gate.
-        const setRow = (lkey, v) => {
-          const cfg2 = E.getCfg(); const L = _ambLayerByKey(E, lkey); if (!L || !cfg2 || !cfg2.prog) return;
-          const N2 = cfg2.prog.chords.length;
-          const m = maskOf(L);
-          m.steps = Array.from({ length: N2 }, () => v);
-          commit(lkey);
-        };
-        const setCol = (ci, v) => {
-          const cfg2 = E.getCfg(); if (!cfg2 || !cfg2.prog) return;
-          const N2 = cfg2.prog.chords.length;
-          _ambChordMatrixRows(cfg2).forEach(r2 => {
-            const L = r2.L; if (!L) return;
-            const m = maskOf(L);
-            if (!Array.isArray(m.steps) || m.steps.length !== N2) { const old2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => old2 ? (Number.isFinite(old2[i2 % old2.length]) ? old2[i2 % old2.length] : 100) : 100); }
-            m.steps[ci] = v;
-            try { _ambMaskEditPoke(E, r2.key); } catch (e) {}
-          });
-          el._sig = ''; _ambRenderChordMatrix(E);
-          if (typeof persistWorkspace === 'function') persistWorkspace();
-        };
-        const chLabel = (ci) => { const c3 = (E.getCfg().prog.chords || [])[ci]; return 'chord ' + (ci + 1) + (c3 ? ' (' + chName(c3) + ')' : ''); };
-        // ---- PART macro. Per the design call, opting a layer in/out of a part is
-        // NOT a stored field — it writes the ordinary per-chord values across that
-        // part's span. Zero schema, zero migration, no new gate in the emitter, and
-        // an individual chord inside the part can still be overridden afterwards.
-        const partRange = (pi) => {
-          const ps = ((E.getCfg() || {}).prog || {}).parts;
-          if (!Array.isArray(ps) || pi < 0 || pi >= ps.length) return null;
-          let from = 0; for (let i = 0; i < pi; i++) from += Math.max(1, ps[i].len | 0);
-          return { from: from, to: from + Math.max(1, ps[pi].len | 0) };
-        };
-        const partName = (pi) => { const ps = ((E.getCfg() || {}).prog || {}).parts; return (ps && ps[pi] && ps[pi].name) || ('part ' + (pi + 1)); };
-        const ensureSteps = (L, N2) => {
-          const m = maskOf(L);
-          if (!Array.isArray(m.steps) || m.steps.length !== N2) { const o2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => o2 ? (Number.isFinite(o2[i2 % o2.length]) ? o2[i2 % o2.length] : 100) : 100); }
-          return m;
-        };
-        const setPart = (lkey, pi, v) => {
-          const cfg2 = E.getCfg(); const L = _ambLayerByKey(E, lkey); if (!L || !cfg2 || !cfg2.prog) return;
-          const r = partRange(pi); if (!r) return;
-          const m = ensureSteps(L, cfg2.prog.chords.length);
-          for (let i = r.from; i < Math.min(r.to, m.steps.length); i++) m.steps[i] = v;
-          commit(lkey);
-        };
-        const openEditor = (cell) => {
-          const sl = slot(cell); if (!sl) return;
-          const pi = Number.isFinite(el._pmPart) ? el._pmPart : -1;
-          // Does salt colour anything for this layer? Own salt wins; an explicit
-          // all-zero layer salt is OFF; otherwise the area/part salt applies.
-          const _saltOn = (() => {
-            try {
-              const L = _ambLayerByKey(E, sl.lkey);
-              const cfg2 = E.getCfg();
-              if (L && L.salt && typeof L.salt === 'object') return (L.salt.colors | 0) > 0;
-              const base = cfg2 && cfg2.prog && cfg2.prog.on && cfg2.prog.salt;
-              if (base && (base.colors | 0) > 0) return true;
-              const parts2 = cfg2 && cfg2.prog && Array.isArray(cfg2.prog.parts) ? cfg2.prog.parts : [];
-              return parts2.some(pp => pp && pp.salt && (pp.salt.colors | 0) > 0);
-            } catch (e) { return false; }
-          })();
-          // A part column has no chord behind it, so the chord-shaped actions
-          // (spread down the column, salt re-roll, snap) do not apply and are
-          // withheld rather than silently writing the wrong store.
-          const _colLbl = sl.isPart
-            ? ((cell.closest('.ambient-pm-row') && _ambLayerByKey(E, sl.lkey)) ? 'this part' : 'this part')
-            : chLabel(sl.ci);
-          _ambMaskCellModal(E, {
-            label: sl.label + ' · ' + _colLbl,
-            salt: (el._pmMask === 'salt'),
-            unit: sl.isPart ? 'part' : 'chord', value: sl.m.steps[sl.ci],
-            rowLabel: sl.label, colLabel: _colLbl,
-            partLabel: (!sl.isPart && pi >= 0) ? partName(pi) : '',
-            onSet: (v) => { const s2 = slot(cell) || sl; s2.m.steps[s2.ci] = v; commit(sl.lkey); },
-            onRow: sl.isPart ? null : ((v) => setRow(sl.lkey, v)),
-            onPart: (!sl.isPart && pi >= 0) ? ((v) => setPart(sl.lkey, pi, v)) : null,
-            onCol: sl.isPart ? null : ((v) => setCol(sl.ci, v)),
-            onReroll: () => {
-              const L = _ambLayerByKey(E, sl.lkey); if (!L) return;
-              if (!L.saltNudge || typeof L.saltNudge !== 'object') L.saltNudge = {};
-              L.saltNudge[sl.ci] = ((L.saltNudge[sl.ci] | 0) + 1);
-              try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-              // heard at the next boundary; a frozen Write loop re-captures
-              try { if (E.timer) _ambReanchorLayer(E, sl.lkey); } catch (e) {}
-              try { if (typeof showToast === 'function') showToast('New roll for ' + sl.label + ' on ' + chLabel(sl.ci) + (_saltOn ? ' — lands at the next pass.' : ' — set a Salt colour amount (layer or area) to hear it.')); } catch (e) {}
-            },
-            snapFree: (() => { try { const L = _ambLayerByKey(E, sl.lkey); return !!(L && L.saltFree && L.saltFree[sl.ci]); } catch (e) { return false; } })(),
-            onSnapToggle: () => {
-              const L = _ambLayerByKey(E, sl.lkey); if (!L) return false;
-              if (!L.saltFree || typeof L.saltFree !== 'object') L.saltFree = {};
-              const nowFree = !L.saltFree[sl.ci];
-              if (nowFree) L.saltFree[sl.ci] = 1; else delete L.saltFree[sl.ci];
-              if (!Object.keys(L.saltFree).length) delete L.saltFree;
-              try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-              try { if (E.timer) _ambReanchorLayer(E, sl.lkey); } catch (e) {}
-              return nowFree;
-            },
-            rerollWhy: _saltOn ? '' : 'This layer has no salt colours yet — the roll is stored, but set Colour (its Salt group, or the area Salt) to hear it.'
-          });
-        };
-        // The row label and the column header are the natural handles for "all of
-        // this layer" / "all layers here", so they open the editor already scoped.
-        const openRow = (lkey, label) => {
-          const L = _ambLayerByKey(E, lkey); if (!L) return;
-          const st = (L.chordMask && Array.isArray(L.chordMask.steps)) ? L.chordMask.steps : null;
-          // With a part tab open the row handle means "this layer, in THIS part" —
-          // the tab is already scoping what you can see, so scoping the bulk edit
-          // to match is what the visible grid implies. All tab = the whole row.
-          const pi = Number.isFinite(el._pmPart) ? el._pmPart : -1;
-          const r = pi >= 0 ? partRange(pi) : null;
-          if (r) {
-            _ambMaskCellModal(E, { label: label + ' · every chord in ' + partName(pi), unit: 'chord', salt: (el._pmMask === 'salt'),
-              bulk: 'chord of ' + partName(pi) + ' for this layer',
-              value: st ? (Number.isFinite(st[r.from]) ? st[r.from] : 100) : 100,
-              onSet: (v) => setPart(lkey, pi, v) });
-            return;
-          }
-          _ambMaskCellModal(E, { label: label + ' · every chord', unit: 'chord', salt: (el._pmMask === 'salt'), bulk: 'chord for this layer',
-            value: st ? st[0] : 100, onSet: (v) => setRow(lkey, v) });
-        };
-        const openCol = (ci) => {
-          _ambMaskCellModal(E, { label: chLabel(ci) + ' · every layer', unit: 'chord', salt: (el._pmMask === 'salt'), bulk: 'layer on this chord',
-            value: 100, onSet: (v) => setCol(ci, v) });
-        };
-        _ambWireMaskCells(el, openEditor);
-        el.addEventListener('click', (ev) => {
-          // The ✎ toggle rides the same delegated handler as the cells.
-          const eb = ev.target && ev.target.closest && ev.target.closest('[data-pm-edit]');
-          if (eb) { el._pmEdit = !el._pmEdit; el._sig = ''; _ambRenderChordMatrix(E); return; }
-          const tb = ev.target && ev.target.closest && ev.target.closest('[data-pmpart]');
-          if (tb) { el._pmPart = tb.dataset.pmpart | 0; el._sig = ''; _ambRenderChordMatrix(E); return; }
-          const mb = ev.target && ev.target.closest && ev.target.closest('[data-pmmask]');
-          if (mb) { el._pmMask = (mb.dataset.pmmask === 'salt') ? 'salt' : 'plays'; el._sig = ''; _ambRenderChordMatrix(E); return; }
-          // The repeat stepper sits ON the tab, because "how many times does the
-          // verse run" belongs next to the verse. 1 is neutral and is deleted
-          // rather than stored, so a plain chain keeps no plays field at all.
-          const pl = ev.target && ev.target.closest && ev.target.closest('[data-pmplays]');
-          if (pl) {
-            _E = E; const cfg3 = E.getCfg(); const ps = cfg3 && cfg3.prog && cfg3.prog.parts;
-            const aa = String(pl.dataset.pmplays).split(':'), pi = aa[0] | 0, d = aa[1] | 0;
-            if (ps && ps[pi]) {
-              const nv = Math.max(1, Math.min(64, Math.max(1, ps[pi].plays | 0) + d));
-              if (nv > 1) ps[pi].plays = nv; else delete ps[pi].plays;
-              if (typeof persistWorkspace === 'function') persistWorkspace();
-              el._sig = ''; _ambRenderChordMatrix(E);
-              try { _ambRenderProgOverview(E); _ambRenderScheduler(E); } catch (e) {}
-            }
-            return;
-          }
-          const rl = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-row > .ambient-pm-lbl');
-          if (rl) { const row2 = rl.closest('.ambient-pm-row'); openRow(row2.dataset.lkey, rl.textContent); return; }
-          const hd = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-head > .ambient-pm-ch');
-          if (hd) { openCol(Array.prototype.indexOf.call(hd.parentNode.querySelectorAll('.ambient-pm-ch'), hd)); return; }
-          const cell = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-cell'); if (!cell) return;
-          // A long-press/right-click already opened the editor for this press.
-          if (el._suppressClick) { el._suppressClick = false; return; }
-          if (el._pmEdit) { openEditor(cell); return; }
-          const sl = slot(cell); if (!sl) return;
-          sl.m.steps[sl.ci] = _ambMaskCellNext(sl.m.steps[sl.ci]);
-          commit(sl.lkey);
-        });
-        el.addEventListener('change', (ev) => {
-          const sel = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-size, .ambient-pm-place'); if (!sel) return;
-          _E = E; const row = sel.closest('.ambient-pm-row'); const L = _ambLayerByKey(E, row.dataset.lkey); if (!L) return;
-          const m = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
-          const sz = row.querySelector('.ambient-pm-size'), pl = row.querySelector('.ambient-pm-place');
-          const size = sz ? (sz.value | 0) : 100;
-          m.part = (size < 100) ? { size: size, place: (pl && pl.value) || 'start' } : null;
-          if (!m.part) delete m.part;
-          _ambMaskEditPoke(E, row.dataset.lkey);
-          el._sig = ''; _ambRenderChordMatrix(E);
-          if (typeof persistWorkspace === 'function') persistWorkspace();
-        });
-      }
-    }
-    // ---- SECTION MATRIX (layers × sections — the arrangement grid) --------
-    // Same interaction grammar as the chord matrix: tap steps the ladder, ✎ % /
-    // long-press / right-click sets an exact 0-100, per-row Part sub-window. Writes L.sectionMask; the emitters gate via
-    // _ambSectionGateOK. Shown whenever the area has sections.
-    // DEAD as of slice 4g — the part columns live in _ambRenderChordMatrix now,
-    // and its host element no longer exists, so this early-returns if called.
-    // Kept only until the merged grid has had some use; delete it and its
-    // handler once that is settled.
+    // ---- ⌗ MATRIX — REMOVED ------------------------------------------------
+    // Layers x chords, and the only editor for four engine-read stores. It is
+    // gone because ▦ Passes now holds all four, at the scope each one belongs to:
+    //
+    //   chordMask.steps   -> the Plays column   (layer scope, part tab)
+    //   saltMask.steps    -> the Salt column    (same)
+    //   chordMask.part    -> the Window control (scope bar; it is ONE {size,place}
+    //                                            per LAYER, never per chord)
+    //   sectionMask.steps -> the Blocks rows    (⇶ Parts view — open parts are the
+    //                                            only thing that store indexes, and
+    //                                            they are a row in no other grid)
+    //
+    // Bulk apply came with them, with the axes swapped: a COLUMN header there is
+    // one layer over every chord (this grid's row apply), a ROW label is one chord
+    // over every layer (its column apply). The comparison it uniquely gave —
+    // every layer at once, so you can see who drops out where — survives as the
+    // read-only `.psq-strip` under the All-layers grid, because a per-layer scope
+    // structurally cannot show it.
+    //
+    // NOTHING ABOUT THE DATA CHANGED. All four stores keep their shape, their
+    // normalize and their gates (`_ambChordGateOK` / `_ambSectionGateOK` /
+    // `_ambLayerSaltColorsOn`); only where you edit them moved. Deleting the grid
+    // BEFORE they had a home would have left them live and uneditable, which is
+    // the failure this file already recorded for a shadowed bank entry.
+
+    // DEAD — its host element has not existed since the part columns were folded
+    // into the ⌗ Matrix, and that grid is itself gone now (see the tombstone
+    // above); `sectionMask` is edited from the Blocks rows of ▦ Passes. This
+    // early-returns if called and can be deleted outright.
     function _ambRenderSectionMatrix(E) {
       const el = _ambGet(E, 'ambient-secmatrix'); if (!el) return;
       const cfg = E.getCfg();
@@ -37053,7 +40741,6 @@
     function _ambSyncFxVis(E) {
       const host = E && document.getElementById(E.hostId); if (!host) return;
       try { _ambSyncProgVis(E); } catch (e) {}
-      try { _ambRenderChordMatrix(E); } catch (e) {}
       try { _ambWirePassMatrix(E); _ambRenderPassMatrix(E); } catch (e) {}
       try { _ambRenderProgOverview(E); } catch (e) {}
       // The renderers above are what flip those bodies, so the header visibility
@@ -37425,6 +41112,15 @@
       // _ambLearnHeadSync so a new article appears the moment it lands.
       (freezeKey && String(freezeKey).split(':')[0] === 'learn'
         ? '<span class="ambient-learn-article" data-artkey="' + freezeKey + '" title="The article this layer is reading"></span>' : '') +
+      // WHERE THIS LAYER'S NOTES COME FROM, said on the header. Three states and
+      // one of them is silence: composing (the ✎ Grid session is open on THIS
+      // layer, so what is drawn is what plays — and the Plays schedule is
+      // deliberately not applied while it is), scheduled (a Plays mapping /
+      // phrase loop is driving it), and generating, which gets no badge because
+      // it is the ordinary case and a badge on every layer says nothing.
+      // Filled by _ambSrcBadgeSync — EMPTY here, so a card rebuilt mid-session
+      // shows nothing until the sync runs rather than a stale claim.
+      (freezeKey ? '<span class="ambient-srcbadge" data-srckey="' + freezeKey + '" hidden></span>' : '') +
       // Level shortcut DIAL — a compact rotary knob for this layer's level, right
       // of the readouts / left of Solo. Drag up/down (or ↑/↓ when focused) to set;
       // double-tap resets. Value/rotation filled by _ambSyncLayerUnits + kept in
@@ -40048,7 +43744,7 @@
       // this is collapsed by default and remembers its own open state per layer
       // via groupsOpen — no new machinery, and no new state to normalize.
       return [['grp', 'Instrument']].concat(voiceToks, hasTone ? [['toneseq']] : [], [
-        ['grp', 'Envelope & Tuning'],
+        ['grp2', 'Envelope & Tuning'],   // NESTED inside Instrument — see the grp2 branch
         ['sl', 'attack', 'Attack', 0, atkMax, 'ms'], ['sl', 'decay', 'Decay', 0, decMax, 'ms'],
         ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, relMax, 'ms'],
         ['sl', 'fine', 'Fine', -100, 100, 'cents'], ['sl', 'portamento', 'Portamento', 0, 300, 'ms glide'],
@@ -40608,7 +44304,6 @@
           '<div class="ambient-ctrl ambient-patsrc"><label>Notes from</label><span class="ambient-seg-row">' +
             '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="generate" data-seedkey="' + _ambEscText(_sk) + '" title="This layer\u2019s Pattern: the rhythm below, with the engine picking each note from the Notes pool.">\u2ff4 Pattern</button>' +
             '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="grid" data-seedkey="' + _ambEscText(_sk) + '" title="A fixed phrase you compose in the full editor. Replaces the Pattern while it is set \u2014 the two are alternatives, not layers.">\u270e Grid</button>' +
-            '<button type="button" class="ambient-seg amb-seedsave" data-savekey="' + _ambEscText(_sk) + '" disabled title="' + _ambEscAttr(_AMB_SEEDSAVE_TITLE) + '">\u{1F4BE} Save</button>' +
           '</span></div>' +
           '<div class="ambient-euclid-presetrow"><select id="' + p + '-euclidpreset" class="ambient-select ambient-euclid-preset" title="The rhythm this pattern came from. Reads Custom once you edit it — save a Custom to keep it.">' + _ambEuclidPresetOptions(inst) + '</select>' +
             '<button type="button" id="' + p + '-euclidrand" class="ambient-euclid-rand" title="Roll a brand-new random on/off pattern straight into the grid \u2014 an actual random rhythm, not a randomly chosen preset. Press again for another; keep one with Save.">\ud83c\udfb2 Random</button>' +
@@ -40742,45 +44437,31 @@
         for (let i = bank.length - 1; i >= 0; i--) { const x = bank[i];
           if (x && x.type !== 'audio' && Array.isArray(x.steps) && x.steps.length) usable.push(x); }
         const map = (inst && inst.partSeqs && typeof inst.partSeqs === 'object') ? inst.partSeqs : {};
-        let parts = [];
-        try { const c0 = (_E && (_E._cfg || (_E.getCfg && _E.getCfg()))) || null;
-          if (c0 && c0.prog && c0.prog.on && Array.isArray(c0.prog.parts)) parts = c0.prog.parts; } catch (e) {}
-        const boundTo = _ambPartSeqBoundTo(map, parts);
+        // The whole CFG, not just `parts` — naming a part needs the progression
+        // too, because a part-less progression is named by `prog.name`.
+        let c0 = null;
+        try { c0 = (_E && (_E._cfg || (_E.getCfg && _E.getCfg()))) || null; } catch (e) { c0 = null; }
+        if (!(c0 && c0.prog && c0.prog.on)) c0 = null;
+        const boundTo = _ambPartSeqBoundTo(map, c0);
+        // A BUTTON, NOT A ROW OF CHIPS. The chips could do exactly one thing —
+        // adopt a whole phrase — and there is nowhere in a chip row to say
+        // "bars 2-3 of motif3, over chord 4, stretched", which is the mapping
+        // this is for. The button states what is mapped so the fold hides no
+        // state (the drum-solo lesson), and the popover has room for the rest.
+        const _mapN = Object.keys(map).reduce((a, k) => a + ((map[k] && typeof map[k] === 'object') ? Object.keys(map[k]).length : 0), 0);
+        const _boundNames = Object.keys(boundTo);
         let h = '<div class="ambient-ctrl ambient-seqbank-row"><label title="' +
-          _ambEscAttr('The phrases banked from this layer’s ✎ Grid. Tapping one makes it this layer’s OWN phrase — ' +
-            'which is what it plays wherever the Plays row below is blank. The Plays row schedules a phrase per PASS; ' +
-            'this row decides the one underneath it.') +
-          '">Sequences</label><span class="ambient-seqbank" data-sbkey="' + _ambEscText(_ek) + '">';
-        // ALREADY-DUPLICATED NAMES cannot be repaired silently — renaming one
-        // would repoint whatever maps to it. So mark the SHADOWED copies: the
-        // resolver takes the first match, and every later entry with that name
-        // is unreachable no matter which chip you tap.
-        const _seen = Object.create(null);
-        const _shadowed = new Set();
-        for (let i = bank.length - 1; i >= 0; i--) {          // bank order = resolve order
-          const x = bank[i]; if (!x || !x.name) continue;
-          if (_seen[x.name]) _shadowed.add(x); else _seen[x.name] = 1;
-        }
-        h += usable.length
-          ? usable.map(x => {
-              const bt = boundTo[x.name];
-              const shadow = _shadowed.has(x);
-              return '<button type="button" class="ambient-seg ambient-sgseq' + (bt ? ' bound' : '') +
-                (shadow ? ' shadowed' : '') +
-                '" data-sgseq="' + _ambEscAttr(x.name) + '" data-sbkey="' + _ambEscText(_ek) + '" title="' +
-                _ambEscAttr(x.name + ' — ' + x.steps.length + ' steps' +
-                  (bt ? ' · scheduled on ' + bt.join(', ') : '') +
-                  (shadow
-                    ? '. ⚠ ANOTHER phrase in the bank has this exact name, and it comes first — ' +
-                      'so anything scheduled as “' + x.name + '” plays that one, not this. ' +
-                      'Re-save this one under a different name to make it reachable.'
-                    : '. Tap to make it this layer’s OWN phrase, replacing the one it has — ' +
-                      'it then plays wherever the Plays row is blank.')) + '">' +
-                (shadow ? '⚠ ' : '') + _ambEscAttr(x.name) +
-                (bt ? '<i>' + _ambEscAttr(bt.join(', ')) + '</i>' : '') + '</button>';
-            }).join('')
-          : '<span class="ambient-hint">none yet — compose in ✎ Grid, then ⬇ Save as sequence</span>';
-        h += '</span></div>';
+          _ambEscAttr('The phrases banked from this layer’s ✎ Grid, and where each one plays. ' +
+            'Open it to give this layer a phrase of its own, or to map a slice of one onto a chord of the changes.') +
+          '">Sequences</label>' +
+          '<span class="ambient-seqbank">' +
+          '<button type="button" class="ambient-seg ambient-seqmap-open" data-sgmap="' + _ambEscAttr(_ek) + '" title="' +
+            _ambEscAttr(usable.length
+              ? (usable.length + ' banked · ' + (_mapN ? (_mapN + ' mapped') : 'nothing mapped yet'))
+              : 'Nothing banked yet — compose in ✎ Grid, then ⬇ Save as sequence') + '">' +
+            '🗂 ' + (usable.length ? (usable.length + ' banked') : 'none banked') +
+            (_mapN ? ('<i>' + _mapN + ' mapped' + (_boundNames.length ? (' · ' + _ambEscText(_boundNames.slice(0, 2).join(', '))) : '') + '</i>') : '') +
+          '</button></span></div>';
         // ALWAYS RENDER THE ROW once there is something to map. It used to be
         // gated on parts.length > 1, so a layer with a saved sequence and a
         // one-part (or absent) progression showed Sequences and NO Plays row and
@@ -41107,7 +44788,7 @@
     function _ambPrimaryCardBody(type, inst) {
       const sch = _AMB_LAYER_SCHEMA[type]; if (!sch) return '';
       const p = 'ambient-' + type, lk = type; inst = inst || {};
-      let html = '', grpOpen = false, subOpen = false;
+      let html = '', grpOpen = false, subOpen = false, sub2Open = false;
       // Kit-voice drum picker (the schema carries no single-drum control) —
       // mirrors the extras card injection. For a Beat, no Voices row (its schema
       // already has euclidVoices).
@@ -41115,12 +44796,28 @@
       sch.ctrls.forEach(c => {
         if (c[0] === 'grp') {
           if (subOpen) { html += '</div>'; subOpen = false; }
+          if (sub2Open) { html += '</div></div>'; sub2Open = false; }
           if (grpOpen) html += '</div></div>';
           const name = c[1], open = _ambGroupOpen(inst, name);
           html += '<div class="ambient-grp' + (open ? ' open' : '') + '" data-grp="' + name + '">' +
             '<button type="button" class="ambient-grp-head" data-grp="' + name + '">' + name +
             '<span class="ambient-grp-caret" aria-hidden="true"></span></button><div class="ambient-grp-body">';
           grpOpen = true;
+        } else if (c[0] === 'grp2') {
+          // A GROUP NESTED INSIDE THE CURRENT ONE. `grp` is a flat marker — it
+          // closes whatever came before — so a subsection needs its own token or
+          // it becomes a sibling. Collapsible for free: the panel build binds
+          // EVERY `.ambient-grp-head` in the host, so this needs no new handler
+          // (adding one makes it fire twice and the group never appears to open).
+          if (subOpen) { html += '</div>'; subOpen = false; }
+          if (sub2Open) html += '</div></div>';
+          {
+            const n2 = c[1], o2 = _ambGroupOpen(inst, n2);
+            html += '<div class="ambient-grp ambient-grp-sub' + (o2 ? ' open' : '') + '" data-grp="' + n2 + '">' +
+              '<button type="button" class="ambient-grp-head" data-grp="' + n2 + '">' + n2 +
+              '<span class="ambient-grp-caret" aria-hidden="true"></span></button><div class="ambient-grp-body">';
+            sub2Open = true;
+          }
         } else if (c[0] === 'sub') {
           // A sub-block WRAPS its rows (until the next grp/sub) so visibility
           // gates can target the whole block (e.g. _ambSyncProgVis).
@@ -41132,6 +44829,7 @@
         }
       });
       if (subOpen) html += '</div>';
+      if (sub2Open) html += '</div></div>';
       if (grpOpen) html += '</div></div>';
       html += _ambLayerRampsHtml(type);   // per-layer Ramps (filled by _ambRenderRamps)
       return html;
@@ -41154,6 +44852,7 @@
       // into an implicit ungrouped bucket that's always shown.
       let grpOpen = false;        // is a group <div> currently open?
       let subOpen = false;        // is a sub-block <div> currently open?
+      let sub2Open = false;       // is a NESTED group (grp2) currently open?
       const ctrlHtml = (c) => _ambCtrlHtml(c, p, lk, inst, type);
       // A Kit or Sample voice has no scale/pitch material: hide the synth instrument
       // (`tone`) and the whole Seed group (notes/register/…) — and the Key group
@@ -41163,6 +44862,7 @@
       sch.ctrls.forEach(c => {
         if (c[0] === 'grp') {
           if (subOpen) { html += '</div>'; subOpen = false; }
+          if (sub2Open) { html += '</div></div>'; sub2Open = false; }
           if (grpOpen) html += '</div></div>';   // close prior group body + wrapper
           grpOpen = false;
           // Beat is exempt: its Source group IS the rhythm generator (Mode toggle,
@@ -41177,6 +44877,22 @@
             '<span class="ambient-grp-caret" aria-hidden="true"></span></button>' +
             '<div class="ambient-grp-body">';
           grpOpen = true;
+        } else if (c[0] === 'grp2') {
+          // NESTED group — opens inside the current group's body rather than
+          // closing it. `grp` is flat by design, so a subsection needs its own
+          // token. Collapsible for free: the panel build binds every
+          // `.ambient-grp-head`, so this must NOT get a handler of its own.
+          if (skipGroup) return;
+          if (subOpen) { html += '</div>'; subOpen = false; }
+          if (sub2Open) html += '</div></div>';
+          {
+            const n2 = c[1], o2 = _ambGroupOpen(inst, n2);
+            html += '<div class="ambient-grp ambient-grp-sub' + (o2 ? ' open' : '') + '" data-grp="' + n2 + '">' +
+              '<button type="button" class="ambient-grp-head" data-grp="' + n2 + '">' + n2 +
+              '<span class="ambient-grp-caret" aria-hidden="true"></span></button>' +
+              '<div class="ambient-grp-body">';
+            sub2Open = true;
+          }
         } else if (c[0] === 'sub') {
           if (skipGroup) return;
           // A sub-block WRAPS its rows (until the next grp/sub) so visibility
@@ -41191,6 +44907,7 @@
         }
       });
       if (subOpen) html += '</div>';
+      if (sub2Open) html += '</div></div>';
       if (grpOpen) html += '</div></div>';
       html += _ambLayerRampsHtml(fkey);   // per-layer Ramps (filled by _ambRenderRamps)
       // Per-layer Reset — restores every group to its default fold state.
@@ -44265,9 +47982,6 @@
               '</div>' +
             _ambProgGrpClose() +
             (E.isLane ? '' :
-              _ambProgGrpOpen('matrix', '\u2317 Matrix', false) +
-              '<div class="ambient-progmatrix" id="ambient-progmatrix" style="display:none"></div>' +
-              _ambProgGrpClose() +
               // PASSES — the part matrix. Deliberately NOT called a third
               // "matrix": ⌗ Matrix is layers × chords and ☷ Sections is layers ×
               // sections, so a third one with a third axis pair would repeat the
@@ -45182,6 +48896,35 @@
             items.push({ label: (on && labelOn) ? labelOn : label, fn: () => setTimeout(() => { try { b.click(); } catch (err) {} }, 0) });
           };
           add('.ambient-solo-btn', 'S Solo', '✓ S Solo (on)', 'soloed');
+          try {
+            const _mk = String(lm.dataset.menukey || '');
+            const _L = _mk ? _ambLayerByKey(E, _mk) : null;
+            if (_L) {
+              // BYPASS EVERY STOCHASTIC CONTROL, one switch. Parks all 30 at zero
+              // and remembers them, so it is reversible. The label states which way
+              // it will go AND how many are parked — a switch whose state is
+              // invisible gets reported as a bug (the drum-solo lesson).
+              const _on = _ambVaryBypassOn(_L);
+              let _n = 0;
+              try {
+                _n = _on ? Object.keys(_L._varyBak || {}).length
+                         : _ambStochKeys().filter(k => typeof _L[k] === 'number' && _L[k] !== 0).length;
+              } catch (e) {}
+              items.push({
+                label: _on ? ('\u2713 \u2684 Variance bypassed \u2014 restore ' + _n)
+                           : (_n ? ('\u2684 Bypass variance (' + _n + ')') : '\u2684 Bypass variance \u2014 none set'),
+                fn: () => setTimeout(() => {
+                  try {
+                    if (!_ambVaryBypassSet(_L, !_on)) return;
+                    if (E.timer) { try { _ambReanchorLayer(E, _mk); } catch (e) {} }
+                    try { _ambSyncControls(E); } catch (e) {}
+                    try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+                    try { showToast(_on ? 'Variance restored' : ('Variance bypassed \u2014 ' + _n + ' parked at 0'), { ms: 2600 }); } catch (e) {}
+                  } catch (e) {}
+                }, 0)
+              });
+            }
+          } catch (e) {}
           // THE WAY BACK from a set-aside voice, offered on the layer it affects.
           if (_ambVoiceLatched() && /^(learn|sireel):/.test(String(lm.dataset.menukey || ''))) {
             items.push({ label: '⟳ Try the voice again', fn: () => setTimeout(() => { try { _ambVoiceRetry(); } catch (e) {} }, 0) });
@@ -46570,10 +50313,13 @@
                 // as runtime material, silently refuses to persist it, and the
                 // toast below is a lie.
                 try { delete _ambFreezeState(E, key2)._partSeqName; } catch (x) {}
-                _ambStepsToLock(E, key2, steps, true);        // the live install path
+                // Same rule as every other compose-session install: when the
+                // grid is open, the loop is the PASS's length.
+                _ambStepsToLock(E, key2, steps, true,
+                  (_bloomGridEdit && _bloomGridEdit.key === key2) ? _ambComposeLoopBars(E, _bloomGridEdit) : null);
                 const f3 = _ambFreezeState(E, key2);
                 f3.frozen = true; f3._lock = true;
-                delete f3._partSeqName;
+                delete f3._partSeqName; delete f3._partSeqSig;
                 if (!f3.keyCtx) f3.keyCtx = _ambCurKeyCtx(E);
                 const L3 = _ambLayerByKey(E, key2);
                 if (L3) { if (!L3.lockState || typeof L3.lockState !== 'object') L3.lockState = {}; L3.lockState.seedEdit = true; }
@@ -46582,6 +50328,39 @@
                 if (typeof persistWorkspace === 'function') persistWorkspace();
                 if (typeof showToast === 'function') showToast(_ambAdoptedMsg(_ambLayerByKey(E, key2), saved.name));
               } catch (err) { console.warn('Load sequence failed', err); }
+              return;
+            }
+            // ⬇ UPDATE — write the lane back to the entry it came from. This is
+            // what makes a banked phrase EDITABLE rather than write-once: every
+            // layer that plays it follows, which is the point of a shared bank.
+            const su = ev.target && ev.target.closest && ev.target.closest('.ambient-seedgrid-update');
+            if (su) {
+              ev.stopPropagation();
+              const ge2 = _bloomGridEdit;
+              if (!ge2 || su.dataset.sgk !== ge2.key || !ge2.seqName) return;
+              const nm2 = ge2.seqName;
+              let idx = -1;
+              try { idx = savedSequences.findIndex(x => x && x.name === nm2); } catch (x) { idx = -1; }
+              if (idx < 0) {
+                // It was deleted or renamed while the grid was open — say so
+                // rather than silently recreating it under the old name.
+                ge2.seqName = '';
+                try { _ambGridLoadedBar(E); } catch (x) {}
+                try { if (typeof showToast === 'function') showToast('“' + nm2 + '” is no longer in the bank — use ⬇ To bank… to save these steps.', { warn: true, ms: 9000 }); } catch (x) {}
+                return;
+              }
+              try {
+                const cl = (typeof cloneStep === 'function') ? cloneStep : (o => JSON.parse(JSON.stringify(o)));
+                const kept = savedSequences[idx];
+                kept.steps = ((ge2.lane && ge2.lane.steps) || []).map(cl);
+                if (typeof persistSaved === 'function') persistSaved();
+                if (typeof renderSavedSequences === 'function') renderSavedSequences();
+                try { _ambRenderExtras(E); _ambRefreshSeedModes(E); } catch (x) {}
+                let uses = 0; try { uses = _ambSeqUses(nm2).cells; } catch (x) { uses = 0; }
+                if (typeof showToast === 'function') {
+                  showToast('Updated “' + nm2 + '”' + (uses ? (' · ' + uses + ' mapping' + (uses === 1 ? '' : 's') + ' now play the new version') : ''));
+                }
+              } catch (x) { try { if (typeof showToast === 'function') showToast('Could not update: ' + ((x && x.message) || x), { warn: true, ms: 9000 }); } catch (y) {} }
               return;
             }
             const sb = ev.target && ev.target.closest && ev.target.closest('.ambient-seedgrid-bank');
@@ -46610,6 +50389,17 @@
                   else if (after <= before) showToast('Save did not add anything to the bank — nothing to report from saveAsNewSeq.', { warn: true, ms: 12000 });
                   else showToast('Saved to the sequence bank — reusable on any layer, and bindable to a part.');
                 }
+                // YOU ARE NOW EDITING WHAT YOU JUST SAVED. Without this the dock
+                // still read "this layer's phrase" straight after banking it, and
+                // the next Save would mint a second copy under a suffixed name.
+                if (!failed && after > before) {
+                  try {
+                    const _ge = _bloomGridEdit;
+                    const _new = savedSequences[savedSequences.length - 1];
+                    if (_ge && _ge.key === _lk && _new && _new.name) _ge.seqName = _new.name;
+                    _ambGridLoadedBar(E);
+                  } catch (x) {}
+                }
                 if (failed) { try { console.error('Save as sequence failed:', failed); } catch (x) {} }
               } catch (err) { console.warn('Save as sequence failed', err); }
               finally {
@@ -46630,7 +50420,17 @@
             const sg = ev.target && ev.target.closest && ev.target.closest('.ambient-seedgrid-done, .ambient-seedgrid-cancel');
             if (sg && hostEl.contains(sg)) {
               _E = E;
-              try { _ambGridEditStop(sg.classList.contains('ambient-seedgrid-cancel')); } catch (e) {}
+              const _cancel = sg.classList.contains('ambient-seedgrid-cancel');
+              // Leaving the session with unsaved writing loses it — a phrase is a
+              // document, and ✓ Done closes the editor rather than saving.
+              if (_ambPhraseDirty(_bloomGridEdit)) {
+                _ambPhraseGuard(_cancel ? 'Quitting' : 'Closing the grid', () => {
+                  try { _ambGridEditStop(_cancel); } catch (e) {}
+                  try { _ambRefreshSeedModes(E); } catch (e) {}
+                });
+                return;
+              }
+              try { _ambGridEditStop(_cancel); } catch (e) {}
               try { _ambRefreshSeedModes(E); } catch (e) {}   // seg returns to Author
               return;
             }
@@ -46923,20 +50723,9 @@
           hostEl.addEventListener('click', (ev) => {
             const btn = ev.target && ev.target.closest && ev.target.closest('.ambient-seg-field .ambient-seg-opt');
             if (!btn || !hostEl.contains(btn)) return;
-            const row = btn.closest('.ambient-seg-field'); const field = row && row.getAttribute('data-field'); if (!field) return;
+            const row = btn.closest('.ambient-seg-field'); if (!row) return;
             const key = _ambCardKey(btn.closest('.ambient-layer')); if (!key) return;
-            _E = E; const lc = _ambLayerByKey(E, key); if (!lc) return;
-            lc[field] = btn.getAttribute('data-val');
-            row.querySelectorAll('.ambient-seg-opt').forEach(b => b.classList.toggle('active', b === btn));
-            if (field === 'home') { try { _ambSyncControls(E); } catch (e) {} }   // Home shifts the seed preview
-            // Drone Prog mode (Pedal ↔ Voicings): a MODE flip mid-play must drop the
-            // scheduled-ahead notes of the OLD mode (a pedal hold can span many bars)
-            // and refresh the explanation line under the Note picker.
-            if (field === 'progMode') {
-              if (E.timer) { try { _ambReanchorLayer(E, key); } catch (e) {} }
-              try { const inf = btn.closest('.ambient-layer').querySelector('.ambient-pedal-info'); if (inf && inf._pedalRefresh) inf._pedalRefresh(); } catch (e) {}
-            }
-            if (typeof persistWorkspace === 'function') persistWorkspace();
+            _ambSegCommit(E, key, row, btn, false);
           });
           // Dry Kill (per-FX) + Wet Only (layer) checkboxes — ONE delegated change
           // listener for every card (class-based, mobile-safe). Both re-apply the

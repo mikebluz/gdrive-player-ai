@@ -2885,7 +2885,16 @@
       box-shadow: 0 12px 40px rgba(0,0,0,0.6); padding: 16px; box-sizing: border-box;
       color: #e2e8f0; font-family: 'Segoe UI', sans-serif;
     }
-    .pe-title { font-size: 1rem; font-weight: 700; color: #cbd5e0; }
+    .pe-title { font-size: 1rem; font-weight: 700; color: #cbd5e0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+    /* The NAME leads visually — it is what you are editing; the label beside it
+       is just context. It wraps rather than ellipsing: a name clipped to nothing
+       is the problem this row exists to fix. */
+    .pe-title-nm { flex: 1 1 120px; min-width: 0; font-weight: 700; color: #f6e05e;
+      white-space: normal; overflow-wrap: anywhere; }
+    .pe-title-ren { flex: 0 0 auto; min-height: 30px; padding: 4px 10px; border-radius: 6px;
+      border: 1px solid #3a3a55; background: #1b1b2b; color: #cbd5e0; font-size: 0.72rem;
+      font-weight: 600; cursor: pointer; }
+    .pe-title-ren:hover { border-color: #4fd1c5; color: #4fd1c5; }
     .pe-chords { display: flex; flex-wrap: wrap; gap: 6px; }
     .pe-chord { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 54px; padding: 6px 8px; border: 1px solid #2d2d3f; border-radius: 8px; background: #1a1a2e; color: #cbd5e0; cursor: pointer; font-weight: 700; touch-action: none; }
     /* Drag-to-reorder (main strip): the lifted chord dims; a purple insertion
@@ -2908,6 +2917,15 @@
     .pe-pickrow { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 2px 0; }
     .pe-pickrow label { font-size: 0.8rem; color: #a0aec0; margin-right: 4px; }
     .pe-roots { display: flex; flex-wrap: wrap; gap: 3px; }
+    /* `.ambient-select` is width:100%, which in an auto-sized flex row resolves
+       circularly and swallows the whole line (the documented trap) — so the two
+       chord selects carry an EXPLICIT width and never grow. */
+    /* COMPOUND selectors: `.ambient-select` is declared LATER in this file, so a
+       single-class override loses the cascade and the select takes the whole row. */
+    select.ambient-select.pe-rootsel { width: 96px; flex: 0 0 auto; min-height: 32px; }
+    select.ambient-select.pe-qualsel { width: 136px; flex: 0 0 auto; min-height: 32px; }
+    .pe-pickhint { font-size: 0.68rem; color: #718096; margin-left: 2px; }
+    @media (max-width: 420px) { select.ambient-select.pe-rootsel { width: 84px; } select.ambient-select.pe-qualsel { width: 116px; } }
     .pe-root { padding: 4px 7px; min-width: 30px; text-align: center; border: 1px solid #2d2d3f; border-radius: 6px; background: #1a1a2e; color: #cbd5e0; cursor: pointer; font-size: 0.8rem; }
     @media (hover: hover) { .pe-root:hover, .pe-q:hover { border-color: #6b5b95; color: #e6ddff; } }
     /* Selected root / matching quality — purple, matching the chord selection. */
@@ -2954,7 +2972,9 @@
     .pe-addtrans { color: #f6ad55; border-color: #6b4a2a !important; }
     .pe-transnote { margin: 4px 0 8px; padding: 6px 9px; border: 1px solid #3a3a52; border-left: 3px solid #f6ad55; border-radius: 6px; background: rgba(246,173,85,0.07); color: #a9b3c4; font-size: 0.74rem; line-height: 1.45; }
     .pe-transnote b { color: #f6d5a8; }
-    .pe-save { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+    /* WRAPS: four footer buttons overflowed the dialog by ~99px at 390px, and
+       horizontal scroll is not an option here (UI rule 1). */
+    .pe-save { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px; }
     .pe-save input { flex: 1; min-width: 0; padding: 6px 10px; background: #0f0f1e; border: 1px solid #2d2d3f; border-radius: 6px; color: #e2e8f0; }
     .pe-apply { background: rgba(159,122,234,0.22) !important; border-color: #9f7aea !important; color: #e2d9f5 !important; font-weight: 600; }
     /* Preview = an audition control → teal accent, distinct from the purple Save/selection. */
@@ -3553,10 +3573,121 @@
     .ambient-pov-part { flex: 1 1 100%; min-width: 0; padding: 7px 8px; border: 1px solid #23233a;
       border-radius: 8px; background: rgba(255,255,255,0.022); }
     .ambient-pov-part.pov-part-open { border-style: dashed; background: rgba(255,255,255,0.012); }
-    .ambient-pov-partname { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: #c9a8ec; cursor: pointer; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; touch-action: manipulation; }
+    /* It is a RENAME HANDLE, not a caption — 14px of text is not a tap target on
+       a phone, so it carries its own padding up to the 30px floor. */
+    .ambient-pov-partname { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: #c9a8ec; cursor: pointer; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; touch-action: manipulation;
+      display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 0 6px; margin-left: -6px; border-radius: 6px; }
+    @media (hover: hover) { .ambient-pov-partname:hover { background: rgba(201,168,236,0.12); } }
     .ambient-pov-partname em { font-style: normal; font-weight: 500; color: #6b7280; text-transform: none; }
     .ambient-pov-partops { display: inline-flex; gap: 3px; flex: 0 0 auto; }
     /* A part's own key is a modulation — named on the part header, not buried. */
+    /* The part-LESS header's key chip is a READOUT, not a handle (there is no
+       part to give its own key), so it takes the cursor and the pointer off. */
+    .ambient-pov-solohdr .ambient-pov-partkey { cursor: default; }
+    /* ⌂ <root> — what the changes are rooted on, beside the key they play in.
+       Dimmer than the key: it is the second fact, not the headline. */
+    .ambient-pov-partroot { font-style: normal; opacity: 0.72; letter-spacing: 0.2px; }
+    /* Placement with nothing to place: the button states why and does not open. */
+    .ambient-pitchbtn[disabled] { opacity: 0.5; cursor: not-allowed; }
+    /* WHERE A LAYER'S NOTES COME FROM — on the card header, beside the length
+       readouts. `flex: 0 0 auto` and a hard cap: `.ambient-layer-head` is a
+       WRAPPING flex row, so a chip that sizes to its text pushes Solo and the
+       caret onto a second line (the documented trap the article chip hit). */
+    .ambient-srcbadge {
+      flex: 0 0 auto; display: inline-flex; align-items: center; gap: 3px;
+      max-width: 13ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      padding: 1px 6px; border-radius: 999px;
+      font-size: 0.56rem; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;
+    }
+    .ambient-srcbadge[hidden] { display: none; }
+    /* Composing is a LIVE, temporary state you are inside — amber, and it
+       breathes, so it cannot be mistaken for a permanent property. */
+    .ambient-srcbadge.is-compose {
+      background: rgba(246,173,85,0.18); border: 1px solid rgba(246,173,85,0.55); color: #f6ad55;
+      animation: ambSrcPulse 1.8s ease-in-out infinite;
+    }
+    /* Scheduled is a settled property of the layer — teal, static. */
+    .ambient-srcbadge.is-sched {
+      background: rgba(79,209,197,0.14); border: 1px solid rgba(79,209,197,0.45); color: #7fd6c4;
+    }
+    @keyframes ambSrcPulse { 0%,100% { opacity: 1 } 50% { opacity: 0.55 } }
+    @media (prefers-reduced-motion: reduce) { .ambient-srcbadge.is-compose { animation: none } }
+    /* THE GLYPH ALONE, AT EVERY WIDTH. `.ambient-layer-head` WRAPS, and a
+       wrapping flex row breaks before it shrinks, so the worded badge cost the
+       header a whole extra row — measured 5 → 6 at BOTH 390px and 900px (the
+       card is a panel column, not the viewport). Two glyphs and two colours are
+       ample signal beside the equally compact bars/unit chips; the word lives in
+       the title, which is where the rest of this header keeps its prose. */
+    /* ▦ Passes scope row — "Showing: All layers | <layer>". Sits under the part
+       tabs and reuses their chip, so the two selectors read as one hierarchy
+       (which part, then whose view of it). */
+    /* Trailing per-chord columns in the layer scope. Narrow and fixed so the
+       phrase cells keep the width — they carry names, these carry a % . */
+    /* WHO PLAYS HERE — read-only comparison across layers, the one thing a
+       per-layer scope cannot show. Fill = how often that layer plays that chord,
+       on the same green the mask cells use so the two read as one language. */
+    .psq-bulk { cursor: pointer; touch-action: manipulation; }
+    .psq-bulk:hover { color: #b2f5ea; }
+    .psq-bulk:focus-visible { outline: 2px solid #4fd1c5; outline-offset: 2px; }
+    .psq-strip { margin-top: 10px; padding: 9px 9px 7px; background: #12121f; border: 1px solid #2d2d3f; border-radius: 8px; }
+    .psq-striphd { font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: #8a8aa8; font-weight: 700; margin-bottom: 6px; }
+    .psq-striprow { display: flex; align-items: center; gap: 3px; margin-bottom: 3px; }
+    .psq-stripnm { flex: 0 0 62px; font-size: 10px; color: #8a8aa8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .psq-dot { flex: 1 1 0; min-width: 10px; height: 15px; padding: 0; border: 1px solid #2d2d3f; border-radius: 4px;
+      background: rgba(53,201,142,calc(var(--pv, 100) * .01 - .05)); cursor: pointer; touch-action: manipulation; }
+    .psq-dot:hover { border-color: #35c98e; }
+    .psq-dot:focus-visible { outline: 2px solid #35c98e; outline-offset: 1px; }
+    /* Chord names under the columns — layers are the rows, so a layer reads
+       along its own row and the labels belong at the foot. */
+    .psq-stripfoot { display: flex; gap: 3px; margin-top: 4px; }
+    .psq-stripfoot > span { flex: 1 1 0; min-width: 10px; text-align: center; font-size: 8.5px; color: #8a8aa8;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .psq-stripfoot > span:first-child { flex: 0 0 62px; }
+    .psq-trailhd { flex: 0 0 46px; text-align: center; font-size: 9px; letter-spacing: .08em;
+      text-transform: uppercase; color: #4fd1c5; font-weight: 700; align-self: center; }
+    .pmx-row > .ambient-pm-cell[data-pmk] { flex: 0 0 46px; height: 26px; }
+    .psq-winbar { gap: 6px; }
+    .psq-winsel { width: 74px; flex: 0 0 auto; }
+    .pmx-scope { align-items: center; }
+    .pmx-scopelbl {
+      flex: 0 0 auto; margin-right: 4px;
+      font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase;
+      color: #8a8aa8; font-weight: 700;
+    }
+    /* The layer scope is a different QUESTION from the part tabs, so it takes the
+       teal the rest of this panel reserves for per-layer scope rather than the
+       purple the structural tabs use. */
+    .pmx-scope .pmx-tab.active { background: rgba(79,209,197,.18); border-color: #4fd1c5; color: #b2f5ea; }
+    /* PHRASE | PLAYS — a secondary MODE over one grid, so it takes the same teal
+       as the layer scope above it: both answer "about this layer", where the
+       purple tabs answer "about this part". */
+    .pmx-mode { align-items: center; gap: 4px; }
+    .pmx-mode .pmx-tab.active { background: rgba(79,209,197,.18); border-color: #4fd1c5; color: #b2f5ea; }
+    /* HOLD PASS is a TRANSPORT state, not an edit — amber, the colour this panel
+       already uses for "something is overriding the normal order", and loud while
+       held so a lock can never be invisible (the drum-solo lesson). */
+    .pmx-hold { flex: 0 0 auto; min-height: 30px; }
+    .pmx-hold.on { background: rgba(246,173,85,.18); border-color: #f6ad55; color: #ffd9a8; font-weight: 700; }
+    .pmx-hold[disabled] { opacity: .45; cursor: default; }
+    @media (prefers-reduced-motion: no-preference) {
+      .pmx-hold.on { animation: pmxHoldPulse 1.9s ease-in-out infinite; }
+      @keyframes pmxHoldPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(246,173,85,.34); } 50% { box-shadow: 0 0 0 3px rgba(246,173,85,0); } }
+    }
+    /* A cell with no setting of its own SHOWS what it inherits, dashed — a solid
+       cell asserts "this pass says so" and a dashed one "the chord says so", so
+       the two are never confused for one another. Same fill either way, because
+       the value shown is the value that plays. */
+    .ambient-pm-cell[data-pminherit] { border-style: dashed; border-color: #4a4a68; opacity: .74; }
+    .ambient-pm-cell[data-pminherit]:hover { opacity: 1; }
+    /* GENERATE — amber, the colour this panel already uses for "this does not do
+       what the neighbouring cells do" (the inert/n-a marks), never the green that
+       means "sounding". A generate cell is not a phrase, so it must not read as
+       one at a glance. */
+    .psq-cell.psq-gen { color: #f6ad55; border-color: rgba(246,173,85,.5); }
+    .psq-cell.psq-gen.on { background: rgba(246,173,85,.16); border-color: #f6ad55; }
+    .ambient-srcbadge { max-width: none; font-size: 0.66rem; padding: 1px 5px; letter-spacing: 0; }
+    .ambient-srcbadge > .ambient-srcbadge-w { display: none; }
+
     .ambient-pov-partkey { display: inline-flex; align-items: center; justify-content: center; gap: 3px; min-width: 22px; height: 22px; padding: 0 7px; border: 1px dashed #3a3a52; border-radius: 6px; background: transparent; color: #6b7280; cursor: pointer; font-size: 0.66rem; font-weight: 700; white-space: nowrap; touch-action: manipulation; }
     /* Inherited from the area reads dimmer than a modulation the part owns — the
        label states the key either way, the weight says whose it is. */
@@ -7184,17 +7315,30 @@
        a left handle when "Resize edges: Both". Dragging a handle changes the
        step's length; touch-action:none so the drag resizes instead of scrolling
        the lane strip. The chip body still selects on tap. */
+    /* A GRIP CANNOT OWN MOST OF ITS CHIP. At a fine step size a lane cell is
+       ~30px, so two 10px handles claimed two thirds of it and a tap meant to
+       SELECT started a resize instead. Capped relative to the chip, so it stays
+       a 10px target on a wide step and shrinks with a narrow one. With BOTH
+       edges enabled the two together are capped at 40%, so the majority of any
+       chip always still selects. Measured on the dense case (32 sixteenths in a
+       bar at 390px = 22px cells): 91% of the chip was resize territory, now 40%. */
     .seq-resize-handle {
-      position: absolute; top: 0; height: 100%; width: 10px; z-index: 5;
+      position: absolute; top: 0; height: 100%; width: clamp(4px, 20%, 10px); z-index: 5;
       cursor: ew-resize; touch-action: none;
     }
     .seq-resize-r { right: 0; }
     .seq-resize-l { left: 0; }
+    /* The visible tick is DIMMER at rest and lights on hover / while dragging.
+       Asked as "what are these vertical lines in steps": at full strength, two
+       per chip across a 32-cell bar reads as stripes rather than as a grip on
+       the step you are pointing at. */
     .seq-resize-handle::after {
       content: ''; position: absolute; top: 50%; transform: translateY(-50%);
-      width: 2px; height: 46%; border-radius: 1px; background: rgba(160,160,200,0.5);
+      width: 2px; height: 46%; border-radius: 1px; background: rgba(160,160,200,0.22);
       transition: background 0.1s ease;
     }
+    .seq-step:hover .seq-resize-handle::after,
+    .seq-step.selected .seq-resize-handle::after { background: rgba(160,160,200,0.6); }
     .seq-resize-r::after { right: 2px; }
     .seq-resize-l::after { left: 2px; }
     @media (hover: hover) { .seq-resize-handle:hover::after { background: #d6bcfa; } }
@@ -8400,6 +8544,32 @@
       cursor: pointer;
     }
     .wrap-bank-chip-x:hover { color: #f472b6; }
+    /* AREA BANK — the area's own changes, grouped by part. Its chips carry a
+       chord NAME rather than a one-letter bank id, so the 34px square the User
+       bank is sized for would clip every one of them; they keep their width and
+       only the delete/label reveal stays tied to `.active`. */
+    .wrap-bank-chips.wb-area .wrap-bank-chip:not(.active) .wrap-bank-chip-recall {
+      width: auto; min-width: 34px; height: 34px; padding: 0 9px;
+    }
+    .wrap-bank-chips.wb-area .wrap-bank-chip:not(.active) .wrap-bank-chip-name {
+      font-size: 0.74rem; letter-spacing: 0.2px;
+    }
+    /* The part a run of chips belongs to, said once at the head of the run. */
+    .wrap-bank-part {
+      flex: 0 0 auto;
+      align-self: center;
+      padding: 0 2px 0 6px;
+      font-size: 0.58rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: rgba(226, 189, 246, 0.72);
+      max-width: 12ch;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .wrap-bank-part:first-child { padding-left: 0; }
     /* Mobile tweaks — keep the strip tap-friendly without letting a
        long active label dominate a 360 px viewport. The Wraps label
        drops a notch and the active label cap tightens so a long stack
@@ -13108,6 +13278,47 @@
 .ambient-sgfor.active { background: rgba(159,122,234,0.24); border-color: #9f7aea; color: #e9d8fd; }
 .ambient-sgpass { min-height: 30px; min-width: 30px; padding: 3px 8px; font-size: 0.62rem; touch-action: manipulation; }
 .ambient-sgpass.active { background: rgba(159,122,234,0.24); border-color: #9f7aea; color: #e9d8fd; }
+    .sgfor-one { font-size: 0.66rem; color: #e9d8fd; padding: 0 2px; }
+    .sgpass-step { display: inline-flex; align-items: center; gap: 3px; }
+    .sgpass-step > b { font-size: 0.62rem; color: #e2e8f0; min-width: 60px; text-align: center; }
+/* THE COMPOSE BAR IS ROWS, not one wrapping blob. Twenty controls in a single
+   flex row put the passes on a line of their own and ran the prose through the
+   buttons; each group now owns a line and stays on it. */
+    .ambient-seedgrid-live { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+    /* A CLASS RULE THAT SETS display BEATS [hidden], so `lb.hidden = !editing`
+       set the property and hid nothing — ✕ Close and ⬇ To bank… sat under the
+       Compose row with no grid open. Same defect .ambient-seedgrid-slot[hidden]
+       above exists to fix; these rows needed their own companion. */
+    .ambient-seedgrid-live[hidden], .sglive-row[hidden] { display: none; }
+    /* Same companion for every host the JS toggles with `hidden`: any class
+       rule setting display outranks it, and an empty box with margins is
+       the whitespace between Compose and Harmony. */
+    .ambient-seedgrid-dockhost[hidden], .ambient-seedgrid-prib[hidden],
+    .ambient-seedgrid-chords[hidden], .ambient-seedgrid-striphost[hidden],
+    .ambient-seedgrid-bar[hidden], .amb-seedsave[hidden] { display: none !important; }
+    /* AN EMPTY READOUT STILL TAKES A LINE BOX — measured 14.75px, which is the
+       band between Compose and Harmony on a composed layer that is not being
+       edited. The slot is deliberately kept open by STATE (it hosts the readout
+       and the piano) and the readout is legitimately empty while stopped, so the
+       collapse belongs in CSS: `:empty` needs no JS timing and cannot race
+       _ambUpdateNotesLive the way a geometry read in the sync did. */
+    .ambient-seedgrid-slot > .ambient-notes-live:empty { display: none; }
+    /* A ZERO-HEIGHT ITEM STILL TAKES A FLEX/GRID SLOT — and still gets the
+       container's `gap` on both sides. Collapsing every child to 0 therefore
+       did NOT close the band between Compose and Harmony; only leaving layout
+       does. `display: none` when nothing inside has content.
+       Safe against the documented trap (hiding the slot once made the readout
+       unable to measure its way back): that was a JS geometry read taken at a
+       fixed point in the sync, whereas `:has()` re-evaluates live — the moment
+       the readout gains a child the selector stops matching and the slot is
+       back. No timing, no ordering hazard. */
+    .ambient-seedgrid-slot:not(:has(> *:not([hidden]):not(:empty))) { display: none !important; }
+    .sglive-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; }
+    /* EVERY control in this bar clears the touch floor. Done/Cancel/Save and the
+       pass steppers were inheriting a 24px seg size — under the 30px minimum
+       this app holds itself to, on the one surface that is used with a thumb. */
+    .ambient-seedgrid-live button { min-height: 30px; }
+    .ambient-seedgrid-for, .ambient-seedgrid-gran { width: 100%; }
 .sgpass-lbl { margin-left: 6px; }
 /* THE BAR RULER — the lane's OWN geometry: one row per bar, `--sgsub` (32)
    columns, chord segments spanning their sub-cell range. Same grid as
@@ -13144,20 +13355,40 @@
    Both rows are the lane's own 32-column grid, so a step sits under the chord
    it plays against by construction rather than by measurement. */
     .sgbar-block { margin-bottom: 6px; }
-    .sglane-row {
-      display: grid; grid-template-columns: repeat(var(--sgsub), minmax(0, 1fr));
-      gap: 2px; position: relative; min-height: 34px;
-    }
+    /* It IS a `.lane-chips` — the columns, chip sizing, triplet marks and
+       playhead rules all come from that. This only adds room for the bar number
+       and stops the strip's own margins stacking. */
+    /* An empty lane row collapses to nothing (a grid with no children), which
+       drew as a chord header with no steps under it. Floor its height so a bar
+       the phrase has not reached still reads as a bar. */
+    .sglane-row { position: relative; margin: 0; min-height: 26px; }
+    /* A REPEATED bar — the phrase is shorter than the pass, so these are the
+       same steps as an earlier bar. Dimmed, never hidden: it IS what sounds. */
+
+
     .sgbar-n {
       position: absolute; left: -12px; top: 50%; transform: translateY(-50%);
       font-style: normal; font-size: 0.52rem; color: #6b6b8a; pointer-events: none;
     }
-    .sglane-row .sgstep { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The real lane is hidden OFF-SCREEN, not `display: none` — a tap on the mirror
    is forwarded to the chip it mirrors, and drag/long-press handlers need real
    GEOMETRY to translate coordinates onto. `display:none` gives zero rects, so
    clicks worked and every coordinate gesture silently did nothing. Laid out at
    the same width, just parked where it cannot be seen or hit. */
+    /* PARKED BY LOCATION, not by class. `renderSequence` builds a FRESH
+       `.lane-row` — so a class parks it only until the next redraw, and anything
+       that redraws the lane (PERF, a step-size change) brings the whole real
+       phrase back on screen underneath the mirror as a second block of rows.
+       `_ambGridBarStrip` re-applies the class when it repaints, but nothing
+       guarantees it repaints first, and a JS re-park has the same problem: it
+       needs a hook on every path that re-renders. A descendant rule has no hook
+       to miss.
+       The striphost IS where the real lane row renders while composing — that is
+       the row the chord strip mirrors — so parking it is correct, not a
+       regression. Perf failing was the TRANSPORT (it started the grid lanes
+       instead of the Bloom area), fixed separately in 16-grid-controls. */
+    .ambient-seedgrid-striphost .lane-row,
+    .ambient-seedgrid-dockhost .lane-row,
     .lane-row.sg-mirrored {
       position: absolute; left: -10000px; top: 0;
       opacity: 0; pointer-events: none; z-index: -1;
@@ -13710,7 +13941,15 @@
     .ambient-passmx .pmx-h.incol { color: #cbd5e0; }
     .ambient-passmx .pmx-cell.incol { border-color: rgba(203,213,224,0.4); }
     .ambient-passmx .pmx-seq.incol { border-color: rgba(203,213,224,0.45); border-style: solid; color: #e2e8f0; }
-    .ambient-passmx .pmx-cell.playing {
+    /* THE LAYER'S PLAYS MATRIX GETS THE SAME PLAYHEAD. Its cells already carry
+       `pmx-cell`, but every rule here was scoped to `.ambient-passmx` — the pass
+       matrix's own host — so the JS applied `.playing` to the layer grid exactly
+       as intended and NOTHING STYLED IT. A probe that asserts on the class reads
+       green while the screen never changes; only a rule that matches makes it
+       visible. Scoped to both hosts so the two grids cannot drift apart. */
+    .ambient-partmap .pmx-cell.incol { border-color: rgba(203,213,224,0.4); }
+    .ambient-passmx .pmx-cell.playing,
+    .ambient-partmap .pmx-cell.playing {
       background: rgba(72,187,120,0.34); border-color: #48bb78; color: #f0fff4;
       box-shadow: 0 0 0 1px rgba(72,187,120,0.5);
     }
@@ -13820,3 +14059,134 @@
       touch-action: manipulation; cursor: pointer; white-space: nowrap;
     }
     .ambient-euclid-savekit:hover { border-color: #4fd1c5; color: #4fd1c5; }
+
+    /* ---- SEQUENCES POPOVER (map a slice of a phrase onto a chord) ---------- */
+    .ambient-seqmap { align-items: flex-start; justify-content: center; padding: 5vh 10px; overflow-y: auto; }
+    .seqmap-modal { width: min(560px, 94vw); max-height: 88vh; overflow-y: auto; background: #12121f;
+      border: 1px solid #2d2d3f; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+    .seqmap-hd { display: flex; align-items: center; gap: 8px; }
+    .seqmap-hd b { font-size: 0.95rem; color: #e2e8f0; }
+    .seqmap-hd span { flex: 1 1 auto; min-width: 0; font-size: 0.75rem; color: #a0aec0; overflow-wrap: anywhere; }
+    .seqmap-x, .seqmap-rm, .seqmap-clear { border: 1px solid #2d2d3f; background: #1a1a2e; color: #cbd5e0;
+      border-radius: 6px; cursor: pointer; min-height: 30px; padding: 0 9px; font-size: 0.75rem; }
+    .seqmap-x:hover, .seqmap-rm:hover { border-color: #fc8181; color: #fc8181; }
+    .seqmap-sec { border: 1px solid #23233a; border-radius: 9px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .seqmap-lbl { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #8f9bb3; }
+    .seqmap-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .seqmap-chip { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px;
+      min-height: 38px; padding: 4px 10px; }
+    .seqmap-chip i { font-style: normal; font-size: 0.62rem; color: #718096; }
+    /* Rows WRAP — four controls on one line is 560px of desktop and nothing on a
+       phone, and horizontal scroll is not an option here (UI rule 1). */
+    .seqmap-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .seqmap-row > label { flex: 0 0 84px; font-size: 0.72rem; color: #a0aec0; }
+    .seqmap-row .ambient-hint { flex: 1 1 100%; font-size: 0.68rem; color: #718096; }
+    /* Explicit widths: `.ambient-select` is width:100% and declared later, so a
+       bare class here loses the cascade and each select eats the whole row. */
+    .seqmap-row select.ambient-select { flex: 0 0 auto; width: 150px; min-height: 34px; }
+    .seqmap-row select.ambient-select[data-smqf="pass"],
+    .seqmap-row select.ambient-select[data-smqf="ci"] { width: 132px; }
+    /* 16px or iOS zooms the page on focus and never zooms back. */
+    .seqmap-row input[type="number"] { width: 66px; min-height: 34px; font-size: 16px; text-align: center;
+      background: #0f0f1e; border: 1px solid #2d2d3f; border-radius: 6px; color: #e2e8f0; padding: 2px 4px; }
+    .seqmap-dash { font-size: 0.72rem; color: #718096; }
+    .seqmap-go { margin-top: 2px; }
+    .seqmap-map { min-height: 38px; padding: 0 14px; font-weight: 600; }
+    .seqmap-list { display: flex; flex-direction: column; gap: 5px; }
+    .seqmap-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 7px;
+      background: rgba(255,255,255,0.03); }
+    .seqmap-item b { font-size: 0.76rem; color: #c9a8ec; white-space: normal; overflow-wrap: anywhere; }
+    .seqmap-item span { flex: 1 1 auto; min-width: 0; font-size: 0.68rem; color: #a0aec0; white-space: normal; overflow-wrap: anywhere; }
+    .seqmap-foot { font-size: 0.66rem; }
+    .ambient-seqmap-open { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 12px; }
+    .ambient-seqmap-open i { font-style: normal; font-size: 0.64rem; color: #4fd1c5; }
+    @media (max-width: 460px) {
+      .seqmap-row > label { flex: 1 1 100%; }
+      .seqmap-row select.ambient-select,
+      .seqmap-row select.ambient-select[data-smqf="pass"],
+      .seqmap-row select.ambient-select[data-smqf="ci"] { width: calc(50% - 4px); }
+    }
+    /* Inline refusal inside a .sm-modal — wraps, never clipped (the modal is a
+       fixed width:min(360px,92vw), where a nowrap line simply exits the box). */
+    .sm-modal .sm-warn { font-size: 0.72rem; line-height: 1.35; color: #f6ad55;
+      background: rgba(246,173,85,0.10); border: 1px solid rgba(246,173,85,0.35);
+      border-radius: 7px; padding: 7px 9px; margin: 6px 0 0;
+      white-space: normal; overflow-wrap: anywhere; }
+    /* A ruler chord is a HANDLE — it scopes every grid action to its bar. */
+    .ambient-sgbar { cursor: pointer; touch-action: manipulation; }
+    @media (hover: hover) { .ambient-sgbar:hover { filter: brightness(1.35); } }
+    .ambient-sgbar.scoped { background: rgba(79,209,197,0.28); color: #d8fffb;
+      box-shadow: inset 0 0 0 1px #4fd1c5; font-weight: 700; }
+    .sglane-row.sgbar-scoped { box-shadow: inset 0 0 0 1px rgba(79,209,197,0.45); border-radius: 6px; }
+    .seqmap-chipwrap { display: inline-flex; align-items: stretch; gap: 0; }
+    .seqmap-chipwrap .seqmap-chip { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+    .seqmap-del { min-width: 34px; min-height: 38px; border: 1px solid #2d2d3f; border-left: 0;
+      border-radius: 0 7px 7px 0; background: #16162a; color: #718096; cursor: pointer; font-size: 0.78rem; }
+    .seqmap-del:hover { border-color: #fc8181; color: #fc8181; background: rgba(252,129,129,0.10); }
+    .ambient-seedgrid-update { background: rgba(79,209,197,0.16); border-color: #4fd1c5; color: #d8fffb; }
+    .ambient-seedgrid-update[hidden] { display: none; }
+    /* THE STRIP HEADLINE: two choosers plus a readout, on one wrapping row.
+       `.ambient-select` is width:100% and declared later, so both selects need
+       COMPOUND selectors and an explicit width or each one eats the line. */
+    .ambient-sgruler-lbl { display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
+      min-width: 0; padding: 2px 0 4px; }
+    select.ambient-select.sgru-part { flex: 0 0 auto; width: 108px; min-height: 30px; font-size: 0.72rem; font-weight: 600; }
+    select.ambient-select.sgru-part:disabled { opacity: 1; color: #c9a8ec; border-color: #2d2d3f; }
+    select.ambient-select.sgru-seq { flex: 0 1 auto; width: 140px; min-height: 30px; font-size: 0.72rem; }
+    select.ambient-select.sgru-pass { flex: 0 0 auto; width: 96px; min-height: 30px; font-size: 0.72rem; }
+    .sgru-dot { color: #4a5568; font-size: 0.7rem; }
+    .sgru-tail { flex: 1 1 100%; min-width: 0; font-size: 0.66rem; color: #8f9bb3;
+      white-space: normal; overflow-wrap: anywhere; }
+    @media (min-width: 620px) { .sgru-tail { flex: 1 1 auto; } }
+    @media (max-width: 430px) {
+      select.ambient-select.sgru-part { width: 92px; }
+      select.ambient-select.sgru-seq { width: 118px; }
+      select.ambient-select.sgru-pass { width: 84px; }
+    }
+    /* ⧉ Copy another chord's steps into this one — on the chord header, because
+       a chord is the unit you write. */
+    .sgbar-copy { margin-left: 8px; min-width: 24px; min-height: 22px; padding: 0 6px;
+      border-radius: 5px; border: 1px solid rgba(255,255,255,0.22); background: rgba(0,0,0,0.25);
+      color: rgba(255,255,255,0.75); font-size: 0.68rem; line-height: 1; cursor: pointer;
+      vertical-align: middle; }
+    .sgbar-copy:hover { border-color: #4fd1c5; color: #4fd1c5; background: rgba(79,209,197,0.18); }
+    /* Dim the CHIPS, never the row: `opacity` on a parent composites the whole
+       subtree, so a child cannot opt out, and the row's one live control would
+       be dimmed with the echo it sits in. */
+
+    /* CHORD BLOCKS: the header names the chord AND its length; a row is as long
+       as the slice of a bar it covers, and holds proportionally fewer cells, so
+       a STEP is the same width in every row. */
+    .ambient-sgbar .sgbar-len { font-style: normal; font-weight: 500; font-size: 0.62rem;
+      color: rgba(255,255,255,0.55); margin-left: 7px; }
+    .sglane-row { box-sizing: border-box; }
+    /* A short row must not stretch: it is narrower BECAUSE the chord is. */
+    .sgbar-block { min-width: 0; }
+
+    /* A repeat is INFORMATION, so it stays readable — the notice above names it,
+       and a chip too faint to read looks like a fault instead. */
+
+
+/* A NESTED group (grp2) — a subsection INSIDE a group's body. Indented and
+   quieter than a top-level group so the hierarchy reads, and it reuses
+   .ambient-grp entirely so its fold state, caret and toggle come for free. */
+.ambient-grp-body > .ambient-grp.ambient-grp-sub { margin: 4px 0 2px 8px; border-left: 2px solid rgba(160,174,192,0.18); padding-left: 6px; }
+.ambient-grp-body > .ambient-grp.ambient-grp-sub > .ambient-grp-head { font-size: 0.72rem; opacity: 0.85; min-height: 34px; }
+
+/* Placement — Home/Register/Range/Proximity collapsed to one row + popover. The
+   holder is only ever hidden by `hidden`, so it needs the companion rule (a class
+   setting display would outrank it — the trap this file keeps paying for). */
+.ambient-pitchhold[hidden] { display: none; }
+.ambient-pitchbtn { min-height: 34px; padding: 4px 10px; }
+#ambient-pitchpop .ambient-pitchpop-body .ambient-ctrl { margin: 6px 0; }
+/* HOME'S THREE OPTIONS NEED THE FULL WIDTH IN HERE. The popover is
+   `min(460px, 94vw)` against a card that is wider, so the trailing hint squeezed
+   the buttons until "Ceiling" broke across two lines. Drop the hint to its own
+   row — the same shape the Proximity description already takes — and let the
+   options span. Compound selector on purpose: `.ambient-ctrl-seg .ambient-seg-field`
+   is declared later in this file, so a single-class override loses the cascade. */
+#ambient-pitchpop .ambient-pitchpop-body .ambient-ctrl-seg > .ambient-seg-field { grid-column: 2 / -1; }
+#ambient-pitchpop .ambient-pitchpop-body .ambient-ctrl-seg > .ambient-hint {
+  grid-column: 1 / -1; white-space: normal; overflow-wrap: anywhere; min-width: 0;
+}

@@ -136,6 +136,19 @@ const CONFIGS = [
     parts: [['Verse', 3, 0, null, null, { cols: 2, seq: {}, bars: { 0: [1, 1, 1] } }], ['Chorus', 1]] },
   { id: 'grid-fit-bars', chords: [0, 5, 7, 9], bars: [2, 0.5, 1, 1],
     parts: [['Verse', 3, 0, null, null, { cols: 2, fit: 1, seq: { 0: [0, 2, 0] }, bars: { 0: [0, 4] } }], ['Chorus', 1]] },
+  // GRID + REPEATS. `plays` says how many VISITS a part gets per iteration and
+  // the grid says what each visit PLAYS — they compose, and the visit is what
+  // advances the part's column, so pass 2 lands on the second run. This shipped
+  // broken (the default meta order returned one visit per part, so `Verse ×2 ·
+  // Chorus` played Verse Chorus Verse Chorus) precisely because no config here
+  // combined them. A CHAIN still outranks `plays`, which grid-chain-plays pins.
+  { id: 'grid-plays',   chords: [0, 5, 7, 9],
+    parts: [['Verse', 2, 2, null, null, { cols: 2, seq: { 1: [1] } }], ['Chorus', 2]] },
+  { id: 'grid-plays-3', chords: [0, 5, 7, 9, 2, 4],
+    parts: [['A', 3, 2, null, null, { cols: 3, seq: { 1: [0], 2: [2, 0] } }], ['B', 1], ['C', 2, 3]] },
+  { id: 'grid-chain-plays', chords: [0, 5, 7, 9],
+    parts: [['Verse', 2, 2, null, null, { cols: 2, seq: { 1: [1] } }], ['Chorus', 2]],
+    chain: [0, 1, 0] },
 ];
 
 // The walk: 32 bars at a quarter bar. Long enough that part repeats, section
@@ -194,6 +207,7 @@ const WALK_BARS = 32, WALK_STEP = 0.25;
       });
       if (c.salt) cfg.prog.salt = c.salt;
       if (c.arrGrid) cfg.prog.arrGrid = c.arrGrid;   // PART MATRIX: the meta grid
+      if (c.chain) cfg.prog.chain = c.chain;        // ORDER OF PLAY (outranks `plays`)
       if (c.sections) cfg.sections = c.sections.map(([name, bars, part, key, groove, rot]) => ({
         name, bars, ...(part != null ? { part } : {}), ...(key != null ? { key } : {}),
         ...(groove ? { groove } : {}), ...(rot != null ? { keyModeRot: rot } : {}) }));

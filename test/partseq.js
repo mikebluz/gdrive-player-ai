@@ -108,9 +108,14 @@ const CHROME = process.env.CHROME_PATH
       // Re-normalising must be a no-op, or the migration is not idempotent.
       eq('migrate/idempotent', E.getCfg().bed.partSeqs[0],
         { '0:*': 'riffA', '1:*': 'riffB', '2:*': 'riffA', '3:*': 'riffB', '4:*': 'riffA', '5:*': 'riffB' });
-      // A width-only grid must NOT engage the clock — that is what makes the
-      // migration safe to apply on its own.
-      eq('migrate/clock untouched', _ambGridOn(c2), false);
+      // A WIDTH-ONLY GRID NOW ENGAGES THE CLOCK — deliberately reversed. Width
+      // was inert so this migration (which widens a part to the LCM of the
+      // layers' cycling lists) could be applied silently; the cost was that
+      // setting Passes to N drew N columns and changed nothing about what
+      // played, reported three times as "it's skipping the second pass". A
+      // control that does nothing is the worse of the two, and the migration is
+      // long past. The migrated project now genuinely runs those passes.
+      eq('migrate/width engages the clock', _ambGridOn(c2), true);
     }
 
     // ---- 2. WHICH PASS ------------------------------------------------------
@@ -215,7 +220,10 @@ const CHROME = process.env.CHROME_PATH
         E.getCfg().bed.partSeqs, { 0: { all: 'riffB' } });
     }
 
-    // ---- 4. A BLANK CELL PLAYS THE LAYER'S OWN PHRASE -----------------------
+    // ---- 4. A BLANK CELL IS SILENT ------------------------------------------
+    // A phrase-driven layer plays what the schedule says and NOTHING ELSE: an
+    // unmapped pass is a deliberate rest. It used to fall back to the layer's own
+    // material, which is why a phrase written for one pass leaked into the rest.
     {
       const cfg = baseProg([['Verse', 2], ['Chorus', 2]]);
       cfg.prog.parts[0].grid = { cols: 2, seq: {} };
@@ -234,17 +242,20 @@ const CHROME = process.env.CHROME_PATH
       eq('own/lockState survives the install',
         ((E.getCfg().bed.lockState || {}).notes || []).length, 2);
 
-      // Verse pass 1 — blank — must hand the layer back its own phrase.
+      // Verse pass 1 — blank — is SILENT, not the layer's own phrase.
       _ambPartSeqSync(E, E._cfg, 4 * barSec + 0.05);
-      eq('own/blank cell clears the mapping', !!(E.freeze[key] || {})._partSeqName, false);
-      eq('own/blank cell restores the own phrase',
-        ((E.freeze[key] || {}).events || []).length, 2);
-      eq('own/restored phrase is the layer’s, not the bank’s',
-        ((E.freeze[key] || {}).events || []).map(e => Math.round(e.freq)), [440, 550]);
+      eq('own/blank cell drops the mapped phrase',
+        (E.freeze[key] || {})._partSeqName !== 'riffA', true);
+      eq('own/blank cell plays nothing', ((E.freeze[key] || {}).events || []).length, 0);
+      eq('own/blank cell stays frozen so the emitter cannot fill it',
+        !!(E.freeze[key] || {}).frozen, true);
+      eq('own/lockState is NOT consumed by going silent',
+        ((E.getCfg().bed.lockState || {}).notes || []).length, 2);
     }
     {
-      // A layer with NO phrase of its own was GENERATING; a blank cell must hand
-      // it back to the emitter rather than leaving a stale loop frozen on it.
+      // A layer that is phrase-driven goes SILENT on a blank cell — it does not
+      // hand back to the emitter. Generating there is what made an unmapped pass
+      // play something nobody wrote.
       const cfg = baseProg([['Verse', 2], ['Chorus', 2]]);
       cfg.prog.parts[0].grid = { cols: 2, seq: {} };
       cfg.bed.partSeqs = { 0: { '0:*': 'riffA' } };
@@ -256,8 +267,10 @@ const CHROME = process.env.CHROME_PATH
       _ambPartSeqSync(E, E._cfg, 4 * barSec + 0.05);
       // The re-anchor can leave an EMPTY freeze entry behind; what matters is
       // that nothing is frozen on the layer any more, not that the key is gone.
-      eq('own/generating layer thaws on a blank cell',
-        !!(E.freeze.bed && E.freeze.bed.frozen), false);
+      eq('own/blank cell silences rather than thaws',
+        !!(E.freeze.bed && E.freeze.bed.frozen), true);
+      eq('own/silenced layer emits nothing',
+        ((E.freeze.bed || {}).events || []).length, 0);
     }
 
     // ---- 4b. FOUR LEVELS: chord -> pass -> part -> the layer's own phrase ---
@@ -278,13 +291,16 @@ const CHROME = process.env.CHROME_PATH
       eq('levels/chord key survives', stored['2:0'], 'lift');
 
       const L = E._cfg.bed;
-      const at = (pass, ci) => _ambPartSeqResolve(L, 0, pass, ci);
+      // PROJECT to what this block is about — which level won, and with what
+      // name. The resolver also carries the slice SPEC now; asserting on the
+      // whole object would make every additive field a test failure.
+      const at = (pass, ci) => { const r = _ambPartSeqResolve(L, 0, pass, ci); return { name: r.name, from: r.from }; };
       eq('levels/chord+pass wins', at(2, 0), { name: 'lift', from: 'cell' });
       eq('levels/then the pass', at(1, 0), { name: 'riffB', from: 'pass' });
       eq('levels/then the part', at(0, 1), { name: 'riffA', from: 'all' });
       eq('levels/pass 3, other chord falls to the part', at(2, 1), { name: 'riffA', from: 'all' });
       // A part with NOTHING set falls all the way through to the layer's own.
-      eq('levels/other part falls through', _ambPartSeqResolve(L, 1, 0, 0),
+      eq('levels/other part falls through', (r => ({ name: r.name, from: r.from }))(_ambPartSeqResolve(L, 1, 0, 0)),
         { name: '', from: '' });
 
       // …and the matrix must SHOW the inheritance, or the picture contradicts
@@ -324,15 +340,20 @@ const CHROME = process.env.CHROME_PATH
       cfg.bed.partSeqs = { 0: { '1:1': 'riffB' } };
       E._cfg = E.getCfg();
       const barSec = (60 / 120) * 4;
-      // Verse = chords 0-1 (bars 0-2); pass 0 = bars 0-2, pass 1 = bars 4-6.
-      const seen = [0, 1, 4, 5].map(bar => {
+      // Verse = chords 0-1 (bars 0-2). A part runs its passes BACK TO BACK, so
+      // pass 0 = bars 0-2 and pass 1 = bars 2-4; the Chorus follows at bar 4.
+      // (It used to interleave — pass 1 sat at bars 4-6, after the Chorus — and
+      // these sample points are the only thing about this test that moved: what
+      // it asserts, "riffB plays over chord 1 of pass 1 and nowhere else", is
+      // unchanged.)
+      const seen = [0, 1, 2, 3].map(bar => {
         const w = _ambPartChordAt(E, E._cfg, bar * barSec + 0.05);
         return w ? (w.pi + '/' + w.pass + '/' + w.ci) : '-';
       });
       eq('chord/where are we', seen, ['0/0/0', '0/0/1', '0/1/0', '0/1/1']);
       const nm = (bar) => _ambPartSeqNameAt(E, E._cfg, E._cfg.bed, bar * barSec + 0.05);
       eq('chord/only that chord on that pass',
-        [nm(0), nm(1), nm(4), nm(5)], [null, null, null, 'riffB']);
+        [nm(0), nm(1), nm(2), nm(3)], [null, null, null, 'riffB']);
     }
 
     // ---- 5. ADOPTING FROM THE SEQUENCES ROW RELEASES THE MAPPING ------------
@@ -363,8 +384,138 @@ const CHROME = process.env.CHROME_PATH
       const barSec = (60 / 120) * 4;
       _ambPartSeqSync(E, E._cfg, 0.05);                       // pass 0 re-takes it
       _ambPartSeqSync(E, E._cfg, 4 * barSec + 0.05);          // pass 1 is blank
-      eq('adopt/blank pass returns the adopted phrase',
-        ((E.freeze.bed || {}).events || []).map(e => Math.round(e.freq)), [330]);
+      eq('adopt/blank pass is silent, adopted phrase or not',
+        ((E.freeze.bed || {}).events || []).length, 0);
+    }
+
+    // ---- 5b. THE LOOP OVERRIDE ----------------------------------------------
+    // `L.phraseLoop` names one phrase the layer loops for the whole piece and it
+    // OUTRANKS the schedule — so a mapped pass and a blank pass both play it.
+    {
+      const cfg = baseProg([['Verse', 2], ['Chorus', 2]]);
+      cfg.prog.parts[0].grid = { cols: 2, seq: {} };
+      const barSec = (60 / 120) * 4;
+      cfg.bed.partSeqs = { 0: { '0:*': 'riffA' } };
+      cfg.bed.phraseLoop = 'riffB';
+      E._cfg = E.getCfg();
+      eq('override/survives normalize', E.getCfg().bed.phraseLoop, 'riffB');
+      _ambPartSeqSync(E, E._cfg, 0.05);                       // a MAPPED pass
+      eq('override/beats a mapped cell', (E.freeze.bed || {})._partSeqName, 'riffB');
+      _ambPartSeqSync(E, E._cfg, 4 * barSec + 0.05);          // a BLANK pass
+      eq('override/plays on a blank pass too', (E.freeze.bed || {})._partSeqName, 'riffB');
+      eq('override/is not silent', ((E.freeze.bed || {}).events || []).length > 0, true);
+      // An empty string is not an override — it must not survive normalize, or
+      // absence and "no override" become two different states.
+      cfg.bed.phraseLoop = '';
+      eq('override/empty string is dropped', E.getCfg().bed.phraseLoop, undefined);
+    }
+    {
+      // A layer with NEITHER a mapping nor an override is not phrase-driven and
+      // must be left completely alone — otherwise switching a progression on
+      // silences every layer in the project.
+      const cfg = baseProg([['Verse', 2], ['Chorus', 2]]);
+      delete cfg.bed.partSeqs; delete cfg.bed.phraseLoop;
+      E._cfg = E.getCfg();
+      delete E.freeze.bed;
+      _ambPartSeqSync(E, E._cfg, 0.05);
+      eq('override/un-mapped layer is untouched', !E.freeze.bed || !E.freeze.bed.frozen, true);
+    }
+
+    // ---- 5b. GENERATE — the third answer ------------------------------------
+    // A cell can say "no composed phrase here". That is a real answer, so it
+    // STOPS the cascade at the level that said it — returning it as an absence
+    // would be indistinguishable from "nothing set" and the next level up would
+    // answer instead, which is the whole bug this exists to fix.
+    {
+      const cfg = baseProg([['Verse', 2], ['Chorus', 2]]);
+      E._cfg = E.getCfg();
+      const L = cfg.bed;
+      const GEN = window._ambPartSeqGenSentinel;
+      const R = (pass, ci) => { const r = _ambPartSeqResolve(L, 0, pass, ci);
+        return r.gen ? ('GEN@' + r.from) : (r.name ? (r.name + '@' + r.from) : '-'); };
+
+      L.partSeqs = { 0: { all: 'riffA', '1:*': GEN } };
+      eq('gen/part default still answers', R(0, 0), 'riffA@all');
+      eq('gen/a pass can opt out', R(1, 0), 'GEN@pass');
+      eq('gen/it does NOT fall through to the part default', R(1, 1), 'GEN@pass');
+
+      L.partSeqs = { 0: { '0:*': 'riffB', '0:1': GEN } };
+      eq('gen/a cell outranks its pass', R(0, 1), 'GEN@cell');
+      eq('gen/its neighbour is unaffected', R(0, 0), 'riffB@pass');
+
+      // It is a stored value like any other, so it must survive a normalize —
+      // getCfg runs one on every call and a dropped sentinel would silently
+      // revert the cell to "inherit", i.e. back to playing the phrase.
+      L.partSeqs = { 0: { all: GEN } };
+      eq('gen/survives normalize', (E.getCfg().bed.partSeqs || {})[0], { all: GEN });
+      // ...and a layer holding only a Generate cell is still phrase-driven, or
+      // the sync would never run and never hand it back.
+      eq('gen/keeps the layer phrase-driven', _ambPhraseDriven(E.getCfg().bed), true);
+    }
+
+    // ---- 5c. PASS LOCK + the per-pass Plays key ------------------------------
+    // Holding a pass repeats it by pushing the CHORD CLOCK's anchor forward one
+    // pass at a time; releasing stops pushing, so the current repetition simply
+    // runs on into the next pass. And the per-pass mask has to be reachable
+    // WHILE held — that is the whole point of holding one.
+    {
+      const cfg = baseProg([['A', 2], ['B', 2]]);
+      cfg.prog.parts[0].plays = 3;
+      cfg.bpm = 240; cfg.barsPerChord = 1;
+      E._cfg = E.getCfg(); E._progAnchor = 0; E._barGridAnchor = 0; E._playStartAt = 0;
+      const c2 = E._cfg, L = c2.bed;
+      const barSec = (60 / 240) * 4, at = (b2) => b2 * barSec;
+      const where = (b2) => { const w = _ambPartChordAt(E, c2, at(b2));
+        return w ? (c2.prog.parts[w.pi].name + (w.pass + 1)) : '?'; };
+
+      eq('lock/free walk', [0, 2, 4, 6].map(where), ['A1', 'A2', 'A3', 'B1']);
+
+      const held = _ambPassLockEngage(E, c2, at(2));
+      eq('lock/engages on the pass playing now', held && held.pass, 1);
+      // The span is BISECTED out of the clock, so it carries float noise — an
+      // over-long span means the wrap misses the boundary bar and one bar of the
+      // NEXT pass plays between repetitions. It must land on the bar grid.
+      eq('lock/span is snapped to the grid', Math.round((held.to - held.from) / barSec * 1e6) / 1e6, 2);
+
+      const held6 = [];
+      for (let b2 = 2; b2 < 10; b2++) { _ambPassLockSync(E, c2, at(b2), 0); held6.push(where(b2)); }
+      eq('lock/repeats that pass and nothing else', [...new Set(held6)], ['A2']);
+
+      // THE KEY THE GATE LOOKS UP MUST BE THE KEY THE GRID WROTE. The gate used
+      // to build it from `sp.step` (the raw progression index) while the cell is
+      // keyed on `rg.from + w.ci` — under parts those are DIFFERENT numbers for
+      // the same sounding chord (measured 2 vs 0), so every lookup missed and the
+      // gate silently fell through to the per-chord default.
+      _ambChordPassSet(L, held.pass, 0, 0);              // silence chord 0 of the held pass
+      _ambPassLockSync(E, c2, at(10), 0);
+      eq('lock/a live per-pass edit is heard while held',
+        _ambChordGateOK(E, L, at(10), c2, c2.prog, false), false);
+      eq('lock/…and only on the chord it names',
+        _ambChordGateOK(E, L, at(11), c2, c2.prog, false), true);
+      _ambChordPassSet(L, held.pass, 0, null);
+      eq('lock/undoing it is heard too',
+        _ambChordGateOK(E, L, at(12), c2, c2.prog, false), true);
+
+      // RELEASE IS NOTHING AT ALL — stop pushing the anchor and the current
+      // repetition runs on into the next pass.
+      _ambPassLockRelease(E);
+      eq('lock/released', _ambPassLockOn(E), false);
+      // Asserted as a SHAPE, not as hand-guessed labels: the anchor has been
+      // pushed forward by each repetition, so which absolute bar lands on which
+      // pass is arithmetic nobody should be writing out by hand. What matters is
+      // that it stops repeating and walks on.
+      const after = [];
+      for (let b2 = 13; b2 < 25; b2++) after.push(where(b2));
+      eq('lock/stops repeating after release', new Set(after).size > 1, true);
+      eq('lock/then walks the chain', after.filter(x => x !== 'A2').length > 0, true);
+
+      // The per-pass store has NO part dimension of its own, so its key is the
+      // ABSOLUTE chord index — keyed within the part, pass 1 chord 0 of A and of
+      // B were the same cell and an edit to one silenced the other.
+      _ambChordPassSet(L, 0, 2, 0);                       // absolute chord 2 = B's first
+      eq('perpass/an edit on B does not touch A',
+        _ambChordGateOK(E, L, at(0), c2, c2.prog, false), true);
+      delete L.chordMask;
     }
 
     // ---- 6. THE CELL PICKER ------------------------------------------------
@@ -401,9 +552,14 @@ const CHROME = process.env.CHROME_PATH
       eq('picker/pass blank = each chord decides', (seen[1] || [])[2], '✓ — let each chord decide');
       eq('picker/cell blank = follow the part default',
         (seen[2] || [])[2], '✓ — follow the part default, “riffA”');
+      // GENERATE is the third answer, between blank and the bank — a cell that
+      // opts out of composed phrases entirely. It sits with the other two
+      // meta-choices, above the separator, so the bank stays one flat list.
+      eq('picker/offers Generate', (seen[0] || [])[3], '⚡ Generate — no composed phrase here');
+      eq('picker/Generate is ticked when set', (seen[1] || [])[3], '⚡ Generate — no composed phrase here');
       // The bank is listed, with the current value ticked.
       // NEWEST FIRST, matching the order the Sequences row lists them in.
-      eq('picker/lists the bank', (seen[0] || []).slice(3), ['riffB', '✓ riffA']);
+      eq('picker/lists the bank', (seen[0] || []).slice(5), ['riffB', '✓ riffA']);
 
       // And choosing actually writes.
       let picked = null;
@@ -498,6 +654,250 @@ const CHROME = process.env.CHROME_PATH
       _ambGridResizeLane(f, 0.25);
       eq('resize/all-rest lane re-rules', f.steps.length, 4);
       eq('resize/all-rest keeps length', f.steps.reduce((a2, st) => a2 + lenOf(st), 0), 1);
+    }
+
+    // ---- 9. APPENDING A PART MUST NOT EAT THE EXISTING CHORDS --------------
+    // Parts are contiguous RANGES measured in `len`. If they cover fewer chords
+    // than exist, the uncovered ones silently become part of whatever is pushed
+    // next — the earlier part appears to shrink to its stated `len`. Reported as
+    // "I added a new part and the first part was basically nuked, reduced to a
+    // single chord".
+    {
+      const four = () => [0, 9, 2, 7].map(r => ({ root: r, intervals: [0, 4, 7, 11] }));
+      const add = () => [6, 1, 11].map(r => ({ root: r, intervals: [0, 4, 7] }));
+      const run = (setup) => {
+        const cfg = E.getCfg();
+        cfg.prog.on = true; cfg.prog.name = 'Imaj7 — vi7 — ii — V';
+        cfg.prog.chords = four();
+        delete cfg.prog.parts; delete cfg.prog.grid; delete cfg.prog.chain;
+        setup(cfg.prog);
+        _ambProgAppendPart(cfg.prog, 'New', add(), null);
+        const c = E.getCfg();
+        return { chords: c.prog.chords.length,
+                 parts: (c.prog.parts || []).map(x => x.len),
+                 roots: c.prog.chords.map(x => x.root) };
+      };
+      const clean = run(() => {});
+      eq('append/clean keeps every chord', clean.roots, [0, 9, 2, 7, 6, 1, 11]);
+      eq('append/clean part lengths', clean.parts, [4, 3]);
+      // The reported state: a part claiming ONE of the four chords.
+      const stale = run(pr => { pr.parts = [{ name: 'Imaj7 — vi7 — ii', len: 1 }]; });
+      eq('append/a short part is repaired, not eaten', stale.parts, [4, 3]);
+      eq('append/chords survive a short part', stale.roots, [0, 9, 2, 7, 6, 1, 11]);
+      const two = run(pr => { pr.parts = [{ name: 'A', len: 1 }, { name: 'B', len: 1 }]; });
+      eq('append/shortfall goes to the LAST part', two.parts, [1, 3, 3]);
+    }
+
+    // ---- 10. THE SEEDED PART IS NAMED AFTER ITS OWN CHORDS ------------------
+    // `prog.name` is set when a progression is picked or exported and is NEVER
+    // re-derived when the chords change, so it goes stale on the first edit.
+    // Seeding the first part from it produced "Imaj7 — vi7 — ii" over a single
+    // Cmaj7 — which reads as three chords having been destroyed by adding a
+    // part. Nothing was destroyed; the name described a progression that no
+    // longer existed.
+    {
+      const run = (name, roots) => {
+        const cfg = E.getCfg();
+        cfg.prog.on = true; cfg.prog.name = name;
+        cfg.prog.chords = roots.map(r => ({ root: r, intervals: [0, 4, 7, 11] }));
+        delete cfg.prog.parts; delete cfg.prog.grid; delete cfg.prog.chain;
+        _ambProgAppendPart(cfg.prog, 'New', [6, 1].map(r => ({ root: r, intervals: [0, 4, 7] })), null);
+        return (E.getCfg().prog.parts || []).map(x => x.name + ':' + x.len);
+      };
+      eq('seedname/a stale list name is re-derived', run('Imaj7 — vi7 — ii — V', [0]),
+        ['Cmaj7:1', 'New:2']);
+      eq('seedname/an accurate list name is kept', run('Imaj7 — vi7 — ii — V', [0, 9, 2, 7]),
+        ['Imaj7 — vi7 — ii:4', 'New:2']);
+      // A name with no list shape is someone's own title — never second-guessed.
+      eq('seedname/a title is left alone', run('Neon Nocturne', [0]),
+        ['Neon Nocturne:1', 'New:2']);
+      eq('seedname/no name derives one', run('', [0, 9]),
+        ['Cmaj7 — Amaj7:2', 'New:2']);
+    }
+    // …and the ROOT of it: `prog.name` itself goes stale, because it is written
+    // once and no chord-editing path updates it. Normalize keeps an auto-generated
+    // LIST name honest, so nothing downstream can inherit a lie.
+    {
+      const nm = (name, roots) => {
+        const cfg = E.getCfg();
+        cfg.prog.on = true; cfg.prog.name = name;
+        cfg.prog.chords = roots.map(r => ({ root: r, intervals: [0, 4, 7, 11] }));
+        delete cfg.prog.parts;
+        return E.getCfg().prog.name;
+      };
+      eq('progname/a stale list is re-derived', nm('Imaj7 — vi7 — ii — V', [0]), 'Cmaj7');
+      eq('progname/an accurate list is untouched', nm('Cmaj7 — Amaj7', [0, 9]), 'Cmaj7 — Amaj7');
+      eq('progname/a chosen title is never rewritten', nm('Neon Nocturne', [0]), 'Neon Nocturne');
+      // The reported journey: 4 chords, an edit cuts it to 1, then a part is added.
+      const cfg = E.getCfg();
+      cfg.prog.on = true; cfg.prog.name = 'Imaj7 — vi7 — ii — V';
+      cfg.prog.chords = [0, 9, 2, 7].map(r => ({ root: r, intervals: [0, 4, 7, 11] }));
+      delete cfg.prog.parts;
+      E.getCfg();
+      cfg.prog.chords.splice(1, 3);
+      E.getCfg();
+      _ambProgAppendPart(cfg.prog, 'New', [6, 1].map(r => ({ root: r, intervals: [0, 4, 7] })), null);
+      eq('progname/the seeded part cannot inherit a lie',
+        (E.getCfg().prog.parts || []).map(x => x.name + ':' + x.len), ['Cmaj7:1', 'New:2']);
+    }
+
+    // ---- 11. A PASSES GRID IS ONLY VALID OVER THE CHORDS IT WAS WRITTEN FOR --
+    // `grid.seq` indexes chords BY POSITION within the part, so a length change
+    // makes those positions mean something else. Filtering out-of-range indices
+    // (the old behaviour) turned an authored pass of [Am7, G7] into [Am7] — a
+    // pass silently playing ONE chord where two were written. Reported as "now
+    // it's only looping the first 3 chords" after editing parts.
+    {
+      const chord = (r) => ({ root: r, intervals: [0, 4, 7] });
+      const cfg = E.getCfg();
+      cfg.prog.on = true; cfg.prog.name = '';
+      cfg.prog.chords = [0, 9, 2, 7].map(chord);
+      delete cfg.prog.parts; delete cfg.prog.chain; delete cfg.prog.arrGrid;
+      cfg.prog.grid = { cols: 6, seq: { '1': [0, 2], '2': [1, 3] }, fit: 1 };
+      const plays = () => { const c = E.getCfg();
+        return [0, 1, 2].map(col => _ambPartGridSeq(c, 0, col, c.prog.chords.length).join('')); };
+      const grid = () => (E.getCfg().prog.grid || {});
+      eq('passgrid/authored passes play as written', plays(), ['0123', '02', '13']);
+      eq('passgrid/the authored length is stamped', grid().len, 4);
+
+      cfg.prog.chords.splice(3, 1);                       // a part edit
+      eq('passgrid/a length change RESETS, never mangles', plays(), ['012', '012', '012']);
+      eq('passgrid/the pass count survives the reset', grid().cols, 6);
+      eq('passgrid/fill-cadence survives the reset', !!grid().fit, true);
+
+      cfg.prog.chords.push(chord(5));
+      eq('passgrid/still intact after another change', grid().cols, 6);
+      E.getCfg(); E.getCfg();
+      eq('passgrid/idempotent', grid().cols, 6);
+    }
+
+    // ---- SLICES: a cell can name PART of a phrase, and how it fits ----------
+    // The cell value grew from a bare name to {n,s,l,f}. Two things have to hold
+    // or the growth is not additive: a whole phrase at the default fit must
+    // still STORE as a plain string (which is what keeps every older project and
+    // every check above unchanged), and the fit must actually change the steps.
+    {
+      const mk = (n, bars) => ({ name: n, type: 'seq',
+        steps: Array.from({ length: bars }, (_, i) => ({ freq: 220 * (i + 1), subdivision: 4, duration: 1 })) });
+      savedSequences.length = 0;
+      savedSequences.push(mk('four', 4), mk('two', 2));
+
+      eq('slice/a whole phrase still stores as a STRING', _ambPsqStore({ n: 'four', s: 0, l: 0, f: 'loop' }), 'four');
+      eq('slice/a slice stores as an object', _ambPsqStore({ n: 'four', s: 1, l: 2, f: 'stretch' }),
+         { n: 'four', s: 1, l: 2, f: 'stretch' });
+      eq('slice/a bare string reads back as a whole-phrase spec', _ambPsqSpec('four'), { n: 'four', s: 0, l: 0, f: 'loop' });
+      eq('slice/an unknown fit falls back to loop', _ambPsqSpec({ n: 'four', f: 'nonsense' }).f, 'loop');
+
+      const four = savedSequences[0].steps;
+      eq('slice/phrase length in bars', _ambSeqBars(four), 4);
+      eq('slice/whole phrase', _ambSeqSlice(four, 0, 0).length, 4);
+      eq('slice/a bar range', _ambSeqBars(_ambSeqSlice(four, 1, 2)), 2);
+      eq('slice/len 0 means to the end', _ambSeqSlice(four, 2, 0).length, 2);
+
+      const one = _ambSeqSlice(four, 1, 1);                 // exactly 1 bar
+      eq('fit/loop fills the chord', _ambSeqBars(_ambSeqFit(one, 2, 'loop')), 2);
+      eq('fit/loop repeats the steps', _ambSeqFit(one, 2, 'loop').length, 2);
+      eq('fit/once plays it once and rests', _ambSeqBars(_ambSeqFit(one, 2, 'once')), 1);
+      eq('fit/stretch spans the chord', _ambSeqBars(_ambSeqFit(one, 2, 'stretch')), 2);
+      eq('fit/stretch does NOT add steps', _ambSeqFit(one, 2, 'stretch').length, 1);
+      eq('fit/a long slice is cut at the chord', _ambSeqBars(_ambSeqFit(four, 2, 'loop')), 2);
+      eq('fit/same length is left alone', _ambSeqFit(one, 1, 'loop').length, one.length);
+
+      eq('slice/steps for a mapping', (_ambPartSeqStepsFor({ n: 'four', s: 1, l: 1, f: 'loop' }, 2) || []).length, 2);
+      eq('slice/an unknown name yields nothing', _ambPartSeqStepsFor({ n: 'nope', s: 0, l: 0, f: 'loop' }, 2), null);
+
+      // The install guard compares the SIG, not the name — re-slicing the same
+      // phrase must count as a change or the old one keeps playing.
+      eq('slice/sig separates two slices of one phrase',
+         _ambPsqSig(_ambPsqSpec({ n: 'four', s: 0, l: 1 })) === _ambPsqSig(_ambPsqSpec({ n: 'four', s: 2, l: 1 })), false);
+      eq('slice/sig separates two fits of one slice',
+         _ambPsqSig(_ambPsqSpec({ n: 'four', s: 0, l: 1, f: 'loop' })) === _ambPsqSig(_ambPsqSpec({ n: 'four', s: 0, l: 1, f: 'once' })), false);
+
+      // Round trip through normalize, which is where a new value shape usually
+      // dies (the documented backfill trap).
+      const Lx = E._cfg.bed;
+      delete Lx.partSeqs;
+      _ambPartSeqCellSet(Lx, 0, '1:2', { n: 'four', s: 1, l: 2, f: 'stretch' });
+      _ambPartSeqCellSet(Lx, 0, 'all', 'two');
+      E.getCfg(); E.getCfg();
+      const back = E.getCfg().bed.partSeqs;
+      eq('slice/survives normalize', back['0']['1:2'], { n: 'four', s: 1, l: 2, f: 'stretch' });
+      eq('slice/a plain name stays plain through normalize', back['0'].all, 'two');
+      eq('slice/resolve carries the spec', _ambPsqSig(_ambPartSeqResolve(E._cfg.bed, 0, 1, 2).spec), 'four#1#2#stretch');
+      eq('slice/the name alone is still readable', _ambPartSeqCellGet(E._cfg.bed, 0, '1:2'), 'four');
+      eq('slice/label names the range', _ambPsqLabel(_ambPsqSpec({ n: 'four', s: 1, l: 2, f: 'stretch' })), 'four ♪2-3 ⤡');
+      delete Lx.partSeqs;
+    }
+
+    // ---- DELETING A BANKED PHRASE DROPS THE CELLS THAT NAMED IT -------------
+    // A mapping references a phrase BY NAME, so a delete that only splices the
+    // bank leaves every cell pointing at nothing and the layer falls back to its
+    // own phrase with nothing saying why.
+    {
+      const mk = (n, bars) => ({ name: n, type: 'seq',
+        steps: Array.from({ length: bars }, (_, i) => ({ freq: 220 * (i + 1), subdivision: 4, duration: 1 })) });
+      savedSequences.length = 0;
+      savedSequences.push(mk('keepme', 2), mk('goner', 4));
+
+      const A = E._cfg.bed, B = E._cfg.motif;
+      delete A.partSeqs; delete B.partSeqs;
+      _ambPartSeqCellSet(A, 0, 'all', 'goner');
+      _ambPartSeqCellSet(A, 0, '1:2', { n: 'goner', s: 1, l: 2, f: 'stretch' });
+      _ambPartSeqCellSet(B, 0, '0:*', 'goner');
+      _ambPartSeqCellSet(B, 0, 'all', 'keepme');
+
+      eq('del/counts every cell that names it', _ambSeqUses('goner').cells, 3);
+      eq('del/counts the layers', _ambSeqUses('goner').layers, 2);
+      eq('del/a SLICE of it counts too', _ambSeqUses('goner').cells >= 2, true);
+      eq('del/an unused phrase warns about nothing', _ambSeqDeleteWarn('keepme') !== '', true);
+      eq('del/an unreferenced name has no warning', _ambSeqDeleteWarn('nobody'), '');
+
+      const dropped = _ambSeqForget('goner');
+      eq('del/drops exactly the cells that named it', dropped, 3);
+      eq('del/none are left', _ambSeqUses('goner').cells, 0);
+      eq('del/the other phrase is untouched', _ambSeqUses('keepme').cells, 1);
+      // Pruning must leave "no mapping" with its single representation.
+      eq('del/an emptied map is deleted, not left as {}', A.partSeqs, undefined);
+      eq('del/a partly-used map keeps what is left', B.partSeqs, { 0: { all: 'keepme' } });
+      delete A.partSeqs; delete B.partSeqs;
+      savedSequences.length = 0;
+    }
+
+    // ---- A MAPPED PHRASE IS FITTED TO ITS CHORD, SO THE CHORD'S LENGTH IS
+    //      PART OF WHAT IS INSTALLED ------------------------------------------
+    // Field report: chord lengths [0.5, 1, 0.5, 2] bars, one phrase mapped to
+    // the whole part, and the layer reported `loop 1.001` — the ½-bar fit —
+    // while the 1-bar and 2-bar chords played. The install guard compared the
+    // spec (name + slice + fit) and skipped as "already loaded", so the phrase
+    // kept the first chord's fit and landed somewhere different at every change.
+    {
+      const mk = (n, bars) => ({ name: n, type: 'seq',
+        steps: Array.from({ length: bars * 2 }, (_, i) => ({ freq: 220 + i, subdivision: 2, duration: 1 })) });
+      savedSequences.length = 0;
+      savedSequences.push(mk('phr', 1));
+
+      const spec = _ambPsqSpec('phr');
+      eq('fit/same chord length is the same install',
+         _ambPsqSig(spec, 1) === _ambPsqSig(spec, 1), true);
+      eq('fit/a DIFFERENT chord length is a different install',
+         _ambPsqSig(spec, 0.5) === _ambPsqSig(spec, 2), false);
+      eq('fit/no length still yields a signature', _ambPsqSig(spec) !== '', true);
+      eq('fit/the name still leads the signature', _ambPsqSig(spec, 2).indexOf('phr#') === 0, true);
+      // The anti-churn guard keys on the part BEFORE the length, so a re-fit is
+      // told apart from a re-install of the same thing.
+      eq('fit/the spec half is shared across lengths',
+         _ambPsqSig(spec, 0.5).split('@')[0] === _ambPsqSig(spec, 2).split('@')[0], true);
+
+      // …and the STEPS really do differ per chord length: a 1-bar phrase looped
+      // into 2 bars is twice the steps, cut into ½ a bar is half.
+      const half = _ambPartSeqStepsFor(spec, 0.5) || [];
+      const one  = _ambPartSeqStepsFor(spec, 1) || [];
+      const two  = _ambPartSeqStepsFor(spec, 2) || [];
+      eq('fit/cut to half a bar', _ambSeqBars(half), 0.5);
+      eq('fit/exact at one bar', _ambSeqBars(one), 1);
+      eq('fit/looped to two bars', _ambSeqBars(two), 2);
+      eq('fit/two bars is more steps than one', two.length > one.length, true);
+      savedSequences.length = 0;
     }
 
     return checks;

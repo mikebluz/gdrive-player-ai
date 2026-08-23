@@ -21,6 +21,52 @@ each pass, and fixes an ordering bug that the extra tapping would expose.
 
 ---
 
+## 0. What to call the parts of the compose strip
+
+One vocabulary, so a bug report and the code mean the same thing. Class names in
+brackets — those are for grepping, not for talking.
+
+```
+COMPOSE STRIP                                    [.ambient-seedgrid-chords]
+├─ HEADLINE      part ▾ · sequence ▾ · pass ▾ · 4 chords · 4 bars
+│                                                [.ambient-sgruler-lbl]
+├─ CHORD BLOCK ── one CHORD of the pass ────────  [.sgbar-block]
+│  ├─ CHORD HEADER  its name, length, ⧉ copy      [.sgruler-row]
+│  │   ├─ CHORD CELL   "Am7  ½ bar"; tap to scope [.ambient-sgbar]
+│  │   └─ ⧉ COPY       take another chord's steps [.sgbar-copy]
+│  └─ STEP ROW      that chord's steps            [.lane-chips.sglane-row]
+│      ├─ BAR NUMBER   1, or "½" on a short row   [i.sgbar-n]
+│      └─ STEP        one chip: note, chord, rest [.seq-step.sgstep]
+└─ … one CHORD BLOCK per chord of the pass
+```
+
+**STEP ROW** is the row of chips in the picture. **CHORD HEADER** is the strip
+directly above it. A **CHORD BLOCK** is a chord's header plus its rows.
+
+Two distinctions that are easy to lose and matter:
+
+- A chord block is a **CHORD**, so with a cadence its rows say how long it is:
+  **row length is the chord's length, and a step is the same width everywhere**
+  (a row covering `f` of a bar is `f` of the strip wide and holds `f × 32`
+  cells, so the cell size is 1/32 of a bar either way). A chord longer than a
+  bar wraps into whole-bar rows — never horizontal scroll, per UI rule 1 — and
+  a chord shorter than one gets a short row holding only ITS steps, so editing
+  it cannot reach the chord beside it.
+- A chord the phrase does not reach is **EMPTY, never a copy**. The phrase is
+  padded with rests to cover the pass when a session opens (and when the part or
+  pass changes), so every chord has real, editable steps of its own. Copying one
+  chord's steps onto another is an explicit act — **⧉** on the chord header.
+- A step row is a **MIRROR**. The real lane is parked off-screen
+  (`.lane-row.sg-mirrored`) and still owns every handler; the strip clones its
+  chips and forwards gestures onto them. So "the steps" are one set of objects
+  shown in one or more places — which is exactly why a **REPEAT ROW** (a bar
+  the phrase does not reach, drawn dimmed with `↻`) shows the same chips, and
+  why its clones must not wear their selection.
+
+Elsewhere in this doc and in the app: a **PART** is a named set of changes, a
+**PASS** is one time through it, and a **PHRASE** (or *sequence*, when banked)
+is the material a layer plays.
+
 ## 1. Toggling a chord must not silently reorder it
 
 `seq[col]` is an ORDERED list, so membership and position are the same stored

@@ -5334,13 +5334,37 @@
     // slot instead of walking it.
     function _ambGridPlan(cfg) {
       if (!_ambGridOn(cfg)) return null;
-      const sig = _ambGridSig(cfg);
+      // HANGS ARE PART OF THE PLAN — the FOURTH clock path, and the one every
+      // probe missed because no test config combined a grid with a hang. This
+      // plan's `cum` IS the chord clock whenever a grid is engaged, so building
+      // it from the raw grid slots meant a project with grids got NO hang time
+      // at all while _ambHangWindows measured windows from the hanged chain:
+      // two disagreeing clocks, the gate hint never stamped, and every phrase
+      // span wrong — the reporter's own project had grids on both parts. The
+      // sig must carry the hang shape or the memo serves a pre-hang plan after
+      // one is edited.
+      const _hs = (function () { const ps = cfg.prog && cfg.prog.parts;
+        if (!Array.isArray(ps)) return '';
+        return ps.map(x => (x && x.head ? ('h' + x.head.bars) : '') + (x && x.tail ? ('t' + x.tail.bars) : '')).join(','); })();
+      const sig = _ambGridSig(cfg) + '|hg' + _hs;
       if (_ambGridMemo && _ambGridMemo.sig === sig) return _ambGridMemo;
-      const slots = _ambGridSlots(cfg);
+      let slots = _ambGridSlots(cfg);
       if (!slots || !slots.length) { _ambGridMemo = null; return null; }
+      try { slots = _ambChainWithHangs(cfg, slots); } catch (e) {}
       const cum = new Float64Array(slots.length + 1);
       for (let i = 0; i < slots.length; i++) cum[i + 1] = cum[i] + _ambChainSlotBars(cfg, slots[i]);
-      _ambGridMemo = { sig, slots, cum, cycle: cum[slots.length] || 1 };
+      // INSTANCE ORDINALS COMPRESS HANGS onto their neighbour chord — the same
+      // rule the parts-walk branch applies — so the chord-choke holds one span
+      // through a hang and _ambPassPlan's hang-free numbering stays aligned.
+      const instOf = new Int32Array(slots.length);
+      let n2 = 0;
+      for (let i = 0; i < slots.length; i++) {
+        const sl = slots[i];
+        if (sl.hang === 'tail') instOf[i] = Math.max(0, n2 - 1);
+        else if (sl.hang === 'head') instOf[i] = n2;
+        else { instOf[i] = n2; n2++; }
+      }
+      _ambGridMemo = { sig, slots, cum, cycle: cum[slots.length] || 1, instOf, instN: Math.max(1, n2) };
       return _ambGridMemo;
     }
     // The rubato amount in force for one PLAYED SLOT. The slot knows its part
@@ -5721,8 +5745,14 @@
           const glenK = Math.max(1e-6, cum[gk + 1] - cum[gk]);
           const gstep = gloops * L + gs[gk].idx;
           // `gk` is the position in the PLAYED sequence — monotonic even though a
-          // chord (and a whole part) may recur inside one pass.
-          _ambProgInstHint = gloops * gs.length + gk;
+          // chord (and a whole part) may recur inside one pass. HANG slots share
+          // their neighbour chord's instance (plan.instOf, hang-compressed) so
+          // the chord-choke holds one span through them and _ambPassPlan's
+          // hang-free numbering stays aligned; and the gate hint is stamped HERE
+          // too — this branch returns before the parts walk, so under a grid it
+          // is the only place the gate can learn a hang is in force.
+          _ambProgInstHint = plan.instOf ? (gloops * plan.instN + plan.instOf[gk]) : (gloops * gs.length + gk);
+          _ambProgHangHint = gs[gk].hang ? { kind: gs[gk].hang, layers: gs[gk].hlayers || [] } : null;
           _ambProgPosHint = { step: gstep, pos: Math.max(0, Math.min(1, grem / glenK)) };
           _ambProgPassHint = { step: gstep, pi: gs[gk].pi | 0, pass: gs[gk].col | 0 };
           return gstep;
@@ -20162,7 +20192,16 @@
       if (_ambPassMemo && _ambPassMemo.cfg === cfg && _ambPassMemo.sig === sig) return _ambPassMemo;
       const out = { cfg, sig, slots: null };
       try {
-        const slots = _ambArchChainSlots(cfg);
+        let slots = _ambArchChainSlots(cfg);
+        // HANG SLOTS ARE NOT PASSES — and they must be dropped HERE because this
+        // plan is indexed by _ambProgInstanceAt, whose ordinals deliberately SKIP
+        // hangs (a hang shares its neighbour chord's instance so the chord-choke
+        // holds through it). Keeping them made `inst % slots.length` walk two
+        // different numberings at once: every lookup past the first hang landed
+        // one slot early, so the pass span's forward walk broke mid-chord
+        // (measured `to` at bar 4.5 of a 5-bar visit) and everything fitted to a
+        // pass inherited the error.
+        if (slots && slots.some(sl => sl && sl.hang)) slots = slots.filter(sl => sl && !sl.hang);
         if (slots && slots.length) {
           const ranges = _ambGridRanges(cfg);
           const piOf = new Array(slots.length), visitOf = new Array(slots.length), seen = {};
@@ -21401,6 +21440,25 @@
         if (!(sp2.end > to)) break;
         to = sp2.end;
       }
+      // A HANG IS NOT PART OF THE PASS'S MUSICAL FRAME. It shares its neighbour
+      // chord's instance ordinal (so the chord-choke holds through it), which
+      // makes the raw walk EXTEND the span across it — and everything that fits
+      // or anchors a phrase reads this span, so a 1-bar intro made a 4-bar pass
+      // read as 5, anchored the phrase inside the hang (where the gate silences
+      // it — the reported phrase-part misalignment) and changed the fit target,
+      // which re-installed against the already-emitted window (the reported
+      // doubling; measured installs 2 → 4 on the reporter's own config). The
+      // hang windows are trimmed off both edges: the span is the pass the
+      // phrase is actually written against.
+      try {
+        const hw = _ambHangWindows(E, cfg, from - 0.05, to + 0.05);
+        for (let i = 0; i < hw.length; i++) {
+          const w2 = hw[i];
+          if (w2.t0 <= from + 1e-3 && w2.t1 > from) from = Math.max(from, w2.t1);
+          if (w2.t1 >= to - 1e-3 && w2.t0 < to) to = Math.min(to, w2.t0);
+        }
+        if (!(to > from)) return null;
+      } catch (e) {}
       return { from, to, pass: w.pass, pi: w.pi };
     }
     // ---- PASS LOCK — hold the pass that is playing, and keep playing it ------
@@ -39054,6 +39112,12 @@
         const allKeys = _ambMixerLayers(E.getCfg()).map(l => l.key);
         const P = E.getCfg().prog.parts[pi]; if (!P) return;
         if (op === 'tog') {
+          // AUTHORING A HANG IS THE INTENT TO HEAR IT. The kill switch exists to
+          // bisect field reports, not as a hidden precondition — a user who adds
+          // one through this popover must never also need a console command
+          // (measured in a real dump: a stored intro, enabled:false, reported
+          // three times as "not playing").
+          try { if (typeof window.bloomHangs === 'function' && !window.bloomHangs()) window.bloomHangs(true); } catch (e) {}
           if (P[which]) delete P[which];
           // SEEDED EMPTY — a REST. The first version seeded every layer ON, on the
           // reasoning that turning a hang on should not silence the mix by
@@ -43504,7 +43568,13 @@
         const gs = _pl && _pl.slots;
         if (gs && gs.length) {
           const parts = Array.isArray(p.parts) ? p.parts : null;
-          return _ambChainWithHangs(cfg, _ambGridWithHolds(cfg, gs.map(sl => ({
+          // The plan ALREADY wove hang slots in (it must — its cum is the clock).
+          // Re-applying _ambChainWithHangs here double-inserted every head, and
+          // worse: this map used to drop the hang fields, so the woven slot came
+          // through as a PHANTOM ordinary chord (its neighbour's idx at the
+          // chord's own length) with a second real head beside it. Carry the
+          // fields; weave once, in the plan.
+          return _ambGridWithHolds(cfg, gs.map(sl => ({
             idx: sl.idx, part: sl.part, pName: (parts && parts[sl.pi] && parts[sl.pi].name) || 'Part',
             pFirst: !!sl.pFirst, rep: sl.rep, plays: sl.plays,
             col: sl.col, cols: sl.cols, iter: sl.iter, pos: sl.pos,
@@ -43517,7 +43587,8 @@
             // chain branch labels these differently and anything post-processing
             // both needs one way to ask.
             pi: sl.pi, visit: sl.visit,
-          }))));
+            ...(sl.hang ? { hang: sl.hang, hbars: sl.hbars, hlayers: sl.hlayers } : {}),
+          })));
         }
       }
       if (!arch || !p || !Array.isArray(p.chords) || !p.chords.length) return null;
@@ -43713,9 +43784,13 @@
     // to the pre-hang baseline with this false, so if doubling or phrase
     // misalignment SURVIVES with it off, the cause is not hangs and not this
     // session's clock work.
-    let _AMB_HANG_PLAYBACK = false;
+    // DEFAULT ON. It shipped default-OFF to bisect the doubling reports; the
+    // bisect is done — the user's own dump reproduced the mechanism (the pass
+    // span swallowing the hang) and the span fix closes it — so the stored hang
+    // a user authored plays without a console incantation. '0' still opts out.
+    let _AMB_HANG_PLAYBACK = true;
     try {
-      _AMB_HANG_PLAYBACK = (localStorage.getItem('bloomHangs') === '1');
+      _AMB_HANG_PLAYBACK = (localStorage.getItem('bloomHangs') !== '0');
     } catch (e) {}
     if (typeof window !== 'undefined') window.bloomHangs = function (on) {
       if (on === undefined) return _AMB_HANG_PLAYBACK;

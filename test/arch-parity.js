@@ -189,6 +189,13 @@ const CONFIGS = [
   { id: 'hang-section', chords: [0, 5, 7, 9],
     parts: [['Verse', 2, 1, null, null, null, { tail: { bars: 1, layers: [] } }], ['Chorus', 2]],
     sections: [['A', 3, 0], ['B', 2, 1]] },
+  // A HANG UNDER A PASSES GRID — the FOURTH clock path (_ambGridPlan's cum), and
+  // the one the reporter's own project ran: with a grid engaged the clock took
+  // the plan while the hang windows came from the chain, two disagreeing clocks,
+  // no gate hint, phrase spans wrong. Every hang config was grid-less and every
+  // grid config hang-less; gate the COMBINATION.
+  { id: 'hang-grid', chords: [0, 5, 7, 9],
+    parts: [['Verse', 2, 1, null, null, { cols: 2, seq: {} }, { head: { bars: 1, layers: [] } }], ['Chorus', 2]] },
 ];
 
 // The walk: 32 bars at a quarter bar. Long enough that part repeats, section

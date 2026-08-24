@@ -5387,10 +5387,16 @@
       // span wrong — the reporter's own project had grids on both parts. The
       // sig must carry the hang shape or the memo serves a pre-hang plan after
       // one is edited.
+      // THE SIG MUST CARRY EVERYTHING THE WOVEN SLOTS SNAPSHOT — bars, once,
+      // AND the layer list (`hlayers` is copied into the slot at weave time, so
+      // a memo blind to layers serves the OLD line-up after a toggle: "updates
+      // to the intro are not taking effect", no save button missing, just this
+      // key). Rolls/phrases/gen are deliberately absent: windows and the
+      // generator read those LIVE from the part record, never from the slot.
       const _hs = (function () { const ps = cfg.prog && cfg.prog.parts;
         if (!Array.isArray(ps)) return '';
-        return ps.map(x => (x && x.head ? ('h' + x.head.bars + (x.head.once ? 'o' : '')) : '')
-                    + (x && x.tail ? ('t' + x.tail.bars + (x.tail.once ? 'o' : '')) : '')).join(','); })();
+        return ps.map(x => (x && x.head ? ('h' + x.head.bars + (x.head.once ? 'o' : '') + '[' + (x.head.layers || []).join('+') + ']') : '')
+                    + (x && x.tail ? ('t' + x.tail.bars + (x.tail.once ? 'o' : '') + '[' + (x.tail.layers || []).join('+') + ']') : '')).join(','); })();
       const sig = _ambGridSig(cfg) + '|hg' + _hs;
       if (_ambGridMemo && _ambGridMemo.sig === sig) return _ambGridMemo;
       let slots = _ambGridSlots(cfg);
@@ -44486,18 +44492,61 @@
       // `_ambChordGridOff` was kept alive to express, and its existing consumers
       // (the cadence onset walk, the freeze snaps) translate through it already.
       E._barGridAnchor += sec;
-      // DO NOT hand-shift the phase stores as well — that double-shifts (lattice
-      // + clocks moved together = no relative change; measured, the onsets did
-      // not move at all). _ambUnitReanchor is the codebase's own idiom for "the
-      // grid moved under you": cancel pending, drop phase state, and the next
-      // tick re-anchors snapped onto the SHIFTED lattice. Only the FREEZE anchor
-      // is shifted by hand — a frozen loop's clock is its anchor, not the grid
-      // (the documented "what is its clock" lesson), and the replay's in-window
-      // re-coverage is eaten by the gate.
+      // A HANG PAUSES A LAYER — it does not restart it. The first build used
+      // _ambUnitReanchor here ("the grid moved under you": cancel, DROP the
+      // phase state, let the next tick re-anchor). Dropping the phase is the
+      // bug: the tick re-seeds the clock at roughly NOW, so a layer resumes
+      // wherever the shift happened to land instead of where its own phrase
+      // left off. Measured across four hangs — a unit-synced layer and a
+      // free-interval layer that started half a bar apart ended 0.04 bar apart,
+      // drifting further every pass ("layers are just out of sync from then
+      // on"), and free-running layers were hit hardest because nothing snaps
+      // them back to a grid at all.
+      //
+      // So shift every clock this layer owns by the hang instead: the next
+      // onset moves LATER by exactly the hang, which is what a pause is, and
+      // relative phase between any two layers is preserved by construction.
+      // The lattice moved by the same amount just above, so unit-synced layers
+      // (whose onsets re-snap to it) agree with free ones. Pending voices are
+      // still cancelled — a note scheduled past the hang before the shift would
+      // otherwise play unshifted — and in-window notes never scheduled at all,
+      // because the gate ran at their schedule time.
+      // EVERYONE RE-ENTERS ON THE PART'S DOWNBEAT, which is the hang's END.
+      // Shifting each clock by the hang alone was phase-correct but left a HOLE:
+      // the beat that fell inside the window is silenced by the gate, so under a
+      // strict content-time reading the layer's next beat is a whole period
+      // later — measured, a 1-bar bass went quiet for 1.5 bars after a 0.5-bar
+      // intro and came in a bar after the part did ("some layers delay start").
+      // An intro is a PICKUP INTO the part: the part begins at t1 and the mix
+      // belongs there. So any layer whose next onset was going to land at or
+      // after the hang's start resumes exactly AT t1 — which is on the shifted
+      // lattice by construction (t1 = t0 + sec, and t0 sat on a line), so the
+      // grid-snapped and free-running families land on the same instant and
+      // hold their new relationship afterwards. A layer with an onset still due
+      // BEFORE the hang keeps it: that note is part of the outgoing bar.
+      // `startAt` is a PHASE REFERENCE, not a next-onset time — it sits in the
+      // past and the emitter walks periods forward from it. So it is re-based
+      // unconditionally (the `c >= t0` guard below is right for clocks, which
+      // ARE next-onset times, and wrong here: a startAt is never >= t0, so the
+      // guarded version silently skipped every phase-driven layer — bass, run
+      // and arp all stayed on their old phase and came in half a bar after the
+      // part).
+      // `lastAt` is the emitter's HIGH-WATER MARK — the cycle walk starts at
+      // max(now, lastAt), so re-basing startAt while lastAt still points past
+      // the hang leaves the walk on the old cycle and the layer re-enters a
+      // whole period late (measured: a bar-long hole after every intro). Clear
+      // it and the walk restarts at startAt, which is the part's downbeat.
+      const land = (m, key) => { const st = m && m[key];
+        if (st && Number.isFinite(st.startAt)) {
+          st.startAt = w.t1; st.lastAt = null;
+          if (Number.isFinite(st.idx)) st.idx = 0; } };
       const one = (key) => {
         const fs = E.freeze && E.freeze[key];
         if (fs && fs.frozen && Number.isFinite(fs.anchor)) fs.anchor += sec;
-        try { _ambUnitReanchor(E, key); } catch (e) {}
+        try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, Tone.now()); } catch (e) {}
+        const c = E.clocks && E.clocks[key];
+        if (Number.isFinite(c) && c >= w.t0 - 1e-6) E.clocks[key] = w.t1;
+        land(E.runPhase, key); land(E.bassPhase, key); land(E.arpState, key);
       };
       try {
         ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k] && cfg[k].present !== false) one(k); });
@@ -44511,7 +44560,18 @@
       E._hangDone = E._hangDone || Object.create(null);
       wins.forEach(w => {
         const sid = 'shift|' + w.occ;
-        if (!E._hangDone[sid]) { let ok = false; try { ok = _ambHangShiftLayers(E, cfg, w); } catch (e) {}
+        // AT THE WINDOW'S START, NOT WHEN IT ENTERS THE LOOKAHEAD. Windows are
+        // fetched up to 1.4 s ahead so their bursts can be scheduled early, and
+        // the lattice shift used to ride along with that fetch — so the grid
+        // moved up to 0.7 BAR before the hang began and every layer re-anchored
+        // onto a lattice the music had not reached yet. Measured on a 0.5-bar
+        // intro: the bass fired an extra onset half a bar early, lost the next
+        // one to the gate, and stayed half a bar off the arrangement from then
+        // on — "some layers delay start and everything is out of sync after".
+        // The burst schedule is unaffected: it is keyed per occurrence below
+        // and still runs off the lookahead.
+        if (!E._hangDone[sid] && tFrom >= w.t0 - 0.02) {
+          let ok = false; try { ok = _ambHangShiftLayers(E, cfg, w); } catch (e) {}
           if (ok) E._hangDone[sid] = 1; }
         (w.layers || []).forEach(key => {
           const id = w.occ + '|' + key;

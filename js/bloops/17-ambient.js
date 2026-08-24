@@ -5211,7 +5211,17 @@
         (Number.isFinite(h.bars) && h.bars > 0) ? h.bars : 0.5));
       const layers = Array.isArray(h.layers)
         ? h.layers.map(x => String(x)).filter(Boolean).slice(0, 64) : [];
-      return { bars, layers };
+      const out = { bars, layers };
+      // PER-LAYER ROLL — what pins the phrase. The burst used to be seeded on
+      // the OCCURRENCE, so it evolved every round and "the phrase" did not exist
+      // to view or edit; it is seeded on this roll now (same every round,
+      // 🎲 bumps it), which is what makes a view meaningful at all.
+      if (h.rolls && typeof h.rolls === 'object') {
+        const r = {};
+        Object.keys(h.rolls).forEach(k => { const v = h.rolls[k] | 0; if (v) r[k] = v; });
+        if (Object.keys(r).length) out.rolls = r;
+      }
+      return out;
     }
     // How many ROUNDS the order cycles through before repeating — one per
     // arrGrid column, else 1. (A "round" is one trip through all the parts;
@@ -33887,8 +33897,18 @@
       // behind the sound. Nudge the read-point forward by one frame to compensate.
       const now = ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow()
         : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0)) + 0.016;
+      // INSIDE A HANG, EVERY BAR IS EMPTY — by STATE, not arithmetic. The layers
+      // are gated through the window (the burst is separate material), so a
+      // sweeping bar there is a lie — and the pre-first-onset guard cannot catch
+      // it for a layer whose unit is not longer than the hang (measured: a 1-bar
+      // bed swept 0.03→0.83 through a 1-bar intro while a 2-bar bass correctly
+      // read empty; `next − now > P` only fails when P exceeds the window).
+      // _ambHangAt is memoised per ms, so this is one cheap lookup per frame.
+      let _inHang = false;
+      try { _inHang = E.timer ? !!_ambHangAt(E, now) : false; } catch (e) {}
       bars.forEach(el => {
         const key = el.dataset.phkey; if (!key) return;
+        if (_inHang) { el.style.setProperty('--ph', 0); el.classList.remove('ambient-ph-on'); return; }
         let prog = 0, active = false, frozen = false, cyc = null;
         const fs = E.freeze && E.freeze[key];
         // THE BAR IS THE CHORD, when the layer rides the chord grid. Every branch
@@ -39132,6 +39152,28 @@
               '" data-hang="lyr:' + which + ':' + esc(l.key) + '" data-ltype="' + esc(String(l.key).split(':')[0]) + '">' +
               '<i></i>' + esc(l.name) + '</button>').join('')
               : '<span class="ambient-hint">This area has no layers yet.</span>') + '</div>' +
+            ((function () {
+              // THE PHRASE, VISIBLE. Rendered from _ambHangNotes — the same
+              // function the emit plays — so what you read is what will sound.
+              if (!h.layers.length) return '';
+              const bpm3 = (E.getCfg().bpm > 0) ? E.getCfg().bpm : _ambBpm();
+              const nm2 = (f) => { const m = Math.round(69 + 12 * Math.log(f / 440) / Math.LN2);
+                return _pcName(((m % 12) + 12) % 12) + (Math.floor(m / 12) - 1); };
+              return '<div class="ambient-hang-phrases">' + h.layers.map(k2 => {
+                const L2 = _ambLayerByKey(E, k2); if (!L2) return '';
+                let txt = '';
+                try {
+                  const win2 = { bars: h.bars, kind: which, rolls: h.rolls || null, pi };
+                  const ph2 = _ambHangNotes(E, E.getCfg(), win2, k2, L2);
+                  txt = ph2.map(x => x.drum ? x.drum : nm2(x.f)).join(' · ');
+                } catch (e) { txt = '?'; }
+                return '<div class="ambient-hang-phr" data-ltype="' + esc(String(k2).split(':')[0]) + '">' +
+                  '<i></i><b>' + esc(_ambLayerLabel(L2, k2)) + '</b>' +
+                  '<span>' + esc(txt) + '</span>' +
+                  '<button type="button" class="ambient-seg" data-hang="roll:' + which + ':' + esc(k2) + '" title="Roll a new phrase for this layer — the current one is kept until you roll">🎲</button>' +
+                '</div>';
+              }).join('') + '</div>';
+            })()) +
             '<div class="ambient-hang-acts">' +
               '<button type="button" class="ambient-seg" data-hang="try:' + which + '">▶ Audition</button>' +
               '<button type="button" class="ambient-seg" data-hang="all:' + which + '">All</button>' +
@@ -39253,6 +39295,9 @@
         else if (op === 'lyr') {
           if (P[which]) { const k = a2.slice(2).join(':'); const i2 = P[which].layers.indexOf(k);
             if (i2 >= 0) P[which].layers.splice(i2, 1); else P[which].layers.push(k); }
+        } else if (op === 'roll') {
+          const k = a2.slice(2).join(':');
+          if (P[which]) { P[which].rolls = P[which].rolls || {}; P[which].rolls[k] = ((P[which].rolls[k] | 0) + 1); }
         } else if (op === 'all') { if (P[which]) P[which].layers = allKeys.slice(); }
         else if (op === 'none') { if (P[which]) P[which].layers = []; }
         else if (op === 'rm') { delete P[which]; }
@@ -43963,8 +44008,10 @@
             const sl = slots[i], w = lens[i];
             if (sl.hang) {
               const t0 = anchor + (L2 * cycle + bar) * barSec, t1 = t0 + w * barSec;
+              const pt2 = parts[sl.pi], hh = pt2 && pt2[sl.hang === 'head' ? 'head' : 'tail'];
               if (t1 > tFrom && t0 < tTo) out.push({ t0, t1, bars: w, kind: sl.hang,
-                layers: sl.hlayers || [], pi: sl.pi, occ: L2 * slots.length + i });
+                layers: sl.hlayers || [], rolls: (hh && hh.rolls) || null,
+                pi: sl.pi, occ: L2 * slots.length + i });
             }
             bar += w;
           }
@@ -43975,6 +44022,41 @@
     // ONE LAYER'S BURST. "In its own character" — the notes come from that layer's
     // own note source, register and voice, so a bass answers low and a pad answers
     // as a chord; only the RHYTHM is invented here.
+    // THE PHRASE, AS DATA — one function is both the emit's source and the
+    // popover's view, so they cannot drift (the audition-vs-emit rule). Seeded
+    // on the stored per-layer ROLL (stable every round; 🎲 bumps it), never the
+    // occurrence.
+    function _ambHangNotes(E, cfg, win, key, L) {
+      const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const dur = Math.max(0.05, (win.bars || 0.5) * barSec);
+      const roll = (win.rolls && (win.rolls[key] | 0)) || 0;
+      const rnd = _ambSeededRand(_ambHangHash(win.pi, win.kind, key, roll, (cfg.seed | 0)));
+      const src = (typeof _ambNotesOf === 'function') ? _ambNotesOf(cfg, L, key) : null;
+      const n = Math.max(4, Math.min(12, Math.round(4 * (win.bars || 0.5) + rnd() * 3)));
+      const isBeat = (String(key).split(':')[0] === 'beat');
+      const reg = Number.isFinite(L.register) ? (L.register | 0) : 5;
+      const out = [];
+      for (let i = 0; i < n; i++) {
+        const u = (i + 0.5) / n;
+        const shaped = (win.kind === 'head') ? Math.pow(u, 0.6) : (1 - Math.pow(1 - u, 0.6));
+        const frac = Math.max(0, Math.min(0.985, shaped + (rnd() - 0.5) * (0.35 / n)));
+        const lenMs = Math.max(60, Math.round((dur / n) * 1000 * (0.7 + rnd() * 0.6)));
+        const vshape = (win.kind === 'head') ? (0.6 + 0.4 * u) : (1 - 0.45 * u);
+        if (isBeat && _ambBeatIsSynth(L)) {
+          const roles = ['kick', 'snare', 'hat', 'tom', 'perc'];
+          out.push({ frac, lenMs, vshape, drum: roles[(rnd() * roles.length) | 0],
+                     vel: (0.55 + rnd() * 0.45) * vshape });
+          continue;
+        }
+        const deg = (rnd() * 7) | 0;
+        const oct = reg + ((rnd() < 0.35) ? 1 : 0);
+        const f = _ambNoteFreq(deg, oct, src);
+        if (!(f > 0)) continue;
+        out.push({ frac, lenMs, vshape, f, deg, oct });
+      }
+      return out;
+    }
     let _ambHangEmitting = false;   // the burst must never be eaten by the gate that clears its own window
     function _ambHangEmit(E, cfg, win, key, L) {
       // NO CHAIN IS NOT NO SOUND. `dest === undefined → return 0` made the burst
@@ -43986,70 +44068,27 @@
       const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
       const barSec = (60 / Math.max(20, bpm)) * 4;
       const dur = Math.max(0.05, win.t1 - win.t0);
-      const rnd = _ambSeededRand(_ambHangHash(win.pi, win.kind, key, win.occ, (cfg.seed | 0)));
-      const src = (typeof _ambNotesOf === 'function') ? _ambNotesOf(cfg, L, key) : null;
-      // A GESTURE WITH A DIRECTION, not scatter. The first build subdivided the
-      // window evenly at the layer's own staged volume — on the reporter's
-      // project (a level-34, register-2, cutoff-36 piano bass) that was a bar of
-      // faint low thumps under a still-ringing reverb tail: the gate measured
-      // perfect and the whole feature was inaudible, reported as "parts back to
-      // back". A hang has to ANNOUNCE itself:
-      //   head → a PICKUP: sparse start, accelerating INTO the part it opens,
-      //          landing its last note just before the downbeat;
-      //   tail → an ACCENT that decays: strongest at the boundary it hangs off,
-      //          thinning toward the next part.
-      // Density floors at 4 per bar, and velocity gets a FLOOR rather than a
-      // scale — the burst still runs through the layer's own strip (its level,
-      // tone and FX all apply), but it must not inherit a staging that made it
-      // vanish the moment everything else stopped.
-      const n = Math.max(4, Math.min(12, Math.round(4 * win.bars + rnd() * 3)));
-      const isBeat = (String(key).split(':')[0] === 'beat');
-      const reg = Number.isFinite(L.register) ? (L.register | 0) : 5;
+      const phrase = _ambHangNotes(E, cfg, win, key, L);
       let fired = 0;
       _ambHangEmitting = true;
       try {
-      for (let i = 0; i < n; i++) {
-        // Curved placement: heads crowd the END (t^0.6 spacing reversed), tails
-        // crowd the START — with a little seeded scatter, never past the end.
-        const u = (i + 0.5) / n;
-        const shaped = (win.kind === 'head') ? Math.pow(u, 0.6) : (1 - Math.pow(1 - u, 0.6));
-        const frac = shaped + (rnd() - 0.5) * (0.35 / n);
-        const at = win.t0 + Math.max(0, Math.min(0.985, frac)) * dur;
-        const lenMs = Math.max(60, Math.round((dur / n) * 1000 * (0.7 + rnd() * 0.6)));
-        // Velocity follows the shape: a head builds toward the downbeat, a tail
-        // decays away from it.
-        const vshape = (win.kind === 'head') ? (0.6 + 0.4 * u) : (1 - 0.45 * u);
+      for (let i = 0; i < phrase.length; i++) {
+        const nn = phrase[i];
+        const at = win.t0 + nn.frac * dur;
         try {
-          if (isBeat && _ambBeatIsSynth(L)) {
-            const roles = ['kick', 'snare', 'hat', 'tom', 'perc'];
+          if (nn.drum) {
             const _pk2 = window._ambEmitKey;
             window._ambEmitKey = key;
-            try { _ambPlaySynthDrum(E, dest, L, roles[(rnd() * roles.length) | 0], at,
-              (0.55 + rnd() * 0.45) * vshape, 0, _ambLayerPan(L), 0); }
+            try { _ambPlaySynthDrum(E, dest, L, nn.drum, at, nn.vel, 0, _ambLayerPan(L), 0); }
             finally { window._ambEmitKey = _pk2; }
             fired++; continue;
           }
-          const deg = (rnd() * 7) | 0;
-          const oct = reg + ((rnd() < 0.35) ? 1 : 0);
-          const f = _ambNoteFreq(deg, oct, src);
-          if (!(f > 0)) continue;
-          const pr = _ambApplyAdsr(_ambMotifParams(lenMs, _ambLayerPan(L), L.tone), L);
-          pr.volume = Math.max(45, Math.round(Math.max(pr.volume || 0, 60) * vshape));
-          // A REAL EMIT SCOPE, LIKE EVERY EMITTER. `_ambEmitKey` is not only the
-          // capture tee's attribution — the CORE keys its strip slots on it, so a
-          // SAMPLE burst posted with it unset landed outside any slot and KILLED
-          // THE WORKLET: one bad post, the processor dies, and every core-rendered
-          // layer goes silent for the rest of the session. Measured on the
-          // reporter's own shape — a sample-toned burst took the whole master to
-          // 0.000 (bisect: empty burst plays, synth burst plays, sample burst
-          // silences everything). `_hangGen` keeps the note OUT of the rolling
-          // capture (the _pecho rule: generated notes must never bake into a
-          // Write freeze), and the previous key is restored in `finally` so an
-          // exception cannot leak the scope.
+          const pr = _ambApplyAdsr(_ambMotifParams(nn.lenMs, _ambLayerPan(L), L.tone), L);
+          pr.volume = Math.max(45, Math.round(Math.max(pr.volume || 0, 60) * nn.vshape));
           pr._hangGen = 1;
           const _pk = window._ambEmitKey;
           window._ambEmitKey = key;
-          try { playNote(f, pr, lenMs, at, dest, undefined, E.laneIdx ? E.laneIdx() : undefined); }
+          try { playNote(nn.f, pr, nn.lenMs, at, dest, undefined, E.laneIdx ? E.laneIdx() : undefined); }
           finally { window._ambEmitKey = _pk; }
           fired++;
         } catch (e) {}

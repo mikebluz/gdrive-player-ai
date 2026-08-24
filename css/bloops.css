@@ -3703,6 +3703,17 @@
     .ambient-hang-lyr.on { color: #e2d9f5; border-color: var(--lt, #4fd1c5);
       background: color-mix(in srgb, var(--lt, #4fd1c5) 14%, transparent); }
     .ambient-hang-lyr.on > i { opacity: 1; }
+    /* The phrase, per layer — read from the same generator the emit plays. */
+    .ambient-hang-phrases { display: flex; flex-direction: column; gap: 4px; }
+    .ambient-hang-phr { display: flex; align-items: center; gap: 7px; min-height: 32px;
+      padding: 3px 7px; border: 1px solid #23233a; border-radius: 7px; background: #14142a; }
+    .ambient-hang-phr > i { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto;
+      background: var(--lt, #4a5568); }
+    .ambient-hang-phr > b { font-size: 0.66rem; color: #cbd5e0; flex: 0 0 auto; max-width: 72px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ambient-hang-phr > span { flex: 1 1 auto; min-width: 0; font-size: 0.66rem; color: #8b8ba8;
+      white-space: normal; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+    .ambient-hang-phr > .ambient-seg { flex: 0 0 auto; min-width: 36px; }
     .ambient-hang-acts { display: flex; gap: 5px; flex-wrap: wrap; }
     .ambient-hang-acts .ambient-seg { min-height: 32px; }
     .ambient-hang-acts .ambient-hang-rm { margin-left: auto; color: #fc8181; border-color: rgba(252,129,129,0.35); }

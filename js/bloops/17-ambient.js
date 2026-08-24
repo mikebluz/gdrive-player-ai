@@ -14086,6 +14086,12 @@
       return true;
     }
     function _ambPlaybackGateShouldSkip(key, at) {
+      // THE BURST IS EXEMPT BY CONSTRUCTION. Keying burst notes (the worklet-kill
+      // fix) put them in front of this gate — and the hang gate silences EVERY
+      // layer inside a window, which is where every burst note lives. Without
+      // this, the fix for "the burst killed the mix" would be "the burst
+      // silences itself".
+      if (_ambHangEmitting) return false;
       if (_ambGridComposing(key)) return false;
       return _ambUnitGateShouldSkip(key, at) || _ambIterGateShouldSkip(key, at) || _ambHangShouldSkip(key, at);
     }
@@ -26321,7 +26327,7 @@
         // the loop then replayed them forever regardless of the FX's on/off
         // ("removed pitch echo, still/suddenly hearing it"), and each rewrite
         // stacked fresh echoes on top of the baked ones (echo-density creep).
-        if (!(params && params._pecho)) {
+        if (!(params && (params._pecho || params._hangGen))) {
           const p = {}; for (const k in params) { if (k === '_detuneMod') continue; p[k] = params[k]; }
           arr.push({ at: at, freq: freq, dur: dur, params: p });
           // PITCH ECHO — spawn pitched echoes of this note (not of an echo). Runs
@@ -39172,22 +39178,47 @@
           // per-layer chains — a re-roll per press so it demos the variety.
           const h = P[which]; if (!h) return;
           try { Tone.start(); } catch (e) {}
-          try { if (!Object.keys(E.mod || {}).length) _ambSyncMods(); } catch (e) {}
+          // UNCONDITIONALLY. The old guard ("only when E.mod is empty") was
+          // defeated by warm-up having built OTHER keys — the selected layer's
+          // chain was absent, _ambHangEmit's dest guard returned 0 for every
+          // layer, and the audition fired NOTHING while the probe counted
+          // warm-up's volume-0 JIT notes as success. Sync is cheap on a press.
+          try { _E = E; _ambSyncMods(); } catch (e) {}
           const bpm2 = (E.getCfg().bpm > 0) ? E.getCfg().bpm : _ambBpm();
           const barSec2 = (60 / Math.max(20, bpm2)) * 4;
           const t0 = Tone.now() + 0.09;
           P._tryN = (P._tryN | 0) + 1;
-          const win = { t0, t1: t0 + h.bars * barSec2, bars: h.bars, kind: which,
-                        layers: h.layers.slice(), pi, occ: 100000 + P._tryN };
-          let fired = 0;
-          (h.layers.length ? h.layers : []).forEach(k2 => {
-            const L2 = _ambLayerByKey(E, k2); if (!L2) return;
-            try { fired += _ambHangEmit(E, E.getCfg(), win, k2, L2) | 0; } catch (e) {}
-          });
-          try {
-            if (!h.layers.length) showToast('Nobody plays in this ' + (which === 'head' ? 'intro' : 'hang') + ' yet — it is a rest. Tap a layer first.');
-            else if (!fired) showToast('Nothing sounded — press ▶ Play once so the layers are built, then audition again.');
-          } catch (e) {}
+          const tryN = P._tryN;
+          (async () => {
+            // WARM COLD SAMPLERS FIRST. A lazy sampler's first notes are silent
+            // by design ("silent that once"), and on a sample-toned layer that
+            // once IS the first audition press — the one press the user judges
+            // the feature by. Reading `.sampler` kicks the fetch; poll `.loaded`
+            // briefly, then emit at a fresh t0.
+            try {
+              const ids = [];
+              h.layers.forEach(k2 => { const L2 = _ambLayerByKey(E, k2);
+                const t2 = L2 && L2.tone; if (t2 && /^sample:/.test(String(t2))) ids.push(String(t2).slice(7)); });
+              for (const id of ids) {
+                const en = (typeof sampleSamplers !== 'undefined') && sampleSamplers.get(id);
+                if (!en) continue;
+                const sm = en.sampler;   // kicks the lazy build
+                for (let z = 0; z < 15 && sm && !sm.loaded; z++) await new Promise(r2 => setTimeout(r2, 100));
+              }
+            } catch (e) {}
+            const t02 = Tone.now() + 0.09;
+            const win = { t0: t02, t1: t02 + h.bars * barSec2, bars: h.bars, kind: which,
+                          layers: h.layers.slice(), pi, occ: 100000 + tryN };
+            let fired = 0;
+            (h.layers.length ? h.layers : []).forEach(k2 => {
+              const L2 = _ambLayerByKey(E, k2); if (!L2) return;
+              try { fired += _ambHangEmit(E, E.getCfg(), win, k2, L2) | 0; } catch (e) {}
+            });
+            try {
+              if (!h.layers.length) showToast('Nobody plays in this ' + (which === 'head' ? 'intro' : 'hang') + ' yet — it is a rest. Tap a layer first.');
+              else if (!fired) showToast('Nothing sounded — press ▶ Play once so the layers are built, then audition again.');
+            } catch (e) {}
+          })();
           return;   // no commit — nothing changed
         }
         if (op === 'tog') {
@@ -40943,6 +40974,12 @@
     const _ambLayerRings = (L) => !!(L && L.ring);
     // The hook. Returns the duration the note should actually sound for.
     function _ambNoteChoke(key, atSec, durMs, params) {
+      // A HANG BURST IS EXEMPT: its notes are cut to fit their window by the
+      // generator itself, and the choke resolves a chord boundary off the CLOCK —
+      // which, when auditioning while STOPPED, is a stale anchor: measured, it
+      // clamped every audition note to a stub and the audition read as silent
+      // while a bare sine in the same session played at 0.511.
+      if (params && params._hangGen) return 0;
       try {
         // THE ENGINE THAT IS EMITTING, not _masterEng — `_E` is set by every emit
         // scope. Gating on `_masterEng.timer` would have skipped the BOUNCE
@@ -43930,8 +43967,14 @@
     // ONE LAYER'S BURST. "In its own character" — the notes come from that layer's
     // own note source, register and voice, so a bass answers low and a pad answers
     // as a chord; only the RHYTHM is invented here.
+    let _ambHangEmitting = false;   // the burst must never be eaten by the gate that clears its own window
     function _ambHangEmit(E, cfg, win, key, L) {
-      const dest = _ambLayerDest(key); if (dest === undefined) return 0;
+      // NO CHAIN IS NOT NO SOUND. `dest === undefined → return 0` made the burst
+      // silently vanish whenever the layer's chain wasn't built (auditioning
+      // while stopped, a layer mid-teardown) — and a return of 0 is invisible.
+      // playNote's default routing is audible; the layer's own strip is used
+      // whenever it exists, which is every normal playback case.
+      const dest = _ambLayerDest(key);
       const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
       const barSec = (60 / Math.max(20, bpm)) * 4;
       const dur = Math.max(0.05, win.t1 - win.t0);
@@ -43955,6 +43998,8 @@
       const isBeat = (String(key).split(':')[0] === 'beat');
       const reg = Number.isFinite(L.register) ? (L.register | 0) : 5;
       let fired = 0;
+      _ambHangEmitting = true;
+      try {
       for (let i = 0; i < n; i++) {
         // Curved placement: heads crowd the END (t^0.6 spacing reversed), tails
         // crowd the START — with a little seeded scatter, never past the end.
@@ -43969,8 +44014,11 @@
         try {
           if (isBeat && _ambBeatIsSynth(L)) {
             const roles = ['kick', 'snare', 'hat', 'tom', 'perc'];
-            _ambPlaySynthDrum(E, dest, L, roles[(rnd() * roles.length) | 0], at,
-              (0.55 + rnd() * 0.45) * vshape, 0, _ambLayerPan(L), 0);
+            const _pk2 = window._ambEmitKey;
+            window._ambEmitKey = key;
+            try { _ambPlaySynthDrum(E, dest, L, roles[(rnd() * roles.length) | 0], at,
+              (0.55 + rnd() * 0.45) * vshape, 0, _ambLayerPan(L), 0); }
+            finally { window._ambEmitKey = _pk2; }
             fired++; continue;
           }
           const deg = (rnd() * 7) | 0;
@@ -43979,10 +44027,26 @@
           if (!(f > 0)) continue;
           const pr = _ambApplyAdsr(_ambMotifParams(lenMs, _ambLayerPan(L), L.tone), L);
           pr.volume = Math.max(45, Math.round(Math.max(pr.volume || 0, 60) * vshape));
-          playNote(f, pr, lenMs, at, dest, undefined, E.laneIdx ? E.laneIdx() : undefined);
+          // A REAL EMIT SCOPE, LIKE EVERY EMITTER. `_ambEmitKey` is not only the
+          // capture tee's attribution — the CORE keys its strip slots on it, so a
+          // SAMPLE burst posted with it unset landed outside any slot and KILLED
+          // THE WORKLET: one bad post, the processor dies, and every core-rendered
+          // layer goes silent for the rest of the session. Measured on the
+          // reporter's own shape — a sample-toned burst took the whole master to
+          // 0.000 (bisect: empty burst plays, synth burst plays, sample burst
+          // silences everything). `_hangGen` keeps the note OUT of the rolling
+          // capture (the _pecho rule: generated notes must never bake into a
+          // Write freeze), and the previous key is restored in `finally` so an
+          // exception cannot leak the scope.
+          pr._hangGen = 1;
+          const _pk = window._ambEmitKey;
+          window._ambEmitKey = key;
+          try { playNote(f, pr, lenMs, at, dest, undefined, E.laneIdx ? E.laneIdx() : undefined); }
+          finally { window._ambEmitKey = _pk; }
           fired++;
         } catch (e) {}
       }
+      } finally { _ambHangEmitting = false; }
       return fired;
     }
     // Called from the tick with the same lookahead the emitters use. Each hang

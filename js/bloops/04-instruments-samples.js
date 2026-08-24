@@ -4269,7 +4269,10 @@
       // look-ahead used to schedule these past-boundary voices and rely on the
       // engage-cancel to kill them, which loses the race on a late/janky tick.
       if (typeof window !== 'undefined' && Number.isFinite(window._ambEmitCutoff)
-          && Number.isFinite(startTime) && startTime >= window._ambEmitCutoff - 1e-6) return;
+          && Number.isFinite(startTime) && startTime >= window._ambEmitCutoff - 1e-6
+          // A hang burst is not part of any freeze handoff — a stale armed
+          // cutoff (set for a Write boundary) must not eat it.
+          && !(params && params._hangGen)) return;
       // Humanize (Bloom Variance): per-onset timing jitter from _ambApplyAdsr.
       // Scheduled notes only (a live press has no startTime to shift).
       if (Number.isFinite(params._humanSec) && params._humanSec && Number.isFinite(startTime)) { startTime = Math.max(0, startTime + params._humanSec); }

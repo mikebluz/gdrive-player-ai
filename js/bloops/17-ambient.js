@@ -2973,6 +2973,14 @@
         const _tp = Array.isArray(prog.parts) ? prog.parts.filter(x => x && !x.open).length : 1;
         const _ag = _ambNormalizeGridObj(prog.arrGrid, Math.max(1, _tp));
         if (_ag) prog.arrGrid = _ag; else delete prog.arrGrid;
+        // A GRID AND A CHAIN CANNOT BOTH BE IN FORCE — _ambArrGridSeq reads the
+        // grid and never looks at the chain, so a chain sitting underneath one is
+        // a store that can never be heard, and an editor pointed at it edits
+        // something silent with nothing saying so. The grid IS a chain per round
+        // (a chain is the one-column case), so dropping it changes no playback
+        // and removes the disagree state. Same prune-what-says-nothing rule the
+        // chain's own coercion above already applies.
+        if (prog.arrGrid && prog.chain) delete prog.chain;
         // The PARTLESS store: with no parts the whole chord list is one part, and
         // its grid has nowhere else to live.
         if (!Array.isArray(prog.parts)) {
@@ -3195,6 +3203,11 @@
           //            which is what lets sections fold in here without changing
           //            what a single saved project plays.
           if (p.hold) e0.hold = 1;
+          // CARRIED EXPLICITLY. This builds a FRESH object per part, so anything
+          // not copied vanishes on every normalize — the trap that already ate
+          // per-part `key`, `salt` and `passSalt`.
+          { const _hh = _ambNormalizeHang(p.head); if (_hh) e0.head = _hh;
+            const _ht = _ambNormalizeHang(p.tail); if (_ht) e0.tail = _ht; }
           // A part with no changes has to be able to hold everything a SECTION
           // holds, or folding sections in here would quietly drop them. `keyOff`
           // is a semitone OFFSET, deliberately distinct from `key` (absolute):
@@ -3247,6 +3260,9 @@
         }
         { const _psx = _ambPassSaltCoerce(p.passSalt); if (_psx) e.passSalt = _psx; }
         { const _rb = _ambRubatoCoerce(p.rubato); if (_rb) e.rubato = _rb; }
+        // HANGS — same fresh-object rule as everything above it.
+        { const _hh = _ambNormalizeHang(p.head); if (_hh) e.head = _hh;
+          const _ht = _ambNormalizeHang(p.tail); if (_ht) e.tail = _ht; }
         if (p.key && typeof p.key === 'object' && Number.isFinite(p.key.root)) {
           const sc = (typeof SCALES !== 'undefined' && SCALES[p.key.scale]) ? p.key.scale : 'major';
           e.key = { root: (((p.key.root | 0) % 12) + 12) % 12, scale: sc };
@@ -5145,6 +5161,126 @@
       if (!Array.isArray(row)) return dflt();
       return row.map(v => v | 0).filter(v => v >= 0 && v < nParts);
     }
+    // ---- PLAY ORDER ---------------------------------------------------------
+    // THE PARTS THAT OCCUPY TIME, in written order — the one enumerator the play
+    // order indexes into, and the convention `chain` has always used:
+    // _ambArchChainSlots picks `withCh[ix]` where withCh is the arch entries
+    // carrying `changes` OR `hold`. A NON-holding open part is deliberately
+    // absent — it becomes a SECTION (the mirror emits one per non-holding open
+    // part) and the progression runs underneath it, so it is not a step in the
+    // order of play.
+    //
+    // NOTE a real index-space split this names rather than hides: `chain`
+    // indexes THIS list, while `arrGrid` indexes `_ambGridRanges`, which skips
+    // every open part. The two agree exactly when there are no holding open
+    // parts, and disagree by the number of holds otherwise. `_ambPovOrder`
+    // therefore maps a grid row through `_ambGridRanges` rather than assuming
+    // the spaces are the same.
+    function _ambOrderParts(cfg) {
+      const p = cfg && cfg.prog, parts = (p && Array.isArray(p.parts)) ? p.parts : null;
+      if (!parts || !parts.length) return [];
+      const out = []; let from = 0;
+      parts.forEach((pt, pi) => {
+        if (!pt) return;
+        const len = pt.open ? 0 : Math.max(1, pt.len | 0);
+        // changes, or a HOLD block. A non-holding open part is a section.
+        if (!pt.open || pt.hold) {
+          out.push({ pi, from, len, open: !!pt.open, hold: !!pt.hold, name: pt.name || '',
+                     plays: Math.max(1, (pt.plays | 0) || 1) });
+        }
+        from += len;
+      });
+      return out;
+    }
+    // ---- HANGS --------------------------------------------------------------
+    // A HANG is extra time tacked onto a part PLAY — `tail` after it, `head`
+    // before it — during which only the named layers sound and the harmony
+    // HOLDS (the tail holds the part's last chord, the head its first). The next
+    // part starts immediately after. Length is 1/8 note … 1 bar: long enough to
+    // land a fill or let a cymbal ring, short enough that it reads as
+    // punctuation rather than as a block of its own (that is what a hold part
+    // is for).
+    //   { bars: 0.125…1, layers: ['bed','beat:1', …] }
+    // `layers` is EXPLICIT and may be empty — an empty list is a real musical
+    // statement (a beat of silence), not a neutral, so it is never pruned to
+    // "everybody". Absence of the whole object is the neutral state.
+    const _AMB_HANG_MIN = 0.125, _AMB_HANG_MAX = 1;
+    function _ambNormalizeHang(h) {
+      if (!h || typeof h !== 'object') return null;
+      const bars = Math.max(_AMB_HANG_MIN, Math.min(_AMB_HANG_MAX,
+        (Number.isFinite(h.bars) && h.bars > 0) ? h.bars : 0.5));
+      const layers = Array.isArray(h.layers)
+        ? h.layers.map(x => String(x)).filter(Boolean).slice(0, 64) : [];
+      return { bars, layers };
+    }
+    // How many ROUNDS the order cycles through before repeating — one per
+    // arrGrid column, else 1. (A "round" is one trip through all the parts;
+    // it is the same axis `iterGate ref:'round'` counts.)
+    function _ambPovRounds(cfg) {
+      const g = cfg && cfg.prog && cfg.prog.arrGrid;
+      return (g && g.seq) ? Math.max(1, _ambGridCols(g)) : 1;
+    }
+    // ONE ROUND'S ORDER OF PLAY, as CARDS for the strip.
+    //   steps — the true play order, indices into _ambOrderParts
+    //   cards — adjacent duplicates coalesced, so "Verse Verse Chorus" draws two
+    //           cards and the first says ×2. The SOUND is identical either way;
+    //           this is a reading of the same list, not a second store.
+    //   src   — which store produced it: 'grid' | 'chain' | 'written'
+    // A card is `first` the first time its part appears in the round and a
+    // REVISIT afterwards — a revisit carries no part ops (cadence, key, rename
+    // belong to the part and are drawn once).
+    function _ambPovOrder(cfg, round) {
+      const ops = _ambOrderParts(cfg);
+      const out = { ops, steps: [], cards: [], src: 'written' };
+      if (!ops.length) return out;
+      const p = cfg.prog;
+      let steps = null;
+      const ag = p && p.arrGrid;
+      if (ag && ag.seq) {
+        const cols = Math.max(1, _ambGridCols(ag));
+        const row = ag.seq[String(((((round | 0) % cols) + cols) % cols))];
+        if (Array.isArray(row)) {
+          // GRID ROWS ARE IN _ambGridRanges SPACE (no open parts) — map them into
+          // the occupy-time space this function speaks, or every index shifts by
+          // the number of holds before it.
+          const rg = _ambGridRanges(cfg);
+          steps = row.map(v => {
+            const r = rg && rg[v | 0]; if (!r) return -1;
+            return ops.findIndex(o => o.pi === r.pi);
+          }).filter(i => i >= 0);
+          if (steps.length) out.src = 'grid'; else steps = null;
+        }
+      }
+      if (!steps && Array.isArray(p.chain) && p.chain.length) {
+        steps = p.chain.map(v => v | 0).filter(v => v >= 0 && v < ops.length);
+        if (steps.length) out.src = 'chain'; else steps = null;
+      }
+      if (!steps) {
+        // WRITTEN ORDER, EXPANDED BY `plays`. It must be expanded, not carried on
+        // the card as a count: the moment anything materialises a list, a chain
+        // IGNORES `plays` (repetition is written out, by design) — so a one-each
+        // list silently took a part from ×3 to ×1 the first time a revisit was
+        // added. Measured. Expanding here means the list a mutation writes back
+        // already contains the repeats, and the card still reads ×3 because
+        // adjacent duplicates coalesce below.
+        steps = [];
+        ops.forEach((o, i) => { const n = Math.max(1, o.plays | 0); for (let z = 0; z < n; z++) steps.push(i); });
+      }
+      out.steps = steps;
+      const seen = Object.create(null);
+      for (let k = 0; k < steps.length; k++) {
+        const oi = steps[k];
+        let n = 1;
+        while (k + n < steps.length && steps[k + n] === oi) n++;
+        // Adjacent duplicates ARE the repeat count in every case now — the
+        // written order is expanded above, so both spellings agree by construction.
+        const reps = n;
+        out.cards.push({ oi, pi: ops[oi].pi, k, n, plays: reps, first: !seen[oi] });
+        seen[oi] = 1;
+        k += n - 1;
+      }
+      return out;
+    }
     // HOW LONG A SLOT LASTS inside a grid pass. Three answers, narrowest first:
     //   1. `grid.bars[col][k]` — a length written for THAT position of THAT pass.
     //      This is per-iteration cadence, and because it is keyed on the POSITION
@@ -5455,6 +5591,10 @@
     // harmony), and read straight after. Sites that ask "which chord" keep using
     // step and its `% len` / `floor(/ len)` contract, untouched.
     let _ambProgInstHint = 0;
+    // WHICH HANG is in force at the walked instant (null when none). Stamped by
+    // _ambProgStepAt beside the pos/instance hints, so the gate reads the same
+    // walk the harmony did rather than re-deriving the boundaries.
+    let _ambProgHangHint = null;
     // MUST NOT DISTURB `_ambProgPosHint`. _ambProgStepAt sets that as a side
     // effect, and the salt COLOUR resolver reads it for the segment position — so
     // calling through here (28 times per span bisection) left the resolver reading
@@ -5473,6 +5613,7 @@
     }
     function _ambProgStepAt(E, atSec, src) {
       E = E || _E; if (!E) return 0;
+      _ambProgHangHint = null;   // cleared on EVERY walk — a stale hint would silence layers outside any hang
       const cfg = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : (E.getCfg && E.getCfg()));
       const bpm = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
       const barSec = (60 / Math.max(20, bpm)) * 4;
@@ -5588,13 +5729,13 @@
       // legacy expansion until slice 4 merges the two spines.
       if (!_ownSrc && cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length
           && Array.isArray(cfg.prog.parts)
-          && (cfg.prog.parts.some(p => p && (((p.plays | 0) > 1) || p.open))
+          && (cfg.prog.parts.some(p => p && (((p.plays | 0) > 1) || p.open || p.head || p.tail))
               || (Array.isArray(cfg.prog.chain) && cfg.prog.chain.length))) {
         const all = cfg.prog.chords, L = all.length;
         const seq = [];
         const _chain = _ambArchOwnsChain(cfg) ? _ambArchChainSlots(cfg) : null;
         if (_chain && _chain.length) {
-          _chain.forEach((sl) => { seq.push({ abs: sl.idx, len: _ambChainSlotBars(cfg, sl) }); });
+          _chain.forEach((sl) => { seq.push({ abs: sl.idx, len: _ambChainSlotBars(cfg, sl), hang: sl.hang || 0, hlayers: sl.hlayers || null }); });
         } else {
           let from = 0;
           cfg.prog.parts.forEach(p => {
@@ -5615,12 +5756,28 @@
           let rem = bars - loops * cycle, k = 0;
           while (k < seq.length - 1 && rem >= seq[k].len) { rem -= seq[k].len; k++; }
           const step = loops * L + seq[k].abs;
+          // A HANG SHARES ITS NEIGHBOUR'S INSTANCE — a tail belongs to the chord
+          // it holds and a head to the chord it leads into, so that chord keeps
+          // ONE span through the extra time. Without this the hang is its own
+          // span and the chord-choke cuts every note at the hang's edge, which is
+          // precisely what a hang exists to stop.
+          let _instOf = k, _instN = seq.length;
+          if (seq.some(v => v.hang)) {
+            let n2 = 0; const map = [];
+            for (let i2 = 0; i2 < seq.length; i2++) {
+              if (seq[i2].hang === 'tail') map.push(Math.max(0, n2 - 1));
+              else if (seq[i2].hang === 'head') map.push(n2);
+              else { map.push(n2); n2++; }
+            }
+            _instOf = map[k]; _instN = Math.max(1, n2);
+          }
           // THE STEP IS NOT MONOTONIC HERE and cannot be: a chain that revisits a
           // part (V C V) plays the same `abs` twice in one cycle, so the value
           // repeats within a single pass. `k` is the position in the played
           // sequence, which is monotonic by construction — that is what the span
           // search must bisect on.
-          _ambProgInstHint = loops * seq.length + k;
+          _ambProgInstHint = loops * _instN + _instOf;
+          _ambProgHangHint = seq[k].hang ? { kind: seq[k].hang, layers: seq[k].hlayers || [] } : null;
           _ambProgPosHint = { step: step, pos: Math.max(0, Math.min(1, rem / Math.max(1e-6, seq[k].len))) };
           return step;
         }
@@ -13818,9 +13975,50 @@
       return !_ambIterGateOpen(E, cfg, L, at);
     }
     // Composing in the Grid bypasses every playback gate — see _ambGridComposing.
+    // ---- HANG GATE ----------------------------------------------------------
+    // During a hang only the named layers sound. Resolved through the SAME walk
+    // the clock uses (_ambProgStepAt stashes which slot is in force), so the gate
+    // and the harmony can never disagree about where a hang starts.
+    //
+    // Memoised on the resolved step, because this runs per NOTE: _ambProgStepAt
+    // is already called by the resolver for the same instant, so the common case
+    // is one cheap re-walk per distinct time rather than per note.
+    let _ambHangMemo = { at: -1, cfg: null, hang: null };
+    function _ambHangAt(E, at) {
+      const cfg = E && (E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : null));
+      if (!cfg || !cfg.prog || !Array.isArray(cfg.prog.parts)) return null;
+      if (!cfg.prog.parts.some(p => p && (p.head || p.tail))) return null;
+      const q = Math.round(at * 1000) / 1000;
+      if (_ambHangMemo.cfg === cfg && _ambHangMemo.at === q) return _ambHangMemo.hang;
+      let hang = null;
+      // SAVE AND RESTORE THE WALK'S HINTS. This runs inside playNote, i.e. in the
+      // middle of an emit — and _ambProgStepAt stashes `_ambProgPosHint` (salt
+      // colours) and `_ambProgInstHint` (chord spans) as side effects. A chord
+      // resolves several voices around its playNote calls, so re-walking here
+      // would hand the next voice hints for a different instant.
+      const _sp = _ambProgPosHint, _si = _ambProgInstHint, _sh = _ambProgHangHint;
+      try {
+        // The walk stashes the slot it landed on; ask it, then read the flag.
+        _ambProgStepAt(E, at);
+        hang = _ambProgHangHint || null;
+      } catch (e) { hang = null; }
+      _ambProgPosHint = _sp; _ambProgInstHint = _si; _ambProgHangHint = _sh;
+      _ambHangMemo = { at: q, cfg, hang };
+      return hang;
+    }
+    // A HANG SILENCES EVERY LAYER IT DOES NOT NAME. An EMPTY list is a real
+    // statement (a beat of silence) and is honoured as one — it is never read as
+    // "everybody".
+    function _ambHangShouldSkip(key, at) {
+      const E = (typeof _masterEng !== 'undefined' && _masterEng) ? _masterEng : _E;
+      if (!E) return false;
+      const h = _ambHangAt(E, at);
+      if (!h) return false;
+      return !(Array.isArray(h.layers) && h.layers.indexOf(key) >= 0);
+    }
     function _ambPlaybackGateShouldSkip(key, at) {
       if (_ambGridComposing(key)) return false;
-      return _ambUnitGateShouldSkip(key, at) || _ambIterGateShouldSkip(key, at);
+      return _ambUnitGateShouldSkip(key, at) || _ambIterGateShouldSkip(key, at) || _ambHangShouldSkip(key, at);
     }
     if (typeof window !== 'undefined') window._ambUnitGateSkip = _ambPlaybackGateShouldSkip;
     // ---- PHASE DIAGNOSTIC (read-only) ---------------------------------------
@@ -38662,26 +38860,17 @@
       // written order, so a part can never be revisited; this is where you say
       // "Verse Chorus Verse Bridge Chorus". Empty = the written order, and
       // that is what the buttons seed from, so switching it on is inaudible.
-      const _chainUi = () => {
-        const c2 = E.getCfg() || {};
-        const pl = (c2.prog && Array.isArray(c2.prog.parts)) ? c2.prog.parts : [];
-        if (pl.length < 2) return '';
-        const seq = (c2.prog && Array.isArray(c2.prog.chain) && c2.prog.chain.length)
-          ? c2.prog.chain : pl.map((_, i) => i);
-        const custom = !!(c2.prog && Array.isArray(c2.prog.chain) && c2.prog.chain.length);
-        return '<div class="ps-chain">' +
-          '<div class="ps-head"><b class="ps-nm">Order of play</b>' +
-            '<span class="ps-x">' + (custom ? 'custom order' : 'written order') + '</span></div>' +
-          '<div class="ps-chainseq">' +
-            seq.map((ix, k) => '<span class="ps-cstep" data-cs="' + k + '" title="Remove this step">' +
-              esc((pl[ix] && pl[ix].name) || ('Part ' + (ix + 1))) + '<i>✕</i></span>').join('') +
-          '</div>' +
-          '<div class="ps-chainadd"><span class="ps-x">add</span>' +
-            pl.map((pt, i) => '<button type="button" class="ambient-seg ps-cadd" data-ca="' + i + '">'
-              + esc(pt.name || ('Part ' + (i + 1))) + '</button>').join('') +
-            (custom ? '<button type="button" class="ambient-seg ps-creset">↩ written order</button>' : '') +
-          '</div></div>';
-      };
+      // ORDER OF PLAY MOVED TO THE ▤ OVERVIEW STRIP (2026-08-23). It used to be
+      // chips here: a row per chain step with an ✕, an "add" button per part and
+      // ↩ written order. The strip is the order now — numbered cards you drag —
+      // so this was a SECOND editor for `prog.chain`, which is the duplicated
+      // -surface bug this file has paid for at least three times (the docked grid
+      // seq bank, the retired Home row, the Scheduler's ＋ Part). A move is a
+      // delete plus an add, so the editor goes in the same change as the strip
+      // gains it; the mode readout ("written order" / "custom order") lives on
+      // the strip's own bar. This popover keeps what it is good at — the whole
+      // piece at full width, bar totals, section rows, per-part chord lists.
+      const _chainUi = () => '';
       const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-step-modal-ov';
       const paint = () => {
         ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-partsched-modal">' +
@@ -38696,18 +38885,6 @@
       // Edits write the chain, re-derive (getCfg rebuilds arch), and repaint the
       // whole popover — the strip and the bar totals below are derived from the
       // same walk, so they follow for free.
-      const commit = (fn) => {
-        const c2 = E.getCfg(); if (!c2 || !c2.prog) return;
-        const pl = Array.isArray(c2.prog.parts) ? c2.prog.parts : [];
-        const cur = (Array.isArray(c2.prog.chain) && c2.prog.chain.length)
-          ? c2.prog.chain.slice() : pl.map((_, i) => i);
-        const next = fn(cur);
-        if (next) c2.prog.chain = next; else delete c2.prog.chain;
-        try { E.getCfg(); } catch (e) {}
-        try { _ambRenderScheduler(E); _ambRenderProgOverview(E); _ambSyncControls(E); } catch (e) {}
-        if (typeof persistWorkspace === 'function') persistWorkspace();
-        paint();
-      };
       ov.addEventListener('click', (ev) => {
         const t = ev.target;
         // SECTION ROW → the section editor. `paint` is passed as the after-hook
@@ -38723,13 +38900,110 @@
           try { _ambSectionMenu(E, si, x, y, () => { try { paint(); } catch (e) {} }); } catch (e) {}
           return;
         }
-        const add = t.closest && t.closest('.ps-cadd');
-        if (add) { const i = add.getAttribute('data-ca') | 0; commit((cur) => cur.concat([i])); return; }
-        const rm = t.closest && t.closest('.ps-cstep');
-        if (rm) { const k = rm.getAttribute('data-cs') | 0;
-          commit((cur) => { const n2 = cur.filter((_, j) => j !== k); return n2.length ? n2 : null; }); return; }
-        if (t.closest && t.closest('.ps-creset')) { commit(() => null); return; }
         if (t === ov || (t.closest && t.closest('.ps-close'))) close();
+      });
+    }
+    // ⌛ HANGS — extra time tacked onto a part play, with its own line-up.
+    // ONE popover for both ends, because they are the same idea pointing opposite
+    // ways and splitting them would be two doors to one concept.
+    function _ambHangModal(E, pi) {
+      _E = E;
+      const cfg = E.getCfg(); if (!cfg || !cfg.prog) return;
+      if (!cfg.prog.parts || !cfg.prog.parts[pi]) return;
+      // RE-RESOLVED ON EVERY READ, never captured: `prog.parts` is a new array
+      // after each getCfg, so a captured one goes stale the first time anything
+      // commits (the cfg.sections orphan bug, one store over).
+      const parts = () => (E.getCfg().prog.parts || []);
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const layers = _ambMixerLayers(cfg);
+      // 1/8 note … 1 bar. Named in NOTE values, which is how you think about a
+      // pickup or a held cymbal — the bar fraction is the storage, not the idea.
+      const LENS = [[0.125, '1/8'], [0.25, '1/4'], [1 / 3, '1/3'], [0.5, '1/2'], [0.75, '3/4'], [1, '1 bar']];
+      const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-step-modal-ov';
+      const nm = () => (parts()[pi] && parts()[pi].name) || 'this part';
+      const side = (which) => {
+        const h = parts()[pi][which];
+        const on = !!h;
+        const lead = (which === 'head')
+          ? ['Intro', 'before', 'Plays before ' + esc(nm()) + ' starts, holding its first chord.']
+          : ['Hang', 'after', 'Plays after ' + esc(nm()) + ' ends, holding its last chord. The next part starts straight after.'];
+        return '<div class="ambient-hang-side' + (on ? ' on' : '') + '" data-hside="' + which + '">' +
+          '<div class="ambient-hang-head">' +
+            '<button type="button" class="ambient-seg' + (on ? ' active' : '') + '" data-hang="tog:' + which + '">' +
+              (on ? '✓ ' : '＋ ') + lead[0] + '</button>' +
+            '<span class="ambient-hint">' + lead[2] + '</span>' +
+          '</div>' +
+          (on ? ('<div class="ambient-hang-body">' +
+            '<div class="ambient-hang-lens">' + LENS.map(([v, lbl]) =>
+              '<button type="button" class="ambient-seg' + (Math.abs(h.bars - v) < 0.01 ? ' active' : '') +
+              '" data-hang="len:' + which + ':' + v + '">' + lbl + '</button>').join('') + '</div>' +
+            '<div class="ambient-hint">Who plays during it' +
+              (h.layers.length ? '' : ' — <b>nobody yet: this is ' + (which === 'head' ? 'silence before' : 'a rest after') + ' the part</b>') + '</div>' +
+            '<div class="ambient-hang-who">' + (layers.length ? layers.map(l =>
+              '<button type="button" class="ambient-hang-lyr' + (h.layers.indexOf(l.key) >= 0 ? ' on' : '') +
+              '" data-hang="lyr:' + which + ':' + esc(l.key) + '" data-ltype="' + esc(String(l.key).split(':')[0]) + '">' +
+              '<i></i>' + esc(l.name) + '</button>').join('')
+              : '<span class="ambient-hint">This area has no layers yet.</span>') + '</div>' +
+            '<div class="ambient-hang-acts">' +
+              '<button type="button" class="ambient-seg" data-hang="all:' + which + '">All</button>' +
+              '<button type="button" class="ambient-seg" data-hang="none:' + which + '">None</button>' +
+              '<button type="button" class="ambient-seg ambient-hang-rm" data-hang="rm:' + which + '">✕ Remove</button>' +
+            '</div></div>') : '') +
+          '</div>';
+      };
+      const paint = () => {
+        ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-hang-modal">' +
+          '<div class="sm-title">⌛ Hangs · ' + esc(nm()) + '</div>' +
+          '<div class="ambient-step-modal-body">' +
+            '<div class="ambient-hint">Extra time tacked onto every play of this part — 1/8 note to a bar. ' +
+              'The harmony holds through it and the next part starts immediately after.</div>' +
+            side('head') + side('tail') +
+          '</div>' +
+          '<div class="sm-footer"><button type="button" class="sm-apply hang-close">Done</button></div></div>';
+      };
+      paint();
+      document.body.appendChild(ov);
+      // Body-attached: the view-mode rules force-hide anything not exempt, so the
+      // display goes on INLINE with !important.
+      ov.style.setProperty('display', 'flex', 'important');
+      const close = () => { try { ov.remove(); } catch (e) {} };
+      const commit = () => {
+        try { E.getCfg(); } catch (e) {}
+        const el = _ambGet(E, 'ambient-prog-overview'); if (el) el._sig = '';
+        try { _ambRenderProgOverview(E); } catch (e) {}
+        try { _ambRenderScheduler(E); } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        paint();
+      };
+      ov.addEventListener('click', (ev) => {
+        const t = ev.target;
+        if (t === ov || (t.closest && t.closest('.hang-close'))) { close(); return; }
+        const btn = t.closest && t.closest('[data-hang]'); if (!btn) return;
+        const a2 = String(btn.getAttribute('data-hang')).split(':'), op = a2[0], which = a2[1];
+        // EVERY getCfg REBUILDS `prog.parts` AS A NEW ARRAY (_ambRepairParts
+        // returns a fresh object per part), so anything read before a getCfg is
+        // an ORPHAN and a write to it is silently discarded. This bit exactly
+        // once here: `_ambMixerLayers(E.getCfg())` sat on the RIGHT-HAND SIDE of
+        // the assignment, so it detached P a moment before the value landed on
+        // it — the modal painted, the store stayed empty, no error anywhere.
+        // Rule: resolve every getCfg-derived value FIRST, take the record LAST,
+        // and never call getCfg between resolving it and writing to it.
+        const allKeys = _ambMixerLayers(E.getCfg()).map(l => l.key);
+        const P = E.getCfg().prog.parts[pi]; if (!P) return;
+        if (op === 'tog') {
+          if (P[which]) delete P[which];
+          // SEEDED WITH EVERY LAYER ON, so adding a hang is inaudible except for
+          // the extra time — you then switch layers OFF to shape it. Turning one
+          // on should never silence the mix by surprise.
+          else P[which] = { bars: 0.5, layers: allKeys.slice() };
+        } else if (op === 'len') { if (P[which]) P[which].bars = parseFloat(a2[2]) || 0.5; }
+        else if (op === 'lyr') {
+          if (P[which]) { const k = a2.slice(2).join(':'); const i2 = P[which].layers.indexOf(k);
+            if (i2 >= 0) P[which].layers.splice(i2, 1); else P[which].layers.push(k); }
+        } else if (op === 'all') { if (P[which]) P[which].layers = allKeys.slice(); }
+        else if (op === 'none') { if (P[which]) P[which].layers = []; }
+        else if (op === 'rm') { delete P[which]; }
+        commit();
       });
     }
     function _ambAddPartModal(E, x, y) {
@@ -39103,6 +39377,11 @@
     }
     function _ambRenderProgOverview(E) {
       const el = _ambGet(E, 'ambient-prog-overview'); if (!el) return;
+      // ITS OWN FLAG, AND BEFORE THE EMPTY-STATE RETURN. `_wired` is claimed by
+      // whichever branch renders FIRST, and at boot an area with no chords takes
+      // the empty one — so anything hung off `!el._wired` further down never ran
+      // at all. Measured: the ordinal drag was wired zero times.
+      if (!el._dragWired) { el._dragWired = true; _ambWirePovDrag(E, el); }
       const cfg = E.getCfg();
       // Render whenever there is anything to show — chords OR parts — and NOT
       // only when prog.on. With the on/off switch gone, gating this on the flag
@@ -39138,7 +39417,16 @@
         '|s' + _ambProgViewShift(E, cfg, chords) + '|' + _ambKeyRootPc(cfg) + _ambKeyScaleName(cfg) +
         '|k' + (cfg.keyOn ? 1 : 0) +            // the header states Key vs Chromatic, and _ambKeyRootPc answers either way
         '|n' + (_ambPovNamesOn(el) ? 1 : 0) +   // the label mode is part of what is on screen
-        '|t' + _ambProgTitle(prog.name);       // the sole set's header names it, so a rename must repaint
+        '|t' + _ambProgTitle(prog.name) +      // the sole set's header names it, so a rename must repaint
+        // THE ORDER OF PLAY IS WHAT THIS STRIP NOW DRAWS, so it is part of what
+        // is on screen — without it a reorder, a repeat or a round change writes
+        // the store and repaints nothing (the documented _sig trap, which the
+        // cadence chip already learned once).
+        '|o' + (Array.isArray(prog.chain) ? prog.chain.join('.') : '-') +
+        '|g' + (prog.arrGrid && prog.arrGrid.seq ? (_ambGridCols(prog.arrGrid) + ':' + JSON.stringify(prog.arrGrid.seq)) : '-') +
+        '|r' + (el._povRound | 0) +
+        '|p' + (parts ? parts.map(p2 => (p2.plays | 0) || 1).join('.') : '-') +
+        '|h' + (parts ? parts.map(p2 => (p2.head ? p2.head.bars + ':' + p2.head.layers.length : '') + '/' + (p2.tail ? p2.tail.bars + ':' + p2.tail.layers.length : '')).join(',') : '-')
       if (el._sig === sig) return;
       el._sig = sig; el._curCi = -2;
       const esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
@@ -39162,6 +39450,92 @@
                       key: p.key || null, open: !!p.open, bars: p.bars, hold: !!p.hold });
         acc += (p.open ? 0 : (p.len | 0)); }); }
       else ranges.push({ name: '', from: 0, to: N, pi: -1 });
+      // WHICH ROUND is on screen. Transient view state on the element (the
+      // `_povNames` / `_pmPart` idiom) — nothing about the music changes, so it
+      // is not a config field. Clamped here because a grid can shrink under it.
+      const _povRounds = Math.max(1, _ambPovRounds(cfg));
+      const povRound = Math.min(Math.max(0, el._povRound | 0), _povRounds - 1);
+      el._povRound = povRound;
+      // The ordinal rail: the number IS the drag handle, so ordering reads as one
+      // idea rather than a number beside a grip that does the work.
+      // THE RAIL OWNS ORDERING — number, arrows, drag. The arrows used to sit on
+      // the HEADER, which is where the crowding was: they cost ~60px of the row
+      // for something that is not identity or state, while the rail sat 32×79 and
+      // mostly empty. Three affordances for one job, in one object.
+      // The arrows are small TARGETS (13px), which is only acceptable because the
+      // ⋯ menu carries the same two actions at full size and names them.
+      const _povOrdHtml = (card) => {
+        if (!card.ord) return '<span class="ambient-pov-ord pov-ord-none" title="A section — it runs over the changes rather than taking a turn in the order"><b>·</b></span>';
+        const last = _povCards.filter(c => c.ord).length;
+        const up = card.ord > 1, dn = card.ord < last;
+        return '<span class="ambient-pov-ord" data-povgrab="' + card.k + '" title="Play step ' + card.ord + ' — drag to reorder">' +
+          '<span role="button" tabindex="0" class="pov-arw' + (up ? '' : ' is-dis') + '" data-pov="' +
+            (up ? ('stepmv:' + card.k + ':-1') : 'noop') + '" title="' + (up ? 'Play this earlier' : 'Already first') + '">▲</span>' +
+          '<b>' + card.ord + '</b>' +
+          '<span role="button" tabindex="0" class="pov-arw' + (dn ? '' : ' is-dis') + '" data-pov="' +
+            (dn ? ('stepmv:' + card.k + ':1') : 'noop') + '" title="' + (dn ? 'Play this later' : 'Already last') + '">▼</span>' +
+          '<i>⠿</i></span>';
+      };
+      const _povFirstOrd = (card) => {
+        for (let i = 0; i < _povCards.length; i++) if (_povCards[i].oi === card.oi && _povCards[i].first) return _povCards[i].ord;
+        return 0;
+      };
+      // _povMoveHtml REMOVED 2026-08-23 — the arrows live on the ordinal rail now
+      // (see _povOrdHtml) and are named in the ⋯ menu. A move is a delete plus an
+      // add: leaving a second copy on the header is how two surfaces drift.
+      // HOW MANY TIMES THIS STEP RUNS before the next one starts. It was only
+      // reachable from the ▦ Passes part tab and the Changes-settings fold, so an
+      // arrangement's shape was never legible in one place.
+      // THE ROOT ONLY WHEN IT DIFFERS FROM THE KEY. Under transpose the
+      // progression is re-rooted onto the key root and the two agree, so the chip
+      // was restating the key; with Key off, or a progression not starting on its
+      // tonic, they diverge — and that is the case the chip was added for.
+      const _povRootIfDiffers = (r) => {
+        try {
+          const h = _ambPovRootHtml(chords, r.from, r.to, vShift);
+          if (!h) return '';
+          const c0 = (chords || []).slice(r.from, r.to).find(c => c && !_ambIsTransition(c) && Number.isFinite(c.root));
+          if (!c0) return '';
+          const pc = (((_ambChordShift(c0, vShift).root % 12) + 12) % 12);
+          const pk = _ambPartKeyForSlot(prog, r.from);
+          const kr = pk ? (pk.root | 0) : kRoot;
+          if (cfg.keyOn && pc === (((kr % 12) + 12) % 12)) return '';
+          return h;
+        } catch (e) { return ''; }
+      };
+      // ⋯ — THE DOOR FOR EVERYTHING THE HEADER NO LONGER SHOWS. Always present, so
+      // hiding a chip can never make its setting unreachable (the trap this file
+      // records four times). Its items read out their current value, so the menu
+      // is also the full state of the part.
+      const _povMenuHtml = (card) => (card.r.pi >= 0
+        ? ('<span role="button" tabindex="0" class="ambient-pov-dots" data-pov="partmenu:' + card.k + ':' + card.r.pi + '" title="Rename, plays, cadence, key, hangs, move, remove">⋯</span>')
+        : '');
+      // ⌛ HANG chip — states what is tacked on and opens the editor. It reads out
+      // rather than just being a button, because a hang changes the LENGTH of the
+      // arrangement and that should be visible without opening anything.
+      const _povHangHtml = (card) => {
+        if (!card.ord || card.r.pi < 0) return '';
+        const P = (parts && parts[card.r.pi]) || null; if (!P) return '';
+        const f = (h) => { const v = h.bars; return v === 1 ? '1 bar' : (Math.abs(v - 1 / 3) < 0.01 ? '1/3' : (v === 0.75 ? '3/4' : (v === 0.5 ? '1/2' : (v === 0.25 ? '1/4' : '1/8')))); };
+        const bits = [];
+        if (P.head) bits.push('◃' + f(P.head));
+        if (P.tail) bits.push(f(P.tail) + '▹');
+        const on = bits.length;
+        if (!on) return '';   // an empty hourglass on every card said nothing — ⋯ adds one
+        return '<span role="button" tabindex="0" class="ambient-pov-hang' + (on ? ' on' : '') + '" data-pov="hang:' + card.r.pi + '" title="' +
+          (on ? esc('Hangs — extra time on this part: ' + (P.head ? ('an intro of ' + f(P.head) + ' before it' + (P.tail ? ', and ' : '')) : '') + (P.tail ? ('a hang of ' + f(P.tail) + ' after it') : '') + '. Click to edit.')
+              : 'Add a hang — extra time before or after this part, with its own line-up') + '">' +
+          '<i>⌛</i>' + (on ? esc(bits.join(' ')) : '') + '</span>';
+      };
+      // ONLY WHEN NON-DEFAULT. `1×` is the value a part has unless you say
+      // otherwise, so rendering it on every card is a control repeating the
+      // absence of a decision. The ⋯ menu is the door when it is hidden.
+      const _povPlaysHtml = (card) => (card.ord && card.plays > 1
+        ? ('<span class="ambient-pov-plays" title="How many times this part runs before the next one starts">' +
+             '<span role="button" tabindex="0" data-pov="stepplays:' + card.k + ':-1" title="One fewer">−</span>' +
+             '<b>' + card.plays + '×</b>' +
+             '<span role="button" tabindex="0" data-pov="stepplays:' + card.k + ':1" title="One more">+</span></span>')
+        : '');
       const namesFirst = _ambPovNamesOn(el);
       let h = '<div class="ambient-pov-bar">' +
         // ＋ PART LEADS THE BAR. It used to sit at the far end of the chain,
@@ -39172,6 +39546,14 @@
         // gone — that lane navigates, it does not author).
         '<span role="button" tabindex="0" class="ambient-pov-addpart" data-pov="addpart" ' +
           'title="Add a part — a new set of changes, or a block with no changes at all">＋ Part</span>' +
+        // ↻ PLAY A PART AGAIN — the one thing the written order can never say, so
+        // it needs its own door beside ＋ Part rather than living in a popover.
+        // A feature is not done until its surface is reachable from where the
+        // user already is.
+        ((Array.isArray(prog.parts) && _ambOrderParts(cfg).length > 1)
+          ? ('<span role="button" tabindex="0" class="ambient-pov-addpart" data-pov="stepaddmenu" ' +
+             'title="Play one of these parts again later in the round — the same part, a second turn in the order">\u21bb Play again</span>')
+          : '') +
         // SALT and ORDER open as popovers from here. They are things you do TO
         // the progression on screen, so they belong on its own bar rather than
         // as two more accordions below it — and as accordions they pushed the
@@ -39216,6 +39598,21 @@
             + esc(_ambFmtBpc(_tot)) + ' bars). Click to edit or generate a new shape.">'
             + '<i>\u29d6</i>' + esc(_flat ? ('even \u00d7' + _cad.length) : _ambCadStr(_cad)) + '</span>';
         })()) +
+        // WHICH ROUND. A round is one trip through all the parts; with an
+        // arrGrid the order differs from one to the next, so the strip shows one
+        // round at a time and this says which — exactly as the Scheduler is told
+        // which pass. Absent at one round, so nothing changes for a progression
+        // that plays the same way every round.
+        ((function () {
+          const _nr = Math.max(1, _ambPovRounds(cfg));
+          if (_nr <= 1) return '';
+          const _cur = Math.min(Math.max(0, el._povRound | 0), _nr - 1);
+          return '<span class="ambient-pov-round" title="A round is one trip through all the parts. With more than one, the order can differ each time — this is the one you are looking at and editing.">' +
+            '<span role="button" tabindex="0" data-pov="round:-1" title="Previous round">\u2039</span>' +
+            '<b>round ' + (_cur + 1) + ' of ' + _nr + '</b>' +
+            '<span role="button" tabindex="0" data-pov="round:1" title="Next round">\u203a</span></span>' +
+            '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="roundsame" title="Play the same order every round \u2014 keeps the round you are looking at and drops the rest">\u21a9 same every round</span>';
+        })()) +
         '<span role="button" tabindex="0" class="ambient-pov-namesbtn' + (namesFirst ? ' on' : '') + '" data-pov="names" title="' +
           (namesFirst ? 'Showing chord NAMES first with the numeral after \u2014 click to lead with numerals' :
                         'Showing ROMAN NUMERALS first with the name after \u2014 click to lead with chord names') + '">' +
@@ -39233,22 +39630,57 @@
           '<span role="button" tabindex="0" class="ambient-pov-ver ambient-pov-veradd" data-pov="veradd" title="Save the current progression as a new version">＋</span>' +
           '</div>';
       }
-      ranges.forEach(r => {
-        // ONE CARD PER PART. The header used to force a row break in a single
+      // THE STRIP IS THE ORDER OF PLAY, NOT THE WRITTEN ORDER. `ranges` is still
+      // the per-part chord window (a part is a contiguous run, and every chip
+      // below indexes the written list) — but WHICH cards are drawn, and in what
+      // sequence, comes from _ambPovOrder: the arrGrid row for this round, else
+      // the chain, else the written order. A part that comes back gets its own
+      // numbered card, so the ordinal always counts PLAY STEPS.
+      const _povCards = (function () {
+        if (!parts) return ranges.map((r, i) => ({ r, ord: i + 1, first: true, plays: 1, k: i }));
+        const o = _ambPovOrder(cfg, povRound);
+        const byPi = Object.create(null);
+        ranges.forEach(r => { byPi[r.pi] = r; });
+        const out = [];
+        o.cards.forEach((c, i) => {
+          const r = byPi[c.pi]; if (!r) return;
+          out.push({ r, ord: i + 1, first: c.first, plays: c.plays, k: c.k, oi: c.oi });
+        });
+        // A NON-HOLDING open part is a section, so _ambPovOrder leaves it out —
+        // but it still occupies the strip (it is a named block you can edit), so
+        // append any range the order never mentioned rather than losing it.
+        ranges.forEach(r => { if (!out.some(x => x.r === r)) out.push({ r, ord: 0, first: true, plays: 1, k: -1 }); });
+        return out;
+      })();
+      _povCards.forEach(card => {
+        const r = card.r;
+        // ONE CARD PER PLAY STEP. The header used to force a row break in a single
         // flat strip (flex-basis 100%), so where one part ended and the next
         // began was left to the reader to infer.
-        h += '<div class="ambient-pov-part' + (r.open ? ' pov-part-open' : '') + '">';
+        // A REVISIT is the same part again: compact, no chord line, and none of
+        // the part's own ops — cadence, key and rename belong to the part and are
+        // drawn once, on its first card.
+        if (!card.first) {
+          h += '<div class="ambient-pov-part pov-part-revisit" data-povstep="' + card.k + '">' +
+            _povOrdHtml(card) +
+            '<div class="ambient-pov-parthdr">' +
+              '<span class="ambient-pov-partname pov-revname">' + esc(r.name || _ambProgTitle(prog.name)) + '</span>' +
+              '<span class="ambient-pov-revtag" title="The same part again — one part, played more than once">↻ same as ' + (_povFirstOrd(card) || 1) + '</span>' +
+              '<span class="ambient-pov-partops">' + _povMoveHtml(card) +
+                '<span role="button" tabindex="0" class="ambient-pov-partbtn ambient-pov-partrm" data-pov="stepdel:' + card.k + '" title="Remove this play of ' + esc(r.name || 'the part') + ' — the part itself stays">✕</span>' +
+              '</span></div></div>';
+          return;
+        }
+        h += '<div class="ambient-pov-part' + (r.open ? ' pov-part-open' : '') + '" data-povstep="' + card.k + '">' + _povOrdHtml(card);
         if (r.open) {
           // A part with no changes: name, length, and the same ops as any other
           // part. It reads as a block of time because that is what it is — the
           // harmony holds through it.
           h += '<div class="ambient-pov-parthdr ambient-pov-openhdr">' +
             '<span class="ambient-pov-partname" role="button" tabindex="0" data-pov="partren:' + r.pi + '" title="Rename this part">' + esc(r.name) + '</span>' +
-            '<span class="ambient-pov-partops">' +
-              '<span role="button" tabindex="0" class="ambient-pov-partkey' + (r.key ? ' on' : '') + '" data-pov="partkey:' + r.pi + '" title="' + (r.key ? ('This part plays in ' + esc(_ambKeyLabel(r.key.root, r.key.scale)) + '. Click to change or clear it.') : ('No key change — this part follows the area key (' + esc(_ambKeyLabel(kRoot, kScale)) + '). Click to give it its own key.')) + '">' + _ambPovKeyHtml(r.key, kRoot, kScale) + '</span>' +
-              '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':-1" title="Move this part earlier">◀</span>' +
-              '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':1" title="Move this part later">▶</span>' +
-              '<span role="button" tabindex="0" class="ambient-pov-partbtn ambient-pov-partrm" data-pov="partrm:' + r.pi + '" title="Remove this part">✕</span>' +
+            '<span class="ambient-pov-partops">' + _povPlaysHtml(card) + _povHangHtml(card) +
+              (r.key ? ('<span role="button" tabindex="0" class="ambient-pov-partkey on" data-pov="partkey:' + r.pi + '" title="This part plays in ' + esc(_ambKeyLabel(r.key.root, r.key.scale)) + '. Click to change or clear it.">' + _ambPovKeyHtml(r.key, kRoot, kScale) + '</span>') : '') +
+              _povMenuHtml(card) +
             '</span></div>' +
             '<span role="button" tabindex="0" class="ambient-pov-open' + (r.hold ? ' pov-hold' : '') + '" data-pov="openlen:' + r.pi + '" title="No changes here — ' + (r.hold ? 'the harmony HOLDS' : 'the changes keep running underneath') + ' for ' + (r.bars || 4) + ' bars. Click to change the length.">' +
               '<b>' + (r.hold ? 'holds' : 'no changes') + '</b><span class="ambient-pov-nm">' + (r.bars || 4) + ' bars</span></span>';
@@ -39262,7 +39694,9 @@
           const _cad = _ambCadence(cfg, r.pi);
           const _cadFlat = _cad.length && _cad.every(v => Math.abs(v - _cad[0]) < 1e-6);
           const _cadTot = _cad.reduce((a, v) => a + v, 0);
-          const _cadHtml = _cad.length
+          // FLAT LENGTHS SAY NOTHING the chord count does not already say, so the
+          // chip renders only for a real shape. ⋯ → Cadence… is the door otherwise.
+          const _cadHtml = (_cad.length && !_cadFlat)
             ? ('<span role="button" tabindex="0" class="ambient-pov-cad' + (_cadFlat ? '' : ' on') + '" data-pov="cad:' + r.pi + '"'
                + ' title="Cadence — how many bars each chord is held (' + esc(_ambCadStr(_cad)) + ' = '
                + esc(_ambFmtBpc(_cadTot)) + ' bars). Click to edit or generate a new shape.">'
@@ -39270,14 +39704,18 @@
             : '';
           h += '<div class="ambient-pov-parthdr">' +
             '<span class="ambient-pov-partname" role="button" tabindex="0" data-pov="partren:' + r.pi + '" title="Rename these changes">' + esc(r.name) + ' <em>' + (r.to - r.from) + '</em></span>' +
-            '<span class="ambient-pov-partops">' + _cadHtml +
+            '<span class="ambient-pov-partops">' + _povPlaysHtml(card) + _povHangHtml(card) + _cadHtml +
               // A part's own key is a modulation, so it is named right on the part
               // header rather than buried — you can see where the music changes key.
-              '<span role="button" tabindex="0" class="ambient-pov-partkey' + (r.key ? ' on' : '') + '" data-pov="partkey:' + r.pi + '" title="' + (r.key ? ('These changes play in ' + esc(_ambKeyLabel(r.key.root, r.key.scale)) + ' — the area key is unchanged. Click to change or clear it.') : ('No key change — these changes follow the area key (' + esc(_ambKeyLabel(kRoot, kScale)) + '). Click to give them their own key.')) + '">' + _ambPovKeyHtml(r.key, kRoot, kScale) + '</span>' +
-              _ambPovRootHtml(chords, r.from, r.to, vShift) +
-              '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':-1" title="Move these changes earlier">◀</span>' +
-              '<span role="button" tabindex="0" class="ambient-pov-partbtn" data-pov="partmv:' + r.pi + ':1" title="Move these changes later">▶</span>' +
-              '<span role="button" tabindex="0" class="ambient-pov-partbtn ambient-pov-partrm" data-pov="partrm:' + r.pi + '" title="Remove these changes (and their chords)">✕</span>' +
+              // A KEY CHIP ONLY WHEN THE PART MODULATES. Following the area key is
+              // the same fact on every card, so it read as repetition rather than
+              // information; ⋯ → Key… sets one. Same for the ROOT, which agrees
+              // with the key root under transpose and is otherwise readable off
+              // the first chord chip directly below — it earns the row only when
+              // the two genuinely differ, which is exactly what it is for.
+              (r.key ? ('<span role="button" tabindex="0" class="ambient-pov-partkey on" data-pov="partkey:' + r.pi + '" title="These changes play in ' + esc(_ambKeyLabel(r.key.root, r.key.scale)) + ' — the area key is unchanged. Click to change or clear it.">' + _ambPovKeyHtml(r.key, kRoot, kScale) + '</span>') : '') +
+              _povRootIfDiffers(r) +
+              _povMenuHtml(card) +
             '</span></div>';
         }
         if (r.pi < 0) {
@@ -39503,6 +39941,76 @@
         if (ci != null) { const chip = el.querySelector('.salt-ch[data-sci="' + ci + '"]'); if (chip) chip.classList.add('cur'); }
       }
     }
+    // DRAG A CARD BY ITS ORDINAL to reorder the play order. Pointer-based, so one
+    // handler covers touch and mouse. Three things this codebase already paid for
+    // once each, all of them in the page-tab reorder:
+    //   · arm on CUMULATIVE travel from the press, never the per-move delta — a
+    //     slow drag arrives as many sub-pixel moves that never cross a threshold
+    //     individually;
+    //   · threshold with Math.hypot, not a horizontal test — this list moves
+    //     VERTICALLY, so an axis-specific test never fires at all;
+    //   · pick the drop target by NEAREST CENTRE, not rect containment — the
+    //     cards have gaps between them and a containment test finds nothing in
+    //     the dead space (works at desktop width, does nothing on a phone).
+    // The rail alone carries `touch-action: none`, so the panel still scrolls
+    // under a finger everywhere else on the card.
+    function _ambWirePovDrag(E, host) {
+      let st = null;
+      const clear = () => {
+        host.querySelectorAll('.pov-dragging, .pov-dropbefore, .pov-dropafter')
+            .forEach(n => n.classList.remove('pov-dragging', 'pov-dropbefore', 'pov-dropafter'));
+        host.querySelectorAll('.ambient-pov-ord.pov-grabbing').forEach(n => n.classList.remove('pov-grabbing'));
+      };
+      const cards = () => Array.from(host.querySelectorAll('.ambient-pov-part[data-povstep]'))
+        .filter(n => n.querySelector('.ambient-pov-ord[data-povgrab]'));
+      host.addEventListener('pointerdown', (ev) => {
+        const grab = ev.target && ev.target.closest && ev.target.closest('[data-povgrab]');
+        if (!grab) return;
+        const card = grab.closest('.ambient-pov-part'); if (!card) return;
+        st = { k: grab.getAttribute('data-povgrab') | 0, card, x: ev.clientX, y: ev.clientY,
+               travel: 0, lastX: ev.clientX, lastY: ev.clientY, armed: false, to: -1 };
+        try { grab.setPointerCapture(ev.pointerId); } catch (e) {}
+        grab.classList.add('pov-grabbing');
+      });
+      host.addEventListener('pointermove', (ev) => {
+        if (!st) return;
+        st.travel += Math.hypot(ev.clientX - st.lastX, ev.clientY - st.lastY);
+        st.lastX = ev.clientX; st.lastY = ev.clientY;
+        if (!st.armed && st.travel < 6) return;
+        if (!st.armed) { st.armed = true; st.card.classList.add('pov-dragging'); }
+        ev.preventDefault();
+        const list = cards();
+        let best = -1, bestD = Infinity;
+        list.forEach((n, i) => {
+          const r = n.getBoundingClientRect();
+          const d = Math.abs((r.top + r.height / 2) - ev.clientY);
+          if (d < bestD) { bestD = d; best = i; }
+        });
+        list.forEach(n => n.classList.remove('pov-dropbefore', 'pov-dropafter'));
+        st.to = best;
+        const from = list.indexOf(st.card);
+        if (best >= 0 && best !== from) list[best].classList.add(best < from ? 'pov-dropbefore' : 'pov-dropafter');
+      });
+      const done = (ev) => {
+        if (!st) return;
+        const s2 = st; st = null;
+        clear();
+        if (!s2.armed || s2.to < 0) return;
+        const list = cards(); const from = list.indexOf(s2.card);
+        if (s2.to === from) return;
+        // A DRAG MUST SUPPRESS THE TRAILING PRESS, or the reorder is also read as
+        // a tap on whatever the finger came down on.
+        if (ev) { try { ev.preventDefault(); ev.stopPropagation(); } catch (e) {} }
+        try {
+          _ambProgOverviewAct(E, {
+            preventDefault() {},
+            target: { closest: () => ({ getAttribute: () => 'stepdrop:' + s2.k + ':' + s2.to, getBoundingClientRect: () => s2.card.getBoundingClientRect() }) },
+          });
+        } catch (e) {}
+      };
+      host.addEventListener('pointerup', done);
+      host.addEventListener('pointercancel', () => { st = null; clear(); });
+    }
     function _ambProgOverviewAct(E, ev) {
       const t = ev.target && ev.target.closest && ev.target.closest('[data-pov]'); if (!t) return;
       ev.preventDefault();
@@ -39523,6 +40031,203 @@
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
       const refresh = () => { el0(); _ambRenderProgOverview(E); try { _ambSyncControls(E); } catch (e) {} try { _ambRefreshSrcChips(E); } catch (e) {} if (E.timer) { try { _ambSyncMods(); } catch (e) {} } };
       const el0 = () => { const el = _ambGet(E, 'ambient-prog-overview'); if (el) el._sig = ''; };
+      if (op === 'noop') return;
+      if (op === 'hang') { const pi = a[1] | 0;
+        // Deferred a tick: this strip acts on POINTERDOWN and the overlay's own
+        // backdrop would eat the trailing click of that same press.
+        setTimeout(() => { try { _ambHangModal(E, pi); } catch (e) {} }, 0); return; }
+      // ---- ORDER OF PLAY ------------------------------------------------------
+      // The strip owns the order now, so these five ops are the whole editor the
+      // ▤ Song map's chain chips used to be.
+      const _povEl = () => _ambGet(E, 'ambient-prog-overview');
+      const _povRoundNow = () => { const e2 = _povEl(); return e2 ? (e2._povRound | 0) : 0; };
+      // WRITE A STEP LIST BACK to whichever store is in force. A list equal to the
+      // written order carries no field — the same absent-is-neutral grammar the
+      // chain's own coercion uses, so a project that plays in written order still
+      // stores nothing.
+      const _povWrite = (steps) => {
+        const ops = _ambOrderParts(cfg);
+        const ag = prog.arrGrid;
+        if (ag && ag.seq) {
+          // A grid row is in _ambGridRanges space, which has no open parts — so a
+          // hold block cannot be expressed in one. Refuse rather than silently
+          // dropping it from the order.
+          const rg = _ambGridRanges(cfg);
+          const row = [];
+          for (let i = 0; i < steps.length; i++) {
+            const o = ops[steps[i]]; if (!o) continue;
+            const j = rg.findIndex(r2 => r2.pi === o.pi);
+            if (j < 0) { try { showToast('“' + (o.name || 'That block') + '” can’t be ordered while the parts grid is on — use ↩ same every round first.'); } catch (e) {} return false; }
+            row.push(j);
+          }
+          const cols = Math.max(1, _ambGridCols(ag));
+          const rk = String((((_povRoundNow() | 0) % cols) + cols) % cols);
+          ag.seq = ag.seq || {}; ag.seq[rk] = row;
+          return true;
+        }
+        // NEUTRAL IS THE WRITTEN ORDER *EXPANDED BY PLAYS* — that is what
+        // _ambPovOrder produces with no list, so anything equal to it says
+        // nothing and carries no field.
+        const nat = [];
+        ops.forEach((o, i) => { const n = Math.max(1, o.plays | 0); for (let z = 0; z < n; z++) nat.push(i); });
+        const natural = steps.length === nat.length && steps.every((v, i) => v === nat[i]);
+        if (natural) delete prog.chain; else prog.chain = steps.slice(0, 64);
+        return true;
+      };
+      // Flatten a card list back to steps — a card of n adjacent duplicates is n
+      // entries, which is what a repeat IS inside a list.
+      const _povFlat = (cards) => { const s2 = []; cards.forEach(c => { for (let z = 0; z < Math.max(1, c.n); z++) s2.push(c.oi); }); return s2; };
+      // ⋯ — every setter the header no longer shows, each reading out its value.
+      if (op === 'partmenu') {
+        const k = a[1] | 0, pi = a[2] | 0;
+        const P = (prog.parts && prog.parts[pi]) || null; if (!P) return;
+        const pov = _ambPovOrder(cfg, _povRoundNow());
+        const ci = pov.cards.findIndex(c => c.k === k);
+        const card = ci >= 0 ? pov.cards[ci] : null;
+        const last = pov.cards.length;
+        const nm = P.name || 'this part';
+        const isOpen = !!P.open;
+        const r0 = t.getBoundingClientRect();
+        const go = (v) => _ambProgOverviewAct(E, { preventDefault() {},
+          target: { closest: () => ({ getAttribute: () => v, getBoundingClientRect: () => r0 }) } });
+        const cadTxt = (() => { try { const c2 = _ambCadence(cfg, pi); if (!c2.length) return ''; 
+          return c2.every(v => Math.abs(v - c2[0]) < 1e-6) ? ('even ×' + c2.length) : _ambCadStr(c2); } catch (e) { return ''; } })();
+        const keyTxt = P.key ? _ambKeyLabel(P.key.root, P.key.scale) : 'area key';
+        const hangTxt = (P.head || P.tail) ? [P.head ? 'intro' : '', P.tail ? 'hang' : ''].filter(Boolean).join(' + ') : 'none';
+        const items = [{ label: nm, disabled: true }];
+        items.push({ label: '✎ Rename…', fn: () => go('partren:' + pi) });
+        if (!isOpen) {
+          // PLAYS as a submenu — a stepper in a menu is fiddly, and the list also
+          // shows what the value IS without opening anything further.
+          items.push({ label: '↻ Plays — ' + (card ? card.plays : 1) + '× ▸', fn: () => setTimeout(() => {
+            const sub = [{ label: 'Plays before the next part', disabled: true }];
+            for (let n2 = 1; n2 <= 8; n2++) sub.push({ label: '  ' + (n2 === (card ? card.plays : 1) ? '✓ ' : '') + n2 + '×',
+              fn: () => go('stepplaysto:' + k + ':' + n2) });
+            showCtxMenu(r0.left, r0.bottom, sub);
+          }, 0) });
+          items.push({ label: '⧖ Cadence…' + (cadTxt ? ('  ' + cadTxt) : ''), fn: () => go('cad:' + pi) });
+        } else {
+          items.push({ label: '⏸ Length…  ' + (P.bars || 4) + ' bars', fn: () => go('openlen:' + pi) });
+        }
+        items.push({ label: '♪ Key…  ' + keyTxt, fn: () => go('partkey:' + pi) });
+        items.push({ label: '⌛ Hangs…  ' + hangTxt, fn: () => go('hang:' + pi) });
+        if (card) {
+          // THE ORDINAL IS THE POSITION IN THIS LIST. `_ambPovOrder`'s cards carry
+          // no `ord` — that is added at render time by `_povCards` — so reading
+          // card.ord here was undefined and both move items silently vanished.
+          const ord = ci + 1;
+          items.push('hr');
+          items.push({ label: '▲ Play earlier', disabled: ord <= 1, fn: () => go('stepmv:' + k + ':-1') });
+          items.push({ label: '▼ Play later', disabled: ord >= last, fn: () => go('stepmv:' + k + ':1') });
+        }
+        items.push('hr');
+        items.push({ label: '✕ Remove ' + (isOpen ? 'this block' : 'these changes'), fn: () => go('partrm:' + pi) });
+        // Deferred: this strip dispatches on POINTERDOWN and showCtxMenu arms its
+        // own document-level dismiss for that same event.
+        setTimeout(() => { try { showCtxMenu(r0.left, r0.bottom, items); } catch (e) {} }, 0);
+        return;
+      }
+      if (op === 'stepplaysto') {
+        const k = a[1] | 0, n2 = Math.max(1, Math.min(64, a[2] | 0));
+        const pov = _ambPovOrder(cfg, _povRoundNow());
+        const ci = pov.cards.findIndex(c => c.k === k); if (ci < 0) return;
+        const card = pov.cards[ci];
+        if (pov.src === 'written') {
+          const pt = prog.parts && prog.parts[card.pi]; if (!pt) return;
+          if (n2 <= 1) delete pt.plays; else pt.plays = n2;
+        } else {
+          const cards = pov.cards.slice();
+          cards[ci] = { oi: card.oi, pi: card.pi, k: card.k, n: n2, plays: n2, first: card.first };
+          if (!_povWrite(_povFlat(cards))) return;
+        }
+        persist(); refresh(); return;
+      }
+      if (op === 'stepmv' || op === 'stepdrop') {
+        const pov = _ambPovOrder(cfg, _povRoundNow());
+        const ci = pov.cards.findIndex(c => c.k === (a[1] | 0));
+        const tgt = (op === 'stepdrop') ? (a[2] | 0) : ci + (a[2] | 0);
+        if (ci < 0 || tgt < 0 || tgt >= pov.cards.length || tgt === ci) return;
+        if (pov.src === 'written') {
+          // NOTHING IS STORED for a plain reorder — the score itself moves, so
+          // written order and play order stay the same thing. _ambProgMovePart
+          // swaps ADJACENT parts and carries their chord segments with them, so
+          // walk it one swap at a time (parts the order skips may sit between).
+          const from = pov.cards[ci].pi, to = pov.cards[tgt].pi;
+          const dir2 = (to > from) ? 1 : -1;
+          for (let cur = from; cur !== to; cur += dir2) _ambProgMovePart(prog, cur, dir2);
+        } else {
+          const cards = pov.cards.slice();
+          const moved = cards.splice(ci, 1)[0];
+          cards.splice(tgt, 0, moved);
+          if (!_povWrite(_povFlat(cards))) return;
+        }
+        persist(); refresh(); return;
+      }
+      if (op === 'stepdel') {
+        const pov = _ambPovOrder(cfg, _povRoundNow());
+        const ci = pov.cards.findIndex(c => c.k === (a[1] | 0));
+        if (ci < 0 || pov.cards.length <= 1) return;
+        const cards = pov.cards.slice(); cards.splice(ci, 1);
+        if (!_povWrite(_povFlat(cards))) return;
+        persist(); refresh(); return;
+      }
+      if (op === 'stepplays') {
+        const k = a[1] | 0, d = a[2] | 0;
+        const pov = _ambPovOrder(cfg, _povRoundNow());
+        const ci = pov.cards.findIndex(c => c.k === k); if (ci < 0) return;
+        const card = pov.cards[ci];
+        if (pov.src === 'written') {
+          // No list at all → the part's own `plays` is the repeat count.
+          const pt = prog.parts && prog.parts[card.pi]; if (!pt) return;
+          const n = Math.max(1, Math.min(64, (Math.max(1, (pt.plays | 0) || 1)) + d));
+          if (n <= 1) delete pt.plays; else pt.plays = n;
+        } else {
+          // Inside a list, repetition is written out — so ± duplicates or drops an
+          // adjacent entry. Same sound, and the user never learns there were two
+          // spellings.
+          const cards = pov.cards.slice();
+          const n = Math.max(1, Math.min(64, card.n + d));
+          cards[ci] = { oi: card.oi, pi: card.pi, k: card.k, n, plays: n, first: card.first };
+          if (!_povWrite(_povFlat(cards))) return;
+        }
+        persist(); refresh(); return;
+      }
+      if (op === 'stepadd') {
+        // PLAY A PART AGAIN — appends a revisit, which is the one thing the
+        // written order can never express, so it always materialises a list.
+        const oi = a[1] | 0;
+        const pov = _ambPovOrder(cfg, _povRoundNow());
+        const steps = pov.steps.slice(); steps.push(oi);
+        if (!_povWrite(steps)) return;
+        persist(); refresh(); return;
+      }
+      if (op === 'stepaddmenu') {
+        const pov = _ambPovOrder(cfg, _povRoundNow());
+        const r0 = t.getBoundingClientRect();
+        const items = [{ label: 'Play a part again', disabled: true }].concat(
+          pov.ops.map((o, i) => ({ label: '  ↻ ' + (o.name || ('Part ' + (i + 1))), fn: () => _ambProgOverviewAct(E, { target: { closest: () => ({ getAttribute: () => 'stepadd:' + i, getBoundingClientRect: () => r0 }) }, preventDefault() {} }) })));
+        // Deferred: this strip dispatches on POINTERDOWN, and showCtxMenu arms its
+        // own document-level dismiss for that same event.
+        setTimeout(() => { try { showCtxMenu(r0.left, r0.bottom, items); } catch (e) {} }, 0);
+        return;
+      }
+      if (op === 'round') {
+        const e2 = _povEl(); if (!e2) return;
+        const nr = Math.max(1, _ambPovRounds(cfg));
+        e2._povRound = ((((e2._povRound | 0) + (a[1] | 0)) % nr) + nr) % nr;
+        refresh(); return;
+      }
+      if (op === 'roundsame') {
+        // Collapse to one order for every round — KEEPING the round on screen,
+        // because reverting to the written order would silently throw away the
+        // arrangement you were looking at.
+        const pov = _ambPovOrder(cfg, _povRoundNow());
+        const steps = pov.steps.slice();
+        delete prog.arrGrid;
+        const e2 = _povEl(); if (e2) e2._povRound = 0;
+        _povWrite(steps);
+        persist(); refresh(); return;
+      }
       if (op === 'chord') {
         const i = a[1] | 0;
         _ambOpenProgEditor(E, { scope: 'area' });
@@ -42728,7 +43433,7 @@
         const gs = _pl && _pl.slots;
         if (gs && gs.length) {
           const parts = Array.isArray(p.parts) ? p.parts : null;
-          return gs.map(sl => ({
+          return _ambChainWithHangs(cfg, _ambGridWithHolds(cfg, gs.map(sl => ({
             idx: sl.idx, part: sl.part, pName: (parts && parts[sl.pi] && parts[sl.pi].name) || 'Part',
             pFirst: !!sl.pFirst, rep: sl.rep, plays: sl.plays,
             col: sl.col, cols: sl.cols, iter: sl.iter, pos: sl.pos,
@@ -42737,7 +43442,11 @@
             // per-part fields. Without it the clock played per-iteration cadence
             // while every readout showed the chord's own length.
             ...(sl.gbars != null ? { gbars: sl.gbars } : {}),
-          }));
+            // CARRIED so a consumer can name the PART (pi) and the VISIT — the
+            // chain branch labels these differently and anything post-processing
+            // both needs one way to ask.
+            pi: sl.pi, visit: sl.visit,
+          }))));
         }
       }
       if (!arch || !p || !Array.isArray(p.chords) || !p.chords.length) return null;
@@ -42813,7 +43522,7 @@
           }
         }
       });
-      return out;
+      return _ambChainWithHangs(cfg, out);
     }
     // ARCH slice 2: the played chain now comes from cfg.arch. Every caller is
     // display-only (Quick edit, the Scheduler's chord and pass lanes, the
@@ -42833,6 +43542,8 @@
     // chord's own `bars`, else barsPerChord. One definition, shared by the clock
     // and every readout, so they cannot disagree about the length of the piece.
     function _ambChainSlotBars(cfg, sl) {
+      // A HANG carries its own length and holds the chord named by `idx`.
+      if (sl && sl.hang) return Math.max(_AMB_HANG_MIN, Math.min(_AMB_HANG_MAX, sl.hbars || 0.5));
       if (sl && sl.hold) return Math.max(0.01, sl.bars || 1);
       // A grid slot may carry its own length — per-iteration cadence, or the
       // written cadence used as a template. A DISTINCT field from `bars`, which
@@ -42841,6 +43552,89 @@
       const bpc = Math.max(0.01, (cfg && cfg.barsPerChord) || 1);
       const c = cfg && cfg.prog && cfg.prog.chords ? cfg.prog.chords[sl.idx] : null;
       return (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc;
+    }
+    // INSERT HANG SLOTS AT PART-VISIT BOUNDARIES. One post-pass over whatever
+    // _ambArchChainSlots produced, so the grid branch and the chain branch both
+    // get them and cannot disagree — the same one-insertion-point reasoning that
+    // made _ambArchChainSlots the display spine in the first place.
+    //
+    // A hang HOLDS a chord rather than being one: `idx` is the chord it holds
+    // (the part's last for a tail, its first for a head), so every consumer that
+    // resolves harmony from `idx` keeps working with no branch. Absent by
+    // default → the returned array is the identical object, so nothing that does
+    // not use hangs pays anything or changes at all.
+    // A PASSES GRID USED TO DROP EVERY HOLD BLOCK. `arrGrid` rows are indices into
+    // `_ambGridRanges`, which SKIPS open parts — so with [Intro(hold), Verse,
+    // Chorus] a row of [0,1] means Verse+Chorus and the Intro simply never
+    // sounded. Engaging a grid on any part silently deleted your intro from the
+    // arrangement, with nothing anywhere saying so.
+    //
+    // Fixed by re-inserting holds rather than re-indexing the store: moving
+    // arrGrid to occupy-time indices would need a migration and would rewrite the
+    // meaning of every saved grid, where this leaves the store alone and is a
+    // pure addition to the walk.
+    //
+    // WHERE a hold goes: it keeps its WRITTEN position relative to the parts
+    // around it — immediately before the first appearance of the part that
+    // follows it in written order, or at the end when nothing follows. That is
+    // the only reading that makes "an intro" mean anything under a row that can
+    // reorder and revisit the parts around it.
+    function _ambGridWithHolds(cfg, slots) {
+      const ops = _ambOrderParts(cfg);
+      if (!ops.length || !ops.some(o => o.hold)) return slots;
+      const out = (slots || []).slice();
+      const parts = cfg.prog.parts;
+      ops.forEach((o, oi) => {
+        if (!o.hold) return;
+        const pt = parts[o.pi]; if (!pt) return;
+        const plays = Math.max(1, (pt.plays | 0) || 1);
+        // The next part with chords, in WRITTEN order — the one this block leads into.
+        let nextPi = -1;
+        for (let j = oi + 1; j < ops.length; j++) if (!ops[j].hold) { nextPi = ops[j].pi; break; }
+        let at = out.length;
+        if (nextPi >= 0) { const f = out.findIndex(sl => sl && sl.pi === nextPi); if (f >= 0) at = f; }
+        const bars = Math.max(0.25, Math.min(64, Number.isFinite(pt.bars) && pt.bars > 0 ? pt.bars : 4));
+        const made = [];
+        for (let r = 0; r < plays; r++) {
+          made.push({ idx: (at > 0 && out[at - 1]) ? out[at - 1].idx : 0,
+                      pi: o.pi, part: oi, pName: pt.name || 'Part', pFirst: true,
+                      rep: r, plays, visit: r, hold: 1, bars });
+        }
+        out.splice(at, 0, ...made);
+      });
+      return out;
+    }
+    function _ambChainWithHangs(cfg, slots) {
+      const parts = cfg && cfg.prog && Array.isArray(cfg.prog.parts) ? cfg.prog.parts : null;
+      if (!slots || !slots.length || !parts) return slots;
+      if (!parts.some(p => p && (p.head || p.tail))) return slots;
+      // THE TWO BRANCHES LABEL A PART DIFFERENTLY and this has to speak both:
+      // the grid branch carries `pi` (a prog.parts index), the chain branch
+      // carries `part` (an index into the occupy-time entries, i.e. exactly
+      // _ambOrderParts). Resolving through both is the difference between a hang
+      // landing on the right part and landing on a neighbour.
+      const ops = _ambOrderParts(cfg);
+      const partOf = (sl) => {
+        if (sl.pi != null && parts[sl.pi]) return parts[sl.pi];
+        const o = (sl.part >= 0) ? ops[sl.part] : null;
+        return o ? parts[o.pi] : null;
+      };
+      // A VISIT key, not a part key: a part played twice in a row gets its hang
+      // BOTH times, which is what "tacked on to a part play" means. Every field
+      // is in the key because either branch may leave some undefined — comparing
+      // only the ones one branch happens to set made two different parts at
+      // rep 0 read as the same visit.
+      const vkey = (o) => o ? ([o.pi, o.part, o.visit, o.rep, o.iter].join('|')) : '\u0000';
+      const out = [];
+      for (let i = 0; i < slots.length; i++) {
+        const sl = slots[i], pt = partOf(sl), k = vkey(sl);
+        const firstOfVisit = vkey(slots[i - 1]) !== k;
+        const lastOfVisit = vkey(slots[i + 1]) !== k;
+        if (firstOfVisit && pt && pt.head) out.push({ ...sl, hang: 'head', hbars: pt.head.bars, hlayers: pt.head.layers });
+        out.push(sl);
+        if (lastOfVisit && pt && pt.tail) out.push({ ...sl, hang: 'tail', hbars: pt.tail.bars, hlayers: pt.tail.layers });
+      }
+      return out;
     }
     function _ambProgChainBars(cfg) {
       const slots = _ambProgChainSlots(cfg); if (!slots) return 0;

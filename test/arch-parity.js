@@ -164,6 +164,17 @@ const CONFIGS = [
   { id: 'grid-rubato-part', chords: [0, 5, 7, 9],
     parts: [['A', 2, 1, null, { len: 0, colors: 0, scatter: 0 }, { cols: 2, seq: { 1: [1, 0] } }], ['B', 2]],
     salt: { len: 80, colors: 0, scatter: 0 } },
+  // A GRID PLUS A HOLD BLOCK. Neither axis was new, but their COMBINATION had no
+  // config — and it was broken: `arrGrid`/`_ambGridRanges` skip open parts, so
+  // engaging a grid on any part silently deleted every hold block from the
+  // arrangement (an intro that simply never sounded). Every grid config here was
+  // hold-less and every hold config grid-less, so both stayed green while the
+  // interaction was wrong. Gate the COMBINATION, not just the new axis.
+  { id: 'grid-open-pass', chords: [0, 5, 7, 9],
+    parts: [{ name: 'Intro', open: 8 }, ['Verse', 2, 1, null, null, { cols: 2, seq: { 1: [0] } }], ['Chorus', 2]] },
+  { id: 'grid-open-meta', chords: [0, 5, 7, 9],
+    parts: [{ name: 'Intro', open: 8 }, ['Verse', 2], ['Chorus', 2]],
+    arrGrid: { cols: 2, seq: { 0: [0, 1], 1: [1, 0] } } },
 ];
 
 // The walk: 32 bars at a quarter bar. Long enough that part repeats, section

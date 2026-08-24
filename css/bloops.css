@@ -3587,9 +3587,127 @@
        a part was a convention rather than a thing — nothing said where one ended
        and the next began. `flex: 1 1 100%` keeps each card on its own row of the
        strip's flex flow. */
-    .ambient-pov-part { flex: 1 1 100%; min-width: 0; padding: 7px 8px; border: 1px solid #23233a;
+    .ambient-pov-part { position: relative; flex: 1 1 100%; min-width: 0; padding: 7px 8px 7px 40px; border: 1px solid #23233a;
       border-radius: 8px; background: rgba(255,255,255,0.022); }
     .ambient-pov-part.pov-part-open { border-style: dashed; background: rgba(255,255,255,0.012); }
+    /* ---- ORDER OF PLAY: the ordinal rail ---------------------------------
+       The number IS the drag handle. Ordering used to be two small ◀ ▶ marks on
+       the header of a VERTICAL list — the wrong metaphor, and nothing said what
+       position a card was in at all. The rail answers both: it states the play
+       step and it is the thing you grab. `touch-action: none` is scoped to the
+       rail alone so the panel still scrolls under a finger everywhere else. */
+    .ambient-pov-ord { position: absolute; left: 0; top: 0; bottom: 0; width: 32px;
+      border-right: 1px solid #23233a; border-radius: 8px 0 0 8px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+      background: rgba(159,122,234,0.07); cursor: grab; touch-action: none; user-select: none;
+      -webkit-touch-callout: none; }
+    .ambient-pov-ord > b { font-size: 0.9rem; font-weight: 700; line-height: 1; color: #c9bdf0;
+      font-variant-numeric: tabular-nums; }
+    .ambient-pov-ord > i { font-style: normal; font-size: 0.6rem; line-height: 1; color: #4a4866; letter-spacing: -1px; }
+    /* THE ARROWS LIVE ON THE RAIL, above and below the number — ordering is one
+       object (number · arrows · drag) instead of three scattered across the row,
+       and it costs the header nothing. They are small TARGETS on purpose: the ⋯
+       menu carries the same two actions full-size and NAMES them, which is what
+       makes 13px acceptable here rather than a touch-floor violation. */
+    .ambient-pov-ord > .pov-arw { display: flex; align-items: center; justify-content: center;
+      width: 100%; height: 13px; font-size: 0.56rem; line-height: 1; color: #6f6b92;
+      cursor: pointer; touch-action: manipulation; }
+    @media (hover: hover) { .ambient-pov-ord > .pov-arw:hover { color: #cbb6f5; } }
+    .ambient-pov-ord > .pov-arw.is-dis { opacity: 0.28; cursor: default; }
+    /* The two chips that survive on a loaded header are also SHORTCUTS, so they
+       match their siblings' 24px rather than the 22 they inherited. Same argument
+       as the rail arrows: the ⋯ menu carries both actions full-size and named. */
+    .ambient-pov-cad, .ambient-pov-partkey { min-height: 24px; }
+    /* ⋯ — the door for every setting the header stopped showing. */
+    .ambient-pov-dots { display: inline-flex; align-items: center; justify-content: center;
+      min-width: 28px; height: 28px; border: 1px solid #2d2d3f; border-radius: 7px;
+      background: #16162a; color: #a99cd0; cursor: pointer; font-size: 0.9rem;
+      letter-spacing: 1px; line-height: 1; touch-action: manipulation; }
+    @media (hover: hover) { .ambient-pov-dots:hover { border-color: #d6bcfa; color: #e2d9f5; } }
+    .ambient-pov-part.pov-part-open > .ambient-pov-ord { background: rgba(246,173,85,0.07); }
+    .ambient-pov-part.pov-part-open > .ambient-pov-ord > b { color: #e8c99a; }
+    .ambient-pov-ord.pov-ord-none { cursor: default; background: rgba(255,255,255,0.02); }
+    .ambient-pov-ord.pov-ord-none > b { color: #4a4866; }
+    /* WHICH PART IS SOUNDING — the strip has never said this at the block level.
+       Painted by _ambProgOverviewPlayheadCore, so it must not live in the _sig. */
+    .ambient-pov-ord.pov-playing { background: rgba(79,209,197,0.14); box-shadow: inset 2px 0 0 #4fd1c5; }
+    .ambient-pov-ord.pov-playing > b { color: #d7fbf6; }
+    .ambient-pov-ord.pov-grabbing { cursor: grabbing; }
+    /* The card being dragged, and the gap it would drop into. */
+    .ambient-pov-part.pov-dragging { opacity: 0.55; border-color: #4fd1c5; }
+    .ambient-pov-part.pov-dropbefore { box-shadow: 0 -3px 0 -1px #4fd1c5; }
+    .ambient-pov-part.pov-dropafter { box-shadow: 0 3px 0 -1px #4fd1c5; }
+    /* A REVISIT — the same part again. Compact, and deliberately carrying none of
+       the part's own ops: cadence, key and rename belong to the part and are
+       drawn once, on its first card. */
+    .ambient-pov-part.pov-part-revisit { border-style: dotted; border-color: #33334f;
+      background: rgba(255,255,255,0.012); padding-top: 4px; padding-bottom: 4px; }
+    .ambient-pov-part.pov-part-revisit > .ambient-pov-ord { background: rgba(255,255,255,0.02); }
+    .ambient-pov-part.pov-part-revisit > .ambient-pov-ord > b { color: #8f8bb0; font-size: 0.78rem; }
+    .ambient-pov-part.pov-part-revisit .ambient-pov-parthdr { margin: 0; }
+    .ambient-pov-partname.pov-revname { color: #8f8bb0; cursor: default; }
+    .ambient-pov-revtag { font-size: 0.62rem; color: #8f8bb0; border: 1px dotted #3a3a58;
+      border-radius: 999px; padding: 2px 7px; min-height: 22px; display: inline-flex;
+      align-items: center; white-space: nowrap; }
+    /* HOW MANY TIMES this step runs. Reachable before only from the ▦ Passes part
+       tab and the Changes-settings fold, so an arrangement's shape was never
+       legible in one place. */
+    .ambient-pov-plays { display: inline-flex; align-items: center; gap: 1px; flex: 0 0 auto;
+      border: 1px solid rgba(159,122,234,0.45); border-radius: 999px;
+      background: rgba(159,122,234,0.12); overflow: hidden; }
+    .ambient-pov-plays > b { font-size: 0.64rem; color: #cbb6f5; padding: 0 3px;
+      font-variant-numeric: tabular-nums; min-width: 20px; text-align: center; }
+    .ambient-pov-plays > span { min-width: 22px; min-height: 24px; display: inline-flex;
+      align-items: center; justify-content: center; color: #cbb6f5; cursor: pointer;
+      font-size: 0.72rem; touch-action: manipulation; }
+    @media (hover: hover) { .ambient-pov-plays > span:hover { background: rgba(159,122,234,0.25); } }
+    /* WHICH ROUND is on screen — one trip through all the parts. */
+    .ambient-pov-round { display: inline-flex; align-items: center; gap: 1px; flex: 0 0 auto;
+      border: 1px solid rgba(79,209,197,0.45); border-radius: 999px;
+      background: rgba(79,209,197,0.1); overflow: hidden; }
+    .ambient-pov-round > b { font-size: 0.64rem; color: #9fe7de; padding: 0 5px; white-space: nowrap; }
+    .ambient-pov-round > span { min-width: 22px; min-height: 26px; display: inline-flex;
+      align-items: center; justify-content: center; color: #9fe7de; cursor: pointer;
+      font-size: 0.8rem; touch-action: manipulation; }
+    @media (hover: hover) { .ambient-pov-round > span:hover { background: rgba(79,209,197,0.22); } }
+    /* ---- ⌛ HANGS — extra time tacked onto a part play ---------------------- */
+    .ambient-pov-hang { display: inline-flex; align-items: center; gap: 4px; min-height: 24px;
+      padding: 2px 7px; border-radius: 999px; border: 1px solid #2d2d3f; background: #0d0d18;
+      color: #7a7a9c; font-size: 0.62rem; cursor: pointer; white-space: nowrap;
+      touch-action: manipulation; font-variant-numeric: tabular-nums; }
+    .ambient-pov-hang > i { font-style: normal; font-size: 0.68rem; line-height: 1; }
+    .ambient-pov-hang.on { color: #9fe7de; border-color: rgba(79,209,197,0.45); background: rgba(79,209,197,0.1); }
+    @media (hover: hover) { .ambient-pov-hang:hover { border-color: #4fd1c5; } }
+    .ambient-hang-modal .ambient-step-modal-body { display: flex; flex-direction: column; gap: 12px; }
+    .ambient-hang-side { border: 1px solid #23233a; border-radius: 9px; padding: 8px;
+      background: #0d0d18; display: flex; flex-direction: column; gap: 8px; }
+    .ambient-hang-side.on { border-color: rgba(79,209,197,0.4); background: rgba(79,209,197,0.05); }
+    .ambient-hang-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    /* The explanation must WRAP — .ambient-hint is the wrapping default now, but
+       this modal is width: min(360px, 92vw), so a nowrap line simply exits it. */
+    .ambient-hang-head > .ambient-hint { flex: 1 1 100%; white-space: normal; }
+    .ambient-hang-body { display: flex; flex-direction: column; gap: 7px; }
+    .ambient-hang-lens { display: flex; flex-wrap: wrap; gap: 4px; }
+    .ambient-hang-lens .ambient-seg { flex: 1 1 auto; min-width: 46px; min-height: 32px; }
+    .ambient-hang-who { display: flex; flex-wrap: wrap; gap: 5px; }
+    /* A layer reads by its own TYPE COLOUR here, the same one the mixer and the
+       Scheduler use — so "who plays" is answered by recognition, not by reading. */
+    .ambient-hang-lyr { display: inline-flex; align-items: center; gap: 6px; min-height: 32px;
+      padding: 4px 9px; border-radius: 7px; border: 1px solid #2d2d3f; background: #14142a;
+      color: #8b8ba8; font-size: 0.7rem; cursor: pointer; touch-action: manipulation; }
+    .ambient-hang-lyr > i { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto;
+      background: var(--lt, #4a5568); opacity: 0.35; }
+    .ambient-hang-lyr.on { color: #e2d9f5; border-color: var(--lt, #4fd1c5);
+      background: color-mix(in srgb, var(--lt, #4fd1c5) 14%, transparent); }
+    .ambient-hang-lyr.on > i { opacity: 1; }
+    .ambient-hang-acts { display: flex; gap: 5px; flex-wrap: wrap; }
+    .ambient-hang-acts .ambient-seg { min-height: 32px; }
+    .ambient-hang-acts .ambient-hang-rm { margin-left: auto; color: #fc8181; border-color: rgba(252,129,129,0.35); }
+    /* EVERY button in here clears the touch floor, not just the rows that were
+       remembered — the two side toggles and the footer sat at 24-28px. */
+    .ambient-hang-modal button { min-height: 32px; }
+    /* An end-of-list arrow states that it is at the end rather than doing nothing. */
+    .ambient-pov-partbtn.is-dis { opacity: 0.3; cursor: default; }
     /* It is a RENAME HANDLE, not a caption — 14px of text is not a tap target on
        a phone, so it carries its own padding up to the 30px floor. */
     .ambient-pov-partname { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: #c9a8ec; cursor: pointer; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; touch-action: manipulation;
@@ -13692,15 +13810,8 @@
     .ambient-grppop-host > .ambient-grp > .ambient-grp-body { display: block; }
 
     /* Order of play — the part chain, in the Arrangement popover. */
-    .ps-chain { border: 1px solid #23233a; border-radius: 10px; padding: 8px; margin-bottom: 10px; background: #0d0d18; }
-    .ps-chainseq { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 8px; }
-    .ps-cstep { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 3px 8px;
-                border: 1px solid rgba(110,120,255,0.45); border-radius: 8px; background: rgba(110,120,255,0.14);
-                color: #cfd4ff; font-size: 0.72rem; cursor: pointer; }
-    .ps-cstep:hover { border-color: #ff8fa3; background: rgba(255,143,163,0.14); }
-    .ps-cstep > i { font-style: normal; opacity: 0.6; }
-    .ps-chainadd { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
-    .ps-chainadd .ambient-seg { min-height: 30px; }
+    /* .ps-chain* removed 2026-08-23 — the order of play is edited on the ▤ Overview
+       strip (numbered cards, drag to reorder); this popover is read-only now. */
 
     /* THE SCHEDULER, INLINED AT THE BOTTOM OF ARRANGEMENT — and it must drop the
        standalone SECTION FRAME to do it. `.ambient-sched` carries a full card

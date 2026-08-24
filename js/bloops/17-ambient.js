@@ -38938,7 +38938,10 @@
               '<button type="button" class="ambient-seg' + (Math.abs(h.bars - v) < 0.01 ? ' active' : '') +
               '" data-hang="len:' + which + ':' + v + '">' + lbl + '</button>').join('') + '</div>' +
             '<div class="ambient-hint">Who plays during it' +
-              (h.layers.length ? '' : ' — <b>nobody yet: this is ' + (which === 'head' ? 'silence before' : 'a rest after') + ' the part</b>') + '</div>' +
+              (h.layers.length
+                ? (' — everything else rests. Notes already ringing carry through.')
+                : (' — <b>nobody: ' + (which === 'head' ? 'a silent count-in before' : 'a rest after') +
+                   ' the part.</b> Tap a layer to have it play through, or <b>All</b> for extra time with the whole mix.')) + '</div>' +
             '<div class="ambient-hang-who">' + (layers.length ? layers.map(l =>
               '<button type="button" class="ambient-hang-lyr' + (h.layers.indexOf(l.key) >= 0 ? ' on' : '') +
               '" data-hang="lyr:' + which + ':' + esc(l.key) + '" data-ltype="' + esc(String(l.key).split(':')[0]) + '">' +
@@ -38992,10 +38995,18 @@
         const P = E.getCfg().prog.parts[pi]; if (!P) return;
         if (op === 'tog') {
           if (P[which]) delete P[which];
-          // SEEDED WITH EVERY LAYER ON, so adding a hang is inaudible except for
-          // the extra time — you then switch layers OFF to shape it. Turning one
-          // on should never silence the mix by surprise.
-          else P[which] = { bars: 0.5, layers: allKeys.slice() };
+          // SEEDED EMPTY — a REST. The first version seeded every layer ON, on the
+          // reasoning that turning a hang on should not silence the mix by
+          // surprise. That was wrong: it made creating a hang do NOTHING audible
+          // (one extra bar of held chord under layers that keep running), and it
+          // was reported as hangs and intros simply not playing. The clock and the
+          // gate were correct the whole time; the default was the bug.
+          //
+          // A hang is punctuation, so it has to announce itself. Empty is the one
+          // seed that is unmistakably audible, and it matches what the control
+          // asks — you SELECT who plays through it, starting from nobody. `All` is
+          // one tap away for the "just extra time" case.
+          else P[which] = { bars: 0.5, layers: [] };
         } else if (op === 'len') { if (P[which]) P[which].bars = parseFloat(a2[2]) || 0.5; }
         else if (op === 'lyr') {
           if (P[which]) { const k = a2.slice(2).join(':'); const i2 = P[which].layers.indexOf(k);

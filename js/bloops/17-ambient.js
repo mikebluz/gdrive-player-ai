@@ -44543,7 +44543,15 @@
       const one = (key) => {
         const fs = E.freeze && E.freeze[key];
         if (fs && fs.frozen && Number.isFinite(fs.anchor)) fs.anchor += sec;
-        try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, Tone.now()); } catch (e) {}
+        // CANCEL FROM THE HANG'S END, NEVER FROM NOW. The burst for this window
+        // was scheduled during the lookahead — i.e. BEFORE this shift runs, now
+        // that the shift waits for t0 — so cancelling from `now` deletes the
+        // intro itself and leaves a bar of silence where it should play
+        // (reported immediately: "I don't hear the intro, it's just a bar of
+        // silence then the part starts"). Cancelling from t1 keeps every
+        // in-window note and still drops the post-hang notes that were queued
+        // on the pre-shift lattice, which is the only reason to cancel at all.
+        try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, w.t1); } catch (e) {}
         const c = E.clocks && E.clocks[key];
         if (Number.isFinite(c) && c >= w.t0 - 1e-6) E.clocks[key] = w.t1;
         land(E.runPhase, key); land(E.bassPhase, key); land(E.arpState, key);

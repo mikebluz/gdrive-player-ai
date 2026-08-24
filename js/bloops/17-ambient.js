@@ -33926,7 +33926,7 @@
           if (E.timer && _ambProgHasCadence(_c)) {
             const _L = _ambLayerByKey(E, key);
             if (_L && _ambProgSyncInfo(E, key, _L, _c)) {
-              const sp = _ambChordSpanAt(E, _c, now);
+              const sp = _ambSpanTrimHang(E, _c, _ambChordSpanAt(E, _c, now));
               if (sp && sp.len > 0.05 && now >= sp.start) {
                 _chordPh = { prog: Math.max(0, Math.min(0.9999, (now - sp.start) / sp.len)), active: true };
               }
@@ -33959,7 +33959,7 @@
             // directly.
             try {
               const _c2 = E._cfg || E.getCfg();
-              const sp3 = _ambChordSpanAt(E, _c2, now);
+              const sp3 = _ambSpanTrimHang(E, _c2, _ambChordSpanAt(E, _c2, now));
               if (sp3 && sp3.len > 0.05 && now >= sp3.start) {
                 return { prog: Math.max(0, Math.min(0.9999, (now - sp3.start) / sp3.len)), active: true };
               }
@@ -44056,6 +44056,30 @@
         out.push({ frac, lenMs, vshape, f, deg, oct });
       }
       return out;
+    }
+    // A CHORD SPAN FOR **DISPLAY** — the hang trimmed off its edges. The clock's
+    // span deliberately MERGES a hang with its neighbour chord (they share an
+    // instance so the choke holds one span through the window), which is right
+    // for note lengths and exactly wrong for a progress bar: "how far through
+    // this chord" against the merged span reads hangBars/(hangBars+chordBars)
+    // at the part downbeat — a 1-bar intro over a ½-bar first chord put every
+    // chord-driven bar at 0.67 the moment the part began (reported as "the bars
+    // do not start at zero at the seam"). The choke keeps the merge; the bars
+    // get the musical chord.
+    function _ambSpanTrimHang(E, cfg, sp) {
+      if (!sp || !(sp.end > sp.start)) return sp;
+      try {
+        const hw = _ambHangWindows(E, cfg, sp.start - 0.05, sp.end + 0.05);
+        if (!hw.length) return sp;
+        let a2 = sp.start, b2 = sp.end;
+        for (let i = 0; i < hw.length; i++) {
+          const w2 = hw[i];
+          if (w2.t0 <= a2 + 1e-3 && w2.t1 > a2) a2 = Math.max(a2, w2.t1);
+          if (w2.t1 >= b2 - 1e-3 && w2.t0 < b2) b2 = Math.min(b2, w2.t0);
+        }
+        if (!(b2 > a2)) return sp;
+        return { start: a2, end: b2, len: b2 - a2 };
+      } catch (e) { return sp; }
     }
     let _ambHangEmitting = false;   // the burst must never be eaten by the gate that clears its own window
     function _ambHangEmit(E, cfg, win, key, L) {

@@ -5652,16 +5652,39 @@
                                            : (_at ? _ambSectionPart(cfg, _at.idx) : null);
         if (_part) {
           const _all = cfg.prog.chords, _L = _all.length;
-          const _lens = [];
+          // A HANG ON THE BOUND PART EXTENDS ITS CYCLE. This branch returns BEFORE
+          // the parts walk below, so without this a project with a section bound
+          // to a part played straight through every hang — the second of the two
+          // paths that bypassed them. `_hangs` is a parallel array to `_lens`;
+          // absent hangs leave it all-null and the arithmetic is unchanged.
+          const _pt = (function () {
+            const ps = cfg.prog.parts; if (!Array.isArray(ps)) return null;
+            let acc = 0;
+            for (let i = 0; i < ps.length; i++) {
+              const pl = ps[i].open ? 0 : Math.max(1, ps[i].len | 0);
+              if (!ps[i].open && acc === _part.from && pl === _part.len) return ps[i];
+              acc += pl;
+            }
+            return null;
+          })();
+          const _lens = [], _hangs = [];
+          if (_pt && _pt.head) { _lens.push(_pt.head.bars); _hangs.push({ kind: 'head', layers: _pt.head.layers || [], at: 0 }); }
           for (let i = 0; i < _part.len; i++) {
             const c = _all[_part.from + i];
             _lens.push((c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
+            _hangs.push(null);
           }
+          if (_pt && _pt.tail) { _lens.push(_pt.tail.bars); _hangs.push({ kind: 'tail', layers: _pt.tail.layers || [], at: Math.max(0, _part.len - 1) }); }
           const _cycle = _lens.reduce((s, v) => s + v, 0) || bpc;
           const _into = Math.max(0, bars - (_at.startBar || 0));   // bars since this section began
           const _loops = Math.floor(_into / _cycle);
           let _rem = _into - _loops * _cycle, _k = 0;
           while (_k < _lens.length - 1 && _rem >= _lens[_k]) { _rem -= _lens[_k]; _k++; }
+          // A hang HOLDS the chord it is attached to, and the gate reads this hint.
+          const _hg = _hangs[_k];
+          _ambProgHangHint = _hg ? { kind: _hg.kind, layers: _hg.layers } : null;
+          if (_hg) _k = _hg.at;
+          else if (_hangs[0]) _k = Math.max(0, _k - 1);   // the head shifted every chord one slot along
           // Keep BOTH caller contracts: `step % chords.length` is the chord index,
           // and `floor(step / chords.length)` is the variation cycle the alternates
           // and order-perm hash on — so alts still evolve inside a bound section.
@@ -5737,15 +5760,27 @@
         if (_chain && _chain.length) {
           _chain.forEach((sl) => { seq.push({ abs: sl.idx, len: _ambChainSlotBars(cfg, sl), hang: sl.hang || 0, hlayers: sl.hlayers || null }); });
         } else {
+          // THE LEGACY EXPANSION — reached whenever _ambArchChainSlots returns null
+          // (no derived arch, no grid) or arch does NOT own the chain (any section
+          // bound to a part). It walks prog.parts directly, so it KNEW NOTHING
+          // ABOUT HANGS: a project on this path stored a hang, drew it, and played
+          // straight through it. Reported twice as intros and hangs not playing,
+          // and invisible to every probe because the arch path was always taken in
+          // a freshly-built test project. Hangs are per part-PLAY, so they go
+          // inside the `plays` loop, exactly as _ambChainWithHangs places them on
+          // the other path.
           let from = 0;
           cfg.prog.parts.forEach(p => {
             const plen = Math.max(1, p.len | 0), plays = Math.max(1, p.plays | 0);
+            const last = Math.min(L - 1, from + plen - 1);
             for (let r = 0; r < plays; r++) {
+              if (p.head && from < L) seq.push({ abs: from, len: p.head.bars, hang: 'head', hlayers: p.head.layers || [] });
               for (let i = 0; i < plen; i++) {
                 const abs = from + i; if (abs >= L) break;
                 const c = all[abs];
                 seq.push({ abs, len: (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc });
               }
+              if (p.tail && last >= 0) seq.push({ abs: last, len: p.tail.bars, hang: 'tail', hlayers: p.tail.layers || [] });
             }
             from += plen;
           });

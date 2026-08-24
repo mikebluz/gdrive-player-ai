@@ -5221,6 +5221,27 @@
         Object.keys(h.rolls).forEach(k => { const v = h.rolls[k] | 0; if (v) r[k] = v; });
         if (Object.keys(r).length) out.rolls = r;
       }
+      // EDITED PHRASES override generation — a phrase became DATA the moment a
+      // note was moved/added/removed. Degree-relative (deg/oct into the layer's
+      // own source), so an edit survives key changes the way the generator's
+      // output always did. An EMPTY array is KEPT: the user removed every note,
+      // which is a deliberate rest, not an absence (the meaningful-zero rule).
+      if (h.phrases && typeof h.phrases === 'object') {
+        const ph = {};
+        Object.keys(h.phrases).forEach(k => {
+          const arr = h.phrases[k]; if (!Array.isArray(arr)) return;
+          ph[k] = arr.slice(0, 32).map(n => {
+            if (!n || typeof n !== 'object') return null;
+            const u = Math.max(0, Math.min(0.985, +n.u || 0));
+            const len = Math.max(40, Math.min(4000, (n.len | 0) || 200));
+            const vel = Math.max(0.2, Math.min(1.4, +n.vel || 0.8));
+            if (n.drum) return { u, drum: String(n.drum).slice(0, 8), len, vel };
+            return { u, deg: Math.max(0, Math.min(11, n.deg | 0)),
+                     oct: Math.max(0, Math.min(8, n.oct | 0)), len, vel };
+          }).filter(Boolean);
+        });
+        if (Object.keys(ph).length) out.phrases = ph;
+      }
       return out;
     }
     // How many ROUNDS the order cycles through before repeating — one per
@@ -39153,25 +39174,59 @@
               '<i></i>' + esc(l.name) + '</button>').join('')
               : '<span class="ambient-hint">This area has no layers yet.</span>') + '</div>' +
             ((function () {
-              // THE PHRASE, VISIBLE. Rendered from _ambHangNotes — the same
-              // function the emit plays — so what you read is what will sound.
+              // THE PHRASE, EDITABLE. The strip renders from _ambHangNotes — the
+              // same function the emit plays — so what you see is what sounds.
+              // Chips drag in time, an empty tap adds, the inspector below a
+              // selected note moves pitch/velocity or removes it. The first
+              // edit MATERIALISES the generated phrase into h.phrases[key]
+              // (seeded with exactly what was playing — the "grown bars are
+              // seeded with what they replay" idiom), and 🎲 discards edits
+              // for a fresh roll.
               if (!h.layers.length) return '';
-              const bpm3 = (E.getCfg().bpm > 0) ? E.getCfg().bpm : _ambBpm();
               const nm2 = (f) => { const m = Math.round(69 + 12 * Math.log(f / 440) / Math.LN2);
                 return _pcName(((m % 12) + 12) % 12) + (Math.floor(m / 12) - 1); };
               return '<div class="ambient-hang-phrases">' + h.layers.map(k2 => {
                 const L2 = _ambLayerByKey(E, k2); if (!L2) return '';
-                let txt = '';
+                let ph2 = [];
                 try {
-                  const win2 = { bars: h.bars, kind: which, rolls: h.rolls || null, pi };
-                  const ph2 = _ambHangNotes(E, E.getCfg(), win2, k2, L2);
-                  txt = ph2.map(x => x.drum ? x.drum : nm2(x.f)).join(' · ');
-                } catch (e) { txt = '?'; }
+                  const win2 = { bars: h.bars, kind: which, rolls: h.rolls || null,
+                                 phrases: h.phrases || null, pi };
+                  ph2 = _ambHangNotes(E, E.getCfg(), win2, k2, L2) || [];
+                } catch (e) { ph2 = []; }
+                const edited = !!(h.phrases && Array.isArray(h.phrases[k2]));
+                // vertical pitch contour: rank within this phrase's own range
+                let lo = Infinity, hi = -Infinity;
+                ph2.forEach(x => { if (!x.drum) { const r2 = (x.oct | 0) * 7 + (x.deg | 0); if (r2 < lo) lo = r2; if (r2 > hi) hi = r2; } });
+                const span2 = Math.max(1, hi - lo);
+                const chips = ph2.map((x, xi) => {
+                  const y = x.drum ? 14 : Math.round(24 - ((((x.oct | 0) * 7 + (x.deg | 0)) - lo) / span2) * 18);
+                  const wpct = Math.max(3, Math.min(24, (x.lenMs / ((h.bars || 0.5) * (60 / Math.max(20, (E.getCfg().bpm || 120))) * 4000)) * 100));
+                  const lbl = x.drum ? x.drum.charAt(0).toUpperCase() : nm2(x.f);
+                  const isSel = _sel && _sel.which === which && _sel.key === k2 && _sel.idx === xi;
+                  return '<span class="ambient-hang-note' + (isSel ? ' sel' : '') + '" data-hn="' + which + '|' + esc(k2) + '|' + xi + '"' +
+                    ' style="left:' + (x.frac * 100).toFixed(1) + '%;width:' + wpct.toFixed(1) + '%;top:' + y + 'px"' +
+                    ' title="' + esc(x.drum || nm2(x.f)) + ' · drag to move · tap to edit">' + esc(lbl) + '</span>';
+                }).join('');
+                // inspector for the selected note of THIS layer
+                let insp = '';
+                if (_sel && _sel.which === which && _sel.key === k2 && ph2[_sel.idx]) {
+                  const xn = ph2[_sel.idx];
+                  insp = '<div class="ambient-hang-insp">' +
+                    '<b>' + esc(xn.drum || nm2(xn.f)) + '</b>' +
+                    '<button type="button" class="ambient-seg" data-hang="npitch:down" title="' + (xn.drum ? 'Previous drum' : 'A step down') + '">▼</button>' +
+                    '<button type="button" class="ambient-seg" data-hang="npitch:up" title="' + (xn.drum ? 'Next drum' : 'A step up') + '">▲</button>' +
+                    '<button type="button" class="ambient-seg" data-hang="nvel:down" title="Quieter">−</button>' +
+                    '<button type="button" class="ambient-seg" data-hang="nvel:up" title="Louder">＋</button>' +
+                    '<button type="button" class="ambient-seg ambient-hang-rm" data-hang="ndel:x" title="Remove this note">✕</button>' +
+                  '</div>';
+                }
                 return '<div class="ambient-hang-phr" data-ltype="' + esc(String(k2).split(':')[0]) + '">' +
                   '<i></i><b>' + esc(_ambLayerLabel(L2, k2)) + '</b>' +
-                  '<span>' + esc(txt) + '</span>' +
-                  '<button type="button" class="ambient-seg" data-hang="roll:' + which + ':' + esc(k2) + '" title="Roll a new phrase for this layer — the current one is kept until you roll">🎲</button>' +
-                '</div>';
+                  '<span class="ambient-hang-cnt">' + ph2.length + (edited ? ' · edited' : '') + '</span>' +
+                  '<button type="button" class="ambient-seg" data-hang="roll:' + which + ':' + esc(k2) + '" title="Roll a new phrase for this layer' + (edited ? ' — REPLACES your edits' : '') + '">🎲</button>' +
+                '</div>' +
+                '<div class="ambient-hang-strip" data-hs="' + which + '|' + esc(k2) + '" title="Tap an empty spot to add a note">' + chips + '</div>' +
+                insp;
               }).join('') + '</div>';
             })()) +
             '<div class="ambient-hang-acts">' +
@@ -39181,6 +39236,30 @@
               '<button type="button" class="ambient-seg ambient-hang-rm" data-hang="rm:' + which + '">✕ Remove</button>' +
             '</div></div>') : '') +
           '</div>';
+      };
+      // Transient selection for the note inspector — modal-local, never persisted.
+      let _sel = null;
+      // MATERIALISE, THEN EDIT. Every getCfg-derived value is resolved FIRST and
+      // the record taken LAST (the documented orphan rule — _ambHangNotes calls
+      // getCfg, which rebuilds prog.parts, so calling it after taking the record
+      // would write to a detached object exactly as the first popover bug did).
+      const matEdit = (which, key, fn) => {
+        const pre = parts()[pi] && parts()[pi][which]; if (!pre) return;
+        let genStore = null;
+        if (!(pre.phrases && Array.isArray(pre.phrases[key]))) {
+          const L2 = _ambLayerByKey(E, key);
+          const win2 = { bars: pre.bars, kind: which, rolls: pre.rolls || null, pi };
+          const gen = L2 ? (_ambHangNotes(E, E.getCfg(), win2, key, L2) || []) : [];
+          genStore = gen.map(x => x.drum
+            ? { u: x.frac, drum: x.drum, len: x.lenMs, vel: Math.round((x.vel || x.vshape || 0.8) * 100) / 100 }
+            : { u: x.frac, deg: x.deg | 0, oct: x.oct | 0, len: x.lenMs, vel: Math.round((x.vshape || 0.8) * 100) / 100 });
+        }
+        const Pn = parts()[pi]; const hh = Pn && Pn[which]; if (!hh) return;
+        hh.phrases = hh.phrases || {};
+        if (genStore && !Array.isArray(hh.phrases[key])) hh.phrases[key] = genStore;
+        if (!Array.isArray(hh.phrases[key])) hh.phrases[key] = [];
+        fn(hh.phrases[key]);
+        commit();
       };
       const paint = () => {
         ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-hang-modal">' +
@@ -39206,9 +39285,62 @@
         if (typeof persistWorkspace === 'function') persistWorkspace();
         paint();
       };
+      // DRAG A CHIP IN TIME. Pointer-based (touch + mouse), with the three traps
+      // this codebase has already paid for: cumulative travel (a slow drag never
+      // crosses a per-move threshold), Math.hypot (not axis-tested), and the
+      // chip node is MOVED live and only committed on release — a repaint mid
+      // -drag would destroy the element under the finger.
+      let _ndrag = null;
+      ov.addEventListener('pointerdown', (ev) => {
+        const chip = ev.target.closest && ev.target.closest('.ambient-hang-note');
+        if (!chip) return;
+        const bits = String(chip.dataset.hn || '').split('|');
+        const strip = chip.closest('.ambient-hang-strip'); if (!strip || bits.length < 3) return;
+        _ndrag = { chip, strip, which: bits[0], key: bits.slice(1, -1).join('|'), idx: +bits[bits.length - 1],
+                   x0: ev.clientX, y0: ev.clientY, lx: ev.clientX, ly: ev.clientY, travel: 0, armed: false, u: null };
+        try { chip.setPointerCapture(ev.pointerId); } catch (e) {}
+      });
+      ov.addEventListener('pointermove', (ev) => {
+        if (!_ndrag) return;
+        _ndrag.travel += Math.hypot(ev.clientX - _ndrag.lx, ev.clientY - _ndrag.ly);
+        _ndrag.lx = ev.clientX; _ndrag.ly = ev.clientY;
+        if (!_ndrag.armed && _ndrag.travel < 5) return;
+        _ndrag.armed = true; ev.preventDefault();
+        const r2 = _ndrag.strip.getBoundingClientRect();
+        const u = Math.round(Math.max(0, Math.min(0.985, (ev.clientX - r2.left) / Math.max(1, r2.width))) * 16) / 16;
+        _ndrag.u = u;
+        _ndrag.chip.style.left = (u * 100).toFixed(1) + '%';
+      });
+      ov.addEventListener('pointerup', () => {
+        if (!_ndrag) return;
+        const d = _ndrag; _ndrag = null;
+        if (d.armed && d.u != null) {
+          matEdit(d.which, d.key, (arr) => { if (arr[d.idx]) arr[d.idx].u = d.u; });
+        } else {
+          _sel = { which: d.which, key: d.key, idx: d.idx };
+          paint();
+        }
+      });
+      ov.addEventListener('pointercancel', () => { _ndrag = null; });
       ov.addEventListener('click', (ev) => {
         const t = ev.target;
         if (t === ov || (t.closest && t.closest('.hang-close'))) { close(); return; }
+        // TAP AN EMPTY SPOT ON A STRIP → add a note there (the target must be the
+        // strip itself — a chip tap is selection, handled on pointerup).
+        if (t.classList && t.classList.contains('ambient-hang-strip')) {
+          const [w2, k2] = String(t.dataset.hs || '').split('|'); if (!k2) return;
+          const r2 = t.getBoundingClientRect();
+          const u = Math.round(Math.max(0, Math.min(0.985, (ev.clientX - r2.left) / Math.max(1, r2.width))) * 16) / 16;
+          const L2 = _ambLayerByKey(E, k2);
+          const isDrum = String(k2).split(':')[0] === 'beat' && L2 && _ambBeatIsSynth(L2);
+          const reg2 = (L2 && Number.isFinite(L2.register)) ? (L2.register | 0) : 4;
+          matEdit(w2, k2, (arr) => {
+            arr.push(isDrum ? { u, drum: 'perc', len: 150, vel: 0.8 }
+                            : { u, deg: 2, oct: reg2, len: 200, vel: 0.8 });
+            _sel = { which: w2, key: k2, idx: arr.length - 1 };
+          });
+          return;
+        }
         const btn = t.closest && t.closest('[data-hang]'); if (!btn) return;
         const a2 = String(btn.getAttribute('data-hang')).split(':'), op = a2[0], which = a2[1];
         // EVERY getCfg REBUILDS `prog.parts` AS A NEW ARRAY (_ambRepairParts
@@ -39271,6 +39403,26 @@
           })();
           return;   // no commit — nothing changed
         }
+        if (op === 'npitch' || op === 'nvel' || op === 'ndel') {
+          if (!_sel) return;
+          const selNow = _sel;
+          matEdit(selNow.which, selNow.key, (arr) => {
+            const nn = arr[selNow.idx]; if (!nn) { _sel = null; return; }
+            if (op === 'ndel') { arr.splice(selNow.idx, 1); _sel = null; return; }
+            if (op === 'npitch') {
+              const d = (a2[1] === 'up') ? 1 : -1;
+              if (nn.drum) { const R = ['kick', 'snare', 'hat', 'tom', 'perc'];
+                nn.drum = R[(R.indexOf(nn.drum) + d + R.length) % R.length]; }
+              else { let t2 = (nn.deg | 0) + d;
+                if (t2 > 6) { t2 = 0; nn.oct = Math.min(8, (nn.oct | 0) + 1); }
+                else if (t2 < 0) { t2 = 6; nn.oct = Math.max(0, (nn.oct | 0) - 1); }
+                nn.deg = t2; }
+            }
+            if (op === 'nvel') nn.vel = Math.max(0.2, Math.min(1.4,
+              Math.round(((+nn.vel || 0.8) + (a2[1] === 'up' ? 0.15 : -0.15)) * 100) / 100));
+          });
+          return;
+        }
         if (op === 'tog') {
           // AUTHORING A HANG IS THE INTENT TO HEAR IT. The kill switch exists to
           // bisect field reports, not as a hidden precondition — a user who adds
@@ -39297,7 +39449,10 @@
             if (i2 >= 0) P[which].layers.splice(i2, 1); else P[which].layers.push(k); }
         } else if (op === 'roll') {
           const k = a2.slice(2).join(':');
-          if (P[which]) { P[which].rolls = P[which].rolls || {}; P[which].rolls[k] = ((P[which].rolls[k] | 0) + 1); }
+          if (P[which]) { P[which].rolls = P[which].rolls || {}; P[which].rolls[k] = ((P[which].rolls[k] | 0) + 1);
+            // A roll means "generate fresh" — stored edits are what it replaces.
+            if (P[which].phrases) delete P[which].phrases[k];
+            if (_sel && _sel.key === k) _sel = null; }
         } else if (op === 'all') { if (P[which]) P[which].layers = allKeys.slice(); }
         else if (op === 'none') { if (P[which]) P[which].layers = []; }
         else if (op === 'rm') { delete P[which]; }
@@ -44011,6 +44166,7 @@
               const pt2 = parts[sl.pi], hh = pt2 && pt2[sl.hang === 'head' ? 'head' : 'tail'];
               if (t1 > tFrom && t0 < tTo) out.push({ t0, t1, bars: w, kind: sl.hang,
                 layers: sl.hlayers || [], rolls: (hh && hh.rolls) || null,
+                phrases: (hh && hh.phrases) || null,
                 pi: sl.pi, occ: L2 * slots.length + i });
             }
             bar += w;
@@ -44030,6 +44186,21 @@
       const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
       const barSec = (60 / Math.max(20, bpm)) * 4;
       const dur = Math.max(0.05, (win.bars || 0.5) * barSec);
+      // A STORED (edited) phrase outranks generation entirely — it is the same
+      // data the editor writes, resolved here so view, audition and emit share
+      // one reading of it.
+      const stored = win.phrases && win.phrases[key];
+      if (Array.isArray(stored)) {
+        const src2 = (typeof _ambNotesOf === 'function') ? _ambNotesOf(cfg, L, key) : null;
+        return stored.map(n => {
+          if (n.drum) return { frac: n.u, lenMs: n.len || 150, vshape: n.vel || 0.8,
+                               drum: n.drum, vel: n.vel || 0.8 };
+          const f2 = _ambNoteFreq(n.deg | 0, n.oct | 0, src2);
+          if (!(f2 > 0)) return null;
+          return { frac: n.u, lenMs: n.len || 200, vshape: n.vel || 0.8,
+                   f: f2, deg: n.deg | 0, oct: n.oct | 0 };
+        }).filter(Boolean);
+      }
       const roll = (win.rolls && (win.rolls[key] | 0)) || 0;
       const rnd = _ambSeededRand(_ambHangHash(win.pi, win.kind, key, roll, (cfg.seed | 0)));
       const src = (typeof _ambNotesOf === 'function') ? _ambNotesOf(cfg, L, key) : null;

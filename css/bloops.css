@@ -3714,6 +3714,25 @@
     .ambient-hang-phr > span { flex: 1 1 auto; min-width: 0; font-size: 0.66rem; color: #8b8ba8;
       white-space: normal; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
     .ambient-hang-phr > .ambient-seg { flex: 0 0 auto; min-width: 36px; }
+    .ambient-hang-cnt { flex: 1 1 auto; min-width: 0; font-size: 0.62rem; color: #6b6b8a; }
+    /* THE PHRASE STRIP — one window of time, chips positioned by fraction, a
+       faint 16th grid so placement reads. Chips carry touch-action:none (they
+       drag); the strip itself keeps taps for add. */
+    .ambient-hang-strip { position: relative; height: 44px; border: 1px solid #23233a;
+      border-radius: 6px; background: #0d0d18 repeating-linear-gradient(90deg,
+        rgba(139,155,180,0.10) 0, rgba(139,155,180,0.10) 1px, transparent 1px, transparent 6.25%);
+      cursor: copy; touch-action: manipulation; overflow: hidden; }
+    .ambient-hang-note { position: absolute; height: 14px; min-width: 14px; border-radius: 3px;
+      background: var(--lt, #9f7aea); color: #0d0d18; font-size: 0.5rem; font-weight: 700;
+      line-height: 14px; text-align: center; overflow: hidden; white-space: nowrap;
+      cursor: grab; touch-action: none; user-select: none; -webkit-touch-callout: none;
+      box-shadow: 0 0 0 1px rgba(13,13,24,0.6); }
+    .ambient-hang-note.sel { box-shadow: 0 0 0 2px #f6ad55; z-index: 2; }
+    .ambient-hang-insp { display: flex; align-items: center; gap: 5px; padding: 3px 0 1px; }
+    .ambient-hang-insp > b { font-size: 0.68rem; color: #e2d9f5; min-width: 34px; }
+    .ambient-hang-insp .ambient-seg { min-width: 36px; min-height: 30px; }
+    .ambient-hang-insp .ambient-hang-rm { margin-left: auto; color: #fc8181;
+      border-color: rgba(252,129,129,0.35); }
     .ambient-hang-acts { display: flex; gap: 5px; flex-wrap: wrap; }
     .ambient-hang-acts .ambient-seg { min-height: 32px; }
     .ambient-hang-acts .ambient-hang-rm { margin-left: auto; color: #fc8181; border-color: rgba(252,129,129,0.35); }

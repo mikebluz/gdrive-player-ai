@@ -24253,7 +24253,15 @@
       const u = lc && lc.unit;
       if (!u || u.mode !== 'sync' || !u.ref) return t;
       const G = E._barGridAnchor;
-      if (!Number.isFinite(G) || !(t > G + 1e-6)) return t;
+      if (!Number.isFinite(G)) return t;
+      // A TIME BEFORE THE GRID SNAPS FORWARD ONTO IT, never through it. The old
+      // guard returned t unsnapped whenever t <= G — harmless when G is pinned at
+      // the first tick's lead (t ≈ G), and wrong the moment the anchor moves into
+      // the FUTURE, which a hang at the top of the arrangement does: the re-
+      // anchored layers rebuilt at the raw lead, permanently off the shifted
+      // lattice. Same lesson the frozen-restore path learned ("pre-grid, the
+      // anchor is G itself").
+      if (!(t > G + 1e-6)) return G;
       let P = 0;
       try { P = _ambLayerPeriodSec(E, key, lc, cfg); } catch (e) {}
       if (!(P > 0.001)) return t;
@@ -44052,11 +44060,73 @@
     // Called from the tick with the same lookahead the emitters use. Each hang
     // occurrence fires ONCE per layer — the tick re-visits a window every ~150ms,
     // so without the ledger the burst would be re-emitted and doubled.
+    // HANG TIME DOES NOT COUNT FOR THE LAYERS. The chord clock includes the
+    // inserted bars (it must — the hang holds a chord), but every layer's unit
+    // clock, phase store and Write-loop anchor used to keep counting straight
+    // through the window: a 2-bar frozen loop came out ONE BAR out of phase with
+    // the part after a 1-bar intro (reported as "the intro/part seam is not
+    // right"), and the card progress bars swept through a window where every
+    // layer is silenced (reported as "progress bars are not in sync with the
+    // intro"). Shifting the layer clocks FORWARD by the hang length, once per
+    // occurrence, at ARM time — before anything past the window is scheduled —
+    // makes the layer world resume exactly where it left off: phrase tops land
+    // on the part boundary, and the bars (driven from these same clocks) HOLD
+    // through the hang instead of sweeping.
+    //   · the freeze-anchor shift makes the replay re-cover the segment it had
+    //     just scheduled, at in-window times — the gate drops every one, so the
+    //     loop audibly RESUMES at the boundary with no double (same reasoning as
+    //     the engage handoff, with the gate as the belt);
+    //   · scheduledUpto stays ABSOLUTE and untouched — shifting it would lie;
+    //   · a FRACTIONAL hang ends off the bar lattice, so unit-SYNCED layers
+    //     re-enter at the next grid point after it (a gap of at most the
+    //     fraction). Integer-bar hangs are exact.
+    function _ambHangShiftLayers(E, cfg, w) {
+      const sec = Math.max(0, w.t1 - w.t0);
+      if (!(sec > 0)) return false;
+      // NOT YET — the first window arms on TICK 1, and the grid anchor is pinned
+      // later in that same flow, so a shift attempted now silently applied to
+      // nothing and the ledger never retried. Report un-shiftable and let the
+      // caller leave the ledger unset; the next tick lands inside the window
+      // with the anchor pinned.
+      if (!Number.isFinite(E._barGridAnchor)) return false;
+      // THE LATTICE ITSELF SHIFTS — the per-layer clock shifts below are not
+      // enough on their own, because unit-SYNCED emitters RE-SNAP every onset to
+      // the shared bar grid (`_ambUnitGridSnap` self-heals), which silently undid
+      // the shift: measured, a 2-bar-unit layer stayed on even absolute bars
+      // while part content moved to odd offsets it could never align with.
+      // Pushing `_barGridAnchor` by the hang keeps the LAYER lattice in CONTENT
+      // time while `_progAnchor` (the chord clock) keeps hang time — the two now
+      // differ by exactly the accumulated hang, which is precisely the crossing
+      // `_ambChordGridOff` was kept alive to express, and its existing consumers
+      // (the cadence onset walk, the freeze snaps) translate through it already.
+      E._barGridAnchor += sec;
+      // DO NOT hand-shift the phase stores as well — that double-shifts (lattice
+      // + clocks moved together = no relative change; measured, the onsets did
+      // not move at all). _ambUnitReanchor is the codebase's own idiom for "the
+      // grid moved under you": cancel pending, drop phase state, and the next
+      // tick re-anchors snapped onto the SHIFTED lattice. Only the FREEZE anchor
+      // is shifted by hand — a frozen loop's clock is its anchor, not the grid
+      // (the documented "what is its clock" lesson), and the replay's in-window
+      // re-coverage is eaten by the gate.
+      const one = (key) => {
+        const fs = E.freeze && E.freeze[key];
+        if (fs && fs.frozen && Number.isFinite(fs.anchor)) fs.anchor += sec;
+        try { _ambUnitReanchor(E, key); } catch (e) {}
+      };
+      try {
+        ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k] && cfg[k].present !== false) one(k); });
+        (cfg.extras || []).forEach(x => { if (x && x.type != null && x.id != null && x.present !== false) one(x.type + ':' + x.id); });
+      } catch (e) {}
+      return true;
+    }
     function _ambEmitHangs(E, cfg, tFrom, tTo) {
       const wins = _ambHangWindows(E, cfg, tFrom, tTo);
       if (!wins.length) return;
       E._hangDone = E._hangDone || Object.create(null);
       wins.forEach(w => {
+        const sid = 'shift|' + w.occ;
+        if (!E._hangDone[sid]) { let ok = false; try { ok = _ambHangShiftLayers(E, cfg, w); } catch (e) {}
+          if (ok) E._hangDone[sid] = 1; }
         (w.layers || []).forEach(key => {
           const id = w.occ + '|' + key;
           if (E._hangDone[id]) return;

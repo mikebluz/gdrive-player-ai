@@ -21713,6 +21713,18 @@
       const E = _masterEng; if (!E) { console.warn('[dump] no engine'); return; }
       const cfg = E._cfg || E.getCfg();
       const out = { v: 1, when: null, bpm: _ambBpm(), cfg: null, seqs: [], freeze: {}, layers: [] };
+      // The hang flag + what the clock currently derives — one paste answers
+      // "is the feature even on" and "where does the engine think the hangs are",
+      // the two questions three rounds of remote debugging never settled.
+      try {
+        out.hangs = { enabled: _AMB_HANG_PLAYBACK,
+          chain: (_ambArchChainSlots(cfg) || []).map(sl => sl.hang ? (sl.hang + ':' + sl.hbars) : ('c' + sl.idx)).join(' '),
+          chainBars: _ambProgChainBars(cfg),
+          ownsChain: _ambArchOwnsChain(cfg),
+          stored: (cfg.prog && Array.isArray(cfg.prog.parts) ? cfg.prog.parts : []).map(p2 =>
+            (p2.head ? ('H' + p2.head.bars + '[' + (p2.head.layers || []).join('+') + ']') : '') +
+            (p2.tail ? ('T' + p2.tail.bars + '[' + (p2.tail.layers || []).join('+') + ']') : '') || '-') };
+      } catch (e) { out.hangsErr = String(e && e.message); }
       try { out.cfg = JSON.parse(JSON.stringify(cfg)); } catch (e) { out.cfgErr = String(e && e.message); }
       // The banked phrases this area REFERENCES — by name, with their steps, so a
       // replay resolves the same material rather than an empty bank.
@@ -43690,7 +43702,28 @@
     // to extend the pass span in the same change.
     //
     // The STORE and the UI stay, so nothing the user authored is lost.
-    const _AMB_HANG_PLAYBACK = true;
+    // DEFAULT OFF, RUNTIME-SWITCHABLE. Hangs have been reported not working three
+    // times running while every probe here passed, so the useful thing is not
+    // another probe — it is letting the ONE person who can see the failure turn
+    // the feature off and on in a second and say which side the breakage is on.
+    //   window.bloomHangs()        → is it on?
+    //   window.bloomHangs(true)    → on   (persisted)
+    //   window.bloomHangs(false)   → off  (persisted)
+    // Off is the pre-hang behaviour exactly: arch-parity measured 55/55 identical
+    // to the pre-hang baseline with this false, so if doubling or phrase
+    // misalignment SURVIVES with it off, the cause is not hangs and not this
+    // session's clock work.
+    let _AMB_HANG_PLAYBACK = false;
+    try {
+      _AMB_HANG_PLAYBACK = (localStorage.getItem('bloomHangs') === '1');
+    } catch (e) {}
+    if (typeof window !== 'undefined') window.bloomHangs = function (on) {
+      if (on === undefined) return _AMB_HANG_PLAYBACK;
+      _AMB_HANG_PLAYBACK = !!on;
+      try { localStorage.setItem('bloomHangs', on ? '1' : '0'); } catch (e) {}
+      try { if (_masterEng) { _masterEng._hangDone = Object.create(null); _masterEng.getCfg(); } } catch (e) {}
+      return 'hangs ' + (on ? 'ON' : 'OFF') + ' — stop and play again';
+    };
     // ---- THE HANG AS A PSEUDO-PART -------------------------------------------
     // A hang is not a filter over the layers' normal material — it is a small
     // PART of its own, inserted before (intro) or after (hang) the part it is

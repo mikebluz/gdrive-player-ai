@@ -230,6 +230,10 @@ const WALK_BARS = 32, WALK_STEP = 0.25;
     // _ambSyncControls sets — a probe that skips it silently measures a
     // different area (the documented trap).
     const build = (c) => {
+      // HANGS ARE DEFAULT-OFF (runtime-switchable). The four hang configs pin
+      // the feature ON; every other config runs with it off, which pins the
+      // off state as byte-identical to the pre-hang clock at the same time.
+      try { window.bloomHangs(String(c.id || '').indexOf('hang-') === 0); } catch (e) {}
       const cfg = _masterEng.getCfg();
       delete cfg.sections;
       cfg.prog = { on: c.on !== false, name: 'P', chords: (c.chords || [0, 5, 7, 9]).map((r, i) => (

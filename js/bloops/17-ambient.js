@@ -43494,7 +43494,18 @@
         }
       }
       let pi = -1;
-      seqEntries.forEach((e) => {
+      // THE PROG.PARTS INDEX, carried explicitly. `pi` below only advances on
+      // entries WITH CHANGES, so on a chain containing a hold it is an index into
+      // the changes-parts and NOT into the occupy-time entries — off by the number
+      // of holds before it. Anything post-processing these slots (hangs) resolved
+      // the wrong part with it: measured, the Intro's tail landed after the Verse.
+      // `withCh` and `_ambOrderParts` are both the occupy-time entries in written
+      // order, so they align 1:1 and this maps cleanly on both the chained and
+      // unchained paths.
+      const _ops = _ambOrderParts(cfg);
+      seqEntries.forEach((e, _si) => {
+        const _occ = chained ? withCh.indexOf(e) : _si;
+        const _piAbs = (_ops[_occ] ? _ops[_occ].pi : undefined);
         // The part INDEX must identify the part itself — a revisited part is the
         // same part, and every consumer (masks, tabs, selection) keys on this.
         if (chained) pi = withCh.indexOf(e);
@@ -43508,7 +43519,7 @@
           const bars = (e.len && Number.isFinite(e.len.num) && e.len.num > 0) ? e.len.num : 4;
           for (let r = 0; r < plays; r++) {
             out.push({ idx: out.length ? out[out.length - 1].idx : 0,
-                       part: pi, pName: e.name || 'Part', pFirst: true, rep: r, plays,
+                       part: pi, pi: _piAbs, pName: e.name || 'Part', pFirst: true, rep: r, plays,
                        hold: 1, bars });
           }
           return;
@@ -43517,7 +43528,7 @@
         for (let r = 0; r < plays; r++) {
           for (let k = 0; k < len; k++) {
             out.push({ idx: (ch.from + k) % p.chords.length,
-                       part: solo ? -1 : pi, pName: solo ? '' : (e.name || ('Changes ' + (pi + 1))),
+                       part: solo ? -1 : pi, pi: _piAbs, pName: solo ? '' : (e.name || ('Changes ' + (pi + 1))),
                        pFirst: k === 0, rep: r, plays });
           }
         }

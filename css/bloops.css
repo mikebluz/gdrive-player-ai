@@ -3727,7 +3727,10 @@
     .ambient-hang-strip { position: relative; height: 44px; border: 1px solid #23233a;
       border-radius: 6px; background: #0d0d18 repeating-linear-gradient(90deg,
         rgba(139,155,180,0.10) 0, rgba(139,155,180,0.10) 1px, transparent 1px, transparent 6.25%);
-      cursor: copy; touch-action: manipulation; overflow: hidden; }
+      cursor: copy; touch-action: manipulation;
+      /* NOT hidden: a chip tail past the window end must feed the wrap's
+         scrollWidth, or it is simply cut and no side-scroll ever appears. */
+      overflow: visible; }
     .ambient-hang-note { position: absolute; height: 14px; min-width: 14px; border-radius: 3px;
       background: var(--lt, #9f7aea); color: #0d0d18; font-size: 0.5rem; font-weight: 700;
       line-height: 14px; text-align: center; overflow: hidden; white-space: nowrap;
@@ -3909,8 +3912,8 @@
        sizing for them would fit two chips on a phone. One of those grows the
        chip; nothing else does.) */
     .ambient-pov-chord { display: inline-flex; flex-direction: row; align-items: center; justify-content: center; gap: 3px;
-      min-width: 72px; min-height: 30px; padding: 2px 5px; border: 1px solid transparent; border-radius: 6px;
-      background: none; color: #cbd5e0; cursor: pointer; position: relative; touch-action: manipulation; }
+      min-width: 72px; min-height: 30px; padding: 2px 5px; border: 1px solid rgba(159,122,234,0.32); border-radius: 6px;
+      background: rgba(159,122,234,0.09); color: #cbd5e0; cursor: pointer; position: relative; touch-action: manipulation; }
     /* NO PHONE EXCEPTION. Tightening to the 95th percentile (58px) looked like a
        reasonable saving and reintroduced the exact bug on the top 5%: G♯maj7,
        C7sus4 and Cm7♭5 all grew the chip again. 72px is what "does not resize"
@@ -3920,10 +3923,7 @@
        long string. Never before the first — that would hang off the card edge.
        ABSOLUTE, so it lives in the container's gap instead of inside the chip:
        as flow content it was part of what the chip centred around. */
-    .ambient-pov-chord + .ambient-pov-chord::before {
-      content: '·'; color: #3d3d55; position: absolute; left: -7px; top: 50%;
-      transform: translateY(-50%); pointer-events: none;
-    }
+    /* (the old '·' separator is gone — bordered chips self-delimit) */
     /* ONE reading per chip, so both get the same weight — there is no longer a
        lead and an aside. (.ambient-pov-nm is the NAME, .ambient-pov-rn the
        numeral; the playhead relabels whichever is on screen.) */

@@ -3581,7 +3581,7 @@
     .ambient-pov-ver { padding: 2px 9px; border: 1px solid #2d2d3f; border-radius: 999px; background: #16162a; color: #cbd5e0; cursor: pointer; font-size: 0.74rem; font-weight: 600; touch-action: manipulation; }
     .ambient-pov-ver.on { border-color: #9f7aea; background: rgba(159,122,234,0.2); color: #f5d0fe; }
     .ambient-pov-veradd { color: #9f7aea; border-style: dashed; }
-    .ambient-pov-parthdr { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 0 0 5px; flex-wrap: wrap; }
+    .ambient-pov-parthdr { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; flex-wrap: wrap; min-height: 30px; }
     .ambient-pov-parthdr:first-child { margin-top: 0; }
     /* ONE CARD PER PART. The header used to force a row break in a flat strip, so
        a part was a convention rather than a thing — nothing said where one ended
@@ -3603,7 +3603,10 @@
       -webkit-touch-callout: none; }
     .ambient-pov-ord > b { font-size: 0.9rem; font-weight: 700; line-height: 1; color: #c9bdf0;
       font-variant-numeric: tabular-nums; }
-    .ambient-pov-ord > i { font-style: normal; font-size: 0.6rem; line-height: 1; color: #4a4866; letter-spacing: -1px; }
+    /* The ⠿ grip is GONE: four different marks stacked in a 32px column read as
+       specks, and the rail's own tint already says it is a distinct surface. The
+       whole rail is the drag target, so the glyph was decoration. */
+    .ambient-pov-ord > i { display: none; }
     /* THE ARROWS LIVE ON THE RAIL, above and below the number — ordering is one
        object (number · arrows · drag) instead of three scattered across the row,
        and it costs the header nothing. They are small TARGETS on purpose: the ⋯
@@ -3714,14 +3717,28 @@
       display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 0 6px; margin-left: -6px; border-radius: 6px; }
     @media (hover: hover) { .ambient-pov-partname:hover { background: rgba(201,168,236,0.12); } }
     .ambient-pov-partname em { font-style: normal; font-weight: 500; color: #6b7280; text-transform: none; }
-    .ambient-pov-partops { display: inline-flex; gap: 3px; flex: 0 0 auto; }
+    /* THE HEADER IS ONE LEFT-ALIGNED READING UNIT WITH ⋯ ANCHORED RIGHT.
+       `flex: 0 0 auto` plus the row's space-between pinned the ops to the far
+       edge, which was invisible while the row was full and became two
+       disconnected islands the moment the chips were pruned — measured 261px of
+       dead space between the name and the ops on a default part. The state chips
+       belong NEXT TO the name (they describe it); only the menu is a corner
+       affordance. */
+    .ambient-pov-partops { display: inline-flex; align-items: center; gap: 5px;
+      flex: 1 1 auto; min-width: 0; justify-content: flex-start; }
+    .ambient-pov-partops > .ambient-pov-dots { margin-left: auto; }
     /* A part's own key is a modulation — named on the part header, not buried. */
     /* The part-LESS header's key chip is a READOUT, not a handle (there is no
        part to give its own key), so it takes the cursor and the pointer off. */
     .ambient-pov-solohdr .ambient-pov-partkey { cursor: default; }
     /* ⌂ <root> — what the changes are rooted on, beside the key they play in.
        Dimmer than the key: it is the second fact, not the headline. */
-    .ambient-pov-partroot { font-style: normal; opacity: 0.72; letter-spacing: 0.2px; }
+    /* A CHIP LIKE ITS NEIGHBOURS. It was a bare <em> sitting between a bordered
+       cadence chip and a bordered menu button — three treatments in one row. */
+    .ambient-pov-partroot { font-style: normal; letter-spacing: 0.2px;
+      display: inline-flex; align-items: center; gap: 4px; min-height: 24px;
+      padding: 2px 7px; border-radius: 999px; border: 1px solid #2d2d3f;
+      background: #0d0d18; color: #7a7a9c; font-size: 0.62rem; white-space: nowrap; }
     /* Placement with nothing to place: the button states why and does not open. */
     .ambient-pitchbtn[disabled] { opacity: 0.5; cursor: not-allowed; }
     /* WHERE A LAYER'S NOTES COME FROM — on the card header, beside the length

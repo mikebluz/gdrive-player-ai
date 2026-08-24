@@ -5221,6 +5221,19 @@
         Object.keys(h.rolls).forEach(k => { const v = h.rolls[k] | 0; if (v) r[k] = v; });
         if (Object.keys(r).length) out.rolls = r;
       }
+      // ONCE PER PASS — the hang coalesces consecutive plays: an intro leads
+      // only the FIRST play of a run and a hang follows only the LAST, instead
+      // of every iteration. Stored only when set; absent = every play (the
+      // original behaviour, so old saves are untouched).
+      if (h.once) out.once = 1;
+      // GENERATION CONTROLS — grid (0 free / 8 / 16), density 1..5, range 0..2.
+      // Stored only when NON-DEFAULT so saves stay clean and sigs stable.
+      if (h.gen && typeof h.gen === 'object') {
+        const gg = (h.gen.grid === 8 || h.gen.grid === 0) ? h.gen.grid : 16;
+        const gd = Math.max(1, Math.min(5, (h.gen.dens | 0) || 3));
+        const gs = (h.gen.spread === 0 || h.gen.spread === 2) ? h.gen.spread : 1;
+        if (gg !== 16 || gd !== 3 || gs !== 1) out.gen = { grid: gg, dens: gd, spread: gs };
+      }
       // EDITED PHRASES override generation — a phrase became DATA the moment a
       // note was moved/added/removed. Degree-relative (deg/oct into the layer's
       // own source), so an edit survives key changes the way the generator's
@@ -5376,7 +5389,8 @@
       // one is edited.
       const _hs = (function () { const ps = cfg.prog && cfg.prog.parts;
         if (!Array.isArray(ps)) return '';
-        return ps.map(x => (x && x.head ? ('h' + x.head.bars) : '') + (x && x.tail ? ('t' + x.tail.bars) : '')).join(','); })();
+        return ps.map(x => (x && x.head ? ('h' + x.head.bars + (x.head.once ? 'o' : '')) : '')
+                    + (x && x.tail ? ('t' + x.tail.bars + (x.tail.once ? 'o' : '')) : '')).join(','); })();
       const sig = _ambGridSig(cfg) + '|hg' + _hs;
       if (_ambGridMemo && _ambGridMemo.sig === sig) return _ambGridMemo;
       let slots = _ambGridSlots(cfg);
@@ -5835,13 +5849,13 @@
             const plen = Math.max(1, p.len | 0), plays = Math.max(1, p.plays | 0);
             const last = Math.min(L - 1, from + plen - 1);
             for (let r = 0; r < plays; r++) {
-              if (_AMB_HANG_PLAYBACK && p.head && from < L) seq.push({ abs: from, len: p.head.bars, hang: 'head', hlayers: p.head.layers || [] });
+              if (_AMB_HANG_PLAYBACK && p.head && from < L && (!p.head.once || r === 0)) seq.push({ abs: from, len: p.head.bars, hang: 'head', hlayers: p.head.layers || [] });
               for (let i = 0; i < plen; i++) {
                 const abs = from + i; if (abs >= L) break;
                 const c = all[abs];
                 seq.push({ abs, len: (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc });
               }
-              if (_AMB_HANG_PLAYBACK && p.tail && last >= 0) seq.push({ abs: last, len: p.tail.bars, hang: 'tail', hlayers: p.tail.layers || [] });
+              if (_AMB_HANG_PLAYBACK && p.tail && last >= 0 && (!p.tail.once || r === plays - 1)) seq.push({ abs: last, len: p.tail.bars, hang: 'tail', hlayers: p.tail.layers || [] });
             }
             from += plen;
           });
@@ -21870,8 +21884,8 @@
           chainBars: _ambProgChainBars(cfg),
           ownsChain: _ambArchOwnsChain(cfg),
           stored: (cfg.prog && Array.isArray(cfg.prog.parts) ? cfg.prog.parts : []).map(p2 =>
-            (p2.head ? ('H' + p2.head.bars + '[' + (p2.head.layers || []).join('+') + ']') : '') +
-            (p2.tail ? ('T' + p2.tail.bars + '[' + (p2.tail.layers || []).join('+') + ']') : '') || '-') };
+            (p2.head ? ('H' + p2.head.bars + (p2.head.once ? '!1' : '') + '[' + (p2.head.layers || []).join('+') + ']') : '') +
+            (p2.tail ? ('T' + p2.tail.bars + (p2.tail.once ? '!1' : '') + '[' + (p2.tail.layers || []).join('+') + ']') : '') || '-') };
       } catch (e) { out.hangsErr = String(e && e.message); }
       try { out.cfg = JSON.parse(JSON.stringify(cfg)); } catch (e) { out.cfgErr = String(e && e.message); }
       // The banked phrases this area REFERENCES — by name, with their steps, so a
@@ -39163,6 +39177,13 @@
             '<div class="ambient-hang-lens">' + LENS.map(([v, lbl]) =>
               '<button type="button" class="ambient-seg' + (Math.abs(h.bars - v) < 0.01 ? ' active' : '') +
               '" data-hang="len:' + which + ':' + v + '">' + lbl + '</button>').join('') + '</div>' +
+            '<div class="ambient-hang-once">' +
+              '<button type="button" class="ambient-seg' + (h.once ? '' : ' active') + '" data-hang="once:' + which + ':0">Every play</button>' +
+              '<button type="button" class="ambient-seg' + (h.once ? ' active' : '') + '" data-hang="once:' + which + ':1">Once per pass</button>' +
+              '<span class="ambient-hint">' + (which === 'head'
+                ? 'Once: a part playing ×4 gets its intro only before the first play.'
+                : 'Once: a part playing ×4 gets its hang only after the last play.') + '</span>' +
+            '</div>' +
             '<div class="ambient-hint">Who plays during it' +
               (h.layers.length
                 ? (' — everything else rests. Notes already ringing carry through.')
@@ -39173,6 +39194,30 @@
               '" data-hang="lyr:' + which + ':' + esc(l.key) + '" data-ltype="' + esc(String(l.key).split(':')[0]) + '">' +
               '<i></i>' + esc(l.name) + '</button>').join('')
               : '<span class="ambient-hint">This area has no layers yet.</span>') + '</div>' +
+            ((function () {
+              if (!h.layers.length) return '';
+              const g = h.gen || {};
+              const gg = (g.grid === 8 || g.grid === 0) ? g.grid : 16;
+              const gd = Math.max(1, Math.min(5, (g.dens | 0) || 3));
+              const gs = (g.spread === 0 || g.spread === 2) ? g.spread : 1;
+              const T = ' title="Regenerates the phrases below — replaces any note edits"';
+              // Each label + its buttons is ONE wrap unit — a flat row let the
+              // wrap split a label from its own controls at phone width.
+              return '<div class="ambient-hang-gen">' +
+                '<span class="ambient-hang-genblk"><span class="ambient-hint">Grid</span>' +
+                [[16, '1/16'], [8, '1/8'], [0, 'Free']].map(([v, lbl]) =>
+                  '<button type="button" class="ambient-seg' + (gg === v ? ' active' : '') +
+                  '" data-hang="ggrid:' + which + ':' + v + '"' + T + '>' + lbl + '</button>').join('') + '</span>' +
+                '<span class="ambient-hang-genblk"><span class="ambient-hint">Density</span>' +
+                '<button type="button" class="ambient-seg" data-hang="gdens:' + which + ':down"' + T + '>−</button>' +
+                '<b class="ambient-hang-dens">' + '•'.repeat(gd) + '</b>' +
+                '<button type="button" class="ambient-seg" data-hang="gdens:' + which + ':up"' + T + '>＋</button></span>' +
+                '<span class="ambient-hang-genblk"><span class="ambient-hint">Range</span>' +
+                [[0, 'Tight'], [1, 'Mid'], [2, 'Wide']].map(([v, lbl]) =>
+                  '<button type="button" class="ambient-seg' + (gs === v ? ' active' : '') +
+                  '" data-hang="gspread:' + which + ':' + v + '"' + T + '>' + lbl + '</button>').join('') + '</span>' +
+              '</div>';
+            })()) +
             ((function () {
               // THE PHRASE, EDITABLE. The strip renders from _ambHangNotes — the
               // same function the emit plays — so what you see is what sounds.
@@ -39459,6 +39504,23 @@
             // A roll means "generate fresh" — stored edits are what it replaces.
             if (P[which].phrases) delete P[which].phrases[k];
             if (_sel && _sel.key === k) _sel = null; }
+        } else if (op === 'once') {
+          if (P[which]) { if (a2[2] | 0) P[which].once = 1; else delete P[which].once; }
+        } else if (op === 'ggrid' || op === 'gdens' || op === 'gspread') {
+          // A CONTROL CHANGE REGENERATES — stored phrases (edits included) are
+          // what the new setting replaces, same contract as 🎲.
+          if (P[which]) {
+            const g = P[which].gen || {};
+            const cur = { grid: (g.grid === 8 || g.grid === 0) ? g.grid : 16,
+                          dens: Math.max(1, Math.min(5, (g.dens | 0) || 3)),
+                          spread: (g.spread === 0 || g.spread === 2) ? g.spread : 1 };
+            if (op === 'ggrid') cur.grid = parseFloat(a2[2]) | 0;
+            else if (op === 'gdens') cur.dens = Math.max(1, Math.min(5, cur.dens + (a2[2] === 'up' ? 1 : -1)));
+            else cur.spread = parseFloat(a2[2]) | 0;
+            P[which].gen = cur;
+            if (P[which].phrases) delete P[which].phrases;
+            _sel = null;
+          }
         } else if (op === 'all') { if (P[which]) P[which].layers = allKeys.slice(); }
         else if (op === 'none') { if (P[which]) P[which].layers = []; }
         else if (op === 'rm') { delete P[which]; }
@@ -39885,7 +39947,7 @@
         '|g' + (prog.arrGrid && prog.arrGrid.seq ? (_ambGridCols(prog.arrGrid) + ':' + JSON.stringify(prog.arrGrid.seq)) : '-') +
         '|r' + (el._povRound | 0) +
         '|p' + (parts ? parts.map(p2 => (p2.plays | 0) || 1).join('.') : '-') +
-        '|h' + (parts ? parts.map(p2 => (p2.head ? p2.head.bars + ':' + p2.head.layers.length : '') + '/' + (p2.tail ? p2.tail.bars + ':' + p2.tail.layers.length : '')).join(',') : '-')
+        '|h' + (parts ? parts.map(p2 => (p2.head ? p2.head.bars + ':' + p2.head.layers.length + (p2.head.once ? 'o' : '') : '') + '/' + (p2.tail ? p2.tail.bars + ':' + p2.tail.layers.length + (p2.tail.once ? 'o' : '') : '')).join(',') : '-')
       if (el._sig === sig) return;
       el._sig = sig; el._curCi = -2;
       const esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
@@ -44213,6 +44275,69 @@
       const n = Math.max(4, Math.min(12, Math.round(4 * (win.bars || 0.5) + rnd() * 3)));
       const isBeat = (String(key).split(':')[0] === 'beat');
       const reg = Number.isFinite(L.register) ? (L.register | 0) : 5;
+      // GENERATION CONTROLS live on the part record itself, resolved here from
+      // win.pi + win.kind rather than threaded through every call site — a call
+      // site cannot forget what it never had to carry.
+      let _g = null;
+      try { const _pp = cfg.prog && cfg.prog.parts && cfg.prog.parts[win.pi];
+            _g = _pp && _pp[win.kind] && _pp[win.kind].gen; } catch (e) { _g = null; }
+      const _grid = (_g && (_g.grid === 8 || _g.grid === 0)) ? _g.grid : 16;
+      const _dens = (_g && (_g.dens | 0)) ? Math.max(1, Math.min(5, _g.dens | 0)) : 3;
+      const _spread = (_g && (_g.spread === 0 || _g.spread === 2)) ? _g.spread : 1;
+      if (_grid > 0) {
+        // QUANTIZED GESTURE — the default. Onsets sit ON the subdivision grid
+        // (grid steps per bar), chosen by a gesture-shaped weight: a head leans
+        // late (a pickup accelerating into the downbeat), a tail leans early
+        // (an accent decaying out of the part). The ANCHOR step always plays —
+        // the last step of a head (the pickup's landing) and the first of a
+        // tail (the accent that leaves the part) are what make the figure read
+        // as an intro or an exit rather than scattered notes.
+        const nSteps = Math.max(2, Math.round((win.bars || 0.5) * _grid));
+        const stepMs = (dur * 1000) / nSteps;
+        const fill = [0, 0.25, 0.4, 0.55, 0.7, 0.85][_dens];
+        const kN = Math.max(1, Math.min(nSteps, Math.round(nSteps * fill)));
+        const scored = [];
+        for (let st = 0; st < nSteps; st++) {
+          const u2 = (nSteps === 1) ? 1 : st / (nSteps - 1);
+          const w = (win.kind === 'head') ? (0.3 + 0.7 * Math.pow(u2, 1.3))
+                                          : (0.3 + 0.7 * Math.pow(1 - u2, 1.3));
+          scored.push({ st, u: u2, w: w * (0.55 + rnd() * 0.9) });
+        }
+        scored[(win.kind === 'head') ? nSteps - 1 : 0].w = 9;
+        scored.sort((x2, y2) => y2.w - x2.w);
+        const chosen = scored.slice(0, kN).sort((x2, y2) => x2.st - y2.st);
+        let dg = (rnd() * 7) | 0;
+        const out2 = [];
+        chosen.forEach(c2 => {
+          const frac = Math.min(0.985, c2.st / nSteps);
+          const vshape = (win.kind === 'head') ? (0.6 + 0.4 * c2.u) : (1 - 0.45 * c2.u);
+          if (isBeat) {
+            // Drums by METRIC ROLE, not a uniform draw: strong steps kick,
+            // half-steps snare, offbeats hat — the burst reads as the kit
+            // speaking in rhythm instead of a dice throw.
+            const strong = (c2.st % 4) === 0, half = (c2.st % 2) === 0;
+            const drum = strong ? (rnd() < 0.7 ? 'kick' : 'tom')
+                       : half ? (rnd() < 0.55 ? 'snare' : 'perc')
+                       : (rnd() < 0.75 ? 'hat' : 'perc');
+            out2.push({ frac, lenMs: Math.max(60, Math.round(stepMs * 0.9)), vshape,
+                        drum, vel: (0.55 + rnd() * 0.45) * vshape });
+            return;
+          }
+          // Pitch WALKS (steps of 1-2 degrees, direction per draw) instead of a
+          // uniform re-draw per note — a contour, not confetti.
+          dg += (rnd() < 0.6 ? 1 : 2) * (rnd() < 0.5 ? -1 : 1);
+          dg = ((dg % 7) + 7) % 7;
+          const oc = reg + (_spread === 0 ? 0
+                     : _spread === 1 ? ((rnd() < 0.35) ? 1 : 0)
+                     : (rnd() < 0.3 ? 1 : (rnd() < 0.2 ? -1 : 0)));
+          const f2 = _ambNoteFreq(dg, Math.max(0, oc), src);
+          if (!(f2 > 0)) return;
+          out2.push({ frac, lenMs: Math.max(60, Math.round(stepMs * (0.9 + rnd() * 1.6))),
+                      vshape, f: f2, deg: dg, oct: Math.max(0, oc) });
+        });
+        return out2;
+      }
+      // FREE (grid 0) — the original continuous gesture, kept verbatim.
       const out = [];
       for (let i = 0; i < n; i++) {
         const u = (i + 0.5) / n;
@@ -44423,14 +44548,26 @@
       // only the ones one branch happens to set made two different parts at
       // rep 0 read as the same visit.
       const vkey = (o) => o ? ([o.pi, o.part, o.visit, o.rep, o.iter].join('|')) : '\u0000';
+      // THE RUN KEY keeps ONLY part identity: `once` coalesces every
+      // CONSECUTIVE slot of the same part into one run — "once at the beginning
+      // of all iterations" in the user's words. This must NOT key on visit/rep/
+      // iter, and the two paths force that: the chain branch counts plays in
+      // `rep` (visit fixed) while the grid branch mints a NEW `visit` per play
+      // (rep fixed at 0) — any finer key coalesces on one path and is inert on
+      // the other. Measured both ways.
+      const rkey = (o) => o ? ([o.pi, o.part].join('|')) : '\u0000';
       const out = [];
       for (let i = 0; i < slots.length; i++) {
-        const sl = slots[i], pt = partOf(sl), k = vkey(sl);
+        const sl = slots[i], pt = partOf(sl), k = vkey(sl), kr = rkey(sl);
         const firstOfVisit = vkey(slots[i - 1]) !== k;
         const lastOfVisit = vkey(slots[i + 1]) !== k;
-        if (firstOfVisit && pt && pt.head) out.push({ ...sl, hang: 'head', hbars: pt.head.bars, hlayers: pt.head.layers });
+        const firstOfRun = rkey(slots[i - 1]) !== kr;
+        const lastOfRun = rkey(slots[i + 1]) !== kr;
+        if (pt && pt.head && (pt.head.once ? firstOfRun : firstOfVisit))
+          out.push({ ...sl, hang: 'head', hbars: pt.head.bars, hlayers: pt.head.layers });
         out.push(sl);
-        if (lastOfVisit && pt && pt.tail) out.push({ ...sl, hang: 'tail', hbars: pt.tail.bars, hlayers: pt.tail.layers });
+        if (pt && pt.tail && (pt.tail.once ? lastOfRun : lastOfVisit))
+          out.push({ ...sl, hang: 'tail', hbars: pt.tail.bars, hlayers: pt.tail.layers });
       }
       return out;
     }

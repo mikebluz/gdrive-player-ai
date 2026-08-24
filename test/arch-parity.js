@@ -196,6 +196,15 @@ const CONFIGS = [
   // grid config hang-less; gate the COMBINATION.
   { id: 'hang-grid', chords: [0, 5, 7, 9],
     parts: [['Verse', 2, 1, null, null, { cols: 2, seq: {} }, { head: { bars: 1, layers: [] } }], ['Chorus', 2]] },
+  // ONCE PER PASS — `once:1` coalesces CONSECUTIVE plays of the part into one
+  // run: intro before the first play only, hang after the last. Two configs
+  // because the two clock paths spell repetition differently (chain counts
+  // plays in `rep`, the grid mints a new `visit` per play) and the run key
+  // must coalesce both — a finer key was measured inert on the grid path.
+  { id: 'hang-once', chords: [0, 5, 7, 9],
+    parts: [['Verse', 2, 3, null, null, null, { head: { bars: 0.5, layers: [], once: 1 }, tail: { bars: 0.5, layers: [], once: 1 } }], ['Chorus', 2]] },
+  { id: 'hang-once-grid', chords: [0, 5, 7, 9],
+    parts: [['Verse', 2, 3, null, null, { cols: 2, seq: {} }, { head: { bars: 0.5, layers: [], once: 1 } }], ['Chorus', 2]] },
 ];
 
 // The walk: 32 bars at a quarter bar. Long enough that part repeats, section

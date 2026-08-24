@@ -21596,6 +21596,59 @@
         (cfg.extras || []).forEach(x => { if (x && x.type != null && x.id != null) one(x.type + ':' + x.id, x); });
       } catch (e) {}
     }
+    // ---- SILENCE WATCH -------------------------------------------------------
+    // window.bloomSilenceWatch(sec) — run DURING a silent playback. For `sec`
+    // seconds it counts every playNote call, how many the playback gate skipped
+    // and WHERE (inside vs outside hang windows), and meters the master tap —
+    // then prints one compact line and copies it. It exists because "hearing
+    // nothing" has at least four different causes (no notes emitted · notes
+    // gate-skipped · notes emitted into a dead chain · audio context suspended)
+    // and each needs a different fix; a dump cannot tell them apart, this can.
+    if (typeof window !== 'undefined') window.bloomSilenceWatch = function (sec) {
+      const E = _masterEng; const S = Math.max(3, Math.min(30, sec | 0 || 10));
+      if (!E || !E.timer) { console.warn('[silence-watch] press ▶ Play first, then run bloomSilenceWatch(10)'); return 'not playing'; }
+      const cfg = E._cfg || E.getCfg();
+      const t0 = Tone.now();
+      let wins = [];
+      try { const a2 = Number.isFinite(E._progAnchor) ? E._progAnchor : (E._playStartAt || 0);
+            wins = _ambHangWindows(E, cfg, t0 - 5, t0 + S + 10); } catch (e) {}
+      const inWin = (t) => wins.some(w => t >= w.t0 && t < w.t1);
+      const st = { calls: 0, tagged: 0, skipHang: 0, skipOther: 0, passed: 0, keys: {} };
+      const oP = window.playNote;
+      window.playNote = function (f, p, d, at) { st.calls++; if (window._ambEmitKey) { st.tagged++;
+        st.keys[window._ambEmitKey] = (st.keys[window._ambEmitKey] | 0) + 1; } return oP.apply(this, arguments); };
+      const oG = window._ambUnitGateSkip;
+      window._ambUnitGateSkip = function (key, at) { const v = oG.apply(this, arguments);
+        if (v) { if (inWin(at)) st.skipHang++; else st.skipOther++; } else st.passed++; return v; };
+      let an = null, peak = 0, frames = 0;
+      try { const tap = _ambMasterTapNode(); an = Tone.getContext().rawContext.createAnalyser();
+        an.fftSize = 2048; Tone.connect(tap, an); } catch (e) { an = null; }
+      const buf = an ? new Float32Array(2048) : null;
+      const pump = () => { if (an) { try { an.getFloatTimeDomainData(buf);
+          for (let i = 0; i < buf.length; i++) { const v = Math.abs(buf[i]); if (v > peak) peak = v; }
+          frames++; } catch (e) {} }
+        if (Tone.now() - t0 < S) requestAnimationFrame(pump); };
+      requestAnimationFrame(pump);
+      setTimeout(() => {
+        window.playNote = oP; window._ambUnitGateSkip = oG;
+        const out = { secs: S, playing: !!E.timer,
+          ctx: Tone.getContext().rawContext.state,
+          notes: st.calls, bloomTagged: st.tagged, byLayer: st.keys,
+          gate: { passed: st.passed, skippedInHang: st.skipHang, skippedElsewhere: st.skipOther },
+          hangsOn: (typeof window.bloomHangs === 'function') ? window.bloomHangs() : '?',
+          hangWindows: wins.length,
+          masterPeak: Math.round(peak * 1000) / 1000, meterFrames: frames,
+          verdict: (st.calls === 0) ? 'NO NOTES EMITTED — generator/config problem'
+            : (st.passed === 0 && (st.skipHang + st.skipOther) > 0) ? 'EVERY NOTE GATE-SKIPPED — gate problem'
+            : (peak < 0.001 && frames > 30) ? 'notes flow but the MASTER IS SILENT — chain/context problem'
+            : (peak < 0.001) ? 'meter got no frames — rerun with the tab focused'
+            : 'audio present at the master — level/routing below the tap' };
+        const txt = JSON.stringify(out);
+        console.log('[silence-watch]', txt);
+        try { navigator.clipboard.writeText(txt).then(() => console.log('[silence-watch] copied to clipboard'), () => {}); } catch (e) {}
+      }, S * 1000 + 200);
+      return 'watching ' + S + 's — keep it playing';
+    };
     // ---- SEAM WATCH ----------------------------------------------------------
     // `bloomSeamWatch()` in the console: arms, waits for Play, and captures the
     // FIRST pass boundary in full — every layer's onsets around it, the audio

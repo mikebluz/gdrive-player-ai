@@ -44541,16 +44541,27 @@
           st.startAt = w.t1; st.lastAt = null;
           if (Number.isFinite(st.idx)) st.idx = 0; } };
       const one = (key) => {
+        // A FROZEN OR COMPOSED LOOP IS NOT THIS FUNCTION'S BUSINESS. Two
+        // separate attempts to include it both failed for the same underlying
+        // reason, so this is a boundary, not a tuning: `_ambReplayFrozen` keeps
+        // a per-(time,pitch) dedupe set (`st._emitted`, the comb-filter guard),
+        // so any note this function CANCELS is retracted from the audio while
+        // the replay still believes it was issued — and it is never re-emitted.
+        // Cancel + dedupe = a permanent hole. Traced: the replay re-ran with
+        // the rewound `from`, scheduled ZERO notes, and advanced its mark
+        // across the whole window, leaving the composed phrase absent for one
+        // lookahead after the part started ("composed phrases are late to
+        // start, midway through second chord").
+        //
+        // It also does not NEED anything from here. A composed phrase is
+        // anchored by `_ambComposedPassSync` to the pass start, and that span
+        // is hang-trimmed (`_ambPassSpanAt` pushes `from` past a head window),
+        // so it already lands on the part's downbeat — the earlier `+= sec`
+        // double-counted the hang on top of that and pushed it half a bar late.
+        // A Write/Evolve capture is deliberately not written against the
+        // changes and keeps its own clock, which is the documented doctrine.
         const fs = E.freeze && E.freeze[key];
-        if (fs && fs.frozen && Number.isFinite(fs.anchor)) fs.anchor += sec;
-        // CANCEL FROM THE HANG'S END, NEVER FROM NOW. The burst for this window
-        // was scheduled during the lookahead — i.e. BEFORE this shift runs, now
-        // that the shift waits for t0 — so cancelling from `now` deletes the
-        // intro itself and leaves a bar of silence where it should play
-        // (reported immediately: "I don't hear the intro, it's just a bar of
-        // silence then the part starts"). Cancelling from t1 keeps every
-        // in-window note and still drops the post-hang notes that were queued
-        // on the pre-shift lattice, which is the only reason to cancel at all.
+        if (fs && fs.frozen) return;
         try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, w.t1); } catch (e) {}
         const c = E.clocks && E.clocks[key];
         if (Number.isFinite(c) && c >= w.t0 - 1e-6) E.clocks[key] = w.t1;

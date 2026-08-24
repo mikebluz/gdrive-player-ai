@@ -175,22 +175,6 @@ const CONFIGS = [
   { id: 'grid-open-meta', chords: [0, 5, 7, 9],
     parts: [{ name: 'Intro', open: 8 }, ['Verse', 2], ['Chorus', 2]],
     arrGrid: { cols: 2, seq: { 0: [0, 1], 1: [1, 0] } } },
-  // HANGS ON EACH OF THE THREE CLOCK PATHS. `_ambProgStepAt` reaches the parts
-  // walk three different ways and hangs originally existed on only ONE of them:
-  // the arch chain. A project that fell to the LEGACY expansion (no derived
-  // arch, or arch not owning the chain) or that took the SECTION-BOUND early
-  // return played straight through every hang — reported twice as intros and
-  // hangs not playing, and invisible to every probe because a freshly-built
-  // test project always took the arch path.
-  { id: 'hang-tail',    chords: [0, 5, 7, 9],
-    parts: [['Verse', 2, 1, null, null, null, { tail: { bars: 1, layers: [] } }], ['Chorus', 2]] },
-  { id: 'hang-head',    chords: [0, 5, 7, 9],
-    parts: [['Verse', 2], ['Chorus', 2, 1, null, null, null, { head: { bars: 0.5, layers: ['bed'] } }]] },
-  { id: 'hang-both',    chords: [0, 5, 7, 9],
-    parts: [['Verse', 2, 2, null, null, null, { head: { bars: 0.25, layers: [] }, tail: { bars: 0.5, layers: ['beat'] } }], ['Chorus', 2]] },
-  { id: 'hang-section', chords: [0, 5, 7, 9],
-    parts: [['Verse', 2, 1, null, null, null, { tail: { bars: 1, layers: [] } }], ['Chorus', 2]],
-    sections: [['A', 3, 0], ['B', 2, 1]] },
 ];
 
 // The walk: 32 bars at a quarter bar. Long enough that part repeats, section

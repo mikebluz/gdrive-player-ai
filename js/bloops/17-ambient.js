@@ -5668,13 +5668,13 @@
             return null;
           })();
           const _lens = [], _hangs = [];
-          if (_pt && _pt.head) { _lens.push(_pt.head.bars); _hangs.push({ kind: 'head', layers: _pt.head.layers || [], at: 0 }); }
+          if (_AMB_HANG_PLAYBACK && _pt && _pt.head) { _lens.push(_pt.head.bars); _hangs.push({ kind: 'head', layers: _pt.head.layers || [], at: 0 }); }
           for (let i = 0; i < _part.len; i++) {
             const c = _all[_part.from + i];
             _lens.push((c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
             _hangs.push(null);
           }
-          if (_pt && _pt.tail) { _lens.push(_pt.tail.bars); _hangs.push({ kind: 'tail', layers: _pt.tail.layers || [], at: Math.max(0, _part.len - 1) }); }
+          if (_AMB_HANG_PLAYBACK && _pt && _pt.tail) { _lens.push(_pt.tail.bars); _hangs.push({ kind: 'tail', layers: _pt.tail.layers || [], at: Math.max(0, _part.len - 1) }); }
           const _cycle = _lens.reduce((s, v) => s + v, 0) || bpc;
           const _into = Math.max(0, bars - (_at.startBar || 0));   // bars since this section began
           const _loops = Math.floor(_into / _cycle);
@@ -5774,13 +5774,13 @@
             const plen = Math.max(1, p.len | 0), plays = Math.max(1, p.plays | 0);
             const last = Math.min(L - 1, from + plen - 1);
             for (let r = 0; r < plays; r++) {
-              if (p.head && from < L) seq.push({ abs: from, len: p.head.bars, hang: 'head', hlayers: p.head.layers || [] });
+              if (_AMB_HANG_PLAYBACK && p.head && from < L) seq.push({ abs: from, len: p.head.bars, hang: 'head', hlayers: p.head.layers || [] });
               for (let i = 0; i < plen; i++) {
                 const abs = from + i; if (abs >= L) break;
                 const c = all[abs];
                 seq.push({ abs, len: (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc });
               }
-              if (p.tail && last >= 0) seq.push({ abs: last, len: p.tail.bars, hang: 'tail', hlayers: p.tail.layers || [] });
+              if (_AMB_HANG_PLAYBACK && p.tail && last >= 0) seq.push({ abs: last, len: p.tail.bars, hang: 'tail', hlayers: p.tail.layers || [] });
             }
             from += plen;
           });
@@ -14045,6 +14045,7 @@
     // statement (a beat of silence) and is honoured as one — it is never read as
     // "everybody".
     function _ambHangShouldSkip(key, at) {
+      if (!_AMB_HANG_PLAYBACK) return false;   // see the tombstone on _ambChainWithHangs
       const E = (typeof _masterEng !== 'undefined' && _masterEng) ? _masterEng : _E;
       if (!E) return false;
       const h = _ambHangAt(E, at);
@@ -43661,7 +43662,25 @@
       });
       return out;
     }
+    // HANG PLAYBACK IS DISABLED PENDING A REBUILD (2026-08-23). The design was
+    // wrong: a hang was built as extra time plus a GATE — the harmony holds, the
+    // selected layers keep playing their normal material, everything else is
+    // silenced. What it must be is a PSEUDO-PART that generates its OWN material:
+    // a stochastic burst, unique per selected layer, inserted before (intro) or
+    // after (hang) the part it is attached to. That is closer to _ambTransitionLine
+    // generating a walk for a ⇝ slot than to a gate.
+    //
+    // It is disabled rather than tuned because it also DESTABILISED COMPOSED
+    // PHRASES: they anchor to pass spans, and inserting time into the chord clock
+    // without teaching _ambPassSpanAt about it anchors the phrase to the wrong
+    // point (misalignment) and re-anchors it repeatedly (doubling — re-anchoring
+    // across an already-scheduled window re-emits it). Whatever replaces this has
+    // to extend the pass span in the same change.
+    //
+    // The STORE and the UI stay, so nothing the user authored is lost.
+    const _AMB_HANG_PLAYBACK = false;
     function _ambChainWithHangs(cfg, slots) {
+      if (!_AMB_HANG_PLAYBACK) return slots;
       const parts = cfg && cfg.prog && Array.isArray(cfg.prog.parts) ? cfg.prog.parts : null;
       if (!slots || !slots.length || !parts) return slots;
       if (!parts.some(p => p && (p.head || p.tail))) return slots;

@@ -39066,6 +39066,7 @@
               '<i></i>' + esc(l.name) + '</button>').join('')
               : '<span class="ambient-hint">This area has no layers yet.</span>') + '</div>' +
             '<div class="ambient-hang-acts">' +
+              '<button type="button" class="ambient-seg" data-hang="try:' + which + '">▶ Audition</button>' +
               '<button type="button" class="ambient-seg" data-hang="all:' + which + '">All</button>' +
               '<button type="button" class="ambient-seg" data-hang="none:' + which + '">None</button>' +
               '<button type="button" class="ambient-seg ambient-hang-rm" data-hang="rm:' + which + '">✕ Remove</button>' +
@@ -39111,6 +39112,31 @@
         // and never call getCfg between resolving it and writing to it.
         const allKeys = _ambMixerLayers(E.getCfg()).map(l => l.key);
         const P = E.getCfg().prog.parts[pi]; if (!P) return;
+        if (op === 'try') {
+          // AUDITION = THE EMIT PATH, run now. Four rounds of "I don't hear it"
+          // were spent on arrangement timing; this answers "does the feature
+          // make sound through MY layers" in one press. Same generator, same
+          // per-layer chains — a re-roll per press so it demos the variety.
+          const h = P[which]; if (!h) return;
+          try { Tone.start(); } catch (e) {}
+          try { if (!Object.keys(E.mod || {}).length) _ambSyncMods(); } catch (e) {}
+          const bpm2 = (E.getCfg().bpm > 0) ? E.getCfg().bpm : _ambBpm();
+          const barSec2 = (60 / Math.max(20, bpm2)) * 4;
+          const t0 = Tone.now() + 0.09;
+          P._tryN = (P._tryN | 0) + 1;
+          const win = { t0, t1: t0 + h.bars * barSec2, bars: h.bars, kind: which,
+                        layers: h.layers.slice(), pi, occ: 100000 + P._tryN };
+          let fired = 0;
+          (h.layers.length ? h.layers : []).forEach(k2 => {
+            const L2 = _ambLayerByKey(E, k2); if (!L2) return;
+            try { fired += _ambHangEmit(E, E.getCfg(), win, k2, L2) | 0; } catch (e) {}
+          });
+          try {
+            if (!h.layers.length) showToast('Nobody plays in this ' + (which === 'head' ? 'intro' : 'hang') + ' yet — it is a rest. Tap a layer first.');
+            else if (!fired) showToast('Nothing sounded — press ▶ Play once so the layers are built, then audition again.');
+          } catch (e) {}
+          return;   // no commit — nothing changed
+        }
         if (op === 'tog') {
           // AUTHORING A HANG IS THE INTENT TO HEAR IT. The kill switch exists to
           // bisect field reports, not as a hidden precondition — a user who adds
@@ -43858,30 +43884,48 @@
       const dur = Math.max(0.05, win.t1 - win.t0);
       const rnd = _ambSeededRand(_ambHangHash(win.pi, win.kind, key, win.occ, (cfg.seed | 0)));
       const src = (typeof _ambNotesOf === 'function') ? _ambNotesOf(cfg, L, key) : null;
-      // Denser for a longer window, but always a GESTURE — 2 to 7 events.
-      const n = Math.max(2, Math.min(7, Math.round(2 + rnd() * 3 + win.bars * 3)));
+      // A GESTURE WITH A DIRECTION, not scatter. The first build subdivided the
+      // window evenly at the layer's own staged volume — on the reporter's
+      // project (a level-34, register-2, cutoff-36 piano bass) that was a bar of
+      // faint low thumps under a still-ringing reverb tail: the gate measured
+      // perfect and the whole feature was inaudible, reported as "parts back to
+      // back". A hang has to ANNOUNCE itself:
+      //   head → a PICKUP: sparse start, accelerating INTO the part it opens,
+      //          landing its last note just before the downbeat;
+      //   tail → an ACCENT that decays: strongest at the boundary it hangs off,
+      //          thinning toward the next part.
+      // Density floors at 4 per bar, and velocity gets a FLOOR rather than a
+      // scale — the burst still runs through the layer's own strip (its level,
+      // tone and FX all apply), but it must not inherit a staging that made it
+      // vanish the moment everything else stopped.
+      const n = Math.max(4, Math.min(12, Math.round(4 * win.bars + rnd() * 3)));
       const isBeat = (String(key).split(':')[0] === 'beat');
       const reg = Number.isFinite(L.register) ? (L.register | 0) : 5;
       let fired = 0;
       for (let i = 0; i < n; i++) {
-        // Rhythm: subdivide the window, with a little seeded scatter, never past
-        // the end — a hang that overruns its slot would collide with the part.
-        const frac = (i / n) + (rnd() - 0.5) * (0.6 / n);
-        const at = win.t0 + Math.max(0, Math.min(0.97, frac)) * dur;
-        const lenMs = Math.max(40, Math.round((dur / n) * 1000 * (0.6 + rnd() * 0.7)));
+        // Curved placement: heads crowd the END (t^0.6 spacing reversed), tails
+        // crowd the START — with a little seeded scatter, never past the end.
+        const u = (i + 0.5) / n;
+        const shaped = (win.kind === 'head') ? Math.pow(u, 0.6) : (1 - Math.pow(1 - u, 0.6));
+        const frac = shaped + (rnd() - 0.5) * (0.35 / n);
+        const at = win.t0 + Math.max(0, Math.min(0.985, frac)) * dur;
+        const lenMs = Math.max(60, Math.round((dur / n) * 1000 * (0.7 + rnd() * 0.6)));
+        // Velocity follows the shape: a head builds toward the downbeat, a tail
+        // decays away from it.
+        const vshape = (win.kind === 'head') ? (0.6 + 0.4 * u) : (1 - 0.45 * u);
         try {
           if (isBeat && _ambBeatIsSynth(L)) {
             const roles = ['kick', 'snare', 'hat', 'tom', 'perc'];
             _ambPlaySynthDrum(E, dest, L, roles[(rnd() * roles.length) | 0], at,
-              0.5 + rnd() * 0.5, 0, _ambLayerPan(L), 0);
+              (0.55 + rnd() * 0.45) * vshape, 0, _ambLayerPan(L), 0);
             fired++; continue;
           }
           const deg = (rnd() * 7) | 0;
-          const oct = reg + ((rnd() < 0.25) ? 1 : 0);
+          const oct = reg + ((rnd() < 0.35) ? 1 : 0);
           const f = _ambNoteFreq(deg, oct, src);
           if (!(f > 0)) continue;
           const pr = _ambApplyAdsr(_ambMotifParams(lenMs, _ambLayerPan(L), L.tone), L);
-          pr.volume = Math.max(4, Math.round((pr.volume || 60) * (0.7 + rnd() * 0.5)));
+          pr.volume = Math.max(45, Math.round(Math.max(pr.volume || 0, 60) * vshape));
           playNote(f, pr, lenMs, at, dest, undefined, E.laneIdx ? E.laneIdx() : undefined);
           fired++;
         } catch (e) {}

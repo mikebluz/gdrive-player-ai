@@ -3718,6 +3718,12 @@
     /* THE PHRASE STRIP — one window of time, chips positioned by fraction, a
        faint 16th grid so placement reads. Chips carry touch-action:none (they
        drag); the strip itself keeps taps for add. */
+    /* DENSE PHRASES SIDE-SCROLL IN THEIR OWN CONTAINER — the strip grows past
+       100% width when the note count needs it (9% per note), and the wrap
+       scrolls; the page never does. pan-x on the wrap keeps finger-scroll;
+       chips stay touch-action:none so their drag wins on the chip itself. */
+    .ambient-hang-stripwrap { overflow-x: auto; overflow-y: hidden; touch-action: pan-x;
+      border-radius: 6px; }
     .ambient-hang-strip { position: relative; height: 44px; border: 1px solid #23233a;
       border-radius: 6px; background: #0d0d18 repeating-linear-gradient(90deg,
         rgba(139,155,180,0.10) 0, rgba(139,155,180,0.10) 1px, transparent 1px, transparent 6.25%);

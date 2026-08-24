@@ -39217,6 +39217,8 @@
                     '<button type="button" class="ambient-seg" data-hang="npitch:up" title="' + (xn.drum ? 'Next drum' : 'A step up') + '">▲</button>' +
                     '<button type="button" class="ambient-seg" data-hang="nvel:down" title="Quieter">−</button>' +
                     '<button type="button" class="ambient-seg" data-hang="nvel:up" title="Louder">＋</button>' +
+                    '<button type="button" class="ambient-seg" data-hang="nlen:down" title="Shorter note">↞</button>' +
+                    '<button type="button" class="ambient-seg" data-hang="nlen:up" title="Longer note">↠</button>' +
                     '<button type="button" class="ambient-seg ambient-hang-rm" data-hang="ndel:x" title="Remove this note">✕</button>' +
                   '</div>';
                 }
@@ -39225,7 +39227,9 @@
                   '<span class="ambient-hang-cnt">' + ph2.length + (edited ? ' · edited' : '') + '</span>' +
                   '<button type="button" class="ambient-seg" data-hang="roll:' + which + ':' + esc(k2) + '" title="Roll a new phrase for this layer' + (edited ? ' — REPLACES your edits' : '') + '">🎲</button>' +
                 '</div>' +
-                '<div class="ambient-hang-strip" data-hs="' + which + '|' + esc(k2) + '" title="Tap an empty spot to add a note">' + chips + '</div>' +
+                '<div class="ambient-hang-stripwrap"><div class="ambient-hang-strip" data-hs="' + which + '|' + esc(k2) + '"' +
+                  ' style="min-width:' + Math.max(100, ph2.length * 9) + '%"' +
+                  ' title="Tap an empty spot to add a note">' + chips + '</div></div>' +
                 insp;
               }).join('') + '</div>';
             })()) +
@@ -39403,7 +39407,7 @@
           })();
           return;   // no commit — nothing changed
         }
-        if (op === 'npitch' || op === 'nvel' || op === 'ndel') {
+        if (op === 'npitch' || op === 'nvel' || op === 'ndel' || op === 'nlen') {
           if (!_sel) return;
           const selNow = _sel;
           matEdit(selNow.which, selNow.key, (arr) => {
@@ -39420,6 +39424,8 @@
             }
             if (op === 'nvel') nn.vel = Math.max(0.2, Math.min(1.4,
               Math.round(((+nn.vel || 0.8) + (a2[1] === 'up' ? 0.15 : -0.15)) * 100) / 100));
+            if (op === 'nlen') nn.len = Math.max(40, Math.min(4000,
+              Math.round(((nn.len | 0) || 200) * (a2[1] === 'up' ? 4 / 3 : 3 / 4))));
           });
           return;
         }
@@ -44214,7 +44220,13 @@
         const frac = Math.max(0, Math.min(0.985, shaped + (rnd() - 0.5) * (0.35 / n)));
         const lenMs = Math.max(60, Math.round((dur / n) * 1000 * (0.7 + rnd() * 0.6)));
         const vshape = (win.kind === 'head') ? (0.6 + 0.4 * u) : (1 - 0.45 * u);
-        if (isBeat && _ambBeatIsSynth(L)) {
+        if (isBeat) {
+          // A BEAT BURSTS AS DRUMS — synth kit OR sample kit. The first build
+          // only handled the synth kit, so a sample-kit beat fell into the
+          // melodic branch and burst as 500-1100 Hz sawtooth BEEPS through a drum
+          // layer's chain — half of "I only hear one layer in the intro": the
+          // drum layer was firing and unrecognisable. A kit maps one drum per
+          // semitone from C2 (_AMB_VDRUM pcs), so the role becomes a zone note.
           const roles = ['kick', 'snare', 'hat', 'tom', 'perc'];
           out.push({ frac, lenMs, vshape, drum: roles[(rnd() * roles.length) | 0],
                      vel: (0.55 + rnd() * 0.45) * vshape });
@@ -44274,7 +44286,22 @@
           if (nn.drum) {
             const _pk2 = window._ambEmitKey;
             window._ambEmitKey = key;
-            try { _ambPlaySynthDrum(E, dest, L, nn.drum, at, nn.vel, 0, _ambLayerPan(L), 0); }
+            try {
+              if (_ambBeatIsSynth(L)) {
+                _ambPlaySynthDrum(E, dest, L, nn.drum, at, nn.vel, 0, _ambLayerPan(L), 0);
+              } else {
+                // SAMPLE KIT: the role is a zone note — one drum per semitone
+                // from C2 (MIDI 36), lanes ordered Kick Snare Hat Clap Open Tom
+                // Crash Perc (_AMB_VDRUM pcs). Exactly how the lane audition
+                // resolves a drum, so the burst and the beat use the same sound.
+                const _lane = { kick: 0, snare: 1, hat: 2, tom: 5, perc: 7 }[nn.drum] || 0;
+                const _midi = 36 + _AMB_VDRUM[_lane];
+                const _f = 440 * Math.pow(2, (_midi - 69) / 12);
+                const _prD = { type: 'sample:' + (L.kit || 'tr808'),
+                  volume: Math.max(40, Math.round(70 * nn.vel)), pan: _ambLayerPan(L), _hangGen: 1 };
+                playNote(_f, _prD, nn.lenMs, at, dest, undefined, E.laneIdx ? E.laneIdx() : undefined);
+              }
+            }
             finally { window._ambEmitKey = _pk2; }
             fired++; continue;
           }

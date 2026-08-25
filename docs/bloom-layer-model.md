@@ -1,6 +1,20 @@
 # Bloom Layer Model — Design Spec
 
-Status: **design settled (2026-07), not yet implemented.** Branch: `bloops-layers`.
+> **Label note (2026-08-24):** the UI group this doc calls **Seed** is labelled **Source** on the cards
+> (`['grp','Source']` ×11; there is no `['grp','Key']` group — `keyov` is a row inside Source), and the mode row
+> inside it is labelled **Compose**. The DATA keys are unchanged (`seedmode`, `seedEdit`, `seedPv`, `seedroll`,
+> `seedgrid`), so SEED is still the right name for the axis — but search the key, not the label. Separately,
+> `cfg.seed` (the area's "Take") is a different thing from `seedmode` (a layer's material source).
+> The ⌗ Chord matrix and ☷ Section matrix described in §2.4/§2.5 are GONE — both folded into ▦ Passes
+> (`_ambRenderChordMatrix` has zero occurrences; `_ambRenderSectionMatrix` survives but is unreachable), and
+> `cfg.sections` is now DERIVED from `prog.parts` on every normalize rather than authored.
+
+Status: ⚠️ **LARGELY IMPLEMENTED AND MERGED TO `main`** (audited 2026-08-24). The original line read
+"design settled (2026-07), not yet implemented — branch `bloops-layers`", which is no longer true: schema is at
+**v10**, the sustain fold, Arch, Placement and the area key lock have all shipped. Per-section status lines below
+were written at different times and several are stale in the same direction — where a section says OPEN or NOT
+STARTED, check the code before believing it. **Not covered here at all:** hangs/intros, the Passes grid,
+`partSeqs`, per-pass salt, the rubato split (v10), Learn / Sir Eel spoken layers and word music.
 **Living doc — revise as we develop.** Implementation will surface details this
 skips; update this spec when it does (it's the source of truth, not a frozen plan).
 Build order + staging: `bloom-layer-plan.md`.
@@ -122,7 +136,7 @@ persist the workspace once, 2 s after the last change (was a full serialize
 per 400 ms tick — the "significant lag on note presses").
 
 *Grid = a SEED MODE (2026-07-16):* the "⧉ Edit in Grid" button is gone — the
-Seed seg is now **Generate · Author · Grid**. Author = the docked piano roll;
+Seed seg is now **Generate · Author · Grid**. ⚠️ SUPERSEDED — `'author'` is no longer a seedmode; `_ambSeedModeHtml` emits ONE row labelled **Compose** with a single visible **✎ Grid** button, and 'Generate' is emitted hidden ("gone as a named mode, 2026-07-30"). Author = the docked piano roll;
 Grid = the full docked lane editor (same authored-lock bootstrap as Author;
 starts the scratch-lane session directly). Leaving Grid via Author KEEPS the
 edits (Done semantics), via Generate reverts the seed entirely; ✕ Cancel in
@@ -400,7 +414,7 @@ layers are frozen loops whose replay bypassed the emitters: matrix edits were
 inaudible until the next rewrite. `_ambReplayFrozen` now gates each note at
 its onset — Write loops HARD-only (p=0 kills, probabilities realize at
 generation — re-rolling them per pass would compound to p²; random Part
-windows likewise skipped), user Hold locks get the FULL gate (nothing else
+windows likewise skipped), user Hold locks get the FULL gate ⚠️ WRONG — replay is HARD-ONLY for every loop kind (`_ambChordGateOK` / `_ambSectionGateOK` are called with `hard = true` unconditionally), so 0-cells kill but probabilities never re-roll (nothing else
 ever re-rolls them). Both gates gained the `hard` param. (2) **Edits are
 audible NOW** — `_ambMaskEditPoke` on every matrix edit: cancel the layer's
 scheduled-ahead voices + rewind scheduledUpto, and a Write-owned loop
@@ -683,7 +697,7 @@ unmappable feature → migration can be additive.
        (already shipped) is where the frame changes.
     5. **Areas = modulation**: verify with a two-area config (same series, different
        area keys) — the series must re-pitch across the boundary with no series edit.
-  - *Companion decision (same session): AREA KEY LOCK.* Since areas are the
+  - *Companion decision (same session): AREA KEY LOCK ⚠️ BUILT — `_ambGuardWorkspaceKeyChange` implements this verbatim, confirm dialog and snapshot-detach included.* Since areas are the
     modulation timeline, an area needs a 🔒 = snapshot-detach in place: freeze the
     area's key at its CURRENT effective value (copy the followed workspace key into
     keyRoot/keyScale, keyFollow=false) so changing the workspace key for a NEW area
@@ -763,7 +777,7 @@ C-track discipline).
 
 ### Fold Home / Register / Range into ONE pitch-span control (raised 2026-08-21)
 
-**Status: OPEN, parked deliberately.** Three consecutive rows on a layer card
+**Status: ⚠️ SHIPPED as the **Placement** popover (`_AMB_PITCH_KEYS = ['home','register','range','proximity']`, `_ambPitchRowOf`/`_ambPitchSummary`) — it even folded a fourth control the proposal did not include. The one sub-question with no answer in code is still "what does Home MEAN on a bed?". Original status: OPEN, parked deliberately.** Three consecutive rows on a layer card
 state one idea — where the layer sits in pitch and how far it reaches — and read
 as unrelated because each has its own row and label. Home in particular gives no
 clue that it is saying *where Register sits inside Range*.

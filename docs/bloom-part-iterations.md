@@ -1,13 +1,13 @@
 # Per-iteration sequences in the Passes grid — design
 
-Status: **BUILT** (schema v9). Branch `bloom-part-iterations`. Section 1 shipped
+Status: **BUILT** (schema v9 (⚠️ v10 today — rubato split out of salt)). Branch `bloom-part-iterations` (merged to `main` 2026-08-24). Section 1 shipped
 earlier; section 2's per-layer grid, its four cascade rules and the migration off
-the cycling list all landed together. Gates: golden 82/82, arch-parity 48/48,
+the cycling list all landed together. Gates: golden 82/82, arch-parity 48/48 (the suite has since grown to **62** configs),
 invariant harness ✓, mod-parity 9/9 — all byte-identical, by construction (the
 feature adds no RNG draw and the clock is untouched; see "the grid stays out of
 the clock" below).
 
-Its OWN gate is **`npm run test:partseq`** (`test/partseq.js`, 64 assertions).
+Its OWN gate is **`npm run test:partseq`** (`test/partseq.js`, 64 assertions when this was written — **231** today).
 None of the other four can see this feature: golden covers the Rust core, the
 harness covers note generation, arch-parity covers the chord clock — which this
 deliberately does not touch — so a break here moves none of them. Deliberately
@@ -208,7 +208,7 @@ iterations"* — i.e. both axes, which is the Passes grid's own shape.
 **Four levels, narrowest first:**
 
 ```
-'<pass>:<chord>'  →  '<pass>:*'  →  'all'  →  the layer's own phrase
+'<pass>:<chord>'  →  '<pass>:*'  →  'all'  →  the layer's own phrase *(⚠️ now silence — see the superseded note below)*
 ```
 
 Stored flat under the part, so every key is independently addressable and
@@ -329,8 +329,7 @@ click as well (`_partSeqName` cleared, `lockState` written, toast correct).
 
 The cell index is the part's **cumulative visit count**, which is exactly the
 number `_ambGridSlots` calls `visit` and the Passes grid draws as a column. The
-column COUNT is the part's own `_ambPartPassCols` (its `grid.cols`, defaulting to
-8 — the same 8 the Passes editor draws), so the layer and the arrangement cannot
+column COUNT is the part's own `_ambPartPassCols` (its `grid.cols`; ⚠️ the default is NOT 8 — `_ambPartPassCols` falls back to `_ambPartNaturalPasses`: chain visit count → `plays` → **1**. `_AMB_GRID_COLS` was deleted, its tombstone explaining that 8 "as a COUNT was simply wrong"), so the layer and the arrangement cannot
 disagree about how many passes there are, or about which one is playing.
 
 `_ambPartPassAt` walks the played chain once to give every run its visit index
@@ -345,12 +344,12 @@ This also fixes a latent bug in the list version, which indexed on
 the same phrase. Measured now: `Verse#0 Chorus#0 Verse#1 | Verse#2 Chorus#1
 Verse#3`.
 
-### The grid stays out of the clock
+### The grid stays out of the clock  ⚠️ NO LONGER TRUE — a width-only grid now ENGAGES it
 
 Raising a part's pass count writes a **width-only** grid (`{cols: n, seq: {}}`).
 `_ambGridOn` still requires `seq`/`fit`/`bars`, so this changes nothing about
 which chords play or when — verified `gridOn === false` after the migration, and
-arch-parity is unmoved across all 48 configs. That is what makes the migration
+arch-parity is unmoved across all 48 configs (62 today). That is what makes the migration
 below safe to apply automatically.
 
 ### Migrating off the cycling list (v9)
@@ -369,7 +368,8 @@ i.e. on every pass — so it expands to fill every cell, not just pass 1. Missin
 that was the one real bug this work introduced and it was caught by the migration
 test, not by reading the code.
 
-### A blank cell plays the layer's OWN phrase
+### A blank cell plays the layer's OWN phrase  
+> ⚠️ **SUPERSEDED — a blank cell is now SILENCE for a phrase-driven layer**, not the own phrase: `_ambPartSeqSync` installs an empty frozen loop via `_ambPartSeqSilence` because "an unmapped pass is a deliberate rest". The own phrase is left alone only when the layer stops being phrase-driven at all (`_ambPhraseDriven`). `_ambPartSeqRestoreOwn` still exists but is DEAD CODE — nothing calls it.
 
 Absent is neutral, and neutral is the layer's own material — so a blank cell (or
 a part with no cells at all, which prunes to the same thing) hands the layer back
@@ -424,6 +424,57 @@ taps walk the options and return to none. No modal, no drag.
 `parts[i].grid.seqs = { "<layerKey>": { "<col>": "<seqName>" } }`. That way the
 column count, part tabs, playhead and pass windowing all come free and there is
 exactly ONE notion of "iteration" — the reason not to give the layer its own.
+
+## 4. Hangs — intros and outros as pseudo-parts  (shipped 2026-08-24)
+
+A **hang** is extra time tacked onto a part play: a `head` leads INTO the part (an intro),
+a `tail` follows it. It is not a gate over the layers' normal material — it is a
+**pseudo-part that generates its own notes**, per selected layer.
+
+**Storage.** `parts[i].head` / `parts[i].tail` =
+`{ bars, layers[], once?, gen?, rolls?, phrases? }` — `bars` 0.125–1, `layers` is who plays
+(EMPTY is meaningful: a rest), `once:1` makes it fire only at the edges of a consecutive
+run of that part rather than every play, `gen = {grid, dens, spread}` shapes generation,
+`rolls[key]` pins the seed, and `phrases[key]` is an EDITED phrase that outranks generation.
+Normalized in `_ambNormalizeHang`; empty arrays are kept.
+
+**The clock — four paths, all of which must weave hangs.** `_ambProgStepAt` reaches the
+arrangement four ways: the arch chain (`_ambArchChainSlots`), the legacy parts expansion,
+the section-bound early return, and the grid plan (`_ambGridPlan`). `_ambChainWithHangs`
+does the weave for the first and fourth; the other two weave inline. A hang slot SHARES its
+neighbour chord's instance ordinal, so the chord-choke holds through it — which is also why
+`_ambPassSpanAt` must TRIM hang windows off both edges of a pass span before anything fits
+or anchors a phrase against it.
+
+**`once` coalesces on part identity only** (`rkey = [pi, part]` over consecutive slots).
+The two paths spell repetition differently — the chain counts plays in `rep`, the grid mints
+a new `visit` per play — so any finer key works on one and is inert on the other.
+
+**Generation.** `_ambHangNotes` IS the phrase: view, audition and emit all read it, so they
+cannot drift. Default is grid-quantized — onsets on the `gen.grid` lattice (1/16 or 1/8),
+steps chosen by a gesture weight with the anchor step forced (a head's last, a tail's first),
+walked pitch, drums by metric role. `grid:0` ("Free") keeps the older continuous algorithm.
+A gen-control change discards stored phrases, same contract as 🎲.
+
+**Timing — the contract that took three attempts.** Hang time does not count for the layers:
+the lattice (`E._barGridAnchor`) shifts by the hang AT THE WINDOW'S START (never at lookahead
+time), each layer's own clocks are shifted rather than re-anchored (re-anchoring RESTARTS a
+layer; a hang PAUSES one), and every layer whose next onset was due at or after the hang
+re-enters exactly at `w.t1` — the part's downbeat. Frozen and composed loops are excluded
+from `_ambHangShiftLayers` entirely: `_ambComposedPassSync` already anchors them to the
+hang-trimmed pass start, and cancelling their voices would collide with the replay's
+per-(time,pitch) dedupe set and leave a permanent hole. Cancels use `w.t1` as the floor, never
+`now`, or the burst — scheduled during the lookahead — is deleted along with the stale notes.
+
+**Editing.** `_ambHangModal` shows one strip per selected layer: tap to add, drag to move,
+tap a chip for an inspector (pitch, velocity, length, delete), 🎲 to re-roll. Dense phrases
+side-scroll in their own container.
+
+**Gates.** `hang-tail · hang-head · hang-both · hang-section · hang-grid · hang-once ·
+hang-once-grid` in `test/arch-parity.js`. Hang playback is runtime-switchable with
+`bloomHangs(false)`, and `bloomSilenceWatch(sec)` + `bloomDump()`'s hangs block are the
+in-situ instruments. Any claim that a hang SOUNDS must be measured at the master tap, not at
+the playback gate — the gate logs notes at schedule time and cannot see a later cancellation.
 
 ## 3. Colour-coded sequences
 

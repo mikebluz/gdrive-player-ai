@@ -24,12 +24,45 @@ A web-based music player that sources music files from Google Drive. Search for 
 
 ### 2. Configuration
 
-Replace the placeholders in `js/google-drive-api.js`:
+Credentials are **injected, not hardcoded** — `GoogleDriveAPI`'s constructor takes
+`{ clientId, apiKey }` and the app passes `window.APP_CONFIG`.
+
+```bash
+cp js/config.example.js js/config.js   # js/config.js is gitignored
+```
+
+Then put your real values in `js/config.js`:
 
 ```javascript
-this.CLIENT_ID = 'your-google-client-id-here';
-this.API_KEY = 'your-google-api-key-here';
+window.APP_CONFIG = { clientId: '…apps.googleusercontent.com', apiKey: '…' };
 ```
+
+It is loaded by `player.html`, `bloops.html` and `tracks.html` before the app scripts.
+The app uses the `drive.readonly` scope.
+
+### 3. Run it
+
+```bash
+npm install
+npm start          # http://localhost:3001 — serves the landing page;
+                   # the player is /player.html, the synth is /bloops.html
+```
+
+Other scripts: `npm run desktop` (Electron shell), `npm run samples` (rebuild
+`samples/manifest.json`), `npm run stoch` (regenerate the stochastic-controls table).
+
+**Gates** — run before shipping anything that touches audio or the arrangement clock:
+
+```bash
+npm run test:golden     # 82 sections, bit-identical render
+npm run test:arch       # 62 arrangement configs vs baseline
+npm run test:partseq    # 231 part-sequence checks
+npm run test:bounce     # offline bounce == realtime
+node test/bloom-mod-parity.js
+```
+
+Deploy is `./deploy.sh` (plain FTP via `lftp`, reads `deploy.env` — see
+`deploy.example.env`). It is **not** run automatically.
 
 ## Bloops — audio signal flow
 
@@ -81,8 +114,9 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
      (anti-runaway headroom; live taps bypass via globalSendTap)  before masterBus
 
    Mix BLOOM (master generative engine) ─► its layer mod chains (+ Bloom Freeverb)
-     ─► the layer's MIX BUS ─► bloomMasterGain (−6 dB trim) ─► masterBus
-     the trim evens its dense, many-voice mix against lane playback
+     ─► the layer's MIX BUS ─► bloomMasterGain (adaptive trim) ─► masterBus
+     the trim is `max(0.5, 1/√N)` over sounding Bloom layers (`_ambUpdateBloomMasterTrim`) — one layer
+     runs at ×1, only 4+ reach the −6 dB floor — and evens its dense mix against lane playback
      (which gets the laneSumBus headroom trim).
 
    BLOOM MIX BUSES (named groups; layer.bus = 'a'|'b'|'c'|'d', absent = 'a')
@@ -103,10 +137,11 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
                                                    reach before buses existed.
 
      Bus 'a' with no settings is byte-identical to the old routing (golden gate
-     depends on that). Settings live in cfg.buses[id] = {name, direct, sends}.
+     depends on that). Settings live in cfg.buses[id] = {name, entry, sends} (`direct` is a legacy alias for entry:'direct').
 
    MASTER CHAIN (series — contains NO FX; the 10 effects are parallel returns):
-   masterBus (Gain 0.6) ─► [DC block / sub HPF ~28 Hz] ─► [Master Warmth stage] ─► masterCompressor ─► masterVolume
+   masterBus (Gain 0.6) ─► [DC block / sub HPF ~28 Hz] ─► [Master Warmth stage] ─► [Vinyl: wobble → age LPF]
+     ─► masterCompressor ─► [masterOtt "Glue"] ─► masterVolume ─► [lookahead limiter] ─► masterClipper ─► masterFade ─► destination
      (−6 dB headroom          low-shelf +@160 →     (gentle glue:
       trim so overlapping     presence −@3k →        −3 dB / 2:1 /
       voices don't slam       high-shelf −@7k →      180 ms)
@@ -153,9 +188,9 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
   bypasses all of these sends; per-lane Bloom (`_laneEng`) rides the active lane's bus and
   inherits that lane's sends.
 - **Each Bloom layer chain ends in a dedicated DRY output GATE.** The per-layer mod chain is
-  `voices → vcf → [EQ3] → vca → levelGain → tgGate → gate → pan → [dist] → [chorus] → [phaser] → [delay] → [autopan] → bus`, with the layer's reverb
+  `voices → vcf → [EQ3] → vca → levelGain → tgGate → ugGate → gate → pan → [dist] → [chorus] → [phaser] → [delay] → [autopan] → bus`, with the layer's reverb
   send tapped off the **levelGain (pre-gate)**. `levelGain` is the layer's **Level** as a
-  continuous gain (`_ambLevelGain`: 0→silent, 70→unity, 100→×2) — Level lives here, not per-note,
+  continuous gain (`_ambLevelGain`, `_AMB_LEVEL_BASE 1.3` / `_AMB_LEVEL_MAX 4.0`: 0→silent, 70→×1.3, 100→×4) — Level lives here, not per-note,
   so a ramp or fader sweeps the whole layer (held tails included) in real time. `tgGate` is the
   **Trance Gate**: a bar-synced step pattern (driven by a dedicated Signal in `_ambScheduleTg`,
   disposed on stop) that chops the layer; unity passthrough when off, and pre-gate so the reverb
@@ -191,27 +226,29 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
   (`masterDCBlock`, ~28 Hz, Q 0.707) sits `masterBus → masterDCBlock → Warmth → …`. It strips
   the DC offset that asymmetric/waveshaped voices leave (wasted headroom, thumps) and sub-30 Hz
   rumble (mud, stolen loudness) for a tighter, cleaner bottom without touching the audible range.
-- **All `Tone.Distortion` nodes run `oversample: '4x'`.** The FX-send, per-voice, per-lane,
-  track-render, and Bloom-layer distortions are oversampled like the master warmth/clipper, so
+- **Most `Tone.Distortion` nodes run `oversample: '4x'`.** The FX-send, per-voice, per-lane and
+  track-render distortions are oversampled (the **Bloom-layer** one is ADAPTIVE — `_ambDistOversample()`:
+  1 distorting layer = 4x, 2–3 = 2x, 4+ = none, re-levelled live) like the master warmth/clipper, so
   driving them adds harmonics without the harsh aliased "digital fizz".
 - **Master Warmth stage rounds the overall tone.** Sitting between the DC block and
   `masterCompressor` (an isolated spot upstream of the FX returns' sum point and the limiter
   rewiring), it applies a single `globalFx.warmth` macro as a tilt EQ — low-shelf lift
   (~+2.5 dB @160 Hz body), presence dip (~−3 dB @3 kHz harshness), high-shelf cut
   (~−4 dB @7 kHz air) — plus an oversampled (4×) tanh soft-saturation (`warmthDrive`,
-  even-harmonic glue) and a high-cut LPF (`warmthCut`, shaves digital fizz). On by default
-  at a tasteful amount (warmth 30, drive 12, cut 16 kHz) so sounds come up rounded instead
-  of shrill; `warmthOn:false` makes it transparent (gains 0, identity curve, cut wide).
+  even-harmonic glue) and a high-cut LPF (`warmthCut`, shaves digital fizz). **OFF by default** (`warmthOn: false`);
+  the stored amounts when you switch it on are warmth 30, drive 12, cut 16 kHz, so sounds come up
+  rounded instead of shrill; `warmthOn:false` makes it transparent (gains 0, identity curve, cut wide).
   All four are persisted in `globalFx` and applied via `applyMasterWarmth()`.
 - **Peak safety vs. glue are split on purpose.** The true-peak ceiling is the final
-  `masterClipper` — a soft-knee waveshaper that is *identity* below 0.9 and rolls smoothly
+  `masterClipper` — a soft-knee waveshaper that is *identity* below 0.85 and rolls smoothly
   to a hard 0.97 ceiling. Because it is instantaneous waveshaping (no time-varying gain) it
   cannot pump. That lets `masterCompressor` stay a *gentle* glue (−3 dB / 2:1 / 180 ms
   release). The earlier aggressive compressor (−6 dB / 4:1 / 30 ms) re-ducked on every
   sequenced step's onset, so lane/Game/Prog playback came out quieter and audibly "gated"
   vs. dry grid taps — measured gain reduction on a dense stream fell from ~−2.8 dB (4.6 dB
   of pumping) to ~−0.5 dB (<1 dB) with the split.
-- **`masterBus` carries a −6 dB headroom trim (Gain 0.5).** All entry buses and FX returns
+- **`masterBus` carries a headroom trim (Gain 0.6, ≈ −4.4 dB).** It stayed at 0.6 rather than
+  dropping to 0.5 because the lookahead limiter shipped (it is built and wired, not a planned follow-up).** All entry buses and FX returns
   sum here, so a single voice already peaks near full scale — with no room for overlap.
   Once voices stack (chords, and especially that sequenced steps sustain for their whole
   step + a release tail that overlaps following steps) the sum slams the clip ceiling and

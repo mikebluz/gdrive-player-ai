@@ -98,7 +98,7 @@ cell *is*, and every future edit there has to remember the mapping.
 
 ### 3c. Three surfaces write `unitGate`
 
-⊞ Within, ◔ Step, and the ⏱ Scheduler lane's unit-block tap. Only Step needs the
+⊞ Within, the **Edit Unit Schedule popover**, and the ⏱ Scheduler lane's unit-block tap (⌥/⌘-click). ⚠️ There is no `◔ Step` tab — the quick-edit has exactly two, `⊞ Within` and `⟳ Across`; the sub-unit resolution below lives in the popover, i.e. INSIDE the lane tap, so "only Step needs the
 sub-unit resolution the store exists for.
 
 ---
@@ -123,7 +123,7 @@ Worth stating plainly, because it bounds any merge:
 ## 5. Precedent: one consolidation already happened, and it worked
 
 `cycleGate` is **not a runtime gate**. `_ambNormalizeCycleGate`
-(17-ambient:15243) folds it into `L.when` over the LCM of their periods and then
+(17-ambient:15910) folds it into `L.when` over the LCM of their periods and then
 `delete L.cycleGate`. The Pattern grid's second tab is an *editing view* that
 compiles into an existing store and leaves nothing behind.
 

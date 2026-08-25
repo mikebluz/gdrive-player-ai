@@ -1,6 +1,6 @@
 # Bloom Composable Layers — Design & Refactor Plan
 
-Status: **in progress.** Phase 0 done; Phase 2a (derivation helpers) done; Phase 2c partially applied. See the implementation log.
+⚠️ **HISTORICAL.** `docs/bloom-layer-model.md` is the authoritative spec and wins on conflicts (CLAUDE.md says so). Phases 0/2/3 and the Phase-4 euclid work are all DONE, and Track C is fully executed — §13 (primary→extras) is the only genuinely open item. This model also does NOT cover the `learn` / `sireel` spoken types, which are dispatched by `_ambTickLearnLayer` and never by `_ambEmitDescriptor` — so §4's "provably preserves all functionality" no longer holds. Original status line: **in progress.** Phase 0 done; Phase 2a (derivation helpers) done; Phase 2c partially applied. See the implementation log.
 
 ## Implementation log
 
@@ -196,7 +196,7 @@ Layer = Voice × Seed × Generator × Timing × Variation × Mix/FX
 
 Recommended order: **B** (contained, high‑value, unlocks Sample for the common case) → **A** (breadth) → **C** (the deep merge, planned as its own project with load/save regression testing).
 
-**Status update:** B done (Sample voice on euclid + random beat), A done for the rhythmic generators (random beat kit/sample), Seed framing + `_ambSeedOf` + Seq/Sample readouts done. Only **C** remains.
+**Status update:** B done (Sample voice on euclid + random beat), A done for the rhythmic generators (random beat kit/sample), Seed framing + `_ambSeedOf` + Seq/Sample readouts done. ~~Only **C** remains.~~ ⚠️ SUPERSEDED — C2 and C3 shipped too (`delete cfg.seqs`/`delete cfg.samples`, schemaVersion 10); §13 is what remains.
 
 ## 12. Track C migration plan (Seq/Sample → Seed layers)
 

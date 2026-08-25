@@ -1380,7 +1380,7 @@ rather than papered over:
 walks `_ambArchChainSlots`, the SAME chain the Scheduler, Quick edit and the
 Part-schedule popover draw, and a bound section takes its chord slice from its
 arch entry. What you see and what you hear are one walk now, so they cannot
-drift apart. Zero note change: the arch-parity gate is identical across all 22
+drift apart. Zero note change: the arch-parity gate is identical across all 22 (the suite is **62** configs today)
 configs and the invariant harness is byte-identical across all 30.
 
 **Sections and parts are TWO SPINES, and arch is one flat list.** Sections

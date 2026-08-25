@@ -6,7 +6,9 @@ against `js/bloops/17-ambient.js`.
 
 ---
 
-## 1. Everything that exists today
+## 1.  ⚠️ SUPERSEDED IN PART — the `len` axis LEFT salt at schema v10 (it lives in `prog.rubato` / `parts[i].rubato` now). Every `len · colors · scatter` triple below is `colors · scatter` today; §9b records the split. `layer.salt` is retired entirely (`_ambNormalizeLayerSalt` deletes the object). See §9b/§9c before trusting §1, §3, §6 or §7.
+
+### 1. Everything that exists today
 
 | Store | Scope | Axes | Edited in |
 |---|---|---|---|
@@ -224,7 +226,7 @@ has is worse than no caption. It now names the ladder and where each rung lives
 (changes → the progression editor, pass → ▦ Passes → 🧂 Salt, layer → the
 `Follows salt` column).
 
-**Gates.** 14 more checks in `npm run test:partseq` (192), poison-verified —
+**Gates.** 14 more checks in `npm run test:partseq` (192 at the time — **231** today), poison-verified —
 severing the wiring fails 5 named checks. The section dispatches a real
 `contextmenu` at the cell, which is the handler `_ambWireMaskCells` actually
 arms, rather than calling the modal directly; and every `.click()` is guarded, so

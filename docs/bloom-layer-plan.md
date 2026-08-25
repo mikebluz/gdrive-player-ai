@@ -26,11 +26,14 @@ is the current frontier and is HIGH-risk/gated (D1+ needs explicit go).
   have no inapplicable controls to hide. Inventing new hide-rules would risk the
   "don't break" contract for no real gain, so this is deliberately NOT done.
 
-**Track B — B1 DONE (`b47490b`).** Unified the area Key + Progression into one KEY
+**Track B — B1 DONE (`b47490b`).** ⚠️ SUPERSEDED — the three-way mode selector described here was later
+REPLACED by two independent section-label toggles (`ambient-key-toggle`, `ambient-prog-onoff`); both can be on at
+once. The phrase survives only in two stale code comments at 17-ambient:50319/50371. Unified the area Key + Progression into one KEY
 axis (mode selector Chromatic | Key | Progression + adaptive sub-controls) with the
 `_ambResolveKey(scope)` read model. Additive — no new persisted fields, no migration,
 harness byte-identical. Underlying keyOn/prog.on stay independent (a progression can
-still be diatonic to a key). One deferred UX nicety: while in Progression mode the
+still be diatonic to a key). ⚠️ THE "deferred UX nicety" BELOW WAS FIXED — the diatonic key IS editable alongside a progression now, and there is no
+"Progression mode" to leave. Do not act on it. One deferred UX nicety: while in Progression mode the
 diatonic key isn't directly editable (shown in the hint as "· in C Dorian"); switch
 to Key mode to edit it (which deactivates the prog; chords retained). Revisit if it
 bites.

@@ -3,7 +3,7 @@
 Status: **phases 1-4 implemented 2026-08-19** on `bloom-part-matrix`; additive
 throughout (absent = today's behaviour, byte-identical — golden 82/82, arch
 45/45 with all 37 pre-existing configs unmoved, harness green).
-Phase 5 — retiring `chain` / `plays` — is deliberately NOT done: the grid marks
+⚠️ SUPERSEDED — `prog.chain` IS retired now — normalize does `delete prog.chain` whenever `arrGrid` exists (a chain under a grid can never be heard). `plays` is still live and now COMPOSES with the grid: a part is visited `cols × plays` times. Original text: Phase 5 — retiring `chain` / `plays` — is deliberately NOT done: the grid marks
 them superseded in the UI and nothing is removed until it has earned it.
 **Living doc — revise as we develop.**
 

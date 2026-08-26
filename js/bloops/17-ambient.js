@@ -11574,7 +11574,31 @@
         // sub-slot (also drives the onset interval below → one strike per voicing).
         const _sp = (bed.progMerge) ? _ambProgSpanAt(_E, bed, (_E._cfg || (_E.getCfg && _E.getCfg())), at) : null;
         if (_sp) { _slot = _sp.slot; _cstep = _sp.chordStep; _psiSub = _sp.subUnit; }
-        else { const _sub = Math.round((at - _psi.anchor) / _psi.subUnit); _cstep = Math.floor(_sub / _psi.subdiv); _slot = ((_sub % _psi.subdiv) + _psi.subdiv) % _psi.subdiv; }
+        else {
+          const _sub = Math.round((at - _psi.anchor) / _psi.subUnit); _cstep = Math.floor(_sub / _psi.subdiv); _slot = ((_sub % _psi.subdiv) + _psi.subdiv) % _psi.subdiv;
+          // …AND THE SPAN IS THE REAL CHORD, not the uniform assumption. `subUnit`
+          // is deliberately uniform — it is the SCHEDULER's grid and moving it
+          // under the walk made a cadence skip a chord outright — but `_psiSub` is
+          // a different question: how long is THIS chord, which is what sizes the
+          // note, the strum, and the span `_ambBedSaltPlan` deals its colour
+          // segments across. Under a cadence the two diverge badly: on a ½-bar
+          // chord the pad ran 2x too long and its colours spilled into the next
+          // one, and on a 2-bar chord it re-voiced halfway through a chord that
+          // was still sounding. Only `followSalt` beds (Keys) make that second
+          // one obvious, because their colour changes are audible events.
+          // MERGE mode already resolved this above and keeps its group span.
+          // Hang-trimmed for the same reason the walk is: a hang shares the
+          // chord's instance, so the raw span starts a window earlier.
+          const _cfgB = _E && (_E._cfg || (_E.getCfg && _E.getCfg()));
+          if (_cfgB && (_ambProgHasCadence(_cfgB) || _ambProgHasHangs(_cfgB))) {
+            try {
+              let _cs = _ambChordSpanAt(_E, _cfgB, at);
+              const _tr = _ambSpanTrimHang(_E, _cfgB, _cs);
+              if (_tr && _tr.end > _tr.start) _cs = _tr;
+              if (_cs && _cs.len > 0.05) _psiSub = _cs.len / Math.max(1, _psi.subdiv);
+            } catch (e) {}
+          }
+        }
         _progVar = { slot: _slot, chordStep: _cstep, subdiv: _psi.subdiv, feel: _psi.feel };
         if (_psi.feel === 'stochastic') { const _jr = _ambSeededRand((((_cstep + 1) * 40503) ^ ((_slot + 1) * 2654435761) ^ 0x9e3779b9) >>> 0); _progJit = _jr() * 0.4 * _psiSub; }   // up to 40% of a sub-slot
       }

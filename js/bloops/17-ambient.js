@@ -10762,8 +10762,24 @@
       return (Number.isFinite(E && E._barGridAnchor) && Number.isFinite(pA))
         ? Math.max(0, E._barGridAnchor - pA) : 0;
     }
+    // Does this progression insert HANG time? Cheap and structural — the same
+    // test `_ambHangWindows` opens with, without building any windows.
+    function _ambProgHasHangs(cfg) {
+      try {
+        if (!_AMB_HANG_PLAYBACK) return false;
+        const ps = cfg && cfg.prog && cfg.prog.parts;
+        return Array.isArray(ps) && ps.some(p2 => p2 && (p2.head || p2.tail));
+      } catch (e) { return false; }
+    }
     function _ambProgNextSlot(E, cfg, psi, from, minSec) {
-      if (!psi || !_ambProgHasCadence(cfg)) return null;
+      // A HANG BREAKS THE UNIFORM LATTICE EXACTLY AS A CADENCE DOES, so it has
+      // to engage the same span walk. `anchor + n * chordSec` is only a chord
+      // grid while every slot is the same length; an intro inserts its own bars
+      // INTO the chord clock, so after the first occurrence the lattice sat half
+      // a slot off every real chord change and drifted further at each one —
+      // and bed/drone are the only prog-synced types, so it read as "Keys is out
+      // of sync with the other layers" while everything else was fine.
+      if (!psi || !(_ambProgHasCadence(cfg) || _ambProgHasHangs(cfg))) return null;
       const subdiv = Math.max(1, psi.subdiv | 0);
       // TRANSLATE ONTO THE LAYER GRID. _ambChordSpanAt's edges are on the CHORD
       // clock (_progAnchor / _playStartAt); every layer's onsets are on
@@ -10776,10 +10792,33 @@
       // documented rule — anything grid-anchored anchors on _barGridAnchor, never
       // on the prog clock. All the span math stays on the chord clock; only the
       // crossing is translated, in both directions.
-      const off = _ambChordGridOff(E);
+      // NO TIME-DOMAIN SHIFT. This used to translate through `_ambChordGridOff`
+      // (`_barGridAnchor − _progAnchor`) because the two anchors differed by the
+      // first tick's lead — and then that lead was removed: play start PINS the
+      // two equal, so the offset has been 0 ever since and the translation was a
+      // no-op nobody re-derived. HANGS made it non-zero again, but for a totally
+      // different reason (accumulated inserted bars), and it is an ANCHOR
+      // difference, not a shift between two time bases: `_ambChordSpanAt` takes
+      // an ABSOLUTE audio time, the same clock a layer's onsets are in. Feeding
+      // it `t − off` looked a whole intro's worth of accumulated hang into the
+      // PAST — measured 3.5 s adrift after seven occurrences — so the bed walked
+      // spans belonging to chords that had already finished. Ask about `t`.
+      // (An AREA ADVANCE also parts the anchors — it sets `_barGridAnchor` to the
+      // boundary and leaves `_progAnchor` — and the same reasoning applies there:
+      // whatever made them differ, this lookup wants the absolute instant.)
+      const off = 0;
       const step = (t) => {
-        const sp = _ambChordSpanAt(E, cfg, t - off + 1e-4);
+        let sp = _ambChordSpanAt(E, cfg, t - off + 1e-4);
         if (!sp) return null;
+        // A HANG IS NOT PART OF THE CHORD IT HOLDS. The clock deliberately MERGES
+        // the two (they share an instance so the choke holds one span through the
+        // window), which is right for note lengths and wrong for an ONSET: walking
+        // the merged span puts the strike at the hang's start — silenced by the
+        // gate — and then nothing until the chord ends, so the layer misses the
+        // part's downbeat altogether. The trimmed span starts at the hang's END,
+        // which IS the downbeat. Free and byte-identical with no hang in play
+        // (`_ambSpanTrimHang` returns its argument when no window overlaps).
+        try { const _tr = _ambSpanTrimHang(E, cfg, sp); if (_tr && _tr.end > _tr.start) sp = _tr; } catch (e) {}
         const sub = Math.max(0.03, sp.len / subdiv);
         const slot = Math.floor((t - off + 1e-4 - sp.start) / sub + 1e-6);
         return ((slot + 1 < subdiv) ? (sp.start + (slot + 1) * sub) : sp.end) + off;
@@ -26386,7 +26425,12 @@
         // the loop then replayed them forever regardless of the FX's on/off
         // ("removed pitch echo, still/suddenly hearing it"), and each rewrite
         // stacked fresh echoes on top of the baked ones (echo-density creep).
-        if (!(params && (params._pecho || params._hangGen))) {
+        // …and neither is a HANG BURST. The sample branch marks its notes
+        // `_hangGen`, but `_ambPlaySynthDrum` builds its own params and cannot,
+        // so a synth-kit intro was being baked into the beat's Write loop as
+        // ordinary material. `_ambHangEmitting` is true for exactly the burst,
+        // so it covers every branch — including any added later.
+        if (!(params && (params._pecho || params._hangGen)) && !_ambHangEmitting) {
           const p = {}; for (const k in params) { if (k === '_detuneMod') continue; p[k] = params[k]; }
           arr.push({ at: at, freq: freq, dur: dur, params: p });
           // PITCH ECHO — spawn pitched echoes of this note (not of an echo). Runs
@@ -44395,6 +44439,10 @@
         return { start: a2, end: b2, len: b2 - a2 };
       } catch (e) { return sp; }
     }
+    // Burst role name -> Beat LANE index, shared by both kit realizations
+    // (see _ambHangEmit). Lane order is _AMB_VDRUM's / _AMB_SYNTH_ROLES':
+    // 0 Kick · 1 Snare · 2 Hat · 3 Clap · 4 Open · 5 Tom · 6 Crash · 7 Perc.
+    const _AMB_HANG_ROLE_LANE = { kick: 0, snare: 1, hat: 2, clap: 3, open: 4, tom: 5, crash: 6, perc: 7 };
     let _ambHangEmitting = false;   // the burst must never be eaten by the gate that clears its own window
     function _ambHangEmit(E, cfg, win, key, L) {
       // NO CHAIN IS NOT NO SOUND. `dest === undefined → return 0` made the burst
@@ -44418,18 +44466,33 @@
             const _pk2 = window._ambEmitKey;
             window._ambEmitKey = key;
             try {
+              // THE ROLE IS A LANE INDEX (0-7), NEVER A NAME, AND THE VELOCITY
+              // IS 0-1 WHILE `volume` IS 0-100. The sample branch converted
+              // both; the synth branch passed `nn.drum` and `nn.vel` straight
+              // through, and BOTH mistakes are silent rather than loud:
+              //   · `_ambSynthVoiceOf(inst, 'kick')` misses `sk.voices['kick']`
+              //     and `_AMB_SYNTH_ROLES['kick']`, so every role fell back to
+              //     role 0's spec with a NaN-seeded hash — one identical drum
+              //     for the whole burst instead of a kit speaking in rhythm;
+              //   · `V = Math.max(1, Math.round(vol || 100))` turned a velocity
+              //     of 0.55 into a volume of **1 of 100**, i.e. inaudible.
+              // Reported as "the drums aren't playing on the intro" — and only
+              // on a SYNTH kit, which is why the sample-kit fix a day earlier
+              // looked complete. `_AMB_SYNTH_ROLES` and `_AMB_VDRUM` share the
+              // lane order (Kick Snare Hat Clap Open Tom Crash Perc), so one
+              // map serves both realizations and they cannot drift again.
+              const _lane = _AMB_HANG_ROLE_LANE[nn.drum] || 0;
+              const _vol = Math.max(40, Math.round(70 * nn.vel));
               if (_ambBeatIsSynth(L)) {
-                _ambPlaySynthDrum(E, dest, L, nn.drum, at, nn.vel, 0, _ambLayerPan(L), 0);
+                _ambPlaySynthDrum(E, dest, L, _lane, at, _vol, 0, _ambLayerPan(L), 0);
               } else {
                 // SAMPLE KIT: the role is a zone note — one drum per semitone
-                // from C2 (MIDI 36), lanes ordered Kick Snare Hat Clap Open Tom
-                // Crash Perc (_AMB_VDRUM pcs). Exactly how the lane audition
-                // resolves a drum, so the burst and the beat use the same sound.
-                const _lane = { kick: 0, snare: 1, hat: 2, tom: 5, perc: 7 }[nn.drum] || 0;
+                // from C2 (MIDI 36). Exactly how the lane audition resolves a
+                // drum, so the burst and the beat use the same sound.
                 const _midi = 36 + _AMB_VDRUM[_lane];
                 const _f = 440 * Math.pow(2, (_midi - 69) / 12);
                 const _prD = { type: 'sample:' + (L.kit || 'tr808'),
-                  volume: Math.max(40, Math.round(70 * nn.vel)), pan: _ambLayerPan(L), _hangGen: 1 };
+                  volume: _vol, pan: _ambLayerPan(L), _hangGen: 1 };
                 playNote(_f, _prD, nn.lenMs, at, dest, undefined, E.laneIdx ? E.laneIdx() : undefined);
               }
             }
@@ -44464,10 +44527,9 @@
     // makes the layer world resume exactly where it left off: phrase tops land
     // on the part boundary, and the bars (driven from these same clocks) HOLD
     // through the hang instead of sweeping.
-    //   · the freeze-anchor shift makes the replay re-cover the segment it had
-    //     just scheduled, at in-window times — the gate drops every one, so the
-    //     loop audibly RESUMES at the boundary with no double (same reasoning as
-    //     the engage handoff, with the gate as the belt);
+    //   · a FROZEN layer keeps its own emitter state, but its ANCHOR moves with
+    //     the lattice (see `one()` below) — nothing is cancelled and nothing is
+    //     rewound, so only time the replay has not scheduled yet is re-mapped;
     //   · scheduledUpto stays ABSOLUTE and untouched — shifting it would lie;
     //   · a FRACTIONAL hang ends off the bar lattice, so unit-SYNCED layers
     //     re-enter at the next grid point after it (a gap of at most the
@@ -44541,10 +44603,12 @@
           st.startAt = w.t1; st.lastAt = null;
           if (Number.isFinite(st.idx)) st.idx = 0; } };
       const one = (key) => {
-        // A FROZEN OR COMPOSED LOOP IS NOT THIS FUNCTION'S BUSINESS. Two
-        // separate attempts to include it both failed for the same underlying
-        // reason, so this is a boundary, not a tuning: `_ambReplayFrozen` keeps
-        // a per-(time,pitch) dedupe set (`st._emitted`, the comb-filter guard),
+        // A FROZEN LOOP TAKES THE ANCHOR SHIFT AND NOTHING ELSE — no cancel,
+        // no rewind, no phase-store reset. That split is a boundary rather than
+        // a tuning, and it is what two earlier attempts each got half of.
+        //
+        // The half that must NOT happen: cancelling. `_ambReplayFrozen` keeps a
+        // per-(time,pitch) dedupe set (`st._emitted`, the comb-filter guard),
         // so any note this function CANCELS is retracted from the audio while
         // the replay still believes it was issued — and it is never re-emitted.
         // Cancel + dedupe = a permanent hole. Traced: the replay re-ran with
@@ -44553,15 +44617,38 @@
         // lookahead after the part started ("composed phrases are late to
         // start, midway through second chord").
         //
-        // It also does not NEED anything from here. A composed phrase is
-        // anchored by `_ambComposedPassSync` to the pass start, and that span
-        // is hang-trimmed (`_ambPassSpanAt` pushes `from` past a head window),
-        // so it already lands on the part's downbeat — the earlier `+= sec`
-        // double-counted the hang on top of that and pushed it half a bar late.
-        // A Write/Evolve capture is deliberately not written against the
-        // changes and keeps its own clock, which is the documented doctrine.
+        // The half that MUST: the anchor. A frozen loop's clock IS `fs.anchor`,
+        // in absolute time, and nothing re-snaps it once set
+        // (`_ambReplayFrozen` reads it verbatim) — while the lattice just moved
+        // by `sec` a few lines above. So the loop comes out of the hang exactly
+        // `sec` out of phase with every live layer, permanently, and again at
+        // every occurrence. That is the shape of "layers are out of sync after
+        // the intro", and it bites hardest on a mix where some layers freeze
+        // and some do not: a Keys layer (a followSalt bed under salt colours)
+        // SKIPS Write by design, so it rides the shifted lattice while the
+        // bed/motif beside it replay a capture that did not move.
+        //
+        // Moving the anchor alone is safe where cancelling was not:
+        // `scheduledUpto` stays absolute and untouched, so only time the replay
+        // has NOT scheduled yet is re-mapped and the dedupe is never asked to
+        // re-issue a note it believes is already out. The notes already
+        // scheduled INTO the window are silenced by the gate, exactly as a live
+        // layer's are.
+        //
+        // EXCEPT a COMPOSED or MAPPED phrase. Those are anchored to the PASS
+        // SPAN (`_ambComposedPassSync`, and the partSeqs installer), and that
+        // span is already hang-TRIMMED — so they land on the part's downbeat by
+        // themselves and a shift here DOUBLE-COUNTS the hang, which is what
+        // pushed the composed phrase half a bar late last time (traced: anchor
+        // 5.18 -> 5.68 against a downbeat of 5.18). Same test as
+        // `_ambComposedPassSync`'s own gate, so the two cannot disagree.
         const fs = E.freeze && E.freeze[key];
-        if (fs && fs.frozen) return;
+        if (fs && fs.frozen) {
+          const _lz = _ambLayerByKey(E, key);
+          const _composed = !!(_lz && _lz.lockState && _lz.lockState.seedEdit);
+          if (!fs._partSeqName && !_composed && Number.isFinite(fs.anchor)) fs.anchor += sec;
+          return;
+        }
         try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, w.t1); } catch (e) {}
         const c = E.clocks && E.clocks[key];
         if (Number.isFinite(c) && c >= w.t0 - 1e-6) E.clocks[key] = w.t1;

@@ -11336,6 +11336,17 @@
       // glide each note's pitch from the previous one. Only set when engaged, so the
       // default params (and the invariant harness) are byte-identical.
       if (Number.isFinite(inst.portamento) && inst.portamento > 0) { p.glideMs = inst.portamento; p.glideLayer = inst; }
+      // VOICE TRIM (dB) — applied to `volume`, which BOTH engines honour, so one
+      // line covers the core, the node fallback and an offline bounce with no new
+      // node and no audio-thread cost. Last, so it trims whatever the emitter's
+      // own staging and Dynamics arrived at. Gated on a non-zero value, so the
+      // default path allocates nothing and stays byte-identical (no normalize
+      // entry either: a missing or garbage value simply fails Number.isFinite).
+      if (Number.isFinite(inst.voiceTrim) && inst.voiceTrim) {
+        const b1 = Number.isFinite(p.volume) ? p.volume : 100;
+        const tdb = Math.max(-24, Math.min(12, inst.voiceTrim));
+        p.volume = Math.max(0, Math.min(127, Math.round(b1 * Math.pow(10, tdb / 20))));
+      }
       return p;
     }
     // Per-type default ADSR — chosen to reproduce each layer's prior
@@ -46355,7 +46366,18 @@
       // parameter group defaults collapsed (_AMB_GROUP_DEFAULT_OPEN is empty), so
       // this is collapsed by default and remembers its own open state per layer
       // via groupsOpen — no new machinery, and no new state to normalize.
-      return [['grp', 'Instrument']].concat(voiceToks, hasTone ? [['toneseq']] : [], [
+      // VOICE TRIM — the voice's own output level, in dB, BEFORE the layer chain.
+      // Voices are not level-matched to each other: measured on one note at
+      // volume 100, the basic waves land at 0.95-0.99 (clearly the intended
+      // reference) while `duo` peaks 1.92, `mono` 2.16 and `bass` 2.21 — roughly
+      // 2x, so they self-clip and drive the layer's own distortion ~6 dB harder
+      // than its Amount implies. The other direction exists too: `am` and `pad`
+      // sit 16 dB BELOW the reference. Level cannot express that cleanly — it is
+      // the mix fader, and spending half its travel undoing a voice's staging
+      // makes it mean something different per tone. Absent/0 = today exactly.
+      return [['grp', 'Instrument']].concat(voiceToks,
+        hasTone ? [['sl', 'voiceTrim', 'Voice trim', -24, 12, 'dB \u00b7 the voice itself (duo/mono/bass run hot)']] : [],
+        hasTone ? [['toneseq']] : [], [
         ['grp2', 'Envelope & Tuning'],   // NESTED inside Instrument — see the grp2 branch
         ['sl', 'attack', 'Attack', 0, atkMax, 'ms'], ['sl', 'decay', 'Decay', 0, decMax, 'ms'],
         ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, relMax, 'ms'],
@@ -50248,7 +50270,7 @@
       if (addBtn) addBtn.disabled = false; // can always add another instance
       chk('ambient-bed-on', cfg.bed.on);
       set('ambient-bed-tone', cfg.bed.tone);
-      set('ambient-bed-attack', cfg.bed.attack); set('ambient-bed-decay', cfg.bed.decay); set('ambient-bed-sustain', cfg.bed.sustain); set('ambient-bed-release', cfg.bed.release); set('ambient-bed-fine', cfg.bed.fine);
+      set('ambient-bed-voiceTrim', cfg.bed.voiceTrim || 0); set('ambient-bed-attack', cfg.bed.attack); set('ambient-bed-decay', cfg.bed.decay); set('ambient-bed-sustain', cfg.bed.sustain); set('ambient-bed-release', cfg.bed.release); set('ambient-bed-fine', cfg.bed.fine);
       { const _nb = document.getElementById(tr('ambient-bed-notes')); if (_nb) _nb.textContent = _ambNotesLabel(_ambNotesOf(cfg.bed)); }
       set('ambient-bed-density', cfg.bed.density);
       set('ambient-bed-voiceCap', cfg.bed.voiceCap | 0);
@@ -50317,7 +50339,7 @@
        set('ambient-bed-areaFadeMs', cfg.bed.areaFadeMs); hint('ambient-bed-areaFadeMs-v', _ambFmtMs(cfg.bed.areaFadeMs));
       chk('ambient-motif-on', cfg.motif.on);
       set('ambient-motif-tone', cfg.motif.tone);
-      set('ambient-motif-attack', cfg.motif.attack); set('ambient-motif-decay', cfg.motif.decay); set('ambient-motif-sustain', cfg.motif.sustain); set('ambient-motif-release', cfg.motif.release); set('ambient-motif-fine', cfg.motif.fine);
+      set('ambient-motif-voiceTrim', cfg.motif.voiceTrim || 0); set('ambient-motif-attack', cfg.motif.attack); set('ambient-motif-decay', cfg.motif.decay); set('ambient-motif-sustain', cfg.motif.sustain); set('ambient-motif-release', cfg.motif.release); set('ambient-motif-fine', cfg.motif.fine);
       { const _nb = document.getElementById(tr('ambient-motif-notes')); if (_nb) _nb.textContent = _ambNotesLabel(_ambNotesOf(cfg.motif)); }
       set('ambient-motif-register', cfg.motif.register);
       set('ambient-motif-range', cfg.motif.range);
@@ -50333,7 +50355,7 @@
        set('ambient-motif-areaFadeMs', cfg.motif.areaFadeMs); hint('ambient-motif-areaFadeMs-v', _ambFmtMs(cfg.motif.areaFadeMs));
       chk('ambient-texture-on', cfg.texture.on);
       set('ambient-texture-tone', cfg.texture.tone);
-      set('ambient-texture-attack', cfg.texture.attack); set('ambient-texture-decay', cfg.texture.decay); set('ambient-texture-sustain', cfg.texture.sustain); set('ambient-texture-release', cfg.texture.release); set('ambient-texture-fine', cfg.texture.fine);
+      set('ambient-texture-voiceTrim', cfg.texture.voiceTrim || 0); set('ambient-texture-attack', cfg.texture.attack); set('ambient-texture-decay', cfg.texture.decay); set('ambient-texture-sustain', cfg.texture.sustain); set('ambient-texture-release', cfg.texture.release); set('ambient-texture-fine', cfg.texture.fine);
       { const _nb = document.getElementById(tr('ambient-texture-notes')); if (_nb) _nb.textContent = _ambNotesLabel(_ambNotesOf(cfg.texture)); }
       set('ambient-texture-register', cfg.texture.register);
       set('ambient-texture-fill', cfg.texture.fill);
@@ -52170,7 +52192,7 @@
           applyDyn();
         });
       }
-      bind('ambient-bed-attack', 'bed', 'attack'); bind('ambient-bed-decay', 'bed', 'decay'); bind('ambient-bed-sustain', 'bed', 'sustain'); bind('ambient-bed-release', 'bed', 'release'); bind('ambient-bed-fine', 'bed', 'fine'); bind('ambient-bed-portamento', 'bed', 'portamento');
+      bind('ambient-bed-voiceTrim', 'bed', 'voiceTrim'); bind('ambient-bed-attack', 'bed', 'attack'); bind('ambient-bed-decay', 'bed', 'decay'); bind('ambient-bed-sustain', 'bed', 'sustain'); bind('ambient-bed-release', 'bed', 'release'); bind('ambient-bed-fine', 'bed', 'fine'); bind('ambient-bed-portamento', 'bed', 'portamento');
       bind('ambient-bed-density', 'bed', 'density');
       bind('ambient-bed-voiceCap', 'bed', 'voiceCap');
       // A select needs its own listener — the numeric bind() helpers can't drive it
@@ -52263,7 +52285,7 @@
       });
       // Rate (schema carries it; old bed template didn't).
       { const rs = G('ambient-bed-rate'); if (rs) { const _bc = cfg0(); rs.value = (_bc && _bc.bed && _bc.bed.rate) || ''; rs.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c || !c.bed) return; c.bed.rate = rs.value || ''; try { _ambUnitSyncViz(E, 'ambient-bed', c.bed); } catch (e) {} persist(); }); } }
-      bind('ambient-motif-attack', 'motif', 'attack'); bind('ambient-motif-decay', 'motif', 'decay'); bind('ambient-motif-sustain', 'motif', 'sustain'); bind('ambient-motif-release', 'motif', 'release'); bind('ambient-motif-fine', 'motif', 'fine'); bind('ambient-motif-portamento', 'motif', 'portamento');
+      bind('ambient-motif-voiceTrim', 'motif', 'voiceTrim'); bind('ambient-motif-attack', 'motif', 'attack'); bind('ambient-motif-decay', 'motif', 'decay'); bind('ambient-motif-sustain', 'motif', 'sustain'); bind('ambient-motif-release', 'motif', 'release'); bind('ambient-motif-fine', 'motif', 'fine'); bind('ambient-motif-portamento', 'motif', 'portamento');
       bind('ambient-motif-register', 'motif', 'register');
       bind('ambient-motif-range', 'motif', 'range');
       bind('ambient-motif-proximity', 'motif', 'proximity');
@@ -52294,7 +52316,7 @@
       bindTime('ambient-motif-areaFadeMs', 'motif', 'areaFadeMs');
       // Rate (schema carries it; old template didn't).
       { const rs = G('ambient-motif-rate'); if (rs) { const _mc = cfg0(); rs.value = (_mc && _mc.motif && _mc.motif.rate) || ''; rs.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c || !c.motif) return; c.motif.rate = rs.value || ''; try { _ambUnitSyncViz(E, 'ambient-motif', c.motif); } catch (e) {} persist(); }); } }
-      bind('ambient-texture-attack', 'texture', 'attack'); bind('ambient-texture-decay', 'texture', 'decay'); bind('ambient-texture-sustain', 'texture', 'sustain'); bind('ambient-texture-release', 'texture', 'release'); bind('ambient-texture-fine', 'texture', 'fine'); bind('ambient-texture-portamento', 'texture', 'portamento');
+      bind('ambient-texture-voiceTrim', 'texture', 'voiceTrim'); bind('ambient-texture-attack', 'texture', 'attack'); bind('ambient-texture-decay', 'texture', 'decay'); bind('ambient-texture-sustain', 'texture', 'sustain'); bind('ambient-texture-release', 'texture', 'release'); bind('ambient-texture-fine', 'texture', 'fine'); bind('ambient-texture-portamento', 'texture', 'portamento');
       bind('ambient-texture-register', 'texture', 'register');
       bind('ambient-texture-fill', 'texture', 'fill');
       bindTime('ambient-texture-intervalMs', 'texture', 'intervalMs');

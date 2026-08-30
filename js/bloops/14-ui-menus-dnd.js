@@ -2037,7 +2037,7 @@
         try {
           const src = ac.createBufferSource(); src.buffer = audioBuf;
           src.playbackRate.value = Math.pow(2, -tuneCents / 1200); // hear the fine-tuned pitch
-          src.connect(ac.destination); src.start();
+          src.connect(window._bloopsSpeakerSink ? window._bloopsSpeakerSink(ac) : ac.destination); src.start();
           previewNode = src;
         } catch (e) {}
       });

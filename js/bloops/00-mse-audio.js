@@ -1,0 +1,324 @@
+// 00-mse-audio.js — the "radio station" output path for the native shell.
+//
+// The one class of audio that survives an iOS screen lock smoothly is a media
+// element playing MEDIA DATA (files/streams — the Drive player proves it on
+// this very phone). Everything live-generated (MediaStream srcObject, mixable
+// native engines) gets a transition artifact at lock. So: encode the live mix
+// to AAC on the fly (WebCodecs AudioEncoder), wrap it in fMP4 fragments, and
+// feed it to an <audio> element through ManagedMediaSource — to iOS, Bloops
+// becomes a streaming-audio app playing its own endless broadcast.
+//
+// This file is pure machinery (muxer + encoder pipeline); 00-native-audio.js
+// decides whether to engage it. Inert unless started.
+(function () {
+  'use strict';
+
+  // ---- minimal fMP4 writer (AAC-LC, stereo, one track) --------------------
+  const u32 = (v) => [v >>> 24 & 255, v >>> 16 & 255, v >>> 8 & 255, v & 255];
+  const u16 = (v) => [v >>> 8 & 255, v & 255];
+  const str = (s) => Array.from(s, (c) => c.charCodeAt(0));
+  function box(type, ...payloads) {
+    const body = [].concat(...payloads);
+    return [...u32(body.length + 8), ...str(type), ...body];
+  }
+  function full(type, ver, flags, ...payloads) {
+    return box(type, [ver, flags >>> 16 & 255, flags >>> 8 & 255, flags & 255], ...payloads);
+  }
+
+  function initSegment(sr, asc) {
+    // The encoder's decoderConfig.description is EITHER a bare
+    // AudioSpecificConfig (2-5 bytes, per spec) OR a full ES_Descriptor
+    // (WebKit hands ~39 bytes starting 0x03). Wrap only the bare form —
+    // wrapping a descriptor inside a descriptor is a malformed esds and the
+    // demuxer rejects the whole stream.
+    const esdsBody = (asc.length > 5 && asc[0] === 0x03)
+      ? asc
+      : [0x03, 23 + asc.length, 0x00, 0x01, 0x00,
+         0x04, 15 + asc.length, 0x40, 0x15, 0x00, 0x00, 0x00,
+         ...u32(0), ...u32(0),
+         0x05, asc.length, ...asc,
+         0x06, 0x01, 0x02];
+    const esds = full('esds', 0, 0, esdsBody);
+    const mp4a = box('mp4a',
+      [0,0,0,0,0,0, ...u16(1),                                      // reserved + data_ref_index
+       0,0,0,0, 0,0,0,0,                                            // reserved
+       ...u16(2), ...u16(16), 0,0,0,0,                              // channels, samplesize
+       ...u16(sr), ...u16(0)],                                      // samplerate 16.16
+      esds);
+    const stbl = box('stbl',
+      full('stsd', 0, 0, u32(1), mp4a),
+      full('stts', 0, 0, u32(0)),
+      full('stsc', 0, 0, u32(0)),
+      full('stsz', 0, 0, u32(0), u32(0)),
+      full('stco', 0, 0, u32(0)));
+    const minf = box('minf',
+      full('smhd', 0, 0, u32(0)),
+      box('dinf', full('dref', 0, 0, u32(1), full('url ', 0, 1))),
+      stbl);
+    const mdia = box('mdia',
+      full('mdhd', 0, 0, u32(0), u32(0), u32(sr), u32(0), u16(0x55c4), u16(0)),
+      full('hdlr', 0, 0, u32(0), str('soun'), u32(0), u32(0), u32(0), str('Bloops'), [0]),
+      minf);
+    const trak = box('trak',
+      full('tkhd', 0, 7, u32(0), u32(0), u32(1), u32(0), u32(0),
+        u32(0), u32(0), [0,0,0,0,0,0,0,0], u16(0), u16(0), u16(0x0100), u16(0),
+        u32(0x00010000), u32(0), u32(0), u32(0), u32(0x00010000), u32(0),
+        u32(0), u32(0), u32(0x40000000), u32(0), u32(0)),
+      mdia);
+    const moov = box('moov',
+      full('mvhd', 0, 0, u32(0), u32(0), u32(1000), u32(0),
+        u32(0x00010000), u16(0x0100), u16(0), u32(0), u32(0),
+        u32(0x00010000), u32(0), u32(0), u32(0), u32(0x00010000), u32(0),
+        u32(0), u32(0), u32(0x40000000),
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0], u32(2)),
+      trak,
+      box('mvex', full('trex', 0, 0, u32(1), u32(1), u32(1024), u32(0), u32(0))));
+    return new Uint8Array([...box('ftyp', str('iso5'), u32(512), str('iso5'), str('iso6'), str('mp41')), ...moov]);
+  }
+
+  function mediaSegment(seq, baseTime, frames) {
+    // frames: array of Uint8Array raw AAC access units, 1024 samples each
+    const sizes = frames.map((f) => f.length);
+    const total = sizes.reduce((a, b) => a + b, 0);
+    const trun = full('trun', 0, 0x000201,                          // data-offset + sample-size present
+      u32(frames.length), u32(0 /* patched below */),
+      [].concat(...sizes.map(u32)));
+    const traf = box('traf',
+      full('tfhd', 0, 0x020008, u32(1), u32(1024)),                 // default-base-is-moof + default duration
+      full('tfdt', 1, 0, u32(Math.floor(baseTime / 4294967296)), u32(baseTime >>> 0)),
+      trun);
+    const moof = box('moof', full('mfhd', 0, 0, u32(seq)), traf);
+    // patch trun data_offset: moof size + 8 (mdat header)
+    const moofArr = moof;
+    const offAt = (() => {                                          // find trun data_offset position
+      // trun sits at a fixed place from the end: total - (trun body) ... compute directly:
+      // moof = [size type mfhd traf]; traf = [size type tfhd tfdt trun]
+      // data_offset is 16 bytes into trun box (8 header + 4 verflags + 4 count)
+      const trunSize = trun.length;
+      return moofArr.length - trunSize + 16;
+    })();
+    const dataOffset = moofArr.length + 8;
+    moofArr[offAt] = dataOffset >>> 24 & 255; moofArr[offAt + 1] = dataOffset >>> 16 & 255;
+    moofArr[offAt + 2] = dataOffset >>> 8 & 255; moofArr[offAt + 3] = dataOffset & 255;
+    const out = new Uint8Array(moofArr.length + 8 + total);
+    out.set(moofArr, 0);
+    out.set(u32(total + 8), moofArr.length); out.set(str('mdat'), moofArr.length + 4);
+    let p = moofArr.length + 8;
+    for (const f of frames) { out.set(f, p); p += f.length; }
+    return out;
+  }
+
+  // ---- the pipeline --------------------------------------------------------
+  // start(bridgeCtx, sourceNode, el, log) → resolves true when the element is
+  // playing encoded mix. sourceNode is tapped via a worklet; el.src becomes
+  // the ManagedMediaSource.
+  async function start(ctx, sourceNode, el, log) {
+    if (typeof ManagedMediaSource === 'undefined' || typeof AudioEncoder === 'undefined') return false;
+    if (!ManagedMediaSource.isTypeSupported('audio/mp4; codecs="mp4a.40.2"')) return false;
+    const sr = ctx.sampleRate;
+
+    // 1. worklet tap → Float32 planar chunks
+    const CHUNK = 2048;
+    log('MSE stage: adding tap worklet');
+    await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([
+      "registerProcessor('mse-tap', class extends AudioWorkletProcessor {" +
+      "  constructor() { super(); this.l = new Float32Array(" + CHUNK + "); this.r = new Float32Array(" + CHUNK + "); this.n = 0; }" +
+      "  process(inputs) {" +
+      "    const inp = inputs[0]; if (!inp || !inp[0]) return true;" +
+      "    const L = inp[0], R = inp[1] || inp[0];" +
+      "    for (let i = 0; i < L.length; i++) {" +
+      "      this.l[this.n] = L[i]; this.r[this.n] = R[i];" +
+      "      if (++this.n === " + CHUNK + ") {" +
+      "        const l = this.l.slice(0), r = this.r.slice(0);" +
+      "        this.port.postMessage({ l: l.buffer, r: r.buffer }, [l.buffer, r.buffer]);" +
+      "        this.n = 0;" +
+      "      }" +
+      "    }" +
+      "    return true;" +
+      "  }" +
+      "});"], { type: 'application/javascript' })));
+    const tap = new AudioWorkletNode(ctx, 'mse-tap');
+    sourceNode.connect(tap);
+    const pull = ctx.createGain(); pull.gain.value = 0;
+    tap.connect(pull); pull.connect(ctx.destination);
+
+    // 2. MMS + element. MMS is picky: remote playback must be disabled
+    // BEFORE src is assigned, and the element should live in the DOM.
+    log('MSE stage: creating MMS');
+    const mms = new ManagedMediaSource();
+    try { el.pause(); } catch (e) {}
+    el.srcObject = null;
+    el.removeAttribute('src');
+    el.disableRemotePlayback = true;
+    try { if (!el.isConnected) { el.style.display = 'none'; document.body.appendChild(el); } } catch (e) {}
+    el.src = URL.createObjectURL(mms);
+    log('MSE stage: waiting for sourceopen (readyState=' + mms.readyState + ')');
+    const opened = await new Promise((res) => {
+      const t = setTimeout(() => res(false), 4000);
+      mms.addEventListener('sourceopen', () => { clearTimeout(t); res(true); }, { once: true });
+    });
+    if (!opened) { log('MSE sourceopen never fired (readyState=' + mms.readyState + ')'); return false; }
+    log('MSE stage: source open');
+    const sb = mms.addSourceBuffer('audio/mp4; codecs="mp4a.40.2"');
+    let queue = [], appending = false;
+    const pump = () => {
+      if (appending || !queue.length || sb.updating) return;
+      appending = true;
+      const seg = queue.shift();
+      try { sb.appendBuffer(seg); } catch (e) { log('MSE append failed: ' + e.message); }
+    };
+    sb.addEventListener('updateend', () => { appending = false; pump(); });
+
+    // 3. encoder → muxer
+    let asc = null, seq = 0, baseTime = 0, pending = [], inited = false;
+    const SEG_FRAMES = 16;                                          // ≈ 0.34 s per segment
+    const enc = new AudioEncoder({
+      output: (chunk, meta) => {
+        if (!inited) {
+          const d = meta && meta.decoderConfig && meta.decoderConfig.description;
+          asc = d ? new Uint8Array(d instanceof ArrayBuffer ? d : d.buffer || d) : new Uint8Array([0x11, 0x90]);
+          log('MSE desc[0..7]=' + Array.from(asc.slice(0, 8)).map((b) => b.toString(16).padStart(2, '0')).join(' '));
+          queue.push(initSegment(sr, Array.from(asc))); inited = true; pump();
+          log('MSE init segment queued (asc ' + asc.length + 'B)');
+        }
+        const buf = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(buf);
+        pending.push(buf);
+        if (pending.length >= SEG_FRAMES) {
+          queue.push(mediaSegment(++seq, baseTime, pending));
+          baseTime += pending.length * 1024;
+          pending = []; pump();
+        }
+      },
+      error: (e) => log('MSE encoder error: ' + e.message),
+    });
+    enc.configure({ codec: 'mp4a.40.2', sampleRate: sr, numberOfChannels: 2, bitrate: 160000 });
+
+    let ts = 0;
+    tap.port.onmessage = (ev) => {
+      const l = new Float32Array(ev.data.l), r = new Float32Array(ev.data.r);
+      const data = new Float32Array(l.length * 2);
+      data.set(l, 0); data.set(r, l.length);
+      try {
+        enc.encode(new AudioData({
+          format: 'f32-planar', sampleRate: sr, numberOfFrames: l.length,
+          numberOfChannels: 2, timestamp: ts, data,
+        }));
+      } catch (e) { log('MSE encode failed: ' + e.message); }
+      ts += Math.round(l.length / sr * 1e6);
+    };
+
+    // 4. playback rides the live edge with a jitter cushion; prune history
+    // JITTER: with no cushion the element rides ~0.05s behind the encoder and
+    // every main-thread hiccup starves it (measured). Hold playback until a
+    // real cushion exists; after a foreground stall, rebuild it before resuming.
+    const CUSHION = 1.2;        // deep cushion: stall recovery
+    const PLAY_CUSHION = 0.6;   // start-of-play cushion — the depth that rode a real
+                                // device lock untouched; halves press-to-sound vs 1.2
+    let needCushion = true;
+    let cushionTarget = CUSHION;
+    let stopHold = false;       // transport stopped → the element stays PAUSED
+    el.addEventListener('waiting', () => {
+      if (document.visibilityState === 'visible' && !stopHold) {
+        try { el.pause(); } catch (e) {} needCushion = true; cushionTarget = CUSHION;
+      }
+    });
+    // TRANSPORT EDGES on a FAST poll — the REQUIREMENT is that music stops the
+    // INSTANT stop is pressed, and the 250 ms maintenance tick is too coarse
+    // for that. Two earlier designs tried to play the engine's ringing tail
+    // through the stop (seek to the live edge, ride a cushion, defer the
+    // re-cushion) and BOTH produced audible artifacts — a starve hole, then a
+    // deferred-tail blip ("cuts out, comes back, cuts out"). The broadcast is
+    // ~0.5-1 s behind the graph, so ANY attempt to render the tail after the
+    // press is playing the past. Hard pause wins: the tail rings into the
+    // encoder unheard, and the element stays paused until the next play.
+    let wasOn = null;
+    setInterval(() => {
+      try {
+        let on = null;
+        try { on = (typeof _vinylTransportOn === 'function') ? !!_vinylTransportOn() : null; } catch (e) {}
+        if (on === null) return;
+        if (on === false && wasOn === true) {
+          stopHold = true; needCushion = false;
+          try { el.pause(); } catch (e) {}
+          log('stop: paused immediately (hard stop) w=' + (Date.now() % 1000000));
+        }
+        // PLAY EDGE: everything buffered ahead of the playhead is stale
+        // content from before/during the stop — skip it, and rebuild only the
+        // small start cushion so sound arrives ~0.6-0.9 s after the press.
+        if (on === true && wasOn === false) {
+          stopHold = false;
+          if (sb.buffered.length) {
+            const liveEnd = sb.buffered.end(sb.buffered.length - 1);
+            if (liveEnd - 0.05 > el.currentTime) el.currentTime = liveEnd - 0.05;
+          }
+          try { el.pause(); } catch (e) {}
+          needCushion = true; cushionTarget = PLAY_CUSHION;
+          log('play-edge: skipped stale content; cushioning ' + PLAY_CUSHION + 's w=' + (Date.now() % 1000000));
+        }
+        wasOn = on;
+      } catch (e) {}
+    }, 80);
+    let mtick = 0;
+    setInterval(() => {
+      try {
+        // NOTHING may resume the element while the transport is stopped —
+        // the auto-resume paths below were the blip factory in every earlier
+        // design (a paused element + a refilling buffer = a deferred tail).
+        if (stopHold) {
+          if (!el.paused) { try { el.pause(); } catch (e) {} }
+          if (sb.buffered.length) {
+            const endS = sb.buffered.end(sb.buffered.length - 1);
+            const startS = sb.buffered.start(0);
+            if (endS - startS > 30 && !sb.updating && !queue.length) sb.remove(startS, endS - 10);
+          }
+          return;
+        }
+        if (needCushion && sb.buffered.length) {
+          const end0 = sb.buffered.end(sb.buffered.length - 1);
+          if (end0 - el.currentTime >= cushionTarget) { needCushion = false; el.play().catch(() => {}); }
+        }
+        if (++mtick % 20 === 0 && sb.buffered.length) {
+          log('MSESTAT elT=' + el.currentTime.toFixed(2)
+            + ' bufEnd=' + sb.buffered.end(sb.buffered.length - 1).toFixed(2)
+            + ' seq=' + seq + ' playing=' + !el.paused);
+        }
+        if (!sb.buffered.length) return;
+        const end = sb.buffered.end(sb.buffered.length - 1);
+        const lag = end - el.currentTime;
+        // NEVER SEEK BACKWARD. When production stalls (a lock-time context
+        // suspension, or the user stopping the transport), the buffered end
+        // freezes — a rewind then replays the same tail forever, which is
+        // audibly "a long buffer loop" and "it kept playing after stop".
+        // Fall silent at the live edge and wait for fresh segments instead.
+        const target = Math.max(sb.buffered.start(0), end - 1.0);
+        if ((el.paused || lag > 3) && target > el.currentTime + 0.05) el.currentTime = target;
+        if (el.paused && !needCushion) el.play().catch(() => {});
+        const start0 = sb.buffered.start(0);
+        if (end - start0 > 30 && !sb.updating && !queue.length) sb.remove(start0, end - 10);
+      } catch (e) {}
+    }, 250);
+
+    const kicked = true;   // playback starts via the cushion gate above
+    // RENDER→SPEAKER LAG: material rendered at graph time T is heard when the
+    // element's playhead reaches it — the delay is (shipped − played), i.e.
+    // ts/1e6 (total tapped audio handed to the encoder) minus el.currentTime,
+    // plus the tap worklet's own chunk (2048 frames). While the element is
+    // paused (play-edge cushioning) the lag GROWS, which is exactly right:
+    // an audible clock derived as (now − lag) FREEZES until sound resumes.
+    // Display code subtracts this so progress bars track what is HEARD.
+    window._bloopsMseOutLag = () => {
+      try {
+        const lag = (ts / 1e6) - el.currentTime + (CHUNK / sr);
+        return Math.max(0, Math.min(8, lag));
+      } catch (e) { return 0; }
+    };
+    window._bloopsMseStats = () => ({
+      buffered: sb.buffered.length ? +(sb.buffered.end(sb.buffered.length - 1) - el.currentTime).toFixed(2) : null,
+      elT: +el.currentTime.toFixed(2), seq, queued: queue.length, playing: !el.paused,
+    });
+    return kicked || true;
+  }
+
+  window._bloopsMse = { start };
+})();

@@ -392,7 +392,7 @@
         g.gain.value = 0;
         osc.frequency.value = 20;
         osc.connect(g);
-        g.connect(ac.destination);
+        g.connect(window._bloopsSpeakerSink ? window._bloopsSpeakerSink(ac) : ac.destination);
         osc.start();
         _keepAliveOsc = osc;
         _keepAliveStarted = true;
@@ -453,7 +453,7 @@
         try {
           const src = ac.createBufferSource();
           src.buffer = ac.createBuffer(1, 1, 22050);
-          src.connect(ac.destination);
+          src.connect(window._bloopsSpeakerSink ? window._bloopsSpeakerSink(ac) : ac.destination);
           src.start(0);
         } catch (e) {}
         try { Tone.start(); } catch (e) {}

@@ -28853,7 +28853,14 @@
         '<div class="ambient-hint ambient-warm-sub">Loading every layer first, so they all start together.</div>' +
         '</div>';
       document.body.appendChild(ov);
-      ov.style.setProperty('display', 'flex', 'important');
+      // DELAYED REVEAL: a warm shell (native app: context pre-resumed, local
+      // samplers) finishes warming in ~150-250 ms, and a full-screen modal
+      // that lives that long reads as a glitchy flash — or, reported from the
+      // iOS app, as "the warming up modal doesn't display". Only show it when
+      // the warm-up is still running after 250 ms; a genuinely cold start
+      // (multi-second, the panel's real audience) is unaffected.
+      ov.style.setProperty('display', 'none', 'important');
+      const reveal = setTimeout(() => { ov.style.setProperty('display', 'flex', 'important'); }, 250);
       const msg = ov.querySelector('.ambient-warm-msg');
       const bar = ov.querySelector('.ambient-warm-bar > i');
       return {
@@ -28861,7 +28868,7 @@
           try { if (msg) msg.textContent = t; } catch (e) {}
           try { if (bar && Number.isFinite(frac)) bar.style.width = Math.max(0, Math.min(1, frac)) * 100 + '%'; } catch (e) {}
         },
-        close: () => { try { ov.remove(); } catch (e) {} },
+        close: () => { try { clearTimeout(reveal); ov.remove(); } catch (e) {} },
       };
     }
     const _AMB_WARM_MAX_MS = 6000;      // never hold the transport longer than this
@@ -31941,7 +31948,7 @@
       // layer ("wrong Seq chips in Pattern during playback, after one play through"
       // — i.e. after the first area advance). Clear instead of guessing.
       if (!_ambViewIsPlaying(E)) { try { _ambClearEuclidPlayheads(E); } catch (e) {} return; }
-      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      const now = _ambAudibleNow();   // track what is HEARD (matters in the native shell's broadcast path)
       const cfg = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : (E.getCfg && E.getCfg())) || null;
       // Prefer the AREA's own tempo, exactly like _ambUpdateBarIndicator and
       // _ambSchedCursor. `_ambBpm()` reads the GLOBAL tempo field, and an area
@@ -33788,8 +33795,12 @@
       const host = document.getElementById('bloom-hdr-elapsed'); if (!host) return;
       const el = host.querySelector('.bloom-hdr-text') || host;
       let ms = 0;
-      if (_masterEng && _masterEng.timer && _masterEng._playStartMs) ms = performance.now() - _masterEng._playStartMs;
-      else if (_laneEng && _laneEng.timer && _laneEng._playStartMs) ms = performance.now() - _laneEng._playStartMs;
+      // Native-shell broadcast lag: elapsed and the beat flash describe what is
+      // HEARD, so they run behind the wall clock by the render→speaker delay.
+      let _lagMs = 0;
+      try { if (typeof window._bloopsMseOutLag === 'function') _lagMs = window._bloopsMseOutLag() * 1000; } catch (e) {}
+      if (_masterEng && _masterEng.timer && _masterEng._playStartMs) ms = Math.max(0, performance.now() - _masterEng._playStartMs - _lagMs);
+      else if (_laneEng && _laneEng.timer && _laneEng._playStartMs) ms = Math.max(0, performance.now() - _laneEng._playStartMs - _lagMs);
       const bpm = (typeof _ambBpm === 'function') ? _ambBpm() : 120;
       el.textContent = _ambFmtElapsed(ms) + '  ·  ' + bpm + ' BPM';
       // Optional BPM flash (Settings → Tempo → Flash). The whole header pulses
@@ -33805,7 +33816,7 @@
         // Play via the re-anchor above) so it's visibly working even before Play.
         if (window._bloomHeaderFlash) {
           const beatMs = 60000 / Math.max(20, bpm);
-          const phase = ((performance.now() - _ambFlashAnchorMs) % beatMs) / beatMs;
+          const phase = (((performance.now() - _lagMs - _ambFlashAnchorMs) % beatMs) + beatMs) % beatMs / beatMs;
           hdr.classList.toggle('bloom-hdr-flash', phase < 0.5);   // on for the first half of each beat
         } else {
           hdr.classList.remove('bloom-hdr-flash');
@@ -40419,7 +40430,7 @@
         }
         return;
       }
-      const tnow = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + 0.016;
+      const tnow = _ambAudibleNow();   // audible clock — the glow follows the sounding chord
       let step = 0; try { step = _ambProgStepAt(E, tnow) | 0; } catch (e) {}
       let ci = ((step % p.chords.length) + p.chords.length) % p.chords.length;
       // ↻ ORDER permutes which written chord plays in this slot — highlight the

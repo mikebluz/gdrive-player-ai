@@ -57,7 +57,7 @@
               try {
                 const silent = ac.createBufferSource();
                 silent.buffer = ac.createBuffer(1, 1, 22050);
-                silent.connect(ac.destination);
+                silent.connect(window._bloopsSpeakerSink ? window._bloopsSpeakerSink(ac) : ac.destination);
                 silent.start(0);
               } catch (e) {}
             }
@@ -110,7 +110,7 @@
                 try {
                   const silent = ac.createBufferSource();
                   silent.buffer = ac.createBuffer(1, 1, 22050);
-                  silent.connect(ac.destination);
+                  silent.connect(window._bloopsSpeakerSink ? window._bloopsSpeakerSink(ac) : ac.destination);
                   silent.start(0);
                 } catch (e) {}
               }

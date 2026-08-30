@@ -233,7 +233,7 @@
           // The processor must be in the graph for process() to run,
           // but it emits nothing audible. Connecting to ctx.destination
           // pulls it; the channel is silent so it's inaudible.
-          try { node.connect(ctx.destination); } catch (e) {}
+          try { node.connect(window._bloopsSpeakerSink ? window._bloopsSpeakerSink(ctx) : ctx.destination); } catch (e) {}
           node.port.onmessage = (e) => _handleBloopsSchedulerMessage(e.data);
           _bloopsSchedulerNode = node;
           return node;
@@ -1157,6 +1157,9 @@
         outLag = (Number.isFinite(raw.baseLatency) ? raw.baseLatency : 0)
                + (Number.isFinite(raw.outputLatency) ? raw.outputLatency : 0);
       } catch (e) {}
+      // Native-shell broadcast (MSE) lag — the mix is buffered before the
+      // speaker hears it; absent on the web (function undefined).
+      try { if (typeof window._bloopsMseOutLag === 'function') outLag += window._bloopsMseOutLag(); } catch (e) {}
       const elapsed = Math.max(0, rawAudioNow() - outLag - _playBaseTime);
       strips.forEach((strip) => {
         const laneIdx = parseInt(strip.dataset.laneIdx, 10);

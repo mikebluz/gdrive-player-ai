@@ -769,7 +769,7 @@
           boostGain.connect(panNode); tail = panNode;
         }
         try { if (typeof Tone.connect === 'function') Tone.connect(tail, destNode); else tail.connect(destNode.input || destNode); }
-        catch (e) { try { tail.connect(ac.destination); } catch (_) {} }
+        catch (e) { try { tail.connect(window._bloopsSpeakerSink ? window._bloopsSpeakerSink(ac) : ac.destination); } catch (_) {} }
 
         const t0 = (typeof when === 'number' && when >= 0) ? when : ac.currentTime;
         try { src.start(t0); } catch (e) {}
@@ -2189,7 +2189,7 @@
         g.gain.setValueAtTime(1, t0);
         g.gain.setValueAtTime(1, t0 + Math.max(0, dur - 0.02));
         g.gain.linearRampToValueAtTime(0, t0 + dur);
-        src.connect(g); g.connect(ac.destination);
+        src.connect(g); g.connect(window._bloopsSpeakerSink ? window._bloopsSpeakerSink(ac) : ac.destination);
         src.start(t0);
         src.stop(t0 + dur + 0.01);
         setTimeout(() => { try { src.disconnect(); g.disconnect(); } catch (e) {} }, (dur + 0.3) * 1000);
@@ -3265,6 +3265,7 @@
           return;
         }
         if (_linkKeepAlive) return;
+        if (window._bloopsSpeakerSink) return;   // shell: the media element keeps the link alive; a rerouted -75 dB tone would defeat the background silence-release
         const osc = raw.createOscillator(); const g = raw.createGain();
         osc.frequency.value = 30; g.gain.value = 0.00018;   // ~-75 dBFS: inaudible, but the DAC/link stays awake
         osc.connect(g); g.connect(raw.destination); osc.start();

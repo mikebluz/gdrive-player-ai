@@ -2077,7 +2077,12 @@
         if (ac && typeof ac.currentTime === 'number') {
           const base = Number.isFinite(ac.baseLatency) ? ac.baseLatency : 0;
           const out = (Number.isFinite(ac.outputLatency) && ac.outputLatency > 0) ? ac.outputLatency : 0;
-          const lat = Math.min(0.30, base + out);   // full output latency, capped at 300ms (covers Bluetooth)
+          let lat = Math.min(0.30, base + out);   // full output latency, capped at 300ms (covers Bluetooth)
+          // Native-shell broadcast (MSE) lag: the mix is encoded and buffered
+          // before the speaker hears it (~0.6-1.4 s, growing while the element
+          // cushions). NOT subject to the 300 ms cap — it is measured, not an
+          // OS estimate. Absent on the web (function undefined) = zero change.
+          try { if (typeof window._bloopsMseOutLag === 'function') lat += window._bloopsMseOutLag(); } catch (e) {}
           return ac.currentTime - lat - _SHAPE_SYNC_TRIM;
         }
       } catch (e) {}

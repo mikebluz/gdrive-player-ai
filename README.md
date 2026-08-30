@@ -162,6 +162,26 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
                          already holds the signal under it. The old Tone
                          masterLimiter(−3) stays as fallback if the worklet
                          can't load.)
+
+   NATIVE SHELL ONLY (Capacitor / iOS app — 00-native-audio.js):
+   Tone.getDestination().output ─► MediaStreamDestination ─► <audio> element ─► 🔊 speakers
+                        (the direct output→rawContext.destination link is CUT;
+                         the playing media element is what stops WebKit from
+                         suspending the AudioContext on background/screen lock —
+                         measured on-device: bare context suspends, this path
+                         renders at 100% of wall clock with JS alive. Inert on
+                         the web; kill switch localStorage bloopsNativeAudio='0'.
+                         ONE AUDIBLE PATH RULE: every former direct
+                         rawContext.destination connect (silent keep-alives,
+                         worklet keep-pull, interactive previews) goes through
+                         window._bloopsSpeakerSink(ctx) instead — streamDest in
+                         the shell, ctx.destination elsewhere/offline. Measured:
+                         ANY node feeding the raw destination makes WebKit
+                         interrupt the context at screen lock (audible skip +
+                         pitch bend); a stream-only graph is untouched. The
+                         Bluetooth link keep-alive is skipped in the shell —
+                         its -75 dB tone through the stream would defeat the
+                         background silence-release.)
 ```
 
 **Notes:**

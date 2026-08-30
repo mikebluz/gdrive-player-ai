@@ -244,6 +244,36 @@
           log('shadow element now carries a 25 Hz keep-alive tone (no mix)');
         } catch (e) { log('shadow retone FAILED: ' + e.message); }
         log('MSE OUTPUT armed — the element plays encoded media now');
+        // FOREGROUND / BACKGROUND MODE SWITCH: the broadcast's ~0.6-1 s lag is
+        // the price of lock-proof playback — wrong for interactive use (grid
+        // taps, auditions all land late). While VISIBLE the mix is audible
+        // through the SHADOW element's live bridge stream (the pre-MSE mode-B
+        // path, proven clean in foreground, ~50 ms) via fgGain, and the
+        // broadcast element rides its cushion MUTED. At hide/lock fgGain ramps
+        // to 0 (only the 25 Hz tone remains in the shadow — the validated
+        // lock chain is untouched) and the broadcast unmutes once its
+        // playhead reaches not-yet-heard material (a short gap at the
+        // handoff, never an echo). EXACTLY ONE route carries the mix in
+        // every state. Kill switch: localStorage bloopsFgDirect='0'.
+        let fgEnabled = true;
+        try { fgEnabled = localStorage.getItem('bloopsFgDirect') !== '0'; } catch (e) {}
+        if (fgEnabled) try {
+          const fgGain = bridgeRefs.bridge.createGain();
+          fgGain.gain.value = 0;
+          bridgeRefs.bSrc.connect(fgGain); fgGain.connect(bridgeRefs.bDest);
+          const setFg = (on) => {
+            try {
+              const t = bridgeRefs.bridge.currentTime;
+              fgGain.gain.cancelScheduledValues(t);
+              fgGain.gain.setValueAtTime(fgGain.gain.value, t);
+              fgGain.gain.linearRampToValueAtTime(on ? 1 : 0, t + 0.03);
+            } catch (e) {}
+            try { if (window._bloopsMseFg) window._bloopsMseFg(on); } catch (e) {}
+            log('audible path → ' + (on ? 'foreground stream (low latency)' : 'broadcast') + ' w=' + (Date.now() % 1000000));
+          };
+          document.addEventListener('visibilitychange', () => setFg(document.visibilityState === 'visible'));
+          setFg(document.visibilityState === 'visible');
+        } catch (e) { log('fg mode switch FAILED: ' + e.message); }
         // STARTING MODAL: the broadcast cushion makes press-to-sound ~1 s, and
         // that second must be NAMED, not silent. Shown on the transport's
         // off→on edge, hidden the moment the AUDIBLE clock (Tone.now − the
@@ -265,13 +295,17 @@
             try {
               const E = (typeof _masterEng !== 'undefined') ? _masterEng : null;
               const on = !!(E && E.timer);
-              if (on && !tWasOn) { shownAt = Date.now(); show(true); }
+              if (on && !tWasOn) { shownAt = Date.now(); }
               if (!on) { if (shownAt) { show(false); shownAt = 0; } }
               else if (shownAt) {
                 const lag = (typeof window._bloopsMseOutLag === 'function') ? window._bloopsMseOutLag() : 0;
                 const audible = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) - lag;
                 const start = Number.isFinite(E._playStartAt) ? E._playStartAt : null;
                 if ((start != null && audible >= start + 0.15) || (Date.now() - shownAt > 6000)) { show(false); shownAt = 0; }
+                // DELAYED REVEAL (the warm-panel idiom): only show if the
+                // wait is still running at 300 ms — the foreground stream
+                // path starts in ~0.1 s and a flashed modal reads as a glitch
+                else if (Date.now() - shownAt > 300) show(true);
               }
               tWasOn = on;
             } catch (e) {}
@@ -523,17 +557,25 @@ if (beatsOnRef.v) {
         navigator.mediaSession.playbackState = 'playing';
         navigator.mediaSession.setActionHandler('pause', () => {
           userPaused = true;
+          // hold the BROADCAST element first — it is the audible copy, and
+          // left running it would play out its buffered cushion and stall
+          // (the old handlers only touched the shadow: "lock-screen pause
+          // doesn't stop the music")
+          try { if (window._bloopsMseHold) window._bloopsMseHold(true); } catch (e) {}
           try { el.pause(); } catch (e) {}
           try { raw.suspend(); } catch (e) {}
           try { if (bridge) bridge.suspend(); } catch (e) {}
           try { navigator.mediaSession.playbackState = 'paused'; } catch (e) {}
-          log('lock-screen pause — context suspended, piece holds its place');
+          log('lock-screen pause — broadcast held, context suspended, piece holds its place');
         });
         navigator.mediaSession.setActionHandler('play', () => {
           userPaused = false;
           try { raw.resume(); } catch (e) {}
           try { if (bridge) bridge.resume(); } catch (e) {}
           kick();
+          // release the broadcast AFTER the contexts are running again — it
+          // re-enters like a play press (skip stale buffer, small cushion)
+          try { if (window._bloopsMseHold) window._bloopsMseHold(false); } catch (e) {}
           try { navigator.mediaSession.playbackState = 'playing'; } catch (e) {}
           log('lock-screen play — resumed');
         });

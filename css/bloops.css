@@ -18,8 +18,11 @@
 
     body {
       overscroll-behavior-x: none;
-      /* Reserve the fixed .float-header's height (40px pills) at the top. */
-      padding-top: 40px;
+      /* Reserve the fixed .float-header's height (40px pills) at the top —
+         plus the notch/status-bar inset (viewport-fit=cover in the native
+         shell; env() is 0 on the web, so this is byte-identical there). */
+      padding-top: calc(40px + env(safe-area-inset-top, 0px));
+      padding-bottom: env(safe-area-inset-bottom, 0px);
       /* width:100% — NOT 100vw. 100vw is the full viewport INCLUDING the
          vertical scrollbar gutter, so once the page scrolls (content taller
          than the viewport) the body is ~15px wider than the content area and
@@ -12012,7 +12015,9 @@
          Safe from the fixed-drift gotcha: direct body child, no backdrop-filter
          ancestor. Exempted (visible) in every view-mode hide rule. */
       position: fixed; top: 0; left: 0; right: 0; z-index: 300;
-      background: #0b0b12; padding: 0;
+      /* padding-top extends the header's own background under the status bar
+         (viewport-fit=cover); its content sits below. 0 on the web. */
+      background: #0b0b12; padding: env(safe-area-inset-top, 0px) 0 0;
       display: flex; align-items: stretch;
     }
     /* Live Bar counter pill — fed by the Bloom bar indicator; hidden when idle. */

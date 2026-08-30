@@ -218,6 +218,41 @@
     let needCushion = true;
     let cushionTarget = CUSHION;
     let stopHold = false;       // transport stopped → the element stays PAUSED
+    let userHold = false;       // lock-screen pause → the element stays PAUSED
+    let fgMode = false;         // foreground: the low-latency stream path is
+                                // audible and THIS element rides its cushion
+                                // MUTED, ready to take over at hide/lock
+    let unmuteAtMedia = 0;      // >0 = hidden, waiting to unmute at the media
+                                // time where NOT-YET-HEARD material begins — a
+                                // short gap at the handoff instead of an echo
+                                // of the last second (the two paths are
+                                // time-offset by the cushion; overlap = echo)
+    window._bloopsMseFg = (on) => {
+      fgMode = !!on;
+      if (on) { try { el.muted = true; } catch (e) {} unmuteAtMedia = 0; }
+      else { unmuteAtMedia = Math.max(0.001, ts / 1e6); }
+    };
+    // LOCK-SCREEN PAUSE/PLAY: the shell suspends the contexts (the piece holds
+    // its place), but the broadcast element would otherwise play out its
+    // buffered cushion and then stall — the audible copy must be held too.
+    // Release re-enters exactly like a play press: skip the stale pre-pause
+    // buffer, rebuild the small cushion, resume with fresh material.
+    window._bloopsMseHold = (on) => {
+      userHold = !!on;
+      if (on) {
+        try { el.pause(); } catch (e) {}
+        log('mse hold: paused (lock-screen) w=' + (Date.now() % 1000000));
+      } else {
+        try {
+          if (sb.buffered.length) {
+            const liveEnd = sb.buffered.end(sb.buffered.length - 1);
+            if (liveEnd - 0.05 > el.currentTime) el.currentTime = liveEnd - 0.05;
+          }
+        } catch (e) {}
+        needCushion = true; cushionTarget = PLAY_CUSHION;
+        log('mse hold released: cushioning ' + PLAY_CUSHION + 's w=' + (Date.now() % 1000000));
+      }
+    };
     el.addEventListener('waiting', () => {
       if (document.visibilityState === 'visible' && !stopHold) {
         try { el.pause(); } catch (e) {} needCushion = true; cushionTarget = CUSHION;
@@ -235,6 +270,15 @@
     let wasOn = null;
     setInterval(() => {
       try {
+        // hidden-handoff: unmute the broadcast once its playhead reaches the
+        // first material the foreground path never played (paused = silence
+        // anyway, unmute at once so lock-screen play resumes audibly)
+        if (!fgMode && el.muted && unmuteAtMedia
+            && (el.currentTime >= unmuteAtMedia || el.paused)) {
+          try { el.muted = false; } catch (e) {}
+          log('bg handoff: broadcast unmuted at ' + el.currentTime.toFixed(2) + ' w=' + (Date.now() % 1000000));
+          unmuteAtMedia = 0;
+        }
         let on = null;
         try { on = (typeof _vinylTransportOn === 'function') ? !!_vinylTransportOn() : null; } catch (e) {}
         if (on === null) return;
@@ -262,10 +306,11 @@
     let mtick = 0;
     setInterval(() => {
       try {
-        // NOTHING may resume the element while the transport is stopped —
-        // the auto-resume paths below were the blip factory in every earlier
-        // design (a paused element + a refilling buffer = a deferred tail).
-        if (stopHold) {
+        // NOTHING may resume the element while the transport is stopped or a
+        // lock-screen pause holds it — the auto-resume paths below were the
+        // blip factory in every earlier design (a paused element + a
+        // refilling buffer = a deferred tail).
+        if (stopHold || userHold) {
           if (!el.paused) { try { el.pause(); } catch (e) {} }
           if (sb.buffered.length) {
             const endS = sb.buffered.end(sb.buffered.length - 1);
@@ -309,6 +354,9 @@
     // Display code subtracts this so progress bars track what is HEARD.
     window._bloopsMseOutLag = () => {
       try {
+        // foreground: the audible path is the live bridge stream, not this
+        // element — the display should track that (~stream-element latency)
+        if (fgMode) return 0.08;
         const lag = (ts / 1e6) - el.currentTime + (CHUNK / sr);
         return Math.max(0, Math.min(8, lag));
       } catch (e) { return 0; }

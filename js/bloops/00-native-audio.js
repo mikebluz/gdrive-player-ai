@@ -35,6 +35,10 @@
   if (!wanted()) return;
 
   const _flight = [];
+  // WHICH BUILD IS THIS? Stamped by sync.sh into build.js. Printed first so a
+  // harvested flight log answers "did my change even reach the device" before
+  // anything else is diagnosed — several rounds were lost to that question.
+  try { _flight.push(Date.now() + ' BUILD ' + (window.__BLOOPS_BUILD || 'unstamped')); } catch (e) {}
   const log = (m) => {
     try { console.log('[native-audio] ' + m); } catch (e) {}
     try {
@@ -42,6 +46,10 @@
       if (_flight.length > 600) _flight.splice(0, _flight.length - 600);
     } catch (e) {}
   };
+  // Published so any module can write to the harvestable flight log. A device
+  // question ("did my tap reach the handler?") is answerable from a harvest
+  // instead of from a theory — which is what several rounds of guessing cost.
+  try { window._bloopsLog = (m) => log(String(m)); } catch (e) {}
   // flush the flight log to Documents so ordinary use leaves a harvestable
   // record — no more scheduled tests
   setInterval(() => {
@@ -88,6 +96,63 @@
       maskGain = raw.createGain(); // the resume-seam mask point (graph-side)
       out.connect(maskGain);
       maskGain.connect(streamDest);
+      // PRE-MASK TAP for the interactive monitor: when the transport stops,
+      // the STOP GATE closes maskGain so the broadcast carries true silence —
+      // but presses must stay audible through the monitor, so it taps the mix
+      // BEFORE the mask. Parallel stream, consumed by the bridge like the
+      // main one. (Also the no-double guarantee: a press while stopped is
+      // heard ONCE, via the monitor — the mask keeps it out of the broadcast.)
+      const monTapDest = raw.createMediaStreamDestination();
+      out.connect(monTapDest);
+      // THE STOP GATE — the last pop standing was iOS renegotiating the audio
+      // session at background/lock while the app sat "active but silent"
+      // (muted element). A muted or paused renderer gets reclassified; an
+      // UNMUTED element playing true silence does not — locks while PLAYING
+      // were always seamless for exactly this reason. So stop closes the
+      // graph here (tails cut instantly = the stop stays immediate) and the
+      // element keeps playing unmuted silence: to the OS, nothing changed.
+      window._bloopsStopGate = (closed) => {
+        try {
+          const t = raw.currentTime;
+          maskGain.gain.cancelScheduledValues(t);
+          maskGain.gain.setValueAtTime(maskGain.gain.value, t);
+          maskGain.gain.linearRampToValueAtTime(closed ? 0 : 1, t + (closed ? 0.012 : 0.03));
+        } catch (e) {}
+        log('stop gate ' + (closed ? 'CLOSED (graph muted, element keeps playing silence)' : 'open') + ' w=' + (Date.now() % 1000000));
+      };
+      window.__bloopsMonTapStream = monTapDest.stream;
+      // The route's PHYSICAL output latency (speaker ~0.01-0.05 s, Bluetooth
+      // 0.15-0.3 s). The media-timeline lag formula self-cancels the encoder
+      // delay but cannot see this term — without it every display surface
+      // leads the ear by the route latency ("the readout starts earlier than
+      // the music"). Read from the bridge ctx once it exists; same route.
+      window._bloopsOutputLatency = () => {
+        try {
+          const br = bridgeRefs && bridgeRefs.bridge;
+          // WebKit has no outputLatency (baseLatency is just the quantum), so
+          // on the phone this falls to a measured-in-the-hand allowance for
+          // the media element's decode+output pipeline. Tunable per device:
+          // localStorage bloopsOutLagTrim (seconds, e.g. '0.25' on Bluetooth).
+          let trim = NaN;
+          try { trim = parseFloat(localStorage.getItem('bloopsOutLagTrim')); } catch (e) {}
+          if (Number.isFinite(trim) && trim >= 0 && trim < 2) return trim;
+          // mic-measured full-loop residue (element render pipeline + physical)
+          // wins outright — it is the only number that covers the unqueryable
+          // AVSampleBufferAudioRenderer depth
+          let mr = NaN;
+          try { mr = parseFloat(localStorage.getItem('bloopsResidue')); } catch (e) {}
+          if (Number.isFinite(mr) && mr >= 0 && mr < 1.2) return mr;
+          // fallback: measured stream hop + a GENEROUS pipeline allowance — a
+          // display that trails slightly reads as in-sync; one that leads
+          // reads broken (three field reports say so)
+          let sl = NaN;
+          try { sl = parseFloat(localStorage.getItem('bloopsStreamLag')); } catch (e) {}
+          if (Number.isFinite(sl) && sl >= 0 && sl < 1.5) return sl + 0.30;
+          const v = br ? (br.outputLatency || 0) : 0;
+          if (Number.isFinite(v) && v > 0.02 && v < 1) return v + 0.30;
+          return 0.35;   // iOS media-element pipeline allowance
+        } catch (e) { return 0.35; }
+      };
       bridge = new (window.AudioContext || window.webkitAudioContext)();
       const bSrc = bridge.createMediaStreamSource(streamDest.stream);
       bridgeRefs = { bSrc: bSrc };
@@ -244,6 +309,158 @@
           log('shadow element now carries a 25 Hz keep-alive tone (no mix)');
         } catch (e) { log('shadow retone FAILED: ' + e.message); }
         log('MSE OUTPUT armed — the element plays encoded media now');
+        // STREAM-LAG SELF-CALIBRATION. The audible clock maps element media
+        // time back to TONE-graph time, and the algebra silently assumes the
+        // tone→bridge MediaStream hop is instant — it is not (iOS: hundreds of
+        // ms, unqueryable), so every display surface led the ear by exactly
+        // that hop ("readout running ahead of playback", surviving two fixed
+        // allowances). Measure it instead: a near-ultrasonic marker scheduled
+        // into the tone graph at a known time, detected arriving on the
+        // bridge by an analyser. One shot per boot, only while the transport
+        // is idle; the result persists (bloopsStreamLag) so a skipped run
+        // still has last boot's number.
+        let _slDone = false, _micDone = false;
+        const _calStream = () => {
+          try {
+            if (_slDone) return;
+            // one stored measurement is enough — the stream hop is inside the
+            // graph (route-independent), and every marker played is a chance
+            // to be heard: the unenveloped first version's edge clicks WERE
+            // the "blip after stopping"
+            try { const v = parseFloat(localStorage.getItem('bloopsStreamLag')); if (Number.isFinite(v) && v >= 0) { _slDone = true; return; } } catch (e) {}
+            const eng = (typeof _masterEng !== 'undefined') ? _masterEng : null;
+            if (eng && eng.timer) { log('stream-lag calibration skipped (transport running)'); return; }
+            if (document.visibilityState !== 'visible') return;
+            const br = bridgeRefs.bridge;
+            const an = br.createAnalyser(); an.fftSize = 2048;
+            bridgeRefs.bSrc.connect(an);
+            const buf = new Float32Array(an.fftSize);
+            const F = 19200, srr = raw.sampleRate;
+            const goertzel = () => {
+              an.getFloatTimeDomainData(buf);
+              const w = 2 * Math.PI * F / br.sampleRate;
+              let s0 = 0, s1 = 0, s2 = 0;
+              for (let i = 0; i < buf.length; i++) { s0 = buf[i] + 2 * Math.cos(w) * s1 - s2; s2 = s1; s1 = s0; }
+              return Math.sqrt(Math.max(0, s1 * s1 + s2 * s2 - 2 * Math.cos(w) * s1 * s2)) / buf.length;
+            };
+            // noise floor first
+            let floor = 0, fN = 0;
+            const fTimer = setInterval(() => { floor = Math.max(floor, goertzel()); fN++; }, 30);
+            setTimeout(() => {
+              clearInterval(fTimer);
+              const osc = raw.createOscillator(); osc.frequency.value = F;
+              // ENVELOPED — an unenveloped start/stop is a broadband click at
+              // each edge (a rectangular window on a near-ultrasonic tone),
+              // audible where the tone itself is not; this was the reported
+              // "blip after stopping"
+              const og = raw.createGain(); og.gain.value = 0;
+              osc.connect(og); og.connect(streamDest);
+              const t0 = raw.currentTime + 0.06;
+              const w0 = performance.now() + 60;   // wall time of the marker's graph start
+              og.gain.setValueAtTime(0, t0);
+              og.gain.linearRampToValueAtTime(0.02, t0 + 0.02);
+              og.gain.setValueAtTime(0.02, t0 + 0.36);
+              og.gain.linearRampToValueAtTime(0, t0 + 0.4);
+              osc.start(t0); osc.stop(t0 + 0.42);
+              const thr = Math.max(floor * 8, 0.0015);
+              const deadline = performance.now() + 2500;
+              const poll = setInterval(() => {
+                const e = goertzel();
+                if (e > thr) {
+                  clearInterval(poll);
+                  // subtract half the analyser window (the energy crosses the
+                  // threshold once the marker fills part of the buffer)
+                  const lag = Math.max(0, (performance.now() - w0) / 1000 - (an.fftSize / 2 / br.sampleRate));
+                  _slDone = true;
+                  try { localStorage.setItem('bloopsStreamLag', String(Math.min(1.5, lag).toFixed(3))); } catch (x) {}
+                  log('stream lag measured: ' + Math.round(lag * 1000) + ' ms (floor ' + floor.toFixed(5) + ', hit ' + e.toFixed(5) + ')');
+                  try { og.disconnect(); bridgeRefs.bSrc.disconnect(an); } catch (x) {}
+                } else if (performance.now() > deadline) {
+                  clearInterval(poll);
+                  log('stream lag: marker never detected (floor ' + floor.toFixed(5) + ')');
+                  try { og.disconnect(); bridgeRefs.bSrc.disconnect(an); } catch (x) {}
+                }
+              }, 8);
+            }, 350);
+          } catch (e) { log('stream-lag calibration failed: ' + e.message); }
+        };
+        // FULL-LOOP MIC CALIBRATION — the element's render pipeline
+          // (el.currentTime → speaker) is unqueryable from JS and it is the
+          // term that kept the display ahead of the ear after every modeled
+          // fix (bridge hop measured at only 47 ms on-device). While stopped
+          // the element plays the broadcast unmuted at the live edge, so a
+          // marker fired into the graph exits the SPEAKER through the whole
+          // real chain; the mic hears it, and full − mediaLag = the residue.
+          // NEVER PROMPTS: runs only when mic permission is already granted
+          // (the hum features ask for it); otherwise the fallback allowance
+          // below stands.
+        const _calMic = async () => {
+            try {
+              if (_micDone) return;
+              // stored residue = done; clear localStorage bloopsResidue to force
+              // a re-measure (e.g. after moving to Bluetooth)
+              try { const v = parseFloat(localStorage.getItem('bloopsResidue')); if (Number.isFinite(v) && v >= 0) { _micDone = true; return; } } catch (e) {}
+              const eng = (typeof _masterEng !== 'undefined') ? _masterEng : null;
+              if (eng && eng.timer) { log('mic cal skipped (transport running)'); return; }
+              if (document.visibilityState !== 'visible') { log('mic cal skipped (hidden)'); return; }
+              let state = 'unknown';
+              try { const q = await navigator.permissions.query({ name: 'microphone' }); state = q.state; } catch (e) {}
+              if (state !== 'granted') { log('mic cal skipped (permission ' + state + ')'); return; }
+              const mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+              const br = bridgeRefs.bridge;
+              const an = br.createAnalyser(); an.fftSize = 4096;
+              const msrc = br.createMediaStreamSource(mic);
+              msrc.connect(an);
+              const buf = new Float32Array(an.fftSize);
+              const F = 17500;
+              const goe = () => {
+                an.getFloatTimeDomainData(buf);
+                const w = 2 * Math.PI * F / br.sampleRate;
+                let s1 = 0, s2 = 0;
+                for (let i = 0; i < buf.length; i++) { const s0 = buf[i] + 2 * Math.cos(w) * s1 - s2; s2 = s1; s1 = s0; }
+                return Math.sqrt(Math.max(0, s1 * s1 + s2 * s2 - 2 * Math.cos(w) * s1 * s2)) / buf.length;
+              };
+              let floor = 0;
+              const fT = setInterval(() => { floor = Math.max(floor, goe()); }, 30);
+              setTimeout(() => {
+                clearInterval(fT);
+                const osc = raw.createOscillator(); osc.frequency.value = F;
+                // enveloped for the same reason as the stream marker — edge
+                // clicks are the audible part of a near-ultrasonic tone
+                const og = raw.createGain(); og.gain.value = 0;
+                osc.connect(og); og.connect(streamDest);
+                const w0 = performance.now() + 100;
+                const t0 = raw.currentTime + 0.1;
+                og.gain.setValueAtTime(0, t0);
+                og.gain.linearRampToValueAtTime(0.08, t0 + 0.025);
+                og.gain.setValueAtTime(0.08, t0 + 0.55);
+                og.gain.linearRampToValueAtTime(0, t0 + 0.6);
+                osc.start(t0); osc.stop(t0 + 0.62);
+                const thr = Math.max(floor * 6, 0.0012);
+                const deadline = performance.now() + 4000;
+                const poll = setInterval(() => {
+                  const e = goe();
+                  if (e > thr) {
+                    clearInterval(poll);
+                    const full = (performance.now() - w0) / 1000 - (an.fftSize / 2 / br.sampleRate);
+                    const media = (typeof window._bloopsMseMediaLag === 'function') ? window._bloopsMseMediaLag() : 0;
+                    const R = Math.max(0, Math.min(1.2, full - media));
+                    _micDone = true;
+                    try { localStorage.setItem('bloopsResidue', R.toFixed(3)); } catch (x) {}
+                    log('mic cal: full=' + Math.round(full * 1000) + 'ms media=' + Math.round(media * 1000) + 'ms residue=' + Math.round(R * 1000) + 'ms (floor ' + floor.toFixed(5) + ' hit ' + e.toFixed(5) + ')');
+                    try { og.disconnect(); msrc.disconnect(); mic.getTracks().forEach(t => t.stop()); } catch (x) {}
+                  } else if (performance.now() > deadline) {
+                    clearInterval(poll);
+                    log('mic cal: marker not heard (floor ' + floor.toFixed(5) + ') — speaker/AAC may cut 17.5k');
+                    try { og.disconnect(); msrc.disconnect(); mic.getTracks().forEach(t => t.stop()); } catch (x) {}
+                  }
+                }, 8);
+              }, 400);
+            } catch (e) { log('mic cal failed: ' + e.message); }
+        };
+        window.__bloopsCal = () => { _calStream(); setTimeout(() => { _calMic(); }, 3000); };
+        // boot attempt (works when the app is opened and left idle)…
+        setTimeout(window.__bloopsCal, 2500);
         // FOREGROUND / BACKGROUND MODE SWITCH: the broadcast's ~0.6-1 s lag is
         // the price of lock-proof playback — wrong for interactive use (grid
         // taps, auditions all land late). While VISIBLE the mix is audible
@@ -255,25 +472,197 @@
         // playhead reaches not-yet-heard material (a short gap at the
         // handoff, never an echo). EXACTLY ONE route carries the mix in
         // every state. Kill switch: localStorage bloopsFgDirect='0'.
-        let fgEnabled = true;
-        try { fgEnabled = localStorage.getItem('bloopsFgDirect') !== '0'; } catch (e) {}
+        // OFF BY DEFAULT — REQUIREMENT: playback is CONTINUOUS AND SMOOTH
+        // through lock/unlock, and that outranks foreground latency. The
+        // broadcast is the one path that provably rides a lock untouched
+        // (device-validated, 1.00 s/s straight through); fg mode makes every
+        // lock a HANDOFF between two paths offset in time, and a handoff can
+        // be made small but never seamless — three rounds of polishing the
+        // seam (poll → sync unmute → interruption-ordered) each still
+        // audible. Opt back in with localStorage bloopsFgDirect='1' only to
+        // experiment; the latency answer within the broadcast is the modal +
+        // 0.6 s cushion + speaker-synced display, all of which stay.
+        let fgEnabled = false;
+        try { fgEnabled = localStorage.getItem('bloopsFgDirect') === '1'; } catch (e) {}
         if (fgEnabled) try {
           const fgGain = bridgeRefs.bridge.createGain();
           fgGain.gain.value = 0;
           bridgeRefs.bSrc.connect(fgGain); fgGain.connect(bridgeRefs.bDest);
-          const setFg = (on) => {
+          const ramp = (to, secs) => {
             try {
               const t = bridgeRefs.bridge.currentTime;
               fgGain.gain.cancelScheduledValues(t);
               fgGain.gain.setValueAtTime(fgGain.gain.value, t);
-              fgGain.gain.linearRampToValueAtTime(on ? 1 : 0, t + 0.03);
+              fgGain.gain.linearRampToValueAtTime(to, t + secs);
             } catch (e) {}
-            try { if (window._bloopsMseFg) window._bloopsMseFg(on); } catch (e) {}
-            log('audible path → ' + (on ? 'foreground stream (low latency)' : 'broadcast') + ' w=' + (Date.now() % 1000000));
           };
-          document.addEventListener('visibilitychange', () => setFg(document.visibilityState === 'visible'));
-          setFg(document.visibilityState === 'visible');
+          // ORDERING IS THE WHOLE GAME AT A LOCK. The context INTERRUPTION
+          // fires ~150-250 ms BEFORE visibilitychange (flight-measured: 5.07
+          // vs 5.30), and for that window the live stream element was still
+          // the audible path while WebKit's element→speaker pipeline did its
+          // lock transition — the ORIGINAL lock artifact, reintroduced.
+          // So the interruption itself is the hide signal: bail to the
+          // broadcast in the statechange dispatch. And on unlock, the
+          // switchback WAITS 350 ms so the reverse route transition happens
+          // while the transition-immune broadcast is still what you hear.
+          let fgState = null;          // null = before first transition
+          let fgBackTimer = null;
+          const wantFg = () => document.visibilityState === 'visible';
+          const goBg = (why) => {
+            if (fgState === false) return;
+            fgState = false;
+            if (fgBackTimer) { clearTimeout(fgBackTimer); fgBackTimer = null; }
+            ramp(0, 0.012);
+            try { if (window._bloopsMseFg) window._bloopsMseFg(false); } catch (e) {}
+            log('audible path → broadcast [' + why + '] w=' + (Date.now() % 1000000));
+          };
+          const goFg = (why) => {
+            if (fgState === true) return;
+            fgState = true;
+            if (fgBackTimer) { clearTimeout(fgBackTimer); fgBackTimer = null; }
+            try { if (window._bloopsMseFg) window._bloopsMseFg(true); } catch (e) {}
+            ramp(1, 0.12);   // soft entry — a hard cut between two paths 0.6 s apart reads as a glitch
+            log('audible path → foreground stream [' + why + '] w=' + (Date.now() % 1000000));
+          };
+          const backSoon = (why, ms) => {
+            if (fgBackTimer) clearTimeout(fgBackTimer);
+            fgBackTimer = setTimeout(() => { fgBackTimer = null; if (wantFg()) goFg(why); }, ms);
+          };
+          document.addEventListener('visibilitychange', () => {
+            if (wantFg()) backSoon('visible', 350);
+            else goBg('hidden');
+          });
+          fgOnInterrupt = () => { if (fgState !== false) goBg('interrupted'); };
+          // a FOREGROUND interruption with no hide following is spurious (the
+          // tone context is interruption-prone even visible, probe-measured) —
+          // come back once running again, on the same delayed path
+          fgOnRunning = () => { if (fgState === false && wantFg() && !fgBackTimer) backSoon('recovered', 500); };
+          if (wantFg()) goFg('boot'); else goBg('boot');
         } catch (e) { log('fg mode switch FAILED: ' + e.message); }
+        // INTERACTIVE MONITOR — grid presses must sound IMMEDIATELY. While the
+        // transport is STOPPED the broadcast element is hard-paused (the stop
+        // requirement), which made every interactive press on the phone not
+        // late but SILENT. This taps the mix straight to the BRIDGE context's
+        // own destination — no media element, ~30-80 ms — and is connected
+        // ONLY while stopped-and-visible: the broadcast is paused then, so
+        // nothing plays twice, and the switch rides TRANSPORT edges, never
+        // lock edges — while playing the bridge keeps no destination connect
+        // and the lock-continuity invariant is untouched. The 1 s delay + ramp
+        // after the stop edge keeps the engine's ring-out tails (which the
+        // hard stop deliberately silences) from surfacing through the monitor.
+        try {
+          const mon = bridgeRefs.bridge.createGain();
+          mon.gain.value = 0;
+          // high-pass ahead of the speakers: a context suspend/resume freezes
+          // the stream mid-sample and the step's DC content THUMPS — kill it
+          const monHp = bridgeRefs.bridge.createBiquadFilter();
+          monHp.type = 'highpass'; monHp.frequency.value = 28; monHp.Q.value = 0.7;
+          // PRE-MASK source: presses stay audible while the stop gate holds
+          // the broadcast at silence (and can never double into it)
+          const monSrc = window.__bloopsMonTapStream
+            ? bridgeRefs.bridge.createMediaStreamSource(window.__bloopsMonTapStream)
+            : bridgeRefs.bSrc;
+          monSrc.connect(monHp); monHp.connect(mon);
+          let monOn = false, monConnected = false, monTimer = null;
+          // TRANSIENT DUCK — the artifacts the monitor made audible (flight-
+          // measured): the tone context is interrupted by app-switch gestures
+          // (and spontaneously, even in foreground), and each suspend→resume
+          // is a waveform discontinuity through this open speaker path. On any
+          // statechange or visibility flap: hard-zero NOW, ramp back over
+          // 450 ms — the pop lands in the silent window.
+          // SOUND-ACTIVATED GATE — the duck alone was not enough (user-
+          // confirmed): the SUSPEND-instant discontinuity happens BEFORE the
+          // statechange event reaches JS, so a reactive mute always arrives
+          // after the pop it exists to hide. The monitor is therefore CLOSED
+          // by default and opens only around actual interactive notes
+          // (playNote with no _ambEmitKey = a press, never generation): a
+          // 20 ms open ramp on the press, held until the note's end + 2.5 s
+          // of tail, then a 300 ms close. Idle — the exact state app switches
+          // and menu taps happen in — the path is physically silent.
+          let monHoldUntil = 0;
+          monDuck = () => {
+            try {
+              if (!monConnected) return;
+              const t = bridgeRefs.bridge.currentTime;
+              mon.gain.cancelScheduledValues(t);
+              mon.gain.setValueAtTime(0, t);
+              if (monOn && performance.now() < monHoldUntil) mon.gain.linearRampToValueAtTime(1, t + 0.45);
+            } catch (e) {}
+          };
+          document.addEventListener('visibilitychange', () => { try { if (monDuck) monDuck(); } catch (e) {} });
+          try {
+            if (!window.__bloopsMonWrapped && typeof window.playNote === 'function') {
+              window.__bloopsMonWrapped = true;
+              const oPN = window.playNote;
+              window.playNote = function (freq, params, durMs, at) {
+                try {
+                  if (monOn && !window._ambEmitKey) {
+                    // CONNECT ON DEMAND — an armed-but-idle destination connect
+                    // left the bridge with an active output at the lock
+                    // transition, and the session renegotiation POPPED at the
+                    // system level (flight-measured, stop → lock ~10 s later).
+                    // Connected only press-to-tail, idle-stopped keeps exactly
+                    // the graph shape every seamless-lock validation ran with.
+                    if (!monConnected) { try { mon.connect(bridgeRefs.bridge.destination); monConnected = true; } catch (e) {} }
+                    const nowT = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+                    const t2 = (typeof at === 'number' && at > 0) ? at : nowT;
+                    const endIn = Math.max(0, t2 - nowT) + Math.max(0.1, (+durMs || 300) / 1000);
+                    const bt = bridgeRefs.bridge.currentTime;
+                    mon.gain.cancelScheduledValues(bt);
+                    mon.gain.setValueAtTime(mon.gain.value, bt);
+                    mon.gain.linearRampToValueAtTime(1, bt + 0.02);
+                    if (monHoldUntil < performance.now()) log('monitor gate opens (press) w=' + (Date.now() % 1000000));
+                    monHoldUntil = Math.max(monHoldUntil, performance.now() + endIn * 1000 + 2500);
+                  }
+                } catch (e) {}
+                return oPN.apply(this, arguments);
+              };
+            }
+          } catch (e) {}
+          setInterval(() => {
+            let on = null;
+            try { on = (typeof _vinylTransportOn === 'function') ? !!_vinylTransportOn() : null; } catch (e) {}
+            if (on === null) return;
+            const want = !on && document.visibilityState === 'visible';
+            // gate close sweep — every tick: past the hold, ramp shut
+            if (monConnected && monHoldUntil > 0 && performance.now() > monHoldUntil) {
+              try {
+                const t = bridgeRefs.bridge.currentTime;
+                mon.gain.cancelScheduledValues(t);
+                mon.gain.setValueAtTime(mon.gain.value, t);
+                mon.gain.linearRampToValueAtTime(0, t + 0.3);
+              } catch (e) {}
+              monHoldUntil = 0;
+              // fully release the speaker connect once the ramp is done —
+              // idle must carry no output for a lock transition to tick through
+              setTimeout(() => {
+                try { if (monConnected && monHoldUntil === 0) { mon.disconnect(bridgeRefs.bridge.destination); monConnected = false; } } catch (e) {}
+              }, 380);
+            }
+            if (want && !monOn) {
+              monOn = true;
+              monTimer = setTimeout(() => {
+                monTimer = null;
+                if (!monOn) return;
+                // no connect here — the gate connects at the press and
+                // releases after the tail (idle carries no speaker output)
+                window.__BLOOPS_MONITOR_ON = true;
+                log('interactive monitor ARMED (stopped) w=' + (Date.now() % 1000000));
+              }, 1000);
+            } else if (!want && monOn) {
+              monOn = false;
+              if (monTimer) { clearTimeout(monTimer); monTimer = null; }
+              try {
+                const t = bridgeRefs.bridge.currentTime;
+                mon.gain.cancelScheduledValues(t);
+                mon.gain.setValueAtTime(0, t);   // hard cut before the band's first onset
+              } catch (e) {}
+              try { if (monConnected) { mon.disconnect(bridgeRefs.bridge.destination); monConnected = false; } } catch (e) {}
+              window.__BLOOPS_MONITOR_ON = false;
+              log('interactive monitor OFF w=' + (Date.now() % 1000000));
+            }
+          }, 150);
+        } catch (e) { log('interactive monitor FAILED: ' + e.message); }
         // STARTING MODAL: the broadcast cushion makes press-to-sound ~1 s, and
         // that second must be NAMED, not silent. Shown on the transport's
         // off→on edge, hidden the moment the AUDIBLE clock (Tone.now − the
@@ -296,6 +685,7 @@
               const E = (typeof _masterEng !== 'undefined') ? _masterEng : null;
               const on = !!(E && E.timer);
               if (on && !tWasOn) { shownAt = Date.now(); }
+              if (!on && tWasOn) { setTimeout(() => { try { if (window.__bloopsCal) window.__bloopsCal(); } catch (e) {} }, 2200); }
               if (!on) { if (shownAt) { show(false); shownAt = 0; } }
               else if (shownAt) {
                 const lag = (typeof window._bloopsMseOutLag === 'function') ? window._bloopsMseOutLag() : 0;
@@ -306,6 +696,21 @@
                 // wait is still running at 300 ms — the foreground stream
                 // path starts in ~0.1 s and a flashed modal reads as a glitch
                 else if (Date.now() - shownAt > 300) show(true);
+              }
+              // PROJECT SNAPSHOT on the play edge: the phone has no console, so
+              // bloomDump (quiet — no toast/clipboard) is written into the app
+              // container beside the flight log. Harvest with devicectl and
+              // replay with `npm run test:replay` — the in-situ instrument the
+              // hang-era retrospective demands on any repeated "it's broken".
+              if (on && !tWasOn) {
+                setTimeout(() => {
+                  try {
+                    const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+                    const txt = (typeof window.bloomDump === 'function') ? window.bloomDump(true) : null;
+                    if (FS && txt) FS.writeFile({ path: 'bloops-project.json', directory: 'DOCUMENTS', encoding: 'utf8', data: txt })
+                      .then(() => log('project snapshot written (' + (txt.length / 1024).toFixed(1) + ' KB)'), () => {});
+                  } catch (e) {}
+                }, 1200);
               }
               tWasOn = on;
             } catch (e) {}
@@ -355,6 +760,10 @@
     // becomes an argument with a robot.
     let userPaused = false;
     let silencePaused = false;   // battery watchdog released the keep-alive
+    // fg/bg mode-switch hooks — assigned by the MSE-armed block; the
+    // statechange handler is the EARLIEST lock signal and must reach them
+    let fgOnInterrupt = null, fgOnRunning = null;
+    let monDuck = null;   // interactive monitor's transient duck — see the monitor block
 
     const rescue = (why) => {
       try { if (bridge && bridge.state !== 'running' && !userPaused && !silencePaused) bridge.resume(); } catch (e) {}
@@ -374,8 +783,12 @@
       raw.onstatechange = () => {
         log('ctx state → ' + raw.state);
         if (raw.state !== 'running') {
+          try { if (fgOnInterrupt) fgOnInterrupt(); } catch (e) {}
+          try { if (monDuck) monDuck(); } catch (e) {}
           setTimeout(() => rescue('statechange'), 50);
         } else {
+          try { if (fgOnRunning) fgOnRunning(); } catch (e) {}
+          try { if (monDuck) monDuck(); } catch (e) {}
           // Soften the resume seam in the graph. Two DEAD ENDS, both measured
           // on-device, must not return: muting the element (a muted element
           // stops counting as audible playback — the app gets suspended) and

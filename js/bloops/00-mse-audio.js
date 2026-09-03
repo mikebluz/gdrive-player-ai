@@ -230,7 +230,30 @@
     window._bloopsMseFg = (on) => {
       fgMode = !!on;
       if (on) { try { el.muted = true; } catch (e) {} unmuteAtMedia = 0; }
-      else { unmuteAtMedia = Math.max(0.001, ts / 1e6); }
+      else {
+        // HIDE HANDOFF — SYNCHRONOUS, in the visibilitychange dispatch. The
+        // first design waited (muted) for the playhead to reach not-yet-heard
+        // material, polled at 80 ms — but hidden pages throttle timers to
+        // ~1 s, AND iOS pauses a muted media element the instant the app
+        // backgrounds, so the handoff measured on-device as ~0.9 s of
+        // SILENCE followed by a stall-recovery seek that landed 0.4 s behind
+        // the heard boundary ("cut out briefly and stuttered"). Doing it
+        // here: unmute NOW (an audible element is never OS-paused, so there
+        // is no pause/resume seam at all) and seek to bufEnd − 0.6 — the
+        // lock-proven cushion. ~0.6 s of just-heard material replays as the
+        // broadcast takes over: continuity, never silence.
+        try {
+          if (sb.buffered.length) {
+            const end = sb.buffered.end(sb.buffered.length - 1);
+            const target = end - 0.6;
+            if (target > el.currentTime) el.currentTime = target;
+          }
+        } catch (e) {}
+        try { el.muted = false; } catch (e) {}
+        try { if (el.paused && !stopHold && !userHold) { needCushion = false; el.play().catch(() => {}); } } catch (e) {}
+        unmuteAtMedia = 0;
+        log('bg handoff: unmuted synchronously at hide w=' + (Date.now() % 1000000));
+      }
     };
     // LOCK-SCREEN PAUSE/PLAY: the shell suspends the contexts (the piece holds
     // its place), but the broadcast element would otherwise play out its
@@ -270,28 +293,49 @@
     let wasOn = null;
     setInterval(() => {
       try {
-        // hidden-handoff: unmute the broadcast once its playhead reaches the
-        // first material the foreground path never played (paused = silence
-        // anyway, unmute at once so lock-screen play resumes audibly)
-        if (!fgMode && el.muted && unmuteAtMedia
-            && (el.currentTime >= unmuteAtMedia || el.paused)) {
+        // belt: the synchronous hide-handoff owns the unmute; this only
+        // catches a missed visibilitychange (never observed — cheap insurance)
+        // muted now has TWO owners: fg mode AND the stopped state (stop mutes
+        // instead of pausing — fix #18). The belt must never unmute a hold, or
+        // it re-opens the stop 80 ms after every press ("stop isn't immediate").
+        if (!fgMode && el.muted && !stopHold && !userHold && !needCushion) {
           try { el.muted = false; } catch (e) {}
-          log('bg handoff: broadcast unmuted at ' + el.currentTime.toFixed(2) + ' w=' + (Date.now() % 1000000));
-          unmuteAtMedia = 0;
+          log('bg handoff belt: unmuted by poll w=' + (Date.now() % 1000000));
         }
         let on = null;
         try { on = (typeof _vinylTransportOn === 'function') ? !!_vinylTransportOn() : null; } catch (e) {}
         if (on === null) return;
         if (on === false && wasOn === true) {
           stopHold = true; needCushion = false;
-          try { el.pause(); } catch (e) {}
-          log('stop: paused immediately (hard stop) w=' + (Date.now() % 1000000));
+          // THE STOP GATE owns immediacy now: the graph is muted at the mask
+          // (tails cut instantly) and the element KEEPS PLAYING UNMUTED — a
+          // muted-or-paused renderer is what iOS reclassifies at background,
+          // popping the session transition (flight-measured twice). The brief
+          // mute here only covers the ~1 s of already-buffered pre-stop music
+          // while we skip past it; content after the skip is true silence, so
+          // the unmute at +500 ms is inaudible and the stopped state looks
+          // IDENTICAL to playing as far as the session is concerned.
+          try { if (window._bloopsStopGate) window._bloopsStopGate(true); } catch (e) {}
+          // NO SEEK — seeking to the live edge left ~50 ms of buffer against a
+          // ~0.34 s segment batch, the element hit 'ended', and an ENDED
+          // renderer is the "playback finished" signal that makes iOS
+          // re-evaluate the session (flight: stop → ended → interrupted 1.35 s
+          // later = the tick, reintroduced). The element plays THROUGH the
+          // residual buffered music under the cover mute instead: the in-flight
+          // pre-mask audio is ≤ ~0.5 s (tap block + encoder + segment batch),
+          // the cushion stays intact, and nothing ends.
+          try { el.muted = true; } catch (e) {}
+          setTimeout(() => {
+            try { if (stopHold && !fgMode) el.muted = false; } catch (e) {}
+          }, 900);
+          log('stop: gated immediately (element plays through under mute) w=' + (Date.now() % 1000000));
         }
         // PLAY EDGE: everything buffered ahead of the playhead is stale
         // content from before/during the stop — skip it, and rebuild only the
         // small start cushion so sound arrives ~0.6-0.9 s after the press.
         if (on === true && wasOn === false) {
           stopHold = false;
+          try { if (window._bloopsStopGate) window._bloopsStopGate(false); } catch (e) {}
           if (sb.buffered.length) {
             const liveEnd = sb.buffered.end(sb.buffered.length - 1);
             if (liveEnd - 0.05 > el.currentTime) el.currentTime = liveEnd - 0.05;
@@ -311,7 +355,22 @@
         // blip factory in every earlier design (a paused element + a
         // refilling buffer = a deferred tail).
         if (stopHold || userHold) {
-          if (!el.paused) { try { el.pause(); } catch (e) {} }
+          if (userHold) { if (!el.paused) { try { el.pause(); } catch (e) {} } }
+          else {
+            // stopped = the element plays true silence UNMUTED (the stop gate
+            // holds the graph at zero) — never re-mute here, an OS-visible
+            // mute is exactly the reclassification trigger being avoided.
+            // If it somehow ENDED (buffer momentarily drained), re-enter just
+            // behind the live edge — an element left 'ended' is a finished
+            // renderer to the session, the reclassification trigger itself.
+            try {
+              if (el.ended && sb.buffered.length) {
+                const end = sb.buffered.end(sb.buffered.length - 1);
+                if (end > 0.3) el.currentTime = end - 0.3;
+              }
+            } catch (e) {}
+            if (el.paused && document.visibilityState === 'visible') { try { el.play().catch(() => {}); } catch (e) {} }
+          }
           if (sb.buffered.length) {
             const endS = sb.buffered.end(sb.buffered.length - 1);
             const startS = sb.buffered.start(0);
@@ -321,12 +380,17 @@
         }
         if (needCushion && sb.buffered.length) {
           const end0 = sb.buffered.end(sb.buffered.length - 1);
-          if (end0 - el.currentTime >= cushionTarget) { needCushion = false; el.play().catch(() => {}); }
+          if (end0 - el.currentTime >= cushionTarget) {
+            needCushion = false;
+            if (!fgMode) { try { el.muted = false; } catch (e) {} }
+            el.play().catch(() => {});
+          }
         }
         if (++mtick % 20 === 0 && sb.buffered.length) {
           log('MSESTAT elT=' + el.currentTime.toFixed(2)
             + ' bufEnd=' + sb.buffered.end(sb.buffered.length - 1).toFixed(2)
-            + ' seq=' + seq + ' playing=' + !el.paused);
+            + ' seq=' + seq + ' playing=' + !el.paused
+            + ' outLag=' + (window._bloopsMseOutLag ? window._bloopsMseOutLag().toFixed(2) : '?'));
         }
         if (!sb.buffered.length) return;
         const end = sb.buffered.end(sb.buffered.length - 1);
@@ -354,12 +418,26 @@
     // Display code subtracts this so progress bars track what is HEARD.
     window._bloopsMseOutLag = () => {
       try {
+        // the route's physical output latency (Bluetooth is the big case) —
+        // the media-timeline formula below cannot see it, and without it the
+        // display leads the ear by exactly this much on every surface
+        const outLat = (typeof window._bloopsOutputLatency === 'function') ? window._bloopsOutputLatency() : 0;
         // foreground: the audible path is the live bridge stream, not this
         // element — the display should track that (~stream-element latency)
         if (fgMode) return 0.08;
-        const lag = (ts / 1e6) - el.currentTime + (CHUNK / sr);
+        // stopped + interactive monitor: presses are audible ~immediately on
+        // the bridge's direct path — preview highlights etc. must not add the
+        // (paused) broadcast's stale lag
+        if (window.__BLOOPS_MONITOR_ON) return 0.06;
+        const lag = (ts / 1e6) - el.currentTime + (CHUNK / sr) + outLat;
         return Math.max(0, Math.min(8, lag));
       } catch (e) { return 0; }
+    };
+    // raw media-timeline lag (encode head vs element position), NO residue —
+    // the mic calibrator subtracts this from the measured full-loop latency
+    // to isolate the element's unqueryable render-pipeline depth
+    window._bloopsMseMediaLag = () => {
+      try { return Math.max(0, Math.min(8, (ts / 1e6) - el.currentTime + (CHUNK / sr))); } catch (e) { return 0; }
     };
     window._bloopsMseStats = () => ({
       buffered: sb.buffered.length ? +(sb.buffered.end(sb.buffered.length - 1) - el.currentTime).toFixed(2) : null,

@@ -3074,8 +3074,45 @@
 
       const title = document.createElement('div');
       title.className = 'key-picker-title';
-      title.textContent = 'Pick a key';
+      title.textContent = 'Current key';
       modal.appendChild(title);
+
+      // SPELLING READOUT — the current key's notes across the top, with the
+      // interval to the next note falling BETWEEN them (one grid: each note
+      // spans 2 columns on row 1, each gap spans 2 columns on row 2 offset by
+      // one, so the gap sits under the boundary). Closes back to the octave
+      // root (dimmed) so every gap is shown, including the last one home.
+      const spell = document.createElement('div');
+      spell.className = 'key-picker-spell';
+      modal.appendChild(spell);
+      const _IVN = { 1: 'm2', 2: 'M2', 3: 'm3', 4: 'M3', 5: 'P4', 6: 'TT', 7: 'P5' };
+      // one hue per interval size — tension-to-open ramp, all legible on the
+      // dark modal: m2 red, M2 amber, m3 teal, M3 blue, P4 purple, TT pink
+      const _IVC = { 1: '#fc8181', 2: '#f6ad55', 3: '#4fd1c5', 4: '#63b3ed', 5: '#9f7aea', 6: '#ed64a6', 7: '#e9d5ff' };
+      function paintSpell() {
+        const iv = (typeof SCALES !== 'undefined' && SCALES[currentScale]) || null;
+        if (!iv || currentScale === 'chromatic') {
+          spell.innerHTML = '<span class="kps-off">chromatic — all 12 notes, no key</span>';
+          return;
+        }
+        const n = iv.length;
+        const cols = 2 * (n + 1);
+        let h = '<div class="kps-grid" style="grid-template-columns:repeat(' + cols + ',1fr)">';
+        for (let i = 0; i <= n; i++) {
+          const pc = (rootIdx + (i === n ? 12 : iv[i])) % 12;
+          h += '<span class="kps-note' + (i === n ? ' kps-oct' : '') + '" style="grid-row:1;grid-column:' + (2 * i + 1) + ' / span 2">' + CHROMATIC[pc] + '</span>';
+        }
+        for (let j = 0; j < n; j++) {
+          const g = (j === n - 1 ? 12 : iv[j + 1]) - iv[j];
+          h += '<span class="kps-gap" style="grid-row:2;grid-column:' + (2 * j + 2) + ' / span 2;color:' + (_IVC[g] || '#9f7aea') + '">' + (_IVN[g] || (g + 'st')) + '</span>';
+        }
+        spell.innerHTML = h + '</div>';
+      }
+
+      const pickTitle = document.createElement('div');
+      pickTitle.className = 'key-picker-title';
+      pickTitle.textContent = 'Pick a key';
+      modal.appendChild(pickTitle);
 
       const rootsRow = document.createElement('div');
       rootsRow.className = 'key-picker-roots';
@@ -3132,6 +3169,60 @@
         paintActive();
       });
       footer.appendChild(off);
+      // ▶ Preview — play the current key's notes ascending, root to octave.
+      // Interactive audio: straight through playNote on the press (the warm
+      // path), scheduled a fixed grid apart so the run is even.
+      const prev = document.createElement('button');
+      prev.type = 'button';
+      prev.className = 'key-picker-off key-picker-preview';
+      prev.textContent = '▶ Preview';
+      prev.addEventListener('click', () => {
+        try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
+        try {
+          const iv = ((typeof SCALES !== 'undefined' && SCALES[currentScale]) || [0,1,2,3,4,5,6,7,8,9,10,11]).slice();
+          iv.push(12);   // close on the octave
+          const t0 = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() + 0.05 : 0;
+          iv.forEach((semi, i) => {
+            const midi = 60 + rootIdx + semi;   // root at C4
+            const freq = 440 * Math.pow(2, (midi - 69) / 12);
+            try { playNote(freq, { type: 'triangle', volume: 60 }, 240, t0 + i * 0.22); } catch (e) {}
+          });
+          // FEEDBACK, in two clocks. The press reacts NOW (the button lights
+          // for the run) — in the native shell every sound rides the
+          // lock-proof broadcast ~1 s behind the press, and with no instant
+          // visual the button reads as dead. The per-note highlight then
+          // follows the AUDIBLE clock (press + measured broadcast lag, the
+          // same offset the progress bars subtract), so each note in the
+          // spelling lights exactly when it is HEARD. Nodes are re-queried
+          // at fire time — the readout repaints on any tap in between.
+          let lagMs = 50;
+          try { if (typeof window._bloopsMseOutLag === 'function') lagMs = 50 + window._bloopsMseOutLag() * 1000; } catch (e) {}
+          const runMs = iv.length * 220 + 240;
+          prev.classList.add('previewing');
+          // NAME THE WAIT: in the shell the sound is ~1 s away on the
+          // broadcast — until the first note is audible the button counts
+          // itself down and the spelling row pulses, so the gap reads as
+          // "coming" rather than "dead".
+          prev.textContent = '▶ …';
+          spell.classList.add('kps-wait');
+          setTimeout(() => {
+            try { spell.classList.remove('kps-wait'); prev.textContent = '▶ playing'; } catch (e) {}
+          }, lagMs);
+          setTimeout(() => { try { prev.classList.remove('previewing'); prev.textContent = '▶ Preview'; } catch (e) {} }, lagMs + runMs);
+          iv.forEach((semi, i) => {
+            setTimeout(() => {
+              try {
+                const ns = spell.querySelectorAll('.kps-note');
+                if (ns[i]) {
+                  ns[i].classList.add('kps-hot');
+                  setTimeout(() => { try { ns[i].classList.remove('kps-hot'); } catch (e) {} }, 230);
+                }
+              } catch (e) {}
+            }, lagMs + i * 220);
+          });
+        } catch (e) {}
+      });
+      footer.appendChild(prev);
       const close = document.createElement('button');
       close.type = 'button';
       close.className = 'key-picker-close';
@@ -3148,6 +3239,7 @@
         scaleButtons.forEach(b => {
           b.classList.toggle('active', b.dataset.scale === currentScale);
         });
+        try { paintSpell(); } catch (e) {}
       }
       paintActive();
 

@@ -14,6 +14,7 @@
     "test:bounce": "node test/bounce-parity.js",
     "test:arch": "node test/arch-parity.js",
     "test:partseq": "node test/partseq.js",
+    "test:ui": "node test/ui-lifecycle.js",
     "stoch": "node tools/stochastic-matrix.mjs",
     "test:seam": "node test/seam.js",
     "test:replay": "node test/replay.js"

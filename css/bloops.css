@@ -423,6 +423,36 @@
       margin-bottom: 10px;
       flex: 0 0 auto;
     }
+    /* Spelling readout — the picked key's notes with the interval to the next
+       note BETWEEN them (notes row 1, gaps row 2, offset by one grid column).
+       Live: repaints on every root/scale tap. */
+    .key-picker-spell { flex: 0 0 auto; margin: 0 0 10px; min-width: 0; }
+    .key-picker-spell .kps-grid { display: grid; row-gap: 1px; }
+    .key-picker-spell .kps-note {
+      text-align: center; font-weight: 700; font-size: 0.82rem; color: #e9d5ff;
+      min-width: 0; overflow: hidden;
+    }
+    .key-picker-spell .kps-note.kps-oct { opacity: 0.4; font-weight: 400; }
+    .key-picker-spell .kps-gap {
+      text-align: center; font-size: 0.62rem; color: #9f7aea; opacity: 0.8;
+      min-width: 0; overflow: hidden;
+    }
+    .key-picker-spell .kps-off {
+      display: block; text-align: center; font-size: 0.72rem; color: #a0aec0;
+    }
+    /* Preview feedback: the button lights instantly on the press (in the
+       shell the SOUND arrives ~1 s later on the broadcast — without this the
+       button reads as dead), and each note flashes when it is HEARD. */
+    .key-picker-preview:active { transform: scale(0.96); }
+    .key-picker-preview.previewing {
+      color: #0d0d18; background: #9f7aea; border-color: #9f7aea;
+    }
+    .key-picker-spell .kps-note.kps-hot {
+      color: #fff; text-shadow: 0 0 8px #9f7aea, 0 0 2px #fff;
+    }
+    /* the press-to-sound wait: the whole spelling breathes until audio lands */
+    .key-picker-spell.kps-wait .kps-note { animation: kpsWait 0.45s ease-in-out infinite alternate; }
+    @keyframes kpsWait { from { opacity: 1; } to { opacity: 0.3; } }
     .key-picker-roots {
       display: grid;
       grid-template-columns: repeat(12, 1fr);
@@ -2107,7 +2137,7 @@
       /* Cancel the cell's own pointer handling so the grid-level
          fluid handler owns the gesture and doesn't have to fight the
          per-cell pointerdown for the pointer. */
-      touch-action: none;
+      touch-action: pinch-zoom;
     }
     body.fluid-grid .cell-edit-carrot,
     body.fluid-grid .cell-freq,
@@ -2506,7 +2536,7 @@
       padding: 8px; border: 1px solid #2d2d3f; border-radius: 8px; background: #14142a;
       color: #cbd5e0; cursor: pointer; text-align: left; overflow: hidden;
       transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
-      touch-action: none; user-select: none; -webkit-user-select: none;
+      touch-action: pinch-zoom; user-select: none; -webkit-user-select: none;
     }
     @media (hover: hover) { .seq-square:hover { border-color: #4fd1c5; } }
     .seq-square:active { background: #1c1c3a; }
@@ -2899,7 +2929,7 @@
       font-weight: 600; cursor: pointer; }
     .pe-title-ren:hover { border-color: #4fd1c5; color: #4fd1c5; }
     .pe-chords { display: flex; flex-wrap: wrap; gap: 6px; }
-    .pe-chord { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 54px; padding: 6px 8px; border: 1px solid #2d2d3f; border-radius: 8px; background: #1a1a2e; color: #cbd5e0; cursor: pointer; font-weight: 700; touch-action: none; }
+    .pe-chord { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 54px; padding: 6px 8px; border: 1px solid #2d2d3f; border-radius: 8px; background: #1a1a2e; color: #cbd5e0; cursor: pointer; font-weight: 700; touch-action: pinch-zoom; }
     /* Drag-to-reorder (main strip): the lifted chord dims; a purple insertion
        bar marks the drop slot (left edge of the slot's chord, or after the last). */
     .pe-chord.pe-dragging { opacity: 0.55; border-style: dashed; border-color: #9f7aea; }
@@ -3065,7 +3095,7 @@
        so a slightly-off-horizontal drag is never stolen by the page scroller —
        that theft is what made them feel unresponsive on a phone. The pointer
        handler in 17-ambient owns touch/pen gestures; mouse stays native. */
-    .ambient-sl { touch-action: none; height: 28px; }
+    .ambient-sl { touch-action: pinch-zoom; height: 28px; }
     .ambient-sl::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
       width: 26px; height: 26px; border-radius: 50%; background: #cbb7f5;
       border: 2px solid #2a2a40; cursor: grab; }
@@ -4567,6 +4597,48 @@
     .ambient-euclid-kitrow { align-items: flex-start; }   /* wrapped (>16-step) lanes: label hugs the top row */
     .ambient-euclid-kitrow .ambient-euclid-drumlbl { padding-top: 6px; }
     .ambient-euclid-kitrow .ambient-euclid-cells { padding-top: 4px; }
+
+    /* ── LAYER MODEL v2 (18-layer-v2.js) ───────────────────────────────────
+       The drawn-pattern row spans the WHOLE `.ambient-ctrl` grid instead of
+       sitting in its 1fr control column: at 390px a 16-step grid squeezed into
+       that column leaves each cell ~14px. Declared as a CLASS, never inline —
+       the gate owns `display` on these rows and CLEARS the inline style to show
+       one, so an inline `display:block` is wiped the first time the row is
+       re-shown. */
+    .ambient-ctrl.v2-cellrow, .ambient-ctrl.v2-textrow, .ambient-ctrl.v2-skrow { display: block; }
+    .ambient-ctrl.v2-textrow > label { display: block; margin-bottom: 3px; }
+    /* The speech text box: full width, wraps, and 16px so iOS does not zoom the
+       page on focus (and never zoom back) — the documented rule for any field
+       the user types into. */
+    .v2-text { display: block; width: 100%; box-sizing: border-box; font-size: 16px;
+      line-height: 1.35; resize: vertical; min-height: 62px; }
+    .ambient-ctrl.v2-cellrow > label { display: block; margin-bottom: 3px; }
+    /* ONE row of cells here, not eight drum lanes, so there is none of the width
+       pressure that keeps the kit grid's cells at 22px — these can meet the 30px
+       touch floor. */
+    .v2-cells .v2-cell { height: 30px; touch-action: manipulation; }
+    .ambient-ctrl.v2-cellrow > .ambient-hint { display: block; margin-top: 5px; }
+    /* Two doors into a recorded part, side by side. `.ambient-seg-row` has no
+       base rule of its own — every use of it in v1 is scoped to a container —
+       so v2 states the one it needs. */
+    .v2-notesrow .ambient-seg-row { display: inline-flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
+    .v2-notesrow .ambient-seg { min-height: 30px; touch-action: manipulation; }
+    /* A soloed v2 layer, marked on the CARD — solo lives in its ⋯ menu, so
+       without this the state is invisible while the mix is silenced. Solo
+       yellow, matching v1's `.ambient-solo-btn.soloed`. */
+    /* The folded group head carries a summary of what is engaged inside it, so a
+   fold never hides live state (the drum-solo lesson). It must SHRINK rather
+   than push the head wide — `.ambient-grp-head` is a flex row and a long
+   summary would otherwise force horizontal overflow (UI rule 1). */
+.v2-layer .ambient-grp-head { display: flex; align-items: baseline; gap: 8px; }
+.v2-layer .ambient-grp-head .v2-grpsum {
+  flex: 1 1 0; min-width: 0; text-align: right;
+  font-size: .66rem; letter-spacing: 0; text-transform: none;
+  color: #6b6b8c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.v2-layer .ambient-grp-head .v2-grpsum:empty { display: none; }
+.v2-layer.v2-soloed { outline: 1px solid #f0b64a; outline-offset: -1px; }
+    .v2-layer.v2-soloed .ambient-layer-name::after { content: ' S'; color: #f0b64a; font-weight: 700; }
     .ambient-euclid-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .ambient-euclid-barsreadout { color: #9fe0ef; font: 600 0.62rem 'Segoe UI', sans-serif; opacity: 0.9; }
     .ambient-euclid-note { color: #c9b8ef; font: 500 0.6rem 'Segoe UI', sans-serif; opacity: 0.85; }
@@ -6675,8 +6747,13 @@
       /* Tell the browser this element is for play gestures, not scroll —
          it commits to "play" without waiting for movement-direction
          heuristics, which used to leave touchmove + pointer events
-         fighting and stalling page scroll on mobile. */
-      touch-action: none;
+         fighting and stalling page scroll on mobile.
+         `pinch-zoom`, NOT `none`: `none` blocks every browser gesture
+         including TWO-FINGER PINCH, and the grid is the biggest touch surface
+         on the page (measured 69,300px² at 390x820), so most pinches started
+         on a cell and were swallowed — "can't pinch zoom out". `pinch-zoom`
+         still denies single-finger pan, which is the part that mattered. */
+      touch-action: pinch-zoom;
     }
 
     /* ===== PIANO MODE =================================================
@@ -11414,6 +11491,52 @@
       display: flex; gap: 8px; margin-top: 20px; justify-content: flex-end;
     }
 
+    /* ADD-LAYER POPOVER — the Add menu was ~33 showCtxMenu rows, i.e. a tall
+       narrow column that is mostly scrolling on a phone. Same actions, laid out
+       as a wrapping grid of real buttons. Section heads and separators span the
+       full width; the body scrolls VERTICALLY only (horizontal scrolling is
+       banned — the buttons wrap their text instead). */
+    .ambient-addpop { width: min(560px, 94vw); }
+    .ambient-addpop .addpop-body {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+      gap: 6px;
+      max-height: 60vh; overflow-y: auto; overflow-x: hidden;
+      padding-right: 2px;
+    }
+    /* Section heads use the panel's own group-head tokens (.ambient-grp-head). */
+    .ambient-addpop .addpop-head {
+      grid-column: 1 / -1;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.7rem; font-weight: 600;
+      letter-spacing: 0.06em; text-transform: uppercase; color: #7a7a9c;
+      margin: 10px 0 0; padding: 6px 2px;
+    }
+    .ambient-addpop .addpop-head:first-child { margin-top: 0; }
+    .ambient-addpop .addpop-hr {
+      grid-column: 1 / -1; border-top: 1px solid #23233a; margin: 6px 0 0;
+    }
+    /* Buttons follow the HOUSE idiom (.ambient-regen / .ambient-seg): transparent
+       ground, 1px #2d2d3f pill border, muted grey text, PURPLE on hover — never a
+       filled dark box with square corners, which is what the first cut shipped and
+       read as foreign chrome next to every other control in the panel. */
+    .ambient-addpop .addpop-btn {
+      min-height: 44px; padding: 8px 12px;
+      border: 1px solid #2d2d3f; border-radius: 20px;
+      background: transparent; color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.85rem; font-weight: 600;
+      text-align: center; cursor: pointer; transition: all 0.15s ease;
+      white-space: normal; overflow-wrap: anywhere; min-width: 0;
+      display: flex; align-items: center; justify-content: center;
+      touch-action: manipulation;
+    }
+    .ambient-addpop .addpop-btn:hover { border-color: #9f7aea; color: #d6bcfa; }
+    .ambient-addpop .addpop-btn:active { border-color: #b794f4; background: rgba(159,122,234,0.12); }
+    .ambient-addpop .addpop-btn.danger {
+      grid-column: 1 / -1;
+      border-color: rgba(252,129,129,0.42); color: #fc8181; background: transparent;
+    }
+    .ambient-addpop .addpop-btn.danger:hover { border-color: #fc8181; color: #feb2b2; }
+
     /* Drive sample import picker (triggerImportSampleFromDrive). */
     .drv-samp-list {
       max-height: 46vh; overflow-y: auto; margin-top: 6px;
@@ -14419,3 +14542,27 @@
 #ambient-pitchpop .ambient-pitchpop-body .ambient-ctrl-seg > .ambient-hint {
   grid-column: 1 / -1; white-space: normal; overflow-wrap: anywhere; min-width: 0;
 }
+
+    /* ── iOS FOCUS ZOOM ──────────────────────────────────────────────────
+       iOS zooms the page in when a focused TEXT-ENTRY field is under 16px,
+       and — with pinch blocked, as it was on the grid — there is then no way
+       to zoom back out. Reported as "can't pinch zoom out, it zooms in when I
+       don't want it to": two halves of one bug.
+       The 16px floor applies only on a COARSE pointer (so desktop keeps its
+       compact fields) and only to controls that raise a KEYBOARD — `select`
+       shows a picker on modern iOS and does not zoom, and range/checkbox
+       never did, so neither is touched and no layout moves for them. */
+    @media (pointer: coarse) {
+      input[type="text"], input[type="number"], input[type="search"],
+      input[type="tel"], input[type="url"], input[type="email"],
+      input:not([type]), textarea { font-size: 16px; }
+      /* These are set by ID elsewhere (specificity 1,0,0), so they have to be
+         named to be reached — measured, not assumed. */
+      #tempo-input, #perform-countin-bars, #master-freq-input,
+      #xy-x-min, #xy-x-max, #xy-y-min, #xy-y-max { font-size: 16px; }
+      /* Two-class rules outrank the attribute selector above, so they are
+         matched at their own weight (and later in the file). Widened a little
+         so 16px digits still fit the box — measured, not assumed. */
+      .ambient-prog-salt .ambient-salt-in,
+      .ambient-prog-rubato .ambient-salt-in { font-size: 16px; width: 58px; }
+    }

@@ -909,6 +909,42 @@ reverb send is up (a layer that loses its wet signal reads as much quieter, and
 that is a different code path from level); whether it tracks `bloomColdLead`;
 whether it happens on the deployed build as well as locally.
 
+### Retiring Drone + Pedal as TYPES — the three gated behaviours (2026-08-31)
+
+**Status: DONE (2026-08-31) — the three behaviours are ported AND both types are retired from the doors.**
+`_AMB_RETIRED_TYPES` (beside `_AMB_LAYER_SCHEMA`) is read by the Add menu and by `Re-realize as…`.
+Schema entries and the loader stay, so existing projects render and play unchanged. Capability
+keeps a door via two Bed presets: **🕯 Drone** and **⚓ Pedal point**. Four factory presets still
+use the retired types internally (Hiss Bed, Chord Drone, Staccato Stack, Roaming Hold) — A/B'd,
+the mapping is not mechanical, so converting them is a separate tuning decision.
+
+A full audit of `type ===` usage (215 comparisons, ~100 functions) classified as
+**PLUMBING 54 · UI 50 · GATE 40 · DEFAULT 39 · STRUCTURE 7**. The 7 structural findings
+reduce to two axes — *which render body runs* (the `generator` enum) and *where the cycle
+length comes from* (computed · resolved · recorded · rendered). Everything else is a
+preset's job. Measured: a Bed at `density 1, strike -2, lenRatio 100, pitchRule 'stack'`
+is **byte-identical** to a Drone.
+
+Three things a Bed could not express, now ported (all absent-by-default, all five gates green):
+
+1. **Anchor clock** — one strike per progression cycle (the pedal point). The bed branch of
+   `_ambEmitSustain` returns before the drone's anchor path, so this is implemented in the
+   bed's own psi advance via `_ambDronePedalWindow` (the same helper the drone walks), with
+   the onset span sized to the window rather than the chord sub-slot.
+2. **Roam** (`vary`) — an isolated `_ambSeededRand` keyed on (onset, layer, take), never the
+   shared stream.
+3. **`degree`** — the field was always read; it now has a control (plus the primary bind/set).
+
+**Pedal subdivision: PROVEN (2026-08-31).** The dial is `progSubdiv`, not `strike` — under a
+progression a Bed's onsets walk the chord sub-grid, so strike/hold apply only in the non-prog
+branch. `pedal{strike:4, lenRatio:15, degree:1}` and
+`bed{progSubdiv:4, lenRatio:15, pitchRule:'fixed', degree:1, density:1}` are identical over 34
+events (time, pitch, duration; 0 mismatches) once the Bed's Ring floor is 40 ms like the
+Pedal's rather than 80. **Both Drone and Pedal are now fully reachable from a Bed.**
+
+**When removal happens:** remove the DOOR (Add menu + schema), never the loader —
+`type: 'drone'` must keep loading and playing forever, per the additive-only invariant.
+
 ### Sustain-family consolidation: Bed / Drone / Pedal → one type (raised 2026-07-27)
 
 **Status: CLOSED 2026-07-30 — shipped.** The header below said "TBD, analysis done,

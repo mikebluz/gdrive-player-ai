@@ -2450,6 +2450,77 @@
                : 'add a voice a stated interval from the line') +
       '</span></div>';
   }
+  // ── THE PART, DRAWN ─────────────────────────────────────────────────────
+  // A part menu that only lists knobs makes you press a button and then guess.
+  // This is one cycle of what the part actually plays — time across, pitch up —
+  // asked of `notesFor`, the part INTERFACE, so it is the same answer the
+  // emitter gets and works for every kind: live or recorded, pitched or kit,
+  // seeded or composed. It is NOT an `.ambient-ctrl`, which is what keeps it
+  // out of `popTabbables` and therefore visible under EVERY tab of the sheet
+  // rather than belonging to one of them.
+  function partVizHtml() {
+    return '<div class="v2-partviz"><canvas class="v2-vizcv" height="84"></canvas>' +
+           '<span class="v2-vizlab ambient-hint"></span></div>';
+  }
+  function drawPartViz(card, L, E) {
+    const host = card && card.querySelector('.v2-partviz'); if (!host) return;
+    const cv = host.querySelector('.v2-vizcv'), lab = host.querySelector('.v2-vizlab');
+    if (!cv || !cv.getContext) return;
+    const w = Math.max(80, Math.round(cv.clientWidth || host.clientWidth || 300));
+    const h = 84;
+    const dpr = Math.min(3, (window.devicePixelRatio || 1));
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+      cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+      cv.style.width = '100%'; cv.style.height = h + 'px';
+    }
+    const g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    let cfg = null; try { cfg = E.getCfg(); } catch (e) {}
+    if (!cfg) return;
+    let cyc = 2, notes = [];
+    try { cyc = Math.max(0.05, V2.cycleSec(L, cfg)); } catch (e) {}
+    try {
+      notes = V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: 0, cycleSec: cyc }) || [];
+    } catch (e) { notes = []; }
+    // BAR LINES, so the drawing has a scale — without them a busy part and a
+    // sparse one at half the length look the same.
+    const bars = Math.max(1, Math.round((L.part && L.part.bars) || 1));
+    g.strokeStyle = 'rgba(159,122,234,0.16)'; g.lineWidth = 1;
+    for (let i = 0; i <= bars; i++) {
+      const x = Math.round((i / bars) * w) + 0.5;
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+    }
+    const played = notes.filter(n => n && n.freq > 0 && n.at >= -1e-6 && n.at < cyc);
+    if (!played.length) {
+      g.fillStyle = '#6b6b8a'; g.font = '12px -apple-system, Segoe UI, sans-serif';
+      g.fillText('silent for this cycle', 8, h / 2 + 4);
+      if (lab) lab.textContent = (L.part && L.part.kind === 'recorded' ? 'recorded' : 'live') + ' · ' + bars + ' bar' + (bars === 1 ? '' : 's');
+      return;
+    }
+    const mids = played.map(n => 69 + 12 * Math.log2(n.freq / 440));
+    let lo = Math.min(...mids), hi = Math.max(...mids);
+    if (hi - lo < 4) { const mid = (hi + lo) / 2; lo = mid - 2; hi = mid + 2; }
+    const pad = 8, span = Math.max(1, hi - lo);
+    for (let i = 0; i < played.length; i++) {
+      const n = played[i];
+      const x = (n.at / cyc) * w;
+      const dw = Math.max(3, ((Math.max(20, n.durMs || 0) / 1000) / cyc) * w);
+      const y = pad + (1 - (mids[i] - lo) / span) * (h - pad * 2 - 6);
+      g.fillStyle = 'rgba(159,122,234,0.55)';
+      g.strokeStyle = '#d6bcfa'; g.lineWidth = 1;
+      const ww = Math.min(dw, w - x);
+      g.beginPath();
+      if (g.roundRect) g.roundRect(x, y, ww, 6, 3); else g.rect(x, y, ww, 6);
+      g.fill(); g.stroke();
+    }
+    if (lab) {
+      lab.textContent = (L.part && L.part.kind === 'recorded' ? 'recorded' : 'live') + ' · ' +
+        played.length + ' note' + (played.length === 1 ? '' : 's') + ' · ' + bars + ' bar' + (bars === 1 ? '' : 's') +
+        ' · ' + (Math.round(cyc * 10) / 10) + 's';
+    }
+  }
+
   const RHYTHM_OPTS = [['pulse', 'Pulse — evenly'], ['euclid', 'Pattern — a grid you edit'],
                        ['chance', 'Chance — scattered']];
   // What the select should SHOW for a given kind. A `<select>` whose value
@@ -2833,6 +2904,9 @@
         ) +
         // ── PART — live or recorded, and how long a pass is ───────────────
         grpOpen('Part', true,
+          // FIRST, so pressing a seed button and seeing the result is one glance
+          // rather than a toast and a guess.
+          partVizHtml() +
           sel(L, 'part.kind', 'Part', p.kind, [['live', 'Live — made as it plays'], ['recorded', 'Recorded — notes read back']]) +
           sel(L, 'part.clock', 'Cycle', p.clock === 'free' ? 'free' : 'bars',
               [['bars', 'Bars — follows the grid'], ['free', 'Free — its own clock']]) +
@@ -3446,6 +3520,10 @@
     // sets `display:block` from a class, which outranks the UA's `[hidden]` rule
     // (the documented trap \u2014 `el.hidden = true` alone hid nothing until
     // `.ambient-seedgrid-slot[hidden]` was added), so `hidden` is honoured.
+    // THE PART DRAWING repaints here because `applyGate` is the one pass that
+    // runs after every render AND every control change — the two moments the
+    // part can have moved. Cheap: one `notesFor` call over a single cycle.
+    try { drawPartViz(card, L, _cardE); } catch (e) {}
     const dock = card.querySelector('.v2-dock');
     if (dock) {
       let open = false;

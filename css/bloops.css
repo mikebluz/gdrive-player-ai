@@ -14678,6 +14678,15 @@
    other button here is a transparent pill. One exception, one meaning: this is
    the button that makes SOUND. */
 .v2-pop-foot { flex: 0 0 auto; padding: 6px 14px calc(14px + env(safe-area-inset-bottom)); }
+/* THE PART, DRAWN — one cycle of what it plays, above the sheet's tabs. Not an
+   .ambient-ctrl on purpose: that is what keeps it out of the tab filter, so it
+   stays visible whichever tab you are on. */
+.v2-partviz {
+  display: block; margin: 2px 0 8px; padding: 6px 8px 4px;
+  border: 1px solid #23233a; border-radius: 10px; background: #0f0f1a;
+}
+.v2-partviz .v2-vizcv { display: block; width: 100%; height: 84px; }
+.v2-partviz .v2-vizlab { display: block; margin-top: 3px; font-size: 0.7rem; }
 .v2-pop-preview {
   width: 100%; min-height: 54px; border: none; border-radius: 27px;
   background: linear-gradient(135deg, #7c5ce0, #b06ae8 55%, #d66ad8);

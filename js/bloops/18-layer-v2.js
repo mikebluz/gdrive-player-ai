@@ -2028,11 +2028,6 @@
   // stop AND unconditionally before every start — which is what makes
   // stacking impossible by construction: a re-press (the natural reaction to
   // a slow first press) replaces the preview instead of piling on it.
-  // `reopenSec` is WHEN the gate comes back, and the two callers want opposite
-  // things. A STOP wants it late: the reverb send taps PRE-gate, so an early
-  // reopen lets the tail back through and the stop reads as slow (measured
-  // 233 ms with a 75 ms reopen against 115 ms with a late one). A START wants
-  // it early — before its own notes land at +0.12, or it swallows them.
   // WHAT IS SOUNDING, tracked rather than guessed — see `previewing()`.
   let PV = null;
   // WHICH CYCLE THE PREVIEW PLAYED. A LIVE part re-rolls every cycle (the seeded
@@ -2057,40 +2052,32 @@
             (t.harm || []).map(h => h && h.deg).join('/'),
             sh.lenRatio, sh.holdSteps, (p.notes || []).length].join(',');
   }
-  function previewKill(E, L, reopenSec) {
-    return previewKillKey(E, 'v2:' + L.id, reopenSec);
+  // KILL a layer's preview audio, click-free: dip the chain gate (a raw voice
+  // stop can click — rule 3), cancel everything not yet sounding, stop
+  // everything that is. Called on an explicit stop AND unconditionally before
+  // every start, which is what makes stacking impossible by construction.
+  function previewKill(E, L) {
+    return previewKillKey(E, 'v2:' + L.id);
   }
-  function previewKillKey(E, key, reopenSec) {
+  function previewKillKey(E, key) {
     const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
-    // HOW LONG THE GATE STAYS SHUT ON A STOP: until this preview's OWN material
-    // is over, not a fixed 0.35 s. Not everything a preview spawns is a
-    // cancellable voice — a speech/sample BUFFER source is only MASKED by the
-    // gate — so an early reopen reveals whatever is left and the layer "comes
-    // back after stopping briefly, then cuts out" (reported). Bounded, so a
-    // stop can never park the gate shut indefinitely.
-    const left = (PV && PV.key === key) ? (PV.until - now) : 0;
-    const ro = Number.isFinite(reopenSec) ? reopenSec
-             : Math.min(12, Math.max(0.35, left));
     if (PV && PV.key === key) PV = null;
     const e = E.mod && E.mod[key];
+    // BACK TO THE SIMPLE DIP, deliberately. This grew a remembered pre-dip
+    // value, a clearing timer and a reopen time computed from the preview's
+    // own length (up to 12 s) — chasing a stop that measured 87 ms down to
+    // 66 ms. That is not worth a gate that can be left shut: every one of
+    // those pieces is a way for the layer to end up muted with nothing to
+    // reopen it, which is what "preview stopped playing after 2 or 3 presses"
+    // is. What actually silences a stop is the cancel and the voice stop
+    // below; the dip only covers the click. Two scheduled events, no state
+    // that can outlive them, and the layer is always audible again 85 ms later.
     try {
       const g = e && e.gate && e.gate.gain;
       if (g) {
-        // RESTORE WHAT THE GATE ACTUALLY WAS, not a hardcoded 1 — reopening to
-        // 1 un-mutes a muted layer, and a re-press 5 ms into a dip would
-        // "restore" the dip itself and leave the layer quiet. Remembered once
-        // per dip and released after the reopen has landed.
-        if (!Number.isFinite(e.__pvGate)) e.__pvGate = g.value;
-        const back = e.__pvGate;
-        // A LINEAR ramp reaches silence when it says it does; setTargetAtTime
-        // is exponential and only asymptotes, which is most of the 87 ms this
-        // measured before. 12 ms is still click-free (rule 3's ≥10 ms floor).
         g.cancelScheduledValues(now);
-        g.setValueAtTime(g.value, now);
-        g.linearRampToValueAtTime(0, now + 0.012);
-        g.setValueAtTime(0, now + ro);
-        g.linearRampToValueAtTime(back, now + ro + 0.025);
-        setTimeout(() => { try { e.__pvGate = undefined; } catch (x) {} }, (ro + 0.15) * 1000);
+        g.setTargetAtTime(0, now, 0.006);
+        g.setTargetAtTime(1, now + 0.07, 0.015);
       }
     } catch (x) {}
     try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, now); } catch (x) {}
@@ -2118,16 +2105,22 @@
     // ANOTHER LAYER'S preview is still sounding — kill it too, or previewing a
     // second layer leaves the first one running underneath (the old code reset
     // its LABEL and never touched its audio).
-    if (PV && PV.key !== key) { try { previewKillKey(E, PV.key, 0.06); } catch (e) {} }
-    previewKill(E, L, 0.06);   // early reopen — this press's own notes land at +0.12
+    if (PV && PV.key !== key) { try { previewKillKey(E, PV.key); } catch (e) {} }
+    previewKill(E, L);
     // The chain must exist for `_ambLayerDest` to route into — but ONLY build
     // it when it is missing. `_ambSyncMods` walks every layer (21.5 ms
     // measured) and rebuilds chains, and rebuilding a chain whose tail is
     // still ringing pops (the documented shared-chain rule) — which a
     // re-press does every time.
-    try {
-      if (typeof _ambSyncMods === 'function' && !(E.mod && E.mod[key])) _ambSyncMods();
-    } catch (e) {}
+    // UNCONDITIONALLY. Making this conditional on a missing chain saved 21 ms
+    // and risked silence for it: the first preview after adding a layer measured
+    // PEAK 0, because "the chain exists" is not the same as "the chain is
+    // current" — a bus change, an FX change or a teardown elsewhere leaves a
+    // stale one. Rebuilding here is also safe by construction rather than by
+    // luck: `previewKill` above has just dipped this layer's gate, so this is
+    // mute → change the graph → unmute, which is exactly the protocol
+    // `_ambReconfigSharedQuiet` exists to describe.
+    try { if (typeof _ambSyncMods === 'function') _ambSyncMods(); } catch (e) {}
     const t0 = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + 0.12;
     const sec = Math.min(cycSecOf(L, cfg), PV_MAX_SEC);
     // THE FIRST NOTE LANDS ON THE PRESS, not the cycle's first pulse. Anchoring
@@ -2223,7 +2216,16 @@
     if (n) PV = { id: L.id | 0, key, until: (endAt > 0 ? endAt : t0 + sec) + PV_TAIL };
     return n;
   }
-  const PV_TAIL = 1.2;
+  // HOW LONG A PRESS STILL MEANS "STOP". `endAt` is already the last note's own
+  // end, so this is only the slack between scheduling and hearing — NOT a
+  // guess at the release tail. It was 1.2 s on top of endAt, which on a 4-bar
+  // part left a press meaning STOP for 11.7 s against 8 s of sound: for
+  // seconds after it had finished, pressing Preview silently stopped instead
+  // of playing, reported as "preview stopped playing after 2 or 3 presses".
+  // Overshoot is not free after all — it just moves the dead press from one
+  // edge to the other. The original bug (a press RESTARTING while notes were
+  // still scheduled) stays fixed because `until` is still >= the last note.
+  const PV_TAIL = 0.15;
   // IS THIS LAYER'S PREVIEW STILL SOUNDING? The button asks this instead of
   // running its own timer, so what the label says and what a press DOES can
   // never disagree.

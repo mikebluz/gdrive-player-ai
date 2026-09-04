@@ -82,7 +82,7 @@ echo "📦 Staging files..."
 # img/ is REQUIRED by index.html — it holds the pixel-art wallpaper, the live
 # photo and the handwritten wordmark. Without it the desktop ships as a flat
 # green field with three broken images.
-cp -r index.html bloops.html player.html artwork.html game.html tracks.html notepad.html css js img audio banner.jpg me2026.jpg samples artwork vendor "$STAGE_DIR/"
+cp -r index.html bloops.html player.html artwork.html game.html tracks.html notepad.html chords.html css js img audio banner.jpg me2026.jpg samples artwork vendor "$STAGE_DIR/"
 # Caching policy (HTML revalidates every load; versioned assets cache long) —
 # without it, phones cache stale HTML pointing at old ?v= assets and boot dies.
 cp .htaccess "$STAGE_DIR/"

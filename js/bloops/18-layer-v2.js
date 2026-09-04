@@ -436,6 +436,16 @@
       ['stutter'].forEach((k2) => {
         if (Number.isFinite(t[k2]) && t[k2] > 0) t[k2] = clamp(t[k2], 0, 100); else delete t[k2];
       });
+      // HARMONY PARTS — a list, so a line can carry a 3rd AND a 6th. Each entry
+      // is an interval in SOURCE TONES (signed: negative harmonises below).
+      // Absent is the default and an emptied list is DELETED, so "no harmony"
+      // has one representation and an untouched layer stores nothing.
+      if (Array.isArray(t.harm)) {
+        t.harm = t.harm
+          .map((h) => (h && Number.isFinite(+h.deg)) ? { deg: clamp(+h.deg | 0, -14, 14) } : null)
+          .filter((h) => h && h.deg);
+        if (!t.harm.length) delete t.harm;
+      } else if (t.harm != null) delete t.harm;
       // CHORD VOICING — absent = the simple stack, so all four are stored only
       // once a mode is chosen and an untouched layer carries none of them.
       if (['chaos', 'chords', 'chordsplus', 'monk'].indexOf(t.chordMode) < 0) {
@@ -485,6 +495,15 @@
       // Absent = bars, so a project made before free cycles existed is
       // byte-identical and `part.ms` is stored only once it is chosen.
       if (p.clock !== 'free') { delete p.clock; delete p.ms; }
+      // LOOP = N PASSES OF A PART. v1 expresses the binding as `write.bars`,
+      // which v2 has no concept of and deletes — so the binding was written by
+      // `_ambLenSyncApplyAll` and wiped on the same normalize, and v2's cycle
+      // came only from `part.bars`. In v2 the CYCLE *is* the loop length, so
+      // the binding lands there directly (reconciled in `normalizeAll`, which
+      // has the cfg the part length needs). Absent = unbound, as before.
+      if (L.lenSync && Number.isFinite(+L.lenSync.passes)) {
+        L.lenSync = { part: (L.lenSync.part | 0), passes: clamp(+L.lenSync.passes | 0, 1, 64) };
+      } else if (L.lenSync != null) delete L.lenSync;
       else p.ms = clamp(Math.round(Number.isFinite(p.ms) ? p.ms : 2000), 200, 60000);
       // THE UNIT MIRROR. v1 indexes several things by a layer's `unit` — a bar
     // RATIO — and `unitGate` is one of them, so without this a v2 layer's unit
@@ -676,8 +695,51 @@
     return Math.round(mem.prev + (k - mem.prev) * (1 - prox / 100));
   }
 
-  // Stage 2 — PITCH: what one onset plays, as MIDI numbers.
+  // HARMONY PARTS — the line, plus one or more voices a stated interval above
+  // (or below) it. `part.pitch.harm` is a list, so a run can carry a 3rd AND a
+  // 6th; absent (the default) means nothing runs and every existing layer is
+  // byte-identical. NOT called `harmony`: `L.harmony` already means how a
+  // RECORDED part follows the changes (fixed/diatonic/chordlock), and one word
+  // for two mechanisms is how a control gets misread (the naming rule).
+  //
+  // Intervals are in SOURCE TONES, not semitones, so a 3rd above stays a 3rd
+  // IN THE KEY — the harmony bends with the scale the way a second player
+  // would, instead of running parallel chromatically. The note's own degree is
+  // recovered from the tone set, so this works for every pitch kind rather
+  // than needing a branch inside each.
+  function applyHarm(part, E, cfg, at, reg, out, L) {
+    const hs = part.pitch && part.pitch.harm;
+    if (!Array.isArray(hs) || !hs.length || !out.length) return out;
+    const set = toneSetAt(E, cfg, at, L);
+    const N = Math.max(1, set.ivs.length);
+    const base = 12 * (reg + 1) + set.root;
+    const add = [];
+    for (let i = 0; i < out.length; i++) {
+      const rel = out[i] - base;
+      const oct = Math.floor(rel / 12);
+      const pc = ((rel % 12) + 12) % 12;
+      const d = set.ivs.indexOf(pc);
+      for (let j = 0; j < hs.length; j++) {
+        const h = hs[j]; if (!h) continue;
+        const st = h.deg | 0;
+        if (!st) continue;
+        if (d < 0) { add.push(out[i] + st); continue; }   // off-set note: semitones
+        const dd = d + st;
+        const w = Math.floor(dd / N);
+        add.push(base + 12 * (oct + w) + set.ivs[((dd % N) + N) % N]);
+      }
+    }
+    for (let i = 0; i < add.length; i++) if (add[i] > 0) out.push(add[i]);
+    return out;
+  }
+  // Stage 2 — PITCH: what one onset plays, as MIDI numbers. The harmony pass
+  // rides on top of whatever the kind produced (declarations hoist, so the
+  // wrapper may sit above the body it calls).
   function pitchesAt(part, E, cfg, at, reg, ctxSeed, idx, mem, L) {
+    const out = pitchesBase(part, E, cfg, at, reg, ctxSeed, idx, mem, L);
+    try { return applyHarm(part, E, cfg, at, reg, out, L); } catch (e) { return out; }
+  }
+  function pitchesBase(part, E, cfg, at, reg, ctxSeed, idx, mem, L) {
     const t = part.pitch, set = toneSetAt(E, cfg, at, L);
     const N = Math.max(1, set.ivs.length);
     const base = 12 * (reg + 1) + set.root;               // register → MIDI octave
@@ -1437,6 +1499,23 @@
       snapshot: { ev: [], loopLen: 0 }, sig: sig0, startSig: sig0, timer: null,
     };
     window._bloomGridKey = key;                          // _placeLaneExpander resolves the dock by this
+    // COVER THE PASS, exactly as v1 does at its own session start. Without it a
+    // phrase shorter than the pass leaves the later chord blocks with NO steps
+    // to edit — the chord ruler draws them and they are dead. Padding with
+    // rests is what makes "compose per change" work, and it is the same call
+    // v1 makes; it only ever ADDS, so a phrase longer than the pass is left be.
+    // …but the PAD half only. `_ambGridPadAndCommit` also COMMITS — it calls
+    // `_ambStepsToLock` and sets `frozen`/`_lock` on the key, and a freeze on a
+    // v2 key outranks the live pipeline (`_ambFreezeGate` returns handled), so
+    // the layer goes silent for good. Caught by test:ui: 21 v2 emission checks
+    // dropped to n=0, the same signature as the compose-flush regression.
+    // v2 commits through `composeCommit`, so it needs the padding and nothing
+    // else. Re-render so the freshly padded steps are what the strip mirrors.
+    try {
+      if (typeof _ambGridPadLaneToPass === 'function') _ambGridPadLaneToPass(E, _bloomGridEdit);
+      if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane();
+      if (typeof renderSequence === 'function') renderSequence();
+    } catch (e) {}
     const idx = lanes.length - 1;
     try { if (typeof activateLane === 'function') activateLane(idx); else activeLaneIdx = idx; } catch (e) { activeLaneIdx = idx; }
     try { _laneExpanderOpen = true; } catch (e) {}
@@ -1944,15 +2023,47 @@
   // stop AND unconditionally before every start — which is what makes
   // stacking impossible by construction: a re-press (the natural reaction to
   // a slow first press) replaces the preview instead of piling on it.
-  function previewKill(E, L) {
-    const key = 'v2:' + L.id;
+  // `reopenSec` is WHEN the gate comes back, and the two callers want opposite
+  // things. A STOP wants it late: the reverb send taps PRE-gate, so an early
+  // reopen lets the tail back through and the stop reads as slow (measured
+  // 233 ms with a 75 ms reopen against 115 ms with a late one). A START wants
+  // it early — before its own notes land at +0.12, or it swallows them.
+  // WHAT IS SOUNDING, tracked rather than guessed — see `previewing()`.
+  let PV = null;
+  function previewKill(E, L, reopenSec) {
+    return previewKillKey(E, 'v2:' + L.id, reopenSec);
+  }
+  function previewKillKey(E, key, reopenSec) {
     const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+    // HOW LONG THE GATE STAYS SHUT ON A STOP: until this preview's OWN material
+    // is over, not a fixed 0.35 s. Not everything a preview spawns is a
+    // cancellable voice — a speech/sample BUFFER source is only MASKED by the
+    // gate — so an early reopen reveals whatever is left and the layer "comes
+    // back after stopping briefly, then cuts out" (reported). Bounded, so a
+    // stop can never park the gate shut indefinitely.
+    const left = (PV && PV.key === key) ? (PV.until - now) : 0;
+    const ro = Number.isFinite(reopenSec) ? reopenSec
+             : Math.min(12, Math.max(0.35, left));
+    if (PV && PV.key === key) PV = null;
     const e = E.mod && E.mod[key];
     try {
-      if (e && e.gate && e.gate.gain) {
-        e.gate.gain.cancelScheduledValues(now);
-        e.gate.gain.setTargetAtTime(0, now, 0.006);
-        e.gate.gain.setTargetAtTime(1, now + 0.07, 0.015);
+      const g = e && e.gate && e.gate.gain;
+      if (g) {
+        // RESTORE WHAT THE GATE ACTUALLY WAS, not a hardcoded 1 — reopening to
+        // 1 un-mutes a muted layer, and a re-press 5 ms into a dip would
+        // "restore" the dip itself and leave the layer quiet. Remembered once
+        // per dip and released after the reopen has landed.
+        if (!Number.isFinite(e.__pvGate)) e.__pvGate = g.value;
+        const back = e.__pvGate;
+        // A LINEAR ramp reaches silence when it says it does; setTargetAtTime
+        // is exponential and only asymptotes, which is most of the 87 ms this
+        // measured before. 12 ms is still click-free (rule 3's ≥10 ms floor).
+        g.cancelScheduledValues(now);
+        g.setValueAtTime(g.value, now);
+        g.linearRampToValueAtTime(0, now + 0.012);
+        g.setValueAtTime(0, now + ro);
+        g.linearRampToValueAtTime(back, now + ro + 0.025);
+        setTimeout(() => { try { e.__pvGate = undefined; } catch (x) {} }, (ro + 0.15) * 1000);
       }
     } catch (x) {}
     try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, now); } catch (x) {}
@@ -1977,18 +2088,45 @@
         return 0;
       }
     } catch (e) {}
-    previewKill(E, L);
-    // the chain must exist for `_ambLayerDest` to route into — cheap when it
-    // already does, and a preview through the default bus is not a preview
-    try { if (typeof _ambSyncMods === 'function') _ambSyncMods(); } catch (e) {}
+    // ANOTHER LAYER'S preview is still sounding — kill it too, or previewing a
+    // second layer leaves the first one running underneath (the old code reset
+    // its LABEL and never touched its audio).
+    if (PV && PV.key !== key) { try { previewKillKey(E, PV.key, 0.06); } catch (e) {} }
+    previewKill(E, L, 0.06);   // early reopen — this press's own notes land at +0.12
+    // The chain must exist for `_ambLayerDest` to route into — but ONLY build
+    // it when it is missing. `_ambSyncMods` walks every layer (21.5 ms
+    // measured) and rebuilds chains, and rebuilding a chain whose tail is
+    // still ringing pops (the documented shared-chain rule) — which a
+    // re-press does every time.
+    try {
+      if (typeof _ambSyncMods === 'function' && !(E.mod && E.mod[key])) _ambSyncMods();
+    } catch (e) {}
     const t0 = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + 0.12;
     const sec = Math.min(cycSecOf(L, cfg), PV_MAX_SEC);
+    // THE FIRST NOTE LANDS ON THE PRESS, not the cycle's first pulse. Anchoring
+    // the CYCLE at t0 means a part whose pattern starts on step 2 of 8 opens
+    // with two empty steps — measured 1193 ms of silence after the press on a
+    // default euclid layer, which is the reported lag. `notesFor` is the part
+    // INTERFACE, so asking it where the first note falls costs one pure call
+    // and works for every part kind (live, recorded, drawn, speech). The
+    // offset is anchor-INDEPENDENT (verified: identical at five different
+    // cycle starts), so one probe places it exactly.
+    let off = 0;
+    try {
+      const probe = notesFor(L, { E, cfg, key, cycleStart: t0, cycleSec: sec });
+      let m = Infinity;
+      for (let i = 0; i < probe.length; i++) {
+        const n = probe[i];
+        if (n && n.freq > 0 && n.at < m) m = n.at;
+      }
+      if (Number.isFinite(m) && m > t0) off = Math.min(m - t0, sec);
+    } catch (e) {}
     if (!E._v2Phase) E._v2Phase = {};
     const saved = E._v2Phase[key];
     // a pre-made phase state pins the anchor to NOW and skips the grid snap —
     // a stale `_barGridAnchor` from the last play would land the notes in the
     // past (the frozen-restore lesson, one store over)
-    E._v2Phase[key] = { startAt: t0, lastAt: null };
+    E._v2Phase[key] = { startAt: t0 - off, lastAt: null };
     // A MAPPED-PHRASE FREEZE is parked for the preview's duration: replaying
     // it here would advance its `scheduledUpto` against preview time and
     // desync the next real play — the state-leak class this function exists
@@ -1996,7 +2134,7 @@
     // playback.
     const savedFs = E.freeze && E.freeze[key];
     if (savedFs) delete E.freeze[key];
-    let n = 0;
+    let n = 0, endAt = 0;
     const orig = (typeof playNote === 'function') ? playNote : null;
     // THE MARKER SINK — the first build installed NO sink, and the preview was
     // SILENT with core strips on: a v2 note's emit key is stamped BY the
@@ -2013,7 +2151,17 @@
     try {
       // count what actually reaches playNote — the return value is the gate's
       // evidence, and "fired" from the emitter's own bookkeeping is not it
-      if (orig) window.playNote = function () { n++; return orig.apply(this, arguments); };
+      if (orig) window.playNote = function (f, params, dur, at) {
+        n++;
+        // WHEN THE AUDIO REALLY ENDS. The button used to reset itself on a
+        // GUESS (cycleSec + 600 ms), which expired 741 ms before the last note
+        // finished — so the "stop" press landed on a button that had already
+        // flipped back to Preview and RESTARTED instead (the reported "it keeps
+        // playing after stop"). A note's own end is not a guess.
+        const a = +at || 0, d = (+dur || 0) / 1000;
+        if (a + d > endAt) endAt = a + d;
+        return orig.apply(this, arguments);
+      };
       window._ambCaptureSink = function (freq, params, dur, at) {
         window._ambEmitKey = key; window._ambEmitAt = at;
       };
@@ -2040,13 +2188,108 @@
       if (saved) E._v2Phase[key] = saved; else delete E._v2Phase[key];
       if (savedFs) { if (!E.freeze) E.freeze = {}; E.freeze[key] = savedFs; }
     }
+    // PV_TAIL covers what a note's `dur` does not: the voice's own release and
+    // the reverb, which taps PRE-gate and rings on. Overshooting is harmless
+    // (a press just stops something already quiet); undershooting is the bug
+    // this replaced, so it is deliberately generous.
+    if (n) PV = { id: L.id | 0, key, until: (endAt > 0 ? endAt : t0 + sec) + PV_TAIL };
     return n;
+  }
+  const PV_TAIL = 1.2;
+  // IS THIS LAYER'S PREVIEW STILL SOUNDING? The button asks this instead of
+  // running its own timer, so what the label says and what a press DOES can
+  // never disagree.
+  function previewing(L) {
+    if (!PV || !L || PV.id !== (L.id | 0)) return false;
+    const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+    if (now >= PV.until) { PV = null; return false; }
+    return true;
+  }
+  function previewLeftSec(L) {
+    if (!previewing(L)) return 0;
+    const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+    return Math.max(0, PV.until - now);
+  }
+
+  // ── 🎲 ROLL A RUN — v1's Riff, in v2's vocabulary ────────────────────────
+  // v1's Riff is a LIVE generator whose line comes out of a seeded roll; you
+  // re-roll it with New take. v2 can already express exactly that shape — the
+  // v1 importer maps run/riff to `rhythm: pulse|euclid` + `pitch: walk` — but
+  // there was no one press that PRODUCES one, so a v2 layer could only be
+  // dialled in knob by knob. This rolls the whole shape at once and leaves it
+  // LIVE, so Preview auditions it and New take keeps re-realising it.
+  //
+  // Rolled with `Math.random` at UI time, NEVER the seeded `_ambRand` stream —
+  // the documented split that keeps the invariant harness byte-identical
+  // (a draw taken from the shared stream shifts every downstream draw).
+  // THE PART ARCHETYPES. v2 answers "what kind of part is this?" with two
+  // independent selects (Rhythm kind × Pitch kind) — powerful, but only if you
+  // already know which combinations make a pad and which make an arpeggio.
+  // These are the doors: one press sets the whole shape, and the components
+  // underneath stay exactly as they were for tuning afterwards.
+  const _ri = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+  const _pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  // SUSTAINED — one onset per cycle, held. Poly by default because that is the
+  // pad case; Voices 1 makes it the mono one, which is why there is one door
+  // and not two (the Voices control already says which).
+  function makeSustainFn(E, L, poly) {
+    if (!L || !L.part) return null;
+    const p = L.part;
+    p.kind = 'live';
+    p.rhythm = { kind: 'pulse', n: 1, steps: 16 };
+    p.pitch = { kind: 'chord', voices: poly === false ? 1 : 3, degree: 1 };
+    // 100% = the note fills its whole onset span, i.e. it holds until the next
+    // one. `holdSteps` stays 0 so Length is what governs it (v2's own rule).
+    p.shape = Object.assign({}, p.shape, { lenRatio: 100, holdSteps: 0 });
+    try { E.getCfg(); } catch (e) {}
+    return { voices: p.pitch.voices, bars: p.bars };
+  }
+  // ARPEGGIO — `series` sweeps the chord one tone per onset, which is what an
+  // arpeggiator is; the rhythm grid decides the speed and the pattern.
+  function makeArpFn(E, L) {
+    if (!L || !L.part) return null;
+    const p = L.part;
+    p.kind = 'live';
+    p.rhythm = { kind: 'pulse', n: 8, steps: 16 };
+    p.pitch = { kind: 'series', dir: 'up', octaves: 2, degree: 1 };
+    p.shape = Object.assign({}, p.shape, { lenRatio: 70, holdSteps: 0 });
+    try { E.getCfg(); } catch (e) {}
+    return { onsets: p.rhythm.n, octaves: p.pitch.octaves };
+  }
+  function rollRunFn(E, L) {
+    if (!L || !L.part) return null;
+    const p = L.part;
+    // A roll makes a LIVE part — that is what a Riff is. A recorded one would
+    // freeze a single realisation and New take could never move it.
+    p.kind = 'live';
+    p.bars = _pick([1, 1, 2, 2, 4]);
+    const steps = _pick([8, 16, 16]);
+    // EUCLID, not an even pulse: the syncopation is most of what makes a riff
+    // a riff, and it leaves a Pattern grid the user can edit afterwards.
+    const pulses = Math.max(2, Math.min(steps - 1, Math.round(steps * (0.3 + Math.random() * 0.35))));
+    p.rhythm = { kind: 'euclid', steps, pulses, rotate: _ri(0, steps - 1), n: 1 };
+    p.pitch = {
+      kind: 'walk',
+      degree: _pick([1, 1, 1, 2, 3]),
+      span: _ri(3, 8),
+      home: _pick(['floor', 'floor', 'center']),
+      stutter: _pick([0, 0, 10, 25, 40]),
+      dir: 'up',
+    };
+    p.shape = Object.assign({}, p.shape, { lenRatio: _ri(45, 95) });
+    try { E.getCfg(); } catch (e) {}   // normalize coerces/prunes what we wrote
+    return { steps, pulses, bars: p.bars, span: p.pitch.span };
   }
 
   // ── TEST / CONSOLE API ──────────────────────────────────────────────────
   window._v2 = {
     preview: previewLayer,
+    rollRun: rollRunFn,
+    makeSustain: makeSustainFn,
+    makeArp: makeArpFn,
     previewKill: previewKill,
+    previewing: previewing,
+    previewLeftSec: previewLeftSec,
     cycleSec: cycSecOf,
     fetchArticle: fetchArticleFn,
     normalize: normLayer,
@@ -2057,6 +2300,25 @@
     normalizeAll: (cfg) => {
       if (!cfg || !Array.isArray(cfg.layers)) return;
       for (let i = 0; i < cfg.layers.length; i++) normLayer(cfg.layers[i], i);
+      // THE LOOP BINDING IS A RECONCILER, not a second clock — v1's own
+      // doctrine (the sections' unit→bars mirror). It writes the plain field
+      // the engine already reads, on every normalize, so editing the cadence
+      // or the part's chords moves every bound layer with no invalidation.
+      for (let i = 0; i < cfg.layers.length; i++) {
+        const L = cfg.layers[i]; if (!L || !L.lenSync || !L.part) continue;
+        try {
+          const per = (typeof _ambLenPartBars === 'function') ? _ambLenPartBars(cfg, L.lenSync.part | 0) : 0;
+          if (!(per > 0)) continue;
+          let bars = (L.lenSync.passes | 0) * per;
+          try { if (typeof _ambSnapBars === 'function') bars = _ambSnapBars(bars); }
+          catch (e) { bars = Math.round(bars * 48) / 48; }
+          if (!(bars > 0)) continue;
+          L.part.bars = clamp(bars, 0.125, 64);
+          // A BOUND CYCLE CANNOT BE FREE-RUNNING: a free part keeps its own ms
+          // interval, which is the one thing a binding to the changes forbids.
+          if (L.part.clock === 'free') { delete L.part.clock; delete L.part.ms; }
+        } catch (e) {}
+      }
     },
     layers: layersOf,
     notesFor,                      // the interface, callable directly
@@ -2106,6 +2368,22 @@
   // a default card and a Euclid card both showed no grid at all. Now Pattern is
   // the euclid option's own surface and the override is internal state.
   // LABEL ≠ KEY, per the house rule: the stored value stays 'euclid'.
+  // The intervals worth one press. Named the way a musician asks for them, and
+  // stored as signed SOURCE TONES (a 3rd is two tones up the set, whatever the
+  // set is) so the harmony bends with the scale instead of running parallel.
+  const HARM_OPTS = [[-5, '−6th'], [-2, '−3rd'], [2, '3rd'], [3, '4th'], [4, '5th'], [5, '6th']];
+  function harmRowHtml(L, t) {
+    const on = new Set((Array.isArray(t.harm) ? t.harm : []).map((h) => h && (h.deg | 0)).filter(Boolean));
+    return '<div data-v2tab="Harmony" class="ambient-ctrl" data-v2when="kind:live;voice:synth">' +
+      '<label>Harmony</label><span class="ambient-seg-row">' +
+      HARM_OPTS.map(([d, lab]) =>
+        '<button type="button" class="ambient-seg v2-harm' + (on.has(d) ? ' on' : '') +
+        '" data-harm="' + d + '">' + lab + '</button>').join('') +
+      '</span><span class="ambient-hint">' +
+      (on.size ? on.size + ' harmony part' + (on.size === 1 ? '' : 's') + ' — in key'
+               : 'add a voice a stated interval from the line') +
+      '</span></div>';
+  }
   const RHYTHM_OPTS = [['pulse', 'Pulse — evenly'], ['euclid', 'Pattern — a grid you edit'],
                        ['chance', 'Chance — scattered']];
   // What the select should SHOW for a given kind. A `<select>` whose value
@@ -2492,7 +2770,15 @@
           sel(L, 'part.kind', 'Part', p.kind, [['live', 'Live — made as it plays'], ['recorded', 'Recorded — notes read back']]) +
           sel(L, 'part.clock', 'Cycle', p.clock === 'free' ? 'free' : 'bars',
               [['bars', 'Bars — follows the grid'], ['free', 'Free — its own clock']]) +
-          st(L, 'part.bars', 'Bars', p.bars, 1, 32, 'per cycle', 'clock:bars') +
+          (L.lenSync
+            // A BOUND CYCLE IS RECONCILED ON EVERY NORMALIZE, so the stepper
+            // would silently lose to it on the next getCfg — the documented
+            // dead-control class. State the binding instead, the way v1's
+            // Scheduler replaces its bars/plays inputs with a chip.
+            ? '<div data-v2tab="Bars" class="ambient-ctrl" data-v2when="clock:bars"><label>Bars</label>' +
+              '<span class="ambient-loop-badge">\u27f2 ' + (L.lenSync.passes | 0) + ' \u00d7 part</span>' +
+              '<span class="ambient-hint">' + esc(String(p.bars)) + ' bars \u2014 set by the loop binding (\u22ef menu)</span></div>'
+            : st(L, 'part.bars', 'Bars', p.bars, 1, 32, 'per cycle', 'clock:bars')) +
           sl(L, 'part.ms', 'Every', num(p.ms, 2000), 200, 20000, 'ms — ignores the bar grid', 'clock:free') +
           // WHEN — which ITERATIONS of the cycle this layer plays. v1 edits this
           // in the Scheduler's Advanced block, which renders per-type controls
@@ -2525,6 +2811,12 @@
               '<button type="button" class="ambient-seg v2-capture">' +
                 (p.kind === 'recorded' ? '❄ Re-take live' : '❄ The live part') + '</button>' +
               '<button type="button" class="ambient-seg v2-adopt">♪ A phrase…</button>' +
+              // A LIVE door beside the three recorded ones: "where do the notes
+              // come from" is the question this row answers, and "rolled" is
+              // one of the answers. Press again to re-roll.
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="sustain" title="A held note or chord, one per cycle — the pad shape. Voices makes it mono or poly.">▬ Sustained</button>' +
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="arp" title="Sweep the chord one tone per onset — an arpeggio. The rhythm grid sets the speed.">⟳ Arpeggio</button>' +
+              '<button type="button" class="ambient-seg v2-rollrun" title="Roll a riff — a syncopated line, live and re-rollable. Auditions straight away.">🎲 Roll a run</button>' +
             '</span>' +
             '<span class="ambient-hint v2-notecount"></span></div>' +
           // THE COMPOSE DOCK. v1 resolves it live by key
@@ -2536,8 +2828,20 @@
             '<div class="ambient-seedgrid-prib" hidden></div>' +
             '<div class="ambient-seedgrid-chords" hidden></div>' +
             '<div class="ambient-seedgrid-striphost"></div>' +
+            // STEP GRANULARITY + JOIN, and SAVE TO THE BANK. Both are v1 chrome
+            // keyed on the SESSION (`_ambGridGranBar` gates on
+            // `ge.E === E && h.dataset.sgk === ge.key`; the bank button is
+            // delegated on the panel host, which contains the v2 card host) —
+            // so the markup IS the wiring, exactly as the Key override was.
+            // Without the gran bar a v2 compose had no way to choose how fine
+            // the grid is; without the bank button a v2 phrase could be adopted
+            // FROM the bank but never added TO it, so the bank could only ever
+            // be filled from a v1 layer.
+            '<span class="ambient-seedgrid-gran" data-sgk="v2:' + L.id + '" hidden></span>' +
             '<div class="ambient-ctrl"><label></label><span class="ambient-seg-row">' +
               '<button type="button" class="ambient-seg v2-gdone">✓ Done</button>' +
+              '<button type="button" class="ambient-seg ambient-seedgrid-bank" data-sgk="v2:' + L.id + '"' +
+                ' title="Save this phrase to the sequence bank under a name, so it can be reused — on another layer, in another area, or bound to a part.">⬇ To bank…</button>' +
               '<button type="button" class="ambient-seg v2-gcancel">✕ Cancel</button>' +
             '</span><span class="ambient-hint">what you draw is what it plays</span></div>' +
           '</div>' +
@@ -2619,6 +2923,13 @@
              'kind:live;voice:synth;pitch:walk') +
           sl(L, 'part.pitch.stutter', 'Stutter', num(t.stutter, 0), 0, 100, 'walk → repeats',
              'kind:live;voice:synth;pitch:walk') +
+          // HARMONY PARTS — chips, because it is a SET, not a choice: a line can
+          // carry a 3rd and a 6th at once, which is what "multiple-part
+          // harmonies" means. Intervals are SOURCE TONES, so they stay in the
+          // key (verified: thirds across C major come out 4,3,3,4,4,3,3
+          // semitones — major on I/IV/V, minor on the rest). Applies to every
+          // live pitch kind, so it is gated on kind:live only.
+          harmRowHtml(L, t) +
 
           st(L, 'part.pitch.octaves', 'Octaves', num(t.octaves, 2), 1, 4, 'how far the sweep climbs',
              'kind:live;voice:synth;pitch:series') +
@@ -3562,18 +3873,27 @@
               b3.classList.remove('playing'); b3.textContent = '\u25b6 Preview';
             });
           };
-          if (h._pv && h._pv.id === (ctx.L.id | 0)) {   // its own preview → stop
+          // IS IT SOUNDING? — asked of the module, which knows when the last
+          // note ends, rather than of a local timer that GUESSED it as
+          // cycleSec + 600 ms. That guess expired 741 ms early (measured), so a
+          // stop press landed on a button already flipped back to Preview and
+          // RESTARTED the layer — reported as "it keeps playing after stop".
+          let sounding = false;
+          try { sounding = !!(V2.previewing && V2.previewing(ctx.L)); } catch (e) {}
+          if (sounding || (h._pv && h._pv.id === (ctx.L.id | 0))) {
             stopPv();
             try { V2.previewKill(E, ctx.L); } catch (e) {}
             return;
           }
           stopPv();                                      // another layer's → replace
           const played = V2.preview(E, ctx.L);
-          const cfg3 = E.getCfg();
-          const sec3 = Math.min((typeof V2.cycleSec === 'function') ? V2.cycleSec(ctx.L, cfg3) : 2, 8);
           pv.classList.add('playing');
           pv.textContent = played ? '\u25a0 Stop' : pv.textContent;
-          h._pv = { id: ctx.L.id | 0, t: setTimeout(stopPv, Math.max(600, Math.round(sec3 * 1000)) + 600) };
+          // the label follows the real end for the same reason the branch above
+          // does — one source of truth for "is it still going"
+          let leftMs = 2000;
+          try { if (V2.previewLeftSec) leftMs = Math.round(V2.previewLeftSec(ctx.L) * 1000); } catch (e) {}
+          h._pv = { id: ctx.L.id | 0, t: setTimeout(stopPv, Math.max(600, leftMs)) };
           return;
         }
         // GROUP FOLD — v1 binds every `.ambient-grp-head` in the PANEL HOST at
@@ -3844,6 +4164,15 @@
           // the rebuild is about to throw away (the documented re-dock order).
           try { if (typeof _placeLaneExpander === 'function') _placeLaneExpander(); } catch (e) {}
           try { if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
+          // …AND REPAINT THE DOCK CHROME, for the same reason and in the same
+          // order. The re-render above recreates the chord ruler and the
+          // granularity bar EMPTY, and both are filled by sync passes that key
+          // on the session — so without this the dock opens with a blank ruler
+          // and no Step Div until something else happens to repaint (measured:
+          // 4 chord blocks when the session was opened directly, 0 through the
+          // button). `_ambRefreshSeedModes` runs whether or not the transport
+          // is going, which is the point — composing happens stopped.
+          try { if (typeof _ambRefreshSeedModes === 'function') _ambRefreshSeedModes(E); } catch (e) {}
           return;
         }
         const gdone = t.closest('.v2-gdone'), gcancel = t.closest('.v2-gcancel');
@@ -3898,6 +4227,68 @@
           h._sig = ''; V2.render(E);
           return;
         }
+        const mk = t.closest('.v2-mkpart');
+        if (mk) {
+          const ctx = layerOf(mk); if (!ctx) return;
+          const which = mk.getAttribute('data-mk');
+          const info = (which === 'arp') ? V2.makeArp(E, ctx.L) : V2.makeSustain(E, ctx.L, true);
+          if (!info) return;
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          h._sig = ''; V2.render(E);
+          // AUDITION IT — the same rule the roll follows: a shape you cannot
+          // hear is a change you have to take on trust.
+          setTimeout(() => { try { V2.preview(E, ctx.L); } catch (e) {} }, 0);
+          try {
+            if (typeof showToast === 'function') {
+              showToast(which === 'arp'
+                ? 'Arpeggio — sweeping the chord, ' + info.onsets + ' per cycle over ' + info.octaves + ' octaves.'
+                : 'Sustained — ' + info.voices + ' voice' + (info.voices === 1 ? '' : 's') +
+                  ' held for the cycle. Set Voices to 1 for a single note.', { ms: 4000 });
+            }
+          } catch (e) {}
+          return;
+        }
+        const hm = t.closest('.v2-harm');
+        if (hm) {
+          const ctx = layerOf(hm); if (!ctx) return;
+          const d = hm.getAttribute('data-harm') | 0;
+          const pt = ctx.L.part.pitch;
+          const cur = Array.isArray(pt.harm) ? pt.harm.slice() : [];
+          const at = cur.findIndex((x) => x && (x.deg | 0) === d);
+          if (at >= 0) cur.splice(at, 1); else cur.push({ deg: d });
+          pt.harm = cur;                       // normalize prunes an emptied list
+          try { E.getCfg(); } catch (e) {}
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          h._sig = ''; V2.render(E);
+          return;
+        }
+        const rr = t.closest('.v2-rollrun');
+        if (rr) {
+          const ctx = layerOf(rr); if (!ctx) return;
+          const info = V2.rollRun(E, ctx.L);
+          if (!info) return;
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          h._sig = ''; V2.render(E);
+          // HEAR IT IMMEDIATELY — a roll you cannot hear is a dice throw
+          // face-down (the documented rule from the synth-drum roll). Deferred
+          // a tick so the re-render has replaced the card first; the preview
+          // kills any previous one itself, so re-rolling never stacks.
+          setTimeout(() => {
+            try { V2.preview(E, ctx.L); } catch (e) {}
+            try {
+              const b2 = document.querySelector('.v2-layer[data-v2id="' + (ctx.L.id | 0) + '"] .v2-pop-preview');
+              if (b2) { b2.classList.add('playing'); b2.textContent = '\u25a0 Stop'; }
+            } catch (e) {}
+          }, 0);
+          try {
+            if (typeof showToast === 'function') {
+              showToast('Rolled a run \u2014 ' + info.pulses + ' of ' + info.steps +
+                ' steps over ' + info.bars + ' bar' + (info.bars === 1 ? '' : 's') +
+                '. Press again to re-roll; edit it in Rhythm and Pitch.', { ms: 4000 });
+            }
+          } catch (e) {}
+          return;
+        }
         const menu = t.closest('.v2-menu');
         if (menu) {
           const ctx = layerOf(menu); if (!ctx) return;
@@ -3907,7 +4298,22 @@
           setTimeout(() => {
             if (typeof showCtxMenu !== 'function') return;
             const isRec = ctx.L.part.kind === 'recorded';
+            const _ls = ctx.L.lenSync;
+            let _lsLab = '\u27f2 Loop \u2014 passes of a part\u2026';
+            try {
+              if (_ls && typeof _ambLenSyncLabel === 'function') {
+                _lsLab = '\u27f2 Loop \u2014 ' + _ambLenSyncLabel(E.getCfg(), _ls);
+              }
+            } catch (e) {}
             showCtxMenu(r.left, r.bottom + 4, [
+              // LOOP = N PASSES OF A PART. The modal is v1's own and already
+              // resolves a `v2:` key through `_ambLayerByKey`, so this is the
+              // door it never had rather than a second implementation. Deferred
+              // a tick — this menu dismisses on the same dispatch otherwise.
+              { label: _lsLab, fn: () => setTimeout(() => {
+                  try { _ambLenSyncModal(E, { mode: 'edit', key: 'v2:' + (ctx.L.id | 0) }); } catch (e) {}
+                }, 0) },
+              'hr',
               isRec
                 ? { label: '\u26a1 Release \u2014 back to live', fn: () => setTimeout(() => {
                     if (!V2.release(E, ctx.L)) return;

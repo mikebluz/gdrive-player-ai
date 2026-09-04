@@ -28387,11 +28387,32 @@
     }
     try { if (typeof window !== 'undefined') { window._ambPhraseDirty = _ambPhraseDirty; window._ambPhraseSave = _ambPhraseSave; window._ambPhraseGuard = _ambPhraseGuard; } } catch (e) {}
 
-    function _ambGridEditSync() {
+    // INSTALLING THE PHRASE IS NOT FREE, AND IT MUST NOT HAPPEN WHILE YOU PLAY.
+    // This ran on the 400 ms session timer the moment the steps changed, so a
+    // run of grid presses re-installed the growing phrase every 400 ms — and
+    // installing it makes the LAYER REPLAY IT. Reported precisely: "the first
+    // 5 or so grid presses are fine, then those notes replay (delayed) on top
+    // of what you're playing, then the grid presses become delayed." All three
+    // phases are one mechanism: the replay is your own phrase echoing back, and
+    // each re-install cancels and re-anchors the layer's voices, so the churn
+    // grows with the phrase until it eats the presses.
+    //
+    // The install now waits for a PAUSE. You still hear what you composed —
+    // that is the point of the session — you just hear it after the phrase,
+    // instead of on top of the notes you are still playing.
+    const _GRID_SYNC_IDLE_MS = 700;
+    function _ambGridEditSync(force) {
       const ge = _bloomGridEdit; if (!ge || !ge.lane) return;
       const sig = _ambGridEditSig(ge.lane.steps);
-      if (sig === ge.sig) return;
-      ge.sig = sig;
+      const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      if (sig !== ge.sig) {
+        ge.sig = sig;
+        ge._dirtyAt = now;
+        if (!force) return;      // still playing — hold the install
+      }
+      if (!ge._dirtyAt) return;
+      if (!force && (now - ge._dirtyAt) < _GRID_SYNC_IDLE_MS) return;
+      ge._dirtyAt = 0;
       try { _ambStepsToLock(ge.E, ge.key, ge.lane.steps, true, _ambComposeLoopBars(ge.E, ge)); } catch (e) {}
     }
     // ONE COMPOSING WORKFLOW — transport decides the semantics. Stopped, the
@@ -28629,6 +28650,17 @@
       ov.addEventListener('click', (ev) => { if (ev.target === ov) { /* outside click = stay in the Grid */ close(); } });
     }
     function _ambGridEditStop(cancel) {
+      // FLUSH A HELD EDIT. The sync now waits for a pause before installing the
+      // phrase, so ending the session on the beat after a press would otherwise
+      // drop those last notes. Never on cancel — that path is meant to discard.
+      // …but ONLY for a v1 session. v2 has no freeze and no lockState — it
+      // commits through `composeCommit` below — so forcing the install here
+      // wrote a freeze onto a v2 key, and `_ambFreezeGate` then replays that
+      // in preference to the live pipeline, silencing the layer for good.
+      // Caught by test:ui: 21 v2 emission checks went to n=0.
+      if (!cancel && !(_bloomGridEdit && _bloomGridEdit.v2)) {
+        try { _ambGridEditSync(true); } catch (e) {}
+      }
       // HAND THE LAYER BACK. The scheduler skipped this layer for the whole
       // session, so its freeze carries whatever the grid left; clearing the
       // signature forces exactly one re-install, which re-anchors on the pass or

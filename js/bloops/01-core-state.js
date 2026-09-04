@@ -279,6 +279,8 @@
     // hear on the pad is what the layer will play. A layer with no tone set
     // (`''` = "whatever the grid uses") still falls back to the cell, the same
     // rule `_ambGridEditStart` applies to the lane voice.
+    // A pad's real attack is for PLAYBACK; an audition has to answer the finger.
+    const _AUDITION_MAX_ATTACK_MS = 40;
     function _gridCellParams(i) {
       const p = (typeof cellParams !== 'undefined' && cellParams[i])
         ? { ...cellParams[i] } : { type: 'sine' };
@@ -297,12 +299,22 @@
         //
         // So the audition is built the way the LAYER builds its notes
         // (`_ambMotifParams` + `_ambApplyAdsr`), which is exactly what
-        // `_ambStepsToLock` will use for the composed phrase. A slow-attack layer
-        // therefore auditions slowly — that IS the layer, and hearing it while
-        // composing is the point; the previous compromise hid it until playback.
+        // `_ambStepsToLock` will use for the composed phrase.
         let q = null;
         try { q = _ambApplyAdsr(_ambMotifParams(300, 0, L.tone), L); } catch (e) { q = null; }
         if (!q) { const t = (typeof L.tone === 'string' && L.tone) ? L.tone : ''; if (t) p.type = t; return p; }
+        // …BUT NOT THE ATTACK. This used to take the layer's envelope whole, on
+        // the reasoning that "a slow-attack layer auditions slowly — that IS the
+        // layer". That was wrong, and it was reported as "major lag on grid
+        // presses from press to sound" in Seed (where the compose dock lives):
+        // a bed or pad attacks over 2000 ms BY DEFAULT, so the pad could not be
+        // heard for two whole seconds — and since the audition note is only
+        // 300 ms long it never reached full level either, so it was late AND
+        // faint. A press is a GESTURE and needs immediate feedback to judge
+        // timing by; the layer's real attack is heard in playback, which is
+        // where it means something. Tone, level, decay/sustain/release still
+        // come from the layer, so the pad still sounds like the layer.
+        if (Number.isFinite(q.attack)) q.attack = Math.min(q.attack, _AUDITION_MAX_ATTACK_MS);
         // …AND THE LEVEL, because the audition does NOT go through the layer's
         // chain: playback multiplies these notes by `e.levelGain` (×1.3 at the
         // default 70, ×4 at 100), so using the layer's raw staged volume here

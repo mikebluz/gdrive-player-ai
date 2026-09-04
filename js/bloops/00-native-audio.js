@@ -52,7 +52,7 @@
   try { window._bloopsLog = (m) => log(String(m)); } catch (e) {}
   // flush the flight log to Documents so ordinary use leaves a harvestable
   // record — no more scheduled tests
-  setInterval(() => {
+  const _flush = () => {
     try {
       const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
       if (!FS || !_flight.length) return;
@@ -61,7 +61,88 @@
         data: JSON.stringify({ at: Date.now(), lines: _flight }),
       }).catch(() => {});
     } catch (e) {}
-  }, 20000);
+  };
+  setInterval(_flush, 20000);
+  // ALSO ON THE WAY OUT. A 20 s interval can lose the last stretch before the
+  // app backgrounds — which is exactly the stretch someone was interacting
+  // with when they hit a problem, so the harvest arrives missing the evidence
+  // it was collected for.
+  try {
+    document.addEventListener('visibilitychange', () => { if (document.hidden) _flush(); });
+    window.addEventListener('pagehide', _flush);
+  } catch (e) {}
+
+  // ── PRESS TELEMETRY — how long a tap takes to make a sound, ON THE DEVICE ──
+  // "Major lag on grid presses" measures 2-43 ms in a desktop browser, so the
+  // only place the answer exists is the phone, and the phone has no console.
+  // Each press leaves a line in the flight log (already flushed to Documents
+  // every 20 s), so a harvest answers it with numbers instead of a theory:
+  //   PRESS h=<pointerdown→playNote ms> lead=<scheduled ahead ms>
+  //         ct=<audio-clock rate> cost=<voice budget in use>
+  // A press whose `h` is large is MAIN-THREAD work before the note; a healthy
+  // `h` with a bad `ct` is render starvation (the documented distinction — a
+  // swinging clock with cost 1-2 is CPU starvation, not a Bloom bug).
+  // The LISTENER goes on immediately — a 4 s arm delay missed a real press one
+  // second before it (seen in a harvest). Only the playNote wrap has to wait
+  // for playNote to exist.
+  let pressAt = 0, pressSeq = 0;
+  try {
+    document.addEventListener('pointerdown', (e) => {
+      try {
+        if (!(e.target && e.target.closest && e.target.closest('.cell'))) return;
+        pressAt = performance.now();
+        // LOG THE TAP ITSELF. A press that makes NO sound is a different fault
+        // from a press that sounds late, and a log with neither line cannot
+        // tell either from "they never tapped" — which is what the first two
+        // harvests could not answer.
+        log('TAP #' + (++pressSeq));
+      } catch (x) {}
+    }, true);   // CAPTURE — the grid's own handler calls stopPropagation
+  } catch (e) {}
+  setTimeout(function armPressWatch() {
+    if (typeof window.playNote !== 'function' || typeof window.startSustainedNote !== 'function') {
+      setTimeout(armPressWatch, 250); return;
+    }
+    let seq = 0;
+    // A GRID PRESS IS A HELD NOTE, and held notes do NOT go through playNote —
+    // `polyStartCell` → `_polyStartSustain` → `startSustainedNote`. Wrapping
+    // only playNote made 24 of 25 real taps look SILENT in a harvest, which
+    // read as a finding and was my instrument's blind spot. Both paths now.
+    const report = (via, params, at, dur) => {
+      if (!pressAt) return;
+      const h = performance.now() - pressAt;
+      pressAt = 0;
+      try {
+          let ct = '?', cost = '?';
+          const hl = window.__bloomHealthLog;
+          if (hl && hl.length) { const L = hl[hl.length - 1]; ct = L.ctRate != null ? (+L.ctRate).toFixed(2) : '?'; cost = L.cost != null ? L.cost : '?'; }
+          let lead = '?';
+          if (window.Tone && Tone.now && Number.isFinite(+at)) lead = Math.round((+at - Tone.now()) * 1000);
+          // THE NOTE'S OWN ATTACK, and whether a compose session is supplying
+          // it. These separate the two candidates that a latency number alone
+          // cannot: a small `h` with a big `atk` is not a slow PRESS, it is a
+          // slow SOUND (the pad's envelope), and the fix for each is different.
+          let atk = '?', ge = 0;
+          try { if (params && Number.isFinite(+params.attack)) atk = Math.round(+params.attack); } catch (x) {}
+          try { ge = (typeof _bloomGridEdit !== 'undefined' && _bloomGridEdit) ? 1 : 0; } catch (x) {}
+        log('PRESS via=' + via + ' h=' + h.toFixed(1) + ' lead=' + lead + ' atk=' + atk +
+            ' voice=' + ((params && params.type) || '?') + ' compose=' + ge +
+            ' ct=' + ct + ' cost=' + cost);
+        seq++;
+      } catch (x) {}
+    };
+    const oPlay = window.playNote;
+    window.playNote = function (freq, params, dur, at) {
+      report('play', params, at, dur);
+      return oPlay.apply(this, arguments);
+    };
+    const oSus = window.startSustainedNote;
+    window.startSustainedNote = function (freq, params, startAt) {
+      report('sustain', params, startAt);
+      return oSus.apply(this, arguments);
+    };
+    log('press watch armed (playNote + startSustainedNote)');
+  }, 300);
 
   let rig = null;   // { el, streamDest } once installed
 
@@ -118,6 +199,12 @@
           maskGain.gain.setValueAtTime(maskGain.gain.value, t);
           maskGain.gain.linearRampToValueAtTime(closed ? 0 : 1, t + (closed ? 0.012 : 0.03));
         } catch (e) {}
+        // WHO IS CARRYING THE SOUND. The interactive monitor is a SECOND
+        // low-latency path, and it must never be open at the same time as the
+        // main one or every press is heard twice. The mask is the honest test:
+        // closed = the main path is silent and the monitor is the only way to
+        // hear a press; open = the foreground direct path already carries it.
+        window.__bloopsMaskClosed = !!closed;
         log('stop gate ' + (closed ? 'CLOSED (graph muted, element keeps playing silence)' : 'open') + ' w=' + (Date.now() % 1000000));
       };
       window.__bloopsMonTapStream = monTapDest.stream;
@@ -482,8 +569,21 @@
         // audible. Opt back in with localStorage bloopsFgDirect='1' only to
         // experiment; the latency answer within the broadcast is the modal +
         // 0.6 s cushion + speaker-synced display, all of which stay.
-        let fgEnabled = false;
-        try { fgEnabled = localStorage.getItem('bloopsFgDirect') === '1'; } catch (e) {}
+        // DEFAULT ON. This whole block IS the low-latency foreground path: the
+        // bridge stream is what you hear while the app is visible, and the MSE
+        // element rides its cushion MUTED, ready to take over at hide/lock.
+        // Behind an opt-in flag it never ran on the device, so `_bloopsMseFg`
+        // was never called, `fgMode` stayed false, and EVERY sound in the
+        // foreground went out through the broadcast at its ~1.2-1.4 s cushion.
+        // Measured in a device harvest: `outLag=1.96`, and not one
+        // "audible path → …" line in the log. That is the reported "grid
+        // presses become delayed" — with the first few presses fine only
+        // because the interactive monitor's 2.5 s press hold was covering
+        // them, and the same notes arriving again out of the broadcast a
+        // second later ("those notes replay delayed on top of what you're
+        // playing"). Escape hatch inverted: '0' turns it off.
+        let fgEnabled = true;
+        try { if (localStorage.getItem('bloopsFgDirect') === '0') fgEnabled = false; } catch (e) {}
         if (fgEnabled) try {
           const fgGain = bridgeRefs.bridge.createGain();
           fgGain.gain.value = 0;
@@ -513,6 +613,7 @@
             fgState = false;
             if (fgBackTimer) { clearTimeout(fgBackTimer); fgBackTimer = null; }
             ramp(0, 0.012);
+            window.__bloopsFgOn = false;
             try { if (window._bloopsMseFg) window._bloopsMseFg(false); } catch (e) {}
             log('audible path → broadcast [' + why + '] w=' + (Date.now() % 1000000));
           };
@@ -520,6 +621,7 @@
             if (fgState === true) return;
             fgState = true;
             if (fgBackTimer) { clearTimeout(fgBackTimer); fgBackTimer = null; }
+            window.__bloopsFgOn = true;
             try { if (window._bloopsMseFg) window._bloopsMseFg(true); } catch (e) {}
             ramp(1, 0.12);   // soft entry — a hard cut between two paths 0.6 s apart reads as a glitch
             log('audible path → foreground stream [' + why + '] w=' + (Date.now() % 1000000));
@@ -590,30 +692,67 @@
             } catch (e) {}
           };
           document.addEventListener('visibilitychange', () => { try { if (monDuck) monDuck(); } catch (e) {} });
+          // OPENING THE GATE IS PER *INTERACTIVE NOTE*, AND THERE ARE TWO KINDS.
+          // This wrapped `playNote` only — but a GRID PRESS is a HELD note
+          // (`polyStartCell` → `_polyStartSustain` → `startSustainedNote`), so
+          // pressing the grid never opened the monitor at all. The gate happened
+          // to be open for the first few presses only because the first
+          // pointerdown fires `_bloopsWarmup`, whose playNote opened it for its
+          // 2.5 s hold; once that expired every later press was audible ONLY
+          // through the MSE broadcast, which runs ~1.4-2 s behind. That is the
+          // reported "first 5 or so grid presses are fine, then those notes
+          // replay (delayed) on top of what you're playing, then the grid
+          // presses become delayed" — one mechanism, all three phases, and
+          // invisible off-device because no browser uses the broadcast path.
+          const monGate = (durMs, at) => {
+            try {
+              if (!(monOn && !window._ambEmitKey)) return;
+              // THE MAIN PATH ALREADY HAS IT — opening here would be a second
+              // audible copy of the same note. This is what "the grid notes
+              // are sounding doubled" was: the foreground direct path went
+              // default-on while the monitor still opened on every press, and
+              // at boot the mask is OPEN (the transport has never stopped), so
+              // both were live at once.
+              if (window.__bloopsFgOn && !window.__bloopsMaskClosed) return;
+              // CONNECT ON DEMAND — an armed-but-idle destination connect
+              // left the bridge with an active output at the lock
+              // transition, and the session renegotiation POPPED at the
+              // system level (flight-measured, stop → lock ~10 s later).
+              // Connected only press-to-tail, idle-stopped keeps exactly
+              // the graph shape every seamless-lock validation ran with.
+              if (!monConnected) { try { mon.connect(bridgeRefs.bridge.destination); monConnected = true; } catch (e) {} }
+              const nowT = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+              const t2 = (typeof at === 'number' && at > 0) ? at : nowT;
+              const endIn = Math.max(0, t2 - nowT) + Math.max(0.1, (+durMs || 300) / 1000);
+              const bt = bridgeRefs.bridge.currentTime;
+              mon.gain.cancelScheduledValues(bt);
+              mon.gain.setValueAtTime(mon.gain.value, bt);
+              mon.gain.linearRampToValueAtTime(1, bt + 0.02);
+              if (monHoldUntil < performance.now()) log('monitor gate opens (press) w=' + (Date.now() % 1000000));
+              monHoldUntil = Math.max(monHoldUntil, performance.now() + endIn * 1000 + 2500);
+            } catch (e) {}
+          };
+          try {
+            // A HELD note has no duration to end on — it ends at pointerup, and
+            // that can be a long time. Hold the gate on a generous window and
+            // let each further press extend it; a stuck-open gate at idle is
+            // what the close sweep below exists for.
+            if (!window.__bloopsMonWrappedSus && typeof window.startSustainedNote === 'function') {
+              window.__bloopsMonWrappedSus = true;
+              const oSN = window.startSustainedNote;
+              window.startSustainedNote = function (freq, params, startAt) {
+                monGate(3000, startAt);
+                return oSN.apply(this, arguments);
+              };
+            }
+          } catch (e) {}
           try {
             if (!window.__bloopsMonWrapped && typeof window.playNote === 'function') {
               window.__bloopsMonWrapped = true;
               const oPN = window.playNote;
               window.playNote = function (freq, params, durMs, at) {
                 try {
-                  if (monOn && !window._ambEmitKey) {
-                    // CONNECT ON DEMAND — an armed-but-idle destination connect
-                    // left the bridge with an active output at the lock
-                    // transition, and the session renegotiation POPPED at the
-                    // system level (flight-measured, stop → lock ~10 s later).
-                    // Connected only press-to-tail, idle-stopped keeps exactly
-                    // the graph shape every seamless-lock validation ran with.
-                    if (!monConnected) { try { mon.connect(bridgeRefs.bridge.destination); monConnected = true; } catch (e) {} }
-                    const nowT = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
-                    const t2 = (typeof at === 'number' && at > 0) ? at : nowT;
-                    const endIn = Math.max(0, t2 - nowT) + Math.max(0.1, (+durMs || 300) / 1000);
-                    const bt = bridgeRefs.bridge.currentTime;
-                    mon.gain.cancelScheduledValues(bt);
-                    mon.gain.setValueAtTime(mon.gain.value, bt);
-                    mon.gain.linearRampToValueAtTime(1, bt + 0.02);
-                    if (monHoldUntil < performance.now()) log('monitor gate opens (press) w=' + (Date.now() % 1000000));
-                    monHoldUntil = Math.max(monHoldUntil, performance.now() + endIn * 1000 + 2500);
-                  }
+                  monGate(durMs, at);
                 } catch (e) {}
                 return oPN.apply(this, arguments);
               };

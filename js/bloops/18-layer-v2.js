@@ -1590,10 +1590,14 @@
     return 2;
   }
 
-  function fromV1Fn(E, key) {
+  // `opts.l1` supplies the v1 layer instead of looking one up, and
+  // `opts.specOnly` returns the spec rather than adding a layer — which is what
+  // lets "seed this part like a v1 Bass" run the SAME mapping as importing a
+  // real Bass, instead of a second copy of it that drifts.
+  function fromV1Fn(E, key, opts) {
     const cfg = E && E.getCfg && E.getCfg(); if (!cfg) return null;
-    let L1 = null;
-    try { L1 = _ambLayerByKey(E, key); } catch (e) {}
+    let L1 = (opts && opts.l1) || null;
+    if (!L1) { try { L1 = _ambLayerByKey(E, key); } catch (e) {} }
     if (!L1) return null;
     const type = (key.indexOf(':') < 0) ? key : key.slice(0, key.indexOf(':'));
     const eff = (typeof _ambEffType === 'function') ? _ambEffType(L1, type) : type;
@@ -1665,6 +1669,7 @@
       const spanMs = (bars * (60 / Math.max(20, bpm)) * 4 * 1000) / onsets;
       if (spanMs > 0) P.shape.lenRatio = clamp(Math.round((L1.lengthMs / spanMs) * 100), 1, 400);
     }
+    if (opts && opts.specOnly) return spec;
     const L2 = addLayer(cfg, spec);
     if (!L2) return null;
     _V2_TREATMENTS.forEach((k) => {
@@ -2281,10 +2286,71 @@
     return { steps, pulses, bars: p.bars, span: p.pitch.span };
   }
 
+  // ── SEED THIS PART LIKE A v1 LAYER ──────────────────────────────────────
+  // One button per v1 layer type: press it and the part is seeded exactly the
+  // way adding that layer in v1 seeds one. Not a table of hand-copied numbers —
+  // it builds a real v1 layer from `_ambDefaultLayer` (the same function v1's
+  // own Add uses, so the defaults cannot drift), applies v1's ADD-TIME
+  // stochastic seeding where that type has any, and runs the result through the
+  // SAME `fromV1Fn` mapping that imports an existing v1 layer.
+  //
+  // The INSTRUMENT is deliberately left alone — you are seeding the PART, and
+  // replacing a voice you chose would be a surprise. The one exception is the
+  // Beat, whose part IS a drum kit: without the kit voice its lanes play nothing.
+  const V1_SEEDS = [['bed', 'Bed'], ['motif', 'Motif'], ['texture', 'Texture'],
+                    ['beat', 'Beat'], ['bass', 'Bass'], ['run', 'Riff'], ['arp', 'Arp']];
+  function seedLikeV1Fn(E, L, type) {
+    if (!L || !L.part || typeof _ambDefaultLayer !== 'function') return null;
+    let L1 = null;
+    try { L1 = _ambDefaultLayer(type, 1); } catch (e) { return null; }
+    if (!L1) return null;
+    // v1 seeds a euclid layer's pattern AT ADD TIME, with Math.random — not from
+    // the seeded stream (the documented split that keeps the harness stable).
+    // Without this every Bass/Beat would come out on the same fixed 5/8.
+    try { if (typeof _ambEuclidStochasticInit === 'function') _ambEuclidStochasticInit(L1); } catch (e) {}
+    try { if (typeof _ambSeedRandomPattern === 'function') _ambSeedRandomPattern(L1, type); } catch (e) {}
+    // …AND ITS UNIT, which is where the LENGTH comes from. `_ambDefaultLayer`
+    // does not set `unit` — v1 pins it at ADD time — so without this `v1Bars`
+    // fell through to the ms interval and produced lengths no v1 layer has
+    // (measured: an Arp at 0.125 bars, a Texture at 0.229). `_ambDefaultUnit`
+    // is v1's own add-time rule: the nearest bar RATIO of that type's natural
+    // length, which is exactly what `v1Bars` wants.
+    try {
+      if (typeof _ambDefaultUnit === 'function') _ambDefaultUnit(E, E.getCfg(), type, L1);
+    } catch (e) {}
+    let spec = null;
+    try { spec = fromV1Fn(E, type, { l1: L1, specOnly: true }); } catch (e) { spec = null; }
+    if (!spec || !spec.part) return null;
+    const P = spec.part;
+    L.part.kind = 'live';
+    L.part.bars = P.bars;
+    L.part.rhythm = P.rhythm;
+    L.part.pitch = P.pitch;
+    if (P.shape) L.part.shape = Object.assign({}, L.part.shape, P.shape);
+    if (L.part.clock === 'free') { delete L.part.clock; delete L.part.ms; }
+    // A Beat's part is its kit, so that one instrument field has to come along.
+    // And the converse, which is not optional: a KIT cannot play a pitched
+    // part, so seeding a Bass or a Riff onto a layer left on a kit by a
+    // previous Beat press produced a part that emitted NOTHING (measured: 0
+    // notes for bass/run/arp straight after beat). Only that case is touched —
+    // any pitched voice the user chose is left alone.
+    if (type === 'beat') {
+      L.instrument.voice = 'kit';
+      if (spec.instrument && spec.instrument.kit) L.instrument.kit = spec.instrument.kit;
+    } else if (L.instrument.voice === 'kit') {
+      L.instrument.voice = 'synth';
+    }
+    try { E.getCfg(); } catch (e) {}
+    const q = L.part;
+    return { type, bars: q.bars, rhythm: q.rhythm.kind, pitch: q.pitch.kind };
+  }
+
   // ── TEST / CONSOLE API ──────────────────────────────────────────────────
   window._v2 = {
     preview: previewLayer,
     rollRun: rollRunFn,
+    seedLikeV1: seedLikeV1Fn,
+    v1Seeds: V1_SEEDS,
     makeSustain: makeSustainFn,
     makeArp: makeArpFn,
     previewKill: previewKill,
@@ -2819,6 +2885,18 @@
               '<button type="button" class="ambient-seg v2-rollrun" title="Roll a riff — a syncopated line, live and re-rollable. Auditions straight away.">🎲 Roll a run</button>' +
             '</span>' +
             '<span class="ambient-hint v2-notecount"></span></div>' +
+          // SEED LIKE A v1 LAYER — one button per type. Its own row rather than
+          // more buttons on the one above: that row answers "recorded from
+          // where", these answer "what shape is the live part", and seven more
+          // chips in there would have made a wall of thirteen.
+          '<div data-v2tab="Seed like" class="ambient-ctrl"><label>Seed like</label>' +
+            '<span class="ambient-seg-row">' +
+            ((V2 && V2.v1Seeds) || []).map(([ty, lab]) =>
+              '<button type="button" class="ambient-seg v2-seedv1" data-v1="' + ty + '"' +
+              ' title="Seed this part the way adding a v1 ' + lab + ' seeds one — its rhythm, its pitch shape and its length. Your instrument is left alone.">' +
+              lab + '</button>').join('') +
+            '</span>' +
+            '<span class="ambient-hint">the part only — the voice you chose stays</span></div>' +
           // THE COMPOSE DOCK. v1 resolves it live by key
           // (`.ambient-seedgrid-slot[data-sgkey] .ambient-seedgrid-dockhost`) —
           // a panel rebuild recreates the card, so a stored node goes stale.
@@ -4225,6 +4303,27 @@
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
           try { if (typeof showToast === 'function') showToast('Kept ' + ctx.L.part.notes.length + ' notes \u2014 it replays them now. Switch Part to Live to go back.', { ms: 5000 }); } catch (e) {}
           h._sig = ''; V2.render(E);
+          return;
+        }
+        const sv = t.closest('.v2-seedv1');
+        if (sv) {
+          const ctx = layerOf(sv); if (!ctx) return;
+          const ty = sv.getAttribute('data-v1') || '';
+          const info = V2.seedLikeV1(E, ctx.L, ty);
+          if (!info) {
+            try { if (typeof showToast === 'function') showToast('Could not seed from a v1 ' + ty + '.', { warn: true, ms: 4000 }); } catch (e) {}
+            return;
+          }
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          h._sig = ''; V2.render(E);
+          setTimeout(() => { try { V2.preview(E, ctx.L); } catch (e) {} }, 0);
+          try {
+            const lab = (V2.v1Seeds.find(x => x[0] === ty) || [ty, ty])[1];
+            if (typeof showToast === 'function') {
+              showToast('Seeded like a ' + lab + ' — ' + info.rhythm + ' rhythm, ' + info.pitch +
+                ' pitch, ' + info.bars + ' bar' + (info.bars === 1 ? '' : 's') + '.', { ms: 4000 });
+            }
+          } catch (e) {}
           return;
         }
         const mk = t.closest('.v2-mkpart');

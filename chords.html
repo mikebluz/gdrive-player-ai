@@ -1,0 +1,939 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chord Query &middot; Mike Luz</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: #0d0d18; color: #e2e8f0; min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  }
+  .bar {
+    display: flex; align-items: baseline; gap: 12px; padding: 12px 16px;
+    border-bottom: 1px solid #1c1c2e;
+  }
+  .back { color: #a0aec0; text-decoration: none; font-size: 0.85rem; white-space: nowrap; }
+  .back:hover { color: #e2e8f0; }
+  .title { font-weight: 700; font-size: 0.95rem; letter-spacing: 0.02em; }
+  .sub { color: #6b6b8a; font-size: 0.78rem; }
+  main { max-width: 640px; margin: 0 auto; padding: 14px 16px 60px; }
+  .slotrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .slots { display: flex; gap: 5px; flex-wrap: wrap; min-width: 0; flex: 1 1 auto; }
+  /* 16px minimum — under that iOS zooms the page on focus and cannot zoom back */
+  .slot {
+    width: 42px; min-height: 48px; text-align: center;
+    background: #14141f; color: #e9e9f4; border: 1px solid #2d2d3f;
+    border-radius: 10px; font-size: 18px; font-family: inherit; font-weight: 600;
+    padding: 0;
+  }
+  .slot:focus { outline: none; border-color: #9f7aea; }
+  .slot.bad { border-color: #f6ad55; color: #f6ad55; }
+  #addslot {
+    width: 42px; min-height: 48px; border: 1px dashed #2d2d3f; border-radius: 10px;
+    background: transparent; color: #a0aec0; font-size: 1.2rem; cursor: pointer;
+    touch-action: manipulation; flex: 0 0 auto;
+  }
+  #addslot:hover { border-color: #9f7aea; color: #d6bcfa; }
+  .hint { color: #6b6b8a; font-size: 0.75rem; margin: 6px 2px 0; line-height: 1.4; }
+  /* THE INTERVAL RULER — one segment per gap between adjacent notes, its WIDTH
+     proportional to the interval's semitone span (a wide fifth, a sliver of a
+     minor second: the stack's shape at a glance). Note names ride the
+     boundaries; each segment is tinted by its interval class. */
+  .ruler { padding: 18px 14px 2px; }
+  .rmain { display: flex; }
+  /* Expanded, every row shares ONE pitch axis with the main ruler — labels
+     sit ABOVE their band, so nothing needs a gutter and nothing indents. */
+  .rexp {
+    display: block; margin: 8px 0 0; padding: 5px 12px; min-height: 34px;
+    border: 1px solid #2d2d3f; border-radius: 17px; background: transparent;
+    color: #a0aec0; font: 600 0.75rem inherit; font-family: inherit;
+    cursor: pointer; touch-action: manipulation;
+  }
+  .rexp:hover { border-color: #9f7aea; color: #d6bcfa; }
+  .rsubs { margin-top: 6px; }
+  .rrow { margin: 8px 0 10px; }
+  .rlab {
+    display: inline-flex; align-items: baseline; gap: 6px; margin: 0 0 3px;
+    cursor: pointer; min-width: 0; touch-action: manipulation;
+    white-space: normal; overflow-wrap: anywhere;
+  }
+  .rlab b { color: #e2e8f0; font-size: 0.78rem; }
+  .rlab .rnotes { color: #6b6b8a; font-size: 0.72rem; }
+  .rlab .rplay { color: #9f7aea; font-size: 0.68rem; font-weight: 600; }
+  .rlab:hover b { color: #d6bcfa; }
+  .rband { display: flex; min-width: 0; }
+  .rband .seg { height: 22px; }
+  .gseg {
+    position: relative; height: 24px; min-width: 4px; flex-basis: 0;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+    border: 1px solid rgba(159, 122, 234, 0.55); border-radius: 6px;
+    background: rgba(159, 122, 234, 0.1); touch-action: manipulation;
+  }
+  .gseg:hover { filter: brightness(1.3); }
+  .gseg .gname {
+    color: #d6bcfa; font-size: 0.7rem; font-weight: 700; white-space: nowrap; overflow: hidden;
+    position: relative; z-index: 1; background: rgba(13, 13, 24, 0.85); padding: 0 6px; border-radius: 4px;
+  }
+  /* a member note is MARKED, not a divider — a full-height line read as a cell
+     boundary and the block looked like a filled segment beside an empty one */
+  .gseg .gtick {
+    position: absolute; bottom: 1px; transform: translateX(-50%);
+    font-size: 0.6rem; line-height: 1.1; color: rgba(214, 188, 250, 0.55);
+  }
+  .gseg .gtick::before {
+    content: ''; position: absolute; left: 50%; bottom: 100%; height: 4px; width: 1px;
+    background: rgba(159, 122, 234, 0.4);
+  }
+  .rband .iv { font-size: 0.66rem; }
+  .rgap { min-width: 0; }
+  .ruler .seg {
+    /* flex-basis 0 — grow alone sets the width, so a fifth really is 7/4 of
+       a major third instead of "roughly wider" */
+    position: relative; height: 30px; min-width: 4px; flex-basis: 0;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid var(--ic); border-left: none; background: var(--bg);
+  }
+  .ruler .seg:first-child { border-left: 1px solid var(--ic); border-radius: 6px 0 0 6px; }
+  .ruler .seg:last-child { border-radius: 0 6px 6px 0; }
+  /* a grouping row can OPEN with a spacer — the first real segment is then not
+     :first-child, which is what shipped rows with a missing left edge */
+  .ruler .rgap + .seg { border-left: 1px solid var(--ic); border-radius: 6px 0 0 6px; }
+  .ruler .seg:has(+ .rgap) { border-radius: 0 6px 6px 0; }
+  .ruler .rgap + .seg:has(+ .rgap) { border-radius: 6px; }
+  .ruler .seg:first-child:has(+ .rgap) { border-radius: 6px; }
+  .ruler .seg { cursor: pointer; touch-action: manipulation; }
+  .ruler .seg:hover { filter: brightness(1.25); }
+  .ruler .seg.lit { background: var(--ic); }
+  .ruler .seg.lit .iv, .ruler .seg.lit .iv .st { color: #0d0d18; }
+  .ruler .iv { color: var(--ic); font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
+  .ruler .iv .st { color: #6b6b8a; font-weight: 400; margin-left: 4px; }
+  /* a narrow segment keeps only its number; a sliver keeps only its title */
+  .ruler .seg.tight .iv .nm, .ruler .seg.tight .iv .st { display: none; }
+  .ruler .seg.tight .iv::after { content: attr(data-st); color: var(--ic); font-weight: 700; }
+  .ruler .seg.sliver .iv { display: none; }
+  .ruler .tick {
+    position: absolute; top: -17px; left: 0; transform: translateX(-50%);
+    color: #a0aec0; font-size: 0.68rem; white-space: nowrap;
+  }
+  .ruler .seg:first-child .tick { transform: none; }
+  .ruler .tick.end { left: auto; right: 0; transform: translateX(50%); }
+  .ruler .seg:last-child .tick.end { transform: none; }
+  .keyrow { display: flex; align-items: center; gap: 10px; margin: 12px 2px 0; flex-wrap: wrap; }
+  /* a class that sets display BEATS the UA's [hidden] rule — without this the
+     attribute hides nothing (the documented trap, again) */
+  .keyrow[hidden] { display: none; }
+  .keyrow label { color: #a0aec0; font-size: 0.8rem; }
+  #key {
+    background: #14141f; color: #e9e9f4; border: 1px solid #2d2d3f; border-radius: 8px;
+    padding: 8px 10px; font-size: 16px; font-family: inherit; min-height: 40px;
+  }
+  #key:focus { outline: none; border-color: #9f7aea; }
+  .ksug { margin: 8px 2px 0; }
+  .ksug-line { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0 0; }
+  .ksug-line .klabel { min-width: 76px; text-align: right; }
+  .ksug .klabel { color: #6b6b8a; font-size: 0.75rem; }
+  .ksug-chip {
+    border: 1px solid #23233a; border-radius: 14px; padding: 5px 11px; min-height: 34px;
+    background: transparent; color: #a0aec0; font-size: 0.78rem; font-family: inherit;
+    cursor: pointer; touch-action: manipulation; overflow-wrap: anywhere; min-width: 0;
+  }
+  .ksug-chip b { color: #e2e8f0; }
+  .ksug-chip .kn { color: #9ae6b4; font-weight: 600; }
+  .ksug-chip:hover { border-color: #9f7aea; }
+  .ksug-chip.on { border-color: #9f7aea; background: rgba(159, 122, 234, 0.1); }
+  .ksug-chip.on b { color: #d6bcfa; }
+  .pcs { display: grid; grid-template-columns: repeat(16, 1fr); gap: 5px; margin: 0 0 12px; }
+  .pcs button {
+    min-width: 0; min-height: 40px; padding: 6px 2px;
+    border: 1px solid #2d2d3f; border-radius: 10px; background: transparent; color: #a0aec0;
+    font: 600 0.9rem inherit; font-family: inherit; cursor: pointer; touch-action: manipulation;
+  }
+  .pcs button:hover { border-color: #9f7aea; color: #d6bcfa; }
+  .pcs button:active { background: rgba(159,122,234,0.12); }
+  .pcs .util { color: #7a7a9c; font-weight: 400; }
+  .pcs .acc { color: #8b93a8; background: rgba(20, 20, 31, 0.8); }
+  h2 { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+       color: #7a7a9c; margin: 22px 0 8px; }
+  .stack { color: #a0aec0; font-size: 0.85rem; margin: 8px 2px; overflow-wrap: anywhere; }
+  .stack b { color: #e2e8f0; }
+  .card {
+    border: 1px solid #2d2d3f; border-radius: 12px; padding: 10px 12px; margin: 8px 0;
+    cursor: pointer; transition: border-color 0.15s ease;
+  }
+  .card:hover { border-color: #9f7aea; }
+  .card.best { border-color: rgba(159,122,234,0.55); }
+  .card .nm { font-size: 1.15rem; font-weight: 700; }
+  .card .nm .play { color: #9f7aea; font-size: 0.8rem; margin-left: 8px; font-weight: 600; }
+  .card .how { color: #a0aec0; font-size: 0.8rem; margin-top: 2px; overflow-wrap: anywhere; }
+  .card .keys { color: #6b6b8a; font-size: 0.76rem; margin-top: 6px; line-height: 1.5; overflow-wrap: anywhere; }
+  .card .keys b { color: #a0aec0; font-weight: 600; }
+  .fitabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+  .fitab {
+    min-height: 38px; padding: 6px 14px; border: 1px solid #2d2d3f; border-radius: 19px;
+    background: transparent; color: #a0aec0; font: 600 0.82rem inherit; font-family: inherit;
+    cursor: pointer; touch-action: manipulation;
+  }
+  .fitab:hover { border-color: #9f7aea; color: #d6bcfa; }
+  .fitab.on { border-color: #9f7aea; color: #d6bcfa; background: rgba(159, 122, 234, 0.1); }
+  .fih {
+    margin: 10px 0 2px; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.05em;
+    text-transform: uppercase; color: var(--oc);
+  }
+  .fih span { color: #6b6b8a; font-weight: 400; text-transform: none; letter-spacing: 0; }
+  .fi-slash { color: #a0aec0; font-weight: 600; }
+  .fi.inkey { box-shadow: inset 0 0 0 1px rgba(154, 230, 180, 0.16); }
+  .fi.outkey { opacity: 0.62; }
+  .fis { display: flex; flex-direction: column; gap: 5px; }
+  .fi {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    border: 1px solid #23233a; border-radius: 10px; padding: 7px 10px;
+    cursor: pointer; touch-action: manipulation;
+    /* the ORDER colour rides the left edge — after the shorthand, which
+       would otherwise reset it (the cascade, not a missing variable) */
+    border-left: 3px solid var(--oc, #23233a);
+  }
+  .fi:hover { border-color: #9f7aea; }
+  .fi-nm { font-weight: 700; color: #e2e8f0; min-width: 64px; }
+  .fi-sp { color: #6b6b8a; font-size: 0.82rem; overflow-wrap: anywhere; min-width: 0; }
+  .fi-sp b { color: #e2e8f0; }
+  .fi-add { color: #9ae6b4; font-size: 0.8rem; }
+  .fi-key { font-size: 0.7rem; border-radius: 10px; padding: 1px 8px; }
+  .fi-key.in { color: #9ae6b4; border: 1px solid rgba(154,230,180,0.4); }
+  .fi-key.out { color: #7a7a9c; border: 1px solid #23233a; }
+  .none { color: #6b6b8a; font-size: 0.85rem; margin: 8px 2px; }
+  .err { color: #f6ad55; font-size: 0.85rem; margin: 8px 2px; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <a class="back" href="index.html">&larr; mikeluz</a>
+  <span class="title">Chord Query</span>
+  <span class="sub">type notes, get every chord they could be</span>
+</div>
+<main>
+  <div class="pcs" id="pcs"></div>
+  <div class="slotrow">
+    <div class="slots" id="slots" aria-label="Notes, low to high"></div>
+    <button type="button" id="addslot" title="Add another note slot">＋</button>
+  </div>
+  <div class="ruler" id="ruler" hidden></div>
+  <div class="hint">One note per box, from <b>low to high</b> — the first is the bass, and each note
+    stacks upward from the one before it. Sharps <code>C#</code> and flats <code>Bb</code> both work.</div>
+  <div class="keyrow" id="keyrow" hidden><label for="key">Key</label>
+    <select id="key"></select>
+    <span class="hint" id="keyhint" style="margin:0"></span></div>
+  <div class="ksug" id="keysugg"></div>
+
+  <div id="out"></div>
+</main>
+<script>
+(() => {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const NAMES_S = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  const NAMES_F = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+  const BLACK = { 1: 1, 3: 1, 6: 1, 8: 1, 10: 1 };
+  // ── THE KEY PARAMETER ────────────────────────────────────────────────────
+  // Optional. With no key a black note is named BOTH ways (the tool has no
+  // context to prefer one); choosing a key settles the spelling (flat keys
+  // spell flat), marks what is diatonic, and puts that key's numeral on every
+  // reading. KEY = null, or { root, minor, label, pcs:Set, flats }.
+  let KEY = null;
+  const MAJOR_PCS = [0, 2, 4, 5, 7, 9, 11];
+  // keys conventionally spelled in flats: F, Bb, Eb, Ab, Db, Gb majors + relatives
+  const FLAT_MAJORS = { 5: 1, 10: 1, 3: 1, 8: 1, 1: 1, 6: 1 };
+  function keyFromValue(v) {
+    if (!v) return null;
+    const minor = v[0] === 'm', root = parseInt(v.slice(1), 10);
+    const majRoot = minor ? (root + 3) % 12 : root;
+    const flats = !!FLAT_MAJORS[majRoot];
+    const nm = (flats ? NAMES_F : NAMES_S)[root] + (minor ? ' minor' : ' major');
+    return { root, minor, label: nm, flats,
+             pcs: new Set(MAJOR_PCS.map((iv) => (majRoot + iv) % 12)) };
+  }
+  const pcName = (pc) => KEY ? (KEY.flats ? NAMES_F : NAMES_S)[pc]
+    : (BLACK[pc] ? (NAMES_S[pc] + '/' + NAMES_F[pc]) : NAMES_S[pc]);
+  const pcShort = (pc) => (KEY && KEY.flats ? NAMES_F : NAMES_S)[pc];
+  const inKey = (pcsArr) => !!KEY && pcsArr.every((p2) => KEY.pcs.has(p2));
+
+  // ── THE QUALITY TABLE ────────────────────────────────────────────────────
+  // Interval SETS from the root (mod 12, sorted). Order matters twice over:
+  // readings are ranked by table position (simpler names first), and the
+  // first exact match names the chord. Same doctrine as the app's own
+  // resolver: sus before fifth-alterations, ° only over a minor third.
+  const QUAL = [
+    ['',        [0, 4, 7]],        ['m',       [0, 3, 7]],
+    ['dim',     [0, 3, 6]],        ['aug',     [0, 4, 8]],
+    ['sus2',    [0, 2, 7]],        ['sus4',    [0, 5, 7]],
+    ['5',       [0, 7]],
+    ['6',       [0, 4, 7, 9]],     ['m6',      [0, 3, 7, 9]],
+    ['7',       [0, 4, 7, 10]],    ['maj7',    [0, 4, 7, 11]],
+    ['m7',      [0, 3, 7, 10]],    ['mMaj7',   [0, 3, 7, 11]],
+    ['dim7',    [0, 3, 6, 9]],     ['m7b5',    [0, 3, 6, 10]],
+    ['7sus4',   [0, 5, 7, 10]],    ['7sus2',   [0, 2, 7, 10]],
+    ['aug7',    [0, 4, 8, 10]],    ['augMaj7', [0, 4, 8, 11]],
+    ['7b5',     [0, 4, 6, 10]],    ['maj7b5',  [0, 4, 6, 11]],
+    ['add9',    [0, 2, 4, 7]],     ['madd9',   [0, 2, 3, 7]],
+    ['add11',   [0, 4, 5, 7]],     ['6/9',     [0, 2, 4, 7, 9]],
+    ['9',       [0, 2, 4, 7, 10]], ['maj9',    [0, 2, 4, 7, 11]],
+    ['m9',      [0, 2, 3, 7, 10]], ['m6/9',    [0, 2, 3, 7, 9]],
+    ['mMaj9',   [0, 2, 3, 7, 11]],
+    ['7b9',     [0, 1, 4, 7, 10]], ['7#9',     [0, 3, 4, 7, 10]],
+    ['9sus4',   [0, 2, 5, 7, 10]], ['maj7#11', [0, 4, 6, 7, 11]],
+    ['m11',     [0, 2, 3, 5, 7, 10]], ['11', [0, 2, 4, 5, 7, 10]],
+    ['13',      [0, 2, 4, 7, 9, 10]], ['maj13', [0, 2, 4, 7, 9, 11]],
+    ['m13',     [0, 2, 3, 7, 9, 10]],
+  ];
+  const setEq = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+  // ── THE INTERVAL RULER ───────────────────────────────────────────────────
+  // Colour per interval CLASS (semitones mod 12), mnemonic where it can be:
+  // the perfect intervals share the green family, the two harsh ones (m2, M7)
+  // share the red family, the tritone stands alone in magenta, minor thirds
+  // run cool and major thirds warm. Compound intervals take their simple
+  // class's colour — an m10 is an m3 that moved upstairs.
+  const IV_COLOR = ['#a0aec0', '#fc8181', '#f6ad55', '#63b3ed', '#f6e05e', '#9ae6b4',
+                    '#ed64a6', '#48bb78', '#9f7aea', '#d6bcfa', '#4fd1c5', '#fda4af'];
+  // COMPOUND intervals keep their real names — B3→C#5 is a MAJOR NINTH (M9),
+  // not "M2 plus an octave": the ordinal grows by 7 per octave, the quality
+  // and the colour stay with the class.
+  const IV_Q = ['P', 'm', 'M', 'm', 'M', 'P', 'TT', 'P', 'm', 'M', 'm', 'M'];
+  const IV_ORD = [1, 2, 2, 3, 3, 4, 4, 5, 6, 6, 7, 7];
+  const IV_WORD = { P: 'perfect', m: 'minor', M: 'major' };
+  const ordSuff = (n) => (n % 10 === 1 && n !== 11) ? 'st'
+    : (n % 10 === 2 && n !== 12) ? 'nd' : (n % 10 === 3 && n !== 13) ? 'rd' : 'th';
+  function ivInfo(semi) {
+    const cls = semi % 12, oct = Math.floor(semi / 12);
+    const color = (semi > 0 && cls === 0) ? '#a0aec0' : IV_COLOR[cls];
+    let nm, full;
+    if (cls === 0) {
+      const ord = 1 + 7 * oct;
+      nm = semi === 0 ? 'P1' : 'P' + ord;
+      full = semi === 0 ? 'unison' : (oct === 1 ? 'octave' : oct + ' octaves');
+    } else if (cls === 6) {
+      nm = oct === 0 ? 'TT' : (oct === 1 ? 'A11' : 'A' + (4 + 7 * oct));
+      full = 'tritone' + (oct ? ' + ' + (oct === 1 ? 'an octave' : oct + ' octaves') : '');
+    } else {
+      const ord = IV_ORD[cls] + 7 * oct;
+      nm = IV_Q[cls] + ord;
+      full = IV_WORD[IV_Q[cls]] + ' ' + ord + ordSuff(ord);
+    }
+    return { nm, full, color };
+  }
+  const noteOct = (mi) => pcShort(mi % 12) + (Math.floor(mi / 12) - 1);
+  function segsHtml(midis, ticks) {
+    let h = '';
+    for (let i = 1; i < midis.length; i++) {
+      const semi = midis[i] - midis[i - 1];
+      const iv = ivInfo(semi);
+      h += '<div class="seg" role="button" tabindex="0" data-lo="' + midis[i - 1] + '" data-hi="' + midis[i] + '"' +
+        ' style="flex-grow:' + semi + ';--ic:' + iv.color + ';--bg:' + iv.color + '22"' +
+        ' title="' + esc(iv.full + ' \u2014 ' + semi + ' semitone' + (semi === 1 ? '' : 's') + ' \u2014 tap to hear') + '">' +
+        (ticks ? '<span class="tick">' + esc(noteOct(midis[i - 1])) + '</span>' : '') +
+        '<span class="iv" data-st="' + semi + '"><span class="nm">' + esc(iv.nm) + '</span>' +
+        '<span class="st">' + semi + '</span></span>' +
+        (ticks && i === midis.length - 1 ? '<span class="tick end">' + esc(noteOct(midis[i])) + '</span>' : '') +
+        '</div>';
+    }
+    return h;
+  }
+  // What a GROUPING is: pairs get their interval name, three or more notes get
+  // their best chord reading — the same resolver the cards use, so the two can
+  // never disagree.
+  function groupingLabel(midis) {
+    if (midis.length === 2) return ivInfo(midis[1] - midis[0]).nm;
+    const r = readings(midis);
+    return r.out.length ? chordName(r.out[0]) : midis.map((m) => pcShort(m % 12)).join('\u00b7');
+  }
+  // Every subset of the notes, sizes 2..n-1, skipping the adjacent pairs the
+  // main row already shows. All rows share ONE pitch axis (spacers fill the
+  // gaps), so a grouping sits under the very notes it is made of.
+  function subsetsOf(midis) {
+    const n = midis.length, out = [];
+    for (let mask = 1; mask < (1 << n); mask++) {
+      const sel = [];
+      for (let i = 0; i < n; i++) if (mask & (1 << i)) sel.push(midis[i]);
+      if (sel.length < 2 || sel.length === n) continue;
+      if (sel.length === 2 && midis.indexOf(sel[1]) === midis.indexOf(sel[0]) + 1) continue;
+      out.push(sel);
+    }
+    out.sort((a, b) => (a.length - b.length) || (a[0] - b[0]) || (a[1] - b[1]));
+    return out;
+  }
+  let RULER_OPEN = false;
+  let FI_TAB = -1;   // which input note holds the bass in Found inside
+  function drawRuler(midis) {
+    const host = $('#ruler');
+    if (!midis || midis.length < 2) { host.hidden = true; host.innerHTML = ''; return; }
+    const lo = midis[0], hi = midis[midis.length - 1];
+    let h = '<div class="rmain">' + segsHtml(midis, true) + '</div>';
+    // A GROUPING OF 3+ NOTES is built entirely of gaps that already appear
+    // somewhere — each consecutive pair is a main-row segment or has its own
+    // pair row. So a bigger grouping earns its row only by NAMING something
+    // (a chord); an unnamed note-list is a pure re-drawing and is dropped.
+    // Pairs always stay: they are the rows that introduce new intervals.
+    const subs = subsetsOf(midis).map((sel) => ({
+      sel,
+      notes2: sel.map((m) => pcShort(m % 12)).join('\u00b7'),
+      lab2: groupingLabel(sel),
+    })).filter((x) => x.sel.length === 2 || x.lab2 !== x.notes2);
+    if (subs.length) {
+      const CAP = 42;
+      h += '<button type="button" class="rexp">' +
+        (RULER_OPEN ? '\u25b4 fewer' : '\u25be all groupings (' + subs.length + ')') + '</button>';
+      if (RULER_OPEN) {
+        h += '<div class="rsubs">' + subs.slice(0, CAP).map(({ sel, notes2, lab2 }) => {
+          const pre = sel[0] - lo, post = hi - sel[sel.length - 1];
+          // A PAIR is a new interval and draws as one; a CHORD grouping's inner
+          // gaps all exist elsewhere by construction (each consecutive pair is
+          // a main segment or a pair row), so re-segmenting it re-drew the same
+          // interval blocks — the reported redundancy. A chord draws as ONE
+          // block: its name inside, its member notes as ticks.
+          const span2 = sel[sel.length - 1] - sel[0];
+          const body = (sel.length === 2)
+            ? segsHtml(sel, false)
+            : '<div class="gseg" role="button" tabindex="0" data-m="' + sel.join(',') + '"' +
+                ' style="flex-grow:' + span2 + '"' +
+                ' title="' + esc(sel.map(noteOct).join(' ')) + ' \u2014 tap to hear them together">' +
+                sel.slice(1, -1).map((m) =>
+                  '<span class="gtick" style="left:' + (((m - sel[0]) / span2) * 100).toFixed(2) + '%">' +
+                    esc(pcShort(m % 12)) + '</span>').join('') +
+                '<span class="gname">' + esc(lab2) + '</span></div>';
+          return '<div class="rrow">' +
+            '<span class="rlab" role="button" tabindex="0" data-m="' + sel.join(',') + '"' +
+              ' title="' + esc(sel.map(noteOct).join(' ')) + ' \u2014 tap to hear them together">' +
+              '<b>' + esc(notes2) + '</b>' +
+              (sel.length === 2 && lab2 !== notes2 ? '<span class="rnotes">= ' + esc(lab2) + '</span>' : '') +
+              '<span class="rplay">\u25b8</span></span>' +
+            '<div class="rband">' +
+              (pre ? '<div class="rgap" style="flex-grow:' + pre + '"></div>' : '') +
+              body +
+              (post ? '<div class="rgap" style="flex-grow:' + post + '"></div>' : '') +
+            '</div></div>';
+        }).join('') +
+        (subs.length > CAP ? '<div class="none">+' + (subs.length - CAP) + ' more groupings not shown</div>' : '') +
+        '</div>';
+      }
+    }
+    host.innerHTML = h;
+    host.hidden = false;
+    host.classList.toggle('open', RULER_OPEN && subs.length > 0);
+    // a label must never be CLIPPED (house rule): a segment too narrow for
+    // "M3 4" keeps only its number, a sliver keeps only its tooltip
+    host.querySelectorAll('.seg').forEach((seg) => {
+      const w = seg.getBoundingClientRect().width;
+      seg.classList.toggle('tight', w < 42 && w >= 16);
+      seg.classList.toggle('sliver', w < 16);
+    });
+  }
+  const subset = (a, b) => a.every((x) => b.indexOf(x) >= 0);
+
+  // ── PARSING ──────────────────────────────────────────────────────────────
+  const LETTER = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 };
+  function parse(text) {
+    const toks = String(text || '').trim().split(/[\s,]+/).filter(Boolean);
+    if (!toks.length) return { midis: [] };
+    const midis = [];
+    for (const tk of toks) {
+      const m = tk.match(/^([A-Ga-g])([#♯b♭]*)(-?\d)?$/);
+      if (!m) return { err: '“' + tk + '” — notes look like C, F#, or Bb.' };
+      let pc = LETTER[m[1].toLowerCase()];
+      for (const ch of m[2]) pc += (ch === '#' || ch === '♯') ? 1 : -1;
+      pc = ((pc % 12) + 12) % 12;
+      if (m[3] != null) {
+        midis.push({ midi: (parseInt(m[3], 10) + 1) * 12 + pc, oct: true });
+      } else {
+        // no octave: stack strictly upward from the previous note (low → high)
+        const prev = midis.length ? midis[midis.length - 1].midi : null;
+        let mi = (prev == null) ? 48 + pc : prev + ((pc - prev % 12 + 12) % 12 || 12);
+        midis.push({ midi: mi, oct: false });
+      }
+    }
+    // octaves given out of order is a statement worth flagging, not repairing
+    for (let i = 1; i < midis.length; i++) {
+      if (midis[i].midi <= midis[i - 1].midi) {
+        return { err: 'Notes must run low to high — ' + NAMES_S[midis[i].midi % 12] +
+          (Math.floor(midis[i].midi / 12) - 1) + ' is not above the note before it.' };
+      }
+    }
+    return { midis: midis.map((x) => x.midi) };
+  }
+
+  // ── READINGS: each input note tried as the root ──────────────────────────
+  function readings(midis) {
+    const pcs = [...new Set(midis.map((m) => m % 12))];
+    const bass = midis[0] % 12;
+    const out = [];
+    for (const r of pcs) {
+      const rel = pcs.map((p) => ((p - r) % 12 + 12) % 12).sort((a, b) => a - b);
+      for (let qi = 0; qi < QUAL.length; qi++) {
+        if (setEq(rel, [...QUAL[qi][1]].sort((a, b) => a - b))) {
+          out.push({ root: r, qual: QUAL[qi][0], qi, bass, inv: r !== bass });
+          break;   // first (simplest) name per root
+        }
+      }
+    }
+    out.sort((a, b) => (a.inv - b.inv) || (a.qi - b.qi));
+    return { pcs, bass, out };
+  }
+  const chordName = (rd) =>
+    pcName(rd.root) + rd.qual + (rd.inv ? ' / ' + pcName(rd.bass) : '');
+
+  // ── KEYS: where is this chord diatonic, and as what numeral ──────────────
+  const MAJOR = [0, 2, 4, 5, 7, 9, 11];
+  const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+  // ONE numeral builder — keysFor and the key suggestions both call it, so
+  // the two surfaces can never number the same chord differently.
+  function numeralOf(rd, pcs, degIdx) {
+    const minor3 = pcs.indexOf((rd.root + 3) % 12) >= 0 && pcs.indexOf((rd.root + 4) % 12) < 0;
+    const dim = /^dim|^m7b5/.test(rd.qual);
+    let num = ROMAN[degIdx];
+    if (minor3 || dim) num = num.toLowerCase();
+    if (/^dim7?$/.test(rd.qual)) num += '°';
+    else if (rd.qual === 'm7b5') num += 'ø';
+    else if (/^aug/.test(rd.qual)) num += '+';
+    // THE SUFFIX IS THE QUALITY ITSELF, minus whatever the numeral already
+    // says (the case carries minor, ° and ø carry diminished, + carries aug).
+    // Scraping a digit out of the name shipped 'I9' for an ADD9 — a numeral
+    // that asserts a dominant seventh the chord does not contain.
+    let ext = rd.qual;
+    if (ext === 'm7b5') ext = '7';   // the ø already says the b5
+    else if (/^mMaj/.test(ext)) ext = ext.replace(/^mMaj/, 'maj');
+    else if (/^m(?!aj)/.test(ext)) ext = ext.slice(1);
+    else if (/^dim/.test(ext)) ext = ext.replace(/^dim/, '');
+    else if (/^aug/.test(ext)) ext = ext.replace(/^aug(Maj)?/, (m2, g) => (g ? 'maj' : ''));
+    return num + ext;
+  }
+  function keysFor(rd, pcs) {
+    const list = [];
+    for (let k = 0; k < 12; k++) {
+      const scale = MAJOR.map((iv) => (k + iv) % 12);
+      if (!subset(pcs, scale)) continue;
+      const deg = scale.indexOf(rd.root);
+      if (deg < 0) continue;
+      list.push({ maj: pcShort(k) + ' major', num: numeralOf(rd, pcs, deg) });
+      // the relative minor shares the pcs; number from its own tonic
+      const rm = (k + 9) % 12, degm = ((deg - 5) % 7 + 7) % 7;
+      list.push({ maj: pcShort(rm) + ' minor', num: numeralOf(rd, pcs, degm) });
+    }
+    return list;
+  }
+  // EVERY KEY THE INPUT COULD BE IN, derived from the notes themselves — with
+  // what the chord IS there. Keys holding their own tonic in the input lead.
+  function keyCandidates(pcs, rds) {
+    const out = [];
+    for (let k = 0; k < 12; k++) {
+      const scale = MAJOR.map((iv) => (k + iv) % 12);
+      if (!subset(pcs, scale)) continue;
+      [[false, k], [true, (k + 9) % 12]].forEach(([minor, tonic]) => {
+        const flats = !!FLAT_MAJORS[k];
+        const label = (flats ? NAMES_F : NAMES_S)[tonic] + (minor ? ' minor' : ' major');
+        let deg0 = 99;
+        const chords = rds.map((rd, ri) => {
+          const deg = scale.indexOf(rd.root);
+          if (deg < 0) return null;
+          const dI = minor ? ((deg - 5) % 7 + 7) % 7 : deg;
+          if (ri === 0) deg0 = dI;   // the BEST reading's degree orders the group
+          return { num: numeralOf(rd, pcs, dI),
+                   nm: (flats ? NAMES_F : NAMES_S)[rd.root] + rd.qual };
+        }).filter(Boolean);
+        out.push({ v: (minor ? 'm' : 'M') + tonic, label, minor, deg: deg0, chords });
+      });
+    }
+    // grouped by KEY QUALITY, and inside a group ordered by WHERE the chord
+    // sits in the key — tonics first, then supertonic, and so on up the scale
+    out.sort((a, b) => (a.minor - b.minor) || (a.deg - b.deg));
+    return out;
+  }
+
+  // ── CONTAINED IN: chords these notes sit inside ──────────────────────────
+  function supersets(pcs, already) {
+    const seen = new Set(already.map((rd) => rd.root + rd.qual));
+    const out = [];
+    for (let r = 0; r < 12; r++) {
+      for (let qi = 0; qi < QUAL.length; qi++) {
+        const set = QUAL[qi][1].map((iv) => (r + iv) % 12);
+        if (set.length <= pcs.length) continue;
+        if (!subset(pcs, set)) continue;
+        if (seen.has(r + QUAL[qi][0])) continue;
+        out.push({ root: r, qual: QUAL[qi][0], qi, size: set.length, set });
+      }
+    }
+    out.sort((a, b) => (a.size - b.size) || (a.qi - b.qi));
+    return out;
+  }
+
+  // A containing chord VOICED AROUND WHAT YOU PLAYED: your notes keep their
+  // typed order (rotated when another of them takes the bass — the ones below
+  // it move above the top, order intact), and each ADDED tone drops into its
+  // lowest slot above the bass, interleaving by pitch or landing on the end.
+  // One function feeds both the spelling and the tap-to-hear, so the row can
+  // never show one voicing and play another.
+  function voiceFrom(bassPc, inputMidis, addPcs) {
+    const idx = inputMidis.findIndex((m) => m % 12 === bassPc);
+    const skel = inputMidis.slice(idx);
+    let top = skel[skel.length - 1];
+    for (const m of inputMidis.slice(0, idx)) {
+      let mm = m;
+      while (mm <= top) mm += 12;
+      skel.push(mm); top = mm;
+    }
+    const out = skel.map((m) => ({ m, mine: true }));
+    const bass = skel[0];
+    for (const pc of addPcs) {
+      const mm = bass + (((pc - (bass % 12)) % 12 + 12) % 12 || 12);
+      out.push({ m: mm, mine: false });
+    }
+    out.sort((x, y) => x.m - y.m);
+    return out;
+  }
+
+  // ── AUDITION — ramped at both edges (a bare start/stop is a click) ───────
+  let AC = null;
+  function play(midis) {
+    try {
+      AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+      if (AC.state !== 'running') { AC.resume(); }
+      const t0 = AC.currentTime + 0.03;
+      const master = AC.createGain();
+      master.gain.value = Math.min(0.22, 0.7 / Math.max(1, midis.length));
+      master.connect(AC.destination);
+      midis.forEach((mi, i) => {
+        const o = AC.createOscillator(), g = AC.createGain();
+        o.type = 'triangle';
+        o.frequency.value = 440 * Math.pow(2, (mi - 69) / 12);
+        const at = t0 + i * 0.035;
+        g.gain.setValueAtTime(0, at);
+        g.gain.linearRampToValueAtTime(1, at + 0.02);
+        g.gain.setValueAtTime(1, at + 1.1);
+        g.gain.linearRampToValueAtTime(0, at + 1.6);
+        o.connect(g); g.connect(master);
+        o.start(at); o.stop(at + 1.65);
+      });
+    } catch (e) {}
+  }
+  // An interval is heard twice: the two notes in turn, then sounded together.
+  function playInterval(lo, hi) {
+    try {
+      AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+      if (AC.state !== 'running') { AC.resume(); }
+      const t0 = AC.currentTime + 0.03;
+      const master = AC.createGain();
+      master.gain.value = 0.2;
+      master.connect(AC.destination);
+      const one = (mi, at, len) => {
+        const o = AC.createOscillator(), g = AC.createGain();
+        o.type = 'triangle';
+        o.frequency.value = 440 * Math.pow(2, (mi - 69) / 12);
+        g.gain.setValueAtTime(0, at);
+        g.gain.linearRampToValueAtTime(1, at + 0.02);
+        g.gain.setValueAtTime(1, at + len);
+        g.gain.linearRampToValueAtTime(0, at + len + 0.25);
+        o.connect(g); g.connect(master);
+        o.start(at); o.stop(at + len + 0.3);
+      };
+      one(lo, t0, 0.32);
+      one(hi, t0 + 0.38, 0.32);
+      one(lo, t0 + 0.82, 0.7);
+      one(hi, t0 + 0.82, 0.7);
+    } catch (e) {}
+  }
+  // hear a NAMED chord from the contained-in list, voiced off the input bass
+  function playSet(rootPc, set, bassMidi) {
+    const base = bassMidi - (bassMidi % 12) + rootPc;
+    const lo = base < bassMidi - 6 ? base + 12 : base;
+    const rel = set.map((p) => ((p - rootPc) % 12 + 12) % 12).sort((a, b) => a - b);
+    play(rel.map((iv) => lo + iv));
+  }
+
+  // ── RENDER ───────────────────────────────────────────────────────────────
+  const esc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+  let LAST = { midis: [] };
+  function render() {
+    const out = $('#out');
+    const p = parse(notesText());
+    drawRuler(p.err ? null : p.midis);
+    if (p.err) { out.innerHTML = '<div class="err">' + esc(p.err) + '</div>'; return; }
+    if (!p.midis || p.midis.length < 2) {
+      out.innerHTML = p.midis && p.midis.length === 1
+        ? '<div class="none">One note is every chord’s beginning — add another.</div>' : '';
+      $('#keysugg').innerHTML = '';
+      LAST = { midis: p.midis || [] };
+      return;
+    }
+    LAST = p;
+    const { pcs, out: rds } = readings(p.midis);
+    // THE KEY ROW FOLLOWS THE INPUT: every key these notes fit inside, each
+    // chip saying what the chord IS there. Tapping one chooses it.
+    {
+      const cands = keyCandidates(pcs, rds);
+      // ONE reading = one chord: name it in the intro, not on all six chips —
+      // repeated "(Aadd9)" read as the tool claiming six chords were one.
+      const oneName = rds.length === 1 ? chordName(rds[0]) : null;
+      const chipOf = (c4) =>
+        '<button class="ksug-chip' + (KEY && KEY.label === c4.label ? ' on' : '') + '"' +
+          ' data-kv="' + c4.v + '"><b>' + esc(c4.label) + '</b>' +
+          (c4.chords.length
+            ? ' — ' + c4.chords.slice(0, 2).map((ch2) =>
+                '<span class="kn">' + esc(ch2.num) + '</span>' +
+                (oneName ? '' : ' (' + esc(ch2.nm) + ')')).join(' · ')
+            : '') + '</button>';
+      const lineOf = (title, list) => !list.length ? '' :
+        '<div class="ksug-line"><span class="klabel">' + title + '</span>' +
+        list.slice(0, 10).map(chipOf).join('') +
+        (list.length > 10 ? '<span class="klabel">+' + (list.length - 10) + ' more\u2026</span>' : '') +
+        '</div>';
+      $('#keysugg').innerHTML = (!cands.length
+        ? '<div class="ksug-line"><span class="klabel">these notes fit no single major or minor key</span></div>'
+        : (oneName ? '<div class="ksug-line"><span class="klabel"></span>' +
+            '<span class="klabel" title="A chord symbol\u2019s suffix counts from the CHORD\u2019S OWN ROOT, so it travels with the chord \u2014 only the roman numeral is measured from the key.">' +
+            'the same <b style="color:#e2e8f0">' + esc(oneName) +
+            '</b> \u2014 the numeral is what the key changes; the suffix counts from the chord\u2019s own root</span></div>' : '') +
+          lineOf('major keys:', cands.filter((c4) => !c4.minor)) +
+          lineOf('minor keys:', cands.filter((c4) => c4.minor))) +
+        '<div class="ksug-line"><span class="klabel"></span>' +
+        '<button class="ksug-chip kmore" data-kmore="1" title="Judge these notes against a key they do not fit \u2014 an out-of-key chord is a real question">other key\u2026</button></div>';
+    }
+    let h = '<h2>You played</h2><div class="stack" id="stackrow" role="button" tabindex="0">' +
+      p.midis.map((m) => '<b>' + esc(pcName(m % 12)) + '</b>').join(' · ') +
+      ' &nbsp;<span style="color:#9f7aea">▸ hear it</span></div>';
+    h += '<h2>Chords these notes spell</h2>';
+    if (!rds.length) {
+      h += '<div class="none">No standard chord matches this exact set — see what it sits inside, below.</div>';
+    }
+    rds.forEach((rd, i) => {
+      const ks = keysFor(rd, pcs);
+      let kh;
+      if (KEY) {
+        const own = ks.find((k) => k.maj === KEY.label);
+        const rest = ks.filter((k) => k.maj !== KEY.label).slice(0, 8)
+          .map((k) => esc(k.num) + ' in ' + esc(k.maj)).join(' · ');
+        kh = (own
+          ? '<b style="color:#9ae6b4">in ' + esc(KEY.label) + ': ' + esc(own.num) + '</b>'
+          : '<b style="color:#f6ad55">not diatonic to ' + esc(KEY.label) + '</b>') +
+          (rest ? ' &nbsp;·&nbsp; also ' + rest : '');
+      } else {
+        kh = ks.length
+          ? ks.slice(0, 12).map((k) => '<b>' + esc(k.num) + '</b> in ' + esc(k.maj)).join(' · ')
+          : 'not diatonic to any major or minor key';
+      }
+      h += '<div class="card' + (i === 0 ? ' best' : '') + '" data-play="input" role="button" tabindex="0">' +
+        '<div class="nm">' + esc(chordName(rd)) + '<span class="play">▸ hear</span></div>' +
+        '<div class="how">' + (rd.inv
+          ? esc(pcName(rd.root)) + ' chord over its ' + esc(pcName(rd.bass)) + ' — an inversion'
+          : 'root position') + '</div>' +
+        '<div class="keys">' + kh + '</div></div>';
+    });
+    let sup = supersets(pcs, rds);
+    if (KEY) {
+      // stable partition: what the chosen key contains comes first
+      sup = [...sup.filter((c2) => inKey(c2.set)), ...sup.filter((c2) => !inKey(c2.set))];
+    }
+    if (sup.length) {
+      // TABS — one per input note, in the order typed. A tab holds the same
+      // containing chords VOICED OVER THAT NOTE: your bass is a fact of what
+      // you played, and which chord it implies depends on who is underneath.
+      const tabPcs = [...new Set(p.midis.map((m) => m % 12))];
+      if (tabPcs.indexOf(FI_TAB) < 0) FI_TAB = tabPcs[0];
+      const bassPc = FI_TAB;
+      h += '<h2>Found inside</h2>' +
+        '<div class="hint" style="margin:0 2px 8px">Bigger chords that <b>contain every note you typed</b> ' +
+          '(your notes keep their order; the new tones slot in between). Pick which of your notes stays ' +
+          'in the <b>bass</b> — a chord rooted elsewhere becomes a slash chord over it. ' +
+          'Grouped by how far the chord extends; tap one to hear it from that bass.</div>' +
+        '<div class="fitabs">' + tabPcs.map((pc2) =>
+          '<button class="fitab' + (pc2 === bassPc ? ' on' : '') + '" data-fitab="' + pc2 + '">' +
+            esc(pcName(pc2)) + ' bass</button>').join('') + '</div>';
+      // grouped by ORDER — triads, sevenths, ninths… — each order with its
+      // own colour, carried on the group head and every row's edge
+      const ORDER = { 3: ['Triads', '#63b3ed'], 4: ['Sevenths & sixths', '#9f7aea'],
+                      5: ['Ninths', '#f6ad55'], 6: ['Elevenths & thirteenths', '#ed64a6'] };
+      let lastSize = 0;
+      h += '<div class="fis">' + sup.slice(0, 30).map((c2, i) => {
+        const od = ORDER[c2.size] || [c2.size + '-note chords', '#a0aec0'];
+        let gh = '';
+        if (c2.size !== lastSize) {
+          lastSize = c2.size;
+          gh = '<div class="fih" style="--oc:' + od[1] + '">' + esc(od[0]) +
+               ' <span>' + c2.size + ' notes</span></div>';
+        }
+        const adds2 = c2.set.filter((pc3) => pcs.indexOf(pc3) < 0);
+        const vc = voiceFrom(bassPc, p.midis, adds2);
+        const sp = vc.map((x) =>
+          x.mine ? '<b>' + esc(pcShort(x.m % 12)) + '</b>' : esc(pcShort(x.m % 12))
+        ).join('\u2009\u00b7\u2009');
+        const adds = c2.set.filter((pc3) => pcs.indexOf(pc3) < 0)
+          .map((pc3) => esc(pcShort(pc3))).join(', ');
+        const slash = c2.root !== bassPc;
+        const keyOk = KEY && inKey(c2.set);
+        const keyBadge = KEY ? (keyOk
+          ? ' <span class="fi-key in">in ' + esc(KEY.label) + '</span>'
+          : ' <span class="fi-key out">outside ' + esc(KEY.label) + '</span>') : '';
+        return gh + '<div class="fi' + (KEY ? (keyOk ? ' inkey' : ' outkey') : '') + '"' +
+          ' role="button" tabindex="0" data-sup="' + i + '" data-bass="' + bassPc + '"' +
+          ' data-mids="' + vc.map((x) => x.m).join(',') + '"' +
+          ' style="--oc:' + od[1] + '"' +
+          ' title="tap to hear it stacked from ' + esc(pcShort(bassPc)) + '">' +
+          '<span class="fi-nm">' + esc(pcName(c2.root) + (c2.qual || '')) +
+            (slash ? '<span class="fi-slash"> / ' + esc(pcName(bassPc)) + '</span>' : '') + '</span>' +
+          '<span class="fi-sp">' + sp + '</span>' +
+          (adds ? '<span class="fi-add">+ ' + adds + '</span>' : '') +
+          keyBadge + '</div>';
+      }).join('') +
+      (sup.length > 30 ? '<div class="none">+' + (sup.length - 30) + ' more</div>' : '') +
+      '</div>';
+    }
+    out.innerHTML = h;
+    out._supList = sup;
+  }
+
+  // ── WIRING ───────────────────────────────────────────────────────────────
+  const keySel = $('#key');
+  keySel.innerHTML = '<option value="">(none — show every key)</option>' +
+    NAMES_S.map((n, i) => '<option value="M' + i + '">' +
+      (FLAT_MAJORS[i] ? NAMES_F[i] : n) + ' major</option>').join('') +
+    NAMES_S.map((n, i) => '<option value="m' + i + '">' +
+      (FLAT_MAJORS[(i + 3) % 12] ? NAMES_F[i] : n) + ' minor</option>').join('');
+  $('#keysugg').addEventListener('click', (ev) => {
+    const km = ev.target.closest('[data-kmore]');
+    if (km) {
+      const kr = $('#keyrow');
+      kr.hidden = !kr.hidden;
+      if (!kr.hidden) { try { $('#key').focus(); } catch (e) {} }
+      return;
+    }
+    const c4 = ev.target.closest('.ksug-chip'); if (!c4) return;
+    const v = c4.dataset.kv;
+    // tapping the chosen key again releases it
+    keySel.value = (keySel.value === v) ? '' : v;
+    keySel.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  keySel.addEventListener('change', () => {
+    KEY = keyFromValue(keySel.value);
+    if (KEY) $('#keyrow').hidden = false;
+    $('#keyhint').textContent = KEY
+      ? 'spelling and numerals follow ' + KEY.label + '; out-of-key results are marked'
+      : '';
+    drawRuler(LAST.midis && LAST.midis.length > 1 ? LAST.midis : null);
+    render();
+  });
+  // ── SLOTS — one note per box; empties are simply skipped ─────────────────
+  const slotsEl = $('#slots');
+  const SLOTS_DEFAULT = 8;
+  function addSlot(focus) {
+    const inp = document.createElement('input');
+    inp.type = 'text'; inp.className = 'slot'; inp.maxLength = 2;
+    inp.autocomplete = 'off'; inp.autocapitalize = 'off'; inp.spellcheck = false;
+    slotsEl.appendChild(inp);
+    if (focus) inp.focus();
+    return inp;
+  }
+  for (let i = 0; i < SLOTS_DEFAULT; i++) addSlot(false);
+  $('#addslot').addEventListener('click', () => addSlot(true));
+  const slotList = () => [...slotsEl.querySelectorAll('.slot')];
+  const notesText = () => slotList().map((sl2) => sl2.value.trim()).filter(Boolean).join(' ');
+  function markSlots() {
+    // a slot is judged on its own — the orange edge points at the box that
+    // needs fixing rather than a sentence pointing at nothing
+    slotList().forEach((sl2) => {
+      const v = sl2.value.trim();
+      sl2.classList.toggle('bad', !!v && !/^[A-Ga-g][#\u266f b\u266d]?$/.test(v.replace(/\s/g, '')));
+    });
+  }
+  slotsEl.addEventListener('input', (ev) => {
+    const sl2 = ev.target.closest('.slot'); if (!sl2) return;
+    markSlots();
+    // a full box hands focus to the next one — typing flows left to right
+    if (sl2.value.length >= 2) {
+      const all = slotList(), i = all.indexOf(sl2);
+      if (i >= 0 && all[i + 1]) all[i + 1].focus();
+    }
+    render();
+  });
+  slotsEl.addEventListener('keydown', (ev) => {
+    const sl2 = ev.target.closest('.slot'); if (!sl2) return;
+    const all = slotList(), i = all.indexOf(sl2);
+    if (ev.key === 'Backspace' && !sl2.value && all[i - 1]) { all[i - 1].focus(); ev.preventDefault(); }
+    else if ((ev.key === 'ArrowLeft') && all[i - 1]) { all[i - 1].focus(); ev.preventDefault(); }
+    else if ((ev.key === 'ArrowRight' || ev.key === ' ' || ev.key === 'Enter') && all[i + 1]) { all[i + 1].focus(); ev.preventDefault(); }
+  });
+  // AN INTERVAL SEGMENT PLAYS ITS OWN TWO NOTES — melodically then together,
+  // which is how an ear checks an interval. Delegated, so a redraw mid-typing
+  // never orphans a handler.
+  $('#ruler').addEventListener('click', (ev) => {
+    const xp = ev.target.closest('.rexp');
+    if (xp) { RULER_OPEN = !RULER_OPEN; drawRuler(LAST.midis); return; }
+    const lb = ev.target.closest('.rlab') || ev.target.closest('.gseg');
+    if (lb) { play(String(lb.dataset.m).split(',').map(Number)); return; }
+    const seg = ev.target.closest('.seg'); if (!seg) return;
+    playInterval(seg.dataset.lo | 0, seg.dataset.hi | 0);
+    seg.classList.add('lit');
+    setTimeout(() => seg.classList.remove('lit'), 1200);
+  });
+  $('#ruler').addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' || ev.key === ' ') {
+      const seg = ev.target.closest('.seg'); if (!seg) return;
+      ev.preventDefault();
+      playInterval(seg.dataset.lo | 0, seg.dataset.hi | 0);
+    }
+  });
+  $('#out').addEventListener('click', (ev) => {
+    const ft = ev.target.closest('.fitab');
+    if (ft) { FI_TAB = ft.dataset.fitab | 0; render(); return; }
+    const chip = ev.target.closest('.fi');
+    if (chip) {
+      // exactly the voicing the row SHOWS — one source for eye and ear
+      const mids = String(chip.dataset.mids || '').split(',').map(Number).filter(Boolean);
+      if (mids.length) play(mids);
+      return;
+    }
+    if (ev.target.closest('.card') || ev.target.closest('#stackrow')) {
+      if (LAST.midis.length) play(LAST.midis);
+    }
+  });
+  // quick-entry buttons — phones should not have to fight a keyboard for “C#”
+  const pcsHost = $('#pcs');
+  // A KEYBOARD, flattened: sharps above, naturals in the middle, flats below —
+  // each accidental sitting between the two naturals it lives between. One
+  // 14-column grid; a natural spans two columns, an accidental spans the two
+  // that straddle the boundary. Sharps and flats ENTER AS SPELLED (Db stays
+  // Db in its slot) — the parser reads both.
+  const KB = [
+    ['C#', 2, 1], ['D#', 4, 1], ['F#', 8, 1], ['G#', 10, 1], ['A#', 12, 1], ['⌫', 15, 1],
+    ['C', 1, 2], ['D', 3, 2], ['E', 5, 2], ['F', 7, 2], ['G', 9, 2], ['A', 11, 2], ['B', 13, 2],
+    ['Db', 2, 3], ['Eb', 4, 3], ['Gb', 8, 3], ['Ab', 10, 3], ['Bb', 12, 3], ['✕', 15, 3],
+  ];
+  pcsHost.innerHTML = KB.map(([n, col, row]) => {
+    const util = (n === '⌫' || n === '✕');
+    const span = 2;
+    const title = n === '⌫' ? ' title="Remove the last note"' : n === '✕' ? ' title="Clear all notes"' : '';
+    return '<button' + (util ? ' class="util"' : (row === 2 ? '' : ' class="acc"')) +
+      ' data-n="' + n + '"' + title +
+      ' style="grid-column:' + col + '/span ' + span + ';grid-row:' + row + '">' + n + '</button>';
+  }).join('');
+  pcsHost.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button'); if (!b) return;
+    const n = b.dataset.n;
+    const all = slotList();
+    if (n === '✕') {
+      // clear resets to the default row — extra slots were for that stack
+      slotsEl.innerHTML = '';
+      for (let i = 0; i < SLOTS_DEFAULT; i++) addSlot(false);
+    } else if (n === '⌫') {
+      const last = [...all].reverse().find((sl2) => sl2.value.trim());
+      if (last) last.value = '';
+    } else {
+      const empty = all.find((sl2) => !sl2.value.trim()) || addSlot(false);
+      empty.value = n;
+    }
+    markSlots();
+    render();
+  });
+  render();
+})();
+</script>
+</body>
+</html>

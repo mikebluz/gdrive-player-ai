@@ -89,31 +89,36 @@
   }
   .rband .iv { font-size: 0.66rem; }
   .rgap { min-width: 0; }
-  .ruler .seg {
+  /* .seg chrome is shared with the Every-ordering bands (.perm-band) — those
+     live in #out, OUTSIDE .ruler, and scoping this to .ruler alone shipped
+     them as invisible bands of floating text */
+  .ruler .seg, .perm-band .seg {
     /* flex-basis 0 — grow alone sets the width, so a fifth really is 7/4 of
        a major third instead of "roughly wider" */
     position: relative; height: 30px; min-width: 4px; flex-basis: 0;
     display: flex; align-items: center; justify-content: center;
     border: 1px solid var(--ic); border-left: none; background: var(--bg);
   }
-  .ruler .seg:first-child { border-left: 1px solid var(--ic); border-radius: 6px 0 0 6px; }
-  .ruler .seg:last-child { border-radius: 0 6px 6px 0; }
+  .ruler .seg:first-child, .perm-band .seg:first-child { border-left: 1px solid var(--ic); border-radius: 6px 0 0 6px; }
+  .ruler .seg:last-child, .perm-band .seg:last-child { border-radius: 0 6px 6px 0; }
   /* a grouping row can OPEN with a spacer — the first real segment is then not
      :first-child, which is what shipped rows with a missing left edge */
   .ruler .rgap + .seg { border-left: 1px solid var(--ic); border-radius: 6px 0 0 6px; }
   .ruler .seg:has(+ .rgap) { border-radius: 0 6px 6px 0; }
   .ruler .rgap + .seg:has(+ .rgap) { border-radius: 6px; }
   .ruler .seg:first-child:has(+ .rgap) { border-radius: 6px; }
-  .ruler .seg { cursor: pointer; touch-action: manipulation; }
-  .ruler .seg:hover { filter: brightness(1.25); }
-  .ruler .seg.lit { background: var(--ic); }
-  .ruler .seg.lit .iv, .ruler .seg.lit .iv .st { color: #0d0d18; }
-  .ruler .iv { color: var(--ic); font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
-  .ruler .iv .st { color: #6b6b8a; font-weight: 400; margin-left: 4px; }
+  .ruler .seg, .perm-band .seg { cursor: pointer; touch-action: manipulation; }
+  .ruler .seg:hover, .perm-band .seg:hover { filter: brightness(1.25); }
+  .ruler .seg.lit, .perm-band .seg.lit { background: var(--ic); }
+  .ruler .seg.lit .iv, .ruler .seg.lit .iv .st,
+  .perm-band .seg.lit .iv, .perm-band .seg.lit .iv .st { color: #0d0d18; }
+  .ruler .iv, .perm-band .iv { color: var(--ic); font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
+  .ruler .iv .st, .perm-band .iv .st { color: #6b6b8a; font-weight: 400; margin-left: 4px; }
   /* a narrow segment keeps only its number; a sliver keeps only its title */
-  .ruler .seg.tight .iv .nm, .ruler .seg.tight .iv .st { display: none; }
-  .ruler .seg.tight .iv::after { content: attr(data-st); color: var(--ic); font-weight: 700; }
-  .ruler .seg.sliver .iv { display: none; }
+  .ruler .seg.tight .iv .nm, .ruler .seg.tight .iv .st,
+  .perm-band .seg.tight .iv .nm, .perm-band .seg.tight .iv .st { display: none; }
+  .ruler .seg.tight .iv::after, .perm-band .seg.tight .iv::after { content: attr(data-st); color: var(--ic); font-weight: 700; }
+  .ruler .seg.sliver .iv, .perm-band .seg.sliver .iv { display: none; }
   .ruler .tick {
     position: absolute; top: -17px; left: 0; transform: translateX(-50%);
     color: #a0aec0; font-size: 0.68rem; white-space: nowrap;
@@ -145,6 +150,32 @@
   .ksug-chip:hover { border-color: #9f7aea; }
   .ksug-chip.on { border-color: #9f7aea; background: rgba(159, 122, 234, 0.1); }
   .ksug-chip.on b { color: #d6bcfa; }
+  /* THE KEY TABLE — one key per row, chord names once in the header, each
+     cell just that chord's numeral in that key. border-collapse stays
+     SEPARATE: the .on row's rounded highlight needs radii on cells, which
+     collapse throws away. */
+  .ksug-tbl { border-collapse: separate; border-spacing: 0; margin: 4px 0 0; }
+  .ksug-tbl th, .ksug-tbl td {
+    text-align: left; padding: 9px 18px 9px 8px; font-size: 0.8rem;
+    white-space: normal; overflow-wrap: anywhere;
+  }
+  .ksug-tbl thead th {
+    color: #6b6b8a; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.05em;
+    text-transform: uppercase; padding-top: 2px; padding-bottom: 4px;
+    border-bottom: 1px solid #23233a;
+  }
+  .ksug-sec td {
+    color: #6b6b8a; font-size: 0.72rem; padding: 10px 0 2px 8px; font-weight: 400;
+  }
+  .ksug-row { cursor: pointer; touch-action: manipulation; }
+  .ksug-row th { color: #e2e8f0; font-weight: 700; }
+  .ksug-row .kn { color: #9ae6b4; font-weight: 600; }
+  .ksug-row + .ksug-row th, .ksug-row + .ksug-row td { border-top: 1px solid #1c1c2e; }
+  .ksug-row:hover th { color: #d6bcfa; }
+  .ksug-row.on th, .ksug-row.on td { background: rgba(159, 122, 234, 0.12); }
+  .ksug-row.on th { color: #d6bcfa; border-radius: 8px 0 0 8px; }
+  .ksug-row.on td:last-child { border-radius: 0 8px 8px 0; }
+  .ksug-row:focus-visible th { outline: 1px solid #9f7aea; outline-offset: -1px; }
   .pcs { display: grid; grid-template-columns: repeat(16, 1fr); gap: 5px; margin: 0 0 12px; }
   .pcs button {
     min-width: 0; min-height: 40px; padding: 6px 2px;
@@ -186,6 +217,27 @@
   .fi-slash { color: #a0aec0; font-weight: 600; }
   .fi.inkey { box-shadow: inset 0 0 0 1px rgba(154, 230, 180, 0.16); }
   .fi.outkey { opacity: 0.62; }
+  /* Every ordering — a card per ordering, matching the .fi rows above it */
+  .perm {
+    margin: 6px 0; padding: 8px 10px 10px;
+    border: 1px solid #23233a; border-radius: 10px;
+    cursor: pointer; touch-action: manipulation;
+  }
+  .perm:hover { border-color: #9f7aea; }
+  .perm.played { border-color: rgba(154, 230, 180, 0.35); }
+  .perm-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0 0 6px; }
+  .perm-head b { color: #e2e8f0; font-size: 0.82rem; letter-spacing: 0.01em; }
+  .perm-nm { color: #d6bcfa; font-size: 0.8rem; font-weight: 700; }
+  .perm-none { color: #6b6b8a; font-size: 0.72rem; font-style: italic; }
+  .perm-badge {
+    color: #9ae6b4; font-size: 0.66rem; border: 1px solid rgba(154, 230, 180, 0.4);
+    border-radius: 10px; padding: 1px 8px;
+  }
+  .perm-head .rplay { margin-left: auto; color: #9f7aea; font-size: 0.68rem; font-weight: 600; }
+  .perm:hover .rplay { color: #d6bcfa; }
+  .perm-band { display: flex; min-width: 0; }
+  .perm-band .seg { height: 22px; }
+  .perm-band .iv { font-size: 0.64rem; }
   .fis { display: flex; flex-direction: column; gap: 5px; }
   .fi {
     display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
@@ -421,9 +473,12 @@
     host.innerHTML = h;
     host.hidden = false;
     host.classList.toggle('open', RULER_OPEN && subs.length > 0);
-    // a label must never be CLIPPED (house rule): a segment too narrow for
-    // "M3 4" keeps only its number, a sliver keeps only its tooltip
-    host.querySelectorAll('.seg').forEach((seg) => {
+    fitSegLabels(host);
+  }
+  // a label must never be CLIPPED (house rule): a segment too narrow for
+  // "M3 4" keeps only its number, a sliver keeps only its tooltip
+  function fitSegLabels(scope) {
+    scope.querySelectorAll('.seg').forEach((seg) => {
       const w = seg.getBoundingClientRect().width;
       seg.classList.toggle('tight', w < 42 && w >= 16);
       seg.classList.toggle('sliver', w < 16);
@@ -591,6 +646,47 @@
     return out;
   }
 
+  // ── EVERY ORDERING of the input notes — each a different VOICING ─────────
+  // The same pitch classes stacked in a different order are a different chord
+  // in the hand: the bass moves, the shape moves, often the name moves. Each
+  // ordering is voiced by the input's own rule (first note low, every next
+  // note in the nearest octave above) and identified by the same resolver as
+  // everything else on the page.
+  function permutations(arr) {
+    if (arr.length <= 1) return [arr];
+    const out = [];
+    arr.forEach((x, i) => {
+      permutations(arr.slice(0, i).concat(arr.slice(i + 1)))
+        .forEach((rest) => out.push([x].concat(rest)));
+    });
+    return out;
+  }
+  function orderings(midis) {
+    const pcsIn = midis.map((m) => m % 12);
+    const seen = new Set();
+    const out = [];
+    for (const perm of permutations(pcsIn)) {
+      const sig = perm.join(',');
+      if (seen.has(sig)) continue;   // duplicate pcs in the input repeat orderings
+      seen.add(sig);
+      const mids = [];
+      for (const pc of perm) {
+        const prev = mids.length ? mids[mids.length - 1] : null;
+        mids.push(prev == null ? 48 + pc : prev + ((pc - prev % 12 + 12) % 12 || 12));
+      }
+      const r = readings(mids);
+      out.push({
+        mids,
+        span: mids[mids.length - 1] - mids[0],
+        name: r.out.length ? chordName(r.out[0]) : null,
+        asPlayed: sig === pcsIn.join(','),
+      });
+    }
+    // the played ordering first, then most compact voicings first
+    out.sort((a, b) => (b.asPlayed - a.asPlayed) || (a.span - b.span));
+    return out;
+  }
+
   // ── AUDITION — ramped at both edges (a bare start/stop is a click) ───────
   let AC = null;
   function play(midis) {
@@ -666,35 +762,45 @@
     }
     LAST = p;
     const { pcs, out: rds } = readings(p.midis);
-    // THE KEY ROW FOLLOWS THE INPUT: every key these notes fit inside, each
-    // chip saying what the chord IS there. Tapping one chooses it.
+    // THE KEY TABLE FOLLOWS THE INPUT: every key these notes fit inside, each
+    // row saying what the chord IS there. Tapping one chooses it.
     {
       const cands = keyCandidates(pcs, rds);
       // ONE reading = one chord: name it in the intro, not on all six chips —
       // repeated "(Aadd9)" read as the tool claiming six chords were one.
       const oneName = rds.length === 1 ? chordName(rds[0]) : null;
-      const chipOf = (c4) =>
-        '<button class="ksug-chip' + (KEY && KEY.label === c4.label ? ' on' : '') + '"' +
-          ' data-kv="' + c4.v + '"><b>' + esc(c4.label) + '</b>' +
-          (c4.chords.length
-            ? ' — ' + c4.chords.slice(0, 2).map((ch2) =>
-                '<span class="kn">' + esc(ch2.num) + '</span>' +
-                (oneName ? '' : ' (' + esc(ch2.nm) + ')')).join(' · ')
-            : '') + '</button>';
-      const lineOf = (title, list) => !list.length ? '' :
-        '<div class="ksug-line"><span class="klabel">' + title + '</span>' +
-        list.slice(0, 10).map(chipOf).join('') +
-        (list.length > 10 ? '<span class="klabel">+' + (list.length - 10) + ' more\u2026</span>' : '') +
-        '</div>';
+      // A TABLE, one KEY per row. The chord names are the same in every key
+      // (only the numeral moves), so the names live ONCE in the header and a
+      // row is just "key / numeral / numeral" -- keyCandidates builds each
+      // key's chords from the same rds in the same order, which is what keeps
+      // the columns aligned by construction.
+      const heads = rds.slice(0, 3).map((rd) => chordName(rd));
+      const rowOf = (c4) =>
+        '<tr class="ksug-row' + (KEY && KEY.label === c4.label ? ' on' : '') + '"' +
+          ' data-kv="' + c4.v + '" role="button" tabindex="0"' +
+          ' title="judge everything on the page against ' + esc(c4.label) + '">' +
+        '<th scope="row">' + esc(c4.label) + '</th>' +
+        heads.map((_, i) => '<td>' + (c4.chords[i]
+          ? '<span class="kn">' + esc(c4.chords[i].num) + '</span>' : '') + '</td>').join('') +
+        '</tr>';
+      const secOf = (title, list) => !list.length ? '' :
+        '<tr class="ksug-sec"><td colspan="' + (heads.length + 1) + '">' + title + '</td></tr>' +
+        list.slice(0, 10).map(rowOf).join('') +
+        (list.length > 10 ? '<tr class="ksug-sec"><td colspan="' + (heads.length + 1) + '">+' +
+          (list.length - 10) + ' more\u2026</td></tr>' : '');
       $('#keysugg').innerHTML = (!cands.length
         ? '<div class="ksug-line"><span class="klabel">these notes fit no single major or minor key</span></div>'
-        : (oneName ? '<div class="ksug-line"><span class="klabel"></span>' +
+        : (oneName ? '<div class="ksug-line">' +
             '<span class="klabel" title="A chord symbol\u2019s suffix counts from the CHORD\u2019S OWN ROOT, so it travels with the chord \u2014 only the roman numeral is measured from the key.">' +
             'the same <b style="color:#e2e8f0">' + esc(oneName) +
             '</b> \u2014 the numeral is what the key changes; the suffix counts from the chord\u2019s own root</span></div>' : '') +
-          lineOf('major keys:', cands.filter((c4) => !c4.minor)) +
-          lineOf('minor keys:', cands.filter((c4) => c4.minor))) +
-        '<div class="ksug-line"><span class="klabel"></span>' +
+          '<table class="ksug-tbl"><thead><tr><th>tap a key</th>' +
+          heads.map((nm) => '<th>' + esc(nm) + '</th>').join('') +
+          '</tr></thead><tbody>' +
+          secOf('major keys', cands.filter((c4) => !c4.minor)) +
+          secOf('minor keys', cands.filter((c4) => c4.minor)) +
+          '</tbody></table>') +
+        '<div class="ksug-line">' +
         '<button class="ksug-chip kmore" data-kmore="1" title="Judge these notes against a key they do not fit \u2014 an out-of-key chord is a real question">other key\u2026</button></div>';
     }
     let h = '<h2>You played</h2><div class="stack" id="stackrow" role="button" tabindex="0">' +
@@ -786,7 +892,32 @@
       (sup.length > 30 ? '<div class="none">+' + (sup.length - 30) + ' more</div>' : '') +
       '</div>';
     }
+    // ── EVERY ORDERING, each with its own ruler ──────────────────────────
+    {
+      const ords = orderings(p.midis);
+      if (ords.length > 1) {
+        const CAPO = 24;
+        const maxSpan = Math.max(...ords.map((o) => o.span));
+        h += '<h2>Every ordering</h2>' +
+          '<div class="hint" style="margin:0 2px 8px">The same notes stacked in every order — a different ' +
+            'bass, a different shape, often a different chord. Rulers share one scale, so a compact voicing ' +
+            'is visibly narrower. Tap a row to hear it; tap a block for just that interval.</div>';
+        h += ords.slice(0, CAPO).map((o) => {
+          return '<div class="perm' + (o.asPlayed ? ' played' : '') + '" role="button" tabindex="0" data-m="' + o.mids.join(',') + '">' +
+            '<div class="perm-head">' +
+              '<b>' + o.mids.map((m) => esc(pcShort(m % 12))).join('\u2009\u00b7\u2009') + '</b>' +
+              (o.name ? '<span class="perm-nm">' + esc(o.name) + '</span>'
+                      : '<span class="perm-none">no standard name</span>') +
+              (o.asPlayed ? '<span class="perm-badge">as played</span>' : '') +
+              '<span class="rplay">\u25b8</span></div>' +
+            '<div class="perm-band" style="width:' + ((o.span / maxSpan) * 100).toFixed(1) + '%">' +
+              segsHtml(o.mids, false) + '</div></div>';
+        }).join('') +
+        (ords.length > CAPO ? '<div class="none">+' + (ords.length - CAPO) + ' more orderings</div>' : '');
+      }
+    }
     out.innerHTML = h;
+    fitSegLabels(out);
     out._supList = sup;
   }
 
@@ -805,9 +936,18 @@
       if (!kr.hidden) { try { $('#key').focus(); } catch (e) {} }
       return;
     }
-    const c4 = ev.target.closest('.ksug-chip'); if (!c4) return;
+    const c4 = ev.target.closest('[data-kv]'); if (!c4) return;
     const v = c4.dataset.kv;
     // tapping the chosen key again releases it
+    keySel.value = (keySel.value === v) ? '' : v;
+    keySel.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  // a table row is not a <button>, so Enter/Space need wiring by hand
+  $('#keysugg').addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    const c4 = ev.target.closest('[data-kv]'); if (!c4) return;
+    ev.preventDefault();
+    const v = c4.dataset.kv;
     keySel.value = (keySel.value === v) ? '' : v;
     keySel.dispatchEvent(new Event('change', { bubbles: true }));
   });
@@ -883,6 +1023,18 @@
   $('#out').addEventListener('click', (ev) => {
     const ft = ev.target.closest('.fitab');
     if (ft) { FI_TAB = ft.dataset.fitab | 0; render(); return; }
+    const psg = ev.target.closest('.perm .seg');
+    if (psg) {
+      playInterval(psg.dataset.lo | 0, psg.dataset.hi | 0);
+      psg.classList.add('lit');
+      setTimeout(() => psg.classList.remove('lit'), 1200);
+      return;
+    }
+    const pr2 = ev.target.closest('.perm');
+    if (pr2) {
+      play(String(pr2.dataset.m).split(',').map(Number));
+      return;
+    }
     const chip = ev.target.closest('.fi');
     if (chip) {
       // exactly the voicing the row SHOWS — one source for eye and ear

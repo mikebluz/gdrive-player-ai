@@ -2522,13 +2522,45 @@
     try {
       notes = V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc }) || [];
     } catch (e) { notes = []; }
-    // BAR LINES, so the drawing has a scale — without them a busy part and a
-    // sparse one at half the length look the same.
-    const bars = Math.max(1, Math.round((L.part && L.part.bars) || 1));
-    g.strokeStyle = 'rgba(159,122,234,0.16)'; g.lineWidth = 1;
-    for (let i = 0; i <= bars; i++) {
-      const x = Math.round((i / bars) * w) + 0.5;
-      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+    // THE RULER — beats, bars and bar NUMBERS, in a gutter of their own. Bar
+    // lines alone gave the drawing a scale but no reading: you could see that
+    // something was wide without knowing whether it was a beat or a bar.
+    // Fractional cycles are drawn honestly (a ⅔-bar motif shows two thirds of a
+    // bar, not a rounded one), and a FREE part has no bar grid at all — saying
+    // so is better than drawing a grid its clock does not follow.
+    const TOP = 15;                       // the ruler gutter
+    const free = L.part && L.part.clock === 'free';
+    const barsF = Math.max(0.0625, (L.part && L.part.bars) || 1);
+    // ONE spelling of the length for the readout: whole bars read as "2 bars",
+    // a fraction keeps its value rather than rounding to a bar it does not have.
+    const barTxt = free ? 'free'
+      : ((Math.abs(barsF - Math.round(barsF)) < 1e-6)
+          ? (Math.round(barsF) + ' bar' + (Math.round(barsF) === 1 ? '' : 's'))
+          : (Math.round(barsF * 100) / 100) + ' bars');
+    g.strokeStyle = 'rgba(159,122,234,0.10)'; g.lineWidth = 1;
+    g.fillStyle = '#6b6b8a';
+    g.font = '9px -apple-system, Segoe UI, sans-serif';
+    if (free) {
+      g.fillText('free · ' + Math.round((L.part && L.part.ms) || 0) + 'ms', 3, 10);
+      g.beginPath(); g.moveTo(0, TOP + 0.5); g.lineTo(w, TOP + 0.5); g.stroke();
+    } else {
+      const beats = Math.max(1, Math.round(barsF * 4));
+      for (let i = 0; i <= beats; i++) {
+        const atBar = (i % 4) === 0;
+        const x = Math.round((i / beats) * w) + 0.5;
+        if (x > w) break;
+        g.strokeStyle = atBar ? 'rgba(159,122,234,0.30)' : 'rgba(159,122,234,0.10)';
+        g.beginPath();
+        g.moveTo(x, atBar ? 2 : TOP - 4); g.lineTo(x, h); g.stroke();
+        if (atBar && i < beats) {
+          g.fillStyle = '#7a7a9c';
+          g.fillText(String(i / 4 + 1), Math.min(w - 8, x + 3), 10);
+        }
+      }
+      // the gutter's floor, so the numbers read as a ruler rather than as
+      // labels floating over the notes
+      g.strokeStyle = 'rgba(159,122,234,0.18)';
+      g.beginPath(); g.moveTo(0, TOP + 0.5); g.lineTo(w, TOP + 0.5); g.stroke();
     }
     // `notesFor` returns ABSOLUTE times (cycleStart + offset), so a remembered
     // cycle start has to be subtracted back off before drawing.
@@ -2536,19 +2568,19 @@
     const played = notes.filter(n => n && n.freq > 0 && n.at >= -1e-6 && n.at < cyc);
     if (!played.length) {
       g.fillStyle = '#6b6b8a'; g.font = '12px -apple-system, Segoe UI, sans-serif';
-      g.fillText('silent for this cycle', 8, h / 2 + 4);
-      if (lab) lab.textContent = (L.part && L.part.kind === 'recorded' ? 'recorded' : 'live') + ' · ' + bars + ' bar' + (bars === 1 ? '' : 's');
+      g.fillText('silent for this cycle', 8, TOP + (h - TOP) / 2 + 4);
+      if (lab) lab.textContent = (L.part && L.part.kind === 'recorded' ? 'recorded' : 'live') + ' · ' + barTxt;
       return;
     }
     const mids = played.map(n => 69 + 12 * Math.log2(n.freq / 440));
     let lo = Math.min(...mids), hi = Math.max(...mids);
     if (hi - lo < 4) { const mid = (hi + lo) / 2; lo = mid - 2; hi = mid + 2; }
-    const pad = 8, span = Math.max(1, hi - lo);
+    const pad = 6, span = Math.max(1, hi - lo);
     for (let i = 0; i < played.length; i++) {
       const n = played[i];
       const x = (n.at / cyc) * w;
       const dw = Math.max(3, ((Math.max(20, n.durMs || 0) / 1000) / cyc) * w);
-      const y = pad + (1 - (mids[i] - lo) / span) * (h - pad * 2 - 6);
+      const y = TOP + pad + (1 - (mids[i] - lo) / span) * (h - TOP - pad * 2 - 6);
       g.fillStyle = 'rgba(159,122,234,0.55)';
       g.strokeStyle = '#d6bcfa'; g.lineWidth = 1;
       const ww = Math.min(dw, w - x);
@@ -2558,7 +2590,7 @@
     }
     if (lab) {
       lab.textContent = (L.part && L.part.kind === 'recorded' ? 'recorded' : 'live') + ' · ' +
-        played.length + ' note' + (played.length === 1 ? '' : 's') + ' · ' + bars + ' bar' + (bars === 1 ? '' : 's') +
+        played.length + ' note' + (played.length === 1 ? '' : 's') + ' · ' + barTxt +
         ' · ' + (Math.round(cyc * 10) / 10) + 's' +
         (fromPv ? ' · as previewed' : (L.part && L.part.kind === 'live' ? ' · one take of many' : ''));
     }
@@ -2950,7 +2982,11 @@
           // FIRST, so pressing a seed button and seeing the result is one glance
           // rather than a toast and a guess.
           partVizHtml() +
-          sel(L, 'part.kind', 'Part', p.kind, [['live', 'Live — made as it plays'], ['recorded', 'Recorded — notes read back']]) +
+          // "Part type", not "Part": the group is already called Part, so a tab
+          // and a row both reading "Part" inside it named nothing. This row is
+          // the KIND — live or recorded — and the tab takes its name from the
+          // label, so renaming the label renames both.
+          sel(L, 'part.kind', 'Part type', p.kind, [['live', 'Live — made as it plays'], ['recorded', 'Recorded — notes read back']]) +
           sel(L, 'part.clock', 'Cycle', p.clock === 'free' ? 'free' : 'bars',
               [['bars', 'Bars — follows the grid'], ['free', 'Free — its own clock']]) +
           (L.lenSync
@@ -3626,6 +3662,13 @@
     const wrap = card && popWrapOf(card);
     if (wrap) {
       const body = wrap.querySelector('.ambient-grp-body');
+      // put the lifted drawing back at the top of the body FIRST, so it travels
+      // home with it — otherwise it is removed with the wrap and the card's own
+      // copy of the group is left without one.
+      try {
+        const viz = wrap.querySelector(':scope > .v2-pop > .v2-partviz');
+        if (viz && body) body.insertBefore(viz, body.firstChild);
+      } catch (e) {}
       const g = POP && card.querySelector('.ambient-grp[data-v2grp="' + POP.grp + '"]');
       if (body && g) g.appendChild(body);
       wrap.remove();
@@ -3654,6 +3697,16 @@
       '</div>';
     card.appendChild(wrap);
     wrap.querySelector('.v2-pop-pane').appendChild(body);
+    // THE DRAWING SITS ABOVE THE TABS. It belongs to the whole sheet, not to
+    // one tab, so putting the chooser under it says so: you read the part, then
+    // pick what to change about it. It lives in the group BODY (that is what
+    // keeps it on the card too), so the sheet lifts it out here and popClose
+    // puts it back — a move, not a copy, or the card would show a stale one.
+    try {
+      const viz = body.querySelector(':scope > .v2-partviz');
+      const tabs = wrap.querySelector('.v2-pop-tabs');
+      if (viz && tabs && tabs.parentNode) tabs.parentNode.insertBefore(viz, tabs);
+    } catch (e) {}
     POP = { id: L.id | 0, grp: grp, tab: tab || null };
     // `position: fixed` resolves against a transformed/filtered ancestor, not
     // the viewport (the documented containing-block trap) — measure at 0,0 and

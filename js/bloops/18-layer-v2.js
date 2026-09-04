@@ -2035,6 +2035,28 @@
   // it early — before its own notes land at +0.12, or it swallows them.
   // WHAT IS SOUNDING, tracked rather than guessed — see `previewing()`.
   let PV = null;
+  // WHICH CYCLE THE PREVIEW PLAYED. A LIVE part re-rolls every cycle (the seeded
+  // draws key on the cycle), so "draw the part" has no single answer — and the
+  // drawing showed cycle 0 while the preview played whichever cycle the clock
+  // landed on, so every press sounded different against a picture that never
+  // moved. Reported exactly that way. The picture follows the SOUND now: the
+  // preview records the cycle start it used and the drawing renders that one.
+  // Module state, never a field on the layer — `persistWorkspace` serialises
+  // underscore fields, so a `_viz` on the layer would be saved (the documented
+  // `_soloLane` trap).
+  let PV_VIZ = null;
+  // A COMPACT part signature: enough to know the part MOVED, cheap enough to
+  // take on every draw. If it changed, the remembered cycle is stale and the
+  // drawing falls back to a representative one.
+  function partSigFn(L) {
+    const p = L && L.part; if (!p) return '';
+    const r = p.rhythm || {}, t = p.pitch || {}, sh = p.shape || {};
+    return [p.kind, p.bars, p.clock || '', p.ms || 0,
+            r.kind, r.steps, r.pulses, r.rotate, r.n, r.chance, r.vary,
+            t.kind, t.degree, t.span, t.voices, t.dir, t.octaves,
+            (t.harm || []).map(h => h && h.deg).join('/'),
+            sh.lenRatio, sh.holdSteps, (p.notes || []).length].join(',');
+  }
   function previewKill(E, L, reopenSec) {
     return previewKillKey(E, 'v2:' + L.id, reopenSec);
   }
@@ -2126,6 +2148,7 @@
       }
       if (Number.isFinite(m) && m > t0) off = Math.min(m - t0, sec);
     } catch (e) {}
+    PV_VIZ = { id: L.id | 0, at: t0 - off, sig: partSigFn(L) };
     if (!E._v2Phase) E._v2Phase = {};
     const saved = E._v2Phase[key];
     // a pre-made phase state pins the anchor to NOW and skips the grid snap —
@@ -2355,6 +2378,8 @@
     makeArp: makeArpFn,
     previewKill: previewKill,
     previewing: previewing,
+    previewCycle: () => PV_VIZ,
+    partSig: partSigFn,
     previewLeftSec: previewLeftSec,
     cycleSec: cycSecOf,
     fetchArticle: fetchArticleFn,
@@ -2480,8 +2505,20 @@
     if (!cfg) return;
     let cyc = 2, notes = [];
     try { cyc = Math.max(0.05, V2.cycleSec(L, cfg)); } catch (e) {}
+    // DRAW THE CYCLE THE PREVIEW PLAYED, not cycle 0. A live part re-rolls per
+    // cycle, so a fixed drawing disagrees with every press. The remembered
+    // cycle is used only while the part still matches the one it was taken
+    // from — change a knob and it falls back to a representative cycle, which
+    // is honest rather than stale.
+    let cs = 0, fromPv = false;
     try {
-      notes = V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: 0, cycleSec: cyc }) || [];
+      const pv = V2.previewCycle && V2.previewCycle();
+      if (pv && pv.id === (L.id | 0) && pv.sig === V2.partSig(L) && Number.isFinite(pv.at)) {
+        cs = pv.at; fromPv = true;
+      }
+    } catch (e) {}
+    try {
+      notes = V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc }) || [];
     } catch (e) { notes = []; }
     // BAR LINES, so the drawing has a scale — without them a busy part and a
     // sparse one at half the length look the same.
@@ -2491,6 +2528,9 @@
       const x = Math.round((i / bars) * w) + 0.5;
       g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
     }
+    // `notesFor` returns ABSOLUTE times (cycleStart + offset), so a remembered
+    // cycle start has to be subtracted back off before drawing.
+    notes = notes.map(n => (n && Number.isFinite(n.at)) ? { at: n.at - cs, freq: n.freq, durMs: n.durMs } : n);
     const played = notes.filter(n => n && n.freq > 0 && n.at >= -1e-6 && n.at < cyc);
     if (!played.length) {
       g.fillStyle = '#6b6b8a'; g.font = '12px -apple-system, Segoe UI, sans-serif';
@@ -2517,7 +2557,8 @@
     if (lab) {
       lab.textContent = (L.part && L.part.kind === 'recorded' ? 'recorded' : 'live') + ' · ' +
         played.length + ' note' + (played.length === 1 ? '' : 's') + ' · ' + bars + ' bar' + (bars === 1 ? '' : 's') +
-        ' · ' + (Math.round(cyc * 10) / 10) + 's';
+        ' · ' + (Math.round(cyc * 10) / 10) + 's' +
+        (fromPv ? ' · as previewed' : (L.part && L.part.kind === 'live' ? ' · one take of many' : ''));
     }
   }
 
@@ -4043,6 +4084,11 @@
           }
           stopPv();                                      // another layer's → replace
           const played = V2.preview(E, ctx.L);
+          // THE PICTURE FOLLOWS THE SOUND — repaint with the cycle that just
+          // played, or the drawing keeps showing a different take from the one
+          // you are hearing (reported: "each time I press preview something
+          // different plays, but the visualization stays the same").
+          try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
           pv.classList.add('playing');
           pv.textContent = played ? '\u25a0 Stop' : pv.textContent;
           // the label follows the real end for the same reason the branch above
@@ -4394,7 +4440,14 @@
           }
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
           h._sig = ''; V2.render(E);
-          setTimeout(() => { try { V2.preview(E, ctx.L); } catch (e) {} }, 0);
+          setTimeout(() => {
+            try { V2.preview(E, ctx.L); } catch (e) {}
+            // the card was re-rendered above, so re-resolve it before drawing
+            try {
+              const c2 = document.querySelector('.v2-layer[data-v2id="' + (ctx.L.id | 0) + '"]');
+              if (c2) drawPartViz(c2, ctx.L, E);
+            } catch (e) {}
+          }, 0);
           try {
             const lab = (V2.v1Seeds.find(x => x[0] === ty) || [ty, ty])[1];
             if (typeof showToast === 'function') {
@@ -4414,7 +4467,14 @@
           h._sig = ''; V2.render(E);
           // AUDITION IT — the same rule the roll follows: a shape you cannot
           // hear is a change you have to take on trust.
-          setTimeout(() => { try { V2.preview(E, ctx.L); } catch (e) {} }, 0);
+          setTimeout(() => {
+            try { V2.preview(E, ctx.L); } catch (e) {}
+            // the card was re-rendered above, so re-resolve it before drawing
+            try {
+              const c2 = document.querySelector('.v2-layer[data-v2id="' + (ctx.L.id | 0) + '"]');
+              if (c2) drawPartViz(c2, ctx.L, E);
+            } catch (e) {}
+          }, 0);
           try {
             if (typeof showToast === 'function') {
               showToast(which === 'arp'
@@ -4453,8 +4513,12 @@
           setTimeout(() => {
             try { V2.preview(E, ctx.L); } catch (e) {}
             try {
-              const b2 = document.querySelector('.v2-layer[data-v2id="' + (ctx.L.id | 0) + '"] .v2-pop-preview');
-              if (b2) { b2.classList.add('playing'); b2.textContent = '\u25a0 Stop'; }
+              const c2 = document.querySelector('.v2-layer[data-v2id="' + (ctx.L.id | 0) + '"]');
+              if (c2) {
+                drawPartViz(c2, ctx.L, E);
+                const b2 = c2.querySelector('.v2-pop-preview');
+                if (b2) { b2.classList.add('playing'); b2.textContent = '\u25a0 Stop'; }
+              }
             } catch (e) {}
           }, 0);
           try {

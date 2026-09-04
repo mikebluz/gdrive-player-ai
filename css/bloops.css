@@ -14566,3 +14566,136 @@
       .ambient-prog-salt .ambient-salt-in,
       .ambient-prog-rubato .ambient-salt-in { font-size: 16px; width: 58px; }
     }
+
+/* ── V2 GROUP GRID + BOTTOM SHEET (2026-09-03) ──────────────────────────────
+   The card body is a GRID OF BUTTONS, one per group; a button opens that
+   group's rows in a bottom sheet, tabbed one parameter per tab, sliders drawn
+   as large knobs. The `.ambient-grp` elements stay in the card as the sheets'
+   STORAGE — hidden here; `.open` still shows one inline, which nothing
+   user-facing sets any more: it is the test hook `npm run test:ui` uses to
+   expose rows without driving the sheet, and the safety net if a sheet ever
+   fails to open. */
+.v2-layer .ambient-grp { display: none; }
+.v2-layer .ambient-grp.open { display: block; }
+.v2-grpgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; padding: 6px 0 8px; }
+/* House idiom (.addpop-btn): transparent ground, 1px #2d2d3f, muted grey text,
+   purple on hover — never a filled dark box. */
+.v2-grpbtn {
+  min-height: 56px; padding: 8px 10px; border: 1px solid #2d2d3f; border-radius: 12px;
+  background: transparent; color: #a0aec0; font-family: 'Segoe UI', sans-serif; cursor: pointer;
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 3px;
+  text-align: left; min-width: 0; touch-action: manipulation;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.v2-grpbtn .v2-grpbt { font-size: 0.8rem; font-weight: 600; }
+.v2-grpbtn .v2-grpsum {
+  font-size: 0.66rem; color: #6b6b8a; line-height: 1.25; text-align: left;
+  white-space: normal; overflow-wrap: anywhere; min-width: 0;
+}
+.v2-grpbtn .v2-grpsum:empty { display: none; }
+.v2-grpbtn:hover { border-color: #9f7aea; color: #d6bcfa; }
+.v2-grpbtn:active { border-color: #b794f4; background: rgba(159, 122, 234, 0.12); }
+.v2-grpbtn.v2-live { border-color: rgba(159, 122, 234, 0.5); }
+.v2-grpbtn.v2-live .v2-grpbt { color: #d6bcfa; }
+
+/* The sheet. A CHILD OF THE CARD (delegation + v1's host-delegated controls
+   keep working), fixed full-viewport wrap, measure-and-corrected in popOpen
+   against the containing-block trap. Not a body child, so the view-mode hide
+   rules never see it. */
+.v2-pop-wrap { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; z-index: 10290; }
+.v2-pop-scrim { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.55); }
+.v2-pop {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(560px, 94vw); max-height: 82vh;
+  display: flex; flex-direction: column;
+  background: #12121f; border: 1px solid #2d2d3f;
+  border-radius: 16px; box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+}
+.v2-pop-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px 6px; flex: 0 0 auto; }
+.v2-pop-title { font: 600 0.95rem 'Segoe UI', sans-serif; color: #e2e8f0; flex: 0 0 auto; }
+.v2-pop-head .v2-grpsum {
+  flex: 1 1 0; min-width: 0; color: #6b6b8a;
+  white-space: normal; overflow-wrap: anywhere; line-height: 1.3;
+}
+.v2-pop-close {
+  width: 44px; height: 44px; flex: 0 0 auto; border: 1px solid #2d2d3f; border-radius: 50%;
+  background: transparent; color: #a0aec0; font-size: 1rem; cursor: pointer; touch-action: manipulation;
+}
+.v2-pop-close:hover { border-color: #9f7aea; color: #d6bcfa; }
+.v2-pop-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 14px 8px; flex: 0 0 auto; }
+.v2-pop-tab {
+  min-height: 34px; padding: 5px 12px; border: 1px solid #2d2d3f; border-radius: 17px;
+  background: transparent; color: #a0aec0; font: 600 0.78rem 'Segoe UI', sans-serif; cursor: pointer;
+  touch-action: manipulation; white-space: normal; overflow-wrap: anywhere; min-width: 0;
+}
+.v2-pop-tab.on { border-color: #9f7aea; color: #d6bcfa; background: rgba(159, 122, 234, 0.1); }
+.v2-pop-pane { overflow-y: auto; padding: 4px 16px calc(20px + env(safe-area-inset-bottom)); }
+/* The moved `.ambient-grp-body` is display:none outside an .open group — the
+   sheet is its other legitimate home. */
+.v2-pop-pane > .ambient-grp-body { display: flex; flex-direction: column; gap: 10px; }
+.v2-pop-pane .v2-rowoff { display: none !important; }
+/* One parameter at a time, so the control gets the full width: label stacked
+   over the control. Compound selector — the 560px media rule's
+   `.ambient-ctrl:has(> input.ambient-sl)` would outrank a two-class one. */
+.v2-layer .v2-pop-pane .ambient-ctrl { grid-template-columns: 1fr; justify-items: stretch; gap: 8px; }
+.v2-layer .v2-pop-pane .ambient-ctrl > label { font-size: 0.9rem; color: #c5c9d4; }
+.v2-pop-pane .ambient-stepper { justify-content: center; }
+.v2-pop-pane .ambient-step-btn { width: 60px; height: 60px; font-size: 1.5rem; }
+.v2-pop-pane .ambient-step-inp { height: 60px; font-size: 1.35rem; min-width: 84px; }
+.v2-pop-pane select.ambient-select { min-height: 48px; font-size: 1rem; }
+.v2-pop-pane .ambient-seg { min-height: 44px; }
+
+/* Knobs. The row's real <input type=range> stays in the DOM (events target
+   it); the knob is its face. */
+.v2-knobbed input.ambient-sl { position: absolute !important; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.v2-knobbed .ambient-sl-v { display: none; }
+.v2-knob {
+  width: 176px; height: 176px; margin: 10px auto 6px; position: relative; border-radius: 50%;
+  cursor: grab; touch-action: pinch-zoom;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
+.v2-knob-ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(from 225deg,
+    #9f7aea 0deg, #b794f4 var(--v2ka, 0deg),
+    #23233a var(--v2ka, 0deg) 270deg, transparent 270deg);
+  -webkit-mask: radial-gradient(closest-side, transparent 70%, #000 71%);
+  mask: radial-gradient(closest-side, transparent 70%, #000 71%);
+}
+.v2-knob-face {
+  position: absolute; inset: 14px; border-radius: 50%;
+  background: radial-gradient(circle at 50% 38%, #1a1a2b, #10101d 75%);
+  border: 1px solid #2d2d3f;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+}
+.v2-knob-val { font: 700 1.7rem 'Segoe UI', sans-serif; color: #e2e8f0; }
+.v2-knob-sub {
+  font: 400 0.68rem 'Segoe UI', sans-serif; color: #6b6b8a; max-width: 78%; text-align: center;
+  white-space: normal; overflow-wrap: anywhere; line-height: 1.2;
+}
+/* THE PREVIEW BUTTON — deliberately the loudest control in the sheet (asked
+   for as "large and fun"): a filled gradient in the house purples, where every
+   other button here is a transparent pill. One exception, one meaning: this is
+   the button that makes SOUND. */
+.v2-pop-foot { flex: 0 0 auto; padding: 6px 14px calc(14px + env(safe-area-inset-bottom)); }
+.v2-pop-preview {
+  width: 100%; min-height: 54px; border: none; border-radius: 27px;
+  background: linear-gradient(135deg, #7c5ce0, #b06ae8 55%, #d66ad8);
+  color: #fff; font: 700 1.05rem 'Segoe UI', sans-serif; letter-spacing: 0.03em;
+  cursor: pointer; touch-action: manipulation;
+  box-shadow: 0 4px 18px rgba(159, 122, 234, 0.35);
+  transition: transform 0.08s ease, box-shadow 0.15s ease, filter 0.15s ease;
+}
+.v2-pop-preview:hover { filter: brightness(1.08); box-shadow: 0 4px 24px rgba(183, 148, 244, 0.5); }
+.v2-pop-preview:active { transform: scale(0.97); }
+.v2-pop-preview.playing { animation: v2pv-pulse 0.9s ease-in-out infinite; }
+@keyframes v2pv-pulse {
+  0%, 100% { box-shadow: 0 4px 18px rgba(159, 122, 234, 0.35); }
+  50% { box-shadow: 0 4px 30px rgba(214, 106, 216, 0.65); }
+}
+
+/* 16px — under that iOS zooms the page on focus and cannot zoom back. */
+.v2-knob-num {
+  width: 92px; font-size: 16px; text-align: center; background: #0f0f1e; color: #e2e8f0;
+  border: 1px solid #9f7aea; border-radius: 8px; padding: 6px;
+}

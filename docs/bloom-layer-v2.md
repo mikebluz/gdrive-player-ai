@@ -1495,6 +1495,242 @@ has one instrument. A missing instrument, not a missing grid.
 areas that each contain a layer id 1 share one phase store. Needs an area
 qualifier before v2 is used in a multi-area project.
 
+## Slice 49 — the card is a grid of buttons, a group is a centered sheet, a slider is a knob
+
+Asked for directly ("convert each section header into a button, and present as
+just a simple grid of buttons, and each button opens into a popover containing
+the subsection's controls; then tabify the controls, so each tab is a single
+parameter; convert sliders into large knobs that are easy to use on a phone").
+
+**The shape.** An expanded card is a `.v2-grpgrid` of 12 buttons — one per
+group, each carrying its live summary (`applyGate` writes every `.v2-grpsum` in
+the card, buttons included) and a `.v2-live` accent when a treatment group is
+away from its neutral. A button opens the group's rows in a centered sheet
+(`popOpen`, `min(560px, 94vw)` wide, fully on-screen by construction), tabbed
+one parameter per tab. Measured: an expanded card is 330px
+where the accordion-of-headings was 382px and the original wall 2873px, and it
+now *says* twelve things instead of naming twelve doors.
+
+**The four decisions that made it cheap, each one a documented lesson applied:**
+
+1. **The sheet is a CHILD OF THE CARD, not body-attached.** So
+   `closest('.v2-layer')` delegation, `applyGate`'s card-scoped queries, and
+   v1's panel-host-delegated controls (Key override via `data-kokey`, tone
+   cycle and synth kit via `_ambCardKey` → `[data-phkey]`) all keep working with
+   ZERO rewiring — verified by driving the Key override inside a sheet on a
+   second card (`keyOv.mode` written to the right layer). A body-attached
+   overlay would have orphaned every one of them (the Home-row lesson). The
+   fixed wrap is measure-and-corrected at 0,0 against the containing-block
+   trap.
+2. **Rows are MOVED into the sheet and moved back on close, never re-created**
+   (the Placement-popover idiom) — no duplicate ids, and the id-bound mod
+   wiring survives. TRAP FOUND: the moved `.ambient-grp-body` is `display:none`
+   outside an `.open` group, so the pane needs its own display rule, and
+   `popTabbables` must look INSIDE the body, not at the pane's children — the
+   first build shipped a sheet that was all head and no rows.
+3. **`.ambient-grp.open` survives as a TEST HOOK.** The storage groups still
+   render; `.open` still shows one inline. Nothing user-facing sets it any
+   more, but ~25 `npm run test:ui` sites use it to expose rows without driving
+   the sheet — which is what kept the gate's surgery bounded to the checks that
+   pin the fold contract itself.
+4. **A knob is a WRAPPER over the row's real `<input type=range>`** — never
+   replaced; it writes `.value` and dispatches real `input`/`change`, so every
+   binding, the Level mirror, and every synthetic drive in the gate work
+   unchanged. Drag is delta-based from the press (cumulative travel, horizontal
+   distance = fine adjust — the touch-slider rule rotated 90°); a tap never
+   jumps and opens 16px numeric entry instead. Built only inside a sheet; the
+   storage rows keep their sliders. `sl()` stamps `data-v2u` on the row so the
+   knob face can show the unit `_ambSl` buries in a title attribute.
+
+**Tabs.** One per top-level row, label = the row's label (first TEXT node — a
+label can carry the Pattern ↻ button; a `.ambient-mod-sub` reads "VCA ·
+amplitude" and tabs as "VCA"). `data-v2tab` clusters rows into one tab where a
+"parameter" is genuinely plural: an FX stage and its own params (Delay, Drive,
+Glitch, Chop), the speech source ("Words"), the Notes door. A tab is offered
+only while some row of it survives the gate, and `popSync` re-runs on every
+`applyGate` — the gate can hide the active tab's rows from under it (switch
+Voice with Tone open). A REBUILD (voice/steps/pitch-kind/tg.steps) destroys the
+sheet with the card; `V2.render` reopens it on the fresh card, same group, same
+tab.
+
+**Gate:** 251 checks (was 242) — the two fold checks became the grid/sheet
+contract; new: the button↔group family audit in both directions (§5i), sheet
+open/tab/close-returns-rows, tab re-gating in both directions across a rebuild,
+knob drag → config, knob tap-never-jumps → 16px entry, typed commit. Poisons:
+a dropped button fails 3 named checks; a jump-on-press fails the tap check; a
+disabled reopen fails the rebuild check; orphaned rows fail the close check.
+Golden 82/82, arch 62/62, partseq 231 untouched by construction.
+
+## Slice 50 — the FX group gains every v1 per-stage parameter
+
+Reported as "fx are missing params", and measured true: the FX group had mixes
+and little else. Added, all under the existing stage-tab clusters and gated
+`on:<fx>`: delay **sync / ping-pong / width**, drive **type (flavor) / tone /
+focus**, chorus & phaser & auto-pan **depth / rate**, glitch **size / rate /
+scatter / pitch**, per-stage **Dry kill** (`fdk`), the whole **Pitch echo**
+stage, and a 3-band **EQ** cluster in Mix. All are v1's own fields coerced by
+`_ambNormalizeFx`, pushed live through `_ambApplyLayerFx` (`eq.` joined the
+push regex — v1's EQ handler does exactly that call).
+
+**Pitch echo needed no engine work at all** — it lives in the capture tee
+(`_ambCapSink` → `_ambSchedulePitchEcho`) resolving through `_ambLayerByKey`,
+which answers `v2:` keys, so it worked the moment it had a surface: measured 6
+notes → 18 echoes at repeats 3. It engages on `pecho.on`, not a mix, so
+`applyGate` pushes `'pecho'` into `now.on` explicitly.
+
+**THE TRAP, poison-pinned: `_ambNormalizeFx` coerces `pe.on = pe.on === true`**
+— only the boolean survives; a numeric 1 flattens to false on the very next
+`getCfg` and the toggle reads as dead (one click, `on: false`, no error
+anywhere). The generic `ftog` toggle writes numbers everywhere else and a
+boolean for exactly this path. Related: `ftog` is a BUTTON, never a select —
+'0' from a select is a truthy string (the trance-gate lesson) — and the text
+input for the echo-arp pattern needed the input handler taught that
+`type === 'text'` carries a STRING (`parseFloat` was eating it).
+
+Gate: 257 checks — six new (delay sync/width/ping, drive type/tone/focus,
+chorus depth/rate, the strict-boolean pecho toggle, echoes actually spawning
+for a v2 layer, EQ reachable) plus `fxRest` 8 to 9. Poisoning the boolean back
+to numeric fails 2 named checks. Golden 82/82, arch 62/62, partseq 231.
+
+## Slice 51 — ▶ Preview on every sheet
+
+Every group sheet carries a large gradient **▶ Preview** in its footer (asked
+for as "large and fun" — the one filled button in a card of transparent pills,
+and the one exception carries the one meaning: this button makes SOUND). It
+plays ONE CYCLE of the layer, capped at 8 s, **through the real emitter**
+(`previewLayer` calls `emit()` with a pinned phase state at now) and the
+layer's own chain — so tone, envelope, groove, chain FX, EQ and level all
+speak (the hang-audition rule: an audition must run the exact emit path).
+
+Three deliberate properties, each a documented trap avoided:
+
+1. **No capture sink is installed** — nothing is baked into a Write loop, and
+   `_ambEmitKey` stays null, which keeps the playback gates and the chord
+   choke (both scoped on the emit key) away from notes scheduled against
+   STOPPED clocks — the trap that clamped every hang-audition note to a stub.
+   Cost, stated: pitch echo and Spatialize live in that sink, so a preview
+   does not carry them.
+2. **A suspended context resumes BEFORE scheduling** — notes scheduled against
+   a frozen clock anchor in the past and drop (the cold-start trap); the first
+   probe measured exactly that as silence, with the positive-control rig
+   proving the tap could hear.
+3. **The phase state is pinned to now and restored after** — a stale
+   `_barGridAnchor` snap would land the cycle in the past, and a leftover
+   state would skew the next real play.
+
+`cycSecOf(L, cfg)` was extracted so the emitter and the preview share one
+definition of the cycle. While the transport runs the button toasts instead —
+the layer is already sounding and edits land live; a second copy would smear.
+
+Gate: 259 checks — the button in every sheet at ≥44px, and a press that
+reaches playNote with every note on the CHAIN dest, zero capture delta, no
+leftover phase state, the button pulsing. Poison: installing the sink in
+preview fails the bake-nothing check. (Check-design note: earlier gate checks
+run the real tick, which captures — the claim is the DELTA, not the presence.)
+
+## Slice 52 — arrangement fully integrated: hangs, section mask, phrase mapping, bursts
+
+Asked outright ("is layer v2 integrated with Arrangement" → "yes, arrangement
+must be fully integrated"), and the audit found four gaps by READING THE
+SWEEPS rather than remembering the campaign. All four closed, each verified by
+measurement and pinned in `npm run test:ui` (264 checks):
+
+1. **Hangs desynced v2 layers** — the hang gate silenced v2 notes in the
+   window (playNote-hook, key-scoped), but `_ambHangShiftLayers`' sweep covered
+   only primaries + extras: the lattice shifted and `E._v2Phase` did not, so a
+   v2 layer re-entered off the part's downbeat by the hang length — the
+   documented desync class on the new store. `E._v2Phase` has the SAME shape
+   (`startAt` = phase reference, `lastAt` = high-water mark), so the same
+   `land()` applies, plus the sweep line. Measured: startAt 100 → 105 (= t1),
+   lastAt → null, anchor +1. Poisoning the sweep line out fails the check.
+2. **`sectionMask` was editable and unread** — the matrices have listed v2
+   layers since the campaign, so the store had a door and no reader (the
+   stored-but-ignored failure from the read side). One gate call in v2's emit
+   beside the chord gate. Measured 9 notes → 0 under `steps:[0]`.
+3. **The ▦ Passes phrase mapping never swept `cfg.layers`** —
+   `_ambPartSeqSync` installs a freeze per phrase-driven layer, and v2's tick
+   never consulted the freeze. Two lines close it: the sync sweeps v2 keys, and
+   v2's emit asks `_ambFreezeGate` FIRST — v1's own precedence ("Recorded
+   outranks Live by definition"). The whole cascade (part default, per-pass
+   cells, GEN, silence, fits) lands via v1's machinery with no copy. Measured:
+   mapping `pvtest` installs frozen, the tick replays exactly the phrase's
+   pitches, generation creates no phase state. NOTE the fixture trap: the
+   mapping resolves per part/pass/chord, so it needs a PROGRESSION on — the
+   gate's first version forgot that and measured a working feature as broken.
+4. **Hang bursts could not voice a v2 layer** — `_ambHangNotes`/`_ambHangEmit`
+   read voice fields FLAT (`L.tone`, `L.register`, `L.kit`); v2 nests them.
+   `_ambV2FlatView(L)` (a VIEW, never written back) + the `isBeat` test learns
+   `instrument.voice === 'kit'`. Measured: melodic burst in the layer's own
+   `fm`, synth-kit burst building 15 drum component voices.
+
+**Preview PARKS a mapped freeze** rather than replaying it — replaying would
+advance `scheduledUpto` against preview time and desync the next real play
+(the state-leak class preview exists to avoid). The preview plays the live
+pipeline; the mapping still owns playback. Golden 82/82, arch 62/62 (the
+`hang-*` configs carry no v2 layers, and every new line is a no-op without
+`cfg.layers`), partseq 231.
+
+## Slice 53 — Preview was silent under core strips, and the check that "verified" it counted calls
+
+Field report: "Preview is not playing anything." Reproduced locally in one
+probe: context running, 9 playNote calls, button pulsing — master tap 0.000.
+**Cause: a v2 note's emit key is stamped BY the capture sink, and preview
+deliberately installed no sink** (to keep notes out of Write captures) — so
+every preview note posted to the CORE unkeyed, landed in no strip slot, and
+rendered silence. The earlier "verified audible" reading had exactly equalled
+its own positive control's peak (0.251 == 0.251), the tell that was noted and
+let go: it was contamination, not the preview.
+
+Fix: a **MARKER SINK** — stamps `window._ambEmitKey`/`_ambEmitAt` and captures
+nothing — plus the audition survival kit the hang work already codified: pin
+the engine clocks to preview time while stopped (a keyed note meets the
+playNote gates, and the chord choke against NULL anchors clamps every note to
+a stub — the documented audition trap), park a stale `_ambEmitCutoff`, stand
+the hang gate down, restore everything in `finally`. Measured: same probe,
+0.000 → 0.236 at the master tap.
+
+**The gate lesson cost two poisons to learn properly.** The original check
+counted playNote calls — "a note count is not a sound", re-committed in the
+very gate meant to prevent it. It now measures AUDIO at the master tap with a
+positive control first and a floor reading between (so the control cannot
+masquerade as the preview), plus a STRUCTURAL keying pin. And that pin's first
+version asserted nothing: **`_ambEmitKey` is STICKY** — nothing clears it
+between scopes, so a stale key from an earlier tick satisfied the equality
+AND routed the unkeyed notes into the right slot by accident, which is why the
+first no-sink poison passed both checks. The gate nulls the key before the
+press; the poison now fails BOTH (peak 0.000, keyed 0/9). 266 checks; golden
+82/82, arch 62/62, partseq 231.
+
+## Slice 54 — Preview stops, and can no longer stack
+
+Field report: "Need to be able to stop preview, it sounds like it's firing a
+few times on top of each other." Both true, one cause: the button's guard was
+the `playing` CLASS, which expired with the cycle while release tails rang on
+— so a re-press (the natural reaction to a preview that opens with rests; a
+default layer's first onset sits ~1.1 s into its cycle) stacked a second copy
+on the first's tail, and there was no way off.
+
+Now: **▶ Preview → ■ Stop** (press again to stop), a press on another layer's
+preview REPLACES the running one, and — the structural half — **every start
+kills first, unconditionally** (`previewKill`, click-free per rule 3: dip the
+chain gate 6 ms, cancel pending, stop sounding, reopen the gate before the new
+first note), so overlap is impossible whichever state the button believes it
+is in. The cold-context resume also gained a pending-guard: pressing during
+the resume no longer queues a second schedule. Measured: start 0.236 → stop
+0.003 within a beat → three rapid presses peak 0.236, identical to one.
+
+**Probe lesson, again:** the first re-measure read press A as silent (peak 0
+over 1 s) and the code was right — the default layer's first onset rides 1.1 s
+of lead, and the window closed at 1.0 s. Bucketed measurement showed the swell
+arriving exactly on schedule. Measure longer than the phrase's own silence.
+
+**And a restore mistake worth the note:** the stop-kill poison was verified,
+then restored from a BACKUP TAKEN BEFORE THE FEATURE — erasing the feature and
+leaving a green-looking tree (`grep -c previewKill` → 0 was the catch). A
+poison is undone by reverting the poison edit, never by restoring a file-level
+snapshot whose vintage you have not checked. Gate: 267 checks — press-again
+stops (label back, audio < floor·3; poison: killing nothing reads 0.845).
+
 **5. ~~The rest of the vocabulary~~ — pitch is 8 of 8 (slice 17). Rhythm has
 four; v1 has more shapes worth lifting.
 

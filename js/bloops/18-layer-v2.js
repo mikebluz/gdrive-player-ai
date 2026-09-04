@@ -1683,10 +1683,31 @@
     return true;
   }
 
+  // ONE definition of a cycle's length — the emitter and the preview both ask
+  // this, and two copies of the calc is how the two would come to disagree.
+  // SPEED is v1's own rate MULTIPLIER (`_ambRateMult` — absent or 1 is an
+  // exact FP identity); it scales the cycle rather than the note rate, which
+  // is what "play this part half as fast" means when the part IS the cycle.
+  function cycSecOf(L, cfg) {
+    let mult = 1;
+    try { if (typeof _ambRateMult === 'function') mult = _ambRateMult(L) || 1; } catch (e) {}
+    return ((L.part.clock === 'free') ? Math.max(0.05, (L.part.ms || 2000) / 1000)
+                                      : Math.max(0.05, L.part.bars * barSec(cfg))) / mult;
+  }
+
   // ── THE EMITTER ─────────────────────────────────────────────────────────
   // Window in, notes out — the same contract as every v1 emitter, so all the
   // machinery downstream of playNote applies untouched.
   function emit(E, L, key, now, horizon, lead, space, cfg) {
+    // A FREEZE OUTRANKS THE LIVE PIPELINE — v1's own precedence ("Recorded
+    // takes precedence over Live by definition"). The only thing that installs
+    // a freeze on a v2 key is the ▦ Passes phrase mapping (`_ambPartSeqSync`
+    // sweeps cfg.layers now); v2's own Recorded parts are `part.kind`, not a
+    // freeze, so an unmapped layer never takes this branch. `_ambFreezeGate`
+    // replays the installed phrase and returns true = handled.
+    try {
+      if (typeof _ambFreezeGate === 'function' && _ambFreezeGate(E, key, now, horizon)) return;
+    } catch (e) {}
     // FREE means the layer keeps its OWN interval and does not follow the bar
     // grid — which is the whole point, so it must not be snapped to it below.
     const free = L.part.clock === 'free';
@@ -1694,10 +1715,7 @@
     // exact FP identity, so an untouched layer is byte-identical). It scales
     // the cycle rather than the note rate, which is what "play this part half
     // as fast" means when the part IS the cycle.
-    let mult = 1;
-    try { if (typeof _ambRateMult === 'function') mult = _ambRateMult(L) || 1; } catch (e) {}
-    const cyc = (free ? Math.max(0.05, (L.part.ms || 2000) / 1000)
-                      : Math.max(0.05, L.part.bars * barSec(cfg))) / mult;
+    const cyc = cycSecOf(L, cfg);
     if (!E._v2Phase) E._v2Phase = {};
     let st = E._v2Phase[key];
     if (!st) {
@@ -1741,6 +1759,10 @@
         // in v1, and per NOTE rather than per cycle because a cycle can span
         // several chords.
         try { if (typeof _ambChordGateOK === 'function' && !_ambChordGateOK(E, L, n.at, cfg, null)) continue; } catch (e) {}
+        // SECTION MASK — the ⇶ Blocks rows. The matrices have listed v2 layers
+        // since the campaign, so this store was EDITABLE and unread — the
+        // documented stored-but-ignored failure, closed from the read side.
+        try { if (typeof _ambSectionGateOK === 'function' && !_ambSectionGateOK(E, L, n.at, cfg, null)) continue; } catch (e) {}
         // A KIT HAS TWO REALIZATIONS and they take DIFFERENT PLAYERS — the
         // documented "audit the whole family" rule: a synth kit is a recipe
         // played by `_ambPlaySynthDrum` (which builds its own params and takes a
@@ -1905,8 +1927,127 @@
     }
   };
 
+  // ── PREVIEW ─────────────────────────────────────────────────────────────
+  // One cycle of the layer, through the REAL emitter and the layer's own
+  // chain — so tone, envelope, groove, chain FX, EQ and level all speak (the
+  // hang-audition rule: an audition must run the exact emit path). Two
+  // deliberate differences from a tick: NO capture sink is installed, so
+  // nothing is baked into a Write loop and `_ambEmitKey` stays null — which is
+  // also what keeps the playback gates and the chord choke (both scoped on the
+  // emit key) away from notes scheduled against STOPPED clocks, the documented
+  // audition trap. Pitch echo and Spatialize live in that sink, so a preview
+  // does not carry them; everything on the chain does.
+  const PV_MAX_SEC = 8;
+  // KILL a layer's preview audio, click-free: dip the chain gate (a raw voice
+  // stop can click — rule 3), cancel everything not yet sounding, stop
+  // everything that is, reopen the gate a beat later. Called on an explicit
+  // stop AND unconditionally before every start — which is what makes
+  // stacking impossible by construction: a re-press (the natural reaction to
+  // a slow first press) replaces the preview instead of piling on it.
+  function previewKill(E, L) {
+    const key = 'v2:' + L.id;
+    const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+    const e = E.mod && E.mod[key];
+    try {
+      if (e && e.gate && e.gate.gain) {
+        e.gate.gain.cancelScheduledValues(now);
+        e.gate.gain.setTargetAtTime(0, now, 0.006);
+        e.gate.gain.setTargetAtTime(1, now + 0.07, 0.015);
+      }
+    } catch (x) {}
+    try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, now); } catch (x) {}
+    try { if (typeof stopBloomVoicesBefore === 'function') stopBloomVoicesBefore(key, now + 30); } catch (x) {}
+  }
+  let PV_RESUME = false;   // one pending resume-then-play, never a queue of them
+  function previewLayer(E, L) {
+    const key = 'v2:' + L.id;
+    const cfg = E.getCfg(); if (!cfg) return 0;
+    // A SUSPENDED context freezes the clock, so notes scheduled before the
+    // resume settles anchor in the past and drop (the documented cold-start
+    // trap). Resume first, schedule after.
+    try {
+      if (typeof Tone !== 'undefined' && Tone.getContext().rawContext.state !== 'running') {
+        // pressing again while the resume is pending must not QUEUE another
+        // schedule — that was one of the ways presses stacked
+        if (!PV_RESUME) {
+          PV_RESUME = true;
+          Tone.start().then(() => { PV_RESUME = false; try { previewLayer(E, L); } catch (e) {} },
+                            () => { PV_RESUME = false; });
+        }
+        return 0;
+      }
+    } catch (e) {}
+    previewKill(E, L);
+    // the chain must exist for `_ambLayerDest` to route into — cheap when it
+    // already does, and a preview through the default bus is not a preview
+    try { if (typeof _ambSyncMods === 'function') _ambSyncMods(); } catch (e) {}
+    const t0 = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + 0.12;
+    const sec = Math.min(cycSecOf(L, cfg), PV_MAX_SEC);
+    if (!E._v2Phase) E._v2Phase = {};
+    const saved = E._v2Phase[key];
+    // a pre-made phase state pins the anchor to NOW and skips the grid snap —
+    // a stale `_barGridAnchor` from the last play would land the notes in the
+    // past (the frozen-restore lesson, one store over)
+    E._v2Phase[key] = { startAt: t0, lastAt: null };
+    // A MAPPED-PHRASE FREEZE is parked for the preview's duration: replaying
+    // it here would advance its `scheduledUpto` against preview time and
+    // desync the next real play — the state-leak class this function exists
+    // to avoid. The preview plays the LIVE pipeline; the mapping still owns
+    // playback.
+    const savedFs = E.freeze && E.freeze[key];
+    if (savedFs) delete E.freeze[key];
+    let n = 0;
+    const orig = (typeof playNote === 'function') ? playNote : null;
+    // THE MARKER SINK — the first build installed NO sink, and the preview was
+    // SILENT with core strips on: a v2 note's emit key is stamped BY the
+    // capture sink, and an unkeyed core post lands in no strip slot (the
+    // documented worklet-keying trap — measured: 9 playNote calls, master tap
+    // 0.000, while the "verified audible" reading had exactly equalled its own
+    // positive control, the tell). This sink stamps the key and captures
+    // NOTHING — no bake, no pecho, no spat, which stays the stated caveat.
+    const sv = {
+      sink: window._ambCaptureSink, ek: window._ambEmitKey, ea: window._ambEmitAt,
+      he: window._ambHangEmitting, cut: window._ambEmitCutoff,
+      pa: E._progAnchor, ps: E._playStartAt, bg: E._barGridAnchor,
+    };
+    try {
+      // count what actually reaches playNote — the return value is the gate's
+      // evidence, and "fired" from the emitter's own bookkeeping is not it
+      if (orig) window.playNote = function () { n++; return orig.apply(this, arguments); };
+      window._ambCaptureSink = function (freq, params, dur, at) {
+        window._ambEmitKey = key; window._ambEmitAt = at;
+      };
+      // KEYED notes now meet the playNote gates, which resolve against the
+      // engine clocks — NULL while stopped, which is the hang-audition trap
+      // (the choke clamps every note to a stub against a stopped clock). Pin
+      // the clocks to preview time so the gates and the choke behave exactly
+      // as they would in playback; a stale cutoff from the last play would
+      // silently drop everything, so it is parked too. The hang gate is stood
+      // down for the burst-flag reason: preview notes are an audition, not
+      // arrangement content.
+      if (!Number.isFinite(E._barGridAnchor)) {
+        E._progAnchor = t0; E._playStartAt = t0; E._barGridAnchor = t0;
+      }
+      window._ambEmitCutoff = null;
+      window._ambHangEmitting = true;
+      emit(E, L, key, t0 - 0.05, t0 + sec + 0.01, 0.12, 0, cfg);
+    } catch (e) {
+    } finally {
+      if (orig) window.playNote = orig;
+      window._ambCaptureSink = sv.sink; window._ambEmitKey = sv.ek; window._ambEmitAt = sv.ea;
+      window._ambHangEmitting = sv.he; window._ambEmitCutoff = sv.cut;
+      E._progAnchor = sv.pa; E._playStartAt = sv.ps; E._barGridAnchor = sv.bg;
+      if (saved) E._v2Phase[key] = saved; else delete E._v2Phase[key];
+      if (savedFs) { if (!E.freeze) E.freeze = {}; E.freeze[key] = savedFs; }
+    }
+    return n;
+  }
+
   // ── TEST / CONSOLE API ──────────────────────────────────────────────────
   window._v2 = {
+    preview: previewLayer,
+    previewKill: previewKill,
+    cycleSec: cycSecOf,
     fetchArticle: fetchArticleFn,
     normalize: normLayer,
     // Called from `_normalizeAmbientCfg`, the ONE migration chokepoint every
@@ -2105,14 +2246,33 @@
     return h;
   };
   const uid = (L, field) => 'v2-' + L.id + '-' + field.replace(/\./g, '-');
-  const sl = (L, field, label, v, min, max, hint, when) =>
-    (typeof _ambSl === 'function')
-      ? tag(_ambSl(label, uid(L, field), min, max, v, hint), 'ambient-sl', field, when)
-      : '';
+  const sl = (L, field, label, v, min, max, hint, when) => {
+    if (typeof _ambSl !== 'function') return '';
+    let h = tag(_ambSl(label, uid(L, field), min, max, v, hint), 'ambient-sl', field, when);
+    // The unit line rides on the ROW so the knob (which replaces the slider in
+    // the sheet) can say what its number means — _ambSl folds `hint` into a
+    // title attribute, which a knob face cannot show.
+    if (hint) h = h.replace('<div ', '<div data-v2u="' + esc(String(hint)) + '" ');
+    return h;
+  };
   const st = (L, field, label, v, min, max, hint, when) =>
     (typeof _ambStep === 'function')
       ? tag(_ambStep(label, uid(L, field), min, max, v, hint), 'ambient-step-inp', field, when)
       : '';
+  // Generic on/off over any field path. A BUTTON, never a select — a select
+  // writes a STRING and '0' is truthy (the documented trance-gate trap), so an
+  // "Off" pick would switch the thing ON.
+  const ftog = (L, field, label, onTxt, offTxt, hint, when) => {
+    const v = !!getPath(L, field);
+    return '<div class="ambient-ctrl"' + (when ? ' data-v2when="' + when + '"' : '') + '><label>' + esc(label) + '</label>' +
+      '<button type="button" class="ambient-seg v2-ftog' + (v ? ' on' : '') + '" data-f="' + field + '"' +
+        ' data-on="' + esc(onTxt) + '" data-off="' + esc(offTxt) + '">' + esc(v ? onTxt : offTxt) + '</button>' +
+      '<span class="ambient-hint">' + esc(hint || '') + '</span></div>';
+  };
+  // Per-FX Dry kill — v1's contract: forces the stage fully wet and ENGAGES it
+  // even at mix 0 (that is the point of it), which is why `applyGate` counts it.
+  const fdk = (L, fxk, when) =>
+    ftog(L, fxk + '.dryKill', 'Dry kill', 'On — wet only', 'Off', 'remove this stage\u2019s dry signal', when);
   const sel = (L, field, label, cur, opts, when) =>
     '<div class="ambient-ctrl"' + (when ? ' data-v2when="' + when + '"' : '') + '><label for="' + uid(L, field) + '">' + esc(label) + '</label>' +
     '<select id="' + uid(L, field) + '" class="ambient-select v2-f" data-f="' + field + '">' +
@@ -2158,6 +2318,14 @@
     ? _AMB_GLITCH_MODES.map(m => [m[0], m[1]])
     : [['grain', 'Grain'], ['repeat', 'Repeat'], ['tapestop', 'Tape stop'], ['reverse', 'Reverse']];
   const coreStrips = () => { try { return !!(typeof _coreVoices !== 'undefined' && _coreVoices.stripsEnabled()); } catch (e) { return false; } };
+  // Mirrored from v1's own lists so the two can never offer different options.
+  // `_AMB_DELAY_SYNCS` / `_AMB_DIST_FLAVORS` are IIFE-scoped consts in 17 and
+  // NOT reachable by bare name here — hence the literal fallbacks.
+  const DELAY_SYNCS = ['1/4', '1/4T', '1/8.', '1/8', '1/8T', '1/16.', '1/16', '1/16T'];
+  const DIST_OPTS = [['', 'Classic'], ['overdrive', 'Overdrive'], ['fuzz', 'Fuzz'],
+                     ['fold', 'Wavefold'], ['crush', 'Crush']];
+  const PECHO_SYNCS = [['', 'free (ms)'], ['1/4', '1/4'], ['1/8', '1/8'], ['1/8T', '1/8T'],
+                       ['1/16', '1/16'], ['1/16T', '1/16T']];
   const spatOn = (L) => !!(L.spat && L.spat.on);
   // Mirrored from v1's own list so the two can never offer different modes.
   const SPAT_OPTS = (typeof _AMB_SPAT_MODES !== 'undefined' && Array.isArray(_AMB_SPAT_MODES))
@@ -2182,6 +2350,20 @@
   // the card opens as a contents page and you unfold exactly what you came
   // for. (`def` is kept in the signature because it still records which groups
   // are the musical core, but it no longer opens them.)
+  // THE TWELVE GROUPS, in pipeline order. The card body is a GRID OF BUTTONS
+  // built from this list; the groups themselves render as hidden storage and a
+  // button opens that group's rows in a bottom SHEET (popOpen). The gate audits
+  // this list against the rendered groups in BOTH directions — a group with no
+  // button is unreachable, a button with no group opens nothing (the Overview
+  // popover-family precedent, §5i).
+  const GRPS = ['Instrument', 'Envelope', 'Part', 'Rhythm', 'Pitch', 'Voicing',
+                'Shape', 'Motion', 'Mix', 'Mod', 'Space', 'FX'];
+  // TAB CLUSTER — rows sharing a `data-v2tab` become ONE tab in the sheet.
+  // Used only where a "parameter" is genuinely plural (an FX stage and its own
+  // params, the speech source, the Notes door) or where bare labels collide.
+  // Tags every <div in the fragment; only top-level pane children are ever
+  // consulted, so the nested ones are inert.
+  const tb = (name, html) => html.split('<div ').join('<div data-v2tab="' + name + '" ');
   const grpOpen = (title, def, body) =>
     '<div class="ambient-grp" data-v2grp="' + esc(title) + '"' +
       (def ? ' data-v2def="1"' : '') + '>' +
@@ -2209,6 +2391,16 @@
         '<button type="button" class="ambient-collapse v2-caret" title="Collapse / expand layer" aria-label="Collapse or expand this layer"></button>' +
       '</div>' +
       '<div class="ambient-layer-body">' +
+        // THE GROUP GRID — the card's whole body at rest. Each button names a
+        // group, carries its live summary (applyGate writes every `.v2-grpsum`
+        // in the card, buttons included), and opens that group's rows in a
+        // bottom sheet. The groups below it are the STORAGE those sheets
+        // borrow rows from — hidden by `.v2-layer .ambient-grp { display:none }`.
+        '<div class="v2-grpgrid">' + GRPS.map(g4 =>
+          '<button type="button" class="v2-grpbtn" data-v2grp="' + g4 + '">' +
+            '<span class="v2-grpbt">' + g4 + '</span>' +
+            '<span class="ambient-hint v2-grpsum" data-grp="' + g4 + '"></span>' +
+          '</button>').join('') + '</div>' +
         // ── INSTRUMENT — what makes the sound ─────────────────────────────
         grpOpen('Instrument', true,
           sel(L, 'instrument.voice', 'Voice', i.voice,
@@ -2222,7 +2414,7 @@
           // `_AMB_LEARN_SOURCES`, read by id, so the two can never offer
           // different sources; `paste` is the no-network case and is what the
           // Words box below has always been.
-          sel(L, 'source', 'Words from', L.source || 'paste',
+          tb('Words', sel(L, 'source', 'Words from', L.source || 'paste',
               ((typeof _AMB_LEARN_SOURCES !== 'undefined' && Array.isArray(_AMB_LEARN_SOURCES))
                 ? _AMB_LEARN_SOURCES.map(x => [x.id, x.label])
                 : [['paste', 'Pasted text']]), 'voice:speech') +
@@ -2243,14 +2435,14 @@
             '<textarea class="ambient-select v2-text" rows="3" ' +
               'placeholder="Type or paste what it should say — one sentence per line, roughly.">' +
               esc(i.text || '') + '</textarea>' +
-            '<span class="ambient-hint v2-speechhint"></span></div>' +
+            '<span class="ambient-hint v2-speechhint"></span></div>') +
           sel(L, 'voiceFrom', 'Voice from', L.voiceFrom || 'auto',
               [['auto', 'Auto — server if available'], ['device', 'This device'], ['server', 'The voice server']],
               'voice:speech') +
           sel(L, 'wordOut', 'Words as', L.wordOut || 'speak',
               [['speak', 'Speech — say them'], ['play', 'Notes — play the letters'], ['both', 'Both at once']],
               'voice:speech') +
-          '<div class="ambient-ctrl" data-v2when="voice:speech"><label>Lines</label>' +
+          '<div data-v2tab="Words" class="ambient-ctrl" data-v2when="voice:speech"><label>Lines</label>' +
             '<span class="ambient-seg-row">' +
               '<button type="button" class="ambient-seg v2-speechwrite">✍ Write</button>' +
               '<button type="button" class="ambient-seg v2-speechgen">🎲 Make some up</button>' +
@@ -2265,7 +2457,7 @@
           // that is stripped and the row is gated on the kit being the SYNTH
           // one instead.
           ((typeof _ambSynthKitUi === 'function')
-            ? ('<div class="ambient-ctrl v2-skrow" data-v2when="voice:kit;kit:synth">' +
+            ? ('<div data-v2tab="Synth kit" class="ambient-ctrl v2-skrow" data-v2when="voice:kit;kit:synth">' +
                  _ambSynthKitUi(L).replace(' style="display:none"', '') + '</div>')
             : '') +
           '<div class="ambient-ctrl" data-v2when="voice:synth"><label for="' + uid(L, 'instrument.tone') + '">Tone</label>' +
@@ -2327,7 +2519,7 @@
           // one is ever visible is a trap for every future querySelector — the
           // first probe to touch it grabbed the hidden one and reported the
           // button as unreachable.
-          '<div class="ambient-ctrl v2-notesrow"><label>Notes from</label>' +
+          '<div data-v2tab="Notes from" class="ambient-ctrl v2-notesrow"><label>Notes from</label>' +
             '<span class="ambient-seg-row">' +
               '<button type="button" class="ambient-seg v2-compose">✎ Compose…</button>' +
               '<button type="button" class="ambient-seg v2-capture">' +
@@ -2350,7 +2542,7 @@
             '</span><span class="ambient-hint">what you draw is what it plays</span></div>' +
           '</div>' +
           ((p.kind === 'recorded' && !(p.notes || []).length)
-            ? '<div class="ambient-ctrl" data-v2when="kind:recorded"><label></label>' +
+            ? '<div data-v2tab="Notes from" class="ambient-ctrl" data-v2when="kind:recorded"><label></label>' +
               '<span class="ambient-hint" style="color:#f6ad55">Nothing recorded yet — take the live part, adopt a phrase, or switch Part back to Live.</span></div>'
             : '')
         ) +
@@ -2407,7 +2599,7 @@
           // controls with no wiring of its own. `keyOv` was already coerced and
           // already READ (it rides `_ambNotesOf`) — this is the door.
           ((typeof _ambKeyOvHtml === 'function')
-            ? _ambKeyOvHtml('v2:' + L.id, L)
+            ? tb('Key', _ambKeyOvHtml('v2:' + L.id, L))
             : '') +
           ((typeof _ambNotesButtonHtml === 'function')
             ? _ambNotesButtonHtml('v2-' + L.id).replace('<div class="ambient-ctrl"',
@@ -2520,7 +2712,10 @@
           sl(L, 'reso', 'Resonance', num(L.reso, 0), 0, 100, 'filter peak') +
           sl(L, 'fine', 'Fine', num(L.fine, 0), -100, 100, 'cents — detune the voice') +
           sl(L, 'portamento', 'Glide', num(L.portamento, 0), 0, 2000, 'ms between notes') +
-          sl(L, 'voiceTrim', 'Voice trim', num(L.voiceTrim, 0), -24, 12, 'dB — tame a hot voice')
+          sl(L, 'voiceTrim', 'Voice trim', num(L.voiceTrim, 0), -24, 12, 'dB — tame a hot voice') +
+          tb('EQ', sl(L, 'eq.low', 'EQ low', num((L.eq || {}).low, 0), -24, 24, 'dB') +
+            sl(L, 'eq.mid', 'EQ mid', num((L.eq || {}).mid, 0), -24, 24, 'dB') +
+            sl(L, 'eq.high', 'EQ high', num((L.eq || {}).high, 0), -24, 24, 'dB'))
         ) +
         // ── MOD — the per-layer LFO matrix ────────────────────────────────
         // v1's OWN builders (`_ambModTarget`, and `_ambShapeSel` inside it), so
@@ -2573,20 +2768,59 @@
         // (`on:delay`), which is what keeps this group from being the 18-row
         // dump it was: 8 rows at rest, growing only around what you turn up.
         grpOpen('FX', false,
-          sl(L, 'delay.mix', 'Delay', num(fx(L, 'delay').mix, 0), 0, 100, 'wet amount') +
-          sl(L, 'delay.timeMs', 'Delay time', num(fx(L, 'delay').timeMs, 300), 20, 1500, 'ms', 'on:delay') +
-          sl(L, 'delay.feedback', 'Delay fb', num(fx(L, 'delay').feedback, 35), 0, 95, 'repeats', 'on:delay') +
-          sl(L, 'dist.mix', 'Drive', num(fx(L, 'dist').mix, 0), 0, 100, 'wet amount') +
-          sl(L, 'dist.amount', 'Drive amt', num(fx(L, 'dist').amount, 40), 0, 100, 'how hard', 'on:dist') +
-          sl(L, 'chorus.mix', 'Chorus', num(fx(L, 'chorus').mix, 0), 0, 100, 'wet amount') +
-          sl(L, 'phaser.mix', 'Phaser', num(fx(L, 'phaser').mix, 0), 0, 100, 'wet amount') +
-          sl(L, 'autopan.mix', 'Auto-pan', num(fx(L, 'autopan').mix, 0), 0, 100, 'wet amount') +
+          tb('Delay', sl(L, 'delay.mix', 'Delay', num(fx(L, 'delay').mix, 0), 0, 100, 'wet amount') +
+            sl(L, 'delay.timeMs', 'Delay time', num(fx(L, 'delay').timeMs, 300), 20, 1500, 'ms — Sync overrides', 'on:delay') +
+            sel(L, 'delay.sync', 'Delay sync', fx(L, 'delay').sync || '',
+                [['', 'free (ms)']].concat(DELAY_SYNCS.map(d2 => [d2, d2])), 'on:delay') +
+            sl(L, 'delay.feedback', 'Delay fb', num(fx(L, 'delay').feedback, 35), 0, 95, 'repeats', 'on:delay') +
+            ftog(L, 'delay.ping', 'Ping-pong', 'On — bounce L/R', 'Off', 'echoes alternate sides', 'on:delay') +
+            sl(L, 'delay.spread', 'Delay width', num(fx(L, 'delay').spread, 0), 0, 100, 'mono → wide', 'on:delay') +
+            fdk(L, 'delay', 'on:delay')) +
+          tb('Drive', sl(L, 'dist.mix', 'Drive', num(fx(L, 'dist').mix, 0), 0, 100, 'wet amount') +
+            sel(L, 'dist.flavor', 'Drive type', fx(L, 'dist').flavor || '', DIST_OPTS, 'on:dist') +
+            sl(L, 'dist.amount', 'Drive amt', num(fx(L, 'dist').amount, 40), 0, 100, 'how hard', 'on:dist') +
+            sl(L, 'dist.focus', 'Focus', num(fx(L, 'dist').focus, 0), 0, 100, 'full range → highs only', 'on:dist') +
+            sl(L, 'dist.tone', 'Drive tone', num(fx(L, 'dist').tone, 50), 0, 100, 'dark ← flat → bright', 'on:dist') +
+            fdk(L, 'dist', 'on:dist')) +
+          tb('Chorus', sl(L, 'chorus.mix', 'Chorus', num(fx(L, 'chorus').mix, 0), 0, 100, 'wet amount') +
+            sl(L, 'chorus.depth', 'Chorus depth', num(fx(L, 'chorus').depth, 50), 0, 100, 'subtle → deep', 'on:chorus') +
+            sl(L, 'chorus.rate', 'Chorus rate', num(fx(L, 'chorus').rate, 30), 0, 100, 'slow → fast', 'on:chorus') +
+            fdk(L, 'chorus', 'on:chorus')) +
+          tb('Phaser', sl(L, 'phaser.mix', 'Phaser', num(fx(L, 'phaser').mix, 0), 0, 100, 'wet amount') +
+            sl(L, 'phaser.depth', 'Phaser depth', num(fx(L, 'phaser').depth, 50), 0, 100, 'narrow → wide', 'on:phaser') +
+            sl(L, 'phaser.rate', 'Phaser rate', num(fx(L, 'phaser').rate, 30), 0, 100, 'slow → fast', 'on:phaser') +
+            fdk(L, 'phaser', 'on:phaser')) +
+          tb('Auto-pan', sl(L, 'autopan.mix', 'Auto-pan', num(fx(L, 'autopan').mix, 0), 0, 100, 'wet amount') +
+            sl(L, 'autopan.depth', 'Pan depth', num(fx(L, 'autopan').depth, 100), 0, 100, 'centre → full L↔R', 'on:autopan') +
+            sl(L, 'autopan.rate', 'Pan rate', num(fx(L, 'autopan').rate, 30), 0, 100, 'slow → fast', 'on:autopan') +
+            fdk(L, 'autopan', 'on:autopan')) +
           // GLITCH is CORE-ONLY — a granulator has no sane Web Audio node build,
           // so with core strips off the stage simply is not there. v1 says so on
           // its own card rather than failing silently; so does this.
-          sl(L, 'glitch.mix', 'Glitch', num(fx(L, 'glitch').mix, 0), 0, 100,
+          tb('Glitch', sl(L, 'glitch.mix', 'Glitch', num(fx(L, 'glitch').mix, 0), 0, 100,
              coreStrips() ? 'wet amount' : 'needs the core engine') +
-          sel(L, 'glitch.mode', 'Glitch as', fx(L, 'glitch').mode || 'grain', GLITCH_OPTS, 'on:glitch') +
+            sel(L, 'glitch.mode', 'Glitch as', fx(L, 'glitch').mode || 'grain', GLITCH_OPTS, 'on:glitch') +
+            sl(L, 'glitch.sizeMs', 'Glitch size', num(fx(L, 'glitch').sizeMs, 80), 5, 900, 'ms per grain/slice', 'on:glitch') +
+            sl(L, 'glitch.rate', 'Glitch rate', num(fx(L, 'glitch').rate, 25), 1, 100, 'meaning depends on the type', 'on:glitch') +
+            sl(L, 'glitch.jitter', 'Scatter', num(fx(L, 'glitch').jitter, 40), 0, 100, 'how far back grains reach', 'on:glitch') +
+            sl(L, 'glitch.pitch', 'Glitch pitch', num(fx(L, 'glitch').pitch, 0), 0, 24, '± semitones per grain', 'on:glitch') +
+            fdk(L, 'glitch', 'on:glitch')) +
+          // PITCH ECHO — spawns pitched repeats of each note, in key. Lives in
+          // the capture tee (`_ambCapSink` → `_ambSchedulePitchEcho`), which v2
+          // installs per layer and which resolves through `_ambLayerByKey` — so
+          // it worked for a v2 layer already and lacked only this surface.
+          tb('Pitch echo', ftog(L, 'pecho.on', 'Pitch echo', 'On — echoing', 'Off', 'pitched repeats of each note') +
+            sl(L, 'pecho.timeMs', 'Echo time', num((L.pecho || {}).timeMs, 300), 20, 4000, 'ms — Sync overrides', 'on:pecho') +
+            sel(L, 'pecho.sync', 'Echo sync', (L.pecho || {}).sync || '', PECHO_SYNCS, 'on:pecho') +
+            st(L, 'pecho.repeats', 'Repeats', num((L.pecho || {}).repeats, 3), 1, 12, 'echoes per note', 'on:pecho') +
+            st(L, 'pecho.step', 'Echo step', num((L.pecho || {}).step, 2), -7, 7, 'scale degrees per echo', 'on:pecho') +
+            '<div class="ambient-ctrl" data-v2when="on:pecho"><label>Echo arp</label>' +
+              '<input type="text" class="ambient-select v2-f" data-f="pecho.pattern" placeholder="e.g. 0,4,7" ' +
+                'value="' + esc(String((L.pecho || {}).pattern || '')) + '">' +
+              '<span class="ambient-hint">degree offsets the echoes cycle</span></div>' +
+            sl(L, 'pecho.feedback', 'Echo decay', num((L.pecho || {}).feedback, 65), 0, 100, 'each echo vs the last', 'on:pecho') +
+            sl(L, 'pecho.spread', 'Echo width', num((L.pecho || {}).spread, 0), 0, 100, 'echoes alternate sides', 'on:pecho') +
+            fdk(L, 'pecho', 'on:pecho')) +
           // TRANCE GATE — a bar-synced step pattern that chops the layer. The
           // engine already drove this for v2 the moment the chain existed
           // (`_ambScheduleStochastic` walks `_E.mod`, `_ambScheduleTg` resolves
@@ -2595,7 +2829,7 @@
           // Labelled "Chop", not "Gate" — this card's other gates are the
           // SCHEDULE gates (Plays, and the chord/section/unit matrices), and one
           // word for two unrelated mechanisms is how a control gets misread.
-          '<div class="ambient-ctrl"><label>Chop</label>' +
+          tb('Chop', '<div class="ambient-ctrl"><label>Chop</label>' +
             '<button type="button" class="ambient-seg v2-tgtoggle' + (tgOn(L) ? ' on' : '') + '">' +
               (tgOn(L) ? 'On — chopping' : 'Off') + '</button>' +
             '<span class="ambient-hint">bar-synced gate</span></div>' +
@@ -2603,7 +2837,7 @@
           sl(L, 'tg.depth', 'Chop depth', num((L.tg || {}).depth, 100), 0, 100, '% cut', 'tg:on') +
           sl(L, 'tg.edge', 'Chop edge', num((L.tg || {}).edge, 6), 0, 60, 'ms softening', 'tg:on') +
           '<div class="ambient-ctrl v2-cellrow" data-v2when="tg:on"><label>Chop pattern</label>' +
-            tgCellsHtml(L) + '<span class="ambient-hint v2-tghint"></span></div>' +
+            tgCellsHtml(L) + '<span class="ambient-hint v2-tghint"></span></div>') +
           // WET ONLY mutes the layer's DRY output so only the reverb wash and wet
           // FX tails sound. A BUTTON, not a select — the trance gate's lesson:
           // a select writes a STRING and '0' is truthy, so "Off" would switch it on.
@@ -2642,6 +2876,9 @@
     };
     now.on = ['delay', 'dist', 'chorus', 'phaser', 'autopan', 'glitch']
       .filter(k => { const f = fx(L, k); return num(f.mix, 0) > 0 || !!f.dryKill; });
+    // Pitch echo engages on its own switch, not a mix — it spawns notes rather
+    // than processing a signal.
+    if (L.pecho && L.pecho.on) now.on.push('pecho');
     // The select has no 'drawn' option (it is internal state, not a choice), and
     // a select whose value matches no option renders BLANK — so point it at the
     // generator. Re-picking that same entry then fires no `input`, which is what
@@ -2828,6 +3065,20 @@
       const cb = card.querySelector('.v2-compose');
       if (cb) cb.classList.toggle('on', open);
     }
+    // GROUP BUTTONS: an ACCENT on any treatment group whose summary is not its
+    // neutral (the folded card then says at a glance which groups this layer
+    // actually uses). The core groups are always in use, so they stay plain.
+    const NEUT = { FX: 'none', Mod: 'none', Motion: 'straight',
+                   Space: 'dry, centred', Shape: 'struck', Voicing: 'simple' };
+    card.querySelectorAll('.v2-grpbtn').forEach(b2 => {
+      const g2 = b2.getAttribute('data-v2grp');
+      if (g2 in NEUT) b2.classList.toggle('v2-live', (sums[g2] || '') !== NEUT[g2]);
+    });
+    // The open sheet re-syncs its tabs on every gate pass — the gate can hide
+    // the active tab's rows from under it (switch Voice with Tone open).
+    if (POP && POP.id === (L.id | 0) && popWrapOf(card)) {
+      try { popSync(card, L); } catch (e) {}
+    }
   }
 
   // Rewrite ONLY the cell container. The whole card must not be rebuilt on a
@@ -2850,7 +3101,169 @@
     }
   }
 
-  function getPath(o, path) { return path.split('.').reduce((a, k) => (a == null ? a : a[k]), o); }
+  // ── THE GROUP SHEET ─────────────────────────────────────────────────────
+  // A group button opens its rows in a bottom sheet. The sheet is a CHILD OF
+  // THE CARD, deliberately: `closest('.v2-layer')` delegation, applyGate's
+  // card-scoped queries, and v1's panel-host-delegated controls (key override,
+  // tone cycle, synth kit — all resolved through `_ambCardKey`/`data-kokey`)
+  // all keep working with zero rewiring, where a body-attached overlay would
+  // orphan every one of them (the documented Home-row lesson). The rows are
+  // MOVED in and moved back on close, never re-created — re-rendering would
+  // mint duplicate ids and detach the id-bound mod wiring.
+  let POP = null;   // { id, grp, tab } — which sheet is open, and on which tab
+  function popWrapOf(card) { return card.querySelector(':scope > .v2-pop-wrap'); }
+  function popClose(card) {
+    const wrap = card && popWrapOf(card);
+    if (wrap) {
+      const body = wrap.querySelector('.ambient-grp-body');
+      const g = POP && card.querySelector('.ambient-grp[data-v2grp="' + POP.grp + '"]');
+      if (body && g) g.appendChild(body);
+      wrap.remove();
+    }
+    POP = null;
+  }
+  function popOpen(card, L, grp, tab) {
+    document.querySelectorAll('.v2-pop-wrap').forEach(w => {
+      const c = w.closest('.v2-layer'); if (c) popClose(c);
+    });
+    const g = card.querySelector('.ambient-grp[data-v2grp="' + grp + '"]');
+    const body = g && g.querySelector('.ambient-grp-body'); if (!body) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'v2-pop-wrap';
+    wrap.innerHTML =
+      '<div class="v2-pop-scrim"></div>' +
+      '<div class="v2-pop" role="dialog" aria-label="' + esc(grp) + '">' +
+        '<div class="v2-pop-head"><span class="v2-pop-title">' + esc(grp) + '</span>' +
+          '<span class="ambient-hint v2-grpsum" data-grp="' + esc(grp) + '"></span>' +
+          '<button type="button" class="v2-pop-close" aria-label="Close">✕</button></div>' +
+        '<div class="v2-pop-tabs"></div>' +
+        '<div class="v2-pop-pane"></div>' +
+        '<div class="v2-pop-foot"><button type="button" class="v2-pop-preview" ' +
+          'title="Hear one cycle of this layer with the current settings — through its own chain, so the FX and level speak too">' +
+          '\u25b6 Preview</button></div>' +
+      '</div>';
+    card.appendChild(wrap);
+    wrap.querySelector('.v2-pop-pane').appendChild(body);
+    POP = { id: L.id | 0, grp: grp, tab: tab || null };
+    // `position: fixed` resolves against a transformed/filtered ancestor, not
+    // the viewport (the documented containing-block trap) — measure at 0,0 and
+    // correct with a transform.
+    const r = wrap.getBoundingClientRect();
+    if (Math.abs(r.left) > 1 || Math.abs(r.top) > 1) {
+      wrap.style.transform = 'translate(' + (-r.left) + 'px,' + (-r.top) + 'px)';
+    }
+    applyGate(card, L);   // gates the rows and, via its tail, builds the tabs
+  }
+  // One tab per top-level row; rows sharing a `data-v2tab` (or a bare label)
+  // merge into one. A tab is offered only while some row of it survives the
+  // gate — the gate can hide the active tab's rows from under it (switch
+  // Voice to speech with Tone open), so this re-runs on every applyGate.
+  function popTabbables(pane) {
+    // The pane holds the MOVED `.ambient-grp-body`; the rows are its children.
+    const body = pane.querySelector(':scope > .ambient-grp-body') || pane;
+    return [...body.children].filter(n => n.classList &&
+      (n.classList.contains('ambient-ctrl') || n.classList.contains('ambient-mod-target')));
+  }
+  function popTabName(row) {
+    const t = row.getAttribute('data-v2tab'); if (t) return t;
+    const lab = row.querySelector(':scope > label') || row.querySelector('.ambient-mod-sub');
+    if (!lab) return '…';
+    // first TEXT node only — a label can carry a button (Pattern's ↻), and the
+    // mod-sub reads "VCA · amplitude", whose tab is just "VCA".
+    const s2 = ((lab.childNodes[0] && lab.childNodes[0].textContent) || lab.textContent || '').trim();
+    return (s2.split('·')[0].trim()) || '…';
+  }
+  function popSync(card, L) {
+    const wrap = popWrapOf(card); if (!wrap || !POP) return;
+    const pane = wrap.querySelector('.v2-pop-pane'), tabsEl = wrap.querySelector('.v2-pop-tabs');
+    const rows = popTabbables(pane);
+    const tabs = [], byName = {};
+    rows.forEach(row => {
+      const name = popTabName(row);
+      let t = byName[name];
+      if (!t) { t = byName[name] = { name: name, rows: [], vis: false }; tabs.push(t); }
+      t.rows.push(row);
+      if (row.style.display !== 'none') t.vis = true;
+    });
+    const visTabs = tabs.filter(t => t.vis);
+    const act = visTabs.find(t => t.name === POP.tab) || visTabs[0] || null;
+    POP.tab = act ? act.name : null;
+    const sig = visTabs.map(t => t.name).join('|');
+    if (tabsEl._sig !== sig) {
+      tabsEl._sig = sig;
+      tabsEl.innerHTML = visTabs.map(t =>
+        '<button type="button" class="v2-pop-tab" data-tab="' + esc(t.name) + '">' + esc(t.name) + '</button>').join('');
+    }
+    tabsEl.querySelectorAll('.v2-pop-tab').forEach(b =>
+      b.classList.toggle('on', !!act && b.getAttribute('data-tab') === act.name));
+    tabs.forEach(t => t.rows.forEach(row => row.classList.toggle('v2-rowoff', t !== act)));
+    knobifyAll(pane);
+    pane.querySelectorAll('.v2-knob').forEach(knobFace);
+  }
+  // ── KNOBS ───────────────────────────────────────────────────────────────
+  // A knob is a VISUAL WRAPPER over the row's real <input type=range> — the
+  // input is never replaced (the wrap-don't-replace rule that made the touch
+  // sliders one handler instead of 120 edits): the knob writes `.value` and
+  // dispatches real input/change, so every binding, mirror and gate check
+  // works unchanged. Built only inside a sheet; the storage rows keep their
+  // sliders.
+  function knobifyAll(pane) {
+    pane.querySelectorAll('input.ambient-sl').forEach(inp => {
+      const row = inp.closest('.ambient-ctrl');
+      if (!row || row.classList.contains('v2-knobbed')) return;
+      row.classList.add('v2-knobbed');
+      const k = document.createElement('div');
+      k.className = 'v2-knob';
+      k.innerHTML = '<div class="v2-knob-ring"></div>' +
+        '<div class="v2-knob-face"><span class="v2-knob-val"></span>' +
+        '<span class="v2-knob-sub">' + esc(row.getAttribute('data-v2u') || '') + '</span></div>';
+      inp.after(k);
+      knobFace(k);
+    });
+  }
+  function knobInputOf(k) {
+    const row = k.closest('.ambient-ctrl');
+    return row && row.querySelector('input.ambient-sl');
+  }
+  function knobFace(k) {
+    const inp = knobInputOf(k); if (!inp) return;
+    const min = +inp.min || 0, max = Number.isFinite(+inp.max) ? +inp.max : 100;
+    const v = +inp.value || 0;
+    const f = Math.max(0, Math.min(1, (v - min) / ((max - min) || 1)));
+    k.querySelector('.v2-knob-ring').style.setProperty('--v2ka', (f * 270) + 'deg');
+    const val = k.querySelector('.v2-knob-val');
+    if (val && val.textContent !== String(v)) val.textContent = String(v);
+  }
+  // Tap-with-no-drag opens numeric entry — a knob must never jump on a tap
+  // (the mis-tap-wrecks-the-setting rule the sliders already follow).
+  function knobEntry(k, inp) {
+    if (k.querySelector('.v2-knob-num')) return;
+    const n = document.createElement('input');
+    n.type = 'number'; n.className = 'v2-knob-num';
+    n.min = inp.min; n.max = inp.max; n.step = '1'; n.value = inp.value;
+    k.querySelector('.v2-knob-face').appendChild(n);
+    try { n.focus(); n.select(); } catch (e) {}
+    const done = (commit) => {
+      if (n._done) return; n._done = true;
+      if (commit) {
+        const lo = +inp.min || 0, hi = Number.isFinite(+inp.max) ? +inp.max : 100;
+        const v = Math.max(lo, Math.min(hi, Math.round(parseFloat(n.value))));
+        if (Number.isFinite(v) && String(v) !== String(inp.value)) {
+          inp.value = v;
+          inp.dispatchEvent(new Event('input', { bubbles: true }));
+          inp.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }
+      n.remove(); knobFace(k);
+    };
+    n.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') done(true);
+      else if (e.key === 'Escape') done(false);
+    });
+    n.addEventListener('blur', () => done(true));
+  }
+
+    function getPath(o, path) { return path.split('.').reduce((a, k) => (a == null ? a : a[k]), o); }
   function setPath(o, path, v) {
     const ks = path.split('.'), last = ks.pop();
     const tgt = ks.reduce((a, k) => (a[k] = a[k] || {}), o);
@@ -2875,7 +3288,7 @@
     const cfg = E && E.getCfg && E.getCfg(); if (!cfg) return;
     const list = V2.layers(cfg);
     const h = host(E); if (!h) return;
-    if (!list.length) { h.innerHTML = ''; h._sig = ''; return; }
+    if (!list.length) { h.innerHTML = ''; h._sig = ''; POP = null; return; }
     // STRUCTURE SIGNATURE — an innerHTML rewrite destroys the control under the
     // finger, which kills a slider drag after one pixel (the documented trap; it
     // cost a round on the Groove Humanize fader). Only rebuild when the set of
@@ -2924,6 +3337,19 @@
       });
       applyGate(card, L);
     });
+    // A REBUILD DESTROYS AN OPEN SHEET with the card that held it — reopen it
+    // on the fresh card, same group, same tab, so a select flipped from inside
+    // the sheet (instrument.voice, steps…) does not slam it shut in the hand.
+    // (The documented repaint-via-the-sync-path lesson: anything a rebuild
+    // throws away must be re-established AFTER the rebuild, by the rebuild.)
+    if (POP) {
+      const keep = POP; POP = null;
+      const card2 = h.querySelector('.v2-layer[data-v2id="' + keep.id + '"]');
+      const L2 = list.find(x => (x.id | 0) === keep.id);
+      if (card2 && L2 && !card2.classList.contains('collapsed')) {
+        popOpen(card2, L2, keep.grp, keep.tab);
+      }
+    }
     // Re-dock AFTER the cards exist — `_placeLaneExpander` resolves the target
     // live by key, so it must run against the rebuilt DOM, never before it.
     if (parked) {
@@ -3007,7 +3433,7 @@
         const ctx = layerOf(f); if (!ctx) return;
         const path = f.getAttribute('data-f');
         const raw = f.value;
-        setPath(ctx.L, path, (f.tagName === 'SELECT') ? raw : (parseFloat(raw) || 0));
+        setPath(ctx.L, path, (f.tagName === 'SELECT' || f.type === 'text') ? raw : (parseFloat(raw) || 0));
         // THE KNOBS REDRAW AN EDITED PATTERN — v1's own contract for a
         // hand-edited euclid grid, so the two editors behave alike. The hint
         // under the grid says so, because a silent wipe of drawn cells is
@@ -3037,7 +3463,7 @@
           try { _ambSyncMods(E); } catch (e) {}
         }
         if (/^(revSend|space|panMode|cutoff|reso|wetOnly)$/.test(path) ||
-            /^(delay|dist|chorus|phaser|autopan|glitch|spat)\./.test(path)) {
+            /^(delay|dist|chorus|phaser|autopan|glitch|spat|eq)\./.test(path)) {
           const k2 = 'v2:' + ctx.L.id;
           try { _ambApplyLayerFx(k2, ctx.L); } catch (e) {}
           try { _ambApplyLayerPan(k2, ctx.L); } catch (e) {}
@@ -3054,8 +3480,102 @@
         if (path === 'tg.steps') { h._sig = ''; V2.render(E); }
       });
 
+      // KNOB DRAG — delegated once, so knobs are pure markup that any rebuild
+      // can recreate with nothing to double-bind. Delta-based from the press
+      // (a tap must never jump the value), vertical travel = coarse, and
+      // horizontal DISTANCE slows it for fine work — the touch-slider rule,
+      // rotated 90°. Cumulative travel arms the drag (the per-move-delta
+      // mistake is documented: slow drags never cross a per-move threshold).
+      h.addEventListener('pointerdown', (ev) => {
+        const k = ev.target.closest && ev.target.closest('.v2-knob'); if (!k) return;
+        if (ev.target.closest('.v2-knob-num')) return;   // typing in the entry
+        const inp = knobInputOf(k); if (!inp) return;
+        ev.preventDefault();
+        try { k.setPointerCapture(ev.pointerId); } catch (e) {}
+        const min = +inp.min || 0, max = Number.isFinite(+inp.max) ? +inp.max : 100;
+        const span = (max - min) || 1;
+        const sx = ev.clientX, sy = ev.clientY, sv = +inp.value || 0;
+        let moved = 0;
+        const mv = (e2) => {
+          const dy = sy - e2.clientY, dx = e2.clientX - sx;
+          moved = Math.max(moved, Math.hypot(dx, dy));
+          const fine = 1 / (1 + Math.abs(dx) / 120);
+          let v = Math.round(sv + dy * (span / 200) * fine);
+          v = Math.max(min, Math.min(max, v));
+          if (String(v) !== String(inp.value)) {
+            inp.value = v;
+            inp.dispatchEvent(new Event('input', { bubbles: true }));
+            knobFace(k);
+          }
+        };
+        const up = () => {
+          k.removeEventListener('pointermove', mv);
+          if (moved < 6) knobEntry(k, inp);
+          else inp.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        k.addEventListener('pointermove', mv);
+        k.addEventListener('pointerup', up, { once: true });
+        k.addEventListener('pointercancel', up, { once: true });
+      });
+
       h.addEventListener('click', (ev) => {
         const t = ev.target;
+        // THE GROUP GRID → its sheet; the sheet's own chrome next — these run
+        // before every other branch so nothing inside the sheet can fall
+        // through to the header's collapse catch-all.
+        const gb2 = t.closest && t.closest('.v2-grpbtn');
+        if (gb2) {
+          const ctx = layerOf(gb2); if (!ctx) return;
+          popOpen(ctx.card, ctx.L, gb2.getAttribute('data-v2grp'));
+          return;
+        }
+        const ptab = t.closest && t.closest('.v2-pop-tab');
+        if (ptab) {
+          const ctx = layerOf(ptab); if (!ctx || !POP) return;
+          POP.tab = ptab.getAttribute('data-tab');
+          popSync(ctx.card, ctx.L);
+          return;
+        }
+        if (t.closest && (t.closest('.v2-pop-close') || t.closest('.v2-pop-scrim'))) {
+          const c3 = t.closest('.v2-layer'); if (c3) popClose(c3);
+          return;
+        }
+        const pv = t.closest && t.closest('.v2-pop-preview');
+        if (pv) {
+          const ctx = layerOf(pv); if (!ctx) return;
+          // While the transport runs the layer is already sounding and every
+          // edit lands live — a second copy on top would only smear it.
+          if (E.timer) {
+            try { showToast('Already playing — edits are heard live.', { ms: 2500 }); } catch (e) {}
+            return;
+          }
+          // PRESS-AGAIN-TO-STOP. The first build's guard (ignore while the
+          // 'playing' class was on) expired with the CYCLE while release tails
+          // rang on, so a re-press stacked a second copy on the first's tail —
+          // "it sounds like it's firing a few times on top of each other".
+          // Stopping is a kill; starting KILLS FIRST unconditionally (inside
+          // V2.preview), so overlap is impossible whichever state the button
+          // believes it is in.
+          const stopPv = () => {
+            if (h._pv) { clearTimeout(h._pv.t); h._pv = null; }
+            document.querySelectorAll('.v2-pop-preview').forEach(b3 => {
+              b3.classList.remove('playing'); b3.textContent = '\u25b6 Preview';
+            });
+          };
+          if (h._pv && h._pv.id === (ctx.L.id | 0)) {   // its own preview → stop
+            stopPv();
+            try { V2.previewKill(E, ctx.L); } catch (e) {}
+            return;
+          }
+          stopPv();                                      // another layer's → replace
+          const played = V2.preview(E, ctx.L);
+          const cfg3 = E.getCfg();
+          const sec3 = Math.min((typeof V2.cycleSec === 'function') ? V2.cycleSec(ctx.L, cfg3) : 2, 8);
+          pv.classList.add('playing');
+          pv.textContent = played ? '\u25a0 Stop' : pv.textContent;
+          h._pv = { id: ctx.L.id | 0, t: setTimeout(stopPv, Math.max(600, Math.round(sec3 * 1000)) + 600) };
+          return;
+        }
         // GROUP FOLD — v1 binds every `.ambient-grp-head` in the PANEL HOST at
         // build time; v2 cards live in their own host, so they were never wired
         // and the Instrument/Part headings did nothing. Found by driving every
@@ -3080,6 +3600,31 @@
             if (ta && got) ta.value = ctx.L.instrument.text || '';
             try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
           }, () => { fb.disabled = false; if (hint) hint.textContent = 'that did not work'; });
+          return;
+        }
+        // GENERIC ON/OFF over a field path — ping-pong, dry kills, pecho.
+        const ft = t.closest('.v2-ftog');
+        if (ft) {
+          const ctx = layerOf(ft); if (!ctx) return;
+          const path = ft.getAttribute('data-f');
+          // First touch of the pitch echo MATERIALISES the whole record with
+          // v1's own defaults (`_pechoOf`'s shape) — a bare `{on:1}` would
+          // leave the tee reading undefined repeats/feedback.
+          if (path === 'pecho.on' && (!ctx.L.pecho || typeof ctx.L.pecho !== 'object')) {
+            ctx.L.pecho = { on: 0, timeMs: 300, sync: '', repeats: 3, step: 2,
+                            pattern: '', feedback: 65, spread: 0, dryKill: 0 };
+          }
+          const nv = getPath(ctx.L, path) ? 0 : 1;
+          // v1's normalizer is strict about THIS one: `pe.on = pe.on === true`,
+          // so the number 1 flattens back to false on the next getCfg.
+          setPath(ctx.L, path, path === 'pecho.on' ? (nv === 1) : nv);
+          ft.classList.toggle('on', !!nv);
+          ft.textContent = nv ? ft.getAttribute('data-on') : ft.getAttribute('data-off');
+          commit(ctx);
+          // a dryKill flips the engaged set, which is a chain change
+          if (/^(delay|dist|chorus|phaser|autopan|glitch)\./.test(path)) {
+            try { _ambApplyLayerFx('v2:' + ctx.L.id, ctx.L); } catch (e) {}
+          }
           return;
         }
         const sa = t.closest('.v2-salttoggle');
@@ -3138,6 +3683,7 @@
             (t.closest('.ambient-layer-head') && !t.closest('button') && !t.closest('input') && !t.closest('select'))) {
           const c = t.closest('.v2-layer');
           if (c) {
+            popClose(c);   // a collapsed card cannot keep a sheet open over it
             const nowCollapsed = c.classList.toggle('collapsed');
             if (nowCollapsed) c.querySelectorAll('.ambient-grp.open').forEach(g => g.classList.remove('open'));
             // Expanding opens NOTHING — every subsection stays closed, so the

@@ -161,20 +161,87 @@ const ok = (name, cond, detail) => {
   s = await state();
   ok('expand again (toggles, never cancels)', s.collapsed === false && s.bodyH > 100, JSON.stringify(s));
 
-  // ---- GROUP FOLD ---------------------------------------------------------
-  // Every group starts CLOSED now, so a head tap OPENS first and folds second.
-  const openBefore = (await state()).grpsOpen;
-  await page.evaluate(() => {
-    const h = document.querySelector('.v2-layer .ambient-grp-head');
-    const g = h && h.closest('.ambient-grp');
-    if (g) g.classList.remove('open');            // tap() would open it for us
+  // ---- GROUP GRID → SHEET -------------------------------------------------
+  // The card body is a grid of buttons; a button opens its group's rows in a
+  // bottom sheet, tabbed one parameter per tab. The old accordion heads are
+  // hidden storage now (`.ambient-grp.open` survives as the test hook the
+  // in-card checks below use).
+  // FAMILY AUDIT, both directions (the §5i popover-group precedent): a group
+  // with no button is unreachable, a button with no group opens nothing.
+  s = await page.evaluate(() => {
+    const c = document.querySelector('.v2-layer');
+    const btns = [...c.querySelectorAll('.v2-grpbtn')].map((b2) => b2.getAttribute('data-v2grp'));
+    const grps = [...c.querySelectorAll('.ambient-grp')].map((g) => g.getAttribute('data-v2grp'));
+    return {
+      btns: btns.length, grps: grps.length,
+      buttonless: grps.filter((g) => btns.indexOf(g) < 0),
+      groupless: btns.filter((b2) => grps.indexOf(b2) < 0),
+    };
   });
-  await tap('.v2-layer .ambient-grp-head');
-  s = await state();
-  ok('group head unfolds its group', s.grpsOpen === openBefore + 1, JSON.stringify(s));
-  await tap('.v2-layer .ambient-grp-head');
-  s = await state();
-  ok('group head folds it again', s.grpsOpen === openBefore, JSON.stringify(s));
+  ok('every group has a button and every button a group',
+    s.btns === 12 && s.grps === 12 && !s.buttonless.length && !s.groupless.length, JSON.stringify(s));
+  await tap('.v2-layer .v2-grpbtn');
+  s = await page.evaluate(() => {
+    const w = document.querySelector('.v2-pop-wrap');
+    const sheet = w && w.querySelector('.v2-pop');
+    const r = sheet && sheet.getBoundingClientRect();
+    const pane = w && w.querySelector('.v2-pop-pane');
+    const over = pane ? Math.max(0, ...[...pane.querySelectorAll('*')].map((n) =>
+      Math.round(n.getBoundingClientRect().right - pane.getBoundingClientRect().right))) : -1;
+    return {
+      open: !!w,
+      title: w ? (w.querySelector('.v2-pop-title') || {}).textContent : null,
+      tabs: w ? w.querySelectorAll('.v2-pop-tab').length : 0,
+      onTabs: w ? w.querySelectorAll('.v2-pop-tab.on').length : 0,
+      centered: r ? (Math.abs((r.top + r.bottom) / 2 - window.innerHeight / 2) < 4 &&
+                     Math.abs((r.left + r.right) / 2 - window.innerWidth / 2) < 4 &&
+                     r.top >= 0 && r.bottom <= window.innerHeight) : false,
+      over,
+    };
+  });
+  ok('group button opens its sheet (tabbed, CENTERED, fully on screen, no overflow)',
+    s.open && s.title === 'Instrument' && s.tabs > 0 && s.onTabs === 1 && s.centered && s.over <= 0,
+    JSON.stringify(s));
+  // one parameter at a time: exactly the active tab's rows are visible
+  s = await page.evaluate(() => {
+    const pane = document.querySelector('.v2-pop-pane');
+    const rows = [...pane.querySelectorAll('.ambient-grp-body > .ambient-ctrl, .ambient-grp-body > .ambient-mod-target')];
+    const vis = rows.filter((n) => getComputedStyle(n).display !== 'none');
+    const act = (document.querySelector('.v2-pop-tab.on') || {}).getAttribute
+      ? document.querySelector('.v2-pop-tab.on').getAttribute('data-tab') : null;
+    return { vis: vis.length, act };
+  });
+  ok('sheet shows one tab of rows at a time', s.vis >= 1 && s.vis <= 3 && !!s.act, JSON.stringify(s));
+  // switching tabs moves the visible row
+  s = await page.evaluate(() => {
+    const tabs = [...document.querySelectorAll('.v2-pop-tab')];
+    return tabs.length > 1 ? tabs[1].getAttribute('data-tab') : null;
+  });
+  if (s) {
+    const want = s;
+    await tap('.v2-pop-tab:nth-child(2)');
+    s = await page.evaluate(() => {
+      const on = document.querySelector('.v2-pop-tab.on');
+      const pane = document.querySelector('.v2-pop-pane');
+      const vis = [...pane.querySelectorAll('.ambient-grp-body > *')]
+        .filter((n) => n.classList && !n.classList.contains('v2-rowoff') &&
+                       getComputedStyle(n).display !== 'none' && n.querySelector('label'));
+      return { on: on && on.getAttribute('data-tab'),
+               lab: vis[0] ? (vis[0].querySelector('label').childNodes[0] || {}).textContent : null };
+    });
+    ok('tab switch shows that parameter', s.on === want, JSON.stringify({ want, got: s }));
+  }
+  // close returns the rows to their group — nothing orphaned
+  await tap('.v2-pop-close');
+  s = await page.evaluate(() => {
+    const c = document.querySelector('.v2-layer');
+    const g = [...c.querySelectorAll('.ambient-grp')].find((x) => x.getAttribute('data-v2grp') === 'Instrument');
+    return {
+      gone: !document.querySelector('.v2-pop-wrap'),
+      rowsBack: g ? g.querySelectorAll('.ambient-grp-body .ambient-ctrl').length : 0,
+    };
+  });
+  ok('closing the sheet returns its rows to the group', s.gone && s.rowsBack > 3, JSON.stringify(s));
 
   // ---- ON / OFF -----------------------------------------------------------
   const onBefore = (await state()).on;
@@ -2938,13 +3005,19 @@ const ok = (name, cond, detail) => {
     const grps = [...c.querySelectorAll('.ambient-grp')];
     const vis = (g) => [...g.querySelectorAll('.ambient-ctrl')]
       .filter((r) => r.getBoundingClientRect().height > 0);
+    const btns = [...c.querySelectorAll('.v2-grpbtn')];
     const out = {
       groups: grps.map((g) => g.getAttribute('data-v2grp')),
-      openOnExpand: grps.filter((g) => g.classList.contains('open')).map((g) => g.getAttribute('data-v2grp')),
+      // the expanded card is the GROUP GRID and nothing else: 12 tappable
+      // buttons, zero group rows showing
+      gridBtns: btns.filter((b2) => b2.getBoundingClientRect().height >= 44).length,
+      rowsShowing: grps.reduce((a2, g) => a2 + vis(g).length, 0),
       height: Math.round(c.getBoundingClientRect().height),
-      // a folded group must still SAY what is engaged inside it
-      folded: grps.filter((g) => !g.classList.contains('open'))
-        .map((g) => g.getAttribute('data-v2grp') + '=' + g.querySelector('.v2-grpsum').textContent),
+      // the card at rest must still SAY what is engaged — the summaries live
+      // on the buttons now (the drum-solo rule: state that can vanish while
+      // its widget keeps state gets reported as a bug)
+      folded: btns.map((b2) => b2.getAttribute('data-v2grp') + '=' +
+        (b2.querySelector('.v2-grpsum') || {}).textContent),
       unnamed: grps.filter((g) => !g.getAttribute('data-v2grp')).length,
     };
     // widest group, with EVERY group open — the wall test
@@ -2992,24 +3065,381 @@ const ok = (name, cond, detail) => {
   ok('the card is grouped by what a control DOES, every group named',
     shape.groups.join(',') === 'Instrument,Envelope,Part,Rhythm,Pitch,Voicing,Shape,Motion,Mix,Mod,Space,FX' && shape.unnamed === 0,
     JSON.stringify(shape.groups));
-  ok('expanding opens NO subsection — the card is a contents page',
-    shape.openOnExpand.length === 0, JSON.stringify(shape.openOnExpand));
-  ok('an expanded card fits in about one screen (was 2873px on a 780px viewport)',
-    shape.height < 1400, shape.height + 'px');
+  ok('expanding shows the group grid and nothing else — 12 buttons, zero rows',
+    shape.gridBtns === 12 && shape.rowsShowing === 0,
+    JSON.stringify({ btns: shape.gridBtns, rows: shape.rowsShowing }));
+  ok('an expanded card is half a screen (was 2873px, then 382px of headings)',
+    shape.height < 700, shape.height + 'px');
   // Even with EVERY group opened at once, no single group may become the dump
   // "Mix & FX" was (18 rows). This is the check that catches accretion.
   ok('no group is a dump — widest is under 12 rows with all of them open',
     shape.widest < 12, shape.widestName + ' of ' + JSON.stringify(shape));
-  ok('a folded group says what is engaged inside it',
+  ok('every group button says what is engaged inside it',
     shape.folded.length === shape.groups.length && shape.folded.every((f) => f.split('=')[1].length > 0),
     JSON.stringify(shape.folded));
   ok('no two rows on the card carry the same label',
     shape.dups.length === 0, JSON.stringify(shape.dups));
   ok("an effect's own parameters appear only once the effect is engaged",
-    shape.fxRest === 8 && /Delay time/.test(shape.fxEngaged) && /Drive amt/.test(shape.fxEngaged) &&
-    shape.fxBack === 8, JSON.stringify(shape));
+    shape.fxRest === 9 && /Delay time/.test(shape.fxEngaged) && /Ping-pong/.test(shape.fxEngaged) &&
+    /Drive amt/.test(shape.fxEngaged) && /Drive tone/.test(shape.fxEngaged) &&
+    shape.fxBack === 9, JSON.stringify(shape));
   ok('which groups are open survives a rebuild',
     shape.afterRebuild === 'FX', shape.afterRebuild);
+
+  // ---- KNOBS --------------------------------------------------------------
+  // In a sheet every slider is a large knob — a WRAPPER over the row's real
+  // <input type=range> (never replaced, so every binding and every synthetic
+  // drive in this file still works). Drag is delta-based from the press; a
+  // tap must never jump the value (the mis-tap-wrecks-the-setting rule).
+  await page.evaluate(async () => {
+    const c = document.querySelector('.v2-layer');
+    c.classList.remove('collapsed');
+    const b2 = [...c.querySelectorAll('.v2-grpbtn')].find((x) => x.getAttribute('data-v2grp') === 'Envelope');
+    b2.scrollIntoView({ block: 'center' });
+  });
+  await tap('.v2-grpbtn[data-v2grp="Envelope"]');
+  const knob = await page.evaluate(() => {
+    const k = document.querySelector('.v2-pop-pane .ambient-ctrl:not(.v2-rowoff) .v2-knob');
+    if (!k) return { err: 'no knob' };
+    const r = k.getBoundingClientRect();
+    const inp = k.closest('.ambient-ctrl').querySelector('input.ambient-sl');
+    return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2),
+             w: Math.round(r.width), v0: +inp.value,
+             hit: document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2).closest('.v2-knob') === k };
+  });
+  ok('the sheet shows a large knob where the slider was', !knob.err && knob.w >= 120 && knob.hit,
+    JSON.stringify(knob));
+  await page.touchscreen.touchStart(knob.x, knob.y);
+  for (let i = 1; i <= 8; i++) await page.touchscreen.touchMove(knob.x, knob.y - i * 8);
+  await page.touchscreen.touchEnd();
+  await new Promise((r) => setTimeout(r, 150));
+  let kn = await page.evaluate(() => {
+    const L = _masterEng.getCfg().layers[0];
+    const k = document.querySelector('.v2-pop-pane .ambient-ctrl:not(.v2-rowoff) .v2-knob');
+    return { attack: L.instrument.attack, face: (k.querySelector('.v2-knob-val') || {}).textContent };
+  });
+  ok('a knob drag writes the config and the face follows',
+    kn.attack > knob.v0 && String(kn.attack) === kn.face, JSON.stringify({ from: knob.v0, to: kn }));
+  const kv1 = kn.attack;
+  await page.touchscreen.tap(knob.x, knob.y);
+  await new Promise((r) => setTimeout(r, 150));
+  kn = await page.evaluate(() => {
+    const L = _masterEng.getCfg().layers[0];
+    const n = document.querySelector('.v2-knob-num');
+    return { attack: L.instrument.attack, entry: !!n,
+             font: n ? getComputedStyle(n).fontSize : null };
+  });
+  ok('a knob TAP never jumps the value — it opens 16px numeric entry',
+    kn.attack === kv1 && kn.entry && kn.font === '16px', JSON.stringify(kn));
+  await page.keyboard.type('500');
+  await page.keyboard.press('Enter');
+  await new Promise((r) => setTimeout(r, 150));
+  kn = await page.evaluate(() => ({
+    attack: _masterEng.getCfg().layers[0].instrument.attack,
+    gone: !document.querySelector('.v2-knob-num'),
+  }));
+  ok('typed entry commits and closes', kn.attack === 500 && kn.gone, JSON.stringify(kn));
+  await tap('.v2-pop-close');
+
+  // ---- SHEET SURVIVES A REBUILD -------------------------------------------
+  // A voice/steps/pitch-kind change re-renders the whole host, which destroys
+  // the sheet with the card holding it — it must come back on the fresh card,
+  // same group, or a select flipped from inside the sheet slams it shut.
+  await tap('.v2-grpbtn[data-v2grp="Instrument"]');
+  await page.evaluate(() => {
+    const sel = document.querySelector('.v2-pop-pane [data-f="instrument.voice"]');
+    sel.value = 'speech'; sel.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  let re = await page.evaluate(() => ({
+    open: !!document.querySelector('.v2-pop-wrap'),
+    title: (document.querySelector('.v2-pop-title') || {}).textContent,
+    tabs: [...document.querySelectorAll('.v2-pop-tab')].map((t) => t.getAttribute('data-tab')).join(','),
+  }));
+  ok('the sheet survives the rebuild its own select caused',
+    re.open && re.title === 'Instrument' && /Words/.test(re.tabs) && !/Tone/.test(re.tabs),
+    JSON.stringify(re));
+  await page.evaluate(() => {
+    const sel = document.querySelector('.v2-pop-pane [data-f="instrument.voice"]');
+    sel.value = 'synth'; sel.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  re = await page.evaluate(() => ({
+    tabs: [...document.querySelectorAll('.v2-pop-tab')].map((t) => t.getAttribute('data-tab')).join(','),
+  }));
+  ok('…and the gate re-tabs it the other way', /Tone/.test(re.tabs) && !/Words/.test(re.tabs),
+    JSON.stringify(re));
+  await tap('.v2-pop-close');
+
+  // ---- THE FULL FX PARAMETER SET ------------------------------------------
+  // Reported as "fx are missing params": the v2 FX group had mixes and little
+  // else. Every v1 per-layer FX param has a v2 control now — this block pins
+  // the ones with traps in them.
+  const fxp = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const out = {};
+    const L = () => _masterEng.getCfg().layers[0];
+    const card = document.querySelector('.v2-layer');
+    card.classList.remove('collapsed');
+    [...card.querySelectorAll('.v2-grpbtn')].find((x) => x.getAttribute('data-v2grp') === 'FX').click();
+    await wait(200);
+    const set = (f, v) => { const el = document.querySelector('.v2-pop-pane [data-f="' + f + '"]');
+      if (!el) { out.missing = (out.missing || []).concat(f); return; }
+      el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); };
+    set('delay.mix', 40); await wait(120);
+    set('delay.sync', '1/8'); set('delay.spread', 30);
+    const ping = [...document.querySelectorAll('.v2-pop-pane .v2-ftog')].find((x) => x.getAttribute('data-f') === 'delay.ping');
+    if (ping) ping.click(); await wait(120);
+    out.delay = { sync: L().delay.sync, spread: L().delay.spread, ping: L().delay.ping };
+    set('dist.mix', 30); await wait(120);
+    set('dist.flavor', 'fuzz'); set('dist.tone', 70); set('dist.focus', 20); await wait(100);
+    out.dist = { flavor: L().dist.flavor, tone: L().dist.tone, focus: L().dist.focus };
+    set('chorus.mix', 25); await wait(120);
+    set('chorus.depth', 80); set('chorus.rate', 60); await wait(100);
+    out.chorus = { depth: L().chorus.depth, rate: L().chorus.rate };
+    // PITCH ECHO — the strict-boolean trap: v1's normalize does
+    // `pe.on = pe.on === true`, so a numeric 1 flattens to false on the very
+    // next getCfg and the toggle reads as dead. The v2 toggle writes a boolean.
+    [...document.querySelectorAll('.v2-pop-tab')].find((t) => t.getAttribute('data-tab') === 'Pitch echo').click();
+    await wait(120);
+    const pt = [...document.querySelectorAll('.v2-pop-pane .v2-ftog')].find((x) => x.getAttribute('data-f') === 'pecho.on');
+    if (pt) pt.click(); await wait(150);
+    const pat = document.querySelector('.v2-pop-pane [data-f="pecho.pattern"]');
+    if (pat) { pat.value = '0,4,7'; pat.dispatchEvent(new Event('input', { bubbles: true })); }
+    await wait(100);
+    out.pecho = { on: L().pecho && L().pecho.on, pattern: L().pecho && L().pecho.pattern };
+    // …and it actually SPAWNS for a v2 layer (the tee resolves `v2:` keys)
+    let echo = 0;
+    const orig = window.playNote;
+    window.playNote = function (f, pr) { if (pr && pr._pecho) echo++; return orig.apply(this, arguments); };
+    window._ambSilentCapture = true;
+    try { window._v2Tick(_masterEng, Tone.now(), Tone.now() + 2.0, 0.15, 0, _masterEng.getCfg()); } catch (e) { out.tickErr = e.message; }
+    window.playNote = orig; window._ambSilentCapture = false;
+    out.echoes = echo;
+    // undo the noisy state
+    if (pt) pt.click(); await wait(100);
+    set('delay.mix', 0); set('dist.mix', 0); set('chorus.mix', 0);
+    const png2 = [...document.querySelectorAll('.v2-pop-pane .v2-ftog')].find((x) => x.getAttribute('data-f') === 'delay.ping');
+    if (png2 && png2.classList.contains('on')) png2.click();
+    document.querySelector('.v2-pop-close').click(); await wait(100);
+    // EQ lives in Mix as its own tab
+    [...card.querySelectorAll('.v2-grpbtn')].find((x) => x.getAttribute('data-v2grp') === 'Mix').click();
+    await wait(150);
+    const eqTab = [...document.querySelectorAll('.v2-pop-tab')].find((t) => t.getAttribute('data-tab') === 'EQ');
+    if (eqTab) { eqTab.click(); await wait(100); set('eq.low', -6); await wait(100); }
+    out.eq = L().eq && L().eq.low;
+    set('eq.low', 0);
+    document.querySelector('.v2-pop-close').click();
+    return out;
+  });
+  ok('delay carries sync, width and ping-pong',
+    fxp.delay && fxp.delay.sync === '1/8' && fxp.delay.spread === 30 && fxp.delay.ping === 1 && !fxp.missing,
+    JSON.stringify(fxp));
+  ok('drive carries type, tone and focus',
+    fxp.dist && fxp.dist.flavor === 'fuzz' && fxp.dist.tone === 70 && fxp.dist.focus === 20,
+    JSON.stringify(fxp.dist));
+  ok('chorus carries depth and rate', fxp.chorus && fxp.chorus.depth === 80 && fxp.chorus.rate === 60,
+    JSON.stringify(fxp.chorus));
+  ok('pitch echo switches ON and STAYS on (v1 normalize accepts only boolean true)',
+    fxp.pecho && fxp.pecho.on === true && fxp.pecho.pattern === '0,4,7', JSON.stringify(fxp.pecho));
+  ok('…and spawns echoes for a v2 layer', fxp.echoes > 0, 'echoes: ' + fxp.echoes + (fxp.tickErr ? ' ERR ' + fxp.tickErr : ''));
+  ok('the 3-band EQ is reachable from Mix', fxp.eq === -6, JSON.stringify(fxp.eq));
+
+  // ---- PREVIEW ------------------------------------------------------------
+  // Every sheet carries a large ▶ Preview that plays one cycle of the layer
+  // through the REAL emitter and the layer's own chain — no capture sink, so
+  // nothing is baked and the stopped-clock gates never see it.
+  const pv = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const out = {};
+    const card = document.querySelector('.v2-layer');
+    card.classList.remove('collapsed');
+    // the button is in EVERY sheet, at a real size
+    out.sized = [];
+    for (const g of ['Instrument', 'Rhythm', 'FX']) {
+      [...card.querySelectorAll('.v2-grpbtn')].find((x) => x.getAttribute('data-v2grp') === g).click();
+      await wait(150);
+      const b2 = document.querySelector('.v2-pop-preview');
+      const r = b2 && b2.getBoundingClientRect();
+      out.sized.push(g + ':' + (r ? Math.round(r.height) : 0));
+      document.querySelector('.v2-pop-close').click(); await wait(100);
+    }
+    // a press reaches playNote, routes to the CHAIN, captures nothing, and
+    // leaves no phase state behind to skew the next real play
+    [...card.querySelectorAll('.v2-grpbtn')].find((x) => x.getAttribute('data-v2grp') === 'Envelope').click();
+    await wait(150);
+    let calls = 0, chained = 0, keyed = 0;
+    const orig = window.playNote;
+    window.playNote = function (f, pr, d, at, dest) {
+      const r0 = orig.apply(this, arguments);
+      // read the key AFTER the call-through — the sink stamps it INSIDE
+      // playNote (the documented wrapper-attribution trap)
+      calls++; if (dest) chained++;
+      if (window._ambEmitKey === 'v2:' + _masterEng.getCfg().layers[0].id) keyed++;
+      return r0;
+    };
+    const L = _masterEng.getCfg().layers[0];
+    // earlier checks ran the real tick, which captures — the claim is that the
+    // PREVIEW adds nothing, so measure the delta, not the presence
+    const capBefore = (_masterEng.cap && _masterEng.cap['v2:' + L.id] || []).length;
+    // A NOTE COUNT IS NOT A SOUND — the first Preview shipped with 9 playNote
+    // calls and a silent master (unkeyed core posts land in no strip slot), and
+    // this check passed. Measure the AUDIO, with a positive control first: a
+    // probe that measures audio must prove it can hear before a zero means
+    // anything.
+    const tap2 = _ambMasterTapNode(); const an2 = new Tone.Analyser('waveform', 2048);
+    Tone.connect(tap2, an2);
+    const meas = async (ms) => { let pk = 0; const t2 = Date.now() + ms;
+      while (Date.now() < t2) { const w = an2.getValue();
+        for (let i = 0; i < w.length; i++) pk = Math.max(pk, Math.abs(w[i]));
+        await wait(35); } return pk; };
+    const osc2 = new Tone.Oscillator(523, 'sine'); Tone.connect(osc2, tap2);
+    osc2.volume.value = -14; osc2.start();
+    out.posCtl = +(await meas(500)).toFixed(3);
+    osc2.stop(); osc2.dispose();
+    await wait(250);   // let the control decay so it cannot masquerade as the preview
+    out.floor = +(await meas(300)).toFixed(3);
+    // `_ambEmitKey` is STICKY — nothing clears it between scopes, so a stale
+    // value from an earlier tick satisfies the equality and the keyed count
+    // asserts nothing (this poison passed once). Null it; only a stamp made
+    // DURING the preview can then count.
+    window._ambEmitKey = null;
+    document.querySelector('.v2-pop-preview').click();
+    await wait(150);
+    // read the pulse NOW — the class clears when the cycle ends, and the
+    // 2.2 s audio measurement below outlives a short cycle
+    out.pulsing = document.querySelector('.v2-pop-preview').classList.contains('playing');
+    out.peak = +(await meas(2200)).toFixed(3);
+    window.playNote = orig;
+    out.calls = calls; out.chained = chained; out.keyed = keyed;
+    out.phaseClean = !(_masterEng._v2Phase && _masterEng._v2Phase['v2:' + L.id]);
+    out.captured = ((_masterEng.cap && _masterEng.cap['v2:' + L.id] || []).length) > capBefore;
+    // PRESS AGAIN = STOP. The first build's 'playing' guard expired with the
+    // cycle while tails rang, so a re-press stacked a second copy — reported
+    // as "firing a few times on top of each other". Stop must return the
+    // label AND kill the audio (tails included), click-free.
+    document.querySelector('.v2-pop-preview').click();
+    await wait(250);
+    out.stopLabel = document.querySelector('.v2-pop-preview').textContent;
+    out.stopPeak = +(await meas(800)).toFixed(3);
+    document.querySelector('.v2-pop-close').click();
+    return out;
+  });
+  ok('every sheet carries a large Preview button',
+    pv.sized.every((x) => parseInt(x.split(':')[1], 10) >= 44), JSON.stringify(pv.sized));
+  ok('Preview plays one cycle through the layer chain, bakes nothing, leaves no state',
+    pv.calls > 0 && pv.chained === pv.calls && pv.phaseClean && !pv.captured && pv.pulsing,
+    JSON.stringify(pv));
+  ok('Preview is AUDIBLE at the master tap (positive control heard, floor quiet, preview loud)',
+    pv.posCtl > 0.05 && pv.peak > Math.max(0.02, pv.floor * 3),
+    JSON.stringify({ posCtl: pv.posCtl, floor: pv.floor, peak: pv.peak }));
+  // The marker sink stamps the emit key — an UNKEYED core post lands in no
+  // strip slot and renders SILENCE (the shipped first build: 9 calls, master
+  // tap 0.000). The audio check above only catches that when the core worklet
+  // is live in this environment, so the keying is pinned structurally too.
+  ok("every preview note carries the layer's emit key",
+    pv.keyed === pv.calls && pv.calls > 0, JSON.stringify({ keyed: pv.keyed, calls: pv.calls }));
+  ok('pressing again STOPS the preview — label back, audio killed',
+    /Preview/.test(pv.stopLabel) && pv.stopPeak < Math.max(0.05, pv.floor * 3),
+    JSON.stringify({ label: pv.stopLabel, stopPeak: pv.stopPeak, floor: pv.floor }));
+
+  // ---- ARRANGEMENT INTEGRATION --------------------------------------------
+  // "Arrangement must be fully integrated with layer v2": the four gaps found
+  // by reading the sweeps — the hang shift skipped `E._v2Phase`, the section
+  // mask was editable and unread, the ▦ Passes phrase mapping never swept
+  // cfg.layers, and a hang burst could not voice a v2 layer.
+  const arr = await page.evaluate(async () => {
+    const res = {};
+    const E = _masterEng;
+    const cfg = E.getCfg(); const L = cfg.layers[0]; const key = 'v2:' + L.id;
+    const saveSm = L.sectionMask, saveSec = cfg.sections, savePs = L.partSeqs;
+    const saveAnch = [E._progAnchor, E._playStartAt, E._barGridAnchor];
+    // 1. the hang PAUSE lands the v2 phase on the part's downbeat
+    E._barGridAnchor = 100;
+    E._v2Phase = {}; E._v2Phase[key] = { startAt: 100, lastAt: 105 };
+    _ambHangShiftLayers(E, cfg, { t0: 104, t1: 105 });
+    res.hang = { startAt: E._v2Phase[key].startAt, lastAt: E._v2Phase[key].lastAt, anchor: E._barGridAnchor };
+    E._v2Phase = {};
+    // 2. the section mask gates a v2 note
+    const t0 = Tone.now() + 0.1;
+    cfg.sections = [{ name: 'A', bars: 8 }];
+    L.sectionMask = { steps: [0] };
+    E.getCfg();
+    E._progAnchor = t0; E._playStartAt = t0; E._barGridAnchor = null;
+    const count = () => { let n = 0; const orig = window.playNote;
+      window.playNote = function () { n++; };
+      window._ambSilentCapture = true;
+      E._v2Phase = {}; E._v2Phase[key] = { startAt: t0, lastAt: null };
+      try { window._v2Tick(E, t0 - 0.05, t0 + 3.9, 0.1, 0, E.getCfg()); } catch (e) { res.tickErr = e.message; }
+      window.playNote = orig; window._ambSilentCapture = false;
+      delete E._v2Phase[key];
+      return n; };
+    res.masked = count();
+    delete L.sectionMask; E.getCfg();
+    res.unmasked = count();
+    // 3. a mapped phrase installs a freeze, outranks the pipeline, and the
+    //    preview PARKS it rather than replaying it
+    // the mapping resolves per part/pass/chord, so it needs a PROGRESSION on
+    const saveProgOn = cfg.prog && cfg.prog.on, saveChords = cfg.prog && cfg.prog.chords;
+    cfg.prog = cfg.prog || {};
+    cfg.prog.on = true;
+    cfg.prog.chords = [{ root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] }];
+    savedSequences.push({ name: '__arrTest', kind: 'phrase', bpm: 120, subdivision: 0.25,
+      steps: [{ freq: 220, duration: 1, subdivision: 0.25 }, { freq: 440, duration: 1, subdivision: 0.25 }] });
+    L.partSeqs = { 0: { all: '__arrTest' } };
+    E.getCfg();
+    try { _ambPartSeqSync(E, E.getCfg(), t0); } catch (e) { res.syncErr = e.message; }
+    const fs = E.freeze && E.freeze[key];
+    res.mapped = { frozen: !!(fs && fs.frozen), name: fs && fs._partSeqName };
+    let freqs = [];
+    { const orig = window.playNote;
+      window.playNote = function (f) { freqs.push(Math.round(f)); };
+      window._ambSilentCapture = true;
+      try { window._v2Tick(E, t0, t0 + 3.9, 0.1, 0, E.getCfg()); } catch (e) { res.tick2Err = e.message; }
+      window.playNote = orig; window._ambSilentCapture = false; }
+    res.replay = [...new Set(freqs)].sort((x, y) => x - y);
+    res.genSilenced = !(E._v2Phase && E._v2Phase[key]);
+    const upto = fs ? fs.scheduledUpto : null;
+    window._v2.preview(E, L);
+    res.parked = !!(E.freeze && E.freeze[key]) && (fs ? fs.scheduledUpto === upto : false);
+    // 4. a hang burst answers in the layer's own voice
+    L.instrument.tone = 'fm'; E.getCfg();
+    delete E.freeze[key];
+    let types = [];
+    { const orig = window.playNote;
+      window.playNote = function (f, pr) { types.push(pr && pr.type); };
+      window._ambSilentCapture = true;
+      try { _ambHangEmit(E, cfg, { t0: t0 + 10, t1: t0 + 11, bars: 0.5, pi: 0, kind: 'head' }, key, L); }
+      catch (e) { res.burstErr = e.message; }
+      window.playNote = orig; window._ambSilentCapture = false; }
+    res.burst = [...new Set(types)];
+    // restore everything this block touched
+    const bi = savedSequences.findIndex((x) => x && x.name === '__arrTest');
+    if (bi >= 0) savedSequences.splice(bi, 1);
+    if (savePs) L.partSeqs = savePs; else delete L.partSeqs;
+    if (saveSm) L.sectionMask = saveSm;
+    if (saveSec) cfg.sections = saveSec; else delete cfg.sections;
+    cfg.prog.on = !!saveProgOn;
+    if (saveChords) cfg.prog.chords = saveChords;
+    if (E.freeze) delete E.freeze[key];
+    E._progAnchor = saveAnch[0]; E._playStartAt = saveAnch[1]; E._barGridAnchor = saveAnch[2];
+    E._v2Phase = {};
+    E.getCfg();
+    return res;
+  });
+  ok('a hang PAUSES a v2 layer — its phase lands on the part downbeat',
+    arr.hang && arr.hang.startAt === 105 && arr.hang.lastAt === null && arr.hang.anchor === 101,
+    JSON.stringify(arr.hang));
+  ok('the section mask gates a v2 layer', arr.masked === 0 && arr.unmasked > 0,
+    JSON.stringify({ masked: arr.masked, unmasked: arr.unmasked }));
+  ok('a ▦ Passes phrase mapping installs on a v2 layer and outranks the pipeline',
+    arr.mapped && arr.mapped.frozen && arr.mapped.name === '__arrTest' &&
+    arr.replay.length && arr.replay.every((f) => f === 220 || f === 440) && arr.genSilenced,
+    JSON.stringify({ mapped: arr.mapped, replay: arr.replay, gen: arr.genSilenced }));
+  ok('…and Preview parks the mapped freeze rather than replaying it', arr.parked === true,
+    JSON.stringify(arr.parked));
+  ok('a hang burst answers in the v2 layer\'s own voice',
+    arr.burst && arr.burst.length > 0 && arr.burst.indexOf('fm') >= 0, JSON.stringify(arr.burst));
 
   // ---- pinch zoom on a phone ----------------------------------------------
   // Reported as "can't pinch zoom out on phone, it zooms in when I don't want

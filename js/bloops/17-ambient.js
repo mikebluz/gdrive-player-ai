@@ -22700,6 +22700,10 @@
       try {
         ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k]) one(k, cfg[k]); });
         (cfg.extras || []).forEach(x => { if (x && x.type != null && x.id != null) one(x.type + ':' + x.id, x); });
+        // LAYER MODEL v2: the mapping installs a freeze on the v2 key exactly as
+        // on a v1 one; the v2 tick consults `_ambFreezeGate` before generating,
+        // which is what makes the installed phrase outrank the live pipeline.
+        (cfg.layers || []).forEach(x => { if (x && x.id != null) one('v2:' + x.id, x); });
       } catch (e) {}
     }
     function _ambSeqPartOptions(cur) {
@@ -44852,6 +44856,7 @@
     // on the stored per-layer ROLL (stable every round; 🎲 bumps it), never the
     // occurrence.
     function _ambHangNotes(E, cfg, win, key, L) {
+      L = _ambV2FlatView(L);
       const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
       const barSec = (60 / Math.max(20, bpm)) * 4;
       const dur = Math.max(0.05, (win.bars || 0.5) * barSec);
@@ -44874,7 +44879,8 @@
       const rnd = _ambSeededRand(_ambHangHash(win.pi, win.kind, key, roll, (cfg.seed | 0)));
       const src = (typeof _ambNotesOf === 'function') ? _ambNotesOf(cfg, L, key) : null;
       const n = Math.max(4, Math.min(12, Math.round(4 * (win.bars || 0.5) + rnd() * 3)));
-      const isBeat = (String(key).split(':')[0] === 'beat');
+      const isBeat = (String(key).split(':')[0] === 'beat') ||
+        !!(L && (L.v | 0) === 2 && L.instrument && L.instrument.voice === 'kit');
       const reg = Number.isFinite(L.register) ? (L.register | 0) : 5;
       // GENERATION CONTROLS live on the part record itself, resolved here from
       // win.pi + win.kind rather than threaded through every call site — a call
@@ -44995,7 +45001,21 @@
     // 0 Kick · 1 Snare · 2 Hat · 3 Clap · 4 Open · 5 Tom · 6 Crash · 7 Perc.
     const _AMB_HANG_ROLE_LANE = { kick: 0, snare: 1, hat: 2, clap: 3, open: 4, tom: 5, crash: 6, perc: 7 };
     let _ambHangEmitting = false;   // the burst must never be eaten by the gate that clears its own window
+    // A v2 layer keeps voice fields NESTED (instrument.tone / .register /
+    // .kit); the hang generator and emitter read them FLAT off the layer. One
+    // flat VIEW — never a copy that could be written back — so both arms voice
+    // a v2 layer in its own character with no per-field branches.
+    function _ambV2FlatView(L) {
+      if (!L || (L.v | 0) !== 2 || !L.instrument) return L;
+      const i = L.instrument;
+      return Object.assign({}, L, {
+        tone: i.tone || '', register: Number.isFinite(i.register) ? i.register : 5,
+        kit: (i.kit === 'synth') ? '' : (i.kit || ''),
+        attack: i.attack, decay: i.decay, sustain: i.sustain, release: i.release,
+      });
+    }
     function _ambHangEmit(E, cfg, win, key, L) {
+      L = _ambV2FlatView(L);
       // NO CHAIN IS NOT NO SOUND. `dest === undefined → return 0` made the burst
       // silently vanish whenever the layer's chain wasn't built (auditioning
       // while stopped, a layer mid-teardown) — and a return of 0 is invisible.
@@ -45204,10 +45224,17 @@
         const c = E.clocks && E.clocks[key];
         if (Number.isFinite(c) && c >= w.t0 - 1e-6) E.clocks[key] = w.t1;
         land(E.runPhase, key); land(E.bassPhase, key); land(E.arpState, key);
+        // LAYER MODEL v2 keeps its phase in `E._v2Phase` — same shape
+        // (`startAt` = phase reference, `lastAt` = high-water mark), so the
+        // same landing applies. Left out of this sweep, a v2 layer sailed
+        // through the shift and re-entered off the part's downbeat by exactly
+        // the hang length — the documented desync class, on the new store.
+        land(E._v2Phase, key);
       };
       try {
         ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k] && cfg[k].present !== false) one(k); });
         (cfg.extras || []).forEach(x => { if (x && x.type != null && x.id != null && x.present !== false) one(x.type + ':' + x.id); });
+        (cfg.layers || []).forEach(x => { if (x && x.id != null && x.present !== false && x.on !== false) one('v2:' + x.id); });
       } catch (e) {}
       return true;
     }

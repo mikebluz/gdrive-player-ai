@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- viewport-fit=cover + the env() paddings below: in the native shell this
+     page runs full-bleed under the notch and above the home indicator. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SAW &middot; Swiss Army Wizard</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: #0d0d18; color: #e2e8f0; min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    padding: calc(env(safe-area-inset-top, 0px) + 26px) 16px calc(env(safe-area-inset-bottom, 0px) + 40px);
+  }
+  main { max-width: 560px; margin: 0 auto; }
+  header { margin: 4px 2px 22px; }
+  h1 {
+    margin: 0; font-size: 2.1rem; letter-spacing: 0.14em; font-weight: 800;
+    color: #d6bcfa;
+  }
+  h1 .saw-blade { font-size: 1.5rem; margin-right: 8px; }
+  .tag { margin: 4px 0 0; color: #6b6b8a; font-size: 0.85rem; letter-spacing: 0.04em; }
+  .tools { display: flex; flex-direction: column; gap: 10px; }
+  /* Each tool is one big tap target — the whole card is the link. */
+  .tool {
+    display: flex; align-items: center; gap: 14px; min-height: 68px;
+    padding: 12px 14px; border: 1px solid #23233a; border-radius: 14px;
+    background: #12121f; text-decoration: none; color: inherit;
+    touch-action: manipulation;
+  }
+  .tool:hover, .tool:active { border-color: #9f7aea; }
+  .tool .ico {
+    flex: 0 0 auto; width: 44px; height: 44px; border-radius: 11px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.5rem; background: rgba(159, 122, 234, 0.1);
+    border: 1px solid rgba(159, 122, 234, 0.25);
+  }
+  .tool .txt { min-width: 0; }
+  .tool .nm { font-size: 1rem; font-weight: 700; color: #e2e8f0; }
+  .tool:hover .nm { color: #d6bcfa; }
+  .tool .d {
+    margin-top: 2px; color: #6b6b8a; font-size: 0.78rem; line-height: 1.35;
+    white-space: normal; overflow-wrap: anywhere;
+  }
+  .tool .go { margin-left: auto; color: #9f7aea; font-size: 0.9rem; flex: 0 0 auto; }
+  /* Bloops is the main event and reads as such. */
+  .tool.main { border-color: rgba(159, 122, 234, 0.55); background: rgba(159, 122, 234, 0.07); }
+  .tool.main .ico { background: rgba(159, 122, 234, 0.18); }
+  .sec { margin: 22px 2px 8px; color: #6b6b8a; font-size: 0.72rem; font-weight: 600;
+         letter-spacing: 0.08em; text-transform: uppercase; }
+  footer { margin: 30px 2px 0; color: #3f3f5c; font-size: 0.72rem; }
+  footer a { color: #6b6b8a; text-decoration: none; }
+  footer a:hover { color: #d6bcfa; }
+  @media (min-width: 600px) {
+    .tools.pair { display: grid; grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1><span class="saw-blade" aria-hidden="true">🪚</span>SAW</h1>
+    <p class="tag">Swiss Army Wizard — every tool in the box</p>
+  </header>
+
+  <div class="tools">
+    <a class="tool main" href="bloops.html">
+      <span class="ico" aria-hidden="true">🎛</span>
+      <span class="txt">
+        <span class="nm">Bloops</span>
+        <span class="d" style="display:block">generative synth &amp; sequencer</span>
+      </span>
+      <span class="go" aria-hidden="true">▸</span>
+    </a>
+  </div>
+
+  <p class="sec">Make</p>
+  <div class="tools pair">
+    <a class="tool" href="tracks.html">
+      <span class="ico" aria-hidden="true">🎚</span>
+      <span class="txt">
+        <span class="nm">Tracks</span>
+        <span class="d" style="display:block">multitrack recorder for quick demos</span>
+      </span>
+      <span class="go" aria-hidden="true">▸</span>
+    </a>
+    <a class="tool" href="notepad.html">
+      <span class="ico" aria-hidden="true">📝</span>
+      <span class="txt">
+        <span class="nm">Notepad</span>
+        <span class="d" style="display:block">a notepad where typing plays notes</span>
+      </span>
+      <span class="go" aria-hidden="true">▸</span>
+    </a>
+  </div>
+
+  <p class="sec">Look up &amp; listen</p>
+  <div class="tools pair">
+    <a class="tool" href="chords.html">
+      <span class="ico" aria-hidden="true">🎼</span>
+      <span class="txt">
+        <span class="nm">Chord Query</span>
+        <span class="d" style="display:block">type notes, get every chord they could be</span>
+      </span>
+      <span class="go" aria-hidden="true">▸</span>
+    </a>
+    <a class="tool" href="player.html">
+      <span class="ico" aria-hidden="true">📻</span>
+      <span class="txt">
+        <span class="nm">Player</span>
+        <span class="d" style="display:block">playlists backed by Google Drive</span>
+      </span>
+      <span class="go" aria-hidden="true">▸</span>
+    </a>
+  </div>
+
+  <p class="sec">Play</p>
+  <div class="tools">
+    <a class="tool" href="game.html">
+      <span class="ico" aria-hidden="true">🧱</span>
+      <span class="txt">
+        <span class="nm">Game</span>
+        <span class="d" style="display:block">bricks that compose as you play</span>
+      </span>
+      <span class="go" aria-hidden="true">▸</span>
+    </a>
+  </div>
+
+  <footer>a <a href="https://mercywizard.com" rel="noopener">Mike Luz</a> production</footer>
+</main>
+</body>
+</html>

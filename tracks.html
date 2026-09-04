@@ -2,12 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Tracks — mercy wizard</title>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; background: #0a0a12; color: #cbd5e0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-    .studio-wrap { max-width: 1060px; margin: 0 auto; padding: 14px 14px 90px; }
+    /* full-bleed in the native shell: inset the top chrome, or it prints
+       under the clock and the battery. 0px fallback = a no-op elsewhere. */
+    .studio-wrap { max-width: 1060px; margin: 0 auto;
+      padding: calc(14px + env(safe-area-inset-top, 0px)) 14px 90px; }
     .studio-top { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 4px; }
     .studio-home { color: #718096; text-decoration: none; font-size: 0.85rem; }
     .studio-home:hover { color: #9f7aea; }
@@ -143,5 +146,20 @@
     })();
   </script>
   <script src="js/bloops/24-studio.js?v=DEPLOYVER"></script>
+<script>
+// IN THE APP, "back" LANDS ON SAW. The href is index.html on both hosts, but in
+// the native bundle index.html IS the SAW front door (sync.sh boots saw.html)
+// while on the web it is the mikeluz.com desktop — so the label has to name the
+// place this actually goes. Web is left exactly as it was.
+(function () {
+  try {
+    if (!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform())) return;
+    var a = document.querySelector('a.back[href="index.html"], a.home-link[href="index.html"], a.studio-home[href="index.html"]');
+    if (!a) return;
+    a.textContent = '\u2190 SAW';
+    a.title = 'Back to the SAW front door \u2014 every tool';
+  } catch (e) {}
+})();
+</script>
 </body>
 </html>

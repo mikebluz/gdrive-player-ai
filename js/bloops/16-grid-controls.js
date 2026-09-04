@@ -1791,8 +1791,25 @@
       const panel = document.createElement('div');
       panel.className = 'xport-menu';
       panel.id = 'xport-menu';
+      // WHERE "BACK" GOES DEPENDS ON WHAT IS HOSTING THIS PAGE. The href is
+      // index.html either way — but in the native bundle index.html IS the SAW
+      // front door (sync.sh boots saw.html), while on the web it is the
+      // mikeluz.com desktop. Same link, two different destinations, so the
+      // label has to name the one the user will actually land on.
+      let _homeTxt = '← Back to Mercy Wizard';
+      let _homeTitle = 'Back to mikeluz.com';
+      let _homeAsk = 'Leave Mercy Wizard and return to the homepage?';
+      try {
+        const _native = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+        if (_native) {
+          _homeTxt = '← Back to SAW';
+          _homeTitle = 'Back to the SAW front door — every tool';
+          _homeAsk = 'Leave Bloops and go back to SAW?';
+        }
+      } catch (e) {}
       panel.innerHTML =
-        '<div class="xport-sec xport-home-sec"><a class="home-bar" href="index.html" title="Back to mikeluz.com" onclick="return confirm(\'Leave Mercy Wizard and return to the homepage?\');">← Back to Mercy Wizard</a></div>' +
+        '<div class="xport-sec xport-home-sec"><a class="home-bar" href="index.html" title="' + _homeTitle +
+        '" onclick="return confirm(\'' + _homeAsk + '\');">' + _homeTxt + '</a></div>' +
         '<div class="xport-sec"><div class="xport-sec-title">Edit</div><div class="xport-row" id="xport-edit-row"></div></div>' +
         '<div class="xport-sec"><div class="xport-sec-title">Tempo</div><div class="xport-row" id="xport-tempo-row"></div></div>' +
         '<div class="xport-sec"><div class="xport-sec-title">Volume</div><div class="xport-row" id="xport-vol-row"></div></div>' +

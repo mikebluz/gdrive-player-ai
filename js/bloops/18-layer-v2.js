@@ -495,6 +495,8 @@
       // Absent = bars, so a project made before free cycles existed is
       // byte-identical and `part.ms` is stored only once it is chosen.
       if (p.clock !== 'free') { delete p.clock; delete p.ms; }
+      // absent = 'stretch', which is what v2 has always done
+      if (p.barsMode !== 'fill') delete p.barsMode;
       // LOOP = N PASSES OF A PART. v1 expresses the binding as `write.bars`,
       // which v2 has no concept of and deletes — so the binding was written by
       // `_ambLenSyncApplyAll` and wiped on the same normalize, and v2's cycle
@@ -2311,6 +2313,54 @@
     return { steps, pulses, bars: p.bars, span: p.pitch.span };
   }
 
+  // ── WHAT HAPPENS WHEN THE LENGTH CHANGES ────────────────────────────────
+  // Onset counts are PER CYCLE, so doubling Bars spreads the same notes over
+  // twice the time — the part STRETCHES. That is often what you want and it is
+  // what v2 has always done, so it stays the default and absent means it.
+  // The other answer is to keep the density and KEEP WRITING: twice the bars,
+  // twice the notes, same feel. That is `fill`.
+  //
+  // Applied at the EDIT, not in normalize — normalize cannot know the previous
+  // length, and the ratio is the whole point.
+  function applyBarsModeFn(L, prevBars) {
+    const p = L && L.part; if (!p) return null;
+    if ((p.barsMode || 'stretch') !== 'fill') return null;
+    const nb = +p.bars || 0;
+    if (!(prevBars > 0) || !(nb > 0) || Math.abs(nb - prevBars) < 1e-9) return null;
+    const k = nb / prevBars;
+    if (p.kind === 'recorded' && Array.isArray(p.notes) && p.notes.length) {
+      // A recorded part's times are FRACTIONS of the cycle, so growing the
+      // cycle would slow the phrase down. Keep it at its own tempo and repeat
+      // it to cover the new length — "continue writing" for notes that already
+      // exist. Shrinking just truncates, which is the honest inverse.
+      const src = p.notes.map(n => ({ t: n.t / k, midi: n.midi, dur: n.dur / k }));
+      const out = [];
+      for (let rep = 0; rep < Math.ceil(k) && out.length < 512; rep++) {
+        const off = rep / k;
+        for (let i = 0; i < src.length; i++) {
+          const t = src[i].t + off;
+          if (t >= 1 - 1e-9) break;
+          out.push({ t, midi: src[i].midi, dur: Math.min(src[i].dur, 1 - t) });
+        }
+      }
+      if (out.length) p.notes = out;
+      return { mode: 'fill', notes: p.notes.length };
+    }
+    const r = p.rhythm || {};
+    const grow = (v, lo, hi) => clamp(Math.max(lo, Math.round((v || lo) * k)), lo, hi);
+    if (r.kind === 'pulse') r.n = grow(r.n, 1, 64);
+    else if (r.kind === 'euclid' || r.kind === 'drawn') {
+      const pu = r.pulses | 0;
+      r.steps = grow(r.steps, 1, 64);
+      r.pulses = clamp(Math.max(1, Math.round(pu * k)), 1, r.steps);
+      // a drawn grid cannot be stretched by arithmetic — its cells are the
+      // pattern, so growing the step count re-seeds from the knobs rather than
+      // leaving a half-empty row (the same contract the knobs already have)
+      if (r.kind === 'drawn') r.kind = 'euclid';
+    } else if (r.kind === 'chance') r.steps = grow(r.steps, 1, 64);
+    return { mode: 'fill', rhythm: r.kind };
+  }
+
   // ── SEED THIS PART LIKE A v1 LAYER ──────────────────────────────────────
   // One button per v1 layer type: press it and the part is seeded exactly the
   // way adding that layer in v1 seeds one. Not a table of hand-copied numbers —
@@ -2375,6 +2425,7 @@
     preview: previewLayer,
     rollRun: rollRunFn,
     seedLikeV1: seedLikeV1Fn,
+    applyBarsMode: applyBarsModeFn,
     v1Seeds: V1_SEEDS,
     makeSustain: makeSustainFn,
     makeArp: makeArpFn,
@@ -2998,6 +3049,16 @@
               '<span class="ambient-loop-badge">\u27f2 ' + (L.lenSync.passes | 0) + ' \u00d7 part</span>' +
               '<span class="ambient-hint">' + esc(String(p.bars)) + ' bars \u2014 set by the loop binding (\u22ef menu)</span></div>'
             : st(L, 'part.bars', 'Bars', p.bars, 1, 32, 'per cycle', 'clock:bars')) +
+          // WHAT CHANGING BARS DOES. Onsets are per CYCLE, so more bars spreads
+          // the same notes further apart — good for a pad, wrong for a riff you
+          // wanted twice as long. Tagged into the Bars tab because it is the
+          // same question, not a new one.
+          '<div data-v2tab="Bars" class="ambient-ctrl" data-v2when="clock:bars">' +
+            '<label for="' + uid(L, 'part.barsMode') + '">More bars</label>' +
+            '<select id="' + uid(L, 'part.barsMode') + '" class="ambient-select v2-f" data-f="part.barsMode">' +
+              '<option value="stretch"' + ((p.barsMode || 'stretch') === 'stretch' ? ' selected' : '') + '>Stretch — the same notes, spread out</option>' +
+              '<option value="fill"' + (p.barsMode === 'fill' ? ' selected' : '') + '>Fill — keep writing, same density</option>' +
+            '</select><span class="ambient-hint"></span></div>' +
           sl(L, 'part.ms', 'Every', num(p.ms, 2000), 200, 20000, 'ms — ignores the bar grid', 'clock:free') +
           // WHEN — which ITERATIONS of the cycle this layer plays. v1 edits this
           // in the Scheduler's Advanced block, which renders per-type controls
@@ -3996,7 +4057,11 @@
         const ctx = layerOf(f); if (!ctx) return;
         const path = f.getAttribute('data-f');
         const raw = f.value;
+        // the PREVIOUS length, captured before the write — "fill" is a ratio and
+        // normalize can never know it
+        const prevBars = (path === 'part.bars') ? (+ctx.L.part.bars || 0) : 0;
         setPath(ctx.L, path, (f.tagName === 'SELECT' || f.type === 'text') ? raw : (parseFloat(raw) || 0));
+        if (path === 'part.bars') { try { V2.applyBarsMode(ctx.L, prevBars); } catch (e) {} }
         // THE KNOBS REDRAW AN EDITED PATTERN — v1's own contract for a
         // hand-edited euclid grid, so the two editors behave alike. The hint
         // under the grid says so, because a silent wipe of drawn cells is

@@ -618,21 +618,22 @@
         // audible. Opt back in with localStorage bloopsFgDirect='1' only to
         // experiment; the latency answer within the broadcast is the modal +
         // 0.6 s cushion + speaker-synced display, all of which stay.
-        // DEFAULT ON. This whole block IS the low-latency foreground path: the
-        // bridge stream is what you hear while the app is visible, and the MSE
-        // element rides its cushion MUTED, ready to take over at hide/lock.
-        // Behind an opt-in flag it never ran on the device, so `_bloopsMseFg`
-        // was never called, `fgMode` stayed false, and EVERY sound in the
-        // foreground went out through the broadcast at its ~1.2-1.4 s cushion.
-        // Measured in a device harvest: `outLag=1.96`, and not one
-        // "audible path → …" line in the log. That is the reported "grid
-        // presses become delayed" — with the first few presses fine only
-        // because the interactive monitor's 2.5 s press hold was covering
-        // them, and the same notes arriving again out of the broadcast a
-        // second later ("those notes replay delayed on top of what you're
-        // playing"). Escape hatch inverted: '0' turns it off.
-        let fgEnabled = true;
-        try { if (localStorage.getItem('bloopsFgDirect') === '0') fgEnabled = false; } catch (e) {}
+        // BACK TO OPT-IN (2026-09-05). Default-ON lasted one day and produced
+        // the exact report fix #14 predicted: "pops/glitches when backgrounding,
+        // when opening other apps, and when the phone is just sitting locked" —
+        // the flight log shows the audible path HANDING OFF at every
+        // interruption (boot→fg, interrupted→broadcast, visible→fg, twice in
+        // 14 s of ordinary use), and while locked iOS's RECURRING interruptions
+        // re-fire the handoff. A handoff between two paths offset in time can
+        // be made small but never seamless — that was already established
+        // three polishing rounds ago, and the continuity requirement is HARD
+        // and outranks foreground latency (stated multiple times). The
+        // foreground-latency answer must be designed INSIDE the broadcast
+        // (rate-warped cushion, or a native monitor path) — never a runtime
+        // handoff at lock/visibility edges. Stopped-state presses stay
+        // immediate via the press-gated interactive monitor.
+        let fgEnabled = false;
+        try { if (localStorage.getItem('bloopsFgDirect') === '1') fgEnabled = true; } catch (e) {}
         if (fgEnabled) try {
           const fgGain = bridgeRefs.bridge.createGain();
           fgGain.gain.value = 0;

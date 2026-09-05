@@ -305,6 +305,13 @@
         let on = null;
         try { on = (typeof _vinylTransportOn === 'function') ? !!_vinylTransportOn() : null; } catch (e) {}
         if (on === null) return;
+        // BOOT SHAPE: the transport is stopped at boot but no edge has fired,
+        // so the stop gate sat OPEN — a boot-time press reached the broadcast
+        // ~1.4 s late on top of the monitor's immediate copy (a double). Close
+        // it once, to match the state; the first play edge opens it as usual.
+        if (wasOn === null && on === false && !window.__bloopsMaskClosed) {
+          try { if (window._bloopsStopGate) window._bloopsStopGate(true); } catch (e) {}
+        }
         if (on === false && wasOn === true) {
           stopHold = true; needCushion = false;
           // THE STOP GATE owns immediacy now: the graph is muted at the mask

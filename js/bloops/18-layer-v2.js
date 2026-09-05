@@ -519,6 +519,8 @@
       // key change — the engine transposes rather than re-resolving (the v1
       // frozen-loop rule). `transpose` is that offset, applied at read time.
       p.transpose = clamp((p.transpose | 0) || 0, -48, 48);
+      // what was last DONE to these notes (absent on an untouched take)
+      if (!TRANSFORMS[p.tf]) delete p.tf;
       // Absent = bars, so a project made before free cycles existed is
       // byte-identical and `part.ms` is stored only once it is chosen.
       if (p.clock !== 'free') { delete p.clock; delete p.ms; }
@@ -1527,6 +1529,62 @@
   // compared `made`, never the notes. A lock still must NOT bump.
   // opts.bars — replace only these bar indices: keep every stored note outside
   // them, take the fresh roll inside them. That is per-bar re-rolling.
+  // ── TRANSFORMS — commands that rework the notes you already have ────────
+  // A REGISTRY, because the set is meant to grow: one entry is a label, a
+  // past-tense word for the hint, and a function over the scoped notes.
+  // Everything works in CYCLE FRACTIONS (`t` and `dur` both are), so a
+  // transform is exact and tempo-independent.
+  // Rolled with `Math.random` at UI time, NEVER the seeded `_ambRand` stream —
+  // the documented split that keeps generation byte-identical.
+  const TRANSFORMS = {
+    reverse: {
+      label: '\u21c4 Reverse', word: 'reversed', hint: 'the notes play backwards',
+      fn: (list, w0, w1) => list.map(n => {
+        const t = w0 + w1 - (n.t + n.dur);
+        return Object.assign({}, n, { t: clamp(t, w0, Math.max(w0, w1 - 1e-6)) });
+      }),
+    },
+    shuffle: {
+      label: '\ud83d\udd00 Shuffle', word: 'shuffled', hint: 'same rhythm, the notes re-ordered',
+      // The RHYTHM is the part's identity, so shuffling moves the PITCHES
+      // between the onsets it already has rather than moving the onsets.
+      fn: (list) => {
+        const pit = list.map(n => n.midi);
+        for (let i = pit.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          const t = pit[i]; pit[i] = pit[j]; pit[j] = t;
+        }
+        return list.map((n, i) => Object.assign({}, n, { midi: pit[i] }));
+      },
+    },
+  };
+  // bars → the window of the cycle they cover, as fractions
+  function tfWindow(L, bars) {
+    const barsF = Math.max(0.125, L.part.bars || 1);
+    if (!Array.isArray(bars) || !bars.length) return [0, 1];
+    let lo = Infinity, hi = -Infinity;
+    bars.forEach(b => { lo = Math.min(lo, b | 0); hi = Math.max(hi, b | 0); });
+    return [clamp(lo / barsF, 0, 1), clamp((hi + 1) / barsF, 0, 1)];
+  }
+  function transformFn(E, L, op, bars) {
+    const T = TRANSFORMS[op];
+    if (!T || !L || !L.part || L.part.kind !== 'recorded') return 0;
+    const all = (L.part.notes || []);
+    if (!all.length) return 0;
+    const [w0, w1] = tfWindow(L, bars);
+    const inScope = (n) => n.t >= w0 - 1e-9 && n.t < w1 - 1e-9;
+    const scoped = all.filter(inScope);
+    if (!scoped.length) return 0;
+    const done = T.fn(scoped, w0, w1) || scoped;
+    L.part.notes = all.filter(n => !inScope(n)).concat(done).sort((a, b) => a.t - b.t);
+    // THE PART CARRIES WHAT WAS DONE TO IT: the hint says so, and
+    // `replaceOK` counts a transformed take as WORK (a plain roll may be
+    // replaced silently — this one may not).
+    L.part.tf = op;
+    try { E.getCfg(); } catch (e) {}
+    return done.length;
+  }
+
   function captureFn(E, L, opts) {
     const cfg = E && E.getCfg && E.getCfg(); if (!cfg || !L) return false;
     const ctx = currentCycle(E, L, cfg);
@@ -2847,6 +2905,9 @@
     layers: layersOf,
     notesFor,                      // the interface, callable directly
     onsetsOf,
+    transform: transformFn,        // commands over the notes you already have
+    transformList: () => Object.keys(TRANSFORMS).map(k => ({ op: k, label: TRANSFORMS[k].label, hint: TRANSFORMS[k].hint })),
+    transformWord: (op) => (TRANSFORMS[op] && TRANSFORMS[op].word) || '',
     capture: captureFn,            // door 1 into a recorded part: freeze the live one
     compose: composeFn,            // door 2: draw it in the grid, docked in the card
     composeCommit: composeCommitFn,
@@ -2985,16 +3046,15 @@
     const a = [...sel.bars].sort((x, y) => x - y).map((b) => b + 1);
     return (a.length === 1 ? 'bar ' + a[0] : 'bars ' + a.join('+'));
   };
+  // ONE BUTTON, TWO STATES (user: "lock/unlock take should be a single
+  // button"). It used to carry three faces and one of them REPLACED your
+  // notes — a lock that sometimes destroys work is two actions in one
+  // control. Making material is 🎲's job in both states now; this only
+  // freezes the take or lets the rules take over again.
   function capFace(L) {
     const rec = L && L.part && L.part.kind === 'recorded';
-    const has = rec && ((L.part.notes || []).length > 0);
-    const sel = has ? bselOf(L) : null;
-    if (sel) return { txt: '\ud83c\udfb2 Re-roll ' + bselLabel(sel),
-      title: 'Roll fresh material into ' + bselLabel(sel) + ' only \u2014 every other bar keeps exactly what it has, edits included. Press again for another roll of the same bars; tap the bars in the drawing to change which.' };
-    if (has) return { txt: '\ud83c\udfb2 Replace with a new take',
-      title: 'Replace these notes with a fresh roll of this layer\u2019s own rules. The notes here now are discarded \u2014 to go back to a part that re-rolls as it plays, set Source to Generated instead. Tap a bar in the drawing first to re-roll only that bar.' };
-    if (rec) return { txt: '\ud83d\udd12 Lock a take',
-      title: 'Freeze a take of this layer\u2019s own rules into a fixed set of notes you can edit.' };
+    if (rec) return { txt: '\ud83d\udd13 Unlock',
+      title: 'Back to Generated \u2014 the rules make the part again and re-roll every cycle. These notes are kept, so locking again brings them back until you roll a new take.' };
     return { txt: '\ud83d\udd12 Lock this take',
       title: 'Freeze exactly the take drawn above into a fixed set of notes you can edit. The rules are kept, so you can roll another take later.' };
   }
@@ -3012,8 +3072,8 @@
       // top hid the one thing you are editing against).
       neHtml() +
       '<span class="ambient-seg-row v2-takebar">' +
-        '<button type="button" class="ambient-seg v2-newtake" data-v2when="kind:live"' +
-          ' title="Roll this live part again. Preview never re-rolls on its own, so the take you are hearing stays until you press this.">🎲 New take</button>' +
+        '<button type="button" class="ambient-seg v2-newtake"' +
+          ' title="Roll this part again. Preview never re-rolls on its own, so the take you are hearing stays until you press this.">🎲 New take</button>' +
         // TWO STATES, TWO SENTENCES. It read "❄ Re-take live" on a fixed part,
         // which sounds like the way BACK to Generated — it is not (that is the
         // Source select); it discards these notes and locks a fresh roll. And
@@ -3027,6 +3087,12 @@
         (((L.part.notes || []).length && L.part.kind === 'recorded')
           ? '<button type="button" class="ambient-seg v2-savetake" title="Keep this take in the bank under a name — it becomes a phrase you can map to any part or chord, on this layer or another.">\ud83d\udcbe Save this take</button>'
           : '') +
+        // COMMANDS OVER THE NOTES YOU HAVE. A menu, not a row: the set is
+        // meant to grow, and the take bar is already four buttons wide. It is
+        // always PRESENT (a control you cannot find is a control you do not
+        // have) and refuses with an explanation on a live part, the same
+        // pattern the no-op rhythm tabs use.
+        '<button type="button" class="ambient-seg v2-tform" title="Rework the notes you already have — reverse, shuffle, and more. Tap bars in the drawing first to rework just those.">\u2728 Transform\u2026</button>' +
       '</span></div>';
   }
   function drawPartViz(card, L, E) {
@@ -3034,7 +3100,10 @@
     const cv = host.querySelector('.v2-vizcv'), lab = host.querySelector('.v2-vizlab');
     if (!cv || !cv.getContext) return;
     const w = Math.max(80, Math.round(cv.clientWidth || host.clientWidth || 300));
-    const h = 84;
+    // the drawing gives its height back to the PANE on a phone — a hardcoded
+    // 84 written INLINE (below) outranks any stylesheet, so the responsive
+    // choice has to live here
+    const h = (window.innerWidth <= 540) ? 60 : 84;
     const dpr = Math.min(3, (window.devicePixelRatio || 1));
     if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
       cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
@@ -3213,7 +3282,7 @@
       : r.kind === 'chance' ? ('chance ' + (r.chance | 0) + '%')
       : ('pulse \u00d7' + (r.n | 0))) +
       ' \u00b7 ' + (t.kind || 'chord') + ' \u00b7 take ' + (V2.takeOf(L) + 1);
-    const M = { sustain: '\u25ac Sustained', arp: '\u27f3 Arpeggio', roll: '\ud83c\udfb2 Rolled' };
+    const M = { sustain: '\u25ac Sustained', arp: '\u27f3 Arpeggio', roll: '\ud83c\udfb2 Roll' };
     const v1 = (p.mat && p.mat.indexOf('v1:') === 0) ? p.mat.slice(3) : null;
     // NO STAMP IS NOT NO MATERIAL. A part made before provenance existed — or
     // assembled by hand on the knobs — still IS one of these materials, and
@@ -3234,9 +3303,10 @@
       if (p.made === 'take') {
         // LEAD with the material — burying it mid-sentence is why "still not
         // clear what Material we're using" was a fair report of the first cut
-        if (v1) return { key: p.mat, txt: nn + ' \u00b7 a locked take of the v1 ' + v1 + ' seed' };
-        if (mat) return { key: mat, txt: M[mat] + ' \u00b7 a locked take \u2014 ' + rules + ' \u00b7 ' + nn };
-        return { key: null, txt: nn + ' \u00b7 a locked take \u2014 ' + rules };
+        const LOCKED = ' \u00b7 LOCKED \u2014 plays these notes, not the rules \u00b7 ';
+        if (v1) return { key: p.mat, txt: 'v1 ' + v1 + ' seed' + LOCKED + nn };
+        if (mat) return { key: mat, txt: M[mat] + LOCKED + rules + ' \u00b7 ' + nn };
+        return { key: null, txt: 'a take' + LOCKED + rules + ' \u00b7 ' + nn };
       }
       return { key: null, txt: nn + ' held' };
     }
@@ -3246,14 +3316,19 @@
   }
   function matSync(card, L) {
     const pv2 = matProv(L);
+    // ✓ = this material is generating · 🔒 = it MADE these notes and the take
+    // was locked. Reported as "I thought using Rolled WAS generating parts?"
+    // — a lit chip alone cannot tell those apart.
+    const lk = L.part.kind === 'recorded';
     const map = { compose: '.v2-compose', adopt: '.v2-adopt',
       sustain: '.v2-mkpart[data-mk="sustain"]', arp: '.v2-mkpart[data-mk="arp"]', roll: '.v2-rollrun' };
     Object.keys(map).forEach((k) => {
       const b2 = card.querySelector(map[k]);
-      if (b2) b2.classList.toggle('on', pv2.key === k);
+      if (b2) { b2.classList.toggle('on', pv2.key === k); b2.classList.toggle('v2-matlock', lk); }
     });
     card.querySelectorAll('.v2-seedv1').forEach((b2) => {
       b2.classList.toggle('on', pv2.key === 'v1:' + b2.getAttribute('data-v1'));
+      b2.classList.toggle('v2-matlock', lk);
     });
     const nc = card.querySelector('.v2-notecount');
     if (nc && nc.textContent !== pv2.txt) nc.textContent = pv2.txt;
@@ -3270,13 +3345,25 @@
     try {
       const nb = card.querySelector('.v2-newtake');
       if (nb) {
-        const sel4 = (L.part.kind !== 'recorded') ? bselOf(L) : null;
-        const txt = sel4 ? ('\ud83c\udfb2 Retake ' + bselLabel(sel4)) : '\ud83c\udfb2 New take';
+        // ONE BUTTON, FOUR SENTENCES — it always makes material, and says
+        // exactly what THIS press will make: a whole take or the tapped bars,
+        // and on a LOCKED part it re-freezes (a take pin changes nothing
+        // there — the notes are already fixed).
+        const rec4 = L.part.kind === 'recorded';
+        const sel4 = bselOf(L);
+        const empty4 = rec4 && !((L.part.notes || []).length);
+        const txt = sel4 ? ((rec4 ? '\ud83c\udfb2 Re-roll ' : '\ud83c\udfb2 Retake ') + bselLabel(sel4))
+          : (empty4 ? '\ud83c\udfb2 Roll a take'
+          : (rec4 ? '\ud83c\udfb2 Replace with a new take' : '\ud83c\udfb2 New take'));
         if (nb.textContent !== txt) {
           nb.textContent = txt;
           nb.title = sel4
-            ? 'Roll fresh material into ' + bselLabel(sel4) + ' only — the rest of the drawing holds still. Tap bars in the drawing to change which; press again for another roll.'
-            : 'Roll this live part again. Preview never re-rolls on its own, so the take you are hearing stays until you press this. Tap a bar in the drawing first to retake only that bar.';
+            ? ('Roll fresh material into ' + bselLabel(sel4) + ' only — the rest of the drawing holds still. Tap bars in the drawing to change which; press again for another roll.')
+            : (empty4
+              ? 'Roll a take of this layer’s rules and freeze it here — there is nothing in this part yet.'
+              : rec4
+              ? 'Replace these notes with a fresh roll of this layer’s rules, still locked. Tap a bar in the drawing first to re-roll only that bar.'
+              : 'Roll this part again. Preview never re-rolls on its own, so the take you are hearing stays until you press this. Tap a bar in the drawing first to retake only that bar.');
         }
       }
     } catch (e) {}
@@ -3372,6 +3459,32 @@
   // LOCK WHAT IS DRAWN. The remembered preview anchor is passed through so that
   // under a progression the capture freezes the chord you heard rather than
   // whichever one is sounding at the instant you pressed.
+  // REPLACING WORK IS CONFIRMED. Re-rolling a locked ROLL loses nothing (it
+  // was a roll of these same rules), but notes that were composed, adopted or
+  // hand-edited are somebody's work — and `made` is absent on anything older
+  // or unrecognised, which takes the safe side. THE SELECTION SCOPES IT: an
+  // edit in bar 1 is not endangered by re-rolling bar 3.
+  function replaceOK(L, selBars) {
+    const cp = L.part;
+    if (cp.kind !== 'recorded' || !(cp.notes || []).length) return true;
+    const barsF = Math.max(0.125, cp.bars || 1);
+    const inScope = (n2) => !selBars || selBars.indexOf(Math.floor(n2.t * barsF)) >= 0;
+    const scoped = (cp.notes || []).filter(inScope);
+    const edited = scoped.some(n2 => Number.isFinite(n2.vel) || Number.isFinite(n2.atk) ||
+      Number.isFinite(n2.dec) || Number.isFinite(n2.sus) || Number.isFinite(n2.rel) || Number.isFinite(n2.glide));
+    // a TRANSFORMED take is work too — a plain roll may be replaced silently,
+    // one you reversed or shuffled may not
+    if (cp.made === 'take' && !edited && !cp.tf) return true;
+    const whereTxt = (selBars && selBars.length) ? (' in ' + (selBars.length === 1
+      ? ('bar ' + ((selBars[0] | 0) + 1)) : (selBars.length + ' bars'))) : '';
+    const what = cp.made === 'compose' ? 'the phrase you composed'
+      : (cp.made === 'phrase' ? ('\u201c' + (cp.from || 'the phrase you chose') + '\u201d')
+      : (edited ? 'your edits to these notes' : 'these notes'));
+    try {
+      return !!window.confirm('Replace ' + what + whereTxt + ' with a fresh roll of this layer\u2019s rules?\n\n' +
+        scoped.length + ' note' + (scoped.length === 1 ? '' : 's') + ' will be discarded. This cannot be undone.');
+    } catch (e) { return true; }
+  }
   function captureShown(E, L, bars) {
     let at = null;
     try {
@@ -3861,6 +3974,20 @@
   // Tags every <div in the fragment; only top-level pane children are ever
   // consulted, so the nested ones are inert.
   const tb = (name, html) => html.split('<div ').join('<div data-v2tab="' + name + '" ');
+  // A MICRO STEPPER — label over a compact − value + , for a row of several.
+  // Deliberately the sheet head's Register markup: the document-level ±
+  // delegation drives it and the card's `.v2-f` handler commits it, so there
+  // is no new wiring and no second copy of either rule.
+  const mini = (L, path, lab, val, lo, hi, nudge, when) =>
+    '<span class="v2-mini"' + (when ? ' data-v2when="' + when + '"' : '') + '>' +
+      '<span class="v2-mini-lab">' + esc(lab) + '</span>' +
+      '<span class="ambient-stepper">' +
+        '<button type="button" class="ambient-step-btn ambient-step-dn" tabindex="-1" aria-label="Less">\u2212</button>' +
+        '<input type="number" inputmode="numeric" class="ambient-step-inp v2-f" data-f="' + path + '"' +
+          ' min="' + lo + '" max="' + hi + '" step="1"' + ((nudge | 0) > 1 ? ' data-nudge="' + (nudge | 0) + '"' : '') +
+          ' value="' + (val | 0) + '" aria-label="' + esc(lab) + '">' +
+        '<button type="button" class="ambient-step-btn ambient-step-up" tabindex="-1" aria-label="More">+</button>' +
+      '</span></span>';
   // A SUBSECTION INSIDE A TAB. `sub()` tags every row it wraps so the card's
   // `v2-so-<id>` class reveals them; `disc()` is the row that does the
   // revealing. Rows stay FLAT children of the group body — a wrapper div would
@@ -4057,15 +4184,18 @@
           // first probe to touch it grabbed the hidden one and reported the
           // button as unreachable.
           '<div data-v2tab="Material" class="ambient-ctrl v2-notesrow"><label>Material</label>' +
-            '<span class="ambient-seg-row">' +
-              '<button type="button" class="ambient-seg v2-compose" title="Written by hand — opens the composer grid.">✎ Composed</button>' +
-              '<button type="button" class="ambient-seg v2-adopt" title="A phrase from the bank — opens the picker.">♪ Phrase</button>' +
+            '<span class="ambient-seg-row v2-matrow">' +
+              '<span class="v2-matgrp"><span class="v2-matlab" title="You choose the notes — the part becomes Fixed and plays exactly those.">Written</span>' +
+              '<button type="button" class="ambient-seg v2-compose" title="Notes you draw yourself, in the composer grid. The part becomes Fixed — it plays exactly what you drew.">✎ Composed</button>' +
+              '<button type="button" class="ambient-seg v2-adopt" title="A phrase from the bank, dropped in as this part. The part becomes Fixed — it plays exactly those notes.">♪ Phrase</button>' +
+              '</span><span class="v2-matgrp"><span class="v2-matlab" title="You choose a shape — the rules work out the notes as it plays, fresh each cycle.">Generated</span>' +
               // A LIVE door beside the three recorded ones: "where do the notes
               // come from" is the question this row answers, and "rolled" is
               // one of the answers. Press again to re-roll.
-              '<button type="button" class="ambient-seg v2-mkpart" data-mk="sustain" title="A held note or chord, one per cycle — the pad shape. Voices makes it mono or poly.">▬ Sustained</button>' +
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="sustain" title="A held note or chord, one per cycle — the pad shape, made by the rules as it plays. Voices makes it mono or poly.">▬ Sustained</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="arp" title="Sweep the chord one tone per onset — an arpeggio. The rhythm grid sets the speed.">⟳ Arpeggio</button>' +
-              '<button type="button" class="ambient-seg v2-rollrun" title="A rolled, syncopated line — live. Press again for a new roll; auditions straight away.">🎲 Rolled</button>' +
+              '<button type="button" class="ambient-seg v2-rollrun" title="A rolled, syncopated line, made by the rules. 🎲 above the drawing rolls another one.">🎲 Roll</button>' +
+              '</span>' +
             '</span>' +
             '<span class="ambient-hint v2-notecount"></span></div>' +
           // SEED LIKE A v1 LAYER — one button per type. Its own row rather than
@@ -4131,17 +4261,12 @@
           ) +
           // The knobs that DESCRIBE the grid live BESIDE it — with Rhythm type
           // set to Pattern, the pattern's own params were a tab away.
+          // THE GRID LEADS ITS OWN TAB — it is the thing you edit, and it sat
+          // under five knob rows ("the actual pattern should be at the top").
+          // The knobs that describe it follow, condensed into ONE row of
+          // MICRO STEPPERS: five full-size rows were ~500px of a sheet whose
+          // whole pane is ~170px on a phone.
           tb('Pattern',
-          st(L, 'part.rhythm.steps', 'Steps', r.steps, 1, 64, 'grid', 'kind:live') +
-          st(L, 'part.rhythm.pulses', 'Pulses', r.pulses, 1, 64, 'hits', 'kind:live;voice:synth;rhythm:euclid,drawn') +
-          st(L, 'part.rhythm.rotate', 'Rotate', r.rotate, 0, 63, 'shift', 'kind:live;voice:synth;rhythm:euclid,drawn') +
-          st(L, 'part.rhythm.voices', 'Euclid voices', num(r.voices, 1), 1, 8, 'interlocking patterns',
-             'kind:live;voice:synth;rhythm:euclid') +
-          // Re-rolls the pattern every cycle instead of repeating it — v1's own
-          // asymmetric rule (drops harder than it adds), so a varied v2 pattern
-          // and a varied v1 one wander the same way.
-          sl(L, 'part.rhythm.vary', 'Vary', num(r.vary, 0), 0, 100, 'as drawn → re-rolled each cycle',
-             'kind:live;rhythm:euclid,drawn') +
           // The grid spans the whole row: at 390px a 16-step grid inside the
           // 3-column `.ambient-ctrl` label gutter gives each cell ~14px.
           // NOT an inline `display:block` — `applyGate` clears the inline style
@@ -4157,7 +4282,25 @@
             '<span class="ambient-hint v2-cellhint"></span></div>' +
           '<div class="ambient-ctrl v2-cellrow v2-lanerow" data-v2when="kind:live;voice:kit">' +
             '<label>Drums</label>' + lanesHtml(L) +
-            '<span class="ambient-hint v2-lanehint"></span></div>'
+            '<span class="ambient-hint v2-lanehint"></span></div>' +
+          // ONE ROW, five micro steppers. The markup is the SHEET HEAD's proven
+          // Register pattern (document-level ± delegation + the card's own
+          // `.v2-f` commit), so it needs no wiring of its own; each cell
+          // carries its OWN `data-v2when`, and `applyGate`'s grey-not-hide
+          // branch was widened to `.v2-mini` so a Fixed part dims them
+          // instead of leaving a blank row. `data-nudge` is an opt-in step
+          // for the shared delegation (absent = 1) — Vary is 0-100 and ±1
+          // would be unusable; the input is still tap-to-type at 16px.
+          '<div class="ambient-ctrl v2-microrow" data-v2when="kind:live">' +
+            mini(L, 'part.rhythm.steps', 'Steps', r.steps, 1, 64, 1, 'kind:live') +
+            mini(L, 'part.rhythm.pulses', 'Pulses', r.pulses, 1, 64, 1, 'kind:live;voice:synth;rhythm:euclid,drawn') +
+            mini(L, 'part.rhythm.rotate', 'Rotate', r.rotate, 0, 63, 1, 'kind:live;voice:synth;rhythm:euclid,drawn') +
+            mini(L, 'part.rhythm.voices', 'Voices', num(r.voices, 1), 1, 8, 1, 'kind:live;voice:synth;rhythm:euclid') +
+            // Re-rolls the pattern every cycle instead of repeating it — v1's
+            // own asymmetric rule, so a varied v2 pattern and a varied v1 one
+            // wander the same way.
+            mini(L, 'part.rhythm.vary', 'Vary', num(r.vary, 0), 0, 100, 5, 'kind:live;rhythm:euclid,drawn') +
+          '</div>'
           ) +
           // THE TIMING HALF OF THE OLD 'Motion' — swing, accent, tightness and
           // humanize are all about WHEN a note lands, which is this group's
@@ -4240,7 +4383,7 @@
             // FROM the bank but never added TO it, so the bank could only ever
             // be filled from a v1 layer.
             '<span class="ambient-seedgrid-gran" data-sgk="v2:' + L.id + '" hidden></span>' +
-            '<div class="ambient-ctrl"><label></label><span class="ambient-seg-row">' +
+            '<div class="ambient-ctrl v2-gacts"><label></label><span class="ambient-seg-row">' +
               '<button type="button" class="ambient-seg v2-gdone">✓ Done</button>' +
               '<button type="button" class="ambient-seg ambient-seedgrid-bank" data-sgk="v2:' + L.id + '"' +
                 ' title="Save this phrase to the sequence bank under a name, so it can be reused — on another layer, in another area, or bound to a part.">⬇ To bank…</button>' +
@@ -4249,7 +4392,7 @@
           '</div>' +
           ((p.kind === 'recorded' && !(p.notes || []).length)
             ? '<div data-v2tab="Material" class="ambient-ctrl" data-v2when="kind:recorded"><label></label>' +
-              '<span class="ambient-hint" style="color:#f6ad55">Nothing here yet — press 🔒 Lock a take above the drawing, compose a phrase, or set Source back to Generated.</span></div>'
+              '<span class="ambient-hint" style="color:#f6ad55">Nothing here yet — press 🎲 Roll a take above the drawing, compose a phrase, or 🔓 Unlock to go back to the rules.</span></div>'
             : '')
         ) +
         // ── PITCH — what the notes are, and how long they ring ────────────
@@ -4572,7 +4715,7 @@
       // parts beside "Replace with a new take", two dice for one action
       // (reported), and the dim styling is scoped to .ambient-ctrl anyway.
       const na = othersOk && !kindOk && wantsLive && now.kind === 'recorded' &&
-        row.classList.contains('ambient-ctrl');
+        (row.classList.contains('ambient-ctrl') || row.classList.contains('v2-mini'));
       row.style.display = (othersOk && kindOk) || na ? '' : 'none';
       row.classList.toggle('v2-rowna', na);
     });
@@ -4580,6 +4723,15 @@
     // its widget keeps state is the documented drum-solo bug; here solo lives in
     // the ⋯ menu, so the card itself has to say so.
     card.classList.toggle('v2-soloed', !!L.solo);
+    // COMPOSING = the docked Grid editor is open on THIS layer. On a phone the
+    // sheet goes full-screen for it and pins ✓ Done / ⬇ To bank / ✕ Cancel to
+    // the bottom, so the editor fits and its actions are never scrolled away.
+    let composing = false;
+    try {
+      composing = (typeof _bloomGridEdit !== 'undefined' && _bloomGridEdit &&
+        _bloomGridEdit.key === 'v2:' + (L.id | 0));
+    } catch (e) {}
+    card.classList.toggle('v2-composing', !!composing);
     const sum = card.querySelector('.v2-summary');
     if (sum) {
       sum.textContent = p.kind === 'recorded'
@@ -5092,13 +5244,24 @@
   // never vanish. Hues avoid the state colours (green = sounding, amber =
   // inert-warning, red = delete).
   const TAB_FAMS = {
+    // RHYTHM LIVES INSIDE MAKE — rhythm IS how the content is made, so it is
+    // one family with a colour seam rather than a separate bar chip (the
+    // rhythm tabs keep their teal via TAB_TINT). SAVED is its own chip at the
+    // right end: it is the bank, not a step in making this part.
     Content: [
-      ['make', ['Material', 'Saved', 'Seed like', 'Source'], 'fam-make'],
-      ['rhythm', ['Rhythm', 'Pattern', 'Feel'], 'fam-rhythm'],
+      ['make', ['Material', 'Seed like', 'Source', 'Rhythm', 'Pattern', 'Feel'], 'fam-make'],
       ['time', ['Cycle', 'Bars', 'Plays', 'Speed'], 'fam-time'],
       ['pitch', ['Transpose', 'Follows changes'], 'fam-pitch'],
+      ['saved', ['Saved'], 'fam-saved'],
     ],
   };
+  // A tab that keeps its own hue inside a family, and the state that makes it
+  // a NO-OP. Rhythm rules shape a GENERATED part; on a Fixed one every row
+  // behind these tabs is greyed, so the tab says so too (dimmed — still
+  // openable, because the greyed rows explain themselves and an unreachable
+  // explanation is the trap this whole pass has been closing).
+  const TAB_TINT = { Rhythm: 'fam-rhythm', Pattern: 'fam-rhythm', Feel: 'fam-rhythm' };
+  const tabNa = (nm, L) => !!TAB_TINT[nm] && L && L.part && L.part.kind === 'recorded';
   function popSync(card, L) {
     const wrap = popWrapOf(card); if (!wrap || !POP) return;
     const pane = wrap.querySelector('.v2-pop-pane'), tabsEl = wrap.querySelector('.v2-pop-tabs');
@@ -5114,23 +5277,47 @@
     const visTabs = tabs.filter(t => t.vis);
     const act = visTabs.find(t => t.name === POP.tab) || visTabs[0] || null;
     POP.tab = act ? act.name : null;
-    const sig = (POP.grp || '') + '|' + visTabs.map(t => t.name).join('|');
+    // TWO-LEVEL STRIP ("the scrollable section is way too small — condense
+    // the families into tabs"): a FAMILY BAR of four chips, and only the
+    // active family's tab row under it. Every tab stays in the DOM (hidden
+    // families included) so programmatic navigation — the goto select, the
+    // gate's tab clicks — works unchanged; picking a family jumps to its
+    // first tab. Four stacked rows (~250px of a phone sheet) became two.
+    const famOfTab = (nm) => {
+      const fams0 = TAB_FAMS[POP.grp]; if (!fams0) return null;
+      const hit = fams0.find(f2 => f2[1].indexOf(nm) >= 0);
+      return hit ? hit[2] : '';
+    };
+    const actFam = act ? famOfTab(act.name) : null;
+    const sig = (POP.grp || '') + '|' + (actFam == null ? '' : actFam) + '|' + visTabs.map(t => t.name).join('|');
     if (tabsEl._sig !== sig) {
       tabsEl._sig = sig;
-      const btn = (t) => '<button type="button" class="v2-pop-tab" data-tab="' + esc(t.name) + '">' + esc(t.name) + '</button>';
+      const btn = (t) => '<button type="button" class="v2-pop-tab' +
+        (TAB_TINT[t.name] ? ' tint-' + TAB_TINT[t.name] : '') +
+        (tabNa(t.name, L) ? ' v2-tabna' : '') +
+        '" data-tab="' + esc(t.name) + '"' +
+        (tabNa(t.name, L) ? ' aria-disabled="true"' +
+          ' title="Rhythm shapes a Generated part — this one is Fixed, so these do nothing until Source is Generated"' : '') +
+        '>' + esc(t.name) + '</button>';
       const fams = TAB_FAMS[POP.grp];
       if (fams) {
         const left = visTabs.slice();
-        let html = '';
+        let bar = '', rows = '';
         fams.forEach(([lab, names, cls]) => {
           const mine = left.filter(t => names.indexOf(t.name) >= 0);
           if (!mine.length) return;
           mine.forEach(t => left.splice(left.indexOf(t), 1));
-          html += '<div class="v2-tabfam ' + cls + '"><span class="v2-tabfam-lab">' + esc(lab) + '</span>' +
+          bar += '<button type="button" class="v2-fambtn ' + cls + (cls === actFam ? ' on' : '') +
+            '" data-first="' + esc(mine[0].name) + '">' + esc(lab) + '</button>';
+          rows += '<div class="v2-tabfam ' + cls + (cls === actFam ? ' fam-on' : '') + '">' +
             mine.map(btn).join('') + '</div>';
         });
-        if (left.length) html += '<div class="v2-tabfam"><span class="v2-tabfam-lab"></span>' + left.map(btn).join('') + '</div>';
-        tabsEl.innerHTML = html;
+        if (left.length) {
+          bar += '<button type="button" class="v2-fambtn' + (actFam === '' ? ' on' : '') +
+            '" data-first="' + esc(left[0].name) + '">more</button>';
+          rows += '<div class="v2-tabfam' + (actFam === '' ? ' fam-on' : '') + '">' + left.map(btn).join('') + '</div>';
+        }
+        tabsEl.innerHTML = '<div class="v2-fambar">' + bar + '</div>' + rows;
       } else {
         tabsEl.innerHTML = visTabs.map(btn).join('');
       }
@@ -5143,12 +5330,29 @@
       const fams2 = TAB_FAMS[POP.grp];
       let famCls = '';
       if (fams2 && act) {
-        const hit = fams2.find(f2 => f2[1].indexOf(act.name) >= 0);
-        if (hit) famCls = hit[2];
+        // a tinted tab (Rhythm/Pattern/Feel inside make) keeps ITS hue, so the
+        // pane's row labels match the chip you pressed rather than its family
+        if (TAB_TINT[act.name]) famCls = TAB_TINT[act.name];
+        else { const hit = fams2.find(f2 => f2[1].indexOf(act.name) >= 0); if (hit) famCls = hit[2]; }
       }
       if (famCls) pane.setAttribute('data-fam', famCls); else pane.removeAttribute('data-fam');
     }
-    tabs.forEach(t => t.rows.forEach(row => row.classList.toggle('v2-rowoff', t !== act)));
+    tabs.forEach(t => t.rows.forEach(row => {
+      row.classList.toggle('v2-rowoff', t !== act);
+      // THE ROW LABEL IS REDUNDANT WHEN IT REPEATS THE ACTIVE TAB — the tab
+      // chip above already names it ("Material" over a row labelled
+      // "Material"). Hidden only when the label is PLAIN TEXT: a label can
+      // carry a control (the Pattern row's ↻ regen button lives inside its
+      // label — the documented trap), and hiding that would take the button
+      // with it.
+      let dup = false;
+      try {
+        const lb = row.querySelector(':scope > label');
+        dup = !!lb && t === act && (lb.textContent || '').trim() === act.name &&
+          !lb.querySelector('button, input, select, a');
+      } catch (e) {}
+      row.classList.toggle('v2-labdup', dup);
+    }));
     knobifyAll(pane);
     pane.querySelectorAll('.v2-knob').forEach(knobFace);
   }
@@ -5534,7 +5738,31 @@
         const ptab = t.closest && t.closest('.v2-pop-tab');
         if (ptab) {
           const ctx = layerOf(ptab); if (!ctx || !POP) return;
+          // A NO-OP TAB REFUSES AND EXPLAINS. It used to open onto greyed rows
+          // carrying the same sentence; a press that visibly does nothing is
+          // worse than one that answers, so the explanation moved to the
+          // press itself and the tab no longer navigates.
+          if (ptab.classList.contains('v2-tabna')) {
+            try {
+              const m2 = (typeof matProv === 'function') ? matProv(ctx.L) : null;
+              const made = (m2 && m2.key && /sustain|arp|roll/.test(m2.key))
+                ? ({ sustain: '\u25ac Sustained', arp: '\u27f3 Arpeggio', roll: '\ud83c\udfb2 Roll' })[m2.key]
+                : 'The material';
+              showToast(made + ' MADE these notes and the take was then LOCKED \u2014 the part now plays ' +
+                'the notes, not the rules. Rhythm \u00b7 Pattern \u00b7 Feel shape the rules, so they do ' +
+                'nothing here: press \ud83c\udfb2 Replace with a new take to roll again, or set ' +
+                'Source \u2192 Generated to keep rolling every cycle.', { ms: 7000 });
+            } catch (e) {}
+            return;
+          }
           POP.tab = ptab.getAttribute('data-tab');
+          popSync(ctx.card, ctx.L);
+          return;
+        }
+        const fbn = t.closest && t.closest('.v2-fambtn');
+        if (fbn) {
+          const ctx = layerOf(fbn); if (!ctx || !POP) return;
+          POP.tab = fbn.getAttribute('data-first');
           popSync(ctx.card, ctx.L);
           return;
         }
@@ -6056,7 +6284,29 @@
           // retaken (a per-bar pin — the rest of the drawing holds still);
           // with none, the whole take moves.
           const selN = bselOf(ctx.L);
-          V2.newTake(ctx.L, selN ? [...selN.bars] : null);
+          const selBarsN = selN ? [...selN.bars] : null;
+          // ON A LOCKED PART this is the REPLACE — the notes are fixed, so a
+          // new take has to be rolled and re-frozen (a take pin would change
+          // nothing). The confirm rides here with it: re-rolling a locked
+          // roll loses nothing, but composed / adopted / hand-edited notes
+          // are somebody's work, and `made` is absent on anything older or
+          // unrecognised, which takes the safe side.
+          if (ctx.L.part.kind === 'recorded') {
+            if (!replaceOK(ctx.L, selBarsN)) return;
+            if (!captureShown(E, ctx.L, selBarsN)) {
+              try { showToast('Nothing to roll \u2014 this cycle is empty. Check the live Rhythm settings.', { ms: 4500 }); } catch (e) {}
+              return;
+            }
+            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            try {
+              showToast(selBarsN
+                ? ('Re-rolled ' + bselLabel(selN) + ' \u2014 the other bars kept what they had. Press again for another roll.')
+                : ('Rolled a new take \u2014 ' + ctx.L.part.notes.length + ' notes, still locked. \ud83d\udd13 Unlock to let the rules take over again.'), { ms: 5000 });
+            } catch (e) {}
+            h._sig = ''; V2.render(E);
+            return;
+          }
+          V2.newTake(ctx.L, selBarsN);
           try { E.getCfg(); } catch (e) {}
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
           // REWRITE, NEVER PLAY. This used to audition the new take, which on
@@ -6066,48 +6316,65 @@
           try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
           return;
         }
+        const tf = t.closest('.v2-tform');
+        if (tf) {
+          const ctx = layerOf(tf); if (!ctx) return;
+          const cp = ctx.L.part;
+          if (cp.kind !== 'recorded' || !(cp.notes || []).length) {
+            try {
+              showToast('Transforms rework notes that are already there \u2014 this part is Generated, ' +
+                'so its notes are made fresh every cycle. Press \ud83d\udd12 Lock this take first.', { ms: 6000 });
+            } catch (e) {}
+            return;
+          }
+          const selT = bselOf(ctx.L);
+          const barsT = selT ? [...selT.bars] : null;
+          const where = selT ? (' \u2014 ' + bselLabel(selT)) : '';
+          const r2 = tf.getBoundingClientRect();
+          // deferred a tick: showCtxMenu arms its own dismiss listener, and
+          // opening it inside this dispatch tears it down again (documented)
+          setTimeout(() => {
+            try {
+              showCtxMenu(r2.left, r2.bottom + 4, (V2.transformList() || []).map(it => ({
+                label: it.label + (where ? where : '') + ' \u2014 ' + it.hint,
+                fn: () => setTimeout(() => {
+                  const n2 = V2.transform(E, ctx.L, it.op, barsT);
+                  if (!n2) {
+                    try { showToast('Nothing to transform' + (selT ? ' in ' + bselLabel(selT) : '') + '.', { ms: 3500 }); } catch (e) {}
+                    return;
+                  }
+                  try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+                  try { showToast(n2 + ' note' + (n2 === 1 ? '' : 's') + ' ' + V2.transformWord(it.op) +
+                    (selT ? (' in ' + bselLabel(selT)) : '') + '.', { ms: 3500 }); } catch (e) {}
+                  h._sig = ''; V2.render(E);
+                }, 0),
+              })));
+            } catch (e) {}
+          }, 0);
+          return;
+        }
         const cap = t.closest('.v2-capture');
         if (cap) {
           const ctx = layerOf(cap); if (!ctx) return;
-          // REPLACING WORK IS CONFIRMED. Re-rolling a locked take loses nothing
-          // (it was a roll of these same rules), but notes that were composed,
-          // adopted, or edited by hand are somebody's work — and `made` is
-          // absent on anything older or unrecognised, which takes the safe side.
-          const cp = ctx.L.part;
-          // THE SELECTION SCOPES EVERYTHING: what is rolled, what is counted
-          // in the confirm, and which edits count as at risk — an edit in bar
-          // 1 is not endangered by re-rolling bar 3.
-          const sel3 = bselOf(ctx.L);
-          const selBars = sel3 ? [...sel3.bars] : null;
-          if (cp.kind === 'recorded' && (cp.notes || []).length) {
-            const barsF3 = Math.max(0.125, cp.bars || 1);
-            const inScope = (n2) => !selBars || selBars.indexOf(Math.floor(n2.t * barsF3)) >= 0;
-            const scoped = (cp.notes || []).filter(inScope);
-            const edited = scoped.some(n2 => Number.isFinite(n2.vel) || Number.isFinite(n2.atk) ||
-              Number.isFinite(n2.dec) || Number.isFinite(n2.sus) || Number.isFinite(n2.rel) || Number.isFinite(n2.glide));
-            if (cp.made !== 'take' || edited) {
-              const whereTxt = sel3 ? (' in ' + bselLabel(sel3)) : '';
-              const what = cp.made === 'compose' ? 'the phrase you composed'
-                : (cp.made === 'phrase' ? ('\u201c' + (cp.from || 'the phrase you chose') + '\u201d')
-                : (edited ? 'your edits to these notes' : 'these notes'));
-              let go = false;
-              try { go = window.confirm('Replace ' + what + whereTxt + ' with a fresh roll of this layer\u2019s rules?\n\n' +
-                scoped.length + ' note' + (scoped.length === 1 ? '' : 's') + ' will be discarded. This cannot be undone.'); } catch (e2) { go = true; }
-              if (!go) return;
-            }
+          // A PURE TOGGLE. Locked \u2192 let the rules take over again (the notes
+          // are KEPT, so locking again brings them back); live \u2192 freeze
+          // exactly the take drawn above. Replacing a locked take moved to
+          // \ud83c\udfb2, which is the button that makes material in both states.
+          if (ctx.L.part.kind === 'recorded') {
+            if (!V2.release(E, ctx.L)) return;
+            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            try { showToast('Unlocked \u2014 the rules make the part again, re-rolled every cycle. ' +
+              'These notes are kept: \ud83d\udd12 Lock this take brings them back.', { ms: 5000 }); } catch (e) {}
+            h._sig = ''; V2.render(E);
+            return;
           }
-          if (!captureShown(E, ctx.L, selBars)) {
-            try { if (typeof showToast === 'function') showToast('Nothing to capture \u2014 this cycle is empty. Check the live Rhythm settings.', { ms: 4500 }); } catch (e) {}
+          if (!captureShown(E, ctx.L, null)) {
+            try { showToast('Nothing to lock \u2014 this cycle is empty. Check the live Rhythm settings.', { ms: 4500 }); } catch (e) {}
             return;
           }
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-          try {
-            if (typeof showToast === 'function') {
-              showToast(selBars
-                ? ('Re-rolled ' + bselLabel(sel3) + ' \u2014 the other bars kept what they had. Press again for another roll.')
-                : ('Locked ' + ctx.L.part.notes.length + ' notes \u2014 it plays these now, and you can tap one to edit it. Set Source to Generated to go back to rules.'), { ms: 5000 });
-            }
-          } catch (e) {}
+          try { showToast('Locked ' + ctx.L.part.notes.length + ' notes \u2014 it plays these now, and you can ' +
+            'tap one to edit it. \ud83d\udd13 Unlock to go back to the rules.', { ms: 5000 }); } catch (e) {}
           h._sig = ''; V2.render(E);
           return;
         }
@@ -6143,15 +6410,20 @@
         if (mk) {
           const ctx = layerOf(mk); if (!ctx) return;
           const which = mk.getAttribute('data-mk');
+          // ALREADY IN THIS MODE = nothing to assert. Keyed on the STAMP, not
+          // the lit class: a chip is also lit by INFERENCE (the rules look
+          // like that shape), and refusing there kills the press that would
+          // actually build it.
+          if (ctx.L.part.mat === which && ctx.L.part.kind !== 'recorded') return;
           const info = (which === 'arp') ? V2.makeArp(E, ctx.L) : V2.makeSustain(E, ctx.L, true);
           if (!info) return;
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
           h._sig = ''; V2.render(E);
-          // AUDITION IT — the same rule the roll follows: a shape you cannot
-          // hear is a change you have to take on trust.
+          // SILENT, like every other press that REWRITES rather than plays.
+          // Choosing a mode used to audition, which while clicking through the
+          // row reads as a stray note from nowhere; the outcome is the DRAWING
+          // and ▶ Preview stays the only thing that makes sound.
           setTimeout(() => {
-            try { V2.preview(E, ctx.L); } catch (e) {}
-            // the card was re-rendered above, so re-resolve it before drawing
             try {
               const c2 = document.querySelector('.v2-layer[data-v2id="' + (ctx.L.id | 0) + '"]');
               if (c2) drawPartViz(c2, ctx.L, E);
@@ -6184,23 +6456,24 @@
         const rr = t.closest('.v2-rollrun');
         if (rr) {
           const ctx = layerOf(rr); if (!ctx) return;
+          // A REPEAT PRESS USED TO RE-ROLL — a mode button that silently
+          // REPLACES your take when you press the one already lit. Rolling
+          // another take is 🎲's job, above the drawing. Keyed on the STAMP
+          // for the same reason the makers are: an INFERRED lit chip must
+          // still build its shape when pressed.
+          if (ctx.L.part.mat === 'roll' && ctx.L.part.kind !== 'recorded') return;
           const info = V2.rollRun(E, ctx.L);
           if (!info) return;
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
           h._sig = ''; V2.render(E);
-          // HEAR IT IMMEDIATELY — a roll you cannot hear is a dice throw
-          // face-down (the documented rule from the synth-drum roll). Deferred
-          // a tick so the re-render has replaced the card first; the preview
-          // kills any previous one itself, so re-rolling never stacks.
+          // SILENT. The old rule here was "a roll you cannot hear is a dice
+          // throw face-down" — but choosing a MODE is not throwing the dice
+          // (🎲 above the drawing does that, and it is silent too), and while
+          // clicking through the row the audition reads as a stray note.
           setTimeout(() => {
-            try { V2.preview(E, ctx.L); } catch (e) {}
             try {
               const c2 = document.querySelector('.v2-layer[data-v2id="' + (ctx.L.id | 0) + '"]');
-              if (c2) {
-                drawPartViz(c2, ctx.L, E);
-                const b2 = c2.querySelector('.v2-pop-preview');
-                if (b2) { b2.classList.add('playing'); b2.textContent = '\u25a0 Stop'; }
-              }
+              if (c2) drawPartViz(c2, ctx.L, E);
             } catch (e) {}
           }, 0);
           try {

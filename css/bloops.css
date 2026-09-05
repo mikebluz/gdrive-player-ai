@@ -11210,19 +11210,61 @@
       display: flex; align-items: center; justify-content: center;
     }
 
-    /* Tab families — labelled, tinted rows inside .v2-pop-tabs. The tint is
-       a hue on the label and a wash on the chips' borders; the active tab's
-       own .on style still wins. */
-    .v2-tabfam { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 0; }
-    .v2-tabfam-lab {
-      flex: 0 0 44px; text-align: right; padding-right: 2px;
-      font: 600 0.6rem 'Segoe UI', sans-serif; letter-spacing: 0.08em;
-      text-transform: uppercase; color: #55556e;
+    /* Tab families — a TWO-LEVEL strip: the family bar picks which family's
+       tab row shows beneath it. Only the active family's row is visible; the
+       others stay in the DOM so programmatic navigation still works. */
+    /* THE STRIP STACKS. `.v2-pop-tabs` is a ROW flex from the flat-strip
+       design, so the bar and the tab row were flex ITEMS sized to content —
+       the family chips could never fill the width (measured 237px of a 358px
+       pane). Scoped with :has so a family-less sheet keeps the flat strip. */
+    .v2-pop-tabs:has(.v2-fambar) { flex-direction: column; align-items: stretch; }
+    .v2-fambar { display: flex; flex-wrap: nowrap; gap: 6px; margin: 2px 0 6px; }
+    .v2-fambtn {
+      flex: 1 1 0; min-width: 0; min-height: 34px; padding: 4px 8px;
+      background: transparent; border: 1px solid #2d2d3f; border-radius: 17px;
+      font: 600 0.66rem 'Segoe UI', sans-serif; letter-spacing: 0.07em;
+      text-transform: uppercase; color: #7a7a9c; cursor: pointer;
+      touch-action: manipulation;
     }
-    .fam-make > .v2-tabfam-lab { color: #9f7aea; }
-    .fam-rhythm > .v2-tabfam-lab { color: #4fd1c5; }
-    .fam-time > .v2-tabfam-lab { color: #63b3ed; }
-    .fam-pitch > .v2-tabfam-lab { color: #f687b3; }
+    .v2-fambtn.fam-make { color: #9f7aea; border-color: rgba(159, 122, 234, 0.38); }
+    .v2-fambtn.fam-rhythm { color: #4fd1c5; border-color: rgba(79, 209, 197, 0.34); }
+    .v2-fambtn.fam-time { color: #63b3ed; border-color: rgba(99, 179, 237, 0.34); }
+    .v2-fambtn.fam-pitch { color: #f687b3; border-color: rgba(246, 135, 179, 0.34); }
+    .v2-fambtn.fam-make.on { background: rgba(159, 122, 234, 0.26); color: #e9d8fd; border-color: #b794f4; }
+    .v2-fambtn.fam-rhythm.on { background: rgba(79, 209, 197, 0.2); color: #b2f5ea; border-color: #4fd1c5; }
+    .v2-fambtn.fam-time.on { background: rgba(99, 179, 237, 0.2); color: #bee3f8; border-color: #63b3ed; }
+    .v2-fambtn.fam-pitch.on { background: rgba(246, 135, 179, 0.2); color: #fed7e2; border-color: #f687b3; }
+    .v2-fambtn.on { background: rgba(159, 122, 234, 0.26); color: #e9d8fd; border-color: #b794f4; }
+    /* SAVED is INVERSE — filled, with the text knocked out in the sheet's own
+       background colour. It is the bank, not a step in making this part, so it
+       reads as a different KIND of destination rather than a fourth sibling. */
+    .v2-layer .v2-fambtn.fam-saved {
+      flex: 0 0 auto; padding: 4px 14px;
+      background: #9f7aea; border-color: #9f7aea; color: #12121f;
+    }
+    .v2-layer .v2-fambtn.fam-saved.on { background: #d6bcfa; border-color: #e9d8fd; color: #12121f; }
+    /* A TINTED TAB keeps its own hue inside its family (Rhythm/Pattern/Feel
+       are teal inside the purple make row). Specificity has to beat
+       `.fam-make > .v2-pop-tab:not(.on)`, which is (0,3,0). */
+    .v2-layer .v2-tabfam > .v2-pop-tab.tint-fam-rhythm {
+      border-color: rgba(79, 209, 197, 0.34); color: #4fd1c5;
+    }
+    .v2-layer .v2-tabfam > .v2-pop-tab.tint-fam-rhythm.on {
+      border-color: #4fd1c5; color: #b2f5ea; background: rgba(79, 209, 197, 0.22);
+    }
+    /* …and a no-op tab (rhythm on a Fixed part) is dimmed but still openable —
+       the rows behind it explain themselves, and hiding that explanation is
+       the trap this pass exists to close. */
+    .v2-layer .v2-pop-tab.v2-tabna:not(.on) { opacity: 0.45; }
+    /* A row label that just repeats the active tab is noise — the chip above
+       says it. (Set by popSync only for plain-text labels.) */
+    .v2-layer .v2-pop-pane .ambient-ctrl.v2-labdup > label { display: none; }
+    .v2-layer .v2-pop-pane .ambient-ctrl.v2-knobbed.v2-labdup {
+      grid-template-columns: 92px minmax(110px, 1.4fr);
+    }
+    .v2-tabfam { display: none; }
+    .v2-tabfam.fam-on { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 0; }
+    .v2-tabfam-lab { display: none; }
     .fam-make > .v2-pop-tab:not(.on) { border-color: rgba(159, 122, 234, 0.38); }
     .fam-rhythm > .v2-pop-tab:not(.on) { border-color: rgba(79, 209, 197, 0.34); }
     .fam-time > .v2-pop-tab:not(.on) { border-color: rgba(99, 179, 237, 0.34); }
@@ -11246,11 +11288,139 @@
     .v2-layer .v2-pop-pane[data-fam="fam-time"] .ambient-ctrl > label { color: #63b3ed; }
     .v2-layer .v2-pop-pane[data-fam="fam-pitch"] .ambient-ctrl > label { color: #f687b3; }
 
+    /* COMPOSING IS A MODE OF THE SHEET at every width: the drawing, the tab
+       strip and ▶ Preview step aside (the tick SKIPS a composing layer — the
+       grid owns what it plays — so a preview there previews nothing you are
+       editing), and the actions PIN to the bottom of the pane. Measured before
+       pinning: ✓ Done sat at y=1183 in an 800px window on desktop, and below
+       the fold on a phone. */
+    .v2-layer.v2-composing .v2-pop .v2-partviz,
+    .v2-layer.v2-composing .v2-pop .v2-pop-foot,
+    .v2-layer.v2-composing .v2-pop .v2-pop-tabs { display: none; }
+    .v2-layer.v2-composing .v2-pop-pane { flex: 1 1 auto; }
+    .v2-layer.v2-composing .ambient-ctrl.v2-gacts {
+      position: sticky; bottom: 0; z-index: 2;
+      margin: 8px -16px calc(-20px - env(safe-area-inset-bottom));
+      padding: 8px 16px calc(8px + env(safe-area-inset-bottom));
+      background: #12121f; border-top: 1px solid #2d2d3f;
+    }
+    .v2-layer.v2-composing .v2-gacts .ambient-seg { flex: 1 1 0; min-width: 0; min-height: 44px; }
+    .v2-layer.v2-composing .v2-gacts > label { display: none; }
+    /* THE COMPOSITION SURFACE LEADS. The dock stacks keyboard (464px) →
+       chord strip (518) → Step Div (92) → actions (83) = 1161px into a 670px
+       pane, so on a phone the per-chord strip — the thing you are writing
+       INTO — was entirely below the fold ("all of this not showing on
+       phone"). Reordered with flex `order` rather than by moving nodes:
+       `_placeLaneExpander` resolves the dockhost BY KEY and v1's sync passes
+       key on the session, so the markup must stay exactly where they expect
+       it. Same principle as the pattern grid leading its own tab. */
+    .v2-layer.v2-composing .v2-dock { display: flex; flex-direction: column; }
+    .v2-layer.v2-composing .v2-dock > .ambient-seedgrid-chords { order: 1; }
+    .v2-layer.v2-composing .v2-dock > .ambient-seedgrid-striphost { order: 2; }
+    .v2-layer.v2-composing .v2-dock > .ambient-seedgrid-gran { order: 3; }
+    .v2-layer.v2-composing .v2-dock > .ambient-seedgrid-dockhost { order: 4; }
+    .v2-layer.v2-composing .v2-dock > .ambient-seedgrid-prib { order: 5; }
+    .v2-layer.v2-composing .v2-dock > .v2-gacts { order: 6; }
+    /* NOT TRIED TWICE: shrinking the keyboard's `.cell` height saves NOTHING —
+       the grid's rows are a fixed `70px 70px 70px` (the app sizes them
+       itself), so the cells just sit smaller inside the same rows: smaller
+       touch targets for zero height back. If the keyboard ever has to be
+       shorter here, the row track is what has to move, not the cell. */
+
+    /* …and on a PHONE the sheet takes the whole screen, because the docked
+       editor is a full instrument (grid, wraps, cell keyboard, note strip) and
+       the pane was ~230px. It fills its own WRAP rather than going
+       `position: fixed`: the wrap is already fixed AND measure-corrected for
+       the backdrop-filter containing-block trap, so borrowing its box inherits
+       that correction instead of re-introducing the bug. */
+    @media (max-width: 540px) {
+      .v2-layer.v2-composing .v2-pop {
+        left: 0; top: 0; transform: none; inset: 0;
+        width: auto; height: auto; max-height: none;
+        border-radius: 0; border-left: 0; border-right: 0;
+        padding-top: env(safe-area-inset-top);
+      }
+    }
+
+    /* MATERIAL IS TWO KINDS, and the row never said so ("what's the difference
+       between Composed and Sustained?"): notes you WRITE (the part becomes
+       Fixed) vs RULES that make notes as it plays. Two labelled clusters, the
+       same tiny caps the family bar uses. */
+    .v2-matrow { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
+    .v2-matgrp { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; flex: 1 1 auto; }
+    .v2-matlab {
+      flex: 1 0 100%; font: 600 0.6rem 'Segoe UI', sans-serif; letter-spacing: 0.06em;
+      text-transform: uppercase; color: #55556e; padding-left: 2px;
+    }
+    /* THE PATTERN GRID GETS FINGER-SIZED CELLS ON A PHONE. 16 steps across a
+       333px pane is 18px per cell; wrapping to 8 columns doubles that (the
+       grid already wraps above 16 steps, so this is its own idiom). `--eucols`
+       is written INLINE by the builder, so the override has to be !important
+       — which beats a non-important inline declaration. Lanes are exempt: a
+       drum row wrapping would split one lane across two lines. */
+    @media (max-width: 540px) {
+      .v2-layer .v2-pop-pane .v2-cellrow:not(.v2-lanerow) .ambient-euclid-cells {
+        --eucols: 8 !important; row-gap: 6px;
+      }
+      .v2-layer .v2-pop-pane .v2-cellrow:not(.v2-lanerow) .ambient-euclid-cell { min-height: 38px; }
+    }
+
+    /* MICRO STEPPERS — several compact − value + cells in ONE row, where
+       five full-size rows were ~500px of a ~170px pane. The sheet styles
+       steppers BIG for touch (60px buttons), so these override with the
+       `.v2-mini` prefix; the targets stay at/near the 34px floor and the
+       input is 16px (iOS zooms a focused field under that and never zooms
+       back — the documented trap). */
+    .v2-layer .v2-pop-pane .ambient-ctrl.v2-microrow {
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end;
+    }
+    .v2-mini { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .v2-mini-lab {
+      font: 600 0.62rem 'Segoe UI', sans-serif; letter-spacing: 0.06em;
+      text-transform: uppercase; color: #7a7a9c; padding-left: 2px;
+    }
+    .v2-layer .v2-pop-pane .v2-mini .ambient-stepper { justify-content: flex-start; gap: 0; }
+    /* 32 + 40 + 32 = 104, so THREE cells fit a 390px pane row (measured: at
+       112 only two did, and the row was 160px). The ± are nudges flanking a
+       tap-to-type input, and they keep the full 34px height. */
+    .v2-layer .v2-pop-pane .v2-mini .ambient-step-btn {
+      width: 32px; height: 34px; font-size: 1.05rem; min-width: 0;
+    }
+    .v2-layer .v2-pop-pane .v2-mini .ambient-step-inp {
+      height: 34px; font-size: 16px; min-width: 40px; width: 40px; padding: 0 2px;
+    }
+    /* dimmed on a Fixed part, like any generation control */
+    .v2-mini.v2-rowna { pointer-events: none; }
+    .v2-mini.v2-rowna > * { opacity: 0.4; }
+
     /* A row that WOULD apply if the part were Generated — visible, inert.
        Children dimmed, not the wrapper (the documented opacity-composites
        rule), and the whole row refuses the pointer. */
     .v2-layer .ambient-ctrl.v2-rowna { pointer-events: none; }
     .v2-layer .ambient-ctrl.v2-rowna > * { opacity: 0.4; }
+
+    /* PHONE LAYOUT for the sheet head and the tab families ("this layout
+       isn't working on mobile"). The head trio was shoving the ✕ close onto
+       an orphan line: on narrow screens the head is two deliberate rows —
+       [title ......... ✕] then the trio full-width — via flex order, and the
+       family labels sit ABOVE their chips instead of in a left gutter that
+       scattered the wrapped ones. */
+    @media (max-width: 540px) {
+      .v2-pop-head { row-gap: 8px; }
+      .v2-pop-head .v2-pop-title { order: 0; }
+      .v2-pop-head .v2-pop-close { order: 1; margin-left: auto; }
+      .v2-pop-head .v2-pop-pair, .v2-pop-head .v2-pop-xtra { order: 2; flex: 1 0 100%; }
+      .v2-pop-head .v2-grpsum { order: 3; }
+      /* every pixel of sheet height goes to the PANE on a phone: taller
+         sheet, shorter drawing (it stays readable at 60px). Compound
+         selectors — this block sits EARLIER in the file than the base rules,
+         so equal specificity loses the cascade (the documented trap). */
+      .v2-layer .v2-pop { max-height: 92vh; }
+      .v2-layer .v2-partviz .v2-vizcv { height: 60px; }
+      /* the trio fills its row — the selector takes the slack */
+      .v2-pop-pair select.ambient-select.v2-pop-part { flex: 1 1 auto; max-width: none; }
+      .v2-pop-pair .v2-pop-sync { flex: 0 0 auto; }
+    }
 
     /* Current part — the editing-context strip between the tab section and
        the layer cards. Chips reuse the house .ambient-seg; wraps, never
@@ -14767,7 +14937,13 @@ select.v2-pop-title.v2-pop-goto:hover { border-color: #9f7aea; color: #d6bcfa; }
 .v2-notesrow .ambient-seg.on, .v2-layer .v2-seedv1.on {
   border-color: #b794f4; color: #e9d8fd; background: rgba(159, 122, 234, 0.3); font-weight: 600;
 }
-.v2-notesrow .ambient-seg.on::before, .v2-layer .v2-seedv1.on::before { content: '\2713 '; }
+/* NO STATUS GLYPH ON A MODE BUTTON (user: "those buttons should just be mode
+   descriptors, not status indicators"). The purple fill IS the active-mode
+   signal — the same one the family chips and every other segmented row in
+   this panel use — and whether the take is locked is stated where it
+   belongs: the hint line ("\ud83c\udfb2 Roll \u00b7 LOCKED \u2014 plays these notes, not the
+   rules") and the \ud83d\udd12/\ud83d\udd13 button. `v2-matlock` is still stamped for anyone
+   who needs to style the state later. */
 /* THE SAVED BANK — one row per phrase: its name loads it, the arrows order it,
    the ✕ deletes it through the one path that also prunes its mappings. */
 .v2-bank { display: flex; flex-direction: column; gap: 6px; min-width: 0; }

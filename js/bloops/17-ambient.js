@@ -8506,11 +8506,40 @@
     // hand-wrote `parts[i].name || ('Part ' + (i+1))` skipped the middle case, so
     // a renamed part-less progression showed as "Part 1" on the Sequences chips
     // while the compose strip beside them read its real name. One helper.
+    // A DERIVED NAME IS RECOMPUTED, NEVER REMEMBERED. A part picked from the
+    // catalogue is named by its numerals ("I — ii — iii"), which is a
+    // DESCRIPTION of chords rather than a name — so the moment a chord is
+    // added or removed the stored string is a lie (reported: a 5-chord part
+    // named with 4 numerals, and both parts one numeral short). The same test
+    // `_ambProgTitle` already uses decides it: a name containing ' — ' is
+    // derived, so it is regenerated from the part's CURRENT chords; an
+    // authored name is returned verbatim and never touched.
+    function _ambPartNumerals(cfg, pi) {
+      try {
+        const prog = cfg && cfg.prog, chords = prog && prog.chords;
+        if (!chords || !chords.length) return '';
+        const rgs = (typeof _ambGridRanges === 'function') ? (_ambGridRanges(cfg) || []) : [];
+        const rg = rgs.find(x => x && (x.pi | 0) === (pi | 0));
+        if (!rg) return '';
+        const kRoot = _ambAreaKeyRootPc(cfg), kScale = _ambAreaKeyScaleName(cfg);
+        let vShift = 0;
+        try { vShift = _ambProgViewShift(cfg, chords) | 0; } catch (e) {}
+        const out = [];
+        const to = (rg.from | 0) + Math.max(0, rg.len | 0);
+        for (let i = rg.from; i < to && i < chords.length; i++) {
+          const c = _ambChordShift(chords[i], vShift);
+          const pk = _ambPartKeyForSlot(prog, i);
+          out.push(_ambIsTransition(c) ? '\u21dd'
+            : (_ambPeRoman(c, pk ? pk.root : kRoot, pk ? pk.scale : kScale) || '?'));
+        }
+        return out.join(' \u2014 ');
+      } catch (e) { return ''; }
+    }
     function _ambPartLabel(cfg, pi) {
       const p = cfg && cfg.prog;
       const parts = (p && Array.isArray(p.parts) && p.parts.length) ? p.parts : null;
       const own = parts && parts[pi] && typeof parts[pi].name === 'string' ? parts[pi].name.trim() : '';
-      if (own) return own;
+      if (own) return _ambProgNameIsList(own) ? (_ambPartNumerals(cfg, pi) || own) : own;
       if (!parts) return _ambProgTitle(p && p.name);
       return 'Part ' + ((pi | 0) + 1);
     }
@@ -40626,7 +40655,7 @@
       // the cursor — it is drawn as its own block rather than as a header over an
       // empty run of chips.
       if (parts) { let acc = 0; parts.forEach((p, pi) => {
-        ranges.push({ name: p.name, from: acc, to: Math.min(N, acc + (p.open ? 0 : (p.len | 0))), pi,
+        ranges.push({ name: _ambPartLabel(cfg, pi), from: acc, to: Math.min(N, acc + (p.open ? 0 : (p.len | 0))), pi,
                       key: p.key || null, open: !!p.open, bars: p.bars, hold: !!p.hold });
         acc += (p.open ? 0 : (p.len | 0)); }); }
       else ranges.push({ name: '', from: 0, to: N, pi: -1 });
@@ -54298,7 +54327,10 @@
             const inp = wrap && wrap.querySelector('.ambient-step-inp'); if (!inp) return;
             const min = parseInt(inp.min, 10), max = parseInt(inp.max, 10);
             let v = parseInt(inp.value, 10); if (!Number.isFinite(v)) v = Number.isFinite(min) ? min : 0;
-            v += btn.classList.contains('ambient-step-up') ? 1 : -1;
+            // OPT-IN STEP SIZE. Absent = 1, which is every existing stepper;
+            // a 0-100 field in a compact row needs a usable nudge.
+            const k = parseInt(inp.getAttribute('data-nudge'), 10);
+            v += (btn.classList.contains('ambient-step-up') ? 1 : -1) * (Number.isFinite(k) && k > 0 ? k : 1);
             if (Number.isFinite(min)) v = Math.max(min, v);
             if (Number.isFinite(max)) v = Math.min(max, v);
             if (String(v) === inp.value) return;

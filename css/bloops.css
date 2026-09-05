@@ -10228,10 +10228,16 @@
       border: 1px solid #2d2d3f;
       border-radius: 10px;
       box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-      /* z-index above the codebase's panel ceiling (9000) so the
-         menu paints over modals / FX panels / settings dropdowns
-         no matter what's open behind it. */
-      z-index: 10001;
+      /* A MENU MUST PAINT ABOVE WHATEVER OPENED IT. That ceiling has moved
+         twice: it was the panel band (9000), then the overlay band grew on
+         top of it — .sm-overlay 10300, .sd-overlay 10400, .key-picker
+         10500, #sample-bank-mgr 10600, #drum-kit-editor 10700, and the v2
+         layer sheet .v2-pop-wrap 10290 — every one of which can have a
+         showCtxMenu opened FROM it. At 10001 the v2 sheet covered the
+         Transform menu outright (reported 2026-09-05). 10900 clears the
+         whole overlay band and stays under the toast/recorder band
+         (100000), which must out-rank a menu. Raise this, not them. */
+      z-index: 10900;
       /* Long menus (e.g. the Tone submenu = full sound palette) scroll instead
          of running off-screen with their tail clipped. */
       max-height: 80vh;

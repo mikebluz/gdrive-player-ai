@@ -1587,6 +1587,69 @@ const ok = (name, cond, detail) => {
     card().classList.remove('collapsed');
     return o;
   });
+  // A MENU OPENED FROM INSIDE THE SHEET MUST PAINT OVER IT. The sheet is a
+  // fixed overlay (.v2-pop-wrap, z 10290) and showCtxMenu is body-attached —
+  // at its old z 10001 the Transform menu opened UNDERNEATH the sheet.
+  // Asserted by HIT-TEST, not by z-index alone: a number that merely looks
+  // bigger proves nothing about what is under the finger.
+  const menuZRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const svPart = JSON.stringify(L().part);
+    const h = document.getElementById('bloom-v2-layers');
+    L().part.kind = 'recorded';
+    L().part.notes = [{ t: 0, midi: 60, dur: 0.1 }, { t: 0.5, midi: 64, dur: 0.1 }];
+    E.getCfg();
+    if (h) h._sig = ''; window._v2.render(E); await wait(250);
+    const card = document.querySelector('.v2-layer');
+    card.classList.remove('collapsed');
+    card.querySelector('[data-v2grp="Content"]').click(); await wait(300);
+    const o = { openedFromSheet: !!document.querySelector('.v2-pop-wrap .v2-tform') };
+    const tf = document.querySelector('.v2-pop-wrap .v2-tform') || document.querySelector('.v2-tform');
+    if (tf) tf.click();
+    await wait(400);
+    const m = document.querySelector('.ctx-menu');
+    o.menu = !!m;
+    if (m) {
+      const wrap = document.querySelector('.v2-pop-wrap');
+      o.z = +getComputedStyle(m).zIndex;
+      o.wrapZ = wrap ? +getComputedStyle(wrap).zIndex : 0;
+      o.above = o.z > o.wrapZ;
+      const r = m.getBoundingClientRect();
+      o.onScreen = r.width > 0 && r.left >= -1 && r.top >= -1 &&
+        r.right <= innerWidth + 1 && r.bottom <= innerHeight + 1;
+      o.covered = [];
+      m.querySelectorAll('button').forEach((bt) => {
+        const q = bt.getBoundingClientRect();
+        if (q.width < 1 || q.height < 1) return;
+        const el = document.elementFromPoint(q.left + q.width / 2, q.top + q.height / 2);
+        if (!el || !m.contains(el)) o.covered.push(bt.textContent.trim().slice(0, 20));
+      });
+      o.items = m.querySelectorAll('button').length;
+    }
+    // LEAVE NO TRACE. The menu's dismiss listens on POINTERDOWN, not click,
+    // so a body.click() leaves it open and it covers the next check's targets;
+    // and the sheet MOVES the card's rows into itself, so a sheet left open
+    // measures every later row at zero size (both hit, in one run).
+    // dispatch on an ELEMENT — the dismiss handler does e.target.closest(),
+    // and a pointerdown aimed at `document` has no closest() to call
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    await wait(150);
+    const cl = document.querySelector('.v2-pop-close');
+    if (cl) cl.click();
+    await wait(250);
+    try { L().part = JSON.parse(svPart); } catch (e) {}
+    E.getCfg();
+    if (h) h._sig = ''; window._v2.render(E); await wait(250);
+    document.querySelector('.v2-layer').classList.remove('collapsed');
+    o.clean = !document.querySelector('.ctx-menu') && !document.querySelector('.v2-pop-wrap');
+    return o;
+  });
+  ok('a menu opened from inside the layer sheet paints OVER it and every item is hit-testable',
+    menuZRun.openedFromSheet && menuZRun.menu && menuZRun.above && menuZRun.onScreen &&
+    menuZRun.items >= 2 && menuZRun.covered.length === 0 && menuZRun.clean,
+    JSON.stringify(menuZRun));
+
   ok('✨ Transform reworks the notes — exact reverse, rhythm-keeping shuffle, scoped to tapped bars',
     tfRun.present && tfRun.liveRefuses && tfRun.reversedMoved && tfRun.involution &&
     tfRun.shuffleKeepsRhythm && tfRun.stamped && tfRun.scoped && tfRun.replaceAsks,

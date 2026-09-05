@@ -169,6 +169,53 @@
     // arrives as clean in-stream silence, nothing for a resampler to chase.
     let maskGain = null, bridge = null, elStream = streamDest.stream, nativeArmed = false;
     let bridgeRefs = null;
+    // ── NAVIGATION TEARDOWN ────────────────────────────────────────────────
+    // Leaving the page (← Back to SAW) destroys the DOCUMENT, but WebKit's
+    // media pipeline outlives it by a beat: the broadcast element's
+    // AVSampleBufferAudioRenderer keeps draining whatever it holds with its
+    // feed dead — heard as a tiny stale-buffer LOOP glitching over the front
+    // door. Nothing reactive on the next page can fix it (the next page does
+    // not own these elements), so the dying page releases them itself:
+    // mute → pause → strip the src → load() — load() on a srcless element is
+    // the canonical WebKit "let go of the renderer NOW".
+    //
+    // pagehide NEVER fires on a plain app-background here (the webview stays
+    // alive — that is the whole background-audio architecture), only on real
+    // navigation or app death, so tearing down on it cannot break the
+    // keep-alive. The one edge is the back-swipe returning to a bfcached copy
+    // of this page — its audio rig is dead by then, so pageshow(persisted)
+    // reloads for a clean boot rather than resuming a half-dead graph.
+    const AUD_TEAR = [];
+    function audioTeardown(why) {
+      if (audioTeardown.done) return; audioTeardown.done = true;
+      log('AUDIO TEARDOWN (' + why + ')');
+      // A DURABLE STAMP — the console line is emitted by a dying page and the
+      // CDP/flight channels can lose it, so the proof that the teardown ran
+      // lives where the NEXT page can read it.
+      try { localStorage.setItem('bloopsLastTeardown', why + '@' + Date.now()); } catch (e) {}
+      for (let i = 0; i < AUD_TEAR.length; i++) {
+        const e2 = AUD_TEAR[i];
+        try {
+          e2.setAttribute('data-bloops-torn', '1');
+          e2.muted = true; e2.pause(); e2.srcObject = null; e2.removeAttribute('src'); e2.load();
+        } catch (e) {}
+      }
+      try {
+        const P = window.Capacitor && window.Capacitor.Plugins;
+        if (P && P.BloopsAudio && P.BloopsAudio.stop) P.BloopsAudio.stop();
+      } catch (e) {}
+      try { raw.suspend(); } catch (e) {}
+      try { if (bridge) bridge.close(); } catch (e) {}
+    }
+    try {
+      window.addEventListener('pagehide', () => audioTeardown('pagehide'));
+      window.addEventListener('pageshow', (ev2) => {
+        if (ev2 && ev2.persisted && audioTeardown.done) {
+          log('bfcache return after teardown — reloading for a clean rig');
+          try { location.reload(); } catch (e) {}
+        }
+      });
+    } catch (e) {}
     let armMse = () => Promise.resolve(false);
     let armNativePlugin = () => {};
     const f0ref = { fn: null };
@@ -262,6 +309,7 @@
         // stream-fed element is what stops WebKit suspending the contexts at
         // lock — its loss is why production died in the first flight harvest).
         const mseEl = new Audio();
+        AUD_TEAR.push(mseEl);
         try { mseEl.style.display = 'none'; document.body.appendChild(mseEl); } catch (e) {}
         for (const evn of ['playing', 'pause', 'ended', 'waiting', 'stalled', 'error']) {
           // w= is WALL ms (mod 1e6): a pause→playing pair 0.07 apart in media
@@ -362,6 +410,7 @@
     };
 
     const el = new Audio();
+    AUD_TEAR.push(el);
     for (const evn of ['play', 'playing', 'pause', 'ended', 'waiting', 'stalled', 'suspend', 'seeking', 'seeked', 'ratechange', 'error']) {
       el.addEventListener(evn, () => log('el event: ' + evn + ' t=' + el.currentTime.toFixed(2) + ' rate=' + el.playbackRate));
     }

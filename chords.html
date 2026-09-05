@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Chord Query &middot; Mike Luz</title>
+<title>Don&rsquo;t Fret &middot; Mike Luz</title>
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
@@ -262,6 +262,96 @@
   .fi-key { font-size: 0.7rem; border-radius: 10px; padding: 1px 8px; }
   .fi-key.in { color: #9ae6b4; border: 1px solid rgba(154,230,180,0.4); }
   .fi-key.out { color: #7a7a9c; border: 1px solid #23233a; }
+  /* ── THE FRETBOARD ────────────────────────────────────────────────────────
+     Chord charts in the standard orientation: strings VERTICAL, low E on the
+     left, frets running down. A bubble carries the FINGER you fret with (1 =
+     index … 4 = little), which is the thing a fret number cannot tell you —
+     and the reason the shapes are solved rather than looked up is that this
+     page names 39 qualities and no shape library covers them. */
+  .fret { margin: 0 0 10px; }
+  .fbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  /* A class rule that sets `display` BEATS the [hidden] attribute (a class
+     selector outranks an attribute one, and the UA sheet loses to any author
+     rule) — so `bar.hidden = true` hid nothing and the chord picker sat there
+     in notes mode. The companion rule is not optional; this is the same trap
+     that left the Grid dock's slot visible in every state. */
+  .fbar[hidden] { display: none; }
+  .fbar select {
+    flex: 0 1 auto; min-width: 0; padding: 9px 10px; border: 1px solid #2d2d3f;
+    border-radius: 10px; background: #14141f; color: #e9e9f4;
+    font-family: inherit; font-size: 16px; font-weight: 600;
+  }
+  .fbar select:focus { outline: none; border-color: #9f7aea; }
+  /* Two modes, one control — the house segmented look, so it reads as a
+     switch rather than as two buttons that might both do something. */
+  .fmode { display: inline-flex; border: 1px solid #2d2d3f; border-radius: 20px; overflow: hidden; }
+  .fmode button {
+    min-height: 40px; padding: 0 14px; border: none; background: transparent;
+    color: #a0aec0; font: 600 0.8rem inherit; cursor: pointer; touch-action: manipulation;
+    white-space: nowrap;
+  }
+  .fmode button.on { background: #241f3a; color: #d6bcfa; }
+  .fmode button:disabled { opacity: 0.45; cursor: default; }
+  .fname { font-weight: 700; font-size: 1.05rem; color: #d6bcfa; margin: 12px 2px 2px; }
+  .fnotes { color: #6b6b8a; font-size: 0.75rem; margin: 0 2px 8px; overflow-wrap: anywhere; }
+  /* WRAPS, never scrolls sideways — a row of charts on a phone is two per line. */
+  .shapes { display: flex; flex-wrap: wrap; gap: 10px; }
+  .shape {
+    flex: 0 0 auto; width: calc(50% - 5px); max-width: 168px;
+    border: 1px solid #23233a; border-radius: 12px; background: #14141f;
+    padding: 8px 6px 6px; text-align: center;
+  }
+  .shape svg { display: block; width: 100%; height: auto; }
+  .shape .lbl { color: #6b6b8a; font-size: 0.68rem; margin-top: 4px; line-height: 1.3;
+    white-space: normal; overflow-wrap: anywhere; }
+  .shape.easy { border-color: #2f4a3d; }
+  /* A full-width heading inside the wrapping flex row — one per position, so a
+     long list reads as a walk up the neck rather than a wall of charts. */
+  .poshd {
+    /* basis 100% PLUS a horizontal margin is wider than the row — 2px of
+       overflow, which rule 1 does not grade on a curve. Pad, never margin. */
+    flex: 1 0 100%; margin: 8px 0 0; padding: 8px 2px 0; border-top: 1px solid #1c1c2e;
+    font: 600 0.7rem 'Segoe UI', sans-serif; letter-spacing: 0.06em;
+    text-transform: uppercase; color: #6b6b8a;
+  }
+  .poshd:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+  /* ONE AT A TIME — the same chart, given the whole width, with the shapes
+     stepped through rather than scrolled past. */
+  .onewrap { width: 100%; }
+  .shape.big { width: 100%; max-width: 320px; margin: 0 auto; }
+  .onenav { display: flex; align-items: center; gap: 10px; margin: 10px 0 0; }
+  .onenav button {
+    width: 56px; min-height: 44px; border: 1px solid #2d2d3f; border-radius: 12px;
+    background: #14141f; color: #d6bcfa; font-size: 1.1rem; cursor: pointer;
+    touch-action: manipulation; flex: 0 0 auto;
+  }
+  .onenav button:disabled { opacity: 0.35; cursor: default; }
+  .onenav .onepos { flex: 1 1 0; min-width: 0; text-align: center; color: #a0aec0;
+    font-size: 0.78rem; white-space: normal; overflow-wrap: anywhere; }
+  /* THE BUILD BOARD — a whole neck you can tap. Bigger cells than a chart:
+     these are targets, not marks. */
+  .board { margin: 4px 0 0; }
+  .board svg { display: block; width: 100%; max-width: 252px; height: auto; margin: 0 auto; }
+  .board .cell { cursor: pointer; }
+  .bldout { margin: 10px 2px 0; }
+  .bldname { font-weight: 700; font-size: 1.1rem; color: #d6bcfa; }
+  .bldalt { color: #8f8fae; font-size: 0.8rem; margin-top: 2px;
+    white-space: normal; overflow-wrap: anywhere; }
+  .bldrow { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 0; }
+  .bldrow button {
+    min-height: 44px; padding: 0 14px; border: 1px solid #2d2d3f; border-radius: 22px;
+    background: transparent; color: #a0aec0; font: 600 0.8rem inherit; cursor: pointer;
+    touch-action: manipulation;
+  }
+  .bldrow button:hover { border-color: #9f7aea; color: #d6bcfa; }
+  .moreshapes {
+    flex: 1 0 100%; min-height: 44px; margin: 10px 0 0; padding: 0 12px;
+    border: 1px solid #2d2d3f; border-radius: 22px; background: transparent;
+    color: #a0aec0; font: 600 0.78rem inherit; cursor: pointer; touch-action: manipulation;
+    white-space: normal; overflow-wrap: anywhere;
+  }
+  .moreshapes:hover { border-color: #9f7aea; color: #d6bcfa; }
+  @media (min-width: 520px) { .shape { width: calc(33.333% - 7px); } }
   .none { color: #6b6b8a; font-size: 0.85rem; margin: 8px 2px; }
   .err { color: #f6ad55; font-size: 0.85rem; margin: 8px 2px; overflow-wrap: anywhere; }
 </style>
@@ -269,10 +359,50 @@
 <body>
 <div class="bar">
   <a class="back" href="index.html">&larr; mikeluz</a>
-  <span class="title">Chord Query</span>
-  <span class="sub">type notes, get every chord they could be</span>
+  <span class="title">Don&rsquo;t Fret</span>
+  <span class="sub">chords on the fretboard, and every chord a stack of notes could be</span>
 </div>
 <main>
+  <!-- THE FRETBOARD, FIRST. Pick a chord, see where to put your fingers. The
+       other half of the page runs the other way round — you type the notes and
+       it tells you what they are — so this reads as: find the chord, then take
+       it apart. -->
+  <section class="fret">
+    <!-- TWO WAYS IN, and the first one is the page's own: whatever you type
+         below appears up here on the neck. The picker stays as the other mode
+         rather than being replaced — looking a chord up by name is a different
+         errand from asking what the notes you have are. -->
+    <div class="fbar">
+      <span class="fmode">
+        <button type="button" id="fr-m-notes" class="on" data-m="notes">&#9834; Your notes</button>
+        <button type="button" id="fr-m-pick" data-m="pick">Pick a chord</button>
+        <!-- THE OTHER DIRECTION AGAIN: put fingers down and it tells you what
+             you are holding. The page already answers this from typed notes;
+             on a guitar the shape is the thing you have. -->
+        <button type="button" id="fr-m-build" data-m="build">&#9998; Fretboard</button>
+      </span>
+    </div>
+    <div class="fbar" id="fr-pickbar" hidden>
+      <select id="fr-root" aria-label="Root"></select>
+      <select id="fr-qual" aria-label="Chord quality"></select>
+    </div>
+    <!-- HOW the shapes are shown, not which ones — so it only appears where
+         there are shapes to show. -->
+    <div class="fbar" id="fr-viewbar">
+      <span class="fmode">
+        <button type="button" id="fr-v-grid" class="on" data-v="grid">&#9638; All</button>
+        <button type="button" id="fr-v-one" data-v="one">&#9635; One at a time</button>
+      </span>
+    </div>
+    <div class="fname" id="fr-name"></div>
+    <div class="fnotes" id="fr-notes"></div>
+    <div class="shapes" id="fr-shapes"></div>
+    <div class="hint">Numbers are <b>fingers</b> — 1 index, 2 middle, 3 ring, 4 little. A bar across
+      several strings is one finger laid flat. <b>×</b> means don&rsquo;t play that string,
+      <b>○</b> means play it open.</div>
+  </section>
+
+  <h2 style="margin:22px 2px 6px;font-size:0.95rem;color:#a0aec0;">Name a stack of notes</h2>
   <div class="pcs" id="pcs"></div>
   <!-- ＋ lives INSIDE the wrapping slot flow, not beside it: as a sibling of
        .slots it was pushed onto a line of its own the moment the boxes wrapped
@@ -759,7 +889,14 @@
   // ── RENDER ───────────────────────────────────────────────────────────────
   const esc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
   let LAST = { midis: [] };
+  // THE BOARD FOLLOWS THE NOTES. `render` is what every keystroke, chip tap and
+  // slot edit already funnels through, so wrapping it is one hook rather than
+  // a listener per input — and the fretboard is drawn AFTER the page's own
+  // answer, so a throw up there can never stop the readings below appearing.
   function render() {
+    try { render0(); } finally { try { if (window.__frReady) frRender(); } catch (e) {} }
+  }
+  function render0() {
     const out = $('#out');
     const p = parse(notesText());
     drawRuler(p.err ? null : p.midis);
@@ -1098,6 +1235,579 @@
     markSlots();
     render();
   });
+  // ── THE FRETBOARD ────────────────────────────────────────────────────────
+  // Shapes are SOLVED, not looked up: this page names 39 qualities and no shape
+  // library covers them, so a chart for m13 would simply be missing. The solver
+  // walks hand positions, picks a fret per string, and keeps what a hand can
+  // actually hold — which is also what lets it say WHICH FINGER goes where,
+  // the one thing a grid of fret numbers cannot tell you.
+  const TUNING = [40, 45, 50, 55, 59, 64];   // E2 A2 D3 G3 B3 E4, low → high
+  const FR_SHOW = 60;                        // a neck's worth, not a page's worth
+  const FR_PER_POS = 3;                      // the best few where the hand sits
+  const FR_MAX = 15, FR_SPAN = 4;            // one hand's reach, in frets
+
+  // WHICH FINGER PRESSES WHAT. Distinct frets take fingers in order, lowest
+  // first; several strings at one fret are ONE finger laid flat. A bar proper
+  // is only when the lowest sounding string is on it — otherwise it is a
+  // partial bar, which the hand can only do across ADJACENT strings.
+  function fingerPlan(frets) {
+    const fingers = frets.map(() => 0);
+    const held = [];
+    for (let i = 0; i < 6; i++) if (frets[i] !== null && frets[i] > 0) held.push(i);
+    if (!held.length) return { fingers: fingers, barre: null, count: 0 };
+    const lowSound = frets.findIndex((f) => f !== null);
+    const byFret = {};
+    held.forEach((i) => { (byFret[frets[i]] = byFret[frets[i]] || []).push(i); });
+    const rows = Object.keys(byFret).map(Number).sort((a2, b2) => a2 - b2);
+    const minF = rows[0];
+    // A BAR PROPER, decided FIRST because it is the only place a finger lies
+    // UNDER notes on higher frets: the lowest sounding string is on the lowest
+    // fret used, and the finger reaches at least one more string. Nothing
+    // between the ends may be muted — a bar presses every string it crosses,
+    // so a muted one inside would ring.
+    let barre = null;
+    const atMin = (byFret[minF] || []).slice().sort((a2, b2) => a2 - b2);
+    if (atMin.length >= 2 && atMin.indexOf(lowSound) >= 0) {
+      let ok = true;
+      for (let i = atMin[0]; i <= atMin[atMin.length - 1]; i++) {
+        // muted: the bar would make it ring. OPEN: the bar is lying across it,
+        // so it cannot ring open — it would sound at the bar's fret. Both mean
+        // this is not a bar. (The second one shipped as a bug: it let F be
+        // "solved" as 1-0-3-2-1-1, an index bar with an open A string
+        // underneath it, which is not a thing a hand can do.)
+        if (frets[i] === null || frets[i] === 0) ok = false;
+      }
+      if (ok) barre = { fret: minF, from: atMin[0], to: atMin[atMin.length - 1] };
+    }
+    // GROUPS — one finger each. Away from the bar, a run breaks on anything
+    // between: a muted string (nothing to lie across) or ANY other fret, high
+    // or low. Only a bar reaches under its neighbours.
+    const build = (splitPairs) => {
+      const groups = [];
+      for (let k = 0; k < rows.length; k++) {
+        const f = rows[k], strs = byFret[f].slice().sort((a2, b2) => a2 - b2);
+        if (barre && f === minF) { groups.push({ f: f, strs: strs }); continue; }
+        let run = [strs[0]];
+        for (let n = 1; n < strs.length; n++) {
+          let broken = false;
+          for (let j = strs[n - 1] + 1; j < strs[n]; j++) if (frets[j] === null || frets[j] !== f) broken = true;
+          if (broken) { groups.push({ f: f, strs: run }); run = [strs[n]]; }
+          else run.push(strs[n]);
+        }
+        groups.push({ f: f, strs: run });
+      }
+      // TWO NEIGHBOURS AT ONE FRET ARE USUALLY TWO FINGERS, not a mini-bar —
+      // open Em is 0-2-2-0-0-0 played middle-and-ring, and one finger across
+      // those two is a thing you can do rather than a thing anyone does.
+      // THREE or more is a bar (open A is one finger across three). Split only
+      // while the hand still has fingers left; a shape that needs five falls
+      // back to the mini-bar rather than being thrown away.
+      if (!splitPairs) return groups;
+      const out2 = [];
+      groups.forEach((g2) => {
+        if (g2.strs.length === 2 && !(barre && g2.f === barre.fret)) {
+          out2.push({ f: g2.f, strs: [g2.strs[0]] }, { f: g2.f, strs: [g2.strs[1]] });
+        } else out2.push(g2);
+      });
+      return out2;
+    };
+    const assign = (groups) => {
+      const fg = frets.map(() => 0);
+      let next = 1;
+      for (let k = 0; k < groups.length; k++) {
+        const g2 = groups[k];
+        // A BAR OF THREE OR MORE ABOVE THE INDEX IS THE RING FINGER. Numbering
+        // strictly in order hands it to the middle finger, which no hand does —
+        // an A-shape barre is index across, then ring across.
+        let fin = next;
+        if (g2.strs.length >= 3 && g2.f !== minF && next < 3) fin = 3;
+        if (fin > 4) return null;
+        g2.strs.forEach((i) => { fg[i] = fin; });
+        next = fin + 1;
+      }
+      const used = {}; let count = 0;
+      fg.forEach((n) => { if (n && !used[n]) { used[n] = 1; count++; } });
+      if (count > 4) return null;
+      return { fingers: fg, count: count };
+    };
+    const r1 = assign(build(true)) || assign(build(false));
+    if (!r1) return null;
+    return { fingers: r1.fingers, barre: barre, count: r1.count };
+  }
+
+  function solveShapes(rootPc, ivs) {
+    const pcs = ivs.map((iv) => (rootPc + iv) % 12);
+    const need = new Set(pcs);
+    // WHAT A BIG CHORD MAY DROP. Six strings cannot carry seven notes, and the
+    // 5th goes first, then the 11th — which is what players do, not a shortcut.
+    const opt = new Set();
+    if (ivs.length >= 5 && ivs.indexOf(7) >= 0) opt.add((rootPc + 7) % 12);
+    if (ivs.length >= 6 && ivs.indexOf(5) >= 0) opt.add((rootPc + 5) % 12);
+    const must = pcs.filter((pc) => !opt.has(pc));
+    const minStrings = (ivs.length <= 2) ? 3 : 4;
+    const found = [], seen = {};
+    for (let base = 0; base <= FR_MAX - FR_SPAN + 1; base++) {
+      const cand = TUNING.map((open) => {
+        const list = [null];
+        const lo = (base === 0) ? 0 : base, hi = Math.min(FR_MAX, base + FR_SPAN - 1);
+        if (base > 0 && need.has(open % 12)) list.push(0);     // an open string rides with any position
+        for (let f = lo; f <= hi; f++) if (need.has((open + f) % 12)) list.push(f);
+        return list;
+      });
+      const pick = [0, 0, 0, 0, 0, 0];
+      const walk = (i) => {
+        if (found.length > 600) return;
+        if (i === 6) { keep(pick.slice()); return; }
+        for (let k = 0; k < cand[i].length; k++) { pick[i] = cand[i][k]; walk(i + 1); }
+      };
+      walk(0);
+    }
+    function keep(frets) {
+      const sound = [];
+      for (let i = 0; i < 6; i++) if (frets[i] !== null) sound.push(i);
+      if (sound.length < minStrings) return;
+      const have = new Set(sound.map((i) => (TUNING[i] + frets[i]) % 12));
+      for (let k = 0; k < must.length; k++) if (!have.has(must[k])) return;
+      // a gap in the middle is a string you must mute with the fretting hand —
+      // playable, but only one, and it costs
+      let inner = 0;
+      for (let i = sound[0]; i <= sound[sound.length - 1]; i++) if (frets[i] === null) inner++;
+      if (inner > 1) return;
+      const plan = fingerPlan(frets); if (!plan) return;
+      const key = frets.map((f) => (f === null ? 'x' : f)).join(',');
+      if (seen[key]) return; seen[key] = 1;
+      const held = frets.filter((f) => f !== null && f > 0);
+      const minF = held.length ? Math.min.apply(null, held) : 0;
+      const bassPc = (TUNING[sound[0]] + frets[sound[0]]) % 12;
+      // LOWER IS EASIER, FEWER FINGERS IS EASIER, and a chord whose bass is not
+      // its root is a different (usually less wanted) thing — so it sorts after
+      // rather than being thrown away. THE WEIGHTS WERE MEASURED AGAINST THE
+      // SHAPES PEOPLE ACTUALLY PLAY: rewarding string count at 2.2 put a
+      // six-string grip at the 7th fret above open D (x-x-0-2-3-2), which is
+      // THE D chord — so position counts for more, string count for less, and
+      // an open string earns its own credit (nothing to fret, nothing to move).
+      const hasOpen2 = frets.some((f) => f === 0);
+      // ARCHING OVER HELD NOTES. Two grips on the lowest fret with FRETTED
+      // strings between them means the hand vaults over notes other fingers are
+      // holding — that is what a bar exists to avoid, so it sorts below the
+      // barre shape it stands in for. An OPEN string in the gap costs nothing
+      // (that is the open G, and A7 x-0-2-0-2-0), and a real bar lies flat
+      // across, so neither is penalised — the first version charged for both
+      // and threw five textbook shapes out of the results.
+      let arch = 0;
+      if (!plan.barre && minF > 0) {
+        const lows = [];
+        for (let i = 0; i < 6; i++) if (frets[i] === minF) lows.push(i);
+        for (let k = 1; k < lows.length; k++) {
+          for (let j = lows[k - 1] + 1; j < lows[k]; j++) {
+            if (frets[j] !== null && frets[j] > minF) { arch++; break; }
+          }
+        }
+      }
+      const score = minF * 0.9 + plan.count * 1.6 + (6 - sound.length) * 1.4 +
+        inner * 3 + (bassPc === rootPc ? 0 : 4.5) + (plan.barre ? 0.8 : 0) +
+        (hasOpen2 ? -1.5 : 0) + arch * 2.5;
+      found.push({ frets: frets, plan: plan, minF: minF, score: score, rootPc: rootPc,
+                   open: held.length === 0 || frets.some((f) => f === 0),
+                   root: bassPc === rootPc, n: sound.length });
+    }
+    found.sort((a2, b2) => a2.score - b2.score);
+    // TWO SHAPES ALWAYS EARN A PLACE, whatever they score, because they are the
+    // ones people are looking for. THE OPEN one: the spread rule below caps a
+    // position at two, and for D that spent the slot elsewhere and dropped
+    // x-x-0-2-3-2 — the first chord most people learn — off the list entirely.
+    // THE LOW BARRE: a movable shape is worth more than its effort score says,
+    // because learning one teaches all twelve keys, and a 4-finger barre like
+    // Bm always loses to some easier partial voicing.
+    const pins = [];
+    const bestOpen = found.find((v) => v.open && v.minF <= 3);
+    if (bestOpen) pins.push(bestOpen);
+    const bestBar = found.find((v) => v.plan.barre && v.minF <= 5 && v.n >= 5 && v.root &&
+      pins.indexOf(v) < 0);
+    if (bestBar) pins.push(bestBar);
+    // THE WHOLE NECK, POSITION BY POSITION. Six shapes was a cheat sheet; the
+    // flat "all of them" is 330 on average and 601 for C6, which is noise
+    // rather than information (most differ by one muted string). Grouping by
+    // where the hand SITS is what "every phrasing up to fret 15" is actually
+    // asking for: you can walk up the neck and see the chord in each place.
+    // The best few per position, ordered up the neck.
+    const byPos = {};
+    for (const v of found) {
+      const k = v.minF;
+      (byPos[k] = byPos[k] || []).push(v);
+    }
+    // A PINNED shape is kept whatever it scores — the canonical open voicing
+    // and the movable barre are the two people are looking for.
+    pins.forEach((v) => {
+      const l = byPos[v.minF];
+      if (l && l.indexOf(v) > 0) { l.splice(l.indexOf(v), 1); l.unshift(v); }
+    });
+    const out = [];
+    Object.keys(byPos).map(Number).sort((a2, b2) => a2 - b2).forEach((k) => {
+      byPos[k].slice(0, FR_PER_POS).forEach((v) => out.push(v));
+    });
+    return out.slice(0, FR_SHOW);
+  }
+
+  // ── THE CHART ────────────────────────────────────────────────────────────
+  // Strings vertical, low E on the left, frets running down — the orientation
+  // every chord book uses, so it reads without being learned.
+  function chartSvg(v) {
+    // A LEFT GUTTER for the fret numbers and a BOTTOM ROW for the note names —
+    // both were asked for and both earn their space: the numbers say where on
+    // the neck without counting frets, and the names say what each string is
+    // actually sounding, open strings included, lined up under their string.
+    const GUT = 15, W = 15 + 100, X0 = GUT + 11, DX = 15.6, Y0 = 24, DY = 18, ROWS = 5;
+    const held = v.frets.filter((f) => f !== null && f > 0);
+    const maxF = held.length ? Math.max.apply(null, held) : 0;
+    // WHERE THE WINDOW SITS is decided by the FRETTED notes alone. An open
+    // string is drawn above the chart as ○ and needs no room in it, so letting
+    // it force the window to the nut put an 8th-fret grip below the last fret
+    // line — measured as 7 elements outside the box, i.e. a blank chart.
+    const start = (maxF <= ROWS) ? 1 : v.minF;
+    const nut = start === 1;
+    const H = Y0 + ROWS * DY + 16;
+    const x = (i) => X0 + i * DX;
+    const y = (f) => Y0 + (f - start + 0.5) * DY;
+    let g = '';
+    for (let r = 0; r <= ROWS; r++) {
+      const yy = Y0 + r * DY;
+      const thick = (r === 0 && nut);
+      g += '<line x1="' + x(0) + '" y1="' + yy + '" x2="' + x(5) + '" y2="' + yy +
+        '" stroke="' + (thick ? '#a0aec0' : '#3a3a55') + '" stroke-width="' + (thick ? 3.5 : 1) + '"/>';
+    }
+    // THE FRET RULER — every row numbered, not just the first. Counting rows
+    // off a single "5fr" is the thing the number is there to save you.
+    for (let r = 0; r < ROWS; r++) {
+      g += '<text x="' + (GUT - 3) + '" y="' + (Y0 + (r + 0.5) * DY + 3.2) + '" fill="#4c4c68" ' +
+        'font-size="8" text-anchor="end" font-family="inherit">' + (start + r) + '</text>';
+    }
+    for (let i = 0; i < 6; i++) {
+      g += '<line x1="' + x(i) + '" y1="' + Y0 + '" x2="' + x(i) + '" y2="' + (Y0 + ROWS * DY) +
+        '" stroke="#3a3a55" stroke-width="1"/>';
+      const f = v.frets[i];
+      if (f === null) {
+        g += '<text x="' + x(i) + '" y="' + (Y0 - 6) + '" fill="#6b6b8a" font-size="11" ' +
+          'text-anchor="middle" font-family="inherit">\u00d7</text>';
+      } else if (f === 0) {
+        g += '<circle cx="' + x(i) + '" cy="' + (Y0 - 9.5) + '" r="4" fill="none" stroke="#9ae6b4" stroke-width="1.4"/>';
+      }
+    }
+    if (v.plan.barre) {
+      const b = v.plan.barre;
+      g += '<rect x="' + (x(b.from) - 6) + '" y="' + (y(b.fret) - 6) + '" width="' +
+        ((b.to - b.from) * DX + 12) + '" height="12" rx="6" fill="#9f7aea"/>';
+    }
+    for (let i = 0; i < 6; i++) {
+      const f = v.frets[i]; if (f === null || f === 0) continue;
+      const fin = v.plan.fingers[i];
+      const inBarre = v.plan.barre && f === v.plan.barre.fret && i >= v.plan.barre.from && i <= v.plan.barre.to;
+      if (!inBarre) g += '<circle cx="' + x(i) + '" cy="' + y(f) + '" r="6" fill="#9f7aea"/>';
+      g += '<text x="' + x(i) + '" y="' + (y(f) + 3.4) + '" fill="#12121e" font-size="9" ' +
+        'font-weight="700" text-anchor="middle" font-family="inherit">' + fin + '</text>';
+    }
+    // WHAT EACH STRING SOUNDS, under the string that sounds it. An open string
+    // is a note like any other and is named here too — reading a chart and
+    // still not knowing which note the open D is giving you is the gap.
+    const ny = Y0 + ROWS * DY + 11;
+    for (let i = 0; i < 6; i++) {
+      const f = v.frets[i];
+      const t = (f === null) ? '\u00b7' : pcShort((TUNING[i] + f) % 12);
+      const col = (f === null) ? '#3a3a55'
+        : (((TUNING[i] + f) % 12) === v.rootPc ? '#d6bcfa' : (f === 0 ? '#9ae6b4' : '#8f8fae'));
+      g += '<text x="' + x(i) + '" y="' + ny + '" fill="' + col + '" font-size="7.5" ' +
+        'text-anchor="middle" font-family="inherit">' + esc(t) + '</text>';
+    }
+    return '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="chord chart">' + g + '</svg>';
+  }
+
+  // ── THE BUILD BOARD ──────────────────────────────────────────────────────
+  // Put fingers down and it tells you what you are holding — the page's own
+  // question asked from the instrument instead of from a list of note names.
+  // A string sounds ONE note, so tapping a fret moves that string there and
+  // tapping the note that is already there mutes the string; the ○/× above the
+  // nut is the open-or-muted choice, which is a third state a fret cell cannot
+  // express.
+  // Fifteen frets, and the board is sized to fit a phone SCREEN rather than a
+  // phone's WIDTH: an SVG scales its height with its width, so a full-width
+  // neck is 1600px tall. Narrower is both shorter and still a 40px target.
+  const BLD_FRETS = 15;
+  let BLD = [null, null, null, null, null, null];
+  function boardSvg() {
+    const GUT = 15, W = GUT + 104, X0 = GUT + 12, DX = 16.4, Y0 = 26, DY = 19;
+    const x = (i) => X0 + i * DX;
+    const y = (f) => Y0 + (f - 0.5) * DY;
+    const H = Y0 + BLD_FRETS * DY + 16;
+    let g = '';
+    for (let r = 0; r <= BLD_FRETS; r++) {
+      const yy = Y0 + r * DY, nut = (r === 0);
+      g += '<line x1="' + x(0) + '" y1="' + yy + '" x2="' + x(5) + '" y2="' + yy +
+        '" stroke="' + (nut ? '#a0aec0' : '#2b2b42') + '" stroke-width="' + (nut ? 3.5 : 1) + '"/>';
+      if (r > 0) g += '<text x="' + (GUT - 3) + '" y="' + (y(r) + 3.2) + '" fill="#4c4c68" ' +
+        'font-size="8" text-anchor="end" font-family="inherit">' + r + '</text>';
+    }
+    for (let i = 0; i < 6; i++) {
+      g += '<line x1="' + x(i) + '" y1="' + Y0 + '" x2="' + x(i) + '" y2="' + (Y0 + BLD_FRETS * DY) +
+        '" stroke="#2b2b42" stroke-width="1"/>';
+      // the open/mute marker, and its own tap target
+      const f = BLD[i];
+      if (f === 0) g += '<circle cx="' + x(i) + '" cy="' + (Y0 - 11) + '" r="4.5" fill="none" stroke="#9ae6b4" stroke-width="1.5"/>';
+      else g += '<text x="' + x(i) + '" y="' + (Y0 - 7) + '" fill="#4c4c68" font-size="11" ' +
+        'text-anchor="middle" font-family="inherit">\u00d7</text>';
+      g += '<rect class="cell" data-s="' + i + '" data-f="0" x="' + (x(i) - DX / 2) + '" y="' +
+        (Y0 - 22) + '" width="' + DX + '" height="20" fill="transparent"/>';
+    }
+    // the dots, then the hit targets over everything
+    for (let i = 0; i < 6; i++) {
+      const f = BLD[i];
+      if (f !== null && f > 0) {
+        g += '<circle cx="' + x(i) + '" cy="' + y(f) + '" r="6.8" fill="#9f7aea"/>';
+        g += '<text x="' + x(i) + '" y="' + (y(f) + 3.2) + '" fill="#12121e" font-size="7.5" ' +
+          'font-weight="700" text-anchor="middle" font-family="inherit">' +
+          esc(pcShort((TUNING[i] + f) % 12)) + '</text>';
+      }
+    }
+    for (let i = 0; i < 6; i++) {
+      for (let f = 1; f <= BLD_FRETS; f++) {
+        g += '<rect class="cell" data-s="' + i + '" data-f="' + f + '" x="' + (x(i) - DX / 2) +
+          '" y="' + (Y0 + (f - 1) * DY) + '" width="' + DX + '" height="' + DY + '" fill="transparent"/>';
+      }
+    }
+    // what each string is sounding, under the string that sounds it
+    const ny = Y0 + BLD_FRETS * DY + 11;
+    for (let i = 0; i < 6; i++) {
+      const f = BLD[i];
+      const t = (f === null) ? '\u00b7' : pcShort((TUNING[i] + f) % 12);
+      const col = (f === null) ? '#3a3a55' : (f === 0 ? '#9ae6b4' : '#8f8fae');
+      g += '<text x="' + x(i) + '" y="' + ny + '" fill="' + col + '" font-size="7.5" ' +
+        'text-anchor="middle" font-family="inherit">' + esc(t) + '</text>';
+    }
+    return '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="fretboard">' + g + '</svg>';
+  }
+  // WHAT IS BEING HELD. The same `readings` the page's own answer uses, so the
+  // board and the cards below can never name one shape two ways.
+  function bldChord() {
+    const midis = [];
+    for (let i = 0; i < 6; i++) if (BLD[i] !== null) midis.push(TUNING[i] + BLD[i]);
+    if (midis.length < 2) return { midis: midis, names: [] };
+    const r = readings(midis);
+    return { midis: midis, names: r.out.map(chordName), pcs: r.pcs };
+  }
+  function renderBuild(host) {
+    const c = bldChord();
+    const notes = c.midis.map((m) => pcName(m % 12));
+    // The name goes in the page's OWN readout, above the board — a 15-fret neck
+    // is taller than a phone, and the chord you are holding is the whole point
+    // of this mode, so it cannot live under it.
+    $('#fr-name').textContent = c.names.length ? c.names[0]
+      : (c.midis.length < 2 ? 'Tap the neck' : notes.join(' \u00b7 '));
+    $('#fr-notes').textContent =
+      (c.names.length > 1 ? 'also ' + c.names.slice(1, 4).join(' \u00b7 ') + '  \u2014  '
+        : (c.names.length === 1 ? '' : (c.midis.length >= 2 ? 'no name for that stack  \u2014  ' : ''))) +
+      (c.midis.length ? notes.join(' \u00b7 ') : 'a tap adds a note, a tap on one takes it away');
+    host.innerHTML = '<div class="onewrap">' +
+      '<div class="bldrow">' +
+        '<button type="button" id="bld-clear">\u2715 Clear</button>' +
+        (c.names.length ? '<button type="button" id="bld-shapes">\u25b8 Show shapes for ' +
+          esc(c.names[0]) + '</button>' : '') +
+      '</div>' +
+      '<div class="board">' + boardSvg() + '</div></div>';
+    const cl = $('#bld-clear');
+    if (cl) cl.addEventListener('click', () => { BLD = [null, null, null, null, null, null]; frRender(); });
+    const sh = $('#bld-shapes');
+    if (sh) sh.addEventListener('click', () => {
+      // HAND THE SHAPE TO THE OTHER MODE. What you built names a chord; the
+      // solver can then show every other way to play it.
+      const r = readings(c.midis);
+      if (!r.out.length) return;
+      const rd = r.out[0];
+      const rootSel = $('#fr-root'), qSel = $('#fr-qual');
+      if (rootSel && qSel) { rootSel.value = String(rd.root); qSel.value = String(rd.qi); }
+      FR_MODE = 'pick'; frRender();
+    });
+    const svg = host.querySelector('svg');
+    if (svg) svg.addEventListener('click', (ev) => {
+      const cell = ev.target.closest && ev.target.closest('.cell'); if (!cell) return;
+      const i = +cell.getAttribute('data-s'), f = +cell.getAttribute('data-f');
+      // a tap on the note that is there takes it away; anywhere else moves the
+      // string to that fret (a string sounds one note)
+      BLD[i] = (BLD[i] === f) ? null : f;
+      frRender();
+    });
+  }
+
+  // WHICH CHORD THE BOARD IS SHOWING. 'notes' follows what you typed below —
+  // the page's own question, asked the other way round — and 'pick' is the
+  // by-name lookup. Both stay: naming the notes you have and finding a chord
+  // you want are different errands.
+  let FR_MODE = 'notes';
+  // How much of the neck is on screen. The whole thing is 8400px on a phone,
+  // and the note boxes that DRIVE the board live below it — so a chord opens
+  // at the low positions, where the shapes people want are, and the rest of
+  // the neck is one press away. `FR_ALL` resets whenever the chord changes: a
+  // new chord starts compact rather than inheriting the last one's scroll.
+  let FR_ALL = false, FR_LAST = '';
+  const FR_POS_FIRST = 2;
+  // HOW the shapes are shown. 'grid' is every position at once; 'one' gives a
+  // single chart the whole width and steps through them — which is how a chart
+  // is actually used, one shape at a time with your hands on the neck.
+  let FR_VIEW = 'grid', FR_IDX = 0;
+  // The chord the typed notes spell, as root + intervals. `readings` already
+  // resolves it and ranks the readings, so the board takes the best one — the
+  // same one the cards below lead with, or the two halves of the page would
+  // disagree about what you played.
+  function frFromNotes() {
+    const p2 = parse(notesText());
+    if (p2.err || !p2.midis || p2.midis.length < 2) return null;
+    const r = readings(p2.midis);
+    if (!r.out.length) return null;
+    const rd = r.out[0];
+    return { rootPc: rd.root, ivs: QUAL[rd.qi][1], label: chordName(rd) };
+  }
+  function frRender() {
+    const rootSel = $('#fr-root'), qSel = $('#fr-qual');
+    const host = $('#fr-shapes'); if (!host) return;
+    const pick = $('#fr-m-pick'), mNotes = $('#fr-m-notes'), mBuild = $('#fr-m-build');
+    const fromNotes = frFromNotes();
+    // THE MODE BUTTON NAMES THE CHORD IT WOULD SHOW, so the connection between
+    // the two halves of the page is visible rather than something to discover.
+    if (mNotes) {
+      mNotes.textContent = fromNotes ? ('\u266a ' + fromNotes.label) : '\u266a Your notes';
+      // NEVER DISABLED. With nothing typed it has nothing to show — but this is
+      // also the way BACK from the picker, and a disabled way back is a trap;
+      // pressing it shows the "type notes below" line, which is the one thing
+      // a first-time reader needs to be told.
+      mNotes.title = fromNotes ? 'Show the chord your notes spell'
+        : 'Type notes below and they appear here';
+    }
+    if (mNotes) mNotes.classList.toggle('on', FR_MODE === 'notes');
+    if (pick) pick.classList.toggle('on', FR_MODE === 'pick');
+    if (mBuild) mBuild.classList.toggle('on', FR_MODE === 'build');
+    const bar = $('#fr-pickbar'); if (bar) bar.hidden = (FR_MODE !== 'pick');
+    // The view switch only means something where there are solved shapes to
+    // view — on the build board you are making the one shape.
+    const vb = $('#fr-viewbar'); if (vb) vb.hidden = (FR_MODE === 'build');
+    const vg = $('#fr-v-grid'), vo = $('#fr-v-one');
+    if (vg) vg.classList.toggle('on', FR_VIEW === 'grid');
+    if (vo) vo.classList.toggle('on', FR_VIEW === 'one');
+    if (FR_MODE === 'build') { renderBuild(host); return; }
+    let rootPc, ivs, nm;
+    if (FR_MODE === 'notes') {
+      if (!fromNotes) {
+        $('#fr-name').textContent = '';
+        $('#fr-notes').textContent = '';
+        host.innerHTML = '<div class="none">Type notes below and their shapes appear here \u2014 ' +
+          'or switch to <b>Pick a chord</b> to look one up by name.</div>';
+        return;
+      }
+      rootPc = fromNotes.rootPc; ivs = fromNotes.ivs; nm = fromNotes.label;
+    } else {
+      if (!rootSel || !qSel) return;
+      rootPc = parseInt(rootSel.value, 10) | 0;
+      const q = QUAL[parseInt(qSel.value, 10) | 0]; if (!q) return;
+      ivs = q[1]; nm = pcShort(rootPc) + q[0];
+    }
+    $('#fr-name').textContent = nm;
+    const all = solveShapes(rootPc, ivs);
+    const sig = rootPc + ':' + ivs.join(',');
+    if (sig !== FR_LAST) { FR_LAST = sig; FR_ALL = false; FR_IDX = 0; }
+    const posList = [];
+    all.forEach((v) => { if (posList.indexOf(v.minF) < 0) posList.push(v.minF); });
+    const shownPos = FR_ALL ? posList : posList.slice(0, FR_POS_FIRST);
+    const shapes = all.filter((v) => shownPos.indexOf(v.minF) >= 0);
+    const restPos = posList.length - shownPos.length;
+    $('#fr-notes').textContent = ivs.map((iv) => pcName((rootPc + iv) % 12)).join(' \u00b7 ') +
+      (all.length ? '  \u2014  ' + all.length + ' shape' + (all.length === 1 ? '' : 's') +
+        ' across ' + posList.length + ' positions, up to fret ' + FR_MAX : '');
+    if (!shapes.length) {
+      host.innerHTML = '<div class="none">No shape for that one fits a hand in the first ' +
+        FR_MAX + ' frets \u2014 try a simpler quality, or drop a note from the stack below.</div>';
+      return;
+    }
+    if (FR_VIEW === 'one') {
+      if (FR_IDX >= all.length) FR_IDX = 0;
+      if (FR_IDX < 0) FR_IDX = all.length - 1;
+      const v = all[FR_IDX];
+      const anyOpen2 = v.frets.some((f) => f === 0);
+      const where = (v.minF <= 3 && anyOpen2) ? 'open' : (v.minF + ordSuff(v.minF) + ' fret');
+      host.innerHTML = '<div class="onewrap">' +
+        '<div class="shape big' + (v.plan.count <= 2 ? ' easy' : '') + '">' + chartSvg(v) +
+          '<div class="lbl">' + where + ' \u00b7 ' + (v.plan.barre ? 'bar \u00b7 ' : '') +
+          v.plan.count + (v.plan.count === 1 ? ' finger' : ' fingers') + '</div></div>' +
+        '<div class="onenav">' +
+          '<button type="button" id="fr-prev" aria-label="Previous shape">\u2039</button>' +
+          '<span class="onepos">' + (FR_IDX + 1) + ' of ' + all.length + ' \u00b7 ' + where + '</span>' +
+          '<button type="button" id="fr-next" aria-label="Next shape">\u203a</button>' +
+        '</div></div>';
+      const go = (d) => { FR_IDX = (FR_IDX + d + all.length) % all.length; frRender(); };
+      const pv = $('#fr-prev'), nx = $('#fr-next');
+      if (pv) pv.addEventListener('click', () => go(-1));
+      if (nx) nx.addEventListener('click', () => go(1));
+      return;
+    }
+    let lastPos = -1;
+    host.innerHTML = shapes.map((v) => {
+      // ONE HEADING PER POSITION. Without it a long list is a wall of charts
+      // with no way to tell where on the neck you are looking.
+      let head = '';
+      if (v.minF !== lastPos) {
+        lastPos = v.minF;
+        head = '<div class="poshd">' + (v.minF === 0 ? 'Open strings'
+          : (v.minF + ordSuff(v.minF) + ' fret')) + '</div>';
+      }
+      const bits = [];
+      // WHERE IT IS comes first once the window has slid up the neck — "open"
+      // beside a chart labelled 10 is two claims about the same shape. Down at
+      // the nut the open strings ARE the position, so they lead.
+      const anyOpen = v.frets.some((f) => f === 0);
+      if (v.minF <= 3 && anyOpen) bits.push('open');
+      else { bits.push(v.minF + 'fr'); if (anyOpen) bits.push('open string'); }
+      if (v.plan.barre) bits.push('bar');
+      bits.push(v.plan.count + (v.plan.count === 1 ? ' finger' : ' fingers'));
+      if (!v.root) bits.push('/' + pcShort((TUNING[v.frets.findIndex((f) => f !== null)] +
+        v.frets[v.frets.findIndex((f) => f !== null)]) % 12));
+      return head + '<div class="shape' + (v.plan.count <= 2 ? ' easy' : '') + '">' + chartSvg(v) +
+        '<div class="lbl">' + bits.join(' \u00b7 ') + '</div></div>';
+    }).join('') + ((restPos > 0 || FR_ALL)
+      // A ONE-WAY EXPANSION IS NOT A FOLD: once it was open the only way back
+      // was to change the chord. It toggles.
+      ? '<button type="button" class="moreshapes" id="fr-more">' + (FR_ALL
+          ? ('\u25b4 Hide the rest of the neck \u2014 back to the first ' + FR_POS_FIRST + ' positions')
+          : ('\u25be Show the rest of the neck \u2014 ' + restPos + ' more position' +
+             (restPos === 1 ? '' : 's') + ', up to fret ' + FR_MAX)) + '</button>'
+      : '');
+    const mb = $('#fr-more');
+    if (mb) mb.addEventListener('click', () => { FR_ALL = !FR_ALL; frRender(); });
+  }
+
+  function frInit() {
+    const rootSel = $('#fr-root'), qSel = $('#fr-qual');
+    if (!rootSel || !qSel) return;
+    rootSel.innerHTML = NAMES_S.map((n, i) =>
+      '<option value="' + i + '">' + (BLACK[i] ? n + '/' + NAMES_F[i] : n) + '</option>').join('');
+    qSel.innerHTML = QUAL.map((q, i) =>
+      '<option value="' + i + '">' + (q[0] === '' ? 'major' : q[0]) + '</option>').join('');
+    rootSel.value = '0'; qSel.value = '0';
+    rootSel.addEventListener('change', frRender);
+    qSel.addEventListener('change', frRender);
+    ['#fr-m-notes', '#fr-m-pick', '#fr-m-build'].forEach((sel2) => {
+      const b2 = $(sel2); if (!b2) return;
+      b2.addEventListener('click', () => { FR_MODE = b2.getAttribute('data-m'); frRender(); });
+    });
+    ['#fr-v-grid', '#fr-v-one'].forEach((sel2) => {
+      const b2 = $(sel2); if (!b2) return;
+      b2.addEventListener('click', () => { FR_VIEW = b2.getAttribute('data-v'); frRender(); });
+    });
+    window.__frReady = 1;
+    frRender();
+  }
+  frInit();
+  // The key select respells black notes, and the fretboard names notes too —
+  // so it has to follow, or the two halves of the page disagree about whether
+  // this chord has an A# or a Bb in it.
+  const _keyEl = $('#key');
+  if (_keyEl) _keyEl.addEventListener('change', () => { try { frRender(); } catch (e) {} });
+
   render();
 })();
 </script>

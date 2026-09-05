@@ -8635,6 +8635,29 @@
           if (Object.keys(o).length) L.partSeqs = o; else delete L.partSeqs;
         });
       } catch (e) {}
+      // v2 PER-PART CONTENT is keyed by part index too — the records shift
+      // with the parts, the deleted part's record goes, and if it was the
+      // SELECTED one the first surviving part takes the bench (its own record
+      // if it has one). Without this a middle delete misfiles every later
+      // part's content by one, silently — the clamped-index trap.
+      try {
+        (cfg.layers || []).forEach(L => {
+          if (!L || !Number.isFinite(L.partFor)) return;
+          const m = (L.parts && typeof L.parts === 'object') ? L.parts : {};
+          const o = {};
+          Object.keys(m).forEach(k => { const nv = fix(k | 0); if (nv >= 0) o[nv] = m[k]; });
+          const nvFor = fix(L.partFor | 0);
+          if (nvFor >= 0) L.partFor = nvFor;
+          else {
+            const ks = Object.keys(o).map(Number).sort((a, b) => a - b);
+            if (ks.length) { L.partFor = ks[0]; L.part = o[ks[0]]; delete o[ks[0]]; }
+            else if (L.partAll && typeof L.partAll === 'object') {
+              L.part = L.partAll; delete L.partAll; delete L.partFor;
+            } else delete L.partFor;
+          }
+          if (Object.keys(o).length) L.parts = o; else delete L.parts;
+        });
+      } catch (e) {}
       if (n) {
         try {
           (_ambChordMatrixRows(cfg) || []).forEach(row => {
@@ -14170,6 +14193,14 @@
       while (arr && arr.length < d) arr.push(1);
       if (!arr || !arr.some(v => !v)) delete g.slots[idx]; else g.slots[idx] = arr;
       if (!Object.keys(g.slots).length) delete L.unitGate;
+      // THE MEMO BUMP LIVES IN THE SETTER, not only in the UI wrappers around
+      // it: `_ambUnitGridPos` caches the resolved layer + unit length per
+      // (cfg, token), and a direct _ambUnitGateSet — a test, a future
+      // programmatic path — otherwise leaves the gate reading a STALE cached
+      // layer whose `unitGate` is not the one just written (measured: a
+      // freshly-set all-off gate skipping nothing, through four instrumented
+      // rounds, because the memo held the layer object from a previous life).
+      try { _ambUnitGateBump(); } catch (e) {}
     }
     // WHOLE-UNIT ON/OFF — the common case, without opening the slice editor.
     // A unit is "off" when every slice of its slot is 0; "on" is simply no slot
@@ -43291,11 +43322,84 @@
         });
       }
     }
+    // ── CURRENT PART — a readout of which arrangement part is being EDITED,
+    // and the way to make another one current. Tapping a part switches every
+    // v2 layer's content record to it (`_v2.partSelect` — the filing move, so
+    // nothing is lost and nothing SOUNDS different until a part diverges).
+    // PLAYBACK IS UNTOUCHED: play always runs the arrangement from the top,
+    // through every gate, schedule and mask — this strip never moves a clock.
+    function _ambCurPartNow(E, cfg, rgs) {
+      if (Number.isFinite(E._curPart) && rgs.some(r => r.pi === (E._curPart | 0))) return E._curPart | 0;
+      // derive from the layers on reload — `partFor` persists, `_curPart` does not
+      try {
+        const L0 = (cfg.layers || []).find(L => L && Number.isFinite(L.partFor));
+        if (L0 && rgs.some(r => r.pi === (L0.partFor | 0))) return L0.partFor | 0;
+      } catch (e) {}
+      return rgs.length ? rgs[0].pi : -1;
+    }
+    function _ambRenderCurPart(E) {
+      const el = _ambGet(E, 'ambient-curpart'); if (!el) return;
+      let cfg = null, rgs = [];
+      try {
+        cfg = E.getCfg();
+        // no changes = nothing to be current — `_ambGridRanges` still answers a
+        // range for a bare area, so gate on the chords actually existing
+        if (!cfg.prog || !cfg.prog.on || !(cfg.prog.chords || []).length) rgs = [];
+        else rgs = (_ambGridRanges(cfg) || []).map((rg) => {
+          const pi = (rg && Number.isFinite(rg.pi)) ? (rg.pi | 0) : 0;
+          let nm = 'Part ' + (pi + 1);
+          try { nm = _ambPartLabel(cfg, pi); } catch (e) {}
+          return { pi, nm };
+        });
+      } catch (e) {}
+      const cur = cfg ? _ambCurPartNow(E, cfg, rgs) : -1;
+      const sig = cur + '|' + rgs.map(r => r.pi + ':' + r.nm).join(',');
+      if (el._sig !== sig) {
+        el._sig = sig;
+        if (!rgs.length) { el.innerHTML = ''; el.style.display = 'none'; }
+        else {
+          el.style.display = '';
+          el.innerHTML = '<span class="ambient-curpart-lab">Part</span>' +
+            rgs.map(r => '<button type="button" class="ambient-seg ambient-curpart-chip' +
+              (r.pi === cur ? ' on' : '') + '" data-cp="' + r.pi + '" title="Make ' + _ambEscAttr(r.nm) +
+              ' the current part — for editing only; play always runs the arrangement from the top">' +
+              _ambEscAttr(r.nm) + '</button>').join('') +
+            '<span class="ambient-hint ambient-curpart-hint">editing · play runs the arrangement from the top</span>';
+        }
+      }
+      if (!el._cpWired) {
+        el._cpWired = true;
+        el.addEventListener('click', (ev) => {
+          const b = ev.target.closest && ev.target.closest('.ambient-curpart-chip'); if (!b) return;
+          const pi = b.getAttribute('data-cp') | 0;
+          E._curPart = pi;                       // transient — never persisted
+          try {
+            const c2 = E.getCfg();
+            (c2.layers || []).forEach((L) => {
+              // only layers that ARE per-part follow — a layer on "one content
+              // everywhere" has nothing to switch, and the mode is its own
+              // explicit control on the Content sheet head
+              if (!Number.isFinite(L && L.partFor)) return;
+              try { if (window._v2 && window._v2.partSelect) window._v2.partSelect(E, L, pi); } catch (e) {}
+            });
+            E.getCfg();
+          } catch (e) {}
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          el._sig = '';
+          try { _ambRenderCurPart(E); } catch (e) {}
+          try {
+            const h2 = document.getElementById('bloom-v2-layers'); if (h2) h2._sig = '';
+            if (window._v2 && window._v2.render) window._v2.render(E);
+          } catch (e) {}
+        });
+      }
+    }
     function _ambSyncFxVis(E) {
       const host = E && document.getElementById(E.hostId); if (!host) return;
       try { _ambSyncProgVis(E); } catch (e) {}
       try { _ambWirePassMatrix(E); _ambRenderPassMatrix(E); } catch (e) {}
       try { _ambRenderProgOverview(E); } catch (e) {}
+      try { _ambRenderCurPart(E); } catch (e) {}
       // The renderers above are what flip those bodies, so the header visibility
       // is settled HERE rather than only at panel build.
       try { _ambProgGrpSync(E); } catch (e) {}
@@ -51535,6 +51639,9 @@
           '</details>' +
         '</div>' +        // end mixer pane
         '</div>' +        // end .ambient-tabsec
+        // CURRENT PART — the editing context, between the tabs and the layers.
+        // Painted by _ambRenderCurPart; hidden while there are no changes.
+        '<div class="ambient-curpart" id="ambient-curpart" style="display:none"></div>' +
         '<div class="ambient-layer collapsed"' + _ambTypeAttr('bed', _cfg0.bed) + '>' + head(_plabel('bed', 'Bed'), 'ambient-bed-on', 'ambient-bed-del', 'bed', _ambComposePrimaryHtml('bed', _cfg0.bed)) +
           _ambPrimaryCardBody('bed', _cfg0.bed) +
         '</div>' +

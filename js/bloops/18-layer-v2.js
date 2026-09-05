@@ -369,6 +369,17 @@
     // CYCLE — how long one pass of the part is. Live states it; a recorded part
     // may state it too (the length it was recorded at).
     p.bars = clamp(Number.isFinite(p.bars) && p.bars > 0 ? p.bars : 2, 0.125, 64);
+    // THE TAKE — WHICH ROLL of a live part the preview and the drawing use.
+    // A live part's seeded draws key on the CYCLE INDEX, so before this every
+    // Preview press landed on whatever cycle the clock happened to be at and
+    // played something different — i.e. pressing Preview REWROTE the part, and
+    // the take you liked was gone before you could keep it. The take pins that
+    // index for the audition and the picture; `🎲 New take` is the only thing
+    // that moves it. It does NOT pin PLAYBACK — a live part is live, and one
+    // that repeated forever would be a recorded one. Absent = 0, so every
+    // existing project and every gate config is byte-identical.
+    p.take = clamp(p.take | 0, 0, 1e6);
+    if (!p.take) delete p.take;
 
     // BOTH HALVES ARE ALWAYS COERCED, whichever is active. Write is a DOOR:
     // a captured layer keeps its live spec so it can be released back, and a
@@ -387,6 +398,8 @@
       if (Number.isFinite(r.syncop) && r.syncop > 0) r.syncop = clamp(r.syncop, 0, 100); else delete r.syncop;
       // Absent or 1 = a single euclid row, which is what v2 has always played.
       if (Number.isFinite(r.voices) && r.voices > 1) r.voices = clamp(r.voices | 0, 1, 8); else delete r.voices;
+      // RATE VAR — v1's steady → rushes, absent by default so nothing moves.
+      if (Number.isFinite(r.rateVar) && r.rateVar > 0) r.rateVar = clamp(r.rateVar, 0, 100); else delete r.rateVar;
       r.chance = clamp(Number.isFinite(r.chance) ? r.chance : 40, 0, 100);   // chance: % per step
       // DRAWN — the cell grid. It is the euclid generator's output made
       // EDITABLE, exactly as v1's `euclidPattern` overrides its own formula, so
@@ -433,7 +446,7 @@
       // Absent = Voices is the ceiling, which is v1's own default.
       if (Number.isFinite(t.voiceCap) && t.voiceCap > 0) t.voiceCap = clamp(t.voiceCap | 0, 1, 12);
       else delete t.voiceCap;
-      ['stutter'].forEach((k2) => {
+      ['stutter', 'roam', 'drift'].forEach((k2) => {
         if (Number.isFinite(t[k2]) && t[k2] > 0) t[k2] = clamp(t[k2], 0, 100); else delete t[k2];
       });
       // HARMONY PARTS — a list, so a line can carry a 3rd AND a 6th. Each entry
@@ -483,11 +496,25 @@
       // absolute, `dur` in beats-of-the-cycle so a tempo change scales it.
       if (!Array.isArray(p.notes)) p.notes = [];
       if (p.notes.length > 512) p.notes.length = 512;   // a cycle is not a song
-      p.notes = p.notes.filter(n => n && Number.isFinite(n.t) && Number.isFinite(n.midi)).map(n => ({
-        t: clamp(n.t, 0, 0.99999),
-        midi: clamp(n.midi | 0, 0, 127),
-        dur: clamp(Number.isFinite(n.dur) && n.dur > 0 ? n.dur : 0.25, 0.001, 8),
-      })).sort((a, b) => a.t - b.t);
+      p.notes = p.notes.filter(n => n && Number.isFinite(n.t) && Number.isFinite(n.midi)).map(n => {
+        const o = {
+          t: clamp(n.t, 0, 0.99999),
+          midi: clamp(n.midi | 0, 0, 127),
+          dur: clamp(Number.isFinite(n.dur) && n.dur > 0 ? n.dur : 0.25, 0.001, 8),
+        };
+        // PER-NOTE OVERRIDES, every one ABSENT BY DEFAULT — absent means "the
+        // layer decides", so a captured, composed or adopted part is byte-for-
+        // byte what it was before this existed and only a note you actually
+        // edited carries anything. `vel` is a PERCENTAGE OF THE LAYER'S LEVEL,
+        // not an absolute: the mixer fader has to keep meaning what it says.
+        if (Number.isFinite(n.vel)) o.vel = clamp(n.vel | 0, 0, 200);
+        if (Number.isFinite(n.atk)) o.atk = clamp(n.atk | 0, 0, 8000);
+        if (Number.isFinite(n.dec)) o.dec = clamp(n.dec | 0, 0, 8000);
+        if (Number.isFinite(n.sus)) o.sus = clamp(n.sus | 0, 0, 100);
+        if (Number.isFinite(n.rel)) o.rel = clamp(n.rel | 0, 0, 20000);
+        if (Number.isFinite(n.glide) && n.glide > 0) o.glide = clamp(n.glide | 0, 1, 4000);
+        return o;
+      }).sort((a, b) => a.t - b.t);
       // A recorded part is fixed pitch material, but it still has to answer to a
       // key change — the engine transposes rather than re-resolving (the v1
       // frozen-loop rule). `transpose` is that offset, applied at read time.
@@ -538,6 +565,45 @@
       // on the card ("from riffA") and must change nothing about how they play —
       // a phrase you adopted and a cycle you captured are the same part.
       if (typeof p.from !== 'string' || !p.from) delete p.from;
+      // WHERE THESE NOTES CAME FROM. Only 'take' (a locked roll of the layer's
+      // own rules) may be replaced without asking — everything else is work
+      // somebody did by hand. Absent = unknown, which takes the SAFE side.
+      if (p.made !== 'take' && p.made !== 'compose' && p.made !== 'phrase') delete p.made;
+      // WHICH MATERIAL IS IN FORCE, and what each one was left holding. Both
+      // absent until a material button is pressed, so an untouched project
+      // carries neither (and the gates stay byte-identical by construction).
+      if (typeof p.mat !== 'string' || !p.mat) delete p.mat;
+      if (p.mem && typeof p.mem === 'object') {
+        const keep = {};
+        Object.keys(p.mem).forEach((k) => {
+          const b = p.mem[k];
+          if (!b || typeof b !== 'object') return;
+          const box = {};
+          ['rhythm', 'pitch', 'shape'].forEach((f) => { if (b[f] && typeof b[f] === 'object') box[f] = b[f]; });
+          if (Number.isFinite(b.bars)) box.bars = clamp(b.bars, 0.125, 64);
+          if (Object.keys(box).length) keep[k] = box;
+        });
+        if (Object.keys(keep).length) p.mem = keep; else delete p.mem;
+      } else delete p.mem;
+      // WHICH BARS HAVE BEEN RETAKEN INDIVIDUALLY — bar index → take number,
+      // the per-bar half of the audition/lock pin. Absent until a bar is
+      // retaken; keys outside the current cycle are pruned so a shortened
+      // part does not carry pins to bars it no longer has.
+      if (p.takeb && typeof p.takeb === 'object') {
+        const tb2 = {}, top = Math.ceil(Math.max(0.125, p.bars || 1));
+        Object.keys(p.takeb).forEach((k) => {
+          const b2 = k | 0, t2 = p.takeb[k] | 0;
+          if (b2 >= 0 && b2 < top && t2 >= 0) tb2[b2] = t2 % 1000000;
+        });
+        if (Object.keys(tb2).length) p.takeb = tb2; else delete p.takeb;
+      } else delete p.takeb;
+      // THE REGISTER THESE NOTES WERE MADE AT. A recorded part is absolute
+      // MIDI, so Register — which sets the octave a LIVE part is generated in —
+      // did nothing to it at all: a control on screen that moved nothing (the
+      // dead-control class). Stored here it becomes the BASELINE, and Register
+      // shifts the part by whole octaves from it. Absent = no shift, so every
+      // project made before this is byte-identical.
+      if (Number.isFinite(p.reg)) p.reg = clamp(p.reg | 0, 1, 8); else delete p.reg;
       // The key a recorded part was written in — only meaningful for one.
       if (p.kind !== 'recorded' || !p.key || !Number.isFinite(p.key.root)) delete p.key;
       else p.key = { root: ((p.key.root | 0) % 12 + 12) % 12, scale: (typeof p.key.scale === 'string') ? p.key.scale : '' };
@@ -739,6 +805,16 @@
   // wrapper may sit above the body it calls).
   function pitchesAt(part, E, cfg, at, reg, ctxSeed, idx, mem, L) {
     const out = pitchesBase(part, E, cfg, at, reg, ctxSeed, idx, mem, L);
+    // PITCH VARY — v1's octave drift: with that chance the whole onset lifts or
+    // drops an octave. LINE kinds only (a chord drifting apart is a voicing
+    // change, not a drift); seeded on the onset so a take replays; 0 = no draw.
+    const t2 = part.pitch || {}, drift = clamp(t2.drift | 0, 0, 100);
+    if (drift > 0 && out.length &&
+        (t2.kind === 'fixed' || t2.kind === 'series' || t2.kind === 'walk' || t2.kind === 'chance') &&
+        vRnd(ctxSeed ^ 0x9e3779b1, 71) * 100 < drift * 0.6) {
+      const up = vRnd(ctxSeed ^ 0xc2b2ae35, 73) < 0.55 ? 12 : -12;
+      for (let i5 = 0; i5 < out.length; i5++) out[i5] = clamp(out[i5] + up, 12, 120);
+    }
     try { return applyHarm(part, E, cfg, at, reg, out, L); } catch (e) { return out; }
   }
   function pitchesBase(part, E, cfg, at, reg, ctxSeed, idx, mem, L) {
@@ -758,14 +834,28 @@
     // immediately by the caller.
     part._deg = null; part._oct = 0;
     if (t.kind === 'fixed') {
-      const d = clamp((t.degree | 0) - 1, 0, N - 1);
+      let d = clamp((t.degree | 0) - 1, 0, N - 1);
+      // ROAM — v1's `vary` ("how often the Note wanders", Stack / Fixed): with
+      // that chance the degree steps to a neighbouring source tone, wrapping
+      // the set. Seeded on the onset so a take replays; 0 draws nothing.
+      const roam = clamp(t.roam | 0, 0, 100);
+      if (roam > 0 && vRnd(ctxSeed ^ 0x1b873593, 61) * 100 < roam) {
+        const mag = vRnd(ctxSeed ^ 0x85ebca6b, 67) < 0.7 ? 1 : 2;
+        d = (((d + mag * (vRnd(ctxSeed ^ 0xcc9e2d51, 69) < 0.5 ? -1 : 1)) % N) + N) % N;
+      }
       part._deg = d;
       out.push(base + set.ivs[d]);
       return out;
     }
     if (t.kind === 'stack') {
       // `voices` consecutive source tones from the Degree, octave on each wrap
-      const from = clamp((t.degree | 0) - 1, 0, N - 1);
+      let from = clamp((t.degree | 0) - 1, 0, N - 1);
+      // ROAM moves the whole stack's BASE degree — the voices stay a stack
+      // (wandering them separately would be a voicing change, not a roam).
+      const roam2 = clamp(t.roam | 0, 0, 100);
+      if (roam2 > 0 && vRnd(ctxSeed ^ 0x1b873593, 61) * 100 < roam2) {
+        from = (((from + (vRnd(ctxSeed ^ 0xcc9e2d51, 69) < 0.5 ? -1 : 1)) % N) + N) % N;
+      }
       const want = clamp(t.voices | 0, 1, 9);
       for (let i = 0; i < want; i++) {
         const k = from + i, idx = k % N, oct = Math.floor(k / N);
@@ -957,15 +1047,75 @@
     return out;
   }
 
+  // THE PINNED TAKE, module state — never a field on the layer, and never
+  // threaded through `notesFor`'s ctx: the emitter calls `notesFor` itself, so
+  // a ctx field would have to be plumbed through every caller to reach it.
+  // Set around the preview's own emit and around the drawing, restored in a
+  // `finally`, so it can never leak into playback.
+  let TAKE_PIN = null;
+  const takeOf = (L) => ((L && L.part && L.part.take) | 0) || 0;
+  // THE PIN FOR THIS LAYER — a bare take number, or, when bars have been
+  // retaken individually, `{ base, bars: { '<bar>': take } }`. A LIVE part's
+  // take is only the audition/lock pin (playback re-rolls every cycle), so a
+  // per-bar retake is exactly a per-bar PIN: bar 2 shows take 7 while the
+  // rest still shows take 4.
+  function pinOf(L) {
+    const tb = L && L.part && L.part.takeb;
+    if (tb && typeof tb === 'object' && Object.keys(tb).length) return { base: takeOf(L), bars: tb };
+    return takeOf(L);
+  }
+  function withTake(t, fn) {
+    const sv = TAKE_PIN;
+    TAKE_PIN = (t && typeof t === 'object') ? t : (t | 0);
+    try { return fn(); } finally { TAKE_PIN = sv; }
+  }
+  const pinSig = (t) => (t && typeof t === 'object') ? JSON.stringify(t) : String(t | 0);
+
   // ── THE PART INTERFACE ──────────────────────────────────────────────────
   // notesFor(layer, ctx) → [{ at, freq, durMs }]
   // ONE contract, two implementations. Everything above is an implementation
   // detail of the live one; the emitter below knows only this signature.
   function notesFor(L, ctx) {
+    // PER-PART CONTENT. `L.part` is always the record being EDITED; `L.partFor`
+    // names which arrangement part it belongs to and `L.parts` files the
+    // others (the `mem` swap pattern — one live record, everything on the card
+    // keeps operating on `L.part`). At emit, resolve which part is SOUNDING at
+    // this cycle's start and swap in its record; a part with no record of its
+    // own falls back to the edited one, so per-part is opt-in bar by bar.
+    // The CALLER's cycleSec stands — a recorded record's times are cycle
+    // fractions and a live rhythm spans the cycle, so a record made for a
+    // different length plays FITTED (stretch semantics) rather than clocked.
+    // engages on the map OR the ice alone — an empty map (every record pruned)
+    // must still fall to the Everywhere floor, never to the bench
+    if (Number.isFinite(L.partFor) && (L.parts || L.partAll) && !ctx._ppDone) {
+      let pi = -1;
+      try {
+        const w = (typeof _ambPartChordAt === 'function' && ctx.E && ctx.cfg)
+          ? _ambPartChordAt(ctx.E, ctx.cfg, ctx.cycleStart) : null;
+        if (w && Number.isFinite(w.pi)) pi = w.pi | 0;
+      } catch (e) {}
+      if (pi >= 0 && pi !== (L.partFor | 0)) {
+        const alt = L.parts && L.parts[String(pi)];
+        // the floor for a part with no record yet is the ICED Everywhere
+        // record — never the bench, or what a part plays would depend on
+        // which part is selected for editing
+        const eff = (alt && typeof alt === 'object') ? alt
+          : ((L.partAll && typeof L.partAll === 'object') ? L.partAll : null);
+        if (eff) {
+          return notesFor(Object.assign({}, L, { part: eff }),
+                          Object.assign({}, ctx, { _ppDone: 1 }));
+        }
+      }
+    }
     const p = L.part, out = [];
     const cyc = ctx.cycleSec, cs = ctx.cycleStart;
     if (p.kind === 'recorded') {
-      const tr = p.transpose | 0;
+      // REGISTER MOVES A RECORDED PART BY WHOLE OCTAVES, from the register it
+      // was made in — the same thing it means on a live part ("which octave
+      // this plays in"), expressed the only way absolute notes can express it.
+      // It composes with Transpose, which stays the semitone control.
+      const regNow = clamp((L.instrument.register | 0) || 4, 1, 8);
+      const tr = (p.transpose | 0) + (Number.isFinite(p.reg) ? (regNow - p.reg) * 12 : 0);
       // HARMONY — what a recorded part does when the chords move under it.
       // 'fixed' (the default, and v2's only behaviour until now) plays it as
       // written; the others remap each note through v1's own
@@ -990,11 +1140,45 @@
         if (hz && kc) {
           try { f = withKeyTime(at, () => _ambLockHarmonizeFreq(L, kc, f, at)) || f; } catch (e) {}
         }
-        out.push({ at, freq: f, durMs: Math.round(n.dur * cyc * 1000) });
+        const o = { at, freq: f, durMs: Math.round(n.dur * cyc * 1000), nidx: i };
+        // The per-note overrides ride ALONG the interface rather than being
+        // read from the store by the emitter — the emitter knows `notesFor`'s
+        // signature and nothing else, which is what keeps a recorded part and
+        // a live one interchangeable to it.
+        if (Number.isFinite(n.vel)) o.vel = n.vel;
+        if (Number.isFinite(n.atk)) o.atk = n.atk;
+        if (Number.isFinite(n.dec)) o.dec = n.dec;
+        if (Number.isFinite(n.sus)) o.sus = n.sus;
+        if (Number.isFinite(n.rel)) o.rel = n.rel;
+        if (Number.isFinite(n.glide)) o.glide = n.glide;
+        out.push(o);
       }
       return out;
     }
-    const cycIdx = Math.round(ctx.cycleStart / Math.max(0.001, cyc));
+    // A PINNED take answers "which roll", so the audition and the drawing agree
+    // with each other by construction rather than by remembering an anchor.
+    // A BAR-MAPPED PIN is composited from whole rolls: roll the base take,
+    // roll each retaken take, and take each bar's notes from the take that
+    // owns it. Recursion with a SCALAR pin keeps every part kind (pitched,
+    // kit, speech) covered by one mechanism instead of a branch in each.
+    if (TAKE_PIN && typeof TAKE_PIN === 'object') {
+      const pin = TAKE_PIN;
+      const roll = (t) => { const sv = TAKE_PIN; TAKE_PIN = (t | 0);
+        try { return notesFor(L, ctx); } finally { TAKE_PIN = sv; } };
+      const barsF = Math.max(0.125, p.bars || 1);
+      const barOf = (n) => Math.floor(((n.at - cs) / Math.max(0.001, cyc)) * barsF + 1e-6);
+      const owned = (b2) => Object.prototype.hasOwnProperty.call(pin.bars, String(b2));
+      const out2 = roll(pin.base).filter((n) => !owned(barOf(n)));
+      const byTake = {};
+      Object.keys(pin.bars).forEach((k) => { (byTake[pin.bars[k] | 0] = byTake[pin.bars[k] | 0] || {})[k] = 1; });
+      Object.keys(byTake).forEach((t) => {
+        roll(+t).forEach((n) => { if (byTake[t][String(barOf(n))]) out2.push(n); });
+      });
+      out2.sort((a2, b2) => a2.at - b2.at);
+      return out2;
+    }
+    const cycIdx = Number.isFinite(TAKE_PIN) ? (TAKE_PIN | 0)
+      : Math.round(ctx.cycleStart / Math.max(0.001, cyc));
     const seedBase = ((L.id | 0) * 9176) ^ (cycIdx * 2246822519);
     // A KIT IS EIGHT PARALLEL RHYTHMS WITH A FIXED PITCH EACH. That is the whole
     // difference, and it falls out of the model rather than being bolted on: the
@@ -1060,6 +1244,7 @@
       // directly is why the groove panel's Density did nothing to a v2 layer.
       const rest = (typeof _ambEffRest === 'function') ? (_ambEffRest(L) | 0) : (L.restProb | 0);
       const ghost = L.ghosts | 0, lvar = L.lenVary | 0;
+      const rateV = clamp((p.rhythm && p.rhythm.rateVar) | 0, 0, 100);
     // ONE memory per cycle — that is what makes a proximity-shaped line
     // deterministic and replayable rather than dependent on tick boundaries.
     const mem = { prev: null };
@@ -1133,7 +1318,13 @@
       // A REST drops the whole onset — checked before anything is resolved, so a
       // dropped onset costs nothing and consumes no other draw.
       if (rest > 0 && vRnd(seedBase ^ (i * 40503), 11) * 100 < rest) continue;
-      const at = cs + ons[i] * cyc;
+      let at = cs + ons[i] * cyc;
+      // RATE VAR — v1's steady → rushes: a seeded push/pull of each onset
+      // within its own span. Replays per take; 0 draws nothing.
+      if (rateV > 0 && i > 0) {
+        const rj = (vRnd(seedBase ^ (i * 15487469), 41) * 2 - 1) * (rateV / 100) * 0.4 * span;
+        at = Math.min(cs + cyc - 0.01, Math.max(cs, at + rj));
+      }
       // The step INDEX, not the onset ordinal: a drawn pitch belongs to the cell
       // it was drawn on, so with a sparse rhythm step 5 must keep step 5's note
       // even if it is only the second onset.
@@ -1325,24 +1516,70 @@
     } catch (e) { delete L.part.key; }
   }
 
-  function captureFn(E, L) {
+  // opts.at — the cycle start to read at. Locking must freeze THE TAKE THAT IS
+  // SHOWING, and under a progression the pitches depend on the chord sounding
+  // at that instant, so the drawing hands its own anchor in rather than letting
+  // this re-read "now" and capture a different chord than the one you heard.
+  // opts.reroll — bump the take before rolling. A REPLACE has to: the pinned
+  // take exists so that LOCKING freezes what is drawn, but a recorded part
+  // captured take N and a "replace" that rolls take N again returns the
+  // identical notes — the button did nothing, and the earlier verification
+  // compared `made`, never the notes. A lock still must NOT bump.
+  // opts.bars — replace only these bar indices: keep every stored note outside
+  // them, take the fresh roll inside them. That is per-bar re-rolling.
+  function captureFn(E, L, opts) {
     const cfg = E && E.getCfg && E.getCfg(); if (!cfg || !L) return false;
     const ctx = currentCycle(E, L, cfg);
+    if (opts && Number.isFinite(opts.at)) ctx.cycleStart = opts.at;
+    if (opts && opts.reroll) L.part.take = (takeOf(L) + 1) % 1000000;
     // Read through the LIVE spec whichever kind is active — that spec is always
     // retained, so "capture from live" is meaningful on an already-recorded
     // part too (re-take it) and, crucially, a part that was switched to
     // Recorded with nothing in it has a way to become non-empty.
     const asLive = Object.assign({}, L, { part: Object.assign({}, L.part, { kind: 'live' }) });
     let notes = [];
-    try { notes = notesFor(asLive, { E, cfg, key: 'v2:' + L.id, cycleStart: ctx.cycleStart, cycleSec: ctx.cycleSec }); }
+    // PINNED — capture the take the picture is showing, not a fresh roll. This
+    // is the whole of "lock what Live came up with": without it, locking rolled
+    // the dice one more time and froze a take nobody had heard.
+    try { notes = withTake((opts && opts.reroll) ? takeOf(L) : pinOf(L), () => notesFor(asLive, { E, cfg, key: 'v2:' + L.id, cycleStart: ctx.cycleStart, cycleSec: ctx.cycleSec })); }
     catch (e) { return false; }
     if (!notes.length) return false;                    // nothing to freeze
-    L.part.notes = notes.map(n => ({
+    let fresh = notes.map(n => ({
       t: clamp((n.at - ctx.cycleStart) / ctx.cycleSec, 0, 0.99999),
       midi: clamp(freqToMidi(n.freq), 0, 127),
       dur: clamp((n.durMs / 1000) / ctx.cycleSec, 0.001, 8),
-    })).sort((a, b) => a.t - b.t);
+    }));
+    const barSel = (opts && Array.isArray(opts.bars) && opts.bars.length &&
+                    L.part.kind === 'recorded' && (L.part.notes || []).length)
+      ? new Set(opts.bars.map(b => b | 0)) : null;
+    if (barSel) {
+      // A SPLICE, not a replace: stored notes outside the chosen bars stay —
+      // per-note edits included — and the fresh roll fills only those bars.
+      const p0 = L.part, barsF = Math.max(0.125, p0.bars || 1);
+      const barOf = (n) => Math.floor(n.t * barsF);
+      // The stored notes carry the register the part was MADE at (`p.reg`) and
+      // the read shifts them by (register − reg)·12 — fresh notes roll at the
+      // CURRENT register, so they are re-based onto the stored baseline or the
+      // read-time shift would move them twice.
+      const rb = Number.isFinite(p0.reg)
+        ? (clamp((L.instrument.register | 0) || 4, 1, 8) - p0.reg) * 12 : 0;
+      const kept = (p0.notes || []).filter(n => !barSel.has(barOf(n)));
+      fresh = kept.concat(fresh.filter(n => barSel.has(barOf(n)))
+        .map(n => ({ t: n.t, midi: clamp(n.midi - rb, 0, 127), dur: n.dur })));
+      // an empty selected bar is a legitimate roll (the rules can rest there);
+      // `made` and `reg` are NOT restamped — the unchosen bars are still
+      // whatever they were, and absent-means-ask stays the safe side
+      L.part.notes = fresh.sort((a, b) => a.t - b.t);
+      L.part.transpose = L.part.transpose | 0;
+      try { E.getCfg(); } catch (e) {}
+      try { if (E._v2Phase) delete E._v2Phase['v2:' + L.id]; } catch (e) {}
+      return true;
+    }
+    L.part.notes = fresh.sort((a, b) => a.t - b.t);
     L.part.kind = 'recorded';
+    delete L.part.takeb;         // the composite is baked in — the map's job is done
+    L.part.made = 'take';        // a roll of the live rules — re-rolling loses nothing
+    L.part.reg = clamp((L.instrument.register | 0) || 4, 1, 8);   // the octave it was made in
     L.part.transpose = L.part.transpose | 0;
     stampPartKey(L, (function () { try { return E.getCfg(); } catch (e) { return null; } })());
     try { E.getCfg(); } catch (e) {}
@@ -1430,6 +1667,8 @@
     L.part.kind = 'recorded';
     L.part.transpose = L.part.transpose | 0;
     L.part.from = String(name || '');            // provenance, for the readout — never behaviour
+    L.part.made = 'phrase';                      // a phrase you chose — never replaced silently
+    L.part.reg = clamp((L.instrument.register | 0) || 4, 1, 8);
     try { E.getCfg(); } catch (e) {}
     try { if (E._v2Phase) delete E._v2Phase['v2:' + L.id]; } catch (e) {}
     return true;
@@ -1534,7 +1773,7 @@
     const L = ge.v2;
     let sub = 1; try { if (typeof stepSubdivision === 'number') sub = stepSubdivision; } catch (e) {}
     const got = phraseToNotes({ steps: (ge.lane && ge.lane.steps) || [], subdivision: sub });
-    if (!got) { L.part.notes = []; L.part.kind = 'recorded'; return true; }   // drew nothing = a rest, honoured
+    if (!got) { L.part.notes = []; L.part.kind = 'recorded'; L.part.made = 'compose'; return true; }   // drew nothing = a rest, honoured
     let bars = got.beats / 4;
     try { if (typeof _ambSnapBars === 'function') bars = _ambSnapBars(bars); }
     catch (e) { bars = Math.round(bars * 48) / 48; }
@@ -1542,6 +1781,8 @@
     L.part.notes = got.notes.slice().sort((a, b) => a.t - b.t);
     stampPartKey(L, (function () { try { return ge.E.getCfg(); } catch (e) { return null; } })());
     L.part.kind = 'recorded';
+    L.part.made = 'compose';                             // drawn by hand — never replaced silently
+    L.part.reg = clamp((L.instrument.register | 0) || 4, 1, 8);
     delete L.part.from;                                  // composed here, not adopted
     try { if (ge.E && ge.E._v2Phase) delete ge.E._v2Phase['v2:' + L.id]; } catch (e) {}
     return true;
@@ -1894,6 +2135,10 @@
           }
         } catch (e) {}
         let vol = n.ghost ? Math.max(1, Math.round(lvl * 0.42)) : lvl;
+        // A HAND-EDITED NOTE'S OWN VOLUME, as a percentage of the layer's level
+        // — applied BEFORE accent and velVar so those still shape it, exactly
+        // as they shape every other note.
+        if (Number.isFinite(n.vel)) vol = Math.max(1, Math.round(vol * (n.vel | 0) / 100));
         // The ARRIVAL of a gesture is leaned on — v1's agogic emphasis, x1.15.
         if (n.arr) vol = Math.min(127, Math.round(vol * 1.15));
         // ACCENT draws from the SHARED seeded stream exactly as v1 does, and
@@ -1953,6 +2198,19 @@
           const m3 = clamp(L.motion | 0, 0, 100) / 100;
           const d3 = Math.round((vRnd((L.id | 0) ^ Math.round(at * 1000), 103) * 2 - 1) * 18 * m3);
           params.detune = (Number.isFinite(params.detune) ? params.detune : 0) + d3;
+        }
+        // A HAND-EDITED NOTE'S OWN ENVELOPE AND GLIDE. After `_ambApplyAdsr`,
+        // because the point is to override what the layer would have done for
+        // THIS note; each field is independent, so a note can state only its
+        // release and inherit the rest. Glide takes the LARGER of its own value
+        // and whatever Slide asked for, so the two cannot silently cancel.
+        if (Number.isFinite(n.atk)) params.attack = n.atk | 0;
+        if (Number.isFinite(n.dec)) params.decay = n.dec | 0;
+        if (Number.isFinite(n.sus)) params.sustain = n.sus | 0;
+        if (Number.isFinite(n.rel)) params.release = n.rel | 0;
+        if (Number.isFinite(n.glide) && n.glide > 0) {
+          params.glideMs = Math.max(params.glideMs || 0, n.glide | 0);
+          params.glideLayer = adsrShim(L);
         }
         // TIGHT clamps the release so a note stops out of the way of the next
         // one — v1's own `_ambTightChoke`, applied AFTER the envelope is built.
@@ -2135,7 +2393,7 @@
     // cycle starts), so one probe places it exactly.
     let off = 0;
     try {
-      const probe = notesFor(L, { E, cfg, key, cycleStart: t0, cycleSec: sec });
+      const probe = withTake(pinOf(L), () => notesFor(L, { E, cfg, key, cycleStart: t0, cycleSec: sec }));
       let m = Infinity;
       for (let i = 0; i < probe.length; i++) {
         const n = probe[i];
@@ -2143,7 +2401,7 @@
       }
       if (Number.isFinite(m) && m > t0) off = Math.min(m - t0, sec);
     } catch (e) {}
-    PV_VIZ = { id: L.id | 0, at: t0 - off, sig: partSigFn(L) };
+    PV_VIZ = { id: L.id | 0, at: t0 - off, sig: partSigFn(L), take: pinSig(pinOf(L)) };
     if (!E._v2Phase) E._v2Phase = {};
     const saved = E._v2Phase[key];
     // a pre-made phase state pins the anchor to NOW and skips the grid snap —
@@ -2201,9 +2459,14 @@
       }
       window._ambEmitCutoff = null;
       window._ambHangEmitting = true;
+      // PINNED FOR THE WHOLE EMIT — `emit` calls `notesFor` itself, so the pin
+      // has to be in force around it rather than passed as an argument. This is
+      // what makes a second press play what the first one played.
+      TAKE_PIN = pinOf(L);
       emit(E, L, key, t0 - 0.05, t0 + sec + 0.01, 0.12, 0, cfg);
     } catch (e) {
     } finally {
+      TAKE_PIN = null;
       if (orig) window.playNote = orig;
       window._ambCaptureSink = sv.sink; window._ambEmitKey = sv.ek; window._ambEmitAt = sv.ea;
       window._ambHangEmitting = sv.he; window._ambEmitCutoff = sv.cut;
@@ -2259,6 +2522,38 @@
   // already know which combinations make a pad and which make an arpeggio.
   // These are the doors: one press sets the whole shape, and the components
   // underneath stay exactly as they were for tuning afterwards.
+  // EACH MATERIAL REMEMBERS ITS OWN SETTINGS. Pressing a material button used
+  // to overwrite the live spec outright, so tuning an Arpeggio, trying a
+  // Sustained and coming back handed you the FACTORY arpeggio again and your
+  // work was gone. `part.mem` keeps one spec per material and `part.mat` says
+  // which one is in force: leaving a material files what you had, returning
+  // restores it. Absent by default (nothing is stored until you switch), so an
+  // untouched project is byte-identical.
+  const MAT_KEYS = ['rhythm', 'pitch', 'shape', 'bars'];
+  function matSave(L) {
+    const p = L && L.part; if (!p || !p.mat) return;
+    const box = {};
+    MAT_KEYS.forEach((k) => { if (p[k] != null) box[k] = JSON.parse(JSON.stringify(p[k])); });
+    p.mem = p.mem || {};
+    p.mem[p.mat] = box;
+  }
+  // Returns true when it restored — the caller then skips its factory defaults,
+  // which is the whole point: coming BACK to a material is not making a new one.
+  function matLoad(L, mat) {
+    const p = L && L.part; if (!p) return false;
+    const box = p.mem && p.mem[mat];
+    p.mat = mat;
+    if (!box) return false;
+    MAT_KEYS.forEach((k) => { if (box[k] != null) p[k] = JSON.parse(JSON.stringify(box[k])); });
+    return true;
+  }
+  // Called by every material door BEFORE it writes: file the outgoing one, then
+  // try to restore the incoming one.
+  function matSwitch(L, mat) {
+    const p = L && L.part; if (!p) return false;
+    if (p.mat && p.mat !== mat) matSave(L);
+    return matLoad(L, mat);
+  }
   const _ri = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
   const _pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
   // SUSTAINED — one onset per cycle, held. Poly by default because that is the
@@ -2268,6 +2563,9 @@
     if (!L || !L.part) return null;
     const p = L.part;
     p.kind = 'live';
+    // COMING BACK to a material restores what you had; arriving for the first
+    // time builds the archetype.
+    if (matSwitch(L, 'sustain')) { try { E.getCfg(); } catch (e) {} return { voices: (p.pitch || {}).voices, bars: p.bars, kept: true }; }
     p.rhythm = { kind: 'pulse', n: 1, steps: 16 };
     p.pitch = { kind: 'chord', voices: poly === false ? 1 : 3, degree: 1 };
     // 100% = the note fills its whole onset span, i.e. it holds until the next
@@ -2282,6 +2580,7 @@
     if (!L || !L.part) return null;
     const p = L.part;
     p.kind = 'live';
+    if (matSwitch(L, 'arp')) { try { E.getCfg(); } catch (e) {} return { onsets: (p.rhythm || {}).n, octaves: (p.pitch || {}).octaves, kept: true }; }
     p.rhythm = { kind: 'pulse', n: 8, steps: 16 };
     p.pitch = { kind: 'series', dir: 'up', octaves: 2, degree: 1 };
     p.shape = Object.assign({}, p.shape, { lenRatio: 70, holdSteps: 0 });
@@ -2294,6 +2593,11 @@
     // A roll makes a LIVE part — that is what a Riff is. A recorded one would
     // freeze a single realisation and New take could never move it.
     p.kind = 'live';
+    // A ROLL IS A RE-ROLL BY DEFINITION: it files the outgoing material so that
+    // one comes back intact, but never restores its own — pressing 🎲 has to
+    // roll, or the button stops meaning anything.
+    if (p.mat && p.mat !== 'roll') matSave(L);
+    p.mat = 'roll';
     p.bars = _pick([1, 1, 2, 2, 4]);
     const steps = _pick([8, 16, 16]);
     // EUCLID, not an even pulse: the syncopation is most of what makes a riff
@@ -2384,6 +2688,11 @@
     // Without this every Bass/Beat would come out on the same fixed 5/8.
     try { if (typeof _ambEuclidStochasticInit === 'function') _ambEuclidStochasticInit(L1); } catch (e) {}
     try { if (typeof _ambSeedRandomPattern === 'function') _ambSeedRandomPattern(L1, type); } catch (e) {}
+    // PROVENANCE, like the other material doors — file the outgoing material's
+    // tuning, stamp this one. Like a roll it never RESTORES its own: a seed
+    // press means "seed fresh like X", or the button stops meaning anything.
+    try { if (L.part.mat && L.part.mat !== 'v1:' + type) matSave(L); } catch (e) {}
+    L.part.mat = 'v1:' + type;
     // …AND ITS UNIT, which is where the LENGTH comes from. `_ambDefaultLayer`
     // does not set `unit` — v1 pins it at ADD time — so without this `v1Bars`
     // fell through to the ms interval and produced lengths no v1 layer has
@@ -2433,6 +2742,30 @@
     previewing: previewing,
     previewCycle: () => PV_VIZ,
     partSig: partSigFn,
+    // THE TAKE, across the IIFE boundary — the card lives in the second one, so
+    // everything it needs has to come through here (the documented rule).
+    takeOf: takeOf,
+    withTake: withTake,
+    newTake: (L, bars) => {
+      if (!L || !L.part) return 0;
+      const p2 = L.part;
+      // never reuse a number any bar is already pinned to — a retake that
+      // resolves to material you are already looking at is a dead press
+      let mx = takeOf(L);
+      try { Object.keys(p2.takeb || {}).forEach((k) => { if ((p2.takeb[k] | 0) > mx) mx = p2.takeb[k] | 0; }); } catch (e) {}
+      const nx = (mx + 1) % 1000000;
+      if (Array.isArray(bars) && bars.length) {
+        p2.takeb = p2.takeb || {};
+        bars.forEach((b2) => { p2.takeb[b2 | 0] = nx; });
+      } else {
+        // a WHOLE new take supersedes the per-bar history — keeping it would
+        // pin old bars over the take you just asked for
+        p2.take = nx; delete p2.takeb;
+      }
+      return nx;
+    },
+    pinOf: pinOf,
+    pinSig: pinSig,
     previewLeftSec: previewLeftSec,
     cycleSec: cycSecOf,
     fetchArticle: fetchArticleFn,
@@ -2444,6 +2777,53 @@
     normalizeAll: (cfg) => {
       if (!cfg || !Array.isArray(cfg.layers)) return;
       for (let i = 0; i < cfg.layers.length; i++) normLayer(cfg.layers[i], i);
+      // PER-PART RECORDS ride the same normalizer — a second copy of the part
+      // coercion is how the two would drift. Swap each filed record in, run
+      // `normLayer` (idempotent), restore, then run once more so the derived
+      // mirrors (unit, bars) reflect the EDITED record, not the last filed one.
+      for (let i = 0; i < cfg.layers.length; i++) {
+        const L = cfg.layers[i]; if (!L) continue;
+        if (!Number.isFinite(L.partFor)) { delete L.partFor; if (L.parts) delete L.parts; if (L.partAll) delete L.partAll; continue; }
+        L.partFor = L.partFor | 0;
+        // the ICED Everywhere record — a per-part save from before the ice
+        // model backfills from the bench, which at that instant is identical
+        if (!L.partAll || typeof L.partAll !== 'object') L.partAll = JSON.parse(JSON.stringify(L.part));
+        if (!L.parts || typeof L.parts !== 'object') L.parts = {};
+        const keep = L.part;
+        L.part = L.partAll; try { normLayer(L, i); } catch (e) {} L.partAll = L.part;
+        Object.keys(L.parts).forEach((k) => {
+          const rec = L.parts[k];
+          if (!(+k >= 0) || !rec || typeof rec !== 'object' || (+k | 0) === (L.partFor | 0)) { delete L.parts[k]; return; }
+          L.part = rec; try { normLayer(L, i); } catch (e) {}
+          L.parts[k] = L.part;
+        });
+        L.part = keep;
+        try { normLayer(L, i); } catch (e) {}
+        // RECONCILE against the arrangement (the lenSync doctrine — a reconciler
+        // on every normalize, never an event): every part has a record. A part
+        // with none — added a minute ago or a year ago — gets a COPY OF THE
+        // EVERYWHERE RECORD fitted to its length (stretch: recorded times are
+        // cycle fractions, a live rhythm spans the cycle; harmony re-resolves
+        // per note at emit, so pitch fitting rides the existing machinery).
+        try {
+          const rgs = (typeof _ambGridRanges === 'function') ? (_ambGridRanges(cfg) || []) : [];
+          if (rgs.length) {
+            const pis = {};
+            rgs.forEach((rg) => {
+              const pi = (rg && Number.isFinite(rg.pi)) ? (rg.pi | 0) : 0;
+              pis[String(pi)] = 1;
+              if (pi === (L.partFor | 0) || L.parts[String(pi)]) return;
+              const rec = JSON.parse(JSON.stringify(L.partAll));
+              let b = 0; try { b = +_ambLenPartBars(cfg, pi); } catch (e) {}
+              if (b > 0) rec.bars = clamp((typeof _ambSnapBars === 'function')
+                ? _ambSnapBars(b) : Math.round(b * 48) / 48, 0.125, 64);
+              L.parts[String(pi)] = rec;
+            });
+            Object.keys(L.parts).forEach((k) => { if (!pis[k]) delete L.parts[k]; });
+          }
+        } catch (e) {}
+        if (!Object.keys(L.parts).length) delete L.parts;
+      }
       // THE LOOP BINDING IS A RECONCILER, not a second clock — v1's own
       // doctrine (the sections' unit→bars mirror). It writes the plain field
       // the engine already reads, on every normalize, so editing the cadence
@@ -2484,6 +2864,52 @@
     // duplicated: two copies of a drum map is how the two halves come to
     // disagree about which lane is a clap.
     LANES: _V2_LANES, VDRUM: _V2_VDRUM, LANE_NAMES: _V2_LANE_NAMES,
+    // ── PER-PART SELECT — file the edited record and take up the target's ──
+    // Choosing a part ADOPTS the current content when that part has none of
+    // its own, so switching is never destructive and syncing/editing is what
+    // makes a part diverge. `null` switches per-part OFF: the edited record
+    // becomes the one content and the filed ones are DROPPED (the caller
+    // confirms — that is the only destructive branch).
+    // THE EVERYWHERE RECORD IS ICED, NOT RELABELLED (user: "one content for
+    // Everywhere, then if editing Per part the everywhere content is put on
+    // ice"): engaging per-part keeps it in `L.partAll`, every part starts from
+    // a FITTED COPY of it (the normalize reconciler materialises them — new
+    // parts included), and disengaging brings it BACK. Un-diverged parts play
+    // their own copy, so what a part plays never depends on which one is
+    // selected for editing.
+    partSelect: (E, L, pi) => {
+      if (!L || !L.part) return false;
+      const clone2 = (o) => JSON.parse(JSON.stringify(o));
+      if (pi == null) {
+        if (!Number.isFinite(L.partFor)) return false;
+        if (L.partAll && typeof L.partAll === 'object') L.part = L.partAll;
+        delete L.partAll; delete L.parts; delete L.partFor;
+        try { E.getCfg(); } catch (e) {} return true;
+      }
+      pi = pi | 0;
+      const cur = Number.isFinite(L.partFor) ? (L.partFor | 0) : null;
+      if (cur === pi) return false;
+      if (cur == null) {
+        L.partAll = clone2(L.part);               // ← the ice
+        L.partFor = pi;
+        // the bench copy fits its part's length (stretch — times are fractions)
+        try {
+          const b = +_ambLenPartBars(E.getCfg(), pi);
+          if (b > 0) L.part.bars = clamp((typeof _ambSnapBars === 'function')
+            ? _ambSnapBars(b) : Math.round(b * 48) / 48, 0.125, 64);
+        } catch (e) {}
+        try { E.getCfg(); } catch (e) {} return true;
+      }
+      if (!L.parts || typeof L.parts !== 'object') L.parts = {};
+      L.parts[String(cur)] = L.part;
+      const nx = L.parts[String(pi)];
+      L.part = (nx && typeof nx === 'object') ? nx
+        : clone2((L.partAll && typeof L.partAll === 'object') ? L.partAll : L.part);
+      delete L.parts[String(pi)];
+      L.partFor = pi;
+      try { E.getCfg(); } catch (e) {}
+      return true;
+    },
     add: addLayer,
     clear(cfg) { if (cfg) cfg.layers = []; },
   };
@@ -2536,9 +2962,72 @@
   // seeded or composed. It is NOT an `.ambient-ctrl`, which is what keeps it
   // out of `popTabbables` and therefore visible under EVERY tab of the sheet
   // rather than belonging to one of them.
-  function partVizHtml() {
+  // WHAT THE LOCK BUTTON SAYS — THREE states, not two, and one definition of
+  // them. A part with no notes has nothing to "replace"; a live part freezes
+  // the take DRAWN ABOVE, which is a more specific promise than a fixed one
+  // can make. Read on every draw as well as at build time, because
+  // `V2.render`'s signature does not include the note count — so removing the
+  // last note rebuilds nothing and the button would go on offering to replace
+  // notes that are not there.
+  // WHICH BARS A RE-ROLL TOUCHES. Tap a bar in the drawing to pick it; with
+  // none picked, Replace re-rolls everything (the old behaviour is the
+  // default). Module state, transient by construction (`_soloLane` rule), and
+  // it SURVIVES a replace on purpose — press again, same bars, another roll:
+  // that repeat-until-you-like-it loop is the point of selecting.
+  let BSEL = null;
+  const bselSig = (L) => [L.part.kind, L.part.bars, L.part.clock || ''].join(',');
+  function bselOf(L) {
+    if (!BSEL || !L || BSEL.id !== (L.id | 0)) return null;
+    if (BSEL.sig !== bselSig(L)) { BSEL = null; return null; }
+    return BSEL.bars.size ? BSEL : null;
+  }
+  const bselLabel = (sel) => {
+    const a = [...sel.bars].sort((x, y) => x - y).map((b) => b + 1);
+    return (a.length === 1 ? 'bar ' + a[0] : 'bars ' + a.join('+'));
+  };
+  function capFace(L) {
+    const rec = L && L.part && L.part.kind === 'recorded';
+    const has = rec && ((L.part.notes || []).length > 0);
+    const sel = has ? bselOf(L) : null;
+    if (sel) return { txt: '\ud83c\udfb2 Re-roll ' + bselLabel(sel),
+      title: 'Roll fresh material into ' + bselLabel(sel) + ' only \u2014 every other bar keeps exactly what it has, edits included. Press again for another roll of the same bars; tap the bars in the drawing to change which.' };
+    if (has) return { txt: '\ud83c\udfb2 Replace with a new take',
+      title: 'Replace these notes with a fresh roll of this layer\u2019s own rules. The notes here now are discarded \u2014 to go back to a part that re-rolls as it plays, set Source to Generated instead. Tap a bar in the drawing first to re-roll only that bar.' };
+    if (rec) return { txt: '\ud83d\udd12 Lock a take',
+      title: 'Freeze a take of this layer\u2019s own rules into a fixed set of notes you can edit.' };
+    return { txt: '\ud83d\udd12 Lock this take',
+      title: 'Freeze exactly the take drawn above into a fixed set of notes you can edit. The rules are kept, so you can roll another take later.' };
+  }
+  function partVizHtml(L) {
+    const cf = capFace(L);
+    // THE TAKE BAR lives INSIDE the viz block, not in an `.ambient-ctrl` — the
+    // same reason the canvas does: it must be visible under every tab of the
+    // sheet, because it acts on the picture rather than on one setting. It is
+    // also why New take and Lock are HERE and nowhere else: two surfaces for
+    // one action is the duplication this file keeps paying for.
     return '<div class="v2-partviz"><canvas class="v2-vizcv" height="84"></canvas>' +
-           '<span class="v2-vizlab ambient-hint"></span></div>';
+      '<span class="v2-vizlab ambient-hint"></span>' +
+      // THE NOTE EDITOR OPENS HERE — directly under the drawing it edits, so
+      // the picture stays visible while you move the note (a dialog over the
+      // top hid the one thing you are editing against).
+      neHtml() +
+      '<span class="ambient-seg-row v2-takebar">' +
+        '<button type="button" class="ambient-seg v2-newtake" data-v2when="kind:live"' +
+          ' title="Roll this live part again. Preview never re-rolls on its own, so the take you are hearing stays until you press this.">🎲 New take</button>' +
+        // TWO STATES, TWO SENTENCES. It read "❄ Re-take live" on a fixed part,
+        // which sounds like the way BACK to Generated — it is not (that is the
+        // Source select); it discards these notes and locks a fresh roll. And
+        // both states shared ONE title, so a fixed part showed the live
+        // state's explanation. Say what the press will do, in each state.
+        '<button type="button" class="ambient-seg v2-capture" title="' + esc(cf.title) + '">' +
+          cf.txt + '</button>' +
+        // A TAKE YOU LIKE IS WORTH KEEPING, and the next press of ⟳ replaces
+        // it — so the way to keep it sits right beside the thing that would
+        // destroy it. Only when there is a take: nothing to save on a live part.
+        (((L.part.notes || []).length && L.part.kind === 'recorded')
+          ? '<button type="button" class="ambient-seg v2-savetake" title="Keep this take in the bank under a name — it becomes a phrase you can map to any part or chord, on this layer or another.">\ud83d\udcbe Save this take</button>'
+          : '') +
+      '</span></div>';
   }
   function drawPartViz(card, L, E) {
     const host = card && card.querySelector('.v2-partviz'); if (!host) return;
@@ -2567,11 +3056,20 @@
     try {
       const pv = V2.previewCycle && V2.previewCycle();
       if (pv && pv.id === (L.id | 0) && pv.sig === V2.partSig(L) && Number.isFinite(pv.at)) {
-        cs = pv.at; fromPv = true;
+        // The anchor is still the right one to draw against (it is what decides
+        // WHICH CHORD the take was rolled over), but the badge may not be: a
+        // take rolled since that preview has not been previewed, and saying it
+        // was is exactly the kind of stale readout this file keeps paying for.
+        cs = pv.at; fromPv = (pv.take === V2.pinSig(V2.pinOf(L)));
       }
     } catch (e) {}
+    // THE TAKE decides WHICH roll; the remembered anchor decides which CHORD it
+    // was rolled over. Both, because under a progression the pitches depend on
+    // the time as well as the seed — pinning only the take would draw the right
+    // rhythm over the wrong harmony.
     try {
-      notes = V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc }) || [];
+      notes = V2.withTake(V2.pinOf(L), () =>
+        V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc })) || [];
     } catch (e) { notes = []; }
     // THE RULER — beats, bars and bar NUMBERS, in a gutter of their own. Bar
     // lines alone gave the drawing a scale but no reading: you could see that
@@ -2613,11 +3111,25 @@
       g.strokeStyle = 'rgba(159,122,234,0.18)';
       g.beginPath(); g.moveTo(0, TOP + 0.5); g.lineTo(w, TOP + 0.5); g.stroke();
     }
+    // THE SELECTED BARS, tinted full-height so "which bars will re-roll" is on
+    // the picture, not in a caption. Geometry recorded for the tap handler.
+    cv._barsGeo = free ? null : { barsF: barsF, w: w };
+    const sel0 = free ? null : bselOf(L);
+    if (sel0) {
+      g.fillStyle = 'rgba(159,122,234,0.13)';
+      sel0.bars.forEach((b2) => {
+        const x0 = (b2 / barsF) * w, x1 = Math.min(w, ((b2 + 1) / barsF) * w);
+        g.fillRect(x0, 0, x1 - x0, h);
+      });
+    }
     // `notesFor` returns ABSOLUTE times (cycleStart + offset), so a remembered
     // cycle start has to be subtracted back off before drawing.
-    notes = notes.map(n => (n && Number.isFinite(n.at)) ? { at: n.at - cs, freq: n.freq, durMs: n.durMs } : n);
+    notes = notes.map(n => (n && Number.isFinite(n.at))
+      ? { at: n.at - cs, freq: n.freq, durMs: n.durMs, nidx: n.nidx } : n);
     const played = notes.filter(n => n && n.freq > 0 && n.at >= -1e-6 && n.at < cyc);
+    cv._hits = []; cv._sel = -1;   // no notes drawn = nothing to hit-test against
     if (!played.length) {
+      try { vizChrome(card, L, E); } catch (e) {}
       g.fillStyle = '#6b6b8a'; g.font = '12px -apple-system, Segoe UI, sans-serif';
       g.fillText('silent for this cycle', 8, TOP + (h - TOP) / 2 + 4);
       if (lab) lab.textContent = (L.part && L.part.kind === 'recorded' ? 'recorded' : 'live') + ' · ' + barTxt;
@@ -2635,16 +3147,457 @@
       g.fillStyle = 'rgba(159,122,234,0.55)';
       g.strokeStyle = '#d6bcfa'; g.lineWidth = 1;
       const ww = Math.min(dw, w - x);
+      // THE NOTE BEING EDITED IS MARKED. With the editor inline the drawing
+      // stays visible while you work, which is the point of it — but "Note 2 of
+      // 4" names a position in a list, not a mark on the picture, so without
+      // this you still cannot see which one you are moving.
+      const isSel = NE && NE.id === (L.id | 0) && Number.isFinite(n.nidx) && NE.idx === n.nidx;
+      if (isSel) {
+        g.fillStyle = 'rgba(214,188,250,0.95)';
+        g.strokeStyle = '#fff'; g.lineWidth = 1.5;
+      }
       g.beginPath();
       if (g.roundRect) g.roundRect(x, y, ww, 6, 3); else g.rect(x, y, ww, 6);
       g.fill(); g.stroke();
+      if (isSel) {
+        // a halo, so it reads at a glance on a 6px-tall note
+        g.strokeStyle = 'rgba(214,188,250,0.45)'; g.lineWidth = 1;
+        g.beginPath();
+        if (g.roundRect) g.roundRect(x - 3, y - 4, ww + 6, 14, 6); else g.rect(x - 3, y - 4, ww + 6, 14);
+        g.stroke();
+        cv._sel = n.nidx;
+        g.fillStyle = 'rgba(159,122,234,0.55)';
+        g.strokeStyle = '#d6bcfa'; g.lineWidth = 1;
+      }
+      // WHERE EACH NOTE IS, so a tap can find it. `t`/`midi` ride along as
+      // well as the index: locking a live take re-sorts the notes, so the note
+      // you tapped is re-found by WHAT IT IS rather than by where it sat in an
+      // array that no longer exists.
+      cv._hits.push({ x, y, w: ww, h: 6, i: (Number.isFinite(n.nidx) ? n.nidx : i),
+                      t: n.at / cyc, midi: mids[i] });
     }
     if (lab) {
-      lab.textContent = (L.part && L.part.kind === 'recorded' ? 'recorded' : 'live') + ' · ' +
+      const rec2 = L.part && L.part.kind === 'recorded';
+      lab.textContent = (rec2 ? 'recorded' : 'live') + ' · ' +
         played.length + ' note' + (played.length === 1 ? '' : 's') + ' · ' + barTxt +
         ' · ' + (Math.round(cyc * 10) / 10) + 's' +
-        (fromPv ? ' · as previewed' : (L.part && L.part.kind === 'live' ? ' · one take of many' : ''));
+        // NAME THE TAKE. "one take of many" was true and unhelpful — you could
+        // not tell whether the picture had moved. A number you can watch change
+        // is what makes "Preview did not re-roll that" verifiable by eye.
+        (rec2 ? (bselOf(L) ? ' · re-rolling ' + bselLabel(bselOf(L)) + ' — tap a bar to change which'
+                            : ' · tap a note to edit · tap a bar to re-roll just it')
+              : ' · take ' + (V2.takeOf(L) + 1) +
+                (L.part.takeb ? ' · retaken: bars ' + Object.keys(L.part.takeb).map((b3) => (b3 | 0) + 1).sort((x, y) => x - y).join('+') : '') +
+                (bselOf(L) ? ' · retaking ' + bselLabel(bselOf(L))
+                           : ' · tap a bar to retake just it') +
+                (fromPv ? ' · as previewed' : ''));
     }
+    try { vizChrome(card, L, E); } catch (e) {}
+  }
+  // The viz block's live chrome — the note editor, and what the lock button
+  // says. Both are state the BUILD cannot settle: the editor is opened after
+  // the card exists, and `V2.render`'s signature does not include the note
+  // count, so an emptied part rebuilds nothing.
+  // WHERE THE CONTENT CAME FROM, and WHAT RULES ARE SHAPING IT. Both stores
+  // existed (`part.made` on a recorded part, `part.mat` on a live one) and
+  // neither showed anywhere — five Material doors and no way to tell which one
+  // produced what you are looking at. The active door lights up (the house
+  // `.ambient-seg.on`), and the hint names the provenance AND the live rules
+  // (rhythm kind × pitch kind × the take that seeds the draws), because "what
+  // rules made this" should be readable off the card, not deduced from three
+  // sheets.
+  function matProv(L) {
+    const p = L.part, r = p.rhythm || {}, t = p.pitch || {};
+    const rules = (r.kind === 'euclid' ? ('euclid ' + (r.pulses | 0) + ' of ' + (r.steps | 0))
+      : r.kind === 'drawn' ? 'a drawn pattern'
+      : r.kind === 'chance' ? ('chance ' + (r.chance | 0) + '%')
+      : ('pulse \u00d7' + (r.n | 0))) +
+      ' \u00b7 ' + (t.kind || 'chord') + ' \u00b7 take ' + (V2.takeOf(L) + 1);
+    const M = { sustain: '\u25ac Sustained', arp: '\u27f3 Arpeggio', roll: '\ud83c\udfb2 Rolled' };
+    const v1 = (p.mat && p.mat.indexOf('v1:') === 0) ? p.mat.slice(3) : null;
+    // NO STAMP IS NOT NO MATERIAL. A part made before provenance existed — or
+    // assembled by hand on the knobs — still IS one of these materials, and
+    // the rules say which: `series` is what an arpeggiator does, one pulse
+    // holding a chord is a sustain, a walked line is the run. The stamp wins
+    // when present (it records the actual press); the shape answers otherwise,
+    // which is what keeps "what Material are we using" answerable on every
+    // part rather than only the ones made since yesterday.
+    const guess = (t.kind === 'series') ? 'arp'
+      : ((r.kind === 'pulse' || !r.kind) && (r.n | 0) <= 1 && (t.kind === 'chord' || t.kind === 'stack')) ? 'sustain'
+      : (t.kind === 'walk') ? 'roll' : null;
+    const mat = M[p.mat] ? p.mat : (v1 ? null : guess);
+    if (p.kind === 'recorded') {
+      const n = (p.notes || []).length;
+      const nn = n + ' note' + (n === 1 ? '' : 's');
+      if (p.made === 'compose') return { key: 'compose', txt: nn + ' \u00b7 \u270e composed by hand' };
+      if (p.made === 'phrase') return { key: 'adopt', txt: nn + ' \u00b7 \u266a the phrase' + (p.from ? ' \u201c' + p.from + '\u201d' : '') };
+      if (p.made === 'take') {
+        // LEAD with the material — burying it mid-sentence is why "still not
+        // clear what Material we're using" was a fair report of the first cut
+        if (v1) return { key: p.mat, txt: nn + ' \u00b7 a locked take of the v1 ' + v1 + ' seed' };
+        if (mat) return { key: mat, txt: M[mat] + ' \u00b7 a locked take \u2014 ' + rules + ' \u00b7 ' + nn };
+        return { key: null, txt: nn + ' \u00b7 a locked take \u2014 ' + rules };
+      }
+      return { key: null, txt: nn + ' held' };
+    }
+    if (v1) return { key: p.mat, txt: 'seeded like a v1 ' + v1 + ' \u2014 live \u00b7 ' + rules };
+    if (mat) return { key: mat, txt: M[mat] + ' \u2014 live \u00b7 ' + rules };
+    return { key: null, txt: 'live \u00b7 ' + rules };
+  }
+  function matSync(card, L) {
+    const pv2 = matProv(L);
+    const map = { compose: '.v2-compose', adopt: '.v2-adopt',
+      sustain: '.v2-mkpart[data-mk="sustain"]', arp: '.v2-mkpart[data-mk="arp"]', roll: '.v2-rollrun' };
+    Object.keys(map).forEach((k) => {
+      const b2 = card.querySelector(map[k]);
+      if (b2) b2.classList.toggle('on', pv2.key === k);
+    });
+    card.querySelectorAll('.v2-seedv1').forEach((b2) => {
+      b2.classList.toggle('on', pv2.key === 'v1:' + b2.getAttribute('data-v1'));
+    });
+    const nc = card.querySelector('.v2-notecount');
+    if (nc && nc.textContent !== pv2.txt) nc.textContent = pv2.txt;
+  }
+  function vizChrome(card, L, E) {
+    try { matSync(card, L); } catch (e) {}
+    try { neSync(card, L, E); } catch (e) {}
+    try {
+      const cb = card.querySelector('.v2-capture'), cf2 = capFace(L);
+      if (cb && cb.textContent !== cf2.txt) { cb.textContent = cf2.txt; cb.title = cf2.title; }
+    } catch (e) {}
+    // 🎲's face follows the selection on a LIVE part, exactly as 🔒's does on
+    // a recorded one — the button says what THIS press will do.
+    try {
+      const nb = card.querySelector('.v2-newtake');
+      if (nb) {
+        const sel4 = (L.part.kind !== 'recorded') ? bselOf(L) : null;
+        const txt = sel4 ? ('\ud83c\udfb2 Retake ' + bselLabel(sel4)) : '\ud83c\udfb2 New take';
+        if (nb.textContent !== txt) {
+          nb.textContent = txt;
+          nb.title = sel4
+            ? 'Roll fresh material into ' + bselLabel(sel4) + ' only — the rest of the drawing holds still. Tap bars in the drawing to change which; press again for another roll.'
+            : 'Roll this live part again. Preview never re-rolls on its own, so the take you are hearing stays until you press this. Tap a bar in the drawing first to retake only that bar.';
+        }
+      }
+    } catch (e) {}
+  }
+
+
+  // ── SAVING A TAKE ───────────────────────────────────────────────────────
+  // A take you like is worth keeping, and the place to keep it is the bank the
+  // rest of the app already maps to CHANGES (`L.partSeqs` resolves a banked
+  // phrase by NAME onto a part/pass/chord slot). So a saved take is not a
+  // private list on this layer — it is a phrase, immediately mappable, and
+  // deletable through the one path that prunes those mappings.
+  //
+  // `phraseToNotes` reads a phrase SEQUENTIALLY (each step advances the cursor
+  // by `subdivision × duration` beats), so a note can never overlap the next
+  // one: a sustain is clipped at the following onset. Onsets are exact.
+  function notesToSteps(L) {
+    const p = L.part, list = (p.notes || []).slice().sort((a, b) => a.t - b.t);
+    if (!list.length) return null;
+    const bars = Math.max(0.125, p.bars || 1);
+    const gridN = clamp(((p.rhythm && p.rhythm.steps) | 0) || 16, 1, 64);
+    const cellBeats = (bars * 4) / gridN;
+    const cells = [];
+    list.forEach((n) => {
+      const i = Math.min(gridN - 1, Math.max(0, Math.round(n.t * gridN)));
+      (cells[i] = cells[i] || []).push(n);
+    });
+    const mf = (m) => 440 * Math.pow(2, (m - 69) / 12);
+    const out = [];
+    let i = 0;
+    while (i < gridN) {
+      if (!cells[i]) {
+        let k = i; while (k < gridN && !cells[k]) k++;
+        out.push({ freq: null, label: '\u2014', cellIndex: null, duration: (k - i), subdivision: cellBeats });
+        i = k; continue;
+      }
+      let nx = i + 1; while (nx < gridN && !cells[nx]) nx++;
+      const want = Math.max(1, Math.round(Math.max.apply(null, cells[i].map((n) => n.dur)) * gridN));
+      const span = Math.max(1, Math.min(want, nx - i));
+      const tr = p.transpose | 0;
+      const freqs = cells[i].map((n) => mf(n.midi + tr));
+      const st = { duration: span, subdivision: cellBeats, cellIndex: null,
+                   label: noteName(cells[i][0].midi + tr) };
+      if (freqs.length > 1) { st.freq = freqs[0]; st.chord = freqs.map((f) => ({ freq: f })); st.label = 'chord'; }
+      else st.freq = freqs[0];
+      out.push(st);
+      i += span;
+    }
+    return out;
+  }
+  function saveTakeFn(E, L) {
+    const steps = notesToSteps(L);
+    if (!steps) return null;
+    let dflt = (L.name || 'take');
+    try { if (typeof uniqueSeqName === 'function') dflt = uniqueSeqName(dflt); } catch (e) {}
+    let nm = null;
+    try { nm = window.prompt('Save this take as:', dflt); } catch (e) {}
+    if (nm == null) return null;
+    nm = String(nm).trim() || dflt;
+    // A NAME ALREADY IN THE BANK would SHADOW the other entry — a mapping
+    // resolves the first match, so the older one becomes unreachable while
+    // still visible. Ask, exactly as the phrase saver does.
+    let at = -1;
+    try { at = savedSequences.findIndex((x) => x && x.name === nm); } catch (e) {}
+    if (at >= 0 && !window.confirm('\u201c' + nm + '\u201d already exists. Replace it?\n\n' +
+      'Anything mapped to that name will play this take instead.')) return null;
+    let bpm = 120;
+    try { bpm = parseInt(document.getElementById('tempo-input').value, 10) || 120; } catch (e) {}
+    const ent = { name: nm, kind: 'phrase', steps: steps, bpm: bpm, subdivision: 1 };
+    try {
+      if (at >= 0) savedSequences[at] = ent; else savedSequences.push(ent);
+      if (typeof persistSaved === 'function') persistSaved();
+    } catch (e) { return null; }
+    return nm;
+  }
+  // WHAT THE BANK HOLDS, for the Saved tab. Metadata only — reading a phrase's
+  // notes is `phraseToNotes`' job and costs a walk per entry.
+  function bankList() {
+    try {
+      if (typeof savedSequences === 'undefined' || !Array.isArray(savedSequences)) return [];
+      return savedSequences.map((s2, i) => ({ i: i, name: (s2 && s2.name) || ('#' + (i + 1)),
+        n: ((s2 && s2.steps) || []).filter((x) => x && (x.freq != null || x.chord)).length }));
+    } catch (e) { return []; }
+  }
+
+  // ── ONE NOTE, BY HAND ───────────────────────────────────────────────────
+  // Tap a note in the drawing and change what it does. A LIVE part has no notes
+  // to edit — its notes are a consequence of rules — so tapping one LOCKS the
+  // take first and says so; that is the same act as pressing 🔒, reached from
+  // the thing you were already pointing at.
+  const NOTE_NAMES = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+  const noteName = (m) => NOTE_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
+  // LOCK WHAT IS DRAWN. The remembered preview anchor is passed through so that
+  // under a progression the capture freezes the chord you heard rather than
+  // whichever one is sounding at the instant you pressed.
+  function captureShown(E, L, bars) {
+    let at = null;
+    try {
+      const pv = V2.previewCycle && V2.previewCycle();
+      if (pv && pv.id === (L.id | 0) && pv.sig === V2.partSig(L) && Number.isFinite(pv.at)) at = pv.at;
+    } catch (e) {}
+    const o = {};
+    if (at != null) o.at = at;
+    if (Array.isArray(bars) && bars.length) o.bars = bars;
+    // a REPLACE rolls fresh; a first LOCK freezes exactly the take drawn
+    if (L.part.kind === 'recorded' && (L.part.notes || []).length) o.reroll = true;
+    return V2.capture(E, L, o);
+  }
+  // Normalize REPLACES every note object (it maps and re-sorts), so an index is
+  // only good until the next `getCfg`. Notes are re-found by WHAT THEY ARE.
+  function nearestNote(notes, t, midi) {
+    let best = -1, bd = Infinity;
+    for (let i = 0; i < notes.length; i++) {
+      const n = notes[i];
+      const d = Math.abs(n.t - t) + Math.abs(n.midi - midi) / 128;
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+  // ── WHAT A NUMBER MEANS ─────────────────────────────────────────────────
+  // `_ambSl` folds its `hint` into a TITLE attribute, which is invisible on a
+  // phone — so a row of raw sliders reads "Position 1 · Length 2 · Attack 400"
+  // and names none of its units. Reported exactly that way. These build the
+  // readout text instead, and the modal paints it itself (nothing else writes
+  // `.ambient-sl-v`: the delegated drag handler sets `.value` and dispatches
+  // events, it does not touch the readout).
+  const FRAC = { 0.25: '¼', 0.5: '½', 0.75: '¾', 0.33: '⅓', 0.67: '⅔' };
+  // A count of beats, spelled the way a musician says it — "1½ beats", not 1.5.
+  function beatTxt(b) {
+    if (!(b > 0)) return '0';
+    const whole = Math.floor(b + 1e-6), rest = Math.round((b - whole) * 100) / 100;
+    const f = FRAC[rest] || (rest ? String(rest).replace(/^0/, '') : '');
+    const n = (whole ? String(whole) : '') + f || String(Math.round(b * 100) / 100);
+    // singular for anything up to one — "½ beat", never "½ beats"
+    return n + ' beat' + (b <= 1 + 1e-6 ? '' : 's');
+  }
+  // WHERE in the cycle, in bars and beats — the units the ruler above is drawn
+  // in, so the number and the picture describe the same thing.
+  function posTxt(step, gridN, bars) {
+    const perBar = Math.max(1, gridN / Math.max(0.0625, bars));
+    const bar = Math.floor(step / perBar) + 1;
+    const beat = ((step % perBar) / (perBar / 4)) + 1;
+    const bt = Math.round(beat * 100) / 100;
+    return (bars > 1 ? 'bar ' + bar + ' · ' : '') + 'beat ' + bt;
+  }
+  function lenTxt(steps, gridN, bars) {
+    return beatTxt(steps * (4 * bars / Math.max(1, gridN)));
+  }
+  const msTxt = (v) => (v >= 1000 ? (Math.round(v / 100) / 10) + ' s' : (v | 0) + ' ms');
+  // WHICH NOTE IS OPEN, module state — transient by construction (a field on the
+  // layer would be serialised by `persistWorkspace`, the documented `_soloLane`
+  // trap) and cleared whenever the note it names stops existing.
+  let NE = null;
+  // THE EDITOR IS PART OF THE CARD, NOT A DIALOG OVER IT. It was a body-attached
+  // `.sm-overlay`, which covered the drawing you were editing against — you
+  // could not see the note move. It renders INSIDE `.v2-partviz`, directly under
+  // the canvas, so the picture stays visible and the editor travels with it when
+  // the sheet lifts the viz block above its tabs.
+  function neHtml() { return '<div class="v2-neinline" hidden></div>'; }
+  function neClear() { NE = null; }
+  function neOpen(E, L, idx, card) {
+    NE = { id: L.id | 0, idx: idx | 0 };
+    try { drawPartViz(card, L, E); } catch (e) {}
+    // bring it into view — it opens below the fold on a phone when the card is
+    // scrolled to the top of the drawing
+    try {
+      const host = card && card.querySelector('.v2-neinline');
+      if (host) host.scrollIntoView({ block: 'nearest' });
+    } catch (e) {}
+  }
+  // THE FALLBACK a field takes when the note states nothing — shown so the
+  // sliders open where the note actually sounds rather than at zero.
+  function neFallback(L) {
+    const inst = L.instrument || {};
+    return { atk: num(inst.attack, 10), dec: num(inst.decay, 200),
+             sus: num(inst.sustain, 70), rel: num(inst.release, 600) };
+  }
+  function neGrid(L) {
+    return { gridN: clamp((L.part.rhythm && L.part.rhythm.steps | 0) || 16, 1, 64),
+             bars: Math.max(0.0625, L.part.bars || 1) };
+  }
+  function neBuild(host, L, idx) {
+    const p = L.part, n = p.notes[idx], g = neGrid(L), fb = neFallback(L);
+    const stepPos = Math.round(n.t * g.gridN), stepLen = Math.max(1, Math.round(n.dur * g.gridN));
+    const sfSl = (sf, label, min, max, val, hint) => {
+      const h = (typeof _ambSl === 'function') ? _ambSl(label, 'v2-ne-' + (L.id | 0) + '-' + sf, min, max, val, hint) : '';
+      return h.replace('class="ambient-sl"', 'class="ambient-sl" data-sf="' + sf + '"');
+    };
+    host.innerHTML =
+      '<div class="v2-nehead">' +
+        '<span class="v2-netitle">Note ' + (idx + 1) + ' of ' + p.notes.length + ' \u00b7 ' + esc(noteName(n.midi)) + '</span>' +
+        // Remove sits in the head, left of the close (user-placed, 2026-09-05)
+        // — still the house destructive red, never beside the benign pair.
+        '<button type="button" class="ambient-seg v2-nerm" data-na="rm">\u2715 Remove note</button>' +
+        '<button type="button" class="v2-neclose" data-na="done" aria-label="Close">\u2715</button>' +
+      '</div>' +
+      ((typeof _ambStep === 'function')
+        ? _ambStep('Note', 'v2-ne-' + (L.id | 0) + '-midi', 0, 127, n.midi, noteName(n.midi))
+            .replace('class="ambient-step-inp"', 'class="ambient-step-inp" data-sf="midi"')
+        : '') +
+      sfSl('pos', 'Position', 0, Math.max(1, g.gridN - 1), stepPos, 'where in the cycle it starts') +
+      sfSl('len', 'Length', 1, g.gridN * 2, stepLen, 'how long it sounds') +
+      sfSl('vel', 'Volume', 0, 200, num(n.vel, 100), 'against the layer\u2019s own level') +
+      '<div class="v2-nesec">Envelope \u00b7 this note only</div>' +
+      sfSl('atk', 'Attack', 0, 4000, num(n.atk, fb.atk), 'time to reach full volume') +
+      sfSl('dec', 'Decay', 0, 4000, num(n.dec, fb.dec), 'time to fall to the sustain level') +
+      sfSl('sus', 'Sustain', 0, 100, num(n.sus, fb.sus), 'level it holds at') +
+      sfSl('rel', 'Release', 0, 8000, num(n.rel, fb.rel), 'time to fade after it ends') +
+      sfSl('glide', 'Portamento', 0, 2000, num(n.glide, 0), 'slide in from the note before') +
+      '<div class="v2-nebtns">' +
+        '<button type="button" class="ambient-seg" data-na="env">\u21ba Layer envelope</button>' +
+        '<button type="button" class="ambient-seg" data-na="hear">\u25b6 Hear it</button>' +
+      '</div>' +
+      '<div class="v2-nehint">Volume and the envelope are this note\u2019s own \u2014 everything else on the card still applies. ' +
+        'A value marked <b>layer</b> is inherited; move it and this note keeps its own.</div>';
+    host._idx = idx;
+    host._lid = L.id | 0;
+  }
+  // THE READOUT IS THE CONTROL'S ONLY LABEL ON A PHONE, so it carries the unit
+  // AND, for an inherited field, the fact that it is inherited — "400 ms ·
+  // layer" answers "is this note different?" without opening anything.
+  function nePaint(host, L, idx) {
+    const p = L.part, n = p.notes[idx]; if (!n) return;
+    const g = neGrid(L);
+    const put = (sf, txt) => {
+      const el = host.querySelector('[data-sf="' + sf + '"]');
+      const row = el && el.closest('.ambient-ctrl');
+      const rd = row && (row.querySelector('.ambient-sl-v') || row.querySelector('.ambient-hint'));
+      if (rd) rd.textContent = txt;
+    };
+    const v = (sf) => { const el = host.querySelector('[data-sf="' + sf + '"]'); return el ? (parseInt(el.value, 10) | 0) : 0; };
+    put('midi', noteName(n.midi));
+    put('pos', posTxt(v('pos'), g.gridN, g.bars));
+    put('len', lenTxt(v('len'), g.gridN, g.bars));
+    // 100% IS "as the layer plays it", so "100% · layer" states the same fact
+    // twice and reads as a unit nobody asked about. Name the relationship.
+    const vv = v('vel');
+    put('vel', vv === 0 ? 'silent' : (vv === 100 ? 'as the layer' : vv + '% of the layer'));
+    put('atk', msTxt(v('atk')) + (Number.isFinite(n.atk) ? '' : ' \u00b7 layer'));
+    put('dec', msTxt(v('dec')) + (Number.isFinite(n.dec) ? '' : ' \u00b7 layer'));
+    put('sus', v('sus') + '%' + (Number.isFinite(n.sus) ? '' : ' \u00b7 layer'));
+    put('rel', msTxt(v('rel')) + (Number.isFinite(n.rel) ? '' : ' \u00b7 layer'));
+    put('glide', v('glide') > 0 ? msTxt(v('glide')) : 'off');
+    const t2 = host.querySelector('.v2-netitle');
+    if (t2) t2.textContent = 'Note ' + (idx + 1) + ' of ' + p.notes.length + ' \u00b7 ' + noteName(n.midi);
+  }
+  // Called at the end of every draw. REBUILDS ONLY WHEN THE NOTE CHANGES — the
+  // drawing is repainted on every edit, and rewriting the markup would destroy
+  // the slider under the finger mid-drag (the documented repaint trap).
+  function neSync(card, L, E) {
+    const host = card && card.querySelector('.v2-neinline'); if (!host) return;
+    const p = L.part;
+    const live = NE && NE.id === (L.id | 0) && p && p.kind === 'recorded' &&
+                 Array.isArray(p.notes) && p.notes[NE.idx];
+    if (!live) {
+      if (NE && NE.id === (L.id | 0)) NE = null;
+      if (!host.hidden) { host.hidden = true; host.innerHTML = ''; host._idx = -1; }
+      return;
+    }
+    if (host.hidden || host._idx !== NE.idx || host._lid !== (L.id | 0)) {
+      neBuild(host, L, NE.idx);
+      host.hidden = false;
+    }
+    nePaint(host, L, NE.idx);
+  }
+  // ONE input branch, delegated on the panel host so it survives every card
+  // rebuild — the documented rule for a control on a re-rendered surface.
+  function neInput(E, el) {
+    const host = el.closest('.v2-neinline'); if (!host || !NE) return false;
+    const L = _ambLayerByKey && _ambLayerByKey(E, 'v2:' + NE.id);
+    if (!L || !L.part || L.part.kind !== 'recorded') return false;
+    const p = L.part, n = p.notes[NE.idx]; if (!n) return false;
+    const sf = el.getAttribute('data-sf');
+    const g = neGrid(L);
+    const v = parseInt(el.value, 10); if (!Number.isFinite(v)) return true;
+    if (sf === 'midi') n.midi = clamp(v, 0, 127);
+    else if (sf === 'pos') n.t = clamp(v / g.gridN, 0, 0.99999);
+    else if (sf === 'len') n.dur = Math.max(0.001, v / g.gridN);
+    // A field set back to what the layer would have done is DELETED — absent is
+    // the one representation of "the layer decides", so a note never carries a
+    // value that merely agrees with its layer.
+    else if (sf === 'vel') { if (v === 100) delete n.vel; else n.vel = v; }
+    else if (sf === 'glide') { if (v <= 0) delete n.glide; else n.glide = v; }
+    else if (sf === 'atk' || sf === 'dec' || sf === 'sus' || sf === 'rel') n[sf] = v;
+    else return false;
+    const t = n.t, midi = n.midi;
+    try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+    try { E.getCfg(); } catch (e) {}          // normalize: coerce, prune, RE-SORT
+    // The array is new and re-sorted, so the note is re-found by WHAT IT IS.
+    NE.idx = nearestNote(p.notes, t, midi);
+    host._idx = NE.idx;                        // no rebuild: the slider is under a finger
+    try { drawPartViz(host.closest('.v2-layer'), L, E); } catch (e) {}
+    nePaint(host, L, NE.idx);
+    return true;
+  }
+  function neAct(E, b) {
+    const host = b.closest('.v2-neinline'); if (!host || !NE) return false;
+    const L = _ambLayerByKey && _ambLayerByKey(E, 'v2:' + NE.id);
+    if (!L || !L.part) return false;
+    const p = L.part, act = b.getAttribute('data-na'), n = p.notes[NE.idx];
+    const card = host.closest('.v2-layer');
+    const redraw = () => { try { drawPartViz(card, L, E); } catch (e) {} };
+    if (act === 'done') { NE = null; redraw(); return true; }
+    if (act === 'rm') {
+      if (n) {
+        p.notes.splice(NE.idx, 1);
+        try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+        try { E.getCfg(); } catch (e) {}
+        try { if (typeof showToast === 'function') showToast('Note removed \u2014 ' + p.notes.length + ' left.', { ms: 3000 }); } catch (e) {}
+      }
+      NE = null; redraw(); return true;
+    }
+    if (act === 'env' && n) {
+      delete n.atk; delete n.dec; delete n.sus; delete n.rel;
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      try { E.getCfg(); } catch (e) {}
+      host._idx = -1;                          // a deliberate rebuild: nothing is being dragged
+      neSync(card, L, E); redraw(); return true;
+    }
+    if (act === 'hear') { try { V2.preview(E, L); } catch (e) {} return true; }
+    return false;
   }
 
   const RHYTHM_OPTS = [['pulse', 'Pulse — evenly'], ['euclid', 'Pattern — a grid you edit'],
@@ -2897,14 +3850,29 @@
   // this list against the rendered groups in BOTH directions — a group with no
   // button is unreachable, a button with no group opens nothing (the Overview
   // popover-family precedent, §5i).
-  const GRPS = ['Instrument', 'Envelope', 'Part', 'Rhythm', 'Pitch', 'Voicing',
-                'Shape', 'Motion', 'Mix', 'Mod', 'Space', 'FX'];
+  // "Content", not "Part" — "Part" already means the ARRANGEMENT's parts
+  // (Verse/Chorus: the ⇶ Parts view, the part tabs, and the ⟲ N × part badge
+  // on this very card), and one word for two mechanisms is how a control gets
+  // misread. The DATA keys stay `part.*` for save-compat (the naming rule).
+  const GRPS = ['Instrument', 'Content', 'Pitch', 'Shape', 'Mix', 'FX'];
   // TAB CLUSTER — rows sharing a `data-v2tab` become ONE tab in the sheet.
   // Used only where a "parameter" is genuinely plural (an FX stage and its own
   // params, the speech source, the Notes door) or where bare labels collide.
   // Tags every <div in the fragment; only top-level pane children are ever
   // consulted, so the nested ones are inert.
   const tb = (name, html) => html.split('<div ').join('<div data-v2tab="' + name + '" ');
+  // A SUBSECTION INSIDE A TAB. `sub()` tags every row it wraps so the card's
+  // `v2-so-<id>` class reveals them; `disc()` is the row that does the
+  // revealing. Rows stay FLAT children of the group body — a wrapper div would
+  // fall out of `popTabbables` (not an `.ambient-ctrl`) and then show under
+  // EVERY tab, which is what keeps the drawing visible and would be exactly
+  // wrong here.
+  const subrows = (id, html) => html.split('class="ambient-ctrl').join('class="ambient-ctrl v2-sub v2-sub-' + id);
+  const disc = (id, label, hint, when) =>
+    '<div class="ambient-ctrl v2-disc"' + (when ? ' data-v2when="' + when + '"' : '') + '>' +
+      '<label>' + esc(label) + '</label>' +
+      '<button type="button" class="ambient-seg v2-discbtn" data-disc="' + id + '">\u25b8 Show</button>' +
+      '<span class="ambient-hint">' + esc(hint) + '</span></div>';
   const grpOpen = (title, def, body) =>
     '<div class="ambient-grp" data-v2grp="' + esc(title) + '"' +
       (def ? ' data-v2def="1"' : '') + '>' +
@@ -2944,13 +3912,43 @@
           '</button>').join('') + '</div>' +
         // ── INSTRUMENT — what makes the sound ─────────────────────────────
         grpOpen('Instrument', true,
-          sel(L, 'instrument.voice', 'Voice', i.voice,
-              [['synth', 'Synth — pitched'], ['kit', 'Drum kit — lanes'], ['speech', 'Speech — words']]) +
-          // SPEECH. The TTS voice is `instrument.speechVoice`, NOT `voice` —
-          // that one is the instrument. `_ambVoiceChoices` reads `L.voice`
-          // meaning the TTS one, so it gets a shim.
-          sel(L, 'instrument.speechVoice', 'Spoken by', i.speechVoice || '',
-              speechVoiceOpts(i.speechVoice || ''), 'voice:speech') +
+          // "Tone type", not "Voice" — it names the KIND of sound, and the row
+          // below it is the sound itself, whose options this narrows. Called
+          // "Voice" it read as a peer of "Tone" rather than its parent, and it
+          // also collided with the TTS voice, which is a different thing again
+          // (`instrument.speechVoice`).
+          // "Live" — the voice it is playing right NOW, as against the Tone set
+          // below, which schedules voices on the bar clock. The TYPE lives in
+          // this tab too: it is the question above "which tone", not a peer of
+          // it, and as its own tab it was a tab you had to visit to find out
+          // what the next one would offer.
+          tb('Live',
+          sel(L, 'instrument.voice', 'Tone type', i.voice,
+              [['synth', 'Synth — pitched'], ['kit', 'Drum kit — lanes'], ['speech', 'Speech — words']])) +
+          // ONE "Tone" ROW, CONSTRAINED BY THE TYPE ABOVE IT. It used to be
+          // three separate rows — Tone (synth), Kit (drums), Spoken by (speech)
+          // — one per type, so the list WAS constrained and nothing said so:
+          // in a tabbed sheet you saw a "Tone" tab that had nothing to do with
+          // the kit you had chosen. One question, one control, options that
+          // change. The FIELD still differs per type (`instrument.tone` /
+          // `.kit` / `.speechVoice`) — `instrument.voice` forces a full
+          // re-render, so the row is always built for the current type.
+          // (The TTS voice is `instrument.speechVoice`, NOT `voice`: that one
+          // is the instrument. `_ambVoiceChoices` reads `L.voice` meaning the
+          // TTS one, so it gets a shim.)
+          (function () {
+            const t3 = (i.voice === 'kit')
+              ? { f: 'instrument.kit', opts: kitOptions(i.kit), cur: i.kit, hint: 'which kit the lanes play' }
+              : ((i.voice === 'speech')
+                ? { f: 'instrument.speechVoice', opts: speechVoiceOpts(i.speechVoice || ''), cur: i.speechVoice || '', hint: 'who says the words' }
+                : { f: 'instrument.tone', opts: null, cur: i.tone, hint: 'the voice it plays with' });
+            const body = t3.opts
+              ? t3.opts.map(o => '<option value="' + esc(o[0]) + '"' + (t3.cur === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('')
+              : toneOptions(i.tone);
+            return '<div data-v2tab="Live" class="ambient-ctrl"><label for="' + uid(L, t3.f) + '">Tone</label>' +
+              '<select id="' + uid(L, t3.f) + '" class="ambient-select v2-f" data-f="' + t3.f + '">' + body + '</select>' +
+              '<span class="ambient-hint">' + esc(t3.hint) + '</span></div>';
+          })() +
           // WHERE THE WORDS COME FROM. The source list is v1's own
           // `_AMB_LEARN_SOURCES`, read by id, so the two can never offer
           // different sources; `paste` is the no-network case and is what the
@@ -2988,7 +3986,6 @@
               '<button type="button" class="ambient-seg v2-speechwrite">✍ Write</button>' +
               '<button type="button" class="ambient-seg v2-speechgen">🎲 Make some up</button>' +
             '</span><span class="ambient-hint v2-speechcount"></span></div>' +
-          sel(L, 'instrument.kit', 'Kit', i.kit, kitOptions(i.kit), 'voice:kit') +
           // THE SYNTH-KIT EDITOR — role tabs, per-voice params, roll one drum,
           // hear it. v1's own `_ambSynthKitUi`, and its handlers resolve the
           // layer through `_ambCardKey` → `_ambLayerByKey`, both of which have
@@ -3001,20 +3998,44 @@
             ? ('<div data-v2tab="Synth kit" class="ambient-ctrl v2-skrow" data-v2when="voice:kit;kit:synth">' +
                  _ambSynthKitUi(L).replace(' style="display:none"', '') + '</div>')
             : '') +
-          '<div class="ambient-ctrl" data-v2when="voice:synth"><label for="' + uid(L, 'instrument.tone') + '">Tone</label>' +
-            '<select id="' + uid(L, 'instrument.tone') + '" class="ambient-select v2-f" data-f="instrument.tone">' + toneOptions(i.tone) + '</select>' +
-            '<span class="ambient-hint"></span></div>' +
-          st(L, 'instrument.register', 'Register', i.register, 1, 8, 'octave', 'voice:synth') +
+          // REGISTER IS IN THE SHEET HEADER — see `popOpen`. It is the one
+          // control you reach for while listening to something else on the
+          // card, so it sits where it is always to hand rather than behind a
+          // tab. (A move is a delete plus an add: it is gone from here.)
           // SCHEDULED TONE — cycle the voice on the BAR clock (4 bars saw, then
           // 4 bars sine, repeat). v1's own builder, and its handler is delegated
           // on the panel host resolving the layer through `_ambCardKey`, which
           // falls back to `[data-phkey]` — a v2 card has carried that since
           // slice 5, so this works with no wiring here either.
           ((typeof _ambToneSeqBoxHtml === 'function')
-            ? ('<div class="ambient-ctrl ambient-toneseq-ctrl" data-v2when="voice:synth"><label>Tone cycle</label>' +
+            ? ('<div class="ambient-ctrl ambient-toneseq-ctrl" data-v2when="voice:synth"><label>Tone set</label>' +
                  '<div class="ambient-toneseq-box">' + _ambToneSeqBoxHtml(L) + '</div>' +
                  '<span class="ambient-hint">bar-clocked voice changes</span></div>')
-            : '')
+            : '') +
+          // THE ENVELOPE IS PART OF THE INSTRUMENT — how the voice responds
+          // is not a peer of the voice itself. It was 4 rows pretending to be
+          // a top-level group beside FX's 47.
+          // TWO SUBSECTIONS INSIDE LIVE, both folded. They were tabs of their
+          // own, which put nine rows one press away from a sheet whose first
+          // question is "which tone" — and the envelope is not a peer of the
+          // voice, it is how that voice behaves.
+          tb('Live',
+            disc('env', 'Envelope', 'attack, decay, sustain, release') +
+            subrows('env',
+              sl(L, 'instrument.attack', 'Attack', i.attack, 0, 8000, 'ms') +
+              sl(L, 'instrument.decay', 'Decay', num(i.decay, 200), 0, 8000, 'ms') +
+              sl(L, 'instrument.sustain', 'Sustain', num(i.sustain, 70), 0, 100, '%') +
+              sl(L, 'instrument.release', 'Release', i.release, 0, 12000, 'ms')) +
+            // FILTER, RESONANCE, FINE, GLIDE AND TRIM ARE THE VOICE, not the mix.
+            // They sat in Mix, which is why that group held nine rows of two
+            // different questions: how this layer SOUNDS and where it SITS.
+            disc('vox', 'Voice detail', 'filter, tuning, glide, trim') +
+            subrows('vox',
+              sl(L, 'cutoff', 'Filter', num(L.cutoff, 100), 0, 100, 'cutoff — 100 is fully open') +
+              sl(L, 'reso', 'Resonance', num(L.reso, 0), 0, 100, 'filter peak') +
+              sl(L, 'fine', 'Fine', num(L.fine, 0), -100, 100, 'cents — detune the voice') +
+              sl(L, 'portamento', 'Glide', num(L.portamento, 0), 0, 2000, 'ms between notes') +
+              sl(L, 'voiceTrim', 'Voice trim', num(L.voiceTrim, 0), -24, 12, 'dB — tame a hot voice')))
         ) +
         // ── ENVELOPE — the instrument's shape over time ───────────────────
         // Split out when the scheduled-tone row landed: Instrument was 456px of
@@ -3022,22 +4043,138 @@
         // own right on any synth. (`decay` and `sustain` were stored and
         // threaded to `_ambApplyAdsr` from slice 13 with no control at all —
         // the reachability rule broken quietly for eight slices.)
-        grpOpen('Envelope', false,
-          sl(L, 'instrument.attack', 'Attack', i.attack, 0, 8000, 'ms') +
-          sl(L, 'instrument.decay', 'Decay', num(i.decay, 200), 0, 8000, 'ms') +
-          sl(L, 'instrument.sustain', 'Sustain', num(i.sustain, 70), 0, 100, '%') +
-          sl(L, 'instrument.release', 'Release', i.release, 0, 12000, 'ms')
-        ) +
         // ── PART — live or recorded, and how long a pass is ───────────────
-        grpOpen('Part', true,
+        grpOpen('Content', true,
           // FIRST, so pressing a seed button and seeing the result is one glance
           // rather than a toast and a guess.
-          partVizHtml() +
-          // "Part type", not "Part": the group is already called Part, so a tab
-          // and a row both reading "Part" inside it named nothing. This row is
-          // the KIND — live or recorded — and the tab takes its name from the
-          // label, so renaming the label renames both.
-          sel(L, 'part.kind', 'Part type', p.kind, [['live', 'Live — made as it plays'], ['recorded', 'Recorded — notes read back']]) +
+          partVizHtml(L) +
+          // MATERIAL FIRST. It is the question the rest of the group qualifies —
+          // what this part is MADE OF — and it was eighth in the tab strip,
+          // behind Cycle, Bars, Plays and Transpose, which are all answers
+          // ABOUT a part you have already made.
+          // ONE row, not one per kind. Two elements sharing a class where only
+          // one is ever visible is a trap for every future querySelector — the
+          // first probe to touch it grabbed the hidden one and reported the
+          // button as unreachable.
+          '<div data-v2tab="Material" class="ambient-ctrl v2-notesrow"><label>Material</label>' +
+            '<span class="ambient-seg-row">' +
+              '<button type="button" class="ambient-seg v2-compose" title="Written by hand — opens the composer grid.">✎ Composed</button>' +
+              '<button type="button" class="ambient-seg v2-adopt" title="A phrase from the bank — opens the picker.">♪ Phrase</button>' +
+              // A LIVE door beside the three recorded ones: "where do the notes
+              // come from" is the question this row answers, and "rolled" is
+              // one of the answers. Press again to re-roll.
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="sustain" title="A held note or chord, one per cycle — the pad shape. Voices makes it mono or poly.">▬ Sustained</button>' +
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="arp" title="Sweep the chord one tone per onset — an arpeggio. The rhythm grid sets the speed.">⟳ Arpeggio</button>' +
+              '<button type="button" class="ambient-seg v2-rollrun" title="A rolled, syncopated line — live. Press again for a new roll; auditions straight away.">🎲 Rolled</button>' +
+            '</span>' +
+            '<span class="ambient-hint v2-notecount"></span></div>' +
+          // SEED LIKE A v1 LAYER — one button per type. Its own row rather than
+          // more buttons on the one above: that row answers "recorded from
+          // where", these answer "what shape is the live part", and seven more
+          // chips in there would have made a wall of thirteen.
+          // THE BANK, ON THE CARD. Saving a take is only half of it: the point
+          // is to come back to one, and to put the ones you want in an order.
+          // This is the SAME bank the compose grid saves to and `partSeqs`
+          // maps to changes by name — one list, not a private copy.
+          '<div data-v2tab="Saved" class="ambient-ctrl v2-bankrow"><label>Saved</label>' +
+            '<span class="v2-bank">' +
+              (bankList().length
+                ? bankList().map((b2) =>
+                    '<span class="v2-bankit" data-bi="' + b2.i + '">' +
+                      '<button type="button" class="v2-bkload" data-bi="' + b2.i + '" title="Play this one on this layer">' +
+                        esc(b2.name) + '<span class="v2-bkn">' + b2.n + '</span></button>' +
+                      '<button type="button" class="v2-bkup" data-bi="' + b2.i + '" aria-label="Move up" title="Move up">\u25b4</button>' +
+                      '<button type="button" class="v2-bkdn" data-bi="' + b2.i + '" aria-label="Move down" title="Move down">\u25be</button>' +
+                      '<button type="button" class="v2-bkdel" data-bi="' + b2.i + '" aria-label="Delete" title="Delete from the bank">\u2715</button>' +
+                    '</span>').join('')
+                : '<span class="ambient-hint">Nothing saved yet \u2014 press \ud83d\udcbe Save this take above the drawing, or compose a phrase.</span>') +
+            '</span>' +
+            '<span class="ambient-hint">these are phrases: any of them can be mapped to a part or a chord</span></div>' +
+          '<div data-v2tab="Seed like" class="ambient-ctrl"><label>Seed like</label>' +
+            '<span class="ambient-seg-row">' +
+            ((V2 && V2.v1Seeds) || []).map(([ty, lab]) =>
+              '<button type="button" class="ambient-seg v2-seedv1" data-v1="' + ty + '"' +
+              ' title="Seed this part the way adding a v1 ' + lab + ' seeds one — its rhythm, its pitch shape and its length. Your instrument is left alone.">' +
+              lab + '</button>').join('') +
+            '</span>' +
+            '<span class="ambient-hint">the content only — the voice you chose stays</span></div>' +
+          // "Source", not "Part type" — and the buttons that FILL the part sit
+          // directly under it as "Material". They were a separate row called
+          // "Notes from", which named a place rather than a thing and left the
+          // card asking the same question twice: the kind select said where the
+          // notes come from in the abstract, and the button row said it again
+          // concretely. One question now — what is this part made of — asked as
+          // a source and answered by a material.
+          // ── RHYTHM — when the notes happen. FOLDED INTO CONTENT (user:
+          // "rhythm params should be in Content since it's editing/defining
+          // content") — the group became three TABS of this sheet, the same
+          // fold that took twelve groups to seven. The knob rows cluster under
+          // ONE Rhythm tab (the kind gates keep the visible set small), the two
+          // grids under Pattern, and Feel keeps its own.
+          tb('Rhythm',
+          '<div class="ambient-ctrl" data-v2when="kind:recorded"><label>Rhythm</label>' +
+            '<span class="ambient-hint">These shape a <b>Generated</b> part, so they are greyed \u2014 this one is Fixed, its notes already placed. ' +
+            'Switch Source to Generated to make them live, or edit notes in the drawing above.</span></div>' +
+
+          // `rhythmShown`, not `r.kind` — 'drawn' matches no option, and a
+          // <select> with no matching option does not render empty, it silently
+          // falls back to the FIRST one ("Pulse"). `applyGate` corrects it a
+          // moment later, but the markup should be right on its own rather than
+          // relying on a later pass to repair it.
+          // "Rhythm type", matching "Tone type" — bare "Rhythm" also named the
+          // tab it sits in, one word for two things.
+          sel(L, 'part.rhythm.kind', 'Rhythm type', rhythmShown(r.kind), RHYTHM_OPTS, 'kind:live;voice:synth') +
+          st(L, 'part.rhythm.n', 'Onsets', r.n, 1, 64, 'per cycle', 'kind:live;voice:synth;rhythm:pulse') +
+          sl(L, 'part.rhythm.chance', 'Chance', r.chance, 0, 100, '% per step', 'kind:live;voice:synth;rhythm:chance') +
+          sl(L, 'part.rhythm.syncop', 'Syncopate', num(r.syncop, 0), 0, 100, 'straight → offbeat',
+             'kind:live;voice:synth;rhythm:chance')
+          ) +
+          // The knobs that DESCRIBE the grid live BESIDE it — with Rhythm type
+          // set to Pattern, the pattern's own params were a tab away.
+          tb('Pattern',
+          st(L, 'part.rhythm.steps', 'Steps', r.steps, 1, 64, 'grid', 'kind:live') +
+          st(L, 'part.rhythm.pulses', 'Pulses', r.pulses, 1, 64, 'hits', 'kind:live;voice:synth;rhythm:euclid,drawn') +
+          st(L, 'part.rhythm.rotate', 'Rotate', r.rotate, 0, 63, 'shift', 'kind:live;voice:synth;rhythm:euclid,drawn') +
+          st(L, 'part.rhythm.voices', 'Euclid voices', num(r.voices, 1), 1, 8, 'interlocking patterns',
+             'kind:live;voice:synth;rhythm:euclid') +
+          // Re-rolls the pattern every cycle instead of repeating it — v1's own
+          // asymmetric rule (drops harder than it adds), so a varied v2 pattern
+          // and a varied v1 one wander the same way.
+          sl(L, 'part.rhythm.vary', 'Vary', num(r.vary, 0), 0, 100, 'as drawn → re-rolled each cycle',
+             'kind:live;rhythm:euclid,drawn') +
+          // The grid spans the whole row: at 390px a 16-step grid inside the
+          // 3-column `.ambient-ctrl` label gutter gives each cell ~14px.
+          // NOT an inline `display:block` — `applyGate` clears the inline style
+          // to SHOW a row, which would wipe it. The block layout is a class rule
+          // (`.ambient-ctrl.v2-cellrow`), so hiding sets inline `none` and
+          // showing falls back to the class. Inline styles and a gate that owns
+          // `display` do not mix.
+          '<div class="ambient-ctrl v2-cellrow" data-v2when="kind:live;voice:synth;rhythm:euclid,drawn">' +
+            '<label>Pattern<button type="button" class="ambient-regen v2-regen" ' +
+              'title="Back to the generated pattern — clears your edits">↻</button></label>' +
+            cellsHtml(L) +
+            ((L.part.pitch && L.part.pitch.kind === 'drawn') ? noteRowHtml(L) : '') +
+            '<span class="ambient-hint v2-cellhint"></span></div>' +
+          '<div class="ambient-ctrl v2-cellrow v2-lanerow" data-v2when="kind:live;voice:kit">' +
+            '<label>Drums</label>' + lanesHtml(L) +
+            '<span class="ambient-hint v2-lanehint"></span></div>'
+          ) +
+          // THE TIMING HALF OF THE OLD 'Motion' — swing, accent, tightness and
+          // humanize are all about WHEN a note lands, which is this group's
+          // question. The other half went to Shape.
+          tb('Feel',
+            sl(L, 'swing', 'Swing', num(L.swing, 0), 0, 100, 'straight → shuffle', 'kind:live') +
+          sl(L, 'part.rhythm.rateVar', 'Rate var', num((L.part.rhythm || {}).rateVar, 0), 0, 100,
+             'steady → rushes — replays per take', 'kind:live;voice:synth') +
+          sl(L, 'accent', 'Accent', num(L.accent, 0), 0, 100, 'flat → dynamic') +
+          sl(L, 'humanize', 'Humanize', num(L.humanize, 0), 0, 100, 'timing jitter — never replays') +
+          '<div class="ambient-ctrl"><label>Tight</label>' +
+            '<button type="button" class="ambient-seg v2-tighttoggle' + (L.tight ? ' on' : '') + '">' +
+              (L.tight ? 'On — clipped' : 'Off') + '</button>' +
+            '<span class="ambient-hint">cut each note short of the next</span></div>') +
+          sel(L, 'part.kind', 'Source', p.kind,
+              [['live', 'Generated — rules, re-made as it plays'],
+               ['recorded', 'Fixed — a set of notes you can edit']]) +
           sel(L, 'part.clock', 'Cycle', p.clock === 'free' ? 'free' : 'bars',
               [['bars', 'Bars — follows the grid'], ['free', 'Free — its own clock']]) +
           (L.lenSync
@@ -3072,7 +4209,10 @@
           // What a RECORDED part does when the chords move under it. Inert on a
           // live part, which re-resolves its pitches every cycle by definition —
           // the same reason v1 marks it inert while a layer is generating.
-          sel(L, 'harmony', 'Harmony', L.harmony || 'fixed',
+          // "Follows changes", not "Harmony": `L.harmony` is how a RECORDED part
+          // tracks the chords, while `part.pitch.harm` is interval doubling —
+          // two mechanisms, and they were both called Harmony on the same card.
+          sel(L, 'harmony', 'Follows changes', L.harmony || 'fixed',
               [['fixed', 'Fixed — as written'], ['diatonic', 'Follow the key'], ['chordlock', 'Lock to the chord']],
               'kind:recorded') +
           sel(L, 'speed', 'Speed', String(num(L.speed, 1)),
@@ -3081,36 +4221,6 @@
           // THE DOOR, ON THE CARD. Selecting "Recorded" from the dropdown used to
           // be a dead end: nothing authors notes, so the part was silent with no
           // way forward and no explanation. (rule 6: name the door.)
-          // ONE row, not one per kind. Two elements sharing a class where only
-          // one is ever visible is a trap for every future querySelector — the
-          // first probe to touch it grabbed the hidden one and reported the
-          // button as unreachable.
-          '<div data-v2tab="Notes from" class="ambient-ctrl v2-notesrow"><label>Notes from</label>' +
-            '<span class="ambient-seg-row">' +
-              '<button type="button" class="ambient-seg v2-compose">✎ Compose…</button>' +
-              '<button type="button" class="ambient-seg v2-capture">' +
-                (p.kind === 'recorded' ? '❄ Re-take live' : '❄ The live part') + '</button>' +
-              '<button type="button" class="ambient-seg v2-adopt">♪ A phrase…</button>' +
-              // A LIVE door beside the three recorded ones: "where do the notes
-              // come from" is the question this row answers, and "rolled" is
-              // one of the answers. Press again to re-roll.
-              '<button type="button" class="ambient-seg v2-mkpart" data-mk="sustain" title="A held note or chord, one per cycle — the pad shape. Voices makes it mono or poly.">▬ Sustained</button>' +
-              '<button type="button" class="ambient-seg v2-mkpart" data-mk="arp" title="Sweep the chord one tone per onset — an arpeggio. The rhythm grid sets the speed.">⟳ Arpeggio</button>' +
-              '<button type="button" class="ambient-seg v2-rollrun" title="Roll a riff — a syncopated line, live and re-rollable. Auditions straight away.">🎲 Roll a run</button>' +
-            '</span>' +
-            '<span class="ambient-hint v2-notecount"></span></div>' +
-          // SEED LIKE A v1 LAYER — one button per type. Its own row rather than
-          // more buttons on the one above: that row answers "recorded from
-          // where", these answer "what shape is the live part", and seven more
-          // chips in there would have made a wall of thirteen.
-          '<div data-v2tab="Seed like" class="ambient-ctrl"><label>Seed like</label>' +
-            '<span class="ambient-seg-row">' +
-            ((V2 && V2.v1Seeds) || []).map(([ty, lab]) =>
-              '<button type="button" class="ambient-seg v2-seedv1" data-v1="' + ty + '"' +
-              ' title="Seed this part the way adding a v1 ' + lab + ' seeds one — its rhythm, its pitch shape and its length. Your instrument is left alone.">' +
-              lab + '</button>').join('') +
-            '</span>' +
-            '<span class="ambient-hint">the part only — the voice you chose stays</span></div>' +
           // THE COMPOSE DOCK. v1 resolves it live by key
           // (`.ambient-seedgrid-slot[data-sgkey] .ambient-seedgrid-dockhost`) —
           // a panel rebuild recreates the card, so a stored node goes stale.
@@ -3138,48 +4248,9 @@
             '</span><span class="ambient-hint">what you draw is what it plays</span></div>' +
           '</div>' +
           ((p.kind === 'recorded' && !(p.notes || []).length)
-            ? '<div data-v2tab="Notes from" class="ambient-ctrl" data-v2when="kind:recorded"><label></label>' +
-              '<span class="ambient-hint" style="color:#f6ad55">Nothing recorded yet — take the live part, adopt a phrase, or switch Part back to Live.</span></div>'
+            ? '<div data-v2tab="Material" class="ambient-ctrl" data-v2when="kind:recorded"><label></label>' +
+              '<span class="ambient-hint" style="color:#f6ad55">Nothing here yet — press 🔒 Lock a take above the drawing, compose a phrase, or set Source back to Generated.</span></div>'
             : '')
-        ) +
-        // ── RHYTHM — when the notes happen ────────────────────────────────
-        grpOpen('Rhythm', true,
-          // `rhythmShown`, not `r.kind` — 'drawn' matches no option, and a
-          // <select> with no matching option does not render empty, it silently
-          // falls back to the FIRST one ("Pulse"). `applyGate` corrects it a
-          // moment later, but the markup should be right on its own rather than
-          // relying on a later pass to repair it.
-          sel(L, 'part.rhythm.kind', 'Rhythm', rhythmShown(r.kind), RHYTHM_OPTS, 'kind:live;voice:synth') +
-          st(L, 'part.rhythm.n', 'Onsets', r.n, 1, 64, 'per cycle', 'kind:live;voice:synth;rhythm:pulse') +
-          st(L, 'part.rhythm.steps', 'Steps', r.steps, 1, 64, 'grid', 'kind:live') +
-          st(L, 'part.rhythm.pulses', 'Pulses', r.pulses, 1, 64, 'hits', 'kind:live;voice:synth;rhythm:euclid,drawn') +
-          st(L, 'part.rhythm.rotate', 'Rotate', r.rotate, 0, 63, 'shift', 'kind:live;voice:synth;rhythm:euclid,drawn') +
-          st(L, 'part.rhythm.voices', 'Euclid voices', num(r.voices, 1), 1, 8, 'interlocking patterns',
-             'kind:live;voice:synth;rhythm:euclid') +
-          sl(L, 'part.rhythm.chance', 'Chance', r.chance, 0, 100, '% per step', 'kind:live;voice:synth;rhythm:chance') +
-          sl(L, 'part.rhythm.syncop', 'Syncopate', num(r.syncop, 0), 0, 100, 'straight → offbeat',
-             'kind:live;voice:synth;rhythm:chance') +
-          // Re-rolls the pattern every cycle instead of repeating it — v1's own
-          // asymmetric rule (drops harder than it adds), so a varied v2 pattern
-          // and a varied v1 one wander the same way.
-          sl(L, 'part.rhythm.vary', 'Vary', num(r.vary, 0), 0, 100, 'as drawn → re-rolled each cycle',
-             'kind:live;rhythm:euclid,drawn') +
-          // The grid spans the whole row: at 390px a 16-step grid inside the
-          // 3-column `.ambient-ctrl` label gutter gives each cell ~14px.
-          // NOT an inline `display:block` — `applyGate` clears the inline style
-          // to SHOW a row, which would wipe it. The block layout is a class rule
-          // (`.ambient-ctrl.v2-cellrow`), so hiding sets inline `none` and
-          // showing falls back to the class. Inline styles and a gate that owns
-          // `display` do not mix.
-          '<div class="ambient-ctrl v2-cellrow" data-v2when="kind:live;voice:synth;rhythm:euclid,drawn">' +
-            '<label>Pattern<button type="button" class="ambient-regen v2-regen" ' +
-              'title="Back to the generated pattern — clears your edits">↻</button></label>' +
-            cellsHtml(L) +
-            ((L.part.pitch && L.part.pitch.kind === 'drawn') ? noteRowHtml(L) : '') +
-            '<span class="ambient-hint v2-cellhint"></span></div>' +
-          '<div class="ambient-ctrl v2-cellrow v2-lanerow" data-v2when="kind:live;voice:kit">' +
-            '<label>Drums</label>' + lanesHtml(L) +
-            '<span class="ambient-hint v2-lanehint"></span></div>'
         ) +
         // ── PITCH — what the notes are, and how long they ring ────────────
         grpOpen('Pitch', true,
@@ -3205,6 +4276,8 @@
           st(L, 'part.pitch.voices', 'Voices', t.voices, 1, 9, 'notes per onset', 'kind:live;voice:synth;pitch:chord,stack') +
 
           st(L, 'part.pitch.degree', 'Note', t.degree, 1, 12, 'source tone', 'kind:live;voice:synth;pitch:fixed,stack,walk,series') +
+          sl(L, 'part.pitch.roam', 'Roam', num(t.roam, 0), 0, 100, 'how often the Note wanders — replays per take',
+             'kind:live;voice:synth;pitch:fixed,stack') +
           sel(L, 'part.pitch.dir', 'Direction', t.dir || 'up',
               [['up', 'Up'], ['down', 'Down'], ['updown', 'Up & down']], 'kind:live;voice:synth;pitch:series') +
           st(L, 'part.pitch.span', 'Span', t.span, 1, 24, 'how far it wanders', 'kind:live;voice:synth;pitch:walk') +
@@ -3215,6 +4288,8 @@
              'kind:live;voice:synth;pitch:walk') +
           sl(L, 'part.pitch.stutter', 'Stutter', num(t.stutter, 0), 0, 100, 'walk → repeats',
              'kind:live;voice:synth;pitch:walk') +
+          sl(L, 'part.pitch.drift', 'Pitch vary', num(t.drift, 0), 0, 100, 'octave drift — replays per take',
+             'kind:live;voice:synth;pitch:fixed,series,walk,chance') +
           // HARMONY PARTS — chips, because it is a SET, not a choice: a line can
           // carry a 3rd and a 6th at once, which is what "multiple-part
           // harmonies" means. Intervals are SOURCE TONES, so they stay in the
@@ -3227,14 +4302,12 @@
              'kind:live;voice:synth;pitch:series') +
           sl(L, 'part.pitch.randomness', 'Scatter', num(t.randomness, 0), 0, 100, 'ordered → jumps about',
              'kind:live;voice:synth;pitch:series') +
-          sl(L, 'part.shape.lenRatio', 'Length', sh.lenRatio, 1, 400, '% of the onset span', 'kind:live')
-        ) +
-        // ── VOICING — how a CHORD is laid out, once its notes are known ────
-        // Split out of Pitch when Salt re-voice landed and the card measured
-        // 1422px: Pitch had become two questions (which notes, and how they are
-        // arranged), and the accretion check refused the sum for the third time
-        // in this campaign.
-        grpOpen('Voicing', false,
+          sl(L, 'part.shape.lenRatio', 'Length', sh.lenRatio, 1, 400, '% of the onset span', 'kind:live') +
+          // VOICING IS A SUB-QUESTION OF PITCH — how the chosen notes are
+          // stacked and spread. And Proximity moved here from Motion: it
+          // pulls each pick toward the previous one, which is a PITCH rule.
+          tb('Voicing',
+            sl(L, 'proximity', 'Proximity', num(L.proximity, 0), 0, 100, 'how close notes stay', 'kind:live') +
           sel(L, 'part.pitch.chordMode', 'Voicing', t.chordMode || '',
               [['', 'Simple — stack the tones'], ['chaos', 'Chaos'], ['chords', 'Chords'],
                ['chordsplus', 'Chords+'], ['monk', 'Monk']], 'kind:live;voice:synth;pitch:chord') +
@@ -3256,8 +4329,13 @@
           '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth;pitch:chord"><label>Salt re-voice</label>' +
             '<button type="button" class="ambient-seg v2-salttoggle' + (L.followSalt ? ' on' : '') + '">' +
               (L.followSalt ? 'On — follows the colours' : 'Off — holds the chord') + '</button>' +
-            '<span class="ambient-hint v2-salthint"></span></div>'
+            '<span class="ambient-hint v2-salthint"></span></div>')
         ) +
+        // ── VOICING — how a CHORD is laid out, once its notes are known ────
+        // Split out of Pitch when Salt re-voice landed and the card measured
+        // 1422px: Pitch had become two questions (which notes, and how they are
+        // arranged), and the accretion check refused the sum for the third time
+        // in this campaign.
         // ── SHAPE — how each onset is PLAYED, once the notes are chosen ────
         // Split out of Pitch when strum landed: Pitch answers "which notes",
         // Shape answers "how they are struck", and the card measured 1467px
@@ -3277,7 +4355,16 @@
           sl(L, 'phrasing', 'Phrasing', num(L.phrasing, 0), 0, 100, 'even → shaped figures', 'kind:live;voice:synth') +
           sl(L, 'startVary', 'Start', num(L.startVary, 0), 0, 100, 'on the 1 → anywhere', 'kind:live') +
           sl(L, 'twist', 'Twist', num(L.twist, 0), 0, 100, 'steady → bursts', 'kind:live;voice:synth') +
-          sl(L, 'motion', 'Motion', num(L.motion, 0), 0, 100, 'detune wobble', 'kind:live;voice:synth')
+          // "Wobble", not "Motion": this is a detune wobble, and 'Motion' was
+          // also a top-level group — one word over two unrelated things.
+          sl(L, 'motion', 'Wobble', num(L.motion, 0), 0, 100, 'detune wobble', 'kind:live;voice:synth') +
+          // THE VARIANCE HALF OF THE OLD 'Motion' — rests, ghosts and the two
+          // scatters change WHAT each note is, which is what Shape asks.
+          tb('Variance',
+            sl(L, 'restProb', 'Rests', num(L.restProb, 0), 0, 100, '% of onsets dropped') +
+          sl(L, 'ghosts', 'Ghosts', num(L.ghosts, 0), 0, 100, 'quiet extra hits') +
+          sl(L, 'lenVary', 'Len vary', num(L.lenVary, 0), 0, 100, 'note-length scatter') +
+          sl(L, 'velVar', 'Vel var', num(L.velVar, 0), 0, 100, 'level scatter — replays per take'))
         ) +
         // ── MOTION — how the performance varies note to note ──────────────
         // v1 splits these out from Variance for a reason worth keeping:
@@ -3285,20 +4372,6 @@
         // Vel var is SEEDED on position-in-the-take, so the same take replays
         // the same dynamics. Both come from `_ambApplyAdsr`, so the semantics
         // are v1's rather than a second implementation.
-        grpOpen('Motion', false,
-          sl(L, 'proximity', 'Proximity', num(L.proximity, 0), 0, 100, 'how close notes stay', 'kind:live') +
-          sl(L, 'swing', 'Swing', num(L.swing, 0), 0, 100, 'straight → shuffle', 'kind:live') +
-          sl(L, 'accent', 'Accent', num(L.accent, 0), 0, 100, 'flat → dynamic') +
-          '<div class="ambient-ctrl"><label>Tight</label>' +
-            '<button type="button" class="ambient-seg v2-tighttoggle' + (L.tight ? ' on' : '') + '">' +
-              (L.tight ? 'On — clipped' : 'Off') + '</button>' +
-            '<span class="ambient-hint">cut each note short of the next</span></div>' +
-          sl(L, 'restProb', 'Rests', num(L.restProb, 0), 0, 100, '% of onsets dropped') +
-          sl(L, 'ghosts', 'Ghosts', num(L.ghosts, 0), 0, 100, 'quiet extra hits') +
-          sl(L, 'lenVary', 'Len vary', num(L.lenVary, 0), 0, 100, 'note-length scatter') +
-          sl(L, 'humanize', 'Humanize', num(L.humanize, 0), 0, 100, 'timing jitter — never replays') +
-          sl(L, 'velVar', 'Vel var', num(L.velVar, 0), 0, 100, 'level scatter — replays per take')
-        ) +
         // ── MIX — level, filtering, routing and stereo placement ──────────
         // These are the TREATMENTS: shared v1 fields the chain already reads, so
         // this group is a surface over machinery that exists rather than new
@@ -3309,42 +4382,15 @@
           // "Filter", not "Tone" — `instrument.tone` is the VOICE and this is the
           // filter cutoff. Two rows on one card labelled the same thing is the
           // naming rule's own failure mode; the audit flagged it as a duplicate.
-          sl(L, 'cutoff', 'Filter', num(L.cutoff, 100), 0, 100, 'cutoff — 100 is fully open') +
-          // `reso` was in the same position as decay/sustain: read by
-          // `_ambApplyLayerFilter`, ramp-able, and unreachable.
-          sl(L, 'reso', 'Resonance', num(L.reso, 0), 0, 100, 'filter peak') +
-          sl(L, 'fine', 'Fine', num(L.fine, 0), -100, 100, 'cents — detune the voice') +
-          sl(L, 'portamento', 'Glide', num(L.portamento, 0), 0, 2000, 'ms between notes') +
-          sl(L, 'voiceTrim', 'Voice trim', num(L.voiceTrim, 0), -24, 12, 'dB — tame a hot voice') +
           tb('EQ', sl(L, 'eq.low', 'EQ low', num((L.eq || {}).low, 0), -24, 24, 'dB') +
             sl(L, 'eq.mid', 'EQ mid', num((L.eq || {}).mid, 0), -24, 24, 'dB') +
-            sl(L, 'eq.high', 'EQ high', num((L.eq || {}).high, 0), -24, 24, 'dB'))
-        ) +
-        // ── MOD — the per-layer LFO matrix ────────────────────────────────
-        // v1's OWN builders (`_ambModTarget`, and `_ambShapeSel` inside it), so
-        // the shape vocabulary, the seq row and the custom-partials row are one
-        // implementation. Deliberately NOT v1's `_ambModUi`, which also emits
-        // the trance gate — v2 has that in FX as Chop, and two controls over one
-        // field is the duplication this card was just cleaned of.
-        grpOpen('Mod', false,
-          ((typeof _ambModTarget === 'function')
-            ? ('<div class="ambient-ctrl"><label for="ambient-v2-' + L.id + '-mod-sync">Rate timing</label>' +
-                 '<select id="ambient-v2-' + L.id + '-mod-sync" class="ambient-select">' +
-                   '<option value="free"' + (((L.mod || {}).sync !== 'sync') ? ' selected' : '') + '>Free (Hz)</option>' +
-                   '<option value="sync"' + (((L.mod || {}).sync === 'sync') ? ' selected' : '') + '>Sync (tempo)</option>' +
-                 '</select><span class="ambient-hint">free / sync</span></div>' +
-               _ambModTarget('v2-' + L.id, 'vca', 'VCA \u00b7 amplitude', 'tremolo', 30) +
-               _ambModTarget('v2-' + L.id, 'vco', 'VCO \u00b7 pitch', 'vibrato', 20) +
-               _ambModTarget('v2-' + L.id, 'vcf', 'VCF \u00b7 cutoff', 'sweep', 15))
-            : '')
-        ) +
-        // ── SPACE — where the layer sits, and where it is sent ────────────
-        // Split out of Mix when the envelope and filter controls landed: Mix
-        // would have been 12 visible rows, which the accretion check in
-        // `npm run test:ui` refuses by design. Mix is now the layer's OWN
-        // sound; Space is where it goes.
-        grpOpen('Space', false,
-          sl(L, 'revSend', 'Reverb', num(L.revSend, 0), 0, 100, 'send to the shared reverb') +
+            sl(L, 'eq.high', 'EQ high', num((L.eq || {}).high, 0), -24, 24, 'dB')) +
+          // SPACE AND MOD FOLD IN HERE. Mix is now one question — what happens
+          // to the layer after it is played: how loud, where it sits, where it
+          // is sent, and what moves. Space was split OUT of Mix when the voice
+          // rows landed here; with those gone to Instrument it fits again.
+          tb('Space',
+            sl(L, 'revSend', 'Reverb', num(L.revSend, 0), 0, 100, 'send to the shared reverb') +
           sel(L, 'bus', 'Bus', L.bus || 'a',
               [['a', 'A — the main path'], ['b', 'B'], ['c', 'C'], ['d', 'D']]) +
           sl(L, 'space', 'Width', num(L.space, 0), -100, 100, 'spread, or position in Pan mode') +
@@ -3364,7 +4410,20 @@
           // AREA FADE — how long this layer takes to fall silent when the area
           // sequence moves on. Read by `_ambAreaFadeMap`; carried by the v1
           // import since slice 12 and, until now, unreachable.
-          st(L, 'areaFadeMs', 'Area fade', num(L.areaFadeMs, 250), 0, 4000, 'ms leaving an area')
+          st(L, 'areaFadeMs', 'Area fade', num(L.areaFadeMs, 250), 0, 4000, 'ms leaving an area')) +
+          // MOD IS ITS OWN QUESTION — what MOVES. Inside the Space cluster it
+          // read as placement, which it is not.
+          tb('Mod',
+            ((typeof _ambModTarget === 'function')
+            ? ('<div class="ambient-ctrl"><label for="ambient-v2-' + L.id + '-mod-sync">Rate timing</label>' +
+                 '<select id="ambient-v2-' + L.id + '-mod-sync" class="ambient-select">' +
+                   '<option value="free"' + (((L.mod || {}).sync !== 'sync') ? ' selected' : '') + '>Free (Hz)</option>' +
+                   '<option value="sync"' + (((L.mod || {}).sync === 'sync') ? ' selected' : '') + '>Sync (tempo)</option>' +
+                 '</select><span class="ambient-hint">free / sync</span></div>' +
+               _ambModTarget('v2-' + L.id, 'vca', 'VCA \u00b7 amplitude', 'tremolo', 30) +
+               _ambModTarget('v2-' + L.id, 'vco', 'VCO \u00b7 pitch', 'vibrato', 20) +
+               _ambModTarget('v2-' + L.id, 'vcf', 'VCF \u00b7 cutoff', 'sweep', 15))
+            : ''))
         ) +
         // ── FX — the effect stages ────────────────────────────────────────
         // An effect's own parameters are gated on the effect being ENGAGED
@@ -3489,16 +4548,33 @@
     const rsel = card.querySelector('[data-f="part.rhythm.kind"]');
     if (rsel) { const want = rhythmShown(now.rhythm); if (rsel.value !== want) rsel.value = want; }
     card.querySelectorAll('[data-v2when]').forEach(row => {
-      const ok = String(row.getAttribute('data-v2when')).split(';').every(cl => {
+      // Clauses are judged SEPARATELY now, because two kinds of gating hide
+      // for two different reasons: an ALTERNATIVE (rhythm:euclid on a pulse
+      // part, voice:synth on a kit) is simply not this layer's control and
+      // hides; but a row whose ONLY failing clause is `kind:live` on a Fixed
+      // part is a control that WOULD apply if the part were Generated — hiding
+      // it read as "where did the rhythm params go" (twice), so it GREYS
+      // instead: visible, inert (`.v2-rowna`), teaching what it is for.
+      let kindOk = true, othersOk = true, wantsLive = false;
+      String(row.getAttribute('data-v2when')).split(';').forEach(cl => {
         const [piece, vals] = cl.split(':');
         const want = String(vals || '').split(',');
         const have = now[piece];
         // A piece may hold ONE value (kind, voice, rhythm…) or a SET of them
         // (`on`, the engaged FX). One clause form, both shapes.
-        return Array.isArray(have) ? have.some(v => want.indexOf(v) >= 0)
-                                   : want.indexOf(have) >= 0;
+        const pass = Array.isArray(have) ? have.some(v => want.indexOf(v) >= 0)
+                                         : want.indexOf(have) >= 0;
+        if (piece === 'kind') { kindOk = pass; wantsLive = want.indexOf('live') >= 0; }
+        else if (!pass) othersOk = false;
       });
-      row.style.display = ok ? '' : 'none';
+      // ONLY PARAMETER ROWS grey — a gated BUTTON (the take bar's 🎲 New
+      // take, kind:live) must still HIDE: greying leaked it onto recorded
+      // parts beside "Replace with a new take", two dice for one action
+      // (reported), and the dim styling is scoped to .ambient-ctrl anyway.
+      const na = othersOk && !kindOk && wantsLive && now.kind === 'recorded' &&
+        row.classList.contains('ambient-ctrl');
+      row.style.display = (othersOk && kindOk) || na ? '' : 'none';
+      row.classList.toggle('v2-rowna', na);
     });
     // A SOLOED LAYER MUST LOOK SOLOED. Monitoring state that can vanish while
     // its widget keeps state is the documented drum-solo bug; here solo lives in
@@ -3515,45 +4591,68 @@
     // while its widget keeps state gets reported as a bug. Written on every
     // gate pass, so an edit inside a group updates the head above it.
     const eng = now.on;
+    // SEVEN BUTTONS MUST SAY WHAT TWELVE DID. Folding groups costs summaries —
+    // the card's heads are a dashboard, and five of them just went away — so
+    // the survivors absorb what their new rows carry.
+    const onOf = (pairs) => pairs.filter(f2 => num(L[f2[0]], 0) > 0).map(f2 => f2[1]);
     const sums = {
-      Instrument: [i2 => i2.voice === 'kit' ? (L.instrument.kit || 'kit')
-                 : i2.voice === 'speech' ? 'speech'
-                 : (L.instrument.tone || 'default')][0](L.instrument || {}),
-      Envelope: 'A ' + ((L.instrument || {}).attack | 0) + ' \u00b7 R ' + ((L.instrument || {}).release | 0),
-      Part: (p.kind === 'recorded' ? (p.notes || []).length + ' notes' : 'live') +
-            ' \u00b7 ' + (p.clock === 'free' ? (p.ms || 2000) + 'ms free' : p.bars + ' bars') +
-            ((typeof L.when === 'string' && L.when && L.when !== 'always') ? ' \u00b7 not every cycle' : ''),
-      Rhythm: (now.voice === 'kit')
-        ? ((p.rhythm.lanes || []).reduce((a4, row) => a4 + (row || []).reduce((x, c3) => x + (c3 ? 1 : 0), 0), 0) + ' hits')
-        : (now.rhythm === 'drawn' ? 'drawn' : now.rhythm) + ' \u00b7 ' + p.rhythm.steps + ' steps',
-      Pitch: now.pitch + ((p.shape && p.shape.lenRatio !== 100) ? ' \u00b7 len ' + p.shape.lenRatio + '%' : ''),
-      Voicing: ((L.part.pitch.chordMode || 'simple') +
-                (((L.part.pitch.subdiv | 0) > 1) ? ' \u00b7 \u00f7' + (L.part.pitch.subdiv | 0) : '') +
-                (L.followSalt ? ' \u00b7 salt' : '')),
-      Shape: ((L.strum | 0) > 0 ? 'strum ' + (L.strum | 0) : 'struck'),
-      Motion: (() => {
-        const on2 = [['proximity', 'proximity'], ['swing', 'swing'], ['accent', 'accent'],
-                     ['restProb', 'rests'], ['ghosts', 'ghosts'],
-                     ['lenVary', 'len vary'], ['humanize', 'humanize'], ['velVar', 'vel var']]
-          .filter(f2 => num(L[f2[0]], 0) > 0).map(f2 => f2[1]);
-        if (L.tight) on2.push('tight');
-        return on2.length ? on2.join(' \u00b7 ') : 'straight';
+      Instrument: (() => {
+        const i2 = L.instrument || {};
+        // NAME THE KIT, don't print its id — the generated kit's id is literally
+        // 'synth', so a drum layer summarised as "synth · A 400" and read as a
+        // synth layer. The label is taken up to its em dash ("Synth kit —
+        // generated" → "Synth kit"), which is what the picker calls it.
+        const kitName = (id) => {
+          try {
+            const hit = kitOptions(id).find(o => o[0] === id);
+            return hit ? String(hit[1]).split('\u2014')[0].trim() : (id || 'kit');
+          } catch (e) { return id || 'kit'; }
+        };
+        const head = i2.voice === 'kit' ? kitName(i2.kit)
+                   : i2.voice === 'speech' ? 'speech'
+                   : (i2.tone || 'default');
+        const bits = ['A ' + (i2.attack | 0) + ' \u00b7 R ' + (i2.release | 0)];
+        if (num(L.cutoff, 100) < 100) bits.push('filter ' + num(L.cutoff, 100));
+        if (num(L.portamento, 0) > 0) bits.push('glide');
+        if (num(L.voiceTrim, 0) !== 0) bits.push('trim ' + num(L.voiceTrim, 0) + 'dB');
+        return head + ' \u00b7 ' + bits.join(' \u00b7 ');
       })(),
-      Mix: 'level ' + num(L.level, 70) +
-           (num(L.cutoff, 100) < 100 ? ' \u00b7 filter ' + num(L.cutoff, 100) : '') +
-           (num(L.reso, 0) > 0 ? ' \u00b7 reso ' + num(L.reso, 0) : '') +
-           (num(L.fine, 0) !== 0 ? ' \u00b7 fine ' + num(L.fine, 0) : '') +
-           (num(L.portamento, 0) > 0 ? ' \u00b7 glide' : '') +
-           (num(L.voiceTrim, 0) !== 0 ? ' \u00b7 trim ' + num(L.voiceTrim, 0) + 'dB' : ''),
-      Mod: (() => {
+      // Rhythm folded into Content, so its summary did too — the head keeps
+      // carrying what its rows now hold (the dashboard rule).
+      Content: (() => {
+        const head = (p.kind === 'recorded' ? (p.notes || []).length + ' notes' : 'live') +
+          ' \u00b7 ' + (p.clock === 'free' ? (p.ms || 2000) + 'ms free' : p.bars + ' bars');
+        const rh = (now.voice === 'kit')
+          ? ((p.rhythm.lanes || []).reduce((a4, row) => a4 + (row || []).reduce((x, c3) => x + (c3 ? 1 : 0), 0), 0) + ' hits')
+          : (p.kind === 'recorded' ? '' : (now.rhythm === 'drawn' ? 'drawn' : now.rhythm) + ' \u00b7 ' + p.rhythm.steps + ' steps');
+        const feel = onOf([['swing', 'swing'], ['accent', 'accent'], ['humanize', 'humanize']]);
+        if (L.tight) feel.push('tight');
+        return head + (rh ? ' \u00b7 ' + rh : '') + (feel.length ? ' \u00b7 ' + feel.join(' \u00b7 ') : '') +
+          ((typeof L.when === 'string' && L.when && L.when !== 'always') ? ' \u00b7 not every cycle' : '');
+      })(),
+      Pitch: now.pitch +
+             ((L.part.pitch.chordMode) ? ' \u00b7 ' + L.part.pitch.chordMode : '') +
+             (((L.part.pitch.harm || []).length) ? ' \u00b7 +' + L.part.pitch.harm.length + ' harmony' : '') +
+             (num(L.proximity, 0) > 0 ? ' \u00b7 close' : ''),
+      Shape: (() => {
+        const bits = [];
+        if ((L.strum | 0) > 0) bits.push('strum ' + (L.strum | 0));
+        if (p.shape && p.shape.lenRatio !== 100) bits.push('len ' + p.shape.lenRatio + '%');
+        bits.push(...onOf([['restProb', 'rests'], ['ghosts', 'ghosts'],
+                           ['lenVary', 'len vary'], ['velVar', 'vel var']]));
+        return bits.length ? bits.join(' \u00b7 ') : 'struck';
+      })(),
+      Mix: (() => {
+        const bits = ['level ' + num(L.level, 70)];
+        if (num(L.revSend, 0) > 0) bits.push('reverb ' + num(L.revSend, 0));
+        if (L.bus && L.bus !== 'a') bits.push('bus ' + String(L.bus).toUpperCase());
+        if (num(L.space, 0) !== 0) bits.push('width ' + num(L.space, 0));
+        if (now.spat === 'on') bits.push('moving');
         const m = L.mod || {};
-        const on3 = ['vca', 'vco', 'vcf'].filter(t => ((m[t] || {}).depth | 0) > 0);
-        return on3.length ? on3.join(' \u00b7 ') : 'none';
+        const mods = ['vca', 'vco', 'vcf'].filter(t => ((m[t] || {}).depth | 0) > 0);
+        if (mods.length) bits.push(mods.join('+'));
+        return bits.join(' \u00b7 ');
       })(),
-      Space: ((num(L.revSend, 0) > 0 ? 'reverb ' + num(L.revSend, 0) : '') +
-              ((L.bus && L.bus !== 'a') ? ' \u00b7 bus ' + String(L.bus).toUpperCase() : '') +
-              (num(L.space, 0) !== 0 ? ' \u00b7 width ' + num(L.space, 0) : '') +
-              (now.spat === 'on' ? ' \u00b7 moving' : '')).replace(/^ \u00b7 /, '') || 'dry, centred',
       FX: (eng.length ? eng.join(' \u00b7 ') : '') +
           (now.tg === 'on' ? (eng.length ? ' \u00b7 ' : '') + 'chop' : '') +
           (L.wetOnly ? ((eng.length || now.tg === 'on') ? ' \u00b7 ' : '') + 'wet only' : '') ||
@@ -3608,13 +4707,9 @@
         ? 'The area progression is on, so every layer follows it. Turn Progression off to choose a source per layer.'
         : 'Where this layer takes its notes from';
     }
-    const nc = card.querySelector('.v2-notecount');
-    if (nc) {
-      const n = (p.notes || []).length;
-      nc.textContent = p.kind === 'recorded'
-        ? (n + ' note' + (n === 1 ? '' : 's') + (p.from ? ' \u00b7 from \u201c' + p.from + '\u201d' : ' held'))
-        : 'either one makes it Recorded';
-    }
+    // the Material hint is owned by `matSync` (one writer — provenance + the
+    // live rules), called here so a gate pass repaints it like every summary
+    try { matSync(card, L); } catch (e) {}
     const ch = card.querySelector('.v2-cellhint');
     if (ch) {
       const edited = now.rhythm === 'drawn';
@@ -3675,8 +4770,9 @@
     // GROUP BUTTONS: an ACCENT on any treatment group whose summary is not its
     // neutral (the folded card then says at a glance which groups this layer
     // actually uses). The core groups are always in use, so they stay plain.
-    const NEUT = { FX: 'none', Mod: 'none', Motion: 'straight',
-                   Space: 'dry, centred', Shape: 'struck', Voicing: 'simple' };
+    // the accent marks a group whose summary is NOT its neutral, so the folded
+    // card says at a glance which groups this layer actually uses
+    const NEUT = { FX: 'none', Shape: 'struck' };
     card.querySelectorAll('.v2-grpbtn').forEach(b2 => {
       const g2 = b2.getAttribute('data-v2grp');
       if (g2 in NEUT) b2.classList.toggle('v2-live', (sums[g2] || '') !== NEUT[g2]);
@@ -3736,6 +4832,141 @@
     }
     POP = null;
   }
+  // The arrangement's parts, as selector options. `_ambGridRanges` is the same
+  // enumerator the Passes grid draws from (a part-less progression is one
+  // range), so the selector and the clock cannot disagree about what exists.
+  // The stored value is ALWAYS among the options — a <select> whose value
+  // matches no option silently shows the first one (the documented trap).
+  function partRangesOf(E) {
+    let out = [];
+    try {
+      const cfg = E.getCfg();
+      const rgs = (typeof _ambGridRanges === 'function') ? (_ambGridRanges(cfg) || []) : [];
+      out = rgs.map((rg) => {
+        const pi = (rg && Number.isFinite(rg.pi)) ? (rg.pi | 0) : 0;
+        let bars = 0;
+        try { bars = (typeof _ambLenPartBars === 'function') ? +_ambLenPartBars(cfg, pi) : 0; } catch (e) {}
+        let nm = 'Part ' + (pi + 1);
+        try { if (typeof _ambPartLabel === 'function') nm = _ambPartLabel(cfg, pi); } catch (e) {}
+        return { pi, bars, nm };
+      });
+    } catch (e) {}
+    return out;
+  }
+  function partChoiceOpts(L) {
+    const E = (typeof _masterEng !== 'undefined') ? _masterEng : null;
+    const rgs = E ? partRangesOf(E) : [];
+    const cur = (L && Number.isFinite(L.partFor)) ? (L.partFor | 0) : null;
+    // shared mode: the selector is DISABLED and says so with a dash — editing
+    // targets only ever appear when there is a choice to make
+    if (cur == null) return '<option value="" selected>\u2014</option>';
+    let opts = '', seen = false;
+    rgs.forEach((rg) => {
+      if (rg.pi === cur) seen = true;
+      opts += '<option value="' + rg.pi + '"' + (rg.pi === cur ? ' selected' : '') + '>' + esc(rg.nm) + '</option>';
+    });
+    if (!seen) opts += '<option value="' + cur + '" selected>Part ' + (cur + 1) + ' (gone)</option>';
+    return opts;
+  }
+
+  // ── SYNC TO PART — match the layer's cycle to one pass of the changes ────
+  // "I created a 5-chord part and Content did not update": a part's bars are
+  // its own, and nothing ever re-lengths them when the changes grow. This is
+  // the explicit door — a small confirm with the two real questions: how do
+  // the BARS come along (stretch the notes, or keep their tempo and fill), and
+  // what happens to the NOTES (keep them as-is, or follow the changes as they
+  // play). Both answers are EXISTING machinery — `applyBarsMode` and
+  // `L.harmony` — so the dialog decides, it does not implement.
+  function syncPartModal(E, card, L, onApply) {
+    const cfg = E.getCfg(); const p = L.part;
+    // THE TARGET IS THE HEAD'S SELECTION — the selector beside this button
+    // names which part the content is for, so Sync does not ask again. With
+    // All parts selected the target is the played changes themselves.
+    let tgt = null;
+    const rgs = partRangesOf(E).filter((x) => x.bars > 0);
+    if (Number.isFinite(L.partFor)) tgt = rgs.find((x) => x.pi === (L.partFor | 0)) || null;
+    if (!tgt && rgs.length === 1) tgt = rgs[0];
+    if (!tgt) {
+      let bars = 0;
+      try { bars = (typeof _ambLenPartBars === 'function') ? +_ambLenPartBars(cfg, -1) : 0; } catch (e) {}
+      if (!(bars > 0)) { try { showToast('No changes to sync to yet \u2014 add a progression first.', { ms: 3500 }); } catch (e) {} return; }
+      tgt = { pi: -1, bars, nm: 'the changes' };
+    }
+    const bound = !!L.lenSync;
+    const isRec = p.kind === 'recorded';
+    const isFollow = (L.harmony === 'diatonic' || L.harmony === 'chordlock');
+    const st = { len: (p.barsMode === 'fill') ? 'fill' : 'stretch',
+                 notes: isFollow ? 'follow' : 'keep' };
+    const fmt = (b2) => (Math.round(b2 * 100) / 100) + ' bar' + (b2 === 1 ? '' : 's');
+    const ov = document.createElement('div');
+    ov.className = 'sm-overlay';
+    ov.style.setProperty('display', 'flex', 'important');   // body-attached — the view-mode hide rules
+    const segs = (name, opts, cur) => '<span class="ambient-seg-row">' + opts.map(([v, lab, tip]) =>
+      '<button type="button" class="ambient-seg v2-syncopt" data-q="' + name + '" data-v="' + v + '"' +
+      (tip ? ' title="' + tip + '"' : '') + '>' + lab + '</button>').join('') + '</span>';
+    ov.innerHTML = '<div class="sm-modal v2-sync-modal">' +
+      '<div class="sm-title">\u21c4 Sync \u2014 ' + esc(tgt.nm) + '</div>' +
+      '<div class="ambient-hint v2-sync-now"></div>' +
+      (bound
+        ? '<div class="ambient-hint v2-sync-bound">\u27f2 This layer is already bound to the arrangement \u2014 its length follows the part by itself, so only the notes question applies.</div>'
+        : '<div class="v2-sync-row"><label>Length</label>' +
+            segs('len', [['stretch', 'Stretch', 'The same notes, spread across the new length'],
+                         ['fill', 'Fill', 'Keep the notes at their own tempo \u2014 repeat or trim to the new length']], st.len) +
+          '</div>') +
+      (isRec
+        ? '<div class="v2-sync-row"><label>Notes</label>' +
+            segs('notes', [['keep', 'Keep as-is', 'The pitches stay exactly what they are'],
+                           ['follow', 'Follow the changes', 'Re-harmonised over each chord as it plays']], st.notes) +
+          '</div>'
+        : '<div class="ambient-hint">A Generated part already follows the changes \u2014 only the length is asked.</div>') +
+      '<div class="v2-sync-actions">' +
+        '<button type="button" class="ambient-regen v2-syncgo">\u21c4 Sync</button>' +
+        '<button type="button" class="ambient-regen v2-synccancel">Cancel</button>' +
+      '</div></div>';
+    document.body.appendChild(ov);
+    const paint = () => {
+      const now = ov.querySelector('.v2-sync-now');
+      if (now) now.textContent = 'One pass of ' + tgt.nm + ' is ' + fmt(tgt.bars) +
+        ' \u2014 this layer is ' + fmt(+p.bars || 1) + '.';
+      ov.querySelectorAll('.v2-syncopt').forEach((b2) => {
+        b2.classList.toggle('on', st[b2.getAttribute('data-q')] === b2.getAttribute('data-v'));
+      });
+    };
+    paint();
+    const close = () => { try { ov.remove(); } catch (e) {} };
+    ov.addEventListener('click', (ev) => {
+      if (ev.target === ov || ev.target.closest('.v2-synccancel')) { close(); return; }
+      const opt = ev.target.closest('.v2-syncopt');
+      if (opt) { st[opt.getAttribute('data-q')] = opt.getAttribute('data-v'); paint(); return; }
+      if (ev.target.closest('.v2-syncgo')) {
+        const prev = +p.bars || 1;
+        if (!bound) {
+          if (p.clock === 'free') { delete p.clock; delete p.ms; }   // syncing to bars IS the bar clock
+          p.bars = clamp(tgt.bars, 0.125, 64);
+          if (st.len === 'fill') {
+            const sv = p.barsMode; p.barsMode = 'fill';
+            try { V2.applyBarsMode(L, prev); } catch (e) {}
+            if (sv === 'fill') p.barsMode = 'fill'; else delete p.barsMode;
+          }
+        }
+        if (isRec) {
+          // only MOVE the setting when the answer changed — 'follow' must not
+          // downgrade an explicit chordlock to diatonic
+          if (st.notes === 'follow' && !isFollow) L.harmony = 'diatonic';
+          if (st.notes === 'keep' && isFollow) delete L.harmony;
+        }
+        try { E.getCfg(); } catch (e) {}
+        try { if (E._v2Phase) delete E._v2Phase['v2:' + L.id]; } catch (e) {}
+        try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+        close();
+        try { if (onApply) onApply(); } catch (e) {}
+        try { showToast('\u21c4 Synced \u2014 ' + fmt(+L.part.bars || 1) +
+          (isRec ? (st.notes === 'follow' ? ' \u00b7 following the changes' : ' \u00b7 notes kept as-is') : ''), { ms: 3000 }); } catch (e) {}
+        return;
+      }
+    });
+  }
+
   function popOpen(card, L, grp, tab) {
     document.querySelectorAll('.v2-pop-wrap').forEach(w => {
       const c = w.closest('.v2-layer'); if (c) popClose(c);
@@ -3747,9 +4978,67 @@
     wrap.innerHTML =
       '<div class="v2-pop-scrim"></div>' +
       '<div class="v2-pop" role="dialog" aria-label="' + esc(grp) + '">' +
-        '<div class="v2-pop-head"><span class="v2-pop-title">' + esc(grp) + '</span>' +
-          '<span class="ambient-hint v2-grpsum" data-grp="' + esc(grp) + '"></span>' +
-          '<button type="button" class="v2-pop-close" aria-label="Close">✕</button></div>' +
+        // THE TITLE IS THE NAVIGATOR. It named the open group and nothing more,
+        // so moving between sections meant closing this sheet and finding the
+        // next button — a round trip through a grid you had just left. It is a
+        // <select> of the seven groups now, current one selected: the same fact
+        // the title stated, plus somewhere to go. Safe as a select because the
+        // head is built ONCE by popOpen and never rewritten (the documented
+        // trap is a select REPLACED while open — popSync only touches the tabs
+        // and the pane).
+        '<div class="v2-pop-head">' +
+          '<select class="v2-pop-title v2-pop-goto" aria-label="Go to a section">' +
+            GRPS.map(g2 => '<option value="' + esc(g2) + '"' + (g2 === grp ? ' selected' : '') + '>' +
+              esc(g2) + '</option>').join('') +
+          '</select>' +
+          // REGISTER, IN THE HEAD. It is the control you reach for while
+          // listening — move the whole part an octave — so it sits where it is
+          // always to hand instead of behind a tab. It is the ordinary stepper
+          // markup, so the DOCUMENT-level ± delegation drives it and the card's
+          // own `.v2-f` input handler commits it: no new wiring, and no second
+          // copy of either rule. Gated on the voice like any row, because the
+          // head is inside the card and `applyGate` sweeps `[data-v2when]`.
+          // CONTENT IS PER-PART: the selector names which arrangement part
+          // THIS record belongs to (All parts = one content everywhere), and
+          // Sync matches the record to that part. One joined pair — choosing
+          // and syncing are two halves of the same sentence.
+          ((grp === 'Content')
+            ? (() => {
+                const pp2 = Number.isFinite(L.partFor);
+                return '<span class="v2-pop-pair">' +
+                  '<button type="button" class="v2-pop-pp' + (pp2 ? ' on' : '') + '" ' +
+                    'title="' + (pp2
+                      ? 'Per part \u2014 each arrangement part has its own content for this layer. Tap to go back to one content everywhere (the filed parts are dropped, it asks first).'
+                      : 'One content \u2014 this layer plays the same content in every part. Tap to give each part its own (nothing changes until a part diverges).') + '">' +
+                    (pp2 ? '\u25eb Per part' : '\u25ad Everywhere') + '</button>' +
+                  '<select class="ambient-select v2-pop-part" aria-label="Which part this content is for"' +
+                    (pp2 ? '' : ' disabled') + ' title="' + (pp2
+                      ? 'Which part you are editing \u2014 the others keep their own content'
+                      : 'One content everywhere \u2014 switch \u25eb Per part on to give each part its own') + '">' +
+                    partChoiceOpts(L) + '</select>' +
+                  '<button type="button" class="v2-pop-sync" ' +
+                    'title="Match this layer\u2019s length to one pass of ' + (pp2 ? 'the selected part' : 'the changes') +
+                    ' \u2014 you choose how the notes and the bars come along">' +
+                    '\u21c4 Sync</button>' +
+                '</span>';
+              })()
+            : '') +
+          ((grp === 'Instrument')
+            ? '<span class="v2-pop-xtra" data-v2when="voice:synth">' +
+                '<span class="v2-xtra-lab">Reg</span>' +
+                '<span class="ambient-stepper">' +
+                  '<button type="button" class="ambient-step-btn ambient-step-dn" tabindex="-1" aria-label="Lower">\u2212</button>' +
+                  '<input type="number" inputmode="numeric" class="ambient-step-inp v2-f" ' +
+                    'data-f="instrument.register" min="1" max="8" step="1" value="' +
+                    (clamp((L.instrument.register | 0) || 4, 1, 8)) + '" aria-label="Register">' +
+                  '<button type="button" class="ambient-step-btn ambient-step-up" tabindex="-1" aria-label="Raise">+</button>' +
+                '</span></span>'
+            : '') +
+          '<button type="button" class="v2-pop-close" aria-label="Close">✕</button>' +
+          // THE SUMMARY TAKES ITS OWN LINE. It was between the title and the
+          // close, which left no room for anything else up there and squeezed
+          // it to nothing on a phone the moment the head grew a control.
+          '<span class="ambient-hint v2-grpsum" data-grp="' + esc(grp) + '"></span></div>' +
         '<div class="v2-pop-tabs"></div>' +
         '<div class="v2-pop-pane"></div>' +
         '<div class="v2-pop-foot"><button type="button" class="v2-pop-preview" ' +
@@ -3797,6 +5086,19 @@
     const s2 = ((lab.childNodes[0] && lab.childNodes[0].textContent) || lab.textContent || '').trim();
     return (s2.split('·')[0].trim()) || '…';
   }
+  // ── TAB FAMILIES — a sheet with a dozen tabs is a wall unless the strip
+  // says which tabs belong together. Each family is a labelled, tinted row;
+  // a tab not in the map lands in a trailing unlabelled one, so a new tab can
+  // never vanish. Hues avoid the state colours (green = sounding, amber =
+  // inert-warning, red = delete).
+  const TAB_FAMS = {
+    Content: [
+      ['make', ['Material', 'Saved', 'Seed like', 'Source'], 'fam-make'],
+      ['rhythm', ['Rhythm', 'Pattern', 'Feel'], 'fam-rhythm'],
+      ['time', ['Cycle', 'Bars', 'Plays', 'Speed'], 'fam-time'],
+      ['pitch', ['Transpose', 'Follows changes'], 'fam-pitch'],
+    ],
+  };
   function popSync(card, L) {
     const wrap = popWrapOf(card); if (!wrap || !POP) return;
     const pane = wrap.querySelector('.v2-pop-pane'), tabsEl = wrap.querySelector('.v2-pop-tabs');
@@ -3812,14 +5114,40 @@
     const visTabs = tabs.filter(t => t.vis);
     const act = visTabs.find(t => t.name === POP.tab) || visTabs[0] || null;
     POP.tab = act ? act.name : null;
-    const sig = visTabs.map(t => t.name).join('|');
+    const sig = (POP.grp || '') + '|' + visTabs.map(t => t.name).join('|');
     if (tabsEl._sig !== sig) {
       tabsEl._sig = sig;
-      tabsEl.innerHTML = visTabs.map(t =>
-        '<button type="button" class="v2-pop-tab" data-tab="' + esc(t.name) + '">' + esc(t.name) + '</button>').join('');
+      const btn = (t) => '<button type="button" class="v2-pop-tab" data-tab="' + esc(t.name) + '">' + esc(t.name) + '</button>';
+      const fams = TAB_FAMS[POP.grp];
+      if (fams) {
+        const left = visTabs.slice();
+        let html = '';
+        fams.forEach(([lab, names, cls]) => {
+          const mine = left.filter(t => names.indexOf(t.name) >= 0);
+          if (!mine.length) return;
+          mine.forEach(t => left.splice(left.indexOf(t), 1));
+          html += '<div class="v2-tabfam ' + cls + '"><span class="v2-tabfam-lab">' + esc(lab) + '</span>' +
+            mine.map(btn).join('') + '</div>';
+        });
+        if (left.length) html += '<div class="v2-tabfam"><span class="v2-tabfam-lab"></span>' + left.map(btn).join('') + '</div>';
+        tabsEl.innerHTML = html;
+      } else {
+        tabsEl.innerHTML = visTabs.map(btn).join('');
+      }
     }
     tabsEl.querySelectorAll('.v2-pop-tab').forEach(b =>
       b.classList.toggle('on', !!act && b.getAttribute('data-tab') === act.name));
+    // THE PANE WEARS THE ACTIVE TAB'S FAMILY — the row labels below take the
+    // family hue, so "which family am I in" survives scrolling past the strip.
+    {
+      const fams2 = TAB_FAMS[POP.grp];
+      let famCls = '';
+      if (fams2 && act) {
+        const hit = fams2.find(f2 => f2[1].indexOf(act.name) >= 0);
+        if (hit) famCls = hit[2];
+      }
+      if (famCls) pane.setAttribute('data-fam', famCls); else pane.removeAttribute('data-fam');
+    }
     tabs.forEach(t => t.rows.forEach(row => row.classList.toggle('v2-rowoff', t !== act)));
     knobifyAll(pane);
     pane.querySelectorAll('.v2-knob').forEach(knobFace);
@@ -3838,10 +5166,19 @@
       row.classList.add('v2-knobbed');
       const k = document.createElement('div');
       k.className = 'v2-knob';
+      // The unit/hint text sits BESIDE the knob, not inside the face — at a
+      // compact dial size a sentence inside the circle overflows it, and the
+      // giant dial existed mostly to hold its own caption ("dials too large,
+      // too much whitespace").
       k.innerHTML = '<div class="v2-knob-ring"></div>' +
-        '<div class="v2-knob-face"><span class="v2-knob-val"></span>' +
-        '<span class="v2-knob-sub">' + esc(row.getAttribute('data-v2u') || '') + '</span></div>';
+        '<div class="v2-knob-face"><span class="v2-knob-val"></span></div>';
       inp.after(k);
+      const u = row.getAttribute('data-v2u') || '';
+      if (u) {
+        const su = document.createElement('span');
+        su.className = 'v2-knob-sub'; su.textContent = u;
+        k.after(su);
+      }
       knobFace(k);
     });
   }
@@ -4030,10 +5367,47 @@
       const commit = (ctx) => {
         try { E.getCfg(); } catch (e) {}
         applyGate(ctx.card, ctx.L);
+        // APPLY NOW, NOT WHEN THE SCHEDULE RUNS DRY — v1's own re-anchor idiom
+        // is CANCEL + drop phase, and this commit only had the second half:
+        // while playing, notes scheduled with the OLD settings (a full
+        // lookahead, and for a long cycle the whole cycle) kept sounding the
+        // old instrument, and the re-anchored emit then DOUBLED the overlap.
+        // Reported as "changing Instrument tone does not update the content".
+        // Sounding notes ring out — only the un-started future is retracted.
+        try {
+          if (E.timer && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined') {
+            cancelBloomFutureVoices('v2:' + ctx.L.id, Tone.now());
+          }
+        } catch (e) {}
         try { if (E._v2Phase) delete E._v2Phase['v2:' + ctx.L.id]; } catch (e) {}   // re-anchor on the next tick
         try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
       };
       h.addEventListener('input', (ev) => {
+        // GO TO ANOTHER SECTION without leaving the sheet. Before every other
+        // branch, because it is not a field — it navigates.
+        // WHICH PART THIS CONTENT IS FOR — the head pair's selector. Filing
+        // and restoring is the engine's `partSelect`; 'All parts' is the one
+        // destructive branch (the filed records are dropped) and confirms.
+        const pp = ev.target.closest && ev.target.closest('.v2-pop-part');
+        if (pp) {
+          const ctx = layerOf(pp); if (!ctx) return;
+          if (pp.value === '') return;                 // shared mode's inert dash
+          V2.partSelect(E, ctx.L, pp.value | 0);
+          commit(ctx); h._sig = ''; V2.render(E);
+          return;
+        }
+        const gt = ev.target.closest && ev.target.closest('.v2-pop-goto');
+        if (gt) {
+          const ctx = layerOf(gt); if (!ctx) return;
+          const want = gt.value;
+          if (want && want !== (POP && POP.grp)) popOpen(ctx.card, ctx.L, want, null);
+          return;
+        }
+        // THE NOTE EDITOR, delegated here rather than bound when it is built —
+        // the card is rebuilt by `V2.render` on all sorts of edits, and a
+        // per-build listener dies with it (the documented host-wiring rule).
+        const nsf = ev.target.closest && ev.target.closest('.v2-neinline [data-sf]');
+        if (nsf) { if (neInput(E, nsf)) return; }
         const tm = ev.target.closest && ev.target.closest('.v2-term');
         if (tm) {
           const ctx = layerOf(tm); if (!ctx) return;
@@ -4166,6 +5540,31 @@
         }
         if (t.closest && (t.closest('.v2-pop-close') || t.closest('.v2-pop-scrim'))) {
           const c3 = t.closest('.v2-layer'); if (c3) popClose(c3);
+          return;
+        }
+        // ▭ Everywhere ⟷ ◫ Per part — the MODE, its own control. Enabling
+        // adopts the current content for the strip's current part (nothing
+        // sounds different until a part diverges); disabling is the one
+        // destructive branch and confirms.
+        const ppt = t.closest && t.closest('.v2-pop-pp');
+        if (ppt) {
+          const ctx = layerOf(ppt); if (!ctx) return;
+          if (Number.isFinite(ctx.L.partFor)) {
+            if (!confirm('Back to one content everywhere?\n\nThe per-part contents will be discarded \u2014 the Everywhere content, kept on ice since Per part went on, comes back.')) return;
+            V2.partSelect(E, ctx.L, null);
+          } else {
+            let pi0 = Number.isFinite(E._curPart) ? (E._curPart | 0) : 0;
+            const rgs = partRangesOf(E);
+            if (!rgs.some(r => r.pi === pi0)) pi0 = rgs.length ? rgs[0].pi : 0;
+            V2.partSelect(E, ctx.L, pi0);
+          }
+          commit(ctx); h._sig = ''; V2.render(E);
+          return;
+        }
+        const sy2 = t.closest && t.closest('.v2-pop-sync');
+        if (sy2) {
+          const ctx = layerOf(sy2); if (!ctx) return;
+          try { syncPartModal(E, ctx.card, ctx.L, () => { h._sig = ''; V2.render(E); }); } catch (e) {}
           return;
         }
         const pv = t.closest && t.closest('.v2-pop-preview');
@@ -4530,22 +5929,185 @@
                   return;
                 }
                 try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-                try { if (typeof showToast === 'function') showToast('Playing “' + p.name + '” — ' + ctx.L.part.notes.length + ' notes over ' + ctx.L.part.bars + ' bars. Switch Part to Live to go back.', { ms: 5000 }); } catch (e) {}
+                try { if (typeof showToast === 'function') showToast('Playing “' + p.name + '” — ' + ctx.L.part.notes.length + ' notes over ' + ctx.L.part.bars + ' bars. Set Source to Generated to go back to rules.', { ms: 5000 }); } catch (e) {}
                 h._sig = ''; V2.render(E);
               },
             })));
           }, 0);
           return;
         }
+        // SAVE A TAKE, and the bank's own row: load, reorder, delete.
+        const svt = t.closest && t.closest('.v2-savetake');
+        if (svt) {
+          const ctx = layerOf(svt); if (!ctx) return;
+          const nm = saveTakeFn(E, ctx.L);
+          if (!nm) return;
+          try { if (typeof showToast === 'function') showToast('Saved \u201c' + nm + '\u201d \u2014 it is in the bank now, and can be mapped to any part or chord.', { ms: 5000 }); } catch (e) {}
+          h._sig = ''; V2.render(E);
+          return;
+        }
+        const bk = t.closest && t.closest('.v2-bkload, .v2-bkup, .v2-bkdn, .v2-bkdel');
+        if (bk) {
+          const ctx = layerOf(bk); if (!ctx) return;
+          const bi = bk.getAttribute('data-bi') | 0;
+          const ent = (typeof savedSequences !== 'undefined' && savedSequences[bi]) || null;
+          if (!ent) return;
+          if (bk.classList.contains('v2-bkload')) {
+            if (!V2.adopt(E, ctx.L, ent.name)) {
+              try { if (typeof showToast === 'function') showToast('Could not read \u201c' + ent.name + '\u201d \u2014 it has no pitched steps.', { warn: true, ms: 4500 }); } catch (e) {}
+              return;
+            }
+            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          } else if (bk.classList.contains('v2-bkdel')) {
+            // THE ONE DELETE PATH — it confirms, names what it costs, and
+            // prunes every mapping that pointed at the name (a second copy of
+            // that logic here is how a mapping is left pointing at nothing).
+            if (typeof deleteSavedSequence === 'function') deleteSavedSequence(bi);
+            else return;
+          } else {
+            const to = bi + (bk.classList.contains('v2-bkup') ? -1 : 1);
+            if (to < 0 || to >= savedSequences.length) return;
+            const sp = savedSequences.splice(bi, 1)[0];
+            savedSequences.splice(to, 0, sp);
+            try { if (typeof persistSaved === 'function') persistSaved(); } catch (e) {}
+          }
+          h._sig = ''; V2.render(E);
+          return;
+        }
+        // A SUBSECTION HEADER. Toggles a class on the CARD rather than setting
+        // `style.display` on the rows — inline display belongs to `applyGate`,
+        // and `.v2-rowoff` (which hides an inactive tab) is `!important` and
+        // has to keep winning over whatever this does.
+        const dsc = t.closest && t.closest('.v2-discbtn');
+        if (dsc) {
+          const ctx = layerOf(dsc); if (!ctx) return;
+          const id = dsc.getAttribute('data-disc');
+          const on = ctx.card.classList.toggle('v2-so-' + id);
+          dsc.textContent = (on ? '\u25be Hide' : '\u25b8 Show');
+          return;
+        }
+        // The note editor's own buttons — same delegation, same reason.
+        const nact = t.closest && t.closest('.v2-neinline [data-na]');
+        if (nact) { if (neAct(E, nact)) return; }
+        // A TAP ON A NOTE IN THE DRAWING. The picture stops being a readout and
+        // becomes the editor: hit-test the boxes recorded by the last draw, and
+        // open that note. A live part has no notes of its own, so tapping one
+        // LOCKS the take first — the same act as pressing 🔒, reached from the
+        // thing the finger was already on, and announced rather than silent.
+        const cvz = t.closest('.v2-vizcv');
+        if (cvz) {
+          const ctx = layerOf(cvz); if (!ctx) return;
+          const r = cvz.getBoundingClientRect();
+          const px = (ev.clientX != null ? ev.clientX : 0) - r.left;
+          const py = (ev.clientY != null ? ev.clientY : 0) - r.top;
+          const hits = cvz._hits || [];
+          let hit = null;
+          for (let i = 0; i < hits.length; i++) {
+            const b = hits[i];
+            // a generous box — a 6px-tall note is under the touch floor, so the
+            // hit area is padded rather than the drawing made clumsy
+            if (px >= b.x - 4 && px <= b.x + b.w + 4 && py >= b.y - 7 && py <= b.y + b.h + 7) { hit = b; break; }
+          }
+          const L2 = ctx.L;
+          if (!hit) {
+            // EMPTY SPACE IS THE BAR'S OWN TAP TARGET — the 15px number gutter
+            // alone is under the touch floor, and a miss on a 6px note used to
+            // do nothing at all. Toggling is visible and one tap reverses it.
+            const geo = cvz._barsGeo;
+            // a LIVE part selects bars too — for 🎲 New take, which retakes
+            // just those bars (a per-bar pin); a recorded one for the splice
+            if (!geo) return;
+            if (L2.part.kind === 'recorded' && !(L2.part.notes || []).length) return;
+            const b2 = Math.max(0, Math.min(Math.ceil(geo.barsF) - 1,
+              Math.floor((px / Math.max(1, geo.w)) * geo.barsF)));
+            if (!BSEL || BSEL.id !== (L2.id | 0) || BSEL.sig !== bselSig(L2)) {
+              BSEL = { id: L2.id | 0, sig: bselSig(L2), bars: new Set() };
+            }
+            if (BSEL.bars.has(b2)) BSEL.bars.delete(b2); else BSEL.bars.add(b2);
+            const c4 = document.querySelector('.v2-layer[data-v2id="' + (L2.id | 0) + '"]') || ctx.card;
+            try { drawPartViz(c4, L2, E); } catch (e) {}
+            return;
+          }
+          if (L2.part.kind !== 'recorded') {
+            if (!captureShown(E, L2)) {
+              try { if (typeof showToast === 'function') showToast('Nothing to lock — this take is empty.', { ms: 3500 }); } catch (e) {}
+              return;
+            }
+            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            try { if (typeof showToast === 'function') showToast('Locked this take so it can be edited — ' + L2.part.notes.length + ' notes. ❄ Re-take live goes back.', { ms: 5000 }); } catch (e) {}
+            h._sig = ''; V2.render(E);
+          }
+          const idx = nearestNote(L2.part.notes || [], hit.t, hit.midi);
+          if (idx < 0) return;
+          const c3 = document.querySelector('.v2-layer[data-v2id="' + (L2.id | 0) + '"]') || ctx.card;
+          // TAPPING THE OPEN NOTE AGAIN CLOSES IT — the drawing is the toggle,
+          // so a mis-tap costs one tap rather than a hunt for the ✕.
+          if (NE && NE.id === (L2.id | 0) && NE.idx === idx) { NE = null; try { drawPartViz(c3, L2, E); } catch (e) {} return; }
+          neOpen(E, L2, idx, c3);
+          return;
+        }
+        // 🎲 NEW TAKE — the ONLY thing that re-rolls a live part. Preview used to
+        // do it as a side effect, so the take you liked was gone the moment you
+        // played it again; that is now a deliberate press.
+        const nt = t.closest('.v2-newtake');
+        if (nt) {
+          const ctx = layerOf(nt); if (!ctx) return;
+          // SCOPED BY THE SELECTED BARS: with bars tapped, only they are
+          // retaken (a per-bar pin — the rest of the drawing holds still);
+          // with none, the whole take moves.
+          const selN = bselOf(ctx.L);
+          V2.newTake(ctx.L, selN ? [...selN.bars] : null);
+          try { E.getCfg(); } catch (e) {}
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          // REWRITE, NEVER PLAY. This used to audition the new take, which on
+          // the phone's ~1 s broadcast read as "it just played the current
+          // content" — the press's outcome is the DRAWING; ▶ Preview is one
+          // button away and stays the only thing that makes sound.
+          try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
+          return;
+        }
         const cap = t.closest('.v2-capture');
         if (cap) {
           const ctx = layerOf(cap); if (!ctx) return;
-          if (!V2.capture(E, ctx.L)) {
+          // REPLACING WORK IS CONFIRMED. Re-rolling a locked take loses nothing
+          // (it was a roll of these same rules), but notes that were composed,
+          // adopted, or edited by hand are somebody's work — and `made` is
+          // absent on anything older or unrecognised, which takes the safe side.
+          const cp = ctx.L.part;
+          // THE SELECTION SCOPES EVERYTHING: what is rolled, what is counted
+          // in the confirm, and which edits count as at risk — an edit in bar
+          // 1 is not endangered by re-rolling bar 3.
+          const sel3 = bselOf(ctx.L);
+          const selBars = sel3 ? [...sel3.bars] : null;
+          if (cp.kind === 'recorded' && (cp.notes || []).length) {
+            const barsF3 = Math.max(0.125, cp.bars || 1);
+            const inScope = (n2) => !selBars || selBars.indexOf(Math.floor(n2.t * barsF3)) >= 0;
+            const scoped = (cp.notes || []).filter(inScope);
+            const edited = scoped.some(n2 => Number.isFinite(n2.vel) || Number.isFinite(n2.atk) ||
+              Number.isFinite(n2.dec) || Number.isFinite(n2.sus) || Number.isFinite(n2.rel) || Number.isFinite(n2.glide));
+            if (cp.made !== 'take' || edited) {
+              const whereTxt = sel3 ? (' in ' + bselLabel(sel3)) : '';
+              const what = cp.made === 'compose' ? 'the phrase you composed'
+                : (cp.made === 'phrase' ? ('\u201c' + (cp.from || 'the phrase you chose') + '\u201d')
+                : (edited ? 'your edits to these notes' : 'these notes'));
+              let go = false;
+              try { go = window.confirm('Replace ' + what + whereTxt + ' with a fresh roll of this layer\u2019s rules?\n\n' +
+                scoped.length + ' note' + (scoped.length === 1 ? '' : 's') + ' will be discarded. This cannot be undone.'); } catch (e2) { go = true; }
+              if (!go) return;
+            }
+          }
+          if (!captureShown(E, ctx.L, selBars)) {
             try { if (typeof showToast === 'function') showToast('Nothing to capture \u2014 this cycle is empty. Check the live Rhythm settings.', { ms: 4500 }); } catch (e) {}
             return;
           }
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-          try { if (typeof showToast === 'function') showToast('Kept ' + ctx.L.part.notes.length + ' notes \u2014 it replays them now. Switch Part to Live to go back.', { ms: 5000 }); } catch (e) {}
+          try {
+            if (typeof showToast === 'function') {
+              showToast(selBars
+                ? ('Re-rolled ' + bselLabel(sel3) + ' \u2014 the other bars kept what they had. Press again for another roll.')
+                : ('Locked ' + ctx.L.part.notes.length + ' notes \u2014 it plays these now, and you can tap one to edit it. Set Source to Generated to go back to rules.'), { ms: 5000 });
+            }
+          } catch (e) {}
           h._sig = ''; V2.render(E);
           return;
         }

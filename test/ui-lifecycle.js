@@ -178,8 +178,11 @@ const ok = (name, cond, detail) => {
       groupless: btns.filter((b2) => grps.indexOf(b2) < 0),
     };
   });
+  // The invariant is the PAIRING in both directions, not a count — pinning 12
+  // made a deliberate regroup look like a break. (12 -> 7: Envelope, Voicing,
+  // Motion, Mod and Space folded into the group each belongs to.)
   ok('every group has a button and every button a group',
-    s.btns === 12 && s.grps === 12 && !s.buttonless.length && !s.groupless.length, JSON.stringify(s));
+    s.btns === s.grps && s.grps > 0 && !s.buttonless.length && !s.groupless.length, JSON.stringify(s));
   await tap('.v2-layer .v2-grpbtn');
   s = await page.evaluate(() => {
     const w = document.querySelector('.v2-pop-wrap');
@@ -190,7 +193,7 @@ const ok = (name, cond, detail) => {
       Math.round(n.getBoundingClientRect().right - pane.getBoundingClientRect().right))) : -1;
     return {
       open: !!w,
-      title: w ? (w.querySelector('.v2-pop-title') || {}).textContent : null,
+      title: w ? (w.querySelector('.v2-pop-title') || {}).value : null,
       tabs: w ? w.querySelectorAll('.v2-pop-tab').length : 0,
       onTabs: w ? w.querySelectorAll('.v2-pop-tab.on').length : 0,
       centered: r ? (Math.abs((r.top + r.bottom) / 2 - window.innerHeight / 2) < 4 &&
@@ -211,7 +214,27 @@ const ok = (name, cond, detail) => {
       ? document.querySelector('.v2-pop-tab.on').getAttribute('data-tab') : null;
     return { vis: vis.length, act };
   });
-  ok('sheet shows one tab of rows at a time', s.vis >= 1 && s.vis <= 3 && !!s.act, JSON.stringify(s));
+  // RESTATED: it counted rows (1-3), which was a proxy for "only one tab is
+  // showing" — and broke when a tab legitimately grew a couple of folded
+  // subsection headers. Assert the thing itself: every visible row belongs to
+  // the ACTIVE tab, and no row of another tab is on screen.
+  s = await page.evaluate(() => {
+    const pane = document.querySelector('.v2-pop-pane');
+    const rows = [...pane.querySelectorAll('.ambient-grp-body > .ambient-ctrl, .ambient-grp-body > .ambient-mod-target')];
+    const act = (document.querySelector('.v2-pop-tab.on') || {}).getAttribute
+      ? document.querySelector('.v2-pop-tab.on').getAttribute('data-tab') : null;
+    const nameOf = (r) => {
+      const t = r.getAttribute('data-v2tab'); if (t) return t;
+      const lab = r.querySelector(':scope > label') || r.querySelector('.ambient-mod-sub');
+      if (!lab) return '…';
+      const s2 = ((lab.childNodes[0] && lab.childNodes[0].textContent) || lab.textContent || '').trim();
+      return (s2.split('·')[0].trim()) || '…';
+    };
+    const vis = rows.filter((n) => getComputedStyle(n).display !== 'none');
+    return { vis: vis.length, act, strays: vis.filter((r) => nameOf(r) !== act).map(nameOf) };
+  });
+  ok('sheet shows one tab of rows at a time', s.vis >= 1 && !!s.act && s.strays.length === 0,
+    JSON.stringify(s));
   // switching tabs moves the visible row
   s = await page.evaluate(() => {
     const tabs = [...document.querySelectorAll('.v2-pop-tab')];
@@ -256,11 +279,16 @@ const ok = (name, cond, detail) => {
   await page.evaluate(() => document.querySelectorAll('.ctx-menu').forEach((m) => m.remove()));
 
   // ---- STEPPER (must move by exactly one) ---------------------------------
+  // Register lives in the SHEET HEAD now, not in a tab — it is the control you
+  // reach for while listening. Same markup, same document-level ± delegation,
+  // so the check follows it rather than being dropped.
+  await tap('.v2-grpbtn[data-v2grp="Instrument"]');
   const regBefore = (await state()).register;
-  await tap('.v2-layer .ambient-ctrl:has([data-f="instrument.register"]) .ambient-step-up');
+  await tap('.v2-pop-xtra .ambient-step-up');
   s = await state();
   ok('stepper + moves by exactly 1 (no double-fire)', s.register === regBefore + 1,
     'was ' + regBefore + ' now ' + s.register);
+  await tap('.v2-pop-close');
 
   // ---- SELECT writes + the gate follows ------------------------------------
   await page.evaluate(() => {
@@ -317,15 +345,1130 @@ const ok = (name, cond, detail) => {
     el.value = 'recorded'; el.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await new Promise((r) => setTimeout(r, 350));
-  const emptyState = await page.evaluate(() => ({
-    notes: ((_masterEng.getCfg().layers || [])[0].part.notes || []).length,
-    hint: [...document.querySelectorAll('.v2-layer .ambient-hint')].some((h) => /Nothing recorded yet/.test(h.textContent)),
-  }));
-  ok('an empty recorded part explains itself', emptyState.notes === 0 && emptyState.hint, JSON.stringify(emptyState));
+  // RESTATED, not relaxed. It pinned the SENTENCE ("Nothing recorded yet"),
+  // which broke when the empty state was reworded to name its new door — while
+  // the contract it exists for never moved. Assert the contract instead, and
+  // one notch harder than before: the explanation must name a control that is
+  // actually ON the card, so a hint pointing at a button that no longer exists
+  // fails here rather than being read by a user who then cannot find it.
+  const emptyState = await page.evaluate(() => {
+    const hint = [...document.querySelectorAll('.v2-layer .ambient-hint')]
+      .map((h) => h.textContent.trim())
+      .find((t) => /nothing (here|recorded) yet/i.test(t)) || '';
+    const named = [...document.querySelectorAll('.v2-layer button')]
+      .filter((b) => b.offsetParent !== null || b.closest('.v2-partviz'))
+      .map((b) => b.textContent.trim().replace(/^[^A-Za-z]+/, ''))
+      .filter(Boolean);
+    return {
+      notes: ((_masterEng.getCfg().layers || [])[0].part.notes || []).length,
+      hint: hint,
+      // the hint has to point somewhere real
+      doorOnCard: named.some((n) => n && hint.indexOf(n) >= 0),
+    };
+  });
+  ok('an empty recorded part explains itself, naming a door that is on the card',
+    emptyState.notes === 0 && !!emptyState.hint && emptyState.doorOnCard, JSON.stringify(emptyState));
+  // THE LOCK BUTTON HAS THREE FACES AND THREE TOOLTIPS, and it said the wrong
+  // thing in two of them: "❄ Re-take live" on a fixed part reads as the way
+  // BACK to Generated (it is not — that is the Source select), and both states
+  // shared ONE title, so a fixed part showed the live state's explanation.
+  // Reported as "re-take live is confusing".
+  const capFaces = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    const cap = () => card().querySelector('.v2-capture');
+    const face = () => ({ txt: cap().textContent.trim(), title: cap().title });
+    const sel = document.querySelector('.v2-layer [data-f="part.kind"]');
+    sel.value = 'live'; sel.dispatchEvent(new Event('input', { bubbles: true }));
+    await wait(250); card().classList.remove('collapsed');
+    const live = face();
+    L().part.kind = 'recorded'; L().part.notes = []; E.getCfg();
+    window._v2.render(E); await wait(250); card().classList.remove('collapsed');
+    const emptyFixed = face();
+    window.confirm = () => true;
+    cap().click(); await wait(350);
+    const filled = face();
+    return { live, emptyFixed, filled, made: L().part.made, n: (L().part.notes || []).length };
+  });
+  ok('the lock button says what THIS press will do — three states, three tooltips',
+    /Lock this take/.test(capFaces.live.txt) && /drawn above/.test(capFaces.live.title) &&
+    /Lock a take/.test(capFaces.emptyFixed.txt) &&
+    /Replace/.test(capFaces.filled.txt) && /discarded/.test(capFaces.filled.title) &&
+    capFaces.live.title !== capFaces.filled.title,
+    JSON.stringify(capFaces).slice(0, 300));
+  ok('nothing on the card offers to "re-take live" — the way back is the Source select',
+    await page.evaluate(() => !/Re-take live/i.test(document.querySelector('.v2-layer').textContent)), '');
+  // Replacing WORK asks first; re-rolling a plain locked take does not.
+  const capConfirm = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const cap = () => document.querySelector('.v2-layer .v2-capture');
+    let asked = null; window.confirm = (m) => { asked = m; return true; };
+    cap().click(); await wait(350);
+    const plain = asked;
+    L().part.notes[0].vel = 40; E.getCfg();
+    asked = null; cap().click(); await wait(350);
+    const edited = asked;
+    // declining must change nothing
+    L().part.notes[0].atk = 900; E.getCfg();
+    const before = JSON.stringify(L().part.notes);
+    window.confirm = () => false;
+    cap().click(); await wait(350);
+    return { plain, edited, declineKeeps: JSON.stringify(L().part.notes) === before, made: L().part.made };
+  });
+  ok('re-rolling a locked take is silent; replacing hand-edited notes asks first',
+    capConfirm.plain === null && !!capConfirm.edited && /discarded/.test(capConfirm.edited) && capConfirm.declineKeeps,
+    JSON.stringify(capConfirm).slice(0, 260));
   e = await tap('.v2-layer .v2-capture');
   ok('Capture is reachable ON THE CARD', !e, e);
   const escaped = await page.evaluate(() => ((_masterEng.getCfg().layers || [])[0].part.notes || []).length);
   ok('the card button fills an empty recorded part', escaped > 0, 'notes=' + escaped);
+
+  // ---- MATERIAL FIRST, AND EACH ONE REMEMBERS ITSELF ----------------------
+  // Material is what the part is MADE OF; Cycle, Bars, Plays and Transpose are
+  // answers ABOUT a part you already made, and it sat eighth behind them. And
+  // pressing a material button used to overwrite the live spec outright, so
+  // tuning an arpeggio, trying a pad and coming back gave you the FACTORY
+  // arpeggio and your work was gone.
+  const matRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = document.querySelector('.v2-layer');
+    card.classList.remove('collapsed');
+    const sel2 = card.querySelector('[data-f="part.kind"]');
+    sel2.value = 'live'; sel2.dispatchEvent(new Event('input', { bubbles: true }));
+    await wait(250);
+    const c2 = document.querySelector('.v2-layer');
+    c2.classList.remove('collapsed');
+    [...c2.querySelectorAll('.v2-grpbtn')].find((x) => x.getAttribute('data-v2grp') === 'Content').click();
+    await wait(300);
+    const tabs = [...document.querySelectorAll('.v2-pop-tab')].map((t) => t.getAttribute('data-tab'));
+    document.querySelector('.v2-pop-close').click(); await wait(200);
+    // tune an arpeggio, go elsewhere, come back
+    window._v2.makeArp(E, L()); E.getCfg();
+    L().part.rhythm.n = 13; L().part.pitch.octaves = 4; E.getCfg();
+    window._v2.makeSustain(E, L(), true); E.getCfg();
+    const sus = { kind: L().part.rhythm.kind, n: L().part.rhythm.n };
+    L().part.pitch.voices = 5; E.getCfg();
+    window._v2.makeArp(E, L()); E.getCfg();
+    const back = { n: L().part.rhythm.n, oct: L().part.pitch.octaves };
+    window._v2.makeSustain(E, L(), true); E.getCfg();
+    const backSus = { voices: L().part.pitch.voices, n: L().part.rhythm.n };
+    // a roll must still ROLL — a material that restored itself would stop
+    const b4 = JSON.stringify(L().part.rhythm);
+    window._v2.rollRun(E, L()); E.getCfg();
+    return { tabs, sus, back, backSus, rolled: JSON.stringify(L().part.rhythm) !== b4 };
+  });
+  ok('Material is the first thing the Part sheet offers',
+    matRun.tabs[0] === 'Material', JSON.stringify(matRun.tabs));
+  ok('each material remembers its own settings across a switch',
+    matRun.sus.n === 1 && matRun.back.n === 13 && matRun.back.oct === 4 && matRun.backSus.voices === 5,
+    JSON.stringify(matRun));
+  ok('…and a roll still rolls, because a re-roll is what it is for',
+    matRun.rolled, String(matRun.rolled));
+
+  // ---- SAVE A TAKE, INTO THE BANK THAT MAPS TO CHANGES --------------------
+  // The next press of ⟳ replaces the take, so the way to keep one sits beside
+  // the thing that would destroy it — and it goes into the SAME bank
+  // `partSeqs` maps by name onto a part/pass/chord, not a private list.
+  const bankRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    // A DETERMINISTIC PART, not a rolled one. The first version stretched a
+    // note of a random roll, and a rolled take's durations do not land cleanly
+    // on the cell grid — so `round(dur * gridN)` differed by one after the trip
+    // and the check FLAKED, which is worse than not having it. Known notes,
+    // known grid, exact answer. (Diagnosed by round-tripping this same fixture
+    // directly: onsets, pitches and durations all come back exact.)
+    L().part.kind = 'recorded'; L().part.bars = 1;
+    L().part.rhythm = { kind: 'pulse', n: 4, steps: 16 };
+    L().part.notes = [{ t: 0, midi: 60, dur: 4 / 16 }, { t: 4 / 16, midi: 64, dur: 2 / 16 },
+                      { t: 8 / 16, midi: 67, dur: 1 / 16 }, { t: 12 / 16, midi: 72, dur: 4 / 16 }];
+    L().part.made = 'take';
+    E.getCfg();
+    window._v2.render(E); await wait(250); card().classList.remove('collapsed');
+    const gridN = 16;
+    const cells = (n) => Math.max(1, Math.round(n.dur * gridN));
+    const before = JSON.stringify(L().part.notes.map((n) => [Math.round(n.t * 1000), n.midi, cells(n)]));
+    const btn = card().querySelector('.v2-savetake');
+    if (!btn) return { err: 'no save button' };
+    window.prompt = () => 'gate-take'; window.confirm = () => true;
+    btn.click(); await wait(320); card().classList.remove('collapsed');
+    const inBank = savedSequences.some((s2) => s2 && s2.name === 'gate-take');
+    // it must READ BACK as the same notes — a take that cannot be reloaded
+    // exactly is a take you have lost
+    window._v2.rollRun(E, L()); E.getCfg();
+    const row = card().querySelector('.v2-bankit .v2-bkload');
+    const bi = row ? row.getAttribute('data-bi') : null;
+    if (row) row.click();
+    await wait(320); card().classList.remove('collapsed');
+    const after = JSON.stringify(L().part.notes.map((n) => [Math.round(n.t * 1000), n.midi, cells(n)]));
+    const names = () => savedSequences.map((s2) => s2.name).join(',');
+    const order0 = names();
+    const up = card().querySelector('.v2-bkup[data-bi="1"]');
+    if (up) { up.click(); await wait(280); card().classList.remove('collapsed'); }
+    const order1 = names();
+    const out2 = { inBank, roundTrip: after === before, rows: card().querySelectorAll('.v2-bankit').length,
+                   order0, order1, bi };
+    // PUT THE BANK BACK. These cases run in ONE page against ONE bank, so an
+    // entry left behind is the next check's bug — "an empty bank says where
+    // phrases come from" is two checks later and this one had filled it.
+    for (let k = savedSequences.length - 1; k >= 0; k--) {
+      if (savedSequences[k] && savedSequences[k].name === 'gate-take') savedSequences.splice(k, 1);
+    }
+    try { if (typeof persistSaved === 'function') persistSaved(); } catch (e) {}
+    window._v2.render(_masterEng);
+    return out2;
+  });
+  ok('a take saves into the bank and reloads EXACTLY',
+    bankRun.inBank && bankRun.roundTrip, JSON.stringify(bankRun).slice(0, 240));
+  ok('the Saved bank can be reordered',
+    bankRun.rows >= 1 && (bankRun.rows < 2 || bankRun.order0 !== bankRun.order1),
+    JSON.stringify({ rows: bankRun.rows, a: bankRun.order0, b: bankRun.order1 }));
+
+  // ---- PER-BAR RE-ROLL ----------------------------------------------------
+  // Tap a bar in the drawing to pick it; Replace then rolls ONLY those bars —
+  // everything else keeps exactly what it has, per-note edits included. With
+  // nothing picked, Replace re-rolls everything, and that press must actually
+  // CHANGE the notes: the pinned take meant a "replace" that rolled the same
+  // take again returned identical notes, and the old verification compared
+  // `made`, never the notes.
+  const barRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    window._v2.rollRun(E, L()); L().part.bars = 4; L().part.rhythm.steps = 16; E.getCfg();
+    window._v2.capture(E, L()); E.getCfg();
+    window._v2.render(E); await wait(250); card().classList.remove('collapsed');
+    const cv = () => card().querySelector('.v2-vizcv');
+    // a hand edit OUTSIDE the selection must survive the re-roll untouched
+    const b0note = L().part.notes.find((n) => Math.floor(n.t * 4) === 0);
+    if (b0note) b0note.vel = 33;
+    E.getCfg();
+    const snap = () => L().part.notes.map((n) => [Math.round(n.t * 1000), n.midi, n.vel || 0])
+      .sort((x, y) => x[0] - y[0]);
+    const byBar = (list) => { const m = {}; list.forEach((r2) => {
+      (m[Math.floor(r2[0] / 250)] = m[Math.floor(r2[0] / 250)] || []).push(r2); }); return m; };
+    // THE TAP POINT IS FOUND, NOT GUESSED. A fixed y=16 sometimes lands on a
+    // top-of-range note (its padded hit box reaches y=14), which opens the
+    // editor instead of selecting — chance-dependent on the roll, and it
+    // cascaded three checks deep. Search the bar for a spot no note claims,
+    // with the handler's own padding (±4 x, ±7 y).
+    const tapBar = (bar) => {
+      const r = cv().getBoundingClientRect(); const geo = cv()._barsGeo;
+      const hits = cv()._hits || [];
+      const x0 = (bar / geo.barsF) * geo.w, x1 = ((bar + 1) / geo.barsF) * geo.w;
+      const free = (px, py) => !hits.some((b2) =>
+        px >= b2.x - 4 && px <= b2.x + b2.w + 4 && py >= b2.y - 7 && py <= b2.y + b2.h + 7);
+      let fx = (x0 + x1) / 2, fy = 17;
+      outer: for (let yi = 17; yi < 80; yi += 9) {
+        for (let xi = 0; xi < 10; xi++) {
+          const px = x0 + 2 + ((x1 - x0 - 4) * xi) / 9;
+          if (free(px, yi)) { fx = px; fy = yi; break outer; }
+        }
+      }
+      cv().dispatchEvent(new MouseEvent('click', { bubbles: true,
+        clientX: r.left + fx, clientY: r.top + fy }));
+    };
+    const before = snap();
+    let asked = null; window.confirm = (m) => { asked = m; return true; };
+    // pick a NON-EMPTY bar (never 0 — the hand edit lives there): an empty
+    // bar's rhythm is deterministic across takes, so it can never "move"
+    const bPick = byBar(before);
+    const SB = +((['1', '2', '3'].find((k) => (bPick[k] || []).length)) || '1');
+    tapBar(SB); await wait(250);
+    const face = card().querySelector('.v2-capture').textContent.trim();
+    // UP TO THREE PRESSES. "The bar changed" after ONE press is a
+    // chance-dependent assertion — a sparse bar can roll to the same content
+    // once (this check flaked on exactly that). The selection survives a press
+    // by design and every press bumps the take, so three identical rolls in a
+    // row is a broken mechanism, never bad luck — while the OTHER bars must
+    // hold on every press, which is the deterministic half.
+    const bB = byBar(before);
+    let after = before, othersHeld = true, selMoved = false, selFilled = false;
+    for (let k2 = 0; k2 < 6 && !(selMoved && selFilled); k2++) {
+      card().querySelector('.v2-capture').click(); await wait(350);
+      after = snap();
+      const bA2 = byBar(after);
+      ['0', '1', '2', '3'].filter((kk) => +kk !== SB).forEach((kk) => {
+        if (JSON.stringify(bB[kk] || []) !== JSON.stringify(bA2[kk] || [])) othersHeld = false;
+      });
+      if (JSON.stringify(bB[String(SB)] || []) !== JSON.stringify(bA2[String(SB)] || [])) selMoved = true;
+      // …and FRESH MATERIAL must actually arrive: a splice that only ever
+      // EMPTIES the bar still reads as "changed" (poison-verified — filtering
+      // every fresh note out passed the changed-alone version of this check).
+      if ((bA2[String(SB)] || []).length) selFilled = true;
+    }
+    const confirmScoped = asked;                 // edit is in bar 0, roll is bar 1
+    const bA = byBar(after);
+    const same = (k) => JSON.stringify(bB[k] || []) === JSON.stringify(bA[k] || []);
+    // deselect, then a FULL replace must change the notes
+    tapBar(SB); await wait(250);
+    const faceBack = card().querySelector('.v2-capture').textContent.trim();
+    const b4 = snap();
+    card().querySelector('.v2-capture').click(); await wait(350);
+    const fullChangedNow = JSON.stringify(snap()) !== JSON.stringify(b4);
+    // CLEAN UP DETERMINISTICALLY — the selection keys on [kind, bars, clock],
+    // so bouncing the kind clears it without a second chance-dependent tap.
+    L().part.kind = 'live'; E.getCfg(); L().part.kind = 'recorded'; E.getCfg();
+    window._v2.render(E); await wait(200); card().classList.remove('collapsed');
+    return { face, faceBack, confirmScoped, fullChangedNow,
+             othersKept: othersHeld, selChanged: selMoved && selFilled,
+             editKept: (L().part.notes || []).length >= 0 && JSON.stringify(bB[0] || []) === JSON.stringify(bA[0] || []),
+             fullChanged: fullChangedNow };
+  });
+  ok('a tapped bar re-rolls ALONE — every other bar, edits included, is untouched',
+    /Re-roll bar \d/.test(barRun.face) && barRun.othersKept && barRun.selChanged &&
+    barRun.confirmScoped === null,     // the bar-0 edit is out of scope, so no confirm
+    JSON.stringify(barRun).slice(0, 260));
+  ok('deselecting restores full replace, and a full replace actually changes the notes',
+    /Replace with a new take/.test(barRun.faceBack) && barRun.fullChanged, JSON.stringify(barRun).slice(0, 200));
+
+  // ---- NEW TAKE REWRITES, SILENTLY — AND RETAKES SELECTED BARS ------------
+  // 🎲 used to audition the new roll, which on the phone's ~1 s broadcast read
+  // as "it just played the current content" — the press's outcome is the
+  // DRAWING now, and ▶ Preview stays the only thing that makes sound. And a
+  // LIVE part selects bars exactly as a recorded one does: with bars tapped,
+  // 🎲 retakes just those (a per-bar pin, `part.takeb`), the rest of the
+  // drawing holding still.
+  const ntRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    L().part.kind = 'live'; delete L().part.takeb; E.getCfg();
+    window._v2.rollRun(E, L()); L().part.bars = 4; E.getCfg();
+    window._v2.render(E); await wait(250); card().classList.remove('collapsed');
+    const cv = () => card().querySelector('.v2-vizcv');
+    const barsOf = () => { const m = {}; (cv()._hits || []).forEach((h) => {
+      const b2 = Math.floor(h.t * 4); (m[b2] = m[b2] || []).push(Math.round(h.x) + ':' + Math.round(h.midi)); }); return m; };
+    const tapBar = (bar) => { const r = cv().getBoundingClientRect(); const geo = cv()._barsGeo;
+      const hits = cv()._hits || []; const x0 = (bar / geo.barsF) * geo.w, x1 = ((bar + 1) / geo.barsF) * geo.w;
+      const fr2 = (px, py) => !hits.some((b2) => px >= b2.x - 4 && px <= b2.x + b2.w + 4 && py >= b2.y - 7 && py <= b2.y + b2.h + 7);
+      let fx = (x0 + x1) / 2, fy = 17;
+      outer: for (let yi = 17; yi < 80; yi += 9) { for (let xi = 0; xi < 10; xi++) {
+        const px = x0 + 2 + ((x1 - x0 - 4) * xi) / 9; if (fr2(px, yi)) { fx = px; fy = yi; break outer; } } }
+      cv().dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: r.left + fx, clientY: r.top + fy })); };
+    // 1. SILENT, and the whole drawing moves
+    const orig = window.playNote; let played = 0;
+    window.playNote = function () { played++; return orig.apply(this, arguments); };
+    const b4 = JSON.stringify(barsOf());
+    card().querySelector('.v2-newtake').click(); await wait(450);
+    window.playNote = orig;
+    const silent = (played === 0), whole = JSON.stringify(barsOf()) !== b4;
+    // 2. a selected bar retakes ALONE — a NON-EMPTY one (an empty bar's
+    // rhythm is deterministic across takes and can never move; the flake)
+    const bAll = barsOf();
+    const SB = +((['1', '2', '3'].find((k) => (bAll[k] || []).length)) || '1');
+    tapBar(SB); await wait(250);
+    const face = card().querySelector('.v2-newtake').textContent.trim();
+    const b0 = barsOf();
+    let moved = false, held = true;
+    for (let k2 = 0; k2 < 6 && !moved; k2++) {
+      card().querySelector('.v2-newtake').click(); await wait(300);
+      const b1 = barsOf();
+      ['0', '1', '2', '3'].filter((kk) => +kk !== SB).forEach((kk) => {
+        if (JSON.stringify(b0[kk] || []) !== JSON.stringify(b1[kk] || [])) held = false; });
+      if (JSON.stringify(b0[String(SB)] || []) !== JSON.stringify(b1[String(SB)] || []) && (b1[String(SB)] || []).length) moved = true;
+    }
+    const takeb = JSON.stringify(L().part.takeb || null);
+    // 3. LOCK freezes the composite exactly as drawn, and consumes the map
+    const drawn = (cv()._hits || []).map((h) => Math.round(h.midi)).sort().join(',');
+    window.confirm = () => true;
+    card().querySelector('.v2-capture').click(); await wait(350);
+    const locked = { kind: L().part.kind, mapGone: !L().part.takeb,
+      match: (L().part.notes || []).map((n) => n.midi).sort().join(',') === drawn };
+    // cleanup: back to live, selection cleared by a real deselect next render
+    L().part.kind = 'live'; delete L().part.takeb; E.getCfg();
+    window._v2.render(E); await wait(200); card().classList.remove('collapsed');
+    return { silent, whole, face, moved, held, takeb, locked };
+  });
+  ok('🎲 New take REWRITES silently — no audition, and the drawing moves',
+    ntRun.silent && ntRun.whole, JSON.stringify(ntRun).slice(0, 160));
+  ok('a selected bar RETAKES alone on a live part, pinned in part.takeb',
+    /Retake bar \d/.test(ntRun.face) && ntRun.moved && ntRun.held && /"\d":/.test(ntRun.takeb),
+    JSON.stringify(ntRun).slice(0, 220));
+  ok('locking a bar-retaken part freezes the composite exactly as drawn',
+    ntRun.locked.kind === 'recorded' && ntRun.locked.match && ntRun.locked.mapGone,
+    JSON.stringify(ntRun.locked));
+
+  // ---- PROVENANCE IS AN ACTIVE MODE ---------------------------------------
+  // Five Material doors and nothing said which one produced the content you
+  // are looking at — both stores existed (`part.made`, `part.mat`) and neither
+  // showed. The door that made the content lights up, and the hint names the
+  // provenance AND the rules shaping the material (rhythm × pitch × take).
+  const provRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    card().classList.remove('collapsed');
+    const st2 = () => ({
+      on: [...card().querySelectorAll('.v2-notesrow .ambient-seg.on, .v2-seedv1.on')]
+        .map((x) => x.textContent.trim().slice(0, 14)).join('|'),
+      hint: card().querySelector('.v2-notecount').textContent });
+    card().querySelector('.v2-rollrun').click(); await wait(350); card().classList.remove('collapsed');
+    const roll = st2();
+    card().querySelector('.v2-mkpart[data-mk="sustain"]').click(); await wait(400); card().classList.remove('collapsed');
+    const sus = st2();
+    card().querySelector('.v2-seedv1[data-v1="bass"]').click(); await wait(450); card().classList.remove('collapsed');
+    const seed = st2();
+    window.confirm = () => true;
+    card().querySelector('.v2-capture').click(); await wait(400); card().classList.remove('collapsed');
+    const locked = st2();
+    // back to a plain live state for whoever runs next
+    L().part.kind = 'live'; delete L().part.mat; delete L().part.mem; E.getCfg();
+    window._v2.render(E); await wait(200); card().classList.remove('collapsed');
+    return { roll, sus, seed, locked };
+  });
+  ok('the Material door that made the content is LIT, and the hint names the rules',
+    /Rolled/.test(provRun.roll.on) && /euclid .* take \d/.test(provRun.roll.hint) &&
+    /Sustained/.test(provRun.sus.on) && !/Rolled/.test(provRun.sus.on) &&
+    /pulse .* chord/.test(provRun.sus.hint),
+    JSON.stringify(provRun).slice(0, 240));
+  ok('a v1 seed lights its chip, and a locked take still says what it was a take OF',
+    /Bass/.test(provRun.seed.on) && /seeded like a v1 bass/.test(provRun.seed.hint) &&
+    /Bass/.test(provRun.locked.on) && /a locked take of the v1 bass seed/.test(provRun.locked.hint),
+    JSON.stringify(provRun).slice(0, 240));
+  // NO STAMP IS NOT NO MATERIAL — a part made before provenance existed (or
+  // assembled by hand on the knobs) still IS one of the materials, and the
+  // rules' shape says which: series = an arpeggiator, one held chord = a
+  // sustain, a walked line = the run. The reported case exactly: a locked
+  // take, no `mat`, euclid + walk — and no door lit.
+  const inferRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    const st2 = () => ({ on: [...card().querySelectorAll('.v2-notesrow .ambient-seg.on')]
+      .map((x) => x.textContent.trim()).join('|'),
+      hint: card().querySelector('.v2-notecount').textContent });
+    window._v2.rollRun(E, L()); window._v2.capture(E, L());
+    delete L().part.mat; delete L().part.mem; E.getCfg();
+    window._v2.render(E); await wait(250); card().classList.remove('collapsed');
+    const legacy = st2();
+    L().part.kind = 'live'; delete L().part.mat;
+    L().part.rhythm = { kind: 'pulse', n: 8, steps: 16 };
+    L().part.pitch = { kind: 'series', dir: 'up', octaves: 2, degree: 1 };
+    E.getCfg(); window._v2.render(E); await wait(250); card().classList.remove('collapsed');
+    const hand = st2();
+    // cleanup for the next case
+    L().part.kind = 'live'; delete L().part.mat; delete L().part.mem; E.getCfg();
+    return { legacy, hand };
+  });
+  // THE VARIANCE GAP — v1's Roam / Pitch vary / Rate var exist on a v2 part
+  // now (pitch.roam, pitch.drift, rhythm.rateVar). Each must MOVE the notes,
+  // replay deterministically (seeded, so a take reproduces), and spend NOTHING
+  // at 0 (byte-identical output — the harness doctrine).
+  const varRun = await page.evaluate(async () => {
+    const E = _masterEng, cfg = E.getCfg(), L = (cfg.layers || [])[0];
+    const sv = JSON.stringify(L.part);
+    const roll = () => window._v2.notesFor(L, { E, cfg, key: 'v2:' + L.id, cycleStart: 0, cycleSec: 4 })
+      .map(n => Math.round(n.at * 1000) + ':' + Math.round(n.freq)).join(' ');
+    L.part.kind = 'live'; L.part.pitch.kind = 'fixed'; L.part.pitch.degree = 1;
+    L.part.rhythm = { kind: 'euclid', pulses: 5, steps: 16, rotate: 0 }; E.getCfg();
+    const base = roll();
+    const test = (mut, undo) => {
+      mut(); E.getCfg();
+      const a = roll(), b2 = roll();
+      undo(); E.getCfg();
+      return { moved: a !== base, det: a === b2, zero: roll() === base };
+    };
+    const roam = test(() => { L.part.pitch.roam = 80; }, () => { delete L.part.pitch.roam; });
+    const drift = test(() => { L.part.pitch.drift = 100; }, () => { delete L.part.pitch.drift; });
+    const rate = test(() => { L.part.rhythm.rateVar = 100; }, () => { delete L.part.rhythm.rateVar; });
+    // rate var must hold the downbeat: first onset identical to base's
+    L.part.rhythm.rateVar = 100; E.getCfg();
+    const firstHeld = roll().split(' ')[0].split(':')[0] === base.split(' ')[0].split(':')[0];
+    try { L.part = JSON.parse(sv); } catch (e) {}
+    delete L.part.mat; delete L.part.mem; E.getCfg();
+    return { roam, drift, rate, firstHeld };
+  });
+  ok('Roam, Pitch vary and Rate var each move the notes, replay, and cost nothing at 0',
+    varRun.roam.moved && varRun.roam.det && varRun.roam.zero &&
+    varRun.drift.moved && varRun.drift.det && varRun.drift.zero &&
+    varRun.rate.moved && varRun.rate.det && varRun.rate.zero && varRun.firstHeld,
+    JSON.stringify(varRun));
+  // ⇄ SYNC TO PART — the Content sheet head's door: a 5-chord part against a
+  // 4-bar layer, synced with Fill + Follow, lands bars 5 and harmony diatonic.
+  const syncRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, cfg = E.getCfg(), L = () => (E.getCfg().layers || [])[0];
+    const svProg = cfg.prog ? JSON.parse(JSON.stringify(cfg.prog)) : null;
+    cfg.prog = { on: true, name: 'SY', chords: [0, 5, 7, 2, 9].map(rt => ({ root: rt, intervals: [0, 4, 7] })) };
+    L().part.kind = 'live'; L().part.bars = 4; E.getCfg();
+    window._v2.capture(E, L()); E.getCfg();
+    window._v2.render(E); await wait(250);
+    const card = document.querySelector('.v2-layer'); card.classList.remove('collapsed');
+    const gb = [...card.querySelectorAll('.v2-grpbtn, [data-v2grp]')].find(x =>
+      x.tagName === 'BUTTON' && x.getAttribute('data-v2grp') === 'Content');
+    if (gb) gb.click(); await wait(250);
+    const btn = document.querySelector('.v2-pop-sync');
+    const rect = btn ? btn.getBoundingClientRect() : { width: 0, height: 0 };
+    if (btn) btn.click(); await wait(150);
+    const modal = document.querySelector('.v2-sync-modal');
+    const nowTxt = modal ? (modal.querySelector('.v2-sync-now') || {}).textContent : '';
+    if (modal) {
+      const f = [...modal.querySelectorAll('.v2-syncopt')];
+      (f.find(x => x.dataset.v === 'fill') || {}).click && f.find(x => x.dataset.v === 'fill').click();
+      (f.find(x => x.dataset.v === 'follow') || {}).click && f.find(x => x.dataset.v === 'follow').click();
+      modal.querySelector('.v2-syncgo').click(); await wait(250);
+    }
+    const L2 = L();
+    const res = { rect: rect.width > 40 && rect.height > 28, nowTxt,
+      bars: L2.part.bars, harmony: L2.harmony || '',
+      modalGone: !document.querySelector('.v2-sync-modal') };
+    // cleanup — one page, one state
+    delete L2.harmony; L2.part.kind = 'live'; L2.part.bars = 2;
+    delete L2.part.mat; delete L2.part.mem;
+    if (svProg) E.getCfg().prog = svProg; else delete E.getCfg().prog;
+    E.getCfg(); window._v2.render(E); await wait(200);
+    document.querySelector('.v2-layer').classList.remove('collapsed');
+    return res;
+  });
+  ok('⇄ Sync to Part: a real button in the Content head, and Fill + Follow lands bars 5 · diatonic',
+    syncRun.rect && /5 bars/.test(syncRun.nowTxt) && syncRun.bars === 5 &&
+    syncRun.harmony === 'diatonic' && syncRun.modalGone,
+    JSON.stringify(syncRun).slice(0, 240));
+  // PER-PART CONTENT — `L.part` is the record being edited, `L.partFor` names
+  // which arrangement part it is for, `L.parts` files the others, and the
+  // emitter swaps in the sounding part's record by TIME. The head pair
+  // ([which part][⇄ Sync]) is the door and must read as ONE control.
+  const ppRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, cfg = E.getCfg();
+    const L = () => (E.getCfg().layers || [])[0];
+    const svProg = cfg.prog ? JSON.parse(JSON.stringify(cfg.prog)) : null;
+    const svPart = JSON.stringify(L().part);   // restore WHOLE, or the leaked
+    // fixed/degree-1 pitch makes every later retake check unable to move
+    cfg.prog = { on: true, name: 'PP', chords: [0, 7, 5, 9].map(rt => ({ root: rt, intervals: [0, 4, 7] })),
+                 parts: [{ name: 'Verse', len: 2 }, { name: 'Chorus', len: 2 }] };
+    L().part.kind = 'live'; E.getCfg();
+    window._v2.render(E); await wait(250);
+    const card = document.querySelector('.v2-layer'); card.classList.remove('collapsed');
+    [...card.querySelectorAll('button[data-v2grp]')].find(x => x.getAttribute('data-v2grp') === 'Content').click();
+    await wait(250);
+    const sel = () => document.querySelector('.v2-pop-part');
+    const ppb = () => document.querySelector('.v2-pop-pp');
+    const rp = ppb().getBoundingClientRect(), rs = sel().getBoundingClientRect(),
+          rb = document.querySelector('.v2-pop-sync').getBoundingClientRect();
+    const o = { joined: Math.abs(rp.right - rs.left) < 2 && Math.abs(rs.right - rb.left) < 2 && rp.width > 40,
+      modeOff: ppb().textContent.trim(), selDisabled: sel().disabled,
+      selDash: (sel().selectedOptions[0] || {}).text,
+      label: document.querySelector('.v2-pop-sync').textContent.trim() };
+    // enable per-part with the TOGGLE, then pick with the selector
+    ppb().click(); await wait(300);
+    o.modeOn = ppb() && ppb().classList.contains('on');
+    o.selEnabled = sel() && !sel().disabled;
+    const pick = async (v) => { const s2 = sel(); s2.value = v;
+      s2.dispatchEvent(new Event('input', { bubbles: true })); await wait(300); };
+    // the two records differ in NOTE COUNT (pulse ×2 vs ×7) — a fixed-pitch
+    // difference is CONFOUNDED: the chords differ between the windows, so the
+    // pitch sets differ with the swap poisoned too (the poison caught it).
+    await pick('0'); L().part.bars = 3; L().part.rhythm = { kind: 'pulse', n: 2, steps: 16 };
+    L().part.pitch.kind = 'fixed'; L().part.pitch.degree = 1; E.getCfg();
+    await pick('1'); L().part.bars = 2; L().part.rhythm = { kind: 'pulse', n: 7, steps: 16 };
+    L().part.pitch.kind = 'fixed'; L().part.pitch.degree = 3; E.getCfg();
+    await pick('0');
+    const Lb = L();
+    o.roundTrip = Lb.partFor === 0 && Lb.part.bars === 3 && (Lb.part.pitch.degree | 0) === 1 &&
+      Lb.parts && Lb.parts['1'] && Lb.parts['1'].bars === 2 && (Lb.parts['1'].pitch.degree | 0) === 3;
+    o.readsAfter = sel().selectedOptions[0].text;
+    // EMIT BY TIME — the Verse window plays the edited record (2 onsets), the
+    // Chorus window the filed one (7). COUNTS, not pitches: the chords differ
+    // between the windows, so pitch sets differ even with the swap broken.
+    const barSec = (60 / (+document.getElementById('tempo-input').value || 120)) * 4;
+    const nf = (at) => window._v2.notesFor(L(), { E, cfg: E.getCfg(), key: 'v2:' + L().id, cycleStart: at, cycleSec: 2 * barSec }).length;
+    o.verse = nf(0.1); o.chorus = nf(2 * barSec + 0.1);
+    o.emitDiffers = o.verse === 2 && o.chorus === 7;
+    o.emitStable = nf(0.1) === o.verse;
+    // BACK TO ONE-EVERYWHERE via the toggle — with the confirm answered yes
+    const svC = window.confirm; window.confirm = () => true;
+    ppb().click(); await wait(300); window.confirm = svC;
+    o.cleared = !Number.isFinite(L().partFor) && !L().parts;
+    // cleanup — one page, one state: the WHOLE part record back
+    delete L().harmony;
+    try { L().part = JSON.parse(svPart); } catch (e) {}
+    delete L().part.mat; delete L().part.mem;
+    if (svProg) E.getCfg().prog = svProg; else delete E.getCfg().prog;
+    E.getCfg(); window._v2.render(E); await wait(200);
+    document.querySelector('.v2-layer').classList.remove('collapsed');
+    return o;
+  });
+  ok('the Content head is a joined trio — [mode][which part][⇄ Sync] — mode toggles, selector follows',
+    ppRun.joined && /Everywhere/.test(ppRun.modeOff) && ppRun.selDisabled && ppRun.selDash === '\u2014' &&
+    ppRun.modeOn && ppRun.selEnabled && ppRun.label === '\u21c4 Sync' && ppRun.readsAfter === 'Verse',
+    JSON.stringify(ppRun).slice(0, 260));
+  ok('choosing a part files the old record and restores its own — bars, pitch, everything',
+    ppRun.roundTrip, JSON.stringify(ppRun).slice(0, 240));
+  ok('the EMITTER plays each arrangement part its own content, resolved by time (2 vs 7 onsets)',
+    ppRun.emitDiffers && ppRun.emitStable,
+    JSON.stringify({ verse: ppRun.verse, chorus: ppRun.chorus }));
+  ok('the mode toggle (confirmed) returns to one-everywhere and drops the filed records',
+    ppRun.cleared, JSON.stringify(ppRun).slice(0, 200));
+  // THE CURRENT-PART STRIP — between the tab section and the layers: a readout
+  // of the part being EDITED, and tapping one switches every v2 layer's
+  // content record to it. Playback must be untouched (the clocks never move).
+  const cpRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, cfg = E.getCfg();
+    const L = () => (E.getCfg().layers || [])[0];
+    const svProg = cfg.prog ? JSON.parse(JSON.stringify(cfg.prog)) : null;
+    const svPart = JSON.stringify(L().part);
+    const svPF = L().partFor;
+    const strip = () => document.getElementById('mix-bloom-curpart');
+    // bare — no changes, no strip
+    delete cfg.prog; E.getCfg(); if (strip()) strip()._sig = '';
+    _ambSyncControls(E); await wait(200);
+    const o = { hiddenBare: !!strip() && strip().style.display === 'none' };
+    E.getCfg().prog = { on: true, name: 'CP', chords: [0, 7, 5, 9].map(rt => ({ root: rt, intervals: [0, 4, 7] })),
+                        parts: [{ name: 'Verse', len: 2 }, { name: 'Chorus', len: 2 }] };
+    E.getCfg(); strip()._sig = ''; _ambSyncControls(E); await wait(250);
+    const chips = () => [...strip().querySelectorAll('.ambient-curpart-chip')];
+    o.shown = strip().style.display !== 'none';
+    o.chips = chips().map(c => c.textContent + (c.classList.contains('on') ? '*' : '')).join(' ');
+    const kids = [...strip().parentElement.children];
+    o.placed = kids.indexOf(strip()) === kids.findIndex(k => k.classList.contains('ambient-tabsec')) + 1 &&
+      kids.indexOf(strip()) < kids.findIndex(k => k.classList.contains('ambient-layer'));
+    const clock0 = { prog: E._progAnchor, grid: E._barGridAnchor, timer: !!E.timer };
+    // a SHARED layer must not follow — per-part is its own explicit control
+    chips()[1].click(); await wait(300);
+    o.sharedUntouched = !Number.isFinite(L().partFor);
+    window._v2.partSelect(E, L(), 0); E.getCfg();     // now per-part → it follows
+    chips()[0].click(); await wait(200); chips()[1].click(); await wait(300);
+    o.tapped = { lit: chips()[1].classList.contains('on'), partFor: L().partFor,
+      clocks: E._progAnchor === clock0.prog && E._barGridAnchor === clock0.grid && !!E.timer === clock0.timer };
+    // cleanup
+    delete E._curPart;
+    try { L().part = JSON.parse(svPart); } catch (e) {}
+    if (Number.isFinite(svPF)) L().partFor = svPF; else { delete L().partFor; delete L().parts; delete L().partAll; }
+    if (svProg) E.getCfg().prog = svProg; else delete E.getCfg().prog;
+    E.getCfg(); if (strip()) strip()._sig = ''; _ambSyncControls(E); await wait(200);
+    return o;
+  });
+  ok('the current-part strip sits between the tabs and the layers, and reads the parts',
+    cpRun.hiddenBare && cpRun.shown && cpRun.placed && /Verse\*/.test(cpRun.chips),
+    JSON.stringify(cpRun));
+  ok('tapping a part makes it current for EDITING — per-part layers follow, shared ones and the clocks are untouched',
+    cpRun.sharedUntouched && cpRun.tapped.lit && cpRun.tapped.partFor === 1 && cpRun.tapped.clocks,
+    JSON.stringify({ shared: cpRun.sharedUntouched, tapped: cpRun.tapped }));
+  // GREY, NOT GONE — on a Fixed part, a row whose only failing gate is
+  // `kind:live` stays visible and inert (.v2-rowna): hiding the rhythm rows
+  // there read as "where did the rhythm params go". An ALTERNATIVE gate
+  // (wrong rhythm kind, wrong voice) still hides.
+  const greyRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const svPart = JSON.stringify(L().part);
+    L().part.kind = 'live'; L().part.rhythm = { kind: 'euclid', pulses: 5, steps: 16, rotate: 0 }; E.getCfg();
+    window._v2.capture(E, L()); E.getCfg();
+    window._v2.render(E); await wait(250);
+    const card = document.querySelector('.v2-layer'); card.classList.remove('collapsed');
+    [...card.querySelectorAll('button[data-v2grp]')].find(x => x.getAttribute('data-v2grp') === 'Content').click();
+    await wait(250);
+    const pop = document.querySelector('.v2-pop');
+    const open = async (nm) => { const t = [...pop.querySelectorAll('.v2-pop-tabs [data-tab]')]
+      .find(x => x.getAttribute('data-tab') === nm); if (t) { t.click(); await wait(200); } return !!t; };
+    const o = { patternTab: await open('Pattern') };
+    // GREY IS FOR PARAMETER ROWS ONLY — a gated BUTTON still hides: 🎲 New
+    // take is the LIVE re-roll and "Replace with a new take" its recorded
+    // twin; greying leaked both dice onto one recorded take bar (reported).
+    const ntb = card.querySelector('.v2-newtake');
+    o.newTakeHidden = !!ntb && ntb.style.display === 'none';
+    const grid = pop.querySelector('.v2-cellrow');
+    if (grid) {
+      const r = grid.getBoundingClientRect();
+      o.gridVisible = r.height > 10;
+      o.gridNa = grid.classList.contains('v2-rowna');
+      o.gridInert = getComputedStyle(grid).pointerEvents === 'none';
+    }
+    await open('Rhythm');
+    const pulses = [...pop.querySelectorAll('[data-f="part.rhythm.pulses"]')].map(x => x.closest('.ambient-ctrl'))[0];
+    o.pulsesNa = pulses && pulses.style.display !== 'none' && pulses.classList.contains('v2-rowna');
+    // an ALTERNATIVE gate still hides: Onsets is rhythm:pulse and this part is euclid
+    const onsets = [...pop.querySelectorAll('[data-f="part.rhythm.n"]')].map(x => x.closest('.ambient-ctrl'))[0];
+    o.altStillHidden = onsets && onsets.style.display === 'none';
+    // back to Generated: the grey lifts
+    L().part.kind = 'live'; E.getCfg();
+    window._v2.render(E); await wait(250);
+    document.querySelector('.v2-layer').classList.remove('collapsed');
+    const p2 = [...document.querySelectorAll('[data-f="part.rhythm.pulses"]')].map(x => x.closest('.ambient-ctrl'))[0];
+    o.liveClear = p2 && !p2.classList.contains('v2-rowna');
+    try { L().part = JSON.parse(svPart); } catch (e) {}
+    delete L().part.mat; delete L().part.mem; E.getCfg();
+    window._v2.render(E); await wait(200);
+    document.querySelector('.v2-layer').classList.remove('collapsed');
+    return o;
+  });
+  ok('on a Fixed part the rhythm rows GREY OUT instead of hiding — alternatives and gated BUTTONS still hide',
+    greyRun.patternTab && greyRun.gridVisible && greyRun.gridNa && greyRun.gridInert &&
+    greyRun.pulsesNa && greyRun.altStillHidden && greyRun.liveClear && greyRun.newTakeHidden,
+    JSON.stringify(greyRun));
+  // TAB FAMILIES — Content's thirteen tabs were an undifferentiated wall; the
+  // strip is labelled, tinted family rows now (make · rhythm · time · pitch),
+  // with a trailing unlabelled row so a NEW tab can never vanish from it.
+  const famRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const svKind = L().part.kind;
+    L().part.kind = 'recorded'; E.getCfg();       // the fullest tab set
+    window._v2.render(E); await wait(250);
+    const card = document.querySelector('.v2-layer'); card.classList.remove('collapsed');
+    [...card.querySelectorAll('button[data-v2grp]')].find(x => x.getAttribute('data-v2grp') === 'Content').click();
+    await wait(250);
+    const strip = document.querySelector('.v2-pop-tabs');
+    const fams = [...strip.querySelectorAll('.v2-tabfam')].map(f => (f.querySelector('.v2-tabfam-lab') || {}).textContent + ':' +
+      [...f.querySelectorAll('.v2-pop-tab')].length);
+    // every tab is in exactly one family row, and clicking one still navigates
+    const inFams = [...strip.querySelectorAll('.v2-tabfam [data-tab]')].length;
+    const total = [...strip.querySelectorAll('[data-tab]')].length;
+    const t = [...strip.querySelectorAll('[data-tab]')].find(x => x.getAttribute('data-tab') === 'Bars');
+    t.click(); await wait(200);
+    // the PANE wears the family: row labels take its hue (Bars → time → blue)
+    const pane = document.querySelector('.v2-pop-pane');
+    const lab = [...pane.querySelectorAll('.ambient-ctrl')].find(r =>
+      r.style.display !== 'none' && !r.classList.contains('v2-rowoff'));
+    const o = { fams: fams.join(' '), allInFams: inFams === total && total >= 10,
+      navWorks: t.classList.contains('on'),
+      paneFam: pane.getAttribute('data-fam'),
+      labHue: lab ? getComputedStyle(lab.querySelector('label')).color : null };
+    document.querySelector('.v2-pop-close').click(); await wait(150);
+    L().part.kind = svKind; delete L().part.mat; delete L().part.mem; E.getCfg();
+    window._v2.render(E); await wait(200);
+    document.querySelector('.v2-layer').classList.remove('collapsed');
+    return o;
+  });
+  ok('the Content tab wall is labelled family rows — make · rhythm · time · pitch — and still navigates',
+    /make:/.test(famRun.fams) && /rhythm:/.test(famRun.fams) && /time:/.test(famRun.fams) &&
+    /pitch:/.test(famRun.fams) && famRun.allInFams && famRun.navWorks &&
+    famRun.paneFam === 'fam-time' && famRun.labHue === 'rgb(99, 179, 237)',
+    JSON.stringify(famRun));
+  // THE ICE MODEL — the Everywhere record survives per-part mode intact, every
+  // part (added whenever) starts from a FITTED copy of it, an un-diverged
+  // part's playback never depends on which part is selected, and part deletion
+  // re-indexes the records (the clamped-index trap).
+  const iceRun = await page.evaluate(async () => {
+    const E = _masterEng, cfg = E.getCfg();
+    const L = () => (E.getCfg().layers || [])[0];
+    const svProg = cfg.prog ? JSON.parse(JSON.stringify(cfg.prog)) : null;
+    const svPart = JSON.stringify(L().part);
+    const mk = (rt) => ({ root: rt, intervals: [0, 4, 7] });
+    cfg.prog = { on: true, name: 'ICE', chords: [0, 7, 5, 9, 2].map(mk),
+                 parts: [{ name: 'Verse', len: 2 }, { name: 'Chorus', len: 3 }] };
+    L().part.kind = 'live'; L().part.bars = 2;
+    L().part.rhythm = { kind: 'pulse', n: 3, steps: 16 }; E.getCfg();
+    const o = {};
+    // ENGAGE on Verse: the Everywhere record is iced; Chorus materialises as a
+    // fitted copy of it (bars = its 3-chord pass, rules = the Everywhere rules)
+    window._v2.partSelect(E, L(), 0); E.getCfg();
+    const Lb = L();
+    o.iced = !!(Lb.partAll && (Lb.partAll.rhythm.n | 0) === 3 && Lb.partAll.bars === 2);
+    const ch = Lb.parts && Lb.parts['1'];
+    o.chorusCopy = !!(ch && (ch.rhythm.n | 0) === 3 && ch.bars === 3);
+    // STABILITY: editing the bench (Verse) must not change what Chorus plays
+    Lb.part.rhythm = { kind: 'pulse', n: 8, steps: 16 }; E.getCfg();
+    const barSec = (60 / (+document.getElementById('tempo-input').value || 120)) * 4;
+    const nf = (at) => window._v2.notesFor(L(), { E, cfg: E.getCfg(), key: 'v2:' + L().id, cycleStart: at, cycleSec: 2 * barSec }).length;
+    o.verseN = nf(0.1); o.chorusN = nf(2 * barSec + 0.1);
+    // A PART ADDED LATER gets a fitted copy of the ICE, not of the edited bench
+    const c2 = E.getCfg();
+    c2.prog.chords.push(mk(4), mk(11));
+    c2.prog.parts.push({ name: 'Bridge', len: 2 });
+    E.getCfg();
+    const br = L().parts && L().parts['2'];
+    o.bridgeCopy = !!(br && (br.rhythm.n | 0) === 3 && br.bars === 2);
+    // DELETING the middle part shifts the records with the parts
+    try { _ambProgDeletePart(E, 1); } catch (e) {}
+    E.getCfg();
+    const L3 = L();
+    o.afterDelete = { partFor: L3.partFor,
+      shifted: !!(L3.parts && L3.parts['1'] && (L3.parts['1'].rhythm.n | 0) === 3 && L3.parts['1'].bars === 2),
+      chorusGone: !(L3.parts && L3.parts['2']) };
+    // DISENGAGE restores the ICED Everywhere record, edits and all dropped
+    window._v2.partSelect(E, L(), null); E.getCfg();
+    o.back = { n: L().part.rhythm.n | 0, bars: L().part.bars,
+      clean: !L().partAll && !L().parts && !Number.isFinite(L().partFor) };
+    // cleanup
+    try { L().part = JSON.parse(svPart); } catch (e) {}
+    delete L().part.mat; delete L().part.mem;
+    if (svProg) E.getCfg().prog = svProg; else delete E.getCfg().prog;
+    E.getCfg();
+    return o;
+  });
+  ok('per-part ices the Everywhere record, and every part starts from a FITTED copy of it',
+    iceRun.iced && iceRun.chorusCopy && iceRun.bridgeCopy,
+    JSON.stringify(iceRun).slice(0, 240));
+  ok('an un-diverged part plays its own copy — editing the bench moves only the selected part',
+    iceRun.verseN === 8 && iceRun.chorusN === 3, JSON.stringify({ v: iceRun.verseN, c: iceRun.chorusN }));
+  ok('deleting a part shifts the records with the parts, and Everywhere comes BACK on disengage',
+    iceRun.afterDelete.partFor === 0 && iceRun.afterDelete.shifted && iceRun.afterDelete.chorusGone &&
+    iceRun.back.n === 3 && iceRun.back.bars === 2 && iceRun.back.clean,
+    JSON.stringify(iceRun).slice(0, 280));
+  // TONE CHANGES APPLY NOW — the commit is v1's cancel + re-anchor pair, so a
+  // Tone/kit change while playing retracts the un-started old-tone notes and
+  // the next tick re-emits with the new one (reported: "changing Instrument
+  // tone does not update the content"). Wall-time stamps, because a playNote
+  // wrapper logs at SCHEDULE time and cannot see the cancel (documented).
+  const toneRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const svPart = JSON.stringify(L().part); const svTone = L().instrument.tone;
+    L().on = true; L().present = true; L().part.kind = 'live'; L().part.bars = 2;
+    L().part.rhythm = { kind: 'pulse', n: 8, steps: 16 };
+    L().instrument.voice = 'synth'; L().instrument.tone = 'sawtooth'; E.getCfg();
+    window._v2.render(E); await wait(250);
+    document.querySelector('.v2-layer').classList.remove('collapsed');
+    const log = [];
+    const oP = window.playNote;
+    window.playNote = function (f, p2, d, at) {
+      const r = oP.apply(this, arguments);
+      if (window._ambEmitKey === 'v2:' + L().id) log.push({ w: Tone.now(), ty: (p2 && p2.type) || '?' });
+      return r;
+    };
+    _ambStartGenerator(E); await wait(1500);
+    const sel = [...document.querySelectorAll('.v2-layer [data-f="instrument.tone"]')][0];
+    const tChange = Tone.now();
+    sel.value = 'square'; sel.dispatchEvent(new Event('input', { bubbles: true }));
+    await wait(1300);
+    _ambStopGenerator(E); window.playNote = oP;
+    const after = log.filter(n => n.w > tChange + 0.05);
+    const o = { oldAfter: after.filter(n => n.ty === 'sawtooth').length,
+      newAfter: after.filter(n => n.ty === 'square').length };
+    try { L().part = JSON.parse(svPart); } catch (e) {}
+    L().instrument.tone = svTone; delete L().part.mat; delete L().part.mem; E.getCfg();
+    // THIS IS THE FIRST CHECK THAT PLAYS THE REAL TRANSPORT, and `_playStartAt`
+    // survives the stop — every later direct notesFor call then resolves its
+    // chords against a stale wall-clock anchor and clamps to chord 0 (four
+    // downstream harmony checks failed exactly that way). Null the anchors.
+    try { E._playStartAt = null; E._progAnchor = null; E._barGridAnchor = null; E._pressAt = null; } catch (e) {}
+    window._v2.render(E); await wait(200);
+    document.querySelector('.v2-layer').classList.remove('collapsed');
+    return o;
+  });
+  ok('a Tone change mid-play cancels the old-tone schedule and re-emits with the new one',
+    toneRun.oldAfter === 0 && toneRun.newAfter > 3, JSON.stringify(toneRun));
+  ok('a part with NO provenance stamp still lights the material its rules ARE',
+    /Rolled/.test(inferRun.legacy.on) && /Rolled · a locked take/.test(inferRun.legacy.hint) &&
+    /Arpeggio/.test(inferRun.hand.on) && /series/.test(inferRun.hand.hint),
+    JSON.stringify(inferRun).slice(0, 240));
+
+  // ---- THE INSTRUMENT SHEET IS TWO TABS AND TWO FOLDS ---------------------
+  // It was five tabs — Tone type, Tone, Register, Tone cycle, Envelope — which
+  // is five presses to find out what the sheet holds. The type belongs WITH the
+  // tone (it is the question above it, not a peer), the envelope is how that
+  // voice behaves rather than a peer of it, and Register is the one control you
+  // reach for while listening, so it sits in the head.
+  const instShape = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const card = document.querySelector('.v2-layer');
+    card.classList.remove('collapsed');
+    const sel2 = card.querySelector('[data-f="instrument.voice"]');
+    sel2.value = 'synth'; sel2.dispatchEvent(new Event('input', { bubbles: true }));
+    await wait(320);
+    // the card is REBUILT by that change, so re-resolve it before clicking
+    const c2 = document.querySelector('.v2-layer');
+    c2.classList.remove('collapsed');
+    const gb = [...c2.querySelectorAll('.v2-grpbtn')].find((x) => x.getAttribute('data-v2grp') === 'Instrument');
+    if (!gb) return { err: 'no Instrument button' };
+    gb.click();
+    await wait(320);
+    const tabs = [...document.querySelectorAll('.v2-pop-tab')].map((t) => t.getAttribute('data-tab'));
+    const head = document.querySelector('.v2-pop-head');
+    const reg = head && head.querySelector('[data-f="instrument.register"]');
+    const regBox = reg ? reg.closest('.v2-pop-xtra').getBoundingClientRect() : null;
+    const btns = reg ? [...reg.closest('.ambient-stepper').querySelectorAll('.ambient-step-btn')]
+      .map((b2) => Math.round(b2.getBoundingClientRect().height)) : [];
+    // the folds start SHUT, and their rows are not on screen until opened
+    const envRow = () => document.querySelector('.v2-pop-pane [data-f="instrument.attack"]');
+    const shown = (el) => !!el && el.closest('.ambient-ctrl') &&
+      getComputedStyle(el.closest('.ambient-ctrl')).display !== 'none';
+    const shut = !shown(envRow());
+    const d = document.querySelector('.v2-pop-pane .v2-discbtn[data-disc="env"]');
+    if (!d) return { err: 'no envelope fold', tabs: tabs };
+    d.click(); await wait(200);
+    const open = shown(envRow());
+    d.click(); await wait(200);
+    const shutAgain = !shown(envRow());
+    return { tabs, reg: !!reg, regInHead: !!reg, regBtnH: btns,
+             regFont: reg ? parseFloat(getComputedStyle(reg).fontSize) : 0,
+             regW: regBox ? Math.round(regBox.width) : 0,
+             headOverflow: head ? head.scrollWidth - head.clientWidth : 0,
+             shut, open, shutAgain,
+             inTabs: !!document.querySelector('.v2-pop-pane [data-f="instrument.register"]') };
+  });
+  ok('the Instrument sheet is Live + Tone set, with no tab for the type or the envelope',
+    instShape.tabs.indexOf('Live') === 0 && instShape.tabs.indexOf('Tone set') > 0 &&
+    instShape.tabs.indexOf('Tone type') < 0 && instShape.tabs.indexOf('Envelope') < 0 &&
+    instShape.tabs.indexOf('Register') < 0, JSON.stringify(instShape.tabs));
+  ok('Register is a ± in the sheet head, thumb-sized, and gone from the tabs',
+    instShape.regInHead && !instShape.inTabs && instShape.regBtnH.every((h2) => h2 >= 40) &&
+    instShape.regFont >= 16 && instShape.headOverflow <= 0,
+    JSON.stringify({ h: instShape.regBtnH, f: instShape.regFont, w: instShape.regW,
+                     over: instShape.headOverflow, inTabs: instShape.inTabs }));
+  ok('the envelope is a fold inside Live — shut, opens, shuts again',
+    instShape.shut && instShape.open && instShape.shutAgain, JSON.stringify(instShape));
+  await page.evaluate(() => { const c = document.querySelector('.v2-pop-close'); if (c) c.click(); });
+  await new Promise((r) => setTimeout(r, 200));
+
+  // ---- REGISTER MOVES THE PART, RECORDED OR NOT ---------------------------
+  // It is read by the LIVE pitch path only, so on a fixed part it was a control
+  // on screen that moved nothing — reported as "register should shift the part
+  // up or down an octave". Measured at playNote, because a config value that
+  // nothing plays is exactly the failure being tested for.
+  const regRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const sel2 = document.querySelector('.v2-layer [data-f="part.kind"]');
+    sel2.value = 'live'; sel2.dispatchEvent(new Event('input', { bubbles: true }));
+    await wait(200);
+    window._v2.rollRun(E, L()); window._v2.render(E); await wait(200);
+    const hear = async () => {
+      const seen = []; const orig = window.playNote;
+      window.playNote = function (f) { seen.push(Math.round(f)); return orig.apply(this, arguments); };
+      window._v2.preview(E, L()); await wait(160); window._v2.previewKill(E, L());
+      window.playNote = orig; return seen;
+    };
+    L().instrument.register = 4; E.getCfg();
+    window._v2.capture(E, L()); E.getCfg();          // a fixed part, made at register 4
+    const base = await hear();
+    L().instrument.register = 5; E.getCfg();
+    const up = await hear();
+    L().instrument.register = 3; E.getCfg();
+    const down = await hear();
+    L().instrument.register = 4; L().part.transpose = 2; E.getCfg();
+    const tr = await hear();
+    const ratio = (a2, b2, r) => a2.length > 0 && a2.length === b2.length &&
+      a2.every((f, i) => Math.abs(b2[i] / f - r) < 0.02);
+    return { kind: L().part.kind, reg: L().part.reg, n: base.length,
+      up: ratio(base, up, 2), down: ratio(base, down, 0.5),
+      withTranspose: ratio(base, tr, Math.pow(2, 2 / 12)) };
+  });
+  ok('Register moves a RECORDED part by whole octaves, and composes with Transpose',
+    regRun.n > 0 && regRun.reg === 4 && regRun.up && regRun.down && regRun.withTranspose,
+    JSON.stringify(regRun));
+
+  // ---- TONE TYPE NARROWS TONE ---------------------------------------------
+  // "Voice" named the KIND of sound and sat beside "Tone" as if it were a peer;
+  // and the list WAS constrained, by having three separate rows, which in a
+  // tabbed sheet reads as a Tone tab that ignores the kit you chose.
+  const toneNarrow = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng;
+    // "Live" — the tab that holds the type, the tone and the folded envelope.
+    const row = () => [...document.querySelectorAll('.v2-layer [data-v2tab="Live"]')]
+      .find((r2) => r2.querySelector('select[data-f^="instrument."]') &&
+                    /^Tone$/.test(((r2.querySelector('label') || {}).textContent || '').trim()));
+    const read = () => {
+      const r2 = row(); if (!r2) return { f: null, n: 0, opts: [] };
+      const s2 = r2.querySelector('select');
+      return { f: s2.getAttribute('data-f'), n: s2.options.length,
+               opts: [...s2.options].slice(0, 40).map((o) => o.value),
+               label: (r2.querySelector('label') || {}).textContent };
+    };
+    const set = async (v) => {
+      const s2 = document.querySelector('.v2-layer [data-f="instrument.voice"]');
+      s2.value = v; s2.dispatchEvent(new Event('input', { bubbles: true })); await wait(300);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    };
+    await set('synth'); const synth = read();
+    await set('kit'); const kit = read();
+    await set('speech'); const speech = read();
+    await set('synth');
+    const typeLabel = (document.querySelector('.v2-layer [data-f="instrument.voice"]')
+      .closest('.ambient-ctrl').querySelector('label') || {}).textContent;
+    return { synth, kit, speech, typeLabel };
+  });
+  ok('the type is called Tone type, and ONE Tone row follows it',
+    /Tone type/.test(toneNarrow.typeLabel) &&
+    toneNarrow.synth.f === 'instrument.tone' && toneNarrow.kit.f === 'instrument.kit' &&
+    toneNarrow.speech.f === 'instrument.speechVoice' &&
+    /^Tone$/.test((toneNarrow.synth.label || '').trim()),
+    JSON.stringify({ t: toneNarrow.typeLabel, s: toneNarrow.synth.f, k: toneNarrow.kit.f, p: toneNarrow.speech.f }));
+  // The group head is a dashboard, so it must name the SOUND — the generated
+  // kit's id is literally 'synth', so a drum layer summarised as "synth · A 400"
+  // and read as a synth one.
+  const instSum = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    const sum = () => [...card().querySelectorAll('.v2-grpbtn')]
+      .find((x) => x.getAttribute('data-v2grp') === 'Instrument').textContent.replace(/\s+/g, ' ');
+    const set = async (v) => { const s2 = card().querySelector('[data-f="instrument.voice"]');
+      s2.value = v; s2.dispatchEvent(new Event('input', { bubbles: true })); await wait(320);
+      card().classList.remove('collapsed'); };
+    await set('kit'); const synthKit = sum();
+    L().instrument.kit = 'tr808'; E.getCfg(); window._v2.render(E); await wait(260);
+    card().classList.remove('collapsed');
+    const named = sum();
+    // PUT BACK WHAT THIS CHECK BORROWED. These cases run in ONE page against
+    // ONE cfg, so a kit id left behind is the next check's bug — it failed the
+    // synth-drum check, which reasonably expects the synth kit (the documented
+    // state-leak trap, one store over).
+    L().instrument.kit = 'synth'; E.getCfg();
+    await set('synth');
+    return { synthKit, named };
+  });
+  ok('the Instrument head names the KIT, not its id',
+    /Synth kit/.test(instSum.synthKit) && /TR-808/.test(instSum.named),
+    JSON.stringify(instSum));
+  ok('a drum type offers KITS and no oscillators; a synth type offers oscillators',
+    toneNarrow.kit.opts.indexOf('synth') >= 0 && toneNarrow.kit.opts.indexOf('sawtooth') < 0 &&
+    toneNarrow.synth.opts.indexOf('sawtooth') >= 0 && toneNarrow.synth.n > toneNarrow.kit.n,
+    JSON.stringify({ kit: toneNarrow.kit.opts.slice(0, 6), kitN: toneNarrow.kit.n, synthN: toneNarrow.synth.n }));
+
+  // ---- THE TAKE: PREVIEW AUDITIONS, IT DOES NOT RE-WRITE ------------------
+  // Reported as "Preview should not re-write the part". A live part's seeded
+  // draws key on the CYCLE INDEX, so before the take was pinned every press
+  // landed on whatever cycle the clock had reached and played something else —
+  // the take you liked was gone the moment you played it again.
+  //
+  // MEASURE THE AUDIO, not the drawing: the picture is derived from the same
+  // call, so a picture that agrees with itself proves only that one function is
+  // consistent with itself. And SPACE THE PRESSES BEYOND ONE CYCLE — the
+  // clock-derived index only moves once per cycle, so three presses inside one
+  // cycle cannot tell a pinned take from an unpinned one. Poison-verified with
+  // the spacing in place (unpinned: 2 distinct takes over a 3-cycle span).
+  await page.evaluate(() => {
+    const E = _masterEng, L = (E.getCfg().layers || [])[0];
+    const el = document.querySelector('.v2-layer [data-f="part.kind"]');
+    el.value = 'live'; el.dispatchEvent(new Event('input', { bubbles: true }));
+    window._v2.rollRun(E, L);
+    window._v2.render(E);
+  });
+  await new Promise((r) => setTimeout(r, 250));
+  const takeRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const orig = window.playNote;
+    const once = async () => {
+      const seen = [];
+      window.playNote = function (f) { seen.push(Math.round(f)); return orig.apply(this, arguments); };
+      window._v2.preview(E, L()); await wait(160); window._v2.previewKill(E, L());
+      window.playNote = orig;
+      return seen.join(',');
+    };
+    const takes = [];
+    for (let i = 0; i < 3; i++) { takes.push(await once()); await wait(1300); }
+    const t0 = window._v2.takeOf(L());
+    document.querySelector('.v2-layer .v2-newtake').click();
+    await wait(300);
+    const rolled = await once();
+    // DETERMINISTIC PROOF that the take is what selects the roll — three
+    // presses being identical can pass by luck (the clock-derived index only
+    // moves once per cycle, so a run of fast presses agrees either way). Ask
+    // two different takes for their notes directly and compare.
+    const ask = (tk) => {
+      const cfg = E.getCfg();
+      return window._v2.withTake(tk, () => window._v2.notesFor(L(),
+        { E, cfg, key: 'v2:' + (L().id | 0), cycleStart: 0, cycleSec: 2 }))
+        .map((n) => Math.round(n.freq)).join(',');
+    };
+    return { notes: takes[0].split(',').filter(Boolean).length,
+             stable: takes.every((t) => t === takes[0]),
+             takeMatters: ask(0) !== ask(5),
+             take0: t0, take1: window._v2.takeOf(L()),
+             rolledDiffers: rolled !== takes[0] };
+  });
+  ok('preview auditions the SAME take however often it is pressed',
+    takeRun.notes > 0 && takeRun.stable && takeRun.takeMatters, JSON.stringify(takeRun));
+  ok('🎲 New take is the only thing that re-rolls it',
+    takeRun.take1 === takeRun.take0 + 1 && takeRun.rolledDiffers, JSON.stringify(takeRun));
+
+  // ---- THE DRAWING IS THE EDITOR ------------------------------------------
+  // Tap a note and change it. A LIVE part has no notes of its own, so tapping
+  // one LOCKS the take first — which is also the check that locking freezes
+  // exactly what was DRAWN rather than rolling once more (the reported "lock
+  // the part Live came up with, before preview re-writes it").
+  const noteEdit = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, o = {};
+    const L = () => (E.getCfg().layers || [])[0];
+    const card = document.querySelector('.v2-layer');
+    card.classList.remove('collapsed');
+    const cv = () => document.querySelector('.v2-layer .v2-vizcv');
+    o.hitsRecorded = ((cv()._hits) || []).length;
+    const drawn = ((cv()._hits) || []).map((x) => Math.round(x.midi)).sort().join(',');
+    const hit = ((cv()._hits) || [])[1];
+    if (!hit) return o;
+    // a REAL pointer at the note's own coordinates, and the element under that
+    // point must be the canvas (the documented covered-target check)
+    const r = cv().getBoundingClientRect();
+    const px = r.left + hit.x + hit.w / 2, py = r.top + hit.y + 3;
+    o.hitTop = (document.elementFromPoint(px, py) || {}).className || '';
+    cv().dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: px, clientY: py }));
+    await wait(320);
+    o.kind = L().part.kind;
+    o.lockedIsDrawn = (L().part.notes || []).map((n) => n.midi).sort().join(',') === drawn;
+    // THE EDITOR IS PART OF THE CARD, not a dialog over it: it opens INSIDE the
+    // viz block, directly under the drawing it edits. So it must be a live,
+    // visible child of `.v2-partviz` — not merely present in the DOM.
+    const ov = document.querySelector('.v2-layer .v2-partviz .v2-neinline');
+    o.modal = !!ov && !ov.hidden && ov.getBoundingClientRect().height > 0;
+    o.underTheDrawing = !!ov && !!ov.previousElementSibling &&
+      /v2-vizlab/.test(ov.previousElementSibling.className);
+    if (!ov) return o;
+    // THE DRAWING MARKS THE NOTE BEING EDITED — with the editor inline the
+    // picture stays visible, and "Note 2 of 4" names a place in a list rather
+    // than a mark on the picture.
+    o.selDrawn = (document.querySelector('.v2-layer .v2-vizcv') || {})._sel;
+    o.rows = [...ov.querySelectorAll('.ambient-ctrl label')].map((x) => x.textContent.trim()).filter(Boolean);
+    // EVERY READOUT MUST NAME ITS UNIT. `_ambSl` folds its hint into a TITLE
+    // attribute, which a phone never shows, so the first build rendered
+    // "Position 1 · Length 2 · Attack 400" — nine sliders and not one unit
+    // between them, reported as "much of these controls are unintelligible".
+    // A bare number is the tell, and it is checkable.
+    o.readouts = [...ov.querySelectorAll('.ambient-ctrl')].map((row) => {
+      const rd = row.querySelector('.ambient-sl-v') || row.querySelector('.ambient-hint');
+      return ((rd && rd.textContent) || '').trim();
+    }).filter(Boolean);
+    o.bare = o.readouts.filter((t) => /^-?\d+(\.\d+)?$/.test(t));
+    const idxOf = () => { const m = ov.querySelector('.v2-netitle').textContent.match(/Note (\d+)/); return m ? +m[1] - 1 : -1; };
+    const set = (sf, v) => { const el = ov.querySelector('[data-sf="' + sf + '"]');
+      el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); };
+    // AN UNEDITED NOTE CARRIES NOTHING — absent means "the layer decides", and
+    // that is what keeps a locked part byte-identical to the take it froze.
+    o.cleanBefore = Object.keys(L().part.notes[idxOf()]).sort().join(',');
+    set('vel', 25); set('atk', 1234); set('rel', 4321); set('glide', 333); await wait(120);
+    const n = L().part.notes[idxOf()];
+    o.stored = { vel: n.vel, atk: n.atk, rel: n.rel, glide: n.glide };
+    // …and it must be HEARD, not merely stored (the dead-control class)
+    const orig = window.playNote; const seen = [];
+    window.playNote = function (f, pr) { seen.push({ f: Math.round(f), vol: pr && pr.volume,
+      atk: pr && pr.attack, rel: pr && pr.release, glide: pr && pr.glideMs }); return orig.apply(this, arguments); };
+    window._v2.preview(E, L()); await wait(160); window._v2.previewKill(E, L());
+    window.playNote = orig;
+    const mine = seen[idxOf()] || {};
+    o.heard = { atk: mine.atk, rel: mine.rel, glide: mine.glide };
+    // back to the layer's value = the field is DELETED, so absent stays the one
+    // representation of "the layer decides"
+    set('vel', 100); await wait(80);
+    o.velCleared = !('vel' in L().part.notes[idxOf()]);
+    const before = L().part.notes.length;
+    ov.querySelector('[data-na="rm"]').click(); await wait(140);
+    o.removed = L().part.notes.length === before - 1;
+    const ov2 = document.querySelector('.v2-layer .v2-neinline');
+    o.closed = !ov2 || ov2.hidden;
+    return o;
+  });
+  ok('a note in the drawing is a tap target, and tapping one locks the take shown',
+    noteEdit.hitsRecorded > 0 && /v2-vizcv/.test(noteEdit.hitTop) &&
+    noteEdit.kind === 'recorded' && noteEdit.lockedIsDrawn, JSON.stringify(noteEdit).slice(0, 400));
+  ok('every readout in the note editor names its unit — never a bare number',
+    (noteEdit.readouts || []).length >= 8 && (noteEdit.bare || []).length === 0,
+    JSON.stringify(noteEdit.readouts));
+  ok('the note editor opens INSIDE the card, directly under the drawing, and the drawing marks the note',
+    noteEdit.modal && noteEdit.underTheDrawing && noteEdit.selDrawn >= 0,
+    JSON.stringify({ open: noteEdit.modal, under: noteEdit.underTheDrawing, sel: noteEdit.selDrawn }));
+  ok('the note editor offers length, position, volume, envelope and portamento',
+    noteEdit.modal && ['Note', 'Position', 'Length', 'Volume', 'Attack', 'Decay', 'Sustain', 'Release', 'Portamento']
+      .every((r2) => (noteEdit.rows || []).indexOf(r2) >= 0), JSON.stringify(noteEdit.rows));
+  ok('an unedited note carries no overrides — absent is "the layer decides"',
+    noteEdit.cleanBefore === 'dur,midi,t', noteEdit.cleanBefore);
+  ok('a note edit is STORED and HEARD, not merely stored',
+    noteEdit.stored && noteEdit.stored.vel === 25 && noteEdit.stored.glide === 333 &&
+    noteEdit.heard && noteEdit.heard.atk === 1234 && noteEdit.heard.rel === 4321 &&
+    noteEdit.heard.glide === 333, JSON.stringify({ s: noteEdit.stored, h: noteEdit.heard }));
+  ok('setting a note field back to the layer’s value deletes it, and Remove removes',
+    noteEdit.velCleared && noteEdit.removed && noteEdit.closed, JSON.stringify(noteEdit).slice(0, 200));
 
   // ---- DOOR 2: THE PATTERN GRID -------------------------------------------
   // The user named two existing surfaces that should be able to make a part.
@@ -682,11 +1825,11 @@ const ok = (name, cond, detail) => {
       .find((g) => g.getAttribute('data-v2grp') === n);
     const rowsOf = (g) => g ? [...g.querySelectorAll('.ambient-ctrl')]
       .map((r) => (r.querySelector('label') || {}).textContent).join('/') : '';
-    const gMix = grpOf('Mix'), gFx = grpOf('FX'), gSp = grpOf('Space');
+    const gMix = grpOf('Mix'), gFx = grpOf('FX');
     const out = {
-      group: !!gMix && !!gFx && !!gSp,
-      rows: rowsOf(gMix) + ' || ' + rowsOf(gSp) + ' || ' + rowsOf(gFx),
-      mix: rowsOf(gMix), fx: rowsOf(gFx), space: rowsOf(gSp),
+      group: !!gMix && !!gFx,
+      rows: rowsOf(gMix) + ' || ' + rowsOf(gFx),
+      mix: rowsOf(gMix), fx: rowsOf(gFx),
     };
     const set = (f, v) => {
       const el = card.querySelector('[data-f="' + f + '"]');
@@ -704,12 +1847,15 @@ const ok = (name, cond, detail) => {
     out.engineReads = !!(L.delay && typeof L.delay.mix === 'number') && Number.isFinite(L.revSend);
     return out;
   });
-  ok('Mix, Space and FX are separate groups, each answering one question',
+  // Space is a TAB of Mix now, and Filter/Resonance moved to Instrument where
+  // they belong (they are how the VOICE sounds, not how it is mixed). What this
+  // check defends is unchanged: Mix and FX stay separate questions, and neither
+  // leaks into the other.
+  ok('Mix and FX stay separate questions, and Space rides with Mix',
     fxState.group &&
-    /Level/.test(fxState.mix) && /Filter/.test(fxState.mix) && /Resonance/.test(fxState.mix) &&
-    /Reverb/.test(fxState.space) && /Bus/.test(fxState.space) && /Width/.test(fxState.space) &&
+    /Level/.test(fxState.mix) && /Reverb/.test(fxState.mix) && /Bus/.test(fxState.mix) &&
     /Delay/.test(fxState.fx) && /Drive/.test(fxState.fx) && /Chop/.test(fxState.fx) &&
-    !/Delay/.test(fxState.mix) && !/Level/.test(fxState.fx) && !/Reverb/.test(fxState.mix),
+    !/Delay/.test(fxState.mix) && !/Level/.test(fxState.fx),
     JSON.stringify(fxState));
   ok('FX write v1\'s FLAT fields and survive normalize',
     fxState.wroteDelay && fxState.wroteRev && fxState.after === '70/80/40' && fxState.engineReads,
@@ -3026,6 +4172,24 @@ const ok = (name, cond, detail) => {
     out.widest = Math.max(...grps.map((g) => vis(g).length));
     out.widestName = grps.map((g) => [g.getAttribute('data-v2grp'), vis(g).length])
       .sort((x, y) => y[1] - x[1])[0].join(':');
+    // TABS PER SHEET — the unit the accretion check now uses. Same derivation
+    // the sheet itself does (an explicit `data-v2tab`, else the row label's
+    // first text node), so this counts what the chooser will actually show.
+    const tabsOf = (g) => {
+      const names = vis(g).map((r) => {
+        const t = r.getAttribute('data-v2tab');
+        if (t) return t;
+        const lab = r.querySelector(':scope > label') || r.querySelector('.ambient-mod-sub');
+        if (!lab) return '…';
+        const s2 = ((lab.childNodes[0] && lab.childNodes[0].textContent) || lab.textContent || '').trim();
+        return (s2.split('·')[0].trim()) || '…';
+      });
+      return [...new Set(names)].length;
+    };
+    out.tabCounts = grps.map((g) => g.getAttribute('data-v2grp') + ':' + tabsOf(g));
+    out.widestTabs = Math.max(...grps.map(tabsOf));
+    out.widestTabsName = grps.map((g) => [g.getAttribute('data-v2grp'), tabsOf(g)])
+      .sort((x, y) => y[1] - x[1])[0].join(':');
     out.allOpenHeight = Math.round(c.getBoundingClientRect().height);
     // duplicate labels across the whole card — "Tone" meant both the voice and
     // the filter cutoff, which is the naming rule's own failure mode
@@ -3062,18 +4226,25 @@ const ok = (name, cond, detail) => {
       .map((g) => g.getAttribute('data-v2grp')).join(',');
     return out;
   });
+  // SEVEN top-level groups, along the model's own spine: a layer is an
+  // INSTRUMENT and a PART, and everything after it is treatment. Envelope,
+  // Voicing, Motion, Mod and Space were not peers of FX — they are sub-tabs of
+  // the group each belongs to now.
   ok('the card is grouped by what a control DOES, every group named',
-    shape.groups.join(',') === 'Instrument,Envelope,Part,Rhythm,Pitch,Voicing,Shape,Motion,Mix,Mod,Space,FX' && shape.unnamed === 0,
+    shape.groups.join(',') === 'Instrument,Content,Pitch,Shape,Mix,FX' && shape.unnamed === 0,
     JSON.stringify(shape.groups));
-  ok('expanding shows the group grid and nothing else — 12 buttons, zero rows',
-    shape.gridBtns === 12 && shape.rowsShowing === 0,
+  ok('expanding shows the group grid and nothing else — buttons, zero rows',
+    shape.gridBtns === shape.groups.length && shape.rowsShowing === 0,
     JSON.stringify({ btns: shape.gridBtns, rows: shape.rowsShowing }));
   ok('an expanded card is half a screen (was 2873px, then 382px of headings)',
     shape.height < 700, shape.height + 'px');
-  // Even with EVERY group opened at once, no single group may become the dump
-  // "Mix & FX" was (18 rows). This is the check that catches accretion.
-  ok('no group is a dump — widest is under 12 rows with all of them open',
-    shape.widest < 12, shape.widestName + ' of ' + JSON.stringify(shape));
+  // THE ACCRETION CHECK, restated in the unit that now matters. It counted ROWS
+  // because rows used to be what you saw; a group's rows live in a TABBED sheet
+  // now and only one tab shows at a time, so the wall this catches is a wall of
+  // TABS. Kept deliberately tight — 16 is about three wrapped rows of chips at
+  // 390px, past which a chooser stops being scannable.
+  ok('no group is a dump — no sheet exceeds 16 tabs',
+    shape.widestTabs <= 16, shape.widestTabsName + ' of ' + JSON.stringify(shape.tabCounts));
   ok('every group button says what is engaged inside it',
     shape.folded.length === shape.groups.length && shape.folded.every((f) => f.split('=')[1].length > 0),
     JSON.stringify(shape.folded));
@@ -3094,10 +4265,26 @@ const ok = (name, cond, detail) => {
   await page.evaluate(async () => {
     const c = document.querySelector('.v2-layer');
     c.classList.remove('collapsed');
-    const b2 = [...c.querySelectorAll('.v2-grpbtn')].find((x) => x.getAttribute('data-v2grp') === 'Envelope');
+    // Envelope is a TAB of Instrument now — the group to open is Instrument
+    const b2 = [...c.querySelectorAll('.v2-grpbtn')].find((x) => x.getAttribute('data-v2grp') === 'Instrument');
     b2.scrollIntoView({ block: 'center' });
   });
-  await tap('.v2-grpbtn[data-v2grp="Envelope"]');
+  await tap('.v2-grpbtn[data-v2grp="Instrument"]');
+  // The envelope is a FOLDED SUBSECTION of the Live tab now, not a tab of its
+  // own — so the sliders it holds are hidden until it is opened, and a probe
+  // that skips that measures `{w:0}` on a perfectly good card. Open the tab,
+  // then open the subsection. (It was a tab; before that it was a group. A
+  // probe for a control has to be re-derived every time its home moves.)
+  await page.evaluate(() => {
+    const t = [...document.querySelectorAll('.v2-pop-tab')].find((b) => b.getAttribute('data-tab') === 'Live');
+    if (t) t.click();
+  });
+  await new Promise((r) => setTimeout(r, 150));
+  await page.evaluate(() => {
+    const d = document.querySelector('.v2-pop-pane .v2-discbtn[data-disc="env"]');
+    if (d && !document.querySelector('.v2-layer').classList.contains('v2-so-env')) d.click();
+  });
+  await new Promise((r) => setTimeout(r, 200));
   const knob = await page.evaluate(() => {
     const k = document.querySelector('.v2-pop-pane .ambient-ctrl:not(.v2-rowoff) .v2-knob');
     if (!k) return { err: 'no knob' };
@@ -3107,7 +4294,9 @@ const ok = (name, cond, detail) => {
              w: Math.round(r.width), v0: +inp.value,
              hit: document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2).closest('.v2-knob') === k };
   });
-  ok('the sheet shows a large knob where the slider was', !knob.err && knob.w >= 120 && knob.hit,
+  // RESTATED with the compact dial (2026-09-05, user: "dials too large") —
+  // the contract is a real, hit-testable dial, now 80-110px.
+  ok('the sheet shows a knob where the slider was', !knob.err && knob.w >= 80 && knob.w <= 110 && knob.hit,
     JSON.stringify(knob));
   await page.touchscreen.touchStart(knob.x, knob.y);
   for (let i = 1; i <= 8; i++) await page.touchscreen.touchMove(knob.x, knob.y - i * 8);
@@ -3141,6 +4330,55 @@ const ok = (name, cond, detail) => {
   ok('typed entry commits and closes', kn.attack === 500 && kn.gone, JSON.stringify(kn));
   await tap('.v2-pop-close');
 
+  // ---- THE HEADER IS A SECTION NAVIGATOR ----------------------------------
+  // The title named the open group and nothing more, so moving between sections
+  // meant closing the sheet and finding the next button — a round trip through
+  // a grid you had just left. It is a dropdown of the seven groups now.
+  await tap('.v2-grpbtn[data-v2grp="Instrument"]');
+  const nav = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const goto = () => document.querySelector('.v2-pop-goto');
+    const o = { opts: [...goto().options].map((x) => x.value), start: goto().value, hops: [] };
+    // ASSERT WHAT ONLY A REAL NAVIGATION PRODUCES. Reading the select's own
+    // value back after setting it proves nothing — it is the same element,
+    // still holding what was just assigned, and the FIRST version of this
+    // check passed with `popOpen` disabled entirely. `aria-label` and the wrap
+    // NODE are both minted by popOpen, and the destination row only exists in
+    // the destination's body.
+    const WANT = { Content: 'part.rhythm.steps', Pitch: 'part.pitch.kind',
+                   Shape: 'part.shape.holdSteps', Mix: 'level', FX: 'delay.mix',
+                   Instrument: 'instrument.voice' };
+    let prev = document.querySelector('.v2-pop-wrap');
+    for (const g of ['Content', 'Pitch', 'Shape', 'Mix', 'FX', 'Instrument']) {
+      const s2 = goto(); s2.value = g; s2.dispatchEvent(new Event('input', { bubbles: true }));
+      await wait(240);
+      const w = document.querySelector('.v2-pop-wrap');
+      const pop = w && w.querySelector('.v2-pop');
+      o.hops.push({ g, ok: !!w && w !== prev &&                       // a NEW sheet, not the old one
+        !!pop && pop.getAttribute('aria-label') === g &&              // built by popOpen for THIS group
+        !!w.querySelector('.v2-pop-pane [data-f="' + WANT[g] + '"]') && // and holding that group's rows
+        w.querySelectorAll('.v2-pop-tab').length > 0 });
+      prev = w;
+    }
+    o.oneSheet = document.querySelectorAll('.v2-pop-wrap').length;
+    document.querySelector('.v2-pop-close').click(); await wait(220);
+    const card = document.querySelector('.v2-layer');
+    o.groups = card.querySelectorAll('.ambient-grp[data-v2grp]').length;
+    const hd = document.querySelector('.v2-pop-head');
+    o.headOverflow = hd ? hd.scrollWidth - hd.clientWidth : 0;
+    return o;
+  });
+  ok('the sheet header goes to any other section, without closing',
+    nav.opts.join(',') === 'Instrument,Content,Pitch,Shape,Mix,FX' &&
+    nav.start === 'Instrument' && nav.hops.every((x) => x.ok) && nav.oneSheet === 1,
+    JSON.stringify(nav.hops.filter((x) => !x.ok)) + ' opts=' + nav.opts.length);
+  // NOT a second body-return check — "closing the sheet returns its rows to the
+  // group" already covers that and has teeth (poison-verified). This asserts
+  // only that the hops leave the card's groups intact (six since the Rhythm
+  // group folded into Content, 2026-09-05).
+  ok('hopping between sections leaves the card\'s groups intact',
+    nav.groups === 6, JSON.stringify({ groups: nav.groups }));
+
   // ---- SHEET SURVIVES A REBUILD -------------------------------------------
   // A voice/steps/pitch-kind change re-renders the whole host, which destroys
   // the sheet with the card holding it — it must come back on the fresh card,
@@ -3151,14 +4389,25 @@ const ok = (name, cond, detail) => {
     sel.value = 'speech'; sel.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await new Promise((r) => setTimeout(r, 300));
+  const toneField = () => page.evaluate(() => {
+    const r2 = [...document.querySelectorAll('.v2-layer [data-v2tab="Live"]')]
+      .find((x) => /^Tone$/.test(((x.querySelector('label') || {}).textContent || '').trim()));
+    const s2 = r2 && r2.querySelector('select');
+    return s2 ? s2.getAttribute('data-f') : null;
+  });
   let re = await page.evaluate(() => ({
     open: !!document.querySelector('.v2-pop-wrap'),
-    title: (document.querySelector('.v2-pop-title') || {}).textContent,
+    title: (document.querySelector('.v2-pop-title') || {}).value,
     tabs: [...document.querySelectorAll('.v2-pop-tab')].map((t) => t.getAttribute('data-tab')).join(','),
   }));
+  // RESTATED. It pinned "a speech layer has no Tone tab", which was true while
+  // Tone meant the SYNTH tone and each type had a row of its own. Tone is now
+  // ONE row whose options the type narrows, so the contract worth pinning is
+  // that it FOLLOWS the type — which is the stronger statement anyway.
   ok('the sheet survives the rebuild its own select caused',
-    re.open && re.title === 'Instrument' && /Words/.test(re.tabs) && !/Tone/.test(re.tabs),
-    JSON.stringify(re));
+    re.open && re.title === 'Instrument' && /Words/.test(re.tabs), JSON.stringify(re));
+  ok('the Tone row follows the Tone type — speech picks a speaker',
+    (await toneField()) === 'instrument.speechVoice', String(await toneField()));
   await page.evaluate(() => {
     const sel = document.querySelector('.v2-pop-pane [data-f="instrument.voice"]');
     sel.value = 'synth'; sel.dispatchEvent(new Event('input', { bubbles: true }));
@@ -3169,6 +4418,8 @@ const ok = (name, cond, detail) => {
   }));
   ok('…and the gate re-tabs it the other way', /Tone/.test(re.tabs) && !/Words/.test(re.tabs),
     JSON.stringify(re));
+  ok('…and the Tone row is the synth tone again',
+    (await toneField()) === 'instrument.tone', String(await toneField()));
   await tap('.v2-pop-close');
 
   // ---- THE FULL FX PARAMETER SET ------------------------------------------
@@ -3256,7 +4507,7 @@ const ok = (name, cond, detail) => {
     card.classList.remove('collapsed');
     // the button is in EVERY sheet, at a real size
     out.sized = [];
-    for (const g of ['Instrument', 'Rhythm', 'FX']) {
+    for (const g of ['Instrument', 'Content', 'FX']) {
       [...card.querySelectorAll('.v2-grpbtn')].find((x) => x.getAttribute('data-v2grp') === g).click();
       await wait(150);
       const b2 = document.querySelector('.v2-pop-preview');
@@ -3266,7 +4517,7 @@ const ok = (name, cond, detail) => {
     }
     // a press reaches playNote, routes to the CHAIN, captures nothing, and
     // leaves no phase state behind to skew the next real play
-    [...card.querySelectorAll('.v2-grpbtn')].find((x) => x.getAttribute('data-v2grp') === 'Envelope').click();
+    [...card.querySelectorAll('.v2-grpbtn')].find((x) => x.getAttribute('data-v2grp') === 'Instrument').click();
     await wait(150);
     let calls = 0, chained = 0, keyed = 0;
     const orig = window.playNote;

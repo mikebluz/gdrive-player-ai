@@ -11210,6 +11210,117 @@
       display: flex; align-items: center; justify-content: center;
     }
 
+    /* Tab families — labelled, tinted rows inside .v2-pop-tabs. The tint is
+       a hue on the label and a wash on the chips' borders; the active tab's
+       own .on style still wins. */
+    .v2-tabfam { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 0; }
+    .v2-tabfam-lab {
+      flex: 0 0 44px; text-align: right; padding-right: 2px;
+      font: 600 0.6rem 'Segoe UI', sans-serif; letter-spacing: 0.08em;
+      text-transform: uppercase; color: #55556e;
+    }
+    .fam-make > .v2-tabfam-lab { color: #9f7aea; }
+    .fam-rhythm > .v2-tabfam-lab { color: #4fd1c5; }
+    .fam-time > .v2-tabfam-lab { color: #63b3ed; }
+    .fam-pitch > .v2-tabfam-lab { color: #f687b3; }
+    .fam-make > .v2-pop-tab:not(.on) { border-color: rgba(159, 122, 234, 0.38); }
+    .fam-rhythm > .v2-pop-tab:not(.on) { border-color: rgba(79, 209, 197, 0.34); }
+    .fam-time > .v2-pop-tab:not(.on) { border-color: rgba(99, 179, 237, 0.34); }
+    .fam-pitch > .v2-pop-tab:not(.on) { border-color: rgba(246, 135, 179, 0.34); }
+    /* …and the SELECTED tab lights in its family's hue too — one purple for
+       all four families read as the colour coding being off. */
+    .v2-layer .fam-make > .v2-pop-tab.on {
+      border-color: #b794f4; color: #e9d8fd; background: rgba(159, 122, 234, 0.3); }
+    .v2-layer .fam-rhythm > .v2-pop-tab.on {
+      border-color: #4fd1c5; color: #b2f5ea; background: rgba(79, 209, 197, 0.22); }
+    .v2-layer .fam-time > .v2-pop-tab.on {
+      border-color: #63b3ed; color: #bee3f8; background: rgba(99, 179, 237, 0.22); }
+    .v2-layer .fam-pitch > .v2-pop-tab.on {
+      border-color: #f687b3; color: #fed7e2; background: rgba(246, 135, 179, 0.22); }
+
+    /* Row labels in the pane take the active tab's family hue. The `.v2-layer`
+       prefix matters: the sheet's own label rule is `.v2-layer .v2-pop-pane
+       .ambient-ctrl > label` and a bare pane selector loses to it. */
+    .v2-layer .v2-pop-pane[data-fam="fam-make"] .ambient-ctrl > label { color: #b794f4; }
+    .v2-layer .v2-pop-pane[data-fam="fam-rhythm"] .ambient-ctrl > label { color: #4fd1c5; }
+    .v2-layer .v2-pop-pane[data-fam="fam-time"] .ambient-ctrl > label { color: #63b3ed; }
+    .v2-layer .v2-pop-pane[data-fam="fam-pitch"] .ambient-ctrl > label { color: #f687b3; }
+
+    /* A row that WOULD apply if the part were Generated — visible, inert.
+       Children dimmed, not the wrapper (the documented opacity-composites
+       rule), and the whole row refuses the pointer. */
+    .v2-layer .ambient-ctrl.v2-rowna { pointer-events: none; }
+    .v2-layer .ambient-ctrl.v2-rowna > * { opacity: 0.4; }
+
+    /* Current part — the editing-context strip between the tab section and
+       the layer cards. Chips reuse the house .ambient-seg; wraps, never
+       scrolls sideways (UI rule 1). */
+    .ambient-curpart {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+      margin: 8px 0 4px; padding: 8px 10px;
+      border: 1px solid #2d2d3f; border-radius: 12px; background: rgba(20, 20, 31, 0.6);
+    }
+    .ambient-curpart-lab {
+      font: 600 0.7rem 'Segoe UI', sans-serif; letter-spacing: 0.06em;
+      text-transform: uppercase; color: #7a7a9c; margin-right: 2px;
+    }
+    .ambient-curpart .ambient-curpart-chip {
+      min-height: 34px; min-width: 44px; padding: 4px 12px;
+      white-space: normal; overflow-wrap: anywhere;
+    }
+    .ambient-curpart .ambient-curpart-chip.on {
+      border-color: #b794f4; color: #e9d8fd; background: rgba(159, 122, 234, 0.3); font-weight: 600;
+    }
+    .ambient-curpart .ambient-curpart-hint {
+      flex: 1 0 100%; white-space: normal; overflow-wrap: anywhere; min-width: 0;
+      font-size: 0.66rem; color: #55556e;
+    }
+
+    /* ⇄ Sync to Part — the Content sheet's length/notes confirm. */
+    .v2-sync-modal { width: min(420px, 94vw); }
+    .v2-sync-modal .v2-sync-row { display: flex; align-items: center; gap: 10px; margin: 10px 0; flex-wrap: wrap; }
+    .v2-sync-modal .v2-sync-row > label { flex: 0 0 52px; font-size: 0.78rem; color: #a0aec0; font-weight: 600; }
+    /* .ambient-seg-row has NO base rule in the stylesheet (documented) — a new
+       consumer declares its own display or the buttons just stack. */
+    .v2-sync-modal .ambient-seg-row { display: inline-flex; gap: 6px; flex-wrap: wrap; min-width: 0; flex: 1 1 0; }
+    .v2-sync-modal .ambient-seg { white-space: normal; overflow-wrap: anywhere; min-width: 0; min-height: 34px; }
+    .v2-sync-modal .ambient-hint { display: block; white-space: normal; overflow-wrap: anywhere; min-width: 0; margin: 6px 0; }
+    .v2-sync-modal .v2-sync-bound { color: #f6ad55; }
+    .v2-sync-modal .v2-sync-actions { display: flex; gap: 10px; margin-top: 14px; }
+    .v2-sync-modal .v2-sync-actions .ambient-regen { min-height: 40px; flex: 1 1 0; }
+    .v2-sync-modal select.ambient-select.v2-syncpart { width: auto; flex: 1 1 0; min-width: 0; }
+    /* the head PAIR — which part this content is for, joined to its Sync.
+       Visibly one control: the selector takes the left cap, the button the
+       right, and they share the middle border. */
+    .v2-pop-pair { display: inline-flex; align-items: stretch; flex: 0 0 auto; min-width: 0; }
+    .v2-pop-pair .v2-pop-pp {
+      flex: 0 0 auto; min-height: 34px; padding: 4px 10px;
+      background: transparent; border: 1px solid #2d2d3f;
+      border-radius: 20px 0 0 20px; color: #a0aec0; cursor: pointer;
+      font-family: 'Segoe UI', sans-serif; font-weight: 600; font-size: 0.74rem;
+      white-space: nowrap;
+    }
+    .v2-pop-pair .v2-pop-pp.on {
+      border-color: #b794f4; color: #e9d8fd; background: rgba(159, 122, 234, 0.3);
+    }
+    .v2-pop-pair select.ambient-select.v2-pop-part {
+      width: auto; max-width: 110px; min-width: 0; flex: 0 1 auto;
+      min-height: 34px; padding: 4px 6px 4px 10px;
+      background: rgba(159, 122, 234, 0.08); border: 1px solid #2d2d3f;
+      border-left: 0; border-right: 0; border-radius: 0; color: #cbd5e0;
+      font-family: 'Segoe UI', sans-serif; font-weight: 600; font-size: 0.74rem;
+    }
+    .v2-pop-pair select.ambient-select.v2-pop-part:disabled {
+      color: #55556e; background: transparent; opacity: 1;
+    }
+    .v2-pop-head .v2-pop-sync {
+      background: transparent; border: 1px solid #2d2d3f; border-radius: 20px;
+      color: #a0aec0; font-family: 'Segoe UI', sans-serif; font-weight: 600;
+      font-size: 0.74rem; padding: 6px 12px; min-height: 34px; cursor: pointer;
+    }
+    .v2-pop-pair .v2-pop-sync { border-radius: 0 20px 20px 0; }
+    @media (hover: hover) { .v2-pop-head .v2-pop-sync:hover { border-color: #9f7aea; color: #d6bcfa; } }
+
     /* 🎲 New-take popover — per-layer Keep / Revise rows in the .sm-modal shell. */
     .nt-modal { width: min(440px, 94vw); }
     .nt-hint { font-size: 0.8rem; color: #a0aec0; line-height: 1.45; margin-bottom: 10px; }
@@ -14611,12 +14722,87 @@
   background: #12121f; border: 1px solid #2d2d3f;
   border-radius: 16px; box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
 }
-.v2-pop-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px 6px; flex: 0 0 auto; }
+/* WRAPS, because the head now carries a control as well as a title: the
+   summary takes its own full-width line under them rather than being squeezed
+   to nothing between the title and the close. */
+.v2-pop-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 14px 6px; flex: 0 0 auto; }
 .v2-pop-title { font: 600 0.95rem 'Segoe UI', sans-serif; color: #e2e8f0; flex: 0 0 auto; }
+/* THE TITLE IS A SECTION NAVIGATOR. Native appearance on purpose — every other
+   select in this panel keeps its own caret, and a bespoke one here would be the
+   "new element that looks bolted on" the styling rule warns about. A select
+   shows a PICKER on iOS rather than zooming, so it needs no 16px floor. */
+select.v2-pop-title.v2-pop-goto {
+  flex: 0 1 auto; min-width: 0; max-width: 56%;
+  padding: 5px 8px; border: 1px solid #2d2d3f; border-radius: 8px;
+  background: #0a0a14; color: #e2e8f0; cursor: pointer;
+  font: 600 0.95rem 'Segoe UI', sans-serif;
+}
+select.v2-pop-title.v2-pop-goto:hover { border-color: #9f7aea; color: #d6bcfa; }
 .v2-pop-head .v2-grpsum {
-  flex: 1 1 0; min-width: 0; color: #6b6b8a;
+  flex: 1 0 100%; min-width: 0; margin-top: -2px; color: #6b6b8a;
   white-space: normal; overflow-wrap: anywhere; line-height: 1.3;
 }
+/* REGISTER IN THE HEAD — a real ± target on a phone, not a token one. */
+.v2-pop-xtra { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; margin-left: auto; }
+.v2-pop-xtra[hidden] { display: none; }
+.v2-xtra-lab { color: #6b6b8a; font-size: 0.72rem; }
+.v2-pop-xtra .ambient-stepper { display: flex; align-items: stretch; }
+.v2-pop-xtra .ambient-step-btn {
+  width: 40px; min-height: 40px; border: 1px solid #2d2d3f; background: #14141f;
+  color: #d6bcfa; font-size: 1.05rem; line-height: 1; cursor: pointer; touch-action: manipulation;
+}
+.v2-pop-xtra .ambient-step-btn:first-child { border-radius: 10px 0 0 10px; }
+.v2-pop-xtra .ambient-step-btn:last-child { border-radius: 0 10px 10px 0; }
+.v2-pop-xtra .ambient-step-inp {
+  width: 42px; min-height: 40px; border: 1px solid #2d2d3f; border-left: none; border-right: none;
+  background: #0a0a14; color: #e9e9f4; text-align: center;
+  font: 700 16px 'Segoe UI', sans-serif;   /* 16px or iOS zooms on focus */
+  -moz-appearance: textfield; appearance: textfield;
+}
+.v2-pop-xtra .ambient-step-inp::-webkit-outer-spin-button,
+.v2-pop-xtra .ambient-step-inp::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+/* THE ACTIVE MATERIAL — an active MODE, not a subtle tint: the door that made
+   the content (stamped, or inferred from the rules' shape) reads as selected
+   at a glance, with a ✓ so it cannot be mistaken for a hover state. */
+.v2-notesrow .ambient-seg.on, .v2-layer .v2-seedv1.on {
+  border-color: #b794f4; color: #e9d8fd; background: rgba(159, 122, 234, 0.3); font-weight: 600;
+}
+.v2-notesrow .ambient-seg.on::before, .v2-layer .v2-seedv1.on::before { content: '\2713 '; }
+/* THE SAVED BANK — one row per phrase: its name loads it, the arrows order it,
+   the ✕ deletes it through the one path that also prunes its mappings. */
+.v2-bank { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.v2-bankit { display: flex; gap: 4px; align-items: stretch; min-width: 0; }
+.v2-bankit button {
+  min-height: 40px; border: 1px solid #2d2d3f; border-radius: 10px;
+  background: transparent; color: #a0aec0; font: 600 0.78rem 'Segoe UI', sans-serif;
+  cursor: pointer; touch-action: manipulation;
+}
+.v2-bankit .v2-bkload {
+  flex: 1 1 0; min-width: 0; text-align: left; padding: 0 10px; color: #d6bcfa;
+  display: flex; align-items: center; gap: 8px;
+  white-space: normal; overflow-wrap: anywhere;
+}
+.v2-bankit .v2-bkn { flex: 0 0 auto; color: #6b6b8a; font-weight: 400; font-size: 0.7rem; }
+.v2-bankit .v2-bkup, .v2-bankit .v2-bkdn, .v2-bankit .v2-bkdel { flex: 0 0 auto; width: 40px; }
+.v2-bankit .v2-bkdel { color: #fc8181; border-color: #4a2b32; }
+.v2-bankit button:hover { border-color: #9f7aea; color: #d6bcfa; }
+.v2-bankit .v2-bkdel:hover { border-color: #fc8181; color: #feb2b2; }
+/* A SUBSECTION INSIDE A TAB. Hidden by a class, never by inline display —
+   `applyGate` owns inline display on gated rows, and `.v2-rowoff` is
+   !important so an inactive tab still wins over an open subsection. */
+.v2-sub { display: none; }
+.v2-so-env .v2-sub-env { display: grid; }
+.v2-so-vox .v2-sub-vox { display: grid; }
+.v2-disc .v2-discbtn { justify-self: start; min-height: 40px; }
+/* A FOLD HEADER IS A HEADER, not another parameter row: its button sits BESIDE
+   its name rather than under it. The sheet stacks ordinary rows to one column
+   (label over control) which is right for a knob and wrong for this. */
+.v2-layer .v2-pop-pane .ambient-ctrl.v2-disc {
+  grid-template-columns: 1fr auto; align-items: center; gap: 10px;
+  margin-top: 6px; padding-top: 8px; border-top: 1px solid #23233a;
+}
+.v2-layer .v2-pop-pane .v2-disc > .ambient-hint { grid-column: 1 / -1; margin-top: -2px; }
+.v2-layer .v2-pop-pane .v2-disc > label { font-weight: 600; }
 .v2-pop-close {
   width: 44px; height: 44px; flex: 0 0 auto; border: 1px solid #2d2d3f; border-radius: 50%;
   background: transparent; color: #a0aec0; font-size: 1rem; cursor: pointer; touch-action: manipulation;
@@ -14629,7 +14815,17 @@
   touch-action: manipulation; white-space: normal; overflow-wrap: anywhere; min-width: 0;
 }
 .v2-pop-tab.on { border-color: #9f7aea; color: #d6bcfa; background: rgba(159, 122, 234, 0.1); }
-.v2-pop-pane { overflow-y: auto; padding: 4px 16px calc(20px + env(safe-area-inset-bottom)); }
+.v2-pop-pane { overflow-y: auto; padding: 4px 16px calc(20px + env(safe-area-inset-bottom));
+  scrollbar-width: thin; scrollbar-color: #2d2d3f transparent; }
+.v2-pop-pane::-webkit-scrollbar { width: 6px; }
+.v2-pop-pane::-webkit-scrollbar-thumb { background: #2d2d3f; border-radius: 3px; }
+/* the fade above the footer says "there is more below" — the pane scrolled
+   with no affordance at all ("user can't tell it's a scrolling section") */
+.v2-pop-foot { position: relative; }
+.v2-pop-foot::before {
+  content: ''; position: absolute; left: 6px; right: 6px; top: -20px; height: 20px;
+  background: linear-gradient(transparent, #12121f); pointer-events: none;
+}
 /* The moved `.ambient-grp-body` is display:none outside an .open group — the
    sheet is its other legitimate home. */
 .v2-pop-pane > .ambient-grp-body { display: flex; flex-direction: column; gap: 10px; }
@@ -14649,8 +14845,21 @@
    it); the knob is its face. */
 .v2-knobbed input.ambient-sl { position: absolute !important; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .v2-knobbed .ambient-sl-v { display: none; }
+/* COMPACT DIAL (was 176px — "the dials are now too large, too much
+   whitespace"): the row is a grid of label | dial | caption, so the sheet
+   reads as a parameter list again instead of one dial per screen. Drag is
+   delta-from-press, so a smaller dial loses no precision. */
+/* COLUMNS ONLY — never `display` here: the envelope fold owns display on
+   `.v2-sub` rows (`display: none` until the fold opens), and a display in this
+   higher-specificity rule leaked shut-fold rows straight through it (caught by
+   the gate the same minute). The row is a grid already. */
+.v2-layer .v2-pop-pane .ambient-ctrl.v2-knobbed {
+  grid-template-columns: minmax(72px, 0.8fr) 92px minmax(110px, 1.4fr);
+  align-items: center; column-gap: 14px; min-height: 0;
+}
 .v2-knob {
-  width: 176px; height: 176px; margin: 10px auto 6px; position: relative; border-radius: 50%;
+  width: 92px; height: 92px; margin: 4px 0; position: relative; border-radius: 50%;
+  justify-self: center;
   cursor: grab; touch-action: pinch-zoom;
   user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
@@ -14663,15 +14872,15 @@
   mask: radial-gradient(closest-side, transparent 70%, #000 71%);
 }
 .v2-knob-face {
-  position: absolute; inset: 14px; border-radius: 50%;
+  position: absolute; inset: 9px; border-radius: 50%;
   background: radial-gradient(circle at 50% 38%, #1a1a2b, #10101d 75%);
   border: 1px solid #2d2d3f;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
 }
-.v2-knob-val { font: 700 1.7rem 'Segoe UI', sans-serif; color: #e2e8f0; }
+.v2-knob-val { font: 700 1.05rem 'Segoe UI', sans-serif; color: #e2e8f0; }
 .v2-knob-sub {
-  font: 400 0.68rem 'Segoe UI', sans-serif; color: #6b6b8a; max-width: 78%; text-align: center;
-  white-space: normal; overflow-wrap: anywhere; line-height: 1.2;
+  font: 400 0.72rem 'Segoe UI', sans-serif; color: #6b6b8a; text-align: left;
+  white-space: normal; overflow-wrap: anywhere; line-height: 1.35; min-width: 0;
 }
 /* THE PREVIEW BUTTON — deliberately the loudest control in the sheet (asked
    for as "large and fun"): a filled gradient in the house purples, where every
@@ -14687,6 +14896,90 @@
 }
 .v2-partviz .v2-vizcv { display: block; width: 100%; height: 84px; }
 .v2-partviz .v2-vizlab { display: block; margin-top: 3px; font-size: 0.7rem; }
+/* THE TAKE BAR — inside the viz block for the same reason the canvas is: it
+   acts on the PICTURE, so it must be visible under every tab rather than
+   belonging to one. Tap targets meet the 44px floor at phone width. */
+.v2-partviz .v2-takebar { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.v2-partviz .v2-takebar .ambient-seg {
+  flex: 1 1 0; min-width: 0; min-height: 40px;
+  white-space: normal; overflow-wrap: anywhere;
+}
+/* A note in the drawing is a control, so say so — and keep the finger target
+   generous (the hit test pads the 6px note box; this is only the cursor). */
+.v2-partviz .v2-vizcv { cursor: pointer; touch-action: manipulation; }
+/* ONE NOTE, BY HAND — an inline section INSIDE the viz block, opening directly
+   under the drawing it edits. It was a body-attached `.sm-overlay`, which
+   covered the one thing you are editing against; here the picture stays
+   visible and the editor travels with it when the sheet lifts the viz block
+   above its tabs. */
+.v2-neinline {
+  margin: 8px 0 2px; padding: 8px 10px 10px;
+  border: 1px solid #2d2d3f; border-radius: 9px; background: #14141f;
+}
+.v2-neinline[hidden] { display: none; }
+.v2-nehead {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+  padding-bottom: 6px; border-bottom: 1px solid #23233a;
+}
+.v2-netitle {
+  flex: 1 1 auto; min-width: 0; font: 600 0.82rem 'Segoe UI', sans-serif;
+  color: #d6bcfa; white-space: normal; overflow-wrap: anywhere;
+}
+.v2-neclose {
+  flex: 0 0 auto; width: 34px; height: 34px; border: 1px solid #2d2d3f;
+  border-radius: 17px; background: transparent; color: #a0aec0;
+  font-size: 0.95rem; line-height: 1; cursor: pointer; touch-action: manipulation;
+}
+.v2-neclose:hover { border-color: #9f7aea; color: #d6bcfa; }
+/* iOS zooms a focused field under 16px and never zooms back (documented). */
+.v2-neinline input, .v2-neinline select { font-size: 16px; }
+.v2-neinline .ambient-hint { white-space: normal; overflow-wrap: anywhere; }
+/* THE VALUE SITS BESIDE ITS NAME, with the slider on its own line under both.
+   The app's phone rule for slider rows (2 columns, hint on the next line) puts
+   the readout UNDER the slider, which is right when the readout is a unit-less
+   number nobody reads and wrong here, where it is the only thing naming what
+   the number means: "Position ......... bar 1 · beat 2" is one glance, and
+   "Position [====]" then "bar 1 · beat 2" underneath is two. Same height. */
+.v2-neinline .ambient-ctrl:has(> input.ambient-sl) {
+  grid-template-columns: 1fr auto; row-gap: 1px; align-items: baseline;
+}
+.v2-neinline .ambient-ctrl:has(> input.ambient-sl) > label { grid-column: 1; grid-row: 1; }
+.v2-neinline .ambient-ctrl:has(> input.ambient-sl) > .ambient-sl-v {
+  grid-column: 2; grid-row: 1; text-align: right; white-space: nowrap;
+  color: #cbd5e0; font-size: 0.74rem;
+}
+.v2-neinline .ambient-ctrl:has(> input.ambient-sl) > input.ambient-sl {
+  grid-column: 1 / -1; grid-row: 2; min-width: 0;
+}
+/* The Note row is a STEPPER, not a slider, so it keeps the 3-column layout —
+   but its readout is the note NAME and has to read like the values beside it
+   rather than like a faint aside. */
+.v2-neinline .ambient-ctrl-step > .ambient-hint {
+  color: #cbd5e0; font-size: 0.74rem; text-align: right; white-space: nowrap;
+}
+/* A section heading: the four envelope rows are one idea, and unlabelled they
+   read as four more unrelated numbers. */
+.v2-nesec {
+  margin: 10px 0 2px; padding-top: 8px; border-top: 1px solid #23233a;
+  font: 600 0.7rem 'Segoe UI', sans-serif; letter-spacing: 0.06em;
+  text-transform: uppercase; color: #7a7a9c;
+}
+.v2-nebtns { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 6px; }
+.v2-nebtns .ambient-seg {
+  flex: 1 1 0; min-width: 0; min-height: 40px; white-space: normal; overflow-wrap: anywhere;
+}
+/* Destructive, so it says so — the house red, never a filled box. In the
+   HEAD now (left of the close), compact to match it. */
+.v2-nehead .v2-nerm {
+  flex: 0 0 auto; min-height: 34px; padding: 4px 10px;
+  color: #fc8181; border-color: #4a2b32; white-space: nowrap;
+}
+.v2-nehead .v2-nerm:hover { border-color: #fc8181; color: #feb2b2; }
+.v2-nehint {
+  font-size: 0.7rem; line-height: 1.45; color: #7a7a9c;
+  white-space: normal; overflow-wrap: anywhere;
+}
+.v2-nehint b { color: #a0aec0; font-weight: 600; }
 .v2-pop-preview {
   width: 100%; min-height: 54px; border: none; border-radius: 27px;
   background: linear-gradient(135deg, #7c5ce0, #b06ae8 55%, #d66ad8);

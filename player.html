@@ -123,6 +123,14 @@ try { if (/[?&]diag=0\b/.test(location.search)) localStorage.removeItem('sbDiag'
        is available when GoogleDriveAPI.initialize() looks for a cached
        token. -->
   <script src="js/auth-storage.js"></script>
+  <!-- NATIVE SHELL Drive auth (inert on the web): Google refuses OAuth inside
+       webviews (disallowed_useragent) and gapi's loader breaks on the
+       capacitor:// scheme, so in the SAW app this shim replaces GIS + gapi
+       with the BloopsAuth plugin + plain fetch — the same one bloops.html
+       loads, sharing one refresh token, so signing in anywhere signs in
+       everywhere. It MUST come before google-drive-api.js, whose fast branch
+       takes whatever `window.gapi`/`google.accounts` already exist. -->
+  <script src="js/bloops/00-native-drive.js?v=DEPLOYVER"></script>
   <style>
     /* Show the player by default on this standalone page. The shared
        rule in bloops.css hides #serialbox-view unless the body has
@@ -130,6 +138,15 @@ try { if (/[?&]diag=0\b/.test(location.search)) localStorage.removeItem('sbDiag'
        direct body child (including the back-link topbar). Force the
        view visible here instead so the topbar can render normally. */
     #serialbox-view { display: block !important; }
+
+    /* bloops.css reserves the FIXED .float-header's band on the body
+       (40px + the safe-area inset) — a header THIS page does not have, so the
+       reservation was a phantom strip above the topbar: 40px of slack on the
+       web, and in the native shell (viewport-fit=cover) 40px + ~50px of inset
+       ON TOP of the topbar's own inset — the "extra tall header". The topbar
+       lives in normal flow and carries its own env() padding, so the body
+       needs none. */
+    body { padding-top: 0; }
 
     /* Standalone-page-only chrome: a slim top bar with a back link.
        Kept inline so the file is self-contained and doesn't depend on

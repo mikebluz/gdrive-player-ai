@@ -77,6 +77,14 @@
 
   <script src="js/config.js"></script>
   <script src="js/auth-storage.js?v=DEPLOYVER"></script>
+  <!-- NATIVE SHELL Drive auth (inert on the web): Google refuses OAuth inside
+       webviews (disallowed_useragent) and gapi's loader breaks on the
+       capacitor:// scheme, so in the SAW app this shim replaces GIS + gapi
+       with the BloopsAuth plugin + plain fetch — the same one bloops.html
+       loads, sharing one refresh token, so signing in anywhere signs in
+       everywhere. It MUST come before google-drive-api.js, whose fast branch
+       takes whatever `window.gapi`/`google.accounts` already exist. -->
+  <script src="js/bloops/00-native-drive.js?v=DEPLOYVER"></script>
   <script src="js/google-drive-api.js?v=DEPLOYVER"></script>
   <script>
     // Page toast (24-studio falls back to console when showToast is absent).

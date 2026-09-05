@@ -4057,6 +4057,20 @@
         // in the card, buttons included), and opens that group's rows in a
         // bottom sheet. The groups below it are the STORAGE those sheets
         // borrow rows from — hidden by `.v2-layer .ambient-grp { display:none }`.
+        // ── FIND A CONTROL ────────────────────────────────────────────
+        // 132 controls across six sheets and ~50 tabs. Each lives with the
+        // thing it modifies, which is the right filing and a poor index: the
+        // variance controls alone are spread over Content ▸ Feel, Content ▸
+        // Pattern, Shape ▸ Variance and Pitch ▸ Voicing, and "where are all
+        // the variance controls" was asked twice. This NAVIGATES — it never
+        // renders a second copy of a control, because two surfaces for one
+        // field is the duplication this file keeps paying for. 16px or iOS
+        // zooms the page on focus and never zooms back.
+        '<div class="v2-find">' +
+          '<input type="search" class="v2-findin" placeholder="\ud83d\udd0d Find a control\u2026" ' +
+            'aria-label="Find a control" autocomplete="off" autocorrect="off" spellcheck="false">' +
+          '<div class="v2-findres"></div>' +
+        '</div>' +
         '<div class="v2-grpgrid">' + GRPS.map(g4 =>
           '<button type="button" class="v2-grpbtn" data-v2grp="' + g4 + '">' +
             '<span class="v2-grpbt">' + g4 + '</span>' +
@@ -5254,6 +5268,80 @@
     return [...body.children].filter(n => n.classList &&
       (n.classList.contains('ambient-ctrl') || n.classList.contains('ambient-mod-target')));
   }
+  // WHICH GROUP A ROW BELONGS TO, kept ON the row. `popOpen` MOVES a group's
+  // whole `.ambient-grp-body` into the sheet, so `row.closest('.ambient-grp')`
+  // stops answering the moment a sheet is open — and the finder has to index
+  // every row whether or not one is. Stamped once per render; the marks travel
+  // with the rows when the body moves.
+  function stampGroups(card) {
+    card.querySelectorAll('.ambient-grp[data-v2grp]').forEach((g) => {
+      const nm = g.getAttribute('data-v2grp');
+      const body = g.querySelector(':scope > .ambient-grp-body'); if (!body) return;
+      [...body.children].forEach((r) => { if (r.dataset) r.dataset.v2g = nm; });
+    });
+  }
+  // EVERY CONTROL ON THE CARD, as { group, tab, label }. Micro steppers are
+  // indexed one entry per CELL (they are five controls in one row) but
+  // navigate to the row's tab, which is where they live.
+  function findIndex(card) {
+    const out = [];
+    card.querySelectorAll('[data-v2g]').forEach((r) => {
+      const grp = r.getAttribute('data-v2g') || '';
+      const tab = popTabName(r);
+      const minis = [...r.querySelectorAll('.v2-mini-lab')];
+      if (minis.length) {
+        minis.forEach((m) => out.push({ grp, tab, lab: (m.textContent || '').trim(), row: r }));
+        return;
+      }
+      const lab = r.querySelector(':scope > label') || r.querySelector('.ambient-mod-sub');
+      if (!lab) return;
+      const nm = ((lab.childNodes[0] && lab.childNodes[0].textContent) || lab.textContent || '')
+        .split('\u00b7')[0].trim();
+      if (nm) out.push({ grp, tab, lab: nm, row: r });
+    });
+    return out;
+  }
+  const FIND_MAX = 20;   // the variance family alone is 17 — a cap that truncates the query the finder exists for is the wrong cap
+  // The few words worth spelling out. Keys are matched WHOLE (a typed term
+  // equal to the key), so ordinary substring search is untouched.
+  const FIND_SYN = {
+    variance: ['vary', 'var', 'roam', 'scatter', 'stutter', 'ghost', 'rest',
+               'humanize', 'accent', 'swing', 'tight', 'variety', 'contour', 'chance'],
+    random: ['vary', 'var', 'roam', 'scatter', 'stutter', 'ghost', 'chance', 'humanize'],
+    timing: ['swing', 'accent', 'humanize', 'tight', 'rate var', 'speed', 'cycle', 'start'],
+    harmony: ['key', 'notes', 'transpose', 'follows changes', 'voicing', 'harmony', 'pitch'],
+    volume: ['level', 'accent', 'vel var', 'ghosts'],
+  };
+  function findRender(card, q) {
+    const box = card.querySelector('.v2-findres'); if (!box) return;
+    const term = String(q || '').trim().toLowerCase();
+    if (!term) { box.classList.remove('on'); box.innerHTML = ''; return; }
+    // A CATEGORY WORD FINDS THE WHOLE FAMILY. Every control is filed with the
+    // thing it modifies, which scatters a category across sheets — the
+    // variance controls sit in Content \u25b8 Feel, Content \u25b8 Pattern,
+    // Pitch \u25b8 Voicing and Shape \u25b8 Variance — so the word people
+    // actually type has to reach all of them. Deliberately a SHORT explicit
+    // table, not fuzzy matching: a finder that guesses is worse than one that
+    // misses, because you cannot tell a wrong hit from a missing control.
+    const terms = (FIND_SYN[term] || [term]);
+    const hits = findIndex(card).filter((x) => {
+      const hay = (x.lab + ' ' + x.tab + ' ' + x.grp).toLowerCase();
+      return terms.some((t) => hay.indexOf(t) >= 0);
+    });
+    box.classList.add('on');
+    if (!hits.length) {
+      box.innerHTML = '<div class="v2-findnone">Nothing matches \u201c' + esc(q) + '\u201d</div>';
+      return;
+    }
+    box.innerHTML = hits.slice(0, FIND_MAX).map((x) =>
+      '<button type="button" class="v2-findhit" data-fgrp="' + esc(x.grp) + '" data-ftab="' +
+        esc(x.tab) + '" data-flab="' + esc(x.lab) + '">' +
+        '<span class="v2-findlab">' + esc(x.lab) + '</span>' +
+        '<span class="v2-findwhere">' + esc(x.grp) + ' \u25b8 ' + esc(x.tab) + '</span>' +
+      '</button>').join('') +
+      (hits.length > FIND_MAX ? '<div class="v2-findnone">\u2026and ' + (hits.length - FIND_MAX) +
+        ' more \u2014 keep typing</div>' : '');
+  }
   function popTabName(row) {
     const t = row.getAttribute('data-v2tab'); if (t) return t;
     const lab = row.querySelector(':scope > label') || row.querySelector('.ambient-mod-sub');
@@ -5526,6 +5614,7 @@
         g.classList.toggle('open', og.has(g.getAttribute('data-v2grp')));
       });
       applyGate(card, L);
+      stampGroups(card);
     });
     // A REBUILD DESTROYS AN OPEN SHEET with the card that held it — reopen it
     // on the fresh card, same group, same tab, so a select flipped from inside
@@ -5612,6 +5701,15 @@
         try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
       };
       h.addEventListener('input', (ev) => {
+        // FIND A CONTROL — filter only. This must NEVER call `V2.render`: a
+        // re-render replaces the input under the finger and the caret goes
+        // with it (the documented Humanize-drag failure, one control over).
+        const fi = ev.target.closest && ev.target.closest('.v2-findin');
+        if (fi) {
+          const c9 = fi.closest('.v2-layer');
+          if (c9) findRender(c9, fi.value);
+          return;
+        }
         // GO TO ANOTHER SECTION without leaving the sheet. Before every other
         // branch, because it is not a field — it navigates.
         // WHICH PART THIS CONTENT IS FOR — the head pair's selector. Filing
@@ -5750,6 +5848,41 @@
       });
 
       h.addEventListener('click', (ev) => {
+        // A HIT NAVIGATES. `popOpen` is the same call the group buttons and the
+        // sheet's own section navigator make, so the finder can never open a
+        // surface the rest of the card cannot.
+        const fh = ev.target.closest && ev.target.closest('.v2-findhit');
+        if (fh) {
+          const ctx = layerOf(fh); if (!ctx) return;
+          const grp = fh.getAttribute('data-fgrp'), tab = fh.getAttribute('data-ftab');
+          const lab = fh.getAttribute('data-flab') || '';
+          popOpen(ctx.card, ctx.L, grp, tab);
+          // MARK WHAT YOU CAME FOR. Landing on the right tab still leaves you
+          // scanning it — a tab can hold ten rows — so the row flashes.
+          setTimeout(() => {
+            try {
+              const pane = ctx.card.querySelector('.v2-pop-pane'); if (!pane) return;
+              const rows = [...pane.querySelectorAll('[data-v2g]')];
+              const hit = rows.find((r) => {
+                if ([...r.querySelectorAll('.v2-mini-lab')].some(m => (m.textContent || '').trim() === lab)) return true;
+                const lb = r.querySelector(':scope > label') || r.querySelector('.ambient-mod-sub');
+                if (!lb) return false;
+                const nm = ((lb.childNodes[0] && lb.childNodes[0].textContent) || lb.textContent || '')
+                  .split('\u00b7')[0].trim();
+                return nm === lab;
+              });
+              if (!hit) return;
+              try { hit.scrollIntoView({ block: 'center' }); } catch (e) {}
+              hit.classList.add('v2-findmark');
+              setTimeout(() => hit.classList.remove('v2-findmark'), 1600);
+            } catch (e) {}
+          }, 60);
+          const inp = ctx.card.querySelector('.v2-findin');
+          const box = ctx.card.querySelector('.v2-findres');
+          if (inp) inp.value = '';
+          if (box) { box.classList.remove('on'); box.innerHTML = ''; }
+          return;
+        }
         const t = ev.target;
         // THE GROUP GRID → its sheet; the sheet's own chrome next — these run
         // before every other branch so nothing inside the sheet can fall

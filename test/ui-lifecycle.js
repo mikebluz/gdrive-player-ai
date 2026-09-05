@@ -1587,6 +1587,74 @@ const ok = (name, cond, detail) => {
     card().classList.remove('collapsed');
     return o;
   });
+  // 🔍 FIND A CONTROL — an index over the card. Every control is filed with
+  // the thing it modifies, which is the right filing and a poor index: the
+  // variance family alone spans four tabs in three sheets, and "where are all
+  // the variance controls" was asked twice. It NAVIGATES; it never renders a
+  // second copy of a field.
+  const findRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const h = document.getElementById('bloom-v2-layers');
+    if (h) h._sig = ''; window._v2.render(E); await wait(250);
+    const card = document.querySelector('.v2-layer');
+    card.classList.remove('collapsed');
+    const inp = card.querySelector('.v2-findin');
+    const o = { present: !!inp };
+    if (!inp) return o;
+    // 16px FLOOR — below it iOS zooms the page on focus and never zooms back
+    o.fontPx = parseFloat(getComputedStyle(inp).fontSize) || 0;
+    const r0 = inp.getBoundingClientRect();
+    o.fits = r0.width > 0 && r0.right <= innerWidth + 1 && r0.height >= 30;
+    const type = async (v) => {
+      inp.value = v; inp.dispatchEvent(new Event('input', { bubbles: true }));
+      await wait(140);
+      return [...card.querySelectorAll('.v2-findhit')].map((x) => ({
+        lab: x.getAttribute('data-flab'), grp: x.getAttribute('data-fgrp'),
+        tab: x.getAttribute('data-ftab') }));
+    };
+    const ghost = await type('ghost');
+    o.exact = ghost.length === 1 && ghost[0].lab === 'Ghosts' &&
+      ghost[0].grp === 'Shape' && ghost[0].tab === 'Variance';
+    // THE CATEGORY WORD reaches the whole family across sheets — the question
+    // this exists for. Asserted as SHEET COVERAGE, not a count: a number would
+    // pin today's roster and break the next time a control is added.
+    const fam = await type('variance');
+    const sheets = new Set(fam.map((x) => x.grp));
+    o.famSheets = [...sheets].sort().join(',');
+    o.famSpans = sheets.has('Content') && sheets.has('Pitch') && sheets.has('Shape');
+    o.famHasVariance = fam.some((x) => x.tab === 'Variance');
+    // a miss says so rather than showing an empty box
+    await type('zzzqq');
+    o.saysNone = /Nothing matches/.test((card.querySelector('.v2-findnone') || {}).textContent || '');
+    // TYPING MUST NOT RE-RENDER THE CARD — that replaces the input under the
+    // finger and takes the caret with it (the documented Humanize-drag bug)
+    await type('vary');
+    o.inputSurvives = document.contains(inp) && inp.value === 'vary';
+    // a hit NAVIGATES to the one home, and marks the row it sent you to
+    const hit = [...card.querySelectorAll('.v2-findhit')].find((x) => x.getAttribute('data-flab') === 'Vary');
+    o.hitFound = !!hit;
+    if (hit) hit.click();
+    await wait(500);
+    const pop = document.querySelector('.v2-pop');
+    o.opened = pop ? pop.getAttribute('aria-label') : null;
+    const on = document.querySelector('.v2-pop-tabs [data-tab].on');
+    o.tab = on ? on.getAttribute('data-tab') : null;
+    o.marked = document.querySelectorAll('.v2-findmark').length === 1;
+    o.cleared = card.querySelector('.v2-findin').value === '' &&
+      !card.querySelector('.v2-findres').classList.contains('on');
+    const cl = document.querySelector('.v2-pop-close'); if (cl) cl.click();
+    await wait(200);
+    o.clean = !document.querySelector('.v2-pop-wrap');
+    return o;
+  });
+  ok('🔍 Find a control indexes the whole card and navigates to the one home',
+    findRun.present && findRun.fontPx >= 16 && findRun.fits && findRun.exact &&
+    findRun.famSpans && findRun.famHasVariance && findRun.saysNone &&
+    findRun.inputSurvives && findRun.hitFound && findRun.opened === 'Content' &&
+    findRun.tab === 'Pattern' && findRun.marked && findRun.cleared && findRun.clean,
+    JSON.stringify(findRun));
+
   // ▶ PREVIEW AUDITIONS THE RECORD ON THE CARD. With per-part content on, the
   // emitter swaps in whichever part is SOUNDING — right for playback, wrong
   // for an audition, because the stopped clock resolves to part 0 while the

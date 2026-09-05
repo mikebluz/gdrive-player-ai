@@ -14889,6 +14889,50 @@
    keep working), fixed full-viewport wrap, measure-and-corrected in popOpen
    against the containing-block trap. Not a body child, so the view-mode hide
    rules never see it. */
+/* ── FIND A CONTROL — an index over the card, not a second home for
+   anything. Styled from the panel's own tokens (transparent ground, 1px
+   #2d2d3f, purple on hover) per the reuse-don't-reinvent rule. */
+.v2-layer .v2-find { margin: 0 0 8px; }
+.v2-layer .v2-findin {
+  width: 100%; box-sizing: border-box; padding: 7px 10px;
+  background: #0f0f1e; border: 1px solid #2d2d3f; border-radius: 20px;
+  color: #e2e8f0; font-family: 'Segoe UI', sans-serif;
+  /* 16px FLOOR — iOS zooms the page on focus below it and never zooms back */
+  font-size: 16px; min-height: 34px;
+}
+.v2-layer .v2-findin:focus { outline: none; border-color: #9f7aea; }
+.v2-layer .v2-findin::placeholder { color: #7a7a9c; }
+/* NOT `[hidden]`: a class rule that sets display beats the attribute, which is
+   the documented trap that once left a whole dock visible. One mechanism. */
+.v2-layer .v2-findres { display: none; }
+.v2-layer .v2-findres.on {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-top: 6px; max-height: 46vh; overflow-y: auto;
+}
+.v2-layer .v2-findhit {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  width: 100%; box-sizing: border-box; min-height: 34px; padding: 6px 10px;
+  background: none; border: 1px solid #2d2d3f; border-radius: 8px;
+  color: #a0aec0; font-family: 'Segoe UI', sans-serif; font-size: 0.8rem;
+  text-align: left; cursor: pointer;
+}
+.v2-layer .v2-findhit:hover { border-color: #9f7aea; color: #d6bcfa; }
+.v2-layer .v2-findlab { font-weight: 600; color: #e2e8f0; min-width: 0; }
+.v2-layer .v2-findhit:hover .v2-findlab { color: #d6bcfa; }
+.v2-layer .v2-findwhere { font-size: 0.72rem; color: #7a7a9c; margin-left: auto; }
+.v2-layer .v2-findnone {
+  padding: 6px 10px; color: #7a7a9c; font-family: 'Segoe UI', sans-serif;
+  font-size: 0.75rem; white-space: normal; overflow-wrap: anywhere;
+}
+/* THE ROW YOU CAME FOR. Landing on the right tab still leaves you scanning it. */
+.v2-layer .v2-findmark {
+  animation: v2findmark 1.6s ease-out 1;
+  border-radius: 8px;
+}
+@keyframes v2findmark {
+  0%, 55% { background: rgba(159, 122, 234, 0.26); box-shadow: 0 0 0 1px #9f7aea inset; }
+  100%    { background: transparent; box-shadow: none; }
+}
 .v2-pop-wrap { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; z-index: 10290; }
 .v2-pop-scrim { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.55); }
 .v2-pop {

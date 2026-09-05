@@ -1587,6 +1587,83 @@ const ok = (name, cond, detail) => {
     card().classList.remove('collapsed');
     return o;
   });
+  // ▶ PREVIEW AUDITIONS THE RECORD ON THE CARD. With per-part content on, the
+  // emitter swaps in whichever part is SOUNDING — right for playback, wrong
+  // for an audition, because the stopped clock resolves to part 0 while the
+  // card is editing the part the strip selected. Before the edit pin, seeding
+  // changed the stored rules every press and left the preview byte-identical.
+  const ppEditRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const cfg0 = E.getCfg();
+    const svProg = JSON.stringify(cfg0.prog || null);
+    const svLayer = JSON.stringify(L());
+    cfg0.prog = { on: true, parts: [{ name: 'Verse', len: 2 }, { name: 'Chorus', len: 2 }],
+      chords: [{ root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] },
+               { root: 7, intervals: [0, 4, 7] }, { root: 9, intervals: [0, 3, 7] }] };
+    E.getCfg();
+    L().on = true; L().present = true;
+    // per part, EDITING part 1 — the part the stopped clock does NOT resolve to
+    L().partFor = 1; L().partAll = JSON.parse(JSON.stringify(L().part));
+    E.getCfg();
+    const o = { partFor: L().partFor | 0, seeds: [] };
+    const cap = async () => {
+      const got = []; const orig = window.playNote;
+      window.playNote = function (f) { got.push(Math.round(f)); return orig.apply(this, arguments); };
+      try { window._v2.preview(E, L()); } catch (e) {}
+      await wait(60); window.playNote = orig;
+      try { window._v2.previewKill(E, L()); } catch (e) {}
+      return got.join(',');
+    };
+    for (const ty of ['bass', 'arp', 'bed']) {
+      window._v2.seedLikeV1(E, L(), ty); E.getCfg();
+      const q = L().part;
+      o.seeds.push({ ty, rules: q.rhythm.kind + '/' + q.pitch.kind, pv: await cap() });
+      await wait(80);
+    }
+    // three seeds, three DIFFERENT auditions — the symptom was all three equal
+    const pvs = o.seeds.map((x) => x.pv);
+    o.rulesMoved = new Set(o.seeds.map((x) => x.rules)).size === 3;
+    o.previewFollows = new Set(pvs).size === 3 && pvs.every((x) => x.length > 0);
+    // …and PLAYBACK still swaps: the arrangement, not the card, owns which
+    // part sounds. Without this the fix would have silenced per-part content.
+    // DETERMINISTIC BY CONSTRUCTION: resolve which part the anchor lands on
+    // FIRST, then edit a different one. Asserting against whatever the clock
+    // happens to hold is chance-dependent — earlier checks that played leave
+    // `_playStartAt` set, and the anchor then resolved to the very part being
+    // edited, so the swap correctly did nothing and the check read as failed.
+    try {
+      const t0 = Tone.now() + 0.5, c2 = E.getCfg();
+      const w = _ambPartChordAt(E, c2, t0);
+      o.anchorPart = w ? (w.pi | 0) : -1;
+      L().partFor = (o.anchorPart === 0) ? 1 : 0;
+      E.getCfg();
+      const ctx = { E, cfg: E.getCfg(), key: 'v2:' + L().id, cycleStart: t0, cycleSec: 2 };
+      const swapped = window._v2.notesFor(L(), ctx).map((n) => Math.round(n.freq)).join(',');
+      const pinned = window._v2.withEdit(() => window._v2.notesFor(L(), ctx))
+        .map((n) => Math.round(n.freq)).join(',');
+      o.playbackStillSwaps = swapped !== pinned;
+    } catch (e) { o.playbackStillSwaps = 'ERR ' + e.message; }
+    // put the whole world back — a progression left behind changes every
+    // later check's harmony (the documented one-page-one-state trap)
+    try {
+      const c3 = E.getCfg();
+      if (svProg === 'null') delete c3.prog; else c3.prog = JSON.parse(svProg);
+      const cur = L(), fresh = JSON.parse(svLayer);
+      Object.keys(cur).forEach((k) => { if (!(k in fresh)) delete cur[k]; });
+      Object.assign(cur, fresh);
+      E.getCfg();
+      const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+      window._v2.render(E); await wait(250);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+      o.clean = !Number.isFinite(L().partFor) && !L().parts;
+    } catch (e) { o.clean = 'ERR ' + e.message; }
+    return o;
+  });
+  ok('▶ Preview auditions the part you are EDITING, while playback still follows the arrangement',
+    ppEditRun.rulesMoved && ppEditRun.previewFollows && ppEditRun.playbackStillSwaps === true && ppEditRun.clean === true,
+    JSON.stringify(ppEditRun));
+
   // A MENU OPENED FROM INSIDE THE SHEET MUST PAINT OVER IT. The sheet is a
   // fixed overlay (.v2-pop-wrap, z 10290) and showCtxMenu is body-attached —
   // at its old z 10001 the Transform menu opened UNDERNEATH the sheet.

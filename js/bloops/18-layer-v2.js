@@ -1073,6 +1073,27 @@
   }
   const pinSig = (t) => (t && typeof t === 'object') ? JSON.stringify(t) : String(t | 0);
 
+  // ── THE EDIT PIN — audition and draw the record ON THE CARD ─────────────
+  // The per-part swap in `notesFor` belongs to PLAYBACK: the arrangement
+  // decides which part is sounding, and the emitter asks for that part's
+  // record. ▶ Preview, the drawing, 🔒 Lock and the compose seed are asking a
+  // DIFFERENT question — "what does the thing I am editing do" — and with
+  // per-part engaged the two had different answers, because the stopped clock
+  // resolves to whichever part sits at the anchor (part 0, normally) while the
+  // card is editing whichever part the strip selected. Measured: seeding a
+  // layer whose selected part was 1 changed the stored rules every press
+  // (euclid/fixed -> pulse/series -> pulse/chord) and left the preview
+  // BYTE-IDENTICAL — 12 notes, the same pitches — which is exactly the
+  // reported "the visualization changes but the preview stays the same".
+  // A MODULE FLAG rather than a ctx argument, for the same reason TAKE_PIN is
+  // one: `emit` calls `notesFor` itself, so the pin has to be in force AROUND
+  // it. Restored in a `finally` so it can never leak into the tick.
+  let EDIT_PIN = false;
+  function withEdit(fn) {
+    const sv = EDIT_PIN; EDIT_PIN = true;
+    try { return fn(); } finally { EDIT_PIN = sv; }
+  }
+
   // ── THE PART INTERFACE ──────────────────────────────────────────────────
   // notesFor(layer, ctx) → [{ at, freq, durMs }]
   // ONE contract, two implementations. Everything above is an implementation
@@ -1089,7 +1110,7 @@
     // different length plays FITTED (stretch semantics) rather than clocked.
     // engages on the map OR the ice alone — an empty map (every record pruned)
     // must still fall to the Everywhere floor, never to the bench
-    if (Number.isFinite(L.partFor) && (L.parts || L.partAll) && !ctx._ppDone) {
+    if (!EDIT_PIN && Number.isFinite(L.partFor) && (L.parts || L.partAll) && !ctx._ppDone) {
       let pi = -1;
       try {
         const w = (typeof _ambPartChordAt === 'function' && ctx.E && ctx.cfg)
@@ -1599,7 +1620,7 @@
     // PINNED — capture the take the picture is showing, not a fresh roll. This
     // is the whole of "lock what Live came up with": without it, locking rolled
     // the dice one more time and froze a take nobody had heard.
-    try { notes = withTake((opts && opts.reroll) ? takeOf(L) : pinOf(L), () => notesFor(asLive, { E, cfg, key: 'v2:' + L.id, cycleStart: ctx.cycleStart, cycleSec: ctx.cycleSec })); }
+    try { notes = withEdit(() => withTake((opts && opts.reroll) ? takeOf(L) : pinOf(L), () => notesFor(asLive, { E, cfg, key: 'v2:' + L.id, cycleStart: ctx.cycleStart, cycleSec: ctx.cycleSec }))); }
     catch (e) { return false; }
     if (!notes.length) return false;                    // nothing to freeze
     let fresh = notes.map(n => ({
@@ -1762,7 +1783,7 @@
     // layer fall silent on the click and showed nothing to edit).
     const asLive = Object.assign({}, L, { part: Object.assign({}, p, { kind: 'live' }) });
     let notes = [];
-    try { notes = notesFor(asLive, { E, cfg, key: 'v2:' + L.id, cycleStart: 0, cycleSec: cyc }); } catch (e) {}
+    try { notes = withEdit(() => notesFor(asLive, { E, cfg, key: 'v2:' + L.id, cycleStart: 0, cycleSec: cyc })); } catch (e) {}
     return { loopLen: cyc, events: notes.map(n => ({ t: n.at, freq: n.freq, dur: n.durMs })) };
   }
 
@@ -2451,7 +2472,7 @@
     // cycle starts), so one probe places it exactly.
     let off = 0;
     try {
-      const probe = withTake(pinOf(L), () => notesFor(L, { E, cfg, key, cycleStart: t0, cycleSec: sec }));
+      const probe = withEdit(() => withTake(pinOf(L), () => notesFor(L, { E, cfg, key, cycleStart: t0, cycleSec: sec })));
       let m = Infinity;
       for (let i = 0; i < probe.length; i++) {
         const n = probe[i];
@@ -2521,10 +2542,12 @@
       // has to be in force around it rather than passed as an argument. This is
       // what makes a second press play what the first one played.
       TAKE_PIN = pinOf(L);
+      EDIT_PIN = true;
       emit(E, L, key, t0 - 0.05, t0 + sec + 0.01, 0.12, 0, cfg);
     } catch (e) {
     } finally {
       TAKE_PIN = null;
+      EDIT_PIN = false;
       if (orig) window.playNote = orig;
       window._ambCaptureSink = sv.sink; window._ambEmitKey = sv.ek; window._ambEmitAt = sv.ea;
       window._ambHangEmitting = sv.he; window._ambEmitCutoff = sv.cut;
@@ -2792,6 +2815,7 @@
     preview: previewLayer,
     rollRun: rollRunFn,
     seedLikeV1: seedLikeV1Fn,
+    withEdit: withEdit,
     applyBarsMode: applyBarsModeFn,
     v1Seeds: V1_SEEDS,
     makeSustain: makeSustainFn,
@@ -3137,8 +3161,8 @@
     // the time as well as the seed — pinning only the take would draw the right
     // rhythm over the wrong harmony.
     try {
-      notes = V2.withTake(V2.pinOf(L), () =>
-        V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc })) || [];
+      notes = V2.withEdit(() => V2.withTake(V2.pinOf(L), () =>
+        V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc }))) || [];
     } catch (e) { notes = []; }
     // THE RULER — beats, bars and bar NUMBERS, in a gutter of their own. Bar
     // lines alone gave the drawing a scale but no reading: you could see that
@@ -3796,8 +3820,9 @@
   // can never promise a note the engine will not play.
   function degLabel(L, i) {
     try {
-      const notes = V2.notesFor(Object.assign({}, L, { part: Object.assign({}, L.part, { kind: 'live' }) }),
-        { E: _engOf(), cfg: _cfgOf(), key: 'v2:' + L.id, cycleStart: 0, cycleSec: 2 });
+      const notes = V2.withEdit(() => V2.notesFor(
+        Object.assign({}, L, { part: Object.assign({}, L.part, { kind: 'live' }) }),
+        { E: _engOf(), cfg: _cfgOf(), key: 'v2:' + L.id, cycleStart: 0, cycleSec: 2 }));
       const st = Math.max(1, (L.part.rhythm.steps | 0));
       const n = notes.find(x => Math.round((x.at / 2) * st) === i);
       if (n && typeof _ambFreqLabel === 'function') return _ambFreqLabel(n.freq);

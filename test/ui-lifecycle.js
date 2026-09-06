@@ -198,13 +198,18 @@ const ok = (name, cond, detail) => {
       title: w ? ((w.querySelector('.v2-gototab.on') || {}).textContent || '').trim() : null,
       tabs: w ? w.querySelectorAll('.v2-pop-tab').length : 0,
       onTabs: w ? w.querySelectorAll('.v2-pop-tab.on').length : 0,
-      centered: r ? (Math.abs((r.top + r.bottom) / 2 - window.innerHeight / 2) < 4 &&
+      // CENTRED IN THE VISIBLE BAND, not the raw viewport — the sheet now sits
+      // below the app's 40px fixed `.float-header` (and, in the shell, below
+      // the status bar), because centring on the viewport put one row of the
+      // head behind them. Restated with the reason; horizontal centring and
+      // "fully on screen" are unchanged.
+      centered: r ? (Math.abs((r.top + r.bottom) / 2 - (40 + window.innerHeight) / 2) < 4 &&
                      Math.abs((r.left + r.right) / 2 - window.innerWidth / 2) < 4 &&
-                     r.top >= 0 && r.bottom <= window.innerHeight) : false,
+                     r.top >= 40 && r.bottom <= window.innerHeight) : false,
       over,
     };
   });
-  ok('group button opens its sheet (tabbed, CENTERED, fully on screen, no overflow)',
+  ok('group button opens its sheet (tabbed, centred BELOW the app header, no overflow)',
     s.open && s.title === 'Instrument' && s.tabs > 0 && s.onTabs === 1 && s.centered && s.over <= 0,
     JSON.stringify(s));
   // one parameter at a time: exactly the active tab's rows are visible
@@ -1606,6 +1611,60 @@ const ok = (name, cond, detail) => {
     card().classList.remove('collapsed');
     return o;
   });
+  // THE SHEET MUST CLEAR THE APP'S OWN CHROME. The wrap is pinned to 0,0 /
+  // 100vh (its transform corrects the containing-block trap, so it must not be
+  // moved), and in the native shell `viewport-fit=cover` makes 100vh INCLUDE
+  // the status bar — so a sheet centred in it starts behind the status bar and
+  // behind the 40px fixed `.float-header`, hiding exactly one row of the head.
+  // `env()` is ALWAYS 0 in a desktop browser, which is why this shipped twice:
+  // the insets are CSS variables so this can stand in for a phone.
+  const safeRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const svPart = JSON.stringify(L().part);
+    L().on = true; L().present = true;
+    L().part.kind = 'live'; L().part.bars = 4;
+    L().part.rhythm = { kind: 'pulse', steps: 16, n: 1 };
+    L().part.pitch = { kind: 'chord', voices: 3 };
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E); await wait(280);
+    const card = document.querySelector('.v2-layer');
+    card.classList.remove('collapsed');
+    card.querySelector('[data-v2grp="Content"]').click(); await wait(340);
+    const pop = document.querySelector('.v2-pop');
+    const out = [];
+    for (const [st, sb] of [[0, 0], [47, 34], [59, 34]]) {
+      pop.style.setProperty('--v2-safetop', st + 'px');
+      pop.style.setProperty('--v2-safebot', sb + 'px');
+      await wait(120);
+      const q = pop.getBoundingClientRect();
+      const tabs = [...document.querySelectorAll('.v2-gototab')];
+      const t0 = Math.min(...tabs.map((t) => t.getBoundingClientRect().top));
+      const xb = document.querySelector('.v2-pop-head .v2-pop-close').getBoundingClientRect();
+      const chrome = st + 40;
+      out.push({ st, sb,
+        topClear: q.top >= chrome - 0.5,
+        rowClear: t0 >= chrome - 0.5,
+        bottomClear: q.bottom <= innerHeight - sb + 1,
+        closeVisible: xb.top >= chrome - 0.5 && xb.bottom <= innerHeight - sb + 1 });
+    }
+    pop.style.removeProperty('--v2-safetop');
+    pop.style.removeProperty('--v2-safebot');
+    const cl = document.querySelector('.v2-pop-close'); if (cl) cl.click();
+    await wait(200);
+    try {
+      L().part = JSON.parse(svPart); E.getCfg();
+      if (h) h._sig = ''; window._v2.render(E); await wait(200);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) {}
+    return out;
+  });
+  ok('the sheet clears the status bar and the app header at every safe-area inset',
+    safeRun.length === 3 && safeRun.every((x) =>
+      x.topClear && x.rowClear && x.bottomClear && x.closeVisible),
+    JSON.stringify(safeRun));
+
   // THE DRAWING IS ONE CYCLE, and its ruler counts BARS — so a 1-bar cycle is
   // one label and four beat lines however many chords the part has. Asked as
   // "why does the ruler just say 1 when the part is 5 chords": nothing said the

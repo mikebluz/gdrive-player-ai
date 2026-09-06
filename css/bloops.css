@@ -11443,7 +11443,11 @@
          sheet, shorter drawing (it stays readable at 60px). Compound
          selectors — this block sits EARLIER in the file than the base rules,
          so equal specificity loses the cascade (the documented trap). */
-      .v2-layer .v2-pop { max-height: 92vh; }
+      /* every pixel of sheet height goes to the PANE on a phone — but measured
+         from the VISIBLE band, not the raw viewport (see the base rule). */
+      .v2-layer .v2-pop {
+        max-height: calc(100vh - var(--v2-topchrome) - var(--v2-safebot) - 8px);
+      }
       .v2-layer .v2-partviz .v2-vizcv { height: 60px; }
       /* the trio fills its row — the selector takes the slack */
       .v2-pop-pair select.ambient-select.v2-pop-part { flex: 1 1 auto; max-width: none; }
@@ -14957,9 +14961,28 @@
 }
 .v2-pop-wrap { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; z-index: 10290; }
 .v2-pop-scrim { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.55); }
+/* CENTRED IN THE AREA THE USER CAN SEE, not in the raw viewport. The wrap is
+   pinned to 0,0 and 100vh (its transform corrects the backdrop-filter
+   containing-block trap, so its top must NOT be moved), and under
+   `viewport-fit=cover` in the native shell 100vh INCLUDES the status bar —
+   so a sheet centred in it starts about 34px down, behind the status bar AND
+   behind the app's own 40px fixed `.float-header`. That is exactly one row of
+   the head: reported as the top being cut off, with row two (Mix · FX · ✕)
+   the first thing visible. Shifting the centre by half the chrome, and
+   capping the height by all of it, puts the whole sheet in the visible band.
+   The insets are VARIABLES so a test can stand in for a phone — `env()` is
+   always 0 in a desktop browser, which is why this could not be measured
+   before it shipped. */
 .v2-pop {
-  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  width: min(560px, 94vw); max-height: 82vh;
+  --v2-safetop: env(safe-area-inset-top, 0px);
+  --v2-safebot: env(safe-area-inset-bottom, 0px);
+  --v2-hdr: 40px;                       /* .float-header, which is fixed above everything */
+  --v2-topchrome: calc(var(--v2-safetop) + var(--v2-hdr));
+  position: absolute; left: 50%;
+  top: calc(50% + (var(--v2-topchrome) - var(--v2-safebot)) / 2);
+  transform: translate(-50%, -50%);
+  width: min(560px, 94vw);
+  max-height: calc(100vh - var(--v2-topchrome) - var(--v2-safebot) - 12px);
   display: flex; flex-direction: column;
   background: #12121f; border: 1px solid #2d2d3f;
   border-radius: 16px; box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);

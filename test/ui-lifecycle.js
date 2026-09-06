@@ -1611,6 +1611,81 @@ const ok = (name, cond, detail) => {
     card().classList.remove('collapsed');
     return o;
   });
+  // 🎲 ROLL MIRRORS THE PART, AND A PRESS ON THE LIT CHIP BUILDS NOTHING.
+  // It rolled its own length, so a record filed under a 5-bar part came back
+  // 1 bar and then repeated five times under it; and the already-in-this-mode
+  // guard keyed on the STAMP, so a chip lit by INFERENCE (a walked line IS a
+  // roll) still rebuilt and threw the content away.
+  const rollRun2 = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const c0 = E.getCfg();
+    const svProg = JSON.stringify(c0.prog || null), svPart = JSON.stringify(L().part);
+    const svFor = L().partFor, svAll = L().partAll ? JSON.stringify(L().partAll) : null;
+    const svKey = [c0.keyOn, c0.keyRoot, c0.keyScale, c0.keyFollow];
+    c0.prog = { on: true,
+      chords: [0, 2, 4, 5, 7].map((r) => ({ root: r, intervals: [0, 4, 7] }))
+        .concat([{ root: 9, intervals: [0, 3, 7] }, { root: 11, intervals: [0, 3, 6] }]),
+      parts: [{ name: 'A', len: 5 }, { name: 'B', len: 2 }] };
+    c0.keyOn = true; c0.keyRoot = 0; c0.keyScale = 'major'; c0.keyFollow = false;
+    E.getCfg();
+    L().on = true; L().present = true; L().part.kind = 'live';
+    L().partFor = 0; L().partAll = JSON.parse(JSON.stringify(L().part));
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers');
+    const draw = async () => { if (h) h._sig = ''; window._v2.render(E); await wait(280);
+      document.querySelector('.v2-layer').classList.remove('collapsed'); };
+    const rollBtn = () => [...document.querySelectorAll('.v2-layer button')]
+      .find((x) => x.textContent.trim() === '\ud83c\udfb2 Roll');
+    const shape = () => JSON.stringify({ b: L().part.bars, r: L().part.rhythm, p: L().part.pitch });
+    const o = {};
+    await draw();
+    rollBtn().click(); await wait(450);
+    o.barsA = L().part.bars;                       // the 5-bar part's length
+    o.stamped = L().part.mat === 'roll';
+    const s1 = shape();
+    rollBtn().click(); await wait(450);
+    o.repeatIsNoop = shape() === s1;               // a second press builds nothing
+    // an INFERRED-lit chip — no stamp, but a walked line already IS a roll
+    delete L().part.mat; L().part.bars = 5;
+    L().part.pitch = { kind: 'walk', degree: 1, span: 3 };
+    E.getCfg(); await draw();
+    const s2 = shape();
+    rollBtn().click(); await wait(450);
+    o.inferredIsNoop = shape() === s2;
+    o.inferredStamps = L().part.mat === 'roll';    // …and it records the mode
+    // a roll made for the OTHER part takes THAT part's length
+    window._v2.partSelect(E, L(), 1);
+    delete L().part.mat; L().part.pitch = { kind: 'chord', voices: 3 };
+    E.getCfg(); await draw();
+    rollBtn().click(); await wait(450);
+    o.barsB = L().part.bars;
+    // …and one cycle of it spans that part's chords, so the generated notes
+    // are in the harmonic character of the bars they play under
+    try {
+      const cyc = L().part.bars * 2;
+      const ns = window._v2.withEdit(() => window._v2.notesFor(L(),
+        { E, cfg: E.getCfg(), key: 'v2:' + L().id, cycleStart: 0, cycleSec: cyc })) || [];
+      o.slots = [...new Set(ns.map((n) => _ambProgStepAt(E, n.at) % 7))].sort().join(',');
+    } catch (e) { o.slots = 'ERR'; }
+    try {
+      const c9 = E.getCfg();
+      if (svProg === 'null') delete c9.prog; else c9.prog = JSON.parse(svProg);
+      c9.keyOn = svKey[0]; c9.keyRoot = svKey[1]; c9.keyScale = svKey[2]; c9.keyFollow = svKey[3];
+      L().part = JSON.parse(svPart);
+      if (Number.isFinite(svFor)) L().partFor = svFor; else delete L().partFor;
+      if (svAll) L().partAll = JSON.parse(svAll); else delete L().partAll;
+      if (L().parts) delete L().parts;
+      E.getCfg(); await draw();
+    } catch (e) { o.err = e.message; }
+    return o;
+  });
+  ok('🎲 Roll takes the selected part\'s length, and a press on the lit chip builds nothing',
+    rollRun2.barsA === 5 && rollRun2.barsB === 2 && rollRun2.stamped &&
+    rollRun2.repeatIsNoop && rollRun2.inferredIsNoop && rollRun2.inferredStamps &&
+    rollRun2.slots === '0,1',
+    JSON.stringify(rollRun2));
+
   // THE SHEET MUST CLEAR THE APP'S OWN CHROME. The wrap is pinned to 0,0 /
   // 100vh (its transform corrects the containing-block trap, so it must not be
   // moved), and in the native shell `viewport-fit=cover` makes 100vh INCLUDE

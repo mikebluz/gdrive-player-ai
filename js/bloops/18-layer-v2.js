@@ -2787,6 +2787,24 @@
     try { E.getCfg(); } catch (e) {}
     return { onsets: p.rhythm.n, octaves: p.pitch.octaves };
   }
+  // HOW LONG THE PART THIS RECORD PLAYS UNDER IS. A maker that rolls its own
+  // length throws away the fit: a record filed under a 5-bar part came back
+  // 1 bar and then repeated five times under it (reported). Live generation
+  // already resolves each note against the chord sounding at its own onset, so
+  // once the cycle IS the part, one pass covers that part's chords in their
+  // own harmonic character — the length is the only thing that has to be told.
+  // Returns 0 when there is no part to mirror, and the makers keep their roll.
+  function partBarsFor(E, L) {
+    try {
+      const cfg = E && E.getCfg && E.getCfg(); if (!cfg) return 0;
+      const pr = cfg.prog; if (!pr || !pr.on) return 0;
+      const pi = Number.isFinite(L.partFor) ? (L.partFor | 0)
+        : ((typeof _ambCurPartNow === 'function') ? _ambCurPartNow(E, cfg) : -1);
+      if (!(pi >= 0) || typeof _ambLenPartBars !== 'function') return 0;
+      const b = +_ambLenPartBars(cfg, pi);
+      return (b > 0 && b <= 64) ? b : 0;
+    } catch (e) { return 0; }
+  }
   function rollRunFn(E, L) {
     if (!L || !L.part) return null;
     const p = L.part;
@@ -2798,7 +2816,8 @@
     // roll, or the button stops meaning anything.
     if (p.mat && p.mat !== 'roll') matSave(L);
     p.mat = 'roll';
-    p.bars = _pick([1, 1, 2, 2, 4]);
+    // MIRROR THE PART's length when there is one — see `partBarsFor`.
+    p.bars = partBarsFor(E, L) || _pick([1, 1, 2, 2, 4]);
     const steps = _pick([8, 16, 16]);
     // EUCLID, not an even pulse: the syncopation is most of what makes a riff
     // a riff, and it leaves a Pattern grid the user can edit afterwards.
@@ -6738,11 +6757,24 @@
         if (mk) {
           const ctx = layerOf(mk); if (!ctx) return;
           const which = mk.getAttribute('data-mk');
-          // ALREADY IN THIS MODE = nothing to assert. Keyed on the STAMP, not
-          // the lit class: a chip is also lit by INFERENCE (the rules look
-          // like that shape), and refusing there kills the press that would
-          // actually build it.
-          if (ctx.L.part.mat === which && ctx.L.part.kind !== 'recorded') return;
+          // ALREADY IN THIS MODE = NOTHING TO BUILD. It used to key on the
+          // STAMP alone so that an INFERRED lit chip (the rules already look
+          // like that shape) would still build when pressed — but building is
+          // exactly what must not happen there: it REPLACES the content you
+          // have with a fresh one, which on a rolled part reset the length and
+          // the notes (reported). A press on a lit chip ADOPTS the mode
+          // instead — it stamps the provenance, so the state becomes explicit,
+          // and leaves the content alone. Rebuilding is what the OTHER modes'
+          // buttons are for, and re-rolling is 🎲 New take's.
+          if (ctx.L.part.kind !== 'recorded' && matProv(ctx.L).key === which) {
+            if (ctx.L.part.mat !== which) {
+              ctx.L.part.mat = which;
+              try { E.getCfg(); } catch (e) {}
+              try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+              h._sig = ''; V2.render(E);
+            }
+            return;
+          }
           const info = (which === 'arp') ? V2.makeArp(E, ctx.L) : V2.makeSustain(E, ctx.L, true);
           if (!info) return;
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
@@ -6786,10 +6818,19 @@
           const ctx = layerOf(rr); if (!ctx) return;
           // A REPEAT PRESS USED TO RE-ROLL — a mode button that silently
           // REPLACES your take when you press the one already lit. Rolling
-          // another take is 🎲's job, above the drawing. Keyed on the STAMP
-          // for the same reason the makers are: an INFERRED lit chip must
-          // still build its shape when pressed.
-          if (ctx.L.part.mat === 'roll' && ctx.L.part.kind !== 'recorded') return;
+          // another is 🎲 New take's job, above the drawing. It keyed on the
+          // STAMP alone, so a chip lit by INFERENCE (a walked line IS a roll)
+          // still rebuilt: the reported case, where a 5-bar per-part record
+          // came back 1 bar. Lit is lit — adopt the mode, keep the content.
+          if (ctx.L.part.kind !== 'recorded' && matProv(ctx.L).key === 'roll') {
+            if (ctx.L.part.mat !== 'roll') {
+              ctx.L.part.mat = 'roll';
+              try { E.getCfg(); } catch (e) {}
+              try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+              h._sig = ''; V2.render(E);
+            }
+            return;
+          }
           const info = V2.rollRun(E, ctx.L);
           if (!info) return;
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}

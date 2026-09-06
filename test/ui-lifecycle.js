@@ -733,14 +733,26 @@ const ok = (name, cond, detail) => {
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const card = () => document.querySelector('.v2-layer');
     card().classList.remove('collapsed');
+    const face = (b) => ((b && b.childNodes[0] && b.childNodes[0].nodeValue) || '').trim();
     const st2 = () => ({
-      on: [...card().querySelectorAll('.v2-notesrow .ambient-seg.on, .v2-seedv1.on')]
-        .map((x) => x.textContent.trim().slice(0, 14)).join('|'),
+      on: [...card().querySelectorAll('.v2-genshapes .ambient-seg.on, .v2-seedv1.on')]
+        .map((x) => face(x).slice(0, 14)).join('|'),
+      // …and what the CARD says without the panel open — the door names the
+      // shape in force, which is what consolidating four buttons must not cost
+      door: (card().querySelector('.v2-genface') || {}).textContent || '',
       hint: card().querySelector('.v2-notecount').textContent });
-    card().querySelector('.v2-rollrun').click(); await wait(350); card().classList.remove('collapsed');
+    // the shapes live behind ⚙ Shape… now; the panel stays open across a
+    // choice, so this opens it once
+    card().querySelector('.v2-genbtn').click(); await wait(280); card().classList.remove('collapsed');
+    card().querySelector('.v2-genpop .v2-rollrun').click(); await wait(350); card().classList.remove('collapsed');
     const roll = st2();
-    card().querySelector('.v2-mkpart[data-mk="sustain"]').click(); await wait(400); card().classList.remove('collapsed');
+    card().querySelector('.v2-genpop .v2-mkpart[data-mk="sustain"]').click(); await wait(400); card().classList.remove('collapsed');
     const sus = st2();
+    // shut the panel before the seed row — it covers the card, and a panel
+    // left open breaks whatever runs next (it already broke the Pattern tab's
+    // hit test one check later)
+    const gc = card().querySelector('.v2-genclose'); if (gc) gc.click();
+    await wait(200); card().classList.remove('collapsed');
     card().querySelector('.v2-seedv1[data-v1="bass"]').click(); await wait(450); card().classList.remove('collapsed');
     const seed = st2();
     window.confirm = () => true;
@@ -756,7 +768,8 @@ const ok = (name, cond, detail) => {
   // reported as the whole thing being opaque. Same contract (the hint NAMES
   // THE RULES, and the take), now asserted on the words a reader gets.
   ok('the Material door that made the content is LIT, and the hint names the rules',
-    /Roll/.test(provRun.roll.on) &&
+    /Roll/.test(provRun.roll.on) && /Roll/.test(provRun.roll.door) &&
+    /Sustained/.test(provRun.sus.door) &&
     /hits spread evenly over \d+ steps/.test(provRun.roll.hint) &&
     /take \d/.test(provRun.roll.hint) &&
     /Sustained/.test(provRun.sus.on) && !/Roll/.test(provRun.sus.on) &&
@@ -776,15 +789,19 @@ const ok = (name, cond, detail) => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const card = () => document.querySelector('.v2-layer');
-    const st2 = () => ({ on: [...card().querySelectorAll('.v2-notesrow .ambient-seg.on')]
-      .map((x) => x.textContent.trim()).join('|'),
+    const face = (b) => ((b && b.childNodes[0] && b.childNodes[0].nodeValue) || '').trim();
+    // the shapes are inside ⚙ Shape… now, so the lit one is read there; the
+    // card's own answer is the door face, which is asserted too
+    const st2 = () => ({ on: [...card().querySelectorAll('.v2-genshapes .ambient-seg.on')]
+      .map((x) => face(x)).join('|'),
+      door: (card().querySelector('.v2-genface') || {}).textContent || '',
       hint: card().querySelector('.v2-notecount').textContent });
     window._v2.rollRun(E, L()); window._v2.capture(E, L());
     delete L().part.mat; delete L().part.mem; E.getCfg();
     window._v2.render(E); await wait(250); card().classList.remove('collapsed');
     // NO STATUS GLYPH ON A MODE BUTTON — the fill is the active-mode signal,
     // and locked/live is said by the hint and the 🔒/🔓 button
-    const markOf = () => { const c2 = card().querySelector('.v2-notesrow .ambient-seg.on');
+    const markOf = () => { const c2 = card().querySelector('.v2-genshapes .ambient-seg.on');
       return c2 ? getComputedStyle(c2, '::before').content : ''; };
     const capOf = () => { const c3 = card().querySelector('.v2-capture');
       return c3 ? c3.textContent.trim() : ''; };
@@ -1380,22 +1397,29 @@ const ok = (name, cond, detail) => {
     const h = document.getElementById('bloom-v2-layers');
     if (h) h._sig = ''; window._v2.render(E); await wait(250);
     card().classList.remove('collapsed');
-    card().querySelector('.v2-rollrun').click(); await wait(420);
+    // the shapes moved into the ⚙ Shape… popover; it stays open across a
+    // choice, so one press gets in and one gets out at the end
+    card().querySelector('.v2-genbtn').click(); await wait(280);
     card().classList.remove('collapsed');
-    const lit = card().querySelector('.v2-notesrow .ambient-seg.on');
+    card().querySelector('.v2-genpop .v2-rollrun').click(); await wait(420);
+    card().classList.remove('collapsed');
+    const lit = card().querySelector('.v2-genshapes .ambient-seg.on');
     const face = (b) => ((b && b.childNodes[0] && b.childNodes[0].nodeValue) || '').trim();
     const o = { label: face(lit), mark: getComputedStyle(lit, '::before').content };
     const sig = JSON.stringify(L().part);
-    card().querySelector('.v2-rollrun').click(); await wait(400);
+    card().querySelector('.v2-genpop .v2-rollrun').click(); await wait(400);
     card().classList.remove('collapsed');
     o.rollNoop = JSON.stringify(L().part) === sig;
-    card().querySelector('.v2-mkpart[data-mk="sustain"]').click(); await wait(420);
+    card().querySelector('.v2-genpop .v2-mkpart[data-mk="sustain"]').click(); await wait(420);
     card().classList.remove('collapsed');
     const sig2 = JSON.stringify(L().part);
-    card().querySelector('.v2-mkpart[data-mk="sustain"]').click(); await wait(400);
+    card().querySelector('.v2-genpop .v2-mkpart[data-mk="sustain"]').click(); await wait(400);
     card().classList.remove('collapsed');
     o.modeNoop = JSON.stringify(L().part) === sig2;
-    o.stillLit = face(card().querySelector('.v2-notesrow .ambient-seg.on'));
+    o.stillLit = face(card().querySelector('.v2-genshapes .ambient-seg.on'));
+    o.doorNames = (card().querySelector('.v2-genface') || {}).textContent || '';
+    const gc2 = card().querySelector('.v2-genclose'); if (gc2) gc2.click();
+    await wait(200); card().classList.remove('collapsed');
     try { L().part = JSON.parse(svPart); } catch (e) {}
     delete L().part.mat; delete L().part.mem; E.getCfg();
     if (h) h._sig = ''; window._v2.render(E); await wait(200);
@@ -1465,7 +1489,9 @@ const ok = (name, cond, detail) => {
     // one texture, so chords-and-single-notes had no door. The contract is the
     // two labelled clusters, not the count, but the count is worth pinning so
     // a door cannot vanish unnoticed.
-    matKindRun.silent && /Written:2/.test(matKindRun.groups) && /Generated:4/.test(matKindRun.groups) &&
+    // ONE Generated door now — the four shapes moved behind ⚙ Shape…, which
+    // is where their knobs are. The contract is the two labelled clusters.
+    matKindRun.silent && /Written:2/.test(matKindRun.groups) && /Generated:1/.test(matKindRun.groups) &&
     matKindRun.cellBig && matKindRun.hit && matKindRun.toggles && matKindRun.overflow === 0,
     JSON.stringify(matKindRun));
   // COMPOSING TAKES THE SHEET. The docked Grid editor is a full instrument
@@ -1696,6 +1722,79 @@ const ok = (name, cond, detail) => {
     fitRun.saysBound && fitRun.iceBack === 1,
     JSON.stringify(fitRun));
 
+  // ⚙ SHAPE… — the four Generated shapes and the knobs that decide what each
+  // one produces, in ONE panel. Four buttons in the row put every choice on
+  // screen and left nowhere for the parameters, which sat three tabs away in
+  // Rhythm, Pattern and Pitch.
+  const genRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const sv = JSON.stringify(L().part);
+    L().on = true; L().present = true; L().part.kind = 'live'; E.getCfg();
+    const h = document.getElementById('bloom-v2-layers');
+    if (h) h._sig = ''; window._v2.render(E); await wait(260);
+    const card = () => document.querySelector('.v2-layer');
+    card().classList.remove('collapsed');
+    const knobs = () => [...document.querySelectorAll('.v2-genrows .ambient-ctrl')]
+      .filter((x) => x.getBoundingClientRect().height > 0)
+      .map((x) => ((x.querySelector('label') || {}).textContent || '').split('\u00b7')[0].trim());
+    const o = { rowShapes: card().querySelectorAll('.v2-matrow .v2-mkpart, .v2-matrow .v2-rollrun').length };
+    card().querySelector('.v2-genbtn').click(); await wait(320);
+    // RE-QUERY after every press: choosing a shape re-renders the card, so a
+    // captured node is detached and clicking it does nothing (the documented
+    // trap — it read as "Roll did not take" on a working panel).
+    const pop = () => document.querySelector('.v2-layer .v2-genpop');
+    const r = pop().getBoundingClientRect();
+    // ON SCREEN and inside the visible band — it opens from inside the sheet,
+    // so it has the same status-bar/header problem the sheet had
+    o.onScreen = r.width > 0 && r.height > 0 && r.top >= 40 && r.bottom <= innerHeight + 1;
+    o.shapes = [...pop().querySelectorAll('.v2-genshapes .ambient-seg')].length;
+    // SET the shape rather than inheriting whatever the last check left — the
+    // part arrived as an arpeggio and the knob comparison read its knobs (the
+    // documented "a structural check must SET the state it measures").
+    pop().querySelector('.v2-mkpart[data-mk="sustain"]').click(); await wait(420);
+    o.sustainKnobs = knobs();
+    // CHOOSING KEEPS IT OPEN — a panel that shuts on every choice cannot be
+    // used to compare shapes
+    pop().querySelector('.v2-rollrun').click(); await wait(420);
+    o.openAfterChoice = card().classList.contains('v2-genopen');
+    o.kindAfter = L().part.pitch.kind;
+    o.rollKnobs = knobs();
+    // …and the knobs are the ones that shape THIS shape
+    o.knobsFollow = o.rollKnobs.indexOf('Range') >= 0 && o.sustainKnobs.indexOf('Range') < 0 &&
+      o.sustainKnobs.indexOf('Notes at once') >= 0;
+    // A KNOB COMMITS, without rebuilding the card under the finger…
+    const sp = document.querySelector('.v2-genrows [data-f="part.pitch.span"]');
+    if (sp) { sp.value = '9'; sp.dispatchEvent(new Event('input', { bubbles: true })); }
+    await wait(240);
+    o.committed = (L().part.pitch.span | 0) === 9;
+    o.stillOpen = card().classList.contains('v2-genopen');
+    // …and the OTHER copy of that field agrees, or the two drift
+    o.copies = [...document.querySelectorAll('.v2-layer .v2-f[data-f="part.pitch.span"]')]
+      .map((x) => x.value).join(',');
+    o.noDrift = new Set(o.copies.split(',')).size === 1;
+    // the card still says which shape is in force WITHOUT opening the panel
+    card().querySelector('.v2-genclose').click(); await wait(240);
+    o.closed = !card().classList.contains('v2-genopen');
+    o.doorNames = (document.querySelector('.v2-genface') || {}).textContent || '';
+    // NO DUPLICATE-CLASS TRAP: the panel's own actions must not answer to the
+    // card's selectors, or a probe finds the hidden copy first (it did, twice)
+    o.oneNewTake = document.querySelectorAll('.v2-layer .v2-newtake').length;
+    o.onePopPrev = document.querySelectorAll('.v2-layer .v2-pop-preview').length;
+    try {
+      L().part = JSON.parse(sv); E.getCfg();
+      if (h) h._sig = ''; window._v2.render(E); await wait(200);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) {}
+    return o;
+  });
+  ok('⚙ Shape… holds the four shapes AND the knobs that shape them, in one panel',
+    genRun.rowShapes === 0 && genRun.onScreen && genRun.shapes === 4 &&
+    genRun.openAfterChoice && genRun.kindAfter === 'walk' && genRun.knobsFollow &&
+    genRun.committed && genRun.stillOpen && genRun.noDrift && genRun.closed &&
+    /Roll/.test(genRun.doorNames) && genRun.oneNewTake === 1 && genRun.onePopPrev === 0,
+    JSON.stringify(genRun));
+
   // ⚇ MIXED — the fourth Generated door: chords AND single notes from one
   // part. The other three each commit to one texture (Sustained is always a
   // chord, Arpeggio and Roll always one note at a time), so "both" could only
@@ -1847,7 +1946,13 @@ const ok = (name, cond, detail) => {
     // used to be a `title`, which a phone NEVER SHOWS — so on the device these
     // were five bare words and the question had no answer at the point of the
     // decision. Asserted as VISIBLE text, not merely present markup.
-    o.subs = [...document.querySelectorAll('.v2-notesrow .ambient-seg')].map((b2) => {
+    // EVERY DOOR, in the row AND in the ⚙ Shape… panel — the four shapes moved
+    // there, and they still have to say what they make
+    const cardS = document.querySelector('.v2-layer');
+    cardS.classList.remove('collapsed');
+    const gb = cardS.querySelector('.v2-genbtn'); if (gb) gb.click();
+    await wait(280);
+    o.subs = [...document.querySelectorAll('.v2-notesrow .ambient-seg, .v2-genshapes .ambient-seg')].map((b2) => {
       const sub = b2.querySelector('.v2-matsub');
       const r2 = sub && sub.getBoundingClientRect();
       return { face: ((b2.childNodes[0] && b2.childNodes[0].nodeValue) || '').trim(),
@@ -1855,8 +1960,10 @@ const ok = (name, cond, detail) => {
         vis: !!(r2 && r2.width > 0 && r2.height > 0),
         clipped: !!(sub && sub.scrollWidth > sub.clientWidth + 1) };
     });
-    o.everyDoorExplains = o.subs.length >= 5 &&
+    o.everyDoorExplains = o.subs.length >= 7 &&
       o.subs.every((x) => x.sub.length > 3 && x.vis && !x.clipped);
+    const gc3 = document.querySelector('.v2-layer .v2-genclose'); if (gc3) gc3.click();
+    await wait(200);
     const ml = document.querySelector('.v2-matmodel');
     o.modelStated = !!ml && /RHYTHM/.test(ml.textContent) && /PITCH RULE/.test(ml.textContent) &&
       ml.getBoundingClientRect().height > 0;

@@ -3675,6 +3675,28 @@
     if (mat) return { key: mat, txt: M[mat] + ' \u2014 ' + rules };
     return { key: null, txt: 'live \u00b7 ' + rules };
   }
+  // THE GENERATED DOOR AND ITS PANEL, kept current. The door's own face names
+  // the shape in force, so the row still answers "what is this" without being
+  // opened — consolidating four buttons into one must not cost that.
+  function genSync(card, L) {
+    const pv = matProv(L);
+    const M = { sustain: '\u25ac Sustained', arp: '\u27f3 Arpeggio',
+                roll: '\ud83c\udfb2 Roll', mixed: '\u2687 Mixed' };
+    const face = card.querySelector('.v2-genface');
+    if (face) {
+      const txt = M[pv.key] || (L.part.kind === 'recorded' ? 'written \u2014 not generated'
+                                                          : 'choose & tune');
+      if (face.textContent !== txt) face.textContent = txt;
+    }
+    const says = card.querySelector('.v2-gensays');
+    if (says) {
+      const txt = (L.part.kind === 'recorded')
+        ? 'This part is Fixed \u2014 choosing a shape makes it Generated again.'
+        : shapeOf(L) + ' \u2014 ' + (L.part.bars || 1) + ' bar' + ((L.part.bars || 1) === 1 ? '' : 's') +
+          ', re-rolled every cycle.';
+      if (says.textContent !== txt) says.textContent = txt;
+    }
+  }
   function matSync(card, L) {
     const pv2 = matProv(L);
     // ✓ = this material is generating · 🔒 = it MADE these notes and the take
@@ -3694,6 +3716,7 @@
     });
     const nc = card.querySelector('.v2-notecount');
     if (nc && nc.textContent !== pv2.txt) nc.textContent = pv2.txt;
+    try { genSync(card, L); } catch (e) {}
   }
   function vizChrome(card, L, E) {
     try { matSync(card, L); } catch (e) {}
@@ -4226,6 +4249,18 @@
     if (hint) h = h.replace('<div ', '<div data-v2u="' + esc(String(hint)) + '" ');
     return h;
   };
+  // THE SAME ROW, FOR THE GENERATED POPOVER. A second control over one field
+  // needs its own element id — `uid(L, field)` is shared, and two nodes with
+  // one id breaks the label's `for` and every id-based lookup. The COMMIT
+  // mirrors the value into the other copy, so the two can never drift (the
+  // rule Level already follows with the mixer fader).
+  const gsl = (L, field, label, v, min, max, hint, when) => {
+    if (typeof _ambSl !== 'function') return '';
+    const id = uid(L, field) + '-gen';
+    let h = tag(_ambSl(label, id, min, max, v, hint), 'ambient-sl', field, when);
+    if (hint) h = h.replace('<div ', '<div data-v2u="' + esc(String(hint)) + '" ');
+    return h;
+  };
   const st = (L, field, label, v, min, max, hint, when) =>
     (typeof _ambStep === 'function')
       ? tag(_ambStep(label, uid(L, field), min, max, v, hint), 'ambient-step-inp', field, when)
@@ -4410,6 +4445,72 @@
             'aria-label="Find a control" autocomplete="off" autocorrect="off" spellcheck="false">' +
           '<div class="v2-findres"></div>' +
         '</div>' +
+            // ── THE GENERATED POPOVER ────────────────────────────────────
+        // INSIDE THE CARD, never body-attached: every control in here is
+        // an ordinary `.v2-f` row, and the whole delegation resolves its
+        // layer with `closest('.v2-layer')` — the same reason the section
+        // sheet is a child of the card. Body-attached, not one knob would
+        // have committed.
+        // Always in the DOM and revealed by a class, so `applyGate` sweeps
+        // its `data-v2when` rows like any other and a commit does not have
+        // to rebuild anything.
+        '<div class="v2-genwrap">' +
+          '<div class="v2-genscrim"></div>' +
+          '<div class="v2-genpop" role="dialog" aria-label="Generated shape">' +
+            '<div class="v2-genhead"><span class="v2-gentitle">Generated</span>' +
+              '<button type="button" class="v2-genclose" aria-label="Close">\u2715</button></div>' +
+            '<span class="ambient-hint v2-genmodel">A shape is a RHYTHM (when notes happen) \u00d7 a ' +
+              'PITCH RULE (what each onset plays). Pick one, then tune it \u2014 the ' +
+              'drawing behind follows every change.</span>' +
+            '<span class="ambient-seg-row v2-genshapes">' +
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="sustain" title="A held note or chord, one per cycle — the pad shape.">\u25ac Sustained<span class="v2-matsub">one held chord</span></button>' +
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="arp" title="Sweep the chord one tone per onset — an arpeggio.">\u27f3 Arpeggio<span class="v2-matsub">the chord, one note at a time</span></button>' +
+              '<button type="button" class="ambient-seg v2-rollrun" title="A rolled, syncopated line. 🎲 New take rolls another.">\ud83c\udfb2 Roll<span class="v2-matsub">a run of single notes</span></button>' +
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="mixed" title="Some onsets a chord, the rest a single note.">\u2687 Mixed<span class="v2-matsub">chords and single notes</span></button>' +
+            '</span>' +
+            '<span class="ambient-hint v2-gensays"></span>' +
+            // THE KNOBS THAT DECIDE WHAT THE SHAPE PRODUCES, gated to the
+            // shape that reads each one — so the panel shows the handful
+            // that apply rather than a wall that mostly does not.
+            '<div class="v2-genrows">' +
+              gsl(L, 'part.rhythm.pulses', 'How many', (L.part.rhythm || {}).pulses, 1, 32,
+                  'onsets in the cycle', 'kind:live;rhythm:euclid,drawn') +
+              gsl(L, 'part.rhythm.steps', 'Grid', (L.part.rhythm || {}).steps, 2, 32,
+                  'steps they can land on', 'kind:live;rhythm:euclid,drawn') +
+              gsl(L, 'part.rhythm.rotate', 'Push', (L.part.rhythm || {}).rotate, 0, 31,
+                  'shift the pattern along', 'kind:live;rhythm:euclid,drawn') +
+              gsl(L, 'part.rhythm.n', 'How many', (L.part.rhythm || {}).n, 1, 32,
+                  'onsets in the cycle', 'kind:live;rhythm:pulse') +
+              gsl(L, 'part.rhythm.chance', 'Chance', (L.part.rhythm || {}).chance, 0, 100,
+                  'how often a step sounds', 'kind:live;rhythm:chance') +
+              gsl(L, 'part.pitch.voices', 'Notes at once', (L.part.pitch || {}).voices, 1, 9,
+                  'how thick each chord is', 'kind:live;voice:synth;pitch:chord,stack,mixed') +
+              gsl(L, 'part.pitch.mix', 'Chords vs notes',
+                  (Number.isFinite((L.part.pitch || {}).mix) ? L.part.pitch.mix : 50), 0, 100,
+                  'all single notes \u2192 all chords', 'kind:live;voice:synth;pitch:mixed') +
+              gsl(L, 'part.pitch.span', 'Range', (L.part.pitch || {}).span, 1, 12,
+                  'how far the line wanders', 'kind:live;voice:synth;pitch:walk,mixed') +
+              gsl(L, 'part.pitch.lines', 'Lines', ((L.part.pitch || {}).lines | 0) || 1, 1, 6,
+                  'independent melodies at once', 'kind:live;voice:synth;pitch:walk,chance') +
+              gsl(L, 'part.pitch.stutter', 'Repeat', (L.part.pitch || {}).stutter, 0, 100,
+                  'how often it repeats a note', 'kind:live;voice:synth;pitch:walk') +
+              gsl(L, 'part.pitch.octaves', 'Octaves', (L.part.pitch || {}).octaves, 1, 4,
+                  'how far the sweep climbs', 'kind:live;voice:synth;pitch:series') +
+              gsl(L, 'part.shape.lenRatio', 'Note length', (L.part.shape || {}).lenRatio, 5, 100,
+                  '% of the space each note fills', 'kind:live') +
+            '</div>' +
+            '<div class="v2-genacts">' +
+              // DISTINCT CLASSES. Reusing `.v2-newtake` put a SECOND element with
+              // that class on the card, hidden inside the closed panel and
+              // EARLIER in the DOM — so `querySelector` found the hidden one
+              // and every probe aimed at the wrong node. The exact trap the
+              // Material row's own comment warns about. The handler takes both.
+              '<button type="button" class="ambient-seg v2-genroll" title="Roll this shape again — same rules, new notes.">\ud83c\udfb2 New take</button>' +
+              '<button type="button" class="ambient-seg v2-genprev" title="Hear one cycle with these settings.">\u25b6 Preview</button>' +
+              '<button type="button" class="ambient-seg v2-genclose">\u2713 Done</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
         '<div class="v2-grpgrid">' + GRPS.map(g4 =>
           '<button type="button" class="v2-grpbtn" data-v2grp="' + g4 + '">' +
             '<span class="v2-grpbt">' + g4 + '</span>' +
@@ -4571,26 +4672,18 @@
               '<span class="v2-matgrp"><span class="v2-matlab" title="You choose the notes — the part becomes Fixed and plays exactly those.">Written</span>' +
               '<button type="button" class="ambient-seg v2-compose" title="Notes you draw yourself, in the composer grid. The part becomes Fixed — it plays exactly what you drew.">\u270e Composed<span class="v2-matsub">notes you draw</span></button>' +
               '<button type="button" class="ambient-seg v2-adopt" title="A phrase from the bank, dropped in as this part. The part becomes Fixed — it plays exactly those notes.">\u266a Phrase<span class="v2-matsub">a phrase from the bank</span></button>' +
+              // ONE GENERATED DOOR. Four shape buttons in the row put every
+              // choice on screen and left nowhere for the knobs that decide
+              // what each shape actually produces — they were scattered across
+              // Rhythm, Pattern and Pitch, three tabs away from the decision.
+              // The door opens a popover holding the shapes AND their
+              // parameters, so choosing and tuning are one place.
               '</span><span class="v2-matgrp"><span class="v2-matlab" title="You choose a shape — the rules work out the notes as it plays, fresh each cycle.">Generated</span>' +
-              // A LIVE door beside the three recorded ones: "where do the notes
-              // come from" is the question this row answers, and "rolled" is
-              // one of the answers. Press again to re-roll.
-              // EACH DOOR SAYS WHAT IT MAKES, on the button. These carried the
-              // explanation in a `title`, which a phone NEVER SHOWS (the
-              // documented rule), so on the device they were three bare words
-              // and "what will Roll generate?" had no answer at the point of
-              // the decision.
-              '<button type="button" class="ambient-seg v2-mkpart" data-mk="sustain" title="A held note or chord, one per cycle — the pad shape, made by the rules as it plays. Voices makes it mono or poly.">\u25ac Sustained<span class="v2-matsub">one held chord</span></button>' +
-              '<button type="button" class="ambient-seg v2-mkpart" data-mk="arp" title="Sweep the chord one tone per onset — an arpeggio. The rhythm grid sets the speed.">\u27f3 Arpeggio<span class="v2-matsub">the chord, one note at a time</span></button>' +
-              '<button type="button" class="ambient-seg v2-rollrun" title="A rolled, syncopated line, made by the rules. 🎲 above the drawing rolls another one.">\ud83c\udfb2 Roll<span class="v2-matsub">a run of single notes</span></button>' +
-              // THE FOURTH DOOR. The other three each commit to one texture —
-              // Sustained is always a chord, Arpeggio and Roll always one note
-              // at a time — so "both" was inexpressible without hand-building
-              // it on the knobs.
-              '<button type="button" class="ambient-seg v2-mkpart" data-mk="mixed" title="Some onsets play a chord, the rest a single note — the balance is the Mix knob in Pitch.">\u2687 Mixed<span class="v2-matsub">chords and single notes</span></button>' +
+              '<button type="button" class="ambient-seg v2-genbtn" title="Choose a shape and tune what it generates.">\u2699 Shape\u2026<span class="v2-matsub v2-genface">choose &amp; tune</span></button>' +
               '</span>' +
             '</span>' +
-            '<span class="ambient-hint v2-notecount"></span></div>' +
+            '<span class="ambient-hint v2-notecount"></span>' +
+'</div>' +
           // SEED LIKE A v1 LAYER — one button per type. Its own row rather than
           // more buttons on the one above: that row answers "recorded from
           // where", these answer "what shape is the live part", and seven more
@@ -5382,6 +5475,12 @@
   // MOVED in and moved back on close, never re-created — re-rendering would
   // mint duplicate ids and detach the id-bound mod wiring.
   let POP = null;   // { id, grp, tab } — which sheet is open, and on which tab
+  // WHICH LAYER HAS THE GENERATED POPOVER OPEN. Beside `POP` and for the same
+  // reason: `V2.render` rebuilds the card and would drop the class, so the
+  // rebuild re-applies it — a knob inside must not slam the panel shut. In the
+  // UI IIFE, because that is where `render` and the click delegation are; the
+  // file is TWO IIFEs and they share nothing but `window._v2`.
+  let GENPOP = null;
   function popWrapOf(card) { return card.querySelector(':scope > .v2-pop-wrap'); }
   function popClose(card) {
     const wrap = card && popWrapOf(card);
@@ -5987,6 +6086,7 @@
       const id = card.getAttribute('data-v2id') | 0;
       const L = list.find(x => x.id === id); if (!L) return;
       if (openIds.has(String(id))) card.classList.remove('collapsed');
+      if (GENPOP === id) card.classList.add('v2-genopen');
       const og = openGrps.get(String(id));
       if (og) card.querySelectorAll('.ambient-grp').forEach(g => {
         g.classList.toggle('open', og.has(g.getAttribute('data-v2grp')));
@@ -6146,6 +6246,20 @@
           V2.seedCells(ctx.L);
           r.kind = 'euclid';                        // back to the formula the knobs just stated
         }
+        // A FIELD CAN HAVE TWO CONTROLS on this card now (the Generated
+        // popover repeats the knobs that shape a shape), and a commit does not
+        // rebuild — so without this the copy you are not touching goes stale
+        // and the two disagree, which is the documented two-copies-drift bug.
+        try {
+          ctx.card.querySelectorAll('.v2-f[data-f="' + path + '"]').forEach((el2) => {
+            if (el2 === f || el2.value === f.value) return;
+            el2.value = f.value;
+            const rd = el2.parentElement && el2.parentElement.querySelector('.ambient-sl-v');
+            if (rd && typeof _ambSlReadout === 'function') {
+              try { rd.textContent = _ambSlReadout(el2.id, f.value); } catch (e) {}
+            }
+          });
+        } catch (e) {}
         commit(ctx);
         // Level is a SHARED treatment with two controls; mirror it so the mixer
         // fader follows the card (and push it to the live gain, which is what
@@ -6335,7 +6449,11 @@
           try { syncPartModal(E, ctx.card, ctx.L, () => { h._sig = ''; V2.render(E); }); } catch (e) {}
           return;
         }
-        const pv = t.closest && t.closest('.v2-pop-preview');
+        // BOTH previews, one handler — and a DISTINCT class for the panel's,
+        // or `querySelector('.v2-pop-preview')` finds the hidden one first and
+        // every sheet measures its Preview as missing (that trap, twice in one
+        // change).
+        const pv = t.closest && (t.closest('.v2-pop-preview') || t.closest('.v2-genprev'));
         if (pv) {
           const ctx = layerOf(pv); if (!ctx) return;
           // While the transport runs the layer is already sounding and every
@@ -6353,7 +6471,7 @@
           // believes it is in.
           const stopPv = () => {
             if (h._pv) { clearTimeout(h._pv.t); h._pv = null; }
-            document.querySelectorAll('.v2-pop-preview').forEach(b3 => {
+            document.querySelectorAll('.v2-pop-preview, .v2-genprev').forEach(b3 => {
               b3.classList.remove('playing'); b3.textContent = '\u25b6 Preview';
             });
           };
@@ -6817,7 +6935,7 @@
         // 🎲 NEW TAKE — the ONLY thing that re-rolls a live part. Preview used to
         // do it as a side effect, so the take you liked was gone the moment you
         // played it again; that is now a deliberate press.
-        const nt = t.closest('.v2-newtake');
+        const nt = t.closest('.v2-newtake') || t.closest('.v2-genroll');
         if (nt) {
           const ctx = layerOf(nt); if (!ctx) return;
           // SCOPED BY THE SELECTED BARS: with bars tapped, only they are
@@ -6944,6 +7062,24 @@
                 ' pitch, ' + info.bars + ' bar' + (info.bars === 1 ? '' : 's') + '.', { ms: 4000 });
             }
           } catch (e) {}
+          return;
+        }
+        // OPEN / CLOSE the Generated popover. A class on the card, not a
+        // created node: the rows inside are ordinary gated `.ambient-ctrl`s
+        // that `applyGate` already sweeps, and keeping them in the DOM is what
+        // lets a commit leave the panel alone.
+        const go = t.closest('.v2-genbtn');
+        if (go) {
+          const ctx = layerOf(go); if (!ctx) return;
+          GENPOP = ctx.L.id | 0;
+          ctx.card.classList.add('v2-genopen');
+          try { genSync(ctx.card, ctx.L); } catch (e) {}
+          return;
+        }
+        if (t.closest('.v2-genclose') || t.closest('.v2-genscrim')) {
+          const ctx = layerOf(t); if (!ctx) return;
+          GENPOP = null;
+          ctx.card.classList.remove('v2-genopen');
           return;
         }
         const mk = t.closest('.v2-mkpart');

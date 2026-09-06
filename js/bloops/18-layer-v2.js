@@ -2768,7 +2768,15 @@
       // silently drop everything, so it is parked too. The hang gate is stood
       // down for the burst-flag reason: preview notes are an audition, not
       // arrangement content.
-      if (!Number.isFinite(E._barGridAnchor)) {
+      // PIN THE CHANGES TO THE PRESS while the transport is stopped. It used
+      // to pin only when there was no bar grid at all, so after any play the
+      // STALE anchor stood and each press resolved a different point in the
+      // progression — for a part whose content IS the changes (Groundwork, or
+      // any chord rule) that redraws the whole picture every press, reported
+      // as "Preview keeps making a new part". Pinned, a preview always plays
+      // the changes from the top, which is repeatable and is what the drawing
+      // then shows. Restored in the `finally` like every other clock here.
+      if (!E.timer || !Number.isFinite(E._barGridAnchor)) {
         E._progAnchor = t0; E._playStartAt = t0; E._barGridAnchor = t0;
       }
       window._ambEmitCutoff = null;
@@ -3473,10 +3481,27 @@
         cs = pv.at; fromPv = (pv.take === V2.pinSig(V2.pinOf(L)));
       }
     } catch (e) {}
+    // A PART WHOSE CONTENT IS THE CHANGES IS DRAWN FROM THE FIRST CHANGE.
+    // Every preview anchors at the press, so for Groundwork the picture landed
+    // on a different point of the progression each time and the note events
+    // were redrawn — reported as "Preview keeps making a new part". Its
+    // content is not a roll to be remembered, it is the changes, so the honest
+    // anchor is where they START: the chord clock's own origin. Stable by
+    // construction, and it is also what the part actually plays from the top.
+    if (L.part.kind === 'live' && (L.part.rhythm || {}).kind === 'ground') {
+      cs = Number.isFinite(E._progAnchor) ? E._progAnchor : 0;
+      fromPv = false;
+    }
     // THE TAKE decides WHICH roll; the remembered anchor decides which CHORD it
     // was rolled over. Both, because under a progression the pitches depend on
     // the time as well as the seed — pinning only the take would draw the right
     // rhythm over the wrong harmony.
+    // THE ANCHOR THE PICTURE WAS DRAWN AT, recorded on the canvas. A drawing
+    // is only honest about a part built on the changes if it starts where the
+    // changes do, and the note COUNT cannot show that — rotating a
+    // progression keeps the total identical, so a count-based check cannot
+    // tell a stable drawing from a wandering one (measured).
+    cv._cs = cs;
     try {
       notes = V2.withEdit(() => V2.withTake(V2.pinOf(L), () =>
         V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc }))) || [];
@@ -3838,8 +3863,25 @@
     const chords = (prog && prog.on && Array.isArray(prog.chords)) ? prog.chords : [];
     const base = clamp((L.part.pitch.voices | 0) || 3, 1, 9);
     const per = (L.part.ground && L.part.ground.per) || {};
-    const sig = chords.length + '|' + base + '|' + JSON.stringify(per);
-    if (host._sig === sig) return;
+    // REBUILD ONLY WHEN THE SET OF CHANGES CHANGES. The values must NOT be in
+    // the signature: a commit calls `applyGate` → `matSync` → here, so keying
+    // on the values rewrote the grid on every press and destroyed the ± button
+    // under the finger — two taps of + moved the number by ONE (measured).
+    // That is the documented re-render-under-the-finger trap, in the panel's
+    // own sync. Values are written in place below.
+    const sig = chords.length + '|' + base;
+    if (host._sig === sig) {
+      chords.forEach((ch, i) => {
+        const cell = host.children[i]; if (!cell) return;
+        const inp = cell.querySelector('.ambient-step-inp');
+        const own = Number.isFinite(per[String(i)]);
+        const v = own ? (per[String(i)] | 0) : base;
+        if (inp && String(inp.value) !== String(v)) inp.value = v;
+        cell.classList.toggle('own', own);
+        cell.classList.toggle('silent', v === 0);
+      });
+      return;
+    }
     host._sig = sig;
     if (!chords.length) {
       host.innerHTML = '<span class="ambient-hint">no changes here \u2014 every bar plays the ' +
@@ -3851,13 +3893,9 @@
       const own = Number.isFinite(per[String(i)]);
       let nm = '';
       try { nm = (typeof _ambChordShort === 'function') ? _ambChordShort(ch) : ''; } catch (e) {}
-      return '<button type="button" class="v2-gwcell' + (own ? ' own' : '') +
-        (v === 0 ? ' silent' : '') + '" data-ci="' + i + '"' +
-        ' title="' + esc(nm || ('change ' + (i + 1))) + ' \u2014 ' +
-        (v === 0 ? 'sits this change out' : v + ' tone' + (v === 1 ? '' : 's')) +
-        (own ? '' : ' (follows the number above)') + '. Tap to change.">' +
+      return '<span class="v2-gwcell' + (own ? ' own' : '') + (v === 0 ? ' silent' : '') + '">' +
         '<span class="v2-gwcn">' + esc(nm || String(i + 1)) + '</span>' +
-        '<span class="v2-gwcv">' + (v === 0 ? '\u2013' : v) + '</span></button>';
+        mini(L, 'part.ground.per.' + i, nm || String(i + 1), v, 0, 9, 1) + '</span>';
     }).join('');
   }
   function matSync(card, L) {
@@ -4624,12 +4662,9 @@
           '<div class="v2-genscrim v2-gwscrim"></div>' +
           '<div class="v2-genpop v2-gwpop" role="dialog" aria-label="Groundwork">' +
             '<div class="v2-genhead"><span class="v2-gentitle">\u26f0 Groundwork</span>' +
-              '<button type="button" class="v2-gwclose" aria-label="Close">\u2715</button></div>' +
+              '<button type="button" class="v2-gwcancel v2-gwx" aria-label="Cancel">\u2715</button></div>' +
             '<span class="ambient-hint v2-genmodel">Plays the changes: notes on the 1 of the cycle and on ' +
               'every change, holding until the next one. With no progression the bar line is the change.</span>' +
-            '<span class="ambient-seg-row v2-genshapes">' +
-              '<button type="button" class="ambient-seg v2-mkground">\u26f0 Use Groundwork<span class="v2-matsub">notes on every change</span></button>' +
-            '</span>' +
             '<span class="ambient-hint v2-gwsays"></span>' +
             '<div class="v2-genrows">' +
               gsl(L, 'part.pitch.voices', 'How many notes', (L.part.pitch || {}).voices, 1, 9,
@@ -4645,7 +4680,10 @@
             '<div class="v2-genacts">' +
               '<button type="button" class="ambient-seg v2-genroll">\ud83c\udfb2 New take</button>' +
               '<button type="button" class="ambient-seg v2-genprev">\u25b6 Preview</button>' +
-              '<button type="button" class="ambient-seg v2-gwclose">\u2713 Done</button>' +
+            '</div>' +
+            '<div class="v2-genacts v2-gwfoot">' +
+              '<button type="button" class="ambient-seg v2-gwcancel">\u2715 Cancel</button>' +
+              '<button type="button" class="ambient-seg v2-gwdone">\u2713 Done</button>' +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -5683,6 +5721,11 @@
   // file is TWO IIFEs and they share nothing but `window._v2`.
   let GENPOP = null;
   let GWPOP = null;   // …and the Groundwork one, same contract
+  // WHAT THE PART LOOKED LIKE WHEN THE PANEL OPENED. Groundwork edits a DRAFT:
+  // opening adopts the shape so you can hear it, ✕ Cancel puts back exactly
+  // what was there, ✓ Done keeps it. That is what lets the door itself be the
+  // choice instead of needing a "Use Groundwork" button inside it.
+  let GW_DRAFT = null;
   function popWrapOf(card) { return card.querySelector(':scope > .v2-pop-wrap'); }
   function popClose(card) {
     const wrap = card && popWrapOf(card);
@@ -7282,18 +7325,47 @@
         const gw = t.closest('.v2-gwbtn');
         if (gw) {
           const ctx = layerOf(gw); if (!ctx) return;
+          // OPENING IS CHOOSING. The panel used to need a second press on a
+          // "Use Groundwork" button to make itself mean anything, which is a
+          // control that only restates the door you just came through. The
+          // snapshot is what makes that safe: ✕ Cancel puts back exactly what
+          // was here, so opening to look costs nothing.
           GWPOP = ctx.L.id | 0;
+          GW_DRAFT = { id: ctx.L.id | 0, part: JSON.stringify(ctx.L.part), harmony: ctx.L.harmony };
           ctx.card.classList.add('v2-gwopen');
-          try { genSync(ctx.card, ctx.L); } catch (e) {}
+          if (matProv(ctx.L).key !== 'ground' || ctx.L.part.kind === 'recorded') {
+            try { V2.makeGround(E, ctx.L); } catch (e) {}
+            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          }
+          h._sig = ''; V2.render(E);
+          setTimeout(() => {
+            try {
+              const c2 = document.querySelector('.v2-layer[data-v2id="' + (ctx.L.id | 0) + '"]');
+              if (c2) drawPartViz(c2, ctx.L, E);
+            } catch (e) {}
+          }, 0);
           return;
         }
         // CLOSE — the Groundwork one first, because its close button carries
         // BOTH classes (it is the same styling) and a bare `.v2-genclose` test
         // would shut the wrong panel.
-        if (t.closest('.v2-gwclose') || t.closest('.v2-gwscrim')) {
+        // CANCEL puts the part back exactly as it was; DONE keeps it. The
+        // scrim cancels too — a dialog you dismiss without deciding should not
+        // silently commit.
+        const gwx = t.closest('.v2-gwcancel') || t.closest('.v2-gwscrim');
+        if (gwx || t.closest('.v2-gwdone')) {
           const ctx = layerOf(t); if (!ctx) return;
-          GWPOP = null;
+          if (gwx && GW_DRAFT && GW_DRAFT.id === (ctx.L.id | 0)) {
+            try {
+              ctx.L.part = JSON.parse(GW_DRAFT.part);
+              if (GW_DRAFT.harmony) ctx.L.harmony = GW_DRAFT.harmony; else delete ctx.L.harmony;
+              E.getCfg();
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+            } catch (e) {}
+          }
+          GW_DRAFT = null; GWPOP = null;
           ctx.card.classList.remove('v2-gwopen');
+          h._sig = ''; V2.render(E);
           return;
         }
         if (t.closest('.v2-genclose') || t.closest('.v2-genscrim')) {
@@ -7304,52 +7376,7 @@
         }
         // USE GROUNDWORK — the same adopt-don't-rebuild rule as every other
         // shape door: pressing the one already in force keeps the content.
-        const mg = t.closest('.v2-mkground');
-        if (mg) {
-          const ctx = layerOf(mg); if (!ctx) return;
-          if (ctx.L.part.kind !== 'recorded' && matProv(ctx.L).key === 'ground') {
-            if (ctx.L.part.mat !== 'ground') {
-              ctx.L.part.mat = 'ground';
-              try { E.getCfg(); } catch (e) {}
-              try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-              h._sig = ''; V2.render(E);
-            }
-            return;
-          }
-          if (!V2.makeGround(E, ctx.L)) return;
-          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-          h._sig = ''; V2.render(E);
-          setTimeout(() => {
-            try {
-              const c2 = document.querySelector('.v2-layer[data-v2id="' + (ctx.L.id | 0) + '"]');
-              if (c2) drawPartViz(c2, ctx.L, E);
-            } catch (e) {}
-          }, 0);
-          return;
-        }
-        // A PER-CHANGE COUNT. Its own handler because the value lives in a MAP
-        // keyed by chord, which no `data-f` path can address.
-        const gp = t.closest('.v2-gwcell');
-        if (gp) {
-          const ctx = layerOf(gp); if (!ctx) return;
-          const idx = gp.getAttribute('data-ci');
-          const p2 = ctx.L.part;
-          const base = clamp((p2.pitch.voices | 0) || 3, 1, 9);
-          const cur = (p2.ground && p2.ground.per && Number.isFinite(p2.ground.per[idx]))
-            ? (p2.ground.per[idx] | 0) : base;
-          // 0 is a REAL answer — that change sits out — so the ladder runs
-          // 0..9 and wraps, and a value equal to the layer's own number is
-          // pruned by normalize rather than stored as a duplicate.
-          const nx = (cur + 1) % 10;
-          p2.ground = p2.ground || {};
-          p2.ground.per = p2.ground.per || {};
-          p2.ground.per[idx] = nx;
-          try { E.getCfg(); } catch (e) {}
-          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-          applyGate(ctx.card, ctx.L);
-          try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
-          return;
-        }
+
         const mk = t.closest('.v2-mkpart');
         if (mk) {
           const ctx = layerOf(mk); if (!ctx) return;

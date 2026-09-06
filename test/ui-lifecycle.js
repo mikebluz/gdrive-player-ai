@@ -1749,10 +1749,14 @@ const ok = (name, cond, detail) => {
     const card = () => document.querySelector('.v2-layer');
     card().classList.remove('collapsed');
     const o = { door: !!card().querySelector('.v2-gwbtn') };
-    card().querySelector('.v2-gwbtn').click(); await wait(320);
+    // OPENING IS CHOOSING — there is no "Use Groundwork" button to press, and
+    // ✕ Cancel is what makes that safe
+    const wasRhythm = L().part.rhythm.kind;
+    card().querySelector('.v2-gwbtn').click(); await wait(450);
     const r = card().querySelector('.v2-gwpop').getBoundingClientRect();
     o.onScreen = r.width > 0 && r.height > 0 && r.top >= 40 && r.bottom <= innerHeight + 1;
-    card().querySelector('.v2-mkground').click(); await wait(450);
+    o.noUseButton = document.querySelectorAll('.v2-layer .v2-mkground').length === 0;
+    o.adoptedOnOpen = L().part.rhythm.kind === 'ground' && wasRhythm !== 'ground';
     o.rhythm = L().part.rhythm.kind; o.mat = L().part.mat;
     o.holds = (L().part.shape.lenRatio | 0) >= 100;
     // ONE ONSET PER CHANGE, each playing THAT chord — the whole claim
@@ -1778,11 +1782,70 @@ const ok = (name, cond, detail) => {
     // PER CHANGE — one cell per chord, and a tap changes only that change
     const cells = () => [...document.querySelectorAll('.v2-layer .v2-gwcell')];
     o.cells = cells().length;
-    cells()[1].click(); await wait(300);
+    // A REAL ± STEPPER. It was a tap-to-cycle button, which can only go UP —
+    // nine taps to go from 4 to 3, reported as a bug and it was one. The value
+    // lives in a MAP, and `setPath` creates intermediates, so a map key is an
+    // ordinary field path driven by the shared ± delegation.
+    o.hasSteppers = cells()[1].querySelectorAll('.ambient-step-btn').length === 2;
+    // CAPTURE THE BUTTON ONCE and press it twice — which is what a finger
+    // does. Re-querying between presses hides the real bug: the panel's own
+    // sync rewrote the grid on every commit, so the second press landed on a
+    // detached node and two taps moved the number by one. A probe that
+    // re-queries passes either way (the poison proved it).
+    const up = cells()[1].querySelector('.ambient-step-up');
+    up.click(); await wait(150); up.click(); await wait(250);
+    o.afterUp = JSON.stringify((L().part.ground || {}).per || null);
+    o.buttonSurvives = document.contains(up);
+    const dn = cells()[1].querySelector('.ambient-step-dn');
+    dn.click(); await wait(250);
     o.stored = JSON.stringify((L().part.ground || {}).per || null);
+    // …and it can come DOWN, which is the whole complaint
+    o.goesDown = o.afterUp === '{"1":5}' && o.stored === '{"1":4}';
     const g2 = grab();
     o.onlyThatChange = g2['2.00'].length === 4 && g2['0.00'].length === 3 && g2['4.00'].length === 3;
     o.cellMarked = cells()[1].classList.contains('own') && !cells()[0].classList.contains('own');
+    // THE DRAWING MUST NOT MOVE ON A PREVIEW. Preview anchored at `now`, so a
+    // part whose content IS the changes landed on a different point of the
+    // progression every press — reported as "it keeps making a new part".
+    // MEASURE WHAT THE DRAWING DRAWS — `notesFor` at the PREVIEW'S OWN anchor,
+    // which is what `drawPartViz` uses. A fixed `cycleStart` never moves, so a
+    // check written that way passes with or without the pin (the poison proved
+    // it). And a REAL PLAY leaves the clocks set, which is the state the bug
+    // needs: with them null the old code pinned anyway.
+    E._barGridAnchor = 12.5; E._progAnchor = 12.5; E._playStartAt = 12.5;
+    // READ THE DRAWING ITSELF — the label under it names the note count, which
+    // is exactly what the user watches change. Computing notes at a fixed
+    // anchor never moves and passes either way (that poison), and reading them
+    // at the PREVIEW's anchor is not what the drawing does for a ground part.
+    // WHERE THE PICTURE WAS DRAWN FROM. The note COUNT cannot answer this —
+    // rotating a progression leaves the total identical, so a count-based
+    // check passed with the fix removed. The canvas records its own anchor.
+    const drawn = () => {
+      const cv = document.querySelector('.v2-layer .v2-vizcv');
+      return (cv && Number.isFinite(cv._cs)) ? cv._cs.toFixed(3) : '?';
+    };
+    // ONE preview to set the remembered anchor, then MOVE THE CLOCK between
+    // reads. Two presses 140 ms apart land on the same chord and cannot tell
+    // the fix from the bug (that poison passed); a user's presses are seconds
+    // apart, and moving the chord origin is the same thing without the wait.
+    try { window._v2.preview(E, L()); } catch (e) {}
+    await wait(160);
+    try { window._v2.previewKill(E, L()); } catch (e) {}
+    const readAt = async (anchor) => {
+      E._progAnchor = anchor; E._barGridAnchor = anchor; E._playStartAt = anchor;
+      const hh = document.getElementById('bloom-v2-layers');
+      if (hh) hh._sig = '';
+      window._v2.render(E); await wait(220);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+      return drawn();
+    };
+    // …and it must be the CHANGES' own origin, not the press. Moving the chord
+    // origin must move the drawing WITH it (so it still starts on change 1),
+    // which is exactly what a preview-anchored drawing does not do.
+    const s1 = await readAt(12.5), s2 = await readAt(13.1), s3 = await readAt(15.7);
+    o.shots = [s1, s2, s3].join(' | ');
+    o.stableAcrossPreviews = s1 === '12.500' && s2 === '13.100' && s3 === '15.700';
+    E._barGridAnchor = null; E._progAnchor = null; E._playStartAt = null;
     // SLIP spreads the notes of an onset; 0 leaves them together
     const together = (by) => Object.keys(by).length;
     o.tightOnsets = together(grab());
@@ -1791,9 +1854,21 @@ const ok = (name, cond, detail) => {
     o.slipSpreads = o.slipOnsets > o.tightOnsets;
     L().part.shape.slip = 0; E.getCfg();
     o.slipPruned = (L().part.shape.slip === undefined);
-    card().querySelector('.v2-gwclose').click(); await wait(240);
+    // ✓ DONE KEEPS IT…
+    card().querySelector('.v2-gwdone').click(); await wait(300);
     o.closed = !card().classList.contains('v2-gwopen');
+    o.doneKeeps = L().part.rhythm.kind === 'ground';
     o.face = (document.querySelector('.v2-gwface') || {}).textContent || '';
+    // …and ✕ CANCEL puts back exactly what was there
+    const beforeOpen = JSON.stringify(L().part);
+    card().querySelector('.v2-gwbtn').click(); await wait(400);
+    const up2 = document.querySelector('.v2-layer .v2-gwcell .ambient-step-up');
+    if (up2) up2.click();
+    await wait(250);
+    o.draftMoved = JSON.stringify(L().part) !== beforeOpen;
+    card().querySelector('.v2-gwcancel').click(); await wait(350);
+    o.cancelRestores = JSON.stringify(L().part) === beforeOpen &&
+      !card().classList.contains('v2-gwopen');
     try {
       const c9 = E.getCfg();
       if (svProg === 'null') delete c9.prog; else c9.prog = JSON.parse(svProg);
@@ -1811,6 +1886,9 @@ const ok = (name, cond, detail) => {
     gwRun.holds && gwRun.onsets === 4 && gwRun.onTheChanges && gwRun.inChord &&
     gwRun.threeEach && gwRun.cells === 4 && gwRun.stored === '{"1":4}' &&
     gwRun.onlyThatChange && gwRun.cellMarked && gwRun.slipSpreads && gwRun.slipPruned &&
+    gwRun.noUseButton && gwRun.adoptedOnOpen && gwRun.hasSteppers && gwRun.goesDown &&
+    gwRun.stableAcrossPreviews && gwRun.buttonSurvives && gwRun.doneKeeps &&
+    gwRun.draftMoved && gwRun.cancelRestores &&
     gwRun.closed && /in use/.test(gwRun.face),
     JSON.stringify(gwRun));
 

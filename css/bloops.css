@@ -11385,15 +11385,18 @@
       font: 600 0.62rem 'Segoe UI', sans-serif; letter-spacing: 0.06em;
       text-transform: uppercase; color: #7a7a9c; padding-left: 2px;
     }
-    .v2-layer .v2-pop-pane .v2-mini .ambient-stepper { justify-content: flex-start; gap: 0; }
+    .v2-layer .v2-pop-pane .v2-mini .ambient-stepper,
+    .v2-layer .v2-genpop .v2-mini .ambient-stepper { justify-content: flex-start; gap: 0; display: flex; flex-wrap: nowrap; }
     /* 32 + 40 + 32 = 104, so THREE cells fit a 390px pane row (measured: at
        112 only two did, and the row was 160px). The ± are nudges flanking a
        tap-to-type input, and they keep the full 34px height. */
-    .v2-layer .v2-pop-pane .v2-mini .ambient-step-btn {
-      width: 32px; height: 34px; font-size: 1.05rem; min-width: 0;
+    .v2-layer .v2-pop-pane .v2-mini .ambient-step-btn,
+    .v2-layer .v2-genpop .v2-mini .ambient-step-btn {
+      width: 32px; height: 34px; font-size: 1.05rem; min-width: 0; flex: 0 0 auto;
     }
-    .v2-layer .v2-pop-pane .v2-mini .ambient-step-inp {
-      height: 34px; font-size: 16px; min-width: 40px; width: 40px; padding: 0 2px;
+    .v2-layer .v2-pop-pane .v2-mini .ambient-step-inp,
+    .v2-layer .v2-genpop .v2-mini .ambient-step-inp {
+      height: 34px; font-size: 16px; min-width: 40px; width: 40px; padding: 0 2px; flex: 0 0 auto;
     }
     /* dimmed on a Fixed part, like any generation control */
     .v2-mini.v2-rowna { pointer-events: none; }
@@ -14986,18 +14989,21 @@
 }
 /* ONE CELL PER CHANGE — the chord, and how many of its tones this part plays.
    A grid so eight changes read as eight, not as a sentence. */
-.v2-gwper > .ambient-hint { grid-column: 1 / -1; margin-top: 4px; white-space: normal; }
+.v2-layer .ambient-ctrl.v2-gwper { display: block; }
+.v2-gwper > label { display: block; margin-bottom: 4px; }
+.v2-gwper > .ambient-hint { display: block; margin-top: 6px; white-space: normal; }
 .v2-gwfoot { border-top: none; padding-top: 0; }
-.v2-gwcancel { color: #fc8181; }
+.v2-genacts .v2-gwcancel { color: #fc8181; }
+.v2-gwx { color: #a0aec0; }
 .v2-gwcancel:hover { border-color: #fc8181; }
 .v2-gwpergrid {
-  grid-column: 2 / -1; display: grid; gap: 4px;
-  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  display: grid; gap: 5px;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
 }
 .v2-gwcell {
-  display: flex; flex-direction: column; align-items: center; gap: 2px;
-  padding: 4px; border: 1px solid #2d2d3f; border-radius: 8px; background: #0f0f1e;
-  color: #a0aec0; font-family: 'Segoe UI', sans-serif;
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 3px 4px 3px 8px; border: 1px solid #2d2d3f; border-radius: 8px;
+  background: #0f0f1e; color: #a0aec0; font-family: 'Segoe UI', sans-serif;
 }
 /* the cell holds a real ± stepper, so it must not restyle it into a button */
 .v2-gwcell .v2-mini { padding: 0; }
@@ -15006,9 +15012,12 @@
    like one you inherited (the absent-is-inherit rule the mask cells follow). */
 .v2-gwcell.own { border-color: #9f7aea; background: rgba(159, 122, 234, 0.16); color: #d6bcfa; }
 .v2-gwcell.silent .v2-gwcv { color: #fc8181; }
-.v2-gwcn { font-size: 0.62rem; color: #7a7a9c; white-space: normal; overflow-wrap: anywhere; line-height: 1.1; }
-.v2-gwcell.own .v2-gwcn { color: #b9a6e0; }
-.v2-gwcv { font-size: 0.9rem; font-weight: 600; }
+.v2-gwcn {
+  font: 600 0.78rem 'Segoe UI', sans-serif; color: #e2e8f0;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.v2-gwcell.own .v2-gwcn { color: #d6bcfa; }
+.v2-gwcell.silent .v2-gwcn { color: #7a7a9c; }
 
 .v2-layer.v2-genopen .v2-genwrap {
   display: flex; align-items: center; justify-content: center;

@@ -1787,6 +1787,37 @@ const ok = (name, cond, detail) => {
     // lives in a MAP, and `setPath` creates intermediates, so a map key is an
     // ordinary field path driven by the shared ± delegation.
     o.hasSteppers = cells()[1].querySelectorAll('.ambient-step-btn').length === 2;
+    // SHAPE OF THE PANEL — reported as "this UI is junk". The compact
+    // micro-stepper rules are scoped to `.v2-pop-pane` and this panel is not
+    // inside one, so every cell fell back to the sheet's 60px touch stepper
+    // and STACKED: 114px cells, a 728px panel filling the screen. Pinned on
+    // the two things that produce that — a cell is ONE LINE (name and ± side
+    // by side) and the panel needs no scrolling of its own.
+    const pop = card().querySelector('.v2-gwpop');
+    const pr2 = pop.getBoundingClientRect();
+    o.popH = Math.round(pr2.height);
+    o.popFits = pr2.top >= 0 && pr2.bottom <= innerHeight + 1 &&
+                pop.scrollHeight <= pop.clientHeight + 2;
+    o.cellOneLine = cells().every((c) => {
+      const cr = c.getBoundingClientRect(); if (cr.height > 60) return false;
+      const n = c.querySelector('.v2-gwcn'), b = c.querySelector('.ambient-step-btn');
+      if (!n || !b) return false;
+      const nr = n.getBoundingClientRect(), br = b.getBoundingClientRect();
+      // side by side: they overlap vertically and the button is to the right
+      return br.left >= nr.right - 1 && br.top < nr.bottom && nr.top < br.bottom;
+    });
+    o.cellH = Math.round(cells()[0].getBoundingClientRect().height);
+    // the grid takes the row, with its label ABOVE it — it was stranded in the
+    // 60px label gutter beside the cells
+    const gl = card().querySelector('.v2-gwper > label');
+    const gg = card().querySelector('.v2-gwpergrid');
+    o.gridFullWidth = !!(gl && gg) &&
+      gl.getBoundingClientRect().bottom <= gg.getBoundingClientRect().top + 1 &&
+      gg.getBoundingClientRect().width > pr2.width * 0.8;
+    // ONE line of prose, not two paragraphs saying the same thing
+    o.onePara = pop.querySelectorAll('.v2-genmodel').length === 0 &&
+                pop.querySelectorAll('.v2-gwsays').length === 1;
+    o.saysNames = /Plays the changes/.test((pop.querySelector('.v2-gwsays') || {}).textContent || '');
     // CAPTURE THE BUTTON ONCE and press it twice — which is what a finger
     // does. Re-querying between presses hides the real bug: the panel's own
     // sync rewrote the grid on every commit, so the second press landed on a
@@ -1891,6 +1922,13 @@ const ok = (name, cond, detail) => {
     gwRun.draftMoved && gwRun.cancelRestores &&
     gwRun.closed && /in use/.test(gwRun.face),
     JSON.stringify(gwRun));
+
+  ok('⛰ the Groundwork panel is legible — one-line cells, no inner scroll, one line of prose',
+    gwRun.cellOneLine && gwRun.popFits && gwRun.gridFullWidth && gwRun.onePara &&
+    gwRun.saysNames && gwRun.cellH <= 60,
+    JSON.stringify({ popH: gwRun.popH, cellH: gwRun.cellH, popFits: gwRun.popFits,
+      cellOneLine: gwRun.cellOneLine, gridFullWidth: gwRun.gridFullWidth,
+      onePara: gwRun.onePara, saysNames: gwRun.saysNames }));
 
   // ⚙ SHAPE… — the four Generated shapes and the knobs that decide what each
   // one produces, in ONE panel. Four buttons in the row put every choice on

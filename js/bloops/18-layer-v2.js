@@ -3838,9 +3838,13 @@
     }
     const gws = card.querySelector('.v2-gwsays');
     if (gws) {
+      const sh = L.part.shape || {};
+      const hold = (sh.lenRatio | 0) || 100;
+      const slip = (sh.slip | 0);
       const txt3 = (pv.key === 'ground')
-        ? shapeOf(L) + ' \u2014 holding ' + ((L.part.shape || {}).lenRatio | 0) + '% of each change.'
-        : 'Not in use \u2014 press \u26f0 Use Groundwork to make this part play the changes.';
+        ? 'Plays the changes \u2014 ' + shapeOf(L) + ', held ' + hold + '% of the way to the next' +
+          (slip ? ', strummed' : '') + '. With no progression the bar line is the change.'
+        : 'Plays the changes \u2014 a note on the 1 of every change, held until the next one.';
       if (gws.textContent !== txt3) gws.textContent = txt3;
     }
     try { gwPerSync(card, L); } catch (e) {}
@@ -4663,8 +4667,6 @@
           '<div class="v2-genpop v2-gwpop" role="dialog" aria-label="Groundwork">' +
             '<div class="v2-genhead"><span class="v2-gentitle">\u26f0 Groundwork</span>' +
               '<button type="button" class="v2-gwcancel v2-gwx" aria-label="Cancel">\u2715</button></div>' +
-            '<span class="ambient-hint v2-genmodel">Plays the changes: notes on the 1 of the cycle and on ' +
-              'every change, holding until the next one. With no progression the bar line is the change.</span>' +
             '<span class="ambient-hint v2-gwsays"></span>' +
             '<div class="v2-genrows">' +
               gsl(L, 'part.pitch.voices', 'How many notes', (L.part.pitch || {}).voices, 1, 9,
@@ -4675,7 +4677,8 @@
                   '% of the change each note fills', 'kind:live;rhythm:ground') +
               '<div class="ambient-ctrl v2-gwper" data-v2when="kind:live;rhythm:ground"><label>Per change</label>' +
                 '<span class="v2-gwpergrid"></span>' +
-                '<span class="ambient-hint">how many tones each change plays \u2014 tap to change one; \u2013 means it sits out</span></div>' +
+                '<span class="ambient-hint">0 sits a change out \u00b7 purple = set by hand, the rest follow ' +
+                  'How many notes</span></div>' +
             '</div>' +
             '<div class="v2-genacts">' +
               '<button type="button" class="ambient-seg v2-genroll">\ud83c\udfb2 New take</button>' +

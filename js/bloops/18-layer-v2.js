@@ -5252,10 +5252,11 @@
         // trap is a select REPLACED while open — popSync only touches the tabs
         // and the pane).
         '<div class="v2-pop-head">' +
-          '<select class="v2-pop-title v2-pop-goto" aria-label="Go to a section">' +
-            GRPS.map(g2 => '<option value="' + esc(g2) + '"' + (g2 === grp ? ' selected' : '') + '>' +
-              esc(g2) + '</option>').join('') +
-          '</select>' +
+          '<div class="v2-pop-title v2-pop-goto" role="tablist" aria-label="Go to a section">' +
+            GRPS.map(g2 => '<button type="button" class="v2-gototab' +
+              (g2 === grp ? ' on' : '') + '" data-goto="' + esc(g2) + '"' +
+              (g2 === grp ? ' aria-current="true"' : '') + '>' + esc(g2) + '</button>').join('') +
+          '</div>' +
           // REGISTER, IN THE HEAD. It is the control you reach for while
           // listening — move the whole part an octave — so it sits where it is
           // always to hand instead of behind a tab. It is the ordinary stepper
@@ -5797,13 +5798,7 @@
           commit(ctx); h._sig = ''; V2.render(E);
           return;
         }
-        const gt = ev.target.closest && ev.target.closest('.v2-pop-goto');
-        if (gt) {
-          const ctx = layerOf(gt); if (!ctx) return;
-          const want = gt.value;
-          if (want && want !== (POP && POP.grp)) popOpen(ctx.card, ctx.L, want, null);
-          return;
-        }
+
         // THE NOTE EDITOR, delegated here rather than bound when it is built —
         // the card is rebuilt by `V2.render` on all sorts of edits, and a
         // per-build listener dies with it (the documented host-wiring rule).
@@ -5922,6 +5917,16 @@
       });
 
       h.addEventListener('click', (ev) => {
+        // SECTION TABS in the sheet head — six groups filling one row, so the
+        // current section and every other one are visible at once. Was a
+        // <select>, which showed only the section you were already in.
+        const gt = ev.target.closest && ev.target.closest('.v2-gototab');
+        if (gt) {
+          const ctx = layerOf(gt); if (!ctx) return;
+          const want = gt.getAttribute('data-goto');
+          if (want && want !== (POP && POP.grp)) popOpen(ctx.card, ctx.L, want, null);
+          return;
+        }
         // A HIT NAVIGATES. `popOpen` is the same call the group buttons and the
         // sheet's own section navigator make, so the finder can never open a
         // surface the rest of the card cannot.

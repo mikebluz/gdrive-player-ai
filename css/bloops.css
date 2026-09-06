@@ -11413,8 +11413,12 @@
        scattered the wrapped ones. */
     @media (max-width: 540px) {
       .v2-pop-head { row-gap: 8px; }
+      /* the tab row and the ✕ still share line one — six chips at ~48px plus
+         a 44px close fits 390px, and giving the tabs their own line would cost
+         a whole row of a sheet whose height is the scarce thing on a phone. */
       .v2-pop-head .v2-pop-title { order: 0; }
-      .v2-pop-head .v2-pop-close { order: 1; margin-left: auto; }
+      .v2-pop-head .v2-pop-close { order: 1; margin-left: 0; flex: 0 0 auto; }
+      .v2-pop-head .v2-gototab { padding: 6px 1px; font-size: 0.62rem; }
       .v2-pop-head .v2-pop-pair, .v2-pop-head .v2-pop-xtra { order: 2; flex: 1 0 100%; }
       .v2-pop-head .v2-grpsum { order: 3; }
       /* every pixel of sheet height goes to the PANE on a phone: taller
@@ -14946,18 +14950,31 @@
    summary takes its own full-width line under them rather than being squeezed
    to nothing between the title and the close. */
 .v2-pop-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 14px 6px; flex: 0 0 auto; }
-.v2-pop-title { font: 600 0.95rem 'Segoe UI', sans-serif; color: #e2e8f0; flex: 0 0 auto; }
-/* THE TITLE IS A SECTION NAVIGATOR. Native appearance on purpose — every other
-   select in this panel keeps its own caret, and a bespoke one here would be the
-   "new element that looks bolted on" the styling rule warns about. A select
-   shows a PICKER on iOS rather than zooming, so it needs no 16px floor. */
-select.v2-pop-title.v2-pop-goto {
-  flex: 0 1 auto; min-width: 0; max-width: 56%;
-  padding: 5px 8px; border: 1px solid #2d2d3f; border-radius: 8px;
-  background: #0a0a14; color: #e2e8f0; cursor: pointer;
-  font: 600 0.95rem 'Segoe UI', sans-serif;
+/* THE TITLE IS A SECTION NAVIGATOR, and it is SIX TABS filling the row rather
+   than a <select>: a select showed only the section you were already in, so
+   every other one cost a press to discover. It shares the row with the ✕,
+   which keeps its own width. */
+.v2-pop-title {
+  font: 600 0.95rem 'Segoe UI', sans-serif; color: #e2e8f0;
+  display: flex; gap: 3px; flex: 1 1 0; min-width: 0;
 }
-select.v2-pop-title.v2-pop-goto:hover { border-color: #9f7aea; color: #d6bcfa; }
+.v2-gototab {
+  /* EQUAL WIDTHS that fill the row — `flex: 1 1 0` (basis ZERO, not auto) or
+     the chips size to their text and "Instrument" takes three times "FX". */
+  flex: 1 1 0; min-width: 0;
+  padding: 6px 2px; min-height: 34px;
+  border: 1px solid #2d2d3f; border-radius: 8px;
+  background: #0a0a14; color: #a0aec0; cursor: pointer;
+  font: 600 0.7rem 'Segoe UI', sans-serif; text-align: center;
+  /* WRAPS, never ellipses: six labels in ~330px is ~53px each, and a button
+     whose text is clipped to "Instr…" names nothing (the documented
+     .ambient-seg-opt lesson). Two short lines beat one cut one. */
+  white-space: normal; overflow-wrap: anywhere; line-height: 1.15;
+  display: flex; align-items: center; justify-content: center;
+  touch-action: manipulation;
+}
+.v2-gototab:hover { border-color: #9f7aea; color: #d6bcfa; }
+.v2-gototab.on { background: #9f7aea; border-color: #9f7aea; color: #12121f; }
 .v2-pop-head .v2-grpsum {
   flex: 1 0 100%; min-width: 0; margin-top: -2px; color: #6b6b8a;
   white-space: normal; overflow-wrap: anywhere; line-height: 1.3;

@@ -193,7 +193,9 @@ const ok = (name, cond, detail) => {
       Math.round(n.getBoundingClientRect().right - pane.getBoundingClientRect().right))) : -1;
     return {
       open: !!w,
-      title: w ? (w.querySelector('.v2-pop-title') || {}).value : null,
+      // the navigator is six TABS now — the section you are in is the lit
+      // one, where it used to be the select's value
+      title: w ? ((w.querySelector('.v2-gototab.on') || {}).textContent || '').trim() : null,
       tabs: w ? w.querySelectorAll('.v2-pop-tab').length : 0,
       onTabs: w ? w.querySelectorAll('.v2-pop-tab.on').length : 0,
       centered: r ? (Math.abs((r.top + r.bottom) / 2 - window.innerHeight / 2) < 4 &&
@@ -5200,8 +5202,23 @@ const ok = (name, cond, detail) => {
   await tap('.v2-grpbtn[data-v2grp="Instrument"]');
   const nav = await page.evaluate(async () => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-    const goto = () => document.querySelector('.v2-pop-goto');
-    const o = { opts: [...goto().options].map((x) => x.value), start: goto().value, hops: [] };
+    const tabOf = (g) => document.querySelector('.v2-gototab[data-goto="' + g + '"]');
+    const o = {
+      opts: [...document.querySelectorAll('.v2-gototab')].map((x) => x.getAttribute('data-goto')),
+      start: ((document.querySelector('.v2-gototab.on') || {}).textContent || '').trim(),
+      hops: [],
+    };
+    // ALL SIX VISIBLE AT ONCE is the point of the change — a select showed only
+    // the section you were already in. Equal widths filling the row, on ONE
+    // line, nothing clipped, and the ✕ still beside them.
+    const tbs = [...document.querySelectorAll('.v2-gototab')];
+    const rects = tbs.map((t) => t.getBoundingClientRect());
+    o.oneRow = new Set(rects.map((r) => Math.round(r.top))).size === 1;
+    o.equal = new Set(rects.map((r) => Math.round(r.width))).size === 1;
+    o.clipped = tbs.filter((t) => t.scrollWidth > t.clientWidth + 1).length;
+    o.tall = Math.min(...rects.map((r) => Math.round(r.height)));
+    const xb = document.querySelector('.v2-pop-close');
+    o.closeBeside = !!xb && Math.abs(xb.getBoundingClientRect().top - rects[0].top) < rects[0].height;
     // ASSERT WHAT ONLY A REAL NAVIGATION PRODUCES. Reading the select's own
     // value back after setting it proves nothing — it is the same element,
     // still holding what was just assigned, and the FIRST version of this
@@ -5213,14 +5230,16 @@ const ok = (name, cond, detail) => {
                    Instrument: 'instrument.voice' };
     let prev = document.querySelector('.v2-pop-wrap');
     for (const g of ['Content', 'Pitch', 'Shape', 'Mix', 'FX', 'Instrument']) {
-      const s2 = goto(); s2.value = g; s2.dispatchEvent(new Event('input', { bubbles: true }));
+      const bt = tabOf(g); if (bt) bt.click();
       await wait(240);
       const w = document.querySelector('.v2-pop-wrap');
       const pop = w && w.querySelector('.v2-pop');
       o.hops.push({ g, ok: !!w && w !== prev &&                       // a NEW sheet, not the old one
         !!pop && pop.getAttribute('aria-label') === g &&              // built by popOpen for THIS group
         !!w.querySelector('.v2-pop-pane [data-f="' + WANT[g] + '"]') && // and holding that group's rows
-        w.querySelectorAll('.v2-pop-tab').length > 0 });
+        w.querySelectorAll('.v2-pop-tab').length > 0 &&
+        // …and the tab you pressed is the one now LIT
+        ((w.querySelector('.v2-gototab.on') || {}).getAttribute('data-goto')) === g });
       prev = w;
     }
     o.oneSheet = document.querySelectorAll('.v2-pop-wrap').length;
@@ -5235,6 +5254,11 @@ const ok = (name, cond, detail) => {
     nav.opts.join(',') === 'Instrument,Content,Pitch,Shape,Mix,FX' &&
     nav.start === 'Instrument' && nav.hops.every((x) => x.ok) && nav.oneSheet === 1,
     JSON.stringify(nav.hops.filter((x) => !x.ok)) + ' opts=' + nav.opts.length);
+  ok('…and all six sections are visible at once, filling one row beside the ✕',
+    nav.oneRow && nav.equal && nav.clipped === 0 && nav.tall >= 30 &&
+    nav.closeBeside && nav.headOverflow === 0,
+    JSON.stringify({ oneRow: nav.oneRow, equal: nav.equal, clipped: nav.clipped,
+      tall: nav.tall, closeBeside: nav.closeBeside, over: nav.headOverflow }));
   // NOT a second body-return check — "closing the sheet returns its rows to the
   // group" already covers that and has teeth (poison-verified). This asserts
   // only that the hops leave the card's groups intact (six since the Rhythm
@@ -5260,7 +5284,7 @@ const ok = (name, cond, detail) => {
   });
   let re = await page.evaluate(() => ({
     open: !!document.querySelector('.v2-pop-wrap'),
-    title: (document.querySelector('.v2-pop-title') || {}).value,
+    title: ((document.querySelector('.v2-gototab.on') || {}).textContent || '').trim(),
     tabs: [...document.querySelectorAll('.v2-pop-tab')].map((t) => t.getAttribute('data-tab')).join(','),
   }));
   // RESTATED. It pinned "a speech layer has no Tone tab", which was true while

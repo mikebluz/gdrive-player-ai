@@ -1606,6 +1606,70 @@ const ok = (name, cond, detail) => {
     card().classList.remove('collapsed');
     return o;
   });
+  // THE DRAWING IS ONE CYCLE, and its ruler counts BARS — so a 1-bar cycle is
+  // one label and four beat lines however many chords the part has. Asked as
+  // "why does the ruler just say 1 when the part is 5 chords": nothing said the
+  // cycle was SHORTER than the part, so the picture read as failing to show the
+  // changes.
+  const overRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const c0 = E.getCfg();
+    const svProg = JSON.stringify(c0.prog || null), svPart = JSON.stringify(L().part);
+    const svFor = L().partFor, svAll = L().partAll ? JSON.stringify(L().partAll) : null;
+    c0.prog = { on: true,
+      chords: [0, 9, 5, 7, 2, 3, 10].map((r) => ({ root: r, intervals: [0, 4, 7] })),
+      parts: [{ name: 'A', len: 5 }, { name: 'B', len: 2 }] };
+    E.getCfg();
+    L().on = true; L().present = true; L().part.kind = 'live';
+    L().partFor = 0; L().partAll = JSON.parse(JSON.stringify(L().part));
+    const say = async () => {
+      const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+      window._v2.render(E); await wait(300);
+      const card = document.querySelector('.v2-layer');
+      card.classList.remove('collapsed');
+      const lab = card.querySelector('.v2-vizlab');
+      return { txt: lab ? lab.textContent.trim() : '', el: lab };
+    };
+    const o = {};
+    L().part.bars = 1; E.getCfg();
+    const a = await say();
+    o.shortSays = /repeats 5× over the 5-bar part/.test(a.txt) && /Sync/.test(a.txt);
+    // …and it must WRAP rather than run out of the sheet (UI rule 2)
+    if (a.el) {
+      const r = a.el.getBoundingClientRect();
+      const pr = a.el.parentElement.getBoundingClientRect();
+      o.wraps = a.el.scrollWidth <= a.el.clientWidth + 1 && r.right <= pr.right + 1;
+      o.lines = Math.round(r.height / parseFloat(getComputedStyle(a.el).lineHeight || 16));
+    }
+    // a cycle that MATCHES says nothing — a readout that always fires is noise
+    L().part.bars = 5; E.getCfg();
+    o.matchSilent = !/repeats/.test((await say()).txt);
+    // fractional counts are honest
+    L().part.bars = 2.5; E.getCfg();
+    o.halfSays = /repeats 2× over the 5-bar part/.test((await say()).txt);
+    // and with no progression there is no part to be shorter than
+    const c2 = E.getCfg(); c2.prog.on = false; E.getCfg();
+    L().part.bars = 1; E.getCfg();
+    o.noProgSilent = !/repeats/.test((await say()).txt);
+    try {
+      const c9 = E.getCfg();
+      if (svProg === 'null') delete c9.prog; else c9.prog = JSON.parse(svProg);
+      L().part = JSON.parse(svPart);
+      if (Number.isFinite(svFor)) L().partFor = svFor; else delete L().partFor;
+      if (svAll) L().partAll = JSON.parse(svAll); else delete L().partAll;
+      E.getCfg();
+      const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+      window._v2.render(E); await wait(220);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) { o.err = e.message; }
+    return o;
+  });
+  ok('the drawing says when its cycle is shorter than the part it plays under',
+    overRun.shortSays && overRun.halfSays && overRun.matchSilent &&
+    overRun.noProgSilent && overRun.wraps,
+    JSON.stringify(overRun));
+
   // A LOCKED TAKE KEEPS FOLLOWING THE CHANGES. A live part resolves every note
   // against the chord sounding at its own onset; freezing it stores absolute
   // pitches, and with 'fixed' it then replays the chords it was CAPTURED over

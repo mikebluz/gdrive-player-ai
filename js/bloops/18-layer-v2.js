@@ -3400,6 +3400,32 @@
     }
     if (lab) {
       const rec2 = L.part && L.part.kind === 'recorded';
+      // THE DRAWING IS ONE CYCLE, and the ruler counts BARS — so a 1-bar cycle
+      // is one label and four beat lines however long the part is. Asked as
+      // "why does the ruler just say 1 when the part is 5 chords": nothing said
+      // that the cycle is SHORTER than the part it plays under, so the picture
+      // looked like it was failing to show the changes. It repeats, and now it
+      // says so — and names ⇄ Sync, which is what re-fits it (a part's bars are
+      // its own; nothing re-lengths them when the changes grow).
+      let overTxt = '';
+      try {
+        // `cfg`, the function's own local — `drawPartViz(card, L, E)` has no
+        // ctx, and a bare reference would throw into the catch and read as a
+        // silent no-op (the mistake this file has now made twice).
+        const cfg2 = cfg;
+        const pi2 = Number.isFinite(L.partFor) ? (L.partFor | 0)
+          : ((typeof _ambCurPartNow === 'function') ? _ambCurPartNow(E, cfg2) : -1);
+        const pb = (pi2 >= 0 && typeof _ambLenPartBars === 'function')
+          ? +_ambLenPartBars(cfg2, pi2) : 0;
+        const cb = +(L.part && L.part.bars) || 0;
+        if (pb > 0 && cb > 0 && pb > cb + 1e-6) {
+          const times = pb / cb;
+          const nice = Math.abs(times - Math.round(times)) < 1e-6 ? String(Math.round(times))
+                                                                 : (Math.round(times * 10) / 10);
+          overTxt = ' · repeats ' + nice + '× over the ' + (Math.round(pb * 100) / 100) +
+                    '-bar part — ⇄ Sync to fit it';
+        }
+      } catch (e) {}
       lab.textContent = (rec2 ? 'recorded' : 'live') + ' · ' +
         played.length + ' note' + (played.length === 1 ? '' : 's') + ' · ' + barTxt +
         ' · ' + (Math.round(cyc * 10) / 10) + 's' +
@@ -3412,7 +3438,7 @@
                 (L.part.takeb ? ' · retaken: bars ' + Object.keys(L.part.takeb).map((b3) => (b3 | 0) + 1).sort((x, y) => x - y).join('+') : '') +
                 (bselOf(L) ? ' · retaking ' + bselLabel(bselOf(L))
                            : ' · tap a bar to retake just it') +
-                (fromPv ? ' · as previewed' : ''));
+                (fromPv ? ' · as previewed' : '')) + overTxt;
     }
     try { vizChrome(card, L, E); } catch (e) {}
   }

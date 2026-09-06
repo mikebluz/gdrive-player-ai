@@ -179,7 +179,7 @@
   // Lazy and total: every v2 layer is coerced on read, so a hand-written or
   // half-migrated layer can never reach the emitter in a shape it can't handle.
   // Unknown enum values fall back rather than throwing — the v1 doctrine.
-  const RHYTHMS = new Set(['pulse', 'euclid', 'chance', 'drawn']);
+  const RHYTHMS = new Set(['pulse', 'euclid', 'chance', 'drawn', 'ground']);
   const PITCHES = new Set(['chord', 'fixed', 'stack', 'walk', 'anchor', 'series', 'chance', 'drawn', 'mixed']);
   const KINDS = new Set(['live', 'recorded']);
 
@@ -436,6 +436,19 @@
       // LINES is absent-by-default and PRUNED at 1, so an untouched project
       // stores nothing and plays exactly as it did.
       if ((t.lines | 0) > 1) t.lines = clamp(t.lines | 0, 2, 6); else delete t.lines;
+      // GROUNDWORK's per-change counts. Absent-by-default and pruned empty, so
+      // a part that has never set one stores nothing; a count equal to the
+      // layer's own `voices` is dropped too, since it says nothing extra.
+      if (p.ground && typeof p.ground === 'object' && p.ground.per && typeof p.ground.per === 'object') {
+        const per = {}, base = clamp((t.voices | 0) || 3, 1, 9);
+        Object.keys(p.ground.per).forEach((k) => {
+          const v = p.ground.per[k] | 0;
+          if (!(+k >= 0) || !Number.isFinite(p.ground.per[k])) return;
+          if (v === base) return;
+          per[String(k | 0)] = clamp(v, 0, 9);
+        });
+        if (Object.keys(per).length) p.ground = { per: per }; else delete p.ground;
+      } else if (p.ground) { delete p.ground; }
       t.degree = clamp((t.degree | 0) || 1, 1, 12);        // which source tone (fixed / stack start)
       t.span = clamp((t.span | 0) || 4, 1, 24);            // walk: how far it may wander, in source tones
       if (t.dir !== 'down' && t.dir !== 'updown') t.dir = 'up';   // series: sweep direction
@@ -499,6 +512,10 @@
       // EARLIEST (v1's rule). 0 = off.
       if (Number.isFinite(s.maxEvents) && s.maxEvents > 0) s.maxEvents = clamp(s.maxEvents | 0, 0, 64);
       else delete s.maxEvents;
+      // SLIP — a stochastic strum, absent-by-default and pruned at 0 so a part
+      // that never set one draws nothing and stores nothing.
+      if (Number.isFinite(s.slip) && s.slip > 0) s.slip = clamp(s.slip | 0, 0, 100);
+      else delete s.slip;
     }
     {
       // RECORDED — literal notes. `t` is a fraction of the cycle [0,1), `midi`
@@ -776,6 +793,49 @@
     return out;
   }
 
+  // WHERE THE GROUND FALLS. One onset at the top of the cycle and one at every
+  // CHANGE inside it — the shape that plays the harmony rather than a figure
+  // over it. Returned as cycle FRACTIONS, like every other rhythm, so nothing
+  // downstream needs to know where they came from. `_ambChordSpanAt` walks the
+  // real clock (cadence, parts, salt lengths and all), so a half-bar chord gets
+  // its own onset exactly where it sounds; with no progression the bar line is
+  // the only boundary, which is the same rule with one chord.
+  function groundOnsets(ctx, cs, cyc, p) {
+    const out = [0];
+    try {
+      const E = ctx.E, cfg = ctx.cfg;
+      const on = cfg && cfg.prog && cfg.prog.on && (cfg.prog.chords || []).length;
+      if (on && typeof _ambChordSpanAt === 'function') {
+        let t = cs, guard = 0;
+        while (guard++ < 64) {
+          const sp = _ambChordSpanAt(E, cfg, t);
+          if (!sp || !(sp.end > t)) break;
+          if (sp.end >= cs + cyc - 1e-6) break;
+          out.push((sp.end - cs) / cyc);
+          t = sp.end + 1e-4;
+        }
+      } else {
+        // no changes: the BAR is the boundary
+        const bars = Math.max(1, Math.round(+p.bars || 1));
+        for (let b = 1; b < bars; b++) out.push(b / bars);
+      }
+    } catch (e) {}
+    return out.filter((x, i, a) => x >= 0 && x < 1 && a.indexOf(x) === i).sort((a2, b2) => a2 - b2);
+  }
+  // HOW MANY TONES THIS CHANGE PLAYS. Keyed on the ABSOLUTE chord index, which
+  // is what `_ambProgStepAt` answers and what the chord matrix already keys on.
+  function groundVoicesAt(ctx, at, p) {
+    const g = p.ground;
+    if (!g || !g.per || typeof g.per !== 'object') return 0;
+    try {
+      const step = _ambProgStepAt(ctx.E, at);
+      const chords = ((ctx.cfg || {}).prog || {}).chords || [];
+      if (!chords.length) return 0;
+      const idx = ((step % chords.length) + chords.length) % chords.length;
+      const v = g.per[String(idx)];
+      return Number.isFinite(v) ? clamp(v | 0, 0, 9) : 0;
+    } catch (e) { return 0; }
+  }
   // Pull `k` toward the previous degree by `prox`%. Rounded, so at high values a
   // wandering line becomes a stepwise one rather than freezing on a note.
   function _nearer(k, mem, prox) {
@@ -1378,7 +1438,14 @@
       out.sort((a2, b2) => a2.at - b2.at);
       return out;
     }
-    const ons = onsetsOf(p, seedBase);
+    // GROUNDWORK lands on the CHANGES, so its onsets are not a grid: one on
+    // the 1 of the cycle and one on every chord boundary inside it. That needs
+    // the clock, which `onsetsOf` has no access to (it sees the part and a
+    // seed), so it is resolved here where `ctx` has the engine and the time.
+    // With no progression it falls back to the BAR line, which is the same
+    // rule with one chord.
+    const ons = (p.rhythm.kind === 'ground')
+      ? groundOnsets(ctx, cs, cyc, p) : onsetsOf(p, seedBase);
     const span = cyc / Math.max(1, ons.length);           // the onset span sizes the note
     // HOLD sizes the note off the STEP GRID instead — N steps long, whatever the
     // onset spacing happens to be. v1's own semantics (`holdSteps`, 0 = use the
@@ -1480,7 +1547,21 @@
       // even if it is only the second onset.
       const stepIdx = (p.rhythm.kind === 'euclid' || p.rhythm.kind === 'drawn' || p.rhythm.kind === 'chance')
         ? Math.round(ons[i] * Math.max(1, p.rhythm.steps | 0)) : i;
-      const ms = withKeyTime(at, () => pitchesAt(p, ctx.E, ctx.cfg, at, L.instrument.register, seedBase ^ (i * 2654435761), stepIdx, mem, L));
+      // GROUNDWORK CAN PLAY A DIFFERENT NUMBER OF TONES ON EACH CHANGE — the
+      // point of a part that fills the harmony is that some changes want three
+      // notes and some want one. `part.ground.per` keys on the ABSOLUTE chord
+      // index (what `_ambProgStepAt` answers, and what the chord matrix already
+      // keys on), so it survives a part being added before this one; absent
+      // falls back to `pitch.voices`, which is the one number for every change.
+      let pAt = p;
+      if (p.rhythm.kind === 'ground') {
+        const nv = groundVoicesAt(ctx, at, p);
+        if (nv > 0 && nv !== (p.pitch.voices | 0)) {
+          pAt = Object.assign({}, p, { pitch: Object.assign({}, p.pitch, { voices: nv }) });
+        }
+      }
+      const ms = withKeyTime(at, () => pitchesAt(pAt, ctx.E, ctx.cfg, at, L.instrument.register, seedBase ^ (i * 2654435761), stepIdx, mem, L));
+      if (pAt !== p) { p._deg = pAt._deg; p._oct = pAt._oct; }
       // LEN VARY scales this onset's notes together — a chord must not come
       // apart into different lengths, which is why it is per ONSET not per note.
       let dm = durMs;
@@ -1598,8 +1679,17 @@
           out.push({ at: at + (spanSec * k) / Math.max(1, ms.length - 1), freq: midiToFreq(ms[v]), durMs: dm });
         }
       } else {
+        // SLIP — a STOCHASTIC strum: each note of the onset is nudged a little
+        // later by its own seeded draw, so a block chord arrives as a hand
+        // would play it rather than as a machine. Distinct from v1's Strum,
+        // which is a DETERMINISTIC spread in a fixed order — slip has no order
+        // and no fixed spacing, and the two compose. Seeded on (onset, voice)
+        // so a take replays; 0 draws nothing and is byte-identical.
+        const slipAmt = clamp((p.shape && p.shape.slip) | 0, 0, 100);
+        const slipMax = slipAmt > 0 ? (slipAmt / 100) * Math.min(0.18, span * 0.5) : 0;
         for (let v = 0; v < ms.length; v++) {
-          const nt2 = { at, freq: midiToFreq(ms[v]), durMs: dm };
+          const off = slipMax > 0 ? vRnd(seedBase ^ ((i * 31 + v) * 2246822519), 137) * slipMax : 0;
+          const nt2 = { at: at + off, freq: midiToFreq(ms[v]), durMs: dm };
           // Only the FIRST voice of an onset carries the degree — a slide and an
           // ornament are gestures on the LINE, not on each note of a chord.
           if (v === 0 && p._deg != null) { nt2.deg = p._deg; nt2.oct = p._oct | 0; }
@@ -2813,6 +2903,24 @@
     try { E.getCfg(); } catch (e) {}
     return { onsets: p.rhythm.n, octaves: p.pitch.octaves };
   }
+  // GROUNDWORK — the part that PLAYS THE CHANGES rather than a figure over
+  // them: notes on the 1 and on every change, holding until the next one. The
+  // other four shapes all answer "what figure goes on top"; none of them can
+  // simply state the harmony, which is what a bed, a pad or a comp does.
+  function makeGroundFn(E, L) {
+    if (!L || !L.part) return null;
+    const p = L.part;
+    p.kind = 'live';
+    if (matSwitch(L, 'ground')) { try { E.getCfg(); } catch (e) {} return { kept: true }; }
+    p.bars = partBarsFor(E, L) || p.bars || 2;
+    p.rhythm = { kind: 'ground', steps: 8, n: 1 };
+    p.pitch = { kind: 'chord', voices: 3, degree: 1 };
+    // HOLD THROUGH THE CHANGE by default — that is what "fills" means, and a
+    // short note here would make it a stab instead. Slip is off until asked.
+    p.shape = Object.assign({}, p.shape, { lenRatio: 100, holdSteps: 0 });
+    try { E.getCfg(); } catch (e) {}
+    return { voices: p.pitch.voices, bars: p.bars };
+  }
   // MIXED — chords AND single notes from one part, which none of the other
   // three doors can express: Sustained is always a chord, Arpeggio and Roll
   // always one note at a time. A euclid rhythm so the placement is musical,
@@ -3011,6 +3119,7 @@
     v1Seeds: V1_SEEDS,
     makeSustain: makeSustainFn,
     makeMixed: makeMixedFn,
+    makeGround: makeGroundFn,
     makeArp: makeArpFn,
     previewKill: previewKill,
     previewing: previewing,
@@ -3566,6 +3675,12 @@
       // read "⟳ Arpeggio — an arpeggio — …".
                          : 'the chord, one note at a time';
     }
+    if (r.kind === 'ground') {
+      const per = (p.ground && p.ground.per) ? Object.keys(p.ground.per).length : 0;
+      const v0 = Math.max(1, n(t.voices));
+      return (v0 === 1 ? 'one note' : v0 + ' notes') + ' on every change' +
+        (per ? ', ' + per + ' of them set by hand' : '');
+    }
     if (t.kind === 'mixed') {
       const mixc = Number.isFinite(t.mix) ? (t.mix | 0) : 50;
       return 'chords and single notes, about ' + mixc + '% chords';
@@ -3589,6 +3704,8 @@
       rh = plural(n(r.pulses), 'hit') + ' spread evenly over ' + n(r.steps) + ' steps';
       if (n(r.rotate)) rh += ', shifted ' + n(r.rotate);
       if (n(r.voices) > 1) rh += ', ' + n(r.voices) + ' voices';
+    } else if (r.kind === 'ground') {
+      rh = 'one onset on the 1 and one on every change';
     } else if (r.kind === 'drawn') {
       rh = 'the pattern you drew';
     } else if (r.kind === 'chance') {
@@ -3642,7 +3759,7 @@
     // description WITHOUT the re-rolled/plays-exactly tail
     const rules = rulesText(L, true), rulesBare = rulesText(L, false);
     const M = { sustain: '\u25ac Sustained', arp: '\u27f3 Arpeggio', roll: '\ud83c\udfb2 Roll',
-                mixed: '\u2687 Mixed' };
+                mixed: '\u2687 Mixed', ground: '\u26f0 Groundwork' };
     const v1 = (p.mat && p.mat.indexOf('v1:') === 0) ? p.mat.slice(3) : null;
     // NO STAMP IS NOT NO MATERIAL. A part made before provenance existed — or
     // assembled by hand on the knobs — still IS one of these materials, and
@@ -3651,7 +3768,8 @@
     // when present (it records the actual press); the shape answers otherwise,
     // which is what keeps "what Material are we using" answerable on every
     // part rather than only the ones made since yesterday.
-    const guess = (t.kind === 'mixed') ? 'mixed'
+    const guess = (r.kind === 'ground') ? 'ground'
+      : (t.kind === 'mixed') ? 'mixed'
       : (t.kind === 'series') ? 'arp'
       : ((r.kind === 'pulse' || !r.kind) && (r.n | 0) <= 1 && (t.kind === 'chord' || t.kind === 'stack')) ? 'sustain'
       : (t.kind === 'walk') ? 'roll' : null;
@@ -3688,6 +3806,19 @@
                                                           : 'choose & tune');
       if (face.textContent !== txt) face.textContent = txt;
     }
+    const gwf = card.querySelector('.v2-gwface');
+    if (gwf) {
+      const txt2 = (pv.key === 'ground') ? '\u2713 in use' : 'play the changes';
+      if (gwf.textContent !== txt2) gwf.textContent = txt2;
+    }
+    const gws = card.querySelector('.v2-gwsays');
+    if (gws) {
+      const txt3 = (pv.key === 'ground')
+        ? shapeOf(L) + ' \u2014 holding ' + ((L.part.shape || {}).lenRatio | 0) + '% of each change.'
+        : 'Not in use \u2014 press \u26f0 Use Groundwork to make this part play the changes.';
+      if (gws.textContent !== txt3) gws.textContent = txt3;
+    }
+    try { gwPerSync(card, L); } catch (e) {}
     const says = card.querySelector('.v2-gensays');
     if (says) {
       const txt = (L.part.kind === 'recorded')
@@ -3697,6 +3828,38 @@
       if (says.textContent !== txt) says.textContent = txt;
     }
   }
+  // ONE CELL PER CHANGE. Built here rather than in the markup because the
+  // chords change under the card and the panel must follow without a rebuild;
+  // the cells carry the ABSOLUTE chord index, which is what the lookup uses.
+  function gwPerSync(card, L) {
+    const host = card.querySelector('.v2-gwpergrid'); if (!host) return;
+    let cfg = null; try { cfg = _cfgOf(); } catch (e) {}
+    const prog = cfg && cfg.prog;
+    const chords = (prog && prog.on && Array.isArray(prog.chords)) ? prog.chords : [];
+    const base = clamp((L.part.pitch.voices | 0) || 3, 1, 9);
+    const per = (L.part.ground && L.part.ground.per) || {};
+    const sig = chords.length + '|' + base + '|' + JSON.stringify(per);
+    if (host._sig === sig) return;
+    host._sig = sig;
+    if (!chords.length) {
+      host.innerHTML = '<span class="ambient-hint">no changes here \u2014 every bar plays the ' +
+        'number above</span>';
+      return;
+    }
+    host.innerHTML = chords.map((ch, i) => {
+      const v = Number.isFinite(per[String(i)]) ? (per[String(i)] | 0) : base;
+      const own = Number.isFinite(per[String(i)]);
+      let nm = '';
+      try { nm = (typeof _ambChordShort === 'function') ? _ambChordShort(ch) : ''; } catch (e) {}
+      return '<button type="button" class="v2-gwcell' + (own ? ' own' : '') +
+        (v === 0 ? ' silent' : '') + '" data-ci="' + i + '"' +
+        ' title="' + esc(nm || ('change ' + (i + 1))) + ' \u2014 ' +
+        (v === 0 ? 'sits this change out' : v + ' tone' + (v === 1 ? '' : 's')) +
+        (own ? '' : ' (follows the number above)') + '. Tap to change.">' +
+        '<span class="v2-gwcn">' + esc(nm || String(i + 1)) + '</span>' +
+        '<span class="v2-gwcv">' + (v === 0 ? '\u2013' : v) + '</span></button>';
+    }).join('');
+  }
   function matSync(card, L) {
     const pv2 = matProv(L);
     // ✓ = this material is generating · 🔒 = it MADE these notes and the take
@@ -3705,7 +3868,7 @@
     const lk = L.part.kind === 'recorded';
     const map = { compose: '.v2-compose', adopt: '.v2-adopt',
       sustain: '.v2-mkpart[data-mk="sustain"]', arp: '.v2-mkpart[data-mk="arp"]',
-      mixed: '.v2-mkpart[data-mk="mixed"]', roll: '.v2-rollrun' };
+      mixed: '.v2-mkpart[data-mk="mixed"]', ground: '.v2-mkground', roll: '.v2-rollrun' };
     Object.keys(map).forEach((k) => {
       const b2 = card.querySelector(map[k]);
       if (b2) { b2.classList.toggle('on', pv2.key === k); b2.classList.toggle('v2-matlock', lk); }
@@ -4454,9 +4617,41 @@
         // Always in the DOM and revealed by a class, so `applyGate` sweeps
         // its `data-v2when` rows like any other and a commit does not have
         // to rebuild anything.
+        // GROUNDWORK'S PANEL — same construction as the Shape one and for the
+        // same reasons: a child of the card (its rows are ordinary `.v2-f`
+        // rows), always in the DOM, revealed by a class.
+        '<div class="v2-gwwrap">' +
+          '<div class="v2-genscrim v2-gwscrim"></div>' +
+          '<div class="v2-genpop v2-gwpop" role="dialog" aria-label="Groundwork">' +
+            '<div class="v2-genhead"><span class="v2-gentitle">\u26f0 Groundwork</span>' +
+              '<button type="button" class="v2-gwclose" aria-label="Close">\u2715</button></div>' +
+            '<span class="ambient-hint v2-genmodel">Plays the changes: notes on the 1 of the cycle and on ' +
+              'every change, holding until the next one. With no progression the bar line is the change.</span>' +
+            '<span class="ambient-seg-row v2-genshapes">' +
+              '<button type="button" class="ambient-seg v2-mkground">\u26f0 Use Groundwork<span class="v2-matsub">notes on every change</span></button>' +
+            '</span>' +
+            '<span class="ambient-hint v2-gwsays"></span>' +
+            '<div class="v2-genrows">' +
+              gsl(L, 'part.pitch.voices', 'How many notes', (L.part.pitch || {}).voices, 1, 9,
+                  'tones of each chord, from the bottom', 'kind:live;voice:synth;rhythm:ground') +
+              gsl(L, 'part.shape.slip', 'Slip', ((L.part.shape || {}).slip | 0), 0, 100,
+                  'nudge each note late by a random hair \u2014 a strum', 'kind:live;rhythm:ground') +
+              gsl(L, 'part.shape.lenRatio', 'Hold', (L.part.shape || {}).lenRatio, 5, 200,
+                  '% of the change each note fills', 'kind:live;rhythm:ground') +
+              '<div class="ambient-ctrl v2-gwper" data-v2when="kind:live;rhythm:ground"><label>Per change</label>' +
+                '<span class="v2-gwpergrid"></span>' +
+                '<span class="ambient-hint">how many tones each change plays \u2014 tap to change one; \u2013 means it sits out</span></div>' +
+            '</div>' +
+            '<div class="v2-genacts">' +
+              '<button type="button" class="ambient-seg v2-genroll">\ud83c\udfb2 New take</button>' +
+              '<button type="button" class="ambient-seg v2-genprev">\u25b6 Preview</button>' +
+              '<button type="button" class="ambient-seg v2-gwclose">\u2713 Done</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
         '<div class="v2-genwrap">' +
           '<div class="v2-genscrim"></div>' +
-          '<div class="v2-genpop" role="dialog" aria-label="Generated shape">' +
+          '<div class="v2-genpop v2-shapepop" role="dialog" aria-label="Generated shape">' +
             '<div class="v2-genhead"><span class="v2-gentitle">Generated</span>' +
               '<button type="button" class="v2-genclose" aria-label="Close">\u2715</button></div>' +
             '<span class="ambient-hint v2-genmodel">A shape is a RHYTHM (when notes happen) \u00d7 a ' +
@@ -4680,6 +4875,12 @@
               // parameters, so choosing and tuning are one place.
               '</span><span class="v2-matgrp"><span class="v2-matlab" title="You choose a shape — the rules work out the notes as it plays, fresh each cycle.">Generated</span>' +
               '<button type="button" class="ambient-seg v2-genbtn" title="Choose a shape and tune what it generates.">\u2699 Shape\u2026<span class="v2-matsub v2-genface">choose &amp; tune</span></button>' +
+              // THE SECOND GENERATED DOOR. Shape answers "what figure goes on
+              // top"; Groundwork answers "play the changes" — notes on the 1
+              // and on every change, held until the next one. Its own door and
+              // its own panel because its parameters are its own: how many
+              // tones, per change, how far they slip, how long they hold.
+              '<button type="button" class="ambient-seg v2-gwbtn" title="Play the changes — notes on the 1 and on every change, holding until the next.">\u26f0 Groundwork<span class="v2-matsub v2-gwface">play the changes</span></button>' +
               '</span>' +
             '</span>' +
             '<span class="ambient-hint v2-notecount"></span>' +
@@ -5481,6 +5682,7 @@
   // UI IIFE, because that is where `render` and the click delegation are; the
   // file is TWO IIFEs and they share nothing but `window._v2`.
   let GENPOP = null;
+  let GWPOP = null;   // …and the Groundwork one, same contract
   function popWrapOf(card) { return card.querySelector(':scope > .v2-pop-wrap'); }
   function popClose(card) {
     const wrap = card && popWrapOf(card);
@@ -6087,6 +6289,7 @@
       const L = list.find(x => x.id === id); if (!L) return;
       if (openIds.has(String(id))) card.classList.remove('collapsed');
       if (GENPOP === id) card.classList.add('v2-genopen');
+      if (GWPOP === id) card.classList.add('v2-gwopen');
       const og = openGrps.get(String(id));
       if (og) card.querySelectorAll('.ambient-grp').forEach(g => {
         g.classList.toggle('open', og.has(g.getAttribute('data-v2grp')));
@@ -7076,10 +7279,75 @@
           try { genSync(ctx.card, ctx.L); } catch (e) {}
           return;
         }
+        const gw = t.closest('.v2-gwbtn');
+        if (gw) {
+          const ctx = layerOf(gw); if (!ctx) return;
+          GWPOP = ctx.L.id | 0;
+          ctx.card.classList.add('v2-gwopen');
+          try { genSync(ctx.card, ctx.L); } catch (e) {}
+          return;
+        }
+        // CLOSE — the Groundwork one first, because its close button carries
+        // BOTH classes (it is the same styling) and a bare `.v2-genclose` test
+        // would shut the wrong panel.
+        if (t.closest('.v2-gwclose') || t.closest('.v2-gwscrim')) {
+          const ctx = layerOf(t); if (!ctx) return;
+          GWPOP = null;
+          ctx.card.classList.remove('v2-gwopen');
+          return;
+        }
         if (t.closest('.v2-genclose') || t.closest('.v2-genscrim')) {
           const ctx = layerOf(t); if (!ctx) return;
           GENPOP = null;
           ctx.card.classList.remove('v2-genopen');
+          return;
+        }
+        // USE GROUNDWORK — the same adopt-don't-rebuild rule as every other
+        // shape door: pressing the one already in force keeps the content.
+        const mg = t.closest('.v2-mkground');
+        if (mg) {
+          const ctx = layerOf(mg); if (!ctx) return;
+          if (ctx.L.part.kind !== 'recorded' && matProv(ctx.L).key === 'ground') {
+            if (ctx.L.part.mat !== 'ground') {
+              ctx.L.part.mat = 'ground';
+              try { E.getCfg(); } catch (e) {}
+              try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+              h._sig = ''; V2.render(E);
+            }
+            return;
+          }
+          if (!V2.makeGround(E, ctx.L)) return;
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          h._sig = ''; V2.render(E);
+          setTimeout(() => {
+            try {
+              const c2 = document.querySelector('.v2-layer[data-v2id="' + (ctx.L.id | 0) + '"]');
+              if (c2) drawPartViz(c2, ctx.L, E);
+            } catch (e) {}
+          }, 0);
+          return;
+        }
+        // A PER-CHANGE COUNT. Its own handler because the value lives in a MAP
+        // keyed by chord, which no `data-f` path can address.
+        const gp = t.closest('.v2-gwcell');
+        if (gp) {
+          const ctx = layerOf(gp); if (!ctx) return;
+          const idx = gp.getAttribute('data-ci');
+          const p2 = ctx.L.part;
+          const base = clamp((p2.pitch.voices | 0) || 3, 1, 9);
+          const cur = (p2.ground && p2.ground.per && Number.isFinite(p2.ground.per[idx]))
+            ? (p2.ground.per[idx] | 0) : base;
+          // 0 is a REAL answer — that change sits out — so the ladder runs
+          // 0..9 and wraps, and a value equal to the layer's own number is
+          // pruned by normalize rather than stored as a duplicate.
+          const nx = (cur + 1) % 10;
+          p2.ground = p2.ground || {};
+          p2.ground.per = p2.ground.per || {};
+          p2.ground.per[idx] = nx;
+          try { E.getCfg(); } catch (e) {}
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          applyGate(ctx.card, ctx.L);
+          try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
           return;
         }
         const mk = t.closest('.v2-mkpart');

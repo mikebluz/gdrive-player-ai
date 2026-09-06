@@ -744,14 +744,14 @@ const ok = (name, cond, detail) => {
     // the shapes live behind ⚙ Shape… now; the panel stays open across a
     // choice, so this opens it once
     card().querySelector('.v2-genbtn').click(); await wait(280); card().classList.remove('collapsed');
-    card().querySelector('.v2-genpop .v2-rollrun').click(); await wait(350); card().classList.remove('collapsed');
+    card().querySelector('.v2-shapepop .v2-rollrun').click(); await wait(350); card().classList.remove('collapsed');
     const roll = st2();
-    card().querySelector('.v2-genpop .v2-mkpart[data-mk="sustain"]').click(); await wait(400); card().classList.remove('collapsed');
+    card().querySelector('.v2-shapepop .v2-mkpart[data-mk="sustain"]').click(); await wait(400); card().classList.remove('collapsed');
     const sus = st2();
     // shut the panel before the seed row — it covers the card, and a panel
     // left open breaks whatever runs next (it already broke the Pattern tab's
     // hit test one check later)
-    const gc = card().querySelector('.v2-genclose'); if (gc) gc.click();
+    const gc = card().querySelector('.v2-shapepop .v2-genclose'); if (gc) gc.click();
     await wait(200); card().classList.remove('collapsed');
     card().querySelector('.v2-seedv1[data-v1="bass"]').click(); await wait(450); card().classList.remove('collapsed');
     const seed = st2();
@@ -1401,24 +1401,24 @@ const ok = (name, cond, detail) => {
     // choice, so one press gets in and one gets out at the end
     card().querySelector('.v2-genbtn').click(); await wait(280);
     card().classList.remove('collapsed');
-    card().querySelector('.v2-genpop .v2-rollrun').click(); await wait(420);
+    card().querySelector('.v2-shapepop .v2-rollrun').click(); await wait(420);
     card().classList.remove('collapsed');
     const lit = card().querySelector('.v2-genshapes .ambient-seg.on');
     const face = (b) => ((b && b.childNodes[0] && b.childNodes[0].nodeValue) || '').trim();
     const o = { label: face(lit), mark: getComputedStyle(lit, '::before').content };
     const sig = JSON.stringify(L().part);
-    card().querySelector('.v2-genpop .v2-rollrun').click(); await wait(400);
+    card().querySelector('.v2-shapepop .v2-rollrun').click(); await wait(400);
     card().classList.remove('collapsed');
     o.rollNoop = JSON.stringify(L().part) === sig;
-    card().querySelector('.v2-genpop .v2-mkpart[data-mk="sustain"]').click(); await wait(420);
+    card().querySelector('.v2-shapepop .v2-mkpart[data-mk="sustain"]').click(); await wait(420);
     card().classList.remove('collapsed');
     const sig2 = JSON.stringify(L().part);
-    card().querySelector('.v2-genpop .v2-mkpart[data-mk="sustain"]').click(); await wait(400);
+    card().querySelector('.v2-shapepop .v2-mkpart[data-mk="sustain"]').click(); await wait(400);
     card().classList.remove('collapsed');
     o.modeNoop = JSON.stringify(L().part) === sig2;
     o.stillLit = face(card().querySelector('.v2-genshapes .ambient-seg.on'));
     o.doorNames = (card().querySelector('.v2-genface') || {}).textContent || '';
-    const gc2 = card().querySelector('.v2-genclose'); if (gc2) gc2.click();
+    const gc2 = card().querySelector('.v2-shapepop .v2-genclose'); if (gc2) gc2.click();
     await wait(200); card().classList.remove('collapsed');
     try { L().part = JSON.parse(svPart); } catch (e) {}
     delete L().part.mat; delete L().part.mem; E.getCfg();
@@ -1491,7 +1491,10 @@ const ok = (name, cond, detail) => {
     // a door cannot vanish unnoticed.
     // ONE Generated door now — the four shapes moved behind ⚙ Shape…, which
     // is where their knobs are. The contract is the two labelled clusters.
-    matKindRun.silent && /Written:2/.test(matKindRun.groups) && /Generated:1/.test(matKindRun.groups) &&
+    // TWO Generated doors: ⚙ Shape… (the figure on top) and ⛰ Groundwork
+    // (playing the changes themselves). The contract is the two labelled
+    // clusters; the count is pinned so a door cannot vanish unnoticed.
+    matKindRun.silent && /Written:2/.test(matKindRun.groups) && /Generated:2/.test(matKindRun.groups) &&
     matKindRun.cellBig && matKindRun.hit && matKindRun.toggles && matKindRun.overflow === 0,
     JSON.stringify(matKindRun));
   // COMPOSING TAKES THE SHEET. The docked Grid editor is a full instrument
@@ -1722,6 +1725,95 @@ const ok = (name, cond, detail) => {
     fitRun.saysBound && fitRun.iceBack === 1,
     JSON.stringify(fitRun));
 
+  // ⛰ GROUNDWORK — the part that PLAYS THE CHANGES instead of a figure over
+  // them: one onset on the 1 and one on every change, held until the next.
+  const gwRun = await page.evaluate(async () => { try {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const c0 = E.getCfg();
+    const svProg = JSON.stringify(c0.prog || null), svPart = JSON.stringify(L().part);
+    const svKey = [c0.keyOn, c0.keyRoot, c0.keyScale, c0.keyFollow];
+    const svClk = [E._playStartAt, E._progAnchor, E._barGridAnchor];
+    c0.prog = { on: true, parts: [],
+      chords: [{ root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] },
+               { root: 7, intervals: [0, 4, 7] }, { root: 9, intervals: [0, 3, 7] }] };
+    c0.keyOn = true; c0.keyRoot = 0; c0.keyScale = 'major'; c0.keyFollow = false;
+    E.getCfg();
+    // a stale anchor clamps every chord lookup to chord 0 (documented), which
+    // would make "one onset per change" pass with one chord repeated
+    E._playStartAt = null; E._progAnchor = null; E._barGridAnchor = null;
+    L().on = true; L().present = true; L().part.kind = 'live'; L().part.bars = 4;
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers');
+    if (h) h._sig = ''; window._v2.render(E); await wait(260);
+    const card = () => document.querySelector('.v2-layer');
+    card().classList.remove('collapsed');
+    const o = { door: !!card().querySelector('.v2-gwbtn') };
+    card().querySelector('.v2-gwbtn').click(); await wait(320);
+    const r = card().querySelector('.v2-gwpop').getBoundingClientRect();
+    o.onScreen = r.width > 0 && r.height > 0 && r.top >= 40 && r.bottom <= innerHeight + 1;
+    card().querySelector('.v2-mkground').click(); await wait(450);
+    o.rhythm = L().part.rhythm.kind; o.mat = L().part.mat;
+    o.holds = (L().part.shape.lenRatio | 0) >= 100;
+    // ONE ONSET PER CHANGE, each playing THAT chord — the whole claim
+    const grab = () => {
+      const ns = window._v2.withEdit(() => window._v2.notesFor(L(),
+        { E, cfg: E.getCfg(), key: 'v2:' + L().id, cycleStart: 0, cycleSec: 8 })) || [];
+      const by = {};
+      ns.forEach((n) => { const t = (Math.round(n.at * 100) / 100).toFixed(2);
+        (by[t] = by[t] || []).push(((Math.round(69 + 12 * Math.log2(n.freq / 440)) % 12) + 12) % 12); });
+      return by;
+    };
+    const g1 = grab();
+    const times = Object.keys(g1).sort((a, b) => +a - +b);
+    o.onsets = times.length;
+    o.onTheChanges = times.join(',') === '0.00,2.00,4.00,6.00';
+    // each onset's notes belong to the chord sounding there
+    o.inChord = times.every((t) => {
+      const ch = _ambProgSoundAt(E, E.getCfg().prog, _ambProgStepAt(E, +t));
+      const pcs = ch ? ch.intervals.map((i) => (((ch.root + i) % 12) + 12) % 12) : [];
+      return g1[t].every((m) => pcs.indexOf(m) >= 0);
+    });
+    o.threeEach = times.every((t) => g1[t].length === 3);
+    // PER CHANGE — one cell per chord, and a tap changes only that change
+    const cells = () => [...document.querySelectorAll('.v2-layer .v2-gwcell')];
+    o.cells = cells().length;
+    cells()[1].click(); await wait(300);
+    o.stored = JSON.stringify((L().part.ground || {}).per || null);
+    const g2 = grab();
+    o.onlyThatChange = g2['2.00'].length === 4 && g2['0.00'].length === 3 && g2['4.00'].length === 3;
+    o.cellMarked = cells()[1].classList.contains('own') && !cells()[0].classList.contains('own');
+    // SLIP spreads the notes of an onset; 0 leaves them together
+    const together = (by) => Object.keys(by).length;
+    o.tightOnsets = together(grab());
+    L().part.shape.slip = 60; E.getCfg();
+    o.slipOnsets = together(grab());
+    o.slipSpreads = o.slipOnsets > o.tightOnsets;
+    L().part.shape.slip = 0; E.getCfg();
+    o.slipPruned = (L().part.shape.slip === undefined);
+    card().querySelector('.v2-gwclose').click(); await wait(240);
+    o.closed = !card().classList.contains('v2-gwopen');
+    o.face = (document.querySelector('.v2-gwface') || {}).textContent || '';
+    try {
+      const c9 = E.getCfg();
+      if (svProg === 'null') delete c9.prog; else c9.prog = JSON.parse(svProg);
+      c9.keyOn = svKey[0]; c9.keyRoot = svKey[1]; c9.keyScale = svKey[2]; c9.keyFollow = svKey[3];
+      L().part = JSON.parse(svPart); E.getCfg();
+      E._playStartAt = svClk[0]; E._progAnchor = svClk[1]; E._barGridAnchor = svClk[2];
+      if (h) h._sig = ''; window._v2.render(E); await wait(200);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) {}
+    return o;
+  } catch (e) { return { err: String(e && e.message) }; }
+  });
+  ok('⛰ Groundwork plays the changes — one onset per change, per-change counts, and slip',
+    gwRun.door && gwRun.onScreen && gwRun.rhythm === 'ground' && gwRun.mat === 'ground' &&
+    gwRun.holds && gwRun.onsets === 4 && gwRun.onTheChanges && gwRun.inChord &&
+    gwRun.threeEach && gwRun.cells === 4 && gwRun.stored === '{"1":4}' &&
+    gwRun.onlyThatChange && gwRun.cellMarked && gwRun.slipSpreads && gwRun.slipPruned &&
+    gwRun.closed && /in use/.test(gwRun.face),
+    JSON.stringify(gwRun));
+
   // ⚙ SHAPE… — the four Generated shapes and the knobs that decide what each
   // one produces, in ONE panel. Four buttons in the row put every choice on
   // screen and left nowhere for the parameters, which sat three tabs away in
@@ -1743,7 +1835,7 @@ const ok = (name, cond, detail) => {
     // RE-QUERY after every press: choosing a shape re-renders the card, so a
     // captured node is detached and clicking it does nothing (the documented
     // trap — it read as "Roll did not take" on a working panel).
-    const pop = () => document.querySelector('.v2-layer .v2-genpop');
+    const pop = () => document.querySelector('.v2-layer .v2-shapepop');
     const r = pop().getBoundingClientRect();
     // ON SCREEN and inside the visible band — it opens from inside the sheet,
     // so it has the same status-bar/header problem the sheet had
@@ -1774,7 +1866,7 @@ const ok = (name, cond, detail) => {
       .map((x) => x.value).join(',');
     o.noDrift = new Set(o.copies.split(',')).size === 1;
     // the card still says which shape is in force WITHOUT opening the panel
-    card().querySelector('.v2-genclose').click(); await wait(240);
+    card().querySelector('.v2-shapepop .v2-genclose').click(); await wait(240);
     o.closed = !card().classList.contains('v2-genopen');
     o.doorNames = (document.querySelector('.v2-genface') || {}).textContent || '';
     // NO DUPLICATE-CLASS TRAP: the panel's own actions must not answer to the
@@ -1799,7 +1891,7 @@ const ok = (name, cond, detail) => {
   // part. The other three each commit to one texture (Sustained is always a
   // chord, Arpeggio and Roll always one note at a time), so "both" could only
   // be hand-built on the knobs.
-  const mixRun = await page.evaluate(async () => {
+  const mixRun = await page.evaluate(async () => { try {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const sv = JSON.stringify(L().part), c0 = E.getCfg();
@@ -1812,11 +1904,16 @@ const ok = (name, cond, detail) => {
     const card = document.querySelector('.v2-layer');
     card.classList.remove('collapsed');
     const o = {};
-    const btn = card.querySelector('.v2-mkpart[data-mk="mixed"]');
+    // the shapes live behind ⚙ Shape… now
+    card.querySelector('.v2-genbtn').click(); await wait(300);
+    const btn = document.querySelector('.v2-layer .v2-shapepop .v2-mkpart[data-mk="mixed"]');
     o.door = !!btn;
     o.sub = btn ? (btn.querySelector('.v2-matsub') || {}).textContent : '';
     if (btn) btn.click();
     await wait(450);
+    const gcM = document.querySelector('.v2-layer .v2-shapepop .v2-genclose');
+    if (gcM) gcM.click();
+    await wait(200);
     document.querySelector('.v2-layer').classList.remove('collapsed');
     o.kind = L().part.pitch.kind; o.mat = L().part.mat;
     // BOTH TEXTURES, and the balance actually moves them. Counted as onsets
@@ -1879,6 +1976,7 @@ const ok = (name, cond, detail) => {
       document.querySelector('.v2-layer').classList.remove('collapsed');
     } catch (e) {}
     return o;
+  } catch (e) { return { err: String(e && e.message) }; }
   });
   ok('⚇ Mixed makes chords AND single notes, and the balance moves them',
     mixRun.door && /chords and single/.test(mixRun.sub) && mixRun.kind === 'mixed' &&
@@ -1952,7 +2050,9 @@ const ok = (name, cond, detail) => {
     cardS.classList.remove('collapsed');
     const gb = cardS.querySelector('.v2-genbtn'); if (gb) gb.click();
     await wait(280);
-    o.subs = [...document.querySelectorAll('.v2-notesrow .ambient-seg, .v2-genshapes .ambient-seg')].map((b2) => {
+    // SCOPED to the row and the SHAPE panel — the Groundwork panel is closed,
+    // and sweeping `.v2-genshapes` unscoped picked up its (invisible) button.
+    o.subs = [...document.querySelectorAll('.v2-notesrow .ambient-seg, .v2-shapepop .v2-genshapes .ambient-seg')].map((b2) => {
       const sub = b2.querySelector('.v2-matsub');
       const r2 = sub && sub.getBoundingClientRect();
       return { face: ((b2.childNodes[0] && b2.childNodes[0].nodeValue) || '').trim(),
@@ -1962,7 +2062,7 @@ const ok = (name, cond, detail) => {
     });
     o.everyDoorExplains = o.subs.length >= 7 &&
       o.subs.every((x) => x.sub.length > 3 && x.vis && !x.clipped);
-    const gc3 = document.querySelector('.v2-layer .v2-genclose'); if (gc3) gc3.click();
+    const gc3 = document.querySelector('.v2-layer .v2-shapepop .v2-genclose'); if (gc3) gc3.click();
     await wait(200);
     const ml = document.querySelector('.v2-matmodel');
     o.modelStated = !!ml && /RHYTHM/.test(ml.textContent) && /PITCH RULE/.test(ml.textContent) &&

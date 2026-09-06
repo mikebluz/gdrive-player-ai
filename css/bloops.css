@@ -14979,7 +14979,33 @@
    `closest('.v2-layer')`. Fixed + measure-free: it covers the viewport and
    centres, like the section sheet, and sits ABOVE it (10290) since it opens
    from inside it. */
-.v2-genwrap { display: none; }
+.v2-genwrap, .v2-gwwrap { display: none; }
+.v2-layer.v2-gwopen .v2-gwwrap {
+  display: flex; align-items: center; justify-content: center;
+  position: fixed; inset: 0; z-index: 10310;
+}
+/* ONE CELL PER CHANGE — the chord, and how many of its tones this part plays.
+   A grid so eight changes read as eight, not as a sentence. */
+.v2-gwpergrid {
+  grid-column: 2 / -1; display: grid; gap: 4px;
+  grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
+}
+.v2-gwcell {
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  min-height: 40px; padding: 4px 2px;
+  border: 1px solid #2d2d3f; border-radius: 8px; background: #0f0f1e;
+  color: #a0aec0; font-family: 'Segoe UI', sans-serif; cursor: pointer;
+  touch-action: manipulation;
+}
+.v2-gwcell:hover { border-color: #9f7aea; }
+/* SET BY HAND vs following the number above — a value you chose must not look
+   like one you inherited (the absent-is-inherit rule the mask cells follow). */
+.v2-gwcell.own { border-color: #9f7aea; background: rgba(159, 122, 234, 0.16); color: #d6bcfa; }
+.v2-gwcell.silent .v2-gwcv { color: #fc8181; }
+.v2-gwcn { font-size: 0.62rem; color: #7a7a9c; white-space: normal; overflow-wrap: anywhere; line-height: 1.1; }
+.v2-gwcell.own .v2-gwcn { color: #b9a6e0; }
+.v2-gwcv { font-size: 0.9rem; font-weight: 600; }
+
 .v2-layer.v2-genopen .v2-genwrap {
   display: flex; align-items: center; justify-content: center;
   position: fixed; inset: 0; z-index: 10310;
@@ -15003,12 +15029,12 @@
   display: flex; align-items: center; gap: 10px; padding: 12px 14px 4px; flex: 0 0 auto;
 }
 .v2-gentitle { font: 600 0.95rem 'Segoe UI', sans-serif; color: #e2e8f0; flex: 1 1 auto; }
-.v2-genclose {
+.v2-genclose, .v2-gwclose {
   flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%;
   border: 1px solid #2d2d3f; background: none; color: #a0aec0;
   font-size: 1rem; cursor: pointer; touch-action: manipulation;
 }
-.v2-genclose:hover { border-color: #9f7aea; color: #d6bcfa; }
+.v2-genclose:hover, .v2-gwclose:hover { border-color: #9f7aea; color: #d6bcfa; }
 .v2-genmodel, .v2-gensays {
   padding: 0 14px; margin: 0 0 6px; color: #6b6b8a; line-height: 1.35;
   white-space: normal; overflow-wrap: anywhere; flex: 0 0 auto;
@@ -15030,6 +15056,7 @@
   border-top: 1px solid #22222f; background: #12121f;
 }
 .v2-genacts .ambient-seg { flex: 1 1 0; min-width: 0; min-height: 40px; }
+.v2-genacts .v2-gwclose { border-radius: 20px; width: auto; height: auto; }
 .v2-pop-wrap { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; z-index: 10290; }
 .v2-pop-scrim { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.55); }
 /* CENTRED IN THE AREA THE USER CAN SEE, not in the raw viewport. The wrap is

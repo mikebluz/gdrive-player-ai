@@ -1587,6 +1587,124 @@ const ok = (name, cond, detail) => {
     card().classList.remove('collapsed');
     return o;
   });
+  // A ROLL CAN PLAY MORE THAN ONE NOTE AT A TIME. `pitch.walk` is one line by
+  // definition, so 🎲 Roll was monophonic and the only way to thicken it was
+  // Harmony — which duplicates the one line at a fixed interval, i.e. parallel
+  // motion, never independence. `pitch.lines` rolls N walks with their own
+  // streams and their own memories.
+  const linesRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const sv = JSON.stringify(L().part), c0 = E.getCfg();
+    const svKey = [c0.keyOn, c0.keyRoot, c0.keyScale, c0.keyFollow];
+    c0.keyOn = true; c0.keyRoot = 0; c0.keyScale = 'major'; c0.keyFollow = false;
+    L().part.kind = 'live'; L().instrument.voice = 'synth';
+    L().part.rhythm = { kind: 'pulse', steps: 8 }; L().part.bars = 1;
+    L().part.pitch = { kind: 'walk', degree: 1, span: 3, home: 'center' };
+    E.getCfg();
+    // SAMPLE ACROSS ONSETS, not within one window: this fixture emits a single
+    // onset per cycle, so a "do the shapes vary" check measured inside one
+    // window can only ever see ONE shape and reported a working feature as
+    // broken. Each cycle start is a different onset and therefore a different
+    // seed, which is exactly what the walk varies on.
+    const shapes = () => {
+      const all = [];
+      let max = 0;
+      for (let i = 0; i < 8; i++) {
+        const ns = window._v2.withEdit(() => window._v2.notesFor(L(),
+          { E, cfg: E.getCfg(), key: 'v2:' + L().id, cycleStart: 100 + i * 4, cycleSec: 4 })) || [];
+        const by = {};
+        ns.forEach((n) => { const k = (Math.round(n.at * 1000) / 1000).toFixed(3);
+          (by[k] = by[k] || []).push(Math.round(69 + 12 * Math.log2(n.freq / 440))); });
+        Object.values(by).forEach((x) => {
+          const g = x.slice().sort((a, b) => a - b);
+          if (g.length > max) max = g.length;
+          if (g.length > 1) all.push(g.map((m) => m - g[0]).join(','));
+        });
+      }
+      return { max, shapes: all };
+    };
+    const o = {};
+    o.plain = shapes().max;                       // absent = one line, as always
+    L().part.pitch.lines = 1; E.getCfg();
+    o.prunedAt1 = L().part.pitch.lines === undefined;
+    L().part.pitch.lines = 3; E.getCfg();
+    const three = shapes();
+    o.three = three.max;
+    // INDEPENDENT: the interval shape must CHANGE from onset to onset. A
+    // constant shape is parallel motion, which is what Harmony does and what
+    // this is not — asserted as "more than one distinct shape", never a count,
+    // so it cannot pin one roll's numbers.
+    o.distinctShapes = new Set(three.shapes).size;
+    // INDEPENDENCE, TESTED PROPERLY. "The interval shapes vary" does NOT test
+    // it — a poison that gave every line the identical stream still varied
+    // them, because the lines start on different DEGREES and a scale is
+    // unevenly spaced, so the same step from a different degree is a different
+    // number of semitones. That check would have passed on parallel lines.
+    // The real property: with ONE shared stream every line is a FUNCTION of
+    // line 0 (same step, fixed degree offset), so a given bottom note always
+    // pairs with the same second note. Independent streams break that.
+    const pairs = {};
+    for (let i = 0; i < 24; i++) {
+      const ns = window._v2.withEdit(() => window._v2.notesFor(L(),
+        { E, cfg: E.getCfg(), key: 'v2:' + L().id, cycleStart: 200 + i * 4, cycleSec: 4 })) || [];
+      const by = {};
+      ns.forEach((n) => { const k = (Math.round(n.at * 1000) / 1000).toFixed(3);
+        (by[k] = by[k] || []).push(Math.round(69 + 12 * Math.log2(n.freq / 440))); });
+      Object.values(by).forEach((x) => {
+        if (x.length < 2) return;
+        const g = x.slice().sort((a, b) => a - b);
+        (pairs[g[0]] = pairs[g[0]] || new Set()).add(g[1]);
+      });
+    }
+    o.pairGroups = Object.keys(pairs).length;
+    o.maxPartners = Object.values(pairs).reduce((m, st) => Math.max(m, st.size), 0);
+    o.independent = o.maxPartners >= 2;
+    // …and HARMONY is the PARALLEL one, on the same line, for contrast. Note it
+    // is parallel in DEGREES, not semitones — a diatonic 3rd is 4 semitones
+    // over C and 3 over D — so the contrast is that its shape takes only those
+    // few values while independent lines wander freely. Asserting "one shape"
+    // would be wrong, and passed only because the first fixture had one onset.
+    delete L().part.pitch.lines; L().part.pitch.harm = [{ deg: 2 }]; E.getCfg();
+    const har = shapes();
+    o.harmMax = har.max;
+    o.harmShapes = new Set(har.shapes).size;
+    o.harmParallel = o.harmShapes <= 2;
+    delete L().part.pitch.harm; E.getCfg();
+    // the CONTROL exists on a walk and is absent where it means nothing
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E); await wait(250);
+    const card = document.querySelector('.v2-layer'); card.classList.remove('collapsed');
+    card.querySelector('[data-v2grp="Pitch"]').click(); await wait(280);
+    const lt = document.querySelector('.v2-pop-tabs [data-tab="Lines"]');
+    o.tabOnWalk = !!lt && lt.getBoundingClientRect().height > 0;
+    if (lt) lt.click(); await wait(160);
+    const li = document.querySelector('.v2-pop-pane [data-f="part.pitch.lines"]');
+    o.ctlOnWalk = !!li && li.getBoundingClientRect().height > 0;
+    let cl = document.querySelector('.v2-pop-close'); if (cl) cl.click(); await wait(180);
+    L().part.pitch = { kind: 'chord', voices: 3 }; E.getCfg();
+    if (h) h._sig = ''; window._v2.render(E); await wait(250);
+    const c2 = document.querySelector('.v2-layer'); c2.classList.remove('collapsed');
+    c2.querySelector('[data-v2grp="Pitch"]').click(); await wait(280);
+    const lt2 = document.querySelector('.v2-pop-tabs [data-tab="Lines"]');
+    o.tabOnChord = !!lt2 && lt2.getBoundingClientRect().height > 0 && !!lt2.offsetParent;
+    cl = document.querySelector('.v2-pop-close'); if (cl) cl.click(); await wait(180);
+    try {
+      const c9 = E.getCfg();
+      c9.keyOn = svKey[0]; c9.keyRoot = svKey[1]; c9.keyScale = svKey[2]; c9.keyFollow = svKey[3];
+      L().part = JSON.parse(sv); E.getCfg();
+      if (h) h._sig = ''; window._v2.render(E); await wait(220);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) { o.err = e.message; }
+    return o;
+  });
+  ok('a Roll can play several INDEPENDENT lines — and Harmony is the parallel one',
+    linesRun.plain === 1 && linesRun.prunedAt1 && linesRun.three === 3 &&
+    linesRun.independent && linesRun.pairGroups >= 2 &&
+    linesRun.harmMax === 2 && linesRun.harmParallel &&
+    linesRun.tabOnWalk && linesRun.ctlOnWalk && !linesRun.tabOnChord,
+    JSON.stringify(linesRun));
+
   // POLYPHONY — a chord must be a CHORD. Measured through the real control in
   // C major, Pitch → Chord played C+D+E: adjacent scale steps, a cluster, and
   // byte-identical to Stack, so the two kinds could not be told apart.

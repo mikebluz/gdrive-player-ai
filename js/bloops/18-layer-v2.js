@@ -427,6 +427,9 @@
       const t = (p.pitch && typeof p.pitch === 'object') ? p.pitch : (p.pitch = {});
       t.kind = PITCHES.has(t.kind) ? t.kind : 'chord';
       t.voices = clamp((t.voices | 0) || 3, 1, 9);         // how many notes per onset
+      // LINES is absent-by-default and PRUNED at 1, so an untouched project
+      // stores nothing and plays exactly as it did.
+      if ((t.lines | 0) > 1) t.lines = clamp(t.lines | 0, 2, 6); else delete t.lines;
       t.degree = clamp((t.degree | 0) || 1, 1, 12);        // which source tone (fixed / stack start)
       t.span = clamp((t.span | 0) || 4, 1, 24);            // walk: how far it may wander, in source tones
       if (t.dir !== 'down' && t.dir !== 'updown') t.dir = 'up';   // series: sweep direction
@@ -954,19 +957,34 @@
       const home = (t.home === 'center' || t.home === 'ceiling') ? t.home : 'floor';
       const homeShift = (home === 'ceiling') ? -(t.span | 0)
                       : (home === 'center') ? -Math.floor((t.span | 0) / 2) : 0;
-      const from = clamp((t.degree | 0) - 1, 0, N - 1) + homeShift;
+      const from0 = clamp((t.degree | 0) - 1, 0, N - 1) + homeShift;
+      // LINES — how many notes a Roll plays AT ONCE. Each is a full walk with
+      // its OWN seeded stream and its OWN memory, so they wander independently
+      // — which is what makes this different from Harmony, where one line is
+      // duplicated at a fixed interval and every voice moves in lockstep.
+      // ABSENT = 1 = today's behaviour byte-for-byte, and it has to be a NEW
+      // field rather than `pitch.voices`: normalize backfills that one to 3 on
+      // every pitch object, so reading it here would silently thicken every
+      // rolled part in every saved project.
+      const lines = clamp((t.lines | 0) || 1, 1, 6);
+      for (let vi = 0; vi < lines; vi++) {
+      // voice 0 keeps TODAY'S seed exactly — `x ^ 0` is `x`, so a one-line
+      // walk draws the identical stream it always has
+      const from = from0 + vi * 2;          // a third apart, so they do not sit on one note
+      const mem2 = (vi === 0) ? mem
+        : (mem ? ((mem._ln = mem._ln || {}), (mem._ln[vi] = mem._ln[vi] || {})) : null);
       const rnd = (typeof _ambSeededRand === 'function')
-        ? _ambSeededRand((((ctxSeed | 0) + 1) * 40503) >>> 0) : Math.random;
+        ? _ambSeededRand(((((ctxSeed | 0) + 1) * 40503) ^ (vi * 0x7f4a7c15)) >>> 0) : Math.random;
       // STUTTER — v1's rule: repeat the PREVIOUS degree instead of stepping,
       // which is what turns a walk into chord-tone phrasing. Consumes no
       // further pick, so the walk resumes from the same place.
       const stut = clamp(t.stutter | 0, 0, 100);
-      if (stut > 0 && mem && Number.isFinite(mem.prev) && rnd() * 100 < stut * 0.45) {
-        const kS = mem.prev;
+      if (stut > 0 && mem2 && Number.isFinite(mem2.prev) && rnd() * 100 < stut * 0.45) {
+        const kS = mem2.prev;
         const iS = ((kS % N) + N) % N, oS = Math.floor(kS / N);
-        part._deg = kS; part._oct = oS;
+        if (vi === 0) { part._deg = kS; part._oct = oS; }
         out.push(base + set.ivs[iS] + 12 * oS);
-        return out;
+        continue;                            // the NEXT line, not the next onset
       }
       // CONTOUR — v1's rule for the step's DIRECTION, -100 to +100. NOTE what
       // it does HERE: v2's walk scatters around a fixed centre rather than
@@ -980,7 +998,7 @@
       const mag = Math.abs(Math.round((rnd() * 2 - 1) * t.span));
       const dir = (rnd() < (0.5 - cont / 100 * 0.35)) ? -1 : 1;
       const step = cont ? (mag * dir) : Math.round((rnd() * 2 - 1) * t.span);
-      let k = _nearer(from + step, mem, prox);
+      let k = _nearer(from + step, mem2, prox);
       // GRAVITY IS NOT PORTED, and that is a MODEL difference rather than an
       // omission: v1's motif walks a chromatic-ish space and gravity pulls a
       // stray note onto a chord tone, whereas v2 picks by INDEX into the
@@ -988,10 +1006,13 @@
       // tone and there is nothing to pull. Written, measured as a literal
       // no-op, and removed: a control that cannot do anything is worse than an
       // absent one.
-      if (mem) mem.prev = k;
+      if (mem2) mem2.prev = k;
       const i4 = ((k % N) + N) % N, oct = Math.floor(k / N);
-      part._deg = k; part._oct = oct;
+      // the articulation helpers (slide, ornament) read ONE degree — the lead
+      // line's, exactly as before lines existed
+      if (vi === 0) { part._deg = k; part._oct = oct; }
       out.push(base + set.ivs[i4] + 12 * oct);
+      }
       return out;
     }
     // 'chord' — `voices` tones of the current harmony, stacking octaves on wrap.
@@ -4489,6 +4510,16 @@
             : '') +
           sel(L, 'part.pitch.kind', 'Pitch', t.kind, PITCH_OPTS, 'kind:live;voice:synth') +
           st(L, 'part.pitch.voices', 'Voices', t.voices, 1, 9, 'notes per onset', 'kind:live;voice:synth;pitch:chord,stack') +
+          // LINES, not "Voices" — divergent behaviour, divergent label. Voices
+          // are notes of ONE chord struck together; lines are separate melodies
+          // that wander independently, which is the only way a Roll plays more
+          // than one note at a time under its own steam (Harmony duplicates the
+          // one line at a fixed interval — parallel, never independent). Its own
+          // FIELD too: `pitch.voices` is backfilled to 3 on every pitch object,
+          // so reading that here would thicken every rolled part ever saved.
+          st(L, 'part.pitch.lines', 'Lines', (t.lines | 0) || 1, 1, 6,
+             'independent melodies at once — 1 is a single line',
+             'kind:live;voice:synth;pitch:walk,chance') +
 
           st(L, 'part.pitch.degree', 'Note', t.degree, 1, 12, 'source tone', 'kind:live;voice:synth;pitch:fixed,stack,walk,series') +
           sl(L, 'part.pitch.roam', 'Roam', num(t.roam, 0), 0, 100, 'how often the Note wanders — replays per take',

@@ -1129,10 +1129,19 @@ const ok = (name, cond, detail) => {
     // PHONE HEAD: two deliberate rows — [title ... ✕] then the trio — and the
     // family labels sit ABOVE their chips (the gutter scattered the wrap).
     const head = document.querySelector('.v2-pop-head');
-    const rT = head.querySelector('.v2-pop-title').getBoundingClientRect();
+    // PHONE HEAD, restated: the section tabs WRAP to two rows —
+    // [Instrument Content Pitch Shape] then [Mix FX · Reg ± · ✕] — with the
+    // per-part trio below both. Measured off the TABS, not `.v2-pop-title`:
+    // that box is `display: contents` on a phone (which is what lets Mix and
+    // FX share a row with their siblings), so its rect is zero.
+    const tabsH = [...head.querySelectorAll('.v2-gototab')];
+    const rT = tabsH[0].getBoundingClientRect();
+    const rL = tabsH[tabsH.length - 1].getBoundingClientRect();
     const rC = head.querySelector('.v2-pop-close').getBoundingClientRect();
     const rP = head.querySelector('.v2-pop-pair').getBoundingClientRect();
-    const phoneHead = Math.abs(rT.top - rC.top) < rT.height && rP.top >= rT.bottom - 4 &&
+    const phoneHead = rL.top >= rT.bottom - 4 &&                    // it wrapped
+      Math.abs(rC.top - rL.top) < rL.height + 10 &&                 // ✕ on the tabs' last row
+      rP.top >= rL.bottom - 4 &&                                    // trio below both
       head.scrollWidth - head.clientWidth === 0;
     // tapping a family chip shows its row and lands on its first tab
     [...strip.querySelectorAll('.v2-fambtn')].find(x => /time/i.test(x.textContent)).click(); await wait(200);
@@ -5213,12 +5222,34 @@ const ok = (name, cond, detail) => {
     // line, nothing clipped, and the ✕ still beside them.
     const tbs = [...document.querySelectorAll('.v2-gototab')];
     const rects = tbs.map((t) => t.getBoundingClientRect());
-    o.oneRow = new Set(rects.map((r) => Math.round(r.top))).size === 1;
-    o.equal = new Set(rects.map((r) => Math.round(r.width))).size === 1;
+    // AT MOST TWO ROWS, and every tab in a row the same width as its
+    // neighbours. Six on ONE row wrapped every label onto two lines on a phone
+    // and read as cut off, so the phone splits 4 + 2 and shares row two with
+    // Register and the ✕ — hence "equal WITHIN a row" rather than overall.
+    const byRow = {};
+    rects.forEach((r, i) => { const k = Math.round(r.top); (byRow[k] = byRow[k] || []).push(Math.round(r.width)); });
+    const rowKeys = Object.keys(byRow).map(Number).sort((a, b) => a - b);
+    o.tabRows = rowKeys.length;
+    // EQUAL ON THE FIRST ROW, which is the one that fills. Row two is Mix and
+    // FX sized to their TEXT on purpose, leaving that row's width for the
+    // Register stepper and the ✕ — so "equal everywhere" is the wrong claim
+    // and failed on a correct layout.
+    o.equal = new Set(byRow[rowKeys[0]]).size === 1;
+    // …and when it wraps, row one spans the head rather than leaving a gap
+    const hd0 = document.querySelector('.v2-pop-head');
+    const cs0 = getComputedStyle(hd0);
+    const inner = hd0.clientWidth - parseFloat(cs0.paddingLeft) - parseFloat(cs0.paddingRight);
+    const r1 = rects.filter((r) => Math.round(r.top) === rowKeys[0]);
+    o.row1Fill = +((Math.max(...r1.map((r) => r.right)) - Math.min(...r1.map((r) => r.left))) / inner).toFixed(2);
+    o.fills = o.tabRows === 1 || o.row1Fill >= 0.9;
     o.clipped = tbs.filter((t) => t.scrollWidth > t.clientWidth + 1).length;
     o.tall = Math.min(...rects.map((r) => Math.round(r.height)));
+    o.allSix = tbs.length === 6 && rects.every((r) => r.width > 0 && r.height > 0);
+    // the ✕ sits on the tabs' LAST row, wherever that falls
     const xb = document.querySelector('.v2-pop-close');
-    o.closeBeside = !!xb && Math.abs(xb.getBoundingClientRect().top - rects[0].top) < rects[0].height;
+    const lastTop = rowKeys[rowKeys.length - 1];
+    o.closeBeside = !!xb &&
+      Math.abs(xb.getBoundingClientRect().top - lastTop) < 44;
     // ASSERT WHAT ONLY A REAL NAVIGATION PRODUCES. Reading the select's own
     // value back after setting it proves nothing — it is the same element,
     // still holding what was just assigned, and the FIRST version of this
@@ -5254,11 +5285,12 @@ const ok = (name, cond, detail) => {
     nav.opts.join(',') === 'Instrument,Content,Pitch,Shape,Mix,FX' &&
     nav.start === 'Instrument' && nav.hops.every((x) => x.ok) && nav.oneSheet === 1,
     JSON.stringify(nav.hops.filter((x) => !x.ok)) + ' opts=' + nav.opts.length);
-  ok('…and all six sections are visible at once, filling one row beside the ✕',
-    nav.oneRow && nav.equal && nav.clipped === 0 && nav.tall >= 30 &&
-    nav.closeBeside && nav.headOverflow === 0,
-    JSON.stringify({ oneRow: nav.oneRow, equal: nav.equal, clipped: nav.clipped,
-      tall: nav.tall, closeBeside: nav.closeBeside, over: nav.headOverflow }));
+  ok('…and all six sections are visible at once — one or two full rows, beside the ✕',
+    nav.allSix && nav.tabRows >= 1 && nav.tabRows <= 2 && nav.equal && nav.fills &&
+    nav.clipped === 0 && nav.tall >= 30 && nav.closeBeside && nav.headOverflow === 0,
+    JSON.stringify({ allSix: nav.allSix, tabRows: nav.tabRows, equal: nav.equal,
+      fills: nav.fills, row1Fill: nav.row1Fill, clipped: nav.clipped, tall: nav.tall,
+      closeBeside: nav.closeBeside, over: nav.headOverflow }));
   // NOT a second body-return check — "closing the sheet returns its rows to the
   // group" already covers that and has teeth (poison-verified). This asserts
   // only that the hops leave the card's groups intact (six since the Rhythm

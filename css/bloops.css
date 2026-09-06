@@ -11413,13 +11413,31 @@
        scattered the wrapped ones. */
     @media (max-width: 540px) {
       .v2-pop-head { row-gap: 8px; }
-      /* the tab row and the ✕ still share line one — six chips at ~48px plus
-         a 44px close fits 390px, and giving the tabs their own line would cost
-         a whole row of a sheet whose height is the scarce thing on a phone. */
-      .v2-pop-head .v2-pop-title { order: 0; }
-      .v2-pop-head .v2-pop-close { order: 1; margin-left: 0; flex: 0 0 auto; }
-      .v2-pop-head .v2-gototab { padding: 6px 1px; font-size: 0.62rem; }
-      .v2-pop-head .v2-pop-pair, .v2-pop-head .v2-pop-xtra { order: 2; flex: 1 0 100%; }
+      /* TWO DELIBERATE ROWS on a phone: [Instrument Content Pitch Shape] then
+         [Mix FX · Reg ± · ✕]. Six chips plus a close on ONE line left every
+         label wrapping to two lines and the sheet reading as cut off.
+         `display: contents` dissolves the tablist box so its chips become flex
+         items of the HEAD itself — that is what lets Mix and FX share a row
+         with Register and the close, which are their siblings, not their
+         children. */
+      /* COMPOUND — this media block sits EARLIER in the file than the base
+         `.v2-pop-head` rule, so an equal-specificity gap here loses the
+         cascade and stays 10px, which left room for only THREE chips per row
+         (measured). The documented single-class trap. */
+      .v2-layer .v2-pop-head { gap: 6px; }
+      .v2-pop-head .v2-pop-title { display: contents; }
+      /* FOUR PER ROW: basis 25% minus its share of the gaps, so the fifth chip
+         cannot fit and wraps. */
+      .v2-pop-head .v2-gototab {
+        order: 0; flex: 1 1 calc(25% - 5px); padding: 6px 2px; font-size: 0.68rem;
+      }
+      /* …and the last two size to their text, leaving row two's width for the
+         Register stepper and the ✕ rather than squeezing them out. */
+      .v2-pop-head .v2-gototab:nth-child(n+5) { flex: 0 1 auto; padding: 6px 12px; }
+      .v2-pop-head .v2-pop-xtra { order: 0; flex: 0 1 auto; margin-left: 0; gap: 5px; }
+      .v2-pop-head .v2-pop-close { order: 0; margin-left: auto; flex: 0 0 auto; }
+      /* the per-part trio and the summary keep their own full-width lines below */
+      .v2-pop-head .v2-pop-pair { order: 2; flex: 1 0 100%; }
       .v2-pop-head .v2-grpsum { order: 3; }
       /* every pixel of sheet height goes to the PANE on a phone: taller
          sheet, shorter drawing (it stays readable at 60px). Compound

@@ -180,7 +180,7 @@
   // half-migrated layer can never reach the emitter in a shape it can't handle.
   // Unknown enum values fall back rather than throwing — the v1 doctrine.
   const RHYTHMS = new Set(['pulse', 'euclid', 'chance', 'drawn']);
-  const PITCHES = new Set(['chord', 'fixed', 'stack', 'walk', 'anchor', 'series', 'chance', 'drawn']);
+  const PITCHES = new Set(['chord', 'fixed', 'stack', 'walk', 'anchor', 'series', 'chance', 'drawn', 'mixed']);
   const KINDS = new Set(['live', 'recorded']);
 
   function normLayer(L, i) {
@@ -427,6 +427,12 @@
       const t = (p.pitch && typeof p.pitch === 'object') ? p.pitch : (p.pitch = {});
       t.kind = PITCHES.has(t.kind) ? t.kind : 'chord';
       t.voices = clamp((t.voices | 0) || 3, 1, 9);         // how many notes per onset
+      // MIXED's balance — how often an onset is a chord rather than one note.
+      // Absent = an even split, and it is pruned there, so the field only
+      // exists once it has been moved.
+      if (t.kind === 'mixed' && Number.isFinite(t.mix) && (t.mix | 0) !== 50) {
+        t.mix = clamp(t.mix | 0, 0, 100);
+      } else { delete t.mix; }
       // LINES is absent-by-default and PRUNED at 1, so an untouched project
       // stores nothing and plays exactly as it did.
       if ((t.lines | 0) > 1) t.lines = clamp(t.lines | 0, 2, 6); else delete t.lines;
@@ -876,6 +882,26 @@
         out.push(base + set.ivs[idx] + 12 * oct);
       }
       return out;
+    }
+    // MIXED — some onsets are a chord, the rest a single note. It does not
+    // re-implement either: a seeded draw picks which of the two this onset is
+    // and the existing branch does the work, so every knob that shapes a chord
+    // or a walk keeps shaping it here. The draw is ISOLATED (its own
+    // `_ambSeededRand` on the onset), so it shifts no other layer's stream and
+    // replays identically for a take.
+    if (t.kind === 'mixed') {
+      const chance = clamp(Number.isFinite(t.mix) ? t.mix : 50, 0, 100);
+      const rndM = (typeof _ambSeededRand === 'function')
+        ? _ambSeededRand((((ctxSeed | 0) + 1) * 2654435761) >>> 0) : Math.random;
+      const asChord = rndM() * 100 < chance;
+      const shim = Object.assign({}, part, {
+        pitch: Object.assign({}, t, { kind: asChord ? 'chord' : 'walk' }),
+      });
+      const got = pitchesBase(shim, E, cfg, at, reg, ctxSeed, idx, mem, L);
+      // the articulation helpers read these off the PART, and the shim is a
+      // copy — carry back what the delegate resolved
+      part._deg = shim._deg; part._oct = shim._oct;
+      return got;
     }
     if (t.kind === 'anchor') {
       // THE PEDAL POINT. One note held against the whole progression, scored by
@@ -2787,6 +2813,22 @@
     try { E.getCfg(); } catch (e) {}
     return { onsets: p.rhythm.n, octaves: p.pitch.octaves };
   }
+  // MIXED — chords AND single notes from one part, which none of the other
+  // three doors can express: Sustained is always a chord, Arpeggio and Roll
+  // always one note at a time. A euclid rhythm so the placement is musical,
+  // and the balance left at its default even split.
+  function makeMixedFn(E, L) {
+    if (!L || !L.part) return null;
+    const p = L.part;
+    p.kind = 'live';
+    if (matSwitch(L, 'mixed')) { try { E.getCfg(); } catch (e) {} return { kept: true }; }
+    p.bars = partBarsFor(E, L) || p.bars || 2;
+    p.rhythm = { kind: 'euclid', steps: 8, pulses: 5, rotate: 0 };
+    p.pitch = { kind: 'mixed', voices: 3, degree: 1, span: 3 };
+    p.shape = Object.assign({}, p.shape, { lenRatio: 70 });
+    try { E.getCfg(); } catch (e) {}
+    return { onsets: p.rhythm.pulses, bars: p.bars };
+  }
   // HOW LONG THE PART THIS RECORD PLAYS UNDER IS. A maker that rolls its own
   // length throws away the fit: a record filed under a 5-bar part came back
   // 1 bar and then repeated five times under it (reported). Live generation
@@ -2798,8 +2840,9 @@
     try {
       const cfg = E && E.getCfg && E.getCfg(); if (!cfg) return 0;
       const pr = cfg.prog; if (!pr || !pr.on) return 0;
+      const rgs = (typeof _ambGridRanges === 'function') ? (_ambGridRanges(cfg) || []) : [];
       const pi = Number.isFinite(L.partFor) ? (L.partFor | 0)
-        : ((typeof _ambCurPartNow === 'function') ? _ambCurPartNow(E, cfg) : -1);
+        : ((typeof _ambCurPartNow === 'function' && rgs.length) ? _ambCurPartNow(E, cfg, rgs) : -1);
       if (!(pi >= 0) || typeof _ambLenPartBars !== 'function') return 0;
       const b = +_ambLenPartBars(cfg, pi);
       return (b > 0 && b <= 64) ? b : 0;
@@ -2967,6 +3010,7 @@
     applyBarsMode: applyBarsModeFn,
     v1Seeds: V1_SEEDS,
     makeSustain: makeSustainFn,
+    makeMixed: makeMixedFn,
     makeArp: makeArpFn,
     previewKill: previewKill,
     previewing: previewing,
@@ -3039,14 +3083,30 @@
           const rgs = (typeof _ambGridRanges === 'function') ? (_ambGridRanges(cfg) || []) : [];
           if (rgs.length) {
             const pis = {};
+            const fitTo = (rec, pi) => {
+              let b = 0; try { b = +_ambLenPartBars(cfg, pi); } catch (e) {}
+              if (!(b > 0)) return;
+              const want = clamp((typeof _ambSnapBars === 'function')
+                ? _ambSnapBars(b) : Math.round(b * 48) / 48, 0.125, 64);
+              if (Math.abs((+rec.bars || 0) - want) > 1e-6) rec.bars = want;
+            };
             rgs.forEach((rg) => {
               const pi = (rg && Number.isFinite(rg.pi)) ? (rg.pi | 0) : 0;
               pis[String(pi)] = 1;
-              if (pi === (L.partFor | 0) || L.parts[String(pi)]) return;
+              // A RECORD FILED UNDER A PART IS THAT PART'S LENGTH, ALWAYS.
+              // Fitting only at materialisation left the EDITED record at
+              // whatever length it had when per-part was engaged — a 1-bar
+              // cycle under a 5-bar part, repeating five times, with the ruler
+              // showing one bar (reported twice). Saying "⇄ Sync to fit it"
+              // was answering a question the app should not have been asking:
+              // choosing Per part IS the statement that this content is for
+              // that part. Reconciled on every normalize, like every other
+              // arrangement-derived length here, so growing the changes moves
+              // it with no invalidation and no event.
+              if (pi === (L.partFor | 0)) { fitTo(L.part, pi); return; }
+              if (L.parts[String(pi)]) { fitTo(L.parts[String(pi)], pi); return; }
               const rec = JSON.parse(JSON.stringify(L.partAll));
-              let b = 0; try { b = +_ambLenPartBars(cfg, pi); } catch (e) {}
-              if (b > 0) rec.bars = clamp((typeof _ambSnapBars === 'function')
-                ? _ambSnapBars(b) : Math.round(b * 48) / 48, 0.125, 64);
+              fitTo(rec, pi);
               L.parts[String(pi)] = rec;
             });
             Object.keys(L.parts).forEach((k) => { if (!pis[k]) delete L.parts[k]; });
@@ -3432,8 +3492,9 @@
         // ctx, and a bare reference would throw into the catch and read as a
         // silent no-op (the mistake this file has now made twice).
         const cfg2 = cfg;
+        const rgs2 = (typeof _ambGridRanges === 'function') ? (_ambGridRanges(cfg2) || []) : [];
         const pi2 = Number.isFinite(L.partFor) ? (L.partFor | 0)
-          : ((typeof _ambCurPartNow === 'function') ? _ambCurPartNow(E, cfg2) : -1);
+          : ((typeof _ambCurPartNow === 'function' && rgs2.length) ? _ambCurPartNow(E, cfg2, rgs2) : -1);
         const pb = (pi2 >= 0 && typeof _ambLenPartBars === 'function')
           ? +_ambLenPartBars(cfg2, pi2) : 0;
         const cb = +(L.part && L.part.bars) || 0;
@@ -3505,6 +3566,10 @@
       // read "⟳ Arpeggio — an arpeggio — …".
                          : 'the chord, one note at a time';
     }
+    if (t.kind === 'mixed') {
+      const mixc = Number.isFinite(t.mix) ? (t.mix | 0) : 50;
+      return 'chords and single notes, about ' + mixc + '% chords';
+    }
     if (t.kind === 'anchor') return 'one note held under the changes';
     if (onsets <= 1) {
       return per > 1 ? ('one held chord of ' + per + ' notes') : 'one held note';
@@ -3552,6 +3617,8 @@
       pt = 'one note held under the whole progression';
     } else if (t.kind === 'drawn') {
       pt = 'the notes you drew';
+    } else if (t.kind === 'mixed') {
+      pt = 'each onset either a ' + Math.max(1, n(t.voices)) + '-note chord or one walked note';
     } else if (t.kind === 'chance') {
       pt = 'a note picked at random from the source';
     } else {
@@ -3574,7 +3641,8 @@
     // the LOCKED lines below state the contract themselves, so they take the
     // description WITHOUT the re-rolled/plays-exactly tail
     const rules = rulesText(L, true), rulesBare = rulesText(L, false);
-    const M = { sustain: '\u25ac Sustained', arp: '\u27f3 Arpeggio', roll: '\ud83c\udfb2 Roll' };
+    const M = { sustain: '\u25ac Sustained', arp: '\u27f3 Arpeggio', roll: '\ud83c\udfb2 Roll',
+                mixed: '\u2687 Mixed' };
     const v1 = (p.mat && p.mat.indexOf('v1:') === 0) ? p.mat.slice(3) : null;
     // NO STAMP IS NOT NO MATERIAL. A part made before provenance existed — or
     // assembled by hand on the knobs — still IS one of these materials, and
@@ -3583,7 +3651,8 @@
     // when present (it records the actual press); the shape answers otherwise,
     // which is what keeps "what Material are we using" answerable on every
     // part rather than only the ones made since yesterday.
-    const guess = (t.kind === 'series') ? 'arp'
+    const guess = (t.kind === 'mixed') ? 'mixed'
+      : (t.kind === 'series') ? 'arp'
       : ((r.kind === 'pulse' || !r.kind) && (r.n | 0) <= 1 && (t.kind === 'chord' || t.kind === 'stack')) ? 'sustain'
       : (t.kind === 'walk') ? 'roll' : null;
     const mat = M[p.mat] ? p.mat : (v1 ? null : guess);
@@ -3613,7 +3682,8 @@
     // — a lit chip alone cannot tell those apart.
     const lk = L.part.kind === 'recorded';
     const map = { compose: '.v2-compose', adopt: '.v2-adopt',
-      sustain: '.v2-mkpart[data-mk="sustain"]', arp: '.v2-mkpart[data-mk="arp"]', roll: '.v2-rollrun' };
+      sustain: '.v2-mkpart[data-mk="sustain"]', arp: '.v2-mkpart[data-mk="arp"]',
+      mixed: '.v2-mkpart[data-mk="mixed"]', roll: '.v2-rollrun' };
     Object.keys(map).forEach((k) => {
       const b2 = card.querySelector(map[k]);
       if (b2) { b2.classList.toggle('on', pv2.key === k); b2.classList.toggle('v2-matlock', lk); }
@@ -4111,7 +4181,8 @@
   const PITCH_OPTS = [['drawn', 'Drawn — a note per step'], ['chord', 'Chord — the harmony'], ['stack', 'Stack — from a note'],
                       ['fixed', 'Fixed — one note'], ['series', 'Series — sweep the chord'],
                       ['anchor', 'Anchor — a pedal point'], ['walk', 'Walk — a line'],
-                      ['chance', 'Chance — any tone']];
+                      ['chance', 'Chance — any tone'],
+                      ['mixed', 'Mixed — chords and single notes']];
 
   // v1's FULL voice list — every built-in, every SAMPLE, every ensemble and every
   // Design patch. `_ambToneOptions()` returns an ARRAY of `{value,label}`, and
@@ -4512,6 +4583,11 @@
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="sustain" title="A held note or chord, one per cycle — the pad shape, made by the rules as it plays. Voices makes it mono or poly.">\u25ac Sustained<span class="v2-matsub">one held chord</span></button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="arp" title="Sweep the chord one tone per onset — an arpeggio. The rhythm grid sets the speed.">\u27f3 Arpeggio<span class="v2-matsub">the chord, one note at a time</span></button>' +
               '<button type="button" class="ambient-seg v2-rollrun" title="A rolled, syncopated line, made by the rules. 🎲 above the drawing rolls another one.">\ud83c\udfb2 Roll<span class="v2-matsub">a run of single notes</span></button>' +
+              // THE FOURTH DOOR. The other three each commit to one texture —
+              // Sustained is always a chord, Arpeggio and Roll always one note
+              // at a time — so "both" was inexpressible without hand-building
+              // it on the knobs.
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="mixed" title="Some onsets play a chord, the rest a single note — the balance is the Mix knob in Pitch.">\u2687 Mixed<span class="v2-matsub">chords and single notes</span></button>' +
               '</span>' +
             '</span>' +
             '<span class="ambient-hint v2-notecount"></span></div>' +
@@ -4645,6 +4721,14 @@
             ? '<div data-v2tab="Bars" class="ambient-ctrl" data-v2when="clock:bars"><label>Bars</label>' +
               '<span class="ambient-loop-badge">\u27f2 ' + (L.lenSync.passes | 0) + ' \u00d7 part</span>' +
               '<span class="ambient-hint">' + esc(String(p.bars)) + ' bars \u2014 set by the loop binding (\u22ef menu)</span></div>'
+            // …and PER-PART is the same situation: a record filed under a part
+            // IS that part's length, reconciled on every normalize, so the
+            // stepper would lose to it exactly the same way.
+            : Number.isFinite(L.partFor)
+            ? '<div data-v2tab="Bars" class="ambient-ctrl" data-v2when="clock:bars"><label>Bars</label>' +
+              '<span class="ambient-loop-badge">\u25eb ' + esc(String(p.bars)) + ' \u00d7 part</span>' +
+              '<span class="ambient-hint">this content is for one part, so its length is that ' +
+              'part\u2019s \u2014 switch to \u25ad Everywhere to set it yourself</span></div>'
             : st(L, 'part.bars', 'Bars', p.bars, 1, 32, 'per cycle', 'clock:bars')) +
           // WHAT CHANGING BARS DOES. Onsets are per CYCLE, so more bars spreads
           // the same notes further apart — good for a pad, wrong for a riff you
@@ -4733,7 +4817,12 @@
                 '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth"')
             : '') +
           sel(L, 'part.pitch.kind', 'Pitch', t.kind, PITCH_OPTS, 'kind:live;voice:synth') +
-          st(L, 'part.pitch.voices', 'Voices', t.voices, 1, 9, 'notes per onset', 'kind:live;voice:synth;pitch:chord,stack') +
+          st(L, 'part.pitch.voices', 'Voices', t.voices, 1, 9, 'notes per onset', 'kind:live;voice:synth;pitch:chord,stack,mixed') +
+          // THE BALANCE for Mixed — how often an onset is a chord rather than
+          // a single note. Its own tab so it is findable, gated to the one
+          // kind that reads it.
+          sl(L, 'part.pitch.mix', 'Mix', (Number.isFinite(t.mix) ? t.mix : 50), 0, 100,
+             'all single notes \u2192 all chords', 'kind:live;voice:synth;pitch:mixed') +
           // LINES, not "Voices" — divergent behaviour, divergent label. Voices
           // are notes of ONE chord struck together; lines are separate melodies
           // that wander independently, which is the only way a Roll plays more
@@ -6879,7 +6968,9 @@
             }
             return;
           }
-          const info = (which === 'arp') ? V2.makeArp(E, ctx.L) : V2.makeSustain(E, ctx.L, true);
+          const info = (which === 'arp') ? V2.makeArp(E, ctx.L)
+            : (which === 'mixed') ? V2.makeMixed(E, ctx.L)
+            : V2.makeSustain(E, ctx.L, true);
           if (!info) return;
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
           h._sig = ''; V2.render(E);
@@ -6897,6 +6988,8 @@
             if (typeof showToast === 'function') {
               showToast(which === 'arp'
                 ? 'Arpeggio — sweeping the chord, ' + info.onsets + ' per cycle over ' + info.octaves + ' octaves.'
+                : which === 'mixed'
+                ? 'Mixed — some onsets play a chord, the rest a single note. Pitch \u25b8 Mix sets the balance.'
                 : 'Sustained — ' + info.voices + ' voice' + (info.voices === 1 ? '' : 's') +
                   ' held for the cycle. Set Voices to 1 for a single note.', { ms: 4000 });
             }

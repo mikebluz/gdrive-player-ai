@@ -923,8 +923,18 @@ const ok = (name, cond, detail) => {
     L().part.pitch.kind = 'fixed'; L().part.pitch.degree = 3; E.getCfg();
     await pick('0');
     const Lb = L();
-    o.roundTrip = Lb.partFor === 0 && Lb.part.bars === 3 && (Lb.part.pitch.degree | 0) === 1 &&
-      Lb.parts && Lb.parts['1'] && Lb.parts['1'].bars === 2 && (Lb.parts['1'].pitch.degree | 0) === 3;
+    // RESTATED: it pinned the hand-set BARS through the round trip, and a
+    // per-part record's length is no longer its own — it is reconciled to the
+    // part it is filed under on every normalize (a 1-bar cycle under a 5-bar
+    // part, repeating five times, was the reported bug). What round-trips is
+    // everything the record still OWNS; the length is asserted against the
+    // PART instead, which is the stronger claim now.
+    const partBars = (pi) => { try { return +_ambLenPartBars(E.getCfg(), pi); } catch (e) { return -1; } };
+    o.roundTrip = Lb.partFor === 0 && (Lb.part.pitch.degree | 0) === 1 &&
+      Lb.parts && Lb.parts['1'] && (Lb.parts['1'].pitch.degree | 0) === 3 &&
+      (Lb.part.rhythm.n | 0) === 2 && (Lb.parts['1'].rhythm.n | 0) === 7;
+    o.barsFollowPart = Math.abs(Lb.part.bars - partBars(0)) < 1e-6 &&
+      Math.abs(Lb.parts['1'].bars - partBars(1)) < 1e-6;
     o.readsAfter = sel().selectedOptions[0].text;
     // EMIT BY TIME — the Verse window plays the edited record (2 onsets), the
     // Chorus window the filed one (7). COUNTS, not pitches: the chords differ
@@ -952,7 +962,7 @@ const ok = (name, cond, detail) => {
     ppRun.modeOn && ppRun.selEnabled && ppRun.label === '\u21c4 Sync' && ppRun.readsAfter === 'Verse',
     JSON.stringify(ppRun).slice(0, 260));
   ok('choosing a part files the old record and restores its own — bars, pitch, everything',
-    ppRun.roundTrip, JSON.stringify(ppRun).slice(0, 240));
+    ppRun.roundTrip && ppRun.barsFollowPart, JSON.stringify(ppRun).slice(0, 240));
   ok('the EMITTER plays each arrangement part its own content, resolved by time (2 vs 7 onsets)',
     ppRun.emitDiffers && ppRun.emitStable,
     JSON.stringify({ verse: ppRun.verse, chorus: ppRun.chorus }));
@@ -1451,7 +1461,11 @@ const ok = (name, cond, detail) => {
     return o;
   });
   ok('choosing a Material is SILENT, the row says which KIND each option is, and the phone grid is finger-sized',
-    matKindRun.silent && /Written:2/.test(matKindRun.groups) && /Generated:3/.test(matKindRun.groups) &&
+    // Generated is FOUR doors since ⚇ Mixed — the other three each commit to
+    // one texture, so chords-and-single-notes had no door. The contract is the
+    // two labelled clusters, not the count, but the count is worth pinning so
+    // a door cannot vanish unnoticed.
+    matKindRun.silent && /Written:2/.test(matKindRun.groups) && /Generated:4/.test(matKindRun.groups) &&
     matKindRun.cellBig && matKindRun.hit && matKindRun.toggles && matKindRun.overflow === 0,
     JSON.stringify(matKindRun));
   // COMPOSING TAKES THE SHEET. The docked Grid editor is a full instrument
@@ -1618,6 +1632,161 @@ const ok = (name, cond, detail) => {
     card().classList.remove('collapsed');
     return o;
   });
+  // A RECORD FILED UNDER A PART IS THAT PART'S LENGTH — reconciled on EVERY
+  // normalize, not only when the record is first materialised. Fitting once
+  // left the edited record at whatever length it had when per-part was
+  // engaged: a 1-bar cycle under a 5-bar part, repeating five times, with the
+  // ruler showing one bar (reported twice). The RESIZE is the whole check —
+  // an engage-time fit passes any test that never moves the part afterwards.
+  const fitRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const c0 = E.getCfg();
+    const svProg = JSON.stringify(c0.prog || null), svPart = JSON.stringify(L().part);
+    const svFor = L().partFor, svAll = L().partAll ? JSON.stringify(L().partAll) : null;
+    c0.prog = { on: true,
+      chords: [0, 2, 4, 5, 7, 9, 11, 1].map((r) => ({ root: r, intervals: [0, 4, 7] })),
+      parts: [{ name: 'A', len: 5 }, { name: 'B', len: 3 }] };
+    E.getCfg();
+    L().on = true; L().present = true; L().part.kind = 'live'; L().part.bars = 1;
+    E.getCfg();
+    const o = { everywhere: L().part.bars };          // untouched while shared
+    window._v2.partSelect(E, L(), 0); E.getCfg();
+    o.onEngage = L().part.bars;                        // fitted to part A
+    o.filed = L().parts && L().parts['1'] ? L().parts['1'].bars : null;
+    // NOW MOVE THE PART. This is what the engage-time fit cannot answer.
+    E.getCfg().prog.parts[0].len = 4; E.getCfg().prog.parts[1].len = 4;
+    E.getCfg();
+    o.afterResize = L().part.bars;
+    o.filedAfter = L().parts && L().parts['1'] ? L().parts['1'].bars : null;
+    // …and a hand-set length loses to the reconciler, so the Bars control has
+    // to say it is bound rather than sit there losing (the dead-control rule)
+    L().part.bars = 2; E.getCfg();
+    o.handSetLoses = L().part.bars === o.afterResize;
+    const h = document.getElementById('bloom-v2-layers');
+    if (h) h._sig = ''; window._v2.render(E); await wait(260);
+    const card = document.querySelector('.v2-layer');
+    card.classList.remove('collapsed');
+    card.querySelector('[data-v2grp="Content"]').click(); await wait(320);
+    const bt = document.querySelector('.v2-pop-tabs [data-tab="Bars"]');
+    if (bt) bt.click(); await wait(180);
+    const badge = document.querySelector('.v2-pop-pane .ambient-loop-badge');
+    o.saysBound = !!badge && /\u00d7 part/.test(badge.textContent) &&
+      !document.querySelector('.v2-pop-pane [data-f="part.bars"]');
+    const cl = document.querySelector('.v2-pop-close'); if (cl) cl.click(); await wait(180);
+    // disengaging brings the ICE back at ITS own length, not the part's
+    window._v2.partSelect(E, L(), null); E.getCfg();
+    o.iceBack = L().part.bars;
+    try {
+      const c9 = E.getCfg();
+      if (svProg === 'null') delete c9.prog; else c9.prog = JSON.parse(svProg);
+      L().part = JSON.parse(svPart);
+      if (Number.isFinite(svFor)) L().partFor = svFor; else delete L().partFor;
+      if (svAll) L().partAll = JSON.parse(svAll); else delete L().partAll;
+      if (L().parts) delete L().parts;
+      E.getCfg();
+      if (h) h._sig = ''; window._v2.render(E); await wait(200);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) { o.err = e.message; }
+    return o;
+  });
+  ok('a per-part record IS its part\'s length, and follows when the part is resized',
+    fitRun.everywhere === 1 && fitRun.onEngage === 5 && fitRun.filed === 3 &&
+    fitRun.afterResize === 4 && fitRun.filedAfter === 4 && fitRun.handSetLoses &&
+    fitRun.saysBound && fitRun.iceBack === 1,
+    JSON.stringify(fitRun));
+
+  // ⚇ MIXED — the fourth Generated door: chords AND single notes from one
+  // part. The other three each commit to one texture (Sustained is always a
+  // chord, Arpeggio and Roll always one note at a time), so "both" could only
+  // be hand-built on the knobs.
+  const mixRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const sv = JSON.stringify(L().part), c0 = E.getCfg();
+    const svKey = [c0.keyOn, c0.keyRoot, c0.keyScale, c0.keyFollow];
+    c0.keyOn = true; c0.keyRoot = 0; c0.keyScale = 'major'; c0.keyFollow = false;
+    E.getCfg();
+    L().on = true; L().present = true;
+    const h = document.getElementById('bloom-v2-layers');
+    if (h) h._sig = ''; window._v2.render(E); await wait(260);
+    const card = document.querySelector('.v2-layer');
+    card.classList.remove('collapsed');
+    const o = {};
+    const btn = card.querySelector('.v2-mkpart[data-mk="mixed"]');
+    o.door = !!btn;
+    o.sub = btn ? (btn.querySelector('.v2-matsub') || {}).textContent : '';
+    if (btn) btn.click();
+    await wait(450);
+    document.querySelector('.v2-layer').classList.remove('collapsed');
+    o.kind = L().part.pitch.kind; o.mat = L().part.mat;
+    // BOTH TEXTURES, and the balance actually moves them. Counted as onsets
+    // carrying more than one note vs exactly one — which is the whole claim.
+    const tally = (mix) => {
+      if (mix != null) L().part.pitch.mix = mix;
+      E.getCfg();
+      let ch = 0, one = 0;
+      for (let k = 0; k < 12; k++) {
+        const cyc = (L().part.bars || 2) * 2;
+        const ns = window._v2.withEdit(() => window._v2.notesFor(L(),
+          { E, cfg: E.getCfg(), key: 'v2:' + L().id, cycleStart: k * cyc, cycleSec: cyc })) || [];
+        const by = {};
+        ns.forEach((n) => { const t = (Math.round(n.at * 1000) / 1000).toFixed(3);
+          (by[t] = by[t] || []).push(1); });
+        Object.values(by).forEach((g) => { if (g.length > 1) ch++; else one++; });
+      }
+      return { ch, one };
+    };
+    const mid = tally(null);
+    o.both = mid.ch > 0 && mid.one > 0;
+    const none = tally(0); o.allSingle = none.ch === 0 && none.one > 0;
+    const all = tally(100); o.allChords = all.one === 0 && all.ch > 0;
+    // seeded, so a take replays — never `Math.random` in the emit path
+    L().part.pitch.mix = 50; E.getCfg();
+    const shot = () => JSON.stringify(window._v2.withEdit(() => window._v2.notesFor(L(),
+      { E, cfg: E.getCfg(), key: 'v2:' + L().id, cycleStart: 0, cycleSec: 4 })));
+    o.deterministic = shot() === shot();
+    // the balance has a REACHABLE control (rule 6) …
+    // RE-QUERY: the Mixed press re-rendered the host, so the `card` captured
+    // above is detached and clicking its buttons does nothing (the documented
+    // trap — it read as "there is no Mix tab" on a card that has one).
+    const card2 = document.querySelector('.v2-layer');
+    card2.classList.remove('collapsed');
+    card2.querySelector('[data-v2grp="Pitch"]').click(); await wait(320);
+    // ITS OWN TAB — a row of an inactive tab is hidden by design, so the tab
+    // has to be opened before the rect means anything (measured 0 otherwise).
+    const mtab = document.querySelector('.v2-pop-tabs [data-tab="Mix"]');
+    o.hasTab = !!mtab;
+    if (mtab) mtab.click(); await wait(200);
+    const mixEl = document.querySelector('.v2-pop-pane [data-f="part.pitch.mix"]');
+    o.hasControl = !!mixEl && mixEl.getBoundingClientRect().height > 0;
+    let cl = document.querySelector('.v2-pop-close'); if (cl) cl.click(); await wait(180);
+    // …and it is GATED to the kind that reads it — a slider that does nothing
+    // on every other pitch rule is the dead-control class
+    L().part.pitch = { kind: 'chord', voices: 3 }; E.getCfg();
+    if (h) h._sig = ''; window._v2.render(E); await wait(240);
+    const c2 = document.querySelector('.v2-layer'); c2.classList.remove('collapsed');
+    c2.querySelector('[data-v2grp="Pitch"]').click(); await wait(320);
+    const gtab = document.querySelector('.v2-pop-tabs [data-tab="Mix"]');
+    if (gtab) { gtab.click(); await wait(180); }
+    const gone = document.querySelector('.v2-pop-pane [data-f="part.pitch.mix"]');
+    o.gatedOff = !gtab || !gone || gone.getBoundingClientRect().height === 0;
+    cl = document.querySelector('.v2-pop-close'); if (cl) cl.click(); await wait(180);
+    try {
+      const c9 = E.getCfg();
+      c9.keyOn = svKey[0]; c9.keyRoot = svKey[1]; c9.keyScale = svKey[2]; c9.keyFollow = svKey[3];
+      L().part = JSON.parse(sv); E.getCfg();
+      if (h) h._sig = ''; window._v2.render(E); await wait(200);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) {}
+    return o;
+  });
+  ok('⚇ Mixed makes chords AND single notes, and the balance moves them',
+    mixRun.door && /chords and single/.test(mixRun.sub) && mixRun.kind === 'mixed' &&
+    mixRun.mat === 'mixed' && mixRun.both && mixRun.allSingle && mixRun.allChords &&
+    mixRun.deterministic && mixRun.hasTab && mixRun.hasControl && mixRun.gatedOff,
+    JSON.stringify(mixRun));
+
   // WHAT IT WILL GENERATE, IN WORDS. The hint read `euclid 5 of 8 · walk ·
   // take 15` — every term correct, and no answer to "what is this going to
   // generate", reported as the whole thing being opaque.
@@ -1852,7 +2021,11 @@ const ok = (name, cond, detail) => {
       parts: [{ name: 'A', len: 5 }, { name: 'B', len: 2 }] };
     E.getCfg();
     L().on = true; L().present = true; L().part.kind = 'live';
-    L().partFor = 0; L().partAll = JSON.parse(JSON.stringify(L().part));
+    // EVERYWHERE, deliberately: a PER-PART record is now reconciled to its
+    // part's length on every normalize, so it can never be shorter than the
+    // part and this clause could not fire. Shared content under a longer part
+    // is exactly the case it is for.
+    delete L().partFor; delete L().partAll; delete L().parts;
     const say = async () => {
       const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
       window._v2.render(E); await wait(300);

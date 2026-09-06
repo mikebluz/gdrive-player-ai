@@ -652,7 +652,16 @@
         const root = _ambSrcRootPc(src);
         const ivs = _ambScaleIntervals(src);
         if (Number.isFinite(root) && Array.isArray(ivs) && ivs.length) {
-          return { root: ((root % 12) + 12) % 12, ivs: ivs.slice() };
+          // IS EVERY TONE A CHORD TONE? A chord / wrap / progression source is
+          // a POOL — its tones are already the harmony, so consecutive picks
+          // are chord tones. A SCALE is not: consecutive picks are adjacent
+          // steps, i.e. a cluster. v1 draws exactly this line (`chordPool` in
+          // `_ambPickVoicing`) and it is the difference between "Chord"
+          // playing C-E-G and playing C-D-E.
+          let pool = false;
+          try { const nt = _ambAsNotes(src); pool = !!nt && (nt.type === 'chord' ||
+            nt.type === 'wrap' || nt.type === 'prog'); } catch (e) {}
+          return { root: ((root % 12) + 12) % 12, ivs: ivs.slice(), pool };
         }
       } catch (e) {}
       finally { try { _ambProgStepOverride = prev; } catch (e) {} }
@@ -663,7 +672,7 @@
         const step = _ambProgStepAt(E, at);
         const ch = _ambProgSoundAt(E, prog, step);
         if (ch && Number.isFinite(ch.root) && Array.isArray(ch.intervals) && ch.intervals.length) {
-          return { root: ((ch.root % 12) + 12) % 12, ivs: ch.intervals.slice() };
+          return { root: ((ch.root % 12) + 12) % 12, ivs: ch.intervals.slice(), pool: true };
         }
       }
     } catch (e) {}
@@ -1041,10 +1050,34 @@
         }
       } catch (e) { out.length = 0; }
     }
+    // A CHORD IS BUILT IN THIRDS, and which "third" means what depends on the
+    // SET. Consecutive tones are right for a chord POOL (a chord, a wrap, a
+    // progression — every tone is already a chord tone, so tone 0,1,2 IS the
+    // triad) and wrong for a SCALE, where they are adjacent steps: measured
+    // through the real control in C major, Pitch -> Chord played C4+D4+E4, a
+    // cluster, and was byte-identical to Stack, so the two kinds could not be
+    // told apart. Over a scale it steps by TWO degrees (root/3rd/5th/7th) —
+    // v1's own `[0,2,4,6]` chord degrees. Over a CHROMATIC set there is no
+    // scale to step through (every other semitone is a whole-tone cluster), so
+    // it stacks thirds by INTERVAL, alternating 4 and 3 semitones, which is
+    // what "chord" can mean when nothing has declared a key.
     const want = clamp(t.voices | 0, 1, 9);
-    for (let i = 0; i < want; i++) {
-      const idx = i % N, oct = Math.floor(i / N);
-      out.push(base + set.ivs[idx] + 12 * oct);
+    if (set.pool) {
+      for (let i = 0; i < want; i++) {
+        const idx = i % N, oct = Math.floor(i / N);
+        out.push(base + set.ivs[idx] + 12 * oct);
+      }
+    } else if (N >= 12) {
+      let off = 0;
+      for (let i = 0; i < want; i++) {
+        out.push(base + off);
+        off += (i % 2 === 0) ? 4 : 3;
+      }
+    } else {
+      for (let i = 0; i < want; i++) {
+        const k = i * 2, idx = k % N, oct = Math.floor(k / N);
+        out.push(base + set.ivs[idx] + 12 * oct);
+      }
     }
     return out;
   }

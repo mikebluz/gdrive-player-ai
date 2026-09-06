@@ -1587,6 +1587,71 @@ const ok = (name, cond, detail) => {
     card().classList.remove('collapsed');
     return o;
   });
+  // POLYPHONY — a chord must be a CHORD. Measured through the real control in
+  // C major, Pitch → Chord played C+D+E: adjacent scale steps, a cluster, and
+  // byte-identical to Stack, so the two kinds could not be told apart.
+  const chordRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const sv = JSON.stringify(L().part), c0 = E.getCfg();
+    const svKey = [c0.keyOn, c0.keyRoot, c0.keyScale, c0.keyFollow];
+    const svProg = JSON.stringify(c0.prog || null);
+    const setKey = (on, root, scale) => { const c = E.getCfg();
+      c.keyOn = on; c.keyRoot = root; c.keyScale = scale; c.keyFollow = false; E.getCfg(); };
+    const midi = (mut) => {
+      eval(mut); E.getCfg();
+      const ns = window._v2.withEdit(() => window._v2.notesFor(L(),
+        { E, cfg: E.getCfg(), key: 'v2:' + L().id, cycleStart: 100, cycleSec: 4 })) || [];
+      const by = {};
+      ns.forEach((n) => { const k = (Math.round(n.at * 1000) / 1000).toFixed(3);
+        (by[k] = by[k] || []).push(Math.round(69 + 12 * Math.log2(n.freq / 440))); });
+      // INTERVALS from the lowest note, not absolute pitches: "a chord is
+      // built in thirds" is a claim about the SHAPE, and pinning absolute midi
+      // makes it fail whenever the layer's register differs (it read an octave
+      // high on the first run, with every interval correct).
+      const g = (Object.values(by)[0] || []).slice().sort((a, b) => a - b);
+      return g.map((m) => m - g[0]).join(',');
+    };
+    const base = "L().part.kind='live';L().instrument.voice='synth';" +
+      "L().part.rhythm={kind:'pulse',steps:2};L().part.bars=1";
+    const o = {};
+    if (E.getCfg().prog) E.getCfg().prog.on = false;
+    setKey(true, 0, 'major');
+    o.cmaj3 = midi(base + ";L().part.pitch={kind:'chord',voices:3}");
+    o.cmaj4 = midi(base + ";L().part.pitch={kind:'chord',voices:4}");
+    o.stack3 = midi(base + ";L().part.pitch={kind:'stack',voices:3}");
+    setKey(true, 9, 'minor');
+    o.amin3 = midi(base + ";L().part.pitch={kind:'chord',voices:3}");
+    setKey(false, 0, 'major');
+    o.chrom3 = midi(base + ";L().part.pitch={kind:'chord',voices:3}");
+    // A POOL is unchanged — a progression's own tones ARE the harmony, so
+    // consecutive picks are already chord tones. This is the other side of the
+    // line and the reason the source/progression checks above never moved.
+    const cP = E.getCfg();
+    cP.prog = { on: true, chords: [{ root: 0, intervals: [0, 3, 7] }] };
+    E.getCfg();
+    o.pool3 = midi(base + ";L().part.pitch={kind:'chord',voices:3}");
+    // restore the world
+    try {
+      const c9 = E.getCfg();
+      if (svProg === 'null') delete c9.prog; else c9.prog = JSON.parse(svProg);
+      c9.keyOn = svKey[0]; c9.keyRoot = svKey[1]; c9.keyScale = svKey[2]; c9.keyFollow = svKey[3];
+      L().part = JSON.parse(sv); E.getCfg();
+      const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+      window._v2.render(E); await wait(200);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) { o.err = e.message; }
+    return o;
+  });
+  ok('Chord builds a CHORD — thirds over a scale, the pool\'s own tones over a progression',
+    chordRun.cmaj3 === '0,4,7' &&             // a major triad
+    chordRun.cmaj4 === '0,4,7,11' &&          // …and its major 7th
+    chordRun.amin3 === '0,3,7' &&             // A C E — diatonic, so MINOR
+    chordRun.chrom3 === '0,4,7' &&            // no key: thirds by interval
+    chordRun.pool3 === '0,3,7' &&             // the progression's OWN Cm tones
+    chordRun.stack3 === '0,2,4',              // Stack keeps its own meaning
+    JSON.stringify(chordRun));
+
   // 🔍 FIND A CONTROL — an index over the card. Every control is filed with
   // the thing it modifies, which is the right filing and a poor index: the
   // variance family alone spans four tabs in three sheets, and "where are all
@@ -4478,9 +4543,15 @@ const ok = (name, cond, detail) => {
   ok('v1\'s own Key control still renders and round-trips after the extraction',
     kov.v1Present && kov.v1Rows && kov.v1Stored === '{"mode":"key","root":0,"scale":"major"}' && kov.v1Cleared,
     JSON.stringify({ p: kov.v1Present, r: kov.v1Rows, s: kov.v1Stored, c: kov.v1Cleared }));
+  // The digits moved when Chord started building in THIRDS over a scale
+  // (C+E+G, not the adjacent C+D+E it used to play) — the contract is
+  // unchanged, so this is restated on it: an own key plays a DIFFERENT chord
+  // and Inherit puts the first one back. The relationship is asserted as well
+  // as the pitches, so the next pitch change fails on meaning, not on digits.
   ok('a layer with its own key plays in it, and reverts on Inherit',
-    kov.inherited === '60,62,64' && kov.withOwnKey === '69,71,73' &&
-    kov.cleared && kov.backToInherit === '60,62,64', JSON.stringify(kov));
+    kov.inherited === '60,64,67' && kov.withOwnKey === '69,73,76' &&
+    kov.withOwnKey !== kov.inherited &&
+    kov.cleared && kov.backToInherit === kov.inherited, JSON.stringify(kov));
 
   // ---- strum ---------------------------------------------------------------
   const strum = await page.evaluate(async () => {
@@ -4512,13 +4583,19 @@ const ok = (name, cond, detail) => {
     out.pruned = E.getCfg().layers[0].strum === undefined;
     return out;
   });
+  // TIME is what these two are about; the pitches are the fixture, and they
+  // moved with Chord's thirds (C E G B, a maj7, where it used to be the
+  // adjacent C D E F). Pinned as "four distinct pitches" plus the digits, so a
+  // chord collapsing to one note still fails here.
+  const CHORD4 = '60,64,67,71';
   ok('with no strum a chord is STRUCK — every note at the same instant',
-    strum.struckT === '0,0,0,0' && strum.struckM === '60,62,64,65', JSON.stringify(strum));
+    strum.struckT === '0,0,0,0' && strum.struckM === CHORD4 &&
+    new Set(strum.struckM.split(',')).size === 4, JSON.stringify(strum));
   ok('strum spreads the chord across a fraction of the span',
-    strum.strumT === '0,0.333,0.667,1' && strum.strumM === '60,62,64,65', JSON.stringify(strum));
+    strum.strumT === '0,0.333,0.667,1' && strum.strumM === CHORD4, JSON.stringify(strum));
   // v1's own `_ambStrumOrder` — fidelity 0 is low→high every time, higher wanders.
   ok('strum order wanders with fidelity, and only then',
-    strum.wanderM !== '60,62,64,65' && strum.pruned, JSON.stringify(strum));
+    strum.wanderM !== CHORD4 && strum.pruned, JSON.stringify(strum));
 
   // ---- speed, and what a recorded part does when the chords move -----------
   const spd = await page.evaluate(async () => {
@@ -4769,8 +4846,12 @@ const ok = (name, cond, detail) => {
   });
   ok('a v2 layer has a Notes source control, built by v1\'s own builder',
     src.hasBtn && src.h === 25, JSON.stringify(src));
+  // C-E-G, not the C-D-E this pinned before: over a SCALE, Chord steps in
+  // thirds. The two checks below are untouched, and that is the tell that the
+  // line is drawn in the right place — a chord source and a progression are
+  // POOLS whose consecutive tones already are the harmony, so they never moved.
   ok('with no source it follows the area key, and says so',
-    /Scale/.test(src.scaleLabel) && src.scalePitches === '261.6,293.7,329.6', JSON.stringify(src));
+    /Scale/.test(src.scaleLabel) && src.scalePitches === '261.6,329.6,392', JSON.stringify(src));
   // The whole point: a layer that does NOT play the area harmony.
   ok('an explicit chord source changes what the layer plays',
     /chord/i.test(src.chordLabel) && src.chordPitches === '440,523.3,659.3', JSON.stringify(src));

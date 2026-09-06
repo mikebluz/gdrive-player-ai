@@ -1657,6 +1657,15 @@ const ok = (name, cond, detail) => {
         (pairs[g[0]] = pairs[g[0]] || new Set()).add(g[1]);
       });
     }
+    // A RE-ROLL KEEPS THE TEXTURE. The roll replaces the pitch object
+    // wholesale, so Lines and Harmony were wiped by every press — the only way
+    // to keep polyphony was to never re-roll again.
+    L().part.pitch.harm = [{ deg: 2 }]; E.getCfg();
+    window._v2.rollRun(E, L()); E.getCfg();
+    o.keptOverRoll = (L().part.pitch.lines | 0) === 3 &&
+      Array.isArray(L().part.pitch.harm) && L().part.pitch.harm.length === 1 &&
+      L().part.pitch.kind === 'walk';
+    delete L().part.pitch.harm; L().part.pitch.lines = 3; E.getCfg();
     o.pairGroups = Object.keys(pairs).length;
     o.maxPartners = Object.values(pairs).reduce((m, st) => Math.max(m, st.size), 0);
     o.independent = o.maxPartners >= 2;
@@ -1700,7 +1709,7 @@ const ok = (name, cond, detail) => {
   });
   ok('a Roll can play several INDEPENDENT lines — and Harmony is the parallel one',
     linesRun.plain === 1 && linesRun.prunedAt1 && linesRun.three === 3 &&
-    linesRun.independent && linesRun.pairGroups >= 2 &&
+    linesRun.independent && linesRun.pairGroups >= 2 && linesRun.keptOverRoll &&
     linesRun.harmMax === 2 && linesRun.harmParallel &&
     linesRun.tabOnWalk && linesRun.ctlOnWalk && !linesRun.tabOnChord,
     JSON.stringify(linesRun));

@@ -2739,6 +2739,9 @@
     // a riff, and it leaves a Pattern grid the user can edit afterwards.
     const pulses = Math.max(2, Math.min(steps - 1, Math.round(steps * (0.3 + Math.random() * 0.35))));
     p.rhythm = { kind: 'euclid', steps, pulses, rotate: _ri(0, steps - 1), n: 1 };
+    const keepLines = (p.pitch && (p.pitch.lines | 0) > 1) ? (p.pitch.lines | 0) : 0;
+    const keepHarm = (p.pitch && Array.isArray(p.pitch.harm) && p.pitch.harm.length)
+      ? p.pitch.harm.slice() : null;
     p.pitch = {
       kind: 'walk',
       degree: _pick([1, 1, 1, 2, 3]),
@@ -2747,6 +2750,13 @@
       stutter: _pick([0, 0, 10, 25, 40]),
       dir: 'up',
     };
+    // HOW MANY NOTES AT ONCE IS NOT PART OF THE SHAPE — it is a standing choice
+    // about texture, like the instrument, which a roll also leaves alone. The
+    // pitch object is REPLACED wholesale above, so without carrying these two
+    // across, setting Lines 3 and pressing 🎲 again put it back to one line
+    // (measured) — the only way to keep polyphony was to never re-roll.
+    if (keepLines) p.pitch.lines = keepLines;
+    if (keepHarm) p.pitch.harm = keepHarm;
     p.shape = Object.assign({}, p.shape, { lenRatio: _ri(45, 95) });
     try { E.getCfg(); } catch (e) {}   // normalize coerces/prunes what we wrote
     return { steps, pulses, bars: p.bars, span: p.pitch.span };

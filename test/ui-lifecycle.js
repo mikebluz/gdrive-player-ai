@@ -751,10 +751,16 @@ const ok = (name, cond, detail) => {
     window._v2.render(E); await wait(200); card().classList.remove('collapsed');
     return { roll, sus, seed, locked };
   });
+  // RESTATED: it pinned the JARGON hint (`euclid 5 of 8 · walk · take 1`),
+  // which was every term correct and no answer to "what will this generate" —
+  // reported as the whole thing being opaque. Same contract (the hint NAMES
+  // THE RULES, and the take), now asserted on the words a reader gets.
   ok('the Material door that made the content is LIT, and the hint names the rules',
-    /Roll/.test(provRun.roll.on) && /euclid .* take \d/.test(provRun.roll.hint) &&
+    /Roll/.test(provRun.roll.on) &&
+    /hits spread evenly over \d+ steps/.test(provRun.roll.hint) &&
+    /take \d/.test(provRun.roll.hint) &&
     /Sustained/.test(provRun.sus.on) && !/Roll/.test(provRun.sus.on) &&
-    /pulse .* chord/.test(provRun.sus.hint),
+    /notes? of the chord/.test(provRun.sus.hint),
     JSON.stringify(provRun).slice(0, 240));
   ok('a v1 seed lights its chip, and a locked take still says what it was a take OF',
     /Bass/.test(provRun.seed.on) && /seeded like a v1 bass/.test(provRun.seed.hint) &&
@@ -1367,7 +1373,8 @@ const ok = (name, cond, detail) => {
     card().querySelector('.v2-rollrun').click(); await wait(420);
     card().classList.remove('collapsed');
     const lit = card().querySelector('.v2-notesrow .ambient-seg.on');
-    const o = { label: lit.textContent.trim(), mark: getComputedStyle(lit, '::before').content };
+    const face = (b) => ((b && b.childNodes[0] && b.childNodes[0].nodeValue) || '').trim();
+    const o = { label: face(lit), mark: getComputedStyle(lit, '::before').content };
     const sig = JSON.stringify(L().part);
     card().querySelector('.v2-rollrun').click(); await wait(400);
     card().classList.remove('collapsed');
@@ -1378,7 +1385,7 @@ const ok = (name, cond, detail) => {
     card().querySelector('.v2-mkpart[data-mk="sustain"]').click(); await wait(400);
     card().classList.remove('collapsed');
     o.modeNoop = JSON.stringify(L().part) === sig2;
-    o.stillLit = card().querySelector('.v2-notesrow .ambient-seg.on').textContent.trim();
+    o.stillLit = face(card().querySelector('.v2-notesrow .ambient-seg.on'));
     try { L().part = JSON.parse(svPart); } catch (e) {}
     delete L().part.mat; delete L().part.mem; E.getCfg();
     if (h) h._sig = ''; window._v2.render(E); await wait(200);
@@ -1611,6 +1618,93 @@ const ok = (name, cond, detail) => {
     card().classList.remove('collapsed');
     return o;
   });
+  // WHAT IT WILL GENERATE, IN WORDS. The hint read `euclid 5 of 8 · walk ·
+  // take 15` — every term correct, and no answer to "what is this going to
+  // generate", reported as the whole thing being opaque.
+  const saysRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const sv = JSON.stringify(L().part);
+    L().on = true; L().present = true;
+    const h = document.getElementById('bloom-v2-layers');
+    const say = async (mut) => {
+      eval(mut); E.getCfg();
+      if (h) h._sig = ''; window._v2.render(E); await wait(260);
+      const card = document.querySelector('.v2-layer');
+      card.classList.remove('collapsed');
+      const el = card.querySelector('.v2-notecount');
+      return el ? el.textContent.trim() : '';
+    };
+    const o = {};
+    o.roll = await say("L().part.kind='live';L().part.bars=4;L().part.mat='roll';" +
+      "L().part.rhythm={kind:'euclid',steps:8,pulses:5,rotate:2};" +
+      "L().part.pitch={kind:'walk',degree:1,span:3,stutter:25}");
+    o.pad = await say("L().part.rhythm={kind:'pulse',n:1};L().part.mat='sustain';" +
+      "L().part.pitch={kind:'chord',voices:3};L().part.bars=2");
+    o.arp = await say("L().part.rhythm={kind:'pulse',n:8};L().part.mat='arp';" +
+      "L().part.pitch={kind:'series',dir:'up',span:2}");
+    o.locked = await say("L().part.kind='recorded';L().part.made='take';" +
+      "L().part.notes=[{t:0,midi:60,dur:0.2},{t:0.5,midi:64,dur:0.2}]");
+    // NO JARGON: the shapes' internal names must not reach the reader. `walk`
+    // and `euclid` are field values, not English.
+    const jargon = /\b(euclid|walk|series|stack|anchor|chance|pulse ×|lenRatio)\b/;
+    o.noJargon = !jargon.test(o.roll) && !jargon.test(o.pad) && !jargon.test(o.arp);
+    // it says the two things a single drawing cannot show
+    o.saysReRolled = /Re-rolled every cycle/.test(o.roll) && /take \d/.test(o.roll);
+    o.saysExact = /plays these notes|Plays exactly these notes/.test(o.locked);
+    // …and never both at once
+    o.notBoth = !(/Re-rolled/.test(o.locked) && /Plays exactly/.test(o.locked));
+    o.saysCounts = /5 hits/.test(o.roll) && /over 8 steps/.test(o.roll) &&
+      /over 4 bars/.test(o.roll);
+    o.saysPitch = /wandering up to 3 notes/.test(o.roll) && /3 notes of the chord/.test(o.pad) &&
+      /sweeping the chord up/.test(o.arp);
+    // THE SHAPE PHRASE — what KIND of content this is, which is the question
+    // ("is Roll a run of notes? a sustained chord? several chords?"). The
+    // parameter text above passes with or without it, which is why both
+    // poisons went green until this was added.
+    o.shapes = /a run of single notes/.test(o.roll) && /one held chord of 3 notes/.test(o.pad) &&
+      /the chord, one note at a time/.test(o.arp);
+    // the long form must WRAP inside the sheet, never clip (UI rule 2)
+    const card = document.querySelector('.v2-layer');
+    card.querySelector('[data-v2grp="Content"]').click(); await wait(320);
+    const el = document.querySelector('.v2-pop-pane .v2-notecount') ||
+               document.querySelector('.v2-notecount');
+    if (el) {
+      const r = el.getBoundingClientRect(), pr = el.parentElement.getBoundingClientRect();
+      o.wraps = !(el.scrollWidth > el.clientWidth + 1) && r.right <= pr.right + 1 &&
+        getComputedStyle(el).whiteSpace === 'normal';
+    }
+    // EVERY MATERIAL DOOR SAYS WHAT IT MAKES, ON THE BUTTON. The explanation
+    // used to be a `title`, which a phone NEVER SHOWS — so on the device these
+    // were five bare words and the question had no answer at the point of the
+    // decision. Asserted as VISIBLE text, not merely present markup.
+    o.subs = [...document.querySelectorAll('.v2-notesrow .ambient-seg')].map((b2) => {
+      const sub = b2.querySelector('.v2-matsub');
+      const r2 = sub && sub.getBoundingClientRect();
+      return { face: ((b2.childNodes[0] && b2.childNodes[0].nodeValue) || '').trim(),
+        sub: sub ? sub.textContent.trim() : '',
+        vis: !!(r2 && r2.width > 0 && r2.height > 0),
+        clipped: !!(sub && sub.scrollWidth > sub.clientWidth + 1) };
+    });
+    o.everyDoorExplains = o.subs.length >= 5 &&
+      o.subs.every((x) => x.sub.length > 3 && x.vis && !x.clipped);
+    const ml = document.querySelector('.v2-matmodel');
+    o.modelStated = !!ml && /RHYTHM/.test(ml.textContent) && /PITCH RULE/.test(ml.textContent) &&
+      ml.getBoundingClientRect().height > 0;
+    const cl = document.querySelector('.v2-pop-close'); if (cl) cl.click(); await wait(180);
+    try {
+      L().part = JSON.parse(sv); E.getCfg();
+      if (h) h._sig = ''; window._v2.render(E); await wait(200);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) {}
+    return o;
+  });
+  ok('the card says what it will GENERATE — the shape first, then the rules, and each door explains itself',
+    saysRun.noJargon && saysRun.saysReRolled && saysRun.saysExact && saysRun.notBoth &&
+    saysRun.saysCounts && saysRun.saysPitch && saysRun.shapes &&
+    saysRun.everyDoorExplains && saysRun.modelStated && saysRun.wraps,
+    JSON.stringify(saysRun));
+
   // 🎲 ROLL MIRRORS THE PART, AND A PRESS ON THE LIT CHIP BUILDS NOTHING.
   // It rolled its own length, so a record filed under a 5-bar part came back
   // 1 bar and then repeated five times under it; and the already-in-this-mode
@@ -1635,8 +1729,10 @@ const ok = (name, cond, detail) => {
     const h = document.getElementById('bloom-v2-layers');
     const draw = async () => { if (h) h._sig = ''; window._v2.render(E); await wait(280);
       document.querySelector('.v2-layer').classList.remove('collapsed'); };
-    const rollBtn = () => [...document.querySelectorAll('.v2-layer button')]
-      .find((x) => x.textContent.trim() === '\ud83c\udfb2 Roll');
+    // BY CLASS, never by text: the button carries a subtitle now, so its
+    // textContent is "🎲 Rolla run of single notes" and an equality match
+    // silently finds nothing (it took down the whole run once).
+    const rollBtn = () => document.querySelector('.v2-layer .v2-rollrun');
     const shape = () => JSON.stringify({ b: L().part.bars, r: L().part.rhythm, p: L().part.pitch });
     const o = {};
     await draw();
@@ -2293,9 +2389,11 @@ const ok = (name, cond, detail) => {
     tfRun.present && tfRun.liveRefuses && tfRun.reversedMoved && tfRun.involution &&
     tfRun.shuffleKeepsRhythm && tfRun.stamped && tfRun.scoped && tfRun.replaceAsks,
     JSON.stringify(tfRun));
+  // `series` was the FIELD VALUE leaking into the hint; the sentence says what
+  // it does instead, which is the same claim made readable.
   ok('a part with NO provenance stamp still lights the material its rules ARE',
     /Roll/.test(inferRun.legacy.on) && /Roll · LOCKED/.test(inferRun.legacy.hint) &&
-    /Arpeggio/.test(inferRun.hand.on) && /series/.test(inferRun.hand.hint) &&
+    /Arpeggio/.test(inferRun.hand.on) && /one note at a time|sweeping the chord/.test(inferRun.hand.hint) &&
     inferRun.lockMark === 'none' && inferRun.liveMark === 'none' &&
     /Unlock/.test(inferRun.lockCap) && /Lock this take/.test(inferRun.liveCap),
     JSON.stringify(inferRun).slice(0, 240));

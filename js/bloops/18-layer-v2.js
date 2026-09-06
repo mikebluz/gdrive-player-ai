@@ -3473,13 +3473,107 @@
   // (rhythm kind × pitch kind × the take that seeds the draws), because "what
   // rules made this" should be readable off the card, not deduced from three
   // sheets.
+  // WHAT THE RULES WILL PRODUCE, IN WORDS. The hint used to read
+  // `euclid 5 of 8 · walk · take 15` — every term correct and none of it an
+  // answer to "what is this going to generate", which was reported as the
+  // whole thing being opaque. Same facts, said as a sentence: how many notes
+  // and where, what the line does with pitch, over how long, and — the part
+  // people cannot see from a single drawing — whether it is re-rolled every
+  // cycle or plays exactly what is shown.
+  // WHAT KIND OF CONTENT THIS IS, in one phrase. The model is two orthogonal
+  // axes — RHYTHM decides WHEN notes happen, PITCH decides WHAT each onset
+  // plays — and nothing said so, so "I select Roll; is that a run of notes? a
+  // sustained chord? several chords?" had no answer anywhere on the card. The
+  // shape falls straight out of the two: onsets per cycle × notes per onset.
+  function shapeOf(L) {
+    const p = L.part, r = p.rhythm || {}, t = p.pitch || {};
+    const n = (x) => (x | 0);
+    if (p.kind === 'recorded') return 'the notes below';
+    if (t.kind === 'drawn' || r.kind === 'drawn') return 'the pattern you drew';
+    // how many notes land together on one onset
+    const stacked = (t.kind === 'chord' || t.kind === 'stack') ? Math.max(1, n(t.voices)) : 1;
+    const lines = Math.max(1, n(t.lines) || 1);
+    const harm = (t.harm || []).length;
+    const per = stacked * lines + harm * lines;
+    // how many onsets there are in a cycle
+    const onsets = (r.kind === 'euclid') ? n(r.pulses)
+      : (r.kind === 'chance') ? Math.max(1, Math.round(n(r.steps) * n(r.chance) / 100))
+      : Math.max(1, n(r.n));
+    if (t.kind === 'series') {
+      return onsets <= 1 ? 'one chord tone per cycle'
+      // NOT "an arpeggio": the door above already says Arpeggio, so the line
+      // read "⟳ Arpeggio — an arpeggio — …".
+                         : 'the chord, one note at a time';
+    }
+    if (t.kind === 'anchor') return 'one note held under the changes';
+    if (onsets <= 1) {
+      return per > 1 ? ('one held chord of ' + per + ' notes') : 'one held note';
+    }
+    if (per > 1) {
+      return lines > 1 ? (lines + ' lines moving independently')
+                       : ('a chord of ' + per + ' notes on every onset');
+    }
+    return 'a run of single notes';
+  }
+  function rulesText(L, withTail) {
+    const p = L.part, r = p.rhythm || {}, t = p.pitch || {};
+    const n = (x) => (x | 0);
+    const plural = (k, w) => k + ' ' + w + (k === 1 ? '' : 's');
+    let rh;
+    if (r.kind === 'euclid') {
+      rh = plural(n(r.pulses), 'hit') + ' spread evenly over ' + n(r.steps) + ' steps';
+      if (n(r.rotate)) rh += ', shifted ' + n(r.rotate);
+      if (n(r.voices) > 1) rh += ', ' + n(r.voices) + ' voices';
+    } else if (r.kind === 'drawn') {
+      rh = 'the pattern you drew';
+    } else if (r.kind === 'chance') {
+      rh = 'each of ' + n(r.steps) + ' steps has a ' + n(r.chance) + '% chance of sounding';
+    } else {
+      const k = Math.max(1, n(r.n));
+      rh = k === 1 ? 'one onset, held' : (plural(k, 'onset') + ', spread evenly');
+    }
+    const lines = Math.max(1, n(t.lines) || 1);
+    const harm = (t.harm || []).length;
+    let pt;
+    if (t.kind === 'walk') {
+      pt = (lines > 1 ? lines + ' lines each wandering' : 'a line wandering') +
+           ' up to ' + Math.max(1, n(t.span)) + ' notes of the scale';
+      if (n(t.stutter)) pt += ', repeating a note ' + n(t.stutter) + '% of the time';
+    } else if (t.kind === 'chord') {
+      pt = plural(Math.max(1, n(t.voices)), 'note') + ' of the chord';
+    } else if (t.kind === 'stack') {
+      pt = plural(Math.max(1, n(t.voices)), 'tone') + ' stacked from note ' + Math.max(1, n(t.degree));
+    } else if (t.kind === 'series') {
+      pt = 'sweeping the chord ' + (t.dir === 'down' ? 'down' : t.dir === 'updown' ? 'up and down' : 'up') +
+           ' over ' + Math.max(1, n(t.span) || 1) + ' octaves';
+    } else if (t.kind === 'fixed') {
+      pt = 'one note — number ' + Math.max(1, n(t.degree)) + ' of the source';
+    } else if (t.kind === 'anchor') {
+      pt = 'one note held under the whole progression';
+    } else if (t.kind === 'drawn') {
+      pt = 'the notes you drew';
+    } else if (t.kind === 'chance') {
+      pt = 'a note picked at random from the source';
+    } else {
+      pt = String(t.kind || 'chord');
+    }
+    if (harm) pt += ', plus ' + plural(harm, 'harmony part');
+    const bars = +p.bars || 1;
+    const len = 'over ' + (Math.round(bars * 100) / 100) + ' bar' + (bars === 1 ? '' : 's');
+    // THE PART NOBODY CAN SEE IN ONE DRAWING: a live part is re-rolled, so the
+    // picture is one take of many; a recorded one is exactly what plays.
+    const tail = (withTail === false) ? ''
+      : (p.kind === 'recorded') ? '. Plays exactly these notes.'
+      : '. Re-rolled every cycle — the drawing is take ' + (V2.takeOf(L) + 1) + '.';
+    // LEAD WITH THE SHAPE. The parameters answer "how", and only after you
+    // already know WHAT is being made.
+    return shapeOf(L) + ' \u2014 ' + rh + ', ' + pt + ', ' + len + tail;
+  }
   function matProv(L) {
     const p = L.part, r = p.rhythm || {}, t = p.pitch || {};
-    const rules = (r.kind === 'euclid' ? ('euclid ' + (r.pulses | 0) + ' of ' + (r.steps | 0))
-      : r.kind === 'drawn' ? 'a drawn pattern'
-      : r.kind === 'chance' ? ('chance ' + (r.chance | 0) + '%')
-      : ('pulse \u00d7' + (r.n | 0))) +
-      ' \u00b7 ' + (t.kind || 'chord') + ' \u00b7 take ' + (V2.takeOf(L) + 1);
+    // the LOCKED lines below state the contract themselves, so they take the
+    // description WITHOUT the re-rolled/plays-exactly tail
+    const rules = rulesText(L, true), rulesBare = rulesText(L, false);
     const M = { sustain: '\u25ac Sustained', arp: '\u27f3 Arpeggio', roll: '\ud83c\udfb2 Roll' };
     const v1 = (p.mat && p.mat.indexOf('v1:') === 0) ? p.mat.slice(3) : null;
     // NO STAMP IS NOT NO MATERIAL. A part made before provenance existed — or
@@ -3503,13 +3597,13 @@
         // clear what Material we're using" was a fair report of the first cut
         const LOCKED = ' \u00b7 LOCKED \u2014 plays these notes, not the rules \u00b7 ';
         if (v1) return { key: p.mat, txt: 'v1 ' + v1 + ' seed' + LOCKED + nn };
-        if (mat) return { key: mat, txt: M[mat] + LOCKED + rules + ' \u00b7 ' + nn };
-        return { key: null, txt: 'a take' + LOCKED + rules + ' \u00b7 ' + nn };
+        if (mat) return { key: mat, txt: M[mat] + LOCKED + rulesBare + ' \u00b7 ' + nn };
+        return { key: null, txt: 'a take' + LOCKED + rulesBare + ' \u00b7 ' + nn };
       }
       return { key: null, txt: nn + ' held' };
     }
-    if (v1) return { key: p.mat, txt: 'seeded like a v1 ' + v1 + ' \u2014 live \u00b7 ' + rules };
-    if (mat) return { key: mat, txt: M[mat] + ' \u2014 live \u00b7 ' + rules };
+    if (v1) return { key: p.mat, txt: 'seeded like a v1 ' + v1 + ' \u2014 ' + rules };
+    if (mat) return { key: mat, txt: M[mat] + ' \u2014 ' + rules };
     return { key: null, txt: 'live \u00b7 ' + rules };
   }
   function matSync(card, L) {
@@ -4398,16 +4492,26 @@
           // button as unreachable.
           '<div data-v2tab="Material" class="ambient-ctrl v2-notesrow"><label>Material</label>' +
             '<span class="ambient-seg-row v2-matrow">' +
+              // THE MODEL, ONCE. Everything a generated part does is these two
+              // axes; without saying so, the doors below look like five
+              // unrelated buttons and the knobs behind them like a pile.
+              '<span class="ambient-hint v2-matmodel">Generated content is a RHYTHM (when notes happen) \u00d7 a PITCH RULE ' +
+                '(what each onset plays \u2014 one note, or several together).</span>' +
               '<span class="v2-matgrp"><span class="v2-matlab" title="You choose the notes — the part becomes Fixed and plays exactly those.">Written</span>' +
-              '<button type="button" class="ambient-seg v2-compose" title="Notes you draw yourself, in the composer grid. The part becomes Fixed — it plays exactly what you drew.">✎ Composed</button>' +
-              '<button type="button" class="ambient-seg v2-adopt" title="A phrase from the bank, dropped in as this part. The part becomes Fixed — it plays exactly those notes.">♪ Phrase</button>' +
+              '<button type="button" class="ambient-seg v2-compose" title="Notes you draw yourself, in the composer grid. The part becomes Fixed — it plays exactly what you drew.">\u270e Composed<span class="v2-matsub">notes you draw</span></button>' +
+              '<button type="button" class="ambient-seg v2-adopt" title="A phrase from the bank, dropped in as this part. The part becomes Fixed — it plays exactly those notes.">\u266a Phrase<span class="v2-matsub">a phrase from the bank</span></button>' +
               '</span><span class="v2-matgrp"><span class="v2-matlab" title="You choose a shape — the rules work out the notes as it plays, fresh each cycle.">Generated</span>' +
               // A LIVE door beside the three recorded ones: "where do the notes
               // come from" is the question this row answers, and "rolled" is
               // one of the answers. Press again to re-roll.
-              '<button type="button" class="ambient-seg v2-mkpart" data-mk="sustain" title="A held note or chord, one per cycle — the pad shape, made by the rules as it plays. Voices makes it mono or poly.">▬ Sustained</button>' +
-              '<button type="button" class="ambient-seg v2-mkpart" data-mk="arp" title="Sweep the chord one tone per onset — an arpeggio. The rhythm grid sets the speed.">⟳ Arpeggio</button>' +
-              '<button type="button" class="ambient-seg v2-rollrun" title="A rolled, syncopated line, made by the rules. 🎲 above the drawing rolls another one.">🎲 Roll</button>' +
+              // EACH DOOR SAYS WHAT IT MAKES, on the button. These carried the
+              // explanation in a `title`, which a phone NEVER SHOWS (the
+              // documented rule), so on the device they were three bare words
+              // and "what will Roll generate?" had no answer at the point of
+              // the decision.
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="sustain" title="A held note or chord, one per cycle — the pad shape, made by the rules as it plays. Voices makes it mono or poly.">\u25ac Sustained<span class="v2-matsub">one held chord</span></button>' +
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="arp" title="Sweep the chord one tone per onset — an arpeggio. The rhythm grid sets the speed.">\u27f3 Arpeggio<span class="v2-matsub">the chord, one note at a time</span></button>' +
+              '<button type="button" class="ambient-seg v2-rollrun" title="A rolled, syncopated line, made by the rules. 🎲 above the drawing rolls another one.">\ud83c\udfb2 Roll<span class="v2-matsub">a run of single notes</span></button>' +
               '</span>' +
             '</span>' +
             '<span class="ambient-hint v2-notecount"></span></div>' +

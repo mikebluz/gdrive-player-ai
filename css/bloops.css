@@ -14959,6 +14959,20 @@
   0%, 55% { background: rgba(159, 122, 234, 0.26); box-shadow: 0 0 0 1px #9f7aea inset; }
   100%    { background: transparent; box-shadow: none; }
 }
+/* A MATERIAL DOOR SAYS WHAT IT MAKES. The explanation used to live in a
+   `title`, which a phone never shows — so on the device these were bare
+   words. Second line, dimmer, wrapping: a button whose text is clipped names
+   nothing (the .ambient-seg-opt lesson). */
+.v2-notesrow .ambient-seg { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.v2-matsub {
+  display: block; font-size: 0.62rem; font-weight: 400; line-height: 1.15;
+  color: #7a7a9c; white-space: normal; overflow-wrap: anywhere; max-width: 15ch;
+}
+.v2-notesrow .ambient-seg.on .v2-matsub { color: #12121f; opacity: 0.75; }
+.v2-matmodel {
+  flex: 1 0 100%; margin: 0 0 6px; color: #6b6b8a; line-height: 1.35;
+  white-space: normal; overflow-wrap: anywhere;
+}
 .v2-pop-wrap { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; z-index: 10290; }
 .v2-pop-scrim { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.55); }
 /* CENTRED IN THE AREA THE USER CAN SEE, not in the raw viewport. The wrap is

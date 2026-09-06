@@ -1214,7 +1214,54 @@
         const n = p.notes[i];
         const at = cs + n.t * cyc;
         let f = midiToFreq(n.midi + tr);
-        if (hz && kc) {
+        // CHORDLOCK IS RESOLVED IN v2's OWN TERMS. It used to go through v1's
+        // `_ambLockHarmonizeFreq`, which is built for a seq unit's captured
+        // phrase and measurably mis-mapped here: over a 5-chord progression a
+        // locked take scored 8 of 16 notes in the sounding chord and put a B
+        // over an F major (pinning `_ambProgStepOverride` first, the usual
+        // suspect, changed nothing). v2 already knows the SOUNDING chord —
+        // `toneSetAt` is the same call the live path uses — so the note's
+        // DEGREE in the key it was written in is re-indexed into that chord's
+        // tones. Same trick `applyHarm` uses (`set.ivs.indexOf(pc)`), and it
+        // is in-chord by construction rather than by a snap.
+        if (hz && kc && L.harmony === 'chordlock') {
+          try {
+            // `ctx.E`, not `E` — `notesFor` takes (L, ctx) and has no engine of
+            // its own; a bare `E` threw straight into the catch below and the
+            // whole branch measured as a silent no-op identical to 'fixed'.
+            const set2 = toneSetAt(ctx.E, ctx.cfg, at, L);
+            const N2 = Math.max(1, set2.ivs.length);
+            const wIv = ((typeof SCALES !== 'undefined' && SCALES && SCALES[kc.scale]) || null);
+            const m0 = n.midi + tr;
+            const pc0 = (((m0 - (kc.root | 0)) % 12) + 12) % 12;
+            // which degree of the WRITTEN key this note was; a note outside
+            // that scale takes the nearest degree rather than being dropped
+            let deg = -1;
+            if (wIv && wIv.length) {
+              deg = wIv.indexOf(pc0);
+              if (deg < 0) {
+                let best = 0, bd = 99;
+                for (let q = 0; q < wIv.length; q++) {
+                  const d2 = Math.min(((pc0 - wIv[q]) + 12) % 12, ((wIv[q] - pc0) + 12) % 12);
+                  if (d2 < bd) { bd = d2; best = q; }
+                }
+                deg = best;
+              }
+            }
+            if (deg >= 0) {
+              // keep it in the octave it was written in: rebuild from the
+              // stored note's octave, then let the degree wrap upward
+              const oct0 = Math.floor(m0 / 12);
+              const idx2 = ((deg % N2) + N2) % N2, up = Math.floor(deg / N2);
+              let m2 = oct0 * 12 + set2.root + set2.ivs[idx2] + 12 * up;
+              while (m2 - m0 > 6) m2 -= 12;
+              while (m0 - m2 > 6) m2 += 12;
+              if (m2 > 0) f = midiToFreq(m2);
+            }
+          } catch (e) {}
+        } else if (hz && kc) {
+          // 'diatonic' still follows the KEY, which is v1's own job and which
+          // it does correctly — a section or part key change re-voices the take.
           try { f = withKeyTime(at, () => _ambLockHarmonizeFreq(L, kc, f, at)) || f; } catch (e) {}
         }
         const o = { at, freq: f, durMs: Math.round(n.dur * cyc * 1000), nidx: i };
@@ -1592,6 +1639,23 @@
       L.part.key = { root: (_ambKeyRootPc(cfg) % 12 + 12) % 12, scale: _ambKeyScaleName(cfg) || '' };
     } catch (e) { delete L.part.key; }
   }
+  // A TAKE THAT WAS FOLLOWING THE CHANGES KEEPS FOLLOWING THEM. A live part
+  // resolves every note against the chord sounding at its own onset; freezing
+  // it stores absolute pitches, and with the default 'fixed' it then plays the
+  // chords it was CAPTURED over for the rest of the piece — reported as "the
+  // part just repeats the first 2 chords, even over part 2". Measured on a
+  // 5+3-chord progression: live 20/20 notes in the sounding chord, locked
+  // 8/20. So a capture made while a progression is running defaults to
+  // following it, which is what you just heard; the Content ▸ Follows changes
+  // control sets it back to Fixed if the frozen pitches were the point.
+  // Only when the layer has no opinion yet — never overriding a stored choice.
+  function stampFollowsChanges(L, cfg) {
+    try {
+      if (L.harmony === 'fixed' || L.harmony === 'diatonic' || L.harmony === 'chordlock') return;
+      const pr = cfg && cfg.prog;
+      if (pr && pr.on && Array.isArray(pr.chords) && pr.chords.length > 1) L.harmony = 'chordlock';
+    } catch (e) {}
+  }
 
   // opts.at — the cycle start to read at. Locking must freeze THE TAKE THAT IS
   // SHOWING, and under a progression the pitches depend on the chord sounding
@@ -1715,6 +1779,7 @@
     L.part.reg = clamp((L.instrument.register | 0) || 4, 1, 8);   // the octave it was made in
     L.part.transpose = L.part.transpose | 0;
     stampPartKey(L, (function () { try { return E.getCfg(); } catch (e) { return null; } })());
+    stampFollowsChanges(L, (function () { try { return E.getCfg(); } catch (e) { return null; } })());
     try { E.getCfg(); } catch (e) {}
     try { if (E._v2Phase) delete E._v2Phase['v2:' + L.id]; } catch (e) {}   // re-anchor cleanly
     return true;

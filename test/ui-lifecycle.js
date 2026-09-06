@@ -859,9 +859,17 @@ const ok = (name, cond, detail) => {
     document.querySelector('.v2-layer').classList.remove('collapsed');
     return res;
   });
-  ok('⇄ Sync to Part: a real button in the Content head, and Fill + Follow lands bars 5 · diatonic',
+  // RESTATED: it pinned the literal 'diatonic', which was the only following
+  // mode a Sync could produce while a capture always left `harmony` absent. A
+  // capture made under a progression now defaults to 'chordlock', and the
+  // modal's documented rule is that "follow" must NOT DOWNGRADE an explicit
+  // chordlock — so on such a part the answer is correctly a no-op and the mode
+  // stays chordlock. The contract is "it FOLLOWS the changes", which is what
+  // this asserts; pinning one of the two modes was pinning the fixture.
+  const FOLLOWS = (h) => h === 'diatonic' || h === 'chordlock';
+  ok('⇄ Sync to Part: a real button in the Content head, and Fill + Follow lands bars 5 · following',
     syncRun.rect && /5 bars/.test(syncRun.nowTxt) && syncRun.bars === 5 &&
-    syncRun.harmony === 'diatonic' && syncRun.modalGone,
+    FOLLOWS(syncRun.harmony) && syncRun.modalGone,
     JSON.stringify(syncRun).slice(0, 240));
   // PER-PART CONTENT — `L.part` is the record being edited, `L.partFor` names
   // which arrangement part it is for, `L.parts` files the others, and the
@@ -1598,6 +1606,91 @@ const ok = (name, cond, detail) => {
     card().classList.remove('collapsed');
     return o;
   });
+  // A LOCKED TAKE KEEPS FOLLOWING THE CHANGES. A live part resolves every note
+  // against the chord sounding at its own onset; freezing it stores absolute
+  // pitches, and with 'fixed' it then replays the chords it was CAPTURED over
+  // for the rest of the piece — reported as "it just repeats the first 2
+  // chords, even over part 2".
+  const followRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const c0 = E.getCfg();
+    const svProg = JSON.stringify(c0.prog || null), svPart = JSON.stringify(L().part);
+    const svKey = [c0.keyOn, c0.keyRoot, c0.keyScale, c0.keyFollow];
+    const svH = L().harmony;
+    const svClocks = [E._playStartAt, E._progAnchor, E._barGridAnchor];
+    c0.prog = { on: true,
+      chords: [{ root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] },
+               { root: 7, intervals: [0, 4, 7] }, { root: 9, intervals: [0, 3, 7] },
+               { root: 2, intervals: [0, 3, 7] }, { root: 3, intervals: [0, 4, 7] },
+               { root: 10, intervals: [0, 4, 7] }, { root: 8, intervals: [0, 4, 7] }],
+      parts: [{ name: 'A', len: 5 }, { name: 'B', len: 3 }] };
+    c0.keyOn = true; c0.keyRoot = 0; c0.keyScale = 'major'; c0.keyFollow = false;
+    E.getCfg();
+    // a real play leaves these set, and a stale anchor clamps every lookup to
+    // chord 0 — the documented trap, which would make this pass for the wrong
+    // reason by never advancing the changes at all
+    E._playStartAt = null; E._progAnchor = null; E._barGridAnchor = null;
+    L().on = true; L().present = true; delete L().harmony;
+    L().part.kind = 'live'; L().part.bars = 2;
+    L().part.rhythm = { kind: 'euclid', steps: 8, pulses: 4, rotate: 0 };
+    L().part.pitch = { kind: 'walk', degree: 1, span: 4 };
+    E.getCfg();
+    // FRACTION OF NOTES IN THE SOUNDING CHORD, over five cycles — which spans
+    // both parts, so a take frozen over part A's opening is measured against
+    // part B's different chords too.
+    const score = () => {
+      const cyc = (L().part.bars || 1) * 2;
+      let ok = 0, n = 0;
+      for (let k = 0; k < 5; k++) {
+        const ns = window._v2.withEdit(() => window._v2.notesFor(L(),
+          { E, cfg: E.getCfg(), key: 'v2:' + L().id, cycleStart: k * cyc, cycleSec: cyc })) || [];
+        ns.forEach((nt) => {
+          const ch = _ambProgSoundAt(E, E.getCfg().prog, _ambProgStepAt(E, nt.at));
+          const pcs = ch ? ch.intervals.map((i) => (((ch.root + i) % 12) + 12) % 12) : [];
+          const m = (((Math.round(69 + 12 * Math.log2(nt.freq / 440)) % 12) + 12) % 12);
+          if (pcs.indexOf(m) >= 0) ok++;
+          n++;
+        });
+      }
+      return { ok, n };
+    };
+    const o = {};
+    const live = score(); o.live = live.ok + '/' + live.n;
+    o.liveFollows = live.n > 8 && live.ok === live.n;
+    window._v2.capture(E, L()); E.getCfg();
+    o.defaultFollow = L().harmony || null;
+    const lock = score(); o.locked = lock.ok + '/' + lock.n;
+    o.lockedFollows = lock.n === live.n && lock.ok === lock.n;
+    // …and Fixed still means fixed — the control has to keep working BOTH ways,
+    // or "follows the changes" would just be unconditional
+    L().harmony = 'fixed'; E.getCfg();
+    const fx = score(); o.fixed = fx.ok + '/' + fx.n;
+    o.fixedDiffers = fx.ok < fx.n;
+    // with NO progression a capture invents nothing
+    const c2 = E.getCfg(); c2.prog.on = false; E.getCfg();
+    L().part.kind = 'live'; delete L().harmony; E.getCfg();
+    window._v2.capture(E, L()); E.getCfg();
+    o.noProgLeavesAlone = !L().harmony;
+    try {
+      const c9 = E.getCfg();
+      if (svProg === 'null') delete c9.prog; else c9.prog = JSON.parse(svProg);
+      c9.keyOn = svKey[0]; c9.keyRoot = svKey[1]; c9.keyScale = svKey[2]; c9.keyFollow = svKey[3];
+      L().part = JSON.parse(svPart);
+      if (svH) L().harmony = svH; else delete L().harmony;
+      E._playStartAt = svClocks[0]; E._progAnchor = svClocks[1]; E._barGridAnchor = svClocks[2];
+      E.getCfg();
+      const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+      window._v2.render(E); await wait(220);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) { o.err = e.message; }
+    return o;
+  });
+  ok('a locked take keeps following the changes, and Fixed still pins it',
+    followRun.liveFollows && followRun.defaultFollow === 'chordlock' &&
+    followRun.lockedFollows && followRun.fixedDiffers && followRun.noProgLeavesAlone,
+    JSON.stringify(followRun));
+
   // A ROLL CAN PLAY MORE THAN ONE NOTE AT A TIME. `pitch.walk` is one line by
   // definition, so 🎲 Roll was monophonic and the only way to thicken it was
   // Harmony — which duplicates the one line at a fixed interval, i.e. parallel

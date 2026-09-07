@@ -2258,7 +2258,8 @@ const ok = (name, cond, detail) => {
     const jargon = /\b(euclid|walk|series|stack|anchor|chance|pulse ×|lenRatio)\b/;
     o.noJargon = !jargon.test(o.roll) && !jargon.test(o.pad) && !jargon.test(o.arp);
     // it says the two things a single drawing cannot show
-    o.saysReRolled = /Re-rolled every cycle/.test(o.roll) && /take \d/.test(o.roll);
+    o.saysReRolled = /Plays take \d+ — what the drawing shows/.test(o.roll) &&
+      /New take rolls another/.test(o.roll);
     o.saysExact = /plays these notes|Plays exactly these notes/.test(o.locked);
     // …and never both at once
     o.notBoth = !(/Re-rolled/.test(o.locked) && /Plays exactly/.test(o.locked));
@@ -2616,6 +2617,11 @@ const ok = (name, cond, detail) => {
   // motion, never independence. `pitch.lines` rolls N walks with their own
   // streams and their own memories.
   const linesRun = await page.evaluate(async () => {
+    // PER-CYCLE VARIATION IS A CHOICE NOW (`part.vary`) — the default is that
+    // playback plays the TAKE the drawing shows, every cycle. This check's
+    // whole phenomenon is observed ACROSS cycles, so it asks for the mode it
+    // is testing; the contract it pins is unchanged.
+    try { (_masterEng.getCfg().layers || [])[0].part.vary = 1; _masterEng.getCfg(); } catch (e) {}
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const sv = JSON.stringify(L().part), c0 = E.getCfg();
@@ -2730,6 +2736,12 @@ const ok = (name, cond, detail) => {
     } catch (e) { o.err = e.message; }
     return o;
   });
+  // …and PUT IT BACK: these run in ONE page against ONE cfg, and a `vary`
+  // left on is the next check's bug (it snapshots the part AFTER this was
+  // set, so its own restore would keep it).
+  await page.evaluate(() => { try {
+    delete (_masterEng.getCfg().layers || [])[0].part.vary; _masterEng.getCfg();
+  } catch (e) {} });
   ok('a Roll can play several INDEPENDENT lines — and Harmony is the parallel one',
     linesRun.plain === 1 && linesRun.prunedAt1 && linesRun.three === 3 &&
     linesRun.independent && linesRun.pairGroups >= 2 && linesRun.keptOverRoll &&
@@ -3270,6 +3282,63 @@ const ok = (name, cond, detail) => {
     Math.abs(playRun.drawn.drawnMs - playRun.drawn.cut) < 90,
     JSON.stringify({ off: playRun.chokeOff, on: playRun.chokeOn, door: playRun.door,
                      drawn: playRun.drawn }));
+
+  // THE TAKE YOU ROLLED IS WHAT PLAYS. Reported as "I created a new take, the
+  // visualizer updated, but when it starts playing both playback and viz revert
+  // to the prior take" — and that is exactly what it was: the drawing pinned
+  // `part.take` while the EMITTER seeded off the CYCLE INDEX, so pressing play
+  // after rolling take 1 gave cycle 0, which IS take 0. Per-cycle dice are a
+  // choice now (`part.vary`), absent by default.
+  const takePlays = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    const svPart = JSON.stringify(L().part);
+    L().on = true; L().present = true; L().part.kind = 'live'; L().part.bars = 2;
+    L().part.rhythm = { kind: 'euclid', steps: 16, n: 5 };
+    L().part.pitch = { kind: 'walk', range: 7 };
+    delete L().part.vary;
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E); await wait(260);
+    card().classList.remove('collapsed');
+    const cyc = window._v2.cycleSec(L(), E.getCfg());
+    const cycleAt = (c) => (window._v2.notesFor(L(),
+      { E, cfg: E.getCfg(), key: 'v2:' + L().id, cycleStart: c * cyc, cycleSec: cyc }) || [])
+      .map((n) => Math.round(n.freq)).join(',');
+    const drawnTake = () => window._v2.withTake(window._v2.pinOf(L()), () =>
+      (window._v2.notesFor(L(), { E, cfg: E.getCfg(), key: 'v2:' + L().id, cycleStart: 0, cycleSec: cyc }) || [])
+        .map((n) => Math.round(n.freq)).join(','));
+    const o = {};
+    o.before = { drawn: drawnTake(), c0: cycleAt(0), c3: cycleAt(3) };
+    window._v2.newTake(L(), null); E.getCfg();
+    o.take = L().part.take | 0;
+    o.after = { drawn: drawnTake(), c0: cycleAt(0), c3: cycleAt(3) };
+    // EVERY cycle plays the take the drawing shows
+    o.playsTheTake = o.after.drawn === o.after.c0 && o.after.c0 === o.after.c3;
+    o.movedWithTake = o.after.c0 !== o.before.c0;
+    // …and the dice are still there, as a choice
+    const tg = card().querySelector('.v2-varytoggle');
+    o.door = !!tg;
+    o.faceOff = tg ? tg.textContent.trim() : '';
+    if (tg) tg.click(); await wait(400);
+    o.vary = L().part.vary | 0;
+    o.faceOn = (card().querySelector('.v2-varytoggle') || {}).textContent || '';
+    o.varies = cycleAt(0) !== cycleAt(3);
+    delete L().part.vary; E.getCfg();
+    try {
+      L().part = JSON.parse(svPart); E.getCfg();
+      if (h) h._sig = ''; window._v2.render(E); await wait(220);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) {}
+    return o;
+  });
+  ok('the take you rolled is what PLAYS — every cycle, and the dice are a choice',
+    takePlays.take === (takePlays.before.drawn === takePlays.after.drawn ? -1 : takePlays.take) &&
+    takePlays.playsTheTake && takePlays.movedWithTake &&
+    takePlays.door && /Play this take/.test(takePlays.faceOff) &&
+    takePlays.vary === 1 && /Re-roll every cycle/.test(takePlays.faceOn) && takePlays.varies,
+    JSON.stringify(takePlays).slice(0, 320));
 
   // A PER-PART LAYER'S CYCLE IS THE PART PASS. Reported as "the visualization
   // is not resized by part; first part is 5 chords, second is 4, when showing
@@ -5479,6 +5548,11 @@ const ok = (name, cond, detail) => {
   // keeps one field. The cascade is the real prize: `_ambEffStart` falls back
   // to the AREA's `startVary`, which IS the Groove panel's Humanize macro.
   const strt = await page.evaluate(async () => {
+    // PER-CYCLE VARIATION IS A CHOICE NOW (`part.vary`) — the default is that
+    // playback plays the TAKE the drawing shows, every cycle. This check's
+    // whole phenomenon is observed ACROSS cycles, so it asks for the mode it
+    // is testing; the contract it pins is unchanged.
+    try { (_masterEng.getCfg().layers || [])[0].part.vary = 1; _masterEng.getCfg(); } catch (e) {}
     const E = _masterEng, cfg = E.getCfg();
     cfg.prog = { on: false, chords: [] };
     cfg.keyOn = true; cfg.keyFollow = false; cfg.keyRoot = 0; cfg.keyScale = 'major';
@@ -5517,6 +5591,12 @@ const ok = (name, cond, detail) => {
   });
   ok('by default every cycle starts on the 1',
     strt.one === '0,0,0,0' && strt.back === '0,0,0,0', JSON.stringify(strt));
+  // …and PUT IT BACK: these run in ONE page against ONE cfg, and a `vary`
+  // left on is the next check's bug (it snapshots the part AFTER this was
+  // set, so its own restore would keep it).
+  await page.evaluate(() => { try {
+    delete (_masterEng.getCfg().layers || [])[0].part.vary; _masterEng.getCfg();
+  } catch (e) {} });
   ok('Start moves the phrase inside its cycle, and replays for a take',
     strt.varied !== strt.one && strt.varied === strt.again &&
     new Set(strt.varied.split(',')).size > 1, JSON.stringify(strt));
@@ -5583,6 +5663,11 @@ const ok = (name, cond, detail) => {
   // `chordRepeats` times, then a fresh one. That is what makes a chord layer
   // sound composed rather than chaotic with no progression to follow.
   const phr = await page.evaluate(async () => {
+    // PER-CYCLE VARIATION IS A CHOICE NOW (`part.vary`) — the default is that
+    // playback plays the TAKE the drawing shows, every cycle. This check's
+    // whole phenomenon is observed ACROSS cycles, so it asks for the mode it
+    // is testing; the contract it pins is unchanged.
+    try { (_masterEng.getCfg().layers || [])[0].part.vary = 1; _masterEng.getCfg(); } catch (e) {}
     const E = _masterEng, cfg = E.getCfg();
     cfg.prog = { on: false, chords: [] };
     cfg.keyOn = true; cfg.keyFollow = false; cfg.keyRoot = 0; cfg.keyScale = 'major';
@@ -5623,6 +5708,12 @@ const ok = (name, cond, detail) => {
   // A 2-chord phrase repeated twice reads A B A B, then a FRESH phrase.
   ok('phrase x repeats builds A B A B then a fresh phrase',
     phr.abab && phr.d2 === 4, JSON.stringify(phr));
+  // …and PUT IT BACK: these run in ONE page against ONE cfg, and a `vary`
+  // left on is the next check's bug (it snapshots the part AFTER this was
+  // set, so its own restore would keep it).
+  await page.evaluate(() => { try {
+    delete (_masterEng.getCfg().layers || [])[0].part.vary; _masterEng.getCfg();
+  } catch (e) {} });
   ok('with no repeat the phrase stops recurring',
     phr.d4 > phr.d2 && phr.d4 >= 6 && phr.again, JSON.stringify(phr));
   ok('the phrase fields prune with the mode', phr.pruned === '{}', phr.pruned);
@@ -6207,6 +6298,11 @@ const ok = (name, cond, detail) => {
   // purpose — it thins harder than it thickens, which is what keeps a varied
   // pattern recognisable instead of filling in.
   const vary = await page.evaluate(async () => {
+    // PER-CYCLE VARIATION IS A CHOICE NOW (`part.vary`) — the default is that
+    // playback plays the TAKE the drawing shows, every cycle. This check's
+    // whole phenomenon is observed ACROSS cycles, so it asks for the mode it
+    // is testing; the contract it pins is unchanged.
+    try { (_masterEng.getCfg().layers || [])[0].part.vary = 1; _masterEng.getCfg(); } catch (e) {}
     const E = _masterEng, cfg = E.getCfg();
     cfg.prog = { on: false, chords: [] };
     cfg.keyOn = true; cfg.keyFollow = false; cfg.keyRoot = 0; cfg.keyScale = 'major';
@@ -6245,6 +6341,12 @@ const ok = (name, cond, detail) => {
   // Distinct per cycle, measured on the onset POSITIONS: the same count can hide
   // a pattern that never moved. (Counts alone misled once here — a 2,5,2,5
   // alternation over four cycles read as a seeding defect and was not.)
+  // …and PUT IT BACK: these run in ONE page against ONE cfg, and a `vary`
+  // left on is the next check's bug (it snapshots the part AFTER this was
+  // set, so its own restore would keep it).
+  await page.evaluate(() => { try {
+    delete (_masterEng.getCfg().layers || [])[0].part.vary; _masterEng.getCfg();
+  } catch (e) {} });
   ok('vary re-rolls the pattern every cycle, differently each time',
     vary.varied !== vary.steady && new Set(vary.varied.split('|')).size >= 5,
     JSON.stringify(vary));

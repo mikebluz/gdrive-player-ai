@@ -380,6 +380,9 @@
     // existing project and every gate config is byte-identical.
     p.take = clamp(p.take | 0, 0, 1e6);
     if (!p.take) delete p.take;
+    // VARY — re-roll every cycle instead of playing the take. Absent = off, so
+    // an untouched project plays exactly what its drawing shows.
+    if (p.vary) p.vary = 1; else delete p.vary;
 
     // BOTH HALVES ARE ALWAYS COERCED, whichever is active. Write is a DOOR:
     // a captured layer keeps its live spec so it can be released back, and a
@@ -1387,8 +1390,20 @@
       out2.sort((a2, b2) => a2.at - b2.at);
       return out2;
     }
+    // THE TAKE YOU ROLLED IS WHAT PLAYS. This was the CYCLE INDEX, so the
+    // drawing (pinned to the take) and playback (index 0, 1, 2 …) were two
+    // different rolls — press play after rolling take 1 and you heard cycle 0,
+    // which IS take 0: reported as "I created a new take, the visualizer
+    // updated, but when it starts playing both playback and viz revert to the
+    // prior take". A drawing that playback ignores is decoration.
+    // Per-cycle dice are still available — as a CHOICE (`part.vary`), absent by
+    // default — because "a live part that repeated forever is a recorded one"
+    // was the argument for the old default and it is answered by the fact that
+    // a live part still re-resolves its pitches against the changes every cycle.
     const cycIdx = Number.isFinite(TAKE_PIN) ? (TAKE_PIN | 0)
-      : Math.round(ctx.cycleStart / Math.max(0.001, cyc));
+      : ((L.part && L.part.vary)
+          ? (Math.round(ctx.cycleStart / Math.max(0.001, cyc)) + (takeOf(L) | 0))
+          : (takeOf(L) | 0));
     const seedBase = ((L.id | 0) * 9176) ^ (cycIdx * 2246822519);
     // A KIT IS EIGHT PARALLEL RHYTHMS WITH A FIXED PITCH EACH. That is the whole
     // difference, and it falls out of the model rather than being bolted on: the
@@ -3974,7 +3989,9 @@
     // picture is one take of many; a recorded one is exactly what plays.
     const tail = (withTail === false) ? ''
       : (p.kind === 'recorded') ? '. Plays exactly these notes.'
-      : '. Re-rolled every cycle — the drawing is take ' + (V2.takeOf(L) + 1) + '.';
+      : (p.vary
+          ? '. Re-rolled every cycle — the drawing is take ' + (V2.takeOf(L) + 1) + '.'
+          : '. Plays take ' + (V2.takeOf(L) + 1) + ' — what the drawing shows. \ud83c\udfb2 New take rolls another.');
     // LEAD WITH THE SHAPE. The parameters answer "how", and only after you
     // already know WHAT is being made.
     return shapeOf(L) + ' \u2014 ' + rh + ', ' + pt + ', ' + len + tail;
@@ -5323,6 +5340,12 @@
             '</span>' +
             '<span class="ambient-hint v2-notecount"></span>' +
 '</div>' +
+          '<div data-v2tab="Material" class="ambient-ctrl" data-v2when="kind:live"><label>Every cycle</label>' +
+            '<button type="button" class="ambient-seg v2-varytoggle' + (L.part.vary ? ' on' : '') + '">' +
+              (L.part.vary ? '\ud83c\udfb2 Re-roll every cycle' : '\u2713 Play this take') + '</button>' +
+            '<span class="ambient-hint">the drawing is take ' + ((L.part.take | 0) + 1) +
+              ' \u2014 by default that is exactly what plays, every cycle. Re-roll makes each ' +
+              'cycle a fresh roll of the same rules, so the drawing is one of many.</span></div>' +
           // SEED LIKE A v1 LAYER — one button per type. Its own row rather than
           // more buttons on the one above: that row answers "recorded from
           // where", these answer "what shape is the live part", and seven more
@@ -7256,6 +7279,25 @@
           vm.textContent = want === 'view' ? '\ud83d\udc41 View' : '\u270e Edit';
           vm.classList.toggle('on', want === 'view');
           try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
+          return;
+        }
+        const vry = t.closest('.v2-varytoggle');
+        if (vry) {
+          const ctx = layerOf(vry); if (!ctx) return;
+          if (ctx.L.part.vary) delete ctx.L.part.vary; else ctx.L.part.vary = 1;
+          try { E.getCfg(); } catch (e) {}
+          vry.classList.toggle('on', !!ctx.L.part.vary);
+          vry.textContent = ctx.L.part.vary ? '\ud83c\udfb2 Re-roll every cycle' : '\u2713 Play this take';
+          // it changes what the NEXT cycles play, so the ones already scheduled
+          // are superseded — the same pair every live edit on this card does
+          try {
+            if (E.timer && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined') {
+              cancelBloomFutureVoices('v2:' + ctx.L.id, Tone.now());
+            }
+          } catch (e) {}
+          try { if (E._v2Phase) delete E._v2Phase['v2:' + ctx.L.id]; } catch (e) {}
+          try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
           return;
         }
         const rgt = t.closest('.v2-ringtoggle');

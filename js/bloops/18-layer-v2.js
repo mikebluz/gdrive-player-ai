@@ -3417,6 +3417,16 @@
     return { txt: '\ud83d\udd12 Lock this take',
       title: 'WRITE THIS TAKE DOWN \u2014 exactly the notes drawn above become the part, editable note by note. The rules are kept, so you can hand it back to them or roll another take later.' };
   }
+  // WATCH IT, OR WORK ON IT. The drawing has always shown the record being
+  // EDITED — right when you are editing, and wrong when you want to follow the
+  // arrangement, because with per-part content the part that SOUNDS is not the
+  // one you have selected. VIEW follows what is playing (the emitter's own
+  // per-part swap, resolved by time); EDIT holds the record you are editing
+  // while the parts cycle underneath. Transient by construction: it is a view
+  // preference, and a field on the layer would be serialised by
+  // `persistWorkspace` (the documented `_soloLane` trap).
+  const VIEWM = new Map();      // layer id -> 'view' | 'edit'  (absent = edit)
+  const vizMode = (L) => (VIEWM.get(L && (L.id | 0)) === 'view') ? 'view' : 'edit';
   function partVizHtml(L) {
     const cf = capFace(L);
     // THE TAKE BAR lives INSIDE the viz block, not in an `.ambient-ctrl` — the
@@ -3428,13 +3438,23 @@
     // mean a `notesFor` call per frame per card — the drawing is generated, not
     // stored — so the sweep and the lit notes go on a transparent overlay that
     // costs a clear, a line and a few rects.
+    const vm = vizMode(L);
     return '<div class="v2-partviz"><canvas class="v2-vizcv" height="84"></canvas>' +
       '<canvas class="v2-vizph" aria-hidden="true"></canvas>' +
-      '<span class="v2-vizlab ambient-hint"></span>' +
       // THE NOTE EDITOR OPENS HERE — directly under the drawing it edits, so
       // the picture stays visible while you move the note (a dialog over the
       // top hid the one thing you are editing against).
       neHtml() +
+      // THE READOUT AND THE MODE SHARE A LINE — both are about the drawing, and
+      // a two-state preference does not earn a row of its own.
+      '<span class="v2-vizfoot">' +
+        '<span class="v2-vizlab ambient-hint"></span>' +
+        '<button type="button" class="v2-vmode" data-vm="' + (vm === 'view' ? 'edit' : 'view') + '" ' +
+          'title="' + (vm === 'view'
+            ? 'Following what PLAYS — whichever part is sounding. Tap to hold the part you are editing instead.'
+            : 'Holding the part you are EDITING while the arrangement cycles. Tap to follow what plays.') + '">' +
+          (vm === 'view' ? '\ud83d\udc41 View' : '\u270e Edit') + '</button>' +
+      '</span>' +
       '<span class="ambient-seg-row v2-takebar">' +
         '<button type="button" class="ambient-seg v2-newtake"' +
           ' title="Roll this part again. Preview never re-rolls on its own, so the take you are hearing stays until you press this.">🎲 New take</button>' +
@@ -3521,10 +3541,15 @@
     try {
       // …and WITHOUT the take pin while playing: the emitter draws from the
       // cycle index, so pinning here would draw a take nobody is hearing.
-      notes = V2.withEdit(() => (playing
+      // VIEW MODE DROPS THE EDIT PIN: `notesFor` then resolves which arrangement
+      // part is sounding at this cycle and plays ITS record — the emitter's own
+      // rule. EDIT keeps the pin, which is what lets you work on one part while
+      // another one plays.
+      const ask = () => (playing
         ? V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc })
         : V2.withTake(V2.pinOf(L), () =>
-            V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc })))) || [];
+            V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc })));
+      notes = ((playing && vizMode(L) === 'view') ? ask() : V2.withEdit(ask)) || [];
     } catch (e) { notes = []; }
     // `notesFor` returns ABSOLUTE times (cycleStart + offset), so a remembered
     // cycle start has to be subtracted back off before drawing.
@@ -4150,6 +4175,26 @@
   // Beside `window._v2Tick` and for the same reason: the viz rAF lives in 17
   // and this is the UI IIFE, and the two share nothing but the window.
   window._v2VizFrame = vizFrame;
+  // EVERY v2 DRAWING, REPAINTED. An AREA control — salt, the changes, the key —
+  // decides what a layer plays just as much as the layer's own controls do, but
+  // only the layer's own commit repainted its picture, so an area edit left
+  // every drawing stale until something else happened to redraw it. `V2.render`
+  // is `_sig`-cached on identity, so it cannot serve for this.
+  window._v2RepaintViz = function (E) {
+    try {
+      const host = document.getElementById('bloom-v2-layers'); if (!host) return;
+      let list = [];
+      try { list = (E.getCfg().layers || []); } catch (e) { return; }
+      host.querySelectorAll('.v2-layer:not(.collapsed)').forEach((card) => {
+        const id = card.getAttribute('data-v2id') | 0;
+        const L = list.find((x) => x && (x.id | 0) === id); if (!L) return;
+        try { drawPartViz(card, L, E); } catch (e) {}
+      });
+    } catch (e) {}
+  };
+  // the mode is module state, so the engine side needs a setter for it
+  try { V2.vizMode = (L, m) => { if (L) VIEWM.set(L.id | 0, m === 'view' ? 'view' : 'edit'); }; } catch (e) {}
+  try { V2.vizModeOf = (L) => vizMode(L); } catch (e) {}
   // A MATERIAL PRESS DOES ONE OF THREE THINGS, and the card never said which:
   // ADOPT (already in that mode — nothing changes), RESTORE (a material you
   // have used before comes back with the settings you left it at), or BUILD
@@ -7147,6 +7192,18 @@
           sa.textContent = ctx.L.followSalt ? 'On — follows the colours' : 'Off — holds the chord';
           applyGate(ctx.card, ctx.L);
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          return;
+        }
+        const vm = t.closest('.v2-vmode');
+        if (vm) {
+          const ctx = layerOf(vm); if (!ctx) return;
+          const want = vm.getAttribute('data-vm') === 'view' ? 'view' : 'edit';
+          V2.vizMode(ctx.L, want);
+          // the button names the state it is IN and switches to the other one
+          vm.setAttribute('data-vm', want === 'view' ? 'edit' : 'view');
+          vm.textContent = want === 'view' ? '\ud83d\udc41 View' : '\u270e Edit';
+          vm.classList.toggle('on', want === 'view');
+          try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
           return;
         }
         const rgt = t.closest('.v2-ringtoggle');

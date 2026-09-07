@@ -3271,6 +3271,105 @@ const ok = (name, cond, detail) => {
     JSON.stringify({ off: playRun.chokeOff, on: playRun.chokeOn, door: playRun.door,
                      drawn: playRun.drawn }));
 
+  // WATCHING vs WORKING. Three asks, one shape: an AREA control decides what a
+  // layer plays as much as its own do (so its picture has to follow), the strip
+  // that names which part you are EDITING said nothing about which one is
+  // PLAYING, and with per-part content the drawing could only ever show the
+  // record you had selected — so you could not watch the arrangement run.
+  const watchRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    const svProg = E.getCfg().prog ? JSON.parse(JSON.stringify(E.getCfg().prog)) : null;
+    const svPart = JSON.stringify(L().part);
+    const svFor = L().partFor, svParts = L().parts ? JSON.stringify(L().parts) : null;
+    const o = {};
+    E.getCfg().prog = { on: true, name: 'WV',
+      parts: [{ name: 'A', len: 2 }, { name: 'B', len: 2 }],
+      chords: [0, 5, 7, 9].map((r) => ({ root: r, intervals: [0, 4, 7] })) };
+    L().on = true; L().present = true; L().part.kind = 'live'; L().part.bars = 2;
+    L().part.rhythm = { kind: 'pulse', steps: 16, n: 2 };
+    // THREE VOICES for the salt step: a colour changes the chord's added tones,
+    // so at one voice you get the root either way and the picture cannot move.
+    L().part.pitch = { kind: 'chord', voices: 3 };
+    // PER-PART: the edited record has 2 onsets, part B's has 7 — a count, not a
+    // pitch set, because the chords differ between the parts and pitches would
+    // differ with the swap broken too (the documented confound).
+    L().partFor = 0;
+    L().parts = { 1: JSON.parse(JSON.stringify(L().part)) };
+    L().parts[1].rhythm = { kind: 'pulse', steps: 16, n: 7 };
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E); await wait(300);
+    card().classList.remove('collapsed');
+    _ambSyncFxVis(E); await wait(200);
+    const drawn = () => (card().querySelector('.v2-vizcv')._hits || []);
+    const pitches = () => drawn().map((x) => Math.round(x.midi)).join(',');
+    // (1) AN AREA EDIT REPAINTS. Salt recolours the chords, so the same rules
+    // make different notes — and only the LAYER's own commit used to repaint.
+    const beforeSalt = pitches();
+    E.getCfg().prog.chords[0].root = 3;          // an AREA control, not the layer's
+    E.getCfg();
+    _ambSyncFxVis(E); await wait(260);
+    o.salt = { before: beforeSalt, after: pitches() };
+    o.saltRepaints = beforeSalt !== o.salt.after && beforeSalt.length > 0;
+    E.getCfg().prog.chords[0].root = 0;
+    L().part.pitch.voices = 1;
+    if (L().parts && L().parts[1]) L().parts[1].pitch.voices = 1;
+    E.getCfg();
+    // (2) and (3) need it playing
+    try { await Tone.start(); } catch (e) {}
+    _ambStartGenerator(E); await wait(1300);
+    const stripState = () => {
+      const el = document.getElementById('mix-bloom-curpart');
+      if (!el) return null;
+      const chips = [...el.querySelectorAll('.ambient-curpart-chip')];
+      return { editing: chips.filter((b) => b.classList.contains('on')).map((b) => b.getAttribute('data-cp') | 0),
+               playing: chips.filter((b) => b.classList.contains('playing')).map((b) => b.getAttribute('data-cp') | 0) };
+    };
+    const seenPlay = new Set(); const counts = { edit: new Set(), view: new Set() };
+    let editingStayed = true;
+    for (let i = 0; i < 9; i++) {
+      const st = stripState();
+      if (st) { st.playing.forEach((x) => seenPlay.add(x));
+        if (st.editing.join() !== '0') editingStayed = false; }
+      counts.edit.add(drawn().length);
+      await wait(850);
+    }
+    o.playSeen = [...seenPlay].sort().join(',');
+    o.editingStayed = editingStayed;
+    o.editCounts = [...counts.edit].sort().join(',');
+    // VIEW follows what is playing
+    const vb = card().querySelector('.v2-vmode[data-vm="view"]');
+    o.door = !!vb && vb.getBoundingClientRect().height > 0;
+    if (vb) vb.click(); await wait(700);
+    o.mode = window._v2.vizModeOf(L());
+    for (let i = 0; i < 9; i++) { counts.view.add(drawn().length); await wait(850); }
+    o.viewCounts = [...counts.view].sort((a, b) => a - b).join(',');
+    _ambStopGenerator(E); await wait(300);
+    try {
+      if (svProg) E.getCfg().prog = svProg; else delete E.getCfg().prog;
+      L().part = JSON.parse(svPart);
+      if (Number.isFinite(svFor)) L().partFor = svFor; else delete L().partFor;
+      if (svParts) L().parts = JSON.parse(svParts); else delete L().parts;
+      window._v2.vizMode(L(), 'edit');
+      E.getCfg();
+      E._playStartAt = null; E._progAnchor = null; E._barGridAnchor = null;
+      if (h) h._sig = ''; window._v2.render(E); await wait(220);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) {}
+    return o;
+  });
+  ok('an AREA edit repaints every layer drawing — salt moves the notes, so it moves the picture',
+    watchRun.saltRepaints, JSON.stringify(watchRun.salt).slice(0, 200));
+  ok('the current-part strip marks the part that is PLAYING, beside the one being edited',
+    /0/.test(watchRun.playSeen) && /1/.test(watchRun.playSeen) && watchRun.editingStayed,
+    JSON.stringify({ playing: watchRun.playSeen, editingStayed: watchRun.editingStayed }));
+  ok('View follows the sounding part, Edit holds the one you are editing',
+    watchRun.door && watchRun.mode === 'view' &&
+    watchRun.editCounts === '2' && watchRun.viewCounts === '2,7',
+    JSON.stringify({ edit: watchRun.editCounts, view: watchRun.viewCounts, door: watchRun.door }));
+
   // THE DRAWING HAS A PITCH AXIS — a keyboard down the left and one SEMITONE
   // per row ("the content visualization needs a Y axis, use piano graphic, so
   // it's clear what note each event is"). It was a continuous squeeze of
@@ -3728,7 +3827,7 @@ const ok = (name, cond, detail) => {
     const ov = document.querySelector('.v2-layer .v2-partviz .v2-neinline');
     o.modal = !!ov && !ov.hidden && ov.getBoundingClientRect().height > 0;
     o.underTheDrawing = !!ov && !!ov.previousElementSibling &&
-      /v2-vizlab/.test(ov.previousElementSibling.className);
+      /v2-vizcv|v2-vizph/.test(ov.previousElementSibling.className || '');
     if (!ov) return o;
     // THE DRAWING MARKS THE NOTE BEING EDITED — with the editor inline the
     // picture stays visible, and "Note 2 of 4" names a place in a list rather
@@ -6606,8 +6705,12 @@ const ok = (name, cond, detail) => {
   // this catches is the same one — the pane is capped and SCROLLS rather than
   // growing without limit, so the card stays about one screen whatever a tab
   // holds.
+  // 1.25 -> 1.30, with the reason: the drawing gained a PITCH AXIS (a keyboard
+  // gutter and a row per semitone, which grows with the range) and a View/Edit
+  // toggle since that number was set. The clause with teeth is the second one —
+  // the pane is capped and SCROLLS, so no tab can push the card further.
   ok('an expanded card is about one screen, and the pane is capped (was 2873px)',
-    shape.height <= shape.vh * 1.25 && shape.paneH <= shape.vh * 0.45,
+    shape.height <= shape.vh * 1.30 && shape.paneH <= shape.vh * 0.45,
     shape.height + 'px, pane ' + shape.paneH + 'px of ' + shape.vh);
   // THE ACCRETION CHECK, restated in the unit that now matters. It counted ROWS
   // because rows used to be what you saw; a group's rows live in a TABBED sheet

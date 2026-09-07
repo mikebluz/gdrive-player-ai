@@ -34312,6 +34312,7 @@
       try { _ambSaltReadoutSync(E); } catch (e) {}
       try { _ambSynthVoicePlayheads(E); } catch (e) {}
       try { if (typeof window._v2VizFrame === 'function') window._v2VizFrame(E); } catch (e) {}
+      try { _ambCurPartPlayhead(E); } catch (e) {}
       if (E.timer && !document.hidden) E.viz.raf = requestAnimationFrame(() => _ambVizFrame(E));
       else E.viz.raf = 0;
     }
@@ -43367,6 +43368,29 @@
       } catch (e) {}
       return rgs.length ? rgs[0].pi : -1;
     }
+    // THE STRIP SAYS WHICH PART YOU ARE EDITING; this says which one is
+    // PLAYING. They are different questions by design (editing a part never
+    // moves playback), and with only the editing one marked there was no way
+    // to follow the arrangement as it ran. Per FRAME off the viz rAF, on the
+    // AUDIBLE clock, and cached on the element so the DOM is touched only when
+    // the part changes.
+    function _ambCurPartPlayhead(E) {
+      const el = _ambGet(E, 'ambient-curpart'); if (!el) return;
+      let pi = -1;
+      try {
+        if (E.timer && _ambViewIsPlaying(E)) {
+          const now = (typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : Tone.now();
+          const cfg = E._cfg || E.getCfg();
+          const r = _ambPartChordAt(E, cfg, now);
+          pi = (r && r.pi >= 0) ? (r.pi | 0) : -1;
+        }
+      } catch (e) { pi = -1; }
+      if (el._playPi === pi) return;
+      el._playPi = pi;
+      el.querySelectorAll('.ambient-curpart-chip').forEach((b) => {
+        b.classList.toggle('playing', (b.getAttribute('data-cp') | 0) === pi && pi >= 0);
+      });
+    }
     function _ambRenderCurPart(E) {
       const el = _ambGet(E, 'ambient-curpart'); if (!el) return;
       let cfg = null, rgs = [];
@@ -43397,6 +43421,9 @@
             '<span class="ambient-hint ambient-curpart-hint">editing · play runs the arrangement from the top</span>';
         }
       }
+      // a rewrite drops the playing mark with the old chips — put it back on
+      // the next frame rather than leaving the strip silent about playback
+      el._playPi = undefined;
       if (!el._cpWired) {
         el._cpWired = true;
         el.addEventListener('click', (ev) => {
@@ -43430,6 +43457,13 @@
       try { _ambWirePassMatrix(E); _ambRenderPassMatrix(E); } catch (e) {}
       try { _ambRenderProgOverview(E); } catch (e) {}
       try { _ambRenderCurPart(E); } catch (e) {}
+      // …AND EVERY v2 DRAWING. An AREA control — salt, the changes, the key —
+      // decides what a layer plays just as much as its own controls do, but
+      // only a layer's own commit repainted its picture, so an area edit left
+      // every v2 drawing stale. `_v2.render` cannot serve for this: it is
+      // `_sig`-cached on layer identity and does nothing when only the harmony
+      // moved.
+      try { if (typeof window._v2RepaintViz === 'function') window._v2RepaintViz(E); } catch (e) {}
       // The renderers above are what flip those bodies, so the header visibility
       // is settled HERE rather than only at panel build.
       try { _ambProgGrpSync(E); } catch (e) {}

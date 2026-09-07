@@ -4747,11 +4747,6 @@
             '</div>' +
           '</div>' +
         '</div>' +
-        '<div class="v2-grpgrid">' + GRPS.map(g4 =>
-          '<button type="button" class="v2-grpbtn" data-v2grp="' + g4 + '">' +
-            '<span class="v2-grpbt">' + g4 + '</span>' +
-            '<span class="ambient-hint v2-grpsum" data-grp="' + g4 + '"></span>' +
-          '</button>').join('') + '</div>' +
         // ── INSTRUMENT — what makes the sound ─────────────────────────────
         grpOpen('Instrument', true,
           // "Tone type", not "Voice" — it names the KIND of sound, and the row
@@ -5675,14 +5670,21 @@
     // actually uses). The core groups are always in use, so they stay plain.
     // the accent marks a group whose summary is NOT its neutral, so the folded
     // card says at a glance which groups this layer actually uses
+    // …and it lands on the SECTION TABS now that the button grid is gone, so
+    // "which groups does this layer actually use" survives the move; each tab
+    // also carries its section's summary as its tooltip.
     const NEUT = { FX: 'none', Shape: 'struck' };
-    card.querySelectorAll('.v2-grpbtn').forEach(b2 => {
-      const g2 = b2.getAttribute('data-v2grp');
+    card.querySelectorAll('.v2-gototab').forEach(b2 => {
+      const g2 = b2.getAttribute('data-goto');
       if (g2 in NEUT) b2.classList.toggle('v2-live', (sums[g2] || '') !== NEUT[g2]);
+      const sm = sums[g2] || '';
+      if (b2.getAttribute('title') !== (g2 + (sm ? ' \u2014 ' + sm : ''))) {
+        b2.setAttribute('title', g2 + (sm ? ' \u2014 ' + sm : ''));
+      }
     });
-    // The open sheet re-syncs its tabs on every gate pass — the gate can hide
-    // the active tab's rows from under it (switch Voice with Tone open).
-    if (POP && POP.id === (L.id | 0) && popWrapOf(card)) {
+    // The editor re-syncs its tabs on every gate pass — the gate can hide the
+    // active tab's rows from under it (switch Voice with Tone open).
+    if (popWrapOf(card)) {
       try { popSync(card, L); } catch (e) {}
     }
   }
@@ -5716,7 +5718,17 @@
   // orphan every one of them (the documented Home-row lesson). The rows are
   // MOVED in and moved back on close, never re-created — re-rendering would
   // mint duplicate ids and detach the id-bound mod wiring.
-  let POP = null;   // { id, grp, tab } — which sheet is open, and on which tab
+  // ONE EDITOR PER CARD, EMBEDDED IN THE LAYER BODY. It was a centred sheet
+  // opened from a grid of six group buttons — and once the sheet's own head
+  // carried those same six sections as a full row, the grid was a second
+  // navigator for one thing. The sheet moved into the body and the buttons
+  // came down with it. So the state is PER LAYER now, not the one-at-a-time
+  // singleton a modal could get away with: two expanded cards each show their
+  // own editor, and a global would have shut one to open the other.
+  const POPS = new Map();          // layer id -> { grp, tab }
+  const popIdOf = (card) => card ? (card.getAttribute('data-v2id') | 0) : -1;
+  const popStOf = (card) => POPS.get(popIdOf(card)) || null;
+  const POP_DEF = 'Content';       // the section a card opens on — it holds the drawing
   // WHICH LAYER HAS THE GENERATED POPOVER OPEN. Beside `POP` and for the same
   // reason: `V2.render` rebuilds the card and would drop the class, so the
   // rebuild re-applies it — a knob inside must not slam the panel shut. In the
@@ -5729,9 +5741,10 @@
   // what was there, ✓ Done keeps it. That is what lets the door itself be the
   // choice instead of needing a "Use Groundwork" button inside it.
   let GW_DRAFT = null;
-  function popWrapOf(card) { return card.querySelector(':scope > .v2-pop-wrap'); }
+  function popWrapOf(card) { return card.querySelector('.v2-pop-wrap'); }
   function popClose(card) {
     const wrap = card && popWrapOf(card);
+    const st0 = popStOf(card);
     if (wrap) {
       const body = wrap.querySelector('.ambient-grp-body');
       // put the lifted drawing back at the top of the body FIRST, so it travels
@@ -5741,11 +5754,11 @@
         const viz = wrap.querySelector(':scope > .v2-pop > .v2-partviz');
         if (viz && body) body.insertBefore(viz, body.firstChild);
       } catch (e) {}
-      const g = POP && card.querySelector('.ambient-grp[data-v2grp="' + POP.grp + '"]');
+      const g = st0 && card.querySelector('.ambient-grp[data-v2grp="' + st0.grp + '"]');
       if (body && g) g.appendChild(body);
       wrap.remove();
     }
-    POP = null;
+    POPS.delete(popIdOf(card));
   }
   // The arrangement's parts, as selector options. `_ambGridRanges` is the same
   // enumerator the Passes grid draws from (a part-less progression is one
@@ -5883,16 +5896,16 @@
   }
 
   function popOpen(card, L, grp, tab) {
-    document.querySelectorAll('.v2-pop-wrap').forEach(w => {
-      const c = w.closest('.v2-layer'); if (c) popClose(c);
-    });
+    // ONLY THIS CARD. It used to close every other layer's sheet — right for a
+    // modal over the panel, wrong for an editor that lives in each card's own
+    // body.
+    popClose(card);
     const g = card.querySelector('.ambient-grp[data-v2grp="' + grp + '"]');
     const body = g && g.querySelector('.ambient-grp-body'); if (!body) return;
     const wrap = document.createElement('div');
     wrap.className = 'v2-pop-wrap';
     wrap.innerHTML =
-      '<div class="v2-pop-scrim"></div>' +
-      '<div class="v2-pop" role="dialog" aria-label="' + esc(grp) + '">' +
+      '<div class="v2-pop" role="group" aria-label="' + esc(grp) + '">' +
         // THE TITLE IS THE NAVIGATOR. It named the open group and nothing more,
         // so moving between sections meant closing this sheet and finding the
         // next button — a round trip through a grid you had just left. It is a
@@ -5950,7 +5963,6 @@
                   '<button type="button" class="ambient-step-btn ambient-step-up" tabindex="-1" aria-label="Raise">+</button>' +
                 '</span></span>'
             : '') +
-          '<button type="button" class="v2-pop-close" aria-label="Close">✕</button>' +
           // THE SUMMARY TAKES ITS OWN LINE. It was between the title and the
           // close, which left no room for anything else up there and squeezed
           // it to nothing on a phone the moment the head grew a control.
@@ -5961,7 +5973,7 @@
           'title="Hear one cycle of this layer with the current settings — through its own chain, so the FX and level speak too">' +
           '\u25b6 Preview</button></div>' +
       '</div>';
-    card.appendChild(wrap);
+    (card.querySelector(':scope > .ambient-layer-body') || card).appendChild(wrap);
     wrap.querySelector('.v2-pop-pane').appendChild(body);
     // THE DRAWING SITS ABOVE THE TABS. It belongs to the whole sheet, not to
     // one tab, so putting the chooser under it says so: you read the part, then
@@ -5973,14 +5985,7 @@
       const tabs = wrap.querySelector('.v2-pop-tabs');
       if (viz && tabs && tabs.parentNode) tabs.parentNode.insertBefore(viz, tabs);
     } catch (e) {}
-    POP = { id: L.id | 0, grp: grp, tab: tab || null };
-    // `position: fixed` resolves against a transformed/filtered ancestor, not
-    // the viewport (the documented containing-block trap) — measure at 0,0 and
-    // correct with a transform.
-    const r = wrap.getBoundingClientRect();
-    if (Math.abs(r.left) > 1 || Math.abs(r.top) > 1) {
-      wrap.style.transform = 'translate(' + (-r.left) + 'px,' + (-r.top) + 'px)';
-    }
+    POPS.set(L.id | 0, { grp: grp, tab: tab || null });
     applyGate(card, L);   // gates the rows and, via its tail, builds the tabs
   }
   // One tab per top-level row; rows sharing a `data-v2tab` (or a bare label)
@@ -6101,7 +6106,8 @@
   const TAB_TINT = { Rhythm: 'fam-rhythm', Pattern: 'fam-rhythm', Feel: 'fam-rhythm' };
   const tabNa = (nm, L) => !!TAB_TINT[nm] && L && L.part && L.part.kind === 'recorded';
   function popSync(card, L) {
-    const wrap = popWrapOf(card); if (!wrap || !POP) return;
+    const wrap = popWrapOf(card); const POP = popStOf(card); if (!wrap || !POP) return;
+
     const pane = wrap.querySelector('.v2-pop-pane'), tabsEl = wrap.querySelector('.v2-pop-tabs');
     const rows = popTabbables(pane);
     const tabs = [], byName = {};
@@ -6291,7 +6297,7 @@
     const cfg = E && E.getCfg && E.getCfg(); if (!cfg) return;
     const list = V2.layers(cfg);
     const h = host(E); if (!h) return;
-    if (!list.length) { h.innerHTML = ''; h._sig = ''; POP = null; return; }
+    if (!list.length) { h.innerHTML = ''; h._sig = ''; POPS.clear(); return; }
     // STRUCTURE SIGNATURE — an innerHTML rewrite destroys the control under the
     // finger, which kills a slider drag after one pixel (the documented trap; it
     // cost a round on the Groove Humanize fader). Only rebuild when the set of
@@ -6348,14 +6354,17 @@
     // the sheet (instrument.voice, steps…) does not slam it shut in the hand.
     // (The documented repaint-via-the-sync-path lesson: anything a rebuild
     // throws away must be re-established AFTER the rebuild, by the rebuild.)
-    if (POP) {
-      const keep = POP; POP = null;
-      const card2 = h.querySelector('.v2-layer[data-v2id="' + keep.id + '"]');
-      const L2 = list.find(x => (x.id | 0) === keep.id);
-      if (card2 && L2 && !card2.classList.contains('collapsed')) {
-        popOpen(card2, L2, keep.grp, keep.tab);
-      }
-    }
+    // …and an EXPANDED card always carries one: the editor is the card's body
+    // now, so a card with none would render empty. Same group and tab as
+    // before the rebuild, else the section that holds the drawing.
+    h.querySelectorAll('.v2-layer').forEach((card2) => {
+      const id2 = card2.getAttribute('data-v2id') | 0;
+      const L2 = list.find(x => (x.id | 0) === id2);
+      if (!L2 || card2.classList.contains('collapsed')) return;
+      const keep = POPS.get(id2);
+      POPS.delete(id2);
+      popOpen(card2, L2, (keep && keep.grp) || POP_DEF, keep ? keep.tab : null);
+    });
     // Re-dock AFTER the cards exist — `_placeLaneExpander` resolves the target
     // live by key, so it must run against the rebuilt DOM, never before it.
     if (parked) {
@@ -6590,7 +6599,7 @@
         if (gt) {
           const ctx = layerOf(gt); if (!ctx) return;
           const want = gt.getAttribute('data-goto');
-          if (want && want !== (POP && POP.grp)) popOpen(ctx.card, ctx.L, want, null);
+          if (want && want !== (popStOf(ctx.card) || {}).grp) popOpen(ctx.card, ctx.L, want, null);
           return;
         }
         // A HIT NAVIGATES. `popOpen` is the same call the group buttons and the
@@ -6629,18 +6638,12 @@
           return;
         }
         const t = ev.target;
-        // THE GROUP GRID → its sheet; the sheet's own chrome next — these run
-        // before every other branch so nothing inside the sheet can fall
-        // through to the header's collapse catch-all.
-        const gb2 = t.closest && t.closest('.v2-grpbtn');
-        if (gb2) {
-          const ctx = layerOf(gb2); if (!ctx) return;
-          popOpen(ctx.card, ctx.L, gb2.getAttribute('data-v2grp'));
-          return;
-        }
+        // The editor's own chrome runs before every other branch so nothing
+        // inside it can fall through to the header's collapse catch-all.
         const ptab = t.closest && t.closest('.v2-pop-tab');
         if (ptab) {
-          const ctx = layerOf(ptab); if (!ctx || !POP) return;
+          const ctx = layerOf(ptab); const POP = popStOf(ctx && ctx.card);
+          if (!ctx || !POP) return;
           // A NO-OP TAB REFUSES AND EXPLAINS. It used to open onto greyed rows
           // carrying the same sentence; a press that visibly does nothing is
           // worse than one that answers, so the explanation moved to the
@@ -6664,13 +6667,10 @@
         }
         const fbn = t.closest && t.closest('.v2-fambtn');
         if (fbn) {
-          const ctx = layerOf(fbn); if (!ctx || !POP) return;
+          const ctx = layerOf(fbn); const POP = popStOf(ctx && ctx.card);
+          if (!ctx || !POP) return;
           POP.tab = fbn.getAttribute('data-first');
           popSync(ctx.card, ctx.L);
-          return;
-        }
-        if (t.closest && (t.closest('.v2-pop-close') || t.closest('.v2-pop-scrim'))) {
-          const c3 = t.closest('.v2-layer'); if (c3) popClose(c3);
           return;
         }
         // ▭ Everywhere ⟷ ◫ Per part — the MODE, its own control. Enabling
@@ -6859,8 +6859,16 @@
             (t.closest('.ambient-layer-head') && !t.closest('button') && !t.closest('input') && !t.closest('select'))) {
           const c = t.closest('.v2-layer');
           if (c) {
-            popClose(c);   // a collapsed card cannot keep a sheet open over it
             const nowCollapsed = c.classList.toggle('collapsed');
+            // THE EDITOR IS THE BODY — a collapsed card gives its rows back to
+            // the storage groups, an expanded one takes them up again.
+            const cx0 = layerOf(c);
+            if (nowCollapsed) popClose(c);
+            else if (cx0 && !popWrapOf(c)) {
+              const keep0 = POPS.get(popIdOf(c));
+              POPS.delete(popIdOf(c));
+              popOpen(c, cx0.L, (keep0 && keep0.grp) || POP_DEF, keep0 ? keep0.tab : null);
+            }
             if (nowCollapsed) c.querySelectorAll('.ambient-grp.open').forEach(g => g.classList.remove('open'));
             // Expanding opens NOTHING — every subsection stays closed, so the
             // card is a contents page you unfold from. (It opened the four

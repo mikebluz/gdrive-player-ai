@@ -14005,13 +14005,28 @@
        the row the chord strip mirrors — so parking it is correct, not a
        regression. Perf failing was the TRANSPORT (it started the grid lanes
        instead of the Bloom area), fixed separately in 16-grid-controls. */
-    .ambient-seedgrid-striphost .lane-row,
+    /* …BUT ONLY WHILE THE CHORD STRIP IS THERE TO MIRROR IT. Parking the real
+       row is right when the per-chord strip is drawing the same chips a few
+       pixels above; with NO progression that strip is `hidden`, and parking
+       the row then left the compose dock with a keyboard, four buttons and
+       NOTHING SHOWING THE SEQUENCE ("where is the sequencer for the run being
+       composed?"). The row is the only view of the phrase in that state, so it
+       stays. */
+    .ambient-seedgrid-slot:has(> .ambient-seedgrid-chords:not([hidden])) .ambient-seedgrid-striphost .lane-row,
     .ambient-seedgrid-dockhost .lane-row,
     .lane-row.sg-mirrored {
       position: absolute; left: -10000px; top: 0;
       opacity: 0; pointer-events: none; z-index: -1;
     }
     .ambient-seedgrid-striphost { position: relative; }
+    /* …and when it IS the view, it is not a ghost: the scratch lane is created
+       MUTED (it must not double what the layer plays), which dims its chips to
+       0.35 — right for a parked mirror, wrong for the surface you are writing
+       on. */
+    .ambient-seedgrid-slot:not(:has(> .ambient-seedgrid-chords:not([hidden]))) .ambient-seedgrid-striphost .lane-row.muted .lane-chips,
+    .ambient-seedgrid-slot:not(:has(> .ambient-seedgrid-chords:not([hidden]))) .ambient-seedgrid-striphost .lane-row.muted .lane-label {
+      opacity: 1;
+    }
 /* THE BAR SOUNDING NOW. Green, because green means "sounding" everywhere else
    in this app — the one hue the palette reserves. */
 .ambient-sgbar.playing {

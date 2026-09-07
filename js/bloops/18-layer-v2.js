@@ -3401,11 +3401,21 @@
   // control. Making material is 🎲's job in both states now; this only
   // freezes the take or lets the rules take over again.
   function capFace(L) {
-    const rec = L && L.part && L.part.kind === 'recorded';
-    if (rec) return { txt: '\ud83d\udd13 Unlock',
-      title: 'Back to Generated \u2014 the rules make the part again and re-roll every cycle. These notes are kept, so locking again brings them back until you roll a new take.' };
+    const p = (L && L.part) || {};
+    const rec = p.kind === 'recorded';
+    // ONE PAIR OF WORDS for the axis — GENERATED or WRITTEN — and this button
+    // is the transition between them. It names the DESTINATION, and on notes
+    // you drew yourself it says so: "Unlock" on a composed part reads as
+    // unlocking something that was never locked.
+    if (rec) {
+      const hand = (p.made === 'compose' || p.made === 'phrase');
+      return { txt: hand ? '\u2699 Generate instead' : '\ud83d\udd13 Unlock',
+        title: hand
+          ? 'Hand this part back to the rules \u2014 it GENERATES again, fresh every cycle. Your notes are kept, so \ud83d\udd12 Lock brings them back until you roll a new take.'
+          : 'Back to GENERATED \u2014 the rules make the part again and re-roll every cycle. These notes are kept, so locking again brings them back until you roll a new take.' };
+    }
     return { txt: '\ud83d\udd12 Lock this take',
-      title: 'Freeze exactly the take drawn above into a fixed set of notes you can edit. The rules are kept, so you can roll another take later.' };
+      title: 'WRITE THIS TAKE DOWN \u2014 exactly the notes drawn above become the part, editable note by note. The rules are kept, so you can hand it back to them or roll another take later.' };
   }
   function partVizHtml(L) {
     const cf = capFace(L);
@@ -3802,21 +3812,21 @@
     if (p.kind === 'recorded') {
       const n = (p.notes || []).length;
       const nn = n + ' note' + (n === 1 ? '' : 's');
-      if (p.made === 'compose') return { key: 'compose', txt: nn + ' \u00b7 \u270e composed by hand' };
-      if (p.made === 'phrase') return { key: 'adopt', txt: nn + ' \u00b7 \u266a the phrase' + (p.from ? ' \u201c' + p.from + '\u201d' : '') };
+      if (p.made === 'compose') return { key: 'compose', txt: '\u270e Composed \u00b7 WRITTEN \u2014 ' + nn + ' you drew' };
+      if (p.made === 'phrase') return { key: 'adopt', txt: '\u266a Phrase' + (p.from ? ' \u201c' + p.from + '\u201d' : '') + ' \u00b7 WRITTEN \u2014 ' + nn };
       if (p.made === 'take') {
         // LEAD with the material — burying it mid-sentence is why "still not
         // clear what Material we're using" was a fair report of the first cut
-        const LOCKED = ' \u00b7 LOCKED \u2014 plays these notes, not the rules \u00b7 ';
+        const LOCKED = ' \u00b7 WRITTEN DOWN \u2014 plays these notes, not the rules \u00b7 ';
         if (v1) return { key: p.mat, txt: 'v1 ' + v1 + ' seed' + LOCKED + nn };
         if (mat) return { key: mat, txt: M[mat] + LOCKED + rulesBare + ' \u00b7 ' + nn };
         return { key: null, txt: 'a take' + LOCKED + rulesBare + ' \u00b7 ' + nn };
       }
-      return { key: null, txt: nn + ' held' };
+      return { key: null, txt: 'WRITTEN \u2014 ' + nn + ', played as they are' };
     }
-    if (v1) return { key: p.mat, txt: 'seeded like a v1 ' + v1 + ' \u2014 ' + rules };
-    if (mat) return { key: mat, txt: M[mat] + ' \u2014 ' + rules };
-    return { key: null, txt: 'live \u00b7 ' + rules };
+    if (v1) return { key: p.mat, txt: 'seeded like a v1 ' + v1 + ' \u00b7 GENERATED \u2014 ' + rules };
+    if (mat) return { key: mat, txt: M[mat] + ' \u00b7 GENERATED \u2014 ' + rules };
+    return { key: null, txt: 'GENERATED \u2014 ' + rules };
   }
   // THE GENERATED DOOR AND ITS PANEL, kept current. The door's own face names
   // the shape in force, so the row still answers "what is this" without being
@@ -3851,7 +3861,7 @@
     const says = card.querySelector('.v2-gensays');
     if (says) {
       const txt = (L.part.kind === 'recorded')
-        ? 'This part is Fixed \u2014 choosing a shape makes it Generated again.'
+        ? 'This part is WRITTEN \u2014 choosing a shape hands it back to the rules.'
         : shapeOf(L) + ' \u2014 ' + (L.part.bars || 1) + ' bar' + ((L.part.bars || 1) === 1 ? '' : 's') +
           ', re-rolled every cycle.';
       if (says.textContent !== txt) says.textContent = txt;
@@ -4407,7 +4417,7 @@
     return h + '</div>';
   }
   const PITCH_OPTS = [['drawn', 'Drawn — a note per step'], ['chord', 'Chord — the harmony'], ['stack', 'Stack — from a note'],
-                      ['fixed', 'Fixed — one note'], ['series', 'Series — sweep the chord'],
+                      ['fixed', 'One note — the same degree every time'], ['series', 'Series — sweep the chord'],
                       ['anchor', 'Anchor — a pedal point'], ['walk', 'Walk — a line'],
                       ['chance', 'Chance — any tone'],
                       ['mixed', 'Mixed — chords and single notes']];
@@ -4898,18 +4908,26 @@
               // THE MODEL, ONCE. Everything a generated part does is these two
               // axes; without saying so, the doors below look like five
               // unrelated buttons and the knobs behind them like a pile.
-              '<span class="ambient-hint v2-matmodel">Generated content is a RHYTHM (when notes happen) \u00d7 a PITCH RULE ' +
-                '(what each onset plays \u2014 one note, or several together).</span>' +
-              '<span class="v2-matgrp"><span class="v2-matlab" title="You choose the notes — the part becomes Fixed and plays exactly those.">Written</span>' +
-              '<button type="button" class="ambient-seg v2-compose" title="Notes you draw yourself, in the composer grid. The part becomes Fixed — it plays exactly what you drew.">\u270e Composed<span class="v2-matsub">notes you draw</span></button>' +
-              '<button type="button" class="ambient-seg v2-adopt" title="A phrase from the bank, dropped in as this part. The part becomes Fixed — it plays exactly those notes.">\u266a Phrase<span class="v2-matsub">a phrase from the bank</span></button>' +
+              // TWO STATES, ONE PAIR OF WORDS. The card said the same axis
+              // three ways — `kind: live/recorded` inside, "Generated / Fixed"
+              // in a Source select, and "Written / Generated" over these two
+              // clusters — so "Generated" named both a cluster and a state, and
+              // "Fixed" and "Written" named one state twice.
+              '<span class="ambient-hint v2-matmodel">A part\u2019s notes are <b>GENERATED</b> \u2014 rules, ' +
+                're-made every cycle \u2014 or <b>WRITTEN</b>: a fixed list you can edit note by note. ' +
+                '\ud83d\udd12 Lock writes a generated take down (the rules are kept); \ud83d\udd13 Unlock ' +
+                'hands it back to them. A generated shape is a RHYTHM (when notes happen) \u00d7 a PITCH ' +
+                'RULE (what each onset plays \u2014 one note, or several together).</span>' +
+              '<span class="v2-matgrp"><span class="v2-matlab" title="You choose the notes — the part is WRITTEN and plays exactly those, every cycle.">Written</span>' +
+              '<button type="button" class="ambient-seg v2-compose" title="Notes you draw yourself, in the composer grid. The part becomes WRITTEN — it plays exactly what you drew.">\u270e Composed<span class="v2-matsub">notes you draw</span></button>' +
+              '<button type="button" class="ambient-seg v2-adopt" title="A phrase from the bank, dropped in as this part. The part becomes WRITTEN — it plays exactly those notes.">\u266a Phrase<span class="v2-matsub">a phrase from the bank</span></button>' +
               // ONE GENERATED DOOR. Four shape buttons in the row put every
               // choice on screen and left nowhere for the knobs that decide
               // what each shape actually produces — they were scattered across
               // Rhythm, Pattern and Pitch, three tabs away from the decision.
               // The door opens a popover holding the shapes AND their
               // parameters, so choosing and tuning are one place.
-              '</span><span class="v2-matgrp"><span class="v2-matlab" title="You choose a shape — the rules work out the notes as it plays, fresh each cycle.">Generated</span>' +
+              '</span><span class="v2-matgrp"><span class="v2-matlab" title="You choose a shape — the rules work out the notes as it plays, fresh every cycle. 🔒 Lock writes one take down.">Generated</span>' +
               '<button type="button" class="ambient-seg v2-genbtn" title="Choose a shape and tune what it generates.">\u2699 Shape\u2026<span class="v2-matsub v2-genface">choose &amp; tune</span></button>' +
               // THE SECOND GENERATED DOOR. Shape answers "what figure goes on
               // top"; Groundwork answers "play the changes" — notes on the 1
@@ -4966,7 +4984,7 @@
           // grids under Pattern, and Feel keeps its own.
           tb('Rhythm',
           '<div class="ambient-ctrl" data-v2when="kind:recorded"><label>Rhythm</label>' +
-            '<span class="ambient-hint">These shape a <b>Generated</b> part, so they are greyed \u2014 this one is Fixed, its notes already placed. ' +
+            '<span class="ambient-hint">These shape a <b>GENERATED</b> part, so they are greyed \u2014 this one is WRITTEN, its notes already placed. ' +
             'Switch Source to Generated to make them live, or edit notes in the drawing above.</span></div>' +
 
           // `rhythmShown`, not `r.kind` — 'drawn' matches no option, and a
@@ -5038,9 +5056,13 @@
             '<button type="button" class="ambient-seg v2-tighttoggle' + (L.tight ? ' on' : '') + '">' +
               (L.tight ? 'On — clipped' : 'Off') + '</button>' +
             '<span class="ambient-hint">cut each note short of the next</span></div>') +
-          sel(L, 'part.kind', 'Source', p.kind,
-              [['live', 'Generated — rules, re-made as it plays'],
-               ['recorded', 'Fixed — a set of notes you can edit']]) +
+          // (THE SOURCE SELECT IS GONE. It was a THIRD door to `part.kind`,
+          // three tabs from the drawing, and the destructive one: picking
+          // "Fixed" wrote the field and captured nothing, so a generating part
+          // became an EMPTY written one and the empty-state hint had to explain
+          // it. 🔒 Lock / 🔓 Unlock on the take bar is the same transition made
+          // properly — it freezes exactly the take you are looking at — and it
+          // sits under the drawing, where the state it changes is visible.)
           sel(L, 'part.clock', 'Cycle', p.clock === 'free' ? 'free' : 'bars',
               [['bars', 'Bars — follows the grid'], ['free', 'Free — its own clock']]) +
           (L.lenSync
@@ -5087,7 +5109,7 @@
           // tracks the chords, while `part.pitch.harm` is interval doubling —
           // two mechanisms, and they were both called Harmony on the same card.
           sel(L, 'harmony', 'Follows changes', L.harmony || 'fixed',
-              [['fixed', 'Fixed — as written'], ['diatonic', 'Follow the key'], ['chordlock', 'Lock to the chord']],
+              [['fixed', 'Keep the written pitches'], ['diatonic', 'Follow the key'], ['chordlock', 'Lock to the chord']],
               'kind:recorded') +
           sel(L, 'speed', 'Speed', String(num(L.speed, 1)),
               [['0.25', '¼ — four times slower'], ['0.5', '½ — half speed'], ['1', '1× — as written'],
@@ -6092,7 +6114,7 @@
     // rhythm tabs keep their teal via TAB_TINT). SAVED is its own chip at the
     // right end: it is the bank, not a step in making this part.
     Content: [
-      ['make', ['Material', 'Seed like', 'Source', 'Rhythm', 'Pattern', 'Feel'], 'fam-make'],
+      ['make', ['Material', 'Seed like', 'Rhythm', 'Pattern', 'Feel'], 'fam-make'],
       ['time', ['Cycle', 'Bars', 'Plays', 'Speed'], 'fam-time'],
       ['pitch', ['Transpose', 'Follows changes'], 'fam-pitch'],
       ['saved', ['Saved'], 'fam-saved'],
@@ -6141,7 +6163,7 @@
         (tabNa(t.name, L) ? ' v2-tabna' : '') +
         '" data-tab="' + esc(t.name) + '"' +
         (tabNa(t.name, L) ? ' aria-disabled="true"' +
-          ' title="Rhythm shapes a Generated part — this one is Fixed, so these do nothing until Source is Generated"' : '') +
+          ' title="Rhythm shapes a GENERATED part — this one is WRITTEN, so these do nothing until you hand it back to the rules"' : '') +
         '>' + esc(t.name) + '</button>';
       const fams = TAB_FAMS[POP.grp];
       if (fams) {
@@ -6654,10 +6676,10 @@
               const made = (m2 && m2.key && /sustain|arp|roll/.test(m2.key))
                 ? ({ sustain: '\u25ac Sustained', arp: '\u27f3 Arpeggio', roll: '\ud83c\udfb2 Roll' })[m2.key]
                 : 'The material';
-              showToast(made + ' MADE these notes and the take was then LOCKED \u2014 the part now plays ' +
+              showToast(made + ' MADE these notes, and \ud83d\udd12 Lock WROTE THEM DOWN \u2014 the part now plays ' +
                 'the notes, not the rules. Rhythm \u00b7 Pattern \u00b7 Feel shape the rules, so they do ' +
-                'nothing here: press \ud83c\udfb2 Replace with a new take to roll again, or set ' +
-                'Source \u2192 Generated to keep rolling every cycle.', { ms: 7000 });
+                'nothing here: press \ud83c\udfb2 Replace with a new take to roll again, or ' +
+                '\ud83d\udd13 Unlock under the drawing to keep rolling every cycle.', { ms: 7000 });
             } catch (e) {}
             return;
           }

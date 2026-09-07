@@ -371,8 +371,12 @@ const ok = (name, cond, detail) => {
   await page.evaluate(() => {
     const L = (_masterEng.getCfg().layers || [])[0];
     L.part.notes = [];                              // a genuinely empty recorded part
-    const el = document.querySelector('.v2-layer [data-f="part.kind"]');
-    el.value = 'recorded'; el.dispatchEvent(new Event('input', { bubbles: true }));
+    // (the Source select is gone — it was the destructive door to this state,
+    // writing the field and capturing nothing. The state itself still exists,
+    // reached by locking an empty take or loaded from a project, and it still
+    // has to explain itself.)
+    L.part.kind = 'recorded'; _masterEng.getCfg();
+    window._v2.render(_masterEng);
   });
   await new Promise((r) => setTimeout(r, 350));
   // RESTATED, not relaxed. It pinned the SENTENCE ("Nothing recorded yet"),
@@ -410,8 +414,7 @@ const ok = (name, cond, detail) => {
     const card = () => document.querySelector('.v2-layer');
     const cap = () => card().querySelector('.v2-capture');
     const face = () => ({ txt: cap().textContent.trim(), title: cap().title });
-    const sel = document.querySelector('.v2-layer [data-f="part.kind"]');
-    sel.value = 'live'; sel.dispatchEvent(new Event('input', { bubbles: true }));
+    L().part.kind = 'live'; E.getCfg(); window._v2.render(E);
     await wait(250); card().classList.remove('collapsed');
     const live = { ...face(), nt: { txt: card().querySelector('.v2-newtake').textContent.trim() } };
     L().part.kind = 'recorded'; L().part.notes = []; E.getCfg();
@@ -481,8 +484,7 @@ const ok = (name, cond, detail) => {
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const card = document.querySelector('.v2-layer');
     card.classList.remove('collapsed');
-    const sel2 = card.querySelector('[data-f="part.kind"]');
-    sel2.value = 'live'; sel2.dispatchEvent(new Event('input', { bubbles: true }));
+    L().part.kind = 'live'; E.getCfg(); window._v2.render(E);
     await wait(250);
     const c2 = document.querySelector('.v2-layer');
     c2.classList.remove('collapsed');
@@ -793,7 +795,12 @@ const ok = (name, cond, detail) => {
   ok('a v1 seed lights its chip, and a locked take still says what it was a take OF',
     /Bass/.test(provRun.seed.on) && /seeded like a v1 bass/.test(provRun.seed.hint) &&
     /Bass/.test(provRun.locked.on) && /v1 bass seed/.test(provRun.locked.hint) &&
-    /LOCKED/.test(provRun.locked.hint),
+    // RESTATED with the vocabulary: one pair of words for the axis, so a
+    // locked take is WRITTEN DOWN (it was "LOCKED", which named the action
+    // rather than the state and left "Fixed" naming the same state elsewhere).
+    // The contract is unchanged — it still says it plays these notes.
+    /WRITTEN DOWN/.test(provRun.locked.hint) &&
+    /plays these notes, not the rules/.test(provRun.locked.hint),
     JSON.stringify(provRun).slice(0, 240));
   // NO STAMP IS NOT NO MATERIAL — a part made before provenance existed (or
   // assembled by hand on the knobs) still IS one of the materials, and the
@@ -1170,7 +1177,9 @@ const ok = (name, cond, detail) => {
     const tst = document.querySelector('.bloops-toast');
     const naRefuses = !!rhy && !rhy.classList.contains('on') &&
       (document.querySelector('.v2-pop-tab.on') || {}).textContent === onBefore &&
-      !!tst && getComputedStyle(tst).display !== 'none' && /Generated/.test(tst.textContent);
+      // it names the way out, which is 🔓 Unlock under the drawing now that the
+      // Source select (a third door to the same field) is gone
+      !!tst && getComputedStyle(tst).display !== 'none' && /Unlock/.test(tst.textContent);
     // a row label that repeats the active tab is hidden — EXCEPT one carrying
     // a control (Pattern's ↻ regen button lives inside its label)
     const labOf = (nm) => { const t2 = [...strip.querySelectorAll('[data-tab]')].find(x => x.getAttribute('data-tab') === nm);
@@ -1584,6 +1593,60 @@ const ok = (name, cond, detail) => {
     card().classList.remove('collapsed');
     return o;
   });
+  // …AND THERE IS ALWAYS A SEQUENCER TO WRITE INTO. The real lane row is
+  // parked off-screen while composing, because the per-chord strip mirrors its
+  // chips a few pixels above — but that strip is `hidden` with NO progression,
+  // which left the dock as a keyboard, four buttons and nothing showing the
+  // sequence ("where is the sequencer for the run being composed?"). Parked
+  // only while the thing that mirrors it is there.
+  const seqRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const svProg = E.getCfg().prog ? JSON.parse(JSON.stringify(E.getCfg().prog)) : null;
+    const svPart = JSON.stringify(L().part);
+    const card = () => document.querySelector('.v2-layer');
+    const open = async () => {
+      const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+      window._v2.render(E); await wait(260);
+      card().classList.remove('collapsed');
+      const gt = card().querySelector('.v2-gototab[data-goto="Content"]');
+      if (gt && !gt.classList.contains('on')) { gt.click(); await wait(220); }
+      card().querySelector('.v2-compose').click(); await wait(800);
+    };
+    const meas = () => {
+      const q = (sel) => { const e = card().querySelector(sel);
+        return e ? Math.round(e.getBoundingClientRect().height) : -1; };
+      const chips = card().querySelectorAll('.ambient-seedgrid-striphost .lane-chips .seq-step').length;
+      const ch = card().querySelector('.ambient-seedgrid-striphost .lane-chips');
+      return { strip: q('.ambient-seedgrid-striphost'), chords: q('.ambient-seedgrid-chords'),
+               chips, op: ch ? +getComputedStyle(ch).opacity : -1 };
+    };
+    // NO PROGRESSION — the lane strip IS the sequencer
+    delete E.getCfg().prog; E.getCfg();
+    await open();
+    const bare = meas();
+    const gc = card().querySelector('.v2-gacts .v2-gcancel'); if (gc) gc.click(); await wait(600);
+    // WITH a progression — the per-chord strip takes over and the row parks,
+    // so the chips are never drawn twice
+    E.getCfg().prog = { on: true, name: 'SQ',
+      chords: [0, 5, 7].map((r) => ({ root: r, intervals: [0, 4, 7] })) };
+    E.getCfg();
+    await open();
+    const withProg = meas();
+    const gc2 = card().querySelector('.v2-gacts .v2-gcancel'); if (gc2) gc2.click(); await wait(600);
+    if (svProg) E.getCfg().prog = svProg; else delete E.getCfg().prog;
+    try { L().part = JSON.parse(svPart); } catch (e) {}
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E); await wait(220);
+    document.querySelector('.v2-layer').classList.remove('collapsed');
+    return { bare, withProg };
+  });
+  ok('composing always shows the sequence — the lane strip when there are no changes, the per-chord strip when there are',
+    seqRun.bare.strip > 40 && seqRun.bare.chips > 0 && seqRun.bare.op === 1 &&
+    seqRun.withProg.chords > 40 && seqRun.withProg.strip === 0,
+    JSON.stringify(seqRun));
+
   ok('composing takes the editor — the dock gets the room, the actions are reachable, and it restores on exit',
 
     compRun.composing && compRun.started && compRun.fullScreen && compRun.actsPinned &&
@@ -2918,11 +2981,59 @@ const ok = (name, cond, detail) => {
   // `series` was the FIELD VALUE leaking into the hint; the sentence says what
   // it does instead, which is the same claim made readable.
   ok('a part with NO provenance stamp still lights the material its rules ARE',
-    /Roll/.test(inferRun.legacy.on) && /Roll · LOCKED/.test(inferRun.legacy.hint) &&
+    /Roll/.test(inferRun.legacy.on) && /Roll · WRITTEN DOWN/.test(inferRun.legacy.hint) &&
     /Arpeggio/.test(inferRun.hand.on) && /one note at a time|sweeping the chord/.test(inferRun.hand.hint) &&
     inferRun.lockMark === 'none' && inferRun.liveMark === 'none' &&
     /Unlock/.test(inferRun.lockCap) && /Lock this take/.test(inferRun.liveCap),
     JSON.stringify(inferRun).slice(0, 240));
+
+  // ONE AXIS, ONE PAIR OF WORDS, ONE CONTROL. The card said the same thing
+  // three ways — `kind: live/recorded` inside, a Source select offering
+  // "Generated / Fixed", and "Written / Generated" over the Material clusters
+  // — so "Generated" named both a cluster and a state and "Fixed"/"Written"
+  // named one state twice ("the nature of the Material still feels opaque").
+  // A part is GENERATED or WRITTEN; 🔒 Lock is the transition; the Source
+  // select is gone (it was the destructive door — it wrote the field and
+  // captured nothing, so a generating part became an EMPTY written one).
+  const vocab = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const svPart = JSON.stringify(L().part);
+    const card = () => document.querySelector('.v2-layer');
+    const show = async () => { const h = document.getElementById('bloom-v2-layers');
+      if (h) h._sig = ''; window._v2.render(E); await wait(240);
+      card().classList.remove('collapsed'); };
+    const hint = () => (card().querySelector('.v2-notecount') || {}).textContent || '';
+    const cap = () => (card().querySelector('.v2-capture') || {}).textContent.trim();
+    const o = {};
+    // GENERATED
+    L().part.kind = 'live'; delete L().part.made; E.getCfg(); await show();
+    o.liveHint = hint(); o.liveCap = cap();
+    // WRITTEN, from a rolled take
+    window._v2.capture(E, L()); E.getCfg(); await show();
+    o.lockHint = hint(); o.lockCap = cap();
+    // WRITTEN, by hand — the button names the way back in ITS words
+    L().part.made = 'compose'; E.getCfg(); await show();
+    o.handHint = hint(); o.handCap = cap();
+    // ONE CONTROL for the axis: the select is gone
+    o.selects = card().querySelectorAll('[data-f="part.kind"]').length;
+    // …and no VISIBLE text on the card calls the state "Fixed" any more
+    const vis = [];
+    card().querySelectorAll('*').forEach((el) => {
+      if (el.children.length || !el.textContent.trim()) return;
+      if (el.getBoundingClientRect().height > 0) vis.push(el.textContent);
+    });
+    o.saysFixed = vis.filter((t) => /\bFixed\b/.test(t)).length;
+    try { L().part = JSON.parse(svPart); E.getCfg(); await show(); } catch (e) {}
+    return o;
+  });
+  ok('a part is GENERATED or WRITTEN — one pair of words, and 🔒 Lock is the only door between them',
+    vocab.selects === 0 && vocab.saysFixed === 0 &&
+    /GENERATED/.test(vocab.liveHint) && /WRITTEN/.test(vocab.lockHint) &&
+    /WRITTEN/.test(vocab.handHint) &&
+    /Lock this take/.test(vocab.liveCap) && /Unlock/.test(vocab.lockCap) &&
+    /Generate instead/.test(vocab.handCap),
+    JSON.stringify(vocab).slice(0, 300));
 
   // ---- THE INSTRUMENT SHEET IS TWO TABS AND TWO FOLDS ---------------------
   // It was five tabs — Tone type, Tone, Register, Tone cycle, Envelope — which
@@ -2990,8 +3101,7 @@ const ok = (name, cond, detail) => {
   const regRun = await page.evaluate(async () => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
-    const sel2 = document.querySelector('.v2-layer [data-f="part.kind"]');
-    sel2.value = 'live'; sel2.dispatchEvent(new Event('input', { bubbles: true }));
+    L().part.kind = 'live'; E.getCfg(); window._v2.render(E);
     await wait(200);
     window._v2.rollRun(E, L()); window._v2.render(E); await wait(200);
     const hear = async () => {
@@ -3110,8 +3220,7 @@ const ok = (name, cond, detail) => {
   // the spacing in place (unpinned: 2 distinct takes over a 3-cycle span).
   await page.evaluate(() => {
     const E = _masterEng, L = (E.getCfg().layers || [])[0];
-    const el = document.querySelector('.v2-layer [data-f="part.kind"]');
-    el.value = 'live'; el.dispatchEvent(new Event('input', { bubbles: true }));
+    L.part.kind = 'live'; E.getCfg();
     window._v2.rollRun(E, L);
     window._v2.render(E);
   });
@@ -3262,8 +3371,8 @@ const ok = (name, cond, detail) => {
   // card AND on a Euclid card — reported immediately as "where is the layer
   // grid". A door you have to already know about is not a door.
   await page.evaluate(() => {
-    const el = document.querySelector('.v2-layer [data-f="part.kind"]');
-    el.value = 'live'; el.dispatchEvent(new Event('input', { bubbles: true }));
+    const L0 = (_masterEng.getCfg().layers || [])[0];
+    L0.part.kind = 'live'; _masterEng.getCfg(); window._v2.render(_masterEng);
     const r = document.querySelector('.v2-layer [data-f="part.rhythm.kind"]');
     r.value = 'euclid'; r.dispatchEvent(new Event('input', { bubbles: true }));
   });

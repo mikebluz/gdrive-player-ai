@@ -490,7 +490,10 @@ const ok = (name, cond, detail) => {
     c2.classList.remove('collapsed');
     [...c2.querySelectorAll('.v2-gototab')].find((x) => x.getAttribute('data-goto') === 'Content').click();
     await wait(300);
-    const tabs = [...document.querySelectorAll('.v2-pop-tab')].map((t) => t.getAttribute('data-tab'));
+    // THE MAKING STEPS, i.e. the tabs in the family ROWS. The bank chip is
+    // deliberately not one of them — it collapsed into the family bar at the
+    // right end, a different KIND of destination rather than a fourth step.
+    const tabs = [...document.querySelectorAll('.v2-tabfam .v2-pop-tab')].map((t) => t.getAttribute('data-tab'));
     await wait(200);
     // tune an arpeggio, go elsewhere, come back
     window._v2.makeArp(E, L()); E.getCfg();
@@ -1139,8 +1142,14 @@ const ok = (name, cond, detail) => {
     // programmatic navigation works.
     const fams = [...strip.querySelectorAll('.v2-fambtn')].map(f => f.textContent + ':' +
       (f.classList.contains('on') ? 'on' : 'off'));
-    const inFams = [...strip.querySelectorAll('.v2-tabfam [data-tab]')].length;
+    // RESTATED: the contract was "every tab lives in a family row", which stood
+    // for "no tab can vanish from the strip". A family naming ONE tab now
+    // collapses into its own chip (Saved-above-Phrases was two words for one
+    // list), so a tab is reachable from a row OR from the bar — same guarantee.
+    const inFams = [...strip.querySelectorAll('.v2-tabfam [data-tab], .v2-fambar [data-tab]')].length;
     const total = [...strip.querySelectorAll('[data-tab]')].length;
+    // …and the collapsed chip is named by its TAB, not by the family word
+    const solo = bar0 => bar0.querySelector('.v2-fambtn.fam-saved');
     const visRows = [...strip.querySelectorAll('.v2-tabfam')].filter(f => f.getBoundingClientRect().height > 0).length;
     const stripH = Math.round(strip.getBoundingClientRect().height);
     // the family chips FILL the row, equal widths (the strip is a row flex
@@ -1156,7 +1165,10 @@ const ok = (name, cond, detail) => {
       Math.abs(allChips.reduce((a, c) => a + c.getBoundingClientRect().width, 0) +
                6 * (allChips.length - 1) - bar.getBoundingClientRect().width) < 3;
     // SAVED: inverse (filled, text knocked out in the sheet ground), last chip
-    const sv = bar.querySelector('.v2-fambtn.fam-saved');
+    const sv = solo(bar);
+    const soloIsTab = !!sv && sv.getAttribute('data-tab') === 'Phrases' &&
+      sv.textContent.trim() === 'Phrases' && sv.classList.contains('v2-pop-tab') &&
+      !strip.querySelector('.v2-tabfam.fam-saved');
     const svCs = sv ? getComputedStyle(sv) : null;
     const savedInverse = !!sv && sv === allChips[allChips.length - 1] &&
       svCs.backgroundColor !== 'rgba(0, 0, 0, 0)' && svCs.color === 'rgb(18, 18, 31)';
@@ -1230,7 +1242,7 @@ const ok = (name, cond, detail) => {
     const o = { fams: fams.join(' '), allInFams: inFams === total && total >= 10,
       navWorks: t.classList.contains('on'), phoneHead, famNav, visRows, stripH,
       chipsEqual, dupHidden, ctrlLabKept, bw: bw.join(','),
-      savedInverse, rhythmInMake, naDim, naRefuses,
+      savedInverse, soloIsTab, rhythmInMake, naDim, naRefuses,
       paneFam: pane.getAttribute('data-fam'),
       labHue: lab ? getComputedStyle(lab.querySelector('label')).color : null };
     await wait(150);
@@ -1243,10 +1255,10 @@ const ok = (name, cond, detail) => {
   // folded into make, tinted), and the height pin moves 120 → 160 because the
   // make row legitimately wraps to two lines at six chips. The contract is
   // "two levels, not four stacked rows" — it was ~250px before the fold.
-  ok('the Content tab strip is a two-level navigator — make (with rhythm) · time · pitch · Saved',
-    /make:/.test(famRun.fams) && /saved:/.test(famRun.fams) && /time:/.test(famRun.fams) &&
+  ok('the Content tab strip is a two-level navigator — make (with rhythm) · time · pitch · Phrases',
+    /make:/.test(famRun.fams) && /Phrases:/.test(famRun.fams) && /time:/.test(famRun.fams) &&
     /pitch:/.test(famRun.fams) && famRun.allInFams && famRun.navWorks &&
-    famRun.savedInverse && famRun.rhythmInMake && famRun.naDim && famRun.naRefuses &&
+    famRun.savedInverse && famRun.soloIsTab && famRun.rhythmInMake && famRun.naDim && famRun.naRefuses &&
     famRun.phoneHead && famRun.visRows === 1 && famRun.stripH <= 160 &&
     /Cycle/.test(famRun.famNav) && famRun.chipsEqual && famRun.dupHidden && famRun.ctrlLabKept &&
     famRun.paneFam === 'fam-time' && famRun.labHue === 'rgb(99, 179, 237)',

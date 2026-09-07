@@ -6591,6 +6591,24 @@
           const mine = left.filter(t => names.indexOf(t.name) >= 0);
           if (!mine.length) return;
           mine.forEach(t => left.splice(left.indexOf(t), 1));
+          // A FAMILY THAT NAMES ONE TAB IS A LEVEL WITH NOTHING TO CHOOSE IN
+          // IT. "Saved" sat above a single tab "Phrases" — two chips, two
+          // words, one list, and the question it produced was "how are they
+          // different". They are not: the chip IS the tab. It takes the TAB's
+          // name and its `data-tab`, so the `.on` toggle, the goto select and
+          // every `[data-tab]` reader find it exactly where they did, and no
+          // second row is drawn under it.
+          if (mine.length === 1) {
+            const t1 = mine[0];
+            bar += '<button type="button" class="v2-fambtn v2-pop-tab ' + cls +
+              (TAB_TINT[t1.name] ? ' tint-' + TAB_TINT[t1.name] : '') +
+              (tabNa(t1.name, L) ? ' v2-tabna' : '') + (cls === actFam ? ' on' : '') +
+              '" data-tab="' + esc(t1.name) + '" data-first="' + esc(t1.name) + '"' +
+              (tabNa(t1.name, L) ? ' aria-disabled="true"' +
+                ' title="Rhythm shapes a GENERATED part \u2014 this one is WRITTEN, so these do nothing until you hand it back to the rules"' : '') +
+              '>' + esc(t1.name) + '</button>';
+            return;
+          }
           bar += '<button type="button" class="v2-fambtn ' + cls + (cls === actFam ? ' on' : '') +
             '" data-first="' + esc(mine[0].name) + '">' + esc(lab) + '</button>';
           rows += '<div class="v2-tabfam ' + cls + (cls === actFam ? ' fam-on' : '') + '">' +

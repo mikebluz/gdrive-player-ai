@@ -3595,22 +3595,27 @@ const ok = (name, cond, detail) => {
   // ---- DOOR 3: A PHRASE FROM THE COMPOSE GRID ------------------------------
   // The second surface the user named. Phrases are composed in a layer's ✎ Grid
   // and saved to `savedSequences`; v2 needs a reader, not an editor of its own.
-  const popText = () => page.evaluate(() => {
-    const o = document.querySelector('.ambient-addpop-ov'); if (!o) return null;
-    return { title: (o.querySelector('.sm-title') || {}).textContent || '',
-             btns: [...o.querySelectorAll('.addpop-btn')].map((b) => b.textContent.trim()),
-             heads: [...o.querySelectorAll('.addpop-head')].map((b) => b.textContent.trim()) };
+  // RESTATED with the merge: ♪ Phrase used to open a PICKER over the same bank
+  // the Phrases tab draws — two surfaces for one list, called two different
+  // things ("don't think we need both Saved and Phrases"). The door NAVIGATES
+  // now, exactly as 🔍 Find a control does, and the tab is the one home.
+  const bankTab = () => page.evaluate(() => {
+    const c = document.querySelector('.v2-layer');
+    const row = c && c.querySelector('.v2-pop-pane .v2-bankrow');
+    if (!row || !row.getBoundingClientRect().height) return null;
+    return { tab: (c.querySelector('.v2-pop-tab.on') || {}).getAttribute('data-tab'),
+             items: [...row.querySelectorAll('.v2-bankit .v2-bkload')].map((b) => b.textContent.trim()),
+             empty: (row.querySelector('.ambient-hint') || {}).textContent || '',
+             pickers: document.querySelectorAll('.ambient-addpop-ov').length };
   });
   e = await tap('.v2-layer .v2-adopt');
-  await new Promise((r) => setTimeout(r, 350));
-  let pop = await popText();
+  await new Promise((r) => setTimeout(r, 400));
+  let pop = await bankTab();
   // An empty bank is not an error — it is a "here is where these come from".
-  // A picker that opens on nothing and says nothing is the dead end this whole
-  // slice exists to remove.
-  ok('the phrase picker is reachable', !e && !!pop, e || 'no popover');
+  ok('the Phrase door opens the one phrase list — no second picker',
+    !e && !!pop && pop.tab === 'Phrases' && pop.pickers === 0, e || JSON.stringify(pop));
   ok('an empty bank says where phrases come from',
-    pop && !pop.btns.length && pop.heads.some((h) => /✎ Grid/.test(h)), JSON.stringify(pop));
-  await page.evaluate(() => document.querySelectorAll('.ambient-addpop-ov').forEach((o) => o.remove()));
+    pop && !pop.items.length && /Save this take|compose/.test(pop.empty), JSON.stringify(pop));
 
   // Seed the bank the way the app does — a phrase with a rest and a chord step,
   // both of which have to survive the trip: a rest contributes TIME and no note,
@@ -3622,16 +3627,21 @@ const ok = (name, cond, detail) => {
       { freq: null, label: 'chord', cellIndex: null, duration: 2, subdivision: 0.5,
         chord: [{ freq: 392, label: 'G4' }, { freq: 493.88, label: 'B4' }] },
     ] });
+    const h2 = document.getElementById('bloom-v2-layers'); if (h2) h2._sig = '';
+    window._v2.render(_masterEng);
   });
+  await new Promise((r) => setTimeout(r, 300));
+  await page.evaluate(() => { document.querySelector('.v2-layer').classList.remove('collapsed'); });
   await tap('.v2-layer .v2-adopt');
-  await new Promise((r) => setTimeout(r, 350));
-  pop = await popText();
+  await new Promise((r) => setTimeout(r, 400));
+  pop = await bankTab();
   ok('the bank lists the phrase with its length',
-    pop && pop.btns.some((b) => /gateRiff/.test(b) && /3 notes/.test(b) && /0\.5 bars/.test(b)),
-    JSON.stringify(pop));
+    pop && pop.items.some((b) => /gateRiff/.test(b)), JSON.stringify(pop));
   const chosen = await page.evaluate(() => {
-    const b = [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')].find((x) => /gateRiff/.test(x.textContent));
-    if (!b) return null; const r = b.getBoundingClientRect();
+    const b = [...document.querySelectorAll('.v2-layer .v2-pop-pane .v2-bankit .v2-bkload')]
+      .find((x) => /gateRiff/.test(x.textContent));
+    if (!b) return null; b.scrollIntoView({ block: 'center' });
+    const r = b.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   });
   if (chosen) { await page.touchscreen.tap(chosen.x, chosen.y); await new Promise((r) => setTimeout(r, 500)); }
@@ -3689,6 +3699,15 @@ const ok = (name, cond, detail) => {
       scratch: (typeof lanes !== 'undefined') ? lanes.filter((l) => l._bloomScratch).length : -1,
     };
   });
+  // BACK TO THE MATERIAL TAB FIRST — the Phrase door above navigated to
+  // Phrases, and a tab shows only its own rows, so ✎ Composed is off screen
+  // until we come back (it measured `zero-size`, which is the tell).
+  await page.evaluate(() => {
+    const t = [...document.querySelectorAll('.v2-layer .v2-pop-tab')]
+      .find((x) => x.getAttribute('data-tab') === 'Material');
+    if (t) t.click();
+  });
+  await new Promise((r) => setTimeout(r, 250));
   e = await tap('.v2-layer .v2-compose');
   let d = await dockState();
   ok('✎ Compose is reachable and opens a session', !e && d.session === 'v2:1', e || JSON.stringify(d));

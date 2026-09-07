@@ -4931,7 +4931,7 @@
                 'RULE (what each onset plays \u2014 one note, or several together).</span>' +
               '<span class="v2-matgrp"><span class="v2-matlab" title="You choose the notes — the part is WRITTEN and plays exactly those, every cycle.">Written</span>' +
               '<button type="button" class="ambient-seg v2-compose" title="Notes you draw yourself, in the composer grid. The part becomes WRITTEN — it plays exactly what you drew.">\u270e Composed<span class="v2-matsub">notes you draw</span></button>' +
-              '<button type="button" class="ambient-seg v2-adopt" title="A phrase from the bank, dropped in as this part. The part becomes WRITTEN — it plays exactly those notes.">\u266a Phrase<span class="v2-matsub">a phrase from the bank</span></button>' +
+              '<button type="button" class="ambient-seg v2-adopt" title="Opens the Phrases tab — the one list of saved phrases. Tapping one makes it this part, WRITTEN: it plays exactly those notes.">\u266a Phrase<span class="v2-matsub">from the Phrases tab</span></button>' +
               // ONE GENERATED DOOR. Four shape buttons in the row put every
               // choice on screen and left nowhere for the knobs that decide
               // what each shape actually produces — they were scattered across
@@ -4958,12 +4958,12 @@
           // is to come back to one, and to put the ones you want in an order.
           // This is the SAME bank the compose grid saves to and `partSeqs`
           // maps to changes by name — one list, not a private copy.
-          '<div data-v2tab="Saved" class="ambient-ctrl v2-bankrow"><label>Saved</label>' +
+          '<div data-v2tab="Phrases" class="ambient-ctrl v2-bankrow"><label>Phrases</label>' +
             '<span class="v2-bank">' +
               (bankList().length
                 ? bankList().map((b2) =>
                     '<span class="v2-bankit" data-bi="' + b2.i + '">' +
-                      '<button type="button" class="v2-bkload" data-bi="' + b2.i + '" title="Play this one on this layer">' +
+                      '<button type="button" class="v2-bkload" data-bi="' + b2.i + '" title="Use this phrase as this part \u2014 the part becomes WRITTEN and plays exactly these notes.">' +
                         esc(b2.name) + '<span class="v2-bkn">' + b2.n + '</span></button>' +
                       '<button type="button" class="v2-bkup" data-bi="' + b2.i + '" aria-label="Move up" title="Move up">\u25b4</button>' +
                       '<button type="button" class="v2-bkdn" data-bi="' + b2.i + '" aria-label="Move down" title="Move down">\u25be</button>' +
@@ -4971,7 +4971,7 @@
                     '</span>').join('')
                 : '<span class="ambient-hint">Nothing saved yet \u2014 press \ud83d\udcbe Save this take above the drawing, or compose a phrase.</span>') +
             '</span>' +
-            '<span class="ambient-hint">these are phrases: any of them can be mapped to a part or a chord</span></div>' +
+            '<span class="ambient-hint">tap one to play it on this layer \u2014 or map any of them to a part or a chord in \u25a6 Passes</span></div>' +
           '<div data-v2tab="Seed like" class="ambient-ctrl"><label>Seed like</label>' +
             '<span class="ambient-seg-row">' +
             ((V2 && V2.v1Seeds) || []).map(([ty, lab]) =>
@@ -4996,7 +4996,7 @@
           tb('Rhythm',
           '<div class="ambient-ctrl" data-v2when="kind:recorded"><label>Rhythm</label>' +
             '<span class="ambient-hint">These shape a <b>GENERATED</b> part, so they are greyed \u2014 this one is WRITTEN, its notes already placed. ' +
-            'Switch Source to Generated to make them live, or edit notes in the drawing above.</span></div>' +
+            'Press \ud83d\udd13 Unlock under the drawing to hand it back to the rules, or edit the notes in the drawing.</span></div>' +
 
           // `rhythmShown`, not `r.kind` — 'drawn' matches no option, and a
           // <select> with no matching option does not render empty, it silently
@@ -6134,7 +6134,7 @@
       ['make', ['Material', 'Seed like', 'Rhythm', 'Pattern', 'Feel'], 'fam-make'],
       ['time', ['Cycle', 'Bars', 'Plays', 'Speed'], 'fam-time'],
       ['pitch', ['Transpose', 'Follows changes'], 'fam-pitch'],
-      ['saved', ['Saved'], 'fam-saved'],
+      ['saved', ['Phrases'], 'fam-saved'],
     ],
   };
   // A tab that keeps its own hue inside a family, and the state that makes it
@@ -7105,32 +7105,22 @@
         const adopt = t.closest('.v2-adopt');
         if (adopt) {
           const ctx = layerOf(adopt); if (!ctx) return;
+          // IT NAVIGATES. This opened a picker over the same bank the Phrases
+          // tab draws — two surfaces for one list, called two different things
+          // ("don't think we need both Saved and Phrases"). The door is a
+          // signpost now: the tab is the one home, where a phrase can also be
+          // reordered and deleted, and its own empty state says where phrases
+          // come from.
+          popOpen(ctx.card, ctx.L, 'Content', 'Phrases');
           setTimeout(() => {
-            const pop = window._ambActionsPopover;
-            const list = V2.phrases().filter(p => p.notes > 0);
-            if (!pop) return;
-            if (!list.length) {
-              // An empty bank is not an error — it is a "here is where these
-              // come from". A picker that opens on nothing and says nothing is
-              // the dead end this whole slice exists to remove.
-              pop('No phrases saved yet', [
-                { label: 'Phrases are composed in a layer’s ✎ Grid and saved to the bank. Save one there and it will appear here.', disabled: true },
-              ]);
-              return;
-            }
-            pop('Play a saved phrase', list.map(p => ({
-              label: p.name + '  ·  ' + p.notes + ' note' + (p.notes === 1 ? '' : 's') + ' · ' + p.bars + ' bars',
-              fn: () => {
-                if (!V2.adopt(E, ctx.L, p.name)) {
-                  try { if (typeof showToast === 'function') showToast('Could not read “' + p.name + '” — it has no pitched steps.', { warn: true, ms: 5000 }); } catch (e) {}
-                  return;
-                }
-                try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-                try { if (typeof showToast === 'function') showToast('Playing “' + p.name + '” — ' + ctx.L.part.notes.length + ' notes over ' + ctx.L.part.bars + ' bars. Set Source to Generated to go back to rules.', { ms: 5000 }); } catch (e) {}
-                h._sig = ''; V2.render(E);
-              },
-            })));
-          }, 0);
+            try {
+              const row = ctx.card.querySelector('.v2-pop-pane .v2-bankrow');
+              if (!row) return;
+              row.scrollIntoView({ block: 'center' });
+              row.classList.add('v2-findmark');
+              setTimeout(() => row.classList.remove('v2-findmark'), 1600);
+            } catch (e) {}
+          }, 60);
           return;
         }
         // SAVE A TAKE, and the bank's own row: load, reorder, delete.

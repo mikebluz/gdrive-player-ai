@@ -3289,24 +3289,35 @@ const ok = (name, cond, detail) => {
     E._playStartAt = 0; E._progAnchor = 0; E._barGridAnchor = 0;
     const q = (dur, at, rel) =>
       Math.round(window._ambNoteChoke('v2:' + L().id, at, dur, { release: rel }));
-    const o = {
-      // a LINE at 1.5 bars — 500 ms of room, 844 ms note: left alone
-      line: q(844, 1.5, 400),
-      // a PAD, 8 s over a 2 s chord: still clamped to the change
-      pad: q(8000, 0.02, 3000),
-      // …and a note that genuinely swamps the next chord is still cut
-      long: q(2600, 1.5, 400),
-      // a short one is never touched
-      short: q(200, 1.9, 100),
-    };
+    // THE MATERIAL DECIDES. A LINE (one note at a time) is never choked — a
+    // melody's note length comes from its rhythm, and clipping only the notes
+    // near a change is what made an even line ragged. HARMONY is what the rule
+    // is for, so the same numbers are asked of both.
+    const svPitch = JSON.stringify(L().part.pitch);
+    const svKind = L().part.kind;
+    L().part.kind = 'live';
+    L().part.pitch = { kind: 'walk', span: 3 }; E.getCfg();
+    const o = { lineLong: q(3200, 1.5, 400), lineMid: q(844, 1.5, 400) };
+    L().part.pitch = { kind: 'chord', voices: 3 }; E.getCfg();
+    // a PAD, 8 s over a 2 s chord: clamped to the change
+    o.pad = q(8000, 0.02, 3000);
+    // …and one that genuinely swamps the next chord
+    o.long = q(2600, 1.5, 400);
+    // a short one is never touched, whatever the material
+    o.short = q(200, 1.9, 100);
+    // …and a note that fits with room to spare keeps its length
+    o.fits = q(600, 0.02, 200);
+    try { L().part.pitch = JSON.parse(svPitch); } catch (e) {}
+    L().part.kind = svKind; E.getCfg();
     if (svProg) E.getCfg().prog = svProg; else delete E.getCfg().prog;
     if (svRing) L().ring = svRing;
     E.getCfg();
     E._playStartAt = svClk[0]; E._progAnchor = svClk[1]; E._barGridAnchor = svClk[2];
     return o;
   });
-  ok('the choke cuts what rings over a change, and leaves a melodic tail alone',
-    chokeRule.line === 844 && chokeRule.short === 200 &&
+  ok('the choke holds HARMONY to the change and never touches a line',
+    chokeRule.lineLong === 3200 && chokeRule.lineMid === 844 &&
+    chokeRule.short === 200 && chokeRule.fits === 600 &&
     chokeRule.pad > 1500 && chokeRule.pad < 2000 &&
     chokeRule.long > 400 && chokeRule.long < 600,
     JSON.stringify(chokeRule));

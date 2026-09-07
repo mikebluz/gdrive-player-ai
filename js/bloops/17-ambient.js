@@ -41960,6 +41960,18 @@
         if (!cfg || !cfg.prog || !cfg.prog.on) return durMs; // no changes ⇒ no boundary to choke at
         const L = _ambLayerByKey(E, key);
         if (!L || _ambLayerRings(L)) return durMs;           // opted out — obey the tone's ADSR
+        // A LINE IS NOT CHOKED. One note at a time is a MELODY, and a melody's
+        // note length comes from its rhythm, not from the chord grid: clipping
+        // only the notes that happen to land near a change is what made an even
+        // line ragged the moment you pressed play (reported twice, the second
+        // time after the overrun allowance below was already in — measured, a
+        // 1520 ms note in a 2 s chord still lost half its length at one onset
+        // and none at the next). What this rule is FOR is HARMONY ringing under
+        // the next chord — several notes at once, held.
+        try {
+          const pk = (L.part && L.part.kind !== 'recorded' && L.part.pitch && L.part.pitch.kind) || '';
+          if (pk && pk !== 'chord' && pk !== 'stack' && pk !== 'mixed') return durMs;
+        } catch (e) {}
         // A note that cannot reach the next boundary needs no work, and this is
         // what keeps percussive layers off the bisection entirely.
         const bpm = (cfg.bpm > 0) ? cfg.bpm : _ambBpm();

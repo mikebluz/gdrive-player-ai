@@ -3270,6 +3270,47 @@ const ok = (name, cond, detail) => {
     playRun.clock && playRun.clock.behindSchedule > 0.005 &&
     Math.abs(playRun.clock.offAudible) < 0.05,
     JSON.stringify(playRun));
+  // …AND IT ONLY CUTS WHAT GENUINELY RINGS OVER. Reported as "the second two
+  // notes of a rolled part are dramatically truncated when I press play" — a
+  // note landing three quarters of the way through a chord had 500 ms of room
+  // and went 844 -> 488, so a line that was even before play came out ragged.
+  // The tail is the NOTE now (a release is a decay, and one that fades over the
+  // change is what legato sounds like) and a note may ring past by half its own
+  // length, capped at one beat.
+  const chokeRule = await page.evaluate(async () => {
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const svProg = E.getCfg().prog ? JSON.parse(JSON.stringify(E.getCfg().prog)) : null;
+    const svClk = [E._playStartAt, E._progAnchor, E._barGridAnchor];
+    const svRing = L().ring;
+    delete L().ring;
+    E.getCfg().prog = { on: true, name: 'CK',
+      chords: [0, 5, 7, 9].map((r) => ({ root: r, intervals: [0, 4, 7] })) };
+    E.getCfg();
+    E._playStartAt = 0; E._progAnchor = 0; E._barGridAnchor = 0;
+    const q = (dur, at, rel) =>
+      Math.round(window._ambNoteChoke('v2:' + L().id, at, dur, { release: rel }));
+    const o = {
+      // a LINE at 1.5 bars — 500 ms of room, 844 ms note: left alone
+      line: q(844, 1.5, 400),
+      // a PAD, 8 s over a 2 s chord: still clamped to the change
+      pad: q(8000, 0.02, 3000),
+      // …and a note that genuinely swamps the next chord is still cut
+      long: q(2600, 1.5, 400),
+      // a short one is never touched
+      short: q(200, 1.9, 100),
+    };
+    if (svProg) E.getCfg().prog = svProg; else delete E.getCfg().prog;
+    if (svRing) L().ring = svRing;
+    E.getCfg();
+    E._playStartAt = svClk[0]; E._progAnchor = svClk[1]; E._barGridAnchor = svClk[2];
+    return o;
+  });
+  ok('the choke cuts what rings over a change, and leaves a melodic tail alone',
+    chokeRule.line === 844 && chokeRule.short === 200 &&
+    chokeRule.pad > 1500 && chokeRule.pad < 2000 &&
+    chokeRule.long > 400 && chokeRule.long < 600,
+    JSON.stringify(chokeRule));
+
   ok('Ring out is the door for the chord choke — off cuts the note, on lets it ring',
     playRun.door && /released by the next change/.test(playRun.faceOff) &&
     playRun.ring === 1 && /through the changes/.test(playRun.faceOn) &&

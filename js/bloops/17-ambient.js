@@ -41964,13 +41964,28 @@
         // what keeps percussive layers off the bisection entirely.
         const bpm = (cfg.bpm > 0) ? cfg.bpm : _ambBpm();
         const barSec = (60 / Math.max(20, bpm)) * 4;
-        const tail = durMs / 1000 + Math.max(0, (params && params.release) || 0) / 1000;
+        // THE NOTE, NOT ITS RELEASE. The tail used to be `dur + release`, so a
+        // line whose notes are shorter than the chord was choked anyway — the
+        // release is a DECAY, and one that fades over the change is what legato
+        // sounds like. What this rule exists to stop is a NOTE still sounding
+        // under the next chord.
+        const tail = durMs / 1000;
         if (tail < barSec / 8) return durMs;
         const end = _ambChordEndAt(E, cfg, atSec);
         if (!(end > atSec)) return durMs;
         const room = (end - _AMB_CHOKE_GAP) - atSec;
         if (room <= 0.03) return durMs;                      // already at the edge; leave it alone
-        if (tail <= room) return durMs;                      // it already finishes in time
+        // …AND A SMALL OVERRUN IS ALLOWED. Reported as "the second two notes of
+        // a rolled part are dramatically truncated": a note landing three
+        // quarters of the way through a chord had 500 ms of room and was cut
+        // from 844 to 488, so a line that was even before play came out ragged.
+        // A note may ring past the change by half its own length, capped at one
+        // BEAT — which leaves a melodic tail alone and still catches the case
+        // this is for, a pad ringing whole chords later (8 s over a 2 s chord
+        // overruns by 300% of a beat and is clamped exactly as before).
+        const beat = barSec / 4;
+        const allow = Math.min(tail * 0.5, beat);
+        if (tail <= room + allow) return durMs;              // it finishes close enough
         const ms = Math.max(60, Math.round(room * 1000));
         // Keep the release INSIDE the shortened note, or the voice collapses to a
         // near-silent stub instead of releasing by the boundary (the bed choke

@@ -3504,7 +3504,10 @@
     let playing = false;
     try {
       const stp = E.timer && E._v2Phase && E._v2Phase['v2:' + (L.id | 0)];
-      const nowT = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      // THE CYCLE BEING HEARD, not the one being scheduled — on the shell's
+      // broadcast those are most of a second apart, so the roll would flip to
+      // the next cycle well before you heard it.
+      const nowT = audibleNow();
       if (stp && Number.isFinite(stp.startAt) && nowT >= stp.startAt) {
         cs = stp.startAt + Math.floor((nowT - stp.startAt) / cyc) * cyc;
         fromPv = false; playing = true;
@@ -4034,6 +4037,13 @@
   // re-arms while playing — the documented rule), and drawn on the OVERLAY
   // canvas: redrawing the roll per frame would mean a `notesFor` call per frame
   // per card, since the drawing is generated rather than stored.
+  // currentTime − output latency − the shell's broadcast lag. Same helper the
+  // Shape wheel and v1's layer bars use, so every playhead in the app answers
+  // to one clock.
+  const audibleNow = () => {
+    try { if (typeof _shapeAudibleNow === 'function') return _shapeAudibleNow(); } catch (e) {}
+    return (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+  };
   function vizFrame(E) {
     if (!E) return;
     const host = document.getElementById('bloom-v2-layers'); if (!host) return;
@@ -4053,7 +4063,10 @@
     }
     let cfg = null; try { cfg = E.getCfg(); } catch (e) {}
     const list = (cfg && cfg.layers) || []; if (!list.length) return;
-    const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+    // …+ ONE SCREEN FRAME: the position is right for the audible clock, but the
+    // browser paints it a frame after this callback, so it would land slightly
+    // behind the sound (v1's bars carry the same nudge, for the same reason).
+    const now = audibleNow() + 0.016;
     host.querySelectorAll('.v2-layer:not(.collapsed)').forEach((card) => {
       const id = card.getAttribute('data-v2id') | 0;
       const L = list.find((x) => x && (x.id | 0) === id); if (!L) return;
@@ -4123,6 +4136,15 @@
       }
       g.strokeStyle = 'rgba(198,246,213,0.9)'; g.lineWidth = 1.5;
       g.beginPath(); g.moveTo(x, TOP); g.lineTo(x, h); g.stroke();
+      // THE TIME THE SWEEP WAS DRAWN FOR — so "is this the audible clock or the
+      // schedule one" is answerable by measurement rather than by reading the
+      // code (it was the schedule clock, and on the shell's broadcast that is
+      // most of a second early).
+      ph._at = now;
+      // …beside the SCHEDULE clock read in the same frame, so the two can be
+      // compared without wall time between them contaminating the answer (a
+      // check that read `Tone.now()` afterwards passed with the poison in).
+      try { ph._sched = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0; } catch (e) {}
     });
   }
   // Beside `window._v2Tick` and for the same reason: the viz rAF lives in 17

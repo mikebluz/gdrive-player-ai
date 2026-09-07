@@ -3161,6 +3161,21 @@ const ok = (name, cond, detail) => {
     o.sweep = lit();
     await wait(500);
     o.sweep2 = lit();
+    // …ON THE AUDIBLE CLOCK. `Tone.now()` is `currentTime + lookAhead` — what
+    // notes are SCHEDULED on — while what you hear is `currentTime − output
+    // latency`, and in the shell the broadcast adds most of a second. Reported
+    // as "the playhead is not in sync, it starts too early". The sweep records
+    // the time it was drawn for, so the clock it used is measurable.
+    o.clock = (() => {
+      const ph = card().querySelector('.v2-vizph');
+      if (!ph || !Number.isFinite(ph._at)) return null;
+      const aud = (typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : Tone.now();
+      // BOTH CLOCKS FROM THE SAME FRAME. Reading `Tone.now()` here instead
+      // let wall time since the last frame stand in for the latency, and the
+      // poison (the schedule clock) passed.
+      return { behindSchedule: +((ph._sched || 0) - ph._at).toFixed(4),
+               offAudible: +(ph._at - (aud + 0.016)).toFixed(4) };
+    })();
     o.overlayBox = (() => { const ph = card().querySelector('.v2-vizph');
       const cv = card().querySelector('.v2-vizcv');
       return (ph && cv) ? (Math.abs(parseFloat(ph.style.width) - cv.clientWidth) < 1.5 &&
@@ -3222,7 +3237,11 @@ const ok = (name, cond, detail) => {
   ok('the roll lights up as it plays — a sweep on its own overlay, cleared on stop',
     playRun.playing && playRun.sweep > 20 && playRun.sweep2 > 20 &&
     playRun.sweep !== playRun.sweep2 && playRun.overlayBox &&
-    playRun.sweepAfterStop === 0,
+    playRun.sweepAfterStop === 0 &&
+    // it reads the AUDIBLE clock: behind the schedule clock, and within a
+    // frame of `currentTime − latency`
+    playRun.clock && playRun.clock.behindSchedule > 0.005 &&
+    Math.abs(playRun.clock.offAudible) < 0.05,
     JSON.stringify(playRun));
   ok('Ring out is the door for the chord choke — off cuts the note, on lets it ring',
     playRun.door && /released by the next change/.test(playRun.faceOff) &&

@@ -11300,9 +11300,28 @@
        editing), and the actions PIN to the bottom of the pane. Measured before
        pinning: ✓ Done sat at y=1183 in an 800px window on desktop, and below
        the fold on a phone. */
+    /* THE DRAWING and ▶ Preview step aside (the tick SKIPS a composing layer —
+       the grid owns what it plays — so a preview there previews nothing you
+       are editing). THE TAB STRIP STAYS: hiding it read as the card being
+       gutted ("what happened to the Material buttons"). It is INERT instead —
+       navigating would move the group body and the dock is inside it — and a
+       press says so. Dim the CHILDREN, never the strip (the documented
+       opacity-composites rule: a dimmed wrapper takes its own banner with it). */
     .v2-layer.v2-composing .v2-pop .v2-partviz,
-    .v2-layer.v2-composing .v2-pop .v2-pop-foot,
-    .v2-layer.v2-composing .v2-pop .v2-pop-tabs { display: none; }
+    .v2-layer.v2-composing .v2-pop .v2-pop-foot { display: none; }
+    .v2-layer.v2-composing .v2-pop-tabs > * ,
+    .v2-layer.v2-composing .v2-notesrow .v2-matgrp,
+    .v2-layer.v2-composing .v2-pop-head .v2-pop-title > * { opacity: 0.42; }
+    /* …but ✎ Composed stays lit and live: it is the mode you are IN, and it is
+       how you opened this. */
+    .v2-layer.v2-composing .v2-notesrow .v2-matgrp .v2-compose { opacity: 1; }
+    .v2-compbanner { display: none; }
+    .v2-layer.v2-composing .v2-compbanner {
+      display: block; margin: 2px 14px 6px; padding: 7px 10px;
+      border: 1px solid #4a3a6a; border-radius: 10px; background: rgba(159, 122, 234, 0.12);
+      color: #d6bcfa; font: 0.72rem/1.35 'Segoe UI', sans-serif;
+      white-space: normal; overflow-wrap: anywhere;
+    }
     .v2-layer.v2-composing .v2-pop-pane { flex: 1 1 auto; }
     .v2-layer.v2-composing .ambient-ctrl.v2-gacts {
       position: sticky; bottom: 0; z-index: 2;
@@ -11321,10 +11340,10 @@
        key on the session, so the markup must stay exactly where they expect
        it. Same principle as the pattern grid leading its own tab. */
     .v2-layer.v2-composing .v2-dock { display: flex; flex-direction: column; }
-    .v2-layer.v2-composing .v2-dock > .ambient-seedgrid-chords { order: 1; }
-    .v2-layer.v2-composing .v2-dock > .ambient-seedgrid-striphost { order: 2; }
-    .v2-layer.v2-composing .v2-dock > .ambient-seedgrid-gran { order: 3; }
-    .v2-layer.v2-composing .v2-dock > .ambient-seedgrid-dockhost { order: 4; }
+    .v2-layer.v2-composing .v2-dock > .ambient-seedgrid-dockhost { order: 1; }
+    .v2-layer.v2-composing .v2-dock > .ambient-seedgrid-chords { order: 2; }
+    .v2-layer.v2-composing .v2-dock > .ambient-seedgrid-striphost { order: 3; }
+    .v2-layer.v2-composing .v2-dock > .ambient-seedgrid-gran { order: 4; }
     .v2-layer.v2-composing .v2-dock > .ambient-seedgrid-prib { order: 5; }
     .v2-layer.v2-composing .v2-dock > .v2-gacts { order: 6; }
     /* NOT TRIED TWICE: shrinking the keyboard's `.cell` height saves NOTHING —
@@ -15098,6 +15117,13 @@
 /* a section whose summary is not its neutral — "which sections does this layer
    actually use", the one thing the button grid said that the tabs did not */
 .v2-gototab.v2-live { border-color: rgba(159, 122, 234, 0.55); color: #d6bcfa; }
+/* AN OPEN COMPOSE SESSION is a MODE, not a provenance — `.on` says "this
+   material made the notes" and had two writers, so ✎ Composed stayed lit on a
+   part Groundwork had made. Its own mark, and it reads as active without
+   claiming the notes. */
+.v2-notesrow .ambient-seg.v2-sess {
+  border-color: #4fd1c5; color: #b2f5ea; box-shadow: inset 0 0 0 1px rgba(79, 209, 197, 0.4);
+}
 .v2-pop-head .v2-grpsum {
   flex: 1 0 100%; min-width: 0; margin-top: -2px; color: #6b6b8a;
   white-space: normal; overflow-wrap: anywhere; line-height: 1.3;

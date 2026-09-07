@@ -1566,9 +1566,28 @@ const ok = (name, cond, detail) => {
       done.scrollIntoView({ block: 'center' });
       const rd2 = done.getBoundingClientRect();
       o.doneHit = document.elementFromPoint(rd2.left + rd2.width / 2, rd2.top + rd2.height / 2) === done;
+      // RESTATED: the drawing and ▶ Preview still step aside (the tick skips a
+      // composing layer, so a preview there previews nothing you are editing),
+      // but THE TAB STRIP STAYS — hiding it read as the card being gutted
+      // ("what happened to the Material buttons"). It is inert and says so:
+      // dimmed, with a banner, and a press refuses rather than navigating
+      // (switching section moves the group body, and the dock is inside it).
       o.stepsAside = getComputedStyle(pop.querySelector('.v2-partviz')).display === 'none' &&
-        getComputedStyle(pop.querySelector('.v2-pop-tabs')).display === 'none' &&
-        getComputedStyle(pop.querySelector('.v2-pop-foot')).display === 'none';
+        getComputedStyle(pop.querySelector('.v2-pop-foot')).display === 'none' &&
+        getComputedStyle(pop.querySelector('.v2-pop-tabs')).display !== 'none' &&
+        (() => { const bn = pop.querySelector('.v2-compbanner');
+          return !!bn && getComputedStyle(bn).display !== 'none' &&
+                 bn.getBoundingClientRect().height > 10; })() &&
+        // …and the tab strip READS as inert
+        +getComputedStyle(pop.querySelector('.v2-pop-tabs').firstElementChild).opacity < 0.6;
+      // A PRESS REFUSES AND EXPLAINS — it used to be hidden, and the Material
+      // doors silently did nothing ("clicking the other options does nothing")
+      const wasTab = (pop.querySelector('.v2-pop-tab.on') || {}).textContent;
+      const other = pop.querySelector('.v2-pop-tab:not(.on)');
+      if (other) other.click(); await wait(240);
+      const tst2 = document.querySelector('.bloops-toast');
+      o.refuses = !!other && (pop.querySelector('.v2-pop-tab.on') || {}).textContent === wasTab &&
+        !!tst2 && /composing/i.test(tst2.textContent);
       o.editorDocked = (() => { const ex = document.getElementById('lane-expander');
         return !!ex && !!ex.closest('.v2-dock') && ex.getBoundingClientRect().height > 200; })();
       // THE COMPOSITION SURFACE LEADS — the per-chord strip is what you write
@@ -1578,7 +1597,12 @@ const ok = (name, cond, detail) => {
       const ky = dk && dk.querySelector('.ambient-seedgrid-dockhost');
       const rp = pop.querySelector('.v2-pop-pane').getBoundingClientRect();
       const row0 = ch && ch.querySelector('.sglane-row');
-      o.stripLeads = !!ch && !!ky && ch.getBoundingClientRect().top < ky.getBoundingClientRect().top;
+      // THE GRID LEADS, THEN THE SEQUENCE. The strip was put above the keyboard
+      // when the dock lived in a ~230px sheet pane, where anything under it was
+      // off screen; embedded, the editor is in the page flow and the panel
+      // scrolls, so the order is the one Make uses ("why is the sequencer above
+      // the grid").
+      o.stripLeads = !!ch && !!ky && ky.getBoundingClientRect().top < ch.getBoundingClientRect().top;
       o.stripInView = !!row0 && row0.getBoundingClientRect().top >= rp.top - 1 &&
         row0.getBoundingClientRect().bottom <= rp.bottom + 1;
       acts.querySelector('.v2-gcancel').click(); await wait(600);
@@ -1647,11 +1671,10 @@ const ok = (name, cond, detail) => {
     seqRun.withProg.chords > 40 && seqRun.withProg.strip === 0,
     JSON.stringify(seqRun));
 
-  ok('composing takes the editor — the dock gets the room, the actions are reachable, and it restores on exit',
-
+  ok('composing takes the editor — grid first, tabs inert but present, actions reachable, restores on exit',
     compRun.composing && compRun.started && compRun.fullScreen && compRun.actsPinned &&
-    compRun.doneHit && compRun.stepsAside && compRun.editorDocked && compRun.exited && compRun.vizBack &&
-    compRun.stripLeads && compRun.stripInView,
+    compRun.doneHit && compRun.stepsAside && compRun.refuses && compRun.editorDocked &&
+    compRun.exited && compRun.vizBack && compRun.stripLeads && compRun.stripInView,
     JSON.stringify(compRun));
   // A DERIVED PART NAME IS RECOMPUTED, NEVER REMEMBERED. A part picked from
   // the catalogue is named by its numerals, which is a DESCRIPTION of chords —
@@ -3034,6 +3057,55 @@ const ok = (name, cond, detail) => {
     /Lock this take/.test(vocab.liveCap) && /Unlock/.test(vocab.lockCap) &&
     /Generate instead/.test(vocab.handCap),
     JSON.stringify(vocab).slice(0, 300));
+
+  // EXACTLY ONE MATERIAL DOOR IS LIT, AND IT TRACKS THE MATERIAL. Reported as
+  // "clicking through the Written/Generated modes is buggy; options stay
+  // highlighted, Composed gets stuck on". Two causes, both measured: the lit
+  // map still named the four shape buttons, which MOVED INTO the Shape panel,
+  // so a generated part lit NOTHING in the row (mat 'ground', lit []); and an
+  // open compose session wrote `.on` — the class that means "this material
+  // made the notes" — onto ✎ Composed, so it stayed lit on a part Groundwork
+  // had made. One class, one meaning: the session has its own mark.
+  const doorRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const svPart = JSON.stringify(L().part);
+    const card = () => document.querySelector('.v2-layer');
+    const show = async () => { const h = document.getElementById('bloom-v2-layers');
+      if (h) h._sig = ''; window._v2.render(E); await wait(240);
+      card().classList.remove('collapsed'); };
+    const lit = () => ['v2-compose', 'v2-adopt', 'v2-genbtn', 'v2-gwbtn']
+      .filter((c) => { const e = card().querySelector('.' + c);
+        return e && e.classList.contains('on'); });
+    const o = {};
+    // a default generated card: the shape door owns hand-built shapes too
+    L().part.kind = 'live'; delete L().part.mat; delete L().part.made;
+    L().part.rhythm = { kind: 'euclid', steps: 16, n: 3 };
+    L().part.pitch = { kind: 'chord', voices: 3 };
+    E.getCfg(); await show();
+    o.dflt = lit();
+    // …Groundwork, through its own door
+    card().querySelector('.v2-gwbtn').click(); await wait(500);
+    o.ground = lit(); o.mat = L().part.mat;
+    const dn = card().querySelector('.v2-gwdone'); if (dn) dn.click(); await wait(350);
+    o.groundAfter = lit();
+    // …and a compose session must not claim the material
+    card().querySelector('.v2-compose').click(); await wait(800);
+    o.composing = card().classList.contains('v2-composing');
+    o.whileComposing = lit();
+    o.sessMark = card().querySelector('.v2-compose').classList.contains('v2-sess');
+    const gc = card().querySelector('.v2-gacts .v2-gcancel'); if (gc) gc.click(); await wait(600);
+    o.afterCancel = lit();
+    try { L().part = JSON.parse(svPart); E.getCfg(); await show(); } catch (e) {}
+    return o;
+  });
+  ok('exactly one Material door is lit, and it names the material — a compose session is not one',
+    doorRun.dflt.join() === 'v2-genbtn' && doorRun.mat === 'ground' &&
+    doorRun.ground.join() === 'v2-gwbtn' && doorRun.groundAfter.join() === 'v2-gwbtn' &&
+    doorRun.composing && doorRun.sessMark &&
+    doorRun.whileComposing.join() === 'v2-gwbtn' &&
+    doorRun.afterCancel.join() === 'v2-gwbtn',
+    JSON.stringify(doorRun));
 
   // ---- THE INSTRUMENT SHEET IS TWO TABS AND TWO FOLDS ---------------------
   // It was five tabs — Tone type, Tone, Register, Tone cycle, Envelope — which

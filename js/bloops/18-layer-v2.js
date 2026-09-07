@@ -3920,10 +3920,21 @@
     const lk = L.part.kind === 'recorded';
     const map = { compose: '.v2-compose', adopt: '.v2-adopt',
       sustain: '.v2-mkpart[data-mk="sustain"]', arp: '.v2-mkpart[data-mk="arp"]',
-      mixed: '.v2-mkpart[data-mk="mixed"]', ground: '.v2-mkground', roll: '.v2-rollrun' };
+      mixed: '.v2-mkpart[data-mk="mixed"]', roll: '.v2-rollrun' };
     Object.keys(map).forEach((k) => {
       const b2 = card.querySelector(map[k]);
       if (b2) { b2.classList.toggle('on', pv2.key === k); b2.classList.toggle('v2-matlock', lk); }
+    });
+    // THE ROW'S OWN DOORS: ⚙ Shape owns the four generated shapes, ⛰ Groundwork
+    // owns itself. Without these the row lit nothing at all for a generated
+    // part — the four buttons the map names live inside the Shape PANEL now.
+    const SHAPES = { sustain: 1, arp: 1, roll: 1, mixed: 1 };
+    const genLit = SHAPES[pv2.key] ? true
+      : (pv2.key === 'ground' || pv2.key === 'compose' || pv2.key === 'adopt') ? false
+      : L.part.kind === 'live';        // a hand-built shape is still behind this door
+    [['.v2-genbtn', genLit], ['.v2-gwbtn', pv2.key === 'ground']].forEach(([sel, on]) => {
+      const b2 = card.querySelector(sel);
+      if (b2) { b2.classList.toggle('on', !!on); b2.classList.toggle('v2-matlock', lk && !!on); }
     });
     card.querySelectorAll('.v2-seedv1').forEach((b2) => {
       b2.classList.toggle('on', pv2.key === 'v1:' + b2.getAttribute('data-v1'));
@@ -5685,7 +5696,10 @@
       try { open = (typeof _bloomGridEdit !== 'undefined') && !!_bloomGridEdit && _bloomGridEdit.key === ('v2:' + L.id); } catch (e) {}
       dock.hidden = !open;
       const cb = card.querySelector('.v2-compose');
-      if (cb) cb.classList.toggle('on', open);
+      // NOT `.on` — that class means "this material made the notes", and a
+      // session is a MODE. Two writers of one class is why ✎ Composed stayed
+      // lit on a part Groundwork had made.
+      if (cb) cb.classList.toggle('v2-sess', open);
     }
     // GROUP BUTTONS: an ACCENT on any treatment group whose summary is not its
     // neutral (the folded card then says at a glance which groups this layer
@@ -5990,6 +6004,9 @@
           // it to nothing on a phone the moment the head grew a control.
           '<span class="ambient-hint v2-grpsum" data-grp="' + esc(grp) + '"></span></div>' +
         '<div class="v2-pop-tabs"></div>' +
+        '<div class="v2-compbanner">\u270e Composing this part \u2014 the tabs and the ' +
+          'Material doors wait until you are done. \u2713 Done keeps it \u00b7 \u2715 Cancel ' +
+          'discards \u00b7 both are under the grid below.</div>' +
         '<div class="v2-pop-pane"></div>' +
         '<div class="v2-pop-foot"><button type="button" class="v2-pop-preview" ' +
           'title="Hear one cycle of this layer with the current settings — through its own chain, so the FX and level speak too">' +
@@ -6613,7 +6630,22 @@
         k.addEventListener('pointercancel', up, { once: true });
       });
 
+      // A press inside a card that is composing, on anything that would
+      // navigate away from the dock, refuses and says how to finish.
+      const composeBlocks = (t) => {
+        const c = t && t.closest && t.closest('.v2-layer.v2-composing');
+        if (!c) return false;
+        if (t.closest('.v2-compose')) return false;   // the way OUT of the mode
+        if (!(t.closest('.v2-gototab') || t.closest('.v2-pop-tab') ||
+              t.closest('.v2-fambtn') || t.closest('.v2-notesrow .ambient-seg'))) return false;
+        try {
+          showToast('\u270e You are composing this part \u2014 finish first: \u2713 Done keeps ' +
+            'what you drew, \u2715 Cancel discards it. Both are under the grid.', { ms: 5000 });
+        } catch (e) {}
+        return true;
+      };
       h.addEventListener('click', (ev) => {
+        if (composeBlocks(ev.target)) { ev.stopPropagation(); return; }
         // SECTION TABS in the sheet head — six groups filling one row, so the
         // current section and every other one are visible at once. Was a
         // <select>, which showed only the section you were already in.

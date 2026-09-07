@@ -2051,6 +2051,10 @@ const ok = (name, cond, detail) => {
   // screen and left nowhere for the parameters, which sat three tabs away in
   // Rhythm, Pattern and Pitch.
   const genRun = await page.evaluate(async () => {
+    // A MATERIAL PRESS ASKS FIRST now (it replaces the notes), and a native
+    // confirm is AUTO-DISMISSED in puppeteer — so a probe that drives these
+    // doors has to answer it, or the door correctly does nothing.
+    const svConfirm = window.confirm; window.confirm = () => true;
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const sv = JSON.stringify(L().part);
@@ -2110,6 +2114,7 @@ const ok = (name, cond, detail) => {
       if (h) h._sig = ''; window._v2.render(E); await wait(200);
       document.querySelector('.v2-layer').classList.remove('collapsed');
     } catch (e) {}
+    window.confirm = svConfirm;
     return o;
   });
   ok('⚙ Shape… holds the four shapes AND the knobs that shape them, in one panel',
@@ -2124,6 +2129,10 @@ const ok = (name, cond, detail) => {
   // chord, Arpeggio and Roll always one note at a time), so "both" could only
   // be hand-built on the knobs.
   const mixRun = await page.evaluate(async () => { try {
+    // A MATERIAL PRESS ASKS FIRST now (it replaces the notes), and a native
+    // confirm is AUTO-DISMISSED in puppeteer — so a probe that drives these
+    // doors has to answer it, or the door correctly does nothing.
+    const svConfirm = window.confirm; window.confirm = () => true;
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const sv = JSON.stringify(L().part), c0 = E.getCfg();
@@ -2207,6 +2216,7 @@ const ok = (name, cond, detail) => {
       if (h) h._sig = ''; window._v2.render(E); await wait(200);
       document.querySelector('.v2-layer').classList.remove('collapsed');
     } catch (e) {}
+    window.confirm = svConfirm;
     return o;
   } catch (e) { return { err: String(e && e.message) }; }
   });
@@ -2319,6 +2329,10 @@ const ok = (name, cond, detail) => {
   // guard keyed on the STAMP, so a chip lit by INFERENCE (a walked line IS a
   // roll) still rebuilt and threw the content away.
   const rollRun2 = await page.evaluate(async () => {
+    // A MATERIAL PRESS ASKS FIRST now (it replaces the notes), and a native
+    // confirm is AUTO-DISMISSED in puppeteer — so a probe that drives these
+    // doors has to answer it, or the door correctly does nothing.
+    const svConfirm = window.confirm; window.confirm = () => true;
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const c0 = E.getCfg();
@@ -2382,6 +2396,7 @@ const ok = (name, cond, detail) => {
       if (L().parts) delete L().parts;
       E.getCfg(); await draw();
     } catch (e) { o.err = e.message; }
+    window.confirm = svConfirm;
     return o;
   });
   ok('🎲 Roll takes the selected part\'s length, and a press on the lit chip builds nothing',
@@ -3331,6 +3346,78 @@ const ok = (name, cond, detail) => {
     rollRun3.rowsExact && rollRun3.onItsKey &&
     rollRun3.whiteKeys > 20 && rollRun3.blackKeys > 8,
     JSON.stringify(rollRun3));
+
+  // A MATERIAL PRESS DOES ONE OF THREE THINGS, and it says which. Reported as
+  // "changing between material modes is still janky… it feels nondeterministic
+  // as to when a new take is rolled and why; before a new take is rolled there
+  // needs to be a confirmation". ADOPT (already in that mode) is silent and
+  // changes nothing; RESTORE (a material you have used before) and BUILD FRESH
+  // both replace what you are looking at, so both ask first and name which one
+  // they are.
+  const matAsk = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    const svPart = JSON.stringify(L().part);
+    L().on = true; L().present = true; L().part.kind = 'live';
+    delete L().part.mat; delete L().part.mem; delete L().part.made;
+    // a KNOWN starting shape that is not the one pressed first, so "first" is
+    // genuinely a switch
+    L().part.rhythm = { kind: 'pulse', steps: 16, n: 1 };
+    L().part.pitch = { kind: 'chord', voices: 3 };
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E); await wait(280);
+    card().classList.remove('collapsed');
+    const asked = []; const svC = window.confirm;
+    window.confirm = (m) => { asked.push(String(m)); return true; };
+    const shape = () => JSON.stringify([L().part.rhythm, L().part.pitch, L().part.bars]);
+    // the four shapes live in the ⚙ Shape panel; it re-renders on every choice,
+    // so re-open and re-query for each press (the documented detached-node trap)
+    const press = async (sel) => {
+      const opener = card().querySelector('.v2-genbtn'); if (opener) opener.click();
+      await wait(380);
+      const el = card().querySelector(sel); if (!el) return { missing: true };
+      const was = shape(); const n0 = asked.length;
+      el.click(); await wait(430);
+      return { changed: shape() !== was, asked: asked.length - n0,
+               msg: asked[asked.length - 1] || '' };
+    };
+    const o = {};
+    o.first = await press('.v2-mkpart[data-mk="arp"]');
+    o.again = await press('.v2-mkpart[data-mk="arp"]');
+    o.roll = await press('.v2-rollrun');
+    o.back = await press('.v2-mkpart[data-mk="arp"]');
+    // DECLINING KEEPS WHAT YOU HAVE — the confirm is not decoration
+    window.confirm = () => false;
+    const was2 = shape();
+    const op2 = card().querySelector('.v2-genbtn'); if (op2) op2.click();
+    await wait(380);
+    const rr = card().querySelector('.v2-rollrun'); if (rr) rr.click();
+    await wait(400);
+    o.declinedKeeps = shape() === was2;
+    window.confirm = svC;
+    const cl2 = card().querySelector('.v2-genclose'); if (cl2) cl2.click();
+    await wait(250);
+    o.panelClosed = !card().classList.contains('v2-genopen');
+    try {
+      L().part = JSON.parse(svPart); E.getCfg();
+      if (h) h._sig = ''; window._v2.render(E); await wait(220);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) {}
+    return o;
+  });
+  ok('a material press asks before it replaces the notes, and says whether it builds fresh or restores',
+    matAsk.first.asked === 1 && matAsk.first.changed &&
+    /built fresh/i.test(matAsk.first.msg) &&
+    // …and a repeat press on the LIT one adopts: no question, no change
+    matAsk.again.asked === 0 && matAsk.again.changed === false &&
+    matAsk.roll.asked === 1 && matAsk.roll.changed &&
+    // coming BACK to a material restores its settings, and says so
+    matAsk.back.asked === 1 && matAsk.back.changed &&
+    /saved/i.test(matAsk.back.msg) &&
+    matAsk.declinedKeeps && matAsk.panelClosed,
+    JSON.stringify(matAsk).slice(0, 400));
 
   // EXACTLY ONE MATERIAL DOOR IS LIT, AND IT TRACKS THE MATERIAL. Reported as
   // "clicking through the Written/Generated modes is buggy; options stay

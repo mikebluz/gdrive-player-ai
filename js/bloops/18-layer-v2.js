@@ -4150,6 +4150,44 @@
   // Beside `window._v2Tick` and for the same reason: the viz rAF lives in 17
   // and this is the UI IIFE, and the two share nothing but the window.
   window._v2VizFrame = vizFrame;
+  // A MATERIAL PRESS DOES ONE OF THREE THINGS, and the card never said which:
+  // ADOPT (already in that mode — nothing changes), RESTORE (a material you
+  // have used before comes back with the settings you left it at), or BUILD
+  // FRESH (new rules, new notes). Reported as "it feels nondeterministic as to
+  // when a new take is rolled and why". The first is silent; the other two
+  // REPLACE what you are looking at, so they ask first and NAME the outcome.
+  const MAT_LABEL = { sustain: '\u25ac Sustained', arp: '\u27f3 Arpeggio',
+                      roll: '\ud83c\udfb2 Roll', mixed: '\u2687 Mixed',
+                      ground: '\u26f0 Groundwork' };
+  function matWillDo(L, which) {
+    const p = (L && L.part) || {};
+    if (p.kind !== 'recorded' && matProv(L).key === which) return 'adopt';
+    return (p.mem && p.mem[which]) ? 'restore' : 'build';
+  }
+  function matSwitchOK(L, which) {
+    const p = (L && L.part) || {};
+    const what = matWillDo(L, which);
+    if (what === 'adopt') return true;                 // nothing changes
+    const lab = MAT_LABEL[which] || 'This material';
+    const n = (p.notes || []).length;
+    if (p.kind === 'recorded') {
+      if (!n) return true;                             // nothing to lose
+      // WRITTEN notes are somebody's work — say what they are before replacing
+      // them (the same rule `replaceOK` follows for a take).
+      const made = (p.made === 'compose') ? 'the notes you drew'
+        : (p.made === 'phrase') ? ('the phrase' + (p.from ? ' \u201c' + p.from + '\u201d' : ''))
+        : 'these ' + n + ' written note' + (n === 1 ? '' : 's');
+      return confirm(lab + ' makes this part GENERATED again.\n\n' + made +
+        ' will be replaced by notes made from its rules' +
+        ((p.mem && p.mem[which]) ? ' \u2014 your saved ' + lab + ' settings come back.' : '.') +
+        '\n\nThis cannot be undone.');
+    }
+    return confirm(lab + ' re-makes this part\u2019s notes.\n\n' +
+      ((what === 'restore')
+        ? ('Your saved ' + lab + ' settings come back, and the take you have now is replaced.')
+        : ('It is built fresh, and the take you have now is replaced.')) +
+      '\n\nCancel keeps what you have. \ud83c\udfb2 New take rolls another of the same shape.');
+  }
   function matSync(card, L) {
     const pv2 = matProv(L);
     // ✓ = this material is generating · 🔒 = it MADE these notes and the take
@@ -7730,7 +7768,7 @@
           // instead — it stamps the provenance, so the state becomes explicit,
           // and leaves the content alone. Rebuilding is what the OTHER modes'
           // buttons are for, and re-rolling is 🎲 New take's.
-          if (ctx.L.part.kind !== 'recorded' && matProv(ctx.L).key === which) {
+          if (matWillDo(ctx.L, which) === 'adopt') {
             if (ctx.L.part.mat !== which) {
               ctx.L.part.mat = which;
               try { E.getCfg(); } catch (e) {}
@@ -7739,6 +7777,10 @@
             }
             return;
           }
+          // ASK BEFORE REPLACING. A mode press that silently re-made the
+          // content is what read as a roll happening for no reason.
+          const willDo = matWillDo(ctx.L, which);
+          if (!matSwitchOK(ctx.L, which)) return;
           const info = (which === 'arp') ? V2.makeArp(E, ctx.L)
             : (which === 'mixed') ? V2.makeMixed(E, ctx.L)
             : V2.makeSustain(E, ctx.L, true);
@@ -7757,12 +7799,17 @@
           }, 0);
           try {
             if (typeof showToast === 'function') {
-              showToast(which === 'arp'
+              // …AND WHICH OF THE THREE IT DID. "Built fresh" and "your saved
+              // settings came back" are different events and looked identical.
+              const how = (willDo === 'restore')
+                ? ' \u00b7 your saved settings for it came back'
+                : ' \u00b7 built fresh';
+              showToast((which === 'arp'
                 ? 'Arpeggio — sweeping the chord, ' + info.onsets + ' per cycle over ' + info.octaves + ' octaves.'
                 : which === 'mixed'
                 ? 'Mixed — some onsets play a chord, the rest a single note. Pitch \u25b8 Mix sets the balance.'
                 : 'Sustained — ' + info.voices + ' voice' + (info.voices === 1 ? '' : 's') +
-                  ' held for the cycle. Set Voices to 1 for a single note.', { ms: 4000 });
+                  ' held for the cycle. Set Voices to 1 for a single note.') + how, { ms: 4500 });
             }
           } catch (e) {}
           return;
@@ -7790,7 +7837,7 @@
           // STAMP alone, so a chip lit by INFERENCE (a walked line IS a roll)
           // still rebuilt: the reported case, where a 5-bar per-part record
           // came back 1 bar. Lit is lit — adopt the mode, keep the content.
-          if (ctx.L.part.kind !== 'recorded' && matProv(ctx.L).key === 'roll') {
+          if (matWillDo(ctx.L, 'roll') === 'adopt') {
             if (ctx.L.part.mat !== 'roll') {
               ctx.L.part.mat = 'roll';
               try { E.getCfg(); } catch (e) {}
@@ -7799,6 +7846,12 @@
             }
             return;
           }
+          // 🎲 Roll is a MODE press like the other three, and the one that
+          // most looked like a roll out of nowhere — so it asks too. (🎲 New
+          // take above the drawing does not: its name IS the intent, and
+          // press-again-until-you-like-it is what it is for.)
+          const willRoll = matWillDo(ctx.L, 'roll');
+          if (!matSwitchOK(ctx.L, 'roll')) return;
           const info = V2.rollRun(E, ctx.L);
           if (!info) return;
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
@@ -7815,9 +7868,13 @@
           }, 0);
           try {
             if (typeof showToast === 'function') {
+              // NOT "press again to re-roll" — a repeat press on the lit door
+              // ADOPTS (it stops replacing your take, which is the whole point
+              // of the lit-chip rule). 🎲 New take is what rolls another.
               showToast('Rolled a run \u2014 ' + info.pulses + ' of ' + info.steps +
                 ' steps over ' + info.bars + ' bar' + (info.bars === 1 ? '' : 's') +
-                '. Press again to re-roll; edit it in Rhythm and Pitch.', { ms: 4000 });
+                (willRoll === 'restore' ? ' \u00b7 your saved Roll settings came back' : ' \u00b7 built fresh') +
+                '. \ud83c\udfb2 New take rolls another; edit it in Rhythm and Pitch.', { ms: 4500 });
             }
           } catch (e) {}
           return;

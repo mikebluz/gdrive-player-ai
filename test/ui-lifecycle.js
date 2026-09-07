@@ -606,11 +606,12 @@ const ok = (name, cond, detail) => {
     const tapBar = (bar) => {
       const r = cv().getBoundingClientRect(); const geo = cv()._barsGeo;
       const hits = cv()._hits || [];
-      const x0 = (bar / geo.barsF) * geo.w, x1 = ((bar + 1) / geo.barsF) * geo.w;
+      const gx = geo.x0 || 0;
+      const x0 = gx + (bar / geo.barsF) * geo.w, x1 = gx + ((bar + 1) / geo.barsF) * geo.w;
       const free = (px, py) => !hits.some((b2) =>
         px >= b2.x - 4 && px <= b2.x + b2.w + 4 && py >= b2.y - 7 && py <= b2.y + b2.h + 7);
       let fx = (x0 + x1) / 2, fy = 17;
-      outer: for (let yi = 17; yi < 80; yi += 9) {
+      outer: for (let yi = 17; yi < 180; yi += 9) {
         for (let xi = 0; xi < 10; xi++) {
           const px = x0 + 2 + ((x1 - x0 - 4) * xi) / 9;
           if (free(px, yi)) { fx = px; fy = yi; break outer; }
@@ -691,10 +692,11 @@ const ok = (name, cond, detail) => {
     const barsOf = () => { const m = {}; (cv()._hits || []).forEach((h) => {
       const b2 = Math.floor(h.t * 4); (m[b2] = m[b2] || []).push(Math.round(h.x) + ':' + Math.round(h.midi)); }); return m; };
     const tapBar = (bar) => { const r = cv().getBoundingClientRect(); const geo = cv()._barsGeo;
-      const hits = cv()._hits || []; const x0 = (bar / geo.barsF) * geo.w, x1 = ((bar + 1) / geo.barsF) * geo.w;
+      const hits = cv()._hits || []; const gx = geo.x0 || 0;
+      const x0 = gx + (bar / geo.barsF) * geo.w, x1 = gx + ((bar + 1) / geo.barsF) * geo.w;
       const fr2 = (px, py) => !hits.some((b2) => px >= b2.x - 4 && px <= b2.x + b2.w + 4 && py >= b2.y - 7 && py <= b2.y + b2.h + 7);
       let fx = (x0 + x1) / 2, fy = 17;
-      outer: for (let yi = 17; yi < 80; yi += 9) { for (let xi = 0; xi < 10; xi++) {
+      outer: for (let yi = 17; yi < 180; yi += 9) { for (let xi = 0; xi < 10; xi++) {
         const px = x0 + 2 + ((x1 - x0 - 4) * xi) / 9; if (fr2(px, yi)) { fx = px; fy = yi; break outer; } } }
       cv().dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: r.left + fx, clientY: r.top + fy })); };
     // 1. SILENT, and the whole drawing moves
@@ -3104,6 +3106,82 @@ const ok = (name, cond, detail) => {
     takeEarRun.after.length > 0 && takeEarRun.after !== takeEarRun.before &&
     takeEarRun.stillPreviewing,
     JSON.stringify(takeEarRun));
+
+  // THE DRAWING HAS A PITCH AXIS — a keyboard down the left and one SEMITONE
+  // per row ("the content visualization needs a Y axis, use piano graphic, so
+  // it's clear what note each event is"). It was a continuous squeeze of
+  // whatever range the take happened to span: you could see that one note was
+  // higher than another and not which note either of them was.
+  const rollRun3 = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    const svPart = JSON.stringify(L().part);
+    // a DETERMINISTIC part with known pitches, so the rows can be checked
+    // against the notes rather than against each other
+    L().on = true; L().present = true;
+    L().part.kind = 'recorded'; L().part.bars = 2; L().part.made = 'take';
+    L().part.notes = [{ t: 0, midi: 60, dur: 0.2 }, { t: 0.25, midi: 61, dur: 0.2 },
+                      { t: 0.5, midi: 67, dur: 0.2 }, { t: 0.75, midi: 60, dur: 0.2 }];
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E); await wait(300);
+    card().classList.remove('collapsed');
+    const cv = card().querySelector('.v2-vizcv');
+    const hits = (cv._hits || []).slice().sort((a, b) => a.t - b.t);
+    const o = { n: hits.length, geo: cv._barsGeo, h: Math.round(cv.getBoundingClientRect().height) };
+    // ONE ROW PER SEMITONE: same pitch → same row; a semitone apart → exactly
+    // one row apart; and the row is the same size everywhere.
+    const yOf = {};
+    hits.forEach((b) => { yOf[Math.round(b.midi)] = b.y; });
+    const step = (yOf[60] - yOf[61]);
+    o.samePitchSameRow = Math.abs(hits[0].y - hits[3].y) < 0.01;
+    o.semitoneStep = step > 1;
+    o.linear = Math.abs((yOf[60] - yOf[67]) - step * 7) < 0.75;
+    // …AND ON THE KEY IT PLAYS. Every note's centre must sit inside the row the
+    // KEYBOARD drew for that pitch — the whole point of the axis, and the one
+    // clause the old continuous squeeze cannot satisfy (it is linear too, so a
+    // linearity check passes with it restored).
+    const pg = cv._pitchGeo || {};
+    o.pg = pg;
+    o.rowsExact = Math.abs(pg.rowH - (o.h - pg.top) / (pg.hiM - pg.loM + 1)) < 0.01;
+    o.onItsKey = hits.every((b) => {
+      const m = Math.round(b.midi);
+      const rowTop = pg.top + (pg.hiM - m) * pg.rowH;
+      const c = b.y + b.h / 2;
+      return c > rowTop && c < rowTop + pg.rowH;
+    });
+    // …and every note starts AFTER the keyboard gutter
+    o.pastGutter = hits.every((b) => b.x >= (cv._barsGeo.x0 || 0) - 0.01);
+    o.gutter = (cv._barsGeo || {}).x0 || 0;
+    // THE KEYBOARD IS DRAWN, not merely reserved: the gutter carries both white
+    // keys and black ones. Read the pixels — a reserved-but-empty gutter is
+    // exactly the failure this is for.
+    try {
+      const g2 = cv.getContext('2d');
+      const dpr = cv.width / Math.max(1, cv.getBoundingClientRect().width);
+      const px = Math.round(3 * dpr);
+      const d = g2.getImageData(px, Math.round(20 * dpr), 1,
+                                Math.round((o.h - 20) * dpr)).data;
+      let light = 0, dark = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const lum = (d[i] + d[i + 1] + d[i + 2]) / 3;
+        if (d[i + 3] > 200 && lum > 180) light++;
+        if (d[i + 3] > 200 && lum < 60) dark++;
+      }
+      o.whiteKeys = light; o.blackKeys = dark;
+    } catch (e) { o.pxErr = String(e && e.message); }
+    try { L().part = JSON.parse(svPart); E.getCfg();
+      if (h) h._sig = ''; window._v2.render(E); await wait(200);
+      document.querySelector('.v2-layer').classList.remove('collapsed'); } catch (e) {}
+    return o;
+  });
+  ok('the drawing has a piano Y axis — a drawn keyboard, one semitone per row',
+    rollRun3.n === 4 && rollRun3.gutter >= 16 && rollRun3.pastGutter &&
+    rollRun3.samePitchSameRow && rollRun3.semitoneStep && rollRun3.linear &&
+    rollRun3.rowsExact && rollRun3.onItsKey &&
+    rollRun3.whiteKeys > 20 && rollRun3.blackKeys > 8,
+    JSON.stringify(rollRun3));
 
   // EXACTLY ONE MATERIAL DOOR IS LIT, AND IT TRACKS THE MATERIAL. Reported as
   // "clicking through the Written/Generated modes is buggy; options stay

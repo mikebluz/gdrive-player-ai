@@ -3459,18 +3459,8 @@
     const cv = host.querySelector('.v2-vizcv'), lab = host.querySelector('.v2-vizlab');
     if (!cv || !cv.getContext) return;
     const w = Math.max(80, Math.round(cv.clientWidth || host.clientWidth || 300));
-    // the drawing gives its height back to the PANE on a phone — a hardcoded
-    // 84 written INLINE (below) outranks any stylesheet, so the responsive
-    // choice has to live here
-    const h = (window.innerWidth <= 540) ? 60 : 84;
     const dpr = Math.min(3, (window.devicePixelRatio || 1));
-    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
-      cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
-      cv.style.width = '100%'; cv.style.height = h + 'px';
-    }
-    const g = cv.getContext('2d');
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.clearRect(0, 0, w, h);
+    const phone = window.innerWidth <= 540;
     let cfg = null; try { cfg = E.getCfg(); } catch (e) {}
     if (!cfg) return;
     let cyc = 2, notes = [];
@@ -3496,33 +3486,107 @@
     // on a different point of the progression each time and the note events
     // were redrawn — reported as "Preview keeps making a new part". Its
     // content is not a roll to be remembered, it is the changes, so the honest
-    // anchor is where they START: the chord clock's own origin. Stable by
-    // construction, and it is also what the part actually plays from the top.
+    // anchor is where they START: the chord clock's own origin.
     if (L.part.kind === 'live' && (L.part.rhythm || {}).kind === 'ground') {
       cs = Number.isFinite(E._progAnchor) ? E._progAnchor : 0;
       fromPv = false;
     }
-    // THE TAKE decides WHICH roll; the remembered anchor decides which CHORD it
-    // was rolled over. Both, because under a progression the pitches depend on
-    // the time as well as the seed — pinning only the take would draw the right
-    // rhythm over the wrong harmony.
     // THE ANCHOR THE PICTURE WAS DRAWN AT, recorded on the canvas. A drawing
     // is only honest about a part built on the changes if it starts where the
-    // changes do, and the note COUNT cannot show that — rotating a
-    // progression keeps the total identical, so a count-based check cannot
-    // tell a stable drawing from a wandering one (measured).
+    // changes do, and the note COUNT cannot show that — rotating a progression
+    // keeps the total identical (measured).
     cv._cs = cs;
     try {
       notes = V2.withEdit(() => V2.withTake(V2.pinOf(L), () =>
         V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc }))) || [];
     } catch (e) { notes = []; }
+    // `notesFor` returns ABSOLUTE times (cycleStart + offset), so a remembered
+    // cycle start has to be subtracted back off before drawing.
+    notes = notes.map(n => (n && Number.isFinite(n.at))
+      ? { at: n.at - cs, freq: n.freq, durMs: n.durMs, nidx: n.nidx } : n);
+    const played = notes.filter(n => n && n.freq > 0 && n.at >= -1e-6 && n.at < cyc);
+    const mids = played.map(n => 69 + 12 * Math.log2(n.freq / 440));
+
+    // ── THE PITCH AXIS IS A KEYBOARD ────────────────────────────────────────
+    // It was a continuous squeeze of whatever range the take happened to span,
+    // with no scale at all: you could see that one note was higher than
+    // another and not WHICH note either of them was. The axis is SEMITONE
+    // ROWS now, with a piano drawn down the left — the reading a piano roll
+    // gives for free — so every event names its own pitch by where it sits.
+    const TOP = 15;                       // the ruler gutter
+    const GUT = phone ? 24 : 28;          // the keyboard gutter — wide enough for "C4"
+    const PC_BLACK = { 1: 1, 3: 1, 6: 1, 8: 1, 10: 1 };
+    let loM = 60, hiM = 71;
+    if (mids.length) {
+      loM = Math.floor(Math.min.apply(null, mids)) - 1;
+      hiM = Math.ceil(Math.max.apply(null, mids)) + 1;
+    }
+    // AT LEAST AN OCTAVE of context: a two-note part squeezed to its own range
+    // draws two enormous rows and says nothing about where they sit.
+    if (hiM - loM < 11) { const c2 = (hiM + loM) / 2; loM = Math.round(c2 - 5.5); hiM = loM + 11; }
+    const rows = Math.max(1, hiM - loM + 1);
+    // THE DRAWING GROWS WITH ITS RANGE rather than squeezing the rows to
+    // nothing — the editor is in the page flow now, so height is a scroll
+    // rather than a fold. Floors stay what they were (60 on a phone, 84
+    // otherwise); a wide part is allowed up to ~2.5x that.
+    // A ROW HAS TO BE TALL ENOUGH TO BE A KEY. Below ~7px the keyboard is a
+    // smear of stripes and the C labels have nowhere to go, which is the
+    // reading the axis exists for — so the row is the floor and the height
+    // follows it, up to a cap past which a very wide part goes back to
+    // squeezing (a 4-octave line is a picture of a shape, not of pitches).
+    const base = phone ? 60 : 84;
+    const rowT = phone ? 5 : 6;
+    const h = Math.max(base, Math.min(phone ? 190 : 240, Math.round(TOP + rows * rowT + 4)));
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+      cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+      cv.style.width = '100%'; cv.style.height = h + 'px';
+    }
+    const g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    const rowH = (h - TOP) / rows;
+    const yOf = (m) => TOP + (hiM - m) * rowH;          // the TOP of that row
+    cv._pitchGeo = { loM: loM, hiM: hiM, rowH: rowH, top: TOP };
+    const PLOT = w - GUT;                                // the notes' own width
+    // the keys, and their lines across the plot — the black rows are what make
+    // a piano roll readable at a glance
+    // WHITE KEYS ARE THE GROUND and the black ones sit ON them, narrower —
+    // which is what makes a column of bands read as a keyboard rather than as
+    // a barcode. Separators only between white keys, because a real one has no
+    // line where a black key sits between them.
+    g.fillStyle = '#e8e4f2';
+    g.fillRect(0, TOP, GUT, h - TOP);
+    for (let m = loM; m <= hiM; m++) {
+      const y = yOf(m), pc = ((m % 12) + 12) % 12, blk = !!PC_BLACK[pc];
+      if (blk) {
+        g.fillStyle = '#15151f';
+        g.fillRect(0, y + 0.5, Math.round(GUT * 0.62), Math.max(1, rowH - 1));
+        // …and its row is tinted across the plot: the black rows are what let
+        // you count intervals off the picture
+        g.fillStyle = 'rgba(159,122,234,0.055)';
+        g.fillRect(GUT, y, PLOT, Math.max(1, rowH));
+      } else if (!PC_BLACK[((m + 1) % 12 + 12) % 12]) {
+        // a white key with a white key above it (B|C and E|F) — the only
+        // places a keyboard shows a line
+        g.strokeStyle = 'rgba(20,20,35,0.45)'; g.lineWidth = 1;
+        g.beginPath(); g.moveTo(0, Math.round(y) + 0.5); g.lineTo(GUT, Math.round(y) + 0.5); g.stroke();
+      }
+      // NAME THE C's — the one landmark that makes the rest countable.
+      if (pc === 0 && rowH >= 5) {
+        const fs = rowH >= 8 ? 8 : 7;
+        g.fillStyle = '#42425e';
+        g.font = fs + 'px -apple-system, Segoe UI, sans-serif';
+        g.fillText('C' + (Math.floor(m / 12) - 1), 1.5, y + Math.min(rowH - 1, fs));
+      }
+    }
+    g.strokeStyle = 'rgba(159,122,234,0.30)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(GUT + 0.5, TOP); g.lineTo(GUT + 0.5, h); g.stroke();
+
     // THE RULER — beats, bars and bar NUMBERS, in a gutter of their own. Bar
     // lines alone gave the drawing a scale but no reading: you could see that
     // something was wide without knowing whether it was a beat or a bar.
     // Fractional cycles are drawn honestly (a ⅔-bar motif shows two thirds of a
-    // bar, not a rounded one), and a FREE part has no bar grid at all — saying
-    // so is better than drawing a grid its clock does not follow.
-    const TOP = 15;                       // the ruler gutter
+    // bar, not a rounded one), and a FREE part has no bar grid at all.
     const free = L.part && L.part.clock === 'free';
     const barsF = Math.max(0.0625, (L.part && L.part.bars) || 1);
     // ONE spelling of the length for the readout: whole bars read as "2 bars",
@@ -3535,13 +3599,13 @@
     g.fillStyle = '#6b6b8a';
     g.font = '9px -apple-system, Segoe UI, sans-serif';
     if (free) {
-      g.fillText('free · ' + Math.round((L.part && L.part.ms) || 0) + 'ms', 3, 10);
-      g.beginPath(); g.moveTo(0, TOP + 0.5); g.lineTo(w, TOP + 0.5); g.stroke();
+      g.fillText('free · ' + Math.round((L.part && L.part.ms) || 0) + 'ms', GUT + 3, 10);
+      g.beginPath(); g.moveTo(GUT, TOP + 0.5); g.lineTo(w, TOP + 0.5); g.stroke();
     } else {
       const beats = Math.max(1, Math.round(barsF * 4));
       for (let i = 0; i <= beats; i++) {
         const atBar = (i % 4) === 0;
-        const x = Math.round((i / beats) * w) + 0.5;
+        const x = Math.round(GUT + (i / beats) * PLOT) + 0.5;
         if (x > w) break;
         g.strokeStyle = atBar ? 'rgba(159,122,234,0.30)' : 'rgba(159,122,234,0.10)';
         g.beginPath();
@@ -3554,61 +3618,56 @@
       // the gutter's floor, so the numbers read as a ruler rather than as
       // labels floating over the notes
       g.strokeStyle = 'rgba(159,122,234,0.18)';
-      g.beginPath(); g.moveTo(0, TOP + 0.5); g.lineTo(w, TOP + 0.5); g.stroke();
+      g.beginPath(); g.moveTo(GUT, TOP + 0.5); g.lineTo(w, TOP + 0.5); g.stroke();
     }
     // THE SELECTED BARS, tinted full-height so "which bars will re-roll" is on
-    // the picture, not in a caption. Geometry recorded for the tap handler.
-    cv._barsGeo = free ? null : { barsF: barsF, w: w };
+    // the picture, not in a caption. Geometry recorded for the tap handler —
+    // including the gutter, which is NOT part of the bar grid.
+    cv._barsGeo = free ? null : { barsF: barsF, w: PLOT, x0: GUT };
     const sel0 = free ? null : bselOf(L);
     if (sel0) {
       g.fillStyle = 'rgba(159,122,234,0.13)';
       sel0.bars.forEach((b2) => {
-        const x0 = (b2 / barsF) * w, x1 = Math.min(w, ((b2 + 1) / barsF) * w);
-        g.fillRect(x0, 0, x1 - x0, h);
+        const x0 = GUT + (b2 / barsF) * PLOT, x1 = Math.min(w, GUT + ((b2 + 1) / barsF) * PLOT);
+        g.fillRect(x0, TOP, x1 - x0, h - TOP);
       });
     }
-    // `notesFor` returns ABSOLUTE times (cycleStart + offset), so a remembered
-    // cycle start has to be subtracted back off before drawing.
-    notes = notes.map(n => (n && Number.isFinite(n.at))
-      ? { at: n.at - cs, freq: n.freq, durMs: n.durMs, nidx: n.nidx } : n);
-    const played = notes.filter(n => n && n.freq > 0 && n.at >= -1e-6 && n.at < cyc);
     cv._hits = []; cv._sel = -1;   // no notes drawn = nothing to hit-test against
     if (!played.length) {
       try { vizChrome(card, L, E); } catch (e) {}
       g.fillStyle = '#6b6b8a'; g.font = '12px -apple-system, Segoe UI, sans-serif';
-      g.fillText('silent for this cycle', 8, TOP + (h - TOP) / 2 + 4);
+      g.fillText('silent for this cycle', GUT + 8, TOP + (h - TOP) / 2 + 4);
       if (lab) lab.textContent = (L.part && L.part.kind === 'recorded' ? 'recorded' : 'live') + ' · ' + barTxt;
       return;
     }
-    const mids = played.map(n => 69 + 12 * Math.log2(n.freq / 440));
-    let lo = Math.min(...mids), hi = Math.max(...mids);
-    if (hi - lo < 4) { const mid = (hi + lo) / 2; lo = mid - 2; hi = mid + 2; }
-    const pad = 6, span = Math.max(1, hi - lo);
+    const nh = Math.max(3, Math.min(8, rowH - 1));
     for (let i = 0; i < played.length; i++) {
       const n = played[i];
-      const x = (n.at / cyc) * w;
-      const dw = Math.max(3, ((Math.max(20, n.durMs || 0) / 1000) / cyc) * w);
-      const y = TOP + pad + (1 - (mids[i] - lo) / span) * (h - TOP - pad * 2 - 6);
+      const x = GUT + (n.at / cyc) * PLOT;
+      const dw = Math.max(3, ((Math.max(20, n.durMs || 0) / 1000) / cyc) * PLOT);
+      // ON ITS OWN ROW: the note sits in the semitone it plays, so the keyboard
+      // beside it names the pitch. (It was a continuous squeeze of the range,
+      // which could put a C and a C♯ at the same height on a wide part.)
+      const y = yOf(Math.round(mids[i])) + (rowH - nh) / 2;
       g.fillStyle = 'rgba(159,122,234,0.55)';
       g.strokeStyle = '#d6bcfa'; g.lineWidth = 1;
       const ww = Math.min(dw, w - x);
       // THE NOTE BEING EDITED IS MARKED. With the editor inline the drawing
       // stays visible while you work, which is the point of it — but "Note 2 of
-      // 4" names a position in a list, not a mark on the picture, so without
-      // this you still cannot see which one you are moving.
+      // 4" names a position in a list, not a mark on the picture.
       const isSel = NE && NE.id === (L.id | 0) && Number.isFinite(n.nidx) && NE.idx === n.nidx;
       if (isSel) {
         g.fillStyle = 'rgba(214,188,250,0.95)';
         g.strokeStyle = '#fff'; g.lineWidth = 1.5;
       }
       g.beginPath();
-      if (g.roundRect) g.roundRect(x, y, ww, 6, 3); else g.rect(x, y, ww, 6);
+      if (g.roundRect) g.roundRect(x, y, ww, nh, Math.min(3, nh / 2)); else g.rect(x, y, ww, nh);
       g.fill(); g.stroke();
       if (isSel) {
-        // a halo, so it reads at a glance on a 6px-tall note
+        // a halo, so it reads at a glance on a small note
         g.strokeStyle = 'rgba(214,188,250,0.45)'; g.lineWidth = 1;
         g.beginPath();
-        if (g.roundRect) g.roundRect(x - 3, y - 4, ww + 6, 14, 6); else g.rect(x - 3, y - 4, ww + 6, 14);
+        if (g.roundRect) g.roundRect(x - 3, y - 4, ww + 6, nh + 8, 6); else g.rect(x - 3, y - 4, ww + 6, nh + 8);
         g.stroke();
         cv._sel = n.nidx;
         g.fillStyle = 'rgba(159,122,234,0.55)';
@@ -3618,7 +3677,7 @@
       // well as the index: locking a live take re-sorts the notes, so the note
       // you tapped is re-found by WHAT IT IS rather than by where it sat in an
       // array that no longer exists.
-      cv._hits.push({ x, y, w: ww, h: 6, i: (Number.isFinite(n.nidx) ? n.nidx : i),
+      cv._hits.push({ x, y, w: ww, h: nh, i: (Number.isFinite(n.nidx) ? n.nidx : i),
                       t: n.at / cyc, midi: mids[i] });
     }
     if (lab) {
@@ -7205,8 +7264,12 @@
             // just those bars (a per-bar pin); a recorded one for the splice
             if (!geo) return;
             if (L2.part.kind === 'recorded' && !(L2.part.notes || []).length) return;
+            // THE KEYBOARD GUTTER IS NOT PART OF THE BAR GRID — a tap on the
+            // keys is a tap on the axis, not on bar 1.
+            const gx0 = geo.x0 || 0;
+            if (px < gx0) return;
             const b2 = Math.max(0, Math.min(Math.ceil(geo.barsF) - 1,
-              Math.floor((px / Math.max(1, geo.w)) * geo.barsF)));
+              Math.floor(((px - gx0) / Math.max(1, geo.w)) * geo.barsF)));
             if (!BSEL || BSEL.id !== (L2.id | 0) || BSEL.sig !== bselSig(L2)) {
               BSEL = { id: L2.id | 0, sig: bselSig(L2), bars: new Set() };
             }

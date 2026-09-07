@@ -11356,7 +11356,6 @@
        was ~230px inside a centred sheet; embedded, the editor is in the page
        flow and simply grows to whatever the dock needs, so the dock's own
        height is the only thing that matters and the panel scrolls to it. */
-    .v2-layer.v2-composing .v2-pop-pane { max-height: none; }
 
     /* MATERIAL IS TWO KINDS, and the row never said so ("what's the difference
        between Composed and Sustained?"): notes you WRITE (the part becomes
@@ -15216,17 +15215,7 @@
    panel. Capped at half the screen, which is what keeps an expanded card to
    about one screen — and it already has the scroll affordance (thin bar plus
    the fade above the footer). */
-.v2-pop-pane { max-height: 40vh; overflow-y: auto; padding: 4px 16px calc(20px + env(safe-area-inset-bottom));
-  scrollbar-width: thin; scrollbar-color: #2d2d3f transparent; }
-.v2-pop-pane::-webkit-scrollbar { width: 6px; }
-.v2-pop-pane::-webkit-scrollbar-thumb { background: #2d2d3f; border-radius: 3px; }
-/* the fade above the footer says "there is more below" — the pane scrolled
-   with no affordance at all ("user can't tell it's a scrolling section") */
-.v2-pop-foot { position: relative; }
-.v2-pop-foot::before {
-  content: ''; position: absolute; left: 6px; right: 6px; top: -20px; height: 20px;
-  background: linear-gradient(transparent, #12121f); pointer-events: none;
-}
+.v2-pop-pane { overflow: visible; padding: 4px 16px calc(12px + env(safe-area-inset-bottom)); }
 /* The moved `.ambient-grp-body` is display:none outside an .open group — the
    sheet is its other legitimate home. */
 .v2-pop-pane > .ambient-grp-body { display: flex; flex-direction: column; gap: 10px; }

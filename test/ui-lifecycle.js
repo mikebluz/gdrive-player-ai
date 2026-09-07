@@ -6839,10 +6839,23 @@ const ok = (name, cond, detail) => {
       gridBtns: btns.filter((b2) => b2.getBoundingClientRect().height >= 44).length,
       rowsShowing: grps.reduce((a2, g) => a2 + vis(g).length, 0),
       height: Math.round(c.getBoundingClientRect().height),
-      // the pane is what a tab can grow; it is capped and scrolls, which is
-      // what stops the card growing without limit
+      // THE CARD SCROLLS AS ONE. The pane was a capped, separately-scrolling
+      // window inside a page that already scrolls — "this scroll section is
+      // still too small; the whole area body should scroll" — so what is pinned
+      // now is that it is NOT its own scroll region, and that the card's CHROME
+      // (everything except the rows) stays bounded, which is the axis accretion
+      // actually threatens.
       paneH: (() => { const pn = c.querySelector('.v2-pop-pane');
         return pn ? Math.round(pn.getBoundingClientRect().height) : -1; })(),
+      paneScrolls: (() => { const pn = c.querySelector('.v2-pop-pane'); if (!pn) return true;
+        const cs = getComputedStyle(pn);
+        return cs.overflowY === 'auto' || cs.overflowY === 'scroll' || cs.maxHeight !== 'none'; })(),
+      chromeH: (() => {
+        const q = (sel) => { const e = c.querySelector(sel);
+          return e ? e.getBoundingClientRect().height : 0; };
+        return Math.round(q('.ambient-layer-head') + q('.v2-find') + q('.v2-pop-head') +
+                          q('.v2-pop-tabs') + q('.v2-partviz') + q('.v2-pop-foot'));
+      })(),
       vh: window.innerHeight,
       // the card at rest must still SAY what is engaged — the summaries live
       // on the buttons now (the drum-solo rule: state that can vanish while
@@ -6926,13 +6939,21 @@ const ok = (name, cond, detail) => {
   // this catches is the same one — the pane is capped and SCROLLS rather than
   // growing without limit, so the card stays about one screen whatever a tab
   // holds.
-  // 1.25 -> 1.30, with the reason: the drawing gained a PITCH AXIS (a keyboard
-  // gutter and a row per semitone, which grows with the range) and a View/Edit
-  // toggle since that number was set. The clause with teeth is the second one —
-  // the pane is capped and SCROLLS, so no tab can push the card further.
-  ok('an expanded card is about one screen, and the pane is capped (was 2873px)',
-    shape.height <= shape.vh * 1.30 && shape.paneH <= shape.vh * 0.45,
-    shape.height + 'px, pane ' + shape.paneH + 'px of ' + shape.vh);
+  // RESTATED (was "about one screen, and the pane is capped"): the pane is no
+  // longer a scroll region of its own — the card grows and the PANEL scrolls,
+  // which is what was asked for. So the ceiling moves off the card's total
+  // height, which is now legitimately as tall as its rows, and onto the two
+  // things that still have to hold: nothing scrolls inside the card, and the
+  // CHROME around the rows stays about half a screen however much the rows grow.
+  ok('an expanded card scrolls as ONE — no window inside it, and its chrome stays bounded',
+    // 0.85 of a screen is a WATCHDOG, not a target: the frame measures 625px of
+    // 780 today (head 38 · find 34 · sheet head 171 · tabs 140 · drawing ~150 ·
+    // foot ~90), most of it things asked for by name — 44px section tabs on two
+    // rows, the family bar, the piano roll. It is here so the FRAME cannot
+    // double while nobody is looking; the rows below it are free to grow.
+    shape.paneScrolls === false && shape.chromeH <= shape.vh * 0.85,
+    JSON.stringify({ card: shape.height, pane: shape.paneH, chrome: shape.chromeH,
+                     paneScrolls: shape.paneScrolls, vh: shape.vh }));
   // THE ACCRETION CHECK, restated in the unit that now matters. It counted ROWS
   // because rows used to be what you saw; a group's rows live in a TABBED sheet
   // now and only one tab shows at a time, so the wall this catches is a wall of

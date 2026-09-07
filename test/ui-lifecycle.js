@@ -3271,6 +3271,73 @@ const ok = (name, cond, detail) => {
     JSON.stringify({ off: playRun.chokeOff, on: playRun.chokeOn, door: playRun.door,
                      drawn: playRun.drawn }));
 
+  // A PER-PART LAYER'S CYCLE IS THE PART PASS. Reported as "the visualization
+  // is not resized by part; first part is 5 chords, second is 4, when showing
+  // the 2nd it's still 5". It was not only the picture: the TICK laid every
+  // part's record over the EDITED record's cycle, so part B (4 bars) PLAYED
+  // over 5 bars because part A happened to be selected — the "what a part
+  // plays depends on which part is selected" wart the ice model exists to
+  // remove. The cycle grid is the part passes now, and the drawing and the
+  // playhead ask the same function the tick walks.
+  const ppCyc = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const svProg = E.getCfg().prog ? JSON.parse(JSON.stringify(E.getCfg().prog)) : null;
+    const svPart = JSON.stringify(L().part);
+    const svFor = L().partFor, svParts = L().parts ? JSON.stringify(L().parts) : null;
+    const svClk = [E._playStartAt, E._progAnchor, E._barGridAnchor];
+    E.getCfg().prog = { on: true, name: 'PL',
+      parts: [{ name: 'A', len: 5 }, { name: 'B', len: 4 }],
+      chords: [0, 2, 4, 5, 7, 9, 11, 0, 2].map((r) => ({ root: r, intervals: [0, 4, 7] })) };
+    L().on = true; L().present = true; L().part.kind = 'live';
+    L().part.rhythm = { kind: 'ground', steps: 8, n: 1 };
+    L().part.pitch = { kind: 'chord', voices: 3 };
+    L().partFor = 0;
+    E.getCfg();               // the reconciler fits each record to its part
+    E._playStartAt = 0; E._progAnchor = 0; E._barGridAnchor = 0;
+    const barSec = (60 / (+document.getElementById('tempo-input').value || 120)) * 4;
+    const at = (bar) => bar * barSec + 0.01;
+    const w = (bar) => {
+      const q = window._v2.cycleWindowAt(L(), E, E.getCfg(), at(bar), { startAt: 0 });
+      return { cs: +(q.cs / barSec).toFixed(2), cyc: +(q.cyc / barSec).toFixed(2), part: !!q.part };
+    };
+    const n = (bar) => {
+      const q = window._v2.cycleWindowAt(L(), E, E.getCfg(), at(bar), { startAt: 0 });
+      return (window._v2.notesFor(L(), { E, cfg: E.getCfg(), key: 'v2:' + L().id,
+        cycleStart: q.cs, cycleSec: q.cyc }) || []).length;
+    };
+    const o = { bars: { edited: L().part.bars, b: (L().parts && L().parts[1]) ? L().parts[1].bars : null } };
+    o.a = w(1); o.b = w(6); o.a2 = w(10);
+    o.notesA = n(1); o.notesB = n(6);
+    // …and an ordinary layer keeps the uniform lattice, byte-identical
+    delete L().partFor; delete L().parts; delete L().partAll;
+    L().part.bars = 2; E.getCfg();
+    const q2 = window._v2.cycleWindowAt(L(), E, E.getCfg(), at(6), { startAt: 0 });
+    o.plain = { cs: +(q2.cs / barSec).toFixed(2), cyc: +(q2.cyc / barSec).toFixed(2), part: !!q2.part };
+    try {
+      if (svProg) E.getCfg().prog = svProg; else delete E.getCfg().prog;
+      L().part = JSON.parse(svPart);
+      if (Number.isFinite(svFor)) L().partFor = svFor; else delete L().partFor;
+      if (svParts) L().parts = JSON.parse(svParts); else delete L().parts;
+      E.getCfg();
+      E._playStartAt = svClk[0]; E._progAnchor = svClk[1]; E._barGridAnchor = svClk[2];
+      const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+      window._v2.render(E); await wait(200);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) {}
+    return o;
+  });
+  ok('a per-part layer\u2019s cycle IS the part pass — its own length, not the edited part\u2019s',
+    ppCyc.bars.edited === 5 && ppCyc.bars.b === 4 &&
+    ppCyc.a.cs === 0 && ppCyc.a.cyc === 5 && ppCyc.a.part &&
+    ppCyc.b.cs === 5 && ppCyc.b.cyc === 4 && ppCyc.b.part &&
+    ppCyc.a2.cs === 9 && ppCyc.a2.cyc === 5 &&
+    // the content follows: 5 changes × 3 voices vs 4 × 3
+    ppCyc.notesA === 15 && ppCyc.notesB === 12 &&
+    // …and a layer that is NOT per-part keeps the uniform lattice
+    ppCyc.plain.part === false && ppCyc.plain.cyc === 2 && ppCyc.plain.cs === 6,
+    JSON.stringify(ppCyc));
+
   // WATCHING vs WORKING. Three asks, one shape: an AREA control decides what a
   // layer plays as much as its own do (so its picture has to follow), the strip
   // that names which part you are EDITING said nothing about which one is

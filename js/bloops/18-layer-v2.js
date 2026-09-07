@@ -2380,18 +2380,30 @@
     const lvl = _AMB_V2_STAGE;
     let c = Math.floor((from - st.startAt) / cyc);
     if (!Number.isFinite(c)) return;
-    for (let guard = 0; guard < 64; guard++, c++) {
-      const cs = st.startAt + c * cyc;
+    // THE CYCLE GRID. Uniform for an ordinary layer (`startAt + c * cyc`,
+    // exactly as before); the PART PASSES for a per-part one, whose record is
+    // that part's length. Walking windows rather than indices is what lets the
+    // second kind have cycles of different lengths at all.
+    let cur = cycleWindowAt(L, E, cfg, Math.max(from, st.startAt), st);
+    for (let guard = 0; guard < 64; guard++) {
+      const cs = cur.cs, cw = cur.cyc, ci = cur.idx;
+      const next = () => {
+        const nx = cycleWindowAt(L, E, cfg, cs + cw + 1e-3, st);
+        // never stand still: a window that does not advance would spin the loop
+        cur = (nx && nx.cs > cs + 1e-6) ? nx : { cs: cs + cw, cyc: cw, idx: ci + 1, part: cur.part };
+      };
       if (cs >= to) break;
-      if (cs + cyc <= from - 1e-6) continue;
+      if (cs + cw <= from - 1e-6) { next(); continue; }
       // WHEN — which ITERATIONS this layer plays. Emitter-side in v1
       // (`_ambCondFires`), so v2 has to ask; it is not one of the playNote-hook
-      // gates. `c` is the cycle index, which is exactly what it wants.
+      // gates. The cycle index is what it wants — the lattice index for an
+      // ordinary layer, the PASS number for a per-part one (which is what "this
+      // iteration" means once the part is the cycle).
       let fires = true;
-      try { if (typeof _ambCondFires === 'function') fires = _ambCondFires(L.when, c, cs); } catch (e) {}
-      if (!fires) continue;
+      try { if (typeof _ambCondFires === 'function') fires = _ambCondFires(L.when, ci, cs); } catch (e) {}
+      if (!fires) { next(); continue; }
       let notes = [];
-      try { notes = notesFor(L, { E, cfg, key, cycleStart: cs, cycleSec: cyc }); } catch (e) { break; }
+      try { notes = notesFor(L, { E, cfg, key, cycleStart: cs, cycleSec: cw }); } catch (e) { break; }
       for (let i = 0; i < notes.length; i++) {
         const n = notes[i];
         if (!(n.at >= from - 1e-6 && n.at < to)) continue;
@@ -2547,6 +2559,7 @@
         try { playNote(n.freq, params, n.durMs, at, dest, undefined, E.laneIdx ? E.laneIdx() : undefined); }
         catch (e) {}
       }
+      next();   // …to the window after this one
     }
     st.lastAt = to;
   }
@@ -2556,6 +2569,35 @@
   // window branch does — that is what stamps `_ambEmitKey` inside playNote, so
   // the gates, Write capture and per-layer routing all see a v2 note exactly as
   // they see a v1 one.
+  // WHICH WINDOW IS ONE CYCLE, at a given moment. For an ordinary layer that is
+  // the uniform lattice off its phase anchor. For a PER-PART layer it is the
+  // PART PASS: its record is reconciled to that part's length on every
+  // normalize, so laying it over the EDITED record's cycle stretched it —
+  // measured, part B (4 bars) played over 5 bars because part A was selected,
+  // which is the "what a part plays depends on which part is selected" wart the
+  // ice model exists to remove. Reported as "the visualization is not resized
+  // by part". ONE definition, three consumers: the tick, the drawing and the
+  // playhead — two walks of one grid is how they come to disagree.
+  function cycleWindowAt(L, E, cfg, at, st) {
+    const cyc0 = Math.max(0.05, cycSecOf(L, cfg));
+    const perPart = !!(L && Number.isFinite(L.partFor) && (L.parts || L.partAll));
+    if (perPart && typeof _ambPassSpanAt === 'function' && cfg && cfg.prog && cfg.prog.on) {
+      try {
+        const sp = _ambPassSpanAt(E, cfg, at);
+        if (sp && sp.to > sp.from + 0.02) {
+          let idx = 0;
+          try {
+            const w = _ambPartChordAt(E, cfg, at);
+            if (w) idx = (w.pass | 0);
+          } catch (e) {}
+          return { cs: sp.from, cyc: sp.to - sp.from, idx: idx, part: true };
+        }
+      } catch (e) {}
+    }
+    const s0 = (st && Number.isFinite(st.startAt)) ? st.startAt : 0;
+    const c = Math.floor((at - s0) / cyc0);
+    return { cs: s0 + c * cyc0, cyc: cyc0, idx: c, part: false };
+  }
   window._v2Tick = function (E, now, horizon, lead, space, cfg) {
     const list = layersOf(cfg);
     if (!list.length) return;
@@ -3155,6 +3197,7 @@
       }
       return nx;
     },
+    cycleWindowAt: cycleWindowAt,
     pinOf: pinOf,
     pinSig: pinSig,
     previewLeftSec: previewLeftSec,
@@ -3526,10 +3569,14 @@
       const stp = E.timer && E._v2Phase && E._v2Phase['v2:' + (L.id | 0)];
       // THE CYCLE BEING HEARD, not the one being scheduled — on the shell's
       // broadcast those are most of a second apart, so the roll would flip to
-      // the next cycle well before you heard it.
+      // the next cycle well before you heard it. Asked of the TICK'S OWN grid
+      // (`cycleWindowAt`), so a per-part layer draws its PART PASS — its own
+      // length — rather than the edited record's cycle: reported as "the
+      // visualization is not resized by part".
       const nowT = audibleNow();
       if (stp && Number.isFinite(stp.startAt) && nowT >= stp.startAt) {
-        cs = stp.startAt + Math.floor((nowT - stp.startAt) / cyc) * cyc;
+        const wnd = V2.cycleWindowAt(L, E, cfg, nowT, stp);
+        cs = wnd.cs; cyc = wnd.cyc;
         fromPv = false; playing = true;
       }
     } catch (e) {}
@@ -4110,8 +4157,13 @@
         }
       };
       if (!geo || !st || !Number.isFinite(st.startAt) || !(cyc > 0) || now < st.startAt) { clear(); return; }
-      const cs = st.startAt + Math.floor((now - st.startAt) / cyc) * cyc;
-      const frac = (now - cs) / cyc;
+      // the same window the tick walks and the drawing drew
+      let cs = 0, cycNow = cyc;
+      try {
+        const wnd = V2.cycleWindowAt(L, E.getCfg ? E : E, cfg, now, st);
+        cs = wnd.cs; cycNow = wnd.cyc;
+      } catch (e) { cs = st.startAt + Math.floor((now - st.startAt) / cyc) * cyc; }
+      const frac = (now - cs) / cycNow;
       if (!(frac >= 0 && frac <= 1)) { clear(); return; }
       // THE CYCLE MOVED — redraw the roll, at most once per cycle. A live part
       // re-rolls, so the picture has to follow or the lit notes are last

@@ -7249,6 +7249,22 @@
         const nt = t.closest('.v2-newtake') || t.closest('.v2-genroll');
         if (nt) {
           const ctx = layerOf(nt); if (!ctx) return;
+          // what is sounding for this layer is now the OLD take
+          const takeHeard = () => {
+            const k2 = 'v2:' + ctx.L.id;
+            try {
+              if (E.timer && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined') {
+                cancelBloomFutureVoices(k2, Tone.now());
+              }
+            } catch (e) {}
+            try { if (E._v2Phase) delete E._v2Phase[k2]; } catch (e) {}   // re-anchor next tick
+            // A RUNNING PREVIEW is the take you are listening to, so it follows
+            // the press. This does not START audio (the documented rule) — it
+            // replaces audio the press just superseded.
+            try {
+              if (V2.previewing(ctx.L)) { V2.previewKill(E, ctx.L); V2.preview(E, ctx.L); }
+            } catch (e) {}
+          };
           // SCOPED BY THE SELECTED BARS: with bars tapped, only they are
           // retaken (a per-bar pin — the rest of the drawing holds still);
           // with none, the whole take moves.
@@ -7273,6 +7289,7 @@
                 : ('Rolled a new take \u2014 ' + ctx.L.part.notes.length + ' notes, still locked. \ud83d\udd13 Unlock to let the rules take over again.'), { ms: 5000 });
             } catch (e) {}
             h._sig = ''; V2.render(E);
+            takeHeard();
             return;
           }
           V2.newTake(ctx.L, selBarsN);
@@ -7283,6 +7300,7 @@
           // content" — the press's outcome is the DRAWING; ▶ Preview is one
           // button away and stays the only thing that makes sound.
           try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
+          takeHeard();
           return;
         }
         const tf = t.closest('.v2-tform');

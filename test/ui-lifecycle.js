@@ -3058,6 +3058,53 @@ const ok = (name, cond, detail) => {
     /Generate instead/.test(vocab.handCap),
     JSON.stringify(vocab).slice(0, 300));
 
+  // 🎲 NEW TAKE REACHES THE EAR. Reported as "it's playing the old take after
+  // pressing New take": the press rolls the take and redraws, but audio for
+  // this layer was already SCHEDULED — a running preview had a whole cycle in
+  // flight, and while the transport runs there is a lookahead — so the old
+  // take kept sounding against a drawing that had moved. The press still never
+  // STARTS audio; it retracts the audio it superseded, and a preview that is
+  // already playing follows it.
+  const takeEarRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    const svPart = JSON.stringify(L().part);
+    L().on = true; L().present = true; L().part.kind = 'live';
+    L().part.rhythm = { kind: 'euclid', steps: 16, n: 5 };
+    L().part.pitch = { kind: 'walk', range: 7 };
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E); await wait(280);
+    card().classList.remove('collapsed');
+    const seen = []; const orig = window.playNote;
+    window.playNote = function (f) {
+      if ((window._ambEmitKey || '').indexOf('v2:') === 0) seen.push(Math.round(f));
+      return orig.apply(this, arguments);
+    };
+    const o = {};
+    try {
+      window._v2.preview(E, L()); await wait(500);
+      o.before = seen.join(',');
+      o.take0 = L().part.take | 0;
+      const n0 = seen.length;
+      card().querySelector('.v2-newtake').click(); await wait(700);
+      o.after = seen.slice(n0).join(',');
+      o.take1 = L().part.take | 0;
+      o.stillPreviewing = !!window._v2.previewing(L());
+      window._v2.previewKill(E, L()); await wait(200);
+    } finally { window.playNote = orig; }
+    try { L().part = JSON.parse(svPart); E.getCfg();
+      if (h) h._sig = ''; window._v2.render(E); await wait(200);
+      document.querySelector('.v2-layer').classList.remove('collapsed'); } catch (e) {}
+    return o;
+  });
+  ok('🎲 New take reaches the ear — a running preview follows the press, the superseded take does not',
+    takeEarRun.take1 === takeEarRun.take0 + 1 && takeEarRun.before.length > 0 &&
+    takeEarRun.after.length > 0 && takeEarRun.after !== takeEarRun.before &&
+    takeEarRun.stillPreviewing,
+    JSON.stringify(takeEarRun));
+
   // EXACTLY ONE MATERIAL DOOR IS LIT, AND IT TRACKS THE MATERIAL. Reported as
   // "clicking through the Written/Generated modes is buggy; options stay
   // highlighted, Composed gets stuck on". Two causes, both measured: the lit

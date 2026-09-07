@@ -3107,6 +3107,136 @@ const ok = (name, cond, detail) => {
     takeEarRun.stillPreviewing,
     JSON.stringify(takeEarRun));
 
+  // THE ROLL LIGHTS UP AS IT PLAYS, and RING OUT is the door for the chord
+  // choke. "It sounds like some notes may be getting cut off" — measured, with
+  // a progression on: 3 of 4 notes clamped, 1200ms → 738 / 238 / 738. That is
+  // `_ambNoteChoke` and it is deliberate (a note is released by the next change
+  // so a pad does not ring three chords later), but its opt-out is a v1 field
+  // with a v1 control, so on this card the behaviour had no door — and the
+  // drawing showed the FULL length while the ear heard the cut one.
+  const playRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    const svProg = E.getCfg().prog ? JSON.parse(JSON.stringify(E.getCfg().prog)) : null;
+    const svPart = JSON.stringify(L().part);
+    const svRing = L().ring;
+    const o = {};
+    E.getCfg().prog = { on: true, name: 'RG',
+      chords: [0, 5, 7, 9].map((r) => ({ root: r, intervals: [0, 4, 7] })) };
+    L().on = true; L().present = true; L().part.kind = 'live'; L().part.bars = 2;
+    L().part.rhythm = { kind: 'euclid', steps: 16, n: 5 };
+    L().part.pitch = { kind: 'chord', voices: 2 };
+    L().part.shape = Object.assign({}, L().part.shape || {}, { lenRatio: 100 });
+    delete L().ring;
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E); await wait(280);
+    card().classList.remove('collapsed');
+    // THE CHOKE ITSELF, asked directly — one implementation, so the drawing and
+    // the ear cannot disagree about it.
+    const chokeOf = () => {
+      const cv = card().querySelector('.v2-vizcv');
+      const cs = Number.isFinite(cv._cs) ? cv._cs : 0;
+      const cyc = window._v2.cycleSec(L(), E.getCfg());
+      const ns = window._v2.withEdit(() => window._v2.notesFor(L(),
+        { E, cfg: E.getCfg(), key: 'v2:' + L().id, cycleStart: cs, cycleSec: cyc })) || [];
+      // a long note that starts INSIDE a chord, which is the case that gets cut
+      const n = ns.find((x) => x && x.durMs > 400);
+      if (!n) return null;
+      const got = window._ambNoteChoke('v2:' + L().id, Tone.now() + 0.2, n.durMs, {});
+      return { req: Math.round(n.durMs), got: Math.round(got) };
+    };
+    try { await Tone.start(); } catch (e) {}
+    _ambStartGenerator(E); await wait(1500);
+    o.playing = !!E.timer;
+    o.chokeOff = chokeOf();
+    // THE SWEEP IS DRAWN — on its own overlay, so the roll is not regenerated
+    // per frame
+    const lit = () => { const ph = card().querySelector('.v2-vizph');
+      if (!ph || !ph.width) return -1;
+      const d = ph.getContext('2d').getImageData(0, 0, ph.width, ph.height).data;
+      let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 40) n++;
+      return n; };
+    o.sweep = lit();
+    await wait(500);
+    o.sweep2 = lit();
+    o.overlayBox = (() => { const ph = card().querySelector('.v2-vizph');
+      const cv = card().querySelector('.v2-vizcv');
+      return (ph && cv) ? (Math.abs(parseFloat(ph.style.width) - cv.clientWidth) < 1.5 &&
+                           Math.abs(parseFloat(ph.style.top) - cv.offsetTop) < 1.5) : false; })();
+    // …and THE DRAWING SHOWS THE CHOKED LENGTH while playing, so the picture
+    // and the ear agree. Compared against the choke's own answer for the SAME
+    // notes at the SAME anchor — a full-length drawing beside a cut note is
+    // exactly what "some notes are getting cut off" looked like.
+    o.drawn = (() => {
+      const cv = card().querySelector('.v2-vizcv');
+      const geo = cv._plotGeo; const hits = cv._hits || [];
+      if (!geo || !hits.length) return null;
+      const cs = Number.isFinite(cv._cs) ? cv._cs : 0;
+      const ns = (window._v2.withEdit(() => window._v2.notesFor(L(),
+        { E, cfg: E.getCfg(), key: 'v2:' + L().id, cycleStart: cs, cycleSec: geo.cyc })) || [])
+        .filter((n) => n && n.freq > 0);
+      // PER NOTE, not per max: only the notes that start INSIDE a chord get
+      // cut, so a maximum over all of them is always an uncut one (that
+      // version passed with the drawn choke disabled — the poison found it).
+      const inCyc = ns.filter((n) => n.at - cs >= -1e-6 && n.at - cs < geo.cyc);
+      if (inCyc.length !== hits.length) return { mismatch: [inCyc.length, hits.length] };
+      let found = null;
+      for (let i = 0; i < inCyc.length; i++) {
+        const raw = inCyc[i].durMs;
+        const cut = window._ambNoteChoke('v2:' + L().id, inCyc[i].at, raw, {});
+        if (!(cut < raw - 30)) continue;
+        found = { raw: Math.round(raw), cut: Math.round(cut),
+                  drawnMs: Math.round((hits[i].w / geo.w) * geo.cyc * 1000) };
+        break;
+      }
+      return found || { none: true };
+    })();
+    // RING OUT — reachable, and it stops the cut
+    const gt = card().querySelector('.v2-gototab[data-goto="Pitch"]'); if (gt) gt.click();
+    await wait(260);
+    const lt = [...card().querySelectorAll('.v2-pop-tab')]
+      .find((x) => x.getAttribute('data-tab') === 'Length');
+    if (lt) lt.click(); await wait(220);
+    const rb = card().querySelector('.v2-ringtoggle');
+    o.door = !!rb && rb.getBoundingClientRect().height > 0;
+    o.faceOff = rb ? rb.textContent.trim() : '';
+    if (rb) rb.click(); await wait(500);
+    o.ring = L().ring | 0;
+    o.faceOn = (card().querySelector('.v2-ringtoggle') || {}).textContent || '';
+    o.chokeOn = chokeOf();
+    _ambStopGenerator(E); await wait(400);
+    o.sweepAfterStop = lit();
+    try {
+      if (svProg) E.getCfg().prog = svProg; else delete E.getCfg().prog;
+      L().part = JSON.parse(svPart);
+      if (svRing) L().ring = svRing; else delete L().ring;
+      E.getCfg();
+      E._playStartAt = null; E._progAnchor = null; E._barGridAnchor = null;
+      if (h) h._sig = ''; window._v2.render(E); await wait(220);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) {}
+    return o;
+  });
+  ok('the roll lights up as it plays — a sweep on its own overlay, cleared on stop',
+    playRun.playing && playRun.sweep > 20 && playRun.sweep2 > 20 &&
+    playRun.sweep !== playRun.sweep2 && playRun.overlayBox &&
+    playRun.sweepAfterStop === 0,
+    JSON.stringify(playRun));
+  ok('Ring out is the door for the chord choke — off cuts the note, on lets it ring',
+    playRun.door && /released by the next change/.test(playRun.faceOff) &&
+    playRun.ring === 1 && /through the changes/.test(playRun.faceOn) &&
+    playRun.chokeOff && playRun.chokeOff.got < playRun.chokeOff.req - 1 &&
+    playRun.chokeOn && playRun.chokeOn.got === playRun.chokeOn.req &&
+    // …AND THE PICTURE SAYS SO: the widest drawn note is the CHOKED length,
+    // not the requested one (the poison that draws the full length passes
+    // every other clause).
+    playRun.drawn && playRun.drawn.cut < playRun.drawn.raw - 30 &&
+    Math.abs(playRun.drawn.drawnMs - playRun.drawn.cut) < 90,
+    JSON.stringify({ off: playRun.chokeOff, on: playRun.chokeOn, door: playRun.door,
+                     drawn: playRun.drawn }));
+
   // THE DRAWING HAS A PITCH AXIS — a keyboard down the left and one SEMITONE
   // per row ("the content visualization needs a Y axis, use piano graphic, so
   // it's clear what note each event is"). It was a continuous squeeze of

@@ -15284,10 +15284,14 @@
    .ambient-ctrl on purpose: that is what keeps it out of the tab filter, so it
    stays visible whichever tab you are on. */
 .v2-partviz {
-  display: block; margin: 2px 0 8px; padding: 6px 8px 4px;
+  display: block; position: relative; margin: 2px 0 8px; padding: 6px 8px 4px;
   border: 1px solid #23233a; border-radius: 10px; background: #0f0f1a;
 }
 .v2-partviz .v2-vizcv { display: block; width: 100%; height: 84px; }
+/* THE PLAYHEAD rides its own transparent canvas over the roll — its box is set
+   in JS from the roll's own offset, so it cannot drift when the padding here
+   changes. */
+.v2-partviz .v2-vizph { position: absolute; pointer-events: none; }
 .v2-partviz .v2-vizlab { display: block; margin-top: 3px; font-size: 0.7rem; }
 /* THE TAKE BAR — inside the viz block for the same reason the canvas is: it
    acts on the PICTURE, so it must be visible under every tab rather than

@@ -3424,7 +3424,12 @@
     // sheet, because it acts on the picture rather than on one setting. It is
     // also why New take and Lock are HERE and nowhere else: two surfaces for
     // one action is the duplication this file keeps paying for.
+    // THE PLAYHEAD IS ITS OWN CANVAS. Redrawing the roll every frame would
+    // mean a `notesFor` call per frame per card — the drawing is generated, not
+    // stored — so the sweep and the lit notes go on a transparent overlay that
+    // costs a clear, a line and a few rects.
     return '<div class="v2-partviz"><canvas class="v2-vizcv" height="84"></canvas>' +
+      '<canvas class="v2-vizph" aria-hidden="true"></canvas>' +
       '<span class="v2-vizlab ambient-hint"></span>' +
       // THE NOTE EDITOR OPENS HERE — directly under the drawing it edits, so
       // the picture stays visible while you move the note (a dialog over the
@@ -3491,19 +3496,53 @@
       cs = Number.isFinite(E._progAnchor) ? E._progAnchor : 0;
       fromPv = false;
     }
+    // WHILE PLAYING, DRAW WHAT IS SOUNDING. A live part re-rolls every cycle,
+    // so the remembered preview take is NOT what you are hearing — lighting its
+    // notes as the playhead passed them would light the wrong ones. The emit's
+    // own cycle math (`startAt + c * cyc`), so the picture and the ear are the
+    // same cycle by construction.
+    let playing = false;
+    try {
+      const stp = E.timer && E._v2Phase && E._v2Phase['v2:' + (L.id | 0)];
+      const nowT = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      if (stp && Number.isFinite(stp.startAt) && nowT >= stp.startAt) {
+        cs = stp.startAt + Math.floor((nowT - stp.startAt) / cyc) * cyc;
+        fromPv = false; playing = true;
+      }
+    } catch (e) {}
     // THE ANCHOR THE PICTURE WAS DRAWN AT, recorded on the canvas. A drawing
     // is only honest about a part built on the changes if it starts where the
     // changes do, and the note COUNT cannot show that — rotating a progression
     // keeps the total identical (measured).
     cv._cs = cs;
     try {
-      notes = V2.withEdit(() => V2.withTake(V2.pinOf(L), () =>
-        V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc }))) || [];
+      // …and WITHOUT the take pin while playing: the emitter draws from the
+      // cycle index, so pinning here would draw a take nobody is hearing.
+      notes = V2.withEdit(() => (playing
+        ? V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc })
+        : V2.withTake(V2.pinOf(L), () =>
+            V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc })))) || [];
     } catch (e) { notes = []; }
     // `notesFor` returns ABSOLUTE times (cycleStart + offset), so a remembered
     // cycle start has to be subtracted back off before drawing.
     notes = notes.map(n => (n && Number.isFinite(n.at))
       ? { at: n.at - cs, freq: n.freq, durMs: n.durMs, nidx: n.nidx } : n);
+    // THE PICTURE MUST AGREE WITH THE EAR. A note is released by the next
+    // change unless the layer rings, so drawing its full length while the
+    // choke cuts it is exactly the disagreement that reads as "notes are
+    // getting cut off". Asked of the CHOKE ITSELF — a second copy of that rule
+    // is how the two would drift — and only while playing, because it resolves
+    // the boundary off the CLOCK and a stopped one is stale (the documented
+    // audition-stub trap).
+    if (playing && typeof window._ambNoteChoke === 'function') {
+      notes = notes.map((n) => {
+        if (!n || !(n.durMs > 0)) return n;
+        try {
+          const ms = window._ambNoteChoke('v2:' + (L.id | 0), cs + n.at, n.durMs, {});
+          return (ms > 0 && ms < n.durMs) ? { at: n.at, freq: n.freq, durMs: ms, nidx: n.nidx } : n;
+        } catch (e) { return n; }
+      });
+    }
     const played = notes.filter(n => n && n.freq > 0 && n.at >= -1e-6 && n.at < cyc);
     const mids = played.map(n => 69 + 12 * Math.log2(n.freq / 440));
 
@@ -3544,10 +3583,28 @@
     const g = cv.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, w, h);
+    // THE PLAYHEAD OVERLAY IS CLEARED WHEN THE TRANSPORT IS NOT RUNNING. The
+    // viz rAF stops re-arming on stop (by design), so its last frame would
+    // otherwise sit there claiming a note is sounding.
+    try {
+      const ph0 = host.querySelector('.v2-vizph');
+      if (ph0 && ph0.getContext && !playing && ph0._on) {
+        const c0 = ph0.getContext('2d');
+        c0.setTransform(1, 0, 0, 1, 0, 0);
+        c0.clearRect(0, 0, ph0.width, ph0.height);
+        ph0._on = false;
+      }
+    } catch (e) {}
     const rowH = (h - TOP) / rows;
     const yOf = (m) => TOP + (hiM - m) * rowH;          // the TOP of that row
     cv._pitchGeo = { loM: loM, hiM: hiM, rowH: rowH, top: TOP };
     const PLOT = w - GUT;                                // the notes' own width
+    // …and the plot's own box, so the playhead overlay reads one geometry
+    // rather than re-deriving it. AFTER `PLOT` is declared: reading a `const`
+    // above its declaration is a TDZ ReferenceError, and this function's
+    // callers all swallow it — the drawing simply stopped, with `cv._cs = 0`
+    // and no hit boxes as the only tell.
+    cv._plotGeo = { x0: GUT, w: PLOT, top: TOP, h: h, cyc: cyc, playing: playing };
     // the keys, and their lines across the plot — the black rows are what make
     // a piano roll readable at a glance
     // WHITE KEYS ARE THE GROUND and the black ones sit ON them, narrower —
@@ -3971,6 +4028,106 @@
         mini(L, 'part.ground.per.' + i, nm || String(i + 1), v, 0, 9, 1) + '</span>';
     }).join('');
   }
+  // ── THE PLAYHEAD ────────────────────────────────────────────────────────
+  // "The layer viz should light up as play happens, current bar and note, so
+  // the user can see where notes are." Driven from the viz rAF (which only
+  // re-arms while playing — the documented rule), and drawn on the OVERLAY
+  // canvas: redrawing the roll per frame would mean a `notesFor` call per frame
+  // per card, since the drawing is generated rather than stored.
+  function vizFrame(E) {
+    if (!E) return;
+    const host = document.getElementById('bloom-v2-layers'); if (!host) return;
+    // STOPPED CLEARS. The rAF runs ONE more frame after the transport stops
+    // (the frame was already requested) and then does not re-arm — so this is
+    // where the sweep is wiped; without it the last frame sits there claiming
+    // a note is sounding.
+    if (!E.timer) {
+      host.querySelectorAll('.v2-vizph').forEach((ph0) => {
+        if (!ph0._on || !ph0.getContext) return;
+        const c0 = ph0.getContext('2d');
+        c0.setTransform(1, 0, 0, 1, 0, 0);
+        c0.clearRect(0, 0, ph0.width, ph0.height);
+        ph0._on = false;
+      });
+      return;
+    }
+    let cfg = null; try { cfg = E.getCfg(); } catch (e) {}
+    const list = (cfg && cfg.layers) || []; if (!list.length) return;
+    const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+    host.querySelectorAll('.v2-layer:not(.collapsed)').forEach((card) => {
+      const id = card.getAttribute('data-v2id') | 0;
+      const L = list.find((x) => x && (x.id | 0) === id); if (!L) return;
+      const cv = card.querySelector('.v2-vizcv');
+      const ph = card.querySelector('.v2-vizph');
+      if (!cv || !ph || !ph.getContext) return;
+      const geo = cv._plotGeo;
+      const st = E._v2Phase && E._v2Phase['v2:' + id];
+      const cyc = (geo && geo.cyc) || 0;
+      const clear = () => {
+        if (ph._on) {
+          const c0 = ph.getContext('2d');
+          c0.setTransform(1, 0, 0, 1, 0, 0);
+          c0.clearRect(0, 0, ph.width, ph.height);
+          ph._on = false;
+        }
+      };
+      if (!geo || !st || !Number.isFinite(st.startAt) || !(cyc > 0) || now < st.startAt) { clear(); return; }
+      const cs = st.startAt + Math.floor((now - st.startAt) / cyc) * cyc;
+      const frac = (now - cs) / cyc;
+      if (!(frac >= 0 && frac <= 1)) { clear(); return; }
+      // THE CYCLE MOVED — redraw the roll, at most once per cycle. A live part
+      // re-rolls, so the picture has to follow or the lit notes are last
+      // cycle's. `drawPartViz` picks the sounding cycle itself while playing.
+      if (!Number.isFinite(cv._cs) || Math.abs(cv._cs - cs) > 1e-4) {
+        try { drawPartViz(card, L, E); } catch (e) {}
+      }
+      const dpr = Math.min(3, (window.devicePixelRatio || 1));
+      const w = cv.clientWidth, h = cv.clientHeight;
+      if (!(w > 0 && h > 0)) { clear(); return; }
+      if (ph.width !== Math.round(w * dpr) || ph.height !== Math.round(h * dpr)) {
+        ph.width = Math.round(w * dpr); ph.height = Math.round(h * dpr);
+      }
+      // the overlay tracks the roll's own box, whatever the padding is
+      if (ph._px !== cv.offsetLeft || ph._py !== cv.offsetTop || ph._pw !== w || ph._phh !== h) {
+        ph.style.left = cv.offsetLeft + 'px'; ph.style.top = cv.offsetTop + 'px';
+        ph.style.width = w + 'px'; ph.style.height = h + 'px';
+        ph._px = cv.offsetLeft; ph._py = cv.offsetTop; ph._pw = w; ph._phh = h;
+      }
+      const g = ph.getContext('2d');
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.clearRect(0, 0, w, h);
+      ph._on = true;
+      const x0 = geo.x0, PLOT = geo.w, TOP = geo.top;
+      const x = x0 + frac * PLOT;
+      // THE CURRENT BAR, tinted — "current bar and note". A bar is what the
+      // ruler above counts, so it is the unit to mark.
+      const barsF = Math.max(0.0625, (L.part && L.part.bars) || 1);
+      if (!(L.part && L.part.clock === 'free')) {
+        const b = Math.floor(frac * barsF);
+        const bx0 = x0 + (b / barsF) * PLOT, bx1 = x0 + ((b + 1) / barsF) * PLOT;
+        g.fillStyle = 'rgba(72,187,120,0.07)';
+        g.fillRect(bx0, TOP, Math.min(bx1, x0 + PLOT) - bx0, h - TOP);
+      }
+      // …AND THE NOTES UNDER IT. Green, because green means "sounding"
+      // everywhere else in this app — the one hue the palette reserves.
+      const hits = cv._hits || [];
+      for (let i = 0; i < hits.length; i++) {
+        const b2 = hits[i];
+        if (x < b2.x - 0.5 || x > b2.x + b2.w + 0.5) continue;
+        g.fillStyle = 'rgba(72,187,120,0.85)';
+        g.strokeStyle = '#c6f6d5'; g.lineWidth = 1;
+        g.beginPath();
+        if (g.roundRect) g.roundRect(b2.x, b2.y, b2.w, b2.h, Math.min(3, b2.h / 2));
+        else g.rect(b2.x, b2.y, b2.w, b2.h);
+        g.fill(); g.stroke();
+      }
+      g.strokeStyle = 'rgba(198,246,213,0.9)'; g.lineWidth = 1.5;
+      g.beginPath(); g.moveTo(x, TOP); g.lineTo(x, h); g.stroke();
+    });
+  }
+  // Beside `window._v2Tick` and for the same reason: the viz rAF lives in 17
+  // and this is the UI IIFE, and the two share nothing but the window.
+  window._v2VizFrame = vizFrame;
   function matSync(card, L) {
     const pv2 = matProv(L);
     // ✓ = this material is generating · 🔒 = it MADE these notes and the take
@@ -5284,6 +5441,11 @@
           sl(L, 'part.pitch.randomness', 'Scatter', num(t.randomness, 0), 0, 100, 'ordered → jumps about',
              'kind:live;voice:synth;pitch:series') +
           sl(L, 'part.shape.lenRatio', 'Length', sh.lenRatio, 1, 400, '% of the onset span', 'kind:live') +
+          '<div data-v2tab="Length" class="ambient-ctrl"><label>Ring out</label>' +
+            '<button type="button" class="ambient-seg v2-ringtoggle' + (L.ring ? ' on' : '') + '">' +
+              (L.ring ? 'On \u2014 through the changes' : 'Off \u2014 released by the next change') + '</button>' +
+            '<span class="ambient-hint">a note is cut short so it does not ring over the next change \u2014 ' +
+              'turn this on to let it play its full length</span></div>' +
           // VOICING IS A SUB-QUESTION OF PITCH — how the chosen notes are
           // stacked and spread. And Proximity moved here from Motion: it
           // pulls each pick toward the previous one, which is a PITCH rule.
@@ -6924,6 +7086,26 @@
           sa.classList.toggle('on', !!ctx.L.followSalt);
           sa.textContent = ctx.L.followSalt ? 'On — follows the colours' : 'Off — holds the chord';
           applyGate(ctx.card, ctx.L);
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          return;
+        }
+        const rgt = t.closest('.v2-ringtoggle');
+        if (rgt) {
+          const ctx = layerOf(rgt); if (!ctx) return;
+          if (ctx.L.ring) delete ctx.L.ring; else ctx.L.ring = 1;
+          try { E.getCfg(); } catch (e) {}
+          rgt.classList.toggle('on', !!ctx.L.ring);
+          rgt.textContent = ctx.L.ring ? 'On \u2014 through the changes' : 'Off \u2014 released by the next change';
+          // it changes how long notes SOUND, so the ones already scheduled with
+          // the old answer are superseded — the same pair every other live edit
+          // on this card does.
+          try {
+            if (E.timer && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined') {
+              cancelBloomFutureVoices('v2:' + ctx.L.id, Tone.now());
+            }
+          } catch (e) {}
+          try { if (E._v2Phase) delete E._v2Phase['v2:' + ctx.L.id]; } catch (e) {}
+          try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
           return;
         }

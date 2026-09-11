@@ -179,9 +179,116 @@
   // Lazy and total: every v2 layer is coerced on read, so a hand-written or
   // half-migrated layer can never reach the emitter in a shape it can't handle.
   // Unknown enum values fall back rather than throwing — the v1 doctrine.
+  // ── STATIC CONTENT vs LIVE CONTENT ──────────────────────────────────────
+  // "Written" and "Generated" are not two kinds of thing. Both make a fixed
+  // set of notes — one by hand note by note, one by setting parameters and
+  // pressing a button — and neither changes on iterations. That is STATIC
+  // CONTENT, and generation is a way of AUTHORING it rather than a mode.
+  //
+  // MEASURED, six consecutive cycles of a euclid x walk part, counting distinct
+  // note sets: a default generated part gives ONE (every cycle identical), and
+  // so do rhythm Vary, Rests, Ghosts, Len vary, Pitch vary and the `chance`
+  // rhythm — every one of them seeds off a FIXED take, so they shape the
+  // content ONCE, deterministically. They are content knobs, not dice.
+  // `part.vary` gives SIX. It is the only content-level live switch there is.
+  //
+  // So liveness is not a stored mode — it is a PROPERTY of the settings, which
+  // is what "once played it can become live at the user's discretion" means.
+  // You never set Live; you turn something stochastic on and it becomes live.
+  // Two tiers reach here, and both genuinely differ pass to pass:
+  //   CONTENT   `part.vary` (fresh dice per cycle) · salt (re-colours the
+  //             changes per instance, so a following layer re-voices)
+  //   PERFORM   Humanize (UNSEEDED by design — never replays) · Vel var
+  //             (seeded on position-in-the-performance, so successive passes
+  //             differ) · a chord/section mask at a probability, which is a
+  //             per-instance draw
+  // Everything else is static by measurement, and saying so is the point.
+  function liveness(L, cfg) {
+    const why = [];
+    if (!L || !L.part) return { live: false, why };
+    // `Number.isFinite`, NOT `num` — that helper is declared in the UI IIFE and
+    // this is the engine one. The bare name threw straight into `liveTxt`'s
+    // catch and every layer answered "Static", including one with the dice on:
+    // the documented swallowed-catch trap, committed by adding the catch.
+    const pos = (v) => Number.isFinite(v) && v > 0;
+    if (L.part.vary) why.push('the dice are thrown every cycle');
+    if (pos(L.humanize)) why.push('Humanize nudges every note');
+    if (pos(L.velVar)) why.push('Vel var moves each note\u2019s level');
+    // a mask STRICTLY between 0 and 100 is a probability — 0 and 100 are
+    // decisions, and a decision is static
+    const anyProb = (m) => !!(m && Array.isArray(m.steps) &&
+      m.steps.some((v) => Number.isFinite(v) && v > 0 && v < 100));
+    if (anyProb(L.chordMask) || anyProb(L.sectionMask)) why.push('a probability decides some passes');
+    // ── THE CHANGES THEMSELVES CAN BE LIVE ──────────────────────────────
+    // Salt was here alone, and it is one of FOUR area-level dice that make the
+    // harmony differ pass to pass — a layer following them plays different
+    // notes, which is the same fact wearing a different hat. Measured over six
+    // full trips of a 4-chord cycle, against the floor a STATIC figure sets by
+    // simply moving through the changes (4 distinct note sets):
+    //   salt colours 17 · prog.vary 13 · chord alternates 6 (either mode)
+    // …and these are NOT live, by the same measurement — they land exactly on
+    // the floor, because each is seeded once per TAKE or per SLOT rather than
+    // per pass: 🎲 take-reroll, 🌡 tension, the ↻ order grid.
+    //
+    // GATED ON THE LAYER ACTUALLY FOLLOWING. A generated part always resolves
+    // its pitches against the sounding chord; a WRITTEN one plays stored
+    // pitches unless `harmony` says otherwise, so the changes moving beneath
+    // it changes nothing it plays.
+    const follows = (L.part.kind !== 'recorded') ||
+      L.harmony === 'diatonic' || L.harmony === 'chordlock';
+    if (follows) try {
+      const pg = cfg && cfg.prog;
+      if (pg && pg.on) {
+        if (typeof _ambAnySaltColors === 'function' && _ambAnySaltColors(cfg))
+          why.push('Salt re-colours the changes');
+        if (Number.isFinite(pg.vary) && pg.vary > 0)
+          why.push('the changes drift each pass');
+        if (Array.isArray(pg.chords) && pg.chords.some((c) =>
+            c && Array.isArray(c.alts) && c.alts.length))
+          why.push('a change has alternates');
+      }
+    } catch (e) {}
+    return { live: why.length > 0, why };
+  }
+
+  // ── THE MATERIAL'S FORM ─────────────────────────────────────────────────
+  // A layer's content is authored and shown one of two ways, and they are
+  // genuinely different instruments rather than two pictures of one thing:
+  //   roll  — notes with their own time, pitch and length (the piano roll)
+  //   steps — a fixed grid of on/off cells (a sequencer: arps and drum kits)
+  // ORTHOGONAL to written/generated: each form can be filled by hand or by the
+  // rules, which is the 2x2 the card already implements without saying so.
+  // ABSENT = 'roll', so every project made before this is byte-identical.
+  //
+  // WHAT THE FORM SCOPES IS SMALL, and that is the point: of the ~45 fields
+  // that shape material, only the grid's own (steps/rotate/vary/rows, cells,
+  // lanes) and the note list's own (notes, grid, transpose, harmony, when) are
+  // form-specific. Every pitch rule, every shape and every variance knob means
+  // the same thing in both, because both have onsets and pitches. The axes
+  // that really scope this card are `kind` (generated vs written) and `voice`
+  // (synth vs kit), and both already existed.
+  const FORMS = new Set(['roll', 'steps']);
+  const formOf = (L) => {
+    const f = L && L.part && L.part.form;
+    return FORMS.has(f) ? f : 'roll';
+  };
   const RHYTHMS = new Set(['pulse', 'euclid', 'chance', 'drawn', 'ground']);
   const PITCHES = new Set(['chord', 'fixed', 'stack', 'walk', 'anchor', 'series', 'chance', 'drawn', 'mixed']);
   const KINDS = new Set(['live', 'recorded']);
+
+  // Divisions per bar. Triplet values are in the list because a swung or
+  // triplet figure cannot be placed on any power-of-two grid, and 1/64 because
+  // that is the finest the drawing can still resolve at a phone's width.
+  const GRIDS = [[4, '1/4'], [8, '1/8'], [12, '1/8 T'], [16, '1/16'],
+                 [24, '1/16 T'], [32, '1/32'], [64, '1/64']];
+  const GRID_DIVS = new Set(GRIDS.map((g) => g[0]));
+  const gridPerBar = (L) => {
+    const g = (L && L.part && L.part.grid) | 0;
+    return GRID_DIVS.has(g) ? g : 16;
+  };
+  // …and over one CYCLE, which is what a note's `t`/`dur` are fractions of.
+  const gridCells = (L) => Math.max(1, Math.round(Math.max(0.0625,
+    (L && L.part && L.part.bars) || 1) * gridPerBar(L)));
 
   function normLayer(L, i) {
     if (!L || typeof L !== 'object') return null;
@@ -366,9 +473,19 @@
 
     const p = (L.part && typeof L.part === 'object') ? L.part : (L.part = {});
     p.kind = KINDS.has(p.kind) ? p.kind : 'live';
+    // THE FORM — roll or steps (see FORMS). Absent = 'roll' and PRUNED at it,
+    // so an untouched project stores nothing and reads exactly as before.
+    if (!FORMS.has(p.form) || p.form === 'roll') delete p.form;
     // CYCLE — how long one pass of the part is. Live states it; a recorded part
     // may state it too (the length it was recorded at).
     p.bars = clamp(Number.isFinite(p.bars) && p.bars > 0 ? p.bars : 2, 0.125, 64);
+    // THE EDITING GRID — divisions per BAR, i.e. a note VALUE, so it means the
+    // same thing whatever length the part is. It used to be `rhythm.steps`
+    // spread across the WHOLE cycle, which on a 5-bar part put the grid at
+    // 1.25 beats and made hand-editing land on nothing musical. Absent = 16
+    // (1/16), pruned at that value so an untouched project stores nothing.
+    if (!GRID_DIVS.has(p.grid | 0)) delete p.grid;
+    if ((p.grid | 0) === 16) delete p.grid;
     // THE TAKE — WHICH ROLL of a live part the preview and the drawing use.
     // A live part's seeded draws key on the CYCLE INDEX, so before this every
     // Preview press landed on whatever cycle the clock happened to be at and
@@ -393,7 +510,38 @@
       const r = (p.rhythm && typeof p.rhythm === 'object') ? p.rhythm : (p.rhythm = {});
       r.kind = RHYTHMS.has(r.kind) ? r.kind : 'pulse';
       r.n = clamp((r.n | 0) || 1, 1, 64);                  // pulse: onsets per cycle
-      r.steps = clamp((r.steps | 0) || 8, 1, 64);          // euclid grid
+      // ONE GRID STANDARD, STATED PER BAR. `part.grid` is a note VALUE (1/16)
+      // and the cycle is always a whole multiple of it, so the number means
+      // the same thing on a 1-bar part and a 5-bar one. In ▦ STEPS the cell
+      // count is DERIVED from it (`bars × grid`) and `r.steps` is a mirror
+      // the emitter and the cells/lanes arrays keep reading unchanged — the
+      // `unit` mirror idiom, so nothing downstream had to learn about it.
+      // Without this the sequencer's own readout contradicted itself:
+      // "5 of 16 · 2 bars · 1/16", and 2 bars at 1/16 is 32 cells.
+      // ⌗ ROLL is deliberately LEFT ALONE: there `r.steps` is the euclid
+      // generator's internal resolution rather than an editing grid, and
+      // deriving it would re-fit every generated part ever made (a default
+      // layer would go 8 steps → 32, i.e. 3-of-8 becoming a much sparser
+      // 3-of-32). That migration is a separate, reviewed decision.
+      r.steps = clamp((r.steps | 0) || 8, 1, 256);         // euclid grid / cell count
+      // WHAT ▦ STEPS WOULD ASK FOR, whichever form is active right now. The
+      // two forms are PARALLEL, and `cells`/`lanes`/`pitch.steps` are ONE array
+      // each serving two different length authorities — `r.steps` (the roll's
+      // euclid resolution knob) and this (the sequencer's grid). Sizing to
+      // `r.steps` alone let the roll's knob TRUNCATE a drawn pattern: measured,
+      // a 32-cell grid of 8 hits came back as 2 after a trip through ⌗ Roll
+      // with Steps turned down. The arrays keep the LONGER of the two, and the
+      // tail is inert — every reader (the emitter, both grids) iterates
+      // `r.steps` and indexes directly, with no modulo over the array.
+      const gcells = clamp(Math.round(Math.max(0.0625, p.bars) * gridPerBar(L)), 1, 256);
+      if (p.form === 'steps') r.steps = gcells;
+      // …but ONLY where there is something to protect. An untouched euclid roll
+      // layer keeps exactly `r.steps` as it always did — otherwise every layer
+      // would carry a zero-padded array as long as its bars × grid (80 entries
+      // on a 5-bar part) for a pattern nobody drew.
+      const anyLane = (r.lanes || []).some((row) => (row || []).some(Boolean));
+      const keepN = (r.kind === 'drawn' || p.form === 'steps' || anyLane)
+        ? Math.max(r.steps, gcells) : r.steps;
       r.pulses = clamp((r.pulses | 0) || 3, 1, r.steps);
       r.rotate = clamp((r.rotate | 0) || 0, 0, 63);
       // Absent or 0 = the pattern exactly as drawn, and no RNG draw at all.
@@ -407,22 +555,22 @@
       // DRAWN — the cell grid. It is the euclid generator's output made
       // EDITABLE, exactly as v1's `euclidPattern` overrides its own formula, so
       // "euclid patterning" and "draw it by hand" are one control rather than
-      // two. Length always tracks `steps`: grow pads with rests, shrink
-      // truncates, so a Steps edit can never leave the grid disagreeing with
-      // the number above it. Kept coerced whichever rhythm is active — the
-      // both-halves rule that keeps every door two-way.
+      // two. Sized to `keepN` (see above) so neither form's length authority can
+      // truncate the other's pattern; the grid still DRAWS `r.steps` of it, so
+      // it can never disagree with the number above it. Kept coerced whichever
+      // rhythm is active — the both-halves rule that keeps every door two-way.
       if (!Array.isArray(r.cells)) r.cells = [];
-      r.cells = r.cells.slice(0, r.steps).map(c => (c ? 1 : 0));
-      while (r.cells.length < r.steps) r.cells.push(0);
-      // KIT LANES — one drawn row per drum, same coercion as `cells` (length
-      // always tracks `steps`, so a Steps edit can never leave a lane
-      // disagreeing with the number above it). Kept coerced whichever
+      r.cells = r.cells.slice(0, keepN).map(c => (c ? 1 : 0));
+      while (r.cells.length < keepN) r.cells.push(0);
+      // KIT LANES — one drawn row per drum, same coercion as `cells` (sized to
+      // `keepN`, drawn at `r.steps`, so a Steps edit can never leave a lane
+      // disagreeing with the number above it OR truncate the other form's). Kept coerced whichever
       // instrument is active, so switching to a kit and back is not a loss.
       if (!Array.isArray(r.lanes)) r.lanes = [];
       r.lanes.length = _V2_LANES;
       for (let li = 0; li < _V2_LANES; li++) {
         const row = Array.isArray(r.lanes[li]) ? r.lanes[li] : [];
-        const out2 = row.slice(0, r.steps).map(c => (c ? 1 : 0));
+        const out2 = row.slice(0, keepN).map(c => (c ? 1 : 0));
         while (out2.length < r.steps) out2.push(0);
         r.lanes[li] = out2;
       }
@@ -502,9 +650,11 @@
       // notes so a drawn line still follows the changes and transposes with the
       // key; length tracks `steps` exactly as `cells` does, so the note row can
       // never disagree with the grid above it.
+      // …and sized like `cells`, for the same reason: the note row is the other
+      // half of the sequencer's material and must survive a trip through ⌗ Roll.
       if (!Array.isArray(t.steps)) t.steps = [];
-      t.steps = t.steps.slice(0, r.steps).map(v => clamp((v | 0) || 1, 1, 24));
-      while (t.steps.length < r.steps) t.steps.push(1);
+      t.steps = t.steps.slice(0, keepN).map(v => clamp((v | 0) || 1, 1, 24));
+      while (t.steps.length < keepN) t.steps.push(1);
 
       const s = (p.shape && typeof p.shape === 'object') ? p.shape : (p.shape = {});
       s.lenRatio = clamp(Number.isFinite(s.lenRatio) ? s.lenRatio : 90, 1, 400);   // % of the onset span
@@ -542,6 +692,12 @@
         if (Number.isFinite(n.sus)) o.sus = clamp(n.sus | 0, 0, 100);
         if (Number.isFinite(n.rel)) o.rel = clamp(n.rel | 0, 0, 20000);
         if (Number.isFinite(n.glide) && n.glide > 0) o.glide = clamp(n.glide | 0, 1, 4000);
+        // `hx` — HAND-PLACED, EXACTLY HERE. Set when a note is dragged or
+        // keyboard-placed on a part whose harmony remaps (diatonic/chordlock):
+        // the remap quantizes to chord tones, so without the pin a hand-placed
+        // pitch would not sound (or sit) where it was dropped. Absent by
+        // default like every per-note field.
+        if (n.hx) o.hx = 1;
         return o;
       }).sort((a, b) => a.t - b.t);
       // A recorded part is fixed pitch material, but it still has to answer to a
@@ -715,15 +871,78 @@
     return { root, ivs };
   }
 
+  // WHICH PITCH CLASSES ARE IN THE SCALE, for the drawn keyboard — so the axis
+  // says which keys belong rather than only which one each note sits on.
+  // Returns a pitch-class map, or null when the question has no answer.
+  //
+  // TWO SOURCES, in the order that makes the axis honest. The LAYER's own tone
+  // set first, through `toneSetAt` (v1's full precedence: the area progression
+  // lock, then a per-layer `keyOv`, then the layer's `notes`) — but only when
+  // it is NOT a `pool`. That flag is the line that matters here: a chord, wrap
+  // or progression source is a HARMONY that moves through the cycle, and the
+  // keyboard is one static axis down the side, so lighting the first chord's
+  // tones would be a claim that is wrong for most of the drawing. A pool
+  // therefore falls through to the KEY, which is what governs the whole cycle.
+  //
+  // NULL is a real answer, twice over: with no key and no source of its own
+  // nothing is "in scale", and a 12-tone scale lights every key, which says
+  // exactly as much as lighting none.
+  function scaleAt(E, cfg, at, L) {
+    const mk = (root, ivs) => {
+      if (!Number.isFinite(root) || !Array.isArray(ivs) || ivs.length < 1 || ivs.length >= 12) return null;
+      const pcs = {};
+      ivs.forEach((iv) => { pcs[((((root + (iv | 0)) % 12) + 12) % 12)] = 1; });
+      return pcs;
+    };
+    try {
+      const set = withKeyTime(at, () => toneSetAt(E, cfg, at, L));
+      if (set && !set.pool) { const p = mk(set.root, set.ivs); if (p) return p; }
+    } catch (e) {}
+    // `_ambKeyRootPc` answers "what key WOULD apply", NOT "is there a key" —
+    // the documented trap — so without this a Free area lights up whatever key
+    // it happens to have STORED. (The branch above needs no such guard, and a
+    // first version that carried one was dead code: `_ambScaleIntervals`
+    // already answers CHROMATIC for a keyless area, so `mk` returns null on
+    // twelve tones and the question never reaches here. Verified by measuring
+    // it, after the poison for that guard passed twice.)
+    if (!(cfg && cfg.keyOn)) return null;
+    try {
+      return withKeyTime(at, () => mk(((_ambKeyRootPc(cfg) % 12) + 12) % 12,
+        (typeof SCALES !== 'undefined') ? SCALES[_ambKeyScaleName(cfg)] : null));
+    } catch (e) { return null; }
+  }
+
   // ── PART: LIVE ──────────────────────────────────────────────────────────
   // The euclidean generator, borrowed from v1 (`euclideanPattern` in 09) rather
   // than reimplemented — it feeds BOTH the `euclid` rhythm and the seed for the
   // `drawn` one, so the two can never disagree about what a 3-in-8 looks like.
+  // WHERE THE PATTERN'S FIRST HIT FALLS AT ROTATE 0. `euclideanPattern`'s
+  // accumulator tests AFTER adding (`bucket += k; if (bucket >= n)`), so its
+  // first hit lands at `ceil(steps/pulses) - 1`, never on step 0: 5 of 8 begins
+  // on step 1, 2 of 8 on step 3, 1 of 8 on step 7. Push 0 therefore ALREADY
+  // pushed, and the sparser the rhythm the further — reported exactly as "Push
+  // is buggy, at 0 all notes are set forward 3 values" (which is 2 pulses of 8).
+  // NORMALISED HERE, NOT IN v1's GENERATOR: that one is shared with every v1
+  // euclid layer (bass, euclid beat, euclid arp) and re-phasing it would
+  // silently re-rhythm every saved project. v2 asks the same generator for the
+  // same pattern, `phase` rotations earlier — so Push 0 starts on the beat and
+  // every step of Push moves it by exactly one.
+  function euclidPhase(pulses, steps) {
+    const st = Math.max(1, steps | 0), pu = clamp(pulses | 0, 0, st);
+    if (pu <= 0 || pu >= st) return 0;          // silence or every step: no phase to fix
+    try {
+      if (typeof euclideanPattern !== 'function') return 0;
+      const p = euclideanPattern(pu, st, 0);
+      if (!p || !p.length) return 0;
+      for (let i = 0; i < p.length; i++) if (p[i]) return i;
+    } catch (e) {}
+    return 0;
+  }
   function euclidCells(pulses, steps, rotate) {
     const st = Math.max(1, steps | 0), pu = clamp(pulses | 0, 0, st);
     try {
       if (typeof euclideanPattern === 'function') {
-        const p = euclideanPattern(pu, st, rotate | 0);
+        const p = euclideanPattern(pu, st, (rotate | 0) + euclidPhase(pu, st));
         if (p && p.length) return Array.from({ length: st }, (_, i) => (p[i] ? 1 : 0));
       }
     } catch (e) {}
@@ -1237,6 +1456,39 @@
     try { return fn(); } finally { EDIT_PIN = sv; }
   }
 
+  // WHICH RECORD IS SOUNDING AT A GIVEN MOMENT — the per-part swap, as ONE
+  // function. It was inline in `notesFor`, so anything else that needed to know
+  // what a per-part layer is playing had to re-implement it or reach for
+  // `L.part` — and `L.part` is the record being EDITED, which is a completely
+  // different thing the moment another part is sounding. The chord choke did
+  // exactly that: it decides line-vs-harmony from the record's own notes, read
+  // the EDITED one, and so let whichever part you had selected decide whether
+  // every OTHER part's notes were cut (measured: part 1 holding a single-note
+  // LINE was choked 7200 ms → 1988 because part 0, selected for editing, held a
+  // chord). That is the "what a part plays depends on which part is selected"
+  // wart the ice model exists to remove, in a new place.
+  // `pi` is the caller's ALREADY-RESOLVED part where it has one — `cycleWindowAt`
+  // hands it out, and re-deriving it from a snapped window start answers the
+  // previous part (see the note there).
+  function partRecordAt(L, E, cfg, at, pi) {
+    if (!L || !L.part) return null;
+    if (!(Number.isFinite(L.partFor) && (L.parts || L.partAll))) return L.part;
+    let p = Number.isFinite(pi) ? (pi | 0) : -1;
+    try {
+      if (p < 0 && typeof _ambPartChordAt === 'function' && E && cfg) {
+        const w = _ambPartChordAt(E, cfg, at);
+        if (w && Number.isFinite(w.pi)) p = w.pi | 0;
+      }
+    } catch (e) {}
+    if (p < 0 || p === (L.partFor | 0)) return L.part;
+    const alt = L.parts && L.parts[String(p)];
+    if (alt && typeof alt === 'object') return alt;
+    // the floor for a part with no record yet is the ICED Everywhere record —
+    // never the bench, or what a part plays would depend on which part is
+    // selected for editing
+    return (L.partAll && typeof L.partAll === 'object') ? L.partAll : L.part;
+  }
+
   // ── THE PART INTERFACE ──────────────────────────────────────────────────
   // notesFor(layer, ctx) → [{ at, freq, durMs }]
   // ONE contract, two implementations. Everything above is an implementation
@@ -1254,28 +1506,30 @@
     // engages on the map OR the ice alone — an empty map (every record pruned)
     // must still fall to the Everywhere floor, never to the bench
     if (!EDIT_PIN && Number.isFinite(L.partFor) && (L.parts || L.partAll) && !ctx._ppDone) {
-      let pi = -1;
-      try {
-        const w = (typeof _ambPartChordAt === 'function' && ctx.E && ctx.cfg)
-          ? _ambPartChordAt(ctx.E, ctx.cfg, ctx.cycleStart) : null;
-        if (w && Number.isFinite(w.pi)) pi = w.pi | 0;
-      } catch (e) {}
-      if (pi >= 0 && pi !== (L.partFor | 0)) {
-        const alt = L.parts && L.parts[String(pi)];
-        // the floor for a part with no record yet is the ICED Everywhere
-        // record — never the bench, or what a part plays would depend on
-        // which part is selected for editing
-        const eff = (alt && typeof alt === 'object') ? alt
-          : ((L.partAll && typeof L.partAll === 'object') ? L.partAll : null);
-        if (eff) {
-          return notesFor(Object.assign({}, L, { part: eff }),
-                          Object.assign({}, ctx, { _ppDone: 1 }));
-        }
+      // THE CALLER'S OWN ANSWER WINS. `cycleWindowAt` resolved which part this
+      // window is at a moment INSIDE it and hands it over as `ctx.pi`; asking
+      // again from `ctx.cycleStart` re-runs the resolver on a SNAPPED float
+      // that can sit one ULP below its own boundary, which answers the
+      // PREVIOUS part (see the note in `cycleWindowAt`). The fallback stays for
+      // the callers that pass only a time.
+      const eff = partRecordAt(L, ctx.E, ctx.cfg, ctx.cycleStart, ctx.pi);
+      if (eff && eff !== L.part) {
+        return notesFor(Object.assign({}, L, { part: eff }),
+                        Object.assign({}, ctx, { _ppDone: 1 }));
       }
     }
     const p = L.part, out = [];
     const cyc = ctx.cycleSec, cs = ctx.cycleStart;
-    if (p.kind === 'recorded') {
+    // ⌗ ROLL AND ▦ STEPS ARE PARALLEL — each keeps its own material and
+    // switching between them preserves both. `part.notes` and
+    // `rhythm.cells`/`lanes` already coexist in the store (the both-halves rule
+    // that keeps 🔒 Lock / 🔓 Unlock two-way), so the only thing coupling them
+    // was `part.kind`: 'recorded' sends the emit down the NOTE-LIST branch, and
+    // in ▦ Steps the material is the grid whatever the roll's kind happens to
+    // be. The FORM decides which branch emits, so `kind` keeps meaning exactly
+    // what it means for the roll and is simply not consulted here — no field to
+    // save and restore, and no state to get out of step.
+    if (p.kind === 'recorded' && formOf(L) !== 'steps') {
       // REGISTER MOVES A RECORDED PART BY WHOLE OCTAVES, from the register it
       // was made in — the same thing it means on a live part ("which octave
       // this plays in"), expressed the only way absolute notes can express it.
@@ -1299,10 +1553,25 @@
         if (p.key && Number.isFinite(p.key.root)) kc = { root: p.key.root | 0, scale: p.key.scale || '' };
         else { try { kc = { root: _ambKeyRootPc(ctx.cfg), scale: _ambKeyScaleName(ctx.cfg) }; } catch (e) { kc = null; } }
       }
+      // A CHORD MUST NOT COLLAPSE INTO ITSELF. The chordlock remap indexes a
+      // note's written-key degree into the sounding chord's tones (`deg % N`),
+      // and a stacked voicing's degrees collide mod N — measured on a locked
+      // 5-voice Mixed take: EVERY chord position remapped at least two voices
+      // onto one pitch (60,64,67,71,72 over F7 → 65,60,65,72,77), heard as
+      // "there's clearly a chord but it only plays one note". Each onset keeps
+      // a set of the pitches already taken; a REMAPPED note that lands on one
+      // is raised by octaves until free — same pitch classes, open voicing,
+      // five voices stay five. Stored unisons and pinned notes are never moved.
+      let _ot = null, _used = null;
       for (let i = 0; i < p.notes.length; i++) {
         const n = p.notes[i];
+        if (_ot === null || Math.abs(n.t - _ot) > 1e-6) { _ot = n.t; _used = new Set(); }
         const at = cs + n.t * cyc;
-        let f = midiToFreq(n.midi + tr);
+        // a HAND-PLACED note (`hx`) sounds exactly its stored pitch — no
+        // transpose, no harmony remap: it was put THERE, and "there" must
+        // survive every rule that would move it (the remap turned a semitone
+        // drag into stick-then-jump between chord tones — "still skipping")
+        let f = midiToFreq(n.midi + (n.hx ? 0 : tr));
         // CHORDLOCK IS RESOLVED IN v2's OWN TERMS. It used to go through v1's
         // `_ambLockHarmonizeFreq`, which is built for a seq unit's captured
         // phrase and measurably mis-mapped here: over a 5-chord progression a
@@ -1313,7 +1582,7 @@
         // DEGREE in the key it was written in is re-indexed into that chord's
         // tones. Same trick `applyHarm` uses (`set.ivs.indexOf(pc)`), and it
         // is in-chord by construction rather than by a snap.
-        if (hz && kc && L.harmony === 'chordlock') {
+        if (!n.hx && hz && kc && L.harmony === 'chordlock') {
           try {
             // `ctx.E`, not `E` — `notesFor` takes (L, ctx) and has no engine of
             // its own; a bare `E` threw straight into the catch below and the
@@ -1345,14 +1614,20 @@
               let m2 = oct0 * 12 + set2.root + set2.ivs[idx2] + 12 * up;
               while (m2 - m0 > 6) m2 -= 12;
               while (m0 - m2 > 6) m2 += 12;
+              // collision with another voice of THIS onset → up an octave
+              let gu = 0;
+              while (_used && _used.has(m2) && m2 <= 115 && gu++ < 8) m2 += 12;
               if (m2 > 0) f = midiToFreq(m2);
             }
           } catch (e) {}
-        } else if (hz && kc) {
+        } else if (!n.hx && hz && kc) {
           // 'diatonic' still follows the KEY, which is v1's own job and which
           // it does correctly — a section or part key change re-voices the take.
           try { f = withKeyTime(at, () => _ambLockHarmonizeFreq(L, kc, f, at)) || f; } catch (e) {}
         }
+        // every voice of the onset claims its pitch — pinned and plain notes
+        // included, so a remapped one can never land on top of them
+        try { if (_used && f > 0) _used.add(Math.round(69 + 12 * Math.log2(f / 440))); } catch (e) {}
         const o = { at, freq: f, durMs: Math.round(n.dur * cyc * 1000), nidx: i };
         // The per-note overrides ride ALONG the interface rather than being
         // read from the store by the emitter — the emitter knows `notesFor`'s
@@ -1527,7 +1802,16 @@
       const dmB = Math.max(20, Math.round(slotSec * 1000 * (p.shape.lenRatio / 100)));
       for (let v = 0; v < evc; v++) {
         let vpat = null;
-        try { vpat = _ambEuclidVoicePat(p.rhythm.pulses | 0, p.rhythm.rotate | 0, stp, evc, v, 0); } catch (e) {}
+        // the SAME phase normalisation as `euclidCells` — this branch never
+        // touches it (it builds every voice, v=0 included, from v1's per-voice
+        // pattern), so without this a polyrhythm would keep the old offset
+        // while a single-voice part was fixed. Taken from the BASE pulses, so
+        // voice 0 lands on the beat and the deliberate `v * steps/V` spread of
+        // the others is preserved relative to it.
+        try {
+          vpat = _ambEuclidVoicePat(p.rhythm.pulses | 0,
+            (p.rhythm.rotate | 0) + euclidPhase(p.rhythm.pulses | 0, stp), stp, evc, v, 0);
+        } catch (e) {}
         if (!vpat || !vpat.length) continue;
         for (let i2 = 0; i2 < stp; i2++) {
           if (!vpat[i2 % vpat.length]) continue;
@@ -1855,28 +2139,37 @@
     return done.length;
   }
 
+  // THE TAKE THE PICTURE IS SHOWING, AS STORED NOTES — and nothing else.
+  // TWO callers want exactly this and want it to AGREE: 🔒 Lock keeps it on the
+  // part, 💾 Save puts a copy in the bank. Two walks of one thing is how the
+  // saved take and the locked one come to differ, so there is one.
+  // PINNED — the take the drawing shows, never a fresh roll. That is the whole
+  // of "lock what Live came up with": without the pin, locking rolled the dice
+  // once more and froze a take nobody had heard.
+  function takeAsNotes(E, L, cfg, ctx, reroll) {
+    // Read through the LIVE spec whichever kind is active — that spec is always
+    // retained, so this is meaningful on an already-recorded part too (re-take
+    // it), and a part switched to Written with nothing in it has a way to
+    // become non-empty.
+    const asLive = Object.assign({}, L, { part: Object.assign({}, L.part, { kind: 'live' }) });
+    let notes = [];
+    try { notes = withEdit(() => withTake(reroll ? takeOf(L) : pinOf(L), () => notesFor(asLive, { E, cfg, key: 'v2:' + L.id, cycleStart: ctx.cycleStart, cycleSec: ctx.cycleSec }))); }
+    catch (e) { return null; }
+    if (!notes.length) return null;
+    return notes.map(n => ({
+      t: clamp((n.at - ctx.cycleStart) / ctx.cycleSec, 0, 0.99999),
+      midi: clamp(freqToMidi(n.freq), 0, 127),
+      dur: clamp((n.durMs / 1000) / ctx.cycleSec, 0.001, 8),
+    })).sort((a, b) => a.t - b.t);
+  }
+
   function captureFn(E, L, opts) {
     const cfg = E && E.getCfg && E.getCfg(); if (!cfg || !L) return false;
     const ctx = currentCycle(E, L, cfg);
     if (opts && Number.isFinite(opts.at)) ctx.cycleStart = opts.at;
     if (opts && opts.reroll) L.part.take = (takeOf(L) + 1) % 1000000;
-    // Read through the LIVE spec whichever kind is active — that spec is always
-    // retained, so "capture from live" is meaningful on an already-recorded
-    // part too (re-take it) and, crucially, a part that was switched to
-    // Recorded with nothing in it has a way to become non-empty.
-    const asLive = Object.assign({}, L, { part: Object.assign({}, L.part, { kind: 'live' }) });
-    let notes = [];
-    // PINNED — capture the take the picture is showing, not a fresh roll. This
-    // is the whole of "lock what Live came up with": without it, locking rolled
-    // the dice one more time and froze a take nobody had heard.
-    try { notes = withEdit(() => withTake((opts && opts.reroll) ? takeOf(L) : pinOf(L), () => notesFor(asLive, { E, cfg, key: 'v2:' + L.id, cycleStart: ctx.cycleStart, cycleSec: ctx.cycleSec }))); }
-    catch (e) { return false; }
-    if (!notes.length) return false;                    // nothing to freeze
-    let fresh = notes.map(n => ({
-      t: clamp((n.at - ctx.cycleStart) / ctx.cycleSec, 0, 0.99999),
-      midi: clamp(freqToMidi(n.freq), 0, 127),
-      dur: clamp((n.durMs / 1000) / ctx.cycleSec, 0.001, 8),
-    }));
+    let fresh = takeAsNotes(E, L, cfg, ctx, !!(opts && opts.reroll));
+    if (!fresh) return false;                           // nothing to freeze
     const barSel = (opts && Array.isArray(opts.bars) && opts.bars.length &&
                     L.part.kind === 'recorded' && (L.part.notes || []).length)
       ? new Set(opts.bars.map(b => b | 0)) : null;
@@ -2401,7 +2694,7 @@
     // second kind have cycles of different lengths at all.
     let cur = cycleWindowAt(L, E, cfg, Math.max(from, st.startAt), st);
     for (let guard = 0; guard < 64; guard++) {
-      const cs = cur.cs, cw = cur.cyc, ci = cur.idx;
+      const cs = cur.cs, cw = cur.cyc, ci = cur.idx, cpi = cur.pi;
       const next = () => {
         const nx = cycleWindowAt(L, E, cfg, cs + cw + 1e-3, st);
         // never stand still: a window that does not advance would spin the loop
@@ -2418,7 +2711,7 @@
       try { if (typeof _ambCondFires === 'function') fires = _ambCondFires(L.when, ci, cs); } catch (e) {}
       if (!fires) { next(); continue; }
       let notes = [];
-      try { notes = notesFor(L, { E, cfg, key, cycleStart: cs, cycleSec: cw }); } catch (e) { break; }
+      try { notes = notesFor(L, { E, cfg, key, cycleStart: cs, cycleSec: cw, pi: cpi }); } catch (e) { break; }
       for (let i = 0; i < notes.length; i++) {
         const n = notes[i];
         if (!(n.at >= from - 1e-6 && n.at < to)) continue;
@@ -2600,18 +2893,50 @@
       try {
         const sp = _ambPassSpanAt(E, cfg, at);
         if (sp && sp.to > sp.from + 0.02) {
-          let idx = 0;
+          let idx = 0, pi = -1;
           try {
             const w = _ambPartChordAt(E, cfg, at);
-            if (w) idx = (w.pass | 0);
+            // …AND WHICH PART, CARRIED OUT. `at` is a real moment INSIDE this
+            // window, so this is the honest answer; re-deriving it later from
+            // the returned `cs` is not, because that value is SNAPPED and the
+            // snap can land ONE ULP BELOW the boundary it reconstructs
+            // (measured: cs 4.06 against a boundary at 4.06 + 4.4e-16, whether
+            // it bites depending on the cold-start anchor). Every consumer
+            // that asked `_ambPartChordAt(cs)` then got the PREVIOUS part for
+            // the whole pass — the drawing showed the other part's record, in
+            // the other part's colour, so notes drawn into part 1 appeared
+            // under part 2 and were missing when part 1 came round again.
+            // Reported as "the events I drew were gone". One resolver, one
+            // answer, handed back: two walks of one grid is how they disagree.
+            if (w) { idx = (w.pass | 0); if (Number.isFinite(w.pi)) pi = w.pi | 0; }
           } catch (e) {}
-          return { cs: sp.from, cyc: sp.to - sp.from, idx: idx, part: true };
+          // THE SPAN IS BISECTED AND CARRIES FLOAT NOISE PER QUERY (the
+          // documented _ambChordSpanAt property): two calls ~16ms apart came
+          // back with starts ~10ms apart, so the rAF's once-per-cycle redraw
+          // check and the drawing's own anchor disagreed EVERY frame — the
+          // canvas redrew 30-57x/s ("notes are flashing"). Snap both edges to
+          // the 1/48-bar grid on the chord clock's own anchor (the
+          // _ambSnapBars idiom, in absolute time) so every consumer of this
+          // window computes the SAME cs whatever instant it asked at.
+          const aA = Number.isFinite(E && E._progAnchor) ? E._progAnchor
+            : (Number.isFinite(E && E._playStartAt) ? E._playStartAt : 0);
+          const gS = barSec(cfg) / 48;
+          const s2 = aA + Math.round((sp.from - aA) / gS) * gS;
+          const e2 = aA + Math.round((sp.to - aA) / gS) * gS;
+          // …AND HOW MANY BARS IT IS. A pass IS a bar span of the arrangement,
+          // and the DRAWING has to say so — it lives in the other IIFE, where
+          // `barSec` is not defined (the two-IIFE trap: a bare call there
+          // throws into the caller's catch and the ruler silently keeps the
+          // edited record's length, which is the bug this fixes).
+          const bsec = barSec(cfg);
+          if (e2 > s2 + 0.02) return { cs: s2, cyc: e2 - s2, idx: idx, pi: pi, part: true, bars: (e2 - s2) / bsec };
+          return { cs: sp.from, cyc: sp.to - sp.from, idx: idx, pi: pi, part: true, bars: (sp.to - sp.from) / bsec };
         }
       } catch (e) {}
     }
     const s0 = (st && Number.isFinite(st.startAt)) ? st.startAt : 0;
     const c = Math.floor((at - s0) / cyc0);
-    return { cs: s0 + c * cyc0, cyc: cyc0, idx: c, part: false };
+    return { cs: s0 + c * cyc0, cyc: cyc0, idx: c, pi: -1, part: false };
   }
   window._v2Tick = function (E, now, horizon, lead, space, cfg) {
     const list = layersOf(cfg);
@@ -2918,6 +3243,35 @@
     p.mem = p.mem || {};
     p.mem[p.mat] = box;
   }
+  // A SHAPE'S STAMP AND ITS RULES CAN DISAGREE — the stamp survives edits, so a
+  // Groundwork part whose Rhythm type was later set to Pulse still says
+  // `mat: 'ground'` while playing one sustained chord. That drifted state made
+  // \u26f0 a permanent no-op (adopt keys on the stamp) and, filed into `mem`,
+  // poisoned every later restore — reported as "Groundwork is broken, it just
+  // creates one sustained chord instead of one chord for each change".
+  // `matShapeOk` is the defining axis per shape; `matRepair` re-asserts it on a
+  // RESTORED spec, keeping everything else the user tuned. Roll is exempt on
+  // purpose: its repeat-press adopt deliberately never rebuilds.
+  function matShapeOk(p, which) {
+    const r = (p && p.rhythm) || {}, pk = ((p && p.pitch) || {}).kind || '';
+    if (which === 'ground') return r.kind === 'ground';
+    if (which === 'sustain') return r.kind === 'pulse' && (r.n | 0) <= 1 && /chord|stack/.test(pk);
+    if (which === 'arp') return pk === 'series';
+    if (which === 'mixed') return pk === 'mixed';
+    return true;
+  }
+  function matRepair(p, which) {
+    if (!p || matShapeOk(p, which)) return;
+    if (which === 'ground') p.rhythm = Object.assign({ steps: 8, n: 1 }, p.rhythm, { kind: 'ground' });
+    else if (which === 'sustain') {
+      p.rhythm = Object.assign({ steps: 8 }, p.rhythm, { kind: 'pulse', n: 1 });
+      if (!/chord|stack/.test(((p.pitch || {}).kind) || ''))
+        p.pitch = Object.assign({ voices: 3, degree: 1 }, p.pitch, { kind: 'chord' });
+    } else if (which === 'arp')
+      p.pitch = Object.assign({ dir: 'up', octaves: 2, degree: 1 }, p.pitch, { kind: 'series' });
+    else if (which === 'mixed')
+      p.pitch = Object.assign({ voices: 3, degree: 1 }, p.pitch, { kind: 'mixed' });
+  }
   // Returns true when it restored — the caller then skips its factory defaults,
   // which is the whole point: coming BACK to a material is not making a new one.
   function matLoad(L, mat) {
@@ -2926,6 +3280,7 @@
     p.mat = mat;
     if (!box) return false;
     MAT_KEYS.forEach((k) => { if (box[k] != null) p[k] = JSON.parse(JSON.stringify(box[k])); });
+    matRepair(p, mat);   // a filed spec can carry the drift that poisoned it
     return true;
   }
   // Called by every material door BEFORE it writes: file the outgoing one, then
@@ -2986,6 +3341,28 @@
     try { E.getCfg(); } catch (e) {}
     return { voices: p.pitch.voices, bars: p.bars };
   }
+  // ⌫ START EMPTY — an empty WRITTEN part, so the roll can be drawn into from
+  // nothing (the Written popover's third option: "working with an empty
+  // visualization"). The generated RULES are kept — ⚙ Generated brings them
+  // back — and the stamps are captureFn's own, so a drawn note behaves exactly
+  // like a locked one: register shift, written key, follows-the-changes
+  // default (with the pencil's pin on top, so it sounds where it is placed).
+  // ENGINE-side, because `stampPartKey`/`stampFollowsChanges` live here and
+  // the click delegation is the OTHER IIFE (the documented two-IIFE trap).
+  function clearPartFn(E, L) {
+    if (!L || !L.part) return false;
+    const cfg = E && E.getCfg && E.getCfg(); if (!cfg) return false;
+    const p = L.part;
+    p.kind = 'recorded';
+    p.notes = [];
+    p.made = 'compose';
+    delete p.tf; delete p.takeb;
+    p.reg = clamp((L.instrument.register | 0) || 4, 1, 8);
+    stampPartKey(L, cfg);
+    stampFollowsChanges(L, cfg);
+    try { E.getCfg(); } catch (e) {}
+    return true;
+  }
   // MIXED — chords AND single notes from one part, which none of the other
   // three doors can express: Sustained is always a chord, Arpeggio and Roll
   // always one note at a time. A euclid rhythm so the placement is musical,
@@ -3034,7 +3411,15 @@
     p.mat = 'roll';
     // MIRROR THE PART's length when there is one — see `partBarsFor`.
     p.bars = partBarsFor(E, L) || _pick([1, 1, 2, 2, 4]);
-    const steps = _pick([8, 16, 16]);
+    // …AND A GRID THE BARS DIVIDE. `rhythm.steps` spans the whole CYCLE, so
+    // 16 steps over a 5-bar part is 3.2 per bar and the onsets can NEVER
+    // land on a bar or beat line (measured: every note up to an eighth off —
+    // "the note events are not squaring up with the bar grid"). The roll
+    // picks whole steps per bar now: the densest of 8/4/2/1 per bar that
+    // fits the 32-step ceiling, so a 5-bar part rolls at 20 (4/bar).
+    const barsInt = Math.max(1, Math.round(+p.bars || 1));
+    const perBar = [8, 4, 2, 1].find((pb) => pb * barsInt <= 32) || 1;
+    const steps = Math.max(2, Math.min(32, perBar * barsInt));
     // EUCLID, not an even pulse: the syncopation is most of what makes a riff
     // a riff, and it leaves a Pattern grid the user can edit afterwards.
     const pulses = Math.max(2, Math.min(steps - 1, Math.round(steps * (0.3 + Math.random() * 0.35))));
@@ -3185,6 +3570,8 @@
     makeSustain: makeSustainFn,
     makeMixed: makeMixedFn,
     makeGround: makeGroundFn,
+    matShapeOk: matShapeOk,
+    clearPart: clearPartFn,        // ⌫ Start empty — an empty written part to draw into
     makeArp: makeArpFn,
     previewKill: previewKill,
     previewing: previewing,
@@ -3213,6 +3600,7 @@
       return nx;
     },
     cycleWindowAt: cycleWindowAt,
+    recordAt: partRecordAt,
     pinOf: pinOf,
     pinSig: pinSig,
     previewLeftSec: previewLeftSec,
@@ -3310,12 +3698,28 @@
       }
     },
     layers: layersOf,
+    GRIDS, gridPerBar, gridCells,  // the editing grid: a note value, per bar
+    // THE MATERIAL'S FORM. Declared in the ENGINE IIFE beside the other part
+    // vocabulary and published because every consumer is in the UI one — the
+    // file is two IIFEs sharing only `window._v2`, and a bare `formOf` there
+    // throws (it did, on the first render).
+    formOf,
+    // STATIC vs LIVE — a computed property of the settings, not a stored mode.
+    // Published because every consumer is in the UI IIFE.
+    liveness,
+    scaleAt,                       // which pitch classes the keyboard should light
     notesFor,                      // the interface, callable directly
     onsetsOf,
     transform: transformFn,        // commands over the notes you already have
     transformList: () => Object.keys(TRANSFORMS).map(k => ({ op: k, label: TRANSFORMS[k].label, hint: TRANSFORMS[k].hint })),
     transformWord: (op) => (TRANSFORMS[op] && TRANSFORMS[op].word) || '',
     capture: captureFn,            // door 1 into a recorded part: freeze the live one
+    // The take as stored notes, WITHOUT freezing it — 💾 Save (UI IIFE) needs
+    // exactly what 🔒 Lock writes, and the two must not be two walks.
+    takeNotesNow: (E, L) => {
+      const c = E && E.getCfg && E.getCfg(); if (!c || !L) return null;
+      return takeAsNotes(E, L, c, currentCycle(E, L, c), false);
+    },
     compose: composeFn,            // door 2: draw it in the grid, docked in the card
     composeCommit: composeCommitFn,
     adopt: adoptPhraseFn,          // door 3: a phrase already saved to the bank
@@ -3381,6 +3785,289 @@
     add: addLayer,
     clear(cfg) { if (cfg) cfg.layers = []; },
   };
+
+  // ── bloomPartWatch — WHY IS THIS PART'S LENGTH NOT WHAT I THINK IT IS? ──
+  // A part's length is answered TWICE and the two can legitimately differ:
+  //   `_ambLenPartBars(cfg, pi)` — the part's own chords, which is what the
+  //      normalize RECONCILER fits every per-part record to (`rec.bars`);
+  //   `_ambPassSpanAt(E, cfg, at)` — the PASS actually sounding, which is what
+  //      `cycleWindowAt` hands the emitter as one cycle.
+  // When they disagree the record is STRETCHED or JAMMED into the window
+  // (`notesFor` takes the caller's `cycleSec` — the documented fit semantics),
+  // which reads as "the 4-bar part is jammed into 3 bars". Measured, the honest
+  // causes are a ▦ Passes SUBSET (a pass that plays 3 of 4 chords IS 3 bars), a
+  // CADENCE (a ½-bar chord means four chords are not four bars) and a HANG
+  // (trimmed off the pass, so the pass is shorter than the slot). Run it
+  // STOPPED or playing — it walks the clock itself.
+  //   bloomPartWatch()      → every part, every pass of one super-cycle
+  // NOTE FOR THE NEXT PERSON: a synthetic multi-shape sweep of this on ONE page
+  // reported hang disagreements that DO NOT EXIST — the shapes leaked into each
+  // other (the one-page-one-state trap). Isolated, only the subset case
+  // disagrees. Measure this in the user's runtime, not in a rig.
+  window.bloomPartWatch = function () {
+    const E = (typeof _masterEng !== 'undefined') ? _masterEng : null;
+    if (!E) { console.log('[partwatch] no engine'); return; }
+    const cfg = E.getCfg();
+    const lines = [];
+    const say = (t) => { lines.push(t); console.log('[partwatch] ' + t); };
+    const prog = cfg && cfg.prog;
+    if (!prog || !prog.on || !(prog.chords || []).length) { say('no progression — every layer runs its own cycle'); return; }
+    const bs = barSec(cfg);
+    const rgs = (typeof _ambGridRanges === 'function') ? (_ambGridRanges(cfg) || []) : [];
+    const nm = (pi) => { try { return _ambPartLabel(cfg, pi); } catch (e) { return 'Part ' + (pi + 1); } };
+    say('bpm ' + (cfg.bpm || 120) + ' · bar ' + (Math.round(bs * 1000) / 1000) + 's · ' +
+        rgs.length + ' part' + (rgs.length === 1 ? '' : 's'));
+    rgs.forEach((rg) => {
+      const pi = rg.pi | 0;
+      let b = 0; try { b = +_ambLenPartBars(cfg, pi); } catch (e) {}
+      const pt = (prog.parts || [])[pi] || {};
+      const bits = [];
+      if (pt.plays > 1) bits.push('plays ' + pt.plays);
+      if (pt.head) bits.push('head hang ' + pt.head.bars + 'b');
+      if (pt.tail) bits.push('tail hang ' + pt.tail.bars + 'b');
+      if (pt.grid && pt.grid.seq && Object.keys(pt.grid.seq).length) bits.push('▦ Passes subset');
+      const cadence = (prog.chords || []).slice(rg.from, rg.from + rg.len)
+        .map((c) => (c && Number.isFinite(c.bars)) ? c.bars : 1);
+      if (cadence.some((x) => Math.abs(x - 1) > 1e-6)) bits.push('cadence ' + cadence.join('·'));
+      // no leading bullet: every part label now LEADS with its own number, and
+      // "· 3 · Changes" reads as two separators for one thing
+      say('  ' + nm(pi) + ' — ' + rg.len + ' chord' + (rg.len === 1 ? '' : 's') + ' = ' +
+          (Math.round(b * 100) / 100) + ' bars' + (bits.length ? ' · ' + bits.join(' · ') : ''));
+    });
+    // WALK ONE SUPER-CYCLE and report each pass's own span against the length
+    // its record was reconciled to. Anchored where the chord clock is anchored,
+    // or at 0 when stopped — the walk is the same either way.
+    const aA = Number.isFinite(E._progAnchor) ? E._progAnchor
+      : (Number.isFinite(E._playStartAt) ? E._playStartAt : 0);
+    const seen = {}, rows = [];
+    for (let k = 0; k < 400; k++) {
+      const at = aA + k * bs * 0.25;
+      let w = null, sp = null;
+      try { w = _ambPartChordAt(E, cfg, at); } catch (e) {}
+      try { sp = _ambPassSpanAt(E, cfg, at); } catch (e) {}
+      if (!w || !(w.pi >= 0) || !sp) continue;
+      const kk = w.pi + '/' + w.pass;
+      if (seen[kk]) continue; seen[kk] = 1;
+      let b = 0; try { b = +_ambLenPartBars(cfg, w.pi); } catch (e) {}
+      rows.push({ pi: w.pi | 0, pass: w.pass | 0, rec: b, win: (sp.to - sp.from) / bs,
+                  at: (sp.from - aA) / bs });
+      if (rows.length > 24) break;
+    }
+    say('');
+    say('PASS          record   window   ');
+    let bad = 0;
+    rows.forEach((r) => {
+      const off = Math.abs(r.rec - r.win) > 0.01;
+      if (off) bad++;
+      say('  ' + (nm(r.pi) + ' pass ' + (r.pass + 1)).padEnd(22) +
+          (Math.round(r.rec * 100) / 100 + 'b').padEnd(8) +
+          (Math.round(r.win * 100) / 100 + 'b').padEnd(8) +
+          (off ? (r.win < r.rec ? '⚠ JAMMED into ' : '⚠ STRETCHED to ') +
+                 (Math.round((r.win / Math.max(0.001, r.rec)) * 100)) + '%' : 'ok') +
+          '   @ bar ' + (Math.round(r.at * 100) / 100));
+    });
+    say('');
+    // …AND WHAT EACH v2 LAYER HAS FILED, since that is what gets fitted.
+    // WITH ITS CONTENT'S OWN SPAN, which is the other half of "jammed": a
+    // record's note times are FRACTIONS of its cycle, so the reconciler moving
+    // `bars` keeps the SHAPE and scales it — a record whose notes only ever
+    // covered 4 of its 5 bars still covers 80% after it is fitted to 4, i.e.
+    // 3.2 bars with the last 0.8 empty. That is not the window being wrong and
+    // no amount of window fixing touches it; the content itself is short.
+    let shortRec = 0;
+    const spanOf = (rec) => {
+      if (!rec || rec.kind !== 'recorded' || !Array.isArray(rec.notes) || !rec.notes.length) return null;
+      let mx = 0;
+      rec.notes.forEach((n) => { const e = (+n.t || 0) + Math.max(0, +n.dur || 0); if (e > mx) mx = e; });
+      return Math.min(1, mx);
+    };
+    const recTxt = (rec, label) => {
+      const b = Math.round((+rec.bars || 0) * 100) / 100;
+      const sp = spanOf(rec);
+      let tail = '';
+      if (sp != null) {
+        const pct = Math.round(sp * 100);
+        tail = ' · ' + (rec.notes || []).length + ' notes covering ' + pct + '% (' +
+               (Math.round(sp * b * 100) / 100) + ' of ' + b + ' bars)';
+        if (pct < 92) { tail += ' ⚠ CONTENT SHORT'; shortRec++; }
+      } else if (rec.kind === 'recorded') { tail = ' · EMPTY'; }
+      if (rec.barsMode === 'fill') tail += ' · fill';
+      return label + ' ' + b + 'b' + tail;
+    };
+    layersOf(cfg).forEach((L) => {
+      if (!Number.isFinite(L.partFor)) {
+        say('layer "' + (L.name || L.id) + '" — ▭ Everywhere: ONE cycle for every part · ' +
+            recTxt(L.part || {}, ''));
+        say('    (◫ Per part is the door to per-part lengths)');
+        return;
+      }
+      say('layer "' + (L.name || L.id) + '" — ◫ Per part, editing ' + nm(L.partFor | 0));
+      say('    ' + recTxt(L.part || {}, 'editing ' + nm(L.partFor | 0) + ':'));
+      Object.keys(L.parts || {}).forEach((k) => say('    ' + recTxt(L.parts[k], nm(+k) + ':')));
+      if (L.partAll) say('    ' + recTxt(L.partAll, '(iced Everywhere):'));
+    });
+    say('');
+    if (shortRec) {
+      say('⚠ ' + shortRec + ' record' + (shortRec === 1 ? '\u2019s' : 's\u2019') +
+          ' notes do not fill the record\u2019s OWN cycle. Note times are FRACTIONS of that ' +
+          'cycle, so fitting a short record to a shorter part keeps the gap IN PROPORTION \u2014 ' +
+          'a 5-bar record covering 72% becomes 2.88 of 4 bars, which reads as "crammed into 3 ' +
+          'bars". The window is not the problem; the content is short. \u21c4 Sync \u2192 Length: ' +
+          'Fill repeats it at its own tempo to cover the part; Stretch spreads it.');
+    }
+    say(bad ? ('VERDICT: ' + bad + ' pass' + (bad === 1 ? '' : 'es') +
+               ' play a record of a different length — the record is fitted to the window, ' +
+               'so its notes compress or spread. The cause is in the part line above ' +
+               '(a ▦ Passes subset shortens a pass; a cadence means chords ≠ bars; a hang is ' +
+               'trimmed off the pass).')
+             : 'VERDICT: every pass plays a record of its own length — lengths agree.');
+    try { navigator.clipboard.writeText(lines.join('\n')).then(() => {}, () => {}); } catch (e) {}
+    console.log('[partwatch] report copied to the clipboard.');
+    return lines.join('\n');
+  };
+
+  // ── bloomContentWatch — WHY IS THIS LAYER'S CONTENT NOT (ALL) SOUNDING? ──
+  // The in-situ instrument for "content chords not being played"-class reports
+  // (the bloomSilenceWatch pattern): a synthetic probe cannot see the USER'S
+  // state, and the answer is almost always a stateful stage — a freeze or a
+  // ▦ Passes mapping outranking the part, a chord/section/unit/iteration gate,
+  // a muted layer, notes shorter than the attack. Run it in the console WHILE
+  // PLAYING: `bloomContentWatch()` (first v2 layer) or `bloomContentWatch(id)`.
+  // It prints the layer's gate-relevant state, what notesFor says one cycle
+  // holds, what actually reached playNote per onset, every playback-gate skip
+  // and choke clamp for this key, and a VERDICT — then copies the report.
+  window.bloomContentWatch = function (idOrName, secs) {
+    const E = (typeof _masterEng !== 'undefined') ? _masterEng : null;
+    if (!E) { console.log('[contentwatch] no engine'); return; }
+    const cfg = E.getCfg();
+    const list = layersOf(cfg);
+    let L = null;
+    if (idOrName == null) L = list[0];
+    else L = list.find((x) => (x.id | 0) === (idOrName | 0)) ||
+             list.find((x) => String(x.name || '').toLowerCase().indexOf(String(idOrName).toLowerCase()) >= 0);
+    if (!L) { console.log('[contentwatch] no v2 layer matched', idOrName); return; }
+    const key = 'v2:' + (L.id | 0);
+    const lines = [];
+    const say = (t) => { lines.push(t); console.log('[contentwatch] ' + t); };
+    const p = L.part || {};
+    // ── the stateful stages that outrank or gate the content ──
+    const fz = E.freeze && E.freeze[key];
+    const mask = (L.chordMask && Array.isArray(L.chordMask.steps))
+      ? L.chordMask.steps.map((v, i) => v < 100 ? (i + ':' + v) : null).filter(Boolean) : [];
+    say('layer ' + key + ' "' + (L.name || '') + '" · on:' + !!L.on + ' present:' + !!L.present +
+        ' level:' + (L.level == null ? '(default)' : L.level) + ' solo-elsewhere:' +
+        (typeof _ambComputeAnySolo === 'function' ? (!!_ambComputeAnySolo(cfg) && !L.solo) : '?'));
+    say('part kind:' + p.kind + ' rhythm:' + ((p.rhythm || {}).kind || '?') +
+        ' pitch:' + ((p.pitch || {}).kind || '?') + ' harmony:' + (L.harmony || '(fixed)') +
+        ' mat:' + (p.mat || '-') + ' vary:' + !!p.vary + ' take:' + ((p.take | 0) || 0) +
+        ' notes:' + ((p.notes || []).length));
+    if (fz) say('⚠ a FREEZE sits on this key' + (fz._partSeqName ? ' (▦ Passes phrase "' + fz._partSeqName + '")' : '') +
+        ' — it OUTRANKS the part: the content you edit is not what plays');
+    if (L.partSeqs) say('⚠ partSeqs mapping present: ' + JSON.stringify(L.partSeqs).slice(0, 120));
+    if (L.when) say('⚠ when-gate: "' + L.when + '" — some ITERATIONS are silent by design');
+    if (mask.length) say('⚠ chord mask below 100%: [' + mask.join(' ') + '] — those chords sit out (rolled per pass)');
+    if (L.sectionMask) say('⚠ section mask present');
+    if (L.unitGate) say('⚠ ⏱ unit schedule present — slices of each unit are gated');
+    if (L.iterGate) say('⚠ iteration gate present');
+    if (Number.isFinite(L.partFor)) {
+      say('per-part content: editing the record for part ' + (L.partFor + 1) +
+        ' — while OTHER parts sound, their own records play. The records:');
+      const recSay = (label, rec) => {
+        if (!rec || typeof rec !== 'object') return;
+        const ns = rec.notes || [];
+        const by = {};
+        ns.forEach((n) => { const k = Math.round((n.t || 0) * 1e4); by[k] = (by[k] || 0) + 1; });
+        const ch = Object.keys(by).filter((k) => by[k] > 1).length;
+        say('  ' + label + ': ' + (rec.kind === 'recorded'
+          ? ('WRITTEN — ' + ns.length + ' notes over ' + (rec.bars || '?') + ' bars, ' +
+             ch + ' chord onset' + (ch === 1 ? '' : 's'))
+          : ('GENERATED — ' + ((rec.rhythm || {}).kind || '?') + ' × ' + ((rec.pitch || {}).kind || '?') +
+             (/chord|stack|mixed/.test((rec.pitch || {}).kind || '') ? '' :
+              ' — ONE NOTE AT A TIME: chords drawn on another part do NOT play here'))));
+      };
+      recSay('part ' + (L.partFor + 1) + ' (the one on screen)', L.part);
+      Object.keys(L.parts || {}).forEach((k) => recSay('part ' + ((+k) + 1), L.parts[k]));
+      recSay('Everywhere (iced)', L.partAll);
+    }
+    // ── what one cycle SHOULD hold ──
+    const cyc = cycSecOf(L, cfg);
+    let exp = [];
+    try { exp = notesFor(L, { E, cfg, key, cycleStart: 0, cycleSec: cyc }) || []; } catch (e) {}
+    const fold = (arr, get) => {
+      const by = {};
+      arr.forEach((n) => { const at = get(n); if (at == null) return;
+        const k = (Math.round(at * 100) / 100).toFixed(2); (by[k] = by[k] || []).push(n); });
+      return by;
+    };
+    const expBy = fold(exp.filter((n) => n.freq > 0), (n) => n.at);
+    const expTxt = Object.keys(expBy).sort((a, b) => a - b)
+      .map((k) => k + 's×' + expBy[k].length).join(' ');
+    say('one cycle (' + (Math.round(cyc * 100) / 100) + 's) holds: ' + (expTxt || 'NOTHING — notesFor returned no notes'));
+    const chordOnsets = Object.keys(expBy).filter((k) => expBy[k].length > 1);
+    say(chordOnsets.length + ' chord onset' + (chordOnsets.length === 1 ? '' : 's') + ' expected per cycle');
+    // notes vs the attack — a note shorter than the attack never reaches full level
+    try {
+      const atk = (L.instrument.attack | 0) || 0;
+      const shorter = exp.filter((n) => (n.durMs || 0) > 0 && n.durMs < atk).length;
+      if (atk > 0 && shorter > 0) say('⚠ ' + shorter + ' of ' + exp.length + ' notes are SHORTER than the ' + atk +
+          'ms Attack — they peak at a fraction of full level and can read as "not played". ' +
+          'Lengthen them, or shorten Instrument ▸ Attack.');
+    } catch (e) {}
+    if (!E.timer) {
+      say('transport NOT running — press ▶ and call bloomContentWatch() again to compare what actually plays.');
+      try { navigator.clipboard.writeText(lines.join('\n')).then(() => {}, () => {}); } catch (e) {}
+      return;
+    }
+    // ── watch what actually reaches playNote for this key ──
+    const dur = Math.max(3, Math.min(30, (secs | 0) || 8));
+    say('watching ' + dur + 's of playback…');
+    const got = [], gateSkips = [], chokes = [];
+    const oP = window.playNote;
+    window.playNote = function (freq, params, durMs, at) {
+      const r = oP.apply(this, arguments);
+      try { if (window._ambEmitKey === key) got.push({ at: +at || 0, f: Math.round(freq), d: Math.round(durMs || 0) }); } catch (e) {}
+      return r;
+    };
+    const oG = window._ambUnitGateSkip;
+    if (typeof oG === 'function') window._ambUnitGateSkip = function (k2, at) {
+      const v = oG.apply(this, arguments);
+      try { if (k2 === key && v) gateSkips.push(Math.round(at * 100) / 100); } catch (e) {}
+      return v;
+    };
+    const oC = window._ambNoteChoke;
+    if (typeof oC === 'function') window._ambNoteChoke = function (k2, at, dms) {
+      const v = oC.apply(this, arguments);
+      try { if (k2 === key && v > 0 && v < dms) chokes.push(dms + '→' + v); } catch (e) {}
+      return v;
+    };
+    setTimeout(() => {
+      window.playNote = oP;
+      if (typeof oG === 'function') window._ambUnitGateSkip = oG;
+      if (typeof oC === 'function') window._ambNoteChoke = oC;
+      const st = E._v2Phase && E._v2Phase[key];
+      const anchor = (st && Number.isFinite(st.startAt)) ? st.startAt : 0;
+      const gotBy = fold(got, (n) => (((n.at - anchor) % cyc) + cyc) % cyc);
+      const gotTxt = Object.keys(gotBy).sort((a, b) => a - b)
+        .map((k) => k + 's×' + gotBy[k].length).join(' ');
+      say('scheduled (folded into the cycle): ' + (gotTxt || 'NOTHING'));
+      // the verdicts
+      if (!got.length && exp.length) say('✗ VERDICT: notes exist but NONE were scheduled — the layer is gated, ' +
+        'frozen, muted or not reached (see the ⚠ lines above; if none, send a bloomDump()).');
+      else {
+        const thin = chordOnsets.filter((k) => {
+          const g2 = gotBy[k]; return !g2 || g2.length < expBy[k].length;
+        });
+        if (thin.length) say('✗ VERDICT: chord onsets scheduled THINNER than drawn at ' + thin.join(', ') +
+          ' — send a bloomDump() so the exact mechanism can be pinned.');
+        else if (exp.length) say('✓ every drawn onset was scheduled at full width' +
+          (chokes.length ? ' — but the CHORD CHOKE clamped ' + chokes.length + ' (' + chokes.slice(0, 5).join(' ') +
+            '): notes ringing over a change are cut; the opt-out is Pitch ▸ Ring out' : '') +
+          (gateSkips.length ? ' — and the ⏱ gate silenced ' + gateSkips.length + ' at ' + gateSkips.slice(0, 8).join(',') : '') + '.');
+      }
+      try { navigator.clipboard.writeText(lines.join('\n')).then(() => {}, () => {}); } catch (e) {}
+      console.log('[contentwatch] report copied to the clipboard.');
+    }, dur * 1000);
+  };
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3443,6 +4130,35 @@
   // it SURVIVES a replace on purpose — press again, same bars, another roll:
   // that repeat-until-you-like-it loop is the point of selecting.
   let BSEL = null;
+  // (DRAW was a Set of layer ids here. It is one value of `modeOf` now — the
+  //  two switches were one axis; see MODES.)
+  // A DRAG IN PROGRESS. Held here rather than on the element so a card rebuild
+  // mid-gesture cannot strand it; cleared on pointerup and on any commit.
+  let DRAG = null;
+  // THE STICKY PITCH WINDOW, per layer id — survives card rebuilds (a locked
+  // drag rebuilds at release) so the canvas cannot resize across one.
+  // Transient by construction; a reload re-derives.
+  const WINHOLD = new Map();
+  // THE SCROLLER IS NOT ALWAYS THE DOCUMENT. `#mix-view` carries
+  // `overflow-y: auto`, so depending on flex state the Bloom panel scrolls
+  // INSIDE it rather than with the page — and every scroll this file does
+  // (the render's save/restore, the drag's absorbing scroll, the editor
+  // reveal) was hardwired to `document.scrollingElement`. In the inner-scroll
+  // regime a card rebuild reset the CONTAINER's scrollTop with nobody
+  // restoring it — the screen jumped on every lock and every commit — and
+  // the drag's absorb scrolled the wrong element, so the note never came
+  // back under the finger. Resolve the NEAREST scrollable ancestor, and
+  // resolve it while the content is still tall (an emptied host collapses
+  // the container and the test below stops recognising it).
+  function scrollerOf(el) {
+    try {
+      for (let a = el && el.parentElement; a && a !== document.body; a = a.parentElement) {
+        const cs = getComputedStyle(a);
+        if (/(auto|scroll)/.test(cs.overflowY) && a.scrollHeight > a.clientHeight + 1) return a;
+      }
+    } catch (e) {}
+    return document.scrollingElement || document.documentElement;
+  }
   const bselSig = (L) => [L.part.kind, L.part.bars, L.part.clock || ''].join(',');
   function bselOf(L) {
     if (!BSEL || !L || BSEL.id !== (L.id | 0)) return null;
@@ -3483,8 +4199,252 @@
   // while the parts cycle underneath. Transient by construction: it is a view
   // preference, and a field on the layer would be serialised by
   // `persistWorkspace` (the documented `_soloLane` trap).
-  const VIEWM = new Map();      // layer id -> 'view' | 'edit'  (absent = edit)
-  const vizMode = (L) => (VIEWM.get(L && (L.id | 0)) === 'view') ? 'view' : 'edit';
+  // THE DEFAULT IS VIEW (2026-09-09): with per-part content, the Edit default
+  // meant the picture showed one part's chords while another part's record
+  // sounded — reported as "one part only plays one of each chord in the
+  // visualization" when the sounding part's record was a one-note-at-a-time
+  // take. A drawing that playback ignores is decoration (the take-pin rule);
+  // \u270e Edit is now the explicit pin for working while the parts cycle.
+  // ── THE DRAWING'S MODE ──────────────────────────────────────────────────
+  // ONE axis, four states, in one control. It was TWO buttons — 👁 View/✎ Edit
+  // (which RECORD is drawn) beside ✎ Draw (what a TAP does) — and they read as
+  // two independent switches when three of the four combinations mean the same
+  // thing: drawing and multi-select both imply you are working on the record
+  // you are editing, not watching whatever plays. So the axis is:
+  //   view  — follow what PLAYS; a tap selects a bar
+  //   edit  — hold the record you are editing; a tap opens a note
+  //   draw  — hold; a tap on empty space ADDS a note (the pencil)
+  //   multi — hold; tap notes to gather them, then move or resize them TOGETHER
+  // `vizMode` keeps answering the two-state question every existing consumer
+  // asks (the record pin: `vizFollows`, the take pin, `cv._vmOther`) — draw and
+  // multi are edit modes — so nothing downstream had to learn the new states.
+  // Transient by construction (a Map keyed on layer id): a field would be
+  // serialised by `persistWorkspace` and a project would reload in a mode you
+  // cannot see (the `_soloLane` rule).
+  //   split — hold; a tap on a note opens the divider (a CLICK is the only
+  //           gesture it has — no drag, no pencil, nothing to arm)
+  const MODES = ['view', 'edit', 'draw', 'multi', 'split'];
+  const VIEWM = new Map();      // layer id -> one of MODES  (absent = view)
+  const modeOf = (L) => {
+    const m = VIEWM.get(L && (L.id | 0));
+    return MODES.indexOf(m) >= 0 ? m : 'view';
+  };
+  const setMode = (L, m) => {
+    if (!L) return;
+    VIEWM.set(L.id | 0, MODES.indexOf(m) >= 0 ? m : 'view');
+    if (m !== 'multi') MSEL.delete(L.id | 0);   // leaving multi drops the gathering
+  };
+  const vizMode = (L) => (modeOf(L) === 'view') ? 'view' : 'edit';
+  // ── THE MULTI SELECTION ─────────────────────────────────────────────────
+  // layer id -> Set of note indices. Transient for the same reason the mode is,
+  // and re-found by IDENTITY after every write: normalize REPLACES every note
+  // object and re-sorts, so an index is only good until the next `getCfg`.
+  const MSEL = new Map();
+  // ── THE VIEWPORT ────────────────────────────────────────────────────────
+  // The drawing used to be the WHOLE part squeezed into one width and the
+  // notes' own pitch range squeezed into one height: nothing outside either
+  // could be reached, and on a long part a bar was a few pixels. It is a
+  // WINDOW now — pan and resize in pitch, pan in time — with buttons, because
+  // a drag on this canvas already means three other things.
+  // Transient for the same reason the mode is (a field would be serialised and
+  // the project would reload looking at a corner of itself, the `_soloLane`
+  // rule).
+  const VNAV = new Map();          // layer id -> {dy, rows, bar0}
+  const vnavOf = (L) => VNAV.get(L && (L.id | 0)) || { dy: 0, rows: 0, bar0: 0 };
+  const vnavSet = (L, v) => {
+    if (!L) return;
+    const cur = vnavOf(L), nx = Object.assign({}, cur, v);
+    if (!nx.dy && !nx.rows && !nx.bar0) VNAV.delete(L.id | 0);
+    else VNAV.set(L.id | 0, nx);
+  };
+  // HOW MUCH OF A PART IS ON SCREEN AT ONCE. Four bars to a phone's width is
+  // the stated floor — below that a bar is too narrow to place a note in —
+  // and a wider screen simply shows more of the part rather than the same
+  // four blown up.
+  const viewBarsMax = () => (window.innerWidth <= 540) ? 4 : 8;
+  const mselOf = (L) => MSEL.get(L && (L.id | 0)) || null;
+  const mselSet = (L, set) => {
+    if (!L) return;
+    if (set && set.size) MSEL.set(L.id | 0, set); else MSEL.delete(L.id | 0);
+  };
+  // DOES THE PICTURE FOLLOW WHAT PLAYS? The record DRAWN and the window it is
+  // drawn OVER have to be the same length, and only one of the two modes gets
+  // that for free. VIEW follows the sounding part, so the sounding window is
+  // right by construction. EDIT pins the EDITED record — and when another part
+  // is sounding, that part's pass is a different length: the picture laid a
+  // 5-bar record across a 4-bar window (measured: ruler 4, 27 notes of a 5-bar
+  // record) and re-drew itself every time the arrangement moved, reported as
+  // "the visualization was totally different when it cycled back and playback
+  // wasn't lining up with it". Held at its OWN cycle instead, with no playhead
+  // — nothing is playing that record, so a sweep across it would be a claim
+  // that is false. ONE definition, two consumers (the draw and the sweep):
+  // two answers to this is how they come to disagree.
+  // `pi` — the part the caller ALREADY resolved (`cycleWindowAt` hands it out).
+  // Preferred over re-deriving from `at`, which for a window's snapped `cs` can
+  // answer the previous part (see the note in `cycleWindowAt`).
+  const vizFollows = (L, E, cfg, at, pi) => {
+    if (vizMode(L) === 'view') return true;
+    if (!(Number.isFinite(L && L.partFor) && (L.parts || L.partAll))) return true;
+    if (Number.isFinite(pi) && pi >= 0) return (pi | 0) === (L.partFor | 0);
+    try {
+      const w = (typeof _ambPartChordAt === 'function') ? _ambPartChordAt(E, cfg, at) : null;
+      if (w && Number.isFinite(w.pi)) return (w.pi | 0) === (L.partFor | 0);
+    } catch (e) {}
+    return true;
+  };
+  // FOLLOWING PLAYBACK, THE PICTURE MAY BE ANOTHER PART'S RECORD (cv._vmOther,
+  // stamped by drawPartViz). An edit gesture there must refuse AND name the
+  // way in — the hit boxes index into the DRAWN record, not the edited one.
+  function vmRefuse(cv) {
+    if (!cv || cv._vmOther == null) return false;
+    let nm = 'Part ' + ((cv._vmOther | 0) + 1);
+    try {
+      if (typeof _ambPartLabel === 'function' && typeof _masterEng !== 'undefined')
+        nm = _ambPartLabel(_masterEng.getCfg(), cv._vmOther | 0) || nm;
+    } catch (e) {}
+    try {
+      if (typeof showToast === 'function') showToast(
+        'Following playback \u2014 this drawing is \u201c' + nm + '\u201d\u2019s record. ' +
+        'Press \u270e Edit to hold the part you are editing, or pick \u201c' + nm +
+        '\u201d in the part strip to edit this one.');
+    } catch (e) {}
+    return true;
+  }
+  // THE FORM SWITCH — a segmented pair, both names visible, on the surface's
+  // own footer in BOTH forms so it is found from either side. Destructive in
+  // both directions (see the handler), which is why it is buttons rather than a
+  // <select>: a picker that has to be put back when a confirm is declined is a
+  // control fighting its own dialog.
+  function formSegHtml(L) {
+    const f = V2.formOf(L);
+    return '<span class="ambient-seg-row v2-formseg">' +
+      [['roll', '\u2317 Roll', 'Notes with their own time, pitch and length \u2014 a piano roll.'],
+       ['steps', '\u25a6 Steps', 'A grid of on/off steps \u2014 arps and drum programming.']]
+        .map(([v, lab, why]) => '<button type="button" class="ambient-seg v2-formbtn' +
+          (f === v ? ' on' : '') + '" data-form="' + v + '" title="' + esc(why) +
+          '" aria-pressed="' + (f === v ? 'true' : 'false') + '">' + lab + '</button>').join('') +
+      '</span>';
+  }
+  // ▦ IN BLOCKS OF 16, CELLS AND THEIR NOTE LABELS INTERLEAVED. The cell grid
+  // and the note row are two `--eucols` grids that WRAP independently (16 per
+  // row — no sideways scroll, UI rule 1), so on a 32-step part the labels for
+  // steps 1-16 rendered UNDER the cells for 17-32 and every name sat beside the
+  // wrong step. v1's "the same `--eucols` so a label sits under its step" only
+  // holds while there is ONE row. Chunking keeps the pairing at any length.
+  // `data-ci` STAYS ABSOLUTE — the delegated handlers index the store by it —
+  // so only the markup is sliced, exactly the chord-matrix doctrine.
+  function stepBlocksHtml(L) {
+    const r = L.part.rhythm || {}, st = Math.max(1, r.steps | 0);
+    const cells = viewCells(L);
+    const pitched = !!(L.part.pitch && L.part.pitch.kind === 'drawn');
+    const PER = 16;
+    let h = '';
+    for (let b0 = 0; b0 < st; b0 += PER) {
+      const n = Math.min(PER, st - b0);
+      h += '<div class="v2-stepblock">' +
+        '<div class="ambient-slice-grid ambient-euclid-cells v2-cells" style="--eucols:' + n + '">' +
+          Array.from({ length: n }, (_, k) => { const i = b0 + k;
+            return '<button type="button" class="ambient-slice-cell ambient-euclid-cell v2-cell' +
+              (cells[i] ? ' on' : '') + '" data-ci="' + i + '" aria-pressed="' +
+              (cells[i] ? 'true' : 'false') + '" title="Step ' + (i + 1) + ' of ' + st + '">' +
+              (i + 1) + '</button>'; }).join('') +
+        '</div>' +
+        (pitched
+          ? '<div class="ambient-euclid-notes v2-notes" style="--eucols:' + n + '">' +
+              Array.from({ length: n }, (_, k) => { const i = b0 + k; const on = !!cells[i];
+                // A SILENT step's label is DISABLED — editing the note of a step
+                // that does not sound stores a value with no audible effect.
+                return '<button type="button"' + (on ? '' : ' disabled') +
+                  ' class="ambient-euclid-notelbl v2-note' + (on ? ' set' : ' off') +
+                  '" data-ci="' + i + '" title="Step ' + (i + 1) +
+                  (on ? ' \u2014 tap to change the note' : ' (silent \u2014 turn the step on above)') +
+                  '">' + (on ? esc(degLabel(L, i)) : '\u00b7') + '</button>'; }).join('') +
+            '</div>'
+          : '') +
+      '</div>';
+    }
+    return h;
+  }
+  // ▦ THE SEQUENCER SURFACE. The kit's eight lanes or the single pitched row,
+  // decided by the VOICE exactly as the Pattern tab decides it — a drum kit has
+  // no pitch rule to speak of, so its lanes ARE its pitches.
+  function stepsFormHtml(L) {
+    const kit = ((L.instrument && L.instrument.voice) || 'synth') === 'kit';
+    // …WEARING THE PART IT IS FOR. The roll's note events carry their part's
+    // hue; a step IS this form's note event, so it carries the same one — "a
+    // part reads as the same part wherever it appears". Stamped on the WRAPPER
+    // rather than per cell: one attribute, and the palette stays a single
+    // definition in the stylesheet (`--pt1`…`--pt8`) with no JS copy.
+    // NOT followed to whatever is playing — this form has no View mode, so the
+    // grid is always the record you are editing, and `L.partFor` is the honest
+    // answer. A layer that is not per-part has no part identity for its
+    // content, so it keeps the grid's own default rather than borrowing a hue
+    // that would assert something false.
+    const pAttr = (Number.isFinite(L.partFor) && typeof _ambPartAttr === 'function')
+      ? _ambPartAttr(L.partFor | 0) : '';
+    return '<div class="v2-partviz v2-partsteps">' +
+      (kit
+        ? '<div class="v2-stepsgrid v2-stepslanes"' + pAttr + '>' + lanesHtml(L) + '</div>'
+        : '<div class="v2-stepsgrid"' + pAttr + '>' + stepBlocksHtml(L) + '</div>') +
+      '<span class="v2-vizfoot">' +
+        '<span class="v2-vizlab v2-stepslab ambient-hint"></span>' +
+        // ↻ BACK TO THE GENERATED PATTERN. The roll's take bar (🎲/🔒/💾) is
+        // deliberately NOT here — those write a take down as NOTES, which is
+        // the other form's material, and 🔒 would fight the form outright. But
+        // ↻ is the only way back from a hand-drawn grid, so it has to come
+        // across: without it, drawing one cell was one-way. Same class and the
+        // same delegated handler as the Pattern tab's, and `applyGate` shows it
+        // only once there is an edit to undo.
+        '<button type="button" class="ambient-regen v2-regen" ' +
+          'title="Back to the generated pattern \u2014 clears your edits">\u21bb</button>' +
+        formSegHtml(L) +
+        // THE SAME GRID CONTROL AS THE ROLL, and the same field: one standard,
+        // stated per BAR, so the number means the same thing on a 1-bar part
+        // and a 5-bar one and the cycle is always a whole multiple of it.
+        '<label class="v2-gridsel"><span>Grid</span><select class="ambient-select v2-gridpick" ' +
+          'title="How finely this bar is divided \u2014 the cell count is this times the part\u2019s bars.">' +
+          V2.GRIDS.map(([v, lab]) => '<option value="' + v + '"' +
+            (v === V2.gridPerBar(L) ? ' selected' : '') + '>' + lab + '</option>').join('') +
+        '</select></label>' +
+      '</span>' +
+    '</div>';
+  }
+  // …AND WHAT THE SEQUENCER'S READOUT SAYS. The roll's line names the record
+  // and how to edit it; this names the grid the same way. An EMPTY grid is
+  // silence, and silence is indistinguishable from a broken control unless it
+  // says so — the Pattern tab's hint learned that and this inherits it.
+  // THE FIRST TOKEN OF EVERY CONTENT READOUT. `Static` or `Live`, with the
+  // reasons spelled out — the reason is the useful half, and a tooltip is not
+  // where it belongs (the documented "a `title` a phone NEVER SHOWS" rule).
+  function liveTxt(L, cfg) {
+    let lv = { live: false, why: [] };
+    // NOT a silent catch: a throw here reads as "everything is Static", which
+    // is a plausible-looking answer and therefore the worst kind of failure.
+    try { lv = V2.liveness(L, cfg) || lv; }
+    catch (e) { try { console.warn('[v2] liveness failed', e && e.message); } catch (x) {} }
+    return lv.live ? ('Live \u2014 ' + lv.why.join(' \u00b7 ')) : 'Static';
+  }
+  function stepsSync(host, L) {
+    const lab = host.querySelector('.v2-stepslab'); if (!lab) return;
+    const p = L.part, r = p.rhythm || {};
+    const kit = ((L.instrument && L.instrument.voice) || 'synth') === 'kit';
+    const st = Math.max(1, r.steps | 0);
+    const bars = +p.bars || 1;
+    const gname = (V2.GRIDS.find((g) => g[0] === V2.gridPerBar(L)) || [0, '?'])[1];
+    let on = 0;
+    if (kit) on = (r.lanes || []).reduce((a, row) => a + (row || []).filter(Boolean).length, 0);
+    else on = viewCells(L).reduce((a, c) => a + (c ? 1 : 0), 0);
+    const edited = kit ? (r.lanes || []).some((row) => (row || []).some(Boolean)) : (r.kind === 'drawn');
+    lab.style.color = on ? '' : '#f6ad55';
+    let cfgS = null; try { cfgS = _cfgOf(); } catch (e) {}
+    lab.textContent = !on
+      ? 'empty \u2014 this layer is silent. ' + (kit ? 'Tap a lane\u2019s steps.' : 'Raise How many, or tap steps.')
+      : (liveTxt(L, cfgS) + ' \u00b7 ' +
+         on + (kit ? ' hits' : ' of ' + st) + ' \u00b7 ' + (Math.round(bars * 100) / 100) +
+         ' bar' + (bars === 1 ? '' : 's') + ' \u00b7 ' + gname +
+         (edited ? ' \u00b7 yours' : ' \u00b7 from the rules') +
+         ' \u00b7 tap a step to toggle it');
+  }
   function partVizHtml(L) {
     const cf = capFace(L);
     // THE TAKE BAR lives INSIDE the viz block, not in an `.ambient-ctrl` — the
@@ -3496,22 +4456,85 @@
     // mean a `notesFor` call per frame per card — the drawing is generated, not
     // stored — so the sweep and the lit notes go on a transparent overlay that
     // costs a clear, a line and a few rects.
-    const vm = vizMode(L);
+    const vm = vizMode(L), vm2 = modeOf(L);
+    // ▦ STEPS — the sequencer takes the line instead of the roll. Deliberately
+    // NOT both: a roll under the grid would be a second picture of one thing,
+    // and the grid IS the material in this form (the roll's equivalent view is
+    // one press away by switching form). The cells, the note row and the drum
+    // lanes are the SAME builders the Pattern tab uses and the SAME delegated
+    // handlers — moving markup, not writing a second editor — and the Pattern
+    // tab's copies are gated off (`form:roll`) so they can never both show.
+    if (V2.formOf(L) === 'steps') return stepsFormHtml(L);
     return '<div class="v2-partviz"><canvas class="v2-vizcv" height="84"></canvas>' +
       '<canvas class="v2-vizph" aria-hidden="true"></canvas>' +
       // THE NOTE EDITOR OPENS HERE — directly under the drawing it edits, so
       // the picture stays visible while you move the note (a dialog over the
       // top hid the one thing you are editing against).
       neHtml() +
+      // ── NAVIGATING THE WINDOW ───────────────────────────────────────────
+      // BUTTONS, not a drag: every drag on this canvas already means
+      // something (move a note, resize it, draw one, gather them), so the one
+      // gesture left is a press. The pitch pair PANS, the ± pair RESIZES, and
+      // ◀ ▶ walk a long part — each one press, which is also what makes them
+      // usable on a phone, where a two-finger gesture would fight the page's
+      // own scroll.
+      '<span class="v2-vnav">' +
+        '<button type="button" class="ambient-seg v2-nav" data-nav="up" title="Look higher \u2014 pan the pitch window up">\u25b2</button>' +
+        '<button type="button" class="ambient-seg v2-nav" data-nav="dn" title="Look lower \u2014 pan the pitch window down">\u25bc</button>' +
+        '<button type="button" class="ambient-seg v2-nav" data-nav="grow" title="Taller \u2014 show more pitches at once">\uff0b</button>' +
+        '<button type="button" class="ambient-seg v2-nav" data-nav="shrink" title="Shorter \u2014 show fewer pitches">\u2212</button>' +
+        '<button type="button" class="ambient-seg v2-nav v2-navx" data-nav="left" title="Earlier bars">\u25c0</button>' +
+        '<button type="button" class="ambient-seg v2-nav v2-navx" data-nav="right" title="Later bars">\u25b6</button>' +
+        '<button type="button" class="ambient-seg v2-nav v2-navfit" data-nav="fit" title="Fit the window back to the notes">\u2302</button>' +
+        '<span class="ambient-hint v2-navlab"></span>' +
+      '</span>' +
       // THE READOUT AND THE MODE SHARE A LINE — both are about the drawing, and
       // a two-state preference does not earn a row of its own.
       '<span class="v2-vizfoot">' +
         '<span class="v2-vizlab ambient-hint"></span>' +
-        '<button type="button" class="v2-vmode" data-vm="' + (vm === 'view' ? 'edit' : 'view') + '" ' +
-          'title="' + (vm === 'view'
-            ? 'Following what PLAYS — whichever part is sounding. Tap to hold the part you are editing instead.'
-            : 'Holding the part you are EDITING while the arrangement cycles. Tap to follow what plays.') + '">' +
-          (vm === 'view' ? '\ud83d\udc41 View' : '\u270e Edit') + '</button>' +
+        // ONE CONTROL FOR ONE AXIS. Two buttons stated two switches for what
+        // is really four states of the same question — and three of the four
+        // combinations they offered meant the same thing, since drawing and
+        // gathering both imply you are working on the record you are editing.
+        // A <select> is safe HERE: a mode change redraws the CANVAS and never
+        // rebuilds the card, so the picker cannot be replaced under an open
+        // list (the documented trap that made the euclid page bar use buttons).
+        '<label class="v2-modesel"><span>Mode</span>' +
+          '<select class="ambient-select v2-modepick" title="What the drawing is showing, and what a tap does.">' +
+            [['view', '\ud83d\udc41 View', 'follow what plays \u2014 a tap selects a bar'],
+             ['edit', '\u270e Edit', 'hold the part you are editing \u2014 a tap opens a note'],
+             ['draw', '\u270e Draw', 'a tap on empty space adds a note'],
+             ['multi', '\u2b1a Multi', 'tap notes to gather, then move or resize them together'],
+             ['split', '\u2702 Split', 'tap a note to divide it into several \u2014 the same total length']]
+              .map(([v, lab, why]) => '<option value="' + v + '"' + (vm2 === v ? ' selected' : '') +
+                ' title="' + esc(why) + '">' + lab + '</option>').join('') +
+          '</select></label>' +
+        // THE GRID EVERY HAND EDIT SNAPS TO — a note VALUE, so it reads the
+        // same on a 1-bar part and a 5-bar one. It sits on the drawing's own
+        // line because it is a property of EDITING the picture, not of the
+        // part: nothing about what plays changes when you move it.
+        '<label class="v2-gridsel"><span>Grid</span><select class="ambient-select v2-gridpick" ' +
+          'title="What the drag, the resize, the add and the editor\u2019s Position and Length all snap to.">' +
+          V2.GRIDS.map(([v, lab]) => '<option value="' + v + '"' +
+            (v === V2.gridPerBar(L) ? ' selected' : '') + '>' + lab + '</option>').join('') +
+        '</select></label>' +
+        formSegHtml(L) +
+      '</span>' +
+      // ⬚ MULTI — what is gathered, and the transforms that apply to ALL of it.
+      // Rendered only in multi mode and only once something is gathered: a row
+      // of steppers over an empty selection is a control that cannot act.
+      // BUTTONS AS WELL AS THE DRAG, deliberately — the drag is the gesture the
+      // request asked for, and a stepper is what makes it exact on a phone and
+      // what a probe can drive; both go through the ONE writer (`multiApply`).
+      '<span class="v2-multibar" hidden>' +
+        '<span class="ambient-hint v2-multin"></span>' +
+        '<button type="button" class="ambient-seg v2-mact" data-ma="t-1" title="Move all earlier by one grid cell">\u2190</button>' +
+        '<button type="button" class="ambient-seg v2-mact" data-ma="t+1" title="Move all later by one grid cell">\u2192</button>' +
+        '<button type="button" class="ambient-seg v2-mact" data-ma="m+1" title="Move all up a half-step">\u2191</button>' +
+        '<button type="button" class="ambient-seg v2-mact" data-ma="m-1" title="Move all down a half-step">\u2193</button>' +
+        '<button type="button" class="ambient-seg v2-mact" data-ma="d-1" title="Shorten all by one grid cell">\u21e4</button>' +
+        '<button type="button" class="ambient-seg v2-mact" data-ma="d+1" title="Lengthen all by one grid cell">\u21e5</button>' +
+        '<button type="button" class="ambient-seg v2-mact v2-mclear" data-ma="clear" title="Gather nothing">\u2715</button>' +
       '</span>' +
       '<span class="ambient-seg-row v2-takebar">' +
         '<button type="button" class="ambient-seg v2-newtake"' +
@@ -3525,9 +4548,11 @@
           cf.txt + '</button>' +
         // A TAKE YOU LIKE IS WORTH KEEPING, and the next press of ⟳ replaces
         // it — so the way to keep it sits right beside the thing that would
-        // destroy it. Only when there is a take: nothing to save on a live part.
-        (((L.part.notes || []).length && L.part.kind === 'recorded')
-          ? '<button type="button" class="ambient-seg v2-savetake" title="Keep this take in the bank under a name — it becomes a phrase you can map to any part or chord, on this layer or another.">\ud83d\udcbe Save this take</button>'
+        // destroy it. BOTH STATES: it used to render only on a written part, so
+        // a generated take could reach the bank only by locking it first — i.e.
+        // the one thing you might not want to do to a take you want to keep.
+        (((L.part.kind === 'recorded' && (L.part.notes || []).length) || L.part.kind === 'live')
+          ? '<button type="button" class="ambient-seg v2-savetake" title="Keep the take shown above in the bank, under a name — mappable to any part or chord, on this layer or another. The part itself is left as it is: a generated one keeps generating.">\ud83d\udcbe Save this take</button>'
           : '') +
         // COMMANDS OVER THE NOTES YOU HAVE. A menu, not a row: the set is
         // meant to grow, and the take bar is already four buttons wide. It is
@@ -3537,8 +4562,98 @@
         '<button type="button" class="ambient-seg v2-tform" title="Rework the notes you already have — reverse, shuffle, and more. Tap bars in the drawing first to rework just those.">\u2728 Transform\u2026</button>' +
       '</span></div>';
   }
+  // ── WHICH CHORD IS WHERE ──────────────────────────────────────────────
+  // The ruler counted BARS and said nothing about the harmony those bars sit
+  // over — and with a CADENCE a chord is not a bar: \u00bd \u00b7 1 \u00b7 \u00bd \u00b7 2 is four
+  // chords across four bars and not one of them starts where a bar count
+  // implies. Walked with `_ambChordSpanAt`, the chord clock's OWN span
+  // function, and NEVER a second walk of the chord lengths: that clock has
+  // four branches (section-bound parts, part repeats, salted lengths, the
+  // passes grid) and re-deriving edges beside it is exactly how the Scheduler
+  // lane once came to lie about the harmony.
+  function chordMarks(E, cfg, t0, cyc) {
+    if (typeof _ambChordSpanAt !== 'function' || !(cyc > 0)) return null;
+    if (!cfg || !cfg.prog || !cfg.prog.on) return null;
+    const out = [];
+    let t = t0 + 1e-4;
+    const stop = t0 + cyc - 1e-3;
+    for (let i = 0; i < 64 && t < stop; i++) {
+      let sp = null;
+      try { sp = _ambChordSpanAt(E, cfg, t); } catch (e) { break; }
+      if (!sp || !(sp.end > sp.start)) break;
+      // A HANG SHARES ITS NEIGHBOUR CHORD'S SPAN so the choke can hold one
+      // chord across it. That merge is for the CHOKE and never for a picture
+      // — the progress bars trim it for the same reason.
+      let vis = sp;
+      try { if (typeof _ambSpanTrimHang === 'function') vis = _ambSpanTrimHang(E, cfg, sp) || sp; } catch (e) {}
+      let nm = '';
+      // THE SOUNDING chord, not the written one: order-perm, alts, take-reroll
+      // and the key transpose all resolve at READ time, so `prog.chords[i]`
+      // names a chord the ear is not hearing (measured elsewhere: the header
+      // read "F" while the engine played D).
+      try { nm = _ambChordShort(_ambProgSoundAt(E, cfg.prog, sp.step, (sp.start + sp.end) / 2)) || ''; } catch (e) {}
+      if (vis.end > t0 && vis.start < t0 + cyc) out.push({
+        f0: Math.max(0, (vis.start - t0) / cyc),
+        f1: Math.min(1, (vis.end - t0) / cyc),
+        nm: nm
+      });
+      t = sp.end + 1e-4;
+    }
+    return out.length ? out : null;
+  }
+  // WHERE THAT WALK STARTS. Playing, the drawn window IS the sounding one and
+  // its own start is the answer. Stopped there is no clock, so the walk is
+  // measured from the progression's own origin — and for a PER-PART layer
+  // that origin names the WRONG PART: with part 2 selected, walking from the
+  // top draws part 1's chords under part 2's notes. The part's first pass is
+  // found by asking the ONE resolver (`_ambPartChordAt`) span by span rather
+  // than by summing chord lengths, so a cadence, a chain, a hold and a passes
+  // grid all come along for free.
+  let _cAnchorMemo = null;
+  function chordAnchor(E, cfg, L, playing, cs) {
+    if (playing) return cs;
+    // THE CHORD CLOCK'S OWN ORIGIN, spelled exactly as `_ambChordSpanAt`
+    // spells it. Taking `_progAnchor ?? 0` while the walk below runs on
+    // `_progAnchor ?? _playStartAt ?? 0` puts the two in DIFFERENT clocks the
+    // moment the transport has been stopped — `_progAnchor` is cleared there
+    // and `_playStartAt` is not — and the picture then jumps after a stop
+    // (measured: the same anchor resolved to the Verse's chords instead of the
+    // Chorus's). One spelling, or they disagree exactly when nothing looks
+    // wrong.
+    const org = Number.isFinite(E && E._progAnchor) ? E._progAnchor
+      : (Number.isFinite(E && E._playStartAt) ? E._playStartAt : 0);
+    const pi = Number.isFinite(L && L.partFor) ? (L.partFor | 0) : -1;
+    if (pi < 0 || typeof _ambPartChordAt !== 'function') return org;
+    // MEMOISED, because the walk below is O(chords before this part) and every
+    // expanded card asks it on every draw — measured 63ms PER CARD on a
+    // 16-chord arrangement with the layer on the eighth part, which would land
+    // on the rAF sweep as well as on an edit. The answer only moves when the
+    // progression's shape or the clock's origin does, and both are in the key.
+    const p9 = (cfg && cfg.prog) || {};
+    const sig = pi + '|' + org + '|' + ((cfg && cfg.bpm) || 0) + '|' +
+      (p9.chords || []).map(c => (c && c.bars) || 0).join(',') + '|' +
+      (p9.parts || []).map(x => (x && x.len) | 0).join(',') + '|' +
+      (E && E._barGridAnchor || 0) + '|' + (E && E._playStartAt || 0);
+    if (_cAnchorMemo && _cAnchorMemo.sig === sig) return _cAnchorMemo.at;
+    let t = org + 1e-4;
+    for (let i = 0; i < 96; i++) {
+      let sp = null;
+      try { sp = _ambChordSpanAt(E, cfg, t); } catch (e) { break; }
+      if (!sp || !(sp.end > sp.start)) break;
+      let w = null;
+      try { w = _ambPartChordAt(E, cfg, (sp.start + sp.end) / 2); } catch (e) {}
+      if (w && (w.pi | 0) === pi) { _cAnchorMemo = { sig: sig, at: sp.start }; return sp.start; }
+      t = sp.end + 1e-4;
+    }
+    _cAnchorMemo = { sig: sig, at: org };
+    return org;
+  }
   function drawPartViz(card, L, E) {
     const host = card && card.querySelector('.v2-partviz'); if (!host) return;
+    // ▦ STEPS has no canvas — the same entry point paints its readout instead,
+    // so every caller that repaints the Content line keeps working unchanged
+    // (there are a dozen, and a second entry point is how two surfaces drift).
+    if (V2.formOf(L) === 'steps') { try { stepsSync(host, L); } catch (e) {} return; }
     const cv = host.querySelector('.v2-vizcv'), lab = host.querySelector('.v2-vizlab');
     if (!cv || !cv.getContext) return;
     const w = Math.max(80, Math.round(cv.clientWidth || host.clientWidth || 300));
@@ -3546,14 +4661,19 @@
     const phone = window.innerWidth <= 540;
     let cfg = null; try { cfg = E.getCfg(); } catch (e) {}
     if (!cfg) return;
-    let cyc = 2, notes = [];
+    // HOW MANY BARS THE DRAWN WINDOW IS, when the window is a bar span of the
+    // arrangement rather than this record's own cycle. Null = ask the record
+    // (`L.part.bars`), which is what every non-per-part case wants and what
+    // keeps the RATE multiplier meaning what it says: `cycleSec` divides by it,
+    // so deriving bars from seconds would redraw the ruler on a sped-up layer.
+    let cyc = 2, cycBars = null, notes = [];
     try { cyc = Math.max(0.05, V2.cycleSec(L, cfg)); } catch (e) {}
     // DRAW THE CYCLE THE PREVIEW PLAYED, not cycle 0. A live part re-rolls per
     // cycle, so a fixed drawing disagrees with every press. The remembered
     // cycle is used only while the part still matches the one it was taken
     // from — change a knob and it falls back to a representative cycle, which
     // is honest rather than stale.
-    let cs = 0, fromPv = false;
+    let cs = 0, fromPv = false, csPv = false;
     try {
       const pv = V2.previewCycle && V2.previewCycle();
       if (pv && pv.id === (L.id | 0) && pv.sig === V2.partSig(L) && Number.isFinite(pv.at)) {
@@ -3561,7 +4681,7 @@
         // WHICH CHORD the take was rolled over), but the badge may not be: a
         // take rolled since that preview has not been previewed, and saying it
         // was is exactly the kind of stale readout this file keeps paying for.
-        cs = pv.at; fromPv = (pv.take === V2.pinSig(V2.pinOf(L)));
+        cs = pv.at; csPv = true; fromPv = (pv.take === V2.pinSig(V2.pinOf(L)));
       }
     } catch (e) {}
     // A PART WHOSE CONTENT IS THE CHANGES IS DRAWN FROM THE FIRST CHANGE.
@@ -3579,7 +4699,7 @@
     // notes as the playhead passed them would light the wrong ones. The emit's
     // own cycle math (`startAt + c * cyc`), so the picture and the ear are the
     // same cycle by construction.
-    let playing = false;
+    let playing = false, wpi = -1;   // …and WHICH PART that sounding window is
     try {
       const stp = E.timer && E._v2Phase && E._v2Phase['v2:' + (L.id | 0)];
       // THE CYCLE BEING HEARD, not the one being scheduled — on the shell's
@@ -3591,15 +4711,95 @@
       const nowT = audibleNow();
       if (stp && Number.isFinite(stp.startAt) && nowT >= stp.startAt) {
         const wnd = V2.cycleWindowAt(L, E, cfg, nowT, stp);
-        cs = wnd.cs; cyc = wnd.cyc;
+        // …ONLY IF THIS PICTURE IS THE ONE SOUNDING (see `vizFollows`). When it
+        // is not, every value below is left exactly as the stopped path set it
+        // — the edited record over its OWN cycle, take pinned, no choke, no
+        // sweep — which is the honest picture of a record nothing is playing.
+        if (vizFollows(L, E, cfg, wnd.cs, wnd.pi)) {
+        cs = wnd.cs; cyc = wnd.cyc; wpi = Number.isFinite(wnd.pi) ? (wnd.pi | 0) : -1;
+        // A PART PASS IS A BAR SPAN, so the ruler can be told how many bars it
+        // is showing. Without this the ruler, the readout and the bar-tap
+        // geometry all read `L.part.bars` — the record being EDITED — while
+        // the NOTES were drawn across the window actually sounding: with a
+        // 5-bar part A selected and a 4-bar part B playing, the drawing put
+        // four bars of music under a five-bar ruler and the readout said
+        // "5 bars · 8s", which is 4 bars at 120bpm — the line contradicting
+        // itself. Reported as "part 2 renders as 5 bars".
+        if (wnd.part && wnd.bars > 0) cycBars = wnd.bars;
         fromPv = false; playing = true;
+        }
       }
     } catch (e) {}
+    // ── STOPPED, DRAW THE RECORD OVER THE CHORDS IT WILL PLAY OVER ────────
+    // A remapped pitch is a function of the chord AT THE NOTE'S OWN ONSET, and
+    // the onset is `cs + n.at` — so with `cs` at zero a per-part record was
+    // resolved against the FIRST chord of the whole progression instead of
+    // against its own part's, and every note sat on a different row from the
+    // one it takes when that part comes round. Reported as "the note is in a
+    // different place on playback and when stopped", and on a chordlocked part
+    // it is many semitones, not one.
+    //
+    // It is also the picture contradicting itself: the ruler's chord band is
+    // drawn from `chordAnchor` — the part's own first pass — so the chords
+    // NAMED above the notes were not the chords the notes were resolved
+    // against. One anchor for both is what makes the drawing coherent, and it
+    // is the same answer playback gives.
+    if (!playing && !csPv) {
+      try { cs = chordAnchor(E, cfg, L, false, cs); } catch (e) {}
+    }
     // THE ANCHOR THE PICTURE WAS DRAWN AT, recorded on the canvas. A drawing
     // is only honest about a part built on the changes if it starts where the
     // changes do, and the note COUNT cannot show that — rotating a progression
     // keeps the total identical (measured).
     cv._cs = cs;
+    // WHOSE RECORD IS DRAWN. Following playback, the picture can be ANOTHER
+    // part's record — mark it on the canvas, because an edit gesture must then
+    // REFUSE: the hit boxes index into the DRAWN record, and writing those
+    // indices into the EDITED one is corruption wearing an edit's clothes.
+    // …AND WHICH PART IT BELONGS TO, so the NOTE EVENTS can be drawn in that
+    // part's own colour. This is the picture's half of "a part reads as the
+    // same part wherever it appears": with the roll following playback, the
+    // notes changing hue IS the answer to "why does this look different now".
+    // A layer that is not per-part has no part identity for its content — one
+    // content everywhere — so it keeps the default purple rather than
+    // borrowing a hue that would mean nothing.
+    cv._drawnPi = -1;
+    try {
+      if (Number.isFinite(L.partFor) && (L.parts || L.partAll)) {
+        // `wpi` — the window's OWN answer, not `_ambPartChordAt(cs)`: `cs` is
+        // snapped and can land one ULP short of the boundary it names, which
+        // painted the notes in the PREVIOUS part's hue for a whole pass.
+        cv._drawnPi = (playing && vizMode(L) === 'view' && wpi >= 0)
+          ? wpi
+          : (L.partFor | 0);
+        if (!(cv._drawnPi >= 0)) cv._drawnPi = -1;
+      }
+    } catch (e) { cv._drawnPi = -1; }
+    const ptCol = (cv._drawnPi >= 0 && typeof _ambPartColor === 'function')
+      ? _ambPartColor(cv._drawnPi) : '';
+    // The palette is HEX (one definition, in the stylesheet), and a note wants
+    // a translucent fill under a solid edge — so it is converted here rather
+    // than kept as a second set of rgba() literals that could drift from it.
+    const _hexA = (hx, a) => {
+      const m = /^#?([0-9a-fA-F]{6})$/.exec(String(hx || '').trim());
+      if (!m) return '';
+      const n = parseInt(m[1], 16);
+      return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+    };
+    const NOTE_FILL = _hexA(ptCol, 0.5) || 'rgba(159,122,234,0.55)';
+    const NOTE_EDGE = ptCol || '#d6bcfa';
+    // ⬚ WHAT IS GATHERED, for this draw. Only in multi mode: the set survives a
+    // mode change only as far as `setMode`, which drops it, so this is belt.
+    const MGRP = (modeOf(L) === 'multi') ? mselOf(L) : null;
+    cv._vmOther = null;
+    try {
+      if (playing && vizMode(L) === 'view' && Number.isFinite(L.partFor) &&
+          (L.parts || L.partAll)) {
+        const pi2 = wpi;
+        if (pi2 >= 0 && pi2 !== (L.partFor | 0) &&
+            ((L.parts && L.parts[String(pi2)]) || L.partAll)) cv._vmOther = pi2;
+      }
+    } catch (e) {}
     try {
       // …and WITHOUT the take pin while playing: the emitter draws from the
       // cycle index, so pinning here would draw a take nobody is hearing.
@@ -3608,7 +4808,7 @@
       // rule. EDIT keeps the pin, which is what lets you work on one part while
       // another one plays.
       const ask = () => (playing
-        ? V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc })
+        ? V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc, pi: wpi })
         : V2.withTake(V2.pinOf(L), () =>
             V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc })));
       notes = ((playing && vizMode(L) === 'view') ? ask() : V2.withEdit(ask)) || [];
@@ -3634,7 +4834,12 @@
       });
     }
     const played = notes.filter(n => n && n.freq > 0 && n.at >= -1e-6 && n.at < cyc);
-    const mids = played.map(n => 69 + 12 * Math.log2(n.freq / 440));
+    // QUANTIZED to 1/1024 semitone: these come out of log2(freq) and an
+    // integer pitch lands at 71.00000000000001 as often as not — floor/ceil
+    // then bump a row and the sticky window's fits-test flips, which was the
+    // "grid resizes slightly after releasing a dragged note" (whether it
+    // fired depended on WHICH note happened to be the extreme).
+    const mids = played.map(n => Math.round((69 + 12 * Math.log2(n.freq / 440)) * 1024) / 1024);
 
     // ── THE PITCH AXIS IS A KEYBOARD ────────────────────────────────────────
     // It was a continuous squeeze of whatever range the take happened to span,
@@ -3642,7 +4847,17 @@
     // another and not WHICH note either of them was. The axis is SEMITONE
     // ROWS now, with a piano drawn down the left — the reading a piano roll
     // gives for free — so every event names its own pitch by where it sits.
-    const TOP = 15;                       // the ruler gutter
+    // THE CHORD BAND, when there is harmony to name. It takes a row of its
+    // own ABOVE the bar numbers rather than sharing the gutter: a chord that
+    // starts on a bar line — which is most of them — would otherwise print
+    // its name straight over that bar's number. TOP is the ONE definition of
+    // where the plot begins (`_pitchGeo.top`, `_plotGeo.top`, the playhead and
+    // the ruler-tap test all read it), so growing it moves everything that
+    // depends on it with no second number to keep in step.
+    const cAt = (L.part && L.part.clock === 'free') ? 0 : chordAnchor(E, cfg, L, playing, cs);
+    const cmarks = (L.part && L.part.clock === 'free') ? null : chordMarks(E, cfg, cAt, cyc);
+    const CHT = cmarks ? 13 : 0;          // the chord band
+    const TOP = 15 + CHT;                 // the ruler gutter
     const GUT = phone ? 24 : 28;          // the keyboard gutter — wide enough for "C4"
     const PC_BLACK = { 1: 1, 3: 1, 6: 1, 8: 1, 10: 1 };
     let loM = 60, hiM = 71;
@@ -3653,7 +4868,52 @@
     // AT LEAST AN OCTAVE of context: a two-note part squeezed to its own range
     // draws two enormous rows and says nothing about where they sit.
     if (hiM - loM < 11) { const c2 = (hiM + loM) / 2; loM = Math.round(c2 - 5.5); hiM = loM + 11; }
-    const rows = Math.max(1, hiM - loM + 1);
+    // THE WINDOW IS STICKY — held EXACTLY while the same material's notes
+    // still fit inside it, widened (never re-tightened) when one lands
+    // outside, re-derived fresh only for NEW material (a kind flip, another
+    // take). Without this, releasing a drag re-derived the range and the
+    // canvas resized the moment a note landed on the old padding row
+    // (measured 97 → 103px at release) — "the grid resizes after
+    // interaction", the exact contract violation. The cost is cosmetic: a
+    // note sitting on the held window's edge row has no empty row beyond it.
+    try {
+      const wsig = (L.part.kind || '') + ':' + ((L.part.take | 0) || 0);
+      const held = WINHOLD.get(L.id | 0);
+      if (held && held.sig === wsig) {
+        const rawLo = mids.length ? Math.floor(Math.min.apply(null, mids)) : held.loM;
+        const rawHi = mids.length ? Math.ceil(Math.max.apply(null, mids)) : held.hiM;
+        if (rawLo >= held.loM && rawHi <= held.hiM) { loM = held.loM; hiM = held.hiM; }
+        else if (rawHi - rawLo <= held.hiM - held.loM) {
+          // A note past the window's edge SCROLLS the axis, it does not grow
+          // it: while the material still fits the held row count, the window
+          // SHIFTS by the overflow and the canvas height is byte-identical.
+          // Growing here resized the drawing one row per ± Note press with a
+          // note at the edge — the editor walking down the page under the
+          // finger ("the +/- buttons should not resize"). Only material that
+          // genuinely no longer fits the held size may widen it.
+          if (rawHi > held.hiM) { hiM = rawHi; loM = rawHi - (held.hiM - held.loM); }
+          else { loM = rawLo; hiM = rawLo + (held.hiM - held.loM); }
+        }
+        else { loM = Math.min(held.loM, loM); hiM = Math.max(held.hiM, hiM); }
+      }
+    } catch (e) {}
+    // A DRAG MUST NOT RE-SCALE THE AXIS UNDER THE FINGER. The window follows
+    // the notes' OWN range, so dragging one moves the very thing that defines
+    // it: measured on a C4–C6 part, dragging the lowest note up walked `loM`
+    // 59 → 71 and collapsed the canvas 181px → 109px, so every row slid under
+    // the finger while the note's VALUE tracked it perfectly. Frozen for the
+    // gesture, exactly as drawn, released on pointerup.
+    if (DRAG && DRAG.id === (L.id | 0) && DRAG.win) { loM = DRAG.win.loM; hiM = DRAG.win.hiM; }
+    // …and the sticky store records the EFFECTIVE window — after the freeze,
+    // so a locked grab (whose kind flip changes the sig mid-gesture) files
+    // the frozen window rather than a mid-drag re-derivation, and the
+    // release draw finds exactly what was on screen.
+    try {
+      WINHOLD.set(L.id | 0, {
+        sig: (L.part.kind || '') + ':' + ((L.part.take | 0) || 0),
+        loM: loM, hiM: hiM });
+    } catch (e) {}
+    let rows = Math.max(1, hiM - loM + 1);   // `let` — the viewport below re-derives it
     // THE DRAWING GROWS WITH ITS RANGE rather than squeezing the rows to
     // nothing — the editor is in the page flow now, so height is a scroll
     // rather than a fold. Floors stay what they were (60 on a phone, 84
@@ -3663,9 +4923,70 @@
     // reading the axis exists for — so the row is the floor and the height
     // follows it, up to a cap past which a very wide part goes back to
     // squeezing (a 4-octave line is a picture of a shape, not of pitches).
+    // WHICH KEY THE SELECTED NOTE IS ON. A tap on the gutter moves that note,
+    // so the keyboard has to say where it currently sits — aiming at an
+    // unmarked strip is guessing — and the SIZING reads it too (below).
+    // …resolved from the DRAWN note itself (`nidx`), never from the stored
+    // midi: the gutter rows are SOUNDING pitches and the store is not —
+    // transpose, register and the harmony remap all sit between them, and a
+    // stored-midi mark sat rows away from the block it claimed to name
+    // ("not aligned to the highlighted note", with a screenshot). While a
+    // note is DRAGGED the mark follows THAT note; otherwise the editor's.
+    let selM = null;
+    let selIdx = null;
+    if (DRAG && DRAG.id === (L.id | 0) && DRAG.win) selIdx = DRAG.idx;
+    else if (NE && NE.id === (L.id | 0) && L.part && L.part.kind === 'recorded' &&
+             Array.isArray(L.part.notes) && L.part.notes[NE.idx]) selIdx = NE.idx;
+    if (selIdx != null) {
+      const dn = played.find((nn) => nn && nn.nidx === selIdx);
+      if (dn && dn.freq > 0) selM = Math.round(69 + 12 * Math.log2(dn.freq / 440));
+      else if (L.part && Array.isArray(L.part.notes) && L.part.notes[selIdx]) {
+        selM = L.part.notes[selIdx].midi | 0;   // choked / outside the window
+      }
+    }
+    // IN-SCALE KEYS ARE MARKED. The keyboard named every pitch and said
+    // nothing about which of them BELONG — and it is a control now, so the
+    // question "will this note fit" is asked at exactly the moment you aim.
+    // Resolved at the drawing's own anchor, so a part or section key change
+    // moves it. Null = no key and no source of its own, or a 12-tone scale:
+    // lighting every key says as much as lighting none.
+    let SPC = null;
+    try { SPC = V2.scaleAt(E, cfg, cs, L); } catch (e) { SPC = null; }
     const base = phone ? 60 : 84;
+    // ONE GEOMETRY, ALWAYS (2026-09-08, stated as the contract: "the grid
+    // should never resize/jitter/shift before, during or after the user
+    // interacts with it"). The rows used to GROW for editing — once when a
+    // note was selected and again when one was grabbed — with an absorbing
+    // scroll to hold the grabbed note under the finger, and every piece of
+    // that dance was reported as the defect: the resize on click, every
+    // other block shifting at the grab, the bearings lost mid-gesture. The
+    // drawing's size now follows only its CONTENT (the note range); no
+    // selection, grab or drag changes a pixel of it. The cost is stated and
+    // accepted: a reading-size row (5/6px) is the drag resolution on a
+    // mouse, and the gutter keys are small tap targets — the editor's ± Note
+    // stepper remains the precision path.
+    // …AND THEN THE USER'S OWN WINDOW ON TOP. The derivation above answers
+    // "where is the material"; this answers "what do I want to look at", and
+    // they are different questions — a note an octave above everything else
+    // was unreachable, and there was no way to give a dense part more room.
+    // Deliberately NOT the interaction-driven resize this file retired: an
+    // explicit button is an act, not a side effect of touching a note.
+    const nv = vnavOf(L);
+    if (nv.rows) {
+      const up = Math.ceil(nv.rows / 2), dn = nv.rows - up;
+      hiM += up; loM -= dn;
+    }
+    if (nv.dy) { hiM += nv.dy; loM += nv.dy; }
+    loM = clamp(Math.round(loM), 0, 124);
+    hiM = clamp(Math.round(hiM), loM + 3, 127);
+    rows = hiM - loM + 1;
     const rowT = phone ? 5 : 6;
-    const h = Math.max(base, Math.min(phone ? 190 : 240, Math.round(TOP + rows * rowT + 4)));
+    // THE CEILING MOVES WITH THE ASK. Growing the window under a fixed cap
+    // would only make the rows thinner, which is the opposite of "show me
+    // more" — so a window the user has expanded is allowed the height it
+    // needs, and an untouched one keeps exactly the cap it had.
+    const capH = nv.rows > 0 ? (phone ? 420 : 560) : (phone ? 190 : 240);
+    const h = Math.max(base, Math.min(capH, Math.round(TOP + rows * rowT + 4)));
     if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
       cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
       cv.style.width = '100%'; cv.style.height = h + 'px';
@@ -3689,12 +5010,38 @@
     const yOf = (m) => TOP + (hiM - m) * rowH;          // the TOP of that row
     cv._pitchGeo = { loM: loM, hiM: hiM, rowH: rowH, top: TOP };
     const PLOT = w - GUT;                                // the notes' own width
+    const free = L.part && L.part.clock === 'free';
+    // THE WINDOW BEING DRAWN, not the record being EDITED — see `cycBars`.
+    const barsF = Math.max(0.0625, cycBars || (L.part && L.part.bars) || 1);
+    // ── THE VIEWPORT, IN TIME ───────────────────────────────────────────────
+    // A long part squeezed into one width gives a bar a few pixels — too
+    // narrow to place a note in, let alone read. At most `viewBarsMax()` bars
+    // are on screen (four to a phone's width, more on a wider screen) and the
+    // rest is reached with the ◀ ▶ buttons. A part that FITS is drawn exactly
+    // as before: `VSC` is 1 and `F0` is 0, so every mapping below is the
+    // identity it was and nothing about a short part moves.
+    //
+    // NOTE this is a deliberate carve-out from UI rule 1 (no horizontal
+    // scrolling): the rule is about CONTROLS overflowing their row, and the
+    // answer here is not a scrollbar — the canvas keeps its width and the
+    // drawing pans INSIDE it, so the keyboard gutter stays pinned where a
+    // scrolled canvas would have carried it off screen.
+    const VB = free ? barsF : Math.min(barsF, Math.max(1, viewBarsMax()));
+    const B0 = free ? 0 : clamp(nv.bar0 || 0, 0, Math.max(0, barsF - VB));
+    const VSC = barsF > 0 ? (VB / barsF) : 1;            // cycle fraction per screen
+    const F0 = barsF > 0 ? (B0 / barsF) : 0;             // the fraction at the left edge
+    // ONE MAPPING, both ways — every x in this function goes through it, so a
+    // note, its hit box, the ruler and the playhead cannot disagree about
+    // where a moment sits.
+    const xF = (f) => GUT + ((f - F0) / VSC) * PLOT;
+    const fX = (x) => F0 + ((x - GUT) / Math.max(1, PLOT)) * VSC;
     // …and the plot's own box, so the playhead overlay reads one geometry
     // rather than re-deriving it. AFTER `PLOT` is declared: reading a `const`
     // above its declaration is a TDZ ReferenceError, and this function's
     // callers all swallow it — the drawing simply stopped, with `cv._cs = 0`
     // and no hit boxes as the only tell.
-    cv._plotGeo = { x0: GUT, w: PLOT, top: TOP, h: h, cyc: cyc, playing: playing };
+    cv._plotGeo = { x0: GUT, w: PLOT, top: TOP, h: h, cyc: cyc, playing: playing,
+                    vsc: VSC, f0: F0, barsF: barsF, vbars: VB, bar0: B0 };
     // the keys, and their lines across the plot — the black rows are what make
     // a piano roll readable at a glance
     // WHITE KEYS ARE THE GROUND and the black ones sit ON them, narrower —
@@ -3705,23 +5052,67 @@
     g.fillRect(0, TOP, GUT, h - TOP);
     for (let m = loM; m <= hiM; m++) {
       const y = yOf(m), pc = ((m % 12) + 12) % 12, blk = !!PC_BLACK[pc];
+      const inSc = SPC ? !!SPC[pc] : null;
+      // IT HAS TO BE A REAL SIGNAL IN BOTH DIRECTIONS. A wash over a near-white
+      // ground stays near-white however much of it you add (the first cut was
+      // a 0.22 purple over #e8e4f2 and measured 16 points away from the plain
+      // key — reported, correctly, as barely visible). So the in-scale key is
+      // TINTED and the out-of-scale one is GREYED, which is what puts a large
+      // delta between them rather than between one of them and the ground.
+      // FOUR key colours plus the two plain ones, all distinct, because with
+      // no key at all nothing is in or out and both must still read as keys.
       if (blk) {
-        g.fillStyle = '#15151f';
+        // A BLACK KEY IS LIFTED, never washed — it is already near the ground
+        // colour, so a tint on it is invisible.
+        g.fillStyle = inSc === true ? '#5b4a86' : inSc === false ? '#0e0e15' : '#15151f';
         g.fillRect(0, y + 0.5, Math.round(GUT * 0.62), Math.max(1, rowH - 1));
         // …and its row is tinted across the plot: the black rows are what let
         // you count intervals off the picture
         g.fillStyle = 'rgba(159,122,234,0.055)';
         g.fillRect(GUT, y, PLOT, Math.max(1, rowH));
-      } else if (!PC_BLACK[((m + 1) % 12 + 12) % 12]) {
+      } else if (inSc !== null) {
+        g.fillStyle = inSc ? '#c4a9f0' : '#8e8b9e';
+        g.fillRect(0, y + 0.5, GUT, Math.max(1, rowH - 1));
+      }
+      if (inSc === false) {
+        // …and the row it owns is knocked back across the plot, so a note that
+        // sits outside the key reads as outside it in the picture too.
+        g.fillStyle = 'rgba(8,8,14,0.38)';
+        g.fillRect(GUT, y, PLOT, Math.max(1, rowH));
+      }
+      if (!blk && !PC_BLACK[((m + 1) % 12 + 12) % 12]) {
         // a white key with a white key above it (B|C and E|F) — the only
         // places a keyboard shows a line
         g.strokeStyle = 'rgba(20,20,35,0.45)'; g.lineWidth = 1;
         g.beginPath(); g.moveTo(0, Math.round(y) + 0.5); g.lineTo(GUT, Math.round(y) + 0.5); g.stroke();
       }
+      // A LINE PER SEMITONE, ACROSS THE PLOT. The black rows were the only
+      // horizontal reference, so between two of them a note's row was a guess
+      // — and a guess is exactly what the selection marker was being read
+      // against ("this note looks a half-step below the one to its left").
+      // Faint, because there is one every 5-6px; the octave line is stronger,
+      // so the C's the gutter names are findable out in the plot too.
+      g.strokeStyle = (pc === 0) ? 'rgba(159,122,234,0.20)' : 'rgba(159,122,234,0.07)';
+      g.lineWidth = 1;
+      g.beginPath();
+      g.moveTo(GUT, Math.round(y) + 0.5); g.lineTo(w, Math.round(y) + 0.5); g.stroke();
+      if (selM != null && m === selM) {
+        g.fillStyle = '#7b4fd6';
+        g.fillRect(0, y + 0.5, GUT, Math.max(1, rowH - 1));
+        g.strokeStyle = '#fff'; g.lineWidth = 1;
+        g.strokeRect(0.5, y + 1, GUT - 1, Math.max(1, rowH - 2));
+        // …AND THE ROW ITSELF, all the way across. The selected note's own
+        // marker used to be a box inflated 4px above and below it — most of a
+        // row at this size — so against a plot with no horizontal lines it
+        // read as sitting a row off. The row band answers "which row is it
+        // on" outright, and cannot displace what it marks.
+        g.fillStyle = 'rgba(123,79,214,0.22)';
+        g.fillRect(GUT, y, PLOT, Math.max(1, rowH));
+      }
       // NAME THE C's — the one landmark that makes the rest countable.
       if (pc === 0 && rowH >= 5) {
         const fs = rowH >= 8 ? 8 : 7;
-        g.fillStyle = '#42425e';
+        g.fillStyle = (selM != null && m === selM) ? '#fff' : '#42425e';
         g.font = fs + 'px -apple-system, Segoe UI, sans-serif';
         g.fillText('C' + (Math.floor(m / 12) - 1), 1.5, y + Math.min(rowH - 1, fs));
       }
@@ -3734,8 +5125,9 @@
     // something was wide without knowing whether it was a beat or a bar.
     // Fractional cycles are drawn honestly (a ⅔-bar motif shows two thirds of a
     // bar, not a rounded one), and a FREE part has no bar grid at all.
-    const free = L.part && L.part.clock === 'free';
-    const barsF = Math.max(0.0625, (L.part && L.part.bars) || 1);
+    // `free` and `barsF` are hoisted to the viewport block above — the x
+    // mapping needs them, and two derivations of one number is how they drift.
+
     // ONE spelling of the length for the readout: whole bars read as "2 bars",
     // a fraction keeps its value rather than rounding to a bar it does not have.
     const barTxt = free ? 'free'
@@ -3752,14 +5144,14 @@
       const beats = Math.max(1, Math.round(barsF * 4));
       for (let i = 0; i <= beats; i++) {
         const atBar = (i % 4) === 0;
-        const x = Math.round(GUT + (i / beats) * PLOT) + 0.5;
+        const x = Math.round(xF(i / beats)) + 0.5;
         if (x > w) break;
         g.strokeStyle = atBar ? 'rgba(159,122,234,0.30)' : 'rgba(159,122,234,0.10)';
         g.beginPath();
-        g.moveTo(x, atBar ? 2 : TOP - 4); g.lineTo(x, h); g.stroke();
+        g.moveTo(x, atBar ? CHT + 2 : TOP - 4); g.lineTo(x, h); g.stroke();
         if (atBar && i < beats) {
           g.fillStyle = '#7a7a9c';
-          g.fillText(String(i / 4 + 1), Math.min(w - 8, x + 3), 10);
+          g.fillText(String(i / 4 + 1), Math.min(w - 8, x + 3), CHT + 10);
         }
       }
       // the gutter's floor, so the numbers read as a ruler rather than as
@@ -3767,15 +5159,73 @@
       g.strokeStyle = 'rgba(159,122,234,0.18)';
       g.beginPath(); g.moveTo(GUT, TOP + 0.5); g.lineTo(w, TOP + 0.5); g.stroke();
     }
+    // THE CHORD BAND. Each change gets the width it actually occupies, so a
+    // cadence reads as a cadence: a \u00bd-bar chord is half as wide as the bar
+    // beside it. A boundary is marked down the WHOLE plot, harder than a bar
+    // line, because that is where the harmony moves and it is the line the
+    // notes are read against. The name is clipped to its own segment rather
+    // than ellipsed — a chord narrower than its name still shows what it can,
+    // and the boundary lines say where it ends whatever fits.
+    if (cmarks) {
+      g.save();
+      for (let i = 0; i < cmarks.length; i++) {
+        const m2 = cmarks[i];
+        const x0 = Math.max(GUT, xF(m2.f0)), x1 = Math.min(w, xF(m2.f1));
+        if (!(x1 > x0)) continue;
+        g.fillStyle = (i % 2) ? 'rgba(159,122,234,0.10)' : 'rgba(159,122,234,0.05)';
+        g.fillRect(x0, 0, x1 - x0, CHT);
+        if (m2.f0 > 1e-4) {                       // the change itself, full height
+          const xb = Math.round(x0) + 0.5;
+          g.strokeStyle = 'rgba(159,122,234,0.45)'; g.lineWidth = 1;
+          g.beginPath(); g.moveTo(xb, 0); g.lineTo(xb, h); g.stroke();
+        }
+        if (m2.nm) {
+          g.save();
+          g.beginPath(); g.rect(x0, 0, Math.max(0, x1 - x0 - 1), CHT); g.clip();
+          g.fillStyle = '#9f8fd0';
+          g.font = '9px -apple-system, Segoe UI, sans-serif';
+          g.fillText(m2.nm, x0 + 3, 10);
+          g.restore();
+        }
+      }
+      g.strokeStyle = 'rgba(159,122,234,0.18)'; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(GUT, CHT + 0.5); g.lineTo(w, CHT + 0.5); g.stroke();
+      g.restore();
+    }
     // THE SELECTED BARS, tinted full-height so "which bars will re-roll" is on
     // the picture, not in a caption. Geometry recorded for the tap handler —
     // including the gutter, which is NOT part of the bar grid.
-    cv._barsGeo = free ? null : { barsF: barsF, w: PLOT, x0: GUT };
+    cv._barsGeo = free ? null : { barsF: barsF, w: PLOT, x0: GUT,
+                                  vsc: VSC, f0: F0, vbars: VB, bar0: B0 };
+    // WHAT THE WINDOW IS SHOWING, said outright — a panned window that does
+    // not say where it is looking is the state-you-cannot-see trap, and the
+    // ◀ ▶ pair is hidden when the whole part is already on screen (a control
+    // that cannot act).
+    try {
+      const nb = host.querySelector('.v2-vnav');
+      if (nb) {
+        const scroll = !free && barsF > VB + 1e-6;
+        nb.querySelectorAll('.v2-navx').forEach((b3) => { b3.style.display = scroll ? '' : 'none'; });
+        const fit = nb.querySelector('.v2-navfit');
+        if (fit) fit.style.display = (nv.dy || nv.rows || nv.bar0) ? '' : 'none';
+        const lab = nb.querySelector('.v2-navlab');
+        if (lab) lab.textContent = noteName(loM) + '\u2013' + noteName(hiM) +
+          (scroll ? (' \u00b7 bar ' + (Math.round(B0 * 10) / 10 + 1) + '\u2013' +
+                     (Math.round((B0 + VB) * 10) / 10)) : '');
+      }
+    } catch (e) {}
+    // WHAT THE CHORD BAND DREW, recorded like every other geometry here. A
+    // reader — the gate included — must ask the picture's own claim: a probe
+    // that re-walks the clock beside it proves only that the walk is
+    // self-consistent, and will eventually disagree with what was drawn.
+    cv._chordGeo = cmarks ? { at: cAt, top: CHT, marks: cmarks } : null;
+    try { multiSync(card, L); } catch (e) {}
     const sel0 = free ? null : bselOf(L);
     if (sel0) {
       g.fillStyle = 'rgba(159,122,234,0.13)';
       sel0.bars.forEach((b2) => {
-        const x0 = GUT + (b2 / barsF) * PLOT, x1 = Math.min(w, GUT + ((b2 + 1) / barsF) * PLOT);
+        const x0 = Math.max(GUT, xF(b2 / barsF)), x1 = Math.min(w, xF((b2 + 1) / barsF));
+        if (x1 <= x0) return;
         g.fillRect(x0, TOP, x1 - x0, h - TOP);
       });
     }
@@ -3784,47 +5234,104 @@
       try { vizChrome(card, L, E); } catch (e) {}
       g.fillStyle = '#6b6b8a'; g.font = '12px -apple-system, Segoe UI, sans-serif';
       g.fillText('silent for this cycle', GUT + 8, TOP + (h - TOP) / 2 + 4);
-      if (lab) lab.textContent = (L.part && L.part.kind === 'recorded' ? 'recorded' : 'live') + ' · ' + barTxt;
+      if (lab) lab.textContent = liveTxt(L, cfg) + ' · ' + barTxt +
+        ((cv._drawnPi >= 0 && Number.isFinite(L.partFor) && (cv._drawnPi | 0) !== (L.partFor | 0))
+          ? ' \u2014 \ud83d\udc41 showing another part' : '');
       return;
     }
+    // WHOSE RECORD YOU ARE LOOKING AT, said outright. In 👁 View the picture
+    // FOLLOWS PLAYBACK, so as the arrangement moves it swaps to another part's
+    // record — different notes, and (since parts are colour-coded) a different
+    // colour. Nothing said so, and it was reported as content being lost:
+    // "I drew some events on one part, then they appeared on the next part,
+    // then when it cycled back the events I drew were gone, and the colour is
+    // wrong". MEASURED: nothing is lost — the edited record kept all 20 notes
+    // through the whole cycle — the PICTURE had moved and the card did not say
+    // it had. A swap you can see but cannot name is the drum-solo bug in a
+    // third costume.
+    let otherTxt = '';
+    try {
+      if (cv._drawnPi >= 0 && Number.isFinite(L.partFor) && (cv._drawnPi | 0) !== (L.partFor | 0)) {
+        const cfg9 = _cfgOf();
+        const who = (cfg9 && typeof _ambPartLabel === 'function')
+          ? _ambPartLabel(cfg9, cv._drawnPi | 0) : ('part ' + ((cv._drawnPi | 0) + 1));
+        const mine = (cfg9 && typeof _ambPartLabel === 'function')
+          ? _ambPartLabel(cfg9, L.partFor | 0) : ('part ' + ((L.partFor | 0) + 1));
+        otherTxt = ' \u2014 \ud83d\udc41 showing ' + who + ', which is playing; your ' + mine +
+                   ' content is safe \u2014 \u270e Edit holds it';
+      }
+    } catch (e) {}
     const nh = Math.max(3, Math.min(8, rowH - 1));
     for (let i = 0; i < played.length; i++) {
       const n = played[i];
-      const x = GUT + (n.at / cyc) * PLOT;
-      const dw = Math.max(3, ((Math.max(20, n.durMs || 0) / 1000) / cyc) * PLOT);
+      const x = xF(n.at / cyc);
+      const dw = Math.max(3, ((Math.max(20, n.durMs || 0) / 1000) / cyc / VSC) * PLOT);
       // ON ITS OWN ROW: the note sits in the semitone it plays, so the keyboard
       // beside it names the pitch. (It was a continuous squeeze of the range,
       // which could put a C and a C♯ at the same height on a wide part.)
       const y = yOf(Math.round(mids[i])) + (rowH - nh) / 2;
-      g.fillStyle = 'rgba(159,122,234,0.55)';
-      g.strokeStyle = '#d6bcfa'; g.lineWidth = 1;
-      const ww = Math.min(dw, w - x);
+      g.fillStyle = NOTE_FILL;
+      g.strokeStyle = NOTE_EDGE; g.lineWidth = 1;
+      // CLIPPED TO THE VIEWPORT. With only part of the cycle on screen a note
+      // can start before the left edge or run past the right one — it is drawn
+      // as the part of itself that is visible, and one entirely outside is
+      // skipped so it cannot be hit-tested either (a hit box off screen is a
+      // tap target nobody can see).
+      if (x + dw <= GUT || x >= w) continue;
+      const xv = Math.max(GUT, x);
+      const ww = Math.min(dw - (xv - x), w - xv);
+      if (!(ww > 0)) continue;
       // THE NOTE BEING EDITED IS MARKED. With the editor inline the drawing
       // stays visible while you work, which is the point of it — but "Note 2 of
       // 4" names a position in a list, not a mark on the picture.
       const isSel = NE && NE.id === (L.id | 0) && Number.isFinite(n.nidx) && NE.idx === n.nidx;
+      // ⬚ GATHERED. A brighter fill and a ring — the same language the open
+      // note uses, because it is the same fact (this one is being worked on)
+      // and a gathering you cannot see is the drum-solo bug.
+      const isGrp = MGRP && Number.isFinite(n.nidx) && MGRP.has(n.nidx);
       if (isSel) {
         g.fillStyle = 'rgba(214,188,250,0.95)';
         g.strokeStyle = '#fff'; g.lineWidth = 1.5;
       }
+      // RIGHT-ANGLE CORNERS, deliberately (2026-09-09, user: "so it's easier
+      // to see visually how they line up on the grid"): a rounded end pulls
+      // the visible edge inboard of the note's true start, so a note ON a
+      // grid line read as slightly off it — the corner IS the onset.
+      if (isGrp && !isSel) {
+        g.fillStyle = _hexA(NOTE_EDGE, 0.85) || 'rgba(214,188,250,0.85)';
+        g.strokeStyle = '#fff'; g.lineWidth = 1.5;
+      }
       g.beginPath();
-      if (g.roundRect) g.roundRect(x, y, ww, nh, Math.min(3, nh / 2)); else g.rect(x, y, ww, nh);
+      g.rect(xv, y, ww, nh);
       g.fill(); g.stroke();
-      if (isSel) {
-        // a halo, so it reads at a glance on a small note
-        g.strokeStyle = 'rgba(214,188,250,0.45)'; g.lineWidth = 1;
+      if (isGrp && !isSel) {
+        g.strokeStyle = 'rgba(255,255,255,0.5)'; g.lineWidth = 1;
         g.beginPath();
-        if (g.roundRect) g.roundRect(x - 3, y - 4, ww + 6, nh + 8, 6); else g.rect(x - 3, y - 4, ww + 6, nh + 8);
+        g.rect(xv - 3, y - 4, ww + 6, nh + 8);
+        g.stroke();
+        g.fillStyle = NOTE_FILL;
+        g.strokeStyle = NOTE_EDGE; g.lineWidth = 1;
+      }
+      if (isSel) {
+        // MARKED WITHOUT BEING MOVED. This was a box inset by 3px and 4px —
+        // and 4px is most of a 5-6px row, so the selected note read as sitting
+        // a row away from where it is (reported as "it jumps when selected").
+        // The row band above says which row, so the note itself only needs a
+        // bright edge ON its own rect: nothing about the selection changes a
+        // pixel of where the note is drawn.
+        g.strokeStyle = 'rgba(255,255,255,0.85)'; g.lineWidth = 1;
+        g.beginPath();
+        g.rect(xv - 0.5, y - 0.5, ww + 1, nh + 1);
         g.stroke();
         cv._sel = n.nidx;
-        g.fillStyle = 'rgba(159,122,234,0.55)';
-        g.strokeStyle = '#d6bcfa'; g.lineWidth = 1;
+        g.fillStyle = NOTE_FILL;
+        g.strokeStyle = NOTE_EDGE; g.lineWidth = 1;
       }
       // WHERE EACH NOTE IS, so a tap can find it. `t`/`midi` ride along as
       // well as the index: locking a live take re-sorts the notes, so the note
       // you tapped is re-found by WHAT IT IS rather than by where it sat in an
       // array that no longer exists.
-      cv._hits.push({ x, y, w: ww, h: nh, i: (Number.isFinite(n.nidx) ? n.nidx : i),
+      cv._hits.push({ x: xv, y, w: ww, h: nh, i: (Number.isFinite(n.nidx) ? n.nidx : i),
                       t: n.at / cyc, midi: mids[i] });
     }
     if (lab) {
@@ -3856,7 +5363,13 @@
                     '-bar part — ⇄ Sync to fit it';
         }
       } catch (e) {}
-      lab.textContent = (rec2 ? 'recorded' : 'live') + ' · ' +
+      // STATIC or LIVE leads the line. It used to say 'recorded' or 'live',
+      // which named where the material CAME FROM and said it in the vocabulary
+      // of liveness — and measurably wrong: a 'live' part plays the identical
+      // notes every cycle unless something stochastic is on. The first token
+      // now answers "does this change on iterations", and NAMES what makes it
+      // live rather than hiding the reason in a title a phone never shows.
+      lab.textContent = liveTxt(L, cfg) + ' · ' +
         played.length + ' note' + (played.length === 1 ? '' : 's') + ' · ' + barTxt +
         ' · ' + (Math.round(cyc * 10) / 10) + 's' +
         // NAME THE TAKE. "one take of many" was true and unhelpful — you could
@@ -3868,7 +5381,7 @@
                 (L.part.takeb ? ' · retaken: bars ' + Object.keys(L.part.takeb).map((b3) => (b3 | 0) + 1).sort((x, y) => x - y).join('+') : '') +
                 (bselOf(L) ? ' · retaking ' + bselLabel(bselOf(L))
                            : ' · tap a bar to retake just it') +
-                (fromPv ? ' · as previewed' : '')) + overTxt;
+                (fromPv ? ' · as previewed' : '')) + overTxt + otherTxt;
     }
     try { vizChrome(card, L, E); } catch (e) {}
   }
@@ -3936,7 +5449,7 @@
     }
     return 'a run of single notes';
   }
-  function rulesText(L, withTail) {
+  function rulesText(L) {
     const p = L.part, r = p.rhythm || {}, t = p.pitch || {};
     const n = (x) => (x | 0);
     const plural = (k, w) => k + ' ' + w + (k === 1 ? '' : 's');
@@ -3985,22 +5498,19 @@
     if (harm) pt += ', plus ' + plural(harm, 'harmony part');
     const bars = +p.bars || 1;
     const len = 'over ' + (Math.round(bars * 100) / 100) + ' bar' + (bars === 1 ? '' : 's');
-    // THE PART NOBODY CAN SEE IN ONE DRAWING: a live part is re-rolled, so the
-    // picture is one take of many; a recorded one is exactly what plays.
-    const tail = (withTail === false) ? ''
-      : (p.kind === 'recorded') ? '. Plays exactly these notes.'
-      : (p.vary
-          ? '. Re-rolled every cycle — the drawing is take ' + (V2.takeOf(L) + 1) + '.'
-          : '. Plays take ' + (V2.takeOf(L) + 1) + ' — what the drawing shows. \ud83c\udfb2 New take rolls another.');
+    // NO TAIL. This line used to end by saying whether the drawing is what
+    // plays or one take of many — a fact that now lives on the Every cycle
+    // toggle directly beneath it, whose FACE says which mode is in force, and
+    // on the drawing's own readout, which names the take. Three surfaces for
+    // one fact is how they come to disagree; a WRITTEN part states its own
+    // contract in `LOCKED` below instead.
     // LEAD WITH THE SHAPE. The parameters answer "how", and only after you
     // already know WHAT is being made.
-    return shapeOf(L) + ' \u2014 ' + rh + ', ' + pt + ', ' + len + tail;
+    return shapeOf(L) + ' \u2014 ' + rh + ', ' + pt + ', ' + len;
   }
   function matProv(L) {
     const p = L.part, r = p.rhythm || {}, t = p.pitch || {};
-    // the LOCKED lines below state the contract themselves, so they take the
-    // description WITHOUT the re-rolled/plays-exactly tail
-    const rules = rulesText(L, true), rulesBare = rulesText(L, false);
+    const rulesBare = rulesText(L);
     const M = { sustain: '\u25ac Sustained', arp: '\u27f3 Arpeggio', roll: '\ud83c\udfb2 Roll',
                 mixed: '\u2687 Mixed', ground: '\u26f0 Groundwork' };
     const v1 = (p.mat && p.mat.indexOf('v1:') === 0) ? p.mat.slice(3) : null;
@@ -4021,7 +5531,7 @@
       const n = (p.notes || []).length;
       const nn = n + ' note' + (n === 1 ? '' : 's');
       if (p.made === 'compose') return { key: 'compose', txt: '\u270e Composed \u00b7 WRITTEN \u2014 ' + nn + ' you drew' };
-      if (p.made === 'phrase') return { key: 'adopt', txt: '\u266a Phrase' + (p.from ? ' \u201c' + p.from + '\u201d' : '') + ' \u00b7 WRITTEN \u2014 ' + nn };
+      if (p.made === 'phrase') return { key: 'adopt', txt: '\u266a From the Bank' + (p.from ? ' \u201c' + p.from + '\u201d' : '') + ' \u00b7 WRITTEN \u2014 ' + nn };
       if (p.made === 'take') {
         // LEAD with the material — burying it mid-sentence is why "still not
         // clear what Material we're using" was a fair report of the first cut
@@ -4032,9 +5542,9 @@
       }
       return { key: null, txt: 'WRITTEN \u2014 ' + nn + ', played as they are' };
     }
-    if (v1) return { key: p.mat, txt: 'seeded like a v1 ' + v1 + ' \u00b7 GENERATED \u2014 ' + rules };
-    if (mat) return { key: mat, txt: M[mat] + ' \u00b7 GENERATED \u2014 ' + rules };
-    return { key: null, txt: 'GENERATED \u2014 ' + rules };
+    if (v1) return { key: p.mat, txt: 'seeded like a v1 ' + v1 + ' \u00b7 GENERATED \u2014 ' + rulesBare };
+    if (mat) return { key: mat, txt: M[mat] + ' \u00b7 GENERATED \u2014 ' + rulesBare };
+    return { key: null, txt: 'GENERATED \u2014 ' + rulesBare };
   }
   // THE GENERATED DOOR AND ITS PANEL, kept current. The door's own face names
   // the shape in force, so the row still answers "what is this" without being
@@ -4042,36 +5552,65 @@
   function genSync(card, L) {
     const pv = matProv(L);
     const M = { sustain: '\u25ac Sustained', arp: '\u27f3 Arpeggio',
-                roll: '\ud83c\udfb2 Roll', mixed: '\u2687 Mixed' };
+                roll: '\ud83c\udfb2 Roll', mixed: '\u2687 Mixed',
+                ground: '\u26f0 Groundwork' };
     const face = card.querySelector('.v2-genface');
     if (face) {
       const txt = M[pv.key] || (L.part.kind === 'recorded' ? 'written \u2014 not generated'
                                                           : 'choose & tune');
       if (face.textContent !== txt) face.textContent = txt;
     }
-    const gwf = card.querySelector('.v2-gwface');
-    if (gwf) {
-      const txt2 = (pv.key === 'ground') ? '\u2713 in use' : 'play the changes';
-      if (gwf.textContent !== txt2) gwf.textContent = txt2;
-    }
-    const gws = card.querySelector('.v2-gwsays');
-    if (gws) {
-      const sh = L.part.shape || {};
-      const hold = (sh.lenRatio | 0) || 100;
-      const slip = (sh.slip | 0);
-      const txt3 = (pv.key === 'ground')
-        ? 'Plays the changes \u2014 ' + shapeOf(L) + ', held ' + hold + '% of the way to the next' +
-          (slip ? ', strummed' : '') + '. With no progression the bar line is the change.'
-        : 'Plays the changes \u2014 a note on the 1 of every change, held until the next one.';
-      if (gws.textContent !== txt3) gws.textContent = txt3;
-    }
     try { gwPerSync(card, L); } catch (e) {}
     const says = card.querySelector('.v2-gensays');
     if (says) {
+      // WHICH PART THIS GENERATES FOR, WITH THE ARITHMETIC (stated as the
+      // contract, 2026-09-08: "it should say WHICH part you're generating
+      // for… it should be evident if how many notes you're choosing lines up
+      // with the part length"). The panel tuned "How many: 9" with nothing
+      // saying nine of what, over what.
+      let forTxt = '', mathTxt = '';
+      try {
+        const E3 = (typeof _masterEng !== 'undefined') ? _masterEng : null;
+        const cfg3 = E3 && E3.getCfg && E3.getCfg();
+        const rgs3 = (cfg3 && typeof _ambGridRanges === 'function') ? (_ambGridRanges(cfg3) || []) : [];
+        const pi3 = Number.isFinite(L.partFor) ? (L.partFor | 0)
+          : ((typeof _ambCurPartNow === 'function' && rgs3.length) ? _ambCurPartNow(E3, cfg3, rgs3) : -1);
+        if (pi3 >= 0 && typeof _ambPartLabel === 'function') {
+          const pb3 = (typeof _ambLenPartBars === 'function') ? +_ambLenPartBars(cfg3, pi3) : 0;
+          forTxt = ' For ' + _ambPartLabel(cfg3, pi3) +
+                   (pb3 > 0 ? ' (' + (Math.round(pb3 * 100) / 100) + ' bars)' : '') + '.';
+          const cb0 = +(L.part.bars || 1);
+          if (pb3 > 0 && Math.abs(pb3 - cb0) > 1e-6) {
+            forTxt += ' This cycle is ' + cb0 + ' of its ' + (Math.round(pb3 * 100) / 100) +
+                      ' bars \u2014 \u21c4 Sync fits it.';
+          }
+        }
+      } catch (e) {}
+      try {
+        const rh3 = L.part.rhythm || {};
+        const cb3 = Math.max(0.125, +(L.part.bars || 1));
+        let on3 = 0;
+        if (rh3.kind === 'euclid' || rh3.kind === 'drawn') on3 = (rh3.pulses | 0) || 0;
+        else if (rh3.kind === 'pulse') on3 = (rh3.n | 0) || 0;
+        if (on3 > 0 && L.part.kind !== 'recorded') {
+          const per = Math.round((on3 / cb3) * 10) / 10;
+          mathTxt = ' How many ' + on3 + ' over ' + (Math.round(cb3 * 100) / 100) +
+                    ' bar' + (cb3 === 1 ? '' : 's') + ' \u2248 ' + per + ' notes/bar.';
+          // the GRID must divide the bars or nothing can land on a bar line
+          const st3 = (rh3.steps | 0) || 0;
+          const bi3 = Math.max(1, Math.round(cb3));
+          if (st3 > 0 && Math.abs(cb3 - bi3) < 1e-6 && st3 % bi3 !== 0) {
+            const fix3 = Math.max(bi3, Math.min(32, bi3 * Math.max(1, Math.round(st3 / bi3))));
+            mathTxt += ' \u26a0 Grid ' + st3 + ' over ' + bi3 + ' bars = ' +
+                       (Math.round((st3 / bi3) * 100) / 100) +
+                       ' steps/bar \u2014 notes cannot land on bar lines; try ' + fix3 + '.';
+          }
+        }
+      } catch (e) {}
       const txt = (L.part.kind === 'recorded')
         ? 'This part is WRITTEN \u2014 choosing a shape hands it back to the rules.'
         : shapeOf(L) + ' \u2014 ' + (L.part.bars || 1) + ' bar' + ((L.part.bars || 1) === 1 ? '' : 's') +
-          ', re-rolled every cycle.';
+          ', re-rolled every cycle.' + forTxt + mathTxt;
       if (says.textContent !== txt) says.textContent = txt;
     }
   }
@@ -4159,6 +5698,12 @@
     host.querySelectorAll('.v2-layer:not(.collapsed)').forEach((card) => {
       const id = card.getAttribute('data-v2id') | 0;
       const L = list.find((x) => x && (x.id | 0) === id); if (!L) return;
+      // NOT WHILE A NOTE IS BEING DRAGGED. This frame redraws the roll once per
+      // cycle, and a LIVE part rolls fresh notes each cycle — so the blocks
+      // genuinely move under the finger while you hold one. Reported as the
+      // note "jumping around like crazy"; the gesture owns the picture until
+      // it is finished.
+      if (DRAG && DRAG.id === id) return;
       const cv = card.querySelector('.v2-vizcv');
       const ph = card.querySelector('.v2-vizph');
       if (!cv || !ph || !ph.getContext) return;
@@ -4179,13 +5724,24 @@
       try {
         const wnd = V2.cycleWindowAt(L, E.getCfg ? E : E, cfg, now, st);
         cs = wnd.cs; cycNow = wnd.cyc;
+        // THE SWEEP AND THE DRAWING MUST MAKE THE SAME CALL. In EDIT mode with
+        // another part sounding the picture HOLDS the edited record (see
+        // `vizFollows`) — nothing is playing it, so there is no position to
+        // mark, and comparing this window's `cs` against the held drawing's
+        // would re-trigger `drawPartViz` every frame (the flashing bug).
+        if (!vizFollows(L, E, cfg, wnd.cs, wnd.pi)) { clear(); return; }
       } catch (e) { cs = st.startAt + Math.floor((now - st.startAt) / cyc) * cyc; }
       const frac = (now - cs) / cycNow;
       if (!(frac >= 0 && frac <= 1)) { clear(); return; }
       // THE CYCLE MOVED — redraw the roll, at most once per cycle. A live part
       // re-rolls, so the picture has to follow or the lit notes are last
       // cycle's. `drawPartViz` picks the sounding cycle itself while playing.
-      if (!Number.isFinite(cv._cs) || Math.abs(cv._cs - cs) > 1e-4) {
+      // The tolerance is 20ms, NOT 1e-4: the drawing samples its own clock a
+      // hair apart from this frame's, and a sub-frame disagreement must read
+      // as "same cycle" — at 1e-4 any residual jitter re-triggered the redraw
+      // every frame (the flashing bug's other half). A real cycle move is at
+      // least a chord span, orders of magnitude above 20ms.
+      if (!Number.isFinite(cv._cs) || Math.abs(cv._cs - cs) > 0.02) {
         try { drawPartViz(card, L, E); } catch (e) {}
       }
       const dpr = Math.min(3, (window.devicePixelRatio || 1));
@@ -4205,15 +5761,29 @@
       g.clearRect(0, 0, w, h);
       ph._on = true;
       const x0 = geo.x0, PLOT = geo.w, TOP = geo.top;
-      const x = x0 + frac * PLOT;
+      // THE SAME VIEWPORT THE DRAW USED, read from its own published geometry
+      // — re-deriving it here is how the sweep and the notes would come to
+      // disagree about where a moment is (and with only part of the cycle on
+      // screen the sweep has somewhere to be that is off it).
+      const VSC = (geo.vsc > 0) ? geo.vsc : 1, F0 = geo.f0 || 0;
+      const xF = (f) => x0 + ((f - F0) / VSC) * PLOT;
+      const x = xF(frac);
+      const onScreen = (x >= x0 - 0.5 && x <= x0 + PLOT + 0.5);
       // THE CURRENT BAR, tinted — "current bar and note". A bar is what the
-      // ruler above counts, so it is the unit to mark.
-      const barsF = Math.max(0.0625, (L.part && L.part.bars) || 1);
+      // ruler above counts, so it is the unit to mark — READ FROM THE RULER
+      // (`cv._barsGeo`, published by the draw) rather than re-derived from
+      // `L.part.bars`: with a per-part layer following another part those are
+      // different numbers, and the tint would mark a bar the ruler never drew.
+      const bg0 = cv._barsGeo;
+      const barsF = Math.max(0.0625,
+        (bg0 && bg0.barsF > 0 ? bg0.barsF : ((L.part && L.part.bars) || 1)));
       if (!(L.part && L.part.clock === 'free')) {
         const b = Math.floor(frac * barsF);
-        const bx0 = x0 + (b / barsF) * PLOT, bx1 = x0 + ((b + 1) / barsF) * PLOT;
-        g.fillStyle = 'rgba(72,187,120,0.07)';
-        g.fillRect(bx0, TOP, Math.min(bx1, x0 + PLOT) - bx0, h - TOP);
+        const bx0 = Math.max(x0, xF(b / barsF)), bx1 = Math.min(x0 + PLOT, xF((b + 1) / barsF));
+        if (bx1 > bx0) {
+          g.fillStyle = 'rgba(72,187,120,0.07)';
+          g.fillRect(bx0, TOP, bx1 - bx0, h - TOP);
+        }
       }
       // …AND THE NOTES UNDER IT. Green, because green means "sounding"
       // everywhere else in this app — the one hue the palette reserves.
@@ -4224,12 +5794,15 @@
         g.fillStyle = 'rgba(72,187,120,0.85)';
         g.strokeStyle = '#c6f6d5'; g.lineWidth = 1;
         g.beginPath();
-        if (g.roundRect) g.roundRect(b2.x, b2.y, b2.w, b2.h, Math.min(3, b2.h / 2));
-        else g.rect(b2.x, b2.y, b2.w, b2.h);
+        // square, matching the note geometry exactly — the lit copy must sit
+        // byte-on-top of the note it lights
+        g.rect(b2.x, b2.y, b2.w, b2.h);
         g.fill(); g.stroke();
       }
       g.strokeStyle = 'rgba(198,246,213,0.9)'; g.lineWidth = 1.5;
-      g.beginPath(); g.moveTo(x, TOP); g.lineTo(x, h); g.stroke();
+      // …only when the moment it marks is actually in view: a sweep pinned to
+      // the edge of a panned window would claim a position it is not at.
+      if (onScreen) { g.beginPath(); g.moveTo(x, TOP); g.lineTo(x, h); g.stroke(); }
       // THE TIME THE SWEEP WAS DRAWN FOR — so "is this the audible clock or the
       // schedule one" is answerable by measurement rather than by reading the
       // code (it was the schedule clock, and on the shell's broadcast that is
@@ -4262,7 +5835,9 @@
     } catch (e) {}
   };
   // the mode is module state, so the engine side needs a setter for it
-  try { V2.vizMode = (L, m) => { if (L) VIEWM.set(L.id | 0, m === 'view' ? 'view' : 'edit'); }; } catch (e) {}
+  try { V2.vizMode = (L, m) => setMode(L, m); } catch (e) {}
+  try { V2.modeOf = (L) => modeOf(L); } catch (e) {}
+  try { V2.multiSel = (L) => [...(mselOf(L) || [])]; } catch (e) {}
   try { V2.vizModeOf = (L) => vizMode(L); } catch (e) {}
   // A MATERIAL PRESS DOES ONE OF THREE THINGS, and the card never said which:
   // ADOPT (already in that mode — nothing changes), RESTORE (a material you
@@ -4270,12 +5845,17 @@
   // FRESH (new rules, new notes). Reported as "it feels nondeterministic as to
   // when a new take is rolled and why". The first is silent; the other two
   // REPLACE what you are looking at, so they ask first and NAME the outcome.
-  const MAT_LABEL = { sustain: '\u25ac Sustained', arp: '\u27f3 Arpeggio',
+  const MAT_LABEL = { ground: '\u26f0 Groundwork',
+    sustain: '\u25ac Sustained', arp: '\u27f3 Arpeggio',
                       roll: '\ud83c\udfb2 Roll', mixed: '\u2687 Mixed',
                       ground: '\u26f0 Groundwork' };
   function matWillDo(L, which) {
     const p = (L && L.part) || {};
-    if (p.kind !== 'recorded' && matProv(L).key === which) return 'adopt';
+    // ADOPT needs the stamp AND the rules: a stamp survives edits, so a
+    // 'ground' part whose rhythm was later set to Pulse must REBUILD on the
+    // next \u26f0 press, not silently keep playing one sustained chord.
+    if (p.kind !== 'recorded' && matProv(L).key === which &&
+        (!V2.matShapeOk || V2.matShapeOk(p, which))) return 'adopt';
     return (p.mem && p.mem[which]) ? 'restore' : 'build';
   }
   function matSwitchOK(L, which) {
@@ -4308,9 +5888,13 @@
     // was locked. Reported as "I thought using Rolled WAS generating parts?"
     // — a lit chip alone cannot tell those apart.
     const lk = L.part.kind === 'recorded';
-    const map = { compose: '.v2-compose', adopt: '.v2-adopt',
+    // `adopt` is deliberately absent: a take taken from the Bank has no door
+    // in this row to light. Its provenance is stated in the hint line below,
+    // which is where a fact that is not a mode belongs.
+    const map = { compose: '.v2-compose',
       sustain: '.v2-mkpart[data-mk="sustain"]', arp: '.v2-mkpart[data-mk="arp"]',
-      mixed: '.v2-mkpart[data-mk="mixed"]', roll: '.v2-rollrun' };
+      mixed: '.v2-mkpart[data-mk="mixed"]', ground: '.v2-mkpart[data-mk="ground"]',
+      roll: '.v2-rollrun' };
     Object.keys(map).forEach((k) => {
       const b2 = card.querySelector(map[k]);
       if (b2) { b2.classList.toggle('on', pv2.key === k); b2.classList.toggle('v2-matlock', lk); }
@@ -4318,11 +5902,11 @@
     // THE ROW'S OWN DOORS: ⚙ Shape owns the four generated shapes, ⛰ Groundwork
     // owns itself. Without these the row lit nothing at all for a generated
     // part — the four buttons the map names live inside the Shape PANEL now.
-    const SHAPES = { sustain: 1, arp: 1, roll: 1, mixed: 1 };
+    const SHAPES = { sustain: 1, arp: 1, roll: 1, mixed: 1, ground: 1 };
     const genLit = SHAPES[pv2.key] ? true
-      : (pv2.key === 'ground' || pv2.key === 'compose' || pv2.key === 'adopt') ? false
+      : (pv2.key === 'compose' || pv2.key === 'adopt') ? false
       : L.part.kind === 'live';        // a hand-built shape is still behind this door
-    [['.v2-genbtn', genLit], ['.v2-gwbtn', pv2.key === 'ground']].forEach(([sel, on]) => {
+    [['.v2-genbtn', genLit]].forEach(([sel, on]) => {
       const b2 = card.querySelector(sel);
       if (b2) { b2.classList.toggle('on', !!on); b2.classList.toggle('v2-matlock', lk && !!on); }
     });
@@ -4416,7 +6000,20 @@
     return out;
   }
   function saveTakeFn(E, L) {
-    const steps = notesToSteps(L);
+    // A GENERATED PART CAN BE BANKED WITHOUT BEING FROZEN. The bank takes a
+    // take whatever made it — that is why it is not filed under WRITTEN — and
+    // requiring 🔒 Lock first made "save this one" also mean "and stop
+    // generating", which is a different decision. The notes come from the SAME
+    // helper 🔒 uses, so the banked copy is what Lock would have written, and
+    // `L.part` is not touched: a shim carries them to `notesToSteps`.
+    let src = L;
+    if (L.part.kind !== 'recorded') {
+      const notes = V2.takeNotesNow(E, L);
+      if (!notes) return null;
+      src = Object.assign({}, L, { part: Object.assign({}, L.part, {
+        kind: 'recorded', notes: notes, transpose: L.part.transpose | 0 }) });
+    }
+    const steps = notesToSteps(src);
     if (!steps) return null;
     let dflt = (L.name || 'take');
     try { if (typeof uniqueSeqName === 'function') dflt = uniqueSeqName(dflt); } catch (e) {}
@@ -4554,11 +6151,39 @@
   function neOpen(E, L, idx, card) {
     NE = { id: L.id | 0, idx: idx | 0 };
     try { drawPartViz(card, L, E); } catch (e) {}
-    // bring it into view — it opens below the fold on a phone when the card is
-    // scrolled to the top of the drawing
+    // bring its HEAD into view — it opens below the fold on a phone when the
+    // card is scrolled to the top of the drawing. NOT `scrollIntoView`: the
+    // editor is TALLER than a phone viewport, so `nearest` aligns its top and
+    // scrolls the DRAWING clean off the screen (measured 503px for one tap —
+    // "the screen jumps") — which defeats the inline editor's whole reason to
+    // exist, seeing the note while you edit it. Reveal the least that shows
+    // the editor has opened; the note you tapped stays where your eye is.
     try {
       const host = card && card.querySelector('.v2-neinline');
-      if (host) host.scrollIntoView({ block: 'nearest' });
+      if (host) {
+        const r = host.getBoundingClientRect();
+        const vh = window.innerHeight || 780;
+        // the visible band is the SCROLLER's, not the viewport's: when the
+        // panel scrolls inside `#mix-view`, an editor below the container's
+        // bottom edge is clipped however much of the viewport remains
+        const sc = scrollerOf(host);
+        let limit = vh;
+        try {
+          const sr = sc.getBoundingClientRect ? sc.getBoundingClientRect() : null;
+          if (sr && sr.bottom > 0) limit = Math.min(vh, sr.bottom);
+        } catch (e) {}
+        const over = r.top - (limit - 200);
+        if (over > 0) {
+          // the nearest scroller first, any clamped remainder to the document
+          const was = sc.scrollTop;
+          sc.scrollTop = was + over;
+          const rest = over - (sc.scrollTop - was);
+          if (rest > 1) {
+            const d2 = document.scrollingElement || document.documentElement;
+            if (d2 && d2 !== sc) d2.scrollTop += rest;
+          }
+        }
+      }
     } catch (e) {}
   }
   // THE FALLBACK a field takes when the note states nothing — shown so the
@@ -4568,12 +6193,94 @@
     return { atk: num(inst.attack, 10), dec: num(inst.decay, 200),
              sus: num(inst.sustain, 70), rel: num(inst.release, 600) };
   }
+  // ONE GRID for everything that places a note by hand — the editor's Position
+  // and Length sliders, the drag, the resize and the add. Two notions of "the
+  // grid" is how a dragged note and a typed one come to land on different
+  // beats.
   function neGrid(L) {
-    return { gridN: clamp((L.part.rhythm && L.part.rhythm.steps | 0) || 16, 1, 64),
+    return { gridN: V2.gridCells(L), perBar: V2.gridPerBar(L),
              bars: Math.max(0.0625, L.part.bars || 1) };
+  }
+  // THE PITCH THE EDITOR SHOWS. On a harmony-remapping part (diatonic /
+  // chordlock) the stored midi is NOT what sounds — the remap sits between
+  // them, and it is non-monotonic (the octave-hugging clamp), so a ± stepper
+  // over the STORED value moved the drawn block "around like crazy" (field
+  // report). The Note control therefore shows and edits the SOUNDING pitch,
+  // read off the drawn note itself (hit boxes carry it); the first edit PINS
+  // the note (`hx`), after which stored IS sounding and ± is linear.
+  function neShownMidi(host, L, idx) {
+    const n = L.part && Array.isArray(L.part.notes) && L.part.notes[idx];
+    if (!n) return 0;
+    if (!n.hx && (L.harmony === 'diatonic' || L.harmony === 'chordlock')) {
+      try {
+        const card = host.closest('.v2-layer');
+        const cv = card && card.querySelector('.v2-vizcv');
+        const hb = cv && (cv._hits || []).find((x) => x.i === idx);
+        if (hb && Number.isFinite(hb.midi)) return Math.round(hb.midi);
+      } catch (e) {}
+    }
+    return n.midi | 0;
+  }
+  // ── \u2295 EXPAND — chords that CONTAIN the open note ───────────────────
+  // "Build a harmony/chord on top of that selected note by selecting a chord
+  // the note could possibly be in — as the tonic or the flat 5th or 9th or
+  // whatever." Every (root × quality) whose pitch classes hold the note's
+  // SOUNDING pitch class is offered, labelled with the note's role in it.
+  // REAL BUTTONS, not a native select: the in-key/out-of-key split is COLOR
+  // (green = in the key, orange = borrowed) and option styling is not
+  // dependable across platforms (the documented rule). The key comes from
+  // `V2.scaleAt` at the drawing's own anchor — the same call that lights the
+  // keyboard's in-scale keys, so the two can never disagree.
+  const NEX_QUALS = [
+    ['maj', [0, 4, 7]], ['m', [0, 3, 7]], ['dim', [0, 3, 6]], ['aug', [0, 4, 8]],
+    ['sus2', [0, 2, 7]], ['sus4', [0, 5, 7]], ['7', [0, 4, 7, 10]], ['maj7', [0, 4, 7, 11]],
+    ['m7', [0, 3, 7, 10]], ['m7\u266d5', [0, 3, 6, 10]], ['dim7', [0, 3, 6, 9]],
+    ['6', [0, 4, 7, 9]], ['m6', [0, 3, 7, 9]], ['9', [0, 2, 4, 7, 10]],
+    ['maj9', [0, 2, 4, 7, 11]], ['m9', [0, 2, 3, 7, 10]], ['add9', [0, 2, 4, 7]]];
+  const NEX_ROLE = { 0: 'root', 1: '\u266d9', 2: '9th', 3: '\u266d3', 4: '3rd', 5: '11th',
+    6: '\u266d5', 7: '5th', 8: '\u266f5', 9: '6th', 10: '\u266d7', 11: 'maj7' };
+  const NEX_PCN = ['C', 'C\u266f', 'D', 'D\u266f', 'E', 'F', 'F\u266f', 'G', 'G\u266f', 'A', 'A\u266f', 'B'];
+  function nexBuild(E, host, L, idx) {
+    const nx = host.querySelector('.v2-nex'); if (!nx) return;
+    const m = neShownMidi(host, L, idx);
+    const pc = ((m % 12) + 12) % 12;
+    let keyPcs = null;
+    try {
+      const card = host.closest('.v2-layer');
+      const cv = card && card.querySelector('.v2-vizcv');
+      keyPcs = V2.scaleAt(E, E.getCfg(), (cv && cv._cs) || 0, L);
+    } catch (e) { keyPcs = null; }
+    const opts = [];
+    for (let r = 0; r < 12; r++) {
+      NEX_QUALS.forEach(([qn, ivs]) => {
+        const iv = ((pc - r) + 12) % 12;
+        if (ivs.indexOf(iv) < 0) return;
+        const inKey = keyPcs ? ivs.every((k) => keyPcs[(r + k) % 12]) : null;
+        opts.push({ r, qn, ivs, iv, inKey });
+      });
+    }
+    // the note's ROLE orders the list — the chords it is the root of first,
+    // then as the 3rd, the 5th, the colours last
+    opts.sort((a, b) => (a.iv - b.iv) || (a.r - b.r) || (a.ivs.length - b.ivs.length));
+    const pcn = (r) => (typeof _pcName === 'function') ? _pcName(r) : NEX_PCN[r];
+    const nameOf = (o) => pcn(o.r) + (o.qn === 'maj' ? '' : o.qn);
+    const btn = (o) => '<button type="button" class="v2-nexbtn' +
+      (o.inKey === false ? ' v2-nex-out' : (o.inKey ? ' v2-nex-in' : '')) + '" data-na="nexpick"' +
+      ' data-root="' + o.r + '" data-iv="' + o.iv + '" data-ivs="' + o.ivs.join(',') + '"' +
+      ' title="Add the other tones of ' + esc(nameOf(o)) + ' at this note\u2019s position.">' +
+      esc(nameOf(o)) + ' <span class="v2-nexrole">\u00b7 ' + (NEX_ROLE[o.iv] || o.iv) + '</span></button>';
+    const ins = opts.filter((o) => o.inKey), outs = opts.filter((o) => o.inKey === false);
+    const neut = opts.filter((o) => o.inKey == null);
+    nx.innerHTML =
+      '<div class="v2-nesec">\u2295 Expand \u2014 chords holding ' + esc(noteName(m)) + '</div>' +
+      (ins.length ? '<div class="v2-nexgrp v2-nexgrp-in">In the key</div><div class="v2-nexrow">' + ins.map(btn).join('') + '</div>' : '') +
+      (outs.length ? '<div class="v2-nexgrp v2-nexgrp-out">Outside the key</div><div class="v2-nexrow">' + outs.map(btn).join('') + '</div>' : '') +
+      (neut.length ? '<div class="v2-nexrow">' + neut.map(btn).join('') + '</div>' : '');
+    nx.hidden = false;
   }
   function neBuild(host, L, idx) {
     const p = L.part, n = p.notes[idx], g = neGrid(L), fb = neFallback(L);
+    const shownM = neShownMidi(host, L, idx);
     const stepPos = Math.round(n.t * g.gridN), stepLen = Math.max(1, Math.round(n.dur * g.gridN));
     const sfSl = (sf, label, min, max, val, hint) => {
       const h = (typeof _ambSl === 'function') ? _ambSl(label, 'v2-ne-' + (L.id | 0) + '-' + sf, min, max, val, hint) : '';
@@ -4581,18 +6288,28 @@
     };
     host.innerHTML =
       '<div class="v2-nehead">' +
-        '<span class="v2-netitle">Note ' + (idx + 1) + ' of ' + p.notes.length + ' \u00b7 ' + esc(noteName(n.midi)) + '</span>' +
+        '<span class="v2-netitle">Note ' + (idx + 1) + ' of ' + p.notes.length + ' \u00b7 ' + esc(noteName(shownM)) + '</span>' +
         // Remove sits in the head, left of the close (user-placed, 2026-09-05)
         // — still the house destructive red, never beside the benign pair.
         '<button type="button" class="ambient-seg v2-nerm" data-na="rm">\u2715 Remove note</button>' +
         '<button type="button" class="v2-neclose" data-na="done" aria-label="Close">\u2715</button>' +
       '</div>' +
       ((typeof _ambStep === 'function')
-        ? _ambStep('Note', 'v2-ne-' + (L.id | 0) + '-midi', 0, 127, n.midi, noteName(n.midi))
+        ? _ambStep('Note', 'v2-ne-' + (L.id | 0) + '-midi', 0, 127, shownM, noteName(shownM))
             .replace('class="ambient-step-inp"', 'class="ambient-step-inp" data-sf="midi"')
         : '') +
-      sfSl('pos', 'Position', 0, Math.max(1, g.gridN - 1), stepPos, 'where in the cycle it starts') +
-      sfSl('len', 'Length', 1, g.gridN * 2, stepLen, 'how long it sounds') +
+      // POSITION AND LENGTH ARE ± STEPPERS, not sliders (stated 2026-09-08:
+      // "large +/- button sets for easy use on mobile") — the Note row's own
+      // pattern, so the document-level ± delegation and the `data-sf` commit
+      // serve them with no wiring of their own. One press = one grid cell.
+      ((typeof _ambStep === 'function')
+        ? _ambStep('Position', 'v2-ne-' + (L.id | 0) + '-pos', 0, Math.max(1, g.gridN - 1), stepPos, 'where in the cycle it starts')
+            .replace('class="ambient-step-inp"', 'class="ambient-step-inp" data-sf="pos"')
+        : sfSl('pos', 'Position', 0, Math.max(1, g.gridN - 1), stepPos, 'where in the cycle it starts')) +
+      ((typeof _ambStep === 'function')
+        ? _ambStep('Length', 'v2-ne-' + (L.id | 0) + '-len', 1, g.gridN * 2, stepLen, 'how long it sounds')
+            .replace('class="ambient-step-inp"', 'class="ambient-step-inp" data-sf="len"')
+        : sfSl('len', 'Length', 1, g.gridN * 2, stepLen, 'how long it sounds')) +
       sfSl('vel', 'Volume', 0, 200, num(n.vel, 100), 'against the layer\u2019s own level') +
       '<div class="v2-nesec">Envelope \u00b7 this note only</div>' +
       sfSl('atk', 'Attack', 0, 4000, num(n.atk, fb.atk), 'time to reach full volume') +
@@ -4601,10 +6318,14 @@
       sfSl('rel', 'Release', 0, 8000, num(n.rel, fb.rel), 'time to fade after it ends') +
       sfSl('glide', 'Portamento', 0, 2000, num(n.glide, 0), 'slide in from the note before') +
       '<div class="v2-nebtns">' +
+        '<button type="button" class="ambient-seg" data-na="expand" title="Build a chord on top of this note \u2014 pick one of the chords that CONTAIN it, and the other tones are added at its position.">\u2295 Expand\u2026</button>' +
         '<button type="button" class="ambient-seg" data-na="env">\u21ba Layer envelope</button>' +
         '<button type="button" class="ambient-seg" data-na="hear">\u25b6 Hear it</button>' +
       '</div>' +
-      '<div class="v2-nehint">Volume and the envelope are this note\u2019s own \u2014 everything else on the card still applies. ' +
+      '<div class="v2-nex" hidden></div>' +
+      '<div class="v2-nehint">\ud83c\udfb9 Tap a key on the piano to move this note. ' +
+        '\u21e7 + arrows move it on the grid, \u2325 + \u2190/\u2192 resize it. ' +
+        'Volume and the envelope are this note\u2019s own \u2014 everything else on the card still applies. ' +
         'A value marked <b>layer</b> is inherited; move it and this note keeps its own.</div>';
     host._idx = idx;
     host._lid = L.id | 0;
@@ -4622,7 +6343,7 @@
       if (rd) rd.textContent = txt;
     };
     const v = (sf) => { const el = host.querySelector('[data-sf="' + sf + '"]'); return el ? (parseInt(el.value, 10) | 0) : 0; };
-    put('midi', noteName(n.midi));
+    put('midi', noteName(neShownMidi(host, L, idx)));
     put('pos', posTxt(v('pos'), g.gridN, g.bars));
     put('len', lenTxt(v('len'), g.gridN, g.bars));
     // 100% IS "as the layer plays it", so "100% · layer" states the same fact
@@ -4635,7 +6356,7 @@
     put('rel', msTxt(v('rel')) + (Number.isFinite(n.rel) ? '' : ' \u00b7 layer'));
     put('glide', v('glide') > 0 ? msTxt(v('glide')) : 'off');
     const t2 = host.querySelector('.v2-netitle');
-    if (t2) t2.textContent = 'Note ' + (idx + 1) + ' of ' + p.notes.length + ' \u00b7 ' + noteName(n.midi);
+    if (t2) t2.textContent = 'Note ' + (idx + 1) + ' of ' + p.notes.length + ' \u00b7 ' + noteName(neShownMidi(host, L, idx));
   }
   // Called at the end of every draw. REBUILDS ONLY WHEN THE NOTE CHANGES — the
   // drawing is repainted on every edit, and rewriting the markup would destroy
@@ -4660,14 +6381,108 @@
   // rebuild — the documented rule for a control on a re-rendered surface.
   function neInput(E, el) {
     const host = el.closest('.v2-neinline'); if (!host || !NE) return false;
+    const v = parseInt(el.value, 10); if (!Number.isFinite(v)) return true;
+    return neApply(E, host, el.getAttribute('data-sf'), v);
+  }
+  // …and the shared tail. `rebuild` is false for a slider (it is under a
+  // finger and replacing it mid-drag kills the drag — the documented bug) and
+  // true when the value came from somewhere else, so the editor's own readouts
+  // follow a pitch set on the keyboard.
+  // ── ⬚ MULTI: ONE WRITER FOR EVERY GATHERED NOTE ─────────────────────────
+  // A DELTA, applied uniformly — which is the whole point of the mode: the
+  // notes keep their relationship to each other, so the shape moves rather
+  // than being re-laid. The delta is CLAMPED ONCE against the whole set (not
+  // per note) — clamping each independently would let the leading note stop
+  // while the rest carried on, which is the opposite of uniform. Same rules as
+  // the single-note path: the grid, the `hx` pin on a remapping part (the hand
+  // wins), and a re-find by IDENTITY after normalize, which replaces every note
+  // object and re-sorts.
+  function multiApply(E, L, what, steps) {
+    if (!L || !L.part || L.part.kind !== 'recorded') return false;
+    const sel = mselOf(L); if (!sel || !sel.size) return false;
+    const p = L.part, g = neGrid(L), cell = 1 / Math.max(1, g.gridN);
+    const idxs = [...sel].filter((i) => p.notes[i]).sort((a, b) => a - b);
+    if (!idxs.length) return false;
+    const ns = idxs.map((i) => p.notes[i]);
+    let d = steps | 0; if (!d) return false;
+    if (what === 'midi') {
+      // the HAND WINS on a remapping part, exactly as the drag and the editor
+      // do — otherwise the remap re-voices the note and the move is undone
+      if (L.harmony === 'diatonic' || L.harmony === 'chordlock') ns.forEach((n) => { n.hx = 1; });
+      const lo = Math.min(...ns.map((n) => n.midi | 0)), hi = Math.max(...ns.map((n) => n.midi | 0));
+      d = clamp(d, -lo, 127 - hi);
+      if (!d) return false;
+      ns.forEach((n) => { n.midi = clamp((n.midi | 0) + d, 0, 127); });
+    } else if (what === 't') {
+      // …and a time move must not re-voice them either (the `pos` rule)
+      if (L.harmony === 'diatonic' || L.harmony === 'chordlock') ns.forEach((n) => { n.hx = 1; });
+      const lo = Math.min(...ns.map((n) => n.t)), hi = Math.max(...ns.map((n) => n.t));
+      const loK = Math.round(lo / cell), hiK = Math.round(hi / cell);
+      const maxK = Math.max(0, Math.round((1 - cell / 2) / cell));
+      d = clamp(d, -loK, maxK - hiK);
+      if (!d) return false;
+      ns.forEach((n) => { n.t = clamp(Math.round(n.t / cell) * cell + d * cell, 0, 0.99999); });
+    } else if (what === 'dur') {
+      // never shorter than a cell, never past the end of the cycle
+      const minK = Math.min(...ns.map((n) => Math.round(n.dur / cell)));
+      const room = Math.min(...ns.map((n) => Math.floor((1 - n.t) / cell) - Math.round(n.dur / cell)));
+      d = clamp(d, 1 - minK, Math.max(0, room));
+      if (!d) return false;
+      ns.forEach((n) => {
+        n.dur = Math.max(cell, Math.min(1 - n.t, Math.round(n.dur / cell) * cell + d * cell));
+      });
+    } else return false;
+    // IDENTITY, not index — the array is rebuilt and re-sorted by normalize
+    const ids = ns.map((n) => ({ t: n.t, midi: n.midi }));
+    try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+    try { E.getCfg(); } catch (e) {}
+    const next = new Set();
+    ids.forEach((q) => { const j = nearestNote(p.notes, q.t, q.midi); if (j >= 0) next.add(j); });
+    mselSet(L, next);
+    return true;
+  }
+  // WHAT IS GATHERED, said on the card. A gathering that can vanish while its
+  // widget keeps state is the documented drum-solo bug, so the count is on
+  // screen whenever there is one — and the row is absent when there is not,
+  // because a stepper over an empty selection cannot act.
+  function multiSync(card, L) {
+    const bar = card && card.querySelector('.v2-multibar'); if (!bar) return;
+    const sel = (modeOf(L) === 'multi') ? mselOf(L) : null;
+    const n = (sel && sel.size) || 0;
+    bar.hidden = !n;
+    if (!n) return;
+    const lab = bar.querySelector('.v2-multin');
+    const txt = '\u2b1a ' + n + ' note' + (n === 1 ? '' : 's') + ' gathered';
+    if (lab && lab.textContent !== txt) lab.textContent = txt;
+  }
+  function neApply(E, host, sf, v, rebuild) {
+    if (!host || !NE) return false;
     const L = _ambLayerByKey && _ambLayerByKey(E, 'v2:' + NE.id);
     if (!L || !L.part || L.part.kind !== 'recorded') return false;
     const p = L.part, n = p.notes[NE.idx]; if (!n) return false;
-    const sf = el.getAttribute('data-sf');
     const g = neGrid(L);
-    const v = parseInt(el.value, 10); if (!Number.isFinite(v)) return true;
-    if (sf === 'midi') n.midi = clamp(v, 0, 127);
-    else if (sf === 'pos') n.t = clamp(v / g.gridN, 0, 0.99999);
+    if (sf === 'midi') {
+      // an explicit pitch is a placement. On a remapping part the Note field
+      // SHOWS the sounding pitch, so `v` arrives in sounding space: PIN the
+      // note and write it verbatim — stored IS sounding once pinned, ± is
+      // linear, and the keyboard's absolute key lands exactly.
+      if (L.harmony === 'diatonic' || L.harmony === 'chordlock') n.hx = 1;
+      n.midi = clamp(v, 0, 127);
+    }
+    else if (sf === 'pos') {
+      // MOVING A NOTE IN TIME MUST NOT MOVE IT IN PITCH. On a remapping part
+      // (diatonic/chordlock) the drawn pitch is a function of the chord AT THE
+      // NOTE'S OWN ONSET, so stepping Position across a change re-voiced the
+      // note toward the new chord's tones — "moving past a bar boundary shifts
+      // it up or down toward the nearest note". The hand wins (the drag's own
+      // rule): pin at the pitch currently DRAWN, then move it — time and pitch
+      // stay independent axes.
+      if (!n.hx && (L.harmony === 'diatonic' || L.harmony === 'chordlock')) {
+        n.midi = clamp(neShownMidi(host, L, NE.idx), 0, 127);
+        n.hx = 1;
+      }
+      n.t = clamp(v / g.gridN, 0, 0.99999);
+    }
     else if (sf === 'len') n.dur = Math.max(0.001, v / g.gridN);
     // A field set back to what the layer would have done is DELETED — absent is
     // the one representation of "the layer decides", so a note never carries a
@@ -4682,7 +6497,9 @@
     // The array is new and re-sorted, so the note is re-found by WHAT IT IS.
     NE.idx = nearestNote(p.notes, t, midi);
     host._idx = NE.idx;                        // no rebuild: the slider is under a finger
-    try { drawPartViz(host.closest('.v2-layer'), L, E); } catch (e) {}
+    const card = host.closest('.v2-layer');
+    if (rebuild) { neBuild(host, L, NE.idx); host.hidden = false; }
+    try { drawPartViz(card, L, E); } catch (e) {}
     nePaint(host, L, NE.idx);
     return true;
   }
@@ -4711,11 +6528,54 @@
       neSync(card, L, E); redraw(); return true;
     }
     if (act === 'hear') { try { V2.preview(E, L); } catch (e) {} return true; }
+    if (act === 'expand' && n) {
+      const nx = host.querySelector('.v2-nex'); if (!nx) return true;
+      if (!nx.hidden) { nx.hidden = true; nx.innerHTML = ''; return true; }
+      try { nexBuild(E, host, L, NE.idx); } catch (e) {}
+      return true;
+    }
+    if (act === 'nexpick' && n) {
+      const r0 = parseInt(b.getAttribute('data-root'), 10) | 0;
+      const iv0 = parseInt(b.getAttribute('data-iv'), 10) | 0;
+      const ivs0 = String(b.getAttribute('data-ivs') || '').split(',').map((x) => parseInt(x, 10) | 0);
+      const m = neShownMidi(host, L, NE.idx);
+      const rootM = m - iv0;
+      // sounding \u2192 stored: pinned exact on a remapping part, shift-corrected
+      // under transpose/register otherwise \u2014 the pencil's own two rules, so
+      // the chord SOUNDS exactly as picked whatever the part's shifts are.
+      const hz2 = (L.harmony === 'diatonic' || L.harmony === 'chordlock');
+      const regNow = clamp((L.instrument.register | 0) || 4, 1, 8);
+      const tr2 = (p.transpose | 0) + (Number.isFinite(p.reg) ? (regNow - p.reg) * 12 : 0);
+      let added = 0;
+      ivs0.forEach((k) => {
+        if (k === iv0) return;                      // the open note IS this tone
+        const tgt = rootM + k;
+        if (!(tgt >= 0 && tgt <= 127)) return;
+        const storeV = clamp(hz2 ? tgt : tgt - tr2, 0, 127);
+        if (p.notes.some((x) => Math.abs(x.t - n.t) < 1e-6 && (x.midi | 0) === storeV)) return;
+        const nn = { t: n.t, midi: storeV, dur: n.dur };
+        if (hz2) nn.hx = 1;
+        p.notes.push(nn); added++;
+      });
+      const t0 = n.t, m0 = n.midi;
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      try { E.getCfg(); } catch (e) {}               // coerce, prune, RE-SORT
+      NE.idx = nearestNote(p.notes, t0, m0);
+      const nx2 = host.querySelector('.v2-nex');
+      if (nx2) { nx2.hidden = true; nx2.innerHTML = ''; }
+      host._idx = -1;                                // deliberate rebuild
+      neSync(card, L, E); redraw();
+      try { if (typeof showToast === 'function') showToast('\u2295 ' + added + ' note' + (added === 1 ? '' : 's') + ' added at this position.', { ms: 3500 }); } catch (e) {}
+      return true;
+    }
     return false;
   }
 
+  // 'ground' IS an option: without it a Groundwork part's select rendered
+  // BLANK (value matches no option), which read as broken and invited the pick
+  // that drifted the rules to Pulse — one sustained chord, forever.
   const RHYTHM_OPTS = [['pulse', 'Pulse — evenly'], ['euclid', 'Pattern — a grid you edit'],
-                       ['chance', 'Chance — scattered']];
+                       ['chance', 'Chance — scattered'], ['ground', 'Groundwork — on every change']];
   // What the select should SHOW for a given kind. A `<select>` whose value
   // matches no option renders BLANK (documented trap), and 'drawn' has no
   // option — so it reads as its generator.
@@ -4870,12 +6730,38 @@
   // one id breaks the label's `for` and every id-based lookup. The COMMIT
   // mirrors the value into the other copy, so the two can never drift (the
   // rule Level already follows with the mixer fader).
-  const gsl = (L, field, label, v, min, max, hint, when) => {
+  const gsl = (L, field, label, v, min, max, hint, when, sfx) => {
     if (typeof _ambSl !== 'function') return '';
-    const id = uid(L, field) + '-gen';
+    const id = uid(L, field) + '-gen' + (sfx || '');
     let h = tag(_ambSl(label, id, min, max, v, hint), 'ambient-sl', field, when);
     if (hint) h = h.replace('<div ', '<div data-v2u="' + esc(String(hint)) + '" ');
     return h;
+  };
+  // …AND THE STEPPER FORM, for the panel's DISCRETE knobs (Grid, Push, Notes
+  // at once, Range, Lines, Octaves). A 1..9 value on a full-width slider is a
+  // thumb where most pixels mean nothing, and the Grid slider was WORSE than
+  // clumsy: its commit re-renders the card (the lane grid is built from
+  // `steps`), which replaced the slider under the finger on the FIRST input
+  // event — the drag died at whatever value that event carried and the rest
+  // of the gesture wrote nothing ("changing Grid does nothing"). A stepper is
+  // one commit per press, which a rebuild cannot interrupt — the same call
+  // the Pattern tab already made for these exact fields.
+  const gst = (L, field, label, v, min, max, hint, when, sfx) =>
+    (typeof _ambStep === 'function')
+      ? tag(_ambStep(label, uid(L, field) + '-gen' + (sfx || ''), min, max, v, hint), 'ambient-step-inp', field, when)
+      : '';
+  // …AND THE SELECT FORM, for the panel's two AXES. Same rule as `gsl`: a
+  // second control over one field needs its own element id, or the label's
+  // `for` and every id-based lookup break. The hint is stated here rather than
+  // left empty (the sheet's `sel` writes a blank one) because these two rows
+  // ARE the model — they replaced the static paragraph that used to say it.
+  const gsel = (L, field, label, cur, opts, hint, when) => {
+    const id = uid(L, field) + '-gen';
+    return '<div class="ambient-ctrl"' + (when ? ' data-v2when="' + when + '"' : '') +
+      '><label for="' + id + '">' + esc(label) + '</label>' +
+      '<select id="' + id + '" class="ambient-select v2-f" data-f="' + field + '">' +
+      opts.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('') +
+      '</select><span class="ambient-hint">' + esc(hint || '') + '</span></div>';
   };
   const st = (L, field, label, v, min, max, hint, when) =>
     (typeof _ambStep === 'function')
@@ -5070,81 +6956,180 @@
         // Always in the DOM and revealed by a class, so `applyGate` sweeps
         // its `data-v2when` rows like any other and a commit does not have
         // to rebuild anything.
-        // GROUNDWORK'S PANEL — same construction as the Shape one and for the
-        // same reasons: a child of the card (its rows are ordinary `.v2-f`
-        // rows), always in the DOM, revealed by a class.
-        '<div class="v2-gwwrap">' +
-          '<div class="v2-genscrim v2-gwscrim"></div>' +
-          '<div class="v2-genpop v2-gwpop" role="dialog" aria-label="Groundwork">' +
-            '<div class="v2-genhead"><span class="v2-gentitle">\u26f0 Groundwork</span>' +
-              '<button type="button" class="v2-gwcancel v2-gwx" aria-label="Cancel">\u2715</button></div>' +
-            '<span class="ambient-hint v2-gwsays"></span>' +
-            '<div class="v2-genrows">' +
-              gsl(L, 'part.pitch.voices', 'How many notes', (L.part.pitch || {}).voices, 1, 9,
-                  'tones of each chord, from the bottom', 'kind:live;voice:synth;rhythm:ground') +
-              gsl(L, 'part.shape.slip', 'Slip', ((L.part.shape || {}).slip | 0), 0, 100,
-                  'nudge each note late by a random hair \u2014 a strum', 'kind:live;rhythm:ground') +
-              gsl(L, 'part.shape.lenRatio', 'Hold', (L.part.shape || {}).lenRatio, 5, 200,
-                  '% of the change each note fills', 'kind:live;rhythm:ground') +
-              '<div class="ambient-ctrl v2-gwper" data-v2when="kind:live;rhythm:ground"><label>Per change</label>' +
-                '<span class="v2-gwpergrid"></span>' +
-                '<span class="ambient-hint">0 sits a change out \u00b7 purple = set by hand, the rest follow ' +
-                  'How many notes</span></div>' +
-            '</div>' +
-            '<div class="v2-genacts">' +
-              '<button type="button" class="ambient-seg v2-genroll">\ud83c\udfb2 New take</button>' +
-              '<button type="button" class="ambient-seg v2-genprev">\u25b6 Preview</button>' +
-            '</div>' +
-            '<div class="v2-genacts v2-gwfoot">' +
-              '<button type="button" class="ambient-seg v2-gwcancel">\u2715 Cancel</button>' +
-              '<button type="button" class="ambient-seg v2-gwdone">\u2713 Done</button>' +
-            '</div>' +
-          '</div>' +
-        '</div>' +
+        // Groundwork's separate panel was FOLDED IN here (2026-09-09) — it is
+        // the fifth shape, and its knobs are ordinary gated rows below.
         '<div class="v2-genwrap">' +
           '<div class="v2-genscrim"></div>' +
           '<div class="v2-genpop v2-shapepop" role="dialog" aria-label="Generated shape">' +
             '<div class="v2-genhead"><span class="v2-gentitle">Generated</span>' +
               '<button type="button" class="v2-genclose" aria-label="Close">\u2715</button></div>' +
-            '<span class="ambient-hint v2-genmodel">A shape is a RHYTHM (when notes happen) \u00d7 a ' +
-              'PITCH RULE (what each onset plays). Pick one, then tune it \u2014 the ' +
-              'drawing behind follows every change.</span>' +
+            // THE MODEL USED TO BE A PARAGRAPH HERE and is two CONTROLS now
+            // (Rhythm and Pitch, the first two rows below). It was 44px of a
+            // 617px panel, static — so after one read it is noise on every
+            // later visit, forever — and the file's own rule is that the
+            // control for a fact beats a sentence about it. `.v2-gensays`
+            // below still says, live, what THIS shape produces.
             '<span class="ambient-seg-row v2-genshapes">' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="sustain" title="A held note or chord, one per cycle — the pad shape.">\u25ac Sustained<span class="v2-matsub">one held chord</span></button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="arp" title="Sweep the chord one tone per onset — an arpeggio.">\u27f3 Arpeggio<span class="v2-matsub">the chord, one note at a time</span></button>' +
               '<button type="button" class="ambient-seg v2-rollrun" title="A rolled, syncopated line. 🎲 New take rolls another.">\ud83c\udfb2 Roll<span class="v2-matsub">a run of single notes</span></button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="mixed" title="Some onsets a chord, the rest a single note.">\u2687 Mixed<span class="v2-matsub">chords and single notes</span></button>' +
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="ground" title="Play the changes — notes on the 1 and on every change, holding until the next.">\u26f0 Groundwork<span class="v2-matsub">play the changes</span></button>' +
             '</span>' +
             '<span class="ambient-hint v2-gensays"></span>' +
             // THE KNOBS THAT DECIDE WHAT THE SHAPE PRODUCES, gated to the
             // shape that reads each one — so the panel shows the handful
             // that apply rather than a wall that mostly does not.
             '<div class="v2-genrows">' +
-              gsl(L, 'part.rhythm.pulses', 'How many', (L.part.rhythm || {}).pulses, 1, 32,
-                  'onsets in the cycle', 'kind:live;rhythm:euclid,drawn') +
-              gsl(L, 'part.rhythm.steps', 'Grid', (L.part.rhythm || {}).steps, 2, 32,
-                  'steps they can land on', 'kind:live;rhythm:euclid,drawn') +
-              gsl(L, 'part.rhythm.rotate', 'Push', (L.part.rhythm || {}).rotate, 0, 31,
-                  'shift the pattern along', 'kind:live;rhythm:euclid,drawn') +
-              gsl(L, 'part.rhythm.n', 'How many', (L.part.rhythm || {}).n, 1, 32,
-                  'onsets in the cycle', 'kind:live;rhythm:pulse') +
-              gsl(L, 'part.rhythm.chance', 'Chance', (L.part.rhythm || {}).chance, 0, 100,
-                  'how often a step sounds', 'kind:live;rhythm:chance') +
-              gsl(L, 'part.pitch.voices', 'Notes at once', (L.part.pitch || {}).voices, 1, 9,
-                  'how thick each chord is', 'kind:live;voice:synth;pitch:chord,stack,mixed') +
+              // ── THE TWO AXES, DIRECTLY ──────────────────────────────────
+              // The panel stated its own model in prose ("a RHYTHM \u00d7 a PITCH
+              // RULE") and then let you touch NEITHER: five preset shapes were
+              // the whole door, and the two selects that actually name the
+              // axes sat three tabs away in Content and Pitch. With both here
+              // the panel offers every combination rather than five of them,
+              // and the chips above become named SHORTCUTS that light by
+              // inference (`matProv`/`matGuess` already read the rules a part
+              // HAS) \u2014 a hand-built pair lights none of them and `.v2-gensays`
+              // describes it, exactly as the Material row already behaves.
+              // `rhythmShown` because 'drawn' is internal state and has no
+              // option: a select whose value matches nothing renders BLANK,
+              // which is the drift bug that turned Groundwork into one
+              // sustained chord. applyGate re-syncs BOTH copies every pass.
+              gsel(L, 'part.rhythm.kind', 'Rhythm', rhythmShown(r.kind), RHYTHM_OPTS,
+                   'when notes happen', 'kind:live;voice:synth') +
+              gsel(L, 'part.pitch.kind', 'Pitch', t.kind, PITCH_OPTS,
+                   'what each onset plays', 'kind:live;voice:synth') +
+              // RANGES ARE BOUND TO THE CURRENT GRID, never the theoretical
+              // ceiling: normalize clamps pulses to `steps` and the pattern
+              // indexes rotate mod `steps`, so a 1..32 pulses slider under an
+              // 8-step grid had 24 values that silently did NOTHING (measured
+              // \u2014 every write past 8 read back 8). A Grid press re-renders the
+              // card, which rebuilds these rows with the new bounds.
+              (function (rr0) {
+                const gN = Math.min(32, Math.max(2, (rr0.steps | 0) || 16));
+                return gsl(L, 'part.rhythm.pulses', 'How many', rr0.pulses, 1, gN,
+                    'onsets in the cycle \u2014 up to the Grid', 'kind:live;rhythm:euclid,drawn') +
+                  // "Steps", NOT "Grid": `part.grid` is a note VALUE per BAR
+                  // and is the one thing called Grid now — two controls over
+                  // two different quantities sharing one name is the naming
+                  // rule's own mistake (this is per CYCLE). Gated `form:roll`
+                  // because in ▦ Steps it is derived from Grid × Bars.
+                  gst(L, 'part.rhythm.steps', 'Steps', rr0.steps, 2, 64,
+                      'how many steps the cycle is cut into', 'kind:live;rhythm:euclid,drawn;form:roll') +
+                  gst(L, 'part.rhythm.rotate', 'Push', rr0.rotate, 0, gN - 1,
+                      'shift the pattern along, in steps \u2014 0 starts on the beat', 'kind:live;rhythm:euclid,drawn') +
+                  gsl(L, 'part.rhythm.n', 'How many', rr0.n, 1, 32,
+                      'onsets in the cycle', 'kind:live;rhythm:pulse') +
+                  gsl(L, 'part.rhythm.chance', 'Chance', rr0.chance, 0, 100,
+                      'how often a step sounds', 'kind:live;rhythm:chance');
+              })(L.part.rhythm || {}) +
+              // SYNCOPATE is read ONLY by the chance walk (it weights the odd
+              // slots), so it is gated exactly as its sheet copy is \u2014 offering
+              // it on a euclid part would be a knob that does nothing.
+              gsl(L, 'part.rhythm.syncop', 'Syncopate', num((L.part.rhythm || {}).syncop, 0), 0, 100,
+                  'straight \u2192 offbeat', 'kind:live;voice:synth;rhythm:chance') +
+              gst(L, 'part.pitch.voices', 'Notes at once', (L.part.pitch || {}).voices, 1, 9,
+                  'how many notes each chord holds', 'kind:live;voice:synth;pitch:chord,stack,mixed') +
               gsl(L, 'part.pitch.mix', 'Chords vs notes',
                   (Number.isFinite((L.part.pitch || {}).mix) ? L.part.pitch.mix : 50), 0, 100,
                   'all single notes \u2192 all chords', 'kind:live;voice:synth;pitch:mixed') +
-              gsl(L, 'part.pitch.span', 'Range', (L.part.pitch || {}).span, 1, 12,
-                  'how far the line wanders', 'kind:live;voice:synth;pitch:walk,mixed') +
-              gsl(L, 'part.pitch.lines', 'Lines', ((L.part.pitch || {}).lines | 0) || 1, 1, 6,
-                  'independent melodies at once', 'kind:live;voice:synth;pitch:walk,chance') +
+              gst(L, 'part.pitch.span', 'Range', (L.part.pitch || {}).span, 1, 12,
+                  'how far the line wanders, in source tones', 'kind:live;voice:synth;pitch:walk,mixed') +
+              gsl(L, 'part.pitch.contour', 'Contour', num((L.part.pitch || {}).contour, 0), -100, 100,
+                  'fall \u2192 rise', 'kind:live;voice:synth;pitch:walk') +
+              gst(L, 'part.pitch.lines', 'Lines', ((L.part.pitch || {}).lines | 0) || 1, 1, 6,
+                  'how many independent melodies at once', 'kind:live;voice:synth;pitch:walk,chance') +
               gsl(L, 'part.pitch.stutter', 'Repeat', (L.part.pitch || {}).stutter, 0, 100,
                   'how often it repeats a note', 'kind:live;voice:synth;pitch:walk') +
-              gsl(L, 'part.pitch.octaves', 'Octaves', (L.part.pitch || {}).octaves, 1, 4,
-                  'how far the sweep climbs', 'kind:live;voice:synth;pitch:series') +
+              // DIRECTION \u2014 the arpeggio's most obvious parameter, and the
+              // panel offered \u27f3 Arpeggio as one of its five shapes while
+              // leaving it three tabs away in Pitch.
+              gsel(L, 'part.pitch.dir', 'Direction', (L.part.pitch || {}).dir || 'up',
+                   [['up', 'Up'], ['down', 'Down'], ['updown', 'Up & down']],
+                   'which way the sweep runs', 'kind:live;voice:synth;pitch:series') +
+              gst(L, 'part.pitch.octaves', 'Octaves', (L.part.pitch || {}).octaves, 1, 4,
+                  'how many octaves the sweep climbs', 'kind:live;voice:synth;pitch:series') +
+              gsl(L, 'part.pitch.randomness', 'Scatter', num((L.part.pitch || {}).randomness, 0), 0, 100,
+                  'ordered \u2192 jumps about', 'kind:live;voice:synth;pitch:series') +
+              // HARMONY \u2014 a SET, not a choice (a line can carry a 3rd and a
+              // 6th at once), and the biggest expressive axis per pixel the
+              // panel was missing. Its buttons are class-delegated with no id,
+              // so a second copy on the card is safe, and its handler
+              // re-renders \u2014 both copies are rebuilt from state.
+              ((typeof harmRowHtml === 'function') ? harmRowHtml(L, L.part.pitch || {}) : '') +
               gsl(L, 'part.shape.lenRatio', 'Note length', (L.part.shape || {}).lenRatio, 5, 100,
-                  '% of the space each note fills', 'kind:live') +
+                  '% of the space each note fills', 'kind:live;rhythm:pulse,euclid,drawn,chance') +
+              // GROUNDWORK'S OWN KNOBS (its former panel folded in here,
+              // 2026-09-09). "Notes at once" already serves it \u2014 ground's
+              // pitch kind is chord \u2014 so only Slip, Hold (which ranges to
+              // 200: past 100 the note rings INTO the next change) and the
+              // per-change grid are its own. Hold carries a distinct id
+              // suffix: it shares `part.shape.lenRatio` with Note length
+              // above, and two nodes with one id break every id lookup.
+              gsl(L, 'part.shape.slip', 'Slip', ((L.part.shape || {}).slip | 0), 0, 100,
+                  'nudge each note late by a random hair \u2014 a strum', 'kind:live;rhythm:ground') +
+              gsl(L, 'part.shape.lenRatio', 'Hold', (L.part.shape || {}).lenRatio, 5, 200,
+                  '% of the change each note fills', 'kind:live;rhythm:ground', '-gw') +
+              '<div class="ambient-ctrl v2-gwper" data-v2when="kind:live;rhythm:ground"><label>Per change</label>' +
+                '<span class="v2-gwpergrid"></span>' +
+                '<span class="ambient-hint">0 sits a change out \u00b7 purple = set by hand, the rest follow Notes at once</span></div>' +
+              // ── HOW A CHORD IS LAID OUT ─────────────────────────────────
+              // v1's rich voicer, and the panel said nothing about it \u2014 which
+              // for \u25ac Sustained and \u26f0 Groundwork (both chord parts) is most
+              // of what decides how they sound.
+              gsel(L, 'part.pitch.chordMode', 'Voicing', (L.part.pitch || {}).chordMode || '',
+                   [['', 'Simple \u2014 stack the tones'], ['chaos', 'Chaos'], ['chords', 'Chords'],
+                    ['chordsplus', 'Chords+'], ['monk', 'Monk']],
+                   'how the tones are arranged', 'kind:live;voice:synth;pitch:chord') +
+              gst(L, 'part.pitch.spread', 'Spread', num((L.part.pitch || {}).spread, 0), 0, 3,
+                  '\u00b1 octaves', 'kind:live;voice:synth;pitch:chord') +
+              gsl(L, 'part.pitch.variety', 'Variety', num((L.part.pitch || {}).variety, 0), 0, 100,
+                  'plain \u2192 colourful', 'kind:live;voice:synth;pitch:chord') +
+              // ── \u25b8 MORE ────────────────────────────────────────────────
+              // The second tier: real controls that shape the generator and
+              // are not what you reach for first. A fold rather than a tab,
+              // and a CLASS on the card rather than inline display \u2014 inline
+              // display belongs to `applyGate`, which writes '' to SHOW a row,
+              // so `.v2-sub`'s `display: none` still wins while the fold is
+              // shut and a gated-out row stays hidden when it is open. Gated
+              // `kind:live` so a written part shows no header over nothing.
+              disc('gmore', 'More', 'variance, voicing detail and ceilings', 'kind:live') +
+              subrows('gmore',
+                gsl(L, 'part.rhythm.vary', 'Vary', num((L.part.rhythm || {}).vary, 0), 0, 100,
+                    'how much the pattern re-rolls each cycle', 'kind:live;rhythm:euclid,drawn') +
+                gsl(L, 'part.rhythm.rateVar', 'Rate var', num((L.part.rhythm || {}).rateVar, 0), 0, 100,
+                    'steady \u2192 rushes \u2014 replays per take', 'kind:live;voice:synth') +
+                gst(L, 'part.rhythm.voices', 'Rows', num((L.part.rhythm || {}).voices, 1), 1, 8,
+                    'euclid rows at once \u2014 a polyrhythm', 'kind:live;voice:synth;rhythm:euclid') +
+                gst(L, 'part.pitch.degree', 'Note', (L.part.pitch || {}).degree, 1, 12,
+                    'which source tone it starts on',
+                    'kind:live;voice:synth;pitch:fixed,stack,walk,series') +
+                gsl(L, 'part.pitch.roam', 'Roam', num((L.part.pitch || {}).roam, 0), 0, 100,
+                    'how often that Note wanders', 'kind:live;voice:synth;pitch:fixed,stack') +
+                gsel(L, 'part.pitch.home', 'Home', (L.part.pitch || {}).home || 'floor',
+                     [['floor', 'Floor \u2014 walk up from Register'],
+                      ['center', 'Centre \u2014 Register in the middle'],
+                      ['ceiling', 'Ceiling \u2014 walk down from Register']],
+                     'where Register sits in the range', 'kind:live;voice:synth;pitch:walk') +
+                gsl(L, 'part.pitch.drift', 'Pitch vary', num((L.part.pitch || {}).drift, 0), 0, 100,
+                    'octave drift \u2014 replays per take',
+                    'kind:live;voice:synth;pitch:fixed,series,walk,chance') +
+                gst(L, 'part.pitch.subdiv', 'Subdivide', num((L.part.pitch || {}).subdiv, 1), 1, 16,
+                    'voicings per chord', 'kind:live;voice:synth;pitch:chord') +
+                gst(L, 'part.pitch.phraseLen', 'Phrase', num((L.part.pitch || {}).phraseLen, 4), 1, 16,
+                    'chords before it repeats', 'kind:live;voice:synth;pitch:chord') +
+                gst(L, 'part.pitch.repeats', 'Repeats', num((L.part.pitch || {}).repeats, 4), 1, 16,
+                    'times before a fresh phrase', 'kind:live;voice:synth;pitch:chord') +
+                gsel(L, 'part.pitch.feel', 'Feel', (L.part.pitch || {}).feel || '',
+                     [['', 'In order \u2014 walk the variants'], ['stochastic', 'Stochastic \u2014 pick per slot']],
+                     'how it moves between voicings', 'kind:live;voice:synth;pitch:chord') +
+                gst(L, 'part.pitch.voiceCap', 'Voice cap', num((L.part.pitch || {}).voiceCap, 0), 0, 12,
+                    'ceiling incl. colour tones (0 = Notes at once)',
+                    'kind:live;voice:synth;pitch:chord') +
+                gst(L, 'part.shape.holdSteps', 'Hold steps', num((L.part.shape || {}).holdSteps, 0), 0, 16,
+                    'steps a note is held (0 = use Note length)', 'kind:live') +
+                gst(L, 'part.shape.maxEvents', 'Max events', num((L.part.shape || {}).maxEvents, 0), 0, 64,
+                    'ceiling on notes per cycle (0 = off)', 'kind:live')) +
             '</div>' +
             '<div class="v2-genacts">' +
               // DISTINCT CLASSES. Reusing `.v2-newtake` put a SECOND element with
@@ -5314,28 +7299,36 @@
               // in a Source select, and "Written / Generated" over these two
               // clusters — so "Generated" named both a cluster and a state, and
               // "Fixed" and "Written" named one state twice.
-              '<span class="ambient-hint v2-matmodel">A part\u2019s notes are <b>GENERATED</b> \u2014 rules, ' +
-                're-made every cycle \u2014 or <b>WRITTEN</b>: a fixed list you can edit note by note. ' +
-                '\ud83d\udd12 Lock writes a generated take down (the rules are kept); \ud83d\udd13 Unlock ' +
-                'hands it back to them. A generated shape is a RHYTHM (when notes happen) \u00d7 a PITCH ' +
-                'RULE (what each onset plays \u2014 one note, or several together).</span>' +
-              '<span class="v2-matgrp"><span class="v2-matlab" title="You choose the notes — the part is WRITTEN and plays exactly those, every cycle.">Written</span>' +
-              '<button type="button" class="ambient-seg v2-compose" title="Notes you draw yourself, in the composer grid. The part becomes WRITTEN — it plays exactly what you drew.">\u270e Composed<span class="v2-matsub">notes you draw</span></button>' +
-              '<button type="button" class="ambient-seg v2-adopt" title="Opens the Phrases tab — the one list of saved phrases. Tapping one makes it this part, WRITTEN: it plays exactly those notes.">\u266a Phrase<span class="v2-matsub">from the Phrases tab</span></button>' +
+              // …AND BOTH DOORS MAKE THE SAME THING. The sentence used to set
+              // them against each other — "GENERATED, re-made every cycle" vs
+              // "WRITTEN, a fixed list" — and the first half was measurably
+              // untrue: six consecutive cycles of a generated part give the
+              // IDENTICAL notes unless the dice are on. They are two ways of
+              // AUTHORING one thing, STATIC CONTENT, and the readout under the
+              // drawing says whether it has been made live.
+              '<span class="ambient-hint v2-matmodel">Two ways to make <b>STATIC CONTENT</b> \u2014 ' +
+                'notes that do not change on iterations. \u270e by hand, note by note; ' +
+                '\u2699 by setting rules and pressing a button (\ud83d\udd12 Lock writes a take down). ' +
+                'It becomes <b>LIVE</b> only when you turn on the dice, Humanize, Vel var or Salt.</span>' +
+              '<span class="v2-matgrp"><span class="v2-matlab" title="You choose the notes, one at a time. Static content — it plays exactly those notes every cycle.">By hand</span>' +
+              '<button type="button" class="ambient-seg v2-compose" title="Notes you choose — draw them in the piano roll, compose them in the step grid, or start empty. The part becomes WRITTEN and plays exactly those notes.">\u270e Written<span class="v2-matsub">draw · grid · clear</span></button>' +
+              // NO PHRASE DOOR HERE. It was a SIGNPOST to the bank tab — one
+              // list wearing two words, asked about twice ("do we need both
+              // Phrases and Phrase") — and, worse, it filed the bank under
+              // WRITTEN. The bank takes a take whatever made it: a GENERATED
+              // roll saves into it as readily as a phrase you drew, so it is
+              // not one of this row's MATERIALS at all. It is the Bank tab.
               // ONE GENERATED DOOR. Four shape buttons in the row put every
               // choice on screen and left nowhere for the knobs that decide
               // what each shape actually produces — they were scattered across
               // Rhythm, Pattern and Pitch, three tabs away from the decision.
               // The door opens a popover holding the shapes AND their
               // parameters, so choosing and tuning are one place.
-              '</span><span class="v2-matgrp"><span class="v2-matlab" title="You choose a shape — the rules work out the notes as it plays, fresh every cycle. 🔒 Lock writes one take down.">Generated</span>' +
-              '<button type="button" class="ambient-seg v2-genbtn" title="Choose a shape and tune what it generates.">\u2699 Shape\u2026<span class="v2-matsub v2-genface">choose &amp; tune</span></button>' +
-              // THE SECOND GENERATED DOOR. Shape answers "what figure goes on
-              // top"; Groundwork answers "play the changes" — notes on the 1
-              // and on every change, held until the next one. Its own door and
-              // its own panel because its parameters are its own: how many
-              // tones, per change, how far they slip, how long they hold.
-              '<button type="button" class="ambient-seg v2-gwbtn" title="Play the changes — notes on the 1 and on every change, holding until the next.">\u26f0 Groundwork<span class="v2-matsub v2-gwface">play the changes</span></button>' +
+              '</span><span class="v2-matgrp"><span class="v2-matlab" title="You set some parameters and press a button; the app works the notes out. Static content too — the same take every cycle, until you turn the dice on. 🔒 Lock writes it down as notes.">By rule</span>' +
+              '<button type="button" class="ambient-seg v2-genbtn" title="Choose a shape and tune what it generates — Sustained, Arpeggio, Roll, Mixed or Groundwork.">\u2699 Generated<span class="v2-matsub v2-genface">choose &amp; tune</span></button>' +
+              // GROUNDWORK IS A SHAPE IN THE PANEL NOW (2026-09-09, user:
+              // "move Groundwork into the Generated menu") — the row is two
+              // doors, WRITTEN and GENERATED, which is the whole model.
               '</span>' +
             '</span>' +
             '<span class="ambient-hint v2-notecount"></span>' +
@@ -5343,9 +7336,9 @@
           '<div data-v2tab="Material" class="ambient-ctrl" data-v2when="kind:live"><label>Every cycle</label>' +
             '<button type="button" class="ambient-seg v2-varytoggle' + (L.part.vary ? ' on' : '') + '">' +
               (L.part.vary ? '\ud83c\udfb2 Re-roll every cycle' : '\u2713 Play this take') + '</button>' +
-            '<span class="ambient-hint">the drawing is take ' + ((L.part.take | 0) + 1) +
-              ' \u2014 by default that is exactly what plays, every cycle. Re-roll makes each ' +
-              'cycle a fresh roll of the same rules, so the drawing is one of many.</span></div>' +
+            '<span class="ambient-hint">' + (L.part.vary
+              ? 'a fresh roll each cycle \u2014 the drawing is take ' + ((L.part.take | 0) + 1) + ', one of many'
+              : 'take ' + ((L.part.take | 0) + 1) + ' is what plays, every cycle') + '</span></div>' +
           // SEED LIKE A v1 LAYER — one button per type. Its own row rather than
           // more buttons on the one above: that row answers "recorded from
           // where", these answer "what shape is the live part", and seven more
@@ -5354,7 +7347,7 @@
           // is to come back to one, and to put the ones you want in an order.
           // This is the SAME bank the compose grid saves to and `partSeqs`
           // maps to changes by name — one list, not a private copy.
-          '<div data-v2tab="Phrases" class="ambient-ctrl v2-bankrow"><label>Phrases</label>' +
+          '<div data-v2tab="Bank" class="ambient-ctrl v2-bankrow"><label>Bank</label>' +
             '<span class="v2-bank">' +
               (bankList().length
                 ? bankList().map((b2) =>
@@ -5365,9 +7358,9 @@
                       '<button type="button" class="v2-bkdn" data-bi="' + b2.i + '" aria-label="Move down" title="Move down">\u25be</button>' +
                       '<button type="button" class="v2-bkdel" data-bi="' + b2.i + '" aria-label="Delete" title="Delete from the bank">\u2715</button>' +
                     '</span>').join('')
-                : '<span class="ambient-hint">Nothing saved yet \u2014 press \ud83d\udcbe Save this take above the drawing, or compose a phrase.</span>') +
+                : '<span class="ambient-hint">Nothing saved yet \u2014 press \ud83d\udcbe Save this take above the drawing, or compose a phrase. Anything you save lands here, generated or written.</span>') +
             '</span>' +
-            '<span class="ambient-hint">tap one to play it on this layer \u2014 or map any of them to a part or a chord in \u25a6 Passes</span></div>' +
+            '<span class="ambient-hint">tap one to make it this part \u2014 it plays exactly those notes \u2014 or map any of them to a part or a chord in \u25a6 Passes</span></div>' +
           '<div data-v2tab="Seed like" class="ambient-ctrl"><label>Seed like</label>' +
             '<span class="ambient-seg-row">' +
             ((V2 && V2.v1Seeds) || []).map(([ty, lab]) =>
@@ -5422,13 +7415,16 @@
           // (`.ambient-ctrl.v2-cellrow`), so hiding sets inline `none` and
           // showing falls back to the class. Inline styles and a gate that owns
           // `display` do not mix.
-          '<div class="ambient-ctrl v2-cellrow" data-v2when="kind:live;voice:synth;rhythm:euclid,drawn">' +
+          // `form:roll` — in ▦ Steps the grid IS the Content line, and rendering
+          // it here too would be two surfaces for one thing (the duplication
+          // this file keeps paying for), with two live copies of one store.
+          '<div class="ambient-ctrl v2-cellrow" data-v2when="kind:live;voice:synth;rhythm:euclid,drawn;form:roll">' +
             '<label>Pattern<button type="button" class="ambient-regen v2-regen" ' +
               'title="Back to the generated pattern — clears your edits">↻</button></label>' +
             cellsHtml(L) +
             ((L.part.pitch && L.part.pitch.kind === 'drawn') ? noteRowHtml(L) : '') +
             '<span class="ambient-hint v2-cellhint"></span></div>' +
-          '<div class="ambient-ctrl v2-cellrow v2-lanerow" data-v2when="kind:live;voice:kit">' +
+          '<div class="ambient-ctrl v2-cellrow v2-lanerow" data-v2when="kind:live;voice:kit;form:roll">' +
             '<label>Drums</label>' + lanesHtml(L) +
             '<span class="ambient-hint v2-lanehint"></span></div>' +
           // ONE ROW, five micro steppers. The markup is the SHEET HEAD's proven
@@ -5440,7 +7436,11 @@
           // for the shared delegation (absent = 1) — Vary is 0-100 and ±1
           // would be unusable; the input is still tap-to-type at 16px.
           '<div class="ambient-ctrl v2-microrow" data-v2when="kind:live">' +
-            mini(L, 'part.rhythm.steps', 'Steps', r.steps, 1, 64, 1, 'kind:live') +
+            // `form:roll` — in ▦ Steps this is DERIVED from Grid × Bars, and a
+            // control that silently loses to a reconciler is the documented
+            // dead-control class. The readout on the grid's own line says what
+            // it came out as.
+            mini(L, 'part.rhythm.steps', 'Steps', r.steps, 1, 256, 1, 'kind:live;form:roll') +
             mini(L, 'part.rhythm.pulses', 'Pulses', r.pulses, 1, 64, 1, 'kind:live;voice:synth;rhythm:euclid,drawn') +
             mini(L, 'part.rhythm.rotate', 'Rotate', r.rotate, 0, 63, 1, 'kind:live;voice:synth;rhythm:euclid,drawn') +
             mini(L, 'part.rhythm.voices', 'Voices', num(r.voices, 1), 1, 8, 1, 'kind:live;voice:synth;rhythm:euclid') +
@@ -5458,7 +7458,6 @@
           sl(L, 'part.rhythm.rateVar', 'Rate var', num((L.part.rhythm || {}).rateVar, 0), 0, 100,
              'steady → rushes — replays per take', 'kind:live;voice:synth') +
           sl(L, 'accent', 'Accent', num(L.accent, 0), 0, 100, 'flat → dynamic') +
-          sl(L, 'humanize', 'Humanize', num(L.humanize, 0), 0, 100, 'timing jitter — never replays') +
           '<div class="ambient-ctrl"><label>Tight</label>' +
             '<button type="button" class="ambient-seg v2-tighttoggle' + (L.tight ? ' on' : '') + '">' +
               (L.tight ? 'On — clipped' : 'Off') + '</button>' +
@@ -5681,20 +7680,34 @@
           // "Wobble", not "Motion": this is a detune wobble, and 'Motion' was
           // also a top-level group — one word over two unrelated things.
           sl(L, 'motion', 'Wobble', num(L.motion, 0), 0, 100, 'detune wobble', 'kind:live;voice:synth') +
-          // THE VARIANCE HALF OF THE OLD 'Motion' — rests, ghosts and the two
-          // scatters change WHAT each note is, which is what Shape asks.
-          tb('Variance',
-            sl(L, 'restProb', 'Rests', num(L.restProb, 0), 0, 100, '% of onsets dropped') +
-          sl(L, 'ghosts', 'Ghosts', num(L.ghosts, 0), 0, 100, 'quiet extra hits') +
-          sl(L, 'lenVary', 'Len vary', num(L.lenVary, 0), 0, 100, 'note-length scatter') +
-          sl(L, 'velVar', 'Vel var', num(L.velVar, 0), 0, 100, 'level scatter — replays per take'))
+          // SHAPING — these change WHAT each note is, ONCE. The tab was called
+          // "Variance", which is measurably the wrong word: six consecutive
+          // cycles of a part with Rests, Ghosts or Len vary up give the
+          // IDENTICAL note set every time, because they seed off a fixed take.
+          // They shape the static content; they do not animate it. Filing them
+          // as variance put three deterministic knobs under a heading that
+          // promised the opposite.
+          tb('Shaping',
+            sl(L, 'restProb', 'Rests', num(L.restProb, 0), 0, 100, '% of onsets dropped — the same ones every cycle') +
+            sl(L, 'ghosts', 'Ghosts', num(L.ghosts, 0), 0, 100, 'quiet extra hits — the same ones every cycle') +
+            sl(L, 'lenVary', 'Len vary', num(L.lenVary, 0), 0, 100, 'note-length scatter — fixed per take')) +
+          // PERFORMANCE — the tier that genuinely differs pass to pass, which
+          // is what makes content LIVE. Humanize is UNSEEDED (real performance
+          // jitter, never replays); Vel var is seeded on position-in-the-
+          // performance, so successive passes differ while one take replays.
+          // Both come from `_ambApplyAdsr`, so the semantics are v1's rather
+          // than a second implementation. The third live switch — the dice
+          // themselves — is the toggle beside the Material doors and is NOT
+          // repeated here: two surfaces for one control is the duplication
+          // this file keeps paying for. The hint names it instead.
+          tb('Performance',
+            sl(L, 'humanize', 'Humanize', num(L.humanize, 0), 0, 100, 'timing jitter — never replays') +
+            sl(L, 'velVar', 'Vel var', num(L.velVar, 0), 0, 100, 'level scatter — differs pass to pass') +
+            '<div class="ambient-ctrl"><label></label><span class="ambient-hint">' +
+              'These make the content LIVE — every pass differs. The third is the dice ' +
+              'toggle beside the Material doors: \ud83c\udfb2 Re-roll every cycle.' +
+            '</span></div>')
         ) +
-        // ── MOTION — how the performance varies note to note ──────────────
-        // v1 splits these out from Variance for a reason worth keeping:
-        // Humanize is UNSEEDED (real performance jitter, never replays) while
-        // Vel var is SEEDED on position-in-the-take, so the same take replays
-        // the same dynamics. Both come from `_ambApplyAdsr`, so the semantics
-        // are v1's rather than a second implementation.
         // ── MIX — level, filtering, routing and stereo placement ──────────
         // These are the TREATMENTS: shared v1 fields the chain already reads, so
         // this group is a surface over machinery that exists rather than new
@@ -5840,11 +7853,24 @@
   function applyGate(card, L) {
     const p = L.part;
     const now = {
-      kind: p.kind,
+      // ▦ STEPS IS ALWAYS GENERATED-SHAPED. `kind` says where the ROLL's
+      // material comes from, and in this form the grid is the material
+      // whatever the roll happens to hold — which is exactly what `notesFor`
+      // decides, so the gate has to agree or the card contradicts the engine.
+      // It did: on a layer whose roll was recorded, EVERY pattern control was
+      // greyed and the tab announced "this one is Fixed" while the grid beside
+      // it was plainly playing. The four `kind:recorded` rows it hides here
+      // (Transpose, Follows changes, and two hints) are all note-list
+      // questions, so hiding them is right; `Plays` carries no gate and stays.
+      kind: (V2.formOf(L) === 'steps') ? 'live' : p.kind,
       voice: (L.instrument && L.instrument.voice) || 'synth',
       tg: (L.tg && L.tg.on) ? 'on' : 'off',   // the gate's own rows follow it
       spat: (L.spat && L.spat.on) ? 'on' : 'off',
       rhythm: (p.rhythm && p.rhythm.kind) || '',
+      // THE MATERIAL'S FORM. What it scopes is deliberately small — the grid's
+      // own rows and the note list's own — because every pitch rule, shape and
+      // variance knob means the same thing in both.
+      form: V2.formOf(L),
       pitch: (p.pitch && p.pitch.kind) || '',
       clock: (p.clock === 'free') ? 'free' : 'bars',
       // The KIT KIND — the synth-kit editor applies to the generated kit only.
@@ -5868,8 +7894,13 @@
     // a select whose value matches no option renders BLANK — so point it at the
     // generator. Re-picking that same entry then fires no `input`, which is what
     // keeps it from silently wiping an edited pattern.
-    const rsel = card.querySelector('[data-f="part.rhythm.kind"]');
-    if (rsel) { const want = rhythmShown(now.rhythm); if (rsel.value !== want) rsel.value = want; }
+    // querySelectorAll, not querySelector: the Generated panel carries a
+    // SECOND copy of this select now, and syncing only the first would leave
+    // the panel's blank on a drawn part \u2014 which is the exact state that
+    // invites the pick that drifts the rules.
+    card.querySelectorAll('[data-f="part.rhythm.kind"]').forEach((rsel) => {
+      const want = rhythmShown(now.rhythm); if (rsel.value !== want) rsel.value = want;
+    });
     card.querySelectorAll('[data-v2when]').forEach(row => {
       // Clauses are judged SEPARATELY now, because two kinds of gating hide
       // for two different reasons: an ALTERNATIVE (rhythm:euclid on a pulse
@@ -6172,12 +8203,6 @@
   // UI IIFE, because that is where `render` and the click delegation are; the
   // file is TWO IIFEs and they share nothing but `window._v2`.
   let GENPOP = null;
-  let GWPOP = null;   // …and the Groundwork one, same contract
-  // WHAT THE PART LOOKED LIKE WHEN THE PANEL OPENED. Groundwork edits a DRAFT:
-  // opening adopts the shape so you can hear it, ✕ Cancel puts back exactly
-  // what was there, ✓ Done keeps it. That is what lets the door itself be the
-  // choice instead of needing a "Use Groundwork" button inside it.
-  let GW_DRAFT = null;
   function popWrapOf(card) { return card.querySelector('.v2-pop-wrap'); }
   function popClose(card) {
     const wrap = card && popWrapOf(card);
@@ -6218,21 +8243,10 @@
     } catch (e) {}
     return out;
   }
-  function partChoiceOpts(L) {
-    const E = (typeof _masterEng !== 'undefined') ? _masterEng : null;
-    const rgs = E ? partRangesOf(E) : [];
-    const cur = (L && Number.isFinite(L.partFor)) ? (L.partFor | 0) : null;
-    // shared mode: the selector is DISABLED and says so with a dash — editing
-    // targets only ever appear when there is a choice to make
-    if (cur == null) return '<option value="" selected>\u2014</option>';
-    let opts = '', seen = false;
-    rgs.forEach((rg) => {
-      if (rg.pi === cur) seen = true;
-      opts += '<option value="' + rg.pi + '"' + (rg.pi === cur ? ' selected' : '') + '>' + esc(rg.nm) + '</option>';
-    });
-    if (!seen) opts += '<option value="' + cur + '" selected>Part ' + (cur + 1) + ' (gone)</option>';
-    return opts;
-  }
+  // (`partChoiceOpts` lived here and built the head's part <select>. That
+  // chooser is GONE — the ⇶ Part strip above the layers is the one place a
+  // part is made current — and the builder went with it rather than being left
+  // as machinery nothing calls, which is how a retired surface comes back.)
 
   // ── SYNC TO PART — match the layer's cycle to one pass of the changes ────
   // "I created a 5-chord part and Content did not update": a part's bars are
@@ -6244,9 +8258,12 @@
   // `L.harmony` — so the dialog decides, it does not implement.
   function syncPartModal(E, card, L, onApply) {
     const cfg = E.getCfg(); const p = L.part;
-    // THE TARGET IS THE HEAD'S SELECTION — the selector beside this button
-    // names which part the content is for, so Sync does not ask again. With
-    // All parts selected the target is the played changes themselves.
+    // THE TARGET IS THE PART THIS RECORD IS FOR (`L.partFor`), which the ⇶ Part
+    // strip keeps equal to the part you are editing — so Sync does not ask
+    // WHICH, it STATES it. With the per-part mode off the target is the played
+    // changes themselves. There is no chooser beside this button any more, so
+    // the dialog naming its target is the only thing that says where the
+    // length is coming from: it leads with the part, in that part's own hue.
     let tgt = null;
     const rgs = partRangesOf(E).filter((x) => x.bars > 0);
     if (Number.isFinite(L.partFor)) tgt = rgs.find((x) => x.pi === (L.partFor | 0)) || null;
@@ -6269,8 +8286,20 @@
     const segs = (name, opts, cur) => '<span class="ambient-seg-row">' + opts.map(([v, lab, tip]) =>
       '<button type="button" class="ambient-seg v2-syncopt" data-q="' + name + '" data-v="' + v + '"' +
       (tip ? ' title="' + tip + '"' : '') + '>' + lab + '</button>').join('') + '</span>';
+    const tgtAttr = (tgt.pi >= 0 && typeof _ambPartAttr === 'function') ? _ambPartAttr(tgt.pi) : '';
     ov.innerHTML = '<div class="sm-modal v2-sync-modal">' +
-      '<div class="sm-title">\u21c4 Sync \u2014 ' + esc(tgt.nm) + '</div>' +
+      '<div class="sm-title">\u21c4 Sync</div>' +
+      // WHICH PART, said outright and in its own colour — the card no longer
+      // carries a selector to read it off, so a dialog that only implied its
+      // target would be asking you to take it on trust.
+      '<div class="v2-sync-tgt"' + tgtAttr + '>' +
+        (tgt.pi >= 0 ? 'Syncing this layer to <b>' + esc(tgt.nm) + '</b>'
+                     : 'Syncing this layer to <b>the changes</b>') +
+      '</div>' +
+      (tgt.pi >= 0
+        ? '<div class="ambient-hint v2-sync-which">That is the current part \u2014 pick another in the ' +
+          '\u21f6 Part strip above the layers, then press \u21c4 Sync again.</div>'
+        : '') +
       '<div class="ambient-hint v2-sync-now"></div>' +
       (bound
         ? '<div class="ambient-hint v2-sync-bound">\u27f2 This layer is already bound to the arrangement \u2014 its length follows the part by itself, so only the notes question applies.</div>'
@@ -6332,6 +8361,344 @@
     });
   }
 
+  // ── A CADENCE CHANGE MOVES THE CONTENT WITH IT ──────────────────────────
+  // A per-part record IS its part's length — the reconciler refits `part.bars`
+  // on every normalize — so lengthening a chord ALREADY stretched every record
+  // filed against that part: note times are cycle FRACTIONS, so the same notes
+  // simply spread over the new length. That is one of two honest answers and
+  // it was being taken silently. `part.barsMode` is where the other one lives
+  // (`fill` — keep the notes at their own tempo and repeat or trim), and the
+  // edit now ASKS which, then applies it through the SAME `applyBarsMode` the
+  // ⇄ Sync dialog uses. The dialog decides; it does not implement.
+  //
+  // THE RECORD FOR THAT PART IS NOT ALWAYS `L.part`: a layer editing part 2
+  // keeps part 1's record filed in `L.parts`, and the reconciler refits that
+  // one too — so a cascade that only looked at the bench would miss every
+  // layer whose selection happens to be elsewhere.
+  function partRecOf(L, pi) {
+    if (!L || !Number.isFinite(L.partFor)) return null;
+    if ((L.partFor | 0) === (pi | 0)) return L.part || null;
+    const m = L.parts && L.parts[String(pi | 0)];
+    return (m && typeof m === 'object') ? m : null;
+  }
+  // WHO IS AFFECTED, and who merely LOOKS affected. `bound` is content that
+  // just moved; `loose` is the ▭ Everywhere layers, which are NOT bound to any
+  // part by definition — cascading to them would override the statement the
+  // mode makes — so they are NAMED and pointed at their own door rather than
+  // resized behind the user's back.
+  function cascadeScanFn(E, pi) {
+    const out = { bound: [], loose: [] };
+    let cfg = null; try { cfg = E.getCfg(); } catch (e) { return out; }
+    (cfg.layers || []).forEach((L) => {
+      if (!L) return;
+      const rec = partRecOf(L, pi);
+      if (rec) out.bound.push({ id: L.id | 0, name: L.name || 'Layer',
+        kind: rec.kind === 'recorded' ? 'written' : 'generated',
+        notes: (rec.notes || []).length, bars: +rec.bars || 0 });
+      else if (!Number.isFinite(L.partFor)) out.loose.push({ id: L.id | 0, name: L.name || 'Layer', bars: +((L.part || {}).bars) || 0 });
+    });
+    return out;
+  }
+  // APPLY THE ANSWER. `stretch` is what already happened, so it only records
+  // the preference; `fill` re-writes against the length the record had BEFORE
+  // the reconciler moved it, which is the one number normalize cannot know.
+  function cascadeBarsFn(E, pi, prevBars, mode) {
+    let cfg = null; try { cfg = E.getCfg(); } catch (e) { return 0; }
+    let n = 0;
+    (cfg.layers || []).forEach((L) => {
+      const rec = partRecOf(L, pi); if (!rec) return;
+      if (mode === 'fill') rec.barsMode = 'fill'; else delete rec.barsMode;
+      if (mode === 'fill' && prevBars > 0) {
+        // SWAP-RUN-RESTORE, the idiom normalize itself uses to run one record
+        // coercion over every filed record — `applyBarsMode` reads `L.part`.
+        const keep = L.part; L.part = rec;
+        // `V2.applyBarsMode`, NOT the bare name — this half of the file is the
+        // OTHER IIFE and the maker lives in the engine one (the documented trap).
+        try { if (V2.applyBarsMode(L, prevBars)) n++; } catch (e) {} finally { L.part = keep; }
+      } else n++;
+      // APPLY NOW, not when the schedule runs dry — the same cancel + drop-phase
+      // pair every other live edit here does.
+      try {
+        if (E.timer && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined')
+          cancelBloomFutureVoices('v2:' + (L.id | 0), Tone.now());
+      } catch (e) {}
+      try { if (E._v2Phase) delete E._v2Phase['v2:' + (L.id | 0)]; } catch (e) {}
+    });
+    try { E.getCfg(); } catch (e) {}
+    try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+    return n;
+  }
+  // THE WARNING, asked ONCE at the end of the edit rather than on every ±
+  // press — a question per press is unusable, and the length that matters is
+  // the one you finished on.
+  function cascadeModalFn(E, pi, prevBars, newBars, onDone) {
+    const scan = cascadeScanFn(E, pi);
+    const fin = () => { try { if (onDone) onDone(); } catch (e) {} };
+    if (!scan.bound.length) { fin(); return false; }
+    let nm = 'this part';
+    try { if (typeof _ambPartLabel === 'function') nm = _ambPartLabel(E.getCfg(), pi) || nm; } catch (e) {}
+    const fmt = (b2) => (Math.round(b2 * 100) / 100) + ' bar' + (Math.abs(b2 - 1) < 1e-9 ? '' : 's');
+    const st = { len: 'stretch' };
+    const ov = document.createElement('div');
+    ov.className = 'sm-overlay';
+    ov.style.setProperty('display', 'flex', 'important');   // body-attached — the view-mode hide rules
+    const attr = (typeof _ambPartAttr === 'function') ? _ambPartAttr(pi) : '';
+    const list = scan.bound.map((x) => '<li>' + esc(x.name) + ' · ' + x.kind +
+      (x.kind === 'written' ? ' · ' + x.notes + ' note' + (x.notes === 1 ? '' : 's') : '') + '</li>').join('');
+    ov.innerHTML = '<div class="sm-modal v2-sync-modal v2-casc-modal">' +
+      '<div class="sm-title">The cadence moved</div>' +
+      '<div class="v2-sync-tgt"' + attr + '><b>' + esc(nm) + '</b> is ' + fmt(newBars) +
+        ' now — it was ' + fmt(prevBars) + '.</div>' +
+      '<div class="ambient-hint v2-casc-who">' + scan.bound.length +
+        (scan.bound.length === 1 ? ' layer writes' : ' layers write') + ' content for it:' +
+        '<ul class="v2-casc-list">' + list + '</ul></div>' +
+      '<div class="v2-sync-row"><label>Content</label>' +
+        '<span class="ambient-seg-row">' +
+          '<button type="button" class="ambient-seg v2-cascopt" data-v="stretch" ' +
+            'title="The same notes, spread across the new length">Stretch</button>' +
+          '<button type="button" class="ambient-seg v2-cascopt" data-v="fill" ' +
+            'title="Keep the notes at their own tempo — repeat or trim them to the new length">Fill</button>' +
+        '</span></div>' +
+      (scan.loose.length
+        ? '<div class="ambient-hint v2-casc-loose">' + scan.loose.length + ' ▭ Everywhere layer' +
+          (scan.loose.length === 1 ? '' : 's') + ' keep' + (scan.loose.length === 1 ? 's' : '') +
+          ' its own length — that content is not for one part. ⇄ Sync fits one to a part.</div>'
+        : '') +
+      '<div class="v2-sync-actions">' +
+        '<button type="button" class="ambient-regen v2-cascgo">Apply</button>' +
+      '</div></div>';
+    document.body.appendChild(ov);
+    const paint = () => ov.querySelectorAll('.v2-cascopt').forEach((b2) =>
+      b2.classList.toggle('on', st.len === b2.getAttribute('data-v')));
+    paint();
+    const close = () => { try { ov.remove(); } catch (e) {} };
+    ov.addEventListener('click', (ev) => {
+      const opt = ev.target.closest && ev.target.closest('.v2-cascopt');
+      if (opt) { st.len = opt.getAttribute('data-v'); paint(); return; }
+      // THE SCRIM IS NOT A CANCEL HERE. The length has already moved and the
+      // records with it — there is nothing to cancel, only a choice about how
+      // they follow — so dismissing means "the default, stretch", which is
+      // exactly the state the dialog opened on.
+      if (ev.target === ov || (ev.target.closest && ev.target.closest('.v2-cascgo'))) {
+        const n = cascadeBarsFn(E, pi, prevBars, st.len);
+        close(); fin();
+        try {
+          showToast(st.len === 'fill'
+            ? '⇥ Filled — ' + n + ' layer' + (n === 1 ? '' : 's') + ' kept their tempo over ' + fmt(newBars)
+            : '↔ Stretched — ' + n + ' layer' + (n === 1 ? '' : 's') + ' spread across ' + fmt(newBars),
+            { ms: 3200 });
+        } catch (e) {}
+      }
+    });
+    return true;
+  }
+
+  // ── ✂ SPLIT — ONE NOTE BECOMES SEVERAL, IN ITS OWN SPAN ─────────────────
+  // The total length is the invariant: whatever you ask for, the pieces cover
+  // exactly `[t, t+dur)` and nothing after this note moves. That is what makes
+  // it a division rather than an edit — you can split a note without re-timing
+  // the phrase around it.
+  //
+  // Three ways to say the proportions, and they are the three real answers:
+  // EQUAL (the common one), CUSTOM (you state the relative sizes and the app
+  // does the arithmetic), RANDOM (a spread from even to dramatic). All three
+  // reduce to a list of WEIGHTS, so there is one divider and the pattern only
+  // decides where the weights come from — a second implementation per mode is
+  // how the "same total length" promise would come to be true of only two.
+  const SPLIT_MIN = 1 / 64;        // of the note — no piece may vanish
+  function splitWeights(kind, count, custom, spread, roll) {
+    const n = Math.max(2, count | 0);
+    let w = [];
+    if (kind === 'custom') {
+      for (let i = 0; i < n; i++) {
+        const v = +(custom || [])[i];
+        w.push(Number.isFinite(v) && v > 0 ? v : 1);
+      }
+    } else if (kind === 'random') {
+      // MULTIPLICATIVE, so a weight can never go negative and 0 spread is
+      // exactly 1 for every piece — the slider's own left end IS equal
+      // division, which is what "from equally sized to dramatic" means.
+      // 2.6, not 1.8: the exponent spans ±k/2, but a handful of uniform draws
+      // rarely reaches both ends — measured, four pieces at the top of the
+      // slider came out only 1.7× apart, which is not "dramatic". At 2.6 the
+      // typical longest:shortest is ~5:1, which reads as a dotted note against
+      // a short one, and the floor below keeps the short one audible.
+      const k = Math.max(0, Math.min(100, spread | 0)) / 100 * 2.6;
+      for (let i = 0; i < n; i++) {
+        // seeded on the piece, the shape and the press count: the same
+        // settings redraw the same division (a preview you cannot trust is
+        // not a preview), and 🎲 asks for another one
+        let r = 0.5;
+        try { r = _ambSeededRand(((roll | 0) * 7919) ^ (n * 131) ^ (i * 2654435761)) (); } catch (e) { r = ((i * 37 + (roll | 0) * 91) % 100) / 100; }
+        w.push(Math.exp(k * (r - 0.5)));
+      }
+    } else {
+      for (let i = 0; i < n; i++) w.push(1);
+    }
+    // NORMALISE, THEN FLOOR, THEN NORMALISE AGAIN. A floor applied to shares
+    // that already sum to 1 breaks the sum, so the second pass is what keeps
+    // the promise; the floor itself is what stops a dramatic spread producing
+    // a piece too short to hear.
+    let tot = w.reduce((a, v) => a + v, 0) || 1;
+    w = w.map((v) => Math.max(SPLIT_MIN, v / tot));
+    tot = w.reduce((a, v) => a + v, 0) || 1;
+    return w.map((v) => v / tot);
+  }
+  // The division itself. Kept separate from the dialog so the gate can ask the
+  // arithmetic directly, and so the promise ("the pieces cover the original
+  // span exactly") is one function's to keep.
+  function splitNoteFn(L, idx, w) {
+    const p = L && L.part; if (!p || p.kind !== 'recorded') return null;
+    const ns = p.notes || []; const n0 = ns[idx]; if (!n0) return null;
+    const T = +n0.t, D = +n0.dur;
+    if (!(D > 0) || !w || w.length < 2) return null;
+    const out = []; let acc = 0;
+    for (let i = 0; i < w.length; i++) {
+      const piece = { t: T + acc * D, midi: n0.midi, dur: w[i] * D };
+      // EVERYTHING THE NOTE WAS, carried. A split is a division of one note,
+      // not a new one — so its level, envelope, glide and its pitch PIN come
+      // along, or a split on a remapping part would re-voice every piece
+      // (the `hx` rule, from the other side).
+      ['vel', 'atk', 'dec', 'sus', 'rel', 'glide', 'hx'].forEach((k) => {
+        if (n0[k] != null) piece[k] = n0[k];
+      });
+      out.push(piece); acc += w[i];
+    }
+    // The LAST piece is snapped to the original end rather than trusted to the
+    // float sum — the invariant is stated in the dialog and must be exact.
+    const last = out[out.length - 1];
+    last.dur = Math.max(1e-6, (T + D) - last.t);
+    p.notes = ns.slice(0, idx).concat(out, ns.slice(idx + 1));
+    return out.length;
+  }
+  function splitModal(E, card, L, idx) {
+    const p = L.part;
+    if (p.kind !== 'recorded') return;
+    const n0 = (p.notes || [])[idx]; if (!n0 || !(+n0.dur > 0)) return;
+    const T = +n0.t, D = +n0.dur;
+    const bars = Math.max(0.0625, +p.bars || 1);
+    const st = { kind: 'equal', count: 3, spread: 40, roll: 1, custom: [] };
+    const ov = document.createElement('div');
+    ov.className = 'sm-overlay';
+    ov.style.setProperty('display', 'flex', 'important');   // body-attached — the view-mode hide rules
+    // BEATS, because that is the unit the ruler above is drawn in and the one
+    // the note editor's own Position and Length already speak.
+    const beats = (frac) => Math.round(frac * bars * 4 * 1000) / 1000;
+    const nm = () => {
+      try { return _AMB_CHROM[(((n0.midi | 0) % 12) + 12) % 12] + (Math.floor((n0.midi | 0) / 12) - 1); }
+      catch (e) { return 'note'; }
+    };
+    ov.innerHTML = '<div class="sm-modal v2-sync-modal v2-split-modal">' +
+      '<div class="sm-title">✂ Split note</div>' +
+      '<div class="v2-sync-tgt"><b>' + esc(nm()) + '</b> — ' + beats(D) +
+        ' beat' + (Math.abs(beats(D) - 1) < 1e-9 ? '' : 's') + ' long. The pieces fill exactly that.</div>' +
+      '<div class="v2-sync-row"><label>Into</label>' +
+        '<span class="ambient-stepper v2-split-cnt">' +
+          '<button type="button" class="ambient-seg v2-splitstep" data-d="-1">−</button>' +
+          '<span class="v2-split-n">3</span>' +
+          '<button type="button" class="ambient-seg v2-splitstep" data-d="1">＋</button>' +
+        '</span><span class="ambient-hint">notes</span></div>' +
+      '<div class="v2-sync-row"><label>Sizes</label>' +
+        '<span class="ambient-seg-row">' +
+          '<button type="button" class="ambient-seg v2-splitkind" data-v="equal" ' +
+            'title="Every piece the same length">Equal</button>' +
+          '<button type="button" class="ambient-seg v2-splitkind" data-v="custom" ' +
+            'title="State the relative sizes — the app scales them to the note’s own length">Custom</button>' +
+          '<button type="button" class="ambient-seg v2-splitkind" data-v="random" ' +
+            'title="Rolled, from even to dramatically uneven — always within the note">Random</button>' +
+        '</span></div>' +
+      '<div class="v2-split-custom"><div class="ambient-hint">Relative sizes — any numbers; ' +
+        'they are scaled to fit.</div><div class="v2-split-fields"></div></div>' +
+      '<div class="v2-split-rand"><div class="ambient-ctrl">' +
+        '<label>Unevenness</label>' +
+        '<input type="range" class="ambient-sl v2-split-spread" min="0" max="100" step="1" value="40">' +
+        '<span class="ambient-sl-v v2-split-spreadv">40</span></div>' +
+        '<div class="v2-split-rerow"><button type="button" class="ambient-regen v2-splitroll">🎲 Roll again</button>' +
+        '<span class="ambient-hint">even → dramatic</span></div></div>' +
+      // THE PREVIEW IS THE POINT. Numbers alone do not read as proportions —
+      // the cadence editor learned the same thing — and it is the one surface
+      // that makes Custom's arithmetic visible before you commit to it.
+      '<div class="v2-split-prev"></div>' +
+      '<div class="v2-sync-actions">' +
+        '<button type="button" class="ambient-regen v2-splitgo">Split</button>' +
+        '<button type="button" class="ambient-regen v2-splitcancel">Cancel</button>' +
+      '</div></div>';
+    document.body.appendChild(ov);
+    const wNow = () => splitWeights(st.kind, st.count, st.custom, st.spread, st.roll);
+    const paint = () => {
+      const q = (s2) => ov.querySelector(s2);
+      const nEl = q('.v2-split-n'); if (nEl) nEl.textContent = String(st.count);
+      ov.querySelectorAll('.v2-splitkind').forEach((b2) =>
+        b2.classList.toggle('on', b2.getAttribute('data-v') === st.kind));
+      const cu = q('.v2-split-custom'), rd = q('.v2-split-rand');
+      if (cu) cu.style.display = (st.kind === 'custom') ? '' : 'none';
+      if (rd) rd.style.display = (st.kind === 'random') ? '' : 'none';
+      // the custom fields are REBUILT only when the count changes — rewriting
+      // them on every keystroke would take the caret with them
+      const box = q('.v2-split-fields');
+      if (box && box.children.length !== st.count) {
+        box.innerHTML = '';
+        for (let i = 0; i < st.count; i++) {
+          const inp = document.createElement('input');
+          inp.type = 'number'; inp.className = 'ambient-step-inp v2-split-w';
+          inp.min = '0.1'; inp.step = '0.1';
+          inp.value = String(st.custom[i] != null ? st.custom[i] : 1);
+          box.appendChild(inp);
+        }
+      }
+      const w = wNow();
+      const pv = q('.v2-split-prev');
+      // `beats(v * D)`, NOT `beats(v)`: a weight is a fraction of THIS NOTE and
+      // `beats` converts a fraction of the CYCLE — so the pieces read as the
+      // whole cycle's beats and summed to twice the note's own length, which
+      // is the one promise this dialog makes.
+      if (pv) pv.innerHTML = w.map((v) => '<i class="v2-split-seg" style="width:' +
+        (v * 100).toFixed(3) + '%"><b>' + (Math.round(beats(v * D) * 100) / 100) + '</b></i>').join('');
+    };
+    paint();
+    const close = () => { try { ov.remove(); } catch (e) {} };
+    ov.addEventListener('input', (ev) => {
+      const sp = ev.target.closest && ev.target.closest('.v2-split-spread');
+      if (sp) { st.spread = +sp.value | 0;
+        const v = ov.querySelector('.v2-split-spreadv'); if (v) v.textContent = String(st.spread);
+        paint(); return; }
+      const wf = ev.target.closest && ev.target.closest('.v2-split-w');
+      if (wf) {
+        st.custom = [...ov.querySelectorAll('.v2-split-w')].map((x) => +x.value);
+        // NEVER repaint the fields from here — see `paint`; only the preview
+        // is redrawn, so the caret survives.
+        const w = wNow(), pv = ov.querySelector('.v2-split-prev');
+        if (pv) pv.innerHTML = w.map((v) => '<i class="v2-split-seg" style="width:' +
+          (v * 100).toFixed(3) + '%"><b>' + (Math.round(beats(v * D) * 100) / 100) + '</b></i>').join('');
+        return;
+      }
+    });
+    ov.addEventListener('click', (ev) => {
+      const t = ev.target;
+      if (t === ov || (t.closest && t.closest('.v2-splitcancel'))) { close(); return; }
+      const stp = t.closest && t.closest('.v2-splitstep');
+      if (stp) { st.count = clamp(st.count + ((stp.getAttribute('data-d') | 0) || 1), 2, 16); paint(); return; }
+      const kd = t.closest && t.closest('.v2-splitkind');
+      if (kd) { st.kind = kd.getAttribute('data-v'); paint(); return; }
+      if (t.closest && t.closest('.v2-splitroll')) { st.roll++; paint(); return; }
+      if (t.closest && t.closest('.v2-splitgo')) {
+        const made = splitNoteFn(L, idx, wNow());
+        close();
+        if (!made) return;
+        try { E.getCfg(); } catch (e) {}
+        try {
+          if (E.timer && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined')
+            cancelBloomFutureVoices('v2:' + (L.id | 0), Tone.now());
+        } catch (e) {}
+        try { if (E._v2Phase) delete E._v2Phase['v2:' + (L.id | 0)]; } catch (e) {}
+        try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+        try { drawPartViz(card, L, E); } catch (e) {}
+        try { showToast('✂ Split into ' + made + ' notes — same total length.', { ms: 3000 }); } catch (e) {}
+        return;
+      }
+    });
+  }
+
   function popOpen(card, L, grp, tab) {
     // ONLY THIS CARD. It used to close every other layer's sheet — right for a
     // modal over the panel, wrong for an editor that lives in each card's own
@@ -6364,27 +8731,48 @@
           // own `.v2-f` input handler commits it: no new wiring, and no second
           // copy of either rule. Gated on the voice like any row, because the
           // head is inside the card and `applyGate` sweeps `[data-v2when]`.
-          // CONTENT IS PER-PART: the selector names which arrangement part
-          // THIS record belongs to (All parts = one content everywhere), and
-          // Sync matches the record to that part. One joined pair — choosing
-          // and syncing are two halves of the same sentence.
+          // CONTENT IS PER-PART: the toggle says whether each arrangement part
+          // has its own content, and Sync matches the record to the part.
+          // WHICH part is NOT asked here — the ⇶ Part strip above the layers
+          // already answers it for the whole panel, and a second chooser on
+          // every card was the same question asked twice (the duplication this
+          // file keeps paying for). The toggle wears the current part's hue so
+          // the card still SAYS which one it is on without a control for it.
           ((grp === 'Content')
             ? (() => {
                 const pp2 = Number.isFinite(L.partFor);
+                // `_masterEng`, NOT `E` — `popOpen(card, L, grp, tab)` has no
+                // engine (the idiom `partRangesOf` uses). A bare `E` here
+                // threw into the try below and the name silently never
+                // appeared: the documented swallowed-catch trap, so the
+                // lookup is guarded by `typeof` rather than by a catch.
+                // THE SHORT label — the ordinal, and a name only if somebody
+                // AUTHORED one. A derived name is the chord numerals, and the
+                // ruler under this pill now draws those chords WHERE THEY
+                // ARE, so spending the whole row on a list of them said the
+                // same thing twice and worse.
+                let pnm = '', pfull = '';
+                if (pp2 && typeof _masterEng !== 'undefined' && _masterEng &&
+                    typeof _ambPartLabel === 'function') {
+                  try {
+                    const c0 = _masterEng.getCfg();
+                    pfull = _ambPartLabel(c0, L.partFor | 0) || '';
+                    pnm = (typeof _ambPartLabelShort === 'function'
+                      ? _ambPartLabelShort(c0, L.partFor | 0) : pfull) || pfull;
+                  } catch (e) { pnm = ''; pfull = ''; }
+                }
                 return '<span class="v2-pop-pair">' +
-                  '<button type="button" class="v2-pop-pp' + (pp2 ? ' on' : '') + '" ' +
+                  '<button type="button" class="v2-pop-pp' + (pp2 ? ' on' : '') + '"' +
+                    (pp2 && typeof _ambPartAttr === 'function' ? _ambPartAttr(L.partFor | 0) : '') + ' ' +
                     'title="' + (pp2
-                      ? 'Per part \u2014 each arrangement part has its own content for this layer. Tap to go back to one content everywhere (the filed parts are dropped, it asks first).'
+                      ? esc('Per part \u2014 each arrangement part has its own content for this layer. ' +
+                          (pfull ? 'You are editing ' + pfull + ' \u2014 pick another in the Part strip above the layers. ' : '') +
+                          'Tap to go back to one content everywhere (the filed parts are dropped, it asks first).')
                       : 'One content \u2014 this layer plays the same content in every part. Tap to give each part its own (nothing changes until a part diverges).') + '">' +
-                    (pp2 ? '\u25eb Per part' : '\u25ad Everywhere') + '</button>' +
-                  '<select class="ambient-select v2-pop-part" aria-label="Which part this content is for"' +
-                    (pp2 ? '' : ' disabled') + ' title="' + (pp2
-                      ? 'Which part you are editing \u2014 the others keep their own content'
-                      : 'One content everywhere \u2014 switch \u25eb Per part on to give each part its own') + '">' +
-                    partChoiceOpts(L) + '</select>' +
+                    (pp2 ? '\u25eb Per part' + (pnm ? ' \u00b7 ' + esc(pnm) : '') : '\u25ad Everywhere') + '</button>' +
                   '<button type="button" class="v2-pop-sync" ' +
-                    'title="Match this layer\u2019s length to one pass of ' + (pp2 ? 'the selected part' : 'the changes') +
-                    ' \u2014 you choose how the notes and the bars come along">' +
+                    'title="Match this layer\u2019s length to one pass of ' + (pp2 ? esc(pfull || 'the current part') : 'the changes') +
+                    ' \u2014 it says which part, and you choose how the notes and the bars come along">' +
                     '\u21c4 Sync</button>' +
                 '</span>';
               })()
@@ -6535,7 +8923,7 @@
       ['make', ['Material', 'Seed like', 'Rhythm', 'Pattern', 'Feel'], 'fam-make'],
       ['time', ['Cycle', 'Bars', 'Plays', 'Speed'], 'fam-time'],
       ['pitch', ['Transpose', 'Follows changes'], 'fam-pitch'],
-      ['saved', ['Phrases'], 'fam-saved'],
+      ['saved', ['Bank'], 'fam-saved'],
     ],
   };
   // A tab that keeps its own hue inside a family, and the state that makes it
@@ -6544,7 +8932,11 @@
   // openable, because the greyed rows explain themselves and an unreachable
   // explanation is the trap this whole pass has been closing).
   const TAB_TINT = { Rhythm: 'fam-rhythm', Pattern: 'fam-rhythm', Feel: 'fam-rhythm' };
-  const tabNa = (nm, L) => !!TAB_TINT[nm] && L && L.part && L.part.kind === 'recorded';
+  // …and NOT in ▦ Steps, where the grid IS the material and its rules are live
+  // by construction — the tab's refusal ("this one is Fixed") would be a
+  // statement about the roll, made over a sequencer that is plainly playing.
+  const tabNa = (nm, L) => !!TAB_TINT[nm] && L && L.part &&
+    L.part.kind === 'recorded' && V2.formOf(L) !== 'steps';
   function popSync(card, L) {
     const wrap = popWrapOf(card); const POP = popStOf(card); if (!wrap || !POP) return;
 
@@ -6750,6 +9142,15 @@
     return h;
   }
 
+  // Published for the CADENCE editor, which lives in 17 — the length moves
+  // there and the content that follows it is v2's to know about.
+  // \u2702 Split — published so the gate can ask the ARITHMETIC directly rather
+  // than inferring it from the notes the dialog happened to write.
+  V2.splitWeights = splitWeights;
+  V2.splitNote = splitNoteFn;
+  V2.cascadeScan = cascadeScanFn;
+  V2.cascadeBars = cascadeBarsFn;
+  V2.cascadeAsk = cascadeModalFn;
   V2.render = function (E) {
     _cardE = E;
     const cfg = E && E.getCfg && E.getCfg(); if (!cfg) return;
@@ -6769,6 +9170,24 @@
       return;
     }
     h._sig = sig;
+    // A REBUILD MUST NOT THROW THE PAGE BACK TO THE TOP. Replacing this host's
+    // innerHTML empties it for an instant, the document collapses to about a
+    // viewport, and the browser CLAMPS the scroll to the new maximum — which
+    // is ~0. Re-adding the cards does not put it back. Measured at 390px with
+    // two expanded cards: toggling a layer on/off went 900 → 0, every time.
+    // Restored at the END of the rebuild, when the cards, their open groups
+    // and their sheets are all back and the height with them; the whole thing
+    // is one synchronous pass, so nothing is painted in between.
+    // …AND THE PAGE IS NOT ALWAYS THE SCROLLER. `#mix-view` is
+    // `overflow-y: auto`, so in some states the panel scrolls INSIDE it and
+    // the document never moves — the rebuild then clamps the CONTAINER's
+    // scrollTop and restoring the document restores nothing (the jump this
+    // guard exists for, back in a different scroller). Save BOTH: whichever
+    // one is live is the one the collapse clamps.
+    const _scroller = scrollerOf(h);
+    const _scrollWas = _scroller ? _scroller.scrollTop : 0;
+    const _docScroller = document.scrollingElement || document.documentElement;
+    const _docScrollWas = (_docScroller && _docScroller !== _scroller) ? _docScroller.scrollTop : null;
     // preserve open/collapsed state across re-renders
     const openIds = new Set([...h.querySelectorAll('.v2-layer:not(.collapsed)')].map(c => c.getAttribute('data-v2id')));
     // ...and which GROUPS are open inside each. Without this a rebuild (any
@@ -6799,7 +9218,6 @@
       const L = list.find(x => x.id === id); if (!L) return;
       if (openIds.has(String(id))) card.classList.remove('collapsed');
       if (GENPOP === id) card.classList.add('v2-genopen');
-      if (GWPOP === id) card.classList.add('v2-gwopen');
       const og = openGrps.get(String(id));
       if (og) card.querySelectorAll('.ambient-grp').forEach(g => {
         g.classList.toggle('open', og.has(g.getAttribute('data-v2grp')));
@@ -6904,19 +9322,47 @@
           if (c9) findRender(c9, fi.value);
           return;
         }
-        // GO TO ANOTHER SECTION without leaving the sheet. Before every other
-        // branch, because it is not a field — it navigates.
-        // WHICH PART THIS CONTENT IS FOR — the head pair's selector. Filing
-        // and restoring is the engine's `partSelect`; 'All parts' is the one
-        // destructive branch (the filed records are dropped) and confirms.
-        const pp = ev.target.closest && ev.target.closest('.v2-pop-part');
-        if (pp) {
-          const ctx = layerOf(pp); if (!ctx) return;
-          if (pp.value === '') return;                 // shared mode's inert dash
-          V2.partSelect(E, ctx.L, pp.value | 0);
-          commit(ctx); h._sig = ''; V2.render(E);
+        // THE EDITING GRID. Display-and-editing only: nothing about what
+        // plays changes, so it persists and redraws and does not re-anchor.
+        // The note editor is REBUILT, because its Position and Length sliders
+        // are ranged in grid cells and a stale range reads the wrong number.
+        // ── THE DRAWING'S MODE. Canvas-only: a mode change redraws the
+        // picture and never rebuilds the card, which is what makes a <select>
+        // safe here (a rebuild mid-pick is the documented trap).
+        const msel = ev.target.closest && ev.target.closest('.v2-modepick');
+        if (msel) {
+          const ctx = layerOf(msel); if (!ctx) return;
+          setMode(ctx.L, msel.value);
+          try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
+          try { multiSync(ctx.card, ctx.L); } catch (e) {}
           return;
         }
+        const gsel = ev.target.closest && ev.target.closest('.v2-gridpick');
+        if (gsel) {
+          const ctx = layerOf(gsel); if (!ctx) return;
+          const v = gsel.value | 0;
+          if (v === 16) delete ctx.L.part.grid; else ctx.L.part.grid = v;
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          try { E.getCfg(); } catch (e) {}
+          // ▦ STEPS: the grid is a note VALUE and the CELL COUNT follows it
+          // (`bars × grid`), so the surface has to be rebuilt — a repaint alone
+          // left 32 cells on screen against a store that said 16, which is the
+          // two-pictures-of-one-thing bug in miniature. In ⌗ Roll nothing
+          // structural moves: the grid is only what a hand edit snaps to.
+          if (V2.formOf(ctx.L) === 'steps') { h._sig = ''; V2.render(E); return; }
+          const cG = document.querySelector('.v2-layer[data-v2id="' + (ctx.L.id | 0) + '"]') || ctx.card;
+          const hostG = cG && cG.querySelector('.v2-neinline');
+          if (hostG && !hostG.hidden) hostG._idx = -1;   // force the rebuild
+          try { drawPartViz(cG, ctx.L, E); } catch (e) {}
+          try { neSync(cG, ctx.L, E); } catch (e) {}
+          return;
+        }
+        // GO TO ANOTHER SECTION without leaving the sheet. Before every other
+        // branch, because it is not a field — it navigates.
+        // (WHICH PART this content is for is not asked on the card: the ⇶ Part
+        // strip above the layers owns that for the whole panel and sweeps every
+        // per-part layer through `partSelect`. The selector that used to sit
+        // here was the same question asked twice.)
 
         // THE NOTE EDITOR, delegated here rather than bound when it is built —
         // the card is rebuilt by `V2.render` on all sorts of edits, and a
@@ -6962,6 +9408,19 @@
           V2.seedCells(ctx.L);
           r.kind = 'euclid';                        // back to the formula the knobs just stated
         }
+        // THE DRAGGED CONTROL'S OWN READOUT. Nothing else writes it: the
+        // delegated slider drag sets `.value` and dispatches events, the
+        // sheets' knobs paint their own faces, and the mirror below skips
+        // `el2 === f` — so a RAW slider (the Generated and Groundwork panels)
+        // moved while its right-gutter number sat on the old value, reported
+        // as "some params don't update their readouts".
+        try {
+          if (f.classList.contains('ambient-sl')) {
+            const row0 = f.closest('.ambient-ctrl');
+            const rd0 = row0 && row0.querySelector('.ambient-sl-v');
+            if (rd0 && typeof _ambSlReadout === 'function') rd0.textContent = _ambSlReadout(f.id, f.value);
+          }
+        } catch (e) {}
         // A FIELD CAN HAVE TWO CONTROLS on this card now (the Generated
         // popover repeats the knobs that shape a shape), and a commit does not
         // rebuild — so without this the copy you are not touching goes stale
@@ -7048,6 +9507,495 @@
         k.addEventListener('pointerup', up, { once: true });
         k.addEventListener('pointercancel', up, { once: true });
       });
+
+      // ✎ ADD A NOTE WHERE THE HAND SAYS — shared by the PENCIL (pointerdown,
+      // press-drag-to-size) and the click path (synthetic clicks in probes),
+      // so the two cannot drift. The pitch comes from the CLICKED ROW, which
+      // is SOUNDING space: on a harmony-remapping part the note is PINNED
+      // (`hx`) so it lands and STAYS exactly on that row; under a plain
+      // transpose the stored value is corrected by the uniform shift after
+      // one redraw (never a second copy of the transpose math — the drawn
+      // note itself says where it landed). A generated part locks first,
+      // data only — the caller decides when to rebuild.
+      const penAdd = (E2, L, cvz, px, py) => {
+        const pg = cvz._pitchGeo, pl = cvz._plotGeo;
+        if (!pg || !pl || !pl.cyc) return null;
+        if (px < pl.x0 || py < pg.top) return null;
+        let locked = false;
+        if (L.part.kind !== 'recorded') {
+          if (!captureShown(E2, L)) {
+            try { if (typeof showToast === 'function') showToast(
+              'Nothing to draw into yet — press 🎲 New take first.', { ms: 3500 }); } catch (e) {}
+            return null;
+          }
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          try { if (typeof showToast === 'function') showToast(
+            '🔒 Locked this take so notes can be drawn into it. 🔓 Unlock hands it back to the rules.',
+            { ms: 4500 }); } catch (e) {}
+          locked = true;
+        }
+        const g2 = neGrid(L), cell = 1 / Math.max(1, g2.gridN);
+        // FLOOR, not round: the pencil fills the cell UNDER the hand
+        // THROUGH THE VIEWPORT — `px` is where the finger is, and with only
+        // part of the cycle on screen that is not the same fraction of the
+        // cycle it used to be (an un-mapped press drew the note back at the
+        // start of the part).
+        const vsc = (pl.vsc > 0) ? pl.vsc : 1, f0 = pl.f0 || 0;
+        const fr = f0 + ((px - pl.x0) / Math.max(1, pl.w)) * vsc;
+        const t = clamp(Math.floor(fr / cell + 1e-6) * cell, 0, 1 - cell);
+        const row = clamp(pg.hiM - Math.floor((py - pg.top) / Math.max(1, pg.rowH)), 0, 127);
+        const nn = { t: t, midi: row, dur: cell };
+        if (L.harmony === 'diatonic' || L.harmony === 'chordlock') nn.hx = 1;
+        L.part.notes.push(nn);
+        try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+        try { E2.getCfg(); } catch (e) {}              // coerce, prune, RE-SORT
+        try { if (E2._v2Phase) delete E2._v2Phase['v2:' + (L.id | 0)]; } catch (e) {}
+        let idx = nearestNote(L.part.notes, t, row);
+        try {
+          const cA = document.querySelector('.v2-layer[data-v2id="' + (L.id | 0) + '"]');
+          if (cA) drawPartViz(cA, L, E2);
+          const hb = (cvz._hits || []).find((x) => x.i === idx);
+          const gotRow = hb ? Math.round(hb.midi) : row;
+          if (gotRow !== row && idx >= 0 && L.part.notes[idx] && !L.part.notes[idx].hx) {
+            const m2 = clamp((L.part.notes[idx].midi | 0) + (row - gotRow), 0, 127);
+            L.part.notes[idx].midi = m2;
+            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            try { E2.getCfg(); } catch (e) {}
+            idx = nearestNote(L.part.notes, t, m2);
+            if (cA) drawPartViz(cA, L, E2);
+          }
+        } catch (e) {}
+        const nf = idx >= 0 ? L.part.notes[idx] : null;
+        return { idx: idx, t: nf ? nf.t : t, midi: nf ? nf.midi : row, locked: locked };
+      };
+
+      // ── DRAG A NOTE: MOVE IT, OR RESIZE IT ───────────────────────────────
+      // The drawing stops being a picture you edit through sliders. What makes
+      // it a drag rather than a tap is CUMULATIVE travel past a threshold (the
+      // per-move-delta mistake is documented — a slow drag never crosses one),
+      // and a gesture that never gets there behaves exactly like a tap.
+      //
+      // THE ORDER HERE IS LOAD-BEARING: hit-test FIRST, against the picture the
+      // finger actually landed on, and only then lock. A live part is rebuilt
+      // by the lock and its drawing re-sizes, so a hit test against the NEW
+      // canvas at the OLD coordinates misses the note by ~27px and the drag
+      // silently never arms — measured, and it is why "still jumping around"
+      // survived the first attempt at this.
+      h.addEventListener('pointerdown', (ev) => {
+        let cvd = ev.target.closest && ev.target.closest('.v2-vizcv'); if (!cvd) return;
+        // `layerOf`, not `layersOf` — the latter is ENGINE-side and this
+        // handler is in the UI IIFE (the file is two of them, sharing only
+        // `window._v2`). The bare name threw into the surrounding try.
+        const ctxD = layerOf(cvd); if (!ctxD) return;
+        let card = ctxD.card, L = ctxD.L;
+        if (!L || !L.part) return;
+        if (vmRefuse(cvd)) return;   // another part's record is drawn — read-only
+
+        // 1 · WHAT IS UNDER THE FINGER, in the picture as it stands.
+        const geo0 = cvd._plotGeo, pg0 = cvd._pitchGeo;
+        if (!geo0 || !pg0 || !geo0.cyc) return;
+        const r0 = cvd.getBoundingClientRect();
+        const px = ev.clientX - r0.left, py = ev.clientY - r0.top;
+        if (px < geo0.x0) return;                      // the keyboard is its own control
+        let hit = null;
+        const hits0 = cvd._hits || [];
+        for (let i = 0; i < hits0.length; i++) {
+          const b2 = hits0[i];
+          // a generous box — a 6px note is under the touch floor, so the hit
+          // area is padded rather than the drawing made clumsy
+          if (px >= b2.x - 4 && px <= b2.x + b2.w + 4 &&
+              py >= b2.y - 7 && py <= b2.y + b2.h + 7) { hit = b2; break; }
+        }
+        // \u2702 SPLIT HAS ONE GESTURE AND IT IS A CLICK. Arming a drag here
+        // would give the mode a second meaning nobody asked for, and the
+        // pencil's own guard below would still let a press on empty space add
+        // a note — so the whole pointerdown path stands down and the click
+        // handler owns the mode. Returning WITHOUT stamping `_dragged` is what
+        // lets that click through.
+        if (modeOf(L) === 'split') return;
+        let mode, locked = false, idx = -1, pen = 0;
+        if (!hit) {
+          // ✎ THE PENCIL. In draw mode, a press on empty plot space PLACES a
+          // note exactly on the clicked row and cell, dragging right SIZES
+          // it, release commits — direct drawing, not tap-then-edit. Empty
+          // space outside draw mode still belongs to the click handler
+          // (bar select), and the ruler strip is nobody's target.
+          if (modeOf(L) !== 'draw' || py < pg0.top) return;
+          const made = penAdd(E, L, cvd, px, py);
+          if (!made || made.idx < 0) return;
+          mode = 'pen'; pen = 1; locked = made.locked; idx = made.idx;
+        } else {
+          // THE RESIZE ZONE IS RELATIVE TO THE NOTE, never a fixed width: a
+          // 10px grip on a 12px note is the whole note (the lane-handle
+          // lesson).
+          const edge = Math.max(4, Math.min(10, hit.w * 0.35));
+          mode = (px >= hit.x + hit.w - edge) ? 'len' : 'move';
+
+          // 2 · A LIVE PART LOCKS ON THE GRAB — the same act a TAP on a note
+          // already performs, brought forward so the gesture can do anything
+          // at all. Before this a drag on a live part did NOTHING (there are
+          // no stored notes to move) and the release then locked and rebuilt
+          // the card, so the picture only moved once you let go.
+          if (L.part.kind !== 'recorded') {
+            if (!captureShown(E, L)) return;           // nothing rolled yet
+            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            try { if (typeof showToast === 'function') showToast(
+              '🔒 Locked this take so its notes can be moved — ' +
+              (L.part.notes || []).length + ' notes. 🔓 Unlock hands it back to the rules.',
+              { ms: 4500 }); } catch (e) {}
+            // The lock writes the DATA only — the card rebuild is DEFERRED to
+            // pointerup. Rebuilding here replaces the canvas mid-gesture, and
+            // TOUCH events stay bound to the element the finger landed on: a
+            // detached canvas has no ancestors, so the host's touchmove guard
+            // below never fires and the browser pans the page straight
+            // through the drag (measured: the drag died after 2 rows and the
+            // page scrolled away — "the note block skips around
+            // vertically"). The drawn take IS the locked take, so the
+            // picture needs no redraw yet.
+            locked = true;
+          }
+          if (!Array.isArray(L.part.notes) || !L.part.notes.length) return;
+          // THE HIT BOX KNOWS WHICH NOTE IT IS (`hit.i` = the note's own
+          // index) — use it. `nearestNote` compares the hit's DRAWN pitch
+          // against STORED midis, and under a harmony remap the nearest
+          // stored note can be a NEIGHBOUR of the one grabbed — which was
+          // then dragged and pitch-rebased instead: "dragging a note changes
+          // notes it comes close to". Only a grab that just LOCKED (the
+          // array was rebuilt by the capture) still re-finds by what it is.
+          if (!locked && Number.isFinite(hit.i) && L.part.notes[hit.i]) idx = hit.i | 0;
+          else { idx = nearestNote(L.part.notes, hit.t, hit.midi); if (idx < 0) return; }
+        }
+        const n0 = L.part.notes[idx]; if (!n0) return;
+
+        // 3 · FREEZE THE AXIS, EXACTLY AS DRAWN, FROM THE PRESS. The window
+        // follows the notes' own range, so dragging one would move the very
+        // thing that defines where it is drawn (measured: `loM` walked
+        // 59 → 71 mid-drag while the value tracked perfectly). Frozen with
+        // NO widening and NO growth: the geometry the pointer landed on IS
+        // the geometry the whole gesture works in — nothing resizes, nothing
+        // shifts, nothing scrolls (the stated contract; the grow-and-absorb
+        // dance this replaces was itself the reported bug, three times). The
+        // cost is stated: a note cannot leave the drawn window in one
+        // gesture — release and re-grab, and the window re-derives with the
+        // note at its edge. The GAIN is the drawn row for a mouse (1:1 —
+        // the block tracks the cursor exactly, one half-step per row) and is
+        // floored at 9px for a finger, where a 5px row is below what a
+        // fingertip can place — the block then moves slightly slower than
+        // the finger, which is the price of precision without a resize.
+        const pgA = cvd._pitchGeo || pg0;
+        const gain = (ev.pointerType === 'touch')
+          ? Math.max(pgA.rowH || 1, 9) : Math.max(pgA.rowH || 1, 1);
+        // THE WINDOW IS IN SOUNDING-PITCH SPACE and `n.midi` is STORED pitch —
+        // transpose and register sit between them (a hit box carries the DRAWN
+        // midi, the documented float-after-transpose). Clamping the stored
+        // value against the drawn window pinned a transposed layer's drag to
+        // the wrong rows entirely (caught by the gate: a +2 shift left the
+        // note stuck at "61" in a 61..87 window while the store said 60). The
+        // offset is measured at the grab, where both spaces name one note.
+        const off = Math.round(((hit && Number.isFinite(hit.midi)) ? hit.midi : n0.midi) - n0.midi);
+        // ⬚ MULTI — a drag that STARTS on a gathered note moves or resizes the
+        // WHOLE gathering, uniformly. Every note's origin is captured at the
+        // press (an index is only good until the next `getCfg`, and the commit
+        // waits for pointerup, so within the gesture indices are stable), and
+        // the delta is clamped ONCE against the whole set — clamping each note
+        // independently would let the leading one stop while the rest carried
+        // on, which is the opposite of uniform. A drag that starts on a note
+        // that is NOT gathered is an ordinary single-note drag.
+        let group = null;
+        if (modeOf(L) === 'multi' && !pen) {
+          const sel = mselOf(L);
+          if (sel && sel.has(idx) && sel.size > 1) {
+            group = [...sel].filter((i) => L.part.notes[i]).map((i) => ({
+              i: i, t0: L.part.notes[i].t, m0: L.part.notes[i].midi | 0, d0: L.part.notes[i].dur,
+            }));
+            if (group.length < 2) group = null;
+          }
+        }
+        DRAG = { id: L.id | 0, idx: idx, mode: mode, locked: locked, pen: pen,
+                 sx: ev.clientX, sy: ev.clientY,
+                 t0: n0.t, m0: n0.midi, d0: n0.dur, moved: 0,
+                 gain: gain, off: off, group: group,
+                 win: { loM: pgA.loM, hiM: pgA.hiM } };
+        cvd._dragGain = gain;                          // probes read the resolution here
+
+        const g = neGrid(L), cell = 1 / Math.max(1, g.gridN);
+        const geo = cvd._plotGeo || geo0;
+        const mv = (e2) => {
+          if (!DRAG) return;
+          const dx = e2.clientX - DRAG.sx, dy = e2.clientY - DRAG.sy;
+          DRAG.moved = Math.max(DRAG.moved, Math.hypot(dx, dy));
+          if (DRAG.moved < 5) return;                  // still a tap
+          if (e2.cancelable) e2.preventDefault();
+          const n = L.part.notes[DRAG.idx]; if (!n) return;
+          // ONE GESTURE, ONE AXIS. A move is horizontal OR vertical — decided
+          // by the dominant travel at the arm, held for the whole gesture —
+          // never both at once: with both axes live, a horizontal drag's hand
+          // wobble flipped rows and a vertical one walked grid cells ("moving
+          // vertically and horizontally should be totally independent"). A
+          // diagonal intent is two gestures, each exact.
+          if (DRAG.mode === 'move' && !DRAG.axis)
+            DRAG.axis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+          // ON A HARMONY-REMAPPED PART, THE HAND WINS: chordlock/diatonic
+          // quantize the sounding pitch, so a semitone of drag moved the
+          // drawn block not at all and then two rows — "still skipping
+          // around", with the gutter mark rows away. The first armed move
+          // PINS the note (`hx`): its stored midi is rebased to the pitch
+          // DRAWN at the grab (so nothing jumps), and from there the drag is
+          // exact — stored IS sounding, one row per detent, and the note
+          // STAYS where it is dropped.
+          if (!DRAG.pinned && DRAG.mode === 'move' &&
+              (L.harmony === 'diatonic' || L.harmony === 'chordlock')) {
+            DRAG.pinned = 1;
+            if (DRAG.group) {
+              // …for the WHOLE gathering. Pinning only the grabbed note would
+              // leave the rest quantized back toward the chord, i.e. the shape
+              // would not survive the move — which is the one thing multi is
+              // for. Each is rebased to the pitch DRAWN for it, so nothing
+              // jumps, and the origins are re-read from the pinned values.
+              const byI = {};
+              (cvd._hits || []).forEach((b3) => { if (Number.isFinite(b3.i)) byI[b3.i | 0] = b3; });
+              DRAG.group.forEach((q) => {
+                const n2 = L.part.notes[q.i]; if (!n2) return;
+                const b3 = byI[q.i];
+                n2.hx = 1;
+                n2.midi = clamp(Math.round(b3 && Number.isFinite(b3.midi) ? b3.midi : n2.midi), 0, 127);
+                q.m0 = n2.midi;
+              });
+              DRAG.off = 0;
+            } else {
+              n.hx = 1;
+              n.midi = clamp(Math.round(Number.isFinite(hit.midi) ? hit.midi : n.midi), 0, 127);
+              DRAG.m0 = n.midi; DRAG.off = 0;
+            }
+          }
+          // px → cycle fraction, THROUGH THE VIEWPORT: with four bars of a
+          // twelve-bar part on screen a pixel is a third of the time it was.
+          const dt = (dx / Math.max(1, geo.w)) * ((geo.vsc > 0) ? geo.vsc : 1);
+          // ⬚ MULTI — the SAME delta on every gathered note. Computed in whole
+          // cells / whole rows so the gathering keeps its shape exactly, and
+          // clamped once for the set (see the press).
+          if (DRAG.group) {
+            const G = DRAG.group;
+            if (DRAG.mode === 'len') {
+              let k = Math.round(dt / cell);
+              const minK = Math.min(...G.map((q) => Math.round(q.d0 / cell)));
+              const room = Math.min(...G.map((q) => Math.floor((1 - q.t0) / cell) - Math.round(q.d0 / cell)));
+              k = clamp(k, 1 - minK, Math.max(0, room));
+              G.forEach((q) => { const n2 = L.part.notes[q.i]; if (!n2) return;
+                n2.dur = Math.max(cell, Math.min(1 - n2.t, Math.round(q.d0 / cell) * cell + k * cell)); });
+            } else {
+              if (DRAG.axis !== 'y') {
+                let k = Math.round(dt / cell);
+                const loK = Math.min(...G.map((q) => Math.round(q.t0 / cell)));
+                const hiK = Math.max(...G.map((q) => Math.round(q.t0 / cell)));
+                const maxK = Math.max(0, Math.round((1 - cell / 2) / cell));
+                k = clamp(k, -loK, maxK - hiK);
+                G.forEach((q) => { const n2 = L.part.notes[q.i]; if (!n2) return;
+                  n2.t = clamp(Math.round(q.t0 / cell) * cell + k * cell, 0, 0.99999); });
+              }
+              if (DRAG.axis !== 'x') {
+                // the SAME detent the single drag uses — a hand wobble at a
+                // 6px row must not flicker the whole gathering
+                const raw = -dy / DRAG.gain;
+                let k = DRAG.k | 0;
+                while (raw >= k + 0.85) k++;
+                while (raw <= k - 0.85) k--;
+                const loM = Math.min(...G.map((q) => q.m0)), hiM = Math.max(...G.map((q) => q.m0));
+                k = clamp(k, Math.ceil(DRAG.win.loM - DRAG.off) - loM,
+                             Math.floor(DRAG.win.hiM - DRAG.off) - hiM);
+                DRAG.k = k;
+                G.forEach((q) => { const n2 = L.part.notes[q.i]; if (!n2) return;
+                  n2.midi = clamp(q.m0 + k, 0, 127); });
+              }
+            }
+            try {
+              const cNow2 = document.querySelector('.v2-layer[data-v2id="' + (L.id | 0) + '"]');
+              if (cNow2) card = cNow2;
+              drawPartViz(card, L, E);
+            } catch (e) {}
+            return;
+          }
+          if (DRAG.mode === 'len' || DRAG.mode === 'pen') {
+            // never shorter than one cell, never past the end of the cycle
+            const want = Math.round((DRAG.d0 + dt) / cell) * cell;
+            n.dur = Math.max(cell, Math.min(1 - n.t, want));
+          } else {
+            if (DRAG.axis !== 'y')
+              n.t = clamp(Math.round((DRAG.t0 + dt) / cell) * cell, 0, 1 - cell / 2);
+            if (DRAG.axis !== 'x') {
+              // TOTAL displacement from the press, through a DETENT: plain
+              // round() flips at every half-row boundary, and a 1-2px hand
+              // wobble at a 6px row made the note flicker between two rows —
+              // "still skips around vertically". The row changes only 0.85 of
+              // a row past the current one. THE NUMBER THAT MATTERS IS THE GAP
+              // BETWEEN ADJACENT THRESHOLDS, 2·0.85−1 = 0.7 rows (~4.4px): a
+              // first cut at 0.6 left a 0.2-row gap and ±2px of jitter parked
+              // near a boundary still straddled both thresholds and flickered
+              // (measured 71,70,71,70…). Holding still IS still now; one
+              // deliberate row of travel is still one half-step. CLAMPED TO
+              // THE FROZEN WINDOW (in stored space, via the drawn-pitch
+              // offset), not 0..127 — the picture is not re-scaling, so a note
+              // dragged past its edge would be drawn outside the plot.
+              const raw = -dy / DRAG.gain;
+              let k = DRAG.k | 0;
+              while (raw >= k + 0.85) k++;
+              while (raw <= k - 0.85) k--;
+              DRAG.k = k;
+              n.midi = clamp((DRAG.m0 | 0) + k,
+                             Math.ceil(DRAG.win.loM - DRAG.off),
+                             Math.floor(DRAG.win.hiM - DRAG.off));
+            }
+          }
+          // REDRAW ONLY. `getCfg` normalizes, which REPLACES every note object
+          // and re-sorts — mid-drag that invalidates the index under the
+          // finger — so the commit waits for pointerup.
+          try {
+            const cNow = document.querySelector('.v2-layer[data-v2id="' + (L.id | 0) + '"]');
+            if (cNow) card = cNow;
+            drawPartViz(card, L, E);
+          } catch (e) {}
+        };
+        const up = () => {
+          document.removeEventListener('pointermove', mv);
+          const d = DRAG; DRAG = null;
+          // the lock's card rebuild, deferred out of the press so the
+          // touch stream (and the finger's view of the page) survived it.
+          const rerender = function () {
+            if (!d || !d.locked) return;
+            try { h._sig = ''; V2.render(E); } catch (e) {}
+            try {
+              const cNow = document.querySelector('.v2-layer[data-v2id="' + (L.id | 0) + '"]');
+              if (cNow) card = cNow;
+            } catch (e) {}
+          };
+          try {
+            const cNow = document.querySelector('.v2-layer[data-v2id="' + (L.id | 0) + '"]');
+            if (cNow) card = cNow;
+          } catch (e) {}
+          if (!d || d.moved < 5) {                     // a tap, not a drag
+            // nothing grew and nothing scrolled — there is nothing to undo
+            rerender();
+            // …and if the grab LOCKED the part, no `click` follows a rebuild,
+            // so the up-handler opens the editor itself. A tap on a note
+            // means the same thing either way. A PENCIL tap already made its
+            // note, so it opens too — and stamps the click suppressor, or
+            // the click handler's own draw path would add a SECOND note.
+            if (d && (d.locked || d.pen)) { try { neOpen(E, L, d.idx, card); } catch (e) {} }
+            if (d && d.pen) cvd._dragged = Date.now();
+            return;
+          }
+          cvd._dragged = Date.now();                   // …and it must not also click
+          const n = L.part.notes[d.idx];
+          const t = n ? n.t : 0, midi = n ? n.midi : 0;
+          // THE GATHERING IS RE-FOUND BY IDENTITY too — the normalize below
+          // replaces every note object and RE-SORTS, so a moved set's indices
+          // are stale the instant it runs, and the gathering would silently
+          // come to name different notes than the ones on screen.
+          const gid = (d && d.group)
+            ? d.group.map((q) => { const n2 = L.part.notes[q.i];
+                return n2 ? { t: n2.t, midi: n2.midi } : null; }).filter(Boolean) : null;
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          try { E.getCfg(); } catch (e) {}             // coerce, prune, RE-SORT
+          if (gid) {
+            const nx = new Set();
+            gid.forEach((q) => { const j = nearestNote(L.part.notes, q.t, q.midi); if (j >= 0) nx.add(j); });
+            mselSet(L, nx);
+          }
+          if (NE && NE.id === (L.id | 0)) NE.idx = nearestNote(L.part.notes, t, midi);
+          try { if (E._v2Phase) delete E._v2Phase['v2:' + (L.id | 0)]; } catch (e) {}
+          rerender();
+          try { drawPartViz(card, L, E); } catch (e) {}
+          try { neSync(card, L, E); } catch (e) {}
+        };
+        // ON THE DOCUMENT, not the canvas: the pointer leaves the canvas the
+        // moment the drag scrolls or outruns it, and a card can still be
+        // rebuilt under the gesture by something else — a document listener
+        // survives both where one bound to the element would be bound to a
+        // corpse.
+        document.addEventListener('pointermove', mv);
+        document.addEventListener('pointerup', up, { once: true });
+        document.addEventListener('pointercancel', up, { once: true });
+      });
+
+      // NATIVE PAN MUST NOT FIGHT THE NOTE GESTURE. The canvas carries
+      // `touch-action: manipulation`, which ALLOWS single-finger panning — so
+      // on a phone a vertical note-drag also scrolled the page: ~2 rows in,
+      // the browser committed to the pan, cancelled the pointer stream, and
+      // the canvas slid away under the finger (measured midi deltas
+      // -1,-1,0,0,0,0 with the scroll walking). `preventDefault` on
+      // pointermove cannot stop a touch pan; only a NON-PASSIVE touchmove
+      // can, and it must refuse from the FIRST move or the browser has
+      // already taken the gesture. `DRAG` is set in pointerdown, which
+      // precedes every touchmove, so the guard is exact: a gesture that
+      // starts on a NOTE belongs to the note, and a swipe from empty canvas
+      // (DRAG null) still scrolls the page. This is also why the lock above
+      // must not rebuild the card mid-gesture — touch events stay bound to
+      // the element the finger landed on, and a detached canvas has no
+      // ancestors for this host listener to hear through.
+      h.addEventListener('touchmove', (ev) => {
+        if (DRAG && ev.cancelable) ev.preventDefault();
+      }, { passive: false });
+
+      // ── KEYBOARD: MOVE AND RESIZE THE OPEN NOTE ──────────────────────────
+      // While the note editor is open: ⇧ + arrows MOVE the note (←/→ one
+      // grid cell, ↑/↓ one half-step) and ⌥ + ←/→ RESIZE it by a cell.
+      // ⇧ REPLACED ⌃ as the primary chord (user: "the arrow keys are not
+      // working — make it shift+arrows"): ⌃←/→ is the macOS Spaces shortcut
+      // by default, so on most Macs the browser never saw half the pairs and
+      // the feature read as broken. ⌃ still works where the system lets it
+      // through. Routed through `neApply`, so the pin, the sounding-space
+      // pitch, the persist/re-find and the redraw are the SAME as every other
+      // editor path — a hotkey is a fourth door to the same three fields,
+      // never a fifth implementation. On the DOCUMENT with a window guard
+      // (the wiring can run more than once, and a doubled key handler double-
+      // steps); the engine is resolved at press time, never captured.
+      if (!window.__v2NoteKeys) {
+        window.__v2NoteKeys = 1;
+        document.addEventListener('keydown', (ev) => {
+          try {
+            if (!NE) return;
+            if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight' &&
+                ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') return;
+            // NEVER while typing: ⇧+arrow extends a text selection, and a
+            // field or search box must keep that.
+            const ae = document.activeElement;
+            if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' ||
+                       ae.tagName === 'SELECT' || ae.isContentEditable)) return;
+            const wantMove = (ev.shiftKey || ev.ctrlKey) && !ev.altKey && !ev.metaKey;
+            const wantSize = ev.altKey && !ev.ctrlKey && !ev.shiftKey && !ev.metaKey &&
+                             (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight');
+            if (!wantMove && !wantSize) return;
+            const E2 = (typeof _masterEng !== 'undefined') ? _masterEng : null;
+            if (!E2) return;
+            const card = document.querySelector('.v2-layer[data-v2id="' + (NE.id | 0) + '"]');
+            const host = card && card.querySelector('.v2-neinline');
+            if (!host || host.hidden) return;
+            const L = _ambLayerByKey && _ambLayerByKey(E2, 'v2:' + NE.id);
+            if (!L || !L.part || L.part.kind !== 'recorded') return;
+            const n = L.part.notes[NE.idx]; if (!n) return;
+            ev.preventDefault(); ev.stopPropagation();
+            const g2 = neGrid(L);
+            if (wantSize) {
+              const len = Math.max(1, Math.round(n.dur * g2.gridN));
+              const nl = Math.max(1, Math.min(g2.gridN * 2,
+                len + (ev.key === 'ArrowRight' ? 1 : -1)));
+              if (nl !== len) neApply(E2, host, 'len', nl, true);
+              return;
+            }
+            if (ev.key === 'ArrowUp' || ev.key === 'ArrowDown') {
+              // SOUNDING space, exactly as the ± stepper — one press, one row
+              const m = neShownMidi(host, L, NE.idx);
+              const m2 = clamp(m + (ev.key === 'ArrowUp' ? 1 : -1), 0, 127);
+              if (m2 !== m) neApply(E2, host, 'midi', m2, true);
+              return;
+            }
+            const st = Math.round(n.t * g2.gridN);
+            const ns = Math.max(0, Math.min(g2.gridN - 1,
+              st + (ev.key === 'ArrowRight' ? 1 : -1)));
+            if (ns !== st) neApply(E2, host, 'pos', ns, true);
+          } catch (e) {}
+        });
+      }
 
       // A press inside a card that is composing, on anything that would
       // navigate away from the dock, refuses and says how to finish.
@@ -7287,18 +10235,7 @@
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
           return;
         }
-        const vm = t.closest('.v2-vmode');
-        if (vm) {
-          const ctx = layerOf(vm); if (!ctx) return;
-          const want = vm.getAttribute('data-vm') === 'view' ? 'view' : 'edit';
-          V2.vizMode(ctx.L, want);
-          // the button names the state it is IN and switches to the other one
-          vm.setAttribute('data-vm', want === 'view' ? 'edit' : 'view');
-          vm.textContent = want === 'view' ? '\ud83d\udc41 View' : '\u270e Edit';
-          vm.classList.toggle('on', want === 'view');
-          try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
-          return;
-        }
+
         const vry = t.closest('.v2-varytoggle');
         if (vry) {
           const ctx = layerOf(vry); if (!ctx) return;
@@ -7521,6 +10458,43 @@
           if (row) { const tmp = document.createElement('div'); tmp.innerHTML = noteRowHtml(ctx.L); row.replaceWith(tmp.firstChild); }
           return;
         }
+        // ⌗ ROLL ⟷ ▦ STEPS — the material's FORM. THE TWO ARE PARALLEL: each
+        // keeps its own material and switching preserves BOTH, so this writes
+        // one field and destroys nothing. Nothing has to be saved and restored
+        // either — `part.notes` and `rhythm.cells`/`lanes` already coexist in
+        // the store (the both-halves rule), and `notesFor` asks the FORM rather
+        // than `part.kind` which branch emits. It says what is being left
+        // behind rather than what is being lost, because a form you cannot see
+        // is still playing nothing, and that is worth naming.
+        const fmb = t.closest && t.closest('.v2-formbtn');
+        if (fmb) {
+          const ctx = layerOf(fmb); if (!ctx) return;
+          const want = fmb.getAttribute('data-form') === 'steps' ? 'steps' : 'roll';
+          if (V2.formOf(ctx.L) === want) return;              // already there — a no-op
+          const P = ctx.L.part;
+          if (want === 'steps') P.form = 'steps'; else delete P.form;
+          // …AND SAY WHAT IS WAITING IN THE OTHER ONE. Switching is silent
+          // otherwise, and "where did my notes go" is the report that follows
+          // (it already did once, when this switch discarded them).
+          const kept = (want === 'steps')
+            ? ((P.notes || []).length ? (P.notes || []).length + ' note' +
+                ((P.notes || []).length === 1 ? '' : 's') : '')
+            : (() => {
+                const r2 = P.rhythm || {};
+                const lc = (r2.lanes || []).reduce((a, row) => a + (row || []).filter(Boolean).length, 0);
+                const cc = (r2.kind === 'drawn') ? (r2.cells || []).filter(Boolean).length : 0;
+                return (lc || cc) ? ((lc || cc) + ' step' + ((lc || cc) === 1 ? '' : 's')) : '';
+              })();
+          try {
+            if (typeof showToast === 'function') showToast(
+              (want === 'steps' ? '\u25a6 Steps' : '\u2317 Roll') + ' \u2014 ' +
+              (kept ? 'your ' + kept + ' in ' + (want === 'steps' ? '\u2317 Roll' : '\u25a6 Steps') +
+                      ' are kept and come back when you switch back.'
+                    : 'the other form keeps whatever is in it.'), { ms: 3800 });
+          } catch (e) {}
+          commit(ctx); h._sig = ''; V2.render(E);
+          return;
+        }
         const cell = t.closest('.v2-cell');
         if (cell) {
           const ctx = layerOf(cell); if (!ctx) return;
@@ -7542,25 +10516,78 @@
         const comp = t.closest('.v2-compose');
         if (comp) {
           const ctx = layerOf(comp); if (!ctx) return;
-          if (!V2.compose(E, ctx.L)) {
-            try { if (typeof showToast === 'function') showToast('Could not open the grid for this layer.', { warn: true, ms: 4000 }); } catch (e) {}
-            return;
+          // ── ✎ WRITTEN IS A CHOICE OF THREE (2026-09-09): draw in the ROLL
+          // (the part becomes written and ✎ Draw switches on), compose in the
+          // GRID (the session, exactly as before), or START EMPTY — clear to
+          // an empty written part, "working with an empty visualization".
+          // The shell is `_ambActionsPopover`, whose fns are deferred a tick
+          // past its own dismiss (the documented dispatch-order rule).
+          const openGrid = () => {
+            if (!V2.compose(E, ctx.L)) {
+              try { if (typeof showToast === 'function') showToast('Could not open the grid for this layer.', { warn: true, ms: 4000 }); } catch (e) {}
+              return;
+            }
+            h._sig = ''; V2.render(E);
+            // The dock is filled by `_placeLaneExpander`, which resolves it by key
+            // — so it has to run AFTER the card is rebuilt, or it docks into a node
+            // the rebuild is about to throw away (the documented re-dock order).
+            try { if (typeof _placeLaneExpander === 'function') _placeLaneExpander(); } catch (e) {}
+            try { if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
+            // …AND REPAINT THE DOCK CHROME, for the same reason and in the same
+            // order — the re-render recreates the chord ruler and the gran bar
+            // EMPTY, and `_ambRefreshSeedModes` runs whether or not the
+            // transport is going (composing happens stopped).
+            try { if (typeof _ambRefreshSeedModes === 'function') _ambRefreshSeedModes(E); } catch (e) {}
+          };
+          const openRoll = () => {
+            const L2 = ctx.L;
+            if (L2.part.kind !== 'recorded') {
+              if (!captureShown(E, L2)) {
+                try { if (typeof showToast === 'function') showToast('Nothing to draw on yet \u2014 \ud83c\udfb2 roll a take first, or \u232b Start empty.', { warn: true, ms: 4500 }); } catch (e) {}
+                return;
+              }
+              try { if (typeof showToast === 'function') showToast('\ud83d\udd12 Locked this take \u2014 the part is WRITTEN and \u270e Draw is on: tap the drawing to add a note, drag right to size it.', { ms: 5000 }); } catch (e) {}
+            } else {
+              try { if (typeof showToast === 'function') showToast('\u270e Draw is on \u2014 tap the drawing to add a note, drag right to size it.', { ms: 4000 }); } catch (e) {}
+            }
+            setMode(L2, 'draw');
+            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            h._sig = ''; V2.render(E);
+          };
+          const startEmpty = () => {
+            const L2 = ctx.L, p2 = L2.part;
+            const n2 = (p2.notes || []).length;
+            const lose = (p2.kind === 'recorded')
+              ? ((p2.made === 'compose') ? 'The notes you drew'
+                : (p2.made === 'phrase') ? ('The phrase' + (p2.from ? ' \u201c' + p2.from + '\u201d' : ''))
+                : ('These ' + n2 + ' written note' + (n2 === 1 ? '' : 's')))
+              : 'The take you see';
+            if ((p2.kind !== 'recorded' || n2 > 0) &&
+                !confirm('Start empty?\n\n' + lose + ' will be cleared \u2014 the part becomes ' +
+                  'WRITTEN with no notes, and \u270e Draw is switched on so a tap on the ' +
+                  'drawing adds one.' +
+                  (p2.kind !== 'recorded' ? '\n\nIts generated rules are kept \u2014 \u2699 Generated brings them back.' : '') +
+                  '\n\nThis cannot be undone.')) return;
+            if (!V2.clearPart(E, ctx.L)) return;
+            setMode(ctx.L, 'draw');
+            // the live-edit pair: anything already scheduled is stale now
+            try { if (E.timer && typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices('v2:' + (ctx.L.id | 0), Tone.now()); } catch (e) {}
+            try { if (E._v2Phase) delete E._v2Phase['v2:' + (ctx.L.id | 0)]; } catch (e) {}
+            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            h._sig = ''; V2.render(E);
+            try { if (typeof showToast === 'function') showToast('\u232b Empty \u2014 \u270e Draw is on: tap the drawing to add the first note.', { ms: 4500 }); } catch (e) {}
+          };
+          // Mid-session the press stays the way back into the open grid
+          // (compose() is idempotent for the same layer); no popover shell →
+          // the grid, today's behaviour.
+          if (ctx.card.classList.contains('v2-composing') || typeof _ambActionsPopover !== 'function') {
+            openGrid(); return;
           }
-          h._sig = ''; V2.render(E);
-          // The dock is filled by `_placeLaneExpander`, which resolves it by key
-          // — so it has to run AFTER the card is rebuilt, or it docks into a node
-          // the rebuild is about to throw away (the documented re-dock order).
-          try { if (typeof _placeLaneExpander === 'function') _placeLaneExpander(); } catch (e) {}
-          try { if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
-          // …AND REPAINT THE DOCK CHROME, for the same reason and in the same
-          // order. The re-render above recreates the chord ruler and the
-          // granularity bar EMPTY, and both are filled by sync passes that key
-          // on the session — so without this the dock opens with a blank ruler
-          // and no Step Div until something else happens to repaint (measured:
-          // 4 chord blocks when the session was opened directly, 0 through the
-          // button). `_ambRefreshSeedModes` runs whether or not the transport
-          // is going, which is the point — composing happens stopped.
-          try { if (typeof _ambRefreshSeedModes === 'function') _ambRefreshSeedModes(E); } catch (e) {}
+          _ambActionsPopover('\u270e Written \u2014 you choose the notes', [
+            { label: '\ud83c\udfb9 Draw in the roll \u2014 add and move notes on the drawing itself', fn: openRoll },
+            { label: '\u25a6 Compose in the grid \u2014 steps, chords and the keyboard', fn: openGrid },
+            { label: '\u232b Start empty \u2014 clear this part and draw from nothing', fn: startEmpty, danger: true },
+          ]);
           return;
         }
         const gdone = t.closest('.v2-gdone'), gcancel = t.closest('.v2-gcancel');
@@ -7569,30 +10596,13 @@
           h._sig = ''; V2.render(E);
           return;
         }
-        // ADOPT A PHRASE — the compose grid's own output, read as a part. A
-        // popover rather than a context menu because the bank is a LIBRARY
-        // whose length is the user's, not a fixed handful of actions.
-        const adopt = t.closest('.v2-adopt');
-        if (adopt) {
-          const ctx = layerOf(adopt); if (!ctx) return;
-          // IT NAVIGATES. This opened a picker over the same bank the Phrases
-          // tab draws — two surfaces for one list, called two different things
-          // ("don't think we need both Saved and Phrases"). The door is a
-          // signpost now: the tab is the one home, where a phrase can also be
-          // reordered and deleted, and its own empty state says where phrases
-          // come from.
-          popOpen(ctx.card, ctx.L, 'Content', 'Phrases');
-          setTimeout(() => {
-            try {
-              const row = ctx.card.querySelector('.v2-pop-pane .v2-bankrow');
-              if (!row) return;
-              row.scrollIntoView({ block: 'center' });
-              row.classList.add('v2-findmark');
-              setTimeout(() => row.classList.remove('v2-findmark'), 1600);
-            } catch (e) {}
-          }, 60);
-          return;
-        }
+        // ADOPTING A SAVED TAKE happens in the Bank tab itself (`.v2-bkload`
+        // below) — there is no door for it in the Material row. Two rounds of
+        // that: first a PICKER over the same list the tab draws, then a
+        // signpost that merely navigated to it. Both were one list wearing two
+        // words, and both filed the bank under WRITTEN, which it is not — a
+        // generated roll saves into it just as a drawn phrase does.
+        // ✎ DRAW / ▦ BARS — what a tap on empty space means.
         // SAVE A TAKE, and the bank's own row: load, reorder, delete.
         const svt = t.closest && t.closest('.v2-savetake');
         if (svt) {
@@ -7646,17 +10656,90 @@
         // The note editor's own buttons — same delegation, same reason.
         const nact = t.closest && t.closest('.v2-neinline [data-na]');
         if (nact) { if (neAct(E, nact)) return; }
+        // ⬚ MULTI's TRANSFORMS. Every one is a DELTA through `multiApply`, the
+        // one writer — a stepper is a second door to what the drag does, never
+        // a second implementation of it (the `neApply` rule).
+        const mab = t.closest && t.closest('.v2-mact');
+        if (mab) {
+          const ctx = layerOf(mab); if (!ctx) return;
+          const a = mab.getAttribute('data-ma');
+          if (a === 'clear') mselSet(ctx.L, null);
+          else {
+            const what = a[0] === 't' ? 't' : (a[0] === 'm' ? 'midi' : 'dur');
+            multiApply(E, ctx.L, what, parseInt(a.slice(1), 10) | 0);
+          }
+          try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
+          try { multiSync(ctx.card, ctx.L); } catch (e) {}
+          return;
+        }
         // A TAP ON A NOTE IN THE DRAWING. The picture stops being a readout and
         // becomes the editor: hit-test the boxes recorded by the last draw, and
         // open that note. A live part has no notes of its own, so tapping one
         // LOCKS the take first — the same act as pressing 🔒, reached from the
         // thing the finger was already on, and announced rather than silent.
+        // ── THE WINDOW'S OWN BUTTONS ────────────────────────────────────
+        // Before the canvas branch: they sit beside it, not on it, and a press
+        // here must never fall through to a bar select.
+        const nvb = t.closest && t.closest('.v2-nav');
+        if (nvb) {
+          const ctx = layerOf(nvb); if (!ctx) return;
+          const L9 = ctx.L, a9 = nvb.getAttribute('data-nav');
+          const cur = vnavOf(L9);
+          const cvn = ctx.card.querySelector('.v2-vizcv');
+          const bg = cvn && cvn._barsGeo;
+          // PAN BY A THIRD OF WHAT IS ON SCREEN, not by a fixed number of
+          // bars: on a four-bar window that is a bar and a bit, and it keeps
+          // context either side rather than jumping to a stretch with nothing
+          // in common with the one you were reading.
+          const step = bg ? Math.max(0.25, (bg.vbars || 4) / 3) : 1;
+          const maxB = bg ? Math.max(0, (bg.barsF || 1) - (bg.vbars || 1)) : 0;
+          if (a9 === 'up') vnavSet(L9, { dy: clamp(cur.dy + 3, -96, 96) });
+          else if (a9 === 'dn') vnavSet(L9, { dy: clamp(cur.dy - 3, -96, 96) });
+          else if (a9 === 'grow') vnavSet(L9, { rows: clamp(cur.rows + 6, 0, 60) });
+          else if (a9 === 'shrink') vnavSet(L9, { rows: clamp(cur.rows - 6, 0, 60) });
+          else if (a9 === 'left') vnavSet(L9, { bar0: clamp(cur.bar0 - step, 0, maxB) });
+          else if (a9 === 'right') vnavSet(L9, { bar0: clamp(cur.bar0 + step, 0, maxB) });
+          else if (a9 === 'fit') vnavSet(L9, { dy: 0, rows: 0, bar0: 0 });
+          try { drawPartViz(ctx.card, L9, E); } catch (e) {}
+          return;
+        }
         const cvz = t.closest('.v2-vizcv');
         if (cvz) {
+          // A DRAG ENDS IN A CLICK. Without this, letting go after moving a
+          // note would also open (or close) its editor — the gesture doing two
+          // things, which is the tab-reorder lesson.
+          if (cvz._dragged && Date.now() - cvz._dragged < 500) { cvz._dragged = 0; return; }
           const ctx = layerOf(cvz); if (!ctx) return;
+          if (vmRefuse(cvz)) return;   // another part's record is drawn — read-only
           const r = cvz.getBoundingClientRect();
           const px = (ev.clientX != null ? ev.clientX : 0) - r.left;
           const py = (ev.clientY != null ? ev.clientY : 0) - r.top;
+          // A TAP ON THE DRAWN PIANO MOVES THE SELECTED NOTE TO THAT KEY.
+          // Pitch had one control — a ± stepper over 0..127 — which is the
+          // tap-to-cycle mistake at 128 values, with a keyboard naming every
+          // one of them sitting three pixels away. Tested BEFORE the note
+          // boxes: those are padded 4px to clear the touch floor, so a note in
+          // bar 1 reaches into the gutter and would win the hit test.
+          const pg = cvz._pitchGeo, gxk = (cvz._plotGeo && cvz._plotGeo.x0) || 0;
+          if (pg && px < gxk && py >= pg.top && pg.rowH > 0) {
+            const Lk = ctx.L;
+            const cardK = document.querySelector('.v2-layer[data-v2id="' + (Lk.id | 0) + '"]') || ctx.card;
+            const nsel = NE && NE.id === (Lk.id | 0) && Lk.part.kind === 'recorded' &&
+                         (Lk.part.notes || [])[NE.idx];
+            // REFUSE AND EXPLAIN. The gutter used to be inert here on purpose
+            // ("a tap on the keys is a tap on the axis"), and a control that
+            // silently does nothing is the trap this card keeps closing.
+            if (!nsel) {
+              try { if (typeof showToast === 'function') showToast(
+                'Tap a note in the drawing first \u2014 then a key on the piano moves it to that pitch.',
+                { ms: 3800 }); } catch (e) {}
+              return;
+            }
+            const m = clamp(pg.hiM - Math.floor((py - pg.top) / pg.rowH), pg.loM, pg.hiM);
+            if (m === (nsel.midi | 0)) return;          // already there
+            neApply(E, cardK.querySelector('.v2-neinline'), 'midi', m, true);
+            return;
+          }
           const hits = cvz._hits || [];
           let hit = null;
           for (let i = 0; i < hits.length; i++) {
@@ -7670,17 +10753,56 @@
             // EMPTY SPACE IS THE BAR'S OWN TAP TARGET — the 15px number gutter
             // alone is under the touch floor, and a miss on a 6px note used to
             // do nothing at all. Toggling is visible and one tap reverses it.
+            // ✎ DRAW — empty space ADDS a note there. Its own mode because a
+            // tap on empty space already means "select this bar", and one
+            // gesture cannot mean both; the button on the drawing's line says
+            // which it is, so the mode is never invisible.
+            const pgA = cvz._pitchGeo, plA = cvz._plotGeo;
+            if (modeOf(L2) === 'draw' && pgA && plA && plA.cyc &&
+                px >= plA.x0 && py >= pgA.top) {
+              // ONE ADD PATH — `penAdd`, shared with the pointerdown PENCIL
+              // (which owns every real gesture and suppresses this click via
+              // `_dragged`; this branch serves synthetic clicks and anything
+              // that never sent a pointerdown). It locks a generated part,
+              // places the note on the CLICKED ROW exactly (pinned on a
+              // remapping part, shift-corrected under a transpose), and it
+              // OPENS — the note you just made is the one you are editing.
+              const made = penAdd(E, L2, cvz, px, py);
+              if (!made) return;
+              const cA = document.querySelector('.v2-layer[data-v2id="' + (L2.id | 0) + '"]') || ctx.card;
+              if (made.idx >= 0) neOpen(E, L2, made.idx, cA);
+              else { try { drawPartViz(cA, L2, E); } catch (e) {} }
+              return;
+            }
+            if (modeOf(L2) === 'multi') {
+              // …and in MULTI a miss means "gather nothing". Bar select is not
+              // available in this mode on purpose: one gesture, one meaning.
+              if ((mselOf(L2) || { size: 0 }).size) {
+                mselSet(L2, null);
+                const cM = document.querySelector('.v2-layer[data-v2id="' + (L2.id | 0) + '"]') || ctx.card;
+                try { drawPartViz(cM, L2, E); } catch (e) {}
+                try { multiSync(cM, L2); } catch (e) {}
+              }
+              return;
+            }
             const geo = cvz._barsGeo;
             // a LIVE part selects bars too — for 🎲 New take, which retakes
             // just those bars (a per-bar pin); a recorded one for the splice
             if (!geo) return;
+            // …AND ONLY FROM THE RULER STRIP (stated as the contract,
+            // 2026-09-08: "selecting a change should only be possible by
+            // pressing the bar ruler area, not the whole section"). A tap in
+            // the open plot used to toggle bars, which made every stray tap
+            // an edit to which bars re-roll.
+            if (py > ((cvz._pitchGeo && cvz._pitchGeo.top) || 15)) return;
             if (L2.part.kind === 'recorded' && !(L2.part.notes || []).length) return;
             // THE KEYBOARD GUTTER IS NOT PART OF THE BAR GRID — a tap on the
             // keys is a tap on the axis, not on bar 1.
             const gx0 = geo.x0 || 0;
             if (px < gx0) return;
+            const vsc9 = (geo.vsc > 0) ? geo.vsc : 1, f09 = geo.f0 || 0;
             const b2 = Math.max(0, Math.min(Math.ceil(geo.barsF) - 1,
-              Math.floor(((px - gx0) / Math.max(1, geo.w)) * geo.barsF)));
+              Math.floor((f09 + ((px - gx0) / Math.max(1, geo.w)) * vsc9) * geo.barsF)));
             if (!BSEL || BSEL.id !== (L2.id | 0) || BSEL.sig !== bselSig(L2)) {
               BSEL = { id: L2.id | 0, sig: bselSig(L2), bars: new Set() };
             }
@@ -7689,6 +10811,7 @@
             try { drawPartViz(c4, L2, E); } catch (e) {}
             return;
           }
+          const wasRec = L2.part.kind === 'recorded';
           if (L2.part.kind !== 'recorded') {
             if (!captureShown(E, L2)) {
               try { if (typeof showToast === 'function') showToast('Nothing to lock — this take is empty.', { ms: 3500 }); } catch (e) {}
@@ -7698,9 +10821,35 @@
             try { if (typeof showToast === 'function') showToast('Locked this take so it can be edited — ' + L2.part.notes.length + ' notes. ❄ Re-take live goes back.', { ms: 5000 }); } catch (e) {}
             h._sig = ''; V2.render(E);
           }
-          const idx = nearestNote(L2.part.notes || [], hit.t, hit.midi);
+          // the hit's own index when the array was not just rebuilt by a lock —
+          // `nearestNote` can resolve to a NEIGHBOUR under a harmony remap
+          const idx = (wasRec && Number.isFinite(hit.i) &&
+                       (L2.part.notes || [])[hit.i]) ? (hit.i | 0)
+            : nearestNote(L2.part.notes || [], hit.t, hit.midi);
           if (idx < 0) return;
           const c3 = document.querySelector('.v2-layer[data-v2id="' + (L2.id | 0) + '"]') || ctx.card;
+          // ⬚ MULTI — a tap GATHERS rather than opens. Toggling, so a mis-tap
+          // costs one tap; the count on the bar below says what is held, and
+          // the notes are ringed in the picture (a gathering you cannot see is
+          // the drum-solo bug).
+          if (modeOf(L2) === 'multi') {
+            const cur = new Set(mselOf(L2) || []);
+            if (cur.has(idx)) cur.delete(idx); else cur.add(idx);
+            mselSet(L2, cur);
+            NE = null;                        // the editor is a single-note surface
+            try { drawPartViz(c3, L2, E); } catch (e) {}
+            try { multiSync(c3, L2); } catch (e) {}
+            return;
+          }
+          // \u2702 SPLIT — a tap DIVIDES rather than opens. The dialog does the
+          // arithmetic, because "three notes in the space of this one" is a
+          // question about proportions and the note editor asks about one note.
+          if (modeOf(L2) === 'split') {
+            NE = null;                        // the editor is a single-note surface
+            try { drawPartViz(c3, L2, E); } catch (e) {}
+            try { splitModal(E, c3, L2, idx); } catch (e) {}
+            return;
+          }
           // TAPPING THE OPEN NOTE AGAIN CLOSES IT — the drawing is the toggle,
           // so a mis-tap costs one tap rather than a hunt for the ✕.
           if (NE && NE.id === (L2.id | 0) && NE.idx === idx) { NE = null; try { drawPartViz(c3, L2, E); } catch (e) {} return; }
@@ -7869,61 +11018,15 @@
           try { genSync(ctx.card, ctx.L); } catch (e) {}
           return;
         }
-        const gw = t.closest('.v2-gwbtn');
-        if (gw) {
-          const ctx = layerOf(gw); if (!ctx) return;
-          // OPENING IS CHOOSING. The panel used to need a second press on a
-          // "Use Groundwork" button to make itself mean anything, which is a
-          // control that only restates the door you just came through. The
-          // snapshot is what makes that safe: ✕ Cancel puts back exactly what
-          // was here, so opening to look costs nothing.
-          GWPOP = ctx.L.id | 0;
-          GW_DRAFT = { id: ctx.L.id | 0, part: JSON.stringify(ctx.L.part), harmony: ctx.L.harmony };
-          ctx.card.classList.add('v2-gwopen');
-          if (matProv(ctx.L).key !== 'ground' || ctx.L.part.kind === 'recorded') {
-            try { V2.makeGround(E, ctx.L); } catch (e) {}
-            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-          }
-          h._sig = ''; V2.render(E);
-          setTimeout(() => {
-            try {
-              const c2 = document.querySelector('.v2-layer[data-v2id="' + (ctx.L.id | 0) + '"]');
-              if (c2) drawPartViz(c2, ctx.L, E);
-            } catch (e) {}
-          }, 0);
-          return;
-        }
-        // CLOSE — the Groundwork one first, because its close button carries
-        // BOTH classes (it is the same styling) and a bare `.v2-genclose` test
-        // would shut the wrong panel.
-        // CANCEL puts the part back exactly as it was; DONE keeps it. The
-        // scrim cancels too — a dialog you dismiss without deciding should not
-        // silently commit.
-        const gwx = t.closest('.v2-gwcancel') || t.closest('.v2-gwscrim');
-        if (gwx || t.closest('.v2-gwdone')) {
-          const ctx = layerOf(t); if (!ctx) return;
-          if (gwx && GW_DRAFT && GW_DRAFT.id === (ctx.L.id | 0)) {
-            try {
-              ctx.L.part = JSON.parse(GW_DRAFT.part);
-              if (GW_DRAFT.harmony) ctx.L.harmony = GW_DRAFT.harmony; else delete ctx.L.harmony;
-              E.getCfg();
-              if (typeof persistWorkspace === 'function') persistWorkspace();
-            } catch (e) {}
-          }
-          GW_DRAFT = null; GWPOP = null;
-          ctx.card.classList.remove('v2-gwopen');
-          h._sig = ''; V2.render(E);
-          return;
-        }
+        // Groundwork's own door and draft-panel are GONE (2026-09-09): it is
+        // the fifth shape in the Generated panel, entered through the same
+        // adopt/restore/build flow as the other four.
         if (t.closest('.v2-genclose') || t.closest('.v2-genscrim')) {
           const ctx = layerOf(t); if (!ctx) return;
           GENPOP = null;
           ctx.card.classList.remove('v2-genopen');
           return;
         }
-        // USE GROUNDWORK — the same adopt-don't-rebuild rule as every other
-        // shape door: pressing the one already in force keeps the content.
-
         const mk = t.closest('.v2-mkpart');
         if (mk) {
           const ctx = layerOf(mk); if (!ctx) return;
@@ -7952,6 +11055,7 @@
           if (!matSwitchOK(ctx.L, which)) return;
           const info = (which === 'arp') ? V2.makeArp(E, ctx.L)
             : (which === 'mixed') ? V2.makeMixed(E, ctx.L)
+            : (which === 'ground') ? V2.makeGround(E, ctx.L)
             : V2.makeSustain(E, ctx.L, true);
           if (!info) return;
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
@@ -7977,6 +11081,8 @@
                 ? 'Arpeggio — sweeping the chord, ' + info.onsets + ' per cycle over ' + info.octaves + ' octaves.'
                 : which === 'mixed'
                 ? 'Mixed — some onsets play a chord, the rest a single note. Pitch \u25b8 Mix sets the balance.'
+                : which === 'ground'
+                ? 'Groundwork — plays the changes: notes on the 1 and on every change, held to the next.'
                 : 'Sustained — ' + info.voices + ' voice' + (info.voices === 1 ? '' : 's') +
                   ' held for the cycle. Set Voices to 1 for a single note.') + how, { ms: 4500 });
             }
@@ -8129,6 +11235,19 @@
         // count TWICE (measured 5 -> 7 on one click).
       });
     }
+    // …and the page stays where it was. A rebuild that genuinely SHORTENS the
+    // document (a layer deleted, a card collapsed) is clamped by the browser
+    // exactly as it should be, so this restores a position rather than forcing
+    // one; anything that legitimately wants to scroll — the note editor coming
+    // into view, 🔍 Find flashing a row — runs after this and still wins.
+    try {
+      if (_scroller && _scrollWas && _scroller.scrollTop !== _scrollWas) {
+        _scroller.scrollTop = _scrollWas;
+      }
+      if (_docScrollWas != null && _docScroller.scrollTop !== _docScrollWas) {
+        _docScroller.scrollTop = _docScrollWas;
+      }
+    } catch (e) {}
   };
 
   // A NEW LAYER OPENS ON THE PATTERN GRID. It defaulted to `pulse`, which has no

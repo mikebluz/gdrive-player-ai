@@ -11452,8 +11452,10 @@
       /* every pixel of sheet height goes to the PANE on a phone — but measured
          from the VISIBLE band, not the raw viewport (see the base rule). */
       .v2-layer .v2-partviz .v2-vizcv { height: 60px; }
-      /* the trio fills its row — the selector takes the slack */
-      .v2-pop-pair select.ambient-select.v2-pop-part { flex: 1 1 auto; max-width: none; }
+      /* the pair fills its row — the toggle takes the slack, Sync keeps its
+         width (it is the button you press; the toggle can ellipse its name) */
+      .v2-pop-pair { flex: 1 1 auto; }
+      .v2-pop-pair .v2-pop-pp { flex: 1 1 auto; }
       .v2-pop-pair .v2-pop-sync { flex: 0 0 auto; }
     }
 
@@ -11488,6 +11490,102 @@
       flex: 1 0 100%; white-space: normal; overflow-wrap: anywhere; min-width: 0;
       font-size: 0.66rem; color: #55556e;
     }
+    /* ↻ LOOP — set apart from the part chips: it is an ACTION on the current
+       part, not another part to choose, so it must not read as a sixth chip.
+       Pushed to the end of the row and given the panel's ground. */
+    .ambient-curpart .ambient-curpart-loop {
+      margin-left: auto; flex: 0 0 auto;
+      min-height: 34px; padding: 4px 12px; white-space: nowrap;
+      background: rgba(20, 20, 31, 0.6);
+    }
+    .ambient-curpart .ambient-curpart-loop.on {
+      border-color: var(--pt, #b794f4); color: var(--pt, #e9d8fd);
+      background: rgba(159, 122, 234, 0.22); font-weight: 600;
+    }
+    /* the row wraps at 390px, and a control that has been pushed to `auto`
+       margin on its own line reads as detached — sit it back beside the chips */
+    @media (max-width: 460px) {
+      .ambient-curpart .ambient-curpart-loop { margin-left: 0; }
+    }
+
+    /* ▦ STEPS — the sequencer form of the Content line. It replaces the roll
+       (never sits beside it), so it reuses the roll's own block and footer and
+       only has to frame the grid the Pattern tab already builds. */
+    .v2-layer .v2-partsteps .v2-stepsgrid {
+      border: 1px solid #2d2d3f; border-radius: 8px; padding: 8px;
+      background: rgba(13, 13, 24, 0.6); margin-bottom: 4px;
+      overflow: hidden;                     /* cells WRAP; nothing scrolls sideways */
+    }
+    /* the grids come from the Pattern tab, where they sit inside an
+       `.ambient-ctrl` 3-column row — here they own the width */
+    .v2-layer .v2-partsteps .ambient-euclid-grid,
+    .v2-layer .v2-partsteps .ambient-slice-grid,
+    .v2-layer .v2-partsteps .ambient-euclid-notes { width: 100%; min-width: 0; }
+    .v2-layer .v2-partsteps .ambient-euclid-row { display: flex; align-items: center; gap: 6px; }
+    .v2-layer .v2-partsteps .ambient-euclid-row + .ambient-euclid-row { margin-top: 3px; }
+    /* A LANE'S CELLS WRAP at 16 per row (no sideways scroll, UI rule 1), so a
+       32-step kit draws each drum as TWO rows with the name beside only the
+       first — at a glance that reads as sixteen lanes rather than eight. The
+       band is the fix: it covers whatever a lane wrapped into, so the grouping
+       is the LANE and not the row. */
+    /* one block of 16 steps: its cells and their note labels, kept together */
+    .v2-layer .v2-partsteps .v2-stepblock + .v2-stepblock { margin-top: 8px; }
+    .v2-layer .v2-partsteps .v2-stepblock .v2-notes { margin-top: 2px; }
+    .v2-layer .v2-partsteps .ambient-euclid-kitrow {
+      padding: 3px 4px; border-radius: 6px;
+    }
+    .v2-layer .v2-partsteps .ambient-euclid-kitrow:nth-child(odd) {
+      background: rgba(159, 122, 234, 0.07);
+    }
+    .v2-layer .v2-partsteps .ambient-euclid-drumlbl {
+      flex: 0 0 46px; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; text-align: left;
+    }
+    .v2-layer .v2-partsteps .v2-lanecells { flex: 1 1 0; min-width: 0; }
+    /* ▦ A STEP WEARS ITS PART. The roll's note events carry their part's hue and
+       a step IS this form's note event, so it carries the same one. COMPOUNDED
+       past `.ambient-euclid-cell.on` (0,2,0) and its hover, which set all four
+       of these and sit EARLIER in the file — the documented cascade trap, on
+       its eighth control. Only when the wrapper carries `data-part`: a layer
+       that is not per-part keeps the grid's own mint, rather than borrowing a
+       hue that would claim a part identity its content does not have. */
+    .v2-layer .v2-partsteps .v2-stepsgrid[data-part] .ambient-euclid-cell.on {
+      background: var(--pt, #4fd1a5); border-color: var(--pt, #6fe0c0);
+      /* the palette is L*>=60 on this ground by construction, so near-black
+         reads on every entry — the same assumption the chips make */
+      color: #0d0d18; box-shadow: none;
+    }
+    @media (hover: hover) {
+      .v2-layer .v2-partsteps .v2-stepsgrid[data-part] .ambient-euclid-cell.on:hover {
+        background: var(--pt, #67e0ba); border-color: #fff; color: #0d0d18;
+      }
+    }
+    /* THE NOTE ROW'S LABELS SIT ON THE GRID'S OWN GROUND. They are <button>s
+       with no background declared, so they took the UA's near-white — measured
+       2.44:1 against the part hue and no better against the lavender it had
+       before, i.e. the one row whose whole job is to be READ was the least
+       legible thing on the card. On the dark ground the same hue measures
+       ~6:1. A silent step keeps its dot rather than vanishing: the row is a
+       ruler as much as a readout. */
+    .v2-layer .v2-partsteps .ambient-euclid-notelbl {
+      background: transparent; border: 0; padding: 0 2px;
+    }
+    .v2-layer .v2-partsteps .ambient-euclid-notelbl.off { color: #3a3a52; }
+    /* the note row is the same material read a different way, so its labels
+       take the hue too — text only, since they sit on the panel ground */
+    .v2-layer .v2-partsteps .v2-stepsgrid[data-part] .ambient-euclid-notelbl.set {
+      color: var(--pt, #c9b8ef);
+    }
+
+    /* ⌗ ROLL ⟷ ▦ STEPS — the form switch, on the footer of whichever surface
+       is showing so it is reachable from either side. */
+    .v2-layer .v2-formseg { display: inline-flex; flex: 0 0 auto; }
+    .v2-layer .v2-formseg .v2-formbtn {
+      min-height: 30px; padding: 3px 10px; font-size: 0.7rem; white-space: nowrap;
+    }
+    .v2-layer .v2-formseg .v2-formbtn.on {
+      border-color: #b794f4; color: #e9d8fd; background: rgba(159, 122, 234, 0.3); font-weight: 600;
+    }
 
     /* ⇄ Sync to Part — the Content sheet's length/notes confirm. */
     .v2-sync-modal { width: min(420px, 94vw); }
@@ -11499,32 +11597,97 @@
     .v2-sync-modal .ambient-seg { white-space: normal; overflow-wrap: anywhere; min-width: 0; min-height: 34px; }
     .v2-sync-modal .ambient-hint { display: block; white-space: normal; overflow-wrap: anywhere; min-width: 0; margin: 6px 0; }
     .v2-sync-modal .v2-sync-bound { color: #f6ad55; }
+    /* WHICH PART this Sync will use — the dialog's own statement of its
+       target, wearing that part's hue so it reads as the same thing the ⇶ Part
+       strip has lit. Wraps: a part's name is its numerals and can be long. */
+    .v2-sync-modal .v2-sync-tgt {
+      margin: 8px 0 2px; padding: 8px 10px; border-radius: 8px;
+      border: 1px solid var(--pt, #2d2d3f); border-left-width: 3px;
+      background: rgba(159, 122, 234, 0.08); color: #cbd5e0;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.82rem;
+      white-space: normal; overflow-wrap: anywhere; min-width: 0;
+    }
+    .v2-sync-modal .v2-sync-tgt b { color: var(--pt, #d6bcfa); }
+    .v2-sync-modal .v2-sync-which { color: #7a7a9c; }
     .v2-sync-modal .v2-sync-actions { display: flex; gap: 10px; margin-top: 14px; }
     .v2-sync-modal .v2-sync-actions .ambient-regen { min-height: 40px; flex: 1 1 0; }
     .v2-sync-modal select.ambient-select.v2-syncpart { width: auto; flex: 1 1 0; min-width: 0; }
-    /* the head PAIR — which part this content is for, joined to its Sync.
-       Visibly one control: the selector takes the left cap, the button the
-       right, and they share the middle border. */
-    .v2-pop-pair { display: inline-flex; align-items: stretch; flex: 0 0 auto; min-width: 0; }
+    /* THE CADENCE CASCADE — the same dialog vocabulary, because it asks the
+       same question (⇄ Sync's Length half) about content that has already
+       moved. The layer list is the WARNING: naming what is affected is what
+       makes an automatic refit something you agreed to. */
+    .v2-casc-modal .v2-casc-list { margin: 6px 0 0; padding: 0 0 0 16px; }
+    .v2-casc-modal .v2-casc-list li { margin: 2px 0; color: #a0aec0;
+      white-space: normal; overflow-wrap: anywhere; }
+    .v2-casc-modal .v2-casc-who { max-height: 26vh; overflow-y: auto; }
+    .v2-casc-modal .v2-casc-loose { color: #7a7a9c; }
+    /* ✂ SPLIT — the PREVIEW is the control that makes the other three
+       legible: numbers do not read as proportions (the cadence editor's own
+       lesson), and Custom's arithmetic is invisible until you can see it. */
+    /* THE WINDOW'S NAV — a tight row under the drawing. Small on purpose: it
+       sits beside a picture, not in a control panel, and the row it shares
+       already carries the pitch range it is reporting. */
+    .v2-vnav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+      margin: 4px 0 0; min-width: 0; }
+    .v2-vnav .v2-nav { min-width: 30px; min-height: 26px; padding: 0 6px;
+      font-size: 0.72rem; line-height: 1; flex: 0 0 auto; }
+    .v2-vnav .v2-navx { margin-left: 0; }
+    .v2-vnav .v2-navlab { flex: 1 1 0; min-width: 0; white-space: normal;
+      overflow-wrap: anywhere; font-size: 0.66rem; color: #6b6b8a; text-align: right; }
+    .v2-split-modal .v2-split-prev { display: flex; gap: 2px; margin: 12px 0 2px;
+      height: 30px; border-radius: 6px; overflow: hidden; background: #12121f; }
+    .v2-split-modal .v2-split-seg { display: flex; align-items: center; justify-content: center;
+      min-width: 0; overflow: hidden; background: rgba(159,122,234,0.30);
+      border-radius: 4px; font-style: normal; }
+    .v2-split-modal .v2-split-seg:nth-child(even) { background: rgba(159,122,234,0.18); }
+    .v2-split-modal .v2-split-seg > b { font-size: 0.62rem; color: #d6bcfa; font-weight: 600; }
+    .v2-split-modal .v2-split-cnt { display: inline-flex; align-items: center; gap: 8px; }
+    .v2-split-modal .v2-split-n { min-width: 22px; text-align: center; color: #e2e8f0;
+      font-weight: 700; font-size: 0.95rem; }
+    .v2-split-modal .v2-split-fields { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    /* 16px or iOS zooms the page on focus and never zooms back */
+    .v2-split-modal .v2-split-w { width: 58px; font-size: 16px; min-height: 34px; }
+    .v2-split-modal .v2-split-rerow { display: flex; align-items: center; gap: 10px; margin-top: 8px;
+      flex-wrap: wrap; }
+    .v2-split-modal .v2-split-rerow .ambient-regen { min-height: 34px; }
+    /* Under 560px the app drops a slider row to TWO columns and puts the third
+       child on its own line — right in a card, wrong in a 360px dialog, where
+       it stranded the readout under the track. `label ......… value` on line
+       one, the slider full-width on line two: same height, one glance. (The
+       note editor's own override, for the same reason.)
+       COMPOUNDED PAST `:has()`, which takes the specificity of its argument —
+       `.ambient-ctrl:has(> input.ambient-sl)` is (0,2,1) and a two-class
+       override loses to it (measured: the readout still sat under the track).
+       The documented cascade trap, on its ninth control. */
+    .v2-split-modal .ambient-ctrl:has(> input.ambient-sl) {
+      display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 10px; }
+    /* THE ROWS ARE STATED, not left to auto-placement: a slider spanning
+       `1 / -1` cannot share row one with the label, so it opens row two — and
+       the readout, placed after it in source order, then lands in row THREE
+       (auto-placement never backtracks). Measured as the value stranded under
+       the track, which is the layout this override exists to fix. */
+    .v2-split-modal .ambient-ctrl:has(> input.ambient-sl) > label {
+      grid-row: 1; grid-column: 1; }
+    .v2-split-modal .ambient-ctrl:has(> input.ambient-sl) > .ambient-sl-v {
+      grid-row: 1; grid-column: 2; text-align: right; }
+    .v2-split-modal .ambient-ctrl:has(> input.ambient-sl) > input.ambient-sl {
+      grid-row: 2; grid-column: 1 / -1; width: 100%; }
+    /* the head PAIR — the per-part MODE joined to its Sync. Visibly one
+       control: the toggle takes the left cap, the button the right, and they
+       share the middle border. (A part SELECTOR used to sit between them; the
+       ⇶ Part strip above the layers owns that choice for the whole panel now.)
+       The toggle carries the part's NAME when it is on, so it may shrink and
+       ellipse — Sync never does. */
+    .v2-pop-pair { display: inline-flex; align-items: stretch; flex: 0 1 auto; min-width: 0; }
     .v2-pop-pair .v2-pop-pp {
-      flex: 0 0 auto; min-height: 34px; padding: 4px 10px;
-      background: transparent; border: 1px solid #2d2d3f;
+      flex: 0 1 auto; min-width: 0; min-height: 34px; padding: 4px 10px;
+      background: transparent; border: 1px solid #2d2d3f; border-right: 0;
       border-radius: 20px 0 0 20px; color: #a0aec0; cursor: pointer;
       font-family: 'Segoe UI', sans-serif; font-weight: 600; font-size: 0.74rem;
-      white-space: nowrap;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .v2-pop-pair .v2-pop-pp.on {
       border-color: #b794f4; color: #e9d8fd; background: rgba(159, 122, 234, 0.3);
-    }
-    .v2-pop-pair select.ambient-select.v2-pop-part {
-      width: auto; max-width: 110px; min-width: 0; flex: 0 1 auto;
-      min-height: 34px; padding: 4px 6px 4px 10px;
-      background: rgba(159, 122, 234, 0.08); border: 1px solid #2d2d3f;
-      border-left: 0; border-right: 0; border-radius: 0; color: #cbd5e0;
-      font-family: 'Segoe UI', sans-serif; font-weight: 600; font-size: 0.74rem;
-    }
-    .v2-pop-pair select.ambient-select.v2-pop-part:disabled {
-      color: #55556e; background: transparent; opacity: 1;
     }
     .v2-pop-head .v2-pop-sync {
       background: transparent; border: 1px solid #2d2d3f; border-radius: 20px;
@@ -14438,6 +14601,95 @@
     .ambient-warm-sub { display: block; margin-top: 9px; white-space: normal; overflow-wrap: anywhere;
       line-height: 1.4; font-size: 0.68rem; }
 
+    /* ⬚ MULTI — what is gathered, and the transforms that act on all of it.
+       Rendered only while something IS gathered, so the row is never a set of
+       steppers over nothing. Compact, because it shares the drawing's own
+       column; the buttons are square glyphs at the touch floor. */
+    .v2-multibar { display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
+      margin: 4px 0 2px; }
+    .v2-multibar[hidden] { display: none; }
+    .v2-multin { flex: 1 1 100%; color: #d6bcfa; }
+    .v2-multibar .v2-mact { min-width: 40px; min-height: 34px; padding: 0 8px;
+      flex: 0 0 auto; font-size: 0.95rem; }
+    .v2-multibar .v2-mclear { margin-left: auto; color: #fc8181; border-color: #4a2b32; }
+    /* THE MODE PICKER shares the drawing's line with Grid. Compound selectors:
+       `.ambient-select` is width:100% and declared LATER, so a plainer rule
+       loses the cascade (the documented trap). */
+    .v2-modesel { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+    .v2-modesel > span { color: #6b6b8a; font-size: 0.7rem; }
+    select.ambient-select.v2-modepick { width: 104px; flex: 0 0 auto; min-height: 34px; }
+    @media (max-width: 420px) { select.ambient-select.v2-modepick { width: 96px; } }
+
+    /* ── PART COLOURS ─────────────────────────────────────────────────────────
+       One hue per arrangement PART, so a part reads as the SAME part wherever
+       it appears — the current-part strip, the ▤ overview cards, the Content
+       head's selector, the ▦ Passes tabs, and the NOTE EVENTS in the roll
+       drawn for it. `data-part` carries the part's ORDINAL (1-based — the
+       identifier every label now leads with), stamped by `_ambPartAttr` at
+       each render site; the palette lives ONLY here and the canvas reads the
+       same custom properties off `:root` (`_ambPartColor`), so there is one
+       definition and no chance of the picture and the chips drifting apart.
+       Applied as an ACCENT — an edge, a text colour, a note fill — never a
+       whole background, for the same reason the layer palette is: these sit
+       beside STATE colours that must keep their meaning (green "sounding",
+       amber "inert/warning", red "delete", purple "selected").
+
+       MEASURED, not eyeballed, in CIELab: ΔE 80.1 across the first FOUR (the
+       shape almost every arrangement has), 57.1 across six, 33.7 across all
+       eight; ≥24.9 from every state colour and ≥18.7 from every layer-type
+       hue — which matters because a part's colour lands on note events INSIDE
+       a layer card whose own edge is the layer hue. Every entry clears L*60 on
+       #0d0d18, and the GREEN BAND (Lab hue 90-172) is reserved outright, since
+       green means "sounding" here whatever the distance says. Order is by
+       SENSE rather than the optimiser's: part 1 is the one you see most, so it
+       is the calmest and the furthest from every state colour. A 9th part
+       wraps to hue 1 — the ordinal in the label is what disambiguates. */
+    :root {
+      --pt1: #479ef5;  /* blue      */
+      --pt2: #f56147;  /* coral     */
+      --pt3: #47f5d2;  /* aqua      */
+      --pt4: #ed47f5;  /* magenta   */
+      --pt5: #fade9e;  /* cream     */
+      --pt6: #fa9ecc;  /* pink      */
+      --pt7: #b5d5e3;  /* pale blue */
+      --pt8: #ca8d72;  /* tan       */
+    }
+    [data-part="1"] { --pt: var(--pt1); }
+    [data-part="2"] { --pt: var(--pt2); }
+    [data-part="3"] { --pt: var(--pt3); }
+    [data-part="4"] { --pt: var(--pt4); }
+    [data-part="5"] { --pt: var(--pt5); }
+    [data-part="6"] { --pt: var(--pt6); }
+    [data-part="7"] { --pt: var(--pt7); }
+    [data-part="8"] { --pt: var(--pt8); }
+
+    /* THE CURRENT-PART STRIP — a row of chips, so the accent is a left edge
+       plus the label; the `.on` chip keeps the panel's own selected fill, with
+       its part edge still showing which part it is. */
+    .ambient-curpart-chip[data-part] {
+      border-left: 3px solid var(--pt, #4a5568); color: var(--pt, #a0aec0);
+    }
+    .ambient-curpart-chip[data-part].on { color: #12121f; }
+    /* THE ▤ OVERVIEW CARDS — a part is a card here, so it takes the edge and
+       its name takes the hue. */
+    /* NO padding override here: `.ambient-pov-part` reserves 40px on the left
+       for its ordinal badge, and re-setting it would collapse the badge's
+       gutter. The edge simply thickens in place. */
+    .ambient-pov-part[data-part] { border-left: 3px solid var(--pt, #2d2d3f); }
+    .ambient-pov-part[data-part] > .ambient-pov-parthdr > .ambient-pov-partname,
+    .ambient-pov-part[data-part] > .ambient-pov-solohdr > .ambient-pov-partname { color: var(--pt, #e2e8f0); }
+    /* THE CONTENT HEAD'S PER-PART TOGGLE wears the part it is currently on —
+       with the selector retired this is the only thing on the card that says
+       WHICH part, so it has to say it in the colour the strip uses too.
+       COMPOUNDED past `.v2-pop-pair .v2-pop-pp.on` (0,2,0), which sets both of
+       these and sits earlier in the file — the documented cascade trap. */
+    .v2-pop-pair .v2-pop-pp.on[data-part] {
+      border-color: var(--pt, #b794f4); color: var(--pt, #e9d8fd);
+    }
+    /* ▦ PASSES / the matrices — part tabs. */
+    .pmx-tab[data-part], .pe-parttab[data-part] { border-bottom: 2px solid var(--pt, transparent); }
+    .pmx-tab[data-part].active, .pe-parttab[data-part].on { color: var(--pt, #d6bcfa); }
+
     /* ── LAYER TYPE COLOURS ───────────────────────────────────────────────────
        One hue per layer TYPE, so a Bass reads as a Bass wherever it appears —
        the card, its ⏱ Schedule row, its mixer channel, its Coarse-edit block.
@@ -15062,10 +15314,29 @@
 .v2-genshapes {
   display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 6px; flex: 0 0 auto;
 }
+/* THREE ACROSS, not two. Five doors at 50% each were 162px of a 617px panel
+   (26%) against 232px of knobs — measured at 390x780 — and the subtitles stay,
+   because three of these five names (Roll, Mixed, Groundwork) are this app's
+   own vocabulary and a bare word explains nothing at the point of the
+   decision (the `title`-never-shows-on-a-phone rule). At ~108px a one-line
+   subtitle fits; `max-width: 15ch` is what forced the second line, so it is
+   lifted here only. */
 .v2-genshapes .ambient-seg {
-  flex: 1 1 calc(50% - 3px); min-width: 0;
-  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  flex: 1 1 calc(33.333% - 4px); min-width: 0; min-height: 40px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
 }
+.v2-genshapes .v2-matsub { max-width: none; }
+/* A SECOND COPY OF A SHEET SELECT LANDS IN A NARROWER BOX. `.ambient-select`
+   is `width: 100%` and declared LATER than most row rules, so a single-class
+   override loses the cascade — compound it (the documented trap, now on its
+   fifth control). */
+.v2-layer .v2-genrows select.ambient-select { width: 100%; min-width: 0; }
+/* THE ▸ More FOLD. A header is a header, not another parameter row: its
+   button sits BESIDE its name, matching the sheet's own `.v2-disc` rule. */
+.v2-layer .v2-genrows .ambient-ctrl.v2-disc {
+  grid-template-columns: 1fr auto; align-items: center; gap: 10px;
+}
+.v2-layer .v2-genrows .ambient-ctrl.v2-disc .ambient-hint { grid-column: 1 / -1; }
 /* THE KNOBS SCROLL, the shapes and the actions do not — an action you have to
    scroll to find is the documented compose-dock bug. */
 .v2-genrows { flex: 1 1 auto; overflow-y: auto; padding: 4px 14px 8px;
@@ -15192,6 +15463,7 @@
 .v2-sub { display: none; }
 .v2-so-env .v2-sub-env { display: grid; }
 .v2-so-vox .v2-sub-vox { display: grid; }
+.v2-so-gmore .v2-sub-gmore { display: grid; }
 .v2-disc .v2-discbtn { justify-self: start; min-height: 40px; }
 /* A FOLD HEADER IS A HEADER, not another parameter row: its button sits BESIDE
    its name rather than under it. The sheet stacks ordinary rows to one column
@@ -15300,6 +15572,32 @@
 }
 .v2-vmode.on { border-color: #48bb78; color: #c6f6d5; }
 @media (hover: hover) { .v2-vmode:hover { border-color: #9f7aea; color: #d6bcfa; } }
+/* THE EDITING GRID and the DRAW mode, on the same line and in the same
+   clothes as ✎ Edit — rule 5: a new control matches its neighbours or it
+   reads as bolted on. `.ambient-select` is `width: 100%` and declared LATER
+   in this file, so a single-class override loses the cascade and the select
+   demands the whole row (four controls have been swallowed by it) — hence the
+   compound selector and an explicit width. */
+.v2-partviz .v2-gridsel {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px;
+  font: 600 0.62rem 'Segoe UI', sans-serif; color: #7a7a9c;
+}
+select.ambient-select.v2-gridpick {
+  flex: 0 0 auto; width: 68px; min-height: 26px; padding: 2px 4px;
+  border-radius: 8px; font-size: 0.66rem;
+}
+.v2-draw {
+  flex: 0 0 auto; min-height: 26px; padding: 3px 9px; border-radius: 20px;
+  border: 1px solid #2d2d3f; background: transparent; color: #a0aec0;
+  font: 600 0.66rem 'Segoe UI', sans-serif; cursor: pointer; touch-action: manipulation;
+}
+.v2-draw.on { border-color: #9f7aea; background: #9f7aea; color: #12121f; }
+@media (hover: hover) { .v2-draw:hover { border-color: #9f7aea; color: #d6bcfa; }
+  .v2-draw.on:hover { color: #12121f; } }
+/* …and the line has four things on it now, so it wraps rather than squeezing
+   the readout to nothing (UI rule 1). */
+.v2-partviz .v2-vizfoot { flex-wrap: wrap; }
+.v2-partviz .v2-vizlab { flex: 1 1 100%; }
 /* THE TAKE BAR — inside the viz block for the same reason the canvas is: it
    acts on the PICTURE, so it must be visible under every tab rather than
    belonging to one. Tap targets meet the 44px floor at phone width. */
@@ -15357,10 +15655,43 @@
 }
 /* The Note row is a STEPPER, not a slider, so it keeps the 3-column layout —
    but its readout is the note NAME and has to read like the values beside it
-   rather than like a faint aside. */
-.v2-neinline .ambient-ctrl-step > .ambient-hint {
-  color: #cbd5e0; font-size: 0.74rem; text-align: right; white-space: nowrap;
+   rather than like a faint aside.
+   THE READOUT COLUMN IS FIXED WIDTH. The base row is `84px 1fr auto`, and an
+   `auto` third column is sized by its text — so Position's readout growing
+   from "beat 1" to "bar 2 · beat 1.25" re-flowed the 1fr stepper and moved
+   the + button under the finger on the very press that changed it (reported:
+   "the readout is causing the Position buttons to resize"). 112px holds the
+   longest real readout ("bar 64 · beat 4.75"); anything longer wraps inside
+   its own column rather than stealing from the control. A fixed column also
+   makes the three steppers EQUAL width instead of each sized by its neighbour. */
+.v2-neinline .ambient-ctrl-step {
+  grid-template-columns: 84px minmax(0, 1fr) 112px;
 }
+.v2-neinline .ambient-ctrl-step > .ambient-hint {
+  color: #cbd5e0; font-size: 0.72rem; text-align: right;
+  white-space: normal; overflow-wrap: anywhere; line-height: 1.25;
+}
+/* ⊕ EXPAND — chords that CONTAIN the open note. Real buttons, never a native
+   select: the in-key/out-of-key split is COLOR (green = in the key, orange =
+   borrowed) and option styling is not dependable across platforms. */
+.v2-neinline .v2-nex { margin: 6px 0 2px; max-height: 240px; overflow-y: auto; }
+.v2-neinline .v2-nex[hidden] { display: none; }
+.v2-nexgrp {
+  font: 600 0.66rem 'Segoe UI', sans-serif; letter-spacing: 0.06em;
+  text-transform: uppercase; color: #7a7a9c; margin: 6px 0 3px;
+}
+.v2-nexgrp-in { color: #9ae6b4; }
+.v2-nexgrp-out { color: #f6ad55; }
+.v2-nexrow { display: flex; flex-wrap: wrap; gap: 6px; }
+.v2-nexbtn {
+  border: 1px solid #2d2d3f; border-radius: 8px; background: transparent;
+  color: #cbd5e0; padding: 6px 10px; min-height: 34px; cursor: pointer;
+  font: 600 0.78rem 'Segoe UI', sans-serif; touch-action: manipulation;
+}
+.v2-nexbtn .v2-nexrole { font-weight: 500; opacity: 0.75; }
+.v2-nexbtn.v2-nex-in { border-color: #2f5d43; color: #9ae6b4; }
+.v2-nexbtn.v2-nex-out { border-color: #7c4a12; color: #f6ad55; }
+@media (hover: hover) { .v2-nexbtn:hover { border-color: #9f7aea; color: #d6bcfa; } }
 /* A section heading: the four envelope rows are one idea, and unlabelled they
    read as four more unrelated numbers. */
 .v2-nesec {

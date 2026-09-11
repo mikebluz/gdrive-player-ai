@@ -17,7 +17,8 @@
     "test:ui": "node test/ui-lifecycle.js",
     "stoch": "node tools/stochastic-matrix.mjs",
     "test:seam": "node test/seam.js",
-    "test:replay": "node test/replay.js"
+    "test:replay": "node test/replay.js",
+    "test:vizdrag": "node test/viz-drag.js"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

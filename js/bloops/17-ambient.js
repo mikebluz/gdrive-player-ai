@@ -730,12 +730,39 @@
       if (!L || typeof L !== 'object') return;
       _ambTransposeSrc(L.notes, semis);
       if (Array.isArray(L.steps)) L.steps.forEach(s => s && _ambTransposeSrc(s.notes, semis));   // arp series entries
-      // A v2 RECORDED part stores ABSOLUTE frequencies. Nothing else here moves
+      // A v2 RECORDED part stores ABSOLUTE PITCHES. Nothing else here moves
       // those, so a transposed sibling would have kept the old key's notes —
       // the same reason v1's frozen loops need their own transposition path.
-      if ((L.v | 0) === 2 && L.part && Array.isArray(L.part.notes)) {
-        const r = Math.pow(2, semis / 12);
-        L.part.notes.forEach(n => { if (n && Number.isFinite(n.freq)) n.freq = n.freq * r; });
+      // …AND THE FIELD IS `midi`, NOT `freq` (normalize keeps `{t, midi, dur}`
+      // — a stored note has no `freq` at all), so the `Number.isFinite(n.freq)`
+      // guard this used to carry could never fire: transposing an area left
+      // every v2 recorded part in the old key, silently.
+      // …AND EVERY FILED RECORD, not just the one on the card. `L.part` is the
+      // record being EDITED; a per-part layer also holds `L.parts[*]` and the
+      // iced `L.partAll`, and moving only the first would have transposed
+      // whichever part happened to be selected and left the rest behind.
+      if ((L.v | 0) === 2) {
+        // …AND THE SMALLEST EQUIVALENT SHIFT. `_ambTransposeArea` folds its
+        // argument into 0..11 before it gets here, which is right for the
+        // PITCH CLASSES everything else it touches is made of (keys, chord
+        // roots) and wrong for absolute notes: a "down a fourth" arrives as
+        // +7 and would move the part UP a fifth — same key, an octave adrift,
+        // and never round-tripping. 7..11 is read as -5..-1, so a transpose
+        // and its inverse cancel exactly (measured 60 → 65 → 60).
+        const st0 = ((((Math.round(semis) | 0) % 12) + 12) % 12);
+        const st = st0 > 6 ? st0 - 12 : st0;
+        const trRec = (p) => {
+          if (!p || !Array.isArray(p.notes)) return;
+          p.notes.forEach(n => {
+            if (n && Number.isFinite(n.midi)) n.midi = Math.max(0, Math.min(127, (n.midi | 0) + st));
+          });
+        };
+        if (st) {
+          trRec(L.part);
+          trRec(L.partAll);
+          if (L.parts && typeof L.parts === 'object')
+            Object.keys(L.parts).forEach(k => trRec(L.parts[k]));
+        }
       }
       const ko = L.keyOv;
       if (ko && typeof ko === 'object') {
@@ -8535,13 +8562,87 @@
         return out.join(' \u2014 ');
       } catch (e) { return ''; }
     }
+    // ── PART COLOURS ────────────────────────────────────────────────────
+    // A part reads as the same part wherever it appears. The KEY is the
+    // ordinal — the identifier the labels already lead with — so the chip, the
+    // overview card, the selector and the note events in the roll cannot
+    // disagree about which part they mean. `_ambPartAttr` is the markup half
+    // (the palette lives in the stylesheet, one line per hue); `_ambPartColor`
+    // is the CANVAS half, and it reads the SAME custom properties off :root so
+    // there is one definition rather than a copy that drifts. Wrapping at 8 is
+    // deliberate: past that the number in the label is what disambiguates, and
+    // a 12-hue palette cannot keep its distances anyway.
+    const _AMB_PART_HUES = 8;
+    function _ambPartOrd(pi) { return (((pi | 0) % _AMB_PART_HUES) + _AMB_PART_HUES) % _AMB_PART_HUES + 1; }
+    function _ambPartAttr(pi) {
+      return (pi >= 0) ? (' data-part="' + _ambPartOrd(pi) + '"') : '';
+    }
+    let _ambPartColorCache = null;
+    function _ambPartColor(pi) {
+      if (!(pi >= 0)) return '';
+      if (!_ambPartColorCache) {
+        _ambPartColorCache = [];
+        try {
+          const cs = getComputedStyle(document.documentElement);
+          for (let i = 1; i <= _AMB_PART_HUES; i++) {
+            _ambPartColorCache.push(String(cs.getPropertyValue('--pt' + i) || '').trim());
+          }
+        } catch (e) { _ambPartColorCache = []; }
+      }
+      return _ambPartColorCache[_ambPartOrd(pi) - 1] || '';
+    }
+    // EVERY PART LEADS WITH ITS NUMBER. A part's name is usually the DERIVED
+    // numerals of its chords ("\u266dVIImaj7 \u2014 v7 \u2014 i7 \u2014 IV7"), which describes the
+    // harmony and identifies nothing — two parts in the same key read almost
+    // alike, and in the Content head's selector the name is ellipsed to a few
+    // glyphs, so the one thing you were looking for was the first thing cut.
+    // The ordinal goes FIRST for exactly that reason: an ellipsed label still
+    // shows which part it is. One labeller, ~26 display consumers (the
+    // selector, the overview headers, \u25a6 Passes tabs, the matrices, the
+    // scheduler, every toast and readout, bloomPartWatch), so the prefix lands
+    // everywhere at once and none of them parses it back.
+    // An UNNAMED part keeps "Part N" rather than becoming "N \u00b7 Part N" — it
+    // already leads with its number, and the prefix would only say it twice.
     function _ambPartLabel(cfg, pi) {
       const p = cfg && cfg.prog;
+      const n = (pi | 0) + 1;
       const parts = (p && Array.isArray(p.parts) && p.parts.length) ? p.parts : null;
       const own = parts && parts[pi] && typeof parts[pi].name === 'string' ? parts[pi].name.trim() : '';
-      if (own) return _ambProgNameIsList(own) ? (_ambPartNumerals(cfg, pi) || own) : own;
-      if (!parts) return _ambProgTitle(p && p.name);
-      return 'Part ' + ((pi | 0) + 1);
+      if (own) {
+        // A part nobody renamed is auto-named "Changes N" by `_ambRepairParts`,
+        // and the ordinal now says N — so the stored digit is the same fact
+        // twice ("3 \u00b7 Changes 3"). The generic name drops its index and keeps
+        // the app's own noun for a set of chords, so every part reads with the
+        // SAME leading token whether or not it has been named.
+        const gen = /^(?:Changes|Part)\s+\d+$/i.test(own);
+        const body = gen ? 'Changes'
+          : (_ambProgNameIsList(own) ? (_ambPartNumerals(cfg, pi) || own) : own);
+        return n + ' \u00b7 ' + body;
+      }
+      if (!parts) {
+        // the part-less progression: its own title, or the bare "Part 1"
+        const t = _ambProgTitle(p && p.name);
+        return (t === _AMB_SOLO_PART) ? t : (n + ' \u00b7 ' + t);
+      }
+      return 'Part ' + n;
+    }
+    // THE SAME NAME WITHOUT THE DESCRIPTION. A derived name IS the chord
+    // numerals, which describes the harmony and identifies nothing — right in
+    // a wide list and far too long on a pill that shares its row with another
+    // control (measured: "\u25eb Per part \u00b7 1 \u00b7 \u266dVII \u2014 i \u2014 ii \u2014 \u266dIII \u2014 IV" took
+    // the whole row, and the numerals it spent that width on are drawn under
+    // the ruler a few pixels below). The ORDINAL is what identifies a part, so
+    // a derived or auto-generated name drops to the bare number and only a
+    // name somebody AUTHORED is kept beside it.
+    function _ambPartLabelShort(cfg, pi) {
+      const p = cfg && cfg.prog;
+      const n = (pi | 0) + 1;
+      const parts = (p && Array.isArray(p.parts) && p.parts.length) ? p.parts : null;
+      // the part-less progression already names itself in one short token
+      if (!parts) return _ambPartLabel(cfg, pi);
+      const own = parts[pi] && typeof parts[pi].name === 'string' ? parts[pi].name.trim() : '';
+      const gen = !own || /^(?:Changes|Part)\s+\d+$/i.test(own) || _ambProgNameIsList(own);
+      return gen ? String(n) : (n + ' \u00b7 ' + own);
     }
     function _ambProgTitle(nm) {
       const s0 = String(nm == null ? '' : nm).trim();
@@ -8777,7 +8878,7 @@
         _peParts.forEach((pt, i) => {
           const r = _ambPePartRange(ed, i);
           const plays = Math.max(1, (pt.plays | 0) || 1);
-          h += '<button type="button" class="pe-parttab' + (ed.part === i ? ' on' : '') + '" data-pe="part:' + i + '" title="' + esc(pt.name || ('Changes ' + (i + 1))) + ' — ' + (r.to - r.from) + ' chord' + ((r.to - r.from) === 1 ? '' : 's') + (plays > 1 ? ', plays ' + plays + '×' : '') + '">' +
+          h += '<button type="button" class="pe-parttab' + (ed.part === i ? ' on' : '') + '" data-pe="part:' + i + '"' + _ambPartAttr(i) + ' title="' + esc(pt.name || ('Changes ' + (i + 1))) + ' — ' + (r.to - r.from) + ' chord' + ((r.to - r.from) === 1 ? '' : 's') + (plays > 1 ? ', plays ' + plays + '×' : '') + '">' +
             esc(pt.name || ('Changes ' + (i + 1))) + (plays > 1 ? '<i class="pe-parttab-x">×' + plays + '</i>' : '') + '</button>';
         });
         h += '<button type="button" class="pe-parttab pe-parttab-add" data-pe="partnew" title="Add a new set of changes after this one, starting with one new chord. No existing chord moves — to divide THIS set instead, use ✂ Split at selection.">＋</button></div>';
@@ -22062,6 +22163,28 @@
     // schedules ~1.4 s ahead, so waiting until `now` passes the boundary would
     // let a lookahead of the NEXT pass be scheduled before the shift lands.
     function _ambPassLockSync(E, cfg, now, lead) {
+      // ↻ LOOP — the ⇶ Part strip's own hold. `_ambPassLockEngage` holds
+      // whatever pass is sounding AT THE MOMENT IT IS PRESSED, which is right
+      // for "↻ Hold pass" and wrong for "loop the part I am editing": that
+      // part may not be sounding yet, and may not be when you press play
+      // either. `E._partLoop` names the PART, and this arms the hold the moment
+      // the arrangement reaches it — so Loop can be set while STOPPED, which is
+      // when you actually want it.
+      if (E && Number.isFinite(E._partLoop)) {
+        const want = E._partLoop | 0;
+        // the current part moved under a running loop — let go of the old one
+        if (E._passLock && (E._passLock.pi | 0) !== want) E._passLock = null;
+        if (!E._passLock) {
+          try {
+            // ON THE HORIZON, like everything else here: the tick schedules
+            // ~1.4s ahead, so arming at `now` would let a lookahead of the pass
+            // AFTER this one be scheduled before the hold lands.
+            const hz = now + Math.max(0, lead || 0);
+            const sp = _ambPassSpanAt(E, cfg, hz);
+            if (sp && (sp.pi | 0) === want) _ambPassLockEngage(E, cfg, hz);
+          } catch (e) {}
+        }
+      }
       const pl = E && E._passLock; if (!pl) return;
       if (!(pl.span > 0)) { E._passLock = null; return; }
       const horizon = now + Math.max(0, lead || 0);
@@ -25353,7 +25476,33 @@
     // ('bed'|'motif'|'texture'|'beat'|'seq:<id>'). iters[key] also counts seq
     // CYCLES for return-to-original. Two engines can tick concurrently; each
     // tick sets the current-engine pointer _E first.
+    // WHERE A PART STARTS, in seconds from the chord clock's own origin. Walked
+    // with `_ambChordSpanAt` and `_ambPartChordAt` — the ONE resolver pair — so a
+    // cadence, a chain, a hold and a passes grid all come along, and never by
+    // summing chord lengths beside the clock (that is how the Scheduler lane once
+    // came to lie about the harmony). Returns 0 for the first part, for a part
+    // that cannot be found, and whenever there is nothing to fast-forward to.
+    function _ambPartStartOffsetSec(E, cfg, pi) {
+      if (!Number.isFinite(pi) || (pi | 0) <= 0) return 0;
+      const p = cfg && cfg.prog;
+      if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return 0;
+      const org = Number.isFinite(E._progAnchor) ? E._progAnchor
+        : (Number.isFinite(E._playStartAt) ? E._playStartAt : 0);
+      let t = org + 1e-4;
+      for (let i = 0; i < 128; i++) {
+        let sp = null;
+        try { sp = _ambChordSpanAt(E, cfg, t); } catch (e) { return 0; }
+        if (!sp || !(sp.end > sp.start)) return 0;
+        let w = null;
+        try { w = _ambPartChordAt(E, cfg, (sp.start + sp.end) / 2); } catch (e) {}
+        if (w && (w.pi | 0) === (pi | 0)) return Math.max(0, sp.start - org);
+        t = sp.end + 1e-4;
+      }
+      return 0;
+    }
     function _ambResetClocks(E) {
+      // the fast-forward is per PLAY — see `_ambPartStartOffsetSec`
+      E._ffDone = 0;
       // The hang ledger is per PLAY — it stops one occurrence being emitted twice
       // by successive ticks, and carrying it across a stop would silence every
       // hang on the next play.
@@ -25555,6 +25704,23 @@
       // chord boundary IS a layer onset. `== null` so an area switch, which sets
       // both explicitly to the boundary, still wins.
       if (E._barGridAnchor != null && E._progAnchor == null) E._progAnchor = E._barGridAnchor;
+      // ── PLAY STARTS FROM THE PART YOU ARE EDITING ────────────────────────
+      // The \u21f6 Part strip names which part is CURRENT, and play used to
+      // ignore it and run the arrangement from the top — so auditioning the
+      // part you were working on meant waiting out everything before it.
+      // Expressed as a FAST-FORWARD OF THE ONE CLOCK rather than as a second
+      // entry point: both anchors move back by the part's own offset, so the
+      // chord clock, the bar grid, the sections and every layer's phase are
+      // all at that part together (shifting only `_progAnchor` would re-open
+      // exactly the two-clock gap the pin above closed).
+      // Once per play, and only while it still names a part that exists.
+      if (E === _masterEng && !E._ffDone) {
+        E._ffDone = 1;
+        try {
+          const off = _ambPartStartOffsetSec(E, cfg, E._curPart);
+          if (off > 0.0005) { E._barGridAnchor -= off; E._progAnchor -= off; }
+        } catch (e) {}
+      }
       const space = cfg.space | 0;
       const C = E.clocks, I = E.iters;
       // Solo: if ANY on layer is soloed, only soloed layers sound.
@@ -29591,6 +29757,11 @@
       E._barGridAnchor = null;                     // fresh loop grid this play
       E._progAnchor = null;                        // …and the chord clock rides it (one clock)
       E._passLock = null;                          // a held pass names "what is playing now" — meaningless stopped
+      // …but ↻ LOOP SURVIVES A STOP. It names a PART, not a moment, and
+      // arming it before pressing play is the normal way to use it — the next
+      // tick re-arms the hold when that part comes round. It is transient on
+      // the engine and the strip's button says so, so it can never be stuck
+      // invisibly (the `_soloLane` rule).
       _ambSeed(cfg.seed);
       try { _ambApplyRamps(cfg, 0); } catch (e) {} // reset ramped params to A so the FIRST events use A
       try { _ambSyncMods(); } catch (e) {} // build mod chains before the first voices fire
@@ -30152,6 +30323,7 @@
       E._barGridAnchor = null;                     // fresh loop grid next play
       E._progAnchor = null;                        // …and the chord clock rides it (one clock)
       E._passLock = null;                          // never survives a stop (the _soloLane lesson: no silently-stuck state)
+      // ↻ Loop (E._partLoop) deliberately DOES survive — see the other stop.
       try { if (typeof _bloomMasterGain !== 'undefined' && _bloomMasterGain && _bloomMasterGain.gain) { const _n = (Tone && Tone.now) ? Tone.now() : 0; _bloomMasterGain.gain.cancelScheduledValues(_n); _bloomMasterGain.gain.setValueAtTime(_BLOOM_MASTER_TRIM, _n); } } catch (e) {}
       try { _ambOrchUpdateNowPlaying(E); } catch (e) {}
       // Restore the master fade to full on a normal stop (so a stop mid fade-in
@@ -38652,10 +38824,28 @@
       motion: '%', strum: '%', strumFidelity: '%', restProb: '%', twist: '%', proximity: '%',
       accent: '%', fill: '%', rhythmVar: '%', pitchVar: '%', vary: '%',
       timeVary: '%', pitchVary: '%', randomness: '%', varyDepth: '%', returnChance: '%', pvary: '%', lenvary: '%', lenVary: '%',
-      spread: '%', sustain: '%', level: '%', fine: '¢',
+      spread: '%', sustain: '%', level: '%', fine: '\u00a2',
+      // v2's generative parameters. A slider whose readout is a bare number
+      // names nothing at the point of the decision — "what do the numbers
+      // mean" — and unlike a stepper (whose hint renders VISIBLY beside it) a
+      // slider folds its hint into a `title`, which a phone never shows. So
+      // the unit goes in the READOUT, which is the documented rule and the one
+      // place both the build and the drag repaint.
+      chance: '%', mix: '%', stutter: '%', lenRatio: '%', slip: '%', contour: '%',
+      syncop: '%', variety: '%', roam: '%', drift: '%', rateVar: '%',
+      pulses: ' onsets', span: ' tones', octaves: ' oct', lines: ' lines',
+      voices: ' notes', steps: ' steps', rotate: ' steps',
     };
+    // The LAST segment names the parameter — except that a SECOND control over
+    // one field carries a suffix so the two ids differ (v2's Generated panel
+    // uses `-gen`, and Hold `-gw`). Without stripping it every slider in that
+    // panel looked up the unit for "gen", found none, and rendered a bare
+    // number: the reported "the numeric values are not all intelligible".
+    const _AMB_UNIT_SUFFIX = { gen: 1, gw: 1 };
     function _ambSlUnit(id) {
-      return _AMB_PARAM_UNIT[String(id || '').split('-').pop()] || '';
+      const seg = String(id || '').split('-');
+      while (seg.length > 1 && _AMB_UNIT_SUFFIX[seg[seg.length - 1]]) seg.pop();
+      return _AMB_PARAM_UNIT[seg.pop()] || '';
     }
     // ---- STOCHASTIC CONTROLS ------------------------------------------------
     // The controls that ROLL for an outcome, plus the two facts a user needs in
@@ -40872,7 +41062,8 @@
         // the part's own ops — cadence, key and rename belong to the part and are
         // drawn once, on its first card.
         if (!card.first) {
-          h += '<div class="ambient-pov-part pov-part-revisit" data-povstep="' + card.k + '">' +
+          h += '<div class="ambient-pov-part pov-part-revisit" data-povstep="' + card.k + '"' +
+            _ambPartAttr(r.pi) + '>' +
             _povOrdHtml(card) +
             '<div class="ambient-pov-parthdr">' +
               '<span class="ambient-pov-partname pov-revname">' + esc(r.name || _ambProgTitle(prog.name)) + '</span>' +
@@ -40882,7 +41073,8 @@
               '</span></div></div>';
           return;
         }
-        h += '<div class="ambient-pov-part' + (r.open ? ' pov-part-open' : '') + '" data-povstep="' + card.k + '">' + _povOrdHtml(card);
+        h += '<div class="ambient-pov-part' + (r.open ? ' pov-part-open' : '') + '" data-povstep="' +
+          card.k + '"' + _ambPartAttr(r.pi) + '>' + _povOrdHtml(card);
         if (r.open) {
           // A part with no changes: name, length, and the same ops as any other
           // part. It reads as a block of time because that is what it is — the
@@ -41730,6 +41922,15 @@
         const c2 = E.getCfg(), ps = (c2.prog && Array.isArray(c2.prog.parts)) ? c2.prog.parts : null;
         return (ps && ps[pi] && ps[pi].name) || (c2.prog && c2.prog.name) || 'Changes';
       };
+      // The trailing repaint of the content drawings (see `commit`). Cleared on
+      // every press so a burst pays for ONE redraw, and FLUSHED at the close so
+      // Done leaves the picture correct before the cascade dialog names it.
+      let _vizT = null;
+      const vizNow = () => {
+        if (_vizT) { clearTimeout(_vizT); _vizT = null; }
+        try { if (typeof window._v2RepaintViz === 'function') window._v2RepaintViz(E); } catch (e) {}
+      };
+      const vizSoon = () => { if (_vizT) clearTimeout(_vizT); _vizT = setTimeout(vizNow, 140); };
       // NO _ambSyncControls HERE. It rebuilds every layer card — measured 193ms of
       // a 197ms press on an 8-layer project, i.e. the whole of the reported lag —
       // and a cadence changes chord LENGTHS, which no layer control displays. What
@@ -41747,6 +41948,20 @@
         // The one-pass readout states the length of the very thing being edited,
         // and it used to ride on the panel rebuild this commit deliberately drops.
         try { _ambProgChainLenSync(E); } catch (e) {}
+        // AND THE CONTENT DRAWING. A per-part record IS its part's length, so a
+        // cadence edit refits it on the very next normalize — the picture was
+        // simply not being told. It rode on the `_ambSyncControls` this commit
+        // deliberately drops (193ms of a 197ms press), which is the standing
+        // lesson about dropping a broad sync: enumerate what rode on it.
+        //
+        // DEBOUNCED, and that is not a nicety. Redrawing every expanded card
+        // costs ~13ms each (`notesFor` generates a whole cycle per card), so
+        // doing it inline took a press from 7.7ms to 108ms on eight cards —
+        // re-creating the exact lag the 193→8ms fix removed, on a control whose
+        // whole shape is repeated presses. The intermediate frames of a burst
+        // are not worth 100ms apiece; the last one is, and it lands within a
+        // sixth of a second of your finger stopping.
+        vizSoon();
         if (typeof persistWorkspace === 'function') persistWorkspace();
         repaint();
       };
@@ -41811,7 +42026,32 @@
       paint();
       document.body.appendChild(ov);
       ov.style.setProperty('display', 'flex', 'important');
-      const close = () => { try { ov.remove(); } catch (e) {} };
+      // THE LENGTH THIS EDIT STARTED FROM. Content filed against a part IS that
+      // part's length — the reconciler refits it on every normalize — so by the
+      // time anything can be asked the STRETCH has already happened, and the
+      // previous length is the one number normalize cannot recover. Measured
+      // once, at the open.
+      let bars0 = 0;
+      try { bars0 = +_ambLenPartBars(E.getCfg(), pi) || 0; } catch (e) {}
+      // ASKED ONCE, AT THE END. The \u00b1 steppers fire repeatedly and a question
+      // per press is unusable; the length that matters is the one you finished
+      // on. Dismissing it keeps the default, which is the state the records are
+      // already in — so there is nothing to undo either way.
+      const askCascade = () => {
+        let bars1 = 0;
+        try { bars1 = +_ambLenPartBars(E.getCfg(), pi) || 0; } catch (e) {}
+        const b0 = bars0; bars0 = bars1;
+        if (!(b0 > 0) || !(bars1 > 0) || Math.abs(bars1 - b0) < 1e-6) return;
+        try {
+          if (window._v2 && typeof window._v2.cascadeAsk === 'function') {
+            window._v2.cascadeAsk(E, pi, b0, bars1, () => {
+              try { window._v2RepaintViz(E); } catch (e) {}
+              try { _ambRenderScheduler(E); } catch (e) {}
+            });
+          }
+        } catch (e) {}
+      };
+      const close = () => { try { ov.remove(); } catch (e) {} vizNow(); askCascade(); };
       ov.addEventListener('click', (ev) => {
         const t = ev.target;
         if (t.closest && t.closest('.cad-close')) { close(); return; }
@@ -41939,6 +42179,25 @@
     // Does this layer ring out instead of choking? Absent = choke (the default).
     const _ambLayerRings = (L) => !!(L && L.ring);
     // The hook. Returns the duration the note should actually sound for.
+    // DOES THIS PART EVER PLAY TWO NOTES AT ONCE? For a WRITTEN part the notes
+    // ARE the material, so this is answered exactly instead of inferred from
+    // whatever made them — and a part you DREW has no meaningful pitch kind at
+    // all, so nothing else could answer for it. Two onsets closer than a 64th
+    // note count as together, which is what makes a strummed chord read as
+    // harmony rather than as a very fast line.
+    function _ambPartOneAtATime(P) {
+      const ns = P && P.notes;
+      if (!Array.isArray(ns) || ns.length < 2) return true;
+      const tol = (1 / 64) / Math.max(0.125, P.bars || 1);
+      const ts = [];
+      for (let i = 0; i < ns.length; i++) {
+        const t = ns[i] && ns[i].t;
+        if (Number.isFinite(t)) ts.push(t);
+      }
+      ts.sort((a, b) => a - b);
+      for (let i = 1; i < ts.length; i++) if (ts[i] - ts[i - 1] < tol) return false;
+      return true;
+    }
     function _ambNoteChoke(key, atSec, durMs, params) {
       // A HANG BURST IS EXEMPT: its notes are cut to fit their window by the
       // generator itself, and the choke resolves a chord boundary off the CLOCK —
@@ -41968,9 +42227,34 @@
         // 1520 ms note in a 2 s chord still lost half its length at one onset
         // and none at the next). What this rule is FOR is HARMONY ringing under
         // the next chord — several notes at once, held.
+        // …AND A WRITTEN LINE IS STILL A LINE. This used to be live-only, on
+        // the reasoning that a recorded part's `pitch.kind` names the RULES
+        // that made it rather than the notes it now has. True — and the notes
+        // answer the question far better than the rules could: for a written
+        // part just ask whether it ever plays two at once. Reported the moment
+        // editing notes by hand became worth doing (drag, resize, add and the
+        // piano-key re-pitch all lock the take first), as "the 2nd and 3rd
+        // notes are getting extremely truncated again on play press" —
+        // measured, an even 1400 ms line came out 1400 · 1400 · 588 the
+        // instant it was locked, and 1400 · 1400 · 1400 while live.
         try {
-          const pk = (L.part && L.part.kind !== 'recorded' && L.part.pitch && L.part.pitch.kind) || '';
-          if (pk && pk !== 'chord' && pk !== 'stack' && pk !== 'mixed') return durMs;
+          // THE RECORD SOUNDING AT THIS NOTE'S OWN TIME, not the one on the
+          // card. `L.part` is the record being EDITED; a per-part layer plays
+          // whichever part's record the arrangement is in. Asking `L.part`
+          // here let the part you happened to have selected decide whether
+          // every other part's notes were choked — a part holding a LINE was
+          // cut at every change because the EDITED part held a chord. One
+          // definition of the swap (`V2.recordAt`), shared with `notesFor`.
+          let P = L.part;
+          try {
+            if (typeof window !== 'undefined' && window._v2 &&
+                typeof window._v2.recordAt === 'function')
+              P = window._v2.recordAt(L, E, cfg, atSec) || L.part;
+          } catch (e) { P = L.part; }
+          if (P && P.kind !== 'recorded') {
+            const pk = (P.pitch && P.pitch.kind) || '';
+            if (pk && pk !== 'chord' && pk !== 'stack' && pk !== 'mixed') return durMs;
+          } else if (P && _ambPartOneAtATime(P)) return durMs;
         } catch (e) {}
         // A note that cannot reach the next boundary needs no work, and this is
         // what keeps percussive layers off the bisection entirely.
@@ -42397,7 +42681,7 @@
           ranges.map((x, k) => {
           const nm = _ambPartLabel(cfg, x.pi);
           return '<button type="button" class="ambient-seg pmx-tab' + (k === pi ? ' active' : '') +
-            '" data-pmx="tab:' + k + '">' + esc(nm) + '</button>';
+            '" data-pmx="tab:' + k + '"' + _ambPartAttr(x.pi) + '>' + esc(nm) + '</button>';
         }).join('') + '</div>';
       }
       // SHOWING — all layers (the schedule) or one layer (what it plays).
@@ -43167,7 +43451,16 @@
             // RELEASE IS NOTHING AT ALL — stop shifting the anchor and the
             // current repetition simply runs on into the next pass.
             _ambPassLockRelease(E);
-            try { showToast('Released — this pass finishes, then the next one runs.'); } catch (e) {}
+            // …AND DISARM ↻ LOOP. It re-arms the hold every tick, so a
+            // release without this is undone before the next frame and the
+            // press reads as dead.
+            let hadLoop = false;
+            if (E && Number.isFinite(E._partLoop)) { hadLoop = true; E._partLoop = null; }
+            try {
+              if (hadLoop) { const el2 = _ambGet(E, 'ambient-curpart'); if (el2) { el2._sig = ''; _ambRenderCurPart(E); } }
+            } catch (e) {}
+            try { showToast('Released — this pass finishes, then the next one runs.' +
+              (hadLoop ? ' ↻ Loop is off.' : '')); } catch (e) {}
           } else {
             const now2 = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
             const got = _ambPassLockEngage(E, E._cfg || cfg, now2);
@@ -43406,10 +43699,22 @@
       let pi = -1;
       try {
         if (E.timer && _ambViewIsPlaying(E)) {
-          const now = (typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : Tone.now();
-          const cfg = E._cfg || E.getCfg();
-          const r = _ambPartChordAt(E, cfg, now);
-          pi = (r && r.pi >= 0) ? (r.pi | 0) : -1;
+          // A HELD PASS ANSWERS FOR ITSELF. `_ambPassLockSync` moves the chord
+          // anchor on the HORIZON — ~1.4 s before the boundary is reached in
+          // real time — so for that window `_ambPartChordAt(audibleNow)`
+          // resolves against the NEW anchor and names the pass BEFORE the one
+          // you are hearing. The audio is right (measured: a held Chorus emits
+          // only Chorus notes) and only this readout was wrong, flickering the
+          // green mark back to the previous part for ~1.5 s every repetition —
+          // which reads as the loop not holding. While a pass is held the part
+          // being heard IS the held one, by definition.
+          if (E._passLock && Number.isFinite(E._passLock.pi)) pi = E._passLock.pi | 0;
+          else {
+            const now = (typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : Tone.now();
+            const cfg = E._cfg || E.getCfg();
+            const r = _ambPartChordAt(E, cfg, now);
+            pi = (r && r.pi >= 0) ? (r.pi | 0) : -1;
+          }
         }
       } catch (e) { pi = -1; }
       if (el._playPi === pi) return;
@@ -43434,7 +43739,13 @@
         });
       } catch (e) {}
       const cur = cfg ? _ambCurPartNow(E, cfg, rgs) : -1;
-      const sig = cur + '|' + rgs.map(r => r.pi + ':' + r.nm).join(',');
+      // a looped part that has been DELETED can never come round again, so the
+      // hold would never arm and the lit button would be a claim about nothing
+      if (Number.isFinite(E._partLoop) && !rgs.some(r => r.pi === (E._partLoop | 0))) {
+        E._partLoop = null; E._passLock = null;
+      }
+      const lp = Number.isFinite(E._partLoop) ? (E._partLoop | 0) : -1;
+      const sig = cur + '|' + lp + '|' + rgs.map(r => r.pi + ':' + r.nm).join(',');
       if (el._sig !== sig) {
         el._sig = sig;
         if (!rgs.length) { el.innerHTML = ''; el.style.display = 'none'; }
@@ -43442,10 +43753,30 @@
           el.style.display = '';
           el.innerHTML = '<span class="ambient-curpart-lab">Part</span>' +
             rgs.map(r => '<button type="button" class="ambient-seg ambient-curpart-chip' +
-              (r.pi === cur ? ' on' : '') + '" data-cp="' + r.pi + '" title="Make ' + _ambEscAttr(r.nm) +
+              (r.pi === cur ? ' on' : '') + '" data-cp="' + r.pi + '"' + _ambPartAttr(r.pi) +
+              ' title="Make ' + _ambEscAttr(r.nm) +
               ' the current part — for editing only; play always runs the arrangement from the top">' +
               _ambEscAttr(r.nm) + '</button>').join('') +
-            '<span class="ambient-hint ambient-curpart-hint">editing · play runs the arrangement from the top</span>';
+            // ↻ LOOP — the one control here that DOES move a clock, which is
+            // exactly why it sits with the part it loops rather than in a
+            // sheet: "repeat the part I am editing so I can hear what I change"
+            // is the same gesture as choosing that part. Rendered even while
+            // stopped (a control that vanishes cannot be found — the Delete
+            // lesson) because arming it BEFORE pressing play is the normal way
+            // to use it; the hint says so.
+            (cur >= 0
+              ? '<button type="button" class="ambient-seg ambient-curpart-loop' +
+                  (lp >= 0 ? ' on' : '') + '"' + (lp >= 0 ? _ambPartAttr(lp) : '') +
+                  ' data-cploop="1" title="' + _ambEscAttr(lp >= 0
+                    ? 'Looping ' + ((rgs.find(r => r.pi === lp) || {}).nm || ('Part ' + (lp + 1))) +
+                      ' — the arrangement repeats it instead of moving on, so an edit is heard next time round. Press to let it run on.'
+                    : 'Repeat the current part instead of running on through the arrangement — so you hear an edit next time round. Takes effect when that part comes round; you can arm it before pressing play.') +
+                  '">↻ ' + (lp >= 0 ? 'Looping' : 'Loop') + '</button>'
+              : '') +
+            '<span class="ambient-hint ambient-curpart-hint">' +
+              (lp >= 0
+                ? '↻ looping this part · press ↻ Looping to let the arrangement run on'
+                : 'editing · play runs the arrangement from the top') + '</span>';
         }
       }
       // a rewrite drops the playing mark with the old chips — put it back on
@@ -43454,9 +43785,40 @@
       if (!el._cpWired) {
         el._cpWired = true;
         el.addEventListener('click', (ev) => {
+          // ↻ LOOP — arm/disarm for whichever part is current. TRANSIENT on the
+          // engine (never persisted): a project that reloaded stuck on one part
+          // is the `_soloLane` failure, and the button is loud about the state
+          // so it can never be invisibly on.
+          const lb = ev.target.closest && ev.target.closest('.ambient-curpart-loop');
+          if (lb) {
+            if (Number.isFinite(E._partLoop)) {
+              E._partLoop = null; E._passLock = null;
+              try { showToast('↻ Loop off — the arrangement runs on from here.'); } catch (e) {}
+            } else {
+              let c3 = -1;
+              try { const c2 = E.getCfg(); c3 = _ambCurPartNow(E, c2, _ambGridRanges(c2) || []); } catch (e) {}
+              if (!(c3 >= 0)) return;
+              E._partLoop = c3; E._passLock = null;
+              try {
+                const nm3 = _ambPartLabel(E.getCfg(), c3);
+                showToast('↻ Looping ' + nm3 + (E.timer
+                  ? ' — it repeats when it next comes round.'
+                  : ' — press play; it repeats when it comes round.'));
+              } catch (e) {}
+            }
+            el._sig = '';
+            try { _ambRenderCurPart(E); } catch (e) {}
+            try { const el4 = _ambGet(E, 'ambient-progmatrix'); if (el4) { el4._sig = ''; _ambRenderPassMatrix(E); } } catch (e) {}
+            return;
+          }
           const b = ev.target.closest && ev.target.closest('.ambient-curpart-chip'); if (!b) return;
           const pi = b.getAttribute('data-cp') | 0;
           E._curPart = pi;                       // transient — never persisted
+          // A RUNNING LOOP FOLLOWS THE SELECTION: "loop the current part" means
+          // the one that is current NOW, so choosing another moves it rather
+          // than leaving the old one repeating under a strip that says
+          // otherwise. The tick re-arms the hold when that part comes round.
+          if (Number.isFinite(E._partLoop)) { E._partLoop = pi; E._passLock = null; }
           try {
             const c2 = E.getCfg();
             (c2.layers || []).forEach((L) => {

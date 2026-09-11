@@ -876,8 +876,11 @@ const CHROME = process.env.CHROME_PATH
       } finally { window.showCtxMenu = real; }
 
       eq('picker/opens for all three scopes', seen.length, 3);
-      eq('picker/corner names the part scope', (seen[0] || [])[0], 'Verse — every chord, every pass');
-      eq('picker/pass header names the pass', (seen[1] || [])[0], 'Verse — the whole of pass 2');
+      // RESTATED 2026-09-09: every part label LEADS WITH ITS NUMBER ("1 · Verse")
+      // — the ordinal is the identifier, and in a narrow selector it is the one
+      // thing an ellipsis must not cut. Same contract: the picker names its scope.
+      eq('picker/corner names the part scope', (seen[0] || [])[0], '1 \u00b7 Verse — every chord, every pass');
+      eq('picker/pass header names the pass', (seen[1] || [])[0], '1 \u00b7 Verse — the whole of pass 2');
       eq('picker/a cell names chord and pass', /pass 2$/.test((seen[2] || [])[0] || ''), true);
       // Blank means something DIFFERENT at each level, and the first entry says so.
       // No tick: the corner IS set (to riffA), so blank is not the current value.

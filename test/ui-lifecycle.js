@@ -30,6 +30,17 @@ import puppeteer from 'puppeteer-core';
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const URL = 'http://localhost:3001/bloops.html';
 
+// UI_WAIT_SCALE scales every settle-wait (node-side and in-page) so a dev
+// iteration can run at ~0.6 while the FINAL verification runs at 1. The
+// checks' semantics do not change — only how long the gate idles between
+// actions. A failure seen only at a reduced scale is re-run at 1 before it
+// is believed.
+const WS = Math.max(0.3, Number(process.env.UI_WAIT_SCALE || 1) || 1);
+// only SHORT waits scale — those are DOM settles; anything longer is usually
+// waiting on the AUDIO clock (a choke boundary, a preview ring-out), which
+// runs on wall time whatever the gate does (4 checks failed at 0.6 before
+// this split, all of them clock-dependent)
+const zz = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * WS) : ms));
 let pass = 0, fail = 0;
 const ok = (name, cond, detail) => {
   if (cond) { pass++; console.log('  ✓ ' + name); }
@@ -42,11 +53,17 @@ const ok = (name, cond, detail) => {
     args: ['--autoplay-policy=no-user-gesture-required'], protocolTimeout: 240000,
   });
   const page = await browser.newPage();
+  // `zz` exists in BOTH scopes: the sleep substitution cannot tell node-side
+  // code from page-evaluate templates, so the page carries the same helper
+  await page.evaluateOnNewDocument((ws) => {
+    window.__WS = ws;
+    window.zz = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * ws) : ms));
+  }, WS);
   await page.setViewport({ width: 390, height: 780, isMobile: true, hasTouch: true });
   const errs = [];
   page.on('pageerror', (e) => errs.push(e.message));
   await page.goto(URL, { waitUntil: 'networkidle2', timeout: 60000 });
-  await new Promise((r) => setTimeout(r, 2500));
+  await zz(2500);
 
   // ---- the REAL lifecycle -------------------------------------------------
   // THE CARD IS CREATED THROUGH THE MENU, not `_v2.addDefault`. Calling the API
@@ -57,12 +74,12 @@ const ok = (name, cond, detail) => {
     document.body.classList.add('view-mix');
     _ambInitMaster();                 // 1. panel builds (wiring sweeps run)
   });
-  await new Promise((r) => setTimeout(r, 500));
+  await zz(500);
   const doorOpened = await page.evaluate(() => {
     const b = document.getElementById('mix-bloom-add-layer'); if (!b) return 'no + Add layer button';
     b.scrollIntoView({ block: 'center' }); b.click(); return null;
   });
-  await new Promise((r) => setTimeout(r, 450));
+  await zz(450);
   const doorPicked = await page.evaluate(() => {
     const bs = [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')];
     if (!bs.length) return 'Add-layer popover did not open';
@@ -70,10 +87,10 @@ const ok = (name, cond, detail) => {
     if (!t) return 'no "Layer" entry among: ' + bs.map((x) => x.textContent.trim()).join(' | ');
     t.click(); return null;
   });
-  await new Promise((r) => setTimeout(r, 600));
+  await zz(600);
   ok('+ Add layer → "Layer" creates a v2 card', !doorOpened && !doorPicked, doorOpened || doorPicked);
   await page.evaluate(() => { _ambRebuildMaster(); });   // 3. THE STEP ad-hoc probes skip
-  await new Promise((r) => setTimeout(r, 500));
+  await zz(500);
 
   // ---- helpers ------------------------------------------------------------
   // A tap is only meaningful if the element is actually reachable: non-zero box,
@@ -98,7 +115,7 @@ const ok = (name, cond, detail) => {
     }, sel);
     if (box.err) return box.err;
     await page.touchscreen.tap(box.x, box.y);
-    await new Promise((r) => setTimeout(r, 250));
+    await zz(250);
     return null;
   };
   const state = () => page.evaluate(() => {
@@ -317,7 +334,7 @@ const ok = (name, cond, detail) => {
     const el = document.querySelector('.v2-layer [data-f="part.rhythm.kind"]');
     el.value = 'euclid'; el.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await new Promise((r) => setTimeout(r, 250));
+  await zz(250);
   s = await state();
   ok('select writes to the config', s.rhythm === 'euclid');
   const gate = await page.evaluate(() => {
@@ -349,7 +366,7 @@ const ok = (name, cond, detail) => {
       it.click();
       return true;
     }, match);
-    await new Promise((r) => setTimeout(r, 400));
+    await zz(400);
     await page.evaluate(() => document.querySelectorAll('.ctx-menu').forEach((m) => m.remove()));
     return clicked;
   };
@@ -378,7 +395,7 @@ const ok = (name, cond, detail) => {
     L.part.kind = 'recorded'; _masterEng.getCfg();
     window._v2.render(_masterEng);
   });
-  await new Promise((r) => setTimeout(r, 350));
+  await zz(350);
   // RESTATED, not relaxed. It pinned the SENTENCE ("Nothing recorded yet"),
   // which broke when the empty state was reworded to name its new door — while
   // the contract it exists for never moved. Assert the contract instead, and
@@ -409,7 +426,7 @@ const ok = (name, cond, detail) => {
   // that it read "❄ Re-take live" on a fixed part, which sounds like the way
   // back to Generated. Each face carries its own tooltip.
   const capFaces = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const card = () => document.querySelector('.v2-layer');
     const cap = () => card().querySelector('.v2-capture');
@@ -442,7 +459,7 @@ const ok = (name, cond, detail) => {
     await page.evaluate(() => !/Re-take live/i.test(document.querySelector('.v2-layer').textContent)), '');
   // Replacing WORK asks first; re-rolling a plain locked take does not.
   const capConfirm = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     // 🎲 owns replacing (the lock is a pure toggle now), so the confirm does too
     const cap = () => document.querySelector('.v2-layer .v2-newtake');
@@ -480,7 +497,7 @@ const ok = (name, cond, detail) => {
   // tuning an arpeggio, trying a pad and coming back gave you the FACTORY
   // arpeggio and your work was gone.
   const matRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const card = document.querySelector('.v2-layer');
     card.classList.remove('collapsed');
@@ -523,7 +540,7 @@ const ok = (name, cond, detail) => {
   // the thing that would destroy it — and it goes into the SAME bank
   // `partSeqs` maps by name onto a part/pass/chord, not a private list.
   const bankRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const card = () => document.querySelector('.v2-layer');
     // A DETERMINISTIC PART, not a rolled one. The first version stretched a
@@ -586,7 +603,7 @@ const ok = (name, cond, detail) => {
   // take again returned identical notes, and the old verification compared
   // `made`, never the notes.
   const barRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const card = () => document.querySelector('.v2-layer');
     window._v2.rollRun(E, L()); L().part.bars = 4; L().part.rhythm.steps = 16; E.getCfg();
@@ -604,24 +621,16 @@ const ok = (name, cond, detail) => {
     // THE TAP POINT IS FOUND, NOT GUESSED. A fixed y=16 sometimes lands on a
     // top-of-range note (its padded hit box reaches y=14), which opens the
     // editor instead of selecting — chance-dependent on the roll, and it
-    // cascaded three checks deep. Search the bar for a spot no note claims,
-    // with the handler's own padding (±4 x, ±7 y).
+    // RESTATED 2026-09-08: bar select moved to the RULER STRIP only (a tap in
+    // the open plot used to toggle bars, and every stray tap edited which
+    // bars re-roll) — so the tap lands mid-bar in the ruler, where no note
+    // box can ever claim the point.
     const tapBar = (bar) => {
       const r = cv().getBoundingClientRect(); const geo = cv()._barsGeo;
-      const hits = cv()._hits || [];
       const gx = geo.x0 || 0;
-      const x0 = gx + (bar / geo.barsF) * geo.w, x1 = gx + ((bar + 1) / geo.barsF) * geo.w;
-      const free = (px, py) => !hits.some((b2) =>
-        px >= b2.x - 4 && px <= b2.x + b2.w + 4 && py >= b2.y - 7 && py <= b2.y + b2.h + 7);
-      let fx = (x0 + x1) / 2, fy = 17;
-      outer: for (let yi = 17; yi < 180; yi += 9) {
-        for (let xi = 0; xi < 10; xi++) {
-          const px = x0 + 2 + ((x1 - x0 - 4) * xi) / 9;
-          if (free(px, yi)) { fx = px; fy = yi; break outer; }
-        }
-      }
+      const fx = gx + ((bar + 0.5) / geo.barsF) * geo.w;
       cv().dispatchEvent(new MouseEvent('click', { bubbles: true,
-        clientX: r.left + fx, clientY: r.top + fy }));
+        clientX: r.left + fx, clientY: r.top + 8 }));
     };
     const before = snap();
     let asked = null; window.confirm = (m) => { asked = m; return true; };
@@ -685,7 +694,7 @@ const ok = (name, cond, detail) => {
   // 🎲 retakes just those (a per-bar pin, `part.takeb`), the rest of the
   // drawing holding still.
   const ntRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const card = () => document.querySelector('.v2-layer');
     L().part.kind = 'live'; delete L().part.takeb; E.getCfg();
@@ -694,14 +703,17 @@ const ok = (name, cond, detail) => {
     const cv = () => card().querySelector('.v2-vizcv');
     const barsOf = () => { const m = {}; (cv()._hits || []).forEach((h) => {
       const b2 = Math.floor(h.t * 4); (m[b2] = m[b2] || []).push(Math.round(h.x) + ':' + Math.round(h.midi)); }); return m; };
-    const tapBar = (bar) => { const r = cv().getBoundingClientRect(); const geo = cv()._barsGeo;
-      const hits = cv()._hits || []; const gx = geo.x0 || 0;
-      const x0 = gx + (bar / geo.barsF) * geo.w, x1 = gx + ((bar + 1) / geo.barsF) * geo.w;
-      const fr2 = (px, py) => !hits.some((b2) => px >= b2.x - 4 && px <= b2.x + b2.w + 4 && py >= b2.y - 7 && py <= b2.y + b2.h + 7);
-      let fx = (x0 + x1) / 2, fy = 17;
-      outer: for (let yi = 17; yi < 180; yi += 9) { for (let xi = 0; xi < 10; xi++) {
-        const px = x0 + 2 + ((x1 - x0 - 4) * xi) / 9; if (fr2(px, yi)) { fx = px; fy = yi; break outer; } } }
-      cv().dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: r.left + fx, clientY: r.top + fy })); };
+    // RESTATED 2026-09-08: bar select moved to the RULER STRIP only (a tap in
+    // the open plot used to toggle bars, and every stray tap edited which
+    // bars re-roll) — so the tap lands mid-bar in the ruler, where no note
+    // box can ever claim the point.
+    const tapBar = (bar) => {
+      const r = cv().getBoundingClientRect(); const geo = cv()._barsGeo;
+      const gx = geo.x0 || 0;
+      const fx = gx + ((bar + 0.5) / geo.barsF) * geo.w;
+      cv().dispatchEvent(new MouseEvent('click', { bubbles: true,
+        clientX: r.left + fx, clientY: r.top + 8 }));
+    };
     // 1. SILENT, and the whole drawing moves
     const orig = window.playNote; let played = 0;
     window.playNote = function () { played++; return orig.apply(this, arguments); };
@@ -751,7 +763,7 @@ const ok = (name, cond, detail) => {
   // showed. The door that made the content lights up, and the hint names the
   // provenance AND the rules shaping the material (rhythm × pitch × take).
   const provRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const card = () => document.querySelector('.v2-layer');
     card().classList.remove('collapsed');
@@ -793,10 +805,13 @@ const ok = (name, cond, detail) => {
     /Roll/.test(provRun.roll.on) && /Roll/.test(provRun.roll.door) &&
     /Sustained/.test(provRun.sus.door) &&
     /hits spread evenly over \d+ steps/.test(provRun.roll.hint) &&
-    /take \d/.test(provRun.roll.hint) &&
+    // RESTATED (recovered after a splice reverted it to HEAD): the rules line
+    // does NOT carry the take tail — a take is not a rule; the Every-cycle
+    // toggle and the drawing's readout own that fact (the prose-cut change).
+    !/Plays take|New take rolls|Re-rolled every cycle/.test(provRun.roll.hint) &&
     /Sustained/.test(provRun.sus.on) && !/Roll/.test(provRun.sus.on) &&
     /notes? of the chord/.test(provRun.sus.hint),
-    JSON.stringify(provRun).slice(0, 240));
+    JSON.stringify(provRun).slice(0, 700));
   ok('a v1 seed lights its chip, and a locked take still says what it was a take OF',
     /Bass/.test(provRun.seed.on) && /seeded like a v1 bass/.test(provRun.seed.hint) &&
     /Bass/.test(provRun.locked.on) && /v1 bass seed/.test(provRun.locked.hint) &&
@@ -813,7 +828,7 @@ const ok = (name, cond, detail) => {
   // sustain, a walked line = the run. The reported case exactly: a locked
   // take, no `mat`, euclid + walk — and no door lit.
   const inferRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const card = () => document.querySelector('.v2-layer');
     const face = (b) => ((b && b.childNodes[0] && b.childNodes[0].nodeValue) || '').trim();
@@ -880,7 +895,7 @@ const ok = (name, cond, detail) => {
   // ⇄ SYNC TO PART — the Content sheet head's door: a 5-chord part against a
   // 4-bar layer, synced with Fill + Follow, lands bars 5 and harmony diatonic.
   const syncRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, cfg = E.getCfg(), L = () => (E.getCfg().layers || [])[0];
     const svProg = cfg.prog ? JSON.parse(JSON.stringify(cfg.prog)) : null;
     cfg.prog = { on: true, name: 'SY', chords: [0, 5, 7, 2, 9].map(rt => ({ root: rt, intervals: [0, 4, 7] })) };
@@ -931,7 +946,7 @@ const ok = (name, cond, detail) => {
   // emitter swaps in the sounding part's record by TIME. The head pair
   // ([which part][⇄ Sync]) is the door and must read as ONE control.
   const ppRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, cfg = E.getCfg();
     const L = () => (E.getCfg().layers || [])[0];
     const svProg = cfg.prog ? JSON.parse(JSON.stringify(cfg.prog)) : null;
@@ -941,23 +956,39 @@ const ok = (name, cond, detail) => {
                  parts: [{ name: 'Verse', len: 2 }, { name: 'Chorus', len: 2 }] };
     L().part.kind = 'live'; E.getCfg();
     window._v2.render(E); await wait(250);
+    // THE STRIP IS THE ONLY PART CHOOSER NOW, so this check needs it PAINTED —
+    // `_v2.render` builds the cards and never touches it (it is v1 panel
+    // chrome, drawn by `_ambSyncFxVis`). Without this every `pick()` below
+    // clicks nothing and the round trip silently measures one record twice.
+    try { _ambSyncFxVis(E); } catch (e) {}
+    await wait(200);
     const card = document.querySelector('.v2-layer'); card.classList.remove('collapsed');
     [...card.querySelectorAll('.v2-gototab')].find(x => x.getAttribute('data-goto') === 'Content').click();
     await wait(250);
-    const sel = () => document.querySelector('.v2-pop-part');
     const ppb = () => document.querySelector('.v2-pop-pp');
-    const rp = ppb().getBoundingClientRect(), rs = sel().getBoundingClientRect(),
+    const rp = ppb().getBoundingClientRect(),
           rb = document.querySelector('.v2-pop-sync').getBoundingClientRect();
-    const o = { joined: Math.abs(rp.right - rs.left) < 2 && Math.abs(rs.right - rb.left) < 2 && rp.width > 40,
-      modeOff: ppb().textContent.trim(), selDisabled: sel().disabled,
-      selDash: (sel().selectedOptions[0] || {}).text,
+    const o = { joined: Math.abs(rp.right - rb.left) < 2 && rp.width > 40,
+      modeOff: ppb().textContent.trim(),
+      // RESTATED 2026-09-10: the head was a joined TRIO — [mode][which
+      // part][Sync] — and the middle chooser is GONE. The ⇶ Part strip above
+      // the layers is the one place a part is made current, so the head asks
+      // the MODE and states which part it landed on. `noSel` pins the removal:
+      // "we took it away" is exactly the claim that regresses quietly.
+      noSel: !document.querySelector('.v2-pop-part'),
       label: document.querySelector('.v2-pop-sync').textContent.trim() };
-    // enable per-part with the TOGGLE, then pick with the selector
+    // enable per-part with the TOGGLE, then pick with the STRIP — which is
+    // now the only door, so this drives the real one rather than a copy
     ppb().click(); await wait(300);
     o.modeOn = ppb() && ppb().classList.contains('on');
-    o.selEnabled = sel() && !sel().disabled;
-    const pick = async (v) => { const s2 = sel(); s2.value = v;
-      s2.dispatchEvent(new Event('input', { bubbles: true })); await wait(300); };
+    const pick = async (v) => {
+      try { _ambSyncFxVis(E); } catch (e) {}          // the strip repaints on part edits
+      await wait(120);
+      const c2 = document.querySelector('#mix-bloom-curpart .ambient-curpart-chip[data-cp="' + v + '"]');
+      if (!c2) { o.pickMissing = (o.pickMissing || '') + v; return; }
+      c2.click();
+      await wait(300);
+    };
     // the two records differ in NOTE COUNT (pulse ×2 vs ×7) — a fixed-pitch
     // difference is CONFOUNDED: the chords differ between the windows, so the
     // pitch sets differ with the swap poisoned too (the poison caught it).
@@ -979,7 +1010,13 @@ const ok = (name, cond, detail) => {
       (Lb.part.rhythm.n | 0) === 2 && (Lb.parts['1'].rhythm.n | 0) === 7;
     o.barsFollowPart = Math.abs(Lb.part.bars - partBars(0)) < 1e-6 &&
       Math.abs(Lb.parts['1'].bars - partBars(1)) < 1e-6;
-    o.readsAfter = sel().selectedOptions[0].text;
+    // the head STATES the part it is on (the selector that used to say so is
+    // gone), and the strip's lit chip is the same answer
+    o.readsAfter = ppb().textContent.trim();
+    try { _ambSyncFxVis(E); } catch (e) {}
+    await wait(150);
+    const litC = document.querySelector('#mix-bloom-curpart .ambient-curpart-chip.on');
+    o.stripLit = litC ? litC.getAttribute('data-cp') : null;
     // EMIT BY TIME — the Verse window plays the edited record (2 onsets), the
     // Chorus window the filed one (7). COUNTS, not pitches: the chords differ
     // between the windows, so pitch sets differ even with the swap broken.
@@ -1001,10 +1038,15 @@ const ok = (name, cond, detail) => {
     document.querySelector('.v2-layer').classList.remove('collapsed');
     return o;
   });
-  ok('the Content head is a joined trio — [mode][which part][⇄ Sync] — mode toggles, selector follows',
-    ppRun.joined && /Everywhere/.test(ppRun.modeOff) && ppRun.selDisabled && ppRun.selDash === '\u2014' &&
-    ppRun.modeOn && ppRun.selEnabled && ppRun.label === '\u21c4 Sync' && ppRun.readsAfter === 'Verse',
-    JSON.stringify(ppRun).slice(0, 260));
+  ok('the Content head is a joined PAIR — [mode · which part][⇄ Sync] — and asks WHICH part nowhere',
+    ppRun.joined && /Everywhere/.test(ppRun.modeOff) && ppRun.noSel &&
+    ppRun.modeOn && ppRun.label === '\u21c4 Sync' &&
+    // RESTATED 2026-09-10: the head no longer CHOOSES a part, so what it pins
+    // is that it still SAYS which one — the part is numbered, so the answer
+    // survives the ellipsis at 390px — and that the strip agrees with it.
+    /Per part/.test(ppRun.readsAfter) && /1 \u00b7 Verse/.test(ppRun.readsAfter) &&
+    ppRun.stripLit === '0',
+    JSON.stringify(ppRun).slice(0, 300));
   ok('choosing a part files the old record and restores its own — bars, pitch, everything',
     ppRun.roundTrip && ppRun.barsFollowPart, JSON.stringify(ppRun).slice(0, 240));
   ok('the EMITTER plays each arrangement part its own content, resolved by time (2 vs 7 onsets)',
@@ -1012,11 +1054,451 @@ const ok = (name, cond, detail) => {
     JSON.stringify({ verse: ppRun.verse, chorus: ppRun.chorus }));
   ok('the mode toggle (confirmed) returns to one-everywhere and drops the filed records',
     ppRun.cleared, JSON.stringify(ppRun).slice(0, 200));
+
+  // ↻ LOOP — the ⇶ Part strip's own hold (2026-09-10). "Repeat the part I am
+  // editing so I hear an edit next time round" is the same gesture as choosing
+  // that part, so it sits with the parts rather than in a sheet. It names a
+  // PART, not a moment, which is what lets it be armed while STOPPED — the
+  // existing ↻ Hold pass can only hold whatever is sounding when pressed.
+  // Measured at the AUDIO, not at the chord clock: `_ambPassLockSync` moves the
+  // anchor on the HORIZON, so `_ambPartChordAt(audibleNow)` legitimately names
+  // the pass before the one being heard for ~1.4 s per repetition (the strip's
+  // green mark reads the LOCK for exactly that reason). Two records that
+  // differ by an OCTAVE, so which one is sounding is unmistakable.
+  const loopRun = await page.evaluate(async () => { try {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const c0 = E.getCfg();
+    const sv = { prog: JSON.stringify(c0.prog || null), bpm: c0.bpm,
+      part: JSON.stringify(L().part), pf: L().partFor,
+      parts: L().parts ? JSON.stringify(L().parts) : null,
+      all: L().partAll ? JSON.stringify(L().partAll) : null, cur: E._curPart };
+    c0.prog = { on: true, parts: [{ name: 'Verse', len: 4 }, { name: 'Chorus', len: 4 }],
+      chords: [0, 5, 7, 9, 0, 3, 5, 7].map((r) => ({ root: r, intervals: [0, 4, 7] })) };
+    c0.bpm = 120;
+    L().on = true; L().present = true;
+    L().part.kind = 'recorded'; L().part.notes = [{ t: 0, midi: 60, dur: 0.2 }, { t: 0.5, midi: 62, dur: 0.2 }];
+    L().partFor = 0; L().parts = {}; delete L().partAll;
+    E.getCfg();
+    L().parts['1'].notes = [{ t: 0, midi: 84, dur: 0.2 }, { t: 0.5, midi: 86, dur: 0.2 }];
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E); await wait(250);
+    _ambSyncFxVis(E); await wait(200);
+    const o = {};
+    const strip = document.getElementById('mix-bloom-curpart');
+    const lb = () => strip.querySelector('.ambient-curpart-loop');
+    o.present = !!lb();
+    // …ARMED WHILE STOPPED, which is the whole reason it names a part
+    strip.querySelector('.ambient-curpart-chip[data-cp="1"]').click(); await wait(250);
+    lb().click(); await wait(200);
+    o.armedStopped = (E._partLoop | 0) === 1 && !E.timer && lb().classList.contains('on');
+    // the notes each part plays, so the audio can be read without a clock
+    window.__lp = [];
+    const oP = window.playNote;
+    window.playNote = function (f, p2, d, at) {
+      try { if (window._ambEmitKey && /^v2:/.test(window._ambEmitKey))
+        window.__lp.push(Math.round(69 + 12 * Math.log2(f / 440))); } catch (e) {}
+      return oP.apply(this, arguments);
+    };
+    try { await Tone.start(); } catch (e) {}
+    _ambStartGenerator(E);
+    // …and read the repetition count WHILE PLAYING: a stop clears `_passLock`
+    // (a held pass names "what is playing now"), so reading it after would
+    // always be -1 — the state under test destroyed by the act of ending the
+    // measurement.
+    o.reps = -1;
+    for (let k = 0; k < 60; k++) {
+      await new Promise((r) => setTimeout(r, 500));   // an AUDIO settle — never scaled
+      if (E._passLock) o.reps = Math.max(o.reps, E._passLock.reps | 0);
+    }
+    _ambStopGenerator(E);
+    window.playNote = oP;
+    const ser = window.__lp.map((m) => (m >= 70 ? 'C' : 'v')).join('');
+    o.ser = ser;
+    const first = ser.indexOf('C');
+    // once the arrangement reaches the looped part it never leaves it
+    o.holds = first >= 0 && ser.slice(first).indexOf('v') < 0 && ser.slice(first).length >= 4;
+    o.survivedStop = (E._partLoop | 0) === 1;
+    // release
+    lb().click(); await wait(200);
+    o.released = !Number.isFinite(E._partLoop) && !E._passLock && !lb().classList.contains('on');
+    try {
+      const c9 = E.getCfg();
+      if (sv.prog === 'null') delete c9.prog; else c9.prog = JSON.parse(sv.prog);
+      c9.bpm = sv.bpm;
+      L().part = JSON.parse(sv.part);
+      if (Number.isFinite(sv.pf)) L().partFor = sv.pf; else delete L().partFor;
+      if (sv.parts) L().parts = JSON.parse(sv.parts); else delete L().parts;
+      if (sv.all) L().partAll = JSON.parse(sv.all); else delete L().partAll;
+      E._curPart = sv.cur; E._partLoop = null; E._passLock = null;
+      E._playStartAt = null; E._progAnchor = null; E._barGridAnchor = null;
+      E.getCfg();
+      if (h) h._sig = ''; window._v2.render(E); await wait(200);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+      _ambSyncFxVis(E); await wait(150);
+    } catch (e) {}
+    return o;
+  } catch (e) { return { err: String(e && e.message) }; }
+  });
+  ok('\u21bb Loop repeats the current part \u2014 armable while stopped, and the AUDIO never leaves it',
+    loopRun && !loopRun.err && loopRun.present && loopRun.armedStopped &&
+    loopRun.holds && loopRun.reps >= 1 && loopRun.survivedStop && loopRun.released,
+    JSON.stringify(loopRun));
+
+  // ⌗ ROLL ⟷ ▦ STEPS — the material's FORM (2026-09-10). One layer's content is
+  // authored and shown one of two ways, and they are different instruments
+  // rather than two pictures of one thing: notes with their own time/pitch/
+  // length, or a fixed grid of on/off cells. ORTHOGONAL to written/generated.
+  // Absent = 'roll', so every project made before this is byte-identical — the
+  // check starts by pinning exactly that.
+  const formRun = await page.evaluate(async () => { try {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const h = document.getElementById('bloom-v2-layers');
+    const card = () => document.querySelector('.v2-layer');
+    const sv = { part: JSON.stringify(L().part), voice: L().instrument.voice };
+    const o = {};
+    const toContent = async () => {
+      if (h) h._sig = ''; window._v2.render(E); await wait(300);
+      card().classList.remove('collapsed');
+      const g = [...card().querySelectorAll('.v2-gototab')].find((x) => x.getAttribute('data-goto') === 'Content');
+      if (g) { g.click(); await wait(280); }
+    };
+    L().on = true; L().present = true; L().instrument.voice = 'synth';
+    delete L().part.form; L().part.kind = 'recorded'; L().part.bars = 2; L().part.grid = 8;
+    L().part.notes = [{ t: 0, midi: 60, dur: 0.2 }, { t: 0.3, midi: 64, dur: 0.2 },
+                      { t: 0.7, midi: 67, dur: 0.2 }];
+    E.getCfg();
+    await toContent();
+    // (1) ABSENT = ROLL, and the switch is reachable from the roll's own footer
+    o.rollDefault = !L().part.form && !!card().querySelector('.v2-vizcv') &&
+      !card().querySelector('.v2-partsteps') &&
+      [...card().querySelectorAll('.v2-formbtn')].length === 2 &&
+      !!card().querySelector('.v2-formbtn[data-form="roll"].on');
+    // (2) THE TWO FORMS ARE PARALLEL — switching PRESERVES both, so it asks
+    // nothing and destroys nothing. RESTATED 2026-09-10: this pinned the
+    // opposite (a confirm naming what would be discarded), and the contract
+    // inverted — each form keeps its own material and the other one waits.
+    // A confirm firing at all is now itself the failure.
+    L().part.rhythm.kind = 'drawn';
+    L().part.rhythm.cells = Array.from({ length: 32 }, (_, i) => (i % 4 === 0 ? 1 : 0));
+    E.getCfg();
+    let asked = null;
+    const svC = window.confirm;
+    window.confirm = (m) => { asked = m; return true; };
+    card().querySelector('.v2-formbtn[data-form="steps"]').click(); await wait(420);
+    o.asked = String(asked || '');
+    o.noConfirm = asked === null;
+    o.switched = L().part.form === 'steps' && (L().part.notes || []).length === 3;
+    o.keptNotes = (L().part.notes || []).map((n) => n.midi).join(',') === '60,64,67';
+    o.keptKind = L().part.kind === 'recorded';       // the roll's own kind survives
+    // …and the EMIT follows the FORM, not `kind`: in ▦ Steps the grid is the
+    // material whatever the roll happens to hold.
+    const emitN = (n2) => window._v2.notesFor(L(), { E, cfg: E.getCfg(),
+      key: 'v2:' + L().id, cycleStart: 0, cycleSec: 4 }).length;
+    o.stepsEmits = emitN() > 3;
+    // (3) THE SURFACE SWAPS — and the Pattern tab's copies are gated OFF, or the
+    // card would carry two live editors over one store.
+    o.surfaceSwapped = !card().querySelector('.v2-vizcv') && !!card().querySelector('.v2-partsteps');
+    o.noDuplicateGrid = [...card().querySelectorAll('.v2-cellrow')]
+      .every((r) => getComputedStyle(r).display === 'none');
+    // (4) ONE GRID STANDARD, PER BAR: the cell count IS bars × grid, and the
+    // readout says the same thing the store does. Before this the sequencer
+    // contradicted itself ("5 of 16 · 2 bars · 1/16" — 2 bars at 1/16 is 32).
+    const cells = () => card().querySelectorAll('.v2-partsteps .v2-cell').length;
+    o.gridIsStandard = cells() === 16 && (L().part.rhythm.steps | 0) === 16;   // 2 bars x 1/8
+    const gp = card().querySelector('.v2-partsteps .v2-gridpick');
+    gp.value = '16'; gp.dispatchEvent(new Event('input', { bubbles: true })); await wait(420);
+    o.gridRefits = cells() === 32 && (L().part.rhythm.steps | 0) === 32;       // 2 bars x 1/16
+    o.lab = (card().querySelector('.v2-stepslab') || {}).textContent || '';
+    o.labAgrees = /of 32/.test(o.lab) && /2 bars/.test(o.lab) && /1\/16/.test(o.lab);
+    // (5) A TAP AUTHORS — the generated pattern is snapshotted and becomes yours
+    const c3 = card().querySelectorAll('.v2-partsteps .v2-cell')[2];
+    const was = c3.classList.contains('on');
+    c3.click(); await wait(320);
+    o.tapAuthors = L().part.rhythm.kind === 'drawn' &&
+      !!(L().part.rhythm.cells || [])[2] !== was;
+    // (6) THE EMITTER PLAYS THE CELLS, on the grid. 2 bars at 120bpm = 4s, so a
+    // 32-cell grid steps every 0.125s — onsets must land on it exactly.
+    L().part.rhythm.cells = Array.from({ length: 32 }, (_, i) => (i % 8 === 0 ? 1 : 0));
+    E.getCfg();
+    const ns = window._v2.notesFor(L(), { E, cfg: E.getCfg(), key: 'v2:' + L().id,
+      cycleStart: 0, cycleSec: 4 });
+    o.onsets = ns.length;
+    o.onGrid = ns.length === 4 && ns.every((n) => Math.abs(n.at / 0.125 - Math.round(n.at / 0.125)) < 1e-6) &&
+      ns.map((n) => +n.at.toFixed(3)).join(',') === '0,1,2,3';
+    // (6b) A STEP WEARS ITS PART. The roll's note events carry their part's hue
+    // and a step IS this form's note event. Read the COMPUTED colour, not the
+    // variable: `.ambient-euclid-cell.on` (0,2,0) sets background AND border
+    // and sits earlier in the file, so the rule has to be compounded past it
+    // (the documented cascade trap). And the NOTE ROW's labels are <button>s
+    // with no background declared, so they took the UA's near-white — measured
+    // 2.44:1 against the part hue, on the one row whose job is to be read.
+    // Set `partFor` DIRECTLY rather than through `V2.partSelect`: that files
+    // records and mints `parts`/`partAll`, and leaving them behind broke FOUR
+    // downstream per-part checks (the one-page-one-state trap — a probe must
+    // restore everything its fixture writes, not the fields it happens to
+    // read). Everything read here needs only the attribute.
+    const svPP = { pf: L().partFor,
+      parts: L().parts ? JSON.stringify(L().parts) : null,
+      all: L().partAll ? JSON.stringify(L().partAll) : null,
+      pk: L().part.pitch.kind };
+    L().part.pitch.kind = 'drawn';          // …so there IS a note row to read
+    const cellCol = () => { const c2 = card().querySelector('.v2-partsteps .ambient-euclid-cell.on');
+      return c2 ? getComputedStyle(c2).backgroundColor : null; };
+    const lblCon = () => {
+      const n2 = card().querySelector('.v2-partsteps .ambient-euclid-notelbl.set');
+      if (!n2) return 0;
+      const px = (v) => { const m = /rgba?\(([^)]+)\)/.exec(v);
+        return m ? m[1].split(',').slice(0, 3).map(Number) : [0, 0, 0]; };
+      const lum = (rgb) => { const f = rgb.map((v) => { v /= 255;
+        return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+        return 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2]; };
+      // against the grid's own dark ground — the label is transparent now
+      const a = lum(px(getComputedStyle(n2).color)), b2 = lum([13, 13, 24]);
+      return (Math.max(a, b2) + 0.05) / (Math.min(a, b2) + 0.05);
+    };
+    L().partFor = 0; E.getCfg(); await toContent();
+    o.hue0 = cellCol(); o.con0 = +lblCon().toFixed(2);
+    L().partFor = 1; E.getCfg(); await toContent();
+    o.hue1 = cellCol(); o.con1 = +lblCon().toFixed(2);
+    // the hue INVERTS with the part — a hardcoded fill passes a one-part check
+    o.hueFollows = !!o.hue0 && !!o.hue1 && o.hue0 !== o.hue1;
+    o.lblReadable = o.con0 >= 4.5 && o.con1 >= 4.5;
+    // …and a layer with NO part identity keeps the grid's own default
+    delete L().partFor; E.getCfg(); await toContent();
+    o.hueNone = cellCol();
+    o.sharedKeepsDefault = !!o.hueNone && o.hueNone !== o.hue0 && o.hueNone !== o.hue1;
+    L().part.pitch.kind = svPP.pk;
+    if (Number.isFinite(svPP.pf)) L().partFor = svPP.pf; else delete L().partFor;
+    if (svPP.parts) L().parts = JSON.parse(svPP.parts); else delete L().parts;
+    if (svPP.all) L().partAll = JSON.parse(svPP.all); else delete L().partAll;
+    E.getCfg();
+    // (7) A KIT SHOWS LANES, not the single row — the voice decides, as it
+    // already does in the Pattern tab.
+    L().instrument.voice = 'kit'; E.getCfg(); await toContent();
+    o.kitLanes = card().querySelectorAll('.v2-partsteps .ambient-euclid-kitrow').length === 8 &&
+      card().querySelectorAll('.v2-partsteps .v2-cell').length === 0;
+    // (8) …AND BACK, WITH BOTH HALVES INTACT. The roll returns to its own note
+    // list and the steps pattern is still there to come back to.
+    L().instrument.voice = 'synth'; E.getCfg(); await toContent();
+    const cellsWas = (L().part.rhythm.cells || []).join('');
+    card().querySelector('.v2-formbtn[data-form="roll"]').click(); await wait(420);
+    o.backToRoll = !L().part.form && !!card().querySelector('.v2-vizcv') &&
+      (L().part.notes || []).map((n) => n.midi).join(',') === '60,64,67' &&
+      (L().part.rhythm.cells || []).join('') === cellsWas;
+    o.rollEmits = emitN() === 3;                     // the note list, not the grid
+    // …AND THE ROLL'S OWN Steps KNOB CANNOT TRUNCATE THE OTHER FORM'S PATTERN.
+    // `cells` is one array serving two length authorities; sized to `r.steps`
+    // alone, a trip through ⌗ Roll with Steps turned down came back with a
+    // 32-cell grid of 8 hits reduced to 2 (measured).
+    L().part.rhythm.steps = 8; E.getCfg();
+    L().part.form = 'steps'; E.getCfg();
+    o.knobCannotTruncate = (L().part.rhythm.cells || []).join('') === cellsWas;
+    delete L().part.form; E.getCfg();
+    window.confirm = svC;
+    try {
+      L().part = JSON.parse(sv.part); L().instrument.voice = sv.voice;
+      E.getCfg(); await toContent();
+    } catch (e) {}
+    return o;
+  } catch (e) { return { err: String(e && e.message) }; }
+  });
+  ok('the material has a FORM \u2014 \u2317 Roll or \u25a6 Steps \u2014 and only one surface is ever live',
+    formRun && !formRun.err && formRun.rollDefault && formRun.switched &&
+    formRun.surfaceSwapped && formRun.noDuplicateGrid && formRun.kitLanes && formRun.backToRoll,
+    JSON.stringify(formRun).slice(0, 300));
+  ok('the two forms are PARALLEL \u2014 each keeps its own material across a round trip, and nothing asks',
+    formRun && !formRun.err && formRun.noConfirm && formRun.keptNotes && formRun.keptKind &&
+    formRun.backToRoll && formRun.knobCannotTruncate,
+    JSON.stringify(formRun && { asked: formRun.asked, notes: formRun.keptNotes,
+      kind: formRun.keptKind, back: formRun.backToRoll, knob: formRun.knobCannotTruncate }));
+  ok('\u2026and the EMIT follows the FORM, not `kind` \u2014 \u25a6 Steps plays the grid over a recorded roll',
+    formRun && !formRun.err && formRun.stepsEmits && formRun.rollEmits,
+    JSON.stringify(formRun && { steps: formRun.stepsEmits, roll: formRun.rollEmits }));
+  ok('ONE grid standard, per BAR \u2014 cells are bars \u00d7 grid, and the readout agrees with the store',
+    formRun && !formRun.err && formRun.gridIsStandard && formRun.gridRefits && formRun.labAgrees,
+    JSON.stringify(formRun && { lab: formRun.lab, std: formRun.gridIsStandard, refit: formRun.gridRefits }));
+  ok('a step tap authors the pattern, and the EMITTER plays the cells on the grid',
+    formRun && !formRun.err && formRun.tapAuthors && formRun.onGrid,
+    JSON.stringify(formRun && { tap: formRun.tapAuthors, onsets: formRun.onsets, onGrid: formRun.onGrid }));
+
+  // STATIC CONTENT vs LIVE CONTENT (2026-09-10, user: "Generated is just a
+  // special case of the Written case… introduce the unifying concept of Static
+  // Content… once PLAYED it can become Live at the user's discretion").
+  // Liveness is a PROPERTY of the settings, not a stored mode — so the check
+  // that matters is that the predicate AGREES WITH REALITY: for every setting,
+  // compare what the card claims against six consecutive cycles of the actual
+  // note stream. A predicate that merely lists fields would drift from the
+  // engine the first time a seed moved.
+  const liveRun = await page.evaluate(async () => { try {
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const sv = { part: JSON.stringify(L().part), rest: L().restProb,
+      gh: L().ghosts, lv: L().lenVary, hu: L().humanize, vv: L().velVar };
+    L().on = true; L().present = true; L().part.bars = 2;
+    // a fixture that CAN vary — a default pulse x chord part has no seeded draw
+    // at all, so every row below would measure "identical" whatever the code
+    // did (the asserting-on-something-that-works-regardless trap)
+    L().part.rhythm = { kind: 'euclid', steps: 16, pulses: 7, rotate: 0 };
+    L().part.pitch = { kind: 'walk', degree: 1, span: 5 };
+    delete L().part.vary; delete L().restProb; delete L().ghosts;
+    delete L().lenVary; delete L().humanize; delete L().velVar;
+    E.getCfg();
+    // DISTINCT note sets over six cycles: 1 = static by measurement
+    const cycles = () => { const out = [];
+      for (let c = 0; c < 6; c++) {
+        const ns = window._v2.notesFor(L(), { E, cfg: E.getCfg(), key: 'v2:' + L().id,
+          cycleStart: c * 4, cycleSec: 4 });
+        out.push(ns.map((n) => Math.round((n.at - c * 4) * 100) + ':' +
+          Math.round(69 + 12 * Math.log2(n.freq / 440))).join(','));
+      }
+      return new Set(out).size; };
+    const says = () => { const lv = window._v2.liveness(L(), E.getCfg()); return !!lv.live; };
+    const o = { rows: [] };
+    const probe = (name, mut, undo, contentLevel) => {
+      mut(L()); E.getCfg();
+      const n = cycles(), claim = says();
+      o.rows.push({ name, cycles: n, live: claim });
+      undo(L()); E.getCfg();
+      // the predicate must MATCH the measurement for the content tier; the
+      // performance tier (Humanize, Vel var) is applied downstream of the note
+      // list, so `notesFor` cannot see it and only the claim is checked
+      return contentLevel ? (claim === (n > 1)) : claim;
+    };
+    o.ok = [
+      probe('default', () => {}, () => {}, true) === true,
+      probe('Rests 40', (x) => { x.restProb = 40; }, (x) => { delete x.restProb; }, true),
+      probe('Ghosts 40', (x) => { x.ghosts = 40; }, (x) => { delete x.ghosts; }, true),
+      probe('Len vary 50', (x) => { x.lenVary = 50; }, (x) => { delete x.lenVary; }, true),
+      probe('rhythm Vary 60', (x) => { x.part.rhythm.vary = 60; }, (x) => { delete x.part.rhythm.vary; }, true),
+      probe('part.vary', (x) => { x.part.vary = 1; }, (x) => { delete x.part.vary; }, true),
+      probe('Humanize 40', (x) => { x.humanize = 40; }, (x) => { delete x.humanize; }, false),
+      probe('Vel var 40', (x) => { x.velVar = 40; }, (x) => { delete x.velVar; }, false),
+    ].every(Boolean);
+    // …and the WORDS. The first token of the content readout answers "does this
+    // change on iterations", and names WHY rather than hiding it in a title.
+    const card2 = document.querySelector('.v2-layer');
+    const labTxt = async () => { window._v2.render(E); await new Promise((r) => setTimeout(r, 200));
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+      const g2 = [...document.querySelectorAll('.v2-gototab')].find((x) => x.getAttribute('data-goto') === 'Content');
+      if (g2) { g2.click(); await new Promise((r) => setTimeout(r, 200)); }
+      return ((document.querySelector('.v2-vizlab') || {}).textContent || '').split(' \u00b7 ')[0]; };
+    o.saysStatic = await labTxt();
+    L().part.vary = 1; E.getCfg();
+    o.saysLive = await labTxt();
+    delete L().part.vary; E.getCfg();
+    try {
+      L().part = JSON.parse(sv.part);
+      L().restProb = sv.rest; L().ghosts = sv.gh; L().lenVary = sv.lv;
+      L().humanize = sv.hu; L().velVar = sv.vv;
+      E.getCfg(); window._v2.render(E);
+    } catch (e) {}
+    return o;
+  } catch (e) { return { err: String(e && e.message) }; }
+  });
+  // ── AND THE CHANGES THEMSELVES CAN BE LIVE ──────────────────────────────
+  // Salt was the only area-level source the predicate knew, and it is one of
+  // several: the harmony moving pass to pass means a layer FOLLOWING it plays
+  // different notes, which is the same fact wearing another hat. Measured
+  // against the floor a STATIC figure sets by simply moving through the
+  // changes — that floor is why this needs its own probe: a "distinct note
+  // sets > 1" test scores an unvarying figure over four chords as live.
+  const liveProgRun = await page.evaluate(async () => {
+    const E = _masterEng, cfg = E.getCfg(), o = { rows: [] };
+    const L = () => (E.getCfg().layers || [])[0];
+    const P0 = JSON.parse(JSON.stringify(cfg.prog));
+    const keep = JSON.parse(JSON.stringify({ part: L().part, harmony: L().harmony || null }));
+    const clk = [E._progAnchor, E._playStartAt, E._barGridAnchor];
+    cfg.prog.on = true;
+    cfg.prog.chords = [{ root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] },
+      { root: 7, intervals: [0, 4, 7] }, { root: 9, intervals: [0, 3, 7] }];
+    delete cfg.prog.parts; E.getCfg();
+    L().part.kind = 'live'; L().part.bars = 1;
+    L().part.rhythm = { kind: 'euclid', steps: 8, pulses: 4 };
+    L().part.pitch = { kind: 'walk', span: 3 };
+    delete L().part.vary; delete L().harmony;
+    E.getCfg();
+    E._progAnchor = 0; E._playStartAt = 0; E._barGridAnchor = 0;
+    const cyc = window._v2.cycleSec(L(), E.getCfg());
+    // SIX FULL TRIPS of the 4-chord cycle — one trip cannot tell a per-pass
+    // die from the chords simply coming round.
+    const sets = () => { const out = new Set();
+      for (let c = 0; c < 24; c++) {
+        const ns = window._v2.notesFor(L(), { E, cfg: E.getCfg(), key: 'v2:' + L().id,
+          cycleStart: c * cyc, cycleSec: cyc }) || [];
+        out.add(ns.map((n) => Math.round(n.freq) + '@' + Math.round((n.at - c * cyc) * 1000)).join(','));
+      }
+      return out.size; };
+    const floor = sets();
+    const probe = (name, set, unset, wantLive) => {
+      set(); E.getCfg();
+      const d = sets(), live = window._v2.liveness(L(), E.getCfg()).live;
+      unset(); E.getCfg();
+      const agrees = (d > floor) === live && live === wantLive;
+      o.rows.push(name + ' ' + d + (agrees ? '' : ' MISMATCH(card ' + (live ? 'live' : 'static') + ')'));
+      return agrees;
+    };
+    o.floor = floor;
+    o.ok = [
+      probe('alts-random', () => { cfg.prog.chords[1].alts = [{ root: 2, intervals: [0, 3, 7] }];
+        cfg.prog.chords[1].altMode = 'random'; },
+        () => { delete cfg.prog.chords[1].alts; delete cfg.prog.chords[1].altMode; }, true),
+      probe('alts-cycle', () => { cfg.prog.chords[1].alts = [{ root: 2, intervals: [0, 3, 7] }];
+        cfg.prog.chords[1].altMode = 'cycle'; },
+        () => { delete cfg.prog.chords[1].alts; delete cfg.prog.chords[1].altMode; }, true),
+      probe('prog.vary', () => { cfg.prog.vary = 70; }, () => { delete cfg.prog.vary; }, true),
+      probe('salt', () => { cfg.prog.salt = { colors: 80, scatter: 0 }; },
+        () => { delete cfg.prog.salt; }, true),
+      // …and these land exactly ON the floor, because each is seeded once per
+      // TAKE or per SLOT rather than per pass. Saying so is half the model.
+      probe('tension', () => { cfg.prog.tension = 70; }, () => { delete cfg.prog.tension; }, false),
+      probe('take-reroll', () => { cfg.prog.reroll = 100; }, () => { delete cfg.prog.reroll; }, false),
+      probe('order-grid', () => { cfg.prog.order = { cols: 2, seq: { 1: [3, 2, 1, 0] } }; },
+        () => { delete cfg.prog.order; }, false),
+      // A WRITTEN part with fixed pitches does NOT follow the changes, so the
+      // harmony moving under it changes nothing it plays — 1 set, not 13.
+      probe('written-fixed under salt', () => { cfg.prog.salt = { colors: 80, scatter: 0 };
+        L().part.kind = 'recorded';
+        L().part.notes = [{ t: 0, midi: 60, dur: 0.2 }, { t: 0.5, midi: 64, dur: 0.2 }];
+        delete L().harmony; },
+        () => { delete cfg.prog.salt; L().part.kind = 'live'; L().part.notes = []; }, false),
+      probe('written-chordlock under salt', () => { cfg.prog.salt = { colors: 80, scatter: 0 };
+        L().part.kind = 'recorded';
+        L().part.notes = [{ t: 0, midi: 60, dur: 0.2 }, { t: 0.5, midi: 64, dur: 0.2 }];
+        L().harmony = 'chordlock'; },
+        () => { delete cfg.prog.salt; L().part.kind = 'live'; L().part.notes = []; delete L().harmony; }, true),
+    ].every(Boolean);
+    L().part = JSON.parse(JSON.stringify(keep.part));
+    if (keep.harmony) L().harmony = keep.harmony; else delete L().harmony;
+    cfg.prog = P0; E.getCfg();
+    E._progAnchor = clk[0]; E._playStartAt = clk[1]; E._barGridAnchor = clk[2];
+    const host = document.getElementById('bloom-v2-layers'); if (host) host._sig = '';
+    window._v2.render(E);
+    return o;
+  });
+  ok('…and the CHANGES can be live too — measured against the floor a static figure sets',
+    liveProgRun && liveProgRun.ok && liveProgRun.floor > 1,
+    JSON.stringify(liveProgRun));
+
+  ok('STATIC vs LIVE is a property of the settings, and the card AGREES WITH THE NOTES',
+    liveRun && !liveRun.err && liveRun.ok,
+    JSON.stringify(liveRun && liveRun.rows));
+  ok('\u2026and it SAYS which \u2014 leading the readout, naming what makes it live',
+    liveRun && !liveRun.err && liveRun.saysStatic === 'Static' &&
+    /^Live \u2014 /.test(liveRun.saysLive || '') && /dice/.test(liveRun.saysLive || ''),
+    JSON.stringify(liveRun && { stat: liveRun.saysStatic, live: liveRun.saysLive }));
+
+  ok('a STEP wears its part \u2014 the hue inverts with the part, and the note row stays readable on it',
+    formRun && !formRun.err && formRun.hueFollows && formRun.lblReadable &&
+    formRun.sharedKeepsDefault,
+    JSON.stringify(formRun && { hue0: formRun.hue0, hue1: formRun.hue1,
+      none: formRun.hueNone, contrast: [formRun.con0, formRun.con1] }));
   // THE CURRENT-PART STRIP — between the tab section and the layers: a readout
   // of the part being EDITED, and tapping one switches every v2 layer's
   // content record to it. Playback must be untouched (the clocks never move).
   const cpRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, cfg = E.getCfg();
     const L = () => (E.getCfg().layers || [])[0];
     const svProg = cfg.prog ? JSON.parse(JSON.stringify(cfg.prog)) : null;
@@ -1063,7 +1545,7 @@ const ok = (name, cond, detail) => {
   // there read as "where did the rhythm params go". An ALTERNATIVE gate
   // (wrong rhythm kind, wrong voice) still hides.
   const greyRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const svPart = JSON.stringify(L().part);
     L().part.kind = 'live'; L().part.rhythm = { kind: 'euclid', pulses: 5, steps: 16, rotate: 0 }; E.getCfg();
@@ -1127,7 +1609,7 @@ const ok = (name, cond, detail) => {
   // strip is labelled, tinted family rows now (make · rhythm · time · pitch),
   // with a trailing unlabelled row so a NEW tab can never vanish from it.
   const famRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const svKind = L().part.kind;
     L().part.kind = 'recorded'; E.getCfg();       // the fullest tab set
@@ -1146,6 +1628,8 @@ const ok = (name, cond, detail) => {
     // for "no tab can vanish from the strip". A family naming ONE tab now
     // collapses into its own chip (Saved-above-Phrases was two words for one
     // list), so a tab is reachable from a row OR from the bar — same guarantee.
+    // RENAMED with it: the tab is BANK, because it takes a take whatever made
+    // it — "Phrases" named only one of the two origins.
     const inFams = [...strip.querySelectorAll('.v2-tabfam [data-tab], .v2-fambar [data-tab]')].length;
     const total = [...strip.querySelectorAll('[data-tab]')].length;
     // …and the collapsed chip is named by its TAB, not by the family word
@@ -1166,8 +1650,8 @@ const ok = (name, cond, detail) => {
                6 * (allChips.length - 1) - bar.getBoundingClientRect().width) < 3;
     // SAVED: inverse (filled, text knocked out in the sheet ground), last chip
     const sv = solo(bar);
-    const soloIsTab = !!sv && sv.getAttribute('data-tab') === 'Phrases' &&
-      sv.textContent.trim() === 'Phrases' && sv.classList.contains('v2-pop-tab') &&
+    const soloIsTab = !!sv && sv.getAttribute('data-tab') === 'Bank' &&
+      sv.textContent.trim() === 'Bank' && sv.classList.contains('v2-pop-tab') &&
       !strip.querySelector('.v2-tabfam.fam-saved');
     const svCs = sv ? getComputedStyle(sv) : null;
     const savedInverse = !!sv && sv === allChips[allChips.length - 1] &&
@@ -1255,8 +1739,8 @@ const ok = (name, cond, detail) => {
   // folded into make, tinted), and the height pin moves 120 → 160 because the
   // make row legitimately wraps to two lines at six chips. The contract is
   // "two levels, not four stacked rows" — it was ~250px before the fold.
-  ok('the Content tab strip is a two-level navigator — make (with rhythm) · time · pitch · Phrases',
-    /make:/.test(famRun.fams) && /Phrases:/.test(famRun.fams) && /time:/.test(famRun.fams) &&
+  ok('the Content tab strip is a two-level navigator — make (with rhythm) · time · pitch · Bank',
+    /make:/.test(famRun.fams) && /Bank:/.test(famRun.fams) && /time:/.test(famRun.fams) &&
     /pitch:/.test(famRun.fams) && famRun.allInFams && famRun.navWorks &&
     famRun.savedInverse && famRun.soloIsTab && famRun.rhythmInMake && famRun.naDim && famRun.naRefuses &&
     famRun.phoneHead && famRun.visRows === 1 && famRun.stripH <= 160 &&
@@ -1330,7 +1814,7 @@ const ok = (name, cond, detail) => {
   // tone does not update the content"). Wall-time stamps, because a playNote
   // wrapper logs at SCHEDULE time and cannot see the cancel (documented).
   const toneRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const svPart = JSON.stringify(L().part); const svTone = L().instrument.tone;
     L().on = true; L().present = true; L().part.kind = 'live'; L().part.bars = 2;
@@ -1373,7 +1857,7 @@ const ok = (name, cond, detail) => {
   // sheet head's Register pattern, so the document ± delegation drives it and
   // the card's `.v2-f` handler commits it — no wiring of its own.
   const patRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const svPart = JSON.stringify(L().part);
     L().part.kind = 'live'; L().part.rhythm = { kind: 'euclid', pulses: 5, steps: 16, rotate: 0 }; E.getCfg();
@@ -1432,7 +1916,7 @@ const ok = (name, cond, detail) => {
   // IS, so the lit one restates a fact — and pressing 🎲 Roll used to REPLACE
   // your take (it re-rolled), which is 🎲-above-the-drawing's job.
   const noopRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const card = () => document.querySelector('.v2-layer');
     const svPart = JSON.stringify(L().part);
@@ -1480,7 +1964,7 @@ const ok = (name, cond, detail) => {
   // Sustained?" — one writes notes, the other is a rule), and on a phone the
   // pattern grid has finger-sized cells (16 steps across a 333px pane is 18px).
   const matKindRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const card = () => document.querySelector('.v2-layer');
     const svPart = JSON.stringify(L().part);
@@ -1539,7 +2023,16 @@ const ok = (name, cond, detail) => {
     // TWO Generated doors: ⚙ Shape… (the figure on top) and ⛰ Groundwork
     // (playing the changes themselves). The contract is the two labelled
     // clusters; the count is pinned so a door cannot vanish unnoticed.
-    matKindRun.silent && /Written:2/.test(matKindRun.groups) && /Generated:2/.test(matKindRun.groups) &&
+    // RESTATED: Written is ONE door. ♪ Phrase was the second and it was a
+    // signpost to the Bank tab — one list wearing two words, and filed under a
+    // cluster it does not belong to (a GENERATED take banks just as readily).
+    // RESTATED 2026-09-09: Groundwork moved into the Generated panel, so the
+    // Generated cluster is ONE door.
+    // RESTATED 2026-09-10: the clusters are "By hand" and "By rule". They were
+    // "Written" and "Generated", which named the two doors as if they made
+    // different KINDS of thing — measurably not so: both make static content,
+    // and the words now say how it is AUTHORED. Same contract, one door each.
+    matKindRun.silent && /By hand:1/.test(matKindRun.groups) && /By rule:1/.test(matKindRun.groups) &&
     matKindRun.cellBig && matKindRun.hit && matKindRun.toggles && matKindRun.overflow === 0,
     JSON.stringify(matKindRun));
   // COMPOSING TAKES THE SHEET. The docked Grid editor is a full instrument
@@ -1549,7 +2042,7 @@ const ok = (name, cond, detail) => {
   // ▶ Preview step aside, the actions PIN to the bottom, and on a phone the
   // sheet fills the screen.
   const compRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const svPart = JSON.stringify(L().part);
     // the per-chord strip only has blocks to draw when there ARE changes
@@ -1563,7 +2056,11 @@ const ok = (name, cond, detail) => {
     if (!document.querySelector('.v2-pop'))
       [...card().querySelectorAll('.v2-gototab')].find(x => x.getAttribute('data-goto') === 'Content').click();
     await wait(250);
-    document.querySelector('.v2-compose').click(); await wait(700);
+    document.querySelector('.v2-compose').click(); await wait(300);
+    // ✎ Written is a POPOVER now — the grid option starts the session
+    const gpb = [...document.querySelectorAll('.addpop-btn')].find((b) => /grid/i.test(b.textContent));
+    if (gpb) gpb.click();
+    await wait(700);
     const pop = document.querySelector('.v2-pop');
     const acts = document.querySelector('.v2-gacts');
     const o = { composing: card().classList.contains('v2-composing'), started: !!acts };
@@ -1638,7 +2135,7 @@ const ok = (name, cond, detail) => {
   // sequence ("where is the sequencer for the run being composed?"). Parked
   // only while the thing that mirrors it is there.
   const seqRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const svProg = E.getCfg().prog ? JSON.parse(JSON.stringify(E.getCfg().prog)) : null;
     const svPart = JSON.stringify(L().part);
@@ -1649,7 +2146,10 @@ const ok = (name, cond, detail) => {
       card().classList.remove('collapsed');
       const gt = card().querySelector('.v2-gototab[data-goto="Content"]');
       if (gt && !gt.classList.contains('on')) { gt.click(); await wait(220); }
-      card().querySelector('.v2-compose').click(); await wait(800);
+      card().querySelector('.v2-compose').click(); await wait(300);
+      const gpb2 = [...document.querySelectorAll('.addpop-btn')].find((b) => /grid/i.test(b.textContent));
+      if (gpb2) gpb2.click();
+      await wait(800);
     };
     const meas = () => {
       const q = (sel) => { const e = card().querySelector(sel);
@@ -1695,7 +2195,7 @@ const ok = (name, cond, detail) => {
   // so the moment one is added or removed the stored string lies (reported: a
   // 5-chord part named with 4 numerals). An AUTHORED name is never touched.
   const nameRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, cfg = E.getCfg();
     const svProg = cfg.prog ? JSON.parse(JSON.stringify(cfg.prog)) : null;
     const svKey = { on: cfg.keyOn, root: cfg.keyRoot, scale: cfg.keyScale };
@@ -1711,28 +2211,193 @@ const ok = (name, cond, detail) => {
       return r ? (r.len | 0) : 0; };
     const nm = (pi) => _ambPartLabel(E.getCfg(), pi);
     const o = { p0: nm(0), p1: nm(1), c0: cnt(0), c1: cnt(1) };
-    o.matches = o.p0.split(' — ').length === o.c0 && o.p1.split(' — ').length === o.c1;
-    // an AUTHORED name is returned verbatim
+    // RESTATED 2026-09-09: every label LEADS WITH ITS PART NUMBER ("1 · …"), so
+    // the body is what this check has always been about — strip the ordinal
+    // rather than splitting through it (which passed by accident, the prefix
+    // riding along as the first numeral).
+    const body = (t) => String(t).replace(/^\d+ \u00b7 /, '');
+    o.b0 = body(o.p0); o.b1 = body(o.p1);
+    o.numbered = /^1 \u00b7 /.test(o.p0) && /^2 \u00b7 /.test(o.p1);
+    o.matches = o.b0.split(' — ').length === o.c0 && o.b1.split(' — ').length === o.c1;
+    // an AUTHORED name is returned verbatim, after its number
     E.getCfg().prog.parts[0].name = 'Verse'; E.getCfg();
-    o.authored = nm(0) === 'Verse';
+    o.authored = nm(0) === '1 \u00b7 Verse';
     // …and a derived one FOLLOWS an edit
     E.getCfg().prog.parts[0].name = 'I — II — III — I';
     const c2 = E.getCfg(); c2.prog.chords.splice(5, 0, mk(9, [0, 3, 7])); c2.prog.parts[0].len = 6;
     E.getCfg();
     o.after = nm(0);
-    o.grew = o.after.split(' — ').length === cnt(0);
+    o.grew = body(o.after).split(' — ').length === cnt(0);
+    // ── EVERY PART LEADS WITH ITS NUMBER ────────────────────────────────
+    // The ordinal is the identifier: a part's name is usually the DERIVED
+    // numerals of its chords, which describes the harmony and identifies
+    // nothing, and in the Content head's selector it is ellipsed to a few
+    // glyphs — so the number goes FIRST or it is the first thing cut. One
+    // labeller, ~26 display consumers, so all four cases are pinned here.
+    const cf = E.getCfg();
+    cf.prog.parts[0].name = 'Verse';
+    cf.prog.parts[1].name = 'Changes 2';        // the auto-name nobody renamed
+    E.getCfg();
+    o.numAuthored = nm(0) === '1 \u00b7 Verse';
+    // …and the auto-name drops its own digit rather than saying it twice
+    o.numGeneric = nm(1) === '2 \u00b7 Changes';
+    cf.prog.parts[1].name = 'I — IV — V'; E.getCfg();
+    o.numDerived = /^2 \u00b7 /.test(nm(1)) && / — /.test(nm(1));
+    // a PART-LESS progression: its own title numbered, or the bare "Part 1"
+    const svParts = JSON.stringify(cf.prog.parts);
+    delete cf.prog.parts;
+    const svPName = cf.prog.name; delete cf.prog.name;   // an authored prog title would be numbered
+    E.getCfg();
+    o.bareGot = nm(0);
+    o.numPartlessBare = nm(0) === 'Part 1';
+    E.getCfg().prog.name = 'Neon Nocturne'; E.getCfg();
+    o.numPartlessNamed = nm(0) === '1 \u00b7 Neon Nocturne';
+    if (svPName == null) delete E.getCfg().prog.name; else E.getCfg().prog.name = svPName;
+    E.getCfg().prog.parts = JSON.parse(svParts); E.getCfg();
     if (svProg) E.getCfg().prog = svProg; else delete E.getCfg().prog;
     const c3 = E.getCfg(); c3.keyOn = svKey.on; c3.keyRoot = svKey.root; c3.keyScale = svKey.scale;
     E.getCfg();
     return o;
   });
   ok('a derived part name is recomputed from its CURRENT chords; an authored one is left alone',
-    nameRun.matches && /I — ii — iii — IV — V/.test(nameRun.p0) && nameRun.authored && nameRun.grew,
+    nameRun.matches && /I — ii — iii — IV — V/.test(nameRun.p0) && nameRun.authored &&
+    nameRun.grew && nameRun.numbered,
     JSON.stringify(nameRun));
+  // ── PART COLOURS ────────────────────────────────────────────────────────
+  // One hue per part, so a part reads as the SAME part wherever it appears —
+  // the current-part strip, the ▤ overview cards, the Content head's selector,
+  // the ▦ Passes tabs, and the NOTE EVENTS in the roll drawn for it. The
+  // palette lives ONLY in the stylesheet and the canvas reads the same
+  // `--ptN` custom properties, so this pins that there is one definition:
+  // the swatches, the wrap at 8, the stamped surfaces, and the canvas PIXELS
+  // following the part. The values are pinned deliberately — they were chosen
+  // by a CIELab search (ΔE 80.1 across the first four, ≥24.9 from every state
+  // colour, ≥18.7 from every layer-type hue, none in the reserved green band),
+  // so changing one should re-run that measurement rather than be a guess.
+  const ptRun = await page.evaluate(async () => { try {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    const h = document.getElementById('bloom-v2-layers');
+    const svProg = E.getCfg().prog ? JSON.stringify(E.getCfg().prog) : 'null';
+    const svPart = JSON.stringify(L().part);
+    const svFor = L().partFor, svParts = L().parts ? JSON.stringify(L().parts) : null,
+          svAll = L().partAll ? JSON.stringify(L().partAll) : null;
+    const mk = (r) => r.map((x) => ({ root: x, intervals: [0, 4, 7] }));
+    const o = {};
+    const rootCss = getComputedStyle(document.documentElement);
+    o.palette = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => rootCss.getPropertyValue('--pt' + i).trim());
+    o.paletteOk = o.palette.join(',') ===
+      '#479ef5,#f56147,#47f5d2,#ed47f5,#fade9e,#fa9ecc,#b5d5e3,#ca8d72';
+    // ONE definition: the canvas half reads those very properties…
+    o.fnMatches = _ambPartColor(0) === o.palette[0] && _ambPartColor(3) === o.palette[3];
+    // …and a 9th part wraps rather than going colourless
+    o.wraps = _ambPartColor(8) === o.palette[0];
+    E.getCfg().prog = { on: true, parts: [{ name: 'Verse', len: 5 }, { name: 'Chorus', len: 4 }],
+      chords: mk([0, 2, 4, 5, 7, 0, 9, 2, 7]) };
+    L().on = true; L().present = true;
+    L().part.kind = 'live'; L().part.bars = 5;
+    L().part.rhythm = { kind: 'euclid', steps: 20, pulses: 9 };
+    L().part.pitch = { kind: 'chord', voices: 3 };
+    E.getCfg(); window._v2.partSelect(E, L(), 0); E.getCfg();
+    if (h) h._sig = ''; window._v2.render(E); await wait(300);
+    card().classList.remove('collapsed');
+    if (h) h._sig = ''; window._v2.render(E); await wait(300);
+    card().classList.remove('collapsed');
+    try { _ambSyncFxVis(E); } catch (e) {}
+    await wait(260);
+    // THE STAMPED SURFACES — the attribute AND the accent it resolves to
+    const chips = [...document.querySelectorAll('.ambient-curpart-chip')];
+    o.chips = chips.map((x) => x.getAttribute('data-part') + ':' +
+      getComputedStyle(x).getPropertyValue('--pt').trim());
+    o.chipsOk = o.chips.join(',') === '1:' + o.palette[0] + ',2:' + o.palette[1];
+    const off = chips.find((x) => !x.classList.contains('on'));
+    o.chipEdgePaints = !!off && /^rgb\(/.test(getComputedStyle(off).borderLeftColor) &&
+      getComputedStyle(off).borderLeftColor !== getComputedStyle(off).borderTopColor;
+    // RESTATED 2026-09-10: the head's part SELECT is gone (the ⇶ Part strip is
+    // the one chooser). The same contract — the head wears the part it is on —
+    // lands on the per-part TOGGLE, which is now the only thing on the card
+    // that says which part. The COMPUTED border, not just the variable:
+    // `.v2-pop-pair .v2-pop-pp.on` is (0,2,0) and sets border-color, so the
+    // hue rule has to be compounded past it (the documented cascade trap).
+    const sel = () => document.querySelector('.v2-pop-pp.on');
+    o.selPart = sel() && sel().getAttribute('data-part');
+    o.selBorder = sel() ? getComputedStyle(sel()).borderTopColor : null;
+    o.selPaints = o.selBorder === 'rgb(71, 158, 245)';
+    // ── THE NOTE EVENTS. Read the CANVAS, not the config: the whole claim is
+    // that the picture carries the hue. Needs the card EXPANDED or the canvas
+    // is 0×0 and getImageData throws (the documented trap).
+    const domi = () => {
+      const cv = card().querySelector('.v2-vizcv');
+      const g = cv.getContext('2d');
+      const d = g.getImageData(0, 0, cv.width, cv.height).data;
+      const t = {};
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 3] < 200) continue;
+        const k = d[i] + ',' + d[i + 1] + ',' + d[i + 2];
+        t[k] = (t[k] || 0) + 1;
+      }
+      return Object.entries(t).sort((a, b) => b[1] - a[1]).map((e) => e[0]);
+    };
+    const near = (list, hex2) => {
+      const n = parseInt(hex2.slice(1), 16);
+      const R = (n >> 16) & 255, G = (n >> 8) & 255, B = n & 255;
+      return list.slice(0, 8).some((k) => { const [r, g2, b] = k.split(',').map(Number);
+        return Math.abs(r - R) <= 2 && Math.abs(g2 - G) <= 2 && Math.abs(b - B) <= 2; });
+    };
+    o.drawnPi0 = card().querySelector('.v2-vizcv')._drawnPi;
+    const px0 = domi();
+    o.notesArePart1 = near(px0, o.palette[0]) && !near(px0, o.palette[1]);
+    // SWITCH THE EDITED PART — the notes must take the other part's hue
+    window._v2.partSelect(E, L(), 1); E.getCfg();
+    if (h) h._sig = ''; window._v2.render(E); await wait(360);
+    card().classList.remove('collapsed');
+    await wait(220);
+    o.drawnPi1 = card().querySelector('.v2-vizcv')._drawnPi;
+    const px1 = domi();
+    o.notesArePart2 = near(px1, o.palette[1]) && !near(px1, o.palette[0]);
+    o.selFollows = sel() && sel().getAttribute('data-part') === '2';
+    // A LAYER THAT IS NOT PER-PART has no part identity for its content, so it
+    // keeps the default rather than borrowing a hue that would mean nothing.
+    const svC = window.confirm; window.confirm = () => true;
+    window._v2.partSelect(E, L(), null); E.getCfg(); window.confirm = svC;
+    if (h) h._sig = ''; window._v2.render(E); await wait(340);
+    card().classList.remove('collapsed');
+    await wait(200);
+    o.sharedPi = card().querySelector('.v2-vizcv')._drawnPi;
+    const px2 = domi();
+    o.sharedIsDefault = o.sharedPi === -1 && !near(px2, o.palette[0]) && !near(px2, o.palette[1]);
+    try {
+      const c9 = E.getCfg();
+      if (svProg === 'null') delete c9.prog; else c9.prog = JSON.parse(svProg);
+      L().part = JSON.parse(svPart);
+      if (Number.isFinite(svFor)) L().partFor = svFor; else delete L().partFor;
+      if (svParts) L().parts = JSON.parse(svParts); else delete L().parts;
+      if (svAll) L().partAll = JSON.parse(svAll); else delete L().partAll;
+      E.getCfg();
+      if (h) h._sig = ''; window._v2.render(E); await wait(220);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) {}
+    return o;
+  } catch (e) { return { err: String(e && e.message) }; } });
+  ok('a part carries ONE hue everywhere — the strip, the selector, and the roll\u2019s note events',
+    ptRun && !ptRun.err && ptRun.paletteOk && ptRun.fnMatches && ptRun.wraps &&
+    ptRun.chipsOk && ptRun.chipEdgePaints && ptRun.selPart === '1' && ptRun.selPaints &&
+    ptRun.drawnPi0 === 0 && ptRun.notesArePart1 &&
+    ptRun.drawnPi1 === 1 && ptRun.notesArePart2 && ptRun.selFollows &&
+    ptRun.sharedIsDefault,
+    JSON.stringify(ptRun));
+
+  ok('every part leads with its NUMBER — authored, derived, auto-named and part-less alike',
+    nameRun.numAuthored && nameRun.numGeneric && nameRun.numDerived &&
+    nameRun.numPartlessBare && nameRun.numPartlessNamed,
+    JSON.stringify({ authored: nameRun.numAuthored, generic: nameRun.numGeneric,
+      derived: nameRun.numDerived, partlessBare: nameRun.numPartlessBare,
+      partlessNamed: nameRun.numPartlessNamed }));
   // ✨ TRANSFORM — commands over the notes you already have. A registry, so
   // the set grows by one entry; scoped by the bar selection when there is one.
   const tfRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const svPart = JSON.stringify(L().part);
     const card = () => document.querySelector('.v2-layer');
@@ -1796,7 +2461,7 @@ const ok = (name, cond, detail) => {
   // ruler showing one bar (reported twice). The RESIZE is the whole check —
   // an engage-time fit passes any test that never moves the part afterwards.
   const fitRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const c0 = E.getCfg();
     const svProg = JSON.stringify(c0.prog || null), svPart = JSON.stringify(L().part);
@@ -1856,7 +2521,7 @@ const ok = (name, cond, detail) => {
   // ⛰ GROUNDWORK — the part that PLAYS THE CHANGES instead of a figure over
   // them: one onset on the 1 and one on every change, held until the next.
   const gwRun = await page.evaluate(async () => { try {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const c0 = E.getCfg();
     const svProg = JSON.stringify(c0.prog || null), svPart = JSON.stringify(L().part);
@@ -1876,12 +2541,17 @@ const ok = (name, cond, detail) => {
     if (h) h._sig = ''; window._v2.render(E); await wait(260);
     const card = () => document.querySelector('.v2-layer');
     card().classList.remove('collapsed');
-    const o = { door: !!card().querySelector('.v2-gwbtn') };
-    // OPENING IS CHOOSING — there is no "Use Groundwork" button to press, and
-    // ✕ Cancel is what makes that safe
+    // RESTATED 2026-09-09: Groundwork is the FIFTH SHAPE in the ⚙ Generated
+    // panel (its own door and draft-panel are gone) — entered through the
+    // same confirm flow as every shape, tuned by gated rows in the shared
+    // panel. Every musical contract below is unchanged.
+    const svCf9 = window.confirm; window.confirm = () => true;
+    card().querySelector('.v2-genbtn').click(); await wait(300);
+    const o = { door: !!card().querySelector('.v2-shapepop .v2-mkpart[data-mk="ground"]') };
     const wasRhythm = L().part.rhythm.kind;
-    card().querySelector('.v2-gwbtn').click(); await wait(450);
-    const r = card().querySelector('.v2-gwpop').getBoundingClientRect();
+    card().querySelector('.v2-shapepop .v2-mkpart[data-mk="ground"]').click(); await wait(500);
+    card().classList.remove('collapsed');
+    const r = card().querySelector('.v2-shapepop').getBoundingClientRect();
     o.onScreen = r.width > 0 && r.height > 0 && r.top >= 40 && r.bottom <= innerHeight + 1;
     o.noUseButton = document.querySelectorAll('.v2-layer .v2-mkground').length === 0;
     o.adoptedOnOpen = L().part.rhythm.kind === 'ground' && wasRhythm !== 'ground';
@@ -1921,11 +2591,12 @@ const ok = (name, cond, detail) => {
     // and STACKED: 114px cells, a 728px panel filling the screen. Pinned on
     // the two things that produce that — a cell is ONE LINE (name and ± side
     // by side) and the panel needs no scrolling of its own.
-    const pop = card().querySelector('.v2-gwpop');
+    const pop = card().querySelector('.v2-shapepop');
     const pr2 = pop.getBoundingClientRect();
     o.popH = Math.round(pr2.height);
-    o.popFits = pr2.top >= 0 && pr2.bottom <= innerHeight + 1 &&
-                pop.scrollHeight <= pop.clientHeight + 2;
+    // no inner-scroll clause any more: the SHARED panel holds five shapes
+    // plus every gated row, and scrolling it is legitimate
+    o.popFits = pr2.top >= 0 && pr2.bottom <= innerHeight + 1;
     o.cellOneLine = cells().every((c) => {
       const cr = c.getBoundingClientRect(); if (cr.height > 60) return false;
       const n = c.querySelector('.v2-gwcn'), b = c.querySelector('.ambient-step-btn');
@@ -1942,10 +2613,19 @@ const ok = (name, cond, detail) => {
     o.gridFullWidth = !!(gl && gg) &&
       gl.getBoundingClientRect().bottom <= gg.getBoundingClientRect().top + 1 &&
       gg.getBoundingClientRect().width > pr2.width * 0.8;
-    // ONE line of prose, not two paragraphs saying the same thing
+    // ONE line of prose, not two paragraphs saying the same thing.
+    // RESTATED TWICE, same contract both times. (1) the dead .v2-gwsays copy
+    // went with the old panel. (2) 2026-09-09: the STATIC `.v2-genmodel`
+    // paragraph is gone too — it stated the RHYTHM x PITCH model in prose,
+    // which the panel's first two ROWS now state as controls, and a static
+    // paragraph is noise on every visit after the first (44px of a 617px
+    // panel, measured). So the claim is: ZERO static paragraphs, exactly one
+    // LIVE line, and the model still stated — by the two axis selects.
     o.onePara = pop.querySelectorAll('.v2-genmodel').length === 0 &&
-                pop.querySelectorAll('.v2-gwsays').length === 1;
-    o.saysNames = /Plays the changes/.test((pop.querySelector('.v2-gwsays') || {}).textContent || '');
+                pop.querySelectorAll('.v2-gensays').length === 1 &&
+                document.querySelectorAll('.v2-layer .v2-gwsays').length === 0 &&
+                !!pop.querySelector('.v2-genrows [data-f="part.rhythm.kind"]') &&
+                !!pop.querySelector('.v2-genrows [data-f="part.pitch.kind"]');
     // CAPTURE THE BUTTON ONCE and press it twice — which is what a finger
     // does. Re-querying between presses hides the real bug: the panel's own
     // sync rewrote the grid on every commit, so the second press landed on a
@@ -2013,21 +2693,14 @@ const ok = (name, cond, detail) => {
     o.slipSpreads = o.slipOnsets > o.tightOnsets;
     L().part.shape.slip = 0; E.getCfg();
     o.slipPruned = (L().part.shape.slip === undefined);
-    // ✓ DONE KEEPS IT…
-    card().querySelector('.v2-gwdone').click(); await wait(300);
-    o.closed = !card().classList.contains('v2-gwopen');
+    // ✓ Done (the panel close) KEEPS it. The draft/cancel pair was RETIRED
+    // with the old panel: a press that would REPLACE content asks first
+    // (matSwitchOK), the same protection every other shape has.
+    card().querySelector('.v2-shapepop .v2-genclose').click(); await wait(300);
+    o.closed = !card().classList.contains('v2-genopen');
     o.doneKeeps = L().part.rhythm.kind === 'ground';
-    o.face = (document.querySelector('.v2-gwface') || {}).textContent || '';
-    // …and ✕ CANCEL puts back exactly what was there
-    const beforeOpen = JSON.stringify(L().part);
-    card().querySelector('.v2-gwbtn').click(); await wait(400);
-    const up2 = document.querySelector('.v2-layer .v2-gwcell .ambient-step-up');
-    if (up2) up2.click();
-    await wait(250);
-    o.draftMoved = JSON.stringify(L().part) !== beforeOpen;
-    card().querySelector('.v2-gwcancel').click(); await wait(350);
-    o.cancelRestores = JSON.stringify(L().part) === beforeOpen &&
-      !card().classList.contains('v2-gwopen');
+    o.face = (document.querySelector('.v2-genface') || {}).textContent || '';
+    window.confirm = svCf9;
     try {
       const c9 = E.getCfg();
       if (svProg === 'null') delete c9.prog; else c9.prog = JSON.parse(svProg);
@@ -2041,22 +2714,565 @@ const ok = (name, cond, detail) => {
   } catch (e) { return { err: String(e && e.message) }; }
   });
   ok('⛰ Groundwork plays the changes — one onset per change, per-change counts, and slip',
+    // RESTATED 2026-09-09: entered through the Generated panel; draft/cancel
+    // retired with the old door (the confirm flow protects instead); the
+    // face is the Generated door's, naming the shape in force.
     gwRun.door && gwRun.onScreen && gwRun.rhythm === 'ground' && gwRun.mat === 'ground' &&
     gwRun.holds && gwRun.onsets === 4 && gwRun.onTheChanges && gwRun.inChord &&
     gwRun.threeEach && gwRun.cells === 4 && gwRun.stored === '{"1":4}' &&
     gwRun.onlyThatChange && gwRun.cellMarked && gwRun.slipSpreads && gwRun.slipPruned &&
     gwRun.noUseButton && gwRun.adoptedOnOpen && gwRun.hasSteppers && gwRun.goesDown &&
     gwRun.stableAcrossPreviews && gwRun.buttonSurvives && gwRun.doneKeeps &&
-    gwRun.draftMoved && gwRun.cancelRestores &&
-    gwRun.closed && /in use/.test(gwRun.face),
+    gwRun.closed && /Groundwork/.test(gwRun.face),
     JSON.stringify(gwRun));
 
-  ok('⛰ the Groundwork panel is legible — one-line cells, no inner scroll, one line of prose',
+  // "NOTES ARE FLASHING" (2026-09-09): a per-part window's edges come out of a
+  // BISECTION and carry ~10ms of float noise per query, so the rAF's
+  // once-per-cycle redraw check and the drawing's own anchor disagreed every
+  // frame the moment another part's span was sounding — the canvas redrew
+  // 30-57x/s. Pins the fix pair: snapped window edges + the 20ms tolerance.
+  // Counts REAL canvas clears while playing across a part boundary, on the
+  // unequal-parts shape (5+4) the noise reproduces on.
+  const flashRun = await page.evaluate(async () => { try {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    const h = document.getElementById('bloom-v2-layers');
+    const svProg = E.getCfg().prog ? JSON.stringify(E.getCfg().prog) : 'null';
+    const svPart = JSON.stringify(L().part);
+    const svFor = L().partFor, svParts = L().parts ? JSON.stringify(L().parts) : null,
+          svAll = L().partAll ? JSON.stringify(L().partAll) : null;
+    const o = {};
+    E.getCfg().prog = { on: true,
+      parts: [{ name: 'A', len: 5 }, { name: 'B', len: 4 }],
+      chords: [0, 2, 4, 5, 7, 0, 9, 2, 7].map((r) => ({ root: r, intervals: [0, 4, 7] })) };
+    L().on = true; L().present = true;
+    L().part.kind = 'live'; L().part.bars = 5;
+    L().part.rhythm = { kind: 'euclid', steps: 16, pulses: 9, rotate: 5 };
+    L().part.pitch = { kind: 'walk', degree: 1, span: 3, voices: 3 };
+    L().partFor = 0;
+    L().parts = { 1: JSON.parse(JSON.stringify(L().part)) };
+    L().parts[1].bars = 4;
+    E.getCfg();
+    if (h) h._sig = ''; window._v2.render(E); await wait(250);
+    card().classList.remove('collapsed');
+    const cv0 = card().querySelector('.v2-vizcv');
+    const proto = CanvasRenderingContext2D.prototype;
+    const oCR = proto.clearRect;
+    let redraws = 0;
+    proto.clearRect = function (x, y, w2) {
+      try { if (this.canvas === cv0 && w2 >= cv0.width - 2) redraws++; } catch (e) {}
+      return oCR.apply(this, arguments);
+    };
+    try { await Tone.start(); } catch (e) {}
+    _ambStartGenerator(E);
+    // 13s at 120bpm reaches ~2.5 bars into part B's span (part A = 10s).
+    // SAMPLED rather than one long wait, so the same playback also answers
+    // "how many bars does the ruler draw for the part that is SOUNDING" —
+    // no extra 13 seconds for a second fixture of the same shape.
+    const rulerBy = {};
+    for (let i = 0; i < 26; i++) {
+      await wait(500);
+      const cvS = card().querySelector('.v2-vizcv');
+      if (!cvS || !cvS._barsGeo) continue;
+      // WHOSE RECORD THE CANVAS SAYS IT DREW — never `_ambPartChordAt(cv._cs)`.
+      // A window's `cs` is SNAPPED and can sit one ULP below the boundary it
+      // names, which answers the PREVIOUS part (see the 2026-09-10 entry); this
+      // probe bucketed on it and so flaked by anchor, reporting both rulers
+      // under one part and none under the other. `_drawnPi` is the picture's
+      // own claim, resolved from the window rather than re-derived from it.
+      const pi = Number.isFinite(cvS._drawnPi) ? (cvS._drawnPi | 0) : -1;
+      const rec = rulerBy[pi] = rulerBy[pi] || { bars: {}, lab: {} };
+      rec.bars[String(Math.round(cvS._barsGeo.barsF * 100) / 100)] = 1;
+      rec.lab[((card().querySelector('.v2-vizlab') || {}).textContent || '')
+        .split('\u00b7').map((x) => x.trim()).filter((x) => /bars?$/.test(x))[0] || '?'] = 1;
+    }
+    proto.clearRect = oCR;
+    _ambStopGenerator(E);
+    o.redraws = redraws;
+    o.ruler = Object.fromEntries(Object.entries(rulerBy).map(([k, v]) =>
+      [k, { bars: Object.keys(v.bars), lab: Object.keys(v.lab) }]));
+    // PART A IS 5 BARS AND PART B IS 4 — the ruler, and the readout beside it,
+    // must say which one is SOUNDING. They read `L.part.bars` (the record
+    // being EDITED) while the NOTES were laid across the window actually
+    // playing, so with part A selected the drawing put four bars of music
+    // under a five-bar ruler and the readout said "5 bars · 8s" — 8s IS four
+    // bars at 120bpm, the one line contradicting itself. Reported as "part 2
+    // renders as 5 bars".
+    o.rulerFollows = !!(o.ruler['0'] && o.ruler['1']) &&
+      o.ruler['0'].bars.length === 1 && o.ruler['0'].bars[0] === '5' &&
+      o.ruler['1'].bars.length === 1 && o.ruler['1'].bars[0] === '4' &&
+      o.ruler['0'].lab.join() === '5 bars' && o.ruler['1'].lab.join() === '4 bars';
+    o.vm = window._v2.vizModeOf(L());
+    try {
+      const c9 = E.getCfg();
+      if (svProg === 'null') delete c9.prog; else c9.prog = JSON.parse(svProg);
+      L().part = JSON.parse(svPart);
+      if (Number.isFinite(svFor)) L().partFor = svFor; else delete L().partFor;
+      if (svParts) L().parts = JSON.parse(svParts); else delete L().parts;
+      if (svAll) L().partAll = JSON.parse(svAll); else delete L().partAll;
+      E.getCfg();
+      E._playStartAt = null; E._progAnchor = null; E._barGridAnchor = null;
+      if (h) h._sig = ''; window._v2.render(E); await wait(200);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) {}
+    return o;
+  } catch (e) { return { err: String(e && e.message) }; }
+  });
+  ok('the roll redraws once per cycle while playing — never per frame (the flashing bug)',
+    flashRun && !flashRun.err && flashRun.redraws >= 1 && flashRun.redraws <= 12,
+    JSON.stringify(flashRun));
+  ok('the ruler and the readout count the SOUNDING part\u2019s bars, not the edited record\u2019s',
+    flashRun && !flashRun.err && flashRun.rulerFollows,
+    JSON.stringify(flashRun && flashRun.ruler));
+
+  // "THE EVENTS I DREW WERE GONE… THEY APPEARED ON THE NEXT PART, AND THE
+  // COLOUR IS THE OTHER PART'S" (2026-09-10). `cycleWindowAt` SNAPS its window
+  // edges to the 1/48-bar grid so every consumer computes the same `cs` (the
+  // flashing fix above) — and the snap reconstructs the boundary to within a
+  // ULP, which can land on the WRONG SIDE of it: measured cs 4.06 against a
+  // boundary at 4.06 + 4.4e-16. Everything that then re-derived the part from
+  // that float — the drawn record, its colour, `_vmOther`, `vizFollows` and
+  // `notesFor`'s own swap — got the PREVIOUS part for a whole pass. With two
+  // parts that reads as the picture swapping them: content drawn into part 1
+  // shown under part 2, and missing when part 1 came round again.
+  // DETERMINISTIC, and swept across ANCHORS rather than measured during one
+  // playback: whether the ULP falls the wrong way depends on the cold-start
+  // anchor, so a single play is exactly the run that can pass with the bug in.
+  const winPiRun = await page.evaluate(async () => { try {
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const sv = { prog: E.getCfg().prog ? JSON.stringify(E.getCfg().prog) : 'null',
+      part: JSON.stringify(L().part), pf: L().partFor,
+      parts: L().parts ? JSON.stringify(L().parts) : null,
+      all: L().partAll ? JSON.stringify(L().partAll) : null,
+      pa: E._progAnchor, ps: E._playStartAt, bg: E._barGridAnchor, cf: E._cfg };
+    const o = { mismatch: 0, noteMiss: 0, tot: 0, anchors: 0, ex: null, exOld: null, oldBad: 0 };
+    const cfg = E.getCfg();
+    cfg.prog = { on: true, parts: [{ name: 'A', len: 4 }, { name: 'B', len: 4 }],
+      chords: [0, 5, 7, 9, 0, 3, 5, 7].map((r) => ({ root: r, intervals: [0, 4, 7] })) };
+    cfg.bpm = 120;
+    L().on = true; L().present = true;
+    L().part.kind = 'recorded'; L().part.bars = 4;
+    L().part.notes = [{ t: 0, midi: 60, dur: 0.2 }, { t: 0.5, midi: 64, dur: 0.2 }];
+    L().partFor = 0; L().parts = {}; delete L().partAll;
+    E.getCfg();
+    // a record for part 1 that is UNMISTAKABLY not part 0's, so the swap is
+    // observable in the notes and not only in an index
+    L().parts['1'].notes = [{ t: 0, midi: 72, dur: 0.2 }, { t: 0.25, midi: 74, dur: 0.2 },
+                            { t: 0.75, midi: 76, dur: 0.2 }];
+    E.getCfg();
+    const Lr = L(), st = { startAt: 0 };
+    const midis = (ns) => ns.map((n) => Math.round(69 + 12 * Math.log2(n.freq / 440)))
+      .sort((a, b) => a - b).join(',');
+    for (let a = 0; a < 40; a++) {
+      const anchor = a * 0.03;
+      E._progAnchor = anchor; E._playStartAt = anchor; E._barGridAnchor = anchor; E._cfg = cfg;
+      o.anchors++;
+      for (let k = 0; k < 90; k++) {
+        const t = anchor + 0.02 + k * 0.19;
+        const w = window._v2.cycleWindowAt(Lr, E, cfg, t, st);
+        const piNow = (_ambPartChordAt(E, cfg, t) || {}).pi | 0;
+        const want = piNow === 0 ? '60,64' : '72,74,76';
+        const got = midis(window._v2.notesFor(Lr, { E, cfg, key: 'v2:' + (Lr.id | 0),
+          cycleStart: w.cs, cycleSec: w.cyc, pi: (w.pi | 0) }));
+        o.tot++;
+        if ((w.pi | 0) !== piNow) { o.mismatch++; if (!o.ex) o.ex = { anchor, t: +t.toFixed(3), piNow, wpi: w.pi | 0 }; }
+        if (got !== want) { o.noteMiss++; }
+        // …and the SHAPE THIS PINS: re-deriving the part from the returned
+        // `cs`, which is what shipped, must be seen to go wrong somewhere in
+        // the sweep — a check whose poison cannot trigger pins nothing.
+        const piOld = (_ambPartChordAt(E, cfg, w.cs) || {}).pi | 0;
+        if (piOld !== piNow) { o.oldBad++; if (!o.exOld) o.exOld = { anchor, t: +t.toFixed(3), piNow, piOld, cs: w.cs }; }
+      }
+    }
+    try {
+      const c9 = E.getCfg();
+      if (sv.prog === 'null') delete c9.prog; else c9.prog = JSON.parse(sv.prog);
+      L().part = JSON.parse(sv.part);
+      if (Number.isFinite(sv.pf)) L().partFor = sv.pf; else delete L().partFor;
+      if (sv.parts) L().parts = JSON.parse(sv.parts); else delete L().parts;
+      if (sv.all) L().partAll = JSON.parse(sv.all); else delete L().partAll;
+      E.getCfg();
+      E._progAnchor = sv.pa; E._playStartAt = sv.ps; E._barGridAnchor = sv.bg; E._cfg = sv.cf;
+    } catch (e) {}
+    return o;
+  } catch (e) { return { err: String(e && e.message) }; }
+  });
+  ok('the window says WHICH PART it is \u2014 the drawn record and its colour never lag a pass behind',
+    winPiRun && !winPiRun.err && winPiRun.tot > 3000 &&
+    winPiRun.mismatch === 0 && winPiRun.noteMiss === 0,
+    JSON.stringify(winPiRun));
+  ok('\u2026and the sweep reaches an anchor where re-deriving it from the window start WOULD be wrong',
+    winPiRun && !winPiRun.err && winPiRun.oldBad > 0,
+    JSON.stringify(winPiRun && { oldBad: winPiRun.oldBad, ex: winPiRun.exOld }));
+
+  // THE SAME FAMILY, FOUND BY AUDITING IT (2026-09-10): `_ambTransposeLayer`
+  // moved a v2 recorded part by scaling `n.freq` — and a stored note is
+  // `{t, midi, dur}` with NO `freq` at all, so the guard never fired and
+  // transposing an area left every v2 recorded part in the old key. It also
+  // only ever looked at `L.part`, so even once it worked it would have moved
+  // the record being EDITED and left the other parts' behind.
+  const trRun = await page.evaluate(async () => { try {
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const c0 = E.getCfg();
+    const sv = { part: JSON.stringify(L().part), pf: L().partFor,
+      parts: L().parts ? JSON.stringify(L().parts) : null,
+      all: L().partAll ? JSON.stringify(L().partAll) : null,
+      prog: JSON.stringify(c0.prog || null) };
+    c0.prog = { on: true, parts: [{ name: 'A', len: 2 }, { name: 'B', len: 2 }],
+      chords: [0, 5, 7, 9].map((r) => ({ root: r, intervals: [0, 4, 7] })) };
+    L().part.kind = 'recorded'; L().part.notes = [{ t: 0, midi: 60, dur: 0.2 }];
+    L().partFor = 0; L().parts = {}; delete L().partAll;
+    E.getCfg();
+    L().parts['1'].notes = [{ t: 0, midi: 67, dur: 0.2 }];
+    E.getCfg();
+    const snap = () => { const x = L(); return {
+      edited: (x.part.notes || []).map((n) => n.midi),
+      other: ((x.parts && x.parts['1'] && x.parts['1'].notes) || []).map((n) => n.midi),
+      ice: ((x.partAll && x.partAll.notes) || []).map((n) => n.midi) }; };
+    const o = { before: snap() };
+    _ambTransposeArea(E.getCfg(), 5); E.getCfg();
+    o.after = snap();
+    // …and back, so the fixture is left where it was found
+    _ambTransposeArea(E.getCfg(), -5); E.getCfg();
+    o.back = snap();
+    try {
+      const c9 = E.getCfg();
+      if (sv.prog === 'null') delete c9.prog; else c9.prog = JSON.parse(sv.prog);
+      L().part = JSON.parse(sv.part);
+      if (Number.isFinite(sv.pf)) L().partFor = sv.pf; else delete L().partFor;
+      if (sv.parts) L().parts = JSON.parse(sv.parts); else delete L().parts;
+      if (sv.all) L().partAll = JSON.parse(sv.all); else delete L().partAll;
+      E.getCfg();
+    } catch (e) {}
+    return o;
+  } catch (e) { return { err: String(e && e.message) }; }
+  });
+  ok('transposing the area moves EVERY filed v2 record \u2014 not just the one being edited',
+    trRun && !trRun.err &&
+    trRun.before.edited.join() === '60' && trRun.before.other.join() === '67' &&
+    trRun.after.edited.join() === '65' && trRun.after.other.join() === '72' &&
+    trRun.after.ice.join() === '65' &&
+    trRun.back.edited.join() === '60' && trRun.back.other.join() === '67',
+    JSON.stringify(trRun));
+
+  // A PART'S LENGTH IS ANSWERED TWICE and the two can legitimately differ:
+  // `_ambLenPartBars` (the part's chords — what the normalize RECONCILER fits
+  // every per-part record to) and `_ambPassSpanAt` (the PASS sounding — what
+  // `cycleWindowAt` hands the emitter as one cycle). When they disagree the
+  // record is fitted into the window and its notes compress ("the 4-bar part is
+  // jammed into 3 bars"). `bloomPartWatch()` is the in-situ instrument for that
+  // class, and a diagnostic that silently stops discriminating is worse than
+  // none — so it is pinned in BOTH directions on the one shape measured to
+  // disagree (a ▦ Passes SUBSET: a pass playing 3 of 4 chords IS 3 bars) and
+  // one measured to agree. NOTE: a multi-shape sweep of this on ONE page
+  // reported hang disagreements that do not exist — the shapes leaked into each
+  // other; each case here rebuilds the progression from scratch.
+  const partWatchRun = await page.evaluate(async () => { try {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const svProg = E.getCfg().prog ? JSON.stringify(E.getCfg().prog) : 'null';
+    const svPart = JSON.stringify(L().part);
+    const svFor = L().partFor, svParts = L().parts ? JSON.stringify(L().parts) : null,
+          svAll = L().partAll ? JSON.stringify(L().partAll) : null;
+    const mk = (r) => r.map((x) => ({ root: x, intervals: [0, 4, 7] }));
+    const o = { exists: typeof window.bloomPartWatch === 'function' };
+    const run = (mut) => {
+      const pr = { on: true, parts: [{ name: 'Verse', len: 5 }, { name: 'Chorus', len: 4 }],
+        chords: mk([0, 2, 4, 5, 7, 0, 9, 2, 7]) };
+      mut(pr);
+      E.getCfg().prog = pr;
+      L().on = true; L().present = true; L().part.kind = 'live'; L().part.bars = 5;
+      E.getCfg(); window._v2.partSelect(E, L(), 0); E.getCfg();
+      return String(window.bloomPartWatch() || '');
+    };
+    const plain = run(() => {});
+    o.plainAgrees = /lengths agree/.test(plain) && !/JAMMED/.test(plain) &&
+                    /Verse .* 5 chords = 5 bars/.test(plain) && /Chorus .* 4 chords = 4 bars/.test(plain);
+    const sub = run((pr) => { pr.parts[1].grid = { cols: 2, seq: { 1: [0, 1, 2] } }; });
+    // NAMES the cause, not just the number — the report has to be actionable
+    o.subFlags = /JAMMED into 75%/.test(sub) && /\u25a6 Passes subset/.test(sub) &&
+                 /play a record of a different length/.test(sub);
+    // A CADENCE is the OTHER honest answer: four chords are not four bars, and
+    // nothing is jammed — the part simply IS 3 bars.
+    const cad = run((pr) => { pr.chords[5].bars = 0.5; pr.chords[6].bars = 0.5; });
+    o.cadenceHonest = /Chorus .* 4 chords = 3 bars .* cadence 0\.5/.test(cad) &&
+                      /lengths agree/.test(cad) && !/JAMMED/.test(cad);
+    // …and it says what a layer that never engaged ◫ Per part is doing
+    delete L().partFor; delete L().parts; delete L().partAll; E.getCfg();
+    const shared = String(window.bloomPartWatch() || '');
+    o.sharedNamed = /Everywhere: ONE cycle/.test(shared);
+    try {
+      const c9 = E.getCfg();
+      if (svProg === 'null') delete c9.prog; else c9.prog = JSON.parse(svProg);
+      L().part = JSON.parse(svPart);
+      if (Number.isFinite(svFor)) L().partFor = svFor; else delete L().partFor;
+      if (svParts) L().parts = JSON.parse(svParts); else delete L().parts;
+      if (svAll) L().partAll = JSON.parse(svAll); else delete L().partAll;
+      E.getCfg();
+      const h = document.getElementById('bloom-v2-layers');
+      if (h) h._sig = ''; window._v2.render(E); await wait(200);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) {}
+    return o;
+  } catch (e) { return { err: String(e && e.message) }; } });
+  ok('bloomPartWatch names when a pass plays a record of a different length \u2014 and when it does not',
+    partWatchRun && !partWatchRun.err && partWatchRun.exists && partWatchRun.plainAgrees &&
+    partWatchRun.subFlags && partWatchRun.cadenceHonest && partWatchRun.sharedNamed,
+    JSON.stringify(partWatchRun));
+
+  // ✎ EDIT HOLDS THE RECORD IT IS EDITING, AT THAT RECORD'S OWN LENGTH.
+  // The record DRAWN and the window it is drawn OVER must be the same length,
+  // and only VIEW gets that for free (it follows the sounding part). EDIT pins
+  // the EDITED record — and with another part sounding, that part's pass is a
+  // different length, so the picture laid a 5-bar record across a 4-bar window:
+  // measured `ruler 4 · 27 notes · record 5 bars`, re-drawn every time the
+  // arrangement moved ("the visualization was totally different when it cycled
+  // back and playback wasn't lining up with it"). Held now, with NO playhead —
+  // nothing is playing that record, so a sweep would be a false claim — and
+  // the sweep has to make the SAME call or its cs comparison re-triggers the
+  // draw every frame (the flashing bug).
+  // 240bpm so a bar is 1s: part A = 5s, part B = 4s, so ~8s reaches part B.
+  const vmHoldRun = await page.evaluate(async () => { try {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    const h = document.getElementById('bloom-v2-layers');
+    const c0 = E.getCfg();
+    const svProg = c0.prog ? JSON.stringify(c0.prog) : 'null', svBpm = c0.bpm;
+    const svPart = JSON.stringify(L().part);
+    const svFor = L().partFor, svParts = L().parts ? JSON.stringify(L().parts) : null,
+          svAll = L().partAll ? JSON.stringify(L().partAll) : null;
+    const svVm = window._v2.vizModeOf(L());
+    const mk = (r) => r.map((x) => ({ root: x, intervals: [0, 4, 7] }));
+    E.getCfg().bpm = 240;
+    E.getCfg().prog = { on: true, parts: [{ name: 'Verse', len: 5 }, { name: 'Chorus', len: 4 }],
+      chords: mk([0, 2, 4, 5, 7, 0, 9, 2, 7]) };
+    L().on = true; L().present = true;
+    L().part.kind = 'live'; L().part.bars = 5;
+    L().part.rhythm = { kind: 'euclid', steps: 20, pulses: 9, rotate: 0 };
+    L().part.pitch = { kind: 'chord', voices: 3 };
+    E.getCfg(); window._v2.partSelect(E, L(), 0); E.getCfg();
+    // the two records are VISIBLY different, so "which one is drawn" is legible
+    L().parts['1'].rhythm = { kind: 'pulse', n: 4 };
+    L().parts['1'].pitch = { kind: 'walk', span: 3 };
+    E.getCfg();
+    if (h) h._sig = ''; window._v2.render(E); await wait(260);
+    card().classList.remove('collapsed');
+    if (h) h._sig = ''; window._v2.render(E); await wait(260);
+    card().classList.remove('collapsed');
+    const o = {};
+    try { await Tone.start(); } catch (e) {}
+    const sample = () => {
+      const cv = card().querySelector('.v2-vizcv'); if (!cv || !cv._barsGeo) return null;
+      let sp = -1;
+      try { const w = _ambPartChordAt(E, E.getCfg(), Tone.now()); sp = w ? (w.pi | 0) : -1; } catch (e) {}
+      // …and WHAT THE CARD SAYS about whose record it is showing
+      const lb = (card().querySelector('.v2-vizlab') || {}).textContent || '';
+      return { sp, ruler: Math.round(cv._barsGeo.barsF * 100) / 100,
+               notes: (cv._hits || []).length, rec: L().part.bars,
+               says: /\ud83d\udc41 showing /.test(lb) ? lb.slice(lb.indexOf('\ud83d\udc41')) : '' };
+    };
+    for (const mode of ['view', 'edit']) {
+      // RESTATED: the two mode buttons became ONE select (view/edit/draw/
+      // multi) — three of the four combinations they offered meant the same
+      // thing. Same contract: the mode is driven through the real control.
+      const msl = card().querySelector('.v2-modepick');
+      if (msl) { msl.value = mode; msl.dispatchEvent(new Event('input', { bubbles: true })); }
+      await wait(220);
+      o[mode + 'Mode'] = window._v2.vizModeOf(L());
+      const cv0 = card().querySelector('.v2-vizcv');
+      const proto = CanvasRenderingContext2D.prototype, oCR = proto.clearRect;
+      let redraws = 0;
+      proto.clearRect = function (x, y, w2) {
+        try { if (this.canvas === cv0 && w2 >= cv0.width - 2) redraws++; } catch (e) {}
+        return oCR.apply(this, arguments);
+      };
+      // PLAY NOW STARTS FROM THE CURRENT PART (the ⇶ strip's selection), so a
+      // check that cares WHICH part is sounding has to say where it starts —
+      // an earlier check's selection would otherwise decide it. Cleared, which
+      // is the from-the-top behaviour this check was written against.
+      delete E._curPart;
+      _ambStartGenerator(E);
+      const by = {};
+      let forced = false;
+      for (let i = 0; i < 22; i++) {
+        await wait(500);
+        let r2 = sample(); if (!r2) continue;
+        // SETTLED READS ONLY: `sp` comes from the CLOCK and the picture from the
+        // CANVAS, which is one draw behind at a part boundary — so a transient
+        // pairing (part 1's ruler over part 0's record) can be recorded as if
+        // it were a state, and it was (one run in several). Two reads a beat
+        // apart, kept only when the sounding part has not moved between them.
+        await wait(140);
+        const r2b = sample();
+        if (!r2b || r2b.sp !== r2.sp) continue;
+        r2 = r2b;
+        // FORCE A REBUILD ONCE while the OTHER part sounds. `drawPartViz` and
+        // the sweep each carry the guard, and the sweep's alone hides the
+        // draw's: with the sweep holding, nothing re-draws, so a stale but
+        // correct picture survives and a draw-side regression is invisible
+        // (measured — that poison passed). `V2.render` is the path an ordinary
+        // edit takes, and it goes through the draw's own guard.
+        if (!forced && r2.sp === 1) {
+          forced = true;
+          if (h) h._sig = ''; window._v2.render(E); await wait(220);
+          card().classList.remove('collapsed');
+          await wait(160);
+          r2 = sample(); if (!r2) continue;
+        }
+        (by[r2.sp] = by[r2.sp] || {})[r2.ruler + '|' + r2.notes + '|' + r2.rec] = 1;
+        (o[mode + 'Says'] = o[mode + 'Says'] || {})[r2.sp] = r2.says;
+      }
+      o[mode + 'Forced'] = forced;
+      _ambStopGenerator(E);
+      proto.clearRect = oCR;
+      o[mode] = Object.fromEntries(Object.entries(by).map(([k, v]) => [k, Object.keys(v)]));
+      o[mode + 'Redraws'] = redraws;
+      await wait(260);
+    }
+    // VIEW follows: part A draws its own 27-note 5-bar record, part B its own
+    // 4-note 4-bar one. EDIT holds: BOTH draw the edited 5-bar record on a
+    // 5-bar ruler — the ruler never disagrees with the record it is under.
+    // ASSERTED AS "the expected signature is PRESENT" plus "the broken one is
+    // ABSENT", never as an exact set: the sample reads the sounding part from
+    // `Tone.now()` and the picture from the canvas, which is one window behind
+    // at a boundary, so a correct build legitimately shows a straddling extra
+    // reading (the poison printed one). The CONTRACT with teeth is the last
+    // clause — in EDIT the ruler always equals the record it is under.
+    const has = (m, k, want) => !!(o[m] && o[m][k] && o[m][k].indexOf(want) >= 0);
+    // RESTATED 2026-09-10: these pinned the NOTE COUNT DRAWN (`5|27|5`), and the
+    // drawing is a WINDOW on the part now — at a phone's width four bars of a
+    // five-bar part are on screen, so 27 became 24. The count was always a
+    // proxy; the claim this check's own name makes is that VIEW swaps the
+    // picture between parts and EDIT does not, which is what it asserts now.
+    const sigs = (m) => Object.keys(o[m] || {}).map((k) => (o[m][k] || []).join('/'));
+    const vs = sigs('view'), es = sigs('edit');
+    o.viewFollows = vs.length === 2 && vs[0] !== vs[1];
+    o.editHolds = es.length === 2 && es[0] === es[1];
+    o.editRulerMatchesRecord = Object.values(o.edit || {}).every((arr) =>
+      arr.every((sig) => { const [ru, , rec] = sig.split('|'); return ru === rec; }));
+    // …and never the reported shape — a 5-bar record laid across a 4-bar
+    // ruler. Stated as the RELATION, not as a literal signature, for the same
+    // reason: the note count is no longer the record's.
+    o.editNeverSqueezes = !Object.values(o.edit || {}).some((arr) =>
+      arr.some((sig) => { const [ru, , rec] = sig.split('|'); return ru !== rec; }));
+    // A SWAP YOU CAN SEE BUT CANNOT NAME reads as content being lost — reported
+    // verbatim once the notes were colour-coded by part ("they appeared on the
+    // next part … the events I drew were gone … the colour is wrong"). Nothing
+    // WAS lost; the picture had moved and the card did not say so. In VIEW the
+    // readout names the part it is following and says yours is safe; in EDIT it
+    // says nothing, because nothing is being followed.
+    o.viewNamesOther = /showing .*Chorus/.test((o.viewSays || {})['1'] || '') &&
+                       /Verse content is safe/.test((o.viewSays || {})['1'] || '') &&
+                       !((o.viewSays || {})['0'] || '');
+    o.editSaysNothing = !((o.editSays || {})['0'] || '') && !((o.editSays || {})['1'] || '');
+    // …and neither mode thrashes the canvas (the flashing guard, both paths)
+    o.noThrash = o.viewRedraws <= 14 && o.editRedraws <= 14;
+    try {
+      const c9 = E.getCfg();
+      if (svProg === 'null') delete c9.prog; else c9.prog = JSON.parse(svProg);
+      c9.bpm = svBpm;
+      L().part = JSON.parse(svPart);
+      if (Number.isFinite(svFor)) L().partFor = svFor; else delete L().partFor;
+      if (svParts) L().parts = JSON.parse(svParts); else delete L().parts;
+      if (svAll) L().partAll = JSON.parse(svAll); else delete L().partAll;
+      E.getCfg();
+      E._playStartAt = null; E._progAnchor = null; E._barGridAnchor = null;
+      const b2 = card().querySelector('.v2-modepick');
+      if (b2) { b2.value = svVm; b2.dispatchEvent(new Event('input', { bubbles: true })); }
+      await wait(200);
+      if (h) h._sig = ''; window._v2.render(E); await wait(220);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) {}
+    return o;
+  } catch (e) { return { err: String(e && e.message) }; } });
+  ok('\u270e Edit holds the record it is editing at its OWN length; \ud83d\udc41 View follows the sounding part',
+    vmHoldRun && !vmHoldRun.err && vmHoldRun.viewFollows && vmHoldRun.editHolds &&
+    vmHoldRun.editRulerMatchesRecord && vmHoldRun.editNeverSqueezes && vmHoldRun.noThrash &&
+    vmHoldRun.viewNamesOther && vmHoldRun.editSaysNothing,
+    JSON.stringify(vmHoldRun));
+
+  // A SHAPE'S STAMP AND ITS RULES CAN DISAGREE — "Groundwork is broken, it
+  // just creates one sustained chord instead of one chord for each change"
+  // (2026-09-09): the Rhythm-type select had no 'ground' option, so on a
+  // Groundwork part it rendered BLANK; picking anything wrote rhythm.kind
+  // while `mat` stayed 'ground', and the ⛰ press then adopted the stamp and
+  // rebuilt nothing, forever. Pins all three fixes: the honest option, the
+  // consistency-gated adopt, and the mem-restore repair.
+  const gwDriftRun = await page.evaluate(async () => { try {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    const h = document.getElementById('bloom-v2-layers');
+    const svProg = E.getCfg().prog ? JSON.stringify(E.getCfg().prog) : 'null';
+    const svPart = JSON.stringify(L().part);
+    const svConfirm = window.confirm;
+    window.confirm = () => true;
+    const o = {};
+    E.getCfg().prog = { on: true, chords: [0, 5, 7, 9].map((r) => ({ root: r, intervals: [0, 4, 7] })) };
+    E.getCfg();
+    if (h) h._sig = ''; window._v2.render(E); await wait(220);
+    card().classList.remove('collapsed');
+    const onsetCount = () => {
+      let ns = [];
+      try { ns = window._v2.withEdit(() => window._v2.notesFor(L(),
+        { E, cfg: E.getCfg(), key: 'v2:' + (L().id | 0), cycleStart: 0,
+          cycleSec: (L().part.bars || 2) * 2 })) || []; } catch (e) {}
+      const set = new Set();
+      ns.forEach((n) => { if (n.freq > 0) set.add(Math.round(n.at * 100)); });
+      return set.size;
+    };
+    // build Groundwork, for real
+    const g1 = card().querySelector('.v2-mkpart[data-mk="ground"]');
+    if (g1) g1.click(); await wait(300);
+    o.built = { rk: (L().part.rhythm || {}).kind, onsets: onsetCount() };
+    // the select is HONEST on a ground part (it used to render blank)
+    const rsel = () => document.querySelector('.v2-layer [data-f="part.rhythm.kind"]');
+    o.selFace = rsel() && rsel().selectedIndex >= 0
+      ? rsel().options[rsel().selectedIndex].value : '(blank)';
+    // DRIFT: the rules move to pulse while the stamp stays 'ground'
+    L().part.rhythm = { kind: 'pulse', n: 1, steps: 8 }; E.getCfg();
+    o.drifted = { rk: (L().part.rhythm || {}).kind, mat: L().part.mat, onsets: onsetCount() };
+    // ⛰ pressed again must REBUILD, not adopt the stamp
+    if (h) h._sig = ''; window._v2.render(E); await wait(220);
+    card().classList.remove('collapsed');
+    const g2 = card().querySelector('.v2-mkpart[data-mk="ground"]');
+    if (g2) g2.click(); await wait(300);
+    o.rebuilt = { rk: (L().part.rhythm || {}).kind, onsets: onsetCount() };
+    // POISONED MEM: a filed ground spec carrying the drift is repaired on restore
+    L().part.mem = { ground: { rhythm: { kind: 'pulse', n: 1, steps: 8 } } };
+    L().part.rhythm = { kind: 'pulse', n: 1, steps: 8 }; E.getCfg();
+    if (h) h._sig = ''; window._v2.render(E); await wait(220);
+    card().classList.remove('collapsed');
+    const g3 = card().querySelector('.v2-mkpart[data-mk="ground"]');
+    if (g3) g3.click(); await wait(300);
+    o.memRepaired = { rk: (L().part.rhythm || {}).kind, onsets: onsetCount() };
+    window.confirm = svConfirm;
+    try {
+      const c9 = E.getCfg();
+      if (svProg === 'null') delete c9.prog; else c9.prog = JSON.parse(svProg);
+      L().part = JSON.parse(svPart); E.getCfg();
+      if (h) h._sig = ''; window._v2.render(E); await wait(200);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) {}
+    return o;
+  } catch (e) { return { err: String(e && e.message) }; }
+  });
+  ok('⛰ a drifted Groundwork part REBUILDS on the next press — stamp alone never adopts, mem restore is repaired, the select names ground',
+    gwDriftRun.built && gwDriftRun.built.rk === 'ground' && gwDriftRun.built.onsets === 4 &&
+    gwDriftRun.selFace === 'ground' &&
+    gwDriftRun.drifted && gwDriftRun.drifted.onsets === 1 &&
+    gwDriftRun.rebuilt && gwDriftRun.rebuilt.rk === 'ground' && gwDriftRun.rebuilt.onsets === 4 &&
+    gwDriftRun.memRepaired && gwDriftRun.memRepaired.rk === 'ground' && gwDriftRun.memRepaired.onsets === 4,
+    JSON.stringify(gwDriftRun));
+
+  ok('⛰ the Groundwork rows are legible in the Generated panel — one-line cells, grid full-width',
     gwRun.cellOneLine && gwRun.popFits && gwRun.gridFullWidth && gwRun.onePara &&
-    gwRun.saysNames && gwRun.cellH <= 60,
+    gwRun.cellH <= 60,
     JSON.stringify({ popH: gwRun.popH, cellH: gwRun.cellH, popFits: gwRun.popFits,
       cellOneLine: gwRun.cellOneLine, gridFullWidth: gwRun.gridFullWidth,
-      onePara: gwRun.onePara, saysNames: gwRun.saysNames }));
+      onePara: gwRun.onePara }));
 
   // ⚙ SHAPE… — the four Generated shapes and the knobs that decide what each
   // one produces, in ONE panel. Four buttons in the row put every choice on
@@ -2067,7 +3283,7 @@ const ok = (name, cond, detail) => {
     // confirm is AUTO-DISMISSED in puppeteer — so a probe that drives these
     // doors has to answer it, or the door correctly does nothing.
     const svConfirm = window.confirm; window.confirm = () => true;
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const sv = JSON.stringify(L().part);
     L().on = true; L().present = true; L().part.kind = 'live'; E.getCfg();
@@ -2130,11 +3346,316 @@ const ok = (name, cond, detail) => {
     return o;
   });
   ok('⚙ Shape… holds the four shapes AND the knobs that shape them, in one panel',
-    genRun.rowShapes === 0 && genRun.onScreen && genRun.shapes === 4 &&
+    genRun.rowShapes === 0 && genRun.onScreen && genRun.shapes === 5 &&
     genRun.openAfterChoice && genRun.kindAfter === 'walk' && genRun.knobsFollow &&
     genRun.committed && genRun.stillOpen && genRun.noDrift && genRun.closed &&
     /Roll/.test(genRun.doorNames) && genRun.oneNewTake === 1 && genRun.onePopPrev === 1,
     JSON.stringify(genRun));
+
+  // ---- THE PANEL'S CONTROLS EARN THEIR RANGES (2026-09-08, user: "generated
+  // menu is very buggy — some parameter changes don't do anything for most
+  // values, some don't update their readouts, some shouldn't be sliders").
+  // Three contracts from that sweep: (1) Grid is a ± STEPPER whose press
+  // commits and re-renders WITHOUT closing the panel — as a slider, the
+  // steps commit's V2.render replaced the input on the FIRST input event and
+  // the rest of the drag wrote nothing; (2) the euclid bounds FOLLOW the
+  // Grid (pulses max = steps, Push max = steps−1) — a 1..32 pulses slider
+  // under an 8-step grid had 24 values that normalize silently clamped away;
+  // (3) a raw slider's OWN readout follows the drag — nothing else writes
+  // `.ambient-sl-v` on an un-knobbed slider, and the mirror skips `el2 === f`.
+  const genCtlRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const sv = JSON.stringify(L().part);
+    L().on = true; L().present = true; L().part.kind = 'live';
+    L().part.rhythm = { kind: 'euclid', steps: 8, pulses: 5 };
+    L().part.pitch = { kind: 'walk', span: 3 };
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers');
+    if (h) h._sig = ''; window._v2.render(E); await wait(300);
+    const card = () => document.querySelector('.v2-layer');
+    card().classList.remove('collapsed');
+    card().querySelector('.v2-genbtn').click(); await wait(300);
+    const ctl = (f2) => document.querySelector('.v2-layer .v2-shapepop .v2-f[data-f="' + f2 + '"]');
+    const o = {};
+    const steps0 = ctl('part.rhythm.steps');
+    o.gridIsStepper = !!steps0 && steps0.classList.contains('ambient-step-inp');
+    o.bounds0 = { pulsesMax: +(ctl('part.rhythm.pulses') || {}).max,
+                  pushMax: +(ctl('part.rhythm.rotate') || {}).max };
+    const up = steps0 && steps0.closest('.ambient-ctrl').querySelector('.ambient-step-up');
+    if (up) up.click(); await wait(400);
+    card().classList.remove('collapsed');
+    o.stepsAfter = (L().part.rhythm || {}).steps | 0;
+    o.inputShows = +((ctl('part.rhythm.steps') || {}).value || 0);
+    o.panelOpen = card().classList.contains('v2-genopen');
+    o.bounds1 = { pulsesMax: +(ctl('part.rhythm.pulses') || {}).max,
+                  pushMax: +(ctl('part.rhythm.rotate') || {}).max };
+    const sl2 = ctl('part.shape.lenRatio');
+    if (sl2) { sl2.value = '42'; sl2.dispatchEvent(new Event('input', { bubbles: true })); }
+    await wait(200);
+    const sl3 = ctl('part.shape.lenRatio');
+    const rd3 = sl3 && sl3.closest('.ambient-ctrl').querySelector('.ambient-sl-v');
+    o.sliderIsSlider = !!sl3 && sl3.classList.contains('ambient-sl');
+    o.readout = rd3 ? rd3.textContent : '(none)';
+    const gc4 = document.querySelector('.v2-layer .v2-shapepop .v2-genclose');
+    if (gc4) gc4.click(); await wait(200);
+    try { L().part = JSON.parse(sv); E.getCfg();
+          if (h) h._sig = ''; window._v2.render(E); await wait(200);
+          document.querySelector('.v2-layer').classList.remove('collapsed'); } catch (e) {}
+    return o;
+  });
+  ok('Generated panel: Grid is a stepper that commits with the panel open, and the euclid bounds follow it',
+    genCtlRun.gridIsStepper && genCtlRun.stepsAfter === 9 && genCtlRun.inputShows === 9 &&
+    genCtlRun.panelOpen &&
+    genCtlRun.bounds0.pulsesMax === 8 && genCtlRun.bounds0.pushMax === 7 &&
+    genCtlRun.bounds1.pulsesMax === 9 && genCtlRun.bounds1.pushMax === 8,
+    JSON.stringify(genCtlRun));
+  // ── PUSH 0 MEANS NO PUSH, AND NO NUMBER IS BARE ─────────────────────────
+  // (2026-09-09, user: "Push is buggy, at 0 all notes are set forward 3 values"
+  // and "the numeric values in the Generated menu are not all intelligible").
+  // TWO defects, both mechanical. (1) `euclideanPattern`'s accumulator tests
+  // AFTER adding, so its first hit lands at `ceil(steps/pulses) - 1` and never
+  // on step 0: 5 of 8 begins on step 1, 2 of 8 on step 3 (the reported "forward
+  // 3"), 1 of 8 on step 7. v2 normalises the phase; v1's generator is
+  // deliberately untouched, since re-phasing it would silently re-rhythm every
+  // saved project. (2) `_ambSlUnit` reads the LAST id segment, and this panel's
+  // second copies carry `-gen`, so EVERY slider here looked up the unit for
+  // "gen", found none, and rendered a bare number.
+  const pushRun = await page.evaluate(async () => { try {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    const h = document.getElementById('bloom-v2-layers');
+    const sv = JSON.stringify(L().part);
+    const o = {};
+    // (1) EVERY density starts on the beat at Push 0 — the sparser the pattern
+    // the worse the old offset was, so the sparse cases are the ones with teeth
+    o.first = {};
+    [[5, 8], [3, 8], [2, 8], [1, 8], [3, 16], [9, 20]].forEach(([k, n]) => {
+      o.first[k + '/' + n] = window._v2.euclidCells(k, n, 0).indexOf(1);
+    });
+    o.allStartOnBeat = Object.values(o.first).every((x) => x === 0);
+    // …and ONE step of Push moves it by exactly one, wrapping home at `steps`
+    const at = (r) => window._v2.euclidCells(5, 8, r).join('');
+    const rot1 = (t) => t.slice(1) + t.slice(0, 1);
+    o.pushIsOneStep = at(1) === rot1(at(0)) && at(2) === rot1(at(1));
+    o.pushWraps = at(8) === at(0);
+    // (2) what the EMITTER places — the claim is about the notes, not the grid
+    L().on = true; L().present = true; L().part.kind = 'live'; L().part.bars = 2;
+    L().part.pitch = { kind: 'chord', voices: 1 };
+    const cyc = 2 * ((60 / (E.getCfg().bpm || 120)) * 4);
+    const ons = (rh) => { L().part.rhythm = rh; E.getCfg();
+      const ns = window._v2.withEdit(() => window._v2.notesFor(L(),
+        { E, cfg: E.getCfg(), key: 'v2:' + L().id, cycleStart: 0, cycleSec: cyc })) || [];
+      return [...new Set(ns.map((n) => Math.round((n.at / cyc) * ((rh.steps | 0) || 8))))]
+        .sort((a, b) => a - b).join(','); };
+    o.emit2of8 = ons({ kind: 'euclid', steps: 8, pulses: 2, rotate: 0 });
+    o.emitPush2 = ons({ kind: 'euclid', steps: 8, pulses: 2, rotate: 2 });
+    // the MULTI-VOICE branch never touches euclidCells — it asks v1's per-voice
+    // builder directly, so it needs the same shift or a polyrhythm keeps the
+    // old offset while a single-voice part is fixed
+    o.emitVoices = ons({ kind: 'euclid', steps: 8, pulses: 2, rotate: 0, voices: 3 });
+    o.voice0OnBeat = /^0,/.test(o.emitVoices);
+    // (3) NO BARE NUMBERS in the panel: every visible row's value carries a
+    // unit, or a hint that names one. A slider folds its hint into a `title`,
+    // which a phone never shows, so a bare slider readout names nothing.
+    L().part.rhythm = { kind: 'euclid', steps: 8, pulses: 5, rotate: 0 };
+    L().part.pitch = { kind: 'mixed', voices: 3 };
+    E.getCfg();
+    if (h) h._sig = ''; window._v2.render(E); await wait(300);
+    card().classList.remove('collapsed');
+    if (h) h._sig = ''; window._v2.render(E); await wait(300);
+    card().classList.remove('collapsed');
+    card().querySelector('.v2-genbtn').click(); await wait(320);
+    const rows = [...document.querySelectorAll('.v2-genrows .ambient-ctrl')]
+      .filter((x) => x.getBoundingClientRect().height > 0);
+    o.bare = rows.map((r) => {
+      const rd = r.querySelector('.ambient-sl-v');
+      if (!rd) return null;                       // a stepper's hint renders visibly
+      const hint = [...r.querySelectorAll('.ambient-hint')]
+        .filter((x) => !x.classList.contains('ambient-sl-v'))
+        .map((x) => x.textContent.trim()).filter(Boolean)[0] || '';
+      const v = rd.textContent.trim();
+      return (/^-?\d+$/.test(v) && !hint)
+        ? (((r.querySelector('label') || {}).textContent || '?').trim() + '=' + v) : null;
+    }).filter(Boolean);
+    o.noBare = o.bare.length === 0;
+    o.sampleReadouts = rows.map((r) => { const rd = r.querySelector('.ambient-sl-v');
+      return rd ? rd.textContent.trim() : null; }).filter(Boolean);
+    const gc = document.querySelector('.v2-layer .v2-shapepop .v2-genclose'); if (gc) gc.click();
+    await wait(220);
+    try { L().part = JSON.parse(sv); E.getCfg();
+          if (h) h._sig = ''; window._v2.render(E); await wait(220);
+          document.querySelector('.v2-layer').classList.remove('collapsed'); } catch (e) {}
+    return o;
+  } catch (e) { return { err: String(e && e.message) }; } });
+  ok('Push 0 means NO push — every density starts on the beat, and one step moves it by one',
+    pushRun && !pushRun.err && pushRun.allStartOnBeat && pushRun.pushIsOneStep &&
+    pushRun.pushWraps && pushRun.emit2of8 === '0,4' && pushRun.emitPush2 === '2,6' &&
+    pushRun.voice0OnBeat,
+    JSON.stringify({ first: pushRun && pushRun.first, emit2of8: pushRun && pushRun.emit2of8,
+      emitPush2: pushRun && pushRun.emitPush2, voices: pushRun && pushRun.emitVoices }));
+  ok('no number in the Generated panel is bare — a slider readout carries its unit',
+    pushRun && !pushRun.err && pushRun.noBare,
+    JSON.stringify({ bare: pushRun && pushRun.bare, readouts: pushRun && pushRun.sampleReadouts }));
+
+  ok('Generated panel: a slider’s own right-gutter readout follows the drag, WITH its unit',
+    // RESTATED 2026-09-09: the readout says "42%", not "42". A slider folds its
+    // hint into a `title`, which a phone never shows, so the unit in the
+    // readout is the only thing naming what the number means — reported as
+    // "the numeric values are not all intelligible". `_ambSlUnit` reads the
+    // LAST id segment and this panel's second copies carry a `-gen` suffix, so
+    // every slider here looked up the unit for "gen" and found none. Same
+    // contract: the value follows the drag.
+    genCtlRun.sliderIsSlider && genCtlRun.readout === '42%',
+    JSON.stringify(genCtlRun));
+
+  // ── THE PANEL IS THE MODEL, NOT FIVE PRESETS (2026-09-09, user: "condense
+  // the top options and expose more parameters for expressiveness").
+  // MEASURED BEFORE, at 390x780: head 56 + a STATIC 44px model paragraph +
+  // 162px of two-line shape chips + 48px of live line + 61px of actions =
+  // 371px of furniture in a 617px panel (60%), leaving 232px that held FIVE
+  // knobs of the fifteen defined. The panel stated "a RHYTHM x a PITCH RULE"
+  // in prose and let you touch NEITHER axis — the two selects that name them
+  // sat three tabs away — so a hand-built combination was unreachable from
+  // the one surface whose whole job is choosing one.
+  // Four contracts here, each of which was a real hole:
+  //   (1) BOTH AXES are controls in the panel, they commit, and the OTHER
+  //       copy on the card follows (a commit does not rebuild — two copies of
+  //       one field is the documented drift bug);
+  //   (2) picking an axis RE-GATES the knobs, so the panel shows the handful
+  //       that shape THAT combination;
+  //   (3) the shape-specific knobs each shape needs are present — Direction
+  //       for the arpeggio above all, which was missing while the panel
+  //       offered Arpeggio as one of its five doors;
+  //   (4) the second tier is a FOLD, shut by default, and a gated-OUT row
+  //       inside an OPEN fold stays hidden — `applyGate` writes '' to show a
+  //       row, so `.v2-sub`'s display:none still wins; inline 'none' beats the
+  //       fold. Both directions, or the fold and the gate fight.
+  const genAxisRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const svConfirm = window.confirm; window.confirm = () => true;
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const sv = JSON.stringify(L().part);
+    L().on = true; L().present = true; L().part.kind = 'live';
+    L().part.rhythm = { kind: 'euclid', steps: 8, pulses: 5 };
+    L().part.pitch = { kind: 'chord', voices: 3 };
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers');
+    if (h) h._sig = ''; window._v2.render(E); await wait(300);
+    const card = () => document.querySelector('.v2-layer');
+    card().classList.remove('collapsed');
+    // PRESS THE DOOR — setting `v2-genopen` by hand leaves the module's own
+    // GENPOP unset, so the first re-render shuts the panel and every later
+    // measurement reads 0x0 (it did).
+    card().querySelector('.v2-genbtn').click(); await wait(320);
+    const pop = () => document.querySelector('.v2-layer .v2-shapepop');
+    const rows = () => [...pop().querySelectorAll('.v2-genrows .ambient-ctrl')]
+      .filter((x) => x.getBoundingClientRect().height > 0)
+      .map((x) => ((x.querySelector('label') || {}).textContent || '?').trim());
+    const o = {};
+    const pr = pop().getBoundingClientRect();
+    o.fits = pr.width > 0 && pr.top >= 40 && pr.bottom <= innerHeight + 1;
+    o.noStaticPara = pop().querySelectorAll('.v2-genmodel').length === 0;
+    // (1)+(2) THE RHYTHM AXIS
+    const rs = () => pop().querySelector('.v2-genrows [data-f="part.rhythm.kind"]');
+    // GUARDED: a MISSING control is precisely the regression this hunts, and
+    // an unguarded write on null throws and kills the whole run — which tells
+    // you less than one red line (the documented rule, in select form).
+    o.rhythmIsHere = !!rs();
+    if (rs()) { rs().value = 'chance'; rs().dispatchEvent(new Event('input', { bubbles: true })); }
+    await wait(300);
+    o.rhythmWrote = L().part.rhythm.kind === 'chance';
+    o.rhythmRows = rows();
+    // Syncopate is read ONLY by the chance walk, so it appears with it and
+    // never on a euclid part — a knob that does nothing is the whole reason
+    // these are gated
+    // RESTATED 2026-09-10: the euclid-only row is labelled 'Steps' now — it is
+    // per CYCLE, and 'Grid' is the per-BAR note value on the surface's own
+    // footer. Two controls over two different quantities sharing one name was
+    // the naming rule's own mistake. Same contract; a stale 'Grid' here would
+    // have passed trivially, which is worse than failing.
+    o.regated = o.rhythmRows.indexOf('Chance') >= 0 && o.rhythmRows.indexOf('Syncopate') >= 0 &&
+                o.rhythmRows.indexOf('Steps') < 0 && o.rhythmRows.indexOf('Grid') < 0;
+    o.rhythmCopies = [...card().querySelectorAll('.v2-f[data-f="part.rhythm.kind"]')].map((x) => x.value);
+    o.rhythmAgrees = o.rhythmCopies.length === 2 && new Set(o.rhythmCopies).size === 1;
+    // (1)+(3) THE PITCH AXIS — this one re-renders the card, so re-query
+    const ps = () => document.querySelector('.v2-layer .v2-genrows [data-f="part.pitch.kind"]');
+    o.pitchIsHere = !!ps();
+    if (ps()) { ps().value = 'series'; ps().dispatchEvent(new Event('input', { bubbles: true })); }
+    await wait(420);
+    o.pitchWrote = L().part.pitch.kind === 'series';
+    o.stillOpen = document.querySelector('.v2-layer').classList.contains('v2-genopen');
+    o.pitchCopies = [...document.querySelectorAll('.v2-layer .v2-f[data-f="part.pitch.kind"]')].map((x) => x.value);
+    o.pitchAgrees = o.pitchCopies.length === 2 && new Set(o.pitchCopies).size === 1;
+    o.arpRows = rows();
+    // THE ARPEGGIO'S OWN KNOB. It writes, which is the claim — a select that
+    // renders and commits nothing is the state this whole panel was in.
+    const dsel = pop().querySelector('.v2-genrows [data-f="part.pitch.dir"]');
+    o.dirIsHere = !!dsel;
+    if (dsel) { dsel.value = 'updown'; dsel.dispatchEvent(new Event('input', { bubbles: true })); await wait(260); }
+    o.dirWrote = L().part.pitch.dir === 'updown';
+    // HARMONY, from inside the panel — a SET, and its handler re-renders, so
+    // BOTH copies must come back lit
+    const hb = pop().querySelector('.v2-genrows .v2-harm[data-harm="2"]');
+    o.harmIsHere = !!hb;
+    if (hb) { hb.click(); await wait(380); }
+    o.harmWrote = JSON.stringify(L().part.pitch.harm || null) === '[{"deg":2}]';
+    o.harmLitBoth = [...document.querySelectorAll('.v2-layer .v2-harm[data-harm="2"]')]
+      .every((x) => x.classList.contains('on')) &&
+      document.querySelectorAll('.v2-layer .v2-harm[data-harm="2"]').length === 2;
+    // (4) THE FOLD
+    const db = () => document.querySelector('.v2-layer .v2-shapepop .v2-discbtn[data-disc="gmore"]');
+    o.foldIsHere = !!db();
+    const shut = rows().length;
+    if (db()) db().click();
+    await wait(240);
+    const open = rows();
+    o.foldOpens = open.length > shut && open.indexOf('Max events') >= 0;
+    const me = document.querySelector('.v2-layer .v2-genrows [data-f="part.shape.maxEvents"]');
+    if (me) { me.value = '7'; me.dispatchEvent(new Event('input', { bubbles: true })); await wait(260); }
+    o.foldCommits = (L().part.shape.maxEvents | 0) === 7;
+    // A GATED-OUT ROW INSIDE AN OPEN FOLD STAYS HIDDEN — Roam reads only
+    // fixed/stack pitch, and this part is a series
+    const roam = document.querySelector('.v2-layer .v2-genrows [data-f="part.pitch.roam"]');
+    o.gateBeatsFold = !!roam && roam.closest('.ambient-ctrl').getBoundingClientRect().height === 0;
+    if (db()) db().click();
+    await wait(220);
+    o.foldShuts = rows().length === shut;
+    // BOTH SELECTS ARE RE-SYNCED, not just the first. 'drawn' is internal and
+    // has no option, so a select left on it renders BLANK — and a blank select
+    // is what invites the pick that drifts the rules (the Groundwork bug).
+    // Changed WITHOUT a rebuild (a rebuild would set both from `rhythmShown`
+    // and prove nothing), then committed on an unrelated field so `applyGate`
+    // is the only thing that can have fixed them.
+    L().part.rhythm.kind = 'drawn'; E.getCfg();
+    const nl = pop().querySelector('.v2-genrows [data-f="part.shape.lenRatio"]');
+    if (nl) { nl.value = '80'; nl.dispatchEvent(new Event('input', { bubbles: true })); await wait(280); }
+    o.drawnSel = [...document.querySelectorAll('.v2-layer [data-f="part.rhythm.kind"]')].map((x) => x.value);
+    o.drawnSynced = o.drawnSel.length === 2 && o.drawnSel.every((v) => v === 'euclid');
+    // …AND THE PANEL STILL HOLDS MORE KNOBS THAN IT USED TO. Five was the
+    // measured before-count on the default euclid/chord shape; the accretion
+    // this replaces was the OPPOSITE problem, so the clause has teeth in the
+    // direction that regressed.
+    o.knobCount = shut;
+    const gc = document.querySelector('.v2-layer .v2-shapepop .v2-genclose'); if (gc) gc.click();
+    await wait(220);
+    try { L().part = JSON.parse(sv); E.getCfg();
+          if (h) h._sig = ''; window._v2.render(E); await wait(220);
+          document.querySelector('.v2-layer').classList.remove('collapsed'); } catch (e) {}
+    window.confirm = svConfirm;
+    return o;
+  });
+  ok('⚙ Generated: BOTH axes are controls, they re-gate the knobs, and the second tier folds',
+    genAxisRun.fits && genAxisRun.noStaticPara &&
+    genAxisRun.rhythmIsHere && genAxisRun.rhythmWrote && genAxisRun.regated && genAxisRun.rhythmAgrees &&
+    genAxisRun.pitchIsHere && genAxisRun.pitchWrote && genAxisRun.stillOpen && genAxisRun.pitchAgrees &&
+    genAxisRun.dirIsHere && genAxisRun.dirWrote &&
+    genAxisRun.harmIsHere && genAxisRun.harmWrote && genAxisRun.harmLitBoth &&
+    genAxisRun.foldIsHere && genAxisRun.foldOpens && genAxisRun.foldCommits &&
+    genAxisRun.gateBeatsFold && genAxisRun.foldShuts && genAxisRun.knobCount >= 8 &&
+    genAxisRun.drawnSynced,
+    JSON.stringify(genAxisRun));
 
   // ⚇ MIXED — the fourth Generated door: chords AND single notes from one
   // part. The other three each commit to one texture (Sustained is always a
@@ -2145,7 +3666,7 @@ const ok = (name, cond, detail) => {
     // confirm is AUTO-DISMISSED in puppeteer — so a probe that drives these
     // doors has to answer it, or the door correctly does nothing.
     const svConfirm = window.confirm; window.confirm = () => true;
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const sv = JSON.stringify(L().part), c0 = E.getCfg();
     const svKey = [c0.keyOn, c0.keyRoot, c0.keyScale, c0.keyFollow];
@@ -2242,7 +3763,7 @@ const ok = (name, cond, detail) => {
   // take 15` — every term correct, and no answer to "what is this going to
   // generate", reported as the whole thing being opaque.
   const saysRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const sv = JSON.stringify(L().part);
     L().on = true; L().present = true;
@@ -2263,15 +3784,39 @@ const ok = (name, cond, detail) => {
       "L().part.pitch={kind:'chord',voices:3};L().part.bars=2");
     o.arp = await say("L().part.rhythm={kind:'pulse',n:8};L().part.mat='arp';" +
       "L().part.pitch={kind:'series',dir:'up',span:2}");
+    // WHERE THE TAKE FACT LIVES NOW. This line used to END by saying whether
+    // the drawing is what plays or one take of many; that is the Every cycle
+    // toggle's whole job, it sits directly beneath, and its FACE says which
+    // mode is in force. RESTATED, not dropped — same contract, one surface,
+    // and the reader is spared the same sentence twice.
+    {
+      const c2 = document.querySelector('.v2-layer');
+      c2.classList.remove('collapsed');
+      const g2 = [...c2.querySelectorAll('.v2-gototab')]
+        .find((x) => x.getAttribute('data-goto') === 'Content');
+      if (g2) { g2.click(); await wait(280); }
+      const mt = [...c2.querySelectorAll('.v2-pop-tabs [data-tab]')]
+        .find((x) => x.getAttribute('data-tab') === 'Material');
+      if (mt) { mt.click(); await wait(240); }
+      const row = [...c2.querySelectorAll('.ambient-ctrl')]
+        .find((r2) => r2.querySelector('.v2-varytoggle'));
+      o.everyFace = row ? (row.querySelector('.v2-varytoggle').textContent || '').trim() : '';
+      o.everyHint = row ? ((row.querySelector('.ambient-hint') || {}).textContent || '') : '';
+      o.everyVis = !!row && row.getBoundingClientRect().height > 0;
+    }
     o.locked = await say("L().part.kind='recorded';L().part.made='take';" +
       "L().part.notes=[{t:0,midi:60,dur:0.2},{t:0.5,midi:64,dur:0.2}]");
     // NO JARGON: the shapes' internal names must not reach the reader. `walk`
     // and `euclid` are field values, not English.
     const jargon = /\b(euclid|walk|series|stack|anchor|chance|pulse ×|lenRatio)\b/;
     o.noJargon = !jargon.test(o.roll) && !jargon.test(o.pad) && !jargon.test(o.arp);
-    // it says the two things a single drawing cannot show
-    o.saysReRolled = /Plays take \d+ — what the drawing shows/.test(o.roll) &&
-      /New take rolls another/.test(o.roll);
+    // it says the two things a single drawing cannot show — the live half on
+    // the Every cycle toggle, the written half in the line itself
+    o.saysReRolled = o.everyVis && /Play this take/.test(o.everyFace) &&
+      /take \d+ is what plays/.test(o.everyHint);
+    // …and the live line must NOT repeat it. Three surfaces for one fact
+    // (line, toggle, drawing readout) is how they come to disagree.
+    o.noTailEcho = !/Plays take|New take rolls|Re-rolled every cycle/.test(o.roll);
     o.saysExact = /plays these notes|Plays exactly these notes/.test(o.locked);
     // …and never both at once
     o.notBoth = !(/Re-rolled/.test(o.locked) && /Plays exactly/.test(o.locked));
@@ -2320,8 +3865,13 @@ const ok = (name, cond, detail) => {
     const gc3 = document.querySelector('.v2-layer .v2-shapepop .v2-genclose'); if (gc3) gc3.click();
     await wait(200);
     const ml = document.querySelector('.v2-matmodel');
-    o.modelStated = !!ml && /RHYTHM/.test(ml.textContent) && /PITCH RULE/.test(ml.textContent) &&
-      ml.getBoundingClientRect().height > 0;
+    // RESTATED 2026-09-10: the sentence used to set the two doors AGAINST each
+    // other ("GENERATED — re-made every cycle" vs "WRITTEN — a fixed list"),
+    // and its first half was measurably untrue. It states the unified model
+    // now: both make STATIC CONTENT, and LIVE is something you turn on. Same
+    // contract — the model is stated, once, visibly.
+    o.modelStated = !!ml && /STATIC CONTENT/.test(ml.textContent) &&
+      /LIVE/.test(ml.textContent) && ml.getBoundingClientRect().height > 0;
     await wait(180);
     try {
       L().part = JSON.parse(sv); E.getCfg();
@@ -2332,7 +3882,7 @@ const ok = (name, cond, detail) => {
   });
   ok('the card says what it will GENERATE — the shape first, then the rules, and each door explains itself',
     saysRun.noJargon && saysRun.saysReRolled && saysRun.saysExact && saysRun.notBoth &&
-    saysRun.saysCounts && saysRun.saysPitch && saysRun.shapes &&
+    saysRun.saysCounts && saysRun.saysPitch && saysRun.shapes && saysRun.noTailEcho &&
     saysRun.everyDoorExplains && saysRun.modelStated && saysRun.wraps,
     JSON.stringify(saysRun));
 
@@ -2346,7 +3896,7 @@ const ok = (name, cond, detail) => {
     // confirm is AUTO-DISMISSED in puppeteer — so a probe that drives these
     // doors has to answer it, or the door correctly does nothing.
     const svConfirm = window.confirm; window.confirm = () => true;
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const c0 = E.getCfg();
     const svProg = JSON.stringify(c0.prog || null), svPart = JSON.stringify(L().part);
@@ -2427,7 +3977,7 @@ const ok = (name, cond, detail) => {
   // is `position: static`, inside the layer body, and it scrolls with the panel
   // — so no fixed chrome can be over it at any inset.
   const safeRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const svPart = JSON.stringify(L().part);
     L().on = true; L().present = true;
@@ -2476,7 +4026,7 @@ const ok = (name, cond, detail) => {
   // cycle was SHORTER than the part, so the picture read as failing to show the
   // changes.
   const overRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const c0 = E.getCfg();
     const svProg = JSON.stringify(c0.prog || null), svPart = JSON.stringify(L().part);
@@ -2544,7 +4094,7 @@ const ok = (name, cond, detail) => {
   // for the rest of the piece — reported as "it just repeats the first 2
   // chords, even over part 2".
   const followRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const c0 = E.getCfg();
     const svProg = JSON.stringify(c0.prog || null), svPart = JSON.stringify(L().part);
@@ -2634,7 +4184,7 @@ const ok = (name, cond, detail) => {
     // whole phenomenon is observed ACROSS cycles, so it asks for the mode it
     // is testing; the contract it pins is unchanged.
     try { (_masterEng.getCfg().layers || [])[0].part.vary = 1; _masterEng.getCfg(); } catch (e) {}
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const sv = JSON.stringify(L().part), c0 = E.getCfg();
     const svKey = [c0.keyOn, c0.keyRoot, c0.keyScale, c0.keyFollow];
@@ -2765,7 +4315,7 @@ const ok = (name, cond, detail) => {
   // C major, Pitch → Chord played C+D+E: adjacent scale steps, a cluster, and
   // byte-identical to Stack, so the two kinds could not be told apart.
   const chordRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const sv = JSON.stringify(L().part), c0 = E.getCfg();
     const svKey = [c0.keyOn, c0.keyRoot, c0.keyScale, c0.keyFollow];
@@ -2832,7 +4382,7 @@ const ok = (name, cond, detail) => {
   // the variance controls" was asked twice. It NAVIGATES; it never renders a
   // second copy of a field.
   const findRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const h = document.getElementById('bloom-v2-layers');
     if (h) h._sig = ''; window._v2.render(E); await wait(250);
@@ -2853,8 +4403,12 @@ const ok = (name, cond, detail) => {
         tab: x.getAttribute('data-ftab') }));
     };
     const ghost = await type('ghost');
+    // RESTATED 2026-09-10: Ghosts is in Shape ▸ SHAPING now — it shapes the
+    // static content once (measured identical over six cycles) rather than
+    // varying it, which is why the tab split. Same contract: one exact hit,
+    // and the finder knows where it lives.
     o.exact = ghost.length === 1 && ghost[0].lab === 'Ghosts' &&
-      ghost[0].grp === 'Shape' && ghost[0].tab === 'Variance';
+      ghost[0].grp === 'Shape' && ghost[0].tab === 'Shaping';
     // THE CATEGORY WORD reaches the whole family across sheets — the question
     // this exists for. Asserted as SHEET COVERAGE, not a count: a number would
     // pin today's roster and break the next time a control is added.
@@ -2862,7 +4416,13 @@ const ok = (name, cond, detail) => {
     const sheets = new Set(fam.map((x) => x.grp));
     o.famSheets = [...sheets].sort().join(',');
     o.famSpans = sheets.has('Content') && sheets.has('Pitch') && sheets.has('Shape');
-    o.famHasVariance = fam.some((x) => x.tab === 'Variance');
+    // RESTATED 2026-09-10: the `Variance` tab SPLIT — three of its four knobs
+    // are deterministic content shapers (measured identical over six cycles),
+    // so it is `Shaping` and `Performance` now. The contract is unchanged and
+    // slightly stronger: the category word must still reach BOTH halves, or
+    // the split would have orphaned one of them from the search.
+    o.famHasVariance = fam.some((x) => x.tab === 'Shaping') &&
+      fam.some((x) => x.tab === 'Performance');
     // a miss says so rather than showing an empty box
     await type('zzzqq');
     o.saysNone = /Nothing matches/.test((card.querySelector('.v2-findnone') || {}).textContent || '');
@@ -2902,7 +4462,7 @@ const ok = (name, cond, detail) => {
   // card is editing the part the strip selected. Before the edit pin, seeding
   // changed the stored rules every press and left the preview byte-identical.
   const ppEditRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const cfg0 = E.getCfg();
     const svProg = JSON.stringify(cfg0.prog || null);
@@ -2979,7 +4539,7 @@ const ok = (name, cond, detail) => {
   // Asserted by HIT-TEST, not by z-index alone: a number that merely looks
   // bigger proves nothing about what is under the finger.
   const menuZRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const svPart = JSON.stringify(L().part);
     const h = document.getElementById('bloom-v2-layers');
@@ -3060,7 +4620,7 @@ const ok = (name, cond, detail) => {
   // select is gone (it was the destructive door — it wrote the field and
   // captured nothing, so a generating part became an EMPTY written one).
   const vocab = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const svPart = JSON.stringify(L().part);
     const card = () => document.querySelector('.v2-layer');
@@ -3107,7 +4667,7 @@ const ok = (name, cond, detail) => {
   // STARTS audio; it retracts the audio it superseded, and a preview that is
   // already playing follows it.
   const takeEarRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const card = () => document.querySelector('.v2-layer');
     const svPart = JSON.stringify(L().part);
@@ -3154,7 +4714,7 @@ const ok = (name, cond, detail) => {
   // with a v1 control, so on this card the behaviour had no door — and the
   // drawing showed the FULL length while the ear heard the cut one.
   const playRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const card = () => document.querySelector('.v2-layer');
     const svProg = E.getCfg().prog ? JSON.parse(JSON.stringify(E.getCfg().prog)) : null;
@@ -3223,6 +4783,17 @@ const ok = (name, cond, detail) => {
     // and the ear agree. Compared against the choke's own answer for the SAME
     // notes at the SAME anchor — a full-length drawing beside a cut note is
     // exactly what "some notes are getting cut off" looked like.
+    // FORCE A PLAYING DRAW FIRST. This clause asserts that the picture shows
+    // the CHOKED length *while playing* — and the presses above it commit,
+    // which drops `E._v2Phase` (the re-anchor idiom), so the next draw takes
+    // the HELD path and correctly does not choke (nothing is playing that
+    // record). Reading whichever draw happened to be last made the clause pass
+    // by luck of timing; wait for the layer to be anchored again, then draw.
+    for (let i = 0; i < 20; i++) {
+      if (E._v2Phase && E._v2Phase['v2:' + L().id]) break;
+      await wait(120);
+    }
+    window._v2.render(E); await wait(200);
     o.drawn = (() => {
       const cv = card().querySelector('.v2-vizcv');
       const geo = cv._plotGeo; const hits = cv._hits || [];
@@ -3242,7 +4813,8 @@ const ok = (name, cond, detail) => {
         const cut = window._ambNoteChoke('v2:' + L().id, inCyc[i].at, raw, {});
         if (!(cut < raw - 30)) continue;
         found = { raw: Math.round(raw), cut: Math.round(cut),
-                  drawnMs: Math.round((hits[i].w / geo.w) * geo.cyc * 1000) };
+                  drawnMs: Math.round((hits[i].w / geo.w) * geo.cyc * 1000),
+                  playing: !!geo.playing };
         break;
       }
       return found || { none: true };
@@ -3342,7 +4914,8 @@ const ok = (name, cond, detail) => {
     // …AND THE PICTURE SAYS SO: the widest drawn note is the CHOKED length,
     // not the requested one (the poison that draws the full length passes
     // every other clause).
-    playRun.drawn && playRun.drawn.cut < playRun.drawn.raw - 30 &&
+    playRun.drawn && playRun.drawn.playing &&
+    playRun.drawn.cut < playRun.drawn.raw - 30 &&
     Math.abs(playRun.drawn.drawnMs - playRun.drawn.cut) < 90,
     JSON.stringify({ off: playRun.chokeOff, on: playRun.chokeOn, door: playRun.door,
                      drawn: playRun.drawn }));
@@ -3354,7 +4927,7 @@ const ok = (name, cond, detail) => {
   // after rolling take 1 gave cycle 0, which IS take 0. Per-cycle dice are a
   // choice now (`part.vary`), absent by default.
   const takePlays = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const card = () => document.querySelector('.v2-layer');
     const svPart = JSON.stringify(L().part);
@@ -3413,7 +4986,7 @@ const ok = (name, cond, detail) => {
   // remove. The cycle grid is the part passes now, and the drawing and the
   // playhead ask the same function the tick walks.
   const ppCyc = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const svProg = E.getCfg().prog ? JSON.parse(JSON.stringify(E.getCfg().prog)) : null;
     const svPart = JSON.stringify(L().part);
@@ -3477,7 +5050,7 @@ const ok = (name, cond, detail) => {
   // PLAYING, and with per-part content the drawing could only ever show the
   // record you had selected — so you could not watch the arrangement run.
   const watchRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const card = () => document.querySelector('.v2-layer');
     const svProg = E.getCfg().prog ? JSON.parse(JSON.stringify(E.getCfg().prog)) : null;
@@ -3529,30 +5102,54 @@ const ok = (name, cond, detail) => {
     };
     const seenPlay = new Set(); const counts = { edit: new Set(), view: new Set() };
     let editingStayed = true;
+    // RESTATED (2026-09-09): the DEFAULT is VIEW now — the drawing follows what
+    // PLAYS, so the first loop samples the follow (both parts' counts) and the
+    // ✎ Edit press is what pins the edited record. The old Edit default is
+    // exactly the "one part only plays one of each chord in the visualization"
+    // report: the picture held one part's record while another part sounded.
+    o.refuse = null;
     for (let i = 0; i < 9; i++) {
       const st = stripState();
       if (st) { st.playing.forEach((x) => seenPlay.add(x));
         if (st.editing.join() !== '0') editingStayed = false; }
-      counts.edit.add(drawn().length);
+      counts.view.add(drawn().length);
+      // WHILE ANOTHER PART'S RECORD IS DRAWN, an edit gesture must REFUSE —
+      // the hit boxes index into the DRAWN record. On this LIVE fixture an
+      // unguarded tap LOCKS the take (kind flips to 'recorded'), which is
+      // what makes the poison loud.
+      const cvv = card().querySelector('.v2-vizcv');
+      if (o.refuse == null && cvv && cvv._vmOther != null && (cvv._hits || []).length) {
+        const rr = cvv.getBoundingClientRect(), hb = cvv._hits[0];
+        cvv.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true,
+          clientX: rr.left + hb.x + 2, clientY: rr.top + hb.y + 2 }));
+        cvv.dispatchEvent(new MouseEvent('click', { bubbles: true,
+          clientX: rr.left + hb.x + 2, clientY: rr.top + hb.y + 2 }));
+        await wait(200);
+        o.refuse = { kind: L().part.kind,
+                     editor: !!card().querySelector('.v2-neinline .ambient-ctrl') };
+      }
       await wait(850);
     }
     o.playSeen = [...seenPlay].sort().join(',');
     o.editingStayed = editingStayed;
-    o.editCounts = [...counts.edit].sort().join(',');
-    // VIEW follows what is playing
-    const vb = card().querySelector('.v2-vmode[data-vm="view"]');
-    o.door = !!vb && vb.getBoundingClientRect().height > 0;
-    if (vb) vb.click(); await wait(700);
-    o.mode = window._v2.vizModeOf(L());
-    for (let i = 0; i < 9; i++) { counts.view.add(drawn().length); await wait(850); }
+    o.defaultMode = window._v2.vizModeOf(L());
     o.viewCounts = [...counts.view].sort((a, b) => a - b).join(',');
+    // ✎ EDIT pins the record being edited while the parts cycle
+    const vb = card().querySelector('.v2-modepick');
+    o.door = !!vb && vb.getBoundingClientRect().height > 0 &&
+      [...vb.options].some((x) => x.value === 'edit');
+    if (vb) { vb.value = 'edit'; vb.dispatchEvent(new Event('input', { bubbles: true })); }
+    await wait(700);
+    o.mode = window._v2.vizModeOf(L());
+    for (let i = 0; i < 9; i++) { counts.edit.add(drawn().length); await wait(850); }
+    o.editCounts = [...counts.edit].sort().join(',');
     _ambStopGenerator(E); await wait(300);
     try {
       if (svProg) E.getCfg().prog = svProg; else delete E.getCfg().prog;
       L().part = JSON.parse(svPart);
       if (Number.isFinite(svFor)) L().partFor = svFor; else delete L().partFor;
       if (svParts) L().parts = JSON.parse(svParts); else delete L().parts;
-      window._v2.vizMode(L(), 'edit');
+      window._v2.vizMode(L(), 'view');   // the default
       E.getCfg();
       E._playStartAt = null; E._progAnchor = null; E._barGridAnchor = null;
       if (h) h._sig = ''; window._v2.render(E); await wait(220);
@@ -3565,10 +5162,14 @@ const ok = (name, cond, detail) => {
   ok('the current-part strip marks the part that is PLAYING, beside the one being edited',
     /0/.test(watchRun.playSeen) && /1/.test(watchRun.playSeen) && watchRun.editingStayed,
     JSON.stringify({ playing: watchRun.playSeen, editingStayed: watchRun.editingStayed }));
-  ok('View follows the sounding part, Edit holds the one you are editing',
-    watchRun.door && watchRun.mode === 'view' &&
-    watchRun.editCounts === '2' && watchRun.viewCounts === '2,7',
-    JSON.stringify({ edit: watchRun.editCounts, view: watchRun.viewCounts, door: watchRun.door }));
+  ok('the drawing FOLLOWS what plays by default; \u270e Edit pins the record being edited',
+    watchRun.door && watchRun.defaultMode === 'view' && watchRun.mode === 'edit' &&
+    watchRun.viewCounts === '2,7' && watchRun.editCounts === '2',
+    JSON.stringify({ def: watchRun.defaultMode, view: watchRun.viewCounts,
+                     edit: watchRun.editCounts, door: watchRun.door }));
+  ok('an edit gesture on a drawing showing ANOTHER part\u2019s record refuses \u2014 no lock, no editor',
+    !!watchRun.refuse && watchRun.refuse.kind === 'live' && !watchRun.refuse.editor,
+    JSON.stringify(watchRun.refuse));
 
   // THE DRAWING HAS A PITCH AXIS — a keyboard down the left and one SEMITONE
   // per row ("the content visualization needs a Y axis, use piano graphic, so
@@ -3576,7 +5177,7 @@ const ok = (name, cond, detail) => {
   // whatever range the take happened to span: you could see that one note was
   // higher than another and not which note either of them was.
   const rollRun3 = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const card = () => document.querySelector('.v2-layer');
     const svPart = JSON.stringify(L().part);
@@ -3654,7 +5255,7 @@ const ok = (name, cond, detail) => {
   // both replace what you are looking at, so both ask first and name which one
   // they are.
   const matAsk = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const card = () => document.querySelector('.v2-layer');
     const svPart = JSON.stringify(L().part);
@@ -3727,14 +5328,14 @@ const ok = (name, cond, detail) => {
   // made the notes" — onto ✎ Composed, so it stayed lit on a part Groundwork
   // had made. One class, one meaning: the session has its own mark.
   const doorRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const svPart = JSON.stringify(L().part);
     const card = () => document.querySelector('.v2-layer');
     const show = async () => { const h = document.getElementById('bloom-v2-layers');
       if (h) h._sig = ''; window._v2.render(E); await wait(240);
       card().classList.remove('collapsed'); };
-    const lit = () => ['v2-compose', 'v2-adopt', 'v2-genbtn', 'v2-gwbtn']
+    const lit = () => ['v2-compose', 'v2-genbtn']
       .filter((c) => { const e = card().querySelector('.' + c);
         return e && e.classList.contains('on'); });
     const o = {};
@@ -3744,13 +5345,20 @@ const ok = (name, cond, detail) => {
     L().part.pitch = { kind: 'chord', voices: 3 };
     E.getCfg(); await show();
     o.dflt = lit();
-    // …Groundwork, through its own door
-    card().querySelector('.v2-gwbtn').click(); await wait(500);
+    // …Groundwork, through the Generated panel (its fifth shape now)
+    const svCf8 = window.confirm; window.confirm = () => true;
+    card().querySelector('.v2-genbtn').click(); await wait(300);
+    card().querySelector('.v2-shapepop .v2-mkpart[data-mk="ground"]').click(); await wait(500);
+    card().classList.remove('collapsed');
     o.ground = lit(); o.mat = L().part.mat;
-    const dn = card().querySelector('.v2-gwdone'); if (dn) dn.click(); await wait(350);
+    const dn = card().querySelector('.v2-shapepop .v2-genclose'); if (dn) dn.click(); await wait(350);
     o.groundAfter = lit();
-    // …and a compose session must not claim the material
-    card().querySelector('.v2-compose').click(); await wait(800);
+    window.confirm = svCf8;
+    // …and a compose session must not claim the material — ✎ Written is a
+    // POPOVER now, whose grid option starts the session
+    card().querySelector('.v2-compose').click(); await wait(300);
+    const gb8 = [...document.querySelectorAll('.addpop-btn')].find((b) => /grid/i.test(b.textContent));
+    if (gb8) gb8.click(); await wait(800);
     o.composing = card().classList.contains('v2-composing');
     o.whileComposing = lit();
     o.sessMark = card().querySelector('.v2-compose').classList.contains('v2-sess');
@@ -3760,12 +5368,146 @@ const ok = (name, cond, detail) => {
     return o;
   });
   ok('exactly one Material door is lit, and it names the material — a compose session is not one',
+    // RESTATED 2026-09-09: ground lights the ⚙ Generated door (its own door
+    // is gone), so every ground state reads 'v2-genbtn'.
     doorRun.dflt.join() === 'v2-genbtn' && doorRun.mat === 'ground' &&
-    doorRun.ground.join() === 'v2-gwbtn' && doorRun.groundAfter.join() === 'v2-gwbtn' &&
+    doorRun.ground.join() === 'v2-genbtn' && doorRun.groundAfter.join() === 'v2-genbtn' &&
     doorRun.composing && doorRun.sessMark &&
-    doorRun.whileComposing.join() === 'v2-gwbtn' &&
-    doorRun.afterCancel.join() === 'v2-gwbtn',
+    doorRun.whileComposing.join() === 'v2-genbtn' &&
+    doorRun.afterCancel.join() === 'v2-genbtn',
     JSON.stringify(doorRun));
+
+  // ---- ✎ WRITTEN IS A POPOVER: draw in the roll / compose in the grid /
+  // START EMPTY (2026-09-09, user: "add ability to Clear content so user can
+  // be working with an empty visualization; separate Composed into 2 types").
+  // Clear leaves an EMPTY WRITTEN part with ✎ Draw on, so the very next tap
+  // on the roll adds a note — and the generated rules survive for ⚙.
+  const writRun = await page.evaluate(async () => { try {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const svPart = JSON.stringify(L().part);
+    const svCf = window.confirm; window.confirm = () => true;
+    const card = () => document.querySelector('.v2-layer');
+    const h = document.getElementById('bloom-v2-layers');
+    L().on = true; L().present = true; L().part.kind = 'live';
+    L().part.rhythm = { kind: 'euclid', steps: 8, pulses: 5 };
+    L().part.pitch = { kind: 'walk', span: 3 };
+    E.getCfg();
+    if (h) h._sig = ''; window._v2.render(E); await wait(280);
+    card().classList.remove('collapsed');
+    const gt = card().querySelector('.v2-gototab[data-goto="Content"]');
+    if (gt && !gt.classList.contains('on')) { gt.click(); await wait(220); }
+    card().querySelector('.v2-compose').click(); await wait(300);
+    const opts = [...document.querySelectorAll('.addpop-btn')].map((b) => b.textContent.trim());
+    const o = { nOpts: opts.length,
+                hasRoll: opts.some((t) => /roll/i.test(t)),
+                hasGrid: opts.some((t) => /grid/i.test(t)),
+                hasClear: opts.some((t) => /empty/i.test(t)) };
+    const cb = [...document.querySelectorAll('.addpop-btn')].find((b) => /empty/i.test(b.textContent));
+    if (cb) cb.click(); await wait(500);
+    o.kind = L().part.kind; o.notes = (L().part.notes || []).length;
+    o.rulesKept = (L().part.rhythm || {}).kind === 'euclid';
+    card().classList.remove('collapsed');
+    o.drawOn = (card().querySelector('.v2-modepick') || {}).value === 'draw';
+    // …the very next tap on the empty roll draws
+    const cv = card().querySelector('.v2-vizcv');
+    cv.scrollIntoView({ block: 'center' }); await wait(180);
+    const r2 = cv.getBoundingClientRect(), pg = cv._pitchGeo, pl = cv._plotGeo;
+    cv.dispatchEvent(new MouseEvent('click', { bubbles: true,
+      clientX: r2.left + pl.x0 + pl.w * 0.3,
+      clientY: r2.top + pg.top + (pg.hiM - 64) * pg.rowH + pg.rowH / 2 }));
+    await wait(450);
+    o.drew = (L().part.notes || []).length === 1;
+    const dn0 = document.querySelector('.v2-layer .v2-neinline [data-na="done"]');
+    if (dn0) dn0.click(); await wait(150);
+    // put Draw back OFF (a later check pins its unlit face) and the part back
+    const db = card().querySelector('.v2-modepick');
+    if (db) { db.value = 'view'; db.dispatchEvent(new Event('input', { bubbles: true })); }
+    await wait(150);
+    window.confirm = svCf;
+    try { L().part = JSON.parse(svPart); E.getCfg();
+          if (h) h._sig = ''; window._v2.render(E); await wait(200);
+          card().classList.remove('collapsed'); } catch (e) {}
+    return o;
+  } catch (e) { return { err: String(e && e.message) }; }
+  });
+  ok('✎ Written offers draw / grid / start-empty, and Clear leaves an empty roll with Draw on',
+    writRun.nOpts === 3 && writRun.hasRoll && writRun.hasGrid && writRun.hasClear &&
+    writRun.kind === 'recorded' && writRun.notes === 0 && writRun.rulesKept &&
+    writRun.drawOn && writRun.drew,
+    JSON.stringify(writRun));
+
+  // ---- ⊕ EXPAND — build a chord ON the open note (2026-09-09): every chord
+  // that CONTAINS the note's sounding pitch class is offered, labelled with
+  // the note's role in it; IN KEY is green, OUTSIDE the key orange; picking
+  // one adds the other tones at the note's own position and length.
+  const exRun = await page.evaluate(async () => { try {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const c0 = E.getCfg();
+    const svPart = JSON.stringify(L().part);
+    const svKey = [c0.keyOn, c0.keyRoot, c0.keyScale, c0.keyFollow];
+    const svHarm = L().harmony || null;
+    c0.keyOn = true; c0.keyRoot = 0; c0.keyScale = 'major'; c0.keyFollow = false;
+    delete L().harmony;
+    L().part.kind = 'recorded'; L().part.bars = 2;
+    delete L().part.transpose; delete L().part.reg;
+    L().part.notes = [{ t: 0.25, midi: 64, dur: 0.125 }];   // E4
+    E.getCfg();
+    const card = () => document.querySelector('.v2-layer');
+    const h = document.getElementById('bloom-v2-layers');
+    if (h) h._sig = ''; window._v2.render(E); await wait(280);
+    card().classList.remove('collapsed');
+    const gt = card().querySelector('.v2-gototab[data-goto="Content"]');
+    if (gt && !gt.classList.contains('on')) { gt.click(); await wait(220); }
+    const cv = card().querySelector('.v2-vizcv');
+    cv.scrollIntoView({ block: 'center' }); await wait(150);
+    const r2 = cv.getBoundingClientRect(), hb = (cv._hits || [])[0];
+    cv.dispatchEvent(new MouseEvent('click', { bubbles: true,
+      clientX: r2.left + hb.x + hb.w / 2, clientY: r2.top + hb.y + 3 }));
+    await wait(400);
+    const ex = document.querySelector('.v2-layer .v2-neinline [data-na="expand"]');
+    const o = { btn: !!ex };
+    if (ex) ex.click(); await wait(280);
+    const nx = document.querySelector('.v2-layer .v2-nex');
+    o.open = !!nx && !nx.hidden;
+    o.inN = nx ? nx.querySelectorAll('.v2-nexbtn.v2-nex-in').length : 0;
+    o.outN = nx ? nx.querySelectorAll('.v2-nexbtn.v2-nex-out').length : 0;
+    // the green/orange CLAIM, checked against the actual chords: every in-key
+    // button's tones all sit in C major; some orange button holds one outside
+    const CM = { 0: 1, 2: 1, 4: 1, 5: 1, 7: 1, 9: 1, 11: 1 };
+    const tonesOK = (b) => {
+      const r0 = +b.getAttribute('data-root');
+      return String(b.getAttribute('data-ivs')).split(',').every((k) => CM[(r0 + (+k)) % 12]);
+    };
+    o.greensInKey = nx ? [...nx.querySelectorAll('.v2-nexbtn.v2-nex-in')].every(tonesOK) : false;
+    o.orangesOut = nx ? [...nx.querySelectorAll('.v2-nexbtn.v2-nex-out')].every((b) => !tonesOK(b)) : false;
+    // pick the in-key chord where the note is the ROOT → E minor on E4
+    const pick = nx && [...nx.querySelectorAll('.v2-nexbtn.v2-nex-in')].find((b) => /root/.test(b.textContent));
+    o.pick = pick ? pick.textContent.trim() : null;
+    if (pick) pick.click(); await wait(400);
+    const ns = (L().part.notes || []).slice().sort((a, b) => a.midi - b.midi);
+    o.after = ns.map((n) => [Math.round(n.t * 100) / 100, n.midi]);
+    o.chordBuilt = ns.length === 3 && ns.every((n) => Math.abs(n.t - 0.25) < 1e-6) &&
+                   ns.map((n) => n.midi).join() === '64,67,71';
+    const dn0 = document.querySelector('.v2-layer .v2-neinline [data-na="done"]');
+    if (dn0) dn0.click(); await wait(150);
+    try {
+      L().part = JSON.parse(svPart);
+      if (svHarm) L().harmony = svHarm; else delete L().harmony;
+      c0.keyOn = svKey[0]; c0.keyRoot = svKey[1]; c0.keyScale = svKey[2]; c0.keyFollow = svKey[3];
+      E.getCfg();
+      if (h) h._sig = ''; window._v2.render(E); await wait(200);
+      card().classList.remove('collapsed');
+    } catch (e) {}
+    return o;
+  } catch (e) { return { err: String(e && e.message) }; }
+  });
+  ok('⊕ Expand offers every chord holding the note — green really in key, orange really out — and builds the picked one',
+    exRun.btn && exRun.open && exRun.inN > 0 && exRun.outN > 0 &&
+    exRun.greensInKey && exRun.orangesOut && /root/.test(exRun.pick || '') &&
+    exRun.chordBuilt,
+    JSON.stringify(exRun));
 
   // ---- THE INSTRUMENT SHEET IS TWO TABS AND TWO FOLDS ---------------------
   // It was five tabs — Tone type, Tone, Register, Tone cycle, Envelope — which
@@ -3774,7 +5516,7 @@ const ok = (name, cond, detail) => {
   // voice behaves rather than a peer of it, and Register is the one control you
   // reach for while listening, so it sits in the head.
   const instShape = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const card = document.querySelector('.v2-layer');
     card.classList.remove('collapsed');
     const sel2 = card.querySelector('[data-f="instrument.voice"]');
@@ -3823,7 +5565,7 @@ const ok = (name, cond, detail) => {
   ok('the envelope is a fold inside Live — shut, opens, shuts again',
     instShape.shut && instShape.open && instShape.shutAgain, JSON.stringify(instShape));
   await page.evaluate(() => { const c = document.querySelector('.v2-pop-close'); if (c) c.click(); });
-  await new Promise((r) => setTimeout(r, 200));
+  await zz(200);
 
   // ---- REGISTER MOVES THE PART, RECORDED OR NOT ---------------------------
   // It is read by the LIVE pitch path only, so on a fixed part it was a control
@@ -3831,7 +5573,7 @@ const ok = (name, cond, detail) => {
   // up or down an octave". Measured at playNote, because a config value that
   // nothing plays is exactly the failure being tested for.
   const regRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     L().part.kind = 'live'; E.getCfg(); window._v2.render(E);
     await wait(200);
@@ -3866,7 +5608,7 @@ const ok = (name, cond, detail) => {
   // and the list WAS constrained, by having three separate rows, which in a
   // tabbed sheet reads as a Tone tab that ignores the kit you chose.
   const toneNarrow = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng;
     // "Live" — the tab that holds the type, the tone and the folded envelope.
     const row = () => [...document.querySelectorAll('.v2-layer [data-v2tab="Live"]')]
@@ -3902,7 +5644,7 @@ const ok = (name, cond, detail) => {
   // kit's id is literally 'synth', so a drum layer summarised as "synth · A 400"
   // and read as a synth one.
   const instSum = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const card = () => document.querySelector('.v2-layer');
     // THE SUMMARY MOVED WITH THE GRID: it was on each group's button, and the
@@ -3956,9 +5698,9 @@ const ok = (name, cond, detail) => {
     window._v2.rollRun(E, L);
     window._v2.render(E);
   });
-  await new Promise((r) => setTimeout(r, 250));
+  await zz(250);
   const takeRun = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
     const orig = window.playNote;
     const once = async () => {
@@ -4001,7 +5743,7 @@ const ok = (name, cond, detail) => {
   // exactly what was DRAWN rather than rolling once more (the reported "lock
   // the part Live came up with, before preview re-writes it").
   const noteEdit = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, o = {};
     const L = () => (E.getCfg().layers || [])[0];
     const card = document.querySelector('.v2-layer');
@@ -4049,6 +5791,85 @@ const ok = (name, cond, detail) => {
       el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); };
     // AN UNEDITED NOTE CARRIES NOTHING — absent means "the layer decides", and
     // that is what keeps a locked part byte-identical to the take it froze.
+    // ---- THE DRAWN PIANO IS A CONTROL --------------------------------------
+    // Pitch had ONE control, a ± stepper over 0..127 — nine taps to move a
+    // fifth, with a keyboard naming every pitch three pixels away. A tap on a
+    // key moves the selected note there.
+    {
+      const cvk = cv(), pg = cvk._pitchGeo, plot = cvk._plotGeo;
+      o.keyPxSel = pg ? Math.round(pg.rowH * 10) / 10 : 0;
+      const nn0 = L().part.notes[idxOf()];
+      o.kbGeo = !!(pg && plot && pg.rowH > 0);
+      if (o.kbGeo) {
+        o.kbFrom = nn0.midi;
+        // a target inside the drawn window, never the row it is already on
+        const want = (nn0.midi + 3 <= pg.hiM) ? nn0.midi + 3 : nn0.midi - 3;
+        o.kbWant = Math.max(pg.loM, Math.min(pg.hiM, want));
+        const rk = cvk.getBoundingClientRect();
+        const kx = rk.left + plot.x0 / 2;
+        const ky = rk.top + pg.top + (pg.hiM - o.kbWant) * pg.rowH + pg.rowH / 2;
+        cvk.scrollIntoView({ block: 'center' });
+        const rk2 = cvk.getBoundingClientRect();
+        const kx2 = rk2.left + plot.x0 / 2;
+        const ky2 = rk2.top + pg.top + (pg.hiM - o.kbWant) * pg.rowH + pg.rowH / 2;
+        // the key must actually be under the finger, not covered
+        o.kbTop = ((document.elementFromPoint(kx2, ky2) || {}).className || '');
+        cvk.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: kx2, clientY: ky2 }));
+        await wait(320);
+        o.kbGot = L().part.notes[idxOf()].midi;
+        // …and the editor followed: its own title and stepper must not go stale
+        const ovk = document.querySelector('.v2-layer .v2-neinline');
+        o.kbTitle = ovk ? (ovk.querySelector('.v2-netitle') || {}).textContent || '' : '';
+        o.kbStep = ovk ? +(ovk.querySelector('[data-sf="midi"]') || {}).value : -1;
+        // THE LIT KEY, read off the CANVAS. The gutter is a control now, so it
+        // has to show which key the note is on — a reserved-and-blank strip is
+        // exactly the failure being tested for, so assert the PIXELS.
+        // RE-READ THE GEOMETRY. The pitch window is derived from the notes'
+        // own range, so MOVING one can widen it — `rowH` and every row's y
+        // shift, and the geometry captured before the tap samples the wrong
+        // row (it read a neighbouring black key and looked like a missing
+        // highlight). Re-query after every click, geometry included.
+        const cx = cv().getContext('2d');
+        const dpr = cv().width / cv().getBoundingClientRect().width;
+        const pg2 = cv()._pitchGeo, plot2 = cv()._plotGeo;
+        const pxAt = (m2) => {
+          const yy = Math.round((pg2.top + (pg2.hiM - m2) * pg2.rowH + pg2.rowH / 2) * dpr);
+          const d = cx.getImageData(Math.round((plot2.x0 / 2) * dpr), yy, 1, 1).data;
+          return d[0] + ',' + d[1] + ',' + d[2];
+        };
+        // the accent marks the DRAWN pitch of the selected note (hit boxes
+        // carry it as `midi`) — transpose/register sit between stored and
+        // drawn, and this gate state carries a +2 shift, so sampling at the
+        // STORED row read a plain key and called the accent missing
+        const hbLit = ((cv()._hits) || []).find((x) => x.i === idxOf());
+        const litM = hbLit ? Math.round(hbLit.midi) : o.kbGot;
+        o.kbLit = pxAt(litM);
+        const other = (litM + 5 <= pg2.hiM) ? litM + 5 : litM - 5;
+        o.kbUnlit = pxAt(Math.max(pg2.loM, Math.min(pg2.hiM, other)));
+        // the two KEY colours, so "lit" cannot pass merely by landing on a
+        // black key while the comparison row is a white one
+        o.kbKeyCols = ['232,228,242', '21,21,31',       // no key: plain
+                       '196,169,240', '91,74,134',       // in scale
+                       '142,139,158', '14,14,21'];       // out of scale
+        // …and with NOTHING selected a key press must not silently move a note
+        ov.querySelector('[data-na="done"]').click(); await wait(220);
+        const before2 = L().part.notes.map((x) => x.midi).join(',');
+        cv().dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: kx2, clientY: ky2 }));
+        await wait(220);
+        o.kbNoSel = L().part.notes.map((x) => x.midi).join(',') === before2;
+        // …and with the editor shut the drawing goes back to its reading size
+        o.keyPxIdle = (cv()._pitchGeo || {}).rowH || 0;
+        o.keyPxIdle = Math.round(o.keyPxIdle * 10) / 10;
+        // …then re-open the same note so the checks below carry on as before
+        const hb = ((cv()._hits) || []).find((x) => Math.round(x.midi) === o.kbGot) || ((cv()._hits) || [])[0];
+        const r3 = cv().getBoundingClientRect();
+        cv().dispatchEvent(new MouseEvent('click', { bubbles: true,
+          clientX: r3.left + hb.x + hb.w / 2, clientY: r3.top + hb.y + 3 }));
+        await wait(300);
+      }
+    }
+    if (!document.querySelector('.v2-layer .v2-neinline') ||
+        document.querySelector('.v2-layer .v2-neinline').hidden) return o;
     o.cleanBefore = Object.keys(L().part.notes[idxOf()]).sort().join(',');
     set('vel', 25); set('atk', 1234); set('rel', 4321); set('glide', 333); await wait(120);
     const n = L().part.notes[idxOf()];
@@ -4081,9 +5902,125 @@ const ok = (name, cond, detail) => {
   ok('the note editor opens INSIDE the card, directly under the drawing, and the drawing marks the note',
     noteEdit.modal && noteEdit.underTheDrawing && noteEdit.selDrawn >= 0,
     JSON.stringify({ open: noteEdit.modal, under: noteEdit.underTheDrawing, sel: noteEdit.selDrawn }));
+  ok('a tap on the drawn piano moves the selected note to that key',
+    noteEdit.kbGeo && /v2-vizcv/.test(noteEdit.kbTop) &&
+    noteEdit.kbGot === noteEdit.kbWant && noteEdit.kbGot !== noteEdit.kbFrom &&
+    noteEdit.kbStep === noteEdit.kbWant &&
+    new RegExp('\u00b7 ').test(noteEdit.kbTitle),
+    JSON.stringify({ from: noteEdit.kbFrom, want: noteEdit.kbWant, got: noteEdit.kbGot,
+                     step: noteEdit.kbStep, title: noteEdit.kbTitle, top: noteEdit.kbTop }));
+  // INVERTED 2026-09-08 with the reason: rows used to GROW while a note was
+  // selected so the gutter keys were finger-sized — and the resize itself was
+  // reported as the defect ("the grid resizes the moment I click a note").
+  // One geometry, always: selecting changes NOTHING about the drawing; the
+  // gutter keys stay reading-sized and the editor's ± Note stepper is the
+  // precision path.
+  ok('selecting a note changes NOTHING about the drawing — the key row holds its size',
+    // 0.2, not 0.01: the two samples straddle the block's keyboard re-pitch,
+    // which may legitimately WIDEN the sticky window a row (content change)
+    // and shift rowH by ~0.1. The defect this guards is the 2x editing growth
+    // (5.2 vs 10.2), which 0.2 separates with room.
+    noteEdit.keyPxIdle > 0 && Math.abs(noteEdit.keyPxSel - noteEdit.keyPxIdle) <= 0.2,
+    JSON.stringify({ selected: noteEdit.keyPxSel, idle: noteEdit.keyPxIdle }));
+  ok('…the key it sits on is LIT, and a key press with nothing selected moves nothing',
+    noteEdit.kbLit !== noteEdit.kbUnlit && noteEdit.kbNoSel &&
+    (noteEdit.kbKeyCols || []).indexOf(noteEdit.kbLit) < 0 &&
+    (noteEdit.kbKeyCols || []).indexOf(noteEdit.kbUnlit) >= 0,
+    JSON.stringify({ lit: noteEdit.kbLit, unlit: noteEdit.kbUnlit, noSel: noteEdit.kbNoSel }));
   ok('the note editor offers length, position, volume, envelope and portamento',
     noteEdit.modal && ['Note', 'Position', 'Length', 'Volume', 'Attack', 'Decay', 'Sustain', 'Release', 'Portamento']
       .every((r2) => (noteEdit.rows || []).indexOf(r2) >= 0), JSON.stringify(noteEdit.rows));
+  // ---- THE KEYBOARD SAYS WHICH KEYS BELONG --------------------------------
+  // It named every pitch and said nothing about which of them are IN the
+  // scale — and it is a control now, so "will this note fit" is asked exactly
+  // when you aim at a key. Read off the CANVAS: a reserved-and-unpainted
+  // gutter is precisely the failure being tested for.
+  const scaleRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, h = document.getElementById('bloom-v2-layers');
+    const c0 = E.getCfg();
+    const sv = { on: c0.keyOn, follow: c0.keyFollow, root: c0.keyRoot, scale: c0.keyScale };
+    const card0 = document.querySelector('.v2-layer');
+    const was = { grp: ((card0.querySelector('.v2-gototab.on') || {}).getAttribute
+                        && card0.querySelector('.v2-gototab.on').getAttribute('data-goto')) || '',
+                  tab: ((card0.querySelector('.v2-pop-tab.on') || {}).getAttribute
+                        && card0.querySelector('.v2-pop-tab.on').getAttribute('data-tab')) || '' };
+    const NM = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const cv = () => document.querySelector('.v2-layer .v2-vizcv');
+    const show = async (mut) => {
+      const c = E.getCfg(); mut(c); E.getCfg();
+      if (h) h._sig = ''; window._v2.render(E); await wait(340);
+      const card = document.querySelector('.v2-layer');
+      card.classList.remove('collapsed');
+      const g = [...card.querySelectorAll('.v2-gototab')]
+        .find((x) => x.getAttribute('data-goto') === 'Content');
+      if (g) { g.click(); await wait(260); }
+    };
+    // ONE PIXEL PER PITCH CLASS, in the gutter — geometry re-read every time,
+    // because the pitch window follows the notes' range and shifts every row.
+    const lit = () => {
+      const c = cv(), bw = c.getBoundingClientRect().width;
+      if (!bw) return null;
+      const pg = c._pitchGeo, plot = c._plotGeo, cx = c.getContext('2d'), dpr = c.width / bw;
+      const seen = {};
+      for (let m = pg.loM; m <= pg.hiM; m++) {
+        const pc = ((m % 12) + 12) % 12;
+        if (seen[NM[pc]]) continue;
+        const yy = Math.round((pg.top + (pg.hiM - m) * pg.rowH + pg.rowH / 2) * dpr);
+        const d = cx.getImageData(Math.round((plot.x0 / 2) * dpr), yy, 1, 1).data;
+        // the two PLAIN key colours; anything else is the in-scale mark
+        const px = d[0] + ',' + d[1] + ',' + d[2];
+        seen[NM[pc]] = (px === '196,169,240' || px === '91,74,134') ? 1 : 0;
+        seen['?' + NM[pc]] = px;
+      }
+      return Object.keys(seen).filter((k) => k[0] !== '?' && seen[k]).sort().join(' ');
+    };
+    const o = {};
+    await show((c) => { c.keyOn = true; c.keyFollow = false; c.keyRoot = 0; c.keyScale = 'major'; });
+    o.cMaj = lit();
+    // …and it MOVES with the key. A static "some keys are marked" would pass
+    // whatever the scale is, which is the asserting-on-nothing trap.
+    await show((c) => { c.keyRoot = 6; });
+    o.fsMaj = lit();
+    // a 12-tone scale lights every key, which says as much as lighting none
+    await show((c) => { c.keyRoot = 0; c.keyScale = 'chromatic'; });
+    o.chromatic = lit();
+    // …and with no key at all there is nothing to be in or out of
+    await show((c) => { c.keyOn = false; });
+    o.keyOff = lit();
+    // A GENUINELY FREE AREA — no key, no progression, no per-layer source.
+    // `_ambKeyRootPc` still answers "what key WOULD apply" here, so without
+    // the guard the gutter lights C major on an area that has no key at all.
+    const svProg = E.getCfg().prog ? E.getCfg().prog.on : null;
+    const svNotes = JSON.stringify((E.getCfg().layers || [])[0].notes || null);
+    await show((c) => { c.keyOn = false; c.keyRoot = 0; c.keyScale = 'major';
+                        if (c.prog) c.prog.on = false;
+                        const L0 = (c.layers || [])[0]; if (L0) delete L0.notes; });
+    o.free = lit();
+    o.freeScale = !!window._v2.scaleAt(E, E.getCfg(), 0, (E.getCfg().layers || [])[0]);
+    await show((c) => { if (c.prog && svProg !== null) c.prog.on = svProg;
+                        const L0 = (c.layers || [])[0];
+                        if (L0 && svNotes && svNotes !== 'null') L0.notes = JSON.parse(svNotes); });
+    await show((c) => { c.keyOn = sv.on; c.keyFollow = sv.follow;
+                        c.keyRoot = sv.root; c.keyScale = sv.scale; });
+    // …and back to the sheet the checks below are standing in
+    try {
+      const cd = document.querySelector('.v2-layer');
+      const g2 = [...cd.querySelectorAll('.v2-gototab')]
+        .find((x) => x.getAttribute('data-goto') === was.grp);
+      if (g2) { g2.click(); await wait(260); }
+      const t2 = [...document.querySelector('.v2-layer').querySelectorAll('.v2-pop-tabs [data-tab]')]
+        .find((x) => x.getAttribute('data-tab') === was.tab);
+      if (t2) { t2.click(); await wait(240); }
+    } catch (e) {}
+    return o;
+  });
+  ok('the drawn piano marks the keys that are IN the scale, and follows the key',
+    scaleRun.cMaj === 'A B C D E F G' && scaleRun.fsMaj === 'A# B C# D# F F# G#' &&
+    scaleRun.chromatic === '' && scaleRun.keyOff === '' &&
+    scaleRun.free === '' && scaleRun.freeScale === false,
+    JSON.stringify(scaleRun));
+
   ok('an unedited note carries no overrides — absent is "the layer decides"',
     noteEdit.cleanBefore === 'dur,midi,t', noteEdit.cleanBefore);
   ok('a note edit is STORED and HEARD, not merely stored',
@@ -4108,7 +6045,7 @@ const ok = (name, cond, detail) => {
     const r = document.querySelector('.v2-layer [data-f="part.rhythm.kind"]');
     r.value = 'euclid'; r.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await new Promise((r) => setTimeout(r, 300));
+  await zz(300);
   const gridOf = () => page.evaluate(() => {
     const card = document.querySelector('.v2-layer');
     const g0 = card.querySelector('.v2-cells');
@@ -4130,16 +6067,36 @@ const ok = (name, cond, detail) => {
               : window._v2.euclidCells(p.rhythm.pulses, p.rhythm.steps, p.rhythm.rotate)).join(''),
       kind: p.rhythm.kind,
       selValue: (card.querySelector('[data-f="part.rhythm.kind"]') || {}).value,
-      opts: [...card.querySelectorAll('[data-f="part.rhythm.kind"] option')].map((o) => o.value).join(','),
+      // SCOPED TO ONE SELECT. The Generated panel carries a second copy of
+      // this field now, so an unscoped option sweep returned the list TWICE
+      // ("pulse,euclid,chance,ground,pulse,euclid,chance,ground") and the
+      // check read it as extra modes — the documented two-copies trap, on the
+      // probe side. Both are built from the one RHYTHM_OPTS, so asking either
+      // is the same claim; `selValue` already reads a single node, and the
+      // two agreeing is pinned by the axis check.
+      opts: (() => { const s0 = card.querySelector('[data-f="part.rhythm.kind"]');
+        return s0 ? [...s0.options].map((o) => o.value).join(',') : ''; })(),
+      selCopies: [...card.querySelectorAll('[data-f="part.rhythm.kind"]')].map((x) => x.value).join(','),
       cells: g.children.length, steps: p.rhythm.steps,
+      // THE VISIBLE PREFIX. `cells` is ONE array serving two length authorities
+      // — the roll's `r.steps` knob and ▦ Steps' derived `bars × grid` — and it
+      // keeps the LONGER so neither form can truncate the other's pattern, so
+      // the stored array can be longer than the grid draws. The claim these
+      // checks make is "the grid draws the stored pattern", which is the
+      // PREFIX; comparing the whole array was only ever incidentally true.
+      modelShown: (p.rhythm.cells || []).slice(0, p.rhythm.steps | 0).join(''),
       cellH: Math.round(c.height), cellW: Math.round(c.width),
       regen: !!card.querySelector('.v2-regen') && getComputedStyle(card.querySelector('.v2-regen')).display !== 'none',
       hint: (card.querySelector('.v2-cellhint') || {}).textContent || '',
     };
   });
   let g = await gridOf();
-  ok('the grid is visible on EUCLID, with no extra mode to find',
-    g.shown && g.opts === 'pulse,euclid,chance', JSON.stringify(g));
+  // RESTATED 2026-09-09: 'ground' JOINED the options — without it a Groundwork
+  // part's select rendered BLANK (value matched nothing) and invited the pick
+  // that drifted the rules to Pulse. 'drawn' stays internal, which is what
+  // "no extra mode" was pinning.
+  ok('the grid is visible on EUCLID, with no extra mode to find (drawn stays internal; ground is a real choice)',
+    g.shown && g.opts === 'pulse,euclid,chance,ground', JSON.stringify(g));
   // Generated, not blank: the knobs ARE the pattern until you touch a cell.
   ok('euclid draws its generated pattern (not blank)', /1/.test(g.dom) && g.kind === 'euclid', JSON.stringify(g));
   ok('the grid meets the touch floor', g.cellH >= 28, 'cell ' + g.cellW + 'x' + g.cellH);
@@ -4152,12 +6109,13 @@ const ok = (name, cond, detail) => {
   const before = g.dom;
   e = await tap('.v2-layer .v2-cell:nth-child(2)');
   g = await gridOf();
-  const flipped = before.split('').filter((c, i) => c !== g.model[i]).length;
+  const flipped = before.split('').filter((c, i) => c !== g.modelShown[i]).length;
   // Compared against the MODEL, not the DOM: an in-place toggle only restyles
   // the cell it touched, so a snapshot that started from an empty grid would
   // look right on screen while the engine plays one lone note.
   ok('tapping a cell edits exactly it, keeping the generated pattern',
-    !e && flipped === 1 && g.dom === g.model, e || (before + ' -> model ' + g.model + ' dom ' + g.dom));
+    !e && flipped === 1 && g.dom === g.modelShown,
+    e || (before + ' -> model ' + g.modelShown + ' dom ' + g.dom + ' (full ' + g.model + ')'));
   ok('the first edit becomes an override, select still reads euclid',
     g.kind === 'drawn' && g.selValue === 'euclid', JSON.stringify(g));
   ok('↻ appears once edited, and the hint says the knobs will redraw it',
@@ -4170,7 +6128,8 @@ const ok = (name, cond, detail) => {
   await tap('.v2-layer .ambient-toggle');
   g = await gridOf();
   ok('an edited pattern survives a card rebuild, still labelled Pattern',
-    g.kind === 'drawn' && g.selValue === 'euclid' && g.shown && g.dom === g.model, JSON.stringify(g));
+    g.kind === 'drawn' && g.selValue === 'euclid' && g.shown && g.dom === g.modelShown,
+    JSON.stringify(g));
 
   // ↻ is the way BACK — the only one, which is why it is a control and not a mode.
   e = await tap('.v2-layer .v2-regen');
@@ -4181,7 +6140,7 @@ const ok = (name, cond, detail) => {
     const el = document.querySelector('.v2-layer [data-f="part.rhythm.pulses"]');
     el.value = '5'; el.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await new Promise((r) => setTimeout(r, 300));
+  await zz(300);
   g = await gridOf();
   ok('Pulses redraws the grid live', g.dom.split('1').length - 1 === 5, JSON.stringify(g));
 
@@ -4189,7 +6148,7 @@ const ok = (name, cond, detail) => {
     const el = document.querySelector('.v2-layer [data-f="part.rhythm.steps"]');
     el.value = '12'; el.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await new Promise((r) => setTimeout(r, 300));
+  await zz(300);
   g = await gridOf();
   ok('Steps resizes the grid (model and DOM agree)',
     g.steps === 12 && g.cells === 12 && g.dom.length === 12, JSON.stringify(g));
@@ -4200,18 +6159,20 @@ const ok = (name, cond, detail) => {
     const el = document.querySelector('.v2-layer [data-f="part.rhythm.rotate"]');
     el.value = '2'; el.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await new Promise((r) => setTimeout(r, 300));
+  await zz(300);
   g = await gridOf();
   ok('a knob nudge takes an edited grid back to the formula',
     g.kind === 'euclid' && !g.regen, JSON.stringify(g));
 
-  // ---- DOOR 3: A PHRASE FROM THE COMPOSE GRID ------------------------------
+  // ---- DOOR 3: A TAKE FROM THE BANK ---------------------------------------
   // The second surface the user named. Phrases are composed in a layer's ✎ Grid
   // and saved to `savedSequences`; v2 needs a reader, not an editor of its own.
-  // RESTATED with the merge: ♪ Phrase used to open a PICKER over the same bank
-  // the Phrases tab draws — two surfaces for one list, called two different
-  // things ("don't think we need both Saved and Phrases"). The door NAVIGATES
-  // now, exactly as 🔍 Find a control does, and the tab is the one home.
+  // RESTATED TWICE, and the second restatement RETIRES the door. First ♪ Phrase
+  // opened a PICKER over the same list the tab draws; then it became a signpost
+  // that merely navigated there. Both were one list wearing two words ("do we
+  // need both Phrases and Phrase"), and both filed the bank under WRITTEN —
+  // which it is not, since a GENERATED roll banks as readily as a drawn phrase.
+  // So the Material row carries no phrase door at all, and the tab is BANK.
   const bankTab = () => page.evaluate(() => {
     const c = document.querySelector('.v2-layer');
     const row = c && c.querySelector('.v2-pop-pane .v2-bankrow');
@@ -4221,14 +6182,83 @@ const ok = (name, cond, detail) => {
              empty: (row.querySelector('.ambient-hint') || {}).textContent || '',
              pickers: document.querySelectorAll('.ambient-addpop-ov').length };
   });
-  e = await tap('.v2-layer .v2-adopt');
-  await new Promise((r) => setTimeout(r, 400));
+  // THE DOOR IS GONE — pinned by ABSENCE, in the view the user has open, since
+  // "we removed it" is exactly the kind of claim that quietly regresses.
+  const goneRun = await page.evaluate(() => {
+    const c = document.querySelector('.v2-layer');
+    const row = c.querySelector('.v2-notesrow');
+    return { adopt: c.querySelectorAll('.v2-adopt').length,
+             written: [...(row ? row.querySelectorAll('.v2-matgrp') : [])]
+               .map((g) => [...g.querySelectorAll('.ambient-seg')].map((b) =>
+                 (b.childNodes[0] || {}).textContent.trim()).join('+')).join(' | '),
+             sayPhrase: [...c.querySelectorAll('.ambient-seg')]
+               .filter((b) => /^\u266a Phrase$/.test((b.childNodes[0] || {}).textContent.trim())).length };
+  });
+  ok('the Material row carries NO phrase door — the Bank tab is the one home',
+    goneRun.adopt === 0 && goneRun.sayPhrase === 0 && /Written/.test(goneRun.written),
+    JSON.stringify(goneRun));
+  // …and the bank is reachable from the strip, as its own collapsed chip.
+  const toBank = () => page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const c = document.querySelector('.v2-layer');
+    c.classList.remove('collapsed');
+    const g = [...c.querySelectorAll('.v2-gototab')]
+      .find((x) => x.getAttribute('data-goto') === 'Content');
+    if (g) { g.click(); await wait(250); }
+    const t = [...c.querySelectorAll('.v2-pop-tabs [data-tab]')]
+      .find((x) => x.getAttribute('data-tab') === 'Bank');
+    if (!t) return false; t.click(); return true;
+  });
+  ok('the Bank tab is on the strip', await toBank());
+  await zz(400);
   let pop = await bankTab();
-  // An empty bank is not an error — it is a "here is where these come from".
-  ok('the Phrase door opens the one phrase list — no second picker',
-    !e && !!pop && pop.tab === 'Phrases' && pop.pickers === 0, e || JSON.stringify(pop));
-  ok('an empty bank says where phrases come from',
-    pop && !pop.items.length && /Save this take|compose/.test(pop.empty), JSON.stringify(pop));
+  // An empty bank is not an error — it is a "here is where these come from",
+  // and it must name BOTH origins now that it is not filed under Written.
+  ok('the Bank tab opens the one list — no second picker',
+    !!pop && pop.tab === 'Bank' && pop.pickers === 0, JSON.stringify(pop));
+  ok('an empty bank says where takes come from, generated or written',
+    pop && !pop.items.length && /Save this take|compose/.test(pop.empty) &&
+    /generated or written/i.test(pop.empty), JSON.stringify(pop));
+
+  // THE PREMISE OF THE RENAME, MEASURED: a GENERATED take banks in one press,
+  // and doing so does NOT freeze the part. It used to render only on a written
+  // one, so the only route was 🔒 Lock first — i.e. "keep this" also meant
+  // "and stop generating", which is a different decision. The banked notes come
+  // from the same helper 🔒 uses, so what lands is what Lock would have written.
+  const bankGen = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    const svPrompt = window.prompt, svConfirm = window.confirm;
+    window.prompt = () => 'genTake'; window.confirm = () => true;
+    L().part.kind = 'live'; L().part.notes = []; E.getCfg();
+    const h0 = document.getElementById('bloom-v2-layers'); if (h0) h0._sig = '';
+    window._v2.render(E); await wait(240);
+    card().classList.remove('collapsed');
+    const o = { kindBefore: L().part.kind };
+    try {
+      const back = [...card().querySelectorAll('.v2-pop-tabs [data-tab]')]
+        .find((x) => x.getAttribute('data-tab') === 'Material');
+      if (back) back.click(); await wait(200);
+      const b = card().querySelector('.v2-savetake');
+      o.button = !!b && b.getBoundingClientRect().height > 0;
+      if (b) { b.click(); await wait(500); }
+      const ent = savedSequences.find((x) => x && x.name === 'genTake');
+      o.banked = !!ent;
+      o.notes = ent ? (ent.steps || []).filter((x) => x && (x.freq != null || x.chord)).length : 0;
+      o.kindAfter = L().part.kind;
+      o.stillGenerating = (L().part.notes || []).length === 0;
+    } catch (e2) { o.err = String(e2 && e2.message || e2); }
+    // ALWAYS restore — a stub left installed masks a MISSING prompt later on.
+    window.prompt = svPrompt; window.confirm = svConfirm;
+    try { savedSequences = savedSequences.filter((x) => !x || x.name !== 'genTake');
+          if (typeof persistSaved === 'function') persistSaved(); } catch (e3) {}
+    return o;
+  });
+  ok('a GENERATED take banks in one press, and the part keeps generating',
+    bankGen.button && bankGen.banked && bankGen.notes > 0 &&
+    bankGen.kindBefore === 'live' && bankGen.kindAfter === 'live' && bankGen.stillGenerating,
+    JSON.stringify(bankGen));
 
   // Seed the bank the way the app does — a phrase with a rest and a chord step,
   // both of which have to survive the trip: a rest contributes TIME and no note,
@@ -4243,10 +6273,10 @@ const ok = (name, cond, detail) => {
     const h2 = document.getElementById('bloom-v2-layers'); if (h2) h2._sig = '';
     window._v2.render(_masterEng);
   });
-  await new Promise((r) => setTimeout(r, 300));
+  await zz(300);
   await page.evaluate(() => { document.querySelector('.v2-layer').classList.remove('collapsed'); });
-  await tap('.v2-layer .v2-adopt');
-  await new Promise((r) => setTimeout(r, 400));
+  await toBank();
+  await zz(400);
   pop = await bankTab();
   ok('the bank lists the phrase with its length',
     pop && pop.items.some((b) => /gateRiff/.test(b)), JSON.stringify(pop));
@@ -4257,7 +6287,7 @@ const ok = (name, cond, detail) => {
     const r = b.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   });
-  if (chosen) { await page.touchscreen.tap(chosen.x, chosen.y); await new Promise((r) => setTimeout(r, 500)); }
+  if (chosen) { await page.touchscreen.tap(chosen.x, chosen.y); await zz(500); }
   const adopted = await page.evaluate(() => {
     const p = (_masterEng.getCfg().layers || [])[0].part;
     return { kind: p.kind, notes: (p.notes || []).length, bars: p.bars, from: p.from || null,
@@ -4282,6 +6312,2170 @@ const ok = (name, cond, detail) => {
     /^(pulse|euclid|drawn|chance)$/.test(adopted.liveSpec) && adopted.cells > 0,
     JSON.stringify({ liveSpec: adopted.liveSpec, cells: adopted.cells }));
 
+  // ---- THE DRAWING IS A PIANO-ROLL EDITOR --------------------------------
+  // Drag a note to move it, drag its right edge to resize it, and — in ✎ Draw
+  // — tap empty space to add one. All three snap to `part.grid`, a note VALUE
+  // per bar: it used to be `rhythm.steps` across the WHOLE cycle, which on a
+  // 5-bar part put the editing grid at 1.25 beats.
+  const rollSet = async () => page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, h = document.getElementById('bloom-v2-layers');
+    const L = (E.getCfg().layers || [])[0];
+    L.part.kind = 'recorded'; L.part.bars = 2; delete L.part.grid;
+    L.part.notes = [{ t: 0, midi: 60, dur: 0.125 }, { t: 0.5, midi: 64, dur: 0.125 }];
+    E.getCfg();
+    const c0 = document.querySelector('.v2-layer'); if (c0) c0.classList.remove('collapsed');
+    if (h) h._sig = ''; window._v2.render(E); await wait(380);
+    const c = document.querySelector('.v2-layer'); c.classList.remove('collapsed');
+    const g = [...c.querySelectorAll('.v2-gototab')]
+      .find((x) => x.getAttribute('data-goto') === 'Content');
+    if (g) { g.click(); await wait(300); }
+    const cv = c.querySelector('.v2-vizcv');
+    cv.scrollIntoView({ block: 'center' });
+    return !!cv.getBoundingClientRect().width;
+  });
+  // WHERE THE FIRST NOTE IS, in page coordinates, plus the grid cell in px —
+  // re-read every time, because a commit redraws and the geometry follows the
+  // notes' own range.
+  const noteAt = () => page.evaluate(() => {
+    const cv = document.querySelector('.v2-layer .v2-vizcv');
+    const r = cv.getBoundingClientRect();
+    const hb = (cv._hits || []).slice().sort((a, b) => a.t - b.t)[0];
+    if (!hb) return null;
+    const L = (_masterEng.getCfg().layers || [])[0];
+    return { mid: { x: r.left + hb.x + hb.w / 2, y: r.top + hb.y + 3 },
+             edge: { x: r.left + hb.x + hb.w - 2, y: r.top + hb.y + 3 },
+             rowH: cv._pitchGeo.rowH,
+             cellPx: cv._plotGeo.w / window._v2.gridCells(L) };
+  });
+  const partNotes = () => page.evaluate(() =>
+    (_masterEng.getCfg().layers || [])[0].part.notes.slice()
+      .sort((a, b) => a.t - b.t).map((n) => [n.t, n.midi, n.dur]));
+  const drag = async (from, dx, dy) => {
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + dx, from.y + dy, { steps: 8 });
+    await page.mouse.up();
+    await zz(450);
+  };
+  // …and a PITCH drag. The drawing does NOT grow for the gesture any more —
+  // one geometry, always (the stated contract) — and the value is the TOTAL
+  // displacement from the press, so the target is measured from `from.y`
+  // itself: the arm move is part of the travel, not a rebase point.
+  const dragPitch = async (from, dx, semis) => {
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x, from.y - 8);          // past the 5px threshold: arm
+    const rowH = await page.evaluate(() => {
+      const cv = document.querySelector('.v2-layer .v2-vizcv');
+      return (cv && cv._pitchGeo) ? cv._pitchGeo.rowH : 0;
+    });
+    // +0.35 rows: the DETENT engages 0.85 past a row boundary (k =
+    // ceil(raw − 0.85), the anti-wobble hysteresis), so a target of
+    // semis + 0.35 rows sits mid-band for k = semis with half a row of
+    // margin either side
+    await page.mouse.move(from.x + dx, from.y - (semis + 0.35) * rowH, { steps: 8 });
+    await page.mouse.up();
+    await zz(450);
+    return rowH;
+  };
+  await rollSet();
+  let np = await noteAt();
+  const rollBefore = await partNotes();
+  const edOpen = () => page.evaluate(() => {
+    const o = document.querySelector('.v2-layer .v2-neinline');
+    return !!o && !o.hidden;
+  });
+  const edBefore = await edOpen();
+  // DRAG BY A NON-MULTIPLE OF THE CELL. Dragging exactly two cells lands on
+  // two cells with or without snapping, so the first version of this check
+  // passed its own poison — the asserting-on-something-that-works-regardless
+  // trap. 2.4 cells can only read as 2 if it was rounded.
+  //
+  // RESTATED 2026-09-08 with the reason: ONE GESTURE IS ONE AXIS now. The old
+  // check dragged time AND pitch in a single diagonal gesture, which is
+  // exactly the coupling reported as the defect ("moving a note vertically
+  // and horizontally should be totally independent"). A horizontal drag moves
+  // TIME only — 1.35 rows of deliberate vertical drift ride along and must
+  // move NOTHING vertically (without the axis lock, the 0.85-row detent flips
+  // a row at that drift, so this discriminates); a vertical drag moves PITCH
+  // only, with 0.7 cells of horizontal drift that would snap a whole cell.
+  await drag(np.mid, np.cellPx * 2.4, -1.35 * np.rowH);
+  const movedT = await partNotes();
+  ok('a horizontal drag moves the note in TIME only, snapped — vertical drift moves nothing',
+    // a 2-bar part at 1/16 = 32 cells, so two cells is 1/16 of the cycle
+    movedT[0][0] === 0.0625 && movedT[0][1] === rollBefore[0][1] &&
+    movedT[0][2] === rollBefore[0][2] && movedT[1].join() === rollBefore[1].join(),
+    JSON.stringify({ before: rollBefore, after: movedT }));
+  np = await noteAt();
+  const dragRowH = await dragPitch(np.mid, np.cellPx * 0.7, 3);
+  const moved = await partNotes();
+  ok('a vertical drag moves the note in PITCH only — horizontal drift moves nothing',
+    moved[0][0] === movedT[0][0] && moved[0][1] === rollBefore[0][1] + 3 &&
+    moved[0][2] === rollBefore[0][2] && moved[1].join() === rollBefore[1].join(),
+    JSON.stringify({ before: movedT, after: moved, idleRowH: np.rowH, dragRowH }));
+  // …and the row did NOT grow for the gesture. INVERTED 2026-09-08 with the
+  // reason: the grow-for-editing design (rows to 10/12px on grab, absorbing
+  // scroll, shrink on release) was itself reported as the defect — "the
+  // grid resizes, the note events all shift, I lose my bearings". One
+  // geometry, always: the drawn row IS the drag resolution on a mouse
+  // (total-displacement math, one half-step per row), and a finger gets a
+  // 9px gain floor instead of a resize.
+  ok('the drawing is IDENTICAL while a note is held — nothing grows for the gesture',
+    Math.abs(dragRowH - np.rowH) < 0.01,
+    JSON.stringify({ idle: np.rowH, dragging: dragRowH }));
+  // …and a DRAG is not also a click: letting go must not toggle the editor.
+  ok('a drag does not also open or close the note editor',
+    (await edOpen()) === edBefore, JSON.stringify({ before: edBefore }));
+
+  // THE AXIS MUST NOT MOVE UNDER THE FINGER. The pitch window follows the
+  // notes' OWN range, so dragging one moves the very thing that defines it —
+  // measured on a C4–C6 part, `loM` walked 59 → 71 and the canvas collapsed
+  // 181px → 109px while the note's VALUE tracked the finger perfectly.
+  // Reported as "hops around skipping notes": the number was right and the
+  // PICTURE was moving. Sampled DURING the gesture, which is the only place
+  // this is visible — before and after both look fine.
+  const axisRun = await (async () => {
+    await page.evaluate(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+      const E = _masterEng, h = document.getElementById('bloom-v2-layers');
+      const L = (E.getCfg().layers || [])[0];
+      // a WIDE range, so the window has room to walk if it is going to
+      L.part.kind = 'recorded'; L.part.bars = 2;
+      L.part.notes = [{ t: 0, midi: 60, dur: 0.125 }, { t: 0.25, midi: 72, dur: 0.125 },
+                      { t: 0.5, midi: 84, dur: 0.125 }];
+      E.getCfg();
+      const c0 = document.querySelector('.v2-layer'); c0.classList.remove('collapsed');
+      if (h) h._sig = ''; window._v2.render(E); await wait(380);
+      const c = document.querySelector('.v2-layer'); c.classList.remove('collapsed');
+      const g = [...c.querySelectorAll('.v2-gototab')]
+        .find((x) => x.getAttribute('data-goto') === 'Content');
+      if (g) { g.click(); await wait(300); }
+      c.querySelector('.v2-vizcv').scrollIntoView({ block: 'center' });
+    });
+    const st = await page.evaluate(() => {
+      const cv = document.querySelector('.v2-layer .v2-vizcv');
+      const r = cv.getBoundingClientRect();
+      const hb = (cv._hits || []).slice().sort((a, b) => a.t - b.t)[0];
+      const pg = cv._pitchGeo;
+      const n = (_masterEng.getCfg().layers || [])[0].part.notes
+        .slice().sort((a, b) => a.t - b.t)[0];
+      return { x: r.left + hb.x + hb.w / 2, y: r.top + hb.y + 3, rowH: pg.rowH,
+               noteY: Math.round(r.top + pg.top + (pg.hiM - n.midi) * pg.rowH + pg.rowH / 2) };
+    });
+    await page.mouse.move(st.x, st.y);
+    await page.mouse.down();
+    await page.mouse.move(st.x, st.y - 7);            // past the threshold: arm (7px sits mid-detent at the 5.15px row)
+    const held = await page.evaluate(() => {
+      const cv = document.querySelector('.v2-layer .v2-vizcv');
+      const r = cv.getBoundingClientRect();
+      const n = (_masterEng.getCfg().layers || [])[0].part.notes
+        .slice().sort((a, b) => a.t - b.t)[0];
+      const pg = cv._pitchGeo;
+      return { rowH: pg.rowH,
+               noteY: Math.round(r.top + pg.top + (pg.hiM - n.midi) * pg.rowH + pg.rowH / 2) };
+    });
+    const seen = [];
+    for (let i = 1; i <= 8; i++) {
+      await page.mouse.move(st.x, st.y - 7 - i * held.rowH, { steps: 1 });
+      await zz(60);
+      seen.push(await page.evaluate(() => {
+        const cv = document.querySelector('.v2-layer .v2-vizcv');
+        const pg = cv._pitchGeo, n = (_masterEng.getCfg().layers || [])[0]
+          .part.notes.slice().sort((a, b) => a.t - b.t)[0];
+        return { axis: pg.loM + '..' + pg.hiM + '@' + Math.round(pg.rowH * 100) +
+                       'h' + Math.round(cv.getBoundingClientRect().height), midi: n.midi };
+      }));
+    }
+    await page.mouse.up();
+    await zz(350);
+    // …and the RELEASE re-tightens nothing: the window is STICKY (it may
+    // only widen, for the life of the material), so letting go of a dragged
+    // extremal note must not resize or re-scale the drawing — "the grid
+    // should never resize before, during or AFTER" is the stated contract.
+    const after = await page.evaluate(() => {
+      const cv = document.querySelector('.v2-layer .v2-vizcv');
+      const pg = cv._pitchGeo;
+      return pg.loM + '..' + pg.hiM + '@' + Math.round(pg.rowH * 100) +
+             'h' + Math.round(cv.getBoundingClientRect().height);
+    });
+    const steps = seen.map((x) => x.midi);
+    return { after,
+             axes: [...new Set(seen.map((x) => x.axis))],
+             deltas: steps.slice(1).map((v, i) => v - steps[i]),
+             grabJump: Math.abs((held.noteY - (st.y - 7)) - (st.noteY - st.y)),
+             heldRowH: Math.round(held.rowH * 100) / 100, idleRowH: Math.round(st.rowH * 100) / 100 };
+  })();
+  ok('the pitch axis is FROZEN while a note is dragged — it cannot re-scale under the finger',
+    axisRun.axes.length === 1 && axisRun.deltas.length === 7 &&
+    axisRun.deltas.every((d) => d === 1),
+    JSON.stringify(axisRun));
+  // …and the GRAB changes nothing about the drawing: same row height as
+  // idle (the grow-and-absorb dance this replaces was itself the reported
+  // defect — every other note shifting the moment one was held).
+  ok('the grab changes NOTHING — the drawing at hold is the drawing at rest',
+    Math.abs(axisRun.heldRowH - axisRun.idleRowH) < 0.01,
+    JSON.stringify(axisRun));
+  ok('the RELEASE changes nothing either — the sticky window never re-tightens',
+    axisRun.axes.length === 1 && axisRun.after === axisRun.axes[0],
+    JSON.stringify({ during: axisRun.axes, after: axisRun.after }));
+
+  // ---- HAND WOBBLE MUST NOT FLICKER THE NOTE ------------------------------
+  // Plain round() flips at every half-row boundary, so ±2px of jitter at a
+  // 5-6px row bounced the note between two rows — reported as "still skips
+  // around vertically when trying to drag". The drag runs through a DETENT
+  // (k = ceil(raw − 0.85)); what matters is the GAP between adjacent
+  // thresholds (0.7 rows ≈ 4px), which is what absorbs the jitter. The
+  // drive: park mid-band, jitter ±2px, the value must not move once.
+  const wobbleRun = await (async () => {
+    await rollSet();
+    const np8 = await noteAt();
+    await page.mouse.move(np8.mid.x, np8.mid.y);
+    await page.mouse.down();
+    await page.mouse.move(np8.mid.x, np8.mid.y - 7);              // arm
+    const base = np8.mid.y - 2.35 * np8.rowH;                     // mid-band, k=2
+    await page.mouse.move(np8.mid.x, base, { steps: 2 });
+    await zz(80);
+    const seen8 = [];
+    for (let j = 0; j < 6; j++) {
+      await page.mouse.move(np8.mid.x, base + (j % 2 ? 2 : -2));
+      await zz(40);
+      seen8.push(await page.evaluate(() =>
+        (_masterEng.getCfg().layers || [])[0].part.notes
+          .slice().sort((a, b) => a.t - b.t)[0].midi));
+    }
+    await page.mouse.up();
+    await zz(300);
+    return { vals: seen8 };
+  })();
+  ok('±2px of hand wobble at a row boundary moves NOTHING — the detent holds',
+    new Set(wobbleRun.vals).size === 1, JSON.stringify(wobbleRun));
+  await rollSet();
+
+  // ---- A HARMONY-REMAPPED PART: THE HAND WINS -----------------------------
+  // A take locked under a progression DEFAULTS to harmony 'chordlock', which
+  // remaps stored pitches into the sounding chord — stored ≠ drawn, so the
+  // gutter mark (stored) sat rows from the block (drawn) and a semitone drag
+  // stuck-then-jumped between chord tones (field report, with a screenshot).
+  // Two contracts: the mark resolves from the DRAWN note (`nidx`), and a
+  // hand-drag PINS the note (`n.hx`) to exactly the pitch under the hand.
+  const chordlockRun = await (async () => {
+    const sv = await page.evaluate(() => {
+      const E = _masterEng, cfg = E.getCfg();
+      const L = (cfg.layers || [])[0];
+      const keep = { prog: JSON.stringify(cfg.prog || null), harmony: L.harmony || null };
+      cfg.prog = { on: true, chords: [
+        { root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] },
+        { root: 7, intervals: [0, 4, 7] }, { root: 9, intervals: [0, 3, 7] }] };
+      L.harmony = 'chordlock';
+      L.part.key = { root: 0, scale: 'major' };
+      L.part.notes = [{ t: 0, midi: 62, dur: 0.125 }, { t: 0.5, midi: 65, dur: 0.125 }];
+      E.getCfg();
+      const h = document.getElementById('bloom-v2-layers');
+      h._sig = ''; window._v2.render(E);
+      return keep;
+    });
+    await zz(400);
+    await page.evaluate(async () => {
+      const c = document.querySelector('.v2-layer'); c.classList.remove('collapsed');
+      const g = [...c.querySelectorAll('.v2-gototab')]
+        .find((x) => x.getAttribute('data-goto') === 'Content');
+      if (g) { g.click(); }
+      await new Promise((r) => setTimeout(r, Math.round(300 * (window.__WS || 1))));
+      c.querySelector('.v2-vizcv').scrollIntoView({ block: 'center' });
+    });
+    await zz(250);
+    const o9 = await page.evaluate(() => {
+      const cv = document.querySelector('.v2-layer .v2-vizcv');
+      const L = (_masterEng.getCfg().layers || [])[0];
+      const stored = L.part.notes.slice().sort((a, b) => a.t - b.t).map((n) => n.midi);
+      const drawn = (cv._hits || []).slice().sort((a, b) => a.t - b.t)
+        .map((hb) => Math.round(hb.midi));
+      const r = cv.getBoundingClientRect();
+      const hb0 = (cv._hits || []).slice().sort((a, b) => a.t - b.t)[0];
+      return { stored, drawn, x: r.left + hb0.x + hb0.w / 2, y: r.top + hb0.y + 3,
+               rowH: cv._pitchGeo.rowH };
+    });
+    // drag the first note up two detents
+    await page.mouse.move(o9.x, o9.y);
+    await page.mouse.down();
+    await page.mouse.move(o9.x, o9.y - 7);
+    await zz(60);
+    await page.mouse.move(o9.x, o9.y - 2.35 * o9.rowH, { steps: 2 });
+    await zz(80);
+    const held9 = await page.evaluate(() => {
+      const cv = document.querySelector('.v2-layer .v2-vizcv');
+      const L = (_masterEng.getCfg().layers || [])[0];
+      const n = L.part.notes.slice().sort((a, b) => a.t - b.t)[0];
+      const hb = (cv._hits || []).slice().sort((a, b) => a.t - b.t)[0];
+      return { hx: !!n.hx, stored: n.midi, drawn: Math.round(hb.midi) };
+    });
+    await page.mouse.up();
+    await zz(400);
+    const end9 = await page.evaluate(() => {
+      const L = (_masterEng.getCfg().layers || [])[0];
+      const n = L.part.notes.slice().sort((a, b) => a.t - b.t)[0];
+      const cv = document.querySelector('.v2-layer .v2-vizcv');
+      const hb = (cv._hits || []).slice().sort((a, b) => a.t - b.t)[0];
+      return { hx: !!n.hx, stored: n.midi, drawn: Math.round(hb.midi) };
+    });
+    await page.evaluate((keep) => {
+      const E = _masterEng, cfg = E.getCfg();
+      const L = (cfg.layers || [])[0];
+      const pr = JSON.parse(keep.prog);
+      if (pr) cfg.prog = pr; else delete cfg.prog;
+      if (keep.harmony) L.harmony = keep.harmony; else delete L.harmony;
+      E.getCfg();
+    }, sv);
+    return { remaps: o9.stored.join() !== o9.drawn.join(),
+             held: held9, end: end9, drawn0: o9.drawn[0] };
+  })();
+  ok('chordlock: a hand-drag PINS the note — it moves with the hand and stays where dropped',
+    chordlockRun.remaps && chordlockRun.held.hx &&
+    chordlockRun.held.stored === chordlockRun.held.drawn &&
+    chordlockRun.end.stored === chordlockRun.end.drawn &&
+    chordlockRun.end.drawn === chordlockRun.drawn0 + 2,
+    JSON.stringify(chordlockRun));
+
+  // ---- TIME AND PITCH ARE INDEPENDENT IN THE EDITOR TOO, AND ± NEVER
+  // RESIZES (2026-09-08, user: "moving a note past a bar boundary shifts it
+  // up or down towards the nearest note; the +/- buttons should not resize").
+  // Two contracts: (1) ± Position across a chord change must not move the
+  // note's SOUNDING pitch — the chordlock remap is a function of the note's
+  // own onset, so an unpinned time move re-voiced it into the new chord's
+  // tones; the pos edit pins now, the drag's own rule. (2) ± Note walking a
+  // note past the window's edge must not change the canvas height — the held
+  // window SHIFTS at a constant row count (the axis scrolls), never grows.
+  const indepRun = await (async () => {
+    const sv = await page.evaluate(() => {
+      const E = _masterEng, cfg = E.getCfg();
+      const L = (cfg.layers || [])[0];
+      const keep = { prog: JSON.stringify(cfg.prog || null), harmony: L.harmony || null,
+                     take: L.part.take, key: JSON.stringify(L.part.key || null) };
+      cfg.prog = { on: true, chords: [
+        { root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] }] };
+      L.harmony = 'chordlock';
+      L.part.kind = 'recorded'; L.part.bars = 2;
+      L.part.take = 77;                   // a fresh window sig — no stale hold
+      L.part.key = { root: 0, scale: 'major' };
+      // one note ONE CELL shy of the bar line (32 cells over 2 bars → cell
+      // 15), stored OFF the chord tones so the remap genuinely moves it
+      L.part.notes = [{ t: 15 / 32, midi: 62, dur: 0.03125 },
+                      { t: 0.75, midi: 65, dur: 0.03125 }];
+      E.getCfg();
+      const h = document.getElementById('bloom-v2-layers');
+      h._sig = ''; window._v2.render(E);
+      return keep;
+    });
+    await zz(400);
+    await page.evaluate(async () => {
+      const c = document.querySelector('.v2-layer'); c.classList.remove('collapsed');
+      const g = [...c.querySelectorAll('.v2-gototab')]
+        .find((x) => x.getAttribute('data-goto') === 'Content');
+      if (g) g.click();
+      await new Promise((r) => setTimeout(r, Math.round(300 * (window.__WS || 1))));
+      c.querySelector('.v2-vizcv').scrollIntoView({ block: 'center' });
+    });
+    await zz(250);
+    const t0 = await page.evaluate(() => {
+      const cv = document.querySelector('.v2-layer .v2-vizcv');
+      const r = cv.getBoundingClientRect();
+      const hb = (cv._hits || []).slice().sort((a, b) => a.t - b.t)[0];
+      return { x: r.left + hb.x + hb.w / 2, y: r.top + hb.y + 3,
+               drawn: Math.round(hb.midi) };
+    });
+    await page.mouse.click(t0.x, t0.y);                 // open the editor
+    await zz(450);
+    const press = (sf) => page.evaluate((sf) => {
+      const inp = document.querySelector('.v2-layer .v2-neinline .ambient-step-inp[data-sf="' + sf + '"]');
+      const b = inp && inp.closest('.ambient-ctrl').querySelector('.ambient-step-up');
+      if (b) b.click(); return !!b;
+    }, sf);
+    await press('pos');                                  // across the bar line
+    await zz(350);
+    const crossed = await page.evaluate(() => {
+      const cv = document.querySelector('.v2-layer .v2-vizcv');
+      const L = (_masterEng.getCfg().layers || [])[0];
+      const n = L.part.notes.slice().sort((a, b) => a.t - b.t)[0];
+      const hb = (cv._hits || []).slice().sort((a, b) => a.t - b.t)[0];
+      return { t: n.t, hx: !!n.hx, drawn: hb ? Math.round(hb.midi) : null };
+    });
+    // …then walk ± Note upward past the window's edge: height must hold
+    const hts = [];
+    for (let i = 0; i < 8; i++) {
+      await press('midi');
+      await zz(250);
+      hts.push(await page.evaluate(() => {
+        const cv = document.querySelector('.v2-layer .v2-vizcv');
+        const L = (_masterEng.getCfg().layers || [])[0];
+        const n = L.part.notes.slice().sort((a, b) => a.t - b.t)[0];
+        const pg = cv._pitchGeo;
+        return { h: Math.round(cv.getBoundingClientRect().height),
+                 stored: n.midi, win: pg.loM + '..' + pg.hiM };
+      }));
+    }
+    await page.evaluate(() => {                          // close the editor
+      const b = document.querySelector('.v2-layer .v2-neinline [data-na="done"]');
+      if (b) b.click();
+    });
+    await zz(250);
+    await page.evaluate((keep) => {
+      const E = _masterEng, cfg = E.getCfg();
+      const L = (cfg.layers || [])[0];
+      const pr = JSON.parse(keep.prog);
+      if (pr) cfg.prog = pr; else delete cfg.prog;
+      if (keep.harmony) L.harmony = keep.harmony; else delete L.harmony;
+      // the take and the written key are FIXTURE, not subject — a leaked
+      // take draws a different roll for every later live-part probe (the
+      // one-page-one-state trap, again)
+      if (keep.take != null) L.part.take = keep.take; else delete L.part.take;
+      const pk = JSON.parse(keep.key);
+      if (pk) L.part.key = pk; else delete L.part.key;
+      E.getCfg();
+    }, sv);
+    return { drawn0: t0.drawn, crossed, hts };
+  })();
+  ok('± Position across a chord change moves the note in TIME only — the pin holds its pitch',
+    Math.abs(indepRun.crossed.t - 0.5) < 1e-9 && indepRun.crossed.hx &&
+    indepRun.crossed.drawn === indepRun.drawn0,
+    JSON.stringify({ drawn0: indepRun.drawn0, crossed: indepRun.crossed }));
+  ok('± Note past the window edge never changes the canvas height — the axis scrolls, it does not grow',
+    indepRun.hts.length === 8 &&
+    indepRun.hts.every((s) => s.h === indepRun.hts[0].h) &&
+    indepRun.hts.every((s, i) => i === 0 || s.stored - indepRun.hts[i - 1].stored === 1) &&
+    indepRun.hts[7].win !== indepRun.hts[0].win,        // it DID cross the edge
+    JSON.stringify(indepRun.hts));
+  await rollSet();
+  await rollSet();
+
+  // ---- A PRESS IS NOT A GESTURE: the page must not move until one exists --
+  // Growing the rows + the absorbing scroll used to run on the bare
+  // pointerdown, so a plain TAP was a grow → shrink → grow-again (the
+  // editor opening) — measured 503px of scroll for one tap, reported as
+  // "clicking into the visualizer is jittery and the screen jumps". The
+  // growth arms at 5px of travel now; a press that never travels changes
+  // NOTHING. Sampled DURING the hold, which is the only place this shows.
+  const pressRun = await (async () => {
+    const np2 = await noteAt();
+    const before = await page.evaluate(() => ({
+      scroll: Math.round((document.scrollingElement || document.documentElement).scrollTop),
+      cvH: Math.round(document.querySelector('.v2-layer .v2-vizcv').getBoundingClientRect().height) }));
+    await page.mouse.move(np2.mid.x, np2.mid.y);
+    await page.mouse.down();
+    await zz(150);
+    const held = await page.evaluate(() => ({
+      scroll: Math.round((document.scrollingElement || document.documentElement).scrollTop),
+      cvH: Math.round(document.querySelector('.v2-layer .v2-vizcv').getBoundingClientRect().height) }));
+    await page.mouse.up();
+    await zz(450);
+    // …and the release opens the editor with a BOUNDED reveal: the editor is
+    // taller than a phone viewport, so `scrollIntoView(nearest)` aligned its
+    // top and threw the DRAWING off the screen — the note you tapped has to
+    // stay visible, because seeing it move is the inline editor's whole point.
+    const after = await page.evaluate(() => {
+      const cv = document.querySelector('.v2-layer .v2-vizcv');
+      const r = cv.getBoundingClientRect();
+      const vh = window.innerHeight || 780;
+      return { scroll: Math.round((document.scrollingElement || document.documentElement).scrollTop),
+               cvOnScreen: r.bottom > 40 && r.top < vh - 40,
+               edOpen: !!document.querySelector('.v2-layer .v2-neinline:not([hidden])') };
+    });
+    return { before, held, after };
+  })();
+  ok('a bare press on a note moves NOTHING — no scroll, no resize, until the drag arms',
+    pressRun.held.scroll === pressRun.before.scroll && pressRun.held.cvH === pressRun.before.cvH,
+    JSON.stringify(pressRun));
+  ok('tapping a note opens the editor WITHOUT throwing the drawing off the screen',
+    pressRun.after.edOpen && pressRun.after.cvOnScreen &&
+    Math.abs(pressRun.after.scroll - pressRun.before.scroll) <= 220,
+    JSON.stringify(pressRun));
+  // close the editor the way a finger would — tapping the note again toggles
+  await (async () => {
+    const np3 = await noteAt();
+    if (np3) { await page.mouse.click(np3.mid.x, np3.mid.y); await zz(400); }
+  })();
+  await rollSet();
+
+  // ---- NATIVE PAN MUST NOT STEAL A TOUCH DRAG -----------------------------
+  // The canvas carries `touch-action: manipulation`, which allows the pan: a
+  // vertical TOUCH drag also scrolled the page, the browser cancelled the
+  // pointer stream ~2 rows in and the canvas slid away under the finger —
+  // measured midi deltas -1,-1,0,0,0,0 with the scroll walking, reported as
+  // "the note block skips around vertically". A non-passive touchmove guard
+  // refuses the pan while a note gesture owns the pointer. Every other drag
+  // check here uses page.mouse, which CANNOT pan — only a touch drive sees
+  // this, which is how it survived every prior fix.
+  const touchDragRun = await (async () => {
+    const np4 = await noteAt();
+    await page.touchscreen.touchStart(np4.mid.x, np4.mid.y);
+    await zz(60);
+    // UPWARD: the frozen window's floor sits right below this fixture's
+    // lowest note, and clamping there is the stated contract — the headroom
+    // is above
+    await page.touchscreen.touchMove(np4.mid.x, np4.mid.y - 12);  // arm (12px = raw 1.33 at the 9px gain — mid-detent)
+    await zz(90);
+    const armed = await page.evaluate(() => ({
+      scroll: Math.round((document.scrollingElement || document.documentElement).scrollTop),
+      // a FINGER's gain is floored at 9px/semitone (a 5px row is below what
+      // a fingertip can place); the handler stamps it for probes
+      rowH: document.querySelector('.v2-layer .v2-vizcv')._dragGain ||
+            document.querySelector('.v2-layer .v2-vizcv')._pitchGeo.rowH }));
+    const seen = [];
+    for (let i = 1; i <= 4; i++) {
+      await page.touchscreen.touchMove(np4.mid.x, np4.mid.y - 12 - i * armed.rowH);
+      await zz(80);
+      seen.push(await page.evaluate(() => ({
+        scroll: Math.round((document.scrollingElement || document.documentElement).scrollTop),
+        midi: (_masterEng.getCfg().layers || [])[0].part.notes
+          .slice().sort((a, b) => a.t - b.t)[0].midi })));
+    }
+    await page.touchscreen.touchEnd();
+    await zz(450);
+    const ms2 = seen.map((x) => x.midi);
+    return { armedScroll: armed.scroll, scrolls: seen.map((x) => x.scroll),
+             deltas: ms2.slice(1).map((v, i) => v - ms2[i]),
+             firstDown: ms2[0] };
+  })();
+  ok('a TOUCH drag keeps the gesture — the page does not pan away under the finger',
+    touchDragRun.scrolls.every((v) => v === touchDragRun.armedScroll) &&
+    touchDragRun.deltas.length === 3 && touchDragRun.deltas.every((d) => d === 1),
+    JSON.stringify(touchDragRun));
+  await rollSet();
+
+  // ---- THE PANEL IS SOMETIMES ITS OWN SCROLLER ----------------------------
+  // `#mix-view` carries `overflow-y: auto`, so in some flex states the Bloom
+  // panel scrolls INSIDE it and the document never moves. Scrolls the v2 card
+  // makes resolve the NEAREST scrollable ancestor (`scrollerOf`). The drag no
+  // longer scrolls at all (one geometry, nothing to absorb), so the gate for
+  // `scrollerOf` is the EDITOR REVEAL: with the editor below the container's
+  // visible band, opening it must scroll the CONTAINER — pointed at the
+  // document it scrolls the page and the editor stays clipped, since moving
+  // the pinned container does not move its content past its own edge. (The
+  // RENDER restore in this regime is deliberately NOT gated: the rebuild is
+  // one atomic innerHTML swap, so headless never sees the container clamp —
+  // two shapes of that check passed their own poison, the documented
+  // non-discrimination.)
+  const revealRun = await (async () => {
+    await page.evaluate(() => {
+      const mv = document.getElementById('mix-view');
+      mv.__sv = mv.getAttribute('style') || '';
+      mv.style.setProperty('height', '500px', 'important');
+      mv.style.setProperty('flex', '0 0 500px', 'important');
+      mv.style.setProperty('overflow-y', 'auto', 'important');
+      const cv = document.querySelector('.v2-layer .v2-vizcv');
+      // the canvas at the band's END: visible, with the editor's slot below
+      // the container's bottom edge
+      if (cv) cv.scrollIntoView({ block: 'end' });
+    });
+    await zz(250);
+    // IN-PAGE dispatched clicks, coords computed in the SAME evaluate — the
+    // pin/unpin reflows the page, and a real mouse.click at coords measured
+    // one evaluate earlier landed on the panel's ⤓ Capture button and left
+    // its MENU open over everything (the documented menu-left-open trap,
+    // manufactured by this very check's first shape: every later canvas
+    // interaction died and the harness wedged on the overlay).
+    await page.evaluate(() => {
+      const cv = document.querySelector('.v2-layer .v2-vizcv');
+      const r = cv.getBoundingClientRect();
+      const hb = (cv._hits || []).slice().sort((a, b) => a.t - b.t)[0];
+      cv.dispatchEvent(new MouseEvent('click', { bubbles: true,
+        clientX: r.left + hb.x + hb.w / 2, clientY: r.top + hb.y + 3 }));
+    });
+    await zz(500);
+    const o6 = await page.evaluate(() => {
+      const mv = document.getElementById('mix-view');
+      const mr = mv.getBoundingClientRect();
+      const ed = document.querySelector('.v2-layer .v2-neinline:not([hidden])');
+      const er = ed ? ed.getBoundingClientRect() : null;
+      const out = { edOpen: !!ed,
+                    edTop: er ? Math.round(er.top) : null,
+                    bandBot: Math.round(mr.bottom),
+                    mvScroll: Math.round(mv.scrollTop) };
+      mv.setAttribute('style', mv.__sv); delete mv.__sv;
+      return out;
+    });
+    // close the editor again (tapping the note toggles) — in-page, same reason
+    await page.evaluate(() => {
+      const cv = document.querySelector('.v2-layer .v2-vizcv');
+      if (!cv) return;
+      const r = cv.getBoundingClientRect();
+      const hb = (cv._hits || []).slice().sort((a, b) => a.t - b.t)[0];
+      if (hb) cv.dispatchEvent(new MouseEvent('click', { bubbles: true,
+        clientX: r.left + hb.x + hb.w / 2, clientY: r.top + hb.y + 3 }));
+    });
+    await zz(350);
+    return o6;
+  })();
+  ok('opening the editor reveals it INSIDE the panel when the panel is the scroller',
+    revealRun.edOpen && revealRun.edTop != null &&
+    revealRun.edTop <= revealRun.bandBot - 40,
+    JSON.stringify(revealRun));
+  // the pin/unpin clamps the DOCUMENT scroll to 0 as a side effect — without
+  // a reset the next checks' note coords sit behind the app's fixed footer
+  // and every canvas interaction silently lands on it (measured: the edge
+  // drag hit `mix-bloom-io-btn` and did nothing)
+  await rollSet();
+
+  // RE-READ THE BASELINE. The axis check above resets the part, so the notes
+  // `moved` recorded are gone — comparing against a stale snapshot measured a
+  // correct resize as a failure.
+  const szBefore = await partNotes();
+  np = await noteAt();
+  await drag(np.edge, np.cellPx * 3.4, 0);
+  const sized = await partNotes();
+  ok('dragging a note\u2019s right edge resizes it, and moves nothing else',
+    Math.abs(sized[0][2] - (szBefore[0][2] + 0.09375)) < 1e-9 &&
+    sized[0][0] === szBefore[0][0] && sized[0][1] === szBefore[0][1],
+    JSON.stringify({ before: szBefore, after: sized }));
+
+  // A TAP IS NOT A DRAG — below the threshold the gesture falls through to the
+  // click handler, which opens the editor. Without that separation letting go
+  // after a move would also toggle the editor (the tab-reorder lesson).
+  np = await noteAt();
+  await page.mouse.click(np.mid.x, np.mid.y);
+  await zz(420);
+  const tapped = await page.evaluate(() => {
+    const o = document.querySelector('.v2-layer .v2-neinline');
+    return { open: !!o && !o.hidden,
+             notes: (_masterEng.getCfg().layers || [])[0].part.notes.slice()
+               .sort((a, b) => a.t - b.t).map((n) => [n.t, n.midi, n.dur]) };
+  });
+  ok('a TAP on a note still opens its editor and moves nothing',
+    tapped.open && JSON.stringify(tapped.notes) === JSON.stringify(sized),
+    JSON.stringify(tapped));
+
+  // ---- HOTKEYS ON THE OPEN NOTE: ⇧ arrows move, ⌥ ←/→ resize --------------
+  // ⇧ replaced ⌃ as the primary chord (⌃←/→ is the macOS Spaces shortcut, so
+  // the browser never saw half the pairs — reported as "arrow keys are not
+  // working"); ⌃ survives as an alias and the return path drives it. Routed
+  // through `neApply` (a fourth door to the same fields, never a fifth
+  // implementation), so pin/sounding-space/persist come along. The editor is
+  // open on the tapped note from the check above.
+  const hotkeyRun = await (async () => {
+    const before = await page.evaluate(() => {
+      const o = document.querySelector('.v2-layer .v2-neinline');
+      const idx = o && !o.hidden ? o._idx : -1;
+      const L = (_masterEng.getCfg().layers || [])[0];
+      const n = L.part.notes[idx];
+      const g = window._v2.gridCells(L);
+      return n ? { idx, t: n.t, midi: n.midi, dur: n.dur, cells: g } : null;
+    });
+    if (!before) return { before: null };
+    const chord = async (mod, key) => {
+      await page.keyboard.down(mod); await page.keyboard.press(key);
+      await page.keyboard.up(mod); await zz(200);
+    };
+    await chord('Shift', 'ArrowUp');
+    await chord('Shift', 'ArrowRight');
+    await chord('Alt', 'ArrowRight');
+    const after = await page.evaluate(() => {
+      const o = document.querySelector('.v2-layer .v2-neinline');
+      const idx = o && !o.hidden ? o._idx : -1;
+      const L = (_masterEng.getCfg().layers || [])[0];
+      const n = L.part.notes[idx];
+      return n ? { t: n.t, midi: n.midi, dur: n.dur } : null;
+    });
+    // put it back so downstream checks keep their fixture
+    await chord('Alt', 'ArrowLeft');
+    await chord('Control', 'ArrowLeft');
+    await chord('Control', 'ArrowDown');
+    return { before, after };
+  })();
+  ok('⇧↑/⇧→ move the open note and ⌥→ resizes it — one cell or half-step per press (⌃ returns it: the alias)',
+    hotkeyRun.before && hotkeyRun.after &&
+    hotkeyRun.after.midi === hotkeyRun.before.midi + 1 &&
+    Math.abs(hotkeyRun.after.t - (hotkeyRun.before.t + 1 / hotkeyRun.before.cells)) < 1e-9 &&
+    Math.abs(hotkeyRun.after.dur - (hotkeyRun.before.dur + 1 / hotkeyRun.before.cells)) < 1e-9,
+    JSON.stringify(hotkeyRun));
+
+  // ---- THE READOUT MUST NEVER RESIZE THE STEPPER (2026-09-08, user: "the
+  // position readout is still causing the Position buttons to resize").
+  // `.ambient-ctrl` is `84px 1fr auto` — an `auto` readout column is sized by
+  // its TEXT, so "beat 4.75" → "bar 2 · beat 1" re-flowed the 1fr stepper and
+  // moved the + button under the finger on the very press that changed it.
+  // The editor's stepper rows fix the readout column; this drives Position
+  // ACROSS the bar line (the readout's biggest length jump) and pins the ±
+  // buttons' rects byte-identical throughout.
+  const stepGeoRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const sv = JSON.stringify(L().part);
+    L().part.kind = 'recorded'; L().part.bars = 2; delete L().part.grid;
+    L().part.notes = [{ t: 0.45, midi: 67, dur: 0.05 }];  // one press shy of bar 2
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers');
+    if (h) h._sig = ''; window._v2.render(E); await wait(300);
+    const c = document.querySelector('.v2-layer'); c.classList.remove('collapsed');
+    const g = [...c.querySelectorAll('.v2-gototab')].find((x) => x.getAttribute('data-goto') === 'Content');
+    if (g) { g.click(); await wait(300); }
+    const cv = c.querySelector('.v2-vizcv'); cv.scrollIntoView({ block: 'center' }); await wait(150);
+    // the hotkey check leaves an editor OPEN, and `neSync` re-opens it on this
+    // fixture's note — so the tap below would be a SECOND tap on an open note,
+    // which closes it by design. Close first, then tap to open.
+    const dn0 = document.querySelector('.v2-layer .v2-neinline [data-na="done"]');
+    if (dn0) { dn0.click(); await wait(200); }
+    const r = cv.getBoundingClientRect(), hb = (cv._hits || [])[0];
+    cv.dispatchEvent(new MouseEvent('click', { bubbles: true,
+      clientX: r.left + hb.x + hb.w / 2, clientY: r.top + hb.y + 3 }));
+    await wait(400);
+    const rectOf = () => {
+      const inp = document.querySelector('.v2-layer .v2-neinline .ambient-step-inp[data-sf="pos"]');
+      if (!inp) return null;
+      const row = inp.closest('.ambient-ctrl');
+      const ru = row.querySelector('.ambient-step-up').getBoundingClientRect();
+      const rd = row.querySelector('.ambient-step-dn').getBoundingClientRect();
+      return { up: [Math.round(ru.left), Math.round(ru.width)],
+               dn: [Math.round(rd.left), Math.round(rd.width)],
+               txt: (row.querySelector('.ambient-hint') || {}).textContent || '' };
+    };
+    const frames = [rectOf()];
+    for (let i = 0; i < 4; i++) {
+      const inp = document.querySelector('.v2-layer .v2-neinline .ambient-step-inp[data-sf="pos"]');
+      const up = inp && inp.closest('.ambient-ctrl').querySelector('.ambient-step-up');
+      if (up) up.click();
+      await wait(200);
+      frames.push(rectOf());
+    }
+    // close + restore
+    const dn = document.querySelector('.v2-layer .v2-neinline [data-na="done"]');
+    if (dn) dn.click(); await wait(200);
+    try { L().part = JSON.parse(sv); E.getCfg();
+          if (h) h._sig = ''; window._v2.render(E); await wait(200);
+          document.querySelector('.v2-layer').classList.remove('collapsed'); } catch (e) {}
+    return frames;
+  });
+  ok('the Position readout crossing the bar line never moves or resizes the ± buttons',
+    stepGeoRun.every((f) => f && JSON.stringify(f.up) === JSON.stringify(stepGeoRun[0].up) &&
+                             JSON.stringify(f.dn) === JSON.stringify(stepGeoRun[0].dn)) &&
+    // …and the readout really did make its length jump (or this pins nothing)
+    stepGeoRun.some((f) => /bar 2/.test(f.txt)) && stepGeoRun.some((f) => !/bar 2/.test(f.txt)),
+    JSON.stringify(stepGeoRun));
+
+  // ---- A LOCKED CHORD KEEPS ITS VOICES THROUGH CHORDLOCK (2026-09-08, user:
+  // "where there's clearly a chord it sometimes only plays one note"). The
+  // remap indexes written-key degrees into the sounding chord mod N, and a
+  // stacked voicing's degrees COLLIDE mod N — measured: 60,64,67,71,72 over
+  // F7 remapped to 65,60,65,72,77, two voices on one pitch. Colliding voices
+  // now climb an octave instead: same pitch classes, five voices stay five.
+  const chordVoicesRun = await page.evaluate(() => {
+    const E = _masterEng, cfg = E.getCfg();
+    const L = (cfg.layers || [])[0];
+    const sv = { part: JSON.stringify(L.part), prog: JSON.stringify(cfg.prog || null),
+                 harmony: L.harmony || null };
+    cfg.prog = { on: true, chords: [{ root: 5, intervals: [0, 4, 7, 10] }] };
+    L.part.kind = 'recorded'; L.part.bars = 1;
+    L.harmony = 'chordlock'; L.part.key = { root: 0, scale: 'major' };
+    L.part.notes = [60, 64, 67, 71, 72].map((m) => ({ t: 0, midi: m, dur: 0.1 }));
+    E.getCfg();
+    const ns = window._v2.notesFor(L, { E, cfg: E.getCfg(), key: 'v2:' + L.id,
+                                        cycleStart: 0, cycleSec: 2 }) || [];
+    const freqs = ns.map((n) => Math.round(n.freq));
+    const o = { n: ns.length, freqs, distinct: new Set(freqs).size };
+    try {
+      const pr = JSON.parse(sv.prog);
+      if (pr) cfg.prog = pr; else delete cfg.prog;
+      L.part = JSON.parse(sv.part);
+      if (sv.harmony) L.harmony = sv.harmony; else delete L.harmony;
+      E.getCfg();
+    } catch (e) {}
+    return o;
+  });
+  ok('a locked 5-voice chord under chordlock plays 5 DISTINCT pitches — the remap never collapses voices',
+    chordVoicesRun.n === 5 && chordVoicesRun.distinct === 5,
+    JSON.stringify(chordVoicesRun));
+
+  // ── ONE MODE SELECT, AND ⬚ MULTI ────────────────────────────────────────
+  // (2026-09-09, user: "consolidate view/draw/edit into a dropdown, add a
+  // multi mode that allows selecting more than one event and resize uniformly
+  // or move vertically/horizontally uniformly".) It was TWO buttons for what is
+  // one axis — 👁 View/✎ Edit (which RECORD is drawn) beside ✎ Draw (what a TAP
+  // does) — and three of the four combinations they offered meant the same
+  // thing, since drawing implies you are working on the record you are editing.
+  // UNIFORM is the whole claim: every gathered note takes the SAME delta, the
+  // ungathered ones do not move, and the delta is clamped ONCE for the set (per
+  // note would let the leading one stop while the rest carried on). Both doors
+  // — the steppers and the drag — go through `multiApply`/the group path, so
+  // the check drives BOTH.
+  const multiRun = await page.evaluate(async () => { try {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    const h = document.getElementById('bloom-v2-layers');
+    const sv = JSON.stringify(L().part);
+    L().on = true; L().present = true;
+    L().part.kind = 'recorded'; L().part.bars = 2; L().part.transpose = 0;
+    delete L().harmony;
+    L().part.notes = [{ t: 0.25, midi: 60, dur: 0.0625 },
+                      { t: 0.5, midi: 64, dur: 0.0625 },
+                      { t: 0.75, midi: 67, dur: 0.0625 }];
+    E.getCfg();
+    if (h) h._sig = ''; window._v2.render(E); await wait(300);
+    card().classList.remove('collapsed');
+    if (h) h._sig = ''; window._v2.render(E); await wait(300);
+    card().classList.remove('collapsed');
+    const o = {};
+    const sel = () => card().querySelector('.v2-modepick');
+    o.isSelect = !!sel() && sel().tagName === 'SELECT';
+    o.opts = sel() ? [...sel().options].map((x) => x.value).join(',') : '';
+    // the two buttons are GONE — "we deleted it" is the claim that regresses
+    // quietly, so it is pinned by ABSENCE
+    o.oldGone = !card().querySelector('.v2-vmode') && !card().querySelector('.v2-draw');
+    o.gridKept = !!card().querySelector('.v2-gridpick');
+    const setM = async (m) => { const s2 = sel(); s2.value = m;
+      s2.dispatchEvent(new Event('input', { bubbles: true })); await wait(260); };
+    await setM('draw'); o.drawTakes = window._v2.modeOf(L()) === 'draw';
+    await setM('multi'); o.multiTakes = window._v2.modeOf(L()) === 'multi';
+    o.barHiddenWhenEmpty = card().querySelector('.v2-multibar').hidden;
+    // GATHER through the real hit boxes
+    const cv = () => card().querySelector('.v2-vizcv');
+    const clickNote = async (i) => {
+      const b = (cv()._hits || [])[i]; if (!b) return;
+      const r = cv().getBoundingClientRect();
+      cv().dispatchEvent(new MouseEvent('click', { bubbles: true,
+        clientX: r.left + b.x + b.w / 2, clientY: r.top + b.y + b.h / 2 }));
+      await wait(210);
+    };
+    await clickNote(0); await clickNote(2);
+    o.gathered = window._v2.multiSel(L()).slice().sort((a, b) => a - b).join(',');
+    o.barShows = !card().querySelector('.v2-multibar').hidden;
+    o.barSays = ((card().querySelector('.v2-multin') || {}).textContent || '').trim();
+    const notes = () => (E.getCfg().layers[0].part.notes || [])
+      .map((n) => (Math.round(n.t * 1000) / 1000) + '/' + n.midi + '/' + (Math.round(n.dur * 1000) / 1000));
+    o.before = notes();
+    const act = async (a) => { const b = card().querySelector('.v2-mact[data-ma="' + a + '"]');
+      if (b) b.click(); await wait(240); };
+    await act('m+1'); o.afterUp = notes();
+    await act('t+1'); o.afterRight = notes();
+    await act('d+1'); o.afterLong = notes();
+    // …UNIFORM, and only the gathered ones
+    const d = (a, b, k) => a.map((x, i) => (+b[i].split('/')[k]) - (+x.split('/')[k]));
+    o.dMidi = d(o.before, o.afterUp, 1).join(',');
+    o.dT = d(o.afterUp, o.afterRight, 0).map((x) => Math.round(x * 1000) / 1000).join(',');
+    o.dDur = d(o.afterRight, o.afterLong, 2).map((x) => Math.round(x * 1000) / 1000).join(',');
+    o.uniform = o.dMidi === '1,0,1' && o.dT === '0.031,0,0.031' && o.dDur === '0.031,0,0.031';
+    o.selSurvives = window._v2.multiSel(L()).length === 2;   // re-found by identity
+    // THE DRAG: grab one gathered note, both move, the third does not
+    const dragBefore = notes();
+    const b0 = (cv()._hits || [])[0];
+    const r0 = cv().getBoundingClientRect();
+    const x0 = r0.left + b0.x + b0.w / 2, y0 = r0.top + b0.y + b0.h / 2;
+    const rowH = (cv()._pitchGeo || {}).rowH || 6;
+    const pev = (el, type, x, y) => el.dispatchEvent(new PointerEvent(type, { bubbles: true,
+      cancelable: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' }));
+    pev(cv(), 'pointerdown', x0, y0); await wait(60);
+    for (let i = 1; i <= 3; i++) { pev(document, 'pointermove', x0, y0 - rowH * i * 1.05); await wait(50); }
+    pev(document, 'pointerup', x0, y0 - rowH * 3 * 1.05); await wait(320);
+    const dragAfter = notes();
+    const dm = d(dragBefore, dragAfter, 1);
+    o.dragUniform = dm[0] === dm[2] && dm[0] > 0 && dm[1] === 0;
+    o.dragDelta = dm.join(',');
+    // ✕ clears, and LEAVING multi drops the gathering
+    await act('clear');
+    o.cleared = window._v2.multiSel(L()).length === 0 && card().querySelector('.v2-multibar').hidden;
+    await clickNote(0);
+    await setM('edit');
+    o.dropsOnLeave = window._v2.multiSel(L()).length === 0;
+    await setM('view');
+    try { L().part = JSON.parse(sv); E.getCfg();
+          if (h) h._sig = ''; window._v2.render(E); await wait(220);
+          document.querySelector('.v2-layer').classList.remove('collapsed'); } catch (e) {}
+    return o;
+  } catch (e) { return { err: String(e && e.message) }; } });
+  // RESTATED 2026-09-10: ✂ Split is a fifth mode, so the list grew. Same
+  // contract — ONE control for the axis, every state named on its face, and
+  // the two buttons this select replaced still gone.
+  ok('the drawing has ONE mode select — view · edit · draw · multi · split — and the two buttons are gone',
+    multiRun && !multiRun.err && multiRun.isSelect &&
+    multiRun.opts === 'view,edit,draw,multi,split' && multiRun.oldGone && multiRun.gridKept &&
+    multiRun.drawTakes && multiRun.multiTakes,
+    JSON.stringify(multiRun));
+  ok('⬚ Multi gathers notes and moves or resizes ALL of them uniformly — by stepper AND by drag',
+    multiRun && !multiRun.err && multiRun.barHiddenWhenEmpty && multiRun.gathered === '0,2' &&
+    multiRun.barShows && /2 notes gathered/.test(multiRun.barSays) &&
+    multiRun.uniform && multiRun.selSurvives && multiRun.dragUniform &&
+    multiRun.cleared && multiRun.dropsOnLeave,
+    JSON.stringify(multiRun));
+
+  // ✎ DRAW — its own mode, because a tap on empty space already selects a BAR
+  // and one gesture cannot mean both.
+  const drawRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const o = {};
+    // RESTATED 2026-09-09: Draw is one option of the drawing's MODE select,
+    // not a two-state toggle. The contract that check pinned — "the face names
+    // the FEATURE, so the word Draw is visible when you are looking for the
+    // mode" — is satisfied by construction here: every option's name is on
+    // screen at all times, which is strictly stronger than a toggle whose face
+    // named only the state it was in.
+    const sel = () => document.querySelector('.v2-layer .v2-modepick');
+    o.exists = !!sel();
+    o.names = sel() ? [...sel().options].map((x) => x.textContent.trim()).join(' | ') : '';
+    o.offLit = sel() ? sel().value === 'draw' : true;      // not in draw mode yet
+    if (sel()) { sel().value = 'draw'; sel().dispatchEvent(new Event('input', { bubbles: true })); }
+    await wait(400);
+    o.on = !!sel() && sel().value === 'draw';
+    return o;
+  });
+  const addPt = await page.evaluate(() => {
+    const cv = document.querySelector('.v2-layer .v2-vizcv');
+    cv.scrollIntoView({ block: 'center' });
+    const r = cv.getBoundingClientRect(), pg = cv._pitchGeo, geo = cv._plotGeo;
+    return { x: r.left + geo.x0 + geo.w * 0.75,
+             y: r.top + pg.top + (pg.hiM - 67) * pg.rowH + pg.rowH / 2,
+             before: (_masterEng.getCfg().layers || [])[0].part.notes.length };
+  });
+  await page.mouse.click(addPt.x, addPt.y);
+  await zz(500);
+  const added = await page.evaluate(() => {
+    const p2 = (_masterEng.getCfg().layers || [])[0].part;
+    const o = document.querySelector('.v2-layer .v2-neinline');
+    // BY THE DRAWN ROW, not the stored midi — the pencil lands the note on
+    // the CLICKED row exactly (shift-corrected / pinned), so under this gate
+    // state's +2 transpose the stored value legitimately differs. RESTATED
+    // 2026-09-08 with the reason: the old stored-space lookup pinned the
+    // land-where-the-shift-says behaviour that was the bug.
+    const cv = document.querySelector('.v2-layer .v2-vizcv');
+    const hb = (cv._hits || []).find((x) => Math.round(x.midi) === 67);
+    const n = hb ? p2.notes[hb.i] : null;
+    return { count: p2.notes.length, note: n ? [n.t, Math.round(hb.midi), n.dur] : null,
+             editorOpen: !!o && !o.hidden };
+  });
+  ok('\u270e Draw is a visible mode, and a tap on empty space adds a note ON THE CLICKED ROW',
+    // RESTATED 2026-09-09 with the reason: the OFF face read "▦ Bars", so the
+    // word "Draw" was invisible exactly when someone was looking for the mode
+    // (asked as "where is the draw mode?"). The face names the FEATURE in both
+    // states now and the purple fill (.on) is the state signal — the panel's
+    // own active-mode convention.
+    drawRun.exists && /Draw/.test(drawRun.names) && !drawRun.offLit &&
+    /View/.test(drawRun.names) && /Multi/.test(drawRun.names) &&
+    drawRun.on && added.count === addPt.before + 1 && added.note &&
+    added.note[0] === 0.75 && added.note[1] === 67 && added.note[2] === 0.03125 &&
+    added.editorOpen,
+    JSON.stringify({ drawRun, addPt: addPt.before, added }));
+
+  // …and with Draw OFF the same tap selects a BAR, exactly as before.
+  const drawOffRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const md0 = document.querySelector('.v2-layer .v2-modepick');
+    md0.value = 'view'; md0.dispatchEvent(new Event('input', { bubbles: true })); await wait(420);
+    const cv = document.querySelector('.v2-layer .v2-vizcv');
+    cv.scrollIntoView({ block: 'center' });
+    return { off: document.querySelector('.v2-layer .v2-modepick').value !== 'draw',
+             before: (_masterEng.getCfg().layers || [])[0].part.notes.length };
+  });
+  await page.mouse.click(addPt.x, addPt.y);
+  await zz(450);
+  ok('\u2026and with Draw off the same tap selects a bar instead of adding',
+    drawOffRun.off && (await page.evaluate(() =>
+      (_masterEng.getCfg().layers || [])[0].part.notes.length)) === drawOffRun.before,
+    JSON.stringify(drawOffRun));
+
+  // THE GRID IS A NOTE VALUE, PER BAR — so it reads the same on a 1-bar part
+  // and a 5-bar one, and the editor's own ranges follow it.
+  const gridRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const sel = () => document.querySelector('.v2-layer .v2-gridpick');
+    const o = { opts: [...sel().options].map((x) => x.textContent).join(',') };
+    const pick = async (v) => { const s2 = sel(); s2.value = String(v);
+      s2.dispatchEvent(new Event('input', { bubbles: true })); await wait(380); };
+    // OPEN A NOTE FIRST — the previous check left the editor shut (its tap
+    // selected a bar), and "the editor follows the grid" cannot be measured
+    // against an editor that is not there.
+    const cvG = document.querySelector('.v2-layer .v2-vizcv');
+    cvG.scrollIntoView({ block: 'center' });
+    const rG = cvG.getBoundingClientRect(), hbG = (cvG._hits || [])[0];
+    if (hbG) {
+      cvG.dispatchEvent(new MouseEvent('click', { bubbles: true,
+        clientX: rG.left + hbG.x + hbG.w / 2, clientY: rG.top + hbG.y + 3 }));
+      await wait(400);
+    }
+    o.editorOpen = !!document.querySelector('.v2-layer .v2-neinline:not([hidden])');
+    await pick(64);
+    o.stored = L().part.grid; o.cells64 = window._v2.gridCells(L());
+    // …the editor's Length slider is ranged in CELLS, so it has to follow
+    const el = document.querySelector('.v2-layer .v2-neinline [data-sf="len"]');
+    o.lenMax = el ? +el.max : -1;
+    await pick(16);
+    o.pruned = !('grid' in L().part);      // the default stores nothing
+    o.cells16 = window._v2.gridCells(L());
+    return o;
+  });
+  ok('the editing grid is a note value per bar, down to 1/64, and the editor follows',
+    /1\/64/.test(gridRun.opts) && /1\/4/.test(gridRun.opts) && /1\/16 T/.test(gridRun.opts) &&
+    gridRun.stored === 64 && gridRun.cells64 === 128 && gridRun.cells16 === 32 &&
+    gridRun.pruned && gridRun.editorOpen && gridRun.lenMax === 256,
+    JSON.stringify(gridRun));
+
+  // ---- THE RULER NAMES THE CHORDS, AND A CADENCE IS NOT A BAR ------------
+  // The ruler counted bars and said nothing about the harmony underneath them,
+  // which is worst exactly where it matters: with a CADENCE a chord is not a
+  // bar, so 2 · ½ · ½ · 1 is four changes across four bars and only the first
+  // one starts where a bar count implies. Pinned on the SEGMENTS the draw
+  // resolves — position AND width, in bars — because a band that merely
+  // appears would pass with every chord drawn the same width.
+  //
+  // THE NAMES ARE THE SOUNDING ONES. `prog.chords[i]` is the SCORE: the key
+  // transpose, order-perm, alts and take-reroll all resolve at read time, so
+  // the written root is not what the ear hears (the fixture is written a whole
+  // tone below what it sounds, and the check asserts the sounding spelling).
+  const rulerRun = await page.evaluate(async () => {
+    const L = () => (_masterEng.getCfg().layers || [])[0];
+    const E = _masterEng, cfg = E.getCfg(), o = {};
+    const P0 = JSON.parse(JSON.stringify(cfg.prog));
+    const keep = { partFor: L().partFor, bars: L().part.bars,
+      parts: L().parts ? JSON.parse(JSON.stringify(L().parts)) : null,
+      partAll: L().partAll ? JSON.parse(JSON.stringify(L().partAll)) : null };
+    cfg.prog.on = true;
+    cfg.prog.chords = [
+      { root: 10, intervals: [0, 4, 7], bars: 2 }, { root: 0, intervals: [0, 3, 7], bars: 0.5 },
+      { root: 2, intervals: [0, 3, 7], bars: 0.5 }, { root: 1, intervals: [0, 4, 7], bars: 1 },
+      { root: 5, intervals: [0, 4, 7] }, { root: 7, intervals: [0, 3, 7] }];
+    cfg.prog.parts = [{ len: 4 }, { len: 2 }];
+    E.getCfg();
+    L().partFor = 0; L().part.bars = 4;
+    window._v2.render(E); await zz(350);
+    const cv = () => document.querySelector('.v2-layer .v2-vizcv');
+    // THE BAND TAKES A ROW OF ITS OWN, so the plot starts lower — `top` is the
+    // ONE definition of where it begins and every consumer reads it.
+    o.top = cv() ? cv()._pitchGeo.top : null;
+    // THE PICTURE'S OWN CLAIM (`cv._chordGeo`), never a re-walk of the clock
+    // beside it. The first version of this check DID re-derive the anchor, and
+    // it passed its own poison — a probe that recomputes what the thing under
+    // test publishes proves only that the recomputation is self-consistent.
+    // Segments are read back in BARS of the drawn cycle, which is the claim:
+    // position AND width, so a band drawn with every chord the same width
+    // fails here.
+    const seg = async (pi) => {
+      L().partFor = pi;
+      window._v2.render(E); await zz(300);
+      const c = cv(), gg = c && c._chordGeo;
+      if (!gg) return '(none)';
+      const bars = (c._barsGeo && c._barsGeo.barsF) || 4;
+      return gg.marks.map((m) => m.nm + '@' +
+        (Math.round(m.f0 * bars * 100) / 100) + '..' +
+        (Math.round(m.f1 * bars * 100) / 100)).join(' ');
+    };
+    o.p0 = await seg(0);
+    o.at0 = cv() && cv()._chordGeo ? Math.round(cv()._chordGeo.at * 1000) / 1000 : null;
+    // A DIFFERENT PART STARTS SOMEWHERE ELSE. Stopped there is no clock, so
+    // walking from the progression's top would draw part 1's chords under
+    // part 2's notes — the anchor asks the one resolver which part it is in.
+    o.p1 = await seg(1);
+    // AND IT STARTS SOMEWHERE ELSE — the anchor asked which part it is in.
+    o.at1 = cv() && cv()._chordGeo ? Math.round(cv()._chordGeo.at * 1000) / 1000 : null;
+    L().partFor = 0;
+    // PIXELS: the band is really painted, and it is CLEARED with the harmony.
+    window._v2.render(E); await zz(300);
+    const lit = () => {
+      const c = cv(); if (!c) return -1;
+      const g = c.getContext('2d');
+      const dpr = Math.min(3, window.devicePixelRatio || 1);
+      const px = g.getImageData(0, 0, c.width, Math.max(2, Math.round(6 * dpr))).data;
+      let n = 0;
+      for (let i = 0; i < px.length; i += 4) if (px[i + 3] > 0 && (px[i] + px[i + 1] + px[i + 2]) > 30) n++;
+      return n;
+    };
+    o.bandLit = lit();
+    cfg.prog.on = false; E.getCfg();
+    window._v2.render(E); await zz(300);
+    o.topNoProg = cv() ? cv()._pitchGeo.top : null;
+    // put EVERYTHING back — the one-page-one-state rule
+    cfg.prog = P0; E.getCfg();
+    L().partFor = keep.partFor; L().part.bars = keep.bars;
+    if (keep.parts) L().parts = keep.parts; else delete L().parts;
+    if (keep.partAll) L().partAll = keep.partAll; else delete L().partAll;
+    if (!Number.isFinite(keep.partFor)) delete L().partFor;
+    E.getCfg(); window._v2.render(E); await zz(250);
+    return o;
+  });
+  ok('the ruler names the chords WHERE THEY ARE — a cadence is not a bar',
+    rulerRun.top === 28 && rulerRun.topNoProg === 15 && rulerRun.bandLit > 200 &&
+    rulerRun.p0 === 'C@0..2 Dm@2..2.5 Em@2.5..3 D\u266f@3..4' &&
+    rulerRun.p1 !== rulerRun.p0 && /@0\.\.1 /.test(rulerRun.p1) &&
+    rulerRun.at1 > rulerRun.at0 + 1e-3,
+    JSON.stringify(rulerRun));
+
+  // THE PILL SAYS WHICH PART, NOT WHICH CHORDS. A derived part name IS the
+  // chord numerals, and the ruler directly below now draws those chords where
+  // they actually are — so the pill spent a whole row saying the same thing
+  // worse (measured: "◫ Per part · 1 · ♭VII — i — ii — ♭III — IV").
+  // READ THE RENDERED PILL, and reach it THROUGH ITS OWN DOOR. The first
+  // version called `_ambPartLabelShort` directly and passed its own poison —
+  // pointing the control back at the long label changed nothing it could see.
+  // The second set `L.partFor` by hand and read a STALE face: `V2.render` is
+  // `_sig`-cached on layer identity (id:name:kind:on), so a field outside that
+  // signature repaints nothing — which is exactly why the handler itself does
+  // `h._sig = ''` before rendering. Press the button.
+  const pillRun = await page.evaluate(async () => {
+    const L = () => (_masterEng.getCfg().layers || [])[0];
+    const E = _masterEng, cfg = E.getCfg(), o = {};
+    const P0 = JSON.parse(JSON.stringify(cfg.prog));
+    const oc = window.confirm;
+    cfg.prog.on = true;
+    cfg.prog.parts = [{ len: 1 }, { len: 1 }];
+    cfg.prog.chords = [{ root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] }];
+    E.getCfg();
+    const card = () => document.querySelector('.v2-layer');
+    if (card() && card().classList.contains('collapsed')) {
+      const cb = card().querySelector('.ambient-collapse'); if (cb) cb.click();
+      await zz(350);
+    }
+    const pill = () => card() && card().querySelector('.v2-pop-pp');
+    o.before = pill() ? pill().textContent.trim() : null;
+    if (pill()) pill().click();                       // ▭ Everywhere → ◫ Per part
+    await zz(400);
+    o.derived = pill() ? pill().textContent.trim() : null;
+    o.derivedW = pill() ? Math.round(pill().getBoundingClientRect().width) : 0;
+    o.engaged = Number.isFinite(L().partFor);
+    // an AUTHORED name is kept beside the ordinal — it identifies something
+    // RESOLVE THE INDEX FIRST. `getCfg()` rebuilds `prog.parts` as a fresh
+    // array, and in `cfg.prog.parts[L().partFor].name = …` the reference is
+    // taken BEFORE the index expression runs — so `L()`'s own getCfg replaces
+    // the array and the write lands on an orphan (the documented trap, in
+    // argument-evaluation order).
+    const pidx = L().partFor | 0;
+    E.getCfg().prog.parts[pidx].name = 'Verse'; E.getCfg();
+    const h2 = card() && card().querySelector('.v2-layer-host');
+    window._v2.render(E); await zz(150);
+    // (the card's own host caches on identity — the same reason as above)
+    const host = document.getElementById('bloom-v2-layers');
+    if (host) host._sig = '';
+    window._v2.render(E); await zz(350);
+    o.authored = pill() ? pill().textContent.trim() : null;
+    o.tipHasFull = pill() ? (pill().getAttribute('title') || '')
+      .indexOf(_ambPartLabel(E.getCfg(), L().partFor | 0)) >= 0 : false;
+    // back out through the same door — the way back asks, so answer it
+    window.confirm = () => true;
+    if (pill()) pill().click();
+    await zz(400);
+    window.confirm = oc;
+    o.after = pill() ? pill().textContent.trim() : null;
+    cfg.prog = P0; E.getCfg();
+    if (host) host._sig = '';
+    window._v2.render(E); await zz(250);
+    return o;
+  });
+  ok('\u25eb Per part names the PART, short \u2014 a derived name drops to its ordinal',
+    pillRun.engaged && pillRun.derived === '\u25eb Per part \u00b7 1' &&
+    pillRun.authored === '\u25eb Per part \u00b7 1 \u00b7 Verse' && pillRun.tipHasFull &&
+    pillRun.derivedW > 0 && pillRun.derivedW < 160 && /Everywhere/.test(pillRun.after || ''),
+    JSON.stringify(pillRun));
+
+  // ---- A CADENCE CHANGE MOVES THE CONTENT, AND SAYS SO -------------------
+  // Content filed against a part IS that part's length: the reconciler refits
+  // `part.bars` on every normalize, so lengthening a chord already STRETCHED
+  // every record on that part — silently, and always the same way. Driven
+  // through the real surface (the ± steppers, then Done), because the ask is
+  // hung on the close and a probe that calls the modal builder proves nothing
+  // about when it fires.
+  const cascRun = await page.evaluate(async () => {
+    const E = _masterEng, cfg = E.getCfg(), o = {};
+    const P0 = JSON.parse(JSON.stringify(cfg.prog));
+    const L0 = () => (E.getCfg().layers || [])[0];
+    const keep = JSON.parse(JSON.stringify({ part: L0().part, partFor: L0().partFor,
+      parts: L0().parts || null, partAll: L0().partAll || null }));
+    cfg.prog.on = true;
+    cfg.prog.chords = [{ root: 0, intervals: [0, 4, 7], bars: 1 }, { root: 5, intervals: [0, 4, 7], bars: 1 },
+      { root: 7, intervals: [0, 4, 7], bars: 1 }, { root: 9, intervals: [0, 3, 7], bars: 1 },
+      { root: 2, intervals: [0, 3, 7], bars: 1 }, { root: 4, intervals: [0, 3, 7], bars: 1 }];
+    cfg.prog.parts = [{ name: 'Verse', len: 4 }, { name: 'Chorus', len: 2 }];
+    E.getCfg();
+    const L = L0();
+    L.partFor = 0; L.part.kind = 'recorded'; L.part.bars = 4;
+    L.part.notes = [{ t: 0, midi: 60, dur: 0.1 }, { t: 0.25, midi: 62, dur: 0.1 },
+      { t: 0.5, midi: 64, dur: 0.1 }, { t: 0.75, midi: 65, dur: 0.1 }];
+    delete L.part.barsMode;
+    E.getCfg();
+    o.t0 = L0().part.notes.map((n) => n.t);
+    o.bars0 = L0().part.bars;
+    const cad = () => document.querySelector('.ambient-cad-modal');
+    const casc = () => document.querySelector('.v2-casc-modal');
+    const run = async (mode) => {
+      _ambCadenceModal(E, 0); await zz(300);
+      if (!cad()) return 'no cadence modal';
+      // ± twice on the first chord: 1 → 1½ → 2, so the part grows by one bar
+      for (let i = 0; i < 2; i++) {
+        const b2 = cad().querySelector('[data-cad^="up:0"]'); if (!b2) return 'no stepper';
+        b2.click(); await zz(140);
+      }
+      const dn = cad().querySelector('.cad-close'); if (!dn) return 'no Done';
+      dn.click(); await zz(400);
+      if (!casc()) return 'no ask';
+      const opt = [...casc().querySelectorAll('.v2-cascopt')].find((x) => x.getAttribute('data-v') === mode);
+      if (!opt) return 'no ' + mode;
+      opt.click(); await zz(80);
+      casc().querySelector('.v2-cascgo').click(); await zz(400);
+      return null;
+    };
+    // FILL — the notes keep their own tempo and one more is written
+    o.err = await run('fill');
+    o.askText = o._t || '';
+    o.barsFill = L0().part.bars;
+    o.tFill = L0().part.notes.map((n) => Math.round(n.t * 1000) / 1000);
+    o.modeFill = L0().part.barsMode || '';
+    o.gone = !casc();
+    // A ▭ EVERYWHERE LAYER IS NOT TOUCHED — its content is not for one part,
+    // so cascading to it would override the statement the mode makes. Asserted
+    // on this same layer with the mode off (the gate's fixture has one card):
+    // the scan must file it as LOOSE and the cascade must leave its bars alone.
+    const bA = L0().part.bars;
+    delete L0().partFor; E.getCfg();
+    const sc = window._v2.cascadeScan(E, 0);
+    o.looseSeen = sc.loose.length === 1 && sc.bound.length === 0;
+    window._v2.cascadeBars(E, 0, 1, 'fill');
+    o.everyBars = L0().part.bars;
+    o.everyKept = Math.abs(L0().part.bars - bA) < 1e-9;
+    L0().partFor = 0; E.getCfg();
+    // STRETCH — the notes stay exactly where they are, over the new length
+    L0().part.bars = 4; delete L0().part.barsMode;
+    L0().part.notes = [{ t: 0, midi: 60, dur: 0.1 }, { t: 0.5, midi: 64, dur: 0.1 }];
+    // put the cadence back so the second run has the same room to grow
+    E.getCfg().prog.chords[0].bars = 1; E.getCfg();
+    o.err2 = await run('stretch');
+    o.barsStretch = L0().part.bars;
+    o.tStretch = L0().part.notes.map((n) => Math.round(n.t * 1000) / 1000);
+    // NO CHANGE, NO QUESTION. A dialog on every close is noise, and it is the
+    // clause with teeth: the ask must key on the LENGTH, not on the editor
+    // having been opened.
+    _ambCadenceModal(E, 0); await zz(250);
+    const dn2 = cad() && cad().querySelector('.cad-close'); if (dn2) dn2.click();
+    await zz(400);
+    o.askedOnNoChange = !!casc();
+    if (casc()) casc().querySelector('.v2-cascgo').click();
+    await zz(200);
+    // restore EVERYTHING this probe wrote
+    cfg.prog = P0; E.getCfg();
+    const Lr = L0();
+    Lr.part = JSON.parse(JSON.stringify(keep.part));
+    if (Number.isFinite(keep.partFor)) Lr.partFor = keep.partFor; else delete Lr.partFor;
+    if (keep.parts) Lr.parts = keep.parts; else delete Lr.parts;
+    if (keep.partAll) Lr.partAll = keep.partAll; else delete Lr.partAll;
+    E.getCfg();
+    const host = document.getElementById('bloom-v2-layers');
+    if (host) host._sig = '';
+    window._v2.render(E); await zz(250);
+    return o;
+  });
+  ok('a cadence change asks how the content follows — and Fill keeps its tempo',
+    !cascRun.err && !cascRun.err2 && cascRun.gone &&
+    cascRun.bars0 === 4 && cascRun.barsFill === 5 &&
+    // four notes a bar apart become FIVE — the tempo held, one more written
+    cascRun.tFill.length === 5 && cascRun.tFill.join(',') === '0,0.2,0.4,0.6,0.8' &&
+    cascRun.modeFill === 'fill' &&
+    // STRETCH is the default and leaves the times exactly as they are
+    cascRun.barsStretch === 5 && cascRun.tStretch.join(',') === '0,0.5' &&
+    // a ▭ Everywhere layer keeps its own length — that content is not for a part
+    cascRun.looseSeen && cascRun.everyKept &&
+    !cascRun.askedOnNoChange,
+    JSON.stringify(cascRun));
+
+  // AND THE PICTURE FOLLOWS, ON THE PRESS. The cadence commit deliberately
+  // does NOT call `_ambSyncControls` (193ms of a 197ms press — it rebuilds
+  // every card), and the drawing rode on it, so the ruler's chord band and the
+  // refit record stayed stale until something else happened to repaint. This
+  // is the standing lesson about dropping a broad sync: enumerate what rode on
+  // it. Read from the canvas's OWN published geometry, mid-edit, with no
+  // render of the probe's own.
+  const cvizRun = await page.evaluate(async () => {
+    const E = _masterEng, cfg = E.getCfg(), o = {};
+    const P0 = JSON.parse(JSON.stringify(cfg.prog));
+    const L0 = () => (E.getCfg().layers || [])[0];
+    const keep = JSON.parse(JSON.stringify({ part: L0().part, partFor: L0().partFor,
+      parts: L0().parts || null, partAll: L0().partAll || null }));
+    cfg.prog.on = true;
+    cfg.prog.chords = [{ root: 0, intervals: [0, 4, 7], bars: 1 }, { root: 5, intervals: [0, 4, 7], bars: 1 },
+      { root: 7, intervals: [0, 4, 7], bars: 1 }, { root: 9, intervals: [0, 3, 7], bars: 1 }];
+    cfg.prog.parts = [{ name: 'Verse', len: 4 }];
+    E.getCfg();
+    L0().partFor = 0; L0().part.bars = 4;
+    const card = () => document.querySelector('.v2-layer');
+    if (card() && card().classList.contains('collapsed')) {
+      const cb = card().querySelector('.ambient-collapse'); if (cb) cb.click();
+      await zz(350);
+    }
+    const host = document.getElementById('bloom-v2-layers');
+    if (host) host._sig = '';
+    window._v2.render(E); await zz(350);
+    const geo = () => { const c = card() && card().querySelector('.v2-vizcv');
+      return (c && c._chordGeo) ? c._chordGeo.marks.map((m) => Math.round((m.f1 - m.f0) * 1000) / 1000) : null; };
+    o.before = geo();
+    _ambCadenceModal(E, 0); await zz(300);
+    const b2 = document.querySelector('.ambient-cad-modal [data-cad^="up:0"]');
+    o.hasStepper = !!b2;
+    if (b2) { b2.click(); await zz(150); b2.click(); await zz(300); }
+    // NO RENDER OF OUR OWN — the press is the only thing that may have
+    // repainted, which is the whole claim.
+    o.after = geo();
+    const cl = document.querySelector('.ambient-cad-modal .cad-close'); if (cl) cl.click();
+    await zz(400);
+    const ca = document.querySelector('.v2-casc-modal'); if (ca) ca.querySelector('.v2-cascgo').click();
+    await zz(300);
+    cfg.prog = P0; E.getCfg();
+    const Lr = L0();
+    Lr.part = JSON.parse(JSON.stringify(keep.part));
+    if (Number.isFinite(keep.partFor)) Lr.partFor = keep.partFor; else delete Lr.partFor;
+    if (keep.parts) Lr.parts = keep.parts; else delete Lr.parts;
+    if (keep.partAll) Lr.partAll = keep.partAll; else delete Lr.partAll;
+    E.getCfg();
+    if (host) host._sig = '';
+    window._v2.render(E); await zz(250);
+    return o;
+  });
+  ok('a cadence press repaints the drawing — the chord band moves with it',
+    cvizRun.hasStepper && !!cvizRun.before && !!cvizRun.after &&
+    // four equal chords over four bars…
+    cvizRun.before.length === 4 && cvizRun.before.every((v) => Math.abs(v - 0.25) < 0.02) &&
+    // …and the first one is now twice the width of its neighbours
+    cvizRun.after.length === 4 && Math.abs(cvizRun.after[0] - 0.4) < 0.02 &&
+    Math.abs(cvizRun.after[1] - 0.2) < 0.02,
+    JSON.stringify(cvizRun));
+
+  // ---- THE ROLL HAS ROW LINES, AND SELECTING A NOTE DOES NOT MOVE IT -----
+  // Reported together, and they are one thing: the black rows were the only
+  // horizontal reference, so between two of them a note's row was a guess —
+  // and the guess was being made against a selection marker inflated 4px above
+  // and below the note, which at a 5-6px row is most of a row either way
+  // ("this note jumps when it's selected; it looks a half-step below the one
+  // to its left"). MEASURED: the note's drawn y never actually moved, so the
+  // check pins that outright, and then pins the two things that made it read
+  // as though it had.
+  const rollRun = await page.evaluate(async () => {
+    const E = _masterEng, cfg = E.getCfg(), o = {};
+    const L = () => (E.getCfg().layers || [])[0];
+    const P0 = JSON.parse(JSON.stringify(cfg.prog));
+    const keep = JSON.parse(JSON.stringify({ part: L().part, harmony: L().harmony || null }));
+    const mode0 = window._v2.modeOf(L());
+    cfg.prog.on = true;
+    cfg.prog.chords = [{ root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] },
+      { root: 7, intervals: [0, 4, 7] }, { root: 9, intervals: [0, 3, 7] }];
+    cfg.prog.parts = [{ name: 'V', len: 4 }];
+    E.getCfg();
+    // A REMAPPING PART, because that is the shape the report came from: the
+    // stored midi and the drawn row are different numbers there, so anything
+    // that quietly swapped one for the other on selection would show here.
+    L().part.kind = 'recorded'; L().part.bars = 4; L().harmony = 'chordlock';
+    L().part.notes = [{ t: 0.05, midi: 60, dur: 0.05 }, { t: 0.30, midi: 41, dur: 0.05 },
+      { t: 0.55, midi: 64, dur: 0.05 }, { t: 0.80, midi: 47, dur: 0.05 }];
+    window._v2.vizMode(L(), 'edit');
+    E.getCfg();
+    const host = document.getElementById('bloom-v2-layers'); if (host) host._sig = '';
+    window._v2.render(E); await zz(400);
+    const cv = () => document.querySelector('.v2-layer .v2-vizcv');
+    const yOf = (i) => { const b2 = (cv()._hits || []).find((x) => x.i === i); return b2 ? Math.round(b2.y) : null; };
+    o.yBefore = yOf(1);
+    o.drawnDiffers = (() => { const b2 = (cv()._hits || []).find((x) => x.i === 1);
+      return !!b2 && Math.abs(b2.midi - 41) > 0.5; })();   // the remap really is in play
+    // A LINE PER SEMITONE, counted down a column of EMPTY plot: transitions in
+    // a vertical strip, against the number of rows drawn.
+    // EVERY boundary, not a total: a plain edge COUNT does not discriminate —
+    // the black-row tint and the out-of-scale knock-back already put an edge
+    // at most boundaries, so a count passes with the lines deleted (it did).
+    // Measured with them: 26 of 26 boundaries carry an edge; without: 21 —
+    // the five missing ones are exactly the boundaries between two white rows
+    // in the same scale state, which is where a note's row was a guess.
+    const lines = () => {
+      const c = cv(), g = c.getContext('2d'), dpr = Math.min(3, window.devicePixelRatio || 1);
+      const pgz = c._pitchGeo;
+      const cx = Math.round((c.clientWidth - 6) * dpr);
+      const rows = pgz.hiM - pgz.loM + 1;
+      let hit = 0;
+      for (let k = 1; k < rows; k++) {
+        const y = Math.round((pgz.top + k * pgz.rowH) * dpr);
+        const a = g.getImageData(cx, Math.max(0, y - 2), 1, 5).data;
+        let mn = 1e9, mx = -1;
+        for (let i = 0; i < a.length; i += 4) {
+          const v = a[i] + a[i + 1] + a[i + 2];
+          if (v < mn) mn = v; if (v > mx) mx = v;
+        }
+        if (mx - mn > 4) hit++;
+      }
+      return { edges: hit, rows: rows };
+    };
+    const ln = lines(); o.lineEdges = ln.edges; o.rows = ln.rows;
+    // THE MARKER'S REACH. The old halo stroked a rect inset 3px/4px, so its
+    // top and bottom edges painted in the column just LEFT of the note; the
+    // new one is exactly the note's own rect, so that column is empty.
+    const outside = () => {
+      const c = cv(), g = c.getContext('2d'), dpr = Math.min(3, window.devicePixelRatio || 1);
+      const b2 = (c._hits || []).find((x) => x.i === 1); if (!b2) return -1;
+      const cx = Math.round((b2.x - 2) * dpr);
+      const y0 = Math.max(0, Math.round((b2.y - 6) * dpr));
+      const col = g.getImageData(cx, y0, 1, Math.round((b2.h + 12) * dpr)).data;
+      let n = 0;
+      for (let i = 0; i < col.length; i += 4)
+        if (col[i] > 200 && col[i + 1] > 200 && col[i + 2] > 200) n++;
+      return n;
+    };
+    // open the editor on that note, through the drawing
+    const b0 = (cv()._hits || []).find((x) => x.i === 1);
+    const r0 = cv().getBoundingClientRect();
+    cv().dispatchEvent(new MouseEvent('click', { bubbles: true,
+      clientX: r0.left + b0.x + b0.w / 2, clientY: r0.top + b0.y + b0.h / 2 }));
+    await zz(400);
+    o.selected = cv()._sel === 1;
+    o.ySel = yOf(1);
+    o.haloOutside = outside();
+    // …and the ROW is banded across the plot, which is what answers "which row
+    // is it on" now that the marker no longer overstates it
+    o.rowBand = (() => {
+      const c = cv(), g = c.getContext('2d'), dpr = Math.min(3, window.devicePixelRatio || 1);
+      const b2 = (c._hits || []).find((x) => x.i === 1); if (!b2) return false;
+      const px = g.getImageData(Math.round((c.clientWidth - 6) * dpr),
+        Math.round((b2.y + b2.h / 2) * dpr), 1, 1).data;
+      const above = g.getImageData(Math.round((c.clientWidth - 6) * dpr),
+        Math.round((b2.y - c._pitchGeo.rowH * 1.5) * dpr), 1, 1).data;
+      return (px[0] + px[1] + px[2]) > (above[0] + above[1] + above[2]) + 12;
+    })();
+    // close it again
+    cv().dispatchEvent(new MouseEvent('click', { bubbles: true,
+      clientX: r0.left + b0.x + b0.w / 2, clientY: r0.top + b0.y + b0.h / 2 }));
+    await zz(400);
+    o.yAfter = yOf(1);
+    // restore
+    window._v2.vizMode(L(), mode0);
+    L().part = JSON.parse(JSON.stringify(keep.part));
+    if (keep.harmony) L().harmony = keep.harmony; else delete L().harmony;
+    cfg.prog = P0; E.getCfg();
+    if (host) host._sig = '';
+    window._v2.render(E); await zz(250);
+    return o;
+  });
+  ok('the roll has a line per semitone — EVERY row boundary, not just the black ones',
+    rollRun.rows > 8 && rollRun.lineEdges === rollRun.rows - 1,
+    JSON.stringify({ edges: rollRun.lineEdges, boundaries: rollRun.rows - 1 }));
+  ok('selecting a note does NOT move it — the marker sits on its own row',
+    rollRun.drawnDiffers && rollRun.selected &&
+    rollRun.yBefore != null && rollRun.ySel === rollRun.yBefore &&
+    rollRun.yAfter === rollRun.yBefore &&
+    rollRun.haloOutside === 0 && rollRun.rowBand,
+    JSON.stringify(rollRun));
+
+  // ---- THE SAME NOTE, THE SAME ROW — STOPPED AND PLAYING -----------------
+  // A remapped pitch is a function of the chord AT THE NOTE'S OWN ONSET, and
+  // the onset is `cs + n.at`. With `cs` at zero a per-part record was resolved
+  // against the FIRST chord of the whole progression instead of against its
+  // own part's — so every note sat on a different row from the one it takes
+  // when that part comes round ("the note is in a different place on playback
+  // and when stopped"). The drawing and playback now share one anchor, and so
+  // does the ruler's chord band above them: a picture whose chord names and
+  // whose notes disagree about which chords are underneath is contradicting
+  // itself.
+  //
+  // THE FIXTURE IS THE SECOND PART, deliberately: with the layer on part 1 the
+  // wrong anchor lands on part 0's chords, which is the reported shape. On the
+  // first part the bug is invisible.
+  const anchRun = await page.evaluate(async () => {
+    const E = _masterEng, cfg = E.getCfg(), o = {};
+    const L = () => (E.getCfg().layers || [])[0];
+    const P0 = JSON.parse(JSON.stringify(cfg.prog));
+    const keep = JSON.parse(JSON.stringify({ part: L().part, harmony: L().harmony || null,
+      partFor: L().partFor, on: L().on, present: L().present }));
+    const mode0 = window._v2.modeOf(L());
+    cfg.prog.on = true;
+    cfg.prog.chords = [{ root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] },
+      { root: 7, intervals: [0, 4, 7] }, { root: 9, intervals: [0, 3, 7] },
+      { root: 2, intervals: [0, 3, 7] }, { root: 4, intervals: [0, 3, 7] }];
+    cfg.prog.parts = [{ name: 'Verse', len: 4 }, { name: 'Chorus', len: 2 }];
+    E.getCfg();
+    const Lx = L();
+    Lx.on = true; Lx.present = true;
+    Lx.part.kind = 'recorded'; Lx.part.bars = 2; Lx.harmony = 'chordlock'; Lx.partFor = 1;
+    Lx.part.notes = [{ t: 0.1, midi: 60, dur: 0.08 }, { t: 0.35, midi: 64, dur: 0.08 },
+      { t: 0.6, midi: 67, dur: 0.08 }, { t: 0.85, midi: 71, dur: 0.08 }];
+    window._v2.vizMode(Lx, 'edit');
+    E.getCfg();
+    const host = document.getElementById('bloom-v2-layers'); if (host) host._sig = '';
+    window._v2.render(E); await zz(400);
+    const cv = () => document.querySelector('.v2-layer .v2-vizcv');
+    const shot = () => { const c = cv(); if (!c) return null;
+      return { rows: (c._hits || []).map((x) => Math.round(x.midi)).join(','),
+        chords: c._chordGeo ? c._chordGeo.marks.map((m) => m.nm).join(',') : null }; };
+    o.stopped = shot();
+    _ambStartGenerator(E); await zz(300);
+    for (let i = 0; i < 60; i++) {
+      await zz(200);
+      const c = cv(); if (c && c._drawnPi === 1) { o.playing = shot(); break; }
+    }
+    _ambStopGenerator(E); await zz(400);
+    window._v2.render(E); await zz(300);
+    o.after = shot();
+    // A TEST THAT PLAYS MUST NULL THE CLOCKS — a stale `_playStartAt` re-anchors
+    // every later chord resolution in this page (the documented trap).
+    E._playStartAt = null; E._progAnchor = null; E._barGridAnchor = null;
+    window._v2.vizMode(L(), mode0);
+    L().part = JSON.parse(JSON.stringify(keep.part));
+    if (keep.harmony) L().harmony = keep.harmony; else delete L().harmony;
+    if (Number.isFinite(keep.partFor)) L().partFor = keep.partFor; else delete L().partFor;
+    L().on = keep.on; L().present = keep.present;
+    cfg.prog = P0; E.getCfg();
+    if (host) host._sig = '';
+    window._v2.render(E); await zz(250);
+    return o;
+  });
+  ok('a note sits on the SAME row stopped and playing — one anchor, and the chords agree',
+    !!anchRun.playing && !!anchRun.stopped &&
+    // the remap is really in play — plain midis would make this pass regardless
+    anchRun.stopped.rows !== '60,64,67,71' &&
+    anchRun.stopped.rows === anchRun.playing.rows &&
+    anchRun.after && anchRun.after.rows === anchRun.stopped.rows &&
+    // …and the ruler names the chords the notes were resolved against
+    anchRun.stopped.chords === anchRun.playing.chords &&
+    anchRun.after.chords === anchRun.stopped.chords,
+    JSON.stringify(anchRun));
+
+  // ---- THE DRAWING IS A WINDOW ON THE PART, AND IT NAVIGATES -------------
+  // It used to be the WHOLE part squeezed into one width and the notes' own
+  // pitch range squeezed into one height: nothing outside either could be
+  // reached, and on a long part a bar was a few pixels. At most four bars are
+  // on screen at a phone's width, the rest is reached with ◀ ▶, and the pitch
+  // window pans and resizes.
+  //
+  // THE CLAUSE WITH TEETH IS THE INVERSE MAPPING: a press lands at a pixel,
+  // and with only part of the cycle showing that pixel is not the fraction of
+  // the cycle it used to be — an un-mapped conversion draws the note back at
+  // the start of the part, which is the failure a "the buttons move things"
+  // check cannot see.
+  const navRun = await page.evaluate(async () => {
+    const E = _masterEng, cfg = E.getCfg(), o = {};
+    const L = () => (E.getCfg().layers || [])[0];
+    const P0 = JSON.parse(JSON.stringify(cfg.prog));
+    const keep = JSON.parse(JSON.stringify({ part: L().part }));
+    const mode0 = window._v2.modeOf(L());
+    cfg.prog.on = true;
+    cfg.prog.chords = [];
+    for (let i = 0; i < 12; i++) cfg.prog.chords.push({ root: (i * 5) % 12, intervals: [0, 4, 7] });
+    cfg.prog.parts = [{ name: 'A', len: 4 }, { name: 'B', len: 4 }, { name: 'C', len: 4 }];
+    E.getCfg();
+    L().part.kind = 'recorded'; L().part.bars = 12;
+    L().part.notes = [];
+    for (let i = 0; i < 12; i++) L().part.notes.push({ t: i / 12 + 0.01, midi: 48 + i * 2, dur: 0.05 });
+    window._v2.vizMode(L(), 'edit');
+    E.getCfg();
+    const card = () => document.querySelector('.v2-layer');
+    if (card() && card().classList.contains('collapsed')) {
+      const cb = card().querySelector('.ambient-collapse'); if (cb) cb.click(); await zz(350);
+    }
+    const host = document.getElementById('bloom-v2-layers'); if (host) host._sig = '';
+    window._v2.render(E); await zz(400);
+    const cv = () => card().querySelector('.v2-vizcv');
+    const g = () => { const c = cv(); return { vb: c._plotGeo.vbars,
+      b0: Math.round((c._plotGeo.bar0 || 0) * 100) / 100,
+      lo: c._pitchGeo.loM, hi: c._pitchGeo.hiM, h: c.clientHeight, hits: (c._hits || []).length }; };
+    o.btns = [...card().querySelectorAll('.v2-nav')].map((x) => x.getAttribute('data-nav')).join(',');
+    o.start = g();
+    o.lab = (card().querySelector('.v2-navlab') || {}).textContent || '';
+    const press = (a) => { const b2 = card().querySelector('.v2-nav[data-nav="' + a + '"]'); if (b2) b2.click(); };
+    press('right'); await zz(200); o.right = g();
+    press('up'); await zz(200); o.up = g();
+    press('grow'); await zz(200); o.grow = g();
+    press('fit'); await zz(250); o.fit = g();
+    press('right'); await zz(200);        // pan again for the mapping test below
+    // THE INVERSE MAPPING. With the window panned, a press at 3/4 across the
+    // plot must add a note in the bar that is DRAWN there — not at 3/4 of the
+    // whole part.
+    window._v2.vizMode(L(), 'draw');
+    window._v2.render(E); await zz(300);
+    const c2 = cv(), pl = c2._plotGeo, pg2 = c2._pitchGeo;
+    // THE NOTE THAT WAS ADDED, identified — not "a note near where we aimed".
+    // Searching every note for the nearest one lets a PRE-EXISTING note stand
+    // in for the new one, and the poison (an un-mapped press, which lands the
+    // note bars away) passed on exactly that.
+    const t0s = new Set(L().part.notes.map((n) => Math.round(n.t * 1e6)));
+    const before = L().part.notes.length;
+    const rc = c2.getBoundingClientRect();
+    const fx = 0.75;
+    const px = pl.x0 + pl.w * fx, py = pg2.top + pg2.rowH * 2.5;
+    c2.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1,
+      clientX: rc.left + px, clientY: rc.top + py }));
+    document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+    await zz(300);
+    o.added = L().part.notes.length - before;
+    // …in BARS, which is the readable form of the claim
+    const want = (pl.f0 + fx * pl.vsc) * 12;
+    const got = (() => {
+      const nu = L().part.notes.filter((n) => !t0s.has(Math.round(n.t * 1e6)));
+      return nu.length === 1 ? Math.round(nu[0].t * 12 * 100) / 100 : null;
+    })();
+    o.penBar = got; o.penWant = Math.round(want * 100) / 100;
+    window._v2.vizMode(L(), mode0);
+    L().part = JSON.parse(JSON.stringify(keep.part));
+    cfg.prog = P0; E.getCfg();
+    if (host) host._sig = '';
+    window._v2.render(E); await zz(250);
+    return o;
+  });
+  ok('the drawing is a WINDOW on the part — four bars to a phone, and it pans',
+    navRun.btns === 'up,dn,grow,shrink,left,right,fit' &&
+    navRun.start.vb === 4 && navRun.start.b0 === 0 &&
+    // a long part is windowed, so only some of its notes are drawn at once
+    navRun.start.hits > 0 && navRun.start.hits < 12 &&
+    /bar 1/.test(navRun.lab) &&
+    navRun.right.b0 > 1 && navRun.right.b0 < 2 &&
+    navRun.up.lo === navRun.start.lo + 3 && navRun.up.hi === navRun.start.hi + 3 &&
+    // ＋ shows MORE pitches and the canvas grows with them — under a fixed cap
+    // it would only have made the rows thinner, the opposite of the ask
+    navRun.grow.hi - navRun.grow.lo > navRun.up.hi - navRun.up.lo &&
+    navRun.grow.h > navRun.up.h &&
+    navRun.fit.b0 === 0 && navRun.fit.lo === navRun.start.lo &&
+    navRun.fit.h === navRun.start.h,
+    JSON.stringify(navRun));
+  ok('…and a press lands where it is DRAWN — the viewport maps both ways',
+    navRun.added === 1 && navRun.penBar != null &&
+    Math.abs(navRun.penBar - navRun.penWant) < 0.3,
+    JSON.stringify({ added: navRun.added, bar: navRun.penBar, want: navRun.penWant }));
+
+  // ---- PLAY STARTS FROM THE PART YOU ARE EDITING -------------------------
+  // The ⇶ Part strip names which part is current, and play ignored it — so
+  // auditioning the part you were working on meant waiting out everything
+  // before it. A FAST-FORWARD OF THE ONE CLOCK (both anchors move back by the
+  // part's own offset), never a second entry point: the chord clock, the bar
+  // grid, the sections and every layer's phase arrive there together.
+  const ffRun = await page.evaluate(async () => {
+    const E = _masterEng, cfg = E.getCfg(), o = {};
+    const P0 = JSON.parse(JSON.stringify(cfg.prog));
+    const cp0 = E._curPart;
+    cfg.prog.on = true;
+    cfg.prog.chords = [{ root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] },
+      { root: 7, intervals: [0, 4, 7] }, { root: 9, intervals: [0, 3, 7] },
+      { root: 2, intervals: [0, 3, 7] }, { root: 4, intervals: [0, 3, 7] }];
+    cfg.prog.parts = [{ name: 'A', len: 2 }, { name: 'B', len: 2 }, { name: 'C', len: 2 }];
+    E.getCfg();
+    const run = async (sel) => {
+      if (sel == null) delete E._curPart; else E._curPart = sel;
+      _ambStartGenerator(E); await zz(500);
+      const w = _ambPartChordAt(E, cfg, Tone.now() + 0.05);
+      const at = w ? { pi: w.pi, ci: w.ci } : null;
+      // ONE CLOCK, STILL. The shift moves BOTH anchors, so the chord clock and
+      // the bar grid stay pinned together — moving only `_progAnchor` would
+      // re-open the two-clock gap that made every chord land late by the lead.
+      // Asserted structurally rather than by racing a chord's length: at
+      // 120bpm a chord is 2s, so "did it advance yet" is a coin toss.
+      const oneClock = Math.abs((E._progAnchor || 0) - (E._barGridAnchor || 0)) < 1e-9;
+      _ambStopGenerator(E); await zz(300);
+      E._playStartAt = null; E._progAnchor = null; E._barGridAnchor = null;
+      return { at, oneClock };
+    };
+    o.p0 = await run(0);
+    o.p1 = await run(1);
+    o.p2 = await run(2);
+    o.none = await run(null);
+    if (cp0 == null) delete E._curPart; else E._curPart = cp0;
+    cfg.prog = P0; E.getCfg();
+    return o;
+  });
+  ok('play starts from the part you are editing — and plays ON from there',
+    ffRun.p0.at && ffRun.p0.at.pi === 0 && ffRun.p0.at.ci === 0 &&
+    ffRun.p1.at && ffRun.p1.at.pi === 1 && ffRun.p1.at.ci === 0 &&
+    ffRun.p2.at && ffRun.p2.at.pi === 2 && ffRun.p2.at.ci === 0 &&
+    // no selection is the old behaviour, from the top
+    ffRun.none.at && ffRun.none.at.pi === 0 &&
+    // …and the two clocks are still one, which is what makes it a fast-forward
+    // of the arrangement rather than a chord clock running on its own
+    ffRun.p0.oneClock && ffRun.p1.oneClock && ffRun.p2.oneClock && ffRun.none.oneClock,
+    JSON.stringify(ffRun));
+
+  // ---- ✂ SPLIT — ONE NOTE BECOMES SEVERAL, IN ITS OWN SPAN ---------------
+  // The total length is the invariant: whatever the pattern, the pieces cover
+  // exactly `[t, t+dur)` and nothing after the note moves — that is what makes
+  // it a division rather than an edit. Asserted on the ARITHMETIC (the weights
+  // must sum to one, in all three patterns) AND on the notes the dialog writes,
+  // because a divider that is right about proportions and wrong about where it
+  // splices them is still wrong.
+  const splitRun = await page.evaluate(async () => {
+    const E = _masterEng, o = {};
+    const L = () => (E.getCfg().layers || [])[0];
+    const keep = JSON.parse(JSON.stringify({ part: L().part }));
+    const mode0 = window._v2.modeOf(L());
+    L().part.kind = 'recorded'; L().part.bars = 2;
+    L().part.notes = [{ t: 0, midi: 60, dur: 0.5, vel: 80 }, { t: 0.5, midi: 64, dur: 0.25 }];
+    E.getCfg();
+    const card = () => document.querySelector('.v2-layer');
+    if (card() && card().classList.contains('collapsed')) {
+      const cb = card().querySelector('.ambient-collapse'); if (cb) cb.click();
+      await zz(350);
+    }
+    const host = document.getElementById('bloom-v2-layers');
+    if (host) host._sig = '';
+    window._v2.render(E); await zz(350);
+    // THE ARITHMETIC, asked of the divider itself. A weight list that does not
+    // sum to one is the "same total length" promise broken before any note is
+    // written, and it is the one claim all three patterns share.
+    const w = (k, n, c, sp, rl) => window._v2.splitWeights(k, n, c, sp, rl);
+    const sum = (a) => Math.round(a.reduce((x, y) => x + y, 0) * 1e6) / 1e6;
+    o.sums = [sum(w('equal', 7)), sum(w('custom', 5, [5, 1, 2, 1, 1])),
+      sum(w('random', 6, null, 100, 3))];
+    // AND WITH THE FLOOR BINDING, which is the only case the SECOND normalise
+    // pass exists for — a floor applied to shares that already sum to one
+    // breaks the sum, so without it 1000:1 overflows the note by 1.5%. The
+    // ordinary fixtures never reach it (no share of 16 or fewer falls under
+    // 1/64), so a check built on them passes with that pass deleted — it did.
+    const wf = w('custom', 2, [1000, 1]);
+    o.floorSum = sum(wf);
+    o.floorMin = Math.round(Math.min.apply(null, wf) * 1e5) / 1e5;
+    o.equal = w('equal', 4).map((v) => Math.round(v * 1e4) / 1e4).join(',');
+    // CUSTOM is relative sizes scaled to fit — 3:1:1 is 60/20/20 of the note
+    o.custom = w('custom', 3, [3, 1, 1]).map((v) => Math.round(v * 1e4) / 1e4).join(',');
+    // …and RANDOM's own left end IS equal division, which is what the slider says
+    o.rand0 = w('random', 4, null, 0, 1).map((v) => Math.round(v * 1e4) / 1e4).join(',');
+    const rA = w('random', 4, null, 100, 1);
+    o.randRepeats = JSON.stringify(rA) === JSON.stringify(w('random', 4, null, 100, 1));
+    o.randRolls = JSON.stringify(rA) !== JSON.stringify(w('random', 4, null, 100, 2));
+    // …and it is genuinely dramatic at the top, or the slider's right end says
+    // nothing (measured 1.7× before the exponent was raised — not "dramatic")
+    const rr = [];
+    for (let i = 1; i <= 25; i++) { const x = w('random', 4, null, 100, i); rr.push(Math.max.apply(null, x) / Math.min.apply(null, x)); }
+    rr.sort((a, b) => a - b);
+    o.randRatio = Math.round(rr[12] * 100) / 100;
+    // THE MODE, through its own control
+    const sel = card().querySelector('.v2-modepick');
+    o.hasOpt = !!(sel && [...sel.options].some((x) => x.value === 'split'));
+    sel.value = 'split'; sel.dispatchEvent(new Event('input', { bubbles: true }));
+    await zz(300);
+    o.mode = window._v2.modeOf(L());
+    const cv = () => card().querySelector('.v2-vizcv');
+    const hit0 = () => (cv()._hits || [])[0];
+    // A CLICK IS THE ONLY GESTURE. A drag would give the mode a second meaning
+    // nobody asked for, and the pencil would still add on empty space — both
+    // stand down, and the click must still get through (the pointerdown
+    // returns WITHOUT stamping `_dragged`, which is what allows that).
+    const before = JSON.stringify(L().part.notes);
+    const rc = () => cv().getBoundingClientRect();
+    const h0 = hit0(), r0 = rc();
+    cv().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1,
+      clientX: r0.left + h0.x + 2, clientY: r0.top + h0.y + h0.h / 2 }));
+    for (let i = 1; i <= 8; i++) document.dispatchEvent(new PointerEvent('pointermove',
+      { bubbles: true, pointerId: 1, clientX: r0.left + h0.x + 2 + i * 6, clientY: r0.top + h0.y + h0.h / 2 }));
+    document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+    await zz(250);
+    o.dragNoop = JSON.stringify(L().part.notes) === before;
+    const pgz = cv()._pitchGeo, gx = (cv()._plotGeo && cv()._plotGeo.x0) || 0;
+    cv().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1,
+      clientX: r0.left + gx + (cv().clientWidth - gx) * 0.85, clientY: r0.top + pgz.top + pgz.rowH * 1.5 }));
+    document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+    await zz(250);
+    o.penNoop = L().part.notes.length === 2;
+    // …and the CLICK opens the divider
+    const h1 = hit0(), r1 = rc();
+    cv().dispatchEvent(new MouseEvent('click', { bubbles: true,
+      clientX: r1.left + h1.x + h1.w / 2, clientY: r1.top + h1.y + h1.h / 2 }));
+    await zz(350);
+    const md = () => document.querySelector('.v2-split-modal');
+    o.opened = !!md();
+    o.patterns = md() ? [...md().querySelectorAll('.v2-splitkind')].map((x) => x.textContent.trim()).join(',') : null;
+    // …and the PREVIEW is in the note's own beats, not the cycle's — it read
+    // twice the note's length until the weight was scaled by the duration
+    o.prev = md() ? [...md().querySelectorAll('.v2-split-seg b')]
+      .reduce((a, x) => a + (+x.textContent || 0), 0) : 0;
+    if (md()) {
+      const up = md().querySelector('.v2-splitstep[data-d="1"]');
+      up.click(); await zz(120);            // 3 → 4
+      md().querySelector('.v2-splitgo').click(); await zz(400);
+    }
+    o.gone = !md();
+    const N = L().part.notes;
+    o.n = N.length;
+    o.times = N.map((x) => Math.round(x.t * 1e4) / 1e4).join(',');
+    o.durs = N.map((x) => Math.round(x.dur * 1e4) / 1e4).join(',');
+    // the ORIGINAL SPAN, exactly — and the note after it never moved
+    o.spanExact = Math.abs(N[0].t) < 1e-9 &&
+      Math.abs((N[3].t + N[3].dur) - 0.5) < 1e-9;
+    o.tailKept = Math.abs(N[4].t - 0.5) < 1e-9 && N[4].midi === 64;
+    // A SPLIT IS A DIVISION OF ONE NOTE, so what the note WAS comes along
+    o.velKept = N.slice(0, 4).every((x) => x.vel === 80) && N[4].vel == null;
+    o.pitchKept = N.slice(0, 4).every((x) => x.midi === 60);
+    // put it all back
+    window._v2.vizMode(L(), mode0);
+    L().part = JSON.parse(JSON.stringify(keep.part));
+    E.getCfg();
+    if (host) host._sig = '';
+    window._v2.render(E); await zz(250);
+    return o;
+  });
+  ok('✂ Split divides a note into several — the same total length',
+    splitRun.hasOpt && splitRun.mode === 'split' && splitRun.opened && splitRun.gone &&
+    splitRun.patterns === 'Equal,Custom,Random' &&
+    splitRun.sums.every((v) => Math.abs(v - 1) < 1e-6) &&
+    Math.abs(splitRun.floorSum - 1) < 1e-6 && splitRun.floorMin > 0.014 &&
+    splitRun.equal === '0.25,0.25,0.25,0.25' && splitRun.custom === '0.6,0.2,0.2' &&
+    splitRun.rand0 === '0.25,0.25,0.25,0.25' &&
+    splitRun.randRepeats && splitRun.randRolls && splitRun.randRatio > 2.5 &&
+    // 4 pieces of a 0.5 note in a 2-bar cycle = 1 beat each, and the preview
+    // says so in the NOTE's beats (4 total), not the cycle's
+    splitRun.n === 5 && splitRun.times === '0,0.125,0.25,0.375,0.5' &&
+    splitRun.durs === '0.125,0.125,0.125,0.125,0.25' &&
+    Math.abs(splitRun.prev - 4) < 0.05 &&
+    splitRun.spanExact && splitRun.tailKept && splitRun.velKept && splitRun.pitchKept,
+    JSON.stringify(splitRun));
+  ok('…and a CLICK is its only gesture — no drag, no pencil',
+    splitRun.dragNoop && splitRun.penNoop && splitRun.opened,
+    JSON.stringify({ dragNoop: splitRun.dragNoop, penNoop: splitRun.penNoop, opened: splitRun.opened }));
+
+  // ---- A GENERATED PART IS EDITABLE BY HAND, TOO -------------------------
+  // Both gestures used to require a WRITTEN part, which is not the one you are
+  // usually looking at: dragging a note on a generated part did NOTHING (there
+  // are no stored notes to move) and only the RELEASE locked and rebuilt the
+  // card, so the picture moved once you let go — reported as the note "jumping
+  // around like crazy". Both now lock on the grab, the same act a tap already
+  // performed, and say so.
+  const liveEditRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, h = document.getElementById('bloom-v2-layers');
+    const L = () => (E.getCfg().layers || [])[0];
+    const sv = JSON.stringify(L().part);
+    const live = async () => {
+      const p2 = L().part;
+      p2.kind = 'live'; delete p2.notes; p2.bars = 2;
+      p2.rhythm = { kind: 'euclid', steps: 16, pulses: 5 };
+      p2.pitch = { kind: 'walk', span: 8 };
+      E.getCfg();
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+      h._sig = ''; window._v2.render(E); await wait(400);
+      const c = document.querySelector('.v2-layer'); c.classList.remove('collapsed');
+      const g = [...c.querySelectorAll('.v2-gototab')]
+        .find((x) => x.getAttribute('data-goto') === 'Content');
+      if (g) { g.click(); await wait(300); }
+      c.querySelector('.v2-vizcv').scrollIntoView({ block: 'center' });
+      await wait(180);
+    };
+    const o = {};
+    await live();
+    // THE DRAW DOOR IS THERE ON A GENERATED PART — it used to render only on a
+    // written one, so on the card you are usually looking at there was no way
+    // to draw a note at all.
+    o.drawOnLive = !!document.querySelector('.v2-layer .v2-modepick');
+    o.kindBefore = L().part.kind;
+    if (!o.drawOnLive) { try { L().part = JSON.parse(sv); E.getCfg(); } catch (e) {} return o; }
+    (function () { const m2 = document.querySelector('.v2-layer .v2-modepick');
+      m2.value = 'draw'; m2.dispatchEvent(new Event('input', { bubbles: true })); })();
+    await wait(420);
+    const cv = document.querySelector('.v2-layer .v2-vizcv');
+    cv.scrollIntoView({ block: 'center' }); await wait(150);
+    const r = cv.getBoundingClientRect(), pg = cv._pitchGeo, geo = cv._plotGeo;
+    // PICK A ROW NO HIT BOX CLAIMS at the target x — a hardcoded row 64 was
+    // CHANCE-DEPENDENT on the roll (the documented fixed-tap-point trap): a
+    // take with a note near (0.8, 64) swallowed the click into its padded hit
+    // box, so the pencil "did nothing" — editor open, nothing drawn — on some
+    // session seeds and not others.
+    const tx = geo.x0 + geo.w * 0.8;
+    let row = -1;
+    for (let m2 = pg.hiM - 1; m2 > pg.loM; m2--) {
+      const y2 = pg.top + (pg.hiM - m2) * pg.rowH + pg.rowH / 2;
+      const clear = !(cv._hits || []).some((x2) =>
+        tx >= x2.x - 6 && tx <= x2.x + x2.w + 6 &&
+        y2 >= x2.y - 9 && y2 <= x2.y + x2.h + 9);
+      if (clear) { row = m2; break; }
+    }
+    o.row = row;
+    cv.dispatchEvent(new MouseEvent('click', { bubbles: true,
+      clientX: r.left + tx,
+      clientY: r.top + pg.top + (pg.hiM - row) * pg.rowH + pg.rowH / 2 }));
+    await wait(520);
+    const p3 = L().part;
+    o.kindAfter = p3.kind;
+    o.notes = (p3.notes || []).map((n) => [Math.round(n.t * 100) / 100, n.midi, n.hx ? 1 : 0]);
+    // FIND THE ADDED NOTE BY ITS DRAWN ROW, never its stored midi — the gate
+    // deliberately carries a leftover transpose (its accumulated state is a
+    // feature), and penAdd CORRECTS the stored value so the drawn note lands
+    // on the clicked row: stored === row pins exactly the
+    // land-where-the-shift-says behaviour that was Round 6's bug.
+    const cells2 = window._v2.gridCells(L());
+    const tc = Math.floor(0.8 * cells2) / cells2;
+    const nAdd = (p3.notes || []).findIndex((x) => Math.abs(x.t - tc) < 1e-6);
+    const cv2 = document.querySelector('.v2-layer .v2-vizcv');
+    const hbAdd = nAdd >= 0 && (cv2._hits || []).find((x2) => x2.i === nAdd);
+    o.drawnRow = hbAdd ? Math.round(hbAdd.midi) : null;
+    o.drew = row > 0 && o.drawnRow === row;
+    o.editorOpen = !!document.querySelector('.v2-layer .v2-neinline:not([hidden])');
+    // …and the live SPEC survives, so 🔓 Unlock still hands it back
+    o.specKept = (p3.rhythm && p3.rhythm.kind) === 'euclid';
+    try { const m3 = document.querySelector('.v2-layer .v2-modepick');
+      m3.value = 'view'; m3.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
+    await wait(300);
+    try { L().part = JSON.parse(sv); E.getCfg();
+          h._sig = ''; window._v2.render(E); await wait(320);
+          document.querySelector('.v2-layer').classList.remove('collapsed'); } catch (e) {}
+    return o;
+  });
+  // THE ROLL IS NOT REDRAWN UNDER A GESTURE: GUARDED IN CODE, NOT GATED.
+  // `vizFrame` skips a layer with a drag in progress, because that frame
+  // repaints the roll once per cycle and a LIVE part rolls fresh notes each
+  // time — the blocks would move under the finger. It is DEFENSIVE and
+  // currently unobservable: every drag now LOCKS the part at the grab, so by
+  // the time a gesture exists the notes are fixed and the repaint is a no-op.
+  // A check for it was written and removed after its poison passed (holding a
+  // note for three seconds of playback, sampling the axis: identical frames
+  // with the guard deleted). Keep the guard — it costs nothing and the hazard
+  // returns the moment a drag is allowed without locking — but do not re-add a
+  // check without first proving it FAILS with the guard removed.
+
+  // A DRAG ON A GENERATED PART LOCKS AND THEN MOVES THE NOTE. Before this it
+  // did nothing at all — there are no stored notes to move — and only the
+  // RELEASE locked and rebuilt the card, so the picture moved once you let go.
+  const liveDragRun = await (async () => {
+    const st = await page.evaluate(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+      const E = _masterEng, h = document.getElementById('bloom-v2-layers');
+      const L = (E.getCfg().layers || [])[0];
+      const sv = JSON.stringify(L.part);
+      L.part.kind = 'live'; delete L.part.notes; L.part.bars = 2;
+      L.part.rhythm = { kind: 'euclid', steps: 16, pulses: 5 };
+      L.part.pitch = { kind: 'walk', span: 8 };
+      L.on = true; L.present = true; E.getCfg();
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+      h._sig = ''; window._v2.render(E); await wait(400);
+      const c = document.querySelector('.v2-layer'); c.classList.remove('collapsed');
+      const g = [...c.querySelectorAll('.v2-gototab')]
+        .find((x) => x.getAttribute('data-goto') === 'Content');
+      if (g) { g.click(); await wait(300); }
+      c.querySelector('.v2-vizcv').scrollIntoView({ block: 'center' }); await wait(200);
+      const cv = document.querySelector('.v2-layer .v2-vizcv');
+      const r = cv.getBoundingClientRect();
+      const hb = (cv._hits || []).slice().sort((a, b) => a.t - b.t)[0];
+      return hb ? { x: r.left + hb.x + hb.w / 2, y: r.top + hb.y + 3, sv,
+                    kind: L.part.kind, midi: Math.round(hb.midi) } : { sv };
+    });
+    const o = { got: !!st.x, kindBefore: st.kind };
+    if (st.x) {
+      // TOWARD THE HEADROOM: the frozen window is EXACT now (no ±6
+      // widening — the widening shifted every other note, which was the
+      // reported defect), so a rolled note near the window's edge has a row
+      // of room on that side and plenty on the other. Read the window, pick
+      // the open side, expect one semitone per row in that direction.
+      const held0 = await page.evaluate(() => {
+        const cv = document.querySelector('.v2-layer .v2-vizcv');
+        return { win: cv._pitchGeo };
+      });
+      const upRoom = held0.win.hiM - st.midi, dnRoom = st.midi - held0.win.loM;
+      const sign = upRoom >= 6 ? 1 : -1;              // +1 = drag UP = midi rises
+      await page.mouse.move(st.x, st.y);
+      await page.mouse.down();
+      // 8px arm: raw = i + 8/rowH lands mid-detent (k = ceil(raw − 0.85))
+      // for every reading row height in play (5.15/5.33/6.31), with ≥0.3
+      // rows of margin against CDP's integer coord rounding
+      await page.mouse.move(st.x, st.y - sign * 8);   // past the threshold: arm (and lock)
+      const held = await page.evaluate(() => {
+        const cv = document.querySelector('.v2-layer .v2-vizcv');
+        const L = (_masterEng.getCfg().layers || [])[0];
+        return { kind: L.part.kind, n: (L.part.notes || []).length,
+                 rowH: cv._pitchGeo.rowH };
+      });
+      o.kindAtGrab = held.kind; o.notes = held.n; o.sign = sign;
+      const ms = [];
+      for (let i = 1; i <= 5; i++) {
+        await page.mouse.move(st.x, st.y - sign * (8 + i * held.rowH));
+        await zz(50);
+        ms.push(await page.evaluate(() => {
+          const ns = (_masterEng.getCfg().layers || [])[0].part.notes;
+          return ns && ns.length ? ns.slice().sort((a, b) => a.t - b.t)[0].midi : null;
+        }));
+      }
+      await page.mouse.up();
+      await zz(420);
+      o.steps = ms;
+      o.deltas = ms.slice(1).map((v, i) => (v == null || ms[i] == null) ? null : (v - ms[i]) * sign);
+      o.specKept = await page.evaluate(() =>
+        ((_masterEng.getCfg().layers || [])[0].part.rhythm || {}).kind === 'euclid');
+    }
+    await page.evaluate(async (sv) => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+      const E = _masterEng, h = document.getElementById('bloom-v2-layers');
+      try { (E.getCfg().layers || [])[0].part = JSON.parse(sv); E.getCfg(); } catch (e) {}
+      h._sig = ''; window._v2.render(E); await wait(320);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    }, st.sv);
+    return o;
+  })();
+  ok('a drag on a GENERATED part locks the take and then moves the note',
+    liveDragRun.got && liveDragRun.kindBefore === 'live' &&
+    liveDragRun.kindAtGrab === 'recorded' && liveDragRun.notes > 0 &&
+    liveDragRun.deltas.length === 4 && liveDragRun.deltas.every((d) => d === 1) &&
+    liveDragRun.specKept,
+    JSON.stringify(liveDragRun));
+
+  ok('a GENERATED part can be drawn into — the door is there, and it locks first',
+    liveEditRun.drawOnLive && liveEditRun.kindBefore === 'live' &&
+    liveEditRun.kindAfter === 'recorded' && liveEditRun.drew &&
+    liveEditRun.editorOpen && liveEditRun.specKept,
+    JSON.stringify(liveEditRun));
+
+  // ---- A REBUILD DOES NOT THROW THE PAGE TO THE TOP: NOT GATED, AND WHY ---
+  // `V2.render` now records the scroll before it replaces the host's innerHTML
+  // and puts it back at the end. Verified by DIRECT MEASUREMENT at 390px —
+  // scrolled to the bottom, then a forced rebuild: without the restore 761 → 0
+  // (1 card), 1794 → 0 (2), 2828 → 0 (3); with it, held in all three.
+  //
+  // A CHECK FOR IT WAS WRITTEN AND REMOVED, because it passed its own poison
+  // and this file's rule is that such a check is worse than none. Four
+  // versions were tried — a programmatic sig change, a forced `_sig = ''`, the
+  // real `.ambient-toggle` click, and scrolling to the exact bottom rather
+  // than near it — and every one held its position with the restore deleted.
+  // It is NOT that the environment cannot clamp: emptying the host by hand
+  // here reads `scrollY 0, max 0` and re-filling it does not come back, so the
+  // clamp is available. What the gate does not reproduce is whatever forces a
+  // LAYOUT mid-rebuild (the sheet reopen moving group bodies is the suspect);
+  // by the time these checks run the card's sheet state is settled and the
+  // rebuild never exposes the short page. Do not re-add a check of this shape
+  // without first proving it FAILS with the restore removed.
+
+  // ---- A LINE IS NEVER CHOKED, WRITTEN OR GENERATED ----------------------
+  // The chord choke releases a note by the next change so a pad does not ring
+  // three chords later. A MELODY must be exempt — its note length comes from
+  // its rhythm, not the chord grid — and that exemption used to be LIVE-only,
+  // on the reasoning that a written part's `pitch.kind` names the rules rather
+  // than the notes. Reported the moment editing notes by hand became worth
+  // doing (drag, resize, add and the piano-key re-pitch all lock the take
+  // first): "the 2nd and 3rd notes are getting extremely truncated again on
+  // play press". A written part's NOTES answer it exactly, so they do.
+  //
+  // ASKED OF THE CHOKE ITSELF. A `playNote` wrapper records the duration
+  // ARGUMENT and the choke mutates playNote's own local afterwards, so audio
+  // that is being cut measures as untouched (the documented trap).
+  const chokeRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng;
+    const c0 = E.getCfg();
+    const sv = { prog: JSON.stringify(c0.prog || null), bpm: c0.bpm, bpc: c0.barsPerChord,
+                 part: JSON.stringify((c0.layers || [])[0].part),
+                 cfg: E._cfg, pa: E._progAnchor, ps: E._playStartAt, bg: E._barGridAnchor };
+    c0.bpm = 120; c0.barsPerChord = 1;
+    c0.prog = { on: true, chords: [{ root: 0, intervals: [0, 4, 7] },
+                                   { root: 5, intervals: [0, 4, 7] },
+                                   { root: 7, intervals: [0, 4, 7] }] };
+    const L0 = (c0.layers || [])[0]; L0.on = true; L0.present = true;
+    E.getCfg();
+    // the clock a play press would set — the choke resolves the boundary off it
+    E._cfg = E.getCfg(); E._progAnchor = 0; E._playStartAt = 0; E._barGridAnchor = 0;
+    await wait(60);
+    const set = (mut) => { const c = E.getCfg(); mut((c.layers || [])[0]);
+                           E.getCfg(); E._cfg = E.getCfg(); };
+    // three onsets across one 2 s chord, every note an even 1400 ms: a cut
+    // shows as the third one landing near the boundary at ~588
+    const row = () => {
+      const L2 = (E.getCfg().layers || [])[0];
+      return [0, 0.35, 0.7].map((f) => {
+        try { return Math.round(window._ambNoteChoke('v2:' + (L2.id | 0), f * 2, 1400, {})); }
+        catch (e) { return -1; }
+      });
+    };
+    const o = {};
+    set((L) => { L.part.kind = 'live'; L.part.bars = 3;
+      L.part.rhythm = { kind: 'euclid', steps: 16, pulses: 4 };
+      L.part.pitch = { kind: 'walk', span: 8 }; });
+    o.liveLine = row();
+    set((L) => { L.part.pitch = { kind: 'chord', voices: 3 }; });
+    o.liveChord = row();
+    // THE REGRESSION: the same line, locked. Its notes are unchanged; only
+    // `kind` moved, and that used to be enough to start cutting it.
+    set((L) => { L.part.kind = 'recorded'; L.part.pitch = { kind: 'walk', span: 8 };
+      L.part.notes = [{ t: 0, midi: 60, dur: 0.23 }, { t: 0.35, midi: 62, dur: 0.23 },
+                      { t: 0.7, midi: 64, dur: 0.23 }]; });
+    o.writtenLine = row();
+    // …and the NOTES outrank the rules in both directions: a one-at-a-time
+    // part whose spec still says `chord` is a line, and a stacked one whose
+    // spec says `walk` is harmony.
+    set((L) => { L.part.pitch = { kind: 'chord', voices: 3 }; });
+    o.writtenLineChordRules = row();
+    set((L) => { L.part.pitch = { kind: 'walk', span: 8 };
+      L.part.notes = [{ t: 0, midi: 60, dur: 0.23 }, { t: 0, midi: 64, dur: 0.23 },
+                      { t: 0.7, midi: 62, dur: 0.23 }, { t: 0.7, midi: 65, dur: 0.23 }]; });
+    o.writtenStack = row();
+    // a STRUM is harmony, not a very fast line — onsets inside a 64th note
+    set((L) => { L.part.notes = [{ t: 0, midi: 60, dur: 0.23 }, { t: 0.004, midi: 64, dur: 0.23 },
+                                 { t: 0.7, midi: 67, dur: 0.23 }]; });
+    o.writtenStrum = row();
+    set((L) => { L.part.notes = [{ t: 0.7, midi: 60, dur: 0.23 }]; });
+    o.writtenOne = row();
+    // …put everything back, or every later check runs under a progression
+    try {
+      const c = E.getCfg();
+      c.prog = sv.prog === 'null' ? undefined : JSON.parse(sv.prog);
+      c.bpm = sv.bpm; c.barsPerChord = sv.bpc;
+      (c.layers || [])[0].part = JSON.parse(sv.part);
+      E.getCfg();
+      E._cfg = sv.cfg; E._progAnchor = sv.pa; E._playStartAt = sv.ps; E._barGridAnchor = sv.bg;
+    } catch (e) {}
+    return o;
+  });
+  const even = (a) => Array.isArray(a) && a.length === 3 && a.every((x) => x === 1400);
+  const cut = (a) => Array.isArray(a) && a[0] === 1400 && a[1] === 1400 && a[2] > 0 && a[2] < 900;
+  ok('a LINE is never choked — written or generated — and harmony still is',
+    even(chokeRun.liveLine) && cut(chokeRun.liveChord) &&
+    even(chokeRun.writtenLine) && even(chokeRun.writtenLineChordRules) &&
+    even(chokeRun.writtenOne) &&
+    cut(chokeRun.writtenStack) && cut(chokeRun.writtenStrum),
+    JSON.stringify(chokeRun));
+
+  // …AND IT ASKS THE RECORD THAT IS SOUNDING, NOT THE ONE ON THE CARD
+  // (2026-09-10). Line-vs-harmony is decided from a record's OWN notes, and
+  // for a per-part layer it read `L.part` — the record being EDITED — so
+  // whichever part you had selected decided whether every OTHER part's notes
+  // were cut: a part holding a single-note LINE was choked at every change
+  // because the edited part held a chord. Reported inside "a bunch of events
+  // are truncated". Pinned in BOTH directions, or it would pass with the
+  // records the other way round.
+  const chokePartRun = await page.evaluate(async () => { try {
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const c0 = E.getCfg();
+    const sv = { prog: JSON.stringify(c0.prog || null), bpm: c0.bpm, bpc: c0.barsPerChord,
+      part: JSON.stringify(L().part), pf: L().partFor,
+      parts: L().parts ? JSON.stringify(L().parts) : null,
+      all: L().partAll ? JSON.stringify(L().partAll) : null,
+      cfg: E._cfg, pa: E._progAnchor, ps: E._playStartAt, bg: E._barGridAnchor };
+    c0.bpm = 120; c0.barsPerChord = 1;
+    c0.prog = { on: true, parts: [{ name: 'A', len: 4 }, { name: 'B', len: 4 }],
+      chords: [0, 5, 7, 9, 0, 3, 5, 7].map((r) => ({ root: r, intervals: [0, 4, 7] })) };
+    L().on = true; L().present = true;
+    L().part.kind = 'recorded'; L().part.bars = 4; L().part.notes = [{ t: 0, midi: 60, dur: 0.9 }];
+    L().partFor = 0; L().parts = {}; delete L().partAll;
+    E.getCfg();
+    E._cfg = E.getCfg(); E._progAnchor = 0; E._playStartAt = 0; E._barGridAnchor = 0;
+    const CHORD = [{ t: 0, midi: 60, dur: 0.9 }, { t: 0, midi: 64, dur: 0.9 }, { t: 0, midi: 67, dur: 0.9 }];
+    const LINE = [{ t: 0, midi: 72, dur: 0.9 }];
+    const st = { startAt: 0 }, o = {};
+    const run = (edited, other) => {
+      L().part.notes = JSON.parse(JSON.stringify(edited));
+      L().parts['1'].notes = JSON.parse(JSON.stringify(other));
+      E.getCfg();
+      const Lr = L(), r = {};
+      [['p0', 0.001], ['p1', 8.001]].forEach(([nm, t0]) => {
+        const w = window._v2.cycleWindowAt(Lr, E, E.getCfg(), t0, st);
+        const ns = window._v2.notesFor(Lr, { E, cfg: E.getCfg(), key: 'v2:' + (Lr.id | 0),
+          cycleStart: w.cs, cycleSec: w.cyc, pi: (w.pi | 0) });
+        r[nm] = ns.map((n) => Math.round(window._ambNoteChoke('v2:' + (Lr.id | 0), n.at, n.durMs, {})));
+      });
+      return r;
+    };
+    o.chordEdited = run(CHORD, LINE);   // part 0 harmony, part 1 a line
+    o.lineEdited = run(LINE, CHORD);    // …and the other way round
+    try {
+      const c9 = E.getCfg();
+      if (sv.prog === 'null') delete c9.prog; else c9.prog = JSON.parse(sv.prog);
+      c9.bpm = sv.bpm; c9.barsPerChord = sv.bpc;
+      L().part = JSON.parse(sv.part);
+      if (Number.isFinite(sv.pf)) L().partFor = sv.pf; else delete L().partFor;
+      if (sv.parts) L().parts = JSON.parse(sv.parts); else delete L().parts;
+      if (sv.all) L().partAll = JSON.parse(sv.all); else delete L().partAll;
+      E.getCfg();
+      E._cfg = sv.cfg; E._progAnchor = sv.pa; E._playStartAt = sv.ps; E._barGridAnchor = sv.bg;
+    } catch (e) {}
+    return o;
+  } catch (e) { return { err: String(e && e.message) }; }
+  });
+  {
+    // a chord asks for 7200ms over a 2000ms change, so harmony lands just under
+    // one change and a line keeps its whole length
+    const held = (a) => Array.isArray(a) && a.length && a.every((x) => x === 7200);
+    const held1 = (a) => Array.isArray(a) && a.length === 1 && a[0] === 7200;
+    const cutAll = (a) => Array.isArray(a) && a.length === 3 && a.every((x) => x > 0 && x < 2100);
+    const r = chokePartRun || {};
+    ok('the choke judges the record that is SOUNDING, not the one being edited',
+      !r.err && r.chordEdited && r.lineEdited &&
+      cutAll(r.chordEdited.p0) && held1(r.chordEdited.p1) &&
+      held1(r.lineEdited.p0) && cutAll(r.lineEdited.p1),
+      JSON.stringify(chokePartRun));
+  }
+
   // ---- DOOR 4: THE COMPOSE GRID, DOCKED IN THE CARD -----------------------
   // The other half of what was asked for: not just READING a phrase from the
   // bank, but drawing one here. v1's session is freeze/lock-specific at its two
@@ -4292,7 +8486,7 @@ const ok = (name, cond, detail) => {
     L.part.kind = 'live'; L.part.rhythm.kind = 'euclid';
     window._v2.render(_masterEng);
   });
-  await new Promise((r) => setTimeout(r, 300));
+  await zz(300);
   const dockState = () => page.evaluate(() => {
     const c = document.querySelector('.v2-layer');
     const exp = document.getElementById('lane-expander');
@@ -4312,16 +8506,22 @@ const ok = (name, cond, detail) => {
       scratch: (typeof lanes !== 'undefined') ? lanes.filter((l) => l._bloomScratch).length : -1,
     };
   });
-  // BACK TO THE MATERIAL TAB FIRST — the Phrase door above navigated to
-  // Phrases, and a tab shows only its own rows, so ✎ Composed is off screen
-  // until we come back (it measured `zero-size`, which is the tell).
+  // BACK TO THE MATERIAL TAB FIRST — the section above navigated to Bank, and
+  // a tab shows only its own rows, so ✎ Composed is off screen until we come
+  // back (it measured `zero-size`, which is the tell).
   await page.evaluate(() => {
     const t = [...document.querySelectorAll('.v2-layer .v2-pop-tab')]
       .find((x) => x.getAttribute('data-tab') === 'Material');
     if (t) t.click();
   });
-  await new Promise((r) => setTimeout(r, 250));
+  await zz(250);
   e = await tap('.v2-layer .v2-compose');
+  await zz(300);
+  await page.evaluate(() => {   // ✎ Written popover → the grid option
+    const b = [...document.querySelectorAll('.addpop-btn')].find((x) => /grid/i.test(x.textContent));
+    if (b) b.click();
+  });
+  await zz(600);
   let d = await dockState();
   ok('✎ Compose is reachable and opens a session', !e && d.session === 'v2:1', e || JSON.stringify(d));
   ok('the editor is DOCKED in the card, with a real box',
@@ -4353,8 +8553,14 @@ const ok = (name, cond, detail) => {
     L.part.kind = 'live'; window.__partBefore = JSON.stringify(L.part.notes);
     window._v2.render(_masterEng);
   });
-  await new Promise((r) => setTimeout(r, 250));
+  await zz(250);
   await tap('.v2-layer .v2-compose');
+  await zz(300);
+  await page.evaluate(() => {   // through the Written popover again
+    const b = [...document.querySelectorAll('.addpop-btn')].find((x) => /grid/i.test(x.textContent));
+    if (b) b.click();
+  });
+  await zz(600);
   await page.evaluate(() => {
     const ge = _bloomGridEdit;
     if (ge) ge.lane.steps.forEach((s) => { s.freq = 110; s.label = 'A2'; delete s.chord; });
@@ -4533,7 +8739,7 @@ const ok = (name, cond, detail) => {
     L0.part.kind = 'live'; E.getCfg();
     const v = c.querySelector('[data-f="instrument.voice"]');
     v.value = 'kit'; v.dispatchEvent(new Event('input', { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 300));
+    await zz(300);
     c = document.querySelector('.v2-layer');
     c.classList.remove('collapsed'); c.querySelectorAll('.ambient-grp').forEach((g) => g.classList.add('open'));
     const out = {
@@ -4580,7 +8786,7 @@ const ok = (name, cond, detail) => {
     out.synthLanes = [...new Set(g.drums)].sort().join(',');
     const ks = document.querySelector('.v2-layer [data-f="instrument.kit"]');
     ks.value = 'tr808'; ks.dispatchEvent(new Event('input', { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 200));
+    await zz(200);
     g = grab();
     out.sampleNotes = g.notes.length; out.sampleDrums = g.drums.length;
     out.sampleType = [...new Set(g.notes)].join(',');
@@ -4731,7 +8937,7 @@ const ok = (name, cond, detail) => {
     open();
     const out = { off: rows() };
     card().querySelector('.v2-tgtoggle').click();
-    await new Promise((r) => setTimeout(r, 250)); open();
+    await zz(250); open();
     out.on = rows();
     out.flag = E.getCfg().layers[0].tg.on;
     out.cells = card().querySelectorAll('.v2-tgcell').length;
@@ -4739,11 +8945,11 @@ const ok = (name, cond, detail) => {
     out.pattern = E.getCfg().layers[0].tg.pattern.join('');
     const ss = card().querySelector('[data-f="tg.steps"]');
     ss.value = 8; ss.dispatchEvent(new Event('input', { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 250)); open();
+    await zz(250); open();
     const tg = E.getCfg().layers[0].tg;
     out.resized = tg.steps + ':' + tg.pattern.length + ':' + card().querySelectorAll('.v2-tgcell').length;
     card().querySelector('.v2-tgtoggle').click();
-    await new Promise((r) => setTimeout(r, 250)); open();
+    await zz(250); open();
     out.offAgain = E.getCfg().layers[0].tg.on;
     return out;
   });
@@ -4786,11 +8992,11 @@ const ok = (name, cond, detail) => {
     };
     out.off = pans();
     card().querySelector('.v2-spattoggle').click();
-    await new Promise((r) => setTimeout(r, 250)); open();
+    await zz(250); open();
     out.on = pans();
     const ms = card().querySelector('[data-f="spat.mode"]');
     ms.value = 'sweep'; ms.dispatchEvent(new Event('input', { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 200));
+    await zz(200);
     out.sweep = pans();
     out.rows = [...card().querySelectorAll('.ambient-ctrl')]
       .filter((r) => getComputedStyle(r).display !== 'none')
@@ -5150,6 +9356,11 @@ const ok = (name, cond, detail) => {
     const k = out.sounding[0];
     document.querySelector('.v2-note[data-ci="' + k + '"]').click();
     document.querySelector('.v2-note[data-ci="' + k + '"]').click();
+    // RESTATED 2026-09-09: assert the degree of the step that was TAPPED, not a
+    // hardcoded slice. Push 0 now starts the pattern on the beat, so this
+    // fixture's first sounding step moved from index 1 to index 0 — the
+    // contract ("tapping raises the degree") never mentioned which step.
+    out.degreeAtK = ((E.getCfg().layers[0].part.pitch.steps || [])[k] | 0);
     out.degrees = (E.getCfg().layers[0].part.pitch.steps || []).slice(0, 4).join(',');
     out.label = card().querySelector('.v2-note[data-ci="' + k + '"]').textContent;
     const mid = (f) => Math.round(69 + 12 * Math.log2(f / 440));
@@ -5166,7 +9377,7 @@ const ok = (name, cond, detail) => {
   // The label asks the EMITTER what it will play, so it cannot promise a note
   // the engine will not sound.
   ok('tapping raises the degree and the label follows',
-    drawn.degrees === '1,3,1,1' && drawn.label === 'G4', JSON.stringify(drawn));
+    drawn.degreeAtK === 3 && drawn.label === 'G4', JSON.stringify(drawn));
   // DEGREES, not notes — the whole reason a drawn line still works under a
   // progression: degree 3 is G over C and C over F.
   ok('a drawn line follows the changes',
@@ -5202,10 +9413,10 @@ const ok = (name, cond, detail) => {
     out.glitch = gl.mix + '/' + gl.mode;
     gl.mix = 0; E.getCfg();
     card().querySelector('.v2-wettoggle').click();
-    await new Promise((r) => setTimeout(r, 250));
+    await zz(250);
     out.wetOn = E.getCfg().layers[0].wetOnly;
     card().querySelector('.v2-wettoggle').click();
-    await new Promise((r) => setTimeout(r, 250));
+    await zz(250);
     out.wetOff = E.getCfg().layers[0].wetOnly;
     return out;
   });
@@ -5308,11 +9519,11 @@ const ok = (name, cond, detail) => {
     out.after = window._v2.speechStat(E, E.getCfg().layers[0]);
     const tap = _ambMasterTapNode(), an = new Tone.Analyser('waveform', 2048);
     Tone.connect(tap, an);
-    _ambStartGenerator(E); await new Promise((r) => setTimeout(r, 2400));
+    _ambStartGenerator(E); await zz(2400);
     let pk = 0;
     for (let i = 0; i < 30; i++) { const v = an.getValue();
       for (let j = 0; j < v.length; j++) pk = Math.max(pk, Math.abs(v[j]));
-      await new Promise((r) => setTimeout(r, 25)); }
+      await zz(25); }
     _ambStopGenerator(E); try { an.dispose(); } catch (e) {}
     out.peak = +pk.toFixed(4);
     // The bank lives on the ENGINE in a WeakMap — not on the layer (persist
@@ -5348,7 +9559,7 @@ const ok = (name, cond, detail) => {
     const L = E.getCfg().layers[0];
     L.instrument.voice = 'synth'; L.part.kind = 'live';
     window._v2.render(E);
-    await new Promise((r) => setTimeout(r, 120));
+    await zz(120);
     const card = document.querySelector('.v2-layer');
     card.querySelectorAll('.ambient-grp').forEach((g) => g.classList.add('open'));
     const set = (f, v) => {
@@ -5435,7 +9646,7 @@ const ok = (name, cond, detail) => {
     L.instrument.voice = 'speech'; L.instrument.kit = 'synth';
     delete L.source; delete L.term; delete L.article; delete L.amount; delete L.lineWords;
     E.getCfg(); window._v2.render(E);
-    await new Promise((r) => setTimeout(r, 160));
+    await zz(160);
     const c = document.querySelector('.v2-layer');
     c.classList.remove('collapsed');
     c.querySelectorAll('.ambient-grp').forEach((g) => g.classList.add('open'));
@@ -5448,7 +9659,7 @@ const ok = (name, cond, detail) => {
     out.hiddenForPaste = c.querySelector('.v2-fetch').closest('.ambient-ctrl').getBoundingClientRect().height === 0;
     const L2 = E.getCfg().layers[0];
     L2.source = 'wiki-random'; E.getCfg(); window._v2.render(E);
-    await new Promise((r) => setTimeout(r, 150));
+    await zz(150);
     const c2 = document.querySelector('.v2-layer');
     c2.classList.remove('collapsed');
     c2.querySelectorAll('.ambient-grp').forEach((g) => g.classList.add('open'));
@@ -5512,13 +9723,13 @@ const ok = (name, cond, detail) => {
     L.instrument.voice = 'kit'; L.instrument.kit = 'synth';
     delete L.synthKit;
     E.getCfg(); window._v2.render(E);
-    await new Promise((r) => setTimeout(r, 160));
+    await zz(160);
     const c = document.querySelector('.v2-layer');
     c.classList.remove('collapsed');
     c.querySelectorAll('.ambient-grp').forEach((g) => g.classList.add('open'));
     try { _ambSyncControls(E); } catch (e) {}
     try { _ambSyncSynthKit(E); } catch (e) { out0err = e.message; }
-    await new Promise((r) => setTimeout(r, 120));
+    await zz(120);
     const ed = c.querySelector('.ambient-synthkit');
     const out = { present: !!ed, cardKey: (typeof _ambCardKey === 'function') ? _ambCardKey(c) : null,
                   syncErr: typeof out0err === 'undefined' ? null : out0err };
@@ -5527,17 +9738,17 @@ const ok = (name, cond, detail) => {
     out.tabs = ed.querySelectorAll('.ambient-sk-role').length;
     // driven through V1's OWN delegated handlers
     const tab = ed.querySelectorAll('.ambient-sk-role')[2];
-    if (tab) { tab.click(); await new Promise((r) => setTimeout(r, 120)); }
+    if (tab) { tab.click(); await zz(120); }
     out.active = ed.getAttribute('data-active');
     const kitOf = () => { const k = E.getCfg().layers[0].synthKit; return (k && k.voices) ? JSON.stringify(k.voices[2]) : null; };
     const before = kitOf();
     const roll = ed.querySelector('.ambient-sk-roll');
-    if (roll) { roll.click(); await new Promise((r) => setTimeout(r, 160)); }
+    if (roll) { roll.click(); await zz(160); }
     out.rolled = before !== kitOf() && kitOf() !== null;
     // a SAMPLE kit must hide it — the editor is for the generated kit only
     E.getCfg().layers[0].instrument.kit = 'tr808';
     E.getCfg(); window._v2.render(E);
-    await new Promise((r) => setTimeout(r, 120));
+    await zz(120);
     try { _ambSyncControls(E); } catch (e) {}
     try { _ambSyncSynthKit(E); } catch (e) {}
     const ed2 = document.querySelector('.v2-layer .ambient-synthkit');
@@ -6250,7 +10461,7 @@ const ok = (name, cond, detail) => {
     if (!box) return out;
     const add = box.querySelector('.ambient-toneseq-add');
     out.addBtn = !!add;
-    if (add) { add.click(); await new Promise((r) => setTimeout(r, 150)); }
+    if (add) { add.click(); await zz(150); }
     out.stored = JSON.stringify(E.getCfg().layers[0].toneSeq);
     const L = E.getCfg().layers[0];
     L.on = true; L.present = true; L.instrument.voice = 'synth'; L.instrument.tone = 'sine';
@@ -6400,7 +10611,12 @@ const ok = (name, cond, detail) => {
     return out;
   });
   ok('with no vary the pattern repeats exactly',
-    vary.steady === '1357|1357|1357|1357|1357|1357' && vary.afterPrune === vary.steady,
+    // RESTATED 2026-09-09: E(4,8) at Push 0 is `0246`, not `1357`. The
+    // generator's accumulator tests AFTER adding, so its first hit landed at
+    // `ceil(steps/pulses) - 1` and Push 0 already pushed ("at 0 all notes are
+    // set forward 3 values" — 2 of 8 began on step 3). v2 normalises the phase
+    // so Push 0 starts on the beat. Same contract: no vary, no movement.
+    vary.steady === '0246|0246|0246|0246|0246|0246' && vary.afterPrune === vary.steady,
     JSON.stringify(vary));
   // Distinct per cycle, measured on the onset POSITIONS: the same count can hide
   // a pattern that never moved. (Counts alone misled once here — a 2,5,2,5
@@ -6451,22 +10667,22 @@ const ok = (name, cond, detail) => {
     out.inherited = cap();
     // driven through V1's OWN delegated handler — no v2 code involved
     md.value = 'key'; md.dispatchEvent(new Event('change', { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 140));
+    await zz(140);
     out.afterMode = JSON.stringify(E.getCfg().layers[0].keyOv);
     const rt = card.querySelector('.amb-keyov-root[data-kokey="v2:' + id + '"]');
-    if (rt) { rt.value = '9'; rt.dispatchEvent(new Event('change', { bubbles: true })); await new Promise((r) => setTimeout(r, 120)); }
+    if (rt) { rt.value = '9'; rt.dispatchEvent(new Event('change', { bubbles: true })); await zz(120); }
     out.afterRoot = JSON.stringify(E.getCfg().layers[0].keyOv);
     E.getCfg(); E._cfg = E.getCfg();
     out.withOwnKey = cap();
     md.value = ''; md.dispatchEvent(new Event('change', { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 140));
+    await zz(140);
     E.getCfg(); E._cfg = E.getCfg();
     out.cleared = E.getCfg().layers[0].keyOv === undefined;
     out.backToInherit = cap();
     // …and v1's OWN card must still work — `_ambKeyOvHtml` was extracted FROM it.
     try {
       _ambAddExtra(E, 'motif'); _ambRebuildMaster();
-      await new Promise((r) => setTimeout(r, 300));
+      await zz(300);
       document.querySelectorAll('.ambient-layer:not(.v2-layer)').forEach((c2) => {
         c2.classList.remove('collapsed');
         c2.querySelectorAll('.ambient-grp').forEach((g) => g.classList.add('open'));
@@ -6478,10 +10694,10 @@ const ok = (name, cond, detail) => {
           .every((k) => !!document.querySelector('.ambient-layer:not(.v2-layer) .' + k));
         const kk = m1.dataset.kokey;
         m1.value = 'key'; m1.dispatchEvent(new Event('change', { bubbles: true }));
-        await new Promise((r) => setTimeout(r, 140));
+        await zz(140);
         out.v1Stored = JSON.stringify((_ambLayerByKey(E, kk) || {}).keyOv);
         m1.value = ''; m1.dispatchEvent(new Event('change', { bubbles: true }));
-        await new Promise((r) => setTimeout(r, 140));
+        await zz(140);
         out.v1Cleared = (_ambLayerByKey(E, kk) || {}).keyOv === undefined;
       }
     } catch (e) { out.v1Err = e.message; }
@@ -6650,11 +10866,11 @@ const ok = (name, cond, detail) => {
     const d = el('mod-vcf-depth');
     if (!d) { out.stored = 'NO CONTROL'; return out; }
     d.value = 70; d.dispatchEvent(new Event('input', { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 150));
+    await zz(150);
     const L = E.getCfg().layers[0];
     out.stored = JSON.stringify(L.mod && L.mod.vcf);
     try { _ambSyncMods(E); } catch (e) { out.err = e.message; }
-    await new Promise((r) => setTimeout(r, 200));
+    await zz(200);
     const e2 = E.mod && E.mod['v2:' + id];
     out.chainSrc = !!(e2 && e2.src);
     const sh = el('mod-vcf-shape');
@@ -6662,7 +10878,7 @@ const ok = (name, cond, detail) => {
     out.shape = ((E.getCfg().layers[0].mod || {}).vcf || {}).shape;
     E.getCfg().layers[0].name = 'Rebuilt' + Math.floor(E.getCfg().layers[0].part.bars);
     window._v2.render(E);
-    await new Promise((r) => setTimeout(r, 120));
+    await zz(120);
     const dEl = el('mod-vcf-depth');
     out.rebuilt = !!dEl && dEl !== d;             // a genuinely new node
     out.afterRebuild = dEl ? dEl.value : 'gone';
@@ -6765,7 +10981,7 @@ const ok = (name, cond, detail) => {
     L.part.pitch = { kind: 'chord', voices: 3 };
     delete L.notes;
     E.getCfg(); window._v2.render(E);
-    await new Promise((r) => setTimeout(r, 120));
+    await zz(120);
     const card = document.querySelector('.v2-layer');
     card.classList.remove('collapsed');
     card.querySelectorAll('.ambient-grp').forEach((g) => g.classList.add('open'));
@@ -6822,7 +11038,7 @@ const ok = (name, cond, detail) => {
   // by accretion over sixteen slices — so the SHAPE is gated now, not just the
   // controls. Every number here is a measurement from that audit.
   const shape = await page.evaluate(async () => {
-    const wait = () => new Promise((r) => setTimeout(r, 120));
+    const wait = () => zz(120);
     // RESET TO THE DEFAULT SHAPE FIRST. This runs after the speech section, and
     // a speech layer HIDES the pitched rows — including `instrument.tone`, so
     // the duplicate-label check saw only one "Tone" and passed while the two
@@ -6863,11 +11079,17 @@ const ok = (name, cond, detail) => {
         const cs = getComputedStyle(pn);
         return cs.overflowY === 'auto' || cs.overflowY === 'scroll' || cs.maxHeight !== 'none'; })(),
       chromeH: (() => {
+        // WITHOUT the viz block: its canvas is content, capped by its own
+        // sizing (reading cap 190/240), and the sticky pitch window may
+        // legitimately hold it at that cap — counting it here made the
+        // watchdog fire on a wide-but-capped drawing, not on frame growth
         const q = (sel) => { const e = c.querySelector(sel);
           return e ? e.getBoundingClientRect().height : 0; };
         return Math.round(q('.ambient-layer-head') + q('.v2-find') + q('.v2-pop-head') +
-                          q('.v2-pop-tabs') + q('.v2-partviz') + q('.v2-pop-foot'));
+                          q('.v2-pop-tabs') + q('.v2-pop-foot'));
       })(),
+      cvH: (() => { const e = c.querySelector('.v2-vizcv');
+        return e ? Math.round(e.getBoundingClientRect().height) : 0; })(),
       vh: window.innerHeight,
       // the card at rest must still SAY what is engaged — the summaries live
       // on the buttons now (the drum-solo rule: state that can vanish while
@@ -6963,9 +11185,10 @@ const ok = (name, cond, detail) => {
     // foot ~90), most of it things asked for by name — 44px section tabs on two
     // rows, the family bar, the piano roll. It is here so the FRAME cannot
     // double while nobody is looking; the rows below it are free to grow.
-    shape.paneScrolls === false && shape.chromeH <= shape.vh * 0.85,
+    shape.paneScrolls === false && shape.chromeH <= shape.vh * 0.68 &&
+    shape.cvH <= 200,
     JSON.stringify({ card: shape.height, pane: shape.paneH, chrome: shape.chromeH,
-                     paneScrolls: shape.paneScrolls, vh: shape.vh }));
+                     cv: shape.cvH, paneScrolls: shape.paneScrolls, vh: shape.vh }));
   // THE ACCRETION CHECK, restated in the unit that now matters. It counted ROWS
   // because rows used to be what you saw; a group's rows live in a TABBED sheet
   // now and only one tab shows at a time, so the wall this catches is a wall of
@@ -7007,12 +11230,12 @@ const ok = (name, cond, detail) => {
     const t = [...document.querySelectorAll('.v2-pop-tab')].find((b) => b.getAttribute('data-tab') === 'Live');
     if (t) t.click();
   });
-  await new Promise((r) => setTimeout(r, 150));
+  await zz(150);
   await page.evaluate(() => {
     const d = document.querySelector('.v2-pop-pane .v2-discbtn[data-disc="env"]');
     if (d && !document.querySelector('.v2-layer').classList.contains('v2-so-env')) d.click();
   });
-  await new Promise((r) => setTimeout(r, 200));
+  await zz(200);
   const knob = await page.evaluate(() => {
     const k = document.querySelector('.v2-pop-pane .ambient-ctrl:not(.v2-rowoff) .v2-knob');
     if (!k) return { err: 'no knob' };
@@ -7033,7 +11256,7 @@ const ok = (name, cond, detail) => {
   await page.touchscreen.touchStart(knob.x, knob.y);
   for (let i = 1; i <= 8; i++) await page.touchscreen.touchMove(knob.x, knob.y - i * 8);
   await page.touchscreen.touchEnd();
-  await new Promise((r) => setTimeout(r, 150));
+  await zz(150);
   let kn = await page.evaluate(() => {
     const L = _masterEng.getCfg().layers[0];
     const k = document.querySelector('.v2-pop-pane .ambient-ctrl:not(.v2-rowoff) .v2-knob');
@@ -7043,7 +11266,7 @@ const ok = (name, cond, detail) => {
     kn.attack > knob.v0 && String(kn.attack) === kn.face, JSON.stringify({ from: knob.v0, to: kn }));
   const kv1 = kn.attack;
   await page.touchscreen.tap(knob.x, knob.y);
-  await new Promise((r) => setTimeout(r, 150));
+  await zz(150);
   kn = await page.evaluate(() => {
     const L = _masterEng.getCfg().layers[0];
     const n = document.querySelector('.v2-knob-num');
@@ -7054,7 +11277,7 @@ const ok = (name, cond, detail) => {
     kn.attack === kv1 && kn.entry && kn.font === '16px', JSON.stringify(kn));
   await page.keyboard.type('500');
   await page.keyboard.press('Enter');
-  await new Promise((r) => setTimeout(r, 150));
+  await zz(150);
   kn = await page.evaluate(() => ({
     attack: _masterEng.getCfg().layers[0].instrument.attack,
     gone: !document.querySelector('.v2-knob-num'),
@@ -7067,7 +11290,7 @@ const ok = (name, cond, detail) => {
   // a grid you had just left. It is a dropdown of the seven groups now.
   await tap('.v2-gototab[data-goto="Instrument"]');
   const nav = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const tabOf = (g) => document.querySelector('.v2-gototab[data-goto="' + g + '"]');
     const o = {
       opts: [...document.querySelectorAll('.v2-gototab')].map((x) => x.getAttribute('data-goto')),
@@ -7167,7 +11390,7 @@ const ok = (name, cond, detail) => {
     const sel = document.querySelector('.v2-pop-pane [data-f="instrument.voice"]');
     sel.value = 'speech'; sel.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await new Promise((r) => setTimeout(r, 300));
+  await zz(300);
   const toneField = () => page.evaluate(() => {
     const r2 = [...document.querySelectorAll('.v2-layer [data-v2tab="Live"]')]
       .find((x) => /^Tone$/.test(((x.querySelector('label') || {}).textContent || '').trim()));
@@ -7191,7 +11414,7 @@ const ok = (name, cond, detail) => {
     const sel = document.querySelector('.v2-pop-pane [data-f="instrument.voice"]');
     sel.value = 'synth'; sel.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await new Promise((r) => setTimeout(r, 300));
+  await zz(300);
   re = await page.evaluate(() => ({
     tabs: [...document.querySelectorAll('.v2-pop-tab')].map((t) => t.getAttribute('data-tab')).join(','),
   }));
@@ -7205,7 +11428,7 @@ const ok = (name, cond, detail) => {
   // else. Every v1 per-layer FX param has a v2 control now — this block pins
   // the ones with traps in them.
   const fxp = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const out = {};
     const L = () => _masterEng.getCfg().layers[0];
     const card = document.querySelector('.v2-layer');
@@ -7278,7 +11501,7 @@ const ok = (name, cond, detail) => {
   // through the REAL emitter and the layer's own chain — no capture sink, so
   // nothing is baked and the stopped-clock gates never see it.
   const pv = await page.evaluate(async () => {
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const out = {};
     const card = document.querySelector('.v2-layer');
     card.classList.remove('collapsed');
@@ -7347,7 +11570,9 @@ const ok = (name, cond, detail) => {
     // as "firing a few times on top of each other". Stop must return the
     // label AND kill the audio (tails included), click-free.
     document.querySelector('.v2-pop-preview').click();
-    await wait(250);
+    // unscaled: this is the ring-down before measuring the stop — audio
+    // runs on wall time (stopPeak read 0.12 when this scaled down)
+    await new Promise((r) => setTimeout(r, 350));
     out.stopLabel = document.querySelector('.v2-pop-preview').textContent;
     out.stopPeak = +(await meas(800)).toFixed(3);
     return out;

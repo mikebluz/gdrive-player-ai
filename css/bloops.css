@@ -3398,6 +3398,13 @@
     .ambient-seg.active { border-color: #b794f4; color: #e9d8fd; background: rgba(159,122,234,0.30); font-weight: 600; }
     .ambient-seg.active:hover { border-color: #d6bcfa; background: rgba(159,122,234,0.38); }
     .ambient-seg.on { border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.18); }
+    /* AN OPTION THAT CANNOT ACT HERE — dimmed, still pressable, and its press
+       says why (a disabled button explains nothing, and a hidden one can never
+       be found). Marked on the BUTTON, never by dimming the row: `opacity` on a
+       parent composites the whole subtree, so the siblings that CAN act would
+       go with it. */
+    .ambient-seg.is-na { opacity: 0.45; border-style: dashed; }
+    .ambient-seg.is-na:hover { border-color: #4a4a66; }
 
     /* Seq Sections popover (edit a Seq layer's sections: reps / order / key) */
     .amb-sections-modal { min-width: min(92vw, 360px); }
@@ -11640,11 +11647,34 @@
       min-width: 0; overflow: hidden; background: rgba(159,122,234,0.30);
       border-radius: 4px; font-style: normal; }
     .v2-split-modal .v2-split-seg:nth-child(even) { background: rgba(159,122,234,0.18); }
+    /* A PIECE IS A CONTROL: it says so on hover, marks the one that is open,
+       and marks the ones set BY HAND — a pin that looks identical to a rolled
+       note is state you cannot see. The pinned mark is a solid amber edge (the
+       hue this panel reserves for "held", never the green that means sounding). */
+    .v2-split-modal .v2-split-seg { cursor: pointer; border: 1px solid transparent; }
+    .v2-split-modal .v2-split-seg:hover { background: rgba(159,122,234,0.42); }
+    .v2-split-modal .v2-split-seg.is-pin { border-color: #f6ad55; background: rgba(246,173,85,0.22); }
+    .v2-split-modal .v2-split-seg.is-pin > b { color: #f6d08a; }
+    .v2-split-modal .v2-split-seg.on { border-color: #fff; background: rgba(214,188,250,0.45); }
+    .v2-split-modal .v2-split-seg.on > b { color: #fff; }
+    .v2-split-modal .v2-split-prevhint { margin-top: 4px; }
+    .v2-split-modal .v2-split-pick { margin-top: 6px; padding: 8px; border-radius: 8px;
+      border: 1px solid #2d2d3f; background: rgba(159,122,234,0.06); }
+    .v2-split-modal .v2-split-pick[hidden] { display: none; }
+    .v2-split-modal .v2-split-nname { min-width: 46px; text-align: center; color: #e2e8f0;
+      font-weight: 700; font-size: 0.95rem; }
+    .v2-split-modal .v2-split-oct { min-width: 26px; text-align: center; color: #e2e8f0;
+      font-weight: 700; font-size: 0.95rem; }
+    .v2-split-modal .v2-splitunpin { min-height: 34px; margin-left: auto; }
     .v2-split-modal .v2-split-seg > b { font-size: 0.62rem; color: #d6bcfa; font-weight: 600; }
     .v2-split-modal .v2-split-cnt { display: inline-flex; align-items: center; gap: 8px; }
     .v2-split-modal .v2-split-n { min-width: 22px; text-align: center; color: #e2e8f0;
       font-weight: 700; font-size: 0.95rem; }
     .v2-split-modal .v2-split-fields { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .v2-split-modal .v2-split-pfields { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .v2-split-modal .v2-split-pw { width: 58px; font-size: 16px; min-height: 34px; }
+    .v2-split-modal .v2-split-pn { min-width: 30px; text-align: center; color: #e2e8f0;
+      font-weight: 700; font-size: 0.95rem; }
     /* 16px or iOS zooms the page on focus and never zooms back */
     .v2-split-modal .v2-split-w { width: 58px; font-size: 16px; min-height: 34px; }
     .v2-split-modal .v2-split-rerow { display: flex; align-items: center; gap: 10px; margin-top: 8px;
@@ -15240,7 +15270,29 @@
    `closest('.v2-layer')`. Fixed + measure-free: it covers the viewport and
    centres, like the section sheet, and sits ABOVE it (10290) since it opens
    from inside it. */
-.v2-genwrap, .v2-gwwrap { display: none; }
+.v2-genwrap, .v2-gwwrap, .v2-barwrap { display: none; }
+/* ONE BAR'S OWN RULES — the same panel chrome as ⚙ Generated (it IS that
+   panel, scoped to a bar), so it REUSES those classes rather than re-typing
+   their values; only the hooks the handlers key on are its own, because a
+   duplicate class means `querySelector` finds the wrong one (documented). */
+.v2-layer.v2-baropen .v2-barwrap {
+  display: flex; align-items: center; justify-content: center;
+  position: fixed; inset: 0; z-index: 10310;
+}
+.v2-barscrim { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.6); }
+.v2-barsays { padding: 0 14px; margin: 0 0 6px; color: #a0aec0; line-height: 1.35;
+  white-space: normal; overflow-wrap: anywhere; flex: 0 0 auto; }
+/* SET FOR THIS BAR vs taken from the part — a value you chose must not look
+   like one you inherited (the absent-is-inherit rule the mask cells follow). */
+.v2-barrow.v2-barown > label { color: #d6bcfa; }
+.v2-barrow.v2-barown > .ambient-hint { color: #9f7aea; }
+/* 30px FLOOR on every control in here. `.ambient-select`'s own sizing is tuned
+   for dense desktop cards and lands at 27px — measured — which is not a touch
+   target on the surface this panel exists for (a bar you tapped on a phone). */
+.v2-layer .v2-barrows select.ambient-select {
+  width: 100%; min-width: 0; min-height: 36px;
+}
+.v2-barpop .v2-barreset { color: #f6ad55; }
 .v2-layer.v2-gwopen .v2-gwwrap {
   display: flex; align-items: center; justify-content: center;
   position: fixed; inset: 0; z-index: 10310;
@@ -15282,7 +15334,7 @@
   position: fixed; inset: 0; z-index: 10310;
 }
 .v2-genscrim { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.6); }
-.v2-genpop {
+.v2-genpop, .v2-barpop {
   position: relative; display: flex; flex-direction: column;
   width: min(520px, 94vw);
   /* the same visible-band rule the section sheet uses — 100vh includes the
@@ -15296,16 +15348,16 @@
   background: #12121f; border: 1px solid #2d2d3f; border-radius: 16px;
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
 }
-.v2-genhead {
+.v2-genhead, .v2-barhead {
   display: flex; align-items: center; gap: 10px; padding: 12px 14px 4px; flex: 0 0 auto;
 }
-.v2-gentitle { font: 600 0.95rem 'Segoe UI', sans-serif; color: #e2e8f0; flex: 1 1 auto; }
-.v2-genclose, .v2-gwclose {
+.v2-gentitle, .v2-bartitle { font: 600 0.95rem 'Segoe UI', sans-serif; color: #e2e8f0; flex: 1 1 auto; }
+.v2-genclose, .v2-gwclose, .v2-barclose {
   flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%;
   border: 1px solid #2d2d3f; background: none; color: #a0aec0;
   font-size: 1rem; cursor: pointer; touch-action: manipulation;
 }
-.v2-genclose:hover, .v2-gwclose:hover { border-color: #9f7aea; color: #d6bcfa; }
+.v2-genclose:hover, .v2-gwclose:hover, .v2-barclose:hover { border-color: #9f7aea; color: #d6bcfa; }
 .v2-genmodel, .v2-gensays {
   padding: 0 14px; margin: 0 0 6px; color: #6b6b8a; line-height: 1.35;
   white-space: normal; overflow-wrap: anywhere; flex: 0 0 auto;
@@ -15339,13 +15391,13 @@
 .v2-layer .v2-genrows .ambient-ctrl.v2-disc .ambient-hint { grid-column: 1 / -1; }
 /* THE KNOBS SCROLL, the shapes and the actions do not — an action you have to
    scroll to find is the documented compose-dock bug. */
-.v2-genrows { flex: 1 1 auto; overflow-y: auto; padding: 4px 14px 8px;
+.v2-genrows, .v2-barrows { flex: 1 1 auto; overflow-y: auto; padding: 4px 14px 8px;
   border-top: 1px solid #22222f; }
-.v2-genacts {
+.v2-genacts, .v2-baracts {
   display: flex; gap: 6px; padding: 8px 14px 12px; flex: 0 0 auto;
   border-top: 1px solid #22222f; background: #12121f;
 }
-.v2-genacts .ambient-seg { flex: 1 1 0; min-width: 0; min-height: 40px; }
+.v2-genacts .ambient-seg, .v2-baracts .ambient-seg { flex: 1 1 0; min-width: 0; min-height: 40px; }
 .v2-genacts .v2-gwclose { border-radius: 20px; width: auto; height: auto; }
 /* THE EDITOR IS THE CARD'S BODY — it was a centred overlay opened from a grid
    of six group buttons, and once its own head carried those six sections as a
@@ -15653,24 +15705,43 @@ select.ambient-select.v2-gridpick {
 .v2-neinline .ambient-ctrl:has(> input.ambient-sl) > input.ambient-sl {
   grid-column: 1 / -1; grid-row: 2; min-width: 0;
 }
-/* The Note row is a STEPPER, not a slider, so it keeps the 3-column layout —
-   but its readout is the note NAME and has to read like the values beside it
-   rather than like a faint aside.
-   THE READOUT COLUMN IS FIXED WIDTH. The base row is `84px 1fr auto`, and an
-   `auto` third column is sized by its text — so Position's readout growing
-   from "beat 1" to "bar 2 · beat 1.25" re-flowed the 1fr stepper and moved
-   the + button under the finger on the very press that changed it (reported:
-   "the readout is causing the Position buttons to resize"). 112px holds the
-   longest real readout ("bar 64 · beat 4.75"); anything longer wraps inside
-   its own column rather than stealing from the control. A fixed column also
-   makes the three steppers EQUAL width instead of each sized by its neighbour. */
+/* THE FIELD NAMES ITS OWN VALUE, so the readout column is gone. It used to be
+   `84px 1fr 112px` — the field carried the raw index (midi 57, cell 12) and a
+   third column translated it (A3, bar 4 · beat 1), which is the app telling
+   you the answer beside a control showing you the question. Reported as "the
+   numerical values are meaningless". With the name IN the field there is
+   nothing left for that column to say, and the reflow it was pinned at 112px
+   to prevent ("the readout is causing the Position buttons to resize") cannot
+   arise: the field is `minmax(0, 1fr)` and the ± buttons are fixed, so a
+   longer face shrinks the text and never moves a button. The description the
+   column briefly held lives in the row's `title`, as it always did. */
 .v2-neinline .ambient-ctrl-step {
-  grid-template-columns: 84px minmax(0, 1fr) 112px;
+  grid-template-columns: 84px minmax(0, 1fr);
 }
-.v2-neinline .ambient-ctrl-step > .ambient-hint {
-  color: #cbd5e0; font-size: 0.72rem; text-align: right;
-  white-space: normal; overflow-wrap: anywhere; line-height: 1.25;
+.v2-neinline .ambient-ctrl-step > .ambient-hint { display: none; }
+/* A NAMED field: readonly (a typed 'A3' is NaN — every other way in is ±, the
+   piano keys, ⇧/⌥ + arrows and the drag), proportional rather than the
+   stepper's monospace so "bar 64 · beat 4.75" fits, and 16px from the rule
+   above so focusing it can never zoom an iPhone. */
+.v2-neinline .v2-nefield {
+  font-family: 'Segoe UI', sans-serif; font-weight: 700; cursor: default;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 6px 4px;
 }
+/* THE ENVELOPE FOLDS, SHUT BY DEFAULT — five rows that almost always read
+   "· layer" were the tallest thing here and pushed the four actions below the
+   fold on a phone. The head is a real button and says what it is holding, so
+   a note carrying its own envelope can never hide behind a shut fold. */
+button.v2-nesec {
+  display: block; width: 100%; text-align: left; background: transparent;
+  border: none; border-top: 1px solid #23233a; cursor: pointer;
+  min-height: 36px; padding: 8px 0 2px; touch-action: manipulation;
+}
+.v2-nefold .v2-nefcar { display: inline-block; width: 1em; color: #9f7aea; }
+.v2-nefold.v2-nefold-own { color: #f6ad55; }
+@media (hover: hover) { button.v2-nesec:hover { color: #d6bcfa; } }
+/* a class rule setting `display` would beat [hidden] (documented trap) — it
+   has none, but state the companion anyway so one can never be added quietly */
+.v2-neinline .v2-neenv[hidden] { display: none; }
 /* ⊕ EXPAND — chords that CONTAIN the open note. Real buttons, never a native
    select: the in-key/out-of-key split is COLOR (green = in the key, orange =
    borrowed) and option styling is not dependable across platforms. */

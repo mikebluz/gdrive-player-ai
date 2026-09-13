@@ -318,11 +318,23 @@ const ok = (name, cond, detail) => {
     const inp = document.querySelector('.v2-layer .v2-neinline .ambient-step-inp[data-sf="midi"]');
     const L = (_masterEng.getCfg().layers || [])[0];
     const n = L.part.notes.slice().sort((a, b) => a.t - b.t)[2];
-    return { drawn: Math.round(hb.midi), input: inp ? parseInt(inp.value, 10) : null,
+    const NM = ['C', 'C\u266f', 'D', 'D\u266f', 'E', 'F', 'F\u266f', 'G', 'G\u266f', 'A', 'A\u266f', 'B'];
+    const name = (m) => NM[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
+    return { drawn: Math.round(hb.midi), face: inp ? inp.value : null,
+             sv: inp ? parseInt(inp.getAttribute('data-sv'), 10) : null,
+             wantDrawn: name(Math.round(hb.midi)), wantStored: name(n.midi),
              stored: n.midi, hx: !!n.hx };
   });
-  ok('stepper: the Note field SHOWS the sounding pitch (not the stored one)',
-    st0.input === st0.drawn && !st0.hx && st0.stored !== st0.drawn,
+  // RESTATED 2026-09-12 with the reason: the FIELD NAMES THE PITCH now ("A3",
+  // not 57) — reported as "the numerical values are meaningless" — and the
+  // number rides in `data-sv`, which the shared ± delegation steps. The old
+  // check read `parseInt(inp.value)`, i.e. it pinned the REPRESENTATION; the
+  // contract it stood for is that the field answers about the SOUNDING pitch,
+  // and asserting the NAME is strictly stronger (a bare number can agree by
+  // accident with the stored one's digits, a name against a name cannot).
+  ok('stepper: the Note field NAMES the sounding pitch (not the stored one)',
+    st0.face === st0.wantDrawn && st0.sv === st0.drawn &&
+    !st0.hx && st0.stored !== st0.drawn && st0.face !== st0.wantStored,
     JSON.stringify(st0));
   const stTrack = [];
   for (let i = 0; i < 3; i++) {

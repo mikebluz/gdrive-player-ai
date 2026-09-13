@@ -39227,7 +39227,7 @@
     // broken card — the classes matched but the required structure did not
     // (`.ambient-ctrl-step` missing → the stepper stacked vertically; no
     // `.ambient-sl-v` readout). Reuse the function, not the class name.
-    try { if (typeof window !== 'undefined') { window._ambSl = _ambSl; window._ambStep = _ambStep; } } catch (e) {}
+    try { if (typeof window !== 'undefined') { window._ambSl = _ambSl; window._ambStep = _ambStep; window._ambSlReadout = _ambSlReadout; } } catch (e) {}
     // SEGMENTED button row for a small ENUM (Feel: Even|Stochastic, Home:
     // Floor|Center|Ceiling) — all options visible, one tap, no dropdown hunt.
     // `field` is the config KEY it writes; one delegated handler + _ambSyncSegs
@@ -42033,6 +42033,12 @@
       // once, at the open.
       let bars0 = 0;
       try { bars0 = +_ambLenPartBars(E.getCfg(), pi) || 0; } catch (e) {}
+      // …AND THE SHAPE IT STARTED FROM. Stretch and Fill only need the total,
+      // but PRESERVE maps each note through the change boundaries, so it needs
+      // the per-change lengths on BOTH sides — and this is the only edit that
+      // knows the old ones (normalize cannot recover them either).
+      let lens0 = [];
+      try { lens0 = (_ambCadence(E.getCfg(), pi) || []).slice(); } catch (e) {}
       // ASKED ONCE, AT THE END. The \u00b1 steppers fire repeatedly and a question
       // per press is unusable; the length that matters is the one you finished
       // on. Dismissing it keeps the default, which is the state the records are
@@ -42044,10 +42050,13 @@
         if (!(b0 > 0) || !(bars1 > 0) || Math.abs(bars1 - b0) < 1e-6) return;
         try {
           if (window._v2 && typeof window._v2.cascadeAsk === 'function') {
+            let lensNow = [];
+            try { lensNow = (_ambCadence(E.getCfg(), pi) || []).slice(); } catch (e) {}
+            const l0 = lens0; lens0 = lensNow;
             window._v2.cascadeAsk(E, pi, b0, bars1, () => {
               try { window._v2RepaintViz(E); } catch (e) {}
               try { _ambRenderScheduler(E); } catch (e) {}
-            });
+            }, { old: l0, now: lensNow });
           }
         } catch (e) {}
       };
@@ -50510,6 +50519,38 @@
       drone:   [['degree','Note',1,12],['register','Register',1,6],['intervalMs','Unit (ms)',200,8000],['hold','Hold',1,16],['attack','Attack',0,8000],['release','Release',0,12000],['timeVary','Time vary',0,100],['pitchVary','Pitch vary',0,100],['level','Level',0,100]],
       arp:     [['randomness','Randomness',0,100],['intervalMs','Interval (ms)',40,2000],['octaves','Octaves',1,4],['register','Register',2,7],['lengthMs','Length (ms)',40,2000],['drift','Drift',0,99],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
       shape:   [['level','Level',0,100]],
+      // LAYER MODEL v2 (`cfg.layers`). Hand-tuned because v2 builds its card
+      // from its own descriptors rather than `_AMB_LAYER_SCHEMA`, so the derive
+      // pass below cannot see it — but the SHARED append (Stereo, Spatialize,
+      // every FX) runs over `Object.keys` and reaches it for free, which is
+      // the whole reason that append was moved after the derive.
+      //
+      // These are the GENERATIVE knobs the emitter re-reads when it builds each
+      // cycle, so a ramp lands at the next cycle boundary exactly as it does on
+      // a v1 layer — no re-anchor, and none wanted: a ramp writes at ~40Hz and
+      // cancelling the schedule at that rate would be catastrophic.
+      //
+      // `part.bars` is deliberately ABSENT: for a per-part layer the reconciler
+      // rewrites it on every getCfg, so a ramp there would be silently outvoted
+      // — the dead-control class this file keeps closing.
+      v2: [['part.rhythm.steps','Steps',2,64],['part.rhythm.pulses','How many',1,64],
+           ['part.rhythm.n','Onsets',1,32],['part.rhythm.rotate','Push',0,63],
+           ['part.rhythm.vary','Rhythm vary',0,100],['part.rhythm.syncop','Syncopate',0,100],
+           ['part.rhythm.chance','Chance',0,100],['part.rhythm.voices','Euclid voices',1,4],
+           ['part.rhythm.rateVar','Rate var',0,100],
+           ['part.pitch.span','Range',1,12],['part.pitch.voices','Notes at once',1,9],
+           ['part.pitch.drift','Pitch vary',0,100],['part.pitch.roam','Roam',0,100],
+           ['part.pitch.randomness','Scatter',0,100],['part.pitch.octaves','Octaves',1,4],
+           ['part.pitch.mix','Chords vs notes',0,100],['part.pitch.lines','Lines',1,4],
+           ['part.pitch.degree','Note',1,12],['part.pitch.stutter','Repeat',0,100],
+           ['part.pitch.contour','Contour',0,100],['part.pitch.variety','Variety',0,100],
+           ['part.pitch.spread','Spread',0,100],
+           ['part.shape.lenRatio','Note length',5,100],['part.shape.slip','Slip',0,100],
+           ['part.transpose','Transpose',-24,24],
+           ['restProb','Rests',0,100],['ghosts','Ghosts',0,100],['lenVary','Len var',0,100],
+           ['velVar','Vel var',0,100],['humanize','Humanize',0,100],['swing','Swing',0,100],
+           ['accent','Accent',0,100],['instrument.register','Register',0,8],
+           ['level','Level',0,100]],
       // Global (not per-layer): writes the shared tempo, so a BPM ramp retempos
       // grid + Bloom + Shapes together. Range is a musical 40–300.
       global:  [['bpm','BPM',40,300]],
@@ -50661,6 +50702,13 @@
       } else if (head.indexOf('samp:') === 0) {
         const sid = parseInt(head.slice(5), 10);
         obj = _ambSampleById(cfg, sid); cat = 'samp';
+      } else if (head.indexOf('v2:') === 0) {
+        // LAYER MODEL v2. `head` IS the engine key here — v2's own key is
+        // `v2:<id>` — so every live push below (`_ambApplyLayerFx`,
+        // `_ambApplyLayerPan`, `_ambApplyLayerFilter`, `_E.mod[head]`) works
+        // untouched, which is what made this cheap.
+        const vid = parseInt(head.slice(3), 10);
+        obj = (cfg.layers || []).find(x => x && (x.id | 0) === vid); cat = 'v2';
       } else {
         // Extra-instance layer: head = '<type>:<id>' (bass/run/pedal/arp/shape, or
         // additional bed/motif/texture/beat). cat = the type.
@@ -50696,6 +50744,22 @@
           if (!obj.spat || typeof obj.spat !== 'object') obj.spat = { on: 1, mode: 'fan', width: 60, steps: 5 };
           obj.spat[sub] = v;
           if (_ambLiveApplyOK(_E)) { try { _ambApplyLayerPan(head, obj); } catch (e) {} }
+        } };
+      }
+      // A v2 PART FIELD IS THREE LEVELS DEEP (`part.rhythm.steps`), and the FX
+      // branch below splits at the FIRST dot only — it would have written
+      // `obj.part['rhythm.steps']`, a field nothing reads. Walked instead, and
+      // with NO node push: the emitter re-reads these when it builds the next
+      // cycle, which is the same latency a v1 generative ramp has.
+      if (key.indexOf('part.') === 0 || key.indexOf('instrument.') === 0) {
+        const path = key.split('.');
+        return { min: spec[2], max: spec[3], set: function (v) {
+          let o2 = obj;
+          for (let i = 0; i < path.length - 1; i++) {
+            if (!o2[path[i]] || typeof o2[path[i]] !== 'object') o2[path[i]] = {};
+            o2 = o2[path[i]];
+          }
+          o2[path[path.length - 1]] = v;
         } };
       }
       if (key === 'revSend' || key.indexOf('.') >= 0) {
@@ -50754,6 +50818,13 @@
         if (!x || !_AMB_LAYER_SCHEMA[x.type] || !_AMB_RAMP_PARAMS[x.type]) return;
         _tc[x.type] = (_tc[x.type] | 0) + 1;
         add(_ambLayerLabel(x, _AMB_LAYER_SCHEMA[x.type].label || x.type) + ' ' + _tc[x.type], x.type + ':' + x.id, x.type);
+      });
+      // LAYER MODEL v2 — its own store, and the sweep it had been missing.
+      // A new layer store must join EVERY sweep; this one was found by asking
+      // "where are ramps in v2" and is the eleventh instance of that rule.
+      (cfg.layers || []).forEach((x, i) => {
+        if (!x) return;
+        add(_ambLayerLabel(x, x.name || ('Layer ' + (i + 1))), 'v2:' + (x.id | 0), 'v2');
       });
       // Global params (BPM) — always available.
       if (_AMB_RAMP_PARAMS.global) g.push({ label: 'Global', items: _AMB_RAMP_PARAMS.global.map(p => ({ value: 'global.' + p[0], label: p[1] })) });
@@ -54750,15 +54821,31 @@
             const wrap = btn.closest('.ambient-stepper');
             const inp = wrap && wrap.querySelector('.ambient-step-inp'); if (!inp) return;
             const min = parseInt(inp.min, 10), max = parseInt(inp.max, 10);
-            let v = parseInt(inp.value, 10); if (!Number.isFinite(v)) v = Number.isFinite(min) ? min : 0;
+            const sv0 = inp.getAttribute('data-sv');
+            let v = parseInt(sv0 !== null ? sv0 : inp.value, 10);
+            if (!Number.isFinite(v)) v = Number.isFinite(min) ? min : 0;
             // OPT-IN STEP SIZE. Absent = 1, which is every existing stepper;
             // a 0-100 field in a compact row needs a usable nudge.
             const k = parseInt(inp.getAttribute('data-nudge'), 10);
             v += (btn.classList.contains('ambient-step-up') ? 1 : -1) * (Number.isFinite(k) && k > 0 ? k : 1);
             if (Number.isFinite(min)) v = Math.max(min, v);
             if (Number.isFinite(max)) v = Math.min(max, v);
-            if (String(v) === inp.value) return;
-            inp.value = String(v);
+            // OPT-IN: `data-sv` HOLDS THE NUMBER AND THE FIELD SHOWS A NAME.
+            // A stepper's field is the number it steps, which is right where
+            // the number IS the meaning (Register 4, Repeat 3) and wrong where
+            // it is an index into something the user thinks in — midi 57 for
+            // A3, cell 12 for bar 4 · beat 1. With `data-sv` the numeric truth
+            // lives in the attribute and `.value` is free to carry the name,
+            // which the consumer repaints. Absent = byte-identical, so every
+            // existing stepper is untouched.
+            const sv = inp.getAttribute('data-sv');
+            if (sv !== null) {
+              if (String(v) === sv) return;
+              inp.setAttribute('data-sv', String(v));
+            } else {
+              if (String(v) === inp.value) return;
+              inp.value = String(v);
+            }
             inp.dispatchEvent(new Event('input', { bubbles: true }));
           }); }
           // Segmented enum rows (Feel / Home…) — ONE delegated click listener,

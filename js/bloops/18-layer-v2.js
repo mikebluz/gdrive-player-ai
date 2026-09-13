@@ -290,6 +290,105 @@
   const gridCells = (L) => Math.max(1, Math.round(Math.max(0.0625,
     (L && L.part && L.part.bars) || 1) * gridPerBar(L)));
 
+  // ── A REGION OF THE CYCLE ───────────────────────────────────────────────
+  // Selection, per-region takes and per-region rules were all keyed by BAR
+  // INDEX, and a bar is the wrong unit the moment a change does not fill one:
+  // reported as "clicking F♯m should only select the F♯m area" on a cadence
+  // where F♯m runs from the middle of bar 3 to its end — selecting the whole
+  // bar was the honest answer to the wrong question.
+  //
+  // A REGION is a half-open range `[a, b)` of 1/48-BAR SLOTS over the cycle.
+  // That grid is this file's own (`_ambSnapBars`, the window start, the rubato
+  // edges): quarters, eighths, triplets and 16ths all land on it exactly, so a
+  // change's span is representable and a bar is simply the region
+  // `[N·48, (N+1)·48)`. Keys are the string `a + ':' + b`, and a BARE INTEGER
+  // key is read as the bar it used to mean — which is the whole migration,
+  // performed at read time, so no stored project has to be rewritten.
+  const SPB = 48;
+  const regKey = (a, b) => (a | 0) + ':' + (b | 0);
+  const regBarKey = (bar) => regKey((bar | 0) * SPB, ((bar | 0) + 1) * SPB);
+  function regParse(k) {
+    const s2 = String(k), i2 = s2.indexOf(':');
+    if (i2 < 0) { const b0 = s2 | 0; return b0 >= 0 ? { a: b0 * SPB, b: (b0 + 1) * SPB } : null; }
+    const a = s2.slice(0, i2) | 0, b = s2.slice(i2 + 1) | 0;
+    return (a >= 0 && b > a) ? { a, b } : null;
+  }
+  // WHERE A NOTE SITS ON THAT GRID. Not rounded — a note anywhere inside a
+  // slot belongs to it, so the test is a plain half-open containment.
+  const slotAt = (t, barsF) => (t || 0) * Math.max(0.125, barsF || 1) * SPB;
+  const regHas = (keys, slot) => keys.some((k) => {
+    const r = regParse(k); return r && slot >= r.a - 1e-6 && slot < r.b - 1e-6; });
+  // WHAT TO CALL ONE. A whole bar is "bar 3"; whole bars are "bars 3–4"; and a
+  // change that does not fill bars is named in bars AND fractions ("bar 2½–3"),
+  // because a selection you cannot describe is one you cannot check.
+  const REG_FR = { 0.25: '\u00bc', 0.5: '\u00bd', 0.75: '\u00be', 0.333: '\u2153', 0.667: '\u2154' };
+  function regLabel(k) {
+    const r = regParse(k); if (!r) return '?';
+    const b0 = r.a / SPB, b1 = r.b / SPB;
+    const whole = Math.abs(b0 - Math.round(b0)) < 1e-6 && Math.abs(b1 - Math.round(b1)) < 1e-6;
+    if (whole) return (Math.round(b1) - Math.round(b0) === 1)
+      ? ('bar ' + (Math.round(b0) + 1))
+      : ('bars ' + (Math.round(b0) + 1) + '\u2013' + Math.round(b1));
+    const fmt = (x) => { const wv = Math.floor(x + 1e-9), f = Math.round((x - wv) * 1000) / 1000;
+      return (wv + 1) + (REG_FR[f] || (f > 1e-6 ? String(Math.round(f * 100) / 100).replace(/^0/, '') : '')); };
+    return 'bar ' + fmt(b0) + '\u2013' + fmt(b1);
+  }
+  // A STORE KEYED BY REGION — coerced, clipped to the cycle, legacy bar keys
+  // converted. Shared by `takeb` and `ruleb` so the two can never disagree
+  // about what a key means.
+  function regMapNorm(src, barsF, val) {
+    if (!src || typeof src !== 'object') return null;
+    const top = Math.max(1, Math.round(Math.max(0.125, barsF || 1) * SPB));
+    const out = {};
+    Object.keys(src).forEach((k) => {
+      const r = regParse(k); if (!r) return;
+      const a = Math.max(0, Math.min(top - 1, r.a)), b = Math.max(a + 1, Math.min(top, r.b));
+      const v = val(src[k]); if (v === undefined) return;
+      out[regKey(a, b)] = v;
+    });
+    return Object.keys(out).length ? out : null;
+  }
+
+  // ── WHAT A SINGLE BAR MAY OVERRIDE ──────────────────────────────────────
+  // The generated settings that shape MATERIAL, and nothing else: a bar is a
+  // slice of one part, so its instrument, its FX and its schedule are the
+  // part's by definition — only what the rules make is per-bar. A string field
+  // lists its legal values (an unknown rhythm kind would render the select
+  // BLANK and drift the rules, the documented Groundwork bug); everything else
+  // is [min, max] and is rounded and clamped on the way in, so the overlay can
+  // be merged onto the part's rules WITHOUT a second normalize pass.
+  const BAR_RULE_F = {
+    rhythm: { kind: ['pulse', 'euclid', 'chance', 'ground', 'drawn'],
+              pulses: [1, 64], steps: [2, 64], rotate: [0, 63], n: [1, 32],
+              chance: [0, 100], syncop: [0, 100] },
+    pitch:  { kind: ['drawn', 'chord', 'stack', 'fixed', 'series', 'anchor', 'walk', 'chance', 'mixed'],
+              dir: ['up', 'down', 'updown'],
+              voices: [1, 9], mix: [0, 100], span: [1, 12], contour: [-100, 100],
+              lines: [1, 6], stutter: [0, 100], octaves: [1, 4], randomness: [0, 100] },
+    shape:  { lenRatio: [5, 100] },
+  };
+  // THE RULES ONE BAR GENERATES BY — the part's, with that bar's overlay on
+  // top. ONE definition, because the popover that edits it and the emitter
+  // that rolls it must agree about what a half-set overlay means.
+  function barRulesOf(p, key) {
+    const ov = (p && p.ruleb && p.ruleb[key]) || null;
+    return { rhythm: Object.assign({}, (p && p.rhythm) || {}, (ov && ov.rhythm) || {}),
+             pitch: Object.assign({}, (p && p.pitch) || {}, (ov && ov.pitch) || {}),
+             shape: Object.assign({}, (p && p.shape) || {}, (ov && ov.shape) || {}),
+             own: !!ov };
+  }
+  // …and the same overlay as a PART, for the roll. `Object.assign` per group so
+  // an overlay that names one field leaves the rest of that group alone.
+  function partWithRules(p, ov) {
+    if (!ov) return p;
+    const q = Object.assign({}, p);
+    delete q.ruleb;                      // a bar's own rules are not themselves per-bar
+
+    if (ov.rhythm) q.rhythm = Object.assign({}, p.rhythm || {}, ov.rhythm);
+    if (ov.pitch) q.pitch = Object.assign({}, p.pitch || {}, ov.pitch);
+    if (ov.shape) q.shape = Object.assign({}, p.shape || {}, ov.shape);
+    return q;
+  }
   function normLayer(L, i) {
     if (!L || typeof L !== 'object') return null;
     L.v = 2;
@@ -709,8 +808,10 @@
       // Absent = bars, so a project made before free cycles existed is
       // byte-identical and `part.ms` is stored only once it is chosen.
       if (p.clock !== 'free') { delete p.clock; delete p.ms; }
-      // absent = 'stretch', which is what v2 has always done
-      if (p.barsMode !== 'fill') delete p.barsMode;
+      // absent = 'stretch', which is what v2 has always done. `preserve` is the
+      // third answer and only a CADENCE edit can apply it — it needs the old
+      // per-change lengths, which no other length change has.
+      if (p.barsMode !== 'fill' && p.barsMode !== 'preserve') delete p.barsMode;
       // LOOP = N PASSES OF A PART. v1 expresses the binding as `write.bars`,
       // which v2 has no concept of and deletes — so the binding was written by
       // `_ambLenSyncApplyAll` and wiped on the same normalize, and v2's cycle
@@ -776,14 +877,34 @@
       // the per-bar half of the audition/lock pin. Absent until a bar is
       // retaken; keys outside the current cycle are pruned so a shortened
       // part does not carry pins to bars it no longer has.
-      if (p.takeb && typeof p.takeb === 'object') {
-        const tb2 = {}, top = Math.ceil(Math.max(0.125, p.bars || 1));
-        Object.keys(p.takeb).forEach((k) => {
-          const b2 = k | 0, t2 = p.takeb[k] | 0;
-          if (b2 >= 0 && b2 < top && t2 >= 0) tb2[b2] = t2 % 1000000;
+      const tb2 = regMapNorm(p.takeb, p.bars, (v) => {
+        const t2 = v | 0; return t2 >= 0 ? (t2 % 1000000) : undefined; });
+      if (tb2) p.takeb = tb2; else delete p.takeb;
+      // WHICH BARS GENERATE BY THEIR OWN RULES — bar index → a SPARSE overlay
+      // on the part's rhythm/pitch/shape, so a bar can be denser, or walk where
+      // the rest arpeggiates, without becoming a second part. Absent means the
+      // bar takes the part's rules, and a field absent INSIDE an overlay means
+      // the same for that field — the house absent-is-inherit grammar, which is
+      // what keeps this sparse and makes "back to the part's rules" a delete.
+      // Coerced against a WHITELIST: this is a rule set the emitters read, and
+      // a stray key from a future build must not survive a downgrade.
+      const rb2 = regMapNorm(p.ruleb, p.bars, (src) => {
+        if (!src || typeof src !== 'object') return undefined;
+        const ov = {};
+        Object.keys(BAR_RULE_F).forEach((grp) => {
+          const sg = src[grp]; if (!sg || typeof sg !== 'object') return;
+          const o2 = {};
+          Object.keys(BAR_RULE_F[grp]).forEach((f) => {
+            const spec = BAR_RULE_F[grp][f], v = sg[f];
+            if (Array.isArray(spec) && typeof spec[0] === 'string') {
+              if (typeof v === 'string' && spec.indexOf(v) >= 0) o2[f] = v;
+            } else if (Number.isFinite(v)) o2[f] = clamp(Math.round(v), spec[0], spec[1]);
+          });
+          if (Object.keys(o2).length) ov[grp] = o2;
         });
-        if (Object.keys(tb2).length) p.takeb = tb2; else delete p.takeb;
-      } else delete p.takeb;
+        return Object.keys(ov).length ? ov : undefined;
+      });
+      if (rb2) p.ruleb = rb2; else delete p.ruleb;
       // THE REGISTER THESE NOTES WERE MADE AT. A recorded part is absolute
       // MIDI, so Register — which sets the octave a LIVE part is generated in —
       // did nothing to it at all: a control on screen that moved nothing (the
@@ -887,6 +1008,25 @@
   // NULL is a real answer, twice over: with no key and no source of its own
   // nothing is "in scale", and a 12-tone scale lights every key, which says
   // exactly as much as lighting none.
+  // WHICH PITCH CLASSES THE SOUNDING CHORD HOLDS, at one moment. `scaleAt`
+  // deliberately REFUSES a pool (a chord moves through the cycle and the
+  // keyboard is one static axis, so lighting the first chord would be a claim
+  // that is wrong for most of the drawing) — but a note being split happens at
+  // ONE instant, where the chord is exactly the right answer. Null when there
+  // is no chord to name, which is what makes "only usable if the part has
+  // changes" a fact the UI can read rather than a rule it has to restate.
+  function chordAt(E, cfg, at, L) {
+    try {
+      const set = withKeyTime(at, () => toneSetAt(E, cfg, at, L));
+      if (!set || !set.pool) return null;
+      if (!Number.isFinite(set.root) || !Array.isArray(set.ivs) || !set.ivs.length) return null;
+      if (set.ivs.length >= 12) return null;          // twelve tones name nothing
+      const pcs = {};
+      set.ivs.forEach((iv) => { pcs[((((set.root + (iv | 0)) % 12) + 12) % 12)] = 1; });
+      return pcs;
+    } catch (e) { return null; }
+  }
+
   function scaleAt(E, cfg, at, L) {
     const mk = (root, ivs) => {
       if (!Number.isFinite(root) || !Array.isArray(ivs) || ivs.length < 1 || ivs.length >= 12) return null;
@@ -1423,9 +1563,17 @@
   // take is only the audition/lock pin (playback re-rolls every cycle), so a
   // per-bar retake is exactly a per-bar PIN: bar 2 shows take 7 while the
   // rest still shows take 4.
-  function pinOf(L) {
-    const tb = L && L.part && L.part.takeb;
-    if (tb && typeof tb === 'object' && Object.keys(tb).length) return { base: takeOf(L), bars: tb };
+  // A BAR CAN ALSO CARRY ITS OWN RULES (`part.ruleb`), which is a second reason
+  // for the composite to exist — that bar is rolled from a DIFFERENT spec, not
+  // merely a different throw of the dice. `reroll` is the recorded part's
+  // replace: the scalar take has already been bumped, so the per-bar TAKE pins
+  // are superseded while the per-bar RULES are not (a rule is a setting, a pin
+  // is history).
+  function pinOf(L, reroll) {
+    const p = (L && L.part) || {};
+    const tb = (!reroll && p.takeb && typeof p.takeb === 'object' && Object.keys(p.takeb).length) ? p.takeb : null;
+    const rb = (p.ruleb && typeof p.ruleb === 'object' && Object.keys(p.ruleb).length) ? p.ruleb : null;
+    if (tb || rb) return { base: takeOf(L), bars: tb || {}, rules: rb || null };
     return takeOf(L);
   }
   function withTake(t, fn) {
@@ -1649,22 +1797,56 @@
     // roll each retaken take, and take each bar's notes from the take that
     // owns it. Recursion with a SCALAR pin keeps every part kind (pitched,
     // kit, speech) covered by one mechanism instead of a branch in each.
-    if (TAKE_PIN && typeof TAKE_PIN === 'object') {
-      const pin = TAKE_PIN;
-      const roll = (t) => { const sv = TAKE_PIN; TAKE_PIN = (t | 0);
-        try { return notesFor(L, ctx); } finally { TAKE_PIN = sv; } };
+    // PER-BAR RULES ARE NOT AN AUDITION PIN — they are what the bar is MADE OF,
+    // so playback has to honour them. A per-bar TAKE is the opposite (a live
+    // part re-rolls every cycle, so pinning one bar's throw is meaningful only
+    // while you are looking at it), which is why the pin path and this one
+    // share the composite and differ in what they hand it: the pin names a
+    // take per bar, playback names the CYCLE's take for every bar and lets the
+    // rules do the work.
+    const composite = (pin) => {
+      const rb = pin.rules || {};
+      // A ROLL IS (a take) × (a rule overlay). The overlay rides as a SHIM part
+      // on a shim layer — the same idiom the per-part swap above uses — so the
+      // whole emitter reads the merged rules with no branch of its own; and it
+      // carries `_ppDone`, because by here `p` IS the resolved record and
+      // letting the per-part block re-resolve would swap the shim straight back
+      // out and silently lose the overlay.
+      const roll = (t, ov) => { const sv = TAKE_PIN; TAKE_PIN = (t | 0);
+        try {
+          return ov ? notesFor(Object.assign({}, L, { part: partWithRules(p, ov) }),
+                               Object.assign({}, ctx, { _ppDone: 1 }))
+                    : notesFor(L, ctx);
+        } finally { TAKE_PIN = sv; }
+      };
       const barsF = Math.max(0.125, p.bars || 1);
-      const barOf = (n) => Math.floor(((n.at - cs) / Math.max(0.001, cyc)) * barsF + 1e-6);
-      const owned = (b2) => Object.prototype.hasOwnProperty.call(pin.bars, String(b2));
-      const out2 = roll(pin.base).filter((n) => !owned(barOf(n)));
-      const byTake = {};
-      Object.keys(pin.bars).forEach((k) => { (byTake[pin.bars[k] | 0] = byTake[pin.bars[k] | 0] || {})[k] = 1; });
-      Object.keys(byTake).forEach((t) => {
-        roll(+t).forEach((n) => { if (byTake[t][String(barOf(n))]) out2.push(n); });
+      // WHERE A NOTE SITS ON THE 1/48-BAR GRID — the one test, so a region is a
+      // change, a bar, or anything else that lands on that grid.
+      const slotOf = (n) => slotAt((n.at - cs) / Math.max(0.001, cyc), barsF);
+      const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+      const allK = {};
+      Object.keys(pin.bars).forEach((k) => { allK[k] = 1; });
+      Object.keys(rb).forEach((k) => { allK[k] = 1; });
+      const keys = Object.keys(allK);
+      const out2 = roll(pin.base).filter((n) => !regHas(keys, slotOf(n)));
+      // ONE ROLL PER DISTINCT (take, rules) PAIR — regions that agree on both
+      // share it, so two bars retaken together still cost one roll between them.
+      const groups = {};
+      keys.forEach((k) => {
+        const t = has(pin.bars, k) ? (pin.bars[k] | 0) : (pin.base | 0);
+        const ov = rb[k] || null;
+        const sig = t + '|' + (ov ? JSON.stringify(ov) : '');
+        const g2 = groups[sig] || (groups[sig] = { t, ov, keys: [] });
+        g2.keys.push(k);
+      });
+      Object.keys(groups).forEach((sig) => {
+        const g2 = groups[sig];
+        roll(g2.t, g2.ov).forEach((n) => { if (regHas(g2.keys, slotOf(n))) out2.push(n); });
       });
       out2.sort((a2, b2) => a2.at - b2.at);
       return out2;
-    }
+    };
+    if (TAKE_PIN && typeof TAKE_PIN === 'object') return composite(TAKE_PIN);
     // THE TAKE YOU ROLLED IS WHAT PLAYS. This was the CYCLE INDEX, so the
     // drawing (pinned to the take) and playback (index 0, 1, 2 …) were two
     // different rolls — press play after rolling take 1 and you heard cycle 0,
@@ -1679,6 +1861,13 @@
       : ((L.part && L.part.vary)
           ? (Math.round(ctx.cycleStart / Math.max(0.001, cyc)) + (takeOf(L) | 0))
           : (takeOf(L) | 0));
+    // …and if any bar generates by its own rules, this cycle is a composite of
+    // one roll per distinct rule set. Guarded on `TAKE_PIN == null` so the
+    // composite's own recursion (which sets a SCALAR pin) cannot re-enter here
+    // — and `partWithRules` strips `ruleb` from the shim for the same reason.
+    if (TAKE_PIN == null && p.ruleb && typeof p.ruleb === 'object' && Object.keys(p.ruleb).length) {
+      return composite({ base: cycIdx, bars: {}, rules: p.ruleb });
+    }
     const seedBase = ((L.id | 0) * 9176) ^ (cycIdx * 2246822519);
     // A KIT IS EIGHT PARALLEL RHYTHMS WITH A FIXED PITCH EACH. That is the whole
     // difference, and it falls out of the model rather than being bolted on: the
@@ -1736,16 +1925,37 @@
     // rule with one chord.
     const ons = (p.rhythm.kind === 'ground')
       ? groundOnsets(ctx, cs, cyc, p) : onsetsOf(p, seedBase);
-    const span = cyc / Math.max(1, ons.length);           // the onset span sizes the note
+    // THE NOTE'S OWN SLOT, not the average of all of them. This was
+    // `cyc / ons.length` — ONE length for every note — so on an uneven pattern
+    // (a euclid 7-of-16 has gaps of 2,2,3,2,2,3,2 steps) every note came out
+    // the same width whatever slot it sat in: the ones in a 3-step gap fell
+    // short of it and the ones in a 2-step gap ran past. Reported as "note
+    // event width isn't right" — measured, every note of a 7-of-16 was 2.06
+    // steps long. The field is labelled "% of the onset span" and the comment
+    // below has always claimed "Length stretches with the gaps"; it did not.
+    // The last onset's slot runs to the top of the NEXT cycle, which is where
+    // its own next hit would fall.
+    const gapAt = (k) => {
+      // AN EMPTY PATTERN IS A REST, and `durMs` below asks for gap 0 whatever
+      // the onsets are — without this guard `ons[0]` is undefined, the gap is
+      // NaN, and a NaN duration reaches playNote. Which is silence, everywhere.
+      if (!ons.length) return 1;
+      const a = ons[k] || 0;
+      const b2 = (k + 1 < ons.length) ? ons[k + 1] : (ons[0] + 1);
+      const d = b2 - a;
+      return Number.isFinite(d) ? Math.max(1e-4, d) : 1;
+    };
+    const span = cyc / Math.max(1, ons.length);           // the AVERAGE — Hold and the fallbacks still use it
     // HOLD sizes the note off the STEP GRID instead — N steps long, whatever the
     // onset spacing happens to be. v1's own semantics (`holdSteps`, 0 = use the
     // length instead): the two answer different questions, and a sparse pattern
     // is exactly where they diverge — Length stretches with the gaps, Hold does
     // not. Absent or 0 keeps Length, so nothing moves by default.
     const holdN = clamp((p.shape.holdSteps | 0), 0, 16);
-    const durMs = (holdN > 0)
-      ? Math.max(20, Math.round((cyc / Math.max(1, p.rhythm.steps | 0)) * 1000 * holdN))
-      : Math.max(20, Math.round(span * 1000 * (p.shape.lenRatio / 100)));
+    const durAt = (holdN > 0)
+      ? () => Math.max(20, Math.round((cyc / Math.max(1, p.rhythm.steps | 0)) * 1000 * holdN))
+      : (k) => Math.max(20, Math.round(gapAt(k) * cyc * 1000 * (p.shape.lenRatio / 100)));
+    const durMs = durAt(0);                               // the fallbacks below want a number
     // RESTS through v1's own `_ambEffRest`, which ADDS the Area Groove
       // density macro on top of the layer's value — reading `L.restProb`
       // directly is why the groove panel's Density did nothing to a v2 layer.
@@ -1863,8 +2073,9 @@
       if (pAt !== p) { p._deg = pAt._deg; p._oct = pAt._oct; }
       // LEN VARY scales this onset's notes together — a chord must not come
       // apart into different lengths, which is why it is per ONSET not per note.
-      let dm = durMs;
-      if (lvar > 0) dm = Math.max(20, Math.round(durMs * (1 + (vRnd(seedBase ^ (i * 40503), 23) * 2 - 1) * (lvar / 100) * 0.6)));
+      const dm0 = durAt(i);
+      let dm = dm0;
+      if (lvar > 0) dm = Math.max(20, Math.round(dm0 * (1 + (vRnd(seedBase ^ (i * 40503), 23) * 2 - 1) * (lvar / 100) * 0.6)));
       // PHRASING — v1's GESTURE CELLS. With probability `phrasing` this onset
       // takes a shaped figure — relative onsets and durations with an ARRIVAL
       // note (agogic emphasis: long, and leaned on) — instead of a uniform
@@ -2112,13 +2323,18 @@
       },
     },
   };
-  // bars → the window of the cycle they cover, as fractions
+  // regions → the window of the cycle they cover, as fractions. A transform
+  // reworks a CONTIGUOUS span (reverse is a retrograde of a window), so
+  // several regions give their outer bounds rather than a set.
   function tfWindow(L, bars) {
     const barsF = Math.max(0.125, L.part.bars || 1);
     if (!Array.isArray(bars) || !bars.length) return [0, 1];
     let lo = Infinity, hi = -Infinity;
-    bars.forEach(b => { lo = Math.min(lo, b | 0); hi = Math.max(hi, b | 0); });
-    return [clamp(lo / barsF, 0, 1), clamp((hi + 1) / barsF, 0, 1)];
+    bars.forEach((k) => { const r = regParse(k); if (!r) return;
+      lo = Math.min(lo, r.a); hi = Math.max(hi, r.b); });
+    if (!(hi > lo)) return [0, 1];
+    const span = barsF * SPB;
+    return [clamp(lo / span, 0, 1), clamp(hi / span, 0, 1)];
   }
   function transformFn(E, L, op, bars) {
     const T = TRANSFORMS[op];
@@ -2153,7 +2369,11 @@
     // become non-empty.
     const asLive = Object.assign({}, L, { part: Object.assign({}, L.part, { kind: 'live' }) });
     let notes = [];
-    try { notes = withEdit(() => withTake(reroll ? takeOf(L) : pinOf(L), () => notesFor(asLive, { E, cfg, key: 'v2:' + L.id, cycleStart: ctx.cycleStart, cycleSec: ctx.cycleSec }))); }
+    // `pinOf(L, reroll)` — a REROLL supersedes the per-bar take pins (the scalar
+    // has already been bumped) and KEEPS the per-bar rules, so re-rolling a bar
+    // that generates by its own rules rolls those rules again rather than
+    // silently falling back to the part's.
+    try { notes = withEdit(() => withTake(pinOf(L, reroll), () => notesFor(asLive, { E, cfg, key: 'v2:' + L.id, cycleStart: ctx.cycleStart, cycleSec: ctx.cycleSec }))); }
     catch (e) { return null; }
     if (!notes.length) return null;
     return notes.map(n => ({
@@ -2172,20 +2392,24 @@
     if (!fresh) return false;                           // nothing to freeze
     const barSel = (opts && Array.isArray(opts.bars) && opts.bars.length &&
                     L.part.kind === 'recorded' && (L.part.notes || []).length)
-      ? new Set(opts.bars.map(b => b | 0)) : null;
+      ? opts.bars.map(String) : null;
     if (barSel) {
       // A SPLICE, not a replace: stored notes outside the chosen bars stay —
       // per-note edits included — and the fresh roll fills only those bars.
       const p0 = L.part, barsF = Math.max(0.125, p0.bars || 1);
-      const barOf = (n) => Math.floor(n.t * barsF);
+      // BY REGION, not by bar — a change that fills half a bar is spliced into
+      // exactly its half (reported as "clicking F♯m should only select the F♯m
+      // area"). A whole-bar region is `[N·48, (N+1)·48)`, so bar selection is
+      // this with nothing special about it.
+      const inSel = (n) => regHas(barSel, slotAt(n.t, barsF));
       // The stored notes carry the register the part was MADE at (`p.reg`) and
       // the read shifts them by (register − reg)·12 — fresh notes roll at the
       // CURRENT register, so they are re-based onto the stored baseline or the
       // read-time shift would move them twice.
       const rb = Number.isFinite(p0.reg)
         ? (clamp((L.instrument.register | 0) || 4, 1, 8) - p0.reg) * 12 : 0;
-      const kept = (p0.notes || []).filter(n => !barSel.has(barOf(n)));
-      fresh = kept.concat(fresh.filter(n => barSel.has(barOf(n)))
+      const kept = (p0.notes || []).filter(n => !inSel(n));
+      fresh = kept.concat(fresh.filter(inSel)
         .map(n => ({ t: n.t, midi: clamp(n.midi - rb, 0, 127), dur: n.dur })));
       // an empty selected bar is a legitimate roll (the rules can rest there);
       // `made` and `reg` are NOT restamped — the unchosen bars are still
@@ -3356,7 +3580,7 @@
     p.kind = 'recorded';
     p.notes = [];
     p.made = 'compose';
-    delete p.tf; delete p.takeb;
+    delete p.tf; delete p.takeb; delete p.ruleb;
     p.reg = clamp((L.instrument.register | 0) || 4, 1, 8);
     stampPartKey(L, cfg);
     stampFollowsChanges(L, cfg);
@@ -3456,13 +3680,85 @@
   //
   // Applied at the EDIT, not in normalize — normalize cannot know the previous
   // length, and the ratio is the whole point.
-  function applyBarsModeFn(L, prevBars) {
+  // ── PRESERVE — EACH NOTE RE-FITTED TO ITS OWN CHANGE ────────────────────
+  // The third answer, and the only one a CADENCE edit can give: Stretch scales
+  // the whole cycle by one ratio and Fill ignores the chords entirely, but a
+  // cadence edit did not scale the part — it moved the CHANGES, each by its own
+  // amount. So map every note through the change boundaries: a note keeps its
+  // place WITHIN the change it was in, and its length is truncated or extended
+  // to that change's new span. A note spanning several changes maps its start
+  // and its end separately, so it stretches piecewise and can never run past
+  // the cycle. This needs the OLD per-change lengths, which is exactly what no
+  // other length change has — hence cadence-only.
+  function barMapper(oldLens, newLens) {
+    if (!Array.isArray(oldLens) || !Array.isArray(newLens)) return null;
+    const n = Math.min(oldLens.length, newLens.length);
+    if (n < 1) return null;
+    const oe = [0], ne = [0];
+    for (let i = 0; i < n; i++) {
+      oe.push(oe[i] + Math.max(1e-6, +oldLens[i] || 0));
+      ne.push(ne[i] + Math.max(1e-6, +newLens[i] || 0));
+    }
+    const oT = oe[n], nT = ne[n];
+    if (!(oT > 0) || !(nT > 0)) return null;
+    // piecewise-linear through the change edges; outside the written span it
+    // rides the overall ratio, so a note past the end still lands somewhere sane
+    return (ob) => {
+      if (!(ob > 0)) return 0;
+      if (ob >= oT) return nT + (ob - oT) * (nT / oT);
+      for (let i = 0; i < n; i++) {
+        if (ob < oe[i + 1] - 1e-9) {
+          const f = (ob - oe[i]) / Math.max(1e-9, oe[i + 1] - oe[i]);
+          return ne[i] + f * (ne[i + 1] - ne[i]);
+        }
+      }
+      return nT;
+    };
+  }
+
+  // `lens` is `{ old: [...bars per change...], now: [...] }` — supplied only by
+  // the cadence edit, which is the only caller that knows both.
+  function applyBarsModeFn(L, prevBars, lens) {
     const p = L && L.part; if (!p) return null;
-    if ((p.barsMode || 'stretch') !== 'fill') return null;
+    const mode = p.barsMode || 'stretch';
+    if (mode !== 'fill' && mode !== 'preserve') return null;
     const nb = +p.bars || 0;
     if (!(prevBars > 0) || !(nb > 0) || Math.abs(nb - prevBars) < 1e-9) return null;
     const k = nb / prevBars;
-    if (p.kind === 'recorded' && Array.isArray(p.notes) && p.notes.length) {
+    const rec = p.kind === 'recorded' && Array.isArray(p.notes) && p.notes.length;
+
+    if (mode === 'preserve') {
+      // The RULES are untouched: a generated part re-resolves its pitches
+      // against whatever chord is sounding at each onset, so it already
+      // follows a cadence edit and there is nothing to re-fit.
+      if (!rec) return { mode: 'preserve', rhythm: (p.rhythm || {}).kind };
+      const map = barMapper(lens && lens.old, lens && lens.now);
+      // WITHOUT THE OLD CADENCE THERE IS NOTHING TO PRESERVE — say so rather
+      // than silently doing a stretch under another name.
+      if (!map) return { mode: 'preserve', notes: p.notes.length, mapped: false };
+      // The reconciler has ALREADY stretched these notes (times are cycle
+      // fractions and `bars` moved), so each note's OLD absolute position is
+      // `t × prevBars` — that is the space the map is defined in.
+      const out = [];
+      for (let i = 0; i < p.notes.length; i++) {
+        const n = p.notes[i];
+        const ob = clamp(n.t, 0, 1) * prevBars;
+        const oe = Math.min(prevBars, ob + Math.max(1e-6, n.dur) * prevBars);
+        const a = map(ob), b2 = map(oe);
+        const t = clamp(a / nb, 0, 0.99999);
+        const dur = clamp(Math.max(b2 - a, 1e-4) / nb, 0.001, 8);
+        // COPY the note and override the two fields that move — a hand-set
+        // velocity, envelope, glide or `hx` pin is somebody's edit, and the
+        // rebuild-from-three-fields the fill branch does would drop every one
+        // of them. Absent stays absent (no invented `undefined`s to prune).
+        out.push(Object.assign({}, n, { t, dur: Math.min(dur, 1 - t) }));
+      }
+      p.notes = out.sort((x, y) => x.t - y.t);
+      return { mode: 'preserve', notes: p.notes.length, mapped: true };
+    }
+
+    let notes = null;
+    if (rec) {
       // A recorded part's times are FRACTIONS of the cycle, so growing the
       // cycle would slow the phrase down. Keep it at its own tempo and repeat
       // it to cover the new length — "continue writing" for notes that already
@@ -3478,21 +3774,37 @@
         }
       }
       if (out.length) p.notes = out;
-      return { mode: 'fill', notes: p.notes.length };
+      notes = p.notes.length;
     }
+    // …AND THE RULES GROW WITH THEM, on a recorded part too. They were grown
+    // only for a GENERATED one, so Fill lived in the notes and nowhere else —
+    // and 🎲 Replace with a new take reads the retained LIVE spec, which still
+    // described the OLD length. Measured: a part filled to 2 onsets came back
+    // from a re-roll with 1, the pre-cadence density stretched thinner, and the
+    // Fill you had just chosen was gone with no way to tell. The rules ARE the
+    // part's density; a mode that means "same density, more bars" has to move
+    // them or it only holds until the next roll.
     const r = p.rhythm || {};
     const grow = (v, lo, hi) => clamp(Math.max(lo, Math.round((v || lo) * k)), lo, hi);
-    if (r.kind === 'pulse') r.n = grow(r.n, 1, 64);
+    // THE FILLED NOTES ARE THE ANSWER, when there are any. Scaling the KNOB
+    // rounds, and rounding DOWN is the one thing "same density" may never do:
+    // a ▬ Sustained part is one onset per cycle, so 5 → 6 bars is `round(1.2)`
+    // = 1 and the re-roll came back a single held chord over five changes —
+    // the report verbatim. The fill has already written the notes it means, so
+    // the rules simply describe THAT: same onset count, re-placed.
+    const onsN = notes
+      ? new Set((p.notes || []).map(n => Math.round(n.t * 1e6))).size : 0;
+    if (r.kind === 'pulse') r.n = onsN ? clamp(onsN, 1, 64) : grow(r.n, 1, 64);
     else if (r.kind === 'euclid' || r.kind === 'drawn') {
       const pu = r.pulses | 0;
       r.steps = grow(r.steps, 1, 64);
-      r.pulses = clamp(Math.max(1, Math.round(pu * k)), 1, r.steps);
+      r.pulses = onsN ? clamp(onsN, 1, r.steps) : clamp(Math.max(1, Math.round(pu * k)), 1, r.steps);
       // a drawn grid cannot be stretched by arithmetic — its cells are the
       // pattern, so growing the step count re-seeds from the knobs rather than
       // leaving a half-empty row (the same contract the knobs already have)
       if (r.kind === 'drawn') r.kind = 'euclid';
     } else if (r.kind === 'chance') r.steps = grow(r.steps, 1, 64);
-    return { mode: 'fill', rhythm: r.kind };
+    return { mode: 'fill', notes: notes, rhythm: r.kind };
   }
 
   // ── SEED THIS PART LIKE A v1 LAYER ──────────────────────────────────────
@@ -3584,20 +3896,80 @@
     newTake: (L, bars) => {
       if (!L || !L.part) return 0;
       const p2 = L.part;
-      // never reuse a number any bar is already pinned to — a retake that
+      // never reuse a number any region is already pinned to — a retake that
       // resolves to material you are already looking at is a dead press
       let mx = takeOf(L);
       try { Object.keys(p2.takeb || {}).forEach((k) => { if ((p2.takeb[k] | 0) > mx) mx = p2.takeb[k] | 0; }); } catch (e) {}
       const nx = (mx + 1) % 1000000;
       if (Array.isArray(bars) && bars.length) {
         p2.takeb = p2.takeb || {};
-        bars.forEach((b2) => { p2.takeb[b2 | 0] = nx; });
+        bars.forEach((k2) => { p2.takeb[String(k2)] = nx; });
       } else {
         // a WHOLE new take supersedes the per-bar history — keeping it would
         // pin old bars over the take you just asked for
         p2.take = nx; delete p2.takeb;
       }
       return nx;
+    },
+    // PER-BAR RULES. The card is in the OTHER IIFE, so the store's whole
+    // vocabulary comes through here (the documented two-IIFE rule).
+    barFields: BAR_RULE_F,
+    barRules: barRulesOf,
+    regBarKey: regBarKey,
+    regKey: regKey,
+    // …in the CALLER's terms — a note's cycle fraction and the part's length —
+    // so nothing outside has to know the grid exists.
+    regHas: (keys, t, barsF) => regHas(keys || [], slotAt(t, barsF)),
+    regParse: regParse,
+    regLabel: regLabel,
+    regSlots: SPB,
+    // WRITE ONE FIELD FOR A SET OF BARS, and store only what DIFFERS from the
+    // part's own — absent is the one representation of "this bar takes the
+    // part's rule", so a value set back to it is a DELETE, and an emptied
+    // overlay takes its bar (and then the map) with it. Returns whether
+    // anything moved, so a no-op press costs no re-render.
+    setBarRule: (L, bars, grp, f, v) => {
+      if (!L || !L.part || !Array.isArray(bars) || !bars.length) return false;
+      const spec = (BAR_RULE_F[grp] || {})[f]; if (!spec) return false;
+      const p2 = L.part, base = (p2[grp] || {})[f];
+      let val = v;
+      if (Array.isArray(spec) && typeof spec[0] === 'string') {
+        if (typeof val !== 'string' || spec.indexOf(val) < 0) return false;
+      } else {
+        if (!Number.isFinite(val)) return false;
+        val = clamp(Math.round(val), spec[0], spec[1]);
+      }
+      let moved = false;
+      bars.forEach((b0) => {
+        const key = String(b0);
+        const rb = p2.ruleb || {};
+        const ov = rb[key] || null;
+        const cur = ov && ov[grp] ? ov[grp][f] : undefined;
+        const same = (val === base) || (Number.isFinite(val) && Number.isFinite(base) && val === base);
+        if (same) {
+          if (cur === undefined) return;
+          delete ov[grp][f];
+          if (!Object.keys(ov[grp]).length) delete ov[grp];
+          if (!Object.keys(ov).length) delete p2.ruleb[key];
+          if (p2.ruleb && !Object.keys(p2.ruleb).length) delete p2.ruleb;
+          moved = true; return;
+        }
+        if (cur === val) return;
+        p2.ruleb = p2.ruleb || {};
+        const o2 = p2.ruleb[key] || (p2.ruleb[key] = {});
+        (o2[grp] || (o2[grp] = {}))[f] = val;
+        moved = true;
+      });
+      return moved;
+    },
+    // …and the way back: this bar generates by the part's rules again.
+    clearBarRules: (L, bars) => {
+      if (!L || !L.part || !L.part.ruleb || !Array.isArray(bars)) return false;
+      let moved = false;
+      bars.forEach((b0) => { const k = String(b0);
+        if (Object.prototype.hasOwnProperty.call(L.part.ruleb, k)) { delete L.part.ruleb[k]; moved = true; } });
+      if (!Object.keys(L.part.ruleb).length) delete L.part.ruleb;
+      return moved;
     },
     cycleWindowAt: cycleWindowAt,
     recordAt: partRecordAt,
@@ -3708,6 +4080,7 @@
     // Published because every consumer is in the UI IIFE.
     liveness,
     scaleAt,                       // which pitch classes the keyboard should light
+    chordAt,                       // …and which the SOUNDING CHORD holds, at one moment
     notesFor,                      // the interface, callable directly
     onsetsOf,
     transform: transformFn,        // commands over the notes you already have
@@ -4085,6 +4458,13 @@
   'use strict';
   const V2 = window._v2; if (!V2) return;
   const esc = (x) => String(x == null ? '' : x).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+  // THE REGION VOCABULARY, across the IIFE boundary. It is declared in the
+  // ENGINE half (normalize needs it) and every surface that draws or selects a
+  // region is in THIS half — the documented two-IIFE trap, which this cost a
+  // round to: `SPB is not defined` threw straight into the tap handler's own
+  // catch, so every chord press silently did nothing.
+  const SPB = V2.regSlots, regKey = V2.regKey, regBarKey = V2.regBarKey,
+        regParse = V2.regParse, regLabel = V2.regLabel;
 
   // `drawn` IS NOT A CHOICE HERE — it is what `euclid` BECOMES the moment you
   // tap a cell, exactly as v1's `euclidPattern` override supersedes its own
@@ -4165,10 +4545,24 @@
     if (BSEL.sig !== bselSig(L)) { BSEL = null; return null; }
     return BSEL.bars.size ? BSEL : null;
   }
+  // `BSEL.bars` IS A MAP of region key → its NAME. The name is what you
+  // pressed — "F♯m" for a change, "bar 3" for a bar — because a selection
+  // described as "bar 2½–3" when you pressed a chord is the app answering a
+  // question you did not ask. `regLabel` is the fallback for a region nobody
+  // named (one restored from the store).
+  const bselKeys = (sel) => [...sel.bars.keys()];
   const bselLabel = (sel) => {
-    const a = [...sel.bars].sort((x, y) => x - y).map((b) => b + 1);
-    return (a.length === 1 ? 'bar ' + a[0] : 'bars ' + a.join('+'));
+    const ks = bselKeys(sel).slice().sort((x, y) => {
+      const A = regParse(x), B = regParse(y); return (A ? A.a : 0) - (B ? B.a : 0); });
+    const names = ks.map((k) => sel.bars.get(k) || regLabel(k));
+    return names.length === 1 ? names[0] : names.join(' + ');
   };
+  // A STORE'S KEYS, IN ORDER, NAMED — for the card readouts, which must say
+  // which regions carry a pin or their own rules (state that can sit in a
+  // closed panel has to be readable from the card).
+  const regListTxt = (map) => Object.keys(map || {})
+    .sort((x, y) => { const A = regParse(x), B = regParse(y); return (A ? A.a : 0) - (B ? B.a : 0); })
+    .map(regLabel).join(' + ');
   // ONE BUTTON, TWO STATES (user: "lock/unlock take should be a single
   // button"). It used to carry three faces and one of them REPLACED your
   // notes — a lock that sometimes destroys work is two actions in one
@@ -4221,9 +4615,12 @@
   // Transient by construction (a Map keyed on layer id): a field would be
   // serialised by `persistWorkspace` and a project would reload in a mode you
   // cannot see (the `_soloLane` rule).
-  //   split — hold; a tap on a note opens the divider (a CLICK is the only
-  //           gesture it has — no drag, no pencil, nothing to arm)
-  const MODES = ['view', 'edit', 'draw', 'multi', 'split'];
+  // (SPLIT was a fifth value here, and it was a mode for one gesture: you had
+  // to switch to it, tap a note, and switch back. A tap on a note ALREADY
+  // opens that note — so the divider is a BUTTON in the note editor now, one
+  // press instead of three, and the mode axis is back to the four states that
+  // genuinely change what a tap means. `✂ Split…` is in `.v2-nebtns`.)
+  const MODES = ['view', 'edit', 'draw', 'multi'];
   const VIEWM = new Map();      // layer id -> one of MODES  (absent = view)
   const modeOf = (L) => {
     const m = VIEWM.get(L && (L.id | 0));
@@ -4254,7 +4651,7 @@
   const vnavSet = (L, v) => {
     if (!L) return;
     const cur = vnavOf(L), nx = Object.assign({}, cur, v);
-    if (!nx.dy && !nx.rows && !nx.bar0) VNAV.delete(L.id | 0);
+    if (!nx.dy && !nx.rows && !nx.bar0) VNAV.delete(L.id | 0);   // 0 is neutral, negative is a zoom
     else VNAV.set(L.id | 0, nx);
   };
   // HOW MUCH OF A PART IS ON SCREEN AT ONCE. Four bars to a phone's width is
@@ -4504,8 +4901,7 @@
             [['view', '\ud83d\udc41 View', 'follow what plays \u2014 a tap selects a bar'],
              ['edit', '\u270e Edit', 'hold the part you are editing \u2014 a tap opens a note'],
              ['draw', '\u270e Draw', 'a tap on empty space adds a note'],
-             ['multi', '\u2b1a Multi', 'tap notes to gather, then move or resize them together'],
-             ['split', '\u2702 Split', 'tap a note to divide it into several \u2014 the same total length']]
+             ['multi', '\u2b1a Multi', 'tap notes to gather, then move or resize them together']]
               .map(([v, lab, why]) => '<option value="' + v + '"' + (vm2 === v ? ' selected' : '') +
                 ' title="' + esc(why) + '">' + lab + '</option>').join('') +
           '</select></label>' +
@@ -4879,7 +5275,17 @@
     try {
       const wsig = (L.part.kind || '') + ':' + ((L.part.take | 0) || 0);
       const held = WINHOLD.get(L.id | 0);
-      if (held && held.sig === wsig) {
+      // ── WHILE IT IS PLAYING, THE GRID DOES NOT MOVE ────────────────────
+      // Stated as the contract: "the grid should never flinch". In 👁 View the
+      // picture FOLLOWS playback and swaps to another part's record, so a
+      // window derived from whatever is on screen grew the instant a part with
+      // a wider span came round — measured mid-play, the canvas went 92px →
+      // 127px and every row slid under the eye. Held verbatim while the
+      // transport runs (and while a gesture is in flight, below): what does
+      // not fit is CLIPPED, which the readout names, and ▲▼ ＋ − are there to
+      // open the window when you want it open.
+      if (held && E.timer) { loM = held.loM; hiM = held.hiM; }
+      else if (held && held.sig === wsig) {
         const rawLo = mids.length ? Math.floor(Math.min.apply(null, mids)) : held.loM;
         const rawHi = mids.length ? Math.ceil(Math.max.apply(null, mids)) : held.hiM;
         if (rawLo >= held.loM && rawHi <= held.hiM) { loM = held.loM; hiM = held.hiM; }
@@ -5011,6 +5417,8 @@
     cv._pitchGeo = { loM: loM, hiM: hiM, rowH: rowH, top: TOP };
     const PLOT = w - GUT;                                // the notes' own width
     const free = L.part && L.part.clock === 'free';
+    let latN = 0;   // the lattice the ruler DRAWS — published below, so a reader
+                    // asks the picture what it drew rather than re-deriving it
     // THE WINDOW BEING DRAWN, not the record being EDITED — see `cycBars`.
     const barsF = Math.max(0.0625, cycBars || (L.part && L.part.bars) || 1);
     // ── THE VIEWPORT, IN TIME ───────────────────────────────────────────────
@@ -5141,17 +5549,47 @@
       g.fillText('free · ' + Math.round((L.part && L.part.ms) || 0) + 'ms', GUT + 3, 10);
       g.beginPath(); g.moveTo(GUT, TOP + 0.5); g.lineTo(w, TOP + 0.5); g.stroke();
     } else {
-      const beats = Math.max(1, Math.round(barsF * 4));
-      for (let i = 0; i <= beats; i++) {
-        const atBar = (i % 4) === 0;
-        const x = Math.round(xF(i / beats)) + 0.5;
+      // ── THE LATTICE THE MATERIAL IS ON ─────────────────────────────────
+      // These were fixed QUARTER notes, and the notes are on neither: a
+      // generated part sits on `rhythm.steps` per CYCLE and a written one
+      // snaps to the editing grid (`bars × grid`). On a 4.5-bar part at 16
+      // steps those are 0.0625 and 0.0556 of the cycle — so every onset
+      // landed between lines and every note measured 2.32 "cells" wide,
+      // which is "note events are not filling the slot commensurate with
+      // the size they are" exactly. Draw the grid the notes actually use and
+      // they fill it by construction.
+      latN = (() => {
+        if (L.part.kind === 'recorded') {
+          try { const c2 = V2.gridCells(L) | 0; if (c2 > 0) return c2; } catch (e) {}
+        } else {
+          const st = (L.part.rhythm || {}).steps | 0;
+          if (st > 0) return st;
+        }
+        return Math.max(1, Math.round(barsF * 4));
+      })();
+      // …skipped when it would be denser than the eye can use — the bar lines
+      // still give the reading
+      if ((PLOT / Math.max(1, latN)) / VSC >= 4) {
+        g.strokeStyle = 'rgba(159,122,234,0.10)'; g.lineWidth = 1;
+        for (let i = 0; i <= latN; i++) {
+          const x = Math.round(xF(i / latN)) + 0.5;
+          if (x < GUT - 1) continue;
+          if (x > w) break;
+          g.beginPath(); g.moveTo(x, TOP - 4); g.lineTo(x, h); g.stroke();
+        }
+      }
+      // BAR LINES AND THEIR NUMBERS on top — the musical reference, exact
+      // whatever the lattice is (and a fractional part keeps its part-bar).
+      const nbars = Math.ceil(barsF - 1e-6);
+      for (let b3 = 0; b3 <= nbars; b3++) {
+        const x = Math.round(xF(b3 / barsF)) + 0.5;
+        if (x < GUT - 1) continue;
         if (x > w) break;
-        g.strokeStyle = atBar ? 'rgba(159,122,234,0.30)' : 'rgba(159,122,234,0.10)';
-        g.beginPath();
-        g.moveTo(x, atBar ? CHT + 2 : TOP - 4); g.lineTo(x, h); g.stroke();
-        if (atBar && i < beats) {
+        g.strokeStyle = 'rgba(159,122,234,0.30)'; g.lineWidth = 1;
+        g.beginPath(); g.moveTo(x, CHT + 2); g.lineTo(x, h); g.stroke();
+        if (b3 < nbars) {
           g.fillStyle = '#7a7a9c';
-          g.fillText(String(i / 4 + 1), Math.min(w - 8, x + 3), CHT + 10);
+          g.fillText(String(b3 + 1), Math.min(w - 8, x + 3), CHT + 10);
         }
       }
       // the gutter's floor, so the numbers read as a ruler rather than as
@@ -5196,12 +5634,15 @@
     // the picture, not in a caption. Geometry recorded for the tap handler —
     // including the gutter, which is NOT part of the bar grid.
     cv._barsGeo = free ? null : { barsF: barsF, w: PLOT, x0: GUT,
-                                  vsc: VSC, f0: F0, vbars: VB, bar0: B0 };
+                                  vsc: VSC, f0: F0, vbars: VB, bar0: B0, latN: latN };
     // WHAT THE WINDOW IS SHOWING, said outright — a panned window that does
     // not say where it is looking is the state-you-cannot-see trap, and the
     // ◀ ▶ pair is hidden when the whole part is already on screen (a control
     // that cannot act).
-    try {
+    // A FUNCTION, because the count of notes outside the window is only known
+    // AFTER they have been drawn — painting the label up here read one draw
+    // stale, which is the two-passes-over-one-fact bug in miniature.
+    const navSync = () => { try {
       const nb = host.querySelector('.v2-vnav');
       if (nb) {
         const scroll = !free && barsF > VB + 1e-6;
@@ -5210,10 +5651,12 @@
         if (fit) fit.style.display = (nv.dy || nv.rows || nv.bar0) ? '' : 'none';
         const lab = nb.querySelector('.v2-navlab');
         if (lab) lab.textContent = noteName(loM) + '\u2013' + noteName(hiM) +
+          (cv._hidden ? ' \u00b7 ' + cv._hidden + ' outside' : '') +
           (scroll ? (' \u00b7 bar ' + (Math.round(B0 * 10) / 10 + 1) + '\u2013' +
                      (Math.round((B0 + VB) * 10) / 10)) : '');
       }
-    } catch (e) {}
+    } catch (e) {} };
+    navSync();
     // WHAT THE CHORD BAND DREW, recorded like every other geometry here. A
     // reader — the gate included — must ask the picture's own claim: a probe
     // that re-walks the clock beside it proves only that the walk is
@@ -5221,14 +5664,21 @@
     cv._chordGeo = cmarks ? { at: cAt, top: CHT, marks: cmarks } : null;
     try { multiSync(card, L); } catch (e) {}
     const sel0 = free ? null : bselOf(L);
+    const selKeys = sel0 ? bselKeys(sel0) : null;
     if (sel0) {
+      // TINTED BY REGION, so a half-bar change is tinted for half a bar — the
+      // picture has to show exactly what will re-roll or the selection is a
+      // claim you cannot check.
       g.fillStyle = 'rgba(159,122,234,0.13)';
-      sel0.bars.forEach((b2) => {
-        const x0 = Math.max(GUT, xF(b2 / barsF)), x1 = Math.min(w, xF((b2 + 1) / barsF));
+      selKeys.forEach((k2) => {
+        const r2 = regParse(k2); if (!r2) return;
+        const x0 = Math.max(GUT, xF(r2.a / (barsF * SPB)));
+        const x1 = Math.min(w, xF(r2.b / (barsF * SPB)));
         if (x1 <= x0) return;
         g.fillRect(x0, TOP, x1 - x0, h - TOP);
       });
     }
+    cv._hidden = 0; navSync();
     cv._hits = []; cv._sel = -1;   // no notes drawn = nothing to hit-test against
     if (!played.length) {
       try { vizChrome(card, L, E); } catch (e) {}
@@ -5261,7 +5711,15 @@
                    ' content is safe \u2014 \u270e Edit holds it';
       }
     } catch (e) {}
-    const nh = Math.max(3, Math.min(8, rowH - 1));
+    // A NOTE FILLS ITS ROW. This was capped at 8px, which is most of a
+    // reading-size row and a THIRD of an expanded one — so once the window
+    // could be made taller the notes stayed thin ribbons in tall lanes
+    // ("note events are not filling the slot commensurate with the size they
+    // are"). Proportional instead: 80% of the row, which is what the old
+    // formula happened to give at the reading size (4.2 of 5.2) and what it
+    // now goes on giving at any size.
+    const nh = Math.max(3, rowH * 0.8);
+    let hidden = 0;   // notes outside the held window — named in the readout
     for (let i = 0; i < played.length; i++) {
       const n = played[i];
       const x = xF(n.at / cyc);
@@ -5269,7 +5727,12 @@
       // ON ITS OWN ROW: the note sits in the semitone it plays, so the keyboard
       // beside it names the pitch. (It was a continuous squeeze of the range,
       // which could put a C and a C♯ at the same height on a wide part.)
-      const y = yOf(Math.round(mids[i])) + (rowH - nh) / 2;
+      // OUTSIDE THE WINDOW IS OFF THE PICTURE. Without this a note above
+      // `hiM` was drawn over the RULER (and hit-tested there), which only
+      // became reachable once the window stopped growing to swallow it.
+      const mrow = Math.round(mids[i]);
+      if (mrow < loM || mrow > hiM) { hidden++; continue; }
+      const y = yOf(mrow) + (rowH - nh) / 2;
       g.fillStyle = NOTE_FILL;
       g.strokeStyle = NOTE_EDGE; g.lineWidth = 1;
       // CLIPPED TO THE VIEWPORT. With only part of the cycle on screen a note
@@ -5289,6 +5752,20 @@
       // note uses, because it is the same fact (this one is being worked on)
       // and a gathering you cannot see is the drum-solo bug.
       const isGrp = MGRP && Number.isFinite(n.nidx) && MGRP.has(n.nidx);
+      // WHICH NOTES A RE-ROLL WILL REPLACE. A note belongs to the region its
+      // ONSET falls in and its LENGTH is never clipped, so a note that starts
+      // before the selection and rings through it survives untouched, while one
+      // that starts inside and rings past the end goes — and in the picture
+      // both simply straddle the tint, which says nothing about which is which.
+      // Asked outright ("how does partial re-rolling work if a note passes
+      // through the piece being edited"), and a selection whose EFFECT you
+      // cannot see is the drum-solo bug in a new costume: the doomed ones wear
+      // the selection's own accent on their edge.
+      const willGo = !!(selKeys && selKeys.length) &&
+        V2.regHas(selKeys, n.at / cyc, barsF);
+      if (selKeys && willGo && !isSel && !isGrp) {
+        g.strokeStyle = 'rgba(190,150,255,0.95)'; g.lineWidth = 1.5;
+      }
       if (isSel) {
         g.fillStyle = 'rgba(214,188,250,0.95)';
         g.strokeStyle = '#fff'; g.lineWidth = 1.5;
@@ -5304,6 +5781,9 @@
       g.beginPath();
       g.rect(xv, y, ww, nh);
       g.fill(); g.stroke();
+      if (selKeys && willGo && !isSel && !isGrp) {
+        g.strokeStyle = NOTE_EDGE; g.lineWidth = 1;
+      }
       if (isGrp && !isSel) {
         g.strokeStyle = 'rgba(255,255,255,0.5)'; g.lineWidth = 1;
         g.beginPath();
@@ -5331,9 +5811,15 @@
       // well as the index: locking a live take re-sorts the notes, so the note
       // you tapped is re-found by WHAT IT IS rather than by where it sat in an
       // array that no longer exists.
+      // …and WHETHER A RE-ROLL WOULD REPLACE IT. Published beside the geometry
+      // like everything else here, so a reader — the gate included — asks the
+      // picture's own claim rather than re-deriving the ownership rule beside
+      // it and eventually disagreeing with what was drawn.
       cv._hits.push({ x: xv, y, w: ww, h: nh, i: (Number.isFinite(n.nidx) ? n.nidx : i),
-                      t: n.at / cyc, midi: mids[i] });
+                      t: n.at / cyc, midi: mids[i], go: !!willGo });
     }
+    // …and NOW the count of what fell outside is known
+    cv._hidden = hidden; navSync();
     if (lab) {
       const rec2 = L.part && L.part.kind === 'recorded';
       // THE DRAWING IS ONE CYCLE, and the ruler counts BARS — so a 1-bar cycle
@@ -5375,12 +5861,21 @@
         // NAME THE TAKE. "one take of many" was true and unhelpful — you could
         // not tell whether the picture had moved. A number you can watch change
         // is what makes "Preview did not re-roll that" verifiable by eye.
-        (rec2 ? (bselOf(L) ? ' · re-rolling ' + bselLabel(bselOf(L)) + ' — tap a bar to change which'
-                            : ' · tap a note to edit · tap a bar to re-roll just it')
+        // A DOOR NOBODY CAN SEE IS NOT A DOOR. The ruler is two rows and they
+        // now answer two questions, so the hint names BOTH — nothing on a
+        // canvas can carry a tooltip, and the chord band looks like a label
+        // until something says it is a handle.
+        (rec2 ? (bselOf(L) ? ' · re-rolling ' + bselLabel(bselOf(L)) + ' — tap a bar' + (cmarks ? ' or a chord' : '') + ' to change which'
+                            : ' · tap a note to edit · tap a bar' + (cmarks ? ' or a chord' : '') + ' to re-roll just it')
               : ' · take ' + (V2.takeOf(L) + 1) +
-                (L.part.takeb ? ' · retaken: bars ' + Object.keys(L.part.takeb).map((b3) => (b3 | 0) + 1).sort((x, y) => x - y).join('+') : '') +
+                (L.part.takeb ? ' · retaken: ' + regListTxt(L.part.takeb) : '') +
+                // A BAR GENERATING BY ITS OWN RULES IS STATE, and state that can
+                // sit in a closed panel has to be readable from the card (the
+                // drum-solo rule) — otherwise "why is bar 3 different" has no
+                // answer anywhere on screen.
+                (L.part.ruleb ? ' · own rules: ' + regListTxt(L.part.ruleb) : '') +
                 (bselOf(L) ? ' · retaking ' + bselLabel(bselOf(L))
-                           : ' · tap a bar to retake just it') +
+                           : ' · tap a bar' + (cmarks ? ' or a chord' : '') + ' to retake just it') +
                 (fromPv ? ' · as previewed' : '')) + overTxt + otherTxt;
     }
     try { vizChrome(card, L, E); } catch (e) {}
@@ -5937,13 +6432,16 @@
         const rec4 = L.part.kind === 'recorded';
         const sel4 = bselOf(L);
         const empty4 = rec4 && !((L.part.notes || []).length);
-        const txt = sel4 ? ((rec4 ? '\ud83c\udfb2 Re-roll ' : '\ud83c\udfb2 Retake ') + bselLabel(sel4))
+        // AN ELLIPSIS MEANS IT OPENS A DIALOG (⊕ Expand…, ✂ Split…, ⇄ Sync) —
+        // with bars tapped this press shows the settings that bar generates by
+        // rather than throwing the dice behind your back.
+        const txt = sel4 ? ((rec4 ? '\ud83c\udfb2 Re-roll ' : '\ud83c\udfb2 Retake ') + bselLabel(sel4) + '\u2026')
           : (empty4 ? '\ud83c\udfb2 Roll a take'
           : (rec4 ? '\ud83c\udfb2 Replace with a new take' : '\ud83c\udfb2 New take'));
         if (nb.textContent !== txt) {
           nb.textContent = txt;
           nb.title = sel4
-            ? ('Roll fresh material into ' + bselLabel(sel4) + ' only — the rest of the drawing holds still. Tap bars in the drawing to change which; press again for another roll.')
+            ? ('Open the settings ' + bselLabel(sel4) + ' generates by — edit them for this alone, or roll again. The rest of the drawing holds still; tap a bar or a chord in the drawing to change which.')
             : (empty4
               ? 'Roll a take of this layer’s rules and freeze it here — there is nothing in this part yet.'
               : rec4
@@ -6066,15 +6564,15 @@
     const cp = L.part;
     if (cp.kind !== 'recorded' || !(cp.notes || []).length) return true;
     const barsF = Math.max(0.125, cp.bars || 1);
-    const inScope = (n2) => !selBars || selBars.indexOf(Math.floor(n2.t * barsF)) >= 0;
+    const inScope = (n2) => !selBars || V2.regHas(selBars, n2.t, barsF);
     const scoped = (cp.notes || []).filter(inScope);
     const edited = scoped.some(n2 => Number.isFinite(n2.vel) || Number.isFinite(n2.atk) ||
       Number.isFinite(n2.dec) || Number.isFinite(n2.sus) || Number.isFinite(n2.rel) || Number.isFinite(n2.glide));
     // a TRANSFORMED take is work too — a plain roll may be replaced silently,
     // one you reversed or shuffled may not
     if (cp.made === 'take' && !edited && !cp.tf) return true;
-    const whereTxt = (selBars && selBars.length) ? (' in ' + (selBars.length === 1
-      ? ('bar ' + ((selBars[0] | 0) + 1)) : (selBars.length + ' bars'))) : '';
+    const whereTxt = (selBars && selBars.length)
+      ? (' in ' + selBars.map((k2) => V2.regLabel(k2)).join(' + ')) : '';
     const what = cp.made === 'compose' ? 'the phrase you composed'
       : (cp.made === 'phrase' ? ('\u201c' + (cp.from || 'the phrase you chose') + '\u201d')
       : (edited ? 'your edits to these notes' : 'these notes'));
@@ -6136,11 +6634,33 @@
   function lenTxt(steps, gridN, bars) {
     return beatTxt(steps * (4 * bars / Math.max(1, gridN)));
   }
+  // A ± PRESS SNAPS AN OFF-GRID NOTE ONTO THE GRID, instead of stepping from
+  // the field's ROUNDED copy of it. The shared stepper delegation parses with
+  // parseInt, so the field can only carry a whole number — on a 2.7-cell note
+  // it shows 3, and a press of ＋ would write 4, past the 3 the hand was
+  // reaching for. `cur` is the note's TRUE value, and a press is always exactly
+  // `round(cur) ± 1`, which is what tells it apart from a TYPED value (taken
+  // verbatim). A note already on the grid takes the first branch, so every
+  // hand-written note behaves exactly as it did.
+  function neCells(cur, v, g) {
+    const c = (cur || 0) * g.gridN;
+    if (Math.abs(c - Math.round(c)) < 1e-6) return v;
+    const shown = Math.max(0, Math.round(c));
+    if (v === shown + 1) return Math.floor(c + 1e-6) + 1;
+    if (v === shown - 1) return Math.ceil(c - 1e-6) - 1;
+    return v;
+  }
   const msTxt = (v) => (v >= 1000 ? (Math.round(v / 100) / 10) + ' s' : (v | 0) + ' ms');
   // WHICH NOTE IS OPEN, module state — transient by construction (a field on the
   // layer would be serialised by `persistWorkspace`, the documented `_soloLane`
   // trap) and cleared whenever the note it names stops existing.
   let NE = null;
+  // IS THE ENVELOPE FOLD OPEN — a view preference, transient like `NE` itself
+  // (a field on the layer would be serialised by `persistWorkspace`, the
+  // documented `_soloLane` trap). Shut on every fresh session, and it holds
+  // across notes once opened, because "show me the envelopes" is a way of
+  // working rather than a property of one note.
+  let NEENV = false;
   // THE EDITOR IS PART OF THE CARD, NOT A DIALOG OVER IT. It was a body-attached
   // `.sm-overlay`, which covered the drawing you were editing against — you
   // could not see the note move. It renders INSIDE `.v2-partviz`, directly under
@@ -6282,9 +6802,30 @@
     const p = L.part, n = p.notes[idx], g = neGrid(L), fb = neFallback(L);
     const shownM = neShownMidi(host, L, idx);
     const stepPos = Math.round(n.t * g.gridN), stepLen = Math.max(1, Math.round(n.dur * g.gridN));
+    // how many envelope fields this note OWNS \u2014 the shut fold's summary
+    const envOwn = ['atk', 'dec', 'sus', 'rel', 'glide'].filter((k) => Number.isFinite(n[k])).length;
     const sfSl = (sf, label, min, max, val, hint) => {
       const h = (typeof _ambSl === 'function') ? _ambSl(label, 'v2-ne-' + (L.id | 0) + '-' + sf, min, max, val, hint) : '';
       return h.replace('class="ambient-sl"', 'class="ambient-sl" data-sf="' + sf + '"');
+    };
+    // THE FIELD NAMES THE VALUE; THE NUMBER RIDES IN `data-sv`. Note 57,
+    // Position 12 and Length 12 are indices into things the user thinks in
+    // — a pitch, a bar and beat, a count of beats — and the editor already
+    // KNEW all three: it printed them in a readout column beside the field
+    // while the field itself carried the index. Reported as "the numerical
+    // values are meaningless". So the name moves INTO the field, the shared
+    // ± delegation steps `data-sv` (its opt-in), and the readout column
+    // carries the description it always had in an invisible `title`.
+    // READONLY because the field is text now: `parseInt('A3')` is NaN, so a
+    // typed value could only ever be a number pretending to be a name. Every
+    // other way in is untouched — ±, the piano keys, ⇧/⌥ + arrows, the drag.
+    const sfStep = (sf, label, min, max, val, face, hint) => {
+      if (typeof _ambStep !== 'function') return sfSl(sf, label, min, max, val, hint);
+      return _ambStep(label, 'v2-ne-' + (L.id | 0) + '-' + sf, min, max, val, hint)
+        .replace('type="number" inputmode="numeric" class="ambient-step-inp"',
+                 'type="text" readonly class="ambient-step-inp v2-nefield" data-sf="' + sf +
+                 '" data-sv="' + (val | 0) + '"')
+        .replace(' step="1" value="' + (val | 0) + '" />', ' value="' + esc(face) + '" />');
     };
     host.innerHTML =
       '<div class="v2-nehead">' +
@@ -6294,31 +6835,42 @@
         '<button type="button" class="ambient-seg v2-nerm" data-na="rm">\u2715 Remove note</button>' +
         '<button type="button" class="v2-neclose" data-na="done" aria-label="Close">\u2715</button>' +
       '</div>' +
-      ((typeof _ambStep === 'function')
-        ? _ambStep('Note', 'v2-ne-' + (L.id | 0) + '-midi', 0, 127, shownM, noteName(shownM))
-            .replace('class="ambient-step-inp"', 'class="ambient-step-inp" data-sf="midi"')
-        : '') +
       // POSITION AND LENGTH ARE ± STEPPERS, not sliders (stated 2026-09-08:
       // "large +/- button sets for easy use on mobile") — the Note row's own
       // pattern, so the document-level ± delegation and the `data-sf` commit
       // serve them with no wiring of their own. One press = one grid cell.
-      ((typeof _ambStep === 'function')
-        ? _ambStep('Position', 'v2-ne-' + (L.id | 0) + '-pos', 0, Math.max(1, g.gridN - 1), stepPos, 'where in the cycle it starts')
-            .replace('class="ambient-step-inp"', 'class="ambient-step-inp" data-sf="pos"')
-        : sfSl('pos', 'Position', 0, Math.max(1, g.gridN - 1), stepPos, 'where in the cycle it starts')) +
-      ((typeof _ambStep === 'function')
-        ? _ambStep('Length', 'v2-ne-' + (L.id | 0) + '-len', 1, g.gridN * 2, stepLen, 'how long it sounds')
-            .replace('class="ambient-step-inp"', 'class="ambient-step-inp" data-sf="len"')
-        : sfSl('len', 'Length', 1, g.gridN * 2, stepLen, 'how long it sounds')) +
+      sfStep('midi', 'Note', 0, 127, shownM, noteName(shownM), 'the pitch it plays') +
+      sfStep('pos', 'Position', 0, Math.max(1, g.gridN - 1), stepPos,
+             posTxt(n.t * g.gridN, g.gridN, g.bars), 'where in the cycle it starts') +
+      sfStep('len', 'Length', 1, g.gridN * 2, stepLen,
+             lenTxt(n.dur * g.gridN, g.gridN, g.bars), 'how long it sounds') +
       sfSl('vel', 'Volume', 0, 200, num(n.vel, 100), 'against the layer\u2019s own level') +
-      '<div class="v2-nesec">Envelope \u00b7 this note only</div>' +
-      sfSl('atk', 'Attack', 0, 4000, num(n.atk, fb.atk), 'time to reach full volume') +
-      sfSl('dec', 'Decay', 0, 4000, num(n.dec, fb.dec), 'time to fall to the sustain level') +
-      sfSl('sus', 'Sustain', 0, 100, num(n.sus, fb.sus), 'level it holds at') +
-      sfSl('rel', 'Release', 0, 8000, num(n.rel, fb.rel), 'time to fade after it ends') +
-      sfSl('glide', 'Portamento', 0, 2000, num(n.glide, 0), 'slide in from the note before') +
+      // THE ENVELOPE FOLDS, AND IT IS SHUT BY DEFAULT. Five rows that almost
+      // always read `\u00b7 layer` are the tallest thing in the editor and the
+      // least often touched, and they pushed the four ACTIONS below the fold
+      // on a phone. A shut fold must still say what it is holding, or it is
+      // the documented drum-solo bug in a costume \u2014 so the head counts the
+      // values this note actually owns and goes amber when there are any.
+      '<button type="button" class="v2-nesec v2-nefold' + (NEENV ? ' open' : '') +
+        (envOwn ? ' v2-nefold-own' : '') + '" data-na="envfold" aria-expanded="' +
+        (NEENV ? 'true' : 'false') + '">' +
+        '<span class="v2-nefcar">' + (NEENV ? '\u25be' : '\u25b8') + '</span> Envelope \u00b7 ' +
+        (envOwn ? (envOwn + ' set on this note') : 'all from the layer') + '</button>' +
+      '<div class="v2-neenv"' + (NEENV ? '' : ' hidden') + '>' +
+        sfSl('atk', 'Attack', 0, 4000, num(n.atk, fb.atk), 'time to reach full volume') +
+        sfSl('dec', 'Decay', 0, 4000, num(n.dec, fb.dec), 'time to fall to the sustain level') +
+        sfSl('sus', 'Sustain', 0, 100, num(n.sus, fb.sus), 'level it holds at') +
+        sfSl('rel', 'Release', 0, 8000, num(n.rel, fb.rel), 'time to fade after it ends') +
+        sfSl('glide', 'Portamento', 0, 2000, num(n.glide, 0), 'slide in from the note before') +
+      '</div>' +
       '<div class="v2-nebtns">' +
         '<button type="button" class="ambient-seg" data-na="expand" title="Build a chord on top of this note \u2014 pick one of the chords that CONTAIN it, and the other tones are added at its position.">\u2295 Expand\u2026</button>' +
+        // \u2702 SPLIT sits beside \u2295 Expand because they are the same kind of act
+        // on the open note \u2014 one DIVIDES it in time, the other BUILDS on it in
+        // pitch \u2014 and both open a dialog that does the arithmetic. It was a
+        // MODE, which meant switching the picker, tapping the note and switching
+        // back for something the tap had already done.
+        '<button type="button" class="ambient-seg" data-na="split" title="Divide this note into several \u2014 the pieces fill exactly its own length.">\u2702 Split\u2026</button>' +
         '<button type="button" class="ambient-seg" data-na="env">\u21ba Layer envelope</button>' +
         '<button type="button" class="ambient-seg" data-na="hear">\u25b6 Hear it</button>' +
       '</div>' +
@@ -6342,10 +6894,31 @@
       const rd = row && (row.querySelector('.ambient-sl-v') || row.querySelector('.ambient-hint'));
       if (rd) rd.textContent = txt;
     };
+    // A NAMED FIELD: the face goes in the field and the number back into
+    // `data-sv`, so the next ± press steps from what is on screen. Both,
+    // always — a face repainted without its number is a control that reads
+    // right and steps from a stale value.
+    const putField = (sf, n0, txt) => {
+      const el = host.querySelector('.v2-nefield[data-sf="' + sf + '"]');
+      if (!el) return false;
+      if (el.getAttribute('data-sv') !== String(n0 | 0)) el.setAttribute('data-sv', String(n0 | 0));
+      if (el.value !== txt) el.value = txt;
+      return true;
+    };
     const v = (sf) => { const el = host.querySelector('[data-sf="' + sf + '"]'); return el ? (parseInt(el.value, 10) | 0) : 0; };
-    put('midi', noteName(neShownMidi(host, L, idx)));
-    put('pos', posTxt(v('pos'), g.gridN, g.bars));
-    put('len', lenTxt(v('len'), g.gridN, g.bars));
+    const shown = neShownMidi(host, L, idx);
+    if (!putField('midi', shown, noteName(shown))) put('midi', noteName(shown));
+    // THE NOTE'S OWN LENGTH, NOT THE FIELD'S ROUNDED COPY. A generated take's
+    // notes are a PERCENTAGE of their slot (Length 90%), so a 3-cell slot
+    // stores 2.7 cells — and the stepper, which can only carry a whole number,
+    // rounded that to 3 and the row read "3 · 3 beats" beside a drawing that
+    // honestly showed 2.7. Reported as "a note 1 bar long should fit the bar":
+    // it was never a bar, the editor said it was. The picture was right all
+    // along, so the READOUT is what had to give.
+    const posTx = posTxt(n.t * g.gridN, g.gridN, g.bars);
+    const lenTx = lenTxt(n.dur * g.gridN, g.gridN, g.bars);
+    if (!putField('pos', Math.round(n.t * g.gridN), posTx)) put('pos', posTx);
+    if (!putField('len', Math.max(1, Math.round(n.dur * g.gridN)), lenTx)) put('len', lenTx);
     // 100% IS "as the layer plays it", so "100% · layer" states the same fact
     // twice and reads as a unit nobody asked about. Name the relationship.
     const vv = v('vel');
@@ -6355,8 +6928,21 @@
     put('sus', v('sus') + '%' + (Number.isFinite(n.sus) ? '' : ' \u00b7 layer'));
     put('rel', msTxt(v('rel')) + (Number.isFinite(n.rel) ? '' : ' \u00b7 layer'));
     put('glide', v('glide') > 0 ? msTxt(v('glide')) : 'off');
+    // the SHUT fold must never hide state (the drum-solo rule), so its head
+    // repaints with the count as the sliders inside it are moved
+    const fold = host.querySelector('.v2-nefold');
+    if (fold) {
+      const own = ['atk', 'dec', 'sus', 'rel', 'glide'].filter((k) => Number.isFinite(n[k])).length;
+      const car = fold.querySelector('.v2-nefcar');
+      const txt = ' Envelope \u00b7 ' + (own ? (own + ' set on this note') : 'all from the layer');
+      if (fold.lastChild && fold.lastChild.nodeType === 3) {
+        if (fold.lastChild.nodeValue !== txt) fold.lastChild.nodeValue = txt;
+      }
+      fold.classList.toggle('v2-nefold-own', !!own);
+      if (car) car.textContent = NEENV ? '\u25be' : '\u25b8';
+    }
     const t2 = host.querySelector('.v2-netitle');
-    if (t2) t2.textContent = 'Note ' + (idx + 1) + ' of ' + p.notes.length + ' \u00b7 ' + noteName(neShownMidi(host, L, idx));
+    if (t2) t2.textContent = 'Note ' + (idx + 1) + ' of ' + p.notes.length + ' \u00b7 ' + noteName(shown);
   }
   // Called at the end of every draw. REBUILDS ONLY WHEN THE NOTE CHANGES — the
   // drawing is repainted on every edit, and rewriting the markup would destroy
@@ -6381,7 +6967,11 @@
   // rebuild — the documented rule for a control on a re-rendered surface.
   function neInput(E, el) {
     const host = el.closest('.v2-neinline'); if (!host || !NE) return false;
-    const v = parseInt(el.value, 10); if (!Number.isFinite(v)) return true;
+    // `data-sv` is the numeric truth wherever the FIELD shows a name (Note,
+    // Position, Length) — reading `.value` there parses 'A3' as NaN.
+    const sv = el.getAttribute && el.getAttribute('data-sv');
+    const v = parseInt(sv !== null && sv !== undefined ? sv : el.value, 10);
+    if (!Number.isFinite(v)) return true;
     return neApply(E, host, el.getAttribute('data-sf'), v);
   }
   // …and the shared tail. `rebuild` is false for a slider (it is under a
@@ -6481,9 +7071,9 @@
         n.midi = clamp(neShownMidi(host, L, NE.idx), 0, 127);
         n.hx = 1;
       }
-      n.t = clamp(v / g.gridN, 0, 0.99999);
+      n.t = clamp(neCells(n.t, v, g) / g.gridN, 0, 0.99999);
     }
-    else if (sf === 'len') n.dur = Math.max(0.001, v / g.gridN);
+    else if (sf === 'len') n.dur = Math.max(0.001, neCells(n.dur, v, g) / g.gridN);
     // A field set back to what the layer would have done is DELETED — absent is
     // the one representation of "the layer decides", so a note never carries a
     // value that merely agrees with its layer.
@@ -6527,7 +7117,27 @@
       host._idx = -1;                          // a deliberate rebuild: nothing is being dragged
       neSync(card, L, E); redraw(); return true;
     }
+    if (act === 'envfold') {
+      NEENV = !NEENV;
+      const box = host.querySelector('.v2-neenv');
+      if (box) box.hidden = !NEENV;
+      b.classList.toggle('open', NEENV);
+      b.setAttribute('aria-expanded', NEENV ? 'true' : 'false');
+      const car = b.querySelector('.v2-nefcar');
+      if (car) car.textContent = NEENV ? '\u25be' : '\u25b8';
+      return true;
+    }
     if (act === 'hear') { try { V2.preview(E, L); } catch (e) {} return true; }
+    if (act === 'split' && n) {
+      // THE INDEX FIRST — closing the editor clears `NE`, and the divider needs
+      // to know which note it is dividing. The editor closes because the two
+      // are different surfaces over one note and leaving it open behind the
+      // dialog would show a note the split is about to replace.
+      const i0 = NE.idx | 0;
+      NE = null; redraw();
+      try { splitModal(E, card, L, i0); } catch (e) {}
+      return true;
+    }
     if (act === 'expand' && n) {
       const nx = host.querySelector('.v2-nex'); if (!nx) return true;
       if (!nx.hidden) { nx.hidden = true; nx.innerHTML = ''; return true; }
@@ -6716,9 +7326,39 @@
     return h;
   };
   const uid = (L, field) => 'v2-' + L.id + '-' + field.replace(/\./g, '-');
+  // ── WHAT THE NUMBER IS A PERCENTAGE OF ──────────────────────────────────
+  // `_ambSlReadout` renders `90%` and `_ambSl` folds the hint ("% of the onset
+  // span") into a TITLE, which a phone never shows — so the one control that
+  // decides whether a note reaches the next grid line read as a bare 90 beside
+  // a picture of notes stopping just short of every line. Reported as "a note
+  // 1 bar long should fit the bar": the note was 90% of its slot and the
+  // drawing was honest, and nothing on the card said what the 90 was OF.
+  // Documented rule, in the one place it most matters — 100 is exactly the
+  // value whose meaning is a RELATIONSHIP rather than a quantity.
+  const V2_READOUT = {
+    'part.shape.lenRatio': (v) => {
+      const n = Math.round(Number(v) || 0);
+      return n === 100 ? 'fills the slot' : (n + '% of the slot');
+    },
+  };
+  const v2Read = (field, v) => {
+    const f = V2_READOUT[field];
+    if (!f) return null;
+    try { return f(v); } catch (e) { return null; }
+  };
+  // Swap the readout span's text in the markup v1's builder just produced. The
+  // text it wrote is deterministic (`val + _ambSlUnit(id)`), so the substring
+  // is exact — no regex over an id.
+  const reRead = (h, id, field, v) => {
+    const rd = v2Read(field, v);
+    if (rd == null || typeof _ambSlReadout !== 'function') return h;
+    const was = 'id="' + id + '-v">' + _ambSlReadout(id, v) + '</span>';
+    return (h.indexOf(was) >= 0) ? h.replace(was, 'id="' + id + '-v">' + esc(rd) + '</span>') : h;
+  };
   const sl = (L, field, label, v, min, max, hint, when) => {
     if (typeof _ambSl !== 'function') return '';
     let h = tag(_ambSl(label, uid(L, field), min, max, v, hint), 'ambient-sl', field, when);
+    h = reRead(h, uid(L, field), field, v);
     // The unit line rides on the ROW so the knob (which replaces the slider in
     // the sheet) can say what its number means — _ambSl folds `hint` into a
     // title attribute, which a knob face cannot show.
@@ -6734,6 +7374,7 @@
     if (typeof _ambSl !== 'function') return '';
     const id = uid(L, field) + '-gen' + (sfx || '');
     let h = tag(_ambSl(label, id, min, max, v, hint), 'ambient-sl', field, when);
+    h = reRead(h, id, field, v);
     if (hint) h = h.replace('<div ', '<div data-v2u="' + esc(String(hint)) + '" ');
     return h;
   };
@@ -6958,6 +7599,35 @@
         // to rebuild anything.
         // Groundwork's separate panel was FOLDED IN here (2026-09-09) — it is
         // the fifth shape, and its knobs are ordinary gated rows below.
+        // ── ONE BAR'S OWN RULES ──────────────────────────────────────
+        // 🎲 Re-roll bar N opens THIS, not a throw of the dice: "it should
+        // open a popover showing the current generated settings, and user
+        // should be able to edit and apply to just that bar". Rolling again is
+        // one button inside it, so the dice is still one press away — what the
+        // press buys is the chance to change WHAT is being rolled first.
+        // Rows are built in JS (`barpopSync`) rather than written out here
+        // because the visible set follows the bar's OWN rhythm/pitch kinds,
+        // which are the very things this panel edits.
+        '<div class="v2-barwrap">' +
+          '<div class="v2-barscrim"></div>' +
+          // ITS OWN CLASS NAMES, NOT the Generated panel's. It is visually that
+          // panel and the stylesheet says so by NAMING both — but a shared
+          // class means `querySelector` finds whichever comes first in the
+          // DOM, and this block sits ABOVE the Generated one: sharing
+          // `.v2-genclose` made the gate's own "the shape panel closed"
+          // press land on THIS button instead (the documented duplicate-class
+          // trap, on the surface whose comment warns about it).
+          '<div class="v2-barpop" role="dialog" aria-label="Rules for this stretch">' +
+            '<div class="v2-barhead"><span class="v2-bartitle">Bar</span>' +
+              '<button type="button" class="v2-barclose" aria-label="Close">\u2715</button></div>' +
+            '<span class="ambient-hint v2-barsays"></span>' +
+            '<div class="v2-barrows"></div>' +
+            '<div class="v2-baracts">' +
+              '<button type="button" class="ambient-seg v2-barroll" title="Throw the dice again here — the same rules, a different roll. Press as often as you like.">\ud83c\udfb2 Roll again</button>' +
+              '<button type="button" class="ambient-seg v2-barreset" title="Drop these settings — this stretch generates by the part\u2019s rules again.">\u21ba Part\u2019s rules</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
         '<div class="v2-genwrap">' +
           '<div class="v2-genscrim"></div>' +
           '<div class="v2-genpop v2-shapepop" role="dialog" aria-label="Generated shape">' +
@@ -7333,12 +8003,20 @@
             '</span>' +
             '<span class="ambient-hint v2-notecount"></span>' +
 '</div>' +
+          // THE DICE MOVED TO Shape ▸ Every pass (2026-09-12, asked as "what is
+          // stochastic about live layers, and where are those controls — they
+          // should be in one place"). Measured first, six consecutive cycles
+          // counting DISTINCT note sets: `part.vary` gives 6, and EVERY other
+          // knob named vary / var / scatter / chance gives 1, because each
+          // seeds off a fixed take. So there are exactly three switches that
+          // make a layer differ pass to pass, and two of them already lived
+          // together — this one was a whole group away. A SIGNPOST is left
+          // here, never a second copy: two surfaces for one control is the
+          // duplication this file keeps paying for.
           '<div data-v2tab="Material" class="ambient-ctrl" data-v2when="kind:live"><label>Every cycle</label>' +
-            '<button type="button" class="ambient-seg v2-varytoggle' + (L.part.vary ? ' on' : '') + '">' +
-              (L.part.vary ? '\ud83c\udfb2 Re-roll every cycle' : '\u2713 Play this take') + '</button>' +
-            '<span class="ambient-hint">' + (L.part.vary
-              ? 'a fresh roll each cycle \u2014 the drawing is take ' + ((L.part.take | 0) + 1) + ', one of many'
-              : 'take ' + ((L.part.take | 0) + 1) + ' is what plays, every cycle') + '</span></div>' +
+            '<span class="ambient-hint v2-varysign">take ' + ((L.part.take | 0) + 1) +
+              ' is what plays. Whether it re-rolls lives with the other two dice \u2014 ' +
+              '<b>Shape \u25b8 Every pass</b>.</span></div>' +
           // SEED LIKE A v1 LAYER — one button per type. Its own row rather than
           // more buttons on the one above: that row answers "recorded from
           // where", these answer "what shape is the live part", and seven more
@@ -7691,22 +8369,35 @@
             sl(L, 'restProb', 'Rests', num(L.restProb, 0), 0, 100, '% of onsets dropped — the same ones every cycle') +
             sl(L, 'ghosts', 'Ghosts', num(L.ghosts, 0), 0, 100, 'quiet extra hits — the same ones every cycle') +
             sl(L, 'lenVary', 'Len vary', num(L.lenVary, 0), 0, 100, 'note-length scatter — fixed per take')) +
-          // PERFORMANCE — the tier that genuinely differs pass to pass, which
-          // is what makes content LIVE. Humanize is UNSEEDED (real performance
-          // jitter, never replays); Vel var is seeded on position-in-the-
-          // performance, so successive passes differ while one take replays.
-          // Both come from `_ambApplyAdsr`, so the semantics are v1's rather
-          // than a second implementation. The third live switch — the dice
-          // themselves — is the toggle beside the Material doors and is NOT
-          // repeated here: two surfaces for one control is the duplication
-          // this file keeps paying for. The hint names it instead.
-          tb('Performance',
+          // EVERY PASS — every switch that makes THIS layer differ pass to
+          // pass, in one place, which is what was asked for. Measured rather
+          // than assumed: the CONTENT tier is `part.vary` and nothing else (6
+          // distinct note sets in 6 cycles, against a floor of 1 that every
+          // other variance knob also scores), and the PERFORMANCE tier is
+          // Humanize (unseeded — 6 distinct offsets, never replays) and Vel var
+          // (seeded on position-in-the-performance, so passes differ while one
+          // take replays). Both come from `_ambApplyAdsr`, so the semantics are
+          // v1's rather than a second implementation — which is also why a
+          // `notesFor` sweep is structurally blind to them and they have to be
+          // measured where they are applied.
+          //   The tab is NOT called "Live": Instrument already has a tab by
+          // that name, and one word for two things is the naming rule's own
+          // mistake. "Every pass" names the axis instead.
+          //   Two more things can make a layer live and are NOT its own to set
+          // — a mask left at a PROBABILITY, and the changes themselves moving
+          // underneath it. The line below NAMES them when they apply, from
+          // `liveness()` — the same predicate the drawing's readout uses, so
+          // the two can never disagree — and points at where they live.
+          tb('Every pass',
+            '<div class="ambient-ctrl" data-v2when="kind:live"><label>Re-roll</label>' +
+              '<button type="button" class="ambient-seg v2-varytoggle' + (L.part.vary ? ' on' : '') + '">' +
+                (L.part.vary ? '\ud83c\udfb2 Re-roll every cycle' : '\u2713 Play this take') + '</button>' +
+              '<span class="ambient-hint v2-varyhint">' + (L.part.vary
+                ? 'a fresh roll each cycle \u2014 the drawing is take ' + ((L.part.take | 0) + 1) + ', one of many'
+                : 'take ' + ((L.part.take | 0) + 1) + ' is what plays, every cycle') + '</span></div>' +
             sl(L, 'humanize', 'Humanize', num(L.humanize, 0), 0, 100, 'timing jitter — never replays') +
             sl(L, 'velVar', 'Vel var', num(L.velVar, 0), 0, 100, 'level scatter — differs pass to pass') +
-            '<div class="ambient-ctrl"><label></label><span class="ambient-hint">' +
-              'These make the content LIVE — every pass differs. The third is the dice ' +
-              'toggle beside the Material doors: \ud83c\udfb2 Re-roll every cycle.' +
-            '</span></div>')
+            '<div class="ambient-ctrl"><label></label><span class="ambient-hint v2-liveline"></span></div>')
         ) +
         // ── MIX — level, filtering, routing and stereo placement ──────────
         // These are the TREATMENTS: shared v1 fields the chain already reads, so
@@ -7943,6 +8634,29 @@
         _bloomGridEdit.key === 'v2:' + (L.id | 0));
     } catch (e) {}
     card.classList.toggle('v2-composing', !!composing);
+    // WHY THIS LAYER IS LIVE, said where its switches are. From `liveness()`,
+    // the same predicate the drawing's readout uses, so the two can never
+    // disagree — and it names the two reasons the LAYER does not own (a mask
+    // left at a probability, and the changes moving underneath it) with where
+    // to change them, rather than growing a second copy of an area control.
+    try {
+      const ll = card.querySelector('.v2-liveline');
+      if (ll) {
+        let cfgL = null; try { cfgL = _cfgOf(); } catch (e) {}
+        let lv = { live: false, why: [] };
+        try { lv = V2.liveness(L, cfgL) || lv; }
+        catch (e) { try { console.warn('[v2] liveness failed', e && e.message); } catch (x) {} }
+        const txt = lv.live
+          ? ('LIVE \u2014 ' + lv.why.join(' \u00b7 ') + '.' +
+             ((/probability/.test(lv.why.join(' ')) || /changes|Salt|alternates/.test(lv.why.join(' ')))
+               ? ' The reasons above that are not switches here belong to the arrangement \u2014 \u25a6 Passes for a probability, \ud83e\uddc2 Salt and the changes for the rest.'
+               : ''))
+          : 'STATIC \u2014 every pass is identical. Nothing else on this card changes that: ' +
+            'Rests, Ghosts, Len vary, Rhythm var and Scatter all shape the material ONCE, ' +
+            'off the take, and give the same result every cycle.';
+        if (ll.textContent !== txt) ll.textContent = txt;
+      }
+    } catch (e) {}
     const sum = card.querySelector('.v2-summary');
     if (sum) {
       sum.textContent = p.kind === 'recorded'
@@ -8203,6 +8917,201 @@
   // UI IIFE, because that is where `render` and the click delegation are; the
   // file is TWO IIFEs and they share nothing but `window._v2`.
   let GENPOP = null;
+  // WHICH BARS' RULES ARE OPEN — `{ id, bars: [..] }`, transient like every
+  // other view state here (a field on the layer would be serialised by
+  // `persistWorkspace`, the `_soloLane` trap).
+  let BARPOP = null;
+  // WHAT IS SOUNDING FOR THIS LAYER IS NOW THE OLD TAKE. One definition, because
+  // three presses supersede audio the same way (🎲 New take, 🎲 Roll again, and
+  // dropping a bar's own rules) and three copies is how they come to differ.
+  function v2TakeHeard(E, L) {
+    const k2 = 'v2:' + (L.id | 0);
+    try {
+      if (E.timer && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined') {
+        cancelBloomFutureVoices(k2, Tone.now());
+      }
+    } catch (e) {}
+    try { if (E._v2Phase) delete E._v2Phase[k2]; } catch (e) {}   // re-anchor next tick
+    // A RUNNING PREVIEW is the take you are listening to, so it follows the
+    // press. This does not START audio (the documented rule) — it replaces
+    // audio the press just superseded.
+    try { if (V2.previewing(L)) { V2.previewKill(E, L); V2.preview(E, L); } } catch (e) {}
+  }
+
+  // ── THE ROWS ONE BAR'S RULES OFFER ──────────────────────────────────────
+  // The generated settings that shape MATERIAL, each with the rhythm/pitch
+  // kinds it applies to — the ⚙ Generated panel's own gating, expressed as a
+  // predicate rather than a `data-v2when` string because this panel is built
+  // fresh per open and is NOT swept by `applyGate` (which syncs from the
+  // LAYER's values and would stomp a bar's own the moment it ran).
+  const BARROWS = [
+    { g: 'rhythm', f: 'kind', lab: 'Rhythm', sel: () => RHYTHM_OPTS, hint: 'when notes happen' },
+    { g: 'rhythm', f: 'pulses', lab: 'How many', sl: 1, hi: (r) => Math.min(64, Math.max(2, (r.rhythm.steps | 0) || 16)),
+      when: (r) => r.rhythm.kind === 'euclid' || r.rhythm.kind === 'drawn', hint: 'onsets in the bar' },
+    { g: 'rhythm', f: 'steps', lab: 'Steps', st: [2, 64],
+      when: (r) => r.rhythm.kind === 'euclid' || r.rhythm.kind === 'drawn', hint: 'how many steps the cycle is cut into' },
+    { g: 'rhythm', f: 'rotate', lab: 'Push', st: [0, 63],
+      when: (r) => r.rhythm.kind === 'euclid' || r.rhythm.kind === 'drawn', hint: 'shift the pattern along' },
+    { g: 'rhythm', f: 'n', lab: 'How many', sl: 1, hi: () => 32,
+      when: (r) => r.rhythm.kind === 'pulse', hint: 'onsets in the cycle' },
+    { g: 'rhythm', f: 'chance', lab: 'Chance', sl: 0, hi: () => 100,
+      when: (r) => r.rhythm.kind === 'chance', hint: 'how often a step sounds' },
+    { g: 'rhythm', f: 'syncop', lab: 'Syncopate', sl: 0, hi: () => 100,
+      when: (r) => r.rhythm.kind === 'chance', hint: 'straight \u2192 offbeat' },
+    { g: 'pitch', f: 'kind', lab: 'Pitch', sel: () => PITCH_OPTS, hint: 'what each onset plays' },
+    { g: 'pitch', f: 'voices', lab: 'Notes at once', st: [1, 9],
+      when: (r) => /^(chord|stack|mixed)$/.test(r.pitch.kind), hint: 'how many notes each chord holds' },
+    { g: 'pitch', f: 'mix', lab: 'Chords vs notes', sl: 0, hi: () => 100,
+      when: (r) => r.pitch.kind === 'mixed', hint: 'all single notes \u2192 all chords' },
+    { g: 'pitch', f: 'span', lab: 'Range', st: [1, 12],
+      when: (r) => /^(walk|mixed)$/.test(r.pitch.kind), hint: 'how far the line wanders' },
+    { g: 'pitch', f: 'contour', lab: 'Contour', sl: -100, hi: () => 100,
+      when: (r) => r.pitch.kind === 'walk', hint: 'fall \u2192 rise' },
+    { g: 'pitch', f: 'lines', lab: 'Lines', st: [1, 6],
+      when: (r) => /^(walk|chance)$/.test(r.pitch.kind), hint: 'independent melodies at once' },
+    { g: 'pitch', f: 'stutter', lab: 'Repeat', sl: 0, hi: () => 100,
+      when: (r) => r.pitch.kind === 'walk', hint: 'how often it repeats a note' },
+    { g: 'pitch', f: 'dir', lab: 'Direction',
+      sel: () => [['up', 'Up'], ['down', 'Down'], ['updown', 'Up & down']],
+      when: (r) => r.pitch.kind === 'series', hint: 'which way the sweep runs' },
+    { g: 'pitch', f: 'octaves', lab: 'Octaves', st: [1, 4],
+      when: (r) => r.pitch.kind === 'series', hint: 'how many octaves it climbs' },
+    { g: 'pitch', f: 'randomness', lab: 'Scatter', sl: 0, hi: () => 100,
+      when: (r) => r.pitch.kind === 'series', hint: 'ordered \u2192 jumps about' },
+    { g: 'shape', f: 'lenRatio', lab: 'Note length', sl: 5, hi: () => 100, hint: 'of the slot' },
+  ];
+  // The DEFAULT a field falls back to when neither the bar nor the part states
+  // one — the same numbers the ⚙ Generated panel opens at, so the two surfaces
+  // never disagree about what "unset" sounds like.
+  const BARDEF = { pulses: 5, steps: 16, rotate: 0, n: 4, chance: 50, syncop: 0,
+                   voices: 3, mix: 50, span: 3, contour: 0, lines: 1, stutter: 0,
+                   octaves: 1, randomness: 0, lenRatio: 90 };
+  // BUILD the open bar's rows. Rebuilt only when the VISIBLE SET changes (a
+  // kind moved) — rewriting the markup on every slider input would destroy the
+  // control under the finger, the documented repaint trap; a slider commit
+  // repaints its own readout and nothing else.
+  function barRowsHtml(L, bars, rules) {
+    const id = L.id | 0;
+    const shown = BARROWS.filter((row) => !row.when || row.when(rules));
+    return shown.map((row) => {
+      const path = row.g + '.' + row.f;
+      const eid = 'v2-bar-' + id + '-' + row.g + '-' + row.f;
+      const v = barVal(rules, row);
+      // OWN vs the part's — a value this bar states must not look like one it
+      // inherits (the absent-is-inherit rule the mask cells follow)
+      const own = !!(L.part.ruleb && bars.some((k2) => {
+        const o = L.part.ruleb[k2]; return o && o[row.g] && o[row.g][row.f] !== undefined; }));
+      const mark = own ? ' v2-barown' : '';
+      let h;
+      if (row.sel) {
+        h = '<div class="ambient-ctrl v2-barrow' + mark + '"><label for="' + eid + '">' + esc(row.lab) + '</label>' +
+          '<select class="ambient-select v2-bf" id="' + eid + '" data-bf="' + path + '">' +
+          row.sel().map(([val, lab]) =>
+            '<option value="' + esc(val) + '"' + (val === v ? ' selected' : '') + '>' + esc(lab) + '</option>').join('') +
+          '</select><span class="ambient-hint">' + esc(own ? 'set here' : row.hint) + '</span></div>';
+      } else if (row.st) {
+        h = (typeof _ambStep === 'function')
+          ? _ambStep(row.lab, eid, row.st[0], row.st[1], v, own ? 'set here' : row.hint)
+              .replace('class="ambient-step-inp"', 'class="ambient-step-inp v2-bf" data-bf="' + path + '"')
+              .replace('class="ambient-ctrl ambient-ctrl-step"', 'class="ambient-ctrl ambient-ctrl-step v2-barrow' + mark + '"')
+          : '';
+      } else {
+        h = (typeof _ambSl === 'function')
+          ? _ambSl(row.lab, eid, row.sl, row.hi(rules), v, own ? 'set here' : row.hint)
+              .replace('class="ambient-sl"', 'class="ambient-sl v2-bf" data-bf="' + path + '"')
+              .replace('class="ambient-ctrl"', 'class="ambient-ctrl v2-barrow' + mark + '"')
+          : '';
+      }
+      return h;
+    }).join('');
+  }
+  // THE VISIBLE SET, as a signature — what decides whether a commit needs a
+  // rebuild or just a readout repaint.
+  const barShownSig = (rules) =>
+    BARROWS.filter((row) => !row.when || row.when(rules)).map((row) => row.g + '.' + row.f).join(',') +
+    '|' + rules.rhythm.steps;
+  function barpopSync(card, L) {
+    if (!BARPOP || BARPOP.id !== (L.id | 0)) { card.classList.remove('v2-baropen'); return; }
+    const bars = BARPOP.bars.slice().sort((a, b) => { const A = V2.regParse(a), B = V2.regParse(b); return (A ? A.a : 0) - (B ? B.a : 0); });
+    const rows = card.querySelector('.v2-barrows'); if (!rows) return;
+    // ONE REGION'S rules are shown; with several selected the FIRST is the
+    // face and every edit writes to all of them (which is what the title says).
+    const rules = V2.barRules(L.part, bars[0]);
+    const sig = barShownSig(rules);
+    if (rows._sig !== sig || rows._bars !== bars.join(',')) {
+      rows.innerHTML = barRowsHtml(L, bars, rules);
+      rows._sig = sig; rows._bars = bars.join(',');
+    } else {
+      // NO REBUILD — but the row must still say whether the value is this
+      // bar's OWN or the part's, because that flips on the very commit a
+      // rebuild would have shown it on (a setting you just made that still
+      // reads "inherited" is state you cannot see — the drum-solo rule).
+      rows.querySelectorAll('.v2-bf').forEach((el) => {
+        const row = el.closest('.ambient-ctrl'); if (!row) return;
+        const path = String(el.getAttribute('data-bf') || '').split('.');
+        const own = path.length === 2 && !!(L.part.ruleb && bars.some((k2) => {
+          const o = L.part.ruleb[k2]; return o && o[path[0]] && o[path[0]][path[1]] !== undefined; }));
+        row.classList.toggle('v2-barown', own);
+        const rd = row.querySelector('.ambient-sl-v');
+        if (rd && typeof _ambSlReadout === 'function') rd.textContent = _ambSlReadout(el.id, el.value);
+        // the hint column is the row's own "inherited / this bar's" line, and
+        // `.ambient-sl-v` IS an `.ambient-hint` — so never overwrite that one
+        const hs = [...row.querySelectorAll('.ambient-hint')].filter((x) => x !== rd);
+        const hint = hs[hs.length - 1];
+        if (hint) {
+          const spec = BARROWS.find((r2) => r2.g === path[0] && r2.f === path[1]);
+          const txt = own ? 'set here' : ((spec && spec.hint) || '');
+          if (hint.textContent !== txt) hint.textContent = txt;
+        }
+      });
+    }
+    const ttl = card.querySelector('.v2-bartitle');
+    // NAME WHAT WAS PRESSED. `BARPOP.nm` carries the selection's own label
+    // ("F♯m"), so the panel says the change rather than the bars underneath it.
+    const lab = BARPOP.nm || bars.map((k2) => V2.regLabel(k2)).join(' + ');
+    if (ttl && ttl.textContent !== lab) ttl.textContent = lab;
+    const says = card.querySelector('.v2-barsays');
+    if (says) {
+      const own = bars.some((k2) => L.part.ruleb && L.part.ruleb[k2]);
+      const t2 = own
+        ? (lab + ' generates by its OWN settings \u2014 everything else in the part keeps the part\u2019s. ' +
+           'A value set back to the part\u2019s is dropped, so only what differs is stored.')
+        : (lab + ' takes the part\u2019s settings. Change one and it becomes this stretch\u2019s own \u2014 the rest of the part is untouched.');
+      if (says.textContent !== t2) says.textContent = t2;
+    }
+    card.classList.add('v2-baropen');
+  }
+  // ONE FIELD OF ONE BAR'S RULES. Live, like every other control on this card
+  // — and live here means AUDIBLE IMMEDIATELY, because the bar's material is
+  // re-derived from these rules rather than stored: changing Pitch redraws the
+  // bar without any roll at all. Only what DIFFERS from the part is stored
+  // (`setBarRule` deletes a value set back), so "the part's rules" needs no
+  // second representation.
+  function barInput(E, el) {
+    if (!BARPOP) return false;
+    const card = el.closest('.v2-layer'); if (!card) return false;
+    const L = _ambLayerByKey && _ambLayerByKey(E, 'v2:' + BARPOP.id);
+    if (!L || !L.part || (L.id | 0) !== BARPOP.id) return false;
+    const path = String(el.getAttribute('data-bf') || '').split('.');
+    if (path.length !== 2) return false;
+    const isSel = el.tagName === 'SELECT';
+    const v = isSel ? el.value : parseInt(el.value, 10);
+    if (!V2.setBarRule(L, BARPOP.bars, path[0], path[1], v)) return true;
+    try { E.getCfg(); } catch (e) {}
+    try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+    try { drawPartViz(card, L, E); } catch (e) {}
+    // A KIND changes which rows apply, so the panel is rebuilt — and ONLY
+    // then: rewriting the markup on a slider's every input event destroys the
+    // control under the finger (the documented repaint trap).
+    try { barpopSync(card, L); } catch (e) {}
+    try { v2TakeHeard(E, L); } catch (e) {}
+    return true;
+  }
+  const barVal = (rules, row) => {
+    const v = (rules[row.g] || {})[row.f];
+    if (row.sel) return typeof v === 'string' && v ? v : (row.sel()[0] || [''])[0];
+    return Number.isFinite(v) ? v : num(BARDEF[row.f], 0);
+  };
   function popWrapOf(card) { return card.querySelector('.v2-pop-wrap'); }
   function popClose(card) {
     const wrap = card && popWrapOf(card);
@@ -8340,7 +9249,10 @@
           if (st.len === 'fill') {
             const sv = p.barsMode; p.barsMode = 'fill';
             try { V2.applyBarsMode(L, prev); } catch (e) {}
-            if (sv === 'fill') p.barsMode = 'fill'; else delete p.barsMode;
+            // PUT BACK WHATEVER WAS THERE — Sync borrows the mode to do one
+            // fill and must not silently retire a `preserve` the cadence edit
+            // chose (it would read as Preserve turning itself off).
+            if (sv === 'fill' || sv === 'preserve') p.barsMode = sv; else delete p.barsMode;
           }
         }
         if (isRec) {
@@ -8402,19 +9314,19 @@
   // APPLY THE ANSWER. `stretch` is what already happened, so it only records
   // the preference; `fill` re-writes against the length the record had BEFORE
   // the reconciler moved it, which is the one number normalize cannot know.
-  function cascadeBarsFn(E, pi, prevBars, mode) {
+  function cascadeBarsFn(E, pi, prevBars, mode, lens) {
     let cfg = null; try { cfg = E.getCfg(); } catch (e) { return 0; }
     let n = 0;
     (cfg.layers || []).forEach((L) => {
       const rec = partRecOf(L, pi); if (!rec) return;
-      if (mode === 'fill') rec.barsMode = 'fill'; else delete rec.barsMode;
-      if (mode === 'fill' && prevBars > 0) {
+      if (mode === 'fill' || mode === 'preserve') rec.barsMode = mode; else delete rec.barsMode;
+      if (mode !== 'stretch' && prevBars > 0) {
         // SWAP-RUN-RESTORE, the idiom normalize itself uses to run one record
         // coercion over every filed record — `applyBarsMode` reads `L.part`.
         const keep = L.part; L.part = rec;
         // `V2.applyBarsMode`, NOT the bare name — this half of the file is the
         // OTHER IIFE and the maker lives in the engine one (the documented trap).
-        try { if (V2.applyBarsMode(L, prevBars)) n++; } catch (e) {} finally { L.part = keep; }
+        try { if (V2.applyBarsMode(L, prevBars, lens)) n++; } catch (e) {} finally { L.part = keep; }
       } else n++;
       // APPLY NOW, not when the schedule runs dry — the same cancel + drop-phase
       // pair every other live edit here does.
@@ -8431,14 +9343,29 @@
   // THE WARNING, asked ONCE at the end of the edit rather than on every ±
   // press — a question per press is unusable, and the length that matters is
   // the one you finished on.
-  function cascadeModalFn(E, pi, prevBars, newBars, onDone) {
+  function cascadeModalFn(E, pi, prevBars, newBars, onDone, lens) {
     const scan = cascadeScanFn(E, pi);
     const fin = () => { try { if (onDone) onDone(); } catch (e) {} };
     if (!scan.bound.length) { fin(); return false; }
     let nm = 'this part';
     try { if (typeof _ambPartLabel === 'function') nm = _ambPartLabel(E.getCfg(), pi) || nm; } catch (e) {}
     const fmt = (b2) => (Math.round(b2 * 100) / 100) + ' bar' + (Math.abs(b2 - 1) < 1e-9 ? '' : 's');
-    const st = { len: 'stretch' };
+    // OPEN ON THE ANSWER ALREADY GIVEN. The mode is stored on the record, so a
+    // second cadence edit should not silently revert to Stretch the choice the
+    // first one made.
+    let st0 = 'stretch';
+    try {
+      const cfg0 = E.getCfg();
+      const r0 = (cfg0.layers || []).map((L) => partRecOf(L, pi)).filter(Boolean)[0];
+      if (r0 && (r0.barsMode === 'fill' || r0.barsMode === 'preserve')) st0 = r0.barsMode;
+    } catch (e) {}
+    // …and Preserve needs the old cadence to map through; without it the button
+    // would be a control that cannot act (the dead-control class), so it is
+    // offered only when the caller supplied both shapes.
+    const canPreserve = !!(lens && Array.isArray(lens.old) && Array.isArray(lens.now) &&
+                           lens.old.length && lens.now.length);
+    if (st0 === 'preserve' && !canPreserve) st0 = 'stretch';
+    const st = { len: st0 };
     const ov = document.createElement('div');
     ov.className = 'sm-overlay';
     ov.style.setProperty('display', 'flex', 'important');   // body-attached — the view-mode hide rules
@@ -8458,7 +9385,16 @@
             'title="The same notes, spread across the new length">Stretch</button>' +
           '<button type="button" class="ambient-seg v2-cascopt" data-v="fill" ' +
             'title="Keep the notes at their own tempo — repeat or trim them to the new length">Fill</button>' +
+          (canPreserve
+            ? '<button type="button" class="ambient-seg v2-cascopt" data-v="preserve" ' +
+              'title="Each note stays in the change it was in — truncated or extended to that change\'s new length">Preserve</button>'
+            : '') +
         '</span></div>' +
+      (canPreserve
+        ? '<div class="ambient-hint v2-casc-why">Stretch scales the whole part by one ratio · ' +
+          'Fill keeps the tempo and repeats · Preserve moves each note with ITS OWN change, ' +
+          'truncating or extending it to fit the new length.</div>'
+        : '') +
       (scan.loose.length
         ? '<div class="ambient-hint v2-casc-loose">' + scan.loose.length + ' ▭ Everywhere layer' +
           (scan.loose.length === 1 ? '' : 's') + ' keep' + (scan.loose.length === 1 ? 's' : '') +
@@ -8480,13 +9416,15 @@
       // they follow — so dismissing means "the default, stretch", which is
       // exactly the state the dialog opened on.
       if (ev.target === ov || (ev.target.closest && ev.target.closest('.v2-cascgo'))) {
-        const n = cascadeBarsFn(E, pi, prevBars, st.len);
+        const n = cascadeBarsFn(E, pi, prevBars, st.len, lens);
         close(); fin();
         try {
-          showToast(st.len === 'fill'
+          const word = st.len === 'fill'
             ? '⇥ Filled — ' + n + ' layer' + (n === 1 ? '' : 's') + ' kept their tempo over ' + fmt(newBars)
-            : '↔ Stretched — ' + n + ' layer' + (n === 1 ? '' : 's') + ' spread across ' + fmt(newBars),
-            { ms: 3200 });
+            : (st.len === 'preserve'
+              ? '⊞ Preserved — ' + n + ' layer' + (n === 1 ? '' : 's') + ' re-fitted to each change'
+              : '↔ Stretched — ' + n + ' layer' + (n === 1 ? '' : 's') + ' spread across ' + fmt(newBars));
+          showToast(word, { ms: 3200 });
         } catch (e) {}
       }
     });
@@ -8544,17 +9482,104 @@
     tot = w.reduce((a, v) => a + v, 0) || 1;
     return w.map((v) => v / tot);
   }
+  // ── …AND IN PITCH ───────────────────────────────────────────────────────
+  // A division in time alone makes a repeated note; the second axis is what
+  // turns it into a figure. Same shape as the sizes: three ways to say it, one
+  // list of MIDI numbers out, so `splitNote` stays one function.
+  //
+  // STEPS walks the SOUNDING SCALE, not semitones — that is the difference
+  // between an arpeggio and a chromatic run, and the scale is already resolved
+  // for the keyboard's in-key marks (`V2.scaleAt`). With no key in force the
+  // ladder is chromatic, which is the honest answer rather than inventing one.
+  function scaleLadder(pcs) {
+    const a = [];
+    for (let i = 0; i < 12; i++) if (pcs && pcs[i]) a.push(i);
+    return a;
+  }
+  function stepScale(midi, n, pcs) {
+    const list = scaleLadder(pcs);
+    const m = Math.round(midi);
+    if (!list.length) return clamp(m + n, 0, 127);
+    // every member of the scale for four octaves either side, ascending — a
+    // ladder to index into, which is exact and needs no modular arithmetic
+    const lad = [];
+    for (let x = m - 48; x <= m + 48; x++) if (list.indexOf(((x % 12) + 12) % 12) >= 0) lad.push(x);
+    if (!lad.length) return clamp(m + n, 0, 127);
+    // the member at or below the note — a note OUTSIDE the scale steps from
+    // the one under it rather than refusing
+    let i = 0;
+    for (let k = 0; k < lad.length; k++) { if (lad[k] <= m) i = k; else break; }
+    return clamp(lad[clamp(i + n, 0, lad.length - 1)], 0, 127);
+  }
+  function splitPitches(kind, count, midi0, opts) {
+    const n = Math.max(2, count | 0), o = opts || {}, m0 = clamp(Math.round(midi0) | 0, 0, 127);
+    const out = [];
+    if (kind === 'steps') {
+      const by = Math.round(o.step || 0);
+      for (let i = 0; i < n; i++) out.push(stepScale(m0, by * i, o.pcs));
+    } else if (kind === 'custom') {
+      for (let i = 0; i < n; i++) {
+        const v = +(o.custom || [])[i];
+        out.push(clamp(m0 + (Number.isFinite(v) ? Math.round(v) : 0), 0, 127));
+      }
+    } else if (kind === 'random') {
+      // WHICH LADDER IT SCATTERS ALONG — the second question Random has to
+      // answer, and it was only ever answered one way. CHROMATIC is every
+      // semitone, SCALE is the sounding scale (what this always did, so it
+      // stays the default), CHORD is the tones of the chord under the note,
+      // which turns a scatter into a broken chord instead of a run.
+      //
+      // ONE LADDER WALK serves all three — `stepScale` indexes whatever pitch
+      // classes it is handed, so the pool only decides WHICH set.
+      const pool = (o.pool === 'chromatic' || o.pool === 'chord') ? o.pool : 'scale';
+      const pcs = (pool === 'chord') ? (o.chordPcs || o.pcs)
+        : (pool === 'chromatic' ? null : o.pcs);
+      // …AND SCATTER MEANS THE SAME DISTANCE IN ALL THREE. The span was a flat
+      // 7 LADDER STEPS, which is about an octave on a 7-note scale and two and
+      // a half on a triad — so the one slider would have covered a different
+      // pitch range per pool. It is stated as an octave and converted by the
+      // ladder's own density (a 12-tone ladder is 12 steps to the octave, a
+      // triad 3). A 7-note scale is 7, i.e. BYTE-IDENTICAL to the old flat 7;
+      // the one case that moves is Scale with NO key in force, where the ladder
+      // already is chromatic — an octave there is 12 semitones, not 7, and
+      // matching it is the point of stating the span in octaves.
+      const per = (() => {
+        if (pool === 'chromatic' || !pcs) return 12;
+        let k = 0; for (let i = 0; i < 12; i++) if (pcs[i]) k++;
+        return k > 0 ? k : 12;
+      })();
+      const span = Math.max(0, Math.min(100, o.scatter | 0)) / 100 * per;
+      for (let i = 0; i < n; i++) {
+        let r = 0.5;
+        try { r = _ambSeededRand((((o.roll | 0) * 6151) ^ (n * 97) ^ (i * 40503)) >>> 0)(); } catch (e) { r = ((i * 53 + (o.roll | 0) * 31) % 100) / 100; }
+        const k = Math.round((r - 0.5) * 2 * span);
+        out.push(pool === 'chromatic' ? clamp(m0 + k, 0, 127) : stepScale(m0, k, pcs));
+      }
+    } else {
+      for (let i = 0; i < n; i++) out.push(m0);
+    }
+    return out;
+  }
   // The division itself. Kept separate from the dialog so the gate can ask the
   // arithmetic directly, and so the promise ("the pieces cover the original
   // span exactly") is one function's to keep.
-  function splitNoteFn(L, idx, w) {
+  function splitNoteFn(L, idx, w, pitches) {
     const p = L && L.part; if (!p || p.kind !== 'recorded') return null;
     const ns = p.notes || []; const n0 = ns[idx]; if (!n0) return null;
     const T = +n0.t, D = +n0.dur;
     if (!(D > 0) || !w || w.length < 2) return null;
+    // A CHANGED PITCH ON A REMAPPING PART MUST BE PINNED — chordlock/diatonic
+    // quantize the sounding pitch into the chord, so a piece asked for a third
+    // up would land wherever the chord put it. The hand wins, the same rule the
+    // drag, the pencil and the note editor all follow.
+    const pit = Array.isArray(pitches) ? pitches : null;
+    const moved = !!(pit && pit.some((m) => (m | 0) !== (n0.midi | 0)));
+    const pin = moved && (L.harmony === 'diatonic' || L.harmony === 'chordlock');
     const out = []; let acc = 0;
     for (let i = 0; i < w.length; i++) {
-      const piece = { t: T + acc * D, midi: n0.midi, dur: w[i] * D };
+      const piece = { t: T + acc * D,
+        midi: (pit && Number.isFinite(pit[i])) ? (pit[i] | 0) : n0.midi,
+        dur: w[i] * D };
       // EVERYTHING THE NOTE WAS, carried. A split is a division of one note,
       // not a new one — so its level, envelope, glide and its pitch PIN come
       // along, or a split on a remapping part would re-voice every piece
@@ -8562,6 +9587,7 @@
       ['vel', 'atk', 'dec', 'sus', 'rel', 'glide', 'hx'].forEach((k) => {
         if (n0[k] != null) piece[k] = n0[k];
       });
+      if (pin) piece.hx = 1;
       out.push(piece); acc += w[i];
     }
     // The LAST piece is snapped to the original end rather than trusted to the
@@ -8577,7 +9603,26 @@
     const n0 = (p.notes || [])[idx]; if (!n0 || !(+n0.dur > 0)) return;
     const T = +n0.t, D = +n0.dur;
     const bars = Math.max(0.0625, +p.bars || 1);
-    const st = { kind: 'equal', count: 3, spread: 40, roll: 1, custom: [] };
+    const st = { kind: 'equal', count: 3, spread: 40, roll: 1, custom: [],
+                 pk: 'same', pstep: 1, pscatter: 40, pcustom: [], ppool: 'scale',
+                 // A PIECE SET BY HAND, and which one is open. The pins survive
+                 // a re-roll — the hand wins, the rule the drag, the pencil and
+                 // the note editor all follow — and ↺ is the way back.
+                 pfix: {}, sel: -1 };
+    // THE SOUNDING SCALE at the drawing's own anchor — the same call that lights
+    // the keyboard's in-key marks, so "a step" means the same thing in both.
+    let PCS = null, CHORD = null;
+    try {
+      const cvz = card && card.querySelector('.v2-vizcv');
+      const cs0 = (cvz && cvz._cs) || 0;
+      PCS = V2.scaleAt(E, E.getCfg(), cs0, L);
+      // …AND THE CHORD AT THE NOTE'S OWN ONSET, not at the cycle start. A
+      // scale governs the whole cycle so the drawing's anchor is the right
+      // question for it; a CHORD changes underneath, and the only chord this
+      // dialog can honestly mean is the one sounding where the note is.
+      let cyc = 0; try { cyc = V2.cycleSec(L, E.getCfg()) || 0; } catch (e2) {}
+      CHORD = V2.chordAt(E, E.getCfg(), cs0 + T * cyc, L);
+    } catch (e) { PCS = null; CHORD = null; }
     const ov = document.createElement('div');
     ov.className = 'sm-overlay';
     ov.style.setProperty('display', 'flex', 'important');   // body-attached — the view-mode hide rules
@@ -8609,22 +9654,120 @@
         '</span></div>' +
       '<div class="v2-split-custom"><div class="ambient-hint">Relative sizes — any numbers; ' +
         'they are scaled to fit.</div><div class="v2-split-fields"></div></div>' +
+      // ── PITCH, the second axis ────────────────────────────────────────
+      // A division in time alone makes a repeated note; this is what turns it
+      // into a figure. Same four-way shape as Sizes so the dialog reads as two
+      // parallel questions rather than one question and an extra.
+      '<div class="v2-sync-row"><label>Pitch</label>' +
+        '<span class="ambient-seg-row">' +
+          '<button type="button" class="ambient-seg v2-splitpk" data-v="same" ' +
+            'title="Every piece keeps the note\u2019s own pitch">Same</button>' +
+          '<button type="button" class="ambient-seg v2-splitpk" data-v="steps" ' +
+            'title="Climb or fall by scale steps \u2014 an arpeggio out of one note">Steps</button>' +
+          '<button type="button" class="ambient-seg v2-splitpk" data-v="custom" ' +
+            'title="State each piece yourself, in semitones from the original">Custom</button>' +
+          '<button type="button" class="ambient-seg v2-splitpk" data-v="random" ' +
+            'title="Scattered around the original, and kept in key">Random</button>' +
+        '</span></div>' +
+      '<div class="v2-split-psteps"><div class="v2-sync-row"><label>By</label>' +
+        '<span class="ambient-stepper v2-split-cnt">' +
+          '<button type="button" class="ambient-seg v2-splitpstep" data-d="-1">\u2212</button>' +
+          '<span class="v2-split-pn">+1</span>' +
+          '<button type="button" class="ambient-seg v2-splitpstep" data-d="1">\uff0b</button>' +
+        '</span><span class="ambient-hint v2-split-scalab"></span></div></div>' +
+      '<div class="v2-split-pcustom"><div class="ambient-hint">Semitones from the ' +
+        'original \u2014 0 keeps it.</div><div class="v2-split-pfields"></div></div>' +
+      // WHICH LADDER RANDOM WALKS. Scatter alone said how FAR and never out of
+      // WHAT — the same missing half the Length readout had, one control over.
+      // Chord is offered whether or not it can act and REFUSES WITH A REASON on
+      // a press (the house rule: a dead control that merely dims teaches
+      // nothing, and hiding it means it can never be found).
+      '<div class="v2-split-prand">' +
+        '<div class="v2-sync-row"><label>From</label>' +
+          '<span class="ambient-seg-row">' +
+            '<button type="button" class="ambient-seg v2-splitpool" data-v="chromatic" ' +
+              'title="Every semitone — in or out of the key">Chromatic</button>' +
+            '<button type="button" class="ambient-seg v2-splitpool" data-v="scale" ' +
+              'title="The scale sounding here — the scatter stays in key">Scale</button>' +
+            '<button type="button" class="ambient-seg v2-splitpool" data-v="chord" ' +
+              'title="The tones of the chord under this note — a broken chord rather than a run">Chord</button>' +
+          '</span></div>' +
+        '<div class="ambient-hint v2-split-poollab"></div>' +
+        '<div class="ambient-ctrl">' +
+        '<label>Scatter</label>' +
+        '<input type="range" class="ambient-sl v2-split-pspread" min="0" max="100" step="1" value="40">' +
+        '<span class="ambient-sl-v v2-split-pspreadv">40</span></div></div>' +
       '<div class="v2-split-rand"><div class="ambient-ctrl">' +
         '<label>Unevenness</label>' +
         '<input type="range" class="ambient-sl v2-split-spread" min="0" max="100" step="1" value="40">' +
         '<span class="ambient-sl-v v2-split-spreadv">40</span></div>' +
-        '<div class="v2-split-rerow"><button type="button" class="ambient-regen v2-splitroll">🎲 Roll again</button>' +
-        '<span class="ambient-hint">even → dramatic</span></div></div>' +
+        '<div class="ambient-hint">even → dramatic</div></div>' +
+      // ONE DICE, FOR WHATEVER IS ROLLED. It lived INSIDE the Sizes panel, so
+      // with Sizes on Equal and Pitch on Random there was no way to roll at all
+      // — the counter drives both and its only button was behind one of them.
+      // Out here it shows whenever either axis is rolled, and says which.
+      '<div class="v2-split-rerow">' +
+        '<button type="button" class="ambient-regen v2-splitroll">🎲 Roll again</button>' +
+        '<span class="ambient-hint v2-split-rolllab"></span></div>' +
       // THE PREVIEW IS THE POINT. Numbers alone do not read as proportions —
       // the cadence editor learned the same thing — and it is the one surface
       // that makes Custom's arithmetic visible before you commit to it.
+      // …AND IT IS A CONTROL: a piece is tapped to set its note by hand.
       '<div class="v2-split-prev"></div>' +
+      '<div class="ambient-hint v2-split-prevhint">Tap a piece to set its note.</div>' +
+      // THE PIECE UNDER THE HAND. Note and OCTAVE are separate steppers because
+      // they are separate questions — a ladder step can cross an octave and an
+      // octave jump must not change which note it is.
+      '<div class="v2-split-pick" hidden>' +
+        '<div class="v2-sync-row"><label class="v2-split-picklab">Piece</label>' +
+          '<span class="ambient-stepper v2-split-cnt">' +
+            '<button type="button" class="ambient-seg v2-splitnstep" data-d="-1">−</button>' +
+            '<span class="v2-split-nname">—</span>' +
+            '<button type="button" class="ambient-seg v2-splitnstep" data-d="1">＋</button>' +
+          '</span><span class="ambient-hint v2-split-nlab"></span></div>' +
+        '<div class="v2-sync-row"><label>Octave</label>' +
+          '<span class="ambient-stepper v2-split-cnt">' +
+            '<button type="button" class="ambient-seg v2-splitostep" data-d="-1">−</button>' +
+            '<span class="v2-split-oct">—</span>' +
+            '<button type="button" class="ambient-seg v2-splitostep" data-d="1">＋</button>' +
+          '</span>' +
+          '<button type="button" class="ambient-regen v2-splitunpin">↺ Back to the roll</button>' +
+        '</div></div>' +
       '<div class="v2-sync-actions">' +
         '<button type="button" class="ambient-regen v2-splitgo">Split</button>' +
         '<button type="button" class="ambient-regen v2-splitcancel">Cancel</button>' +
       '</div></div>';
     document.body.appendChild(ov);
     const wNow = () => splitWeights(st.kind, st.count, st.custom, st.spread, st.roll);
+    const pNow = () => {
+      const out = splitPitches(st.pk, st.count, n0.midi | 0,
+        { step: st.pstep, custom: st.pcustom, scatter: st.pscatter, roll: st.roll,
+          pcs: PCS, pool: st.ppool, chordPcs: CHORD });
+      // THE HAND LAST. A pin is a statement about ONE piece, so it outranks
+      // whatever the pattern proposed and is untouched by a re-roll.
+      for (let i = 0; i < out.length; i++) {
+        const v = st.pfix[i];
+        if (Number.isFinite(v)) out[i] = clamp(v | 0, 0, 127);
+      }
+      return out;
+    };
+    // THE LADDER THE ± WALKS — the same set the dialog is working in, so a
+    // step means one thing on this surface: the pool's tones under Random,
+    // otherwise the sounding scale, and semitones when there is neither.
+    const pickLadder = () => {
+      if (st.pk === 'random') {
+        if (st.ppool === 'chromatic') return null;
+        if (st.ppool === 'chord') return CHORD || PCS;
+      }
+      return PCS;
+    };
+    const pickLadderName = () => {
+      const l = pickLadder();
+      if (!l) return 'semitones';
+      return (st.pk === 'random' && st.ppool === 'chord' && CHORD) ? 'chord tones' : 'scale steps';
+    };
+    const pname = (m) => { try { return _AMB_CHROM[(((m % 12) + 12) % 12)] + (Math.floor(m / 12) - 1); }
+      catch (e) { return String(m); } };
     const paint = () => {
       const q = (s2) => ov.querySelector(s2);
       const nEl = q('.v2-split-n'); if (nEl) nEl.textContent = String(st.count);
@@ -8633,6 +9776,48 @@
       const cu = q('.v2-split-custom'), rd = q('.v2-split-rand');
       if (cu) cu.style.display = (st.kind === 'custom') ? '' : 'none';
       if (rd) rd.style.display = (st.kind === 'random') ? '' : 'none';
+      ov.querySelectorAll('.v2-splitpk').forEach((b2) =>
+        b2.classList.toggle('on', b2.getAttribute('data-v') === st.pk));
+      const ps = q('.v2-split-psteps'), pc = q('.v2-split-pcustom'), pr = q('.v2-split-prand');
+      if (ps) ps.style.display = (st.pk === 'steps') ? '' : 'none';
+      if (pc) pc.style.display = (st.pk === 'custom') ? '' : 'none';
+      if (pr) pr.style.display = (st.pk === 'random') ? '' : 'none';
+      const pn = q('.v2-split-pn');
+      if (pn) pn.textContent = (st.pstep > 0 ? '+' : '') + st.pstep;
+      // SAY WHICH LADDER IT IS WALKING. With no key in force a "step" is a
+      // semitone, and a control that means two things without saying which is
+      // the trap this card keeps closing.
+      const sc = q('.v2-split-scalab');
+      if (sc) sc.textContent = PCS ? 'scale steps' : 'semitones — no key in force';
+      ov.querySelectorAll('.v2-splitpool').forEach((b2) => {
+        const v = b2.getAttribute('data-v');
+        b2.classList.toggle('on', v === st.ppool);
+        // n/a is MARKED, never hidden and never inert-and-silent
+        const na = (v === 'chord' && !CHORD) || (v === 'scale' && !PCS);
+        b2.classList.toggle('is-na', na);
+        if (na) b2.setAttribute('aria-disabled', 'true'); else b2.removeAttribute('aria-disabled');
+      });
+      const pl = q('.v2-split-poollab');
+      if (pl) {
+        pl.textContent = st.ppool === 'chromatic'
+          ? 'every semitone · ±1 octave at full scatter'
+          : (st.ppool === 'chord'
+            ? (CHORD ? 'the chord under this note · ±1 octave at full scatter'
+                     : 'this part has no changes — add a progression, or use Scale')
+            : (PCS ? 'the sounding scale · ±1 octave at full scatter'
+                   : 'no key in force, so this is every semitone'));
+      }
+      const pbox = q('.v2-split-pfields');
+      if (pbox && pbox.children.length !== st.count) {
+        pbox.innerHTML = '';
+        for (let i = 0; i < st.count; i++) {
+          const inp = document.createElement('input');
+          inp.type = 'number'; inp.className = 'ambient-step-inp v2-split-pw';
+          inp.step = '1';
+          inp.value = String(st.pcustom[i] != null ? st.pcustom[i] : 0);
+          pbox.appendChild(inp);
+        }
+      }
       // the custom fields are REBUILT only when the count changes — rewriting
       // them on every keystroke would take the caret with them
       const box = q('.v2-split-fields');
@@ -8646,14 +9831,62 @@
           box.appendChild(inp);
         }
       }
+      // ONE DICE FOR BOTH AXES — shown whenever either is rolled, and it says
+      // what a press will move rather than leaving you to infer it.
+      const rr = q('.v2-split-rerow');
+      const rolls = (st.kind === 'random' ? 1 : 0) + (st.pk === 'random' ? 2 : 0);
+      if (rr) rr.style.display = rolls ? '' : 'none';
+      const rl = q('.v2-split-rolllab');
+      if (rl) rl.textContent = rolls === 3 ? 'new sizes and new notes'
+        : (rolls === 2 ? 'new notes' : (rolls === 1 ? 'new sizes' : ''));
       const w = wNow();
       const pv = q('.v2-split-prev');
       // `beats(v * D)`, NOT `beats(v)`: a weight is a fraction of THIS NOTE and
       // `beats` converts a fraction of the CYCLE — so the pieces read as the
       // whole cycle's beats and summed to twice the note's own length, which
       // is the one promise this dialog makes.
-      if (pv) pv.innerHTML = w.map((v) => '<i class="v2-split-seg" style="width:' +
-        (v * 100).toFixed(3) + '%"><b>' + (Math.round(beats(v * D) * 100) / 100) + '</b></i>').join('');
+      const mids = pNow();
+      if (pv) pv.innerHTML = segHtml(w, mids);
+      // THE PIECE UNDER THE HAND. Absent selection = the row is not there at
+      // all; there is nothing to say about no piece.
+      const pk = q('.v2-split-pick');
+      const has = st.sel >= 0 && st.sel < st.count;
+      if (pk) pk.hidden = !has;
+      if (pk && has) {
+        const m = mids[st.sel] | 0;
+        const lb = q('.v2-split-picklab');
+        if (lb) lb.textContent = 'Piece ' + (st.sel + 1);
+        const nn2 = q('.v2-split-nname'); if (nn2) nn2.textContent = pname(m);
+        const oc = q('.v2-split-oct');
+        if (oc) oc.textContent = String(Math.floor(m / 12) - 1);
+        const nl = q('.v2-split-nlab'); if (nl) nl.textContent = pickLadderName();
+        const un = q('.v2-splitunpin');
+        // ↺ is only a way BACK — with nothing pinned there is nothing to undo
+        if (un) un.style.display = Number.isFinite(st.pfix[st.sel]) ? '' : 'none';
+      }
+      const ph = q('.v2-split-prevhint');
+      if (ph) ph.textContent = has ? 'Tap the piece again to close it.' : 'Tap a piece to set its note.';
+    };
+    // THE PREVIEW NAMES THE PIECES once pitch varies — the beats stay in the
+    // tooltip, because a segment is ~42px at eight pieces and the pitch is the
+    // thing you cannot work out in your head.
+    const segHtml = (w, mid) => {
+      const varies = mid.some((m) => (m | 0) !== (n0.midi | 0));
+      return w.map((v, i) => {
+        const b2 = Math.round(beats(v * D) * 100) / 100;
+        // THE NAME CARRIES THE OCTAVE (`pname` is note + octave, C4 not C) —
+        // which is the whole point once a piece can be moved an octave by hand:
+        // six pieces reading the same letter and different octaves must not
+        // read as six of the same note.
+        const face = varies ? pname(mid[i]) : String(b2);
+        const pinned = Number.isFinite(st.pfix[i]);
+        return '<i class="v2-split-seg' + (pinned ? ' is-pin' : '') +
+          (st.sel === i ? ' on' : '') + '" data-i="' + i + '" ' +
+          'style="width:' + (v * 100).toFixed(3) + '%" ' +
+          'title="' + esc(pname(mid[i]) + ' \u00b7 ' + b2 + ' beats' +
+            (pinned ? ' \u00b7 set by hand' : '') + ' \u2014 tap to set this piece') + '"><b>' +
+          esc(face) + '</b></i>';
+      }).join('');
     };
     paint();
     const close = () => { try { ov.remove(); } catch (e) {} };
@@ -8662,14 +9895,25 @@
       if (sp) { st.spread = +sp.value | 0;
         const v = ov.querySelector('.v2-split-spreadv'); if (v) v.textContent = String(st.spread);
         paint(); return; }
+      const psp = ev.target.closest && ev.target.closest('.v2-split-pspread');
+      if (psp) { st.pscatter = +psp.value | 0;
+        const v2 = ov.querySelector('.v2-split-pspreadv'); if (v2) v2.textContent = String(st.pscatter);
+        paint(); return; }
+      const pwf = ev.target.closest && ev.target.closest('.v2-split-pw');
+      if (pwf) {
+        st.pcustom = [...ov.querySelectorAll('.v2-split-pw')].map((x) => +x.value);
+        // the preview ONLY — repainting the fields would take the caret
+        const pv2 = ov.querySelector('.v2-split-prev');
+        if (pv2) pv2.innerHTML = segHtml(wNow(), pNow());
+        return;
+      }
       const wf = ev.target.closest && ev.target.closest('.v2-split-w');
       if (wf) {
         st.custom = [...ov.querySelectorAll('.v2-split-w')].map((x) => +x.value);
         // NEVER repaint the fields from here — see `paint`; only the preview
         // is redrawn, so the caret survives.
-        const w = wNow(), pv = ov.querySelector('.v2-split-prev');
-        if (pv) pv.innerHTML = w.map((v) => '<i class="v2-split-seg" style="width:' +
-          (v * 100).toFixed(3) + '%"><b>' + (Math.round(beats(v * D) * 100) / 100) + '</b></i>').join('');
+        const pv = ov.querySelector('.v2-split-prev');
+        if (pv) pv.innerHTML = segHtml(wNow(), pNow());
         return;
       }
     });
@@ -8677,12 +9921,71 @@
       const t = ev.target;
       if (t === ov || (t.closest && t.closest('.v2-splitcancel'))) { close(); return; }
       const stp = t.closest && t.closest('.v2-splitstep');
-      if (stp) { st.count = clamp(st.count + ((stp.getAttribute('data-d') | 0) || 1), 2, 16); paint(); return; }
+      if (stp) {
+        st.count = clamp(st.count + ((stp.getAttribute('data-d') | 0) || 1), 2, 16);
+        // A PIN NAMES A PIECE, and past the new count that piece is gone — the
+        // ones that still exist keep theirs rather than the whole set being
+        // thrown away for changing the number.
+        Object.keys(st.pfix).forEach((k) => { if ((k | 0) >= st.count) delete st.pfix[k]; });
+        if (st.sel >= st.count) st.sel = -1;
+        paint(); return;
+      }
+      // ── A PIECE OF THE PREVIEW IS A CONTROL ──────────────────────────
+      const seg = t.closest && t.closest('.v2-split-seg');
+      if (seg) {
+        const i = seg.getAttribute('data-i') | 0;
+        st.sel = (st.sel === i) ? -1 : i;    // tapping the open one closes it
+        paint(); return;
+      }
+      const nst = t.closest && t.closest('.v2-splitnstep');
+      if (nst && st.sel >= 0) {
+        // STEP THE LADDER THE DIALOG IS IN — chord tones under Chord, scale
+        // steps under a key, semitones when there is neither. The value is
+        // taken from what is DRAWN, so the first press moves from the note you
+        // can see rather than from a base the pattern happened to start at.
+        const cur = pNow()[st.sel] | 0;
+        const d = (nst.getAttribute('data-d') | 0) || 1;
+        const lad = pickLadder();
+        st.pfix[st.sel] = lad ? stepScale(cur, d, lad) : clamp(cur + d, 0, 127);
+        paint(); return;
+      }
+      const ost = t.closest && t.closest('.v2-splitostep');
+      if (ost && st.sel >= 0) {
+        const cur = pNow()[st.sel] | 0;
+        st.pfix[st.sel] = clamp(cur + 12 * ((ost.getAttribute('data-d') | 0) || 1), 0, 127);
+        paint(); return;
+      }
+      if (t.closest && t.closest('.v2-splitunpin')) {
+        if (st.sel >= 0) delete st.pfix[st.sel];
+        paint(); return;
+      }
       const kd = t.closest && t.closest('.v2-splitkind');
       if (kd) { st.kind = kd.getAttribute('data-v'); paint(); return; }
+      const pkd = t.closest && t.closest('.v2-splitpk');
+      if (pkd) { st.pk = pkd.getAttribute('data-v'); paint(); return; }
+      const pool = t.closest && t.closest('.v2-splitpool');
+      if (pool) {
+        const v = pool.getAttribute('data-v');
+        // REFUSE AND EXPLAIN. A press that silently does nothing is
+        // indistinguishable from a broken button; naming the condition is the
+        // whole reason the option is rendered at all.
+        if (v === 'chord' && !CHORD) {
+          try { showToast('Chord needs changes to draw from — this part has none. ' +
+            'Turn the Progression on (or give the layer a chord source), then Chord scatters ' +
+            'through the chord under the note.', { ms: 4200 }); } catch (e2) {}
+          return;
+        }
+        if (v === 'scale' && !PCS) {
+          try { showToast('No key is in force, so Scale and Chromatic are the same ladder here. ' +
+            'Turn Key on to scatter in key.', { ms: 4000 }); } catch (e2) {}
+        }
+        st.ppool = v; paint(); return;
+      }
+      const pst = t.closest && t.closest('.v2-splitpstep');
+      if (pst) { st.pstep = clamp(st.pstep + ((pst.getAttribute('data-d') | 0) || 1), -7, 7); paint(); return; }
       if (t.closest && t.closest('.v2-splitroll')) { st.roll++; paint(); return; }
       if (t.closest && t.closest('.v2-splitgo')) {
-        const made = splitNoteFn(L, idx, wNow());
+        const made = splitNoteFn(L, idx, wNow(), pNow());
         close();
         if (!made) return;
         try { E.getCfg(); } catch (e) {}
@@ -8693,7 +9996,13 @@
         try { if (E._v2Phase) delete E._v2Phase['v2:' + (L.id | 0)]; } catch (e) {}
         try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
         try { drawPartViz(card, L, E); } catch (e) {}
-        try { showToast('✂ Split into ' + made + ' notes — same total length.', { ms: 3000 }); } catch (e) {}
+        try {
+          showToast('\u2702 Split into ' + made + ' notes \u2014 same total length' +
+            (st.pk === 'random' ? (', scattered through the ' + st.ppool + '.')
+              : (st.pk !== 'same' ? ', new pitches.' : '.')) +
+            (Object.keys(st.pfix).length ? ' ' + Object.keys(st.pfix).length + ' set by hand.' : ''),
+            { ms: 3000 });
+        } catch (e) {}
         return;
       }
     });
@@ -9147,6 +10456,7 @@
   // \u2702 Split — published so the gate can ask the ARITHMETIC directly rather
   // than inferring it from the notes the dialog happened to write.
   V2.splitWeights = splitWeights;
+  V2.splitPitches = splitPitches;
   V2.splitNote = splitNoteFn;
   V2.cascadeScan = cascadeScanFn;
   V2.cascadeBars = cascadeBarsFn;
@@ -9218,6 +10528,15 @@
       const L = list.find(x => x.id === id); if (!L) return;
       if (openIds.has(String(id))) card.classList.remove('collapsed');
       if (GENPOP === id) card.classList.add('v2-genopen');
+      // …and the bar's rules, for the same reason: a rebuild would otherwise
+      // shut the panel you are working in. Its rows are BUILT rather than
+      // written into the card markup, so the re-open has to rebuild them.
+      if (BARPOP && BARPOP.id === id) {
+        try {
+          const rw = card.querySelector('.v2-barrows'); if (rw) rw._sig = '';
+          barpopSync(card, L);
+        } catch (e) {}
+      }
       const og = openGrps.get(String(id));
       if (og) card.querySelectorAll('.ambient-grp').forEach(g => {
         g.classList.toggle('open', og.has(g.getAttribute('data-v2grp')));
@@ -9369,6 +10688,11 @@
         // per-build listener dies with it (the documented host-wiring rule).
         const nsf = ev.target.closest && ev.target.closest('.v2-neinline [data-sf]');
         if (nsf) { if (neInput(E, nsf)) return; }
+        // ONE BAR'S OWN RULES. Delegated here for the same reason everything
+        // else on this card is: `V2.render` rebuilds the card, and a listener
+        // bound when the panel is built dies with it.
+        const bfe = ev.target.closest && ev.target.closest('.v2-barpop .v2-bf');
+        if (bfe) { if (barInput(E, bfe)) return; }
         const tm = ev.target.closest && ev.target.closest('.v2-term');
         if (tm) {
           const ctx = layerOf(tm); if (!ctx) return;
@@ -9418,7 +10742,8 @@
           if (f.classList.contains('ambient-sl')) {
             const row0 = f.closest('.ambient-ctrl');
             const rd0 = row0 && row0.querySelector('.ambient-sl-v');
-            if (rd0 && typeof _ambSlReadout === 'function') rd0.textContent = _ambSlReadout(f.id, f.value);
+            // …and a field whose number means a RELATIONSHIP says so (Length).
+            if (rd0 && typeof _ambSlReadout === 'function') rd0.textContent = (v2Read(path, f.value) != null) ? v2Read(path, f.value) : _ambSlReadout(f.id, f.value);
           }
         } catch (e) {}
         // A FIELD CAN HAVE TWO CONTROLS on this card now (the Generated
@@ -9431,7 +10756,7 @@
             el2.value = f.value;
             const rd = el2.parentElement && el2.parentElement.querySelector('.ambient-sl-v');
             if (rd && typeof _ambSlReadout === 'function') {
-              try { rd.textContent = _ambSlReadout(el2.id, f.value); } catch (e) {}
+              try { const rv = v2Read(path, f.value); rd.textContent = (rv != null) ? rv : _ambSlReadout(el2.id, f.value); } catch (e) {}
             }
           });
         } catch (e) {}
@@ -9606,13 +10931,6 @@
           if (px >= b2.x - 4 && px <= b2.x + b2.w + 4 &&
               py >= b2.y - 7 && py <= b2.y + b2.h + 7) { hit = b2; break; }
         }
-        // \u2702 SPLIT HAS ONE GESTURE AND IT IS A CLICK. Arming a drag here
-        // would give the mode a second meaning nobody asked for, and the
-        // pencil's own guard below would still let a press on empty space add
-        // a note — so the whole pointerdown path stands down and the click
-        // handler owns the mode. Returning WITHOUT stamping `_dragged` is what
-        // lets that click through.
-        if (modeOf(L) === 'split') return;
         let mode, locked = false, idx = -1, pen = 0;
         if (!hit) {
           // ✎ THE PENCIL. In draw mode, a press on empty plot space PLACES a
@@ -9976,9 +11294,11 @@
             ev.preventDefault(); ev.stopPropagation();
             const g2 = neGrid(L);
             if (wantSize) {
-              const len = Math.max(1, Math.round(n.dur * g2.gridN));
+              const cur = n.dur * g2.gridN;
+              const len = Math.max(1, Math.round(cur));
               const nl = Math.max(1, Math.min(g2.gridN * 2,
-                len + (ev.key === 'ArrowRight' ? 1 : -1)));
+                (ev.key === 'ArrowRight' ? Math.floor(cur + 1e-6) + 1
+                                         : Math.ceil(cur - 1e-6) - 1)));
               if (nl !== len) neApply(E2, host, 'len', nl, true);
               return;
             }
@@ -10243,6 +11563,15 @@
           try { E.getCfg(); } catch (e) {}
           vry.classList.toggle('on', !!ctx.L.part.vary);
           vry.textContent = ctx.L.part.vary ? '\ud83c\udfb2 Re-roll every cycle' : '\u2713 Play this take';
+          try {
+            const vh = ctx.card.querySelector('.v2-varyhint');
+            const tk = ((ctx.L.part.take | 0) + 1);
+            if (vh) vh.textContent = ctx.L.part.vary
+              ? ('a fresh roll each cycle \u2014 the drawing is take ' + tk + ', one of many')
+              : ('take ' + tk + ' is what plays, every cycle');
+          } catch (e) {}
+          // …and the line that says WHY this layer is live has just changed
+          try { applyGate(ctx.card, ctx.L); } catch (e) {}
           // it changes what the NEXT cycles play, so the ones already scheduled
           // are superseded — the same pair every live edit on this card does
           try {
@@ -10696,7 +12025,11 @@
           if (a9 === 'up') vnavSet(L9, { dy: clamp(cur.dy + 3, -96, 96) });
           else if (a9 === 'dn') vnavSet(L9, { dy: clamp(cur.dy - 3, -96, 96) });
           else if (a9 === 'grow') vnavSet(L9, { rows: clamp(cur.rows + 6, 0, 60) });
-          else if (a9 === 'shrink') vnavSet(L9, { rows: clamp(cur.rows - 6, 0, 60) });
+          // NEGATIVE IS ALLOWED — it was floored at 0, so − could only undo a
+          // previous ＋ and never do what its own label promises ("show fewer
+          // pitches"). Narrowing below the derived window is a pitch ZOOM: the
+          // canvas has a floor height, so fewer rows means TALLER rows.
+          else if (a9 === 'shrink') vnavSet(L9, { rows: clamp(cur.rows - 6, -40, 60) });
           else if (a9 === 'left') vnavSet(L9, { bar0: clamp(cur.bar0 - step, 0, maxB) });
           else if (a9 === 'right') vnavSet(L9, { bar0: clamp(cur.bar0 + step, 0, maxB) });
           else if (a9 === 'fit') vnavSet(L9, { dy: 0, rows: 0, bar0: 0 });
@@ -10801,14 +12134,51 @@
             const gx0 = geo.x0 || 0;
             if (px < gx0) return;
             const vsc9 = (geo.vsc > 0) ? geo.vsc : 1, f09 = geo.f0 || 0;
-            const b2 = Math.max(0, Math.min(Math.ceil(geo.barsF) - 1,
-              Math.floor((f09 + ((px - gx0) / Math.max(1, geo.w)) * vsc9) * geo.barsF)));
+            // the tap, as a CYCLE FRACTION — one inverse of the draw's own
+            // mapping, shared by the bar row and the chord band above it
+            const fr9 = f09 + ((px - gx0) / Math.max(1, geo.w)) * vsc9;
             if (!BSEL || BSEL.id !== (L2.id | 0) || BSEL.sig !== bselSig(L2)) {
-              BSEL = { id: L2.id | 0, sig: bselSig(L2), bars: new Set() };
+              BSEL = { id: L2.id | 0, sig: bselSig(L2), bars: new Map() };
             }
-            if (BSEL.bars.has(b2)) BSEL.bars.delete(b2); else BSEL.bars.add(b2);
-            const c4 = document.querySelector('.v2-layer[data-v2id="' + (L2.id | 0) + '"]') || ctx.card;
-            try { drawPartViz(c4, L2, E); } catch (e) {}
+            const selToggle = (key, nm) => {
+              if (BSEL.bars.has(key)) BSEL.bars.delete(key); else BSEL.bars.set(key, nm);
+              const cS = document.querySelector('.v2-layer[data-v2id="' + (L2.id | 0) + '"]') || ctx.card;
+              try { drawPartViz(cS, L2, E); } catch (e) {}
+            };
+            // ── THE CHORD BAND SELECTS A CHANGE ──────────────────────────
+            // "should also be able to click the Chord headers to select all of
+            // a chord (just like bar selection but by chord instead)". The
+            // ruler is two rows and they now answer two questions: the top one
+            // picks a CHANGE, the numbers below pick a BAR.
+            //
+            // THE SELECTION IS STILL IN BARS, and that is not a shortcut — it
+            // is the granularity the re-roll HAS: the splice and the composite
+            // both bucket notes with `floor(t * bars)`, and the per-bar stores
+            // (`takeb`, `ruleb`) are keyed by bar index. So a chord tap picks
+            // every bar the change OVERLAPS, and when the change does not fill
+            // whole bars it says so rather than quietly selecting more than
+            // its name (a control that does more than it says is the trap this
+            // file keeps paying for).
+            const cg9 = cvz._chordGeo;
+            if (cg9 && py <= cg9.top && Array.isArray(cg9.marks) && cg9.marks.length) {
+              const m9 = cg9.marks.find((x) => fr9 >= x.f0 - 1e-6 && fr9 < x.f1 - 1e-6);
+              if (!m9) return;
+              // THE CHANGE'S OWN SPAN, to the slot. Reported as "clicking F♯m
+              // should only select the F♯m area" — it used to widen to whole
+              // bars, which on a cadence where F♯m runs from the middle of a
+              // bar to its end selected twice the change.
+              // SNAP FIRST: `_ambChordSpanAt` BISECTS, so a change's edges carry
+              // float noise (measured 1.00005 bars for a chord ending exactly on
+              // bar 1). The 1/48-bar grid is where every real boundary sits, and
+              // is the same snap the window start and the rubato edges use.
+              const top9 = Math.max(1, Math.round(geo.barsF * SPB));
+              const sa = Math.max(0, Math.min(top9 - 1, Math.round(m9.f0 * geo.barsF * SPB)));
+              const sb = Math.max(sa + 1, Math.min(top9, Math.round(m9.f1 * geo.barsF * SPB)));
+              selToggle(regKey(sa, sb), m9.nm || regLabel(regKey(sa, sb)));
+              return;
+            }
+            const b2 = Math.max(0, Math.min(Math.ceil(geo.barsF) - 1, Math.floor(fr9 * geo.barsF)));
+            selToggle(regBarKey(b2), 'bar ' + (b2 + 1));
             return;
           }
           const wasRec = L2.part.kind === 'recorded';
@@ -10841,15 +12211,6 @@
             try { multiSync(c3, L2); } catch (e) {}
             return;
           }
-          // \u2702 SPLIT — a tap DIVIDES rather than opens. The dialog does the
-          // arithmetic, because "three notes in the space of this one" is a
-          // question about proportions and the note editor asks about one note.
-          if (modeOf(L2) === 'split') {
-            NE = null;                        // the editor is a single-note surface
-            try { drawPartViz(c3, L2, E); } catch (e) {}
-            try { splitModal(E, c3, L2, idx); } catch (e) {}
-            return;
-          }
           // TAPPING THE OPEN NOTE AGAIN CLOSES IT — the drawing is the toggle,
           // so a mis-tap costs one tap rather than a hunt for the ✕.
           if (NE && NE.id === (L2.id | 0) && NE.idx === idx) { NE = null; try { drawPartViz(c3, L2, E); } catch (e) {} return; }
@@ -10863,26 +12224,28 @@
         if (nt) {
           const ctx = layerOf(nt); if (!ctx) return;
           // what is sounding for this layer is now the OLD take
-          const takeHeard = () => {
-            const k2 = 'v2:' + ctx.L.id;
-            try {
-              if (E.timer && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined') {
-                cancelBloomFutureVoices(k2, Tone.now());
-              }
-            } catch (e) {}
-            try { if (E._v2Phase) delete E._v2Phase[k2]; } catch (e) {}   // re-anchor next tick
-            // A RUNNING PREVIEW is the take you are listening to, so it follows
-            // the press. This does not START audio (the documented rule) — it
-            // replaces audio the press just superseded.
-            try {
-              if (V2.previewing(ctx.L)) { V2.previewKill(E, ctx.L); V2.preview(E, ctx.L); }
-            } catch (e) {}
-          };
+          const takeHeard = () => v2TakeHeard(E, ctx.L);
           // SCOPED BY THE SELECTED BARS: with bars tapped, only they are
           // retaken (a per-bar pin — the rest of the drawing holds still);
           // with none, the whole take moves.
           const selN = bselOf(ctx.L);
-          const selBarsN = selN ? [...selN.bars] : null;
+          const selBarsN = selN ? bselKeys(selN) : null;
+          // WITH BARS TAPPED THE PRESS OPENS THE RULES, it does not throw the
+          // dice — "it should open a popover showing the current generated
+          // settings, and user should be able to edit and apply to just that
+          // bar". Rolling is 🎲 Roll again inside it, so the dice is still one
+          // press away and you can see WHAT you are rolling first. With no
+          // selection the press is the whole-take roll it always was.
+          if (selBarsN && selBarsN.length) {
+            // never two stacked panels: they are mutually unreachable today
+            // (each one's scrim covers the other's door), and a second one
+            // opening behind the first is the kind of state that only shows up
+            // once somebody adds a third door
+            GENPOP = null; ctx.card.classList.remove('v2-genopen');
+            BARPOP = { id: ctx.L.id | 0, bars: selBarsN.slice(), nm: bselLabel(selN) };
+            try { barpopSync(ctx.card, ctx.L); } catch (e) {}
+            return;
+          }
           // ON A LOCKED PART this is the REPLACE — the notes are fixed, so a
           // new take has to be rolled and re-frozen (a take pin would change
           // nothing). The confirm rides here with it: re-rolling a locked
@@ -10928,7 +12291,7 @@
             return;
           }
           const selT = bselOf(ctx.L);
-          const barsT = selT ? [...selT.bars] : null;
+          const barsT = selT ? bselKeys(selT) : null;
           const where = selT ? (' \u2014 ' + bselLabel(selT)) : '';
           const r2 = tf.getBoundingClientRect();
           // deferred a tick: showCtxMenu arms its own dismiss listener, and
@@ -11013,6 +12376,7 @@
         const go = t.closest('.v2-genbtn');
         if (go) {
           const ctx = layerOf(go); if (!ctx) return;
+          BARPOP = null; ctx.card.classList.remove('v2-baropen');
           GENPOP = ctx.L.id | 0;
           ctx.card.classList.add('v2-genopen');
           try { genSync(ctx.card, ctx.L); } catch (e) {}
@@ -11021,6 +12385,59 @@
         // Groundwork's own door and draft-panel are GONE (2026-09-09): it is
         // the fifth shape in the Generated panel, entered through the same
         // adopt/restore/build flow as the other four.
+        // THE BAR'S RULES — close, roll, reset. Tested BEFORE the Generated
+        // popover's close, because `.v2-barclose` deliberately carries
+        // `.v2-genclose` too (it IS that button, visually) and the generic
+        // branch below would otherwise shut the wrong panel — the documented
+        // duplicate-class trap, pre-armed.
+        if (t.closest('.v2-barclose') || t.closest('.v2-barscrim')) {
+          const ctx = layerOf(t); if (!ctx) return;
+          BARPOP = null;
+          ctx.card.classList.remove('v2-baropen');
+          return;
+        }
+        const brl = t.closest('.v2-barroll');
+        if (brl) {
+          const ctx = layerOf(brl); if (!ctx) return;
+          if (!BARPOP || BARPOP.id !== (ctx.L.id | 0)) return;
+          const bs = BARPOP.bars.slice();
+          const lab2 = BARPOP.nm || bs.map((k2) => V2.regLabel(k2)).join(' + ');
+          if (ctx.L.part.kind === 'recorded') {
+            if (!replaceOK(ctx.L, bs)) return;
+            if (!captureShown(E, ctx.L, bs)) {
+              try { showToast('Nothing to roll \u2014 these bars come out empty with these settings.', { ms: 4500 }); } catch (e) {}
+              return;
+            }
+          } else {
+            V2.newTake(ctx.L, bs);
+          }
+          try { E.getCfg(); } catch (e) {}
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          try { showToast('Rolled ' + lab2 + ' again \u2014 the rest of the drawing held still.', { ms: 3500 }); } catch (e) {}
+          // REDRAW, NEVER PLAY (the documented rule) — and never a card
+          // rebuild, which would throw away the panel under the finger.
+          try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
+          try { barpopSync(ctx.card, ctx.L); } catch (e) {}
+          try { v2TakeHeard(E, ctx.L); } catch (e) {}
+          return;
+        }
+        const brs = t.closest('.v2-barreset');
+        if (brs) {
+          const ctx = layerOf(brs); if (!ctx) return;
+          if (!BARPOP || BARPOP.id !== (ctx.L.id | 0)) return;
+          const bs = BARPOP.bars.slice();
+          if (!V2.clearBarRules(ctx.L, bs)) {
+            try { showToast('These bars already generate by the part\u2019s settings.', { ms: 3500 }); } catch (e) {}
+            return;
+          }
+          try { E.getCfg(); } catch (e) {}
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          const rows2 = ctx.card.querySelector('.v2-barrows'); if (rows2) rows2._sig = '';
+          try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
+          try { barpopSync(ctx.card, ctx.L); } catch (e) {}
+          try { v2TakeHeard(E, ctx.L); } catch (e) {}
+          return;
+        }
         if (t.closest('.v2-genclose') || t.closest('.v2-genscrim')) {
           const ctx = layerOf(t); if (!ctx) return;
           GENPOP = null;

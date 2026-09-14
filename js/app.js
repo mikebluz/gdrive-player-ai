@@ -21,7 +21,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // OFFLINE (2026-07-16): the per-track cache model is gone. One switch saves
   // THE WHOLE CURRENT PLAYLIST to this device; loading a different playlist
   // deletes the old copy first (one playlist offline at a time, never stale).
-  // State: OFFLINE_KEY holds {on, name, tracks:[{id,name,size}]} so the saved
+  // State: OFFLINE_KEY holds {on, name, tracks:[{id,name,size,modifiedMs}]} so the saved
   // playlist can also BOOT offline (no Drive listing needed).
   const offlineBtn = document.getElementById("offline-btn");
   const offlineBtnContainer = offlineBtn?.closest(".cache-btn-container");
@@ -190,7 +190,7 @@ document.addEventListener("DOMContentLoaded", () => {
   async function saveCurrentPlaylistOffline() {
     if (!player || !playlist || !playlist.tracks || !playlist.tracks.length) return;
     const gen = ++_offlineSaveGen;
-    const tracks = playlist.tracks.map((t) => ({ id: t.id, name: t.name, size: t.size ?? null }));
+    const tracks = playlist.tracks.map((t) => ({ id: t.id, name: t.name, size: t.size ?? null, modifiedMs: t.modifiedMs || 0 }));
     const plName = lastDriveFolderName;
     offlineBtn && (offlineBtn.disabled = true);
     let done = 0, failed = 0;
@@ -368,7 +368,7 @@ document.addEventListener("DOMContentLoaded", () => {
         player.defaultArtist = null;
         document.getElementById("playlist-heading-name").textContent = (stOff.name || "Offline") + " (offline)";
         setAlbumArt(null);
-        playlist.setTracks(offTracks.map(t => ({ id: t.id, name: t.name, size: t.size ?? null })));
+        playlist.setTracks(offTracks.map(t => ({ id: t.id, name: t.name, size: t.size ?? null, modifiedMs: t.modifiedMs || 0 })));
         lastDriveFolderName = stOff.name || null;
         refreshOfflineIds();
         updateOfflineBtn();

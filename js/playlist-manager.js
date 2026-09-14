@@ -44,10 +44,15 @@ class PlaylistManager {
 
     setTracks(tracks) {
         this.musicPlayer.clearPrefetchCache();
-        // Default sort: A–Z by track name (natural order, so "Track 2" < "Track 10"),
-        // replacing Drive's arbitrary return order. Users can re-sort via the Sort
-        // dropdown; this is just the initial order (and picks the first auto-play track).
-        const sorted = [...tracks].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' }));
+        // Default sort: NEWEST FIRST by Drive's modified time, replacing Drive's
+        // arbitrary return order — what you just added is what you want to hear.
+        // Ties (and files Drive gave no modifiedTime for, which arrive as 0) fall
+        // back to A–Z by name in natural order, so "Track 2" < "Track 10" and a
+        // folder with no dates at all still comes out sorted rather than arbitrary.
+        // Users can re-sort via the Sort dropdown; this is just the initial order
+        // (and picks the first auto-play track).
+        const byName = (a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' });
+        const sorted = [...tracks].sort((a, b) => ((b.modifiedMs || 0) - (a.modifiedMs || 0)) || byName(a, b));
         this.tracks = sorted;
         this.originalOrder = [...sorted];
         this.currentIndex = -1;

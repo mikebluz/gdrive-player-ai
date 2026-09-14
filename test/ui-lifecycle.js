@@ -63,6 +63,23 @@ const ok = (name, cond, detail) => {
   const errs = [];
   page.on('pageerror', (e) => errs.push(e.message));
   await page.goto(URL, { waitUntil: 'networkidle2', timeout: 60000 });
+  // BACK TO CONTENT. The section row lost its Content button (2026-09-13) —
+  // the body IS Content, so a button for it could only say "you are here".
+  // Getting back to it means dismissing the section popover, if one is open.
+  await page.evaluate(() => {
+    window.__toContent = () => {
+      document.querySelectorAll('.v2-secpop-close').forEach((b) => b.click());
+    };
+    // …and OPEN a section. Content's families (Make · Time · Bank) became
+    // section buttons too, so "go to the rows" is now "open the section that
+    // holds them"; the body itself holds only the drawing.
+    window.__sec = (nm) => {
+      window.__toContent();
+      const b = document.querySelector('.v2-gototab[data-goto="' + nm + '"]');
+      if (b) b.click();
+      return !!b;
+    };
+  });
   await zz(2500);
 
   // ---- the REAL lifecycle -------------------------------------------------
@@ -97,6 +114,17 @@ const ok = (name, cond, detail) => {
   // and whatever is at its centre is the element itself (not something covering
   // it). Both have been real failures here.
   const tap = async (sel) => {
+    // A SECTION POPOVER IS MODAL — it covers the card, exactly as it does for a
+    // finger. So a tap aimed OUTSIDE it dismisses it first, which is what a
+    // person would have to do; a tap aimed INSIDE it leaves it alone. (Before
+    // 2026-09-13 the five sections rebuilt the card body, so a probe could
+    // navigate and go on poking the card; now it has to come back out.)
+    await page.evaluate((s) => {
+      const ov = document.querySelector('.v2-secpop-wrap'); if (!ov) return;
+      const t = document.querySelector(s); if (t && ov.contains(t)) return;
+      const c = ov.querySelector('.v2-secpop-close'); if (c) c.click();
+    }, sel);
+    await zz(120);
     const box = await page.evaluate((s) => {
       const el = document.querySelector(s);
       if (!el) return { err: 'missing' };
@@ -194,15 +222,24 @@ const ok = (name, cond, detail) => {
     const grps = [...c.querySelectorAll('.ambient-grp')].map((g) => g.getAttribute('data-v2grp'));
     return {
       btns: btns.length, grps: grps.length,
-      buttonless: grps.filter((g) => btns.indexOf(g) < 0),
-      groupless: btns.filter((b2) => grps.indexOf(b2) < 0),
+      // CONTENT IS THE BODY (2026-09-13), so it is the one group that must NOT
+      // have a button — pressing one could only have said "you are here". The
+      // pairing still binds in both directions for the five treatments.
+      // A SECTION NAMES A GROUP, and three of them (Make · Time · Bank) name
+      // the SAME one — they are the Content group seen three ways. Asked of the
+      // app rather than re-derived here, so the check cannot drift from it.
+      buttonless: grps.filter((g) => g !== 'Content' &&
+        !btns.some((b2) => window._v2.secGrp(b2) === g)),
+      contentHasButton: btns.indexOf('Content') >= 0,
+      groupless: btns.filter((b2) => grps.indexOf(window._v2.secGrp(b2)) < 0),
     };
   });
   // The invariant is the PAIRING in both directions, not a count — pinning 12
   // made a deliberate regroup look like a break. (12 -> 7: Envelope, Voicing,
   // Motion, Mod and Space folded into the group each belongs to.)
-  ok('every group has a section tab and every tab a group',
-    s.btns === s.grps && s.grps > 0 && !s.buttonless.length && !s.groupless.length, JSON.stringify(s));
+  ok('every treatment has a section button and every button a group — Content is the body',
+    s.btns === 8 && s.grps === 6 && !s.buttonless.length && !s.groupless.length &&
+    !s.contentHasButton, JSON.stringify(s));
   // THE EDITOR IS THE CARD'S BODY — there is nothing to press. It opens on
   // Content, the section that holds the drawing, and every other section is one
   // tap away in the head. Nothing is `position: fixed` any more, so it cannot
@@ -216,11 +253,18 @@ const ok = (name, cond, detail) => {
       Math.round(n.getBoundingClientRect().right - pane.getBoundingClientRect().right))) : -1;
     return {
       open: !!w,
-      // the navigator is six TABS now — the section you are in is the lit
-      // one, where it used to be the select's value
-      title: w ? ((w.querySelector('.v2-gototab.on') || {}).textContent || '').trim() : null,
+      // THE BODY IS CONTENT and the row is the five treatments, so with no
+      // popover open NOTHING is lit — a row that always lit something would be
+      // claiming a treatment is open when none is. What says the body is
+      // Content is its summary, which is keyed by group.
+      title: w ? ((w.querySelector('.v2-grpsum') || {}).getAttribute
+                  && w.querySelector('.v2-grpsum').getAttribute('data-grp')) || null : null,
+      litNone: w ? w.querySelectorAll('.v2-gototab.on').length === 0 : false,
+      noContentBtn: w ? !w.querySelector('.v2-gototab[data-goto="Content"]') : false,
       tabs: w ? w.querySelectorAll('.v2-pop-tab').length : 0,
       onTabs: w ? w.querySelectorAll('.v2-pop-tab.on').length : 0,
+      rows: w ? w.querySelectorAll('.v2-pop-pane .ambient-ctrl').length : -1,
+      hasViz: !!(w && w.querySelector('.v2-partviz')),
       // EMBEDDED, not floating: inside the layer's own body box, in the flow.
       // (The old check asserted it was centred in the visible band below the
       // app header — the whole class of bug that centring dodged is gone with
@@ -236,8 +280,9 @@ const ok = (name, cond, detail) => {
       over,
     };
   });
-  ok('the editor is embedded in the layer body (opens on Content, tabbed, no overflow)',
-    s.open && s.title === 'Content' && s.tabs > 0 && s.onTabs === 1 && s.embedded && s.over <= 0,
+  ok('the layer body IS the content — the drawing, and no settings in it',
+    s.open && s.title === 'Content' && s.litNone && s.noContentBtn &&
+    s.tabs === 0 && s.rows === 0 && s.hasViz && s.embedded && s.over <= 0,
     JSON.stringify(s));
   // …and the rest of this section reads the Instrument rows
   await tap('.v2-gototab[data-goto="Instrument"]');
@@ -420,11 +465,15 @@ const ok = (name, cond, detail) => {
   ok('an empty recorded part explains itself, naming a door that is on the card',
     emptyState.notes === 0 && !!emptyState.hint && emptyState.doorOnCard, JSON.stringify(emptyState));
   // THE TAKE BAR IS TWO BUTTONS WITH ONE JOB EACH: 🎲 makes material (New
-  // take / Roll a take / Replace / Re-roll bar N) and 🔒/🔓 is a pure toggle.
-  // The lock used to carry a "Replace with a new take" face — a lock that
-  // sometimes DISCARDS your notes is two actions in one control — and before
-  // that it read "❄ Re-take live" on a fixed part, which sounds like the way
-  // back to Generated. Each face carries its own tooltip.
+  // take / Roll a take / Replace / Re-roll bar N) and the second is a pure
+  // toggle along the WRITTEN ⟷ GENERATED axis. It used to carry a "Replace
+  // with a new take" face — a control that sometimes DISCARDS your notes is
+  // two actions in one — and before that "❄ Re-take live", which sounds like
+  // the way back to Generated. RESTATED 2026-09-13 (user: "the lock/unlock,
+  // written/generated functional distinction is confusing"): the faces said
+  // Lock/Unlock while the state said Written/Generated, i.e. one axis named in
+  // two languages. Same contract, the axis's own words — and now BOTH written
+  // cases carry ONE face, where `made` used to split them three ways.
   const capFaces = await page.evaluate(async () => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
@@ -440,19 +489,19 @@ const ok = (name, cond, detail) => {
     const ntFace = () => ({ txt: nt().textContent.trim(), title: nt().title });
     const emptyFixed = { cap: face(), nt: ntFace() };
     window.confirm = () => true;
-    nt().click(); await wait(350);          // 🎲 fills it, still locked
+    nt().click(); await wait(350);          // 🎲 fills it, still WRITTEN
     const filled = { cap: face(), nt: ntFace(), kind: L().part.kind };
-    cap().click(); await wait(350);         // 🔓 the SAME button releases
+    cap().click(); await wait(350);         // the SAME button hands it back
     const released = { cap: face(), kind: L().part.kind };
     return { live, emptyFixed, filled, released, made: L().part.made, n: (L().part.notes || []).length };
   });
-  ok('the take bar is 🎲 make + 🔒/🔓 toggle — each face with its own tooltip',
-    /Lock this take/.test(capFaces.live.txt) && /drawn above/.test(capFaces.live.title) &&
+  ok('the take bar is 🎲 make + a WRITTEN⟷GENERATED toggle — each face with its own tooltip',
+    /Write it down/.test(capFaces.live.txt) && /drawn above/.test(capFaces.live.title) &&
     /New take/.test(capFaces.live.nt.txt) &&
-    /Unlock/.test(capFaces.emptyFixed.cap.txt) && /Roll a take/.test(capFaces.emptyFixed.nt.txt) &&
-    /Replace/.test(capFaces.filled.nt.txt) && /still locked/.test(capFaces.filled.nt.title) &&
+    /Generate instead/.test(capFaces.emptyFixed.cap.txt) && /Roll a take/.test(capFaces.emptyFixed.nt.txt) &&
+    /Replace/.test(capFaces.filled.nt.txt) && /still WRITTEN/.test(capFaces.filled.nt.title) &&
     capFaces.filled.kind === 'recorded' &&
-    /Lock this take/.test(capFaces.released.cap.txt) && capFaces.released.kind === 'live' &&
+    /Write it down/.test(capFaces.released.cap.txt) && capFaces.released.kind === 'live' &&
     capFaces.live.title !== capFaces.emptyFixed.cap.title,
     JSON.stringify(capFaces).slice(0, 300));
   ok('nothing on the card offers to "re-take live" — the way back is the Source select',
@@ -505,12 +554,16 @@ const ok = (name, cond, detail) => {
     await wait(250);
     const c2 = document.querySelector('.v2-layer');
     c2.classList.remove('collapsed');
-    [...c2.querySelectorAll('.v2-gototab')].find((x) => x.getAttribute('data-goto') === 'Content').click();
+    window.__sec('Make');
     await wait(300);
-    // THE MAKING STEPS, i.e. the tabs in the family ROWS. The bank chip is
-    // deliberately not one of them — it collapsed into the family bar at the
-    // right end, a different KIND of destination rather than a fourth step.
-    const tabs = [...document.querySelectorAll('.v2-tabfam .v2-pop-tab')].map((t) => t.getAttribute('data-tab'));
+    // THE MAKING STEPS are the ✦ Make section's own tabs now (2026-09-13): the
+    // family ROWS became section buttons, so `make` is a popover rather than a
+    // family chip, and Bank is its own button rather than a chip at the right
+    // end — still a different KIND of destination, one level out.
+    { const mb = document.querySelector('.v2-gototab[data-goto="Make"]'); if (mb) mb.click(); }
+    await wait(300);
+    const tabs = [...document.querySelectorAll('.v2-pop-tabs .v2-pop-tab')].map((t) => t.getAttribute('data-tab'));
+    { const cb = document.querySelector('.v2-secpop-close'); if (cb) cb.click(); }
     await wait(200);
     // tune an arpeggio, go elsewhere, come back
     window._v2.makeArp(E, L()); E.getCfg();
@@ -527,7 +580,7 @@ const ok = (name, cond, detail) => {
     window._v2.rollRun(E, L()); E.getCfg();
     return { tabs, sus, back, backSus, rolled: JSON.stringify(L().part.rhythm) !== b4 };
   });
-  ok('Material is the first thing the Part sheet offers',
+  ok('Material is the first thing ✦ Make offers',
     matRun.tabs[0] === 'Material', JSON.stringify(matRun.tabs));
   ok('each material remembers its own settings across a switch',
     matRun.sus.n === 1 && matRun.back.n === 13 && matRun.back.oct === 4 && matRun.backSus.voices === 5,
@@ -808,7 +861,7 @@ const ok = (name, cond, detail) => {
     card().classList.remove('collapsed');
     const face = (b) => ((b && b.childNodes[0] && b.childNodes[0].nodeValue) || '').trim();
     const st2 = () => ({
-      on: [...card().querySelectorAll('.v2-genshapes .ambient-seg.on, .v2-seedv1.on')]
+      on: [...card().querySelectorAll('.v2-genshapes .ambient-seg.on')]
         .map((x) => face(x).slice(0, 14)).join('|'),
       // …and what the CARD says without the panel open — the door names the
       // shape in force, which is what consolidating four buttons must not cost
@@ -821,20 +874,18 @@ const ok = (name, cond, detail) => {
     const roll = st2();
     card().querySelector('.v2-shapepop .v2-mkpart[data-mk="sustain"]').click(); await wait(400); card().classList.remove('collapsed');
     const sus = st2();
-    // shut the panel before the seed row — it covers the card, and a panel
-    // left open breaks whatever runs next (it already broke the Pattern tab's
-    // hit test one check later)
+    // shut the panel before locking — it covers the card, and a panel left
+    // open breaks whatever runs next (it already broke the Pattern tab's hit
+    // test one check later)
     const gc = card().querySelector('.v2-shapepop .v2-genclose'); if (gc) gc.click();
     await wait(200); card().classList.remove('collapsed');
-    card().querySelector('.v2-seedv1[data-v1="bass"]').click(); await wait(450); card().classList.remove('collapsed');
-    const seed = st2();
     window.confirm = () => true;
     card().querySelector('.v2-capture').click(); await wait(400); card().classList.remove('collapsed');
     const locked = st2();
     // back to a plain live state for whoever runs next
     L().part.kind = 'live'; delete L().part.mat; delete L().part.mem; E.getCfg();
     window._v2.render(E); await wait(200); card().classList.remove('collapsed');
-    return { roll, sus, seed, locked };
+    return { roll, sus, locked };
   });
   // RESTATED: it pinned the JARGON hint (`euclid 5 of 8 · walk · take 1`),
   // which was every term correct and no answer to "what will this generate" —
@@ -849,17 +900,24 @@ const ok = (name, cond, detail) => {
     // toggle and the drawing's readout own that fact (the prose-cut change).
     !/Plays take|New take rolls|Re-rolled every cycle/.test(provRun.roll.hint) &&
     /Sustained/.test(provRun.sus.on) && !/Roll/.test(provRun.sus.on) &&
-    /notes? of the chord/.test(provRun.sus.hint),
+    // RESTATED 2026-09-13: the count of notes-in-the-chord is said ONCE, by
+    // the shape phrase, where the line used to read "one held chord of 5
+    // notes — one onset, held, 5 notes of the chord" — the same fact three
+    // times, which is most of what "noisy and overly complicated" meant.
+    /one held chord of \d+ notes/.test(provRun.sus.hint) &&
+    !/notes? of the chord/.test(provRun.sus.hint),
     JSON.stringify(provRun).slice(0, 700));
-  ok('a v1 seed lights its chip, and a locked take still says what it was a take OF',
-    /Bass/.test(provRun.seed.on) && /seeded like a v1 bass/.test(provRun.seed.hint) &&
-    /Bass/.test(provRun.locked.on) && /v1 bass seed/.test(provRun.locked.hint) &&
+  ok('a locked take still says what it was a take OF',
+    /Sustained/.test(provRun.locked.on) &&
     // RESTATED with the vocabulary: one pair of words for the axis, so a
-    // locked take is WRITTEN DOWN (it was "LOCKED", which named the action
+    // written-down take says WRITTEN (it was "LOCKED", which named the action
     // rather than the state and left "Fixed" naming the same state elsewhere).
-    // The contract is unchanged — it still says it plays these notes.
-    /WRITTEN DOWN/.test(provRun.locked.hint) &&
-    /plays these notes, not the rules/.test(provRun.locked.hint),
+    // The contract is unchanged — it still says it plays these notes — and
+    // the RULES half is dropped, because `shapeOf` answers "the notes below"
+    // on a written part, so the line read "…not the rules it was made from:
+    // the notes below". What it was a take OF is the material NAME, leading.
+    /WRITTEN/.test(provRun.locked.hint) && !/WRITTEN DOWN/.test(provRun.locked.hint) &&
+    /plays these notes, not its rules/.test(provRun.locked.hint),
     JSON.stringify(provRun).slice(0, 240));
   // NO STAMP IS NOT NO MATERIAL — a part made before provenance existed (or
   // assembled by hand on the knobs) still IS one of the materials, and the
@@ -942,8 +1000,7 @@ const ok = (name, cond, detail) => {
     window._v2.capture(E, L()); E.getCfg();
     window._v2.render(E); await wait(250);
     const card = document.querySelector('.v2-layer'); card.classList.remove('collapsed');
-    const gb = [...card.querySelectorAll('.v2-gototab')].find(x =>
-      x.tagName === 'BUTTON' && x.getAttribute('data-goto') === 'Content');
+    const gb = (window.__toContent(), null);
     if (gb) gb.click(); await wait(250);
     const btn = document.querySelector('.v2-pop-sync');
     const rect = btn ? btn.getBoundingClientRect() : { width: 0, height: 0 };
@@ -1002,7 +1059,7 @@ const ok = (name, cond, detail) => {
     try { _ambSyncFxVis(E); } catch (e) {}
     await wait(200);
     const card = document.querySelector('.v2-layer'); card.classList.remove('collapsed');
-    [...card.querySelectorAll('.v2-gototab')].find(x => x.getAttribute('data-goto') === 'Content').click();
+    window.__toContent();
     await wait(250);
     const ppb = () => document.querySelector('.v2-pop-pp');
     const rp = ppb().getBoundingClientRect(),
@@ -1201,7 +1258,7 @@ const ok = (name, cond, detail) => {
     const toContent = async () => {
       if (h) h._sig = ''; window._v2.render(E); await wait(300);
       card().classList.remove('collapsed');
-      const g = [...card().querySelectorAll('.v2-gototab')].find((x) => x.getAttribute('data-goto') === 'Content');
+      const g = (window.__toContent(), null);
       if (g) { g.click(); await wait(280); }
     };
     L().on = true; L().present = true; L().instrument.voice = 'synth';
@@ -1363,6 +1420,204 @@ const ok = (name, cond, detail) => {
     formRun && !formRun.err && formRun.tapAuthors && formRun.onGrid,
     JSON.stringify(formRun && { tap: formRun.tapAuthors, onsets: formRun.onsets, onGrid: formRun.onGrid }));
 
+  // ▦ STEPS PLAYS THE GRID FROM THE MOMENT YOU ARRIVE (2026-09-13, user: "Steps
+  // doesn't seem to be wired up to playback… it sounds like the Roll part is
+  // playing"). The existing check above taps a cell first, which stamps
+  // `kind = 'drawn'` — so it covered the EDITED case and the reported one, an
+  // untouched grid, went straight past it: `onsetsOf` asked `kind`, the form
+  // said nothing, and the layer played the roll's euclid pattern while the grid
+  // drew something else. Three claims: the switch is INAUDIBLE (the grid is
+  // seeded from the rules), the PICTURE equals the EAR, and the ROLL is left
+  // exactly as it was.
+  const stepPlay = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const sv = JSON.stringify(L().part);
+    const card = () => document.querySelector('.v2-layer');
+    card().classList.remove('collapsed');
+    const onsets = () => { const st = L().part.rhythm.steps;
+      return [...new Set(window._v2.notesFor(L(), { E, cfg: E.getCfg(), key: 'v2:' + L().id,
+        cycleStart: 0, cycleSec: 4 }).map((n) => Math.round(n.at / 4 * st)))].sort((a, b) => a - b).join(','); };
+    const lit = () => [...card().querySelectorAll('.v2-cell')]
+      .filter((x) => x.getBoundingClientRect().width > 0 && x.classList.contains('on'))
+      .map((x) => +x.getAttribute('data-ci')).sort((a, b) => a - b).join(',');
+    const o = {};
+    // start from a plain euclid ROLL
+    L().part.form && delete L().part.form; L().part.rhythm.kind = 'euclid';
+    delete L().part.rhythm.cells;
+    // …over 1.5 bars, so the grid WRAPS (24 cells = 16 + 8). At one block the
+    // broken and the fixed sizing are identical and the poison passes.
+    L().part.bars = 1.5; E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E); await wait(260); card().classList.remove('collapsed');
+    o.rollOnsets = onsets();
+    // …press ▦ Steps through the real control
+    const sb = [...card().querySelectorAll('.v2-formbtn')].find((x) => x.getAttribute('data-form') === 'steps');
+    if (sb) sb.click(); await wait(500); card().classList.remove('collapsed');
+    o.inSteps = window._v2.formOf(L()) === 'steps';
+    o.seeded = onsets() === o.rollOnsets;          // the switch changed nothing you can hear
+    o.drawMatches = lit() === onsets();            // the picture IS what plays
+    o.rollUntouched = L().part.rhythm.kind === 'euclid';
+    // …and a tap moves BOTH, still without reaching across to the roll
+    const off = [...card().querySelectorAll('.v2-cell')]
+      .filter((x) => x.getBoundingClientRect().width > 0 && !x.classList.contains('on'))[0];
+    const oi = off ? +off.getAttribute('data-ci') : -1;
+    if (off) off.click(); await wait(350);
+    o.tapAdds = oi >= 0 && onsets().split(',').indexOf(String(oi)) >= 0;
+    o.tapDrawMatches = lit() === onsets();
+    o.tapRollUntouched = L().part.rhythm.kind === 'euclid';
+    // EVERY CHIP THE SAME SIZE — a short last row used to stretch its cells
+    // ("step chips should all be same size"), because each block sized its grid
+    // to its own count instead of to the full row.
+    const w = [...card().querySelectorAll('.v2-cell')]
+      .filter((x) => x.getBoundingClientRect().width > 0)
+      .map((x) => Math.round(x.getBoundingClientRect().width));
+    o.widths = [...new Set(w)].join(',');
+    o.blocks = card().querySelectorAll('.v2-cells').length;
+    o.sameSize = w.length > 16 && o.blocks > 1 && new Set(w).size === 1;
+    try { L().part = JSON.parse(sv); } catch (e) {}
+    E.getCfg(); if (h) h._sig = ''; window._v2.render(E); await wait(200);
+    document.querySelector('.v2-layer').classList.remove('collapsed');
+    return o;
+  });
+  ok('\u25a6 Steps plays the GRID from the moment you arrive — seeded from the rules, and the roll is untouched',
+    stepPlay.inSteps && stepPlay.seeded && stepPlay.drawMatches && stepPlay.rollUntouched &&
+    stepPlay.tapAdds && stepPlay.tapDrawMatches && stepPlay.tapRollUntouched,
+    JSON.stringify(stepPlay));
+  ok('\u2026and every step chip is the same size, whatever the last row holds',
+    stepPlay.sameSize, 'widths=' + stepPlay.widths + ' blocks=' + stepPlay.blocks);
+
+  // …AND A STEP LIGHTS AS IT SOUNDS. The roll sweeps a line across its canvas;
+  // ▦ Steps has no canvas, so the viz rAF returned at its `!cv || !ph` guard and
+  // nothing followed playback at all ("no playhead follows play across the
+  // sequence"). Measured as a WALK — several distinct steps in order — because
+  // one lit cell could be a class that never moves; and it must CLEAR on stop,
+  // or the last frame goes on claiming a step is sounding.
+  const stepPh = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const sv = JSON.stringify(L().part), svOn = L().on, svPr = L().present;
+    const card = () => document.querySelector('.v2-layer');
+    card().classList.remove('collapsed');
+    L().part.form = 'steps'; L().part.bars = 1.5; L().on = true; L().present = true; E.getCfg();
+    const r = L().part.rhythm;
+    r.cells = new Array(r.steps).fill(0); [0, 8, 16].forEach((i) => { r.cells[i] = 1; });
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E); await wait(300); card().classList.remove('collapsed');
+    _ambStartGenerator(E);
+    const seen = new Set(); let lit = 0;
+    for (let i = 0; i < 22; i++) {
+      await wait(110);
+      const a2 = [...card().querySelectorAll('.v2-cell.playing')].map((x) => x.getAttribute('data-ci'));
+      if (a2.length) { lit++; seen.add(a2.join(',')); }
+    }
+    _ambStopGenerator(E);
+    await wait(400);
+    const after = card().querySelectorAll('.v2-cell.playing').length;
+    // a probe that plays must put the clocks back, or the next check inherits them
+    E._playStartAt = null; E._progAnchor = null; E._barGridAnchor = null;
+    try { L().part = JSON.parse(sv); } catch (e) {}
+    L().on = svOn; L().present = svPr; E.getCfg();
+    if (h) h._sig = ''; window._v2.render(E); await wait(220);
+    document.querySelector('.v2-layer').classList.remove('collapsed');
+    return { walked: seen.size, litFrames: lit, after };
+  });
+  ok('\u2026and a step LIGHTS as it sounds, walking the grid, and clears on stop',
+    stepPh.walked >= 4 && stepPh.litFrames >= 10 && stepPh.after === 0,
+    JSON.stringify(stepPh));
+
+  // A STEP CAN SAY WHAT IT PLAYS (2026-09-13, user: "user needs to be able to
+  // define what plays at each step (note, chord, etc)"). It could not: the note
+  // row showed only under `pitch.kind === 'drawn'` — one rule in nine — and its
+  // only control was a TAP-TO-CYCLE through 24 degrees, which is the documented
+  // mistake (unreadable, unreversible, and one axis where the question has two).
+  // `pitch.stepFx[i] = {deg, voices}` is a per-step say applied at the ONE place
+  // every pitch kind funnels through, so it works over any rule; absent = the
+  // rule decides, and a say that says nothing is PRUNED back to absent.
+  const stepFx = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const sv = JSON.stringify(L().part);
+    const card = () => document.querySelector('.v2-layer');
+    const midi = () => window._v2.notesFor(L(), { E, cfg: E.getCfg(), key: 'v2:' + L().id,
+      cycleStart: 0, cycleSec: 4 }).map((n) => Math.round(12 * Math.log2(n.freq / 440) + 69)).join(',');
+    card().classList.remove('collapsed');
+    // a KEY, so "thirds of the source" is a scale rather than bare semitones
+    E.getCfg().keyOn = true; E.getCfg().keyFollow = false;
+    E.getCfg().keyRoot = 0; E.getCfg().keyScale = 'major';
+    const svKey = { on: E.getCfg().keyOn, follow: E.getCfg().keyFollow,
+                    root: E.getCfg().keyRoot, scale: E.getCfg().keyScale };
+    L().part.form = 'steps'; L().part.rhythm.kind = 'pulse'; L().part.rhythm.n = 3;
+    L().part.pitch.kind = 'fixed'; E.getCfg();
+    // in ▦ Steps the CELLS are the rhythm, so the grid has to have something on
+    // it — an empty grid is silence, and silence has no step to edit
+    { const r2 = L().part.rhythm; r2.cells = new Array(r2.steps).fill(0);
+      [0, 8, 16].forEach((i) => { r2.cells[i] = 1; }); E.getCfg(); }
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E); await wait(320); card().classList.remove('collapsed');
+    const o = {};
+    o.plain = midi();
+    // THE ROW IS THERE whatever the pitch rule is — it was 'drawn'-only
+    o.notesShown = [...card().querySelectorAll('.v2-note')].filter((x) => x.getBoundingClientRect().width > 0).length;
+    // …and tapping one opens an EDITOR rather than cycling a number
+    const nb = [...card().querySelectorAll('.v2-note')]
+      .filter((x) => x.getBoundingClientRect().width > 0 && !x.disabled)[0];
+    o.notesLive = [...card().querySelectorAll('.v2-note')]
+      .filter((x) => x.getBoundingClientRect().width > 0 && !x.disabled).length;
+    if (nb) nb.click(); await wait(300);
+    const pop = card().querySelector('.v2-steppop');
+    o.opened = !!pop;
+    o.saysRule = !!pop && /pitch rule/.test(pop.querySelector('.v2-stepsays').textContent || '');
+    o.faceNamesIt = !!pop && (pop.querySelector('.v2-sfdeg') || {}).value === 'the rule';
+    // a DEGREE — three presses of + on Note
+    // GUARDED — a probe that throws takes the whole run with it and tells you
+    // less than one red line (documented).
+    const up = (cls) => { const el2 = card().querySelector('.' + cls);
+      const st2 = el2 && el2.closest('.ambient-stepper');
+      const b2 = st2 && st2.querySelector('.ambient-step-up'); if (b2) b2.click(); };
+    for (let i = 0; i < 3; i++) { up('v2-sfdeg'); await wait(150); }
+    o.deg = midi();
+    o.stored = JSON.stringify(L().part.pitch.stepFx || null);
+    // …and a CHORD on it — two presses of + on Tones
+    for (let i = 0; i < 2; i++) { up('v2-sfvox'); await wait(150); }
+    o.chord = midi();
+    o.storedChord = JSON.stringify(L().part.pitch.stepFx || null);
+    // ↺ Follow the rule takes the say away, and the store goes back to absent
+    const fb = card().querySelector('.v2-stepfollow'); if (fb) fb.click(); await wait(450);
+    card().classList.remove('collapsed');
+    o.back = midi();
+    o.pruned = L().part.pitch.stepFx === undefined;
+    try { L().part = JSON.parse(sv); } catch (e) {}
+    E.getCfg().keyOn = svKey.on; E.getCfg().keyFollow = svKey.follow;
+    E.getCfg().keyRoot = svKey.root; E.getCfg().keyScale = svKey.scale; E.getCfg();
+    if (h) h._sig = ''; window._v2.render(E); await wait(220);
+    document.querySelector('.v2-layer').classList.remove('collapsed');
+    return o;
+  });
+  // ASSERTED AS RELATIONSHIPS, not absolute MIDI — the register decides the
+  // digits, so pinning them pins the fixture (the documented lesson).
+  ok('a STEP can say what it plays — a note, or a chord on it — over any pitch rule',
+    stepFx.notesShown > 0 && stepFx.notesLive > 0 && stepFx.opened &&
+    stepFx.saysRule && stepFx.faceNamesIt &&
+    (() => {
+      const p0 = stepFx.plain.split(',').map(Number);
+      const d0 = stepFx.deg.split(',').map(Number);
+      const c0 = stepFx.chord.split(',').map(Number);
+      // ONLY the step that was told moved, and it moved UP the scale
+      const movedOne = d0.length === p0.length && d0[0] > p0[0] &&
+        d0.slice(1).join(',') === p0.slice(1).join(',');
+      // …and asking for tones stacks a CHORD on that same note, in thirds of
+      // the scale (3 or 4 semitones a step — never a cluster)
+      const stacked = c0.length === p0.length + 2 && c0[0] === d0[0];
+      const iv = [c0[1] - c0[0], c0[2] - c0[1]];
+      const thirds = iv.every((x) => x === 3 || x === 4);
+      return movedOne && stacked && thirds;
+    })() &&
+    /"deg":3/.test(stepFx.stored) && /"voices":3/.test(stepFx.storedChord) &&
+    stepFx.back === stepFx.plain && stepFx.pruned,
+    JSON.stringify(stepFx));
+
   // STATIC CONTENT vs LIVE CONTENT (2026-09-10, user: "Generated is just a
   // special case of the Written case… introduce the unifying concept of Static
   // Content… once PLAYED it can become Live at the user's discretion").
@@ -1420,7 +1675,7 @@ const ok = (name, cond, detail) => {
     const card2 = document.querySelector('.v2-layer');
     const labTxt = async () => { window._v2.render(E); await new Promise((r) => setTimeout(r, 200));
       document.querySelector('.v2-layer').classList.remove('collapsed');
-      const g2 = [...document.querySelectorAll('.v2-gototab')].find((x) => x.getAttribute('data-goto') === 'Content');
+      const g2 = (window.__toContent(), null);
       if (g2) { g2.click(); await new Promise((r) => setTimeout(r, 200)); }
       return ((document.querySelector('.v2-vizlab') || {}).textContent || '').split(' \u00b7 ')[0]; };
     o.saysStatic = await labTxt();
@@ -1591,9 +1846,12 @@ const ok = (name, cond, detail) => {
     window._v2.capture(E, L()); E.getCfg();
     window._v2.render(E); await wait(250);
     const card = document.querySelector('.v2-layer'); card.classList.remove('collapsed');
-    [...card.querySelectorAll('.v2-gototab')].find(x => x.getAttribute('data-goto') === 'Content').click();
-    await wait(250);
-    const pop = document.querySelector('.v2-pop');
+    // THE RHYTHM ROWS LIVE BEHIND ✦ MAKE now (2026-09-13) — the Content group's
+    // families became section buttons, so the body holds the drawing and these
+    // rows are in a popover.
+    const openSec = async (nm) => { const cb = document.querySelector('.v2-secpop-close'); if (cb) cb.click(); await wait(120); const b0 = document.querySelector('.v2-gototab[data-goto="' + nm + '"]'); if (b0) b0.click(); await wait(250); };
+    await openSec('Make');
+    const pop = document.querySelector('.v2-secpop');
     const open = async (nm) => { const t = [...pop.querySelectorAll('.v2-pop-tabs [data-tab]')]
       .find(x => x.getAttribute('data-tab') === nm); if (t) { t.click(); await wait(200); } return !!t; };
     // THE RHYTHM TABS REFUSE TO OPEN on a Fixed part now (a no-op control
@@ -1612,9 +1870,8 @@ const ok = (name, cond, detail) => {
     o.pulsesNa = !!pulses && pulses.style.display !== 'none' && pulses.classList.contains('v2-rowna');
     // VISIBLE, INERT, and readable — on a tab that opens
     await wait(150);
-    [...card.querySelectorAll('.v2-gototab')].find(x => x.getAttribute('data-goto') === 'Shape').click();
-    await wait(250);
-    const sp = document.querySelector('.v2-pop');
+    await openSec('Shape');
+    const sp = document.querySelector('.v2-secpop');
     // the row of the ACTIVE tab — every other tab's rows are `v2-rowoff` and
     // measure 0, so an unscoped find picks one that is merely not showing
     const st2 = [...sp.querySelectorAll('.ambient-ctrl.v2-rowna')]
@@ -1622,10 +1879,9 @@ const ok = (name, cond, detail) => {
     o.greyVisible = !!st2 && getComputedStyle(st2).pointerEvents === 'none' &&
       parseFloat(getComputedStyle(st2.querySelector('label') || st2).opacity) < 0.6;
     await wait(150);
-    [...card.querySelectorAll('.v2-gototab')].find(x => x.getAttribute('data-goto') === 'Content').click();
-    await wait(250);
+    await openSec('Make');
     // an ALTERNATIVE gate still hides: Onsets is rhythm:pulse and this part is euclid
-    const onsets = [...document.querySelectorAll('.v2-pop [data-f="part.rhythm.n"]')]
+    const onsets = [...document.querySelectorAll('.v2-secpop [data-f="part.rhythm.n"]')]
       .map(x => x.closest('.ambient-ctrl'))[0];
     o.altStillHidden = !!onsets && onsets.style.display === 'none';
     // back to Generated: the grey lifts
@@ -1654,120 +1910,89 @@ const ok = (name, cond, detail) => {
     L().part.kind = 'recorded'; E.getCfg();       // the fullest tab set
     window._v2.render(E); await wait(250);
     const card = document.querySelector('.v2-layer'); card.classList.remove('collapsed');
-    [...card.querySelectorAll('.v2-gototab')].find(x => x.getAttribute('data-goto') === 'Content').click();
     await wait(250);
+    // RESTATED 2026-09-13 with the reason (the old-CONTRACT fork): Content's
+    // FAMILIES became section buttons, so there is no two-level strip left to
+    // assert. The guarantee it stood for — no Content tab can go missing, and
+    // rhythm is a no-op on a Fixed part that says so — is restated on the
+    // surface that exists: three section buttons, each owning its own tabs.
+    const tabsOf = (nm) => { window.__sec(nm); return new Promise(r => setTimeout(() => {
+      const st2 = document.querySelector('.v2-pop-tabs');
+      r(st2 ? [...st2.querySelectorAll('[data-tab]')] : []); }, 260)); };
+    const mkT = await tabsOf('Make'), tiT = await tabsOf('Time'), bkT = await tabsOf('Bank');
+    const names = (a) => a.map(x => x.getAttribute('data-tab'));
+    const fams = ['Make:' + names(mkT).join('/'), 'Time:' + names(tiT).join('/'),
+                  'Bank:' + names(bkT).join('/')].join(' ');
+    // EVERY Content tab is behind exactly one of the three
+    const covered = new Set([...names(mkT), ...names(tiT), ...names(bkT)]);
+    const allInFams = covered.has('Material') && covered.has('Rhythm') &&
+      covered.has('Pattern') && covered.has('Feel') && covered.has('Bars') &&
+      covered.has('Bank') && covered.size >= 8;
+    // RHYTHM IS IN MAKE, tinted teal — and on a Fixed part it is a no-op, so
+    // the tab dims and a PRESS REFUSES AND EXPLAINS rather than navigating.
+    await tabsOf('Make');
     const strip = document.querySelector('.v2-pop-tabs');
-    // TWO-LEVEL STRIP: the family BAR carries the names; only the active
-    // family's tab row is visible (four stacked rows were "way too small a
-    // scrollable section" on a phone); hidden tabs stay in the DOM so
-    // programmatic navigation works.
-    const fams = [...strip.querySelectorAll('.v2-fambtn')].map(f => f.textContent + ':' +
-      (f.classList.contains('on') ? 'on' : 'off'));
-    // RESTATED: the contract was "every tab lives in a family row", which stood
-    // for "no tab can vanish from the strip". A family naming ONE tab now
-    // collapses into its own chip (Saved-above-Phrases was two words for one
-    // list), so a tab is reachable from a row OR from the bar — same guarantee.
-    // RENAMED with it: the tab is BANK, because it takes a take whatever made
-    // it — "Phrases" named only one of the two origins.
-    const inFams = [...strip.querySelectorAll('.v2-tabfam [data-tab], .v2-fambar [data-tab]')].length;
-    const total = [...strip.querySelectorAll('[data-tab]')].length;
-    // …and the collapsed chip is named by its TAB, not by the family word
-    const solo = bar0 => bar0.querySelector('.v2-fambtn.fam-saved');
-    const visRows = [...strip.querySelectorAll('.v2-tabfam')].filter(f => f.getBoundingClientRect().height > 0).length;
-    const stripH = Math.round(strip.getBoundingClientRect().height);
-    // the family chips FILL the row, equal widths (the strip is a row flex
-    // from the flat design, so they sized to content until it stacked)
-    const bar = strip.querySelector('.v2-fambar');
-    const allChips = [...bar.querySelectorAll('.v2-fambtn')];
-    // RESTATED: Saved is deliberately NOT an equal sibling — it is the bank,
-    // an inverse-filled chip sized to its own text at the right end. The
-    // SHARING chips still split the row evenly.
-    const bw = allChips.filter(x => !x.classList.contains('fam-saved'))
-      .map(x => Math.round(x.getBoundingClientRect().width));
-    const chipsEqual = bw.length >= 3 && new Set(bw).size === 1 && bw[0] > 60 &&
-      Math.abs(allChips.reduce((a, c) => a + c.getBoundingClientRect().width, 0) +
-               6 * (allChips.length - 1) - bar.getBoundingClientRect().width) < 3;
-    // SAVED: inverse (filled, text knocked out in the sheet ground), last chip
-    const sv = solo(bar);
-    const soloIsTab = !!sv && sv.getAttribute('data-tab') === 'Bank' &&
-      sv.textContent.trim() === 'Bank' && sv.classList.contains('v2-pop-tab') &&
-      !strip.querySelector('.v2-tabfam.fam-saved');
-    const svCs = sv ? getComputedStyle(sv) : null;
-    const savedInverse = !!sv && sv === allChips[allChips.length - 1] &&
-      svCs.backgroundColor !== 'rgba(0, 0, 0, 0)' && svCs.color === 'rgb(18, 18, 31)';
-    // RHYTHM LIVES IN MAKE, tinted teal — and on a Fixed part it is a no-op,
-    // so the tabs dim (still openable: the rows behind explain themselves)
-    const mk = [...strip.querySelectorAll('.v2-fambtn')].find(x => /make/i.test(x.textContent));
-    if (mk) mk.click();
-    const mkTabs = [...strip.querySelectorAll('.v2-tabfam.fam-on .v2-pop-tab')];
+    const mkTabs = [...strip.querySelectorAll('[data-tab]')];
     const rhy = mkTabs.find(x => x.getAttribute('data-tab') === 'Rhythm');
     const rhythmInMake = !!rhy && /tint-fam-rhythm/.test(rhy.className) &&
       mkTabs.some(x => x.getAttribute('data-tab') === 'Material');
     const naDim = !!rhy && rhy.classList.contains('v2-tabna') &&
       parseFloat(getComputedStyle(rhy).opacity) < 0.6 && rhy.getAttribute('aria-disabled') === 'true';
-    // …AND A PRESS REFUSES AND EXPLAINS. A control that visibly does nothing
-    // is worse than one that answers, so the no-op tab does not navigate —
-    // it toasts the condition under which it becomes usable.
     const onBefore = (document.querySelector('.v2-pop-tab.on') || {}).textContent;
     if (rhy) rhy.click();
     await wait(220);
     const tst = document.querySelector('.bloops-toast');
     const naRefuses = !!rhy && !rhy.classList.contains('on') &&
       (document.querySelector('.v2-pop-tab.on') || {}).textContent === onBefore &&
-      // it names the way out, which is 🔓 Unlock under the drawing now that the
-      // Source select (a third door to the same field) is gone
-      !!tst && getComputedStyle(tst).display !== 'none' && /Unlock/.test(tst.textContent);
+      !!tst && getComputedStyle(tst).display !== 'none' && /Generate instead/.test(tst.textContent);
     // a row label that repeats the active tab is hidden — EXCEPT one carrying
     // a control (Pattern's ↻ regen button lives inside its label)
-    const labOf = (nm) => { const t2 = [...strip.querySelectorAll('[data-tab]')].find(x => x.getAttribute('data-tab') === nm);
+    const labOf = (nm) => { const t2 = mkTabs.find(x => x.getAttribute('data-tab') === nm);
       if (t2) t2.click();
       const r2 = [...document.querySelectorAll('.v2-pop-pane .ambient-ctrl')].find(x =>
         x.getBoundingClientRect().height > 0 && !x.classList.contains('v2-rowoff'));
       const lb = r2 && r2.querySelector(':scope > label');
       return lb ? getComputedStyle(lb).display : 'none'; };
     const dupHidden = labOf('Material') === 'none';
-    // A LABEL CARRYING A CONTROL IS NEVER DEDUPED (the Pattern row's ↻ regen
-    // button lives inside its label). Asserted on the mechanism — every such
-    // row, whichever tab is showing — rather than on the first visible row,
-    // which the grid-leads reorder moved out from under the old probe.
     const withCtrl = [...document.querySelectorAll('.v2-pop-pane .ambient-ctrl')]
       .filter(r => r.querySelector(':scope > label button, :scope > label input, :scope > label select'));
     const ctrlLabKept = withCtrl.length > 0 && withCtrl.every(r => !r.classList.contains('v2-labdup'));
-    // PHONE HEAD: two deliberate rows — [title ... ✕] then the trio — and the
-    // family labels sit ABOVE their chips (the gutter scattered the wrap).
+    // PHONE HEAD: the section buttons own the top rows outright and WRAP, with
+    // the per-part trio below them — measured on the BODY's head, which is the
+    // only head the card itself has.
+    window.__toContent(); await wait(200);
     const head = document.querySelector('.v2-pop-head');
-    // PHONE HEAD, restated: the section tabs WRAP to two rows —
-    // [Instrument Content Pitch Shape] then [Mix FX · Reg ± · ✕] — with the
-    // per-part trio below both. Measured off the TABS, not `.v2-pop-title`:
-    // that box is `display: contents` on a phone (which is what lets Mix and
-    // FX share a row with their siblings), so its rect is zero.
     const tabsH = [...head.querySelectorAll('.v2-gototab')];
     const rT = tabsH[0].getBoundingClientRect();
     const rL = tabsH[tabsH.length - 1].getBoundingClientRect();
-    // RESTATED with the embed: the sections own the top row(s) outright
-    // ("the section buttons should be the whole top row, and 2 rows if
-    // necessary so the buttons are large enough"), and the per-part trio sits
-    // BELOW them. There is no ✕ — the editor is the card's body.
     const rP = head.querySelector('.v2-pop-pair').getBoundingClientRect();
-    const phoneHead = rL.top >= rT.bottom - 4 &&                    // it wrapped
-      tabsH.every((t2) => t2.getBoundingClientRect().height >= 36) && // still a real target
-      rP.top >= rL.bottom - 4 &&                                    // trio below the tabs
+    // …and the summary rides in the head with the pair. On a PHONE the pair
+    // takes the whole row so the summary wraps below it (that is what is
+    // measured here); at desktop widths it shares the pair's row and
+    // right-aligns into the ~296px that was dead space. This gate is
+    // single-viewport, so only the phone half of that is asserted.
+    const sum = head.querySelector('.v2-grpsum');
+    const rS = sum ? sum.getBoundingClientRect() : null;
+    const phoneHead = rL.top >= rT.bottom - 4 &&
+      tabsH.every((t2) => t2.getBoundingClientRect().height >= 36) &&
+      rP.top >= rL.bottom - 4 &&
+      !!rS && rS.height > 0 && rS.top >= rP.bottom - 4 &&
       head.scrollWidth - head.clientWidth === 0;
-    // tapping a family chip shows its row and lands on its first tab
-    [...strip.querySelectorAll('.v2-fambtn')].find(x => /time/i.test(x.textContent)).click(); await wait(200);
-    const famNav = [...document.querySelectorAll('.v2-tabfam.fam-on [data-tab]')].map(x => x.textContent).join(',');
-    const t = [...strip.querySelectorAll('[data-tab]')].find(x => x.getAttribute('data-tab') === 'Bars');
-    t.click(); await wait(200);
-    // the PANE wears the family: row labels take its hue (Bars → time → blue)
+    // …and ⏱ Time lands on its own tabs, the pane wearing that family's hue
+    await tabsOf('Time');
+    const famNav = names([...document.querySelectorAll('.v2-pop-tabs [data-tab]')]).join(',');
+    const t = [...document.querySelectorAll('.v2-pop-tabs [data-tab]')]
+      .find(x => x.getAttribute('data-tab') === 'Bars');
+    if (t) t.click(); await wait(200);
     const pane = document.querySelector('.v2-pop-pane');
     const lab = [...pane.querySelectorAll('.ambient-ctrl')].find(r =>
       r.style.display !== 'none' && !r.classList.contains('v2-rowoff'));
-    const o = { fams: fams.join(' '), allInFams: inFams === total && total >= 10,
-      navWorks: t.classList.contains('on'), phoneHead, famNav, visRows, stripH,
-      chipsEqual, dupHidden, ctrlLabKept, bw: bw.join(','),
-      savedInverse, soloIsTab, rhythmInMake, naDim, naRefuses,
-      paneFam: pane.getAttribute('data-fam'),
+    const o = { fams, allInFams,
+      navWorks: !!t && t.classList.contains('on'), phoneHead, famNav,
+      dupHidden, ctrlLabKept, rhythmInMake, naDim, naRefuses,
+      secBtns: tabsH.length,
       labHue: lab ? getComputedStyle(lab.querySelector('label')).color : null };
+    window.__toContent();
     await wait(150);
     L().part.kind = svKind; delete L().part.mat; delete L().part.mem; E.getCfg();
     window._v2.render(E); await wait(200);
@@ -1778,13 +2003,11 @@ const ok = (name, cond, detail) => {
   // folded into make, tinted), and the height pin moves 120 → 160 because the
   // make row legitimately wraps to two lines at six chips. The contract is
   // "two levels, not four stacked rows" — it was ~250px before the fold.
-  ok('the Content tab strip is a two-level navigator — make (with rhythm) · time · pitch · Bank',
-    /make:/.test(famRun.fams) && /Bank:/.test(famRun.fams) && /time:/.test(famRun.fams) &&
-    /pitch:/.test(famRun.fams) && famRun.allInFams && famRun.navWorks &&
-    famRun.savedInverse && famRun.soloIsTab && famRun.rhythmInMake && famRun.naDim && famRun.naRefuses &&
-    famRun.phoneHead && famRun.visRows === 1 && famRun.stripH <= 160 &&
-    /Cycle/.test(famRun.famNav) && famRun.chipsEqual && famRun.dupHidden && famRun.ctrlLabKept &&
-    famRun.paneFam === 'fam-time' && famRun.labHue === 'rgb(99, 179, 237)',
+  ok('Content is three sections — ✦ Make (with rhythm) · ⏱ Time · Bank — and every tab is behind one',
+    /Make:/.test(famRun.fams) && /Time:/.test(famRun.fams) && /Bank:/.test(famRun.fams) &&
+    famRun.allInFams && famRun.navWorks && famRun.secBtns === 8 &&
+    famRun.rhythmInMake && famRun.naDim && famRun.naRefuses &&
+    famRun.phoneHead && /Bars/.test(famRun.famNav) && famRun.dupHidden && famRun.ctrlLabKept,
     JSON.stringify(famRun));
   // THE ICE MODEL — the Everywhere record survives per-part mode intact, every
   // part (added whenever) starts from a FITTED copy of it, an un-diverged
@@ -1905,8 +2128,7 @@ const ok = (name, cond, detail) => {
     const card = () => document.querySelector('.v2-layer');
     card().classList.remove('collapsed');
     const openPat = async () => {
-      if (!document.querySelector('.v2-pop'))
-        [...card().querySelectorAll('.v2-gototab')].find(x => x.getAttribute('data-goto') === 'Content').click();
+      window.__sec('Make');
       await wait(220);
       const t = [...document.querySelectorAll('.v2-pop-tabs [data-tab]')].find(x => x.getAttribute('data-tab') === 'Pattern');
       if (t) t.click(); await wait(200);
@@ -2024,7 +2246,7 @@ const ok = (name, cond, detail) => {
     L().part.kind = 'live'; L().part.rhythm = { kind: 'euclid', pulses: 5, steps: 16, rotate: 0 }; E.getCfg();
     if (h) h._sig = ''; window._v2.render(E); await wait(250);
     card().classList.remove('collapsed');
-    [...card().querySelectorAll('.v2-gototab')].find(x => x.getAttribute('data-goto') === 'Content').click();
+    window.__sec('Make');
     await wait(250);
     [...document.querySelectorAll('.v2-pop-tabs [data-tab]')].find(x => x.getAttribute('data-tab') === 'Pattern').click();
     await wait(250);
@@ -2071,7 +2293,7 @@ const ok = (name, cond, detail) => {
     // "Written" and "Generated", which named the two doors as if they made
     // different KINDS of thing — measurably not so: both make static content,
     // and the words now say how it is AUTHORED. Same contract, one door each.
-    matKindRun.silent && /By hand:1/.test(matKindRun.groups) && /By rule:1/.test(matKindRun.groups) &&
+    matKindRun.silent && /By hand:1/.test(matKindRun.groups) && /By rule:2/.test(matKindRun.groups) &&
     matKindRun.cellBig && matKindRun.hit && matKindRun.toggles && matKindRun.overflow === 0,
     JSON.stringify(matKindRun));
   // COMPOSING TAKES THE SHEET. The docked Grid editor is a full instrument
@@ -2092,17 +2314,25 @@ const ok = (name, cond, detail) => {
     const h = document.getElementById('bloom-v2-layers');
     if (h) h._sig = ''; window._v2.render(E); await wait(250);
     card().classList.remove('collapsed');
-    if (!document.querySelector('.v2-pop'))
-      [...card().querySelectorAll('.v2-gototab')].find(x => x.getAttribute('data-goto') === 'Content').click();
+    // ✎ Written lives in ✦ Make — the compose dock is Content's, and Content's
+    // rows are behind the section buttons now.
+    window.__sec('Make');
     await wait(250);
     document.querySelector('.v2-compose').click(); await wait(300);
     // ✎ Written is a POPOVER now — the grid option starts the session
     const gpb = [...document.querySelectorAll('.addpop-btn')].find((b) => /grid/i.test(b.textContent));
     if (gpb) gpb.click();
     await wait(700);
+    // RESTATED 2026-09-13: ✦ Make CLOSES when a door hands off to the card
+    // ("grid doesn't show"). The dock lives on the card body, and Make is
+    // modal over it — measured, the dock opened 333×464 entirely behind the
+    // scrim. So the sheet under test is the BODY's, and Make being gone is
+    // part of the contract now rather than an accident.
     const pop = document.querySelector('.v2-pop');
+    const bodyPop = pop;
     const acts = document.querySelector('.v2-gacts');
-    const o = { composing: card().classList.contains('v2-composing'), started: !!acts };
+    const o = { composing: card().classList.contains('v2-composing'), started: !!acts,
+      secClosed: !document.querySelector('.v2-secpop-wrap') };
     if (pop && acts) {
       const r = pop.getBoundingClientRect(), ra = acts.getBoundingClientRect();
       const done = acts.querySelector('.v2-gdone');
@@ -2122,21 +2352,27 @@ const ok = (name, cond, detail) => {
       // ("what happened to the Material buttons"). It is inert and says so:
       // dimmed, with a banner, and a press refuses rather than navigating
       // (switching section moves the group body, and the dock is inside it).
-      o.stepsAside = getComputedStyle(pop.querySelector('.v2-partviz')).display === 'none' &&
-        getComputedStyle(pop.querySelector('.v2-pop-foot')).display === 'none' &&
-        getComputedStyle(pop.querySelector('.v2-pop-tabs')).display !== 'none' &&
-        (() => { const bn = pop.querySelector('.v2-compbanner');
+      // RESTATED with the close: there is no popover tab strip to keep, so the
+      // "stays and reads inert" half is asserted where it now lives — the
+      // body head's SECTION ROW, which `composeBlocks` still refuses and the
+      // composing CSS still dims. Same contract: the card is not gutted, and
+      // what you cannot use says so rather than vanishing.
+      o.stepsAside = getComputedStyle(bodyPop.querySelector('.v2-partviz')).display === 'none' &&
+        getComputedStyle(bodyPop.querySelector('.v2-pop-foot')).display === 'none' &&
+        (() => { const bn = bodyPop.querySelector('.v2-compbanner');
           return !!bn && getComputedStyle(bn).display !== 'none' &&
                  bn.getBoundingClientRect().height > 10; })() &&
-        // …and the tab strip READS as inert
-        +getComputedStyle(pop.querySelector('.v2-pop-tabs').firstElementChild).opacity < 0.6;
+        (() => { const gt = bodyPop.querySelector('.v2-pop-head .v2-gototab');
+          return !!gt && gt.getBoundingClientRect().height > 0 &&
+                 +getComputedStyle(gt).opacity < 0.6; })();
       // A PRESS REFUSES AND EXPLAINS — it used to be hidden, and the Material
       // doors silently did nothing ("clicking the other options does nothing")
-      const wasTab = (pop.querySelector('.v2-pop-tab.on') || {}).textContent;
-      const other = pop.querySelector('.v2-pop-tab:not(.on)');
+      // …driven on the SECTION ROW now: pressing one must neither open a
+      // section popover over the dock nor silently do nothing.
+      const other = bodyPop.querySelector('.v2-pop-head .v2-gototab');
       if (other) other.click(); await wait(240);
       const tst2 = document.querySelector('.bloops-toast');
-      o.refuses = !!other && (pop.querySelector('.v2-pop-tab.on') || {}).textContent === wasTab &&
+      o.refuses = !!other && !document.querySelector('.v2-secpop-wrap') &&
         !!tst2 && /composing/i.test(tst2.textContent);
       o.editorDocked = (() => { const ex = document.getElementById('lane-expander');
         return !!ex && !!ex.closest('.v2-dock') && ex.getBoundingClientRect().height > 200; })();
@@ -2145,7 +2381,6 @@ const ok = (name, cond, detail) => {
       const dk = document.querySelector('.v2-dock');
       const ch = dk && dk.querySelector('.ambient-seedgrid-chords');
       const ky = dk && dk.querySelector('.ambient-seedgrid-dockhost');
-      const rp = pop.querySelector('.v2-pop-pane').getBoundingClientRect();
       const row0 = ch && ch.querySelector('.sglane-row');
       // THE GRID LEADS, THEN THE SEQUENCE. The strip was put above the keyboard
       // when the dock lived in a ~230px sheet pane, where anything under it was
@@ -2153,8 +2388,18 @@ const ok = (name, cond, detail) => {
       // scrolls, so the order is the one Make uses ("why is the sequencer above
       // the grid").
       o.stripLeads = !!ch && !!ky && ky.getBoundingClientRect().top < ch.getBoundingClientRect().top;
-      o.stripInView = !!row0 && row0.getBoundingClientRect().top >= rp.top - 1 &&
-        row0.getBoundingClientRect().bottom <= rp.bottom + 1;
+      // RESTATED 2026-09-13: the dock lives in ✦ Make, whose pane is clamped to
+      // the visible band and SCROLLS — so "already inside the pane's rect" is a
+      // claim the design no longer makes. What it was protecting against was a
+      // strip that could not be got to at all (464px below the fold in a 230px
+      // pane); the claim is REACHABLE, so scroll to it and check it arrives.
+      // …and the band is the VIEWPORT's now: the body sheet has no `.v2-pop-pane`
+      // (that is the section popover's), because the body holds the drawing and
+      // the dock and nothing else. Scroll to it and check it arrives on screen.
+      if (row0) row0.scrollIntoView({ block: 'center' });
+      const rr = row0 ? row0.getBoundingClientRect() : null;
+      o.stripInView = !!rr && rr.height > 10 &&
+        rr.bottom > 0 && rr.top < (window.innerHeight || 780);
       acts.querySelector('.v2-gcancel').click(); await wait(600);
     }
     o.exited = !document.querySelector('.v2-layer.v2-composing');
@@ -2183,8 +2428,8 @@ const ok = (name, cond, detail) => {
       const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
       window._v2.render(E); await wait(260);
       card().classList.remove('collapsed');
-      const gt = card().querySelector('.v2-gototab[data-goto="Content"]');
-      if (gt && !gt.classList.contains('on')) { gt.click(); await wait(220); }
+      // ✎ Written lives in ✦ Make, and so does the dock it opens
+      window.__sec('Make'); await wait(260);
       card().querySelector('.v2-compose').click(); await wait(300);
       const gpb2 = [...document.querySelectorAll('.addpop-btn')].find((b) => /grid/i.test(b.textContent));
       if (gpb2) gpb2.click();
@@ -2229,6 +2474,237 @@ const ok = (name, cond, detail) => {
     compRun.doneHit && compRun.stepsAside && compRun.refuses && compRun.editorDocked &&
     compRun.exited && compRun.vizBack && compRun.stripLeads && compRun.stripInView,
     JSON.stringify(compRun));
+  // A SECTION IS MODAL, SO WHAT IT OPENS MUST BE REACHABLE (2026-09-13, user:
+  // "major bugs with Make popover; z-index issue when clicking Written,
+  // nothing works right, grid doesn't show, roll doesn't show"). Three
+  // symptoms, one structural fact: the Material doors live INSIDE ✦ Make and
+  // every surface they act on lives OUTSIDE it. Measured — the ✎ Written menu
+  // is an `.sm-overlay` (10300) and the section wrap sat at 10310, so the
+  // menu's first button hit-tested to `.v2-pop-tab`; and `.v2-partviz` stays
+  // in the card body, so the roll hit-tested to `.v2-secpop-scrim` while the
+  // dock opened 333×464 entirely behind the modal.
+  // ASSERTED BY HIT-TEST, NEVER BY THE Z NUMBER — a bigger number proves
+  // nothing about what is under the finger (the documented `.ctx-menu` rule).
+  const secDoorRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    // SNAPSHOT THE WHOLE LAYER, not the fields I remember touching — ✎ Written
+    // captures the take (kind flips to recorded) and `openRoll` also sets the
+    // DRAW mode, which lives in a module Map and is not in `part` at all. The
+    // first cut restored `part` alone and took out three downstream checks
+    // (the documented one-page-one-state trap).
+    const svLayer = JSON.stringify(L());
+    const card = () => document.querySelector('.v2-layer');
+    const h = document.getElementById('bloom-v2-layers');
+    const o = {};
+    const hits = (el) => { if (!el) return false;
+      const r = el.getBoundingClientRect(); if (r.width < 1 || r.height < 1) return false;
+      const t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return t === el || el.contains(t); };
+    const fresh = async () => {
+      L().part.kind = 'live'; E.getCfg();
+      if (h) h._sig = ''; window._v2.render(E); await wait(260);
+      card().classList.remove('collapsed');
+      const gt = [...card().querySelectorAll('.v2-gototab')].find((x) => /Make/i.test(x.textContent));
+      if (gt) gt.click(); await wait(320);
+      return !!card().querySelector('.v2-secpop-wrap');
+    };
+    // ── the ✎ Written menu paints ABOVE the section it was opened from
+    o.makeOpen = await fresh();
+    const wb = card().querySelector('.v2-compose');
+    o.doorInSec = !!(wb && card().querySelector('.v2-secpop-wrap') &&
+      card().querySelector('.v2-secpop-wrap').contains(wb));
+    if (wb) wb.click(); await wait(380);
+    const btns = [...document.querySelectorAll('.addpop-btn')];
+    o.menuItems = btns.length;
+    o.menuOnTop = btns.length > 0 && btns.every(hits);
+    // ── …and choosing the GRID lands you ON the dock, not behind the modal
+    const gb = btns.find((x) => /grid/i.test(x.textContent));
+    if (gb) gb.click(); await wait(800);
+    const dk = card().querySelector('.v2-dock');
+    o.grid = { session: (typeof _bloomGridEdit !== 'undefined' && _bloomGridEdit) ? _bloomGridEdit.key : null,
+      secClosed: !card().querySelector('.v2-secpop-wrap'),
+      // the dock is on the always-visible surface, not in a group nobody opened
+      onBody: !!(dk && dk.closest('.v2-pop-wrap')),
+      h: dk ? Math.round(dk.getBoundingClientRect().height) : 0 };
+    const ex = document.getElementById('lane-expander');
+    if (ex) { const r = ex.getBoundingClientRect();
+      o.grid.top = Math.round(r.top);
+      o.grid.inBand = r.top > -1 && r.top < (window.innerHeight || 780) * 0.5;
+      o.grid.reach = [0.2, 0.5, 0.8].every((f) => {
+        const t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height * f);
+        return !!t && ex.contains(t); }); }
+    try { if (typeof _ambGridEditStop === 'function') _ambGridEditStop(true); } catch (e) {}
+    await wait(350);
+    // ── and choosing the ROLL leaves the drawing reachable
+    await fresh();
+    const wb2 = card().querySelector('.v2-compose');
+    if (wb2) wb2.click(); await wait(380);
+    const rb = [...document.querySelectorAll('.addpop-btn')].find((x) => /roll/i.test(x.textContent));
+    if (rb) rb.click(); await wait(600);
+    const cv = card().querySelector('.v2-partviz .v2-vizcv');
+    o.roll = { secClosed: !card().querySelector('.v2-secpop-wrap'), canvasHit: hits(cv) };
+    try {
+      const cur = L(), was = JSON.parse(svLayer);
+      Object.keys(cur).forEach((k) => { if (!(k in was)) delete cur[k]; });
+      Object.keys(was).forEach((k) => { cur[k] = was[k]; });
+      E.getCfg();
+      if (h) h._sig = ''; window._v2.render(E); await wait(220);
+      card().classList.remove('collapsed');
+      // …and the view MODE back to the default, through its own control —
+      // it is module state, so no config restore can reach it
+      const mp = card().querySelector('.v2-modepick');
+      if (mp && mp.value !== 'view') { mp.value = 'view';
+        mp.dispatchEvent(new Event('input', { bubbles: true }));
+        mp.dispatchEvent(new Event('change', { bubbles: true })); await wait(220); }
+      o.restored = { kind: L().part.kind, mode: (card().querySelector('.v2-modepick') || {}).value };
+    } catch (e) { o.restoreErr = String(e && e.message); }
+    return o;
+  });
+  // THE DRAWING FOLDS AWAY (2026-09-13, user: "visualizer should be able to be
+  // shown/hidden"). It is the tallest thing on the card — measured 315px of a
+  // 729px card at 390px — and is in the way while you are turning knobs.
+  // WHAT MUST SURVIVE THE FOLD is the whole point: 🎲 New take, ✎ Write it
+  // down, 💾 Save and ✨ Transform live on the take bar and NOWHERE else, so
+  // folding them away would make four actions unreachable (rule 6 in reverse);
+  // and the readout is the only place the card says Static or Live. What must
+  // NOT survive is a hint telling you to tap a picture that is not there.
+  const vizFoldRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const card = () => document.querySelector('.v2-layer');
+    const h = document.getElementById('bloom-v2-layers');
+    const hits = (sel) => { const e = card().querySelector(sel); if (!e) return 'missing';
+      e.scrollIntoView({ block: 'center' });
+      const r = e.getBoundingClientRect(); if (r.width < 1 || r.height < 1) return 'zero';
+      const t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return (t === e || e.contains(t)) ? 'ok' : 'covered'; };
+    const vis = (sel) => { const e = card().querySelector(sel);
+      return !!e && e.getBoundingClientRect().height > 0; };
+    const tog = () => card().querySelector('.v2-viztog');
+    const snap = () => ({ face: tog() ? tog().textContent.trim() : null,
+      title: tog() ? tog().title : '',
+      vizH: Math.round((card().querySelector('.v2-partviz') || { getBoundingClientRect: () => ({ height: 0 }) }).getBoundingClientRect().height),
+      cardH: Math.round(card().getBoundingClientRect().height),
+      canvas: vis('.v2-vizcv'), nav: vis('.v2-vnav'), mode: vis('.v2-modesel'), grid: vis('.v2-gridsel'),
+      readout: vis('.v2-vizlab'), tail: ((card().querySelector('.v2-vizlab') || {}).textContent || ''),
+      newtake: hits('.v2-newtake'), capture: hits('.v2-capture'), togHit: hits('.v2-viztog') });
+    if (h) h._sig = ''; window._v2.render(E); await wait(260);
+    card().classList.remove('collapsed'); await wait(180);
+    const o = { door: !!tog() };
+    o.shown = snap();
+    tog().click(); await wait(320);
+    o.hidden = snap();
+    // a card REBUILD must not lose it — the state is a module Map, and every
+    // commit on this card rebuilds
+    if (h) h._sig = ''; window._v2.render(E); await wait(260);
+    card().classList.remove('collapsed'); await wait(150);
+    o.rebuilt = snap();
+    card().querySelector('.v2-viztog').click(); await wait(320);
+    o.back = snap();
+    return o;
+  });
+  // THE CHROME SITS ABOVE THE PICTURE, IN ONE ROW (2026-09-13, user: "move all
+  // of these controls above the visualization… reduce white space and text,
+  // make buttons/dropdowns orderly and logically grouped"). It was FOUR stacked
+  // lines UNDERNEATH the drawing — nav, fold toggle, readout, then Mode · Grid ·
+  // form — measured 153px of chrome against a 79px canvas, nearly twice the
+  // picture. One wrapping row now, in a left-to-right progression: WHETHER you
+  // see it → WHICH picture → WHAT A TAP DOES → WHAT EDITS SNAP TO → WHERE YOU
+  // ARE LOOKING. The clause with teeth is the ORDER and the position: a control
+  // drifting back under the canvas is exactly what regresses quietly.
+  const vizHeadRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng;
+    const card = () => document.querySelector('.v2-layer');
+    const h = document.getElementById('bloom-v2-layers');
+    if (h) h._sig = ''; window._v2.render(E); await wait(260);
+    card().classList.remove('collapsed'); await wait(180);
+    const viz = card().querySelector('.v2-partviz');
+    const hd = viz.querySelector('.v2-vizhead');
+    const cv = viz.querySelector('.v2-vizcv');
+    const lab = viz.querySelector('.v2-vizlab');
+    const R = (e) => e ? e.getBoundingClientRect() : null;
+    const o = { head: !!hd, order: [...hd.children]
+      .map((e) => (e.className || e.tagName).toString().split(' ')
+        .filter((c) => c.indexOf('v2-') === 0 || c === 'ambient-regen')[0] || e.tagName) };
+    // ABOVE the picture, and so is the readout
+    o.headAboveCanvas = R(hd).bottom <= R(cv).top + 1;
+    o.labAboveCanvas = R(lab).bottom <= R(cv).top + 1;
+    // …and NOTHING that used to live under it is still under it
+    o.nothingBelow = ['.v2-vnav', '.v2-modesel', '.v2-gridsel', '.v2-formseg']
+      .every((sel) => { const e = viz.querySelector(sel);
+        return !e || R(e).top < R(cv).top + 1; });
+    o.headH = Math.round(R(hd).height);
+    o.chromeH = Math.round(R(hd).height + R(lab).height);
+    o.canvasH = Math.round(R(cv).height);
+    // the word labels are gone — the Mode option carries its own icon
+    o.noWordLabels = !/\bMode\b/.test(hd.textContent) && !/\bGrid\b/.test(hd.textContent);
+    // every control in the row is reachable and nothing spills
+    const ctl = [...hd.querySelectorAll('button,select')]
+      .filter((e) => getComputedStyle(e).display !== 'none');
+    o.shown = ctl.length;
+    o.bad = ctl.map((e) => { e.scrollIntoView({ block: 'center' });
+      const r = e.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) return 'zero';
+      const t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return (t === e || e.contains(t)) ? null : 'covered'; }).filter(Boolean);
+    const vr = R(viz);
+    o.spill = [...viz.querySelectorAll('*')].filter((e) => { const r = R(e);
+      return r.height > 0 && (r.right > vr.right + 1 || r.left < vr.left - 1); }).length;
+    return o;
+  });
+  ok('the drawing’s chrome is ONE row above the picture, in order, with no word labels',
+    vizHeadRun.head && vizHeadRun.headAboveCanvas && vizHeadRun.labAboveCanvas &&
+    vizHeadRun.nothingBelow &&
+    // whether → which → what a tap does → what edits snap to → where you look
+    JSON.stringify(vizHeadRun.order) ===
+      JSON.stringify(['v2-viztog', 'v2-formseg', 'v2-modesel', 'v2-gridsel', 'v2-vnav']) &&
+    vizHeadRun.noWordLabels &&
+    // it was 153px of chrome against a 79px canvas — a watchdog, not a target
+    vizHeadRun.chromeH < vizHeadRun.canvasH * 1.6 &&
+    vizHeadRun.shown >= 6 && vizHeadRun.bad.length === 0 && vizHeadRun.spill === 0,
+    JSON.stringify(vizHeadRun));
+
+  ok('the drawing folds away — the picture and its navigation go, the take bar and the readout stay',
+    vizFoldRun.door &&
+    // RESTATED: the face names the ACTION the press performs — Hide while the
+    // drawing is showing, Show while it is hidden. The card's usual rule (put
+    // the FEATURE'S name on the face) is deliberately carved out for a
+    // disclosure toggle attached to the thing it hides; what still has to hold
+    // is that the two states are DISTINGUISHABLE and each says what a press does.
+    /Hide/.test(vizFoldRun.shown.face) && /Show/.test(vizFoldRun.hidden.face) &&
+    vizFoldRun.shown.face !== vizFoldRun.hidden.face &&
+    // …and the title still names WHAT is shown, for the state where the face cannot
+    /drawing/i.test(vizFoldRun.shown.title) && /drawing/i.test(vizFoldRun.hidden.title) &&
+    // it actually saves the card's tallest block
+    vizFoldRun.hidden.vizH < vizFoldRun.shown.vizH * 0.6 &&
+    vizFoldRun.hidden.cardH < vizFoldRun.shown.cardH - 100 &&
+    // the picture and everything that only makes sense beside it
+    vizFoldRun.shown.canvas && !vizFoldRun.hidden.canvas &&
+    vizFoldRun.shown.nav && !vizFoldRun.hidden.nav &&
+    vizFoldRun.shown.mode && !vizFoldRun.hidden.mode &&
+    vizFoldRun.shown.grid && !vizFoldRun.hidden.grid &&
+    // …and NOT the four actions that live nowhere else, nor the one readout
+    // that says Static or Live
+    vizFoldRun.hidden.newtake === 'ok' && vizFoldRun.hidden.capture === 'ok' &&
+    vizFoldRun.hidden.togHit === 'ok' && vizFoldRun.hidden.readout &&
+    /^(Static|Live)/.test(vizFoldRun.hidden.tail) &&
+    // a hint may not name a surface that is off screen
+    /tap a/.test(vizFoldRun.shown.tail) && !/tap a/.test(vizFoldRun.hidden.tail) &&
+    // survives a rebuild, and comes back exactly
+    !vizFoldRun.rebuilt.canvas && vizFoldRun.rebuilt.cardH === vizFoldRun.hidden.cardH &&
+    vizFoldRun.back.canvas && vizFoldRun.back.cardH === vizFoldRun.shown.cardH,
+    JSON.stringify(vizFoldRun));
+
+  ok('a door inside ✦ Make reaches its surface — the menu paints over the section, the grid and the roll are not behind it',
+    secDoorRun.makeOpen && secDoorRun.doorInSec &&
+    secDoorRun.menuItems === 3 && secDoorRun.menuOnTop &&
+    secDoorRun.grid.session === 'v2:1' && secDoorRun.grid.secClosed &&
+    secDoorRun.grid.onBody && secDoorRun.grid.h > 200 &&
+    secDoorRun.grid.inBand && secDoorRun.grid.reach &&
+    secDoorRun.roll.secClosed && secDoorRun.roll.canvasHit,
+    JSON.stringify(secDoorRun));
   // A DERIVED PART NAME IS RECOMPUTED, NEVER REMEMBERED. A part picked from
   // the catalogue is named by its numerals, which is a DESCRIPTION of chords —
   // so the moment one is added or removed the stored string lies (reported: a
@@ -2450,7 +2926,7 @@ const ok = (name, cond, detail) => {
     const o = { present: !!card().querySelector('.v2-tform') };
     card().querySelector('.v2-tform').click(); await wait(300);
     const t1 = document.querySelector('.bloops-toast');
-    o.liveRefuses = !!t1 && /Lock this take/.test(t1.textContent) && !document.querySelector('.ctx-menu');
+    o.liveRefuses = !!t1 && /Write it down/.test(t1.textContent) && !document.querySelector('.ctx-menu');
     // a deterministic fixture — a random roll's durations make exactness hard
     // to read, and the transforms are EXACT (documented flake lesson)
     L().part.kind = 'recorded';
@@ -2528,7 +3004,7 @@ const ok = (name, cond, detail) => {
     if (h) h._sig = ''; window._v2.render(E); await wait(260);
     const card = document.querySelector('.v2-layer');
     card.classList.remove('collapsed');
-    card.querySelector('.v2-gototab[data-goto="Content"]').click(); await wait(320);
+    window.__sec('Time'); await wait(320);
     const bt = document.querySelector('.v2-pop-tabs [data-tab="Bars"]');
     if (bt) bt.click(); await wait(180);
     const badge = document.querySelector('.v2-pop-pane .ambient-loop-badge');
@@ -2637,18 +3113,23 @@ const ok = (name, cond, detail) => {
     // plus every gated row, and scrolling it is legitimate
     o.popFits = pr2.top >= 0 && pr2.bottom <= innerHeight + 1;
     o.cellOneLine = cells().every((c) => {
-      const cr = c.getBoundingClientRect(); if (cr.height > 60) return false;
-      const n = c.querySelector('.v2-gwcn'), b = c.querySelector('.ambient-step-btn');
-      if (!n || !b) return false;
-      const nr = n.getBoundingClientRect(), br = b.getBoundingClientRect();
-      // side by side: they overlap vertically and the button is to the right
-      return br.left >= nr.right - 1 && br.top < nr.bottom && nr.top < br.bottom;
+      const cr = c.getBoundingClientRect(); if (cr.height > 72) return false;
+      const n = c.querySelector('.v2-gwcn'), b = c.querySelector('.ambient-step-btn'),
+            v = c.querySelector('.ambient-step-inp');
+      if (!n || !b || !v) return false;
+      const nr = n.getBoundingClientRect(), br = b.getBoundingClientRect(),
+            vr = v.getBoundingClientRect();
+      // the name is READABLE (it collapsed to 0 when it shared the line)…
+      if (nr.width < 14 || !n.textContent.trim()) return false;
+      // …and the stepper is still the COMPACT one, ± beside the value
+      return br.height <= 40 && vr.left >= br.right - 1 &&
+             br.top < vr.bottom && vr.top < br.bottom;
     });
     o.cellH = Math.round(cells()[0].getBoundingClientRect().height);
     // the grid takes the row, with its label ABOVE it — it was stranded in the
     // 60px label gutter beside the cells
-    const gl = card().querySelector('.v2-gwper > label');
-    const gg = card().querySelector('.v2-gwpergrid');
+    const gl = card().querySelector('.v2-gwparts > label');
+    const gg = card().querySelector('.v2-gwpartshost');
     o.gridFullWidth = !!(gl && gg) &&
       gl.getBoundingClientRect().bottom <= gg.getBoundingClientRect().top + 1 &&
       gg.getBoundingClientRect().width > pr2.width * 0.8;
@@ -2672,13 +3153,13 @@ const ok = (name, cond, detail) => {
     // re-queries passes either way (the poison proved it).
     const up = cells()[1].querySelector('.ambient-step-up');
     up.click(); await wait(150); up.click(); await wait(250);
-    o.afterUp = JSON.stringify((L().part.ground || {}).per || null);
+    o.afterUp = JSON.stringify((L().part.ground || {}).chords || null);
     o.buttonSurvives = document.contains(up);
     const dn = cells()[1].querySelector('.ambient-step-dn');
     dn.click(); await wait(250);
-    o.stored = JSON.stringify((L().part.ground || {}).per || null);
+    o.stored = JSON.stringify((L().part.ground || {}).chords || null);
     // …and it can come DOWN, which is the whole complaint
-    o.goesDown = o.afterUp === '{"1":5}' && o.stored === '{"1":4}';
+    o.goesDown = o.afterUp === '{"1":{"voices":5}}' && o.stored === '{"1":{"voices":4}}';
     const g2 = grab();
     o.onlyThatChange = g2['2.00'].length === 4 && g2['0.00'].length === 3 && g2['4.00'].length === 3;
     o.cellMarked = cells()[1].classList.contains('own') && !cells()[0].classList.contains('own');
@@ -2758,12 +3239,327 @@ const ok = (name, cond, detail) => {
     // face is the Generated door's, naming the shape in force.
     gwRun.door && gwRun.onScreen && gwRun.rhythm === 'ground' && gwRun.mat === 'ground' &&
     gwRun.holds && gwRun.onsets === 4 && gwRun.onTheChanges && gwRun.inChord &&
-    gwRun.threeEach && gwRun.cells === 4 && gwRun.stored === '{"1":4}' &&
+    gwRun.threeEach && gwRun.cells === 4 && gwRun.stored === '{"1":{"voices":4}}' &&
     gwRun.onlyThatChange && gwRun.cellMarked && gwRun.slipSpreads && gwRun.slipPruned &&
     gwRun.noUseButton && gwRun.adoptedOnOpen && gwRun.hasSteppers && gwRun.goesDown &&
     gwRun.stableAcrossPreviews && gwRun.buttonSurvives && gwRun.doneKeeps &&
     gwRun.closed && /Groundwork/.test(gwRun.face),
     JSON.stringify(gwRun));
+
+  // ✨ AUTO — THE SHORT WAY IN (2026-09-14, user: "the Generated menu feels
+  // totally overloaded, let's sidestep it for now; create a new 'By Rule'
+  // option called 'Auto'"). Two presses, no knobs, applied to the SELECTED
+  // part: ▦ Chords fills every change, ♪ Melody is one voice over them.
+  const autoRun = await page.evaluate(async () => { try {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const c0 = E.getCfg();
+    const svProg = JSON.stringify(c0.prog || null), svPart = JSON.stringify(L().part);
+    const svKey = [c0.keyOn, c0.keyRoot, c0.keyScale, c0.keyFollow];
+    const svClk = [E._playStartAt, E._progAnchor, E._barGridAnchor];
+    const svOn = L().on, svPr = L().present, svFor = L().partFor;
+    const o = {};
+    // A CADENCE, so "fills the changes bars" is a claim with teeth: chord 1
+    // runs TWO bars and chord 2 one, inside a 3-bar part.
+    c0.prog = { on: true, name: 'P',
+      parts: [{ name: 'Verse', len: 2 }, { name: 'Chorus', len: 2 }],
+      chords: [{ root: 0, intervals: [0, 4, 7], bars: 2 }, { root: 5, intervals: [0, 4, 7] },
+               { root: 7, intervals: [0, 4, 7] }, { root: 9, intervals: [0, 3, 7] }] };
+    c0.keyOn = false; c0.keyFollow = false;
+    E.getCfg();
+    E._playStartAt = null; E._progAnchor = null; E._barGridAnchor = null;
+    L().on = true; L().present = true; L().part.kind = 'live';
+    delete L().part.mat; delete L().part.mem;
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers');
+    if (h) h._sig = ''; window._v2.render(E); await wait(260);
+    const card = () => document.querySelector('.v2-layer');
+    card().classList.remove('collapsed');
+    const svCf = window.confirm; window.confirm = () => true;
+    // THE ROW IS IN THE MAKE SECTION, so open it the way a finger does — a
+    // `querySelector` hit proves nothing and a 0x0 rect is the tell.
+    window.__sec('Make'); await wait(300);
+    // ── THE DOOR IS REACHABLE, and it is in the By rule group ─────────────
+    const door = () => card().querySelector('.v2-autobtn');
+    const dr = door() && door().getBoundingClientRect();
+    o.door = !!(door() && door().offsetParent && dr.width > 40 && dr.height > 20);
+    o.doorTxt = door() ? door().textContent : '';
+    // the two doors sit in ONE group, and the group is labelled "By rule"
+    const grp = door() && door().closest('.v2-matgrp');
+    o.sameGroup = !!(grp && grp.querySelector('.v2-genbtn'));
+    o.grpLab = grp ? (grp.querySelector('.v2-matlab') || {}).textContent : '';
+    // A DOOR IS AN ACTION, NOT A STATUS. Both doors lighting for one part is
+    // the mode-or-status rule broken, so ⚙ Generated keeps the light and this
+    // one never takes it — asserted AFTER a build below, where it would.
+    const wrap = () => card().querySelector('.v2-autowrap');
+    o.shutRect = Math.round(wrap().getBoundingClientRect().width);
+    door().click(); await wait(300);
+    o.openRect = Math.round(wrap().getBoundingClientRect().width);
+    o.opened = o.shutRect === 0 && o.openRect > 100;
+    // ── IT SAYS WHICH PART IT WILL WRITE ─────────────────────────────────
+    // "applies to the currently selected part" is only true if the panel
+    // names it — a stopped clock resolves to part 0 (the documented trap).
+    o.says = (card().querySelector('.v2-autosays') || {}).textContent || '';
+    o.namesPart = /Verse/.test(o.says) && /3 bar/.test(o.says) && /2 change/.test(o.says);
+    const picks = () => [...card().querySelectorAll('.v2-autopick')];
+    o.picks = picks().map((b) => b.getAttribute('data-auto')).join(',');
+    o.pickRects = picks().map((b) => Math.round(b.getBoundingClientRect().width));
+    o.bothOnScreen = picks().length === 2 && o.pickRects.every((w) => w > 60);
+    const notes = () => window._v2.takeNotesNow(E, L()) || [];
+    const onsets = () => [...new Set(notes().map((n) => Math.round(n.t * 1000) / 1000))].sort((a, b) => a - b);
+    const poly = () => {
+      const m = {}; notes().forEach((n) => { const k = Math.round(n.t * 1000); m[k] = (m[k] || 0) + 1; });
+      const v = Object.keys(m).map((k) => m[k]); return v.length ? Math.max.apply(null, v) : 0;
+    };
+    // ── ▦ CHORDS FILLS THE CHANGES, CADENCE AND ALL ──────────────────────
+    picks()[0].click(); await wait(340);
+    o.chordMat = L().part.mat;
+    o.chordBars = L().part.bars;
+    o.chordOnsets = onsets().join(',');
+    o.chordPoly = poly();
+    // ONE onset per change and NOT one per bar: the part is 3 bars and the
+    // first chord holds two of them, so a uniform lattice would put a note at
+    // 1/3 as well. The cadence is what says 0 and 2/3.
+    o.fillsCadence = o.chordOnsets === '0,0.667' && o.chordBars === 3 && o.chordPoly === 3;
+    // …and each note HOLDS to the next change rather than being a stab
+    o.chordHolds = (L().part.shape || {}).lenRatio === 100;
+    // THE SAME MATERIAL, NOT A SECOND ONE WEARING A NEW WORD. ▦ Chords is
+    // ⛰ Groundwork, and every surface has to keep saying so.
+    o.chordIsGround = L().part.mat === 'ground' &&
+      /Groundwork/.test((card().querySelector('.v2-genface') || {}).textContent || '');
+    // the DOOR still does not light; ⚙ Generated does
+    o.doorDark = !door().classList.contains('on') &&
+                 card().querySelector('.v2-genbtn').classList.contains('on');
+    // …and INSIDE the panel it says which one is in force, which is a status
+    // that is unambiguous there
+    o.litChords = picks().map((b) => b.getAttribute('data-auto') + ':' + b.classList.contains('on')).join(' ');
+    // THE PANEL STAYS OPEN — two choices is a comparison, and shutting it on
+    // the first press means going back in to hear the other one.
+    o.stayedOpen = card().classList.contains('v2-autoopen');
+    // ── ♪ MELODY IS ONE VOICE ────────────────────────────────────────────
+    picks()[1].click(); await wait(340);
+    o.melMat = L().part.mat;
+    o.melPoly = poly();
+    o.melN = notes().length;
+    o.melVoices = (L().part.pitch || {}).voices;
+    o.melLines = (L().part.pitch || {}).lines;
+    o.singleVoice = o.melMat === 'melody' && o.melPoly === 1 && o.melN > 1 &&
+                    o.melVoices === 1 && !(o.melLines > 1);
+    // …on a grid the BARS DIVIDE, or a note can never land on a bar line (the
+    // documented roll bug). 3 bars → 12 steps, so every onset is a 12th.
+    o.melSteps = (L().part.rhythm || {}).steps;
+    o.onGrid = o.melSteps % Math.max(1, Math.round(L().part.bars)) === 0;
+    // IT IS NAMED EVERYWHERE, or a material with no chip renders blank
+    o.melFace = (card().querySelector('.v2-genface') || {}).textContent || '';
+    o.prov = (card().querySelector('.v2-notecount') || {}).textContent || '';
+    // …and it must NOT borrow the Roll's words: they are the same SHAPE and
+    // differ only by the stamp, so one line saying both is two names for one
+    // state (the divergent-label rule).
+    o.namedOnce = /Melody/.test(o.melFace) && /Melody/.test(o.prov) &&
+                  !/run of single notes/.test(o.prov) && !/Roll/.test(o.prov);
+    // A ROLL KEEPS ITS OWN WORDS — the phrase keys on the stamp, and keying it
+    // on the shape renamed every Roll ever made (caught here).
+    window._v2.rollRun(E, L()); E.getCfg();
+    if (h) h._sig = ''; window._v2.render(E); await wait(240);
+    document.querySelector('.v2-layer').classList.remove('collapsed');
+    o.rollProv = (card().querySelector('.v2-notecount') || {}).textContent || '';
+    o.rollKeepsWords = /Roll/.test(o.rollProv) && !/single voice, moving/.test(o.rollProv);
+    // ── PRESSING THE LIT ONE ADOPTS, it does not re-make ─────────────────
+    door().click(); await wait(300);
+    picks()[1].click(); await wait(340);         // back to Melody
+    const sig0 = JSON.stringify([L().part.rhythm, L().part.pitch, L().part.bars]);
+    picks()[1].click(); await wait(340);         // …and again
+    o.adoptKeeps = JSON.stringify([L().part.rhythm, L().part.pitch, L().part.bars]) === sig0;
+    // ── CLOSE ────────────────────────────────────────────────────────────
+    const x = card().querySelector('.v2-autox'); if (x) x.click();
+    await wait(260);
+    o.closed = !card().classList.contains('v2-autoopen') &&
+               Math.round(wrap().getBoundingClientRect().width) === 0;
+    // …and the Generated door still opens ITS panel, not this one — the two
+    // popovers share no class name (the duplicate-class trap, pre-armed).
+    card().querySelector('.v2-genbtn').click(); await wait(280);
+    o.exclusive = card().classList.contains('v2-genopen') && !card().classList.contains('v2-autoopen');
+    const gx = card().querySelector('.v2-genclose'); if (gx) gx.click();
+    await wait(200);
+    try { window.__toContent(); } catch (e) {}    // …and put the section sheet back
+    await wait(200);
+    window.confirm = svCf;
+    try {
+      const c9 = E.getCfg();
+      if (svProg === 'null') delete c9.prog; else c9.prog = JSON.parse(svProg);
+      c9.keyOn = svKey[0]; c9.keyRoot = svKey[1]; c9.keyScale = svKey[2]; c9.keyFollow = svKey[3];
+      L().part = JSON.parse(svPart); L().on = svOn; L().present = svPr;
+      if (Number.isFinite(svFor)) L().partFor = svFor; else delete L().partFor;
+      E.getCfg();
+      E._playStartAt = svClk[0]; E._progAnchor = svClk[1]; E._barGridAnchor = svClk[2];
+      if (h) h._sig = ''; window._v2.render(E); await wait(200);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) {}
+    return o;
+  } catch (e) { return { err: String(e && e.message) }; }
+  });
+  ok('✨ Auto is a reachable By-rule door — two presses, no knobs, and it names the part it writes',
+    autoRun.door && /Auto/.test(autoRun.doorTxt || '') && autoRun.sameGroup &&
+    /By rule/i.test(autoRun.grpLab || '') && autoRun.opened && autoRun.namesPart &&
+    autoRun.picks === 'chords,melody' && autoRun.bothOnScreen &&
+    autoRun.stayedOpen && autoRun.closed && autoRun.exclusive,
+    JSON.stringify(autoRun));
+  ok('✨ Auto ▸ Chords fills every change at its own cadence, and it IS ⛰ Groundwork — one state, one word',
+    autoRun.fillsCadence && autoRun.chordHolds && autoRun.chordIsGround &&
+    autoRun.doorDark && autoRun.litChords === 'chords:true melody:false',
+    JSON.stringify(autoRun));
+  ok('✨ Auto ▸ Melody is ONE voice on a grid the bars divide, named everywhere, and a Roll keeps its own words',
+    autoRun.singleVoice && autoRun.onGrid && autoRun.namedOnce &&
+    autoRun.rollKeepsWords && autoRun.adoptKeeps,
+    JSON.stringify(autoRun));
+
+  // ⛰ GROUNDWORK IS FILED BY PART NOW, and a change can carry a LINE over it.
+  // The panel was a flat strip of chord cells — on a chained progression that
+  // is a row of names with nothing saying where one part ends and the next
+  // begins ("it needs to be clearer which part is which"). Each PART is its
+  // own block holding GLOBAL (that part speaking for all of its changes) and
+  // the changes themselves, each of which may override it. The ladder is the
+  // one this file uses everywhere: chord → part → layer, absent = inherit.
+  const gwPartsRun = await page.evaluate(async () => { try {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const c0 = E.getCfg();
+    const svProg = JSON.stringify(c0.prog || null), svPart = JSON.stringify(L().part);
+    const svKey = [c0.keyOn, c0.keyRoot, c0.keyScale, c0.keyFollow];
+    const svClk = [E._playStartAt, E._progAnchor, E._barGridAnchor];
+    const svOn = L().on, svPr = L().present;
+    const o = {};
+    // TWO PARTS over five changes — the shape the report is about. One part
+    // cannot tell a part-scoped setting from a layer-scoped one.
+    c0.prog = { on: true, name: 'P',
+      parts: [{ name: 'Verse', len: 2 }, { name: 'Chorus', len: 3 }],
+      chords: [{ root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] },
+               { root: 7, intervals: [0, 4, 7] }, { root: 9, intervals: [0, 3, 7] },
+               { root: 2, intervals: [0, 3, 7] }] };
+    c0.keyOn = false; c0.keyFollow = false;
+    E.getCfg();
+    E._playStartAt = null; E._progAnchor = null; E._barGridAnchor = null;
+    const Lp = L();
+    Lp.on = true; Lp.present = true; Lp.part.kind = 'live'; Lp.part.bars = 5;
+    Lp.part.rhythm = { kind: 'ground', steps: 8, n: 1 };
+    Lp.part.pitch = Object.assign({}, Lp.part.pitch, { kind: 'chord', voices: 3 });
+    delete Lp.part.ground;
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers');
+    if (h) h._sig = ''; window._v2.render(E); await wait(260);
+    const card = () => document.querySelector('.v2-layer');
+    card().classList.remove('collapsed');
+    // the panel lives behind ⚙ Generated, and pressing it ADOPTS the shape
+    const svCf = window.confirm; window.confirm = () => true;
+    const gb = card().querySelector('.v2-genbtn'); if (gb) gb.click();
+    await wait(300);
+    const notes = () => (window._v2.takeNotesNow(E, L()) || []).length;
+    const stored = () => JSON.stringify(L().part.ground || null);
+    const blocks = () => [...document.querySelectorAll('.v2-layer .v2-gwpart')];
+    const cellOf = (ci) => document.querySelector('.v2-layer .v2-gwcell[data-gwci="' + ci + '"]');
+    o.blocks = blocks().length;
+    o.names = blocks().map((b) => (b.querySelector('.v2-gwpname') || {}).textContent || '');
+    // each block holds only ITS OWN changes — that is the whole report
+    o.perBlockCells = blocks().map((b) => [...b.querySelectorAll('.v2-gwcell')].map((c) => c.dataset.gwci).join(','));
+    o.split = o.perBlockCells.join(' | ') === '0,1 | 2,3,4';
+    // GLOBAL — one row per part, the three things a part says for all of it
+    o.globLabs = blocks().map((b) => [...b.querySelectorAll('.v2-gwglob .v2-mini-lab')].map((x) => x.textContent).join('/'));
+    o.hasGlobal = o.globLabs.every((x) => x === 'Notes/Hold %/Slip');
+    o.hasLineBtn = blocks().every((b) => !!b.querySelector('.v2-gwpmel'));
+    // …and the head SAYS what it is set to, so a block can never hide its state
+    o.sum0 = (blocks()[0].querySelector('.v2-gwpsum') || {}).textContent;
+    o.n0 = notes();
+    // A PART SETTING REACHES EVERY CHANGE IN IT AND NO OTHER. Verse → 1 note
+    // each leaves the Chorus at three: 2x1 + 3x3 = 11 where it was 5x3 = 15.
+    const gUp = blocks()[0].querySelector('.v2-gwglob .ambient-step-dn');
+    gUp.click(); await wait(140); gUp.click(); await wait(260);
+    o.partStored = stored();
+    o.nPart = notes();
+    o.partScoped = o.n0 === 15 && o.nPart === 11;
+    // THE BUTTON SURVIVES ITS OWN COMMIT — the panel's sync must not rewrite
+    // the block under the finger (two taps moving the number by one is the
+    // documented re-render-under-the-finger trap, and this panel had it).
+    o.globSurvives = document.contains(gUp);
+    // A CHANGE OUTRANKS ITS PART: chord 0 back to three inside a part set to one
+    const cu = cellOf(0).querySelector('.ambient-step-up');
+    cu.click(); await wait(140); cu.click(); await wait(260);
+    o.chordStored = stored();
+    o.nChord = notes();
+    o.chordOutranksPart = o.nChord === 13 && /"chords":\{"0":\{"voices":3\}\}/.test(o.chordStored);
+    o.cellMarked = cellOf(0).classList.contains('own') && !cellOf(1).classList.contains('own');
+    // ── A LINE OVER THE CHORD ────────────────────────────────────────────
+    // The chord SUSTAINS and a separate voice moves over it — a real second
+    // pass, not a re-voicing. 3 changes in the Chorus x 4 notes = 12 more.
+    const lb = blocks()[1].querySelector('.v2-gwpmel');
+    lb.click(); await wait(320);
+    o.melStored = stored();
+    o.nMel = notes();
+    o.lineAdds = o.nMel === o.nChord + 12;
+    o.melRow = !!document.querySelector('.v2-layer .v2-gwpart[data-gwpi="1"] .v2-gwmelrow');
+    o.melSays = /line/.test((blocks()[1].querySelector('.v2-gwpsum') || {}).textContent || '');
+    // …and the chord still sounds underneath it — the line is ADDED, never
+    // substituted, which is what separates this from a per-change pitch rule.
+    const nn = window._v2.takeNotesNow(E, L()) || [];
+    o.chordHeld = nn.filter((n) => Math.abs(n.t - 0.4) < 0.001).length >= 1;
+    // THE LINE'S OWN SETTINGS, and they are only offered once it is on
+    o.melLabs = [...document.querySelectorAll('.v2-layer .v2-gwmelrow .v2-mini-lab')].map((x) => x.textContent).join('/');
+    o.melKind = !!document.querySelector('.v2-layer .v2-gwmelrow .v2-gwkind select');
+    // A CHANGE'S LINE BUTTON IS THREE-STATE, because absent and off are
+    // different answers — and the FIRST tap always changes what you hear, so
+    // on a part that already gives a line it means "not this one".
+    const mb = () => cellOf(3).querySelector('.v2-gwmel');
+    o.st0 = mb().dataset.gwmel;
+    mb().click(); await wait(300);
+    o.st1 = mb().dataset.gwmel; o.n1 = notes(); o.stored1 = stored();
+    mb().click(); await wait(300);
+    o.st2 = mb().dataset.gwmel;
+    mb().click(); await wait(300);
+    o.st3 = mb().dataset.gwmel; o.stored3 = stored();
+    o.triState = o.st0 === 'inherit' && o.st1 === 'off' && o.st2 === 'on' && o.st3 === 'inherit' &&
+                 o.n1 === o.nMel - 4 &&                     // the first tap silences THAT line
+                 /"mel":\{"on":0\}/.test(o.stored1) &&      // …stored, because off ≠ absent
+                 !/"3"/.test(o.stored3);                    // …and back to absent
+    // A CHANGE CAN CARRY A LINE ITS PART DOES NOT GIVE IT
+    const mb0 = () => cellOf(0).querySelector('.v2-gwmel');
+    mb0().click(); await wait(300);
+    o.ownLine = notes() === o.nMel + 4 && /"0":\{[^}]*"mel":\{"on":1\}/.test(stored());
+    // NOTHING STORED = NOTHING CHANGED. A layer that has set nothing must
+    // carry no field at all, or every older project gains one on load.
+    delete L().part.ground; E.getCfg();
+    o.absentByDefault = stored() === 'null' && notes() === 15;
+    // the legacy flat map IS a chord-scoped note count, and is migrated rather
+    // than kept as a third parallel store
+    L().part.ground = { per: { '1': 0, '4': 5 } }; E.getCfg();
+    o.migrated = stored();
+    o.migrates = o.migrated === '{"chords":{"1":{"voices":0},"4":{"voices":5}}}';
+    const gp = card().querySelector('.v2-genclose'); if (gp) gp.click();
+    await wait(200);
+    window.confirm = svCf;
+    try {
+      const c9 = E.getCfg();
+      if (svProg === 'null') delete c9.prog; else c9.prog = JSON.parse(svProg);
+      c9.keyOn = svKey[0]; c9.keyRoot = svKey[1]; c9.keyScale = svKey[2]; c9.keyFollow = svKey[3];
+      L().part = JSON.parse(svPart); L().on = svOn; L().present = svPr; E.getCfg();
+      E._playStartAt = svClk[0]; E._progAnchor = svClk[1]; E._barGridAnchor = svClk[2];
+      if (h) h._sig = ''; window._v2.render(E); await wait(200);
+      document.querySelector('.v2-layer').classList.remove('collapsed');
+    } catch (e) {}
+    return o;
+  } catch (e) { return { err: String(e && e.message) }; }
+  });
+  ok('⛰ Groundwork is filed by PART — global, then per change, and a change may carry a line',
+    gwPartsRun.blocks === 2 && gwPartsRun.split && gwPartsRun.hasGlobal &&
+    gwPartsRun.hasLineBtn && /Verse/.test(gwPartsRun.names[0]) && /Chorus/.test(gwPartsRun.names[1]) &&
+    /3 notes/.test(gwPartsRun.sum0 || '') &&
+    gwPartsRun.partScoped && gwPartsRun.globSurvives &&
+    gwPartsRun.chordOutranksPart && gwPartsRun.cellMarked &&
+    gwPartsRun.absentByDefault && gwPartsRun.migrates,
+    JSON.stringify(gwPartsRun));
+  ok('⛰ …and the line is a SECOND voice over the held chord, off by default, three-state per change',
+    gwPartsRun.lineAdds && gwPartsRun.melRow && gwPartsRun.melSays && gwPartsRun.chordHeld &&
+    gwPartsRun.melKind && gwPartsRun.melLabs === 'Notes/Moves/Octave/Length %/Level' &&
+    gwPartsRun.triState && gwPartsRun.ownLine,
+    JSON.stringify(gwPartsRun));
 
   // "NOTES ARE FLASHING" (2026-09-09): a per-part window's edges come out of a
   // BISECTION and carry ~10ms of float noise per query, so the rAF's
@@ -3308,7 +4104,7 @@ const ok = (name, cond, detail) => {
 
   ok('⛰ the Groundwork rows are legible in the Generated panel — one-line cells, grid full-width',
     gwRun.cellOneLine && gwRun.popFits && gwRun.gridFullWidth && gwRun.onePara &&
-    gwRun.cellH <= 60,
+    gwRun.cellH <= 72,
     JSON.stringify({ popH: gwRun.popH, cellH: gwRun.cellH, popFits: gwRun.popFits,
       cellOneLine: gwRun.cellOneLine, gridFullWidth: gwRun.gridFullWidth,
       onePara: gwRun.onePara }));
@@ -3845,20 +4641,22 @@ const ok = (name, cond, detail) => {
       // Material must still name where it went.
       const c2 = document.querySelector('.v2-layer');
       c2.classList.remove('collapsed');
-      const gM = [...c2.querySelectorAll('.v2-gototab')]
-        .find((x) => x.getAttribute('data-goto') === 'Content');
-      if (gM) { gM.click(); await wait(280); }
+      window.__sec('Make'); await wait(280);
       const mt = [...c2.querySelectorAll('.v2-pop-tabs [data-tab]')]
         .find((x) => x.getAttribute('data-tab') === 'Material');
       if (mt) { mt.click(); await wait(240); }
-      const sign = c2.querySelector('.v2-varysign');
+      // RESTATED 2026-09-13: the signpost was a LABELLED ROW with no control
+      // — 51px of a 228px tab, two lines of prose — and it is a trailing
+      // clause on the material line now ("this popover feels noisy and overly
+      // complicated"). Same contract, read where it lives: Material still
+      // names where the dice went, exactly once.
+      const sign = c2.querySelector('.v2-notecount');
       o.signVis = !!sign && sign.getBoundingClientRect().height > 0;
       o.signNames = !!sign && /Every pass/.test(sign.textContent || '');
-      o.signNotADupe = c2.querySelectorAll('.v2-varytoggle').length === 1;
+      o.signNotADupe = c2.querySelectorAll('.v2-varytoggle').length === 1 &&
+        !c2.querySelector('.v2-varysign');
 
-      const g2 = [...c2.querySelectorAll('.v2-gototab')]
-        .find((x) => x.getAttribute('data-goto') === 'Shape');
-      if (g2) { g2.click(); await wait(280); }
+      window.__sec('Shape'); await wait(280);
       const et = [...c2.querySelectorAll('.v2-pop-tabs [data-tab]')]
         .find((x) => x.getAttribute('data-tab') === 'Every pass');
       if (et) { et.click(); await wait(240); }
@@ -3896,9 +4694,18 @@ const ok = (name, cond, detail) => {
     o.saysExact = /plays these notes|Plays exactly these notes/.test(o.locked);
     // …and never both at once
     o.notBoth = !(/Re-rolled/.test(o.locked) && /Plays exactly/.test(o.locked));
+    // THE LINE STATES THE MATERIAL; THE HEAD STATES THE SIZE. It used to end
+    // "over N bars" while the section head four pixels above already read
+    // `15 notes · 6 bars` — bars twice in one open popover, three times with
+    // the drawing's readout. Restated onto the stronger claim: the parameters
+    // are there AND the length is not said twice.
     o.saysCounts = /5 hits/.test(o.roll) && /over 8 steps/.test(o.roll) &&
-      /over 4 bars/.test(o.roll);
-    o.saysPitch = /wandering up to 3 notes/.test(o.roll) && /3 notes of the chord/.test(o.pad) &&
+      !/over 4 bars/.test(o.roll) && !/\d+ notes?$/.test(o.locked || '');
+    // …and the PITCH clause must not restate the shape phrase either: a pad
+    // read "one held chord of 3 notes — one onset, held, 3 notes of the chord",
+    // the same fact three times. The count is said once, by the shape.
+    o.saysPitch = /wandering up to 3 notes/.test(o.roll) &&
+      /one held chord of 3 notes/.test(o.pad) && !/3 notes of the chord/.test(o.pad) &&
       /sweeping the chord up/.test(o.arp);
     // THE SHAPE PHRASE — what KIND of content this is, which is the question
     // ("is Roll a run of notes? a sustained chord? several chords?"). The
@@ -3908,7 +4715,7 @@ const ok = (name, cond, detail) => {
       /the chord, one note at a time/.test(o.arp);
     // the long form must WRAP inside the sheet, never clip (UI rule 2)
     const card = document.querySelector('.v2-layer');
-    card.querySelector('.v2-gototab[data-goto="Content"]').click(); await wait(320);
+    window.__sec('Make'); await wait(320);
     const el = document.querySelector('.v2-pop-pane .v2-notecount') ||
                document.querySelector('.v2-notecount');
     if (el) {
@@ -3940,14 +4747,21 @@ const ok = (name, cond, detail) => {
       o.subs.every((x) => x.sub.length > 3 && x.vis && !x.clipped);
     const gc3 = document.querySelector('.v2-layer .v2-shapepop .v2-genclose'); if (gc3) gc3.click();
     await wait(200);
-    const ml = document.querySelector('.v2-matmodel');
-    // RESTATED 2026-09-10: the sentence used to set the two doors AGAINST each
-    // other ("GENERATED — re-made every cycle" vs "WRITTEN — a fixed list"),
-    // and its first half was measurably untrue. It states the unified model
-    // now: both make STATIC CONTENT, and LIVE is something you turn on. Same
-    // contract — the model is stated, once, visibly.
-    o.modelStated = !!ml && /STATIC CONTENT/.test(ml.textContent) &&
-      /LIVE/.test(ml.textContent) && ml.getBoundingClientRect().height > 0;
+    // THE MODEL IS STATED BY CONTROLS, NOT A PARAGRAPH (restated 2026-09-13).
+    // It was a static 73px block — a THIRD of the tab, on every visit forever
+    // — and a static block is always the first suspect: it never changes and
+    // never responds. Every fact in it is carried by something that DOES, so
+    // the claim is now that those surfaces exist: the two LABELLED doors state
+    // the two ways, and STATIC/LIVE is the FIRST TOKEN of the drawing's own
+    // readout, per layer and live. Strictly stronger — a paragraph can say
+    // "it becomes LIVE when…" while the card never shows which this one is.
+    const cardM = document.querySelector('.v2-layer');
+    const labs2 = [...cardM.querySelectorAll('.v2-notesrow .v2-matlab')]
+      .filter((e) => e.getBoundingClientRect().height > 0).map((e) => e.textContent.trim());
+    const vl = cardM.querySelector('.v2-vizlab');
+    o.modelStated = !document.querySelector('.v2-matmodel') &&
+      labs2.length === 2 && /hand/i.test(labs2[0]) && /rule/i.test(labs2[1]) &&
+      !!vl && /^(Static|Live)\b/.test((vl.textContent || '').trim());
     await wait(180);
     try {
       L().part = JSON.parse(sv); E.getCfg();
@@ -4065,7 +4879,7 @@ const ok = (name, cond, detail) => {
     window._v2.render(E); await wait(280);
     const card = document.querySelector('.v2-layer');
     card.classList.remove('collapsed');
-    const gt = card.querySelector('.v2-gototab[data-goto="Content"]');
+    const gt = (window.__toContent(), null);
     if (gt) gt.click(); await wait(340);
     const pop = document.querySelector('.v2-pop');
     const wrap = document.querySelector('.v2-pop-wrap');
@@ -4630,7 +5444,7 @@ const ok = (name, cond, detail) => {
     if (h) h._sig = ''; window._v2.render(E); await wait(250);
     const card = document.querySelector('.v2-layer');
     card.classList.remove('collapsed');
-    card.querySelector('.v2-gototab[data-goto="Content"]').click(); await wait(300);
+    window.__toContent(); await wait(300);
     const o = { openedFromSheet: !!document.querySelector('.v2-pop-wrap .v2-tform') };
     const tf = document.querySelector('.v2-pop-wrap .v2-tform') || document.querySelector('.v2-tform');
     if (tf) tf.click();
@@ -4686,10 +5500,10 @@ const ok = (name, cond, detail) => {
   // `series` was the FIELD VALUE leaking into the hint; the sentence says what
   // it does instead, which is the same claim made readable.
   ok('a part with NO provenance stamp still lights the material its rules ARE',
-    /Roll/.test(inferRun.legacy.on) && /Roll · WRITTEN DOWN/.test(inferRun.legacy.hint) &&
+    /Roll/.test(inferRun.legacy.on) && /Roll · WRITTEN/.test(inferRun.legacy.hint) &&
     /Arpeggio/.test(inferRun.hand.on) && /one note at a time|sweeping the chord/.test(inferRun.hand.hint) &&
     inferRun.lockMark === 'none' && inferRun.liveMark === 'none' &&
-    /Unlock/.test(inferRun.lockCap) && /Lock this take/.test(inferRun.liveCap),
+    /Generate instead/.test(inferRun.lockCap) && /Write it down/.test(inferRun.liveCap),
     JSON.stringify(inferRun).slice(0, 240));
 
   // ONE AXIS, ONE PAIR OF WORDS, ONE CONTROL. The card said the same thing
@@ -4697,9 +5511,18 @@ const ok = (name, cond, detail) => {
   // "Generated / Fixed", and "Written / Generated" over the Material clusters
   // — so "Generated" named both a cluster and a state and "Fixed"/"Written"
   // named one state twice ("the nature of the Material still feels opaque").
-  // A part is GENERATED or WRITTEN; 🔒 Lock is the transition; the Source
-  // select is gone (it was the destructive door — it wrote the field and
-  // captured nothing, so a generating part became an EMPTY written one).
+  // A part is GENERATED or WRITTEN, and the take bar's second button is the
+  // transition; the Source select is gone (it was the destructive door — it
+  // wrote the field and captured nothing, so a generating part became an
+  // EMPTY written one).
+  // THIS CHECK'S OWN NAME WAS THE TELL (2026-09-13): it claimed "one pair of
+  // words" while asserting a SECOND pair — the faces said Lock/Unlock for the
+  // very axis the hints called WRITTEN/GENERATED. The transition names its
+  // destination in the axis's own words now, and the clause with teeth is the
+  // ABSENCE: no visible text on the card may say Lock or Unlock, because "we
+  // stopped saying it two ways" is exactly the claim that regresses quietly.
+  // (The padlock is not free to reuse either — v1's Bar Lock and Area Write
+  // both mean "freeze a loop and repeat it verbatim" in this same panel.)
   const vocab = await page.evaluate(async () => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
@@ -4717,7 +5540,9 @@ const ok = (name, cond, detail) => {
     // WRITTEN, from a rolled take
     window._v2.capture(E, L()); E.getCfg(); await show();
     o.lockHint = hint(); o.lockCap = cap();
-    // WRITTEN, by hand — the button names the way back in ITS words
+    // WRITTEN, by hand — ONE face for both written cases: `made` used to
+    // split them ("Unlock" a rolled take, "Generate instead" notes you drew),
+    // which is a distinction the new wording does not need to make.
     L().part.made = 'compose'; E.getCfg(); await show();
     o.handHint = hint(); o.handCap = cap();
     // ONE CONTROL for the axis: the select is gone
@@ -4729,16 +5554,95 @@ const ok = (name, cond, detail) => {
       if (el.getBoundingClientRect().height > 0) vis.push(el.textContent);
     });
     o.saysFixed = vis.filter((t) => /\bFixed\b/.test(t)).length;
+    // …and NOTHING visible names the axis in the other language. Titles count:
+    // a tooltip is where the second vocabulary hid longest.
+    const lk = /\b(Lock|Unlock|Locked|Unlocked)\b/;
+    o.saysLock = vis.filter((t) => lk.test(t)).length;
+    o.lockTitles = [...card().querySelectorAll('[title]')]
+      .filter((el) => el.getBoundingClientRect().height > 0 && lk.test(el.title))
+      .map((el) => el.title.slice(0, 60));
     try { L().part = JSON.parse(svPart); E.getCfg(); await show(); } catch (e) {}
     return o;
   });
-  ok('a part is GENERATED or WRITTEN — one pair of words, and 🔒 Lock is the only door between them',
+  ok('a part is GENERATED or WRITTEN — ONE pair of words, and the take bar is the only door between them',
     vocab.selects === 0 && vocab.saysFixed === 0 &&
     /GENERATED/.test(vocab.liveHint) && /WRITTEN/.test(vocab.lockHint) &&
     /WRITTEN/.test(vocab.handHint) &&
-    /Lock this take/.test(vocab.liveCap) && /Unlock/.test(vocab.lockCap) &&
-    /Generate instead/.test(vocab.handCap),
-    JSON.stringify(vocab).slice(0, 300));
+    // the transition names its DESTINATION, in the same two words as the state
+    /Write it down/.test(vocab.liveCap) && /Generate instead/.test(vocab.lockCap) &&
+    vocab.handCap === vocab.lockCap &&
+    // …and there is no second vocabulary anywhere on the card, titles included
+    vocab.saysLock === 0 && vocab.lockTitles.length === 0,
+    JSON.stringify(vocab).slice(0, 360));
+
+  // THE MATERIAL TAB IS TWO DOORS AND A LINE — NOT A READING (2026-09-13,
+  // user: "this popover feels noisy and overly complicated"). Measured at
+  // 390px before the cut: the tab was 228px of which 150px (66%) was TEXT,
+  // against two buttons — a static 73px model paragraph, a 51px LABELLED ROW
+  // carrying a dice signpost and NO control, and a 26px provenance line that
+  // ended by repeating the note count and bar count the section head states
+  // four pixels above it. Three facts, each said two or three times.
+  // The clauses with teeth are the ones that regress quietly: a pure-prose row
+  // creeping back, and the head's own summary being echoed in the line.
+  const noiseRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const sv = JSON.stringify(L().part);
+    const card = () => document.querySelector('.v2-layer');
+    // a GENERATED part — the state that carries the most text
+    L().part.kind = 'live'; L().part.mat = 'roll';
+    L().part.rhythm = { kind: 'euclid', steps: 8, pulses: 5, rotate: 2 };
+    L().part.pitch = { kind: 'walk', span: 3 }; L().part.bars = 4; E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E); await wait(260);
+    card().classList.remove('collapsed');
+    window.__sec('Make'); await wait(320);
+    const mt = [...card().querySelectorAll('.v2-pop-tabs [data-tab]')]
+      .find((x) => x.getAttribute('data-tab') === 'Material');
+    if (mt) { mt.click(); await wait(240); }
+    const pane = card().querySelector('.v2-secpop-pane') || card().querySelector('.v2-pop-pane');
+    const body = (pane && pane.querySelector('.ambient-grp-body')) || pane;
+    const H = (el) => (el ? Math.round(el.getBoundingClientRect().height) : 0);
+    const rows = [...body.children].filter((el) => H(el) > 0).map((el) => ({
+      h: H(el), ctrls: el.querySelectorAll('button,select,input,canvas').length,
+      lab: ((el.querySelector(':scope > label') || {}).textContent || '').trim(),
+    }));
+    const o = { rows, tabH: rows.reduce((a, r) => a + r.h, 0) };
+    // EVERY block in the tab must DO something — a labelled row of prose with
+    // no control is a reading, not a control surface
+    o.allActed = rows.length > 0 && rows.every((r) => r.ctrls > 0);
+    o.noParagraph = !card().querySelector('.v2-matmodel') && !card().querySelector('.v2-varysign');
+    const nc = card().querySelector('.v2-notecount');
+    o.line = nc ? (nc.textContent || '').trim() : '';
+    o.textH = H(nc);
+    o.doors = card().querySelectorAll('.v2-notesrow .ambient-seg').length;
+    // THE HEAD STATES THE SIZE, THE LINE STATES THE MATERIAL. Both visible at
+    // once while this tab is open, so neither may say the other's fact.
+    const hd = [...card().querySelectorAll('.v2-secpop-head *')]
+      .filter((e) => !e.children.length && (e.textContent || '').trim() && H(e) > 0)
+      .map((e) => e.textContent.trim()).join(' | ');
+    o.head = hd;
+    o.headSizes = /\bbars?\b/.test(hd);
+    // the two EXACT forms that were duplicated — the line's old length tail
+    // ("over 4 bars") and its old count suffix ("· 15 notes"). A loose /notes/
+    // here is a false positive: "3 notes of the scale" is a pitch SPAN, not a
+    // count of what the part holds.
+    o.lineNoSizes = !/over \d+(\.\d+)? bars?\b/.test(o.line) && !/·\s*\d+ notes?\s*$/.test(o.line);
+    // …and the tab is mostly CONTROL, not copy
+    o.textShare = o.tabH ? Math.round((o.textH / o.tabH) * 100) : 100;
+    // the forwarding address for the dice survived the row's deletion
+    o.signposts = /Every pass/.test(o.line);
+    try { L().part = JSON.parse(sv); E.getCfg(); if (h) h._sig = '';
+      window._v2.render(E); await wait(200);
+      card().classList.remove('collapsed'); } catch (e) {}
+    return o;
+  });
+  ok('the Material tab is three doors and a line — no block without a control, nothing said twice',
+    noiseRun.allActed && noiseRun.noParagraph && noiseRun.doors === 3 &&
+    noiseRun.headSizes && noiseRun.lineNoSizes && noiseRun.signposts &&
+    // a watchdog, not a target: it measured 66% text before the cut
+    noiseRun.textShare <= 50 && noiseRun.tabH <= 190,
+    JSON.stringify(noiseRun).slice(0, 420));
 
   // 🎲 NEW TAKE REACHES THE EAR. Reported as "it's playing the old take after
   // pressing New take": the press rolls the take and redraws, but audio for
@@ -5476,7 +6380,7 @@ const ok = (name, cond, detail) => {
     E.getCfg();
     if (h) h._sig = ''; window._v2.render(E); await wait(280);
     card().classList.remove('collapsed');
-    const gt = card().querySelector('.v2-gototab[data-goto="Content"]');
+    const gt = (window.__toContent(), null);
     if (gt && !gt.classList.contains('on')) { gt.click(); await wait(220); }
     card().querySelector('.v2-compose').click(); await wait(300);
     const opts = [...document.querySelectorAll('.addpop-btn')].map((b) => b.textContent.trim());
@@ -5539,7 +6443,7 @@ const ok = (name, cond, detail) => {
     const h = document.getElementById('bloom-v2-layers');
     if (h) h._sig = ''; window._v2.render(E); await wait(280);
     card().classList.remove('collapsed');
-    const gt = card().querySelector('.v2-gototab[data-goto="Content"]');
+    const gt = (window.__toContent(), null);
     if (gt && !gt.classList.contains('on')) { gt.click(); await wait(220); }
     const cv = card().querySelector('.v2-vizcv');
     cv.scrollIntoView({ block: 'center' }); await wait(150);
@@ -5611,7 +6515,7 @@ const ok = (name, cond, detail) => {
     gb.click();
     await wait(320);
     const tabs = [...document.querySelectorAll('.v2-pop-tab')].map((t) => t.getAttribute('data-tab'));
-    const head = document.querySelector('.v2-pop-head');
+    const head = document.querySelector('.v2-secpop-head');
     const reg = head && head.querySelector('[data-f="instrument.register"]');
     const regBox = reg ? reg.closest('.v2-pop-xtra').getBoundingClientRect() : null;
     const btns = reg ? [...reg.closest('.ambient-stepper').querySelectorAll('.ambient-step-btn')]
@@ -5735,7 +6639,7 @@ const ok = (name, cond, detail) => {
       const t2 = [...card().querySelectorAll('.v2-gototab')]
         .find((x) => x.getAttribute('data-goto') === 'Instrument');
       if (t2 && !t2.classList.contains('on')) t2.click();
-      const el = card().querySelector('.v2-pop-head .v2-grpsum[data-grp="Instrument"]');
+      const el = card().querySelector('.v2-secpop-head .v2-grpsum[data-grp="Instrument"]');
       return el ? el.textContent.replace(/\s+/g, ' ') : '';
     };
     const set = async (v) => { const s2 = card().querySelector('[data-f="instrument.voice"]');
@@ -5829,6 +6733,12 @@ const ok = (name, cond, detail) => {
     const L = () => (E.getCfg().layers || [])[0];
     const card = document.querySelector('.v2-layer');
     card.classList.remove('collapsed');
+    // COME OUT OF THE SECTION POPOVER FIRST (2026-09-13). Instrument · Pitch ·
+    // Shape · Mix · FX open OVER the card, so one left open by an earlier probe
+    // covers the drawing — `elementFromPoint` then answers about the scrim and
+    // the covered-target check correctly refuses.
+    { const c0 = document.querySelector('.v2-layer .v2-secpop-close'); if (c0) c0.click(); }
+    await wait(160);
     const cv = () => document.querySelector('.v2-layer .v2-vizcv');
     o.hitsRecorded = ((cv()._hits) || []).length;
     const drawn = ((cv()._hits) || []).map((x) => Math.round(x.midi)).sort().join(',');
@@ -6042,8 +6952,7 @@ const ok = (name, cond, detail) => {
       if (h) h._sig = ''; window._v2.render(E); await wait(340);
       const card = document.querySelector('.v2-layer');
       card.classList.remove('collapsed');
-      const g = [...card.querySelectorAll('.v2-gototab')]
-        .find((x) => x.getAttribute('data-goto') === 'Content');
+      const g = (window.__toContent(), null);
       if (g) { g.click(); await wait(260); }
     };
     // ONE PIXEL PER PITCH CLASS, in the gutter — geometry re-read every time,
@@ -6141,9 +7050,22 @@ const ok = (name, cond, detail) => {
     const g0 = card.querySelector('.v2-cells');
     const grp0 = g0 && g0.closest('.ambient-grp');
     if (grp0) grp0.classList.add('open');
+    // CONTENT IS THE CARD'S BODY NOW (2026-09-13), so its rows never sit in a
+    // storage group and `.open` — the test hook above — cannot reveal them;
+    // what shows a row is its TAB being active. Press the tab that holds the
+    // grid, which is the move a user makes. (The `.open` line stays for the
+    // case where the grid is somewhere else.)
+    const ptab = card.querySelector('.v2-pop-tabs [data-tab="Pattern"]');
+    if (ptab && !ptab.classList.contains('on')) ptab.click();
     const g = card.querySelector('.v2-cells');
     const p = (_masterEng.getCfg().layers || [])[0].part;
-    const row = card.querySelector('.v2-cellrow');
+    // THE GRID'S OWN ROW. `querySelector('.v2-cellrow')` takes the FIRST of
+    // three, which is not the one holding the cells — that only passed while
+    // Content sat in a storage group, where `.open` shows every row whatever
+    // its tab. Asking the grid for its own row is what the check always meant.
+    const row = (card.querySelector('.v2-cells') || {}).closest
+      ? card.querySelector('.v2-cells').closest('.ambient-ctrl')
+      : card.querySelector('.v2-cellrow');
     if (!g) return { missing: true };
     const c = g.children[0].getBoundingClientRect();
     return {
@@ -6292,14 +7214,13 @@ const ok = (name, cond, detail) => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const c = document.querySelector('.v2-layer');
     c.classList.remove('collapsed');
-    const g = [...c.querySelectorAll('.v2-gototab')]
-      .find((x) => x.getAttribute('data-goto') === 'Content');
-    if (g) { g.click(); await wait(250); }
-    const t = [...c.querySelectorAll('.v2-pop-tabs [data-tab]')]
+    window.__sec('Bank');
+    await wait(300);
+    const t = [...document.querySelectorAll('.v2-pop-tabs [data-tab]')]
       .find((x) => x.getAttribute('data-tab') === 'Bank');
     if (!t) return false; t.click(); return true;
   });
-  ok('the Bank tab is on the strip', await toBank());
+  ok('Bank is its own section button, and it opens the one list', await toBank());
   await zz(400);
   let pop = await bankTab();
   // An empty bank is not an error — it is a "here is where these come from",
@@ -6417,8 +7338,7 @@ const ok = (name, cond, detail) => {
     const c0 = document.querySelector('.v2-layer'); if (c0) c0.classList.remove('collapsed');
     if (h) h._sig = ''; window._v2.render(E); await wait(380);
     const c = document.querySelector('.v2-layer'); c.classList.remove('collapsed');
-    const g = [...c.querySelectorAll('.v2-gototab')]
-      .find((x) => x.getAttribute('data-goto') === 'Content');
+    const g = (window.__toContent(), null);
     if (g) { g.click(); await wait(300); }
     const cv = c.querySelector('.v2-vizcv');
     cv.scrollIntoView({ block: 'center' });
@@ -6538,8 +7458,7 @@ const ok = (name, cond, detail) => {
       const c0 = document.querySelector('.v2-layer'); c0.classList.remove('collapsed');
       if (h) h._sig = ''; window._v2.render(E); await wait(380);
       const c = document.querySelector('.v2-layer'); c.classList.remove('collapsed');
-      const g = [...c.querySelectorAll('.v2-gototab')]
-        .find((x) => x.getAttribute('data-goto') === 'Content');
+      const g = (window.__toContent(), null);
       if (g) { g.click(); await wait(300); }
       c.querySelector('.v2-vizcv').scrollIntoView({ block: 'center' });
     });
@@ -6668,8 +7587,7 @@ const ok = (name, cond, detail) => {
     await zz(400);
     await page.evaluate(async () => {
       const c = document.querySelector('.v2-layer'); c.classList.remove('collapsed');
-      const g = [...c.querySelectorAll('.v2-gototab')]
-        .find((x) => x.getAttribute('data-goto') === 'Content');
+      const g = (window.__toContent(), null);
       if (g) { g.click(); }
       await new Promise((r) => setTimeout(r, Math.round(300 * (window.__WS || 1))));
       c.querySelector('.v2-vizcv').scrollIntoView({ block: 'center' });
@@ -6760,8 +7678,7 @@ const ok = (name, cond, detail) => {
     await zz(400);
     await page.evaluate(async () => {
       const c = document.querySelector('.v2-layer'); c.classList.remove('collapsed');
-      const g = [...c.querySelectorAll('.v2-gototab')]
-        .find((x) => x.getAttribute('data-goto') === 'Content');
+      const g = (window.__toContent(), null);
       if (g) g.click();
       await new Promise((r) => setTimeout(r, Math.round(300 * (window.__WS || 1))));
       c.querySelector('.v2-vizcv').scrollIntoView({ block: 'center' });
@@ -7096,7 +8013,7 @@ const ok = (name, cond, detail) => {
     const h = document.getElementById('bloom-v2-layers');
     if (h) h._sig = ''; window._v2.render(E); await wait(300);
     const c = document.querySelector('.v2-layer'); c.classList.remove('collapsed');
-    const g = [...c.querySelectorAll('.v2-gototab')].find((x) => x.getAttribute('data-goto') === 'Content');
+    const g = (window.__toContent(), null);
     if (g) { g.click(); await wait(300); }
     const cv = c.querySelector('.v2-vizcv'); cv.scrollIntoView({ block: 'center' }); await wait(150);
     // the hotkey check leaves an editor OPEN, and `neSync` re-opens it on this
@@ -7180,7 +8097,7 @@ const ok = (name, cond, detail) => {
       if (h) h._sig = ''; window._v2.render(E); await wait(300);
       const c = () => document.querySelector('.v2-layer');
       c().classList.remove('collapsed');
-      const g2 = [...c().querySelectorAll('.v2-gototab')].find((x) => x.getAttribute('data-goto') === 'Content');
+      const g2 = (window.__toContent(), null);
       if (g2) { g2.click(); await wait(300); }
       const cv = () => c().querySelector('.v2-vizcv');
       cv().scrollIntoView({ block: 'center' }); await wait(150);
@@ -7281,7 +8198,7 @@ const ok = (name, cond, detail) => {
         if (h) h._sig = ''; window._v2.render(E); await wait(300);
         const c = () => document.querySelector('.v2-layer');
         c().classList.remove('collapsed');
-        const g2 = [...c().querySelectorAll('.v2-gototab')].find((x) => x.getAttribute('data-goto') === 'Content');
+        const g2 = (window.__toContent(), null);
         if (g2) { g2.click(); await wait(300); }
         const cv = () => c().querySelector('.v2-vizcv');
         cv().scrollIntoView({ block: 'center' }); await wait(150);
@@ -7405,7 +8322,7 @@ const ok = (name, cond, detail) => {
     if (h) h._sig = ''; window._v2.render(E); await wait(300);
     const c = () => document.querySelector('.v2-layer');
     c().classList.remove('collapsed');
-    const g = [...c().querySelectorAll('.v2-gototab')].find((x) => x.getAttribute('data-goto') === 'Content');
+    const g = (window.__toContent(), null);
     if (g) { g.click(); await wait(300); }
     const cv = c().querySelector('.v2-vizcv'); cv.scrollIntoView({ block: 'center' }); await wait(150);
     // ONE NOTE COUNT PER BAR, through an UNPINNED notesFor — the tick's own call
@@ -7521,7 +8438,7 @@ const ok = (name, cond, detail) => {
     E.getCfg();
     if (h) h._sig = ''; window._v2.render(E); await wait(300);
     const c = document.querySelector('.v2-layer'); c.classList.remove('collapsed');
-    const g = [...c.querySelectorAll('.v2-gototab')].find((x) => x.getAttribute('data-goto') === 'Content');
+    const g = (window.__toContent(), null);
     if (g) { g.click(); await wait(300); }
     const cv = c.querySelector('.v2-vizcv'); cv.scrollIntoView({ block: 'center' }); await wait(150);
     // a previous check can leave an editor open, and a second tap CLOSES it
@@ -9637,8 +10554,7 @@ const ok = (name, cond, detail) => {
       document.querySelector('.v2-layer').classList.remove('collapsed');
       h._sig = ''; window._v2.render(E); await wait(400);
       const c = document.querySelector('.v2-layer'); c.classList.remove('collapsed');
-      const g = [...c.querySelectorAll('.v2-gototab')]
-        .find((x) => x.getAttribute('data-goto') === 'Content');
+      const g = (window.__toContent(), null);
       if (g) { g.click(); await wait(300); }
       c.querySelector('.v2-vizcv').scrollIntoView({ block: 'center' });
       await wait(180);
@@ -9692,7 +10608,7 @@ const ok = (name, cond, detail) => {
     o.drawnRow = hbAdd ? Math.round(hbAdd.midi) : null;
     o.drew = row > 0 && o.drawnRow === row;
     o.editorOpen = !!document.querySelector('.v2-layer .v2-neinline:not([hidden])');
-    // …and the live SPEC survives, so 🔓 Unlock still hands it back
+    // …and the live SPEC survives, so ⚙ Generate instead still hands it back
     o.specKept = (p3.rhythm && p3.rhythm.kind) === 'euclid';
     try { const m3 = document.querySelector('.v2-layer .v2-modepick');
       m3.value = 'view'; m3.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
@@ -9730,8 +10646,7 @@ const ok = (name, cond, detail) => {
       document.querySelector('.v2-layer').classList.remove('collapsed');
       h._sig = ''; window._v2.render(E); await wait(400);
       const c = document.querySelector('.v2-layer'); c.classList.remove('collapsed');
-      const g = [...c.querySelectorAll('.v2-gototab')]
-        .find((x) => x.getAttribute('data-goto') === 'Content');
+      const g = (window.__toContent(), null);
       if (g) { g.click(); await wait(300); }
       c.querySelector('.v2-vizcv').scrollIntoView({ block: 'center' }); await wait(200);
       const cv = document.querySelector('.v2-layer .v2-vizcv');
@@ -10860,7 +11775,19 @@ const ok = (name, cond, detail) => {
     };
     const k = out.sounding[0];
     document.querySelector('.v2-note[data-ci="' + k + '"]').click();
-    document.querySelector('.v2-note[data-ci="' + k + '"]').click();
+    await new Promise((r) => setTimeout(r, 260));
+    out.editorOpened = !!card().querySelector('.v2-steppop');
+    // …and under a DRAWN line the editor edits that line's own degree, so there
+    // is no "follow the rule" to offer and no second store to drift from
+    out.noFollow = !card().querySelector('.v2-stepfollow');
+    for (let i = 0; i < 2; i++) {
+      const el2 = card().querySelector('.v2-sfdeg');
+      const b2 = el2 && el2.closest('.ambient-stepper').querySelector('.ambient-step-up');
+      if (b2) b2.click();
+      await new Promise((r) => setTimeout(r, 160));
+    }
+    { const cb = card().querySelector('.v2-stepclose'); if (cb) cb.click(); }
+    await new Promise((r) => setTimeout(r, 220));
     // RESTATED 2026-09-09: assert the degree of the step that was TAPPED, not a
     // hardcoded slice. Push 0 now starts the pattern on the beat, so this
     // fixture's first sounding step moved from index 1 to index 0 — the
@@ -10881,7 +11808,8 @@ const ok = (name, cond, detail) => {
   ok('a silent step\'s label is disabled, not a dead control', drawn.silentDisabled, String(drawn.silentDisabled));
   // The label asks the EMITTER what it will play, so it cannot promise a note
   // the engine will not sound.
-  ok('tapping raises the degree and the label follows',
+  ok('a step label opens an editor, and the note set there is what plays',
+    drawn.editorOpened && drawn.noFollow &&
     drawn.degreeAtK === 3 && drawn.label === 'G4', JSON.stringify(drawn));
   // DEGREES, not notes — the whole reason a drawn line still works under a
   // progression: degree 3 is G over C and C over F.
@@ -12580,7 +13508,8 @@ const ok = (name, cond, detail) => {
       // actually threatens.
       paneH: (() => { const pn = c.querySelector('.v2-pop-pane');
         return pn ? Math.round(pn.getBoundingClientRect().height) : -1; })(),
-      paneScrolls: (() => { const pn = c.querySelector('.v2-pop-pane'); if (!pn) return true;
+      // no pane at all = nothing inside the card scrolls, which is the claim
+      paneScrolls: (() => { const pn = c.querySelector('.v2-pop-pane'); if (!pn) return false;
         const cs = getComputedStyle(pn);
         return cs.overflowY === 'auto' || cs.overflowY === 'scroll' || cs.maxHeight !== 'none'; })(),
       chromeH: (() => {
@@ -12599,8 +13528,11 @@ const ok = (name, cond, detail) => {
       // the card at rest must still SAY what is engaged — the summaries live
       // on the buttons now (the drum-solo rule: state that can vanish while
       // its widget keeps state gets reported as a bug)
-      folded: btns.map((b2) => b2.getAttribute('data-v2grp') + '=' +
-        (b2.querySelector('.v2-grpsum') || {}).textContent),
+      folded: btns.map((b2) => b2.getAttribute('data-goto') + '=' +
+        (b2.getAttribute('title') || '')),
+      // …and Content's summary, which is the body's own — it has no button
+      contentSum: ((c.querySelector('.v2-pop-head .v2-grpsum[data-grp="Content"]') || {})
+        .textContent || '').trim(),
       unnamed: grps.filter((g) => !g.getAttribute('data-v2grp')).length,
     };
     // widest group, with EVERY group open — the wall test
@@ -12670,8 +13602,8 @@ const ok = (name, cond, detail) => {
   ok('the card is grouped by what a control DOES, every group named',
     shape.groups.join(',') === 'Instrument,Content,Pitch,Shape,Mix,FX' && shape.unnamed === 0,
     JSON.stringify(shape.groups));
-  ok('expanding shows the editor — six section tabs at a real touch size, no rows left behind',
-    shape.gridBtns === shape.groups.length && shape.rowsShowing === 0,
+  ok('expanding shows the editor — a button per section at a real touch size, no rows left behind',
+    shape.gridBtns === 8 && shape.rowsShowing === 0,
     JSON.stringify({ btns: shape.gridBtns, rows: shape.rowsShowing }));
   // RESTATED with the embed: the card WAS a grid of buttons at rest, so half a
   // screen was the right bar for it; it is the editor itself now. The accretion
@@ -12701,9 +13633,16 @@ const ok = (name, cond, detail) => {
   // 390px, past which a chooser stops being scannable.
   ok('no group is a dump — no sheet exceeds 16 tabs',
     shape.widestTabs <= 16, shape.widestTabsName + ' of ' + JSON.stringify(shape.tabCounts));
-  ok('every group button says what is engaged inside it',
-    shape.folded.length === shape.groups.length && shape.folded.every((f) => f.split('=')[1].length > 0),
-    JSON.stringify(shape.folded));
+  // RESTATED 2026-09-13, and it was asserting nothing before: it read
+  // `data-v2grp` and a `.v2-grpsum` CHILD off the section buttons, which carry
+  // neither — every entry was the string "null=undefined", whose split half is
+  // non-empty, so it passed on garbage. A button says what is engaged through
+  // its TITLE; Content says it through the body's own summary.
+  ok('every section button says what is engaged inside it, and the body says Content',
+    shape.folded.length === 8 &&
+    shape.folded.every((f) => { const [g, t] = f.split('='); return g && g !== 'null' && t.indexOf(g) === 0; }) &&
+    shape.contentSum.length > 0,
+    JSON.stringify({ folded: shape.folded, content: shape.contentSum }));
   ok('no two rows on the card carry the same label',
     shape.dups.length === 0, JSON.stringify(shape.dups));
   ok("an effect's own parameters appear only once the effect is engaged",
@@ -12821,7 +13760,7 @@ const ok = (name, cond, detail) => {
     // and failed on a correct layout.
     o.equal = new Set(byRow[rowKeys[0]]).size === 1;
     // …and when it wraps, row one spans the head rather than leaving a gap
-    const hd0 = document.querySelector('.v2-pop-head');
+    const hd0 = document.querySelector('.v2-secpop-head');
     const cs0 = getComputedStyle(hd0);
     const inner = hd0.clientWidth - parseFloat(cs0.paddingLeft) - parseFloat(cs0.paddingRight);
     const r1 = rects.filter((r) => Math.round(r.top) === rowKeys[0]);
@@ -12829,7 +13768,7 @@ const ok = (name, cond, detail) => {
     o.fills = o.tabRows === 1 || o.row1Fill >= 0.9;
     o.clipped = tbs.filter((t) => t.scrollWidth > t.clientWidth + 1).length;
     o.tall = Math.min(...rects.map((r) => Math.round(r.height)));
-    o.allSix = tbs.length === 6 && rects.every((r) => r.width > 0 && r.height > 0);
+    o.allSix = tbs.length === 8 && rects.every((r) => r.width > 0 && r.height > 0);
     // THE TABS OWN THE ROW: nothing else shares their last line — the trio and
     // Register sit below them (it was [Mix FX · Reg ± · ✕] on one row, which
     // is what squeezed "Instrument" into three stacked syllables).
@@ -12844,22 +13783,58 @@ const ok = (name, cond, detail) => {
     // check passed with `popOpen` disabled entirely. `aria-label` and the wrap
     // NODE are both minted by popOpen, and the destination row only exists in
     // the destination's body.
-    const WANT = { Content: 'part.rhythm.steps', Pitch: 'part.pitch.kind',
+    // a marker only that section's rows carry — a field path, or a class where
+    // the row has no field of its own (the bank is a list, not a setting)
+    const WANT = { Make: 'part.rhythm.steps', Time: 'part.bars', Bank: '.v2-bankrow',
+                   Pitch: 'part.pitch.kind',
                    Shape: 'part.shape.holdSteps', Mix: 'level', FX: 'delay.mix',
                    Instrument: 'instrument.voice' };
-    let prev = document.querySelector('.v2-pop-wrap');
-    for (const g of ['Content', 'Pitch', 'Shape', 'Mix', 'FX', 'Instrument']) {
-      const bt = tabOf(g); if (bt) bt.click();
+    // RESTATED 2026-09-13 with the reason (the old-CONTRACT fork): the section
+    // row no longer REBUILDS the body, so "a NEW sheet, not the old one" and
+    // "built by popOpen for THIS group" are claims this change deliberately
+    // contradicts — Content IS the body, and the other five open OVER it. What
+    // is still worth pinning, and is strictly stronger, is that every section
+    // is reachable, arrives holding its OWN rows and its OWN tab strip, that
+    // the row says where you are, and that THE BODY NEVER MOVES while you do it.
+    const bodyW = document.querySelector('.v2-pop-wrap');
+    // THE BODY'S SHAPE — its height and the drawing inside it. NOT its
+    // viewport position (scroll moves that) and NOT its offset in the card (a
+    // storage group left `.open` by an earlier probe's test hook sits above it
+    // and shifts it — the probe's doing, not the design's).
+    const bodyGeo = () => { const r = bodyW.getBoundingClientRect();
+      const v = bodyW.querySelector('.v2-partviz');
+      const vr = v ? v.getBoundingClientRect() : null;
+      return Math.round(r.height) + '/' + (vr ? Math.round(vr.height) + 'x' + Math.round(vr.width) : 'no-viz'); };
+    o.bodyBefore = bodyGeo();
+    o.bodyMoved = 0;
+    // …and the body's sheet is the SAME NODE throughout. This is the exact
+    // inverse of what this check used to assert ("a NEW sheet, not the old
+    // one"), and it is the claim with teeth: a section press must not replace
+    // the body, only put something over it.
+    o.bodyRebuilt = 0;
+    for (const g of ['Make', 'Time', 'Bank', 'Pitch', 'Shape', 'Mix', 'FX', 'Instrument']) {
+      // CLOSE FIRST, as a finger must: the popover is modal, so the body's
+      // section row is behind its scrim until it is dismissed.
+      // Content has no button — it IS the body, so getting to it is dismissing
+      // whatever treatment is open over it. The other five have to be dismissed
+      // first too: the popover is modal, so the row is behind its scrim.
+      { const c0 = document.querySelector('.v2-layer .v2-secpop-close'); if (c0) c0.click(); }
+      await wait(140);
+      { const bt = tabOf(g); if (bt) bt.click(); }
       await wait(240);
-      const w = document.querySelector('.v2-pop-wrap');
-      const pop = w && w.querySelector('.v2-pop');
-      o.hops.push({ g, ok: !!w && w !== prev &&                       // a NEW sheet, not the old one
-        !!pop && pop.getAttribute('aria-label') === g &&              // built by popOpen for THIS group
-        !!w.querySelector('.v2-pop-pane [data-f="' + WANT[g] + '"]') && // and holding that group's rows
-        w.querySelectorAll('.v2-pop-tab').length > 0 &&
-        // …and the tab you pressed is the one now LIT
-        ((w.querySelector('.v2-gototab.on') || {}).getAttribute('data-goto')) === g });
-      prev = w;
+      const ov = document.querySelector('.v2-secpop-wrap');
+      // every section opens a popover NAMED for it, holding its own rows and
+      // its own tab strip, with the body's row marking where you are
+      const named = !!ov && ((ov.querySelector('.v2-secpop') || {}).getAttribute
+        && ov.querySelector('.v2-secpop').getAttribute('aria-label') === g);
+      o.hops.push({ g, ok: !!named &&
+        !!ov.querySelector('.v2-pop-pane ' + (WANT[g][0] === '.' ? WANT[g]
+              : '[data-f="' + WANT[g] + '"]')) &&
+        ov.querySelectorAll('.v2-pop-tabs .v2-pop-tab').length > 0 &&
+        (((document.querySelector('.v2-gototab.on') || {}).getAttribute
+          && document.querySelector('.v2-gototab.on').getAttribute('data-goto')) || '') === g });
+      if (bodyGeo() !== o.bodyBefore) o.bodyMoved++;
+      if (document.querySelector('.v2-pop-wrap') !== bodyW) o.bodyRebuilt++;
     }
     o.oneSheet = document.querySelectorAll('.v2-pop-wrap').length;
     await wait(220);
@@ -12869,12 +13844,14 @@ const ok = (name, cond, detail) => {
     o.headOverflow = hd ? hd.scrollWidth - hd.clientWidth : 0;
     return o;
   });
-  ok('the sheet header goes to any other section, without closing',
-    nav.opts.join(',') === 'Instrument,Content,Pitch,Shape,Mix,FX' &&
-    nav.start === 'Instrument' && nav.hops.every((x) => x.ok) && nav.oneSheet === 1,
-    JSON.stringify(nav.hops.filter((x) => !x.ok)) + ' opts=' + nav.opts.length);
-  ok('…and all six sections are visible at once — one or two rows they fill outright',
-    nav.allSix && nav.tabRows >= 1 && nav.tabRows <= 2 && nav.equal && nav.fills &&
+  ok('the section row reaches every section, and the body never moves',
+    nav.opts.join(',') === 'Make,Time,Bank,Instrument,Pitch,Shape,Mix,FX' &&
+    nav.start === 'Instrument' && nav.hops.every((x) => x.ok) && nav.oneSheet === 1 &&
+    nav.bodyMoved === 0 && nav.bodyRebuilt === 0,
+    JSON.stringify(nav.hops.filter((x) => !x.ok)) + ' opts=' + nav.opts.length +
+    ' bodyMoved=' + nav.bodyMoved + ' bodyRebuilt=' + nav.bodyRebuilt);
+  ok('…and all eight sections are visible at once — the rows they fill outright',
+    nav.allSix && nav.tabRows >= 1 && nav.tabRows <= 3 && nav.equal && nav.fills &&
     nav.clipped === 0 && nav.tall >= 30 && nav.closeBeside && nav.headOverflow === 0,
     JSON.stringify({ allSix: nav.allSix, tabRows: nav.tabRows, equal: nav.equal,
       fills: nav.fills, row1Fill: nav.row1Fill, clipped: nav.clipped, tall: nav.tall,
@@ -13013,9 +13990,10 @@ const ok = (name, cond, detail) => {
     // the button is in EVERY sheet, at a real size
     out.sized = [];
     for (const g of ['Instrument', 'Content', 'FX']) {
-      [...card.querySelectorAll('.v2-gototab')].find((x) => x.getAttribute('data-goto') === g).click();
+      if (g === 'Content') window.__toContent();
+      else [...card.querySelectorAll('.v2-gototab')].find((x) => x.getAttribute('data-goto') === g).click();
       await wait(150);
-      const b2 = document.querySelector('.v2-pop-preview');
+      const b2 = document.querySelector(g === 'Content' ? '.v2-pop-preview' : '.v2-secprev');
       const r = b2 && b2.getBoundingClientRect();
       out.sized.push(g + ':' + (r ? Math.round(r.height) : 0));
       await wait(100);

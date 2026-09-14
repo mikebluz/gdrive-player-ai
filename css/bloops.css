@@ -11230,7 +11230,7 @@
        design, so the bar and the tab row were flex ITEMS sized to content —
        the family chips could never fill the width (measured 237px of a 358px
        pane). Scoped with :has so a family-less sheet keeps the flat strip. */
-    .v2-pop-tabs:has(.v2-fambar) { flex-direction: column; align-items: stretch; }
+.v2-pop-tabs:has(.v2-fambar) { flex-direction: column; align-items: stretch; }
     .v2-fambar { display: flex; flex-wrap: nowrap; gap: 6px; margin: 2px 0 6px; }
     .v2-fambtn {
       flex: 1 1 0; min-width: 0; min-height: 34px; padding: 4px 8px;
@@ -11271,8 +11271,8 @@
     .v2-layer .v2-pop-tab.v2-tabna:not(.on) { opacity: 0.45; }
     /* A row label that just repeats the active tab is noise — the chip above
        says it. (Set by popSync only for plain-text labels.) */
-    .v2-layer .v2-pop-pane .ambient-ctrl.v2-labdup > label { display: none; }
-    .v2-layer .v2-pop-pane .ambient-ctrl.v2-knobbed.v2-labdup {
+.v2-layer .v2-pop-pane .ambient-ctrl.v2-labdup > label { display: none; }
+.v2-layer .v2-pop-pane .ambient-ctrl.v2-knobbed.v2-labdup {
       grid-template-columns: 92px minmax(110px, 1.4fr);
     }
     .v2-tabfam { display: none; }
@@ -11296,10 +11296,10 @@
     /* Row labels in the pane take the active tab's family hue. The `.v2-layer`
        prefix matters: the sheet's own label rule is `.v2-layer .v2-pop-pane
        .ambient-ctrl > label` and a bare pane selector loses to it. */
-    .v2-layer .v2-pop-pane[data-fam="fam-make"] .ambient-ctrl > label { color: #b794f4; }
-    .v2-layer .v2-pop-pane[data-fam="fam-rhythm"] .ambient-ctrl > label { color: #4fd1c5; }
-    .v2-layer .v2-pop-pane[data-fam="fam-time"] .ambient-ctrl > label { color: #63b3ed; }
-    .v2-layer .v2-pop-pane[data-fam="fam-pitch"] .ambient-ctrl > label { color: #f687b3; }
+.v2-layer .v2-pop-pane[data-fam="fam-make"] .ambient-ctrl > label { color: #b794f4; }
+.v2-layer .v2-pop-pane[data-fam="fam-rhythm"] .ambient-ctrl > label { color: #4fd1c5; }
+.v2-layer .v2-pop-pane[data-fam="fam-time"] .ambient-ctrl > label { color: #63b3ed; }
+.v2-layer .v2-pop-pane[data-fam="fam-pitch"] .ambient-ctrl > label { color: #f687b3; }
 
     /* COMPOSING IS A MODE OF THE SHEET at every width: the drawing, the tab
        strip and ▶ Preview step aside (the tick SKIPS a composing layer — the
@@ -11314,11 +11314,8 @@
        navigating would move the group body and the dock is inside it — and a
        press says so. Dim the CHILDREN, never the strip (the documented
        opacity-composites rule: a dimmed wrapper takes its own banner with it). */
-    .v2-layer.v2-composing .v2-pop .v2-partviz,
-    .v2-layer.v2-composing .v2-pop .v2-pop-foot { display: none; }
-    .v2-layer.v2-composing .v2-pop-tabs > * ,
-    .v2-layer.v2-composing .v2-notesrow .v2-matgrp,
-    .v2-layer.v2-composing .v2-pop-head .v2-pop-title > * { opacity: 0.42; }
+    .v2-layer.v2-composing .v2-pop .v2-partviz, .v2-layer.v2-composing .v2-pop .v2-pop-foot, .v2-layer.v2-composing .v2-pop .v2-secpop-foot { display: none; }
+.v2-layer.v2-composing .v2-pop-tabs > *, .v2-layer.v2-composing .v2-notesrow .v2-matgrp, .v2-layer.v2-composing .v2-pop-head .v2-pop-title > *, .v2-layer.v2-composing .v2-secpop-head .v2-pop-title > * { opacity: 0.42; }
     /* …but ✎ Composed stays lit and live: it is the mode you are IN, and it is
        how you opened this. */
     .v2-layer.v2-composing .v2-notesrow .v2-matgrp .v2-compose { opacity: 1; }
@@ -11329,7 +11326,7 @@
       color: #d6bcfa; font: 0.72rem/1.35 'Segoe UI', sans-serif;
       white-space: normal; overflow-wrap: anywhere;
     }
-    .v2-layer.v2-composing .v2-pop-pane { flex: 1 1 auto; }
+.v2-layer.v2-composing .v2-pop-pane { flex: 1 1 auto; }
     .v2-layer.v2-composing .ambient-ctrl.v2-gacts {
       position: sticky; bottom: 0; z-index: 2;
       margin: 8px -16px calc(-20px - env(safe-area-inset-bottom));
@@ -11368,6 +11365,19 @@
        between Composed and Sustained?"): notes you WRITE (the part becomes
        Fixed) vs RULES that make notes as it plays. Two labelled clusters, the
        same tiny caps the family bar uses. */
+    /* …AND IT OWNS ITS OWN BANDS. `.ambient-ctrl` is a 3-column grid and the
+       hint is a THIRD child, so it auto-places into the trailing `auto` column
+       BESIDE the doors. That was only ever survivable because a long static
+       paragraph used to sit inside `.v2-matrow` and win the `1fr`; delete the
+       paragraph and the middle track collapses (measured `84px 0px 258px`)
+       while the hint takes 258px and paints ON TOP of ✎ Written — the gate's
+       own tap reported "covered by ambient-hint v2-notecount". The ROWS are
+       ONE rule, not two: spanning every column cannot fit beside the doors, so
+       the hint is pushed to its own row by placement alone — which also keeps
+       it correct in the SHEET PANE, where `.ambient-ctrl` is a SINGLE column
+       (pinning `.v2-matrow` to `2 / -1` there invented a second track and left
+       the hint a 5px × 1119px ribbon). */
+    .v2-notesrow > .v2-notecount { grid-column: 1 / -1; }
     .v2-matrow { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
     .v2-matgrp { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; flex: 1 1 auto; }
     .v2-matlab {
@@ -11381,10 +11391,10 @@
        — which beats a non-important inline declaration. Lanes are exempt: a
        drum row wrapping would split one lane across two lines. */
     @media (max-width: 540px) {
-      .v2-layer .v2-pop-pane .v2-cellrow:not(.v2-lanerow) .ambient-euclid-cells {
+.v2-layer .v2-pop-pane .v2-cellrow:not(.v2-lanerow) .ambient-euclid-cells {
         --eucols: 8 !important; row-gap: 6px;
       }
-      .v2-layer .v2-pop-pane .v2-cellrow:not(.v2-lanerow) .ambient-euclid-cell { min-height: 38px; }
+.v2-layer .v2-pop-pane .v2-cellrow:not(.v2-lanerow) .ambient-euclid-cell { min-height: 38px; }
     }
 
     /* MICRO STEPPERS — several compact − value + cells in ONE row, where
@@ -11393,7 +11403,7 @@
        `.v2-mini` prefix; the targets stay at/near the 34px floor and the
        input is 16px (iOS zooms a focused field under that and never zooms
        back — the documented trap). */
-    .v2-layer .v2-pop-pane .ambient-ctrl.v2-microrow {
+.v2-layer .v2-pop-pane .ambient-ctrl.v2-microrow {
       display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end;
     }
     .v2-mini { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -11401,17 +11411,14 @@
       font: 600 0.62rem 'Segoe UI', sans-serif; letter-spacing: 0.06em;
       text-transform: uppercase; color: #7a7a9c; padding-left: 2px;
     }
-    .v2-layer .v2-pop-pane .v2-mini .ambient-stepper,
-    .v2-layer .v2-genpop .v2-mini .ambient-stepper { justify-content: flex-start; gap: 0; display: flex; flex-wrap: nowrap; }
+.v2-layer .v2-pop-pane .v2-mini .ambient-stepper, .v2-layer .v2-genpop .v2-mini .ambient-stepper { justify-content: flex-start; gap: 0; display: flex; flex-wrap: nowrap; }
     /* 32 + 40 + 32 = 104, so THREE cells fit a 390px pane row (measured: at
        112 only two did, and the row was 160px). The ± are nudges flanking a
        tap-to-type input, and they keep the full 34px height. */
-    .v2-layer .v2-pop-pane .v2-mini .ambient-step-btn,
-    .v2-layer .v2-genpop .v2-mini .ambient-step-btn {
+.v2-layer .v2-pop-pane .v2-mini .ambient-step-btn, .v2-layer .v2-genpop .v2-mini .ambient-step-btn {
       width: 32px; height: 34px; font-size: 1.05rem; min-width: 0; flex: 0 0 auto;
     }
-    .v2-layer .v2-pop-pane .v2-mini .ambient-step-inp,
-    .v2-layer .v2-genpop .v2-mini .ambient-step-inp {
+.v2-layer .v2-pop-pane .v2-mini .ambient-step-inp, .v2-layer .v2-genpop .v2-mini .ambient-step-inp {
       height: 34px; font-size: 16px; min-width: 40px; width: 40px; padding: 0 2px; flex: 0 0 auto;
     }
     /* dimmed on a Fixed part, like any generation control */
@@ -11431,7 +11438,7 @@
        family labels sit ABOVE their chips instead of in a left gutter that
        scattered the wrapped ones. */
     @media (max-width: 540px) {
-      .v2-pop-head { row-gap: 8px; }
+      .v2-pop-head, .v2-secpop-head { row-gap: 8px; }
       /* TWO DELIBERATE ROWS on a phone: [Instrument Content Pitch Shape] then
          [Mix FX · Reg ± · ✕]. Six chips plus a close on ONE line left every
          label wrapping to two lines and the sheet reading as cut off.
@@ -11443,15 +11450,15 @@
          `.v2-pop-head` rule, so an equal-specificity gap here loses the
          cascade and stays 10px, which left room for only THREE chips per row
          (measured). The documented single-class trap. */
-      .v2-layer .v2-pop-head { gap: 6px; }
+      .v2-layer .v2-pop-head, .v2-layer .v2-secpop-head { gap: 6px; }
       /* THREE PER ROW at phone width — two rows of large targets beats one
          row of chips whose labels wrap to three lines. */
-      .v2-pop-head .v2-gototab {
+      .v2-pop-head .v2-gototab, .v2-secpop-head .v2-gototab {
         flex: 1 1 calc(33.333% - 4px); min-width: 0; padding: 6px 2px; font-size: 0.72rem;
       }
-      .v2-pop-head .v2-pop-xtra { flex: 0 1 auto; margin-left: auto; gap: 5px; }
+      .v2-pop-head .v2-pop-xtra, .v2-secpop-head .v2-pop-xtra { flex: 0 1 auto; margin-left: auto; gap: 5px; }
       /* the per-part trio and the summary keep their own full-width lines below */
-      .v2-pop-head .v2-pop-pair { flex: 1 0 100%; }
+      .v2-pop-head .v2-pop-pair, .v2-secpop-head .v2-pop-pair { flex: 1 0 100%; }
       /* every pixel of sheet height goes to the PANE on a phone: taller
          sheet, shorter drawing (it stays readable at 60px). Compound
          selectors — this block sits EARLIER in the file than the base rules,
@@ -11635,12 +11642,13 @@
        sits beside a picture, not in a control panel, and the row it shares
        already carries the pitch range it is reporting. */
     .v2-vnav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
-      margin: 4px 0 0; min-width: 0; }
+      margin: 0 0 0 auto; min-width: 0; }
     .v2-vnav .v2-nav { min-width: 30px; min-height: 26px; padding: 0 6px;
       font-size: 0.72rem; line-height: 1; flex: 0 0 auto; }
     .v2-vnav .v2-navx { margin-left: 0; }
-    .v2-vnav .v2-navlab { flex: 1 1 0; min-width: 0; white-space: normal;
-      overflow-wrap: anywhere; font-size: 0.66rem; color: #6b6b8a; text-align: right; }
+    .v2-vnav .v2-navlab { flex: 0 1 auto; min-width: 0; white-space: normal;
+      overflow-wrap: anywhere; font-size: 0.66rem; color: #6b6b8a; text-align: right;
+      padding-left: 2px; }
     .v2-split-modal .v2-split-prev { display: flex; gap: 2px; margin: 12px 0 2px;
       height: 30px; border-radius: 6px; overflow: hidden; background: #12121f; }
     .v2-split-modal .v2-split-seg { display: flex; align-items: center; justify-content: center;
@@ -11719,7 +11727,7 @@
     .v2-pop-pair .v2-pop-pp.on {
       border-color: #b794f4; color: #e9d8fd; background: rgba(159, 122, 234, 0.3);
     }
-    .v2-pop-head .v2-pop-sync {
+    .v2-pop-head .v2-pop-sync, .v2-secpop-head .v2-pop-sync {
       background: transparent; border: 1px solid #2d2d3f; border-radius: 20px;
       color: #a0aec0; font-family: 'Segoe UI', sans-serif; font-weight: 600;
       font-size: 0.74rem; padding: 6px 12px; min-height: 34px; cursor: pointer;
@@ -15270,7 +15278,7 @@
    `closest('.v2-layer')`. Fixed + measure-free: it covers the viewport and
    centres, like the section sheet, and sits ABOVE it (10290) since it opens
    from inside it. */
-.v2-genwrap, .v2-gwwrap, .v2-barwrap { display: none; }
+.v2-genwrap, .v2-gwwrap, .v2-barwrap, .v2-autowrap { display: none; }
 /* ONE BAR'S OWN RULES — the same panel chrome as ⚙ Generated (it IS that
    panel, scoped to a bar), so it REUSES those classes rather than re-typing
    their values; only the hooks the handlers key on are its own, because a
@@ -15297,22 +15305,69 @@
   display: flex; align-items: center; justify-content: center;
   position: fixed; inset: 0; z-index: 10310;
 }
-/* ONE CELL PER CHANGE — the chord, and how many of its tones this part plays.
-   A grid so eight changes read as eight, not as a sentence. */
-.v2-layer .ambient-ctrl.v2-gwper { display: block; }
-.v2-gwper > label { display: block; margin-bottom: 4px; }
-.v2-gwper > .ambient-hint { display: block; margin-top: 6px; white-space: normal; }
+/* GROUNDWORK'S OVERLAY — one BLOCK per part, each holding what that part says
+   for all of its changes and then what each change says for itself. A flat
+   strip of chord cells could not say where one part ended and the next began. */
+.v2-layer .ambient-ctrl.v2-gwparts { display: block; }
+.v2-gwparts > label { display: block; margin-bottom: 4px; }
+.v2-gwparts > .ambient-hint { display: block; margin-top: 6px; white-space: normal; }
+.v2-gwpartshost { display: flex; flex-direction: column; gap: 8px; }
+.v2-gwpart {
+  border: 1px solid #2d2d3f; border-radius: 10px; padding: 7px 8px 8px;
+  background: rgba(15, 15, 30, 0.6); min-width: 0;
+}
+.v2-gwphead {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 6px; min-width: 0;
+}
+.v2-gwpname {
+  font: 600 0.74rem 'Segoe UI', sans-serif; letter-spacing: .05em;
+  text-transform: uppercase; color: #d6bcfa; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* the head must never hide what the part is set to — a fold that hides its own
+   state is the drum-solo bug in a costume */
+.v2-gwpsum { font: 400 0.7rem 'Segoe UI', sans-serif; color: #7a7a9c; margin-left: auto; white-space: normal; }
+.v2-gwrow {
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  min-width: 0; margin-top: 5px;
+}
+.v2-gwrowlab {
+  font: 600 0.66rem 'Segoe UI', sans-serif; letter-spacing: .04em;
+  text-transform: uppercase; color: #7a7a9c; flex: 0 0 auto; min-width: 58px;
+}
+.v2-gwmelrow { padding-left: 10px; border-left: 2px solid rgba(159, 122, 234, 0.45); }
+.v2-gwrow .v2-mini { flex: 0 0 auto; }
+/* the ± steppers are 16px so focusing one cannot zoom an iPhone */
+.v2-gwkind { display: inline-flex; align-items: center; gap: 4px; }
+.v2-gwkind select.ambient-select { width: auto; min-width: 84px; flex: 0 0 auto; min-height: 30px; font-size: 16px; }
+.v2-gwglob .ambient-seg.v2-gwpmel { flex: 0 0 auto; min-height: 30px; padding: 4px 9px; }
+.v2-gwglob .ambient-seg.v2-gwpmel.on { border-color: #9f7aea; background: rgba(159, 122, 234, 0.2); color: #d6bcfa; }
+.v2-gwrow.v2-gwchords {
+  display: grid; gap: 5px;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+}
+.v2-gwchords > .v2-gwrowlab { grid-column: 1 / -1; }
 .v2-gwfoot { border-top: none; padding-top: 0; }
 .v2-genacts .v2-gwcancel { color: #fc8181; }
 .v2-gwx { color: #a0aec0; }
 .v2-gwcancel:hover { border-color: #fc8181; }
-.v2-gwpergrid {
-  display: grid; gap: 5px;
-  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+/* A CHANGE'S LINE BUTTON is three-state: ↳ follows its part, ♪ plays a line,
+   — refuses one. Absent and off are different answers, so they look different. */
+.v2-gwcell .v2-gwmel {
+  flex: 0 0 auto; min-width: 30px; min-height: 30px; padding: 0 4px;
+  border: 1px solid #2d2d3f; border-radius: 7px; background: transparent;
+  color: #7a7a9c; font: 600 0.8rem 'Segoe UI', sans-serif; cursor: pointer;
 }
+.v2-gwcell .v2-gwmel.on { border-color: #9f7aea; color: #d6bcfa; background: rgba(159, 122, 234, 0.18); }
+.v2-gwcell .v2-gwmel.off { border-color: #4a3a3a; color: #fc8181; }
+/* THE NAME TAKES ITS OWN LINE. Side by side with a ± stepper (104px) and the
+   line button (30px) it had nothing left and collapsed to zero — the cell read
+   as an unlabelled number, which the rects could not see and a screenshot
+   could. A grid, so the name spans and the controls sit under it. */
 .v2-gwcell {
-  display: flex; align-items: center; justify-content: space-between; gap: 6px;
-  padding: 3px 4px 3px 8px; border: 1px solid #2d2d3f; border-radius: 8px;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 6px;
+  align-items: center; padding: 4px 6px; border: 1px solid #2d2d3f; border-radius: 8px;
   background: #0f0f1e; color: #a0aec0; font-family: 'Segoe UI', sans-serif;
 }
 /* the cell holds a real ± stepper, so it must not restyle it into a button */
@@ -15321,20 +15376,43 @@
 /* SET BY HAND vs following the number above — a value you chose must not look
    like one you inherited (the absent-is-inherit rule the mask cells follow). */
 .v2-gwcell.own { border-color: #9f7aea; background: rgba(159, 122, 234, 0.16); color: #d6bcfa; }
-.v2-gwcell.silent .v2-gwcv { color: #fc8181; }
+/* 0 SITS THE CHANGE OUT, and that has to be visible on the number itself —
+   the old `.v2-gwcv` readout span is gone, so this named nothing. */
+.v2-gwcell.silent .ambient-step-inp { color: #fc8181; }
+.v2-gwcell.silent .v2-gwcn::after { content: ' \2014 out'; color: #fc8181; font-weight: 400; }
 .v2-gwcn {
+  grid-column: 1 / -1;
   font: 600 0.78rem 'Segoe UI', sans-serif; color: #e2e8f0;
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .v2-gwcell.own .v2-gwcn { color: #d6bcfa; }
 .v2-gwcell.silent .v2-gwcn { color: #7a7a9c; }
 
+/* ✨ AUTO — the short way in: two doors and nothing to tune, so the panel is
+   its head, one line and the pair. TWO ACROSS at 50%, not the shapes row's
+   three: with two buttons a third column would leave a gap that reads as a
+   missing option. */
+.v2-layer.v2-autoopen .v2-autowrap {
+  display: flex; align-items: center; justify-content: center;
+  position: fixed; inset: 0; z-index: 10310;
+}
+.v2-autoscrim { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.6); }
+.v2-autoshapes {
+  display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 14px 10px; flex: 0 0 auto;
+  border-top: 1px solid #22222f; margin-top: 4px;
+}
+.v2-autoshapes .ambient-seg {
+  flex: 1 1 calc(50% - 3px); min-width: 0; min-height: 56px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+}
+.v2-autoshapes .v2-matsub { max-width: none; white-space: normal; }
+.v2-autoshapes .ambient-seg.on { border-color: #9f7aea; background: rgba(159, 122, 234, 0.18); color: #d6bcfa; }
 .v2-layer.v2-genopen .v2-genwrap {
   display: flex; align-items: center; justify-content: center;
   position: fixed; inset: 0; z-index: 10310;
 }
 .v2-genscrim { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.6); }
-.v2-genpop, .v2-barpop {
+.v2-genpop, .v2-barpop, .v2-steppop, .v2-autopop {
   position: relative; display: flex; flex-direction: column;
   width: min(520px, 94vw);
   /* the same visible-band rule the section sheet uses — 100vh includes the
@@ -15348,21 +15426,21 @@
   background: #12121f; border: 1px solid #2d2d3f; border-radius: 16px;
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
 }
-.v2-genhead, .v2-barhead {
+.v2-genhead, .v2-barhead, .v2-stephead, .v2-autohead {
   display: flex; align-items: center; gap: 10px; padding: 12px 14px 4px; flex: 0 0 auto;
 }
-.v2-gentitle, .v2-bartitle { font: 600 0.95rem 'Segoe UI', sans-serif; color: #e2e8f0; flex: 1 1 auto; }
-.v2-genclose, .v2-gwclose, .v2-barclose {
+.v2-gentitle, .v2-bartitle, .v2-steptitle, .v2-autotitle { font: 600 0.95rem 'Segoe UI', sans-serif; color: #e2e8f0; flex: 1 1 auto; }
+.v2-genclose, .v2-gwclose, .v2-barclose, .v2-stepclose, .v2-autohead .v2-autox {
   flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%;
   border: 1px solid #2d2d3f; background: none; color: #a0aec0;
   font-size: 1rem; cursor: pointer; touch-action: manipulation;
 }
-.v2-genclose:hover, .v2-gwclose:hover, .v2-barclose:hover { border-color: #9f7aea; color: #d6bcfa; }
-.v2-genmodel, .v2-gensays {
+.v2-genclose:hover, .v2-gwclose:hover, .v2-barclose:hover, .v2-stepclose:hover, .v2-autohead .v2-autox:hover { border-color: #9f7aea; color: #d6bcfa; }
+.v2-genmodel, .v2-gensays, .v2-autosays {
   padding: 0 14px; margin: 0 0 6px; color: #6b6b8a; line-height: 1.35;
   white-space: normal; overflow-wrap: anywhere; flex: 0 0 auto;
 }
-.v2-gensays { color: #a0aec0; padding-top: 4px; }
+.v2-gensays, .v2-autosays { color: #a0aec0; padding-top: 4px; }
 .v2-genshapes {
   display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 6px; flex: 0 0 auto;
 }
@@ -15391,13 +15469,13 @@
 .v2-layer .v2-genrows .ambient-ctrl.v2-disc .ambient-hint { grid-column: 1 / -1; }
 /* THE KNOBS SCROLL, the shapes and the actions do not — an action you have to
    scroll to find is the documented compose-dock bug. */
-.v2-genrows, .v2-barrows { flex: 1 1 auto; overflow-y: auto; padding: 4px 14px 8px;
+.v2-genrows, .v2-barrows, .v2-steprows { flex: 1 1 auto; overflow-y: auto; padding: 4px 14px 8px;
   border-top: 1px solid #22222f; }
-.v2-genacts, .v2-baracts {
+.v2-genacts, .v2-baracts, .v2-autoacts {
   display: flex; gap: 6px; padding: 8px 14px 12px; flex: 0 0 auto;
   border-top: 1px solid #22222f; background: #12121f;
 }
-.v2-genacts .ambient-seg, .v2-baracts .ambient-seg { flex: 1 1 0; min-width: 0; min-height: 40px; }
+.v2-genacts .ambient-seg, .v2-baracts .ambient-seg, .v2-autoacts .ambient-seg { flex: 1 1 0; min-width: 0; min-height: 40px; }
 .v2-genacts .v2-gwclose { border-radius: 20px; width: auto; height: auto; }
 /* THE EDITOR IS THE CARD'S BODY — it was a centred overlay opened from a grid
    of six group buttons, and once its own head carried those six sections as a
@@ -15415,7 +15493,7 @@
 /* WRAPS, because the head now carries a control as well as a title: the
    summary takes its own full-width line under them rather than being squeezed
    to nothing between the title and the close. */
-.v2-pop-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px 6px; flex: 0 0 auto; }
+.v2-pop-head, .v2-secpop-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px 6px; flex: 0 0 auto; }
 /* THE TITLE IS A SECTION NAVIGATOR, and it is SIX TABS filling the row rather
    than a <select>: a select showed only the section you were already in, so
    every other one cost a press to discover. It shares the row with the ✕,
@@ -15454,9 +15532,22 @@
 .v2-notesrow .ambient-seg.v2-sess {
   border-color: #4fd1c5; color: #b2f5ea; box-shadow: inset 0 0 0 1px rgba(79, 209, 197, 0.4);
 }
-.v2-pop-head .v2-grpsum {
-  flex: 1 0 100%; min-width: 0; margin-top: -2px; color: #6b6b8a;
+/* THE SUMMARY SHARES THE PAIR'S ROW AND FILLS THE GAP TO ITS RIGHT. The pair
+   is content-sized (measured 170px in a 466px row), so it left ~296px of dead
+   space and the summary took a LINE OF ITS OWN underneath it. `flex: 1 1 auto`
+   lets it sit beside the pair and right-align into that gap — the same
+   pair-left / readout-right shape the drawing's own head uses. */
+.v2-pop-head .v2-grpsum, .v2-secpop-head .v2-grpsum {
+  flex: 1 1 auto; min-width: 0; margin-top: -2px; color: #6b6b8a;
   white-space: normal; overflow-wrap: anywhere; line-height: 1.3;
+  text-align: right;
+}
+/* …on a phone the PAIR already takes the whole row, so the summary wraps below
+   it and reads left, as it always did. Kept HERE rather than in the phone block
+   near the top of the file: that block sits EARLIER, so an equal-specificity
+   rule there would lose the cascade (the documented trap). */
+@media (max-width: 540px) {
+  .v2-pop-head .v2-grpsum, .v2-secpop-head .v2-grpsum { flex: 1 0 100%; text-align: left; }
 }
 /* REGISTER IN THE HEAD — a real ± target on a phone, not a token one. */
 .v2-pop-xtra { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; margin-left: auto; }
@@ -15600,7 +15691,104 @@
    for as "large and fun"): a filled gradient in the house purples, where every
    other button here is a transparent pill. One exception, one meaning: this is
    the button that makes SOUND. */
-.v2-pop-foot { flex: 0 0 auto; padding: 6px 14px calc(14px + env(safe-area-inset-bottom)); }
+/* THE BODY IS THE CONTENT, so its tab strip and pane are empty — every setting
+   lives behind a section button. Collapse them rather than leaving two padded
+   bands of nothing between the drawing and the foot. (They are not removed:
+   `popSync` still writes to them, and a future body-level row would appear.) */
+.v2-pop > .v2-pop-tabs:empty, .v2-pop > .v2-pop-pane:empty { display: none; }
+/* THE HINT TAKES ITS OWN ROW. In a 367px popover the third column is ~90px, so
+   a sentence there stacks two words to a line beside its control — the
+   documented `.ambient-ctrl` third-column trap. Same for the head's readout. */
+.v2-steprows .ambient-ctrl { grid-template-columns: 84px 1fr; }
+.v2-steprows .ambient-ctrl > .ambient-hint {
+  grid-column: 1 / -1; white-space: normal; overflow-wrap: anywhere; line-height: 1.35;
+}
+.v2-stephead { flex-wrap: wrap; }
+.v2-stephead .v2-stepsays {
+  flex: 1 0 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere; color: #9f7aea;
+}
+/* WHAT A STEP PLAYS. Its own hooks, and it borrows the bar popover's chrome by
+   NAMING both rather than re-stating the values. */
+.v2-steppop-wrap {
+  display: flex; align-items: center; justify-content: center;
+  position: fixed; inset: 0; z-index: 10310;
+}
+.v2-stepscrim { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.6); }
+.v2-stepacts { padding: 4px 14px calc(12px + env(safe-area-inset-bottom)); }
+.v2-stepacts .ambient-seg { width: 100%; min-height: 44px; }
+/* a step that SAYS what it plays must not look like one that follows the rule
+   (the absent-is-inherit grammar the mask cells and the bar rules follow) */
+.ambient-euclid-notelbl.v2-noteown { color: #d6bcfa; border-color: #9f7aea; }
+/* ── THE SECTION POPOVER ──────────────────────────────────────────────────
+   Instrument · Pitch · Shape · Mix · FX open OVER the card rather than
+   rebuilding its body, so the body keeps showing Content and its drawing while
+   you reach for a treatment. It follows the ⚙ Generated / bar popovers exactly
+   — same band, same scrim, same visible-band clamp — and every rule that
+   styles the sheet's pane, tabs, head and foot NAMES both containers rather
+   than re-stating its values, so the two can never drift apart.
+   Its hooks are its own (`.v2-secpop-*`): a duplicate class means
+   `querySelector` answers for the wrong sheet, which is documented and has
+   bitten this file repeatedly. */
+.v2-secpop-wrap {
+  display: flex; align-items: center; justify-content: center;
+  position: fixed; inset: 0;
+  /* ITS OWN RUNG, BELOW THE DIALOG BAND — 2026-09-13, reported as "z-index
+     issue when clicking Written… nothing works right". It sat at 10310: the
+     SAME rung as the four v2 popovers it can open (`.v2-genwrap`,
+     `.v2-gwwrap`, `.v2-barwrap`, `.v2-steppop-wrap` — equal z, so DOM order
+     decided, and this wrap is appended last) and ABOVE `.sm-overlay` (10300),
+     which is what `_ambActionsPopover` uses. So ✎ Written opened its menu
+     BEHIND this panel: measured, the menu's first button hit-tested to
+     `.v2-pop-tab`, i.e. this popover's own tab strip painted over it.
+     A section sheet is a sheet over ONE CARD — it has no business outranking
+     the app's dialog layer. 10250 clears everything in the panel (the highest
+     is `.ambient-prog-editor` at 10050) and sits under the whole band, so
+     EVERY surface opened from inside a section paints above it, including
+     ones not written yet. Same family fix as raising `.ctx-menu` to 10900,
+     from the other direction. */
+  z-index: 10250;
+}
+.v2-secpop-scrim { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.6); }
+.v2-secpop {
+  position: relative; display: flex; flex-direction: column;
+  width: min(560px, 94vw);
+  /* the visible band, not the raw viewport: 100vh includes the status bar
+     under viewport-fit=cover and the app's own fixed header sits on top of it,
+     so a plainly centred panel loses its top row in the shell */
+  --v2-safetop: env(safe-area-inset-top, 0px);
+  --v2-safebot: env(safe-area-inset-bottom, 0px);
+  --v2-hdr: 40px;
+  --v2-topchrome: calc(var(--v2-safetop) + var(--v2-hdr));
+  max-height: calc(100vh - var(--v2-topchrome) - var(--v2-safebot) - 12px);
+  margin-top: calc(var(--v2-topchrome) - var(--v2-safebot));
+  background: #12121f; border: 1px solid #2d2d3f; border-radius: 16px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+/* THE PANE IS THE ONLY THING THAT SCROLLS. The body's Content editor scrolls
+   with the page (it IS the page), but a popover is clamped to the visible
+   band, so its rows need somewhere to go — head, nav, tabs and foot hold. */
+.v2-secpop .v2-pop-pane { overflow-y: auto; -webkit-overflow-scrolling: touch; flex: 1 1 auto; }
+.v2-secpop-head { padding: 12px 14px 4px; }
+.v2-secpop-title { font: 600 1rem 'Segoe UI', sans-serif; color: #e2e8f0; flex: 1 1 auto; min-width: 0; }
+.v2-secpop-close {
+  flex: 0 0 auto; width: 40px; height: 40px; border-radius: 10px;
+  border: 1px solid #2d2d3f; background: #0a0a14; color: #a0aec0;
+  font-size: 1rem; cursor: pointer; touch-action: manipulation;
+}
+.v2-secpop-close:hover { border-color: #fc8181; color: #fc8181; }
+/* the body's row keeps marking the section you are in, so the card still says
+   where you are behind the scrim — dimmer than a section you are reading */
+.v2-pop-head .v2-gototab.on { opacity: 1; }
+.v2-secprev {
+  width: 100%; min-height: 44px; border-radius: 20px;
+  border: 1px solid #2d2d3f; background: transparent; color: #a0aec0;
+  font: 600 0.85rem 'Segoe UI', sans-serif; cursor: pointer;
+  touch-action: manipulation;
+}
+.v2-secprev:hover { border-color: #9f7aea; color: #d6bcfa; }
+.v2-secprev.on { border-color: #48bb78; color: #9ae6b4; }
+.v2-pop-foot, .v2-secpop-foot { flex: 0 0 auto; padding: 6px 14px calc(14px + env(safe-area-inset-bottom)); }
 /* THE PART, DRAWN — one cycle of what it plays, above the sheet's tabs. Not an
    .ambient-ctrl on purpose: that is what keeps it out of the tab filter, so it
    stays visible whichever tab you are on. */
@@ -15609,12 +15797,48 @@
   border: 1px solid #23233a; border-radius: 10px; background: #0f0f1a;
 }
 .v2-partviz .v2-vizcv { display: block; width: 100%; height: 84px; }
+/* ── THE DRAWING, FOLDED AWAY ────────────────────────────────────────────
+   The picture is the tallest thing on the card (282px measured at 390px) and
+   is in the way while you are turning knobs. What folds is the PICTURE and
+   everything that only makes sense beside it — the pitch/bar navigation, the
+   note editor, the multi-select bar, and Mode / Grid / the form switch, all of
+   which answer "what does a tap on the drawing do".
+   WHAT STAYS IS THE TAKE BAR AND THE READOUT: 🎲 New take, ✎ Write it down,
+   💾 Save and ✨ Transform live here and nowhere else, so folding them would
+   make four actions unreachable; and the readout is the only place the card
+   says Static or Live. `display: none`, not opacity — a hidden control must
+   not be tabbable or hit-testable, and `opacity` composites the whole subtree
+   (the documented trap that dimmed a live ✎ button along with its row). */
+.v2-partviz.v2-vizoff > .v2-vizcv,
+.v2-partviz.v2-vizoff > .v2-vizph,
+.v2-partviz.v2-vizoff > .v2-neinline,
+.v2-partviz.v2-vizoff > .v2-multibar,
+.v2-partviz.v2-vizoff > .v2-stepsgrid,
+.v2-partviz.v2-vizoff .v2-vnav,
+.v2-partviz.v2-vizoff .v2-modesel,
+.v2-partviz.v2-vizoff .v2-gridsel,
+.v2-partviz.v2-vizoff .v2-regen,
+.v2-partviz.v2-vizoff .v2-formseg { display: none !important; }
+/* folded, the block is a strip: no picture to frame, so no inner padding to
+   reserve for one */
+.v2-partviz.v2-vizoff { padding-bottom: 6px; }
+.v2-viztog { flex: 0 0 auto; }
 /* THE PLAYHEAD rides its own transparent canvas over the roll — its box is set
    in JS from the roll's own offset, so it cannot drift when the padding here
    changes. */
 .v2-partviz .v2-vizph { position: absolute; pointer-events: none; }
-.v2-partviz .v2-vizfoot { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
-.v2-partviz .v2-vizlab { display: block; flex: 1 1 auto; min-width: 0; font-size: 0.7rem; }
+/* ── THE CHROME, ABOVE THE PICTURE, IN ONE ROW ──────────────────────────
+   It was four stacked lines UNDERNEATH the drawing — 153px of chrome against
+   a 79px canvas. One wrapping row now, in a left-to-right progression:
+   whether you see it → which picture → what a tap does → what edits snap to →
+   where you are looking. The nav is pushed right because it is about the VIEW
+   rather than the material, which is also what keeps the two groups legible
+   when the row wraps. */
+.v2-partviz .v2-vizhead {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  margin: 0 0 4px; min-width: 0;
+}
+.v2-partviz .v2-vizlab { display: block; min-width: 0; margin: 0 0 4px; font-size: 0.7rem; }
 /* WATCH or WORK — a two-state preference, so one button that names the state
    it is in. On the label line, because it is about the drawing. */
 .v2-vmode {
@@ -15646,10 +15870,8 @@ select.ambient-select.v2-gridpick {
 .v2-draw.on { border-color: #9f7aea; background: #9f7aea; color: #12121f; }
 @media (hover: hover) { .v2-draw:hover { border-color: #9f7aea; color: #d6bcfa; }
   .v2-draw.on:hover { color: #12121f; } }
-/* …and the line has four things on it now, so it wraps rather than squeezing
-   the readout to nothing (UI rule 1). */
-.v2-partviz .v2-vizfoot { flex-wrap: wrap; }
-.v2-partviz .v2-vizlab { flex: 1 1 100%; }
+/* the readout is its own block under the head, so it needs no flex basis to
+   claim a line of its own */
 /* THE TAKE BAR — inside the viz block for the same reason the canvas is: it
    acts on the PICTURE, so it must be visible under every tab rather than
    belonging to one. Tap targets meet the 44px floor at phone width. */
@@ -15658,6 +15880,17 @@ select.ambient-select.v2-gridpick {
   flex: 1 1 0; min-width: 0; min-height: 40px;
   white-space: normal; overflow-wrap: anywhere;
 }
+/* TWO PER ROW ON A PHONE, not four. At 390px `flex: 1 1 0` gave each of the
+   four 81px — and "🎲 Replace with a new take" in 81px is FIVE LINES that
+   break mid-word ("Generat / e instead"), which is `overflow-wrap: anywhere`
+   doing exactly what it is told in a box that is too narrow to ask it.
+   A 50% basis gives ~165px, which fits the longest face in two lines and
+   every other one in one. Desktop keeps the single row. */
+/* …AT EVERY WIDTH, because the card's own width is capped: measured 472px at
+   a 620px viewport and STILL 472px at 1280, so four across is 114px forever
+   and no breakpoint exists at which it works. A 50% basis is the answer, not
+   a media query. */
+.v2-partviz .v2-takebar .ambient-seg { flex: 1 1 calc(50% - 3px); }
 /* A note in the drawing is a control, so say so — and keep the finger target
    generous (the hit test pads the 6px note box; this is only the cursor). */
 .v2-partviz .v2-vizcv { cursor: pointer; touch-action: manipulation; }

@@ -11530,6 +11530,13 @@
       background: rgba(13, 13, 24, 0.6); margin-bottom: 4px;
       overflow: hidden;                     /* cells WRAP; nothing scrolls sideways */
     }
+    /* THE TOUCH FLOOR, on the surface that owns the grid. ▦ Pattern is the only
+       place the grid lives now, so its cells have to clear 32px on their own —
+       they measured 17×30 while a freely-wrapping duplicate in the Rhythm tab
+       was quietly satisfying the check. `stepBlocksHtml` gives the WIDTH by
+       chunking 8-per-row under 540px; this gives the HEIGHT, which no column
+       count can. */
+    .v2-layer .v2-partsteps .v2-stepsgrid .ambient-euclid-cell { min-height: 34px; }
     /* the grids come from the Pattern tab, where they sit inside an
        `.ambient-ctrl` 3-column row — here they own the width */
     .v2-layer .v2-partsteps .ambient-euclid-grid,
@@ -11591,15 +11598,23 @@
       color: var(--pt, #c9b8ef);
     }
 
-    /* ⌗ ROLL ⟷ ▦ STEPS — the form switch, on the footer of whichever surface
-       is showing so it is reachable from either side. */
+    /* ⌗ ROLL ⇄ ▦ STEPS — the form switch, on the footer of whichever surface
+       is showing so it is reachable from either side. ONE button carrying BOTH
+       names: the state lives in the FILL (`.v2-formnow` lit, `.v2-formalt` set
+       back), never in which word is shown — a single word here is read as the
+       current mode whatever glyph precedes it, which is exactly how the
+       destination-only face got reported as "it says I'm in Steps". The wrapper
+       stays: the vizoff fold and the head-order check both key on it. */
     .v2-layer .v2-formseg { display: inline-flex; flex: 0 0 auto; }
     .v2-layer .v2-formseg .v2-formbtn {
-      min-height: 30px; padding: 3px 10px; font-size: 0.7rem; white-space: nowrap;
+      min-height: 30px; padding: 3px 9px; font-size: 0.7rem; white-space: nowrap;
+      display: inline-flex; align-items: center; gap: 5px;
     }
-    .v2-layer .v2-formseg .v2-formbtn.on {
-      border-color: #b794f4; color: #e9d8fd; background: rgba(159, 122, 234, 0.3); font-weight: 600;
-    }
+    .v2-layer .v2-formnow { color: #e9d8fd; font-weight: 600; }
+    .v2-layer .v2-formalt { color: #6b6b8a; font-weight: 400; }
+    /* the switch glyph is the only part that is neither state — it says the
+       press swaps them, and is set back so it never competes with the lit half */
+    .v2-layer .v2-formsw { color: #4a4a63; font-size: 0.66rem; }
 
     /* ⇄ Sync to Part — the Content sheet's length/notes confirm. */
     .v2-sync-modal { width: min(420px, 94vw); }
@@ -15278,7 +15293,7 @@
    `closest('.v2-layer')`. Fixed + measure-free: it covers the viewport and
    centres, like the section sheet, and sits ABOVE it (10290) since it opens
    from inside it. */
-.v2-genwrap, .v2-gwwrap, .v2-barwrap, .v2-autowrap { display: none; }
+.v2-genwrap, .v2-gwwrap, .v2-barwrap, .v2-autowrap, .v2-whywrap { display: none; }
 /* ONE BAR'S OWN RULES — the same panel chrome as ⚙ Generated (it IS that
    panel, scoped to a bar), so it REUSES those classes rather than re-typing
    their values; only the hooks the handlers key on are its own, because a
@@ -15301,6 +15316,15 @@
   width: 100%; min-width: 0; min-height: 36px;
 }
 .v2-barpop .v2-barreset { color: #f6ad55; }
+.v2-barpop .v2-barreset:disabled { color: #6b6b8a; border-color: #22222f; cursor: default; }
+.v2-layer .ambient-ctrl.v2-barsec {
+  display: block; border-top: 1px solid #22222f; margin-top: 8px;
+  padding-top: 8px; min-height: 0;
+}
+.v2-barsec > label {
+  font: 600 0.66rem 'Segoe UI', sans-serif; letter-spacing: .08em;
+  text-transform: uppercase; color: #7a7a9c;
+}
 .v2-layer.v2-gwopen .v2-gwwrap {
   display: flex; align-items: center; justify-content: center;
   position: fixed; inset: 0; z-index: 10310;
@@ -15397,6 +15421,67 @@
   position: fixed; inset: 0; z-index: 10310;
 }
 .v2-autoscrim { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.6); }
+
+/* ℹ WHY THESE NOTES — read-only prose, so the only rules it needs of its own
+   are the ones the shared shell cannot supply: it SCROLLS (the shell caps the
+   height and an explanation is long), and every line WRAPS. UI rule 2: this is
+   the one v2 popover made of sentences, so `overflow-wrap: anywhere` is not
+   optional here — a long control name would otherwise run out of the box. */
+.v2-layer.v2-whyopen .v2-whywrap {
+  display: flex; align-items: center; justify-content: center;
+  position: fixed; inset: 0; z-index: 10310;
+}
+.v2-whyscrim { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.6); }
+.v2-whybody {
+  flex: 1 1 auto; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 0 14px 14px; min-width: 0;
+}
+.v2-whybody p {
+  margin: 0 0 7px; font: 0.78rem/1.45 'Segoe UI', sans-serif; color: #a0aec0;
+  white-space: normal; overflow-wrap: anywhere; min-width: 0;
+}
+.v2-whylead { color: #cbd5e0; }
+/* THE ✕ OVERHANGS THE TOP OF THE BODY. It is absolutely positioned in the head's
+   corner, and the head is short — so the body's first line runs under it while
+   every line below clears it. The head reserves 62px for exactly this; the first
+   line of the body has to as well, or the lead is clipped at its right edge. */
+.v2-whybody > .v2-whylead:first-child { padding-right: 62px; }
+.v2-whysec { margin-top: 12px; }
+.v2-whysec h4 {
+  margin: 0 0 5px; font: 600 0.7rem/1.2 'Segoe UI', sans-serif;
+  color: #9f7aea; text-transform: uppercase; letter-spacing: 0.06em;
+}
+/* LABEL → VALUE. A two-column grid, not a sentence: the label is the CARD'S
+   OWN control name, so the row is both the answer and the way to change it.
+   `minmax(0, …)` on both tracks and `overflow-wrap` on the value — UI rule 2,
+   and a long value (a key name, a source-tone phrase) is exactly what would
+   otherwise push this out of the box at 390px. */
+.v2-whyrow {
+  display: grid; grid-template-columns: minmax(0, 92px) minmax(0, 1fr);
+  gap: 10px; align-items: baseline; padding: 3px 0;
+  border-bottom: 1px solid rgba(45, 45, 63, 0.5);
+}
+.v2-whyrow:last-of-type { border-bottom: 0; }
+.v2-whyk {
+  font: 0.72rem/1.3 'Segoe UI', sans-serif; color: #b794f4;
+  min-width: 0; overflow-wrap: anywhere;
+}
+.v2-whyv {
+  font: 600 0.78rem/1.3 'Segoe UI', sans-serif; color: #e2e8f0;
+  min-width: 0; overflow-wrap: anywhere;
+}
+/* WHAT ACTUALLY CAME OUT, measured — the one line per section that is not a
+   setting, so it is set apart from the rows above it rather than read as one. */
+.v2-whyout {
+  margin: 5px 0 0 !important; color: #6b6b8a !important; font-style: italic;
+  font-size: 0.72rem !important;
+}
+/* the lead's one reference to a button elsewhere on the card */
+.v2-whyctl {
+  display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 5px;
+  border: 1px solid #2d2d3f; background: #0a0a14; color: #b794f4;
+  font-size: 0.68rem; white-space: normal; overflow-wrap: anywhere;
+}
 .v2-autoshapes {
   display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 14px 10px; flex: 0 0 auto;
   border-top: 1px solid #22222f; margin-top: 4px;
@@ -15412,7 +15497,7 @@
   position: fixed; inset: 0; z-index: 10310;
 }
 .v2-genscrim { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.6); }
-.v2-genpop, .v2-barpop, .v2-steppop, .v2-autopop {
+.v2-genpop, .v2-barpop, .v2-steppop, .v2-autopop, .v2-whypop {
   position: relative; display: flex; flex-direction: column;
   width: min(520px, 94vw);
   /* the same visible-band rule the section sheet uses — 100vh includes the
@@ -15426,16 +15511,16 @@
   background: #12121f; border: 1px solid #2d2d3f; border-radius: 16px;
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
 }
-.v2-genhead, .v2-barhead, .v2-stephead, .v2-autohead {
+.v2-genhead, .v2-barhead, .v2-stephead, .v2-autohead, .v2-whyhead {
   display: flex; align-items: center; gap: 10px; padding: 12px 14px 4px; flex: 0 0 auto;
 }
-.v2-gentitle, .v2-bartitle, .v2-steptitle, .v2-autotitle { font: 600 0.95rem 'Segoe UI', sans-serif; color: #e2e8f0; flex: 1 1 auto; }
-.v2-genclose, .v2-gwclose, .v2-barclose, .v2-stepclose, .v2-autohead .v2-autox {
+.v2-gentitle, .v2-bartitle, .v2-steptitle, .v2-autotitle, .v2-whytitle { font: 600 0.95rem 'Segoe UI', sans-serif; color: #e2e8f0; flex: 1 1 auto; }
+.v2-gwclose {
   flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%;
   border: 1px solid #2d2d3f; background: none; color: #a0aec0;
   font-size: 1rem; cursor: pointer; touch-action: manipulation;
 }
-.v2-genclose:hover, .v2-gwclose:hover, .v2-barclose:hover, .v2-stepclose:hover, .v2-autohead .v2-autox:hover { border-color: #9f7aea; color: #d6bcfa; }
+.v2-gwclose:hover { border-color: #9f7aea; color: #d6bcfa; }
 .v2-genmodel, .v2-gensays, .v2-autosays {
   padding: 0 14px; margin: 0 0 6px; color: #6b6b8a; line-height: 1.35;
   white-space: normal; overflow-wrap: anywhere; flex: 0 0 auto;
@@ -15444,18 +15529,31 @@
 .v2-genshapes {
   display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 6px; flex: 0 0 auto;
 }
-/* THREE ACROSS, not two. Five doors at 50% each were 162px of a 617px panel
-   (26%) against 232px of knobs — measured at 390x780 — and the subtitles stay,
-   because three of these five names (Roll, Mixed, Groundwork) are this app's
-   own vocabulary and a bare word explains nothing at the point of the
-   decision (the `title`-never-shows-on-a-phone rule). At ~108px a one-line
-   subtitle fits; `max-width: 15ch` is what forced the second line, so it is
-   lifted here only. */
+/* VERBS, ONE LINE EACH (2026-09-16). The faces were a name plus a subtitle
+   because three of the names were app vocabulary that explained nothing; an
+   imperative face ("Roll a line", "Play the changes") explains itself, so the
+   subtitles went and the doors size to their words and wrap. The status names
+   (Sustained, Roll, Groundwork…) lead each title. */
 .v2-genshapes .ambient-seg {
-  flex: 1 1 calc(33.333% - 4px); min-width: 0; min-height: 40px;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  flex: 1 1 auto; min-width: 0; min-height: 40px;
+  white-space: normal; overflow-wrap: anywhere;
 }
-.v2-genshapes .v2-matsub { max-width: none; }
+/* ✓ DONE WRITES — the staged part, drawn inside ✨ Quick / ⚙ Deep. Fixed
+   height (the canvas is sized from its box), full width, the drawing's own
+   ground; the label sits on it like the card's ruler does. */
+.v2-stageviz { position: relative; margin: 0 14px 8px; flex: 0 0 auto; }
+.v2-stageviz .v2-stagecv { display: block; width: 100%; height: 96px; border-radius: 8px; border: 1px solid #22222f; }
+.v2-stageviz .v2-stagelab { position: absolute; right: 8px; top: 2px; font: 600 0.62rem 'Segoe UI', sans-serif; color: #9f7aea; pointer-events: none; }
+/* PRESET — a labelled picker with ↺ Reset beside it. Chips under the shapes
+   read as MORE SHAPES (different sizes, no label), so the choice sits with the
+   controls it sets. Compound selector: `.ambient-select` is `width: 100%` and
+   declared late (the documented trap). `[hidden]` needs its own rule because
+   `.ambient-ctrl` sets `display`. */
+.v2-layer .v2-genrows .ambient-ctrl.v2-presetctl { align-items: center; }
+.v2-layer .v2-genrows .ambient-ctrl.v2-presetctl[hidden] { display: none; }
+.v2-layer .v2-genrows select.ambient-select.v2-presetpick { width: 100%; min-width: 0; }
+.v2-layer .v2-genrows .v2-presetctl .v2-presetreset { min-height: 36px; padding: 4px 11px; white-space: nowrap; }
+.v2-layer .v2-genrows .v2-presetctl .v2-presetreset:disabled { opacity: 0.45; cursor: default; }
 /* A SECOND COPY OF A SHEET SELECT LANDS IN A NARROWER BOX. `.ambient-select`
    is `width: 100%` and declared LATER than most row rules, so a single-class
    override loses the cascade — compound it (the documented trap, now on its
@@ -15467,6 +15565,25 @@
   grid-template-columns: 1fr auto; align-items: center; gap: 10px;
 }
 .v2-layer .v2-genrows .ambient-ctrl.v2-disc .ambient-hint { grid-column: 1 / -1; }
+/* THE CORNER ✕ IS 40px AND PINNED at top 10px, so it reaches y=50 — but the
+   head measured 36px, and the shape doors below ran UNDER it (the second door
+   was half covered). The head reserves the ✕'s height as well as its width. */
+.v2-genhead { min-height: 56px; box-sizing: border-box; }
+/* HARMONY'S CHIPS TAKE THE ROW. Beside a hint column they stacked one per line
+   on a phone (six rows of chips); the chips span the control columns and the
+   hint takes its own line under them (the 3-column-grid trap). */
+.v2-layer .v2-genrows .ambient-ctrl > .ambient-seg-row:has(.v2-harm) { grid-column: 2 / -1; }
+.v2-layer .v2-genrows .ambient-ctrl:has(.v2-harm) > .ambient-hint { grid-column: 1 / -1; }
+/* …and with nothing picked the hint is a sentence about the chips beside it —
+   the panel's rows carry units, not sentences, so it shows only as a count */
+.v2-layer .v2-genrows .ambient-ctrl:has(.v2-harm):not(:has(.v2-harm.on)) > .ambient-hint { display: none; }
+/* Groundwork's overlay is `display: block` by its own rule, which beat the
+   fold's `.v2-sub { display: none }` — so it sat outside ▸ Fine-tune. */
+.v2-layer .v2-genrows .ambient-ctrl.v2-gwparts.v2-sub { display: none; }
+.v2-layer.v2-so-gmore .v2-genrows .ambient-ctrl.v2-gwparts.v2-sub { display: block; }
+/* ▸ Fine-tune's line is a READOUT of what the fold holds, not a caption */
+.v2-layer .v2-genrows .v2-tunesum { color: #a0aec0; }
+.v2-layer .v2-genrows .v2-tunesum:empty { display: none; }
 /* THE KNOBS SCROLL, the shapes and the actions do not — an action you have to
    scroll to find is the documented compose-dock bug. */
 .v2-genrows, .v2-barrows, .v2-steprows { flex: 1 1 auto; overflow-y: auto; padding: 4px 14px 8px;
@@ -15521,6 +15638,11 @@
   touch-action: manipulation;
 }
 .v2-gototab:hover { border-color: #9f7aea; color: #d6bcfa; }
+/* ✺ LIVE wears the VARIES badge's amber — the section is where everything that
+   makes a pass differ lives, and the colour is how the badge points at it */
+.v2-gototab[data-goto="Live"] { border-color: rgba(246, 173, 85, 0.55); color: #f6ad55; }
+.v2-gototab[data-goto="Live"]:hover { border-color: #f6ad55; color: #fbd38d; }
+.v2-gototab[data-goto="Live"].on { background: #f6ad55; border-color: #f6ad55; color: #12121f; }
 .v2-gototab.on { background: #9f7aea; border-color: #9f7aea; color: #12121f; }
 /* a section whose summary is not its neutral — "which sections does this layer
    actually use", the one thing the button grid said that the tabs did not */
@@ -15538,10 +15660,28 @@
    lets it sit beside the pair and right-align into that gap — the same
    pair-left / readout-right shape the drawing's own head uses. */
 .v2-pop-head .v2-grpsum, .v2-secpop-head .v2-grpsum {
-  flex: 1 1 auto; min-width: 0; margin-top: -2px; color: #6b6b8a;
+  flex: 1 1 auto; min-width: 0; margin-top: -2px;
+  /* READABLE, not a whisper — it is the one line that says what the pop-up
+     holds (live/static, bars, rhythm), and at #6b6b8a/hint size it was reported
+     as barely visible. */
+  color: #d6d6f0; font-size: 0.86rem; font-weight: 650;
   white-space: normal; overflow-wrap: anywhere; line-height: 1.3;
   text-align: right;
 }
+/* Each value its own colour, cycling by position; the dots stay quiet. Values
+   sit at the ODD children (separators are spans between them), hence 12n+odd. */
+.v2-grpsum .v2-sumsep { color: #6b6b8a; font-weight: 400; }
+.v2-grpsum .v2-sumv:nth-child(12n+1) { color: #f6ad55; }
+.v2-grpsum .v2-sumv:nth-child(12n+3) { color: #63b3ed; }
+.v2-grpsum .v2-sumv:nth-child(12n+5) { color: #68d391; }
+.v2-grpsum .v2-sumv:nth-child(12n+7) { color: #b794f4; }
+.v2-grpsum .v2-sumv:nth-child(12n+9) { color: #f687b3; }
+.v2-grpsum .v2-sumv:nth-child(12n+11) { color: #4fd1c5; }
+/* LIVE ⟷ FIXED — the badge that leads every summary and every drawing readout
+   (`liveBadge` wraps it). LIVE is lit, FIXED is quiet; both are always there,
+   in the same place, so nothing appears or vanishes as settings change. */
+.v2-grpsum .v2-sumv.v2-sum-live, .v2-livebadge.v2-sum-live { color: #f6ad55; font-weight: 800; letter-spacing: 0.04em; }
+.v2-grpsum .v2-sumv.v2-sum-fixed, .v2-livebadge.v2-sum-fixed { color: #9a9ab8; font-weight: 800; letter-spacing: 0.04em; }
 /* …on a phone the PAIR already takes the whole row, so the summary wraps below
    it and reads left, as it always did. Kept HERE rather than in the phone block
    near the top of the file: that block sits EARLIER, so an equal-specificity
@@ -15618,6 +15758,9 @@
 .v2-layer .v2-pop-pane .v2-disc > .ambient-hint { grid-column: 1 / -1; margin-top: -2px; }
 .v2-layer .v2-pop-pane .v2-disc > label { font-weight: 600; }
 .v2-pop-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 14px 8px; flex: 0 0 auto; }
+/* a section with ONE tab hides its strip (`hidden`, set in syncSheet) — the rule
+   above sets `display`, which would otherwise beat the attribute */
+.v2-pop-tabs[hidden] { display: none; }
 .v2-pop-tab {
   min-height: 34px; padding: 5px 12px; border: 1px solid #2d2d3f; border-radius: 17px;
   background: transparent; color: #a0aec0; font: 600 0.78rem 'Segoe UI', sans-serif; cursor: pointer;
@@ -15771,12 +15914,30 @@
 .v2-secpop .v2-pop-pane { overflow-y: auto; -webkit-overflow-scrolling: touch; flex: 1 1 auto; }
 .v2-secpop-head { padding: 12px 14px 4px; }
 .v2-secpop-title { font: 600 1rem 'Segoe UI', sans-serif; color: #e2e8f0; flex: 1 1 auto; min-width: 0; }
-.v2-secpop-close {
+/* ✕ LIVES IN THE CORNER, not in the flow. As a flex ITEM it sat wherever DOM
+   order left it: the section head's summary follows it and takes the rest of
+   the row (`flex: 1 1 auto; text-align: right`), so at desktop width the close
+   measured 324px from the right edge — the middle of the header. Pinned, it
+   cannot be pushed by anything that is added to the head later, which is the
+   whole point; the head reserves room on the right so no text runs under it.
+   (Only ≤540px hid this: there the summary wraps to its own line and the ✕
+   happened to end up last — the documented single-viewport blind spot.) */
+.v2-secpop-head .v2-secpop-close, .v2-genhead .v2-genclose,
+.v2-barhead .v2-barclose, .v2-stephead .v2-stepclose, .v2-autohead .v2-autox,
+.v2-whyhead .v2-whyclose {
+  position: absolute; top: 10px; right: 12px; z-index: 2;
   flex: 0 0 auto; width: 40px; height: 40px; border-radius: 10px;
   border: 1px solid #2d2d3f; background: #0a0a14; color: #a0aec0;
   font-size: 1rem; cursor: pointer; touch-action: manipulation;
+  display: flex; align-items: center; justify-content: center;
 }
-.v2-secpop-close:hover { border-color: #fc8181; color: #fc8181; }
+.v2-secpop-head .v2-secpop-close:hover, .v2-genhead .v2-genclose:hover,
+.v2-barhead .v2-barclose:hover, .v2-stephead .v2-stepclose:hover,
+.v2-autohead .v2-autox:hover,
+.v2-whyhead .v2-whyclose:hover { border-color: #fc8181; color: #fc8181; }
+/* …and the room it needs, so a long title or a summary never runs under it */
+.v2-secpop-head, .v2-genhead, .v2-barhead, .v2-stephead, .v2-autohead,
+.v2-whyhead { padding-right: 62px; }
 /* the body's row keeps marking the section you are in, so the card still says
    where you are behind the scrim — dimmer than a section you are reading */
 .v2-pop-head .v2-gototab.on { opacity: 1; }
@@ -15838,6 +15999,11 @@
   display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
   margin: 0 0 4px; min-width: 0;
 }
+.v2-partviz .v2-vizhead > .ambient-seg { padding-left: 10px; padding-right: 10px; }
+/* ⌫ CLEAR RIDES RIGHT OF THE 👁 VIEW PICKER (2026-09-16). At the card's capped
+   width (472px) the row had 58px left after View and Clear is ~79px at the
+   house 14px padding, so the head's buttons take 10px — which puts Clear on
+   the first line beside View. At phone width the row wraps as it always did. */
 .v2-partviz .v2-vizlab { display: block; min-width: 0; margin: 0 0 4px; font-size: 0.7rem; }
 /* WATCH or WORK — a two-state preference, so one button that names the state
    it is in. On the label line, because it is about the drawing. */
@@ -16040,3 +16206,119 @@ button.v2-nesec {
   width: 92px; font-size: 16px; text-align: center; background: #0f0f1e; color: #e2e8f0;
   border: 1px solid #9f7aea; border-radius: 8px; padding: 6px;
 }
+
+/* ── ▦ SCHEDULE (18-schedule.js) ─────────────────────────────────────────────
+   One grid for "who plays where". Built from the panel's own tokens: the
+   `.ambient-seg` chips, the #2d2d3f hairline, purple for a choice, amber for a
+   CHANCE (the same amber the VARIES badge uses), and each part's own hue
+   (`--pt`, from `[data-part]`) on its chords and cells. Passes WRAP rather than
+   scroll (UI rule 1); a cell's width is its change's length on that pass. */
+.ambient-schedgrid { display: grid; gap: 10px; min-width: 0; }
+.sch-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.sch-view { display: inline-flex; border: 1px solid #4b3b78; border-radius: 999px; padding: 3px; background: #0d0b1a; }
+.sch-viewbtn { border: 0; background: transparent; color: #8a8aa8; font: 650 0.8rem 'Segoe UI', sans-serif;
+  padding: 6px 13px; border-radius: 999px; cursor: pointer; min-height: 32px; touch-action: manipulation; }
+.sch-viewbtn.on { background: #d6bcfa; color: #14102a; }
+.sch-viewbtn:disabled { opacity: 0.45; cursor: default; }
+.sch-tabs .sch-tab[data-part].on { border-color: var(--pt, #9f7aea); color: #e2e8f0;
+  background: color-mix(in srgb, var(--pt, #9f7aea) 18%, #0a0a14); }
+.sch-brush { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px;
+  border: 1px solid #1f1f30; border-radius: 10px; background: #0e0e1a; min-width: 0; }
+.sch-lbl { font: 700 0.62rem 'Segoe UI', sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: #5a5a78; }
+.sch-sep { width: 1px; align-self: stretch; background: #2d2d3f; margin: 0 2px; }
+.sch-tool, .sch-level { display: inline-flex; align-items: center; gap: 6px; }
+.sch-sw { width: 14px; height: 12px; border-radius: 3px; border: 1px solid #2d2d3f; flex: 0 0 auto; }
+.sch-sw.sw-on { background: color-mix(in srgb, #479ef5 42%, #141426); }
+.sch-sw.sw-off { background: repeating-linear-gradient(135deg, #11111d 0 4px, #1a1a2a 4px 8px); }
+.sch-sw.sw-pct { background: linear-gradient(to top, color-mix(in srgb, #479ef5 42%, #141426) var(--p), #171728 var(--p)); border-color: rgba(246,173,85,0.6); }
+.sch-sw.sw-clear { border-style: dashed; }
+.sch-sw.sw-gen { border-style: dashed; background: #171728; }
+.sch-sw.sw-ph { background: #1a1830; border-color: #3b3360; }
+.sch-chance { gap: 8px; }
+.sch-chancein { width: 3.6em; background: #07070f; color: #f6ad55; border: 1px solid #2d2d3f; border-radius: 6px;
+  font: 700 0.85rem 'Segoe UI', sans-serif; text-align: center; padding: 3px 6px; font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield; appearance: textfield; }
+.sch-chancein::-webkit-outer-spin-button, .sch-chancein::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+@media (pointer: coarse) { .sch-chancein { font-size: 16px; } }   /* iOS zooms under 16px and never returns */
+.sch-pc { margin-left: -4px; color: #8a8aa8; }
+.sch-cap, .sch-foot { white-space: normal; overflow-wrap: anywhere; }
+.sch-passes { display: flex; flex-wrap: wrap; gap: 14px; min-width: 0; }
+.sch-pass { flex: 1 1 380px; min-width: 0; display: grid; gap: 4px; }
+.sch-passlab { font: 700 0.62rem 'Segoe UI', sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: #5a5a78; }
+.sch-grid { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 4px 8px; }
+.sch-rowlab { display: flex; align-items: center; min-width: 0; font-size: 0.78rem; color: #e2e8f0; overflow-wrap: anywhere; }
+.sch-rowlab.sch-arr { font: 600 0.62rem 'Segoe UI', sans-serif; letter-spacing: 0.06em; text-transform: uppercase; color: #8a8aa8; }
+.sch-lane { display: flex; gap: 3px; min-width: 0; }
+.sch-chord { min-width: 0; display: grid; gap: 1px; text-align: left; padding: 4px 6px; border-radius: 6px; cursor: pointer;
+  color: #e2e8f0; font: inherit; touch-action: manipulation;
+  background: color-mix(in srgb, var(--pt, #9f7aea) 14%, #0f0f1c); border: 1px solid color-mix(in srgb, var(--pt, #9f7aea) 40%, transparent); }
+.sch-chord b { font-size: 0.8rem; overflow: hidden; text-overflow: clip; white-space: nowrap; }
+.sch-chord span { font-size: 0.64rem; color: #8a8aa8; white-space: nowrap; overflow: hidden; }
+.sch-chord.dropped { opacity: 0.45; border-style: dashed; }
+.sch-cell { min-width: 0; min-height: 38px; border-radius: 6px; border: 1px solid #2d2d3f; background: #171728; color: #8a8aa8;
+  font: 650 0.68rem 'Segoe UI', sans-serif; cursor: pointer; padding: 0 2px; overflow: hidden; white-space: nowrap;
+  font-variant-numeric: tabular-nums; touch-action: manipulation; }
+@media (pointer: coarse) { .sch-cell, .sch-chord { min-height: 44px; } }
+.sch-cell.on { background: color-mix(in srgb, var(--pt, #479ef5) 42%, #141426); border-color: color-mix(in srgb, var(--pt, #479ef5) 70%, transparent); color: #0b0b16; }
+.sch-cell.pct { color: #f6ad55; border-color: rgba(246,173,85,0.55);
+  background: linear-gradient(to top, color-mix(in srgb, var(--pt, #479ef5) 42%, #141426) var(--p), #171728 var(--p)); }
+.sch-cell.off { background: repeating-linear-gradient(135deg, #11111d 0 5px, #1a1a2a 5px 10px); color: #5a5a78; }
+.sch-cell.inh { border-style: dashed; }
+.sch-cell.na { background: transparent; border-style: dotted; opacity: 0.35; cursor: default; }
+.sch-cell.ph { background: #1a1830; border-color: #3b3360; color: #e2e8f0; }
+.sch-cell.phgen { color: #5a5a78; }
+.sch-cell:focus-visible, .sch-chord:focus-visible, .sch-viewbtn:focus-visible { outline: 2px solid #d6bcfa; outline-offset: 1px; }
+/* ACROSS ROUNDS — every row shares one column count, so a round lines up down
+   the whole grid; on a phone the rounds wrap four to a line instead of shrinking */
+.sch-rgrid { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 4px 8px; }
+.sch-rounds { display: grid; grid-template-columns: repeat(var(--n, 4), minmax(0, 1fr)); gap: 3px; min-width: 0; }
+@media (max-width: 560px) { .sch-rounds { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.sch-round { display: flex; gap: 2px; min-width: 0; align-items: stretch; }
+.sch-visit { min-width: 0; min-height: 30px; border-radius: 4px; border: 0; cursor: pointer; padding: 0 2px;
+  background: color-mix(in srgb, var(--pt, #9f7aea) 48%, #141426); color: #0b0b16;
+  font: 750 0.66rem 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; overflow: hidden; touch-action: manipulation; }
+@media (pointer: coarse) { .sch-visit { min-height: 44px; } }
+select.ambient-select.sch-addvisit { flex: 0 0 auto; width: 26px; min-width: 0; padding: 0; text-align: center; font-size: 0.8rem; }
+.sch-n { min-width: 2ch; text-align: center; font-variant-numeric: tabular-nums; }
+.sch-note { display: block; font-size: 0.6rem; color: #f6ad55; }
+.sch-rowlab { flex-wrap: wrap; }
+/* A LAYER'S NAME opens its options — it reads as a label, and behaves as a door */
+button.sch-rowlab { background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 2px 4px;
+  font: inherit; text-align: left; cursor: pointer; flex-direction: column; align-items: flex-start; justify-content: center; gap: 1px; }
+button.sch-rowlab:hover, button.sch-rowlab.on { border-color: #4b3b78; background: #1c1633; }
+button.sch-rowlab b { font-size: 0.78rem; overflow-wrap: anywhere; }
+.sch-note { font-size: 0.6rem; color: #f6ad55; }
+.sch-note.sch-mute { color: #d6bcfa; }
+.sch-opts { display: grid; gap: 8px; padding: 10px; border: 1px solid #4b3b78; border-radius: 12px; background: #0f0d1c; }
+.sch-optshead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sch-optrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.sch-optrow .sch-lbl { min-width: 9.5em; }
+.sch-slices { display: inline-flex; gap: 3px; }
+.sch-slice { width: 26px; min-height: 30px; border-radius: 5px; border: 1px solid #2d2d3f; background: #161626; cursor: pointer; touch-action: manipulation; }
+.sch-slice.on { background: #6b52b0; border-color: #9f7aea; }
+@media (pointer: coarse) { .sch-slice { width: 34px; min-height: 44px; } }
+select.ambient-select.sch-secsel { width: auto; flex: 0 0 auto; max-width: 100%; }
+/* A PASS'S LABEL opens its Salt, lengths and order */
+button.sch-passlab { justify-self: start; background: transparent; border: 1px solid transparent; border-radius: 6px;
+  padding: 3px 6px; cursor: pointer; min-height: 28px; }
+button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; background: #1c1633; color: #d6bcfa; }
+@media (pointer: coarse) { button.sch-passlab { min-height: 40px; } }
+.sch-salt { color: #f6ad55; letter-spacing: 0; text-transform: none; font-weight: 650; }
+.sch-lens { row-gap: 8px; }
+.sch-lenitem { display: inline-flex; align-items: center; gap: 4px; padding: 3px 5px; border: 1px solid #2d2d3f; border-radius: 8px; }
+.sch-lenitem b { font-size: 0.78rem; }
+.sch-barsin { width: 4.2em; background: #07070f; color: #e2e8f0; border: 1px solid #2d2d3f; border-radius: 6px;
+  font: 600 0.8rem 'Segoe UI', sans-serif; text-align: center; padding: 3px 4px; font-variant-numeric: tabular-nums; }
+@media (pointer: coarse) { .sch-barsin { font-size: 16px; } }
+/* PHONE — the pass grid turns: chords down (row height = length, min 44px),
+   layers across (~70px each at 390px) */
+.sch-vgrid { display: grid; grid-template-columns: 64px repeat(var(--nl, 2), minmax(0, 1fr)); gap: 3px; align-items: stretch; }
+.sch-vgrid button.sch-rowlab { align-items: center; text-align: center; }
+.sch-vgrid .sch-chord { align-content: center; }
+.sch-vgrid .sch-cell { min-height: 44px; }
+/* ▦ Schedule playhead — the running pass / round tinted, the sounding cell lit (same greens as the old pass grid) */
+.ambient-schedgrid .sch-pass.sch-incol { box-shadow: inset 3px 0 0 rgba(72,187,120,0.7); }
+.ambient-schedgrid .sch-round.sch-incol { outline: 1px solid rgba(72,187,120,0.55); outline-offset: 1px; }
+.ambient-schedgrid .sch-playing { box-shadow: 0 0 0 2px #48bb78; }
+/* ⏺ Temp punch-in — red while armed, like a record button */
+.ambient-schedgrid .sch-temp.on { border-color: #fc8181; color: #fff5f5; background: rgba(245,101,101,0.28); }

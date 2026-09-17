@@ -1269,6 +1269,47 @@
       return (area && area.playsRandom) ? (1 + Math.floor(Math.random() * plays)) : plays;
     }
     // Area tab strip (master Bloom only). Wired by CLASS (namespacing rewrites ids).
+    // ◈ THE NATURAL SEAMLESS UNIT, as a face — ONE definition, because the
+    // strip that PAINTS it and the sync that REPAINTS it must not be able to
+    // disagree. It was inline in the strip's HTML and written NOWHERE else, so
+    // it was computed once when the panel was built and never again: evening
+    // out a progression (or changing a layer's length, or the tempo) moved the
+    // real unit while the badge went on showing the old number. Reported as
+    // "that 30 number doesn't update". A readout that never re-reads is worse
+    // than no readout — it is a confident wrong answer.
+    //
+    // NOTE the unit counts the PROGRESSION's own cycle too, and it sums the
+    // FLAT chord list — parts and the chain do not divide it.
+    function _ambUnitBadge(act) {
+      const bars = _ambAreaLoopBars(_masterEng, act) | 0;
+      const ub = Math.max(1, ((act && act.bars) | 0) || 4);
+      const clean = bars > 0 && (ub % bars === 0);
+      return {
+        bars: bars, clean: clean,
+        label: bars > 0 ? ('◈ ' + bars + '-bar unit' + (clean ? '' : ' ⚠'))
+                        : '◈ no synced layers',
+        tip: bars > 0
+          ? ('Natural seamless unit = ' + bars + ' bar' + (bars === 1 ? '' : 's') +
+             ' — the LCM of this area’s capturable layers AND its progression cycle. ' +
+             'Set Bars to it (or a multiple) for a seamless Bar-Lock loop. ' + (clean
+              ? ('Bars ' + ub + ' = ×' + (ub / bars) + ' — tiles cleanly.')
+              : ('Bars ' + ub + ' is NOT a multiple → locking would cut a layer mid-cycle (possible seam).')))
+          : 'No capturable (synced / bar-native) layers — Unit-Sync a layer so Bar Lock has something to loop.',
+      };
+    }
+    // …and the repaint. IN PLACE, never a rebuild: this row holds the Bars
+    // picker and the lock, and rewriting it would detach the control under the
+    // finger (the documented trap).
+    function _ambSyncUnitBadge() {
+      const el = document.querySelector('.ambient-orch-unit'); if (!el) return;
+      let act = null;
+      try { const st = _masterBloomState(); act = st.areas[st.activeIdx] || null; } catch (e) {}
+      if (!act) return;
+      const u = _ambUnitBadge(act);
+      if (el.textContent !== u.label) el.textContent = u.label;
+      el.classList.toggle('warn', !(u.clean || u.bars <= 0));
+      if (el.title !== u.tip) el.title = u.tip;
+    }
     function _ambAreaStripHtml() {
       const s = _masterBloomState();
       const seq = (s.orch.mode === 'sequence');
@@ -1278,20 +1319,13 @@
       // to it (or a multiple) BEFORE locking. When locked, the lock LOOP LENGTH is the
       // user's Bars (a hard override); this readout flags a Bars value that doesn't tile
       // the unit (⚠ = would cut a layer mid-cycle when locked).
-      const unitBars = _ambAreaLoopBars(_masterEng, act);
+      const _u0 = _ambUnitBadge(act);
+      const unitBars = _u0.bars, _clean = _u0.clean;
+      const unitLabel = _u0.label, unitTip = _u0.tip;
+      const _ub = Math.max(1, (act.bars | 0) || 4);
       const _auN = Math.max(1, (act.areaUnit && act.areaUnit.num | 0) || 1);
       const _auD = Math.max(1, (act.areaUnit && act.areaUnit.den | 0) || 1);
       const _auVal = _auN + '/' + _auD;
-      const _ub = Math.max(1, (act.bars | 0) || 4);
-      const _clean = unitBars > 0 && (_ub % unitBars === 0);
-      const unitLabel = unitBars > 0
-        ? ('◈ ' + unitBars + '-bar unit' + (_clean ? '' : ' ⚠'))
-        : '◈ no synced layers';
-      const unitTip = unitBars > 0
-        ? ('Natural seamless unit = ' + unitBars + ' bar' + (unitBars === 1 ? '' : 's') + ' (the LCM of this area’s capturable layers). Set Bars to it (or a multiple) for a seamless Bar-Lock loop. ' + (_clean
-            ? ('Bars ' + _ub + ' = ×' + (_ub / unitBars) + ' — tiles cleanly.')
-            : ('Bars ' + _ub + ' is NOT a multiple → locking would cut a layer mid-cycle (possible seam).')))
-        : 'No capturable (synced / bar-native) layers — Unit-Sync a layer so Bar Lock has something to loop.';
       // `.on` = viewed/edited area; `.playing` = the area the engine is sounding
       // (can differ while you edit another area mid-play).
       // AUDIBLE index, not the engine's `_playIdx` — the advance flips that ~0.6s
@@ -6253,9 +6287,16 @@
       const x = Math.abs(Math.sin(a * 127.1 + b * 311.7 + 74.7) * 43758.5453);
       return x - Math.floor(x);
     }
+    // MUTE vs SKIP (▦ Schedule, 2026-09-16). A layer with `gateMode: 'mute'` does
+    // not have its chord cells applied BEFORE generation — the notes are made,
+    // and the SAME cells silence them at playback (`_ambChordMuteShouldSkip`,
+    // through the playNote hook). Absent = skip, today's behaviour. The flag is
+    // raised only for the duration of that playback call.
+    let _ambGateAtPlayback = false;
     function _ambChordGateOK(E, L, atSec, cfg, src, hard) {
       // Composing in the Grid: play every chord (see _ambGridComposing).
       if (L && _bloomGridEdit && _ambGridComposing(_ambKeyOfLayer(E, L))) return true;
+      if (L && L.gateMode === 'mute' && !_ambGateAtPlayback) return true;
       const m = L && L.chordMask; if (!m) return true;
       const eff = (src && src.type === 'prog') ? src : ((typeof _ambGlobalProg === 'function') ? _ambGlobalProg() : null);
       if (!eff || !Array.isArray(eff.chords) || !eff.chords.length) return true;
@@ -14395,6 +14436,24 @@
         }
         const ch = cfg && cfg.prog && cfg.prog.chords;
         if (!cfg || !cfg.prog || !cfg.prog.on || !Array.isArray(ch) || !ch.length) return -1;
+        // A ROUND IS ONE TRIP THROUGH THE ARRANGEMENT — the play-order chain, part
+        // repeats and every grid iteration included — not a trip through the
+        // chord LIST. `floor(step / chords.length)` was right only when every part
+        // plays once: with the Verse ×2 it ticked over mid-round, so a gate cell
+        // silenced half of one round and half of the next, and the ▦ Schedule's
+        // round cells could not line up with its own round header. The chain plan
+        // is indexed by chord INSTANCE and each slot carries its arrangement
+        // iteration, so round = completed cycles × iterations + this slot's iter.
+        try {
+          const plan = (typeof _ambPassPlan === 'function') ? _ambPassPlan(cfg) : null;
+          if (plan && plan.slots && plan.slots.length && typeof _ambProgInstanceAt === 'function') {
+            let inst = _ambProgInstanceAt(E, at) | 0; if (inst < 0) inst = 0;
+            const n = plan.slots.length, k = inst % n, cyc = Math.floor(inst / n);
+            let per = 1;
+            for (let i = 0; i < n; i++) per = Math.max(per, ((plan.slots[i] && plan.slots[i].iter) | 0) + 1);
+            return cyc * per + (((plan.slots[k] && plan.slots[k].iter) | 0));
+          }
+        } catch (e) {}
         const step = _ambProgStepAt(E, at);
         if (!Number.isFinite(step)) return -1;
         return Math.floor(step / ch.length);
@@ -14563,7 +14622,21 @@
       // silences itself".
       if (_ambHangEmitting) return false;
       if (_ambGridComposing(key)) return false;
-      return _ambUnitGateShouldSkip(key, at) || _ambIterGateShouldSkip(key, at) || _ambHangShouldSkip(key, at);
+      return _ambUnitGateShouldSkip(key, at) || _ambIterGateShouldSkip(key, at) || _ambHangShouldSkip(key, at) ||
+        _ambChordMuteShouldSkip(key, at);
+    }
+    // A MUTE-mode layer's chord cells, applied to a note that is about to sound.
+    // Reads the tick's captured cfg (never a getCfg per note — a full normalize).
+    function _ambChordMuteShouldSkip(key, at) {
+      try {
+        const E = (typeof _E !== 'undefined' && _E) ? _E : _masterEng;
+        if (!E) return false;
+        const L = _ambLayerByKey(E, key);
+        if (!L || L.gateMode !== 'mute' || !L.chordMask) return false;
+        const cfg = E._cfg || null;
+        _ambGateAtPlayback = true;
+        try { return !_ambChordGateOK(E, L, at, cfg, null); } finally { _ambGateAtPlayback = false; }
+      } catch (e) { return false; }
     }
     if (typeof window !== 'undefined') window._ambUnitGateSkip = _ambPlaybackGateShouldSkip;
     // ---- PHASE DIAGNOSTIC (read-only) ---------------------------------------
@@ -30336,6 +30409,7 @@
       try { _ambClearEuclidPlayheads(E); } catch (e) {}   // drop the step-playhead highlight on stop
       try { _ambClearPassPlayhead(_ambGet(E, 'ambient-passmx')); } catch (e) {}
       try { _ambRestoreTempWhen(E); } catch (e) {}   // drop lingering "Temp" When edits back to baseline
+      try { if (typeof window._ambScheduleTempRestore === 'function') window._ambScheduleTempRestore(E); } catch (e) {}   // …and ▦ Schedule's
       try { _ambFreezeStopAll(E); } catch (e) {}
       _ambResetClocks(E);
       const cfg = E.getCfg();
@@ -34478,6 +34552,7 @@
       // Per FRAME, not per sync: this is the one that has to track the music.
       try { _ambGridRulerPlayhead(E); } catch (e) {}
       try { _ambPassPlayhead(E); } catch (e) {}
+      try { if (typeof window._ambScheduleTick === 'function') window._ambScheduleTick(E); } catch (e) {}
       try { _ambPartSeqPlayhead(E); } catch (e) {}
       try { _ambPartSeqMatrixSync(E); } catch (e) {}
       try { _ambProgOverviewPlayhead(E); } catch (e) {}
@@ -38841,7 +38916,8 @@
     // uses `-gen`, and Hold `-gw`). Without stripping it every slider in that
     // panel looked up the unit for "gen", found none, and rendered a bare
     // number: the reported "the numeric values are not all intelligible".
-    const _AMB_UNIT_SUFFIX = { gen: 1, gw: 1 };
+    // `mx` = the ⚙ panel's second copy of a line knob, shown for ⚇ Mix (v2)
+    const _AMB_UNIT_SUFFIX = { gen: 1, gw: 1, mx: 1 };
     function _ambSlUnit(id) {
       const seg = String(id || '').split('-');
       while (seg.length > 1 && _AMB_UNIT_SUFFIX[seg[seg.length - 1]]) seg.pop();
@@ -42276,7 +42352,11 @@
         // under the next chord.
         const tail = durMs / 1000;
         if (tail < barSec / 8) return durMs;
-        const end = _ambChordEndAt(E, cfg, atSec);
+        // AN ANTICIPATED CHORD (v2 Groundwork, `_chokeLead`) sounds an 8th before
+        // its change and BELONGS to that change — so its boundary is the end of
+        // the change it anticipates, not the one it happens to start inside.
+        const lead = (params && params._chokeLead > 0) ? params._chokeLead : 0;
+        const end = _ambChordEndAt(E, cfg, atSec + lead);
         if (!(end > atSec)) return durMs;
         const room = (end - _AMB_CHOKE_GAP) - atSec;
         if (room <= 0.03) return durMs;                      // already at the edge; leave it alone
@@ -43310,7 +43390,7 @@
           }),
           rerollWhy: (_isSalt && !_ambAnySaltColors(cfg2))
             ? 'Nothing is colouring these chords yet \u2014 the roll is stored, but set a Salt colour amount ' +
-              '(\u25a6 Passes \u2192 \ud83e\uddc2 Salt for one pass, the progression editor for these changes, or \ud83e\uddc2 Salt for the area) to hear it.'
+              '(\u25a6 Schedule \u2192 a pass\u2019s label for one pass, the progression editor for these changes, or \ud83e\uddc2 Salt for the area) to hear it.'
             : '',
         });
       };
@@ -44735,7 +44815,8 @@
           _ambTm('Interval', p + 'interval', 200, 16000, 50, s.intervalMs) +
           _ambTm('Length', p + 'length', 300, 16000, 100, s.lengthMs) +
           _ambSl('Drift', p + 'drift', 0, 99, s.drift, 'phase offset') +
-          _ambWhenCtrl(p) + gpe() +
+          // (When moved to ▦ Schedule ▸ a layer's options, 2026-09-16)
+          gpe() +
         grp('Variance') +
           '<div class="ambient-ctrl"><label for="' + p + 'vary">Vary</label><select id="' + p + 'vary" class="ambient-select">' + opts([['pitch', 'Pitch'], ['rhythm', 'Pitch + rhythm'], ['pad', 'Pad re-voice']], s.varyMode) + '</select><span class="ambient-hint">style</span></div>' +
           _ambSl('Amount', p + 'depth', 0, 100, s.varyDepth, 'subtle → wild') +
@@ -45980,6 +46061,9 @@
       return 'Area×' + _ambFmtBpc(num / den);
     }
     function _ambRenderScheduler(E) {
+      // the ▦ Schedule grid draws the same arrangement — every path that repaints
+      // the Scheduler repaints it too (signature-cached, so a playhead tick is free)
+      try { if (typeof window._ambRenderSchedule === 'function') window._ambRenderSchedule(E); } catch (e) {}
       const body = _ambGet(E, 'ambient-sched-body'); if (!body) return;
       const cfg = E.getCfg(); if (!cfg) return;
       const layers = _ambMixerLayers(cfg);
@@ -46560,10 +46644,9 @@
       // Parts, which toggled the lane above; with that gone the bar is exactly
       // the two doors, and ▤ Song map (on the Arrangement bar) is where the
       // arrangement is read.
+      // COARSE RETIRED (2026-09-16): every layer's on/off, per chord, per pass and
+      // across rounds, is ▦ Schedule now — the grid above this section.
       html = '<div class="ambient-sched-qebar">'
-        + '<button type="button" class="ambient-seg ambient-sched-qe" '
-        + 'title="Coarse — every layer\u2019s changes in one grid; click a cell to turn that layer off there">'
-        + 'Coarse</button>'
         + '<button type="button" class="ambient-seg ambient-sched-advbtn" '
         + 'title="Fine — each layer\u2019s Unit, Evolve and phrase, plus the chord lane">'
         + '\u2699 Fine</button>' + _rowSelHtml + '</div>' + html;
@@ -47212,7 +47295,8 @@
           _ambTm('Length', p + 'length', 80, _lenMax, 20, s.lengthMs) +
           '<div class="ambient-ctrl ambient-samp-match"><label>Match unit</label><button type="button" class="ambient-srcbtn" id="' + p + 'matchunit" title="Set this sample’s Interval to another layer’s unit length (rhythmic lock). Length past the unit is cut at the boundary.">⇄ Match to layer…</button></div>' +
           _ambSl('Drift', p + 'drift', 0, 99, s.drift, 'phase offset') +
-          _ambWhenCtrl(p) + gpe() +
+          // (When moved to ▦ Schedule ▸ a layer's options, 2026-09-16)
+          gpe() +
         grp('FX / Mix') +
           _ambSl('Level', p + 'level', 0, 100, s.level, 'soft → boost') +
           _ambTm('Fade out', p + 'boundaryfade', 0, 8000, 50, s.boundaryFadeMs) +
@@ -48294,7 +48378,7 @@
           h += '<div class="ambient-ctrl ambient-seqbank-row"><label title="' +
             _ambEscAttr('Which banked phrase this layer plays over each chord, on each pass of the changes. ' +
               'Rows are the chords, columns are each time through them — same rows and columns as the ' +
-              '▦ Passes grid, so the two line up. A column header sets that whole pass, the corner sets ' +
+              '▦ Schedule grid, so the two line up. A column header sets that whole pass, the corner sets ' +
               'the whole part, and — falls through to this layer’s own phrase (the Sequences row above).') +
             '">Plays</label><span class="ambient-seqbank ambient-partmap" data-sbkey="' + _ambEscText(_ek) + '"' +
             ' data-psqpart="' + (_psqSel | 0) + '">' +
@@ -48345,7 +48429,9 @@
       // → never free → no fader at all. Other types keep it (disabled live when synced).
       if (k === 'tm' && c[1] === 'areaFadeMs' && (type === 'bass' || type === 'run' || type === 'pedal')) return '';
       if (k === 'tm') return _ambTm(c[2], p + '-' + c[1], c[3], c[4], c[5], inst[c[1]]);
-      if (k === 'cond') return _ambCondCtrl(lk);
+      // When lives in ▦ Schedule ▸ a layer's options now (2026-09-16) — the
+      // schema token renders nothing, and its null-safe wiring finds no grid
+      if (k === 'cond') return '';
       if (k === 'spread') return _ambSpreadCtrl(p, inst);
       if (k === 'spat') return _ambSpatCtrl(p, inst);
       if (k === 'mod') return _ambModUi(lk);
@@ -51438,6 +51524,9 @@
       _E = E;
       const cfg = E.getCfg();
       if (!cfg) return;
+      // ◈ the seamless-unit badge — it moves whenever a layer's length, the
+      // tempo or the progression does, and every one of those routes here.
+      try { if (E === _masterEng) _ambSyncUnitBadge(); } catch (e) {}
       // Translate the 'ambient-' id stems to this engine's DOM prefix.
       const tr = (id) => (E.idPrefix === 'ambient') ? id : id.replace(/^ambient-/, E.idPrefix + '-');
       const set = (id, v) => { const el = document.getElementById(tr(id)); if (el && v != null) el.value = String(v); };
@@ -51980,8 +52069,8 @@
               '<span class="ambient-hint salt-ladder">Salt recolours a chord without moving it — ' +
               'when the changes FALL is <b>↔ Rubato</b>, its own section below. These are the <b>area</b> ' +
               'defaults; a set of changes can override them (✎ Edit → Changes settings → Variation), and a ' +
-              'single pass can override them again (▦ Passes → 🧂 Salt). How much each layer follows the ' +
-              'recolouring is its <b>Follows salt</b> column, in ▦ Passes with that layer chosen.</span>' +
+              'single pass can override them again (▦ Schedule → a pass\u2019s label). How much each layer takes of the ' +
+              'recolouring, chord by chord, is ▦ Schedule\u2019s <b>Salt</b> mode.</span>' +
             '</div>' +
             // the salt/order readout belongs with Salt — it is what salt did.
             '<div class="ambient-salt-readout" id="ambient-salt-readout" style="display:none" title="What salt/order are doing: this cycle\u2019s chords in PLAYED order (with lengths and \u00d7n color segments), then the next cycle\u2019s \u2014 deterministic per seed, so it plays exactly as shown."></div>' +
@@ -52044,19 +52133,22 @@
             // #ambient-sched and #ambient-sched-body keep their ids and their
             // state (_schedPart / _schedRep / _schedFollow live on the element),
             // so the renderer and every handler are untouched.
-            _ambProgGrpOpen('sched', '\u23f1 Schedule', true) +
+            // ▦ SCHEDULE — the one grid for "who plays where" (18-schedule.js).
+            // It replaced ▦ Passes (retired 2026-09-16 — every one of its edits
+            // has a door here) and the Scheduler's Coarse modal.
+            (E.isLane ? '' :
+              _ambProgGrpOpen('schedgrid', '\u25a6 Schedule', true) +
+              '<div class="ambient-schedgrid" id="ambient-schedgrid"></div>' +
+              _ambProgGrpClose()) +
+            _ambProgGrpOpen('sched', '\u23f1 Schedule (old)', true) +
               '<div class="ambient-sched ambient-sched-inline" id="ambient-sched">' +
                 '<div class="ambient-sched-body" id="ambient-sched-body"></div>' +
               '</div>' +
             _ambProgGrpClose() +
-            (E.isLane ? '' :
-              // PASSES — the part matrix. Deliberately NOT called a third
-              // "matrix": ⌗ Matrix is layers × chords and ☷ Sections is layers ×
-              // sections, so a third one with a third axis pair would repeat the
-              // _ambProgDefaultUnit naming mistake. This one schedules PASSES.
-              _ambProgGrpOpen('passes', '\u25a6 Passes', false) +
-              '<div class="ambient-passmx" id="ambient-passmx" style="display:none"></div>' +
-              _ambProgGrpClose()) +
+            // ▦ PASSES WAS HERE — retired into ▦ Schedule above. Its renderer and
+            // wiring stay (they no-op without #ambient-passmx) so a stale DOM or a
+            // test that builds the node still works.
+
           '</div>' +       // end #ambient-progsec-body
         '</div>') +        // end the merged Arrangement pane
         // 🕺 Groove — swing / accent / humanize (cascade) + per-layer push;

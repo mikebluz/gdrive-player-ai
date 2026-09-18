@@ -118,6 +118,16 @@
 - **Sliders need `.ambient-sl`** or they get no touch handling at all (delegated `pointerdown`: grab
   anywhere, move by DELTA never jump, vertical distance = fine adjust, tap = numeric entry). Arm on
   CUMULATIVE travel, never a per-move delta.
+- **A "keep this?" question belongs on the press that DESTROYS the thing, not beside it.** 💾 Save this
+  take stood next to 🎲 New take for months and was rarely pressed — nobody knows a take was worth
+  keeping until it is about to go. It is now the first answer inside the gate 🎲 and the Bank's own
+  load open (`keepGate`): Save · Discard · Close, where Close is the cancel. Two rules came with it:
+  the gate is **SILENT when there is nothing to lose** (an empty part, a live one whose cycle comes out
+  empty) or it trains people to dismiss dialogs; and **backing out of the name prompt cancels the whole
+  press**, since rolling anyway destroys the very take they were trying to keep.
+- **A popover action runs a tick AFTER its own dismiss, so the layer it was opened for is an orphan.**
+  `_ambActionsPopover` defers `fn`, and counting a live take runs `getCfg` before that — pass a
+  RE-RESOLVER (`querySelector('.v2-layer[data-v2id=…]')` → `layerOf`), never the captured `ctx.L`.
 - **A tap-to-cycle number is a bug**; so is a control that is absent in some states. **Render it and
   DISABLE it**, with the reason in the title — a conditionally-rendered control cannot be found,
   learned, or asked about. A press that cannot act should REFUSE AND EXPLAIN rather than do nothing.

@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3001;
+const PORT = Number(process.env.PORT) || 3001;
 
 // Local dev: never let the browser cache assets, so edits to the JS/CSS
 // modules always load fresh on refresh (no stale per-file caching that masks

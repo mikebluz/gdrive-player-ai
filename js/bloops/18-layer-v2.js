@@ -6937,7 +6937,7 @@
       '</span>' +
       '<span class="ambient-seg-row v2-takebar">' +
         '<button type="button" class="ambient-seg v2-newtake"' +
-          ' title="Roll this part again. Preview never re-rolls on its own, so the take you are hearing stays until you press this.">🎲 New take</button>' +
+          ' title="Roll this part again — it asks first whether to keep the take you have (save it to the bank) or roll over it. Preview never re-rolls on its own, so what you are hearing stays until you press this.">🎲 New take</button>' +
         // TWO STATES, TWO SENTENCES. It read "❄ Re-take live" on a fixed part,
         // which sounds like the way BACK to Generated — it is not (that is the
         // Source select); it discards these notes and locks a fresh roll. And
@@ -6966,14 +6966,13 @@
         // that lands, editing still freezes a part for you (the pen, a drag, a
         // tap, ✎ Draw) and picking a shape in ⚙ Deep hands it back to the rules.
         // `capFace` is kept — the sync and the handler below still read it.
-        // A TAKE YOU LIKE IS WORTH KEEPING, and the next press of ⟳ replaces
-        // it — so the way to keep it sits right beside the thing that would
-        // destroy it. BOTH STATES: it used to render only on a written part, so
-        // a generated take could reach the bank only by locking it first — i.e.
-        // the one thing you might not want to do to a take you want to keep.
-        (((L.part.kind === 'recorded' && (L.part.notes || []).length) || L.part.kind === 'live')
-          ? '<button type="button" class="ambient-seg v2-savetake" title="Keep the take shown above in the bank, under a name — mappable to any part or chord, on this layer or another. The part itself is left as it is: a generated one keeps generating.">\ud83d\udcbe Save this take</button>'
-          : '') +
+        // 💾 SAVE THIS TAKE IS GONE FROM HERE (2026-09-18). It sat right beside
+        // the dice, which is the correct PLACE and the wrong SHAPE: keeping a
+        // take is a question you can only answer when you are about to lose it,
+        // so a button that has to be pressed BEFOREHAND is one most takes never
+        // reach. 🎲 New take asks it now (`keepGate`) and so does loading from
+        // the Bank — same three answers, at the moment they mean something. The
+        // bank itself is unchanged: `saveTakeFn` is the one writer either way.
         // COMMANDS OVER THE NOTES YOU HAVE. A menu, not a row: the set is
         // meant to grow, and the take bar is already four buttons wide. It is
         // always PRESENT (a control you cannot find is a control you do not
@@ -9143,26 +9142,87 @@
   // hand-edited are somebody's work — and `made` is absent on anything older
   // or unrecognised, which takes the safe side. THE SELECTION SCOPES IT: an
   // edit in bar 1 is not endangered by re-rolling bar 3.
+  // WHAT A REPLACE WOULD COST, in ONE vocabulary. The confirm below and the
+  // keep-gate further down both have to name the thing being lost, and two
+  // spellings is how one surface ends up calling it something the other never
+  // mentions (the divergent-label rule). `work` is the "is this somebody's
+  // work" verdict — a plain roll is not, a transformed or hand-edited one is.
+  function takeCost(L, selBars) {
+    const cp = (L && L.part) || {};
+    const barsF = Math.max(0.125, cp.bars || 1);
+    const inScope = (n2) => !selBars || V2.regHas(selBars, n2.t, barsF);
+    const scoped = (cp.kind === 'recorded' ? (cp.notes || []) : []).filter(inScope);
+    const edited = scoped.some(n2 => Number.isFinite(n2.vel) || Number.isFinite(n2.atk) ||
+      Number.isFinite(n2.dec) || Number.isFinite(n2.sus) || Number.isFinite(n2.rel) || Number.isFinite(n2.glide));
+    const what = cp.kind !== 'recorded' ? 'the take you are hearing'
+      : (cp.made === 'compose' ? 'the phrase you composed'
+      : (cp.made === 'phrase' ? ('\u201c' + (cp.from || 'the phrase you chose') + '\u201d')
+      : (edited ? 'your edits to these notes' : 'these notes')));
+    const where = (selBars && selBars.length)
+      ? (' in ' + selBars.map((k2) => V2.regLabel(k2)).join(' + ')) : '';
+    return { n: scoped.length, what: what, where: where, edited: edited,
+      work: cp.kind === 'recorded' && scoped.length > 0 && !(cp.made === 'take' && !edited && !cp.tf) };
+  }
   function replaceOK(L, selBars) {
     const cp = L.part;
     if (cp.kind !== 'recorded' || !(cp.notes || []).length) return true;
-    const barsF = Math.max(0.125, cp.bars || 1);
-    const inScope = (n2) => !selBars || V2.regHas(selBars, n2.t, barsF);
-    const scoped = (cp.notes || []).filter(inScope);
-    const edited = scoped.some(n2 => Number.isFinite(n2.vel) || Number.isFinite(n2.atk) ||
-      Number.isFinite(n2.dec) || Number.isFinite(n2.sus) || Number.isFinite(n2.rel) || Number.isFinite(n2.glide));
+    const c = takeCost(L, selBars);
     // a TRANSFORMED take is work too — a plain roll may be replaced silently,
     // one you reversed or shuffled may not
-    if (cp.made === 'take' && !edited && !cp.tf) return true;
-    const whereTxt = (selBars && selBars.length)
-      ? (' in ' + selBars.map((k2) => V2.regLabel(k2)).join(' + ')) : '';
-    const what = cp.made === 'compose' ? 'the phrase you composed'
-      : (cp.made === 'phrase' ? ('\u201c' + (cp.from || 'the phrase you chose') + '\u201d')
-      : (edited ? 'your edits to these notes' : 'these notes'));
+    if (!c.work) return true;
     try {
-      return !!window.confirm('Replace ' + what + whereTxt + ' with a fresh roll of this layer\u2019s rules?\n\n' +
-        scoped.length + ' note' + (scoped.length === 1 ? '' : 's') + ' will be discarded. This cannot be undone.');
+      return !!window.confirm('Replace ' + c.what + c.where + ' with a fresh roll of this layer\u2019s rules?\n\n' +
+        c.n + ' note' + (c.n === 1 ? '' : 's') + ' will be discarded. This cannot be undone.');
     } catch (e) { return true; }
+  }
+  // ── KEEP THIS TAKE? — THE ONE GATE IN FRONT OF A PRESS THAT REPLACES IT ──
+  // 💾 Save this take used to be its own button on the take bar, sitting beside
+  // 🎲 New take doing nothing but arm you against it. But that is a QUESTION,
+  // not a command, and the only moment anyone knows whether a take was worth
+  // keeping is the moment they are about to lose it — which is why the button
+  // was pressed rarely and the loss reported often. So the button is GONE and
+  // the two presses that overwrite a take ask on their own behalf: 🎲 New take
+  // and loading a phrase from the Bank, each with Save · Discard · Close in the
+  // one popover. Close is the CANCEL: nothing is rolled, nothing is loaded.
+  // SILENT WHEN THERE IS NOTHING TO LOSE — an empty part, or a live one whose
+  // cycle comes out empty. A dialog over nothing is what trains a person to
+  // dismiss dialogs without reading them, and then the one that mattered goes
+  // with it.
+  // The notes are the SAME walk 💾 used (`V2.takeNotesNow`, which is what 🔒
+  // writes), so what the gate offers to keep is exactly what lands in the bank.
+  function takeShownNotes(E, L) {
+    try {
+      if (!L || !L.part) return [];
+      if (L.part.kind === 'recorded') return (L.part.notes || []);
+      return V2.takeNotesNow(E, L) || [];
+    } catch (e) { return []; }
+  }
+  // `o` = { title, head, saveLabel, goLabel, ctx, go }. `ctx()` RE-RESOLVES the
+  // layer: the count above runs `getCfg` on a live part and the popover's own
+  // actions are deferred a tick past its dismiss, so an `L` captured at press
+  // time is an orphan by the time anything here writes to it (the documented
+  // normalize rule). Everything downstream takes the fresh one.
+  function keepGate(E, L, o) {
+    const n = takeShownNotes(E, L).length;
+    const run = () => { const c = o.ctx(); if (c) o.go(c); };
+    if (!n || typeof _ambActionsPopover !== 'function') { run(); return; }
+    const save = () => {
+      const c = o.ctx(); if (!c) return;
+      const nm = saveTakeFn(E, c.L);
+      // BACKING OUT OF THE NAME PROMPT CANCELS THE WHOLE PRESS. Rolling anyway
+      // would destroy the take the person was in the middle of trying to keep.
+      if (nm == null) {
+        try { if (typeof showToast === 'function') showToast('Nothing saved — this take is still here. Press again when you are ready.', { ms: 4000 }); } catch (e) {}
+        return;
+      }
+      try { if (typeof showToast === 'function') showToast('Saved “' + nm + '” — it is in the bank now, and can be mapped to any part or chord.', { ms: 5000 }); } catch (e) {}
+      run();
+    };
+    _ambActionsPopover(o.title, [
+      { disabled: true, label: o.head(n) },
+      { label: o.saveLabel, fn: save },
+      { label: o.goLabel, danger: true, fn: run },
+    ]);
   }
   function captureShown(E, L, bars) {
     let at = null;
@@ -11113,15 +11173,15 @@
               (bankList().length
                 ? bankList().map((b2) =>
                     '<span class="v2-bankit" data-bi="' + b2.i + '">' +
-                      '<button type="button" class="v2-bkload" data-bi="' + b2.i + '" title="Use this phrase as this part \u2014 the part becomes FROZEN and plays exactly these notes.">' +
+                      '<button type="button" class="v2-bkload" data-bi="' + b2.i + '" title="Use this phrase as this part \u2014 the part becomes FROZEN and plays exactly these notes. It asks first whether to keep what is here.">' +
                         esc(b2.name) + '<span class="v2-bkn">' + b2.n + '</span></button>' +
                       '<button type="button" class="v2-bkup" data-bi="' + b2.i + '" aria-label="Move up" title="Move up">\u25b4</button>' +
                       '<button type="button" class="v2-bkdn" data-bi="' + b2.i + '" aria-label="Move down" title="Move down">\u25be</button>' +
                       '<button type="button" class="v2-bkdel" data-bi="' + b2.i + '" aria-label="Delete" title="Delete from the bank">\u2715</button>' +
                     '</span>').join('')
-                : '<span class="ambient-hint">Nothing saved yet \u2014 press \ud83d\udcbe Save this take above the drawing, or compose a phrase. Anything you save lands here, generated or written.</span>') +
+                : '<span class="ambient-hint">Nothing saved yet \u2014 press \ud83c\udfb2 New take above the drawing and choose \ud83d\udcbe Save it to the bank, or compose a phrase. Anything you save lands here, generated or written.</span>') +
             '</span>' +
-            '<span class="ambient-hint">tap one to make it this part \u2014 it plays exactly those notes \u2014 or map any of them to a part or a chord in \u25a6 Schedule \u2192 Phrase</span></div>' +
+            '<span class="ambient-hint">tap one to make it this part \u2014 it asks first whether to keep what is here, then plays exactly those notes \u2014 or map any of them to a part or a chord in \u25a6 Schedule \u2192 Phrase</span></div>' +
           // "Source", not "Part type" — and the buttons that FILL the part sit
           // directly under it as "Material". They were a separate row called
           // "Notes from", which named a place rather than a thing and left the
@@ -15818,16 +15878,9 @@
         // words, and both filed the bank under WRITTEN, which it is not — a
         // generated roll saves into it just as a drawn phrase does.
         // ✎ DRAW / ▦ BARS — what a tap on empty space means.
-        // SAVE A TAKE, and the bank's own row: load, reorder, delete.
-        const svt = t.closest && t.closest('.v2-savetake');
-        if (svt) {
-          const ctx = layerOf(svt); if (!ctx) return;
-          const nm = saveTakeFn(E, ctx.L);
-          if (!nm) return;
-          try { if (typeof showToast === 'function') showToast('Saved \u201c' + nm + '\u201d \u2014 it is in the bank now, and can be mapped to any part or chord.', { ms: 5000 }); } catch (e) {}
-          h._sig = ''; V2.render(E);
-          return;
-        }
+        // THE BANK'S OWN ROW: load, reorder, delete. Saving INTO it is no longer
+        // a button here — `keepGate` offers it at the two moments a take is
+        // about to be lost (see the take bar).
         const bk = t.closest && t.closest('.v2-bkload, .v2-bkup, .v2-bkdn, .v2-bkdel');
         if (bk) {
           const ctx = layerOf(bk); if (!ctx) return;
@@ -15835,11 +15888,47 @@
           const ent = (typeof savedSequences !== 'undefined' && savedSequences[bi]) || null;
           if (!ent) return;
           if (bk.classList.contains('v2-bkload')) {
-            if (!V2.adopt(E, ctx.L, ent.name)) {
-              try { if (typeof showToast === 'function') showToast('Could not read \u201c' + ent.name + '\u201d \u2014 it has no pitched steps.', { warn: true, ms: 4500 }); } catch (e) {}
-              return;
-            }
-            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            // LOADING IS A REPLACE, so it asks the same question \ud83c\udfb2 New take
+            // asks: the phrase lands on this part and whatever is drawn there
+            // now is gone. BY NAME, never by the index \u2014 saving first can add a
+            // row, and `data-bi` was read before that happened.
+            const nm2 = String(ent.name || '');
+            const id0 = ctx.L.id | 0;
+            const reCtx = () => {
+              const c3 = document.querySelector('.v2-layer[data-v2id="' + id0 + '"]');
+              const r3 = c3 ? layerOf(c3) : null;
+              if (r3) return r3;
+              try {
+                const cf = E.getCfg();
+                const L3 = (cf.layers || []).find((x) => x && (x.id | 0) === id0);
+                if (L3) return { L: L3, card: ctx.card };
+              } catch (e) {}
+              return null;
+            };
+            const load = (c2) => {
+              if (!c2) return;
+              if (!V2.adopt(E, c2.L, nm2)) {
+                try { if (typeof showToast === 'function') showToast('Could not read \u201c' + nm2 + '\u201d \u2014 it has no pitched steps.', { warn: true, ms: 4500 }); } catch (e) {}
+                return;
+              }
+              try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+              try { if (typeof showToast === 'function') showToast('Loaded \u201c' + nm2 + '\u201d \u2014 this part plays exactly those notes now.', { ms: 4500 }); } catch (e) {}
+              h._sig = ''; V2.render(E);
+            };
+            const cost = takeCost(ctx.L, null);
+            keepGate(E, ctx.L, {
+              title: '\u266a ' + nm2 + ' \u2014 keep what is here first?',
+              head: (n3) => ('Loading \u201c' + nm2 + '\u201d replaces ' +
+                (cost.what === 'these notes'
+                  ? ('the ' + n3 + ' note' + (n3 === 1 ? '' : 's') + ' on this part')
+                  : (cost.what + ' \u2014 ' + n3 + ' note' + (n3 === 1 ? '' : 's'))) +
+                '. That cannot be undone; closing this changes nothing.'),
+              saveLabel: '\ud83d\udcbe Save this take to the bank, then load',
+              goLabel: '\u266a Load \u201c' + nm2 + '\u201d \u2014 what is here is gone',
+              ctx: reCtx,
+              go: load,
+            });
+            return;
           } else if (bk.classList.contains('v2-bkdel')) {
             // THE ONE DELETE PATH — it confirms, names what it costs, and
             // prunes every mapping that pointed at the name (a second copy of
@@ -16166,8 +16255,6 @@
         const nt = t.closest('.v2-newtake') || t.closest('.v2-genroll');
         if (nt) {
           const ctx = layerOf(nt); if (!ctx) return;
-          // what is sounding for this layer is now the OLD take
-          const takeHeard = () => v2TakeHeard(E, ctx.L);
           // SCOPED BY THE SELECTED BARS: with bars tapped, only they are
           // retaken (a per-bar pin — the rest of the drawing holds still);
           // with none, the whole take moves.
@@ -16197,37 +16284,76 @@
             try { barpopSync(ctx.card, ctx.L); } catch (e) {}
             return;
           }
-          // ON A LOCKED PART this is the REPLACE — the notes are fixed, so a
-          // new take has to be rolled and re-frozen (a take pin would change
-          // nothing). The confirm rides here with it: re-rolling a locked
-          // roll loses nothing, but composed / adopted / hand-edited notes
-          // are somebody's work, and `made` is absent on anything older or
-          // unrecognised, which takes the safe side.
-          if (ctx.L.part.kind === 'recorded') {
-            if (!replaceOK(ctx.L, selBarsN)) return;
-            if (!captureShown(E, ctx.L, selBarsN)) {
-              try { showToast('Nothing to roll \u2014 this cycle is empty. Check the live Rhythm settings.', { ms: 4500 }); } catch (e) {}
+          // THE ROLL ITSELF, as a callable — the keep-gate below runs it a tick
+          // later, from a popover, so it takes its layer as an ARGUMENT and
+          // never from the closure (the press-time `ctx.L` is an orphan by
+          // then: the gate counts a live take, which runs `getCfg`).
+          const roll = (c2) => {
+            if (!c2) return;
+            // ON A LOCKED PART this is the REPLACE — the notes are fixed, so a
+            // new take has to be rolled and re-frozen (a take pin would change
+            // nothing).
+            if (c2.L.part.kind === 'recorded') {
+              if (!captureShown(E, c2.L, selBarsN)) {
+                try { showToast('Nothing to roll \u2014 this cycle is empty. Check the live Rhythm settings.', { ms: 4500 }); } catch (e) {}
+                return;
+              }
+              try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+              try {
+                showToast(selBarsN
+                  ? ('Re-rolled ' + bselLabel(selN) + ' \u2014 the other bars kept what they had. Press again for another roll.')
+                  : ('Rolled a new take \u2014 ' + c2.L.part.notes.length + ' notes, still frozen. \u2744 Unfreeze instead lets the rules take over again.'), { ms: 5000 });
+              } catch (e) {}
+              h._sig = ''; V2.render(E);
+              try { v2TakeHeard(E, c2.L); } catch (e) {}
               return;
             }
+            V2.newTake(c2.L, selBarsN);
+            try { E.getCfg(); } catch (e) {}
             try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            // REWRITE, NEVER PLAY. This used to audition the new take, which on
+            // the phone's ~1 s broadcast read as "it just played the current
+            // content" — the press's outcome is the DRAWING; ▶ Preview is one
+            // button away and stays the only thing that makes sound.
+            try { drawPartViz(c2.card, c2.L, E); } catch (e) {}
+            try { v2TakeHeard(E, c2.L); } catch (e) {}
+          };
+          // 🎲 ON THE TAKE BAR ASKS FIRST — keep this one, or roll over it. That
+          // question used to be a button of its own (💾 Save this take) standing
+          // beside the dice; it is now the dice's own first step, which is the
+          // only moment anyone can answer it. ⚙ Deep's 🎲 Roll again is NOT
+          // gated: it rolls a STAGED draft that nothing has committed yet, so
+          // there is no take to lose and no take worth banking.
+          if (!t.closest('.v2-newtake')) { roll(ctx); return; }
+          const id0 = ctx.L.id | 0;
+          const reCtx = () => {
+            const c3 = document.querySelector('.v2-layer[data-v2id="' + id0 + '"]');
+            const r3 = c3 ? layerOf(c3) : null;
+            if (r3) return r3;
+            // the card was rebuilt out from under us — the LAYER is still the
+            // thing being acted on, so resolve it alone and keep the old node
             try {
-              showToast(selBarsN
-                ? ('Re-rolled ' + bselLabel(selN) + ' \u2014 the other bars kept what they had. Press again for another roll.')
-                : ('Rolled a new take \u2014 ' + ctx.L.part.notes.length + ' notes, still frozen. \u2744 Unfreeze instead lets the rules take over again.'), { ms: 5000 });
+              const cf = E.getCfg();
+              const L3 = (cf.layers || []).find((x) => x && (x.id | 0) === id0);
+              if (L3) return { L: L3, card: ctx.card };
             } catch (e) {}
-            h._sig = ''; V2.render(E);
-            takeHeard();
-            return;
-          }
-          V2.newTake(ctx.L, selBarsN);
-          try { E.getCfg(); } catch (e) {}
-          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-          // REWRITE, NEVER PLAY. This used to audition the new take, which on
-          // the phone's ~1 s broadcast read as "it just played the current
-          // content" — the press's outcome is the DRAWING; ▶ Preview is one
-          // button away and stays the only thing that makes sound.
-          try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
-          takeHeard();
+            return null;
+          };
+          const cost = takeCost(ctx.L, selBarsN);
+          keepGate(E, ctx.L, {
+            title: '\ud83c\udfb2 New take \u2014 keep this one first?',
+            // THE COUNT AND THE NAME, never the name twice: `takeCost`'s generic
+            // answer IS "these notes", and "the 12 notes drawn above \u2014 these
+            // notes" is how a sentence made of two surfaces reads.
+            head: (n3) => ((cost.what === 'these notes'
+                ? ('A new take replaces the ' + n3 + ' note' + (n3 === 1 ? '' : 's') + ' drawn above.')
+                : ('A new take replaces ' + cost.what + ' \u2014 ' + n3 + ' note' + (n3 === 1 ? '' : 's') + '.')) +
+              ' That cannot be undone; closing this changes nothing.'),
+            saveLabel: '\ud83d\udcbe Save it to the bank, then roll',
+            goLabel: '\ud83c\udfb2 Roll over it \u2014 this take is gone',
+            ctx: reCtx,
+            go: roll,
+          });
           return;
         }
         const tf = t.closest('.v2-tform');

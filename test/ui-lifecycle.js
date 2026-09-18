@@ -40,7 +40,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const URL = 'http://localhost:3001/bloops.html';
+// `npm start` on 3001 by default. BLOOPS_URL overrides it so a worktree can be
+// gated against its OWN server without stopping the one the main checkout uses.
+const URL = process.env.BLOOPS_URL || 'http://localhost:3001/bloops.html';
 
 // UI_WAIT_SCALE scales every settle-wait (node-side and in-page) so a dev
 // iteration can run at ~0.6 while the FINAL verification runs at 1. The
@@ -128,6 +130,44 @@ const ok = (name, cond, detail) => {
       const b = document.querySelector('.v2-gototab[data-goto="' + nm + '"]');
       if (b) b.click();
       return !!b;
+    };
+    // \ud83c\udfb2 NEW TAKE ASKS BEFORE IT ROLLS (2026-09-18). \ud83d\udcbe Save this take is no
+    // longer a button of its own: the dice opens a keep-gate \u2014 Save \u00b7 Discard \u00b7
+    // Close \u2014 and so does loading from the Bank. Every driver of either press
+    // goes through here so the answer is stated once, and a check that wants
+    // the plain roll it always had asks for 'roll'.
+    //
+    // The popover is built SYNCHRONOUSLY inside the click handler, so it is
+    // already in the DOM when click() returns; its own actions are deferred a
+    // tick past its dismiss (the documented dispatch order), hence the yield.
+    // NO GATE IS NOT A FAILURE \u2014 a press with nothing to lose (an empty part,
+    // a live one whose cycle comes out empty) rolls outright, by design.
+    window.__gate = async (btn, which) => {
+      if (!btn) return 'nobtn';
+      btn.click();
+      const pop = document.querySelector('.ambient-addpop');
+      if (!pop) return 'nogate';
+      const re = which === 'save' ? /Save it to the bank|Save this take to the bank/
+        : which === 'close' ? /^Close$/
+        : /Roll over it|what is here is gone/;
+      const b = [...pop.querySelectorAll('.addpop-btn, .addpop-close')]
+        .find((x) => re.test(x.textContent.trim()));
+      if (!b) { const ov = pop.closest('.sm-overlay'); if (ov) ov.remove(); return 'noanswer'; }
+      b.click();
+      await new Promise((r) => setTimeout(r, 20));
+      return 'ok';
+    };
+    // what the gate SAYS, without answering it \u2014 for the checks that read it
+    window.__gatePeek = (btn) => {
+      if (!btn) return null;
+      btn.click();
+      const pop = document.querySelector('.ambient-addpop');
+      if (!pop) return null;
+      const o = { title: (pop.querySelector('.sm-title') || {}).textContent || '',
+        head: (pop.querySelector('.addpop-head') || {}).textContent || '',
+        btns: [...pop.querySelectorAll('.addpop-btn')].map((x) => x.textContent.trim()) };
+      const ov = pop.closest('.sm-overlay'); if (ov) ov.remove();
+      return o;
     };
   });
   await zz(2500);
@@ -572,38 +612,65 @@ const ok = (name, cond, detail) => {
     JSON.stringify(capFaces).slice(0, 300));
   ok('nothing on the card offers to "re-take live" — the way back is the Source select',
     await page.evaluate(() => !/Re-take live/i.test(document.querySelector('.v2-layer').textContent)), '');
-  // Replacing WORK asks first; re-rolling a plain locked take does not.
+  // ── THE KEEP GATE (2026-09-18) ────────────────────────────────
+  // 💾 Save this take used to be a button of its own beside the dice, which is
+  // the right PLACE and the wrong SHAPE — whether a take was worth keeping is
+  // only answerable at the moment it is about to be lost. So the button is gone
+  // and 🎲 New take asks, with three answers: save it to the bank and then
+  // roll, roll over it, or close and keep what is there. WHAT IS PINNED HERE is
+  // that all three are on offer, that the head names the thing at risk in the
+  // SAME words the old confirm used (`takeCost`, one vocabulary), and that
+  // CLOSING IS A CANCEL — a gate that rolls anyway is worse than no gate.
   const capConfirm = await page.evaluate(async () => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => window.__Lv2(E);
-    // 🎲 owns replacing (the lock is a pure toggle now), so the confirm does too
     const cap = () => document.querySelector('.v2-layer .v2-newtake');
-    let asked = null; window.confirm = (m) => { asked = m; return true; };
-    // REPLACING presupposes a LOCKED part with notes — set it up through the
-    // real button rather than inheriting whatever the previous check left
+    window.confirm = () => true;
+    // A GATE PRESUPPOSES SOMETHING TO LOSE — set up a locked part with notes
+    // through the real button rather than inheriting whatever the last check left
     if (L().part.kind !== 'recorded' || !(L().part.notes || []).length) {
       document.querySelector('.v2-layer .v2-capture').click(); await wait(350);
     }
-    asked = null;
-    cap().click(); await wait(350);
-    const plain = asked;
+    const plain = window.__gatePeek(cap()); await wait(120);
     L().part.notes[0].vel = 40; E.getCfg();
-    asked = null; cap().click(); await wait(350);
-    const edited = asked;
-    // declining must change nothing
+    const edited = window.__gatePeek(cap()); await wait(120);
+    // closing must change nothing
     L().part.notes[0].atk = 900; E.getCfg();
     const before = JSON.stringify(L().part.notes);
-    window.confirm = () => false;
-    cap().click(); await wait(350);
-    return { plain, edited, declineKeeps: JSON.stringify(L().part.notes) === before, made: L().part.made };
+    const closed = await window.__gate(cap(), 'close'); await wait(350);
+    return { plain, edited, closed, declineKeeps: JSON.stringify(L().part.notes) === before,
+             made: L().part.made, leftOpen: !!document.querySelector('.ambient-addpop') };
   });
-  ok('re-rolling a locked take is silent; replacing hand-edited notes asks first',
-    capConfirm.plain === null && !!capConfirm.edited && /discarded/.test(capConfirm.edited) && capConfirm.declineKeeps,
-    JSON.stringify(capConfirm).slice(0, 260));
+  ok('🎲 New take asks first — save it to the bank, roll over it, or close and keep it',
+    !!capConfirm.plain && /keep this one/i.test(capConfirm.plain.title) &&
+    capConfirm.plain.btns.some((b) => /Save it to the bank/.test(b)) &&
+    capConfirm.plain.btns.some((b) => /this take is gone/.test(b)) &&
+    capConfirm.closed === 'ok' && capConfirm.declineKeeps && !capConfirm.leftOpen,
+    JSON.stringify(capConfirm).slice(0, 320));
+  ok('the gate names what is at risk in the replace-confirm\u2019s own words',
+    !!capConfirm.edited && /your edits to these notes/.test(capConfirm.edited.head) &&
+    /cannot be undone/.test(capConfirm.edited.head),
+    JSON.stringify(capConfirm.edited || null).slice(0, 240));
+  // EMPTY IT FIRST, or this check measures nothing: with notes present the tap
+  // opens the gate, and "there are notes afterwards" would pass without the
+  // button doing anything. An empty part has nothing to keep, so no gate opens
+  // — which is the other half of the contract.
+  await page.evaluate(() => {
+    const E = _masterEng, L = () => window.__Lv2(E);
+    L().part.kind = 'recorded'; L().part.notes = []; E.getCfg();
+    const h2 = document.getElementById('bloom-v2-layers'); if (h2) h2._sig = '';
+    window._v2.render(E);
+  });
+  await zz(400);
+  await page.evaluate(() => document.querySelector('.v2-layer').classList.remove('collapsed'));
   e = await tap('.v2-layer .v2-newtake');
   ok('rolling a take is reachable ON THE CARD', !e, e);
-  const escaped = await page.evaluate(() => ((_masterEng.getCfg().layers || [])[0].part.notes || []).length);
-  ok('the card button fills an empty recorded part', escaped > 0, 'notes=' + escaped);
+  await zz(350);
+  const escaped = await page.evaluate(() => ({
+    n: ((_masterEng.getCfg().layers || [])[0].part.notes || []).length,
+    gate: !!document.querySelector('.ambient-addpop') }));
+  ok('the card button fills an empty recorded part, and asks nothing — there was nothing to keep',
+    escaped.n > 0 && !escaped.gate, JSON.stringify(escaped));
 
   // ---- MATERIAL FIRST, AND EACH ONE REMEMBERS ITSELF ----------------------
   // Material is what the part is MADE OF; Cycle, Bars, Plays and Transpose are
@@ -655,9 +722,12 @@ const ok = (name, cond, detail) => {
     matRun.rolled, String(matRun.rolled));
 
   // ---- SAVE A TAKE, INTO THE BANK THAT MAPS TO CHANGES --------------------
-  // The next press of ⟳ replaces the take, so the way to keep one sits beside
-  // the thing that would destroy it — and it goes into the SAME bank
+  // Keeping a take is the FIRST ANSWER the dice offers (2026-09-18) — the press
+  // that would destroy it is the one that asks — and it goes into the SAME bank
   // `partSeqs` maps by name onto a part/pass/chord, not a private list.
+  // BOTH DOORS ARE DRIVEN HERE: save through 🎲 New take's gate, and load back
+  // through the Bank's own gate, which asks the same question in the other
+  // direction (what is here now is what you are about to lose).
   const bankRun = await page.evaluate(async () => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => window.__Lv2(E);
@@ -678,26 +748,28 @@ const ok = (name, cond, detail) => {
     const gridN = 16;
     const cells = (n) => Math.max(1, Math.round(n.dur * gridN));
     const before = JSON.stringify(L().part.notes.map((n) => [Math.round(n.t * 1000), n.midi, cells(n)]));
-    const btn = card().querySelector('.v2-savetake');
-    if (!btn) return { err: 'no save button' };
+    const btn = card().querySelector('.v2-newtake');
+    if (btn && card().querySelector('.v2-savetake')) return { err: 'the save button is back' };
     window.prompt = () => 'gate-take'; window.confirm = () => true;
-    btn.click(); await wait(320); card().classList.remove('collapsed');
+    const saved = await window.__gate(btn, 'save'); await wait(420);
+    card().classList.remove('collapsed');
     const inBank = savedSequences.some((s2) => s2 && s2.name === 'gate-take');
     // it must READ BACK as the same notes — a take that cannot be reloaded
-    // exactly is a take you have lost
+    // exactly is a take you have lost. (The gate's Save ROLLS afterwards, which
+    // is the point: what is on the part now is NOT what was banked.)
     window._v2.rollRun(E, L()); E.getCfg();
     const row = card().querySelector('.v2-bankit .v2-bkload');
     const bi = row ? row.getAttribute('data-bi') : null;
-    if (row) row.click();
-    await wait(320); card().classList.remove('collapsed');
+    const loaded = await window.__gate(row, 'roll');
+    await wait(420); card().classList.remove('collapsed');
     const after = JSON.stringify(L().part.notes.map((n) => [Math.round(n.t * 1000), n.midi, cells(n)]));
     const names = () => savedSequences.map((s2) => s2.name).join(',');
     const order0 = names();
     const up = card().querySelector('.v2-bkup[data-bi="1"]');
     if (up) { up.click(); await wait(280); card().classList.remove('collapsed'); }
     const order1 = names();
-    const out2 = { inBank, roundTrip: after === before, rows: card().querySelectorAll('.v2-bankit').length,
-                   order0, order1, bi };
+    const out2 = { inBank, saved, loaded, roundTrip: after === before,
+                   rows: card().querySelectorAll('.v2-bankit').length, order0, order1, bi };
     // PUT THE BANK BACK. These cases run in ONE page against ONE bank, so an
     // entry left behind is the next check's bug — "an empty bank says where
     // phrases come from" is two checks later and this one had filled it.
@@ -708,8 +780,9 @@ const ok = (name, cond, detail) => {
     window._v2.render(_masterEng);
     return out2;
   });
-  ok('a take saves into the bank and reloads EXACTLY',
-    bankRun.inBank && bankRun.roundTrip, JSON.stringify(bankRun).slice(0, 240));
+  ok('a take saves into the bank through 🎲 New take’s gate, and reloads EXACTLY',
+    bankRun.saved === 'ok' && bankRun.inBank && bankRun.loaded === 'ok' && bankRun.roundTrip,
+    JSON.stringify(bankRun).slice(0, 260));
   ok('the Saved bank can be reordered',
     bankRun.rows >= 1 && (bankRun.rows < 2 || bankRun.order0 !== bankRun.order1),
     JSON.stringify({ rows: bankRun.rows, a: bankRun.order0, b: bankRun.order1 }));
@@ -1008,7 +1081,7 @@ const ok = (name, cond, detail) => {
     tapBar(SB); await wait(250);
     const faceBack = card().querySelector('.v2-newtake').textContent.trim();
     const b4 = snap();
-    card().querySelector('.v2-newtake').click(); await wait(350);
+    await window.__gate(card().querySelector('.v2-newtake'), 'roll'); await wait(350);
     const fullChangedNow = JSON.stringify(snap()) !== JSON.stringify(b4);
     // CLEAN UP DETERMINISTICALLY — the selection keys on [kind, bars, clock],
     // so bouncing the kind clears it without a second chance-dependent tap.
@@ -3529,12 +3602,11 @@ const ok = (name, cond, detail) => {
     window._v2.transform(E, L(), 'reverse', [1]);
     const sc = snap().split(' ');
     o.scoped = sc[0] === '0:60' && sc[3] === '750:67' && sc[1] !== '260:62';
-    // …and a transformed take counts as WORK: replacing it asks first
-    let asked = null; window.confirm = (m) => { asked = m; return false; };
+    // …and a transformed take counts as WORK: the keep gate names it as such
     if (h) h._sig = ''; window._v2.render(E); await wait(250);
     card().classList.remove('collapsed');
-    card().querySelector('.v2-newtake').click(); await wait(300);
-    o.replaceAsks = !!asked;
+    const g = window.__gatePeek(card().querySelector('.v2-newtake')); await wait(300);
+    o.replaceAsks = !!g && /Save it to the bank/.test((g.btns || []).join('|'));
     try { L().part = JSON.parse(svPart); } catch (e) {}
     delete L().part.mat; delete L().part.mem; delete L().part.tf; E.getCfg();
     if (h) h._sig = ''; window._v2.render(E); await wait(200);
@@ -7215,7 +7287,7 @@ const ok = (name, cond, detail) => {
       o.before = seen.join(',');
       o.take0 = L().part.take | 0;
       const n0 = seen.length;
-      card().querySelector('.v2-newtake').click(); await wait(700);
+      await window.__gate(card().querySelector('.v2-newtake'), 'roll'); await wait(700);
       o.after = seen.slice(n0).join(',');
       o.take1 = L().part.take | 0;
       o.stillPreviewing = !!window._v2.previewing(L());
@@ -8252,7 +8324,7 @@ const ok = (name, cond, detail) => {
     const takes = [];
     for (let i = 0; i < 3; i++) { takes.push(await once()); await wait(1300); }
     const t0 = window._v2.takeOf(L());
-    document.querySelector('.v2-layer .v2-newtake').click();
+    await window.__gate(document.querySelector('.v2-layer .v2-newtake'), 'roll');
     await wait(300);
     const rolled = await once();
     // DETERMINISTIC PROOF that the take is what selects the roll — three
@@ -8967,15 +9039,18 @@ const ok = (name, cond, detail) => {
   // and it must name BOTH origins now that it is not filed under Written.
   ok('the Bank tab opens the one list — no second picker',
     !!pop && pop.tab === 'Bank' && pop.pickers === 0, JSON.stringify(pop));
-  ok('an empty bank says where takes come from, generated or written',
-    pop && !pop.items.length && /Save this take|compose/.test(pop.empty) &&
+  ok('an empty bank names the DOOR that fills it, and both origins',
+    pop && !pop.items.length && /New take/.test(pop.empty) &&
+    /Save it to the bank/.test(pop.empty) && /compose/.test(pop.empty) &&
     /generated or written/i.test(pop.empty), JSON.stringify(pop));
 
-  // THE PREMISE OF THE RENAME, MEASURED: a GENERATED take banks in one press,
-  // and doing so does NOT freeze the part. It used to render only on a written
-  // one, so the only route was 🔒 Lock first — i.e. "keep this" also meant
-  // "and stop generating", which is a different decision. The banked notes come
-  // from the same helper 🔒 uses, so what lands is what Lock would have written.
+  // THE PREMISE, MEASURED: a GENERATED take can be banked, and doing so does NOT
+  // freeze the part. 💾 once rendered only on a written one, so the only route
+  // was 🔒 Lock first — i.e. "keep this" also meant "and stop generating", which
+  // is a different decision — and since 2026-09-18 it is not a button at all but
+  // the first answer 🎲 New take offers. The banked notes come from the same
+  // helper 🔒 uses, so what lands is what Lock would have written; the press
+  // then rolls, which is what makes the gate worth having on a live part.
   const bankGen = await page.evaluate(async () => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => window.__Lv2(E);
@@ -8991,9 +9066,11 @@ const ok = (name, cond, detail) => {
       const back = [...card().querySelectorAll('.v2-pop-tabs [data-tab]')]
         .find((x) => x.getAttribute('data-tab') === 'Method');
       if (back) back.click(); await wait(200);
-      const b = card().querySelector('.v2-savetake');
-      o.button = !!b && b.getBoundingClientRect().height > 0;
-      if (b) { b.click(); await wait(500); }
+      const b = card().querySelector('.v2-newtake');
+      // REACHABLE, not merely present — a 0×0 rect is the tell
+      o.button = !!b && b.getBoundingClientRect().height > 0 && !!b.offsetParent;
+      o.noOldButton = !card().querySelector('.v2-savetake');
+      o.gate = await window.__gate(b, 'save'); await wait(500);
       const ent = savedSequences.find((x) => x && x.name === 'genTake');
       o.banked = !!ent;
       o.notes = ent ? (ent.steps || []).filter((x) => x && (x.freq != null || x.chord)).length : 0;
@@ -9006,8 +9083,9 @@ const ok = (name, cond, detail) => {
           if (typeof persistSaved === 'function') persistSaved(); } catch (e3) {}
     return o;
   });
-  ok('a GENERATED take banks in one press, and the part keeps generating',
-    bankGen.button && bankGen.banked && bankGen.notes > 0 &&
+  ok('a GENERATED take banks from the dice’s own gate, and the part keeps generating',
+    bankGen.button && bankGen.noOldButton && bankGen.gate === 'ok' &&
+    bankGen.banked && bankGen.notes > 0 &&
     bankGen.kindBefore === 'live' && bankGen.kindAfter === 'live' && bankGen.stillGenerating,
     JSON.stringify(bankGen));
 
@@ -9031,6 +9109,15 @@ const ok = (name, cond, detail) => {
   pop = await bankTab();
   ok('the bank lists the phrase with its length',
     pop && pop.items.some((b) => /gateRiff/.test(b)), JSON.stringify(pop));
+  // PUT SOMETHING ON THE PART WORTH LOSING, so the load's keep-gate is
+  // deterministic rather than dependent on whatever the case above left
+  // generating. No re-render — the open pane holds the row being tapped.
+  await page.evaluate(() => {
+    const E = _masterEng, L = () => window.__Lv2(E);
+    L().part.kind = 'recorded'; L().part.made = 'take';
+    L().part.notes = [{ t: 0, midi: 60, dur: 0.25 }, { t: 0.5, midi: 64, dur: 0.25 }];
+    E.getCfg();
+  });
   const chosen = await page.evaluate(() => {
     const b = [...document.querySelectorAll('.v2-layer .v2-pop-pane .v2-bankit .v2-bkload')]
       .find((x) => /gateRiff/.test(x.textContent));
@@ -9039,6 +9126,23 @@ const ok = (name, cond, detail) => {
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   });
   if (chosen) { await page.touchscreen.tap(chosen.x, chosen.y); await zz(500); }
+  // LOADING IS A REPLACE (2026-09-18), so the bank asks the same question the
+  // dice asks — keep what is here, or lose it — and it must NAME the phrase
+  // being loaded, or the two answers are indistinguishable. Answered by
+  // discarding: everything below is about what LANDS on the part.
+  const bkGate = await page.evaluate(async () => {
+    const pop2 = document.querySelector('.ambient-addpop');
+    if (!pop2) return 'nogate';
+    const ttl = (pop2.querySelector('.sm-title') || {}).textContent || '';
+    const b2 = [...pop2.querySelectorAll('.addpop-btn')]
+      .find((x) => /what is here is gone/.test(x.textContent));
+    if (!b2) return 'noanswer';
+    b2.click(); await new Promise((r) => setTimeout(r, 20));
+    return /gateRiff/.test(ttl) ? 'ok' : ('unnamed:' + ttl);
+  });
+  await zz(500);
+  ok('loading from the bank asks before it replaces, and names the phrase',
+    bkGate === 'ok', String(bkGate));
   const adopted = await page.evaluate(() => {
     const p = (_masterEng.getCfg().layers || [])[0].part;
     return { kind: p.kind, notes: (p.notes || []).length, bars: p.bars, from: p.from || null,
@@ -16190,5 +16294,6 @@ const ok = (name, cond, detail) => {
 })().catch((e) => {
   // a halted run keeps driving a closed browser for a moment; that is not an error
   if (halting) return;
-  console.error('UI LIFECYCLE: harness error —', e.message); process.exit(1);
+  console.error('UI LIFECYCLE: harness error —', e.message);
+  console.error(e.stack || ''); process.exit(1);
 });

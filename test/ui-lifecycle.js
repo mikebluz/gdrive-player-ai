@@ -5684,10 +5684,10 @@ const ok = (name, cond, detail) => {
     if (tab('rhythm')) tab('rhythm').click();
     await wait(240);
     const open = rows();
-    o.foldOpens = shutRows.indexOf('Max events') < 0 && open.indexOf('Max events') >= 0;
-    const me = document.querySelector('.v2-layer .v2-genrows [data-f="part.shape.maxEvents"]');
+    o.foldOpens = shutRows.indexOf('Hold steps') < 0 && open.indexOf('Hold steps') >= 0;
+    const me = document.querySelector('.v2-layer .v2-genrows [data-f="part.shape.holdSteps"]');
     if (me) { me.value = '7'; me.dispatchEvent(new Event('input', { bubbles: true })); await wait(260); }
-    o.foldCommits = (L().part.shape.maxEvents | 0) === 7;
+    o.foldCommits = (L().part.shape.holdSteps | 0) === 7;
     // A GATED-OUT ROW ON THE OPEN TAB STAYS HIDDEN — Roam reads only
     // fixed/stack/chord pitch, and this part is a series
     if (tab('notes')) { tab('notes').click(); await wait(220); }
@@ -5695,7 +5695,7 @@ const ok = (name, cond, detail) => {
     o.gateBeatsFold = !!roam && roam.closest('.ambient-ctrl').getBoundingClientRect().height === 0;
     if (tab('take')) tab('take').click();
     await wait(220);
-    o.foldShuts = rows().indexOf('Max events') < 0;
+    o.foldShuts = rows().indexOf('Hold steps') < 0;
     { const f1 = document.querySelector('.v2-layer .v2-shapepop .v2-discbtn[data-disc="recipe"]');
       if (f1 && document.querySelector('.v2-layer').classList.contains('v2-so-recipe')) { f1.click(); await wait(200); } }
     // THE SELECT IS RE-SYNCED. 'drawn' is internal and has no option, so a
@@ -15057,7 +15057,7 @@ const ok = (name, cond, detail) => {
     tseq.cycled === 'sine,square,sine,square' && tseq.off === 'sine,sine,sine,sine',
     JSON.stringify(tseq));
 
-  // ---- the sweep's pool, Hold, and Max events ------------------------------
+  // ---- the sweep's pool, Hold, and the Max events retirement ---------------
   const pool = await page.evaluate(async () => {
     const E = _masterEng, cfg = E.getCfg();
     cfg.prog = { on: false, chords: [] };
@@ -15109,8 +15109,15 @@ const ok = (name, cond, detail) => {
       window.playNote = oP; return c;
     };
     out.uncapped = n();
+    // MAX EVENTS IS RETIRED (2026-09-18) — and this is the MIGRATION guard.
+    // Retiring a control that made sound leaves a worse bug than it fixes if
+    // the STORED field survives: a project with one set would play a truncated
+    // cycle with nothing on the card able to switch it off. So normalize
+    // deletes it, and the engine ignores it — both halves, because either one
+    // alone is the unrecoverable state.
     L2.part.shape.maxEvents = 3; E.getCfg(); E._cfg = E.getCfg();
     out.capped = n();
+    out.migrated = !('maxEvents' in (L2.part.shape || {}));
     delete L2.part.shape.maxEvents; E.getCfg();
     return out;
   });
@@ -15126,8 +15133,8 @@ const ok = (name, cond, detail) => {
   // different questions and a sparse pattern is where that shows.
   ok('Hold sizes the note off the step grid, where Length sizes it off the gaps',
     pool.byLength === '900,900' && pool.byHold === '500,500', JSON.stringify(pool));
-  ok('Max events caps a cycle, keeping the earliest',
-    pool.uncapped === 8 && pool.capped === 3, JSON.stringify(pool));
+  ok('a retired Max events neither caps the cycle nor survives a normalize',
+    pool.uncapped === 8 && pool.capped === 8 && pool.migrated === true, JSON.stringify(pool));
 
   // ---- rhythm vary ---------------------------------------------------------
   // v1's rule verbatim, from all four of its euclid renderers: a seed hit is

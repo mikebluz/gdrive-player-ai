@@ -1,4 +1,4 @@
-// PROBE — the Shape group's semantics: Feel ▸ Tight, and Max events.
+// PROBE — the Shape group's semantics: Feel ▸ Tight, and the note/onset counts.
 //
 // Reported as "Tight doesn't seem to be doing its job", from a drawing full of
 // overlapping bars. v1's Tight does TWO things — clamp the release AND size the
@@ -110,14 +110,16 @@ const ok = (name, cond, detail) => {
     JSON.stringify(shortOnly.off) === JSON.stringify(shortOnly.on),
     JSON.stringify(shortOnly));
 
-  // ── MAX EVENTS ───────────────────────────────────────────
-  // Asked outright ("what is Max events"), and the two things that make it
-  // surprising are both worth pinning, because either could be "fixed" later by
-  // someone who assumed it meant the other thing:
-  //   · it counts NOTE EVENTS, not onsets — applied last, after voices, so a
-  //     3-voice chord spends three of them;
-  //   · it TRUNCATES rather than thinning — the earliest are kept, so the tail
-  //     of the cycle falls silent.
+  // ── MAX EVENTS IS RETIRED ────────────────────────────────
+  // Asked outright ("what is Max events"), and the answer was the reason it
+  // went: it counted NOTE EVENTS rather than onsets, applied last — so `6` on a
+  // 3-voice chord layer was 2 chords — and it TRUNCATED rather than thinned,
+  // dropping the tail of the cycle into silence. Removed on the ask 2026-09-18.
+  //
+  // WHAT IS PINNED NOW IS THE RETIREMENT, both halves. Dropping the control and
+  // leaving the stored field would have been the worse bug: a project that had
+  // one set would keep playing a truncated cycle with nothing on the card able
+  // to switch it off. So the engine ignores the field AND normalize deletes it.
   const maxEv = await page.evaluate(async () => {
     const E = _masterEng;
     const L = () => (E.getCfg().layers || [])[0];
@@ -131,21 +133,23 @@ const ok = (name, cond, detail) => {
     const off = ask();
     L().part.shape.maxEvents = 6; E.getCfg();
     const on = ask();
-    L().part.shape.maxEvents = 0; E.getCfg();
+    const kept = 'maxEvents' in (L().part.shape || {});
+    delete L().part.shape.maxEvents; E.getCfg();
     return { off: { n: off.length, onsets: new Set(off).size, last: off[off.length - 1] },
-             on: { n: on.length, onsets: new Set(on).size, last: on[on.length - 1] } };
+             on: { n: on.length, onsets: new Set(on).size, last: on[on.length - 1] },
+             kept: kept, row: !!document.querySelector('[data-f="part.shape.maxEvents"]') };
   });
-  ok('Max events caps NOTES, not onsets — 6 on a 3-voice chord layer is 2 onsets',
+  ok('a stored Max events no longer caps the cycle — all 24 notes still play',
     maxEv.off.n === 24 && maxEv.off.onsets === 8 &&
-    maxEv.on.n === 6 && maxEv.on.onsets === 2, JSON.stringify(maxEv));
-  ok('…and it TRUNCATES — the earliest are kept and the cycle falls silent after',
-    maxEv.on.last < maxEv.off.last / 2, JSON.stringify(maxEv));
+    maxEv.on.n === 24 && maxEv.on.last === maxEv.off.last, JSON.stringify(maxEv));
+  ok('…and normalize DELETES it, so no project is left truncated with no way back',
+    maxEv.kept === false && maxEv.row === false, JSON.stringify(maxEv));
 
   // ── THE READOUT SAYS BOTH COUNTS ────────────────────────────
   // An ONSET is a moment the layer strikes; a NOTE is one sounding pitch, and
   // one onset can spend several. Without both numbers "8 onsets" in the rules
-  // and "24 notes" here look like a contradiction, and Max events (which counts
-  // NOTES) cannot be read at all.
+  // and "24 notes" here look like a contradiction, with nothing on the card to
+  // reconcile them.
   // THE STRUM CASE IS THE ONE THAT MATTERS: Strum spreads one onset's notes
   // across the slot, so counting distinct TIMES reports a strummed chord as
   // three onsets. It is counted from a per-onset TAG instead — and that tag has

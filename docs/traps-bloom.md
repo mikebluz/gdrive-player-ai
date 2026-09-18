@@ -16,6 +16,13 @@
   - **Anything a repair function rebuilds must be carried explicitly.** `_ambRepairParts` builds a new
     object per part — `key`, `salt`, `passSalt`, `grid`, `rubato`, `part` have each been dropped by
     forgetting this.
+- **RETIRING A CONTROL THAT MADE SOUND: delete the STORED field in normalize, in the same change.**
+  Removing only the UI leaves a project that had the field set still behaving that way with nothing
+  on the card able to switch it off — unrecoverable. `Max events` went this way (2026-09-18):
+  `if ('maxEvents' in s) delete s.maxEvents;` plus the engine ignoring it, both halves. It IS audible
+  for affected projects, and that is the honest outcome — there is no silent way to retire a feature
+  that made sound. Restate every gate check that DROVE the field onto a surviving one rather than
+  deleting it (the check was pinning the fold/gate, not the field).
 - **The numeric backfill clobbers non-number defaults.** `Number.isFinite(true) === false`, so a
   BOOLEAN or OBJECT in a layer's defaults is reset on every normalize. Keep additive booleans/objects
   OUT of `_ambDefaultLayer` and coerce them only when present.

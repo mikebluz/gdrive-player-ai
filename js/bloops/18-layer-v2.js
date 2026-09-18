@@ -1124,10 +1124,17 @@
       // 0 = off, i.e. Length governs. Stored only when it is doing something.
       if (Number.isFinite(s.holdSteps) && s.holdSteps > 0) s.holdSteps = clamp(s.holdSteps | 0, 0, 16);
       else delete s.holdSteps;
-      // MAX EVENTS — a hard ceiling on note-events per cycle, keeping the
-      // EARLIEST (v1's rule). 0 = off.
-      if (Number.isFinite(s.maxEvents) && s.maxEvents > 0) s.maxEvents = clamp(s.maxEvents | 0, 0, 64);
-      else delete s.maxEvents;
+      // MAX EVENTS IS GONE (2026-09-18) — and the STORED value goes with it.
+      // Dropping only the control would have left a project that had one set
+      // playing a truncated cycle with nothing on the card able to switch it
+      // off: the documented "I deleted the delay and now all I have is the wet
+      // signal" failure, which was unrecoverable. Deleting the field here is the
+      // migration, and it runs on every normalize, so an old project heals the
+      // first time it is opened.
+      // IT IS AUDIBLE FOR THOSE PROJECTS — a layer that was capped now plays its
+      // whole cycle. That is the honest outcome: the cap was truncating the bar,
+      // and there is no silent way to retire a feature that made sound.
+      if ('maxEvents' in s) delete s.maxEvents;
       // SLIP — a stochastic strum, absent-by-default and pruned at 0 so a part
       // that never set one draws nothing and stores nothing.
       if (Number.isFinite(s.slip) && s.slip > 0) s.slip = clamp(s.slip | 0, 0, 100);
@@ -2999,8 +3006,6 @@
       }
       out.sort((a3, b3) => a3.at - b3.at);
       if (startOff > 0) for (let z2 = 0; z2 < out.length; z2++) out[z2].at += startOff;
-      const mxv = clamp((p.shape && p.shape.maxEvents) | 0, 0, 64);
-      if (mxv > 0 && out.length > mxv) out.length = mxv;
       return out;
     }
     // WHICH CHANGE EACH ONSET IS IN — only asked when a setting needs it
@@ -3416,8 +3421,7 @@
       } catch (e) {}
     }
     // The phrase's START shifts the WHOLE cycle, so it is applied once here
-    // rather than at each push — and BEFORE Max events, so the cap still keeps
-    // the earliest of what actually sounds.
+    // rather than at each push, before anything downstream reads the times.
     if (startOff > 0) for (let z = 0; z < out.length; z++) out[z].at += startOff;
     // ── THE DENSITY CEILING (2026-09-17) ──────────────────────────────────
     // Every die that ADDS notes — Twist's burst, Phrasing's cell, a ghost —
@@ -3482,14 +3486,12 @@
         if (room > 0 && ln[z].durMs > room) ln[z].durMs = Math.max(40, room);
       }
     }
-    // MAX EVENTS — v1's rule: cap the note-events in a cycle, keeping the
-    // EARLIEST. Applied last, after every onset, voice and ghost, so it is a
-    // ceiling on the whole cycle rather than on one stage of it. 0 = off.
-    const mx = clamp((p.shape && p.shape.maxEvents) | 0, 0, 64);
-    if (mx > 0 && out.length > mx) {
-      out.sort((a2, b2) => a2.at - b2.at);
-      out.length = mx;
-    }
+    // (MAX EVENTS WAS HERE. It capped the note-events in a cycle, keeping the
+    // EARLIEST — so it truncated the bar rather than thinning it, and because it
+    // counted NOTES a 3-voice chord spent three of them: `Max events 6` on a
+    // chord layer was two chords and three seconds of silence. Removed
+    // 2026-09-18 on the ask; Density, the voice cap and the rhythm's own count
+    // are the controls that shape how much a cycle plays.)
     return out;
   }
 
@@ -8120,8 +8122,8 @@
       // An ONSET is a moment the layer strikes; a NOTE is one sounding pitch, and
       // one onset can spend several (a 3-voice chord is one onset, three notes).
       // The readout said notes only, so "8 onsets" in the rules and "24 notes"
-      // here looked like a contradiction — and Max events, which counts NOTES, is
-      // unreadable without both.
+      // here looked like a contradiction, with nothing on the card to reconcile
+      // them.
       // FROM THE TAG, NOT FROM THE TIMES: Strum and Slip spread one onset's notes
       // across the slot, so distinct `at` values would report a strummed chord as
       // three onsets. Recorded parts carry no tag — there the stored times ARE
@@ -8535,7 +8537,7 @@
         'part.rhythm.rateVar': 0, 'part.rhythm.voices': 1, 'part.pitch.roam': 0,
         'part.pitch.home': 'floor', 'part.pitch.drift': 0, 'part.pitch.subdiv': 1,
         'part.pitch.phraseLen': 4, 'part.pitch.repeats': 4, 'instrument.register': 4,
-        'part.pitch.voiceCap': 0, 'part.shape.holdSteps': 0, 'part.shape.maxEvents': 0,
+        'part.pitch.voiceCap': 0, 'part.shape.holdSteps': 0,
         'part.pitch.stutter': 0, 'proximity': 0, 'part.shape.slip': 0, 'part.pitch.tones': '',
         'part.pitch.motif': '', 'part.rhythm.antic': '', 'part.pitch.inv': 0,
         'restProb': 0, 'ghosts': 0, 'lenVary': 0, 'startVary': 0, 'twist': 0, 'phrasing': 0 };
@@ -10899,9 +10901,7 @@
                   'interlocking rows, each on its own note', 'kind:live;voice:synth;rhythm:euclid') +
               gst(L, 'part.shape.holdSteps', 'Hold steps', num((L.part.shape || {}).holdSteps, 0), 0, 16,
                   'note length in grid steps, whatever the gaps — 0 = use Length instead (which follows them)',
-                  'kind:live') +
-              gst(L, 'part.shape.maxEvents', 'Max events', num((L.part.shape || {}).maxEvents, 0), 0, 64,
-                  'a ceiling on NOTES, not onsets — a 3-note chord spends 3. The earliest are kept and the rest of the cycle falls silent. 0 = off', 'kind:live')) +
+                  'kind:live')) +
               // ── NOTES — which pitches, and how they are stacked
               ftrows('notes',
               // REGISTER, the pitch material Range / Home / Note are tuned
@@ -11605,15 +11605,7 @@
           st(L, 'part.shape.holdSteps', 'Hold', num(sh.holdSteps, 0), 0, 16,
              'note length in grid steps, whatever the gaps — 0 = use Length instead (which follows them)',
              'kind:live') +
-          // TWO THINGS THE OLD HINT ("per cycle (0 = off)") did not say, and both
-          // are how this control surprises you. It counts NOTE EVENTS, not
-          // onsets — it is applied last, after voices, ghosts and bursts, so a
-          // 3-voice chord spends three of them. And it TRUNCATES rather than
-          // thinning: `out.sort(by time); out.length = mx` keeps the EARLIEST,
-          // so the tail of the cycle goes silent instead of the density coming
-          // down evenly across the bar.
-          st(L, 'part.shape.maxEvents', 'Max events', num(sh.maxEvents, 0), 0, 64,
-             'a ceiling on NOTES, not onsets — a 3-note chord spends 3. The earliest are kept and the rest of the cycle falls silent. 0 = off', 'kind:live') +
+
           // Only means something where an onset carries MORE THAN ONE note.
           sl(L, 'strum', 'Strum', num(L.strum, 0), 0, 100, 'struck → arpeggiated',
              'kind:live;voice:synth;pitch:chord,stack') +

@@ -110,6 +110,77 @@ const ok = (name, cond, detail) => {
   ok('the drawing shows the notes the preview played, not the progression rotated',
     run.drawn.length > 0 && run.prefix,
     'played=' + run.played.join(',') + ' drawn=' + run.drawn.join(','));
+  // ── CASE B: THE PICTURE MUST NOT JUMP ON THE FIRST PREVIEW PRESS ──────
+  // ▶ Preview lands the first note ON the press, so the cycle begins `off`
+  // EARLIER — and the pin anchored the changes at `t0`, which put chord 1 that
+  // far INTO the part instead of at its top. The stopped drawing aligns the
+  // chords with the part's own first pass, so the two disagreed by `off` and
+  // the picture JUMPED the first time you pressed Preview. Invisible whenever
+  // the first onset is on beat 1 (`off` is 0 and the two coincide), which is
+  // why this fixture ROTATES a euclid pattern so the first onset is late.
+  // Five chords under a four-bar part, the last a 7th, so a misalignment is a
+  // different note COUNT and not only different pitches.
+  await page.evaluate(() => {
+    const E = _masterEng, cfg = E.getCfg();
+    cfg.prog = { on: true, name: 'SEAM',
+      chords: [{ root: 2, intervals: [0, 4, 7] }, { root: 4, intervals: [0, 3, 7] },
+               { root: 6, intervals: [0, 3, 7] }, { root: 7, intervals: [0, 4, 7] },
+               { root: 9, intervals: [0, 4, 7, 10] }] };
+    const L = (cfg.layers || [])[0];
+    L.part.kind = 'live'; L.part.bars = 4; L.part.notes = [];
+    L.part.rhythm = { kind: 'euclid', pulses: 7, steps: 16, rotate: 5 };
+    L.part.pitch = { kind: 'chord', span: 12, voices: 4 };
+    delete E._progAnchor; delete E._playStartAt; delete E._barGridAnchor;
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E);
+  });
+  await zz(700);
+
+  // THE CANVAS THE USER IS LOOKING AT. There is more than one `.v2-vizcv` in
+  // the document (the card body and the section sheet each carry the drawing),
+  // so a bare `querySelector` answers for whichever comes first — and that one
+  // can be the stale, hidden copy nothing has redrawn. It cost an hour here:
+  // the "after" reading was the "before" draw. Pick by RECT — the reachability
+  // rule, applied to reading rather than to tapping.
+  const shot = () => page.evaluate(async () => {
+    const E = _masterEng;
+    const c = document.querySelector('.v2-layer');
+    c.classList.remove('collapsed');
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E);
+    await new Promise((r) => setTimeout(r, 450));
+    const all = [...document.querySelectorAll('.v2-vizcv')];
+    const cv = all.find((x) => x.offsetParent && x.getBoundingClientRect().height > 10) || all[0];
+    return (cv && cv._hits || []).slice().sort((a, b) => a.t - b.t).map((x) => x.midi);
+  });
+  const seamBefore = await shot();
+  const seamPlayed = await page.evaluate(async () => {
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    const got = [];
+    const orig = window.playNote;
+    window.playNote = function (f) {
+      if (f > 0) got.push(Math.round(69 + 12 * Math.log2(f / 440)));
+      return orig.apply(this, arguments);
+    };
+    try { window._v2.preview(E, L()); } finally { window.playNote = orig; }
+    await new Promise((r) => setTimeout(r, 700));
+    return got;
+  });
+  const seamAfter = await shot();
+  await page.evaluate(() => { const E = _masterEng; window._v2.previewKill(E, (E.getCfg().layers || [])[0]); });
+
+  console.log('  before: ' + seamBefore.join(','));
+  console.log('  played: ' + seamPlayed.join(','));
+  console.log('  after : ' + seamAfter.join(','));
+  ok('a preview press does not move the picture — same take, same notes',
+    seamBefore.length > 0 && seamBefore.join(',') === seamAfter.join(','),
+    'before=' + seamBefore.join(',') + ' after=' + seamAfter.join(','));
+  ok('…and the UN-previewed picture already showed what a preview would play',
+    seamBefore.length > 0 &&
+    seamPlayed.slice(0, seamBefore.length).join(',') === seamBefore.join(','),
+    'played=' + seamPlayed.join(',') + ' drawn=' + seamBefore.join(','));
+
   ok('no page errors', errs.length === 0, errs.join(' | '));
 
   console.log('\nprobe: ' + pass + ' passed, ' + fail + ' failed');

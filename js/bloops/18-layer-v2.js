@@ -4650,8 +4650,18 @@
       // as "Preview keeps making a new part". Pinned, a preview always plays
       // the changes from the top, which is repeatable and is what the drawing
       // then shows. Restored in the `finally` like every other clock here.
+      // …AT THE CYCLE'S START, NOT AT THE PRESS. The first note lands on the
+      // press, so the cycle begins `off` EARLIER (see the probe above) — and
+      // anchoring the changes at `t0` therefore put chord 1 `off` into the
+      // part instead of at its top, which is neither what this pin says it
+      // does nor what the stopped drawing shows (that one aligns the chords
+      // with the part's own first pass). Measured on a part whose first onset
+      // is a beat late: the preview played D·D·Em·Em·F♯m·F♯m·G·A7 while the
+      // un-previewed picture drew D·Em·Em·F♯m·F♯m·G·G, so the picture JUMPED
+      // on the first press and neither state was the other's. One origin for
+      // the notes, the changes and the picture, and all three agree.
       if (!E.timer || !Number.isFinite(E._barGridAnchor)) {
-        E._progAnchor = t0; E._playStartAt = t0; E._barGridAnchor = t0;
+        E._progAnchor = t0 - off; E._playStartAt = t0 - off; E._barGridAnchor = t0 - off;
       }
       // …AND REMEMBER THEM FOR THE DRAWING. These three are restored in the
       // `finally` below — synchronously, before a single note has sounded — so

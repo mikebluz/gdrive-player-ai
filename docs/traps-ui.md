@@ -100,7 +100,11 @@
 - **A card fold is a CLASS (`v2-so-<id>`) and a card rebuild dropped it** — ▸ Fine-tune holds Steps, whose
   commit rebuilds the card, so the fold shut under the finger. `V2.render` now carries `v2-so-*` across.
   Anything that lands on a row INSIDE a fold (🔍 Find) must press the fold's own button, or it marks a 0×0 row.
-- **A duplicate class makes `querySelector` answer for the wrong surface.** When adding a second
+- **A duplicate class makes `querySelector` answer for the wrong surface.** The drawing is one of these:
+  `.v2-vizcv` exists in BOTH the card body and the section sheet, and the first in DOM order can be
+  the stale hidden copy nothing has redrawn — a probe reading it got the PREVIOUS draw and "the
+  picture did not change" passed while it had. Pick the one with a real rect and an `offsetParent`
+  (the reachability rule, applied to READING rather than to tapping). When adding a second
   instance of anything, rename its hooks in the SAME change.
 - **A control that re-renders its own panel on `input` cannot be dragged** — the re-render replaces the
   element the pointer grabbed. Mirror readouts on `input`; do the rebuild on `change`.

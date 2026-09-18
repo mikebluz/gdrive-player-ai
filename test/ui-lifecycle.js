@@ -7375,6 +7375,76 @@ const ok = (name, cond, detail) => {
     vizAnchorRun.drawn.length > 0 && vizAnchorRun.prefix,
     'played=' + vizAnchorRun.played.join(',') + ' drawn=' + vizAnchorRun.drawn.join(','));
 
+  // …AND THE PRESS MUST NOT MOVE THE PICTURE AT ALL. ▶ Preview lands the first
+  // note ON the press, so the cycle begins `off` EARLIER — and the pin anchored
+  // the changes at `t0`, which put chord 1 that far INTO the part instead of at
+  // its top, while the stopped drawing aligns them with the part's own first
+  // pass. The two disagreed by `off`, so the picture JUMPED the first time you
+  // pressed Preview and neither state was the other's. Invisible whenever the
+  // first onset is on beat 1 (`off` is 0 and they coincide) — hence a euclid
+  // pattern ROTATED so the first onset is late. Five chords under a four-bar
+  // part, the last a 7th, so a misalignment is a different note COUNT and not
+  // only different pitches. Poison-verified: anchoring at `t0` again gives a
+  // before-picture one chord short of what plays, and an after-picture that
+  // does not match it.
+  // READ THE VISIBLE CANVAS. There is more than one `.v2-vizcv` in the document
+  // (the card body and the section sheet each carry the drawing), so a bare
+  // `querySelector` can answer for the stale hidden copy nothing has redrawn —
+  // which is how the "after" reading came back as the "before" draw.
+  const vizSeamRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => window.__Lv2(E);
+    const card = () => document.querySelector('.v2-layer');
+    const svProg = E.getCfg().prog ? JSON.parse(JSON.stringify(E.getCfg().prog)) : null;
+    const svPart = JSON.stringify(L().part);
+    const cfg = E.getCfg();
+    cfg.prog = { on: true, name: 'SEAM',
+      chords: [{ root: 2, intervals: [0, 4, 7] }, { root: 4, intervals: [0, 3, 7] },
+               { root: 6, intervals: [0, 3, 7] }, { root: 7, intervals: [0, 4, 7] },
+               { root: 9, intervals: [0, 4, 7, 10] }] };
+    L().part.kind = 'live'; L().part.bars = 4; L().part.notes = [];
+    L().part.rhythm = { kind: 'euclid', pulses: 7, steps: 16, rotate: 5 };
+    L().part.pitch = { kind: 'chord', span: 12, voices: 4 };
+    delete E._progAnchor; delete E._playStartAt; delete E._barGridAnchor;
+    E.getCfg();
+    const h0 = document.getElementById('bloom-v2-layers');
+    const shot = async () => {
+      card().classList.remove('collapsed');
+      if (h0) h0._sig = ''; window._v2.render(E);
+      await wait(450);
+      const all = [...document.querySelectorAll('.v2-vizcv')];
+      const cv = all.find((x) => x.offsetParent && x.getBoundingClientRect().height > 10) || all[0];
+      return (cv && cv._hits || []).slice().sort((a, b) => a.t - b.t).map((x) => x.midi);
+    };
+    const before = await shot();
+    const played = [];
+    const orig = window.playNote;
+    window.playNote = function (f) {
+      if (f > 0) played.push(Math.round(69 + 12 * Math.log2(f / 440)));
+      return orig.apply(this, arguments);
+    };
+    try { window._v2.preview(E, L()); } finally { window.playNote = orig; }
+    await wait(700);
+    const after = await shot();
+    window._v2.previewKill(E, L());
+    // RESTORE — one project, many cases; a progression left on is the next
+    // check's bug.
+    if (svProg) cfg.prog = svProg; else delete cfg.prog;
+    try { L().part = JSON.parse(svPart); } catch (e) {}
+    E.getCfg(); if (h0) h0._sig = ''; window._v2.render(E); await wait(250);
+    card().classList.remove('collapsed');
+    return { before, after, played,
+             still: before.length > 0 && before.join(',') === after.join(','),
+             honest: before.length > 0 &&
+               played.slice(0, before.length).join(',') === before.join(',') };
+  });
+  ok('a ▶ Preview press does not MOVE the picture — same take, same notes',
+    vizSeamRun.still,
+    'before=' + vizSeamRun.before.join(',') + ' after=' + vizSeamRun.after.join(','));
+  ok('…and the un-previewed picture already showed what a preview would play',
+    vizSeamRun.honest,
+    'played=' + vizSeamRun.played.join(',') + ' drawn=' + vizSeamRun.before.join(','));
+
   // THE ROLL LIGHTS UP AS IT PLAYS, and RING OUT is the door for the chord
   // choke. "It sounds like some notes may be getting cut off" — measured, with
   // a progression on: 3 of 4 notes clamped, 1200ms → 738 / 238 / 738. That is

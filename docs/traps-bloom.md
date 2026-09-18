@@ -439,6 +439,12 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   ordinary layer, the PART PASS for a per-part one. One definition, three consumers (tick, drawing,
   playhead); two walks of one grid is how they disagree. It carries `pi`, so nothing re-derives the
   part from a snapped `cs`.
+- **▶ Preview's changes anchor at the CYCLE START (`t0 - off`), never at the press (`t0`).** The
+  first note lands on the press, so the cycle begins `off` earlier — anchoring the changes at `t0`
+  put chord 1 that far INTO the part while the stopped drawing aligns them with the part's own first
+  pass, so **the picture jumped the first time you pressed Preview** and neither state matched the
+  audio. Invisible when the first onset is on beat 1 (`off` is 0 and the two coincide), which is why
+  a fixture for this must ROTATE its pattern so the first onset is late.
 - **A PICTURE MUST BE DRAWN IN THE CLOCK ITS NOTES WERE MADE IN.** `previewLayer` pins
   `_progAnchor` / `_playStartAt` / `_barGridAnchor` to the press and restores them in its `finally`
   — synchronously, before a note has sounded — so every later draw resolved the SAME onsets against

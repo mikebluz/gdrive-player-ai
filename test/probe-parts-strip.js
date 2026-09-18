@@ -1,4 +1,4 @@
-// PROBE — the Parts strip: one dropdown for the part, one for 👁 View / ✎ Edit.
+// PROBE — the Parts strip: one dropdown for the part, one ✎ Edit toggle.
 //
 // 👁 View — every layer follows playback: the part being heard is the part you
 //          see, with a playhead, and the dropdown is a READOUT of it.
@@ -56,12 +56,14 @@ const ok = (name, cond, detail) => {
     const q = (s) => el.querySelector(s);
     const r = (n) => { if (!n) return null; const b = n.getBoundingClientRect();
       return { w: Math.round(b.width), h: Math.round(b.height), vis: !!n.offsetParent }; };
-    const sel = q('.ambient-curpart-sel'), mode = q('.ambient-curpart-mode'), loop = q('.ambient-curpart-loop');
+    const sel = q('.ambient-curpart-sel'), mode = q('.ambient-curpart-edit'), loop = q('.ambient-curpart-loop');
     return {
       chips: el.querySelectorAll('.ambient-curpart-chip').length,
       sel: r(sel), mode: r(mode), loop: r(loop),
       opts: sel ? [...sel.options].map((o) => o.textContent) : [],
-      modeOpts: mode ? [...mode.options].map((o) => o.textContent) : [],
+      modeFace: mode ? mode.textContent.trim() : null,
+      modeOn: !!(mode && mode.classList.contains('on')),
+      modePressed: mode ? mode.getAttribute('aria-pressed') : null,
       stripW: Math.round(el.getBoundingClientRect().width),
       overflow: el.scrollWidth - el.clientWidth,
       docOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -69,14 +71,17 @@ const ok = (name, cond, detail) => {
   });
   ok('the parts are ONE dropdown — no chip per part',
     shape.chips === 0 && shape.opts.length === 2, JSON.stringify(shape).slice(0, 220));
-  ok('👁 View / ✎ Edit is a selector in the Parts strip',
-    shape.modeOpts.length === 2 && /View/.test(shape.modeOpts[0]) && /Edit/.test(shape.modeOpts[1]),
-    JSON.stringify(shape.modeOpts));
+  // A TOGGLE, and its WORD carries the state as well as the fill — `✎ Edit` is
+  // an offer, `✎ Editing` is a state. That is how ↻ Loop beside it solves the
+  // documented "a ONE-WORD FACE IS READ AS THE CURRENT STATE" trap.
+  ok('✎ Edit is a TOGGLE in the Parts strip, off by default',
+    /^✎ Edit$/.test(shape.modeFace || '') && shape.modeOn === false &&
+    shape.modePressed === 'false', JSON.stringify(shape.modeFace) + ' on=' + shape.modeOn);
   // THE SWALLOW CHECK, measured on the SIBLINGS: `.ambient-select` is width:100%
   // and declared late, so a bare one here would crush the mode select and ↻ Loop
   // to nothing. Their widths are the evidence, not the part select's.
   ok('the part dropdown does not swallow its siblings',
-    !!shape.mode && shape.mode.w > 60 && shape.mode.vis &&
+    !!shape.mode && shape.mode.w > 50 && shape.mode.vis &&
     !!shape.loop && shape.loop.w > 40 && shape.loop.vis,
     JSON.stringify({ sel: shape.sel, mode: shape.mode, loop: shape.loop }));
   ok('no horizontal overflow at 390px',
@@ -87,8 +92,8 @@ const ok = (name, cond, detail) => {
   const edit = await page.evaluate(async () => {
     const E = _masterEng;
     const el = document.getElementById('mix-bloom-curpart');
-    const md = el.querySelector('.ambient-curpart-mode');
-    md.value = 'edit'; md.dispatchEvent(new Event('change', { bubbles: true }));
+    const md = el.querySelector('.ambient-curpart-edit');
+    md.click();
     await new Promise((r) => setTimeout(r, 500));
     const sel = document.getElementById('mix-bloom-curpart').querySelector('.ambient-curpart-sel');
     const before = (E.getCfg().layers || []).map((L) => L.partFor);
@@ -124,8 +129,8 @@ const ok = (name, cond, detail) => {
   const view = await page.evaluate(async () => {
     const E = _masterEng;
     const el = document.getElementById('mix-bloom-curpart');
-    const md = el.querySelector('.ambient-curpart-mode');
-    md.value = 'view'; md.dispatchEvent(new Event('change', { bubbles: true }));
+    const md = el.querySelector('.ambient-curpart-edit');
+    if (md.classList.contains('on')) md.click();
     await new Promise((r) => setTimeout(r, 500));
     const el2 = document.getElementById('mix-bloom-curpart');
     const s2 = el2.querySelector('.ambient-curpart-sel');
@@ -170,10 +175,12 @@ const ok = (name, cond, detail) => {
     window._v2.setViewMode('view');
     try { window._ambCurPartRefresh(E); } catch (e) {}
     await new Promise((r) => setTimeout(r, 300));
-    const before = document.getElementById('mix-bloom-curpart').querySelector('.ambient-curpart-mode').value;
+    const face = () => { const b2 = document.getElementById('mix-bloom-curpart')
+      .querySelector('.ambient-curpart-edit'); return b2.classList.contains('on') ? 'edit' : 'view'; };
+    const before = face();
     window._v2.vizMode(L0, 'draw');                 // what ✎ Draw does
     await new Promise((r) => setTimeout(r, 300));
-    const after = document.getElementById('mix-bloom-curpart').querySelector('.ambient-curpart-mode').value;
+    const after = face();
     return { before, after, axis: window._v2.viewMode() };
   });
   ok('the strip follows the axis when a CARD moves it \u2014 no stale readout',
@@ -194,9 +201,9 @@ const ok = (name, cond, detail) => {
       const at = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
       return { disabled: !!n.disabled, self: at === n, got: at ? (at.className || at.tagName) : null };
     };
-    return { sel: hit('.ambient-curpart-sel'), mode: hit('.ambient-curpart-mode') };
+    return { sel: hit('.ambient-curpart-sel'), mode: hit('.ambient-curpart-edit') };
   });
-  ok('neither dropdown is disabled, and a tap lands on the control itself',
+  ok('neither control is disabled, and a tap lands on the control itself',
     reach.sel && !reach.sel.disabled && reach.sel.self &&
     reach.mode && !reach.mode.disabled && reach.mode.self,
     JSON.stringify(reach));
@@ -214,7 +221,8 @@ const ok = (name, cond, detail) => {
     cur: _masterEng._curPart,
     parts: (_masterEng.getCfg().layers || []).map((L) => L.partFor),
     shown: document.getElementById('mix-bloom-curpart').querySelector('.ambient-curpart-sel').value,
-    modeShown: document.getElementById('mix-bloom-curpart').querySelector('.ambient-curpart-mode').value,
+    modeShown: document.getElementById('mix-bloom-curpart')
+      .querySelector('.ambient-curpart-edit').classList.contains('on') ? 'edit' : 'view',
   }));
   ok('a real pick in 👁 View ACTS — it holds that part and switches to ✎ Edit',
     realPick === 'view' && picked.mode === 'edit' && picked.cur === 1 &&
@@ -222,14 +230,23 @@ const ok = (name, cond, detail) => {
     picked.parts.every((x) => x === 1), JSON.stringify({ was: realPick, picked }));
 
   // …and the mode dropdown itself, driven the same way
-  await page.select('#mix-bloom-curpart .ambient-curpart-mode', 'view');
+  // A REAL POINTER PRESS on the toggle — not `.click()`, which skips hit-testing.
+  const box = await page.evaluate(() => {
+    const b2 = document.getElementById('mix-bloom-curpart').querySelector('.ambient-curpart-edit');
+    b2.scrollIntoView({ block: 'center' });
+    const r2 = b2.getBoundingClientRect();
+    return { x: r2.left + r2.width / 2, y: r2.top + r2.height / 2 };
+  });
+  await page.mouse.click(box.x, box.y);
   await zz(600);
-  const realMode = await page.evaluate(() => ({
-    mode: window._v2.viewMode(),
-    shown: document.getElementById('mix-bloom-curpart').querySelector('.ambient-curpart-mode').value,
-  }));
-  ok('a real pick on the 👁 View / ✎ Edit dropdown switches the axis',
-    realMode.mode === 'view' && realMode.shown === 'view', JSON.stringify(realMode));
+  const realMode = await page.evaluate(() => {
+    const b2 = document.getElementById('mix-bloom-curpart').querySelector('.ambient-curpart-edit');
+    return { mode: window._v2.viewMode(), on: b2.classList.contains('on'),
+             face: b2.textContent.trim(), pressed: b2.getAttribute('aria-pressed') };
+  });
+  ok('a real POINTER press on ✎ Editing turns it off — and the word changes with it',
+    realMode.mode === 'view' && !realMode.on && /^✎ Edit$/.test(realMode.face) &&
+    realMode.pressed === 'false', JSON.stringify(realMode));
 
   // AND AT DESKTOP WIDTH. Everything above is measured at 390px, this project's
   // documented single-viewport blind spot — and the report that prompted the
@@ -267,14 +284,14 @@ const ok = (name, cond, detail) => {
     const r = (sq) => { const n = el.querySelector(sq); if (!n) return null;
       const bb = n.getBoundingClientRect();
       return { w: Math.round(bb.width), x: Math.round(bb.left), vis: !!n.offsetParent }; };
-    return { sel: r('.ambient-curpart-sel'), mode: r('.ambient-curpart-mode'),
+    return { sel: r('.ambient-curpart-sel'), mode: r('.ambient-curpart-edit'),
              loop: r('.ambient-curpart-loop'),
              overflow: el.scrollWidth - el.clientWidth,
              docOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth };
   });
   ok('…and it holds at desktop width too — three controls, in order, no overflow',
     !wide.err && !!wide.sel && wide.sel.w > 120 && wide.sel.vis &&
-    !!wide.mode && wide.mode.w > 60 && wide.mode.vis &&
+    !!wide.mode && wide.mode.w > 50 && wide.mode.vis &&
     !!wide.loop && wide.loop.w > 40 && wide.loop.vis &&
     wide.mode.x > wide.sel.x && wide.loop.x > wide.mode.x &&
     wide.overflow <= 0 && wide.docOverflow <= 0,

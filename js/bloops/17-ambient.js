@@ -43895,17 +43895,27 @@
               rgs.map(r => '<option value="' + r.pi + '"' + (r.pi === cur ? ' selected' : '') + '>' +
                 _ambEscAttr(r.nm) + '</option>').join('') +
             '</select>' +
-            // ── 👁 VIEW / ✎ EDIT ────────────────────────────────
+            // ── ✎ EDIT — A TOGGLE, NOT A PICKER ───────────────────────
             // ONE QUESTION ABOUT THE SESSION, asked once. It was a picker on
             // EVERY layer card, so two cards could disagree about what the app
             // was doing; and it belongs beside the part it governs, because
             // what it decides IS whether that selection or playback wins.
-            '<select class="ambient-select ambient-curpart-mode"' +
-              ' title="👁 View follows playback — every layer draws the part being heard, with a playhead. ✎ Edit holds the part chosen above, whatever is playing, so an edit stays put while the arrangement runs on.">' +
-              [['view', '👁 View'], ['edit', '✎ Edit']]
-                .map(([v, lab]) => '<option value="' + v + '"' + (vmode === v ? ' selected' : '') +
-                  '>' + lab + '</option>').join('') +
-            '</select>' +
+            // A BUTTON RATHER THAN A SELECT (user: "maybe the View/Edit
+            // dropdown should just be an Edit button"): two stops do not need a
+            // list, and ↻ Loop beside it is already this exact control — rule
+            // 6, new UI matches its neighbours.
+            // THE WORD CHANGES WITH THE STATE, which is how ↻ Loop/Looping
+            // solves the documented "a ONE-WORD FACE IS READ AS THE CURRENT
+            // STATE" trap: `✎ Edit` is an OFFER, `✎ Editing` is a STATE, and
+            // the fill carries it as well. What says you are in 👁 View when it
+            // is off is the hint line below, which names that mode outright.
+            '<button type="button" class="ambient-seg ambient-curpart-edit' +
+              (vmode === 'edit' ? ' on' : '') + '"' +
+              ' aria-pressed="' + (vmode === 'edit' ? 'true' : 'false') + '"' +
+              ' title="' + _ambEscAttr(vmode === 'edit'
+                ? '✎ Editing — every layer holds the part chosen here whatever is playing, so an edit stays put while the arrangement runs on. Press to follow playback instead.'
+                : 'Hold the part chosen here while the arrangement runs on, so an edit stays put under you. Off, every layer follows playback — the part being heard is the part you see, with a playhead.') + '">' +
+              (vmode === 'edit' ? '✎ Editing' : '✎ Edit') + '</button>' +
             // ↻ LOOP — the one control here that DOES move a clock, which is
             // exactly why it sits with the part it loops rather than in a
             // sheet: "repeat the part I am editing so I can hear what I change"
@@ -43972,10 +43982,14 @@
         // layer's `partFor`, the persist, and the two re-renders) and every one
         // of them had to come across — a store complains when it loses a
         // reader, a callback says nothing at all.
-        el.addEventListener('change', (ev) => {
-          const md = ev.target.closest && ev.target.closest('.ambient-curpart-mode');
+        // ✎ EDIT rides the CLICK listener above (it is a button now); only the
+        // part select needs `change`.
+        el.addEventListener('click', (ev) => {
+          const md = ev.target.closest && ev.target.closest('.ambient-curpart-edit');
           if (md) {
-            const v = md.value === 'edit' ? 'edit' : 'view';
+            let cur2 = 'view';
+            try { if (window._v2 && window._v2.viewMode) cur2 = window._v2.viewMode(); } catch (e) {}
+            const v = (cur2 === 'edit') ? 'view' : 'edit';
             try { if (window._v2 && window._v2.setViewMode) window._v2.setViewMode(v); } catch (e) {}
             el._sig = ''; el._playPi = undefined;
             try { _ambRenderCurPart(E); } catch (e) {}
@@ -43992,6 +44006,8 @@
               { ms: 4000 }); } catch (e) {}
             return;
           }
+        });
+        el.addEventListener('change', (ev) => {
           const ps = ev.target.closest && ev.target.closest('.ambient-curpart-sel');
           if (ps) {
             const pi2 = ps.value | 0;

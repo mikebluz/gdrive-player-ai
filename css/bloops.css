@@ -11504,8 +11504,16 @@
       flex: 1 1 200px; width: auto; min-width: 0; min-height: 34px;
       font-weight: 600;
     }
-    .ambient-curpart select.ambient-select.ambient-curpart-mode {
-      flex: 0 0 auto; width: auto; min-width: 0; min-height: 34px;
+    /* ✎ EDIT — a toggle, styled as ↻ Loop's sibling because it is the same kind
+       of control (rule 6). The word carries the state as well as the fill:
+       `✎ Edit` is an offer, `✎ Editing` is a state. */
+    .ambient-curpart .ambient-curpart-edit {
+      flex: 0 0 auto; min-height: 34px; padding: 4px 12px; white-space: nowrap;
+      background: rgba(20, 20, 31, 0.6);
+    }
+    .ambient-curpart .ambient-curpart-edit.on {
+      border-color: #b794f4; color: #e9d8fd;
+      background: rgba(159, 122, 234, 0.3); font-weight: 600;
     }
     .ambient-curpart select.ambient-select:disabled { opacity: 0.75; cursor: default; }
     .ambient-curpart .ambient-curpart-hint {

@@ -11486,21 +11486,28 @@
    filing choice), and this is the one you are hearing. Green, the hue this app
    reserves for "sounding", so the two marks can never be read as the same
    thing. */
-.ambient-curpart-chip.playing {
+.ambient-curpart-sel.playing {
   border-color: #48bb78; color: #c6f6d5; box-shadow: inset 0 0 0 1px rgba(72, 187, 120, 0.45);
 }
-.ambient-curpart-chip.playing::before { content: '\25b8 '; color: #9ae6b4; }
 .ambient-curpart-lab {
       font: 600 0.7rem 'Segoe UI', sans-serif; letter-spacing: 0.06em;
       text-transform: uppercase; color: #7a7a9c; margin-right: 2px;
     }
-    .ambient-curpart .ambient-curpart-chip {
-      min-height: 34px; min-width: 44px; padding: 4px 12px;
-      white-space: normal; overflow-wrap: anywhere;
+    /* THE TWO DROPDOWNS. `.ambient-select` is `width: 100%` and declared LATE,
+       so dropped bare into this flex row either one would demand the whole line
+       and crush the other and the ↻ Loop button — the documented swallow. Both
+       are therefore COMPOUND selectors with an explicit width and their own
+       flex basis, and the check measures the SIBLINGS rather than the control
+       that was added. The part select takes the slack (its label is a whole
+       chord line); the mode select is content-width and never shrinks. */
+    .ambient-curpart select.ambient-select.ambient-curpart-sel {
+      flex: 1 1 200px; width: auto; min-width: 0; min-height: 34px;
+      font-weight: 600;
     }
-    .ambient-curpart .ambient-curpart-chip.on {
-      border-color: #b794f4; color: #e9d8fd; background: rgba(159, 122, 234, 0.3); font-weight: 600;
+    .ambient-curpart select.ambient-select.ambient-curpart-mode {
+      flex: 0 0 auto; width: auto; min-width: 0; min-height: 34px;
     }
+    .ambient-curpart select.ambient-select:disabled { opacity: 0.75; cursor: default; }
     .ambient-curpart .ambient-curpart-hint {
       flex: 1 0 100%; white-space: normal; overflow-wrap: anywhere; min-width: 0;
       font-size: 0.66rem; color: #55556e;
@@ -14717,13 +14724,13 @@
     [data-part="7"] { --pt: var(--pt7); }
     [data-part="8"] { --pt: var(--pt8); }
 
-    /* THE CURRENT-PART STRIP — a row of chips, so the accent is a left edge
-       plus the label; the `.on` chip keeps the panel's own selected fill, with
-       its part edge still showing which part it is. */
-    .ambient-curpart-chip[data-part] {
+    /* THE CURRENT-PART STRIP — one dropdown since 2026-09-18 (a chip per part
+       grew without limit: a part's label is its whole chord line, so two parts
+       filled the row and four wrapped it into a wall). The accent is the
+       select's left edge, carrying that part's hue. */
+    .ambient-curpart-sel[data-part] {
       border-left: 3px solid var(--pt, #4a5568); color: var(--pt, #a0aec0);
     }
-    .ambient-curpart-chip[data-part].on { color: #12121f; }
     /* THE ▤ OVERVIEW CARDS — a part is a card here, so it takes the edge and
        its name takes the hue. */
     /* NO padding override here: `.ambient-pov-part` reserves 40px on the left

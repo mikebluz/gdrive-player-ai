@@ -132,6 +132,17 @@
 - **A popover action runs a tick AFTER its own dismiss, so the layer it was opened for is an orphan.**
   `_ambActionsPopover` defers `fn`, and counting a live take runs `getCfg` before that — pass a
   RE-RESOLVER (`querySelector('.v2-layer[data-v2id=…]')` → `layerOf`), never the captured `ctx.L`.
+- **👁 VIEW / ✎ EDIT IS ONE GLOBAL AXIS, and the Parts strip is its face.** It was a picker on every
+  layer card, so two cards could disagree about what the app was doing. `V2.viewMode()` /
+  `V2.setViewMode()` own it; the per-layer picker keeps only the GESTURE axis (edit/draw/multi) and is
+  rendered-and-disabled in View. **Anything that moves the axis must tell the strip**
+  (`window._ambCurPartRefresh`) — ✎ Draw sets it from a card, and without the call the strip went on
+  claiming View while every drawing had switched: a readout with no second writer.
+- **A ROUNDING TIE IS NOT A REGRESSION.** A probe signature of `Math.round(t * 1000)` reported two
+  byte-identical pictures as different because a note at t=0.9375 scales to 937.5 — exactly half-way,
+  so a float ULP flips it. Quantize a probe's positions to a MUSICAL tick (960 is a whole multiple of
+  every grid here), never to the millisecond. Read a one-unit diff on a single position as the metric
+  before reading it as the code.
 - **A tap-to-cycle number is a bug**; so is a control that is absent in some states. **Render it and
   DISABLE it**, with the reason in the title — a conditionally-rendered control cannot be found,
   learned, or asked about. A press that cannot act should REFUSE AND EXPLAIN rather than do nothing.

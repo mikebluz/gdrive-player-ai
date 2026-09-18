@@ -43817,9 +43817,21 @@
       } catch (e) { pi = -1; }
       if (el._playPi === pi) return;
       el._playPi = pi;
-      el.querySelectorAll('.ambient-curpart-chip').forEach((b) => {
-        b.classList.toggle('playing', (b.getAttribute('data-cp') | 0) === pi && pi >= 0);
-      });
+      // 👁 VIEW: THE DROPDOWN IS A READOUT and follows what plays, so the strip
+      // names the part you are hearing while the layers draw it. ✎ EDIT: it is
+      // a CHOICE and playback must not touch it — a select that doubles as a
+      // live readout stomping an explicit pick is the documented trap, and here
+      // it would move the part you are editing out from under you mid-edit.
+      let vmode = 'view';
+      try { if (window._v2 && window._v2.viewMode) vmode = window._v2.viewMode(); } catch (e) {}
+      const sel = el.querySelector('.ambient-curpart-sel');
+      if (sel && vmode === 'view' && pi >= 0) {
+        const v = String(pi);
+        // a value matching no option shows the FIRST one silently — only set
+        // what the list actually offers
+        if (sel.value !== v && [...sel.options].some((o) => o.value === v)) sel.value = v;
+      }
+      if (sel) sel.classList.toggle('playing', vmode === 'view' && pi >= 0);
     }
     function _ambRenderCurPart(E) {
       const el = _ambGet(E, 'ambient-curpart'); if (!el) return;
@@ -43843,18 +43855,42 @@
         E._partLoop = null; E._passLock = null;
       }
       const lp = Number.isFinite(E._partLoop) ? (E._partLoop | 0) : -1;
-      const sig = cur + '|' + lp + '|' + rgs.map(r => r.pi + ':' + r.nm).join(',');
+      let vmode = 'view';
+      try { if (window._v2 && window._v2.viewMode) vmode = window._v2.viewMode(); } catch (e) {}
+      const sig = cur + '|' + lp + '|' + vmode + '|' + rgs.map(r => r.pi + ':' + r.nm).join(',');
       if (el._sig !== sig) {
         el._sig = sig;
         if (!rgs.length) { el.innerHTML = ''; el.style.display = 'none'; }
         else {
           el.style.display = '';
+          // ── ONE DROPDOWN, NOT A CHIP PER PART (2026-09-18) ──────────────
+          // A chip per part is a row that grows without limit — a part's label
+          // is its whole chord line ("1 · ♭VII — i — ii — ♭III"), so two
+          // parts already filled the strip and four wrapped it into a wall.
+          // A select holds one line whatever the arrangement does.
+          // DISABLED IN 👁 VIEW, with the reason in the title rather than hidden:
+          // there it is a READOUT of what is playing, and a control you can
+          // still operate but that snaps back would read as broken.
           el.innerHTML = '<span class="ambient-curpart-lab">Part</span>' +
-            rgs.map(r => '<button type="button" class="ambient-seg ambient-curpart-chip' +
-              (r.pi === cur ? ' on' : '') + '" data-cp="' + r.pi + '"' + _ambPartAttr(r.pi) +
-              ' title="Make ' + _ambEscAttr(r.nm) +
-              ' the current part — for editing only; play always runs the arrangement from the top">' +
-              _ambEscAttr(r.nm) + '</button>').join('') +
+            '<select class="ambient-select ambient-curpart-sel"' + _ambPartAttr(cur) +
+              (vmode === 'view' ? ' disabled' : '') +
+              ' title="' + _ambEscAttr(vmode === 'view'
+                ? 'The part that is playing — 👁 View follows the arrangement. Switch to ✎ Edit to choose a part yourself.'
+                : 'The part every layer shows and edits. Play always runs the arrangement from the top; this stays put while it does.') + '">' +
+              rgs.map(r => '<option value="' + r.pi + '"' + (r.pi === cur ? ' selected' : '') + '>' +
+                _ambEscAttr(r.nm) + '</option>').join('') +
+            '</select>' +
+            // ── 👁 VIEW / ✎ EDIT ────────────────────────────────
+            // ONE QUESTION ABOUT THE SESSION, asked once. It was a picker on
+            // EVERY layer card, so two cards could disagree about what the app
+            // was doing; and it belongs beside the part it governs, because
+            // what it decides IS whether that selection or playback wins.
+            '<select class="ambient-select ambient-curpart-mode"' +
+              ' title="👁 View follows playback — every layer draws the part being heard, with a playhead. ✎ Edit holds the part chosen above, whatever is playing, so an edit stays put while the arrangement runs on.">' +
+              [['view', '👁 View'], ['edit', '✎ Edit']]
+                .map(([v, lab]) => '<option value="' + v + '"' + (vmode === v ? ' selected' : '') +
+                  '>' + lab + '</option>').join('') +
+            '</select>' +
             // ↻ LOOP — the one control here that DOES move a clock, which is
             // exactly why it sits with the part it loops rather than in a
             // sheet: "repeat the part I am editing so I can hear what I change"
@@ -43874,7 +43910,10 @@
             '<span class="ambient-hint ambient-curpart-hint">' +
               (lp >= 0
                 ? '↻ looping this part · press ↻ Looping to let the arrangement run on'
-                : 'editing · play runs the arrangement from the top') + '</span>';
+                : vmode === 'view'
+                  ? 'following playback · every layer draws the part being heard, with a playhead'
+                  : 'editing · every layer holds this part while play runs the arrangement from the top') +
+              '</span>';
         }
       }
       // a rewrite drops the playing mark with the old chips — put it back on
@@ -43909,8 +43948,46 @@
             try { const el4 = _ambGet(E, 'ambient-progmatrix'); if (el4) { el4._sig = ''; _ambRenderPassMatrix(E); } } catch (e) {}
             return;
           }
-          const b = ev.target.closest && ev.target.closest('.ambient-curpart-chip'); if (!b) return;
-          const pi = b.getAttribute('data-cp') | 0;
+          // the part itself is a <select> now — its change handler below carries
+          // everything the chip used to (see `_ambCurPartPick`)
+        });
+        // ── THE TWO DROPDOWNS ────────────────────────────────────
+        // A MOVE IS A DELETE PLUS AN ADD: the chip carried five things (the
+        // transient selection, the running loop following it, every per-part
+        // layer's `partFor`, the persist, and the two re-renders) and every one
+        // of them had to come across — a store complains when it loses a
+        // reader, a callback says nothing at all.
+        el.addEventListener('change', (ev) => {
+          const md = ev.target.closest && ev.target.closest('.ambient-curpart-mode');
+          if (md) {
+            const v = md.value === 'edit' ? 'edit' : 'view';
+            try { if (window._v2 && window._v2.setViewMode) window._v2.setViewMode(v); } catch (e) {}
+            el._sig = ''; el._playPi = undefined;
+            try { _ambRenderCurPart(E); } catch (e) {}
+            // EVERY CARD REDRAWS — the axis decides what each drawing shows, so
+            // leaving them on the old answer is the stale-readout class this
+            // file keeps paying for. The card's own picker is gated on it too.
+            try {
+              const h3 = document.getElementById('bloom-v2-layers'); if (h3) h3._sig = '';
+              if (window._v2 && window._v2.render) window._v2.render(E);
+            } catch (e) {}
+            try { showToast(v === 'view'
+              ? '\ud83d\udc41 View \u2014 every layer follows playback, with a playhead.'
+              : '\u270e Edit \u2014 every layer holds the part chosen above while the arrangement runs on.',
+              { ms: 4000 }); } catch (e) {}
+            return;
+          }
+          const ps = ev.target.closest && ev.target.closest('.ambient-curpart-sel');
+          if (ps) _ambCurPartPick(E, el, ps.value | 0);
+        });
+      }
+    }
+    // WHAT CHOOSING A PART DOES. Its own function because the dropdown is now
+    // one of two doors to it (the Schedule grid is the other) and two copies of
+    // this list is how one of them comes to forget the loop or the persist.
+    function _ambCurPartPick(E, el, pi) {
+      {
+        {
           E._curPart = pi;                       // transient — never persisted
           // A RUNNING LOOP FOLLOWS THE SELECTION: "loop the current part" means
           // the one that is current NOW, so choosing another moves it rather
@@ -43935,9 +44012,24 @@
             const h2 = document.getElementById('bloom-v2-layers'); if (h2) h2._sig = '';
             if (window._v2 && window._v2.render) window._v2.render(E);
           } catch (e) {}
-        });
+        }
       }
     }
+    // THE STRIP IS A READOUT OF THE GLOBAL AXIS, and the axis can be moved from
+    // the LAYER CARD too (✎ Draw, ✎ Start empty and the card's own gesture
+    // picker all mean "I am editing this"). Without a way to say so the strip
+    // kept claiming 👁 View while every drawing had switched — a readout with no
+    // second writer, the exact class this file keeps paying for. Published for
+    // 18-layer-v2, which owns the axis.
+    try {
+      window._ambCurPartRefresh = (E2) => {
+        try {
+          const el2 = _ambGet(E2 || _masterEng, 'ambient-curpart');
+          if (el2) { el2._sig = ''; el2._playPi = undefined; }
+          _ambRenderCurPart(E2 || _masterEng);
+        } catch (e) {}
+      };
+    } catch (e) {}
     function _ambSyncFxVis(E) {
       const host = E && document.getElementById(E.hostId); if (!host) return;
       try { _ambSyncProgVis(E); } catch (e) {}

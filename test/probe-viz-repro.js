@@ -72,7 +72,14 @@ const out = await page.evaluate(async () => {
     const cv = all.find((x) => x.offsetParent && x.getBoundingClientRect().height > 10) || all[0];
     const hits = (cv && cv._hits || []).slice().sort((a, b2) => a.t - b2.t);
     const lab = (cv && cv.closest('.v2-partviz') || c).querySelector('.v2-vizlab');
-    return { sig: hits.map((x) => Math.round(x.t * 1000) + ':' + x.midi).join(' '),
+      // QUANTIZED TO A MUSICAL TICK, not to the millisecond. `t` is a fraction of
+      // the cycle and the notes sit on the 1/48-bar grid, so t=0.9375 scaled by
+      // 1000 is 937.5 — an exact rounding TIE that flips on a float ULP and
+      // reports two identical pictures as different (the documented float-noise
+      // class: an integer value lands at x.00000000000001 as often as not).
+      // 960 is a whole multiple of every grid this app uses, so a grid position
+      // never lands half-way.
+    return { sig: hits.map((x) => Math.round(x.t * 960) + ':' + x.midi).join(' '),
              n: hits.length, lab: (lab ? lab.textContent : '').replace(/\s+/g, ' ').slice(0, 96) };
   };
   const draw = async () => {

@@ -80,8 +80,15 @@ const ok = (name, cond, detail) => {
     const read = () => [...document.querySelectorAll('.v2-layer')].map((c) => {
       const all = [...c.querySelectorAll('.v2-vizcv')];
       const cv = all.find((x) => x.offsetParent && x.getBoundingClientRect().height > 10) || all[0];
+      // QUANTIZED TO A MUSICAL TICK, not to the millisecond. `t` is a fraction of
+      // the cycle and the notes sit on the 1/48-bar grid, so t=0.9375 scaled by
+      // 1000 is 937.5 — an exact rounding TIE that flips on a float ULP and
+      // reports two identical pictures as different (the documented float-noise
+      // class: an integer value lands at x.00000000000001 as often as not).
+      // 960 is a whole multiple of every grid this app uses, so a grid position
+      // never lands half-way.
       return (cv && cv._hits || []).slice().sort((a, b) => a.t - b.t)
-        .map((x) => Math.round(x.t * 1000) + ':' + x.midi).join(' ');
+        .map((x) => Math.round(x.t * 960) + ':' + x.midi).join(' ');
     }).join(' || ');
     const draw = async () => {
       document.querySelectorAll('.v2-layer').forEach((c) => c.classList.remove('collapsed'));

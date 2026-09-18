@@ -6184,17 +6184,50 @@
   // press instead of three, and the mode axis is back to the four states that
   // genuinely change what a tap means. `✂ Split…` is in `.v2-nebtns`.)
   const MODES = ['view', 'edit', 'draw', 'multi'];
-  const VIEWM = new Map();      // layer id -> one of MODES  (absent = view)
+  // ── 👁 VIEW / ✎ EDIT IS ONE GLOBAL AXIS (2026-09-18) ────────────────
+  // It was per LAYER, on each card's own picker — so "am I watching or
+  // working?" had to be answered once per card, and two cards could disagree
+  // about what the whole app was doing. It is one question about the SESSION,
+  // asked once, in the Parts strip beside the part it governs (user: "move
+  // Edit/View modes into a selector in this Parts area").
+  //   👁 View  — every layer follows playback: the part that is sounding is the
+  //             part you see, with a playhead across it.
+  //   ✎ Edit  — every layer holds the SELECTED part whatever is playing, so an
+  //             edit stays put under you while the arrangement runs on.
+  // TRANSIENT, like every other view state here (`VIEWM`, `VNAV`, `MSEL`,
+  // `VIZOFF`): a persisted field would reload the project into a mode nobody
+  // chose, which is the documented `_soloLane` trap.
+  let VIEWMODE = 'view';
+  const globalMode = () => (VIEWMODE === 'edit') ? 'edit' : 'view';
+  const VIEWM = new Map();      // layer id -> the EDIT gesture: edit | draw | multi
+  // WHAT A TAP ON THE DRAWING MEANS. In View it is always "select a bar"; the
+  // per-layer value is the GESTURE axis WITHIN editing, and it only has meaning
+  // there — which is why a layer with nothing stored reads as plain ✎ Edit
+  // rather than falling back to View and silently disagreeing with the strip.
   const modeOf = (L) => {
+    if (globalMode() !== 'edit') return 'view';
     const m = VIEWM.get(L && (L.id | 0));
-    return MODES.indexOf(m) >= 0 ? m : 'view';
+    return (m === 'draw' || m === 'multi') ? m : 'edit';
+  };
+  // Every existing caller passes a GESTURE ('draw' from the pencil doors, 'edit'
+  // from the picker) and means "start editing this" — so a gesture sets the
+  // global axis too, and only an explicit 'view' stands it down. Without that,
+  // ✎ Draw would arm a gesture the mode says is not happening.
+  // THE STRIP OWNS THE FACE OF THIS AXIS, so anything that moves it here has to
+  // say so — otherwise the strip goes on claiming the mode it last rendered.
+  const axisMoved = () => {
+    try { if (typeof window._ambCurPartRefresh === 'function') window._ambCurPartRefresh(); } catch (e) {}
   };
   const setMode = (L, m) => {
+    if (m === 'view') { VIEWMODE = 'view'; if (L) MSEL.delete(L.id | 0); axisMoved(); return; }
+    const was = VIEWMODE;
+    VIEWMODE = 'edit';
+    if (was !== 'edit') axisMoved();
     if (!L) return;
-    VIEWM.set(L.id | 0, MODES.indexOf(m) >= 0 ? m : 'view');
+    VIEWM.set(L.id | 0, (m === 'draw' || m === 'multi') ? m : 'edit');
     if (m !== 'multi') MSEL.delete(L.id | 0);   // leaving multi drops the gathering
   };
-  const vizMode = (L) => (modeOf(L) === 'view') ? 'view' : 'edit';
+  const vizMode = (L) => globalMode();
   // ── THE MULTI SELECTION ─────────────────────────────────────────────────
   // layer id -> Set of note indices. Transient for the same reason the mode is,
   // and re-found by IDENTITY after every write: normalize REPLACES every note
@@ -6923,9 +6956,17 @@
         // rebuilds the card, so the picker cannot be replaced under an open
         // list (the documented trap that made the euclid page bar use buttons).
         '<label class="v2-modesel">' +
-          '<select class="ambient-select v2-modepick" title="What the drawing is showing, and what a tap does.">' +
-            [['view', '\ud83d\udc41 View', 'follow what plays \u2014 a tap selects a bar'],
-             ['edit', '\u270e Edit', 'hold the part you are editing \u2014 a tap opens a note'],
+          // 👁 VIEW / ✎ EDIT LEFT THIS PICKER for the Parts strip, which asks it
+          // once for the session. What stays is the GESTURE axis — what a tap
+          // does while you are editing — so in View there is nothing here to
+          // choose. RENDERED AND DISABLED, with the reason in the title: a
+          // control that vanishes in a state cannot be found or learned (the
+          // conditionally-rendered-control rule).
+          '<select class="ambient-select v2-modepick"' + (vm2 === 'view' ? ' disabled' : '') +
+            ' title="' + (vm2 === 'view'
+              ? 'What a tap does \u2014 available while the Parts strip is set to \u270e Edit. In \ud83d\udc41 View a tap selects a bar.'
+              : 'What a tap on the drawing does.') + '">' +
+            [['edit', '\u270e Edit', 'a tap opens a note'],
              ['draw', '\u270e Draw', 'a tap on empty space adds a note'],
              ['multi', '\u2b1a Multi', 'tap notes to gather, then move or resize them together']]
               .map(([v, lab, why]) => '<option value="' + v + '"' + (vm2 === v ? ' selected' : '') +
@@ -8980,6 +9021,12 @@
   };
   // the mode is module state, so the engine side needs a setter for it
   try { V2.vizMode = (L, m) => setMode(L, m); } catch (e) {}
+  // THE GLOBAL AXIS, for the Parts strip that now owns it. A setter rather than
+  // a writable field so the one normalisation lives in one place.
+  try {
+    V2.viewMode = () => globalMode();
+    V2.setViewMode = (m) => { VIEWMODE = (m === 'edit') ? 'edit' : 'view'; };
+  } catch (e) {}
   try { V2.modeOf = (L) => modeOf(L); } catch (e) {}
   try { V2.multiSel = (L) => [...(mselOf(L) || [])]; } catch (e) {}
   try { V2.vizModeOf = (L) => vizMode(L); } catch (e) {}

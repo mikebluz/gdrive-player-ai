@@ -1438,9 +1438,13 @@ const ok = (name, cond, detail) => {
     const pick = async (v) => {
       try { _ambSyncFxVis(E); } catch (e) {}          // the strip repaints on part edits
       await wait(120);
-      const c2 = document.querySelector('#mix-bloom-curpart .ambient-curpart-chip[data-cp="' + v + '"]');
-      if (!c2) { o.pickMissing = (o.pickMissing || '') + v; return; }
-      c2.click();
+      // ONE DROPDOWN since 2026-09-18 — and it is a CHOICE only in ✎ Edit,
+      // so the driver states the mode it needs rather than assuming it.
+      const md0 = document.querySelector('#mix-bloom-curpart .ambient-curpart-mode');
+      if (md0 && md0.value !== 'edit') { md0.value = 'edit'; md0.dispatchEvent(new Event('change', { bubbles: true })); await wait(250); }
+      const c2 = document.querySelector('#mix-bloom-curpart .ambient-curpart-sel');
+      if (!c2 || ![...c2.options].some((o2) => o2.value === String(v))) { o.pickMissing = (o.pickMissing || '') + v; return; }
+      c2.value = String(v); c2.dispatchEvent(new Event('change', { bubbles: true }));
       await wait(300);
     };
     // the two records differ in NOTE COUNT (pulse ×2 vs ×7) — a fixed-pitch
@@ -1469,8 +1473,8 @@ const ok = (name, cond, detail) => {
     o.readsAfter = ppb().textContent.trim();
     try { _ambSyncFxVis(E); } catch (e) {}
     await wait(150);
-    const litC = document.querySelector('#mix-bloom-curpart .ambient-curpart-chip.on');
-    o.stripLit = litC ? litC.getAttribute('data-cp') : null;
+    const litC = document.querySelector('#mix-bloom-curpart .ambient-curpart-sel');
+    o.stripLit = litC ? litC.value : null;
     // EMIT BY TIME — the Verse window plays the edited record (2 onsets), the
     // Chorus window the filed one (7). COUNTS, not pitches: the chords differ
     // between the windows, so pitch sets differ even with the swap broken.
@@ -1544,7 +1548,12 @@ const ok = (name, cond, detail) => {
     const lb = () => strip.querySelector('.ambient-curpart-loop');
     o.present = !!lb();
     // …ARMED WHILE STOPPED, which is the whole reason it names a part
-    strip.querySelector('.ambient-curpart-chip[data-cp="1"]').click(); await wait(250);
+    (() => { const md1 = strip.querySelector('.ambient-curpart-mode');
+      if (md1 && md1.value !== 'edit') { md1.value = 'edit'; md1.dispatchEvent(new Event('change', { bubbles: true })); } })();
+    await wait(250);
+    (() => { const s1 = strip.querySelector('.ambient-curpart-sel');
+      s1.value = '1'; s1.dispatchEvent(new Event('change', { bubbles: true })); })();
+    await wait(250);
     lb().click(); await wait(200);
     o.armedStopped = (E._partLoop | 0) === 1 && !E.timer && lb().classList.contains('on');
     // the notes each part plays, so the audio can be read without a clock
@@ -2194,15 +2203,22 @@ const ok = (name, cond, detail) => {
     E.getCfg().prog = { on: true, name: 'CP', chords: [0, 7, 5, 9].map(rt => ({ root: rt, intervals: [0, 4, 7] })),
                         parts: [{ name: 'Verse', len: 2 }, { name: 'Chorus', len: 2 }] };
     E.getCfg(); strip()._sig = ''; _ambSyncControls(E); await wait(250);
-    const chips = () => [...strip().querySelectorAll('.ambient-curpart-chip')];
+    const psel = () => strip().querySelector('.ambient-curpart-sel');
     o.shown = strip().style.display !== 'none';
-    o.chips = chips().map(c => c.textContent + (c.classList.contains('on') ? '*' : '')).join(' ');
+    // the parts ARE the options now; the chosen one is the select's value
+    o.chips = [...(psel() ? psel().options : [])]
+      .map((c) => c.textContent + (c.selected ? '*' : '')).join(' ');
     const kids = [...strip().parentElement.children];
     o.placed = kids.indexOf(strip()) === kids.findIndex(k => k.classList.contains('ambient-tabsec')) + 1 &&
       kids.indexOf(strip()) < kids.findIndex(k => k.classList.contains('ambient-layer'));
     const clock0 = { prog: E._progAnchor, grid: E._barGridAnchor, timer: !!E.timer };
     // a SHARED layer must not follow — per-part is its own explicit control
-    chips()[1].click(); await wait(300);
+    (() => { const md2 = strip().querySelector('.ambient-curpart-mode');
+      if (md2 && md2.value !== 'edit') { md2.value = 'edit'; md2.dispatchEvent(new Event('change', { bubbles: true })); } })();
+    await wait(250);
+    (() => { const s2 = psel(); s2.value = s2.options[1].value;
+      s2.dispatchEvent(new Event('change', { bubbles: true })); })();
+    await wait(300);
     o.sharedUntouched = !Number.isFinite(L().partFor);
     window._v2.partSelect(E, L(), 0); E.getCfg();     // now per-part → it follows
     chips()[0].click(); await wait(200); chips()[1].click(); await wait(300);
@@ -3467,11 +3483,13 @@ const ok = (name, cond, detail) => {
     try { _ambSyncFxVis(E); } catch (e) {}
     await wait(260);
     // THE STAMPED SURFACES — the attribute AND the accent it resolves to
-    const chips = [...document.querySelectorAll('.ambient-curpart-chip')];
-    o.chips = chips.map((x) => x.getAttribute('data-part') + ':' +
-      getComputedStyle(x).getPropertyValue('--pt').trim());
-    o.chipsOk = o.chips.join(',') === '1:' + o.palette[0] + ',2:' + o.palette[1];
-    const off = chips.find((x) => !x.classList.contains('on'));
+    // ONE select carries the CURRENT part's hue now (there is no chip per part
+    // to stamp), so the claim is that the accent follows the selection.
+    const psel2 = document.querySelector('.ambient-curpart-sel');
+    o.chips = psel2 ? [psel2.getAttribute('data-part') + ':' +
+      getComputedStyle(psel2).getPropertyValue('--pt').trim()] : [];
+    o.chipsOk = !!psel2 && o.chips[0] === '1:' + o.palette[0];
+    const off = null;
     o.chipEdgePaints = !!off && /^rgb\(/.test(getComputedStyle(off).borderLeftColor) &&
       getComputedStyle(off).borderLeftColor !== getComputedStyle(off).borderTopColor;
     // RESTATED 2026-09-10: the head's part SELECT is gone (the ⇶ Part strip is
@@ -7897,9 +7915,12 @@ const ok = (name, cond, detail) => {
     const stripState = () => {
       const el = document.getElementById('mix-bloom-curpart');
       if (!el) return null;
-      const chips = [...el.querySelectorAll('.ambient-curpart-chip')];
-      return { editing: chips.filter((b) => b.classList.contains('on')).map((b) => b.getAttribute('data-cp') | 0),
-               playing: chips.filter((b) => b.classList.contains('playing')).map((b) => b.getAttribute('data-cp') | 0) };
+      const ps = el.querySelector('.ambient-curpart-sel');
+      if (!ps) return null;
+      // EDITING is the select's value; PLAYING is the same select wearing the
+      // green mark, which only 👁 View puts on it.
+      return { editing: [ps.value | 0],
+               playing: ps.classList.contains('playing') ? [ps.value | 0] : [] };
     };
     const seenPlay = new Set(); const counts = { edit: new Set(), view: new Set() };
     let editingStayed = true;

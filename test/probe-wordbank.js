@@ -78,6 +78,49 @@ const ok = (name, cond, detail) => {
   ok('with no bank loaded a layer still gets a name',
     typeof fallback === 'string' && fallback.length > 0, JSON.stringify(fallback));
 
+  // ── THE LABEL FITS THE NAME ─────────────────────────────────
+  // The button was a flat 90px — fine while every layer was "Layer 2", and it
+  // started truncating the moment they got real names ("Hundred" → "Hundr…").
+  // Checked by comparing scrollWidth to clientWidth ON THE LABEL, which is the
+  // only way clipping shows: the button looks perfectly fine at any width.
+  const fit = await page.evaluate(async (names) => {
+    const E = _masterEng, cfg = E.getCfg();
+    (cfg.layers || []).forEach((L, i) => { if (names[i]) L.name = names[i]; });
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E);
+    await new Promise((r) => setTimeout(r, 600));
+    const rows = [...document.querySelectorAll('.v2-layer .ambient-toggle')].map((b) => {
+      const sp = b.querySelector('.ambient-layer-name');
+      return { name: sp.textContent, w: Math.round(b.getBoundingClientRect().width),
+               clipped: sp.scrollWidth > sp.clientWidth + 1 };
+    });
+    return { rows, docOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+  }, ['Hundred', 'Perpetual']);
+  ok('a real layer name is not truncated — the button grows to fit it',
+    fit.rows.length >= 2 && fit.rows.every((r) => !r.clipped) &&
+    fit.rows.some((r) => r.w > 90) && fit.docOverflow <= 0,
+    JSON.stringify(fit));
+
+  // …and a name longer than any word still cannot break the row: the ceiling
+  // holds and the ellipsis takes over, which is what it is for.
+  const longName = await page.evaluate(async () => {
+    const E = _masterEng, L = (E.getCfg().layers || [])[0];
+    L.name = 'Antidisestablishmentarianism and then some';
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E);
+    await new Promise((r) => setTimeout(r, 600));
+    const b = document.querySelector('.v2-layer .ambient-toggle');
+    return { w: Math.round(b.getBoundingClientRect().width),
+             docOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+             headOverflow: (() => { const hd = b.closest('.ambient-layer-head');
+               return hd ? hd.scrollWidth - hd.clientWidth : 0; })() };
+  });
+  ok('…and an absurd name is capped rather than breaking the row',
+    longName.w <= 260 && longName.docOverflow <= 0 && longName.headOverflow <= 0,
+    JSON.stringify(longName));
+
   ok('no page errors', errs.length === 0, errs.join(' | '));
   console.log('\n  names: ' + got.cfg.join(' · '));
   console.log('\nprobe: ' + pass + ' passed, ' + fail + ' failed');

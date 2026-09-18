@@ -169,6 +169,12 @@
   it (129 → 46), so the ✕ and the tab strip jumped under the finger. Give it a `height` as well
   (`min(<fixed>, <band>)`, so a short viewport still shrinks) and let the pane scroll. **Assert the
   TOP as well as the height**: a height-only check passes a sheet that still slides up and down.
+- **A FIXED-WIDTH LABEL IS A BUG WAITING FOR REAL CONTENT.** `.ambient-toggle` was a flat 90px, which
+  looked right for as long as every layer was called "Layer 2" and truncated the moment they got
+  names ("Hundred" → "Hundr…"). Size to content with a min (so a short name still reads as a button)
+  and a max (so a long one cannot push its row-mates off). **Clipping only shows by comparing
+  `scrollWidth` to `clientWidth` ON THE TEXT NODE** — the button itself looks perfectly fine at any
+  width, which is why this shipped.
 - **A tap-to-cycle number is a bug**; so is a control that is absent in some states. **Render it and
   DISABLE it**, with the reason in the title — a conditionally-rendered control cannot be found,
   learned, or asked about. A press that cannot act should REFUSE AND EXPLAIN rather than do nothing.

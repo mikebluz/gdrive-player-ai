@@ -5385,7 +5385,17 @@
       /* 112px -> 90px (-20%): the header gained an article readout on Learn layers
          and needed the room to stay on ONE line. The name still ellipses, so the
          only cost is a couple of characters on the longest names. */
-      height: 38px; width: 90px; padding: 0 11px; border: 1px solid #2d2d3f; border-radius: 10px;
+      /* THE LABEL FITS THE NAME (2026-09-18, user: "label should fit the name
+         (can make the button a bit bigger)"). It was a FLAT 90px, which was
+         fine while every layer was called "Layer 2" and started truncating the
+         moment they got real names — `Hundred` came out as `Hundr…`. Sizes to
+         its content now, with the old 90px kept as the FLOOR so a short name
+         still reads as a button rather than a chip, and a ceiling so a long one
+         cannot push the summary beside it off the row. The ellipsis stays for
+         what genuinely does not fit: a name is user-editable and can be
+         anything. */
+      height: 38px; width: auto; min-width: 90px; max-width: min(240px, 54vw);
+      padding: 0 11px; border: 1px solid #2d2d3f; border-radius: 10px;
       display: inline-flex; align-items: center; flex: 0 0 auto;
       background: transparent; color: #6b6b8a; font-family: 'Segoe UI', sans-serif;
       font-size: 1.02rem; font-weight: 700; cursor: pointer; transition: all 0.15s ease;

@@ -188,6 +188,91 @@ const labelsOf = () => {
     /Pitch echo/.test(summ) && !/\bpecho\b/.test(summ) && /Wet only/.test(summ),
     JSON.stringify(summ));
 
+  // ── THE CHAIN EDITOR ──────────────────────────────────────
+  // The order is a real engine fact: `fxChain` → `_ambFxCoreOrder` →
+  // `strip_fxorder`, and the node path connects in the same order. So the check
+  // asserts the STORE and the CORE ORDER move, not just the labels on screen.
+  const chain = await page.evaluate(async () => {
+    const E = _masterEng;
+    const L = (E.getCfg().layers || [])[0];
+    // two in-line stages engaged, in a known order
+    L.dist = Object.assign({}, L.dist, { mix: 40 });
+    L.delay = Object.assign({}, L.delay, { mix: 40 });
+    delete L.fxChain;                       // derived = core index order (dist before delay)
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E);
+    await new Promise((r) => setTimeout(r, 600));
+    const c = document.querySelector('.v2-layer');
+    const hd = c.querySelector('.ambient-layer-head');
+    if (c.classList.contains('collapsed')) hd.click();
+    await new Promise((r) => setTimeout(r, 600));
+    c.querySelector('.v2-gototab[data-goto="FX"]').click();
+    await new Promise((r) => setTimeout(r, 500));
+    return { order0: _ambFxCoreOrder((_masterEng.getCfg().layers || [])[0]).join(','),
+             opts: [...document.querySelector('.v2-fxpick').options].map(o => o.value) };
+  });
+  ok('Chain is the first stage in the FX dropdown',
+    chain.opts[0] === 'Chain', JSON.stringify(chain.opts));
+
+  await page.select('.v2-layer .v2-pop-tabs .v2-fxpick', 'Chain');
+  await zz(700);
+  const chainUi = await page.evaluate(() => {
+    const pane = document.querySelector('.v2-layer .v2-pop-pane');
+    const flow = pane.querySelector('.v2-fxflow');
+    const stages = [...pane.querySelectorAll('.v2-fxstage')]
+      .filter((n) => getComputedStyle(n).display !== 'none')
+      .map((n) => (n.querySelector(':scope > label') || {}).textContent || '');
+    const up = [...pane.querySelectorAll('.v2-fxup')];
+    return { flow: flow ? flow.textContent.trim() : null, stages,
+             ups: up.length, firstUpDisabled: up.length ? !!up[0].disabled : null };
+  });
+  ok('the Chain tab shows the signal flow and every movable stage',
+    /in/.test(chainUi.flow || '') && /Drive/.test(chainUi.flow || '') &&
+    /Delay/.test(chainUi.flow || '') && chainUi.stages.length === 2 &&
+    /1\. Drive/.test(chainUi.stages[0]) && /2\. Delay/.test(chainUi.stages[1]) &&
+    chainUi.firstUpDisabled === true,
+    JSON.stringify(chainUi));
+
+  // MOVE IT FOR REAL — a pointer press on Delay's ▲, then read the ENGINE order.
+  const before = await page.evaluate(() =>
+    _ambFxCoreOrder((_masterEng.getCfg().layers || [])[0]).join(','));
+  const btn = await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.v2-layer .v2-pop-pane .v2-fxup')]
+      .find((x) => x.getAttribute('data-fxid') === 'delay');
+    if (!b) return null;
+    b.scrollIntoView({ block: 'center' });
+    const r = b.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  if (btn) await page.mouse.click(btn.x, btn.y);
+  await zz(800);
+  const after = await page.evaluate(() => {
+    const L = (_masterEng.getCfg().layers || [])[0];
+    const pane = document.querySelector('.v2-layer .v2-pop-pane');
+    return { core: _ambFxCoreOrder(L).join(','),
+             chain: (L.fxChain || []).join(','),
+             flow: (pane.querySelector('.v2-fxflow') || {}).textContent || '',
+             stages: [...pane.querySelectorAll('.v2-fxstage')]
+               .filter((n) => getComputedStyle(n).display !== 'none')
+               .map((n) => (n.querySelector(':scope > label') || {}).textContent || '') };
+  });
+  // dist is core index 0, delay is 3 — moving Delay up must put 3 before 0
+  ok('▲ on Delay moves it EARLIER — the stored chain and the CORE order both follow',
+    before === '0,3,1,2,4' && after.core.indexOf('3') < after.core.indexOf('0') &&
+    after.chain.indexOf('delay') < after.chain.indexOf('dist'),
+    JSON.stringify({ before, after }));
+  ok('…and the picture agrees — the flow line and the numbering both flip',
+    /Delay/.test(after.flow) && after.flow.indexOf('Delay') < after.flow.indexOf('Drive') &&
+    /1\. Delay/.test(after.stages[0] || '') && /2\. Drive/.test(after.stages[1] || ''),
+    JSON.stringify(after));
+
+  await page.evaluate(() => {
+    const L = (_masterEng.getCfg().layers || [])[0];
+    delete L.dist; delete L.delay; delete L.fxChain;
+    _masterEng.getCfg();
+  });
+
   ok('no page errors', errs.length === 0, errs.join(' | '));
   console.log('\nprobe: ' + pass + ' passed, ' + fail + ' failed');
   await browser.close();

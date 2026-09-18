@@ -11652,6 +11652,19 @@
         // conditionally-rendered-control trap, and it produced its predicted
         // report verbatim: "where are the other effects params".
         grpOpen('FX', false,
+          // ── CHAIN — WHAT ORDER THE STAGES RUN IN ─────────────────────
+          // (2026-09-18, user: "need an FX chaining editor, so user can put
+          // distortion before or after delay".) THE MODEL ALREADY DID THIS: the
+          // layer carries `fxChain`, `_ambFxCoreOrder` hands it to the core as
+          // `strip_fxorder`, and the node path connects `_ambFxInlineEngaged`
+          // in the same order — v1's card has had the ▲▼ editor for months. The
+          // v2 card simply never got the surface, so this is a door onto
+          // working machinery, not a new mechanism: same store, same helpers
+          // (`_ambFxChainOf` / `_ambFxMove`), so the two cards cannot disagree.
+          // FIRST IN THE LIST on purpose — it is the one stage that is ABOUT the
+          // others, so landing here answers "what is my signal doing" before
+          // you go tuning any single box.
+          tb('Chain', fxChainHtml(L)) +
           tb('Delay', sl(L, 'delay.mix', 'Delay', num(fx(L, 'delay').mix, 0), 0, 100, 'wet amount') +
             sl(L, 'delay.timeMs', 'Delay time', num(fx(L, 'delay').timeMs, 300), 20, 1500, 'ms — Sync overrides') +
             sel(L, 'delay.sync', 'Delay sync', fx(L, 'delay').sync || '',
@@ -11731,6 +11744,52 @@
             '<span class="ambient-hint">mute the dry signal</span></div>'
         ) +
       '</div></div>';
+  }
+
+  // ── THE FX CHAIN, AS A ROW OF MOVABLE STAGES ────────────────────────────
+  // Only the IN-LINE stages are orderable, and that is a fact about the engine
+  // rather than a UI choice: Filter is pre-chain (it is the VCF) and Reverb is a
+  // parallel SEND, so neither sits in the series at all. `_AMB_FX_INLINE` is the
+  // engine's own list and the core's index order — read it, never restate it.
+  function fxChainHtml(L) {
+    let chain = [], inline = [];
+    try {
+      chain = (typeof _ambFxChainOf === 'function') ? _ambFxChainOf(L) : [];
+      inline = chain.filter(id => _AMB_FX_INLINE.indexOf(id) >= 0);
+    } catch (e) { chain = []; inline = []; }
+    if (!inline.length) {
+      return '<div data-v2tab="Chain" class="ambient-ctrl"><label>Chain</label>' +
+        '<span class="ambient-hint">No in-line effects yet — turn one up (Delay, Drive, Chorus, ' +
+        'Phaser or Auto-pan) and it joins the chain here, where you can move it earlier or later.</span></div>';
+    }
+    const nm = (id) => fxLabel(id);
+    // THE FLOW, SPELLED OUT. The order is the whole subject of this tab, so it
+    // is stated as a line you can read left to right before any control.
+    const flow = ['◦ in', 'Filter'].concat(inline.map(nm)).concat(['out ◦']).join(' → ');
+    return '<div data-v2tab="Chain" class="ambient-ctrl v2-fxchain"><label>Chain</label>' +
+      '<span class="v2-fxflow">' + esc(flow) + '</span>' +
+      '<span class="ambient-hint">the order the stages run in · Filter is pre-chain and Reverb is a ' +
+        'parallel send, so neither can move</span></div>' +
+      inline.map((id, i) => '<div data-v2tab="Chain" class="ambient-ctrl v2-fxstage">' +
+        '<label>' + esc((i + 1) + '. ' + nm(id)) + '</label>' +
+        '<span class="v2-fxmove">' +
+          '<button type="button" class="ambient-seg v2-fxup" data-fxid="' + esc(id) + '"' +
+            (i === 0 ? ' disabled' : '') + ' aria-label="Move earlier"' +
+            ' title="Move ' + esc(nm(id)) + ' EARLIER — it then processes the signal before ' +
+            esc(i > 0 ? nm(inline[i - 1]) : 'the stage above') + '">▲</button>' +
+          '<button type="button" class="ambient-seg v2-fxdn" data-fxid="' + esc(id) + '"' +
+            (i === inline.length - 1 ? ' disabled' : '') + ' aria-label="Move later"' +
+            ' title="Move ' + esc(nm(id)) + ' LATER — it then processes the signal after ' +
+            esc(i < inline.length - 1 ? nm(inline[i + 1]) : 'the stage below') + '">▼</button>' +
+        '</span>' +
+        // WHAT ORDER BUYS YOU, said where the question is asked. Putting Drive
+        // after Delay dirties the REPEATS rather than the notes — and with that
+        // delay's Dry kill on, only the repeats are left to dirty, which is the
+        // "distortion on just the delay repeats" case without any send at all.
+        '<span class="ambient-hint">' +
+          (id === 'dist' ? 'after Delay it dirties the repeats, not the notes'
+           : id === 'delay' ? 'stages after this one process its repeats too'
+           : 'runs at this point in the signal') + '</span></div>').join('');
   }
 
   // ── THE GATE ────────────────────────────────────────────────────────────
@@ -15324,6 +15383,34 @@
       };
       h.addEventListener('input', fxPick);
       h.addEventListener('change', fxPick);
+      // ▲▼ ON A CHAIN STAGE — move it earlier or later in the signal chain.
+      // `_ambFxMove` is v1's own mutator on the same `fxChain` store, so the two
+      // cards cannot drift apart; `_ambSyncMods` is what pushes the new order to
+      // the core (`strip_fxorder`) and rebuilds the node path's connections.
+      h.addEventListener('click', (ev) => {
+        const mv = ev.target && ev.target.closest &&
+          (ev.target.closest('.v2-fxup') || ev.target.closest('.v2-fxdn'));
+        if (!mv || mv.disabled) return;
+        const ctx = layerOf(mv); if (!ctx) return;
+        const id = mv.getAttribute('data-fxid');
+        const dir = mv.classList.contains('v2-fxup') ? -1 : 1;
+        let moved = false;
+        try { moved = (typeof _ambFxMove === 'function') && _ambFxMove(ctx.L, id, dir); } catch (e) {}
+        if (!moved) return;
+        try { E.getCfg(); } catch (e) {}
+        try { if (typeof _ambSyncMods === 'function') _ambSyncMods(); } catch (e) {}
+        try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+        // A CARD REBUILD, not `popSync`. The chain rows are BAKED at render time
+        // (the numbering, the flow line, which arrows are disabled), and
+        // `popSync` only shows and hides rows — so the store and the core moved
+        // while the picture kept the old order, which is the stale-readout class
+        // this file keeps paying for. The sheet reopens on the same section and
+        // tab (`OVLS`/`POPS` carry them across a rebuild), and a BUTTON press is
+        // safe to rebuild under — the documented repaint trap is about dragging
+        // a slider, whose element the rewrite would replace mid-gesture.
+        h._sig = ''; V2.render(E);
+        ev.stopPropagation();
+      });
       h.addEventListener('click', (ev) => {
         if (composeBlocks(ev.target)) { ev.stopPropagation(); return; }
         // SECTION TABS in the sheet head — six groups filling one row, so the

@@ -15989,7 +15989,18 @@
   --v2-safebot: env(safe-area-inset-bottom, 0px);
   --v2-hdr: 40px;
   --v2-topchrome: calc(var(--v2-safetop) + var(--v2-hdr));
-  max-height: calc(100vh - var(--v2-topchrome) - var(--v2-safebot) - 12px);
+  /* A FIXED SIZE, NOT A FITTED ONE (2026-09-18, user: "they should be a fixed
+     size, with scrollable body content"). With only `max-height` the sheet fits
+     its CONTENT, so switching stages resized it — measured 603px on Chorus and
+     768px on Glitch — and because it is CENTRED the top moved with it too,
+     129px to 46px. So the ✕, the stage picker and Dry Kill all jumped under the
+     finger every time you changed stage. One height for every pane; the body
+     scrolls when it needs to, which it already could.
+     `min()` so a SHORT viewport still shrinks to the visible band — a flat
+     720px would overflow a landscape phone and put the head off screen. */
+  --v2-band: calc(100vh - var(--v2-topchrome) - var(--v2-safebot) - 12px);
+  height: min(720px, var(--v2-band));
+  max-height: var(--v2-band);
   margin-top: calc(var(--v2-topchrome) - var(--v2-safebot));
   background: #12121f; border: 1px solid #2d2d3f; border-radius: 16px;
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);

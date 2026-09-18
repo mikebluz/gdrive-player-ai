@@ -383,6 +383,36 @@ const labelsOf = () => {
     !!chainToggle.closed.pick && chainToggle.closed.pick !== 'Chain',
     JSON.stringify(chainToggle.closed));
 
+  // ── THE SHEET IS A FIXED SIZE ────────────────────────────────
+  // With only `max-height` it fitted its CONTENT, so every stage change resized
+  // it — 603px on Chorus, 768px on Glitch — and because it is CENTRED the TOP
+  // moved too (129 → 46). The ✕, the picker and Dry Kill all jumped under the
+  // finger. Both numbers are asserted: a height-only check would pass a sheet
+  // that still slid up and down the screen.
+  const sizes = await page.evaluate(async () => {
+    const out = [];
+    for (const st of ['Chorus', 'Glitch', 'Phaser', 'Pitch echo', 'Delay']) {
+      const fp = document.querySelector('.v2-layer .v2-pop-tabs .v2-fxpick');
+      fp.value = st; fp.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 380));
+      const sheet = document.querySelector('.v2-secpop');
+      const pane = document.querySelector('.v2-secpop .v2-pop-pane');
+      const r = sheet.getBoundingClientRect();
+      out.push({ st, h: Math.round(r.height), top: Math.round(r.top),
+                 scrolls: pane.scrollHeight > pane.clientHeight + 1,
+                 paneOverflowY: getComputedStyle(pane).overflowY });
+    }
+    return out;
+  });
+  const hs = [...new Set(sizes.map((x) => x.h))];
+  const tops = [...new Set(sizes.map((x) => x.top))];
+  ok('the sheet holds ONE size across every stage — and one position',
+    hs.length === 1 && tops.length === 1,
+    JSON.stringify(sizes.map((x) => x.st + '=' + x.h + '@' + x.top)));
+  ok('…and the BODY is what scrolls when a stage overflows it',
+    sizes.every((x) => x.paneOverflowY === 'auto') && sizes.some((x) => x.scrolls),
+    JSON.stringify(sizes.map((x) => x.st + (x.scrolls ? ' scrolls' : ''))));
+
   ok('no page errors', errs.length === 0, errs.join(' | '));
   console.log('\nprobe: ' + pass + ' passed, ' + fail + ' failed');
   await browser.close();

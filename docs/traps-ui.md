@@ -164,6 +164,11 @@
   rendered beside the FX dropdown; tabs do not un-select, and it was reported as "not toggling off".
   A second press goes back to what it was covering. Plain tabs INSIDE a list keep tab behaviour —
   there is nothing to go back to there.
+- **A CENTRED POPOVER WITH ONLY `max-height` RESIZES *AND* MOVES.** It fits its content, so changing
+  tabs changed the height (measured 603 → 768) — and because the wrap centres it, the TOP moved with
+  it (129 → 46), so the ✕ and the tab strip jumped under the finger. Give it a `height` as well
+  (`min(<fixed>, <band>)`, so a short viewport still shrinks) and let the pane scroll. **Assert the
+  TOP as well as the height**: a height-only check passes a sheet that still slides up and down.
 - **A tap-to-cycle number is a bug**; so is a control that is absent in some states. **Render it and
   DISABLE it**, with the reason in the title — a conditionally-rendered control cannot be found,
   learned, or asked about. A press that cannot act should REFUSE AND EXPLAIN rather than do nothing.

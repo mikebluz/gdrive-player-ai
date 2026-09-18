@@ -181,6 +181,16 @@
 
 ### Bloom: the v2 layer model (`cfg.layers`, `js/bloops/18-layer-v2.js`)
 
+- **A COMPUTED FACE ON A CARD REPAINTS FROM `applyGateCard`'s tail** — that is the chokepoint every
+  commit already runs through (`commit` → `applyGate` → it → `popSync`). A row builder alone is ONE
+  writer, and a value built from tempo / Bars / Rate / Steps freezes at whatever was true when the
+  row was built, because none of those rebuild it. Hold's hint resolves `cycle / Steps × Hold` into a
+  time this way (2026-09-18); `querySelectorAll`, never `querySelector` — a field can have two
+  controls on one card and the copy you are not touching is the one that goes stale.
+- **A `.v2-f` commit inside ⚙ Deep / ✺ Quick writes to the STAGED CLONE, not the layer** — so a probe
+  that drives one and reads `getCfg().layers[0]` measures "the control commits nothing" on working
+  code. Read `V2.stagedOf(id) || layer` (what `test/ui-lifecycle.js`'s `__Lv2` does). Cost an hour.
+
 Read `docs/bloom-layer-v2.md` before touching layers. A layer is an INSTRUMENT and a PART; a part is
 LIVE (rules resolved at play time) or RECORDED (notes read back). `notesFor(L, ctx) → [{at,freq,durMs}]`
 is the interface. v2 decides only "what notes, when" — everything downstream of `playNote` is v1's.

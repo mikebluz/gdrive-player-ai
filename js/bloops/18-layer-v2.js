@@ -6670,7 +6670,12 @@
     // that move nothing.
     const hl = [];
     const hold = Math.max(0, Math.min(16, I(sh.holdSteps)));
-    if (hold > 0) hl.push(kv('Hold', plural(hold, 'step')));
+    if (hold > 0) {
+      // …AND WHAT THAT IS IN TIME. Why? is the explain surface, and "3 steps"
+      // is only half an answer without what a step is worth here.
+      const hms = holdMsOf(L, cfg);
+      hl.push(kv('Hold', plural(hold, 'step') + (hms > 0 ? ' \u00b7 ' + holdTime(hms) : '')));
+    }
     else hl.push(kv('Length', NF(sh.lenRatio, 100) + '% of each slot'));
     if (I(L.lenVary) > 0) hl.push(kv('Len vary', I(L.lenVary) + '%'));
     let hlTail = '';
@@ -10380,6 +10385,40 @@
       opts.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('') +
       '</select><span class="ambient-hint">' + esc(hint || '') + '</span></div>';
   };
+  // ── WHAT A HOLD STEP IS WORTH ───────────────────────────────────────────
+  // Asked outright: "what does hold do? what does a unit of value for that
+  // parameter mean". The hint said "grid steps" and nothing on the card said
+  // what a step was worth — and the divisor is `part.rhythm.steps`, which is
+  // only SHOWN on the Euclid and Drawn rhythms although normalize gives EVERY
+  // kind one. So on a Pulse or Chance layer the unit was governed by a number
+  // with no row on the card at all. The row resolves it instead:
+  //     one step = cycle / Steps      a note = step * Hold
+  // MIRRORS THE EMITTER, including its 20 ms floor (`durAt`, the holdN branch)
+  // — a readout that disagrees with what plays is worse than no readout.
+  function holdMsOf(L, cfg) {
+    const p = (L && L.part) || {};
+    const n = clamp(((p.shape || {}).holdSteps | 0), 0, 16);
+    if (n <= 0) return 0;
+    const steps = Math.max(1, ((p.rhythm || {}).steps | 0) || 1);
+    try { return Math.max(20, Math.round(V2.cycleSec(L, cfg) / steps * n * 1000)); }
+    catch (e) { return 0; }
+  }
+  const holdTime = (ms) => (ms < 1000) ? (ms + ' ms') : ((Math.round(ms / 100) / 10) + ' s');
+  // THE ROW'S HINT, RESOLVED. REPAINTED from `applyGateCard` — tempo, Bars,
+  // Rate, Steps and Hold itself all move this number and not one of them
+  // rebuilds this row, and a computed face with a single writer is a frozen
+  // wrong answer (the documented rule). At 0 it stays the teaching line: there
+  // is no time to resolve, and what matters is which knob is in charge.
+  const HOLD_BASE = 'note length in grid steps, whatever the gaps';
+  function holdHint(L) {
+    const n = clamp((((L && L.part && L.part.shape) || {}).holdSteps | 0), 0, 16);
+    if (n <= 0) return HOLD_BASE + ' \u2014 0 = use Length instead (which follows them)';
+    let cfg = null; try { cfg = _cfgOf(); } catch (e) {}
+    const ms = holdMsOf(L, cfg);
+    if (!(ms > 0)) return HOLD_BASE;
+    const steps = Math.max(1, (((L.part.rhythm) || {}).steps | 0) || 1);
+    return HOLD_BASE + ' \u2014 ' + n + ' of ' + steps + ' per cycle = ' + holdTime(ms) + ' a note';
+  }
   const st = (L, field, label, v, min, max, hint, when) =>
     (typeof _ambStep === 'function')
       ? tag(_ambStep(label, uid(L, field), min, max, v, hint), 'ambient-step-inp', field, when)
@@ -10900,7 +10939,7 @@
               gst(L, 'part.rhythm.voices', 'Rows', num((L.part.rhythm || {}).voices, 1), 1, 8,
                   'interlocking rows, each on its own note', 'kind:live;voice:synth;rhythm:euclid') +
               gst(L, 'part.shape.holdSteps', 'Hold steps', num((L.part.shape || {}).holdSteps, 0), 0, 16,
-                  'note length in grid steps, whatever the gaps — 0 = use Length instead (which follows them)',
+                  holdHint(L),
                   'kind:live')) +
               // ── NOTES — which pitches, and how they are stacked
               ftrows('notes',
@@ -11603,7 +11642,7 @@
           // an absolute number of grid steps and does not. A sparse pattern is
           // where they diverge, which is exactly where someone asks.
           st(L, 'part.shape.holdSteps', 'Hold', num(sh.holdSteps, 0), 0, 16,
-             'note length in grid steps, whatever the gaps — 0 = use Length instead (which follows them)',
+             holdHint(L),
              'kind:live') +
 
           // Only means something where an onset carries MORE THAN ONE note.
@@ -12379,6 +12418,18 @@
         b2.setAttribute('title', g2 + (sm ? ' \u2014 ' + sm : ''));
       }
     });
+    // HOLD'S HINT RESOLVES A TIME, so it needs a SECOND WRITER — tempo, Bars,
+    // Rate and Steps all move the number and none of them rebuilds this row,
+    // which would leave it frozen at whatever was true when it was built. The
+    // gate pass is the chokepoint that already runs on every commit.
+    try {
+      const ht = holdHint(L);
+      card.querySelectorAll('.v2-f[data-f="part.shape.holdSteps"]').forEach((el) => {
+        const row = el.closest('.ambient-ctrl');
+        const hn = row && row.querySelector('.ambient-hint');
+        if (hn && hn.textContent !== ht) hn.textContent = ht;
+      });
+    } catch (e) {}
     // The editor re-syncs its tabs on every gate pass — the gate can hide the
     // active tab's rows from under it (switch Voice with Tone open).
     if (popWrapOf(card)) {

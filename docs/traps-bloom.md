@@ -439,6 +439,16 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   ordinary layer, the PART PASS for a per-part one. One definition, three consumers (tick, drawing,
   playhead); two walks of one grid is how they disagree. It carries `pi`, so nothing re-derives the
   part from a snapped `cs`.
+- **A PICTURE MUST BE DRAWN IN THE CLOCK ITS NOTES WERE MADE IN.** `previewLayer` pins
+  `_progAnchor` / `_playStartAt` / `_barGridAnchor` to the press and restores them in its `finally`
+  — synchronously, before a note has sounded — so every later draw resolved the SAME onsets against
+  a different progression origin and showed the changes ROTATED (chord tones a third off, an octave
+  once the span folds them), differently on every press because `t0` is `Tone.now()`. `PV_VIZ` now
+  carries those three clocks and `drawPartViz` puts them back for the length of one draw
+  (`withPvClocks`), around the notes AND the chord band — both, or the band names one alignment over
+  notes resolved in another. **A single press proves nothing here:** it agrees whenever the press
+  lands a whole number of chord spans from the fallback origin, so test it with a stale anchor parked
+  a HALF-chord away.
 - **Take pinning:** `part.take` pins the seed for the AUDITION and the PICTURE; playback plays that
   take too (per-cycle dice are `part.vary`). `part.takeb` pins per REGION, `part.ruleb` gives a region
   its own RULES — and a per-region RULE must be honoured by playback while a per-region TAKE is an

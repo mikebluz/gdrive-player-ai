@@ -7304,6 +7304,77 @@ const ok = (name, cond, detail) => {
     takeEarRun.stillPreviewing,
     JSON.stringify(takeEarRun));
 
+  // ── THE PICTURE IS DRAWN IN THE CLOCK THE NOTES WERE MADE IN (2026-09-18) ──
+  // ▶ Preview pins `_progAnchor` / `_playStartAt` / `_barGridAnchor` to the press
+  // so the changes start from the top, and restores them in its `finally` —
+  // synchronously, before a single note has sounded. Every draw AFTER the press
+  // then resolved the harmony at the same absolute times against a DIFFERENT
+  // progression origin, so the picture showed the progression ROTATED under the
+  // same notes: chord tones a third away, and once the span folds them, an
+  // octave away. `Tone.now()` moves between presses, so the rotation moved too.
+  // Reported as "notes are moving around and are not representing exactly what's
+  // playing … chords seem to move octaves in the visualizer but playback stays
+  // the same".
+  //
+  // MISALIGNED ON PURPOSE. The disagreement is invisible when the press happens
+  // to land a whole number of chord spans from whatever origin the draw falls
+  // back to — which it does often enough that one press proves nothing
+  // (measured: press 1 agreed, press 2 was rotated by a whole chord). Parking a
+  // KNOWN stale anchor a half-chord away makes it deterministic rather than a
+  // coin toss. Poison-verified: short-circuiting the draw's clock scope gives
+  // played D·D·Em·Em·F♯m·F♯m·G·G against drawn D·D·D·Em·Em·F♯m·F♯m·G.
+  const vizAnchorRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => window.__Lv2(E);
+    const card = () => document.querySelector('.v2-layer');
+    const svProg = E.getCfg().prog ? JSON.parse(JSON.stringify(E.getCfg().prog)) : null;
+    const svPart = JSON.stringify(L().part);
+    // D · Em · F♯m · G, a bar each, under a 4-bar live part taking its pitches
+    // from the chord — so every group of three NAMES its chord and a rotation is
+    // legible in the failure text instead of inferred from a diff.
+    const cfg = E.getCfg();
+    cfg.prog = { on: true, name: 'ANCHOR',
+      chords: [{ root: 2, intervals: [0, 4, 7] }, { root: 4, intervals: [0, 3, 7] },
+               { root: 6, intervals: [0, 3, 7] }, { root: 7, intervals: [0, 4, 7] }] };
+    L().part.kind = 'live'; L().part.bars = 4; L().part.notes = [];
+    L().part.rhythm = { kind: 'pulse', n: 8, steps: 16 };
+    L().part.pitch = { kind: 'chord', span: 12 };
+    E.getCfg();
+    const h0 = document.getElementById('bloom-v2-layers'); if (h0) h0._sig = '';
+    window._v2.render(E); await wait(300);
+    card().classList.remove('collapsed');
+    const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+    E._progAnchor = now + 1.0;          // half of a 2 s chord span at 120 bpm
+    E._playStartAt = now + 1.0;
+    const played = [];
+    const orig = window.playNote;
+    window.playNote = function (f) {
+      if (f > 0) played.push(Math.round(69 + 12 * Math.log2(f / 440)));
+      return orig.apply(this, arguments);
+    };
+    try { window._v2.preview(E, L()); } finally { window.playNote = orig; }
+    await wait(700);
+    card().classList.remove('collapsed');
+    if (h0) h0._sig = ''; window._v2.render(E); await wait(450);
+    const cv = card().querySelector('.v2-vizcv');
+    const drawn = (cv && cv._hits || []).slice().sort((a, b) => a.t - b.t).map((x) => x.midi);
+    window._v2.previewKill(E, L());
+    delete E._progAnchor; delete E._playStartAt;
+    // RESTORE — these cases share one project, and a progression left on is the
+    // next check's bug.
+    if (svProg) cfg.prog = svProg; else delete cfg.prog;
+    try { L().part = JSON.parse(svPart); } catch (e) {}
+    E.getCfg(); if (h0) h0._sig = ''; window._v2.render(E); await wait(250);
+    card().classList.remove('collapsed');
+    // the picture draws ONE cycle and the emit window runs a hair past it, so
+    // the claim is that the drawing is a PREFIX of what played, in order
+    return { played, drawn,
+             prefix: JSON.stringify(played.slice(0, drawn.length)) === JSON.stringify(drawn) };
+  });
+  ok('▶ Preview’s drawing shows the notes it PLAYED — not the progression rotated under them',
+    vizAnchorRun.drawn.length > 0 && vizAnchorRun.prefix,
+    'played=' + vizAnchorRun.played.join(',') + ' drawn=' + vizAnchorRun.drawn.join(','));
+
   // THE ROLL LIGHTS UP AS IT PLAYS, and RING OUT is the door for the chord
   // choke. "It sounds like some notes may be getting cut off" — measured, with
   // a progression on: 3 of 4 notes clamped, 1200ms → 738 / 238 / 738. That is

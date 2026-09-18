@@ -4653,6 +4653,22 @@
       if (!E.timer || !Number.isFinite(E._barGridAnchor)) {
         E._progAnchor = t0; E._playStartAt = t0; E._barGridAnchor = t0;
       }
+      // …AND REMEMBER THEM FOR THE DRAWING. These three are restored in the
+      // `finally` below — synchronously, before a single note has sounded — so
+      // every draw AFTER the press resolved the harmony at the same absolute
+      // times against a DIFFERENT progression origin than the notes were made
+      // with. Measured: a preview that played D·D·Em·Em·F♯m·F♯m·G·G drew
+      // Em·F♯m·F♯m·G·G·D·D·Em — the progression ROTATED under the same notes,
+      // which moves chord tones by thirds and, once the span folds them, by
+      // octaves. And because `t0` is `Tone.now()`, the rotation differs on every
+      // press: reported as "notes are moving around and are not representing
+      // exactly what's playing … chords seem to move octaves in the visualizer
+      // but playback stays the same". The picture has to be drawn in the clock
+      // the notes were generated in; `drawPartViz` puts these back for the
+      // length of one draw.
+      if (PV_VIZ && PV_VIZ.id === (L.id | 0)) {
+        PV_VIZ.pa = E._progAnchor; PV_VIZ.ps = E._playStartAt; PV_VIZ.bg = E._barGridAnchor;
+      }
       window._ambEmitCutoff = null;
       window._ambHangEmitting = true;
       // PINNED FOR THE WHOLE EMIT — `emit` calls `notesFor` itself, so the pin
@@ -7102,7 +7118,7 @@
     // cycle is used only while the part still matches the one it was taken
     // from — change a knob and it falls back to a representative cycle, which
     // is honest rather than stale.
-    let cs = 0, fromPv = false, csPv = false;
+    let cs = 0, fromPv = false, csPv = false, pvClk = null;
     try {
       const pv = V2.previewCycle && V2.previewCycle();
       if (pv && pv.id === (L.id | 0) && pv.sig === V2.partSig(L) && Number.isFinite(pv.at)) {
@@ -7111,6 +7127,14 @@
         // take rolled since that preview has not been previewed, and saying it
         // was is exactly the kind of stale readout this file keeps paying for.
         cs = pv.at; csPv = true; fromPv = (pv.take === V2.pinSig(V2.pinOf(L)));
+        // THE CLOCKS THOSE NOTES WERE MADE AGAINST. The anchor decides WHICH
+        // CHORD sits under each onset, and the preview restores the global ones
+        // the instant it has finished scheduling — so without this the picture
+        // resolves the same notes over a different point in the progression
+        // (see the note beside the pin in `previewLayer`).
+        if (Number.isFinite(pv.pa) || Number.isFinite(pv.ps) || Number.isFinite(pv.bg)) {
+          pvClk = { pa: pv.pa, ps: pv.ps, bg: pv.bg };
+        }
       }
     } catch (e) {}
     // A PART WHOSE CONTENT IS THE CHANGES IS DRAWN FROM THE FIRST CHANGE.
@@ -7159,6 +7183,19 @@
         }
       }
     } catch (e) {}
+    // ONE DRAW, IN THE PREVIEW'S OWN CLOCK. Everything that resolves harmony
+    // — the notes AND the chord band naming them — goes through here, or the
+    // picture contradicts itself again: the band drawn from one origin over
+    // notes resolved against another is the exact shape of the bug this fixes.
+    // Gated on `!playing`, because a running transport IS the clock and `cs`
+    // has been replaced with the sounding window by then.
+    const withPvClocks = (fn) => {
+      if (playing || !csPv || !pvClk) return fn();
+      const sv2 = { pa: E._progAnchor, ps: E._playStartAt, bg: E._barGridAnchor };
+      E._progAnchor = pvClk.pa; E._playStartAt = pvClk.ps; E._barGridAnchor = pvClk.bg;
+      try { return fn(); }
+      finally { E._progAnchor = sv2.pa; E._playStartAt = sv2.ps; E._barGridAnchor = sv2.bg; }
+    };
     // ── STOPPED, DRAW THE RECORD OVER THE CHORDS IT WILL PLAY OVER ────────
     // A remapped pitch is a function of the chord AT THE NOTE'S OWN ONSET, and
     // the onset is `cs + n.at` — so with `cs` at zero a per-part record was
@@ -7240,7 +7277,7 @@
         ? V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc, pi: wpi })
         : V2.withTake(V2.pinOf(L), () =>
             V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc })));
-      notes = ((playing && vizMode(L) === 'view') ? ask() : V2.withEdit(ask)) || [];
+      notes = withPvClocks(() => ((playing && vizMode(L) === 'view') ? ask() : V2.withEdit(ask))) || [];
     } catch (e) { notes = []; }
     // `notesFor` returns ABSOLUTE times (cycleStart + offset), so a remembered
     // cycle start has to be subtracted back off before drawing.
@@ -7284,8 +7321,9 @@
     // where the plot begins (`_pitchGeo.top`, `_plotGeo.top`, the playhead and
     // the ruler-tap test all read it), so growing it moves everything that
     // depends on it with no second number to keep in step.
-    const cAt = (L.part && L.part.clock === 'free') ? 0 : chordAnchor(E, cfg, L, playing, cs);
-    const cmarks = (L.part && L.part.clock === 'free') ? null : chordMarks(E, cfg, cAt, cyc);
+    const freeClk = !!(L.part && L.part.clock === 'free');
+    const cAt = freeClk ? 0 : withPvClocks(() => chordAnchor(E, cfg, L, playing, cs));
+    const cmarks = freeClk ? null : withPvClocks(() => chordMarks(E, cfg, cAt, cyc));
     const CHT = cmarks ? 13 : 0;          // the chord band
     const TOP = 15 + CHT;                 // the ruler gutter
     const GUT = phone ? 24 : 28;          // the keyboard gutter — wide enough for "C4"

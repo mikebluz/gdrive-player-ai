@@ -10756,7 +10756,14 @@
               // put in first inversion without selecting every bar.
               gst(L, 'part.pitch.inv', 'Inversion', ((L.part.pitch || {}).inv | 0), -12, 12,
                   '0 = root position', 'kind:live;voice:synth;pitch:chord,stack') +
-              gsl(L, 'part.shape.lenRatio', 'Hold', (L.part.shape || {}).lenRatio, 5, 200,
+              // CALLED "Length", like everywhere else. This is `shape.lenRatio`
+              // — the SAME field the Shape tab calls Length — and it was
+              // labelled "Hold" here, while the Shape tab's "Hold" is a
+              // different field entirely (`shape.holdSteps`). One word naming
+              // two fields is the documented two-vocabularies failure, and it
+              // is what made someone ask what Hold does. LABEL-ONLY: the data
+              // key is untouched.
+              gsl(L, 'part.shape.lenRatio', 'Length', (L.part.shape || {}).lenRatio, 5, 200,
                   '% of the change each note fills', 'kind:live;rhythm:ground', '-gw') +
               gsel(L, 'part.rhythm.strike', 'Strike', (L.part.rhythm || {}).strike || '',
                    [['', 'Once per change'], ['half', 'Every half bar'], ['bar', 'Every bar'],
@@ -11520,7 +11527,15 @@
         // second time in this campaign, which is exactly its job. The model's
         // own name for this is `part.shape`.
         grpOpen('Shape', false,
-          st(L, 'part.shape.holdSteps', 'Hold', num(sh.holdSteps, 0), 0, 16, 'steps (0 = use Length)', 'kind:live') +
+          // HOLD vs LENGTH — the hint has to carry the difference, because the
+          // two answer the same question ("how long is a note?") by different
+          // rules and nothing else on the card says so. LENGTH is a share of
+          // the gap to the next onset, so it STRETCHES with the gaps; HOLD is
+          // an absolute number of grid steps and does not. A sparse pattern is
+          // where they diverge, which is exactly where someone asks.
+          st(L, 'part.shape.holdSteps', 'Hold', num(sh.holdSteps, 0), 0, 16,
+             'note length in grid steps, whatever the gaps — 0 = use Length instead (which follows them)',
+             'kind:live') +
           st(L, 'part.shape.maxEvents', 'Max events', num(sh.maxEvents, 0), 0, 64, 'per cycle (0 = off)', 'kind:live') +
           // Only means something where an onset carries MORE THAN ONE note.
           sl(L, 'strum', 'Strum', num(L.strum, 0), 0, 100, 'struck → arpeggiated',

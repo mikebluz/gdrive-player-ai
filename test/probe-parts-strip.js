@@ -141,8 +141,15 @@ const ok = (name, cond, detail) => {
     E._passLock = null;
     return { mode: window._v2.viewMode(), disabled, followed, lit };
   });
-  ok('👁 View — the dropdown FOLLOWS playback and is a readout, not a control',
-    view.mode === 'view' && view.disabled && view.followed === '0' && view.lit,
+  // RESTATED with the reason: the first cut asserted the dropdown was DISABLED
+  // in View. That shipped as "clicking the dropdown does nothing" — a control
+  // that swallows a press and says nothing, which this project has a rule
+  // against. What View actually owes is that the dropdown FOLLOWS playback and
+  // is marked as sounding; being operable is not a violation of that, it is
+  // what makes the readout a door (a pick switches to ✎ Edit — checked below,
+  // driven for real).
+  ok('👁 View — the dropdown FOLLOWS playback and is marked as sounding',
+    view.mode === 'view' && !view.disabled && view.followed === '0' && view.lit,
     JSON.stringify(view));
 
   // …and the layers follow it too — `vizMode` is the one axis both read
@@ -172,6 +179,57 @@ const ok = (name, cond, detail) => {
   ok('the strip follows the axis when a CARD moves it \u2014 no stale readout',
     fromCard.before === 'view' && fromCard.after === 'edit' && fromCard.axis === 'edit',
     JSON.stringify(fromCard));
+
+  // ── DRIVEN FOR REAL ───────────────────────────────────────
+  // Everything above dispatches a synthetic `change`, which proves the HANDLER
+  // and nothing about whether a finger can reach the control — the documented
+  // reachability rule, and the hole that let a `disabled` select ship as
+  // "clicking does nothing". `page.select` is a real user selection, and the
+  // hit-test proves nothing is covering the box.
+  const reach = await page.evaluate(() => {
+    const el = document.getElementById('mix-bloom-curpart');
+    const hit = (sq) => {
+      const n = el.querySelector(sq); if (!n) return 'missing';
+      const b = n.getBoundingClientRect();
+      const at = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+      return { disabled: !!n.disabled, self: at === n, got: at ? (at.className || at.tagName) : null };
+    };
+    return { sel: hit('.ambient-curpart-sel'), mode: hit('.ambient-curpart-mode') };
+  });
+  ok('neither dropdown is disabled, and a tap lands on the control itself',
+    reach.sel && !reach.sel.disabled && reach.sel.self &&
+    reach.mode && !reach.mode.disabled && reach.mode.self,
+    JSON.stringify(reach));
+
+  // A REAL PICK IN 👁 VIEW: it must ACT — hold that part, and say it switched.
+  const realPick = await page.evaluate(() => {
+    try { window._v2.setViewMode('view'); window._ambCurPartRefresh(_masterEng); } catch (e) {}
+    return window._v2.viewMode();
+  });
+  await zz(400);
+  await page.select('#mix-bloom-curpart .ambient-curpart-sel', '1');
+  await zz(600);
+  const picked = await page.evaluate(() => ({
+    mode: window._v2.viewMode(),
+    cur: _masterEng._curPart,
+    parts: (_masterEng.getCfg().layers || []).map((L) => L.partFor),
+    shown: document.getElementById('mix-bloom-curpart').querySelector('.ambient-curpart-sel').value,
+    modeShown: document.getElementById('mix-bloom-curpart').querySelector('.ambient-curpart-mode').value,
+  }));
+  ok('a real pick in 👁 View ACTS — it holds that part and switches to ✎ Edit',
+    realPick === 'view' && picked.mode === 'edit' && picked.cur === 1 &&
+    picked.shown === '1' && picked.modeShown === 'edit' &&
+    picked.parts.every((x) => x === 1), JSON.stringify({ was: realPick, picked }));
+
+  // …and the mode dropdown itself, driven the same way
+  await page.select('#mix-bloom-curpart .ambient-curpart-mode', 'view');
+  await zz(600);
+  const realMode = await page.evaluate(() => ({
+    mode: window._v2.viewMode(),
+    shown: document.getElementById('mix-bloom-curpart').querySelector('.ambient-curpart-mode').value,
+  }));
+  ok('a real pick on the 👁 View / ✎ Edit dropdown switches the axis',
+    realMode.mode === 'view' && realMode.shown === 'view', JSON.stringify(realMode));
 
   // AND AT DESKTOP WIDTH. Everything above is measured at 390px, this project's
   // documented single-viewport blind spot — and the report that prompted the

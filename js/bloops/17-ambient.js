@@ -43825,6 +43825,11 @@
       let vmode = 'view';
       try { if (window._v2 && window._v2.viewMode) vmode = window._v2.viewMode(); } catch (e) {}
       const sel = el.querySelector('.ambient-curpart-sel');
+      // NOT WHILE IT IS OPEN. Rewriting a <select>'s value under an open list
+      // is the stomp this readout has to avoid — and with the control no longer
+      // disabled, the list CAN be open. Focus is the one signal available for
+      // it (there is no `open` state on a select).
+      if (sel && document.activeElement === sel) return;
       if (sel && vmode === 'view' && pi >= 0) {
         const v = String(pi);
         // a value matching no option shows the FIRST one silently — only set
@@ -43872,10 +43877,20 @@
           // there it is a READOUT of what is playing, and a control you can
           // still operate but that snaps back would read as broken.
           el.innerHTML = '<span class="ambient-curpart-lab">Part</span>' +
+            // NEVER DISABLED. The first cut greyed it out in 👁 View — it is a
+            // readout there, and the reasoning was the documented trap about a
+            // select that doubles as a live readout stomping an explicit pick.
+            // But the cost was a control that swallows a click and says
+            // nothing, which is the worse failure of the two and the one this
+            // file has a rule about: a press that cannot act must REFUSE AND
+            // EXPLAIN, and better still, ACT. Choosing a part IS the intent to
+            // hold it, so a pick in 👁 View switches to ✎ Edit and holds it —
+            // one gesture, and the mode dropdown beside it says what happened.
+            // The stomp is handled where it actually lives: the playhead sync
+            // stands down while the list is open (see `_ambCurPartPlayhead`).
             '<select class="ambient-select ambient-curpart-sel"' + _ambPartAttr(cur) +
-              (vmode === 'view' ? ' disabled' : '') +
               ' title="' + _ambEscAttr(vmode === 'view'
-                ? 'The part that is playing — 👁 View follows the arrangement. Switch to ✎ Edit to choose a part yourself.'
+                ? 'The part being heard — 👁 View follows the arrangement. Choose one to hold it instead: that switches to ✎ Edit.'
                 : 'The part every layer shows and edits. Play always runs the arrangement from the top; this stays put while it does.') + '">' +
               rgs.map(r => '<option value="' + r.pi + '"' + (r.pi === cur ? ' selected' : '') + '>' +
                 _ambEscAttr(r.nm) + '</option>').join('') +
@@ -43978,13 +43993,43 @@
             return;
           }
           const ps = ev.target.closest && ev.target.closest('.ambient-curpart-sel');
-          if (ps) _ambCurPartPick(E, el, ps.value | 0);
+          if (ps) {
+            const pi2 = ps.value | 0;
+            // CHOOSING A PART IS THE INTENT TO HOLD IT. In 👁 View the strip is
+            // following playback, so a deliberate pick can only mean "stop
+            // following and show me this one" — which is ✎ Edit. Doing it for
+            // them beats a dead control or a value that snaps back.
+            let vm2 = 'view';
+            try { if (window._v2 && window._v2.viewMode) vm2 = window._v2.viewMode(); } catch (e) {}
+            if (vm2 === 'view') {
+              try { if (window._v2 && window._v2.setViewMode) window._v2.setViewMode('edit'); } catch (e) {}
+              try {
+                const nm4 = ((rgsOf(E) || []).find((r) => r.pi === pi2) || {}).nm || ('Part ' + (pi2 + 1));
+                showToast('✎ Edit — holding ' + nm4 + ' while the arrangement runs on.', { ms: 4000 });
+              } catch (e) {}
+            }
+            _ambCurPartPick(E, el, pi2);
+          }
         });
       }
     }
     // WHAT CHOOSING A PART DOES. Its own function because the dropdown is now
     // one of two doors to it (the Schedule grid is the other) and two copies of
     // this list is how one of them comes to forget the loop or the persist.
+    // The strip's own part list, for the one place that needs a NAME outside the
+    // render (the toast above). Same derivation as `_ambRenderCurPart`.
+    function rgsOf(E) {
+      try {
+        const cfg = E.getCfg();
+        if (!cfg.prog || !cfg.prog.on || !(cfg.prog.chords || []).length) return [];
+        return (_ambGridRanges(cfg) || []).map((rg) => {
+          const pi = (rg && Number.isFinite(rg.pi)) ? (rg.pi | 0) : 0;
+          let nm = 'Part ' + (pi + 1);
+          try { nm = _ambPartLabel(cfg, pi); } catch (e) {}
+          return { pi, nm };
+        });
+      } catch (e) { return []; }
+    }
     function _ambCurPartPick(E, el, pi) {
       {
         {

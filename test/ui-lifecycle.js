@@ -7445,6 +7445,68 @@ const ok = (name, cond, detail) => {
     vizSeamRun.honest,
     'played=' + vizSeamRun.played.join(',') + ' drawn=' + vizSeamRun.before.join(','));
 
+  // ── DRAWING THE PICTURE MUST NOT CHANGE THE PICTURE (2026-09-18) ────────
+  // Strum's play order came from v1's `_ambStrumOrder`, which draws from
+  // `_ambRand` — the ENGINE-WIDE stream (`_E.rng`). `notesFor` is what the
+  // DRAWING asks, so merely repainting advanced the stream that decides the
+  // notes: one call made 118 writes to `_E.rng`, every one from there. Three
+  // consequences, all reported as one bug — the same take drew a different
+  // order on the next repaint ("notes are moving around"), playback pulled at
+  // its own point in that stream and disagreed with the picture ("not
+  // representing exactly what's playing"), and a v2 layer silently shifted
+  // every OTHER layer's draws as a side effect of being looked at.
+  // FIDELITY MUST BE > 0 or this sees nothing: fidelity 0 is low→high every
+  // time and spends no draw. Poison-verified: restoring the `_ambStrumOrder`
+  // call gives SIX distinct pictures from six repaints.
+  const vizStreamRun = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
+    const E = _masterEng, L = () => window.__Lv2(E);
+    const card = () => document.querySelector('.v2-layer');
+    const svProg = E.getCfg().prog ? JSON.parse(JSON.stringify(E.getCfg().prog)) : null;
+    const svPart = JSON.stringify(L().part);
+    const svStrum = { s: L().strum, f: L().strumFidelity };
+    const cfg = E.getCfg();
+    cfg.prog = { on: true, name: 'STREAM',
+      chords: [{ root: 2, intervals: [0, 4, 7] }, { root: 4, intervals: [0, 3, 7] },
+               { root: 6, intervals: [0, 3, 7] }, { root: 7, intervals: [0, 4, 7] }] };
+    L().part.kind = 'live'; L().part.bars = 4; L().part.notes = [];
+    L().part.rhythm = { kind: 'euclid', pulses: 7, steps: 16, rotate: 3 };
+    L().part.pitch = { kind: 'chord', span: 12, voices: 4 };
+    L().strum = 45; L().strumFidelity = 70;
+    E.getCfg();
+    const h0 = document.getElementById('bloom-v2-layers');
+    // READ THE VISIBLE CANVAS — `.v2-vizcv` is in both the card body and the
+    // section sheet, and the first in DOM order can be the stale hidden copy.
+    const draw = async () => {
+      card().classList.remove('collapsed');
+      if (h0) h0._sig = ''; window._v2.render(E);
+      await wait(400);
+      const all = [...document.querySelectorAll('.v2-vizcv')];
+      const cv = all.find((x) => x.offsetParent && x.getBoundingClientRect().height > 10) || all[0];
+      return (cv && cv._hits || []).slice().sort((a, b) => a.t - b.t)
+        .map((x) => Math.round(x.t * 1000) + ':' + x.midi).join(' ');
+    };
+    const shots = [];
+    for (let i = 0; i < 5; i++) shots.push(await draw());
+    const rng0 = E.rng;
+    window._v2.withEdit(() => window._v2.withTake(window._v2.pinOf(L()), () =>
+      window._v2.notesFor(L(), { E, cfg: E.getCfg(), key: 'v2:' + L().id, cycleStart: 0, cycleSec: 8 })));
+    const rngTouched = E.rng !== rng0;
+    // RESTORE — one project, many cases.
+    if (svProg) cfg.prog = svProg; else delete cfg.prog;
+    try { L().part = JSON.parse(svPart); } catch (e) {}
+    if (svStrum.s == null) delete L().strum; else L().strum = svStrum.s;
+    if (svStrum.f == null) delete L().strumFidelity; else L().strumFidelity = svStrum.f;
+    E.getCfg(); if (h0) h0._sig = ''; window._v2.render(E); await wait(250);
+    card().classList.remove('collapsed');
+    return { distinct: [...new Set(shots)].length, rngTouched, first: shots.slice(0, 2) };
+  });
+  ok('repainting the drawing does not CHANGE the drawing — five repaints, one picture',
+    vizStreamRun.distinct === 1,
+    vizStreamRun.distinct + ' distinct: ' + (vizStreamRun.first || []).map((x) => x.slice(0, 90)).join(' | '));
+  ok('…because asking for the notes never touches the engine’s SHARED rng',
+    !vizStreamRun.rngTouched, 'the draw consumed from _E.rng');
+
   // THE ROLL LIGHTS UP AS IT PLAYS, and RING OUT is the door for the chord
   // choke. "It sounds like some notes may be getting cut off" — measured, with
   // a progression on: 3 of 4 notes clamped, 1200ms → 738 / 238 / 738. That is

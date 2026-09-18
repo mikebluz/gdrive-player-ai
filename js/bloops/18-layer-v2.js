@@ -3251,18 +3251,42 @@
       }
       // STRUM — spread this onset's notes over a fraction of the span instead
       // of striking them together: 0 is a pad, 100 an arpeggio across the whole
-      // span. The PLAY ORDER comes from v1's own `_ambStrumOrder` (a partial
-      // Fisher–Yates on the seeded stream, so Fidelity 0 is low→high every time
-      // and higher wanders), which is what keeps a strummed v2 chord and a
-      // strummed v1 bed sounding like the same instrument. Absent or 0 spends
-      // no draw and emits exactly as before.
+      // span. Fidelity 0 is low→high every time and higher wanders, a partial
+      // Fisher–Yates. Absent or 0 spends no draw and emits exactly as before.
+      //
+      // ── THE ORDER IS AN ISOLATED DRAW (2026-09-18) ────────────────────
+      // It used to call v1's `_ambStrumOrder`, which pulls from `_ambRand` — the
+      // ENGINE-WIDE stream (`_E.rng`) — and `notesFor` is what the DRAWING asks.
+      // So MERELY DRAWING THE PICTURE advanced the stream that decides the
+      // notes: measured, one `notesFor` call made 118 writes to `_E.rng`, every
+      // one of them from here. The consequences were all three halves of the
+      // same report — the same take drew a different order on the next repaint
+      // (notes "moving around" with nothing changed), playback pulled at its own
+      // point in that stream and so disagreed with the picture, and a v2 layer
+      // silently shifted every OTHER layer's draws as a side effect of being
+      // looked at.
+      // This is the split `vRnd` was built for and states in its own comment
+      // ("ISOLATED draws … NEVER `_ambRand`'s shared stream, so a v2 layer can
+      // never shift a v1 layer's draws and the same take always replays") —
+      // strum was the one path that still reached across. Same algorithm, same
+      // two faces, keyed on (layer, cycle, onset) like slip right below.
       const strumAmt = clamp((L.strum | 0), 0, 100);
       if (strumAmt > 0 && ms.length > 1) {
         const spanSec = (strumAmt / 100) * (cyc / Math.max(1, ons.length));
-        let order = null;
-        try { if (typeof _ambStrumOrder === 'function') order = _ambStrumOrder(ms.length, L.strumFidelity | 0); } catch (e) {}
+        const fid = clamp(L.strumFidelity | 0, 0, 100) / 100;
+        const order = [];
+        for (let k2 = 0; k2 < ms.length; k2++) order.push(k2);
+        if (fid > 0) {
+          const sSeed = seedBase ^ ((si * 61 + 7) * 2654435761);
+          for (let k2 = ms.length - 1; k2 > 0; k2--) {
+            if (vRnd(sSeed, 191 + k2) < fid) {
+              const j2 = Math.floor(vRnd(sSeed, 227 + k2) * (k2 + 1));
+              const t2 = order[k2]; order[k2] = order[j2]; order[j2] = t2;
+            }
+          }
+        }
         for (let k = 0; k < ms.length; k++) {
-          const v = order ? order[k] : k;
+          const v = order[k];
           out.push({ at: at + (spanSec * k) / Math.max(1, ms.length - 1), freq: midiToFreq(ms[v]), durMs: dm });
         }
       } else {

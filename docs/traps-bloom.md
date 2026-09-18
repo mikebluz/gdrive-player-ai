@@ -439,6 +439,14 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   ordinary layer, the PART PASS for a per-part one. One definition, three consumers (tick, drawing,
   playhead); two walks of one grid is how they disagree. It carries `pi`, so nothing re-derives the
   part from a snapped `cs`.
+- **DRAWING MUST NOT CONSUME `_ambRand`. `notesFor` IS the visualizer's query, so any shared-stream
+  draw inside it makes REPAINTING change what is drawn.** Strum's order called v1's
+  `_ambStrumOrder` — 118 writes to `_E.rng` per `notesFor` call — so the same take drew a different
+  order each frame, playback pulled at its own point in that stream and disagreed with the picture,
+  and a v2 layer shifted every OTHER layer's draws just by being looked at. Every v2 variance draw
+  goes through `vRnd` keyed on (layer, cycle, onset); strum was the last path reaching across.
+  **When adding anything to the generation path, check it with `_E.rng` before and after a draw** —
+  a v1 helper that looks pure may pull from the stream two frames down.
 - **▶ Preview's changes anchor at the CYCLE START (`t0 - off`), never at the press (`t0`).** The
   first note lands on the press, so the cycle begins `off` earlier — anchoring the changes at `t0`
   put chord 1 that far INTO the part while the stopped drawing aligns them with the part's own first

@@ -173,6 +173,55 @@ const ok = (name, cond, detail) => {
     fromCard.before === 'view' && fromCard.after === 'edit' && fromCard.axis === 'edit',
     JSON.stringify(fromCard));
 
+  // AND AT DESKTOP WIDTH. Everything above is measured at 390px, this project's
+  // documented single-viewport blind spot — and the report that prompted the
+  // feature came from a ~1400px window. A flex row that behaves at phone width
+  // can still let one `width: 100%` select take the line at desktop.
+  //
+  // A FRESH LOAD, NOT A LIVE RESIZE: resizing from a mobile viewport drops
+  // `view-mix` from the body and tears the whole mix panel down — measured
+  // identically on the unfixed build, so it is the app's own responsive
+  // behaviour and not something this row can be asked about. Reload instead.
+  await page.setViewport({ width: 1400, height: 900 });
+  await page.goto(URL, { waitUntil: 'networkidle2', timeout: 60000 });
+  await zz(2200);
+  await page.evaluate(() => { document.body.classList.add('view-mix'); _ambInitMaster(); });
+  await zz(500);
+  await page.evaluate(() => { document.getElementById('mix-bloom-add-layer').click(); });
+  await zz(500);
+  await page.evaluate(() => { [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')]
+    .find((x) => x.textContent.trim() === 'Layer').click(); });
+  await zz(800);
+  await page.evaluate(() => { _ambRebuildMaster(); });
+  await zz(700);
+  await page.evaluate(() => {
+    const E = _masterEng, cfg = E.getCfg();
+    cfg.prog = { on: true, name: 'WIDE',
+      chords: [{ root: 2, intervals: [0, 4, 7] }, { root: 4, intervals: [0, 3, 7] }],
+      parts: [{ name: 'Verse', len: 1 }, { name: 'Chorus', len: 1 }] };
+    (cfg.layers || []).forEach((L) => { L.partFor = 0; });
+    E.getCfg(); _ambSyncFxVis(E);
+  });
+  await zz(800);
+  const wide = await page.evaluate(() => {
+    const el = document.getElementById('mix-bloom-curpart');
+    if (!el) return { err: 'strip absent at desktop width' };
+    const r = (sq) => { const n = el.querySelector(sq); if (!n) return null;
+      const bb = n.getBoundingClientRect();
+      return { w: Math.round(bb.width), x: Math.round(bb.left), vis: !!n.offsetParent }; };
+    return { sel: r('.ambient-curpart-sel'), mode: r('.ambient-curpart-mode'),
+             loop: r('.ambient-curpart-loop'),
+             overflow: el.scrollWidth - el.clientWidth,
+             docOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+  });
+  ok('…and it holds at desktop width too — three controls, in order, no overflow',
+    !wide.err && !!wide.sel && wide.sel.w > 120 && wide.sel.vis &&
+    !!wide.mode && wide.mode.w > 60 && wide.mode.vis &&
+    !!wide.loop && wide.loop.w > 40 && wide.loop.vis &&
+    wide.mode.x > wide.sel.x && wide.loop.x > wide.mode.x &&
+    wide.overflow <= 0 && wide.docOverflow <= 0,
+    JSON.stringify(wide));
+
   ok('no page errors', errs.length === 0, errs.join(' | '));
   console.log('\nprobe: ' + pass + ' passed, ' + fail + ' failed');
   await browser.close();

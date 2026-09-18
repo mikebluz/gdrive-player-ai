@@ -343,6 +343,46 @@ const labelsOf = () => {
     !closeBox.err && closeBox.sumOverlap === false && closeBox.tabOverlaps === 0 &&
     closeBox.self, JSON.stringify(closeBox));
 
+  // ── CHAIN TOGGLES OFF ─────────────────────────────────────
+  // It sits beside the picker rather than inside it, so it reads as a switch —
+  // and a switch that will not switch off was the report. A second press goes
+  // back to whichever stage the dropdown is showing.
+  const chainToggle = await page.evaluate(async () => {
+    const press = async () => {
+      const b = document.querySelector('.v2-layer .v2-pop-tabs .v2-chainbtn');
+      b.scrollIntoView({ block: 'center' });
+      b.click();
+      await new Promise((r) => setTimeout(r, 450));
+    };
+    const state = () => {
+      const b = document.querySelector('.v2-layer .v2-pop-tabs .v2-chainbtn');
+      const pane = document.querySelector('.v2-layer .v2-pop-pane');
+      // VISIBLE rows, not present ones. A tab's pane is HIDDEN, never removed,
+      // so `querySelectorAll(...).length` is true in every state and the check
+      // passes whatever the button does.
+      return { on: b.classList.contains('on'),
+               chainRows: [...pane.querySelectorAll('.v2-fxstage')]
+                 .some((n) => getComputedStyle(n).display !== 'none' && n.offsetParent),
+               pick: (document.querySelector('.v2-layer .v2-fxpick') || {}).value || null };
+    };
+    // make sure it starts CLOSED
+    if (state().on) await press();
+    const before = state();
+    await press();
+    const open = state();
+    await press();
+    const closed = state();
+    return { before, open, closed };
+  });
+  ok('the Chain button toggles — a second press closes it again',
+    chainToggle.before.on === false &&
+    chainToggle.open.on === true && chainToggle.open.chainRows === true &&
+    chainToggle.closed.on === false && chainToggle.closed.chainRows === false,
+    JSON.stringify(chainToggle));
+  ok('…and closing lands on the stage the dropdown is showing',
+    !!chainToggle.closed.pick && chainToggle.closed.pick !== 'Chain',
+    JSON.stringify(chainToggle.closed));
+
   ok('no page errors', errs.length === 0, errs.join(' | '));
   console.log('\nprobe: ' + pass + ' passed, ' + fail + ' failed');
   await browser.close();

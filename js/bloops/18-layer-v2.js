@@ -15571,7 +15571,25 @@
             } catch (e) {}
             return;
           }
-          POP.tab = ptab.getAttribute('data-tab');
+          const wantTab = ptab.getAttribute('data-tab');
+          // CHAIN TOGGLES. It sits beside the stage picker rather than inside
+          // it, so it reads as a switch — and a switch that will not switch off
+          // is the report. Pressing it while it is already open goes BACK to
+          // whichever stage the dropdown is showing, which is the thing it was
+          // covering. Every other tab keeps plain tab behaviour: they are the
+          // list's own entries and there is nothing to go back to.
+          if (wantTab === 'Chain' && POP.tab === 'Chain' &&
+              ptab.classList.contains('v2-chainbtn')) {
+            let back = null;
+            try {
+              const fp = ctx.card.querySelector('.v2-fxpick');
+              if (fp && fp.value) back = fp.value;
+            } catch (e) {}
+            POP.tab = back || null;      // null → syncSheet falls to the first visible tab
+            popSync(ctx.card, ctx.L);
+            return;
+          }
+          POP.tab = wantTab;
           popSync(ctx.card, ctx.L);
           return;
         }

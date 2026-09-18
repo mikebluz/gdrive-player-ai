@@ -156,6 +156,14 @@
   ("what does this dist readout mean"). Data keys stay forever for save-compat; every SURFACE says the
   control's own name (`FX_LABEL`, which must mirror the tab names — the tab is where a reader goes
   looking after seeing the summary).
+- **A TAB PANE IS HIDDEN, NEVER REMOVED — so `querySelectorAll(sel).length` is true in every state.**
+  A check written that way passes whatever the control does; three checks in one session measured
+  PRESENCE where they meant VISIBILITY. Filter on `getComputedStyle(n).display !== 'none' &&
+  n.offsetParent` — the same test the reachability rule uses.
+- **A BUTTON THAT SITS OUTSIDE A PICKER READS AS A SWITCH, so it must switch OFF.** Chain was a tab
+  rendered beside the FX dropdown; tabs do not un-select, and it was reported as "not toggling off".
+  A second press goes back to what it was covering. Plain tabs INSIDE a list keep tab behaviour —
+  there is nothing to go back to there.
 - **A tap-to-cycle number is a bug**; so is a control that is absent in some states. **Render it and
   DISABLE it**, with the reason in the title — a conditionally-rendered control cannot be found,
   learned, or asked about. A press that cannot act should REFUSE AND EXPLAIN rather than do nothing.

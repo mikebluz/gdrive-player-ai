@@ -11451,10 +11451,11 @@
          cascade and stays 10px, which left room for only THREE chips per row
          (measured). The documented single-class trap. */
       .v2-layer .v2-pop-head, .v2-layer .v2-secpop-head { gap: 6px; }
-      /* THREE PER ROW at phone width — two rows of large targets beats one
-         row of chips whose labels wrap to three lines. */
+      /* FOUR PER ROW (2026-09-17, the user's own order): eight sections in two
+         rows of four — Instrument · Generate · Live · Shape, then Time · Mix ·
+         FX · Bank. It was three per row, which split the pairs across lines. */
       .v2-pop-head .v2-gototab, .v2-secpop-head .v2-gototab {
-        flex: 1 1 calc(33.333% - 4px); min-width: 0; padding: 6px 2px; font-size: 0.72rem;
+        flex: 1 1 calc(25% - 5px); min-width: 0; padding: 6px 1px; font-size: 0.68rem;
       }
       .v2-pop-head .v2-pop-xtra, .v2-secpop-head .v2-pop-xtra { flex: 0 1 auto; margin-left: auto; gap: 5px; }
       /* the per-part trio and the summary keep their own full-width lines below */
@@ -15625,7 +15626,9 @@
 .v2-gototab {
   /* EQUAL WIDTHS that fill the row — `flex: 1 1 0` (basis ZERO, not auto) or
      the chips size to their text and "Instrument" takes three times "FX". */
-  flex: 1 1 96px; min-width: 90px;
+  /* FOUR PER ROW — eight sections, two rows (basis 25%, not a px width, or
+     "Instrument" sizes to its text and the rows come out 3 + 3 + 2). */
+  flex: 1 1 calc(25% - 4px); min-width: 0;
   padding: 6px 8px; min-height: 44px;
   border: 1px solid #2d2d3f; border-radius: 8px;
   background: #0a0a14; color: #a0aec0; cursor: pointer;
@@ -15637,16 +15640,37 @@
   display: flex; align-items: center; justify-content: center;
   touch-action: manipulation;
 }
-.v2-gototab:hover { border-color: #9f7aea; color: #d6bcfa; }
-/* ✺ LIVE wears the VARIES badge's amber — the section is where everything that
-   makes a pass differ lives, and the colour is how the badge points at it */
-.v2-gototab[data-goto="Live"] { border-color: rgba(246, 173, 85, 0.55); color: #f6ad55; }
-.v2-gototab[data-goto="Live"]:hover { border-color: #f6ad55; color: #fbd38d; }
-.v2-gototab[data-goto="Live"].on { background: #f6ad55; border-color: #f6ad55; color: #12121f; }
-.v2-gototab.on { background: #9f7aea; border-color: #9f7aea; color: #12121f; }
-/* a section whose summary is not its neutral — "which sections does this layer
-   actually use", the one thing the button grid said that the tabs did not */
-.v2-gototab.v2-live { border-color: rgba(159, 122, 234, 0.55); color: #d6bcfa; }
+/* ── ONE COLOUR PER SECTION (2026-09-17, user: "each button should be a
+   different color") ─────────────────────────────────────────────────────────
+   Eight buttons, eight hues, so the row is recognised by POSITION AND COLOUR
+   rather than read word by word every time. ✺ Playing keeps the VARIES badge's
+   amber (the badge points at that section) and ✦ Shape its lavender — the two
+   that already meant something. Each button carries its hue as `--sec`, so the
+   state rules below are written ONCE. */
+.v2-gototab[data-goto="Instrument"] { --sec: #4fd1c5; }   /* teal — what makes the sound */
+.v2-gototab[data-goto="Generate"]   { --sec: #90cdf4; }   /* blue — what the notes are */
+.v2-gototab[data-goto="Playing"]    { --sec: #f6ad55; }   /* amber — the VARIES badge's own */
+.v2-gototab[data-goto="Shape"]      { --sec: #d6bcfa; }   /* lavender — how a note is struck */
+.v2-gototab[data-goto="Time"]       { --sec: #9ae6b4; }   /* green — the clock */
+.v2-gototab[data-goto="Mix"]        { --sec: #f687b3; }   /* pink — level and placement */
+.v2-gototab[data-goto="FX"]         { --sec: #fc8181; }   /* red — the treatments */
+.v2-gototab[data-goto="Bank"]       { --sec: #faf089; }   /* yellow — saved phrases */
+.v2-gototab { color: var(--sec, #a0aec0); border-color: rgba(255, 255, 255, 0.14); }
+.v2-gototab:hover { border-color: var(--sec, #9f7aea); }
+/* OPEN = filled with its own hue, and the label goes dark so it stays legible */
+.v2-gototab.on { background: var(--sec, #9f7aea); border-color: var(--sec, #9f7aea); color: #12121f; }
+/* A SECTION THIS LAYER ACTUALLY USES — "which sections does this layer use",
+   the one thing the button grid said that the tabs did not. It gets a DOT in
+   its own colour, never a border or a ground: recolouring it collided with the
+   per-section hue, and tinting it read as "this one is open" (reported — "why
+   is Shape highlighted differently from all others"). Only `.on` means open. */
+.v2-gototab { position: relative; }
+.v2-gototab.v2-live::after {
+  content: ''; position: absolute; top: 5px; right: 5px;
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--sec, #9f7aea);
+}
+.v2-gototab.v2-live.on::after { background: #12121f; }
 /* AN OPEN COMPOSE SESSION is a MODE, not a provenance — `.on` says "this
    material made the notes" and had two writers, so ✎ Composed stayed lit on a
    part Groundwork had made. Its own mark, and it reads as active without
@@ -16322,3 +16346,95 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
 .ambient-schedgrid .sch-playing { box-shadow: 0 0 0 2px #48bb78; }
 /* ⏺ Temp punch-in — red while armed, like a record button */
 .ambient-schedgrid .sch-temp.on { border-color: #fc8181; color: #fff5f5; background: rgba(245,101,101,0.28); }
+
+/* ── ⚙ Deep ▸ Fine-tune tabs (2026-09-17) ─────────────────────────────────
+   Rows carry `v2-ft-<tab>`; the card carries `v2-ftt-<tab>`. A row off the open
+   tab is hidden with !important so it beats both `.ambient-ctrl`'s display and
+   the gate pass's inline '' — the gate's inline `none` still hides by shape. */
+.v2-layer:not(.v2-ftt-rhythm) .v2-genrows .ambient-ctrl.v2-ft-rhythm,
+.v2-layer:not(.v2-ftt-notes) .v2-genrows .ambient-ctrl.v2-ft-notes,
+.v2-layer:not(.v2-ftt-form) .v2-genrows .ambient-ctrl.v2-ft-form,
+.v2-layer:not(.v2-ftt-take) .v2-genrows .ambient-ctrl.v2-ft-take { display: none !important; }
+.v2-layer .v2-genrows .v2-fttabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin-top: 6px; }
+.v2-layer .v2-genrows .v2-fttab { display: flex; flex-direction: column; align-items: center; gap: 1px;
+  min-height: 44px; min-width: 0; padding: 4px 2px; white-space: normal; text-align: center; }
+.v2-layer .v2-genrows .v2-fttab .v2-ftlab { font-size: 0.78rem; overflow-wrap: anywhere; }
+.v2-layer .v2-genrows .v2-fttab .v2-ftn { font-size: 0.62rem; color: #8a8aa8; }
+.v2-layer .v2-genrows .v2-fttab.on .v2-ftn { color: inherit; opacity: 0.75; }
+.v2-layer .v2-genrows .v2-fttab .v2-ftdot { font-style: normal; color: #f6ad55; margin-left: 3px; font-size: 0.6rem; vertical-align: 2px; }
+.v2-layer .v2-genrows .v2-fttabs .v2-ftq { grid-column: 1 / -1; }
+.v2-layer .v2-genrows .v2-ftna { display: flex; flex-direction: column; gap: 2px; margin: 2px 0; }
+.v2-layer .v2-genrows .v2-ftnabtn { align-self: flex-start; background: none; border: 0; padding: 4px 0; min-height: 32px;
+  color: #8a8aa8; font: inherit; font-size: 0.74rem; cursor: pointer; text-align: left; }
+.v2-layer .v2-genrows .v2-ftlinks { display: block; border-top: 1px dashed #2d2d3f; padding-top: 6px; margin-top: 2px; }
+/* Tuned — one amber chip per knob moved away from the Character */
+.v2-layer .v2-genrows .v2-tunedrow .v2-tunedchips { display: flex; flex-wrap: wrap; gap: 4px; grid-column: 2 / -1; min-width: 0; }
+.v2-layer .v2-genrows .v2-tunedchip { display: inline-flex; align-items: center; gap: 2px; font-size: 0.72rem; color: #f6ad55;
+  background: rgba(246,173,85,0.1); border: 1px solid rgba(246,173,85,0.45); border-radius: 999px; padding: 1px 2px 1px 8px;
+  max-width: 100%; overflow-wrap: anywhere; }
+.v2-layer .v2-genrows .v2-tunedx { background: none; border: 0; color: inherit; cursor: pointer; font-size: 0.78rem;
+  min-width: 28px; min-height: 28px; padding: 0 4px; }
+/* ⚠ Advanced: recipe */
+.v2-so-recipe .v2-sub-recipe { display: grid; }
+.v2-layer.v2-so-recipe .v2-genrows .ambient-ctrl.v2-recipewarn { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.v2-layer .v2-genrows .v2-recipesays.v2-recipeoff { color: #fbd38d; }
+.v2-layer .v2-genrows .v2-recipesum { color: #f6ad55; }
+/* ⚙ Deep reads as three numbered steps — Shape · the knobs that matter ·
+   Fine-tune. The KNOBS SCROLL and the shape does not, so the scrolling band
+   gets its own recessed ground (with inset edges that say it scrolls) and each
+   step gets a full-width bar that STICKS to the top of that band — a heading
+   you scroll past leaves you guessing which step you are in. */
+.v2-layer .v2-genrows { background: #09090f; box-shadow: inset 0 8px 10px -10px #000, inset 0 -8px 10px -10px #000; }
+.v2-layer .v2-genzone {
+  display: flex; align-items: center; gap: 7px;
+  text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.66rem; color: #e2e8f0;
+}
+/* the numeral is the step, so it reads as one — a chip, not a digit in a sentence */
+.v2-layer .v2-genzone .v2-zonen {
+  flex: 0 0 auto; width: 17px; height: 17px; border-radius: 5px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(214,188,250,0.18); border: 1px solid rgba(214,188,250,0.5);
+  color: #d6bcfa; font-size: 0.64rem; letter-spacing: 0;
+}
+.v2-layer .v2-genpop > .v2-genzone {
+  padding: 7px 14px; margin: 0 0 6px;
+  background: #16162a; border-bottom: 1px solid #2a2a3c;
+}
+.v2-layer .v2-genrows .v2-genzone {
+  position: sticky; top: -4px; z-index: 2;
+  margin: 12px -14px 7px; padding: 7px 14px;
+  background: #16162a; border-top: 1px solid #2a2a3c; border-bottom: 1px solid #2a2a3c;
+}
+.v2-layer .v2-genrows .v2-genzone:first-child { margin-top: -4px; border-top: 0; }
+.v2-layer .v2-genrows .v2-genzone .v2-zonefor { text-transform: none; letter-spacing: 0; color: #8a8aa8; font-weight: 500; }
+.v2-layer .v2-genrows .v2-tunedrow .v2-tunedsays { grid-column: 2 / -1; }
+
+/* ⚙ Deep's five shape doors are one dropdown now — the buttons stay in the DOM
+   as the press target (the select clicks them), so they must not be measurable
+   chrome: display:none, never visibility/opacity. */
+.v2-layer .v2-shapepop .v2-genshapes { display: none; }
+.v2-layer .v2-shapepop .v2-shaperow { padding: 0 14px 8px; }
+.v2-layer .v2-shapepop select.ambient-select.v2-shapepick {
+  width: 100%; min-width: 0; min-height: 44px; font-size: 0.86rem; font-weight: 600;
+  background: #1c1c33; border-color: #3a3160; color: #e9e4ff;
+}
+/* ⚙ Deep ▸ 🎲 Take: three macro sliders over the nine dice */
+.v2-layer .v2-genrows .ambient-ctrl.v2-dmrow input[type="range"] { width: 100%; min-width: 0; }
+.v2-layer .v2-genrows .v2-dmhint { grid-column: 2 / -1; margin-top: -4px; }
+.v2-layer .v2-genrows .v2-dmv { justify-self: end; white-space: nowrap; }
+.v2-so-dice .v2-sub-dice { display: grid; }
+.v2-layer .v2-genrows .v2-dicesum { color: #a0aec0; }
+/* ↺ All to default · 🎲 Surprise me — the two verbs over one set of dice */
+.v2-layer .v2-genrows .ambient-ctrl.v2-diceall .ambient-seg-row { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 5px; }
+.v2-layer .ambient-ctrl.v2-diceall .v2-dall { min-height: 36px; flex: 1 1 auto; white-space: nowrap; }
+/* WHO AUTHORED THE NOTES — its own chip beside VARIES/FIXED, so the two
+   questions (are the notes frozen · does a pass differ) never share a word
+   again. Only FROZEN gets a chip — making notes from the rules is the ordinary
+   case and needs no word. */
+.v2-madebadge { font-weight: 800; letter-spacing: 0.04em; margin-right: 2px; }
+.v2-madebadge.v2-sum-frozen { color: #90cdf4; }
+/* the Rules ⟷ Edited switch sits in the take bar; the state you are in is lit */
+.v2-layer .v2-madeby { display: inline-flex; gap: 4px; flex: 1 1 auto; min-width: 0; }
+.v2-layer .v2-madeby .ambient-seg { flex: 1 1 0; min-width: 0; white-space: nowrap; }
+/* the switch names its question — two lit-or-not chips alone read as commands */
+.v2-layer .v2-madeby .v2-madelab { align-self: center; white-space: nowrap; flex: 0 0 auto; margin-right: 2px; }

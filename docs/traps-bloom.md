@@ -93,6 +93,36 @@
   `_ambPartSeqCellSpec` + `_ambPsqStore`, or "tap again to clear" never matches a sliced cell. An edit to one
   round must widen `prog.arrGrid` to the rounds on screen first (`editRound`), or every round shares column 0.
 
+- **⚙ Deep ▸ Fine-tune is four TABS of flat rows** (`ftrows(tab, …)` → `v2-ft v2-ft-<tab>`; the card holds
+  `v2-ftt-<tab>`, kept across rebuilds with the `v2-so-*` folds). Off-tab rows hide by CSS `!important`;
+  inline display stays `gateRow`'s. Tab counts, the "don't apply" list, Tuned chips and the recipe warning
+  are all filled in `genSync` AFTER gating — a new Deep row needs only `ftrows` + a `data-v2when`.
+- **Deep or ✺ Live: trace the seed, not the label.** Anything drawn from `seedBase` is per TAKE (Deep)
+  unless `part.vary` is on; per-pass means seeded on play time, chord occurrence, or the shared stream.
+
+- **STOCHASTIC PLACEMENT NEEDS MUSICAL FLOORS, not millisecond constants.** Twist packed a fixed 120 ms
+  burst at any tempo and Phrasing scaled its cells off the AVERAGE span: measured 20 pulses → 67 notes
+  with 20–80 ms notes 52 ms apart. Both now subdivide the onset's OWN slot, floored at a 16th triplet of
+  the bar (`MIN_GAP`/`MIN_MS`, ≥60 ms); a ghost's floor is a 32nd because it is a grace note. A burst
+  under ⚇ Mix also forces single notes — chord picks inside it multiplied the note count.
+- **A SHIM THAT SKIPS A BRANCH SKIPS ITS RULES.** Twist's burst and Phrasing's cell shim straight to
+  `walk`, so they bypassed the `mixed` branch: they kept the coin flip (11 chords where the structure
+  wanted 4), scattered the chord pool, and sat an OCTAVE below the line (19-semitone "leaps"). Every such
+  shim must carry `_mixLine` AND be called with the line's register (`lineReg`).
+- **THE DICE GET A PER-BAR BUDGET.** Added notes are marked `xtra` (burst q>0, cell q>0, ghosts) and kept
+  in time order up to a third of the bar's own onsets, then dropped — so Twist/Phrasing/Ghosts colour a
+  bar and can never redraw it. ⚙ Deep's 🎲 Take shows three macros (`DICE`, `L.dice`) that WRITE those
+  fields; the nine dice are the same data behind ▸ Advanced, and a hand-edited die makes its macro read
+  "custom".
+- **⚇ Mix: structure picks WHERE a chord may land, `pitch.mix` picks HOW MANY.** Forcing every structural
+  position ignored the slider (10 onsets → 8 chords). The slider's ends stay absolute (0 = no chords,
+  100 = all). A stepping line (`pitch.walkMode: 'step'`) must walk the KEY SCALE, not the layer's tone
+  set: under a progression that set is a chord POOL, so one "step" is a 3rd — measured 8-semitone mean
+  leaps, 1.4 after. `lineUp` puts it an octave above the chords; `_mixArriveAt` makes the note before a
+  change take the nearest incoming chord tone. ABSENT MEANS ALL THREE (2026-09-17): shipping them
+  opt-in meant the part the user was listening to kept the coin flip, and the fix read as no fix at all.
+  The old behaviour is the named choice `mixAt:'any'` / `walkMode:'scatter'` / `lineUp:0`.
+
 ### Bloom: emit, capture, freeze / Write
 
 - **`window._ambEmitKey` is stamped by the CAPTURE-SINK TEE inside `playNote`**, not by emitters — a

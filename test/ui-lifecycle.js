@@ -2643,10 +2643,13 @@ const ok = (name, cond, detail) => {
     };
     const o = { opened: await openPat() };
     const pop = () => card().querySelector('.v2-shapepop');
-    // Rhythm · Steps · Push sit behind ▸ Fine-tune since 2026-09-16 — press
-    // the fold's own button, as a user does
-    { const fb = pop().querySelector('.v2-discbtn[data-disc="gmore"]');
-      if (fb && !card().classList.contains('v2-so-gmore')) { fb.click(); await wait(220); } }
+    // RESTATED 2026-09-17 (the Deep reorganisation): Steps · Push are on
+    // Fine-tune's Rhythm TAB, and the Rhythm recipe is inside ⚠ Advanced:
+    // recipe — press the tab and the fold's own button, as a user does
+    { const tb = pop().querySelector('.v2-fttab[data-ft="rhythm"]');
+      if (tb && !card().classList.contains('v2-ftt-rhythm')) { tb.click(); await wait(200); }
+      const fb = pop().querySelector('.v2-discbtn[data-disc="recipe"]');
+      if (fb && !card().classList.contains('v2-so-recipe')) { fb.click(); await wait(220); } }
     const rowsOf = () => [...pop().querySelectorAll('.v2-genrows .ambient-ctrl')]
       .filter((x) => x.getBoundingClientRect().height > 0);
     const rowFor = (f) => rowsOf().find((x) => x.querySelector('[data-f="' + f + '"]'));
@@ -2693,8 +2696,8 @@ const ok = (name, cond, detail) => {
     // actually shows, with the panel closed so nothing overlaps it.
     // …and the fold is STILL OPEN after both rebuilds (a fold that shut under
     // the finger read as the knob vanishing)
-    o.foldHeld = card().classList.contains('v2-so-gmore');
-    { const fb = pop().querySelector('.v2-discbtn[data-disc="gmore"]'); if (fb && o.foldHeld) fb.click(); }
+    o.foldHeld = card().classList.contains('v2-so-recipe') && card().classList.contains('v2-ftt-rhythm');
+    { const fb = pop().querySelector('.v2-discbtn[data-disc="recipe"]'); if (fb && card().classList.contains('v2-so-recipe')) fb.click(); }
     const gc = card().querySelector('.v2-shapepop .v2-gendone'); if (gc) gc.click();
     await wait(240);
     window.__sec('Generate'); await wait(240);
@@ -3635,9 +3638,9 @@ const ok = (name, cond, detail) => {
     const wasRhythm = L().part.rhythm.kind;
     card().querySelector('.v2-shapepop .v2-mkpart[data-mk="ground"]').click(); await wait(500);
     card().classList.remove('collapsed');
-    // the per-change overlay sits behind ▸ Fine-tune since 2026-09-16
-    { const fb = card().querySelector('.v2-shapepop .v2-discbtn[data-disc="gmore"]');
-      if (fb && !card().classList.contains('v2-so-gmore')) { fb.click(); await wait(220); } }
+    // the per-change overlay is on Fine-tune's Repeats tab since 2026-09-17
+    { const tb = card().querySelector('.v2-shapepop .v2-fttab[data-ft="form"]');
+      if (tb && !card().classList.contains('v2-ftt-form')) { tb.click(); await wait(220); } }
     const r = card().querySelector('.v2-shapepop').getBoundingClientRect();
     o.onScreen = r.width > 0 && r.height > 0 && r.top >= 40 && r.bottom <= innerHeight + 1;
     o.noUseButton = document.querySelectorAll('.v2-layer .v2-mkground').length === 0;
@@ -5505,14 +5508,19 @@ const ok = (name, cond, detail) => {
     o.fits = pr.width > 0 && pr.top >= 40 && pr.bottom <= innerHeight + 1;
     // the fold's open state now survives rebuilds, so an earlier check may
     // have left it open — shut it through its own button first
-    if (card().classList.contains('v2-so-gmore')) {
-      const f0 = pop().querySelector('.v2-discbtn[data-disc="gmore"]'); if (f0) { f0.click(); await wait(200); } }
+    if (card().classList.contains('v2-so-recipe')) {
+      const f0 = pop().querySelector('.v2-discbtn[data-disc="recipe"]'); if (f0) { f0.click(); await wait(200); } }
+    { const t0 = pop().querySelector('.v2-fttab[data-ft="rhythm"]'); if (t0) { t0.click(); await wait(200); } }
     // THE MAIN TIER IS SHORT (2026-09-16, "overloaded… simplify"): measured on
-    // the euclid × chord part before anything is opened
-    o.mainRows = rows();
-    // the axes live behind ▸ Fine-tune now — open it for (1)–(3), shut it for (4)
-    const db0 = () => document.querySelector('.v2-layer .v2-shapepop .v2-discbtn[data-disc="gmore"]');
-    if (db0() && !card().classList.contains('v2-so-gmore')) { db0().click(); await wait(220); }
+    // the euclid × chord part before anything is opened. RESTATED 2026-09-17:
+    // Fine-tune is four TABS now, not a fold, so the main tier is every row
+    // that is neither on a tab nor inside ⚠ Advanced: recipe.
+    o.mainRows = [...pop().querySelectorAll('.v2-genrows .ambient-ctrl:not(.v2-ft):not(.v2-sub)')]
+      .filter((x) => x.getBoundingClientRect().height > 0)
+      .map((x) => ((x.querySelector('label') || {}).textContent || '?').trim());
+    // the axes live behind ⚠ Advanced: recipe now — open it for (1)–(3)
+    const db0 = () => document.querySelector('.v2-layer .v2-shapepop .v2-discbtn[data-disc="recipe"]');
+    if (db0() && !card().classList.contains('v2-so-recipe')) { db0().click(); await wait(220); }
     o.noStaticPara = pop().querySelectorAll('.v2-genmodel').length === 0;
     // (1)+(2) THE RHYTHM AXIS
     const rs = () => pop().querySelector('.v2-genrows [data-f="part.rhythm.kind"]');
@@ -5577,25 +5585,29 @@ const ok = (name, cond, detail) => {
     o.harmLitBoth = hc.length >= 2 &&
       hc.filter((x) => x.closest('.v2-genwrap')).every((x) => x.classList.contains('on')) &&
       hc.filter((x) => !x.closest('.v2-genwrap')).every((x) => !x.classList.contains('on'));
-    // (4) THE FOLD
-    const db = () => document.querySelector('.v2-layer .v2-shapepop .v2-discbtn[data-disc="gmore"]');
-    if (document.querySelector('.v2-layer').classList.contains('v2-so-gmore') && db()) { db().click(); await wait(220); }
-    o.foldIsHere = !!db();
-    const shut = rows().length;
-    if (db()) db().click();
+    // (4) THE TABS (RESTATED 2026-09-17 — was one ▸ Fine-tune fold): a knob
+    // shows on its own tab and nowhere else
+    const tab = (k) => document.querySelector('.v2-layer .v2-shapepop .v2-fttab[data-ft="' + k + '"]');
+    o.foldIsHere = !!tab('rhythm') && !!tab('take');
+    if (tab('take')) { tab('take').click(); await wait(220); }
+    const shutRows = rows(), shut = shutRows.length;
+    if (tab('rhythm')) tab('rhythm').click();
     await wait(240);
     const open = rows();
-    o.foldOpens = open.length > shut && open.indexOf('Max events') >= 0;
+    o.foldOpens = shutRows.indexOf('Max events') < 0 && open.indexOf('Max events') >= 0;
     const me = document.querySelector('.v2-layer .v2-genrows [data-f="part.shape.maxEvents"]');
     if (me) { me.value = '7'; me.dispatchEvent(new Event('input', { bubbles: true })); await wait(260); }
     o.foldCommits = (L().part.shape.maxEvents | 0) === 7;
-    // A GATED-OUT ROW INSIDE AN OPEN FOLD STAYS HIDDEN — Roam reads only
-    // fixed/stack pitch, and this part is a series
+    // A GATED-OUT ROW ON THE OPEN TAB STAYS HIDDEN — Roam reads only
+    // fixed/stack/chord pitch, and this part is a series
+    if (tab('notes')) { tab('notes').click(); await wait(220); }
     const roam = document.querySelector('.v2-layer .v2-genrows [data-f="part.pitch.roam"]');
     o.gateBeatsFold = !!roam && roam.closest('.ambient-ctrl').getBoundingClientRect().height === 0;
-    if (db()) db().click();
+    if (tab('take')) tab('take').click();
     await wait(220);
-    o.foldShuts = rows().length === shut;
+    o.foldShuts = rows().indexOf('Max events') < 0;
+    { const f1 = document.querySelector('.v2-layer .v2-shapepop .v2-discbtn[data-disc="recipe"]');
+      if (f1 && document.querySelector('.v2-layer').classList.contains('v2-so-recipe')) { f1.click(); await wait(200); } }
     // THE SELECT IS RE-SYNCED. 'drawn' is internal and has no option, so a
     // select left on it renders BLANK — and a blank select is what invites the
     // pick that drifts the rules (the Groundwork bug). Changed WITHOUT a
@@ -5632,11 +5644,12 @@ const ok = (name, cond, detail) => {
     genAxisRun.harmIsHere && genAxisRun.harmWrote && genAxisRun.harmLitBoth &&
     genAxisRun.foldIsHere && genAxisRun.foldOpens && genAxisRun.foldCommits &&
     // RESTATED 2026-09-16: the shut panel is the SHORT tier — at most five rows
-    // including the ▸ Fine-tune header (it was ≥8, when the complaint was the
-    // opposite one)
+    // (it was ≥8, when the complaint was the opposite one). RESTATED 2026-09-17:
+    // plus the Tuned line, and it ends on the ⚠ Advanced: recipe fold
     genAxisRun.gateBeatsFold && genAxisRun.foldShuts &&
-    genAxisRun.mainRows.length >= 3 && genAxisRun.mainRows.length <= 5 &&
-    genAxisRun.mainRows[genAxisRun.mainRows.length - 1] === 'Fine-tune' &&
+    genAxisRun.mainRows.length >= 3 && genAxisRun.mainRows.length <= 6 &&
+    genAxisRun.mainRows.some((x) => x === 'Tuned' || x === 'Changed') &&
+    genAxisRun.mainRows[genAxisRun.mainRows.length - 1] === '\u26a0 Advanced: recipe' &&
     genAxisRun.drawnSynced,
     JSON.stringify(genAxisRun));
 
@@ -8852,10 +8865,14 @@ const ok = (name, cond, detail) => {
     }
     const o = { opened: card().classList.contains('v2-genopen') };
     let el = card().querySelector('.v2-shapepop .v2-genrows [data-f="' + f + '"]');
-    // a knob behind ▸ Fine-tune is reached by pressing the fold open
+    // a knob on another Fine-tune tab, or inside ⚠ Advanced: recipe, is
+    // reached by pressing that tab / fold (RESTATED 2026-09-17: was one fold)
     if (el && el.getBoundingClientRect().height === 0) {
-      const fb = card().querySelector('.v2-shapepop .v2-discbtn[data-disc="gmore"]');
-      if (fb) { fb.click(); await wait(200); }
+      const row = el.closest('.ambient-ctrl');
+      const ftk = row && [...row.classList].find((k) => /^v2-ft-/.test(k));
+      if (ftk) { const tb = card().querySelector('.v2-shapepop .v2-fttab[data-ft="' + ftk.slice(6) + '"]'); if (tb) { tb.click(); await wait(200); } }
+      if (row && row.classList.contains('v2-sub-recipe') && !card().classList.contains('v2-so-recipe')) {
+        const fb = card().querySelector('.v2-shapepop .v2-discbtn[data-disc="recipe"]'); if (fb) { fb.click(); await wait(200); } }
       el = card().querySelector('.v2-shapepop .v2-genrows [data-f="' + f + '"]');
     }
     o.found = !!el;
@@ -8864,8 +8881,8 @@ const ok = (name, cond, detail) => {
     await wait(320);
     // the commit may have re-rendered the card; the panel survives it (GENPOP
     // is module state re-applied on render), so close it by its own ✕
-    if (card().classList.contains('v2-so-gmore')) {
-      const fb = card().querySelector('.v2-shapepop .v2-discbtn[data-disc="gmore"]'); if (fb) fb.click();
+    if (card().classList.contains('v2-so-recipe')) {
+      const fb = card().querySelector('.v2-shapepop .v2-discbtn[data-disc="recipe"]'); if (fb) fb.click();
     }
     const gc = document.querySelector('.v2-layer .v2-shapepop .v2-gendone');
     if (gc) gc.click();
@@ -14284,6 +14301,15 @@ const ok = (name, cond, detail) => {
     L2.twist = 100; E.getCfg(); E._cfg = E.getCfg();
     const c2 = cap();
     out.twistN = c2.t.length; out.twistAt = c2.t.slice(0, 3).join(',');
+    // RESTATED 2026-09-17 — a burst is a SUBDIVISION OF ITS OWN SLOT, not a
+    // fixed 120 ms stutter (user: "a lot of these notes are too small and
+    // rapidly placed, it's not musical"). So the claim is the floor and the
+    // ceiling: every gap inside the first burst is at least a 16th triplet of
+    // the bar and no wider than the slot it subdivides. 4 pulses over 1 bar at
+    // 120 bpm = a 0.5 s slot, and the floor is 2/24 s ≈ 0.083.
+    const gaps2 = c2.t.slice(1, 4).map((v, i) => +(v - c2.t[i]).toFixed(3)).filter((g) => g > 0);
+    out.burstGaps = gaps2.join(',');
+    out.burstFloorOK = gaps2.length > 0 && gaps2.every((g) => g >= 0.082 && g <= 0.5);
     out.twistAgain = cap().t.length;
     delete L2.twist;
     L2.motion = 100; E.getCfg(); E._cfg = E.getCfg();
@@ -14299,9 +14325,9 @@ const ok = (name, cond, detail) => {
     return out;
   });
   // A burst is EXTRA notes packed tight, not the same notes moved.
-  ok('twist bursts the line into packed runs',
+  ok('twist bursts the line into packed runs — inside its own slot, never finer than a 16th triplet',
     twm.plainN === 4 && twm.plainAt === '0,0.5,1,1.5' &&
-    twm.twistN > twm.plainN && /^0,0\.12/.test(twm.twistAt), JSON.stringify(twm));
+    twm.twistN > twm.plainN && /^0,0\./.test(twm.twistAt) && twm.burstFloorOK, JSON.stringify(twm));
   ok('and the burst replays for a take', twm.twistN === twm.twistAgain, JSON.stringify(twm));
   // Motion ADDS to `params.detune` — v1 warns that `fine` writes the same field,
   // so replacing it would flatten the two together.

@@ -38908,6 +38908,7 @@
       // place both the build and the drag repaint.
       chance: '%', mix: '%', stutter: '%', lenRatio: '%', slip: '%', contour: '%',
       syncop: '%', variety: '%', roam: '%', drift: '%', rateVar: '%',
+      phrasing: '%', ghosts: '%', startVary: '%',
       pulses: ' onsets', span: ' tones', octaves: ' oct', lines: ' lines',
       voices: ' notes', steps: ' steps', rotate: ' steps',
     };
@@ -42343,6 +42344,10 @@
         } catch (e) {}
         // A note that cannot reach the next boundary needs no work, and this is
         // what keeps percussive layers off the bisection entirely.
+        // A NOTE THAT SAYS IT IS A LINE is never choked — ⚇ Mix is a chord
+        // part by pitch kind, but half its onsets are single line notes and
+        // cutting those at every change made slivers (v2 marks them).
+        if (params && params._chokeSkip) return durMs;
         const bpm = (cfg.bpm > 0) ? cfg.bpm : _ambBpm();
         const barSec = (60 / Math.max(20, bpm)) * 4;
         // THE NOTE, NOT ITS RELEASE. The tail used to be `dur + release`, so a
@@ -42371,7 +42376,11 @@
         const beat = barSec / 4;
         const allow = Math.min(tail * 0.5, beat);
         if (tail <= room + allow) return durMs;              // it finishes close enough
-        const ms = Math.max(60, Math.round(room * 1000));
+        // NEVER A SLIVER: if the room to the boundary is under a 16th of the
+        // bar, the note RINGS THROUGH instead of being clamped to a stub —
+        // a 60 ms stab on a change reads as a glitch, not as a choke.
+        if (room < barSec / 16) return durMs;
+        const ms = Math.max(Math.round((barSec / 16) * 1000), Math.round(room * 1000));
         // Keep the release INSIDE the shortened note, or the voice collapses to a
         // near-silent stub instead of releasing by the boundary (the bed choke
         // learned this the same way).
@@ -52036,7 +52045,7 @@
             // itself — the chips, their order, and the way in to editing any of
             // them — so it belongs before the things that COLOUR it (Salt) or
             // REORDER it (Order), not after.
-            _ambProgGrpOpen('overview', '\u25a4 Overview', true) +
+            _ambProgGrpOpen('overview', '\u25a4 Parts', false) +
             '<div class="ambient-pov-actions" id="ambient-pov-actions" style="display:none">' +
               // ＋ Add changes is GONE. Its seed list, Create and roman-numeral
               // routes all live in ＋ Part now, which chains them on instead of
@@ -52126,7 +52135,7 @@
             // A SUBSECTION LIKE ITS NEIGHBOURS. It used to be a bare block with no
             // header sitting between two accordions, still wearing the standalone
             // section frame it had as a tab pane — a card with a moat around it,
-            // and nothing naming it. Now it is ▤ Overview · ⏱ Schedule · ⌗ Matrix,
+            // and nothing naming it. Now it is ▤ Parts · ▦ Schedule (v2) · ⏱ Schedule (v1),
             // one grammar for the three. The head toggle is bound by the panel
             // build's own `.ambient-grp-head` sweep — do NOT add a second handler
             // (two would fire and cancel out, the documented double-toggle trap).
@@ -52137,10 +52146,10 @@
             // It replaced ▦ Passes (retired 2026-09-16 — every one of its edits
             // has a door here) and the Scheduler's Coarse modal.
             (E.isLane ? '' :
-              _ambProgGrpOpen('schedgrid', '\u25a6 Schedule', true) +
+              _ambProgGrpOpen('schedgrid', '\u25a6 Schedule (v2)', false) +
               '<div class="ambient-schedgrid" id="ambient-schedgrid"></div>' +
               _ambProgGrpClose()) +
-            _ambProgGrpOpen('sched', '\u23f1 Schedule (old)', true) +
+            _ambProgGrpOpen('sched', '\u23f1 Schedule (v1)', false) +
               '<div class="ambient-sched ambient-sched-inline" id="ambient-sched">' +
                 '<div class="ambient-sched-body" id="ambient-sched-body"></div>' +
               '</div>' +

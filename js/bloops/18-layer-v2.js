@@ -214,7 +214,15 @@
     // `tags` — the same reasons as one word each, for the LIVE badge's readout
     // line; `why` keeps the sentences for the line that sits beside the switches.
     const tags = [];
-    if (L.part.vary) { why.push('the dice are thrown every cycle'); tags.push('notes'); }
+    // …AND ONLY WHERE IT CAN ACT. A WRITTEN part plays its stored list, so the
+    // rules cannot run again — measured: four consecutive cycles identical with
+    // `part.vary` on. Counting it there made the badge say VARIES for a reason
+    // that does nothing, which is the confident-wrong-answer class this readout
+    // exists to prevent (reported: "why does it say VARIES after it's been
+    // written down").
+    if (L.part.vary && L.part.kind !== 'recorded') {
+      why.push('the rules run again every cycle'); tags.push('notes');
+    }
     if (pos(L.humanize)) { why.push('Humanize nudges every note'); tags.push('timing'); }
     if (pos(L.velVar)) { why.push('Vel var moves each note\u2019s level'); tags.push('loudness'); }
     // …and the rest that draw PER PASS — traced to their draw sites (2026-09-16):
@@ -334,7 +342,11 @@
       set: { 'part.pitch.dir': 'updown', 'part.pitch.octaves': 1, 'part.pitch.restart': 1, 'part.pitch.tones': 'triad' } },
     { id: 'outside', shape: 'arp', label: 'Outside in', speed: 8,
       set: { 'part.pitch.dir': 'converge', 'part.pitch.octaves': 2, 'part.pitch.restart': 1, 'part.pitch.tones': '' } },
-    { id: 'melody', shape: 'roll', label: 'Melody', speed: 8, density: 0.625,
+    // "Singable", NOT "Melody" (renamed 2026-09-17, label only — the id stays
+    // `melody` for save-compat): ✨ Quick's shape is called Melody, and one word
+    // for two things is the naming rule's own mistake. It is the stepwise,
+    // moderate-span line beside Busy · Riff · Sparse.
+    { id: 'melody', shape: 'roll', label: 'Singable', speed: 8, density: 0.625,
       set: { 'part.rhythm.rotate': 0, 'part.pitch.span': 4, 'proximity': 60, 'part.pitch.stutter': 10,
              'part.shape.lenRatio': 80, 'part.pitch.motif': '' } },
     { id: 'busy', shape: 'roll', label: 'Busy', speed: 16, density: 0.6,
@@ -347,9 +359,9 @@
       set: { 'part.rhythm.rotate': 0, 'part.pitch.span': 5, 'proximity': 50, 'part.pitch.stutter': 0,
              'part.shape.lenRatio': 100, 'part.pitch.motif': '' } },
     { id: 'mixchg', shape: 'mixed', label: 'Chords on the changes',
-      set: { 'part.pitch.mixAt': 'change', 'part.pitch.voices': 3, 'part.pitch.span': 3, 'proximity': 50 } },
+      set: { 'part.pitch.mixAt': 'change', 'part.pitch.voices': 3, 'part.pitch.span': 5, 'proximity': 50 } },
     { id: 'mixbeat', shape: 'mixed', label: 'Chords on 1 and 3',
-      set: { 'part.pitch.mixAt': 'strong', 'part.pitch.voices': 3, 'part.pitch.span': 4, 'proximity': 40 } },
+      set: { 'part.pitch.mixAt': 'strong', 'part.pitch.voices': 3, 'part.pitch.span': 6, 'proximity': 40 } },
     { id: 'held', shape: 'ground', label: 'Held',
       set: { 'part.rhythm.strike': '', 'part.rhythm.antic': 0, 'part.shape.lenRatio': 100 } },
     { id: 'everybar', shape: 'ground', label: 'Every bar',
@@ -776,6 +788,54 @@
     if (L.followSalt) L.followSalt = 1; else delete L.followSalt;
     // ARTICULATION — absent or 0 spends no draw and emits nothing extra, so an
     // untouched layer is byte-identical and stores neither.
+    // ── HOW OFTEN THE NOTES CHANGE (2026-09-17) ─────────────────────────
+    // ONE axis where three controls used to disagree: ❄ Freeze (never), ⚙ Deep's
+    // Each cycle (every pass) and the arrangement's Evolve (hold · loop · re-roll).
+    //   L.chg = { ev, am, what:{rhy,pit,len}, from, clock, parts: { <pi>: {…} } }
+    // `ev` 0 = never re-decided (what Freeze was), 1 = every pass/round, N = every
+    // N. `am` is HOW MUCH of the material a change touches — the thing v2 never
+    // had, and why a part could only repeat forever or throw itself away.
+    // ABSENT = absent: a layer with no `chg` behaves exactly as before.
+    const CHG_WHAT = ['rhy', 'pit', 'len'];
+    function normChgSet(c) {
+      if (!c || typeof c !== 'object') return null;
+      const o = {};
+      if (Number.isFinite(c.ev)) o.ev = clamp(c.ev | 0, 0, 64);
+      if (Number.isFinite(c.am)) o.am = clamp(c.am | 0, 0, 100);
+      if (c.clock === 'round') o.clock = 'round';
+      if (c.from === 'scratch') o.from = 'scratch';
+      if (c.what && typeof c.what === 'object') {
+        const w = {};
+        CHG_WHAT.forEach((k) => { if (c.what[k]) w[k] = 1; });
+        // all three on is the default — store nothing for it
+        if (Object.keys(w).length && Object.keys(w).length < CHG_WHAT.length) o.what = w;
+      }
+      return Object.keys(o).length ? o : null;
+    }
+    function normChg(L) {
+      const c = L.chg;
+      if (!c || typeof c !== 'object') { if (c != null) delete L.chg; return; }
+      const o = normChgSet(c) || {};
+      if (c.parts && typeof c.parts === 'object') {
+        const ps = {};
+        Object.keys(c.parts).forEach((k) => {
+          const pi = k | 0; if (pi < 0 || pi > 63) return;
+          const v = normChgSet(c.parts[k]); if (v) ps[pi] = v;
+        });
+        if (Object.keys(ps).length) o.parts = ps;
+      }
+      if (Object.keys(o).length) L.chg = o; else delete L.chg;
+    }
+    // THE DICE MACROS' OWN VALUES — a display store, never read by the
+    // emitter (the fields it writes are what plays), pruned when empty.
+    if (L.dice && typeof L.dice === 'object') {
+      const d2 = {};
+      ['fl', 'ls', 'th'].forEach((k) => {
+        if (Number.isFinite(L.dice[k]) && L.dice[k] > 0) d2[k] = clamp(L.dice[k] | 0, 0, 100);
+      });
+      if (Object.keys(d2).length) L.dice = d2; else delete L.dice;
+    } else if (L.dice != null) delete L.dice;
+    try { normChg(L); } catch (e) {}
     ['slide', 'ornament', 'twist', 'motion', 'phrasing', 'startVary'].forEach((k) => {
       if (L[k] === undefined) return;
       if (Number.isFinite(L[k]) && L[k] > 0) L[k] = clamp(L[k], 0, 100); else delete L[k];
@@ -964,10 +1024,25 @@
       //   restart — the sweep begins again on each change (absent: it carries on)
       //   tones   — 'triad' sweeps the triad only (absent: every sounding tone)
       //   mixAt   — where ⚇ Mix puts its chords: 'strong' beats 1 and 3,
-      //             'change' the first onset of each change (absent: a coin flip)
+      //             'change' the first onset of each change, 'arch' both
+      //             (absent: a coin flip — the old default, kept for saves)
       if (t.restart) t.restart = 1; else delete t.restart;
       if (t.tones !== 'triad') delete t.tones;
-      if (t.mixAt !== 'strong' && t.mixAt !== 'change') delete t.mixAt;
+      // ABSENT IS THE MUSICAL ANSWER (2026-09-17, user: "this isn't making any
+      // sense at all from a user perspective"). These three shipped as
+      // opt-in — so the architectural placement, the stepping line and the
+      // register split reached NEWLY BUILT shapes only, and the part you were
+      // listening to kept the coin flip. Absent now means 'arch' / step / up,
+      // and the old behaviour is a NAMED choice ('any' / 'scatter' / 0).
+      if (['strong', 'change', 'arch', 'any'].indexOf(t.mixAt) < 0) delete t.mixAt;
+      //   walkMode — 'step' steps from the note before it, 'scatter' is the
+      //             scatter around a fixed centre. Absent: a ⚇ Mix line steps
+      //             and a plain walk (🎲 Roll) scatters, which is its character.
+      if (t.walkMode !== 'step' && t.walkMode !== 'scatter') delete t.walkMode;
+      //   lineUp  — ⚇ Mix's line plays an octave above its chords (absent: it
+      //             does; an explicit 0 keeps it in the same register)
+      if (t.lineUp === 0 || t.lineUp === '0' || t.lineUp === false) t.lineUp = 0;
+      else if (t.lineUp) t.lineUp = 1; else delete t.lineUp;
       //   motif   — a line repeats its first bar as A A B A: 'bar' repeats the
       //             rhythm AND the notes, 'notes' keeps each bar's own rhythm
       //             and repeats the note choices. Refitted to each chord, because
@@ -1309,6 +1384,34 @@
       a.sort((x, y) => x - y);
     }
     return a.map((m) => clamp(m, 12, 120));
+  }
+  // THE KEY'S OWN SCALE — what a LINE steps through. `toneSetAt` answers the
+  // layer's source, and under a progression that source is a POOL (the chord's
+  // tones), so one "step" there is a 3rd or a 4th: measured as 9-semitone moves
+  // in a row, which is what read as chaotic. A melodic line wants adjacent
+  // scale degrees and CHORD TONES AT THE ARRIVALS, which is what the two
+  // callers below do.
+  function keySetOf(cfg) {
+    let root = 0, ivs = [0, 2, 4, 5, 7, 9, 11];
+    try { root = ((_ambKeyRootPc(cfg) % 12) + 12) % 12; } catch (e) {}
+    try {
+      const sc = (typeof SCALES !== 'undefined') ? SCALES[_ambKeyScaleName(cfg)] : null;
+      if (Array.isArray(sc) && sc.length) ivs = sc.slice();
+    } catch (e) {}
+    return { root, ivs, pool: false };
+  }
+  // THE NEAREST MEMBER of a tone set to a MIDI note — the voice-leading step.
+  function nearestOf(set2, reg2, mid) {
+    const b2 = 12 * (reg2 + 1) + set2.root;
+    let best = null, bd = Infinity;
+    for (let o = -2; o <= 2; o++) {
+      for (let j = 0; j < set2.ivs.length; j++) {
+        const c = b2 + set2.ivs[j] + 12 * o;
+        const d = Math.abs(c - mid);
+        if (d < bd) { bd = d; best = c; }
+      }
+    }
+    return (best == null) ? mid : best;
   }
   function toneSetAt(E, cfg, at, L) {
     // THE LAYER'S OWN SOURCE, through v1's resolver rather than a second one.
@@ -1813,9 +1916,21 @@
       // draw above is isolated, so skipping it shifts nothing else.
       const asChord = (typeof part._mixForce === 'boolean') ? part._mixForce : (rndM() * 100 < chance);
       const shim = Object.assign({}, part, {
-        pitch: Object.assign({}, t, { kind: asChord ? 'chord' : 'walk' }),
+        // `_mixLine` says the walk below IS ⚇ Mix's line, so it takes Mix's
+        // defaults (step + the octave up) rather than a plain walk's
+        pitch: Object.assign({}, t, { kind: asChord ? 'chord' : 'walk', _mixLine: 1 }),
       });
-      const got = pitchesBase(shim, E, cfg, at, reg, ctxSeed, idx, mem, L);
+      // THE LINE SITS ABOVE THE CHORDS (`lineUp`, absent = the same register,
+      // which is what every part made before this keeps). Accompaniment and
+      // melody in one register is what made the two smear into each other.
+      const lreg = (!asChord && t.lineUp !== 0) ? (reg | 0) + 1 : reg;
+      // THE CHORD CHOKE MUST LEAVE THE LINE ALONE. It is scoped by the PART's
+      // pitch kind, and ⚇ Mix counts as a chord part — so a line note landing
+      // near a change was cut to a 60 ms stub ("making some events very small").
+      // A line is never choked (17-ambient's own rule for `walk`), so the part
+      // says which of its onsets this one is.
+      part._mixWasLine = !asChord;
+      const got = pitchesBase(shim, E, cfg, at, lreg, ctxSeed, idx, mem, L);
       // the articulation helpers read these off the PART, and the shim is a
       // copy — carry back what the delegate resolved
       part._deg = shim._deg; part._oct = shim._oct;
@@ -1917,10 +2032,18 @@
       // own shape: floor (v2's behaviour until now) walks UP from the register,
       // centre shifts the window down by half the span, ceiling by all of it.
       // Only the walk has a window, so it is the only kind this applies to.
+      // A STEPPING LINE WALKS THE SCALE, not the chord pool (see `keySetOf`).
+      // Absent `walkMode` keeps the pool and is byte-identical.
+      // …the same absent-is-musical rule as the emitter: a ⚇ Mix line steps
+      // (so it walks the scale), a plain walk keeps its scatter unless asked
+      const stepping = (t.walkMode === 'step') || (t._mixLine && t.walkMode !== 'scatter');
+      const wset = (stepping && set.pool) ? keySetOf(cfg) : set;
+      const wN = Math.max(1, wset.ivs.length);
+      const wbase = 12 * (reg + 1) + wset.root;
       const home = (t.home === 'center' || t.home === 'ceiling') ? t.home : 'floor';
       const homeShift = (home === 'ceiling') ? -(t.span | 0)
                       : (home === 'center') ? -Math.floor((t.span | 0) / 2) : 0;
-      const from0 = clamp((t.degree | 0) - 1, 0, N - 1) + homeShift;
+      const from0 = clamp((t.degree | 0) - 1, 0, wN - 1) + homeShift;
       // LINES — how many notes a Roll plays AT ONCE. Each is a full walk with
       // its OWN seeded stream and its OWN memory, so they wander independently
       // — which is what makes this different from Harmony, where one line is
@@ -1944,9 +2067,9 @@
       const stut = clamp(t.stutter | 0, 0, 100);
       if (stut > 0 && mem2 && Number.isFinite(mem2.prev) && rnd() * 100 < stut * 0.45) {
         const kS = mem2.prev;
-        const iS = ((kS % N) + N) % N, oS = Math.floor(kS / N);
+        const iS = ((kS % wN) + wN) % wN, oS = Math.floor(kS / wN);
         if (vi === 0) { part._deg = kS; part._oct = oS; }
-        out.push(base + set.ivs[iS] + 12 * oS);
+        out.push(wbase + wset.ivs[iS] + 12 * oS);
         continue;                            // the NEXT line, not the next onset
       }
       // CONTOUR — v1's rule for the step's DIRECTION, -100 to +100. NOTE what
@@ -1960,8 +2083,26 @@
       const cont = clamp(Number.isFinite(t.contour) ? t.contour : 0, -100, 100);
       const mag = Math.abs(Math.round((rnd() * 2 - 1) * t.span));
       const dir = (rnd() < (0.5 - cont / 100 * 0.35)) ? -1 : 1;
-      const step = cont ? (mag * dir) : Math.round((rnd() * 2 - 1) * t.span);
-      let k = _nearer(from + step, mem2, prox);
+      let k;
+      if (stepping && Number.isFinite(mem2 && mem2.prev)) {
+        // ── STEPWISE (2026-09-17, user: "more architectural and less random") ──
+        // v2's walk SCATTERS: every pick is `centre ± random(span)`, so two
+        // consecutive notes can leap the whole Range in either direction — which
+        // is what read as chaotic under ⚇ Mix. In step mode the line moves FROM
+        // the note before it, mostly by one source tone, and TURNS at the edges
+        // of its window instead of being clipped to them (a clamp parks a line
+        // on its ceiling; a reflection is what a player does).
+        const sm = rnd();
+        const smag = (sm < 0.7) ? 1 : (sm < 0.93) ? 2 : 3;
+        const lo = from0, hi = from0 + Math.max(1, t.span | 0);
+        let kk = mem2.prev + smag * dir;
+        if (kk > hi) kk = hi - (kk - hi);
+        if (kk < lo) kk = lo + (lo - kk);
+        k = clamp(Math.round(kk), lo - wN, hi + wN);
+      } else {
+        const step = cont ? (mag * dir) : Math.round((rnd() * 2 - 1) * t.span);
+        k = _nearer(from + step, mem2, prox);
+      }
       // GRAVITY IS NOT PORTED, and that is a MODEL difference rather than an
       // omission: v1's motif walks a chromatic-ish space and gravity pulls a
       // stray note onto a chord tone, whereas v2 picks by INDEX into the
@@ -1970,11 +2111,21 @@
       // no-op, and removed: a control that cannot do anything is worse than an
       // absent one.
       if (mem2) mem2.prev = k;
-      const i4 = ((k % N) + N) % N, oct = Math.floor(k / N);
+      const i4 = ((k % wN) + wN) % wN, oct = Math.floor(k / wN);
       // the articulation helpers (slide, ornament) read ONE degree — the lead
       // line's, exactly as before lines existed
       if (vi === 0) { part._deg = k; part._oct = oct; }
-      out.push(base + set.ivs[i4] + 12 * oct);
+      let mid = wbase + wset.ivs[i4] + 12 * oct;
+      // ARRIVAL — the last line note before a change takes the nearest tone of
+      // the chord that is coming, so the change is led INTO rather than jumped
+      // at. The emitter says which onset that is (`_mixArriveAt`).
+      if (vi === 0 && Number.isFinite(part._mixArriveAt)) {
+        try {
+          const nset = toneSetAt(E, cfg, part._mixArriveAt, L);
+          if (nset && Array.isArray(nset.ivs) && nset.ivs.length) mid = nearestOf(nset, reg, mid);
+        } catch (e) {}
+      }
+      out.push(mid);
       }
       return out;
     }
@@ -1992,13 +2143,24 @@
     // sound composed rather than chaotic when there is no progression to follow.
     // It resolves the source itself (`_ambNotesOf(bed)`), so the shim carries
     // `notes`/`keyOv` and the two agree on what this layer is playing.
+    // ROAM ON A CHORD (2026-09-17) — now and then the chord is built on a
+    // NEIGHBOURING tone: the same seeded draw Fixed and Stack use, so it rolls
+    // once per take. `rd` is 0 whenever Roam is, and every use below adds it,
+    // so a chord with no Roam is byte-identical.
+    const roamC = clamp(t.roam | 0, 0, 100);
+    let rd = 0;
+    if (roamC > 0 && vRnd(ctxSeed ^ 0x1b873593, 61) * 100 < roamC) {
+      rd = vRnd(ctxSeed ^ 0xcc9e2d51, 69) < 0.5 ? -1 : 1;
+    }
     if (t.chordMode && typeof _ambPickVoicing === 'function') {
       try {
         const src = (typeof _ambNotesOf === 'function' && L) ? _ambNotesOf(L) : null;
         if (src) {
           const shim = {
             chordMode: t.chordMode,
-            degree: clamp((t.degree | 0) || 1, 1, 12),
+            // a roam off either end REFLECTS rather than wrapping to degree 12
+            degree: (function () { const d0 = clamp((t.degree | 0) || 1, 1, 12) + rd;
+              return d0 < 1 ? 2 : d0 > 12 ? 11 : d0; })(),
             density: clamp((t.voices | 0) || 3, 1, 9),
             register: clamp((reg | 0) || 4, 1, 8),
             spread: clamp((t.spread | 0), 0, 3),
@@ -2048,7 +2210,7 @@
     const want = clamp(t.voices | 0, 1, 9);
     if (set.pool) {
       for (let i = 0; i < want; i++) {
-        const idx = i % N, oct = Math.floor(i / N);
+        const k = i + rd, idx = ((k % N) + N) % N, oct = Math.floor(k / N);
         out.push(base + set.ivs[idx] + 12 * oct);
       }
     } else if (N >= 12) {
@@ -2058,8 +2220,9 @@
         off += (i % 2 === 0) ? 4 : 3;
       }
     } else {
+      // over a scale a neighbouring CHORD tone is two degrees away
       for (let i = 0; i < want; i++) {
-        const k = i * 2, idx = k % N, oct = Math.floor(k / N);
+        const k = i * 2 + rd * 2, idx = ((k % N) + N) % N, oct = Math.floor(k / N);
         out.push(base + set.ivs[idx] + 12 * oct);
       }
     }
@@ -2449,10 +2612,55 @@
     // default — because "a live part that repeated forever is a recorded one"
     // was the argument for the old default and it is answered by the fact that
     // a live part still re-resolves its pitches against the changes every cycle.
+    // ── HOW OFTEN THE NOTES CHANGE ────────────────────────────────────────
+    // `L.chg` (per layer, overridable per part) says how often a FRESH decision
+    // happens: every `ev` passes of this part — or rounds of the arrangement —
+    // and how MUCH of the material it touches. The epoch is what advances the
+    // take, so "every 4 passes" is take+0,+0,+0,+0,+1,… and `am` decides which
+    // stages follow the new epoch on a given onset (see `stageSeed`).
+    // Absent `chg` leaves the two old paths exactly as they were.
+    const chgOf2 = (() => {
+      const c0 = L.chg; if (!c0) return null;
+      let pi0 = -1;
+      try { const w0 = _ambPartPassAt(ctx.E, ctx.cfg, cs); if (w0 && w0.pi >= 0) pi0 = w0.pi | 0; } catch (e) {}
+      const own = (pi0 >= 0 && c0.parts && c0.parts[pi0]) ? c0.parts[pi0] : null;
+      const m = Object.assign({ ev: 4, am: 100, clock: 'pass', from: 'evolve' }, c0, own || {});
+      delete m.parts;
+      return m;
+    })();
+    let chgEpoch = 0, chgAm = 100, chgWhat = null;
+    if (chgOf2) {
+      chgAm = clamp(Number.isFinite(chgOf2.am) ? chgOf2.am : 100, 0, 100);
+      chgWhat = (chgOf2.what && typeof chgOf2.what === 'object') ? chgOf2.what : null;
+      // 0% TOUCHES NOTHING, so the epoch must not advance either: otherwise the
+      // KEEP seed (the epoch before) moves every pass and the part changes while
+      // the control says it does not (measured: 4 distinct sets in 4 passes).
+      const ev = (chgAm <= 0) ? 0 : clamp(chgOf2.ev | 0, 0, 64);
+      if (ev > 0) {
+        // THE CLOCK, WITH A FALLBACK. No progression means no parts and no
+        // rounds — `_ambPartPassAt` answers nothing — so the layer's own CYCLE
+        // is the pass, which is what a part without changes plays anyway.
+        // Without this the axis silently did nothing on a keys-only project
+        // (measured: 100% of notes identical at every setting).
+        const cycTick = () => Math.max(0, Math.round((cs - (ctx.cycleStart0 || 0)) / Math.max(0.001, cyc)));
+        let tick = null;
+        try {
+          if (chgOf2.clock === 'round') {
+            const r0 = _ambIterIndexAt(ctx.E, ctx.cfg, 'round', cs);
+            if (r0 >= 0) tick = r0 | 0;
+          } else {
+            const w1 = _ambPartPassAt(ctx.E, ctx.cfg, cs);
+            if (w1 && w1.pi >= 0 && Number.isFinite(w1.pass)) tick = w1.pass | 0;
+          }
+        } catch (e) { tick = null; }
+        if (tick == null) tick = cycTick();
+        chgEpoch = Math.floor(tick / ev);
+      }
+    }
     const cycIdx = Number.isFinite(TAKE_PIN) ? (TAKE_PIN | 0)
       : ((L.part && L.part.vary)
           ? (Math.round(ctx.cycleStart / Math.max(0.001, cyc)) + (takeOf(L) | 0))
-          : (takeOf(L) | 0));
+          : ((takeOf(L) | 0) + (chgEpoch | 0)));
     // …and if any bar generates by its own rules, this cycle is a composite of
     // one roll per distinct rule set. Guarded on `TAKE_PIN == null` so the
     // composite's own recursion (which sets a SCALAR pin) cannot re-enter here
@@ -2461,6 +2669,61 @@
       return composite({ base: cycIdx, bars: {}, rules: p.ruleb });
     }
     const seedBase = ((L.id | 0) * 9176) ^ (cycIdx * 2246822519);
+    // ── WHICH SEED EACH STAGE READS ───────────────────────────────────────
+    // A change may touch only SOME of the material (`am`) and only SOME of its
+    // stages (`what`). A stage that is not changing reads the KEEP seed — the
+    // epoch before this one when a change grows from the last set, or the
+    // layer's own take when it starts from scratch — so the rest of the part
+    // carries on unchanged while the changed share is re-decided. With no
+    // `chg`, or at 100%, every stage reads `seedBase` exactly as before.
+    const seedOf = (ix) => ((L.id | 0) * 9176) ^ ((ix | 0) * 2246822519);
+    // A EUCLID (or drawn) PATTERN IS A FORMULA — steps, pulses, rotate — so a
+    // fresh seed changes nothing about it, and "rhythm changes" measured as a
+    // no-op. A change to the rhythm therefore ROTATES the pattern by a seeded
+    // amount: the same density, a different placement, which is what a player
+    // would do. `vary` already perturbs it per seed, so a pattern that carries
+    // some is left to it.
+    const rhyShift = (seed) => {
+      const r0 = p.rhythm || {};
+      if (!chgOf2 || (r0.vary | 0) > 0) return p;
+      if (r0.kind !== 'euclid' && r0.kind !== 'drawn') return p;
+      const stp = Math.max(2, r0.steps | 0);
+      const rot = Math.floor(vRnd(seed ^ 0x5bd1e995, 157) * stp) % stp;
+      if (!rot) return p;
+      return Object.assign({}, p, { rhythm: Object.assign({}, r0, {
+        rotate: (((r0.rotate | 0) + rot) % stp + stp) % stp, cells: null }) });
+    };
+    // TWO KINDS OF "NOT CHANGING", and they need different seeds:
+    //   a stage NOT in `what` never changes at all → the layer's OWN take, which
+    //     does not move with the epoch (reading the previous epoch made a "held"
+    //     stage change every pass — measured: pitches moved under rhythm-only)
+    //   the KEPT SHARE of a stage that IS changing → the set it is growing from:
+    //     the epoch before (from the last set) or the take (from scratch)
+    const seedHold = seedOf(takeOf(L) | 0);
+    // THE KEPT SHARE REFERENCES THE TAKE, not the epoch before it. Pointing it
+    // at the previous epoch made the "kept" material drift every pass — a slot
+    // kept twice running read two different seeds — and measured as 16–27%
+    // identical where the control promised 100 − `am`. A stateless engine can
+    // only keep something it can NAME, and the take is that thing.
+    //   `from: 'scratch'` vs the last set is therefore not yet a real
+    // distinction: growing from the PLAYING set needs the stateful capture path
+    // (v1's Write store), which is the Evolve work still to come. The field is
+    // stored and ignored rather than faked.
+    const seedKeep = seedHold;
+    const wantStage = (k) => !chgWhat || !!chgWhat[k];
+    // WHICH SLOTS ARE RE-DECIDED, decided ONCE per slot and read by every stage,
+    // so a kept slot keeps its hit AND its pitch (`am` reads as a share of the
+    // material rather than of the draws).
+    const slotNew = (key) => {
+      if (!chgOf2 || chgAm >= 100) return true;
+      if (chgAm <= 0) return false;
+      return vRnd(seedBase ^ (((key | 0) + 1) * 0x27d4eb2d), 149) * 100 < chgAm;
+    };
+    const stageSeed = (k, key) => {
+      if (!chgOf2) return seedBase;
+      if (!wantStage(k)) return seedHold;
+      return slotNew(key) ? seedBase : seedKeep;
+    };
     // A KIT IS EIGHT PARALLEL RHYTHMS WITH A FIXED PITCH EACH. That is the whole
     // difference, and it falls out of the model rather than being bolted on: the
     // RHYTHM stage gains a lane dimension, and the PITCH stage is answered by the
@@ -2516,7 +2779,26 @@
     // With no progression it falls back to the BAR line, which is the same
     // rule with one chord.
     const ons0 = (p.rhythm.kind === 'ground')
-      ? groundOnsets(ctx, cs, cyc, p) : onsetsOf(p, seedBase);
+      ? groundOnsets(ctx, cs, cyc, p)
+      : ((!chgOf2 || !wantStage('rhy') || chgAm >= 100 || chgAm <= 0)
+          ? (() => { const sd = wantStage('rhy') ? seedBase : seedHold;
+              return onsetsOf(rhyShift(sd), sd); })()
+          // A PARTIAL RHYTHM CHANGE is a mix of two patterns: each slot takes
+          // its presence from the new pattern or the kept one, decided per slot
+          // and seeded, so the same take replays and `am` reads as a share.
+          : (() => {
+              const A = onsetsOf(rhyShift(seedBase), seedBase), B = onsetsOf(rhyShift(seedKeep), seedKeep);
+              const inA = new Set(A.map((x) => Math.round(x * 1e6)));
+              const inB = new Set(B.map((x) => Math.round(x * 1e6)));
+              const all = [...new Set([...inA, ...inB])].sort((a2, b2) => a2 - b2);
+              const out2 = [];
+              all.forEach((k2) => {
+                // the SLOT decides, by its position — so the same slot answers the
+                // same way for its hit and for its pitch
+                if (slotNew(Math.round(k2 / 1000)) ? inA.has(k2) : inB.has(k2)) out2.push(k2 / 1e6);
+              });
+              return out2;
+            })());
     // ── MOTIF: A A B A ────────────────────────────────────────────────────
     // Bar 1 is the figure; bars 2 and 4 (of every four) repeat it and bar 3 is
     // its own. A repeat REPLAYS THE DRAWS — the same seed and the same walk
@@ -2548,6 +2830,48 @@
       return Number.isFinite(d) ? Math.max(1e-4, d) : 1;
     };
     const span = cyc / Math.max(1, ons.length);           // the AVERAGE — Hold and the fallbacks still use it
+    let lastChordI = -1, lastChordAt = -Infinity;          // ⚇ Mix's chord spacing
+    // THE LINE'S REGISTER — a burst or a gesture note shims straight to `walk`,
+    // which bypasses the mixed branch that applies `lineUp`, so it has to be
+    // passed: without it those notes sat an OCTAVE below the line they belong
+    // to and measured as 19-semitone leaps.
+    const lineReg = (p.pitch.kind === 'mixed' && p.pitch.lineUp !== 0)
+      ? (L.instrument.register | 0) + 1 : L.instrument.register;
+    // ABSENT = THE MUSICAL ANSWER (see the normalizer): a ⚇ Mix part places its
+    // chords architecturally and steps its line unless it says otherwise.
+    const mixAtEff = (p.pitch.kind === 'mixed') ? (p.pitch.mixAt || 'arch') : (p.pitch.mixAt || '');
+    const stepEff = (p.pitch.walkMode === 'step') ||
+                    (p.pitch.kind === 'mixed' && p.pitch.walkMode !== 'scatter');
+    // ── HOW SMALL A NOTE MAY GET (2026-09-17, user: "a lot of these notes are
+    // too small and rapidly placed, it's not musical") ──────────────────────
+    // Twist packed 2..7 notes a FIXED 120 ms apart and sized them off that gap,
+    // so at any tempo it produced a burst finer than the grid it sits on, and
+    // under ⚇ Mix each burst note could be a 3-note chord: measured 20 pulses →
+    // 35 onsets → 67 notes, lengths down to 1% of a cycle. The floors below are
+    // MUSICAL — a fraction of the bar, so they scale with tempo — and they only
+    // ever LIMIT what the dice asked for, so a part with no Twist, Phrasing or
+    // Len vary is byte-identical.
+    const barSec = cyc / Math.max(1, +p.bars || 1);
+    // One floor for both, so a length and the gap in front of it agree: a
+    // STRAIGHT 16th of the bar (at 120bpm, 125 ms), never under 70 ms. It was a
+    // 16th triplet and the 83 ms notes still read as slivers on the drawing
+    // ("making some events very small") — a burst of 16ths is a run, a burst of
+    // 24ths is a smear.
+    const MIN_GAP = Math.max(0.07, barSec / 16);
+    const MIN_MS = Math.max(70, Math.round(MIN_GAP * 1000));
+    // AN ADDED NOTE'S TIME IS SNAPPED RELATIVE TO THE CYCLE, to microseconds.
+    // Its offset is a fraction of a slot — not representable in binary — so
+    // adding it to a growing absolute time gave a result a microsecond apart
+    // from one cycle to the next, and a FIXED part measured as two different
+    // note sets (the LIVE-vs-FIXED gate caught it on Ghosts 40).
+    const relSnap = (x) => cs + Math.round((x - cs) * 1e6) / 1e6;
+    // …and its OFFSET lands on the app's own 1/48-bar grid (`_ambSnapBars`'s
+    // grid). A fraction of a slot can land exactly on a rounding tie — a ghost
+    // at 1.915 s read as 1.91 on one cycle and 1.92 on the next — and a grid
+    // offset is what a player would place anyway: quarters, eighths, triplets
+    // and 16ths all sit on it exactly.
+    const GRID = barSec / 48;
+    const gsnap = (x) => Math.max(GRID, Math.round(x / GRID) * GRID);
     // HOLD sizes the note off the STEP GRID instead — N steps long, whatever the
     // onset spacing happens to be. v1's own semantics (`holdSteps`, 0 = use the
     // length instead): the two answer different questions, and a sparse pattern
@@ -2648,7 +2972,7 @@
     // two consecutive changes on the same chord are still two changes. No
     // progression = the bar is the change, the rule this file uses everywhere.
     const wantChg = (p.pitch.kind === 'series' && p.pitch.restart) ||
-                    (p.pitch.kind === 'mixed' && p.pitch.mixAt === 'change');
+                    (p.pitch.kind === 'mixed' && (mixAtEff === 'change' || mixAtEff === 'arch'));
     const chgOf = (i) => {
       const t0 = cs + ons[i] * cyc;
       try {
@@ -2716,15 +3040,44 @@
           pAt = Object.assign({}, p, { pitch: Object.assign({}, p.pitch, { voices: gset.voices }) });
         }
       }
-      if (p.pitch.kind === 'mixed' && p.pitch.mixAt) {
+      if (p.pitch.kind === 'mixed' && mixAtEff !== 'any') {
+        // beats 1 and 3 of the bar, on the onset's own (unjittered) position
+        const beat = ((ons[i] * Math.max(1, +p.bars || 1)) % 1) * 4;
+        const onStrong = Math.abs(beat - Math.round(beat)) < 1e-4 && (Math.round(beat) % 2) === 0;
+        const onChange = chgPending;
+        if (mixAtEff === 'change' || mixAtEff === 'arch') chgPending = false;
+        // STRUCTURE SAYS WHERE A CHORD MAY LAND; ⚇ Mix % SAYS HOW MANY DO.
+        // Forcing every structural position ignored the Mix slider outright and
+        // turned 10 onsets into 8 chords (measured) — chord-heavy, which is not
+        // "mix". So: the first onset of each change ALWAYS states the harmony,
+        // every other candidate is drawn at Mix %, and no two chords sit back to
+        // back unless a change demands it. Chance placement (absent `mixAt`,
+        // every project made before this) is untouched.
+        const beatSec = (cyc / Math.max(1, +p.bars || 1)) / 4;
+        const cand = (mixAtEff === 'change') ? false
+                   : (mixAtEff === 'arch') ? (onStrong && (at - lastChordAt) >= beatSec * 2 - 1e-6)
+                   : onStrong;
+        // THE SLIDER'S ENDS ARE ABSOLUTE — 0 is a line with no chords in it and
+        // 100 is all chords, whatever the structure says. Structure shapes the
+        // MIDDLE: it decides which onsets are candidates, and the change always
+        // states its harmony there.
+        const mixPc = clamp(Number.isFinite(p.pitch.mix) ? p.pitch.mix : 50, 0, 100);
         let force;
-        if (p.pitch.mixAt === 'change') { force = chgPending; chgPending = false; }
+        if (mixPc <= 0) force = false;
+        else if (mixPc >= 100) force = true;
         else {
-          // beats 1 and 3 of the bar, on the onset's own (unjittered) position
-          const beat = ((ons[i] * Math.max(1, +p.bars || 1)) % 1) * 4;
-          force = Math.abs(beat - Math.round(beat)) < 1e-4 && (Math.round(beat) % 2) === 0;
+          force = onChange || (cand && vRnd(seedBase ^ (i * 0x9e3779b9), 131) * 100 < mixPc);
+          if (force && !onChange && lastChordI >= 0 && (i - lastChordI) < 2) force = false;
         }
+        if (force) { lastChordI = i; lastChordAt = at; }
         pAt = Object.assign({}, pAt, { _mixForce: force });
+        // …and a LINE note immediately before a change is an ARRIVAL: it takes
+        // the nearest tone of the chord that is about to sound (see the walk).
+        if (!force && stepEff && i + 1 < ons.length) {
+          try {
+            if (chgOf(i + 1) !== chgOf(i)) pAt = Object.assign({}, pAt, { _mixArriveAt: cs + ons[i + 1] * cyc });
+          } catch (e) {}
+        }
       }
       if (motMem) {
         // a figure onset files the memory it drew from; a repeat draws from it
@@ -2734,13 +3087,19 @@
           if (snap) { const o2 = JSON.parse(snap); Object.keys(mem).forEach((k2) => delete mem[k2]); Object.assign(mem, o2); }
         }
       }
-      const ms = withKeyTime(at, () => pitchesAt(pAt, ctx.E, ctx.cfg, at, L.instrument.register, seedBase ^ (pi * 2654435761), stepIdx, mem, L));
+      // WITH A CHANGE SCHEDULE the pitch draw is keyed on the ONSET'S SLOT
+      // rather than its index: a rhythm change shifts every later index, which
+      // would re-pitch notes the change was supposed to keep.
+      const slotK = chgOf2 ? Math.round((ons[pi] || 0) * 1e6 / 1000) : 0;
+      const ms = withKeyTime(at, () => pitchesAt(pAt, ctx.E, ctx.cfg, at, L.instrument.register,
+        (chgOf2 ? (stageSeed('pit', slotK) ^ (slotK * 2654435761)) : (seedBase ^ (pi * 2654435761))),
+        stepIdx, mem, L));
       // ANTICIPATED: the chord is resolved AT its change (above) and SOUNDS an
       // 8th before it, holding through; the onset before it gives the 8th up.
       const anticK = isAntic(i) ? anticLead : 0;
       if (anticK) at -= anticK;
       const outFrom = out.length;
-      if (pAt !== p) { p._deg = pAt._deg; p._oct = pAt._oct; }
+      if (pAt !== p) { p._deg = pAt._deg; p._oct = pAt._oct; if (pAt._mixWasLine != null) p._mixWasLine = pAt._mixWasLine; }
       // LEN VARY scales this onset's notes together — a chord must not come
       // apart into different lengths, which is why it is per ONSET not per note.
       let dm0 = durAt(i);
@@ -2754,7 +3113,9 @@
         if (gset.hold !== lr0) dm0 = Math.max(20, Math.round(dm0 * (gset.hold / lr0)));
       }
       let dm = dm0;
-      if (lvar > 0) dm = Math.max(20, Math.round(dm0 * (1 + (vRnd(seedBase ^ (si * 40503), 23) * 2 - 1) * (lvar / 100) * 0.6)));
+      // …and Len vary may not scatter a note below the floor (it only ever
+      // shortens past it — a lengthened note is never a problem)
+      if (lvar > 0) dm = Math.max(Math.min(dm0, MIN_MS), Math.round(dm0 * (1 + (vRnd(stageSeed('len', chgOf2 ? Math.round((ons[i] || 0) * 1e6 / 1000) : si) ^ (si * 40503), 23) * 2 - 1) * (lvar / 100) * 0.6)));
       // PHRASING — v1's GESTURE CELLS. With probability `phrasing` this onset
       // takes a shaped figure — relative onsets and durations with an ARRIVAL
       // note (agogic emphasis: long, and leaned on) — instead of a uniform
@@ -2772,17 +3133,37 @@
           try { Object.defineProperty(L, '__v2gest', { value: gs, enumerable: false, writable: true, configurable: true }); }
           catch (e) { gs = {}; }
         }
+        // THE CELL SCALES TO THIS ONSET'S OWN SLOT (it was the average span,
+        // so on a tight pattern its 0.13 spacings landed ~50 ms apart) and no
+        // two of its notes come closer than the floor — a figure finer than
+        // that is the "too small and rapidly placed" report, not a gesture.
+        const pslot = Math.max(1e-4, gapAt(i) * cyc);
         const reuse = gs.cell && vRnd(seedBase ^ (i * 40503), 109) < 0.35;
         const cell = reuse ? gs.cell : _V2_CELLS[Math.floor(vRnd(seedBase ^ (i * 7919), 113) * _V2_CELLS.length) % _V2_CELLS.length];
         gs.cell = cell;
+        let lastAt = -Infinity;
         for (let q = 0; q < cell.length; q++) {
-          const cAt = at + cell[q][0] * span;
+          const cAt = relSnap(at + (cell[q][0] > 0 ? gsnap(cell[q][0] * pslot) : 0));
           if (cAt >= cs + cyc) break;
-          const cms = withKeyTime(cAt, () => pitchesAt(p, ctx.E, ctx.cfg, cAt, L.instrument.register,
+          if (cAt - lastAt < MIN_GAP) continue;          // too close to the last one — drop it
+          lastAt = cAt;
+          // THE GESTURE IS THIS ONSET'S, so it asks with `pAt` — the shim that
+          // carries ⚇ Mix's structural decision. Asking with the raw part put
+          // every cell note back on the coin flip (measured: 11 chords where
+          // the structure wanted 4), and the notes AFTER the first are the
+          // figure's own steps, so they are single notes as a burst's are.
+          const cp = (q === 0 || p.pitch.kind !== 'mixed') ? pAt
+            : Object.assign({}, pAt, { pitch: Object.assign({}, pAt.pitch, { kind: 'walk', _mixLine: 1 }) });
+          const cms = withKeyTime(cAt, () => pitchesAt(cp, ctx.E, ctx.cfg, cAt,
+              (q === 0) ? L.instrument.register : lineReg,
               seedBase ^ ((i * 613 + q) * 2654435761), stepIdx, mem, L));
-          const cd = Math.max(60, Math.round(cell[q][1] * span * 1000));
+          const cd = Math.max(Math.min(MIN_MS, Math.round(pslot * 1000)), Math.round(cell[q][1] * pslot * 1000));
           for (let v = 0; v < cms.length; v++) {
             const cn = { at: cAt, freq: midiToFreq(cms[v]), durMs: cd };
+            // …but NEVER the ARRIVAL: the whole figure exists to land on it, and
+            // the budget dropping it left a gesture with no point (measured —
+            // "the arrival note is leaned on" failed with one volume, not two).
+            if (q > 0 && !cell[q][2]) cn.xtra = 1;   // an ADDED note — the density cap may drop it
             if (cell[q][2]) cn.arr = 1;          // the arrival: leaned on at emit
             if (v === 0 && p._deg != null) { cn.deg = p._deg; cn.oct = p._oct | 0; }
             out.push(cn);
@@ -2797,22 +3178,39 @@
       // sits here, after the first pick, and asks `pitchesAt` again.
       const tw = clamp(L.twist | 0, 0, 100) / 100;
       if (tw > 0 && vRnd(seedBase ^ (i * 2654435761), 91) < tw) {
-        const cnt = 2 + Math.floor(vRnd(seedBase ^ (i * 40503), 97) * (1 + tw * 5));
-        const gap = Math.min(0.12, (dm / 1000) / Math.max(1, cnt));
+        // THE BURST IS A SUBDIVISION OF ITS OWN SLOT, not a fixed 120 ms
+        // stutter: it spreads across the gap to the next onset, and however
+        // many notes the dice ask for, no two land closer than MIN_GAP. A slot
+        // too short to hold two of them takes no burst at all.
+        const slot = Math.max(1e-4, gapAt(i) * cyc);
+        const room = Math.floor((slot * 0.92) / MIN_GAP);
+        if (room < 2) { /* no room for a musical burst — leave the plain note */ } else {
+        const cnt = Math.min(room, 2 + Math.floor(vRnd(seedBase ^ (i * 40503), 97) * (1 + tw * 5)));
+        const gap = Math.max(MIN_GAP, gsnap((slot * 0.92) / cnt));
         for (let q = 0; q < cnt; q++) {
-          const bAt = at + gap * q;
+          const bAt = relSnap(at + gap * q);
           if (bAt >= cs + cyc) break;
+          // A BURST IS A FLURRY OF SINGLE STEPS — v1's own words. Under ⚇ Mix
+          // every extra note could come out a chord, which is what multiplied
+          // 35 onsets into 67 notes; the walk shim keeps the flurry monophonic.
+          // `_mixLine` so the flurry takes ⚇ Mix's own line rules (step through
+          // the scale, an octave up) instead of scattering the chord pool —
+          // without it a burst leapt 22 semitones where the line moved by 2.
+          const bp = (q === 0 || p.pitch.kind !== 'mixed') ? pAt
+            : Object.assign({}, pAt, { pitch: Object.assign({}, pAt.pitch, { kind: 'walk', _mixLine: 1 }) });
           const bms = (q === 0) ? ms
-            : withKeyTime(bAt, () => pitchesAt(p, ctx.E, ctx.cfg, bAt, L.instrument.register,
+            : withKeyTime(bAt, () => pitchesAt(bp, ctx.E, ctx.cfg, bAt, lineReg,
                 seedBase ^ ((i * 977 + q) * 2654435761), stepIdx, mem, L));
-          const bd = Math.max(20, Math.round(Math.min(dm, gap * 1000 * 1.6)));
+          const bd = Math.max(Math.min(MIN_MS, Math.round(gap * 1000)), Math.round(Math.min(dm, gap * 1000 * 1.6)));
           for (let v = 0; v < bms.length; v++) {
             const nb = { at: bAt, freq: midiToFreq(bms[v]), durMs: bd };
+            if (q > 0) nb.xtra = 1;              // an ADDED note — the density cap may drop it
             if (v === 0 && p._deg != null) { nb.deg = p._deg; nb.oct = p._oct | 0; }
             out.push(nb);
           }
         }
         continue;
+        }
       }
       // FOLLOW SALT — the "Keys" behaviour. Salt sub-divides ONE chord instance
       // into colour segments (C · C(no3) · Cmaj7), and a chord layer normally
@@ -2892,9 +3290,23 @@
       // an anticipated chord carries its LEAD, so the chord choke measures its
       // boundary from the change it belongs to, not the one it arrives inside
       if (anticK) for (let z = outFrom; z < out.length; z++) out[z].antic = anticK;
+      if (p.pitch.kind === 'mixed' && p._mixWasLine) {
+        for (let z = outFrom; z < out.length; z++) out[z].line = 1;
+      }
+      // …and a flam is never finer than the floor: a third of the span, but at
+      // least MIN_GAP after the onset, and only when the slot has room for it
+      // A GHOST MAY SIT CLOSER than a full note — it is a quiet grace note, so
+      // its floor is a 32nd of the bar rather than MIN_GAP, and a slot with no
+      // room even for that takes no flam.
       if (ghost > 0 && ons.length > 1 && vRnd(seedBase ^ (si * 40503), 37) * 100 < ghost * 0.6) {
-        const gAt = at + span * 0.33;
-        if (gAt < cs + cyc) out.push({ at: gAt, freq: midiToFreq(ms[0]), durMs: Math.max(20, Math.round(dm * 0.45)), ghost: 1 });
+        const gslot = Math.max(1e-4, gapAt(i) * cyc);
+        const GH_MIN = Math.max(0.045, barSec / 32);
+        if (gslot > GH_MIN * 1.2) {
+          const gAt = relSnap(at + gsnap(Math.max(GH_MIN, gslot * 0.33)));
+          if (gAt < cs + cyc) out.push({ at: gAt, freq: midiToFreq(ms[0]),
+            durMs: Math.max(Math.min(MIN_MS, Math.round(gslot * 1000 * 0.5)), Math.round(dm * 0.45)),
+            ghost: 1, xtra: 1 });
+        }
       }
     }
     // ── A LINE OVER THE CHANGE ──────────────────────────────────────────
@@ -2939,6 +3351,69 @@
     // rather than at each push — and BEFORE Max events, so the cap still keeps
     // the earliest of what actually sounds.
     if (startOff > 0) for (let z = 0; z < out.length; z++) out[z].at += startOff;
+    // ── THE DENSITY CEILING (2026-09-17) ──────────────────────────────────
+    // Every die that ADDS notes — Twist's burst, Phrasing's cell, a ghost —
+    // drew on its own, so they stacked: 20 pulses came out as 35 onsets and 65
+    // notes, finer than the grid the user chose, and no single control
+    // explained it ("this isn't making any sense at all from a user
+    // perspective"). Now they compete for a BUDGET per bar: the pattern's own
+    // onsets plus half again, rounded up, and at least one extra. Added notes
+    // (`xtra`) are kept in time order until the bar is full and dropped after
+    // that, so the dice still colour the bar and can never redraw it. The
+    // pattern's own notes are never dropped; a part with no dice has no `xtra`
+    // and is byte-identical.
+    if (out.some((n2) => n2 && n2.xtra)) {
+      const barsN = Math.max(1, +p.bars || 1);
+      // AN EPSILON, NOT A BARE FLOOR: a note landing on a bar line comes out
+      // 1.9999999 on one cycle and 2.0000001 on the next, which put it in
+      // different bars, changed that bar's budget, and kept a ghost on one pass
+      // while dropping it on the next — i.e. a FIXED part that differed between
+      // cycles (the LIVE-vs-FIXED gate caught it: 2 note sets for Ghosts 40).
+      const barOf = (n2) => Math.floor(Math.max(0, (n2.at - cs) / cyc) * barsN + 1e-6);
+      const own = {}, used = {};
+      const keyAt = (n2) => barOf(n2) + ':' + Math.round(n2.at * 1000);
+      const ownSeen = {};
+      out.forEach((n2) => {
+        if (n2.xtra) return;
+        const b2 = barOf(n2);
+        if (!ownSeen[keyAt(n2)]) { ownSeen[keyAt(n2)] = 1; own[b2] = (own[b2] || 0) + 1; }
+      });
+      // A THIRD of what the pattern itself plays, at least one: the dice
+      // COLOUR a bar (5 onsets → at most 2 added), they never redraw it.
+      const budget = (b2) => Math.max(1, Math.round((own[b2] || 0) / 3));
+      const xSeen = {};
+      const kept = [];
+      out.slice().sort((a2, b3) => a2.at - b3.at).forEach((n2) => {
+        if (!n2.xtra) { kept.push(n2); return; }
+        const b2 = barOf(n2), k2 = keyAt(n2);
+        if (xSeen[k2]) { kept.push(n2); return; }      // another voice of an onset already kept
+        if ((used[b2] || 0) >= budget(b2)) return;      // the bar is full — this one is dropped
+        used[b2] = (used[b2] || 0) + 1; xSeen[k2] = 1; kept.push(n2);
+      });
+      if (kept.length !== out.length) { out.length = 0; kept.forEach((n2) => out.push(n2)); }
+    }
+    // ── ONE LINE, ONE NOTE AT A TIME (2026-09-17, user: "there are still odd
+    // overlaps") ──────────────────────────────────────────────────────────────
+    // A note's length is 70% (say) of ITS OWN SLOT in the pattern — but Twist's
+    // burst and Phrasing's cell land INSIDE that slot, so the note before them
+    // was still sounding underneath, two scale steps away.
+    //
+    // ONLY AGAINST AN ADDED NOTE. Clamping every line note to its neighbour
+    // also killed the deliberate overhang a long Length asks for — the gate's
+    // "a LENGTH is never clipped at a region edge" caught it — and that
+    // legato is the pattern's own business. What was never asked for is a note
+    // ringing under a flourish that landed inside it.
+    const monoLine = (p.pitch.kind === 'mixed') ||
+      (p.pitch.kind === 'walk' && (((p.pitch.lines | 0) || 1) === 1));
+    if (monoLine && out.length > 1) {
+      const ln = out.filter((n2) => (p.pitch.kind !== 'mixed') || n2.line)
+        .sort((a2, b2) => a2.at - b2.at);
+      for (let z = 0; z < ln.length - 1; z++) {
+        if (!ln[z + 1].xtra) continue;                 // its own neighbour — legato is allowed
+        const room = Math.round((ln[z + 1].at - ln[z].at) * 1000) - 6;
+        if (room > 0 && ln[z].durMs > room) ln[z].durMs = Math.max(40, room);
+      }
+    }
     // MAX EVENTS — v1's rule: cap the note-events in a cycle, keeping the
     // EARLIEST. Applied last, after every onset, voice and ghost, so it is a
     // ceiling on the whole cycle rather than on one stage of it. 0 = off.
@@ -3880,6 +4355,7 @@
         }
         // set LAST — `_ambApplyAdsr` may hand back a fresh params object
         if (n.antic > 0) params._chokeLead = n.antic;     // see the chord choke (17-ambient)
+        if (n.line) params._chokeSkip = 1;                 // ⚇ Mix's line is a LINE, never choked
         try { playNote(n.freq, params, n.durMs, at, dest, undefined, E.laneIdx ? E.laneIdx() : undefined); }
         catch (e) {}
       }
@@ -4462,7 +4938,11 @@
     const perBarM = [8, 4, 2, 1].find((pb) => pb * barsIntM <= 32) || 1;
     const stepsM = Math.max(2, Math.min(32, perBarM * barsIntM));
     p.rhythm = { kind: 'euclid', steps: stepsM, pulses: Math.max(1, Math.round(stepsM * 5 / 8)), rotate: 0 };
-    p.pitch = { kind: 'mixed', voices: 3, degree: 1, span: 3 };
+    // ARCHITECTURAL BY DEFAULT (2026-09-17): chords on the changes and the
+    // strong beats, and the line between them STEPS rather than scatters. A
+    // coin flip per onset is still reachable (Chords land ▸ Anywhere) and is
+    // what every part made before this keeps.
+    p.pitch = { kind: 'mixed', voices: 3, degree: 1, span: 5 };   // absent = arch · step · line up
     p.shape = Object.assign({}, p.shape, { lenRatio: 70 });
     try { E.getCfg(); } catch (e) {}
     return { onsets: p.rhythm.pulses, bars: p.bars };
@@ -5345,7 +5825,7 @@
         ns.forEach((n) => { const k = Math.round((n.t || 0) * 1e4); by[k] = (by[k] || 0) + 1; });
         const ch = Object.keys(by).filter((k) => by[k] > 1).length;
         say('  ' + label + ': ' + (rec.kind === 'recorded'
-          ? ('STATIC — ' + ns.length + ' notes over ' + (rec.bars || '?') + ' bars, ' +
+          ? ('❄ FROZEN — ' + ns.length + ' notes over ' + (rec.bars || '?') + ' bars, ' +
              ch + ' chord onset' + (ch === 1 ? '' : 's'))
           : ('GENERATED — ' + ((rec.rhythm || {}).kind || '?') + ' × ' + ((rec.pitch || {}).kind || '?') +
              (/chord|stack|mixed/.test((rec.pitch || {}).kind || '') ? '' :
@@ -5473,7 +5953,7 @@
   function harmRowHtml(L, t) {
     const on = new Set((Array.isArray(t.harm) ? t.harm : []).map((h) => h && (h.deg | 0)).filter(Boolean));
     return '<div data-v2tab="Harmony" class="ambient-ctrl" data-v2when="kind:live;voice:synth">' +
-      '<label>Harmony</label><span class="ambient-seg-row">' +
+      '<label>Harmony voices</label><span class="ambient-seg-row">' +
       HARM_OPTS.map(([d, lab]) =>
         '<button type="button" class="ambient-seg v2-harm' + (on.has(d) ? ' on' : '') +
         '" data-harm="' + d + '">' + lab + '</button>').join('') +
@@ -5606,12 +6086,17 @@
     // drew — because "unlocking" something that was never locked reads wrong.
     // In this vocabulary that distinction disappears: both say what the press
     // DOES, which is the same thing either way.
+    // FREEZE, not a new word for it (2026-09-17, user: "the function at play is
+    // really just this Freeze or Lock idea we've had for a while, we shouldn't
+    // be wrapping it in new jargon"). A frozen part plays the notes it was
+    // frozen at; unfreezing hands it back to the rules and the notes are kept.
+    // Whether a PASS differs is ✺ Playing's question, never this one.
     if (p.kind === 'recorded') {
-      return { txt: '\u2699 Generate instead',
-        title: 'Back to GENERATED \u2014 the rules make this part again, and these notes are kept, so \u270e Write it down brings them back. Generated is still the SAME take every cycle: the dice live in \u273a Live.' };
+      return { txt: '\u2744 Unfreeze',
+        title: 'Hand it back to the RULES \u2014 they make the notes again. These notes are kept, so \u2744 Freeze brings them back.' };
     }
-    return { txt: '\u270e Write it down',
-      title: 'Becomes STATIC \u2014 exactly the notes drawn above become the part, editable note by note. The rules are kept, so \u2699 Generate instead hands it back.' };
+    return { txt: '\u2744 Freeze this take',
+      title: 'Freeze exactly the notes drawn above \u2014 they become the part and can be edited note by note. The rules are kept, so \u2744 Unfreeze hands it back.' };
   }
   // WATCH IT, OR WORK ON IT. The drawing has always shown the record being
   // EDITED — right when you are editing, and wrong when you want to follow the
@@ -6222,7 +6707,7 @@
         // is still on the take bar, and a shared name makes `querySelector`
         // answer for whichever comes first (the documented duplicate-class trap).
         '<button type="button" class="ambient-seg v2-gridbtn" ' +
-          'title="Compose in the grid \u2014 steps, chords and the keyboard. The part becomes STATIC and plays exactly what you put there.">\u25a6 Compose</button>' +
+          'title="Compose in the grid \u2014 steps, chords and the keyboard. The part becomes FROZEN and plays exactly what you put there.">\u25a6 Compose</button>' +
         // ↻ BACK TO THE GENERATED PATTERN. The roll's take bar (🎲/✎/💾) is
         // deliberately NOT here — those write a take down as NOTES, which is
         // the other form's material, and ✎ Write it down would fight the form
@@ -6235,7 +6720,7 @@
         // ⌫ CLEAR — empty this part to draw into. Beside the picker because
         // what it leads to is ✎ Draw (the handler switches it on); moved here
         // from the Generate tab 2026-09-16. Same class, same delegated handler.
-        '<button type="button" class="ambient-seg v2-clearpart" title="Empty this part \u2014 it becomes STATIC with no notes, ready to draw into. The generated settings are kept, so \u2699 Deep brings them back.">\u232b Clear</button>' +
+        '<button type="button" class="ambient-seg v2-clearpart" title="Empty this part \u2014 it becomes FROZEN with no notes, ready to draw into. The generated settings are kept, so \u2699 Deep brings them back.">\u232b Clear</button>' +
         // THE SAME GRID CONTROL AS THE ROLL, and the same field: one standard,
         // stated per BAR, so the number means the same thing on a 1-bar part
         // and a 5-bar one and the cycle is always a whole multiple of it.
@@ -6275,7 +6760,15 @@
     // FIXED IS A SPECIAL CASE OF VARYING (2026-09-16): every part is a function
     // from pass to take, and Fixed is the constant one. So the readout names
     // WHAT varies per pass — or FIXED when nothing does — rather than two kinds.
-    return lv.live ? ('VARIES: ' + (lv.tags || lv.why).join(', ')) : 'FIXED';
+    // …AND WHO AUTHORED THE NOTES comes first (2026-09-17). VARIES/FIXED is
+    // about how each PASS is played; RULES/EDITED is about where the notes came
+    // from. Sharing one leading word is what made "why does it still say VARIES
+    // after it's been written down" a fair question.
+    // FROZEN leads when it is true, and NOTHING leads when it is not: a part
+    // making its notes from the rules is the ordinary case and needs no word.
+    const frozen = !!(L && L.part && L.part.kind === 'recorded');
+    const varies = lv.live ? ('VARIES: ' + (lv.tags || lv.why).join(', ')) : 'FIXED';
+    return frozen ? ('FROZEN \u00b7 ' + varies) : varies;
   }
   // THE BADGE. Every writer sets plain textContent; this lifts the leading
   // LIVE/FIXED into its own span AFTER, so textContent (what every reader and
@@ -6283,12 +6776,24 @@
   function liveBadge(lab) {
     const t = lab && lab.firstChild;
     if (!t || t.nodeType !== 3) return;
-    const m = /^(VARIES|FIXED)\b/.exec(t.nodeValue || '');
+    // TWO CHIPS, ONE PER QUESTION (2026-09-17): who authored the notes, then
+    // whether a pass differs. Either may lead — every writer sets plain
+    // textContent and this lifts what it finds, so a readout that states only
+    // one of them still gets its chip.
+    const m0 = /^(FROZEN)\b/.exec(t.nodeValue || '');
+    if (m0) {
+      const sp0 = document.createElement('span');
+      sp0.className = 'v2-madebadge v2-sum-frozen';
+      sp0.textContent = m0[1];
+      t.nodeValue = t.nodeValue.slice(m0[1].length).replace(/^\s*\u00b7\s*/, ' ');
+      lab.insertBefore(sp0, t);
+    }
+    const m = /^\s*(VARIES|FIXED)\b/.exec(t.nodeValue || '');
     if (!m) return;
     const sp = document.createElement('span');
     sp.className = 'v2-livebadge ' + (m[1] === 'VARIES' ? 'v2-sum-live' : 'v2-sum-fixed');
     sp.textContent = m[1];
-    t.nodeValue = t.nodeValue.slice(m[1].length);
+    t.nodeValue = t.nodeValue.slice(m[0].length);
     lab.insertBefore(sp, t);
   }
   function stepsSync(host, L) {
@@ -6359,7 +6864,7 @@
         // is still on the take bar, and a shared name makes `querySelector`
         // answer for whichever comes first (the documented duplicate-class trap).
         '<button type="button" class="ambient-seg v2-gridbtn" ' +
-          'title="Compose in the grid \u2014 steps, chords and the keyboard. The part becomes STATIC and plays exactly what you put there.">\u25a6 Compose</button>' +
+          'title="Compose in the grid \u2014 steps, chords and the keyboard. The part becomes FROZEN and plays exactly what you put there.">\u25a6 Compose</button>' +
         // ONE CONTROL FOR ONE AXIS. Two buttons stated two switches for what
         // is really four states of the same question — and three of the four
         // combinations they offered meant the same thing, since drawing and
@@ -6378,7 +6883,7 @@
           '</select></label>' +
         // ⌫ CLEAR — the same door as the roll's head (this form has no View
         // picker, so it follows ↻). Same class, same delegated handler.
-        '<button type="button" class="ambient-seg v2-clearpart" title="Empty this part \u2014 it becomes STATIC with no notes, ready to draw into. The generated settings are kept, so \u2699 Deep brings them back.">\u232b Clear</button>' +
+        '<button type="button" class="ambient-seg v2-clearpart" title="Empty this part \u2014 it becomes FROZEN with no notes, ready to draw into. The generated settings are kept, so \u2699 Deep brings them back.">\u232b Clear</button>' +
         // THE GRID EVERY HAND EDIT SNAPS TO — a note VALUE, so it reads the
         // same on a 1-bar part and a 5-bar one. It is here rather than in a
         // sheet because it is a property of EDITING THE PICTURE, not of the
@@ -6438,8 +6943,29 @@
         // Source select); it discards these notes and locks a fresh roll. And
         // both states shared ONE title, so a fixed part showed the live
         // state's explanation. Say what the press will do, in each state.
-        '<button type="button" class="ambient-seg v2-capture" title="' + esc(cf.title) + '">' +
-          cf.txt + '</button>' +
+        // ── WHERE THE NOTES COME FROM: RULES ⟷ EDITED ────────────────────
+        // One button that swapped its own label between "✎ Write it down" and
+        // "⚙ Generate instead" read as two unrelated verbs (reported twice).
+        // The model is the pipeline: RULES and HUMAN EDITING both author the
+        // same CONTENT, so this is a two-state switch over one question, with
+        // the state you are in lit and the other one press away. The notes are
+        // kept either way, so it is reversible.
+        // ONE BUTTON, ONE DIRECTION (2026-09-17, user: "I don't see how these
+        // buttons are useful"). It was a ⚙ Rules ⟷ ✎ Edited pair, and before
+        // that one button wearing two verbs — but EDITING ALREADY SWITCHES IT:
+        // the pen, a drag, a tap on a note and ✎ Draw each freeze the take
+        // first (see `penAdd`, the drag branch, `openRoll`) and say so. So the
+        // ✎ direction is a door nobody needs to open, and the only real choice
+        // is handing an edited part BACK. Shown only when there is something to
+        // hand back; the badge's RULES / EDITED chip states which one it is.
+        // THE FREEZE BUTTON IS GONE (2026-09-17). "Frozen" is overloaded: with
+        // the transport STOPPED nothing is re-decided, so every part is frozen
+        // — the word cannot name a per-layer setting. What it was really doing
+        // is one point on the axis HOW OFTEN THE NOTES ARE RE-DECIDED (never →
+        // every N passes → every pass), which is becoming ONE control; until
+        // that lands, editing still freezes a part for you (the pen, a drag, a
+        // tap, ✎ Draw) and picking a shape in ⚙ Deep hands it back to the rules.
+        // `capFace` is kept — the sync and the handler below still read it.
         // A TAKE YOU LIKE IS WORTH KEEPING, and the next press of ⟳ replaces
         // it — so the way to keep it sits right beside the thing that would
         // destroy it. BOTH STATES: it used to render only on a written part, so
@@ -6733,7 +7259,7 @@
         if (!n || !(n.durMs > 0)) return n;
         try {
           const ms = window._ambNoteChoke('v2:' + (L.id | 0), cs + n.at, n.durMs,
-            n.antic > 0 ? { _chokeLead: n.antic } : {});
+            Object.assign({}, n.antic > 0 ? { _chokeLead: n.antic } : {}, n.line ? { _chokeSkip: 1 } : {}));
           return (ms > 0 && ms < n.durMs) ? { at: n.at, freq: n.freq, durMs: ms, nidx: n.nidx } : n;
         } catch (e) { return n; }
       });
@@ -7608,7 +8134,7 @@
     // but not the TAKE, so that much travels with the pointer. Live parts only
     // — a written part's notes are a list, and there is nothing to re-roll.
     const takeTail = (p.kind === 'recorded') ? ''
-      : ' \u00b7 dice in \u273a Live';
+      : ' \u00b7 dice in \u273a Playing';
     // NO STAMP IS NOT NO MATERIAL. A part made before provenance existed — or
     // assembled by hand on the knobs — still IS one of these materials, and
     // the rules say which: `series` is what an arpeggiator does, one pulse
@@ -7625,24 +8151,24 @@
     if (p.kind === 'recorded') {
       // NO NOTE COUNT. The section head above reads `15 notes · 6 bars`, so
       // every one of these lines used to end by saying it again.
-      if (p.made === 'compose') return { key: 'compose', txt: '\u270e Composed \u00b7 STATIC \u2014 the notes you drew' };
-      if (p.made === 'phrase') return { key: 'adopt', txt: '\u266a From the Bank' + (p.from ? ' \u201c' + p.from + '\u201d' : '') + ' \u00b7 STATIC' };
+      if (p.made === 'compose') return { key: 'compose', txt: '\u270e Composed \u2014 the notes you drew' };
+      if (p.made === 'phrase') return { key: 'adopt', txt: '\u266a From the Bank' + (p.from ? ' \u201c' + p.from + '\u201d' : '') };
       if (p.made === 'take') {
         // LEAD with the material — burying it mid-sentence is why "still not
         // clear what Material we're using" was a fair report of the first cut
         // "…not its rules" ALONE now contradicts the tabs beside it: a written
         // take's rules are editable again (they decide the next roll), so the
         // line has to finish the thought or it reads as "why are those on?".
-        const WROTE = ' \u00b7 STATIC \u2014 plays these notes; its rules roll the next take';
+        const WROTE = ' \u2014 plays these notes; its rules roll the next take';
         if (v1) return { key: p.mat, txt: 'v1 ' + v1 + ' seed' + WROTE };
         if (mat) return { key: mat, txt: M[mat] + WROTE };
         return { key: null, txt: 'a take' + WROTE };
       }
-      return { key: null, txt: 'STATIC \u2014 played exactly as they are' };
+      return { key: null, txt: 'played exactly as they are' };
     }
-    if (v1) return { key: p.mat, txt: 'seeded like a v1 ' + v1 + ' \u00b7 GENERATED \u2014 ' + rulesBare + takeTail };
-    if (mat) return { key: mat, txt: M[mat] + ' \u00b7 GENERATED \u2014 ' + rulesBare + takeTail };
-    return { key: null, txt: 'GENERATED \u2014 ' + rulesBare + takeTail };
+    if (v1) return { key: p.mat, txt: 'seeded like a v1 ' + v1 + ' \u2014 ' + rulesBare + takeTail };
+    if (mat) return { key: mat, txt: M[mat] + ' \u2014 ' + rulesBare + takeTail };
+    return { key: null, txt: rulesBare + takeTail };
   }
   // WHICH ARRANGEMENT PART A MAKER WILL WRITE. `L.partFor` when the layer has
   // per-part records; otherwise whatever is sounding. ONE resolver, because the
@@ -7701,7 +8227,7 @@
     if (face) {
       const empty = L.part.kind === 'recorded' && !(L.part.notes || []).length;
       const txt = M[pv.key] || (empty ? 'nothing yet \u2014 pick a shape'
-                             : L.part.kind === 'recorded' ? 'written \u2014 not generated'
+                             : L.part.kind === 'recorded' ? 'the rules are idle \u2014 \u2699 Rules uses them'
                                                           : 'choose & tune');
       if (face.textContent !== txt) face.textContent = txt;
     }
@@ -7709,6 +8235,23 @@
     // layer's; the panel is synced by `stagePass`, from the copy
     if (card.classList && card.classList.contains('v2-layer') && V2.stagedOf(card.getAttribute('data-v2id') | 0)) return;
     try { gwPartsSync(card, L); } catch (e) {}
+    // THE SHAPE PICKER — its options are the five doors, plus whatever shape is
+    // in force when that is not one of them (✨ Quick's ♪ Melody), because a
+    // select whose value matches no option silently shows the FIRST one.
+    const sp = card.querySelector('.v2-shapepick');
+    if (sp) {
+      const SH = [['sustain', '\u25ac Sustain a chord'], ['arp', '\u27f3 Arpeggiate'],
+        ['roll', '\ud83c\udfb2 Roll a line'], ['mixed', '\u2687 Mix chords + notes'],
+        ['ground', '\u26f0 Play the changes']];
+      const key = pv.key;
+      const extra = (key === 'melody') ? [['melody', '\u266a Melody \u2014 from \u2728 Quick']] : [];
+      const mine = SH.some((o) => o[0] === key) || !!extra.length;
+      const list = (mine ? '' : '<option value="">Choose a shape\u2026</option>') +
+        SH.concat(extra).map((o) => '<option value="' + o[0] + '">' + esc(o[1]) + '</option>').join('');
+      if (sp._sig !== list) { sp._sig = list; sp.innerHTML = list; }
+      const want = mine ? key : '';
+      if (sp.value !== want) sp.value = want;
+    }
     const says = card.querySelector('.v2-gensays');
     if (says) {
       // ONE LINE, FACTS ONLY (2026-09-16, the imperative pass). It was three
@@ -7749,7 +8292,7 @@
         }
       } catch (e) {}
       const txt = (L.part.kind === 'recorded')
-        ? 'STATIC now \u2014 pick a shape to hand it back to the rules.'
+        ? 'FROZEN \u2014 pick a shape to hand it back to the rules.'
         : bits.join(' \u00b7 ');
       if (says.textContent !== txt) says.textContent = txt;
     }
@@ -7796,44 +8339,166 @@
           : st0.tuned ? 'Put this character\u2019s values back' : 'Nothing to reset \u2014 this character has not been changed';
       }
     }
-    // ▸ FINE-TUNE SAYS WHAT IT HOLDS: the recipe (Rhythm × Pitch), then every
-    // knob that is SHOWING for this shape and set away from its default. A
-    // folded change must stay readable from outside the fold (the drum-solo
-    // rule); a row gated off for this shape reads nothing, so its stale value
-    // is never reported.
-    const ts = card.querySelector('.v2-shapepop .v2-tunesum');
-    if (ts) {
-      const pop = ts.closest('.v2-shapepop');
-      const pickTxt = (f) => { const e = pop.querySelector('select.v2-f[data-f="' + f + '"]');
-        return e && e.selectedIndex >= 0 ? (e.options[e.selectedIndex].text || '').split(' \u2014 ')[0] : ''; };
-      const out = [];
-      const rk = pickTxt('part.rhythm.kind'), pk = pickTxt('part.pitch.kind');
-      if (rk || pk) out.push([rk, pk].filter(Boolean).join(' \u00d7 ').toLowerCase());
-      const DEF = { 'part.rhythm.steps': null, 'part.rhythm.rotate': 0, 'part.rhythm.syncop': 0,
+    // ── FINE-TUNE'S TABS, TUNED CHIPS AND RECIPE (2026-09-17) ───────────────
+    // All read from the panel's own controls after `gateRow` has run, so a row
+    // this shape does not read (inline display none) counts for nothing — its
+    // stale value is never reported, and it is listed as "doesn't apply".
+    const pop = card.querySelector('.v2-shapepop');
+    if (pop) {
+      const host = pop.closest('.v2-layer') || card;
+      const shown = (row) => row && row.style.display !== 'none';
+      // WHAT A KNOB IS COMPARED WITH — the Character's value when it sets
+      // one, else the knob's own default. Absent from both = not reported.
+      const DEF = { 'part.rhythm.rotate': 0, 'part.rhythm.syncop': 0,
         'part.pitch.contour': 0, 'part.pitch.lines': 1, 'part.pitch.randomness': 0,
         'part.pitch.spread': 0, 'part.pitch.variety': 0, 'part.rhythm.vary': 0,
         'part.rhythm.rateVar': 0, 'part.rhythm.voices': 1, 'part.pitch.roam': 0,
         'part.pitch.home': 'floor', 'part.pitch.drift': 0, 'part.pitch.subdiv': 1,
-        'part.pitch.phraseLen': 4, 'part.pitch.repeats': 4,
+        'part.pitch.phraseLen': 4, 'part.pitch.repeats': 4, 'instrument.register': 4,
         'part.pitch.voiceCap': 0, 'part.shape.holdSteps': 0, 'part.shape.maxEvents': 0,
         'part.pitch.stutter': 0, 'proximity': 0, 'part.shape.slip': 0, 'part.pitch.tones': '',
-        'part.pitch.motif': '', 'part.rhythm.antic': '',
+        'part.pitch.motif': '', 'part.rhythm.antic': '', 'part.pitch.inv': 0,
         'restProb': 0, 'ghosts': 0, 'lenVary': 0, 'startVary': 0, 'twist': 0, 'phrasing': 0 };
-      pop.querySelectorAll('.v2-sub-gmore').forEach((row) => {
-        if (row.style.display === 'none' || row.classList.contains('v2-rowoff')) return;
+      const st0 = V2.presetState ? V2.presetState(L) : { id: null };
+      const pr = st0.id ? (V2.presets || []).find((x) => x.id === st0.id) : null;
+      const selNorm = (x) => (x === 0 || x === '0' || x == null || x === false) ? '' : String(x);
+      const chips = [];
+      const tunedRows = new Set();
+      const seen = new Set();
+      // A DIE A MACRO WROTE IS NOT A SEPARATE CHANGE — three chips for one
+      // slider is the wall this reorganisation exists to remove. The macro
+      // itself gets the chip; a die moved BY HAND still gets its own.
+      const byMacro = {};
+      ['fl', 'ls', 'th'].forEach((k) => {
+        const st2 = diceStateOf(L, k);
+        if (!st2.custom && st2.v > 0) Object.keys(DICE[k].set).forEach((f) => { byMacro[f] = k; });
+        if (st2.v > 0) chips.push({ lab: DICE[k].lab, val: st2.v + '%' + (st2.custom ? ' \u00b7 custom' : ''),
+          f: '#dice:' + k, v: 0, from: 'default' });
+      });
+      pop.querySelectorAll('.v2-genrows .ambient-ctrl').forEach((row) => {
+        if (!shown(row) || row.classList.contains('v2-sub-recipe')) return;
         const c = row.querySelector('.v2-f[data-f]'); if (!c) return;
         const f = c.getAttribute('data-f');
-        if (!(f in DEF) || DEF[f] === null) return;
-        const v = c.tagName === 'SELECT' ? c.value : +c.value;
-        if (String(v) === String(DEF[f])) return;
-        const lab = ((row.querySelector('label') || {}).textContent || '').trim().toLowerCase();
-        out.push(lab + ' ' + (c.tagName === 'SELECT' ? pickTxt(f).toLowerCase() : v));
+        if (seen.has(f)) return;
+        if (byMacro[f]) return;                     // the macro's chip speaks for it
+        const has = pr && pr.set && Object.prototype.hasOwnProperty.call(pr.set, f);
+        if (!has && !(f in DEF)) return;
+        const target = has ? pr.set[f] : DEF[f];
+        const isSel = c.tagName === 'SELECT';
+        const same = isSel ? selNorm(c.value) === selNorm(target) : (+c.value === +target);
+        if (same) return;
+        seen.add(f);
+        tunedRows.add(row);
+        const lab = ((row.querySelector('label') || {}).textContent || '').trim();
+        const val = isSel ? ((c.options[c.selectedIndex] || {}).text || '').split(' — ')[0] : c.value;
+        chips.push({ lab, val, f, v: target, from: has ? 'character' : 'default' });
       });
-      const hs = [...pop.querySelectorAll('.v2-sub-gmore .v2-harm.on')]
-        .filter((h) => (h.closest('.ambient-ctrl') || {}).style.display !== 'none');
-      if (hs.length) out.push('+' + hs.length + ' harmony');
-      const t2 = out.join(' \u00b7 ');
-      if (ts.textContent !== t2) ts.textContent = t2;
+      if (pr && pr.speed && V2.speedOf) {
+        const sp = V2.speedOf(L);
+        if (sp != null && Math.abs(sp - pr.speed) > 0.01) chips.push({ lab: 'Speed', val: (Math.round(sp * 100) / 100) + ' a bar', f: '#speed', v: pr.speed, from: 'character' });
+      }
+      if (L.followSalt) {
+        const sr = pop.querySelector('.v2-gensalt');
+        const row = sr && sr.closest('.ambient-ctrl');
+        if (shown(row)) { tunedRows.add(row); chips.push({ lab: 'Salt re-voice', val: 'on', f: '#salt', v: 0, from: 'default' }); }
+      }
+      pop.querySelectorAll('.v2-ft .v2-harm.on').forEach((hb, i, all) => {
+        const row = hb.closest('.ambient-ctrl');
+        if (i === 0 && shown(row)) { tunedRows.add(row); chips.push({ lab: 'Harmony voices', val: '+' + all.length, f: '#harm', v: 0, from: 'default' }); }
+      });
+      const zf = pop.querySelector('.v2-zonefor');
+      if (zf) {
+        // NAMES THE SHAPE, and ✨ Quick's Melody IS a Roll a line (same recipe,
+        // and the Character list below is roll's — `PK` maps it). Saying
+        // "Melody" here read as a CHARACTER being picked, because roll has one
+        // by that name — one word for two things, the naming rule's own trap.
+        const M2 = { sustain: 'Sustain a chord', arp: 'Arpeggiate', roll: 'Roll a line', melody: 'Roll a line',
+          mixed: 'Mix chords + notes', ground: 'Play the changes' };
+        const zt = M2[matProv(L).key] ? ' \u2014 for ' + M2[matProv(L).key] : '';
+        if (zf.textContent !== zt) zf.textContent = zt;
+      }
+      const ts2 = pop.querySelector('.v2-tunedsays');
+      if (ts2) {
+        const tt = st0.id ? 'what differs from the Character' : 'what differs from each knob\u2019s default';
+        if (ts2.textContent !== tt) ts2.textContent = tt;
+      }
+      pop.querySelectorAll('.v2-dmrow').forEach((row) => {
+        const inp = row.querySelector('.v2-dm'); if (!inp) return;
+        const st2 = diceStateOf(L, inp.getAttribute('data-dm'));
+        const txt = (st2.v | 0) + '%' + (st2.custom ? ' \u00b7 custom' : '');
+        const vv = row.querySelector('.v2-dmv');
+        if (vv && vv.textContent !== txt) vv.textContent = txt;
+        if (document.activeElement !== inp && String(inp.value) !== String(st2.v | 0)) inp.value = String(st2.v | 0);
+      });
+      const tc = pop.querySelector('.v2-tunedchips');
+      if (tc) {
+        const html = chips.length ? chips.map((ch) =>
+          '<span class="v2-tunedchip" title="' + esc(ch.lab + ' — ' + (ch.from === 'character'
+            ? 'the Character sets ' + ch.v : 'set away from its default')) + '">' + esc(ch.lab) + ' ' + esc(ch.val) +
+            '<button type="button" class="v2-tunedx" data-tf="' + esc(ch.f) + '" data-tv="' + esc(JSON.stringify(ch.v)) + '"' +
+            ' aria-label="Put ' + esc(ch.lab) + ' back">✕</button></span>').join('')
+          : '<span class="ambient-hint">' + (pr ? 'nothing — it plays the Character as it is' : 'nothing — every knob at its default') + '</span>';
+        if (tc._sig !== html) { tc._sig = html; tc.innerHTML = html; }
+        // "Tuned" is against a Character; with none in force the baseline is
+        // each knob's default, which a roll moves by itself — so it says so
+        const tl = tc.parentNode && tc.parentNode.querySelector('label');
+        const tlt = pr ? 'Tuned' : 'Changed';
+        if (tl && tl.textContent !== tlt) tl.textContent = tlt;
+      }
+      // THE TABS — which is open, how many rows each has for THIS shape, a dot
+      // where one is tuned, and the question the open one answers
+      const TABQ = { rhythm: 'When the notes land, and for how long.', notes: 'Which pitches, and how they are stacked.',
+        form: 'How the part repeats itself.', take: 'Chance rolled once per take — 🎲 New take rolls it again.' };
+      let cur = (([...host.classList].find((k) => k.indexOf('v2-ftt-') === 0)) || 'v2-ftt-rhythm').slice(7);
+      if (!TABQ[cur]) cur = 'rhythm';
+      pop.querySelectorAll('.v2-fttab').forEach((tb) => {
+        const k = tb.getAttribute('data-ft');
+        const rows = [...pop.querySelectorAll('.ambient-ctrl.v2-ft-' + k)].filter(shown);
+        tb.classList.toggle('on', k === cur);
+        tb.setAttribute('aria-selected', k === cur ? 'true' : 'false');
+        const n = tb.querySelector('.v2-ftn'); const nt = rows.length + ' row' + (rows.length === 1 ? '' : 's');
+        if (n && n.textContent !== nt) n.textContent = nt;
+        const dot = tb.querySelector('.v2-ftdot'); if (dot) dot.hidden = !rows.some((r2) => tunedRows.has(r2));
+      });
+      const q = pop.querySelector('.v2-ftq'); if (q && q.textContent !== TABQ[cur]) q.textContent = TABQ[cur];
+      const naRows = [...pop.querySelectorAll('.ambient-ctrl.v2-ft-' + cur)].filter((r2) => !shown(r2));
+      const nb = pop.querySelector('.v2-ftnabtn'), nl = pop.querySelector('.v2-ftnalist');
+      if (nb && nl) {
+        const open = nb.getAttribute('aria-expanded') === 'true';
+        nb.hidden = !naRows.length;
+        const bt = (open ? '▾ ' : '▸ ') + naRows.length + ' don’t apply to this shape';
+        if (nb.textContent !== bt) nb.textContent = bt;
+        nl.hidden = !open || !naRows.length;
+        const lt = naRows.map((r2) => ((r2.querySelector('label') || {}).textContent || '').trim()).filter(Boolean).join(' · ');
+        if (nl.textContent !== lt) nl.textContent = lt;
+      }
+      // ⚠ ADVANCED: RECIPE — a shape IS a rhythm × pitch recipe; leaving it is
+      // allowed and said. The shape is the provenance stamp (`part.mat`).
+      const RECIPE = { sustain: ['pulse', 'chord'], arp: ['pulse', 'series'], roll: ['euclid', 'walk'],
+        melody: ['euclid', 'walk'], mixed: ['euclid', 'mixed'], ground: ['ground', 'chord'] };
+      const SHN = { sustain: 'Sustain a chord', arp: 'Arpeggiate', roll: 'Roll a line', melody: 'Melody',
+        mixed: 'Mix chords + notes', ground: 'Play the changes' };
+      const says = pop.querySelector('.v2-recipesays'), back = pop.querySelector('.v2-recipeback'),
+            sum = pop.querySelector('.v2-recipesum');
+      if (says) {
+        const shp = L.part.mat, rec = RECIPE[shp];
+        const rk = (L.part.rhythm && L.part.rhythm.kind) === 'drawn' ? 'euclid' : ((L.part.rhythm && L.part.rhythm.kind) || 'pulse');
+        const pk = (L.part.pitch && L.part.pitch.kind) || '';
+        const off = !!(rec && (rk !== rec[0] || pk !== rec[1]));
+        const txt = !rec ? 'No shape in force — these two are the whole recipe.'
+          : off ? '⚠ Custom recipe — this is no longer “' + SHN[shp] + '”. Its Character and knobs were tuned for ' +
+                  rec[0] + ' × ' + rec[1] + ', so some may do nothing or behave differently.'
+          : '“' + SHN[shp] + '” is ' + rec[0] + ' rhythm × ' + rec[1] + ' pitch. Change these only if no shape does what you want.';
+        if (says.textContent !== txt) says.textContent = txt;
+        says.classList.toggle('v2-recipeoff', off);
+        if (back) { back.hidden = !off; if (off) back.textContent = '↺ Back to ' + SHN[shp]; }
+        const st2 = off ? 'custom recipe' : '';
+        if (sum && sum.textContent !== st2) sum.textContent = st2;
+        if (off && !host.classList.contains('v2-so-recipe')) {
+          host.classList.add('v2-so-recipe');
+          pop.querySelectorAll('.v2-discbtn[data-disc="recipe"]').forEach((b0) => { b0.textContent = '▾ Hide'; });
+        }
+      }
     }
   }
   // ── GROUNDWORK'S PANEL: ONE SUBSECTION PER PART ─────────────────────────
@@ -8335,8 +9000,8 @@
     try { matSync(card, L); } catch (e) {}
     try { neSync(card, L, E); } catch (e) {}
     try {
-      const cb = card.querySelector('.v2-capture'), cf2 = capFace(L);
-      if (cb && cb.textContent !== cf2.txt) { cb.textContent = cf2.txt; cb.title = cf2.title; }
+      // (no freeze button to sync — see `partVizHtml`. The handler stays, so a
+      // surface that still carries `.v2-capture` keeps working.)
     } catch (e) {}
     // 🎲's face follows the selection on a LIVE part, exactly as 🔒's does on
     // a recorded one — the button says what THIS press will do.
@@ -8363,7 +9028,7 @@
             : (empty4
               ? 'Roll a take of this layer’s rules and freeze it here — there is nothing in this part yet.'
               : rec4
-              ? 'Replace these notes with a fresh roll of this layer’s rules, still STATIC. Tap a bar in the drawing first to re-roll only that bar.'
+              ? 'Replace these notes with a fresh roll of this layer’s rules, still frozen. Tap a bar in the drawing first to re-roll only that bar.'
               : 'Roll this part again. Preview never re-rolls on its own, so the take you are hearing stays until you press this. Tap a bar in the drawing first to retake only that bar.');
         }
       }
@@ -9326,6 +9991,112 @@
   // one id breaks the label's `for` and every id-based lookup. The COMMIT
   // mirrors the value into the other copy, so the two can never drift (the
   // rule Level already follows with the mixer fader).
+  // ── THE THREE DICE MACROS (2026-09-17) ──────────────────────────────────
+  // Nine separate dice with no ceiling is what made a layer unreadable: each
+  // one defensible alone, and together a mush nobody chose. Each macro writes
+  // the fields it stands for at musical ratios — they are the SAME data, so
+  // Advanced ▸ each die is a finer view of one thing and never a second
+  // mechanism. `L.dice` stores what the sliders were set to (so a macro can
+  // show its own value); the FIELDS are what plays, and editing one by hand
+  // makes the macro read "custom".
+  const DICE = {
+    fl: { lab: 'Flourishes', hint: 'extra notes \u2014 flicks, flams and figures',
+          set: { twist: 0.30, ghosts: 0.45, phrasing: 0.40 } },
+    ls: { lab: 'Looseness', hint: 'timing and length scatter',
+          set: { lenVary: 0.60, 'part.rhythm.rateVar': 0.35, startVary: 0.25 } },
+    th: { lab: 'Thinning', hint: 'onsets dropped \u2014 space in the pattern',
+          set: { restProb: 0.50 } },
+  };
+  const dGet = (o, path) => path.split('.').reduce((a, k) => (a == null ? a : a[k]), o);
+  // ── EVERY DIE, IN TWO SETS, AND THE TWO VERBS OVER THEM (2026-09-17) ─────
+  // The sets are the play-it-twice split: TAKE dice are rolled once per take
+  // (⚙ Deep's own), PASS dice are re-rolled every pass (✺ Playing's). Each is
+  // listed with the CEILING a random roll may reach — randomising to 100
+  // across the board is exactly the mush the density work just removed, so a
+  // roll is tasteful by construction: each die is a coin flip for "off at all",
+  // then a value in its own musical range.
+  const DICE_SETS = {
+    take: [['restProb', 35], ['ghosts', 45], ['lenVary', 50], ['startVary', 30], ['twist', 30],
+           ['phrasing', 45], ['part.pitch.randomness', 40], ['part.pitch.drift', 30],
+           ['part.rhythm.vary', 45], ['part.rhythm.rateVar', 30]],
+    pass: [['humanize', 35], ['velVar', 40], ['accent', 50], ['strumFidelity', 60],
+           ['slide', 40], ['ornament', 30], ['motion', 25]],
+  };
+  function diceReset(L, which) {
+    if (!L) return false;
+    (DICE_SETS[which] || []).forEach(([f]) => setPath(L, f, 0));
+    if (which === 'take') delete L.dice;
+    return true;
+  }
+  function diceRandom(L, which) {
+    if (!L) return false;
+    if (which === 'take') {
+      // THE MACROS ARE WHAT IS ROLLED, so a random take reads as one decision
+      // per axis rather than ten — and the nine dice follow them.
+      diceReset(L, 'take');
+      ['fl', 'ls', 'th'].forEach((k) => {
+        const on = Math.random() < 0.7;
+        diceApply(L, k, on ? Math.round(10 + Math.random() * 50) : 0);
+      });
+      // …and the four take dice NO MACRO covers (they shape WHICH notes, not
+      // how many): Scatter, Pitch vary, Vary and Rate var. Rolled sparsely —
+      // most of the time a part should not be doing all four at once.
+      const MACRO_F = {};
+      ['fl', 'ls', 'th'].forEach((k) => Object.keys(DICE[k].set).forEach((f) => { MACRO_F[f] = 1; }));
+      DICE_SETS.take.forEach(([f, cap]) => {
+        if (MACRO_F[f]) return;
+        setPath(L, f, (Math.random() < 0.4) ? Math.round(5 + Math.random() * (cap - 5)) : 0);
+      });
+      return true;
+    }
+    (DICE_SETS.pass || []).forEach(([f, cap]) => {
+      setPath(L, f, (Math.random() < 0.55) ? Math.round(Math.random() * cap) : 0);
+    });
+    return true;
+  }
+  // ONE ROW, BOTH VERBS — named for the set they act on, so neither can read
+  // as "everything on the card".
+  const diceAllRow = (which, what) =>
+    '<div class="ambient-ctrl v2-diceall" data-v2when="kind:live"><label>All of these</label>' +
+      '<span class="ambient-seg-row">' +
+        '<button type="button" class="ambient-seg v2-dall" data-da="' + which + ':reset"' +
+          ' title="Put every one of these back to 0 \u2014 ' + esc(what) + ' as written">\u21ba All to default</button>' +
+        '<button type="button" class="ambient-seg v2-dall" data-da="' + which + ':rand"' +
+          ' title="Roll a fresh, playable set \u2014 each one is often off, and none goes to an extreme">\ud83c\udfb2 Surprise me</button>' +
+      '</span></div>';
+  // ONE MACRO ROW. Deliberately not a `.v2-f`: that handler writes ONE field,
+  // and this writes the three the macro stands for, through `diceApply`.
+  const dmRow = (L, k) => {
+    const d = DICE[k]; if (!d) return '';
+    const st = diceStateOf(L, k);
+    const id = uid(L, 'dice.' + k) + '-gen';
+    return '<div class="ambient-ctrl v2-dmrow" data-v2when="kind:live"><label for="' + id + '">' + esc(d.lab) + '</label>' +
+      '<input type="range" id="' + id + '" class="v2-dm" data-dm="' + k + '" min="0" max="100" step="1" value="' + (st.v | 0) + '">' +
+      '<span class="ambient-hint v2-dmv">' + (st.v | 0) + '%' + (st.custom ? ' \u00b7 custom' : '') + '</span>' +
+      '<span class="ambient-hint v2-dmhint">' + esc(d.hint) + '</span></div>';
+  };
+  const diceApply = (L, k, v) => {
+    const d = DICE[k]; if (!d || !L) return false;
+    const n = clamp(Math.round(+v || 0), 0, 100);
+    if (!L.dice || typeof L.dice !== 'object') L.dice = {};
+    L.dice[k] = n;
+    Object.keys(d.set).forEach((f) => setPath(L, f, Math.round(n * d.set[f])));
+    return true;
+  };
+  // WHAT A MACRO SHOWS: its stored value when the fields still agree with it,
+  // and 'custom' once any of them has been moved by hand.
+  const diceStateOf = (L, k) => {
+    const d = DICE[k]; if (!d || !L) return { v: 0, custom: false };
+    const st = (L.dice && Number.isFinite(L.dice[k])) ? (L.dice[k] | 0) : null;
+    const agrees = st != null && Object.keys(d.set).every((f) =>
+      Math.abs((+dGet(L, f) || 0) - Math.round(st * d.set[f])) <= 1);
+    if (agrees) return { v: st, custom: false };
+    // no stored value (or it has been overridden): infer one from the fields
+    const guess = Math.max.apply(null, Object.keys(d.set).map((f) =>
+      Math.round((+dGet(L, f) || 0) / d.set[f])));
+    const any = Object.keys(d.set).some((f) => (+dGet(L, f) || 0) > 0);
+    return { v: clamp(guess || 0, 0, 100), custom: any && st != null };
+  };
   const gsl = (L, field, label, v, min, max, hint, when, sfx) => {
     if (typeof _ambSl !== 'function') return '';
     const id = uid(L, field) + '-gen' + (sfx || '');
@@ -9465,7 +10236,7 @@
   // (Verse/Chorus: the ⇶ Parts view, the part tabs, and the ⟲ N × part badge
   // on this very card), and one word for two mechanisms is how a control gets
   // misread. The DATA keys stay `part.*` for save-compat (the naming rule).
-  const GRPS = ['Instrument', 'Content', 'Pitch', 'Shape', 'Mix', 'FX'];
+  const GRPS = ['Instrument', 'Content', 'Shape', 'Mix', 'FX'];   // ✦ Pitch folded into Instrument (2026-09-17)
   // ✺ LIVE (2026-09-16, user: "consolidate them all into a single menu behind a
   // new button 'Live' next to 'Generate'"). Everything that makes a pass differ
   // from the last — the dice, Humanize, Vel var, and the line naming what
@@ -9473,13 +10244,25 @@
   // one section. It is the Shape group's `Every pass` tab seen on its own, so
   // no row moved and no field gained a second control; Shape stops offering it
   // (`SEC_EXCL`) so the same controls are never behind two doors.
-  const SECS = ['Generate', 'Live', 'Time', 'Bank', 'Instrument', 'Pitch', 'Shape', 'Mix', 'FX'];
+  // THE ORDER THE USER ASKED FOR (2026-09-17): what it is, then what it plays,
+  // then how each pass differs, then how a note is struck — and the second row
+  // is the frame around all of it. Eight sections, four per row: ✦ Pitch folded
+  // into Instrument, which is why it divides evenly now.
+  const SECS = ['Instrument', 'Generate', 'Playing', 'Shape', 'Time', 'Mix', 'FX', 'Bank'];
   // Make · Time · Bank are the Content group seen three ways, so they share its
   // rows and differ only in which TABS they offer.
-  const SEC_GRP = { Generate: 'Content', Time: 'Content', Bank: 'Content', Live: 'Shape' };
+  // ✺ PLAYING (renamed from ✺ Playing, 2026-09-17). "Live" meant three things —
+  // the rules-mode data key (`kind: 'live'`), this section, and the transport —
+  // and the model is a PIPELINE, not a set of poles: RULES and HUMAN EDITING
+  // author CONTENT, and PLAYING is what happens to that content as it is struck,
+  // pass by pass. So this section holds stage 3 ONLY; the two switches that
+  // re-run the RULES on a schedule (Re-roll every cycle, Voicing feel) moved to
+  // ⚙ Deep, where authoring lives. VARIES/FIXED is not a fourth axis: it REPORTS
+  // whether stage 1 re-runs, the arrangement moves, or stage 3 rolls.
+  const SEC_GRP = { Generate: 'Content', Time: 'Content', Bank: 'Content', Playing: 'Shape' };
   const SEC_EXCL = { Shape: ['Every pass'] };
   const SEC_TABS = {
-    Live: ['Every pass'],
+    Playing: ['Every pass'],
     // Transpose and Pitch quantize ride with Generate: they are what a STATIC
     // part does with the notes it has, which is part of what it is made of.
     Generate: ['Method', 'Transpose', 'Pitch quantize'],
@@ -9523,6 +10306,9 @@
   // EVERY tab, which is what keeps the drawing visible and would be exactly
   // wrong here.
   const subrows = (id, html) => html.split('class="ambient-ctrl').join('class="ambient-ctrl v2-sub v2-sub-' + id);
+  // ⚙ DEEP'S FINE-TUNE TABS — the same flat-rows idea: each row carries its
+  // tab, and the card's `v2-ftt-<tab>` class (CSS) decides which one shows.
+  const ftrows = (tab, html) => html.split('class="ambient-ctrl').join('class="ambient-ctrl v2-ft v2-ft-' + tab);
   const disc = (id, label, hint, when) =>
     '<div class="ambient-ctrl v2-disc"' + (when ? ' data-v2when="' + when + '"' : '') + '>' +
       '<label>' + esc(label) + '</label>' +
@@ -9669,6 +10455,18 @@
             // later visit, forever — and the file's own rule is that the
             // control for a fact beats a sentence about it. `.v2-gensays`
             // below still says, live, what THIS shape produces.
+            // THREE NUMBERED ZONES (2026-09-17): the shape, the few knobs that
+            // shape reads, then Fine-tune. `.ambient-mod-sub` is the card's own
+            // subsection label, so the panel reads as three steps without new chrome.
+            '<div class="ambient-mod-sub v2-genzone"><b class="v2-zonen">1</b>Shape</div>' +
+            // ONE DROPDOWN, NOT FIVE BUTTONS (2026-09-17, user: "these can be
+            // moved into a styled dropdown to conserve space"). Five doors took
+            // two rows and a third of the panel. The BUTTONS STAY in the DOM,
+            // display:none, and the select presses the matching one — so the
+            // shape-press logic (confirm before replacing, adopt-vs-build,
+            // provenance stamping, the roll) has exactly ONE implementation and
+            // every handler that already found those buttons still does.
+            '<div class="v2-shaperow"><select class="ambient-select v2-shapepick" aria-label="Shape"></select></div>' +
             '<span class="ambient-seg-row v2-genshapes">' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="sustain" title="▬ Sustained — a held note or chord, one per cycle: the pad shape.">\u25ac Sustain a chord</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="arp" title="⟳ Arpeggio — sweep the chord one tone per onset.">\u27f3 Arpeggiate</button>' +
@@ -9707,11 +10505,12 @@
               // shapes. First row, because a preset sets the rows below it.
               // Options are filled by `genSync` — which shape is in force, and
               // whether its preset has been tuned, move without a rebuild.
+              '<div class="ambient-mod-sub v2-genzone v2-genzone2"><b class="v2-zonen">2</b>The knobs that matter<span class="v2-zonefor"></span></div>' +
               '<div class="ambient-ctrl v2-presetctl" hidden>' +
                 '<label for="' + uid(L, 'preset') + '-gen">Character</label>' +
                 '<select id="' + uid(L, 'preset') + '-gen" class="ambient-select v2-presetpick"></select>' +
                 '<button type="button" class="ambient-seg v2-presetreset">\u21ba Reset</button></div>' +
-              '<div class="ambient-ctrl v2-speedrow" data-v2when="kind:live;voice:synth;pitch:series,walk;rhythm:pulse,euclid,drawn">' +
+              '<div class="ambient-ctrl v2-speedrow" data-v2when="kind:live;voice:synth;pitch:series,walk,mixed;rhythm:pulse,euclid,drawn">' +
                 '<label for="' + uid(L, 'speed') + '-gen">Speed</label>' +
                 '<select id="' + uid(L, 'speed') + '-gen" class="ambient-select v2-speed"></select>' +
                 '<span class="ambient-hint"></span></div>' +
@@ -9728,7 +10527,8 @@
                   (Number.isFinite((L.part.pitch || {}).mix) ? L.part.pitch.mix : 50), 0, 100,
                   'all single notes \u2192 all chords', 'kind:live;voice:synth;pitch:mixed') +
               gsel(L, 'part.pitch.mixAt', 'Chords land', (L.part.pitch || {}).mixAt || '',
-                   [['', 'Anywhere'], ['strong', 'On beats 1 and 3'], ['change', 'On each change']],
+                   [['arch', 'On the changes and strong beats'], ['change', 'On each change'],
+                    ['strong', 'On beats 1 and 3'], ['any', 'Anywhere \u2014 a coin flip']],
                    '', 'kind:live;voice:synth;pitch:mixed') +
               gst(L, 'part.pitch.span', 'Range', (L.part.pitch || {}).span, 1, 12,
                   'tones', 'kind:live;voice:synth;pitch:walk,mixed') +
@@ -9773,16 +10573,39 @@
                 ? harmRowHtml(L, L.part.pitch || {}).replace('data-v2when="kind:live;voice:synth"',
                     'data-v2when="kind:live;voice:synth;pitch:fixed,anchor,series,drawn"')
                 : '') +
-              // ── ▸ FINE-TUNE ─────────────────────────────────────────────
-              // One fold for everything else, recipe first. Keeps the `gmore`
-              // id (and its `.v2-so-gmore` class), so only the words moved.
-              disc('gmore', 'Fine-tune', '', 'kind:live')
-                .replace('<span class="ambient-hint">', '<span class="ambient-hint v2-tunesum">') +
-              subrows('gmore',
-              gsel(L, 'part.rhythm.kind', 'Rhythm', rhythmShown(r.kind), RHYTHM_OPTS,
-                   '', 'kind:live;voice:synth') +
-              gsel(L, 'part.pitch.kind', 'Pitch', t.kind, PITCH_OPTS,
-                   '', 'kind:live;voice:synth') +
+              // Arpeggiate counts its onsets as a pulse, so ITS "How many" is
+              // `rhythm.n` — a main knob, beside Speed (it was in Fine-tune).
+              // …but NOT on a sustain (pulse × chord): that shape is one onset
+              // holding a chord, so "how many" is always 1 and the knob is noise
+              gsl(L, 'part.rhythm.n', 'How many', (L.part.rhythm || {}).n, 1, 32,
+                  'onsets in the cycle', 'kind:live;rhythm:pulse;pitch:series,walk,mixed,fixed,anchor,drawn') +
+              // ── TUNED — what differs from the Character (2026-09-17) ────
+              // Replaces Fine-tune's summary line. One chip per knob moved away
+              // from the Character in force (or from its default when the
+              // Character does not set it); ✕ puts that one back. Filled by
+              // `genSync`, which already reads the staged copy.
+              '<div class="ambient-ctrl v2-tunedrow" data-v2when="kind:live"><label>Tuned</label>' +
+                '<span class="v2-tunedchips"></span>' +
+                '<span class="ambient-hint v2-tunedsays"></span></div>' +
+              diceAllRow('take', 'the take plays the pattern') +
+              // ── FINE-TUNE: FOUR QUESTIONS (2026-09-17, the Deep reorganisation;
+              // mockup https://claude.ai/artifact/4XoTwoR6sydpG5sJE92KT3). Was
+              // one ▸ fold of ~45 rows in no order. Rows carry `v2-ft
+              // v2-ft-<tab>`; the CARD carries `v2-ftt-<tab>` (kept across a
+              // rebuild like the `v2-so-*` folds) and CSS shows the one tab —
+              // inline display stays `gateRow`'s, so shape gating still hides.
+              // The rule for what is here at all: play it twice — a knob that
+              // makes two passes differ is ✺ Playing's; one that changes only on
+              // 🎲 New take is Deep's.
+              '<div class="ambient-mod-sub v2-genzone" data-v2when="kind:live"><b class="v2-zonen">3</b>Fine-tune</div>' +
+              '<div class="v2-fttabs" data-v2when="kind:live" role="tablist">' +
+                [['rhythm', 'Rhythm'], ['notes', 'Notes'], ['form', 'Repeats'], ['take', '🎲 Take']].map(([k, lab]) =>
+                  '<button type="button" class="ambient-seg v2-fttab" role="tab" data-ft="' + k + '">' +
+                    '<span class="v2-ftlab">' + lab + '<i class="v2-ftdot" hidden>●</i></span>' +
+                    '<small class="v2-ftn"></small></button>').join('') +
+                '<span class="ambient-hint v2-ftq"></span></div>' +
+              // ── RHYTHM — when the notes land, and for how long
+              ftrows('rhythm',
               (function (rr0) {
                 const gN = Math.min(32, Math.max(2, (rr0.steps | 0) || 16));
                 // "Steps", NOT "Grid": `part.grid` is a note VALUE per BAR.
@@ -9793,96 +10616,160 @@
                       'steps late', 'kind:live;rhythm:euclid,drawn');
               })(L.part.rhythm || {}) +
               gsl(L, 'part.rhythm.syncop', 'Syncopate', num((L.part.rhythm || {}).syncop, 0), 0, 100,
-                  'straight \u2192 offbeat', 'kind:live;voice:synth;rhythm:chance') +
-              // ⚇ MIX'S LINE IS A WALK — its single-note onsets are made by the
-              // walk branch on a shim, which carries every walk field, so these
-              // shape it exactly as they shape 🎲 a line. They were gated to
-              // `walk` alone: real knobs, hidden from the shape that reads them.
-              gsl(L, 'part.pitch.contour', 'Contour', num((L.part.pitch || {}).contour, 0), -100, 100,
-                  'fall \u2192 rise', 'kind:live;voice:synth;pitch:walk,mixed') +
-              gst(L, 'part.pitch.lines', 'Lines', ((L.part.pitch || {}).lines | 0) || 1, 1, 6,
-                  'melodies', 'kind:live;voice:synth;pitch:walk,chance,mixed') +
-              gsl(L, 'part.pitch.stutter', 'Repeat', num((L.part.pitch || {}).stutter, 0), 0, 100,
-                  'how often it repeats a note', 'kind:live;voice:synth;pitch:mixed', '-mx') +
-              gsl(L, 'proximity', 'Proximity', num(L.proximity, 0), 0, 100,
-                  'how close notes stay', 'kind:live;voice:synth;pitch:mixed,chance', '-mx') +
+                  'straight → offbeat', 'kind:live;voice:synth;rhythm:chance') +
+              gsl(L, 'part.shape.lenRatio', 'Note length', (L.part.shape || {}).lenRatio, 5, 100,
+                  '% of the space each note fills', 'kind:live;rhythm:pulse,euclid,drawn,chance') +
               gsl(L, 'part.shape.slip', 'Slip', ((L.part.shape || {}).slip | 0), 0, 100,
-                  'nudge each note late by a random hair \u2014 a strum', 'kind:live;rhythm:ground') +
+                  'nudge each note late by a random hair — a strum', 'kind:live;rhythm:ground') +
               gsel(L, 'part.rhythm.antic', 'Arrive', (L.part.rhythm || {}).antic ? '1' : '',
                    [['', 'On the change'], ['1', 'An 8th early']], '', 'kind:live;rhythm:ground') +
-              gsel(L, 'part.pitch.motif', 'Motif', (L.part.pitch || {}).motif || '',
-                   [['', 'Off'], ['bar', 'Repeat bar 1 \u2014 A A B A'], ['notes', 'Repeat its notes \u2014 A A B A']],
-                   '', 'kind:live;voice:synth;pitch:walk,chance,mixed') +
-              gsl(L, 'part.rhythm.n', 'How many', (L.part.rhythm || {}).n, 1, 32,
-                  'onsets in the cycle', 'kind:live;rhythm:pulse') +
+              gst(L, 'part.rhythm.voices', 'Rows', num((L.part.rhythm || {}).voices, 1), 1, 8,
+                  'interlocking rows, each on its own note', 'kind:live;voice:synth;rhythm:euclid') +
+              gst(L, 'part.shape.holdSteps', 'Hold steps', num((L.part.shape || {}).holdSteps, 0), 0, 16,
+                  'steps (0 = off)', 'kind:live') +
+              gst(L, 'part.shape.maxEvents', 'Max events', num((L.part.shape || {}).maxEvents, 0), 0, 64,
+                  'per cycle (0 = off)', 'kind:live')) +
+              // ── NOTES — which pitches, and how they are stacked
+              ftrows('notes',
+              // REGISTER, the pitch material Range / Home / Note are tuned
+              // against — a second door onto the Instrument sheet head's Reg
+              gst(L, 'instrument.register', 'Register', clamp((L.instrument.register | 0) || 4, 1, 8), 1, 8,
+                  'the octave the notes sit in', 'kind:live;voice:synth') +
+              gst(L, 'part.pitch.degree', 'Note', (L.part.pitch || {}).degree, 1, 12,
+                  'tone', 'kind:live;voice:synth;pitch:fixed,stack,walk,series') +
+              // HOW THE LINE MOVES — stepping from the last note is what makes
+              // it a melody rather than a scatter around a centre
+              gsel(L, 'part.pitch.walkMode', 'Line moves',
+                   (L.part.pitch || {}).walkMode ||
+                     (((L.part.pitch || {}).kind === 'mixed') ? 'step' : 'scatter'),
+                   [['step', 'Steps from the last note'], ['scatter', 'Scatters in Range']],
+                   '', 'kind:live;voice:synth;pitch:walk,mixed') +
+              gsel(L, 'part.pitch.lineUp', 'Line sits',
+                   ((L.part.pitch || {}).lineUp === 0) ? '0' : '1',
+                   [['1', 'An octave above the chords'], ['0', 'In the same register']],
+                   '', 'kind:live;voice:synth;pitch:mixed') +
+              gsel(L, 'part.pitch.home', 'Home', (L.part.pitch || {}).home || 'floor',
+                   [['floor', 'Floor — walk up from Register'],
+                    ['center', 'Centre — Register in the middle'],
+                    ['ceiling', 'Ceiling — walk down from Register']],
+                   '', 'kind:live;voice:synth;pitch:walk') +
+              // ⚇ MIX'S LINE IS A WALK — its single-note onsets are made by the
+              // walk branch on a shim, which carries every walk field.
+              gsl(L, 'part.pitch.contour', 'Contour', num((L.part.pitch || {}).contour, 0), -100, 100,
+                  'fall → rise', 'kind:live;voice:synth;pitch:walk,mixed') +
+              gsl(L, 'proximity', 'Proximity', num(L.proximity, 0), 0, 100,
+                  'how close notes stay', 'kind:live;voice:synth;pitch:mixed,chance', '-mx') +
               gsel(L, 'part.pitch.tones', 'Tones', (L.part.pitch || {}).tones || '',
                    [['', 'Every chord tone'], ['triad', 'Triad only']], '', 'kind:live;voice:synth;pitch:series') +
-              gsl(L, 'part.pitch.randomness', 'Scatter', num((L.part.pitch || {}).randomness, 0), 0, 100,
-                  'ordered \u2192 jumps about', 'kind:live;voice:synth;pitch:series') +
+              // ROAM reaches CHORDS now (2026-09-17): now and then the chord is
+              // built on a neighbouring tone — the same per-take draw Fixed and
+              // Stack always had.
+              gsl(L, 'part.pitch.roam', 'Roam', num((L.part.pitch || {}).roam, 0), 0, 100,
+                  'how often it is built on a neighbouring tone', 'kind:live;voice:synth;pitch:fixed,stack,chord') +
               gst(L, 'part.pitch.spread', 'Spread', num((L.part.pitch || {}).spread, 0), 0, 3,
-                  '\u00b1 octaves', 'kind:live;voice:synth;pitch:chord') +
+                  '± octaves', 'kind:live;voice:synth;pitch:chord') +
               gsl(L, 'part.pitch.variety', 'Variety', num((L.part.pitch || {}).variety, 0), 0, 100,
-                  'plain \u2192 colourful', 'kind:live;voice:synth;pitch:chord') +
+                  'plain → colourful', 'kind:live;voice:synth;pitch:chord') +
+              // VOICING FEEL decides WHICH voicing each chord gets — content, not
+              // performance — so it sits with the voicing rows (moved out of the
+              // per-pass section 2026-09-17). Stochastic re-picks per chord
+              // OCCURRENCE, which is why the badge still counts it as a reason a
+              // pass differs.
+              gsel(L, 'part.pitch.feel', 'Voicing feel', (L.part.pitch || {}).feel || '',
+                   [['', 'In order \u2014 the same voicing each pass'],
+                    ['stochastic', 'Stochastic \u2014 a new voicing each pass']],
+                   '', 'kind:live;voice:synth;pitch:chord') +
+              gst(L, 'part.pitch.voiceCap', 'Voice cap', num((L.part.pitch || {}).voiceCap, 0), 0, 12,
+                  'notes (0 = off)', 'kind:live;voice:synth;pitch:chord') +
+              // SALT RE-VOICE — a chord-generation rule beside Voice cap. Its
+              // OWN class: the Voicing sheet's `.v2-salttoggle` sits later in
+              // the DOM, and a shared class hands `querySelector` this hidden
+              // copy first (the duplicate-class trap). One handler takes both.
+              '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth;pitch:chord"><label>Salt re-voice</label>' +
+                '<button type="button" class="ambient-seg v2-gensalt' + (L.followSalt ? ' on' : '') + '">' +
+                  (L.followSalt ? 'On — follows the colours' : 'Off — holds the chord') + '</button>' +
+                '<span class="ambient-hint">re-voice inside a chord as Salt recolours it</span></div>' +
               ((typeof harmRowHtml === 'function')
                 ? harmRowHtml(L, L.part.pitch || {}).replace('data-v2when="kind:live;voice:synth"',
                     'data-v2when="kind:live;voice:synth;pitch:chord,stack,mixed,walk,chance"')
-                : '') +
-              gsl(L, 'part.shape.lenRatio', 'Note length', (L.part.shape || {}).lenRatio, 5, 100,
-                  '% of the space each note fills', 'kind:live;rhythm:pulse,euclid,drawn,chance') +
+                : '')) +
+              // ── REPEATS — how the part repeats itself
+              ftrows('form',
+              gsel(L, 'part.pitch.motif', 'Motif', (L.part.pitch || {}).motif || '',
+                   [['', 'Off'], ['bar', 'Repeat bar 1 — A A B A'], ['notes', 'Repeat its notes — A A B A']],
+                   '', 'kind:live;voice:synth;pitch:walk,chance,mixed') +
+              gsl(L, 'part.pitch.stutter', 'Repeat', num((L.part.pitch || {}).stutter, 0), 0, 100,
+                  'how often it repeats a note', 'kind:live;voice:synth;pitch:mixed', '-mx') +
+              gst(L, 'part.pitch.lines', 'Lines', ((L.part.pitch || {}).lines | 0) || 1, 1, 6,
+                  'melodies', 'kind:live;voice:synth;pitch:walk,chance,mixed') +
+              gst(L, 'part.pitch.subdiv', 'Subdivide', num((L.part.pitch || {}).subdiv, 1), 1, 16,
+                  'per chord', 'kind:live;voice:synth;pitch:chord') +
+              gst(L, 'part.pitch.phraseLen', 'Phrase', num((L.part.pitch || {}).phraseLen, 4), 1, 16,
+                  'chords', 'kind:live;voice:synth;pitch:chord') +
+              gst(L, 'part.pitch.repeats', 'Repeats', num((L.part.pitch || {}).repeats, 4), 1, 16,
+                  'times', 'kind:live;voice:synth;pitch:chord') +
               // GROUNDWORK'S OVERLAY, PART BY PART — the rows above are the
               // floor; a part, then one change, may say otherwise.
               '<div class="ambient-ctrl v2-gwparts" data-v2when="kind:live;rhythm:ground"><label>Changes</label>' +
                 '<span class="v2-gwpartshost"></span>' +
-                '<span class="ambient-hint">\u21b3 follows the floor \u00b7 0 notes sits a change out</span></div>' +
-                gsl(L, 'part.rhythm.vary', 'Vary', num((L.part.rhythm || {}).vary, 0), 0, 100,
-                    'how much the pattern re-rolls each cycle', 'kind:live;rhythm:euclid,drawn') +
-                gsl(L, 'part.rhythm.rateVar', 'Rate var', num((L.part.rhythm || {}).rateVar, 0), 0, 100,
-                    'steady \u2192 rushes \u2014 replays per take', 'kind:live;voice:synth') +
-                gst(L, 'part.rhythm.voices', 'Rows', num((L.part.rhythm || {}).voices, 1), 1, 8,
-                    'rows', 'kind:live;voice:synth;rhythm:euclid') +
-                gst(L, 'part.pitch.degree', 'Note', (L.part.pitch || {}).degree, 1, 12,
-                    'tone',
-                    'kind:live;voice:synth;pitch:fixed,stack,walk,series') +
-                gsl(L, 'part.pitch.roam', 'Roam', num((L.part.pitch || {}).roam, 0), 0, 100,
-                    'how often that Note wanders', 'kind:live;voice:synth;pitch:fixed,stack') +
-                gsel(L, 'part.pitch.home', 'Home', (L.part.pitch || {}).home || 'floor',
-                     [['floor', 'Floor \u2014 walk up from Register'],
-                      ['center', 'Centre \u2014 Register in the middle'],
-                      ['ceiling', 'Ceiling \u2014 walk down from Register']],
-                     '', 'kind:live;voice:synth;pitch:walk') +
-                gsl(L, 'part.pitch.drift', 'Pitch vary', num((L.part.pitch || {}).drift, 0), 0, 100,
-                    'octave drift \u2014 replays per take',
-                    'kind:live;voice:synth;pitch:fixed,series,walk,chance') +
-                gst(L, 'part.pitch.subdiv', 'Subdivide', num((L.part.pitch || {}).subdiv, 1), 1, 16,
-                    'per chord', 'kind:live;voice:synth;pitch:chord') +
-                gst(L, 'part.pitch.phraseLen', 'Phrase', num((L.part.pitch || {}).phraseLen, 4), 1, 16,
-                    'chords', 'kind:live;voice:synth;pitch:chord') +
-                gst(L, 'part.pitch.repeats', 'Repeats', num((L.part.pitch || {}).repeats, 4), 1, 16,
-                    'times', 'kind:live;voice:synth;pitch:chord') +
-                gst(L, 'part.pitch.voiceCap', 'Voice cap', num((L.part.pitch || {}).voiceCap, 0), 0, 12,
-                    'notes (0 = off)',
-                    'kind:live;voice:synth;pitch:chord') +
-                gst(L, 'part.shape.holdSteps', 'Hold steps', num((L.part.shape || {}).holdSteps, 0), 0, 16,
-                    'steps (0 = off)', 'kind:live') +
-                gst(L, 'part.shape.maxEvents', 'Max events', num((L.part.shape || {}).maxEvents, 0), 0, 64,
-                    'per cycle (0 = off)', 'kind:live') +
-                // ── 🎲 RANDOMISE THE TAKE (2026-09-16) ─────────────────────
-                // Chance that shapes the material ONCE per take — measured
-                // (Rests, Ghosts, Len vary: one note set across six cycles) or
-                // traced to the take seed — and acts only on GENERATED parts,
-                // which is why these left Shape: that sheet is how a part is
-                // PLAYED, and these decide what it IS. 🎲 New take re-rolls them;
-                // nothing else does. (Deep's own Vary, Rate var, Roam, Scatter,
-                // Pitch vary and Repeat are the same kind; grouping them all is
-                // the pending reorganisation of this panel.)
-                '<div class="ambient-ctrl v2-ftsec"><label>\ud83c\udfb2 Randomise the take</label>' +
-                  '<span class="ambient-hint">chance that shapes the notes once \u2014 \ud83c\udfb2 New take rolls it again</span></div>' +
+                '<span class="ambient-hint">↳ follows the floor · 0 notes sits a change out</span></div>') +
+              // ── 🎲 TAKE — chance that shapes the notes ONCE per take. Traced
+              // to the seed, not judged by label: Vary and Rate var draw from
+              // `seedBase`, which is the TAKE unless ✺ Playing's Re-roll is on —
+              // so they are here, not in Live (their old "each cycle" hints
+              // were v1's semantics).
+              // THREE SLIDERS, NOT NINE DICE (2026-09-17). Each writes the
+              // fields it stands for (see `DICE`), so Advanced ▸ each die below
+              // is the same data at finer grain; every added note also competes
+              // for the per-bar density budget, so turning these up COLOURS the
+              // bar instead of redrawing it.
+              ftrows('take',
+              // THE PREMISE OF EVERY DIE BELOW IT: one roll, or the rules run
+              // again each cycle. It sat in the per-pass section, which made an
+              // AUTHORING switch look like a performance one (2026-09-17).
+              '<div class="ambient-ctrl" data-v2when="kind:live"><label>Each cycle</label>' +
+                '<button type="button" class="ambient-seg v2-varytoggle' + (L.part.vary ? ' on' : '') + '">' +
+                  (L.part.vary ? '\ud83c\udfb2 Roll again' : '\u2713 Play this take') + '</button>' +
+                '<span class="ambient-hint v2-varyhint">' + (L.part.vary
+                  ? 'the rules run again every cycle \u2014 the drawing is take ' + ((L.part.take | 0) + 1) + ', one of many'
+                  : 'take ' + ((L.part.take | 0) + 1) + ' is what plays, every cycle') + '</span></div>' +
+              ['fl', 'ls', 'th'].map((k) => dmRow(L, k)).join('') +
+              disc('dice', 'Advanced: each die', '', 'kind:live')
+                .replace('<span class="ambient-hint">', '<span class="ambient-hint v2-dicesum">') +
+              subrows('dice',
                 gsl(L, 'restProb', 'Rests', num(L.restProb, 0), 0, 100, '% of onsets dropped', 'kind:live') +
                 gsl(L, 'ghosts', 'Ghosts', num(L.ghosts, 0), 0, 100, '% quiet extra hits', 'kind:live') +
                 gsl(L, 'lenVary', 'Len vary', num(L.lenVary, 0), 0, 100, '% note-length scatter', 'kind:live') +
-                gsl(L, 'startVary', 'Start', num(L.startVary, 0), 0, 100, 'on the 1 \u2192 anywhere', 'kind:live') +
-                gsl(L, 'twist', 'Twist', num(L.twist, 0), 0, 100, 'steady \u2192 bursts', 'kind:live;voice:synth') +
-                gsl(L, 'phrasing', 'Phrasing', num(L.phrasing, 0), 0, 100, 'even \u2192 shaped figures', 'kind:live;voice:synth')) +
+                gsl(L, 'startVary', 'Start', num(L.startVary, 0), 0, 100, 'on the 1 → anywhere', 'kind:live') +
+                gsl(L, 'twist', 'Twist', num(L.twist, 0), 0, 100, 'steady → bursts', 'kind:live;voice:synth') +
+                gsl(L, 'part.pitch.randomness', 'Scatter', num((L.part.pitch || {}).randomness, 0), 0, 100,
+                    'ordered → jumps about', 'kind:live;voice:synth;pitch:series') +
+                gsl(L, 'part.pitch.drift', 'Pitch vary', num((L.part.pitch || {}).drift, 0), 0, 100,
+                    'octave drift', 'kind:live;voice:synth;pitch:fixed,series,walk,chance') +
+                gsl(L, 'part.rhythm.vary', 'Vary', num((L.part.rhythm || {}).vary, 0), 0, 100,
+                    'hits dropped or added off the pattern', 'kind:live;rhythm:euclid,drawn') +
+                gsl(L, 'part.rhythm.rateVar', 'Rate var', num((L.part.rhythm || {}).rateVar, 0), 0, 100,
+                    'steady → rushes', 'kind:live;voice:synth') +
+                gsl(L, 'phrasing', 'Phrasing', num(L.phrasing, 0), 0, 100, 'even \u2192 shaped figures', 'kind:live;voice:synth'))) +
+              // WHAT THIS TAB HAS THAT THIS SHAPE DOES NOT READ — named, so a
+              // knob you remember is never simply gone. Filled by `genSync`.
+              '<div class="v2-ftna" data-v2when="kind:live">' +
+                '<button type="button" class="v2-ftnabtn" aria-expanded="false"></button>' +
+                '<span class="ambient-hint v2-ftnalist" hidden></span></div>' +
+              '<div class="v2-ftlinks ambient-hint" data-v2when="kind:live">Also shapes the notes, where it lives: ' +
+                'Pitch ▸ Notes source · Pitch ▸ Key · ✺ Playing ▸ Every pass</div>' +
+              // ── ⚠ ADVANCED: RECIPE — Rhythm × Pitch, out of the tabs. A shape
+              // IS a recipe, so changing either one leaves the shape; the warning
+              // says so and ↺ Back puts the shape's recipe back.
+              disc('recipe', '⚠ Advanced: recipe', '', 'kind:live;voice:synth')
+                .replace('<span class="ambient-hint">', '<span class="ambient-hint v2-recipesum">') +
+              subrows('recipe',
+                '<div class="ambient-ctrl v2-recipewarn"><span class="ambient-hint v2-recipesays"></span>' +
+                  '<button type="button" class="ambient-seg v2-recipeback" hidden>↺ Back</button></div>' +
+                gsel(L, 'part.rhythm.kind', 'Rhythm', rhythmShown(r.kind), RHYTHM_OPTS,
+                     'where the notes land', 'kind:live;voice:synth') +
+                gsel(L, 'part.pitch.kind', 'Pitch', t.kind, PITCH_OPTS,
+                     'which notes they are', 'kind:live;voice:synth')) +
             '</div>' +
             '<div class="v2-genacts">' +
               // DISTINCT CLASSES. Reusing `.v2-newtake` put a SECOND element with
@@ -9904,7 +10791,7 @@
           // "Voice" it read as a peer of "Tone" rather than its parent, and it
           // also collided with the TTS voice, which is a different thing again
           // (`instrument.speechVoice`).
-          // "Sound" (was "Live", renamed 2026-09-16 — ✺ Live is the per-pass
+          // "Sound" (was "Live", renamed 2026-09-16 — ✺ Playing is the per-pass
           // dice section now, and one word for two things is the naming rule's
           // mistake) — the voice it is playing right NOW, as against the Tone set
           // below, which schedules voices on the bar clock. The TYPE lives in
@@ -10024,7 +10911,101 @@
               sl(L, 'reso', 'Resonance', num(L.reso, 0), 0, 100, 'filter peak') +
               sl(L, 'fine', 'Fine', num(L.fine, 0), -100, 100, 'cents — detune the voice') +
               sl(L, 'portamento', 'Glide', num(L.portamento, 0), 0, 2000, 'ms between notes') +
-              sl(L, 'voiceTrim', 'Voice trim', num(L.voiceTrim, 0), -24, 12, 'dB — tame a hot voice')))
+              sl(L, 'voiceTrim', 'Voice trim', num(L.voiceTrim, 0), -24, 12, 'dB — tame a hot voice'))) +
+
+          // ── WHICH NOTES IT CAN PLAY ──────────────────────────────
+          // Was its own ✦ Pitch section; folded into Instrument 2026-09-17 at
+          // the user's ask. The pitch SOURCE, the KEY it reads them in and the
+          // VOICING of a chord are all part of what the instrument plays, and
+          // the sections are eight again — two rows of four.
+          // NOTES — the layer's own pitch SOURCE (a scale, a chord, a wrap, its
+          // own progression). v1's builder and v1's menu, so the vocabulary and
+          // the precedence cannot drift; `_ambNotesOf` already applies the AREA
+          // PROGRESSION LOCK, which is why the button greys while one is on.
+          // KEY — the layer's own harmonic frame (its own key, its own chord
+          // changes, or yoked to another layer's sounding notes). v1's markup,
+          // extracted into `_ambKeyOvHtml` so there is one copy: everything in
+          // it is keyed on `data-kokey` and v1's wiring is DELEGATED on the
+          // panel host by that key, so a v2 card inside the host gets working
+          // controls with no wiring of its own. `keyOv` was already coerced and
+          // already READ (it rides `_ambNotesOf`) — this is the door.
+          ((typeof _ambKeyOvHtml === 'function')
+            ? tb('Key', _ambKeyOvHtml('v2:' + L.id, L))
+            : '') +
+          ((typeof _ambNotesButtonHtml === 'function')
+            ? _ambNotesButtonHtml('v2-' + L.id).replace('<div class="ambient-ctrl"',
+                '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth"')
+            : '') +
+          sel(L, 'part.pitch.kind', 'Pitch', t.kind, PITCH_OPTS, 'kind:live;voice:synth') +
+          st(L, 'part.pitch.voices', 'Voices', t.voices, 1, 9, 'notes per onset', 'kind:live;voice:synth;pitch:chord,stack,mixed') +
+          // THE BALANCE for Mixed — how often an onset is a chord rather than
+          // a single note. Its own tab so it is findable, gated to the one
+          // kind that reads it.
+          sl(L, 'part.pitch.mix', 'Mix', (Number.isFinite(t.mix) ? t.mix : 50), 0, 100,
+             'all single notes \u2192 all chords', 'kind:live;voice:synth;pitch:mixed') +
+          // LINES, not "Voices" — divergent behaviour, divergent label. Voices
+          // are notes of ONE chord struck together; lines are separate melodies
+          // that wander independently, which is the only way a Roll plays more
+          // than one note at a time under its own steam (Harmony duplicates the
+          // one line at a fixed interval — parallel, never independent). Its own
+          // FIELD too: `pitch.voices` is backfilled to 3 on every pitch object,
+          // so reading that here would thicken every rolled part ever saved.
+          st(L, 'part.pitch.lines', 'Lines', (t.lines | 0) || 1, 1, 6,
+             'independent melodies at once — 1 is a single line',
+             'kind:live;voice:synth;pitch:walk,chance') +
+
+          st(L, 'part.pitch.degree', 'Note', t.degree, 1, 12, 'source tone', 'kind:live;voice:synth;pitch:fixed,stack,walk,series') +
+          // (Roam, Stutter, Pitch vary and Scatter moved to ⚙ Deep, 2026-09-16:
+          // they are seeded on the TAKE — generation, re-rolled by 🎲 New take.)
+          sel(L, 'part.pitch.dir', 'Direction', t.dir || 'up',
+              [['up', 'Up'], ['down', 'Down'], ['updown', 'Up & down'], ['downup', 'Down & up'], ['converge', 'Outside in']], 'kind:live;voice:synth;pitch:series') +
+          st(L, 'part.pitch.span', 'Span', t.span, 1, 24, 'how far it wanders', 'kind:live;voice:synth;pitch:walk') +
+          sel(L, 'part.pitch.home', 'Home', t.home || 'floor',
+              [['floor', 'Floor — walk up from Register'], ['center', 'Centre — Register in the middle'],
+               ['ceiling', 'Ceiling — walk down from Register']], 'kind:live;voice:synth;pitch:walk') +
+          sl(L, 'part.pitch.contour', 'Contour', num(t.contour, 0), -100, 100, 'fall → rise',
+             'kind:live;voice:synth;pitch:walk') +
+          // HARMONY PARTS — chips, because it is a SET, not a choice: a line can
+          // carry a 3rd and a 6th at once, which is what "multiple-part
+          // harmonies" means. Intervals are SOURCE TONES, so they stay in the
+          // key (verified: thirds across C major come out 4,3,3,4,4,3,3
+          // semitones — major on I/IV/V, minor on the rest). Applies to every
+          // live pitch kind, so it is gated on kind:live only.
+          harmRowHtml(L, t) +
+
+          st(L, 'part.pitch.octaves', 'Octaves', num(t.octaves, 2), 1, 4, 'how far the sweep climbs',
+             'kind:live;voice:synth;pitch:series') +
+          sl(L, 'part.shape.lenRatio', 'Length', sh.lenRatio, 1, 400, '% of the onset span', 'kind:live') +
+          '<div data-v2tab="Length" class="ambient-ctrl"><label>Ring out</label>' +
+            '<button type="button" class="ambient-seg v2-ringtoggle' + (L.ring ? ' on' : '') + '">' +
+              (L.ring ? 'On \u2014 through the changes' : 'Off \u2014 released by the next change') + '</button>' +
+            '<span class="ambient-hint">a note is cut short so it does not ring over the next change \u2014 ' +
+              'turn this on to let it play its full length</span></div>' +
+          // VOICING IS A SUB-QUESTION OF PITCH — how the chosen notes are
+          // stacked and spread. And Proximity moved here from Motion: it
+          // pulls each pick toward the previous one, which is a PITCH rule.
+          tb('Voicing',
+            sl(L, 'proximity', 'Proximity', num(L.proximity, 0), 0, 100, 'how close notes stay', 'kind:live') +
+          sel(L, 'part.pitch.chordMode', 'Voicing', t.chordMode || '',
+              [['', 'Simple — stack the tones'], ['chaos', 'Chaos'], ['chords', 'Chords'],
+               ['chordsplus', 'Chords+'], ['monk', 'Monk']], 'kind:live;voice:synth;pitch:chord') +
+          st(L, 'part.pitch.spread', 'Spread', num(t.spread, 0), 0, 3, '± octaves',
+             'kind:live;voice:synth;pitch:chord') +
+          sl(L, 'part.pitch.variety', 'Variety', num(t.variety, 0), 0, 100, 'plain → colourful',
+             'kind:live;voice:synth;pitch:chord') +
+          st(L, 'part.pitch.subdiv', 'Subdivide', num(t.subdiv, 1), 1, 16, 'voicings per chord',
+             'kind:live;voice:synth;pitch:chord') +
+          st(L, 'part.pitch.phraseLen', 'Phrase', num(t.phraseLen, 4), 1, 16, 'chords before it repeats',
+             'kind:live;voice:synth;pitch:chord') +
+          st(L, 'part.pitch.repeats', 'Repeats', num(t.repeats, 4), 1, 16, 'times before a fresh phrase',
+             'kind:live;voice:synth;pitch:chord') +
+          // (Feel moved to ✺ Playing — Stochastic re-picks per chord OCCURRENCE.)
+          st(L, 'part.pitch.voiceCap', 'Voice cap', num(t.voiceCap, 0), 0, 12, 'ceiling incl. colour tones (0 = Voices)',
+             'kind:live;voice:synth;pitch:chord') +
+          '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth;pitch:chord"><label>Salt re-voice</label>' +
+            '<button type="button" class="ambient-seg v2-salttoggle' + (L.followSalt ? ' on' : '') + '">' +
+              (L.followSalt ? 'On — follows the colours' : 'Off — holds the chord') + '</button>' +
+            '<span class="ambient-hint v2-salthint"></span></div>')
         ) +
         // ── ENVELOPE — the instrument's shape over time ───────────────────
         // Split out when the scheduled-tone row landed: Instrument was 456px of
@@ -10132,7 +11113,7 @@
               (bankList().length
                 ? bankList().map((b2) =>
                     '<span class="v2-bankit" data-bi="' + b2.i + '">' +
-                      '<button type="button" class="v2-bkload" data-bi="' + b2.i + '" title="Use this phrase as this part \u2014 the part becomes STATIC and plays exactly these notes.">' +
+                      '<button type="button" class="v2-bkload" data-bi="' + b2.i + '" title="Use this phrase as this part \u2014 the part becomes FROZEN and plays exactly these notes.">' +
                         esc(b2.name) + '<span class="v2-bkn">' + b2.n + '</span></button>' +
                       '<button type="button" class="v2-bkup" data-bi="' + b2.i + '" aria-label="Move up" title="Move up">\u25b4</button>' +
                       '<button type="button" class="v2-bkdn" data-bi="' + b2.i + '" aria-label="Move down" title="Move down">\u25be</button>' +
@@ -10330,97 +11311,6 @@
               '<span class="ambient-hint" style="color:#f6ad55">Nothing here yet — press 🎲 Roll a take above the drawing, compose a phrase, or ⚙ Generate instead to go back to the rules.</span></div>'
             : '')
         ) +
-        // ── PITCH — what the notes are, and how long they ring ────────────
-        grpOpen('Pitch', true,
-          // NOTES — the layer's own pitch SOURCE (a scale, a chord, a wrap, its
-          // own progression). v1's builder and v1's menu, so the vocabulary and
-          // the precedence cannot drift; `_ambNotesOf` already applies the AREA
-          // PROGRESSION LOCK, which is why the button greys while one is on.
-          // KEY — the layer's own harmonic frame (its own key, its own chord
-          // changes, or yoked to another layer's sounding notes). v1's markup,
-          // extracted into `_ambKeyOvHtml` so there is one copy: everything in
-          // it is keyed on `data-kokey` and v1's wiring is DELEGATED on the
-          // panel host by that key, so a v2 card inside the host gets working
-          // controls with no wiring of its own. `keyOv` was already coerced and
-          // already READ (it rides `_ambNotesOf`) — this is the door.
-          ((typeof _ambKeyOvHtml === 'function')
-            ? tb('Key', _ambKeyOvHtml('v2:' + L.id, L))
-            : '') +
-          ((typeof _ambNotesButtonHtml === 'function')
-            ? _ambNotesButtonHtml('v2-' + L.id).replace('<div class="ambient-ctrl"',
-                '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth"')
-            : '') +
-          sel(L, 'part.pitch.kind', 'Pitch', t.kind, PITCH_OPTS, 'kind:live;voice:synth') +
-          st(L, 'part.pitch.voices', 'Voices', t.voices, 1, 9, 'notes per onset', 'kind:live;voice:synth;pitch:chord,stack,mixed') +
-          // THE BALANCE for Mixed — how often an onset is a chord rather than
-          // a single note. Its own tab so it is findable, gated to the one
-          // kind that reads it.
-          sl(L, 'part.pitch.mix', 'Mix', (Number.isFinite(t.mix) ? t.mix : 50), 0, 100,
-             'all single notes \u2192 all chords', 'kind:live;voice:synth;pitch:mixed') +
-          // LINES, not "Voices" — divergent behaviour, divergent label. Voices
-          // are notes of ONE chord struck together; lines are separate melodies
-          // that wander independently, which is the only way a Roll plays more
-          // than one note at a time under its own steam (Harmony duplicates the
-          // one line at a fixed interval — parallel, never independent). Its own
-          // FIELD too: `pitch.voices` is backfilled to 3 on every pitch object,
-          // so reading that here would thicken every rolled part ever saved.
-          st(L, 'part.pitch.lines', 'Lines', (t.lines | 0) || 1, 1, 6,
-             'independent melodies at once — 1 is a single line',
-             'kind:live;voice:synth;pitch:walk,chance') +
-
-          st(L, 'part.pitch.degree', 'Note', t.degree, 1, 12, 'source tone', 'kind:live;voice:synth;pitch:fixed,stack,walk,series') +
-          // (Roam, Stutter, Pitch vary and Scatter moved to ⚙ Deep, 2026-09-16:
-          // they are seeded on the TAKE — generation, re-rolled by 🎲 New take.)
-          sel(L, 'part.pitch.dir', 'Direction', t.dir || 'up',
-              [['up', 'Up'], ['down', 'Down'], ['updown', 'Up & down'], ['downup', 'Down & up'], ['converge', 'Outside in']], 'kind:live;voice:synth;pitch:series') +
-          st(L, 'part.pitch.span', 'Span', t.span, 1, 24, 'how far it wanders', 'kind:live;voice:synth;pitch:walk') +
-          sel(L, 'part.pitch.home', 'Home', t.home || 'floor',
-              [['floor', 'Floor — walk up from Register'], ['center', 'Centre — Register in the middle'],
-               ['ceiling', 'Ceiling — walk down from Register']], 'kind:live;voice:synth;pitch:walk') +
-          sl(L, 'part.pitch.contour', 'Contour', num(t.contour, 0), -100, 100, 'fall → rise',
-             'kind:live;voice:synth;pitch:walk') +
-          // HARMONY PARTS — chips, because it is a SET, not a choice: a line can
-          // carry a 3rd and a 6th at once, which is what "multiple-part
-          // harmonies" means. Intervals are SOURCE TONES, so they stay in the
-          // key (verified: thirds across C major come out 4,3,3,4,4,3,3
-          // semitones — major on I/IV/V, minor on the rest). Applies to every
-          // live pitch kind, so it is gated on kind:live only.
-          harmRowHtml(L, t) +
-
-          st(L, 'part.pitch.octaves', 'Octaves', num(t.octaves, 2), 1, 4, 'how far the sweep climbs',
-             'kind:live;voice:synth;pitch:series') +
-          sl(L, 'part.shape.lenRatio', 'Length', sh.lenRatio, 1, 400, '% of the onset span', 'kind:live') +
-          '<div data-v2tab="Length" class="ambient-ctrl"><label>Ring out</label>' +
-            '<button type="button" class="ambient-seg v2-ringtoggle' + (L.ring ? ' on' : '') + '">' +
-              (L.ring ? 'On \u2014 through the changes' : 'Off \u2014 released by the next change') + '</button>' +
-            '<span class="ambient-hint">a note is cut short so it does not ring over the next change \u2014 ' +
-              'turn this on to let it play its full length</span></div>' +
-          // VOICING IS A SUB-QUESTION OF PITCH — how the chosen notes are
-          // stacked and spread. And Proximity moved here from Motion: it
-          // pulls each pick toward the previous one, which is a PITCH rule.
-          tb('Voicing',
-            sl(L, 'proximity', 'Proximity', num(L.proximity, 0), 0, 100, 'how close notes stay', 'kind:live') +
-          sel(L, 'part.pitch.chordMode', 'Voicing', t.chordMode || '',
-              [['', 'Simple — stack the tones'], ['chaos', 'Chaos'], ['chords', 'Chords'],
-               ['chordsplus', 'Chords+'], ['monk', 'Monk']], 'kind:live;voice:synth;pitch:chord') +
-          st(L, 'part.pitch.spread', 'Spread', num(t.spread, 0), 0, 3, '± octaves',
-             'kind:live;voice:synth;pitch:chord') +
-          sl(L, 'part.pitch.variety', 'Variety', num(t.variety, 0), 0, 100, 'plain → colourful',
-             'kind:live;voice:synth;pitch:chord') +
-          st(L, 'part.pitch.subdiv', 'Subdivide', num(t.subdiv, 1), 1, 16, 'voicings per chord',
-             'kind:live;voice:synth;pitch:chord') +
-          st(L, 'part.pitch.phraseLen', 'Phrase', num(t.phraseLen, 4), 1, 16, 'chords before it repeats',
-             'kind:live;voice:synth;pitch:chord') +
-          st(L, 'part.pitch.repeats', 'Repeats', num(t.repeats, 4), 1, 16, 'times before a fresh phrase',
-             'kind:live;voice:synth;pitch:chord') +
-          // (Feel moved to ✺ Live — Stochastic re-picks per chord OCCURRENCE.)
-          st(L, 'part.pitch.voiceCap', 'Voice cap', num(t.voiceCap, 0), 0, 12, 'ceiling incl. colour tones (0 = Voices)',
-             'kind:live;voice:synth;pitch:chord') +
-          '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth;pitch:chord"><label>Salt re-voice</label>' +
-            '<button type="button" class="ambient-seg v2-salttoggle' + (L.followSalt ? ' on' : '') + '">' +
-              (L.followSalt ? 'On — follows the colours' : 'Off — holds the chord') + '</button>' +
-            '<span class="ambient-hint v2-salthint"></span></div>')
-        ) +
         // ── VOICING — how a CHORD is laid out, once its notes are known ────
         // Split out of Pitch when Salt re-voice landed and the card measured
         // 1422px: Pitch had become two questions (which notes, and how they are
@@ -10438,9 +11328,9 @@
           // Only means something where an onset carries MORE THAN ONE note.
           sl(L, 'strum', 'Strum', num(L.strum, 0), 0, 100, 'struck → arpeggiated',
              'kind:live;voice:synth;pitch:chord,stack') +
-          // (Strum order, Slide and Ornament moved to ✺ Live — they draw per PASS.)
+          // (Strum order, Slide and Ornament moved to ✺ Playing — they draw per PASS.)
           // (Phrasing, Start and Twist moved to ⚙ Deep — seeded on the take.)
-          // (Wobble moved to ✺ Live — it is seeded on the note's play time.)
+          // (Wobble moved to ✺ Playing — it is seeded on the note's play time.)
           // SHAPING — these change WHAT each note is, ONCE. The tab was called
           // "Variance", which is measurably the wrong word: six consecutive
           // cycles of a part with Rests, Ghosts or Len vary up give the
@@ -10461,7 +11351,7 @@
           // v1's rather than a second implementation — which is also why a
           // `notesFor` sweep is structurally blind to them and they have to be
           // measured where they are applied.
-          //   The tab is "Every pass", naming the axis; the section is ✺ Live.
+          //   The tab is "Every pass", naming the axis; the section is ✺ Playing.
           // Instrument's old "Live" tab is "Sound" now so the word has one meaning.
           //   Two more things can make a layer live and are NOT its own to set
           // — a mask left at a PROBABILITY, and the changes themselves moving
@@ -10483,12 +11373,9 @@
                 (L.tight ? 'On — clipped' : 'Off') + '</button>' +
               '<span class="ambient-hint">cut each note short of the next</span></div>') +
           tb('Every pass',
-            '<div class="ambient-ctrl" data-v2when="kind:live"><label>Re-roll</label>' +
-              '<button type="button" class="ambient-seg v2-varytoggle' + (L.part.vary ? ' on' : '') + '">' +
-                (L.part.vary ? '\ud83c\udfb2 Re-roll every cycle' : '\u2713 Play this take') + '</button>' +
-              '<span class="ambient-hint v2-varyhint">' + (L.part.vary
-                ? 'a fresh roll each cycle \u2014 the drawing is take ' + ((L.part.take | 0) + 1) + ', one of many'
-                : 'take ' + ((L.part.take | 0) + 1) + ' is what plays, every cycle') + '</span></div>' +
+            // (Re-roll every cycle and Voicing feel moved to ⚙ Deep, 2026-09-17:
+            // both re-run the RULES on a schedule, so they author CONTENT. This
+            // section is stage 3 — what happens to content as it is PLAYED.)
             sl(L, 'humanize', 'Humanize', num(L.humanize, 0), 0, 100, 'timing jitter — never replays') +
             sl(L, 'velVar', 'Vel var', num(L.velVar, 0), 0, 100, 'level scatter — differs pass to pass') +
             // ── EVERYTHING ELSE THAT DRAWS PER PASS (2026-09-16) ────────────
@@ -10504,9 +11391,9 @@
             sl(L, 'slide', 'Slide', num(L.slide, 0), 0, 100, 'glide across a leap', 'kind:live;voice:synth') +
             sl(L, 'ornament', 'Ornament', num(L.ornament, 0), 0, 100, 'grace-note flicks', 'kind:live;voice:synth') +
             sl(L, 'motion', 'Wobble', num(L.motion, 0), 0, 100, 'detune wobble', 'kind:live;voice:synth') +
-            sel(L, 'part.pitch.feel', 'Voicing feel', t.feel || '',
-                [['', 'In order — the same voicing each pass'], ['stochastic', 'Stochastic — a new voicing each pass']],
-                'kind:live;voice:synth;pitch:chord') +
+            // the same two verbs as ⚙ Deep's 🎲 Take, over THIS set: the dice
+            // that re-roll every pass (see `DICE_SETS`)
+            diceAllRow('pass', 'every pass plays it the same way') +
             '<div class="ambient-ctrl"><label></label><span class="ambient-hint v2-liveline"></span></div>')
         ) +
         // ── MIX — level, filtering, routing and stereo placement ──────────
@@ -10895,7 +11782,7 @@
                ? ' The reasons above that are not switches here belong to the arrangement \u2014 \u25a6 Schedule for a probability, \ud83e\uddc2 Salt and the changes for the rest.'
                : ''))
           : 'FIXED \u2014 nothing here re-rolls between cycles. ' +
-            'Rests, Ghosts, Len vary, Rhythm var and Scatter all shape the material ONCE, ' +
+            'Rests, Ghosts, Len vary, Vary and Scatter all shape the material ONCE, ' +
             'off the take, and give the same result every cycle.';
         if (ll.textContent !== txt) ll.textContent = txt;
       }
@@ -10967,7 +11854,7 @@
         const bits = [];
         if ((L.strum | 0) > 0) bits.push('strum ' + (L.strum | 0));
         if (p.shape && p.shape.lenRatio !== 100) bits.push('len ' + p.shape.lenRatio + '%');
-        // (rests / ghosts / len vary are ⚙ Deep's now, and vel var is ✺ Live's —
+        // (rests / ghosts / len vary are ⚙ Deep's now, and vel var is ✺ Playing's —
         // a summary names only what is behind THIS door)
         if (num(L.swing, 0) > 0) bits.push('swing');
         return bits.length ? bits.join(' \u00b7 ') : 'struck';
@@ -12725,7 +13612,7 @@
             : '') +
           '<button type="button" class="v2-secpop-close" aria-label="Close" ' +
             'title="Close \u2014 back to the layer">\u2715</button>' +
-          '<span class="ambient-hint v2-grpsum" data-grp="' + esc(grp === 'Live' ? 'Live' : secGrp(grp)) + '"></span>' +
+          '<span class="ambient-hint v2-grpsum" data-grp="' + esc(grp === 'Playing' ? 'Playing' : secGrp(grp)) + '"></span>' +
         '</div>' +
         '<div class="v2-pop-tabs"></div>' +
         '<div class="v2-pop-pane"></div>' +
@@ -12924,7 +13811,7 @@
     // every ordinary section passes.
     const allow = only ? new Set(only) : null;
     // …and a section may GIVE ONE UP to another section over the same group
-    // (Shape's `Every pass` is ✺ Live's), so one control has one door
+    // (Shape's `Every pass` is ✺ Playing's), so one control has one door
     const excl = (POP && SEC_EXCL[POP.grp]) ? new Set(SEC_EXCL[POP.grp]) : null;
     const visTabs = tabs.filter(t => t.vis && (!allow || allow.has(t.name)) && (!excl || !excl.has(t.name)));
     const act = visTabs.find(t => t.name === POP.tab) || visTabs[0] || null;
@@ -12949,7 +13836,7 @@
         (tabNa(t.name, L) ? ' v2-tabna' : '') +
         '" data-tab="' + esc(t.name) + '"' +
         (tabNa(t.name, L) ? ' aria-disabled="true"' +
-          ' title="Rhythm shapes a GENERATED part — this one is STATIC, so these do nothing until you hand it back to the rules"' : '') +
+          ' title="Rhythm shapes a GENERATED part — this one is FROZEN, so these do nothing until you unfreeze it"' : '') +
         '>' + esc(t.name) + '</button>';
       const fams = TAB_FAMS[POP.grp];
       if (fams) {
@@ -12973,7 +13860,7 @@
               (tabNa(t1.name, L) ? ' v2-tabna' : '') + (cls === actFam ? ' on' : '') +
               '" data-tab="' + esc(t1.name) + '" data-first="' + esc(t1.name) + '"' +
               (tabNa(t1.name, L) ? ' aria-disabled="true"' +
-                ' title="Rhythm shapes a GENERATED part \u2014 this one is STATIC, so these do nothing until you hand it back to the rules"' : '') +
+                ' title="Rhythm shapes a GENERATED part \u2014 this one is FROZEN, so these do nothing until you unfreeze it"' : '') +
               '>' + esc(t1.name) + '</button>';
             return;
           }
@@ -13181,7 +14068,7 @@
     // finger read as the knob vanishing.
     const openFolds = new Map();
     h.querySelectorAll('.v2-layer').forEach(c => {
-      openFolds.set(c.getAttribute('data-v2id'), [...c.classList].filter((k) => k.indexOf('v2-so-') === 0));
+      openFolds.set(c.getAttribute('data-v2id'), [...c.classList].filter((k) => k.indexOf('v2-so-') === 0 || k.indexOf('v2-ftt-') === 0));
     });
     h.querySelectorAll('.v2-layer').forEach(c => {
       openGrps.set(c.getAttribute('data-v2id'),
@@ -13220,8 +14107,10 @@
         } catch (e) {}
       }
       if (openIds.has(String(id))) card.classList.remove('collapsed');
+      if (!(openFolds.get(String(id)) || []).some((k) => k.indexOf('v2-ftt-') === 0)) card.classList.add('v2-ftt-rhythm');
       (openFolds.get(String(id)) || []).forEach((k) => {
         card.classList.add(k);
+        if (k.indexOf('v2-ftt-') === 0) return;
         card.querySelectorAll('.v2-discbtn[data-disc="' + k.slice(6) + '"]')
           .forEach((b0) => { b0.textContent = '\u25be Hide'; });
       });
@@ -13348,6 +14237,45 @@
         try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
       };
       h.addEventListener('input', (ev) => {
+        // A DICE MACRO writes the three fields it stands for, live under the
+        // finger: the row is updated in place (never a re-render — that
+        // replaces the slider mid-drag, the documented Humanize bug) and the
+        // drawing is redrawn from the copy the panel is editing.
+        const dm = ev.target.closest && ev.target.closest('.v2-dm');
+        if (dm) {
+          const ctx = layerOf(dm); if (!ctx) return;
+          if (!diceApply(ctx.L, dm.getAttribute('data-dm'), dm.value)) return;
+          try { E.getCfg(); } catch (e) {}
+          const vv = dm.parentNode && dm.parentNode.querySelector('.v2-dmv');
+          if (vv) vv.textContent = (Math.round(+dm.value) | 0) + '%';
+          // the nine dice below are the same data — keep their sliders honest
+          Object.keys(DICE[dm.getAttribute('data-dm')].set).forEach((f) => {
+            const el2 = ctx.card.querySelector('.v2-shapepop .v2-f[data-f="' + f + '"]');
+            if (!el2) return;
+            const v2 = +dGet(ctx.L, f) || 0;
+            if (String(el2.value) !== String(v2)) {
+              el2.value = String(v2);
+              const rd = el2.closest('.ambient-ctrl') && el2.closest('.ambient-ctrl').querySelector('.ambient-sl-v');
+              if (rd) rd.textContent = v2 + '%';
+            }
+          });
+          try { if (V2.isStaged(ctx.L)) stageVizDraw(ctx.card, ctx.L); else drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
+          try { if (!V2.isStaged(ctx.L) && typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          return;
+        }
+        // THE SHAPE PICKER presses the door it names — one opener, so a pick
+        // cannot reach a shape by a route the buttons do not (they carry the
+        // confirm-before-replacing, the adopt rule and the provenance stamp).
+        const sp2 = ev.target.closest && ev.target.closest('.v2-shapepick');
+        if (sp2) {
+          const v = sp2.value, pop2 = sp2.closest('.v2-genpop');
+          if (pop2 && v && v !== 'melody') {
+            const b2 = (v === 'roll') ? pop2.querySelector('.v2-rollrun')
+                                      : pop2.querySelector('.v2-mkpart[data-mk="' + v + '"]');
+            if (b2) b2.click();
+          }
+          return;
+        }
         // FIND A CONTROL — filter only. This must NEVER call `V2.render`: a
         // re-render replaces the input under the finger and the caret goes
         // with it (the documented Humanize-drag failure, one control over).
@@ -13633,7 +14561,7 @@
           }
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
           try { if (typeof showToast === 'function') showToast(
-            '\u270e Wrote this take down so notes can be drawn into it. \u2699 Generate instead hands it back to the rules.',
+            '\u2744 Froze this take so notes can be drawn into it. \u2744 Unfreeze hands it back to the rules.',
             { ms: 4500 }); } catch (e) {}
           locked = true;
         }
@@ -13736,8 +14664,8 @@
             if (!captureShown(E, L)) return;           // nothing rolled yet
             try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
             try { if (typeof showToast === 'function') showToast(
-              '\u270e Wrote this take down so its notes can be moved \u2014 ' +
-              (L.part.notes || []).length + ' notes. \u2699 Generate instead hands it back to the rules.',
+              '\u2744 Froze this take so its notes can be moved \u2014 ' +
+              (L.part.notes || []).length + ' notes. \u2744 Unfreeze hands it back to the rules.',
               { ms: 4500 }); } catch (e) {}
             // The lock writes the DATA only — the card rebuild is DEFERRED to
             // pointerup. Rebuilding here replaces the canvas mid-gesture, and
@@ -14204,9 +15132,16 @@
               // …INSIDE ▸ FINE-TUNE, press the fold's own button first — one
               // opener, the same rule as the ⚙ door above. Without it the mark
               // landed on a 0×0 row: found, and invisible.
-              if (wantGen && hit.classList.contains('v2-sub-gmore') &&
-                  !ctx.card.classList.contains('v2-so-gmore')) {
-                const fb = pane.querySelector('.v2-discbtn[data-disc="gmore"]');
+              // …ON ANOTHER FINE-TUNE TAB, or inside ⚠ Advanced: recipe, press
+              // that tab / fold first — one opener each
+              const ftk = wantGen && [...hit.classList].find((k) => /^v2-ft-/.test(k));
+              if (ftk && !ctx.card.classList.contains('v2-ftt-' + ftk.slice(6))) {
+                const tb2 = pane.querySelector('.v2-fttab[data-ft="' + ftk.slice(6) + '"]');
+                if (tb2) tb2.click();
+              }
+              if (wantGen && hit.classList.contains('v2-sub-recipe') &&
+                  !ctx.card.classList.contains('v2-so-recipe')) {
+                const fb = pane.querySelector('.v2-discbtn[data-disc="recipe"]');
                 if (fb) fb.click();
               }
               try { hit.scrollIntoView({ block: 'center' }); } catch (e) {}
@@ -14238,10 +15173,10 @@
               const made = (m2 && m2.key && /sustain|arp|roll/.test(m2.key))
                 ? ({ sustain: '\u25ac Sustain a chord', arp: '\u27f3 Arpeggiate', roll: '\ud83c\udfb2 Roll a line' })[m2.key]
                 : 'The material';
-              showToast(made + ' MADE these notes, and \u270e Write it down TURNED THEM INTO NOTES \u2014 the part now ' +
+              showToast(made + ' MADE these notes, and \u2744 Freeze TURNED THEM INTO NOTES \u2014 the part now ' +
                 'plays the notes, not the rules. Rhythm \u00b7 Pattern \u00b7 Feel shape the rules, so they do ' +
                 'nothing here: press \ud83c\udfb2 Replace with a new take to roll again, or ' +
-                '\u2699 Generate instead under the drawing to hand it back to the rules.', { ms: 7000 });
+                '\u2744 Unfreeze under the drawing hands it back to the rules.', { ms: 7000 });
             } catch (e) {}
             return;
           }
@@ -14396,7 +15331,7 @@
           }
           return;
         }
-        const sa = t.closest('.v2-salttoggle');
+        const sa = t.closest('.v2-salttoggle, .v2-gensalt');
         if (sa) {
           const ctx = layerOf(sa); if (!ctx) return;
           if (ctx.L.followSalt) delete ctx.L.followSalt; else ctx.L.followSalt = 1;
@@ -14825,7 +15760,7 @@
                 try { if (typeof showToast === 'function') showToast('Nothing to draw on yet \u2014 \ud83c\udfb2 roll a take first, or \u232b Start empty.', { warn: true, ms: 4500 }); } catch (e) {}
                 return;
               }
-              try { if (typeof showToast === 'function') showToast('\u270e Wrote this take down \u2014 the part is STATIC and \u270e Draw is on: tap the drawing to add a note, drag right to size it.', { ms: 5000 }); } catch (e) {}
+              try { if (typeof showToast === 'function') showToast('\u2744 Froze this take \u2014 \u270e Draw is on: tap the drawing to add a note, drag right to size it.', { ms: 5000 }); } catch (e) {}
             } else {
               try { if (typeof showToast === 'function') showToast('\u270e Draw is on \u2014 tap the drawing to add a note, drag right to size it.', { ms: 4000 }); } catch (e) {}
             }
@@ -14844,7 +15779,7 @@
               : 'The take you see';
             if ((p2.kind !== 'recorded' || n2 > 0) &&
                 !confirm('Start empty?\n\n' + lose + ' will be cleared \u2014 the part becomes ' +
-                  'STATIC with no notes, and \u270e Draw is switched on so a tap on the ' +
+                  'frozen with no notes, and \u270e Draw is switched on so a tap on the ' +
                   'drawing adds one.' +
                   (p2.kind !== 'recorded' ? '\n\nIts generated rules are kept \u2014 \u2699 Deep brings them back.' : '') +
                   '\n\nThis cannot be undone.')) return;
@@ -15196,7 +16131,7 @@
               return;
             }
             try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-            try { if (typeof showToast === 'function') showToast('Wrote this take down so it can be edited — ' + L2.part.notes.length + ' notes. ⚙ Generate instead goes back.', { ms: 5000 }); } catch (e) {}
+            try { if (typeof showToast === 'function') showToast('\u2744 Froze this take so it can be edited — ' + L2.part.notes.length + ' notes. ⚙ Generate instead goes back.', { ms: 5000 }); } catch (e) {}
             h._sig = ''; V2.render(E);
           }
           // the hit's own index when the array was not just rebuilt by a lock —
@@ -15278,7 +16213,7 @@
             try {
               showToast(selBarsN
                 ? ('Re-rolled ' + bselLabel(selN) + ' \u2014 the other bars kept what they had. Press again for another roll.')
-                : ('Rolled a new take \u2014 ' + ctx.L.part.notes.length + ' notes, still STATIC. \u2699 Generate instead lets the rules take over again.'), { ms: 5000 });
+                : ('Rolled a new take \u2014 ' + ctx.L.part.notes.length + ' notes, still frozen. \u2744 Unfreeze instead lets the rules take over again.'), { ms: 5000 });
             } catch (e) {}
             h._sig = ''; V2.render(E);
             takeHeard();
@@ -15302,7 +16237,7 @@
           if (cp.kind !== 'recorded' || !(cp.notes || []).length) {
             try {
               showToast('Transforms rework notes that are already there \u2014 this part is Generated, ' +
-                'so its notes come from the rules, not a list. Press \u270e Write it down first.', { ms: 6000 });
+                'so its notes come from the rules, not a list. Press \u2744 Freeze this take first.', { ms: 6000 });
             } catch (e) {}
             return;
           }
@@ -15335,6 +16270,14 @@
         const cap = t.closest('.v2-capture');
         if (cap) {
           const ctx = layerOf(cap); if (!ctx) return;
+          // A TWO-STATE SWITCH, so the press names the state it wants rather
+          // than "the other one": pressing the state you are already in is a
+          // no-op (it used to be the only button, and a toggle).
+          const want = cap.getAttribute('data-made');
+          if (want) {
+            const isEd = ctx.L.part.kind === 'recorded';
+            if ((want === 'edit') === isEd) return;
+          }
           // A PURE TOGGLE. Locked \u2192 let the rules take over again (the notes
           // are KEPT, so locking again brings them back); live \u2192 freeze
           // exactly the take drawn above. Replacing a locked take moved to
@@ -15342,18 +16285,18 @@
           if (ctx.L.part.kind === 'recorded') {
             if (!V2.release(E, ctx.L)) return;
             try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-            try { showToast('Back to GENERATED \u2014 the rules make the part again. ' +
-              'These notes are kept: \u270e Write it down brings them back.', { ms: 5000 }); } catch (e) {}
+            try { showToast('\u2744 Unfrozen \u2014 the rules make the notes again. ' +
+              'The notes you had are kept: \u2744 Freeze brings them back.', { ms: 5000 }); } catch (e) {}
             h._sig = ''; V2.render(E);
             return;
           }
           if (!captureShown(E, ctx.L, null)) {
-            try { showToast('Nothing to write down \u2014 this cycle is empty. Check the live Rhythm settings.', { ms: 4500 }); } catch (e) {}
+            try { showToast('Nothing to freeze \u2014 this cycle is empty. Check \u2699 Deep \u25b8 Rhythm.', { ms: 4500 }); } catch (e) {}
             return;
           }
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-          try { showToast('Wrote ' + ctx.L.part.notes.length + ' notes down \u2014 it plays these now, and you can ' +
-            'tap one to edit it. \u2699 Generate instead goes back to the rules.', { ms: 5000 }); } catch (e) {}
+          try { showToast('\u2744 Frozen \u2014 ' + ctx.L.part.notes.length + ' notes are the part now, and you can ' +
+            'tap one to change it. \u2744 Unfreeze hands it back to the rules.', { ms: 5000 }); } catch (e) {}
           h._sig = ''; V2.render(E);
           return;
         }
@@ -15551,6 +16494,73 @@
           GENPOP = null;
           ctx.card.classList.remove('v2-genopen');
           draftClose(ctx, !!t.closest('.v2-gendone'));
+          return;
+        }
+        // ⚙ DEEP ▸ FINE-TUNE TABS — a class on the card, then the gate pass
+        // (which re-syncs the panel from the staged copy). No rebuild.
+        const ftb = t.closest('.v2-fttab');
+        if (ftb) {
+          const ctx = layerOf(ftb); if (!ctx) return;
+          [...ctx.card.classList].filter((k) => k.indexOf('v2-ftt-') === 0).forEach((k) => ctx.card.classList.remove(k));
+          ctx.card.classList.add('v2-ftt-' + ftb.getAttribute('data-ft'));
+          const nb0 = ctx.card.querySelector('.v2-shapepop .v2-ftnabtn'); if (nb0) nb0.setAttribute('aria-expanded', 'false');
+          applyGate(ctx.card, ctx.L);
+          return;
+        }
+        const ftna = t.closest('.v2-ftnabtn');
+        if (ftna) {
+          const ctx = layerOf(ftna); if (!ctx) return;
+          ftna.setAttribute('aria-expanded', ftna.getAttribute('aria-expanded') === 'true' ? 'false' : 'true');
+          applyGate(ctx.card, ctx.L);
+          return;
+        }
+        // ↺ ALL TO DEFAULT / 🎲 SURPRISE ME — over one set of dice
+        const da = t.closest('.v2-dall');
+        if (da) {
+          const ctx = layerOf(da); if (!ctx) return;
+          const [which, verb] = String(da.getAttribute('data-da')).split(':');
+          const okd = (verb === 'rand') ? diceRandom(ctx.L, which) : diceReset(ctx.L, which);
+          if (!okd) return;
+          try { E.getCfg(); } catch (e) {}
+          try { if (!V2.isStaged(ctx.L) && typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          h._sig = ''; V2.render(E);
+          setTimeout(() => {
+            try {
+              const c2 = document.querySelector('.v2-layer[data-v2id="' + (ctx.L.id | 0) + '"]');
+              if (c2) { const S2 = V2.stagedOf(ctx.L.id | 0); if (S2) stageVizDraw(c2, S2); else drawPartViz(c2, ctx.L, E); }
+            } catch (e) {}
+          }, 0);
+          return;
+        }
+        // ✕ ON A TUNED CHIP — that one knob back to the Character's value (or
+        // its default), then the same rebuild ↺ Reset does
+        const tx = t.closest('.v2-tunedx');
+        if (tx) {
+          const ctx = layerOf(tx); if (!ctx) return;
+          const f = tx.getAttribute('data-tf');
+          let v = null; try { v = JSON.parse(tx.getAttribute('data-tv')); } catch (e) { return; }
+          if (f.indexOf('#dice:') === 0) { if (!diceApply(ctx.L, f.slice(6), 0)) return; }
+          else if (f === '#speed') { if (!V2.setSpeed(E, ctx.L, v)) return; }
+          else if (f === '#salt') delete ctx.L.followSalt;
+          else if (f === '#harm') { if (ctx.L.part.pitch) delete ctx.L.part.pitch.harm; }
+          else setPath(ctx.L, f, v);
+          try { E.getCfg(); } catch (e) {}
+          try { if (!V2.isStaged(ctx.L) && typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          h._sig = ''; V2.render(E);
+          return;
+        }
+        // ↺ BACK TO THE SHAPE'S RECIPE — ⚠ Advanced: recipe
+        const rb0 = t.closest('.v2-recipeback');
+        if (rb0) {
+          const ctx = layerOf(rb0); if (!ctx) return;
+          const REC = { sustain: ['pulse', 'chord'], arp: ['pulse', 'series'], roll: ['euclid', 'walk'],
+            melody: ['euclid', 'walk'], mixed: ['euclid', 'mixed'], ground: ['ground', 'chord'] };
+          const rec = REC[ctx.L.part.mat]; if (!rec) return;
+          ctx.L.part.rhythm = Object.assign({}, ctx.L.part.rhythm, { kind: rec[0] });
+          ctx.L.part.pitch = Object.assign({}, ctx.L.part.pitch, { kind: rec[1] });
+          try { E.getCfg(); } catch (e) {}
+          try { if (!V2.isStaged(ctx.L) && typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          h._sig = ''; V2.render(E);
           return;
         }
         // ↺ RESET — the preset in force, written again through `V2.applyPreset`,

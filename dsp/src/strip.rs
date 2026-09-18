@@ -449,6 +449,15 @@ pub(crate) struct Strip {
     // The feedback path always reads at the base tap so the echo timing/decay is
     // unchanged — only the stereo image of what reaches the bus widens.
     dly_spread: f32,
+    // REPEAT FX — processing applied INSIDE the delay's feedback path, so it
+    // shapes the echoes and never the dry signal. Written into the line, which
+    // means repeat 1 is processed once, repeat 2 twice, and so on: the classic
+    // dub behaviour, where the tail dissolves rather than just repeating.
+    // Absent/0 skips the whole stage, so an untouched strip is byte-identical.
+    dfx_on: bool,
+    dfx_drive: f32,
+    dfx_damp: f32,
+    dfx_lp: [f32; 2],
     ap_on: bool,
     ap_wet: f32,
     ap_depth: f32,
@@ -518,6 +527,10 @@ pub(crate) const STRIP0: Strip = Strip {
     dly_fb: 0.35,
     dly_w: 0,
     dly_spread: 0.0,
+    dfx_on: false,
+    dfx_drive: 0.0,
+    dfx_damp: 0.0,
+    dfx_lp: [0.0, 0.0],
     ap_on: false,
     ap_wet: 0.0,
     main_c: -1.0,
@@ -838,8 +851,16 @@ fn fx_delay(slot: usize, st: &mut Strip, frames: usize) {
                 DFB[slot][0][q] = l_out;
                 DFB[slot][1][q] = r_fb;
                 // cross feedback: L out → R delay input, R out → L delay input
-                DLINE[slot][0][w] = flush(in_l + fb * r_old);
-                DLINE[slot][1][w] = flush(pre_out + fb * l_old);
+                // PROCESSED ON THE WAY IN, so every repeat is shaped (repeat 1
+                // once, repeat 2 twice …) and the dry `in_l`/`in_r` below is
+                // untouched — "FX on the repeats only".
+                let (w_l, w_r) = if st.dfx_on {
+                    (repeat_fx(st, 0, in_l + fb * r_old), repeat_fx(st, 1, pre_out + fb * l_old))
+                } else {
+                    (in_l + fb * r_old, pre_out + fb * l_old)
+                };
+                DLINE[slot][0][w] = flush(w_l);
+                DLINE[slot][1][w] = flush(w_r);
                 DPRE[slot][w] = flush(in_r);
                 OUT[slot][0][i] = in_l * cd + l_out * cw;
                 OUT[slot][1][i] = in_r * cd + r_out * cw;
@@ -850,13 +871,42 @@ fn fx_delay(slot: usize, st: &mut Strip, frames: usize) {
                     let x = OUT[slot][ch][i];
                     let old = DFB[slot][ch][q];
                     DFB[slot][ch][q] = fb_read;
-                    DLINE[slot][ch][w] = flush(x + fb * old);
+                    let wr = if st.dfx_on { repeat_fx(st, ch, x + fb * old) } else { x + fb * old };
+                    DLINE[slot][ch][w] = flush(wr);
                     OUT[slot][ch][i] = x * cd + out_read * cw;
                 }
             }
         }
         st.dly_w = (w + 1) % DELAY_LEN;
     }
+}
+
+// REPEAT FX — the per-sample stage that runs inside the delay's feedback path.
+// ODD-SYMMETRIC saturation on purpose: the DC blocker in this file runs only on
+// the asymmetric dist flavours, and an asymmetric curve in a FEEDBACK loop would
+// integrate its own offset into the line until the tail thumps.
+// Both controls CROSSFADE FROM DRY by their own amount, so 0 is not merely
+// "gentle" but exactly the untouched sample — which is what lets an unengaged
+// strip stay byte-identical and keeps golden green.
+#[inline(always)]
+fn repeat_fx(st: &mut Strip, ch: usize, x: f32) -> f32 {
+    let mut y = x;
+    if st.dfx_drive > 0.0 {
+        let g = 1.0 + st.dfx_drive * 20.0;
+        let xg = y * g;
+        let sh = xg / (1.0 + xg.abs());            // algebraic soft clip, odd
+        y += (sh * (1.0 + st.dfx_drive * 0.5) - y) * st.dfx_drive;
+    }
+    if st.dfx_damp > 0.0 {
+        // One-pole lowpass. A RECURSIVE write, so it goes through `flush` —
+        // strips process silence 24/7 and WASM has no FTZ, so an unflushed state
+        // decays into subnormals (the documented hygiene rule).
+        let a = st.dfx_damp * 0.92;
+        let lp = flush(y * (1.0 - a) + st.dfx_lp[ch] * a);
+        st.dfx_lp[ch] = lp;
+        y = lp;
+    }
+    y
 }
 
 // Linear read of the glitch ring at a fractional position (already wrapped).
@@ -1522,6 +1572,27 @@ pub extern "C" fn strip_delay(slot: u32, on: u32, ping: u32, wet: f32, time_s: f
 }
 
 /// Layer "Wet only": main (dry) output gain, 0..1. 1.0 = neutral. See Strip.main.
+/// REPEAT FX — processing inside the delay's FEEDBACK path, so it shapes the
+/// echoes and never the dry signal. Each pass through the loop applies it again,
+/// so the tail dissolves instead of merely repeating.
+/// `drive` and `damp` are 0..100 and **0 is neutral** for both — the i32 ABI
+/// turns a MISSING argument into 0, so a caller on an older signature keeps
+/// rendering the untouched, golden-covered path (the documented rule for
+/// extending a `strip_*` export).
+#[no_mangle]
+pub extern "C" fn strip_dlyfx(slot: u32, on: u32, drive: i32, damp: i32) {
+    unsafe {
+        let st = &mut STRIPS[(slot as usize) % SLOTS];
+        let want = on != 0 && (drive > 0 || damp > 0);
+        // Engaging clears the filter state so a stage switched on mid-piece
+        // cannot dump a stale tail into the line.
+        if want && !st.dfx_on { st.dfx_lp = [0.0, 0.0]; }
+        st.dfx_on = want;
+        st.dfx_drive = (drive.clamp(0, 100) as f32) / 100.0;
+        st.dfx_damp = (damp.clamp(0, 100) as f32) / 100.0;
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn strip_mainout(slot: u32, gain: f32) {
     unsafe {

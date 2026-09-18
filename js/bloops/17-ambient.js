@@ -2333,6 +2333,19 @@
           if (host.fxChain.indexOf(k) < 0 && host[k] && typeof host[k] === 'object') host[k].dryKill = 0;
         });
       }
+      // REPEAT FX — the delay's own feedback-path processing (drive / damp,
+      // 0-100, 0 neutral). Additive and coerced HERE rather than defaulted onto
+      // every layer: a number in `_ambDefaultLayer` would be backfilled onto
+      // every project, and the whole point is that an untouched strip renders
+      // byte-identically (the absent-by-default rule).
+      if (host.delay && typeof host.delay === 'object') {
+        ['fxDrive', 'fxDamp'].forEach((k) => {
+          if (k in host.delay) {
+            const v = host.delay[k] | 0;
+            if (v > 0) host.delay[k] = Math.min(100, v); else delete host.delay[k];
+          }
+        });
+      }
       // Salt-follow + the voice ceiling are additive per-layer fields, coerced
       // here rather than defaulted onto every layer (the backfill trap).
       if ('label' in host) { const lb = (typeof host.label === 'string') ? host.label.trim().slice(0, 16) : ''; if (lb) host.label = lb; else delete host.label; }
@@ -23947,6 +23960,15 @@
             0.1 + Math.max(0, Math.min(100, pha.rate | 0)) / 100 * 3.9);
           e.core.cmd('strip_delay', sl, wantDelay ? 1 : 0, wantPing ? 1 : 0, _wet01(dly),
             _ambDelaySec(dly), Math.max(0, Math.min(0.95, (dly.feedback | 0) / 100)), c01(dly.spread));
+          // REPEAT FX — inside the delay's feedback path, so it shapes the
+          // echoes and never the dry signal, and each pass applies it again
+          // (the tail dissolves rather than merely repeating). Gated on the
+          // delay actually being engaged: processing a loop nothing is feeding
+          // is a stage running for no reason.
+          e.core.cmd('strip_dlyfx', sl,
+            (wantDelay && (((dly.fxDrive | 0) > 0) || ((dly.fxDamp | 0) > 0))) ? 1 : 0,
+            Math.max(0, Math.min(100, dly.fxDrive | 0)),
+            Math.max(0, Math.min(100, dly.fxDamp | 0)));
           e.core.cmd('strip_autopan', sl, wantAutopan ? 1 : 0, _wet01(apan), c01(apan.depth),
             0.05 + Math.max(0, Math.min(100, apan.rate | 0)) / 100 * 7.95);
           // GLITCH — CORE ONLY. A granulator has no sane Web Audio node build, so

@@ -46,6 +46,17 @@
 - **Bus = where a layer ENTERS the master chain** (`full`/`postwarmth`/`postvinyl`/`direct`), plus its
   own FX sends into the shared returns. The chain is serial and shared, so per-effect switches are not
   physically possible. `routeBloomBus` disconnects, so it must RE-ATTACH the sends.
+- **FX ON THE DELAY'S REPEATS IS A LOOP INSERT, NOT A CHAIN POSITION.** `strip_dlyfx` processes the
+  signal written INTO the delay line, so the dry note is untouched and every pass applies it again
+  (the tail dissolves). Chain order cannot express that — a stage AFTER the delay damps every repeat
+  equally, which is the measurement that tells the two apart (`test/probe-repeat-fx.js` compares the
+  repeat-1 and repeat-3 ratios). Saturation in a feedback loop must be ODD-SYMMETRIC: the DC blocker
+  runs only on the asymmetric dist flavours, and an asymmetric curve would integrate its own offset
+  into the line until the tail thumps. Core-only; the row says so, as Glitch's does.
+- **A DSP FEATURE IS MEASURED AGAINST THE WASM, NOT AN OFFLINE RENDER.** An offline render falls back
+  to the NODE engine, so it never exercises the core path — a core-only stage would show no effect and
+  read as broken. Instantiate the wasm directly (`in_ptr` / `process` / `out_ptr`, the same shape
+  golden-render uses) and measure the buffer.
 - **Extending a `strip_*` wasm export: make new args `i32`, never `f32`** — a missing argument becomes
   `0` for an int and `NaN` for a float, so design the new param so 0 is neutral.
 

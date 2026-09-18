@@ -11672,6 +11672,24 @@
             sl(L, 'delay.feedback', 'Delay fb', num(fx(L, 'delay').feedback, 35), 0, 95, 'repeats') +
             ftog(L, 'delay.ping', 'Ping-pong', 'On — bounce L/R', 'Off', 'echoes alternate sides') +
             sl(L, 'delay.spread', 'Delay width', num(fx(L, 'delay').spread, 0), 0, 100, 'mono → wide') +
+            // ── FX ON THE REPEATS ONLY ───────────────────────────────
+            // (2026-09-18, user: "for time-based FX like delay, I want to be
+            // able to apply FX to just the repeats, independently of the main
+            // FX chain".) These run INSIDE the feedback loop — not after the
+            // delay in the chain — which is the difference that matters: the dry
+            // note is untouched, and every pass through the loop applies them
+            // again, so the tail dissolves instead of merely repeating. Chain
+            // order cannot express that at all; it is a property of the loop.
+            // CORE ONLY, and the hint says so rather than failing silently —
+            // the same contract Glitch states on its own row.
+            '<div class="ambient-ctrl v2-dlyfxhead"><label>Repeats</label>' +
+              '<span class="ambient-hint">processed inside the feedback loop — the dry note is ' +
+              'untouched, and each repeat is shaped again' +
+              (coreStrips() ? '' : ' · needs the core engine') + '</span></div>' +
+            sl(L, 'delay.fxDrive', 'Repeat drive', num(fx(L, 'delay').fxDrive, 0), 0, 100,
+               coreStrips() ? 'dirt, deeper on every repeat' : 'needs the core engine') +
+            sl(L, 'delay.fxDamp', 'Repeat damp', num(fx(L, 'delay').fxDamp, 0), 0, 100,
+               coreStrips() ? 'darker on every repeat' : 'needs the core engine') +
             fdk(L, 'delay')) +
           tb('Drive', sl(L, 'dist.mix', 'Drive', num(fx(L, 'dist').mix, 0), 0, 100, 'wet amount') +
             sel(L, 'dist.flavor', 'Drive type', fx(L, 'dist').flavor || '', DIST_OPTS) +

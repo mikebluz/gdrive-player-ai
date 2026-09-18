@@ -470,6 +470,13 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   (`notesFor` wraps `notesForRaw`), so the DRAWING shows it too — in the emit it would fix the ear and
   leave the picture lying, which is how the report was arrived at. It only ever SHORTENS, and the
   "next onset" is the next STRICTLY LATER one or a chord clips itself to nothing.
+- **ONSET ≠ NOTE, and a readout that says only one of them reads as a contradiction.** An onset is a
+  moment the layer strikes; a note is one sounding pitch, and one onset can spend several (`onsets ×
+  notes-per-onset`, which is what `shapeOf` states). Count onsets from the per-note `oi` TAG, never
+  from distinct times — Strum and Slip spread one onset's notes across the slot, so times report a
+  strummed chord as three onsets. **`drawPartViz` rebuilds the note objects from a NAMED field list**,
+  so any new per-note field is silently dropped there unless added — which is exactly where `oi` went
+  missing first.
 - **Take pinning:** `part.take` pins the seed for the AUDITION and the PICTURE; playback plays that
   take too (per-cycle dice are `part.vary`). `part.takeb` pins per REGION, `part.ruleb` gives a region
   its own RULES — and a per-region RULE must be honoured by playback while a per-region TAKE is an

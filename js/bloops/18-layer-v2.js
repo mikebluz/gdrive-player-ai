@@ -3206,6 +3206,7 @@
             out.push(cn);
           }
         }
+        for (let z = outFrom; z < out.length; z++) out[z].oi = i;
         continue;
       }
       // TWIST — v1's rule: 0 is a single note per onset; as it rises the CHANCE
@@ -3350,6 +3351,12 @@
       // level (a ghost at full volume is just a doubled note).
       // an anticipated chord carries its LEAD, so the chord choke measures its
       // boundary from the change it belongs to, not the one it arrives inside
+      // WHICH ONSET THESE NOTES BELONG TO. Counting distinct TIMES cannot answer
+      // that: Strum and Slip deliberately spread one onset's notes across the
+      // slot, so a strummed chord would read as three onsets and the readout
+      // would contradict the very distinction it exists to draw. Tagged per
+      // onset, at the ONE place that already marks a whole onset's output.
+      for (let z = outFrom; z < out.length; z++) out[z].oi = i;
       if (anticK) for (let z = outFrom; z < out.length; z++) out[z].antic = anticK;
       if (p.pitch.kind === 'mixed' && p._mixWasLine) {
         for (let z = outFrom; z < out.length; z++) out[z].line = 1;
@@ -7393,8 +7400,12 @@
     } catch (e) { notes = []; }
     // `notesFor` returns ABSOLUTE times (cycleStart + offset), so a remembered
     // cycle start has to be subtracted back off before drawing.
+    // `oi` COMES ALONG. This rebuild copies NAMED fields, so anything not listed
+    // is silently dropped — the onset tag went missing here and the readout fell
+    // back to counting distinct times, which is wrong in exactly the case the
+    // tag exists for (a strummed chord read as three onsets).
     notes = notes.map(n => (n && Number.isFinite(n.at))
-      ? { at: n.at - cs, freq: n.freq, durMs: n.durMs, nidx: n.nidx, antic: n.antic } : n);
+      ? { at: n.at - cs, freq: n.freq, durMs: n.durMs, nidx: n.nidx, antic: n.antic, oi: n.oi } : n);
     // THE PICTURE MUST AGREE WITH THE EAR. A note is released by the next
     // change unless the layer rings, so drawing its full length while the
     // choke cuts it is exactly the disagreement that reads as "notes are
@@ -8105,8 +8116,28 @@
       // notes every cycle unless something stochastic is on. The first token
       // now answers "does this change on iterations", and NAMES what makes it
       // live rather than hiding the reason in a title a phone never shows.
+      // ── NOTES AND ONSETS ARE DIFFERENT NUMBERS ─────────────────────
+      // An ONSET is a moment the layer strikes; a NOTE is one sounding pitch, and
+      // one onset can spend several (a 3-voice chord is one onset, three notes).
+      // The readout said notes only, so "8 onsets" in the rules and "24 notes"
+      // here looked like a contradiction — and Max events, which counts NOTES, is
+      // unreadable without both.
+      // FROM THE TAG, NOT FROM THE TIMES: Strum and Slip spread one onset's notes
+      // across the slot, so distinct `at` values would report a strummed chord as
+      // three onsets. Recorded parts carry no tag — there the stored times ARE
+      // the onsets, which is the honest answer for a note list.
+      const onsetN = (() => {
+        const tagged = played.filter((n) => Number.isFinite(n.oi));
+        if (tagged.length) return new Set(tagged.map((n) => n.oi)).size;
+        return new Set(played.map((n) => Math.round(n.at * 1e6))).size;
+      })();
+      // Said only when it DIFFERS — on a monophonic line the two numbers are the
+      // same and printing both twice is noise, which is the rule this file keeps
+      // relearning about readouts.
       lab.textContent = liveTxt(L, cfg) + ' · ' +
-        played.length + ' note' + (played.length === 1 ? '' : 's') + ' · ' + barTxt +
+        played.length + ' note' + (played.length === 1 ? '' : 's') +
+        (onsetN && onsetN !== played.length
+          ? ' in ' + onsetN + ' onset' + (onsetN === 1 ? '' : 's') : '') + ' · ' + barTxt +
         ' · ' + (Math.round(cyc * 10) / 10) + 's' +
         // NAME THE TAKE. "one take of many" was true and unhelpful — you could
         // not tell whether the picture had moved. A number you can watch change

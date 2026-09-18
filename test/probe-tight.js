@@ -141,6 +141,44 @@ const ok = (name, cond, detail) => {
   ok('…and it TRUNCATES — the earliest are kept and the cycle falls silent after',
     maxEv.on.last < maxEv.off.last / 2, JSON.stringify(maxEv));
 
+  // ── THE READOUT SAYS BOTH COUNTS ────────────────────────────
+  // An ONSET is a moment the layer strikes; a NOTE is one sounding pitch, and
+  // one onset can spend several. Without both numbers "8 onsets" in the rules
+  // and "24 notes" here look like a contradiction, and Max events (which counts
+  // NOTES) cannot be read at all.
+  // THE STRUM CASE IS THE ONE THAT MATTERS: Strum spreads one onset's notes
+  // across the slot, so counting distinct TIMES reports a strummed chord as
+  // three onsets. It is counted from a per-onset TAG instead — and that tag has
+  // to survive the draw's own rebuild of the note objects, which copies named
+  // fields and silently drops anything not listed. It was dropped there first.
+  const lab = async (setup) => page.evaluate(async (st) => {
+    const E = _masterEng, L = () => (E.getCfg().layers || [])[0];
+    eval(st); E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E);
+    await new Promise((r) => setTimeout(r, 600));
+    const c = document.querySelector('.v2-layer'); c.classList.remove('collapsed');
+    return ((c.querySelector('.v2-vizlab') || {}).textContent || '').replace(/\s+/g, ' ');
+  }, setup);
+
+  const chordLab = await lab("L().part.kind='live';L().part.bars=2;L().part.notes=[];" +
+    "L().part.rhythm={kind:'pulse',n:8,steps:16};L().part.pitch={kind:'chord',voices:3,span:12};delete L().strum;");
+  ok('a 3-voice chord layer reads BOTH counts — 24 notes in 8 onsets',
+    /24 notes in 8 onsets/.test(chordLab), chordLab.slice(0, 90));
+
+  const strumLab = await lab("L().strum=70;L().strumFidelity=50;");
+  ok('…and STRUM does not turn one onset into three',
+    /24 notes in 8 onsets/.test(strumLab), strumLab.slice(0, 90));
+
+  const monoLab = await lab("delete L().strum;L().part.pitch={kind:'walk',span:12};");
+  ok('…while a monophonic line says it ONCE — the two numbers are the same',
+    /8 notes/.test(monoLab) && !/onset/.test(monoLab), monoLab.slice(0, 90));
+
+  const recLab = await lab("L().part.kind='recorded';" +
+    "L().part.notes=[{t:0,midi:60,dur:0.2},{t:0,midi:64,dur:0.2},{t:0.5,midi:67,dur:0.2}];");
+  ok('…and a RECORDED part counts its own stored times',
+    /3 notes in 2 onsets/.test(recLab), recLab.slice(0, 90));
+
   ok('no page errors', errs.length === 0, errs.join(' | '));
   console.log('\nprobe: ' + pass + ' passed, ' + fail + ' failed');
   await browser.close();

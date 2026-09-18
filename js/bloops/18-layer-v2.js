@@ -17289,9 +17289,39 @@
   // unless you happened to open the Rhythm dropdown and pick the right entry.
   // Reported twice. The grid is the thing people come here for; a pad is one
   // dropdown away, and that is the right way round.
+  // ── A NEW LAYER GETS A NAME, NOT A NUMBER ───────────────────────
+  // "Layer", "Layer 2", "Layer 3" are three things you cannot tell apart in a
+  // list, a Schedule cell or a toast. A word can be remembered and pointed at.
+  // The bank is generated from Project Gutenberg and COMMITTED
+  // (`tools/build-wordbank.mjs`) rather than fetched: naming a layer has to work
+  // in the native shell and offline, and a committed list is reviewable.
+  // NOT ALREADY IN USE — two layers called Hollow is exactly the thing the
+  // numbers were bad at. Falls back to the old scheme if the bank is missing
+  // (a page that did not load it, or a stripped build), because a layer with no
+  // name at all is worse than a dull one.
+  function layerWord(cfg) {
+    let bank = null;
+    try { bank = window.BLOOPS_WORDBANK; } catch (e) {}
+    if (!Array.isArray(bank) || !bank.length) return null;
+    const used = new Set();
+    try {
+      (cfg.layers || []).forEach((x) => { if (x && x.name) used.add(String(x.name).toLowerCase()); });
+      (cfg.extras || []).forEach((x) => { if (x && x.name) used.add(String(x.name).toLowerCase()); });
+    } catch (e) {}
+    const cap = (w) => w.charAt(0).toUpperCase() + w.slice(1);
+    // Try the bank at random; give up after a bounded number of draws rather
+    // than scanning it, so a nearly-full bank cannot spin.
+    for (let i = 0; i < 40; i++) {
+      const w = bank[Math.floor(Math.random() * bank.length)];
+      if (w && !used.has(w)) return cap(w);
+    }
+    // every draw collided — take the first free one, then give up gracefully
+    const free = bank.find((w) => !used.has(w));
+    return free ? cap(free) : null;
+  }
   V2.addDefault = function (E) {
     const cfg = E && E.getCfg && E.getCfg(); if (!cfg) return null;
-    const L = V2.add(cfg, { name: 'Layer', instrument: { tone: '', register: 4, level: 65 },
+    const L = V2.add(cfg, { name: layerWord(cfg) || 'Layer', instrument: { tone: '', register: 4, level: 65 },
       part: { kind: 'live', bars: 2, rhythm: { kind: 'euclid', steps: 8, pulses: 3, rotate: 0 },
               pitch: { kind: 'chord', voices: 3 }, shape: { lenRatio: 90 } } });
     try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}

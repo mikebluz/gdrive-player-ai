@@ -1123,6 +1123,11 @@ try { if (/[?&]diag=0\b/.test(location.search)) localStorage.removeItem('sbDiag'
   <script src="js/bloops/15-grid-build.js?v=DEPLOYVER"></script>
   <script src="js/bloops/16-grid-controls.js?v=DEPLOYVER"></script>
   <script src="js/bloops/17-ambient.js?v=DEPLOYVER"></script>
+  <!-- The layer-name word bank. Generated ONCE from Project Gutenberg by
+       tools/build-wordbank.mjs and committed, so naming a layer needs no
+       network: it must work in the shell and offline. Before 18-layer-v2,
+       which reads it when a layer is created. -->
+  <script src="js/bloops/wordbank.js?v=DEPLOYVER"></script>
   <script src="js/bloops/18-layer-v2.js?v=DEPLOYVER"></script>
   <script src="js/bloops/18-schedule.js?v=DEPLOYVER"></script>
   <script src="js/bloops/18-text.js?v=DEPLOYVER"></script>

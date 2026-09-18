@@ -109,14 +109,17 @@ const labelsOf = () => {
   await page.evaluate(() => {
     const E = _masterEng;
     const L = (E.getCfg().layers || [])[0];
-    try { if (L.fx && L.fx.dist) L.fx.dist.mix = 0; } catch (e) {}
+    // THE STORE IS `L.dist`, not `L.fx.dist` — `fx(L,k)` reads `L[k]`. Written
+    // the wrong way this read as mix 0 because the object never existed, which
+    // is a check passing for the wrong reason.
+    L.dist = Object.assign({}, L.dist, { mix: 0 });
     E.getCfg();
   });
   await page.select('.v2-layer .v2-pop-tabs .v2-fxpick', 'Drive');
   await zz(700);
   const driveRows = await page.evaluate(() => ({
     vis: window.__labelsOf(),
-    mix: (((_masterEng.getCfg().layers || [])[0].fx || {}).dist || {}).mix || 0,
+    mix: (((_masterEng.getCfg().layers || [])[0]).dist || {}).mix || 0,
   }));
   ok('Drive at mix 0 still shows its OWN parameters — type, amount, focus, tone',
     driveRows.mix === 0 &&
@@ -152,6 +155,38 @@ const labelsOf = () => {
   }));
   ok('a real press on Wet only opens its row and lights the button',
     wetOpen.on && wetOpen.rows.some((x) => /Wet only/.test(x)), JSON.stringify(wetOpen));
+
+  // ── THE HEAD'S SUMMARY NAMES CONTROLS, NOT STORAGE KEYS ──────────────
+  // It printed `now.on`, which is the DATA KEYS — so a layer with Drive engaged
+  // read "dist" in the head, a word that appears nowhere else on the card
+  // (reported: "what does this dist readout mean"). Data keys stay for
+  // save-compat; every SURFACE says the control's own name.
+  const summ = await page.evaluate(async () => {
+    const E = _masterEng;
+    const L = (E.getCfg().layers || [])[0];
+    L.dist = Object.assign({}, L.dist, { mix: 40 });        // Drive
+    L.autopan = Object.assign({}, L.autopan, { mix: 25 });  // Auto-pan
+    // `true`, NOT `1` — `_ambNormalizeFx` does `pe.on = pe.on === true`, so a
+    // truthy 1 flattens to false and the stage reads as off (documented).
+    L.pecho = Object.assign({}, L.pecho, { on: true });     // Pitch echo
+    L.wetOnly = 1;
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E);
+    await new Promise((r) => setTimeout(r, 600));
+    const el = document.querySelector('.v2-layer [data-grp="FX"].v2-grpsum') ||
+               document.querySelector('.v2-layer .v2-grpsum[data-grp="FX"]');
+    const txt = el ? el.textContent.trim() : null;
+    // put it back — one page, one state
+    delete L.dist; delete L.autopan; delete L.pecho; delete L.wetOnly;
+    E.getCfg();
+    return txt;
+  });
+  ok('the FX summary names the CONTROLS — Drive, not the `dist` storage key',
+    !!summ && /Drive/.test(summ) && !/\bdist\b/.test(summ) &&
+    /Auto-pan/.test(summ) && !/\bautopan\b/.test(summ) &&
+    /Pitch echo/.test(summ) && !/\bpecho\b/.test(summ) && /Wet only/.test(summ),
+    JSON.stringify(summ));
 
   ok('no page errors', errs.length === 0, errs.join(' | '));
   console.log('\nprobe: ' + pass + ' passed, ' + fail + ' failed');

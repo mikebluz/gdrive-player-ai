@@ -151,6 +151,11 @@
 - **`classList.remove('collapsed')` IS NOT EXPANDING A CARD.** The head's handler is what calls
   `popOpen`, so stripping the class gives an expanded-looking card with NO sheet and every section
   door missing — a probe doing it reported "no FX door" against working code. Drive the head.
+- **A SUMMARY THAT PRINTS STORAGE KEYS INVENTS A SECOND VOCABULARY.** The FX head read `dist` for a
+  layer with Drive engaged — a word appearing nowhere else on the card, so it cannot be looked up
+  ("what does this dist readout mean"). Data keys stay forever for save-compat; every SURFACE says the
+  control's own name (`FX_LABEL`, which must mirror the tab names — the tab is where a reader goes
+  looking after seeing the summary).
 - **A tap-to-cycle number is a bug**; so is a control that is absent in some states. **Render it and
   DISABLE it**, with the reason in the title — a conditionally-rendered control cannot be found,
   learned, or asked about. A press that cannot act should REFUSE AND EXPLAIN rather than do nothing.

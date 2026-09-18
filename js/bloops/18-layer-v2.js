@@ -10428,6 +10428,19 @@
   // is the frame around all of it. Eight sections, four per row: ✦ Pitch folded
   // into Instrument, which is why it divides evenly now.
   const SECS = ['Instrument', 'Generate', 'Playing', 'Shape', 'Time', 'Mix', 'FX', 'Bank'];
+  // ── WHAT AN EFFECT IS CALLED ───────────────────────────────────
+  // The DATA KEYS are `dist`, `autopan`, `pecho` — kept forever for save-compat
+  // — and the card's words are Drive, Auto-pan, Pitch echo. The FX summary
+  // printed the keys, so a layer with Drive engaged read "dist" in the head: a
+  // name for the same thing that appears NOWHERE else on the card, which is the
+  // documented two-vocabularies-for-one-axis failure (user: "what does this
+  // dist readout mean"). MUST MIRROR THE TAB NAMES in the FX group — the tab is
+  // where a reader goes looking after seeing the summary.
+  const FX_LABEL = {
+    delay: 'Delay', dist: 'Drive', chorus: 'Chorus', phaser: 'Phaser',
+    autopan: 'Auto-pan', glitch: 'Glitch', pecho: 'Pitch echo',
+  };
+  const fxLabel = (k) => FX_LABEL[k] || k;
   // Make · Time · Bank are the Content group seen three ways, so they share its
   // rows and differ only in which TABS they offer.
   // ✺ PLAYING (renamed from ✺ Playing, 2026-09-17). "Live" meant three things —
@@ -12055,9 +12068,11 @@
         if (mods.length) bits.push(mods.join('+'));
         return bits.join(' \u00b7 ');
       })(),
-      FX: (eng.length ? eng.join(' \u00b7 ') : '') +
-          (now.tg === 'on' ? (eng.length ? ' \u00b7 ' : '') + 'chop' : '') +
-          (L.wetOnly ? ((eng.length || now.tg === 'on') ? ' \u00b7 ' : '') + 'wet only' : '') ||
+      // EVERY WORD HERE NAMES A CONTROL YOU CAN FIND — the stage's own tab name,
+      // never its storage key, and Chop / Wet only spelled as their buttons are.
+      FX: (eng.length ? eng.map(fxLabel).join(' · ') : '') +
+          (now.tg === 'on' ? (eng.length ? ' · ' : '') + 'Chop' : '') +
+          (L.wetOnly ? ((eng.length || now.tg === 'on') ? ' · ' : '') + 'Wet only' : '') ||
           'none',
     };
     card.querySelectorAll('.v2-grpsum').forEach(el => {

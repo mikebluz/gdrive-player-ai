@@ -11504,6 +11504,23 @@
       flex: 1 1 200px; width: auto; min-width: 0; min-height: 34px;
       font-weight: 600;
     }
+    /* ── THE FX STAGE PICKER ─────────────────────────────────
+       `.ambient-select` is width:100% and declared LATE, so bare in this strip
+       it would take the whole line and leave Wet only nowhere — the documented
+       swallow, checked by measuring the SIBLING. */
+    .v2-pop-tabs select.ambient-select.v2-fxpick {
+      flex: 1 1 160px; width: auto; min-width: 0; min-height: 34px; font-weight: 600;
+    }
+    /* WET ONLY IS NOT ONE OF THE STAGES — it is a switch on the dry signal, so
+       it reads in its own colour rather than as a tenth effect. Teal, which
+       this app uses for nothing else on this card. */
+    .v2-pop-tabs .v2-pop-tab.v2-wetonly {
+      flex: 0 0 auto; min-height: 34px; padding: 4px 12px; white-space: nowrap;
+      border-color: rgba(56, 217, 169, 0.45); color: #7fe3c4;
+    }
+    .v2-pop-tabs .v2-pop-tab.v2-wetonly.on {
+      border-color: #38d9a9; color: #06231a; background: #38d9a9; font-weight: 600;
+    }
     /* ✎ EDIT — a toggle, styled as ↻ Loop's sibling because it is the same kind
        of control (rule 6). The word carries the state as well as the fill:
        `✎ Edit` is an offer, `✎ Editing` is a state. */

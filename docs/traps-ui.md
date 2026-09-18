@@ -143,6 +143,14 @@
   so a float ULP flips it. Quantize a probe's positions to a MUSICAL tick (960 is a whole multiple of
   every grid here), never to the millisecond. Read a one-unit diff on a single position as the metric
   before reading it as the code.
+- **A `<select>` FIRES `input` BEFORE `change`, and a repaint in between eats the new value.** The FX
+  stage picker set `POP.tab` on `change` — but the card's input sweep repaints the sheet first, which
+  runs the picker's own follow-the-active-tab sync and puts the value BACK to the stage you were
+  leaving. The handler fired, the context resolved, and `fp.value` read as the OLD stage: a press that
+  did nothing. Take the FIRST event for anything that navigates.
+- **`classList.remove('collapsed')` IS NOT EXPANDING A CARD.** The head's handler is what calls
+  `popOpen`, so stripping the class gives an expanded-looking card with NO sheet and every section
+  door missing — a probe doing it reported "no FX door" against working code. Drive the head.
 - **A tap-to-cycle number is a bug**; so is a control that is absent in some states. **Render it and
   DISABLE it**, with the reason in the title — a conditionally-rendered control cannot be found,
   learned, or asked about. A press that cannot act should REFUSE AND EXPLAIN rather than do nothing.

@@ -11629,63 +11629,69 @@
             : ''))
         ) +
         // ── FX — the effect stages ────────────────────────────────────────
-        // An effect's own parameters are gated on the effect being ENGAGED
-        // (`on:delay`), which is what keeps this group from being the 18-row
-        // dump it was: 8 rows at rest, growing only around what you turn up.
+        // AN EFFECT'S PARAMETERS ALWAYS SHOW ON ITS TAB (2026-09-18, user:
+        // "that's sloppy to hide them, they should be always showing when that
+        // effect is selected"). They used to be gated on the effect being
+        // ENGAGED (`on:delay`, i.e. mix > 0) to keep the group from being an
+        // 18-row dump — but the tab IS the scoping, and the gate meant a Drive
+        // tab at mix 0 showed one knob and nothing else, with no way to learn
+        // that a Drive type or a Focus existed. That is the documented
+        // conditionally-rendered-control trap, and it produced its predicted
+        // report verbatim: "where are the other effects params".
         grpOpen('FX', false,
           tb('Delay', sl(L, 'delay.mix', 'Delay', num(fx(L, 'delay').mix, 0), 0, 100, 'wet amount') +
-            sl(L, 'delay.timeMs', 'Delay time', num(fx(L, 'delay').timeMs, 300), 20, 1500, 'ms — Sync overrides', 'on:delay') +
+            sl(L, 'delay.timeMs', 'Delay time', num(fx(L, 'delay').timeMs, 300), 20, 1500, 'ms — Sync overrides') +
             sel(L, 'delay.sync', 'Delay sync', fx(L, 'delay').sync || '',
-                [['', 'free (ms)']].concat(DELAY_SYNCS.map(d2 => [d2, d2])), 'on:delay') +
-            sl(L, 'delay.feedback', 'Delay fb', num(fx(L, 'delay').feedback, 35), 0, 95, 'repeats', 'on:delay') +
-            ftog(L, 'delay.ping', 'Ping-pong', 'On — bounce L/R', 'Off', 'echoes alternate sides', 'on:delay') +
-            sl(L, 'delay.spread', 'Delay width', num(fx(L, 'delay').spread, 0), 0, 100, 'mono → wide', 'on:delay') +
-            fdk(L, 'delay', 'on:delay')) +
+                [['', 'free (ms)']].concat(DELAY_SYNCS.map(d2 => [d2, d2]))) +
+            sl(L, 'delay.feedback', 'Delay fb', num(fx(L, 'delay').feedback, 35), 0, 95, 'repeats') +
+            ftog(L, 'delay.ping', 'Ping-pong', 'On — bounce L/R', 'Off', 'echoes alternate sides') +
+            sl(L, 'delay.spread', 'Delay width', num(fx(L, 'delay').spread, 0), 0, 100, 'mono → wide') +
+            fdk(L, 'delay')) +
           tb('Drive', sl(L, 'dist.mix', 'Drive', num(fx(L, 'dist').mix, 0), 0, 100, 'wet amount') +
-            sel(L, 'dist.flavor', 'Drive type', fx(L, 'dist').flavor || '', DIST_OPTS, 'on:dist') +
-            sl(L, 'dist.amount', 'Drive amt', num(fx(L, 'dist').amount, 40), 0, 100, 'how hard', 'on:dist') +
-            sl(L, 'dist.focus', 'Focus', num(fx(L, 'dist').focus, 0), 0, 100, 'full range → highs only', 'on:dist') +
-            sl(L, 'dist.tone', 'Drive tone', num(fx(L, 'dist').tone, 50), 0, 100, 'dark ← flat → bright', 'on:dist') +
-            fdk(L, 'dist', 'on:dist')) +
+            sel(L, 'dist.flavor', 'Drive type', fx(L, 'dist').flavor || '', DIST_OPTS) +
+            sl(L, 'dist.amount', 'Drive amt', num(fx(L, 'dist').amount, 40), 0, 100, 'how hard') +
+            sl(L, 'dist.focus', 'Focus', num(fx(L, 'dist').focus, 0), 0, 100, 'full range → highs only') +
+            sl(L, 'dist.tone', 'Drive tone', num(fx(L, 'dist').tone, 50), 0, 100, 'dark ← flat → bright') +
+            fdk(L, 'dist')) +
           tb('Chorus', sl(L, 'chorus.mix', 'Chorus', num(fx(L, 'chorus').mix, 0), 0, 100, 'wet amount') +
-            sl(L, 'chorus.depth', 'Chorus depth', num(fx(L, 'chorus').depth, 50), 0, 100, 'subtle → deep', 'on:chorus') +
-            sl(L, 'chorus.rate', 'Chorus rate', num(fx(L, 'chorus').rate, 30), 0, 100, 'slow → fast', 'on:chorus') +
-            fdk(L, 'chorus', 'on:chorus')) +
+            sl(L, 'chorus.depth', 'Chorus depth', num(fx(L, 'chorus').depth, 50), 0, 100, 'subtle → deep') +
+            sl(L, 'chorus.rate', 'Chorus rate', num(fx(L, 'chorus').rate, 30), 0, 100, 'slow → fast') +
+            fdk(L, 'chorus')) +
           tb('Phaser', sl(L, 'phaser.mix', 'Phaser', num(fx(L, 'phaser').mix, 0), 0, 100, 'wet amount') +
-            sl(L, 'phaser.depth', 'Phaser depth', num(fx(L, 'phaser').depth, 50), 0, 100, 'narrow → wide', 'on:phaser') +
-            sl(L, 'phaser.rate', 'Phaser rate', num(fx(L, 'phaser').rate, 30), 0, 100, 'slow → fast', 'on:phaser') +
-            fdk(L, 'phaser', 'on:phaser')) +
+            sl(L, 'phaser.depth', 'Phaser depth', num(fx(L, 'phaser').depth, 50), 0, 100, 'narrow → wide') +
+            sl(L, 'phaser.rate', 'Phaser rate', num(fx(L, 'phaser').rate, 30), 0, 100, 'slow → fast') +
+            fdk(L, 'phaser')) +
           tb('Auto-pan', sl(L, 'autopan.mix', 'Auto-pan', num(fx(L, 'autopan').mix, 0), 0, 100, 'wet amount') +
-            sl(L, 'autopan.depth', 'Pan depth', num(fx(L, 'autopan').depth, 100), 0, 100, 'centre → full L↔R', 'on:autopan') +
-            sl(L, 'autopan.rate', 'Pan rate', num(fx(L, 'autopan').rate, 30), 0, 100, 'slow → fast', 'on:autopan') +
-            fdk(L, 'autopan', 'on:autopan')) +
+            sl(L, 'autopan.depth', 'Pan depth', num(fx(L, 'autopan').depth, 100), 0, 100, 'centre → full L↔R') +
+            sl(L, 'autopan.rate', 'Pan rate', num(fx(L, 'autopan').rate, 30), 0, 100, 'slow → fast') +
+            fdk(L, 'autopan')) +
           // GLITCH is CORE-ONLY — a granulator has no sane Web Audio node build,
           // so with core strips off the stage simply is not there. v1 says so on
           // its own card rather than failing silently; so does this.
           tb('Glitch', sl(L, 'glitch.mix', 'Glitch', num(fx(L, 'glitch').mix, 0), 0, 100,
              coreStrips() ? 'wet amount' : 'needs the core engine') +
-            sel(L, 'glitch.mode', 'Glitch as', fx(L, 'glitch').mode || 'grain', GLITCH_OPTS, 'on:glitch') +
-            sl(L, 'glitch.sizeMs', 'Glitch size', num(fx(L, 'glitch').sizeMs, 80), 5, 900, 'ms per grain/slice', 'on:glitch') +
-            sl(L, 'glitch.rate', 'Glitch rate', num(fx(L, 'glitch').rate, 25), 1, 100, 'meaning depends on the type', 'on:glitch') +
-            sl(L, 'glitch.jitter', 'Scatter', num(fx(L, 'glitch').jitter, 40), 0, 100, 'how far back grains reach', 'on:glitch') +
-            sl(L, 'glitch.pitch', 'Glitch pitch', num(fx(L, 'glitch').pitch, 0), 0, 24, '± semitones per grain', 'on:glitch') +
-            fdk(L, 'glitch', 'on:glitch')) +
+            sel(L, 'glitch.mode', 'Glitch as', fx(L, 'glitch').mode || 'grain', GLITCH_OPTS) +
+            sl(L, 'glitch.sizeMs', 'Glitch size', num(fx(L, 'glitch').sizeMs, 80), 5, 900, 'ms per grain/slice') +
+            sl(L, 'glitch.rate', 'Glitch rate', num(fx(L, 'glitch').rate, 25), 1, 100, 'meaning depends on the type') +
+            sl(L, 'glitch.jitter', 'Scatter', num(fx(L, 'glitch').jitter, 40), 0, 100, 'how far back grains reach') +
+            sl(L, 'glitch.pitch', 'Glitch pitch', num(fx(L, 'glitch').pitch, 0), 0, 24, '± semitones per grain') +
+            fdk(L, 'glitch')) +
           // PITCH ECHO — spawns pitched repeats of each note, in key. Lives in
           // the capture tee (`_ambCapSink` → `_ambSchedulePitchEcho`), which v2
           // installs per layer and which resolves through `_ambLayerByKey` — so
           // it worked for a v2 layer already and lacked only this surface.
           tb('Pitch echo', ftog(L, 'pecho.on', 'Pitch echo', 'On — echoing', 'Off', 'pitched repeats of each note') +
-            sl(L, 'pecho.timeMs', 'Echo time', num((L.pecho || {}).timeMs, 300), 20, 4000, 'ms — Sync overrides', 'on:pecho') +
-            sel(L, 'pecho.sync', 'Echo sync', (L.pecho || {}).sync || '', PECHO_SYNCS, 'on:pecho') +
-            st(L, 'pecho.repeats', 'Repeats', num((L.pecho || {}).repeats, 3), 1, 12, 'echoes per note', 'on:pecho') +
-            st(L, 'pecho.step', 'Echo step', num((L.pecho || {}).step, 2), -7, 7, 'scale degrees per echo', 'on:pecho') +
-            '<div class="ambient-ctrl" data-v2when="on:pecho"><label>Echo arp</label>' +
+            sl(L, 'pecho.timeMs', 'Echo time', num((L.pecho || {}).timeMs, 300), 20, 4000, 'ms — Sync overrides') +
+            sel(L, 'pecho.sync', 'Echo sync', (L.pecho || {}).sync || '', PECHO_SYNCS) +
+            st(L, 'pecho.repeats', 'Repeats', num((L.pecho || {}).repeats, 3), 1, 12, 'echoes per note') +
+            st(L, 'pecho.step', 'Echo step', num((L.pecho || {}).step, 2), -7, 7, 'scale degrees per echo') +
+            '<div class="ambient-ctrl"><label>Echo arp</label>' +
               '<input type="text" class="ambient-select v2-f" data-f="pecho.pattern" placeholder="e.g. 0,4,7" ' +
                 'value="' + esc(String((L.pecho || {}).pattern || '')) + '">' +
               '<span class="ambient-hint">degree offsets the echoes cycle</span></div>' +
-            sl(L, 'pecho.feedback', 'Echo decay', num((L.pecho || {}).feedback, 65), 0, 100, 'each echo vs the last', 'on:pecho') +
-            sl(L, 'pecho.spread', 'Echo width', num((L.pecho || {}).spread, 0), 0, 100, 'echoes alternate sides', 'on:pecho') +
-            fdk(L, 'pecho', 'on:pecho')) +
+            sl(L, 'pecho.feedback', 'Echo decay', num((L.pecho || {}).feedback, 65), 0, 100, 'each echo vs the last') +
+            sl(L, 'pecho.spread', 'Echo width', num((L.pecho || {}).spread, 0), 0, 100, 'echoes alternate sides') +
+            fdk(L, 'pecho')) +
           // TRANCE GATE — a bar-synced step pattern that chops the layer. The
           // engine already drove this for v2 the moment the chain existed
           // (`_ambScheduleStochastic` walks `_E.mod`, `_ambScheduleTg` resolves
@@ -14017,6 +14023,33 @@
         (tabNa(t.name, L) ? ' aria-disabled="true"' +
           ' title="Rhythm shapes a GENERATED part — this one is FROZEN, so these do nothing until you unfreeze it"' : '') +
         '>' + esc(t.name) + '</button>';
+      // ── FX IS A DROPDOWN, NOT NINE CHIPS ─────────────────────────
+      // (2026-09-18, user: "consolidate the effect option buttons into a
+      // dropdown — all except Wet Only, leave that as a button and color it
+      // differently".) Nine chips wrapped to two rows before a single control
+      // was reached; the stages are a LIST OF ALTERNATIVES — you look at one at
+      // a time — which is what a select is for.
+      // WET ONLY IS NOT ONE OF THEM, which is why it keeps its own button and
+      // its own colour: every other entry picks WHICH effect you are looking
+      // at, while Wet only is a switch on the layer's dry signal. Putting it in
+      // the list would have made one control mean two things — "show me this"
+      // for eight entries and "do this" for the ninth.
+      if (POP.grp === 'FX') {
+        const isWet = (t) => t.name === 'Wet only';
+        const rest = visTabs.filter(t => !isWet(t));
+        const wet = visTabs.filter(isWet);
+        tabsEl.innerHTML =
+          (rest.length
+            ? '<select class="ambient-select v2-fxpick" title="Which effect\u2019s controls to show">' +
+                rest.map(t => '<option value="' + esc(t.name) + '"' +
+                  (act && act.name === t.name ? ' selected' : '') + '>' + esc(t.name) + '</option>').join('') +
+              '</select>'
+            : '') +
+          wet.map(t => '<button type="button" class="v2-pop-tab v2-wetonly' +
+            (act && act.name === t.name ? ' on' : '') + '" data-tab="' + esc(t.name) + '"' +
+            ' title="Mute this layer\u2019s DRY signal so only the reverb wash and wet FX tails sound.">' +
+            esc(t.name) + '</button>').join('');
+      } else {
       const fams = TAB_FAMS[POP.grp];
       if (fams) {
         const left = visTabs.slice();
@@ -14057,9 +14090,19 @@
       } else {
         tabsEl.innerHTML = visTabs.map(btn).join('');
       }
+      }
     }
     tabsEl.querySelectorAll('.v2-pop-tab').forEach(b =>
       b.classList.toggle('on', !!act && b.getAttribute('data-tab') === act.name));
+    // THE PICKER IS A LIVE READOUT of which stage is open, so it follows a tab
+    // change made anywhere else (the finder, a programmatic hop). Never while
+    // it has focus — rewriting a <select> under an open list is the documented
+    // stomp.
+    {
+      const fp = tabsEl.querySelector('.v2-fxpick');
+      if (fp && act && fp.value !== act.name && document.activeElement !== fp &&
+          [...fp.options].some(o => o.value === act.name)) fp.value = act.name;
+    }
     // ONE TAB IS NOT A CHOICE (2026-09-16, user: "we can now remove 'Method'
     // button since it's the only option in this menu"). The strip is hidden,
     // not emptied — the `[data-tab]` button stays in the DOM, so the goto
@@ -15244,6 +15287,28 @@
         }
         h._sig = ''; V2.render(E);
       };
+      // THE FX STAGE PICKER. The sheet lives inside the card (so inside this
+      // host) — the same delegation the tab buttons use, which is why it needs
+      // no per-card wiring.
+      // ON `input`, NOT `change`. A <select> fires input FIRST, and this card's
+      // input sweep repaints the sheet — which runs the picker's own
+      // follow-the-active-tab sync and puts the value BACK to the tab you were
+      // leaving. By the time `change` arrived, `fp.value` read as the OLD stage
+      // and the press did nothing (measured: handler fired, POP resolved,
+      // value already reverted). Taking the first event sets the tab before
+      // anything can repaint over it; both are bound because the pair is cheap
+      // and setting the same tab twice is idempotent.
+      const fxPick = (ev) => {
+        const fp = ev.target && ev.target.closest && ev.target.closest('.v2-fxpick');
+        if (!fp) return;
+        const ctx = layerOf(fp); if (!ctx) return;
+        const POP = sheetCtx(fp, ctx.card).st; if (!POP) return;
+        if (POP.tab === fp.value) return;
+        POP.tab = fp.value;
+        popSync(ctx.card, ctx.L);
+      };
+      h.addEventListener('input', fxPick);
+      h.addEventListener('change', fxPick);
       h.addEventListener('click', (ev) => {
         if (composeBlocks(ev.target)) { ev.stopPropagation(); return; }
         // SECTION TABS in the sheet head — six groups filling one row, so the

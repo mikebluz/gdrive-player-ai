@@ -10327,7 +10327,12 @@
   // Per-FX Dry kill — v1's contract: forces the stage fully wet and ENGAGES it
   // even at mix 0 (that is the point of it), which is why `applyGate` counts it.
   const fdk = (L, fxk, when) =>
-    ftog(L, fxk + '.dryKill', 'Dry kill', 'On — wet only', 'Off', 'remove this stage\u2019s dry signal', when);
+    // SCOPED IN THE LABEL. The layer now has a "Dry Kill" button of its own in
+    // the FX strip, and two controls sharing one name while acting at different
+    // scopes is the documented one-axis-two-vocabularies failure — so this one
+    // says which dry it removes.
+    ftog(L, fxk + '.dryKill', 'Dry kill (this stage)', 'On — wet only', 'Off',
+         'remove THIS stage\u2019s dry signal — the layer\u2019s own Dry Kill is in the strip above', when);
   const sel = (L, field, label, cur, opts, when, hint) =>
     '<div class="ambient-ctrl"' + (when ? ' data-v2when="' + when + '"' : '') + '><label for="' + uid(L, field) + '">' + esc(label) + '</label>' +
     '<select id="' + uid(L, field) + '" class="ambient-select v2-f" data-f="' + field + '">' +
@@ -11753,13 +11758,11 @@
           sl(L, 'tg.edge', 'Chop edge', num((L.tg || {}).edge, 6), 0, 60, 'ms softening', 'tg:on') +
           '<div class="ambient-ctrl v2-cellrow" data-v2when="tg:on"><label>Chop pattern</label>' +
             tgCellsHtml(L) + '<span class="ambient-hint v2-tghint"></span></div>') +
-          // WET ONLY mutes the layer's DRY output so only the reverb wash and wet
-          // FX tails sound. A BUTTON, not a select — the trance gate's lesson:
-          // a select writes a STRING and '0' is truthy, so "Off" would switch it on.
-          '<div class="ambient-ctrl"><label>Wet only</label>' +
-            '<button type="button" class="ambient-seg v2-wettoggle' + (wetOn(L) ? ' on' : '') + '">' +
-              (wetOn(L) ? 'On — tails only' : 'Off') + '</button>' +
-            '<span class="ambient-hint">mute the dry signal</span></div>'
+          // DRY KILL HAS NO ROW. It was a tab opening a pane that held one Off/On
+          // button — two surfaces and two presses for a switch. The strip's own
+          // button IS the control now (see the FX branch in `syncSheet`), which
+          // is why nothing is rendered here.
+          ''
         ) +
       '</div></div>';
   }
@@ -14127,9 +14130,14 @@
       // the list would have made one control mean two things — "show me this"
       // for eight entries and "do this" for the ninth.
       if (POP.grp === 'FX') {
-        const isWet = (t) => t.name === 'Wet only';
-        const rest = visTabs.filter(t => !isWet(t));
-        const wet = visTabs.filter(isWet);
+        // CHAIN IS A BUTTON, not a list entry (user: "chain should be a button
+        // like Wet Only, not in the dropdown"). The dropdown answers "which
+        // stage am I tuning"; Chain is not a stage, it is the view of how they
+        // are wired together — so it sits beside the list rather than inside it,
+        // exactly the reasoning that kept Dry Kill out.
+        const rest = visTabs.filter(t => t.name !== 'Chain');
+        const chainT = visTabs.find(t => t.name === 'Chain');
+        const on = (t) => (act && act.name === t.name) ? ' on' : '';
         tabsEl.innerHTML =
           (rest.length
             ? '<select class="ambient-select v2-fxpick" title="Which effect\u2019s controls to show">' +
@@ -14137,10 +14145,29 @@
                   (act && act.name === t.name ? ' selected' : '') + '>' + esc(t.name) + '</option>').join('') +
               '</select>'
             : '') +
-          wet.map(t => '<button type="button" class="v2-pop-tab v2-wetonly' +
-            (act && act.name === t.name ? ' on' : '') + '" data-tab="' + esc(t.name) + '"' +
-            ' title="Mute this layer\u2019s DRY signal so only the reverb wash and wet FX tails sound.">' +
-            esc(t.name) + '</button>').join('');
+          (chainT
+            ? '<button type="button" class="v2-pop-tab v2-chainbtn' + on(chainT) + '" data-tab="Chain"' +
+              ' title="The order the stages run in \u2014 and what that buys you.">Chain</button>'
+            : '') +
+          // ── DRY KILL ─────────────────────────────────────────
+          // THE BUTTON IS THE CONTROL NOW. It used to be a TAB that opened a
+          // pane holding one Off/On button — two presses and two surfaces for a
+          // switch (user: "it should toggle, clicking it kills dry signal,
+          // clicking again brings it back... we can then remove the redundant
+          // Off/On button"). Renamed from "Wet only" to say what the press DOES
+          // rather than what is left over.
+          // It carries `.v2-wettoggle`, which is the class the existing handler
+          // already listens for — the markup IS the wiring, so there is no
+          // second implementation of the toggle to keep in step.
+          // FEATURE NAME ON THE FACE, STATE IN THE FILL (the documented rule for
+          // an on/off toggle): the word stays "Dry Kill" so it can be found by
+          // someone looking for it, and the teal fill + aria-pressed carry
+          // whether it is engaged.
+          '<button type="button" class="ambient-seg v2-wettoggle v2-wetonly' +
+            (wetOn(L) ? ' on' : '') + '" aria-pressed="' + (wetOn(L) ? 'true' : 'false') + '"' +
+            ' title="' + (wetOn(L)
+              ? 'Dry signal is MUTED \u2014 only the reverb wash and wet FX tails sound. Press to bring the dry back.'
+              : 'Mute this layer\u2019s DRY signal so only the reverb wash and wet FX tails sound.') + '">Dry Kill</button>';
       } else {
       const fams = TAB_FAMS[POP.grp];
       if (fams) {

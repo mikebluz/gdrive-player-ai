@@ -11526,14 +11526,24 @@
     .v2-pop-tabs select.ambient-select.v2-fxpick {
       flex: 1 1 160px; width: auto; min-width: 0; min-height: 34px; font-weight: 600;
     }
+    /* CHAIN — a button beside the stage picker, not an entry in it: the list
+       answers "which stage am I tuning" and Chain is not a stage. */
+    .v2-pop-tabs .v2-pop-tab.v2-chainbtn {
+      flex: 0 0 auto; min-height: 34px; padding: 4px 12px; white-space: nowrap;
+    }
     /* WET ONLY IS NOT ONE OF THE STAGES — it is a switch on the dry signal, so
        it reads in its own colour rather than as a tenth effect. Teal, which
        this app uses for nothing else on this card. */
-    .v2-pop-tabs .v2-pop-tab.v2-wetonly {
+    /* NOT scoped to `.v2-pop-tab` any more: Dry Kill stopped being a tab when it
+       became a toggle, and the old compound selector silently stopped matching
+       — the button rendered in the default grey with nothing to say it had
+       changed kind. Measured by asserting the COMPUTED border, which is the
+       only way a tint regression shows. */
+    .v2-pop-tabs .v2-wetonly {
       flex: 0 0 auto; min-height: 34px; padding: 4px 12px; white-space: nowrap;
       border-color: rgba(56, 217, 169, 0.45); color: #7fe3c4;
     }
-    .v2-pop-tabs .v2-pop-tab.v2-wetonly.on {
+    .v2-pop-tabs .v2-wetonly.on {
       border-color: #38d9a9; color: #06231a; background: #38d9a9; font-weight: 600;
     }
     /* ✎ EDIT — a toggle, styled as ↻ Loop's sibling because it is the same kind
@@ -15658,7 +15668,13 @@
 /* WRAPS, because the head now carries a control as well as a title: the
    summary takes its own full-width line under them rather than being squeezed
    to nothing between the title and the close. */
-.v2-pop-head, .v2-secpop-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px 6px; flex: 0 0 auto; }
+/* THE ✕ IS ABSOLUTE, SO THE HEAD MUST RESERVE ITS BOX — the documented rule
+   ("Absolute top/right + padding-right on the head"), which this head never had:
+   the group summary ran underneath it, and because the button is 40px tall in a
+   head barely that high, it OVERHUNG the tab strip and sat on whatever control
+   was at the strip's right edge. `min-height` keeps the button inside its own
+   head; `padding-right` keeps the summary out from under it. */
+.v2-pop-head, .v2-secpop-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 62px 6px 12px; flex: 0 0 auto; min-height: 44px; }
 /* THE TITLE IS A SECTION NAVIGATOR, and it is SIX TABS filling the row rather
    than a <select>: a select showed only the section you were already in, so
    every other one cost a press to discover. It shares the row with the ✕,

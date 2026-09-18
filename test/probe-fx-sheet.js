@@ -78,13 +78,17 @@ const labelsOf = () => {
     const tabs = document.querySelector('.v2-layer .v2-pop-tabs');
     if (!tabs) return { err: 'no strip' };
     const sel = tabs.querySelector('.v2-fxpick');
-    const wet = tabs.querySelector('.v2-pop-tab.v2-wetonly');
+    const wet = tabs.querySelector('.v2-wettoggle');
+    const chainB = tabs.querySelector('.v2-chainbtn');
     const r = (n) => { if (!n) return null; const b = n.getBoundingClientRect();
       return { w: Math.round(b.width), vis: !!n.offsetParent }; };
     const hit = (n) => { if (!n) return false; const b = n.getBoundingClientRect();
       return document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2) === n; };
     return {
-      chips: tabs.querySelectorAll('.v2-pop-tab:not(.v2-wetonly)').length,
+      chips: tabs.querySelectorAll('.v2-pop-tab:not(.v2-wetonly):not(.v2-chainbtn)').length,
+      chain: chainB ? { w: Math.round(chainB.getBoundingClientRect().width),
+                        face: chainB.textContent.trim(), vis: !!chainB.offsetParent } : null,
+      wetPressed: wet ? wet.getAttribute('aria-pressed') : null,
       opts: sel ? [...sel.options].map((o) => o.textContent) : [],
       sel: r(sel), wet: r(wet), wetFace: wet ? wet.textContent.trim() : null,
       selHit: hit(sel), wetHit: hit(wet),
@@ -96,11 +100,18 @@ const labelsOf = () => {
     shape.chips === 0 && shape.opts.length >= 7 &&
     shape.opts.some((o) => /Delay/.test(o)) && shape.opts.some((o) => /Drive/.test(o)),
     JSON.stringify({ chips: shape.chips, opts: shape.opts }));
-  ok('Wet only keeps its own button, in its own colour',
-    /Wet only/.test(shape.wetFace || '') && !!shape.wet && shape.wet.vis &&
-    !shape.opts.some((o) => /Wet only/.test(o)) &&
+  // RENAMED and now a real toggle: it says what the press DOES, and it is a
+  // switch rather than a tab that opens a pane holding one Off/On button.
+  ok('Dry Kill is a toggle in the strip, in its own colour, not in the list',
+    /^Dry Kill$/.test(shape.wetFace || '') && !!shape.wet && shape.wet.vis &&
+    !shape.opts.some((o) => /Dry Kill|Wet only/.test(o)) &&
+    shape.wetPressed === 'false' &&
     /56,\s*217,\s*169/.test(shape.wetTint || ''),
-    JSON.stringify({ face: shape.wetFace, tint: shape.wetTint, inList: shape.opts }));
+    JSON.stringify({ face: shape.wetFace, pressed: shape.wetPressed, tint: shape.wetTint, inList: shape.opts }));
+  ok('Chain is a BUTTON beside the picker, not an entry in it',
+    !!shape.chain && shape.chain.vis && shape.chain.w > 40 &&
+    /^Chain$/.test(shape.chain.face) && !shape.opts.some((o) => /Chain/.test(o)),
+    JSON.stringify({ chain: shape.chain, opts: shape.opts }));
   ok('both are reachable — a tap lands on the control itself, and the row fits',
     shape.selHit && shape.wetHit && shape.overflow <= 0,
     JSON.stringify({ selHit: shape.selHit, wetHit: shape.wetHit, overflow: shape.overflow }));
@@ -142,7 +153,7 @@ const labelsOf = () => {
     JSON.stringify(delayRows));
 
   const wetPress = await page.evaluate(() => {
-    const b = document.querySelector('.v2-layer .v2-pop-tabs .v2-pop-tab.v2-wetonly');
+    const b = document.querySelector('.v2-layer .v2-pop-tabs .v2-wettoggle');
     b.scrollIntoView({ block: 'center' });
     const r = b.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
@@ -150,11 +161,32 @@ const labelsOf = () => {
   await page.mouse.click(wetPress.x, wetPress.y);
   await zz(700);
   const wetOpen = await page.evaluate(() => ({
-    on: document.querySelector('.v2-layer .v2-pop-tabs .v2-pop-tab.v2-wetonly').classList.contains('on'),
+    on: document.querySelector('.v2-layer .v2-pop-tabs .v2-wettoggle').classList.contains('on'),
+    pressed: document.querySelector('.v2-layer .v2-pop-tabs .v2-wettoggle').getAttribute('aria-pressed'),
+    store: ((_masterEng.getCfg().layers || [])[0].wetOnly | 0),
     rows: window.__labelsOf(),
   }));
-  ok('a real press on Wet only opens its row and lights the button',
-    wetOpen.on && wetOpen.rows.some((x) => /Wet only/.test(x)), JSON.stringify(wetOpen));
+  // IT TOGGLES THE LAYER, it does not open a pane. The old surface was a tab
+  // holding one Off/On button; the press itself is the switch now, so the check
+  // reads the STORE and asserts no row appeared.
+  ok('a real press on Dry Kill mutes the dry — no pane, no second button',
+    wetOpen.on && wetOpen.pressed === 'true' && wetOpen.store === 1 &&
+    !wetOpen.rows.some((x) => /Wet only/.test(x)), JSON.stringify(wetOpen));
+  // …and again brings it back
+  const wetBack = await page.evaluate(async () => {
+    const b = document.querySelector('.v2-layer .v2-pop-tabs .v2-wettoggle');
+    b.scrollIntoView({ block: 'center' });
+    const r = b.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  await page.mouse.click(wetBack.x, wetBack.y);
+  await zz(700);
+  const wetOff = await page.evaluate(() => ({
+    on: document.querySelector('.v2-layer .v2-pop-tabs .v2-wettoggle').classList.contains('on'),
+    store: ((_masterEng.getCfg().layers || [])[0].wetOnly | 0),
+  }));
+  ok('…and pressing it again brings the dry back',
+    !wetOff.on && wetOff.store === 0, JSON.stringify(wetOff));
 
   // ── THE HEAD'S SUMMARY NAMES CONTROLS, NOT STORAGE KEYS ──────────────
   // It printed `now.on`, which is the DATA KEYS — so a layer with Drive engaged
@@ -212,10 +244,18 @@ const labelsOf = () => {
     return { order0: _ambFxCoreOrder((_masterEng.getCfg().layers || [])[0]).join(','),
              opts: [...document.querySelector('.v2-fxpick').options].map(o => o.value) };
   });
-  ok('Chain is the first stage in the FX dropdown',
-    chain.opts[0] === 'Chain', JSON.stringify(chain.opts));
+  ok('Chain is NOT in the dropdown — it has its own button',
+    !chain.opts.some((o) => /Chain/.test(o)), JSON.stringify(chain.opts));
 
-  await page.select('.v2-layer .v2-pop-tabs .v2-fxpick', 'Chain');
+  // press the Chain button for real
+  const chainBox = await page.evaluate(() => {
+    const b = document.querySelector('.v2-layer .v2-pop-tabs .v2-chainbtn');
+    if (!b) return null;
+    b.scrollIntoView({ block: 'center' });
+    const r = b.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  if (chainBox) await page.mouse.click(chainBox.x, chainBox.y);
   await zz(700);
   const chainUi = await page.evaluate(() => {
     const pane = document.querySelector('.v2-layer .v2-pop-pane');
@@ -272,6 +312,36 @@ const labelsOf = () => {
     delete L.dist; delete L.delay; delete L.fxChain;
     _masterEng.getCfg();
   });
+
+  // ── THE ✕ MUST NOT SIT ON ANYTHING ─────────────────────────────
+  // It is absolutely positioned, and the head never reserved its box — so the
+  // group summary ran underneath it and, because the button is 40px tall in a
+  // head barely that high, it OVERHUNG the tab strip and landed on whatever
+  // control sat at the strip's right edge. Measured as RECT OVERLAP against
+  // every sibling, not by eye: an overlap is invisible until the thing
+  // underneath is the one you tried to press.
+  const closeBox = await page.evaluate(() => {
+    const wrap = document.querySelector('.v2-layer .v2-secpop-wrap') ||
+                 document.querySelector('.v2-layer .v2-pop-wrap');
+    if (!wrap) return { err: 'no sheet' };
+    const x = wrap.querySelector('.v2-secpop-close');
+    if (!x) return { err: 'no close' };
+    const rect = (n) => { const r = n.getBoundingClientRect();
+      return { l: r.left, t: r.top, r: r.right, b: r.bottom }; };
+    const xr = rect(x);
+    const hits = (n) => { const r = rect(n);
+      return !(r.r <= xr.l || r.l >= xr.r || r.b <= xr.t || r.t >= xr.b); };
+    const sum = wrap.querySelector('.v2-grpsum');
+    const tabs = wrap.querySelector('.v2-pop-tabs');
+    return {
+      sumOverlap: sum ? hits(sum) : false,
+      tabOverlaps: tabs ? [...tabs.children].filter(hits).length : 0,
+      self: document.elementFromPoint((xr.l + xr.r) / 2, (xr.t + xr.b) / 2) === x,
+    };
+  });
+  ok('the \u2715 clashes with nothing \u2014 not the summary, not the strip',
+    !closeBox.err && closeBox.sumOverlap === false && closeBox.tabOverlaps === 0 &&
+    closeBox.self, JSON.stringify(closeBox));
 
   ok('no page errors', errs.length === 0, errs.join(' | '));
   console.log('\nprobe: ' + pass + ' passed, ' + fail + ' failed');

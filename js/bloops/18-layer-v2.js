@@ -10867,9 +10867,10 @@
               gst(L, 'part.rhythm.voices', 'Rows', num((L.part.rhythm || {}).voices, 1), 1, 8,
                   'interlocking rows, each on its own note', 'kind:live;voice:synth;rhythm:euclid') +
               gst(L, 'part.shape.holdSteps', 'Hold steps', num((L.part.shape || {}).holdSteps, 0), 0, 16,
-                  'steps (0 = off)', 'kind:live') +
+                  'note length in grid steps, whatever the gaps — 0 = use Length instead (which follows them)',
+                  'kind:live') +
               gst(L, 'part.shape.maxEvents', 'Max events', num((L.part.shape || {}).maxEvents, 0), 0, 64,
-                  'per cycle (0 = off)', 'kind:live')) +
+                  'a ceiling on NOTES, not onsets — a 3-note chord spends 3. The earliest are kept and the rest of the cycle falls silent. 0 = off', 'kind:live')) +
               // ── NOTES — which pitches, and how they are stacked
               ftrows('notes',
               // REGISTER, the pitch material Range / Home / Note are tuned
@@ -11573,7 +11574,15 @@
           st(L, 'part.shape.holdSteps', 'Hold', num(sh.holdSteps, 0), 0, 16,
              'note length in grid steps, whatever the gaps — 0 = use Length instead (which follows them)',
              'kind:live') +
-          st(L, 'part.shape.maxEvents', 'Max events', num(sh.maxEvents, 0), 0, 64, 'per cycle (0 = off)', 'kind:live') +
+          // TWO THINGS THE OLD HINT ("per cycle (0 = off)") did not say, and both
+          // are how this control surprises you. It counts NOTE EVENTS, not
+          // onsets — it is applied last, after voices, ghosts and bursts, so a
+          // 3-voice chord spends three of them. And it TRUNCATES rather than
+          // thinning: `out.sort(by time); out.length = mx` keeps the EARLIEST,
+          // so the tail of the cycle goes silent instead of the density coming
+          // down evenly across the bar.
+          st(L, 'part.shape.maxEvents', 'Max events', num(sh.maxEvents, 0), 0, 64,
+             'a ceiling on NOTES, not onsets — a 3-note chord spends 3. The earliest are kept and the rest of the cycle falls silent. 0 = off', 'kind:live') +
           // Only means something where an onset carries MORE THAN ONE note.
           sl(L, 'strum', 'Strum', num(L.strum, 0), 0, 100, 'struck → arpeggiated',
              'kind:live;voice:synth;pitch:chord,stack') +

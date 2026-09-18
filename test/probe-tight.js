@@ -1,4 +1,4 @@
-// PROBE — Shape ▸ Feel ▸ Tight actually cuts each note short of the next.
+// PROBE — the Shape group's semantics: Feel ▸ Tight, and Max events.
 //
 // Reported as "Tight doesn't seem to be doing its job", from a drawing full of
 // overlapping bars. v1's Tight does TWO things — clamp the release AND size the
@@ -109,6 +109,37 @@ const ok = (name, cond, detail) => {
   ok('…and a note already shorter than its gap is left exactly alone',
     JSON.stringify(shortOnly.off) === JSON.stringify(shortOnly.on),
     JSON.stringify(shortOnly));
+
+  // ── MAX EVENTS ───────────────────────────────────────────
+  // Asked outright ("what is Max events"), and the two things that make it
+  // surprising are both worth pinning, because either could be "fixed" later by
+  // someone who assumed it meant the other thing:
+  //   · it counts NOTE EVENTS, not onsets — applied last, after voices, so a
+  //     3-voice chord spends three of them;
+  //   · it TRUNCATES rather than thinning — the earliest are kept, so the tail
+  //     of the cycle falls silent.
+  const maxEv = await page.evaluate(async () => {
+    const E = _masterEng;
+    const L = () => (E.getCfg().layers || [])[0];
+    L().part.kind = 'live'; L().part.bars = 2; L().part.notes = [];
+    L().part.rhythm = { kind: 'pulse', n: 8, steps: 16 };
+    L().part.pitch = { kind: 'chord', voices: 3, span: 12 };
+    delete L().part.shape.maxEvents; E.getCfg();
+    const ask = () => (window._v2.withEdit(() => window._v2.notesFor(L(),
+      { E, cfg: E.getCfg(), key: 'v2:' + L().id, cycleStart: 0, cycleSec: 4 })) || [])
+      .map((n) => Math.round(n.at * 1000));
+    const off = ask();
+    L().part.shape.maxEvents = 6; E.getCfg();
+    const on = ask();
+    L().part.shape.maxEvents = 0; E.getCfg();
+    return { off: { n: off.length, onsets: new Set(off).size, last: off[off.length - 1] },
+             on: { n: on.length, onsets: new Set(on).size, last: on[on.length - 1] } };
+  });
+  ok('Max events caps NOTES, not onsets — 6 on a 3-voice chord layer is 2 onsets',
+    maxEv.off.n === 24 && maxEv.off.onsets === 8 &&
+    maxEv.on.n === 6 && maxEv.on.onsets === 2, JSON.stringify(maxEv));
+  ok('…and it TRUNCATES — the earliest are kept and the cycle falls silent after',
+    maxEv.on.last < maxEv.off.last / 2, JSON.stringify(maxEv));
 
   ok('no page errors', errs.length === 0, errs.join(' | '));
   console.log('\nprobe: ' + pass + ' passed, ' + fail + ' failed');

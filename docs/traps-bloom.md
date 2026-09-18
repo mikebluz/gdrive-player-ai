@@ -463,6 +463,13 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   notes resolved in another. **A single press proves nothing here:** it agrees whenever the press
   lands a whole number of chord spans from the fallback origin, so test it with a stale anchor parked
   a HALF-chord away.
+- **TIGHT IS TWO THINGS, AND v2 ONLY HAD ONE.** v1 clamps the release (`_ambTightChoke`) AND sizes the
+  note to the gap before the next onset (`_ambTightGap`, five call sites there). v2 applied only the
+  release clamp, so notes kept their full length and went on overlapping while the control's own hint
+  promised "cut each note short of the next". The clip lives at the ONE exit of the note generator
+  (`notesFor` wraps `notesForRaw`), so the DRAWING shows it too — in the emit it would fix the ear and
+  leave the picture lying, which is how the report was arrived at. It only ever SHORTENS, and the
+  "next onset" is the next STRICTLY LATER one or a chord clips itself to nothing.
 - **Take pinning:** `part.take` pins the seed for the AUDITION and the PICTURE; playback plays that
   take too (per-cycle dice are `part.vary`). `part.takeb` pins per REGION, `part.ruleb` gives a region
   its own RULES — and a per-region RULE must be honoured by playback while a per-region TAKE is an

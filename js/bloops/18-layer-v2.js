@@ -2373,10 +2373,47 @@
   }
 
   // ── THE PART INTERFACE ──────────────────────────────────────────────────
+  // ── TIGHT — CUT EACH NOTE SHORT OF THE NEXT ──────────────────────
+  // v1's Tight does TWO things: it clamps the release (`_ambTightChoke`) AND it
+  // sizes the note to the gap before the next onset (`_ambTightGap`, used at
+  // five call sites there). v2 only ever did the FIRST, so notes kept their full
+  // length and went on overlapping — the control's own hint promises "cut each
+  // note short of the next" and nothing was cutting. Reported as "Tight doesn't
+  // seem to be doing its job", from a drawing full of overlapping bars.
+  //
+  // APPLIED HERE, at the ONE exit of the generator, so the DRAWING shows it too.
+  // Putting it in the emit would fix the ear and leave the picture lying, which
+  // is how the report was arrived at in the first place; and one chokepoint
+  // means the audition, the draw and playback cannot disagree.
+  // IT CLIPS, IT NEVER LENGTHENS — a note already shorter than its gap is left
+  // exactly as it is, so Tight can only ever tighten.
+  // NOTES SHARING AN ONSET ARE A CHORD, not a sequence: the next onset is the
+  // next STRICTLY LATER one, or a stacked voicing would clip itself to nothing.
+  // Absent/0 returns the rolled notes untouched, so every gate stays byte-identical.
+  function tightClip(L, out) {
+    let on = false;
+    try { on = (typeof _ambTightOn === 'function') && _ambTightOn(L); } catch (e) {}
+    if (!on || !Array.isArray(out) || out.length < 2) return out;
+    const ix = [];
+    for (let i = 0; i < out.length; i++) if (out[i] && Number.isFinite(out[i].at)) ix.push(i);
+    ix.sort((a, b) => out[a].at - out[b].at);
+    for (let k = 0; k < ix.length; k++) {
+      const n = out[ix[k]];
+      let nextAt = null;
+      for (let j = k + 1; j < ix.length; j++) {
+        if (out[ix[j]].at > n.at + 1e-6) { nextAt = out[ix[j]].at; break; }
+      }
+      if (nextAt == null) continue;                  // the last onset rings out
+      const cap = Math.max(20, Math.round((nextAt - n.at) * 1000));
+      if (Number.isFinite(n.durMs) && n.durMs > cap) n.durMs = cap;
+    }
+    return out;
+  }
   // notesFor(layer, ctx) → [{ at, freq, durMs }]
   // ONE contract, two implementations. Everything above is an implementation
   // detail of the live one; the emitter below knows only this signature.
-  function notesFor(L, ctx) {
+  function notesFor(L, ctx) { return tightClip(L, notesForRaw(L, ctx)); }
+  function notesForRaw(L, ctx) {
     // PER-PART CONTENT. `L.part` is always the record being EDITED; `L.partFor`
     // names which arrangement part it belongs to and `L.parts` files the
     // others (the `mem` swap pattern — one live record, everything on the card
@@ -2397,7 +2434,7 @@
       // the callers that pass only a time.
       const eff = partRecordAt(L, ctx.E, ctx.cfg, ctx.cycleStart, ctx.pi);
       if (eff && eff !== L.part) {
-        return notesFor(Object.assign({}, L, { part: eff }),
+        return notesForRaw(Object.assign({}, L, { part: eff }),
                         Object.assign({}, ctx, { _ppDone: 1 }));
       }
     }
@@ -2549,9 +2586,9 @@
       // out and silently lose the overlay.
       const roll = (t, ov) => { const sv = TAKE_PIN; TAKE_PIN = (t | 0);
         try {
-          return ov ? notesFor(Object.assign({}, L, { part: partWithRules(p, ov) }),
+          return ov ? notesForRaw(Object.assign({}, L, { part: partWithRules(p, ov) }),
                                Object.assign({}, ctx, { _ppDone: 1 }))
-                    : notesFor(L, ctx);
+                    : notesForRaw(L, ctx);
         } finally { TAKE_PIN = sv; }
       };
       const barsF = Math.max(0.125, p.bars || 1);

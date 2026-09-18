@@ -420,6 +420,11 @@
         // it, which reads as "suspend() doesn't work" rather than "something
         // resumed it".
         if (window.__bloopsAudioPaused) return;
+        // …and the NATIVE shell's own deliberate suspensions (lock-screen
+        // pause, the battery watchdog). They are module-local flags in
+        // 00-native-audio, so this poll could not see them and resumed the
+        // context out from under both.
+        if (window.__bloopsNativeHold) return;
         let ac;
         try { ac = Tone.getContext().rawContext; } catch (e) { return; }
         if (!ac) return;
@@ -442,6 +447,11 @@
         // even more, because the pause is triggered BY a pointerdown: without
         // the guard the unlock handler races the pauser on its own click.
         if (window.__bloopsAudioPaused) return;
+        // …and the NATIVE shell's own deliberate suspensions (lock-screen
+        // pause, the battery watchdog). They are module-local flags in
+        // 00-native-audio, so this poll could not see them and resumed the
+        // context out from under both.
+        if (window.__bloopsNativeHold) return;
         let ac;
         try { ac = Tone.getContext().rawContext; } catch (e) { return; }
         if (ac && ac.state === 'running') {

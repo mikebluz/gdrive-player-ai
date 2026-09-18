@@ -288,8 +288,37 @@
         } catch (e) { return 0.35; }
       };
       bridge = new (window.AudioContext || window.webkitAudioContext)();
-      const bSrc = bridge.createMediaStreamSource(streamDest.stream);
-      bridgeRefs = { bSrc: bSrc };
+      const bSrcRaw = bridge.createMediaStreamSource(streamDest.stream);
+      // ── DC BLOCKER ON THE BROADCAST PATH (2026-09-18) ─────────────────
+      // An iOS audio-session INTERRUPTION freezes the graph mid-sample and the
+      // resume restarts it there: the step's DC content is a thump. The
+      // interactive monitor has carried exactly this filter since it was built
+      // ("a context suspend/resume freezes the stream mid-sample and the step's
+      // DC content THUMPS — kill it") — but the BROADCAST, which is the audible
+      // path essentially all of the time, never got one, so every interruption
+      // went as a step straight into the encoder and out of the speaker.
+      //
+      // Harvested from the device (bloops-flight.json, 12 minutes of ordinary
+      // use): FOUR `ctx state → interrupted` → `rescue resume OK` pairs, one of
+      // them 1.34 s after a stop press — which is the session-renegotiation
+      // tick this file already documents to the tenth of a second. And the
+      // mask's own re-ramp at resume is gated `!nativeArmed`, so on the plugin
+      // path there is no ramp at all; the bridge context is interrupted and
+      // resumed TOO (`bridge state → interrupted` in the same harvest) and
+      // nothing ramps that side in either mode. A filter in the path covers
+      // every one of those cases without another state machine to keep in step.
+      //
+      // 28 Hz / Q 0.7 — the monitor's own values, so the two paths cannot drift
+      // apart, and far enough below the lowest musical fundamental to be
+      // inaudible on the programme material.
+      const bHp = bridge.createBiquadFilter();
+      bHp.type = 'highpass'; bHp.frequency.value = 28; bHp.Q.value = 0.7;
+      bSrcRaw.connect(bHp);
+      // EVERY consumer taps the FILTERED node — `bridgeRefs.bSrc` is what the
+      // foreground path, the monitor fallback and the encoder all read, so the
+      // blocker cannot be bypassed by a route that was wired before it existed.
+      const bSrc = bHp;
+      bridgeRefs = { bSrc: bSrc, bSrcRaw: bSrcRaw, bHp: bHp };
       window.__bloopsBridgeSrc = bSrc;
       const bDest = bridge.createMediaStreamDestination();
       bridgeRefs.bDest = bDest; bridgeRefs.bridge = bridge;
@@ -934,6 +963,7 @@
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState !== 'visible' || userPaused) return;
       silencePaused = false;
+      try { window.__bloopsNativeHold = false; } catch (e) {}
       try { if (raw.state !== 'running' && raw.resume) raw.resume(); } catch (e) {}
       try { if (el.paused) kick(); } catch (e) {}
       try { navigator.mediaSession.playbackState = 'playing'; } catch (e) {}
@@ -1030,6 +1060,7 @@
       silentFor = rms < 1e-4 ? silentFor + 1 : 0;
       if (silentFor >= 20 && !el.paused) {
         silencePaused = true;
+        try { window.__bloopsNativeHold = true; } catch (e) {}   // see the lock-screen pause
         try { el.pause(); } catch (e) {}
         try { navigator.mediaSession.playbackState = 'paused'; } catch (e) {}
         log('silent in background 20s — released the keep-alive, iOS may suspend us now');
@@ -1159,6 +1190,16 @@ if (beatsOnRef.v) {
         navigator.mediaSession.playbackState = 'playing';
         navigator.mediaSession.setActionHandler('pause', () => {
           userPaused = true;
+          // STAND THE WEB KEEP-ALIVE WATCHDOG DOWN. `03-audio-bus-fx` polls
+          // every 500 ms and resumes any context it finds suspended, and it
+          // could only ever see `window.__bloopsAudioPaused` (Bloom's ⏸) —
+          // `userPaused` is a module-local here. So a lock-screen pause
+          // suspended the context and the watchdog resumed it half a second
+          // later: the piece did not hold its place, and the suspend/resume
+          // pair is itself a discontinuity. Its own comment predicted this
+          // exact shape ("it looks like it works for ~500 ms and then the
+          // context silently resumes under it").
+          try { window.__bloopsNativeHold = true; } catch (e) {}
           // hold the BROADCAST element first — it is the audible copy, and
           // left running it would play out its buffered cushion and stall
           // (the old handlers only touched the shadow: "lock-screen pause
@@ -1172,6 +1213,7 @@ if (beatsOnRef.v) {
         });
         navigator.mediaSession.setActionHandler('play', () => {
           userPaused = false;
+          try { window.__bloopsNativeHold = false; } catch (e) {}
           try { raw.resume(); } catch (e) {}
           try { if (bridge) bridge.resume(); } catch (e) {}
           kick();

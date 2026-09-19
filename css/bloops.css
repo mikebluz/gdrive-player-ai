@@ -15736,6 +15736,28 @@
 .v2-pop-pane[data-sec="Mix"], .v2-gototab[data-goto="Mix"]        { --sec: #f687b3; }   /* pink — level and placement */
 .v2-pop-pane[data-sec="FX"], .v2-gototab[data-goto="FX"]         { --sec: #fc8181; }   /* red — the treatments */
 .v2-pop-pane[data-sec="Bank"], .v2-gototab[data-goto="Bank"]       { --sec: #faf089; }   /* yellow — saved phrases */
+
+/* ── TAKE HUES ──────────────────────────────────────────────────────────────
+   The drawing outlines every note the NEXT SEVEN passes play behind the take
+   you are on, and in one colour they were a mush ("still looks a mess, can we
+   add some color coding to distinguish takes"). One hue per upcoming take, so
+   a single take can be picked out of the pile by eye.
+   THE HOUSE PALETTE, not a new one — the same eight above, MINUS the lavender,
+   which the drawn take itself wears (`_ambPartColor`, falling back to #d6bcfa).
+   Seven left, seven other passes: the fit is exact, so no take shares a colour
+   with another and none is confusable with the take in front.
+   Defined HERE because the palette has one home (the note fill/edge already
+   read theirs from the stylesheet rather than keeping rgba() literals in JS);
+   `takeHue()` in 18-layer-v2.js reads these off :root. */
+:root {
+  --take-1: #4fd1c5;   /* teal */
+  --take-2: #90cdf4;   /* blue */
+  --take-3: #f6ad55;   /* amber */
+  --take-4: #9ae6b4;   /* green */
+  --take-5: #f687b3;   /* pink */
+  --take-6: #fc8181;   /* red */
+  --take-7: #faf089;   /* yellow */
+}
 .v2-gototab { color: var(--sec, #a0aec0); border-color: rgba(255, 255, 255, 0.14); }
 .v2-gototab:hover { border-color: var(--sec, #9f7aea); }
 /* OPEN = filled with its own hue, and the label goes dark so it stays legible */

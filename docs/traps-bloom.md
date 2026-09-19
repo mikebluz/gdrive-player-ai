@@ -220,13 +220,25 @@
   half of the same fact: alpha `0.28 + 0.72 × stability`, the share of those 8 passes that play them.
   A FIXED part samples one take eight times, so it has none by construction. The readout calls them
   **outlines** for exactly this reason (asked verbatim: "what are all these shadow notes").
+- **HUE IS WHICH TAKE, ALPHA IS HOW MANY — two facts, two channels.** In one colour the outlines were
+  a mush ("still looks a mess, can we add some color coding to distinguish takes"). Each now wears the
+  hue of the SOONEST pass that plays it (`sm` is walked in order, so the first pass to claim an
+  (onset, pitch) is the minimum — no `min()` needed). The seven hues are `--take-1..7` on `:root` in
+  `bloops.css`: the house section palette MINUS the lavender, which the drawn take itself wears —
+  seven left for seven other passes, so the fit is exact and no outline is confusable with the take in
+  front. `takeHue()` reads them off `:root` once per draw and memoises on the canvas; a
+  `getComputedStyle` per outline would be a layout read inside the draw loop.
 - **A LEGEND IS A READOUT: say it only when the thing it names is ON SCREEN.** Two gates, not one —
   `ghosts.length` (a FIXED part has no outlines, and naming them there is a confident wrong answer)
   AND `tapTxt`, because ▸ Hide takes the picture away and KEEPS the readout. `test/probe-roll-legend.js`
   holds the biconditional, both directions poison-verified; saying it unconditionally prints
   `FIXED · … · outlines: notes other takes play`, which is the lie in one line.
-- **The drawing publishes what it drew** — `cv._stability`, `cv._ghostN`, `cv._pitchGeo`. A gate that
-  re-derives the picture instead of reading these is testing its own arithmetic, not the drawing.
+- **The drawing publishes what it drew** — `cv._stability`, `cv._ghostN`, `cv._ghostTakes`,
+  `cv._pitchGeo`. A gate that re-derives the picture instead of reading these is testing its own
+  arithmetic, not the drawing. **Publish from INSIDE the draw, off the value the canvas was handed**:
+  `cv._ghostTakes` was first built as `ghosts.map(takeHue)` — the INTENT — and poisoning the stroke
+  then left it still reporting the right colours while the picture had gone monochrome. Reading
+  `g.strokeStyle` back as each outline is stroked turned that poison from 1 failing check into 3.
   To reach a part that HAS outlines: a new layer starts as an EMPTY `recorded` part (excluded from the
   pass sampling), so drive a Material door (`.v2-autopick`) → `✓ Done` → `.v2-varytoggle`. The readout
   is `.v2-vizlab`, the canvas `.v2-vizcv`.

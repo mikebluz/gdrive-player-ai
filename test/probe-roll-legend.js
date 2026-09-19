@@ -3,7 +3,8 @@
 // The roll draws every note the NEXT PASSES play behind the take you are
 // looking at, hollow. Nothing on the card said so, and it was asked outright:
 // "what are all these shadow notes". `.v2-vizlab` now ends with
-// `· outlines: notes other takes play`.
+// `· outlines: the next 7 takes, a colour each`, and each outline is stroked in
+// the hue of the soonest take that plays it.
 //
 // The invariant is the BICONDITIONAL, not the presence: the clause is there
 // exactly when outlines are drawn (`.v2-vizcv._ghostN`), and never while the
@@ -12,13 +13,18 @@
 // part (which has no outlines by construction) would be the lie; staying
 // silent on a part with 24 of them is the bug that prompted this.
 //
+// The COLOURS carry the second half: alpha says how many passes play a note,
+// hue says which one plays it first. The load-bearing check is the same one
+// test/probe-label-hue.js makes — the drawing and the stylesheet resolve to the
+// SAME value, one table, so they can never drift into two palettes.
+//
 // Needs a server on :3001 (or PROBE_PORT).
 import puppeteer from 'puppeteer-core';
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const PORT = process.env.PROBE_PORT || '3001';
 const URL = process.env.BLOOPS_URL || `http://localhost:${PORT}/bloops.html`;
-const LEGEND = 'outlines: notes other takes play';
+const LEGEND = 'outlines: the next 7 takes, a colour each';
 const zz = (ms) => new Promise((r) => setTimeout(r, ms));
 let pass = 0, fail = 0;
 const ok = (name, cond, detail) => {
@@ -101,6 +107,35 @@ const ok = (name, cond, detail) => {
       overflows: lab ? (lab.scrollWidth > lab.clientWidth + 1) : true,
       rightOut: lab ? (lab.getBoundingClientRect().right >
                        lab.parentElement.getBoundingClientRect().right + 1) : true,
+      // WHICH takes the outlines belong to, and the hue each was given.
+      takes: cv ? (cv._ghostTakes || []) : [],
+      // The stylesheet's own answer, for the one-table check.
+      css: (() => { const rs = getComputedStyle(document.documentElement);
+        return [1, 2, 3, 4, 5, 6, 7].map((i) => (rs.getPropertyValue('--take-' + i) || '').trim()); })(),
+      // WHAT ACTUALLY REACHED THE PIXELS. A hue assigned but never stroked is
+      // the confident-wrong-answer shape, so count distinct hue families in the
+      // bitmap rather than trusting the published mapping alone.
+      hueBins: (() => {
+        if (!cv) return 0;
+        let px; try { px = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data; }
+        catch (e) { return -1; }
+        const bins = {};
+        for (let i = 0; i < px.length; i += 4) {
+          const a = px[i + 3]; if (a < 40) continue;
+          const r = px[i] / 255, g2 = px[i + 1] / 255, b = px[i + 2] / 255;
+          const mx = Math.max(r, g2, b), mn = Math.min(r, g2, b), d = mx - mn;
+          const l = (mx + mn) / 2;
+          if (d < 0.10 || l < 0.12 || l > 0.95) continue;     // greys and the ground
+          let h = 0;
+          if (mx === r) h = 60 * (((g2 - b) / d) % 6);
+          else if (mx === g2) h = 60 * ((b - r) / d + 2);
+          else h = 60 * ((r - g2) / d + 4);
+          if (h < 0) h += 360;
+          const k = Math.round(h / 20);                        // 20° families
+          bins[k] = (bins[k] || 0) + 1;
+        }
+        return Object.values(bins).filter((n) => n >= 25).length;
+      })(),
     };
   }, LEGEND);
 
@@ -118,7 +153,25 @@ const ok = (name, cond, detail) => {
   ok('the drawing put outlines behind the take', v.ghostN > 0, JSON.stringify(v));
   ok('the readout names them', v.says === true, v.text);
   ok('and names them LAST, after the take', /take \d[\s\S]*outlines:/.test(v.text), v.text);
-  ok('readout does not overflow its box', !v.overflows && !v.rightOut, JSON.stringify(v));
+  ok('readout does not overflow its box', !v.overflows && !v.rightOut,
+     JSON.stringify({ o: v.overflows, r: v.rightOut, t: v.text }));
+
+  console.log('\ncolour coding');
+  const ks = [...new Set(v.takes.map((t) => t.k))].sort((a, b) => a - b);
+  const hues = [...new Set(v.takes.map((t) => t.hue))];
+  ok('the outlines span more than one take', ks.length >= 2, 'takes ' + JSON.stringify(ks));
+  ok('…so more than one hue is in play', hues.length >= 2, JSON.stringify(hues));
+  ok('no outline wears take 0 (that is the drawn take)', ks.every((k) => k > 0), JSON.stringify(ks));
+  // ONE TABLE, SHARED — the drawing's hue for take k and the stylesheet's
+  // --take-k must be the same value, or the picture and the palette have
+  // drifted into two vocabularies for one axis.
+  ok('every hue is the stylesheet\'s own --take-N',
+     v.css.filter(Boolean).length === 7 &&
+     v.takes.every((t) => t.hue.toLowerCase() === v.css[(t.k - 1) % 7].toLowerCase()),
+     JSON.stringify({ css: v.css, sample: v.takes.slice(0, 4) }));
+  // …and it reached the bitmap: the drawn take's own hue plus at least two
+  // take hues. One family would mean the picture is still monochrome.
+  ok('the canvas really is multi-hued now', v.hueBins >= 3, 'hue families = ' + v.hueBins);
 
   // ---- 2. HIDDEN drawing: the readout stays, the legend must not ----------
   console.log('\ndrawing hidden (Hide keeps the readout)');

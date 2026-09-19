@@ -7459,6 +7459,24 @@
     };
     const NOTE_FILL = _hexA(ptCol, 0.5) || 'rgba(159,122,234,0.55)';
     const NOTE_EDGE = ptCol || '#d6bcfa';
+    // ONE HUE PER UPCOMING TAKE, read from `--take-1..7` on :root (bloops.css
+    // holds the palette; see the block there for why it is these seven). Read
+    // once per draw and memoised on the canvas — getComputedStyle per outline
+    // would be a layout read inside the draw loop. The fallback is the same
+    // seven, so a stylesheet that has not loaded yet still distinguishes takes
+    // rather than collapsing every outline back into one colour.
+    const TAKE_FALLBACK = ['#4fd1c5', '#90cdf4', '#f6ad55', '#9ae6b4', '#f687b3', '#fc8181', '#faf089'];
+    if (!cv._takeHues) {
+      let hs = [];
+      try {
+        const rs = getComputedStyle(document.documentElement);
+        hs = TAKE_FALLBACK.map((_, i) => (rs.getPropertyValue('--take-' + (i + 1)) || '').trim());
+      } catch (e) { hs = []; }
+      cv._takeHues = TAKE_FALLBACK.map((f, i) => hs[i] || f);
+    }
+    // k is how many passes away; 0 is the drawn take itself, which is never an
+    // outline — if one ever arrives, it wears the drawn take's own edge.
+    const takeHue = (k) => (k | 0) > 0 ? cv._takeHues[((k | 0) - 1) % cv._takeHues.length] : NOTE_EDGE;
     // ⬚ WHAT IS GATHERED, for this draw. Only in multi mode: the set survives a
     // mode change only as far as `setMode`, which drops it, so this is belt.
     const MGRP = (modeOf(L) === 'multi') ? mselOf(L) : null;
@@ -8041,15 +8059,26 @@
         });
         // the ghosts: every (onset, pitch) some pass plays that the drawn one does not
         const seen = {};
-        sm.forEach((arr) => arr.forEach((q) => {
+        // `ki` is HOW MANY PASSES AWAY this sample is, and `sm` is walked in
+        // order — so the first pass to claim an (onset, pitch) is the SOONEST
+        // one that plays it, and `k` needs no min(). That is the take the
+        // outline is coloured for: of the seven it could belong to, the one you
+        // will hear first is the useful answer.
+        sm.forEach((arr, ki) => arr.forEach((q) => {
           const drawn = played.some((n, i) => Math.round(mids[i]) === q.m && Math.abs(n.at - q.at) < tol);
           if (drawn) return;
           const k2 = Math.round(q.at / tol) + ':' + q.m;
-          if (!seen[k2]) { seen[k2] = { at: q.at, m: q.m, durMs: q.durMs, c: 0 }; ghosts.push(seen[k2]); }
+          if (!seen[k2]) { seen[k2] = { at: q.at, m: q.m, durMs: q.durMs, c: 0, k: ki }; ghosts.push(seen[k2]); }
           seen[k2].c++;
         }));
       }
     } catch (e) { stab = null; ghosts = []; }
+    // WHAT WAS ACTUALLY PAINTED, collected as it is painted — reading the
+    // strokeStyle back off the context, not the intent that fed it. Publishing
+    // `ghosts.map(takeHue)` instead let the two disagree: poisoning the stroke
+    // left the published mapping still claiming the right colours, so a gate
+    // reading it passed on a picture that had gone monochrome.
+    const ghostDrawn = [];
     ghosts.forEach((q) => {
       if (q.m < loM || q.m > hiM) return;
       const x = xF(q.at / cyc);
@@ -8057,14 +8086,25 @@
       if (x + dw <= GUT || x >= w) return;
       const xv = Math.max(GUT, x), ww = Math.min(dw - (xv - x), w - xv);
       if (!(ww > 0)) return;
-      g.globalAlpha = 0.12 + 0.4 * (q.c / PASSES);
-      g.strokeStyle = NOTE_EDGE; g.lineWidth = 1;
+      // ALPHA still says HOW MANY passes play it, hue says WHICH one plays it
+      // first — two facts, two channels, so neither has to be read off the
+      // other. The floor is lifted a little now that a faint stroke also has to
+      // carry a hue: below ~0.2 the colour is unreadable and the outline is
+      // back to being grey mush.
+      g.globalAlpha = 0.22 + 0.5 * (q.c / PASSES);
+      g.strokeStyle = takeHue(q.k); g.lineWidth = 1;
       g.beginPath(); g.rect(xv, yOf(q.m) + (rowH - nh) / 2, ww, nh); g.stroke();
+      ghostDrawn.push({ k: q.k, c: q.c, hue: String(g.strokeStyle) });
       g.globalAlpha = 1;
     });
     cv._stability = stab;            // published, like the drawing's other geometry
     cv._ghostN = ghosts.length;      // …and how many outlines went behind them, so a
                                      // gate can hold the readout to the picture
+    // WHICH takes the outlines that REACHED THE PICTURE belong to, and the
+    // colour the canvas was actually handed for each. (`_ghostN` counts every
+    // outline the sampling found; this counts the ones inside the pitch window
+    // and the viewport, which is what a reader can see.)
+    cv._ghostTakes = ghostDrawn;
     let hidden = 0;   // notes outside the held window — named in the readout
     for (let i = 0; i < played.length; i++) {
       const n = played[i];
@@ -8210,7 +8250,8 @@
       // NOT CALLED "GHOSTS", though that is the internal name: ⚙ Deep already
       // owns that word for "% quiet extra hits", which SOUND and draw SOLID.
       // One word for two mechanisms reads as one mechanism.
-      const ghostTxt = ghosts.length ? tapTxt(L, ' · outlines: notes other takes play') : '';
+      const ghostTxt = ghosts.length
+        ? tapTxt(L, ' · outlines: the next 7 takes, a colour each') : '';
       // STATIC or LIVE leads the line. It used to say 'recorded' or 'live',
       // which named where the material CAME FROM and said it in the vocabulary
       // of liveness — and measurably wrong: a 'live' part plays the identical

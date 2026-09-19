@@ -8052,6 +8052,10 @@
     // needs no saying; under Evolve it is every `ev` passes, which is the
     // whole difference between the two clocks.
     let evoEv = 0;
+    // …and whether a THAWED part would have outlines at all, which is the same
+    // question `varies` asks minus the `kind` guard: `vary` on, or Evolve set.
+    // Read on a frozen part too, so the way back can say what is waiting.
+    let wouldVary = false;
     try {
       const pin0 = V2.pinOf(L);
       // TWO CLOCKS REACH THE SAME PLACE. `vary` advances the take every cycle;
@@ -8063,11 +8067,13 @@
       // Reported as a disappearance ("why aren't the phantom future take notes
       // showing anymore"): Evolve requires `vary` off, so turning it on took
       // the preview away from the one mode most about future takes.
-      const evo = (L.part.kind !== 'recorded' && !L.part.vary)
-        ? (V2.chgAt(L, { E: E, cfg: cfg }, cs, cyc) || null) : null;
+      // Asked regardless of kind — a FROZEN part still stores its Evolve, and
+      // the thaw hint below needs to know. `chgAt` reads nothing it must not.
+      const evo = V2.chgAt(L, { E: E, cfg: cfg }, cs, cyc) || null;
       const varies = L.part.kind !== 'recorded' && typeof pin0 !== 'object' &&
         (!!L.part.vary || !!(evo && evo.ev > 0));
       if (!L.part.vary && evo) evoEv = evo.ev | 0;
+      wouldVary = !!(L.part.vary || (evo && evo.ev > 0));
       if (varies && played.length) {
         // WHILE PLAYING the drawn take is wherever the clock has got to, and
         // the two clocks answer that differently — `vary` counts cycles, Evolve
@@ -8313,8 +8319,8 @@
       // NOT wrapped in tapTxt as a whole — the way back is true with the
       // drawing hidden; only the half that talks about the picture is.
       const thawTxt = (rec2 && L.part.made === 'take')
-        ? ' · \u2699 Generate goes back to the live rules' +
-          (L.part.vary ? tapTxt(L, ' \u2014 and to the take outlines') : '')
+        ? ' \u00b7 \u22ef \u25b8 \u26a1 Release goes back to the live rules' +
+          (wouldVary ? tapTxt(L, ' \u2014 and to the take outlines') : '')
         : '';
       // STATIC or LIVE leads the line. It used to say 'recorded' or 'live',
       // which named where the material CAME FROM and said it in the vocabulary
@@ -17511,7 +17517,7 @@
               return;
             }
             try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-            try { if (typeof showToast === 'function') showToast('\u2744 Froze this take so it can be edited — ' + L2.part.notes.length + ' notes. ⚙ Generate instead goes back.', { ms: 5000 }); } catch (e) {}
+            try { if (typeof showToast === 'function') showToast('\u2744 Froze this take so it can be edited — ' + L2.part.notes.length + ' notes. \u22ef \u25b8 \u26a1 Release goes back.', { ms: 5000 }); } catch (e) {}
             h._sig = ''; V2.render(E);
           }
           // the hit's own index when the array was not just rebuilt by a lock —

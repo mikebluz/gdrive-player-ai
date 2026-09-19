@@ -213,6 +213,14 @@
 
 ### Bloom: the v2 layer model (`cfg.layers`, `js/bloops/18-layer-v2.js`)
 
+- **THERE IS NO "\u2699 Generate" DOOR. The way back from a frozen take is `\u22ef \u25b8 \u26a1 Release`.** The
+  freeze toast named \u2699 Generate for months and it has never existed — `MAT_LABEL` has no such
+  entry and no button carries it; the only unfreeze is the \u22ef menu's "\u26a1 Release \u2014 back to live"
+  (a Material door also makes a part live, but REPLACES the content). Reported as "unless i'm missing
+  something" by a user doing exactly what the card told them. **A hint that names a door is a claim —
+  grep for the label before writing it**, and note this one propagated: the readout copied the name
+  from the toast, so the wrong door was then said twice.
+
 - **VARY AND EVOLVE ARE TWO CLOCKS REACHING THE SAME TAKES.** `cycIdx` is `take + epoch` with the
   epoch stepping by ONE per change, so the takes that are coming are `base + 1, +2, …` under either —
   `vary` reaches the next one after 1 cycle, Evolve after `ev` passes. The drawing's pass sampler is

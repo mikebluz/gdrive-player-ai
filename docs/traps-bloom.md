@@ -232,6 +232,15 @@
   copy. On a FROZEN take the button is dimmed (`.v2-clockfrozen`), never `disabled` — the press
   releases (`V2.release`, silent, keeps the notes) and turns Evolve on. A new surface on this axis
   goes on this button, not beside it.
+  **WHILE PLAYING, THE DRAWN TAKE IS SOLID (2026-09-19).** The stability fade (note alpha = share of
+  the next 8 passes it survives) is a reading of the FUTURE; applied while playing it painted notes
+  of the take sounding NOW at 0.28 — an outline's weight — and was reported as "the current take is
+  not solid". Measured first (throwaway script hooking `playNote` against `cv._hits`, per cycle):
+  audio and drawing agreed on every note of every cycle, in ✎ Edit and 👁 View, with Evolve every 1
+  and every 4, How much 100 and 60 — the fade was the whole difference. Before touching the take
+  clock for a "the picture is wrong" report, measure the picture against the audio, not against the
+  drawing's own clock. Note also `cv._hidden`: a note outside the HELD pitch window is not drawn at
+  all, and a new take can land outside the window the pinned take set.
   **THE READOUT NAMES THE TAKE THAT IS DRAWN, NOT THE PIN (2026-09-19).** While playing, the
   drawing follows the clock's take (`base` = pin + Evolve epoch, or the cycle count under Re-roll —
   measured: the solid notes changed every epoch in BOTH ✎ Edit and 👁 View), but the readout printed

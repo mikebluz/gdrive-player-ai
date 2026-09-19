@@ -8428,8 +8428,15 @@
       }
       g.beginPath();
       g.rect(xv, y, ww, nh);
-      // a note only SOME passes play is as solid as the share that do
-      if (stab && !isSel && !isGrp) g.globalAlpha = 0.28 + 0.72 * stab[i];
+      // a note only SOME passes play is as solid as the share that do —
+      // STOPPED. Playing, the drawn take is the one sounding NOW and every
+      // note of it is as real as the next: a note the coming takes drop was
+      // painted at 0.28 — an outline's weight — while it played, and the
+      // picture read as "the current take is not solid" (2026-09-19,
+      // measured: audio and drawing agreed on every note of every cycle;
+      // the fade was the whole difference). The fade is a reading of the
+      // FUTURE and belongs to the stopped picture.
+      if (stab && !playing && !isSel && !isGrp) g.globalAlpha = 0.28 + 0.72 * stab[i];
       g.fill(); g.stroke();
       g.globalAlpha = 1;
       if (selKeys && willGo && !isSel && !isGrp) {

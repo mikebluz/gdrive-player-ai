@@ -190,6 +190,18 @@
 
 ### Bloom: the v2 layer model (`cfg.layers`, `js/bloops/18-layer-v2.js`)
 
+- **A FIELD HIDDEN BY A GATE IS STILL READ BY THE ENGINE.** `part.bars` is gated `clock:bars`, so the
+  row vanishes on a Free clock — but it stayed STORED and every bar-derived DENSITY quantity kept
+  dividing by it (gap floor, note-length floor, the added-note snap grid, the ghost floor, and the
+  per-bar budget of the density ceiling). A free layer therefore sounded different depending on what
+  Bars happened to be when you last left the grid. Fixed 2026-09-18 by resolving `barsOf` ONCE at the
+  top of `notesForRaw` (`clock === 'free' ? 1 : bars`) and deriving all of them from it — a floor and
+  a budget that disagree about what a bar is would be the same bug one layer down. **Gating a row is
+  not retiring a field**: grep the engine for every read before assuming a hidden control is inert.
+  STILL BAR-DERIVED IN FREE MODE, deliberately (structure, not density): the change-grouping key
+  (`'b' + floor(on * bars)`), ⚇ Mix's strong-beat test, Groundwork's antic lead, and `barsF`/`slotOf`
+  (the 1/48-bar coordinate stored edits are pinned to — moving it would move existing edits).
+
 - **A COMPUTED FACE ON A CARD REPAINTS FROM `applyGateCard`'s tail** — that is the chokepoint every
   commit already runs through (`commit` → `applyGate` → it → `popSync`). A row builder alone is ONE
   writer, and a value built from tempo / Bars / Rate / Steps freezes at whatever was true when the

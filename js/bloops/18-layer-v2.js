@@ -2895,7 +2895,21 @@
     // MUSICAL — a fraction of the bar, so they scale with tempo — and they only
     // ever LIMIT what the dice asked for, so a part with no Twist, Phrasing or
     // Len vary is byte-identical.
-    const barSec = cyc / Math.max(1, +p.bars || 1);
+    // ── IN FREE MODE THERE IS NO BAR ──────────────────────────────────────
+    // `part.bars` is HIDDEN when the clock is Free (its row is gated
+    // `clock:bars`) but it stayed STORED, and every bar-derived DENSITY
+    // quantity went on dividing by it: the gap floor and the note-length floor
+    // below, the snap grid added notes land on, the ghost floor, and the
+    // per-bar budget of THE DENSITY CEILING further down. So a number with no
+    // control on the card decided how tightly the dice could pack, and a free
+    // layer sounded different depending on what Bars happened to be when you
+    // last left the grid — measured on one 4 s free cycle with Twist 70:
+    // 7 notes at Bars 1, 8 at Bars 4, nothing else changed.
+    // FOR A FREE LAYER THE CYCLE IS THE MUSICAL UNIT, so it is the one they all
+    // come from. Resolved ONCE, here, because a floor and a budget that
+    // disagree about what a bar is would be the same bug one layer down.
+    const barsOf = (p.clock === 'free') ? 1 : Math.max(1, +p.bars || 1);
+    const barSec = cyc / barsOf;
     // One floor for both, so a length and the gap in front of it agree: a
     // STRAIGHT 16th of the bar (at 120bpm, 125 ms), never under 70 ms. It was a
     // 16th triplet and the 83 ms notes still read as slivers on the drawing
@@ -3435,7 +3449,7 @@
     // pattern's own notes are never dropped; a part with no dice has no `xtra`
     // and is byte-identical.
     if (out.some((n2) => n2 && n2.xtra)) {
-      const barsN = Math.max(1, +p.bars || 1);
+      const barsN = barsOf;          // the cycle IS the bar when Free — see above
       // AN EPSILON, NOT A BARE FLOOR: a note landing on a bar line comes out
       // 1.9999999 on one cycle and 2.0000001 on the next, which put it in
       // different bars, changed that bar's budget, and kept a ghost on one pass

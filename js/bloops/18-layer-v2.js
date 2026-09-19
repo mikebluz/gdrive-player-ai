@@ -7453,51 +7453,6 @@
     _cAnchorMemo = { sig: sig, at: org };
     return org;
   }
-  // ⟳ EVOLVE'S OWN READOUT ON THE PICTURE (2026-09-19). The badge says
-  // EVOLVES, but the drawing is what people look at while it plays, and the
-  // one mode whose whole job is CHANGING the picture had nothing on the
-  // picture saying so. A chip in Evolve's hue at the top right: the cadence,
-  // and How much when it is below 100 (100 needs no saying — it is a fresh
-  // roll). Painted by BOTH drawings (the card's, and ⚙ Deep's staged one —
-  // where Evolve is set, so where turning it on must show first) from the
-  // same `chgAt` answer the emitter uses, and published as `cv._evoChip` so
-  // a probe reads the picture's own claim rather than re-deriving it.
-  // Absent exactly when Evolve cannot act — frozen, `vary` outranking it, or
-  // `ev` 0 (`chgAt` already folds `am` 0 into `ev` 0) — the same qualifier
-  // `liveness` applies, so chip and badge can never disagree.
-  // The hue is read off `--evo` ONCE and memoised, like the take palette;
-  // the fallback is the stylesheet's own value.
-  let EVO_HUE = '';
-  function evoHue() {
-    if (!EVO_HUE) {
-      try { EVO_HUE = (getComputedStyle(document.documentElement).getPropertyValue('--evo') || '').trim(); } catch (e) {}
-      if (!EVO_HUE) EVO_HUE = '#b8f24a';
-    }
-    return EVO_HUE;
-  }
-  const evoActs = (L, evo) => !!(evo && evo.ev > 0 && L && L.part && L.part.kind !== 'recorded' && !L.part.vary);
-  function evoChip(g, evo, right, top) {
-    const ev = evo.ev | 0, am = Math.round(Number.isFinite(evo.am) ? evo.am : 100);
-    const txt = '\u27f3 EVOLVES every ' + (ev === 1 ? 'cycle' : ev + ' passes') + (am < 100 ? ' \u00b7 ' + am + '%' : '');
-    const hue = evoHue();
-    g.save();
-    g.font = 'bold 10px -apple-system, Segoe UI, sans-serif';
-    g.textAlign = 'left'; g.textBaseline = 'middle';
-    const tw = Math.ceil(g.measureText(txt).width);
-    const px = 5, hh = 15, ww = tw + px * 2, r = 3;
-    const x = Math.max(0, right - ww - 3) + 0.5, y = top + 3 + 0.5;
-    // a rounded box by hand — `roundRect` is missing on the WebKit this ships in
-    g.beginPath();
-    g.moveTo(x + r, y); g.lineTo(x + ww - r, y); g.quadraticCurveTo(x + ww, y, x + ww, y + r);
-    g.lineTo(x + ww, y + hh - r); g.quadraticCurveTo(x + ww, y + hh, x + ww - r, y + hh);
-    g.lineTo(x + r, y + hh); g.quadraticCurveTo(x, y + hh, x, y + hh - r);
-    g.lineTo(x, y + r); g.quadraticCurveTo(x, y, x + r, y); g.closePath();
-    g.fillStyle = 'rgba(13,13,26,0.85)'; g.fill();
-    g.strokeStyle = hue; g.lineWidth = 1; g.stroke();
-    g.fillStyle = hue; g.fillText(txt, x + px, y + hh / 2);
-    g.restore();
-    return { text: txt, ev, am, hue, x, y, w: ww, h: hh };
-  }
   function drawPartViz(card, L, E) {
     // THE CARD'S DRAWING IS THE LAYER'S. A handler inside ✨ Quick / ⚙ Deep
     // repaints with the STAGED copy; that belongs on the panel's own drawing.
@@ -8187,22 +8142,18 @@
     cv._hidden = 0; navSync();
     cv._hits = []; cv._sel = -1;   // no notes drawn = nothing to hit-test against
     // ⟳ EVOLVE'S CLOCK, asked ONCE per draw — `chgAt` is the one computation
-    // (the trap this file keeps rediscovering), and both the chip and the
-    // pass sampler below read this same answer. Asked regardless of kind: a
-    // FROZEN part still stores its Evolve, and the thaw hint needs to know.
+    // (the trap this file keeps rediscovering) and the pass sampler below
+    // reads this answer. Asked regardless of kind: a FROZEN part still
+    // stores its Evolve, and the thaw hint needs to know. (The chip that
+    // used to paint it on the picture is gone — 2026-09-19, "this readout
+    // is obscuring the visualizer" — the cadence lives in the summary line
+    // above the drawing now, with the rest of the state.)
     let evo = null;
     try { evo = V2.chgAt(L, { E: E, cfg: cfg }, cs, cyc) || null; } catch (e) { evo = null; }
-    // Re-roll (`part.vary`) IS Evolve every cycle — the face and the badge
-    // say so, and the picture must agree
-    const evoOn = evoActs(L, evo) || (L.part.kind !== 'recorded' && !!L.part.vary);
-    const evoArg = (L.part.vary && L.part.kind !== 'recorded') ? { ev: 1, am: 100 } : evo;
-    cv._evoChip = null;
     if (!played.length) {
       try { vizChrome(card, L, E); } catch (e) {}
       g.fillStyle = '#6b6b8a'; g.font = '12px -apple-system, Segoe UI, sans-serif';
       g.fillText('silent for this cycle', GUT + 8, TOP + (h - TOP) / 2 + 4);
-      // a silent cycle is still an evolving one — the chip says so
-      try { if (evoOn) cv._evoChip = evoChip(g, evoArg, w, TOP); } catch (e) {}
       if (lab) lab.textContent = liveTxt(L, cfg) + ' · ' + barTxt +
         ((cv._drawnPi >= 0 && Number.isFinite(L.partFor) && (cv._drawnPi | 0) !== (L.partFor | 0))
           ? ' \u2014 \ud83d\udc41 showing another part' : '');
@@ -8598,8 +8549,6 @@
                 (fromPv ? ' · as previewed' : '')) + thawTxt + ghostTxt + overTxt + otherTxt;
       liveBadge(lab);
     }
-    // ⟳ painted LAST, so it sits over the notes rather than under them
-    try { if (evoOn) cv._evoChip = evoChip(g, evoArg, w, TOP); } catch (e) {}
     try { vizChrome(card, L, E); } catch (e) {}
   }
   // The viz block's live chrome — the note editor, and what the lock button
@@ -13173,16 +13122,9 @@
         }
       }
       const played = notes.filter((n) => n && n.freq > 0 && (n.at - cs0) >= -1e-6 && (n.at - cs0) < cyc);
-      // ⟳ the STAGED Evolve on the staged drawing — this panel is where it is
-      // set, so this is where turning it on shows first (see `evoChip`).
-      let evoS = null;
-      try { if (cfg) evoS = V2.chgAt(S, { E: E, cfg: cfg }, 0, cyc) || null; } catch (e) { evoS = null; }
-      const varyS = !!(S.part && S.part.vary && S.part.kind !== 'recorded');   // Re-roll = every 1
-      const chip = () => { try { cv._evoChip = (evoActs(S, evoS) || varyS) ? evoChip(g, varyS ? { ev: 1, am: 100 } : evoS, wCss, TOP) : null; } catch (e) { cv._evoChip = null; } };
       if (!played.length) {
         g.fillStyle = '#6b6b8a'; g.font = '12px -apple-system, Segoe UI, sans-serif';
         g.fillText('silent for this cycle', 8, TOP + (hCss - TOP) / 2 + 4);
-        chip();
         return;
       }
       const mid = played.map((n) => 69 + 12 * Math.log2(n.freq / 440));
@@ -13198,7 +13140,6 @@
         g.fillRect(x, y, ww, hh);
         cv._hits.push({ x, y, w: ww, h: hh, midi: Math.round(mid[i]), t: (n.at - cs0) / cyc });
       });
-      chip();
     });
   }
   // THE GATE, STAGING-AWARE. A handler inside ✨ Quick / ⚙ Deep passes the
@@ -13276,7 +13217,10 @@
     // that repeats said "live" and a humanized static one said nothing.
     let lvS = { live: false };
     try { lvS = V2.liveness(L, _cfgOf()) || lvS; } catch (e) {}
-    const lvWord = stateWord(lvS);
+    // …WITH EVOLVE'S CADENCE (2026-09-19): "EVOLVES every 4 passes" — the
+    // chip that said this on the picture obscured it; the summary line above
+    // the drawing is where the rest of the state already reads.
+    const lvWord = stateWord(lvS) + evoCadence(lvS);
     const sum = card.querySelector('.v2-summary');
     if (sum) {
       sum.textContent = lvWord + ' \u00b7 ' + (p.kind === 'recorded'
@@ -13375,7 +13319,7 @@
       if (el._sumTxt !== want2) {
         el._sumTxt = want2;
         el.innerHTML = want2 ? want2.split(' · ').map((v) =>
-          '<span class="v2-sumv' + (STATE_CLS[v] ? ' ' + STATE_CLS[v] : '') + '">' + esc(v) + '</span>')
+          '<span class="v2-sumv' + (STATE_CLS[v.split(' ')[0]] ? ' ' + STATE_CLS[v.split(' ')[0]] : '') + '">' + esc(v) + '</span>')
           .join('<span class="v2-sumsep"> · </span>') : '';
       }
     });

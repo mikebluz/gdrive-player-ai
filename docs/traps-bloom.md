@@ -224,7 +224,7 @@
   then"):** `.v2-evotog` on the take bar — ONE toggle, `⟳ Evolve: off — this take repeats` /
   `⟳ Evolve: every N passes` (fill AND tail carry the state; a one-word face reads as the current
   state) — with an `Every N` stepper (`st`, card id, `chg.ev`) beneath it while on. Repeat is OFF and
-  Re-roll is EVERY 1: `liveness()` folds `vary` in as `evolve.ev` 1, so the badge, the chip and the
+  Re-roll is EVERY 1: `liveness()` folds `vary` in as `evolve.ev` 1, so the badge, the summary and the
   button all say EVOLVES for it and VARIES is left to the per-pass dice. `setClock(L, n)` is the one
   writer (clears `part.vary`; editing Every on the face clears it too, since `vary` would outrank the
   number) and `clockSwSync` (from `vizChrome`) the second writer. ⚙ Deep ▸ 🎲 Take keeps Each cycle /
@@ -270,10 +270,11 @@
   and `stateWord()` (UI half) is the ONLY map from it to a word — never derive the word from `.live`
   or `.tags`; three surfaces did, which is how a third state reaches some and not others. Its hue is
   `--evo` (lime, beside the take palette in bloops.css — violet was too close to the app's purple
-  accent) on the badge, the summary chip, the three `.v2-evorow` knobs and the drawing's chip
-  (`evoChip`, published as `cv._evoChip` on the card's canvas AND ⚙ Deep's `.v2-stagecv`). A new
-  Evolve surface wears that class/var, never a restated colour, and shows exactly when `evoActs`
-  says it can act — the badge's own qualifier.
+  accent) on the badge, the summary chip and the three `.v2-evorow` knobs. The cadence ("every 4
+  passes") rides the summary's state word (`lvWord = stateWord + evoCadence`, chip class by the
+  FIRST word) — a chip painted on the canvas said it and was removed the same day ("this readout is
+  obscuring the visualizer"): nothing is painted over the notes that is not a note. A new Evolve
+  surface wears that class/var, never a restated colour.
 
 - **`liveness` HAS NO CLOCK, so it cannot resolve `chg.parts`.** Resolving which part is sounding is
   `chgAt`'s job and needs a ctx. The badge therefore answers "does this EVER decide again", taking

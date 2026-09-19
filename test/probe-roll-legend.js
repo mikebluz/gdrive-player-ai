@@ -220,7 +220,7 @@ const ok = (name, cond, detail) => {
 
   // ---- 4b. EVOLVE IS ITS OWN STATE (2026-09-19) ---------------------------
   // The readout and the badge say EVOLVES (not VARIES) and the badge wears
-  // `--evo`; the drawing carries its own chip, published as `cv._evoChip`
+  // `--evo`; the cadence rides the summary line (no chip on the picture)
   // (the picture's own claim, not a re-derivation); the three knobs that set
   // it are marked `.v2-evorow`, REACHABLE (rect + offsetParent, through the
   // ⚙ Deep door and the 🎲 Take tab — the way a person gets there), and their
@@ -253,6 +253,7 @@ const ok = (name, cond, detail) => {
           badgeColor: badge ? getComputedStyle(badge).color : '',
           evoCss, evoRgb: evoCss ? rgb(evoCss) : '',
           chip: cv?._evoChip || null, stageChip: scv?._evoChip || null, rows,
+          contentSum: (card?.querySelector('.v2-grpsum[data-grp="Content"]')?.textContent || '').trim(),
           summary: (card?.querySelector('.v2-summary')?.textContent || '').trim().slice(0, 40) });
       }, 500);
     }, 400);
@@ -262,11 +263,9 @@ const ok = (name, cond, detail) => {
      es.badge === 'EVOLVES' && /v2-sum-evo/.test(es.badgeCls) && es.badgeColor === es.evoRgb,
      JSON.stringify({ b: es.badge, c: es.badgeCls, col: es.badgeColor, want: es.evoRgb }));
   ok('the summary leads with it too', /^EVOLVES/.test(es.summary), es.summary);
-  ok('the drawing carries an Evolve chip in that hue',
-     !!es.chip && /EVOLVES every 2 passes/.test(es.chip.text) && es.chip.hue.toLowerCase() === es.evoCss.toLowerCase(),
-     JSON.stringify(es.chip));
-  ok('…and so does ⚙ Deep\'s staged drawing', !!es.stageChip && /EVOLVES every 2 passes/.test(es.stageChip.text),
-     JSON.stringify(es.stageChip));
+  ok('the cadence rides the summary, and nothing is painted on the picture',
+     /^EVOLVES every 2 passes/.test(es.summary) && /^EVOLVES every 2 passes/.test(es.contentSum) && !es.chip && !es.stageChip,
+     JSON.stringify({ s: es.summary, c: es.contentSum, chip: es.chip, st: es.stageChip }));
   ok('the three Evolve knobs are marked, reachable, and wear the hue',
      es.rows.length === 3 && es.rows.every((r) => r.marked && r.shown && r.labelColor === es.evoRgb),
      JSON.stringify(es.rows));
@@ -297,7 +296,8 @@ const ok = (name, cond, detail) => {
       everyShown: !!(evr && evr.offsetParent && getComputedStyle(evr).display !== 'none' && er.height > 0),
       everyVal: evr ? +(evr.querySelector('.v2-f[data-f="chg.ev"]')?.value) : null,
       deepEv: +(card?.querySelector('.v2-genwrap .v2-f[data-f="chg.ev"]')?.value),
-      chip: !!card?.querySelector('.v2-vizcv')?._evoChip };
+      chip: !!card?.querySelector('.v2-vizcv')?._evoChip,
+      summary: (card?.querySelector('.v2-summary')?.textContent || '').trim() };
   });
   const press = async () => {
     await page.evaluate(() => { document.querySelector('.v2-layer .v2-evotog')?.click(); });
@@ -306,23 +306,23 @@ const ok = (name, cond, detail) => {
   };
   // section 4 left it evolving every 2 (set directly) — the first press turns it OFF
   const s1 = await press();
-  ok('press: off — unlit, says so, Evolve 0, vary off, no chip, no Every row', !s1.lit && /off/.test(s1.face) &&
-     s1.shown && s1.ev === 0 && !s1.vary && s1.badge !== 'EVOLVES' && !s1.chip && !s1.everyShown, JSON.stringify(s1));
+  ok('press: off — unlit, says so, Evolve 0, vary off, summary not evolving, no Every row', !s1.lit && /off/.test(s1.face) &&
+     s1.shown && s1.ev === 0 && !s1.vary && s1.badge !== 'EVOLVES' && !/^EVOLVES/.test(s1.summary) && !s1.everyShown, JSON.stringify(s1));
   const s2 = await press();
-  ok('press: on — lit in the hue, every 4 (the default), badge EVOLVES, chip drawn, Every row reachable and mirrored into ⚙ Deep',
+  ok('press: on — lit in the hue, every 4 (the default), badge EVOLVES, summary says every 4, Every row reachable and mirrored into ⚙ Deep',
      s2.lit && /every 4 passes/.test(s2.face) && s2.shown && s2.color === es.evoRgb && !s2.vary && s2.ev === 4 &&
-     s2.badge === 'EVOLVES' && s2.chip && s2.everyShown && s2.everyVal === 4 && s2.deepEv === 4, JSON.stringify(s2));
+     s2.badge === 'EVOLVES' && /^EVOLVES every 4 passes/.test(s2.summary) && !s2.chip && s2.everyShown && s2.everyVal === 4 && s2.deepEv === 4, JSON.stringify(s2));
   // ⚙ Deep's legacy Each cycle (`part.vary`) reads on the face as Every 1 —
-  // and the badge and the chip agree, or amber VARIES would sit over a lime
-  // button saying the opposite
+  // and the badge and the summary agree, or amber VARIES would sit over a
+  // lime button saying the opposite
   await page.evaluate(() => {
     const L = (_masterEng.getCfg().layers || [])[0];
     L.part.vary = 1; _masterEng.getCfg(); window._v2.render(_masterEng);
   });
   await zz(900); await open();
   const s3 = await readSw();
-  ok('Re-roll (Each cycle in ⚙ Deep) reads as ⟳ Evolve: every cycle, Every 1, badge EVOLVES, chip drawn',
-     s3.lit && /every cycle/.test(s3.face) && s3.everyVal === 1 && s3.everyShown && s3.badge === 'EVOLVES' && s3.chip,
+  ok('Re-roll (Each cycle in ⚙ Deep) reads as ⟳ Evolve: every cycle, Every 1, badge EVOLVES, summary says every cycle',
+     s3.lit && /every cycle/.test(s3.face) && s3.everyVal === 1 && s3.everyShown && s3.badge === 'EVOLVES' && /^EVOLVES every cycle/.test(s3.summary),
      JSON.stringify(s3));
   // …and on a FROZEN take the press RELEASES it and evolves — never a
   // disabled button ("why can't i click it": a disabled button cannot take

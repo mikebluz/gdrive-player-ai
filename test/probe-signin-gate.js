@@ -80,7 +80,15 @@ async function openPage(browser, path, { native = false, cached = false } = {}) 
   const browser = await puppeteer.launch({
     executablePath: CHROME, headless: 'new',
     args: ['--autoplay-policy=no-user-gesture-required',
-           `--host-resolver-rules=MAP ${HOST} 127.0.0.1`],
+           `--host-resolver-rules=MAP ${HOST} 127.0.0.1`,
+           // The hostname has to be NON-local for BLOOPS_LOCAL to be false, but
+           // a non-local http origin is INSECURE, so AudioWorkletNode throws on
+           // every voice — and bloops.html's boot guard answers the first
+           // unhandled rejection with a one-shot `?fresh=` reload, which
+           // detaches the frame mid-probe. Treat the origin as secure and the
+           // audio core boots normally, as it does on https in the real world.
+           `--unsafely-treat-insecure-origin-as-secure=http://${HOST}:${PORT}`,
+           `--user-data-dir=${process.env.TMPDIR || '/tmp'}/bloops-probe-signin-gate`],
     protocolTimeout: 240000,
   });
 

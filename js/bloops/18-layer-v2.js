@@ -8252,6 +8252,16 @@
     // needs no saying; under Evolve it is every `ev` passes, which is the
     // whole difference between the two clocks.
     let evoEv = 0;
+    // WHICH TAKE THE PICTURE SHOWS. Stopped, the layer's pin; playing, the
+    // clock's take (the pin + Evolve's epoch, or the cycle count under
+    // Re-roll) — set below from the same `base` the outline sampler uses,
+    // so the two cannot disagree. The readout prints THIS. It printed the
+    // pin, which does not move while the clock does — measured: "take 2"
+    // through epochs 12…21 while the solid notes changed every cycle — so
+    // the picture looked pinned to take 2 with the sounding takes drawn as
+    // outlines ("as each take plays, ALL its notes should become solid").
+    // They were solid; the number beside them said otherwise.
+    let drawnTake = (V2.takeOf(L) | 0);
     // …and whether a THAWED part would have outlines at all, which is the same
     // question `varies` asks minus the `kind` guard: `vary` on, or Evolve set.
     // Read on a frozen part too, so the way back can say what is waiting.
@@ -8280,6 +8290,7 @@
         const base = !playing ? (pin0 | 0)
           : (L.part.vary ? (Math.round(cs / Math.max(0.001, cyc)) + (V2.takeOf(L) | 0))
                          : ((V2.takeOf(L) | 0) + ((evo && evo.epoch) | 0)));
+        if (playing || typeof pin0 !== 'object') drawnTake = base;   // an object pin is a bar composite over the layer's take
         // `base` is in the signature, so an Evolve part re-samples when its
         // epoch turns — but `ev`/`am` are NOT derivable from it, and changing
         // either changes what the coming takes are. A cached drawing with no
@@ -8559,7 +8570,11 @@
         // until something says it is a handle.
         (rec2 ? (bselOf(L) ? ' · re-rolling ' + bselLabel(bselOf(L)) + tapTxt(L, ' — tap a bar' + (cmarks ? ' or a chord' : '') + ' to change which')
                             : tapTxt(L, ' · tap a note to edit · a bar' + (cmarks ? ' or chord' : '') + ' to re-roll'))
-              : ' · take ' + (V2.takeOf(L) + 1) +
+              : ' · take ' + (drawnTake + 1) +
+                // …the one SOUNDING, when the clock has moved past the pin —
+                // otherwise a moving picture beside a fixed number reads as
+                // a fixed picture
+                ((playing && drawnTake !== (V2.takeOf(L) | 0)) ? ' (sounding — pinned to ' + (V2.takeOf(L) + 1) + ')' : '') +
                 (L.part.takeb ? ' · retaken: ' + regListTxt(L.part.takeb) : '') +
                 // A BAR GENERATING BY ITS OWN RULES IS STATE, and state that can
                 // sit in a closed panel has to be readable from the card (the

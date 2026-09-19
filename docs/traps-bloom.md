@@ -232,6 +232,12 @@
   copy. On a FROZEN take the button is dimmed (`.v2-clockfrozen`), never `disabled` — the press
   releases (`V2.release`, silent, keeps the notes) and turns Evolve on. A new surface on this axis
   goes on this button, not beside it.
+  **THE READOUT NAMES THE TAKE THAT IS DRAWN, NOT THE PIN (2026-09-19).** While playing, the
+  drawing follows the clock's take (`base` = pin + Evolve epoch, or the cycle count under Re-roll —
+  measured: the solid notes changed every epoch in BOTH ✎ Edit and 👁 View), but the readout printed
+  `takeOf(L)`, which never moves — so "take 2" sat beside a picture that changed every cycle and the
+  sounding takes were taken for the outlines. `drawnTake` is set from the sampler's own `base`; a
+  number beside a moving picture must be the moving one.
   **THE SWEEP NAMES WHAT IT PASSES (2026-09-19):** the playhead overlay (`vizFrame`) stacks the
   sounding pitches' names high → low beside the sweep, the chord under it on top (from
   `cv._chordGeo.marks`, the band's own claim — never a second walk of the chord clock), and lights

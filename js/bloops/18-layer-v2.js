@@ -8063,6 +8063,8 @@
       g.globalAlpha = 1;
     });
     cv._stability = stab;            // published, like the drawing's other geometry
+    cv._ghostN = ghosts.length;      // …and how many outlines went behind them, so a
+                                     // gate can hold the readout to the picture
     let hidden = 0;   // notes outside the held window — named in the readout
     for (let i = 0; i < played.length; i++) {
       const n = played[i];
@@ -8196,6 +8198,19 @@
                     '-bar part — ⇄ Sync to fit it';
         }
       } catch (e) {}
+      // THE OUTLINES NEED A NAME. The drawing puts every note the NEXT PASSES
+      // play behind the one you are looking at, hollow (the block above) — and
+      // nothing on the card said so, which is the drum-solo rule again: a mark
+      // on the picture no readout explains. Asked outright, verbatim: "what are
+      // all these shadow notes".
+      // Said ONLY when some are actually drawn — a FIXED part has none by
+      // construction, so the clause is absent exactly when it would be a lie.
+      // `tapTxt` because Hide keeps this readout while taking the picture away,
+      // and a legend for a drawing that is not on screen is noise.
+      // NOT CALLED "GHOSTS", though that is the internal name: ⚙ Deep already
+      // owns that word for "% quiet extra hits", which SOUND and draw SOLID.
+      // One word for two mechanisms reads as one mechanism.
+      const ghostTxt = ghosts.length ? tapTxt(L, ' · outlines: notes other takes play') : '';
       // STATIC or LIVE leads the line. It used to say 'recorded' or 'live',
       // which named where the material CAME FROM and said it in the vocabulary
       // of liveness — and measurably wrong: a 'live' part plays the identical
@@ -8243,7 +8258,7 @@
                 (L.part.ruleb ? ' · own rules: ' + regListTxt(L.part.ruleb) : '') +
                 (bselOf(L) ? ' · retaking ' + bselLabel(bselOf(L))
                            : tapTxt(L, ' · tap a bar' + (cmarks ? ' or a chord' : '') + ' to retake just it')) +
-                (fromPv ? ' · as previewed' : '')) + overTxt + otherTxt;
+                (fromPv ? ' · as previewed' : '')) + ghostTxt + overTxt + otherTxt;
       liveBadge(lab);
     }
     try { vizChrome(card, L, E); } catch (e) {}

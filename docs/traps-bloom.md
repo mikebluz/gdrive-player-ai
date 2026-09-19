@@ -213,6 +213,24 @@
 
 ### Bloom: the v2 layer model (`cfg.layers`, `js/bloops/18-layer-v2.js`)
 
+- **"GHOSTS" MEANS TWO THINGS — never say the word in the UI.** ⚙ Deep's `L.ghosts` is "% quiet extra
+  hits": real notes, they SOUND, and they draw SOLID. The drawing's internal `ghosts` are the hollow
+  outlines behind the take — every (onset, pitch) one of the next `PASSES = 8` passes plays that the
+  drawn take does not, alpha `0.12 + 0.4 × (count/8)`, stroke only. The solid notes carry the other
+  half of the same fact: alpha `0.28 + 0.72 × stability`, the share of those 8 passes that play them.
+  A FIXED part samples one take eight times, so it has none by construction. The readout calls them
+  **outlines** for exactly this reason (asked verbatim: "what are all these shadow notes").
+- **A LEGEND IS A READOUT: say it only when the thing it names is ON SCREEN.** Two gates, not one —
+  `ghosts.length` (a FIXED part has no outlines, and naming them there is a confident wrong answer)
+  AND `tapTxt`, because ▸ Hide takes the picture away and KEEPS the readout. `test/probe-roll-legend.js`
+  holds the biconditional, both directions poison-verified; saying it unconditionally prints
+  `FIXED · … · outlines: notes other takes play`, which is the lie in one line.
+- **The drawing publishes what it drew** — `cv._stability`, `cv._ghostN`, `cv._pitchGeo`. A gate that
+  re-derives the picture instead of reading these is testing its own arithmetic, not the drawing.
+  To reach a part that HAS outlines: a new layer starts as an EMPTY `recorded` part (excluded from the
+  pass sampling), so drive a Material door (`.v2-autopick`) → `✓ Done` → `.v2-varytoggle`. The readout
+  is `.v2-vizlab`, the canvas `.v2-vizcv`.
+
 - **A FIELD HIDDEN BY A GATE IS STILL READ BY THE ENGINE.** `part.bars` is gated `clock:bars`, so the
   row vanishes on a Free clock — but it stayed STORED and every bar-derived DENSITY quantity kept
   dividing by it (gap floor, note-length floor, the added-note snap grid, the ghost floor, and the

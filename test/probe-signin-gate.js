@@ -15,7 +15,11 @@ import puppeteer from 'puppeteer-core';
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const HOST = process.env.PROBE_HOST || 'bloops.test';
 const PORT = process.env.PROBE_PORT || '3001';
-const BASE = `http://${HOST}:${PORT}`;
+// PROBE_BASE points the whole run at a real origin (e.g. https://mercywizard.com)
+// — there the hostname is genuinely non-local and genuinely secure, so neither
+// Chrome workaround below applies. Default is the local dev server.
+const BASE = process.env.PROBE_BASE || `http://${HOST}:${PORT}`;
+const LIVE = !!process.env.PROBE_BASE;
 const zz = (ms) => new Promise((r) => setTimeout(r, ms));
 let pass = 0, fail = 0;
 const ok = (name, cond, detail) => {
@@ -80,6 +84,7 @@ async function openPage(browser, path, { native = false, cached = false } = {}) 
   const browser = await puppeteer.launch({
     executablePath: CHROME, headless: 'new',
     args: ['--autoplay-policy=no-user-gesture-required',
+           ...(LIVE ? [] : [
            `--host-resolver-rules=MAP ${HOST} 127.0.0.1`,
            // The hostname has to be NON-local for BLOOPS_LOCAL to be false, but
            // a non-local http origin is INSECURE, so AudioWorkletNode throws on
@@ -88,7 +93,7 @@ async function openPage(browser, path, { native = false, cached = false } = {}) 
            // detaches the frame mid-probe. Treat the origin as secure and the
            // audio core boots normally, as it does on https in the real world.
            `--unsafely-treat-insecure-origin-as-secure=http://${HOST}:${PORT}`,
-           `--user-data-dir=${process.env.TMPDIR || '/tmp'}/bloops-probe-signin-gate`],
+           `--user-data-dir=${process.env.TMPDIR || '/tmp'}/bloops-probe-signin-gate`])],
     protocolTimeout: 240000,
   });
 

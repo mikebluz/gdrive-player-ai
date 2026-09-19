@@ -215,6 +215,10 @@
 - **A tap-to-cycle number is a bug**; so is a control that is absent in some states. **Render it and
   DISABLE it**, with the reason in the title — a conditionally-rendered control cannot be found,
   learned, or asked about. A press that cannot act should REFUSE AND EXPLAIN rather than do nothing.
+  **`disabled` is the wrong tool for that (2026-09-19, "why can't i click it"):** a disabled button
+  cannot take the press to explain itself, and its title never shows on a phone — so it is a dead
+  control with a secret reason. Dim it with a CLASS, keep it pressable, and let the press either do
+  the prerequisite itself (the clock switch releases a frozen take, then sets the clock) or toast why.
 - **A control is a mode, a status, or an action — never two.** On an on/off toggle put the FEATURE'S
   NAME on the face and the state in the fill; a label that exists only while the mode is active cannot
   be found by someone looking for the mode. **A ONE-WORD FACE IS READ AS THE CURRENT STATE, whatever

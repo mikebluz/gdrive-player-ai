@@ -226,7 +226,8 @@
   `vizChrome`) the second writer that re-lights it. ⚙ Deep ▸ 🎲 Take keeps Each cycle / Evolve / How
   much / Against as the FINE view of the same fields — the handler mirrors into them and into the
   staged copy, so ✓ Done cannot hand the old clock back. A new surface on this axis goes on the
-  switch, not beside it.
+  switch, not beside it. On a FROZEN take the stops are dimmed (`.v2-clockfrozen`), never
+  `disabled` — the press releases the take (`V2.release`, silent, keeps the notes) and sets the clock.
   **EVOLVES IS ITS OWN STATE WORD (2026-09-19):** `liveness().state` is `fixed · varies · evolves`
   and `stateWord()` (UI half) is the ONLY map from it to a word — never derive the word from `.live`
   or `.tags`; three surfaces did, which is how a third state reaches some and not others. Its hue is

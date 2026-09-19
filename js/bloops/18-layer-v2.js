@@ -7112,9 +7112,14 @@
   // ⚙ Deep keeps its rows as the fine view of the SAME fields (How much and
   // Against have no face here — they mean nothing until it evolves), and the
   // handler mirrors into them, so the two can never disagree.
-  // RENDERED AND DISABLED on a frozen part, with the way back in the title:
-  // a stop that vanished would be a missing feature, not "cannot act".
-  const CLOCK_FROZEN = 'Frozen — ⋯ ▸ ⚡ Release goes back to the live rules first';
+  // ON A FROZEN TAKE THE PRESS RELEASES IT (2026-09-19, "why can't i click
+  // it"). The first cut rendered the stops `disabled` with the way back in
+  // the title — and a disabled button cannot take the press to explain
+  // itself, while its title never shows on a phone: a dead control with a
+  // secret reason. The stops are DIMMED (a class) and stay pressable; the
+  // press does the prerequisite itself — the same silent, note-keeping
+  // `release` the ⋯ menu offers — then takes the clock.
+  const CLOCK_FROZEN = 'Frozen take — press to go back to the live rules with this';
   const CLOCK_SW = [
     ['fixed',   '✓ This take',  'this take plays, every cycle — nothing is re-decided'],
     ['evolves', '⟳ Evolve',     'the rules decide again every N passes, keeping How much of the material (⚙ Deep ▸ 🎲 Take for How much and Against)'],
@@ -7148,8 +7153,8 @@
     const frozen = L.part.kind === 'recorded';
     return '<span class="ambient-seg-row v2-statesw" role="group" title="How often the notes are re-decided">' +
       CLOCK_SW.map(([k, face, why]) =>
-        '<button type="button" class="ambient-seg v2-statebtn" data-state="' + k + '"' +
-          (frozen ? ' disabled' : '') + ' title="' + esc(frozen ? CLOCK_FROZEN : why) + '">' + face + '</button>').join('') +
+        '<button type="button" class="ambient-seg v2-statebtn' + (frozen ? ' v2-clockfrozen' : '') + '" data-state="' + k + '"' +
+          ' title="' + esc(frozen ? CLOCK_FROZEN : why) + '">' + face + '</button>').join('') +
       '</span>' +
       // EVERY N — the one number Evolve needs on the face. `st` gives it the
       // card's own id (no -gen), so it is a second control over `chg.ev`
@@ -7170,7 +7175,7 @@
     card.querySelectorAll('.v2-statesw .v2-statebtn').forEach((b) => {
       const bk = b.getAttribute('data-state');
       b.classList.toggle('on', bk === k);
-      b.disabled = frozen;
+      b.classList.toggle('v2-clockfrozen', frozen);
       const want = frozen ? CLOCK_FROZEN : CLOCK_WHY[bk];
       if (b.title !== want) b.title = want;
     });
@@ -16912,9 +16917,24 @@
         // below: it changes what the NEXT cycles play.
         const sbt = t.closest('.v2-statebtn');
         if (sbt) {
-          if (sbt.disabled) return;
           const ctx = layerOf(sbt); if (!ctx) return;
           const k = sbt.getAttribute('data-state');
+          // A FROZEN TAKE RELEASES ON THE PRESS — `V2.release` is silent and
+          // keeps the notes (the live spec was never discarded) — then takes
+          // the clock, and the card is rebuilt as the ⋯ menu's door does.
+          if (ctx.L.part.kind === 'recorded') {
+            if (!V2.release(E, ctx.L)) return;
+            setClock(ctx.L, k);
+            try { E.getCfg(); } catch (e) {}
+            try {
+              const said = (k === 'evolves') ? ('evolving every ' + (((ctx.L.chg || {}).ev | 0) || 4) + ' passes')
+                         : (k === 'varies') ? 'a fresh roll every cycle' : 'this take plays, every cycle';
+              if (typeof showToast === 'function') showToast('Live again — ' + said + '.');
+            } catch (e) {}
+            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            h._sig = ''; V2.render(E);
+            return;
+          }
           setClock(ctx.L, k);
           // ⚙ Deep open on this layer edits a STAGED copy — write it too, or
           // its ✓ Done hands the old clock back

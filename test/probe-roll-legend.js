@@ -309,6 +309,24 @@ const ok = (name, cond, detail) => {
   const s3 = await press('varies');
   ok('🎲 Each cycle: lit, vary on, badge VARIES, Every row gone, no chip', s3.lit && s3.shown && s3.vary &&
      s3.badge === 'VARIES' && !s3.everyShown && !s3.chip, JSON.stringify(s3));
+  // …and on a FROZEN take the press RELEASES it and sets the clock — never a
+  // disabled button ("why can't i click it": a disabled stop cannot take the
+  // press to explain itself, and its title never shows on a phone).
+  await page.evaluate(() => {
+    const L = (_masterEng.getCfg().layers || [])[0];
+    window._v2.capture(_masterEng, L); _masterEng.getCfg(); window._v2.render(_masterEng);
+  });
+  await zz(900); await open();
+  const fr = await page.evaluate(() => {
+    const b = document.querySelector('.v2-layer .v2-statebtn[data-state="evolves"]');
+    return { frozenCls: !!b?.classList.contains('v2-clockfrozen'), disabled: !!b?.disabled,
+      kind: (_masterEng.getCfg().layers || [])[0]?.part?.kind };
+  });
+  ok('a frozen take dims the switch but never disables it', fr.kind === 'recorded' && fr.frozenCls && !fr.disabled,
+     JSON.stringify(fr));
+  const s4 = await press('evolves');
+  ok('⟳ Evolve on a frozen take releases it and evolves', s4.lit && !s4.vary && s4.ev > 0 && s4.badge === 'EVOLVES',
+     JSON.stringify(s4));
 
   // ---- the invariant, stated once ----------------------------------------
   const shown = [v, back, f, ev];                 // every state with the picture up

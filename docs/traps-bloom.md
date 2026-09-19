@@ -232,6 +232,11 @@
   copy. On a FROZEN take the button is dimmed (`.v2-clockfrozen`), never `disabled` — the press
   releases (`V2.release`, silent, keeps the notes) and turns Evolve on. A new surface on this axis
   goes on this button, not beside it.
+  **THE SWEEP NAMES WHAT IT PASSES (2026-09-19):** the playhead overlay (`vizFrame`) stacks the
+  sounding pitches' names high → low beside the sweep, the chord under it on top (from
+  `cv._chordGeo.marks`, the band's own claim — never a second walk of the chord clock), and lights
+  their keys in the gutter; published as `ph._readout`. It reads `cv._hits[].midi`, so a hit box
+  without a pitch is a note the readout cannot name — keep `midi` on every hit.
   **EVOLVES IS ITS OWN STATE WORD (2026-09-19):** `liveness().state` is `fixed · varies · evolves`
   and `stateWord()` (UI half) is the ONLY map from it to a word — never derive the word from `.live`
   or `.tags`; three surfaces did, which is how a third state reaches some and not others. Its hue is

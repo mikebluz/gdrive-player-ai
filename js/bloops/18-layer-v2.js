@@ -9467,9 +9467,11 @@
       // …AND THE NOTES UNDER IT. Green, because green means "sounding"
       // everywhere else in this app — the one hue the palette reserves.
       const hits = cv._hits || [];
+      const lit = [];   // the pitches under the sweep — the readout below names them
       for (let i = 0; i < hits.length; i++) {
         const b2 = hits[i];
         if (x < b2.x - 0.5 || x > b2.x + b2.w + 0.5) continue;
+        if (Number.isFinite(b2.midi)) lit.push(Math.round(b2.midi));
         g.fillStyle = 'rgba(72,187,120,0.85)';
         g.strokeStyle = '#c6f6d5'; g.lineWidth = 1;
         g.beginPath();
@@ -9477,6 +9479,54 @@
         // byte-on-top of the note it lights
         g.rect(b2.x, b2.y, b2.w, b2.h);
         g.fill(); g.stroke();
+      }
+      // ── WHAT IS SOUNDING, IN LETTERS (2026-09-19) ─────────────────────
+      // "we should have a vertical note readout as each note/chord plays."
+      // The lit boxes say WHERE the sounding notes are; with thirty notes and
+      // seven takes' outlines behind them that is not readable as a chord.
+      // This says WHAT they are: the names stacked high → low beside the
+      // sweep, the chord the harmony has under it on top (from the chord
+      // band's own marks, so the two can never disagree), and the keys they
+      // sit on lit in the gutter. On the overlay, so it is a few fillTexts a
+      // frame and never redraws the roll; pinned to the top of the plot so
+      // it does not jump with the pitch; flipped to the sweep's left near
+      // the right edge so it is never clipped. Published as `ph._readout`
+      // so a probe reads the picture's own claim.
+      ph._readout = null;
+      if (onScreen && lit.length) {
+        const ms = lit.filter((m, i, a) => a.indexOf(m) === i).sort((a, b) => b - a);
+        const pg = cv._pitchGeo;
+        if (pg && pg.rowH > 0) {
+          g.fillStyle = 'rgba(72,187,120,0.55)';
+          ms.forEach((m) => {
+            if (m < pg.loM || m > pg.hiM) return;
+            g.fillRect(0, pg.top + (pg.hiM - m) * pg.rowH, Math.max(0, x0 - 1), Math.max(1, pg.rowH));
+          });
+        }
+        let chord = '';
+        try {
+          const cg = cv._chordGeo;
+          const mk = cg && cg.marks && cg.marks.find((q) => frac >= q.f0 && frac < q.f1);
+          chord = (mk && mk.nm) || '';
+        } catch (e) { chord = ''; }
+        const names = ms.map(noteName);
+        const lines = (chord ? [chord] : []).concat(names);
+        g.save();
+        g.font = 'bold 10px -apple-system, Segoe UI, sans-serif';
+        g.textBaseline = 'middle'; g.textAlign = 'left';
+        const LH = 12, PX = 5;
+        const bw = Math.ceil(Math.max.apply(null, lines.map((s) => g.measureText(s).width))) + PX * 2;
+        const bh = lines.length * LH + 4;
+        let bx = x + 6; if (bx + bw > x0 + PLOT) bx = x - 6 - bw;
+        const by = TOP + 3;
+        g.fillStyle = 'rgba(13,13,26,0.86)'; g.fillRect(bx, by, bw, bh);
+        g.strokeStyle = 'rgba(198,246,213,0.6)'; g.lineWidth = 1; g.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+        lines.forEach((s, i) => {
+          g.fillStyle = (chord && i === 0) ? '#b9a7ee' : '#c6f6d5';
+          g.fillText(s, bx + PX, by + 2 + i * LH + LH / 2);
+        });
+        g.restore();
+        ph._readout = { chord, names, x: bx, y: by, w: bw, h: bh };
       }
       g.strokeStyle = 'rgba(198,246,213,0.9)'; g.lineWidth = 1.5;
       // …only when the moment it marks is actually in view: a sweep pinned to

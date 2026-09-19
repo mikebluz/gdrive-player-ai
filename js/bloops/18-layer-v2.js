@@ -11488,6 +11488,18 @@
             ? _ambNotesButtonHtml('v2-' + L.id).replace('<div class="ambient-ctrl"',
                 '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth"')
             : '') +
+          // ── EVERYTHING THAT DEPENDS ON THE PITCH CHOICE, UNDER IT ────────
+          // user: "move any params that are dependent on a Pitch selection into
+          // the Pitch tab". Each of these was an untabbed row, so each became a
+          // CHIP OF ITS OWN in the strip — and since they are gated per kind,
+          // the strip changed shape every time Pitch changed: a row of siblings
+          // that were really its children. They are its tab now, so the answer
+          // to "what else does this choice ask me" is in one place.
+          // NOT MOVED: Harmony and Length are gated `kind:live` only (they read
+          // every pitch kind), and ▸ Voicing is already one cluster rather than
+          // loose chips — folding its nine rows in here would trade a wall of
+          // chips for a wall of rows.
+          tb('Pitch',
           sel(L, 'part.pitch.kind', 'Pitch', t.kind, PITCH_OPTS, 'kind:live;voice:synth') +
           st(L, 'part.pitch.voices', 'Voices', t.voices, 1, 9, 'notes per onset', 'kind:live;voice:synth;pitch:chord,stack,mixed') +
           // THE BALANCE for Mixed — how often an onset is a chord rather than
@@ -11517,7 +11529,8 @@
               [['floor', 'Floor — walk up from Register'], ['center', 'Centre — Register in the middle'],
                ['ceiling', 'Ceiling — walk down from Register']], 'kind:live;voice:synth;pitch:walk') +
           sl(L, 'part.pitch.contour', 'Contour', num(t.contour, 0), -100, 100, 'fall → rise',
-             'kind:live;voice:synth;pitch:walk') +
+             'kind:live;voice:synth;pitch:walk')
+          ) +
           // HARMONY PARTS — chips, because it is a SET, not a choice: a line can
           // carry a 3rd and a 6th at once, which is what "multiple-part
           // harmonies" means. Intervals are SOURCE TONES, so they stay in the
@@ -11526,8 +11539,9 @@
           // live pitch kind, so it is gated on kind:live only.
           harmRowHtml(L, t) +
 
-          st(L, 'part.pitch.octaves', 'Octaves', num(t.octaves, 2), 1, 4, 'how far the sweep climbs',
-             'kind:live;voice:synth;pitch:series') +
+          tb('Pitch',
+            st(L, 'part.pitch.octaves', 'Octaves', num(t.octaves, 2), 1, 4, 'how far the sweep climbs',
+               'kind:live;voice:synth;pitch:series')) +
           sl(L, 'part.shape.lenRatio', 'Length', sh.lenRatio, 1, 400, '% of the onset span', 'kind:live') +
           '<div data-v2tab="Length" class="ambient-ctrl"><label>Ring out</label>' +
             '<button type="button" class="ambient-seg v2-ringtoggle' + (L.ring ? ' on' : '') + '">' +

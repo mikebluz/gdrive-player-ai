@@ -58,7 +58,9 @@ const ok = (name, cond, detail) => {
     const openInstr = async () => {
       const d = document.querySelector('.v2-layer .v2-gototab[data-goto="Instrument"]');
       if (d) { d.click(); await wait(460); }
-      const b = document.querySelector('.v2-layer .v2-pop-tabs [data-tab="Note"]');
+      // NOTE IS UNDER PITCH (2026-09-18) — it is a sub-param of the pitch
+      // choice, not a sibling of it, so it stopped being a chip of its own.
+      const b = document.querySelector('.v2-layer .v2-pop-tabs [data-tab="Pitch"]');
       if (b) { b.click(); await wait(300); }
       return !!b;
     };

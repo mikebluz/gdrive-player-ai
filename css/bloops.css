@@ -16228,6 +16228,19 @@ select.ambient-select.v2-gridpick {
    and no breakpoint exists at which it works. A 50% basis is the answer, not
    a media query. */
 .v2-partviz .v2-takebar .ambient-seg { flex: 1 1 calc(50% - 3px); }
+/* ✓ This take · ⟳ Evolve · 🎲 Each cycle — the re-decide clock, on the face
+   (2026-09-19, "Evolve feels buried in the Deep menu"). Three stops in one
+   row at every width (short faces, so 390px fits them), the lit stop in the
+   STATE'S hue — lime for Evolve (`--evo`), amber for Each cycle (VARIES) —
+   so the switch and the badge above it are visibly the same fact. */
+.v2-partviz .v2-statesw { display: flex; gap: 6px; margin-top: 6px; min-width: 0; }
+.v2-partviz .v2-statesw .ambient-seg { flex: 1 1 0; min-width: 0; min-height: 40px; white-space: nowrap; }
+.v2-partviz .v2-statesw .v2-statebtn[data-state="evolves"].on { border-color: var(--evo, #b8f24a); color: var(--evo, #b8f24a); background: rgba(184, 242, 74, 0.14); }
+.v2-partviz .v2-statesw .v2-statebtn[data-state="varies"].on { border-color: #f6ad55; color: #f6ad55; background: rgba(246, 173, 85, 0.14); }
+.v2-partviz .v2-statesw .v2-statebtn[disabled] { opacity: 0.45; cursor: not-allowed; }
+/* the Every N row under it — Evolve's one number on the face; gated off
+   unless it evolves, so it takes no room otherwise */
+.v2-partviz .ambient-ctrl.v2-evoevery { margin-top: 6px; }
 /* A note in the drawing is a control, so say so — and keep the finger target
    generous (the hit test pads the 6px note box; this is only the cursor). */
 .v2-partviz .v2-vizcv { cursor: pointer; touch-action: manipulation; }

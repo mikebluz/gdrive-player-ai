@@ -7098,6 +7098,87 @@
          tapTxt(L, ' \u00b7 tap a step to toggle it'));
     liveBadge(lab);
   }
+  // ── HOW OFTEN THE NOTES ARE RE-DECIDED: ONE CONTROL, ON THE FACE ──────
+  // (2026-09-19, "now Evolve feels buried in the Deep menu".) The axis had
+  // two doors, both two presses deep in ⚙ Deep ▸ 🎲 Take — Each cycle and
+  // Evolve — and the traps file has said since the day Evolve got a door
+  // that `vary` IS Evolve at ev 1 / am 100 and the two should be ONE
+  // control: never · every N passes · every cycle. This is it, on the take
+  // bar, where the take's own actions live and where it survives the
+  // picture's fold. The three stops use ⚙ Deep's OWN labels (✓ Play this
+  // take · Evolve · Each cycle) so the fine view and the face are one
+  // vocabulary; the lit stop wears the state's hue (Evolve lime, Each cycle
+  // amber), so the switch and the badge above it read as the same fact.
+  // ⚙ Deep keeps its rows as the fine view of the SAME fields (How much and
+  // Against have no face here — they mean nothing until it evolves), and the
+  // handler mirrors into them, so the two can never disagree.
+  // RENDERED AND DISABLED on a frozen part, with the way back in the title:
+  // a stop that vanished would be a missing feature, not "cannot act".
+  const CLOCK_FROZEN = 'Frozen — ⋯ ▸ ⚡ Release goes back to the live rules first';
+  const CLOCK_SW = [
+    ['fixed',   '✓ This take',  'this take plays, every cycle — nothing is re-decided'],
+    ['evolves', '⟳ Evolve',     'the rules decide again every N passes, keeping How much of the material (⚙ Deep ▸ 🎲 Take for How much and Against)'],
+    ['varies',  '🎲 Each cycle', 'a fresh roll every cycle — Evolve at its extreme'],
+  ];
+  const CLOCK_WHY = {}; CLOCK_SW.forEach(([k, , why]) => { CLOCK_WHY[k] = why; });
+  // WHICH STOP IS LIT — from `liveness()` for the Evolve answer (the one
+  // computation of that axis; it already applies the recorded/am-0/vary
+  // qualifiers) and from the field for `vary`, which is exactly what the
+  // stop sets. A frozen part lights nothing: its state is FROZEN.
+  function clockOf(L, cfg) {
+    if (!L || !L.part || L.part.kind === 'recorded') return '';
+    if (L.part.vary) return 'varies';
+    let lv = null; try { lv = V2.liveness(L, cfg); } catch (e) {}
+    return (lv && lv.state === 'evolves') ? 'evolves' : 'fixed';
+  }
+  // THE WRITE, in one place — the face's handler and nothing else calls it,
+  // but the staged copy in ⚙ Deep needs the same write or ✓ Done reverts it.
+  function setClock(L, k) {
+    if (!L.chg || typeof L.chg !== 'object') L.chg = {};
+    if (k === 'varies') { L.part.vary = 1; return; }
+    delete L.part.vary;
+    if (k === 'evolves') {
+      if (!((L.chg.ev | 0) > 0)) L.chg.ev = 4;                    // the emitter's own default
+      if (L.chg.am != null && (L.chg.am | 0) <= 0) L.chg.am = 100; // 0% is "never", by the emitter's rule
+    } else {
+      L.chg.ev = 0;
+    }
+  }
+  function clockSwHtml(L) {
+    const frozen = L.part.kind === 'recorded';
+    return '<span class="ambient-seg-row v2-statesw" role="group" title="How often the notes are re-decided">' +
+      CLOCK_SW.map(([k, face, why]) =>
+        '<button type="button" class="ambient-seg v2-statebtn" data-state="' + k + '"' +
+          (frozen ? ' disabled' : '') + ' title="' + esc(frozen ? CLOCK_FROZEN : why) + '">' + face + '</button>').join('') +
+      '</span>' +
+      // EVERY N — the one number Evolve needs on the face. `st` gives it the
+      // card's own id (no -gen), so it is a second control over `chg.ev`
+      // beside ⚙ Deep's, and the `.v2-f` commit mirrors the two (the Level
+      // rule). Gated like Deep's How much: present only while it evolves.
+      st(L, 'chg.ev', 'Every', ((L.chg || {}).ev | 0) || 4, 1, 64,
+         'passes before the rules decide again — How much and Against are in ⚙ Deep ▸ 🎲 Take',
+         'kind:live;vary:off;evo:on')
+        .replace('class="ambient-ctrl', 'class="ambient-ctrl v2-evorow v2-evoevery');
+  }
+  // THE SECOND WRITER. Every route that moves this axis — ⚙ Deep's rows and
+  // ✓ Done, ⚡ Release, a tap that freezes, a Material door — ends in a
+  // redraw, and the redraw ends in `vizChrome`, so the switch is re-lit from
+  // the model there rather than by each of those routes remembering to.
+  function clockSwSync(card, L) {
+    let cfg = null; try { cfg = _cfgOf(); } catch (e) {}
+    const k = clockOf(L, cfg), frozen = L.part.kind === 'recorded';
+    card.querySelectorAll('.v2-statesw .v2-statebtn').forEach((b) => {
+      const bk = b.getAttribute('data-state');
+      b.classList.toggle('on', bk === k);
+      b.disabled = frozen;
+      const want = frozen ? CLOCK_FROZEN : CLOCK_WHY[bk];
+      if (b.title !== want) b.title = want;
+    });
+    const ev = ((L.chg || {}).ev | 0);
+    if (ev > 0) card.querySelectorAll('.v2-evoevery .v2-f[data-f="chg.ev"]').forEach((i) => {
+      if ((+i.value | 0) !== ev) i.value = ev;
+    });
+  }
   function partVizHtml(L) {
     const cf = capFace(L);
     // THE TAKE BAR lives INSIDE the viz block, not in an `.ambient-ctrl` — the
@@ -7223,6 +7304,7 @@
         '<button type="button" class="ambient-seg v2-mact" data-ma="d+1" title="Lengthen all by one grid cell">\u21e5</button>' +
         '<button type="button" class="ambient-seg v2-mact v2-mclear" data-ma="clear" title="Gather nothing">\u2715</button>' +
       '</span>' +
+      clockSwHtml(L) +
       '<span class="ambient-seg-row v2-takebar">' +
         '<button type="button" class="ambient-seg v2-newtake"' +
           ' title="Roll this part again — it asks first whether to keep the take you have (save it to the bank) or roll over it. Preview never re-rolls on its own, so what you are hearing stays until you press this.">🎲 New take</button>' +
@@ -7250,8 +7332,9 @@
         // the transport STOPPED nothing is re-decided, so every part is frozen
         // — the word cannot name a per-layer setting. What it was really doing
         // is one point on the axis HOW OFTEN THE NOTES ARE RE-DECIDED (never →
-        // every N passes → every pass), which is becoming ONE control; until
-        // that lands, editing still freezes a part for you (the pen, a drag, a
+        // every N passes → every pass), which IS one control now — the
+        // `.v2-statesw` switch above this bar (2026-09-19). Editing still
+        // freezes a part for you (the pen, a drag, a
         // tap, ✎ Draw) and picking a shape in ⚙ Deep hands it back to the rules.
         // `capFace` is kept — the sync and the handler below still read it.
         // 💾 SAVE THIS TAKE IS GONE FROM HERE (2026-09-18). It sat right beside
@@ -9521,6 +9604,7 @@
   }
   function vizChrome(card, L, E) {
     try { matSync(card, L); } catch (e) {}
+    try { clockSwSync(card, L); } catch (e) {}
     try { neSync(card, L, E); } catch (e) {}
     try {
       // (no freeze button to sync — see `partVizHtml`. The handler stays, so a
@@ -15893,6 +15977,9 @@
         // that pads differently is exactly how the two come to disagree. Only
         // the row needs rebuilding, so the grid follows the number above it.
         if (path === 'tg.steps') { h._sig = ''; V2.render(E); }
+        // Evolve's clock moved: the badge, the chip and the outlines all read
+        // it, and none of them is rebuilt by the gate pass alone
+        if (!staged0 && path.indexOf('chg.') === 0) { try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {} }
       });
 
       // KNOB DRAG — delegated once, so knobs are pure markup that any rebuild
@@ -16820,6 +16907,45 @@
           return;
         }
 
+        // ✓ This take · ⟳ Evolve · 🎲 Each cycle — the face's switch over the
+        // re-decide clock (`clockSwHtml`). Same follow-through as Each cycle
+        // below: it changes what the NEXT cycles play.
+        const sbt = t.closest('.v2-statebtn');
+        if (sbt) {
+          if (sbt.disabled) return;
+          const ctx = layerOf(sbt); if (!ctx) return;
+          const k = sbt.getAttribute('data-state');
+          setClock(ctx.L, k);
+          // ⚙ Deep open on this layer edits a STAGED copy — write it too, or
+          // its ✓ Done hands the old clock back
+          try { const S = V2.stagedOf(ctx.L.id | 0); if (S && S !== ctx.L) setClock(S, k); } catch (e) {}
+          try { E.getCfg(); } catch (e) {}
+          // mirror ⚙ Deep's faces of the same fields, if they are built
+          try {
+            const vt = ctx.card.querySelector('.v2-varytoggle');
+            if (vt) {
+              vt.classList.toggle('on', !!ctx.L.part.vary);
+              vt.textContent = ctx.L.part.vary ? '🎲 Re-roll every cycle' : '✓ Play this take';
+            }
+            const vh = ctx.card.querySelector('.v2-varyhint');
+            const tk = ((ctx.L.part.take | 0) + 1);
+            if (vh) vh.textContent = ctx.L.part.vary
+              ? ('a fresh roll each cycle — the drawing is take ' + tk + ', one of many')
+              : ('take ' + tk + ' is what plays, every cycle');
+            const ev = ((ctx.L.chg || {}).ev | 0);
+            ctx.card.querySelectorAll('.v2-f[data-f="chg.ev"]').forEach((i) => { if ((+i.value | 0) !== ev) i.value = ev; });
+          } catch (e) {}
+          try { applyGate(ctx.card, ctx.L); } catch (e) {}
+          try {
+            if (E.timer && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined') {
+              cancelBloomFutureVoices('v2:' + ctx.L.id, Tone.now());
+            }
+          } catch (e) {}
+          try { if (E._v2Phase) delete E._v2Phase['v2:' + ctx.L.id]; } catch (e) {}
+          try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}   // re-lights the switch via vizChrome
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          return;
+        }
         const vry = t.closest('.v2-varytoggle');
         if (vry) {
           const ctx = layerOf(vry); if (!ctx) return;

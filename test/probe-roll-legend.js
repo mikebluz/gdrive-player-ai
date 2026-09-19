@@ -273,6 +273,43 @@ const ok = (name, cond, detail) => {
   await page.evaluate(() => { document.querySelector('.v2-layer .v2-gencancel')?.click(); });
   await zz(400); await open();
 
+  // ---- 4c. THE SWITCH ON THE FACE (2026-09-19) ----------------------------
+  // "Evolve feels buried in the Deep menu." ✓ This take · ⟳ Evolve · 🎲 Each
+  // cycle sit on the take bar; each stop is driven with a real click and the
+  // config read back, the lit stop measured (rect + offsetParent) and its
+  // colour compared to the stylesheet, and the Every row shown exactly while
+  // it evolves.
+  console.log('\nthe switch on the card face');
+  const press = async (k) => {
+    await page.evaluate((k) => { document.querySelector('.v2-layer .v2-statebtn[data-state="' + k + '"]')?.click(); }, k);
+    await zz(900); await open();
+    return page.evaluate((k) => {
+      const card = document.querySelector('.v2-layer');
+      const L = (_masterEng.getCfg().layers || [])[0];
+      const b = card?.querySelector('.v2-statebtn[data-state="' + k + '"]');
+      const r = b?.getBoundingClientRect();
+      const evr = card?.querySelector('.v2-evoevery');
+      const er = evr?.getBoundingClientRect();
+      return { lit: !!b?.classList.contains('on'), shown: !!(b && b.offsetParent && r.width > 0 && r.height > 0),
+        color: b ? getComputedStyle(b).color : '', vary: !!L?.part?.vary, ev: ((L?.chg || {}).ev | 0),
+        badge: card?.querySelector('.v2-vizlab .v2-livebadge')?.textContent,
+        everyShown: !!(evr && evr.offsetParent && getComputedStyle(evr).display !== 'none' && er.height > 0),
+        everyVal: evr ? +(evr.querySelector('.v2-f[data-f="chg.ev"]')?.value) : null,
+        deepEv: +(card?.querySelector('.v2-genwrap .v2-f[data-f="chg.ev"]')?.value),
+        chip: !!card?.querySelector('.v2-vizcv')?._evoChip };
+    }, k);
+  };
+  const s1 = await press('fixed');
+  ok('✓ This take: lit, vary off, Evolve 0, no chip, no Every row', s1.lit && s1.shown && !s1.vary && s1.ev === 0 &&
+     s1.badge !== 'EVOLVES' && !s1.chip && !s1.everyShown, JSON.stringify(s1));
+  const s2 = await press('evolves');
+  ok('⟳ Evolve: lit in the hue, defaults to every 4, badge EVOLVES, chip drawn, Every row reachable and mirrored into ⚙ Deep',
+     s2.lit && s2.shown && s2.color === es.evoRgb && !s2.vary && s2.ev === 4 && s2.badge === 'EVOLVES' && s2.chip &&
+     s2.everyShown && s2.everyVal === 4 && s2.deepEv === 4, JSON.stringify(s2));
+  const s3 = await press('varies');
+  ok('🎲 Each cycle: lit, vary on, badge VARIES, Every row gone, no chip', s3.lit && s3.shown && s3.vary &&
+     s3.badge === 'VARIES' && !s3.everyShown && !s3.chip, JSON.stringify(s3));
+
   // ---- the invariant, stated once ----------------------------------------
   const shown = [v, back, f, ev];                 // every state with the picture up
   ok('said exactly when outlines are drawn', shown.every((s) => s.says === (s.ghostN > 0)),

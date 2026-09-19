@@ -220,6 +220,13 @@
   FIXED while 24 outlines sat behind it. **Before adding a fourth surface to this axis, collapse it:**
   one control — never / every N passes / every cycle — with `part.vary` kept as a stored key for
   save-compat. `part.kind` (live vs frozen) is a genuinely different axis and stays.
+  **COLLAPSED 2026-09-19 ("Evolve feels buried in the Deep menu"):** `.v2-statesw` on the take bar —
+  ✓ This take · ⟳ Evolve · 🎲 Each cycle — is THE door, with an `Every N` stepper (`st`, card id,
+  `chg.ev`) beneath it while it evolves; `setClock` is the one writer and `clockSwSync` (from
+  `vizChrome`) the second writer that re-lights it. ⚙ Deep ▸ 🎲 Take keeps Each cycle / Evolve / How
+  much / Against as the FINE view of the same fields — the handler mirrors into them and into the
+  staged copy, so ✓ Done cannot hand the old clock back. A new surface on this axis goes on the
+  switch, not beside it.
   **EVOLVES IS ITS OWN STATE WORD (2026-09-19):** `liveness().state` is `fixed · varies · evolves`
   and `stateWord()` (UI half) is the ONLY map from it to a word — never derive the word from `.live`
   or `.tags`; three surfaces did, which is how a third state reaches some and not others. Its hue is

@@ -309,7 +309,20 @@
     } catch (e) {}
     // `tags` name WHAT varies (notes · chance · chords · timing · loudness),
     // once each — several reasons can move the same thing
-    return { live: why.length > 0, why, tags: tags.filter((x, i, a) => a.indexOf(x) === i) };
+    // ── THE STATE, AS ONE WORD (2026-09-19) ─────────────────────────────
+    // fixed · varies · evolves. EVOLVE IS ITS OWN STATE, not a reason inside
+    // VARIES: it is a CLOCK (the rules decide again every `ev` passes) where
+    // everything else counted above is per-pass dice, and folding the two
+    // into one badge read as one mechanism ("Evolve needs to be its own
+    // state, there are too many overlapping states"). Every surface reads
+    // this field, and `stateWord` in the UI half is the ONE place it becomes
+    // a word — three surfaces used to derive VARIES/FIXED from `.live` on
+    // their own, which is how a third state would have reached some and not
+    // others. `vary` on still wins (the emitter says so); `evAny` is already
+    // 0 there, so the order below needs no second check.
+    const state = (evAny > 0) ? 'evolves' : (why.length ? 'varies' : 'fixed');
+    return { live: why.length > 0, state, evolve: (evAny > 0) ? { ev: evAny } : null,
+      why, tags: tags.filter((x, i, a) => a.indexOf(x) === i) };
   }
 
   // ── THE MATERIAL'S FORM ─────────────────────────────────────────────────
@@ -7022,9 +7035,21 @@
     // FROZEN leads when it is true, and NOTHING leads when it is not: a part
     // making its notes from the rules is the ordinary case and needs no word.
     const frozen = !!(L && L.part && L.part.kind === 'recorded');
-    const varies = lv.live ? ('VARIES: ' + (lv.tags || lv.why).join(', ')) : 'FIXED';
+    // EVOLVES is the third word (2026-09-19), and it carries its clock —
+    // "every N passes" is the fact that separates it from VARIES.
+    const varies = lv.live ? (stateWord(lv) + evoCadence(lv) + ': ' + (lv.tags || lv.why).join(', ')) : 'FIXED';
     return frozen ? ('FROZEN \u00b7 ' + varies) : varies;
   }
+  // THE STATE'S WORD, IN ONE PLACE. `liveness().state` is fixed · varies ·
+  // evolves; this is the only map from it to a word, and STATE_CLS the only
+  // map from the word to its chip class — so a surface cannot know two of
+  // the three states. Never derive the word from `.live` or `.tags`.
+  const stateWord = (lv) => (lv && lv.state === 'evolves') ? 'EVOLVES' : ((lv && lv.live) ? 'VARIES' : 'FIXED');
+  const evoCadence = (lv) => (lv && lv.evolve && lv.evolve.ev > 0)
+    ? (' every ' + lv.evolve.ev + ' pass' + (lv.evolve.ev === 1 ? '' : 'es')) : '';
+  // null-prototyped: a summary value is looked up by name, and a plain object
+  // would answer for 'constructor'
+  const STATE_CLS = Object.assign(Object.create(null), { EVOLVES: 'v2-sum-evo', VARIES: 'v2-sum-live', FIXED: 'v2-sum-fixed' });
   // THE BADGE. Every writer sets plain textContent; this lifts the leading
   // LIVE/FIXED into its own span AFTER, so textContent (what every reader and
   // probe sees) is untouched and a new writer only has to call this.
@@ -7043,10 +7068,10 @@
       t.nodeValue = t.nodeValue.slice(m0[1].length).replace(/^\s*\u00b7\s*/, ' ');
       lab.insertBefore(sp0, t);
     }
-    const m = /^\s*(VARIES|FIXED)\b/.exec(t.nodeValue || '');
+    const m = /^\s*(EVOLVES|VARIES|FIXED)\b/.exec(t.nodeValue || '');
     if (!m) return;
     const sp = document.createElement('span');
-    sp.className = 'v2-livebadge ' + (m[1] === 'VARIES' ? 'v2-sum-live' : 'v2-sum-fixed');
+    sp.className = 'v2-livebadge ' + STATE_CLS[m[1]];
     sp.textContent = m[1];
     t.nodeValue = t.nodeValue.slice(m[0].length);
     lab.insertBefore(sp, t);
@@ -7336,6 +7361,51 @@
     }
     _cAnchorMemo = { sig: sig, at: org };
     return org;
+  }
+  // ⟳ EVOLVE'S OWN READOUT ON THE PICTURE (2026-09-19). The badge says
+  // EVOLVES, but the drawing is what people look at while it plays, and the
+  // one mode whose whole job is CHANGING the picture had nothing on the
+  // picture saying so. A chip in Evolve's hue at the top right: the cadence,
+  // and How much when it is below 100 (100 needs no saying — it is a fresh
+  // roll). Painted by BOTH drawings (the card's, and ⚙ Deep's staged one —
+  // where Evolve is set, so where turning it on must show first) from the
+  // same `chgAt` answer the emitter uses, and published as `cv._evoChip` so
+  // a probe reads the picture's own claim rather than re-deriving it.
+  // Absent exactly when Evolve cannot act — frozen, `vary` outranking it, or
+  // `ev` 0 (`chgAt` already folds `am` 0 into `ev` 0) — the same qualifier
+  // `liveness` applies, so chip and badge can never disagree.
+  // The hue is read off `--evo` ONCE and memoised, like the take palette;
+  // the fallback is the stylesheet's own value.
+  let EVO_HUE = '';
+  function evoHue() {
+    if (!EVO_HUE) {
+      try { EVO_HUE = (getComputedStyle(document.documentElement).getPropertyValue('--evo') || '').trim(); } catch (e) {}
+      if (!EVO_HUE) EVO_HUE = '#b794f4';
+    }
+    return EVO_HUE;
+  }
+  const evoActs = (L, evo) => !!(evo && evo.ev > 0 && L && L.part && L.part.kind !== 'recorded' && !L.part.vary);
+  function evoChip(g, evo, right, top) {
+    const ev = evo.ev | 0, am = Math.round(Number.isFinite(evo.am) ? evo.am : 100);
+    const txt = '\u27f3 EVOLVES every ' + ev + ' pass' + (ev === 1 ? '' : 'es') + (am < 100 ? ' \u00b7 ' + am + '%' : '');
+    const hue = evoHue();
+    g.save();
+    g.font = 'bold 10px -apple-system, Segoe UI, sans-serif';
+    g.textAlign = 'left'; g.textBaseline = 'middle';
+    const tw = Math.ceil(g.measureText(txt).width);
+    const px = 5, hh = 15, ww = tw + px * 2, r = 3;
+    const x = Math.max(0, right - ww - 3) + 0.5, y = top + 3 + 0.5;
+    // a rounded box by hand — `roundRect` is missing on the WebKit this ships in
+    g.beginPath();
+    g.moveTo(x + r, y); g.lineTo(x + ww - r, y); g.quadraticCurveTo(x + ww, y, x + ww, y + r);
+    g.lineTo(x + ww, y + hh - r); g.quadraticCurveTo(x + ww, y + hh, x + ww - r, y + hh);
+    g.lineTo(x + r, y + hh); g.quadraticCurveTo(x, y + hh, x, y + hh - r);
+    g.lineTo(x, y + r); g.quadraticCurveTo(x, y, x + r, y); g.closePath();
+    g.fillStyle = 'rgba(13,13,26,0.85)'; g.fill();
+    g.strokeStyle = hue; g.lineWidth = 1; g.stroke();
+    g.fillStyle = hue; g.fillText(txt, x + px, y + hh / 2);
+    g.restore();
+    return { text: txt, ev, am, hue, x, y, w: ww, h: hh };
   }
   function drawPartViz(card, L, E) {
     // THE CARD'S DRAWING IS THE LAYER'S. A handler inside ✨ Quick / ⚙ Deep
@@ -8021,10 +8091,20 @@
     }
     cv._hidden = 0; navSync();
     cv._hits = []; cv._sel = -1;   // no notes drawn = nothing to hit-test against
+    // ⟳ EVOLVE'S CLOCK, asked ONCE per draw — `chgAt` is the one computation
+    // (the trap this file keeps rediscovering), and both the chip and the
+    // pass sampler below read this same answer. Asked regardless of kind: a
+    // FROZEN part still stores its Evolve, and the thaw hint needs to know.
+    let evo = null;
+    try { evo = V2.chgAt(L, { E: E, cfg: cfg }, cs, cyc) || null; } catch (e) { evo = null; }
+    const evoOn = evoActs(L, evo);
+    cv._evoChip = null;
     if (!played.length) {
       try { vizChrome(card, L, E); } catch (e) {}
       g.fillStyle = '#6b6b8a'; g.font = '12px -apple-system, Segoe UI, sans-serif';
       g.fillText('silent for this cycle', GUT + 8, TOP + (h - TOP) / 2 + 4);
+      // a silent cycle is still an evolving one — the chip says so
+      try { if (evoOn) cv._evoChip = evoChip(g, evo, w, TOP); } catch (e) {}
       if (lab) lab.textContent = liveTxt(L, cfg) + ' · ' + barTxt +
         ((cv._drawnPi >= 0 && Number.isFinite(L.partFor) && (cv._drawnPi | 0) !== (L.partFor | 0))
           ? ' \u2014 \ud83d\udc41 showing another part' : '');
@@ -8095,7 +8175,6 @@
       // the preview away from the one mode most about future takes.
       // Asked regardless of kind — a FROZEN part still stores its Evolve, and
       // the thaw hint below needs to know. `chgAt` reads nothing it must not.
-      const evo = V2.chgAt(L, { E: E, cfg: cfg }, cs, cyc) || null;
       const varies = L.part.kind !== 'recorded' && typeof pin0 !== 'object' &&
         (!!L.part.vary || !!(evo && evo.ev > 0));
       if (!L.part.vary && evo) evoEv = evo.ev | 0;
@@ -8398,6 +8477,8 @@
                 (fromPv ? ' · as previewed' : '')) + thawTxt + ghostTxt + overTxt + otherTxt;
       liveBadge(lab);
     }
+    // ⟳ painted LAST, so it sits over the notes rather than under them
+    try { if (evoOn) cv._evoChip = evoChip(g, evo, w, TOP); } catch (e) {}
     try { vizChrome(card, L, E); } catch (e) {}
   }
   // The viz block's live chrome — the note editor, and what the lock button
@@ -10716,6 +10797,12 @@
   // of the gesture wrote nothing ("changing Grid does nothing"). A stepper is
   // one commit per press, which a rebuild cannot interrupt — the same call
   // the Pattern tab already made for these exact fields.
+  // ⟳ EVOLVE'S ROWS WEAR ITS HUE (2026-09-19). Evolve is its own state (see
+  // `liveness().state`), and a state needs ONE colour everywhere it shows —
+  // the badge, the summary chip, the drawing's chip and the knobs that set it
+  // — or the knobs read as three more dice among the dice. Class only; the
+  // colour has one home (`--evo` in bloops.css).
+  const evoRow = (h) => h.replace('class="ambient-ctrl', 'class="ambient-ctrl v2-evorow');
   const gst = (L, field, label, v, min, max, hint, when, sfx) =>
     (typeof _ambStep === 'function')
       ? tag(_ambStep(label, uid(L, field) + '-gen' + (sfx || ''), min, max, v, hint), 'ambient-step-inp', field, when)
@@ -11501,23 +11588,23 @@
               // roll again every cycle IS evolve-every-pass-at-100%, which is
               // why the emitter lets `vary` outrank it — and why these rows
               // gate off while it is on rather than sitting there inert.
-              gst(L, 'chg.ev', 'Evolve', ((L.chg || {}).ev | 0), 0, 64,
+              evoRow(gst(L, 'chg.ev', 'Evolve', ((L.chg || {}).ev | 0), 0, 64,
                   'passes before the rules decide again \u2014 0 = never, this take plays on',
-                  'kind:live;vary:off') +
+                  'kind:live;vary:off')) +
               // THE THING v1 NEVER HAD. At 100 a change throws the whole part
               // away and rolls another; below it the part KEEPS that share of
               // its material and re-decides the rest, which is what lets a part
               // develop instead of only repeating or restarting.
-              gsl(L, 'chg.am', 'How much', num((L.chg || {}).am, 100), 0, 100,
+              evoRow(gsl(L, 'chg.am', 'How much', num((L.chg || {}).am, 100), 0, 100,
                   '% of the material each change touches \u2014 the rest is kept',
-                  'kind:live;vary:off;evo:on') +
+                  'kind:live;vary:off;evo:on')) +
               // WHICH CLOCK IT COUNTS. A string field, so a select is safe here
               // (the trance-gate trap is a select over a NUMBER); '' is absent,
               // which the emitter reads as 'pass'.
-              gsel(L, 'chg.clock', 'Against', ((L.chg || {}).clock === 'round') ? 'round' : '',
+              evoRow(gsel(L, 'chg.clock', 'Against', ((L.chg || {}).clock === 'round') ? 'round' : '',
                    [['', 'Passes of this part'], ['round', 'Rounds of the arrangement']],
                    'what a \u201cpass\u201d counts \u2014 with no progression the layer\u2019s own cycle is the pass',
-                   'kind:live;vary:off;evo:on') +
+                   'kind:live;vary:off;evo:on')) +
               ['fl', 'ls', 'th'].map((k) => dmRow(L, k)).join('') +
               disc('dice', 'Advanced: each die', '', 'kind:live')
                 .replace('<span class="ambient-hint">', '<span class="ambient-hint v2-dicesum">') +
@@ -12844,9 +12931,15 @@
         }
       }
       const played = notes.filter((n) => n && n.freq > 0 && n.at >= -1e-6 && n.at < cyc);
+      // ⟳ the STAGED Evolve on the staged drawing — this panel is where it is
+      // set, so this is where turning it on shows first (see `evoChip`).
+      let evoS = null;
+      try { if (cfg) evoS = V2.chgAt(S, { E: E, cfg: cfg }, 0, cyc) || null; } catch (e) { evoS = null; }
+      const chip = () => { try { cv._evoChip = evoActs(S, evoS) ? evoChip(g, evoS, wCss, TOP) : null; } catch (e) { cv._evoChip = null; } };
       if (!played.length) {
         g.fillStyle = '#6b6b8a'; g.font = '12px -apple-system, Segoe UI, sans-serif';
         g.fillText('silent for this cycle', 8, TOP + (hCss - TOP) / 2 + 4);
+        chip();
         return;
       }
       const mid = played.map((n) => 69 + 12 * Math.log2(n.freq / 440));
@@ -12860,6 +12953,7 @@
         const y = TOP + (hi - mid[i]) * rowH;
         g.fillRect(x, y, Math.min(w, wCss - x), Math.max(2, rowH - 1));
       });
+      chip();
     });
   }
   // THE GATE, STAGING-AWARE. A handler inside ✨ Quick / ⚙ Deep passes the
@@ -12921,7 +13015,7 @@
         try { lv = V2.liveness(L, cfgL) || lv; }
         catch (e) { try { console.warn('[v2] liveness failed', e && e.message); } catch (x) {} }
         const txt = lv.live
-          ? ('VARIES \u2014 ' + lv.why.join(' \u00b7 ') + '.' +
+          ? (stateWord(lv) + ' \u2014 ' + lv.why.join(' \u00b7 ') + '.' +
              ((/probability/.test(lv.why.join(' ')) || /changes|Salt|alternates/.test(lv.why.join(' ')))
                ? ' The reasons above that are not switches here belong to the arrangement \u2014 \u25a6 Schedule for a probability, \ud83e\uddc2 Salt and the changes for the rest.'
                : ''))
@@ -12937,7 +13031,7 @@
     // that repeats said "live" and a humanized static one said nothing.
     let lvS = { live: false };
     try { lvS = V2.liveness(L, _cfgOf()) || lvS; } catch (e) {}
-    const lvWord = lvS.live ? 'VARIES' : 'FIXED';
+    const lvWord = stateWord(lvS);
     const sum = card.querySelector('.v2-summary');
     if (sum) {
       sum.textContent = lvWord + ' \u00b7 ' + (p.kind === 'recorded'
@@ -12978,7 +13072,7 @@
       // Rhythm folded into Content, so its summary did too — the head keeps
       // carrying what its rows now hold (the dashboard rule).
       // ✺ LIVE says WHAT varies, in the badge's own words — or FIXED
-      Live: lvS.live ? ('VARIES \u00b7 ' + (lvS.tags || []).join(' \u00b7 ')) : 'FIXED',
+      Live: lvS.live ? (lvWord + ' \u00b7 ' + (lvS.tags || []).join(' \u00b7 ')) : 'FIXED',
       Content: (() => {
         const head = lvWord + (p.kind === 'recorded' ? ' \u00b7 ' + (p.notes || []).length + ' notes' : '') +
           ' \u00b7 ' + (p.clock === 'free' ? (p.ms || 2000) + 'ms free' : p.bars + ' bars');
@@ -13036,7 +13130,7 @@
       if (el._sumTxt !== want2) {
         el._sumTxt = want2;
         el.innerHTML = want2 ? want2.split(' · ').map((v) =>
-          '<span class="v2-sumv' + (v === 'VARIES' ? ' v2-sum-live' : v === 'FIXED' ? ' v2-sum-fixed' : '') + '">' + esc(v) + '</span>')
+          '<span class="v2-sumv' + (STATE_CLS[v] ? ' ' + STATE_CLS[v] : '') + '">' + esc(v) + '</span>')
           .join('<span class="v2-sumsep"> · </span>') : '';
       }
     });

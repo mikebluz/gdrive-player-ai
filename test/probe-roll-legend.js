@@ -218,6 +218,61 @@ const ok = (name, cond, detail) => {
   ok('the readout names them', ev.says === true, ev.text);
   ok('…and says how often they arrive', /one every 2 passes/.test(ev.text), ev.text);
 
+  // ---- 4b. EVOLVE IS ITS OWN STATE (2026-09-19) ---------------------------
+  // The readout and the badge say EVOLVES (not VARIES) and the badge wears
+  // `--evo`; the drawing carries its own chip, published as `cv._evoChip`
+  // (the picture's own claim, not a re-derivation); the three knobs that set
+  // it are marked `.v2-evorow`, REACHABLE (rect + offsetParent, through the
+  // ⚙ Deep door and the 🎲 Take tab — the way a person gets there), and their
+  // labels resolve to the same hue. One colour for one state, read from the
+  // stylesheet rather than restated here.
+  console.log('\nEvolve is its own state');
+  const es = await page.evaluate(() => new Promise((res) => {
+    const card = document.querySelector('.v2-layer');
+    const cv = card?.querySelector('.v2-vizcv');
+    const lab = card?.querySelector('.v2-vizlab');
+    const badge = lab?.querySelector('.v2-livebadge');
+    const evoCss = (getComputedStyle(document.documentElement).getPropertyValue('--evo') || '').trim();
+    const rgb = (hx) => { const n = parseInt(hx.replace('#', ''), 16);
+      return 'rgb(' + ((n >> 16) & 255) + ', ' + ((n >> 8) & 255) + ', ' + (n & 255) + ')'; };
+    card?.querySelector('.v2-genbtn')?.click();
+    setTimeout(() => {
+      card?.querySelector('.v2-fttab[data-ft="take"]')?.click();
+      setTimeout(() => {
+        const rows = ['chg.ev', 'chg.am', 'chg.clock'].map((f) => {
+          const inp = card?.querySelector('.v2-genwrap [data-f="' + f + '"]');
+          const row = inp?.closest('.ambient-ctrl');
+          const r = row?.getBoundingClientRect();
+          return { f, marked: !!row?.classList.contains('v2-evorow'),
+            shown: !!(row && row.offsetParent && r.width > 0 && r.height > 0),
+            labelColor: row ? getComputedStyle(row.querySelector('label')).color : '' };
+        });
+        const scv = card?.querySelector('.v2-genwrap .v2-stagecv');
+        res({ text: (lab?.textContent || '').trim().slice(0, 80),
+          badge: badge?.textContent, badgeCls: badge?.className || '',
+          badgeColor: badge ? getComputedStyle(badge).color : '',
+          evoCss, evoRgb: evoCss ? rgb(evoCss) : '',
+          chip: cv?._evoChip || null, stageChip: scv?._evoChip || null, rows,
+          summary: (card?.querySelector('.v2-summary')?.textContent || '').trim().slice(0, 40) });
+      }, 500);
+    }, 400);
+  }));
+  ok('the readout leads with EVOLVES and its clock', /^EVOLVES every 2 passes:/.test(es.text), es.text);
+  ok('the badge is EVOLVES, in Evolve\'s hue',
+     es.badge === 'EVOLVES' && /v2-sum-evo/.test(es.badgeCls) && es.badgeColor === es.evoRgb,
+     JSON.stringify({ b: es.badge, c: es.badgeCls, col: es.badgeColor, want: es.evoRgb }));
+  ok('the summary leads with it too', /^EVOLVES/.test(es.summary), es.summary);
+  ok('the drawing carries an Evolve chip in that hue',
+     !!es.chip && /EVOLVES every 2 passes/.test(es.chip.text) && es.chip.hue.toLowerCase() === es.evoCss.toLowerCase(),
+     JSON.stringify(es.chip));
+  ok('…and so does ⚙ Deep\'s staged drawing', !!es.stageChip && /EVOLVES every 2 passes/.test(es.stageChip.text),
+     JSON.stringify(es.stageChip));
+  ok('the three Evolve knobs are marked, reachable, and wear the hue',
+     es.rows.length === 3 && es.rows.every((r) => r.marked && r.shown && r.labelColor === es.evoRgb),
+     JSON.stringify(es.rows));
+  await page.evaluate(() => { document.querySelector('.v2-layer .v2-gencancel')?.click(); });
+  await zz(400); await open();
+
   // ---- the invariant, stated once ----------------------------------------
   const shown = [v, back, f, ev];                 // every state with the picture up
   ok('said exactly when outlines are drawn', shown.every((s) => s.says === (s.ghostN > 0)),

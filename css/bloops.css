@@ -15757,6 +15757,12 @@
   --take-5: #f687b3;   /* pink */
   --take-6: #fc8181;   /* red */
   --take-7: #faf089;   /* yellow */
+  /* ⟳ EVOLVE'S HUE (2026-09-19). Evolve is its own STATE (`liveness().state`),
+     and a state needs ONE colour everywhere it shows: the EVOLVES badge, the
+     summary chip, the drawing's chip (`evoChip` reads this off :root) and the
+     three knobs that set it (`.v2-evorow`). Violet — not one of the seven
+     take hues above, not VARIES' amber, not FROZEN's blue. */
+  --evo: #b794f4;
 }
 .v2-gototab { color: var(--sec, #a0aec0); border-color: rgba(255, 255, 255, 0.14); }
 .v2-gototab:hover { border-color: var(--sec, #9f7aea); }
@@ -15809,6 +15815,18 @@
    in the same place, so nothing appears or vanishes as settings change. */
 .v2-grpsum .v2-sumv.v2-sum-live, .v2-livebadge.v2-sum-live { color: #f6ad55; font-weight: 800; letter-spacing: 0.04em; }
 .v2-grpsum .v2-sumv.v2-sum-fixed, .v2-livebadge.v2-sum-fixed { color: #9a9ab8; font-weight: 800; letter-spacing: 0.04em; }
+/* …and EVOLVES, the third state, in its own hue (`--evo`, defined with the
+   take palette). Same weight and tracking as its two siblings, so the three
+   read as one badge in three states rather than as two badges and a chip. */
+.v2-grpsum .v2-sumv.v2-sum-evo, .v2-livebadge.v2-sum-evo { color: var(--evo, #b794f4); font-weight: 800; letter-spacing: 0.04em; }
+/* THE KNOBS THAT SET IT — Evolve · How much · Against in ⚙ Deep ▸ 🎲 Take —
+   wear the same hue: a bar down the row's edge and the label. An inset
+   shadow, not a border, so the grid does not move; the 8px keeps the label
+   off the bar. Outranked by Each cycle (`.v2-rowna`) the children dim and the
+   bar dims with them, so a greyed row still points at what it is. */
+.v2-layer .ambient-ctrl.v2-evorow { box-shadow: inset 3px 0 0 var(--evo, #b794f4); padding-left: 8px; }
+.v2-layer .ambient-ctrl.v2-evorow > label { color: var(--evo, #b794f4); }
+.v2-layer .ambient-ctrl.v2-evorow.v2-rowna { box-shadow: inset 3px 0 0 rgba(183, 148, 244, 0.35); }
 /* …on a phone the PAIR already takes the whole row, so the summary wraps below
    it and reads left, as it always did. Kept HERE rather than in the phone block
    near the top of the file: that block sits EARLIER, so an equal-specificity

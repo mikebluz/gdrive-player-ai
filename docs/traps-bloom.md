@@ -220,6 +220,13 @@
   FIXED while 24 outlines sat behind it. **Before adding a fourth surface to this axis, collapse it:**
   one control — never / every N passes / every cycle — with `part.vary` kept as a stored key for
   save-compat. `part.kind` (live vs frozen) is a genuinely different axis and stays.
+  **EVOLVES IS ITS OWN STATE WORD (2026-09-19):** `liveness().state` is `fixed · varies · evolves`
+  and `stateWord()` (UI half) is the ONLY map from it to a word — never derive the word from `.live`
+  or `.tags`; three surfaces did, which is how a third state reaches some and not others. Its hue is
+  `--evo` (violet, beside the take palette in bloops.css) on the badge, the summary chip, the three
+  `.v2-evorow` knobs and the drawing's chip (`evoChip`, published as `cv._evoChip` on the card's
+  canvas AND ⚙ Deep's `.v2-stagecv`). A new Evolve surface wears that class/var, never a restated
+  colour, and shows exactly when `evoActs` says it can act — the badge's own qualifier.
 - **`liveness` HAS NO CLOCK, so it cannot resolve `chg.parts`.** Resolving which part is sounding is
   `chgAt`'s job and needs a ctx. The badge therefore answers "does this EVER decide again", taking
   the largest `ev` any part override offers — deliberately, and noted here so it is not later
@@ -354,7 +361,7 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   | axis | poles | means |
   |---|---|---|
   | what makes the notes | **GENERATED** · **STATIC** | resolved by rule at play time · stored and read back |
-  | does it change per cycle | **VARIES: what** · **FIXED** (badge, `liveBadge`) | `liveness()` — a property of the SETTINGS; FIXED is the zero case, not a second kind |
+  | does it change per cycle | **VARIES: what** · **EVOLVES every N: what** · **FIXED** (badge, `liveBadge`) | `liveness().state` — a property of the SETTINGS; FIXED is the zero case, not a second kind; EVOLVES is the slow clock, in its own hue (`--evo`) |
   | who chose the notes | **✎ Written** (by hand) | the only surviving use of the word |
 
   **STATIC had to be TAKEN OFF the liveness readout to be given to the state** — renaming one pole

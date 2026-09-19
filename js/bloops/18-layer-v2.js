@@ -8442,7 +8442,7 @@
     const face = card.querySelector('.v2-genface');
     if (face) {
       const empty = L.part.kind === 'recorded' && !(L.part.notes || []).length;
-      const txt = M[pv.key] || (empty ? 'nothing yet \u2014 pick a shape'
+      const txt = M[pv.key] || (empty ? 'nothing yet \u2014 pick a material'
                              : L.part.kind === 'recorded' ? 'the rules are idle \u2014 \u2699 Rules uses them'
                                                           : 'choose & tune');
       if (face.textContent !== txt) face.textContent = txt;
@@ -8462,7 +8462,7 @@
       const key = pv.key;
       const extra = (key === 'melody') ? [['melody', '\u266a Melody \u2014 from \u2728 Quick']] : [];
       const mine = SH.some((o) => o[0] === key) || !!extra.length;
-      const list = (mine ? '' : '<option value="">Choose a shape\u2026</option>') +
+      const list = (mine ? '' : '<option value="">Choose a material\u2026</option>') +
         SH.concat(extra).map((o) => '<option value="' + o[0] + '">' + esc(o[1]) + '</option>').join('');
       if (sp._sig !== list) { sp._sig = list; sp.innerHTML = list; }
       const want = mine ? key : '';
@@ -8508,7 +8508,7 @@
         }
       } catch (e) {}
       const txt = (L.part.kind === 'recorded')
-        ? 'FROZEN \u2014 pick a shape to hand it back to the rules.'
+        ? 'FROZEN \u2014 pick a material to hand it back to the rules.'
         : bits.join(' \u00b7 ');
       if (says.textContent !== txt) says.textContent = txt;
     }
@@ -8682,7 +8682,7 @@
       if (nb && nl) {
         const open = nb.getAttribute('aria-expanded') === 'true';
         nb.hidden = !naRows.length;
-        const bt = (open ? '▾ ' : '▸ ') + naRows.length + ' don’t apply to this shape';
+        const bt = (open ? '▾ ' : '▸ ') + naRows.length + ' don’t apply to this material';
         if (nb.textContent !== bt) nb.textContent = bt;
         nl.hidden = !open || !naRows.length;
         const lt = naRows.map((r2) => ((r2.querySelector('label') || {}).textContent || '').trim()).filter(Boolean).join(' · ');
@@ -8701,10 +8701,10 @@
         const rk = (L.part.rhythm && L.part.rhythm.kind) === 'drawn' ? 'euclid' : ((L.part.rhythm && L.part.rhythm.kind) || 'pulse');
         const pk = (L.part.pitch && L.part.pitch.kind) || '';
         const off = !!(rec && (rk !== rec[0] || pk !== rec[1]));
-        const txt = !rec ? 'No shape in force — these two are the whole recipe.'
+        const txt = !rec ? 'No material in force — these two are the whole recipe.'
           : off ? '⚠ Custom recipe — this is no longer “' + SHN[shp] + '”. Its Character and knobs were tuned for ' +
                   rec[0] + ' × ' + rec[1] + ', so some may do nothing or behave differently.'
-          : '“' + SHN[shp] + '” is ' + rec[0] + ' rhythm × ' + rec[1] + ' pitch. Change these only if no shape does what you want.';
+          : '“' + SHN[shp] + '” is ' + rec[0] + ' rhythm × ' + rec[1] + ' pitch. Change these only if no material does what you want.';
         if (says.textContent !== txt) says.textContent = txt;
         says.classList.toggle('v2-recipeoff', off);
         if (back) { back.hidden = !off; if (off) back.textContent = '↺ Back to ' + SHN[shp]; }
@@ -9179,7 +9179,7 @@
       ((what === 'restore')
         ? ('Your saved ' + lab + ' settings come back, and the take you have now is replaced.')
         : ('It is built fresh, and the take you have now is replaced.')) +
-      '\n\nCancel keeps what you have. \ud83c\udfb2 New take rolls another of the same shape.');
+      '\n\nCancel keeps what you have. \ud83c\udfb2 New take rolls another of the same material.');
   }
   function matSync(card, L) {
     const pv2 = matProv(L);
@@ -10698,7 +10698,7 @@
   // (Verse/Chorus: the ⇶ Parts view, the part tabs, and the ⟲ N × part badge
   // on this very card), and one word for two mechanisms is how a control gets
   // misread. The DATA keys stay `part.*` for save-compat (the naming rule).
-  const GRPS = ['Instrument', 'Content', 'Shape', 'Mix', 'FX'];   // ✦ Pitch folded into Instrument (2026-09-17)
+  const GRPS = ['Instrument', 'Content', 'Shape', 'Mix', 'FX'];   // ✦ Pitch lives in Generate (2026-09-18)
   // ✺ LIVE (2026-09-16, user: "consolidate them all into a single menu behind a
   // new button 'Live' next to 'Generate'"). Everything that makes a pass differ
   // from the last — the dice, Humanize, Vel var, and the line naming what
@@ -10931,10 +10931,22 @@
             // later visit, forever — and the file's own rule is that the
             // control for a fact beats a sentence about it. `.v2-gensays`
             // below still says, live, what THIS shape produces.
-            // THREE NUMBERED ZONES (2026-09-17): the shape, the few knobs that
-            // shape reads, then Fine-tune. `.ambient-mod-sub` is the card's own
+            // THREE NUMBERED ZONES (2026-09-17): the material, the few knobs it
+            // reads, then Fine-tune. `.ambient-mod-sub` is the card's own
             // subsection label, so the panel reads as three steps without new chrome.
-            '<div class="ambient-mod-sub v2-genzone"><b class="v2-zonen">1</b>Shape</div>' +
+            // "MATERIAL", NOT "SHAPE" (2026-09-18, user: "now there are 2 places
+            // called Shape"). This step picks WHAT THE PART IS MADE OF —
+            // Sustain a chord, Arpeggiate, Roll a line, Mix, Play the changes —
+            // while ▨ SHAPE is the section that sizes and strikes each NOTE.
+            // One word for two mechanisms is the naming rule's own mistake, and
+            // the model already had the other word: the key is `part.mat` and
+            // the helpers are `matProv` / `matSave` / `matWillDo`. So the LABEL
+            // moves to the data's vocabulary; every key, class and `data-mk`
+            // stays exactly as it was (renames are label-only, for save-compat).
+            // Size and Feel did NOT move here instead: \u2699 Deep is what \ud83c\udfb2 New take
+            // re-rolls, and Hold, Note length, Swing and Tight are deterministic
+            // \u2014 filing them here would claim they are rolled.
+            '<div class="ambient-mod-sub v2-genzone"><b class="v2-zonen">1</b>Material</div>' +
             // ONE DROPDOWN, NOT FIVE BUTTONS (2026-09-17, user: "these can be
             // moved into a styled dropdown to conserve space"). Five doors took
             // two rows and a third of the panel. The BUTTONS STAY in the DOM,
@@ -10942,9 +10954,9 @@
             // shape-press logic (confirm before replacing, adopt-vs-build,
             // provenance stamping, the roll) has exactly ONE implementation and
             // every handler that already found those buttons still does.
-            '<div class="v2-shaperow"><select class="ambient-select v2-shapepick" aria-label="Shape"></select></div>' +
+            '<div class="v2-shaperow"><select class="ambient-select v2-shapepick" aria-label="Material"></select></div>' +
             '<span class="ambient-seg-row v2-genshapes">' +
-              '<button type="button" class="ambient-seg v2-mkpart" data-mk="sustain" title="▬ Sustained — a held note or chord, one per cycle: the pad shape.">\u25ac Sustain a chord</button>' +
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="sustain" title="▬ Sustained — a held note or chord, one per cycle: the pad material.">\u25ac Sustain a chord</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="arp" title="⟳ Arpeggio — sweep the chord one tone per onset.">\u27f3 Arpeggiate</button>' +
               '<button type="button" class="ambient-seg v2-rollrun" title="🎲 Roll — a rolled, syncopated line. 🎲 New take rolls another.">\ud83c\udfb2 Roll a line</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="mixed" title="⚇ Mixed — some onsets a chord, the rest a single note.">\u2687 Mix chords + notes</button>' +
@@ -11259,7 +11271,7 @@
               // EARLIER in the DOM — so `querySelector` found the hidden one
               // and every probe aimed at the wrong node. The exact trap the
               // Material row's own comment warns about. The handler takes both.
-              '<button type="button" class="ambient-seg v2-genroll" title="Roll this shape again — same rules, new notes.">\ud83c\udfb2 New take</button>' +
+              '<button type="button" class="ambient-seg v2-genroll" title="Roll this material again — same rules, new notes.">\ud83c\udfb2 New take</button>' +
               '<button type="button" class="ambient-seg v2-genclose v2-gencancel">\u2715 Cancel</button>' +
               '<button type="button" class="ambient-seg v2-genprev" title="Hear one cycle with these settings.">\u25b6 Preview</button>' +
               '<button type="button" class="ambient-seg v2-genclose v2-gendone">\u2713 Done</button>' +
@@ -11548,7 +11560,7 @@
               // Groundwork), so nothing here is a second mechanism.
               '<button type="button" class="ambient-seg v2-autobtn" title="Two presses, no knobs — chords that fill each change, or a single-voice melody over them. Both make this part GENERATED, for the part you have selected.">\u2728 Quick<span class="v2-matsub">chords \u00b7 melody</span></button>' +
               // ⚙ DEEP — the one generated door; see ONE GENERATED DOOR above.
-              '<button type="button" class="ambient-seg v2-genbtn" title="Make this part by rule instead of by hand — choose a shape and tune what it generates: Sustained, Arpeggio, Roll, Mixed or Groundwork.">\u2699 Deep<span class="v2-matsub v2-genface">choose &amp; tune</span></button>' +
+              '<button type="button" class="ambient-seg v2-genbtn" title="Make this part by rule instead of by hand — choose a material and tune what it generates: Sustained, Arpeggio, Roll, Mixed or Groundwork.">\u2699 Deep<span class="v2-matsub v2-genface">choose &amp; tune</span></button>' +
               // (⌫ CLEAR MOVED to the drawing's head, beside the 👁 View picker —
               // 2026-09-16, user: "this is the wrong place for Clear".)
               // GROUNDWORK IS A SHAPE IN THE PANEL NOW (2026-09-09, user:

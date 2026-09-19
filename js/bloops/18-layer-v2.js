@@ -8690,10 +8690,7 @@
       }
       // ⚠ ADVANCED: RECIPE — a shape IS a rhythm × pitch recipe; leaving it is
       // allowed and said. The shape is the provenance stamp (`part.mat`).
-      const RECIPE = { sustain: ['pulse', 'chord'], arp: ['pulse', 'series'], roll: ['euclid', 'walk'],
-        melody: ['euclid', 'walk'], mixed: ['euclid', 'mixed'], ground: ['ground', 'chord'] };
-      const SHN = { sustain: 'Sustain a chord', arp: 'Arpeggiate', roll: 'Roll a line', melody: 'Melody',
-        mixed: 'Mix chords + notes', ground: 'Play the changes' };
+      const RECIPE = MAT_RECIPE, SHN = MAT_NAME;   // module scope — see there
       const says = pop.querySelector('.v2-recipesays'), back = pop.querySelector('.v2-recipeback'),
             sum = pop.querySelector('.v2-recipesum');
       if (says) {
@@ -10190,6 +10187,39 @@
         '" title="Step ' + (i + 1) + ' of ' + st + '">' + (i + 1) + '</button>';
     }
     return h + '</div>';
+  }
+  // ── A MATERIAL *IS* A RHYTHM \u00d7 PITCH RECIPE ────────────────────────────
+  // user: "the Pitch options feel kinda like Material options, can they be
+  // merged?" — they cannot be ONE list (a merge loses the rhythm half, and
+  // \u26f0 Play the changes is a RHYTHM choice that happens to use chord pitch;
+  // spelled out in full it is 9 pitch \u00d7 5 rhythm), but they are not rivals
+  // either: Material is a NAMED POINT in that grid and Pitch is one of its two
+  // coordinates. The card knew this already and only said so two levels down,
+  // inside \u2699 Deep \u25b8 \u26a0 Advanced: recipe.
+  // LIFTED HERE so there is ONE table. It was local to that panel's sync, and
+  // the Pitch row needed the same answer — a second copy is how the two come
+  // to disagree about what "Arpeggiate" is made of.
+  const MAT_RECIPE = { sustain: ['pulse', 'chord'], arp: ['pulse', 'series'], roll: ['euclid', 'walk'],
+    melody: ['euclid', 'walk'], mixed: ['euclid', 'mixed'], ground: ['ground', 'chord'] };
+  const MAT_NAME = { sustain: 'Sustain a chord', arp: 'Arpeggiate', roll: 'Roll a line', melody: 'Melody',
+    mixed: 'Mix chords + notes', ground: 'Play the changes' };
+  // WHAT THE PITCH ROW SAYS ABOUT ITS MATERIAL. Same three states the Advanced
+  // block reports, in the same words, so the two surfaces cannot drift: no
+  // material in force, this pitch IS the material's, or the recipe has been
+  // departed from. REPAINTED from `applyGateCard` — it moves with the RHYTHM
+  // kind and the material stamp, and neither rebuilds this row.
+  function matHint(L) {
+    const p = (L && L.part) || {};
+    const rec = MAT_RECIPE[p.mat];
+    const pk = (p.pitch || {}).kind || '';
+    if (!rec) return 'how the notes are chosen \u2014 with no material in force, this and Rhythm are the whole recipe';
+    const rk = ((p.rhythm || {}).kind === 'drawn') ? 'euclid' : ((p.rhythm || {}).kind || 'pulse');
+    if (rk !== rec[0] || pk !== rec[1]) {
+      return '\u26a0 no longer \u201c' + MAT_NAME[p.mat] + '\u201d \u2014 that material is ' +
+             rec[0] + ' rhythm \u00d7 ' + rec[1] + ' pitch';
+    }
+    return 'the pitch half of \u201c' + MAT_NAME[p.mat] + '\u201d \u2014 ' +
+           rec[0] + ' rhythm \u00d7 ' + rec[1] + ' pitch';
   }
   const PITCH_OPTS = [['drawn', 'Drawn — a note per step'], ['chord', 'Chord — the harmony'], ['stack', 'Stack — from a note'],
                       ['fixed', 'One note — the same degree every time'], ['series', 'Series — sweep the chord'],
@@ -11886,7 +11916,8 @@
           // loose chips — folding its nine rows in here would trade a wall of
           // chips for a wall of rows.
           tb('Pitch',
-          sel(L, 'part.pitch.kind', 'Pitch', t.kind, PITCH_OPTS, 'kind:live;voice:synth') +
+          sel(L, 'part.pitch.kind', 'Pitch', t.kind, PITCH_OPTS, 'kind:live;voice:synth',
+              matHint(L)) +
           st(L, 'part.pitch.voices', 'Voices', t.voices, 1, 9, 'notes per onset', 'kind:live;voice:synth;pitch:chord,stack,mixed') +
           // THE BALANCE for Mixed — how often an onset is a chord rather than
           // a single note. Its own tab so it is findable, gated to the one
@@ -12881,6 +12912,11 @@
       const paint = (f, ht) => {
         card.querySelectorAll('.v2-f[data-f="' + f + '"]').forEach((el) => {
           const row = el.closest('.ambient-ctrl'); if (!row) return;
+          // NOT INTO A STAGED PANEL. `stagePass` owns ⚙ Deep and ✺ Quick and
+          // syncs them from the CLONE, while this pass runs with the real
+          // layer — so a sentence written here would be the wrong layer's
+          // whenever one of those is open. Their build-time text stands.
+          if (row.closest('.v2-genwrap, .v2-autowrap')) return;
           if (el.classList.contains('ambient-sl')) {
             if (row.getAttribute('data-v2u') !== ht) row.setAttribute('data-v2u', ht);
             const sub = row.querySelector('.v2-knob-sub');
@@ -12900,6 +12936,7 @@
           if (el.getAttribute('max') !== nmax) el.setAttribute('max', nmax);
         });
       } catch (e) {}
+      paint('part.pitch.kind', matHint(L));
       paint('part.pitch.degree', noteHint(L));
       paint('part.shape.holdSteps', holdHint(L));
       paint('part.shape.lenRatio', lenHint(L));

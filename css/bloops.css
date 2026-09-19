@@ -15726,14 +15726,14 @@
    amber (the badge points at that section) and ✦ Shape its lavender — the two
    that already meant something. Each button carries its hue as `--sec`, so the
    state rules below are written ONCE. */
-.v2-gototab[data-goto="Instrument"] { --sec: #4fd1c5; }   /* teal — what makes the sound */
-.v2-gototab[data-goto="Generate"]   { --sec: #90cdf4; }   /* blue — what the notes are */
-.v2-gototab[data-goto="Playing"]    { --sec: #f6ad55; }   /* amber — the VARIES badge's own */
-.v2-gototab[data-goto="Shape"]      { --sec: #d6bcfa; }   /* lavender — how a note is struck */
-.v2-gototab[data-goto="Time"]       { --sec: #9ae6b4; }   /* green — the clock */
-.v2-gototab[data-goto="Mix"]        { --sec: #f687b3; }   /* pink — level and placement */
-.v2-gototab[data-goto="FX"]         { --sec: #fc8181; }   /* red — the treatments */
-.v2-gototab[data-goto="Bank"]       { --sec: #faf089; }   /* yellow — saved phrases */
+.v2-pop-pane[data-sec="Instrument"], .v2-gototab[data-goto="Instrument"] { --sec: #4fd1c5; }   /* teal — what makes the sound */
+.v2-pop-pane[data-sec="Generate"], .v2-gototab[data-goto="Generate"]   { --sec: #90cdf4; }   /* blue — what the notes are */
+.v2-pop-pane[data-sec="Playing"], .v2-gototab[data-goto="Playing"]    { --sec: #f6ad55; }   /* amber — the VARIES badge's own */
+.v2-pop-pane[data-sec="Shape"], .v2-gototab[data-goto="Shape"]      { --sec: #d6bcfa; }   /* lavender — how a note is struck */
+.v2-pop-pane[data-sec="Time"], .v2-gototab[data-goto="Time"]       { --sec: #9ae6b4; }   /* green — the clock */
+.v2-pop-pane[data-sec="Mix"], .v2-gototab[data-goto="Mix"]        { --sec: #f687b3; }   /* pink — level and placement */
+.v2-pop-pane[data-sec="FX"], .v2-gototab[data-goto="FX"]         { --sec: #fc8181; }   /* red — the treatments */
+.v2-pop-pane[data-sec="Bank"], .v2-gototab[data-goto="Bank"]       { --sec: #faf089; }   /* yellow — saved phrases */
 .v2-gototab { color: var(--sec, #a0aec0); border-color: rgba(255, 255, 255, 0.14); }
 .v2-gototab:hover { border-color: var(--sec, #9f7aea); }
 /* OPEN = filled with its own hue, and the label goes dark so it stays legible */
@@ -15885,7 +15885,20 @@
    over the control. Compound selector — the 560px media rule's
    `.ambient-ctrl:has(> input.ambient-sl)` would outrank a two-class one. */
 .v2-layer .v2-pop-pane .ambient-ctrl { grid-template-columns: 1fr; justify-items: stretch; gap: 8px; }
-.v2-layer .v2-pop-pane .ambient-ctrl > label { font-size: 0.9rem; color: #c5c9d4; }
+/* ── A ROW LABEL WEARS ITS SECTION'S COLOUR ───────────────────────────────────
+   user: "parameter labels in these layer menus needs to be spruced up, with
+   some color". The hues already exist — one per section, declared ONCE above
+   and shared with the `.v2-gototab` chips, so the label of a row and the button
+   you pressed to reach it are the same colour and there is no second table to
+   drift. The pane carries `data-sec` (set in `syncSheet`, so both the body
+   sheet and the section popover get it and every gate pass keeps it current).
+   FALLS BACK to the old grey: a pane with no section still reads normally.
+   The `[data-fam]` rules further up are MORE SPECIFIC (they add an attribute),
+   so a tab that claims its own family still overrides this. */
+.v2-layer .v2-pop-pane .ambient-ctrl > label {
+  font-size: 0.86rem; font-weight: 600; letter-spacing: 0.01em;
+  color: var(--sec, #c5c9d4);
+}
 .v2-pop-pane .ambient-stepper { justify-content: center; }
 .v2-pop-pane .ambient-step-btn { width: 60px; height: 60px; font-size: 1.5rem; }
 .v2-pop-pane .ambient-step-inp { height: 60px; font-size: 1.35rem; min-width: 84px; }

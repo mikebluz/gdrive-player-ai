@@ -14576,6 +14576,15 @@
   function syncSheet(card, L, wrap, POP, paneSel, tabsSel, only) {
     if (!wrap || !POP) return;
     const pane = wrap.querySelector(paneSel), tabsEl = wrap.querySelector(tabsSel);
+    // THE PANE WEARS ITS SECTION'S COLOUR, and the row labels take it from
+    // there (one `--sec` per section, shared with the `.v2-gototab` chips).
+    // Set HERE rather than at build time because both sheets come through this
+    // one call and it runs on every gate pass, so it can never go stale.
+    try {
+      if (pane && POP.grp) {
+        if (pane.getAttribute('data-sec') !== POP.grp) pane.setAttribute('data-sec', POP.grp);
+      }
+    } catch (e) {}
     if (!pane || !tabsEl) return;
     const rows = popTabbables(pane);
     const tabs = [], byName = {};

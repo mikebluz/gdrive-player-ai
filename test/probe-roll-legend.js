@@ -295,6 +295,7 @@ const ok = (name, cond, detail) => {
       badge: card?.querySelector('.v2-vizlab .v2-livebadge')?.textContent,
       everyShown: !!(evr && evr.offsetParent && getComputedStyle(evr).display !== 'none' && er.height > 0),
       everyVal: evr ? +(evr.querySelector('.v2-f[data-f="chg.ev"]')?.value) : null,
+      everyHint: (evr?.querySelector('.ambient-hint')?.textContent || '').trim(),
       deepEv: +(card?.querySelector('.v2-genwrap .v2-f[data-f="chg.ev"]')?.value),
       chip: !!card?.querySelector('.v2-vizcv')?._evoChip,
       summary: (card?.querySelector('.v2-summary')?.textContent || '').trim() };
@@ -312,6 +313,8 @@ const ok = (name, cond, detail) => {
   ok('press: on — lit in the hue, every 4 (the default), badge EVOLVES, summary says every 4, Every row reachable and mirrored into ⚙ Deep',
      s2.lit && /every 4 passes/.test(s2.face) && s2.shown && s2.color === es.evoRgb && !s2.vary && s2.ev === 4 &&
      s2.badge === 'EVOLVES' && /^EVOLVES every 4 passes/.test(s2.summary) && !s2.chip && s2.everyShown && s2.everyVal === 4 && s2.deepEv === 4, JSON.stringify(s2));
+  // no progression in this run, so a pass IS the layer's cycle — and the row says so
+  ok('the Every row says what a pass is (no changes here: the cycle)', /1 = every cycle/.test(s2.everyHint), s2.everyHint);
   // ⚙ Deep's legacy Each cycle (`part.vary`) reads on the face as Every 1 —
   // and the badge and the summary agree, or amber VARIES would sit over a
   // lime button saying the opposite

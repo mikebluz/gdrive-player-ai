@@ -7152,6 +7152,55 @@
     if (L.chg.ev > 0 && L.chg.am != null && (L.chg.am | 0) <= 0) L.chg.am = 100;  // 0% is "never", by the emitter's rule
   }
   const clockFace = (n) => '⟳ Evolve: ' + (n > 0 ? ('every ' + (n === 1 ? 'cycle' : n + ' passes')) : 'off — this take repeats');
+  // WHAT ONE "PASS" IS, said on the row (2026-09-19, "is a single Every unit
+  // always 1 pass of the current part?"). It is NOT always the layer's own
+  // cycle: `chgAt` counts passes of the arrangement PART sounding at that
+  // moment (`_ambPartPassAt` — chord-rounds of "the changes" when there are
+  // no parts), rounds of the whole arrangement under Against = round, and
+  // falls back to the layer's cycle only when there is no progression. So
+  // when this content is 4 bars in an 8-bar part, Every 1 is TWO cycles of
+  // it — a fact the old hint ("1 = every cycle") got wrong exactly when it
+  // mattered. The part is resolved the way the drawing's own "repeats N×"
+  // readout resolves it, the bars by the same `_ambLenPartBars`, and the
+  // line is REPAINTED from `clockSwSync` — Bars, Per part, Against and the
+  // progression all move it and none of them rebuilds the row.
+  function evoUnitTxt(L, cfg) {
+    const TAIL = ' · How much and Against: ⚙ Deep ▸ 🎲 Take';
+    const cb = +(L && L.part && L.part.bars) || 0;
+    const progOn = !!(cfg && cfg.prog && cfg.prog.on && (cfg.prog.chords || []).length);
+    if (!progOn || (L.part && L.part.clock === 'free')) return 'cycles of this content — 1 = every cycle' + TAIL;
+    const round = !!(L.chg && L.chg.clock === 'round');
+    const E = (typeof _masterEng !== 'undefined') ? _masterEng : null;
+    const hasParts = Array.isArray(cfg.prog.parts) && cfg.prog.parts.length > 0;
+    let pi = -1;
+    try {
+      const rgs = (typeof _ambGridRanges === 'function') ? (_ambGridRanges(cfg) || []) : [];
+      pi = Number.isFinite(L.partFor) ? (L.partFor | 0)
+         : ((E && typeof _ambCurPartNow === 'function' && rgs.length) ? _ambCurPartNow(E, cfg, rgs) : -1);
+    } catch (e) { pi = -1; }
+    let unit = '', pb = 0;
+    if (round && hasParts) {
+      // a round is every part once; its length is the plan's, not one part's,
+      // so no ratio is claimed here rather than a wrong one
+      return 'rounds of the arrangement — every part once' + TAIL;
+    }
+    if (round || !hasParts || pi < 0) {
+      unit = round ? 'rounds of the arrangement' : 'passes of the changes';
+      try { pb = +_ambLenPartBars(cfg, hasParts ? -1 : 0) || 0; } catch (e) { pb = 0; }
+    } else {
+      let nm = ''; try { nm = _ambPartLabelShort(cfg, pi) || ''; } catch (e) { nm = ''; }
+      unit = 'passes of ' + (nm || ('Part ' + (pi + 1)));
+      try { pb = +_ambLenPartBars(cfg, pi) || 0; } catch (e) { pb = 0; }
+    }
+    let ratio = '';
+    if (pb > 0 && cb > 0) {
+      const k = pb / cb;
+      const nice = Math.abs(k - Math.round(k)) < 1e-6 ? String(Math.round(k)) : String(Math.round(k * 10) / 10);
+      ratio = ' — 1 ' + (round ? 'round' : 'pass') + ' = ' + (Math.round(pb * 100) / 100) + ' bars = ' +
+        (Math.abs(k - 1) < 1e-6 ? 'one cycle of this content' : nice + '× this ' + cb + '-bar content');
+    }
+    return unit + ratio + TAIL;
+  }
   function clockSwHtml(L) {
     const frozen = L.part.kind === 'recorded';
     let cfg = null; try { cfg = _cfgOf(); } catch (e) {}
@@ -7164,9 +7213,7 @@
       // card's own id (no -gen), so it is a second control over `chg.ev`
       // beside ⚙ Deep's, and the `.v2-f` commit mirrors the two (the Level
       // rule). Present only while it is on (`evo:on` counts `vary` too).
-      st(L, 'chg.ev', 'Every', n || ((L.chg || {}).ev | 0) || 4, 1, 64,
-         'passes before the rules decide again — 1 = every cycle. How much and Against are in ⚙ Deep ▸ 🎲 Take',
-         'kind:live;evo:on')
+      st(L, 'chg.ev', 'Every', n || ((L.chg || {}).ev | 0) || 4, 1, 64, evoUnitTxt(L, cfg), 'kind:live;evo:on')
         .replace('class="ambient-ctrl', 'class="ambient-ctrl v2-evorow v2-evoevery');
   }
   // THE SECOND WRITER. Every route that moves this axis — ⚙ Deep's rows and
@@ -7185,6 +7232,10 @@
     });
     if (n > 0) card.querySelectorAll('.v2-evoevery .v2-f[data-f="chg.ev"]').forEach((i) => {
       if ((+i.value | 0) !== n) i.value = n;
+    });
+    // …and what a pass IS, which moves with Bars / Per part / the progression
+    card.querySelectorAll('.v2-evoevery .ambient-hint').forEach((hn) => {
+      const want = evoUnitTxt(L, cfg); if (hn.textContent !== want) hn.textContent = want;
     });
   }
   function partVizHtml(L) {

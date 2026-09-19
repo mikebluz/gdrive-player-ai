@@ -232,6 +232,13 @@
   copy. On a FROZEN take the button is dimmed (`.v2-clockfrozen`), never `disabled` — the press
   releases (`V2.release`, silent, keeps the notes) and turns Evolve on. A new surface on this axis
   goes on this button, not beside it.
+  **A "PASS" IS THE ARRANGEMENT PART'S, NOT THE LAYER'S CYCLE (2026-09-19).** `chgAt` ticks on
+  `_ambPartPassAt(...).pass` — passes of the part sounding at that moment (chord-rounds of "the
+  changes" when there are no parts), rounds under Against = round — and only falls back to the
+  layer's own cycle with no progression. A 4-bar content in an 8-bar part evolves every `ev` PART
+  passes = 2·ev cycles. The Every row's hint (`evoUnitTxt`, repainted from `clockSwSync`) states
+  the unit and the ratio the same way the drawing's "repeats N×" readout does; never write "1 =
+  every cycle" unqualified.
   **▶ PREVIEW HAS ITS OWN SWEEP LOOP (2026-09-19).** `vizFrame` rides the transport's rAF and Preview
   runs with the transport stopped, so `previewSweep` (started by the Preview handler, alive only while
   `previewing(L)`) paints `paintSweep` — the ONE painter, extracted from `vizFrame` — on the card's

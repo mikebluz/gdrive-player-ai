@@ -11681,12 +11681,40 @@
           // the same notes further apart — good for a pad, wrong for a riff you
           // wanted twice as long. Tagged into the Bars tab because it is the
           // same question, not a new one.
-          '<div data-v2tab="Bars" class="ambient-ctrl" data-v2when="cyc:every,locked">' +
-            '<label for="' + uid(L, 'part.barsMode') + '">More bars</label>' +
-            '<select id="' + uid(L, 'part.barsMode') + '" class="ambient-select v2-f" data-f="part.barsMode">' +
-              '<option value="stretch"' + ((p.barsMode || 'stretch') === 'stretch' ? ' selected' : '') + '>Stretch — the same notes, spread out</option>' +
-              '<option value="fill"' + (p.barsMode === 'fill' ? ' selected' : '') + '>Fill — keep writing, same density</option>' +
-            '</select><span class="ambient-hint"></span></div>' +
+          // ── WHAT HAPPENS TO THE NOTES WHEN THE LENGTH MOVES ──────────────
+          // SHOWN ON A PER-PART RECORD TOO (2026-09-18). It is the ONE thing
+          // still yours there: the part owns when and how long, but a re-cut of
+          // that part runs this record through `applyBarsMode`, and the cascade
+          // dialog PRE-FILLS from what is stored here — so setting it ahead
+          // genuinely decides rather than just reporting. Time was three badges
+          // and no control in that state, with the one live setting gated out.
+          //
+          // AND IT OFFERS ALL THREE MODES. It listed Stretch and Fill while
+          // `applyBarsMode`, normalize and the re-cut dialog all also take
+          // PRESERVE — so a record set to Preserve displayed as Stretch and was
+          // silently downgraded the moment this control was touched: a control
+          // that cannot represent a stored value and overwrites it. Preserve
+          // only does work on a RECORDED part (a live part re-resolves its
+          // pitches against the chords, so there is nothing to re-fit), so it
+          // is offered there — and ALWAYS when it is what is stored, because
+          // the first duty of a control is not to lie about the model.
+          (function () {
+            const bm = p.barsMode || 'stretch';
+            const perPart = Number.isFinite(L.partFor);
+            const opt = (v, lab) => '<option value="' + v + '"' +
+              (bm === v ? ' selected' : '') + '>' + esc(lab) + '</option>';
+            return '<div data-v2tab="Bars" class="ambient-ctrl" data-v2when="cyc:every,locked,part">' +
+              '<label for="' + uid(L, 'part.barsMode') + '">More bars</label>' +
+              '<select id="' + uid(L, 'part.barsMode') + '" class="ambient-select v2-f" data-f="part.barsMode">' +
+                opt('stretch', 'Stretch \u2014 the same notes, spread out') +
+                opt('fill', 'Fill \u2014 keep writing, same density') +
+                ((p.kind === 'recorded' || bm === 'preserve')
+                  ? opt('preserve', 'Preserve \u2014 keep each note with its chord') : '') +
+              '</select><span class="ambient-hint">' + esc(perPart
+                ? 'what happens to these notes when this part is re-cut'
+                : 'what happens to the notes when the loop gets longer') +
+              '</span></div>';
+          })() +
           sl(L, 'part.ms', 'Every', num(p.ms, 2000), 200, 20000, 'ms — ignores the bar grid', 'cyc:free') +
           // WHEN — which ITERATIONS of the cycle this layer plays. v1 edits this
           // in the Scheduler's Advanced block, which renders per-type controls

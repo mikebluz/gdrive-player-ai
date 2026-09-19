@@ -254,6 +254,51 @@ const ok = (name, cond, detail) => {
     window.confirm = svC;
     await openTime(); await toTab('Cycle');
     o.cycBack = { sel: cycSel() ? cycSel().value : null };
+
+    // ── MORE BARS: THE ONE THING STILL YOURS ON A PER-PART RECORD ────
+    // The part owns WHEN and HOW LONG; this owns what happens to the notes
+    // when that part is re-cut. The cascade dialog pre-fills from it.
+    const modeSel = () => { const r = rowOf('More bars');
+      return r ? r.querySelector('select[data-f="part.barsMode"]') : null; };
+    const modeOpts = () => { const el = modeSel(); return el ? [...el.options].map((x) => x.value) : null; };
+    // a LIVE part, everywhere: two modes (Preserve does nothing on rules)
+    delete L().partFor; delete L().parts; delete L().partAll;
+    delete L().part.barsMode; L().part.kind = 'live'; E.getCfg();
+    await repaint(); await openTime(); await toTab('Bars');
+    o.liveModes = modeOpts();
+    // a RECORDED part: Preserve is real there and is offered
+    L().part.kind = 'recorded';
+    L().part.notes = [{ t: 0, midi: 60, dur: 0.25 }, { t: 0.5, midi: 64, dur: 0.25 }];
+    E.getCfg(); await repaint(); await openTime(); await toTab('Bars');
+    o.recModes = modeOpts();
+    // …and a STORED preserve must SHOW as preserve, on any kind
+    L().part.barsMode = 'preserve'; E.getCfg();
+    L().part.kind = 'live'; delete L().part.notes; E.getCfg();
+    await repaint(); await openTime(); await toTab('Bars');
+    o.storedPreserve = { opts: modeOpts(), shown: modeSel() ? modeSel().value : null,
+                         stored: L().part.barsMode };
+    delete L().part.barsMode; E.getCfg();
+    // ── AND IT IS THERE ON A PER-PART RECORD ────────────────────────
+    await openGen(); await toTab('Per part');
+    if (ppBtn()) { ppBtn().click(); await wait(560); }
+    await openTime(); await toTab('Bars');
+    o.perPartMore = (() => {
+      const r = rowOf('More bars');
+      const rr = r ? r.getBoundingClientRect() : null;
+      const hn = r && r.querySelector('.ambient-hint');
+      return rr ? { w: Math.round(rr.width), h: Math.round(rr.height),
+                    hint: hn ? hn.textContent.trim() : null,
+                    opts: modeOpts() } : null;
+    })();
+    // it COMMITS from there
+    { const el = modeSel();
+      if (el) { el.value = 'fill'; el.dispatchEvent(new Event('input', { bubbles: true })); } }
+    await wait(380);
+    o.perPartWrote = L().part.barsMode || null;
+    { const svc = window.confirm; window.confirm = () => true;
+      await openGen(); await toTab('Per part');
+      if (ppBtn()) { ppBtn().click(); await wait(560); }
+      window.confirm = svc; }
     return o;
   });
 
@@ -337,6 +382,23 @@ const ok = (name, cond, detail) => {
     run.accepted.partFor === null && run.accepted.iced === false &&
     /Everywhere/.test(run.accepted.face || '') && run.cycBack.sel === 'every',
     JSON.stringify({ a: run.accepted, c: run.cycBack }));
+
+  // ── MORE BARS ────────────────────────────────────────────────────────
+  ok('More bars offers Preserve on a RECORDED part, and not on a live one',
+    JSON.stringify(run.liveModes) === JSON.stringify(['stretch', 'fill']) &&
+    JSON.stringify(run.recModes) === JSON.stringify(['stretch', 'fill', 'preserve']),
+    JSON.stringify({ live: run.liveModes, rec: run.recModes }));
+  // A CONTROL'S FIRST DUTY IS NOT TO LIE ABOUT THE MODEL: it used to show
+  // "Stretch" over a stored `preserve`, and overwrite it the moment it was touched.
+  ok('…and a STORED Preserve shows as Preserve, whatever the part kind',
+    run.storedPreserve.stored === 'preserve' && run.storedPreserve.shown === 'preserve' &&
+    (run.storedPreserve.opts || []).indexOf('preserve') >= 0,
+    JSON.stringify(run.storedPreserve));
+  ok('…and on a per-part record it is REACHABLE — the one control still yours there',
+    !!run.perPartMore && run.perPartMore.w > 0 && run.perPartMore.h > 0 &&
+    /re-cut/.test(run.perPartMore.hint || ''), JSON.stringify(run.perPartMore));
+  ok('…and it commits from there', run.perPartWrote === 'fill',
+    JSON.stringify(run.perPartWrote));
 
   ok('no page errors', errs.length === 0, errs.join(' | '));
   console.log('\n  Speed row (per-part): ' + (run.speedRow && run.speedRow.badge) +

@@ -11,6 +11,12 @@
   reads `Hold · Note length · Feel`. Only the ACTIVE tab's rows are shown (`v2-rowoff`, `display:none`),
   so a newly added row measures 0×0 until its chip is pressed, and "adjacent row" is the wrong model
   for *put it next to X*: adjacency is in the STRIP. A probe must walk `.v2-pop-tabs [data-tab]`.
+- **A SELECT MUST BE ABLE TO SHOW EVERY VALUE THE MODEL STORES.** `More bars` listed Stretch and Fill
+  while `applyBarsMode`, normalize and the re-cut dialog all also take `preserve` — so a record set to
+  Preserve DISPLAYED as Stretch (the browser falls back to option 0 when none matches) and was
+  silently overwritten the moment the control was touched. Build the option list from what the model
+  accepts, and include an option whenever it is the stored value even if you would not otherwise
+  offer it. A control's first duty is not to lie about the model.
 - **A COLLAPSED CARD GETS NO SECTION SHEET.** `render` calls `popOpen` only for an EXPANDED card, so
   `render()` then `classList.remove('collapsed')` leaves a card with no editor in it and every row
   unreachable — `.v2-gototab` does not exist either, because the section row lives in the sheet HEAD

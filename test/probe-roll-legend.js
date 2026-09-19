@@ -274,7 +274,7 @@ const ok = (name, cond, detail) => {
   await zz(400); await open();
 
   // ---- 4c. THE SWITCH ON THE FACE (2026-09-19) ----------------------------
-  // "Evolve feels buried in the Deep menu." ✓ This take · ⟳ Evolve · 🎲 Each
+  // "Evolve feels buried in the Deep menu." ↻ Repeat · ⟳ Evolve · 🎲 Re-roll
   // cycle sit on the take bar; each stop is driven with a real click and the
   // config read back, the lit stop measured (rect + offsetParent) and its
   // colour compared to the stylesheet, and the Every row shown exactly while
@@ -300,14 +300,14 @@ const ok = (name, cond, detail) => {
     }, k);
   };
   const s1 = await press('fixed');
-  ok('✓ This take: lit, vary off, Evolve 0, no chip, no Every row', s1.lit && s1.shown && !s1.vary && s1.ev === 0 &&
+  ok('↻ Repeat: lit, vary off, Evolve 0, no chip, no Every row', s1.lit && s1.shown && !s1.vary && s1.ev === 0 &&
      s1.badge !== 'EVOLVES' && !s1.chip && !s1.everyShown, JSON.stringify(s1));
   const s2 = await press('evolves');
   ok('⟳ Evolve: lit in the hue, defaults to every 4, badge EVOLVES, chip drawn, Every row reachable and mirrored into ⚙ Deep',
      s2.lit && s2.shown && s2.color === es.evoRgb && !s2.vary && s2.ev === 4 && s2.badge === 'EVOLVES' && s2.chip &&
      s2.everyShown && s2.everyVal === 4 && s2.deepEv === 4, JSON.stringify(s2));
   const s3 = await press('varies');
-  ok('🎲 Each cycle: lit, vary on, badge VARIES, Every row gone, no chip', s3.lit && s3.shown && s3.vary &&
+  ok('🎲 Re-roll: lit, vary on, badge VARIES, Every row gone, no chip', s3.lit && s3.shown && s3.vary &&
      s3.badge === 'VARIES' && !s3.everyShown && !s3.chip, JSON.stringify(s3));
   // …and on a FROZEN take the press RELEASES it and sets the clock — never a
   // disabled button ("why can't i click it": a disabled stop cannot take the

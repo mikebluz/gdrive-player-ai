@@ -16228,10 +16228,10 @@ select.ambient-select.v2-gridpick {
    and no breakpoint exists at which it works. A 50% basis is the answer, not
    a media query. */
 .v2-partviz .v2-takebar .ambient-seg { flex: 1 1 calc(50% - 3px); }
-/* ✓ This take · ⟳ Evolve · 🎲 Each cycle — the re-decide clock, on the face
+/* ↻ Repeat · ⟳ Evolve · 🎲 Re-roll — the re-decide clock, on the face
    (2026-09-19, "Evolve feels buried in the Deep menu"). Three stops in one
    row at every width (short faces, so 390px fits them), the lit stop in the
-   STATE'S hue — lime for Evolve (`--evo`), amber for Each cycle (VARIES) —
+   STATE'S hue — lime for Evolve (`--evo`), amber for Re-roll (VARIES) —
    so the switch and the badge above it are visibly the same fact. */
 .v2-partviz .v2-statesw { display: flex; gap: 6px; margin-top: 6px; min-width: 0; }
 .v2-partviz .v2-statesw .ambient-seg { flex: 1 1 0; min-width: 0; min-height: 40px; white-space: nowrap; }

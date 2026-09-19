@@ -221,7 +221,9 @@
   one control — never / every N passes / every cycle — with `part.vary` kept as a stored key for
   save-compat. `part.kind` (live vs frozen) is a genuinely different axis and stays.
   **COLLAPSED 2026-09-19 ("Evolve feels buried in the Deep menu"):** `.v2-statesw` on the take bar —
-  ✓ This take · ⟳ Evolve · 🎲 Each cycle — is THE door, with an `Every N` stepper (`st`, card id,
+  ↻ Repeat · ⟳ Evolve · 🎲 Re-roll — is THE door (VERBS: what happens each cycle — "Fixed also
+  doesn't reflect what pressing DOES"; a switch's faces are actions, its fill is the state), with an
+  `Every N` stepper (`st`, card id,
   `chg.ev`) beneath it while it evolves; `setClock` is the one writer and `clockSwSync` (from
   `vizChrome`) the second writer that re-lights it. ⚙ Deep ▸ 🎲 Take keeps Each cycle / Evolve / How
   much / Against as the FINE view of the same fields — the handler mirrors into them and into the

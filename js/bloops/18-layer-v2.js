@@ -7105,10 +7105,15 @@
   // that `vary` IS Evolve at ev 1 / am 100 and the two should be ONE
   // control: never · every N passes · every cycle. This is it, on the take
   // bar, where the take's own actions live and where it survives the
-  // picture's fold. The three stops use ⚙ Deep's OWN labels (✓ Play this
-  // take · Evolve · Each cycle) so the fine view and the face are one
-  // vocabulary; the lit stop wears the state's hue (Evolve lime, Each cycle
-  // amber), so the switch and the badge above it read as the same fact.
+  // picture's fold. THE THREE STOPS ARE VERBS — what happens to the notes
+  // each cycle: Repeat · Evolve · Re-roll. The first cut said "✓ This take",
+  // then "Fixed" was offered, and both name a STATE where the other two
+  // name what the press DOES ("Fixed also doesn't reflect what pressing
+  // DOES"); a switch's faces are actions, its fill is the state. ⚙ Deep's
+  // Each cycle toggle says the same words (↻ Repeat this take · 🎲 Re-roll
+  // every cycle), so the fine view and the face are one vocabulary; the lit
+  // stop wears the state's hue (Evolve lime, Re-roll amber), so the switch
+  // and the badge above it read as the same fact.
   // ⚙ Deep keeps its rows as the fine view of the SAME fields (How much and
   // Against have no face here — they mean nothing until it evolves), and the
   // handler mirrors into them, so the two can never disagree.
@@ -7121,9 +7126,9 @@
   // `release` the ⋯ menu offers — then takes the clock.
   const CLOCK_FROZEN = 'Frozen take — press to go back to the live rules with this';
   const CLOCK_SW = [
-    ['fixed',   '✓ This take',  'this take plays, every cycle — nothing is re-decided'],
+    ['fixed',   '↻ Repeat',   'play this same take every cycle — nothing is re-decided'],
     ['evolves', '⟳ Evolve',     'the rules decide again every N passes, keeping How much of the material (⚙ Deep ▸ 🎲 Take for How much and Against)'],
-    ['varies',  '🎲 Each cycle', 'a fresh roll every cycle — Evolve at its extreme'],
+    ['varies',  '🎲 Re-roll',  'a fresh roll every cycle — Evolve at its extreme'],
   ];
   const CLOCK_WHY = {}; CLOCK_SW.forEach(([k, , why]) => { CLOCK_WHY[k] = why; });
   // WHICH STOP IS LIT — from `liveness()` for the Evolve answer (the one
@@ -11662,7 +11667,7 @@
               // AUTHORING switch look like a performance one (2026-09-17).
               '<div class="ambient-ctrl" data-v2when="kind:live"><label>Each cycle</label>' +
                 '<button type="button" class="ambient-seg v2-varytoggle' + (L.part.vary ? ' on' : '') + '">' +
-                  (L.part.vary ? '\ud83c\udfb2 Roll again' : '\u2713 Play this take') + '</button>' +
+                  (L.part.vary ? '\ud83c\udfb2 Re-roll every cycle' : '\u21bb Repeat this take') + '</button>' +
                 '<span class="ambient-hint v2-varyhint">' + (L.part.vary
                   ? 'the rules run again every cycle \u2014 the drawing is take ' + ((L.part.take | 0) + 1) + ', one of many'
                   : 'take ' + ((L.part.take | 0) + 1) + ' is what plays, every cycle') + '</span></div>' +
@@ -16912,7 +16917,7 @@
           return;
         }
 
-        // ✓ This take · ⟳ Evolve · 🎲 Each cycle — the face's switch over the
+        // ↻ Repeat · ⟳ Evolve · 🎲 Re-roll — the face's switch over the
         // re-decide clock (`clockSwHtml`). Same follow-through as Each cycle
         // below: it changes what the NEXT cycles play.
         const sbt = t.closest('.v2-statebtn');
@@ -16945,7 +16950,7 @@
             const vt = ctx.card.querySelector('.v2-varytoggle');
             if (vt) {
               vt.classList.toggle('on', !!ctx.L.part.vary);
-              vt.textContent = ctx.L.part.vary ? '🎲 Re-roll every cycle' : '✓ Play this take';
+              vt.textContent = ctx.L.part.vary ? '🎲 Re-roll every cycle' : '↻ Repeat this take';
             }
             const vh = ctx.card.querySelector('.v2-varyhint');
             const tk = ((ctx.L.part.take | 0) + 1);
@@ -16972,7 +16977,7 @@
           if (ctx.L.part.vary) delete ctx.L.part.vary; else ctx.L.part.vary = 1;
           try { E.getCfg(); } catch (e) {}
           vry.classList.toggle('on', !!ctx.L.part.vary);
-          vry.textContent = ctx.L.part.vary ? '\ud83c\udfb2 Re-roll every cycle' : '\u2713 Play this take';
+          vry.textContent = ctx.L.part.vary ? '\ud83c\udfb2 Re-roll every cycle' : '\u21bb Repeat this take';
           try {
             const vh = ctx.card.querySelector('.v2-varyhint');
             const tk = ((ctx.L.part.take | 0) + 1);

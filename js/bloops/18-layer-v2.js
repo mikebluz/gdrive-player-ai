@@ -7660,7 +7660,11 @@
       const n = parseInt(m[1], 16);
       return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
     };
-    const NOTE_FILL = _hexA(ptCol, 0.5) || 'rgba(159,122,234,0.55)';
+    // NEAR-OPAQUE (2026-09-19, "the notes need to be more solid"): at 0.5 the
+    // drawn take sat between the ground and the outlines in weight, and with
+    // seven takes of outlines behind it the one that PLAYS has to be the one
+    // thing on the picture that is unmistakably there.
+    const NOTE_FILL = _hexA(ptCol, 0.92) || 'rgba(159,122,234,0.92)';
     const NOTE_EDGE = ptCol || '#d6bcfa';
     // ONE HUE PER UPCOMING TAKE, read from `--take-1..7` on :root (bloops.css
     // holds the palette; see the block there for why it is these seven). Read
@@ -8436,7 +8440,8 @@
       // measured: audio and drawing agreed on every note of every cycle;
       // the fade was the whole difference). The fade is a reading of the
       // FUTURE and belongs to the stopped picture.
-      if (stab && !playing && !isSel && !isGrp) g.globalAlpha = 0.28 + 0.72 * stab[i];
+      // (floor raised 0.28 → 0.5: at 0.28 a stopped note read as an outline)
+      if (stab && !playing && !isSel && !isGrp) g.globalAlpha = 0.5 + 0.5 * stab[i];
       g.fill(); g.stroke();
       g.globalAlpha = 1;
       if (selKeys && willGo && !isSel && !isGrp) {
@@ -9442,7 +9447,19 @@
       // as "same cycle" — at 1e-4 any residual jitter re-triggered the redraw
       // every frame (the flashing bug's other half). A real cycle move is at
       // least a chord span, orders of magnitude above 20ms.
-      if (!Number.isFinite(cv._cs) || Math.abs(cv._cs - cs) > 0.02) {
+      // …AND ONCE MORE THE MOMENT THE DRAWING CAN CALL ITSELF PLAYING
+      // (2026-09-19, "they don't become solid until the second pass"). This
+      // frame runs 16 ms ahead of `audibleNow()`, so its first redraw lands
+      // a hair before `drawPartViz` agrees the transport has started and
+      // paints the STOPPED picture — pinned take, stability fade. A stopped
+      // drawing's `cs` is the chord anchor, which is the very time playback
+      // started from, so `cv._cs` then matches `cs` and nothing redraws until
+      // the next cycle. `geo.playing` is the drawing's own claim; one more
+      // redraw once `audibleNow()` has caught up settles it, and it cannot
+      // loop: a following drawing registers playing on that redraw, and a
+      // non-following one returned above.
+      const stale0 = !geo.playing && audibleNow() >= st.startAt;
+      if (!Number.isFinite(cv._cs) || Math.abs(cv._cs - cs) > 0.02 || stale0) {
         try { drawPartViz(card, L, E); } catch (e) {}
       }
       const dpr = Math.min(3, (window.devicePixelRatio || 1));

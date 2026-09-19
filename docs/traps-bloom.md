@@ -232,6 +232,13 @@
   copy. On a FROZEN take the button is dimmed (`.v2-clockfrozen`), never `disabled` — the press
   releases (`V2.release`, silent, keeps the notes) and turns Evolve on. A new surface on this axis
   goes on this button, not beside it.
+  **THE FRAME IS 16 ms AHEAD OF THE DRAWING (2026-09-19).** `vizFrame` runs on `audibleNow() + 0.016`
+  and `drawPartViz` decides "playing" on bare `audibleNow()`, so the frame's first redraw at play
+  paints the STOPPED picture (pinned take, faded); a stopped drawing's `cs` is the chord anchor —
+  the time playback started from — so `cv._cs` then equals the live `cs` and the per-cycle trigger
+  stays quiet for a whole pass ("not solid until the second pass"). The frame now also redraws while
+  `!cv._plotGeo.playing && audibleNow() >= startAt`. A redraw trigger keyed on `cs` alone cannot see
+  a redraw that got the STATE wrong; key it on the drawing's own claim too.
   **WHILE PLAYING, THE DRAWN TAKE IS SOLID (2026-09-19).** The stability fade (note alpha = share of
   the next 8 passes it survives) is a reading of the FUTURE; applied while playing it painted notes
   of the take sounding NOW at 0.28 — an outline's weight — and was reported as "the current take is

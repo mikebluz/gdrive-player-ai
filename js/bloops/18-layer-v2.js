@@ -8422,6 +8422,14 @@
     if (p.kind === 'recorded') {
       // NO NOTE COUNT. The section head above reads `15 notes · 6 bars`, so
       // every one of these lines used to end by saying it again.
+      // AN EMPTY PART IS NOT A COMPOSED ONE. A new layer starts with no notes
+      // now, and "Composed — the notes you drew" over nothing is a claim about
+      // work that has not happened. Say what it is: waiting, and what for.
+      // `matSync` lights nothing for this key and `matWillDo` returns 'build',
+      // which are both the right answers for a part with nothing in it.
+      if (!(p.notes || []).length) {
+        return { key: 'empty', txt: '\u25cb Empty \u2014 pick a material below, or draw it' };
+      }
       if (p.made === 'compose') return { key: 'compose', txt: '\u270e Composed \u2014 the notes you drew' };
       if (p.made === 'phrase') return { key: 'adopt', txt: '\u266a From the Bank' + (p.from ? ' \u201c' + p.from + '\u201d' : '') };
       if (p.made === 'take') {
@@ -18123,9 +18131,19 @@
   }
   V2.addDefault = function (E) {
     const cfg = E && E.getCfg && E.getCfg(); if (!cfg) return null;
-    const L = V2.add(cfg, { name: layerWord(cfg) || 'Layer', instrument: { tone: '', register: 4, level: 65 },
-      part: { kind: 'live', bars: 2, rhythm: { kind: 'euclid', steps: 8, pulses: 3, rotate: 0 },
-              pitch: { kind: 'chord', voices: 3 }, shape: { lenRatio: 90 } } });
+    // NO PART SPEC — A NEW LAYER STARTS EMPTY (2026-09-18, user: "newly created
+    // layers should start empty, no content"). It used to arrive holding a
+    // euclid × chord take nobody asked for: 3 onsets, 9 notes, already playing.
+    // `V2.add` ALREADY builds the empty part when no `part` is given (recorded,
+    // no notes, `made: 'compose'` — the notes are yours from the first one);
+    // passing one here was what stepped over it.
+    // THE EMPTY STATE IS ALREADY A STATE, not a gap: ⚙ Deep's face reads
+    // "nothing yet — pick a material", and the doors it opens are the eight
+    // materials. So a new layer asks the question instead of answering it.
+    // The INSTRUMENT still comes set up — a voice, a register and a level are
+    // what it plays WITH, not what it plays.
+    const L = V2.add(cfg, { name: layerWord(cfg) || 'Layer',
+      instrument: { tone: '', register: 4, level: 65 } });
     try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
     V2.render(E);
     return L;

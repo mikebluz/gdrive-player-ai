@@ -53,6 +53,13 @@
 
 ### Bloom: the arrangement clock
 
+- **A CONTROL THAT INDEXES THE SOURCE SET MUST BE CAPPED TO IT.** Every branch reading
+  `part.pitch.degree` does `clamp(degree - 1, 0, N - 1)`, so a 1-12 stepper over a triad had three
+  live values and nine that silently repeated the third. The ceiling is `V2.toneCount` (published from
+  `toneSetAt`, never re-derived — that resolver applies the area progression lock, the per-layer key
+  override and the part/section key offsets). It is a UI cap only: `max(count, stored)`, because the
+  set can be a triad now and a 7th two bars later and a stored 4 must survive. Repainted from
+  `applyGateCard` — the count moves with the CHORDS and nothing rebuilds the row when they change.
 - **A CONTROL BELONGS WHERE ITS QUESTION LIVES; every other surface STATES THE CONSEQUENCE.**
   Time asks "how long is a cycle" — `cycModeOf` is its ladder: ▭ Everywhere (own bar count) ·
   ⟲ Locked (N passes of a part, `lenSync`) · Free (own ms clock). Generate asks "what content does

@@ -1508,6 +1508,20 @@
     } catch (e) { return null; }
   }
 
+  // HOW MANY SOURCE TONES THERE ARE at a moment — the ceiling for every control
+  // that INDEXES into the set. All four branches that read `Note` do
+  // `clamp(degree - 1, 0, N - 1)`, so a stepper offering 1-12 over a triad had
+  // nine values that were silently the same as 3.
+  // PUBLISHED rather than re-derived: `toneSetAt` applies the area progression
+  // lock, a per-layer key override and the part/section key offsets, and a
+  // second resolver on the card would disagree the moment any of those moved.
+  function toneCountAt(E, cfg, at, L) {
+    try {
+      const set = withKeyTime(at, () => toneSetAt(E, cfg, at, L));
+      if (set && Array.isArray(set.ivs) && set.ivs.length) return set.ivs.length;
+    } catch (e) {}
+    return 0;
+  }
   function scaleAt(E, cfg, at, L) {
     const mk = (root, ivs) => {
       if (!Number.isFinite(root) || !Array.isArray(ivs) || ivs.length < 1 || ivs.length >= 12) return null;
@@ -5663,6 +5677,7 @@
     // Published because every consumer is in the UI IIFE.
     liveness,
     scaleAt,                       // which pitch classes the keyboard should light
+    toneCount: toneCountAt,        // …and how MANY there are, for the controls that index them
     chordAt,                       // …and which the SOUNDING CHORD holds, at one moment
     notesFor,                      // the interface, callable directly
     onsetsOf,
@@ -10505,6 +10520,44 @@
     const b = (L.part && +L.part.bars) || 0;
     return 'passes of ' + (pn || 'the part') + (b > 0 ? ' \u2014 ' + b + ' bars' : '');
   }
+  // ── NOTE: A TONE OF THE SET, AND UNDER `STACK` AN INVERSION ─────────────
+  // user: "cap it to the available tones, and make it clear this is selecting
+  // an inversion". `Note` indexes the source set, and every branch that reads
+  // it clamps to the set's size — so over a triad the stepper's 1-12 was three
+  // live values and nine that silently repeated the third.
+  // NEVER BELOW WHAT IS STORED: the set can be a triad now and a 7th chord two
+  // bars later, so a project holding 4 keeps its 4 rather than being capped to
+  // something it cannot get back to. The cap narrows the dice, it does not
+  // rewrite the layer.
+  const ORDINAL = ['root position', '1st inversion', '2nd inversion', '3rd inversion',
+                   '4th inversion', '5th inversion'];
+  function noteCount(L) {
+    let n = 0;
+    try { n = V2.toneCount(_engOf(), _cfgOf(), 0, L) | 0; } catch (e) { n = 0; }
+    return (n > 0) ? n : 12;
+  }
+  function noteMax(L) {
+    const stored = clamp((((L.part && L.part.pitch) || {}).degree | 0), 0, 12);
+    return clamp(Math.max(noteCount(L), stored, 1), 1, 12);
+  }
+  function noteHint(L) {
+    const t = (L.part && L.part.pitch) || {};
+    const n = noteMax(L);
+    const d = clamp((t.degree | 0) || 1, 1, n);
+    // STACK takes `voices` CONSECUTIVE tones from here and wraps the octave, so
+    // over a chord that is exactly an inversion — and naming it is the whole
+    // ask. It stops being one when Voices is not the chord's size (a dyad, or
+    // a spread voicing), which is why the count is stated too.
+    if (t.kind === 'stack') {
+      const v = clamp((t.voices | 0) || 1, 1, 9);
+      const inv = (v === n) ? (ORDINAL[d - 1] || ('inversion ' + d)) : null;
+      return 'which inversion \u2014 ' + d + ' of ' + n +
+             (inv ? ' (' + inv + ')' : ', though ' + v + ' voices over ' + n +
+              ' tones is a voicing rather than an inversion');
+    }
+    if (t.kind === 'series' || t.kind === 'walk') return 'the tone it starts from \u2014 ' + d + ' of ' + n;
+    return 'which of the ' + n + ' tones it plays';
+  }
   const HOLD_BASE = 'note length in grid steps, whatever the gaps';
   function holdHint(L) {
     const n = clamp((((L && L.part && L.part.shape) || {}).holdSteps | 0), 0, 16);
@@ -11063,8 +11116,8 @@
               // against — a second door onto the Instrument sheet head's Reg
               gst(L, 'instrument.register', 'Register', clamp((L.instrument.register | 0) || 4, 1, 8), 1, 8,
                   'the octave the notes sit in', 'kind:live;voice:synth') +
-              gst(L, 'part.pitch.degree', 'Note', (L.part.pitch || {}).degree, 1, 12,
-                  'tone', 'kind:live;voice:synth;pitch:fixed,stack,walk,series') +
+              gst(L, 'part.pitch.degree', 'Note', (L.part.pitch || {}).degree, 1, noteMax(L),
+                  noteHint(L), 'kind:live;voice:synth;pitch:fixed,stack,walk,series') +
               // HOW THE LINE MOVES — stepping from the last note is what makes
               // it a melody rather than a scatter around a centre
               gsel(L, 'part.pitch.walkMode', 'Line moves',
@@ -11453,7 +11506,8 @@
              'independent melodies at once — 1 is a single line',
              'kind:live;voice:synth;pitch:walk,chance') +
 
-          st(L, 'part.pitch.degree', 'Note', t.degree, 1, 12, 'source tone', 'kind:live;voice:synth;pitch:fixed,stack,walk,series') +
+          st(L, 'part.pitch.degree', 'Note', t.degree, 1, noteMax(L), noteHint(L),
+             'kind:live;voice:synth;pitch:fixed,stack,walk,series') +
           // (Roam, Stutter, Pitch vary and Scatter moved to ⚙ Deep, 2026-09-16:
           // they are seeded on the TAKE — generation, re-rolled by 🎲 New take.)
           sel(L, 'part.pitch.dir', 'Direction', t.dir || 'up',
@@ -12791,6 +12845,16 @@
           }
         });
       };
+      // NOTE's ceiling and its wording both come from the SOUNDING SET, which
+      // moves with the progression and with Voices — and nothing rebuilds this
+      // row when those change. So the max is repainted too, not just the text.
+      try {
+        const nmax = String(noteMax(L));
+        card.querySelectorAll('.v2-f[data-f="part.pitch.degree"]').forEach((el) => {
+          if (el.getAttribute('max') !== nmax) el.setAttribute('max', nmax);
+        });
+      } catch (e) {}
+      paint('part.pitch.degree', noteHint(L));
       paint('part.shape.holdSteps', holdHint(L));
       paint('part.shape.lenRatio', lenHint(L));
       if (L.lenSync) paint('lenSync.passes', lockHint(L));

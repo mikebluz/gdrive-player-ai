@@ -232,6 +232,14 @@
   copy. On a FROZEN take the button is dimmed (`.v2-clockfrozen`), never `disabled` — the press
   releases (`V2.release`, silent, keeps the notes) and turns Evolve on. A new surface on this axis
   goes on this button, not beside it.
+  **EVOLVES IS ITS OWN STATE WORD (2026-09-19):** `liveness().state` is `fixed · varies · evolves`
+  and `stateWord()` (UI half) is the ONLY map from it to a word — never derive the word from `.live`
+  or `.tags`; three surfaces did, which is how a third state reaches some and not others. Its hue is
+  `--evo` (lime, beside the take palette in bloops.css — violet was too close to the app's purple
+  accent) on the badge, the summary chip, the three `.v2-evorow` knobs and the drawing's chip
+  (`evoChip`, published as `cv._evoChip` on the card's canvas AND ⚙ Deep's `.v2-stagecv`). A new
+  Evolve surface wears that class/var, never a restated colour, and shows exactly when `evoActs`
+  says it can act — the badge's own qualifier.
 
 - **`liveness` HAS NO CLOCK, so it cannot resolve `chg.parts`.** Resolving which part is sounding is
   `chgAt`'s job and needs a ctx. The badge therefore answers "does this EVER decide again", taking

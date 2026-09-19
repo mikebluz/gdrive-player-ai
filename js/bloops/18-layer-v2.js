@@ -320,8 +320,15 @@
     // their own, which is how a third state would have reached some and not
     // others. `vary` on still wins (the emitter says so); `evAny` is already
     // 0 there, so the order below needs no second check.
-    const state = (evAny > 0) ? 'evolves' : (why.length ? 'varies' : 'fixed');
-    return { live: why.length > 0, state, evolve: (evAny > 0) ? { ev: evAny } : null,
+    // …AND `vary` IS EVOLVE EVERY CYCLE (2026-09-19, "can't they just one
+    // button then"). The emitter has always said so (`vary` outranks `chg`
+    // BECAUSE it is Evolve at ev 1 / am 100), and the face now spells it
+    // "⟳ Evolve: every cycle" — so the badge reads EVOLVES for it too, or an
+    // amber VARIES would sit over a lime button saying the opposite. VARIES
+    // is left to the per-pass dice: timing, loudness, chance, the chords.
+    const evEff = (L.part.vary && L.part.kind !== 'recorded') ? 1 : evAny;
+    const state = (evEff > 0) ? 'evolves' : (why.length ? 'varies' : 'fixed');
+    return { live: why.length > 0, state, evolve: (evEff > 0) ? { ev: evEff } : null,
       why, tags: tags.filter((x, i, a) => a.indexOf(x) === i) };
   }
 
@@ -7046,7 +7053,7 @@
   // the three states. Never derive the word from `.live` or `.tags`.
   const stateWord = (lv) => (lv && lv.state === 'evolves') ? 'EVOLVES' : ((lv && lv.live) ? 'VARIES' : 'FIXED');
   const evoCadence = (lv) => (lv && lv.evolve && lv.evolve.ev > 0)
-    ? (' every ' + lv.evolve.ev + ' pass' + (lv.evolve.ev === 1 ? '' : 'es')) : '';
+    ? (' every ' + (lv.evolve.ev === 1 ? 'cycle' : lv.evolve.ev + ' passes')) : '';
   // null-prototyped: a summary value is looked up by name, and a plain object
   // would answer for 'constructor'
   const STATE_CLS = Object.assign(Object.create(null), { EVOLVES: 'v2-sum-evo', VARIES: 'v2-sum-live', FIXED: 'v2-sum-fixed' });
@@ -7098,95 +7105,86 @@
          tapTxt(L, ' \u00b7 tap a step to toggle it'));
     liveBadge(lab);
   }
-  // ── HOW OFTEN THE NOTES ARE RE-DECIDED: ONE CONTROL, ON THE FACE ──────
-  // (2026-09-19, "now Evolve feels buried in the Deep menu".) The axis had
-  // two doors, both two presses deep in ⚙ Deep ▸ 🎲 Take — Each cycle and
-  // Evolve — and the traps file has said since the day Evolve got a door
-  // that `vary` IS Evolve at ev 1 / am 100 and the two should be ONE
-  // control: never · every N passes · every cycle. This is it, on the take
+  // ── HOW OFTEN THE NOTES ARE RE-DECIDED: ONE BUTTON, ON THE FACE ───────
+  // (2026-09-19.) "Evolve feels buried in the Deep menu" — it was two doors
+  // two presses deep in ⚙ Deep ▸ 🎲 Take. First cut: a three-stop switch
+  // (Repeat · Evolve · Re-roll) on the take bar. Then: "can't they just one
+  // button then" — and they can, because the three were one NUMBER all
+  // along: Repeat is Evolve OFF, and Re-roll is Evolve EVERY 1 (the emitter
+  // says so: `vary` outranks `chg` because it IS Evolve at ev 1 / am 100).
+  // So: ⟳ Evolve is a TOGGLE that names the feature and wears the state in
+  // its fill AND its tail — a one-word face is read as the current state
+  // (the documented trap), so "⟳ Evolve" unlit would read as evolving —
+  // with the Every N stepper beneath it while it is on. It sits on the take
   // bar, where the take's own actions live and where it survives the
-  // picture's fold. THE THREE STOPS ARE VERBS — what happens to the notes
-  // each cycle: Repeat · Evolve · Re-roll. The first cut said "✓ This take",
-  // then "Fixed" was offered, and both name a STATE where the other two
-  // name what the press DOES ("Fixed also doesn't reflect what pressing
-  // DOES"); a switch's faces are actions, its fill is the state. ⚙ Deep's
-  // Each cycle toggle says the same words (↻ Repeat this take · 🎲 Re-roll
-  // every cycle), so the fine view and the face are one vocabulary; the lit
-  // stop wears the state's hue (Evolve lime, Re-roll amber), so the switch
-  // and the badge above it read as the same fact.
-  // ⚙ Deep keeps its rows as the fine view of the SAME fields (How much and
-  // Against have no face here — they mean nothing until it evolves), and the
+  // picture's fold. The lit fill is Evolve's hue (`--evo`), the same the
+  // badge above it wears, so the two read as one fact.
+  // ⚙ Deep keeps its rows as the FINE view of the same fields (How much and
+  // Against have no face here — they mean nothing until it evolves), and its
+  // legacy Each cycle toggle (`part.vary`) reads here as Every 1; the
   // handler mirrors into them, so the two can never disagree.
-  // ON A FROZEN TAKE THE PRESS RELEASES IT (2026-09-19, "why can't i click
-  // it"). The first cut rendered the stops `disabled` with the way back in
-  // the title — and a disabled button cannot take the press to explain
-  // itself, while its title never shows on a phone: a dead control with a
-  // secret reason. The stops are DIMMED (a class) and stay pressable; the
-  // press does the prerequisite itself — the same silent, note-keeping
-  // `release` the ⋯ menu offers — then takes the clock.
-  const CLOCK_FROZEN = 'Frozen take — press to go back to the live rules with this';
-  const CLOCK_SW = [
-    ['fixed',   '↻ Repeat',   'play this same take every cycle — nothing is re-decided'],
-    ['evolves', '⟳ Evolve',     'the rules decide again every N passes, keeping How much of the material (⚙ Deep ▸ 🎲 Take for How much and Against)'],
-    ['varies',  '🎲 Re-roll',  'a fresh roll every cycle — Evolve at its extreme'],
-  ];
-  const CLOCK_WHY = {}; CLOCK_SW.forEach(([k, , why]) => { CLOCK_WHY[k] = why; });
-  // WHICH STOP IS LIT — from `liveness()` for the Evolve answer (the one
-  // computation of that axis; it already applies the recorded/am-0/vary
-  // qualifiers) and from the field for `vary`, which is exactly what the
-  // stop sets. A frozen part lights nothing: its state is FROZEN.
-  function clockOf(L, cfg) {
-    if (!L || !L.part || L.part.kind === 'recorded') return '';
-    if (L.part.vary) return 'varies';
+  // ON A FROZEN TAKE THE PRESS RELEASES IT ("why can't i click it"). The
+  // first cut rendered it `disabled` with the way back in the title — and a
+  // disabled button cannot take the press to explain itself, while its
+  // title never shows on a phone: a dead control with a secret reason. It is
+  // DIMMED (a class) and stays pressable; the press does the prerequisite
+  // itself — the same silent, note-keeping `release` the ⋯ menu offers —
+  // then turns Evolve on.
+  const CLOCK_FROZEN = 'Frozen take — press to go back to the live rules and evolve them';
+  const CLOCK_ON_WHY = 'the rules decide again every N passes, keeping How much of the material — 1 = every cycle. Press to turn it off; How much and Against are in ⚙ Deep ▸ 🎲 Take';
+  const CLOCK_OFF_WHY = 'off — this take plays every cycle, nothing is re-decided. Press to evolve it';
+  // HOW OFTEN, AS ONE NUMBER: 0 = off, N = every N passes. From `liveness()`
+  // — the one computation of this axis; it already folds `vary` in as 1 and
+  // applies the recorded / am-0 qualifiers — so the button, the badge and
+  // the chip cannot disagree.
+  function evoEveryOf(L, cfg) {
     let lv = null; try { lv = V2.liveness(L, cfg); } catch (e) {}
-    return (lv && lv.state === 'evolves') ? 'evolves' : 'fixed';
+    return (lv && lv.state === 'evolves' && lv.evolve) ? (lv.evolve.ev | 0) : 0;
   }
-  // THE WRITE, in one place — the face's handler and nothing else calls it,
-  // but the staged copy in ⚙ Deep needs the same write or ✓ Done reverts it.
-  function setClock(L, k) {
+  // THE WRITE, in one place. `n` 0 turns it off, N sets the clock — and both
+  // clear `part.vary`, since the face has ONE field and Re-roll is spelled
+  // Every 1 here. The staged copy in ⚙ Deep needs the same write or ✓ Done
+  // hands the old clock back.
+  function setClock(L, n) {
     if (!L.chg || typeof L.chg !== 'object') L.chg = {};
-    if (k === 'varies') { L.part.vary = 1; return; }
     delete L.part.vary;
-    if (k === 'evolves') {
-      if (!((L.chg.ev | 0) > 0)) L.chg.ev = 4;                    // the emitter's own default
-      if (L.chg.am != null && (L.chg.am | 0) <= 0) L.chg.am = 100; // 0% is "never", by the emitter's rule
-    } else {
-      L.chg.ev = 0;
-    }
+    L.chg.ev = clamp(n | 0, 0, 64);
+    if (L.chg.ev > 0 && L.chg.am != null && (L.chg.am | 0) <= 0) L.chg.am = 100;  // 0% is "never", by the emitter's rule
   }
+  const clockFace = (n) => '⟳ Evolve: ' + (n > 0 ? ('every ' + (n === 1 ? 'cycle' : n + ' passes')) : 'off — this take repeats');
   function clockSwHtml(L) {
     const frozen = L.part.kind === 'recorded';
-    return '<span class="ambient-seg-row v2-statesw" role="group" title="How often the notes are re-decided">' +
-      CLOCK_SW.map(([k, face, why]) =>
-        '<button type="button" class="ambient-seg v2-statebtn' + (frozen ? ' v2-clockfrozen' : '') + '" data-state="' + k + '"' +
-          ' title="' + esc(frozen ? CLOCK_FROZEN : why) + '">' + face + '</button>').join('') +
+    let cfg = null; try { cfg = _cfgOf(); } catch (e) {}
+    const n = evoEveryOf(L, cfg);
+    return '<span class="ambient-seg-row v2-statesw" title="How often the notes are re-decided">' +
+      '<button type="button" class="ambient-seg v2-statebtn v2-evotog' + (n > 0 ? ' on' : '') + (frozen ? ' v2-clockfrozen' : '') + '"' +
+        ' title="' + esc(frozen ? CLOCK_FROZEN : (n > 0 ? CLOCK_ON_WHY : CLOCK_OFF_WHY)) + '">' + clockFace(n) + '</button>' +
       '</span>' +
       // EVERY N — the one number Evolve needs on the face. `st` gives it the
       // card's own id (no -gen), so it is a second control over `chg.ev`
       // beside ⚙ Deep's, and the `.v2-f` commit mirrors the two (the Level
-      // rule). Gated like Deep's How much: present only while it evolves.
-      st(L, 'chg.ev', 'Every', ((L.chg || {}).ev | 0) || 4, 1, 64,
-         'passes before the rules decide again — How much and Against are in ⚙ Deep ▸ 🎲 Take',
-         'kind:live;vary:off;evo:on')
+      // rule). Present only while it is on (`evo:on` counts `vary` too).
+      st(L, 'chg.ev', 'Every', n || ((L.chg || {}).ev | 0) || 4, 1, 64,
+         'passes before the rules decide again — 1 = every cycle. How much and Against are in ⚙ Deep ▸ 🎲 Take',
+         'kind:live;evo:on')
         .replace('class="ambient-ctrl', 'class="ambient-ctrl v2-evorow v2-evoevery');
   }
   // THE SECOND WRITER. Every route that moves this axis — ⚙ Deep's rows and
   // ✓ Done, ⚡ Release, a tap that freezes, a Material door — ends in a
-  // redraw, and the redraw ends in `vizChrome`, so the switch is re-lit from
+  // redraw, and the redraw ends in `vizChrome`, so the button is re-lit from
   // the model there rather than by each of those routes remembering to.
   function clockSwSync(card, L) {
     let cfg = null; try { cfg = _cfgOf(); } catch (e) {}
-    const k = clockOf(L, cfg), frozen = L.part.kind === 'recorded';
-    card.querySelectorAll('.v2-statesw .v2-statebtn').forEach((b) => {
-      const bk = b.getAttribute('data-state');
-      b.classList.toggle('on', bk === k);
+    const n = evoEveryOf(L, cfg), frozen = L.part.kind === 'recorded';
+    card.querySelectorAll('.v2-statesw .v2-evotog').forEach((b) => {
+      b.classList.toggle('on', n > 0);
       b.classList.toggle('v2-clockfrozen', frozen);
-      const want = frozen ? CLOCK_FROZEN : CLOCK_WHY[bk];
+      const face = clockFace(n); if (b.textContent !== face) b.textContent = face;
+      const want = frozen ? CLOCK_FROZEN : (n > 0 ? CLOCK_ON_WHY : CLOCK_OFF_WHY);
       if (b.title !== want) b.title = want;
     });
-    const ev = ((L.chg || {}).ev | 0);
-    if (ev > 0) card.querySelectorAll('.v2-evoevery .v2-f[data-f="chg.ev"]').forEach((i) => {
-      if ((+i.value | 0) !== ev) i.value = ev;
+    if (n > 0) card.querySelectorAll('.v2-evoevery .v2-f[data-f="chg.ev"]').forEach((i) => {
+      if ((+i.value | 0) !== n) i.value = n;
     });
   }
   function partVizHtml(L) {
@@ -7480,7 +7478,7 @@
   const evoActs = (L, evo) => !!(evo && evo.ev > 0 && L && L.part && L.part.kind !== 'recorded' && !L.part.vary);
   function evoChip(g, evo, right, top) {
     const ev = evo.ev | 0, am = Math.round(Number.isFinite(evo.am) ? evo.am : 100);
-    const txt = '\u27f3 EVOLVES every ' + ev + ' pass' + (ev === 1 ? '' : 'es') + (am < 100 ? ' \u00b7 ' + am + '%' : '');
+    const txt = '\u27f3 EVOLVES every ' + (ev === 1 ? 'cycle' : ev + ' passes') + (am < 100 ? ' \u00b7 ' + am + '%' : '');
     const hue = evoHue();
     g.save();
     g.font = 'bold 10px -apple-system, Segoe UI, sans-serif';
@@ -8190,14 +8188,17 @@
     // FROZEN part still stores its Evolve, and the thaw hint needs to know.
     let evo = null;
     try { evo = V2.chgAt(L, { E: E, cfg: cfg }, cs, cyc) || null; } catch (e) { evo = null; }
-    const evoOn = evoActs(L, evo);
+    // Re-roll (`part.vary`) IS Evolve every cycle — the face and the badge
+    // say so, and the picture must agree
+    const evoOn = evoActs(L, evo) || (L.part.kind !== 'recorded' && !!L.part.vary);
+    const evoArg = (L.part.vary && L.part.kind !== 'recorded') ? { ev: 1, am: 100 } : evo;
     cv._evoChip = null;
     if (!played.length) {
       try { vizChrome(card, L, E); } catch (e) {}
       g.fillStyle = '#6b6b8a'; g.font = '12px -apple-system, Segoe UI, sans-serif';
       g.fillText('silent for this cycle', GUT + 8, TOP + (h - TOP) / 2 + 4);
       // a silent cycle is still an evolving one — the chip says so
-      try { if (evoOn) cv._evoChip = evoChip(g, evo, w, TOP); } catch (e) {}
+      try { if (evoOn) cv._evoChip = evoChip(g, evoArg, w, TOP); } catch (e) {}
       if (lab) lab.textContent = liveTxt(L, cfg) + ' · ' + barTxt +
         ((cv._drawnPi >= 0 && Number.isFinite(L.partFor) && (cv._drawnPi | 0) !== (L.partFor | 0))
           ? ' \u2014 \ud83d\udc41 showing another part' : '');
@@ -8571,7 +8572,7 @@
       liveBadge(lab);
     }
     // ⟳ painted LAST, so it sits over the notes rather than under them
-    try { if (evoOn) cv._evoChip = evoChip(g, evo, w, TOP); } catch (e) {}
+    try { if (evoOn) cv._evoChip = evoChip(g, evoArg, w, TOP); } catch (e) {}
     try { vizChrome(card, L, E); } catch (e) {}
   }
   // The viz block's live chrome — the note editor, and what the lock button
@@ -12900,7 +12901,10 @@
       // is off as far as anything that reasons about it is concerned.
       vary: (L.part && L.part.vary && L.part.kind !== 'recorded') ? 'on' : 'off',
       // …and How much / Against only mean something once it evolves at all.
-      evo: (L.chg && (L.chg.ev | 0) > 0) ? 'on' : 'off',
+      // …and Re-roll (`vary`) IS every 1, so it counts (the face's Every row
+      // must show, reading 1); Deep's How much / Against also carry
+      // `vary:off`, so there they grey — pointing at their cause — not hide
+      evo: ((L.chg && (L.chg.ev | 0) > 0) || (L.part && L.part.vary && L.part.kind !== 'recorded')) ? 'on' : 'off',
       // ── SIZE: THE TWO ANSWERS TO "HOW LONG IS A NOTE" ARE EXCLUSIVE ──
       // `durAt` takes the Hold branch whenever Hold > 0 and Length is then
       // read by nothing, so the model ALREADY says one or the other —
@@ -13029,7 +13033,8 @@
       // set, so this is where turning it on shows first (see `evoChip`).
       let evoS = null;
       try { if (cfg) evoS = V2.chgAt(S, { E: E, cfg: cfg }, 0, cyc) || null; } catch (e) { evoS = null; }
-      const chip = () => { try { cv._evoChip = evoActs(S, evoS) ? evoChip(g, evoS, wCss, TOP) : null; } catch (e) { cv._evoChip = null; } };
+      const varyS = !!(S.part && S.part.vary && S.part.kind !== 'recorded');   // Re-roll = every 1
+      const chip = () => { try { cv._evoChip = (evoActs(S, evoS) || varyS) ? evoChip(g, varyS ? { ev: 1, am: 100 } : evoS, wCss, TOP) : null; } catch (e) { cv._evoChip = null; } };
       if (!played.length) {
         g.fillStyle = '#6b6b8a'; g.font = '12px -apple-system, Segoe UI, sans-serif';
         g.fillText('silent for this cycle', 8, TOP + (hCss - TOP) / 2 + 4);
@@ -15989,6 +15994,18 @@
         if (path === 'tg.steps') { h._sig = ''; V2.render(E); }
         // Evolve's clock moved: the badge, the chip and the outlines all read
         // it, and none of them is rebuilt by the gate pass alone
+        // Every N is ONE field on the face and Re-roll is spelled Every 1
+        // there — so editing the number takes ⚙ Deep's legacy Each cycle
+        // switch off, which would otherwise outrank it and make the face lie
+        if (path === 'chg.ev' && ctx.L.part.vary) {
+          delete ctx.L.part.vary;
+          try { E.getCfg(); } catch (e) {}
+          try {
+            const vt = ctx.card.querySelector('.v2-varytoggle');
+            if (vt) { vt.classList.remove('on'); vt.textContent = '↻ Repeat this take'; }
+          } catch (e) {}
+          try { applyGate(ctx.card, ctx.L); } catch (e) {}
+        }
         if (!staged0 && path.indexOf('chg.') === 0) { try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {} }
       });
 
@@ -16917,33 +16934,32 @@
           return;
         }
 
-        // ↻ Repeat · ⟳ Evolve · 🎲 Re-roll — the face's switch over the
-        // re-decide clock (`clockSwHtml`). Same follow-through as Each cycle
-        // below: it changes what the NEXT cycles play.
-        const sbt = t.closest('.v2-statebtn');
+        // ⟳ EVOLVE — the face's one button over the re-decide clock
+        // (`clockSwHtml`). Same follow-through as Each cycle below: it
+        // changes what the NEXT cycles play.
+        const sbt = t.closest('.v2-evotog');
         if (sbt) {
           const ctx = layerOf(sbt); if (!ctx) return;
-          const k = sbt.getAttribute('data-state');
+          let cfg0 = null; try { cfg0 = _cfgOf(); } catch (e) {}
+          // on → off; off → on at the last N it had, or the emitter's 4
+          const wasOn = ctx.L.part.kind !== 'recorded' && evoEveryOf(ctx.L, cfg0) > 0;
+          const n = wasOn ? 0 : (((ctx.L.chg || {}).ev | 0) || 4);
           // A FROZEN TAKE RELEASES ON THE PRESS — `V2.release` is silent and
-          // keeps the notes (the live spec was never discarded) — then takes
-          // the clock, and the card is rebuilt as the ⋯ menu's door does.
+          // keeps the notes (the live spec was never discarded) — then turns
+          // Evolve on, and the card is rebuilt as the ⋯ menu's door does.
           if (ctx.L.part.kind === 'recorded') {
             if (!V2.release(E, ctx.L)) return;
-            setClock(ctx.L, k);
+            setClock(ctx.L, n);
             try { E.getCfg(); } catch (e) {}
-            try {
-              const said = (k === 'evolves') ? ('evolving every ' + (((ctx.L.chg || {}).ev | 0) || 4) + ' passes')
-                         : (k === 'varies') ? 'a fresh roll every cycle' : 'this take plays, every cycle';
-              if (typeof showToast === 'function') showToast('Live again — ' + said + '.');
-            } catch (e) {}
+            try { if (typeof showToast === 'function') showToast('Live again — evolving every ' + (n === 1 ? 'cycle' : n + ' passes') + '.'); } catch (e) {}
             try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
             h._sig = ''; V2.render(E);
             return;
           }
-          setClock(ctx.L, k);
+          setClock(ctx.L, n);
           // ⚙ Deep open on this layer edits a STAGED copy — write it too, or
           // its ✓ Done hands the old clock back
-          try { const S = V2.stagedOf(ctx.L.id | 0); if (S && S !== ctx.L) setClock(S, k); } catch (e) {}
+          try { const S = V2.stagedOf(ctx.L.id | 0); if (S && S !== ctx.L) setClock(S, n); } catch (e) {}
           try { E.getCfg(); } catch (e) {}
           // mirror ⚙ Deep's faces of the same fields, if they are built
           try {

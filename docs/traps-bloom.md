@@ -220,23 +220,19 @@
   FIXED while 24 outlines sat behind it. **Before adding a fourth surface to this axis, collapse it:**
   one control — never / every N passes / every cycle — with `part.vary` kept as a stored key for
   save-compat. `part.kind` (live vs frozen) is a genuinely different axis and stays.
-  **COLLAPSED 2026-09-19 ("Evolve feels buried in the Deep menu"):** `.v2-statesw` on the take bar —
-  ↻ Repeat · ⟳ Evolve · 🎲 Re-roll — is THE door (VERBS: what happens each cycle — "Fixed also
-  doesn't reflect what pressing DOES"; a switch's faces are actions, its fill is the state), with an
-  `Every N` stepper (`st`, card id,
-  `chg.ev`) beneath it while it evolves; `setClock` is the one writer and `clockSwSync` (from
-  `vizChrome`) the second writer that re-lights it. ⚙ Deep ▸ 🎲 Take keeps Each cycle / Evolve / How
-  much / Against as the FINE view of the same fields — the handler mirrors into them and into the
-  staged copy, so ✓ Done cannot hand the old clock back. A new surface on this axis goes on the
-  switch, not beside it. On a FROZEN take the stops are dimmed (`.v2-clockfrozen`), never
-  `disabled` — the press releases the take (`V2.release`, silent, keeps the notes) and sets the clock.
-  **EVOLVES IS ITS OWN STATE WORD (2026-09-19):** `liveness().state` is `fixed · varies · evolves`
-  and `stateWord()` (UI half) is the ONLY map from it to a word — never derive the word from `.live`
-  or `.tags`; three surfaces did, which is how a third state reaches some and not others. Its hue is
-  `--evo` (lime, beside the take palette in bloops.css — violet was too close to the app's purple accent) on the badge, the summary chip, the three
-  `.v2-evorow` knobs and the drawing's chip (`evoChip`, published as `cv._evoChip` on the card's
-  canvas AND ⚙ Deep's `.v2-stagecv`). A new Evolve surface wears that class/var, never a restated
-  colour, and shows exactly when `evoActs` says it can act — the badge's own qualifier.
+  **COLLAPSED 2026-09-19 ("Evolve feels buried in the Deep menu" → "can't they just one button
+  then"):** `.v2-evotog` on the take bar — ONE toggle, `⟳ Evolve: off — this take repeats` /
+  `⟳ Evolve: every N passes` (fill AND tail carry the state; a one-word face reads as the current
+  state) — with an `Every N` stepper (`st`, card id, `chg.ev`) beneath it while on. Repeat is OFF and
+  Re-roll is EVERY 1: `liveness()` folds `vary` in as `evolve.ev` 1, so the badge, the chip and the
+  button all say EVOLVES for it and VARIES is left to the per-pass dice. `setClock(L, n)` is the one
+  writer (clears `part.vary`; editing Every on the face clears it too, since `vary` would outrank the
+  number) and `clockSwSync` (from `vizChrome`) the second writer. ⚙ Deep ▸ 🎲 Take keeps Each cycle /
+  Evolve / How much / Against as the FINE view — the handler mirrors into them and into the staged
+  copy. On a FROZEN take the button is dimmed (`.v2-clockfrozen`), never `disabled` — the press
+  releases (`V2.release`, silent, keeps the notes) and turns Evolve on. A new surface on this axis
+  goes on this button, not beside it.
+
 - **`liveness` HAS NO CLOCK, so it cannot resolve `chg.parts`.** Resolving which part is sounding is
   `chgAt`'s job and needs a ctx. The badge therefore answers "does this EVER decide again", taking
   the largest `ev` any part override offers — deliberately, and noted here so it is not later
@@ -371,7 +367,7 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   | axis | poles | means |
   |---|---|---|
   | what makes the notes | **GENERATED** · **STATIC** | resolved by rule at play time · stored and read back |
-  | does it change per cycle | **VARIES: what** · **EVOLVES every N: what** · **FIXED** (badge, `liveBadge`) | `liveness().state` — a property of the SETTINGS; FIXED is the zero case, not a second kind; EVOLVES is the slow clock, in its own hue (`--evo`, lime) |
+  | does it change per cycle | **EVOLVES every N: what** · **VARIES: what** · **FIXED** (badge, `liveBadge`) | `liveness().state` — a property of the SETTINGS. EVOLVES is the CONTENT clock (`chg.ev`, and `vary` = every cycle), in its own hue (`--evo`, lime); VARIES is the per-pass dice (timing, loudness, chance, the chords); FIXED is the zero case, not a second kind |
   | who chose the notes | **✎ Written** (by hand) | the only surviving use of the word |
 
   **STATIC had to be TAKEN OFF the liveness readout to be given to the state** — renaming one pole

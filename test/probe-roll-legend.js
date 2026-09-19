@@ -273,60 +273,71 @@ const ok = (name, cond, detail) => {
   await page.evaluate(() => { document.querySelector('.v2-layer .v2-gencancel')?.click(); });
   await zz(400); await open();
 
-  // ---- 4c. THE SWITCH ON THE FACE (2026-09-19) ----------------------------
-  // "Evolve feels buried in the Deep menu." ↻ Repeat · ⟳ Evolve · 🎲 Re-roll
-  // cycle sit on the take bar; each stop is driven with a real click and the
-  // config read back, the lit stop measured (rect + offsetParent) and its
-  // colour compared to the stylesheet, and the Every row shown exactly while
-  // it evolves.
-  console.log('\nthe switch on the card face');
-  const press = async (k) => {
-    await page.evaluate((k) => { document.querySelector('.v2-layer .v2-statebtn[data-state="' + k + '"]')?.click(); }, k);
+  // ---- 4c. ONE BUTTON ON THE FACE (2026-09-19) ---------------------------
+  // "Evolve feels buried in the Deep menu" → a switch on the take bar; then
+  // "can't they just one button then" → ⟳ Evolve is a toggle whose fill and
+  // tail carry the state, with Every N beneath it while on (Re-roll = Every
+  // 1, Repeat = off). Each press is a real click with the config read back,
+  // the button measured (rect + offsetParent) and its colour compared to the
+  // stylesheet, and the Every row held to "shown exactly while on".
+  console.log('\nthe one button on the card face');
+  const readSw = () => page.evaluate(() => {
+    const card = document.querySelector('.v2-layer');
+    const L = (_masterEng.getCfg().layers || [])[0];
+    const b = card?.querySelector('.v2-evotog');
+    const r = b?.getBoundingClientRect();
+    const evr = card?.querySelector('.v2-evoevery');
+    const er = evr?.getBoundingClientRect();
+    return { lit: !!b?.classList.contains('on'), face: b?.textContent || '', disabled: !!b?.disabled,
+      frozenCls: !!b?.classList.contains('v2-clockfrozen'),
+      shown: !!(b && b.offsetParent && r.width > 0 && r.height > 0),
+      color: b ? getComputedStyle(b).color : '', vary: !!L?.part?.vary, ev: ((L?.chg || {}).ev | 0),
+      kind: L?.part?.kind,
+      badge: card?.querySelector('.v2-vizlab .v2-livebadge')?.textContent,
+      everyShown: !!(evr && evr.offsetParent && getComputedStyle(evr).display !== 'none' && er.height > 0),
+      everyVal: evr ? +(evr.querySelector('.v2-f[data-f="chg.ev"]')?.value) : null,
+      deepEv: +(card?.querySelector('.v2-genwrap .v2-f[data-f="chg.ev"]')?.value),
+      chip: !!card?.querySelector('.v2-vizcv')?._evoChip };
+  });
+  const press = async () => {
+    await page.evaluate(() => { document.querySelector('.v2-layer .v2-evotog')?.click(); });
     await zz(900); await open();
-    return page.evaluate((k) => {
-      const card = document.querySelector('.v2-layer');
-      const L = (_masterEng.getCfg().layers || [])[0];
-      const b = card?.querySelector('.v2-statebtn[data-state="' + k + '"]');
-      const r = b?.getBoundingClientRect();
-      const evr = card?.querySelector('.v2-evoevery');
-      const er = evr?.getBoundingClientRect();
-      return { lit: !!b?.classList.contains('on'), shown: !!(b && b.offsetParent && r.width > 0 && r.height > 0),
-        color: b ? getComputedStyle(b).color : '', vary: !!L?.part?.vary, ev: ((L?.chg || {}).ev | 0),
-        badge: card?.querySelector('.v2-vizlab .v2-livebadge')?.textContent,
-        everyShown: !!(evr && evr.offsetParent && getComputedStyle(evr).display !== 'none' && er.height > 0),
-        everyVal: evr ? +(evr.querySelector('.v2-f[data-f="chg.ev"]')?.value) : null,
-        deepEv: +(card?.querySelector('.v2-genwrap .v2-f[data-f="chg.ev"]')?.value),
-        chip: !!card?.querySelector('.v2-vizcv')?._evoChip };
-    }, k);
+    return readSw();
   };
-  const s1 = await press('fixed');
-  ok('↻ Repeat: lit, vary off, Evolve 0, no chip, no Every row', s1.lit && s1.shown && !s1.vary && s1.ev === 0 &&
-     s1.badge !== 'EVOLVES' && !s1.chip && !s1.everyShown, JSON.stringify(s1));
-  const s2 = await press('evolves');
-  ok('⟳ Evolve: lit in the hue, defaults to every 4, badge EVOLVES, chip drawn, Every row reachable and mirrored into ⚙ Deep',
-     s2.lit && s2.shown && s2.color === es.evoRgb && !s2.vary && s2.ev === 4 && s2.badge === 'EVOLVES' && s2.chip &&
-     s2.everyShown && s2.everyVal === 4 && s2.deepEv === 4, JSON.stringify(s2));
-  const s3 = await press('varies');
-  ok('🎲 Re-roll: lit, vary on, badge VARIES, Every row gone, no chip', s3.lit && s3.shown && s3.vary &&
-     s3.badge === 'VARIES' && !s3.everyShown && !s3.chip, JSON.stringify(s3));
-  // …and on a FROZEN take the press RELEASES it and sets the clock — never a
-  // disabled button ("why can't i click it": a disabled stop cannot take the
-  // press to explain itself, and its title never shows on a phone).
+  // section 4 left it evolving every 2 (set directly) — the first press turns it OFF
+  const s1 = await press();
+  ok('press: off — unlit, says so, Evolve 0, vary off, no chip, no Every row', !s1.lit && /off/.test(s1.face) &&
+     s1.shown && s1.ev === 0 && !s1.vary && s1.badge !== 'EVOLVES' && !s1.chip && !s1.everyShown, JSON.stringify(s1));
+  const s2 = await press();
+  ok('press: on — lit in the hue, every 4 (the default), badge EVOLVES, chip drawn, Every row reachable and mirrored into ⚙ Deep',
+     s2.lit && /every 4 passes/.test(s2.face) && s2.shown && s2.color === es.evoRgb && !s2.vary && s2.ev === 4 &&
+     s2.badge === 'EVOLVES' && s2.chip && s2.everyShown && s2.everyVal === 4 && s2.deepEv === 4, JSON.stringify(s2));
+  // ⚙ Deep's legacy Each cycle (`part.vary`) reads on the face as Every 1 —
+  // and the badge and the chip agree, or amber VARIES would sit over a lime
+  // button saying the opposite
+  await page.evaluate(() => {
+    const L = (_masterEng.getCfg().layers || [])[0];
+    L.part.vary = 1; _masterEng.getCfg(); window._v2.render(_masterEng);
+  });
+  await zz(900); await open();
+  const s3 = await readSw();
+  ok('Re-roll (Each cycle in ⚙ Deep) reads as ⟳ Evolve: every cycle, Every 1, badge EVOLVES, chip drawn',
+     s3.lit && /every cycle/.test(s3.face) && s3.everyVal === 1 && s3.everyShown && s3.badge === 'EVOLVES' && s3.chip,
+     JSON.stringify(s3));
+  // …and on a FROZEN take the press RELEASES it and evolves — never a
+  // disabled button ("why can't i click it": a disabled button cannot take
+  // the press to explain itself, and its title never shows on a phone)
   await page.evaluate(() => {
     const L = (_masterEng.getCfg().layers || [])[0];
     window._v2.capture(_masterEng, L); _masterEng.getCfg(); window._v2.render(_masterEng);
   });
   await zz(900); await open();
-  const fr = await page.evaluate(() => {
-    const b = document.querySelector('.v2-layer .v2-statebtn[data-state="evolves"]');
-    return { frozenCls: !!b?.classList.contains('v2-clockfrozen'), disabled: !!b?.disabled,
-      kind: (_masterEng.getCfg().layers || [])[0]?.part?.kind };
-  });
-  ok('a frozen take dims the switch but never disables it', fr.kind === 'recorded' && fr.frozenCls && !fr.disabled,
+  const fr = await readSw();
+  ok('a frozen take dims the button but never disables it', fr.kind === 'recorded' && fr.frozenCls && !fr.disabled && !fr.lit,
      JSON.stringify(fr));
-  const s4 = await press('evolves');
-  ok('⟳ Evolve on a frozen take releases it and evolves', s4.lit && !s4.vary && s4.ev > 0 && s4.badge === 'EVOLVES',
-     JSON.stringify(s4));
+  const s4 = await press();
+  ok('the press on a frozen take releases it and evolves', s4.kind === 'live' && s4.lit && !s4.vary && s4.ev > 0 &&
+     s4.badge === 'EVOLVES', JSON.stringify(s4));
 
   // ---- the invariant, stated once ----------------------------------------
   const shown = [v, back, f, ev];                 // every state with the picture up

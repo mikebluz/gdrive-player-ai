@@ -1,9 +1,11 @@
     // ---- Sign-in toggle --------------------------------------------------
-    // Sign-in is REQUIRED to use Bloops (see initSigninGate below): the
-    // full-page #signin-gate covers the app until a token is present. Once
-    // signed in, this top-bar toggle lets the user sign back OUT (which
-    // re-raises the gate). `body.no-google` still gates the Drive-only
-    // controls (Save / Load, Export, Listen) as a second layer.
+    // On the DEPLOYED WEB sign-in is required (see initSigninGate below): the
+    // full-page #signin-gate covers the app until a token is present, and this
+    // toggle is how a signed-in user signs back OUT (which re-raises the gate).
+    // In the NATIVE SHELL (and on localhost) the gate never shows, so this
+    // button is the ONLY sign-in door — it reads "Sign in" when signed out.
+    // `body.no-google` gates the Drive-only controls (Save / Load, Export,
+    // Listen) in every case.
     function _signOutOfGoogle() {
       // Drop the in-process token + cached SharedAuth so the next gapi
       // call has no credential. Don't try to revoke server-side — that
@@ -82,20 +84,21 @@
       document.addEventListener('authStatusChanged', syncUI);
     })();
 
-    // ---- Required sign-in gate ------------------------------------------
-    // Bloops is gated behind Google sign-in. body.signin-required shows the
-    // full-screen #signin-gate and hides the rest of the app (CSS). The
-    // inline boot script raises the gate when no cached token exists; here
-    // we wire the gate's button and drop / restore .signin-required as the
-    // auth state changes (sign-out from the top bar re-raises it).
+    // ---- Sign-in gate (deployed web only) --------------------------------
+    // body.signin-required shows the full-screen #signin-gate and hides the
+    // rest of the app (CSS). The inline boot script raises it when no cached
+    // token exists AND window.BLOOPS_NO_GATE is false; here we wire the gate's
+    // button and drop / restore .signin-required as the auth state changes
+    // (a sign-out from the project bar re-raises it — on the web).
     (function initSigninGate() {
       const gateBtn = document.getElementById('signin-btn');
       const syncGate = () => {
         const on = !!(window.bloopsAuth && window.bloopsAuth.isSignedIn());
-        // Sign-in is only REQUIRED when deployed. On localhost the boot
-        // script sets window.BLOOPS_LOCAL and skips the gate, so never
-        // re-raise it here (a local sign-out shouldn't lock the app).
-        document.body.classList.toggle('signin-required', !on && !window.BLOOPS_LOCAL);
+        // The NATIVE SHELL and localhost never raise the gate (BLOOPS_NO_GATE,
+        // set by the boot script): the app opens into the instrument and Sign
+        // in lives in the project bar, so a launch with no network still runs.
+        // Never re-raise it here for them — a sign-out must not lock the app.
+        document.body.classList.toggle('signin-required', !on && !window.BLOOPS_NO_GATE);
       };
       if (gateBtn) {
         gateBtn.addEventListener('click', async () => {

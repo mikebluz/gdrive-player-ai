@@ -440,8 +440,12 @@ class MusicPlayer {
                         this.audio.src = this._blobUrl;
 
                     } else if (!this.gDrive.accessToken) {
-                        // 3. No cached blob and no token — can't play offline
+                        // 3. No cached blob and no token — can't play offline.
+                        // Say so: the native player opens signed-out with the
+                        // cached playlist up, so a track whose bytes aren't
+                        // here has to explain itself rather than just not go.
                         this.playPauseBtn.textContent = '▶️';
+                        document.dispatchEvent(new CustomEvent('trackNeedsSignIn', { detail: { track: this.currentTrack } }));
                         return;
 
                     } else {

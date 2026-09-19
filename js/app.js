@@ -31,6 +31,24 @@ document.addEventListener("DOMContentLoaded", () => {
   const offlineState = () => { try { return JSON.parse(localStorage.getItem(OFFLINE_KEY) || "null"); } catch { return null; } };
   const setOfflineState = (st) => { try { st ? localStorage.setItem(OFFLINE_KEY, JSON.stringify(st)) : localStorage.removeItem(OFFLINE_KEY); } catch {} };
 
+  // NATIVE SHELL ONLY (window.BLOOPS_NATIVE is published by
+  // js/bloops/00-native-drive.js, loaded in the head of both pages): the app
+  // must OPEN READY TO PLAY, never waiting on Google. Boot paints the cached
+  // playlist with no token and no network, and signing out never takes the
+  // player away. The deployed WEB player is unchanged — it still asks you to
+  // connect first, and only an explicitly-saved offline playlist survives a
+  // sign-out there.
+  const NATIVE = !!window.BLOOPS_NATIVE;
+  // Snapshot of the last playlist LISTED from Drive — {name, artist, tracks:[…]}.
+  // Written on every successful load so a later launch with no token (or no
+  // network) still has something to show. Bytes come from the blob store for
+  // whatever was saved offline; the rest needs a sign-in to actually play.
+  const LAST_KEY = "gdrivePlayerLastPlaylist";
+  const LAST_MAX = 1000;                 // keep the snapshot a localStorage-sized thing
+  const lastPlaylist = () => { try { return JSON.parse(localStorage.getItem(LAST_KEY) || "null"); } catch { return null; } };
+  const setLastPlaylist = (st) => { try { localStorage.setItem(LAST_KEY, JSON.stringify(st)); } catch {} };
+  let _cachedShownKey = null;            // what showCachedPlaylist last rendered
+
   // Click → save the currently selected track as a sequencer chip in
   // Bloops + drop it on a fresh stereo track. Mirrors the long-press
   // "Copy to Make track" menu on individual playlist rows so the user
@@ -78,6 +96,15 @@ document.addEventListener("DOMContentLoaded", () => {
       // lazy-load the track when the Listen view is opened.
       window.musicPlayer = player;
       window.playlist = playlist;
+
+      // NATIVE: paint a PLAYABLE app right now — cached playlist, live
+      // controls — before gapi/GIS have even loaded. Anything sign-in brings
+      // later only ADDS to this; it never gates it.
+      if (NATIVE) {
+        mainContent.style.display = "";
+        footer.style.display = "";
+        showCachedPlaylist();
+      }
 
       // Pre-set the UI from cached auth before gapi/GIS scripts load —
       // otherwise mobile users see the "Connect to Google Drive" header
@@ -157,6 +184,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // A track that isn't on the device and can't be fetched (no token). Fired by
+  // MusicPlayer instead of silently refusing to start.
+  document.addEventListener("trackNeedsSignIn", () => {
+    showError("Sign in to play this track — it isn't saved on this device.");
+  });
+
   // Hide loading banner when first track is ready to play
   document.addEventListener("trackLoaded", (e) => {
     hideLoading();
@@ -173,7 +206,15 @@ document.addEventListener("DOMContentLoaded", () => {
     const st = offlineState();
     const here = st && st.on && st.name === lastDriveFolderName;
     offlineBtn.textContent = here ? "✓ Available offline — tap to remove" : "📥 Make available offline";
-    offlineBtn.disabled = false;
+    // SAVING needs Drive. Without a token persistTrack can't fetch anything, so
+    // the button would count all the way to n/n and then report 0 saved — a
+    // confident wrong answer. Removing an existing copy is local, so it stays
+    // live. (Only reachable signed-out on the native player, which opens on the
+    // cached playlist.)
+    offlineBtn.disabled = !here && !driveAPI?.accessToken;
+    offlineBtn.title = offlineBtn.disabled
+      ? "Sign in to save this playlist on this device"
+      : "Save every track in this playlist on this device for offline playback. Only one playlist is kept offline — loading a different playlist replaces it.";
   }
   async function refreshOfflineIds() {
     offlineIds.clear();
@@ -220,6 +261,36 @@ document.addEventListener("DOMContentLoaded", () => {
       await saveCurrentPlaylistOffline();
     }
   });
+
+  // Render whatever playlist THIS DEVICE already has, with no token and no
+  // network: the offline-saved playlist first (its bytes are here), else the
+  // last one listed from Drive. Returns true when something was rendered.
+  // Renders WITHOUT autoplay — "ready to play" is the ask, not "playing" — and
+  // is a no-op when it would re-render what is already on screen (setTracks
+  // resets to track 0, which would interrupt playback).
+  function showCachedPlaylist() {
+    if (!player || !playlist) return false;
+    const st = offlineState();
+    const off = (st && st.on && Array.isArray(st.tracks) && st.tracks.length) ? st : null;
+    const last = lastPlaylist();
+    const src = off || ((last && Array.isArray(last.tracks) && last.tracks.length) ? last : null);
+    if (!src) return false;
+    const key = (off ? "off:" : "last:") + (src.name || "") + ":" + src.tracks.length;
+    if (_cachedShownKey === key && playlist.tracks?.length) return true;
+    _cachedShownKey = key;
+    player.defaultArtist = off ? null : (src.artist || null);
+    document.getElementById("playlist-heading-name").textContent = src.name || "Offline";
+    setAlbumArt(null);
+    playlist.setTracks(
+      src.tracks.map((t) => ({ id: t.id, name: t.name, size: t.size ?? null, modifiedMs: t.modifiedMs || 0 })),
+      { autoplay: false }
+    );
+    lastDriveFolderName = src.name || null;
+    showPlayerSections();
+    refreshOfflineIds();
+    updateOfflineBtn();
+    return true;
+  }
 
   async function loadQuickLoadOptions() {
     try {
@@ -295,6 +366,14 @@ document.addEventListener("DOMContentLoaded", () => {
       playlist.setTracks(musicFiles);
       showPlayerSections();
       lastDriveFolderName = folderName;
+      // Snapshot it for the next launch (see LAST_KEY) — the native player
+      // boots from this when there's no token or no network.
+      setLastPlaylist({
+        name: folderName,
+        artist: artistName || null,
+        tracks: musicFiles.slice(0, LAST_MAX).map((t) => ({ id: t.id, name: t.name, size: t.size ?? null, modifiedMs: t.modifiedMs || 0 })),
+      });
+      _cachedShownKey = null;                            // a real listing supersedes the snapshot
       // OFFLINE handoff: a DIFFERENT playlist replaces the stored one — wipe
       // the old copy, and if the offline switch was on, save this playlist.
       {
@@ -323,7 +402,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function unfreezeUI() {
-    playlistSelect.disabled = false;
+    playlistSelect.disabled = !driveAPI?.accessToken;   // nothing to pick without a token
     player.enableControls();
     const shuffleBtn = document.getElementById("sb-shuffle-btn");
     if (shuffleBtn) shuffleBtn.disabled = false;
@@ -339,6 +418,11 @@ document.addEventListener("DOMContentLoaded", () => {
       playlistSelect.disabled = false;
       mainContent.style.display = "";
       footer.style.display = "";
+      // NATIVE: a cached playlist is already up and playable — leave it there.
+      // Blanking the sections (what the web does while the Drive listing
+      // loads) would take the player away for a whole network round-trip,
+      // which is the wait this exists to remove. The listing replaces it.
+      if (NATIVE && playlist?.tracks?.length) return;
       document.querySelector(".player-section").style.display = "none";
       document.querySelector(".album-art-section").style.display = "none";
       document.querySelector(".playlist-section").style.display = "none";
@@ -349,6 +433,24 @@ document.addEventListener("DOMContentLoaded", () => {
       userStatus.style.display = "";
       userStatus.textContent = "❌ Not signed in";
       playlistSelect.disabled = true;
+
+      // NATIVE: signing out (or a lapsed token) takes DRIVE away, not the
+      // player. Whatever is cached stays up and keeps playing — stopping it
+      // here would cut off a track whose bytes are already on the device —
+      // and the header above it is the Sign in door.
+      if (NATIVE) {
+        mainContent.style.display = "";
+        footer.style.display = "";
+        document.querySelector(".search-section").style.display = "none";
+        const shown = showCachedPlaylist();
+        if (infoBox) infoBox.style.display = shown ? "none" : "";
+        if (!shown) {
+          document.querySelector(".player-section").style.display = "none";
+          document.querySelector(".album-art-section").style.display = "none";
+          document.querySelector(".playlist-section").style.display = "none";
+        }
+        return;
+      }
 
       player.stop();
       player.disableControls();
@@ -400,8 +502,11 @@ document.addEventListener("DOMContentLoaded", () => {
     document.querySelector(".player-section").style.display = "";
     document.querySelector(".album-art-section").style.display = "";
     document.querySelector(".playlist-section").style.display = "";
-    document.querySelector(".search-section").style.display = "";
-    signoutBtn.style.display = "inline-block";
+    // The folder picker and Sign out only mean anything with a live token —
+    // the native cached boot shows the player with neither.
+    const signedIn = !!driveAPI?.accessToken;
+    document.querySelector(".search-section").style.display = signedIn ? "" : "none";
+    signoutBtn.style.display = signedIn ? "inline-block" : "none";
   }
 
   // --- LOADING / FEEDBACK UTILITIES ---

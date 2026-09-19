@@ -27,6 +27,18 @@
 
   var native = false;
   try { native = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); } catch (e) {}
+
+  // ONE ANSWER TO "am I the native shell?", published for every page that asks.
+  // This file is the earliest script BOTH bloops.html and player.html load, so
+  // the flag is up before any boot code reads it: bloops.html skips the
+  // full-screen sign-in gate on it, js/app.js boots the Player from cache on
+  // it. Kept SEPARATE from the Drive-shim switch below — forcing the flag for
+  // a desktop-browser test must not swap out google.accounts. Force with
+  // localStorage bloopsNativeShell = '1' / '0'.
+  try {
+    var forceShell = localStorage.getItem('bloopsNativeShell');
+    window.BLOOPS_NATIVE = forceShell === '1' ? true : forceShell === '0' ? false : native;
+  } catch (e) { window.BLOOPS_NATIVE = native; }
   var force = null;
   try { force = localStorage.getItem('bloopsNativeDrive'); } catch (e) {}
   if (force === '0') return;

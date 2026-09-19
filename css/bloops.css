@@ -13131,7 +13131,9 @@
 
     /* Sign-in gate — covers everything below the home bar until the user
        has signed in with Google. Both Bloops and the Player need Drive
-       access, so we gate the whole page rather than each tab. */
+       access, so we gate the whole page rather than each tab. On the native
+       shell (and on localhost) the gate is never raised — see BLOOPS_NO_GATE
+       in bloops.html. */
     .signin-gate {
       display: none;
       position: fixed;

@@ -42,7 +42,10 @@ class PlaylistManager {
         });
     }
 
-    setTracks(tracks) {
+    // `autoplay: false` loads the first track and warms the prefetch window but
+    // does NOT start it — what the native player's cached boot wants: ready to
+    // play, not playing. Drive listings keep the default (autoplay on).
+    setTracks(tracks, { autoplay = true } = {}) {
         this.musicPlayer.clearPrefetchCache();
         // Default sort: NEWEST FIRST by Drive's modified time, replacing Drive's
         // arbitrary return order — what you just added is what you want to hear.
@@ -78,8 +81,10 @@ class PlaylistManager {
             if (onListen) {
                 this.musicPlayer.loadTrack(this.tracks[0]);
                 this._buildPrefetchWindow(0);
-                const p = this.musicPlayer.play();
-                if (p && typeof p.catch === 'function') p.catch(() => {});
+                if (autoplay) {
+                    const p = this.musicPlayer.play();
+                    if (p && typeof p.catch === 'function') p.catch(() => {});
+                }
             }
         }
     }

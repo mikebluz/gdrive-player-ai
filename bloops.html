@@ -127,6 +127,12 @@ try { if (/[?&]diag=0\b/.test(location.search)) localStorage.removeItem('sbDiag'
   <!-- Cross-page OAuth persistence — must load before any inline auth
        code so window.SharedAuth is available when bloopsAuth boots. -->
   <script src="js/auth-storage.js"></script>
+  <!-- NATIVE SHELL Drive auth (inert on the web) — same shim player.html loads,
+       so one sign-in covers both pages. Hoisted OUT of the numbered 00-… block
+       below into the head because it also publishes window.BLOOPS_NATIVE, which
+       the inline boot script at the top of <body> reads to decide whether the
+       sign-in gate applies. It still lands before 10-tracks.js loads GIS. -->
+  <script src="js/bloops/00-native-drive.js?v=DEPLOYVER"></script>
 </head>
 <body class="bloops-loading no-google">
   <script>
@@ -136,25 +142,33 @@ try { if (/[?&]diag=0\b/.test(location.search)) localStorage.removeItem('sbDiag'
     if ((location.hash || '').toLowerCase() === '#player') {
       document.body.classList.add('view-serialbox');
     }
-    // Sign-in is REQUIRED only when DEPLOYED. On localhost (npm start) the
-    // gate is skipped so the app is usable for non-Drive work without an
-    // OAuth round-trip; Drive-only controls stay disabled via `.no-google`
-    // until the user optionally signs in. `window.BLOOPS_LOCAL` is reused by
-    // initSigninGate so the gate isn't re-raised on local sign-out.
+    // WHO SKIPS THE SIGN-IN GATE. The full-screen gate is a WEB-ONLY door:
+    //   - the NATIVE SHELL (Capacitor iOS/Android) never raises it — the app
+    //     opens into the instrument and Sign in is the button in the project
+    //     bar, so a launch with no network (or a lapsed token) still plays;
+    //   - localhost (npm start) never raises it either, so the app is usable
+    //     for non-Drive work without an OAuth round-trip.
+    // Deployed web keeps the gate. In every skipping case the Drive-only
+    // controls stay dimmed via `.no-google` until the user signs in.
+    // `window.BLOOPS_NO_GATE` is re-read by initSigninGate so the gate isn't
+    // raised on a later sign-out either.
+    // `window.BLOOPS_NATIVE` is published by js/bloops/00-native-drive.js in the
+    // head above (force it for testing with localStorage bloopsNativeShell).
     window.BLOOPS_LOCAL = ['localhost', '127.0.0.1', '::1', '0.0.0.0'].includes(location.hostname)
       || location.hostname.endsWith('.local')
       || location.protocol === 'file:';
+    window.BLOOPS_NO_GATE = window.BLOOPS_LOCAL || !!window.BLOOPS_NATIVE;
     // If SharedAuth already has a fresh token, drop the `.no-google` class
     // synchronously so the user lands in the signed-in state on first paint
     // (Listen tab + Save/Load enabled) without a flash of the signed-out
     // chrome on a cross-page return. Otherwise add `.signin-required` so the
     // full-screen #signin-gate shows on first paint with no flash of the
-    // gated-off app behind it — except on local, where the gate never shows.
+    // gated-off app behind it — except where BLOOPS_NO_GATE says otherwise.
     // The async bloopsAuth init (initSigninGate) re-syncs both classes as
     // auth state changes; doing it here makes the transition immediate.
     if (window.SharedAuth?.load?.()?.token) {
       document.body.classList.remove('no-google');
-    } else if (!window.BLOOPS_LOCAL) {
+    } else if (!window.BLOOPS_NO_GATE) {
       document.body.classList.add('signin-required');
     }
   </script>
@@ -1104,7 +1118,8 @@ try { if (/[?&]diag=0\b/.test(location.search)) localStorage.removeItem('sbDiag'
   <script src="js/bloops/00-mse-audio.js?v=DEPLOYVER"></script>
   <script src="js/bloops/00-native-audio.js?v=DEPLOYVER"></script>
   <script src="js/bloops/00-native-storage.js?v=DEPLOYVER"></script>
-  <script src="js/bloops/00-native-drive.js?v=DEPLOYVER"></script>
+  <!-- 00-native-drive.js loads in the <head> — the inline boot script reads the
+       window.BLOOPS_NATIVE it publishes. -->
   <script src="js/bloops/01-core-state.js?v=DEPLOYVER"></script>
   <script src="js/bloops/02-wraps.js?v=DEPLOYVER"></script>
   <script src="js/bloops/03-audio-bus-fx.js?v=DEPLOYVER"></script>

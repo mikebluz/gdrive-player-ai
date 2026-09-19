@@ -33,6 +33,18 @@
 - **`pagehide` tears the media pipeline down** (mute → pause → strip src → `load()`), because a
   navigated-away page's renderer keeps draining a dead feed. It never fires on a plain background —
   that IS the keep-alive design.
+- **THE SIGN-IN GATE IS WEB-ONLY, AND "am I the shell?" HAS ONE ANSWER.** `window.BLOOPS_NATIVE` is
+  published by `00-native-drive.js` (hoisted into the `<head>` of bloops.html for this — the inline
+  boot script at the top of `<body>` reads it); `bloops.html` ORs it with `BLOOPS_LOCAL` into
+  `BLOOPS_NO_GATE`, and `js/app.js` reads the same flag. Re-deriving it inline anywhere is a second
+  vocabulary for one axis. Force it for a desktop test with `localStorage.bloopsNativeShell='1'`,
+  which deliberately does NOT switch on the Drive shim (`bloopsNativeDrive` still owns that), so the
+  web OAuth path survives the test. A "deployed" page is simulated with Chrome's
+  `--host-resolver-rules=MAP <host> 127.0.0.1`, because `BLOOPS_LOCAL` keys off the hostname.
+- **A `position: fixed` element's `offsetParent` IS NULL even when it covers the screen** — the
+  documented `0×0`/`offsetParent` reachability recipe reports the full-screen sign-in gate as hidden.
+  Use `el.checkVisibility({checkOpacity:true, checkVisibilityCSS:true})` plus a non-zero rect, which
+  still reports false for a `display:none` ancestor.
 - **A shim is per-page opt-in** — `00-native-drive.js` must be loaded BEFORE `google-drive-api.js` on
   every page that uses Drive. Grep for every page loading the library, not the page the bug was on.
 - **A stylesheet that reserves space for a FIXED element is only correct on pages that HAVE it** —

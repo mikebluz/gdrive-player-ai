@@ -10191,6 +10191,65 @@
   // also passed was harmless — JS ignores it — so the ARRAY-AS-STRING test is
   // the whole bug, and the poison that proves this check has teeth.) That was
   // the entire "sample instrument": it needed a picker, not an engine.
+  // ── NARROWING THE TONE LIST ─────────────────────────────────────────────
+  // user: "we need to add an intermediate filter between Tone type and Tone to
+  // help reduce the number of options in the Tone dropdown, it's too unwieldy
+  // as is". The app ALREADY has that axis — `toneFamilyFor` /
+  // `TONE_FAMILY_ORDER` in 15-grid-build.js are what the grid's own tone menu
+  // groups by — so this narrows by THOSE families rather than inventing a
+  // second taxonomy. One axis, one vocabulary, or the two menus disagree about
+  // what a Key is.
+  // GLOBALS FROM ANOTHER FILE, so every call is `typeof`-guarded: a bare name
+  // that is not there throws into the nearest catch and the row silently comes
+  // out empty (the documented swallowed-catch trap).
+  const TONE_FAM = new Map();   // layer id → chosen family. UI-ONLY: a filter is
+                                // not a property of the sound, and storing it
+                                // would add a schema field that changes nothing
+                                // audible. It survives re-renders (module state)
+                                // and resets on reload, which is what a filter
+                                // should do.
+  function toneFamOf(v) {
+    try { if (typeof toneFamilyFor === 'function') return toneFamilyFor(v); } catch (e) {}
+    return 'other';
+  }
+  function toneFamLabel(f) {
+    try {
+      if (typeof TONE_FAMILY_LABELS === 'object' && TONE_FAMILY_LABELS && TONE_FAMILY_LABELS[f]) {
+        return TONE_FAMILY_LABELS[f];
+      }
+    } catch (e) {}
+    return f;
+  }
+  function toneAll() {
+    try {
+      if (typeof _ambToneOptions === 'function') {
+        const l = _ambToneOptions();
+        if (Array.isArray(l)) return l;
+      }
+    } catch (e) {}
+    return [];
+  }
+  // THE GRID VOICE IS A REAL STORED VALUE (`instrument.tone: ''` — "whatever the
+  // grid uses"), and the list `_ambToneOptions` returns does NOT contain it. So
+  // the select could not show its own default: it fell back to option 0 and
+  // reported some arbitrary voice as the layer's. v1 has the canonical option.
+  function toneGridOpt() {
+    try {
+      if (typeof _ambGridVoiceOption === 'function') {
+        const o = _ambGridVoiceOption();
+        if (o && typeof o.value === 'string') return o;
+      }
+    } catch (e) {}
+    return { value: '', label: 'Grid voice' };
+  }
+  // Which family this layer's Tone list is narrowed to. Defaults to the family
+  // of the tone IN FORCE, so opening a card never hides the sound it is playing.
+  function toneFamFor(L) {
+    const cur = (L.instrument && L.instrument.tone) || '';
+    const held = TONE_FAM.get(L.id | 0);
+    if (held) return held;
+    return cur ? toneFamOf(cur) : 'all';
+  }
   function toneOptions(cur) {
     try {
       if (typeof _ambToneOptions === 'function') {
@@ -11181,15 +11240,64 @@
           // (The TTS voice is `instrument.speechVoice`, NOT `voice`: that one
           // is the instrument. `_ambVoiceChoices` reads `L.voice` meaning the
           // TTS one, so it gets a shim.)
+          // THE FILTER, between the type and the sound. Synth only: a kit list
+          // is a handful of kits and a speech list is the installed voices —
+          // neither is the wall this exists to cut down.
+          tb('Sound', (function () {
+            const all = toneAll();
+            if (!all.length) return '';
+            const cur = i.tone || '';
+            const fam = toneFamFor(L);
+            const counts = {};
+            all.forEach((o) => { const f = toneFamOf(o.value); counts[f] = (counts[f] || 0) + 1; });
+            let order = [];
+            try { if (Array.isArray(TONE_FAMILY_ORDER)) order = TONE_FAMILY_ORDER.slice(); } catch (e) {}
+            Object.keys(counts).forEach((f) => { if (order.indexOf(f) < 0) order.push(f); });
+            const opt = (v, lab) => '<option value="' + esc(v) + '"' +
+              (fam === v ? ' selected' : '') + '>' + esc(lab) + '</option>';
+            const fid = uid(L, 'instrument.toneFam');
+            return '<div class="ambient-ctrl" data-v2when="voice:synth">' +
+              '<label for="' + fid + '">Family</label>' +
+              '<select id="' + fid + '" class="ambient-select v2-tonefam">' +
+                opt('all', 'All \u2014 ' + all.length) +
+                order.filter((f) => counts[f]).map((f) =>
+                  opt(f, toneFamLabel(f) + ' \u2014 ' + counts[f])).join('') +
+              '</select><span class="ambient-hint">narrows the Tone list below</span></div>';
+          })()) +
           (function () {
             const t3 = (i.voice === 'kit')
               ? { f: 'instrument.kit', opts: kitOptions(i.kit), cur: i.kit, hint: 'which kit the lanes play' }
               : ((i.voice === 'speech')
                 ? { f: 'instrument.speechVoice', opts: speechVoiceOpts(i.speechVoice || ''), cur: i.speechVoice || '', hint: 'who says the words' }
                 : { f: 'instrument.tone', opts: null, cur: i.tone, hint: 'the voice it plays with' });
-            const body = t3.opts
-              ? t3.opts.map(o => '<option value="' + esc(o[0]) + '"' + (t3.cur === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('')
-              : toneOptions(i.tone);
+            let body;
+            if (t3.opts) {
+              body = t3.opts.map(o => '<option value="' + esc(o[0]) + '"' + (t3.cur === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('');
+            } else {
+              const all = toneAll();
+              if (!all.length) { body = toneOptions(i.tone); }
+              else {
+                const cur = i.tone || '';
+                const fam = toneFamFor(L);
+                let shown = (fam === 'all') ? all.slice()
+                                            : all.filter((o) => toneFamOf(o.value) === fam);
+                // A FILTER MUST NEVER HIDE WHAT IS IN FORCE. If the narrowed
+                // list does not hold the current tone, the select would fall
+                // back to option 0 and report a sound the layer is not playing
+                // — and writing it back would change the sound as a SIDE EFFECT
+                // OF FILTERING, which no filter is allowed to do. So it is kept,
+                // labelled with the family it actually belongs to.
+                if (cur && !shown.some((o) => o.value === cur)) {
+                  const o0 = all.find((x) => x.value === cur);
+                  shown = [{ value: cur,
+                             label: (o0 ? o0.label : cur) + ' \u2014 ' + toneFamLabel(toneFamOf(cur)) }]
+                          .concat(shown);
+                }
+                const g = toneGridOpt();
+                body = [g].concat(shown).map((o) => '<option value="' + esc(o.value) + '"' +
+                  (cur === o.value ? ' selected' : '') + '>' + esc(o.label || o.value) + '</option>').join('');
+              }
+            }
             return '<div data-v2tab="Sound" class="ambient-ctrl"><label for="' + uid(L, t3.f) + '">Tone</label>' +
               '<select id="' + uid(L, t3.f) + '" class="ambient-select v2-f" data-f="' + t3.f + '">' + body + '</select>' +
               '<span class="ambient-hint">' + esc(t3.hint) + '</span></div>';
@@ -15131,6 +15239,16 @@
         // and fits a copy to each part. Leaving Per part DISCARDS those copies,
         // so it asks, and a refusal puts the select back where it was — a
         // cancelled confirm must never look like it did something.
+        // THE TONE FAMILY FILTER writes NOTHING to the layer — it only narrows
+        // the list below it — so it does not go near `commit`, and the sound
+        // does not change when you change the filter.
+        const tf = ev.target.closest && ev.target.closest('.v2-tonefam');
+        if (tf) {
+          const ctx = layerOf(tf); if (!ctx) return;
+          TONE_FAM.set(ctx.L.id | 0, tf.value || 'all');
+          h._sig = ''; V2.render(E);
+          return;
+        }
         const cm = ev.target.closest && ev.target.closest('.v2-cycmode');
         if (cm) {
           const ctx = layerOf(cm); if (!ctx) return;

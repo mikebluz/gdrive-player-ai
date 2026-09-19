@@ -11,6 +11,13 @@
   reads `Hold · Note length · Feel`. Only the ACTIVE tab's rows are shown (`v2-rowoff`, `display:none`),
   so a newly added row measures 0×0 until its chip is pressed, and "adjacent row" is the wrong model
   for *put it next to X*: adjacency is in the STRIP. A probe must walk `.v2-pop-tabs [data-tab]`.
+- **A FILTER MAY NARROW A LIST AND NOTHING ELSE.** Two ways the Tone ▸ Family filter could have gone
+  wrong, both pinned by poison checks: it must not write the field it filters (changing the sound as a
+  side effect of looking for one), and it must never drop the value IN FORCE from the narrowed list —
+  a select whose options exclude its own value falls back to option 0 and reports a voice the layer is
+  not playing. Keep the current value in the list, labelled with the family it really belongs to.
+  Narrow by `toneFamilyFor` / `TONE_FAMILY_ORDER` (globals from 15-grid-build.js, `typeof`-guarded) —
+  the SAME axis the grid's tone menu groups by, never a second taxonomy.
 - **A SELECT MUST BE ABLE TO SHOW EVERY VALUE THE MODEL STORES.** `More bars` listed Stretch and Fill
   while `applyBarsMode`, normalize and the re-cut dialog all also take `preserve` — so a record set to
   Preserve DISPLAYED as Stretch (the browser falls back to option 0 when none matches) and was

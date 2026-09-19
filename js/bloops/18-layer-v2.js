@@ -7380,7 +7380,7 @@
   function evoHue() {
     if (!EVO_HUE) {
       try { EVO_HUE = (getComputedStyle(document.documentElement).getPropertyValue('--evo') || '').trim(); } catch (e) {}
-      if (!EVO_HUE) EVO_HUE = '#b794f4';
+      if (!EVO_HUE) EVO_HUE = '#b8f24a';
     }
     return EVO_HUE;
   }

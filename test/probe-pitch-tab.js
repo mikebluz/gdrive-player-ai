@@ -50,11 +50,13 @@ const ok = (name, cond, detail) => {
       if (h) h._sig = ''; window._v2.render(E); await wait(300); un();
       if (h) h._sig = ''; window._v2.render(E); await wait(340); un(); await wait(140);
     };
-    const openInstr = async () => {
-      const d = document.querySelector('.v2-layer .v2-gototab[data-goto="Instrument"]');
+    const openSec = async (nm) => {
+      const d = document.querySelector('.v2-layer .v2-gototab[data-goto="' + nm + '"]');
       if (d) { d.click(); await wait(460); }
       return !!d;
     };
+    // PITCH AND ITS WHOLE FAMILY LIVE IN GENERATE NOW.
+    const openInstr = () => openSec('Generate');
     const chips = () => [...document.querySelectorAll('.v2-layer .v2-pop-tabs [data-tab]')]
       .filter((x) => x.getBoundingClientRect().height > 0)
       .map((x) => x.getAttribute('data-tab'));
@@ -78,6 +80,11 @@ const ok = (name, cond, detail) => {
     o.series = await look({ kind: 'series', dir: 'up', octaves: 2 });
     o.chord  = await look({ kind: 'chord', voices: 3 });
     o.mixed  = await look({ kind: 'mixed', voices: 3, mix: 50 });
+    // ── THE SPLIT: what it SOUNDS like vs what it PLAYS ─────────────
+    L().part.pitch = { kind: 'chord', voices: 3 }; E.getCfg();
+    await repaint();
+    await openSec('Instrument'); o.instrStrip = chips();
+    await openSec('Generate');   o.genStrip = chips();
     // …and a row still COMMITS from its new home
     L().part.pitch = { kind: 'walk', span: 7 }; E.getCfg();
     await repaint(); await openInstr(); await toTab('Pitch');
@@ -111,15 +118,29 @@ const ok = (name, cond, detail) => {
     run.walk.onPitch.indexOf('Direction') < 0 && run.series.onPitch.indexOf('Contour') < 0 &&
     run.chord.onPitch.indexOf('Span') < 0, JSON.stringify({ walk: run.walk.onPitch, series: run.series.onPitch }));
   // Deliberately left alone.
-  ok('Harmony, Length and Voicing keep their own chips',
-    strips.every((st) => st.indexOf('Harmony') >= 0 && st.indexOf('Length') >= 0) &&
+  // RESTATED with the move to Generate: Length went the other way — note
+  // duration is Shape's question, so it stayed behind in Instrument and is
+  // checked there instead.
+  ok('Harmony and Voicing keep their own chips beside Pitch',
+    strips.every((st) => st.indexOf('Harmony') >= 0) &&
     run.chord.strip.indexOf('Voicing') >= 0,
     JSON.stringify(run.chord.strip));
   ok('…and a row still commits from its new home',
     run.spanThere && run.spanWrote === 9, JSON.stringify(run.spanWrote));
 
+  // ── WHERE THE QUESTION LIVES ─────────────────────────────────────────
+  ok('Instrument keeps only what it SOUNDS like',
+    JSON.stringify(run.instrStrip) === JSON.stringify(['Sound', 'Tone set', 'Length']),
+    JSON.stringify(run.instrStrip));
+  ok('…and Generate holds what it PLAYS, in pipeline order',
+    JSON.stringify(run.genStrip) ===
+      JSON.stringify(['Method', 'Per part', 'Key', 'Notes', 'Pitch', 'Harmony', 'Voicing']),
+    JSON.stringify(run.genStrip));
+
   ok('no page errors', errs.length === 0, errs.join(' | '));
-  console.log('\n  walk   strip: ' + run.walk.strip.join(' · '));
+  console.log('\n  Instrument: ' + (run.instrStrip || []).join(' · '));
+  console.log('  Generate:   ' + (run.genStrip || []).join(' · '));
+  console.log('  walk   strip: ' + run.walk.strip.join(' · '));
   console.log('  walk   Pitch: ' + run.walk.onPitch.join(' · '));
   console.log('  series Pitch: ' + run.series.onPitch.join(' · '));
   console.log('\nprobe: ' + pass + ' passed, ' + fail + ' failed');

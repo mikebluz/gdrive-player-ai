@@ -56,7 +56,9 @@ const ok = (name, cond, detail) => {
       if (h) h._sig = ''; window._v2.render(E); await wait(340); un(); await wait(140);
     };
     const openInstr = async () => {
-      const d = document.querySelector('.v2-layer .v2-gototab[data-goto="Instrument"]');
+      // PITCH LIVES IN GENERATE (2026-09-18) — it answers what the layer PLAYS,
+      // not what it sounds like.
+      const d = document.querySelector('.v2-layer .v2-gototab[data-goto="Generate"]');
       if (d) { d.click(); await wait(460); }
       // NOTE IS UNDER PITCH (2026-09-18) — it is a sub-param of the pitch
       // choice, not a sibling of it, so it stopped being a chip of its own.

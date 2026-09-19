@@ -10740,7 +10740,8 @@
     Playing: ['Every pass'],
     // Transpose and Pitch quantize ride with Generate: they are what a STATIC
     // part does with the notes it has, which is part of what it is made of.
-    Generate: ['Method', 'Per part', 'Transpose', 'Pitch quantize'],
+    Generate: ['Method', 'Per part', 'Key', 'Notes', 'Pitch', 'Harmony', 'Voicing',
+               'Transpose', 'Pitch quantize'],
     Time: ['Cycle', 'Bars', 'Every', 'Speed'],
     Bank: ['Bank'],
   };
@@ -11465,114 +11466,12 @@
               sl(L, 'portamento', 'Glide', num(L.portamento, 0), 0, 2000, 'ms between notes') +
               sl(L, 'voiceTrim', 'Voice trim', num(L.voiceTrim, 0), -24, 12, 'dB — tame a hot voice'))) +
 
-          // ── WHICH NOTES IT CAN PLAY ──────────────────────────────
-          // Was its own ✦ Pitch section; folded into Instrument 2026-09-17 at
-          // the user's ask. The pitch SOURCE, the KEY it reads them in and the
-          // VOICING of a chord are all part of what the instrument plays, and
-          // the sections are eight again — two rows of four.
-          // NOTES — the layer's own pitch SOURCE (a scale, a chord, a wrap, its
-          // own progression). v1's builder and v1's menu, so the vocabulary and
-          // the precedence cannot drift; `_ambNotesOf` already applies the AREA
-          // PROGRESSION LOCK, which is why the button greys while one is on.
-          // KEY — the layer's own harmonic frame (its own key, its own chord
-          // changes, or yoked to another layer's sounding notes). v1's markup,
-          // extracted into `_ambKeyOvHtml` so there is one copy: everything in
-          // it is keyed on `data-kokey` and v1's wiring is DELEGATED on the
-          // panel host by that key, so a v2 card inside the host gets working
-          // controls with no wiring of its own. `keyOv` was already coerced and
-          // already READ (it rides `_ambNotesOf`) — this is the door.
-          ((typeof _ambKeyOvHtml === 'function')
-            ? tb('Key', _ambKeyOvHtml('v2:' + L.id, L))
-            : '') +
-          ((typeof _ambNotesButtonHtml === 'function')
-            ? _ambNotesButtonHtml('v2-' + L.id).replace('<div class="ambient-ctrl"',
-                '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth"')
-            : '') +
-          // ── EVERYTHING THAT DEPENDS ON THE PITCH CHOICE, UNDER IT ────────
-          // user: "move any params that are dependent on a Pitch selection into
-          // the Pitch tab". Each of these was an untabbed row, so each became a
-          // CHIP OF ITS OWN in the strip — and since they are gated per kind,
-          // the strip changed shape every time Pitch changed: a row of siblings
-          // that were really its children. They are its tab now, so the answer
-          // to "what else does this choice ask me" is in one place.
-          // NOT MOVED: Harmony and Length are gated `kind:live` only (they read
-          // every pitch kind), and ▸ Voicing is already one cluster rather than
-          // loose chips — folding its nine rows in here would trade a wall of
-          // chips for a wall of rows.
-          tb('Pitch',
-          sel(L, 'part.pitch.kind', 'Pitch', t.kind, PITCH_OPTS, 'kind:live;voice:synth') +
-          st(L, 'part.pitch.voices', 'Voices', t.voices, 1, 9, 'notes per onset', 'kind:live;voice:synth;pitch:chord,stack,mixed') +
-          // THE BALANCE for Mixed — how often an onset is a chord rather than
-          // a single note. Its own tab so it is findable, gated to the one
-          // kind that reads it.
-          sl(L, 'part.pitch.mix', 'Mix', (Number.isFinite(t.mix) ? t.mix : 50), 0, 100,
-             'all single notes \u2192 all chords', 'kind:live;voice:synth;pitch:mixed') +
-          // LINES, not "Voices" — divergent behaviour, divergent label. Voices
-          // are notes of ONE chord struck together; lines are separate melodies
-          // that wander independently, which is the only way a Roll plays more
-          // than one note at a time under its own steam (Harmony duplicates the
-          // one line at a fixed interval — parallel, never independent). Its own
-          // FIELD too: `pitch.voices` is backfilled to 3 on every pitch object,
-          // so reading that here would thicken every rolled part ever saved.
-          st(L, 'part.pitch.lines', 'Lines', (t.lines | 0) || 1, 1, 6,
-             'independent melodies at once — 1 is a single line',
-             'kind:live;voice:synth;pitch:walk,chance') +
-
-          st(L, 'part.pitch.degree', 'Note', t.degree, 1, noteMax(L), noteHint(L),
-             'kind:live;voice:synth;pitch:fixed,stack,walk,series') +
-          // (Roam, Stutter, Pitch vary and Scatter moved to ⚙ Deep, 2026-09-16:
-          // they are seeded on the TAKE — generation, re-rolled by 🎲 New take.)
-          sel(L, 'part.pitch.dir', 'Direction', t.dir || 'up',
-              [['up', 'Up'], ['down', 'Down'], ['updown', 'Up & down'], ['downup', 'Down & up'], ['converge', 'Outside in']], 'kind:live;voice:synth;pitch:series') +
-          st(L, 'part.pitch.span', 'Span', t.span, 1, 24, 'how far it wanders', 'kind:live;voice:synth;pitch:walk') +
-          sel(L, 'part.pitch.home', 'Home', t.home || 'floor',
-              [['floor', 'Floor — walk up from Register'], ['center', 'Centre — Register in the middle'],
-               ['ceiling', 'Ceiling — walk down from Register']], 'kind:live;voice:synth;pitch:walk') +
-          sl(L, 'part.pitch.contour', 'Contour', num(t.contour, 0), -100, 100, 'fall → rise',
-             'kind:live;voice:synth;pitch:walk')
-          ) +
-          // HARMONY PARTS — chips, because it is a SET, not a choice: a line can
-          // carry a 3rd and a 6th at once, which is what "multiple-part
-          // harmonies" means. Intervals are SOURCE TONES, so they stay in the
-          // key (verified: thirds across C major come out 4,3,3,4,4,3,3
-          // semitones — major on I/IV/V, minor on the rest). Applies to every
-          // live pitch kind, so it is gated on kind:live only.
-          harmRowHtml(L, t) +
-
-          tb('Pitch',
-            st(L, 'part.pitch.octaves', 'Octaves', num(t.octaves, 2), 1, 4, 'how far the sweep climbs',
-               'kind:live;voice:synth;pitch:series')) +
           sl(L, 'part.shape.lenRatio', 'Length', sh.lenRatio, 1, 400, '% of the onset span', 'kind:live') +
           '<div data-v2tab="Length" class="ambient-ctrl"><label>Ring out</label>' +
             '<button type="button" class="ambient-seg v2-ringtoggle' + (L.ring ? ' on' : '') + '">' +
               (L.ring ? 'On \u2014 through the changes' : 'Off \u2014 released by the next change') + '</button>' +
             '<span class="ambient-hint">a note is cut short so it does not ring over the next change \u2014 ' +
-              'turn this on to let it play its full length</span></div>' +
-          // VOICING IS A SUB-QUESTION OF PITCH — how the chosen notes are
-          // stacked and spread. And Proximity moved here from Motion: it
-          // pulls each pick toward the previous one, which is a PITCH rule.
-          tb('Voicing',
-            sl(L, 'proximity', 'Proximity', num(L.proximity, 0), 0, 100, 'how close notes stay', 'kind:live') +
-          sel(L, 'part.pitch.chordMode', 'Voicing', t.chordMode || '',
-              [['', 'Simple — stack the tones'], ['chaos', 'Chaos'], ['chords', 'Chords'],
-               ['chordsplus', 'Chords+'], ['monk', 'Monk']], 'kind:live;voice:synth;pitch:chord') +
-          st(L, 'part.pitch.spread', 'Spread', num(t.spread, 0), 0, 3, '± octaves',
-             'kind:live;voice:synth;pitch:chord') +
-          sl(L, 'part.pitch.variety', 'Variety', num(t.variety, 0), 0, 100, 'plain → colourful',
-             'kind:live;voice:synth;pitch:chord') +
-          st(L, 'part.pitch.subdiv', 'Subdivide', num(t.subdiv, 1), 1, 16, 'voicings per chord',
-             'kind:live;voice:synth;pitch:chord') +
-          st(L, 'part.pitch.phraseLen', 'Phrase', num(t.phraseLen, 4), 1, 16, 'chords before it repeats',
-             'kind:live;voice:synth;pitch:chord') +
-          st(L, 'part.pitch.repeats', 'Repeats', num(t.repeats, 4), 1, 16, 'times before a fresh phrase',
-             'kind:live;voice:synth;pitch:chord') +
-          // (Feel moved to ✺ Playing — Stochastic re-picks per chord OCCURRENCE.)
-          st(L, 'part.pitch.voiceCap', 'Voice cap', num(t.voiceCap, 0), 0, 12, 'ceiling incl. colour tones (0 = Voices)',
-             'kind:live;voice:synth;pitch:chord') +
-          '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth;pitch:chord"><label>Salt re-voice</label>' +
-            '<button type="button" class="ambient-seg v2-salttoggle' + (L.followSalt ? ' on' : '') + '">' +
-              (L.followSalt ? 'On — follows the colours' : 'Off — holds the chord') + '</button>' +
-            '<span class="ambient-hint v2-salthint"></span></div>')
+              'turn this on to let it play its full length</span></div>'
         ) +
         // ── ENVELOPE — the instrument's shape over time ───────────────────
         // Split out when the scheduled-tone row landed: Instrument was 456px of
@@ -11921,6 +11820,127 @@
           // of any length (one char per cycle, repeating).
           // (Plays moved to ▦ Schedule ▸ a layer's options, 2026-09-16 — whether a
           // layer plays is the arrangement's question, not the card's)
+          // ── WHAT THE NOTES ARE — MOVED HERE FROM INSTRUMENT ──────────────
+          // user: "Pitch is feeling more like a Generate parameter". It is:
+          // Instrument answers what it SOUNDS like — tone, envelope, filter,
+          // glide — and every row below answers what it PLAYS. They sat under
+          // Instrument because ✦ Pitch was folded in there when the sections
+          // were cut to eight, which solved a count and moved a question.
+          // The seam showed from the other side too: RHYTHM, the other half of
+          // "what makes the notes", is not on this sheet at all (it is ⚙ Deep's,
+          // deliberately — its rows here were duplicates). So Generate held one
+          // half of the pair and Instrument the other.
+          // ORDER IS DOM ORDER (`syncSheet` walks the rows), and `SEC_TABS`
+          // decides MEMBERSHIP — so this sits before Transpose to read as
+          // Method · Per part · Key · Notes · Pitch · Harmony · Voicing ·
+          // Transpose · Pitch quantize: how it is made, what notes exist, which
+          // of them, how they are stacked, then what happens to stored pitches.
+          // LENGTH AND RING OUT STAYED BEHIND: note duration is Shape's
+          // question (it is the same family as Hold and Note length on ▸ Size),
+          // and moving it here would put it in a third home rather than the
+          // right one. Flagged, not smuggled.
+          // ── WHICH NOTES IT CAN PLAY ──────────────────────────────
+          // Was its own ✦ Pitch section; folded into Instrument 2026-09-17 at
+          // the user's ask. The pitch SOURCE, the KEY it reads them in and the
+          // VOICING of a chord are all part of what the instrument plays, and
+          // the sections are eight again — two rows of four.
+          // NOTES — the layer's own pitch SOURCE (a scale, a chord, a wrap, its
+          // own progression). v1's builder and v1's menu, so the vocabulary and
+          // the precedence cannot drift; `_ambNotesOf` already applies the AREA
+          // PROGRESSION LOCK, which is why the button greys while one is on.
+          // KEY — the layer's own harmonic frame (its own key, its own chord
+          // changes, or yoked to another layer's sounding notes). v1's markup,
+          // extracted into `_ambKeyOvHtml` so there is one copy: everything in
+          // it is keyed on `data-kokey` and v1's wiring is DELEGATED on the
+          // panel host by that key, so a v2 card inside the host gets working
+          // controls with no wiring of its own. `keyOv` was already coerced and
+          // already READ (it rides `_ambNotesOf`) — this is the door.
+          ((typeof _ambKeyOvHtml === 'function')
+            ? tb('Key', _ambKeyOvHtml('v2:' + L.id, L))
+            : '') +
+          ((typeof _ambNotesButtonHtml === 'function')
+            ? _ambNotesButtonHtml('v2-' + L.id).replace('<div class="ambient-ctrl"',
+                '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth"')
+            : '') +
+          // ── EVERYTHING THAT DEPENDS ON THE PITCH CHOICE, UNDER IT ────────
+          // user: "move any params that are dependent on a Pitch selection into
+          // the Pitch tab". Each of these was an untabbed row, so each became a
+          // CHIP OF ITS OWN in the strip — and since they are gated per kind,
+          // the strip changed shape every time Pitch changed: a row of siblings
+          // that were really its children. They are its tab now, so the answer
+          // to "what else does this choice ask me" is in one place.
+          // NOT MOVED: Harmony and Length are gated `kind:live` only (they read
+          // every pitch kind), and ▸ Voicing is already one cluster rather than
+          // loose chips — folding its nine rows in here would trade a wall of
+          // chips for a wall of rows.
+          tb('Pitch',
+          sel(L, 'part.pitch.kind', 'Pitch', t.kind, PITCH_OPTS, 'kind:live;voice:synth') +
+          st(L, 'part.pitch.voices', 'Voices', t.voices, 1, 9, 'notes per onset', 'kind:live;voice:synth;pitch:chord,stack,mixed') +
+          // THE BALANCE for Mixed — how often an onset is a chord rather than
+          // a single note. Its own tab so it is findable, gated to the one
+          // kind that reads it.
+          sl(L, 'part.pitch.mix', 'Mix', (Number.isFinite(t.mix) ? t.mix : 50), 0, 100,
+             'all single notes \u2192 all chords', 'kind:live;voice:synth;pitch:mixed') +
+          // LINES, not "Voices" — divergent behaviour, divergent label. Voices
+          // are notes of ONE chord struck together; lines are separate melodies
+          // that wander independently, which is the only way a Roll plays more
+          // than one note at a time under its own steam (Harmony duplicates the
+          // one line at a fixed interval — parallel, never independent). Its own
+          // FIELD too: `pitch.voices` is backfilled to 3 on every pitch object,
+          // so reading that here would thicken every rolled part ever saved.
+          st(L, 'part.pitch.lines', 'Lines', (t.lines | 0) || 1, 1, 6,
+             'independent melodies at once — 1 is a single line',
+             'kind:live;voice:synth;pitch:walk,chance') +
+
+          st(L, 'part.pitch.degree', 'Note', t.degree, 1, noteMax(L), noteHint(L),
+             'kind:live;voice:synth;pitch:fixed,stack,walk,series') +
+          // (Roam, Stutter, Pitch vary and Scatter moved to ⚙ Deep, 2026-09-16:
+          // they are seeded on the TAKE — generation, re-rolled by 🎲 New take.)
+          sel(L, 'part.pitch.dir', 'Direction', t.dir || 'up',
+              [['up', 'Up'], ['down', 'Down'], ['updown', 'Up & down'], ['downup', 'Down & up'], ['converge', 'Outside in']], 'kind:live;voice:synth;pitch:series') +
+          st(L, 'part.pitch.span', 'Span', t.span, 1, 24, 'how far it wanders', 'kind:live;voice:synth;pitch:walk') +
+          sel(L, 'part.pitch.home', 'Home', t.home || 'floor',
+              [['floor', 'Floor — walk up from Register'], ['center', 'Centre — Register in the middle'],
+               ['ceiling', 'Ceiling — walk down from Register']], 'kind:live;voice:synth;pitch:walk') +
+          sl(L, 'part.pitch.contour', 'Contour', num(t.contour, 0), -100, 100, 'fall → rise',
+             'kind:live;voice:synth;pitch:walk')
+          ) +
+          // HARMONY PARTS — chips, because it is a SET, not a choice: a line can
+          // carry a 3rd and a 6th at once, which is what "multiple-part
+          // harmonies" means. Intervals are SOURCE TONES, so they stay in the
+          // key (verified: thirds across C major come out 4,3,3,4,4,3,3
+          // semitones — major on I/IV/V, minor on the rest). Applies to every
+          // live pitch kind, so it is gated on kind:live only.
+          harmRowHtml(L, t) +
+
+          tb('Pitch',
+            st(L, 'part.pitch.octaves', 'Octaves', num(t.octaves, 2), 1, 4, 'how far the sweep climbs',
+               'kind:live;voice:synth;pitch:series')) +
+          // VOICING IS A SUB-QUESTION OF PITCH — how the chosen notes are
+          // stacked and spread. And Proximity moved here from Motion: it
+          // pulls each pick toward the previous one, which is a PITCH rule.
+          tb('Voicing',
+            sl(L, 'proximity', 'Proximity', num(L.proximity, 0), 0, 100, 'how close notes stay', 'kind:live') +
+          sel(L, 'part.pitch.chordMode', 'Voicing', t.chordMode || '',
+              [['', 'Simple — stack the tones'], ['chaos', 'Chaos'], ['chords', 'Chords'],
+               ['chordsplus', 'Chords+'], ['monk', 'Monk']], 'kind:live;voice:synth;pitch:chord') +
+          st(L, 'part.pitch.spread', 'Spread', num(t.spread, 0), 0, 3, '± octaves',
+             'kind:live;voice:synth;pitch:chord') +
+          sl(L, 'part.pitch.variety', 'Variety', num(t.variety, 0), 0, 100, 'plain → colourful',
+             'kind:live;voice:synth;pitch:chord') +
+          st(L, 'part.pitch.subdiv', 'Subdivide', num(t.subdiv, 1), 1, 16, 'voicings per chord',
+             'kind:live;voice:synth;pitch:chord') +
+          st(L, 'part.pitch.phraseLen', 'Phrase', num(t.phraseLen, 4), 1, 16, 'chords before it repeats',
+             'kind:live;voice:synth;pitch:chord') +
+          st(L, 'part.pitch.repeats', 'Repeats', num(t.repeats, 4), 1, 16, 'times before a fresh phrase',
+             'kind:live;voice:synth;pitch:chord') +
+          // (Feel moved to ✺ Playing — Stochastic re-picks per chord OCCURRENCE.)
+          st(L, 'part.pitch.voiceCap', 'Voice cap', num(t.voiceCap, 0), 0, 12, 'ceiling incl. colour tones (0 = Voices)',
+             'kind:live;voice:synth;pitch:chord') +
+          '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth;pitch:chord"><label>Salt re-voice</label>' +
+            '<button type="button" class="ambient-seg v2-salttoggle' + (L.followSalt ? ' on' : '') + '">' +
+              (L.followSalt ? 'On — follows the colours' : 'Off — holds the chord') + '</button>' +
+            '<span class="ambient-hint v2-salthint"></span></div>') +
           st(L, 'part.transpose', 'Transpose', p.transpose || 0, -24, 24, 'semitones', 'kind:recorded') +
           // What a RECORDED part does when the chords move under it. Inert on a
           // live part, which re-resolves its pitches every cycle by definition —

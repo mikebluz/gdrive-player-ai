@@ -2332,6 +2332,53 @@
     if (tb || rb) return { base: takeOf(L), bars: tb || {}, rules: rb || null };
     return takeOf(L);
   }
+  // ── EVOLVE'S CLOCK, ASKED IN ONE PLACE ──────────────────────────────────
+  // The EMITTER needs the epoch, because that is what advances the take:
+  // "every 4 passes" is take+0,+0,+0,+0,+1,… The DRAWING needs the same
+  // number, to know which take it is looking at and therefore which ones are
+  // coming. Two computations of one clock is the bug this file keeps
+  // rediscovering — `part.vary` had two, and the Evolve rows vanished for it —
+  // so both callers come here.
+  // `ctx.cycleStart0` is read with a `|| 0` fallback and is set by NOBODY, so
+  // the fallback tick is `round(cs / cyc)` and a caller that has only E and cfg
+  // gets exactly what the emitter gets. Kept as-is rather than removed: it
+  // names the origin this would use if the arrangement ever had one.
+  function chgAt(L, ctx, cs, cyc) {
+    const c0 = L && L.chg; if (!c0) return null;
+    let pi0 = -1;
+    try { const w0 = _ambPartPassAt(ctx.E, ctx.cfg, cs); if (w0 && w0.pi >= 0) pi0 = w0.pi | 0; } catch (e) {}
+    const own = (pi0 >= 0 && c0.parts && c0.parts[pi0]) ? c0.parts[pi0] : null;
+    const m = Object.assign({ ev: 4, am: 100, clock: 'pass', from: 'evolve' }, c0, own || {});
+    delete m.parts;
+    const am = clamp(Number.isFinite(m.am) ? m.am : 100, 0, 100);
+    const what = (m.what && typeof m.what === 'object') ? m.what : null;
+    // 0% TOUCHES NOTHING, so the epoch must not advance either: otherwise the
+    // KEEP seed (the epoch before) moves every pass and the part changes while
+    // the control says it does not (measured: 4 distinct sets in 4 passes).
+    const ev = (am <= 0) ? 0 : clamp(m.ev | 0, 0, 64);
+    let tick = 0, epoch = 0;
+    if (ev > 0) {
+      // THE CLOCK, WITH A FALLBACK. No progression means no parts and no
+      // rounds — `_ambPartPassAt` answers nothing — so the layer's own CYCLE
+      // is the pass, which is what a part without changes plays anyway.
+      // Without this the axis silently did nothing on a keys-only project
+      // (measured: 100% of notes identical at every setting).
+      const cycTick = () => Math.max(0, Math.round((cs - (ctx.cycleStart0 || 0)) / Math.max(0.001, cyc)));
+      let t = null;
+      try {
+        if (m.clock === 'round') {
+          const r0 = _ambIterIndexAt(ctx.E, ctx.cfg, 'round', cs);
+          if (r0 >= 0) t = r0 | 0;
+        } else {
+          const w1 = _ambPartPassAt(ctx.E, ctx.cfg, cs);
+          if (w1 && w1.pi >= 0 && Number.isFinite(w1.pass)) t = w1.pass | 0;
+        }
+      } catch (e) { t = null; }
+      if (t == null) t = cycTick();
+      tick = t; epoch = Math.floor(t / ev);
+    }
+    return { cfg: m, am: am, what: what, ev: ev, tick: tick, epoch: epoch };
+  }
   function withTake(t, fn) {
     const sv = TAKE_PIN;
     TAKE_PIN = (t && typeof t === 'object') ? t : (t | 0);
@@ -2677,44 +2724,11 @@
     // take, so "every 4 passes" is take+0,+0,+0,+0,+1,… and `am` decides which
     // stages follow the new epoch on a given onset (see `stageSeed`).
     // Absent `chg` leaves the two old paths exactly as they were.
-    const chgOf2 = (() => {
-      const c0 = L.chg; if (!c0) return null;
-      let pi0 = -1;
-      try { const w0 = _ambPartPassAt(ctx.E, ctx.cfg, cs); if (w0 && w0.pi >= 0) pi0 = w0.pi | 0; } catch (e) {}
-      const own = (pi0 >= 0 && c0.parts && c0.parts[pi0]) ? c0.parts[pi0] : null;
-      const m = Object.assign({ ev: 4, am: 100, clock: 'pass', from: 'evolve' }, c0, own || {});
-      delete m.parts;
-      return m;
-    })();
-    let chgEpoch = 0, chgAm = 100, chgWhat = null;
-    if (chgOf2) {
-      chgAm = clamp(Number.isFinite(chgOf2.am) ? chgOf2.am : 100, 0, 100);
-      chgWhat = (chgOf2.what && typeof chgOf2.what === 'object') ? chgOf2.what : null;
-      // 0% TOUCHES NOTHING, so the epoch must not advance either: otherwise the
-      // KEEP seed (the epoch before) moves every pass and the part changes while
-      // the control says it does not (measured: 4 distinct sets in 4 passes).
-      const ev = (chgAm <= 0) ? 0 : clamp(chgOf2.ev | 0, 0, 64);
-      if (ev > 0) {
-        // THE CLOCK, WITH A FALLBACK. No progression means no parts and no
-        // rounds — `_ambPartPassAt` answers nothing — so the layer's own CYCLE
-        // is the pass, which is what a part without changes plays anyway.
-        // Without this the axis silently did nothing on a keys-only project
-        // (measured: 100% of notes identical at every setting).
-        const cycTick = () => Math.max(0, Math.round((cs - (ctx.cycleStart0 || 0)) / Math.max(0.001, cyc)));
-        let tick = null;
-        try {
-          if (chgOf2.clock === 'round') {
-            const r0 = _ambIterIndexAt(ctx.E, ctx.cfg, 'round', cs);
-            if (r0 >= 0) tick = r0 | 0;
-          } else {
-            const w1 = _ambPartPassAt(ctx.E, ctx.cfg, cs);
-            if (w1 && w1.pi >= 0 && Number.isFinite(w1.pass)) tick = w1.pass | 0;
-          }
-        } catch (e) { tick = null; }
-        if (tick == null) tick = cycTick();
-        chgEpoch = Math.floor(tick / ev);
-      }
-    }
+    const chg0 = chgAt(L, ctx, cs, cyc);
+    const chgOf2 = chg0 ? chg0.cfg : null;
+    const chgEpoch = chg0 ? chg0.epoch : 0;
+    const chgAm = chg0 ? chg0.am : 100;
+    const chgWhat = chg0 ? chg0.what : null;
     const cycIdx = Number.isFinite(TAKE_PIN) ? (TAKE_PIN | 0)
       : ((L.part && L.part.vary)
           ? (Math.round(ctx.cycleStart / Math.max(0.001, cyc)) + (takeOf(L) | 0))
@@ -5499,6 +5513,8 @@
     // everything it needs has to come through here (the documented rule).
     takeOf: takeOf,
     withTake: withTake,
+    chgAt: chgAt,                    // the drawing asks Evolve's clock the same way
+
     newTake: (L, bars) => {
       if (!L || !L.part) return 0;
       const p2 = L.part;
@@ -8031,12 +8047,41 @@
     // recomputes once a pass, not once a frame.
     const PASSES = 8;
     let stab = null, ghosts = [];
+    // Evolve's cadence, carried out of the sampling block so the readout can
+    // say WHEN the coming takes arrive — under `vary` it is every cycle and
+    // needs no saying; under Evolve it is every `ev` passes, which is the
+    // whole difference between the two clocks.
+    let evoEv = 0;
     try {
       const pin0 = V2.pinOf(L);
-      const varies = L.part.kind !== 'recorded' && !!L.part.vary && typeof pin0 !== 'object';
+      // TWO CLOCKS REACH THE SAME PLACE. `vary` advances the take every cycle;
+      // EVOLVE advances it every `ev` passes, keeping `am`% of the material —
+      // and because `cycIdx` is `take + epoch` with the epoch stepping by one
+      // per change, the takes that are COMING are `base + 1, +2, …` either way.
+      // So the sampling below is unchanged; only the question of whether to ask
+      // it, and what `base` is while playing, differ.
+      // Reported as a disappearance ("why aren't the phantom future take notes
+      // showing anymore"): Evolve requires `vary` off, so turning it on took
+      // the preview away from the one mode most about future takes.
+      const evo = (L.part.kind !== 'recorded' && !L.part.vary)
+        ? (V2.chgAt(L, { E: E, cfg: cfg }, cs, cyc) || null) : null;
+      const varies = L.part.kind !== 'recorded' && typeof pin0 !== 'object' &&
+        (!!L.part.vary || !!(evo && evo.ev > 0));
+      if (!L.part.vary && evo) evoEv = evo.ev | 0;
       if (varies && played.length) {
-        const base = playing ? (Math.round(cs / Math.max(0.001, cyc)) + (V2.takeOf(L) | 0)) : (pin0 | 0);
-        const sig = JSON.stringify([L.part.rhythm, L.part.pitch, L.part.shape, L.part.bars, base, Math.round(cs * 1000), Math.round(cyc * 1000), wpi]);
+        // WHILE PLAYING the drawn take is wherever the clock has got to, and
+        // the two clocks answer that differently — `vary` counts cycles, Evolve
+        // counts epochs. Stopped, both are the layer's own pin.
+        const base = !playing ? (pin0 | 0)
+          : (L.part.vary ? (Math.round(cs / Math.max(0.001, cyc)) + (V2.takeOf(L) | 0))
+                         : ((V2.takeOf(L) | 0) + ((evo && evo.epoch) | 0)));
+        // `base` is in the signature, so an Evolve part re-samples when its
+        // epoch turns — but `ev`/`am` are NOT derivable from it, and changing
+        // either changes what the coming takes are. A cached drawing with no
+        // second writer is the frozen-readout trap.
+        const sig = JSON.stringify([L.part.rhythm, L.part.pitch, L.part.shape, L.part.bars, base,
+          L.part.vary ? 1 : 0, evo ? [evo.ev, evo.am, evo.cfg.clock] : 0,
+          Math.round(cs * 1000), Math.round(cyc * 1000), wpi]);
         if (!cv._stab || cv._stab.sig !== sig) {
           const key = 'v2:' + (L.id | 0);
           const samples = [];
@@ -8105,6 +8150,7 @@
     // outline the sampling found; this counts the ones inside the pitch window
     // and the viewport, which is what a reader can see.)
     cv._ghostTakes = ghostDrawn;
+    cv._evoEv = evoEv;               // 0 = the takes come from `vary`, every cycle
     let hidden = 0;   // notes outside the held window — named in the readout
     for (let i = 0; i < played.length; i++) {
       const n = played[i];
@@ -8251,7 +8297,9 @@
       // owns that word for "% quiet extra hits", which SOUND and draw SOLID.
       // One word for two mechanisms reads as one mechanism.
       const ghostTxt = ghosts.length
-        ? tapTxt(L, ' · outlines: the next 7 takes, a colour each') : '';
+        ? tapTxt(L, ' · outlines: the next 7 takes, a colour each' +
+            (evoEv > 0 ? ' \u2014 one every ' + evoEv + ' pass' + (evoEv === 1 ? '' : 'es') : ''))
+        : '';
       // WHY THE OUTLINES WENT, AND HOW TO GET THEM BACK. Tapping a note on a
       // live part FREEZES it so there is something to edit (captureShown, with
       // a toast) — and a frozen part is FIXED, so by construction it has no

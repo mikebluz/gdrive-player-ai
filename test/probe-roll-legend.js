@@ -197,8 +197,29 @@ const ok = (name, cond, detail) => {
   ok('no outlines are drawn', f.ghostN === 0, JSON.stringify(f));
   ok('and the readout stays silent about them', f.says === false, f.text);
 
+  // ---- 4. EVOLVE: the other clock that has coming takes -------------------
+  // `vary` advances the take every cycle; Evolve advances it every `ev`
+  // passes. Both end up asking for `base + 1, +2, …`, so the outlines are the
+  // next takes either way — the preview used to ask only under `vary`, which
+  // took it away from the mode most about future takes.
+  console.log('\nevolving part (vary off, Evolve on)');
+  await page.evaluate(() => {
+    const L = (_masterEng.getCfg().layers || [])[0];
+    L.part.vary = 0;                       // Evolve and Each cycle are exclusive
+    L.chg = { ev: 2, am: 100 };
+    _masterEng.getCfg(); window._v2.render(_masterEng);
+  });
+  await zz(1100); await open();
+  const ev = await read();
+  ok('the part is live and not varying', ev.kind === 'live' && ev.vary === false, JSON.stringify(ev));
+  ok('outlines are drawn for the coming takes', ev.ghostN > 0, JSON.stringify(ev));
+  ok('…still one hue per take', [...new Set(ev.takes.map((t) => t.hue))].length >= 2,
+     JSON.stringify([...new Set(ev.takes.map((t) => t.hue))]));
+  ok('the readout names them', ev.says === true, ev.text);
+  ok('…and says how often they arrive', /one every 2 passes/.test(ev.text), ev.text);
+
   // ---- the invariant, stated once ----------------------------------------
-  const shown = [v, back, f];                    // the three states with the picture up
+  const shown = [v, back, f, ev];                 // every state with the picture up
   ok('said exactly when outlines are drawn', shown.every((s) => s.says === (s.ghostN > 0)),
      JSON.stringify(shown.map((s) => ({ g: s.ghostN, says: s.says }))));
   ok('no page errors', errs.length === 0, errs.join(' | '));

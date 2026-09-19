@@ -213,6 +213,25 @@
 
 ### Bloom: the v2 layer model (`cfg.layers`, `js/bloops/18-layer-v2.js`)
 
+- **VARY AND EVOLVE ARE TWO CLOCKS REACHING THE SAME TAKES.** `cycIdx` is `take + epoch` with the
+  epoch stepping by ONE per change, so the takes that are coming are `base + 1, +2, …` under either —
+  `vary` reaches the next one after 1 cycle, Evolve after `ev` passes. The drawing's pass sampler is
+  therefore shared; only two things differ: whether to ask at all, and `base` WHILE PLAYING (`vary`
+  counts cycles, Evolve counts epochs; stopped, both are the layer's own pin).
+- **`chgEpoch` FEEDS ONLY `cycIdx` — pinning the take is enough to preview a future epoch.** The
+  obvious worry is that `am`'s keep-or-change blending would need the epoch pinned too; it does not.
+  `seedKeep`/`seedHold` reference the TAKE, deliberately ("a stateless engine can only keep something
+  it can NAME"), and `slotNew`/`stageSeed` key off `seedBase`, which comes from `cycIdx`. So
+  `withTake(n)` reproduces a future Evolve pass exactly. Verified by grep before building an epoch
+  pin that would have been dead weight.
+- **`ctx.cycleStart0` IS SET BY NOBODY** — read once, with `|| 0`, so Evolve's fallback tick is
+  `round(cs / cyc)`. That is why a caller holding only `E` and `cfg` (the drawing) gets exactly what
+  the emitter gets from `chgAt`.
+- **A CACHED DRAWING NEEDS EVERY INPUT IN ITS SIGNATURE.** `cv._stab.sig` carried `base`, which moves
+  when an Evolve epoch turns — but `ev`/`am`/`clock` are NOT derivable from it, and changing any of
+  them changes which takes are coming. A signature short of an input is the frozen-readout trap with
+  a cache in front of it.
+
 - **`part.vary` IS INERT ON A RECORDED PART — qualify it EVERYWHERE, not just in `liveOf`.** A written
   part plays its stored list, so the generation path never runs and `vary` cannot act; `liveOf` has
   carried `vary && kind !== 'recorded'` since the "why does it say VARIES after it's been written

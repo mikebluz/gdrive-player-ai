@@ -12629,7 +12629,15 @@
       // `vary` OUTRANKS IT in the emitter: with Each cycle on, `cycIdx` is the
       // cycle number and `chgEpoch` is never consulted, so every Evolve row
       // would be a knob that does nothing. It gates them off instead.
-      vary: (L.part && L.part.vary) ? 'on' : 'off',
+      // …BUT ONLY WHERE IT CAN ACT — the same qualifier `liveOf` carries, and
+      // for the same reason. A RECORDED part plays its stored list; the
+      // generation path `cycIdx` lives in is never reached, so `vary` is inert
+      // there. Read unqualified, freezing a varying part (which is what tapping
+      // a note does) left `vary` reading 'on' for ever and took all three
+      // Evolve rows away with no way back — reported as "Evolve has stopped
+      // working". One axis, one computation: if the badge says FIXED, `vary`
+      // is off as far as anything that reasons about it is concerned.
+      vary: (L.part && L.part.vary && L.part.kind !== 'recorded') ? 'on' : 'off',
       // …and How much / Against only mean something once it evolves at all.
       evo: (L.chg && (L.chg.ev | 0) > 0) ? 'on' : 'off',
       // ── SIZE: THE TWO ANSWERS TO "HOW LONG IS A NOTE" ARE EXCLUSIVE ──
@@ -12655,7 +12663,12 @@
       // part is a control that WOULD apply if the part were Generated — hiding
       // it read as "where did the rhythm params go" (twice), so it GREYS
       // instead: visible, inert (`.v2-rowna`), teaching what it is for.
-      let kindOk = true, othersOk = true, wantsLive = false;
+      // `vary` is judged apart from the rest for the SAME reason `kind` is: a
+      // row that fails only on it is not an alternative, it is this layer's
+      // control being OUTRANKED — and the thing outranking it (Each cycle) is
+      // the row directly above, so greying says "that switch is why" where
+      // vanishing said nothing. Only Evolve's three rows carry `vary:off`.
+      let kindOk = true, othersOk = true, wantsLive = false, varyOk = true;
       String(row.getAttribute('data-v2when')).split(';').forEach(cl => {
         const [piece, vals] = cl.split(':');
         const want = String(vals || '').split(',');
@@ -12665,15 +12678,20 @@
         const pass = Array.isArray(have) ? have.some(v => want.indexOf(v) >= 0)
                                          : want.indexOf(have) >= 0;
         if (piece === 'kind') { kindOk = pass; wantsLive = want.indexOf('live') >= 0; }
+        else if (piece === 'vary') { varyOk = pass; }
         else if (!pass) othersOk = false;
       });
       // ONLY PARAMETER ROWS grey — a gated BUTTON (the take bar's 🎲 New
       // take, kind:live) must still HIDE: greying leaked it onto recorded
       // parts beside "Replace with a new take", two dice for one action
       // (reported), and the dim styling is scoped to .ambient-ctrl anyway.
-      const na = othersOk && !kindOk && wantsLive && now.kind === 'recorded' &&
-        (row.classList.contains('ambient-ctrl') || row.classList.contains('v2-mini'));
-      row.style.display = (othersOk && kindOk) || na ? '' : 'none';
+      const isRow = row.classList.contains('ambient-ctrl') || row.classList.contains('v2-mini');
+      // A row still has to be RELEVANT to grey: `evo:on` failing means Evolve
+      // is 0 and How much / Against mean nothing yet — those still hide.
+      const naKind = othersOk && varyOk && !kindOk && wantsLive && now.kind === 'recorded';
+      const naVary = othersOk && kindOk && !varyOk;
+      const na = isRow && (naKind || naVary);
+      row.style.display = (othersOk && kindOk && varyOk) || na ? '' : 'none';
       row.classList.toggle('v2-rowna', na);
   }
   // THE STAGED PASS — ✨ Quick and ⚙ Deep, gated, synced and drawn from the

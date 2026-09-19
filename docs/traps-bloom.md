@@ -213,6 +213,20 @@
 
 ### Bloom: the v2 layer model (`cfg.layers`, `js/bloops/18-layer-v2.js`)
 
+- **`part.vary` IS INERT ON A RECORDED PART — qualify it EVERYWHERE, not just in `liveOf`.** A written
+  part plays its stored list, so the generation path never runs and `vary` cannot act; `liveOf` has
+  carried `vary && kind !== 'recorded'` since the "why does it say VARIES after it's been written
+  down" report. `gateNowOf` computed the same axis UNQUALIFIED, so freezing a varying part (which is
+  what tapping a note does) left the gate reading `vary:on` for ever and took all three Evolve rows
+  away permanently — "Evolve has stopped working". **Two computations of one axis is the bug; grep for
+  `part.vary` before adding a third.**
+- **A row that fails only on `vary` is OUTRANKED, not irrelevant — grey it, don't hide it.** Same
+  split `kind` already gets, same reason ("where did the rhythm params go", twice). The switch doing
+  the outranking (Each cycle) is the row directly above Evolve, so a dimmed row points at its own
+  cause while a vanished one teaches nothing. `evo:on` still HIDES: How much / Against genuinely mean
+  nothing until Evolve is non-zero. Only Evolve's three rows carry `vary:off`, so that is the whole
+  blast radius.
+
 - **TAPPING A NOTE FREEZES A LIVE PART — and that is why the outlines vanish.** `captureShown` turns
   the part `recorded` so there is something to edit, which makes it FIXED, which means no other takes
   and so no outlines. Reported as a disappearance ("all the phantom notes disappeared after i clicked

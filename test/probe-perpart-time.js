@@ -154,11 +154,19 @@ const ok = (name, cond, detail) => {
       o.backValue = r ? ((r.querySelector('select[data-f="speed"]') || {}).value || null) : null; }
     delete L().speed; E.getCfg();
 
-    // ── CYCLE IS ONE LADDER: Free → Everywhere → Per part ─────────────
-    // It was split over two surfaces (this select, and a ▭/◫ toggle in the
-    // sheet head), so "how long is this layer" had two half-answers in
-    // different places.
+    // ── TIME ASKS ONLY "HOW LONG" ────────────────────────────────────
+    // The ladder is Everywhere / Locked / Free. Per part is NOT on it: it
+    // answers what CONTENT the layer has, which is Generate's question, and
+    // only has a length consequence — which Time states instead.
     const cycSel = () => document.querySelector('.v2-pop-pane .v2-cycmode');
+    const rowH = (lab) => { const r = rowOf(lab); return r ? Math.round(r.getBoundingClientRect().height) : -1; };
+    const badgeIn = (lab) => {
+      const r = rowOf(lab); const bg = r && r.querySelector('.ambient-loop-badge');
+      return bg ? bg.textContent.trim() : null;
+    };
+    const stepIn = (lab) => {
+      const r = rowOf(lab); return r ? r.querySelector('input.ambient-step-inp') : null;
+    };
     const pick = async (v) => {
       const el = cycSel(); if (!el) return false;
       el.value = v; el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -166,76 +174,86 @@ const ok = (name, cond, detail) => {
       await openTime(); await toTab('Cycle');
       return true;
     };
-    const rowH = (lab) => {
-      const r = [...document.querySelectorAll('.v2-pop-pane .ambient-ctrl')]
-        .find((x) => (((x.querySelector('label') || {}).textContent) || '').trim() === lab);
-      return r ? Math.round(r.getBoundingClientRect().height) : -1;
-    };
-    const badge = () => {
-      const r = [...document.querySelectorAll('.v2-pop-pane .ambient-ctrl')]
-        .find((x) => (((x.querySelector('label') || {}).textContent) || '').trim() === 'Bars');
-      const b = r && r.querySelector('.ambient-loop-badge');
-      return b ? b.textContent.trim() : null;
-    };
-    // start from a clean Everywhere layer
-    delete L().partFor; delete L().parts; delete L().partAll; delete L().part.clock;
+    // a clean Everywhere layer to start from
+    delete L().partFor; delete L().parts; delete L().partAll;
+    delete L().part.clock; delete L().lenSync;
     E.getCfg();
     await repaint(); await openTime(); await toTab('Cycle');
     o.cycOpts = cycSel() ? [...cycSel().options].map((x) => x.value) : null;
     o.cycNow = cycSel() ? cycSel().value : null;
-    const tabsOf = () => [...document.querySelectorAll('.v2-layer .v2-pop-tabs [data-tab]')]
-      .map((x) => x.getAttribute('data-tab'));
-    // EVERYWHERE
-    await toTab('Bars'); o.everyRows = { bars: rowH('Bars'), more: rowH('More bars'), badge: badge() };
+    await toTab('Bars');
+    o.everyRows = { bars: rowH('Bars'), more: rowH('More bars'), badge: badgeIn('Bars'),
+                    step: !!stepIn('Bars') };
     await toTab('Cycle');
     // FREE
     await pick('free');
-    o.freeMode = { val: cycSel().value, stored: L().part.clock || null, tabs: tabsOf() };
+    o.freeMode = { val: cycSel().value, stored: L().part.clock || null };
     await toTab('Bars'); o.freeRows = { bars: rowH('Bars'), more: rowH('More bars') };
     await toTab('Cycle');
-    // PER PART — a content FORK, through partSelect
-    await pick('part');
-    o.partMode = { val: cycSel().value, partFor: L().partFor,
-                   iced: !!L().partAll, clock: L().part.clock || null };
+    // LOCKED — the rung that used to exist only behind a ⋯ menu modal
+    await pick('locked');
+    o.lockMode = { val: cycSel().value, lenSync: JSON.parse(JSON.stringify(L().lenSync || null)),
+                   clock: L().part.clock || null, bars: L().part.bars };
     await toTab('Bars');
-    o.partRows = { bars: rowH('Bars'), more: rowH('More bars'), badge: badge() };
-    await toTab('Cycle');
-    // LEAVING ASKS — and a REFUSAL must leave everything exactly as it was
-    const svC = window.confirm;
-    window.confirm = () => false;
-    await pick('every');
-    o.refused = { val: cycSel().value, partFor: L().partFor, asked: true };
-    window.confirm = () => true;
-    await pick('every');
-    o.accepted = { val: cycSel().value, partFor: L().partFor === undefined ? null : L().partFor,
-                   iced: !!L().partAll, bars: L().part.bars };
-    window.confirm = svC;
-    await toTab('Bars'); o.backRows = { bars: rowH('Bars'), badge: badge() };
+    o.lockRows = { bars: rowH('Bars'), more: rowH('More bars'),
+                   step: !!stepIn('Bars'), badge: badgeIn('Bars'),
+                   hint: (() => { const r = rowOf('Bars'); const hn = r && r.querySelector('.ambient-hint');
+                                  return hn ? hn.textContent.trim() : null; })() };
+    // …AND IT IS A CONTROL: driving the passes count moves the loop length
+    { const el = stepIn('Bars');
+      if (el) { el.value = '2'; el.dispatchEvent(new Event('input', { bubbles: true })); } }
+    await wait(420);
+    o.lockDrove = { passes: (L().lenSync || {}).passes, bars: L().part.bars };
+    await toTab('Cycle'); await pick('every');
+    delete L().lenSync; E.getCfg(); await repaint();
 
-    // ── TWO DOORS, ONE ANSWER ────────────────────────────────────────
-    // The sheet HEAD keeps its ▭/◫ pill: it is the only surface that says
-    // WHICH part's copy you are editing, and it shows on every group — so a
-    // per-part layer being tuned under Shape or FX would otherwise say nothing
-    // about the scope of what you are changing. Two doors onto one action is
-    // fine here (the card already does it for Register) because BOTH force a
-    // full re-render, so the documented two-copies-drift cannot happen. This
-    // is the check that keeps that true.
+    // ── GENERATE OWNS THE CONTENT QUESTION ───────────────────────────
+    const openGen = async () => {
+      let d = document.querySelector('.v2-layer .v2-gototab[data-goto="Generate"]');
+      if (!d) { await openTime(); d = document.querySelector('.v2-layer .v2-gototab[data-goto="Generate"]'); }
+      if (d) { d.click(); await wait(460); }
+      return !!d;
+    };
+    o.genDoor = await openGen();
+    o.genTabs = [...document.querySelectorAll('.v2-layer .v2-pop-tabs [data-tab]')]
+      .map((x) => x.getAttribute('data-tab'));
+    o.ppTab = await toTab('Per part');
+    const ppBtn = () => document.querySelector('.v2-pop-pane .v2-ppmode');
+    o.ppRow = (() => {
+      const r = rowOf('Per part'); const rr = r ? r.getBoundingClientRect() : null;
+      return rr ? { w: Math.round(rr.width), h: Math.round(rr.height),
+                    face: ppBtn() ? ppBtn().textContent.trim() : null } : null;
+    })();
+    // FORK IT — a real press
+    if (ppBtn()) { ppBtn().click(); await wait(560); }
+    await openGen(); await toTab('Per part');
+    o.forked = { partFor: L().partFor, iced: !!L().partAll,
+                 face: ppBtn() ? ppBtn().textContent.trim() : null };
+    // …and TIME now STATES it rather than owning it
     await openTime(); await toTab('Cycle');
-    const pill = () => document.querySelector('.v2-layer .v2-pop-pp');
-    o.pillThere = !!pill();
-    o.pillBefore = pill() ? pill().textContent.trim() : null;
-    if (pill()) { pill().click(); await wait(520); }
+    o.cycWhenPart = { sel: !!cycSel(), badge: badgeIn('Cycle'),
+                      hint: (() => { const r = rowOf('Cycle'); const hn = r && r.querySelector('.ambient-hint');
+                                     return hn ? hn.textContent.trim() : null; })() };
+    await toTab('Bars');
+    o.barsWhenPart = { badge: badgeIn('Bars'), step: !!stepIn('Bars') };
+    // THE HEAD PILL STAYS IN STEP — one handler, two doors
+    o.pillWhenPart = (() => { const q = document.querySelector('.v2-layer .v2-pop-pp');
+                              return q ? q.textContent.trim() : null; })();
+    // LEAVING ASKS; refusing changes nothing
+    const svC = window.confirm;
+    await openGen(); await toTab('Per part');
+    window.confirm = () => false;
+    if (ppBtn()) { ppBtn().click(); await wait(520); }
+    await openGen(); await toTab('Per part');
+    o.refused = { partFor: L().partFor, face: ppBtn() ? ppBtn().textContent.trim() : null };
+    window.confirm = () => true;
+    if (ppBtn()) { ppBtn().click(); await wait(560); }
+    await openGen(); await toTab('Per part');
+    o.accepted = { partFor: L().partFor === undefined ? null : L().partFor,
+                   iced: !!L().partAll, face: ppBtn() ? ppBtn().textContent.trim() : null };
+    window.confirm = svC;
     await openTime(); await toTab('Cycle');
-    o.afterPill = { pill: pill() ? pill().textContent.trim() : null,
-                    sel: cycSel() ? cycSel().value : null,
-                    partFor: L().partFor };
-    // …and back the other way, from the Cycle select
-    const svC2 = window.confirm; window.confirm = () => true;
-    await pick('every');
-    window.confirm = svC2;
-    o.afterSel = { pill: pill() ? pill().textContent.trim() : null,
-                   sel: cycSel() ? cycSel().value : null,
-                   partFor: L().partFor === undefined ? null : L().partFor };
+    o.cycBack = { sel: cycSel() ? cycSel().value : null };
     return o;
   });
 
@@ -251,7 +269,7 @@ const ok = (name, cond, detail) => {
     JSON.stringify(run.speedRow));
   ok('…it states the binding, and says the way out',
     !!run.speedRow && /1\u00d7/.test(run.speedRow.badge || '') &&
-    /pass sets it/.test(run.speedRow.badge || '') && /Everywhere/.test(run.speedRow.hint || ''),
+    /pass sets it/.test(run.speedRow.badge || '') && /Generate/.test(run.speedRow.hint || ''),
     JSON.stringify(run.speedRow));
   ok('…on the Speed tab, REACHABLE — measured, not just present',
     run.timeDoor && run.speedTab && !!run.speedRow && run.speedRow.w > 0 && run.speedRow.h > 0,
@@ -267,42 +285,58 @@ const ok = (name, cond, detail) => {
     run.backSelect === true && run.backBadge === false && run.backValue === '2',
     JSON.stringify({ sel: run.backSelect, badge: run.backBadge, v: run.backValue }));
 
-  // ── THE CYCLE LADDER ──────────────────────────────────────────────────
-  ok('Cycle offers the whole ladder — Everywhere, Per part, Free',
-    JSON.stringify(run.cycOpts) === JSON.stringify(['every', 'part', 'free']),
+  // ── TIME: ONLY "HOW LONG", AND LIVE IN EVERY STATE IT OWNS ───────────
+  ok('Cycle offers Everywhere, Locked and Free — Per part is not a cycle setting',
+    JSON.stringify(run.cycOpts) === JSON.stringify(['every', 'locked', 'free']),
     JSON.stringify(run.cycOpts));
-  ok('…an ordinary layer reads Everywhere, with Bars and More bars under it',
-    run.cycNow === 'every' && run.everyRows.bars > 0 && run.everyRows.more > 0 &&
-    run.everyRows.badge === null, JSON.stringify({ v: run.cycNow, rows: run.everyRows }));
-  ok('Free takes the Bars rows away and stores its own clock',
+  ok('…Everywhere gives a live Bars stepper and More bars',
+    run.cycNow === 'every' && run.everyRows.step === true &&
+    run.everyRows.more > 0 && run.everyRows.badge === null, JSON.stringify(run.everyRows));
+  ok('…Free takes the Bars rows away and stores its own clock',
     run.freeMode.val === 'free' && run.freeMode.stored === 'free' &&
     run.freeRows.bars <= 0 && run.freeRows.more <= 0,
     JSON.stringify({ m: run.freeMode, rows: run.freeRows }));
-  // The rung that is not a setting: it forks the content.
-  ok('Per part forks the content — the Everywhere record is ICED and a part is filed',
-    run.partMode.val === 'part' && Number.isFinite(run.partMode.partFor) &&
-    run.partMode.iced === true, JSON.stringify(run.partMode));
-  ok('…and it is bar-shaped, showing the part badge instead of a stepper',
-    run.partMode.clock === null && run.partRows.badge !== null &&
-    /\u00d7 part/.test(run.partRows.badge) && run.partRows.bars > 0,
-    JSON.stringify({ m: run.partMode, rows: run.partRows }));
-  // A CANCELLED CONFIRM MUST NEVER LOOK LIKE IT DID SOMETHING.
-  ok('leaving Per part ASKS, and refusing leaves the layer and the select alone',
-    run.refused.val === 'part' && Number.isFinite(run.refused.partFor),
-    JSON.stringify(run.refused));
-  ok('…accepting brings the iced Everywhere content back',
-    run.accepted.val === 'every' && run.accepted.partFor === null &&
-    run.accepted.iced === false && run.backRows.badge === null && run.backRows.bars > 0,
-    JSON.stringify({ a: run.accepted, rows: run.backRows }));
+  // The rung that previously existed ONLY behind a ⋯ menu modal.
+  ok('…Locked binds the loop to passes of a part, and clears any free clock',
+    run.lockMode.val === 'locked' && run.lockMode.lenSync &&
+    (run.lockMode.lenSync.passes | 0) === 1 && run.lockMode.clock === null,
+    JSON.stringify(run.lockMode));
+  ok('…and Bars is a CONTROL there, not a sign pointing at a menu',
+    run.lockRows.step === true && run.lockRows.badge === null &&
+    /passes of/.test(run.lockRows.hint || ''), JSON.stringify(run.lockRows));
+  ok('…driving it moves the loop length — 2 passes of a 2-bar part is 4 bars',
+    (run.lockDrove.passes | 0) === 2 && run.lockDrove.bars === 4,
+    JSON.stringify(run.lockDrove));
 
-  ok('the sheet head keeps its scope pill — it names WHICH part you are editing',
-    run.pillThere && /Everywhere/.test(run.pillBefore || ''), JSON.stringify(run.pillBefore));
-  ok('…flipping it there moves the Cycle select too — two doors, one answer',
-    run.afterPill.sel === 'part' && /Per part/.test(run.afterPill.pill || '') &&
-    Number.isFinite(run.afterPill.partFor), JSON.stringify(run.afterPill));
-  ok('…and flipping Cycle moves the pill back',
-    run.afterSel.sel === 'every' && /Everywhere/.test(run.afterSel.pill || '') &&
-    run.afterSel.partFor === null, JSON.stringify(run.afterSel));
+  // ── GENERATE: WHAT CONTENT DOES THIS LAYER HAVE ──────────────────────
+  ok('Per part is a Generate control now, on its own tab',
+    run.genDoor && run.ppTab && run.genTabs.indexOf('Per part') >= 0,
+    JSON.stringify(run.genTabs));
+  ok('…REACHABLE there — measured, not just present',
+    !!run.ppRow && run.ppRow.w > 0 && run.ppRow.h > 0 && /Everywhere/.test(run.ppRow.face || ''),
+    JSON.stringify(run.ppRow));
+  ok('…and pressing it forks the content: the Everywhere record is ICED',
+    Number.isFinite(run.forked.partFor) && run.forked.iced === true &&
+    /Per part/.test(run.forked.face || ''), JSON.stringify(run.forked));
+
+  // ── TIME STATES THE CONSEQUENCE, AND OWNS NOTHING THERE ──────────────
+  ok('with a per-part content, Cycle is a BADGE that points at Generate',
+    run.cycWhenPart.sel === false && run.cycWhenPart.badge !== null &&
+    /Generate/.test(run.cycWhenPart.hint || ''), JSON.stringify(run.cycWhenPart));
+  ok('…and Bars says the length is the part\'s',
+    run.barsWhenPart.step === false && /\u00d7 part/.test(run.barsWhenPart.badge || ''),
+    JSON.stringify(run.barsWhenPart));
+  ok('…while the head pill follows the Generate control — one handler, two doors',
+    /Per part/.test(run.pillWhenPart || ''), JSON.stringify(run.pillWhenPart));
+
+  // A CANCELLED CONFIRM MUST NEVER LOOK LIKE IT DID SOMETHING.
+  ok('going back ASKS, and refusing leaves the fork in place',
+    Number.isFinite(run.refused.partFor) && /Per part/.test(run.refused.face || ''),
+    JSON.stringify(run.refused));
+  ok('…accepting brings the iced Everywhere content back, and Cycle is live again',
+    run.accepted.partFor === null && run.accepted.iced === false &&
+    /Everywhere/.test(run.accepted.face || '') && run.cycBack.sel === 'every',
+    JSON.stringify({ a: run.accepted, c: run.cycBack }));
 
   ok('no page errors', errs.length === 0, errs.join(' | '));
   console.log('\n  Speed row (per-part): ' + (run.speedRow && run.speedRow.badge) +

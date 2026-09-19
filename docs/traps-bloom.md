@@ -53,15 +53,22 @@
 
 ### Bloom: the arrangement clock
 
-- **WHAT SETS A LAYER'S CYCLE IS ONE LADDER, asked once** (`cycModeOf`): Free (own ms clock) →
-  Everywhere (own bar count on the grid) → Per part (the part's length). It reads TWO stored things
-  (`part.clock`, `partFor`), so the Cycle select is NOT a `.v2-f` — and PER PART OUTRANKS THE CLOCK,
-  because the engine does. The Per part rung is not a setting: `partSelect` ices the Everywhere record
-  into `partAll` and fits a copy to every part, and leaving it DISCARDS those copies — the one
-  destructive branch on this card, so it confirms, and a refusal must put the select back.
-  The sheet head's ▭/◫ pill is kept as a SECOND door on purpose: it is the only surface naming which
-  part's copy you are editing, and it shows on every group. Safe because both paths force a full
-  re-render, so the two-copies-drift trap cannot bite — pinned by a probe check.
+- **A CONTROL BELONGS WHERE ITS QUESTION LIVES; every other surface STATES THE CONSEQUENCE.**
+  Time asks "how long is a cycle" — `cycModeOf` is its ladder: ▭ Everywhere (own bar count) ·
+  ⟲ Locked (N passes of a part, `lenSync`) · Free (own ms clock). Generate asks "what content does
+  this layer have" — ▭ Everywhere vs ◫ Per part (`partSelect`). Per part LOOKS like a cycle setting
+  because it fixes the length, but it forks the CONTENT and only has a length consequence, so Time
+  shows a badge pointing at Generate rather than owning it. Putting it on the cycle ladder first
+  (2026-09-18) made a content fork look like a length pick.
+  PER PART OUTRANKS THE CLOCK in `cycModeOf`, because the engine does: `cycleWindowAt` takes the pass
+  span whatever `part.clock` says. `partSelect` ices the Everywhere record into `partAll` and fits a
+  copy to each part; LEAVING DISCARDS those copies — the one destructive branch on this card, so it
+  confirms, and a refusal must leave the control exactly where it was.
+  The sheet head's ▭/◫ pill is a SECOND door on the same handler (`.v2-pop-pp, .v2-ppmode`) — kept
+  because it is the only surface naming which part's copy you are editing, and it shows on every
+  group. A second element answering `.v2-pop-pp` would have made every existing `querySelector` for
+  it ambiguous, hence the separate class with one shared handler. Both force a full re-render, so
+  they cannot drift; a probe check pins it.
 - **A PER-PART RECORD'S CYCLE *IS* THE PASS SPAN** (`cycleWindowAt`: `partFor` finite + `parts`/`partAll`
   + `prog.on`). It takes the part's span from `_ambPassSpanAt`, snapped to the 1/48-bar grid, and the
   cycle index becomes the PASS number. So NEITHER `part.bars` NOR `speed` reaches it — the rate-scaled

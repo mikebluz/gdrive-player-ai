@@ -140,118 +140,121 @@ const ok = (name, cond, detail) => {
     o.why = ((wbody && wbody.textContent) || '').replace(/\s+/g, ' ')
       .match(/Hold\s*(\d+ steps?) · ([\d.]+ (?:ms|s))/);
     o.why = o.why ? o.why[0] : null;
-    // ── NOTE LENGTH SITS BESIDE HOLD ON THE SHAPE SHEET ──────────────
-    // It lived in Deep alone while Hold had a copy here, so the two
-    // ALTERNATIVES to one question were on different sheets.
-    // A REBUILD CLOSES i Why? — it is read-only and keeps no module state, so
-    // this is the documented way back out of it. It was left open by the check
-    // above and its panel sits OVER the sheet, which measures every row at 0.
-    await repaint();
+    // ── ONE TAB CALLED "SIZE", TWO EXCLUSIVE ANSWERS ─────────────────
+    // "Hold and Note length should be mutually exclusive params on the same
+    // tab, call it Size". The MODEL already said one or the other — `durAt`
+    // takes the Hold branch whenever Hold > 0 and Length is then read by
+    // nothing — so the tab shows the knob IN FORCE plus a button that flips
+    // which that is. No second stored field: `holdSteps: 0` IS size-by-Length.
+    await repaint();      // a rebuild closes i Why?, which sits OVER the sheet
     { const gb = document.querySelector('.v2-layer.v2-genopen .v2-genbtn');
       if (gb) { gb.click(); await wait(320); } }
-    // THE CARD'S OWN DOOR is the group head — `.v2-gototab` only exists
-    // INSIDE an open sheet, to move between groups once you are there.
+    // THE CARD'S OWN DOOR is the group head — `.v2-gototab` only exists INSIDE
+    // an open sheet, to move between groups once you are there.
     const openShape = async () => {
       let d = document.querySelector('.v2-layer .v2-gototab[data-goto="Shape"]');
       if (!d) d = document.querySelector('.v2-layer [data-v2grp="Shape"] .ambient-grp-head');
       if (d) { d.click(); await wait(440); }
       return !!d;
     };
-    o.shapeDoor = await openShape();
-    // THE SHEET'S ROWS LIVE BEHIND TABS — only the ACTIVE tab's are shown
-    // (`v2-rowoff`). Walk the real strip until the row is on screen, and NAME
-    // the tab it is under: "present in the DOM" is not reachable.
-    const tabNames = [...document.querySelectorAll('.v2-layer .v2-pop-tabs [data-tab]')]
-      .map((b) => b.getAttribute('data-tab'));
-    o.shapeTabs = tabNames;
-    o.lenTab = null;
-    for (const nm of tabNames) {
+    const toTab = async (nm) => {
       const b = document.querySelector('.v2-layer .v2-pop-tabs [data-tab="' + nm + '"]');
-      if (!b) continue;
-      b.click(); await wait(260);
-      const el = document.querySelector('.v2-pop-pane [data-f="part.shape.lenRatio"]');
-      const row = el && el.closest('.ambient-ctrl');
-      if (row && row.getBoundingClientRect().height > 0) { o.lenTab = nm; break; }
-    }
-    // BESIDE HOLD is the actual ask — same tab, and adjacent in the pane.
-    {
-      const he = document.querySelector('.v2-pop-pane [data-f="part.shape.holdSteps"]');
-      const hr = he && he.closest('.ambient-ctrl');
-      const lr = (document.querySelector('.v2-pop-pane [data-f="part.shape.lenRatio"]') || {}).closest
-        ? document.querySelector('.v2-pop-pane [data-f="part.shape.lenRatio"]').closest('.ambient-ctrl') : null;
-      o.holdVisibleHere = !!(hr && hr.getBoundingClientRect().height > 0);
-      o.adjacent = !!(hr && lr && hr.nextElementSibling === lr);
-      o.order = [...document.querySelectorAll('.v2-pop-pane .ambient-ctrl')]
-        .filter((x) => x.getBoundingClientRect().height > 0)
-        .map((x) => ((x.querySelector('label') || {}).textContent || '?').trim());
-    }
-    { const c = document.querySelector('.v2-layer');
-      o.state = { cls: c ? c.className : null,
-                  pane: !!document.querySelector('.v2-layer .v2-pop-pane'),
-                  paneH: (() => { const q = document.querySelector('.v2-layer .v2-pop-pane'); return q ? Math.round(q.getBoundingClientRect().height) : -1; })(),
-                  grps: [...document.querySelectorAll('.v2-layer [data-v2grp]')].map((x) => x.getAttribute('data-v2grp')),
-                  kind: L().part.kind, rk: (L().part.rhythm || {}).kind }; }
-    { const el = [...document.querySelectorAll('.v2-pop-pane [data-f="part.shape.lenRatio"]')][0];
-      const chain = []; let n = el;
-      while (n && n !== document.body) {
-        const cs = getComputedStyle(n);
-        chain.push({ t: n.tagName + '.' + String(n.className || '').split(' ').slice(0, 3).join('.'),
-                     d: cs.display, v: cs.visibility, h: Math.round(n.getBoundingClientRect().height) });
-        n = n.parentElement;
-      }
-      o.chain = chain.slice(0, 7);
-      o.tabs = [...document.querySelectorAll('.v2-layer .v2-gototab')].map((b) => b.getAttribute('data-goto') + (b.className.indexOf('on') >= 0 ? '*' : ''));
-    }
-    o.dbg = [...document.querySelectorAll('[data-f="part.shape.lenRatio"]')].map((el) => {
-      const row = el.closest('.ambient-ctrl');
-      const r = row ? row.getBoundingClientRect() : { width: 0, height: 0 };
-      return { w: Math.round(r.width), h: Math.round(r.height),
-               when: row ? (row.getAttribute('data-v2when') || '') : '?',
-               host: row ? (row.closest('.v2-genrows') ? 'deep' : (row.closest('.v2-pop-pane') ? 'sheet' : 'body')) : '?' };
-    });
-    const lenEl = () => {
-      const all = [...document.querySelectorAll('.v2-f[data-f="part.shape.lenRatio"]')];
-      return all.find((el) => {
-        const r = el.getBoundingClientRect();
-        return el.offsetParent && r.width > 0 && r.height > 0;
-      }) || null;
+      if (b) { b.click(); await wait(300); }
+      return !!b;
     };
-    const capOf = (el) => {
+    o.shapeDoor = await openShape();
+    // Only the ACTIVE tab's rows are shown (`v2-rowoff`), so a row measures 0
+    // until its chip is pressed — "present in the DOM" is not reachable.
+    o.shapeTabs = [...document.querySelectorAll('.v2-layer .v2-pop-tabs [data-tab]')]
+      .map((x) => x.getAttribute('data-tab'));
+    o.sizeTab = await toTab('Size');
+    const vis = (f) => {
+      const el = document.querySelector('.v2-pop-pane [data-f="' + f + '"]');
+      const row = el && el.closest('.ambient-ctrl');
+      return !!(row && el.offsetParent && row.getBoundingClientRect().height > 0);
+    };
+    const rowsShown = () => [...document.querySelectorAll('.v2-pop-pane .ambient-ctrl')]
+      .filter((x) => x.getBoundingClientRect().height > 0)
+      .map((x) => ((x.querySelector('label') || {}).textContent || '?').trim());
+    const togFace = () => {
+      const t2 = document.querySelector('.v2-pop-pane .v2-sizemode');
+      return t2 ? t2.textContent.trim() : null;
+    };
+    const rectOf = (f) => {
+      const el = document.querySelector('.v2-pop-pane [data-f="' + f + '"]');
+      if (!el) return null;
+      const r = el.closest('.ambient-ctrl').getBoundingClientRect();
+      return { w: Math.round(r.width), h: Math.round(r.height) };
+    };
+    // HOLD IS THE ONE IN FORCE right now (3 steps, set above)
+    o.holdMode = { rows: rowsShown(), hold: vis('part.shape.holdSteps'),
+                   len: vis('part.shape.lenRatio'), face: togFace() };
+    o.holdReach = rectOf('part.shape.holdSteps');
+    // FLIP IT — a real press on the button
+    { const t2 = document.querySelector('.v2-pop-pane .v2-sizemode');
+      o.togDoor = !!t2; if (t2) t2.click(); }
+    await wait(460);
+    await openShape(); await toTab('Size');
+    o.lenMode = { rows: rowsShown(), hold: vis('part.shape.holdSteps'),
+                  len: vis('part.shape.lenRatio'), face: togFace(),
+                  stored: (L().part.shape.holdSteps | 0) };
+    o.lenReach = rectOf('part.shape.lenRatio');
+    // …reachable AND it commits from here, with its number intact
+    { const el = document.querySelector('.v2-pop-pane [data-f="part.shape.lenRatio"]');
+      const row = el && el.closest('.ambient-ctrl');
+      const kv2 = row && row.querySelector('.v2-knob-val');
+      const rd = row && row.querySelector('.ambient-sl-v');
+      o.lenVal = (kv2 ? kv2.textContent.trim() : '') || (rd ? rd.textContent.trim() : '');
+      if (el) { el.value = '55'; el.dispatchEvent(new Event('input', { bubbles: true })); } }
+    await wait(320);
+    o.lenWrote = (L().part.shape.lenRatio | 0);
+    // FLIP BACK — the Hold value must RETURN, not reset to a default
+    { const t2 = document.querySelector('.v2-pop-pane .v2-sizemode'); if (t2) t2.click(); }
+    await wait(460);
+    o.backHold = (L().part.shape.holdSteps | 0);
+    // ⚙ DEEP IS THE WHOLE RECIPE — it still shows BOTH, and there the caption
+    // is what says which one wins. That is why lenHint still earns its place.
+    await openShape();
+    { const gb = document.querySelector('.v2-layer .v2-genbtn'); if (gb) { gb.click(); await wait(420); } }
+    { const el = document.querySelector('.v2-genrows [data-f="part.shape.lenRatio"]');
       const row = el && el.closest('.ambient-ctrl');
       const sub = row && row.querySelector('.v2-knob-sub');
-      return sub ? sub.textContent.trim() : (row ? (row.getAttribute('data-v2u') || '') : null);
-    };
-    const le = lenEl();
-    o.lenReach = le ? (() => { const r = le.closest('.ambient-ctrl').getBoundingClientRect();
-      return { w: Math.round(r.width), h: Math.round(r.height), inView: r.top >= 0 && r.bottom <= innerHeight + 1 }; })() : null;
-    // WITH HOLD SET it must say it is out of use
-    o.capHeld = capOf(le);
-    // …and the READOUT must survive: the hint is NOT the number
-    { const row = le && le.closest('.ambient-ctrl');
-      const rd = row && row.querySelector('.ambient-sl-v');
-      const kv2 = row && row.querySelector('.v2-knob-val');
-      o.valStill = (kv2 ? kv2.textContent.trim() : '') || (rd ? rd.textContent.trim() : ''); }
-    // HOLD OFF — the caption must follow, with nothing rebuilding this row
-    L().part.shape.holdSteps = 0; E.getCfg();
-    { const any = document.querySelector('.v2-layer .v2-f[data-f="strum"]');
-      if (any) { any.dispatchEvent(new Event('input', { bubbles: true })); } }
-    await wait(320);
-    o.capFree = capOf(lenEl());
-    // IT COMMITS from the sheet
-    const le2 = lenEl();
-    if (le2) { le2.value = '55'; le2.dispatchEvent(new Event('input', { bubbles: true })); }
-    await wait(300);
-    o.lenWrote = (L().part.shape.lenRatio | 0);
-    // THE GATE MATCHES DEEP'S COPY — a ground rhythm drops it on BOTH
-    const shown = () => [...document.querySelectorAll('.v2-f[data-f="part.shape.lenRatio"]')]
-      .map((el) => { const r = el.closest('.ambient-ctrl').getBoundingClientRect(); return r.height > 0; });
-    o.gateOn = shown();
-    const rsave = JSON.parse(JSON.stringify(L().part.rhythm));
-    L().part.rhythm = { kind: 'ground' }; E.getCfg();
-    await repaint();
+      o.deepCap = sub ? sub.textContent.trim() : (row ? (row.getAttribute('data-v2u') || '') : null);
+      o.deepBoth = !!(row && document.querySelector('.v2-genrows [data-f="part.shape.holdSteps"]')); }
+    // ✓ DONE is the way OUT of a staged panel — while it is open its rows gate
+    // from the STAGED CLONE, so a change made to the real layer below does not
+    // reach them and reads as a gate leak. (It did; this is the guard.)
+    for (let i = 0; i < 3 && document.querySelector('.v2-layer.v2-genopen'); i++) {
+      const d3 = document.querySelector('.v2-layer .v2-gendone') ||
+                 document.querySelector('.v2-layer.v2-genopen .v2-genbtn');
+      if (!d3) break;
+      d3.click(); await wait(380);
+    }
+    // GATE PARITY, from the markup: one field, one answer on whether it applies.
+    // Read with the SHEET OPEN — its copy only exists in the DOM while it is.
     await openShape();
-    o.gateOff = shown();
-    L().part.rhythm = rsave; E.getCfg();
+    o.dbg = [...document.querySelectorAll('[data-f="part.shape.lenRatio"]')].map((el) => {
+      const row = el.closest('.ambient-ctrl');
+      return { when: row ? (row.getAttribute('data-v2when') || '') : '?',
+               host: row ? (row.closest('.v2-genrows') ? 'deep'
+                          : (row.closest('.v2-pop-pane') ? 'sheet' : 'body')) : '?' };
+    });
+    // …and Groundwork still drops Length everywhere it is shown
+    await repaint();
+    const rsave = JSON.parse(JSON.stringify(L().part.rhythm));
+    L().part.shape.holdSteps = 0;
+    L().part.rhythm = { kind: 'ground' }; E.getCfg();
+    await repaint(); await openShape();
+    o.deepOpenAtGate = !!document.querySelector('.v2-layer.v2-genopen');
+    o.stagedAtGate = (() => { try { const id = L().id | 0;
+      const S = window._v2.stagedOf && window._v2.stagedOf(id);
+      return S ? ((S.part.rhythm || {}).kind || '?') : 'none'; } catch (e) { return 'err'; } })();
+    o.gateOff = [...document.querySelectorAll('[data-f="part.shape.lenRatio"]')]
+      .map((el) => { const row = el.closest('.ambient-ctrl');
+        return { when: row.getAttribute('data-v2when') || '',
+                 host: row.closest('.v2-genrows') ? 'deep' : (row.closest('.v2-pop-pane') ? 'sheet' : 'body'),
+                 vis: row.getBoundingClientRect().height > 0 }; });
+    L().part.rhythm = rsave; L().part.shape.holdSteps = 3; E.getCfg();
     await repaint();
     // back off
     L().part.shape.holdSteps = 0; E.getCfg();
@@ -302,39 +305,44 @@ const ok = (name, cond, detail) => {
     run.whyDoor && run.why != null && /· [\d.]+ (ms|s)/.test(run.why), JSON.stringify(run.why));
 
   // ── NOTE LENGTH, NOW BESIDE HOLD ──────────────────────────────────────
-  ok('Note length is REACHABLE on the Shape sheet — measured, not just present',
-    run.shapeDoor && run.lenReach && run.lenReach.w > 0 && run.lenReach.h > 0,
-    JSON.stringify(run.lenReach));
-  ok('…and with Hold set it SAYS it is out of use, rather than sitting there lying',
-    /not in use: Hold is set/.test(run.capHeld || ''), JSON.stringify(run.capHeld));
-  ok('…without eating the VALUE — a slider hint is not its readout',
-    !!run.valStill && !/not in use/.test(run.valStill), JSON.stringify(run.valStill));
-  ok('…and switching Hold off clears the note, with nothing rebuilding the row',
-    run.capFree === '% of the space each note fills', JSON.stringify(run.capFree));
-  ok('…it commits from the sheet', run.lenWrote === 55, JSON.stringify(run.lenWrote));
-  // GATE PARITY, stated as the thing that actually matters: one field with two
-  // controls and two different gates is how the two come to disagree about
-  // whether the knob applies at all. (A copy inside a CLOSED panel is hidden
-  // for its own reason, so this compares the gate STRINGS and then checks the
-  // visible one really does drop on Groundwork.)
+  // ── THE SIZE TAB ──────────────────────────────────────────────────────
+  ok('Hold and Note length are ONE tab called Size — neither has a chip of its own',
+    run.shapeDoor && run.sizeTab && run.shapeTabs.indexOf('Size') >= 0 &&
+    run.shapeTabs.indexOf('Hold') < 0 && run.shapeTabs.indexOf('Note length') < 0,
+    JSON.stringify(run.shapeTabs));
+  ok('with Hold in force the tab shows Hold and NOT Note length — mutually exclusive',
+    run.holdMode.hold === true && run.holdMode.len === false && run.holdMode.face === 'Hold',
+    JSON.stringify(run.holdMode));
+  ok('…and the Hold row is REACHABLE there — measured, not just present',
+    run.holdReach && run.holdReach.w > 0 && run.holdReach.h > 0, JSON.stringify(run.holdReach));
+  ok('pressing Size by swaps which one is in force, and clears the other from the tab',
+    run.togDoor && run.lenMode.len === true && run.lenMode.hold === false &&
+    run.lenMode.face === 'Length' && run.lenMode.stored === 0, JSON.stringify(run.lenMode));
+  ok('…the Length knob is reachable and keeps its NUMBER — a hint is not a readout',
+    run.lenReach && run.lenReach.w > 0 && run.lenReach.h > 0 &&
+    !!run.lenVal && !/not in use/.test(run.lenVal), JSON.stringify({ r: run.lenReach, v: run.lenVal }));
+  ok('…and it commits from the tab', run.lenWrote === 55, JSON.stringify(run.lenWrote));
+  // Flipping must not be a data-loss gesture: a dialled Hold comes BACK.
+  ok('flipping back restores the Hold value you had — not a default',
+    run.backHold === 3, JSON.stringify(run.backHold));
+  // ⚙ Deep is the whole recipe and deliberately keeps both, so the caption is
+  // still the thing that says which wins THERE.
+  ok('⚙ Deep still shows both, and says which one is winning',
+    run.deepBoth && /not in use: Hold is set/.test(run.deepCap || ''), JSON.stringify(run.deepCap));
   {
     const sheet = (run.dbg || []).find((x) => x.host === 'sheet');
     const deep = (run.dbg || []).filter((x) => x.host === 'deep' && !/rhythm:ground/.test(x.when))[0];
-    ok('…and its gate is Deep\'s copy VERBATIM — one field, one answer on whether it applies',
-      !!sheet && !!deep && sheet.when === deep.when,
+    ok('…and the sheet copy carries Deep\'s rhythm gate plus the size clause',
+      !!sheet && !!deep && sheet.when === deep.when + ';size:length',
       JSON.stringify({ sheet: sheet && sheet.when, deep: deep && deep.when }));
   }
-  ok('…and Groundwork drops it — the visible copy goes with the gate',
-    run.gateOn.some(Boolean) && run.gateOff.every((x) => x === false),
-    JSON.stringify({ on: run.gateOn, off: run.gateOff }));
-
-  // BESIDE HOLD, in this sheet's own terms: each main-tier row IS a tab chip
-  // here (which is why the strip reads Hold · Strum · Feel), so "next to Hold"
-  // means the CHIP lands immediately after Hold's — not a row under it.
-  ok('…and it is BESIDE Hold — the next chip in the strip, before Strum',
-    run.shapeTabs.indexOf('Note length') === run.shapeTabs.indexOf('Hold') + 1 &&
-    run.shapeTabs.indexOf('Hold') >= 0,
-    JSON.stringify(run.shapeTabs));
+  // Deep carries a SECOND, Groundwork-only copy of this row (`rhythm:ground`),
+  // so "everywhere" is wrong: what must hold is that no copy gated to the OTHER
+  // rhythms survives a switch to Groundwork.
+  ok('Groundwork drops every Note length that is not its own',
+    run.deepOpenAtGate === false && run.gateOff.length > 0 &&
+    run.gateOff.filter((x) => !/rhythm:ground/.test(x.when)).every((x) => x.vis === false),
+    JSON.stringify({ deepOpen: run.deepOpenAtGate, staged: run.stagedAtGate, rows: run.gateOff }));
 
   ok('no page errors', errs.length === 0, errs.join(' | '));
   if (run.why) console.log('  (ℹ Why? says: ' + run.why + ')');

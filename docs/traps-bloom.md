@@ -187,6 +187,10 @@
   row was built, because none of those rebuild it. Hold's hint resolves `cycle / Steps × Hold` into a
   time this way (2026-09-18); `querySelectorAll`, never `querySelector` — a field can have two
   controls on one card and the copy you are not touching is the one that goes stale.
+- **A STAGED PANEL GATES FROM ITS CLONE, so a change made to the real layer below does not reach it**
+  — and reads as a gate leak (a row gated `rhythm:euclid` still showing after switching to `ground`).
+  `✓ Done` is the way out; `.v2-genbtn` may not close it once a rebuild has restored `GENPOP`. Check
+  `.v2-genopen` before believing a gate result. Same root as the staged-commit trap below.
 - **A `.v2-f` commit inside ⚙ Deep / ✺ Quick writes to the STAGED CLONE, not the layer** — so a probe
   that drives one and reads `getCfg().layers[0]` measures "the control commits nothing" on working
   code. Read `V2.stagedOf(id) || layer` (what `test/ui-lifecycle.js`'s `__Lv2` does). Cost an hour.

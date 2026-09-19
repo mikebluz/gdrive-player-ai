@@ -10440,6 +10440,26 @@
   // Generic on/off over any field path. A BUTTON, never a select — a select
   // writes a STRING and '0' is truthy (the documented trance-gate trap), so an
   // "Off" pick would switch the thing ON.
+  // ── SIZE BY: LENGTH *OR* HOLD ───────────────────────────────────────────
+  // "Hold and Note length should be mutually exclusive params on the same tab,
+  // call it Size". Deliberately `ftog`'s markup and a single button rather than
+  // a two-chip segment: the choice has exactly two states, and the card already
+  // answers a two-state question this way (Dry Kill). NO NEW STORED FIELD —
+  // `holdSteps: 0` has always meant "use Length", so the button just moves that
+  // number and the `size` gate piece does the rest.
+  const SIZE_MEM = new Map();     // last Hold value, for the trip back. UI-only:
+                                  // it must not reach the save, and a forgotten
+                                  // number is a nuisance where a new key is a
+                                  // migration.
+  const sizeTog = (L) => {
+    const hold = clamp((((L.part || {}).shape || {}).holdSteps | 0), 0, 16) > 0;
+    return '<div class="ambient-ctrl" data-v2when="kind:live"><label>Size by</label>' +
+      '<button type="button" class="ambient-seg v2-sizemode' + (hold ? ' on' : '') +
+        '" data-size="' + (hold ? 'hold' : 'length') + '">' + (hold ? 'Hold' : 'Length') + '</button>' +
+      '<span class="ambient-hint">' + (hold ? 'a fixed number of grid steps, whatever the gaps'
+                                            : 'a share of the gap to the next note, so it follows them') +
+      '</span></div>';
+  };
   const ftog = (L, field, label, onTxt, offTxt, hint, when) => {
     const v = !!getPath(L, field);
     return '<div class="ambient-ctrl"' + (when ? ' data-v2when="' + when + '"' : '') + '><label>' + esc(label) + '</label>' +
@@ -11655,9 +11675,11 @@
           // the gap to the next onset, so it STRETCHES with the gaps; HOLD is
           // an absolute number of grid steps and does not. A sparse pattern is
           // where they diverge, which is exactly where someone asks.
-          st(L, 'part.shape.holdSteps', 'Hold', num(sh.holdSteps, 0), 0, 16,
-             holdHint(L),
-             'kind:live') +
+          tb('Size',
+            sizeTog(L) +
+            st(L, 'part.shape.holdSteps', 'Hold', num(sh.holdSteps, 0), 0, 16,
+               holdHint(L),
+               'kind:live;size:hold') +
           // LENGTH SITS BESIDE IT (2026-09-18). It lived in \u2699 Deep alone while
           // Hold had a copy here, so the two ALTERNATIVES to one question were
           // on different sheets and Tight \u2014 which clips whatever they produce
@@ -11667,8 +11689,8 @@
           // for. GATE MIRRORED FROM DEEP'S COPY, verbatim: one field with two
           // controls and two different gates is how the two come to disagree
           // about whether the knob applies at all.
-          sl(L, 'part.shape.lenRatio', 'Note length', num(sh.lenRatio, 100), 5, 100,
-             lenHint(L), 'kind:live;rhythm:pulse,euclid,drawn,chance') +
+            sl(L, 'part.shape.lenRatio', 'Note length', num(sh.lenRatio, 100), 5, 100,
+               lenHint(L), 'kind:live;rhythm:pulse,euclid,drawn,chance;size:length')) +
 
           // Only means something where an onset carries MORE THAN ONE note.
           sl(L, 'strum', 'Strum', num(L.strum, 0), 0, 100, 'struck → arpeggiated',
@@ -12021,6 +12043,13 @@
       // `on:delay,dist` shows for either. Note `dryKill` engages a stage at
       // mix 0 deliberately (the documented Dry-kill contract), so it counts.
       on: '',
+      // ── SIZE: THE TWO ANSWERS TO "HOW LONG IS A NOTE" ARE EXCLUSIVE ──
+      // `durAt` takes the Hold branch whenever Hold > 0 and Length is then
+      // read by nothing, so the model ALREADY says one or the other —
+      // `holdSteps: 0` IS "size by Length". This publishes that as a gate
+      // piece so the Size tab can show exactly the knob in force, with no
+      // second stored field and no show/hide wired by hand.
+      size: (((p.shape || {}).holdSteps | 0) > 0) ? 'hold' : 'length',
     };
     now.on = ['delay', 'dist', 'chorus', 'phaser', 'autopan', 'glitch']
       .filter(k => { const f = fx(L, k); return num(f.mix, 0) > 0 || !!f.dryKill; });
@@ -17297,6 +17326,21 @@
                   ' of the first change, held for the whole part (Ring out is on).') + how, { ms: 4500 });
             }
           } catch (e) {}
+          return;
+        }
+        // SIZE BY — flip which of the two sizes the note. Going to Length
+        // parks the Hold value so the trip back is not a re-dial; going to
+        // Hold takes it back, or 4 steps on a first visit.
+        const sz = t.closest('.v2-sizemode');
+        if (sz) {
+          const ctx = layerOf(sz); if (!ctx) return;
+          const sh2 = ctx.L.part.shape || (ctx.L.part.shape = {});
+          const cur = clamp(sh2.holdSteps | 0, 0, 16);
+          if (cur > 0) { SIZE_MEM.set(ctx.L.id | 0, cur); sh2.holdSteps = 0; }
+          else sh2.holdSteps = clamp(SIZE_MEM.get(ctx.L.id | 0) | 0, 0, 16) || 4;
+          try { E.getCfg(); } catch (e) {}
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          h._sig = ''; V2.render(E);
           return;
         }
         const hm = t.closest('.v2-harm');

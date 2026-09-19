@@ -1,5 +1,19 @@
 # UI traps — CSS, layout, DOM, controls, wiring, reachability
 
+- **A SLIDER'S HINT AND ITS READOUT ARE THE SAME CLASS.** `_ambSl` renders the VALUE into
+  `<span class="ambient-hint ambient-sl-v">`, and the hint goes to a `title` (invisible on a phone)
+  plus `data-v2u`. So `row.querySelector('.ambient-hint')` on a slider row finds the NUMBER — writing
+  a hint there wipes the value, silently. On a sheet the slider becomes a knob
+  (`.v2-knobbed` hides `.ambient-sl-v`) and the visible line is `.v2-knob-sub`, built ONCE from
+  `data-v2u` and never revisited — repaint both. A STEPPER (`_ambStep`) does render its hint visibly;
+  the two control types are not interchangeable here. Use `.ambient-hint:not(.ambient-sl-v)`.
+- **In a SECTION SHEET every main-tier row becomes its own TAB CHIP** — which is why the Shape strip
+  reads `Hold · Note length · Feel`. Only the ACTIVE tab's rows are shown (`v2-rowoff`, `display:none`),
+  so a newly added row measures 0×0 until its chip is pressed, and "adjacent row" is the wrong model
+  for *put it next to X*: adjacency is in the STRIP. A probe must walk `.v2-pop-tabs [data-tab]`.
+- **ℹ Why? sits OVER the sheet** — leave it open in a probe and every row behind it measures 0. It
+  keeps no module state, so any rebuild closes it; that is the way back out.
+
 > Moved out of `CLAUDE.md` on 2026-09-15 so it is loaded on demand instead of on every call.
 > **Read this before any change to CSS, layout, a control, or a handler.** Add new entries HERE, under the right subheading, following the
 > learnings rules in `CLAUDE.md` (a rule someone will break again; sharpen an existing line rather

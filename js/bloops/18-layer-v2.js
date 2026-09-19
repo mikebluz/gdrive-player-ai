@@ -10409,6 +10409,20 @@
   // rebuilds this row, and a computed face with a single writer is a frozen
   // wrong answer (the documented rule). At 0 it stays the teaching line: there
   // is no time to resolve, and what matters is which knob is in charge.
+  // …AND LENGTH'S, which has to say when HOLD HAS TAKEN OVER. The two are
+  // alternatives — `durAt` picks the Hold branch whenever Hold > 0 and Length
+  // is then read by nothing — so putting them side by side without saying so
+  // would be worse than leaving them on separate sheets. Stated, not HIDDEN:
+  // the question "why is Length doing nothing" is answered by seeing Length
+  // with the reason on it, and a row that vanishes answers it for nobody.
+  const LEN_BASE = '% of the space each note fills';
+  function lenHint(L) {
+    const n = clamp((((L && L.part && L.part.shape) || {}).holdSteps | 0), 0, 16);
+    if (n <= 0) return LEN_BASE;
+    let cfg = null; try { cfg = _cfgOf(); } catch (e) {}
+    const ms = holdMsOf(L, cfg);
+    return LEN_BASE + ' \u2014 not in use: Hold is set' + (ms > 0 ? ' (' + holdTime(ms) + ' a note)' : '');
+  }
   const HOLD_BASE = 'note length in grid steps, whatever the gaps';
   function holdHint(L) {
     const n = clamp((((L && L.part && L.part.shape) || {}).holdSteps | 0), 0, 16);
@@ -11644,6 +11658,17 @@
           st(L, 'part.shape.holdSteps', 'Hold', num(sh.holdSteps, 0), 0, 16,
              holdHint(L),
              'kind:live') +
+          // LENGTH SITS BESIDE IT (2026-09-18). It lived in \u2699 Deep alone while
+          // Hold had a copy here, so the two ALTERNATIVES to one question were
+          // on different sheets and Tight \u2014 which clips whatever they produce
+          // \u2014 was on a third. Asked as "should Shape and Time params just be in
+          // Deep?"; the answer was the other way round, because Deep is the
+          // whole recipe and this sheet is the shortlist you actually reach
+          // for. GATE MIRRORED FROM DEEP'S COPY, verbatim: one field with two
+          // controls and two different gates is how the two come to disagree
+          // about whether the knob applies at all.
+          sl(L, 'part.shape.lenRatio', 'Note length', num(sh.lenRatio, 100), 5, 100,
+             lenHint(L), 'kind:live;rhythm:pulse,euclid,drawn,chance') +
 
           // Only means something where an onset carries MORE THAN ONE note.
           sl(L, 'strum', 'Strum', num(L.strum, 0), 0, 100, 'struck → arpeggiated',
@@ -12422,13 +12447,30 @@
     // Rate and Steps all move the number and none of them rebuilds this row,
     // which would leave it frozen at whatever was true when it was built. The
     // gate pass is the chokepoint that already runs on every commit.
+    // …and LENGTH's says whether Hold has taken it out of use, which is the
+    // same problem one field over: it changes when HOLD changes, and nothing
+    // rebuilds Length's row when that happens.
+    // A SLIDER AND A STEPPER SHOW A HINT IN DIFFERENT PLACES, and getting that
+    // wrong is silent: on a slider row `.ambient-hint` IS the readout span
+    // (`.ambient-sl-v`, the number), so writing the hint into it WIPES THE
+    // VALUE. A slider's line lives on `data-v2u` and is rendered beside the
+    // knob as `.v2-knob-sub`, which is built once and never revisited.
     try {
-      const ht = holdHint(L);
-      card.querySelectorAll('.v2-f[data-f="part.shape.holdSteps"]').forEach((el) => {
-        const row = el.closest('.ambient-ctrl');
-        const hn = row && row.querySelector('.ambient-hint');
-        if (hn && hn.textContent !== ht) hn.textContent = ht;
-      });
+      const paint = (f, ht) => {
+        card.querySelectorAll('.v2-f[data-f="' + f + '"]').forEach((el) => {
+          const row = el.closest('.ambient-ctrl'); if (!row) return;
+          if (el.classList.contains('ambient-sl')) {
+            if (row.getAttribute('data-v2u') !== ht) row.setAttribute('data-v2u', ht);
+            const sub = row.querySelector('.v2-knob-sub');
+            if (sub && sub.textContent !== ht) sub.textContent = ht;
+          } else {
+            const hn = row.querySelector('.ambient-hint:not(.ambient-sl-v)');
+            if (hn && hn.textContent !== ht) hn.textContent = ht;
+          }
+        });
+      };
+      paint('part.shape.holdSteps', holdHint(L));
+      paint('part.shape.lenRatio', lenHint(L));
     } catch (e) {}
     // The editor re-syncs its tabs on every gate pass — the gate can hide the
     // active tab's rows from under it (switch Voice with Tone open).

@@ -8252,6 +8252,22 @@
       // One word for two mechanisms reads as one mechanism.
       const ghostTxt = ghosts.length
         ? tapTxt(L, ' · outlines: the next 7 takes, a colour each') : '';
+      // WHY THE OUTLINES WENT, AND HOW TO GET THEM BACK. Tapping a note on a
+      // live part FREEZES it so there is something to edit (captureShown, with
+      // a toast) — and a frozen part is FIXED, so by construction it has no
+      // other takes and no outlines. Reported as a disappearance: "all the
+      // phantom notes disappeared after i clicked an active note, now they
+      // won't come back". The toast already named the door and then faded;
+      // the readout is where a state that can outlive a toast has to say so.
+      // `made === 'take'` is exactly the frozen-from-live case (a drawn or
+      // emptied part is 'compose'), and `vary` survives the freeze inert, so
+      // it still says whether the outlines are what is waiting on the far side.
+      // NOT wrapped in tapTxt as a whole — the way back is true with the
+      // drawing hidden; only the half that talks about the picture is.
+      const thawTxt = (rec2 && L.part.made === 'take')
+        ? ' · \u2699 Generate goes back to the live rules' +
+          (L.part.vary ? tapTxt(L, ' \u2014 and to the take outlines') : '')
+        : '';
       // STATIC or LIVE leads the line. It used to say 'recorded' or 'live',
       // which named where the material CAME FROM and said it in the vocabulary
       // of liveness — and measurably wrong: a 'live' part plays the identical
@@ -8299,7 +8315,7 @@
                 (L.part.ruleb ? ' · own rules: ' + regListTxt(L.part.ruleb) : '') +
                 (bselOf(L) ? ' · retaking ' + bselLabel(bselOf(L))
                            : tapTxt(L, ' · tap a bar' + (cmarks ? ' or a chord' : '') + ' to retake just it')) +
-                (fromPv ? ' · as previewed' : '')) + ghostTxt + overTxt + otherTxt;
+                (fromPv ? ' · as previewed' : '')) + thawTxt + ghostTxt + overTxt + otherTxt;
       liveBadge(lab);
     }
     try { vizChrome(card, L, E); } catch (e) {}
@@ -10904,7 +10920,7 @@
     Playing: ['Every pass'],
     // Transpose and Pitch quantize ride with Generate: they are what a STATIC
     // part does with the notes it has, which is part of what it is made of.
-    Generate: ['Method', 'Per part', 'Key', 'Notes', 'Pitch', 'Harmony', 'Voicing',
+    Generate: ['Method', 'Key', 'Notes', 'Pitch', 'Harmony', 'Voicing',
                'Transpose', 'Pitch quantize'],
     Time: ['Cycle', 'Bars', 'Every', 'Speed'],
     Bank: ['Bank'],
@@ -11809,38 +11825,15 @@
           // ONE Rhythm tab (the kind gates keep the visible set small), the two
           // grids under Pattern, and Feel keeps its own.
           // ── WHAT CONTENT DOES THIS LAYER HAVE? ───────────────────────────
-          // One record for every part, or one per part. It was on Time's Cycle
-          // ladder, which was the wrong home: it answers a CONTENT question and
-          // merely has a length consequence, and Time now states that
-          // consequence instead. (user: "this sounds like it should be generate
-          // or shape".)
-          // IT SHARES THE HEAD PILL'S HANDLER, not its class. The handler
-          // already ices the Everywhere record, files a copy per part and
-          // confirms on the way back, so one handler means the two doors cannot
-          // grow apart — but a SECOND element answering `.v2-pop-pp` would make
-          // every existing `querySelector('.v2-pop-pp')` ambiguous, so this one
-          // is `.v2-ppmode` and the handler matches both.
-          tb('Per part',
-          (function () {
-            const on2 = Number.isFinite(L.partFor);
-            let pnm = '';
-            if (on2) {
-              try {
-                if (typeof _masterEng !== 'undefined' && _masterEng &&
-                    typeof _ambPartLabelShort === 'function') {
-                  pnm = _ambPartLabelShort(_masterEng.getCfg(), L.partFor | 0) || '';
-                }
-              } catch (e) {}
-            }
-            return '<div class="ambient-ctrl"><label>Per part</label>' +
-              '<button type="button" class="ambient-seg v2-ppmode' + (on2 ? ' on' : '') + '">' +
-                (on2 ? '\u25eb Per part' + (pnm ? ' \u00b7 ' + esc(pnm) : '') : '\u25ad Everywhere') +
-              '</button>' +
-              '<span class="ambient-hint">' + (on2
-                ? 'each part has its own content, at that part\u2019s length \u2014 tap to go back to one (it asks first)'
-                : 'one content, played in every part \u2014 tap to give each part its own') +
-              '</span></div>';
-          })()) +
+          // THE ROW THAT WAS HERE IS GONE (2026-09-19, user: "the Generate >
+          // Per Part is redundant since we already have this button", over a
+          // shot of the head pill). One content or one per part is asked and
+          // answered by `.v2-pop-pp` in the popover head, beside ⇄ Sync, where
+          // it is visible on every tab instead of only this one. The row was a
+          // second door on the same field — it already had to borrow the pill's
+          // handler to keep the two from drifting, which is the tell that it
+          // was one control wearing two coats. Same lesson as the rhythm knobs
+          // below, four days apart.
           tb('Method',
           // (THE RHYTHM KNOBS ARE GONE FROM HERE — 2026-09-15, user: "now we have
           // two tiers of controls for the Generated method, we need to consolidate
@@ -11942,7 +11935,7 @@
               return '<div class="ambient-ctrl"><label>Cycle</label>' +
                 '<span class="ambient-loop-badge">\u25eb each part\u2019s own</span>' +
                 '<span class="ambient-hint">this layer has one content per part, so each ' +
-                'part\u2019s length is the cycle \u2014 set in Generate \u25b8 Per part</span></div>';
+                'part\u2019s length is the cycle \u2014 set by \u25eb Per part, in the head above</span></div>';
             }
             const opt = (v, lab) => '<option value="' + v + '"' +
               (cur === v ? ' selected' : '') + '>' + esc(lab) + '</option>';
@@ -11978,7 +11971,7 @@
             ? '<div data-v2tab="Bars" class="ambient-ctrl" data-v2when="cyc:part"><label>Bars</label>' +
               '<span class="ambient-loop-badge">\u25eb ' + esc(String(p.bars)) + ' \u00d7 part</span>' +
               '<span class="ambient-hint">this content is for one part, so its length is that ' +
-              'part\u2019s \u2014 set the scope in Generate \u25b8 Per part</span></div>'
+              'part\u2019s \u2014 set the scope with \u25eb Per part, in the head above</span></div>'
             : st(L, 'part.bars', 'Bars', p.bars, 1, 32,
                  'how long the loop is before it repeats', 'cyc:every')) +
           // WHAT CHANGING BARS DOES. Onsets are per CYCLE, so more bars spreads
@@ -12179,7 +12172,7 @@
             ? '<div data-v2tab="Speed" class="ambient-ctrl"><label>Speed</label>' +
               '<span class="ambient-loop-badge">\u25eb 1\u00d7 \u2014 the pass sets it</span>' +
               '<span class="ambient-hint">this content is for one part, so its cycle IS that ' +
-              'part\u2019s span \u2014 set the scope in Generate \u25b8 Per part</span></div>'
+              'part\u2019s span \u2014 set the scope with \u25eb Per part, in the head above</span></div>'
             : sel(L, 'speed', 'Speed', String(num(L.speed, 1)),
               [['0.25', '¼ — four times slower'], ['0.5', '½ — half speed'], ['1', '1× — as written'],
                ['2', '2× — double speed'], ['4', '4× — four times faster']])) +
@@ -16489,7 +16482,7 @@
           }
           return;
         }
-        const ppt = t.closest && t.closest('.v2-pop-pp, .v2-ppmode');
+        const ppt = t.closest && t.closest('.v2-pop-pp');   // the head pill is the only door
         if (ppt) {
           const ctx = layerOf(ppt); if (!ctx) return;
           if (Number.isFinite(ctx.L.partFor)) {

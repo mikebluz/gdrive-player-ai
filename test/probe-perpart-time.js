@@ -217,16 +217,20 @@ const ok = (name, cond, detail) => {
     o.genDoor = await openGen();
     o.genTabs = [...document.querySelectorAll('.v2-layer .v2-pop-tabs [data-tab]')]
       .map((x) => x.getAttribute('data-tab'));
-    o.ppTab = await toTab('Per part');
-    const ppBtn = () => document.querySelector('.v2-pop-pane .v2-ppmode');
-    o.ppRow = (() => {
-      const r = rowOf('Per part'); const rr = r ? r.getBoundingClientRect() : null;
+    // ONE DOOR, IN THE HEAD (2026-09-19). The Generate row that used to ask
+    // this was removed as a duplicate of the head pill — so the probe drives
+    // the pill, and also checks the row has NOT grown back.
+    o.ppTab = await toTab('Per part');          // expected to FAIL to find one now
+    o.ppGoneFromGen = !document.querySelector('.v2-pop-pane .v2-ppmode');
+    const ppBtn = () => document.querySelector('.v2-pop-pp');
+    o.ppPill = (() => {
+      const b = ppBtn(); const rr = b ? b.getBoundingClientRect() : null;
       return rr ? { w: Math.round(rr.width), h: Math.round(rr.height),
-                    face: ppBtn() ? ppBtn().textContent.trim() : null } : null;
+                    on: !!b.offsetParent, face: b.textContent.trim() } : null;
     })();
-    // FORK IT — a real press
+    // FORK IT — a real press, on the pill
     if (ppBtn()) { ppBtn().click(); await wait(560); }
-    await openGen(); await toTab('Per part');
+    await openGen();
     o.forked = { partFor: L().partFor, iced: !!L().partAll,
                  face: ppBtn() ? ppBtn().textContent.trim() : null };
     // …and TIME now STATES it rather than owning it
@@ -354,12 +358,12 @@ const ok = (name, cond, detail) => {
     JSON.stringify(run.lockDrove));
 
   // ── GENERATE: WHAT CONTENT DOES THIS LAYER HAVE ──────────────────────
-  ok('Per part is a Generate control now, on its own tab',
-    run.genDoor && run.ppTab && run.genTabs.indexOf('Per part') >= 0,
+  ok('Per part has ONE door, and it is not in Generate',
+    run.genDoor && run.genTabs.indexOf('Per part') < 0 && run.ppGoneFromGen === true,
     JSON.stringify(run.genTabs));
-  ok('…REACHABLE there — measured, not just present',
-    !!run.ppRow && run.ppRow.w > 0 && run.ppRow.h > 0 && /Everywhere/.test(run.ppRow.face || ''),
-    JSON.stringify(run.ppRow));
+  ok('…the head pill is REACHABLE — measured, not just present',
+    !!run.ppPill && run.ppPill.on && run.ppPill.w > 0 && run.ppPill.h > 0 &&
+    /Everywhere/.test(run.ppPill.face || ''), JSON.stringify(run.ppPill));
   ok('…and pressing it forks the content: the Everywhere record is ICED',
     Number.isFinite(run.forked.partFor) && run.forked.iced === true &&
     /Per part/.test(run.forked.face || ''), JSON.stringify(run.forked));

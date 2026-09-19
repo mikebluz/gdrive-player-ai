@@ -213,6 +213,21 @@
 
 ### Bloom: the v2 layer model (`cfg.layers`, `js/bloops/18-layer-v2.js`)
 
+- **TAPPING A NOTE FREEZES A LIVE PART — and that is why the outlines vanish.** `captureShown` turns
+  the part `recorded` so there is something to edit, which makes it FIXED, which means no other takes
+  and so no outlines. Reported as a disappearance ("all the phantom notes disappeared after i clicked
+  an active note, now they won't come back"). The toast named ⚙ Generate as the way back AND THEN
+  FADED: a state that outlives a toast has to be readable off the card. `made === 'take'` is the
+  frozen-from-live case ('compose' is drawn or emptied), and `vary` survives the freeze inert, so the
+  readout can say whether outlines are what is waiting on the other side.
+- **ONE FIELD, ONE DOOR.** Per part was asked by the head pill (`.v2-pop-pp`, beside ⇄ Sync) AND by a
+  Generate row (`.v2-ppmode`) — the row removed 2026-09-19 as redundant, the third time this card has
+  grown a second control for one field (the rhythm knobs, the Written source, this). **The tell was in
+  the comment that introduced it:** it had to borrow the pill's handler "so the two doors cannot grow
+  apart", which is a control wearing two coats, not two controls. Removing a door means re-pointing
+  every hint that NAMED it (three said "set in Generate ▸ Per part") and every probe that drove it —
+  `test/probe-perpart-time.js` now drives the pill and asserts the row has not grown back.
+
 - **"GHOSTS" MEANS TWO THINGS — never say the word in the UI.** ⚙ Deep's `L.ghosts` is "% quiet extra
   hits": real notes, they SOUND, and they draw SOLID. The drawing's internal `ghosts` are the hollow
   outlines behind the take — every (onset, pitch) one of the next `PASSES = 8` passes plays that the

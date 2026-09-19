@@ -53,6 +53,15 @@
 
 ### Bloom: the arrangement clock
 
+- **A PER-PART RECORD'S CYCLE *IS* THE PASS SPAN** (`cycleWindowAt`: `partFor` finite + `parts`/`partAll`
+  + `prog.on`). It takes the part's span from `_ambPassSpanAt`, snapped to the 1/48-bar grid, and the
+  cycle index becomes the PASS number. So NEITHER `part.bars` NOR `speed` reaches it — the rate-scaled
+  length is computed and then not used. Both rows state the binding with an `.ambient-loop-badge`
+  instead of offering a control that does nothing (Speed's was added 2026-09-18 after measuring 16
+  onsets at both 1× and 2× over a 16 s horizon, against 16 → 32 for an ordinary layer). An ORDINARY
+  layer ignores part boundaries entirely: a uniform lattice off the shared anchor, with chords
+  changing underneath it per NOTE (`_ambChordGateOK`) — a 3-bar layer over a 4-bar part drifts, by design.
+
 - **`_ambProgStepAt` is the one clock, and it reaches the parts walk FOUR ways** — arch chain, legacy
   expansion, section-bound, and the memoised passes-grid plan. A feature added to one is ABSENT from
   the others; a freshly-built test project always takes the arch path, so test all four.

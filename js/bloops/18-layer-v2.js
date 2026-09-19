@@ -11620,9 +11620,23 @@
           sel(L, 'harmony', 'Pitch quantize', L.harmony || 'fixed',
               FOLLOW_OPTS, 'kind:recorded',
               'what stored pitches snap to \u2014 notes you edited by hand keep theirs') +
-          sel(L, 'speed', 'Speed', String(num(L.speed, 1)),
+          // SPEED IS NOT YOURS ON A PER-PART RECORD — the same situation as Bars
+          // directly above, and it was the same dead control. `cycleWindowAt`
+          // takes the PASS SPAN for a per-part layer and returns it untouched:
+          // it computes the rate-scaled length and then does not use it. So the
+          // dropdown stored 2 and showed "2× — double speed" while the layer
+          // played at exactly 1× (measured: 16 onsets over a 16 s horizon at
+          // both settings, against 16 → 32 for an ordinary layer). State the
+          // binding instead, exactly as Bars does. The STORED value is kept, so
+          // switching back to ▭ Everywhere returns the speed you had.
+          (Number.isFinite(L.partFor)
+            ? '<div data-v2tab="Speed" class="ambient-ctrl"><label>Speed</label>' +
+              '<span class="ambient-loop-badge">\u25eb 1\u00d7 \u2014 the pass sets it</span>' +
+              '<span class="ambient-hint">this content is for one part, so its cycle IS that ' +
+              'part\u2019s span \u2014 switch to \u25ad Everywhere to set a speed</span></div>'
+            : sel(L, 'speed', 'Speed', String(num(L.speed, 1)),
               [['0.25', '¼ — four times slower'], ['0.5', '½ — half speed'], ['1', '1× — as written'],
-               ['2', '2× — double speed'], ['4', '4× — four times faster']]) +
+               ['2', '2× — double speed'], ['4', '4× — four times faster']])) +
           // THE DOOR, ON THE CARD. Selecting "Recorded" from the dropdown used to
           // be a dead end: nothing authors notes, so the part was silent with no
           // way forward and no explanation. (rule 6: name the door.)

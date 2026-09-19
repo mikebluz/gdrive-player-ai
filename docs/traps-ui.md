@@ -11,6 +11,11 @@
   reads `Hold · Note length · Feel`. Only the ACTIVE tab's rows are shown (`v2-rowoff`, `display:none`),
   so a newly added row measures 0×0 until its chip is pressed, and "adjacent row" is the wrong model
   for *put it next to X*: adjacency is in the STRIP. A probe must walk `.v2-pop-tabs [data-tab]`.
+- **A COLLAPSED CARD GETS NO SECTION SHEET.** `render` calls `popOpen` only for an EXPANDED card, so
+  `render()` then `classList.remove('collapsed')` leaves a card with no editor in it and every row
+  unreachable — `.v2-gototab` does not exist either, because the section row lives in the sheet HEAD
+  that `popOpen` builds. Expand FIRST, then render (a probe needs two passes: render, un-collapse,
+  render). The `.ambient-grp-head` is a FOLD, not a door — it toggles `.open` and nothing else.
 - **ℹ Why? sits OVER the sheet** — leave it open in a probe and every row behind it measures 0. It
   keeps no module state, so any rebuild closes it; that is the way back out.
 

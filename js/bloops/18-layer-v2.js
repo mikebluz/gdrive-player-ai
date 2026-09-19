@@ -12032,7 +12032,7 @@
           // half of the pair and Instrument the other.
           // ORDER IS DOM ORDER (`syncSheet` walks the rows), and `SEC_TABS`
           // decides MEMBERSHIP — so this sits before Transpose to read as
-          // Method · Per part · Key · Notes · Pitch · Harmony · Voicing ·
+          // Method · Key · Notes · Pitch · Harmony · Voicing ·
           // Transpose · Pitch quantize: how it is made, what notes exist, which
           // of them, how they are stacked, then what happens to stored pitches.
           // LENGTH AND RING OUT STAYED BEHIND: note duration is Shape's

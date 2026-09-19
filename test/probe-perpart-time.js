@@ -153,6 +153,89 @@ const ok = (name, cond, detail) => {
       o.backBadge = r ? !!r.querySelector('.ambient-loop-badge') : null;
       o.backValue = r ? ((r.querySelector('select[data-f="speed"]') || {}).value || null) : null; }
     delete L().speed; E.getCfg();
+
+    // ── CYCLE IS ONE LADDER: Free → Everywhere → Per part ─────────────
+    // It was split over two surfaces (this select, and a ▭/◫ toggle in the
+    // sheet head), so "how long is this layer" had two half-answers in
+    // different places.
+    const cycSel = () => document.querySelector('.v2-pop-pane .v2-cycmode');
+    const pick = async (v) => {
+      const el = cycSel(); if (!el) return false;
+      el.value = v; el.dispatchEvent(new Event('input', { bubbles: true }));
+      await wait(520);
+      await openTime(); await toTab('Cycle');
+      return true;
+    };
+    const rowH = (lab) => {
+      const r = [...document.querySelectorAll('.v2-pop-pane .ambient-ctrl')]
+        .find((x) => (((x.querySelector('label') || {}).textContent) || '').trim() === lab);
+      return r ? Math.round(r.getBoundingClientRect().height) : -1;
+    };
+    const badge = () => {
+      const r = [...document.querySelectorAll('.v2-pop-pane .ambient-ctrl')]
+        .find((x) => (((x.querySelector('label') || {}).textContent) || '').trim() === 'Bars');
+      const b = r && r.querySelector('.ambient-loop-badge');
+      return b ? b.textContent.trim() : null;
+    };
+    // start from a clean Everywhere layer
+    delete L().partFor; delete L().parts; delete L().partAll; delete L().part.clock;
+    E.getCfg();
+    await repaint(); await openTime(); await toTab('Cycle');
+    o.cycOpts = cycSel() ? [...cycSel().options].map((x) => x.value) : null;
+    o.cycNow = cycSel() ? cycSel().value : null;
+    const tabsOf = () => [...document.querySelectorAll('.v2-layer .v2-pop-tabs [data-tab]')]
+      .map((x) => x.getAttribute('data-tab'));
+    // EVERYWHERE
+    await toTab('Bars'); o.everyRows = { bars: rowH('Bars'), more: rowH('More bars'), badge: badge() };
+    await toTab('Cycle');
+    // FREE
+    await pick('free');
+    o.freeMode = { val: cycSel().value, stored: L().part.clock || null, tabs: tabsOf() };
+    await toTab('Bars'); o.freeRows = { bars: rowH('Bars'), more: rowH('More bars') };
+    await toTab('Cycle');
+    // PER PART — a content FORK, through partSelect
+    await pick('part');
+    o.partMode = { val: cycSel().value, partFor: L().partFor,
+                   iced: !!L().partAll, clock: L().part.clock || null };
+    await toTab('Bars');
+    o.partRows = { bars: rowH('Bars'), more: rowH('More bars'), badge: badge() };
+    await toTab('Cycle');
+    // LEAVING ASKS — and a REFUSAL must leave everything exactly as it was
+    const svC = window.confirm;
+    window.confirm = () => false;
+    await pick('every');
+    o.refused = { val: cycSel().value, partFor: L().partFor, asked: true };
+    window.confirm = () => true;
+    await pick('every');
+    o.accepted = { val: cycSel().value, partFor: L().partFor === undefined ? null : L().partFor,
+                   iced: !!L().partAll, bars: L().part.bars };
+    window.confirm = svC;
+    await toTab('Bars'); o.backRows = { bars: rowH('Bars'), badge: badge() };
+
+    // ── TWO DOORS, ONE ANSWER ────────────────────────────────────────
+    // The sheet HEAD keeps its ▭/◫ pill: it is the only surface that says
+    // WHICH part's copy you are editing, and it shows on every group — so a
+    // per-part layer being tuned under Shape or FX would otherwise say nothing
+    // about the scope of what you are changing. Two doors onto one action is
+    // fine here (the card already does it for Register) because BOTH force a
+    // full re-render, so the documented two-copies-drift cannot happen. This
+    // is the check that keeps that true.
+    await openTime(); await toTab('Cycle');
+    const pill = () => document.querySelector('.v2-layer .v2-pop-pp');
+    o.pillThere = !!pill();
+    o.pillBefore = pill() ? pill().textContent.trim() : null;
+    if (pill()) { pill().click(); await wait(520); }
+    await openTime(); await toTab('Cycle');
+    o.afterPill = { pill: pill() ? pill().textContent.trim() : null,
+                    sel: cycSel() ? cycSel().value : null,
+                    partFor: L().partFor };
+    // …and back the other way, from the Cycle select
+    const svC2 = window.confirm; window.confirm = () => true;
+    await pick('every');
+    window.confirm = svC2;
+    o.afterSel = { pill: pill() ? pill().textContent.trim() : null,
+                   sel: cycSel() ? cycSel().value : null,
+                   partFor: L().partFor === undefined ? null : L().partFor };
     return o;
   });
 
@@ -183,6 +266,43 @@ const ok = (name, cond, detail) => {
   ok('…and ▭ Everywhere brings the dropdown back, still on 2×',
     run.backSelect === true && run.backBadge === false && run.backValue === '2',
     JSON.stringify({ sel: run.backSelect, badge: run.backBadge, v: run.backValue }));
+
+  // ── THE CYCLE LADDER ──────────────────────────────────────────────────
+  ok('Cycle offers the whole ladder — Everywhere, Per part, Free',
+    JSON.stringify(run.cycOpts) === JSON.stringify(['every', 'part', 'free']),
+    JSON.stringify(run.cycOpts));
+  ok('…an ordinary layer reads Everywhere, with Bars and More bars under it',
+    run.cycNow === 'every' && run.everyRows.bars > 0 && run.everyRows.more > 0 &&
+    run.everyRows.badge === null, JSON.stringify({ v: run.cycNow, rows: run.everyRows }));
+  ok('Free takes the Bars rows away and stores its own clock',
+    run.freeMode.val === 'free' && run.freeMode.stored === 'free' &&
+    run.freeRows.bars <= 0 && run.freeRows.more <= 0,
+    JSON.stringify({ m: run.freeMode, rows: run.freeRows }));
+  // The rung that is not a setting: it forks the content.
+  ok('Per part forks the content — the Everywhere record is ICED and a part is filed',
+    run.partMode.val === 'part' && Number.isFinite(run.partMode.partFor) &&
+    run.partMode.iced === true, JSON.stringify(run.partMode));
+  ok('…and it is bar-shaped, showing the part badge instead of a stepper',
+    run.partMode.clock === null && run.partRows.badge !== null &&
+    /\u00d7 part/.test(run.partRows.badge) && run.partRows.bars > 0,
+    JSON.stringify({ m: run.partMode, rows: run.partRows }));
+  // A CANCELLED CONFIRM MUST NEVER LOOK LIKE IT DID SOMETHING.
+  ok('leaving Per part ASKS, and refusing leaves the layer and the select alone',
+    run.refused.val === 'part' && Number.isFinite(run.refused.partFor),
+    JSON.stringify(run.refused));
+  ok('…accepting brings the iced Everywhere content back',
+    run.accepted.val === 'every' && run.accepted.partFor === null &&
+    run.accepted.iced === false && run.backRows.badge === null && run.backRows.bars > 0,
+    JSON.stringify({ a: run.accepted, rows: run.backRows }));
+
+  ok('the sheet head keeps its scope pill — it names WHICH part you are editing',
+    run.pillThere && /Everywhere/.test(run.pillBefore || ''), JSON.stringify(run.pillBefore));
+  ok('…flipping it there moves the Cycle select too — two doors, one answer',
+    run.afterPill.sel === 'part' && /Per part/.test(run.afterPill.pill || '') &&
+    Number.isFinite(run.afterPill.partFor), JSON.stringify(run.afterPill));
+  ok('…and flipping Cycle moves the pill back',
+    run.afterSel.sel === 'every' && /Everywhere/.test(run.afterSel.pill || '') &&
+    run.afterSel.partFor === null, JSON.stringify(run.afterSel));
 
   ok('no page errors', errs.length === 0, errs.join(' | '));
   console.log('\n  Speed row (per-part): ' + (run.speedRow && run.speedRow.badge) +

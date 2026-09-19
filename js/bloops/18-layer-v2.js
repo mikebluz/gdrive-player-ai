@@ -11580,36 +11580,55 @@
           // it. 🔒 Lock / 🔓 Unlock on the take bar is the same transition made
           // properly — it freezes exactly the take you are looking at — and it
           // sits under the drawing, where the state it changes is visible.)
-          sel(L, 'part.clock', 'Cycle', p.clock === 'free' ? 'free' : 'bars',
-              [['bars', 'Bars — follows the grid'], ['free', 'Free — its own clock']]) +
+          // NOT A `.v2-f`: the three rungs are TWO stored things (`part.clock`
+          // and `partFor`), and the Per part rung FORKS THE CONTENT — it ices
+          // the Everywhere record and gives every part a fitted copy. So it
+          // goes through `partSelect`, and leaving it asks first.
+          (function () {
+            const cur = cycModeOf(L);
+            const cid = uid(L, 'part.clock');
+            const opt = (v, lab) => '<option value="' + v + '"' +
+              (cur === v ? ' selected' : '') + '>' + esc(lab) + '</option>';
+            return '<div class="ambient-ctrl"><label for="' + cid + '">Cycle</label>' +
+              '<select id="' + cid + '" class="ambient-select v2-cycmode">' +
+                opt('every', '\u25ad Everywhere \u2014 one loop, every part') +
+                opt('part', '\u25eb Per part \u2014 each part\u2019s own length') +
+                opt('free', 'Free \u2014 its own clock') +
+              '</select><span class="ambient-hint">' + esc(
+                cur === 'free' ? 'its own clock in milliseconds, off the bar grid'
+                : cur === 'part' ? 'each part carries its own content, at that part\u2019s length'
+                : 'one content for every part, looping every Bars bars') +
+              '</span></div>';
+          })() +
           (L.lenSync
             // A BOUND CYCLE IS RECONCILED ON EVERY NORMALIZE, so the stepper
             // would silently lose to it on the next getCfg — the documented
             // dead-control class. State the binding instead, the way v1's
             // Scheduler replaces its bars/plays inputs with a chip.
-            ? '<div data-v2tab="Bars" class="ambient-ctrl" data-v2when="clock:bars"><label>Bars</label>' +
+            ? '<div data-v2tab="Bars" class="ambient-ctrl" data-v2when="cyc:every"><label>Bars</label>' +
               '<span class="ambient-loop-badge">\u27f2 ' + (L.lenSync.passes | 0) + ' \u00d7 part</span>' +
               '<span class="ambient-hint">' + esc(String(p.bars)) + ' bars \u2014 set by the loop binding (\u22ef menu)</span></div>'
             // …and PER-PART is the same situation: a record filed under a part
             // IS that part's length, reconciled on every normalize, so the
             // stepper would lose to it exactly the same way.
             : Number.isFinite(L.partFor)
-            ? '<div data-v2tab="Bars" class="ambient-ctrl" data-v2when="clock:bars"><label>Bars</label>' +
+            ? '<div data-v2tab="Bars" class="ambient-ctrl" data-v2when="cyc:part"><label>Bars</label>' +
               '<span class="ambient-loop-badge">\u25eb ' + esc(String(p.bars)) + ' \u00d7 part</span>' +
               '<span class="ambient-hint">this content is for one part, so its length is that ' +
               'part\u2019s \u2014 switch to \u25ad Everywhere to set it yourself</span></div>'
-            : st(L, 'part.bars', 'Bars', p.bars, 1, 32, 'per cycle', 'clock:bars')) +
+            : st(L, 'part.bars', 'Bars', p.bars, 1, 32,
+                 'how long the loop is before it repeats', 'cyc:every')) +
           // WHAT CHANGING BARS DOES. Onsets are per CYCLE, so more bars spreads
           // the same notes further apart — good for a pad, wrong for a riff you
           // wanted twice as long. Tagged into the Bars tab because it is the
           // same question, not a new one.
-          '<div data-v2tab="Bars" class="ambient-ctrl" data-v2when="clock:bars">' +
+          '<div data-v2tab="Bars" class="ambient-ctrl" data-v2when="cyc:every">' +
             '<label for="' + uid(L, 'part.barsMode') + '">More bars</label>' +
             '<select id="' + uid(L, 'part.barsMode') + '" class="ambient-select v2-f" data-f="part.barsMode">' +
               '<option value="stretch"' + ((p.barsMode || 'stretch') === 'stretch' ? ' selected' : '') + '>Stretch — the same notes, spread out</option>' +
               '<option value="fill"' + (p.barsMode === 'fill' ? ' selected' : '') + '>Fill — keep writing, same density</option>' +
             '</select><span class="ambient-hint"></span></div>' +
-          sl(L, 'part.ms', 'Every', num(p.ms, 2000), 200, 20000, 'ms — ignores the bar grid', 'clock:free') +
+          sl(L, 'part.ms', 'Every', num(p.ms, 2000), 200, 20000, 'ms — ignores the bar grid', 'cyc:free') +
           // WHEN — which ITERATIONS of the cycle this layer plays. v1 edits this
           // in the Scheduler's Advanced block, which renders per-type controls
           // v2 has no part in, so it gets its own control here. The values are
@@ -12016,6 +12035,19 @@
   // `piece:value,value` clauses; every clause must match for the row to show.
   // WHAT A LAYER IS, for the row gate — one definition for the card pass and
   // the staged panels' pass.
+  // ── WHAT SETS THIS LAYER'S CYCLE ────────────────────────────────────────
+  // One ladder, asked once: its own clock → its own bar count → the part's
+  // length. It was split over two surfaces — `Cycle` here and a
+  // ▭ Everywhere / ◫ Per part toggle in the sheet head — so the question
+  // "how long is this layer" had two half-answers in different places.
+  // PER PART OUTRANKS THE CLOCK because the ENGINE does: `cycleWindowAt` takes
+  // the pass span for a per-part layer whatever `part.clock` says, so a legacy
+  // free + per-part layer must read as Per part or the card offers an `Every`
+  // that nothing consults.
+  function cycModeOf(L) {
+    if (L && Number.isFinite(L.partFor)) return 'part';
+    return (L && L.part && L.part.clock === 'free') ? 'free' : 'every';
+  }
   function gateNowOf(L) {
     const p = L.part;
     const now = {
@@ -12071,6 +12103,9 @@
       // `on:delay,dist` shows for either. Note `dryKill` engages a stage at
       // mix 0 deliberately (the documented Dry-kill contract), so it counts.
       on: '',
+      // THE CYCLE LADDER — see `cycModeOf`. The Time rows gate on this rather
+      // than on `clock` alone, which could not tell Everywhere from Per part.
+      cyc: cycModeOf(L),
       // ── SIZE: THE TWO ANSWERS TO "HOW LONG IS A NOTE" ARE EXCLUSIVE ──
       // `durAt` takes the Hold branch whenever Hold > 0 and Length is then
       // read by nothing, so the model ALREADY says one or the other —
@@ -14987,6 +15022,36 @@
             try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
             h._sig = ''; V2.render(E);
           }
+          return;
+        }
+        // CYCLE — the ladder. Its own handler because the three rungs write two
+        // different stored things, and because the Per part rung is a CONTENT
+        // FORK rather than a setting: `partSelect` ices the Everywhere record
+        // and fits a copy to each part. Leaving Per part DISCARDS those copies,
+        // so it asks, and a refusal puts the select back where it was — a
+        // cancelled confirm must never look like it did something.
+        const cm = ev.target.closest && ev.target.closest('.v2-cycmode');
+        if (cm) {
+          const ctx = layerOf(cm); if (!ctx) return;
+          const L2 = ctx.L, want = cm.value, wasPart = Number.isFinite(L2.partFor);
+          if (want === 'part') {
+            if (!wasPart) {
+              let pi0 = Number.isFinite(E._curPart) ? (E._curPart | 0) : 0;
+              const rgs = partRangesOf(E);
+              if (!rgs.some(r => r.pi === pi0)) pi0 = rgs.length ? rgs[0].pi : 0;
+              V2.partSelect(E, L2, pi0);
+            }
+            L2.part.clock = 'bars';              // a part's span IS bar-shaped
+          } else {
+            if (wasPart) {
+              if (!confirm('Back to one content everywhere?\n\nThe per-part contents will be discarded \u2014 the Everywhere content, kept on ice since Per part went on, comes back.')) {
+                cm.value = 'part'; return;
+              }
+              V2.partSelect(E, L2, null);
+            }
+            if (want === 'free') L2.part.clock = 'free'; else delete L2.part.clock;
+          }
+          commit(ctx); h._sig = ''; V2.render(E);
           return;
         }
         const f = ev.target.closest && ev.target.closest('.v2-f'); if (!f) return;

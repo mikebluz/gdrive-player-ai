@@ -53,6 +53,15 @@
 
 ### Bloom: the arrangement clock
 
+- **WHAT SETS A LAYER'S CYCLE IS ONE LADDER, asked once** (`cycModeOf`): Free (own ms clock) →
+  Everywhere (own bar count on the grid) → Per part (the part's length). It reads TWO stored things
+  (`part.clock`, `partFor`), so the Cycle select is NOT a `.v2-f` — and PER PART OUTRANKS THE CLOCK,
+  because the engine does. The Per part rung is not a setting: `partSelect` ices the Everywhere record
+  into `partAll` and fits a copy to every part, and leaving it DISCARDS those copies — the one
+  destructive branch on this card, so it confirms, and a refusal must put the select back.
+  The sheet head's ▭/◫ pill is kept as a SECOND door on purpose: it is the only surface naming which
+  part's copy you are editing, and it shows on every group. Safe because both paths force a full
+  re-render, so the two-copies-drift trap cannot bite — pinned by a probe check.
 - **A PER-PART RECORD'S CYCLE *IS* THE PASS SPAN** (`cycleWindowAt`: `partFor` finite + `parts`/`partAll`
   + `prog.on`). It takes the part's span from `_ambPassSpanAt`, snapped to the 1/48-bar grid, and the
   cycle index becomes the PASS number. So NEITHER `part.bars` NOR `speed` reaches it — the rate-scaled

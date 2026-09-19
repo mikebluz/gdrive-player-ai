@@ -5182,6 +5182,54 @@
     for (let i = 0; i < ks.length - 1; i++) { if (o[ks[i]] == null || typeof o[ks[i]] !== 'object') o[ks[i]] = {}; o = o[ks[i]]; }
     o[ks[ks.length - 1]] = v;
   };
+  // ── THE SIMPLE MATERIALS ────────────────────────────────────────────────
+  // user: "add the missing Material doors for the other pitch kinds". Four of
+  // the nine pitch kinds had a door (chord, series, walk, mixed); these are the
+  // three that earn one. Each is a RHYTHM and a PITCH and nothing else, so they
+  // are a TABLE read by ONE builder rather than three more near-copies of
+  // `makeSustain` — the existing five each carry their own quirks (Sustain's
+  // ring, Arp's per-bar speed, Roll being a dice throw), and adding three more
+  // hand-written twins would be the redundancy this pass is removing.
+  // NOT GIVEN A DOOR, deliberately:
+  //   · DRAWN is not a generated material at all — the notes are the ones you
+  //     drew, and ▦ Steps / ✎ Compose are already its doors.
+  //   · STACK is ▬ Sustain with a different voicing, not a peer of it. The
+  //     model already says so: `matProv`'s guess reads a one-pulse chord OR
+  //     STACK as `sustain`, so a door here would contradict it. It belongs as
+  //     a Character over Sustain, which is a separate pass.
+  const MAT_SIMPLE = {
+    // A PEDAL POINT: one note held against the whole progression. Rings, like
+    // ▬ Sustain, because that is what holding means.
+    anchor:  { rhythm: { kind: 'pulse', n: 1, steps: 16 }, pitch: { kind: 'anchor' },
+               shape: { lenRatio: 100, holdSteps: 0 }, ring: 1, barsMode: '' },
+    // THE SAME DEGREE, struck again and again — it follows the chords, so over
+    // C · Am · F · G it plays C A F G. `fill` keeps that pulse per BAR when the
+    // part gets longer, which is what an ostinato means.
+    onenote: { rhythm: { kind: 'pulse', n: 4, steps: 16 }, pitch: { kind: 'fixed', degree: 1 },
+               shape: { lenRatio: 80, holdSteps: 0 }, ring: 0, barsMode: 'fill' },
+    // ANY TONE OF THE SET, drawn fresh per onset — seeded, so it replays until
+    // 🎲 New take.
+    scatter: { rhythm: { kind: 'euclid', steps: 8, pulses: 5 }, pitch: { kind: 'chance' },
+               shape: { lenRatio: 70, holdSteps: 0 }, ring: 0, barsMode: 'fill' },
+  };
+  function makeSimpleFn(E, L, key) {
+    const spec = MAT_SIMPLE[key];
+    if (!spec || !L || !L.part) return null;
+    const p = L.part;
+    p.kind = 'live';
+    // Both stated on BOTH paths, the restore included — `barsMode` and `ring`
+    // are not in MAT_KEYS, so a shape left behind by the last material would
+    // otherwise ride along (the rule `makeSustain` and `makeArp` already state).
+    if (spec.barsMode) p.barsMode = spec.barsMode; else delete p.barsMode;
+    if (spec.ring) L.ring = 1; else delete L.ring;
+    if (matSwitch(L, key)) { try { E.getCfg(); } catch (e) {} return { kept: true }; }
+    p.bars = partBarsFor(E, L) || p.bars || 2;
+    p.rhythm = JSON.parse(JSON.stringify(spec.rhythm));
+    p.pitch = JSON.parse(JSON.stringify(spec.pitch));
+    p.shape = Object.assign({}, p.shape, spec.shape);
+    try { E.getCfg(); } catch (e) {}
+    return { bars: p.bars };
+  }
   // absent, '', 0 and false all read as "not set" — normalize prunes them
   const presetNorm = (v) => (v === undefined || v === null || v === '' || v === 0 || v === false) ? '' : String(v);
   function applyPresetFn(E, L, id) {
@@ -5430,6 +5478,8 @@
     matShapeOk: matShapeOk,
     clearPart: clearPartFn,        // ⌫ Start empty — an empty written part to draw into
     makeArp: makeArpFn,
+    makeSimple: makeSimpleFn,       // the table-driven doors
+    matSimple: MAT_SIMPLE,          // …and the table, so the recipe has ONE source
     presets: PRESETS,
     draftOpen: draftOpenFn,
     draftOf: draftOfFn,
@@ -8343,7 +8393,9 @@
     const p = L.part, r = p.rhythm || {}, t = p.pitch || {};
     const rulesBare = rulesText(L);
     const M = { sustain: '\u25ac Sustain a chord', arp: '\u27f3 Arpeggiate', roll: '\ud83c\udfb2 Roll a line',
-                mixed: '\u2687 Mix chords + notes', ground: '\u26f0 Play the changes', melody: '\u266a Melody' };
+                mixed: '\u2687 Mix chords + notes', ground: '\u26f0 Play the changes', melody: '\u266a Melody',
+                anchor: '\u2693 Hold a pedal note', onenote: '\u25aa Repeat one note',
+                scatter: '\u273b Scatter tones' };
     const v1 = (p.mat && p.mat.indexOf('v1:') === 0) ? p.mat.slice(3) : null;
     // THE FORWARDING ADDRESS FOR THE DICE, and which throw is on screen. It was
     // a labelled row of its own carrying no control; the head states the SIZE
@@ -8362,6 +8414,9 @@
       : (t.kind === 'mixed') ? 'mixed'
       : (t.kind === 'series') ? 'arp'
       : ((r.kind === 'pulse' || !r.kind) && (r.n | 0) <= 1 && (t.kind === 'chord' || t.kind === 'stack')) ? 'sustain'
+      : (t.kind === 'anchor') ? 'anchor'
+      : (t.kind === 'chance') ? 'scatter'
+      : (t.kind === 'fixed') ? 'onenote'
       : (t.kind === 'walk') ? 'roll' : null;
     const mat = M[p.mat] ? p.mat : (v1 ? null : guess);
     if (p.kind === 'recorded') {
@@ -8438,7 +8493,9 @@
     const pv = matProv(L);
     const M = { sustain: '\u25ac Sustain a chord', arp: '\u27f3 Arpeggiate',
                 roll: '\ud83c\udfb2 Roll a line', mixed: '\u2687 Mix chords + notes',
-                ground: '\u26f0 Play the changes', melody: '\u266a Melody' };
+                ground: '\u26f0 Play the changes', melody: '\u266a Melody',
+                anchor: '\u2693 Hold a pedal note', onenote: '\u25aa Repeat one note',
+                scatter: '\u273b Scatter tones' };
     const face = card.querySelector('.v2-genface');
     if (face) {
       const empty = L.part.kind === 'recorded' && !(L.part.notes || []).length;
@@ -8456,9 +8513,10 @@
     // select whose value matches no option silently shows the FIRST one.
     const sp = card.querySelector('.v2-shapepick');
     if (sp) {
-      const SH = [['sustain', '\u25ac Sustain a chord'], ['arp', '\u27f3 Arpeggiate'],
-        ['roll', '\ud83c\udfb2 Roll a line'], ['mixed', '\u2687 Mix chords + notes'],
-        ['ground', '\u26f0 Play the changes']];
+      const SH = [['sustain', '\u25ac Sustain a chord'], ['anchor', '\u2693 Hold a pedal note'],
+        ['onenote', '\u25aa Repeat one note'], ['arp', '\u27f3 Arpeggiate'],
+        ['roll', '\ud83c\udfb2 Roll a line'], ['scatter', '\u273b Scatter tones'],
+        ['mixed', '\u2687 Mix chords + notes'], ['ground', '\u26f0 Play the changes']];
       const key = pv.key;
       const extra = (key === 'melody') ? [['melody', '\u266a Melody \u2014 from \u2728 Quick']] : [];
       const mine = SH.some((o) => o[0] === key) || !!extra.length;
@@ -8628,9 +8686,9 @@
         // and the Character list below is roll's — `PK` maps it). Saying
         // "Melody" here read as a CHARACTER being picked, because roll has one
         // by that name — one word for two things, the naming rule's own trap.
-        const M2 = { sustain: 'Sustain a chord', arp: 'Arpeggiate', roll: 'Roll a line', melody: 'Roll a line',
-          mixed: 'Mix chords + notes', ground: 'Play the changes' };
-        const zt = M2[matProv(L).key] ? ' \u2014 for ' + M2[matProv(L).key] : '';
+        // ONE NAME TABLE (`MAT_NAME`) — a caption that does not know a material
+        // just goes blank, which reads as "this zone is for nothing".
+        const zt = MAT_NAME[matProv(L).key] ? ' \u2014 for ' + MAT_NAME[matProv(L).key] : '';
         if (zf.textContent !== zt) zf.textContent = zt;
       }
       const ts2 = pop.querySelector('.v2-tunedsays');
@@ -9142,7 +9200,9 @@
   const MAT_LABEL = { ground: '\u26f0 Play the changes',
     sustain: '\u25ac Sustain a chord', arp: '\u27f3 Arpeggiate',
                       roll: '\ud83c\udfb2 Roll a line', mixed: '\u2687 Mix chords + notes',
-                      melody: '\u266a Melody' };
+                      melody: '\u266a Melody',
+                      anchor: '\u2693 Hold a pedal note', onenote: '\u25aa Repeat one note',
+                      scatter: '\u273b Scatter tones' };
   function matWillDo(L, which) {
     const p = (L && L.part) || {};
     // ADOPT needs the stamp AND the rules: a stamp survives edits, so a
@@ -9190,6 +9250,8 @@
     const map = { compose: '.v2-compose',
       sustain: '.v2-mkpart[data-mk="sustain"]', arp: '.v2-mkpart[data-mk="arp"]',
       mixed: '.v2-mkpart[data-mk="mixed"]', ground: '.v2-mkpart[data-mk="ground"]',
+      anchor: '.v2-mkpart[data-mk="anchor"]', onenote: '.v2-mkpart[data-mk="onenote"]',
+      scatter: '.v2-mkpart[data-mk="scatter"]',
       roll: '.v2-rollrun' };
     // the shape doors live in ⚙ Deep — while it is STAGED, `stagePass` owns them
     const stagedCard = !!(card.classList && card.classList.contains('v2-layer') &&
@@ -9202,8 +9264,9 @@
     // THE ROW'S OWN DOORS: ⚙ Shape owns the four generated shapes, ⛰ Groundwork
     // owns itself. Without these the row lit nothing at all for a generated
     // part — the four buttons the map names live inside the Shape PANEL now.
-    const SHAPES = { sustain: 1, arp: 1, roll: 1, mixed: 1, ground: 1, melody: 1 };
-    const genLit = SHAPES[pv2.key] ? true
+    // EVERY MATERIAL IS A GENERATED SHAPE — asked of the one name table rather
+    // than a hand-kept set that a new door would be missing from.
+    const genLit = MAT_NAME[pv2.key] ? true
       : (pv2.key === 'compose' || pv2.key === 'adopt') ? false
       : L.part.kind === 'live';        // a hand-built shape is still behind this door
     [['.v2-genbtn', genLit]].forEach(([sel, on]) => {
@@ -10201,8 +10264,15 @@
   // to disagree about what "Arpeggiate" is made of.
   const MAT_RECIPE = { sustain: ['pulse', 'chord'], arp: ['pulse', 'series'], roll: ['euclid', 'walk'],
     melody: ['euclid', 'walk'], mixed: ['euclid', 'mixed'], ground: ['ground', 'chord'] };
+  // …and the table-driven doors state their own recipe, DERIVED from the table
+  // that builds them rather than written out a second time here.
+  try {
+    const MS = V2.matSimple || {};
+    Object.keys(MS).forEach((k) => { MAT_RECIPE[k] = [MS[k].rhythm.kind, MS[k].pitch.kind]; });
+  } catch (e) {}
   const MAT_NAME = { sustain: 'Sustain a chord', arp: 'Arpeggiate', roll: 'Roll a line', melody: 'Melody',
-    mixed: 'Mix chords + notes', ground: 'Play the changes' };
+    mixed: 'Mix chords + notes', ground: 'Play the changes',
+    anchor: 'Hold a pedal note', onenote: 'Repeat one note', scatter: 'Scatter tones' };
   // WHAT THE PITCH ROW SAYS ABOUT ITS MATERIAL. Same three states the Advanced
   // block reports, in the same words, so the two surfaces cannot drift: no
   // material in force, this pitch IS the material's, or the recipe has been
@@ -10987,6 +11057,9 @@
             '<div class="v2-shaperow"><select class="ambient-select v2-shapepick" aria-label="Material"></select></div>' +
             '<span class="ambient-seg-row v2-genshapes">' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="sustain" title="▬ Sustained — a held note or chord, one per cycle: the pad material.">\u25ac Sustain a chord</button>' +
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="anchor" title="⚓ Pedal point — one note held against the whole progression, whatever the chords do.">\u2693 Hold a pedal note</button>' +
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="onenote" title="▪ One note, struck again and again — the same degree of each chord, so it follows the changes.">\u25aa Repeat one note</button>' +
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="scatter" title="✻ Any tone of the set, drawn fresh per onset — seeded, so it replays until 🎲 New take.">\u273b Scatter tones</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="arp" title="⟳ Arpeggio — sweep the chord one tone per onset.">\u27f3 Arpeggiate</button>' +
               '<button type="button" class="ambient-seg v2-rollrun" title="🎲 Roll — a rolled, syncopated line. 🎲 New take rolls another.">\ud83c\udfb2 Roll a line</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="mixed" title="⚇ Mixed — some onsets a chord, the rest a single note.">\u2687 Mix chords + notes</button>' +
@@ -12528,7 +12601,9 @@
     try {
       const pv2 = matProv(S);
       const map = { sustain: '.v2-mkpart[data-mk="sustain"]', arp: '.v2-mkpart[data-mk="arp"]',
-        mixed: '.v2-mkpart[data-mk="mixed"]', ground: '.v2-mkpart[data-mk="ground"]', roll: '.v2-rollrun' };
+        mixed: '.v2-mkpart[data-mk="mixed"]', ground: '.v2-mkpart[data-mk="ground"]',
+        anchor: '.v2-mkpart[data-mk="anchor"]', onenote: '.v2-mkpart[data-mk="onenote"]',
+        scatter: '.v2-mkpart[data-mk="scatter"]', roll: '.v2-rollrun' };
       Object.keys(map).forEach((k) => {
         const b2 = gw && gw.querySelector(map[k]);
         if (b2) { b2.classList.toggle('on', pv2.key === k); b2.classList.toggle('v2-matlock', S.part.kind === 'recorded'); }
@@ -16255,9 +16330,9 @@
           if (ptab.classList.contains('v2-tabna')) {
             try {
               const m2 = (typeof matProv === 'function') ? matProv(ctx.L) : null;
-              const made = (m2 && m2.key && /sustain|arp|roll/.test(m2.key))
-                ? ({ sustain: '\u25ac Sustain a chord', arp: '\u27f3 Arpeggiate', roll: '\ud83c\udfb2 Roll a line' })[m2.key]
-                : 'The material';
+              // …whichever material it was: a regex over three of them left the
+              // other six saying "The material" for no reason.
+              const made = (m2 && m2.key && MAT_LABEL[m2.key]) ? MAT_LABEL[m2.key] : 'The material';
               showToast(made + ' MADE these notes, and \u2744 Freeze TURNED THEM INTO NOTES \u2014 the part now ' +
                 'plays the notes, not the rules. Rhythm \u00b7 Pattern \u00b7 Feel shape the rules, so they do ' +
                 'nothing here: press \ud83c\udfb2 Replace with a new take to roll again, or ' +
@@ -17737,9 +17812,10 @@
         const rb0 = t.closest('.v2-recipeback');
         if (rb0) {
           const ctx = layerOf(rb0); if (!ctx) return;
-          const REC = { sustain: ['pulse', 'chord'], arp: ['pulse', 'series'], roll: ['euclid', 'walk'],
-            melody: ['euclid', 'walk'], mixed: ['euclid', 'mixed'], ground: ['ground', 'chord'] };
-          const rec = REC[ctx.L.part.mat]; if (!rec) return;
+          // ONE RECIPE TABLE (`MAT_RECIPE`). This was a third copy — and a copy
+          // that does not know about a new material silently makes ↺ Back a
+          // no-op for it, which is the quiet half of the two-copies bug.
+          const rec = MAT_RECIPE[ctx.L.part.mat]; if (!rec) return;
           ctx.L.part.rhythm = Object.assign({}, ctx.L.part.rhythm, { kind: rec[0] });
           ctx.L.part.pitch = Object.assign({}, ctx.L.part.pitch, { kind: rec[1] });
           try { E.getCfg(); } catch (e) {}
@@ -17798,6 +17874,8 @@
           const info = (which === 'arp') ? V2.makeArp(E, ctx.L)
             : (which === 'mixed') ? V2.makeMixed(E, ctx.L)
             : (which === 'ground') ? V2.makeGround(E, ctx.L)
+            // THE TABLE-DRIVEN DOORS — one call, whichever it was
+            : (V2.matSimple && V2.matSimple[which]) ? V2.makeSimple(E, ctx.L, which)
             : V2.makeSustain(E, ctx.L, true);
           if (!info) return;
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}

@@ -213,6 +213,18 @@
 
 ### Bloom: the v2 layer model (`cfg.layers`, `js/bloops/18-layer-v2.js`)
 
+- **`vary` IS EVOLVE AT `ev` 1, `am` 100 — one axis wearing two controls.** The emitter says so (it
+  lets `vary` outrank `chg` for exactly this reason), and every consequence of the split has now been
+  a bug: the Evolve rows vanished on a frozen part (`vary` computed two ways), the outline preview
+  only knew `vary`'s clock, and `liveness` counted only `vary` so an EVOLVING layer's badge read
+  FIXED while 24 outlines sat behind it. **Before adding a fourth surface to this axis, collapse it:**
+  one control — never / every N passes / every cycle — with `part.vary` kept as a stored key for
+  save-compat. `part.kind` (live vs frozen) is a genuinely different axis and stays.
+- **`liveness` HAS NO CLOCK, so it cannot resolve `chg.parts`.** Resolving which part is sounding is
+  `chgAt`'s job and needs a ctx. The badge therefore answers "does this EVER decide again", taking
+  the largest `ev` any part override offers — deliberately, and noted here so it is not later
+  "fixed" into a per-part answer this function cannot compute.
+
 - **THERE IS NO "\u2699 Generate" DOOR. The way back from a frozen take is `\u22ef \u25b8 \u26a1 Release`.** The
   freeze toast named \u2699 Generate for months and it has never existed — `MAT_LABEL` has no such
   entry and no button carries it; the only unfreeze is the \u22ef menu's "\u26a1 Release \u2014 back to live"

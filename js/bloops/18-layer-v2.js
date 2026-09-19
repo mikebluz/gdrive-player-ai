@@ -223,6 +223,32 @@
     if (L.part.vary && L.part.kind !== 'recorded') {
       why.push('the rules run again every cycle'); tags.push('notes');
     }
+    // EVOLVE IS THE SAME AXIS ON A SLOWER CLOCK. The rules decide again every
+    // `ev` passes instead of every cycle — and `vary` is exactly this at ev 1,
+    // am 100, which is why the emitter lets `vary` outrank it. Counting only
+    // `vary` made an EVOLVING layer read FIXED while it demonstrably changed
+    // (measured: 24 outlines behind a part the badge called fixed) — the same
+    // confident-wrong-answer this function exists to prevent, one axis later.
+    // Reported as "Evolve needs to be more of a definite state, there are too
+    // many overlapping states".
+    // Same "only where it can act" qualifier: a RECORDED part replays its list,
+    // and `am` 0 touches nothing, so neither is live.
+    // `chg.parts` overrides per part and this function has no clock to resolve
+    // WHICH part (that is `chgAt`'s job, and it needs a ctx) — so the badge
+    // answers "does this ever decide again", taking the largest `ev` on offer.
+    const evAny = (() => {
+      const c = L.chg; if (!c || L.part.vary || L.part.kind === 'recorded') return 0;
+      const one = (m) => ((m && (m.am == null || (m.am | 0) > 0)) ? (m.ev | 0) : 0);
+      let n = one(c);
+      if (c.parts && typeof c.parts === 'object') {
+        Object.keys(c.parts).forEach((k) => { n = Math.max(n, one(Object.assign({}, c, c.parts[k]))); });
+      }
+      return n;
+    })();
+    if (evAny > 0) {
+      why.push('Evolve re-decides the rules every ' + evAny + ' pass' + (evAny === 1 ? '' : 'es'));
+      tags.push('notes');
+    }
     if (pos(L.humanize)) { why.push('Humanize nudges every note'); tags.push('timing'); }
     if (pos(L.velVar)) { why.push('Vel var moves each note\u2019s level'); tags.push('loudness'); }
     // …and the rest that draw PER PASS — traced to their draw sites (2026-09-16):

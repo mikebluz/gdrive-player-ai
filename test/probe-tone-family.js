@@ -123,6 +123,63 @@ const ok = (name, cond, detail) => {
     o.kitFam = (() => { const el = famSel(); if (!el) return -1;
       return Math.round(el.closest('.ambient-ctrl').getBoundingClientRect().height); })();
     L().instrument.voice = 'synth'; E.getCfg();
+
+    // ── THE FOUR MAKERS ──────────────────────────────────────────────
+    // "we need to add these to the Instrument area" — Design, Create
+    // ensemble, Capture sample, Sample to Pad. Each ADDS a voice to the Tone
+    // list, so they belong beside it.
+    await repaint(); await goSound();
+    const mkBtns = () => [...document.querySelectorAll('.v2-pop-pane .v2-mktone')];
+    o.mk = mkBtns().map((b) => {
+      const r = b.getBoundingClientRect();
+      return { k: b.getAttribute('data-mk'), t: b.textContent.trim(),
+               w: Math.round(r.width), h: Math.round(r.height), on: !!b.offsetParent };
+    });
+    // THEY MUST FIT. Four long labels in a row that does not wrap is the
+    // horizontal scroll the UI rules forbid.
+    o.mkFits = (() => {
+      const row = document.querySelector('.v2-pop-pane .v2-makerow');
+      if (!row) return null;
+      const rr = row.getBoundingClientRect();
+      const par = row.parentElement.getBoundingClientRect();
+      return { over: rr.right > par.right + 1 || row.scrollWidth > row.clientWidth + 1,
+               w: Math.round(rr.width), rows: new Set(mkBtns().map((b) =>
+                 Math.round(b.getBoundingClientRect().top))).size };
+    })();
+    // EACH ONE CALLS v1's OWN DIALOG — stub the four and press all four.
+    const fired = [];
+    const sv = { d: window._sdOpenDesign, e: window.showEnsembleEditor,
+                 c: window.showCaptureSampleDialog, p: window.showSampleToPadDialog };
+    window._sdOpenDesign = () => fired.push('design');
+    window.showEnsembleEditor = () => fired.push('ensemble');
+    window.showCaptureSampleDialog = () => fired.push('capture');
+    window.showSampleToPadDialog = () => fired.push('pad');
+    for (const k of ['design', 'ensemble', 'capture', 'pad']) {
+      const b = mkBtns().find((x) => x.getAttribute('data-mk') === k);
+      if (b) { b.click(); await wait(200); }
+    }
+    window._sdOpenDesign = sv.d; window.showEnsembleEditor = sv.e;
+    window.showCaptureSampleDialog = sv.c; window.showSampleToPadDialog = sv.p;
+    o.fired = fired;
+    // NOT ON A SPEECH LAYER — nothing there feeds a Tone list.
+    L().instrument.voice = 'speech'; E.getCfg();
+    await repaint(); await goSound();
+    o.speechMk = (() => { const row = document.querySelector('.v2-pop-pane .v2-makerow');
+      return row ? Math.round(row.getBoundingClientRect().height) : -1; })();
+    L().instrument.voice = 'synth'; E.getCfg();
+
+    // ── THE VOICE-BANK REFRESH MUST NOT WIDEN THE FILTER ─────────────
+    // `_ambRefreshAllToneSelects` repopulates every `select[id$="-tone"]` with
+    // the FULL grouped list — which would have silently undone the narrowing
+    // the moment anything imported a sample.
+    await repaint(); await goSound();
+    { const el = famSel(); if (el) { el.value = o.pickFam; el.dispatchEvent(new Event('input', { bubbles: true })); } }
+    await wait(520); await goSound();
+    const narrowed = (toneVals() || []).length;
+    try { if (typeof _ambRefreshAllToneSelects === 'function') _ambRefreshAllToneSelects(); } catch (e) {}
+    await wait(500); await goSound();
+    o.afterRefresh = { before: narrowed, after: (toneVals() || []).length,
+                       fam: famSel() ? famSel().value : null };
     return o;
   });
 
@@ -154,6 +211,28 @@ const ok = (name, cond, detail) => {
     run.backAll.n === run.toneNAll, JSON.stringify(run.backAll));
   ok('it is a SYNTH control — a kit list is a handful of kits, not a wall',
     run.kitFam <= 0, JSON.stringify(run.kitFam));
+
+  // ── THE FOUR MAKERS ──────────────────────────────────────────────────
+  ok('all four makers are in the Instrument area, and REACHABLE',
+    run.mk.length === 4 &&
+    JSON.stringify(run.mk.map((x) => x.k)) === JSON.stringify(['design', 'ensemble', 'capture', 'pad']) &&
+    run.mk.every((x) => x.on && x.w > 0 && x.h >= 28), JSON.stringify(run.mk));
+  ok('…they carry the SAME words the grid\'s menu uses',
+    /Design/.test(run.mk[0].t) && /Create ensemble/.test(run.mk[1].t) &&
+    /Capture sample/.test(run.mk[2].t) && /Sample to Pad/.test(run.mk[3].t),
+    JSON.stringify(run.mk.map((x) => x.t)));
+  ok('…and the row WRAPS at 390px rather than scrolling sideways',
+    !!run.mkFits && run.mkFits.over === false && run.mkFits.rows >= 2,
+    JSON.stringify(run.mkFits));
+  ok('…each opens v1\'s own dialog — no second implementation on this card',
+    JSON.stringify(run.fired) === JSON.stringify(['design', 'ensemble', 'capture', 'pad']),
+    JSON.stringify(run.fired));
+  ok('…and they stay off a speech layer, which feeds no Tone list',
+    run.speechMk <= 0, JSON.stringify(run.speechMk));
+  // The interaction that would have quietly undone the filter.
+  ok('a voice-bank refresh does NOT widen the narrowed Tone list',
+    run.afterRefresh.after === run.afterRefresh.before &&
+    run.afterRefresh.fam === run.pickFam, JSON.stringify(run.afterRefresh));
 
   ok('no page errors', errs.length === 0, errs.join(' | '));
   console.log('\n  families: ' + (run.famOpts || []).join(' · '));

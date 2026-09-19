@@ -4630,6 +4630,12 @@
        so v2 states the one it needs. */
     .v2-notesrow .ambient-seg-row { display: inline-flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
     .v2-notesrow .ambient-seg { min-height: 30px; touch-action: manipulation; }
+    /* THE FOUR MAKERS — same situation, four longer labels. They MUST wrap:
+       the base `.ambient-seg-row` does not, and four "Create ensemble…"-sized
+       buttons in one nowrap line is the horizontal scroll this file forbids. */
+    .v2-makerow .ambient-seg-row { display: inline-flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
+    .v2-makerow .ambient-seg { min-height: 30px; touch-action: manipulation; }
+    .v2-makerow > .ambient-hint { display: block; margin-top: 5px; }
     /* A soloed v2 layer, marked on the CARD — solo lives in its ⋯ menu, so
        without this the state is invisible while the mix is silenced. Solo
        yellow, matching v1's `.ambient-solo-btn.soloed`. */

@@ -11302,6 +11302,28 @@
               '<select id="' + uid(L, t3.f) + '" class="ambient-select v2-f" data-f="' + t3.f + '">' + body + '</select>' +
               '<span class="ambient-hint">' + esc(t3.hint) + '</span></div>';
           })() +
+          // ── MAKING A NEW VOICE ───────────────────────────────────────────
+          // The four doors the grid's tone panel has always had, put where the
+          // Tone list they feed is: design a patch, build an ensemble, capture
+          // from the mic, or loop a sample into a pad. Each one ADDS a voice to
+          // that list, so they belong beside it rather than in a menu attached
+          // to another surface entirely.
+          // THEY CALL v1's OWN DIALOGS — no second implementation, and nothing
+          // to drift. `typeof`-guarded because they live in other files
+          // (a bare name that is not there throws into the nearest catch and
+          // the button measures as dead).
+          // The list refreshes ITSELF: `_ambRefreshAllToneSelects` re-renders
+          // these cards when the voice bank changes.
+          tb('Sound',
+          '<div class="ambient-ctrl v2-makerow" data-v2when="voice:synth,kit">' +
+            '<label>New tone</label>' +
+            '<span class="ambient-seg-row">' +
+              '<button type="button" class="ambient-seg v2-mktone" data-mk="design">\u2726 Design\u2026</button>' +
+              '<button type="button" class="ambient-seg v2-mktone" data-mk="ensemble">\u271a Create ensemble\u2026</button>' +
+              '<button type="button" class="ambient-seg v2-mktone" data-mk="capture">\ud83c\udf99 Capture sample\u2026</button>' +
+              '<button type="button" class="ambient-seg v2-mktone" data-mk="pad">\ud83c\udf9a Sample to Pad\u2026</button>' +
+            '</span>' +
+            '<span class="ambient-hint">make a voice \u2014 it joins the Tone list above</span></div>') +
           // WHERE THE WORDS COME FROM. The source list is v1's own
           // `_AMB_LEARN_SOURCES`, read by id, so the two can never offer
           // different sources; `paste` is the no-network case and is what the
@@ -16122,6 +16144,21 @@
         // adopts the current content for the strip's current part (nothing
         // sounds different until a part diverges); disabling is the one
         // destructive branch and confirms.
+        // THE FOUR MAKERS. v1's own dialogs, called by name — this card must
+        // not grow a second copy of any of them.
+        const mkt = t.closest && t.closest('.v2-mktone');
+        if (mkt) {
+          const w = mkt.getAttribute('data-mk');
+          try {
+            if (w === 'design' && typeof _sdOpenDesign === 'function') _sdOpenDesign();
+            else if (w === 'ensemble' && typeof showEnsembleEditor === 'function') showEnsembleEditor();
+            else if (w === 'capture' && typeof showCaptureSampleDialog === 'function') showCaptureSampleDialog();
+            else if (w === 'pad' && typeof showSampleToPadDialog === 'function') showSampleToPadDialog();
+          } catch (e) {
+            try { if (typeof showToast === 'function') showToast('That editor did not open \u2014 ' + ((e && e.message) || e)); } catch (x) {}
+          }
+          return;
+        }
         const ppt = t.closest && t.closest('.v2-pop-pp, .v2-ppmode');
         if (ppt) {
           const ctx = layerOf(ppt); if (!ctx) return;

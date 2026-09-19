@@ -11,6 +11,11 @@
   reads `Hold · Note length · Feel`. Only the ACTIVE tab's rows are shown (`v2-rowoff`, `display:none`),
   so a newly added row measures 0×0 until its chip is pressed, and "adjacent row" is the wrong model
   for *put it next to X*: adjacency is in the STRIP. A probe must walk `.v2-pop-tabs [data-tab]`.
+- **`_ambRefreshAllToneSelects` REPOPULATES EVERY `select[id$="-tone"]`** with the full grouped voice
+  list — and a v2 layer's Tone select matches that pattern (`v2-<id>-instrument-tone`). It is skipped
+  by id prefix now, because it builds its own list (narrowed by the card's Family filter) and a
+  repopulate would silently widen it the moment anything imported a sample. v2 cards are re-rendered
+  from that same function instead, so a new ensemble / capture / design still appears without a reload.
 - **A FILTER MAY NARROW A LIST AND NOTHING ELSE.** Two ways the Tone ▸ Family filter could have gone
   wrong, both pinned by poison checks: it must not write the field it filters (changing the sound as a
   side effect of looking for one), and it must never drop the value IN FORCE from the narrowed list —

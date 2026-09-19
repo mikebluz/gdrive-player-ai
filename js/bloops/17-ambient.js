@@ -15662,6 +15662,11 @@
       if (typeof populateGroupedToneSelect !== 'function') return;
       const opts = _ambToneOptions();
       host.querySelectorAll('select[id$="-tone"]').forEach(sel => {
+        // A v2 LAYER BUILDS ITS OWN TONE LIST — narrowed by the card's Family
+        // filter — so repopulating it here would silently widen it back to
+        // every voice the moment anything imported a sample. v2 rebuilds its
+        // cards instead (see `_ambRefreshAllToneSelects`).
+        if (sel.id.indexOf('v2-') === 0) return;
         const cur = sel.value;
         // A Drone keeps its sustaining-only list on every repopulate, or an
         // imported sample/ensemble would quietly re-open the decaying voices.
@@ -15681,6 +15686,17 @@
     function _ambRefreshAllToneSelects() {
       try { if (_laneEng && _laneEng.inited) _ambRefreshToneSelects(_laneEng); } catch (e) {}
       try { if (_masterEng && _masterEng.inited) _ambRefreshToneSelects(_masterEng); } catch (e) {}
+      // …AND THE v2 CARDS, which build their own (filtered) lists and are
+      // skipped above. A new ensemble / capture / design must show up in the
+      // layer's Tone list without a reload, and the rebuild is what re-reads
+      // the voice bank. Clearing `_sig` is what makes the render do work.
+      try {
+        const h2 = document.getElementById('bloom-v2-layers');
+        if (h2 && window._v2 && typeof window._v2.render === 'function' &&
+            typeof _masterEng !== 'undefined' && _masterEng && _masterEng.inited) {
+          h2._sig = ''; window._v2.render(_masterEng);
+        }
+      } catch (e) {}
     }
     function _ambDrumKits() {
       const kits = [{ id: 'synth', name: '⚙ Synth (generated)' }];

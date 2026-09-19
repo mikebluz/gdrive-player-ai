@@ -15619,6 +15619,9 @@
    ground; the label sits on it like the card's ruler does. */
 .v2-stageviz { position: relative; margin: 0 14px 8px; flex: 0 0 auto; }
 .v2-stageviz .v2-stagecv { display: block; width: 100%; height: 96px; border-radius: 8px; border: 1px solid #22222f; }
+/* the sweep's overlay during ▶ Preview — sized and placed by `paintSweep` from
+   the canvas it tracks, like the roll's `.v2-vizph` */
+.v2-stageviz .v2-stageph { position: absolute; left: 0; top: 0; pointer-events: none; }
 .v2-stageviz .v2-stagelab { position: absolute; right: 8px; top: 2px; font: 600 0.62rem 'Segoe UI', sans-serif; color: #9f7aea; pointer-events: none; }
 /* PRESET — a labelled picker with ↺ Reset beside it. Chips under the shapes
    read as MORE SHAPES (different sizes, no label), so the choice sits with the

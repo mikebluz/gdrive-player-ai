@@ -8441,7 +8441,7 @@
       // the fade was the whole difference). The fade is a reading of the
       // FUTURE and belongs to the stopped picture.
       // (floor raised 0.28 → 0.5: at 0.28 a stopped note read as an outline)
-      if (stab && !playing && !isSel && !isGrp) g.globalAlpha = 0.5 + 0.5 * stab[i];
+      if (stab && !playing && !fromPv && !isSel && !isGrp) g.globalAlpha = 0.5 + 0.5 * stab[i];   // …and a previewed cycle is a sounding one
       g.fill(); g.stroke();
       g.globalAlpha = 1;
       if (selKeys && willGo && !isSel && !isGrp) {
@@ -9366,6 +9366,127 @@
       if (c1.classList.contains('v2-cell') || c1.classList.contains('v2-lanecell')) c1.classList.add('playing');
     });
   }
+  // ── THE SWEEP, PAINTED ON AN OVERLAY — ONE PAINTER (2026-09-19) ──────
+  // Extracted from `vizFrame` so ▶ Preview can paint the same sweep: the
+  // transport's frame and the preview's loop both come here. It reads ONLY
+  // what a drawing PUBLISHED on its canvas (`_plotGeo`, `_barsGeo`, `_hits`,
+  // `_pitchGeo`, `_chordGeo`), so any canvas that publishes those — the
+  // card's roll, ⚙ Deep's staged picture — gets the current-bar tint, the
+  // lit notes, the vertical readout and the line, byte-identical. Returns
+  // false when the overlay cannot be sized (the caller clears it).
+  function paintSweep(cv, ph, L, frac) {
+    const geo = cv._plotGeo; if (!geo) return false;
+    const dpr = Math.min(3, (window.devicePixelRatio || 1));
+    const w = cv.clientWidth, h = cv.clientHeight;
+    if (!(w > 0 && h > 0)) return false;
+    if (ph.width !== Math.round(w * dpr) || ph.height !== Math.round(h * dpr)) {
+      ph.width = Math.round(w * dpr); ph.height = Math.round(h * dpr);
+    }
+    // the overlay tracks the roll's own box, whatever the padding is
+    if (ph._px !== cv.offsetLeft || ph._py !== cv.offsetTop || ph._pw !== w || ph._phh !== h) {
+      ph.style.left = cv.offsetLeft + 'px'; ph.style.top = cv.offsetTop + 'px';
+      ph.style.width = w + 'px'; ph.style.height = h + 'px';
+      ph._px = cv.offsetLeft; ph._py = cv.offsetTop; ph._pw = w; ph._phh = h;
+    }
+    const g = ph.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    ph._on = true;
+    const x0 = geo.x0, PLOT = geo.w, TOP = geo.top;
+    // THE SAME VIEWPORT THE DRAW USED, read from its own published geometry
+    // — re-deriving it here is how the sweep and the notes would come to
+    // disagree about where a moment is (and with only part of the cycle on
+    // screen the sweep has somewhere to be that is off it).
+    const VSC = (geo.vsc > 0) ? geo.vsc : 1, F0 = geo.f0 || 0;
+    const xF = (f) => x0 + ((f - F0) / VSC) * PLOT;
+    const x = xF(frac);
+    const onScreen = (x >= x0 - 0.5 && x <= x0 + PLOT + 0.5);
+    // THE CURRENT BAR, tinted — "current bar and note". A bar is what the
+    // ruler above counts, so it is the unit to mark — READ FROM THE RULER
+    // (`cv._barsGeo`, published by the draw) rather than re-derived from
+    // `L.part.bars`: with a per-part layer following another part those are
+    // different numbers, and the tint would mark a bar the ruler never drew.
+    const bg0 = cv._barsGeo;
+    const barsF = Math.max(0.0625,
+      (bg0 && bg0.barsF > 0 ? bg0.barsF : ((L.part && L.part.bars) || 1)));
+    if (!(L.part && L.part.clock === 'free')) {
+      const b = Math.floor(frac * barsF);
+      const bx0 = Math.max(x0, xF(b / barsF)), bx1 = Math.min(x0 + PLOT, xF((b + 1) / barsF));
+      if (bx1 > bx0) {
+        g.fillStyle = 'rgba(72,187,120,0.07)';
+        g.fillRect(bx0, TOP, bx1 - bx0, h - TOP);
+      }
+    }
+    // …AND THE NOTES UNDER IT. Green, because green means "sounding"
+    // everywhere else in this app — the one hue the palette reserves.
+    const hits = cv._hits || [];
+    const lit = [];   // the pitches under the sweep — the readout below names them
+    for (let i = 0; i < hits.length; i++) {
+      const b2 = hits[i];
+      if (x < b2.x - 0.5 || x > b2.x + b2.w + 0.5) continue;
+      if (Number.isFinite(b2.midi)) lit.push(Math.round(b2.midi));
+      g.fillStyle = 'rgba(72,187,120,0.85)';
+      g.strokeStyle = '#c6f6d5'; g.lineWidth = 1;
+      g.beginPath();
+      // square, matching the note geometry exactly — the lit copy must sit
+      // byte-on-top of the note it lights
+      g.rect(b2.x, b2.y, b2.w, b2.h);
+      g.fill(); g.stroke();
+    }
+    // ── WHAT IS SOUNDING, IN LETTERS (2026-09-19) ─────────────────────
+    // "we should have a vertical note readout as each note/chord plays."
+    // The lit boxes say WHERE the sounding notes are; with thirty notes and
+    // seven takes' outlines behind them that is not readable as a chord.
+    // This says WHAT they are: the names stacked high → low beside the
+    // sweep, the chord the harmony has under it on top (from the chord
+    // band's own marks, so the two can never disagree), and the keys they
+    // sit on lit in the gutter. On the overlay, so it is a few fillTexts a
+    // frame and never redraws the roll; pinned to the top of the plot so
+    // it does not jump with the pitch; flipped to the sweep's left near
+    // the right edge so it is never clipped. Published as `ph._readout`
+    // so a probe reads the picture's own claim.
+    ph._readout = null;
+    if (onScreen && lit.length) {
+      const ms = lit.filter((m, i, a) => a.indexOf(m) === i).sort((a, b) => b - a);
+      const pg = cv._pitchGeo;
+      if (pg && pg.rowH > 0) {
+        g.fillStyle = 'rgba(72,187,120,0.55)';
+        ms.forEach((m) => {
+          if (m < pg.loM || m > pg.hiM) return;
+          g.fillRect(0, pg.top + (pg.hiM - m) * pg.rowH, Math.max(0, x0 - 1), Math.max(1, pg.rowH));
+        });
+      }
+      let chord = '';
+      try {
+        const cg = cv._chordGeo;
+        const mk = cg && cg.marks && cg.marks.find((q) => frac >= q.f0 && frac < q.f1);
+        chord = (mk && mk.nm) || '';
+      } catch (e) { chord = ''; }
+      const names = ms.map(noteName);
+      const lines = (chord ? [chord] : []).concat(names);
+      g.save();
+      g.font = 'bold 10px -apple-system, Segoe UI, sans-serif';
+      g.textBaseline = 'middle'; g.textAlign = 'left';
+      const LH = 12, PX = 5;
+      const bw = Math.ceil(Math.max.apply(null, lines.map((s) => g.measureText(s).width))) + PX * 2;
+      const bh = lines.length * LH + 4;
+      let bx = x + 6; if (bx + bw > x0 + PLOT) bx = x - 6 - bw;
+      const by = TOP + 3;
+      g.fillStyle = 'rgba(13,13,26,0.86)'; g.fillRect(bx, by, bw, bh);
+      g.strokeStyle = 'rgba(198,246,213,0.6)'; g.lineWidth = 1; g.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+      lines.forEach((s, i) => {
+        g.fillStyle = (chord && i === 0) ? '#b9a7ee' : '#c6f6d5';
+        g.fillText(s, bx + PX, by + 2 + i * LH + LH / 2);
+      });
+      g.restore();
+      ph._readout = { chord, names, x: bx, y: by, w: bw, h: bh };
+    }
+    g.strokeStyle = 'rgba(198,246,213,0.9)'; g.lineWidth = 1.5;
+    // …only when the moment it marks is actually in view: a sweep pinned to
+    // the edge of a panned window would claim a position it is not at.
+    if (onScreen) { g.beginPath(); g.moveTo(x, TOP); g.lineTo(x, h); g.stroke(); }
+    return true;
+  }
   function vizFrame(E) {
     if (!E) return;
     const host = document.getElementById('bloom-v2-layers'); if (!host) return;
@@ -9462,115 +9583,7 @@
       if (!Number.isFinite(cv._cs) || Math.abs(cv._cs - cs) > 0.02 || stale0) {
         try { drawPartViz(card, L, E); } catch (e) {}
       }
-      const dpr = Math.min(3, (window.devicePixelRatio || 1));
-      const w = cv.clientWidth, h = cv.clientHeight;
-      if (!(w > 0 && h > 0)) { clear(); return; }
-      if (ph.width !== Math.round(w * dpr) || ph.height !== Math.round(h * dpr)) {
-        ph.width = Math.round(w * dpr); ph.height = Math.round(h * dpr);
-      }
-      // the overlay tracks the roll's own box, whatever the padding is
-      if (ph._px !== cv.offsetLeft || ph._py !== cv.offsetTop || ph._pw !== w || ph._phh !== h) {
-        ph.style.left = cv.offsetLeft + 'px'; ph.style.top = cv.offsetTop + 'px';
-        ph.style.width = w + 'px'; ph.style.height = h + 'px';
-        ph._px = cv.offsetLeft; ph._py = cv.offsetTop; ph._pw = w; ph._phh = h;
-      }
-      const g = ph.getContext('2d');
-      g.setTransform(dpr, 0, 0, dpr, 0, 0);
-      g.clearRect(0, 0, w, h);
-      ph._on = true;
-      const x0 = geo.x0, PLOT = geo.w, TOP = geo.top;
-      // THE SAME VIEWPORT THE DRAW USED, read from its own published geometry
-      // — re-deriving it here is how the sweep and the notes would come to
-      // disagree about where a moment is (and with only part of the cycle on
-      // screen the sweep has somewhere to be that is off it).
-      const VSC = (geo.vsc > 0) ? geo.vsc : 1, F0 = geo.f0 || 0;
-      const xF = (f) => x0 + ((f - F0) / VSC) * PLOT;
-      const x = xF(frac);
-      const onScreen = (x >= x0 - 0.5 && x <= x0 + PLOT + 0.5);
-      // THE CURRENT BAR, tinted — "current bar and note". A bar is what the
-      // ruler above counts, so it is the unit to mark — READ FROM THE RULER
-      // (`cv._barsGeo`, published by the draw) rather than re-derived from
-      // `L.part.bars`: with a per-part layer following another part those are
-      // different numbers, and the tint would mark a bar the ruler never drew.
-      const bg0 = cv._barsGeo;
-      const barsF = Math.max(0.0625,
-        (bg0 && bg0.barsF > 0 ? bg0.barsF : ((L.part && L.part.bars) || 1)));
-      if (!(L.part && L.part.clock === 'free')) {
-        const b = Math.floor(frac * barsF);
-        const bx0 = Math.max(x0, xF(b / barsF)), bx1 = Math.min(x0 + PLOT, xF((b + 1) / barsF));
-        if (bx1 > bx0) {
-          g.fillStyle = 'rgba(72,187,120,0.07)';
-          g.fillRect(bx0, TOP, bx1 - bx0, h - TOP);
-        }
-      }
-      // …AND THE NOTES UNDER IT. Green, because green means "sounding"
-      // everywhere else in this app — the one hue the palette reserves.
-      const hits = cv._hits || [];
-      const lit = [];   // the pitches under the sweep — the readout below names them
-      for (let i = 0; i < hits.length; i++) {
-        const b2 = hits[i];
-        if (x < b2.x - 0.5 || x > b2.x + b2.w + 0.5) continue;
-        if (Number.isFinite(b2.midi)) lit.push(Math.round(b2.midi));
-        g.fillStyle = 'rgba(72,187,120,0.85)';
-        g.strokeStyle = '#c6f6d5'; g.lineWidth = 1;
-        g.beginPath();
-        // square, matching the note geometry exactly — the lit copy must sit
-        // byte-on-top of the note it lights
-        g.rect(b2.x, b2.y, b2.w, b2.h);
-        g.fill(); g.stroke();
-      }
-      // ── WHAT IS SOUNDING, IN LETTERS (2026-09-19) ─────────────────────
-      // "we should have a vertical note readout as each note/chord plays."
-      // The lit boxes say WHERE the sounding notes are; with thirty notes and
-      // seven takes' outlines behind them that is not readable as a chord.
-      // This says WHAT they are: the names stacked high → low beside the
-      // sweep, the chord the harmony has under it on top (from the chord
-      // band's own marks, so the two can never disagree), and the keys they
-      // sit on lit in the gutter. On the overlay, so it is a few fillTexts a
-      // frame and never redraws the roll; pinned to the top of the plot so
-      // it does not jump with the pitch; flipped to the sweep's left near
-      // the right edge so it is never clipped. Published as `ph._readout`
-      // so a probe reads the picture's own claim.
-      ph._readout = null;
-      if (onScreen && lit.length) {
-        const ms = lit.filter((m, i, a) => a.indexOf(m) === i).sort((a, b) => b - a);
-        const pg = cv._pitchGeo;
-        if (pg && pg.rowH > 0) {
-          g.fillStyle = 'rgba(72,187,120,0.55)';
-          ms.forEach((m) => {
-            if (m < pg.loM || m > pg.hiM) return;
-            g.fillRect(0, pg.top + (pg.hiM - m) * pg.rowH, Math.max(0, x0 - 1), Math.max(1, pg.rowH));
-          });
-        }
-        let chord = '';
-        try {
-          const cg = cv._chordGeo;
-          const mk = cg && cg.marks && cg.marks.find((q) => frac >= q.f0 && frac < q.f1);
-          chord = (mk && mk.nm) || '';
-        } catch (e) { chord = ''; }
-        const names = ms.map(noteName);
-        const lines = (chord ? [chord] : []).concat(names);
-        g.save();
-        g.font = 'bold 10px -apple-system, Segoe UI, sans-serif';
-        g.textBaseline = 'middle'; g.textAlign = 'left';
-        const LH = 12, PX = 5;
-        const bw = Math.ceil(Math.max.apply(null, lines.map((s) => g.measureText(s).width))) + PX * 2;
-        const bh = lines.length * LH + 4;
-        let bx = x + 6; if (bx + bw > x0 + PLOT) bx = x - 6 - bw;
-        const by = TOP + 3;
-        g.fillStyle = 'rgba(13,13,26,0.86)'; g.fillRect(bx, by, bw, bh);
-        g.strokeStyle = 'rgba(198,246,213,0.6)'; g.lineWidth = 1; g.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
-        lines.forEach((s, i) => {
-          g.fillStyle = (chord && i === 0) ? '#b9a7ee' : '#c6f6d5';
-          g.fillText(s, bx + PX, by + 2 + i * LH + LH / 2);
-        });
-        g.restore();
-        ph._readout = { chord, names, x: bx, y: by, w: bw, h: bh };
-      }
-      g.strokeStyle = 'rgba(198,246,213,0.9)'; g.lineWidth = 1.5;
-      // …only when the moment it marks is actually in view: a sweep pinned to
-      // the edge of a panned window would claim a position it is not at.
-      if (onScreen) { g.beginPath(); g.moveTo(x, TOP); g.lineTo(x, h); g.stroke(); }
+      if (!paintSweep(cv, ph, L, frac)) { clear(); return; }
       // THE TIME THE SWEEP WAS DRAWN FOR — so "is this the audible clock or the
       // schedule one" is answerable by measurement rather than by reading the
       // code (it was the schedule clock, and on the shell's broadcast that is
@@ -9585,6 +9598,40 @@
   // Beside `window._v2Tick` and for the same reason: the viz rAF lives in 17
   // and this is the UI IIFE, and the two share nothing but the window.
   window._v2VizFrame = vizFrame;
+  // ── THE SWEEP DURING ▶ PREVIEW (2026-09-19, "main layer preview should do
+  // that as well, and also have playhead") ────────────────────────────────
+  // `vizFrame` rides the transport's rAF loop, and Preview runs with the
+  // transport STOPPED (it refuses otherwise) — so a previewed cycle had no
+  // sweep, no lit notes and no readout, on the card's roll or on ⚙ Deep's
+  // staged picture. This loop lives only while a preview sounds and paints
+  // the one sweep (`paintSweep`) on both, from the preview's own clock
+  // (`PV_VIZ.at`, the cycle start the preview scheduled against — the same
+  // moment both drawings drew, so the sweep and the notes agree).
+  let PV_RAF = 0;
+  function previewSweep(E) {
+    PV_RAF = 0;
+    const pv = V2.previewCycle && V2.previewCycle(); if (!pv) return;
+    let L = null; try { L = ((E.getCfg().layers) || []).find((x) => x && (x.id | 0) === (pv.id | 0)) || null; } catch (e) {}
+    const on = !!(L && V2.previewing(L));
+    const now = audibleNow();
+    const card = document.querySelector('.v2-layer[data-v2id="' + (pv.id | 0) + '"]');
+    const pairs = [];
+    if (card) {
+      pairs.push([card.querySelector('.v2-vizcv'), card.querySelector('.v2-vizph')]);
+      card.querySelectorAll('.v2-stageviz').forEach((sv) => pairs.push([sv.querySelector('.v2-stagecv'), sv.querySelector('.v2-stageph')]));
+    }
+    pairs.forEach(([cv, ph]) => {
+      if (!cv || !ph || !ph.getContext) return;
+      const geo = cv._plotGeo, cyc = geo && geo.cyc;
+      const frac = (on && cyc > 0) ? (now - pv.at) / cyc : -1;
+      const okp = on && frac >= 0 && frac <= 1 && paintSweep(cv, ph, L, frac);
+      if (!okp && ph._on) {
+        const c0 = ph.getContext('2d'); c0.setTransform(1, 0, 0, 1, 0, 0);
+        c0.clearRect(0, 0, ph.width, ph.height); ph._on = false;
+      }
+    });
+    if (on) PV_RAF = requestAnimationFrame(() => previewSweep(E));
+  }
   // EVERY v2 DRAWING, REPAINTED. An AREA control — salt, the changes, the key —
   // decides what a layer plays just as much as the layer's own controls do, but
   // only the layer's own commit repainted its picture, so an area edit left
@@ -11421,7 +11468,7 @@
             // and a stopped clock resolves to part 0 (the documented trap).
             '<span class="ambient-hint v2-autosays"></span>' +
             '<div class="v2-stageviz"><span class="v2-stagelab">\u2713 Done writes</span>' +
-              '<canvas class="v2-stagecv" height="96"></canvas></div>' +
+              '<canvas class="v2-stagecv" height="96"></canvas><canvas class="v2-stageph" aria-hidden="true"></canvas></div>' +
             '<span class="ambient-seg-row v2-autoshapes">' +
               '<button type="button" class="ambient-seg v2-autopick" data-auto="chords" title="Chords that state the harmony — one on the 1 and one on every change, each held until the next, so a cadence of any length is filled. This is the ⛰ Groundwork material.">\u25a6 Chords<span class="v2-matsub">one per change, held to the next</span></button>' +
               '<button type="button" class="ambient-seg v2-autopick" data-auto="melody" title="A single voice that moves over the changes — one note at a time, stepwise, resolved against whatever chord is sounding.">\u266a Melody<span class="v2-matsub">a single voice over the changes</span></button>' +
@@ -11501,7 +11548,7 @@
             // WHAT ✓ DONE WILL WRITE — the staged part, drawn. Read-only: the
             // layer's own drawing is the one you edit notes on.
             '<div class="v2-stageviz"><span class="v2-stagelab">\u2713 Done writes</span>' +
-              '<canvas class="v2-stagecv" height="96"></canvas></div>' +
+              '<canvas class="v2-stagecv" height="96"></canvas><canvas class="v2-stageph" aria-hidden="true"></canvas></div>' +
             // THE KNOBS THAT DECIDE WHAT THE SHAPE PRODUCES, gated to the
             // shape that reads each one — so the panel shows the handful
             // that apply rather than a wall that mostly does not.
@@ -13097,15 +13144,23 @@
       g.setTransform(dpr, 0, 0, dpr, 0, 0);
       g.clearRect(0, 0, wCss, hCss);
       g.fillStyle = '#0d0d1a'; g.fillRect(0, 0, wCss, hCss);
-      let cfg = null, notes = [], cyc = 2;
+      // THE CYCLE ▶ PREVIEW IS PLAYING, when it is — so what is drawn is what
+      // is sounding (the harmony at THAT moment, not at 0), and the sweep
+      // (`previewSweep`) has a picture to cross.
+      let cfg = null, notes = [], cyc = 2, cs0 = 0;
       try {
         cfg = E.getCfg();
         cyc = V2.cycleSec(S, cfg) || 2;
+        try { const pv = V2.previewCycle && V2.previewCycle(); if (pv && (pv.id | 0) === (S.id | 0) && V2.previewing(S)) cs0 = pv.at; } catch (e) { cs0 = 0; }
         notes = V2.withEdit(() => V2.withTake(V2.pinOf(S), () =>
-          V2.notesFor(S, { E, cfg, key: 'v2:' + (S.id | 0), cycleStart: 0, cycleSec: cyc }))) || [];
+          V2.notesFor(S, { E, cfg, key: 'v2:' + (S.id | 0), cycleStart: cs0, cycleSec: cyc }))) || [];
       } catch (e) { notes = []; }
       const bars = Math.max(1, Math.round(+(S.part && S.part.bars) || 1));
       const TOP = 14;
+      // PUBLISHED LIKE THE CARD'S ROLL, so the one sweep painter serves both
+      cv._plotGeo = { x0: 0, w: wCss, top: TOP, h: hCss, cyc: cyc, playing: false, vsc: 1, f0: 0, cs: cs0 };
+      cv._barsGeo = { barsF: bars, w: wCss, x0: 0 };
+      cv._pitchGeo = null; cv._chordGeo = null; cv._hits = [];
       // the bar grid, numbered like the card's ruler
       g.font = '10px -apple-system, Segoe UI, sans-serif';
       for (let b = 0; b <= bars; b++) {
@@ -13117,7 +13172,7 @@
           g.strokeStyle = '#1b1b2b'; g.beginPath(); g.moveTo(xq, TOP); g.lineTo(xq, hCss); g.stroke();
         }
       }
-      const played = notes.filter((n) => n && n.freq > 0 && n.at >= -1e-6 && n.at < cyc);
+      const played = notes.filter((n) => n && n.freq > 0 && (n.at - cs0) >= -1e-6 && (n.at - cs0) < cyc);
       // ⟳ the STAGED Evolve on the staged drawing — this panel is where it is
       // set, so this is where turning it on shows first (see `evoChip`).
       let evoS = null;
@@ -13134,12 +13189,14 @@
       let lo = Math.floor(Math.min(...mid)) - 2, hi = Math.ceil(Math.max(...mid)) + 2;
       if (hi - lo < 12) { const c = (hi + lo) / 2; lo = Math.floor(c - 6); hi = lo + 12; }
       const rowH = (hCss - TOP - 2) / (hi - lo + 1);
-      g.fillStyle = 'rgba(159,122,234,0.85)'; g.strokeStyle = '#d6bcfa';
+      g.fillStyle = 'rgba(159,122,234,0.92)'; g.strokeStyle = '#d6bcfa';
       played.forEach((n, i) => {
-        const x = (n.at / cyc) * wCss;
+        const x = ((n.at - cs0) / cyc) * wCss;
         const w = Math.max(2, ((n.durMs / 1000) / cyc) * wCss);
         const y = TOP + (hi - mid[i]) * rowH;
-        g.fillRect(x, y, Math.min(w, wCss - x), Math.max(2, rowH - 1));
+        const ww = Math.min(w, wCss - x), hh = Math.max(2, rowH - 1);
+        g.fillRect(x, y, ww, hh);
+        cv._hits.push({ x, y, w: ww, h: hh, midi: Math.round(mid[i]), t: (n.at - cs0) / cyc });
       });
       chip();
     });
@@ -16958,6 +17015,7 @@
           let leftMs = 2000;
           try { if (V2.previewLeftSec) leftMs = Math.round(V2.previewLeftSec(ctx.L) * 1000); } catch (e) {}
           h._pv = { id: ctx.L.id | 0, t: setTimeout(stopPv, Math.max(600, leftMs)) };
+          if (played && !PV_RAF) PV_RAF = requestAnimationFrame(() => previewSweep(E));   // the sweep, while it sounds
           return;
         }
         // GROUP FOLD — v1 binds every `.ambient-grp-head` in the PANEL HOST at

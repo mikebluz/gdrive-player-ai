@@ -232,6 +232,13 @@
   copy. On a FROZEN take the button is dimmed (`.v2-clockfrozen`), never `disabled` — the press
   releases (`V2.release`, silent, keeps the notes) and turns Evolve on. A new surface on this axis
   goes on this button, not beside it.
+  **▶ PREVIEW HAS ITS OWN SWEEP LOOP (2026-09-19).** `vizFrame` rides the transport's rAF and Preview
+  runs with the transport stopped, so `previewSweep` (started by the Preview handler, alive only while
+  `previewing(L)`) paints `paintSweep` — the ONE painter, extracted from `vizFrame` — on the card's
+  `.v2-vizph` and ⚙ Deep's `.v2-stageph`, from `PV_VIZ.at`. A canvas gets the sweep by PUBLISHING
+  `_plotGeo` / `_barsGeo` / `_hits` / `_pitchGeo` / `_chordGeo`; `stageVizDraw` does, and draws the
+  preview's cycle (`cs0 = PV_VIZ.at`) so the notes are the ones sounding. A previewed cycle is solid
+  (`fromPv` skips the stability fade) for the same reason a playing one is.
   **THE FRAME IS 16 ms AHEAD OF THE DRAWING (2026-09-19).** `vizFrame` runs on `audibleNow() + 0.016`
   and `drawPartViz` decides "playing" on bare `audibleNow()`, so the frame's first redraw at play
   paints the STOPPED picture (pinned take, faded); a stopped drawing's `cs` is the chord anchor —

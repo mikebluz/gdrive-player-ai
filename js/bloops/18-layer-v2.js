@@ -11338,6 +11338,34 @@
                 '<span class="ambient-hint v2-varyhint">' + (L.part.vary
                   ? 'the rules run again every cycle \u2014 the drawing is take ' + ((L.part.take | 0) + 1) + ', one of many'
                   : 'take ' + ((L.part.take | 0) + 1) + ' is what plays, every cycle') + '</span></div>' +
+              // ── EVOLVE (2026-09-18) ──────────────────────────────────────
+              // The axis existed in the model and the emitter honoured it, and
+              // NOTHING WROTE IT: `L.chg` was normalized, read by `chgOf2` and
+              // unreachable from anywhere in the app. v1 has this as Area
+              // Evolve (generate X bars, loop them Y times, then evolve a fresh
+              // one) with a per-layer override; v2's version is strictly richer
+              // and had no door at all.
+              // IT SITS UNDER "Each cycle" because that control is its extreme:
+              // roll again every cycle IS evolve-every-pass-at-100%, which is
+              // why the emitter lets `vary` outrank it — and why these rows
+              // gate off while it is on rather than sitting there inert.
+              gst(L, 'chg.ev', 'Evolve', ((L.chg || {}).ev | 0), 0, 64,
+                  'passes before the rules decide again \u2014 0 = never, this take plays on',
+                  'kind:live;vary:off') +
+              // THE THING v1 NEVER HAD. At 100 a change throws the whole part
+              // away and rolls another; below it the part KEEPS that share of
+              // its material and re-decides the rest, which is what lets a part
+              // develop instead of only repeating or restarting.
+              gsl(L, 'chg.am', 'How much', num((L.chg || {}).am, 100), 0, 100,
+                  '% of the material each change touches \u2014 the rest is kept',
+                  'kind:live;vary:off;evo:on') +
+              // WHICH CLOCK IT COUNTS. A string field, so a select is safe here
+              // (the trance-gate trap is a select over a NUMBER); '' is absent,
+              // which the emitter reads as 'pass'.
+              gsel(L, 'chg.clock', 'Against', ((L.chg || {}).clock === 'round') ? 'round' : '',
+                   [['', 'Passes of this part'], ['round', 'Rounds of the arrangement']],
+                   'what a \u201cpass\u201d counts \u2014 with no progression the layer\u2019s own cycle is the pass',
+                   'kind:live;vary:off;evo:on') +
               ['fl', 'ls', 'th'].map((k) => dmRow(L, k)).join('') +
               disc('dice', 'Advanced: each die', '', 'kind:live')
                 .replace('<span class="ambient-hint">', '<span class="ambient-hint v2-dicesum">') +
@@ -12548,6 +12576,13 @@
       // THE CYCLE LADDER — see `cycModeOf`. The Time rows gate on this rather
       // than on `clock` alone, which could not tell Everywhere from Per part.
       cyc: cycModeOf(L),
+      // ── EVOLVE ──────────────────────────────────────────────────────
+      // `vary` OUTRANKS IT in the emitter: with Each cycle on, `cycIdx` is the
+      // cycle number and `chgEpoch` is never consulted, so every Evolve row
+      // would be a knob that does nothing. It gates them off instead.
+      vary: (L.part && L.part.vary) ? 'on' : 'off',
+      // …and How much / Against only mean something once it evolves at all.
+      evo: (L.chg && (L.chg.ev | 0) > 0) ? 'on' : 'off',
       // ── SIZE: THE TWO ANSWERS TO "HOW LONG IS A NOTE" ARE EXCLUSIVE ──
       // `durAt` takes the Hold branch whenever Hold > 0 and Length is then
       // read by nothing, so the model ALREADY says one or the other —

@@ -344,6 +344,20 @@
   `chgAt`'s job and needs a ctx. The badge therefore answers "does this EVER decide again", taking
   the largest `ev` any part override offers — deliberately, and noted here so it is not later
   "fixed" into a per-part answer this function cannot compute.
+- **"PLAY IS EDITING MY NOTES" IS FIXED LYING, NOT A WRITE (2026-09-20).** Measured first, and the
+  store is innocent: `L.part.notes` is byte-identical across Preview, Play and Stop in every
+  configuration — Everywhere, per-part, `barsMode:'fill'`, a free clock, a `lenSync` binding — and
+  30 × `getCfg` moves nothing (`test/probe-content-state.js`, both halves). What moves is a
+  GENERATED part whose cycle does not DIVIDE the changes: a 2-bar cycle under a 3-bar part sits over
+  different chords every pass, so the pitch rules re-resolve and **every note changes, for ever** —
+  measured through `notesFor`, so it SOUNDS, and the frozen pitch window then clips the strays so
+  notes also vanish from the picture and come back ("new notes that weren't there"). `liveness()`
+  counts three ways the changes can move (salt · `prog.vary` · alternates) and NOT this one, so the
+  badge reads **FIXED with no tags** beside the one thing that is moving. Setting `part.bars` to a
+  divisor collapses it to one note set — that is the proof of cause, and ⇄ Sync is the door. Before
+  hunting a writer for "the notes changed", pin the clocks (`E._progAnchor/_playStartAt/_barGridAnchor
+  = 0`, the `partseq` idiom) and diff `notesFor` pass to pass; an unpinned anchor re-orders the
+  chords under the walk and inverts the answer.
 
 - **THERE IS NO "\u2699 Generate" DOOR. The way back from a frozen take is `\u22ef \u25b8 \u26a1 Release`.** The
   freeze toast named \u2699 Generate for months and it has never existed — and the Transform refusal named

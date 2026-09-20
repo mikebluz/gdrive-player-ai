@@ -74,6 +74,12 @@
   Show them with INLINE `display … !important`, and add a `:not()` for any new body-appended overlay.
 - **`position: fixed` overlays drift** because `backdrop-filter` on an ancestor makes it a containing
   block. Measure-and-correct: set 0,0, read the rect, subtract it.
+- **RESERVE SPACE WHERE THE THING IS (2026-09-19).** The shared `.v2-pop-head, .v2-secpop-head` rule
+  carried `padding-right: 62px` for a corner ✕ — but the heads that HAVE one take their 62px from
+  their own `padding-right` rule beside the absolute positioning, and `.v2-pop-head` has no ✕ at
+  all, so it sat with a 62px right gutter against a 12px left one ("why is the right gutter so much
+  larger than the left"). A reservation belongs next to the thing it reserves for, never in a rule
+  shared with heads that do not have it.
 - **A popover's ✕ belongs in the CORNER, pinned, not in the flow.** As a flex item it sits wherever
   DOM order leaves it: the section head's summary follows it and takes the rest of the row, so at
   DESKTOP width the close measured 324px from the right edge — the middle of the header. Absolute

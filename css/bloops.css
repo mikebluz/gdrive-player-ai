@@ -15695,7 +15695,13 @@
    head barely that high, it OVERHUNG the tab strip and sat on whatever control
    was at the strip's right edge. `min-height` keeps the button inside its own
    head; `padding-right` keeps the summary out from under it. */
-.v2-pop-head, .v2-secpop-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 62px 6px 12px; flex: 0 0 auto; min-height: 44px; }
+/* SYMMETRIC — the 62px right padding here was reserving room for a corner ✕
+   that `.v2-pop-head` does not have (2026-09-19, "why is the right gutter so
+   much larger than the left"). The heads that DO carry one take their 62px
+   from the dedicated `padding-right` rule further down, beside the absolute
+   positioning that makes it necessary; this shared rule was reserving it for
+   a head with no ✕ at all. Reserve space where the thing IS. */
+.v2-pop-head, .v2-secpop-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px 6px; flex: 0 0 auto; min-height: 44px; }
 /* THE TITLE IS A SECTION NAVIGATOR, and it is SIX TABS filling the row rather
    than a <select>: a select showed only the section you were already in, so
    every other one cost a press to discover. It shares the row with the ✕,

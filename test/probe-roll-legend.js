@@ -254,7 +254,7 @@ const ok = (name, cond, detail) => {
           evoCss, evoRgb: evoCss ? rgb(evoCss) : '',
           chip: cv?._evoChip || null, stageChip: scv?._evoChip || null, rows,
           contentSum: (card?.querySelector('.v2-grpsum[data-grp="Content"]')?.textContent || '').trim(),
-          summary: (card?.querySelector('.v2-summary')?.textContent || '').trim().slice(0, 40) });
+          summary: (card?.querySelector('.v2-grpsum[data-grp="Content"]')?.textContent || '').trim().slice(0, 40) });
       }, 500);
     }, 400);
   }));
@@ -298,7 +298,7 @@ const ok = (name, cond, detail) => {
       everyHint: (evr?.querySelector('.ambient-hint')?.textContent || '').trim(),
       deepEv: +(card?.querySelector('.v2-genwrap .v2-f[data-f="chg.ev"]')?.value),
       chip: !!card?.querySelector('.v2-vizcv')?._evoChip,
-      summary: (card?.querySelector('.v2-summary')?.textContent || '').trim() };
+      summary: (card?.querySelector('.v2-grpsum[data-grp="Content"]')?.textContent || '').trim() };
   });
   const press = async () => {
     await page.evaluate(() => { document.querySelector('.v2-layer .v2-evotog')?.click(); });

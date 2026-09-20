@@ -11390,7 +11390,15 @@
         // mixer fader) over ONE field, and without this the two drift apart
         // (measured: mixer moved to 42, card still read 65). Deliberately NOT
         // `.ambient-ph`, so the playhead sweep does not pick it up.
-        '<span class="ambient-layer-unit v2-summary" data-phkey="v2:' + L.id + '" title="What this layer is"></span>' +
+        // NO SUMMARY IN THE HEAD (2026-09-19, "remove from header, it causes a
+        // new row and we don't need it"): the line wrapped the head onto a
+        // second row, and the same facts read in the Content summary and the
+        // drawing's readout. The span STAYS, empty and hidden, because it is
+        // this card's only `data-phkey` carrier — five fallbacks in
+        // 17-ambient resolve the layer key through
+        // `card.querySelector('[data-phkey]')`, a DESCENDANT lookup — and a
+        // move is a delete plus an add: the text goes, the key does not.
+        '<span class="ambient-layer-unit v2-summary" data-phkey="v2:' + L.id + '" style="display:none" aria-hidden="true"></span>' +
         '<button type="button" class="ambient-layer-menu-btn v2-menu" title="Layer menu — rename, remove" aria-label="Layer menu">\u22ef</button>' +
         '<button type="button" class="ambient-collapse v2-caret" title="Collapse / expand layer" aria-label="Collapse or expand this layer"></button>' +
       '</div>' +
@@ -13272,16 +13280,6 @@
     // chip that said this on the picture obscured it; the summary line above
     // the drawing is where the rest of the state already reads.
     const lvWord = stateWord(lvS) + evoCadence(lvS);
-    const sum = card.querySelector('.v2-summary');
-    if (sum) {
-      // KEY: VALUE (2026-09-19, "make these into key: value pairs so user
-      // knows what each one means") — a bare "16 steps" says the unit and
-      // "euclid" says nothing; the name of the control the value belongs to
-      // is what makes a summary readable without opening the group.
-      sum.textContent = lvWord + ' \u00b7 ' + (p.kind === 'recorded'
-        ? ('notes: ' + (p.notes || []).length + ' \u00b7 bars: ' + p.bars)
-        : ('rhythm: ' + (now.rhythm === 'drawn' ? 'pattern\u270e' : now.rhythm) + ' \u00b7 pitch: ' + now.pitch + ' \u00b7 bars: ' + p.bars));
-    }
     // GROUP SUMMARIES. A folded group is one line, so that line has to say
     // what is engaged inside it — the drum-solo lesson: state that can vanish
     // while its widget keeps state gets reported as a bug. Written on every

@@ -12191,9 +12191,9 @@
               // invisible until another press must name that press.
               '<div class="ambient-ctrl v2-deferhint" data-v2when="kind:recorded">' +
                 '<label></label><span class="ambient-hint">' +
-                'These notes are written down, so these knobs do not move them \u2014 ' +
-                'they decide what \ud83c\udfb2 New take rolls next. \u22ef \u25b8 \u26a1 Release hands the part ' +
-                'back to the rules for good.</span></div>' +
+                'These notes are written down. Touch any knob here and this draft hands the ' +
+                'part back to the rules, so you can hear what they make \u2014 ' +
+                '\u2713 Done keeps it, \u2715 Cancel puts the written notes back.</span></div>' +
               '<div class="ambient-ctrl v2-presetctl" hidden>' +
                 '<label for="' + uid(L, 'preset') + '-gen">Character</label>' +
                 '<select id="' + uid(L, 'preset') + '-gen" class="ambient-select v2-presetpick"></select>' +
@@ -16779,6 +16779,29 @@
         // …within the STAGED panels only, while staging: the card's own copies
         // show the layer, which a staged edit has not touched
         const staged0 = V2.isStaged(ctx.L);
+        // \u2699 DEEP IS A SANDBOX, AND A RULE EDIT IN IT REGENERATES (2026-09-20,
+        // "editing parameters in deep should edit the FROZEN part; edits should
+        // be sandboxed, live reflect in the editor, then Cancel/Done discards
+        // or commits").
+        // A FROZEN part plays a stored list, so touching Length or Strike moved
+        // nothing and the preview sat still — the knobs looked broken. Inside
+        // the draft they now hand the STAGED part back to the rules the moment a
+        // generation rule is touched (`kind: 'live'` — the one line
+        // `releaseFn` uses; the live spec was never discarded), so the preview
+        // regenerates and shows the edit at once.
+        // ONLY THE RULES: `part.rhythm.*`, `part.pitch.*` and `part.shape.*` are
+        // what MAKES the notes. Transpose and Pitch quantize act on the stored
+        // list itself and are gated `kind:recorded`, so they stay exactly where
+        // they are — flipping on those would delete the very notes they edit.
+        // SAFE BY CONSTRUCTION: this is the DRAFT copy. \u2713 Done commits it,
+        // \u2715 Cancel and ✕ Close drop it and the written notes come back
+        // untouched — which is the whole point of the sandbox.
+        if (staged0 && ctx.L.part && ctx.L.part.kind === 'recorded' &&
+            (path.indexOf('part.rhythm.') === 0 || path.indexOf('part.pitch.') === 0 ||
+             path.indexOf('part.shape.') === 0)) {
+          ctx.L.part.kind = 'live';
+          try { E.getCfg(); } catch (e) {}
+        }
         const mirrorRoot = staged0 ? (f.closest('.v2-genwrap, .v2-autowrap') || ctx.card) : ctx.card;
         try {
           mirrorRoot.querySelectorAll('.v2-f[data-f="' + path + '"]').forEach((el2) => {

@@ -15843,6 +15843,13 @@
 .v2-layer .ambient-ctrl.v2-evorow { box-shadow: inset 3px 0 0 var(--evo, #b8f24a); padding-left: 8px; }
 .v2-layer .ambient-ctrl.v2-evorow > label { color: var(--evo, #b8f24a); }
 .v2-layer .ambient-ctrl.v2-evorow.v2-rowna { box-shadow: inset 3px 0 0 rgba(184, 242, 74, 0.35); }
+/* HARMONY VOICE ROWS (2026-09-19): motion select + canon stepper side by side.
+   `.ambient-select` is width:100% and declared late — compound selector, an
+   explicit width and flex 0 0 auto, or it swallows the stepper (the documented
+   five-victims trap). */
+.v2-layer .v2-harmrow { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.v2-layer .v2-harmrow select.ambient-select.v2-harmmo { width: auto; flex: 0 0 auto; min-width: 7.5em; }
+.v2-layer .v2-harmrow .ambient-stepper { flex: 0 0 auto; }
 /* 🧂 the Salt follow rows — same shape as Evolve's, Salt's own hue */
 .v2-layer .ambient-ctrl.v2-saltrow { box-shadow: inset 3px 0 0 var(--salt, #e879f9); padding-left: 8px; }
 .v2-layer .ambient-ctrl.v2-saltrow > label { color: var(--salt, #e879f9); }

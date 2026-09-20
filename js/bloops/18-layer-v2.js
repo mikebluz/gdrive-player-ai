@@ -1131,7 +1131,15 @@
       // has one representation and an untouched layer stores nothing.
       if (Array.isArray(t.harm)) {
         t.harm = t.harm
-          .map((h) => (h && Number.isFinite(+h.deg)) ? { deg: clamp(+h.deg | 0, -14, 14) } : null)
+          .map((h) => {
+            if (!(h && Number.isFinite(+h.deg))) return null;
+            const o = { deg: clamp(+h.deg | 0, -14, 14) };
+            // …HOW the voice moves and WHEN (2026-09-19, see `applyHarm`):
+            // absent = parallel, now, the old way — byte-identical
+            if (h.motion === 'contrary' || h.motion === 'oblique' || h.motion === 'free') o.motion = h.motion;
+            if (Number.isFinite(+h.lag) && (+h.lag | 0) > 0) o.lag = clamp(+h.lag | 0, 1, 8);
+            return o;
+          })
           .filter((h) => h && h.deg);
         if (!t.harm.length) delete t.harm;
       } else if (t.harm != null) delete t.harm;
@@ -1849,34 +1857,89 @@
   // would, instead of running parallel chromatically. The note's own degree is
   // recovered from the tone set, so this works for every pitch kind rather
   // than needing a branch inside each.
-  function applyHarm(part, E, cfg, at, reg, out, L) {
+  // ── HARMONY VOICES AS LINES, NOT PARALLELS (2026-09-19) ─────────────────
+  // "how can we make harmony voices more dynamic instead of just applying
+  // parallel harmonies" — each voice was a stateless degree offset per lead
+  // note, so strict parallel motion by construction. A `harm` entry now
+  // carries HOW it moves and WHEN:
+  //   motion  parallel (absent — the old way, byte-identical) · contrary (the
+  //           line steps up, the voice steps DOWN to the nearest tone of its
+  //           interval class, and vice versa) · oblique (the voice HOLDS its
+  //           pitch while the line moves, re-picking only when it leaves the
+  //           tone set or the reach) · free (the nearest tone of the set to
+  //           where it was, on its own side of the line, never a unison or an
+  //           octave with it)
+  //   lag     a canon: the voice plays the LINE's pitch `lag` onsets later, at
+  //           its interval, on the line's rhythm — silent until the line has
+  //           gone that far
+  // Voice memory lives in the cycle's generation memory (`mem`: per take, per
+  // cycle), so the picture, the outlines and the audio agree, and no draw is
+  // random. The motion modes read the FIRST lead pitch as "the line" (a chord
+  // lead is harmonised from that voice); parallel keeps voicing every lead
+  // pitch, as before.
+  function applyHarm(part, E, cfg, at, reg, out, L, mem, idx) {
     const hs = part.pitch && part.pitch.harm;
     if (!Array.isArray(hs) || !hs.length || !out.length) return out;
     const set = toneSetAt(E, cfg, at, L);
     const N = Math.max(1, set.ivs.length);
     const base = 12 * (reg + 1) + set.root;
+    const toDeg = (m) => {
+      const rel = m - base, oct = Math.floor(rel / 12), pc = ((rel % 12) + 12) % 12, d = set.ivs.indexOf(pc);
+      return d < 0 ? null : { oct, d };
+    };
+    const fromDeg = (oct, dd) => base + 12 * (oct + Math.floor(dd / N)) + set.ivs[((dd % N) + N) % N];
+    const par = (m, st) => { const q = toDeg(m); return q ? fromDeg(q.oct, q.d + st) : (m + st); };   // off-set note: semitones
+    const M = mem || null;
+    const n = Number.isFinite(idx) ? (idx | 0) : (M ? (M.harmN = (M.harmN | 0) + 1) : 0);
+    const hist = M ? (M.harmHist || (M.harmHist = {})) : null;
+    if (hist) hist[n] = out.slice();
+    const vmem = M ? (M.harmV || (M.harmV = {})) : null;
+    const prevLead = (M && Array.isArray(M.harmLead) && M.harmLead.length) ? M.harmLead[0] : null;
     const add = [];
-    for (let i = 0; i < out.length; i++) {
-      const rel = out[i] - base;
-      const oct = Math.floor(rel / 12);
-      const pc = ((rel % 12) + 12) % 12;
-      const d = set.ivs.indexOf(pc);
-      for (let j = 0; j < hs.length; j++) {
-        const h = hs[j]; if (!h) continue;
-        const st = h.deg | 0;
-        if (!st) continue;
-        if (d < 0) { add.push(out[i] + st); continue; }   // off-set note: semitones
-        const dd = d + st;
-        const w = Math.floor(dd / N);
-        add.push(base + 12 * (oct + w) + set.ivs[((dd % N) + N) % N]);
+    for (let j = 0; j < hs.length; j++) {
+      const h = hs[j]; if (!h) continue;
+      const st = h.deg | 0; if (!st) continue;
+      const lag = clamp(h.lag | 0, 0, 8);
+      let src = out;
+      if (lag > 0) { src = (hist && hist[n - lag]) ? hist[n - lag] : null; if (!src) continue; }
+      const motion = (h.motion === 'contrary' || h.motion === 'oblique' || h.motion === 'free') ? h.motion : '';
+      if (!motion) { for (let i = 0; i < src.length; i++) add.push(par(src[i], st)); continue; }
+      const m = src[0];
+      const p0 = par(m, st);
+      const prevV = (vmem && Number.isFinite(vmem[j])) ? vmem[j] : null;
+      let cand = p0;
+      if (motion === 'contrary') {
+        if (prevV != null && prevLead != null && m !== prevLead) {
+          const dir = (m > prevLead) ? -1 : 1;
+          cand = p0;
+          if (dir < 0) { for (let g = 0; g < 8 && cand >= prevV; g++) cand -= 12; }
+          else { for (let g = 0; g < 8 && cand <= prevV; g++) cand += 12; }
+          if (cand <= 0 || Math.abs(cand - m) > 19) cand = p0;
+        }
+      } else if (motion === 'oblique') {
+        if (prevV != null && toDeg(prevV) && prevV !== m && Math.abs(prevV - m) <= 19) cand = prevV;
+      } else {
+        if (prevV != null) {
+          let best = p0, bestD = Infinity;
+          const o0 = Math.floor((prevV - base) / 12);
+          for (let o = o0 - 1; o <= o0 + 1; o++) for (let q = 0; q < N; q++) {
+            const c = base + 12 * o + set.ivs[q]; if (c <= 0) continue;
+            const ab = c - m;
+            if ((st > 0 && ab <= 0) || (st < 0 && ab >= 0)) continue;   // stays on its side of the line
+            if (((ab % 12) + 12) % 12 === 0) continue;                    // never a unison or an octave
+            const dd = Math.abs(c - prevV) + (Math.abs(ab) > 19 ? 24 : 0);
+            if (dd < bestD) { bestD = dd; best = c; }
+          }
+          cand = best;
+        }
       }
+      if (vmem) vmem[j] = cand;
+      add.push(cand);
     }
+    if (M) M.harmLead = out.slice();
     for (let i = 0; i < add.length; i++) if (add[i] > 0) out.push(add[i]);
     return out;
   }
-  // Stage 2 — PITCH: what one onset plays, as MIDI numbers. The harmony pass
-  // rides on top of whatever the kind produced (declarations hoist, so the
-  // wrapper may sit above the body it calls).
   function pitchesAt(part, E, cfg, at, reg, ctxSeed, idx, mem, L) {
     // A RECOLOURED CHORD NEEDS THE VOICES TO REACH ITS TOP TONE. Raised on a
     // SHIM PART (the `partWithRules` idiom) rather than by threading a second
@@ -1899,7 +1962,7 @@
       for (let i5 = 0; i5 < out.length; i5++) out[i5] = clamp(out[i5] + up, 12, 120);
     }
     let fin = out;
-    try { fin = applyHarm(part, E, cfg, at, reg, out, L); } catch (e) { fin = out; }
+    try { fin = applyHarm(part, E, cfg, at, reg, out, L, mem, idx); } catch (e) { fin = out; }
     // LAST, so it rotates what actually sounds — a harmony voice is part of the
     // voicing and inverts with it.
     const invK = (part.pitch && part.pitch.inv) | 0;
@@ -6284,17 +6347,49 @@
   // stored as signed SOURCE TONES (a 3rd is two tones up the set, whatever the
   // set is) so the harmony bends with the scale instead of running parallel.
   const HARM_OPTS = [[-5, '−6th'], [-2, '−3rd'], [2, '3rd'], [3, '4th'], [4, '5th'], [5, '6th']];
+  const HARM_MOTIONS = [['', 'Parallel'], ['contrary', 'Contrary'], ['oblique', 'Oblique'], ['free', 'Free']];
   function harmRowHtml(L, t) {
-    const on = new Set((Array.isArray(t.harm) ? t.harm : []).map((h) => h && (h.deg | 0)).filter(Boolean));
+    const list = Array.isArray(t.harm) ? t.harm : [];
+    const on = new Set(list.map((h) => h && (h.deg | 0)).filter(Boolean));
+    const name = (d) => (HARM_OPTS.find((o) => o[0] === d) || [d, String(d)])[1];
+    // WHAT THE VOICES DO, in the line under the chips — the words the rows use
+    const said = list.filter((h) => h && (h.motion || (h.lag | 0))).map((h) =>
+      name(h.deg | 0) + (h.motion ? ' ' + h.motion : '') + ((h.lag | 0) ? ' canon +' + (h.lag | 0) : ''));
+    // ── A ROW PER LIT VOICE (2026-09-19): how it moves, and how far behind ──
+    // Rows share the chips' `data-v2tab`, so they are the same Harmony tab.
+    // Each control is a `.v2-f` over its entry BY POSITION in `harm` — the
+    // list is stored in the order it is drawn, so the index is stable; the
+    // stepper is the document-delegated one (add nothing), the select commits
+    // like any field. Absent = parallel, now — the voice as it always was.
+    const rows = list.map((h, j) => {
+      if (!h || !(h.deg | 0)) return '';
+      const mo = (h.motion === 'contrary' || h.motion === 'oblique' || h.motion === 'free') ? h.motion : '';
+      const lag = clamp(h.lag | 0, 0, 8);
+      return '<div data-v2tab="Harmony" class="ambient-ctrl v2-harmopt" data-v2when="kind:live;voice:synth">' +
+        '<label>' + esc(name(h.deg | 0)) + '</label>' +
+        '<span class="ambient-seg-row v2-harmrow">' +
+          '<select class="ambient-select v2-f v2-harmmo" data-f="part.pitch.harm.' + j + '.motion" ' +
+            'title="How this voice moves against the line \u2014 parallel: with it · contrary: against it · oblique: holds while the line moves · free: the nearest tone on its own side, never a unison">' +
+            HARM_MOTIONS.map((o) => '<option value="' + o[0] + '"' + (mo === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
+          '</select>' +
+          '<span class="ambient-stepper v2-harmlagwrap" title="Canon \u2014 this voice plays the line this many notes later, at its interval">' +
+            '<button type="button" class="ambient-step-btn ambient-step-dn" tabindex="-1" aria-label="Sooner">\u2212</button>' +
+            '<input type="number" inputmode="numeric" class="ambient-step-inp v2-f" data-f="part.pitch.harm.' + j + '.lag" ' +
+              'min="0" max="8" step="1" value="' + lag + '" aria-label="Lag, notes behind the line">' +
+            '<button type="button" class="ambient-step-btn ambient-step-up" tabindex="-1" aria-label="Later">+</button>' +
+          '</span>' +
+        '</span>' +
+        '<span class="ambient-hint">motion \u00b7 canon (notes behind the line; 0 = with it)</span></div>';
+    }).join('');
     return '<div data-v2tab="Harmony" class="ambient-ctrl" data-v2when="kind:live;voice:synth">' +
       '<label>Harmony voices</label><span class="ambient-seg-row">' +
       HARM_OPTS.map(([d, lab]) =>
         '<button type="button" class="ambient-seg v2-harm' + (on.has(d) ? ' on' : '') +
         '" data-harm="' + d + '">' + lab + '</button>').join('') +
       '</span><span class="ambient-hint">' +
-      (on.size ? on.size + ' harmony part' + (on.size === 1 ? '' : 's') + ' — in key'
+      (on.size ? on.size + ' harmony part' + (on.size === 1 ? '' : 's') + ' \u2014 in key' + (said.length ? ' \u00b7 ' + said.join(', ') : '')
                : 'add a voice a stated interval from the line') +
-      '</span></div>';
+      '</span></div>' + rows;
   }
   // ── THE PART, DRAWN ─────────────────────────────────────────────────────
   // A part menu that only lists knobs makes you press a button and then guess.
@@ -16350,7 +16445,7 @@
           } catch (e) {}
           try { applyGate(ctx.card, ctx.L); } catch (e) {}
         }
-        if (!staged0 && (path.indexOf('chg.') === 0 || path === 'ahead' || path === 'saltUpTo' || path === 'saltShare')) { try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {} }
+        if (!staged0 && (path.indexOf('chg.') === 0 || path === 'ahead' || path === 'saltUpTo' || path === 'saltShare' || path.indexOf('part.pitch.harm.') === 0)) { try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {} }
       });
 
       // KNOB DRAG — delegated once, so knobs are pure markup that any rebuild

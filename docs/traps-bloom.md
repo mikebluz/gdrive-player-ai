@@ -232,6 +232,13 @@
   copy. On a FROZEN take the button is dimmed (`.v2-clockfrozen`), never `disabled` — the press
   releases (`V2.release`, silent, keeps the notes) and turns Evolve on. A new surface on this axis
   goes on this button, not beside it.
+  **HARMONY VOICES HAVE MEMORY (2026-09-19).** `applyHarm(part, E, cfg, at, reg, out, L, mem, idx)`
+  keeps each voice's last pitch and the line's onset history on the cycle's generation memory
+  (`mem.harmV`, `mem.harmHist`, `mem.harmLead`), so `motion` (contrary · oblique · free) and `lag` (a
+  canon: the line's pitch `lag` onsets later) are deterministic per take and the audio, the picture and
+  the outlines agree. Absent motion/lag = the old parallel voicing, byte-identical. A caller that passes
+  no `mem` gets parallel only (no memory, no canon) — pass it. The per-voice rows address their entry
+  BY POSITION (`part.pitch.harm.<j>.motion`) — the list is stored in draw order, so keep it so.
   **SALT STAYS ON THE CHANGES; A LAYER DECIDES HOW IT FOLLOWS (2026-09-19).** Per-layer *salting* was
   asked for and refused: the colouring is central (`_ambProgSoundAt`, seeded from the project) so every
   following layer hears ONE coloured chord — per-layer seeds would cost that harmony, the chord band's

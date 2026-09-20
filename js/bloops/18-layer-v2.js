@@ -14313,9 +14313,35 @@
       try {
         cfg = E.getCfg();
         cyc = V2.cycleSec(S, cfg) || 2;
-        try { const pv = V2.previewCycle && V2.previewCycle(); if (pv && (pv.id | 0) === (S.id | 0) && V2.previewing(S)) cs0 = pv.at; } catch (e) { cs0 = 0; }
-        notes = V2.withEdit(() => V2.withTake(V2.pinOf(S), () =>
-          V2.notesFor(S, { E, cfg, key: 'v2:' + (S.id | 0), cycleStart: cs0, cycleSec: cyc }))) || [];
+        // …AND THE CLOCKS THOSE NOTES WERE MADE AGAINST (2026-09-20). Taking
+        // the preview's cycle start without its ANCHORS resolves preview-time
+        // onsets against the RESTORED GLOBAL progression origin — the preview
+        // puts those back the instant it has finished scheduling — so the
+        // staged picture drew the same rhythm over a different point in the
+        // changes. `drawPartViz` was fixed for exactly this; the staged panel
+        // never was. Measured with a draft open: a 3-voice chord part drew 21
+        // notes and played 21, with 14 of them different, and Groundwork drew
+        // 27 against 18 heard.
+        let pvClk = null;
+        try {
+          const pv = V2.previewCycle && V2.previewCycle();
+          if (pv && (pv.id | 0) === (S.id | 0) && V2.previewing(S)) {
+            cs0 = pv.at;
+            if (Number.isFinite(pv.pa) || Number.isFinite(pv.ps) || Number.isFinite(pv.bg)) {
+              pvClk = { pa: pv.pa, ps: pv.ps, bg: pv.bg };
+            }
+          }
+        } catch (e) { cs0 = 0; }
+        const askS = () => V2.withEdit(() => V2.withTake(V2.pinOf(S), () =>
+          V2.notesFor(S, { E, cfg, key: 'v2:' + (S.id | 0), cycleStart: cs0, cycleSec: cyc })));
+        if (pvClk) {
+          const sv2 = { pa: E._progAnchor, ps: E._playStartAt, bg: E._barGridAnchor };
+          E._progAnchor = pvClk.pa; E._playStartAt = pvClk.ps; E._barGridAnchor = pvClk.bg;
+          try { notes = askS() || []; }
+          finally { E._progAnchor = sv2.pa; E._playStartAt = sv2.ps; E._barGridAnchor = sv2.bg; }
+        } else {
+          notes = askS() || [];
+        }
       } catch (e) { notes = []; }
       const bars = Math.max(1, Math.round(+(S.part && S.part.bars) || 1));
       const TOP = 14;

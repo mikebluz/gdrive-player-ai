@@ -208,8 +208,11 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
   bypasses all of these sends; per-lane Bloom (`_laneEng`) rides the active lane's bus and
   inherits that lane's sends.
 - **Each Bloom layer chain ends in a dedicated DRY output GATE.** The per-layer mod chain is
-  `voices → vcf → [EQ3] → vca → levelGain → tgGate → ugGate → gate → pan → [dist] → [chorus] → [phaser] → [delay] → [autopan] → bus`, with the layer's reverb
-  send tapped off the **levelGain (pre-gate)**. `levelGain` is the layer's **Level** as a
+  `voices → vcf → [EQ3] → vca → levelGain → tgGate → ugGate → gate → pan → [dist] → [chorus] → [phaser] → [delay] → [autopan] → tgPost → bus`, with the layer's reverb
+  send tapped off the **levelGain (pre-gate)**. `tgPost` (2026-09-19) is the same **Trance Gate** placed **after the FX
+  stages** — Chop ▸ Position: After FX — a per-layer Gain between the layer's output and the bus on BOTH engines
+  (on the core it sits between the strip's slot output and the bus, since the core renders the FX inside the strip);
+  unity when unused, driven by the same `_ambScheduleTg` with the wave options (Width, Shape). `levelGain` is the layer's **Level** as a
   continuous gain (`_ambLevelGain`, `_AMB_LEVEL_BASE 1.3` / `_AMB_LEVEL_MAX 4.0`: 0→silent, 70→×1.3, 100→×4) — Level lives here, not per-note,
   so a ramp or fader sweeps the whole layer (held tails included) in real time. `tgGate` is the
   **Trance Gate**: a bar-synced step pattern (driven by a dedicated Signal in `_ambScheduleTg`,

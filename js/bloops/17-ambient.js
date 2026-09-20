@@ -2462,12 +2462,23 @@
         host.tg.on = host.tg.on ? 1 : 0;
         host.tg.gen = host.tg.gen ? 1 : 0;   // generative: re-roll the pattern each bar (drawn pattern = density)
         host.tg.steps = Math.max(2, Math.min(64, (host.tg.steps | 0) || 16));
+        // ▦ GATE (2026-09-19): what the pattern SPANS (a bar, or one pass of the
+        // content — bars × steps, capped at the core's 64), WHERE it sits (before
+        // the FX, or after them), and the WAVE over each sounding step (width =
+        // duty, shape). All absent by default = the old bar-synced square gate.
+        if (host.tg.span !== 'pass') delete host.tg.span;
+        if (host.tg.pos !== 'post') delete host.tg.pos;
+        if (Number.isFinite(host.tg.width)) { host.tg.width = Math.max(10, Math.min(100, host.tg.width | 0)); if (host.tg.width === 100) delete host.tg.width; } else delete host.tg.width;
+        if (['tri', 'sine', 'saw', 'ramp'].indexOf(host.tg.shape) < 0) delete host.tg.shape;
         if (!Number.isFinite(host.tg.depth)) host.tg.depth = d.tg.depth;
         if (!Number.isFinite(host.tg.edge)) host.tg.edge = d.tg.edge;
         // Pattern resized to `steps` (pad with 1s / truncate), coerced to 0|1.
         let p = Array.isArray(host.tg.pattern) ? host.tg.pattern.map(v => (v ? 1 : 0)) : [];
-        while (p.length < host.tg.steps) p.push(1);
-        host.tg.pattern = p.slice(0, host.tg.steps);
+        const tgLen = (host.tg.span === 'pass' && host.part && Number.isFinite(+host.part.bars))
+          ? Math.max(2, Math.min(64, Math.round(Math.max(0.125, +host.part.bars) * host.tg.steps)))
+          : host.tg.steps;
+        while (p.length < tgLen) p.push(1);
+        host.tg.pattern = p.slice(0, tgLen);
       }
       // Portamento (pitch glide between consecutive notes, ms) — shared by EVERY layer type
       // (this normalizer runs on primary, extras, seq AND sample layers).
@@ -23810,7 +23821,12 @@
         // writers branch on e.core instead. Falls through to the node strip
         // when strips are off, the engine isn't ready, or slots run out.
         if (typeof _coreVoices !== 'undefined' && _coreVoices.stripAcquire) {
-          const h = _coreVoices.stripAcquire(layer, out);
+          // ▦ CHOP AFTER FX (2026-09-19): a per-layer gate between the strip's
+          // slot output and the bus — the core renders the FX inside the strip,
+          // so this is the one place "after FX" exists on this engine. Unity
+          // when unused; driven by `_ambScheduleTg` when Chop ▸ Position = After.
+          const tgPost = new Tone.Gain(1).connect(out);
+          const h = _coreVoices.stripAcquire(layer, tgPost);
           if (h) {
             // ensure the shared reverb exists AND (re)claim the worklet's
             // global send bus for THIS engine's reverb — the reverb may be
@@ -23821,7 +23837,7 @@
               core: h, input: h.input,
               vcf: null, eq: null, eqAnalyser: null, vca: null,
               levelGain: { gain: h.param(1, 1) },
-              tgGate: null, tgSig: null,
+              tgGate: null, tgSig: null, tgPost, tgPostSig: null,
               // Unit-schedule chop gate — core param 5 (a plain multiplier on the
               // strip output, alongside the trance gate). Neutral at 1.
               ugGate: { gain: h.param(5, 1) },
@@ -23848,7 +23864,8 @@
         // Chain: vcf → [eq] → vca → gate → pan → [FX] → bus. In Spread mode the
         // pan stays centred and per-voice pans fan the width; in Pan mode the
         // per-voice pan is centred and this node holds the (rampable) position.
-        const pan = new Tone.Panner(0).connect(out);
+        const tgPost = new Tone.Gain(1).connect(out);   // ▦ Chop AFTER FX — the FX tail joins here (see `_ambUpdateMod`)
+        const pan = new Tone.Panner(0).connect(tgPost);
         const gate = new Tone.Gain(1).connect(pan);
         // Continuous per-layer LEVEL gain (set from cfg.level). Level lives here, not
         // per-note, so a ramp / slider sweeps the WHOLE layer — including held pad tails —
@@ -23887,7 +23904,7 @@
         levelGain.connect(revSend);   // reverb scales with level (still pre-gate, so tails ring through a gate mute)
         const rev = _ambEnsureReverb();
         if (rev) revSend.connect(rev);
-        _E.mod[layer] = { input: vcf, vcf, eq: null, eqAnalyser, vca, levelGain, tgGate, tgSig: null, ugGate, gate, pan, dist: null, delay: null, chorus: null, phaser: null, autopan: null, revSend, src: { vca: null, vco: null, vcf: null } };
+        _E.mod[layer] = { input: vcf, vcf, eq: null, eqAnalyser, vca, levelGain, tgGate, tgSig: null, tgPost, tgPostSig: null, ugGate, gate, pan, dist: null, delay: null, chorus: null, phaser: null, autopan: null, revSend, src: { vca: null, vco: null, vcf: null } };
         _ambUpdateMod(layer, cfg);
       } catch (e) {}
     }
@@ -24048,6 +24065,8 @@
           const _nodeById = { dist: e.dist, chorus: e.chorus, phaser: e.phaser, delay: e.delay, autopan: e.autopan };
           let tail = out;
           if (e.mainOut) { try { e.mainOut.disconnect(); } catch (x) {} try { e.mainOut.connect(out); tail = e.mainOut; } catch (x) {} }
+          // ▦ the AFTER-FX gate is the last thing before the bus (or the capture tap)
+          if (e.tgPost) { try { e.tgPost.disconnect(); } catch (x) {} try { e.tgPost.connect(tail); tail = e.tgPost; } catch (x) {} }
           for (let i = _inline.length - 1; i >= 0; i--) { const nd = _nodeById[_inline[i]]; if (!nd) continue; try { nd.disconnect(); } catch (x) {} nd.connect(tail); tail = nd; }
           g.connect(tail);
           // (reverb send taps the VCA, pre-gate — see _ambBuildMod — so it is
@@ -24201,6 +24220,8 @@
       try { e.levelGain && e.levelGain.dispose(); } catch (x) {}
       try { e.tgSig && e.tgSig.disconnect(); e.tgSig && e.tgSig.dispose(); } catch (x) {}
       try { e.tgGate && e.tgGate.dispose(); } catch (x) {}
+      try { e.tgPostSig && e.tgPostSig.disconnect(); e.tgPostSig && e.tgPostSig.dispose(); } catch (x) {}
+      try { e.tgPost && e.tgPost.dispose(); } catch (x) {}
       try { e.ugGate && e.ugGate.dispose && e.ugGate.dispose(); } catch (x) {}
       try { e.gate && e.gate.dispose(); } catch (x) {}
       try { e.pan && e.pan.dispose(); } catch (x) {}
@@ -25361,117 +25382,143 @@
       if (!any) out[((bar % steps) + steps) % steps] = 1;
       return out;
     }
+    // ── THE TRANCE GATE: ONE PASS OR ONE BAR, A WAVE, BEFORE OR AFTER FX ──
+    // (2026-09-19.) `_ambTgConf` resolves the layer's Chop into one plan:
+    // the pattern's span (a bar, anchored on the bar grid — or one PASS of the
+    // content, anchored on the layer's own cycle start and as long as bars ×
+    // steps, capped at the core's 64), the wave over each sounding step
+    // (width = the share of the step that sounds; shape = square · tri ·
+    // sine · saw (strike, fade) · ramp (swell)), and the position.
+    // TWO POSITIONS, TWO DRIVERS. Before FX is the engine's own gate: on the
+    // core a 64-step bitmask (`strip_tg`) — square by construction, width
+    // honoured by SUBDIVIDING the pattern while the cap allows — on the node
+    // path the `tgGate` Signal. After FX is `tgPost`, a per-layer Gain between
+    // the layer's output and the bus on BOTH engines, driven by the Signal
+    // driver with the full wave. The reverb send is tapped pre-gate either
+    // way, so tails ring through a cut (the documented choice).
+    function _ambTgConf(E, layer, L, cfg, now) {
+      const tg = L && L.tg;
+      if (!tg || !tg.on || !Array.isArray(tg.pattern) || !tg.pattern.length) return null;
+      const bpm = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : (typeof _ambBpm === 'function' ? _ambBpm() : 120);
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const steps = Math.max(2, Math.min(64, (tg.steps | 0) || 16));
+      let period = barSec, len = steps;
+      let anchor = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor
+        : (Number.isFinite(E._playStartAt) ? E._playStartAt : (Number.isFinite(E._progAnchor) ? E._progAnchor : now));
+      if (tg.span === 'pass' && L.part && Number.isFinite(+L.part.bars)) {
+        const bars = Math.max(0.125, +L.part.bars);
+        len = Math.max(2, Math.min(64, Math.round(bars * steps)));
+        period = barSec * bars;
+        try { if (window._v2 && window._v2.cycleSec) period = Math.max(0.05, window._v2.cycleSec(L, cfg)); } catch (x) {}
+        const ph = E._v2Phase && E._v2Phase[layer];
+        if (ph && Number.isFinite(ph.startAt)) anchor = ph.startAt;
+      }
+      const pat = tg.pattern.slice(0, len); while (pat.length < len) pat.push(1);
+      return { steps, len, period, anchor, pat,
+        depth: Math.max(0, Math.min(100, tg.depth | 0)) / 100,
+        edge: Math.max(0, Math.min(80, tg.edge | 0)) / 1000,
+        width: Math.max(10, Math.min(100, Number.isFinite(tg.width) ? (tg.width | 0) : 100)) / 100,
+        shape: ['square', 'tri', 'sine', 'saw', 'ramp'].indexOf(tg.shape) >= 0 ? tg.shape : 'square',
+        post: tg.pos === 'post', gen: !!tg.gen, seed: (cfg && cfg.seed) | 0 };
+    }
+    // Drives `node.gain` through a dedicated Signal kept at `e[sigKey]` (the
+    // documented pattern: never per-note automation on a long-lived param).
+    // `P` null = release: the Signal goes, the gain returns to unity.
+    function _ambTgDrive(E, layer, e, node, sigKey, now, horizon, P) {
+      const nextKey = sigKey + 'NextAt', prevKey = sigKey + 'PrevV', onKey = sigKey + 'On';
+      if (!node || !node.gain) return;
+      if (!P) {
+        if (e[sigKey]) { try { e[sigKey].disconnect(); e[sigKey].dispose(); } catch (x) {} e[sigKey] = null; }
+        if (e[onKey]) { try { node.gain.cancelScheduledValues(now); node.gain.value = 1; } catch (x) {} e[onKey] = false; e[nextKey] = 0; }
+        return;
+      }
+      if (!e[sigKey]) {
+        try { e[sigKey] = new Tone.Signal(1); node.gain.value = 0; e[sigKey].connect(node.gain); }   // intrinsic 0 → the Signal sets the gain
+        catch (x) { e[sigKey] = null; return; }
+        e[onKey] = true; e[nextKey] = 0; e[prevKey] = 1;
+      }
+      const sig = e[sigKey];
+      const stepDur = Math.max(0.01, P.period / P.len);
+      const offGain = Math.max(0, 1 - P.depth);
+      if (!e[nextKey] || e[nextKey] < now) { const k = Math.ceil((now - P.anchor) / stepDur); e[nextKey] = P.anchor + k * stepDur; }
+      let g = 0, prevV = Number.isFinite(e[prevKey]) ? e[prevKey] : 1;
+      let genBar = -1, genPat = null;
+      while (e[nextKey] < horizon && g++ < 128) {
+        const t0 = e[nextKey];
+        const idx = Math.round((t0 - P.anchor) / stepDur);
+        let on;
+        if (P.gen) {
+          const bar = Math.floor(idx / P.len);
+          if (bar !== genBar) { genBar = bar; genPat = _ambTgGenPat(layer, P.seed, bar, P.len, P.pat); }
+          on = genPat[((idx % P.len) + P.len) % P.len];
+        } else on = P.pat[((idx % P.len) + P.len) % P.len];
+        // every edge is a RAMP (rule 3: a gain step clicks) — `edge` on square,
+        // the wave itself on the others; the sounding window is `width` of the step
+        const edge = Math.max(0.002, Math.min(P.edge, stepDur * 0.25));
+        const onDur = Math.max(edge * 2 + 0.002, Math.min(stepDur - 0.001, stepDur * P.width));
+        try {
+          sig.setValueAtTime(prevV, t0);
+          if (!on) {
+            sig.linearRampToValueAtTime(offGain, t0 + edge); prevV = offGain;
+          } else if (P.shape === 'square') {
+            sig.linearRampToValueAtTime(1, t0 + edge);
+            if (P.width < 0.995) { sig.setValueAtTime(1, t0 + onDur - edge); sig.linearRampToValueAtTime(offGain, t0 + onDur); prevV = offGain; }
+            else prevV = 1;
+          } else if (P.shape === 'tri') {
+            sig.linearRampToValueAtTime(1, t0 + onDur / 2); sig.linearRampToValueAtTime(offGain, t0 + onDur); prevV = offGain;
+          } else if (P.shape === 'saw') {          // strike, then fade
+            sig.linearRampToValueAtTime(1, t0 + edge); sig.linearRampToValueAtTime(offGain, t0 + onDur); prevV = offGain;
+          } else if (P.shape === 'ramp') {         // swell, then cut
+            sig.linearRampToValueAtTime(1, t0 + onDur - edge); sig.linearRampToValueAtTime(offGain, t0 + onDur); prevV = offGain;
+          } else {                                 // sine — a half-sine hump
+            const N = 17, curve = new Float32Array(N);
+            for (let i = 0; i < N; i++) curve[i] = offGain + (1 - offGain) * Math.sin(Math.PI * i / (N - 1));
+            sig.setValueCurveAtTime(curve, t0 + 0.0005, Math.max(0.005, onDur - 0.001)); prevV = offGain;
+          }
+        } catch (x) {}
+        e[nextKey] += stepDur;
+      }
+      e[prevKey] = prevV;
+    }
     function _ambScheduleTg(E, layer, e, now, horizon) {
       if (!e || typeof Tone === 'undefined') return;
-      // CORE STRIPS: the gate pattern runs inside the core (stateless,
-      // anchored) — send ONE config command when it changes, no scheduling.
+      const L = _ambLayerByKey(E, layer);
+      const cfg = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : null);
+      const P = _ambTgConf(E, layer, L, cfg, now);
+      // AFTER FX: the post node, on both engines, with the full wave; the pre
+      // gate rests (released below) so the layer is not chopped twice.
+      _ambTgDrive(E, layer, e, e.tgPost, 'tgPostSig', now, horizon, (P && P.post) ? P : null);
+      const pre = (P && !P.post) ? P : null;
       if (e.core) {
-        const L0 = _ambLayerByKey(E, layer);
-        const tg0 = L0 && L0.tg;
-        const on = !!(tg0 && tg0.on && Array.isArray(tg0.pattern) && tg0.pattern.length);
-        let sig = 'off', args = null;
-        if (on) {
-          const cfg0 = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : null);
-          const bpm0 = (cfg0 && Number.isFinite(cfg0.bpm) && cfg0.bpm > 0) ? cfg0.bpm : (typeof _ambBpm === 'function' ? _ambBpm() : 120);
-          const barSec0 = (60 / Math.max(20, bpm0)) * 4;
-          const steps0 = Math.max(2, Math.min(64, (tg0.steps | 0) || 16));
-          // BAR GRID FIRST — the trance gate's steps must sit on the same bars the
-          // layers play. Anchoring on _playStartAt (the press) put the gate the
-          // first-tick lead away from every layer, 115-350ms and different each
-          // play: the same two-clock split the chord clock had.
-          const anchor0 = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor
-            : (Number.isFinite(E._playStartAt) ? E._playStartAt : (Number.isFinite(E._progAnchor) ? E._progAnchor : now));
-          // Generative: re-roll the mask for the CURRENT bar (swap slightly early
-          // so the new bar's first steps aren't a tick late); sig carries the bar
-          // index so each bar resends exactly once.
-          let pat0 = tg0.pattern, genBar = -1;
-          if (tg0.gen) {
-            genBar = Math.max(0, Math.floor((now + 0.08 - anchor0) / barSec0));
-            pat0 = _ambTgGenPat(layer, (cfg0 && cfg0.seed) | 0, genBar, steps0, tg0.pattern);
+        let sig = 'off', args = null, genBar = -1;
+        if (pre) {
+          let len = pre.len, pat = pre.pat;
+          if (pre.gen) { genBar = Math.max(0, Math.floor((now + 0.08 - pre.anchor) / pre.period)); pat = _ambTgGenPat(layer, pre.seed, genBar, len, pat); }
+          // the core gate is a 64-step bitmask: WIDTH by subdividing each step
+          // while the cap allows (×4 up to 16 steps, ×2 up to 32), square only —
+          // the Chop rows say so; the other shapes are the AFTER-FX gate's
+          if (pre.width < 0.995) {
+            const k = (len * 4 <= 64) ? 4 : (len * 2 <= 64 ? 2 : 1);
+            if (k > 1) {
+              const onSub = Math.max(1, Math.round(k * pre.width)), ex = [];
+              for (let i = 0; i < len; i++) for (let j = 0; j < k; j++) ex.push((pat[i] && j < onSub) ? 1 : 0);
+              pat = ex; len = len * k;
+            }
           }
           let lo = 0, hi = 0;
-          for (let i = 0; i < steps0 && i < 64; i++) {
-            if (pat0[i]) { if (i < 32) lo |= (1 << i); else hi |= (1 << (i - 32)); }
-          }
-          const depth0 = Math.max(0, Math.min(100, tg0.depth | 0)) / 100;
-          const edge0 = Math.max(0, Math.min(80, tg0.edge | 0)) / 1000;
-          args = [e.core.slot, 1, steps0, lo >>> 0, hi >>> 0, depth0, edge0, anchor0, barSec0];
-          sig = args.join('/') + (tg0.gen ? ('/g' + genBar) : '');
+          for (let i = 0; i < len && i < 64; i++) if (pat[i]) { if (i < 32) lo |= (1 << i); else hi |= (1 << (i - 32)); }
+          args = [e.core.slot, 1, len, lo >>> 0, hi >>> 0, pre.depth, pre.edge, pre.anchor, pre.period];
+          sig = args.join('/') + (pre.gen ? ('/g' + genBar) : '');
         }
         if (e._tgCoreSig !== sig) {
           e._tgCoreSig = sig;
-          if (on) e.core.cmd('strip_tg', ...args);
+          if (pre) e.core.cmd('strip_tg', ...args);
           else e.core.cmd('strip_tg', e.core.slot, 0, 16, 0, 0, 1, 0.006, 0, 2);
         }
         return;
       }
-      if (!e.tgGate) return;
-      const L = _ambLayerByKey(E, layer);
-      const tg = L && L.tg;
-      if (!tg || !tg.on || !Array.isArray(tg.pattern) || !tg.pattern.length) {
-        // Disengage → unity passthrough; drop the driving signal.
-        if (e.tgSig) { try { e.tgSig.disconnect(); e.tgSig.dispose(); } catch (x) {} e.tgSig = null; }
-        if (e._tgOn) { try { e.tgGate.gain.cancelScheduledValues(now); e.tgGate.gain.value = 1; } catch (x) {} e._tgOn = false; e._tgNextAt = 0; }
-        return;
-      }
-      if (!e.tgSig) {
-        try {
-          e.tgSig = new Tone.Signal(1);
-          e.tgGate.gain.value = 0;        // intrinsic 0 → the connected signal sets the gain
-          e.tgSig.connect(e.tgGate.gain);
-        } catch (x) { e.tgSig = null; return; }
-        e._tgOn = true; e._tgNextAt = 0; e._tgPrevV = 1;
-      }
-      const cfg = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : null);
-      const bpm = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : (typeof _ambBpm === 'function' ? _ambBpm() : 120);
-      const barSec = (60 / Math.max(20, bpm)) * 4;
-      const steps = Math.max(2, Math.min(64, (tg.steps | 0) || 16));
-      const stepDur = Math.max(0.01, barSec / steps);
-      // BAR GRID FIRST — see the note at the mask re-roll above. The gate and the
-      // layers it chops have to share one grid.
-      const anchor = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor
-        : (Number.isFinite(E._playStartAt) ? E._playStartAt : (Number.isFinite(E._progAnchor) ? E._progAnchor : now));
-      const offGain = Math.max(0, 1 - Math.max(0, Math.min(100, tg.depth | 0)) / 100);
-      const edge = Math.max(0, Math.min(80, tg.edge | 0)) / 1000;
-      const pat = tg.pattern;
-      if (!e._tgNextAt || e._tgNextAt < now) {
-        const k = Math.ceil((now - anchor) / stepDur);
-        e._tgNextAt = anchor + k * stepDur;
-      }
-      let g = 0, prevV = Number.isFinite(e._tgPrevV) ? e._tgPrevV : 1;
-      let _genBar = -1, _genPat = null;   // per-bar cache for generative mode
-      while (e._tgNextAt < horizon && g++ < 128) {
-        const idx = Math.round((e._tgNextAt - anchor) / stepDur);
-        let stepOn;
-        if (tg.gen) {
-          const bar = Math.floor(idx / steps);
-          if (bar !== _genBar) { _genBar = bar; _genPat = _ambTgGenPat(layer, (cfg && cfg.seed) | 0, bar, steps, pat); }
-          stepOn = _genPat[((idx % steps) + steps) % steps];
-        } else stepOn = pat[((idx % steps) + steps) % steps];
-        const v = stepOn ? 1 : offGain;
-        try {
-          if (edge > 0.0005) {
-            e.tgSig.setValueAtTime(prevV, e._tgNextAt);
-            e.tgSig.linearRampToValueAtTime(v, e._tgNextAt + Math.min(edge, stepDur * 0.5));
-          } else {
-            e.tgSig.setValueAtTime(v, e._tgNextAt);
-          }
-        } catch (x) {}
-        prevV = v;
-        e._tgNextAt += stepDur;
-      }
-      e._tgPrevV = prevV;
+      _ambTgDrive(E, layer, e, e.tgGate, 'tgSig', now, horizon, pre);
     }
-    // UNIT SCHEDULE, 'chop' mode — the audio half of the per-unit step gate.
-    // Schedules a gain envelope AHEAD onto e.ugGate.gain across the lookahead, so
-    // an off slice silences the layer's output (a sustained note is cut). Unlike
-    // the trance gate this needs no engine split: e.ugGate.gain is a real
-    // AudioParam on the node chain and a SHIM param (→ strip_setv/strip_rampv on
-    // core param 5) under core strips, so the same scheduling drives both.
-    // Sits post-levelGain / pre-gate exactly like tgGate, so the reverb send —
-    // tapped off levelGain — is NOT chopped and the wash fills the gaps.
-    // Deterministic (no RNG draw), so the invariant harness is untouched.
-    const _AMB_UG_EDGE = 0.004;   // 4 ms slew on each transition — declick, not a fade
     function _ambUnitGateAudio(E, key, now, horizon) {
       const e = E.mod && E.mod[key];
       if (!e || !e.ugGate || !e.ugGate.gain) return;
@@ -31234,7 +31281,8 @@
             // schedule is ignored" needs all of them). Only non-neutral state is
             // recorded, so a clean layer stays one line.
             write: L.write ? { on: !!L.write.on, lock: !!L.write.lock, bars: L.write.bars | 0, times: L.write.times | 0 } : null,
-            tg: (L.tg && L.tg.on) ? { steps: L.tg.steps, pattern: L.tg.pattern } : null,
+            tg: (L.tg && L.tg.on) ? { steps: L.tg.steps, pattern: L.tg.pattern, span: L.tg.span || 'bar', pos: L.tg.pos || 'pre',
+                                      width: Number.isFinite(L.tg.width) ? L.tg.width : 100, shape: L.tg.shape || 'square' } : null,
             unitGate: L.unitGate ? { div: L.unitGate.div, period: L.unitGate.period, mode: L.unitGate.mode,
                                      slots: Object.keys(L.unitGate.slots || {}) } : null,
             iterGate: L.iterGate ? { len: L.iterGate.len, ref: L.iterGate.ref, steps: L.iterGate.steps } : null,

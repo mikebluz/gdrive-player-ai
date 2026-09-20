@@ -57,6 +57,16 @@
   to the NODE engine, so it never exercises the core path — a core-only stage would show no effect and
   read as broken. Instantiate the wasm directly (`in_ptr` / `process` / `out_ptr`, the same shape
   golden-render uses) and measure the buffer.
+- **THE TRANCE GATE HAS TWO POSITIONS AND TWO DRIVERS (2026-09-19).** Before FX is the engine's own
+  gate — on the core the `strip_tg` 64-step BITMASK (square by construction; Width is honoured by
+  subdividing the pattern while `len × k ≤ 64`), on the node path the `tgGate` Signal. After FX is
+  `tgPost`, a per-layer Gain between the layer's output and the bus on BOTH engines (core: between the
+  strip's slot output and the bus — the one place "after FX" exists there), driven by `_ambTgDrive`
+  with the full wave (Width, Shape). `_ambTgConf` is the ONE resolver (span bar/pass, period, anchor,
+  pattern length); the two drivers read it. Span = pass anchors on the LAYER's cycle start
+  (`E._v2Phase[key].startAt`) and its `cycleSec`, not the bar grid. Continuous shapes inside the core
+  gate need a Rust change and a rebuild — no Rust toolchain on the dev machine (2026-09-19), which
+  is why the shapes live on the post node and the Chop rows say so.
 - **Extending a `strip_*` wasm export: make new args `i32`, never `f32`** — a missing argument becomes
   `0` for an int and `NaN` for a float, so design the new param so 0 is neutral.
 

@@ -10772,7 +10772,9 @@
   // have a note), so sharing a cell class would make one tap ambiguous.
   function tgCellsHtml(L) {
     const tg = (L.tg && typeof L.tg === 'object') ? L.tg : {};
-    const st = clamp((tg.steps | 0) || 16, 1, 32), pat = tg.pattern || [];
+    // as long as the SPAN says (a bar, or one pass = bars × steps, capped at the
+    // core's 64) — the same arithmetic the normalizer sizes the pattern by
+    const st = tgLenOf(L), pat = tg.pattern || [];
     let h = '<div class="ambient-slice-grid ambient-euclid-cells v2-tgcells" style="--eucols:' + Math.min(st, 16) + '">';
     for (let i = 0; i < st; i++) {
       h += '<button type="button" class="ambient-slice-cell ambient-euclid-cell v2-tgcell' +
@@ -11352,6 +11354,24 @@
     ? _AMB_SPAT_MODES.map(m => [m[0], m[1]])
     : [['fan', 'Fan out'], ['alt', 'Alternate'], ['sine', 'Sine'], ['sweep', 'Sweep'], ['random', 'Random']];
   const tgOn = (L) => !!(L.tg && L.tg.on);
+  const tgLenOf = (L) => {
+    const tg = (L && L.tg) || {}, steps = clamp((tg.steps | 0) || 16, 2, 64);
+    if (tg.span !== 'pass') return steps;
+    const bars = Math.max(0.125, +((L.part || {}).bars) || 1);
+    return clamp(Math.round(bars * steps), 2, 64);
+  };
+  // THE CHOP RESOLUTION as a note value — steps per bar by STANDARD DIVISIONS
+  // (2026-09-19, "by standard divisions"). A select over a NUMBER: the stored
+  // value is always among the options (the documented trap), labelled "N per
+  // bar" when it is not a division.
+  const TG_DIVS = [[4, '1/4'], [8, '1/8'], [16, '1/16'], [32, '1/32'], [6, '1/4 T'], [12, '1/8 T'], [24, '1/16 T']];
+  const tgSel = (L, field, label, cur, opts, hint, when) => {
+    const id = uid(L, field);
+    return '<div class="ambient-ctrl"' + (when ? ' data-v2when="' + when + '"' : '') + '><label for="' + id + '">' + esc(label) + '</label>' +
+      '<select id="' + id + '" class="ambient-select v2-f" data-f="' + field + '">' +
+      opts.map(o => '<option value="' + o[0] + '"' + (String(cur) === String(o[0]) ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('') +
+      '</select><span class="ambient-hint">' + esc(hint || '') + '</span></div>';
+  };
   const num = (v, d) => (Number.isFinite(v) ? v : d);
   const fx = (L, k) => (L && L[k] && typeof L[k] === 'object') ? L[k] : {};
 
@@ -12990,9 +13010,26 @@
             '<button type="button" class="ambient-seg v2-tgtoggle' + (tgOn(L) ? ' on' : '') + '">' +
               (tgOn(L) ? 'On — chopping' : 'Off') + '</button>' +
             '<span class="ambient-hint">bar-synced gate</span></div>' +
-          st(L, 'tg.steps', 'Chop steps', num((L.tg || {}).steps, 16), 1, 32, 'per bar', 'tg:on') +
+          // ▦ GATE (2026-09-19): the pattern can span ONE PASS of the content —
+          // "a stepped trance gate that maps to the content" — at a resolution
+          // in note values, with a wave over each sounding step and a choice of
+          // sitting before or after the FX. Same `tg` fields plus span · pos ·
+          // width · shape, all absent by default (the old bar-synced gate).
+          tgSel(L, 'tg.span', 'Span', (L.tg || {}).span === 'pass' ? 'pass' : '',
+                [['', 'Each bar'], ['pass', 'One pass of the content']],
+                'what the pattern spans \u2014 a pass is bars \u00d7 resolution steps, capped at 64 (the pattern below is that long)', 'tg:on') +
+          tgSel(L, 'tg.steps', 'Resolution', num((L.tg || {}).steps, 16),
+                (TG_DIVS.some(d => d[0] === num((L.tg || {}).steps, 16)) ? TG_DIVS : TG_DIVS.concat([[num((L.tg || {}).steps, 16), num((L.tg || {}).steps, 16) + ' per bar']])),
+                'each step is this note value \u2014 on sounds, off is cut', 'tg:on') +
           sl(L, 'tg.depth', 'Chop depth', num((L.tg || {}).depth, 100), 0, 100, '% cut', 'tg:on') +
           sl(L, 'tg.edge', 'Chop edge', num((L.tg || {}).edge, 6), 0, 60, 'ms softening', 'tg:on') +
+          sl(L, 'tg.width', 'Width', num((L.tg || {}).width, 100), 10, 100, '% of each step that sounds \u2014 the wave\u2019s duty; 100 = the whole step', 'tg:on') +
+          tgSel(L, 'tg.shape', 'Shape', ['tri', 'sine', 'saw', 'ramp'].indexOf((L.tg || {}).shape) >= 0 ? (L.tg || {}).shape : '',
+                [['', 'Square'], ['tri', 'Triangle'], ['sine', 'Sine'], ['saw', 'Saw \u2014 strike, fade'], ['ramp', 'Ramp \u2014 swell']],
+                'the wave over each sounding step. Before FX the engine\u2019s own gate is square (width still applies); the other shapes apply after FX', 'tg:on') +
+          tgSel(L, 'tg.pos', 'Position', (L.tg || {}).pos === 'post' ? 'post' : '',
+                [['', 'Before FX'], ['post', 'After FX']],
+                'before: the FX hear the chopped signal and smear it; after: the whole layer is chopped, FX tails included. The reverb send is tapped before either, so reverb rings through', 'tg:on') +
           '<div class="ambient-ctrl v2-cellrow" data-v2when="tg:on"><label>Chop pattern</label>' +
             tgCellsHtml(L) + '<span class="ambient-hint v2-tghint"></span></div>') +
           // DRY KILL HAS NO ROW. It was a tab opening a pane that held one Off/On
@@ -13466,7 +13503,7 @@
       // EVERY WORD HERE NAMES A CONTROL YOU CAN FIND — the stage's own tab name,
       // never its storage key, and Chop / Wet only spelled as their buttons are.
       FX: (eng.length ? eng.map(fxLabel).join(' · ') : '') +
-          (now.tg === 'on' ? (eng.length ? ' · ' : '') + 'Chop' : '') +
+          (now.tg === 'on' ? (eng.length ? ' · ' : '') + 'Chop' + ((L.tg || {}).pos === 'post' ? ' (after FX)' : '') : '') +
           (L.wetOnly ? ((eng.length || now.tg === 'on') ? ' · ' : '') + 'Wet only' : '') ||
           'none',
     };
@@ -13555,7 +13592,7 @@
     if (th) {
       const tg = L.tg || {}, pat = tg.pattern || [];
       const on2 = pat.reduce((a2, x) => a2 + (x ? 1 : 0), 0);
-      th.textContent = on2 ? (on2 + ' of ' + (tg.steps | 0) + ' sound — tap to edit')
+      th.textContent = on2 ? (on2 + ' of ' + pat.length + ' sound' + (tg.span === 'pass' ? ' (one pass)' : ' (one bar)') + ' — tap to edit')
                            : 'every step cut — the layer is silent';
       th.style.color = on2 ? '' : '#f6ad55';
     }
@@ -16247,7 +16284,7 @@
         // getCfg — so v2 must NOT keep a second copy of that rule; a duplicate
         // that pads differently is exactly how the two come to disagree. Only
         // the row needs rebuilding, so the grid follows the number above it.
-        if (path === 'tg.steps') { h._sig = ''; V2.render(E); }
+        if (path === 'tg.steps' || path === 'tg.span') { h._sig = ''; V2.render(E); }   // the pattern's length moved
         // Evolve's clock moved: the badge, the chip and the outlines all read
         // it, and none of them is rebuilt by the gate pass alone
         // Every N is ONE field on the face and Re-roll is spelled Every 1
@@ -18238,6 +18275,16 @@
               h._sig = ''; V2.render(E);
             }, 0),
           }));
+          // ▦ GATE — asked for as a transform type (2026-09-19). It IS the
+          // layer's Chop (FX ▸ Chop): a stepped on/off gate over one pass of
+          // the content, before or after FX, with a wave. One mechanism, so
+          // this is a DOOR to it, not a second gate.
+          items.push('hr');
+          items.push({ label: '\u25a6 Gate \u2014 a stepped on/off gate over one pass, before or after FX (opens FX \u25b8 Chop)',
+            fn: () => setTimeout(() => {
+              try { if (!ctx.L.tg || typeof ctx.L.tg !== 'object') ctx.L.tg = {}; if (ctx.L.tg.span !== 'pass') ctx.L.tg.span = 'pass'; E.getCfg(); } catch (e) {}
+              try { secOpen(ctx.card, ctx.L, 'FX', 'Chop'); } catch (e) {}
+            }, 0) });
           if (cur.length) {
             items.push('hr');
             items.push({ label: 'In force: ' + cur.join(', '), fn: () => {} });

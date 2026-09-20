@@ -419,7 +419,7 @@
   ];
   const PRESET_BY_ID = {};
   PRESETS.forEach((pr) => { PRESET_BY_ID[pr.id] = pr; });
-  const PITCHES = new Set(['chord', 'fixed', 'stack', 'walk', 'anchor', 'series', 'chance', 'drawn', 'mixed']);
+  const PITCHES = new Set(['chord', 'fixed', 'stack', 'walk', 'anchor', 'series', 'chance', 'drawn', 'mixed', 'confug']);
   const KINDS = new Set(['live', 'recorded']);
 
   // Divisions per bar. Triplet values are in the list because a swung or
@@ -640,7 +640,7 @@
     rhythm: { kind: ['pulse', 'euclid', 'chance', 'ground', 'drawn'],
               pulses: [1, 64], steps: [2, 64], rotate: [0, 63], n: [1, 32],
               chance: [0, 100], syncop: [0, 100] },
-    pitch:  { kind: ['drawn', 'chord', 'stack', 'fixed', 'series', 'anchor', 'walk', 'chance', 'mixed'],
+    pitch:  { kind: ['drawn', 'chord', 'stack', 'fixed', 'series', 'anchor', 'walk', 'chance', 'mixed', 'confug'],
               dir: ['up', 'down', 'updown'],
               // a stretch may RECOLOUR the change it sits on — '' is "the
               // change's own", and it is a legal value so the row can say so
@@ -1125,6 +1125,23 @@
       ['stutter', 'roam', 'drift'].forEach((k2) => {
         if (Number.isFinite(t[k2]) && t[k2] > 0) t[k2] = clamp(t[k2], 0, 100); else delete t[k2];
       });
+      // ── \u266b ConFUGUED (2026-09-19) ──────────────────────────────────────
+      // N notes at every onset, stacked by N\u22121 STATED intervals in semitones
+      // (1\u201324, so a voicing may open past two octaves), re-ordered per onset
+      // and bent toward the sounding chord by Strictness. `voices` is the
+      // shared field (2\u20135 here); the rest are its own, and the interval list
+      // is SIZED to voices\u22121 here — one place, so a Notes-at-once change can
+      // never leave a stack half-specified.
+      if (t.kind === 'confug') {
+        t.voices = clamp((t.voices | 0) || 3, 2, 5);
+        const want = t.voices - 1;
+        let iv = Array.isArray(t.civs) ? t.civs.map((v) => clamp((v | 0) || 1, 1, 24)) : [];
+        while (iv.length < want) iv.push(iv.length ? iv[iv.length - 1] : 4);   // a 3rd, then keep the stack even
+        t.civs = iv.slice(0, want);
+        if (['up', 'down', 'alt', 'rot', 'rand'].indexOf(t.corder) < 0) t.corder = 'up';
+        t.cstrict = clamp(Number.isFinite(t.cstrict) ? (t.cstrict | 0) : 60, 0, 100);
+        if (['ladder', 'chord', 'prob'].indexOf(t.cmode) < 0) t.cmode = 'ladder';
+      } else { delete t.civs; delete t.corder; delete t.cstrict; delete t.cmode; }
       // HARMONY PARTS — a list, so a line can carry a 3rd AND a 6th. Each entry
       // is an interval in SOURCE TONES (signed: negative harmonises below).
       // Absent is the default and an emptied list is DELETED, so "no harmony"
@@ -2045,6 +2062,91 @@
       }
       part._deg = d;
       out.push(base + set.ivs[d]);
+      return out;
+    }
+    // ── \u266b ConFUGUED: N NOTES, STATED INTERVALS, RE-ORDERED PER ONSET ──
+    // (2026-09-19, built to order.) The bottom note is the SOUNDING chord's
+    // root; the N\u22121 intervals stack upward from it in semitones, and their
+    // ORDER changes every onset (up \u00b7 down \u00b7 alternate \u00b7 rotate \u00b7 random), so the
+    // same set of intervals keeps re-voicing itself \u2014 the "fugued" part.
+    // STRICTNESS, three ladders, all honest about what they consult:
+    //   ladder  0 ignores the changes entirely (the stack sits on the FIRST
+    //           chord's root, intervals literal) \u2192 1\u201333 the root follows the
+    //           changes \u2192 34\u201366 every note is bent to the nearest KEY tone
+    //           \u2192 67+ bent to the nearest CHORD tone
+    //   chord   0 ignores; above it the root follows and `cstrict`% of the
+    //           notes bend to the nearest chord tone (the key is never asked)
+    //   prob    the root always follows; `cstrict`% of notes bend to the chord
+    // A bend moves a note to the nearest allowed pitch class, up or down, so a
+    // major 3rd becomes a minor 3rd over a minor chord rather than clashing.
+    // The draw is SEEDED per onset, so a take replays exactly and the drawing,
+    // the outlines and the audio agree.
+    if (t.kind === 'confug') {
+      const vN = clamp((t.voices | 0) || 3, 2, 5);
+      const ivs0 = (Array.isArray(t.civs) ? t.civs : []).slice(0, vN - 1).map((v) => clamp((v | 0) || 1, 1, 24));
+      while (ivs0.length < vN - 1) ivs0.push(4);
+      const oi = Math.max(0, idx | 0);
+      // THE ORDER OF THE INTERVALS, this onset
+      let ord = ivs0.slice();
+      const od = t.corder || 'up';
+      if (od === 'down') ord.reverse();
+      else if (od === 'alt') { if (oi % 2) ord.reverse(); }
+      else if (od === 'rot') { const k = ord.length ? (oi % ord.length) : 0; ord = ord.slice(k).concat(ord.slice(0, k)); }
+      else if (od === 'rand') {
+        for (let i = ord.length - 1; i > 0; i--) {
+          const j = Math.floor(vRnd(ctxSeed ^ 0x7f4a7c15, 311 + i * 7 + oi * 31) * (i + 1)) % (i + 1);
+          const tmp = ord[i]; ord[i] = ord[j]; ord[j] = tmp;
+        }
+      }
+      const mode = t.cmode || 'ladder';
+      const strict = clamp(Number.isFinite(t.cstrict) ? (t.cstrict | 0) : 60, 0, 100);
+      // THE BOTTOM NOTE. Above 0 it is the sounding chord's root (`set.root`,
+      // which `toneSetAt` already resolved for this moment); at 0 the changes
+      // are ignored, so it holds the FIRST chord's root instead.
+      let rootPc = set.root;
+      if (strict <= 0 && mode !== 'prob') {
+        try {
+          const ch0 = cfg && cfg.prog && cfg.prog.on && (cfg.prog.chords || [])[0];
+          if (ch0 && Number.isFinite(ch0.root)) rootPc = (((ch0.root | 0) % 12) + 12) % 12;
+        } catch (e) {}
+      }
+      // WHICH PITCH CLASSES A BENT NOTE MAY LAND ON. The chord pool is the
+      // tone set this moment resolved to; the key is the layer's scale, asked
+      // the way `toneSetAt` asks it (never a second table).
+      const chordPcs = set.ivs.map((iv) => (((set.root + iv) % 12) + 12) % 12);
+      let keyPcs = chordPcs;
+      try {
+        const sc = (typeof _ambScaleIntervals === 'function') ? _ambScaleIntervals(_ambNotesOf(L)) : null;
+        const kr = (typeof _ambSrcRootPc === 'function') ? _ambSrcRootPc(_ambNotesOf(L)) : null;
+        if (Array.isArray(sc) && sc.length && Number.isFinite(kr)) keyPcs = sc.map((iv) => (((kr + iv) % 12) + 12) % 12);
+      } catch (e) {}
+      const snap = (m, pcs) => {
+        if (!pcs || !pcs.length) return m;
+        let best = m, bd = 99;
+        for (let d = 0; d <= 6; d++) {
+          for (const sgn of (d === 0 ? [1] : [-1, 1])) {
+            const c = m + sgn * d;
+            if (pcs.indexOf(((c % 12) + 12) % 12) >= 0 && d < bd) { bd = d; best = c; }
+          }
+          if (bd < 99) break;
+        }
+        return best;
+      };
+      const rootBase = 12 * (reg + 1) + rootPc;
+      let cur = rootBase;
+      for (let i = 0; i < vN; i++) {
+        if (i > 0) cur += ord[i - 1];
+        let note = cur;
+        if (mode === 'ladder') {
+          if (strict >= 67) note = snap(note, chordPcs);
+          else if (strict >= 34) note = snap(note, keyPcs);
+        } else if (mode === 'chord') {
+          if (strict > 0 && vRnd(ctxSeed ^ 0x2545f491, 907 + i * 13 + oi * 41) * 100 < strict) note = snap(note, chordPcs);
+        } else {
+          if (vRnd(ctxSeed ^ 0x2545f491, 907 + i * 13 + oi * 41) * 100 < strict) note = snap(note, chordPcs);
+        }
+        out.push(clamp(note, 12, 120));
+      }
       return out;
     }
     if (t.kind === 'stack') {
@@ -5090,6 +5192,7 @@
     // MELODY is a walked line of ONE voice — the same pitch rule a Roll uses,
     // so `voices` is what separates them and the defining axis has to name it.
     if (which === 'melody') return pk === 'walk' && (((p.pitch || {}).voices | 0) || 1) <= 1;
+    if (which === 'confug') return pk === 'confug';
     return true;
   }
   function matRepair(p, which) {
@@ -5424,6 +5527,12 @@
     // 🎲 New take.
     scatter: { rhythm: { kind: 'euclid', steps: 8, pulses: 5 }, pitch: { kind: 'chance' },
                shape: { lenRatio: 70, holdSteps: 0 }, ring: 0, barsMode: 'fill' },
+    // \u266b ConFUGUED — N notes at every onset by stated intervals, re-ordered
+    // each time (see the `confug` branch in `pitchesBase`). A PULSE rhythm, so
+    // "how many onsets" is `rhythm.n` and the row on the panel writes it.
+    confug:  { rhythm: { kind: 'pulse', n: 4, steps: 16 },
+               pitch: { kind: 'confug', voices: 3, civs: [4, 3], corder: 'up', cstrict: 60, cmode: 'ladder' },
+               shape: { lenRatio: 85, holdSteps: 0 }, ring: 0, barsMode: 'fill' },
   };
   function makeSimpleFn(E, L, key) {
     const spec = MAT_SIMPLE[key];
@@ -6361,6 +6470,49 @@
   // stored as signed SOURCE TONES (a 3rd is two tones up the set, whatever the
   // set is) so the harmony bends with the scale instead of running parallel.
   const HARM_OPTS = [[-5, '−6th'], [-2, '−3rd'], [2, '3rd'], [3, '4th'], [4, '5th'], [5, '6th']];
+  // ── \u266b ConFUGUED'S OWN ROWS (2026-09-19) ─────────────────────────────
+  // Notes at once (2\u20135) \u00b7 an interval per gap \u00b7 Onsets \u00b7 Order \u00b7 Strictness and
+  // its ladder. Staged in \u2699 Deep like every other material setting, so
+  // \u2713 Done is what writes them. The interval steppers address the list BY
+  // POSITION (`part.pitch.civs.<i>`), which the normalizer keeps sized to
+  // voices\u22121 \u2014 so a Notes-at-once change re-renders (below) rather than
+  // leaving a stack half-specified.
+  const CONFUG_IV = ['', 'm2', 'M2', 'm3', 'M3', 'P4', 'TT', 'P5', 'm6', 'M6', 'm7', 'M7', 'P8',
+                     'm9', 'M9', 'm10', 'M10', 'P11', 'TT+8', 'P12', 'm13', 'M13', 'm14', 'M14', 'P15'];
+  const confugIvName = (n) => CONFUG_IV[clamp(n | 0, 1, 24)] || (n + ' st');
+  const CONFUG_ORDER = [['up', 'Up \u2014 as stated'], ['down', 'Down \u2014 reversed'],
+                        ['alt', 'Alternate \u2014 up, then down'], ['rot', 'Rotate \u2014 one place per onset'],
+                        ['rand', 'Random \u2014 a fresh order each onset']];
+  const CONFUG_MODE = [['ladder', 'Root \u2192 key \u2192 chord'], ['chord', 'Root \u2192 chord only'], ['prob', 'Share of notes bent']];
+  function confugRows(L) {
+    const t = (L.part && L.part.pitch) || {};
+    const W = 'kind:live;voice:synth;pitch:confug';
+    const vN = clamp((t.voices | 0) || 3, 2, 5);
+    const ivs = Array.isArray(t.civs) ? t.civs : [];
+    const strict = Number.isFinite(t.cstrict) ? (t.cstrict | 0) : 60;
+    const mode = t.cmode || 'ladder';
+    const rung = (mode !== 'ladder')
+      ? (strict <= 0 && mode === 'chord' ? 'ignores the changes' : strict + '% of notes bent to the chord')
+      : (strict <= 0 ? 'ignores the changes \u2014 the first chord\u2019s root, intervals literal'
+        : strict < 34 ? 'the root follows the changes; intervals literal'
+        : strict < 67 ? 'every note bent to the nearest tone of the key'
+        : 'every note bent to the nearest tone of the chord');
+    let rows = gst(L, 'part.pitch.voices', 'Notes at once', vN, 2, 5,
+                   'notes at every onset \u2014 and one interval below for each gap', W, 'cf');
+    for (let i = 0; i < vN - 1; i++) {
+      rows += gst(L, 'part.pitch.civs.' + i, 'Interval ' + (i + 1), clamp((ivs[i] | 0) || 4, 1, 24), 1, 24,
+                  'semitones above the note below \u2014 ' + confugIvName((ivs[i] | 0) || 4), W, 'cf' + i);
+    }
+    rows += gst(L, 'part.rhythm.n', 'Onsets', clamp(((L.part.rhythm || {}).n | 0) || 4, 1, 32), 1, 32,
+                'stacks per cycle', W, 'cf') +
+      gsel(L, 'part.pitch.corder', 'Order', t.corder || 'up', CONFUG_ORDER,
+           'how the intervals are ordered at each onset \u2014 the same set, re-voiced', W) +
+      gsel(L, 'part.pitch.cmode', 'Strictness rule', mode, CONFUG_MODE,
+           'what Strictness consults on its way from ignoring the changes to obeying them', W) +
+      gsl(L, 'part.pitch.cstrict', 'Strictness', strict, 0, 100,
+          'ignores the changes \u2192 strictly in the chord \u00b7 now: ' + rung, W);
+    return rows;
+  }
   const HARM_MOTIONS = [['', 'Parallel'], ['contrary', 'Contrary'], ['oblique', 'Oblique'], ['free', 'Free']];
   const HARM_SERIES_OPTS = [['', 'Fixed'], ['wave', 'Wave (+1 · 0 · \u22121)'], ['rise', 'Rise (+1 +2 +1)'], ['fall', 'Fall (\u22121 \u22122 \u22121)'], ['alt', 'Alternate (+2)'], ['wide', 'Wide (+3)']];
   function harmRowHtml(L, t) {
@@ -8877,7 +9029,7 @@
     if (p.kind === 'recorded') return 'the notes below';
     if (t.kind === 'drawn' || r.kind === 'drawn') return 'the pattern you drew';
     // how many notes land together on one onset
-    const stacked = (t.kind === 'chord' || t.kind === 'stack') ? Math.max(1, n(t.voices)) : 1;
+    const stacked = (t.kind === 'chord' || t.kind === 'stack' || t.kind === 'confug') ? Math.max(1, n(t.voices)) : 1;
     const lines = Math.max(1, n(t.lines) || 1);
     const harm = (t.harm || []).length;
     const per = stacked * lines + harm * lines;
@@ -8944,6 +9096,11 @@
       if (n(t.stutter)) pt += ', repeating a note ' + n(t.stutter) + '% of the time';
     } else if (t.kind === 'chord') {
       pt = '';                     // shapeOf always names the count AND "chord"
+    } else if (t.kind === 'confug') {
+      const nm = (Array.isArray(t.civs) ? t.civs : []).map(confugIvName).join(' + ');
+      pt = 'stacked by ' + (nm || 'stated intervals') +
+        ', ' + ({ up: 'in order', down: 'reversed', alt: 'alternating', rot: 'rotating', rand: 're-ordered' }[t.corder || 'up']) +
+        ' each onset';
     } else if (t.kind === 'stack') {
       pt = 'stacked from note ' + Math.max(1, n(t.degree));   // shapeOf has the count
     } else if (t.kind === 'series') {
@@ -8994,7 +9151,7 @@
     const M = { sustain: '\u25ac Sustain a chord', arp: '\u27f3 Arpeggiate', roll: '\ud83c\udfb2 Roll a line',
                 mixed: '\u2687 Mix chords + notes', ground: '\u26f0 Play the changes', melody: '\u266a Melody',
                 anchor: '\u2693 Hold a pedal note', onenote: '\u25aa Repeat one note',
-                scatter: '\u273b Scatter tones' };
+                scatter: '\u273b Scatter tones', confug: '\u266b ConFugued' };
     const v1 = (p.mat && p.mat.indexOf('v1:') === 0) ? p.mat.slice(3) : null;
     // THE FORWARDING ADDRESS FOR THE DICE, and which throw is on screen. It was
     // a labelled row of its own carrying no control; the head states the SIZE
@@ -9010,6 +9167,7 @@
     // which is what keeps "what Material are we using" answerable on every
     // part rather than only the ones made since yesterday.
     const guess = (r.kind === 'ground') ? 'ground'
+      : (t.kind === 'confug') ? 'confug'
       : (t.kind === 'mixed') ? 'mixed'
       : (t.kind === 'series') ? 'arp'
       : ((r.kind === 'pulse' || !r.kind) && (r.n | 0) <= 1 && (t.kind === 'chord' || t.kind === 'stack')) ? 'sustain'
@@ -9102,7 +9260,7 @@
                 roll: '\ud83c\udfb2 Roll a line', mixed: '\u2687 Mix chords + notes',
                 ground: '\u26f0 Play the changes', melody: '\u266a Melody',
                 anchor: '\u2693 Hold a pedal note', onenote: '\u25aa Repeat one note',
-                scatter: '\u273b Scatter tones' };
+                scatter: '\u273b Scatter tones', confug: '\u266b ConFugued' };
     const face = card.querySelector('.v2-genface');
     if (face) {
       const empty = L.part.kind === 'recorded' && !(L.part.notes || []).length;
@@ -9123,7 +9281,8 @@
       const SH = [['sustain', '\u25ac Sustain a chord'], ['anchor', '\u2693 Hold a pedal note'],
         ['onenote', '\u25aa Repeat one note'], ['arp', '\u27f3 Arpeggiate'],
         ['roll', '\ud83c\udfb2 Roll a line'], ['scatter', '\u273b Scatter tones'],
-        ['mixed', '\u2687 Mix chords + notes'], ['ground', '\u26f0 Play the changes']];
+        ['mixed', '\u2687 Mix chords + notes'], ['ground', '\u26f0 Play the changes'],
+        ['confug', '\u266b ConFugued']];
       const key = pv.key;
       const extra = (key === 'melody') ? [['melody', '\u266a Melody \u2014 from \u2728 Quick']] : [];
       const mine = SH.some((o) => o[0] === key) || !!extra.length;
@@ -9918,7 +10077,8 @@
                       roll: '\ud83c\udfb2 Roll a line', mixed: '\u2687 Mix chords + notes',
                       melody: '\u266a Melody',
                       anchor: '\u2693 Hold a pedal note', onenote: '\u25aa Repeat one note',
-                      scatter: '\u273b Scatter tones' };
+                      scatter: '\u273b Scatter tones',
+                      confug: '\u266b ConFugued' };
   function matWillDo(L, which) {
     const p = (L && L.part) || {};
     // ADOPT needs the stamp AND the rules: a stamp survives edits, so a
@@ -9967,7 +10127,7 @@
       sustain: '.v2-mkpart[data-mk="sustain"]', arp: '.v2-mkpart[data-mk="arp"]',
       mixed: '.v2-mkpart[data-mk="mixed"]', ground: '.v2-mkpart[data-mk="ground"]',
       anchor: '.v2-mkpart[data-mk="anchor"]', onenote: '.v2-mkpart[data-mk="onenote"]',
-      scatter: '.v2-mkpart[data-mk="scatter"]',
+      scatter: '.v2-mkpart[data-mk="scatter"]', confug: '.v2-mkpart[data-mk="confug"]',
       roll: '.v2-rollrun' };
     // the shape doors live in ⚙ Deep — while it is STAGED, `stagePass` owns them
     const stagedCard = !!(card.classList && card.classList.contains('v2-layer') &&
@@ -10991,7 +11151,8 @@
   } catch (e) {}
   const MAT_NAME = { sustain: 'Sustain a chord', arp: 'Arpeggiate', roll: 'Roll a line', melody: 'Melody',
     mixed: 'Mix chords + notes', ground: 'Play the changes',
-    anchor: 'Hold a pedal note', onenote: 'Repeat one note', scatter: 'Scatter tones' };
+    anchor: 'Hold a pedal note', onenote: 'Repeat one note', scatter: 'Scatter tones',
+    confug: 'ConFugued' };
   // WHAT THE PITCH ROW SAYS ABOUT ITS MATERIAL. Same three states the Advanced
   // block reports, in the same words, so the two surfaces cannot drift: no
   // material in force, this pitch IS the material's, or the recipe has been
@@ -11014,7 +11175,8 @@
                       ['fixed', 'One note — the same degree every time'], ['series', 'Series — sweep the chord'],
                       ['anchor', 'Anchor — a pedal point'], ['walk', 'Walk — a line'],
                       ['chance', 'Chance — any tone'],
-                      ['mixed', 'Mixed — chords and single notes']];
+                      ['mixed', 'Mixed — chords and single notes'],
+                      ['confug', 'ConFugued — N notes by stated intervals']];
 
   // v1's FULL voice list — every built-in, every SAMPLE, every ensemble and every
   // Design patch. `_ambToneOptions()` returns an ARRAY of `{value,label}`, and
@@ -11843,6 +12005,7 @@
               '<button type="button" class="ambient-seg v2-rollrun" title="🎲 Roll — a rolled, syncopated line. 🎲 New take rolls another.">\ud83c\udfb2 Roll a line</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="mixed" title="⚇ Mixed — some onsets a chord, the rest a single note.">\u2687 Mix chords + notes</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="ground" title="⛰ Groundwork — notes on the 1 and on every change, holding until the next.">\u26f0 Play the changes</button>' +
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="confug" title="♫ ConFugued — N notes at every onset, stacked by intervals you state, re-ordered each onset and bent toward the chord by Strictness.">\u266b ConFugued</button>' +
             '</span>' +
 
             '<span class="ambient-hint v2-gensays"></span>' +
@@ -11893,6 +12056,7 @@
               })(L.part.rhythm || {}) +
               gst(L, 'part.pitch.voices', 'Notes at once', (L.part.pitch || {}).voices, 1, 9,
                   'notes', 'kind:live;voice:synth;pitch:chord,stack,mixed') +
+              confugRows(L) +
               gsl(L, 'part.pitch.mix', 'Chords vs notes',
                   (Number.isFinite((L.part.pitch || {}).mix) ? L.part.pitch.mix : 50), 0, 100,
                   'all single notes \u2192 all chords', 'kind:live;voice:synth;pitch:mixed') +
@@ -13441,7 +13605,7 @@
       const map = { sustain: '.v2-mkpart[data-mk="sustain"]', arp: '.v2-mkpart[data-mk="arp"]',
         mixed: '.v2-mkpart[data-mk="mixed"]', ground: '.v2-mkpart[data-mk="ground"]',
         anchor: '.v2-mkpart[data-mk="anchor"]', onenote: '.v2-mkpart[data-mk="onenote"]',
-        scatter: '.v2-mkpart[data-mk="scatter"]', roll: '.v2-rollrun' };
+        scatter: '.v2-mkpart[data-mk="scatter"]', confug: '.v2-mkpart[data-mk="confug"]', roll: '.v2-rollrun' };
       Object.keys(map).forEach((k) => {
         const b2 = gw && gw.querySelector(map[k]);
         if (b2) { b2.classList.toggle('on', pv2.key === k); b2.classList.toggle('v2-matlock', S.part.kind === 'recorded'); }
@@ -16453,6 +16617,8 @@
         // The lane grid is built from `steps`, and switching instrument changes
         // which grid is on screen — both need the row rebuilt, not just regated.
         if (path === 'instrument.voice' || path === 'part.rhythm.steps' || path === 'part.pitch.kind') { h._sig = ''; V2.render(E); }
+        // \u266b ConFugued keeps one interval row per gap, so the count moved the rows
+        if (path === 'part.pitch.voices' && ((ctx.L.part.pitch || {}).kind === 'confug')) { h._sig = ''; V2.render(E); }
         // The gate's pattern length IS its step count, and `_ambNormalizeFx`
         // ALREADY resizes it (pads with 1, truncates to `steps`) on the next
         // getCfg — so v2 must NOT keep a second copy of that rule; a duplicate

@@ -232,6 +232,14 @@
   copy. On a FROZEN take the button is dimmed (`.v2-clockfrozen`), never `disabled` — the press
   releases (`V2.release`, silent, keeps the notes) and turns Evolve on. A new surface on this axis
   goes on this button, not beside it.
+  **\u266b ConFUGUED IS A PITCH KIND, NOT A ONE-OFF (2026-09-19, built to order).** `pitch.kind:
+  'confug'` \u2014 N notes (2\u20135) at every onset, stacked by N\u22121 STATED semitone intervals (1\u201324), the
+  order permuted per onset (up \u00b7 down \u00b7 alternate \u00b7 rotate \u00b7 random, seeded), each note bent toward the
+  sounding chord by `cstrict` under one of three `cmode` ladders (ladder: ignore \u2192 root follows \u2192 nearest
+  KEY tone \u2192 nearest CHORD tone; chord: root + a share bent, key never asked; prob: root always follows,
+  a share bent). The interval list is sized to `voices`\u22121 in the NORMALIZER \u2014 one place \u2014 and the rows
+  address it by position, so a Notes-at-once change must re-render the panel. The material (`MAT_SIMPLE.confug`)
+  is a PULSE rhythm, so "how many onsets" is `rhythm.n`.
   **HARMONY VOICES HAVE MEMORY (2026-09-19).** `applyHarm(part, E, cfg, at, reg, out, L, mem, idx)`
   keeps each voice's last pitch and the line's onset history on the cycle's generation memory
   (`mem.harmV`, `mem.harmHist`, `mem.harmLead`), so `motion` (contrary · oblique · free) and `lag` (a

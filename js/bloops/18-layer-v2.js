@@ -11419,7 +11419,11 @@
         // 17-ambient resolve the layer key through
         // `card.querySelector('[data-phkey]')`, a DESCENDANT lookup — and a
         // move is a delete plus an add: the text goes, the key does not.
-        '<span class="ambient-layer-unit v2-summary" data-phkey="v2:' + L.id + '" style="display:none" aria-hidden="true"></span>' +
+        // EMPTY, NOT HIDDEN: an empty `.ambient-layer-unit` is the head's
+        // transparent flex spacer (the stylesheet says so, in as many words)
+        // — `display:none` took the spacer away and ⋯ and the caret slid up
+        // against the name ("these should be right-justified").
+        '<span class="ambient-layer-unit v2-summary" data-phkey="v2:' + L.id + '" aria-hidden="true"></span>' +
         '<button type="button" class="ambient-layer-menu-btn v2-menu" title="Layer menu — rename, remove" aria-label="Layer menu">\u22ef</button>' +
         '<button type="button" class="ambient-collapse v2-caret" title="Collapse / expand layer" aria-label="Collapse or expand this layer"></button>' +
       '</div>' +

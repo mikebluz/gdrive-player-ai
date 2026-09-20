@@ -48,6 +48,10 @@
   flex row it demands the whole line and crushes its siblings — it has swallowed at least five
   controls. Fix with a COMPOUND selector (`select.ambient-select.<its-class>`), an explicit width and
   `flex: 0 0 auto`. Verify by measuring the SIBLINGS, not the control you added.
+- **AN EMPTY ELEMENT CAN BE LOAD-BEARING (2026-09-19).** The card head's `.ambient-layer-unit` is the
+  flex spacer that right-justifies ⋯ and the caret — the stylesheet keeps it as one when EMPTY
+  (`:empty { margin-left: 0 }`) precisely so nobody `display:none`s it. Removing a readout's TEXT is
+  not removing its element: check what else the element does (spacer, key carrier) before hiding it.
 - **A class rule that sets `display` beats `[hidden]`.** `el.hidden = true` then hides nothing. Any
   element toggled by `hidden` needs a companion `[hidden] { display: none }`.
 - **`opacity` on a parent composites the whole subtree** and cannot be undone by a child. Dim the
